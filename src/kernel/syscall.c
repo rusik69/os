@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "printf.h"
 #include "io.h"
+#include "vmm.h"
 
 /* MSR numbers */
 #define MSR_EFER   0xC0000080
@@ -62,6 +63,13 @@ static uint64_t sys_close(uint64_t fd) {
 
 static uint64_t sys_exit(uint64_t code) {
     (void)code;
+    struct process *p = process_get_current();
+    /* If this is a user-mode process, clean up page tables */
+    if (p && p->is_user && p->pml4) {
+        vmm_switch_pml4(vmm_get_pml4()); /* switch back to kernel pages */
+        vmm_destroy_user_pml4(p->pml4);
+        p->pml4 = NULL;
+    }
     process_exit();
     return 0; /* unreachable */
 }

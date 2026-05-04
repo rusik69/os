@@ -130,6 +130,7 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
     uint8_t msg_type = 0;
     uint32_t router = 0;
     uint32_t mask = 0;
+    uint32_t dns = 0;
     uint32_t server_id = 0;
 
     while (opt < end && *opt != 255) {
@@ -141,7 +142,7 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
         if (code == 53 && olen >= 1) msg_type = opt[0];
         if (code == 1 && olen >= 4) mask = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
         if (code == 3 && olen >= 4) router = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
-        if (code == 6 && olen >= 4) net_dns_server = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
+        if (code == 6 && olen >= 4) dns = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
         if (code == 54 && olen >= 4) server_id = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
         opt += olen;
     }
@@ -155,8 +156,19 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
         dhcp_send_request();
     } else if (msg_type == DHCP_ACK && dhcp_state == 2) {
         net_our_ip = offered;
-        if (router) net_gateway_ip = router;
         if (mask) net_subnet_mask = mask;
+        /* Default to /24 if no mask provided */
+        if (!net_subnet_mask)
+            net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
+        if (router) {
+            net_gateway_ip = router;
+        } else {
+            /* Infer gateway as .1 on our subnet */
+            net_gateway_ip = (offered & net_subnet_mask) | 1;
+        }
+        net_dns_server = dns ? dns : net_gateway_ip;
+        /* Reset gateway MAC — it may have changed */
+        net_gw_mac_known = 0;
         dhcp_state = 3;
         net_dhcp_done = 1;
     }
@@ -213,7 +225,6 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     uint16_t dst_port = ntohs(udp->dst_port);
     uint16_t src_port = ntohs(udp->src_port);
     uint16_t udp_len = ntohs(udp->length);
-    if (udp_len > len) return;
     const uint8_t *data = payload + sizeof(struct udp_header);
     uint16_t data_len = udp_len - sizeof(struct udp_header);
     uint32_t src_ip = ntohl(ip_hdr->src_ip);
@@ -301,13 +312,10 @@ uint32_t net_dns_resolve(const char *hostname) {
         net_udp_send(srv, 1053, DNS_PORT, pkt, pos);
 
         uint64_t start = timer_get_ticks();
-        volatile uint32_t tries = 0;
         while (!dns_reply_received) {
             net_poll();
-            tries++;
             uint64_t now = timer_get_ticks();
-            if (now != start && now - start > 200) break;
-            if (tries > 2000000) break;
+            if (now - start > 300) break;  /* 3 second timeout per attempt */
         }
     }
     return dns_result_ip;
@@ -317,25 +325,25 @@ void net_dhcp_discover(void) {
     kprintf("[..] DHCP: Sending DISCOVER...\n");
     dhcp_send_discover();
 
-    /* Poll for DHCP completion; resend discover only if still in state 0-1 */
+    /* Poll for DHCP completion; resend discover periodically */
     volatile uint32_t total = 0;
     int resends = 0;
-    while (dhcp_state != 3 && total < 30000000) {
+    while (dhcp_state != 3 && total < 200000000U) {
         net_poll();
         total++;
-        /* Resend discover every 5M iterations if no offer received yet */
-        if (dhcp_state <= 1 && total % 5000000 == 0 && resends < 2) {
+        /* Resend discover every 20M iterations if still waiting for offer */
+        if (dhcp_state <= 1 && total % 20000000 == 0 && resends < 4) {
             dhcp_send_discover();
             resends++;
         }
     }
 
     if (dhcp_state != 3) {
-        kprintf("[!!] DHCP: Timeout, using fallback IP\n");
-        net_our_ip = (192U << 24) | (168U << 16) | (64U << 8) | 15U;
-        net_gateway_ip = (192U << 24) | (168U << 16) | (64U << 8) | 1U;
+        kprintf("[!!] DHCP: Timeout, using QEMU user-mode defaults\n");
+        net_our_ip      = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
+        net_gateway_ip  = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
         net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
-        net_dns_server = net_gateway_ip;
+        net_dns_server  = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
     }
 
     if (dhcp_state == 3)
@@ -347,50 +355,144 @@ void net_dhcp_discover(void) {
         arp_resolve_gateway();
 }
 
+/* Parse an absolute URL into host, port, path (modifies all three) */
+static void url_parse_absolute(const char *url, char *host, uint16_t *port, char *path) {
+    const char *p = url;
+    *port = 80;
+    if (p[0]=='h' && p[1]=='t' && p[2]=='t' && p[3]=='p') {
+        if (p[4]==':' && p[5]=='/' && p[6]=='/') { p += 7; }
+        else if (p[4]=='s' && p[5]==':' && p[6]=='/' && p[7]=='/') { *port = 443; p += 8; }
+    }
+    int hi = 0;
+    while (*p && *p != '/' && *p != ':' && *p != ' ' && *p != '\r' && *p != '\n' && hi < 127)
+        host[hi++] = *p++;
+    host[hi] = '\0';
+    if (*p == ':') {
+        p++;
+        *port = 0;
+        while (*p >= '0' && *p <= '9') { *port = *port * 10 + (*p - '0'); p++; }
+    }
+    if (*p == '/') {
+        int pi = 0;
+        while (*p && *p != ' ' && *p != '\r' && *p != '\n' && pi < 255)
+            path[pi++] = *p++;
+        path[pi] = '\0';
+    } else {
+        path[0] = '/'; path[1] = '\0';
+    }
+}
+
+int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
+                    char *buf, int bufsize, int follow_redirects) {
+    char host[128], path[256];
+    uint16_t port = port_in;
+    int i = 0;
+    while (host_in[i] && i < 127) { host[i] = host_in[i]; i++; } host[i] = '\0';
+    i = 0;
+    while (path_in[i] && i < 255) { path[i] = path_in[i]; i++; } path[i] = '\0';
+
+    static char raw[4096];
+    int max_redir = follow_redirects ? 5 : 0;
+
+    for (int redir = 0; redir <= max_redir; redir++) {
+        uint32_t ip = net_dns_resolve(host);
+        if (!ip) { kprintf("DNS resolution failed for %s\n", host); return -1; }
+        kprintf("Resolved %s -> %u.%u.%u.%u\n", host,
+            (uint64_t)((ip>>24)&0xFF), (uint64_t)((ip>>16)&0xFF),
+            (uint64_t)((ip>>8)&0xFF),  (uint64_t)(ip&0xFF));
+
+        int conn = net_tcp_connect(ip, port);
+        if (conn < 0) { kprintf("TCP connect to %u.%u.%u.%u:%u failed\n",
+            (uint64_t)((ip>>24)&0xFF), (uint64_t)((ip>>16)&0xFF),
+            (uint64_t)((ip>>8)&0xFF),  (uint64_t)(ip&0xFF), (uint64_t)port); return -1; }
+
+        char req[512];
+        int rlen = 0;
+        const char *method = "GET ";
+        while (*method) req[rlen++] = *method++;
+        if (!path[0]) req[rlen++] = '/';
+        else { const char *pp = path; while (*pp) req[rlen++] = *pp++; }
+        const char *ver = " HTTP/1.0\r\nHost: ";
+        while (*ver) req[rlen++] = *ver++;
+        const char *h = host;
+        while (*h) req[rlen++] = *h++;
+        const char *end = "\r\nConnection: close\r\n\r\n";
+        while (*end) req[rlen++] = *end++;
+
+        net_tcp_send(conn, req, rlen);
+
+        int total = 0;
+        while (total < (int)sizeof(raw) - 1) {
+            int n = net_tcp_recv(conn, raw + total, sizeof(raw) - 1 - total, 300);
+            if (n <= 0) break;
+            total += n;
+        }
+        raw[total] = '\0';
+        net_tcp_close(conn);
+
+        /* Parse HTTP status code from "HTTP/1.x NNN ..." */
+        int status = 0;
+        if (raw[0]=='H' && raw[1]=='T' && raw[2]=='T' && raw[3]=='P') {
+            const char *sp = raw;
+            while (*sp && *sp != ' ') sp++;
+            while (*sp == ' ') sp++;
+            while (*sp >= '0' && *sp <= '9') { status = status * 10 + (*sp - '0'); sp++; }
+        }
+
+        /* Follow redirect if status is 3xx */
+        if (follow_redirects && (status == 301 || status == 302 || status == 303 ||
+                                  status == 307 || status == 308)) {
+            char *loc = 0;
+            for (int j = 0; j < total - 10; j++) {
+                if (raw[j]=='L' && raw[j+1]=='o' && raw[j+2]=='c' && raw[j+3]=='a' &&
+                    raw[j+4]=='t' && raw[j+5]=='i' && raw[j+6]=='o' && raw[j+7]=='n' &&
+                    raw[j+8]==':') {
+                    loc = raw + j + 9;
+                    while (*loc == ' ') loc++;
+                    break;
+                }
+            }
+            if (!loc) { kprintf("Redirect with no Location header\n"); return -1; }
+            char locbuf[256];
+            int li = 0;
+            while (*loc && *loc != '\r' && *loc != '\n' && li < 255)
+                locbuf[li++] = *loc++;
+            locbuf[li] = '\0';
+            kprintf("Redirect %d -> %s\n", (uint64_t)status, locbuf);
+            if (locbuf[0] == '/') {
+                /* Relative path: keep host and port, update path only */
+                for (i = 0; i <= li; i++) path[i] = locbuf[i];
+            } else {
+                url_parse_absolute(locbuf, host, &port, path);
+            }
+            continue;
+        }
+
+        /* Extract body (skip headers) */
+        char *body = 0;
+        for (int j = 0; j < total - 3; j++) {
+            if (raw[j]=='\r' && raw[j+1]=='\n' && raw[j+2]=='\r' && raw[j+3]=='\n') {
+                body = raw + j + 4;
+                break;
+            }
+        }
+        if (body) {
+            int bodylen = total - (int)(body - raw);
+            if (bodylen > bufsize - 1) bodylen = bufsize - 1;
+            memmove(buf, body, bodylen);
+            buf[bodylen] = '\0';
+            return bodylen;
+        }
+        if (total > bufsize - 1) total = bufsize - 1;
+        memmove(buf, raw, total);
+        buf[total] = '\0';
+        return total;
+    }
+    kprintf("Too many redirects\n");
+    return -1;
+}
+
 int net_http_get(const char *host, uint16_t port, const char *path,
                  char *buf, int bufsize) {
-    uint32_t ip = net_dns_resolve(host);
-    if (!ip) return -1;
-
-    int conn = net_tcp_connect(ip, port);
-    if (conn < 0) return -1;
-
-    char req[512];
-    int rlen = 0;
-    const char *method = "GET ";
-    while (*method) req[rlen++] = *method++;
-    if (!path || !*path) req[rlen++] = '/';
-    else { const char *pp = path; while (*pp) req[rlen++] = *pp++; }
-    const char *ver = " HTTP/1.0\r\nHost: ";
-    while (*ver) req[rlen++] = *ver++;
-    const char *h = host;
-    while (*h) req[rlen++] = *h++;
-    const char *end = "\r\nConnection: close\r\n\r\n";
-    while (*end) req[rlen++] = *end++;
-
-    net_tcp_send(conn, req, rlen);
-
-    int total = 0;
-    while (total < bufsize - 1) {
-        int n = net_tcp_recv(conn, buf + total, bufsize - 1 - total, 300);
-        if (n <= 0) break;
-        total += n;
-    }
-    buf[total] = '\0';
-    net_tcp_close(conn);
-
-    char *body = 0;
-    for (int i = 0; i < total - 3; i++) {
-        if (buf[i] == '\r' && buf[i+1] == '\n' && buf[i+2] == '\r' && buf[i+3] == '\n') {
-            body = buf + i + 4;
-            break;
-        }
-    }
-    if (body) {
-        int bodylen = total - (body - buf);
-        memmove(buf, body, bodylen);
-        buf[bodylen] = '\0';
-        return bodylen;
-    }
-    return total;
+    return net_http_get_ex(host, port, path, buf, bufsize, 0);
 }

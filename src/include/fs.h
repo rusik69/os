@@ -43,5 +43,7 @@ int fs_list(const char *path);
 int fs_stat(const char *path, uint32_t *size, uint8_t *type);
 void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
                   uint32_t *used_blocks, uint32_t *data_start);
+int fs_list_names(const char *dir, const char *prefix,
+                  char names[][FS_MAX_NAME], int max);
 
 #endif

@@ -2,8 +2,11 @@
 #include "process.h"
 #include "signal.h"
 #include "io.h"
+#include "gdt.h"
+#include "vmm.h"
 
 extern void process_set_current(struct process *proc);
+extern uint64_t syscall_kernel_rsp;
 
 static struct process *ready_queue_head = NULL;
 static struct process *ready_queue_tail = NULL;
@@ -64,6 +67,17 @@ void schedule(void) {
 
     next->state = PROCESS_RUNNING;
     process_set_current(next);
+
+    /* Set kernel stack for syscall/interrupt returns */
+    tss_set_rsp0(next->stack_top);
+    syscall_kernel_rsp = next->stack_top;
+
+    /* Switch page tables if user process */
+    if (next->is_user && next->pml4) {
+        vmm_switch_pml4(next->pml4);
+    } else {
+        vmm_switch_pml4(vmm_get_pml4());
+    }
 
     /* Check and deliver any pending signals before returning to next process */
     signal_check();

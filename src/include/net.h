@@ -146,6 +146,9 @@ void net_udp_bind(uint16_t port, udp_recv_handler handler);
 /* HTTP client - fetches URL, writes body to buf. Returns bytes written or -1 */
 int net_http_get(const char *host, uint16_t port, const char *path,
                  char *buf, int bufsize);
+/* HTTP GET with optional redirect following (follow_redirects=1 to enable, max 5) */
+int net_http_get_ex(const char *host, uint16_t port, const char *path,
+                    char *buf, int bufsize, int follow_redirects);
 
 /* ARP cache dump - calls cb(ip, mac) for each valid entry.  Returns count. */
 int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac));

@@ -88,8 +88,16 @@ void arp_resolve_gateway(void) {
     if (net_gw_mac_known || !net_gateway_ip) return;
     for (int a = 0; a < 3 && !net_gw_mac_known; a++) {
         arp_send_request(net_gateway_ip);
+        uint64_t start = timer_get_ticks();
         volatile uint32_t w = 0;
-        while (!net_gw_mac_known && w < 2000000) { net_poll(); w++; }
+        while (!net_gw_mac_known) {
+            net_poll();
+            w++;
+            uint64_t now = timer_get_ticks();
+            /* Tick-based timeout (2s) when timer is running, else spin-count */
+            if (now > start && now - start > 200) break;
+            if (now == start && w > 3000000) break;
+        }
     }
 }
 
@@ -98,8 +106,15 @@ static void arp_resolve_ip(uint32_t ip) {
     if (arp_cache_lookup(ip)) return;
     for (int a = 0; a < 3 && !arp_cache_lookup(ip); a++) {
         arp_send_request(ip);
+        uint64_t start = timer_get_ticks();
         volatile uint32_t w = 0;
-        while (!arp_cache_lookup(ip) && w < 2000000) { net_poll(); w++; }
+        while (!arp_cache_lookup(ip)) {
+            net_poll();
+            w++;
+            uint64_t now = timer_get_ticks();
+            if (now > start && now - start > 200) break;
+            if (now == start && w > 3000000) break;
+        }
     }
 }
 
@@ -276,27 +291,30 @@ int net_ping(uint32_t target_ip) {
     struct icmp_header *icmp = (struct icmp_header *)buf;
     icmp->type = 8;
     icmp->code = 0;
-    icmp->checksum = 0;
     icmp->id = htons(0x1234);
-    icmp->seq = htons(1);
-    for (int i = 0; i < 32; i++)
-        buf[sizeof(struct icmp_header) + i] = (uint8_t)i;
-    icmp->checksum = net_checksum(buf, sizeof(struct icmp_header) + 32);
 
-    ping_reply_received = 0;
-    send_ip(target_ip, IP_PROTO_ICMP, buf, sizeof(struct icmp_header) + 32);
+    for (int seq = 1; seq <= 4; seq++) {
+        icmp->seq = htons((uint16_t)seq);
+        icmp->checksum = 0;
+        for (int i = 0; i < 32; i++)
+            buf[sizeof(struct icmp_header) + i] = (uint8_t)i;
+        icmp->checksum = net_checksum(buf, sizeof(struct icmp_header) + 32);
 
-    uint64_t start = timer_get_ticks();
-    volatile uint32_t tries = 0;
-    while (!ping_reply_received) {
-        net_poll();
-        tries++;
-        uint64_t now = timer_get_ticks();
-        if (now != start && now - start > 300) return -1;
-        if (tries > 3000000) return -1;
+        ping_reply_received = 0;
+        send_ip(target_ip, IP_PROTO_ICMP, buf, sizeof(struct icmp_header) + 32);
+
+        uint64_t start = timer_get_ticks();
+        while (!ping_reply_received) {
+            net_poll();
+            uint64_t now = timer_get_ticks();
+            if (now - start > 200) break;  /* 2 second per-probe timeout */
+        }
+        if (ping_reply_received) {
+            uint64_t elapsed = timer_get_ticks() - start;
+            return (int)(elapsed * 10);
+        }
     }
-    uint64_t elapsed = timer_get_ticks() - start;
-    return (int)(elapsed * 10);
+    return -1;
 }
 
 /* --- Poll --- */

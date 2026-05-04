@@ -12,12 +12,52 @@ typedef __builtin_va_list va_list;
 static void (*output_hook)(char c, void *ctx) = 0;
 static void *output_hook_ctx = 0;
 
+/* Flush hook: called by kprintf_flush() to push buffered output */
+static void (*flush_hook)(void *ctx) = 0;
+static void *flush_hook_ctx = 0;
+
+void kprintf_set_flush(void (*fn)(void *), void *ctx) {
+    flush_hook = fn;
+    flush_hook_ctx = ctx;
+}
+void kprintf_flush(void) {
+    if (flush_hook) flush_hook(flush_hook_ctx);
+}
+
+/* dmesg ring buffer: 16 KB, always captures every character */
+#define DMESG_BUF_SIZE 16384
+static char dmesg_buf[DMESG_BUF_SIZE];
+static int  dmesg_pos = 0;          /* next write position (wraps) */
+static int  dmesg_full = 0;         /* 1 once the buffer has wrapped */
+
 void kprintf_set_hook(void (*hook)(char, void *), void *ctx) {
     output_hook = hook;
     output_hook_ctx = ctx;
 }
+void kprintf_get_hook(void (**hook)(char,void*), void **ctx) {
+    if (hook) *hook = output_hook;
+    if (ctx)  *ctx  = output_hook_ctx;
+}
+
+/* Fill buf with the dmesg contents (oldest first). Returns bytes written. */
+int kprintf_dmesg(char *buf, int max) {
+    int written = 0;
+    if (dmesg_full) {
+        /* Start from the character just after the current write pointer */
+        for (int i = dmesg_pos; i < DMESG_BUF_SIZE && written < max - 1; i++)
+            buf[written++] = dmesg_buf[i];
+    }
+    for (int i = 0; i < dmesg_pos && written < max - 1; i++)
+        buf[written++] = dmesg_buf[i];
+    buf[written] = '\0';
+    return written;
+}
 
 static void kputchar(char c) {
+    /* Always record in ring buffer (even when hook is active) */
+    dmesg_buf[dmesg_pos++] = c;
+    if (dmesg_pos >= DMESG_BUF_SIZE) { dmesg_pos = 0; dmesg_full = 1; }
+
     if (output_hook) {
         output_hook(c, output_hook_ctx);
         return;

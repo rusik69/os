@@ -54,5 +54,12 @@ void cmd_route(void);
 void cmd_uname(void);
 void cmd_lspci(void);
 void cmd_dmesg(void);
+void cmd_cc(const char *args);
+void cmd_sort(const char *args);
+void cmd_find(const char *args);
+void cmd_calc(const char *args);
+void cmd_uniq(const char *args);
+void cmd_tr(const char *args);
+void cmd_tmux(const char *args);
 
 #endif

@@ -1,0 +1,68 @@
+/* cmd_help.c — help command */
+#include "shell_cmds.h"
+#include "printf.h"
+
+void cmd_help(void) {
+    kprintf("Available commands:\n");
+    kprintf("  help     - Show this help\n");
+    kprintf("  echo     - Print arguments\n");
+    kprintf("  clear    - Clear screen\n");
+    kprintf("  meminfo  - Show memory info\n");
+    kprintf("  ps       - List processes\n");
+    kprintf("  uptime   - Show uptime\n");
+    kprintf("  reboot   - Reboot system\n");
+    kprintf("  shutdown - Shutdown system (ACPI)\n");
+    kprintf("  kill     - Kill process (kill <pid> [signal])\n");
+    kprintf("  color    - Set color (color <fg> [bg])\n");
+    kprintf("  hexdump  - Dump memory (hexdump <addr> [len])\n");
+    kprintf("  date     - Show current date/time from RTC\n");
+    kprintf("  cpuinfo  - Show CPU info\n");
+    kprintf("  history  - Show command history\n");
+    kprintf("  ls       - List files [dir]\n");
+    kprintf("  cat      - Show file contents\n");
+    kprintf("  write    - Write to file (write <name> <text>)\n");
+    kprintf("  touch    - Create empty file\n");
+    kprintf("  rm       - Remove file or empty dir\n");
+    kprintf("  mkdir    - Create directory\n");
+    kprintf("  stat     - Show file info\n");
+    kprintf("  format   - Format filesystem\n");
+    kprintf("  edit     - Text editor (edit <file>)\n");
+    kprintf("  exec     - Execute ELF binary (exec <path>)\n");
+    kprintf("  run      - Execute script file (run <path>)\n");
+    kprintf("  ifconfig - Show network info\n");
+    kprintf("  ping     - Ping host (ping [ip])\n");
+    kprintf("  dns      - Resolve hostname (dns <host>)\n");
+    kprintf("  curl     - HTTP GET (curl [-F] <url>)\n");
+    kprintf("  udpsend  - Send UDP packet (udpsend <ip> <port> <data>)\n");
+    kprintf("  beep     - PC speaker beep (beep [freq] [ms])\n");
+    kprintf("  play     - Play note sequence (play <note> ...)\n");
+    kprintf("  mouse    - Show mouse position and buttons\n");
+    kprintf("  wc       - Count lines/words/bytes (wc <file>)\n");
+    kprintf("  head     - Show first N lines (head <file> [n])\n");
+    kprintf("  tail     - Show last N lines (tail <file> [n])\n");
+    kprintf("  cp       - Copy file (cp <src> <dst>)\n");
+    kprintf("  mv       - Move file (mv <src> <dst>)\n");
+    kprintf("  grep     - Search text in file (grep <pattern> <file>)\n");
+    kprintf("  df       - Show disk usage\n");
+    kprintf("  free     - Show memory usage\n");
+    kprintf("  whoami   - Show current process\n");
+    kprintf("  hostname - Show hostname\n");
+    kprintf("  env      - Show environment info\n");
+    kprintf("  xxd      - Hex dump file (xxd <file>)\n");
+    kprintf("  sleep    - Sleep N seconds (sleep <n>)\n");
+    kprintf("  seq      - Print number sequence (seq [start] <end>)\n");
+    kprintf("  arp      - Show ARP cache\n");
+    kprintf("  route    - Show routing table\n");
+    kprintf("  uname    - Show system info\n");
+    kprintf("  lspci    - List PCI devices\n");
+    kprintf("  dmesg    - Show boot log\n");
+    kprintf("  cc       - Compile C source (cc <file> [out])\n");
+    kprintf("  sort     - Sort file lines (sort <file>)\n");
+    kprintf("  find     - Find files (find <pattern>)\n");
+    kprintf("  calc     - Calculator (calc <expr>)\n");
+    kprintf("  uniq     - Remove duplicate lines (uniq <file>)\n");
+    kprintf("  tr       - Translate chars (tr <from> <to> <file>)\n");
+    kprintf("  tmux     - Terminal multiplexer (Ctrl-B prefix)\n");
+    kprintf("\nShell features: Tab completion, history (up/down),\n");
+    kprintf("  pipes (cmd1 | cmd2), redirection (cmd > file, cmd >> file)\n");
+}

@@ -13,4 +13,10 @@ void vmm_unmap_page(uint64_t virt);
 uint64_t vmm_get_physaddr(uint64_t virt);
 uint64_t *vmm_get_pml4(void);
 
+/* Per-process user address space */
+uint64_t *vmm_create_user_pml4(void);
+void vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags);
+void vmm_switch_pml4(uint64_t *pml4);
+void vmm_destroy_user_pml4(uint64_t *pml4);
+
 #endif

@@ -36,8 +36,6 @@ C_SRCS = src/kernel/kernel.c \
          src/process/scheduler.c \
          src/process/signal.c \
          src/shell/shell.c \
-         src/shell/shell_cmds.c \
-         src/shell/shell_tools.c \
          src/shell/editor.c \
          src/shell/script.c \
          src/fs/fs.c \
@@ -57,7 +55,11 @@ ASM_SRCS = src/boot/boot.asm \
 
 C_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(C_SRCS))
 ASM_OBJS = $(patsubst src/%.asm,$(BUILDDIR)/%.o,$(ASM_SRCS))
-OBJS = $(ASM_OBJS) $(C_OBJS)
+CMD_SRCS = $(wildcard src/shell/cmds/*.c)
+CMD_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(CMD_SRCS))
+COMPILER_SRCS = $(wildcard src/compiler/*.c)
+COMPILER_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(COMPILER_SRCS))
+OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS)
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean
 
@@ -85,7 +87,8 @@ $(BUILDDIR)/disk.img:
 run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
-		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0
+		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0 ; \
+	stty sane
 
 # ── Test build (separate output dir, compiled with -DTEST_MODE) ──────────────
 

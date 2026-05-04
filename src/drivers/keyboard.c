@@ -112,6 +112,7 @@ char keyboard_getchar(void) {
                 continue;
             }
             if (c == '\r') c = '\n';
+            if (c == 127) c = '\b';
             return c;
         }
         __asm__ volatile("hlt");

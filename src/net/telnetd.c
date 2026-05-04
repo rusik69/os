@@ -6,6 +6,8 @@
 #include "timer.h"
 #include "shell.h"
 #include "scheduler.h"
+#include "editor.h"
+#include "fs.h"
 
 #define TELNET_PORT 23
 
@@ -32,6 +34,8 @@ struct telnet_session {
     char out_buf[TELNET_OUT_SIZE];
     int out_len;
     int negotiated;
+    int hist_pos;    /* current history navigation position */
+    int esc_state;   /* 0=normal, 1=got ESC, 2=got ESC[ */
 };
 
 static struct telnet_session sessions[8];
@@ -79,6 +83,11 @@ static void telnet_output_hook(char c, void *ctx) {
     }
 }
 
+/* kprintf flush hook: sends buffered output to the telnet client */
+static void ses_flush_hook(void *ctx) {
+    ses_flush((struct telnet_session *)ctx);
+}
+
 static void process_telnet_cmd(struct telnet_session *s) {
     char *cmd = s->cmd_buf;
     while (*cmd == ' ') cmd++;
@@ -109,7 +118,9 @@ static void process_telnet_cmd(struct telnet_session *s) {
 
     /* Redirect kprintf output to this session, run the shared command handler */
     kprintf_set_hook(telnet_output_hook, s);
+    kprintf_set_flush(ses_flush_hook, s);
     shell_exec_cmd(cmd, args);
+    kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
 
     s->processing = 0;
@@ -133,22 +144,37 @@ static void on_connect(int conn_id) {
     net_tcp_send(conn_id, neg, sizeof(neg));
 
     kprintf_set_hook(telnet_output_hook, s);
+    kprintf_set_flush(ses_flush_hook, s);
     kprintf("\n=== OS Remote Shell ===\n");
     kprintf("Type 'help' for commands, 'exit' to disconnect.\n\n");
     kprintf("os> ");
+    kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
     ses_flush(s);
     s->negotiated = 1;
+    s->hist_pos = shell_history_count();
+    s->esc_state = 0;
 }
 
 static void on_data(int conn_id, const void *data, uint16_t len) {
     struct telnet_session *s = find_session(conn_id);
     if (!s) return;
-    /* Prevent re-entrant command processing (e.g. when net_poll is called
-     * while a command is already executing) */
-    if (s->processing) return;
 
     const uint8_t *p = (const uint8_t *)data;
+
+    /* If the editor is active, route all characters to the editor ring buffer.
+     * Bypass the processing guard so net_poll() inside the editor loop works. */
+    if (editor_is_active()) {
+        for (uint16_t i = 0; i < len; i++) {
+            uint8_t c = p[i];
+            if (c == IAC && i + 2 < len) { i += 2; continue; }
+            editor_feed_char((char)c);
+        }
+        return;
+    }
+
+    /* Prevent re-entrant command processing */
+    if (s->processing) return;
     for (uint16_t i = 0; i < len; i++) {
         uint8_t c = p[i];
 
@@ -158,11 +184,61 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
             continue;
         }
 
+        /* ANSI escape sequence state machine for arrow keys */
+        if (s->esc_state == 1) {
+            if (c == '[') { s->esc_state = 2; continue; }
+            s->esc_state = 0;
+            /* fall through to process c normally */
+        } else if (s->esc_state == 2) {
+            s->esc_state = 0;
+            if (c == 'A' || c == 'B') {
+                /* Erase current input */
+                for (int k = 0; k < s->cmd_len; k++) ses_write(s, "\b ", 2);
+                for (int k = 0; k < s->cmd_len; k++) ses_write(s, "\b", 1);
+                if (c == 'A') {
+                    /* Up: go back in history */
+                    int cnt = shell_history_count();
+                    int oldest = cnt > HISTORY_SIZE ? cnt - HISTORY_SIZE : 0;
+                    if (s->hist_pos > oldest) s->hist_pos--;
+                    const char *entry = shell_history_entry(s->hist_pos);
+                    if (entry) {
+                        strncpy(s->cmd_buf, entry, TELNET_BUF_SIZE - 1);
+                        s->cmd_buf[TELNET_BUF_SIZE - 1] = '\0';
+                        s->cmd_len = strlen(s->cmd_buf);
+                        ses_write(s, s->cmd_buf, s->cmd_len);
+                    } else { s->cmd_buf[0] = '\0'; s->cmd_len = 0; }
+                } else {
+                    /* Down: go forward in history */
+                    int cnt = shell_history_count();
+                    if (s->hist_pos < cnt - 1) {
+                        s->hist_pos++;
+                        const char *entry = shell_history_entry(s->hist_pos);
+                        if (entry) {
+                            strncpy(s->cmd_buf, entry, TELNET_BUF_SIZE - 1);
+                            s->cmd_buf[TELNET_BUF_SIZE - 1] = '\0';
+                            s->cmd_len = strlen(s->cmd_buf);
+                            ses_write(s, s->cmd_buf, s->cmd_len);
+                        }
+                    } else {
+                        s->hist_pos = cnt;
+                        s->cmd_buf[0] = '\0';
+                        s->cmd_len = 0;
+                    }
+                }
+                ses_flush(s);
+            }
+            /* ignore other escape sequences */
+            continue;
+        }
+
+        if (c == 0x1b) { s->esc_state = 1; continue; }
+
         if (c == '\r') continue; /* ignore CR, handle LF */
         if (c == '\n' || c == '\0') {
             /* Execute command */
             s->cmd_buf[s->cmd_len] = '\0';
             ses_write(s, "\r\n", 2);
+            s->hist_pos = shell_history_count(); /* reset navigation */
             process_telnet_cmd(s);
             s->cmd_len = 0;
             continue;
@@ -174,6 +250,13 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
                 ses_write(s, "\b \b", 3);
                 ses_flush(s);
             }
+            continue;
+        }
+
+        /* Tab completion */
+        if (c == '\t') {
+            s->cmd_buf[s->cmd_len] = '\0';
+            shell_tab_complete_telnet(s->cmd_buf, &s->cmd_len, s);
             continue;
         }
 

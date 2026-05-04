@@ -288,3 +288,26 @@ void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
     if (used_blocks)  *used_blocks  = super.next_free_block - FS_DATA_START;
     if (data_start)   *data_start   = FS_DATA_START;
 }
+
+int fs_list_names(const char *dir, const char *prefix,
+                  char names[][FS_MAX_NAME], int max) {
+    int parent;
+    if (!dir || dir[0] == '\0' || (dir[0] == '/' && dir[1] == '\0'))
+        parent = 0;
+    else {
+        parent = find_inode(dir);
+        if (parent < 0) return 0;
+        if (inodes[parent].type != FS_TYPE_DIR) return 0;
+    }
+    int plen = prefix ? (int)strlen(prefix) : 0;
+    int n = 0;
+    for (int i = 0; i < FS_MAX_FILES && n < max; i++) {
+        if (inodes[i].type == FS_TYPE_FREE) continue;
+        if (inodes[i].parent != (uint16_t)parent || i == parent) continue;
+        if (plen > 0 && strncmp(inodes[i].name, prefix, plen) != 0) continue;
+        strncpy(names[n], inodes[i].name, FS_MAX_NAME - 1);
+        names[n][FS_MAX_NAME - 1] = '\0';
+        n++;
+    }
+    return n;
+}

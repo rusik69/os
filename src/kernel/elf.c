@@ -4,6 +4,8 @@
 #include "heap.h"
 #include "string.h"
 #include "printf.h"
+#include "vmm.h"
+#include "pmm.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE 65536
@@ -63,7 +65,7 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
 static uint64_t exec_entry_addr = 0;
 
 static void elf_trampoline(void) {
-    /* Jump to the ELF entry point */
+    /* Jump to the ELF entry point (kernel-mode fallback) */
     void (*entry)(void) = (void (*)(void))exec_entry_addr;
     entry();
     /* If ELF returns, terminate */
@@ -82,17 +84,86 @@ int elf_exec(const char *path) {
     }
 
     uint64_t entry = elf_load(buf, (uint64_t)size);
-    kfree(buf);
-
     if (!entry) {
         kprintf("elf: load failed\n");
+        kfree(buf);
         return -1;
     }
 
-    /* Store entry point so the trampoline can find it */
-    exec_entry_addr = entry;
+    /* Check if this ELF is targeted at user-space addresses (< 0x800000000000) */
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    int is_userland = (entry < 0x800000000000ULL);
 
-    /* Create a new kernel process whose code starts at the ELF entry */
+    if (is_userland) {
+        /* Create per-process page tables */
+        uint64_t *user_pml4 = vmm_create_user_pml4();
+        if (!user_pml4) {
+            kprintf("elf: cannot create page tables\n");
+            kfree(buf);
+            return -1;
+        }
+
+        /* Map each PT_LOAD segment into user address space */
+        for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+            const struct elf64_phdr *ph =
+                (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
+            if (ph->p_type != PT_LOAD) continue;
+
+            /* Map pages covering [vaddr, vaddr+memsz) */
+            uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
+            uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+            uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+            if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE; /* PF_W */
+
+            for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
+                /* Allocate a physical frame and map it */
+                uint64_t frame = pmm_alloc_frame();
+                if (!frame) { kprintf("elf: OOM mapping segment\n"); kfree(buf); return -1; }
+                /* Zero the frame first */
+                memset((void *)frame, 0, PAGE_SIZE);
+                vmm_map_user_page(user_pml4, va, frame, flags);
+                /* Also identity-map for now so we can copy data */
+                vmm_map_page(va, frame, flags | VMM_FLAG_WRITE);
+            }
+
+            /* Copy segment data */
+            memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
+            /* BSS is already zeroed from memset above */
+        }
+
+        /* Allocate user stack (16 pages = 64KB) */
+        uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+        for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
+            uint64_t frame = pmm_alloc_frame();
+            if (!frame) { kprintf("elf: OOM for user stack\n"); kfree(buf); return -1; }
+            memset((void *)frame, 0, PAGE_SIZE);
+            vmm_map_user_page(user_pml4, va, frame,
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+        }
+
+        uint64_t user_rsp = USER_STACK_TOP - 8; /* stack grows down */
+
+        /* Remove the temporary identity maps for code pages */
+        /* Not needed — kernel identity maps the whole first 1GB anyway */
+        (void)hdr;
+
+        kfree(buf);
+
+        /* Create user-mode process */
+        struct process *p = process_create_user(entry, user_rsp, user_pml4, path);
+        if (!p) {
+            kprintf("elf: cannot create user process\n");
+            return -1;
+        }
+
+        kprintf("elf: launched %s (pid %u, ring 3, entry 0x%x)\n",
+                path, (uint64_t)p->pid, entry);
+        return 0;
+    }
+
+    /* Kernel-mode fallback for non-userland ELFs */
+    kfree(buf);
+    exec_entry_addr = entry;
     struct process *p = process_create(elf_trampoline, path);
     if (!p) {
         kprintf("elf: cannot create process\n");
