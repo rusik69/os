@@ -11,6 +11,8 @@
 #include "vfs.h"
 #include "fs.h"
 #include "pipe.h"
+#include "process.h"
+#include "scheduler.h"
 
 static void putchar_both(char c) {
     vga_putchar(c);
@@ -113,11 +115,11 @@ const char *shell_history_entry(int idx) {
 static const char *all_cmds[] = {
     "arp", "beep", "calc", "cat", "cc", "clear", "color", "cp", "cpuinfo",
     "curl", "date", "df", "dmesg", "dns", "echo", "edit", "env", "exec",
-    "exit", "find", "format", "free", "grep", "head", "help", "hexdump",
-    "history", "hostname", "ifconfig", "kill", "ls", "lspci", "meminfo",
+    "exit", "fg", "find", "format", "free", "grep", "head", "help", "hexdump",
+    "history", "hostname", "ifconfig", "jobs", "kill", "ls", "lspci", "meminfo",
     "mkdir", "mouse", "mv", "ping", "play", "ps", "reboot", "rm", "route",
     "run", "seq", "shutdown", "sleep", "sort", "stat", "tail", "tmux",
-    "touch", "tr", "udpsend", "uname", "uniq", "uptime", "wc", "whoami",
+    "touch", "tr", "udpsend", "uname", "uniq", "uptime", "wait", "wc", "whoami",
     "write", "xxd", 0
 };
 
@@ -236,10 +238,77 @@ static void erase_line(int len) {
     for (int i = 0; i < len; i++) putchar_both('\b');
 }
 
+/* --- Background process support --- */
+struct bg_cmd_info {
+    char cmd[64];
+    char args[CMD_BUF_SIZE];
+    int  has_args;
+};
+static struct bg_cmd_info bg_slots[8];
+static int bg_slot_next = 0;
+
+static void bg_cmd_entry(void) {
+    /* Find our slot by matching process name to bg_slots[].cmd */
+    struct process *me = process_get_current();
+    int slot = -1;
+    for (int i = 0; i < 8; i++) {
+        if (me->name == bg_slots[i].cmd) { slot = i; break; }
+    }
+    if (slot < 0) { process_exit(); return; }
+    const char *a = bg_slots[slot].has_args ? bg_slots[slot].args : NULL;
+    shell_exec_cmd(bg_slots[slot].cmd, a);
+    process_exit();
+}
+
 static void process_cmd(void) {
     char *cmd = cmd_buf;
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
+
+    /* --- Check for background operator: cmd & --- */
+    int bg = 0;
+    {
+        int len = strlen(cmd);
+        while (len > 0 && cmd[len-1] == ' ') len--;
+        if (len > 0 && cmd[len-1] == '&') {
+            bg = 1;
+            cmd[len-1] = '\0';
+            len--;
+            while (len > 0 && cmd[len-1] == ' ') { cmd[len-1] = '\0'; len--; }
+        }
+    }
+
+    if (bg) {
+        /* Parse command and args, then launch as background process */
+        char *bcmd = cmd;
+        while (*bcmd == ' ') bcmd++;
+        char *bargs = bcmd;
+        while (*bargs && *bargs != ' ') bargs++;
+        if (*bargs) { *bargs = '\0'; bargs++; while (*bargs == ' ') bargs++; }
+        else bargs = NULL;
+
+        int slot = bg_slot_next;
+        bg_slot_next = (bg_slot_next + 1) % 8;
+        strncpy(bg_slots[slot].cmd, bcmd, 63);
+        bg_slots[slot].cmd[63] = '\0';
+        if (bargs && *bargs) {
+            strncpy(bg_slots[slot].args, bargs, CMD_BUF_SIZE - 1);
+            bg_slots[slot].args[CMD_BUF_SIZE - 1] = '\0';
+            bg_slots[slot].has_args = 1;
+        } else {
+            bg_slots[slot].args[0] = '\0';
+            bg_slots[slot].has_args = 0;
+        }
+
+        struct process *p = process_create(bg_cmd_entry, bg_slots[slot].cmd);
+        if (p) {
+            p->is_background = 1;
+            kprintf("[%u] %s\n", (uint64_t)p->pid, bg_slots[slot].cmd);
+        } else {
+            kprintf("Failed to create background process\n");
+        }
+        return;
+    }
 
     /* --- Check for pipe: cmd1 | cmd2 --- */
     char *pipe_pos = 0;
@@ -388,6 +457,16 @@ static void process_cmd(void) {
     shell_exec_cmd(cmd, args);
 }
 
+/* Process a full command line (with pipe/redirect/background support).
+ * Used by telnet daemon to get the same features as the local shell. */
+void shell_process_line(const char *line) {
+    if (!line || !*line) return;
+    strncpy(cmd_buf, line, CMD_BUF_SIZE - 1);
+    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+    cmd_len = strlen(cmd_buf);
+    process_cmd();
+}
+
 void shell_exec_cmd(const char *cmd, const char *args) {
     /* Per-command --help */
     if (args && strcmp(args, "--help") == 0) {
@@ -507,6 +586,12 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: tr <from> <to> <file>\n  Translate characters in file\n");
         else if (strcmp(cmd, "tmux") == 0)
             kprintf("Usage: tmux\n  Terminal multiplexer (Ctrl-B prefix, see tmux --help)\n");
+        else if (strcmp(cmd, "jobs") == 0)
+            kprintf("Usage: jobs\n  List background processes\n");
+        else if (strcmp(cmd, "fg") == 0)
+            kprintf("Usage: fg <pid>\n  Bring background process to foreground\n");
+        else if (strcmp(cmd, "wait") == 0)
+            kprintf("Usage: wait <pid>\n  Wait for a process to finish\n");
         else if (strcmp(cmd, "help") == 0)
             kprintf("Usage: help\n  List all available commands\n");
         else if (strcmp(cmd, "exit") == 0)
@@ -575,6 +660,9 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "uniq") == 0) cmd_uniq(args);
     else if (strcmp(cmd, "tr") == 0) cmd_tr(args);
     else if (strcmp(cmd, "tmux") == 0) cmd_tmux(args);
+    else if (strcmp(cmd, "jobs") == 0) cmd_jobs();
+    else if (strcmp(cmd, "fg") == 0) cmd_fg(args);
+    else if (strcmp(cmd, "wait") == 0) cmd_wait(args);
     else kprintf("Unknown command: %s\n", cmd);
 }
 

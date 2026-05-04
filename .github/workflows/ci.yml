@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-x86-64-linux-gnu \
+            binutils-x86-64-linux-gnu \
+            nasm \
+            qemu-system-x86 \
+            python3
+
+      - name: Build kernel
+        run: |
+          make CC=x86_64-linux-gnu-gcc \
+               LD=x86_64-linux-gnu-ld \
+               OBJCOPY=x86_64-linux-gnu-objcopy
+
+      - name: Run unit tests
+        run: |
+          make test CC=x86_64-linux-gnu-gcc \
+                    LD=x86_64-linux-gnu-ld \
+                    OBJCOPY=x86_64-linux-gnu-objcopy
+
+      - name: Run E2E tests
+        run: |
+          make e2e CC=x86_64-linux-gnu-gcc \
+                   LD=x86_64-linux-gnu-ld \
+                   OBJCOPY=x86_64-linux-gnu-objcopy
+        env:
+          E2E_BOOT_TIMEOUT: "120"
+          E2E_TIMEOUT: "45"

@@ -93,20 +93,19 @@ static void process_telnet_cmd(struct telnet_session *s) {
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
 
-    char *args = cmd;
-    while (*args && *args != ' ') args++;
-    if (*args) { *args = '\0'; args++; while (*args == ' ') args++; }
-    else args = NULL;
-
-    /* Handle telnet-specific commands */
-    if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0) {
-        kprintf_set_hook(telnet_output_hook, s);
-        kprintf("Goodbye!\n");
-        kprintf_set_hook(0, 0);
-        ses_flush(s);
-        net_tcp_close(s->conn_id);
-        s->active = 0;
-        return;
+    /* Handle telnet-specific commands before full processing */
+    {
+        char *c = cmd;
+        while (*c == ' ') c++;
+        if (strcmp(c, "exit") == 0 || strcmp(c, "quit") == 0) {
+            kprintf_set_hook(telnet_output_hook, s);
+            kprintf("Goodbye!\n");
+            kprintf_set_hook(0, 0);
+            ses_flush(s);
+            net_tcp_close(s->conn_id);
+            s->active = 0;
+            return;
+        }
     }
 
     /* Add to history before executing */
@@ -116,10 +115,11 @@ static void process_telnet_cmd(struct telnet_session *s) {
      * (e.g., if net_poll is called during a long-running command) */
     s->processing = 1;
 
-    /* Redirect kprintf output to this session, run the shared command handler */
+    /* Redirect kprintf output to this session, run the full command line
+     * processor (supports pipes, redirection, background &) */
     kprintf_set_hook(telnet_output_hook, s);
     kprintf_set_flush(ses_flush_hook, s);
-    shell_exec_cmd(cmd, args);
+    shell_process_line(cmd);
     kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
 

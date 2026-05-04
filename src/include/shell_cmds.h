@@ -61,5 +61,8 @@ void cmd_calc(const char *args);
 void cmd_uniq(const char *args);
 void cmd_tr(const char *args);
 void cmd_tmux(const char *args);
+void cmd_jobs(void);
+void cmd_fg(const char *args);
+void cmd_wait(const char *args);
 
 #endif

@@ -3,6 +3,7 @@
 #include "pic.h"
 #include "io.h"
 #include "scheduler.h"
+#include "process.h"
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -13,8 +14,12 @@ static void timer_handler(struct interrupt_frame *frame) {
     (void)frame;
     ticks++;
     pic_eoi(0);
+    scheduler_wake_sleepers();
     if (ticks % 5 == 0) { /* every 50ms */
         schedule();
+    }
+    if (ticks % TIMER_FREQ == 0) { /* every second */
+        process_reap_zombies();
     }
 }
 

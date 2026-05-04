@@ -2,6 +2,7 @@
 #include "heap.h"
 #include "string.h"
 #include "scheduler.h"
+#include "timer.h"
 
 extern void process_entry_trampoline(void);
 extern void user_entry_trampoline(void);
@@ -20,6 +21,10 @@ void process_init(void) {
     process_table[0].pending_signals = 0;
     process_table[0].is_user = 0;
     process_table[0].pml4 = NULL;
+    process_table[0].parent_pid = 0;
+    process_table[0].exit_code = 0;
+    process_table[0].sleep_until = 0;
+    process_table[0].is_background = 0;
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
     current_process = &process_table[0];
 }
@@ -51,6 +56,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->user_entry = 0;
     proc->user_rsp = 0;
     proc->pml4 = NULL;
+    proc->parent_pid = current_process ? current_process->pid : 0;
+    proc->exit_code = 0;
+    proc->sleep_until = 0;
+    proc->is_background = 0;
 
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
@@ -102,6 +111,10 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->user_entry = entry;
     proc->user_rsp = user_rsp;
     proc->pml4 = pml4;
+    proc->parent_pid = current_process ? current_process->pid : 0;
+    proc->exit_code = 0;
+    proc->sleep_until = 0;
+    proc->is_background = 0;
 
     /* Set up initial context on kernel stack.
      * context_switch will pop r15..rbp then ret → user_entry_trampoline
@@ -125,9 +138,18 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
 
 void process_exit(void) {
     current_process->state = PROCESS_ZOMBIE;
+    current_process->exit_code = 0;
     scheduler_remove(current_process);
     scheduler_yield();
     /* should never reach here */
+    for (;;) __asm__ volatile("hlt");
+}
+
+void process_exit_code(int code) {
+    current_process->state = PROCESS_ZOMBIE;
+    current_process->exit_code = code;
+    scheduler_remove(current_process);
+    scheduler_yield();
     for (;;) __asm__ volatile("hlt");
 }
 
@@ -150,4 +172,61 @@ struct process *process_get_by_pid(uint32_t pid) {
 /* For shell `ps` command */
 struct process *process_get_table(void) {
     return process_table;
+}
+
+/* Wait for a specific child process to become ZOMBIE.
+ * Returns 0 on success (exit code in *status), -1 if not found. */
+int process_waitpid(uint32_t pid, int *status) {
+    struct process *child = process_get_by_pid(pid);
+    if (!child) return -1;
+    /* Spin-yield until child becomes zombie */
+    while (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
+        scheduler_yield();
+    }
+    if (status) *status = child->exit_code;
+    /* Reap the zombie */
+    process_cleanup(child);
+    return 0;
+}
+
+/* Block the current process for N ticks. */
+void process_sleep_ticks(uint64_t nticks) {
+    current_process->sleep_until = timer_get_ticks() + nticks;
+    current_process->state = PROCESS_BLOCKED;
+    scheduler_remove(current_process);
+    scheduler_yield();
+}
+
+/* Free resources of a zombie process. */
+void process_cleanup(struct process *proc) {
+    if (proc->kernel_stack) {
+        kfree((void *)proc->kernel_stack);
+        proc->kernel_stack = 0;
+    }
+    proc->state = PROCESS_UNUSED;
+    proc->pid = 0;
+    proc->name = NULL;
+    proc->context = NULL;
+    proc->next = NULL;
+    proc->sleep_until = 0;
+}
+
+/* Reap zombie processes: background jobs are reaped immediately,
+ * other zombies are reaped only if their parent is gone. */
+void process_reap_zombies(void) {
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (process_table[i].state == PROCESS_ZOMBIE) {
+            /* Background processes: reap immediately (no one waits for them) */
+            if (process_table[i].is_background) {
+                process_cleanup(&process_table[i]);
+                continue;
+            }
+            /* Non-background: reap if parent is gone */
+            struct process *parent = process_get_by_pid(process_table[i].parent_pid);
+            if (!parent || parent->state == PROCESS_ZOMBIE ||
+                parent->state == PROCESS_UNUSED) {
+                process_cleanup(&process_table[i]);
+            }
+        }
+    }
 }

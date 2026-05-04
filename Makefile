@@ -95,7 +95,7 @@ run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 BUILDDIR_TEST = build_test
 TEST_CFLAGS   = $(CFLAGS) -DTEST_MODE
 
-C_TEST_SRCS  = $(C_SRCS) src/test/test.c
+C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) src/test/test.c
 ASM_TEST_SRCS = $(ASM_SRCS)
 
 C_TEST_OBJS  = $(patsubst src/%.c,$(BUILDDIR_TEST)/%.o,$(C_TEST_SRCS))

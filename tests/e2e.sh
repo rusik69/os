@@ -25,7 +25,17 @@ E2E_HOST="${E2E_HOST:-127.0.0.1}"
 if [ -z "$E2E_PORT" ]; then
     # Try ports in 12300-12399 range; pick first free one
     for _p in 12323 12324 12325 12326 12327 12328; do
-        if ! lsof -i ":${_p}" >/dev/null 2>&1; then
+        if command -v lsof >/dev/null 2>&1; then
+            if ! lsof -i ":${_p}" >/dev/null 2>&1; then
+                E2E_PORT=$_p
+                break
+            fi
+        elif command -v ss >/dev/null 2>&1; then
+            if ! ss -tlnp | grep -q ":${_p} " 2>/dev/null; then
+                E2E_PORT=$_p
+                break
+            fi
+        else
             E2E_PORT=$_p
             break
         fi
@@ -37,9 +47,9 @@ err() { echo "ERROR: $*" >&2; exit 2; }
 
 # ── Prerequisites ─────────────────────────────────────────────────────────────
 command -v qemu-system-x86_64 >/dev/null 2>&1 || \
-    err "qemu-system-x86_64 not found. Install QEMU: brew install qemu"
+    err "qemu-system-x86_64 not found. Install QEMU: brew install qemu / apt install qemu-system-x86"
 command -v python3 >/dev/null 2>&1 || \
-    err "python3 not found. Install: brew install python"
+    err "python3 not found. Install: brew install python / apt install python3"
 [ -f "$KERNEL" ] || err "kernel not found at '$KERNEL'. Run: make"
 [ -f "$DISK"   ] || err "disk image not found at '$DISK'. Run: make"
 

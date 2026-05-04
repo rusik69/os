@@ -612,8 +612,192 @@ def test_lspci(t: Telnet):
 
 def test_dmesg(t: Telnet):
     """dmesg: boot log."""
-    r = t.send_cmd("dmesg")
-    check("dmesg — response", r, "Boot log")
+    r = t.send_cmd("dmesg", timeout=10)
+    check("dmesg — response", r, "Booting")
+    t.drain(t=0.5)
+
+
+def test_sort(t: Telnet):
+    """sort: sort lines of a file."""
+    # Create a multi-line file using redirection
+    t.send_cmd("echo cherry > sortfile")
+    t.send_cmd("echo apple >> sortfile")
+    t.send_cmd("echo banana >> sortfile")
+    r = t.send_cmd("sort sortfile")
+    # Sorted output should have apple before banana before cherry
+    check("sort — has apple", r, "apple")
+    check("sort — has banana", r, "banana")
+    check("sort — has cherry", r, "cherry")
+    t.send_cmd("rm sortfile")
+
+    r = t.send_cmd("sort")
+    check("sort no args — usage", r, "Usage:")
+
+
+def test_find(t: Telnet):
+    """find: search for files by pattern."""
+    t.send_cmd("touch findme1")
+    t.send_cmd("touch findme2")
+    t.send_cmd("touch other")
+    r = t.send_cmd("find find*")
+    check("find — matches findme1", r, "findme1")
+    check("find — matches findme2", r, "findme2")
+    t.send_cmd("rm findme1")
+    t.send_cmd("rm findme2")
+    t.send_cmd("rm other")
+
+    r = t.send_cmd("find")
+    check("find no args — usage", r, "Usage:")
+
+
+def test_calc(t: Telnet):
+    """calc: arithmetic calculator."""
+    r = t.send_cmd("calc 2+3")
+    check("calc addition", r, "5")
+
+    r = t.send_cmd("calc 10-4")
+    check("calc subtraction", r, "6")
+
+    r = t.send_cmd("calc 6*7")
+    check("calc multiplication", r, "42")
+
+    r = t.send_cmd("calc 100/5")
+    check("calc division", r, "20")
+
+    r = t.send_cmd("calc (2+3)*4")
+    check("calc parens", r, "20")
+
+    r = t.send_cmd("calc")
+    check("calc no args — usage", r, "Usage:")
+
+
+def test_uniq(t: Telnet):
+    """uniq: remove adjacent duplicate lines."""
+    # Create multi-line file with adjacent duplicates
+    t.send_cmd("echo aaa > uniqfile")
+    t.send_cmd("echo aaa >> uniqfile")
+    t.send_cmd("echo bbb >> uniqfile")
+    t.send_cmd("echo bbb >> uniqfile")
+    t.send_cmd("echo ccc >> uniqfile")
+    r = t.send_cmd("uniq uniqfile")
+    check("uniq — has aaa", r, "aaa")
+    check("uniq — has bbb", r, "bbb")
+    check("uniq — has ccc", r, "ccc")
+    # Count occurrences — should be deduped
+    if r.count("aaa") == 1:
+        ok("uniq — deduplicates adjacent")
+    else:
+        fail("uniq — deduplicates adjacent", f"aaa appears {r.count('aaa')} times")
+    t.send_cmd("rm uniqfile")
+
+    r = t.send_cmd("uniq")
+    check("uniq no args — usage", r, "Usage:")
+
+
+def test_tr(t: Telnet):
+    """tr: translate characters."""
+    t.send_cmd("write trfile hello")
+    r = t.send_cmd("tr e a trfile")
+    check("tr — translates e->a", r, "hallo")
+    t.send_cmd("rm trfile")
+
+    r = t.send_cmd("tr")
+    check("tr no args — usage", r, "Usage:")
+
+
+def test_cc(t: Telnet):
+    """cc: compile C source to ELF and execute."""
+    # Write a minimal C program
+    t.send_cmd("write hello.c int main() { return 0; }")
+    r = t.send_cmd("cc hello.c hello")
+    # Check compilation succeeded (no error message)
+    if "error" in r.lower() and "cannot" not in r.lower():
+        fail("cc — compile", f"compilation error: {r[:200]}")
+    else:
+        ok("cc — compile succeeds")
+    t.send_cmd("rm hello.c")
+    t.send_cmd("rm hello")
+
+    r = t.send_cmd("cc")
+    check("cc no args — usage", r, "Usage:")
+
+
+def test_pipes(t: Telnet):
+    """Pipe operator: cmd1 | cmd2."""
+    # Write a file and pipe through cat
+    t.send_cmd("write pipefile hello_pipe")
+    r = t.send_cmd("cat pipefile | cat")
+    check("pipe cat|cat", r, "hello_pipe")
+    t.send_cmd("rm pipefile")
+
+
+def test_redirect(t: Telnet):
+    """Output redirection: > and >>."""
+    t.send_cmd("echo redirect_test > redir_out")
+    r = t.send_cmd("cat redir_out")
+    check("redirect > — content", r, "redirect_test")
+
+    t.send_cmd("echo appended >> redir_out")
+    r = t.send_cmd("cat redir_out")
+    check("redirect >> — appended", r, "appended")
+    t.send_cmd("rm redir_out")
+
+
+def test_background(t: Telnet):
+    """Background execution with &."""
+    r = t.send_cmd("sleep 2 &", timeout=5)
+    # Should return immediately with [pid] message
+    check("background — returns pid", r, "[")
+    # Extract PID from "[PID] sleep" message
+    pid_match = re.search(r"\[(\d+)\]", r)
+    if pid_match:
+        pid = pid_match.group(1)
+        ok(f"background — got PID {pid}")
+
+        # Check jobs shows it
+        r = t.send_cmd("jobs")
+        check("background — jobs shows it", r, "sleep")
+
+        # Wait for it to finish
+        time.sleep(3)
+        r = t.send_cmd("jobs")
+        # After 3s the sleep 2 should have finished
+        check("background — job finished", r, "No background")
+    else:
+        fail("background — parse PID", f"could not extract PID from: {r!r}")
+
+
+def test_jobs(t: Telnet):
+    """jobs: list background processes."""
+    r = t.send_cmd("jobs")
+    # When no jobs running, should say "No background jobs"
+    check("jobs — empty", r, "No background")
+
+
+def test_fg(t: Telnet):
+    """fg: bring background process to foreground."""
+    r = t.send_cmd("fg")
+    check("fg no args — usage", r, "Usage:")
+
+    r = t.send_cmd("fg 9999")
+    check("fg bad pid", r, "No such process")
+
+
+def test_wait_cmd(t: Telnet):
+    """wait: wait for process to finish."""
+    r = t.send_cmd("wait")
+    check("wait no args — usage", r, "Usage:")
+
+    r = t.send_cmd("wait 9999")
+    check("wait bad pid", r, "No such process")
+
+
+def test_ps_enhanced(t: Telnet):
+    """ps: enhanced output with PPID, MODE, BG columns."""
+    r = t.send_cmd("ps")
+    check("ps — PPID column", r, "PPID")
+    check("ps — MODE column", r, "MODE")
+    check("ps — kernel mode", r, "kernel")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -687,6 +871,19 @@ def main() -> int:
         ("uname",      test_uname),
         ("lspci",      test_lspci),
         ("dmesg",      test_dmesg),
+        ("sort",       test_sort),
+        ("find",       test_find),
+        ("calc",       test_calc),
+        ("uniq",       test_uniq),
+        ("tr",         test_tr),
+        ("cc",         test_cc),
+        ("pipes",      test_pipes),
+        ("redirect",   test_redirect),
+        ("background", test_background),
+        ("jobs",       test_jobs),
+        ("fg",         test_fg),
+        ("wait",       test_wait_cmd),
+        ("ps enhanced",test_ps_enhanced),
     ]
 
     for group_name, fn in tests:

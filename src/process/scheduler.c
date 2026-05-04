@@ -4,6 +4,7 @@
 #include "io.h"
 #include "gdt.h"
 #include "vmm.h"
+#include "timer.h"
 
 extern void process_set_current(struct process *proc);
 extern uint64_t syscall_kernel_rsp;
@@ -89,4 +90,18 @@ void schedule(void) {
 
 void scheduler_yield(void) {
     schedule();
+}
+
+/* Wake any processes whose sleep timer has expired. Called from timer interrupt. */
+void scheduler_wake_sleepers(void) {
+    uint64_t now = timer_get_ticks();
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_BLOCKED && table[i].sleep_until > 0 &&
+            now >= table[i].sleep_until) {
+            table[i].sleep_until = 0;
+            table[i].state = PROCESS_READY;
+            scheduler_add(&table[i]);
+        }
+    }
 }

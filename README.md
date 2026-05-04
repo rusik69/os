@@ -1,5 +1,7 @@
 # OS — A 64-bit x86 Hobby Kernel
 
+[![CI](https://github.com/rusik69/os/actions/workflows/ci.yml/badge.svg)](https://github.com/rusik69/os/actions/workflows/ci.yml)
+
 A minimal operating system kernel written from scratch in C and x86-64 assembly.
 Boots via Multiboot1, runs on QEMU, and provides a Unix-like shell accessible
 over a telnet connection with filesystem, networking, process management, and more.
@@ -27,16 +29,23 @@ make e2e
 
 - **64-bit long mode** with Multiboot1 boot, identity-mapped first 1 GB
 - **Preemptive multitasking** — round-robin scheduler with 50 ms time slices
+- **Kernel/User separation (Ring 3)** — per-process page tables, SYSCALL/SYSRET, TSS RSP0
+- **Background processes & job control** — `&` operator, `jobs`, `fg`, `wait`
+- **Blocking sleep** — timer-based process wakeup, no busy-wait
+- **Zombie reaping** — automatic cleanup of terminated processes
 - **TCP/IP networking** — DHCP, ARP, ICMP, TCP, UDP, DNS
 - **Telnet server** on port 23 — remote shell access
 - **Simple filesystem (SMFS)** — on an IDE disk with directories and files
 - **VFS layer** with mount table
 - **IPC via pipes** — 16 blocking circular-buffer pipes
 - **Signal delivery** — SIGKILL, SIGTERM, SIGSTOP/SIGCONT, user signals
-- **ELF loader** — load and run static 64-bit ELF binaries
-- **Shell** — 50+ built-in commands, command history, text editor, scripting
+- **ELF loader** — load and run static 64-bit ELF binaries in ring 3
+- **C compiler** — single-pass recursive descent, outputs native x86-64 ELF64 binaries
+- **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
+- **Shell** — 60+ built-in commands, command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
   serial (COM1), ATA/IDE disk, PCI bus, Intel e1000 NIC, PC speaker, ACPI
+- **CI** — GitHub Actions with unit tests and full E2E test suite
 
 ## Project Structure
 
@@ -89,21 +98,26 @@ os/
 │   ├── ipc/
 │   │   └── pipe.c         Inter-process pipes
 │   ├── shell/
-│   │   ├── shell.c        Shell core (input, dispatch, history)
-│   │   ├── shell_cmds.c   Original command implementations
-│   │   ├── shell_tools.c  Utility commands (wc, head, tail, grep, etc.)
+│   │   ├── shell.c        Shell core (input, dispatch, history, background)
 │   │   ├── editor.c       Text editor (vi-like)
-│   │   └── script.c       Script runner with variables
+│   │   ├── script.c       Script runner with variables
+│   │   └── cmds/          One file per command (cmd_*.c)
+│   ├── compiler/
+│   │   ├── cc_lex.c       Lexer (tokenizer)
+│   │   ├── cc_parse.c     Parser + code generator
+│   │   └── cc_elf.c       ELF64 binary output
 │   ├── lib/
 │   │   ├── string.c       String/memory utilities
 │   │   └── printf.c       kprintf with output hook
 │   ├── test/
 │   │   └── test.c         In-kernel test suite (95 tests)
-│   └── include/           Header files (incl. net_internal.h, shell_cmds.h)
-└── tests/
-    ├── e2e.sh             E2E test harness (QEMU boot + telnet)
-    ├── e2e.py             E2E test suite (94 tests via telnet)
-    └── run_tests.sh       In-kernel test runner
+│   └── include/           Header files
+├── tests/
+│   ├── e2e.sh             E2E test harness (QEMU boot + telnet)
+│   ├── e2e.py             E2E test suite (110+ tests via telnet)
+│   └── run_tests.sh       In-kernel test runner
+└── .github/workflows/
+    └── ci.yml             GitHub Actions CI pipeline
 ```
 
 ---
@@ -264,6 +278,14 @@ struct process {
     const char         *name;
     uint32_t           pending_signals;
     signal_handler_t   sig_handlers[32];
+    int                is_user;        // 1 = ring 3 process
+    uint64_t           user_entry;     // Ring 3 entry point
+    uint64_t           user_rsp;       // Ring 3 stack pointer
+    uint64_t          *pml4;           // Per-process page table
+    uint32_t           parent_pid;     // Parent PID
+    int                exit_code;      // Exit status
+    uint64_t           sleep_until;    // Timer wakeup tick
+    int                is_background;  // Launched with &
 };
 ```
 
@@ -673,6 +695,16 @@ RX descriptor ring, then dispatches by EtherType (ARP or IP → ICMP/TCP/UDP).
 | `lspci` | List PCI devices |
 | `dmesg` | Print kernel log |
 | `shutdown` | ACPI power off |
+| `cc <file> [out]` | Compile C source to ELF64 binary |
+| `sort <file>` | Sort file lines alphabetically |
+| `find <pattern>` | Search for files matching wildcard pattern |
+| `calc <expr>` | Arithmetic calculator (+, -, *, /, %, parens) |
+| `uniq <file>` | Remove adjacent duplicate lines |
+| `tr <from> <to> <file>` | Translate characters (supports ranges) |
+| `tmux` | Terminal multiplexer (split panes, Ctrl-B prefix) |
+| `jobs` | List background processes |
+| `fg <pid>` | Bring background process to foreground |
+| `wait <pid>` | Wait for process to finish |
 | `exit` | Disconnect telnet session |
 
 ### Text Editor
@@ -719,6 +751,82 @@ No dynamic linking, no relocations, no ASLR.
 
 ---
 
+## Ring 3 — User Mode
+
+Processes can run in **ring 3** (user mode) with full hardware isolation:
+
+- **Per-process page tables** — each user process gets its own PML4; kernel
+  half (entries 256–511) is shared, user half is private
+- **SYSCALL/SYSRET** — fast system call entry via MSR_LSTAR; kernel RSP
+  loaded from `syscall_kernel_rsp` on entry
+- **TSS RSP0** — set on every context switch so interrupts in user mode
+  switch to the correct kernel stack
+- **iretq transition** — new user processes start via `user_entry_trampoline`
+  which builds an iretq frame (SS=0x23, CS=0x1B, RFLAGS=0x202)
+
+User-mode ELF binaries are loaded at `0x400000` with a 64 KB user stack
+below `0x7FFFFFFFE000`.
+
+---
+
+## C Compiler
+
+A built-in single-pass recursive descent C compiler (`cc` command):
+
+- **Lexer** — tokenizes C source with support for `#define` preprocessor macros
+- **Parser** — recursive descent for expressions, statements, functions
+- **Code generator** — emits raw x86-64 machine code directly (no assembler)
+- **Output** — ELF64 executable loaded at `0x400000`
+
+**Supported features:**
+- Functions, local/global variables, arrays, structs, unions
+- Pointers, pointer arithmetic, `->` and `.` operators
+- Control flow: `if`/`else`, `while`, `for`, `do-while`, `switch`, `goto`
+- Operators: arithmetic, comparison, logical, bitwise, compound assignment
+- `sizeof`, type casts, function pointers, string literals
+- Syscall interface for I/O (`sys_write`, `sys_exit`)
+
+**Usage:** `cc source.c [output]` — compiles and writes ELF to filesystem,
+then `exec output` to run it.
+
+---
+
+## Terminal Multiplexer (tmux)
+
+A built-in terminal multiplexer with split-pane support:
+
+- **Ctrl-B** prefix key (like GNU tmux)
+- **Ctrl-B %** — vertical split
+- **Ctrl-B "** — horizontal split
+- **Ctrl-B ←/→/↑/↓** — navigate between panes
+- **Ctrl-B x** — close current pane
+- **Ctrl-B q** — quit tmux and return to shell
+
+Each pane runs an independent shell instance with its own command buffer.
+
+---
+
+## Job Control & Background Processes
+
+The shell supports background execution and job management:
+
+- **`command &`** — launch command in a background kernel thread; shell
+  returns immediately with `[PID] command`
+- **`jobs`** — list all background processes with PID, state, and name
+- **`fg <pid>`** — bring a background process to the foreground (wait for it)
+- **`wait <pid>`** — block until a specific process exits
+
+**Implementation:**
+- Background commands run as separate kernel threads via `process_create()`
+- The `is_background` flag marks processes launched with `&`
+- Blocking sleep uses `process_sleep_ticks()` — the timer ISR wakes processes
+  when their `sleep_until` tick is reached (no busy-wait)
+- Zombie processes are automatically reaped every second by the timer ISR
+- `process_waitpid()` blocks the caller until the target becomes ZOMBIE,
+  then frees its kernel stack and process slot
+
+---
+
 ## Testing
 
 ### In-Kernel Tests (95 tests)
@@ -742,7 +850,7 @@ all test groups at boot, outputs `[PASS]`/`[FAIL]` to serial, and calls
 - **Network tests** — IP config, ARP, DHCP, TCP handshake
 - **UDP tests** — port binding
 
-### E2E Tests (94 tests)
+### E2E Tests (110+ tests)
 
 Built with `make e2e`. Boots the kernel in QEMU with user-mode networking
 and drives every shell command over a telnet connection:
@@ -763,7 +871,18 @@ and drives every shell command over a telnet connection:
 color, hexdump, mouse, ifconfig, beep, play, udpsend, ping, dns, kill,
 filesystem (format, ls, mkdir, touch, write, cat, stat, rm), run/script,
 wc, head, tail, cp, mv, grep, df, free, whoami, hostname, env, xxd,
-sleep, seq, arp, route, uname, lspci, dmesg, error cases, exit.
+sleep, seq, arp, route, uname, lspci, dmesg, sort, find, calc, uniq,
+tr, cc (compiler), pipes, redirection, background processes, jobs, fg,
+wait, enhanced ps, error cases, exit.
+
+### CI — GitHub Actions
+
+Every push and pull request triggers the full test suite on Ubuntu:
+
+1. Install cross-compiler (`x86_64-linux-gnu-gcc`), NASM, and QEMU
+2. Build the kernel
+3. Run in-kernel unit tests (95 assertions)
+4. Run E2E tests over telnet (110+ assertions)
 
 ---
 
@@ -781,6 +900,13 @@ sleep, seq, arp, route, uname, lspci, dmesg, error cases, exit.
 | `python3` | E2E test runner |
 
 Install on macOS: `brew install x86_64-elf-gcc nasm qemu`
+
+Install on Ubuntu/CI: `apt install gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu nasm qemu-system-x86`
+
+The Makefile supports `CC`, `LD`, and `OBJCOPY` overrides for CI:
+```bash
+make CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+```
 
 ### Compiler Flags
 

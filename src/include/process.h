@@ -45,6 +45,11 @@ struct process {
     uint64_t user_entry;      /* ring 3 entry point (ELF e_entry) */
     uint64_t user_rsp;        /* ring 3 stack pointer */
     uint64_t *pml4;           /* per-process page table (NULL = use kernel_pml4) */
+    /* Multitasking */
+    uint32_t parent_pid;      /* parent process PID */
+    int      exit_code;       /* exit code when ZOMBIE */
+    uint64_t sleep_until;     /* tick count to wake up (0 = not sleeping) */
+    int      is_background;   /* 1 = launched with & */
 };
 
 void process_init(void);
@@ -52,8 +57,13 @@ struct process *process_create(void (*entry)(void), const char *name);
 struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
                                     uint64_t *pml4, const char *name);
 void process_exit(void);
+void process_exit_code(int code);
 struct process *process_get_current(void);
 struct process *process_get_by_pid(uint32_t pid);
 struct process *process_get_table(void);
+int  process_waitpid(uint32_t pid, int *status);
+void process_sleep_ticks(uint64_t ticks);
+void process_reap_zombies(void);
+void process_cleanup(struct process *proc);
 
 #endif

@@ -63,6 +63,10 @@ void cmd_help(void) {
     kprintf("  uniq     - Remove duplicate lines (uniq <file>)\n");
     kprintf("  tr       - Translate chars (tr <from> <to> <file>)\n");
     kprintf("  tmux     - Terminal multiplexer (Ctrl-B prefix)\n");
+    kprintf("  jobs     - List background processes\n");
+    kprintf("  fg       - Bring background process to foreground (fg <pid>)\n");
+    kprintf("  wait     - Wait for process to finish (wait <pid>)\n");
     kprintf("\nShell features: Tab completion, history (up/down),\n");
     kprintf("  pipes (cmd1 | cmd2), redirection (cmd > file, cmd >> file)\n");
+    kprintf("  background execution (cmd &)\n");
 }

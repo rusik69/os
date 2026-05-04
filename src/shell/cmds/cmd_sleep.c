@@ -2,7 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "timer.h"
-#include "scheduler.h"
+#include "process.h"
 
 static uint32_t parse_uint(const char **s) {
     uint32_t v = 0;
@@ -18,8 +18,6 @@ void cmd_sleep(const char *args) {
     const char *p = args;
     uint32_t sec = parse_uint(&p);
     if (sec > 60) sec = 60;
-    uint64_t target = timer_get_ticks() + (uint64_t)sec * TIMER_FREQ;
-    while (timer_get_ticks() < target)
-        scheduler_yield();
+    process_sleep_ticks((uint64_t)sec * TIMER_FREQ);
     kprintf("Slept %u seconds\n", (uint64_t)sec);
 }

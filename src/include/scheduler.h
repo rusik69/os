@@ -8,6 +8,7 @@ void schedule(void);
 void scheduler_add(struct process *proc);
 void scheduler_remove(struct process *proc);
 void scheduler_yield(void);
+void scheduler_wake_sleepers(void);
 
 extern void context_switch(struct cpu_context **old, struct cpu_context *new_ctx);
 
