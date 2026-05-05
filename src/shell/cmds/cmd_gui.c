@@ -172,10 +172,12 @@ static void build_desktop(void) {
  * ================================================================ */
 
 void cmd_gui(void) {
+    /* Try to allocate software framebuffer if not already initialized */
     if (!vga_is_framebuffer()) {
-        kprintf("[ERROR] GUI requires framebuffer display.\n");
-        kprintf("        Ensure QEMU boots with: -vga std\n");
-        return;
+        if (vga_try_alloc_software_framebuffer() != 0) {
+            kprintf("[ERROR] Failed to initialize framebuffer (hardware or software)\n");
+            return;
+        }
     }
 
     /* Reset state */

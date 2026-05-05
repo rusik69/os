@@ -3,9 +3,46 @@
 #include "string.h"
 #include "vmm.h"
 #include "printf.h"
+#include "heap.h"
 
 #define FB_CELL_W 8
 #define FB_CELL_H 16
+
+struct vbe_mode_info {
+    uint16_t mode_attributes;
+    uint8_t  win_a_attributes;
+    uint8_t  win_b_attributes;
+    uint16_t win_granularity;
+    uint16_t win_size;
+    uint16_t win_a_segment;
+    uint16_t win_b_segment;
+    uint32_t win_func_ptr;
+    uint16_t pitch;
+    uint16_t width;
+    uint16_t height;
+    uint8_t  char_width;
+    uint8_t  char_height;
+    uint8_t  planes;
+    uint8_t  bits_per_pixel;
+    uint8_t  banks;
+    uint8_t  memory_model;
+    uint8_t  bank_size;
+    uint8_t  image_pages;
+    uint8_t  reserved1;
+    uint8_t  red_mask_size;
+    uint8_t  red_field_position;
+    uint8_t  green_mask_size;
+    uint8_t  green_field_position;
+    uint8_t  blue_mask_size;
+    uint8_t  blue_field_position;
+    uint8_t  reserved_mask_size;
+    uint8_t  reserved_field_position;
+    uint8_t  direct_color_mode_info;
+    uint32_t phys_base;
+    uint32_t offscreen_memory_offset;
+    uint16_t offscreen_memory_size;
+    uint8_t  reserved2[206];
+} __attribute__((packed));
 
 struct multiboot_info {
     uint32_t flags;
@@ -232,44 +269,67 @@ void vga_init(void) {
 int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     struct multiboot_info *mbi = (struct multiboot_info *)PHYS_TO_VIRT(multiboot_info_phys);
     
-    /* Check for framebuffer: framebuffer_addr field must be non-zero */
-    if (!(mbi->framebuffer_addr)) {
+    uint64_t fb_addr = mbi->framebuffer_addr;
+    uint32_t fb_w = mbi->framebuffer_width;
+    uint32_t fb_h = mbi->framebuffer_height;
+    uint32_t fb_pitch = mbi->framebuffer_pitch;
+    uint8_t fb_bpp_val = mbi->framebuffer_bpp;
+    uint8_t fb_type = mbi->framebuffer_type;
+    
+    /* If framebuffer_addr is 0, try to read from VBE mode info */
+    if (!fb_addr && mbi->vbe_mode_info) {
+        struct vbe_mode_info *vmi = (struct vbe_mode_info *)PHYS_TO_VIRT((uint32_t)mbi->vbe_mode_info);
+        fb_addr = (uint64_t)vmi->phys_base;
+        fb_w = vmi->width;
+        fb_h = vmi->height;
+        fb_pitch = vmi->pitch;
+        fb_bpp_val = vmi->bits_per_pixel;
+        fb_type = 1;  /* Assume RGB */
+        kprintf("[..] Using VBE mode info: addr=0x%llx %ux%u bpp=%d pitch=%u\n",
+                (unsigned long long)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch);
+    }
+    
+    /* If still no framebuffer, return failure - will try to allocate later */
+    if (!fb_addr) {
         return -1;
     }
     
     kprintf("[..] Framebuffer: addr=0x%llx type=%d bpp=%d %ux%u pitch=%u\n",
-            (unsigned long long)mbi->framebuffer_addr, mbi->framebuffer_type,
-            mbi->framebuffer_bpp, mbi->framebuffer_width, mbi->framebuffer_height,
-            mbi->framebuffer_pitch);
+            (unsigned long long)fb_addr, fb_type,
+            fb_bpp_val, fb_w, fb_h,
+            fb_pitch);
     
-    if (mbi->framebuffer_type != 1) {
-        kprintf("[--] Framebuffer type %d (need 1 = RGB)\n", mbi->framebuffer_type);
+    if (fb_type != 1) {
+        kprintf("[--] Framebuffer type %d (need 1 = RGB)\n", fb_type);
         return -1;
     }
-    if (mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) {
-        kprintf("[--] Framebuffer BPP %d (need 24 or 32)\n", mbi->framebuffer_bpp);
+    if (fb_bpp_val != 24 && fb_bpp_val != 32) {
+        kprintf("[--] Framebuffer BPP %d (need 24 or 32)\n", fb_bpp_val);
         return -1;
     }
-    if (mbi->framebuffer_width < VGA_WIDTH * FB_CELL_W ||
-        mbi->framebuffer_height < VGA_HEIGHT * FB_CELL_H) {
+    if (fb_w < VGA_WIDTH * FB_CELL_W ||
+        fb_h < VGA_HEIGHT * FB_CELL_H) {
         kprintf("[--] Framebuffer too small: %ux%u (need at least %ux%u)\n",
-                mbi->framebuffer_width, mbi->framebuffer_height,
+                fb_w, fb_h,
                 VGA_WIDTH * FB_CELL_W, VGA_HEIGHT * FB_CELL_H);
         return -1;
     }
 
-    uint64_t fb_addr = mbi->framebuffer_addr;
-    uint64_t fb_size = (uint64_t)mbi->framebuffer_pitch * mbi->framebuffer_height;
-    uint64_t start = fb_addr & ~(PAGE_SIZE - 1ULL);
-    uint64_t end = (fb_addr + fb_size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
-    for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
-        vmm_map_page(addr, addr, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    uint64_t fb_size = (uint64_t)fb_pitch * fb_h;
+    
+    /* Only map to MMU if it's a hardware framebuffer (high address) */
+    if (fb_addr > 0x100000) {
+        uint64_t start = fb_addr & ~(PAGE_SIZE - 1ULL);
+        uint64_t end = (fb_addr + fb_size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+        for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
+            vmm_map_page(addr, addr, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    }
 
     fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;
-    fb_pitch = mbi->framebuffer_pitch;
-    fb_width = mbi->framebuffer_width;
-    fb_height = mbi->framebuffer_height;
-    fb_bpp = mbi->framebuffer_bpp;
+    fb_pitch = fb_pitch;
+    fb_width = fb_w;
+    fb_height = fb_h;
+    fb_bpp = fb_bpp_val;
     fb_active = 1;
     clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
     render_all();
@@ -278,6 +338,42 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
 
 int vga_is_framebuffer(void) {
     return fb_active;
+}
+
+int vga_try_alloc_software_framebuffer(void) {
+    /* If framebuffer is already initialized, don't reallocate */
+    if (fb_active) {
+        return 0;
+    }
+    
+    /* Allocate software framebuffer from heap */
+    uint32_t new_width = 1024;
+    uint32_t new_height = 768;
+    uint8_t new_bpp = 32;
+    uint32_t new_pitch = new_width * (new_bpp / 8);
+    uint64_t new_size = (uint64_t)new_pitch * new_height;
+    
+    uint8_t *new_fb = (uint8_t *)kmalloc(new_size);
+    if (!new_fb) {
+        kprintf("[--] Failed to allocate software framebuffer (%u KB)\n", (unsigned)(new_size / 1024));
+        return -1;
+    }
+    
+    kprintf("[OK] Allocated software framebuffer: %ux%u bpp=%d size=%u KB at 0x%lx\n",
+            new_width, new_height, new_bpp, (unsigned)(new_size / 1024), (unsigned long)new_fb);
+    
+    /* Initialize framebuffer variables */
+    fb_base = (volatile uint8_t *)new_fb;
+    fb_pitch = new_pitch;
+    fb_width = new_width;
+    fb_height = new_height;
+    fb_bpp = new_bpp;
+    fb_active = 1;
+    
+    /* Clear and render */
+    clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
+    render_all();
+    return 0;
 }
 
 void vga_get_framebuffer_info(uint32_t *width, uint32_t *height,

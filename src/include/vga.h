@@ -28,6 +28,7 @@ enum vga_color {
 
 void vga_init(void);
 int vga_try_init_framebuffer(uint64_t multiboot_info_phys);
+int vga_try_alloc_software_framebuffer(void);
 int vga_is_framebuffer(void);
 void vga_get_framebuffer_info(uint32_t *width, uint32_t *height,
                               uint32_t *pitch, uint8_t *bpp);

@@ -3,7 +3,7 @@ bits 32
 
 ; Multiboot1 constants
 MULTIBOOT_MAGIC     equ 0x1BADB002
-MULTIBOOT_FLAGS     equ 0x00010007  ; align + memory map + video mode + address fields
+MULTIBOOT_FLAGS     equ 0x00010807  ; align + memory map + video mode + VBE mode + address fields
 MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 extern _kernel_end
