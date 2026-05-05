@@ -28,6 +28,7 @@
 #include "ahci.h"
 #include "usb.h"
 #include "usb_msc.h"
+#include "intel_gpu.h"
 #include "fat32.h"
 #include "users.h"
 #include "vfs.h"
@@ -97,6 +98,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Virtual memory manager */
     vmm_init();
     kprintf("[OK] VMM initialized\n");
+    if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
+        kprintf("[OK] Framebuffer console enabled\n");
 
     /* Kernel heap */
     heap_init();
@@ -172,6 +175,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* PCI bus */
     pci_init();
     kprintf("[OK] PCI initialized\n");
+
+    /* Intel integrated GPU */
+    if (intel_gpu_init() == 0)
+        kprintf("[OK] Intel GPU initialized\n");
+    else
+        kprintf("[--] No Intel GPU found\n");
 
     /* USB */
     if (usb_init() == 0) {

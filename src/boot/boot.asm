@@ -3,7 +3,7 @@ bits 32
 
 ; Multiboot1 constants
 MULTIBOOT_MAGIC     equ 0x1BADB002
-MULTIBOOT_FLAGS     equ 0x00010003  ; align + memory map + address fields (bit 16)
+MULTIBOOT_FLAGS     equ 0x00010007  ; align + memory map + video mode + address fields
 MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 extern _kernel_end
@@ -19,6 +19,10 @@ multiboot_header:
     dd 0                         ; load_end_addr (0 = load entire file)
     dd 0                         ; bss_end_addr (0 = no BSS clearing by loader)
     dd _start                    ; entry_addr
+    dd 0                         ; mode_type: linear graphics
+    dd 1024                      ; width
+    dd 768                       ; height
+    dd 32                        ; depth
 
 section .boot
 align 4

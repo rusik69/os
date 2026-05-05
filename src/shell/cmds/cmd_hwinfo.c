@@ -2,6 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "pci.h"
+#include "intel_gpu.h"
 #include "io.h"
 #include "string.h"
 
@@ -55,6 +56,26 @@ void cmd_hwinfo(void) {
     uint16_t com2 = *(volatile uint16_t *)0x402;
     kprintf("COM1: 0x%x  COM2: 0x%x\n",
             (uint64_t)com1, (uint64_t)com2);
+
+        /* --- Intel GPU --- */
+        if (intel_gpu_is_present()) {
+                const struct intel_gpu_info *gpu = intel_gpu_get_info();
+                kprintf("Intel GPU: %04x at %02x:%02x.%u (MMIO=0x%x, APER=0x%x, STOLEN=0x%x, IRQ=%u)\n",
+                                (uint64_t)gpu->device_id,
+                                (uint64_t)gpu->bus, (uint64_t)gpu->slot, (uint64_t)gpu->func,
+                                gpu->mmio_base, gpu->aperture_base, gpu->stolen_mem_base,
+                                (uint64_t)gpu->irq);
+                kprintf("Intel GPU state: MMIO=%s, pipeA=%u, planeA=%u, VGA=%s",
+                                gpu->mmio_mapped ? "mapped" : "off",
+                                (uint64_t)gpu->pipe_a_active,
+                                (uint64_t)gpu->plane_a_active,
+                                gpu->vga_disabled ? "disabled" : "enabled");
+                if (gpu->mode_width && gpu->mode_height)
+                        kprintf(", mode=%ux%u", (uint64_t)gpu->mode_width, (uint64_t)gpu->mode_height);
+                kprintf("\n");
+        } else {
+                kprintf("Intel GPU: not detected\n");
+        }
 
     /* --- PCI devices --- */
     kprintf("PCI devices:\n");

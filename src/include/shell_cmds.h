@@ -93,6 +93,7 @@ void cmd_base64(const char *args);
 /* Hardware commands */
 void cmd_cmos(void);
 void cmd_hwinfo(void);
+void cmd_fbinfo(void);
 void cmd_serial(const char *args);
 
 /* New hardware & FS commands */

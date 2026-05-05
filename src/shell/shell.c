@@ -476,6 +476,8 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: cmos\n  Show CMOS/NVRAM hardware configuration\n");
         else if (strcmp(cmd, "hwinfo") == 0)
             kprintf("Usage: hwinfo\n  Show comprehensive hardware information\n");
+        else if (strcmp(cmd, "fbinfo") == 0)
+            kprintf("Usage: fbinfo\n  Show active display backend and framebuffer geometry\n");
         else if (strcmp(cmd, "serial") == 0)
             kprintf("Usage: serial status | serial write <text>\n  COM1 serial port operations\n");
         else
@@ -569,6 +571,7 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "base64") == 0) cmd_base64(args);
     else if (strcmp(cmd, "cmos") == 0) cmd_cmos();
     else if (strcmp(cmd, "hwinfo") == 0) cmd_hwinfo();
+    else if (strcmp(cmd, "fbinfo") == 0) cmd_fbinfo();
     else if (strcmp(cmd, "serial") == 0) cmd_serial(args);
     else if (strcmp(cmd, "lsusb") == 0) cmd_lsusb();
     else if (strcmp(cmd, "lsblk") == 0) cmd_lsblk();
