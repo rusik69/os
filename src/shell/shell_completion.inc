@@ -8,7 +8,7 @@ static const char *all_cmds[] = {
     "dirname", "dns", "du", "echo", "edit", "env", "exec", "exit", "expr",
     "fg", "find", "format", "free", "grep", "head", "help", "hexdump",
     "history", "hostname", "hwinfo", "id", "ifconfig", "jobs", "kill", "ls", "lspci",
-    "fbinfo",
+    "fbinfo", "gui",
     "md5sum", "meminfo", "mkdir", "mouse", "mv", "nl", "od", "paste",
     "ping", "play", "printf", "ps", "reboot", "rev", "rm", "route",
     "run", "seq", "serial", "shutdown", "sleep", "sort", "stat", "strings", "tac",

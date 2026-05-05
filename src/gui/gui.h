@@ -83,8 +83,11 @@ void gui_window_set_rect(gui_window_t *win, gui_rect_t rect);
 void gui_window_set_visible(gui_window_t *win, int visible);
 int gui_window_is_visible(gui_window_t *win);
 int gui_window_contains_point(gui_window_t *win, int32_t x, int32_t y);
+void gui_window_add_widget(gui_window_t *win, gui_widget_t *widget);
 gui_widget_t* gui_window_get_focused_widget(gui_window_t *win);
 void gui_window_set_focused_widget(gui_window_t *win, gui_widget_t *widget);
+gui_widget_t* gui_window_first_widget(gui_window_t *win);
+int gui_window_has_title(gui_window_t *win);  /* 1 if title is non-empty */
 
 /* ===== Widget API ===== */
 
@@ -96,6 +99,7 @@ struct gui_widget {
     gui_rect_t rect;
     gui_color_t bg, fg;
     int visible;
+    struct gui_widget *next;
     void *data;
     gui_widget_draw_fn draw;
     gui_widget_event_fn on_event;
@@ -148,7 +152,13 @@ void gui_set_focused_window(gui_window_t *win);
 void gui_handle_event(gui_event_t *evt);
 void gui_render_frame(void);
 void gui_update_mouse(int32_t x, int32_t y, int buttons);
-
 void gui_run_loop(void);
+void gui_task(void);
+
+/* Walk all windows front-to-back (head = most recently added) */
+gui_window_t* gui_get_window_list(void);
+
+/* next pointer accessor for linked-list traversal */
+gui_window_t* gui_window_next(gui_window_t *win);
 
 #endif /* GUI_H */

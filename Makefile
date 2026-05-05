@@ -17,7 +17,7 @@ endif
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Isrc/include -mcmodel=large -g
+         -Wall -Wextra -Isrc/include -Isrc/gui -mcmodel=large -g
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000
 
@@ -117,7 +117,7 @@ run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 BUILDDIR_TEST = build_test
 TEST_CFLAGS   = $(CFLAGS) -DTEST_MODE
 
-C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) src/test/test.c
+C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) src/test/test.c
 ASM_TEST_SRCS = $(ASM_SRCS)
 
 C_TEST_OBJS  = $(patsubst src/%.c,$(BUILDDIR_TEST)/%.o,$(C_TEST_SRCS))

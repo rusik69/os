@@ -2,6 +2,7 @@
 #include "io.h"
 #include "string.h"
 #include "vmm.h"
+#include "printf.h"
 
 #define FB_CELL_W 8
 #define FB_CELL_H 16
@@ -230,11 +231,32 @@ void vga_init(void) {
 
 int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     struct multiboot_info *mbi = (struct multiboot_info *)PHYS_TO_VIRT(multiboot_info_phys);
-    if (!(mbi->flags & (1u << 12))) return -1;
-    if (mbi->framebuffer_type != 1) return -1;
-    if (mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) return -1;
+    
+    /* Check for framebuffer: framebuffer_addr field must be non-zero */
+    if (!(mbi->framebuffer_addr)) {
+        return -1;
+    }
+    
+    kprintf("[..] Framebuffer: addr=0x%llx type=%d bpp=%d %ux%u pitch=%u\n",
+            (unsigned long long)mbi->framebuffer_addr, mbi->framebuffer_type,
+            mbi->framebuffer_bpp, mbi->framebuffer_width, mbi->framebuffer_height,
+            mbi->framebuffer_pitch);
+    
+    if (mbi->framebuffer_type != 1) {
+        kprintf("[--] Framebuffer type %d (need 1 = RGB)\n", mbi->framebuffer_type);
+        return -1;
+    }
+    if (mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) {
+        kprintf("[--] Framebuffer BPP %d (need 24 or 32)\n", mbi->framebuffer_bpp);
+        return -1;
+    }
     if (mbi->framebuffer_width < VGA_WIDTH * FB_CELL_W ||
-        mbi->framebuffer_height < VGA_HEIGHT * FB_CELL_H) return -1;
+        mbi->framebuffer_height < VGA_HEIGHT * FB_CELL_H) {
+        kprintf("[--] Framebuffer too small: %ux%u (need at least %ux%u)\n",
+                mbi->framebuffer_width, mbi->framebuffer_height,
+                VGA_WIDTH * FB_CELL_W, VGA_HEIGHT * FB_CELL_H);
+        return -1;
+    }
 
     uint64_t fb_addr = mbi->framebuffer_addr;
     uint64_t fb_size = (uint64_t)mbi->framebuffer_pitch * mbi->framebuffer_height;

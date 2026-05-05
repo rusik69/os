@@ -90,6 +90,7 @@ void cmd_help(void) {
     kprintf("  cmos     - Show CMOS hardware configuration\n");
     kprintf("  hwinfo   - Comprehensive hardware summary\n");
     kprintf("  fbinfo   - Show display backend/framebuffer info\n");
+    kprintf("  gui      - Launch GUI desktop environment\n");
     kprintf("  serial   - COM1 serial port (status/write)\n");
     kprintf("  lsusb    - List USB devices\n");
     kprintf("  lsblk    - List block devices (ATA/AHCI)\n");

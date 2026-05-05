@@ -15,6 +15,13 @@ static int mouse_x = 40;
 static int mouse_y = 12;
 static uint8_t mouse_buttons = 0;
 
+/* Pixel-space position for framebuffer GUI (1024x768) */
+static int mouse_px = 512;
+static int mouse_py = 384;
+#define FB_WIDTH  1024
+#define FB_HEIGHT 768
+#define MOUSE_SENSITIVITY 4
+
 /* 3-byte packet accumulator */
 static uint8_t mouse_cycle = 0;
 static int8_t  mouse_bytes[3];
@@ -94,6 +101,14 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
             if (mouse_x >= VGA_COLS) mouse_x = VGA_COLS - 1;
             if (mouse_y < 0) mouse_y = 0;
             if (mouse_y >= VGA_ROWS) mouse_y = VGA_ROWS - 1;
+
+            /* Pixel-space tracking */
+            mouse_px += dx * MOUSE_SENSITIVITY;
+            mouse_py -= dy * MOUSE_SENSITIVITY;
+            if (mouse_px < 0) mouse_px = 0;
+            if (mouse_px >= FB_WIDTH)  mouse_px = FB_WIDTH  - 1;
+            if (mouse_py < 0) mouse_py = 0;
+            if (mouse_py >= FB_HEIGHT) mouse_py = FB_HEIGHT - 1;
             break;
     }
 }
@@ -133,6 +148,11 @@ void mouse_init(void) {
 void mouse_get_pos(int *x, int *y) {
     *x = mouse_x;
     *y = mouse_y;
+}
+
+void mouse_get_pixel_pos(int *x, int *y) {
+    *x = mouse_px;
+    *y = mouse_py;
 }
 
 uint8_t mouse_get_buttons(void) {

@@ -28,6 +28,7 @@
 #include "ahci.h"
 #include "usb.h"
 #include "usb_msc.h"
+#include "gui.h"
 #include "intel_gpu.h"
 #include "fat32.h"
 #include "users.h"
@@ -231,6 +232,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     process_create(shell_task, "shell");
     if (e1000_is_present())
         process_create(net_task, "netd");
+    if (vga_is_framebuffer())
+        process_create(gui_task, "gui");
     kprintf("[OK] Processes created\n");
 #endif
 

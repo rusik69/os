@@ -141,7 +141,7 @@ void gui_window_destroy(gui_window_t *win) {
     if (!win) return;
     gui_widget_t *w = win->widgets;
     while (w) {
-        gui_widget_t *next = (gui_widget_t *)((uint64_t*)w)[15]; /* hack: next ptr */
+        gui_widget_t *next = w->next;
         gui_widget_destroy(w);
         w = next;
     }
@@ -160,16 +160,17 @@ void gui_window_clear(gui_window_t *win, gui_color_t color) {
 }
 
 void gui_window_draw_pixel(gui_window_t *win, int32_t x, int32_t y, gui_color_t color) {
-    if (!win || x < win->rect.x || y < win->rect.y || 
-        x >= (int32_t)(win->rect.x + win->rect.w) || 
-        y >= (int32_t)(win->rect.y + win->rect.h)) {
-        return;
+    if (win) {
+        if (x < win->rect.x || y < win->rect.y ||
+            x >= (int32_t)(win->rect.x + win->rect.w) ||
+            y >= (int32_t)(win->rect.y + win->rect.h)) {
+            return;
+        }
     }
     vga_put_pixel(x, y, color);
 }
 
 void gui_window_draw_rect(gui_window_t *win, gui_rect_t rect, gui_color_t color) {
-    if (!win) return;
     for (int32_t y = rect.y; y < (int32_t)(rect.y + rect.h); y++) {
         for (int32_t x = rect.x; x < (int32_t)(rect.x + rect.w); x++) {
             gui_window_draw_pixel(win, x, y, color);
@@ -179,7 +180,6 @@ void gui_window_draw_rect(gui_window_t *win, gui_rect_t rect, gui_color_t color)
 
 void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect,
                                    gui_color_t color, int thickness) {
-    if (!win) return;
     for (int t = 0; t < thickness; t++) {
         gui_rect_t r = {rect.x + t, rect.y + t, 
                         rect.w - 2*t, rect.h - 2*t};
@@ -200,7 +200,8 @@ void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect,
 
 void gui_window_draw_text(gui_window_t *win, int32_t x, int32_t y,
                           const char *text, gui_color_t fg, gui_color_t bg) {
-    if (!win || !text) return;
+    (void)win;
+    if (!text) return;
     for (int i = 0; text[i]; i++) {
         render_glyph(x + i * 12, y, text[i], fg, bg);
     }
@@ -235,12 +236,29 @@ int gui_window_contains_point(gui_window_t *win, int32_t x, int32_t y) {
            y < (int32_t)(win->rect.y + win->rect.h);
 }
 
+void gui_window_add_widget(gui_window_t *win, gui_widget_t *widget) {
+    if (!win || !widget) return;
+    widget->next = win->widgets;
+    win->widgets = widget;
+    if (!win->focused_widget) {
+        win->focused_widget = widget;
+    }
+}
+
 gui_widget_t* gui_window_get_focused_widget(gui_window_t *win) {
     return win ? win->focused_widget : NULL;
 }
 
 void gui_window_set_focused_widget(gui_window_t *win, gui_widget_t *widget) {
     if (win) win->focused_widget = widget;
+}
+
+gui_widget_t* gui_window_first_widget(gui_window_t *win) {
+    return win ? win->widgets : NULL;
+}
+
+int gui_window_has_title(gui_window_t *win) {
+    return win && win->title[0] != '\0';
 }
 
 /* ===== Widget Management ===== */
@@ -472,20 +490,33 @@ void gui_render_frame(void) {
         /* Draw window background */
         gui_window_draw_rect(win, win->rect, win->bg);
         
-        /* Draw title bar */
-        gui_rect_t title_rect = {win->rect.x, win->rect.y, win->rect.w, 24};
-        gui_window_draw_rect(win, title_rect, GUI_TITLE_BG);
-        gui_window_draw_text(win, win->rect.x + 4, win->rect.y + 4,
-                            win->title, GUI_WHITE, GUI_TITLE_BG);
+        /* Draw title bar — focused window gets brighter colour */
+        int is_focused = (win == g_gui_ctx.focused_window);
+        gui_color_t tbar_col = is_focused ? GUI_TITLE_BG : GUI_COLOR(60, 60, 90);
+        /* Don't draw title bar for the desktop (empty title) */
+        int has_title = (win->title[0] != '\0');
+        if (has_title) {
+            gui_rect_t title_rect = {win->rect.x, win->rect.y, win->rect.w, 24};
+            gui_window_draw_rect(win, title_rect, tbar_col);
+            gui_window_draw_text(win, win->rect.x + 4, win->rect.y + 4,
+                                win->title, GUI_WHITE, tbar_col);
+            /* Close button [X] in top-right of title bar */
+            gui_rect_t close_r = {(int32_t)(win->rect.x + win->rect.w - 22),
+                                   win->rect.y + 2, 20, 20};
+            gui_window_draw_rect(win, close_r, GUI_COLOR(180, 40, 40));
+            gui_window_draw_text(win, close_r.x + 4, close_r.y + 3,
+                                "X", GUI_WHITE, GUI_COLOR(180, 40, 40));
+        }
         
         /* Draw window border */
-        gui_window_draw_rect_outline(win, win->rect, GUI_DARK_GRAY, 2);
+        gui_color_t border_col = is_focused ? GUI_WHITE : GUI_DARK_GRAY;
+        gui_window_draw_rect_outline(win, win->rect, border_col, 2);
         
         /* Draw widgets */
         gui_widget_t *w = win->widgets;
         while (w) {
             gui_widget_draw(w);
-            w = (gui_widget_t *)((uint64_t*)w)[15]; /* hack */
+            w = w->next;
         }
         
         win = win->prev;
@@ -506,5 +537,13 @@ void gui_render_frame(void) {
 void gui_run_loop(void) {
     /* Placeholder for main GUI loop */
     gui_render_frame();
+}
+
+gui_window_t* gui_get_window_list(void) {
+    return g_gui_ctx.windows;
+}
+
+gui_window_t* gui_window_next(gui_window_t *win) {
+    return win ? win->next : NULL;
 }
 

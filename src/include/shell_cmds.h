@@ -96,6 +96,9 @@ void cmd_hwinfo(void);
 void cmd_fbinfo(void);
 void cmd_serial(const char *args);
 
+/* GUI commands */
+void cmd_gui(void);
+
 /* New hardware & FS commands */
 void cmd_lsusb(void);
 void cmd_lsblk(void);
