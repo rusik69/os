@@ -48,9 +48,11 @@ make e2e
 - **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
 - **Shell** — 60+ built-in commands, command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
-  serial (COM1), ATA/IDE disk, PCI bus, Intel e1000 NIC, PC speaker, ACPI
+  serial (COM1), ATA/IDE disk, PCI bus, Intel e1000 NIC, PC speaker, ACPI, Intel GPU detection
 - **Block device abstraction** — ATA/AHCI registered behind a shared sector I/O layer
 - **FAT32 mount targets** — `fat mount ata|ahci|usb` (`usb` path is integration groundwork)
+- **Multiboot graphics** — Framebuffer support with 1024×768 RGB rendering
+- **GUI framework** — Window system, widgets (button, textbox, label), event handling, mouse cursor
 - **CI** — GitHub Actions with unit tests and full E2E test suite
 
 ## Multiuser Notes
@@ -123,6 +125,9 @@ os/
 │   │   ├── cc_lex.c       Lexer (tokenizer)
 │   │   ├── cc_parse.c     Parser + code generator
 │   │   └── cc_elf.c       ELF64 binary output
+│   ├── gui/
+│   │   ├── gui.h          GUI core types, window API, widget system
+│   │   └── gui.c          Window management, widgets, rendering
 │   ├── lib/
 │   │   ├── string.c       String/memory utilities
 │   │   └── printf.c       kprintf with output hook
@@ -968,6 +973,51 @@ The [linker.ld](linker.ld) places the kernel at physical address
 
 ---
 
+## GUI Framework
+
+A basic graphical user interface system built on the Multiboot framebuffer:
+
+### Core Components
+
+- **Window System** — Z-ordered layered windows with titles and borders
+- **Widget Library** — button, textbox, label with event routing
+- **Drawing API** — pixel-based rendering (24/32-bit RGB), built-in 5×7 font
+- **Mouse Integration** — pointer driven by PS/2 mouse events
+- **Event Dispatch** — mouse move/click, keyboard input routing to focused widget
+
+### Architecture
+
+The GUI runs in kernel mode with direct framebuffer access. Windows maintain
+a Z-order linked list; rendering proceeds back-to-front with title bars,
+borders, and widgets drawn into the framebuffer.
+
+**API Overview:**
+```c
+gui_init()                      /* Initialize GUI context */
+gui_window_t* gui_window_create(title, x, y, w, h, bg)
+gui_window_draw_rect(win, rect, color)
+gui_window_draw_text(win, x, y, text, fg, bg)
+gui_add_window(win)             /* Add to Z-order */
+gui_update_mouse(x, y, buttons) /* PS/2 mouse driver hook */
+gui_render_frame()              /* Full framebuffer redraw */
+
+gui_widget_t* gui_button_create(rect, label)
+gui_widget_t* gui_textbox_create(rect, max_len)
+gui_widget_t* gui_label_create(rect, text)
+gui_button_set_on_click(btn, callback)
+```
+
+### Display Backend Selection
+
+The system automatically selects the display backend at boot:
+- **Framebuffer** — if Multiboot provides graphics info (RGB 32-bit, 1024×768)
+- **VGA Text** — fallback if Multiboot graphics unavailable (80×25 text cells)
+
+Both modes use a unified 80×25 cell buffer for compatibility. In framebuffer
+mode, cells are rendered as 8×16-pixel glyphs using the built-in font.
+
+---
+
 ## Key Design Decisions
 
 1. **Identity-mapped memory** — the first 1 GB is mapped 1:1 (virtual =
@@ -1000,4 +1050,11 @@ The [linker.ld](linker.ld) places the kernel at physical address
 7. **TCP retransmit handling** — since QEMU's SLIRP backend aggressively
    retransmits, the kernel's TCP stack detects and trims duplicate/partial
    segments to prevent commands from executing twice.
+
+8. **Dual-backend display** — unified VGA cell buffer with pluggable rendering
+   backends (text mode and framebuffer graphics). Automatic selection based on
+   Multiboot capabilities ensures compatibility across different boot environments.
+
+9. **GUI kernel-mode execution** — GUI runs with full framebuffer access,
+   no separate graphics daemon. Event polling integrated into kernel event loop.
 # os
