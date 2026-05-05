@@ -39,4 +39,9 @@ void vga_set_cursor(uint16_t row, uint16_t col);
 void vga_get_cursor(uint16_t *row, uint16_t *col);
 void vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col);
 
+/* Framebuffer graphics API */
+void vga_put_pixel(int32_t x, int32_t y, uint32_t color);
+void vga_clear_framebuffer(uint32_t color);
+void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, uint32_t *pitch);
+
 #endif

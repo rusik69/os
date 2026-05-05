@@ -330,3 +330,39 @@ void vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col) {
     vga_cells[row * VGA_WIDTH + col] = vga_entry(c, color);
     render_cell(row, col);
 }
+
+/* ===== Framebuffer Graphics API ===== */
+
+void vga_put_pixel(int32_t x, int32_t y, uint32_t color) {
+    if (!fb_base || x < 0 || y < 0 || x >= (int32_t)fb_width || y >= (int32_t)fb_height) {
+        return;
+    }
+
+    uint64_t offset = (uint64_t)y * fb_pitch + x * (fb_bpp / 8);
+    if (fb_bpp == 32) {
+        volatile uint32_t *pixel = (volatile uint32_t *)(fb_base + offset);
+        *pixel = color;
+    } else if (fb_bpp == 24) {
+        volatile uint8_t *pixel = (volatile uint8_t *)(fb_base + offset);
+        pixel[0] = (color) & 0xFF;
+        pixel[1] = (color >> 8) & 0xFF;
+        pixel[2] = (color >> 16) & 0xFF;
+    }
+}
+
+void vga_clear_framebuffer(uint32_t color) {
+    if (!fb_base) return;
+
+    for (uint32_t y = 0; y < fb_height; y++) {
+        for (uint32_t x = 0; x < fb_width; x++) {
+            vga_put_pixel(x, y, color);
+        }
+    }
+}
+
+void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, uint32_t *pitch) {
+    if (ptr) *ptr = (uint8_t *)fb_base;
+    if (width) *width = fb_width;
+    if (height) *height = fb_height;
+    if (pitch) *pitch = fb_pitch;
+}

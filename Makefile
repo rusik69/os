@@ -79,7 +79,9 @@ CMD_SRCS = $(wildcard src/shell/cmds/*.c)
 CMD_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(CMD_SRCS))
 COMPILER_SRCS = $(wildcard src/compiler/*.c)
 COMPILER_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(COMPILER_SRCS))
-OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS)
+GUI_SRCS = $(wildcard src/gui/*.c)
+GUI_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(GUI_SRCS))
+OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS)
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean
 
