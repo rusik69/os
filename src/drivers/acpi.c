@@ -1,4 +1,5 @@
 #include "acpi.h"
+#include "pci.h"
 #include "io.h"
 #include "string.h"
 #include "printf.h"
@@ -83,7 +84,7 @@ void acpi_init(void) {
     /* Validate RSDT signature */
     if (memcmp(rsdt->header.signature, "RSDT", 4) != 0) return;
 
-    /* Walk RSDT entries looking for FADT */
+    /* Walk RSDT entries looking for FADT and MCFG */
     uint32_t num_entries = (rsdt->header.length - sizeof(struct acpi_header)) / 4;
     struct fadt *fadt = NULL;
 
@@ -91,7 +92,18 @@ void acpi_init(void) {
         struct acpi_header *hdr = (struct acpi_header *)(uint64_t)rsdt->entries[i];
         if (memcmp(hdr->signature, FADT_SIG, 4) == 0) {
             fadt = (struct fadt *)hdr;
-            break;
+        }
+        /* MCFG table: PCIe memory-mapped config space base */
+        if (memcmp(hdr->signature, "MCFG", 4) == 0) {
+            /* MCFG body: 8 bytes reserved, then allocation structures */
+            /* Each entry: 8B base addr, 2B pci segment, 1B start bus, 1B end bus, 4B reserved */
+            uint8_t *body = (uint8_t *)hdr + sizeof(struct acpi_header) + 8;
+            uint64_t ecam = 0;
+            memcpy(&ecam, body, 8);
+            if (ecam) {
+                pcie_ecam_set_base(ecam);
+                kprintf("[OK] PCIe ECAM base: 0x%x\n", ecam);
+            }
         }
     }
 

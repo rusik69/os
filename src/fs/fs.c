@@ -2,6 +2,7 @@
 #include "ata.h"
 #include "string.h"
 #include "printf.h"
+#include "users.h"
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -127,9 +128,28 @@ int fs_format(void) {
     memset(inodes, 0, sizeof(inodes));
 
     /* Create root directory as inode 0 */
-    inodes[0].type = FS_TYPE_DIR;
+    inodes[0].type   = FS_TYPE_DIR;
     inodes[0].parent = 0;
+    inodes[0].uid    = 0;
+    inodes[0].gid    = 0;
+    inodes[0].mode   = FS_MODE_DIR;
     strncpy(inodes[0].name, "/", FS_MAX_NAME);
+
+    /* Base home parent directory */
+    inodes[1].type   = FS_TYPE_DIR;
+    inodes[1].parent = 0;
+    inodes[1].uid    = 0;
+    inodes[1].gid    = 0;
+    inodes[1].mode   = FS_MODE_DIR;
+    strncpy(inodes[1].name, "home", FS_MAX_NAME - 1);
+
+    /* Root home directory */
+    inodes[2].type   = FS_TYPE_DIR;
+    inodes[2].parent = 0;
+    inodes[2].uid    = 0;
+    inodes[2].gid    = 0;
+    inodes[2].mode   = FS_MODE_DIR;
+    strncpy(inodes[2].name, "root", FS_MAX_NAME - 1);
 
     if (save_super() < 0) return -1;
     if (save_inodes() < 0) return -1;
@@ -168,10 +188,17 @@ int fs_create(const char *path, uint8_t type) {
     int idx = find_free_inode();
     if (idx < 0) return -1;
 
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    uint16_t cur_gid = s ? (uint16_t)s->gid : 0;
+
     const char *name = basename(path);
     memset(&inodes[idx], 0, sizeof(struct fs_inode));
-    inodes[idx].type = type;
+    inodes[idx].type   = type;
     inodes[idx].parent = (uint16_t)parent;
+    inodes[idx].uid    = cur_uid;
+    inodes[idx].gid    = cur_gid;
+    inodes[idx].mode   = (type == FS_TYPE_DIR) ? FS_MODE_DIR : FS_MODE_FILE;
     strncpy(inodes[idx].name, name, FS_MAX_NAME - 1);
 
     save_inodes();
@@ -180,6 +207,7 @@ int fs_create(const char *path, uint8_t type) {
 
 int fs_write_file(const char *path, const void *data, uint32_t size) {
     int idx = find_inode(path);
+    if (idx >= 0 && fs_check_perm(path, 'w') < 0) return -3; /* perm denied on existing file */
     if (idx < 0) {
         idx = fs_create(path, FS_TYPE_FILE);
         if (idx < 0) return -1;
@@ -212,6 +240,7 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
     int idx = find_inode(path);
     if (idx < 0) return -1;
     if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (fs_check_perm(path, 'r') < 0) return -3; /* permission denied */
 
     uint32_t size = inodes[idx].size;
     if (size > max_size) size = max_size;
@@ -234,6 +263,7 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
 int fs_delete(const char *path) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+    if (fs_check_perm(path, 'w') < 0) return -3; /* permission denied */
 
     /* If dir, check it's empty */
     if (inodes[idx].type == FS_TYPE_DIR) {
@@ -260,9 +290,16 @@ int fs_list(const char *path) {
 
     int count = 0;
     for (int i = 0; i < FS_MAX_FILES; i++) {
-        if (inodes[i].type != FS_TYPE_FREE && inodes[i].parent == (uint16_t)parent && i != parent) {
-            const char *type_str = inodes[i].type == FS_TYPE_DIR ? "DIR " : "FILE";
-            kprintf("  %s  %u\t%s\n", type_str, (uint64_t)inodes[i].size, inodes[i].name);
+        if (inodes[i].type != FS_TYPE_FREE &&
+            inodes[i].parent == (uint16_t)parent && i != parent) {
+            char mstr[10];
+            fs_mode_str(inodes[i].mode, mstr);
+            char type_char = inodes[i].type == FS_TYPE_DIR ? 'd' : '-';
+            kprintf("%c%s %u:%u\t%u\t%s\n",
+                    type_char, mstr,
+                    (uint64_t)inodes[i].uid, (uint64_t)inodes[i].gid,
+                    (uint64_t)inodes[i].size,
+                    inodes[i].name);
             count++;
         }
     }
@@ -276,6 +313,86 @@ int fs_stat(const char *path, uint32_t *size, uint8_t *type) {
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
     return 0;
+}
+
+int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
+               uint16_t *uid, uint16_t *gid, uint16_t *mode) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    if (size) *size = inodes[idx].size;
+    if (type) *type = inodes[idx].type;
+    if (uid)  *uid  = inodes[idx].uid;
+    if (gid)  *gid  = inodes[idx].gid;
+    if (mode) *mode = inodes[idx].mode;
+    return 0;
+}
+
+int fs_chmod(const char *path, uint16_t mode) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    /* Only owner or root may chmod */
+    if (cur_uid != 0 && cur_uid != inodes[idx].uid) return -2;
+
+    inodes[idx].mode = mode & 0777;
+    save_inodes();
+    return 0;
+}
+
+int fs_chown(const char *path, uint16_t uid, uint16_t gid) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    /* Only root may chown */
+    if (cur_uid != 0) return -2;
+
+    inodes[idx].uid = uid;
+    inodes[idx].gid = gid;
+    save_inodes();
+    return 0;
+}
+
+/* Check if current session has permission op ('r','w','x') on path.
+ * Returns 0 = allowed, -1 = not found, -2 = denied. */
+int fs_check_perm(const char *path, char op) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    uint16_t cur_gid = s ? (uint16_t)s->gid : 0;
+    uint16_t m       = inodes[idx].mode;
+
+    /* Root bypasses permission checks */
+    if (cur_uid == 0) return 0;
+
+    int shift;
+    if (cur_uid == inodes[idx].uid)      shift = 6; /* owner */
+    else if (cur_gid == inodes[idx].gid) shift = 3; /* group */
+    else                                 shift = 0; /* other */
+
+    uint16_t bits;
+    switch (op) {
+        case 'r': bits = FS_PERM_ROTH << shift; break;
+        case 'w': bits = FS_PERM_WOTH << shift; break;
+        case 'x': bits = FS_PERM_XOTH << shift; break;
+        default:  return -2;
+    }
+    return (m & bits) ? 0 : -2;
+}
+
+/* Format mode as "rwxrwxrwx" — 9 chars + NUL */
+void fs_mode_str(uint16_t mode, char out[10]) {
+    const char *bits = "rwxrwxrwx";
+    for (int i = 0; i < 9; i++) {
+        int bit = 1 << (8 - i);
+        out[i] = (mode & bit) ? bits[i] : '-';
+    }
+    out[9] = '\0';
 }
 
 void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,

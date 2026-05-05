@@ -14,6 +14,34 @@
 #include "process.h"
 #include "scheduler.h"
 
+#define MAX_VAR_NAME 32
+
+/* Expand $VAR references in src into dst (dst_max includes NUL) */
+static void var_expand(const char *src, char *dst, int dst_max) {
+    int di = 0;
+    while (*src && di < dst_max - 1) {
+        if (*src == '$') {
+            src++;
+            char name[MAX_VAR_NAME];
+            int ni = 0;
+            while (*src && ni < MAX_VAR_NAME - 1 &&
+                   ((*src >= 'A' && *src <= 'Z') ||
+                    (*src >= 'a' && *src <= 'z') ||
+                    (*src >= '0' && *src <= '9') ||
+                    *src == '_')) {
+                name[ni++] = *src++;
+            }
+            name[ni] = '\0';
+            const char *val = shell_var_get(name);
+            while (*val && di < dst_max - 1)
+                dst[di++] = *val++;
+        } else {
+            dst[di++] = *src++;
+        }
+    }
+    dst[di] = '\0';
+}
+
 static void putchar_both(char c) {
     vga_putchar(c);
     if (c == '\b') {
@@ -39,204 +67,11 @@ static int history_pos = 0;
 
 static char history_filebuf[HISTORY_FILE_MAX];
 
-static void history_save(void) {
-    int pos = 0;
-    int start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
-    for (int i = start; i < history_count && pos < HISTORY_FILE_MAX - CMD_BUF_SIZE; i++) {
-        const char *e = history[i % HISTORY_SIZE];
-        int n = strlen(e);
-        if (pos + n + 1 >= HISTORY_FILE_MAX) break;
-        memcpy(history_filebuf + pos, e, n);
-        pos += n;
-        history_filebuf[pos++] = '\n';
-    }
-    history_filebuf[pos] = '\0';
-    vfs_write(HISTORY_FILE, history_filebuf, (uint32_t)pos);
-}
+/* History functions extracted to sub-module */
+#include "shell_history.inc"
 
-static void history_load(void) {
-    uint32_t size = 0;
-    if (vfs_read(HISTORY_FILE, history_filebuf, HISTORY_FILE_MAX - 1, &size) != 0) return;
-    history_filebuf[size] = '\0';
-    char *p = history_filebuf;
-    while (*p) {
-        char *nl = p;
-        while (*nl && *nl != '\n') nl++;
-        int len = (int)(nl - p);
-        if (len > 0 && len < CMD_BUF_SIZE) {
-            char tmp[CMD_BUF_SIZE];
-            memcpy(tmp, p, len);
-            tmp[len] = '\0';
-            /* history_add without re-saving to avoid redundant writes */
-            if (history_count == 0 ||
-                strcmp(history[(history_count - 1) % HISTORY_SIZE], tmp) != 0) {
-                strcpy(history[history_count % HISTORY_SIZE], tmp);
-                history_count++;
-            }
-        }
-        if (*nl == '\n') nl++;
-        p = nl;
-    }
-}
-
-static void history_add(const char *cmd) {
-    if (cmd[0] == '\0') return;
-    if (history_count > 0 && strcmp(history[(history_count - 1) % HISTORY_SIZE], cmd) == 0) return;
-    strcpy(history[history_count % HISTORY_SIZE], cmd);
-    history_count++;
-    history_save();
-}
-
-void shell_history_add(const char *cmd_line) {
-    history_add(cmd_line);
-}
-
-void shell_history_show_entries(void) {
-    int start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
-    for (int i = start; i < history_count; i++)
-        kprintf("  %u: %s\n", (uint64_t)(i - start + 1), history[i % HISTORY_SIZE]);
-}
-
-int shell_history_count(void) {
-    return history_count;
-}
-
-const char *shell_history_entry(int idx) {
-    if (idx < 0 || idx >= history_count) return 0;
-    int oldest = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
-    if (idx < oldest) return 0;
-    return history[idx % HISTORY_SIZE];
-}
-
-/* ------------------------------------------------------------------ */
-/*  Command name table for tab completion                              */
-/* ------------------------------------------------------------------ */
-
-static const char *all_cmds[] = {
-    "arp", "beep", "calc", "cat", "cc", "clear", "color", "cp", "cpuinfo",
-    "curl", "date", "df", "dmesg", "dns", "echo", "edit", "env", "exec",
-    "exit", "fg", "find", "format", "free", "grep", "head", "help", "hexdump",
-    "history", "hostname", "ifconfig", "jobs", "kill", "ls", "lspci", "meminfo",
-    "mkdir", "mouse", "mv", "ping", "play", "ps", "reboot", "rm", "route",
-    "run", "seq", "shutdown", "sleep", "sort", "stat", "tail", "tmux",
-    "touch", "tr", "udpsend", "uname", "uniq", "uptime", "wait", "wc", "whoami",
-    "write", "xxd", 0
-};
-
-/* ------------------------------------------------------------------ */
-/*  Tab completion                                                     */
-/* ------------------------------------------------------------------ */
-
-static void shell_prompt(void);
-static void erase_line(int len);
-
-static void shell_tab_complete(char *buf, int *len) {
-    /* Determine if we're completing a command (first word) or filename */
-    int has_space = 0;
-    for (int i = 0; i < *len; i++) if (buf[i] == ' ') { has_space = 1; break; }
-
-    if (!has_space) {
-        /* Command completion */
-        char prefix[64];
-        int plen = *len > 63 ? 63 : *len;
-        memcpy(prefix, buf, plen); prefix[plen] = '\0';
-
-        /* Find all matching commands */
-        const char *matches[64]; int nmatch = 0;
-        for (int i = 0; all_cmds[i]; i++) {
-            if (strncmp(all_cmds[i], prefix, plen) == 0 && nmatch < 64)
-                matches[nmatch++] = all_cmds[i];
-        }
-        if (nmatch == 0) return;
-        if (nmatch == 1) {
-            /* Unique match — complete it */
-            erase_line(*len);
-            int clen = strlen(matches[0]);
-            memcpy(buf, matches[0], clen);
-            buf[clen] = ' ';
-            *len = clen + 1;
-            kprintf("%s ", matches[0]);
-        } else {
-            /* Multiple matches — find common prefix and show options */
-            int common = strlen(matches[0]);
-            for (int i = 1; i < nmatch; i++) {
-                int j = 0;
-                while (j < common && matches[0][j] == matches[i][j]) j++;
-                common = j;
-            }
-            if (common > plen) {
-                erase_line(*len);
-                memcpy(buf, matches[0], common);
-                *len = common;
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            } else {
-                kprintf("\n");
-                for (int i = 0; i < nmatch; i++) kprintf("  %s", matches[i]);
-                kprintf("\n");
-                shell_prompt();
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            }
-        }
-    } else {
-        /* Filename completion — get the last word */
-        int wstart = *len;
-        while (wstart > 0 && buf[wstart - 1] != ' ') wstart--;
-        char prefix[64];
-        int plen = *len - wstart;
-        if (plen > 63) plen = 63;
-        memcpy(prefix, buf + wstart, plen); prefix[plen] = '\0';
-
-        char fnames[16][FS_MAX_NAME]; /* up to 16 matches */
-        int nmatch = fs_list_names("/", prefix, fnames, 16);
-        if (nmatch == 0) return;
-        if (nmatch == 1) {
-            erase_line(*len);
-            int clen = strlen(fnames[0]);
-            int newlen = wstart + clen;
-            memcpy(buf + wstart, fnames[0], clen);
-            buf[newlen] = ' ';
-            *len = newlen + 1;
-            buf[*len] = '\0';
-            kprintf("%s", buf);
-        } else {
-            /* Find common prefix */
-            int common = strlen(fnames[0]);
-            for (int i = 1; i < nmatch; i++) {
-                int j = 0;
-                while (j < common && fnames[0][j] == fnames[i][j]) j++;
-                common = j;
-            }
-            if (common > plen) {
-                erase_line(*len);
-                memcpy(buf + wstart, fnames[0], common);
-                *len = wstart + common;
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            } else {
-                kprintf("\n");
-                for (int i = 0; i < nmatch; i++) kprintf("  %s", fnames[i]);
-                kprintf("\n");
-                shell_prompt();
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            }
-        }
-    }
-}
-
-static void shell_prompt(void) {
-    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    kprintf("os> ");
-    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
-}
-
-static void erase_line(int len) {
-    for (int i = 0; i < len; i++) putchar_both('\b');
-    for (int i = 0; i < len; i++) putchar_both(' ');
-    for (int i = 0; i < len; i++) putchar_both('\b');
-}
+/* Command table + tab completion extracted to sub-module */
+#include "shell_completion.inc"
 
 /* --- Background process support --- */
 struct bg_cmd_info {
@@ -264,6 +99,37 @@ static void process_cmd(void) {
     char *cmd = cmd_buf;
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
+
+    /* --- Variable expansion: replace $VAR with its value --- */
+    static char expanded[CMD_BUF_SIZE];
+    var_expand(cmd_buf, expanded, CMD_BUF_SIZE);
+    strncpy(cmd_buf, expanded, CMD_BUF_SIZE - 1);
+    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+    cmd = cmd_buf;
+    while (*cmd == ' ') cmd++;
+    if (*cmd == '\0') return;
+
+    /* --- Check for variable assignment: NAME=value (no spaces around =) --- */
+    {
+        const char *p = cmd;
+        int valid_name = 1;
+        while (*p && *p != '=' && *p != ' ') {
+            char c = *p;
+            if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  (c >= '0' && c <= '9') || c == '_'))
+                { valid_name = 0; break; }
+            p++;
+        }
+        if (valid_name && *p == '=' && p > cmd) {
+            char name[MAX_VAR_NAME];
+            int nl = (int)(p - cmd);
+            if (nl > MAX_VAR_NAME - 1) nl = MAX_VAR_NAME - 1;
+            memcpy(name, cmd, nl);
+            name[nl] = '\0';
+            shell_var_set(name, p + 1);
+            return;
+        }
+    }
 
     /* --- Check for background operator: cmd & --- */
     int bg = 0;
@@ -596,6 +462,22 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: help\n  List all available commands\n");
         else if (strcmp(cmd, "exit") == 0)
             kprintf("Usage: exit\n  Disconnect telnet session\n");
+        else if (strcmp(cmd, "printf") == 0)
+            kprintf("Usage: printf <format> [args...]\n  Format and print. Supports \\n \\t %%s %%d\n");
+        else if (strcmp(cmd, "time") == 0)
+            kprintf("Usage: time <command> [args...]\n  Measure execution time of a command\n");
+        else if (strcmp(cmd, "strings") == 0)
+            kprintf("Usage: strings <file>\n  Print printable strings found in a file\n");
+        else if (strcmp(cmd, "tac") == 0)
+            kprintf("Usage: tac <file>\n  Print file lines in reverse order\n");
+        else if (strcmp(cmd, "base64") == 0)
+            kprintf("Usage: base64 <file>\n  Encode file contents as base64\n");
+        else if (strcmp(cmd, "cmos") == 0)
+            kprintf("Usage: cmos\n  Show CMOS/NVRAM hardware configuration\n");
+        else if (strcmp(cmd, "hwinfo") == 0)
+            kprintf("Usage: hwinfo\n  Show comprehensive hardware information\n");
+        else if (strcmp(cmd, "serial") == 0)
+            kprintf("Usage: serial status | serial write <text>\n  COM1 serial port operations\n");
         else
             kprintf("Unknown command: %s\n", cmd);
         return;
@@ -663,6 +545,42 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "jobs") == 0) cmd_jobs();
     else if (strcmp(cmd, "fg") == 0) cmd_fg(args);
     else if (strcmp(cmd, "wait") == 0) cmd_wait(args);
+    else if (strcmp(cmd, "tee") == 0) cmd_tee(args);
+    else if (strcmp(cmd, "cut") == 0) cmd_cut(args);
+    else if (strcmp(cmd, "paste") == 0) cmd_paste(args);
+    else if (strcmp(cmd, "basename") == 0) cmd_basename(args);
+    else if (strcmp(cmd, "dirname") == 0) cmd_dirname(args);
+    else if (strcmp(cmd, "yes") == 0) cmd_yes(args);
+    else if (strcmp(cmd, "rev") == 0) cmd_rev(args);
+    else if (strcmp(cmd, "nl") == 0) cmd_nl(args);
+    else if (strcmp(cmd, "du") == 0) cmd_du(args);
+    else if (strcmp(cmd, "id") == 0) cmd_id(args);
+    else if (strcmp(cmd, "diff") == 0) cmd_diff(args);
+    else if (strcmp(cmd, "md5sum") == 0) cmd_md5sum(args);
+    else if (strcmp(cmd, "od") == 0) cmd_od(args);
+    else if (strcmp(cmd, "expr") == 0) cmd_expr(args);
+    else if (strcmp(cmd, "test") == 0) cmd_test(args);
+    else if (strcmp(cmd, "[") == 0) cmd_test(args);
+    else if (strcmp(cmd, "xargs") == 0) cmd_xargs(args);
+    else if (strcmp(cmd, "printf") == 0) cmd_printf(args);
+    else if (strcmp(cmd, "time") == 0) cmd_time(args);
+    else if (strcmp(cmd, "strings") == 0) cmd_strings(args);
+    else if (strcmp(cmd, "tac") == 0) cmd_tac(args);
+    else if (strcmp(cmd, "base64") == 0) cmd_base64(args);
+    else if (strcmp(cmd, "cmos") == 0) cmd_cmos();
+    else if (strcmp(cmd, "hwinfo") == 0) cmd_hwinfo();
+    else if (strcmp(cmd, "serial") == 0) cmd_serial(args);
+    else if (strcmp(cmd, "lsusb") == 0) cmd_lsusb();
+    else if (strcmp(cmd, "lsblk") == 0) cmd_lsblk();
+    else if (strcmp(cmd, "fat") == 0) cmd_fat(args);
+    else if (strcmp(cmd, "chmod") == 0) cmd_chmod(args);
+    else if (strcmp(cmd, "chown") == 0) cmd_chown(args);
+    else if (strcmp(cmd, "login") == 0) cmd_login(args);
+    else if (strcmp(cmd, "logout") == 0) cmd_logout();
+    else if (strcmp(cmd, "useradd") == 0) cmd_useradd(args);
+    else if (strcmp(cmd, "userdel") == 0) cmd_userdel(args);
+    else if (strcmp(cmd, "passwd") == 0) cmd_passwd(args);
+    else if (strcmp(cmd, "users") == 0) cmd_users();
     else kprintf("Unknown command: %s\n", cmd);
 }
 
@@ -724,91 +642,23 @@ void shell_run(void) {
 void shell_init(void) {
 }
 
-/* Tab completion for telnet sessions — uses kprintf which is hooked to session */
-void shell_tab_complete_telnet(char *buf, int *len, void *session) {
-    (void)session; /* kprintf hooks are already set by telnetd */
-    int has_space = 0;
-    for (int i = 0; i < *len; i++) if (buf[i] == ' ') { has_space = 1; break; }
-
-    if (!has_space) {
-        /* Command completion */
-        char prefix[64];
-        int plen = *len > 63 ? 63 : *len;
-        memcpy(prefix, buf, plen); prefix[plen] = '\0';
-
-        const char *matches[64]; int nmatch = 0;
-        for (int i = 0; all_cmds[i]; i++)
-            if (strncmp(all_cmds[i], prefix, plen) == 0 && nmatch < 64)
-                matches[nmatch++] = all_cmds[i];
-
-        if (nmatch == 0) return;
-        if (nmatch == 1) {
-            /* Erase and rewrite */
-            for (int k = 0; k < *len; k++) kprintf("\b \b");
-            int clen = strlen(matches[0]);
-            memcpy(buf, matches[0], clen);
-            buf[clen] = ' ';
-            *len = clen + 1;
-            buf[*len] = '\0';
-            kprintf("%s", buf);
-        } else {
-            int common = strlen(matches[0]);
-            for (int i = 1; i < nmatch; i++) {
-                int j = 0;
-                while (j < common && matches[0][j] == matches[i][j]) j++;
-                common = j;
+/* Read a line from keyboard into buf (up to max-1 chars) */
+void shell_read_line(char *buf, int max) {
+    int len = 0;
+    while (1) {
+        char c = keyboard_getchar();
+        if (c == '\n') {
+            putchar_both('\n');
+            break;
+        } else if (c == '\b') {
+            if (len > 0) {
+                len--;
+                putchar_both('\b');
             }
-            if (common > plen) {
-                for (int k = 0; k < *len; k++) kprintf("\b \b");
-                memcpy(buf, matches[0], common);
-                *len = common;
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            } else {
-                kprintf("\r\n");
-                for (int i = 0; i < nmatch; i++) kprintf("  %s", matches[i]);
-                kprintf("\r\nos> %s", buf);
-            }
-        }
-    } else {
-        /* Filename completion */
-        int wstart = *len;
-        while (wstart > 0 && buf[wstart - 1] != ' ') wstart--;
-        char prefix[64];
-        int plen = *len - wstart;
-        if (plen > 63) plen = 63;
-        memcpy(prefix, buf + wstart, plen); prefix[plen] = '\0';
-
-        char fnames[16][FS_MAX_NAME];
-        int nmatch = fs_list_names("/", prefix, fnames, 16);
-        if (nmatch == 0) return;
-        if (nmatch == 1) {
-            for (int k = 0; k < *len; k++) kprintf("\b \b");
-            int clen = strlen(fnames[0]);
-            int newlen = wstart + clen;
-            memcpy(buf + wstart, fnames[0], clen);
-            buf[newlen] = ' ';
-            *len = newlen + 1;
-            buf[*len] = '\0';
-            kprintf("%s", buf);
-        } else {
-            int common = strlen(fnames[0]);
-            for (int i = 1; i < nmatch; i++) {
-                int j = 0;
-                while (j < common && fnames[0][j] == fnames[i][j]) j++;
-                common = j;
-            }
-            if (common > plen) {
-                for (int k = 0; k < *len; k++) kprintf("\b \b");
-                memcpy(buf + wstart, fnames[0], common);
-                *len = wstart + common;
-                buf[*len] = '\0';
-                kprintf("%s", buf);
-            } else {
-                kprintf("\r\n");
-                for (int i = 0; i < nmatch; i++) kprintf("  %s", fnames[i]);
-                kprintf("\r\nos> %s", buf);
-            }
+        } else if (len < max - 1) {
+            buf[len++] = c;
+            putchar_both(c);
         }
     }
+    buf[len] = '\0';
 }

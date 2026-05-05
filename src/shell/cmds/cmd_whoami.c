@@ -1,9 +1,13 @@
 /* cmd_whoami.c — whoami command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "process.h"
+#include "users.h"
 
 void cmd_whoami(void) {
-    struct process *p = process_get_current();
-    kprintf("PID %u (%s)\n", (uint64_t)p->pid, p->name);
+    struct user_session *s = session_get();
+    if (!s || !s->logged_in) {
+        kprintf("unknown\n");
+        return;
+    }
+    kprintf("%s\n", s->username);
 }

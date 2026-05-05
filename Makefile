@@ -1,9 +1,21 @@
+ifeq ($(origin CC), undefined)
 CC = x86_64-elf-gcc
+else ifeq ($(origin CC), default)
+CC = x86_64-elf-gcc
+endif
 AS = nasm
+ifeq ($(origin LD), undefined)
 LD = x86_64-elf-ld
+else ifeq ($(origin LD), default)
+LD = x86_64-elf-ld
+endif
+ifeq ($(origin OBJCOPY), undefined)
 OBJCOPY = x86_64-elf-objcopy
+else ifeq ($(origin OBJCOPY), default)
+OBJCOPY = x86_64-elf-objcopy
+endif
 
-CFLAGS = -std=c11 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -mcmodel=large -g
 ASFLAGS = -f elf64 -g
@@ -24,21 +36,28 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/serial.c \
          src/drivers/ata.c \
          src/drivers/pci.c \
+         src/drivers/blockdev.c \
          src/drivers/e1000.c \
          src/drivers/rtc.c \
          src/drivers/mouse.c \
          src/drivers/speaker.c \
          src/drivers/acpi.c \
+         src/drivers/ahci.c \
+         src/drivers/usb_ehci.c \
+         src/drivers/usb_msc.c \
          src/memory/pmm.c \
          src/memory/vmm.c \
          src/memory/heap.c \
          src/process/process.c \
          src/process/scheduler.c \
          src/process/signal.c \
+         src/process/users.c \
          src/shell/shell.c \
+         src/shell/shell_vars.c \
          src/shell/editor.c \
          src/shell/script.c \
          src/fs/fs.c \
+         src/fs/fat32.c \
          src/net/net.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \

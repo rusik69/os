@@ -25,8 +25,14 @@
 #include "speaker.h"
 #include "acpi.h"
 #include "syscall.h"
+#include "ahci.h"
+#include "usb.h"
+#include "usb_msc.h"
+#include "fat32.h"
+#include "users.h"
 #include "vfs.h"
 #include "pipe.h"
+#include "blockdev.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -143,12 +149,21 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     pipe_init();
     kprintf("[OK] Pipes initialized\n");
 
+    /* Block device registry */
+    blockdev_init();
+
     /* ATA disk */
     ata_init();
     if (ata_is_present())
         kprintf("[OK] ATA disk detected\n");
     else
         kprintf("[--] No ATA disk found\n");
+
+    /* AHCI SATA disk */
+    if (ahci_init() == 0)
+        kprintf("[OK] AHCI SATA initialized\n");
+    else
+        kprintf("[--] No AHCI controller\n");
 
     /* Filesystem */
     fs_init();
@@ -157,6 +172,24 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* PCI bus */
     pci_init();
     kprintf("[OK] PCI initialized\n");
+
+    /* USB */
+    if (usb_init() == 0) {
+        kprintf("[OK] USB initialized\n");
+        if (usb_msc_init() == 0)
+            kprintf("[OK] USB MSC device registered\n");
+        else
+            kprintf("[--] No USB MSC device\n");
+    } else {
+        kprintf("[--] No USB controllers\n");
+    }
+
+    /* FAT32 */
+    fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0);
+
+    /* Multiuser */
+    users_init();
+    kprintf("[OK] Multiuser initialized\n");
 
     /* Network */
     if (e1000_init() == 0) {

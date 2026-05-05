@@ -65,4 +65,49 @@ void cmd_jobs(void);
 void cmd_fg(const char *args);
 void cmd_wait(const char *args);
 
+/* Additional tool commands */
+void cmd_tee(const char *args);
+void cmd_cut(const char *args);
+void cmd_paste(const char *args);
+void cmd_basename(const char *args);
+void cmd_dirname(const char *args);
+void cmd_yes(const char *args);
+void cmd_rev(const char *args);
+void cmd_nl(const char *args);
+void cmd_du(const char *args);
+void cmd_id(const char *args);
+void cmd_diff(const char *args);
+void cmd_md5sum(const char *args);
+void cmd_od(const char *args);
+void cmd_expr(const char *args);
+void cmd_test(const char *args);
+void cmd_xargs(const char *args);
+
+/* New utility commands */
+void cmd_printf(const char *args);
+void cmd_time(const char *args);
+void cmd_strings(const char *args);
+void cmd_tac(const char *args);
+void cmd_base64(const char *args);
+
+/* Hardware commands */
+void cmd_cmos(void);
+void cmd_hwinfo(void);
+void cmd_serial(const char *args);
+
+/* New hardware & FS commands */
+void cmd_lsusb(void);
+void cmd_lsblk(void);
+void cmd_fat(const char *args);
+void cmd_chmod(const char *args);
+void cmd_chown(const char *args);
+
+/* Multiuser commands */
+void cmd_login(const char *args);
+void cmd_logout(void);
+void cmd_useradd(const char *args);
+void cmd_userdel(const char *args);
+void cmd_passwd(const char *args);
+void cmd_users(void);
+
 #endif

@@ -36,16 +36,33 @@ make e2e
 - **TCP/IP networking** — DHCP, ARP, ICMP, TCP, UDP, DNS
 - **Telnet server** on port 23 — remote shell access
 - **Simple filesystem (SMFS)** — on an IDE disk with directories and files
+- **Unix-style permissions** — owner/group/other rwx bits, `chmod`, `chown`, `stat`
+- **Multiuser auth** — password-backed users (`login`, `passwd`, `useradd`, `userdel`, `users`)
+- **Owned home directories** — `/root`, `/home/<user>` auto-created and ownership tracked by uid/gid
 - **VFS layer** with mount table
 - **IPC via pipes** — 16 blocking circular-buffer pipes
 - **Signal delivery** — SIGKILL, SIGTERM, SIGSTOP/SIGCONT, user signals
 - **ELF loader** — load and run static 64-bit ELF binaries in ring 3
 - **C compiler** — single-pass recursive descent, outputs native x86-64 ELF64 binaries
+- **C17 toolchain mode** — kernel and in-kernel compiler build with `-std=c17`
 - **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
 - **Shell** — 60+ built-in commands, command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
   serial (COM1), ATA/IDE disk, PCI bus, Intel e1000 NIC, PC speaker, ACPI
+- **Block device abstraction** — ATA/AHCI registered behind a shared sector I/O layer
+- **FAT32 mount targets** — `fat mount ata|ahci|usb` (`usb` path is integration groundwork)
 - **CI** — GitHub Actions with unit tests and full E2E test suite
+
+## Multiuser Notes
+
+- Default accounts now require passwords: `root/root` and `guest/guest`.
+- Successful `login` sets shell variables `HOME` and `PWD` to the user's home path.
+- File ownership and permissions are enforced by uid/gid + rwx mode bits.
+
+## Toolchain Notes
+
+- Build mode uses strict C17 (`-std=c17`) in freestanding kernel context.
+- Makefile now protects against host-default `cc`/`ld` on macOS by selecting cross tools when defaults are in effect.
 
 ## Project Structure
 

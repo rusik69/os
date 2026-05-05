@@ -24,3 +24,22 @@ void serial_write(const char *str) {
         serial_putchar(*str++);
     }
 }
+
+int serial_readable(void) {
+    return inb(COM1 + 5) & 0x01;
+}
+
+char serial_getchar(void) {
+    while (!serial_readable());
+    return (char)inb(COM1);
+}
+
+void serial_read_line(char *buf, int max) {
+    int i = 0;
+    while (i < max - 1) {
+        char c = serial_getchar();
+        if (c == '\r' || c == '\n') break;
+        buf[i++] = c;
+    }
+    buf[i] = 0;
+}

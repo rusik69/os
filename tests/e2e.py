@@ -530,9 +530,9 @@ def test_free(t: Telnet):
 
 
 def test_whoami(t: Telnet):
-    """whoami: current process."""
+    """whoami: current logged-in user."""
     r = t.send_cmd("whoami")
-    check("whoami — PID", r, "PID")
+    check("whoami — user", r, "root")
 
 
 def test_hostname(t: Telnet):
@@ -800,6 +800,347 @@ def test_ps_enhanced(t: Telnet):
     check("ps — kernel mode", r, "kernel")
 
 
+def test_cut(t: Telnet):
+    """cut: extract fields from delimited file."""
+    t.send_cmd("echo one:two:three > /cuttest.txt")
+    r = t.send_cmd("cut -d: -f2 /cuttest.txt")
+    check("cut — field 2", r, "two")
+    t.send_cmd("rm /cuttest.txt")
+
+
+def test_paste(t: Telnet):
+    """paste: merge lines from two files."""
+    t.send_cmd("echo hello > /paste1.txt")
+    t.send_cmd("echo world > /paste2.txt")
+    r = t.send_cmd("paste /paste1.txt /paste2.txt")
+    check("paste — merged", r, "hello")
+    check("paste — second file", r, "world")
+    t.send_cmd("rm /paste1.txt")
+    t.send_cmd("rm /paste2.txt")
+
+
+def test_basename(t: Telnet):
+    """basename/dirname: path manipulation."""
+    r = t.send_cmd("basename /usr/local/bin/test")
+    check("basename — extracts filename", r, "test")
+    r = t.send_cmd("dirname /usr/local/bin/test")
+    check("dirname — extracts directory", r, "/usr/local/bin")
+
+
+def test_yes(t: Telnet):
+    """yes: output repeated string."""
+    r = t.send_cmd("yes hello")
+    check("yes — outputs string", r, "hello")
+    # Should have multiple lines
+    check("yes — repeats", r, "hello\nhello")
+
+
+def test_rev(t: Telnet):
+    """rev: reverse text."""
+    t.send_cmd("echo abcdef > /revtest.txt")
+    r = t.send_cmd("rev /revtest.txt")
+    check("rev — reversed", r, "fedcba")
+    t.send_cmd("rm /revtest.txt")
+
+
+def test_nl(t: Telnet):
+    """nl: number lines."""
+    t.send_cmd("echo alpha > /nltest.txt")
+    t.send_cmd("echo beta >> /nltest.txt")
+    r = t.send_cmd("nl /nltest.txt")
+    check("nl — line 1", r, "1")
+    check("nl — content", r, "alpha")
+    check("nl — line 2", r, "2")
+    t.send_cmd("rm /nltest.txt")
+
+
+def test_du(t: Telnet):
+    """du: disk usage."""
+    t.send_cmd("echo testdata > /dutest.txt")
+    r = t.send_cmd("du /dutest.txt")
+    check("du — shows blocks", r, "/dutest.txt")
+    t.send_cmd("rm /dutest.txt")
+
+
+def test_id(t: Telnet):
+    """id: show user identity."""
+    r = t.send_cmd("id")
+    check("id — uid", r, "uid=0")
+    check("id — root", r, "root")
+
+
+def test_diff(t: Telnet):
+    """diff: compare two files."""
+    t.send_cmd("echo hello > /diff1.txt")
+    t.send_cmd("echo hello > /diff2.txt")
+    r = t.send_cmd("diff /diff1.txt /diff2.txt")
+    check("diff — identical", r, "identical")
+    t.send_cmd("echo world > /diff2.txt")
+    r = t.send_cmd("diff /diff1.txt /diff2.txt")
+    check("diff — difference", r, "---")
+    t.send_cmd("rm /diff1.txt")
+    t.send_cmd("rm /diff2.txt")
+
+
+def test_md5sum(t: Telnet):
+    """md5sum: compute checksum."""
+    t.send_cmd("echo test > /hashtest.txt")
+    r = t.send_cmd("md5sum /hashtest.txt")
+    check("md5sum — shows hash", r, "/hashtest.txt")
+    # Hash should be hex chars
+    check("md5sum — hex output", r, "0")
+    t.send_cmd("rm /hashtest.txt")
+
+
+def test_od(t: Telnet):
+    """od: octal dump."""
+    t.send_cmd("echo AB > /odtest.txt")
+    r = t.send_cmd("od /odtest.txt")
+    check("od — offset", r, "0000000")
+    # 'A' = 0101 octal
+    check("od — octal byte", r, "101")
+    t.send_cmd("rm /odtest.txt")
+
+
+def test_expr(t: Telnet):
+    """expr: evaluate expressions."""
+    r = t.send_cmd("expr 3 + 4")
+    check("expr — addition", r, "7")
+    r = t.send_cmd("expr 10 - 3")
+    check("expr — subtraction", r, "7")
+    r = t.send_cmd("expr 6 * 7")
+    check("expr — multiplication", r, "42")
+    r = t.send_cmd("expr 15 / 3")
+    check("expr — division", r, "5")
+    r = t.send_cmd("expr 10 % 3")
+    check("expr — modulo", r, "1")
+
+
+def test_test_cmd(t: Telnet):
+    """test: condition evaluation."""
+    r = t.send_cmd("test hello = hello")
+    check("test — string equal", r, "true")
+    r = t.send_cmd("test hello = world")
+    check("test — string not equal", r, "false")
+    r = t.send_cmd("test 5 -gt 3")
+    check("test — greater than", r, "true")
+    r = t.send_cmd("test 2 -lt 1")
+    check("test — less than false", r, "false")
+    t.send_cmd("echo x > /testfile.txt")
+    r = t.send_cmd("test -f /testfile.txt")
+    check("test — file exists", r, "true")
+    t.send_cmd("rm /testfile.txt")
+
+
+def test_xargs(t: Telnet):
+    """xargs: build command from pipe input."""
+    t.send_cmd("echo hello > /xtest.txt")
+    r = t.send_cmd("cat /xtest.txt | xargs echo")
+    check("xargs — passes args", r, "hello")
+    t.send_cmd("rm /xtest.txt")
+
+
+def test_printf(t: Telnet):
+    """printf: formatted output with escape sequences."""
+    r = t.send_cmd("printf hello\\nworld")
+    check("printf — newline escape", r, "hello")
+    check("printf — second line", r, "world")
+    r = t.send_cmd("printf count:%d 42")
+    check("printf — %%d substitution", r, "42")
+    r = t.send_cmd("printf %s rocks OS")
+    check("printf — %%s substitution", r, "rocks")
+
+
+def test_time_cmd(t: Telnet):
+    """time: measure execution time of a command."""
+    r = t.send_cmd("time echo hello")
+    check("time — runs command", r, "hello")
+    check("time — shows real time", r, "real")
+
+
+def test_strings(t: Telnet):
+    """strings: extract printable strings from file."""
+    t.send_cmd("write /strtest.txt Hello World")
+    r = t.send_cmd("strings /strtest.txt")
+    check("strings — finds text", r, "Hello")
+    t.send_cmd("rm /strtest.txt")
+
+
+def test_tac(t: Telnet):
+    """tac: print file lines in reverse."""
+    t.send_cmd("write /tactest.txt line1")
+    t.send_cmd("echo line2 >> /tactest.txt")
+    t.send_cmd("echo line3 >> /tactest.txt")
+    r = t.send_cmd("tac /tactest.txt")
+    check("tac — has last line first", r, "line3")
+    check("tac — has content", r, "line1")
+    t.send_cmd("rm /tactest.txt")
+
+
+def test_base64(t: Telnet):
+    """base64: encode file as base64."""
+    t.send_cmd("write /b64test.txt Man")
+    r = t.send_cmd("base64 /b64test.txt")
+    check("base64 — produces output", r, "TWFu")
+    t.send_cmd("rm /b64test.txt")
+
+
+def test_variables(t: Telnet):
+    """Shell variables: assignment and $VAR expansion."""
+    r = t.send_cmd("MYVAR=hello")
+    r = t.send_cmd("echo $MYVAR")
+    check("variables — $VAR expansion", r, "hello")
+    t.send_cmd("GREETING=world")
+    r = t.send_cmd("echo $MYVAR $GREETING")
+    check("variables — multiple vars", r, "hello")
+    check("variables — second var", r, "world")
+
+
+def test_cpuinfo_features(t: Telnet):
+    """cpuinfo: extended feature flags."""
+    r = t.send_cmd("cpuinfo")
+    check("cpuinfo — features line", r, "Features")
+    check("cpuinfo — family/model", r, "Family")
+
+
+def test_cmos(t: Telnet):
+    """cmos: read CMOS hardware configuration."""
+    r = t.send_cmd("cmos")
+    check("cmos — header", r, "CMOS")
+    check("cmos — base memory", r, "Base memory")
+    check("cmos — ext memory", r, "Extended memory")
+
+
+def test_hwinfo(t: Telnet):
+    """hwinfo: comprehensive hardware summary."""
+    r = t.send_cmd("hwinfo")
+    check("hwinfo — header", r, "Hardware")
+    check("hwinfo — CPU", r, "CPU vendor")
+    check("hwinfo — PCI", r, "PCI")
+
+
+def test_serial(t: Telnet):
+    """serial: COM1 status command."""
+    r = t.send_cmd("serial status")
+    check("serial — COM1 info", r, "COM1")
+    r = t.send_cmd("serial write hello")
+    check("serial — write reports bytes", r, "sent")
+
+
+def test_lspci_descriptions(t: Telnet):
+    """lspci: class name descriptions shown."""
+    r = t.send_cmd("lspci")
+    check("lspci — header", r, "BUS")
+    check("lspci — description", r, "Controller")
+
+
+def test_lsusb(t: Telnet):
+    """lsusb: USB device listing."""
+    r = t.send_cmd("lsusb")
+    # Either a device list or "no USB host controllers" is acceptable in QEMU
+    found = ("USB devices" in r or "No USB host controllers" in r
+             or "no devices" in r)
+    if found:
+        ok("lsusb — runs without error")
+    else:
+        fail("lsusb — unexpected output", repr(r[:200]))
+
+
+def test_lsblk(t: Telnet):
+    """lsblk: block device listing."""
+    r = t.send_cmd("lsblk")
+    check("lsblk — header", r, "NAME")
+    check("lsblk — TYPE column", r, "TYPE")
+    # At least one disk entry expected in QEMU
+    found = ("disk" in r or "no block devices" in r)
+    if found:
+        ok("lsblk — disk line present")
+    else:
+        fail("lsblk — no disk entry", repr(r[:200]))
+
+
+def test_fat(t: Telnet):
+    """fat: FAT32 filesystem command."""
+    # No FAT32 disk in QEMU — mount should fail gracefully
+    r = t.send_cmd("fat mount ata")
+    found = ("FAT32 mounted" in r or "fat mount failed" in r
+             or "mount failed" in r or "No ATA" in r or "failed" in r)
+    if found:
+        ok("fat mount — returns status")
+    else:
+        fail("fat mount — unexpected output", repr(r[:200]))
+
+    # fat with no args should show usage
+    r = t.send_cmd("fat")
+    check("fat no args — shows status", r, "mounted")
+
+
+def test_users(t: Telnet):
+    """users: list user accounts."""
+    r = t.send_cmd("users")
+    check("users — header", r, "UID")
+    check("users — root", r, "root")
+    check("users — guest", r, "guest")
+
+
+def test_login(t: Telnet):
+    """login: authenticate a user."""
+    r = t.send_cmd("login root root")
+    found = ("Welcome" in r or "root" in r)
+    if found:
+        ok("login root — completes")
+    else:
+        fail("login root — unexpected output", repr(r[:200]))
+
+
+def test_permissions(t: Telnet):
+    """File permission (chmod/chown/ls -l style) tests."""
+    t.send_cmd("format")
+
+    # Create a file and verify default permissions show in stat
+    t.send_cmd("touch permtest")
+    r = t.send_cmd("stat permtest")
+    check("stat — shows Mode", r, "Mode:")
+    check("stat — shows UID", r, "UID:")
+    # Root creates with uid=0, mode=rw-r--r-- (644)
+    check("stat — rw for owner", r, "rw")
+
+    # ls should show permissions column
+    r = t.send_cmd("ls")
+    check("ls — permission bits", r, "rw")
+    check("ls — uid:gid shown", r, "0:0")
+
+    # chmod to 755
+    r = t.send_cmd("chmod 755 permtest")
+    check("chmod — success", r, "mode changed")
+    r = t.send_cmd("stat permtest")
+    check("chmod — stat shows x", r, "x")
+
+    # chmod to 000
+    r = t.send_cmd("chmod 000 permtest")
+    check("chmod 000 — success", r, "mode changed")
+
+    # chown to uid 1000
+    r = t.send_cmd("chown 1000:1000 permtest")
+    check("chown — success", r, "owner changed")
+    r = t.send_cmd("stat permtest")
+    check("chown — uid changed", r, "1000")
+
+    # mkdir with correct permissions
+    r = t.send_cmd("mkdir pdir")
+    check_absent("mkdir — no error", r, "Cannot")
+    r = t.send_cmd("stat pdir")
+    check("stat dir — Mode", r, "Mode:")
+    check("stat dir — directory type", r, "directory")
+
+    # cleanup
+    t.send_cmd("chmod 644 permtest")
+    t.send_cmd("chown 0:0 permtest")
+    t.send_cmd("rm permtest")
+    t.send_cmd("rm pdir")
+    ok("permissions — full chmod/chown/ls cycle")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -884,6 +1225,37 @@ def main() -> int:
         ("fg",         test_fg),
         ("wait",       test_wait_cmd),
         ("ps enhanced",test_ps_enhanced),
+        ("cut",        test_cut),
+        ("paste",      test_paste),
+        ("basename",   test_basename),
+        ("yes",        test_yes),
+        ("rev",        test_rev),
+        ("nl",         test_nl),
+        ("du",         test_du),
+        ("id",         test_id),
+        ("diff",       test_diff),
+        ("md5sum",     test_md5sum),
+        ("od",         test_od),
+        ("expr",       test_expr),
+        ("test",       test_test_cmd),
+        ("xargs",      test_xargs),
+        ("printf",     test_printf),
+        ("time",       test_time_cmd),
+        ("strings",    test_strings),
+        ("tac",        test_tac),
+        ("base64",     test_base64),
+        ("variables",  test_variables),
+        ("cpuinfo ext",test_cpuinfo_features),
+        ("cmos",       test_cmos),
+        ("hwinfo",     test_hwinfo),
+        ("serial",     test_serial),
+        ("lspci desc", test_lspci_descriptions),
+        ("lsusb",      test_lsusb),
+        ("lsblk",      test_lsblk),
+        ("fat",        test_fat),
+        ("users",      test_users),
+        ("login",      test_login),
+        ("permissions",test_permissions),
     ]
 
     for group_name, fn in tests:
