@@ -3,7 +3,7 @@
 ## Project Overview
 **Timeline**: Multi-phase refactoring of bare-metal x86-64 OS kernel
 **Objective**: Eliminate direct kernel header dependencies from command-layer files, establishing clean architectural separation through libc + syscalls
-**Result**: ✅ **SUBSTANTIALLY COMPLETE** - 93% of command layer now uses only libc interface
+**Result**: ✅ **COMPLETE (with intentional subsystem exception)** - 91/92 command files are isolated via libc/syscalls; only `cmd_gui` remains intentionally kernel-coupled.
 
 ## Phase Breakdown
 
@@ -143,25 +143,26 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 
 ---
 
-### Phase 3 Group 3b: Specialized Commands (7 - ACCEPTED AS-IS)
-**Status**: Architectural assessment completed; remaining 7 commands have legitimate kernel coupling
+### Phase 3 Group 3b: Specialized Commands (Hard Isolation Completed)
+**Status**: Isolation completed for all practical specialized commands except GUI runner.
 
-**Commands Remaining with Direct Kernel Access**:
-1. **cmd_gui** (7 headers): GUI subsystem - window manager, rendering, input
-2. **cmd_exec** (2 headers): ELF binary execution loader
-3. **cmd_fat** (3 headers): FAT32 filesystem operations
-4. **cmd_lsblk** (2 headers): Block device enumeration
-5. **cmd_tmux** (5 headers): Terminal multiplexer with VGA rendering
-6. **cmd_cc** (2 headers): Compiler infrastructure with code generation
-7. **cmd_run** (2 headers): Script execution engine
+**Commands isolated in Group 3b**:
+1. **cmd_exec**: isolated via ELF syscall wrapper
+2. **cmd_fat**: isolated via FAT syscall wrappers
+3. **cmd_lsblk**: isolated via storage/libc wrappers
+4. **cmd_tmux**: isolated via keyboard/shell-history/VGA syscall wrappers
+5. **cmd_cc**: isolated via compiler syscall wrapper
+6. **cmd_run**: isolated via script syscall wrapper
+7. **cmd_history/cmd_login/cmd_time/cmd_useradd**: isolated via shell-core wrappers
+8. **cmd_color/cmd_fbinfo**: isolated via display wrappers
 
-**Rationale for Keeping Coupled**:
-- **Subsystems**: GUI, tmux, and compiler are fundamentally kernel subsystems
-- **Deep system utilities**: ELF loader, script executor, filesystem access legitimately need kernel-level operations
-- **Efficiency**: Isolating these with syscalls would create excessive context switches
-- **Maintainability**: Subsystem APIs naturally live in kernel; wrapping them would complicate maintenance
+**Remaining direct kernel command**:
+1. **cmd_gui** (intentional): GUI desktop subsystem entrypoint
 
-**Documentation**: PHASE3_COMPLETION_ANALYSIS.md (181 lines)
+**Rationale for keeping cmd_gui coupled**:
+- It is subsystem orchestration code (not a generic utility command)
+- Wrapping its high-frequency GUI/render/input operations would duplicate the GUI API and add overhead
+- Background GUI kernel task already exists and reinforces subsystem ownership
 
 ---
 
@@ -170,16 +171,14 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 ### Command Migration Statistics
 | Category | Count | Status |
 |----------|-------|--------|
-| Total commands in shell | ~95 | N/A |
-| Successfully migrated to libc | 76 | ✅ 100% working |
-| Using only #include "libc.h" | 87 | ✅ 93% of shell |
-| Legitimate kernel coupling | 7 | ⚙️ Architectural reasons |
-| Remaining shell_cmds.h only | ~5 | 🟡 Shell infrastructure |
+| Total commands in shell | 92 | N/A |
+| Isolated via libc/syscalls | 91 | ✅ 98.9% |
+| Intentionally kernel-coupled | 1 | ⚙️ cmd_gui |
 
 ### Syscall Infrastructure
 | Aspect | Value |
 |--------|-------|
-| Total syscalls created | 154 |
+| Syscall constants defined | 91 |
 | Base syscalls (Phase 0) | 14 |
 | Extended syscalls (Phases 1-3a) | 135 |
 | Phase 1 (100-113) | 14 |
@@ -216,6 +215,7 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 | Phase 3 Group 2 (Hardware/Audio) | ~0.5 hours | 0c3d743 |
 | Phase 3 Group 3a (I/O/Memory) | ~1 hour | 7857677 |
 | Phase 3 Analysis | ~0.5 hours | 61e5c51 |
+| Phase 3 Group 3b isolation slices | ~2 hours | afa0f94, a2b5a20, 4fd3e28, 1b66172, 7343967 |
 | **Total** | **~6.5 hours** | **5 major commits** |
 
 ---
@@ -354,8 +354,8 @@ The kernel-userspace isolation project successfully achieved its objective:
 - Maintained 100% test pass rate through 5 phases
 - Documented architectural decisions and remaining coupling
 
-### Project Status: **SUBSTANTIALLY COMPLETE** ✅
-The isolation goal is achieved. The 7 remaining commands with direct kernel access have legitimate architectural reasons to remain coupled. Further isolation would require significant engineering effort with diminishing returns.
+### Project Status: **COMPLETE (with intentional subsystem exception)** ✅
+The isolation goal is achieved. Only `cmd_gui` remains directly coupled by design as subsystem orchestration code.
 
 ---
 
