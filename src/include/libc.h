@@ -89,6 +89,14 @@ struct libc_pmm_stats {
     uint32_t free_pages;
 };
 
+/* FAT32 compatibility constants/types for phase 3 group 3b */
+#define FAT32_MAX_NAME 256
+typedef enum {
+    FAT32_DISK_ATA = 0,
+    FAT32_DISK_AHCI = 1,
+    FAT32_DISK_USB0 = 2,
+} libc_fat32_disk_t;
+
 /* Low-level syscall shim used by libc wrappers. */
 uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
                       uint64_t a3, uint64_t a4, uint64_t a5);
@@ -168,6 +176,15 @@ int libc_serial_read(uint8_t *buf, int max);
 int libc_serial_write(const uint8_t *buf, int len);
 uint8_t libc_cmos_read_byte(uint8_t addr);
 int libc_pmm_get_stats(struct libc_pmm_stats *out);
+
+/* Specialized syscall-backed operations (phase 3 group 3b) */
+int libc_elf_exec(const char *path);
+int libc_script_exec(const char *path);
+int libc_fat32_mount(libc_fat32_disk_t disk, uint32_t part_lba);
+int libc_fat32_is_mounted(void);
+int libc_fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max);
+int libc_fat32_read_file(const char *path, void *buf, uint32_t max_size);
+int libc_fat32_file_size(const char *path);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -258,6 +275,7 @@ static inline struct libc_user_entry *users_get_table(void) {
 #define rtc_time libc_rtc_time
 #define mouse_state libc_mouse_state
 #define pmm_stats libc_pmm_stats
+#define fat32_disk_t libc_fat32_disk_t
 
 /* Hardware/audio compatibility wrappers */
 static inline void speaker_beep(uint32_t frequency, uint32_t duration_ms) {
@@ -285,6 +303,29 @@ static inline uint8_t cmos_read_byte(uint8_t addr) {
 }
 static inline int pmm_get_stats(struct libc_pmm_stats *out) {
     return libc_pmm_get_stats(out);
+}
+
+/* Specialized compatibility wrappers */
+static inline int elf_exec(const char *path) {
+    return libc_elf_exec(path);
+}
+static inline int script_exec(const char *path) {
+    return libc_script_exec(path);
+}
+static inline int fat32_mount(libc_fat32_disk_t disk, uint32_t part_lba) {
+    return libc_fat32_mount(disk, part_lba);
+}
+static inline int fat32_is_mounted(void) {
+    return libc_fat32_is_mounted();
+}
+static inline int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
+    return libc_fat32_list_dir(path, names, max);
+}
+static inline int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
+    return libc_fat32_read_file(path, buf, max_size);
+}
+static inline int fat32_file_size(const char *path) {
+    return libc_fat32_file_size(path);
 }
 
 /* Utility helper used by stat/chmod style tools. */

@@ -82,6 +82,15 @@
 #define SYS_CMOS_READ_BYTE  153
 #define SYS_PMM_GET_STATS   154
 
+/* Specialized syscalls (Phase 3 Group 3b) */
+#define SYS_ELF_EXEC        155
+#define SYS_SCRIPT_EXEC     156
+#define SYS_FAT_MOUNT       157
+#define SYS_FAT_IS_MOUNTED  158
+#define SYS_FAT_LIST_DIR    159
+#define SYS_FAT_READ_FILE   160
+#define SYS_FAT_FILE_SIZE   161
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

@@ -23,6 +23,9 @@
 #include "serial.h"
 #include "pmm.h"
 #include "io.h"
+#include "elf.h"
+#include "script.h"
+#include "fat32.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -561,6 +564,42 @@ static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
     return 0;
 }
 
+/* Specialized syscall handlers (Phase 3 Group 3b) */
+
+static uint64_t sys_elf_exec(uint64_t path_addr) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+    return (uint64_t)elf_exec(path);
+}
+
+static uint64_t sys_script_exec(uint64_t path_addr) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+    return (uint64_t)script_exec(path);
+}
+
+static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
+    return (uint64_t)fat32_mount((fat32_disk_t)disk, (uint32_t)part_lba);
+}
+
+static uint64_t sys_fat_is_mounted(void) {
+    return (uint64_t)fat32_is_mounted();
+}
+
+static uint64_t sys_fat_list_dir(uint64_t path_addr, uint64_t names_addr, uint64_t max) {
+    return (uint64_t)fat32_list_dir((const char *)path_addr,
+                                    (char (*)[FAT32_MAX_NAME])names_addr,
+                                    (int)max);
+}
+
+static uint64_t sys_fat_read_file(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size) {
+    return (uint64_t)fat32_read_file((const char *)path_addr, (void *)buf_addr, (uint32_t)max_size);
+}
+
+static uint64_t sys_fat_file_size(uint64_t path_addr) {
+    return (uint64_t)fat32_file_size((const char *)path_addr);
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -635,6 +674,13 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SERIAL_WRITE:  return sys_serial_write(a1, a2);
         case SYS_CMOS_READ_BYTE: return sys_cmos_read_byte(a1);
         case SYS_PMM_GET_STATS: return sys_pmm_get_stats(a1);
+        case SYS_ELF_EXEC:      return sys_elf_exec(a1);
+        case SYS_SCRIPT_EXEC:   return sys_script_exec(a1);
+        case SYS_FAT_MOUNT:     return sys_fat_mount(a1, a2);
+        case SYS_FAT_IS_MOUNTED: return sys_fat_is_mounted();
+        case SYS_FAT_LIST_DIR:  return sys_fat_list_dir(a1, a2, a3);
+        case SYS_FAT_READ_FILE: return sys_fat_read_file(a1, a2, a3);
+        case SYS_FAT_FILE_SIZE: return sys_fat_file_size(a1);
         default:         return (uint64_t)-1;
     }
 }

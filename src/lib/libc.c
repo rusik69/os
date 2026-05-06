@@ -298,6 +298,37 @@ int libc_pmm_get_stats(struct libc_pmm_stats *out) {
     return (int)libc_syscall(SYS_PMM_GET_STATS, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
 }
 
+/* Specialized syscall wrappers (phase 3 group 3b) */
+int libc_elf_exec(const char *path) {
+    return (int)libc_syscall(SYS_ELF_EXEC, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
+}
+
+int libc_script_exec(const char *path) {
+    return (int)libc_syscall(SYS_SCRIPT_EXEC, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
+}
+
+int libc_fat32_mount(libc_fat32_disk_t disk, uint32_t part_lba) {
+    return (int)libc_syscall(SYS_FAT_MOUNT, (uint64_t)disk, (uint64_t)part_lba, 0, 0, 0);
+}
+
+int libc_fat32_is_mounted(void) {
+    return (int)libc_syscall(SYS_FAT_IS_MOUNTED, 0, 0, 0, 0, 0);
+}
+
+int libc_fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
+    return (int)libc_syscall(SYS_FAT_LIST_DIR, (uint64_t)(uintptr_t)path,
+                             (uint64_t)(uintptr_t)names, (uint64_t)max, 0, 0);
+}
+
+int libc_fat32_read_file(const char *path, void *buf, uint32_t max_size) {
+    return (int)libc_syscall(SYS_FAT_READ_FILE, (uint64_t)(uintptr_t)path,
+                             (uint64_t)(uintptr_t)buf, (uint64_t)max_size, 0, 0);
+}
+
+int libc_fat32_file_size(const char *path) {
+    return (int)libc_syscall(SYS_FAT_FILE_SIZE, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
+}
+
 
 
 

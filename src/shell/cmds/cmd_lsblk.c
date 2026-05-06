@@ -1,6 +1,5 @@
 #include "shell_cmds.h"
 #include "libc.h"
-#include "ahci.h"
 #include "printf.h"
 
 void cmd_lsblk(void) {

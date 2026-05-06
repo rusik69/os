@@ -2,7 +2,6 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "elf.h"
 #include "libc.h"
 
 void cmd_exec(const char *args) {
