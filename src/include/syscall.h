@@ -59,6 +59,17 @@
 #define SYS_USB_LIST      136
 #define SYS_HWINFO_PRINT  137
 
+/* User/Session management syscalls (Phase 3 Group 1) */
+#define SYS_USER_FIND     138
+#define SYS_USER_ADD      139
+#define SYS_USER_DELETE   140
+#define SYS_USER_PASSWD   141
+#define SYS_SESSION_LOGIN  142
+#define SYS_SESSION_LOGOUT 143
+#define SYS_SESSION_GET   144
+#define SYS_USERS_COUNT   145
+#define SYS_USERS_GET_BY_INDEX 146
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

@@ -33,6 +33,28 @@ struct libc_process_info {
     char name[32];
 };
 
+/* Opaque user/session structures for phase 3 group 1. */
+#define USER_MAX_NAME    32
+#define USER_MAX_PASS    64
+#define USER_MAX_HOME    64
+#define USER_MAX_ENTRIES 16
+
+struct libc_user_entry {
+    char    username[USER_MAX_NAME];
+    uint32_t uid;
+    uint32_t gid;
+    char    home[USER_MAX_HOME];
+    uint32_t pw_hash;
+    int     active;
+};
+
+struct libc_user_session {
+    int     logged_in;
+    uint32_t uid;
+    uint32_t gid;
+    char    username[USER_MAX_NAME];
+};
+
 /* Low-level syscall shim used by libc wrappers. */
 uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
                       uint64_t a3, uint64_t a4, uint64_t a5);
@@ -88,6 +110,19 @@ int libc_vfs_create(const char *path, uint8_t type);
 int libc_vfs_unlink(const char *path);
 int libc_vfs_readdir(const char *path);
 
+/* User/session syscall-backed operations (phase 3 group 1) */
+int libc_user_find(const char *username, struct libc_user_entry *out);
+int libc_user_add(const char *username, uint32_t uid, const char *password);
+int libc_user_delete(const char *username);
+int libc_user_passwd(const char *username, const char *new_pass);
+int libc_session_login(const char *username, const char *password);
+void libc_session_logout(void);
+struct libc_user_session *libc_session_get(void);
+int libc_session_is_root(void);
+int libc_users_count(void);
+int libc_users_get_by_index(int idx, struct libc_user_entry *out);
+struct libc_user_entry *libc_users_get_table(void);
+
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
 static inline uint32_t ata_get_sectors(void) { return libc_ata_get_sectors(); }
@@ -136,6 +171,44 @@ static inline int vfs_stat(const char *path, struct vfs_stat *st) {
 static inline int vfs_create(const char *path, uint8_t type) { return libc_vfs_create(path, type); }
 static inline int vfs_unlink(const char *path) { return libc_vfs_unlink(path); }
 static inline int vfs_readdir(const char *path) { return libc_vfs_readdir(path); }
+
+/* User/session compatibility wrappers for command migration */
+static inline int user_find(const char *username, struct libc_user_entry *out) {
+    return libc_user_find(username, out);
+}
+static inline int user_add(const char *username, uint32_t uid, const char *password) {
+    return libc_user_add(username, uid, password);
+}
+static inline int user_delete(const char *username) {
+    return libc_user_delete(username);
+}
+static inline int user_passwd(const char *username, const char *new_pass) {
+    return libc_user_passwd(username, new_pass);
+}
+static inline int session_login(const char *username, const char *password) {
+    return libc_session_login(username, password);
+}
+static inline void session_logout(void) {
+    libc_session_logout();
+}
+static inline struct libc_user_session *session_get(void) {
+    return libc_session_get();
+}
+static inline int session_is_root(void) {
+    return libc_session_is_root();
+}
+
+/* Additional user management helpers */
+static inline int users_count(void) {
+    return libc_users_count();
+}
+static inline struct libc_user_entry *users_get_table(void) {
+    return libc_users_get_table();
+}
+
+/* Type aliases so command code doesn't need changes beyond #include "libc.h" */
+#define user_entry libc_user_entry
+#define user_session libc_user_session
 
 /* Utility helper used by stat/chmod style tools. */
 static inline void fs_mode_str(uint16_t mode, char out[10]) {

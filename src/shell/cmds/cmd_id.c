@@ -2,7 +2,7 @@
 
 #include "shell_cmds.h"
 #include "printf.h"
-#include "users.h"
+#include "libc.h"
 
 void cmd_id(const char *args) {
     (void)args;

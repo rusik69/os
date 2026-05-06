@@ -1,6 +1,6 @@
 #include "shell_cmds.h"
 #include "shell.h"
-#include "users.h"
+#include "libc.h"
 #include "string.h"
 #include "printf.h"
 

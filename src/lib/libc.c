@@ -210,3 +210,58 @@ int libc_vfs_unlink(const char *path) {
 int libc_vfs_readdir(const char *path) {
     return (int)libc_syscall(SYS_VFS_READDIR, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
 }
+
+/* User/session syscall wrappers (phase 3 group 1) */
+int libc_user_find(const char *username, struct libc_user_entry *out) {
+    return (int)libc_syscall(SYS_USER_FIND, (uint64_t)(uintptr_t)username,
+                             (uint64_t)(uintptr_t)out, 0, 0, 0);
+}
+
+int libc_user_add(const char *username, uint32_t uid, const char *password) {
+    return (int)libc_syscall(SYS_USER_ADD, (uint64_t)(uintptr_t)username,
+                             uid, (uint64_t)(uintptr_t)password, 0, 0);
+}
+
+int libc_user_delete(const char *username) {
+    return (int)libc_syscall(SYS_USER_DELETE, (uint64_t)(uintptr_t)username, 0, 0, 0, 0);
+}
+
+int libc_user_passwd(const char *username, const char *new_pass) {
+    return (int)libc_syscall(SYS_USER_PASSWD, (uint64_t)(uintptr_t)username,
+                             (uint64_t)(uintptr_t)new_pass, 0, 0, 0);
+}
+
+int libc_session_login(const char *username, const char *password) {
+    return (int)libc_syscall(SYS_SESSION_LOGIN, (uint64_t)(uintptr_t)username,
+                             (uint64_t)(uintptr_t)password, 0, 0, 0);
+}
+
+void libc_session_logout(void) {
+    (void)libc_syscall(SYS_SESSION_LOGOUT, 0, 0, 0, 0, 0);
+}
+
+struct libc_user_session *libc_session_get(void) {
+    return (struct libc_user_session *)libc_syscall(SYS_SESSION_GET, 0, 0, 0, 0, 0);
+}
+
+int libc_session_is_root(void) {
+    struct libc_user_session *s = libc_session_get();
+    return (s && s->logged_in && s->uid == 0) ? 1 : 0;
+}
+
+int libc_users_count(void) {
+    return (int)libc_syscall(SYS_USERS_COUNT, 0, 0, 0, 0, 0);
+}
+
+int libc_users_get_by_index(int idx, struct libc_user_entry *out) {
+    return (int)libc_syscall(SYS_USERS_GET_BY_INDEX, (uint64_t)idx,
+                             (uint64_t)(uintptr_t)out, 0, 0, 0);
+}
+
+/* Return a pointer to the kernel's user table. Since kernel and userspace share
+ * the same address space in this simple OS, this is a direct pointer. */
+struct libc_user_entry *libc_users_get_table(void) {
+    return (struct libc_user_entry *)libc_syscall(SYS_USERS_COUNT, 1, 0, 0, 0, 0);
+}
+
+

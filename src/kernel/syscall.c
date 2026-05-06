@@ -15,6 +15,7 @@
 #include "e1000.h"
 #include "pci.h"
 #include "usb.h"
+#include "users.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -412,6 +413,71 @@ static uint64_t sys_hwinfo_print(void) {
     return 0;
 }
 
+/* ── User/Session syscall handlers (Phase 3 Group 1) ─────── */
+
+static uint64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
+    const char *username = (const char *)name_addr;
+    struct user_entry *out = (struct user_entry *)out_addr;
+    if (!username || !out) return (uint64_t)-1;
+    return (uint64_t)user_find(username, out);
+}
+
+static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_addr) {
+    const char *username = (const char *)name_addr;
+    const char *password = (const char *)pass_addr;
+    if (!username || !password) return (uint64_t)-1;
+    return (uint64_t)user_add(username, (uint32_t)uid, password);
+}
+
+static uint64_t sys_user_delete(uint64_t name_addr) {
+    const char *username = (const char *)name_addr;
+    if (!username) return (uint64_t)-1;
+    return (uint64_t)user_delete(username);
+}
+
+static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
+    const char *username = (const char *)name_addr;
+    const char *new_pass = (const char *)pass_addr;
+    if (!username || !new_pass) return (uint64_t)-1;
+    return (uint64_t)user_passwd(username, new_pass);
+}
+
+static uint64_t sys_session_login(uint64_t name_addr, uint64_t pass_addr) {
+    const char *username = (const char *)name_addr;
+    const char *password = (const char *)pass_addr;
+    if (!username || !password) return (uint64_t)-1;
+    return (uint64_t)session_login(username, password);
+}
+
+static uint64_t sys_session_logout(void) {
+    session_logout();
+    return 0;
+}
+
+static uint64_t sys_session_get(void) {
+    struct user_session *s = session_get();
+    return (uint64_t)(uintptr_t)s;
+}
+
+static uint64_t sys_users_count(uint64_t mode) {
+    if (mode == 0) {
+        return (uint64_t)users_count();
+    } else if (mode == 1) {
+        /* Return pointer to kernel's user table for direct access */
+        return (uint64_t)(uintptr_t)users_get_table();
+    }
+    return (uint64_t)-1;
+}
+
+static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
+    struct user_entry *out = (struct user_entry *)out_addr;
+    struct user_entry *tbl = users_get_table();
+    int max = users_count();
+    if (!out || (int)idx < 0 || (int)idx >= max) return (uint64_t)-1;
+    *out = tbl[(int)idx];
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -469,6 +535,15 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_PCI_LIST:      return sys_pci_list();
         case SYS_USB_LIST:      return sys_usb_list();
         case SYS_HWINFO_PRINT:  return sys_hwinfo_print();
+        case SYS_USER_FIND:     return sys_user_find(a1, a2);
+        case SYS_USER_ADD:      return sys_user_add(a1, a2, a3);
+        case SYS_USER_DELETE:   return sys_user_delete(a1);
+        case SYS_USER_PASSWD:   return sys_user_passwd(a1, a2);
+        case SYS_SESSION_LOGIN: return sys_session_login(a1, a2);
+        case SYS_SESSION_LOGOUT: return sys_session_logout();
+        case SYS_SESSION_GET:   return sys_session_get();
+        case SYS_USERS_COUNT:   return sys_users_count(a1);
+        case SYS_USERS_GET_BY_INDEX: return sys_users_get_by_index(a1, a2);
         default:         return (uint64_t)-1;
     }
 }
