@@ -241,6 +241,7 @@ void libc_shell_tab_complete_telnet(char *buf, int *len, void *session);
 void libc_vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col);
 void libc_vga_set_cursor(uint16_t row, uint16_t col);
 void libc_vga_clear(void);
+int libc_gui_shell_run(void);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -415,6 +416,9 @@ static inline void vga_set_cursor(uint16_t row, uint16_t col) {
 }
 static inline void vga_clear(void) {
     libc_vga_clear();
+}
+static inline int gui_shell_run(void) {
+    return libc_gui_shell_run();
 }
 
 /* Utility helper used by stat/chmod style tools. */

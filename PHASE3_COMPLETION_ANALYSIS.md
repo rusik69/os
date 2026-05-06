@@ -3,14 +3,14 @@
 ## Summary
 Objective: Remove direct kernel header dependencies from command-layer files, enforcing cmd -> libc -> syscall -> kernel layering.
 
-Result: COMPLETED for all practical command categories.
-- 91/92 shell command files are isolated behind libc/syscalls.
-- 1/92 command (`cmd_gui`) remains intentionally kernel-coupled as a GUI subsystem entrypoint.
+Result: COMPLETED.
+- 92/92 shell command files are isolated behind libc/syscalls.
+- No command files directly include kernel subsystem headers.
 
 Current measured state (from include audit):
 - Total command files: 92
-- Remaining direct-kernel command files: 1
-- Isolated command files: 91
+- Remaining direct-kernel command files: 0
+- Isolated command files: 92
 
 ## Phase Completion
 
@@ -51,6 +51,7 @@ Hard isolation completed for:
 - cmd_color, cmd_fbinfo
 - cmd_cc
 - cmd_tmux
+- cmd_gui
 
 Commits:
 - afa0f94 refactor: phase 3 group 3b - isolate exec/fat/lsblk/run via libc syscalls
@@ -58,34 +59,31 @@ Commits:
 - 4fd3e28 refactor: phase 3 group 3b - isolate color/fbinfo via display syscalls
 - 1b66172 refactor: phase 3 group 3b - isolate cmd_cc via compiler syscall
 - 7343967 refactor: phase 3 group 3b - isolate cmd_tmux via syscall/libc boundary
+- (current) refactor: phase 3 group 3b - isolate cmd_gui via gui_shell syscall entry
 
 Validation after each slice: build clean, tests 95/95.
 
-## Remaining Direct-Kernel Command
+## cmd_gui Isolation Outcome
 
-### cmd_gui
-File: src/shell/cmds/cmd_gui.c
+`cmd_gui` was isolated by moving its heavy desktop/event-loop implementation into the GUI subsystem (`src/gui/gui_shell.c`) and exposing a single syscall/libc entry from the command layer.
 
-Reason it remains coupled:
-- It is an embedded GUI desktop runner with direct event loop orchestration, drag logic, taskbar rendering, focus and widget dispatch.
-- It drives high-frequency framebuffer/UI primitives where syscall-per-primitive wrapping would add overhead and duplicate the existing GUI subsystem API.
-- The system already has a dedicated background GUI kernel task (`gui_task`), reinforcing this as subsystem code rather than a general utility command.
+Command-layer result:
+- `src/shell/cmds/cmd_gui.c` is now a thin wrapper through libc/syscall only.
 
-Decision:
-- Keep `cmd_gui` intentionally coupled.
-- Treat this as a subsystem boundary exception, not an isolation gap.
+Subsystem result:
+- GUI logic remains in kernel-side GUI modules where it belongs.
 
 ## Final Metrics
 
 - Command files total: 92
-- Isolated through libc/syscalls: 91 (98.9%)
-- Intentionally coupled: 1 (`cmd_gui`)
+- Isolated through libc/syscalls: 92 (100%)
+- Intentionally coupled command files: 0
 - Syscall constants defined: 91 (sparse IDs in range 0..176)
 - Test status: 95/95 passing
 - Regression status: none observed
 
 ## Conclusion
 
-The kernel-userspace isolation program is functionally complete.
+The kernel-userspace isolation program is complete.
 
-General-purpose commands are now fully routed through libc/syscalls, and only one subsystem-level command (`cmd_gui`) remains deliberately kernel-coupled for architectural and performance reasons.
+All command-layer files are now routed through libc/syscalls; subsystem-specific logic remains in kernel-side modules, not in command files.

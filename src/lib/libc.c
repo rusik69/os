@@ -401,6 +401,10 @@ void libc_vga_clear(void) {
     (void)libc_syscall(SYS_VGA_CLEAR, 0, 0, 0, 0, 0);
 }
 
+int libc_gui_shell_run(void) {
+    return (int)libc_syscall(SYS_GUI_SHELL_RUN, 0, 0, 0, 0, 0);
+}
+
 
 
 

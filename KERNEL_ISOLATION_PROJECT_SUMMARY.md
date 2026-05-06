@@ -3,7 +3,7 @@
 ## Project Overview
 **Timeline**: Multi-phase refactoring of bare-metal x86-64 OS kernel
 **Objective**: Eliminate direct kernel header dependencies from command-layer files, establishing clean architectural separation through libc + syscalls
-**Result**: ✅ **COMPLETE (with intentional subsystem exception)** - 91/92 command files are isolated via libc/syscalls; only `cmd_gui` remains intentionally kernel-coupled.
+**Result**: ✅ **COMPLETE** - 92/92 command files are isolated via libc/syscalls.
 
 ## Phase Breakdown
 
@@ -144,7 +144,7 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 ---
 
 ### Phase 3 Group 3b: Specialized Commands (Hard Isolation Completed)
-**Status**: Isolation completed for all practical specialized commands except GUI runner.
+**Status**: Isolation completed for all specialized command files, including GUI runner entrypoint.
 
 **Commands isolated in Group 3b**:
 1. **cmd_exec**: isolated via ELF syscall wrapper
@@ -156,13 +156,9 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 7. **cmd_history/cmd_login/cmd_time/cmd_useradd**: isolated via shell-core wrappers
 8. **cmd_color/cmd_fbinfo**: isolated via display wrappers
 
-**Remaining direct kernel command**:
-1. **cmd_gui** (intentional): GUI desktop subsystem entrypoint
-
-**Rationale for keeping cmd_gui coupled**:
-- It is subsystem orchestration code (not a generic utility command)
-- Wrapping its high-frequency GUI/render/input operations would duplicate the GUI API and add overhead
-- Background GUI kernel task already exists and reinforces subsystem ownership
+**GUI finalization**:
+1. **cmd_gui** now isolates through a single syscall/libc entry.
+2. Desktop/event-loop implementation was moved into GUI subsystem source (`src/gui/gui_shell.c`).
 
 ---
 
@@ -172,8 +168,8 @@ case SYS_FS_WRITE: return sys_fs_write(a1, a2, a3);
 | Category | Count | Status |
 |----------|-------|--------|
 | Total commands in shell | 92 | N/A |
-| Isolated via libc/syscalls | 91 | ✅ 98.9% |
-| Intentionally kernel-coupled | 1 | ⚙️ cmd_gui |
+| Isolated via libc/syscalls | 92 | ✅ 100% |
+| Intentionally kernel-coupled command files | 0 | ✅ |
 
 ### Syscall Infrastructure
 | Aspect | Value |
@@ -354,8 +350,8 @@ The kernel-userspace isolation project successfully achieved its objective:
 - Maintained 100% test pass rate through 5 phases
 - Documented architectural decisions and remaining coupling
 
-### Project Status: **COMPLETE (with intentional subsystem exception)** ✅
-The isolation goal is achieved. Only `cmd_gui` remains directly coupled by design as subsystem orchestration code.
+### Project Status: **COMPLETE** ✅
+The isolation goal is fully achieved at the command layer.
 
 ---
 

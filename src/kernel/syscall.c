@@ -30,6 +30,7 @@
 #include "shell.h"
 #include "cc.h"
 #include "heap.h"
+#include "gui_shell.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -741,6 +742,11 @@ static uint64_t sys_vga_clear(void) {
     return 0;
 }
 
+static uint64_t sys_gui_shell_run(void) {
+    gui_shell_run();
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -837,6 +843,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_PUT_ENTRY_AT: return sys_vga_put_entry_at(a1, a2, a3, a4);
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
+        case SYS_GUI_SHELL_RUN: return sys_gui_shell_run();
         default:         return (uint64_t)-1;
     }
 }

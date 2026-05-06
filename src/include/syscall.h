@@ -113,6 +113,7 @@
 #define SYS_VGA_PUT_ENTRY_AT    174
 #define SYS_VGA_SET_CURSOR      175
 #define SYS_VGA_CLEAR           176
+#define SYS_GUI_SHELL_RUN       177
 
 void syscall_init(void);
 
