@@ -347,6 +347,14 @@ void libc_shell_exec_cmd(const char *cmd, const char *args) {
                        (uint64_t)(uintptr_t)args, 0, 0, 0);
 }
 
+void libc_vga_set_color(uint8_t fg, uint8_t bg) {
+    (void)libc_syscall(SYS_VGA_SET_COLOR, (uint64_t)fg, (uint64_t)bg, 0, 0, 0);
+}
+
+int libc_vga_get_fb_info(struct libc_fb_info *out) {
+    return (int)libc_syscall(SYS_VGA_GET_FB_INFO, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
+}
+
 
 
 

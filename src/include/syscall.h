@@ -97,6 +97,10 @@
 #define SYS_SHELL_VAR_SET      164
 #define SYS_SHELL_EXEC_CMD     165
 
+/* Display syscalls (Phase 3 Group 3b, color/fbinfo slice) */
+#define SYS_VGA_SET_COLOR      166
+#define SYS_VGA_GET_FB_INFO    167
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

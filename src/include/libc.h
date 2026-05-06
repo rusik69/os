@@ -10,6 +10,8 @@
 #define FS_TYPE_DIR    2
 #define FS_MAX_NAME    28
 #define PROCESS_MAX    64
+#define VGA_WIDTH      80
+#define VGA_HEIGHT     25
 
 struct vfs_stat {
     uint32_t size;
@@ -87,6 +89,14 @@ struct libc_pmm_stats {
     uint32_t total_pages;
     uint32_t used_pages;
     uint32_t free_pages;
+};
+
+struct libc_fb_info {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint8_t bpp;
+    uint8_t is_framebuffer;
 };
 
 /* FAT32 compatibility constants/types for phase 3 group 3b */
@@ -191,6 +201,10 @@ void libc_shell_history_show(void);
 void libc_shell_read_line(char *buf, int max);
 void libc_shell_var_set(const char *name, const char *value);
 void libc_shell_exec_cmd(const char *cmd, const char *args);
+
+/* Display syscall-backed operations (phase 3 group 3b color/fbinfo slice) */
+void libc_vga_set_color(uint8_t fg, uint8_t bg);
+int libc_vga_get_fb_info(struct libc_fb_info *out);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -332,6 +346,12 @@ static inline int fat32_read_file(const char *path, void *buf, uint32_t max_size
 }
 static inline int fat32_file_size(const char *path) {
     return libc_fat32_file_size(path);
+}
+static inline void vga_set_color(uint8_t fg, uint8_t bg) {
+    libc_vga_set_color(fg, bg);
+}
+static inline int vga_get_fb_info(struct libc_fb_info *out) {
+    return libc_vga_get_fb_info(out);
 }
 
 /* Utility helper used by stat/chmod style tools. */

@@ -58,6 +58,14 @@ struct pmm_stats {
     uint32_t free_pages;
 };
 
+struct syscall_fb_info {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;
+    uint8_t bpp;
+    uint8_t is_framebuffer;
+};
+
 /* MSR numbers */
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -628,6 +636,26 @@ static uint64_t sys_shell_exec_cmd(uint64_t cmd_addr, uint64_t args_addr) {
     return 0;
 }
 
+static uint64_t sys_vga_set_color(uint64_t fg, uint64_t bg) {
+    vga_set_color((uint8_t)fg, (uint8_t)bg);
+    return 0;
+}
+
+static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
+    struct syscall_fb_info *out = (struct syscall_fb_info *)out_addr;
+    if (!out) return (uint64_t)-1;
+    out->is_framebuffer = (uint8_t)(vga_is_framebuffer() ? 1 : 0);
+    if (out->is_framebuffer) {
+        vga_get_framebuffer_info(&out->width, &out->height, &out->pitch, &out->bpp);
+    } else {
+        out->width = 0;
+        out->height = 0;
+        out->pitch = 0;
+        out->bpp = 0;
+    }
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -713,6 +741,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SHELL_READ_LINE: return sys_shell_read_line(a1, a2);
         case SYS_SHELL_VAR_SET: return sys_shell_var_set(a1, a2);
         case SYS_SHELL_EXEC_CMD: return sys_shell_exec_cmd(a1, a2);
+        case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
+        case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
         default:         return (uint64_t)-1;
     }
 }

@@ -1,7 +1,7 @@
 /* cmd_color.c — color command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "vga.h"
+#include "libc.h"
 
 void cmd_color(const char *args) {
     if (!args) { kprintf("Usage: color <fg> [bg] (0-15)\n"); return; }
