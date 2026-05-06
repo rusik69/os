@@ -1,7 +1,7 @@
 /* cmd_date.c — date command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "rtc.h"
+#include "libc.h"
 
 void cmd_date(void) {
     struct rtc_time t;

@@ -2,7 +2,6 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "speaker.h"
 #include "libc.h"
 
 static uint32_t note_freq(const char *note) {

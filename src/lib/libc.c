@@ -264,4 +264,19 @@ struct libc_user_entry *libc_users_get_table(void) {
     return (struct libc_user_entry *)libc_syscall(SYS_USERS_COUNT, 1, 0, 0, 0, 0);
 }
 
+/* Hardware/audio syscall wrappers (phase 3 group 2) */
+void libc_speaker_beep(uint32_t frequency, uint32_t duration_ms) {
+    (void)libc_syscall(SYS_SPEAKER_BEEP, (uint64_t)frequency, (uint64_t)duration_ms, 0, 0, 0);
+}
+
+int libc_rtc_get_time(struct libc_rtc_time *out) {
+    return (int)libc_syscall(SYS_RTC_GET_TIME, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
+}
+
+void libc_acpi_shutdown(void) {
+    (void)libc_syscall(SYS_ACPI_SHUTDOWN, 0, 0, 0, 0, 0);
+}
+
+
+
 

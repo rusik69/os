@@ -70,6 +70,11 @@
 #define SYS_USERS_COUNT   145
 #define SYS_USERS_GET_BY_INDEX 146
 
+/* Hardware/Audio syscalls (Phase 3 Group 2) */
+#define SYS_SPEAKER_BEEP  147
+#define SYS_RTC_GET_TIME  148
+#define SYS_ACPI_SHUTDOWN 149
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

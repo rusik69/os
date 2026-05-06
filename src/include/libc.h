@@ -55,6 +55,26 @@ struct libc_user_session {
     char    username[USER_MAX_NAME];
 };
 
+/* RTC time structure for phase 3 group 2 */
+struct libc_rtc_time {
+    uint16_t year;
+    uint8_t month;
+    uint8_t day;
+    uint8_t hour;
+    uint8_t minute;
+    uint8_t second;
+};
+
+/* Speaker note frequencies (from speaker.h) for phase 3 group 2 */
+#define NOTE_C4  262
+#define NOTE_D4  294
+#define NOTE_E4  330
+#define NOTE_F4  349
+#define NOTE_G4  392
+#define NOTE_A4  440
+#define NOTE_B4  494
+#define NOTE_C5  523
+
 /* Low-level syscall shim used by libc wrappers. */
 uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
                       uint64_t a3, uint64_t a4, uint64_t a5);
@@ -122,6 +142,11 @@ int libc_session_is_root(void);
 int libc_users_count(void);
 int libc_users_get_by_index(int idx, struct libc_user_entry *out);
 struct libc_user_entry *libc_users_get_table(void);
+
+/* Hardware/audio syscall-backed operations (phase 3 group 2) */
+void libc_speaker_beep(uint32_t frequency, uint32_t duration_ms);
+int libc_rtc_get_time(struct libc_rtc_time *out);
+void libc_acpi_shutdown(void);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -209,6 +234,18 @@ static inline struct libc_user_entry *users_get_table(void) {
 /* Type aliases so command code doesn't need changes beyond #include "libc.h" */
 #define user_entry libc_user_entry
 #define user_session libc_user_session
+#define rtc_time libc_rtc_time
+
+/* Hardware/audio compatibility wrappers */
+static inline void speaker_beep(uint32_t frequency, uint32_t duration_ms) {
+    libc_speaker_beep(frequency, duration_ms);
+}
+static inline int rtc_get_time(struct libc_rtc_time *out) {
+    return libc_rtc_get_time(out);
+}
+static inline void acpi_shutdown(void) {
+    libc_acpi_shutdown();
+}
 
 /* Utility helper used by stat/chmod style tools. */
 static inline void fs_mode_str(uint16_t mode, char out[10]) {

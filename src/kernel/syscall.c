@@ -16,6 +16,9 @@
 #include "pci.h"
 #include "usb.h"
 #include "users.h"
+#include "rtc.h"
+#include "acpi.h"
+#include "speaker.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -478,6 +481,25 @@ static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
     return 0;
 }
 
+/* Hardware/Audio syscall handlers (Phase 3 Group 2) */
+
+static uint64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
+    speaker_beep((uint32_t)frequency, (uint32_t)duration_ms);
+    return 0;
+}
+
+static uint64_t sys_rtc_get_time(uint64_t out_addr) {
+    struct rtc_time *out = (struct rtc_time *)out_addr;
+    if (!out) return (uint64_t)-1;
+    rtc_get_time(out);
+    return 0;
+}
+
+static uint64_t sys_acpi_shutdown(void) {
+    acpi_shutdown();
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -544,6 +566,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SESSION_GET:   return sys_session_get();
         case SYS_USERS_COUNT:   return sys_users_count(a1);
         case SYS_USERS_GET_BY_INDEX: return sys_users_get_by_index(a1, a2);
+        case SYS_SPEAKER_BEEP:  return sys_speaker_beep(a1, a2);
+        case SYS_RTC_GET_TIME:  return sys_rtc_get_time(a1);
+        case SYS_ACPI_SHUTDOWN: return sys_acpi_shutdown();
         default:         return (uint64_t)-1;
     }
 }

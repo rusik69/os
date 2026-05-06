@@ -1,7 +1,7 @@
 /* cmd_beep.c — beep command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "speaker.h"
+#include "libc.h"
 
 void cmd_beep(const char *args) {
     uint32_t freq = 1000;
