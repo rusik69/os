@@ -360,6 +360,47 @@ int libc_cc_compile(const char *inpath, const char *outpath) {
                              (uint64_t)(uintptr_t)outpath, 0, 0, 0);
 }
 
+char libc_keyboard_getchar(void) {
+    return (char)libc_syscall(SYS_KEYBOARD_GETCHAR, 0, 0, 0, 0, 0);
+}
+
+void libc_shell_history_add(const char *cmd_line) {
+    (void)libc_syscall(SYS_SHELL_HISTORY_ADD, (uint64_t)(uintptr_t)cmd_line, 0, 0, 0, 0);
+}
+
+int libc_shell_history_count(void) {
+    return (int)libc_syscall(SYS_SHELL_HISTORY_COUNT, 0, 0, 0, 0, 0);
+}
+
+const char *libc_shell_history_entry(int idx) {
+    return (const char *)(uintptr_t)libc_syscall(SYS_SHELL_HISTORY_ENTRY, (uint64_t)idx, 0, 0, 0, 0);
+}
+
+void libc_shell_tab_complete_telnet(char *buf, int *len, void *session) {
+    (void)libc_syscall(SYS_SHELL_TAB_COMPLETE,
+                       (uint64_t)(uintptr_t)buf,
+                       (uint64_t)(uintptr_t)len,
+                       (uint64_t)(uintptr_t)session,
+                       0, 0);
+}
+
+void libc_vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col) {
+    (void)libc_syscall(SYS_VGA_PUT_ENTRY_AT,
+                       (uint64_t)(uint8_t)c,
+                       (uint64_t)color,
+                       (uint64_t)row,
+                       (uint64_t)col,
+                       0);
+}
+
+void libc_vga_set_cursor(uint16_t row, uint16_t col) {
+    (void)libc_syscall(SYS_VGA_SET_CURSOR, (uint64_t)row, (uint64_t)col, 0, 0, 0);
+}
+
+void libc_vga_clear(void) {
+    (void)libc_syscall(SYS_VGA_CLEAR, 0, 0, 0, 0, 0);
+}
+
 
 
 

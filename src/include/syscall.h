@@ -104,6 +104,16 @@
 /* Compiler syscall (Phase 3 Group 3b, cmd_cc slice) */
 #define SYS_CC_COMPILE         168
 
+/* Tmux isolation syscalls (Phase 3 Group 3b, cmd_tmux slice) */
+#define SYS_KEYBOARD_GETCHAR    169
+#define SYS_SHELL_HISTORY_ADD   170
+#define SYS_SHELL_HISTORY_COUNT 171
+#define SYS_SHELL_HISTORY_ENTRY 172
+#define SYS_SHELL_TAB_COMPLETE  173
+#define SYS_VGA_PUT_ENTRY_AT    174
+#define SYS_VGA_SET_CURSOR      175
+#define SYS_VGA_CLEAR           176
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

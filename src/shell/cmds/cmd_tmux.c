@@ -15,14 +15,16 @@
  * Status bar at row 24 shows: [0:sh] [1:sh]* ...
  */
 
-#include "tmux.h"
-#include "vga.h"
-#include "keyboard.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
-#include "shell.h"
 #include "shell_cmds.h"
-#include "serial.h"
+
+#define TMUX_MAX_PANES  4
+#define TMUX_COLS       80
+#define TMUX_ROWS       24   /* 25 - 1 for status bar */
+#define TMUX_PREFIX     0x02 /* Ctrl-B */
+#define HISTORY_SIZE    16
 
 /* Per-pane screen buffer */
 typedef struct {
@@ -150,11 +152,12 @@ static void display_pane_region(Pane *p, int scr_top, int scr_bot) {
     for (int r = 0; r < rows; r++) {
         int pr = start_row + r;
         for (int c = 0; c < TMUX_COLS; c++) {
-            if (pr >= 0 && pr < TMUX_ROWS)
-                VGA_MEMORY[(scr_top + r) * VGA_WIDTH + c] = p->screen[pr][c];
-            else
-                VGA_MEMORY[(scr_top + r) * VGA_WIDTH + c] =
-                    (uint16_t)' ' | ((uint16_t)(VGA_LIGHT_GREY | (VGA_BLACK << 4)) << 8);
+            uint16_t cell = (pr >= 0 && pr < TMUX_ROWS)
+                                ? p->screen[pr][c]
+                                : ((uint16_t)' ' | ((uint16_t)(VGA_LIGHT_GREY | (VGA_BLACK << 4)) << 8));
+            char ch = (char)(cell & 0xFF);
+            uint8_t color = (uint8_t)((cell >> 8) & 0xFF);
+            vga_put_entry_at(ch, color, (uint16_t)(scr_top + r), (uint16_t)c);
         }
     }
 }
@@ -277,7 +280,7 @@ static void pane_exec(int pane_idx) {
     int saved_pane = active_pane;
     active_pane = pane_idx;
     kprintf_set_hook(tmux_output_hook, 0);
-    shell_exec_cmd(cmd, args);
+    libc_shell_exec_cmd(cmd, args);
     kprintf_set_hook(0, 0);
     active_pane = saved_pane;
 
@@ -455,7 +458,6 @@ void tmux_run(void) {
             /* Simple: just complete command names */
             /* (Reuse shell logic via kprintf hook) */
             kprintf_set_hook(tmux_output_hook, 0);
-            extern void shell_tab_complete_telnet(char *buf, int *len, void *session);
             /* We reuse the telnet version which uses kprintf */
             int old_active = active_pane;
             shell_tab_complete_telnet(p->cmd_buf, &p->cmd_len, 0);

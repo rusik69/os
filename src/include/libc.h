@@ -13,6 +13,31 @@
 #define VGA_WIDTH      80
 #define VGA_HEIGHT     25
 
+/* VGA colors mirrored from vga.h for command-side compatibility. */
+enum libc_vga_color {
+    VGA_BLACK = 0,
+    VGA_BLUE = 1,
+    VGA_GREEN = 2,
+    VGA_CYAN = 3,
+    VGA_RED = 4,
+    VGA_MAGENTA = 5,
+    VGA_BROWN = 6,
+    VGA_LIGHT_GREY = 7,
+    VGA_DARK_GREY = 8,
+    VGA_LIGHT_BLUE = 9,
+    VGA_LIGHT_GREEN = 10,
+    VGA_LIGHT_CYAN = 11,
+    VGA_LIGHT_RED = 12,
+    VGA_LIGHT_MAGENTA = 13,
+    VGA_YELLOW = 14,
+    VGA_WHITE = 15,
+};
+
+#define KEY_UP    ((char)0x80)
+#define KEY_DOWN  ((char)0x81)
+#define KEY_LEFT  ((char)0x82)
+#define KEY_RIGHT ((char)0x83)
+
 struct vfs_stat {
     uint32_t size;
     uint8_t  type;
@@ -208,6 +233,14 @@ int libc_vga_get_fb_info(struct libc_fb_info *out);
 
 /* Compiler syscall-backed operation (phase 3 group 3b cmd_cc slice) */
 int libc_cc_compile(const char *inpath, const char *outpath);
+char libc_keyboard_getchar(void);
+void libc_shell_history_add(const char *cmd_line);
+int libc_shell_history_count(void);
+const char *libc_shell_history_entry(int idx);
+void libc_shell_tab_complete_telnet(char *buf, int *len, void *session);
+void libc_vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col);
+void libc_vga_set_cursor(uint16_t row, uint16_t col);
+void libc_vga_clear(void);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -358,6 +391,30 @@ static inline int vga_get_fb_info(struct libc_fb_info *out) {
 }
 static inline int cc_compile(const char *inpath, const char *outpath) {
     return libc_cc_compile(inpath, outpath);
+}
+static inline char keyboard_getchar(void) {
+    return libc_keyboard_getchar();
+}
+static inline void shell_history_add(const char *cmd_line) {
+    libc_shell_history_add(cmd_line);
+}
+static inline int shell_history_count(void) {
+    return libc_shell_history_count();
+}
+static inline const char *shell_history_entry(int idx) {
+    return libc_shell_history_entry(idx);
+}
+static inline void shell_tab_complete_telnet(char *buf, int *len, void *session) {
+    libc_shell_tab_complete_telnet(buf, len, session);
+}
+static inline void vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col) {
+    libc_vga_put_entry_at(c, color, row, col);
+}
+static inline void vga_set_cursor(uint16_t row, uint16_t col) {
+    libc_vga_set_cursor(row, col);
+}
+static inline void vga_clear(void) {
+    libc_vga_clear();
 }
 
 /* Utility helper used by stat/chmod style tools. */

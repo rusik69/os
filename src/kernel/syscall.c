@@ -7,6 +7,7 @@
 #include "ahci.h"
 #include "vga.h"
 #include "timer.h"
+#include "keyboard.h"
 #include "printf.h"
 #include "io.h"
 #include "vmm.h"
@@ -697,6 +698,49 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     return 0;
 }
 
+static uint64_t sys_keyboard_getchar(void) {
+    return (uint64_t)(uint8_t)keyboard_getchar();
+}
+
+static uint64_t sys_shell_history_add(uint64_t cmd_addr) {
+    const char *cmd_line = (const char *)cmd_addr;
+    if (!cmd_line) return (uint64_t)-1;
+    shell_history_add(cmd_line);
+    return 0;
+}
+
+static uint64_t sys_shell_history_count(void) {
+    return (uint64_t)shell_history_count();
+}
+
+static uint64_t sys_shell_history_entry(uint64_t idx) {
+    return (uint64_t)(uintptr_t)shell_history_entry((int)idx);
+}
+
+static uint64_t sys_shell_tab_complete(uint64_t buf_addr, uint64_t len_addr, uint64_t session_addr) {
+    char *buf = (char *)buf_addr;
+    int *len = (int *)len_addr;
+    void *session = (void *)session_addr;
+    if (!buf || !len) return (uint64_t)-1;
+    shell_tab_complete_telnet(buf, len, session);
+    return 0;
+}
+
+static uint64_t sys_vga_put_entry_at(uint64_t ch, uint64_t color, uint64_t row, uint64_t col) {
+    vga_put_entry_at((char)(uint8_t)ch, (uint8_t)color, (uint16_t)row, (uint16_t)col);
+    return 0;
+}
+
+static uint64_t sys_vga_set_cursor(uint64_t row, uint64_t col) {
+    vga_set_cursor((uint16_t)row, (uint16_t)col);
+    return 0;
+}
+
+static uint64_t sys_vga_clear(void) {
+    vga_clear();
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -785,6 +829,14 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
         case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
         case SYS_CC_COMPILE: return sys_cc_compile(a1, a2);
+        case SYS_KEYBOARD_GETCHAR: return sys_keyboard_getchar();
+        case SYS_SHELL_HISTORY_ADD: return sys_shell_history_add(a1);
+        case SYS_SHELL_HISTORY_COUNT: return sys_shell_history_count();
+        case SYS_SHELL_HISTORY_ENTRY: return sys_shell_history_entry(a1);
+        case SYS_SHELL_TAB_COMPLETE: return sys_shell_tab_complete(a1, a2, a3);
+        case SYS_VGA_PUT_ENTRY_AT: return sys_vga_put_entry_at(a1, a2, a3, a4);
+        case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
+        case SYS_VGA_CLEAR: return sys_vga_clear();
         default:         return (uint64_t)-1;
     }
 }
