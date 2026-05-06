@@ -26,6 +26,7 @@
 #include "elf.h"
 #include "script.h"
 #include "fat32.h"
+#include "shell.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -600,6 +601,33 @@ static uint64_t sys_fat_file_size(uint64_t path_addr) {
     return (uint64_t)fat32_file_size((const char *)path_addr);
 }
 
+static uint64_t sys_shell_history_show(void) {
+    shell_history_show_entries();
+    return 0;
+}
+
+static uint64_t sys_shell_read_line(uint64_t buf_addr, uint64_t max) {
+    if (!buf_addr || max == 0) return (uint64_t)-1;
+    shell_read_line((char *)buf_addr, (int)max);
+    return 0;
+}
+
+static uint64_t sys_shell_var_set(uint64_t name_addr, uint64_t value_addr) {
+    const char *name = (const char *)name_addr;
+    const char *value = (const char *)value_addr;
+    if (!name || !value) return (uint64_t)-1;
+    shell_var_set(name, value);
+    return 0;
+}
+
+static uint64_t sys_shell_exec_cmd(uint64_t cmd_addr, uint64_t args_addr) {
+    const char *cmd = (const char *)cmd_addr;
+    const char *args = (const char *)args_addr;
+    if (!cmd) return (uint64_t)-1;
+    shell_exec_cmd(cmd, args);
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -681,6 +709,10 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FAT_LIST_DIR:  return sys_fat_list_dir(a1, a2, a3);
         case SYS_FAT_READ_FILE: return sys_fat_read_file(a1, a2, a3);
         case SYS_FAT_FILE_SIZE: return sys_fat_file_size(a1);
+        case SYS_SHELL_HISTORY_SHOW: return sys_shell_history_show();
+        case SYS_SHELL_READ_LINE: return sys_shell_read_line(a1, a2);
+        case SYS_SHELL_VAR_SET: return sys_shell_var_set(a1, a2);
+        case SYS_SHELL_EXEC_CMD: return sys_shell_exec_cmd(a1, a2);
         default:         return (uint64_t)-1;
     }
 }

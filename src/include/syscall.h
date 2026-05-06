@@ -91,6 +91,12 @@
 #define SYS_FAT_READ_FILE   160
 #define SYS_FAT_FILE_SIZE   161
 
+/* Shell-core syscalls (Phase 3 Group 3b, shell linkage slice) */
+#define SYS_SHELL_HISTORY_SHOW 162
+#define SYS_SHELL_READ_LINE    163
+#define SYS_SHELL_VAR_SET      164
+#define SYS_SHELL_EXEC_CMD     165
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

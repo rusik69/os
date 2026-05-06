@@ -1,6 +1,5 @@
 /* cmd_time.c — time: measure execution time of a shell command */
 #include "shell_cmds.h"
-#include "shell.h"
 #include "printf.h"
 #include "string.h"
 #include "libc.h"
@@ -28,7 +27,7 @@ void cmd_time(const char *args) {
     }
 
     uint64_t start = libc_uptime_ticks();
-    shell_exec_cmd(cmdname, cmdargs);
+    libc_shell_exec_cmd(cmdname, cmdargs);
     uint64_t end = libc_uptime_ticks();
 
     uint64_t elapsed_ms = (end - start) * 1000 / TIMER_FREQ;

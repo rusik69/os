@@ -329,6 +329,24 @@ int libc_fat32_file_size(const char *path) {
     return (int)libc_syscall(SYS_FAT_FILE_SIZE, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
 }
 
+void libc_shell_history_show(void) {
+    (void)libc_syscall(SYS_SHELL_HISTORY_SHOW, 0, 0, 0, 0, 0);
+}
+
+void libc_shell_read_line(char *buf, int max) {
+    (void)libc_syscall(SYS_SHELL_READ_LINE, (uint64_t)(uintptr_t)buf, (uint64_t)max, 0, 0, 0);
+}
+
+void libc_shell_var_set(const char *name, const char *value) {
+    (void)libc_syscall(SYS_SHELL_VAR_SET, (uint64_t)(uintptr_t)name,
+                       (uint64_t)(uintptr_t)value, 0, 0, 0);
+}
+
+void libc_shell_exec_cmd(const char *cmd, const char *args) {
+    (void)libc_syscall(SYS_SHELL_EXEC_CMD, (uint64_t)(uintptr_t)cmd,
+                       (uint64_t)(uintptr_t)args, 0, 0, 0);
+}
+
 
 
 

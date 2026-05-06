@@ -1,5 +1,4 @@
 #include "shell_cmds.h"
-#include "shell.h"
 #include "libc.h"
 #include "string.h"
 #include "printf.h"
@@ -37,7 +36,7 @@ void cmd_useradd(const char *args) {
 
     char pw[USER_MAX_PASS];
     kprintf("Initial password: ");
-    shell_read_line(pw, USER_MAX_PASS);
+    libc_shell_read_line(pw, USER_MAX_PASS);
 
     int rc = user_add(username, uid, pw);
     if (rc == 0)
@@ -84,7 +83,7 @@ void cmd_passwd(const char *args) {
 
     kprintf("New password: ");
     char pw[USER_MAX_PASS];
-    shell_read_line(pw, USER_MAX_PASS);
+    libc_shell_read_line(pw, USER_MAX_PASS);
 
     int rc = user_passwd(target, pw);
     if (rc == 0)

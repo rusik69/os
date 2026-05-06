@@ -186,6 +186,12 @@ int libc_fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max)
 int libc_fat32_read_file(const char *path, void *buf, uint32_t max_size);
 int libc_fat32_file_size(const char *path);
 
+/* Shell-core syscall-backed operations (phase 3 group 3b shell linkage slice) */
+void libc_shell_history_show(void);
+void libc_shell_read_line(char *buf, int max);
+void libc_shell_var_set(const char *name, const char *value);
+void libc_shell_exec_cmd(const char *cmd, const char *args);
+
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
 static inline uint32_t ata_get_sectors(void) { return libc_ata_get_sectors(); }
