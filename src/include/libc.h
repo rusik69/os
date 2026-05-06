@@ -206,6 +206,9 @@ void libc_shell_exec_cmd(const char *cmd, const char *args);
 void libc_vga_set_color(uint8_t fg, uint8_t bg);
 int libc_vga_get_fb_info(struct libc_fb_info *out);
 
+/* Compiler syscall-backed operation (phase 3 group 3b cmd_cc slice) */
+int libc_cc_compile(const char *inpath, const char *outpath);
+
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
 static inline uint32_t ata_get_sectors(void) { return libc_ata_get_sectors(); }
@@ -352,6 +355,9 @@ static inline void vga_set_color(uint8_t fg, uint8_t bg) {
 }
 static inline int vga_get_fb_info(struct libc_fb_info *out) {
     return libc_vga_get_fb_info(out);
+}
+static inline int cc_compile(const char *inpath, const char *outpath) {
+    return libc_cc_compile(inpath, outpath);
 }
 
 /* Utility helper used by stat/chmod style tools. */

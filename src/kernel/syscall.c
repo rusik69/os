@@ -27,6 +27,8 @@
 #include "script.h"
 #include "fat32.h"
 #include "shell.h"
+#include "cc.h"
+#include "heap.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -656,6 +658,45 @@ static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
     return 0;
 }
 
+static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
+    const char *inpath = (const char *)inpath_addr;
+    const char *outpath = (const char *)outpath_addr;
+    if (!inpath || !outpath) return (uint64_t)-1;
+
+    CompilerState *cc = (CompilerState *)kmalloc(sizeof(CompilerState));
+    if (!cc) return (uint64_t)-1;
+    memset(cc, 0, sizeof(CompilerState));
+
+    uint32_t read_sz = 0;
+    int r = vfs_read(inpath, cc->src, CC_SRC_MAX - 1, &read_sz);
+    if (r < 0 || read_sz == 0) {
+        kfree(cc);
+        return (uint64_t)-2;
+    }
+    cc->src[read_sz] = '\0';
+    cc->src_len = read_sz;
+
+    cc_lex(cc);
+    if (cc->error) {
+        kfree(cc);
+        return (uint64_t)-3;
+    }
+
+    cc_parse(cc);
+    if (cc->error) {
+        kfree(cc);
+        return (uint64_t)-4;
+    }
+
+    if (cc_write_elf(cc, outpath) < 0) {
+        kfree(cc);
+        return (uint64_t)-5;
+    }
+
+    kfree(cc);
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -743,6 +784,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SHELL_EXEC_CMD: return sys_shell_exec_cmd(a1, a2);
         case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
         case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
+        case SYS_CC_COMPILE: return sys_cc_compile(a1, a2);
         default:         return (uint64_t)-1;
     }
 }

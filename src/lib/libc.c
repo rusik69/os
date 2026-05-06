@@ -355,6 +355,11 @@ int libc_vga_get_fb_info(struct libc_fb_info *out) {
     return (int)libc_syscall(SYS_VGA_GET_FB_INFO, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
 }
 
+int libc_cc_compile(const char *inpath, const char *outpath) {
+    return (int)libc_syscall(SYS_CC_COMPILE, (uint64_t)(uintptr_t)inpath,
+                             (uint64_t)(uintptr_t)outpath, 0, 0, 0);
+}
+
 
 
 

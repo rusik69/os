@@ -1,8 +1,6 @@
 /* cmd_cc.c — cc command: compile a C source file to an ELF binary */
 
-#include "cc.h"
 #include "libc.h"
-#include "heap.h"
 #include "string.h"
 #include "printf.h"
 
@@ -35,52 +33,17 @@ void cmd_cc(const char *args) {
         }
     }
 
-    /* Allocate compiler state on heap (it's ~250KB) */
-    CompilerState *cc = (CompilerState *)kmalloc(sizeof(CompilerState));
-    if (!cc) {
-        kprintf("cc: out of memory\n");
-        return;
-    }
-    memset(cc, 0, sizeof(CompilerState));
-
-    /* Read source file */
-    uint32_t read_sz = 0;
-    int r = vfs_read(inpath, cc->src, CC_SRC_MAX - 1, &read_sz);
-    if (r < 0 || read_sz == 0) {
+    int rc = cc_compile(inpath, outpath);
+    if (rc == 0)
+        kprintf("cc: OK -> %s\n", outpath);
+    else if (rc == -2)
         kprintf("cc: cannot read %s\n", inpath);
-        kfree(cc);
-        return;
-    }
-    cc->src[read_sz] = '\0';
-    cc->src_len = read_sz;
-
-    kprintf("cc: compiling %s (%u bytes)...\n", inpath, read_sz);
-
-    /* Lex */
-    cc_lex(cc);
-    if (cc->error) {
-        kprintf("cc: lex error: %s\n", cc->errmsg);
-        kfree(cc);
-        return;
-    }
-    kprintf("cc: %d tokens\n", cc->ntokens);
-
-    /* Parse + codegen */
-    cc_parse(cc);
-    if (cc->error) {
-        kprintf("cc: compile error: %s\n", cc->errmsg);
-        kfree(cc);
-        return;
-    }
-    kprintf("cc: code=%d bytes data=%d bytes\n", cc->code_len, cc->data_len);
-
-    /* Write ELF */
-    if (cc_write_elf(cc, outpath) < 0) {
+    else if (rc == -3)
+        kprintf("cc: lex error\n");
+    else if (rc == -4)
+        kprintf("cc: compile error\n");
+    else if (rc == -5)
         kprintf("cc: failed to write output\n");
-        kfree(cc);
-        return;
-    }
-
-    kprintf("cc: OK -> %s\n", outpath);
-    kfree(cc);
+    else
+        kprintf("cc: failed (%d)\n", (uint64_t)(-rc));
 }

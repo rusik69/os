@@ -101,6 +101,9 @@
 #define SYS_VGA_SET_COLOR      166
 #define SYS_VGA_GET_FB_INFO    167
 
+/* Compiler syscall (Phase 3 Group 3b, cmd_cc slice) */
+#define SYS_CC_COMPILE         168
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */
