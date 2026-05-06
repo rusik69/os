@@ -1,7 +1,7 @@
 /* cmd_lspci.c — lspci command */
 #include "shell_cmds.h"
-#include "pci.h"
+#include "libc.h"
 
 void cmd_lspci(void) {
-    pci_list();
+    libc_pci_list();
 }

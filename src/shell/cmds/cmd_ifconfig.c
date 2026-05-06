@@ -1,18 +1,17 @@
 /* cmd_ifconfig.c — ifconfig command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "net.h"
-#include "e1000.h"
+#include "libc.h"
 
 void cmd_ifconfig(void) {
-    if (!e1000_is_present()) { kprintf("No network device\n"); return; }
+    if (!libc_net_is_present()) { kprintf("No network device\n"); return; }
     uint8_t mac[6];
-    e1000_get_mac(mac);
+    libc_net_get_mac(mac);
     uint8_t ip[4];
-    net_get_ip(ip);
+    libc_net_get_ip(ip);
     uint8_t gw[4], mask[4];
-    uint32_t gw32 = net_get_gateway();
-    uint32_t mask32 = net_get_mask();
+    uint32_t gw32 = libc_net_get_gateway();
+    uint32_t mask32 = libc_net_get_mask();
     gw[0] = (gw32 >> 24) & 0xFF; gw[1] = (gw32 >> 16) & 0xFF;
     gw[2] = (gw32 >> 8) & 0xFF;  gw[3] = gw32 & 0xFF;
     mask[0] = (mask32 >> 24) & 0xFF; mask[1] = (mask32 >> 16) & 0xFF;

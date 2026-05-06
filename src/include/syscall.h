@@ -44,6 +44,20 @@
 #define SYS_ATA_SECTORS   121
 #define SYS_AHCI_PRESENT  122
 #define SYS_AHCI_SECTORS  123
+#define SYS_NET_PRESENT   124
+#define SYS_NET_GET_MAC   125
+#define SYS_NET_GET_IP    126
+#define SYS_NET_GET_GW    127
+#define SYS_NET_GET_MASK  128
+#define SYS_NET_DNS       129
+#define SYS_NET_PING      130
+#define SYS_NET_UDP_SEND  131
+#define SYS_NET_HTTP_GET  132
+#define SYS_NET_ARP_LIST  133
+#define SYS_PROC_LIST     134
+#define SYS_PCI_LIST      135
+#define SYS_USB_LIST      136
+#define SYS_HWINFO_PRINT  137
 
 void syscall_init(void);
 

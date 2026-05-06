@@ -10,6 +10,11 @@
 #include "printf.h"
 #include "io.h"
 #include "vmm.h"
+#include "string.h"
+#include "net.h"
+#include "e1000.h"
+#include "pci.h"
+#include "usb.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -17,6 +22,15 @@ struct syscall_fs_stat_ex {
     uint16_t uid;
     uint16_t gid;
     uint16_t mode;
+};
+
+struct syscall_process_info {
+    uint32_t pid;
+    uint32_t ppid;
+    uint8_t state;
+    uint8_t is_user;
+    uint8_t is_background;
+    char name[32];
 };
 
 /* MSR numbers */
@@ -268,11 +282,140 @@ static uint64_t sys_sleep_ticks(uint64_t ticks) {
     return 0;
 }
 
+static uint64_t sys_net_present(void) {
+    return (uint64_t)e1000_is_present();
+}
+
+static uint64_t sys_net_get_mac(uint64_t mac_addr) {
+    uint8_t *mac = (uint8_t *)mac_addr;
+    if (!mac) return (uint64_t)-1;
+    e1000_get_mac(mac);
+    return 0;
+}
+
+static uint64_t sys_net_get_ip(uint64_t ip_addr) {
+    uint8_t *ip = (uint8_t *)ip_addr;
+    if (!ip) return (uint64_t)-1;
+    net_get_ip(ip);
+    return 0;
+}
+
+static uint64_t sys_net_get_gw(void) {
+    return (uint64_t)net_get_gateway();
+}
+
+static uint64_t sys_net_get_mask(void) {
+    return (uint64_t)net_get_mask();
+}
+
+static uint64_t sys_net_dns(uint64_t host_addr) {
+    return (uint64_t)net_dns_resolve((const char *)host_addr);
+}
+
+static uint64_t sys_net_ping(uint64_t ip) {
+    return (uint64_t)net_ping((uint32_t)ip);
+}
+
+static uint64_t sys_net_udp_send(uint64_t dst_ip, uint64_t src_port, uint64_t dst_port,
+                                 uint64_t data_addr, uint64_t len) {
+    net_udp_send((uint32_t)dst_ip, (uint16_t)src_port, (uint16_t)dst_port,
+                 (const void *)data_addr, (uint16_t)len);
+    return 0;
+}
+
+static uint64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t path_addr,
+                                 uint64_t buf_addr, uint64_t packed) {
+    int bufsize = (int)(uint32_t)(packed >> 32);
+    int follow = (int)(uint32_t)packed;
+    return (uint64_t)net_http_get_ex((const char *)host_addr, (uint16_t)port,
+                                     (const char *)path_addr, (char *)buf_addr,
+                                     bufsize, follow);
+}
+
+static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
+    kprintf("  %u.%u.%u.%u  ->  %x:%x:%x:%x:%x:%x\n",
+            (uint64_t)((ip >> 24) & 0xFF), (uint64_t)((ip >> 16) & 0xFF),
+            (uint64_t)((ip >> 8) & 0xFF), (uint64_t)(ip & 0xFF),
+            (uint64_t)mac[0], (uint64_t)mac[1], (uint64_t)mac[2],
+            (uint64_t)mac[3], (uint64_t)mac[4], (uint64_t)mac[5]);
+}
+
+static uint64_t sys_net_arp_list(void) {
+    int n = net_arp_list(arp_print_entry_sys);
+    return (uint64_t)n;
+}
+
+static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
+    struct syscall_process_info *out = (struct syscall_process_info *)out_addr;
+    struct process *table = process_get_table();
+    int written = 0;
+    int lim = (int)max;
+    if (lim < 0) lim = 0;
+    for (int i = 0; i < PROCESS_MAX && written < lim; i++) {
+        if (table[i].state == PROCESS_UNUSED) continue;
+        out[written].pid = table[i].pid;
+        out[written].ppid = table[i].parent_pid;
+        out[written].state = (uint8_t)table[i].state;
+        out[written].is_user = (uint8_t)(table[i].is_user ? 1 : 0);
+        out[written].is_background = (uint8_t)(table[i].is_background ? 1 : 0);
+        if (table[i].name) {
+            strncpy(out[written].name, table[i].name, sizeof(out[written].name) - 1);
+            out[written].name[sizeof(out[written].name) - 1] = '\0';
+        } else {
+            out[written].name[0] = '\0';
+        }
+        written++;
+    }
+    return (uint64_t)written;
+}
+
+static uint64_t sys_pci_list(void) {
+    pci_list();
+    return 0;
+}
+
+static uint64_t sys_usb_list(void) {
+    int n = usb_get_device_count();
+    kprintf("USB devices: %d\n", (uint64_t)n);
+    for (int i = 0; i < n; i++) {
+        struct usb_device *dev = usb_get_device(i);
+        if (!dev) continue;
+        const char *spd = dev->speed == 2 ? "High" :
+                          dev->speed == 1 ? "Low"  : "Full";
+        kprintf("  Bus %03d Device %03d: %s-speed class=%02x\n",
+                (uint64_t)1, (uint64_t)dev->addr,
+                spd, (uint64_t)dev->class_code);
+    }
+    if (n == 0) kprintf("  (no devices connected)\n");
+    return (uint64_t)n;
+}
+
+static uint64_t sys_hwinfo_print(void) {
+    uint32_t eax, ebx, ecx, edx;
+    char vendor[13];
+
+    kprintf("=== Hardware Information ===\n");
+
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    *(uint32_t *)&vendor[0] = ebx;
+    *(uint32_t *)&vendor[4] = edx;
+    *(uint32_t *)&vendor[8] = ecx;
+    vendor[12] = 0;
+    kprintf("CPU vendor: %s\n", vendor);
+
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    kprintf("CPU family/model/stepping: %u/%u/%u\n",
+            (uint64_t)((eax >> 8) & 0xF), (uint64_t)((eax >> 4) & 0xF), (uint64_t)(eax & 0xF));
+
+    kprintf("PCI devices:\n");
+    pci_list();
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a4; (void)a5;
     switch (num) {
         case SYS_READ:   return sys_read(a1, a2, a3);
         case SYS_WRITE:  return sys_write(a1, a2, a3);
@@ -312,6 +455,20 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VFS_READDIR:   return sys_vfs_readdir(a1);
         case SYS_WAITPID:       return sys_waitpid(a1, a2);
         case SYS_SLEEP_TICKS:   return sys_sleep_ticks(a1);
+        case SYS_NET_PRESENT:   return sys_net_present();
+        case SYS_NET_GET_MAC:   return sys_net_get_mac(a1);
+        case SYS_NET_GET_IP:    return sys_net_get_ip(a1);
+        case SYS_NET_GET_GW:    return sys_net_get_gw();
+        case SYS_NET_GET_MASK:  return sys_net_get_mask();
+        case SYS_NET_DNS:       return sys_net_dns(a1);
+        case SYS_NET_PING:      return sys_net_ping(a1);
+        case SYS_NET_UDP_SEND:  return sys_net_udp_send(a1, a2, a3, a4, a5);
+        case SYS_NET_HTTP_GET:  return sys_net_http_get(a1, a2, a3, a4, a5);
+        case SYS_NET_ARP_LIST:  return sys_net_arp_list();
+        case SYS_PROC_LIST:     return sys_proc_list(a1, a2);
+        case SYS_PCI_LIST:      return sys_pci_list();
+        case SYS_USB_LIST:      return sys_usb_list();
+        case SYS_HWINFO_PRINT:  return sys_hwinfo_print();
         default:         return (uint64_t)-1;
     }
 }

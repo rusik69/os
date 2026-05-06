@@ -2,12 +2,11 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "net.h"
-#include "e1000.h"
+#include "libc.h"
 
 void cmd_udpsend(const char *args) {
     if (!args || !*args) { kprintf("Usage: udpsend <ip> <port> <data>\n"); return; }
-    if (!e1000_is_present()) { kprintf("No network device\n"); return; }
+    if (!libc_net_is_present()) { kprintf("No network device\n"); return; }
 
     char ipstr[20];
     int ii = 0;
@@ -30,7 +29,7 @@ void cmd_udpsend(const char *args) {
 
     if (!*p) { kprintf("Usage: udpsend <ip> <port> <data>\n"); return; }
 
-    net_udp_send(dst_ip, 12345, port, p, strlen(p));
+    libc_net_udp_send(dst_ip, 12345, port, p, (uint16_t)strlen(p));
     kprintf("UDP sent %u bytes to %u.%u.%u.%u:%u\n",
             (uint64_t)strlen(p),
             (uint64_t)((dst_ip >> 24) & 0xFF), (uint64_t)((dst_ip >> 16) & 0xFF),

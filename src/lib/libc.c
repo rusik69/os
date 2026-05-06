@@ -46,6 +46,67 @@ void libc_sleep_ticks(uint64_t ticks) {
     (void)libc_syscall(SYS_SLEEP_TICKS, ticks, 0, 0, 0, 0);
 }
 
+int libc_net_is_present(void) {
+    return (int)libc_syscall(SYS_NET_PRESENT, 0, 0, 0, 0, 0);
+}
+
+void libc_net_get_mac(uint8_t mac[6]) {
+    (void)libc_syscall(SYS_NET_GET_MAC, (uint64_t)(uintptr_t)mac, 0, 0, 0, 0);
+}
+
+void libc_net_get_ip(uint8_t ip[4]) {
+    (void)libc_syscall(SYS_NET_GET_IP, (uint64_t)(uintptr_t)ip, 0, 0, 0, 0);
+}
+
+uint32_t libc_net_get_gateway(void) {
+    return (uint32_t)libc_syscall(SYS_NET_GET_GW, 0, 0, 0, 0, 0);
+}
+
+uint32_t libc_net_get_mask(void) {
+    return (uint32_t)libc_syscall(SYS_NET_GET_MASK, 0, 0, 0, 0, 0);
+}
+
+uint32_t libc_net_dns_resolve(const char *host) {
+    return (uint32_t)libc_syscall(SYS_NET_DNS, (uint64_t)(uintptr_t)host, 0, 0, 0, 0);
+}
+
+int libc_net_ping(uint32_t ip) {
+    return (int)libc_syscall(SYS_NET_PING, ip, 0, 0, 0, 0);
+}
+
+void libc_net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
+                       const void *data, uint16_t len) {
+    (void)libc_syscall(SYS_NET_UDP_SEND, dst_ip, src_port, dst_port,
+                       (uint64_t)(uintptr_t)data, len);
+}
+
+int libc_net_http_get_ex(const char *host, uint16_t port, const char *path,
+                         char *buf, int bufsize, int follow_redirects) {
+    return (int)libc_syscall(SYS_NET_HTTP_GET, (uint64_t)(uintptr_t)host, port,
+                             (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)buf,
+                             ((uint64_t)(uint32_t)bufsize << 32) | (uint32_t)follow_redirects);
+}
+
+int libc_net_arp_list_print(void) {
+    return (int)libc_syscall(SYS_NET_ARP_LIST, 0, 0, 0, 0, 0);
+}
+
+int libc_process_list(struct libc_process_info *out, int max) {
+    return (int)libc_syscall(SYS_PROC_LIST, (uint64_t)(uintptr_t)out, (uint64_t)max, 0, 0, 0);
+}
+
+void libc_pci_list(void) {
+    (void)libc_syscall(SYS_PCI_LIST, 0, 0, 0, 0, 0);
+}
+
+void libc_usb_list(void) {
+    (void)libc_syscall(SYS_USB_LIST, 0, 0, 0, 0, 0);
+}
+
+void libc_hwinfo_print(void) {
+    (void)libc_syscall(SYS_HWINFO_PRINT, 0, 0, 0, 0, 0);
+}
+
 int libc_fs_format(void) {
     return (int)libc_syscall(SYS_FS_FORMAT, 0, 0, 0, 0, 0);
 }

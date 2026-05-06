@@ -9,6 +9,7 @@
 #define FS_TYPE_FILE   1
 #define FS_TYPE_DIR    2
 #define FS_MAX_NAME    28
+#define PROCESS_MAX    64
 
 struct vfs_stat {
     uint32_t size;
@@ -21,6 +22,15 @@ struct libc_fs_stat_ex {
     uint16_t uid;
     uint16_t gid;
     uint16_t mode;
+};
+
+struct libc_process_info {
+    uint32_t pid;
+    uint32_t ppid;
+    uint8_t state;
+    uint8_t is_user;
+    uint8_t is_background;
+    char name[32];
 };
 
 /* Low-level syscall shim used by libc wrappers. */
@@ -38,6 +48,22 @@ uint64_t libc_getpid(void);
 int libc_kill(uint32_t pid, int sig);
 int libc_waitpid(uint32_t pid, int *status);
 void libc_sleep_ticks(uint64_t ticks);
+int libc_net_is_present(void);
+void libc_net_get_mac(uint8_t mac[6]);
+void libc_net_get_ip(uint8_t ip[4]);
+uint32_t libc_net_get_gateway(void);
+uint32_t libc_net_get_mask(void);
+uint32_t libc_net_dns_resolve(const char *host);
+int libc_net_ping(uint32_t ip);
+void libc_net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
+                       const void *data, uint16_t len);
+int libc_net_http_get_ex(const char *host, uint16_t port, const char *path,
+                         char *buf, int bufsize, int follow_redirects);
+int libc_net_arp_list_print(void);
+int libc_process_list(struct libc_process_info *out, int max);
+void libc_pci_list(void);
+void libc_usb_list(void);
+void libc_hwinfo_print(void);
 
 int libc_fs_format(void);
 int libc_fs_create(const char *path, uint8_t type);

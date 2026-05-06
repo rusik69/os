@@ -1,12 +1,11 @@
 /* cmd_curl.c — curl command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "net.h"
-#include "e1000.h"
+#include "libc.h"
 
 void cmd_curl(const char *args) {
     if (!args || !*args) { kprintf("Usage: curl [-F] <url>\n"); return; }
-    if (!e1000_is_present()) { kprintf("No network device\n"); return; }
+    if (!libc_net_is_present()) { kprintf("No network device\n"); return; }
 
     /* Detect -F flag (follow redirects) */
     int follow = 0;
@@ -52,7 +51,7 @@ void cmd_curl(const char *args) {
             follow ? " (following redirects)" : "");
 
     static char buf[4096];
-    int n = net_http_get_ex(host, port, path, buf, sizeof(buf), follow);
+    int n = libc_net_http_get_ex(host, port, path, buf, sizeof(buf), follow);
     if (n < 0) {
         kprintf("Request failed\n");
     } else {

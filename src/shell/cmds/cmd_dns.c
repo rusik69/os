@@ -1,14 +1,13 @@
 /* cmd_dns.c — dns command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "net.h"
-#include "e1000.h"
+#include "libc.h"
 
 void cmd_dns(const char *args) {
     if (!args || !*args) { kprintf("Usage: dns <hostname>\n"); return; }
-    if (!e1000_is_present()) { kprintf("No network device\n"); return; }
+    if (!libc_net_is_present()) { kprintf("No network device\n"); return; }
     kprintf("Resolving %s... ", args);
-    uint32_t ip = net_dns_resolve(args);
+    uint32_t ip = libc_net_dns_resolve(args);
     if (!ip) {
         kprintf("failed\n");
     } else {
