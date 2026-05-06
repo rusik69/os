@@ -103,11 +103,19 @@ int elf_exec(const char *path) {
             return -1;
         }
 
+        uint64_t *kernel_pml4 = vmm_get_pml4();
+
         /* Map each PT_LOAD segment into user address space */
         for (uint16_t i = 0; i < hdr->e_phnum; i++) {
             const struct elf64_phdr *ph =
                 (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
             if (ph->p_type != PT_LOAD) continue;
+
+            if (ph->p_vaddr >= 0x0000800000000000ULL) {
+                kprintf("elf: user segment outside user address space\n");
+                kfree(buf);
+                return -1;
+            }
 
             /* Map pages covering [vaddr, vaddr+memsz) */
             uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
@@ -122,12 +130,12 @@ int elf_exec(const char *path) {
                 /* Zero the frame first */
                 memset((void *)frame, 0, PAGE_SIZE);
                 vmm_map_user_page(user_pml4, va, frame, flags);
-                /* Also identity-map for now so we can copy data */
-                vmm_map_page(va, frame, flags | VMM_FLAG_WRITE);
             }
 
-            /* Copy segment data */
+            /* Copy segment data while running on target address space */
+            vmm_switch_pml4(user_pml4);
             memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
+            vmm_switch_pml4(kernel_pml4);
             /* BSS is already zeroed from memset above */
         }
 
@@ -143,8 +151,6 @@ int elf_exec(const char *path) {
 
         uint64_t user_rsp = USER_STACK_TOP - 8; /* stack grows down */
 
-        /* Remove the temporary identity maps for code pages */
-        /* Not needed — kernel identity maps the whole first 1GB anyway */
         (void)hdr;
 
         kfree(buf);

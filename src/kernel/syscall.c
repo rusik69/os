@@ -87,6 +87,139 @@ static uint64_t rdmsr(uint32_t msr) {
     return ((uint64_t)hi << 32) | lo;
 }
 
+#define SYSCALL_USER_STR_MAX 4096
+
+static int syscall_is_user_process(void) {
+    struct process *p = process_get_current();
+    return (p && p->is_user && p->pml4);
+}
+
+static int syscall_user_read_ok(uint64_t addr, uint64_t len) {
+    struct process *p = process_get_current();
+    if (!p || !p->pml4) return 0;
+    return vmm_user_range_ok(p->pml4, addr, len, 0);
+}
+
+static int syscall_user_write_ok(uint64_t addr, uint64_t len) {
+    struct process *p = process_get_current();
+    if (!p || !p->pml4) return 0;
+    return vmm_user_range_ok(p->pml4, addr, len, 1);
+}
+
+static int syscall_user_cstr_ok(uint64_t addr) {
+    struct process *p = process_get_current();
+    if (!p || !p->pml4) return 0;
+    return vmm_user_string_ok(p->pml4, addr, SYSCALL_USER_STR_MAX);
+}
+
+static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
+                                      uint64_t a3, uint64_t a4, uint64_t a5) {
+    if (!syscall_is_user_process()) return 1;
+
+    switch (num) {
+        case SYS_READ:
+            return syscall_user_write_ok(a2, a3);
+        case SYS_WRITE:
+            return syscall_user_read_ok(a2, a3);
+        case SYS_OPEN:
+        case SYS_MKDIR:
+        case SYS_UNLINK:
+        case SYS_FS_DELETE:
+        case SYS_FS_LIST:
+        case SYS_VFS_UNLINK:
+        case SYS_VFS_READDIR:
+        case SYS_NET_DNS:
+        case SYS_ELF_EXEC:
+        case SYS_SCRIPT_EXEC:
+        case SYS_FAT_FILE_SIZE:
+        case SYS_SHELL_HISTORY_ADD:
+            return syscall_user_cstr_ok(a1);
+        case SYS_STAT:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2);
+        case SYS_FS_CREATE:
+        case SYS_FS_CHMOD:
+            return syscall_user_cstr_ok(a1);
+        case SYS_FS_CHOWN:
+            return syscall_user_cstr_ok(a1);
+        case SYS_FS_WRITE:
+            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
+        case SYS_FS_READ:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                   syscall_user_write_ok(a4, sizeof(uint32_t));
+        case SYS_FS_STAT:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2);
+        case SYS_FS_STAT_EX:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct syscall_fs_stat_ex));
+        case SYS_FS_LIST_NAMES:
+            if (!syscall_user_cstr_ok(a1)) return 0;
+            if (a2 && !syscall_user_cstr_ok(a2)) return 0;
+            if (a4 == 0) return 1;
+            if (a4 > (1ULL << 20)) return 0;
+            return syscall_user_write_ok(a3, a4 * FS_MAX_NAME);
+        case SYS_VFS_READ:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3) &&
+                   syscall_user_write_ok(a4, sizeof(uint32_t));
+        case SYS_VFS_WRITE:
+            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
+        case SYS_VFS_STAT:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct vfs_stat));
+        case SYS_WAITPID:
+            return a2 ? syscall_user_write_ok(a2, sizeof(int)) : 1;
+        case SYS_NET_GET_MAC:
+            return syscall_user_write_ok(a1, 6);
+        case SYS_NET_GET_IP:
+            return syscall_user_write_ok(a1, 4);
+        case SYS_NET_UDP_SEND:
+            return syscall_user_read_ok(a4, a5);
+        case SYS_NET_HTTP_GET: {
+            uint64_t bufsize = (uint32_t)(a5 >> 32);
+            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
+                   syscall_user_write_ok(a4, bufsize);
+        }
+        case SYS_PROC_LIST:
+            if (a2 == 0) return 1;
+            if (a2 > PROCESS_MAX) return 0;
+            return syscall_user_write_ok(a1, a2 * sizeof(struct syscall_process_info));
+        case SYS_USER_FIND:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(struct user_entry));
+        case SYS_USER_ADD:
+            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3);
+        case SYS_USER_PASSWD:
+        case SYS_SESSION_LOGIN:
+            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2);
+        case SYS_USER_DELETE:
+            return syscall_user_cstr_ok(a1);
+        case SYS_USERS_GET_BY_INDEX:
+            return syscall_user_write_ok(a2, sizeof(struct user_entry));
+        case SYS_RTC_GET_TIME:
+            return syscall_user_write_ok(a1, sizeof(struct rtc_time));
+        case SYS_MOUSE_GET_STATE:
+            return syscall_user_write_ok(a1, sizeof(struct mouse_state));
+        case SYS_SERIAL_READ:
+            return syscall_user_write_ok(a1, a2);
+        case SYS_SERIAL_WRITE:
+            return syscall_user_read_ok(a1, a2);
+        case SYS_PMM_GET_STATS:
+            return syscall_user_write_ok(a1, sizeof(struct pmm_stats));
+        case SYS_FAT_LIST_DIR:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME);
+        case SYS_FAT_READ_FILE:
+            return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3);
+        case SYS_SHELL_READ_LINE:
+            return syscall_user_write_ok(a1, a2);
+        case SYS_SHELL_VAR_SET:
+        case SYS_CC_COMPILE:
+            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2);
+        case SYS_SHELL_EXEC_CMD:
+            if (!syscall_user_cstr_ok(a1)) return 0;
+            return a2 ? syscall_user_cstr_ok(a2) : 1;
+        case SYS_SHELL_TAB_COMPLETE:
+            return syscall_user_write_ok(a1, 1) && syscall_user_write_ok(a2, sizeof(int));
+        default:
+            return 1;
+    }
+}
+
 static void wrmsr(uint32_t msr, uint64_t val) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
 }
@@ -491,6 +624,7 @@ static uint64_t sys_session_logout(void) {
 }
 
 static uint64_t sys_session_get(void) {
+    if (syscall_is_user_process()) return (uint64_t)-1;
     struct user_session *s = session_get();
     return (uint64_t)(uintptr_t)s;
 }
@@ -499,6 +633,7 @@ static uint64_t sys_users_count(uint64_t mode) {
     if (mode == 0) {
         return (uint64_t)users_count();
     } else if (mode == 1) {
+        if (syscall_is_user_process()) return (uint64_t)-1;
         /* Return pointer to kernel's user table for direct access */
         return (uint64_t)(uintptr_t)users_get_table();
     }
@@ -715,6 +850,7 @@ static uint64_t sys_shell_history_count(void) {
 }
 
 static uint64_t sys_shell_history_entry(uint64_t idx) {
+    if (syscall_is_user_process()) return (uint64_t)-1;
     return (uint64_t)(uintptr_t)shell_history_entry((int)idx);
 }
 
@@ -751,6 +887,10 @@ static uint64_t sys_gui_shell_run(void) {
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    if (!syscall_validate_user_args(num, a1, a2, a3, a4, a5)) {
+        return (uint64_t)-1;
+    }
+
     switch (num) {
         case SYS_READ:   return sys_read(a1, a2, a3);
         case SYS_WRITE:  return sys_write(a1, a2, a3);

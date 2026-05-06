@@ -7,6 +7,7 @@
 #define PTE_WRITE    (1ULL << 1)
 #define PTE_USER     (1ULL << 2)
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define USER_VADDR_MAX 0x0000800000000000ULL
 
 static uint64_t *kernel_pml4;
 
@@ -117,7 +118,7 @@ uint64_t *vmm_create_user_pml4(void) {
 
     /* Copy kernel half (entries 256-511 map kernel space) */
     for (int i = 256; i < 512; i++)
-        pml4[i] = kernel_pml4[i];
+        pml4[i] = kernel_pml4[i] & ~PTE_USER;
 
     return pml4;
 }
@@ -134,6 +135,9 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
 }
 
 void vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
+    if (!pml4) return;
+    if (virt >= USER_VADDR_MAX) return;
+
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
@@ -147,6 +151,79 @@ void vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fl
     if (!pt) return;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
+}
+
+static uint64_t *vmm_walk_to_pt(uint64_t *pml4, uint64_t virt,
+                                uint64_t *pde_out, uint64_t *pte_out) {
+    int pml4_idx = (virt >> 39) & 0x1FF;
+    int pdpt_idx = (virt >> 30) & 0x1FF;
+    int pd_idx   = (virt >> 21) & 0x1FF;
+    int pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return NULL;
+    if (!(pml4[pml4_idx] & PTE_USER)) return NULL;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return NULL;
+    if (!(pdpt[pdpt_idx] & PTE_USER)) return NULL;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+
+    if (!(pd[pd_idx] & PTE_PRESENT)) return NULL;
+    if (!(pd[pd_idx] & PTE_USER)) return NULL;
+    if (pde_out) *pde_out = pd[pd_idx];
+
+    if (pd[pd_idx] & (1ULL << 7)) {
+        if (pte_out) *pte_out = pd[pd_idx];
+        return NULL;
+    }
+
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+    if (pte_out) *pte_out = pt[pt_idx];
+    return pt;
+}
+
+int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
+    if (!pml4) return 0;
+    if (len == 0) return 1;
+    if (addr >= USER_VADDR_MAX) return 0;
+    if (len > USER_VADDR_MAX) return 0;
+    if (addr + len < addr) return 0;
+    if (addr + len > USER_VADDR_MAX) return 0;
+
+    uint64_t cur = addr;
+    uint64_t end = addr + len;
+
+    while (cur < end) {
+        uint64_t pde = 0;
+        uint64_t pte = 0;
+        uint64_t *pt = vmm_walk_to_pt(pml4, cur, &pde, &pte);
+
+        if (pde & (1ULL << 7)) {
+            if (!(pde & PTE_PRESENT) || !(pde & PTE_USER)) return 0;
+            if (write && !(pde & PTE_WRITE)) return 0;
+            cur = (cur & ~0x1FFFFFULL) + 0x200000ULL;
+            continue;
+        }
+
+        if (!pt) return 0;
+        if (!(pte & PTE_PRESENT) || !(pte & PTE_USER)) return 0;
+        if (write && !(pte & PTE_WRITE)) return 0;
+
+        cur = (cur & ~0xFFFULL) + 0x1000ULL;
+    }
+
+    return 1;
+}
+
+int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len) {
+    if (!pml4 || addr >= USER_VADDR_MAX || max_len == 0) return 0;
+    for (uint64_t i = 0; i < max_len; i++) {
+        uint64_t cur = addr + i;
+        if (cur < addr || cur >= USER_VADDR_MAX) return 0;
+        if (!vmm_user_range_ok(pml4, cur, 1, 0)) return 0;
+        if (*(const char *)cur == '\0') return 1;
+    }
+    return 0;
 }
 
 void vmm_switch_pml4(uint64_t *pml4) {
