@@ -19,6 +19,10 @@
 #include "rtc.h"
 #include "acpi.h"
 #include "speaker.h"
+#include "mouse.h"
+#include "serial.h"
+#include "pmm.h"
+#include "io.h"
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -35,6 +39,19 @@ struct syscall_process_info {
     uint8_t is_user;
     uint8_t is_background;
     char name[32];
+};
+
+/* I/O and Memory structs (Phase 3 Group 3a) - must match libc definitions */
+struct mouse_state {
+    int x;
+    int y;
+    uint8_t buttons;
+};
+
+struct pmm_stats {
+    uint32_t total_pages;
+    uint32_t used_pages;
+    uint32_t free_pages;
 };
 
 /* MSR numbers */
@@ -500,6 +517,50 @@ static uint64_t sys_acpi_shutdown(void) {
     return 0;
 }
 
+/* I/O and Memory syscall handlers (Phase 3 Group 3a) */
+
+static uint64_t sys_mouse_get_state(uint64_t out_addr) {
+    struct mouse_state *out = (struct mouse_state *)out_addr;
+    if (!out) return (uint64_t)-1;
+    mouse_get_pos((int *)&out->x, (int *)&out->y);
+    out->buttons = mouse_get_buttons();
+    return 0;
+}
+
+static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
+    uint8_t *buf = (uint8_t *)buf_addr;
+    if (!buf || max <= 0) return (uint64_t)-1;
+    int n_read = 0;
+    while (n_read < (int)max && serial_readable()) {
+        buf[n_read++] = serial_getchar();
+    }
+    return (uint64_t)n_read;
+}
+
+static uint64_t sys_serial_write(uint64_t buf_addr, uint64_t len) {
+    const char *buf = (const char *)buf_addr;
+    if (!buf || len == 0) return (uint64_t)0;
+    serial_write(buf);
+    return (uint64_t)len;
+}
+
+static uint64_t sys_cmos_read_byte(uint64_t addr) {
+    uint8_t reg = (uint8_t)addr;
+    outb(0x70, reg & 0x7F);  /* mask NMI-disable bit */
+    return (uint64_t)inb(0x71);
+}
+
+static uint64_t sys_pmm_get_stats(uint64_t out_addr) {
+    struct pmm_stats *out = (struct pmm_stats *)out_addr;
+    if (!out) return (uint64_t)-1;
+    uint64_t total = pmm_get_total_frames();
+    uint64_t used = pmm_get_used_frames();
+    out->total_pages = (uint32_t)total;
+    out->used_pages = (uint32_t)used;
+    out->free_pages = (uint32_t)(total - used);
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -569,6 +630,11 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SPEAKER_BEEP:  return sys_speaker_beep(a1, a2);
         case SYS_RTC_GET_TIME:  return sys_rtc_get_time(a1);
         case SYS_ACPI_SHUTDOWN: return sys_acpi_shutdown();
+        case SYS_MOUSE_GET_STATE: return sys_mouse_get_state(a1);
+        case SYS_SERIAL_READ:   return sys_serial_read(a1, a2);
+        case SYS_SERIAL_WRITE:  return sys_serial_write(a1, a2);
+        case SYS_CMOS_READ_BYTE: return sys_cmos_read_byte(a1);
+        case SYS_PMM_GET_STATS: return sys_pmm_get_stats(a1);
         default:         return (uint64_t)-1;
     }
 }

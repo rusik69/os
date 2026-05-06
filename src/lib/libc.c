@@ -277,6 +277,28 @@ void libc_acpi_shutdown(void) {
     (void)libc_syscall(SYS_ACPI_SHUTDOWN, 0, 0, 0, 0, 0);
 }
 
+/* I/O and Memory syscall wrappers (phase 3 group 3a) */
+int libc_mouse_get_state(struct libc_mouse_state *out) {
+    return (int)libc_syscall(SYS_MOUSE_GET_STATE, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
+}
+
+int libc_serial_read(uint8_t *buf, int max) {
+    return (int)libc_syscall(SYS_SERIAL_READ, (uint64_t)(uintptr_t)buf, (uint64_t)max, 0, 0, 0);
+}
+
+int libc_serial_write(const uint8_t *buf, int len) {
+    return (int)libc_syscall(SYS_SERIAL_WRITE, (uint64_t)(uintptr_t)buf, (uint64_t)len, 0, 0, 0);
+}
+
+uint8_t libc_cmos_read_byte(uint8_t addr) {
+    return (uint8_t)libc_syscall(SYS_CMOS_READ_BYTE, (uint64_t)addr, 0, 0, 0, 0);
+}
+
+int libc_pmm_get_stats(struct libc_pmm_stats *out) {
+    return (int)libc_syscall(SYS_PMM_GET_STATS, (uint64_t)(uintptr_t)out, 0, 0, 0, 0);
+}
+
+
 
 
 

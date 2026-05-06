@@ -1,11 +1,10 @@
 /* cmd_cmos.c — read CMOS/NVRAM hardware configuration */
 #include "shell_cmds.h"
-#include "io.h"
+#include "libc.h"
 #include "printf.h"
 
 static uint8_t cmos_read(uint8_t reg) {
-    outb(0x70, reg & 0x7F);  /* mask NMI-disable bit */
-    return inb(0x71);
+    return cmos_read_byte(reg & 0x7F);
 }
 
 void cmd_cmos(void) {

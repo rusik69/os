@@ -1,12 +1,14 @@
 /* cmd_meminfo.c — meminfo command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "pmm.h"
+#include "libc.h"
 
 void cmd_meminfo(void) {
-    uint64_t total = pmm_get_total_frames();
-    uint64_t used = pmm_get_used_frames();
-    uint64_t free_fr = total - used;
+    struct pmm_stats stats = {0};
+    pmm_get_stats(&stats);
+    uint64_t total = stats.total_pages;
+    uint64_t used = stats.used_pages;
+    uint64_t free_fr = stats.free_pages;
     kprintf("Physical memory:\n");
     kprintf("  Total: %u KB (%u frames)\n", total * 4, total);
     kprintf("  Used:  %u KB (%u frames)\n", used * 4, used);

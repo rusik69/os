@@ -75,6 +75,13 @@
 #define SYS_RTC_GET_TIME  148
 #define SYS_ACPI_SHUTDOWN 149
 
+/* I/O and Memory syscalls (Phase 3 Group 3a) */
+#define SYS_MOUSE_GET_STATE 150
+#define SYS_SERIAL_READ     151
+#define SYS_SERIAL_WRITE    152
+#define SYS_CMOS_READ_BYTE  153
+#define SYS_PMM_GET_STATS   154
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

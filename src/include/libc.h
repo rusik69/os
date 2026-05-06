@@ -75,6 +75,20 @@ struct libc_rtc_time {
 #define NOTE_B4  494
 #define NOTE_C5  523
 
+/* Mouse state structure for phase 3 group 3a */
+struct libc_mouse_state {
+    int x;
+    int y;
+    uint8_t buttons;  /* bit 0=left, bit 1=right, bit 2=middle */
+};
+
+/* Memory statistics structure for phase 3 group 3a */
+struct libc_pmm_stats {
+    uint32_t total_pages;
+    uint32_t used_pages;
+    uint32_t free_pages;
+};
+
 /* Low-level syscall shim used by libc wrappers. */
 uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
                       uint64_t a3, uint64_t a4, uint64_t a5);
@@ -147,6 +161,13 @@ struct libc_user_entry *libc_users_get_table(void);
 void libc_speaker_beep(uint32_t frequency, uint32_t duration_ms);
 int libc_rtc_get_time(struct libc_rtc_time *out);
 void libc_acpi_shutdown(void);
+
+/* I/O and Memory syscall-backed operations (phase 3 group 3a) */
+int libc_mouse_get_state(struct libc_mouse_state *out);
+int libc_serial_read(uint8_t *buf, int max);
+int libc_serial_write(const uint8_t *buf, int len);
+uint8_t libc_cmos_read_byte(uint8_t addr);
+int libc_pmm_get_stats(struct libc_pmm_stats *out);
 
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
@@ -235,6 +256,8 @@ static inline struct libc_user_entry *users_get_table(void) {
 #define user_entry libc_user_entry
 #define user_session libc_user_session
 #define rtc_time libc_rtc_time
+#define mouse_state libc_mouse_state
+#define pmm_stats libc_pmm_stats
 
 /* Hardware/audio compatibility wrappers */
 static inline void speaker_beep(uint32_t frequency, uint32_t duration_ms) {
@@ -245,6 +268,23 @@ static inline int rtc_get_time(struct libc_rtc_time *out) {
 }
 static inline void acpi_shutdown(void) {
     libc_acpi_shutdown();
+}
+
+/* I/O and memory compatibility wrappers */
+static inline int mouse_get_state(struct libc_mouse_state *out) {
+    return libc_mouse_get_state(out);
+}
+static inline int serial_read(uint8_t *buf, int max) {
+    return libc_serial_read(buf, max);
+}
+static inline int serial_write(const uint8_t *buf, int len) {
+    return libc_serial_write(buf, len);
+}
+static inline uint8_t cmos_read_byte(uint8_t addr) {
+    return libc_cmos_read_byte(addr);
+}
+static inline int pmm_get_stats(struct libc_pmm_stats *out) {
+    return libc_pmm_get_stats(out);
 }
 
 /* Utility helper used by stat/chmod style tools. */
