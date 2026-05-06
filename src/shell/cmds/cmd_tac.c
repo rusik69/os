@@ -2,7 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "vfs.h"
+#include "libc.h"
 
 void cmd_tac(const char *args) {
     if (!args || !*args) {

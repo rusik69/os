@@ -1,7 +1,7 @@
 /* cmd_sort.c — Sort lines of a file alphabetically */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

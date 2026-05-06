@@ -1,7 +1,7 @@
 /* cmd_cc.c — cc command: compile a C source file to an ELF binary */
 
 #include "cc.h"
-#include "vfs.h"
+#include "libc.h"
 #include "heap.h"
 #include "string.h"
 #include "printf.h"

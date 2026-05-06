@@ -1,7 +1,7 @@
 /* cmd_find.c — Search for files matching a pattern */
 
 #include "shell_cmds.h"
-#include "fs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

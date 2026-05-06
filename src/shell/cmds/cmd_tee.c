@@ -1,7 +1,7 @@
 /* cmd_tee.c — Read from pipe input file, write to file + stdout */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

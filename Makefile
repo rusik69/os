@@ -65,7 +65,8 @@ C_SRCS = src/kernel/kernel.c \
          src/net/telnetd.c \
          src/ipc/pipe.c \
          src/lib/string.c \
-         src/lib/printf.c
+         src/lib/printf.c \
+         src/lib/libc.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

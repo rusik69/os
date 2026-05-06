@@ -1,8 +1,7 @@
 /* cmd_format.c — format command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "fs.h"
-#include "ata.h"
+#include "libc.h"
 
 void cmd_format_disk(void) {
     if (!ata_is_present()) { kprintf("No disk\n"); return; }

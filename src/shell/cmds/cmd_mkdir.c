@@ -2,8 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "fs.h"
-#include "ata.h"
+#include "libc.h"
 
 void cmd_mkdir(const char *args) {
     if (!args) { kprintf("Usage: mkdir <dir>\n"); return; }

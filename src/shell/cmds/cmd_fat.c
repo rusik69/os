@@ -1,6 +1,6 @@
 #include "shell_cmds.h"
 #include "fat32.h"
-#include "ata.h"
+#include "libc.h"
 #include "ahci.h"
 #include "string.h"
 #include "printf.h"

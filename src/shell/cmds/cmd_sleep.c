@@ -1,8 +1,7 @@
 /* cmd_sleep.c — sleep command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "timer.h"
-#include "process.h"
+#include "libc.h"
 
 static uint32_t parse_uint(const char **s) {
     uint32_t v = 0;
@@ -18,6 +17,6 @@ void cmd_sleep(const char *args) {
     const char *p = args;
     uint32_t sec = parse_uint(&p);
     if (sec > 60) sec = 60;
-    process_sleep_ticks((uint64_t)sec * TIMER_FREQ);
+    libc_sleep_ticks((uint64_t)sec * TIMER_FREQ);
     kprintf("Slept %u seconds\n", (uint64_t)sec);
 }

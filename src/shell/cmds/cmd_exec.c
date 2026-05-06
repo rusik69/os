@@ -3,7 +3,7 @@
 #include "printf.h"
 #include "string.h"
 #include "elf.h"
-#include "ata.h"
+#include "libc.h"
 
 void cmd_exec(const char *args) {
     if (!args || !*args) { kprintf("Usage: exec <path>\n"); return; }

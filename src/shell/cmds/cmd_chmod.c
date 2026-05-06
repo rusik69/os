@@ -1,5 +1,5 @@
 #include "shell_cmds.h"
-#include "fs.h"
+#include "libc.h"
 #include "string.h"
 #include "printf.h"
 

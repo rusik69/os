@@ -1,5 +1,5 @@
 #include "shell_cmds.h"
-#include "ata.h"
+#include "libc.h"
 #include "ahci.h"
 #include "printf.h"
 

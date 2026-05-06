@@ -2,8 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "fs.h"
-#include "ata.h"
+#include "libc.h"
 
 static uint32_t parse_uint(const char **s) {
     uint32_t v = 0;

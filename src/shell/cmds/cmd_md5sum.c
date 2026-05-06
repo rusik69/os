@@ -1,7 +1,7 @@
 /* cmd_md5sum.c — Compute simple checksums (djb2 hash) */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

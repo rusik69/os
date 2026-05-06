@@ -1,7 +1,7 @@
 /* cmd_od.c — Octal/hex dump of a file */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

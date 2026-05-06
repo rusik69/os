@@ -3,7 +3,7 @@
 #include "printf.h"
 #include "string.h"
 #include "script.h"
-#include "ata.h"
+#include "libc.h"
 
 void cmd_run(const char *args) {
     if (!args || !*args) { kprintf("Usage: run <script>\n"); return; }

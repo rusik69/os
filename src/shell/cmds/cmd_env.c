@@ -4,7 +4,7 @@
 #include "net.h"
 #include "timer.h"
 #include "process.h"
-#include "ata.h"
+#include "libc.h"
 #include "e1000.h"
 
 void cmd_env(void) {

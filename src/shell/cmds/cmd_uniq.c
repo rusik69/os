@@ -1,7 +1,7 @@
 /* cmd_uniq.c — Remove adjacent duplicate lines */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

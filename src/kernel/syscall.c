@@ -2,11 +2,22 @@
 #include "process.h"
 #include "scheduler.h"
 #include "fs.h"
+#include "vfs.h"
+#include "ata.h"
+#include "ahci.h"
 #include "vga.h"
 #include "timer.h"
 #include "printf.h"
 #include "io.h"
 #include "vmm.h"
+
+struct syscall_fs_stat_ex {
+    uint32_t size;
+    uint8_t  type;
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mode;
+};
 
 /* MSR numbers */
 #define MSR_EFER   0xC0000080
@@ -125,6 +136,138 @@ static uint64_t sys_uptime(void) {
     return timer_get_ticks();
 }
 
+static uint64_t sys_fs_format(void) {
+    return (uint64_t)fs_format();
+}
+
+static uint64_t sys_fs_create(uint64_t path_addr, uint64_t type) {
+    return (uint64_t)fs_create((const char *)path_addr, (uint8_t)type);
+}
+
+static uint64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+    return (uint64_t)fs_write_file((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+}
+
+static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size, uint64_t out_addr) {
+    return (uint64_t)fs_read_file((const char *)path_addr, (void *)buf_addr,
+                                  (uint32_t)max_size, (uint32_t *)out_addr);
+}
+
+static uint64_t sys_fs_delete(uint64_t path_addr) {
+    return (uint64_t)fs_delete((const char *)path_addr);
+}
+
+static uint64_t sys_fs_list(uint64_t path_addr) {
+    return (uint64_t)fs_list((const char *)path_addr);
+}
+
+static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
+    uint32_t size = 0;
+    uint8_t type = 0;
+    int rc = fs_stat((const char *)path_addr, &size, &type);
+    if (rc < 0) return (uint64_t)rc;
+    if (out_addr) {
+        uint32_t *out = (uint32_t *)out_addr;
+        out[0] = size;
+        out[1] = type;
+    }
+    return 0;
+}
+
+static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
+    struct syscall_fs_stat_ex *out = (struct syscall_fs_stat_ex *)out_addr;
+    uint32_t size = 0;
+    uint8_t type = 0;
+    uint16_t uid = 0, gid = 0, mode = 0;
+    int rc = fs_stat_ex((const char *)path_addr, &size, &type, &uid, &gid, &mode);
+    if (rc < 0) return (uint64_t)rc;
+    if (out) {
+        out->size = size;
+        out->type = type;
+        out->uid = uid;
+        out->gid = gid;
+        out->mode = mode;
+    }
+    return 0;
+}
+
+static uint64_t sys_fs_chmod(uint64_t path_addr, uint64_t mode) {
+    return (uint64_t)fs_chmod((const char *)path_addr, (uint16_t)mode);
+}
+
+static uint64_t sys_fs_chown(uint64_t path_addr, uint64_t uid, uint64_t gid) {
+    return (uint64_t)fs_chown((const char *)path_addr, (uint16_t)uid, (uint16_t)gid);
+}
+
+static uint64_t sys_fs_get_usage(uint64_t out_addr) {
+    uint32_t used_inodes = 0, total_inodes = 0, used_blocks = 0, data_start = 0;
+    fs_get_usage(&used_inodes, &total_inodes, &used_blocks, &data_start);
+    if (out_addr) {
+        uint32_t *out = (uint32_t *)out_addr;
+        out[0] = used_inodes;
+        out[1] = total_inodes;
+        out[2] = used_blocks;
+        out[3] = data_start;
+    }
+    return 0;
+}
+
+static uint64_t sys_fs_list_names(uint64_t dir_addr, uint64_t prefix_addr,
+                                  uint64_t names_addr, uint64_t max) {
+    return (uint64_t)fs_list_names((const char *)dir_addr, (const char *)prefix_addr,
+                                   (char (*)[FS_MAX_NAME])names_addr, (int)max);
+}
+
+static uint64_t sys_ata_present(void) {
+    return (uint64_t)ata_is_present();
+}
+
+static uint64_t sys_ata_sectors(void) {
+    return (uint64_t)ata_get_sectors();
+}
+
+static uint64_t sys_ahci_present(void) {
+    return (uint64_t)ahci_is_present();
+}
+
+static uint64_t sys_ahci_sectors(void) {
+    return (uint64_t)ahci_get_sectors();
+}
+
+static uint64_t sys_vfs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max, uint64_t out_addr) {
+    return (uint64_t)vfs_read((const char *)path_addr, (void *)buf_addr,
+                              (uint32_t)max, (uint32_t *)out_addr);
+}
+
+static uint64_t sys_vfs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+    return (uint64_t)vfs_write((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+}
+
+static uint64_t sys_vfs_stat(uint64_t path_addr, uint64_t st_addr) {
+    return (uint64_t)vfs_stat((const char *)path_addr, (struct vfs_stat *)st_addr);
+}
+
+static uint64_t sys_vfs_create(uint64_t path_addr, uint64_t type) {
+    return (uint64_t)vfs_create((const char *)path_addr, (uint8_t)type);
+}
+
+static uint64_t sys_vfs_unlink(uint64_t path_addr) {
+    return (uint64_t)vfs_unlink((const char *)path_addr);
+}
+
+static uint64_t sys_vfs_readdir(uint64_t path_addr) {
+    return (uint64_t)vfs_readdir((const char *)path_addr);
+}
+
+static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
+    return (uint64_t)process_waitpid((uint32_t)pid, (int *)status_addr);
+}
+
+static uint64_t sys_sleep_ticks(uint64_t ticks) {
+    process_sleep_ticks(ticks);
+    return 0;
+}
+
 /* ── Dispatch table ───────────────────────────────────────────── */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -145,6 +288,30 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_TIME:   return sys_time();
         case SYS_YIELD:  return sys_yield();
         case SYS_UPTIME: return sys_uptime();
+        case SYS_FS_FORMAT:     return sys_fs_format();
+        case SYS_FS_CREATE:     return sys_fs_create(a1, a2);
+        case SYS_FS_WRITE:      return sys_fs_write(a1, a2, a3);
+        case SYS_FS_READ:       return sys_fs_read(a1, a2, a3, a4);
+        case SYS_FS_DELETE:     return sys_fs_delete(a1);
+        case SYS_FS_LIST:       return sys_fs_list(a1);
+        case SYS_FS_STAT:       return sys_fs_stat(a1, a2);
+        case SYS_FS_STAT_EX:    return sys_fs_stat_ex(a1, a2);
+        case SYS_FS_CHMOD:      return sys_fs_chmod(a1, a2);
+        case SYS_FS_CHOWN:      return sys_fs_chown(a1, a2, a3);
+        case SYS_FS_GET_USAGE:  return sys_fs_get_usage(a1);
+        case SYS_FS_LIST_NAMES: return sys_fs_list_names(a1, a2, a3, a4);
+        case SYS_ATA_PRESENT:   return sys_ata_present();
+        case SYS_ATA_SECTORS:   return sys_ata_sectors();
+        case SYS_AHCI_PRESENT:  return sys_ahci_present();
+        case SYS_AHCI_SECTORS:  return sys_ahci_sectors();
+        case SYS_VFS_READ:      return sys_vfs_read(a1, a2, a3, a4);
+        case SYS_VFS_WRITE:     return sys_vfs_write(a1, a2, a3);
+        case SYS_VFS_STAT:      return sys_vfs_stat(a1, a2);
+        case SYS_VFS_CREATE:    return sys_vfs_create(a1, a2);
+        case SYS_VFS_UNLINK:    return sys_vfs_unlink(a1);
+        case SYS_VFS_READDIR:   return sys_vfs_readdir(a1);
+        case SYS_WAITPID:       return sys_waitpid(a1, a2);
+        case SYS_SLEEP_TICKS:   return sys_sleep_ticks(a1);
         default:         return (uint64_t)-1;
     }
 }

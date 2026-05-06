@@ -1,7 +1,7 @@
 /* cmd_nl.c — Number lines of a file */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

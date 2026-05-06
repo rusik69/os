@@ -1,8 +1,7 @@
 /* cmd_df.c — df command */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "fs.h"
-#include "ata.h"
+#include "libc.h"
 
 void cmd_df(void) {
     if (!ata_is_present()) { kprintf("No disk\n"); return; }

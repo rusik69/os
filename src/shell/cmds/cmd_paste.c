@@ -1,7 +1,7 @@
 /* cmd_paste.c — Merge lines of files side by side */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

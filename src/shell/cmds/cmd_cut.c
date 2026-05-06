@@ -1,7 +1,7 @@
 /* cmd_cut.c — Extract fields from text */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

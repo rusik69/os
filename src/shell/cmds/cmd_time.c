@@ -3,7 +3,7 @@
 #include "shell.h"
 #include "printf.h"
 #include "string.h"
-#include "timer.h"
+#include "libc.h"
 
 void cmd_time(const char *args) {
     if (!args || !*args) {
@@ -27,9 +27,9 @@ void cmd_time(const char *args) {
         cmdargs = NULL;
     }
 
-    uint64_t start = timer_get_ticks();
+    uint64_t start = libc_uptime_ticks();
     shell_exec_cmd(cmdname, cmdargs);
-    uint64_t end = timer_get_ticks();
+    uint64_t end = libc_uptime_ticks();
 
     uint64_t elapsed_ms = (end - start) * 1000 / TIMER_FREQ;
     uint64_t sec = elapsed_ms / 1000;

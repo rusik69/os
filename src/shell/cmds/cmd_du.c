@@ -1,7 +1,7 @@
 /* cmd_du.c — Disk usage for files */
 
 #include "shell_cmds.h"
-#include "vfs.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 
