@@ -78,13 +78,23 @@ C_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(C_SRCS))
 ASM_OBJS = $(patsubst src/%.asm,$(BUILDDIR)/%.o,$(ASM_SRCS))
 CMD_SRCS = $(wildcard src/shell/cmds/*.c)
 CMD_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(CMD_SRCS))
+APP_SRCS = $(CMD_SRCS) $(wildcard src/apps/*.c)
 COMPILER_SRCS = $(wildcard src/compiler/*.c)
 COMPILER_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(COMPILER_SRCS))
 GUI_SRCS = $(wildcard src/gui/*.c)
 GUI_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(GUI_SRCS))
 OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS)
 
-.PHONY: all run debug clean deps test test-kernel test-serial test-clean
+.PHONY: all run debug clean deps test test-kernel test-serial test-clean check-app-boundary
+
+check-app-boundary:
+    @bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|printf\.h|string\.h|types\.h)' $(APP_SRCS) 2>/dev/null || true); \
+    if [ -n "$$bad" ]; then \
+        echo "ERROR: App sources may include only libc-facing headers (libc.h/shell_cmds.h/printf.h/string.h/types.h)."; \
+        echo "Direct kernel includes found:"; \
+        echo "$$bad"; \
+        exit 1; \
+    fi
 
 all: $(BUILDDIR)/kernel.bin
 
@@ -96,7 +106,7 @@ $(BUILDDIR)/%.o: src/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILDDIR)/kernel.elf: $(OBJS)
+$(BUILDDIR)/kernel.elf: check-app-boundary $(OBJS)
 	@mkdir -p $(BUILDDIR)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
@@ -133,7 +143,7 @@ $(BUILDDIR_TEST)/%.o: src/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-$(BUILDDIR_TEST)/kernel.elf: $(TEST_OBJS)
+$(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 	@mkdir -p $(BUILDDIR_TEST)
 	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS)
 
