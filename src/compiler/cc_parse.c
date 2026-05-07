@@ -298,6 +298,33 @@ static StructDef *find_struct(CompilerState *cc, const char *name) {
     return 0;
 }
 
+static void add_builtin_typedef(CompilerState *cc, const char *name, int kind, int ptr_depth) {
+    if (cc->ntypedefs >= CC_MAX_TYPEDEFS) return;
+    TypedefEntry *te = &cc->typedefs[cc->ntypedefs++];
+    memset(te, 0, sizeof(*te));
+    strncpy(te->name, name, sizeof(te->name) - 1);
+    te->type.kind = kind;
+    te->type.ptr_depth = ptr_depth;
+    te->type.struct_idx = -1;
+    te->type.arr_size = 0;
+}
+
+static void cc_seed_builtin_typedefs(CompilerState *cc) {
+    /* Common aliases from types.h and standard C headers used in OS sources. */
+    add_builtin_typedef(cc, "uint8_t", TY_CHAR, 0);
+    add_builtin_typedef(cc, "int8_t", TY_CHAR, 0);
+    add_builtin_typedef(cc, "uint16_t", TY_INT, 0);
+    add_builtin_typedef(cc, "int16_t", TY_INT, 0);
+    add_builtin_typedef(cc, "uint32_t", TY_INT, 0);
+    add_builtin_typedef(cc, "int32_t", TY_INT, 0);
+    add_builtin_typedef(cc, "uint64_t", TY_INT, 0);
+    add_builtin_typedef(cc, "int64_t", TY_INT, 0);
+    add_builtin_typedef(cc, "size_t", TY_INT, 0);
+    add_builtin_typedef(cc, "ssize_t", TY_INT, 0);
+    add_builtin_typedef(cc, "uintptr_t", TY_INT, 0);
+    add_builtin_typedef(cc, "intptr_t", TY_INT, 0);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Type parsing                                                       */
 /* ------------------------------------------------------------------ */
@@ -1832,6 +1859,8 @@ void cc_parse(CompilerState *cc) {
     cc->ntypedefs = 0;
     cc->main_offset = -1;
     cc->local_frame = 0;
+
+    cc_seed_builtin_typedefs(cc);
 
     /* _start: call main, then exit(rax) syscall */
     int call_off = emit_call(cc);

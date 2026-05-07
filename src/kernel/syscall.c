@@ -831,14 +831,143 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     if (!cc) return (uint64_t)-1;
     memset(cc, 0, sizeof(CompilerState));
 
-    uint32_t read_sz = 0;
-    int r = vfs_read(inpath, cc->src, CC_SRC_MAX - 1, &read_sz);
-    if (r < 0 || read_sz == 0) {
-        kfree(cc);
-        return (uint64_t)-2;
+    /* Expand #include "..." recursively before lexing. */
+    cc->src_len = 0;
+    cc->src[0] = '\0';
+
+    {
+        #define CC_INCLUDE_MAX_DEPTH 16
+        #define CC_PATH_MAX_LEN 256
+
+        int append_src(CompilerState *st, const char *buf, uint32_t n) {
+            if (st->src_len + n >= CC_SRC_MAX) return -1;
+            memcpy(st->src + st->src_len, buf, n);
+            st->src_len += n;
+            st->src[st->src_len] = '\0';
+            return 0;
+        }
+
+        void path_dirname(const char *path, char out[CC_PATH_MAX_LEN]) {
+            int last_slash = -1;
+            int i = 0;
+            while (path[i] && i < CC_PATH_MAX_LEN - 1) {
+                if (path[i] == '/') last_slash = i;
+                i++;
+            }
+            if (last_slash <= 0) {
+                out[0] = '/';
+                out[1] = '\0';
+                return;
+            }
+            memcpy(out, path, (uint32_t)last_slash);
+            out[last_slash] = '\0';
+        }
+
+        int path_join(const char *dir, const char *name, char out[CC_PATH_MAX_LEN]) {
+            int di = 0;
+            if (name[0] == '/') {
+                while (name[di] && di < CC_PATH_MAX_LEN - 1) {
+                    out[di] = name[di];
+                    di++;
+                }
+                out[di] = '\0';
+                return 0;
+            }
+
+            while (dir[di] && di < CC_PATH_MAX_LEN - 1) {
+                out[di] = dir[di];
+                di++;
+            }
+            if (di == 0 || out[di - 1] != '/') {
+                if (di >= CC_PATH_MAX_LEN - 1) return -1;
+                out[di++] = '/';
+            }
+            int ni = 0;
+            while (name[ni] && di < CC_PATH_MAX_LEN - 1) {
+                out[di++] = name[ni++];
+            }
+            out[di] = '\0';
+            return name[ni] ? -1 : 0;
+        }
+
+        int load_with_includes(CompilerState *st, const char *path, int depth) {
+            if (depth > CC_INCLUDE_MAX_DEPTH) return -1;
+
+            char *fbuf = (char *)kmalloc(CC_SRC_MAX);
+            if (!fbuf) return -1;
+            uint32_t sz = 0;
+            int rr = vfs_read(path, fbuf, CC_SRC_MAX - 1, &sz);
+            if (rr < 0 || sz == 0) {
+                kfree(fbuf);
+                return -1;
+            }
+            fbuf[sz] = '\0';
+
+            char base[CC_PATH_MAX_LEN];
+            path_dirname(path, base);
+
+            uint32_t i = 0;
+            while (i < sz) {
+                uint32_t line_start = i;
+                while (i < sz && fbuf[i] != '\n') i++;
+                uint32_t line_end = i;
+                if (i < sz && fbuf[i] == '\n') i++;
+
+                uint32_t p = line_start;
+                while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+
+                if (p < line_end && fbuf[p] == '#') {
+                    p++;
+                    while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+
+                    char dirkw[16] = {0};
+                    int dk = 0;
+                    while (p < line_end && ((fbuf[p] >= 'a' && fbuf[p] <= 'z') ||
+                           (fbuf[p] >= 'A' && fbuf[p] <= 'Z')) && dk < 15) {
+                        dirkw[dk++] = fbuf[p++];
+                    }
+                    dirkw[dk] = '\0';
+
+                    if (strcmp(dirkw, "include") == 0) {
+                        while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+                        if (p < line_end && fbuf[p] == '"') {
+                            p++;
+                            char inc[CC_PATH_MAX_LEN] = {0};
+                            int ii = 0;
+                            while (p < line_end && fbuf[p] != '"' && ii < CC_PATH_MAX_LEN - 1)
+                                inc[ii++] = fbuf[p++];
+                            inc[ii] = '\0';
+
+                            char full[CC_PATH_MAX_LEN] = {0};
+                            if (path_join(base, inc, full) < 0) {
+                                kfree(fbuf);
+                                return -1;
+                            }
+                            if (load_with_includes(st, full, depth + 1) < 0) {
+                                kfree(fbuf);
+                                return -1;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                if (append_src(st, fbuf + line_start, line_end - line_start) < 0 ||
+                    append_src(st, "\n", 1) < 0) {
+                    kfree(fbuf);
+                    return -1;
+                }
+            }
+
+            kfree(fbuf);
+            return 0;
+        }
+
+        if (load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
+            kfree(cc);
+            return (uint64_t)-2;
+        }
     }
-    cc->src[read_sz] = '\0';
-    cc->src_len = read_sz;
 
     cc_lex(cc);
     if (cc->error) {

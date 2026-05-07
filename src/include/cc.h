@@ -3,17 +3,17 @@
 
 #include "types.h"
 
-#define CC_MAX_TOKENS  8192
-#define CC_MAX_LOCALS   256
-#define CC_MAX_GLOBALS  128
-#define CC_MAX_FUNCS     64
+#define CC_MAX_TOKENS  65536
+#define CC_MAX_LOCALS   1024
+#define CC_MAX_GLOBALS  1024
+#define CC_MAX_FUNCS     256
 #define CC_MAX_STRUCTS   32
 #define CC_MAX_FIELDS    32
 #define CC_MAX_TYPEDEFS  32
-#define CC_CODE_MAX   65536   /* 64KB code */
-#define CC_DATA_MAX   16384   /* 16KB data/strings */
-#define CC_SRC_MAX    65536   /* 64KB max source */
-#define CC_MAX_PATCHES 1024
+#define CC_CODE_MAX   524288  /* 512KB code */
+#define CC_DATA_MAX   131072  /* 128KB data/strings */
+#define CC_SRC_MAX    524288  /* 512KB max preprocessed source */
+#define CC_MAX_PATCHES 8192
 #define CC_MAX_LABELS       128
 #define CC_MAX_MACROS        64
 #define CC_MAX_GOTO_PATCHES 128
