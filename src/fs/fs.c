@@ -177,6 +177,14 @@ int fs_format(void) {
     inodes[2].mode   = FS_MODE_DIR;
     strncpy(inodes[2].name, "root", FS_MAX_NAME - 1);
 
+    /* Shared temp directory: rwxrwxrwt */
+    inodes[3].type   = FS_TYPE_DIR;
+    inodes[3].parent = 0;
+    inodes[3].uid    = 0;
+    inodes[3].gid    = 0;
+    inodes[3].mode   = 01777;
+    strncpy(inodes[3].name, "tmp", FS_MAX_NAME - 1);
+
     if (save_super() < 0) return -1;
     if (save_inodes() < 0) return -1;
     return 0;
