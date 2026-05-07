@@ -448,7 +448,10 @@ static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
 }
 
 static uint64_t sys_sleep_ticks(uint64_t ticks) {
-    process_sleep_ticks(ticks);
+    uint64_t start = timer_get_ticks();
+    while ((timer_get_ticks() - start) < ticks) {
+        __asm__ volatile("pause");
+    }
     return 0;
 }
 
