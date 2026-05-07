@@ -24,6 +24,7 @@
 #define FS_PERM_ROTH   0004   /* other read    */
 #define FS_PERM_WOTH   0002   /* other write   */
 #define FS_PERM_XOTH   0001   /* other execute */
+#define FS_PERM_STICKY 01000  /* sticky bit (restricted deletion on dirs) */
 
 #define FS_MODE_FILE   0644   /* default file: rw-r--r-- */
 #define FS_MODE_DIR    0755   /* default dir:  rwxr-xr-x */
@@ -37,7 +38,7 @@ struct fs_inode {
     uint32_t blocks[FS_MAX_BLOCKS]; /* sector numbers for data */
     uint16_t uid;                /* owning user id  */
     uint16_t gid;                /* owning group id */
-    uint16_t mode;               /* permission bits (octal rwxrwxrwx) */
+    uint16_t mode;               /* permission bits (octal, includes sticky) */
     uint8_t  _pad2[6];           /* reserved / future use */
     char     name[FS_MAX_NAME];
 } __attribute__((packed));

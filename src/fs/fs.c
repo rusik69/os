@@ -294,6 +294,17 @@ int fs_delete(const char *path) {
     int parent = inodes[idx].parent;
     if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
+    /* Linux sticky-dir semantics: in sticky directories, only root,
+     * directory owner, or entry owner may unlink/remove entries. */
+    {
+        struct user_session *s = session_get();
+        uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+        if (cur_uid != 0 && (inodes[parent].mode & FS_PERM_STICKY)) {
+            if (cur_uid != inodes[parent].uid && cur_uid != inodes[idx].uid)
+                return -3;
+        }
+    }
+
     /* If dir, check it's empty */
     if (inodes[idx].type == FS_TYPE_DIR) {
         for (int i = 0; i < FS_MAX_FILES; i++) {
@@ -370,7 +381,7 @@ int fs_chmod(const char *path, uint16_t mode) {
     /* Only owner or root may chmod */
     if (cur_uid != 0 && cur_uid != inodes[idx].uid) return -2;
 
-    inodes[idx].mode = mode & 0777;
+    inodes[idx].mode = mode & 07777;
     save_inodes();
     return 0;
 }
@@ -429,6 +440,9 @@ void fs_mode_str(uint16_t mode, char out[10]) {
     for (int i = 0; i < 9; i++) {
         int bit = 1 << (8 - i);
         out[i] = (mode & bit) ? bits[i] : '-';
+    }
+    if (mode & FS_PERM_STICKY) {
+        out[8] = (out[8] == 'x') ? 't' : 'T';
     }
     out[9] = '\0';
 }

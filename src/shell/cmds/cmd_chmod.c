@@ -9,7 +9,7 @@
 void cmd_chmod(const char *args) {
     if (!args || !*args) {
         kprintf("Usage: chmod <mode> <path>\n");
-        kprintf("  mode is octal, e.g. 755 or 644\n");
+        kprintf("  mode is octal, e.g. 755, 644, or 1777\n");
         return;
     }
 
