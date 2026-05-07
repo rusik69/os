@@ -220,6 +220,70 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
     }
 }
 
+static int syscall_user_cap_allowed(uint64_t num) {
+    switch (num) {
+        /* Core process/syscall lifecycle */
+        case SYS_READ:
+        case SYS_WRITE:
+        case SYS_OPEN:
+        case SYS_CLOSE:
+        case SYS_EXIT:
+        case SYS_GETPID:
+        case SYS_KILL:
+        case SYS_BRK:
+        case SYS_STAT:
+        case SYS_MKDIR:
+        case SYS_UNLINK:
+        case SYS_TIME:
+        case SYS_YIELD:
+        case SYS_UPTIME:
+        case SYS_WAITPID:
+        case SYS_SLEEP_TICKS:
+            return 1;
+
+        /* Filesystem/VFS through syscall boundary */
+        case SYS_FS_CREATE:
+        case SYS_FS_WRITE:
+        case SYS_FS_READ:
+        case SYS_FS_DELETE:
+        case SYS_FS_LIST:
+        case SYS_FS_STAT:
+        case SYS_FS_STAT_EX:
+        case SYS_FS_CHMOD:
+        case SYS_FS_CHOWN:
+        case SYS_FS_GET_USAGE:
+        case SYS_FS_LIST_NAMES:
+        case SYS_VFS_READ:
+        case SYS_VFS_WRITE:
+        case SYS_VFS_STAT:
+        case SYS_VFS_CREATE:
+        case SYS_VFS_UNLINK:
+        case SYS_VFS_READDIR:
+            return 1;
+
+        /* Network stack access */
+        case SYS_NET_PRESENT:
+        case SYS_NET_GET_MAC:
+        case SYS_NET_GET_IP:
+        case SYS_NET_GET_GW:
+        case SYS_NET_GET_MASK:
+        case SYS_NET_DNS:
+        case SYS_NET_PING:
+        case SYS_NET_UDP_SEND:
+        case SYS_NET_HTTP_GET:
+        case SYS_NET_ARP_LIST:
+            return 1;
+
+        /* User program execution helpers */
+        case SYS_ELF_EXEC:
+        case SYS_SCRIPT_EXEC:
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
 static void wrmsr(uint32_t msr, uint64_t val) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
 }
@@ -887,6 +951,10 @@ static uint64_t sys_gui_shell_run(void) {
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    if (syscall_is_user_process() && !syscall_user_cap_allowed(num)) {
+        return (uint64_t)-1;
+    }
+
     if (!syscall_validate_user_args(num, a1, a2, a3, a4, a5)) {
         return (uint64_t)-1;
     }
