@@ -440,6 +440,8 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: dmesg\n  Show kernel boot log\n");
         else if (strcmp(cmd, "cc") == 0)
             kprintf("Usage: cc <source.c> [output]\n  Compile C source to static ELF64 binary\n");
+        else if (strcmp(cmd, "ccbuilder") == 0)
+            kprintf("Usage: ccbuilder [-k|--keep-going] <manifest.txt>\n  Run manifest steps: cc/exec/run/echo\n");
         else if (strcmp(cmd, "sort") == 0)
             kprintf("Usage: sort <file>\n  Sort lines of a file alphabetically\n");
         else if (strcmp(cmd, "find") == 0)
@@ -540,6 +542,7 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "lspci") == 0) cmd_lspci();
     else if (strcmp(cmd, "dmesg") == 0) cmd_dmesg();
     else if (strcmp(cmd, "cc") == 0) cmd_cc(args);
+    else if (strcmp(cmd, "ccbuilder") == 0) cmd_ccbuilder(args);
     else if (strcmp(cmd, "sort") == 0) cmd_sort(args);
     else if (strcmp(cmd, "find") == 0) cmd_find(args);
     else if (strcmp(cmd, "calc") == 0) cmd_calc(args);

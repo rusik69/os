@@ -3,7 +3,7 @@
 /* ------------------------------------------------------------------ */
 
 static const char *all_cmds[] = {
-    "arp", "base64", "basename", "beep", "calc", "cat", "cc", "clear",
+    "arp", "base64", "basename", "beep", "calc", "cat", "cc", "ccbuilder", "clear",
     "cmos", "color", "cp", "cpuinfo", "curl", "cut", "date", "df", "diff", "dmesg",
     "dirname", "dns", "du", "echo", "edit", "env", "exec", "exit", "expr",
     "fg", "find", "format", "free", "grep", "head", "help", "hexdump",

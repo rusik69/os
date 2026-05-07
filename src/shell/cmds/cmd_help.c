@@ -57,6 +57,7 @@ void cmd_help(void) {
     kprintf("  lspci    - List PCI devices\n");
     kprintf("  dmesg    - Show boot log\n");
     kprintf("  cc       - Compile C source (cc <file> [out], cc --batch <list>)\n");
+    kprintf("  ccbuilder- Run build manifest (ccbuilder [-k] <manifest>)\n");
     kprintf("  sort     - Sort file lines (sort <file>)\n");
     kprintf("  find     - Find files (find <pattern>)\n");
     kprintf("  calc     - Calculator (calc <expr>)\n");
