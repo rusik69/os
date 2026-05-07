@@ -114,6 +114,7 @@
 #define SYS_VGA_SET_CURSOR      175
 #define SYS_VGA_CLEAR           176
 #define SYS_GUI_SHELL_RUN       177
+#define SYS_PROC_SET_CAP_PROFILE 178
 
 void syscall_init(void);
 

@@ -16,7 +16,7 @@ static const char *all_cmds[] = {
     "uname", "uniq", "uptime", "users", "useradd", "userdel", "wait", "wc",
     "whoami", "write", "xargs", "xxd", "yes",
     "fat", "login", "logout", "lsblk", "lsusb", "passwd",
-    "chmod", "chown", 0
+    "chmod", "chown", "capprof", 0
 };
 
 /* ------------------------------------------------------------------ */

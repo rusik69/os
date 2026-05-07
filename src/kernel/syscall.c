@@ -649,6 +649,20 @@ static uint64_t sys_users_get_by_index(uint64_t idx, uint64_t out_addr) {
     return 0;
 }
 
+static uint64_t sys_proc_set_cap_profile(uint64_t pid, uint64_t profile) {
+    struct user_session *sess = session_get();
+    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-1;
+
+    struct process *target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-2;
+    if (!target->is_user) return (uint64_t)-3;
+
+    if (process_set_cap_profile(target, (enum process_cap_profile)profile) < 0)
+        return (uint64_t)-4;
+
+    return 0;
+}
+
 /* Hardware/Audio syscall handlers (Phase 3 Group 2) */
 
 static uint64_t sys_speaker_beep(uint64_t frequency, uint64_t duration_ms) {
@@ -958,6 +972,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SESSION_GET:   return sys_session_get();
         case SYS_USERS_COUNT:   return sys_users_count(a1);
         case SYS_USERS_GET_BY_INDEX: return sys_users_get_by_index(a1, a2);
+        case SYS_PROC_SET_CAP_PROFILE: return sys_proc_set_cap_profile(a1, a2);
         case SYS_SPEAKER_BEEP:  return sys_speaker_beep(a1, a2);
         case SYS_RTC_GET_TIME:  return sys_rtc_get_time(a1);
         case SYS_ACPI_SHUTDOWN: return sys_acpi_shutdown();

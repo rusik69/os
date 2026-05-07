@@ -95,6 +95,10 @@ int libc_process_list(struct libc_process_info *out, int max) {
     return (int)libc_syscall(SYS_PROC_LIST, (uint64_t)(uintptr_t)out, (uint64_t)max, 0, 0, 0);
 }
 
+int libc_process_set_cap_profile(uint32_t pid, uint32_t profile) {
+    return (int)libc_syscall(SYS_PROC_SET_CAP_PROFILE, (uint64_t)pid, (uint64_t)profile, 0, 0, 0);
+}
+
 void libc_pci_list(void) {
     (void)libc_syscall(SYS_PCI_LIST, 0, 0, 0, 0, 0);
 }

@@ -103,6 +103,7 @@ void cmd_help(void) {
     kprintf("  useradd  - Add a user\n");
     kprintf("  userdel  - Delete a user\n");
     kprintf("  passwd   - Change password\n");
+    kprintf("  capprof  - Set process syscall profile (capprof <pid> <none|default|trusted>)\n");
     kprintf("\nShell features: Tab completion, history (up/down),\n");
     kprintf("  pipes (cmd1 | cmd2), redirection (cmd > file, cmd >> file)\n");
     kprintf("  background execution (cmd &)\n");

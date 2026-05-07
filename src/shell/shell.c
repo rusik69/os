@@ -587,6 +587,7 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "userdel") == 0) cmd_userdel(args);
     else if (strcmp(cmd, "passwd") == 0) cmd_passwd(args);
     else if (strcmp(cmd, "users") == 0) cmd_users();
+    else if (strcmp(cmd, "capprof") == 0) cmd_capprof(args);
     else kprintf("Unknown command: %s\n", cmd);
 }
 

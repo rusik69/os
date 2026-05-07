@@ -124,6 +124,11 @@ struct libc_fb_info {
     uint8_t is_framebuffer;
 };
 
+/* Process capability profile values mirrored from process.h */
+#define LIBC_PROC_CAP_NONE    0
+#define LIBC_PROC_CAP_DEFAULT 1
+#define LIBC_PROC_CAP_TRUSTED 2
+
 /* FAT32 compatibility constants/types for phase 3 group 3b */
 #define FAT32_MAX_NAME 256
 typedef enum {
@@ -160,6 +165,7 @@ int libc_net_http_get_ex(const char *host, uint16_t port, const char *path,
                          char *buf, int bufsize, int follow_redirects);
 int libc_net_arp_list_print(void);
 int libc_process_list(struct libc_process_info *out, int max);
+int libc_process_set_cap_profile(uint32_t pid, uint32_t profile);
 void libc_pci_list(void);
 void libc_usb_list(void);
 void libc_hwinfo_print(void);

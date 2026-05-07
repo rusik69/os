@@ -113,5 +113,6 @@ void cmd_useradd(const char *args);
 void cmd_userdel(const char *args);
 void cmd_passwd(const char *args);
 void cmd_users(void);
+void cmd_capprof(const char *args);
 
 #endif
