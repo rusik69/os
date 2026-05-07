@@ -3,6 +3,7 @@
 #include "string.h"
 #include "scheduler.h"
 #include "timer.h"
+#include "syscall.h"
 
 extern void process_entry_trampoline(void);
 extern void user_entry_trampoline(void);
@@ -10,6 +11,114 @@ extern void user_entry_trampoline(void);
 static struct process process_table[PROCESS_MAX];
 static uint32_t next_pid = 1;
 static struct process *current_process = NULL;
+
+static inline int process_cap_valid(uint32_t num) {
+    return num < PROCESS_SYSCALL_MAX;
+}
+
+void process_caps_clear_all(struct process *proc) {
+    if (!proc) return;
+    memset(proc->syscall_caps, 0, sizeof(proc->syscall_caps));
+}
+
+void process_caps_allow(struct process *proc, uint32_t num) {
+    if (!proc || !process_cap_valid(num)) return;
+    proc->syscall_caps[num / 64] |= (1ULL << (num % 64));
+}
+
+void process_caps_allow_all(struct process *proc) {
+    if (!proc) return;
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+        proc->syscall_caps[i] = ~0ULL;
+    }
+}
+
+int process_caps_has(const struct process *proc, uint32_t num) {
+    if (!proc || !process_cap_valid(num)) return 0;
+    return (proc->syscall_caps[num / 64] & (1ULL << (num % 64))) != 0;
+}
+
+static void process_caps_apply_user_default(struct process *proc) {
+    process_caps_clear_all(proc);
+
+    /* Core process/syscall lifecycle */
+    process_caps_allow(proc, SYS_READ);
+    process_caps_allow(proc, SYS_WRITE);
+    process_caps_allow(proc, SYS_OPEN);
+    process_caps_allow(proc, SYS_CLOSE);
+    process_caps_allow(proc, SYS_EXIT);
+    process_caps_allow(proc, SYS_GETPID);
+    process_caps_allow(proc, SYS_KILL);
+    process_caps_allow(proc, SYS_BRK);
+    process_caps_allow(proc, SYS_STAT);
+    process_caps_allow(proc, SYS_MKDIR);
+    process_caps_allow(proc, SYS_UNLINK);
+    process_caps_allow(proc, SYS_TIME);
+    process_caps_allow(proc, SYS_YIELD);
+    process_caps_allow(proc, SYS_UPTIME);
+    process_caps_allow(proc, SYS_WAITPID);
+    process_caps_allow(proc, SYS_SLEEP_TICKS);
+
+    /* Filesystem/VFS through syscall boundary */
+    process_caps_allow(proc, SYS_FS_CREATE);
+    process_caps_allow(proc, SYS_FS_WRITE);
+    process_caps_allow(proc, SYS_FS_READ);
+    process_caps_allow(proc, SYS_FS_DELETE);
+    process_caps_allow(proc, SYS_FS_LIST);
+    process_caps_allow(proc, SYS_FS_STAT);
+    process_caps_allow(proc, SYS_FS_STAT_EX);
+    process_caps_allow(proc, SYS_FS_CHMOD);
+    process_caps_allow(proc, SYS_FS_CHOWN);
+    process_caps_allow(proc, SYS_FS_GET_USAGE);
+    process_caps_allow(proc, SYS_FS_LIST_NAMES);
+    process_caps_allow(proc, SYS_VFS_READ);
+    process_caps_allow(proc, SYS_VFS_WRITE);
+    process_caps_allow(proc, SYS_VFS_STAT);
+    process_caps_allow(proc, SYS_VFS_CREATE);
+    process_caps_allow(proc, SYS_VFS_UNLINK);
+    process_caps_allow(proc, SYS_VFS_READDIR);
+
+    /* Network stack access */
+    process_caps_allow(proc, SYS_NET_PRESENT);
+    process_caps_allow(proc, SYS_NET_GET_MAC);
+    process_caps_allow(proc, SYS_NET_GET_IP);
+    process_caps_allow(proc, SYS_NET_GET_GW);
+    process_caps_allow(proc, SYS_NET_GET_MASK);
+    process_caps_allow(proc, SYS_NET_DNS);
+    process_caps_allow(proc, SYS_NET_PING);
+    process_caps_allow(proc, SYS_NET_UDP_SEND);
+    process_caps_allow(proc, SYS_NET_HTTP_GET);
+    process_caps_allow(proc, SYS_NET_ARP_LIST);
+
+    /* User program execution helpers */
+    process_caps_allow(proc, SYS_ELF_EXEC);
+    process_caps_allow(proc, SYS_SCRIPT_EXEC);
+}
+
+static void process_caps_apply_user_trusted(struct process *proc) {
+    process_caps_allow_all(proc);
+}
+
+int process_set_cap_profile(struct process *proc, enum process_cap_profile profile) {
+    if (!proc) return -1;
+
+    switch (profile) {
+        case PROCESS_CAP_PROFILE_NONE:
+            process_caps_clear_all(proc);
+            break;
+        case PROCESS_CAP_PROFILE_USER_DEFAULT:
+            process_caps_apply_user_default(proc);
+            break;
+        case PROCESS_CAP_PROFILE_USER_TRUSTED:
+            process_caps_apply_user_trusted(proc);
+            break;
+        default:
+            return -1;
+    }
+
+    proc->cap_profile = (uint8_t)profile;
+    return 0;
+}
 
 void process_init(void) {
     memset(process_table, 0, sizeof(process_table));
@@ -25,6 +134,8 @@ void process_init(void) {
     process_table[0].exit_code = 0;
     process_table[0].sleep_until = 0;
     process_table[0].is_background = 0;
+    process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
+    process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
     current_process = &process_table[0];
 }
@@ -60,6 +171,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->exit_code = 0;
     proc->sleep_until = 0;
     proc->is_background = 0;
+    process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_TRUSTED);
 
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
@@ -115,6 +227,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->exit_code = 0;
     proc->sleep_until = 0;
     proc->is_background = 0;
+    process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
 
     /* Set up initial context on kernel stack.
      * context_switch will pop r15..rbp then ret → user_entry_trampoline
@@ -209,6 +322,8 @@ void process_cleanup(struct process *proc) {
     proc->context = NULL;
     proc->next = NULL;
     proc->sleep_until = 0;
+    proc->cap_profile = PROCESS_CAP_PROFILE_NONE;
+    process_caps_clear_all(proc);
 }
 
 /* Reap zombie processes: background jobs are reaped immediately,

@@ -7,6 +7,8 @@
 #define KERNEL_STACK_SIZE (32 * 1024)  /* 32 KB — network TX chain uses ~5KB of stack */
 #define USER_STACK_SIZE   (64 * 1024)  /* 64 KB user stack */
 #define PROCESS_SIG_MAX 32
+#define PROCESS_SYSCALL_MAX 192
+#define PROCESS_SYSCALL_CAP_WORDS (PROCESS_SYSCALL_MAX / 64)
 
 /* User-space virtual addresses (canonical lower-half) */
 #define USER_STACK_TOP    0x00007FFFFFFFE000ULL  /* top of user stack region */
@@ -29,6 +31,12 @@ struct cpu_context {
 
 typedef void (*signal_handler_t)(int signum);
 
+enum process_cap_profile {
+    PROCESS_CAP_PROFILE_NONE = 0,
+    PROCESS_CAP_PROFILE_USER_DEFAULT,
+    PROCESS_CAP_PROFILE_USER_TRUSTED,
+};
+
 struct process {
     uint32_t pid;
     enum process_state state;
@@ -50,6 +58,8 @@ struct process {
     int      exit_code;       /* exit code when ZOMBIE */
     uint64_t sleep_until;     /* tick count to wake up (0 = not sleeping) */
     int      is_background;   /* 1 = launched with & */
+    uint8_t  cap_profile;     /* enum process_cap_profile */
+    uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
 };
 
 void process_init(void);
@@ -65,5 +75,10 @@ int  process_waitpid(uint32_t pid, int *status);
 void process_sleep_ticks(uint64_t ticks);
 void process_reap_zombies(void);
 void process_cleanup(struct process *proc);
+void process_caps_clear_all(struct process *proc);
+void process_caps_allow(struct process *proc, uint32_t num);
+void process_caps_allow_all(struct process *proc);
+int process_caps_has(const struct process *proc, uint32_t num);
+int process_set_cap_profile(struct process *proc, enum process_cap_profile profile);
 
 #endif
