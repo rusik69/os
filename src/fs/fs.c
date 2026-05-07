@@ -341,6 +341,7 @@ int fs_list(const char *path) {
 int fs_stat(const char *path, uint32_t *size, uint8_t *type) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+    if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
     return 0;
@@ -350,6 +351,7 @@ int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
                uint16_t *uid, uint16_t *gid, uint16_t *mode) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+    if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
     if (uid)  *uid  = inodes[idx].uid;
@@ -361,6 +363,7 @@ int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+    if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
 
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
@@ -375,6 +378,7 @@ int fs_chmod(const char *path, uint16_t mode) {
 int fs_chown(const char *path, uint16_t uid, uint16_t gid) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+    if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
 
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
@@ -392,6 +396,9 @@ int fs_chown(const char *path, uint16_t uid, uint16_t gid) {
 int fs_check_perm(const char *path, char op) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
+
+    /* Linux-like path resolution requires search permission on parent dirs. */
+    if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -2;
 
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
