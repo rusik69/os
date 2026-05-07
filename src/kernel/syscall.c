@@ -592,6 +592,9 @@ static uint64_t sys_user_find(uint64_t name_addr, uint64_t out_addr) {
 }
 
 static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_addr) {
+    struct user_session *sess = session_get();
+    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-2;
+
     const char *username = (const char *)name_addr;
     const char *password = (const char *)pass_addr;
     if (!username || !password) return (uint64_t)-1;
@@ -599,15 +602,25 @@ static uint64_t sys_user_add(uint64_t name_addr, uint64_t uid, uint64_t pass_add
 }
 
 static uint64_t sys_user_delete(uint64_t name_addr) {
+    struct user_session *sess = session_get();
+    if (!sess || !sess->logged_in || sess->uid != 0) return (uint64_t)-2;
+
     const char *username = (const char *)name_addr;
     if (!username) return (uint64_t)-1;
     return (uint64_t)user_delete(username);
 }
 
 static uint64_t sys_user_passwd(uint64_t name_addr, uint64_t pass_addr) {
+    struct user_session *sess = session_get();
+    if (!sess || !sess->logged_in) return (uint64_t)-2;
+
     const char *username = (const char *)name_addr;
     const char *new_pass = (const char *)pass_addr;
     if (!username || !new_pass) return (uint64_t)-1;
+
+    /* Linux-like: root can change any password; regular users only their own. */
+    if (sess->uid != 0 && strcmp(username, sess->username) != 0) return (uint64_t)-2;
+
     return (uint64_t)user_passwd(username, new_pass);
 }
 

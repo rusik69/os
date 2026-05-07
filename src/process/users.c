@@ -28,7 +28,7 @@ static uint32_t djb2_hash(const char *s) {
     return h;
 }
 
-static int ensure_home_owned(const char *path, uint16_t uid, uint16_t gid) {
+static int ensure_home_owned(const char *path, uint16_t uid, uint16_t gid, uint16_t mode) {
     uint8_t type = 0;
     if (fs_stat(path, (uint32_t *)0, &type) < 0) {
         if (fs_create(path, FS_TYPE_DIR) < 0) return -1;
@@ -37,7 +37,7 @@ static int ensure_home_owned(const char *path, uint16_t uid, uint16_t gid) {
     }
 
     if (fs_chown(path, uid, gid) < 0) return -1;
-    if (fs_chmod(path, FS_MODE_DIR) < 0) return -1;
+    if (fs_chmod(path, mode) < 0) return -1;
     return 0;
 }
 
@@ -85,7 +85,8 @@ int user_add(const char *username, uint32_t uid, const char *password) {
             strncpy(user_table[i].home + 6, username, USER_MAX_HOME - 7);
         }
         user_table[i].active = 1;
-        if (ensure_home_owned(user_table[i].home, (uint16_t)uid, (uint16_t)uid) < 0) {
+        uint16_t home_mode = (uid == 0) ? 0700 : 0750;
+        if (ensure_home_owned(user_table[i].home, (uint16_t)uid, (uint16_t)uid, home_mode) < 0) {
             user_table[i].active = 0;
             return -5;
         }

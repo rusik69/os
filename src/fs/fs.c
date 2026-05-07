@@ -118,6 +118,32 @@ static int find_inode(const char *path) {
     return -1;
 }
 
+static int check_dir_perm_idx(int idx, char op) {
+    if (idx < 0 || idx >= FS_MAX_FILES) return -1;
+    if (inodes[idx].type != FS_TYPE_DIR) return -1;
+
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    uint16_t cur_gid = s ? (uint16_t)s->gid : 0;
+    uint16_t m       = inodes[idx].mode;
+
+    if (cur_uid == 0) return 0; /* root */
+
+    int shift;
+    if (cur_uid == inodes[idx].uid)      shift = 6;
+    else if (cur_gid == inodes[idx].gid) shift = 3;
+    else                                 shift = 0;
+
+    uint16_t bits;
+    switch (op) {
+        case 'r': bits = FS_PERM_ROTH << shift; break;
+        case 'w': bits = FS_PERM_WOTH << shift; break;
+        case 'x': bits = FS_PERM_XOTH << shift; break;
+        default:  return -1;
+    }
+    return (m & bits) ? 0 : -1;
+}
+
 int fs_format(void) {
     memset(&super, 0, sizeof(super));
     super.magic = FS_MAGIC;
@@ -184,6 +210,7 @@ int fs_create(const char *path, uint8_t type) {
 
     int parent = find_parent(path);
     if (parent < 0) return -1;
+    if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
     int idx = find_free_inode();
     if (idx < 0) return -1;
@@ -210,7 +237,7 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
     if (idx >= 0 && fs_check_perm(path, 'w') < 0) return -3; /* perm denied on existing file */
     if (idx < 0) {
         idx = fs_create(path, FS_TYPE_FILE);
-        if (idx < 0) return -1;
+        if (idx < 0) return idx;
     }
     if (inodes[idx].type != FS_TYPE_FILE) return -1;
 
@@ -263,7 +290,9 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
 int fs_delete(const char *path) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
-    if (fs_check_perm(path, 'w') < 0) return -3; /* permission denied */
+
+    int parent = inodes[idx].parent;
+    if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
     /* If dir, check it's empty */
     if (inodes[idx].type == FS_TYPE_DIR) {
@@ -287,6 +316,8 @@ int fs_list(const char *path) {
         if (parent < 0) return -1;
         if (inodes[parent].type != FS_TYPE_DIR) return -1;
     }
+
+    if (check_dir_perm_idx(parent, 'r') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
     int count = 0;
     for (int i = 0; i < FS_MAX_FILES; i++) {
@@ -416,6 +447,7 @@ int fs_list_names(const char *dir, const char *prefix,
         if (parent < 0) return 0;
         if (inodes[parent].type != FS_TYPE_DIR) return 0;
     }
+    if (check_dir_perm_idx(parent, 'r') < 0 || check_dir_perm_idx(parent, 'x') < 0) return 0;
     int plen = prefix ? (int)strlen(prefix) : 0;
     int n = 0;
     for (int i = 0; i < FS_MAX_FILES && n < max; i++) {
