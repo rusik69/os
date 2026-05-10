@@ -111,7 +111,7 @@ $(BUILDDIR)/kernel.elf: check-app-boundary $(OBJS)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 
 $(BUILDDIR)/kernel.bin: $(BUILDDIR)/kernel.elf
-	$(OBJCOPY) -O elf32-i386 $< $@
+	cp $< $@
 
 $(BUILDDIR)/disk.img:
 	@mkdir -p $(BUILDDIR)
@@ -148,7 +148,7 @@ $(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS)
 
 $(BUILDDIR_TEST)/kernel.bin: $(BUILDDIR_TEST)/kernel.elf
-	$(OBJCOPY) -O elf32-i386 $< $@
+	cp $< $@
 
 # Build the test kernel binary
 test-kernel: $(BUILDDIR_TEST)/kernel.bin

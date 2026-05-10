@@ -111,10 +111,10 @@ static void e1000_read_mac(void) {
 
 static void e1000_init_rx(void) {
     for (int i = 0; i < NUM_RX_DESC; i++) {
-        rx_descs[i].addr = (uint64_t)(uintptr_t)rx_buffers[i];
+        rx_descs[i].addr = VIRT_TO_PHYS(rx_buffers[i]);
         rx_descs[i].status = 0;
     }
-    uint64_t rdesc_phys = (uint64_t)(uintptr_t)rx_descs;
+    uint64_t rdesc_phys = VIRT_TO_PHYS(rx_descs);
     e1000_write(REG_RDBAL, (uint32_t)(rdesc_phys & 0xFFFFFFFF));
     e1000_write(REG_RDBAH, (uint32_t)(rdesc_phys >> 32));
     e1000_write(REG_RDLEN, NUM_RX_DESC * sizeof(struct e1000_rx_desc));
@@ -127,11 +127,11 @@ static void e1000_init_rx(void) {
 
 static void e1000_init_tx(void) {
     for (int i = 0; i < NUM_TX_DESC; i++) {
-        tx_descs[i].addr = (uint64_t)(uintptr_t)tx_buffers[i];
+        tx_descs[i].addr = VIRT_TO_PHYS(tx_buffers[i]);
         tx_descs[i].status = TDESC_STA_DD;
         tx_descs[i].cmd = 0;
     }
-    uint64_t tdesc_phys = (uint64_t)(uintptr_t)tx_descs;
+    uint64_t tdesc_phys = VIRT_TO_PHYS(tx_descs);
     e1000_write(REG_TDBAL, (uint32_t)(tdesc_phys & 0xFFFFFFFF));
     e1000_write(REG_TDBAH, (uint32_t)(tdesc_phys >> 32));
     e1000_write(REG_TDLEN, NUM_TX_DESC * sizeof(struct e1000_tx_desc));

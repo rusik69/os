@@ -7,8 +7,8 @@
 #define FS_MAX_NAME    28
 #define FS_MAX_FILES   128
 #define FS_BLOCK_SIZE  512
-#define FS_MAX_BLOCKS  8          /* max blocks per file = 4KB */
-#define FS_DATA_START  34         /* sector: 0=super, 1-33=inodes */
+#define FS_MAX_BLOCKS  16         /* max blocks per file = 8KB */
+#define FS_DATA_START  40         /* sector: 0=super, 1-39=inodes */
 
 #define FS_TYPE_FREE   0
 #define FS_TYPE_FILE   1

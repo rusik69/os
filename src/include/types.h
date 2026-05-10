@@ -18,8 +18,12 @@ typedef uint64_t            uintptr_t;
 #define false 0
 typedef _Bool bool;
 
+#define KERNEL_VMA_OFFSET  0xFFFF800000000000ULL
 #define PHYS_TO_VIRT(addr) ((void *)((uint64_t)(addr)))
-#define VIRT_TO_PHYS(addr) ((uint64_t)(addr))
+/* Convert a kernel virtual address to its physical address (subtract high-half offset) */
+#define VIRT_TO_PHYS(addr) ((uint64_t)(uintptr_t)(addr) < KERNEL_VMA_OFFSET ? \
+                             (uint64_t)(uintptr_t)(addr) : \
+                             (uint64_t)(uintptr_t)(addr) - KERNEL_VMA_OFFSET)
 
 #define PAGE_SIZE 4096
 

@@ -41,6 +41,10 @@ align 4096
 boot_pd:
     times 512 dq 0
 
+align 4096
+boot_pd2:
+    times 512 dq 0
+
 ; Bootstrap stack
 align 16
 boot_stack_bottom:
@@ -69,17 +73,26 @@ _start:
     mov esp, boot_stack_top
 
     ; Set up page tables
-    ; PML4[0] -> boot_pdpt (identity map)
+    ; PML4[0] -> boot_pdpt (identity map for low addresses)
     mov eax, boot_pdpt
     or eax, 0x03                    ; present + writable
     mov [boot_pml4], eax
 
-    ; boot_pdpt[0] -> boot_pd
+    ; PML4[256] -> boot_pdpt (high-half kernel at 0xFFFF800000000000)
+    ; Same PDPT: physical 0x0..0x3FFFFFFF maps to both 0x0 and 0xFFFF800000000000
+    mov [boot_pml4 + 256 * 8], eax
+
+    ; boot_pdpt[0] -> boot_pd  (identity: 0x00000000 - 0x3FFFFFFF)
     mov eax, boot_pd
     or eax, 0x03
     mov [boot_pdpt], eax
 
-    ; Fill page directory with 2MB pages (identity map first 1GB)
+    ; boot_pdpt[3] -> boot_pd2 (identity: 0xC0000000 - 0xFFFFFFFF, covers PCI MMIO)
+    mov eax, boot_pd2
+    or eax, 0x03
+    mov [boot_pdpt + 3 * 8], eax
+
+    ; Fill boot_pd with 2MB pages (identity map 0x0 - 0x3FFFFFFF)
     mov ecx, 0
 .fill_pd:
     mov eax, ecx
@@ -89,6 +102,19 @@ _start:
     inc ecx
     cmp ecx, 512
     jne .fill_pd
+
+    ; Fill boot_pd2 with 2MB pages (identity map 0xC0000000 - 0xFFFFFFFF)
+    ; Entry N maps physical 0xC0000000 + N*2MB
+    mov ecx, 0
+.fill_pd2:
+    mov eax, ecx
+    shl eax, 21                     ; N * 2MB
+    add eax, 0xC0000000             ; base at 3GB
+    or eax, 0x83                    ; present + writable + huge page
+    mov [boot_pd2 + ecx * 8], eax
+    inc ecx
+    cmp ecx, 512
+    jne .fill_pd2
 
     ; Load PML4 into CR3
     mov eax, boot_pml4
@@ -148,7 +174,8 @@ long_mode_entry:
     mov esi, r13d
 
     extern kernel_main
-    call kernel_main
+    movabs rax, kernel_main         ; absolute call - kernel_main is at high VMA
+    call rax
 
 .halt:
     cli
