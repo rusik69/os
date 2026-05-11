@@ -124,8 +124,17 @@
 
 void syscall_init(void);
 
-/* Called from assembly stub - dispatches to the right handler */
+/*
+ * syscall_dispatch is a kernel-internal function called ONLY from the
+ * syscall_entry assembly stub (syscall_asm.asm).  It is NOT part of the
+ * userspace API: user code and libc must go through the `syscall` instruction.
+ * The declaration is kept here so that syscall.c (which defines it) and
+ * kernel.c (which includes syscall.h) can see it, but it should never be
+ * called directly from libc or application code.
+ */
+#ifdef KERNEL_INTERNAL
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
+#endif
 
 #endif

@@ -1,3 +1,4 @@
+#define KERNEL_INTERNAL
 #include "syscall.h"
 #include "process.h"
 #include "scheduler.h"

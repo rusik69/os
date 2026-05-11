@@ -1,10 +1,16 @@
 #include "libc.h"
 #include "syscall.h"
 
-uint64_t libc_syscall(uint64_t num, uint64_t a1, uint64_t a2,
-                      uint64_t a3, uint64_t a4, uint64_t a5) {
-    return syscall_dispatch(num, a1, a2, a3, a4, a5);
-}
+/*
+ * libc_syscall is defined in src/kernel/syscall_asm.asm as a pure-assembly
+ * leaf function that issues the x86-64 `syscall` instruction.  All callers
+ * of libc_* functions therefore go through the hardware syscall gate
+ * (syscall_entry) rather than calling syscall_dispatch() directly.
+ *
+ * The declaration is in libc.h.  No C body is needed here.
+ */
+
+
 
 int libc_ata_is_present(void) {
     return (int)libc_syscall(SYS_ATA_PRESENT, 0, 0, 0, 0, 0);

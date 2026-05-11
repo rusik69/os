@@ -1,3 +1,4 @@
+#define KERNEL_INTERNAL
 #include "types.h"
 #include "vga.h"
 #include "gdt.h"
