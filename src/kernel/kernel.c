@@ -29,6 +29,8 @@
 #include "ahci.h"
 #include "usb.h"
 #include "usb_msc.h"
+#include "service.h"
+#include "httpd.h"
 #include "gui.h"
 #include "intel_gpu.h"
 #include "fat32.h"
@@ -174,6 +176,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     fs_init();
     kprintf("[OK] Filesystem initialized\n");
 
+    /* Service infrastructure + FS directory tree */
+    service_init();
+    kprintf("[OK] Service manager initialized\n");
+
     /* PCI bus */
     pci_init();
     kprintf("[OK] PCI initialized\n");
@@ -216,8 +222,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         net_get_ip(ip);
         kprintf("[OK] Network: %u.%u.%u.%u\n",
                 (uint64_t)ip[0], (uint64_t)ip[1], (uint64_t)ip[2], (uint64_t)ip[3]);
-        telnetd_init();
-        kprintf("[OK] Telnet server on port 23\n");
+        /* Register & start services */
+        service_register("telnetd", telnetd_start, telnetd_stop);
+        service_register("httpd",   httpd_start,   httpd_stop);
+        service_start("telnetd");
+        service_start("httpd");
+        kprintf("[OK] Services started\n");
     } else {
         kprintf("[--] No network device found\n");
     }

@@ -289,6 +289,18 @@ void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect,
     net_num_listeners++;
 }
 
+void net_tcp_unlisten(uint16_t port) {
+    for (int i = 0; i < net_num_listeners; i++) {
+        if (net_listeners[i].port == port) {
+            /* Compact the array */
+            for (int j = i; j < net_num_listeners - 1; j++)
+                net_listeners[j] = net_listeners[j + 1];
+            net_num_listeners--;
+            return;
+        }
+    }
+}
+
 int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
     struct tcp_conn *c = &tcp_conns[conn_id];

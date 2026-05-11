@@ -271,6 +271,27 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
     return 0;
 }
 
+int fs_append(const char *path, const void *data, uint32_t len) {
+    if (len == 0) return 0;
+
+    /* Read existing content */
+    static uint8_t tmp[FS_MAX_BLOCKS * FS_BLOCK_SIZE];
+    uint32_t existing = 0;
+    int idx = find_inode(path);
+    if (idx >= 0) {
+        if (inodes[idx].type != FS_TYPE_FILE) return -1;
+        if (fs_check_perm(path, 'w') < 0) return -3;
+        if (fs_read_file(path, tmp, sizeof(tmp), &existing) < 0) existing = 0;
+    }
+
+    uint32_t total = existing + len;
+    if (total > sizeof(tmp)) total = sizeof(tmp); /* clamp to max */
+    uint32_t copy = total - existing;
+    memcpy(tmp + existing, data, copy);
+
+    return fs_write_file(path, tmp, total);
+}
+
 int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_size) {
     int idx = find_inode(path);
     if (idx < 0) return -1;

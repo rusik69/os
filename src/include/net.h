@@ -124,6 +124,7 @@ typedef void (*tcp_close_handler)(int conn_id);
 
 void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect,
                     tcp_data_handler on_data, tcp_close_handler on_close);
+void net_tcp_unlisten(uint16_t port);
 int net_tcp_send(int conn_id, const void *data, uint16_t len);
 void net_tcp_close(int conn_id);
 

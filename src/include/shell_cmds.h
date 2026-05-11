@@ -116,4 +116,7 @@ void cmd_passwd(const char *args);
 void cmd_users(void);
 void cmd_capprof(const char *args);
 
+/* Service management */
+void cmd_service(const char *args);
+
 #endif

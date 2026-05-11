@@ -1208,6 +1208,39 @@ def test_permissions(t: Telnet):
     ok("permissions — full chmod/chown/ls cycle")
 
 
+def test_service(t: Telnet):
+    """Service management (start/stop/status/list) tests."""
+    # List registered services
+    r = t.send_cmd("service list")
+    check("service list — shows httpd",   r, "httpd")
+    check("service list — shows telnetd", r, "telnetd")
+    check("service list — running status", r, "running")
+
+    # Status of a specific service
+    r = t.send_cmd("service status httpd")
+    check("service status httpd — running", r, "running")
+
+    # Stop httpd
+    r = t.send_cmd("service stop httpd")
+    check_absent("service stop httpd — no error", r, "unknown")
+
+    r = t.send_cmd("service status httpd")
+    check("service status httpd — stopped", r, "stopped")
+
+    # Restart httpd
+    r = t.send_cmd("service start httpd")
+    check_absent("service start httpd — no error", r, "unknown")
+
+    r = t.send_cmd("service status httpd")
+    check("service status httpd — running again", r, "running")
+
+    # Check log file created
+    r = t.send_cmd("ls /var/log")
+    check("service log dir — httpd.log exists", r, "httpd.log")
+
+    ok("service — start/stop/status/list/log")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -1325,6 +1358,7 @@ def main() -> int:
         ("users",      test_users),
         ("login",      test_login),
         ("permissions",test_permissions),
+        ("service",    test_service),
     ]
 
     for group_name, fn in tests:

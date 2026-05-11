@@ -6,6 +6,7 @@
 #include "printf.h"
 #include "fs.h"
 #include "rtc.h"
+#include "service.h"
 
 #define HTTPD_MAX_CONNS 8
 #define HTTPD_RECV_SIZE 4096
@@ -309,6 +310,13 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
     }
 
     kprintf("[httpd] %s %s\n", s->method, s->path);
+    {
+        char logmsg[80];
+        strncpy(logmsg, s->method, sizeof(logmsg) - 1);
+        strncat(logmsg, " ", sizeof(logmsg) - strlen(logmsg) - 1);
+        strncat(logmsg, s->path, sizeof(logmsg) - strlen(logmsg) - 1);
+        service_log("httpd", logmsg);
+    }
     handle_get(conn_id, s->path, strcmp(s->method, "HEAD") == 0);
 
 done:
@@ -326,8 +334,25 @@ static void on_close(int conn_id) {
 
 /* --- Init --- */
 
-void httpd_init(void) {
+static int httpd_running = 0;
+
+int httpd_start(void) {
+    if (httpd_running) return 0;
     memset(sessions, 0, sizeof(sessions));
     net_tcp_listen(80, on_connect, on_data, on_close);
+    httpd_running = 1;
     kprintf("[OK] HTTP server on port 80 (root: %s)\n", HTTPD_ROOT_DIR);
+    return 0;
+}
+
+void httpd_stop(void) {
+    if (!httpd_running) return;
+    net_tcp_unlisten(80);
+    memset(sessions, 0, sizeof(sessions));
+    httpd_running = 0;
+    kprintf("[--] HTTP server stopped\n");
+}
+
+void httpd_init(void) {
+    httpd_start();
 }

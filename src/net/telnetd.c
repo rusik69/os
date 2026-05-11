@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "editor.h"
 #include "fs.h"
+#include "service.h"
 
 #define TELNET_PORT 23
 
@@ -134,6 +135,7 @@ static void process_telnet_cmd(struct telnet_session *s) {
 static void on_connect(int conn_id) {
     struct telnet_session *s = alloc_session(conn_id);
     if (!s) { net_tcp_close(conn_id); return; }
+    service_log("telnetd", "client connected");
 
     /* Send telnet negotiation: server will echo, suppress go-ahead */
     uint8_t neg[] = {
@@ -273,11 +275,28 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
 static void on_close(int conn_id) {
     struct telnet_session *s = find_session(conn_id);
     if (s) s->active = 0;
+    service_log("telnetd", "client disconnected");
+}
+
+static int telnetd_running = 0;
+
+int telnetd_start(void) {
+    if (telnetd_running) return 0;
+    memset(sessions, 0, sizeof(sessions));
+    net_tcp_listen(TELNET_PORT, on_connect, on_data, on_close);
+    telnetd_running = 1;
+    return 0;
+}
+
+void telnetd_stop(void) {
+    if (!telnetd_running) return;
+    net_tcp_unlisten(TELNET_PORT);
+    memset(sessions, 0, sizeof(sessions));
+    telnetd_running = 0;
 }
 
 void telnetd_init(void) {
-    memset(sessions, 0, sizeof(sessions));
-    net_tcp_listen(TELNET_PORT, on_connect, on_data, on_close);
+    telnetd_start();
 }
 
 void telnetd_task(void) {

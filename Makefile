@@ -63,6 +63,8 @@ C_SRCS = src/kernel/kernel.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \
          src/net/telnetd.c \
+         src/net/httpd.c \
+         src/kernel/service.c \
          src/ipc/pipe.c \
          src/lib/string.c \
          src/lib/printf.c \

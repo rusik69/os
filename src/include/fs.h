@@ -56,6 +56,7 @@ void fs_init(void);
 int fs_format(void);
 int fs_create(const char *path, uint8_t type);
 int fs_write_file(const char *path, const void *data, uint32_t size);
+int fs_append(const char *path, const void *data, uint32_t len);
 int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_size);
 int fs_delete(const char *path);
 int fs_list(const char *path);
