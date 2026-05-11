@@ -66,6 +66,7 @@ C_SRCS = src/kernel/kernel.c \
          src/ipc/pipe.c \
          src/lib/string.c \
          src/lib/printf.c \
+         src/lib/stdlib.c \
          src/lib/libc.c
 
 ASM_SRCS = src/boot/boot.asm \

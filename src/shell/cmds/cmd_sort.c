@@ -4,17 +4,18 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"
+
+static int cmp_strptr(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
 
 void cmd_sort(const char *args) {
     if (!args || !args[0]) { kprintf("Usage: sort <file>\n"); return; }
 
     char path[64];
-    if (args[0] != '/') { path[0] = '/'; strncpy(path + 1, args, 62); }
-    else strncpy(path, args, 63);
-    path[63] = '\0';
-    /* strip trailing spaces */
-    int pl = strlen(path);
-    while (pl > 0 && path[pl-1] == ' ') path[--pl] = '\0';
+    snprintf(path, sizeof(path), "%s%s", args[0] == '/' ? "" : "/", args);
+    strtrim(path);
 
     static char buf[4096];
     uint32_t size = 0;
@@ -34,16 +35,8 @@ void cmd_sort(const char *args) {
         if (*p == '\n') { *p = '\0'; p++; }
     }
 
-    /* Simple bubble sort */
-    for (int i = 0; i < nlines - 1; i++) {
-        for (int j = 0; j < nlines - 1 - i; j++) {
-            if (strcmp(lines[j], lines[j+1]) > 0) {
-                char *tmp = lines[j];
-                lines[j] = lines[j+1];
-                lines[j+1] = tmp;
-            }
-        }
-    }
+    /* Sort with qsort */
+    qsort(lines, (size_t)nlines, sizeof(char *), cmp_strptr);
 
     for (int i = 0; i < nlines; i++)
         kprintf("%s\n", lines[i]);

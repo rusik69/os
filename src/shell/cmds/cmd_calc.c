@@ -19,33 +19,10 @@ static int64_t parse_expr(void);
 
 static int64_t parse_number(void) {
     skip_spaces();
-    int64_t val = 0;
-    int neg = 0;
-    if (*pos == '-') { neg = 1; pos++; skip_spaces(); }
-
-    int is_hex = 0;
-    if (*pos == '0' && (*(pos+1) == 'x' || *(pos+1) == 'X')) {
-        pos += 2; is_hex = 1;
-    }
-
-    if (is_hex) {
-        while ((*pos >= '0' && *pos <= '9') ||
-               (*pos >= 'a' && *pos <= 'f') ||
-               (*pos >= 'A' && *pos <= 'F')) {
-            int d;
-            if (*pos >= '0' && *pos <= '9') d = *pos - '0';
-            else if (*pos >= 'a' && *pos <= 'f') d = *pos - 'a' + 10;
-            else d = *pos - 'A' + 10;
-            val = val * 16 + d;
-            pos++;
-        }
-    } else {
-        while (*pos >= '0' && *pos <= '9') {
-            val = val * 10 + (*pos - '0');
-            pos++;
-        }
-    }
-    return neg ? -val : val;
+    char *end;
+    int64_t val = (int64_t)strtol(pos, &end, 0);
+    pos = end;
+    return val;
 }
 
 static int64_t parse_factor(void) {

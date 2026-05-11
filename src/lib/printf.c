@@ -195,3 +195,105 @@ int kprintf(const char *fmt, ...) {
     va_end(ap);
     return count;
 }
+
+/* --- vsnprintf / snprintf / sprintf ---------------------------------- */
+
+typedef struct { char *buf; size_t pos; size_t max; } snbuf_t;
+
+static void sn_write(snbuf_t *b, char c) {
+    if (b->pos < b->max - 1) b->buf[b->pos++] = c;
+}
+
+static int sn_uint(snbuf_t *b, uint64_t val, int base, int pad,
+                   char padchar, int left_align) {
+    char tmp[64]; int i = 0;
+    const char *digits = "0123456789abcdef";
+    if (val == 0) tmp[i++] = '0';
+    else while (val) { tmp[i++] = digits[val % base]; val /= base; }
+    int len = i, written = 0;
+    if (!left_align) for (int j = len; j < pad; j++) { sn_write(b, padchar); written++; }
+    for (int j = len - 1; j >= 0; j--) { sn_write(b, tmp[j]); written++; }
+    if (left_align)  for (int j = len; j < pad; j++) { sn_write(b, ' ');    written++; }
+    return written;
+}
+
+int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
+    if (!buf || n == 0) return 0;
+    snbuf_t b = { buf, 0, n };
+    int count = 0;
+    while (*fmt) {
+        if (*fmt != '%') { sn_write(&b, *fmt++); count++; continue; }
+        fmt++;
+        int left_align = 0, pad = 0; char padchar = ' ';
+        if (*fmt == '-') { left_align = 1; fmt++; }
+        if (*fmt == '0' && !left_align) { padchar = '0'; fmt++; }
+        while (*fmt >= '0' && *fmt <= '9') { pad = pad * 10 + (*fmt - '0'); fmt++; }
+        switch (*fmt) {
+        case 's': {
+            const char *s = va_arg(ap, const char *);
+            if (!s) s = "(null)";
+            int len = 0; const char *t = s; while (*t) { t++; len++; }
+            if (!left_align) for (int i = len; i < pad; i++) { sn_write(&b, ' '); count++; }
+            while (*s) { sn_write(&b, *s++); count++; }
+            if (left_align)  for (int i = len; i < pad; i++) { sn_write(&b, ' '); count++; }
+            break;
+        }
+        case 'd': case 'i': {
+            int64_t val = va_arg(ap, int64_t);
+            if (left_align) {
+                char tmp[32]; int ti = 0;
+                int64_t v = val;
+                if (v < 0) { tmp[ti++] = '-'; v = -v; }
+                char d2[32]; int di = 0;
+                if (v == 0) d2[di++] = '0';
+                else while (v > 0) { d2[di++] = '0' + (int)(v % 10); v /= 10; }
+                while (di > 0) tmp[ti++] = d2[--di];
+                for (int i = 0; i < ti; i++) { sn_write(&b, tmp[i]); count++; }
+                for (int i = ti; i < pad; i++) { sn_write(&b, ' '); count++; }
+            } else {
+                if (val < 0) { sn_write(&b, '-'); count++; val = -val; }
+                count += sn_uint(&b, (uint64_t)val, 10, pad, padchar, 0);
+            }
+            break;
+        }
+        case 'u': {
+            uint64_t val = va_arg(ap, uint64_t);
+            count += sn_uint(&b, val, 10, pad, padchar, left_align);
+            break;
+        }
+        case 'x': {
+            uint64_t val = va_arg(ap, uint64_t);
+            count += sn_uint(&b, val, 16, pad, padchar, left_align);
+            break;
+        }
+        case 'p': {
+            uint64_t val = va_arg(ap, uint64_t);
+            sn_write(&b, '0'); sn_write(&b, 'x');
+            count += sn_uint(&b, val, 16, 16, '0', 0);
+            break;
+        }
+        case 'c': {
+            char c = (char)va_arg(ap, int);
+            sn_write(&b, c); count++;
+            break;
+        }
+        case '%': sn_write(&b, '%'); count++; break;
+        default:  sn_write(&b, '%'); sn_write(&b, *fmt); count += 2; break;
+        }
+        fmt++;
+    }
+    b.buf[b.pos] = '\0';
+    return count;
+}
+
+int snprintf(char *buf, size_t n, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vsnprintf(buf, n, fmt, ap);
+    va_end(ap); return r;
+}
+
+int sprintf(char *buf, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int r = vsnprintf(buf, (size_t)-1, fmt, ap);
+    va_end(ap); return r;
+}

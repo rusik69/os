@@ -20,6 +20,9 @@ char *strstr(const char *haystack, const char *needle);
 long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
 char *strtrim(char *s);
+void *memchr(const void *s, int c, size_t n);
+char *strtok(char *str, const char *delim);
+char *strsep(char **stringp, const char *delim);
 
 /* Character classification — inline for zero overhead */
 static inline int isdigit(int c)  { return c >= '0' && c <= '9'; }

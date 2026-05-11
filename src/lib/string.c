@@ -167,3 +167,38 @@ char *strtrim(char *s) {
     while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
     return s;
 }
+
+void *memchr(const void *s, int c, size_t n) {
+    const unsigned char *p = (const unsigned char *)s;
+    while (n--) {
+        if (*p == (unsigned char)c) return (void *)p;
+        p++;
+    }
+    return (void *)0;
+}
+
+/* strtok: tokenize str on first call (non-NULL), subsequent calls pass NULL */
+static char *strtok_saveptr = (char *)0;
+char *strtok(char *str, const char *delim) {
+    if (str) strtok_saveptr = str;
+    if (!strtok_saveptr) return (char *)0;
+    /* Skip leading delimiters */
+    while (*strtok_saveptr && strchr(delim, *strtok_saveptr)) strtok_saveptr++;
+    if (!*strtok_saveptr) return (char *)0;
+    char *start = strtok_saveptr;
+    /* Find end of token */
+    while (*strtok_saveptr && !strchr(delim, *strtok_saveptr)) strtok_saveptr++;
+    if (*strtok_saveptr) *strtok_saveptr++ = '\0';
+    return start;
+}
+
+/* strsep: like strtok but caller manages state via pointer-to-pointer */
+char *strsep(char **stringp, const char *delim) {
+    char *s = *stringp;
+    if (!s) return (char *)0;
+    char *p = s;
+    while (*p && !strchr(delim, *p)) p++;
+    if (*p) { *p = '\0'; *stringp = p + 1; }
+    else     *stringp = (char *)0;
+    return s;
+}
