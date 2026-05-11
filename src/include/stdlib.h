@@ -3,6 +3,13 @@
 
 #include "types.h"
 #include "string.h"   /* for strtol/strtoul used by atoi/atol */
+#include "libc.h"     /* for libc_malloc/free backing malloc/free */
+
+/* ---- Heap allocation (backed by SYS_MALLOC / SYS_FREE) ---- */
+static inline void *malloc(size_t size)            { return libc_malloc(size); }
+static inline void  free(void *ptr)                { libc_free(ptr); }
+static inline void *calloc(size_t n, size_t sz)    { return libc_calloc(n, sz); }
+static inline void *realloc(void *ptr, size_t sz)  { return libc_realloc(ptr, sz); }
 
 /* ---- Simple number conversion (inline wrappers) ---- */
 static inline int  atoi(const char *s) { return (int)strtol(s, (char **)0, 10); }

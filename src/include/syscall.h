@@ -116,6 +116,12 @@
 #define SYS_GUI_SHELL_RUN       177
 #define SYS_PROC_SET_CAP_PROFILE 178
 
+/* Heap syscalls — userspace malloc/free */
+#define SYS_MALLOC              179
+#define SYS_FREE                180
+#define SYS_REALLOC             181
+#define SYS_CALLOC              182
+
 void syscall_init(void);
 
 /* Called from assembly stub - dispatches to the right handler */

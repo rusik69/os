@@ -409,6 +409,26 @@ int libc_gui_shell_run(void) {
     return (int)libc_syscall(SYS_GUI_SHELL_RUN, 0, 0, 0, 0, 0);
 }
 
+/* ---- Heap: malloc/free/calloc/realloc backed by kernel syscalls ---- */
+
+void *libc_malloc(size_t size) {
+    return (void *)(uintptr_t)libc_syscall(SYS_MALLOC, (uint64_t)size, 0, 0, 0, 0);
+}
+
+void libc_free(void *ptr) {
+    (void)libc_syscall(SYS_FREE, (uint64_t)(uintptr_t)ptr, 0, 0, 0, 0);
+}
+
+void *libc_realloc(void *ptr, size_t new_size) {
+    return (void *)(uintptr_t)libc_syscall(SYS_REALLOC,
+        (uint64_t)(uintptr_t)ptr, (uint64_t)new_size, 0, 0, 0);
+}
+
+void *libc_calloc(size_t nmemb, size_t size) {
+    return (void *)(uintptr_t)libc_syscall(SYS_CALLOC,
+        (uint64_t)nmemb, (uint64_t)size, 0, 0, 0);
+}
+
 
 
 

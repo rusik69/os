@@ -215,6 +215,12 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return a2 ? syscall_user_cstr_ok(a2) : 1;
         case SYS_SHELL_TAB_COMPLETE:
             return syscall_user_write_ok(a1, 1) && syscall_user_write_ok(a2, sizeof(int));
+        case SYS_FREE:
+            /* Pointer could be any previously-allocated address; no range check needed */
+            return 1;
+        case SYS_REALLOC:
+            /* old ptr is arbitrary; just validate that the new result ptr location is writable */
+            return 1;
         default:
             return 1;
     }
@@ -286,6 +292,40 @@ static uint64_t sys_brk(uint64_t addr) {
     /* Minimal stub — user-space heap management not yet implemented */
     (void)addr;
     return addr;
+}
+
+/* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
+
+static uint64_t sys_malloc(uint64_t size) {
+    return (uint64_t)(uintptr_t)kmalloc((size_t)size);
+}
+
+static uint64_t sys_free(uint64_t ptr) {
+    kfree((void *)(uintptr_t)ptr);
+    return 0;
+}
+
+static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
+    if (!ptr) return sys_malloc(new_size);
+    if (!new_size) { kfree((void *)(uintptr_t)ptr); return 0; }
+    /* Simple realloc: allocate new block, copy, free old */
+    void *old = (void *)(uintptr_t)ptr;
+    /* Retrieve old size from block header (24 bytes before ptr) */
+    struct heap_block_hdr { size_t size; int free; void *next; };
+    size_t old_size = ((struct heap_block_hdr *)((uint8_t *)old - sizeof(struct heap_block_hdr)))->size;
+    void *newp = kmalloc((size_t)new_size);
+    if (!newp) return 0;
+    size_t copy = old_size < (size_t)new_size ? old_size : (size_t)new_size;
+    for (size_t i = 0; i < copy; i++) ((uint8_t *)newp)[i] = ((uint8_t *)old)[i];
+    kfree(old);
+    return (uint64_t)(uintptr_t)newp;
+}
+
+static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
+    size_t total = (size_t)(nmemb * size);
+    void *p = kmalloc(total);
+    if (p) for (size_t i = 0; i < total; i++) ((uint8_t *)p)[i] = 0;
+    return (uint64_t)(uintptr_t)p;
 }
 
 static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
@@ -1149,6 +1189,10 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
         case SYS_GUI_SHELL_RUN: return sys_gui_shell_run();
+        case SYS_MALLOC:  return sys_malloc(a1);
+        case SYS_FREE:    return sys_free(a1);
+        case SYS_REALLOC: return sys_realloc(a1, a2);
+        case SYS_CALLOC:  return sys_calloc(a1, a2);
         default:         return (uint64_t)-1;
     }
 }

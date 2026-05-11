@@ -1,6 +1,5 @@
 #include "stdlib.h"
 #include "string.h"
-#include "heap.h"
 
 /* ---- Internal byte-swap helper ---- */
 static void swap_bytes(char *a, char *b, size_t sz) {
@@ -66,7 +65,7 @@ void *bsearch(const void *key, const void *base, size_t n, size_t sz,
  */
 char *strdup(const char *s) {
     size_t len = strlen(s) + 1;
-    char *p = (char *)kmalloc(len);
+    char *p = (char *)malloc(len);
     if (p) memcpy(p, s, len);
     return p;
 }

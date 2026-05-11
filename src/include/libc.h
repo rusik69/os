@@ -249,6 +249,12 @@ void libc_vga_set_cursor(uint16_t row, uint16_t col);
 void libc_vga_clear(void);
 int libc_gui_shell_run(void);
 
+/* Heap syscall-backed operations (userspace malloc/free/calloc/realloc) */
+void *libc_malloc(size_t size);
+void  libc_free(void *ptr);
+void *libc_realloc(void *ptr, size_t new_size);
+void *libc_calloc(size_t nmemb, size_t size);
+
 /* Compatibility wrappers so existing command code can be migrated with includes only. */
 static inline int ata_is_present(void) { return libc_ata_is_present(); }
 static inline uint32_t ata_get_sectors(void) { return libc_ata_get_sectors(); }
