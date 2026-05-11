@@ -35,7 +35,7 @@ void cmd_strings(const char *args) {
     int slen = 0;
     for (uint32_t i = 0; i <= size; i++) {
         unsigned char c = (i < size) ? (unsigned char)buf[i] : 0;
-        if (c >= 32 && c < 127) {
+        if (isprint(c)) {
             if (slen < 255) str[slen++] = (char)c;
         } else {
             if (slen >= STRINGS_MIN_LEN) {

@@ -21,10 +21,8 @@ void cmd_basename(const char *args) {
     while (len > 1 && path[len-1] == '/') path[--len] = '\0';
 
     /* Find last slash */
-    char *last = path;
-    for (char *p = path; *p; p++) {
-        if (*p == '/') last = p + 1;
-    }
+    char *slash = strrchr(path, '/');
+    char *last = slash ? slash + 1 : path;
     if (path[0] == '/' && !path[1]) last = path; /* root */
 
     kprintf("%s\n", last);

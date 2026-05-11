@@ -4,14 +4,8 @@
 #include "printf.h"
 #include "string.h"
 
-static int is_digit(char c) { return c >= '0' && c <= '9'; }
-
 static long parse_num(const char **p) {
-    long sign = 1;
-    if (**p == '-') { sign = -1; (*p)++; }
-    long v = 0;
-    while (is_digit(**p)) { v = v * 10 + (**p - '0'); (*p)++; }
-    return sign * v;
+    return strtol(*p, (char **)p, 10);
 }
 
 void cmd_expr(const char *args) {

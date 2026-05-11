@@ -26,17 +26,12 @@ void cmd_grep(const char *args) {
         return;
     }
     fbuf[size] = '\0';
-    int plen = strlen(pattern);
     char *line = fbuf;
     int count = 0;
     for (uint32_t i = 0; i <= size; i++) {
         if (fbuf[i] == '\n' || i == size) {
             fbuf[i] = '\0';
-            int found = 0;
-            for (char *s = line; *s; s++) {
-                if (strncmp(s, pattern, plen) == 0) { found = 1; break; }
-            }
-            if (found) {
+            if (strstr(line, pattern)) {
                 kprintf("%s\n", line);
                 count++;
             }

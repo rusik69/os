@@ -23,8 +23,7 @@ void cmd_cut(const char *args) {
             if (*p) delim = *p++;
         } else if (*p == 'f') {
             p++;
-            field = 0;
-            while (*p >= '0' && *p <= '9') { field = field * 10 + (*p - '0'); p++; }
+            { char *ep; field = (int)strtol(p, &ep, 10); p = ep; }
         }
         while (*p == ' ') p++;
     }
