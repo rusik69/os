@@ -89,8 +89,9 @@ void pmm_init(uint64_t multiboot_info_phys) {
         }
     }
 
-    /* Reserve kernel frames */
-    uint64_t kernel_end_frame = ((uint64_t)_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    /* Reserve kernel frames — use physical address since _kernel_end has a high VMA */
+    uint64_t kernel_end_phys = VIRT_TO_PHYS((uint64_t)(uintptr_t)_kernel_end);
+    uint64_t kernel_end_frame = (kernel_end_phys + PAGE_SIZE - 1) / PAGE_SIZE;
     for (uint64_t f = 0; f < kernel_end_frame && f < MAX_FRAMES; f++) {
         if (!bitmap_test(f)) {
             bitmap_set(f);
