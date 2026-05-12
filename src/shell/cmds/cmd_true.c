@@ -9,6 +9,5 @@ void cmd_true(const char *args) {
 
 void cmd_false(const char *args) {
     (void)args;
-    /* failure — in a real shell this sets $? to 1 */
-    kprintf("false\n");
+    /* failure — in a real shell this sets $? to 1; no output */
 }

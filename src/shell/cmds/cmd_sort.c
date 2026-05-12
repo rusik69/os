@@ -17,9 +17,11 @@ void cmd_sort(const char *args) {
     const char *p = args;
     while (*p == '-') {
         p++;
-        if (*p == 'r') reverse = 1;
-        else if (*p == 'R') shuffle = 1;
-        while (*p && *p != ' ') p++;
+        while (*p && *p != ' ') {
+            if (*p == 'r') reverse = 1;
+            else if (*p == 'R') shuffle = 1;
+            p++;
+        }
         while (*p == ' ') p++;
     }
 

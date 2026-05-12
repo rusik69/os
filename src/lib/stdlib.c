@@ -112,7 +112,7 @@ char *ltoa(long value, char *buf, int base) {
     if (uval == 0) { tmp[i++] = '0'; }
     while (uval) {
         unsigned long rem = uval % (unsigned long)base;
-        tmp[i++] = (char)(rem < 10 ? '0' + rem : 'a' + (int)rem - 10);
+        tmp[i++] = (char)(rem < 10 ? '0' + (unsigned long)rem : 'a' + (unsigned long)rem - 10);
         uval /= (unsigned long)base;
     }
     if (neg) tmp[i++] = '-';
@@ -143,7 +143,8 @@ int    opterr = 1;
 int    optopt = 0;
 
 /* Reset for re-use within the same command */
-static void getopt_reset(void) { optind = 1; optarg = (char *)0; optopt = 0; }
+static int optpos = 1; /* position within current argv element */
+static void getopt_reset(void) { optind = 1; optarg = (char *)0; optopt = 0; optpos = 1; }
 
 /*
  * getopt — parse short options from argv.
@@ -154,13 +155,10 @@ static void getopt_reset(void) { optind = 1; optarg = (char *)0; optopt = 0; }
  * commands, or build argv from the parsed args string.
  */
 int getopt(int argc, char * const argv[], const char *optstring) {
-    static int optpos = 1; /* position within current argv element */
-
-    /* Skip non-option arguments at current optind */
-    while (optind < argc && (argv[optind][0] != '-' || argv[optind][1] == '\0'))
-        optind++;
-
-    if (optind >= argc || argv[optind][0] == '\0') { getopt_reset(); return -1; }
+    if (optind >= argc) { getopt_reset(); return -1; }
+    if (argv[optind][0] != '-' || argv[optind][1] == '\0') {
+        getopt_reset(); return -1;  /* non-option arg stops processing */
+    }
     if (argv[optind][0] == '-' && argv[optind][1] == '-') {
         optind++; getopt_reset(); return -1; /* -- ends options */
     }
