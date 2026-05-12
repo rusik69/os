@@ -623,6 +623,9 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "expand") == 0) cmd_expand(args);
     else if (strcmp(cmd, "comm") == 0) cmd_comm(args);
     else if (strcmp(cmd, "split") == 0) cmd_split(args);
+    else if (strcmp(cmd, "top") == 0) cmd_top();
+    else if (strcmp(cmd, "sed") == 0) cmd_sed(args);
+    else if (strcmp(cmd, "tar") == 0) cmd_tar(args);
     else if (strcmp(cmd, "which") == 0) cmd_which(args);
     else if (strcmp(cmd, "ln") == 0) cmd_ln(args);
     else if (strcmp(cmd, "true") == 0) cmd_true(args);

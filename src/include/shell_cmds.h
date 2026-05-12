@@ -126,6 +126,9 @@ void cmd_comm(const char *args);
 void cmd_split(const char *args);
 
 /* New system utilities */
+void cmd_top(void);
+void cmd_sed(const char *args);
+void cmd_tar(const char *args);
 void cmd_which(const char *args);
 void cmd_ln(const char *args);
 void cmd_true(const char *args);
