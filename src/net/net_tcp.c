@@ -14,8 +14,10 @@ static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp_d
     pseudo.tcp_len = htons(tcp_len);
 
     uint32_t sum = 0;
-    const uint16_t *p = (const uint16_t *)&pseudo;
-    for (int i = 0; i < (int)(sizeof(pseudo) / 2); i++) sum += p[i];
+    const uint8_t *pb = (const uint8_t *)&pseudo;
+    for (int i = 0; i < (int)sizeof(pseudo); i += 2) {
+        uint16_t w; __builtin_memcpy(&w, pb + i, 2); sum += w;
+    }
     p = (const uint16_t *)tcp_data;
     int len = tcp_len;
     while (len > 1) { sum += *p++; len -= 2; }

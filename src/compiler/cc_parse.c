@@ -792,7 +792,7 @@ static void parse_primary(CompilerState *cc) {
 /*  return elem size (for store) and set *is_byte                     */
 /* ------------------------------------------------------------------ */
 
-static int emit_lvalue_addr(CompilerState *cc, int *is_byte) {
+static int __attribute__((unused)) emit_lvalue_addr(CompilerState *cc, int *is_byte) {
     Token *t = cur(cc);
     *is_byte = 0;
     /* *ptr = ... */
@@ -891,7 +891,7 @@ static int emit_lvalue_addr(CompilerState *cc, int *is_byte) {
 
 /* rax = rhs already pushed on stack. Load old value, apply op, store.
    addr is in rcx (set before call). op is TK_PLUSEQ etc. */
-static void emit_compound_op(CompilerState *cc, TokenType op, int is_byte, Symbol *sym) {
+static void __attribute__((unused)) emit_compound_op(CompilerState *cc, TokenType op, int is_byte, Symbol *sym) {
     /* Stack: [rhs]. We have sym's address computed. */
     /* Load old value of sym */
     emit_push_rax(cc); /* push rhs */

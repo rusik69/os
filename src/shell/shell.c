@@ -16,6 +16,17 @@
 
 #define MAX_VAR_NAME 32
 
+/* Helper for pipe/redirect output capture via kprintf hook */
+struct shell_capture_ctx {
+    char *buf;
+    int  *len;
+};
+
+static void shell_capture_cb(char c, void *ctx) {
+    struct shell_capture_ctx *sc = (struct shell_capture_ctx *)ctx;
+    if (*sc->len < 4095) sc->buf[(*sc->len)++] = c;
+}
+
 /* Expand $VAR references in src into dst (dst_max includes NUL) */
 static void var_expand(const char *src, char *dst, int dst_max) {
     int di = 0;
@@ -210,11 +221,8 @@ static void process_cmd(void) {
 
         /* Execute left, capture to pipe_buf via kprintf hook */
         pipe_len = 0;
-        void pipe_capture(char c, void *ctx) {
-            (void)ctx;
-            if (pipe_len < 4095) pipe_buf[pipe_len++] = c;
-        }
-        kprintf_set_hook(pipe_capture, 0);
+        struct shell_capture_ctx pipe_ctx = { pipe_buf, &pipe_len };
+        kprintf_set_hook(shell_capture_cb, &pipe_ctx);
         shell_exec_cmd(lcmd, largs);
         kprintf_set_hook(saved_hook, saved_ctx);
         pipe_buf[pipe_len] = '\0';
@@ -284,11 +292,8 @@ static void process_cmd(void) {
         void (*saved_hook)(char, void*) = 0;
         void *saved_ctx = 0;
         kprintf_get_hook(&saved_hook, &saved_ctx);
-        void redir_capture(char c, void *ctx) {
-            (void)ctx;
-            if (redir_len < 4095) redir_buf[redir_len++] = c;
-        }
-        kprintf_set_hook(redir_capture, 0);
+        struct shell_capture_ctx redir_ctx = { redir_buf, &redir_len };
+        kprintf_set_hook(shell_capture_cb, &redir_ctx);
         shell_exec_cmd(lcmd, largs);
         kprintf_set_hook(saved_hook, saved_ctx);
         redir_buf[redir_len] = '\0';

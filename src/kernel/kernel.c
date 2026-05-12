@@ -42,25 +42,25 @@
 #include "test.h"
 #endif
 
-static void test_task_a(void) {
+static void __attribute__((unused)) test_task_a(void) {
     for (;;) {
         /* Background task A: just yields */
         scheduler_yield();
     }
 }
 
-static void test_task_b(void) {
+static void __attribute__((unused)) test_task_b(void) {
     for (;;) {
         /* Background task B: just yields */
         scheduler_yield();
     }
 }
 
-static void shell_task(void) {
+static void __attribute__((unused)) shell_task(void) {
     shell_run();
 }
 
-static void net_task(void) {
+static void __attribute__((unused)) net_task(void) {
     telnetd_task();
 }
 

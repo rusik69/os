@@ -159,7 +159,6 @@ static int build_response(char *resp, int status, const char *status_text,
     /* Status line: "HTTP/1.1 NNN Text\r\n" */
     *p++ = 'H'; *p++ = 'T'; *p++ = 'T'; *p++ = 'P'; *p++ = '/'; *p++ = '1';
     *p++ = '.'; *p++ = '1'; *p++ = ' ';
-    char stat_buf[8];
     p = u64toa((uint64_t)status, p);
     *p++ = ' ';
     while (*status_text) *p++ = *status_text++;
@@ -203,7 +202,6 @@ static void send_error(int conn_id, int status, const char *text, const char *de
     char *p = body;
     const char *prefix = "<html><body><h1>";
     while (*prefix) *p++ = *prefix++;
-    char sbuf[8];
     p = u64toa((uint64_t)status, p);
     *p++ = ' ';
     while (*detail) *p++ = *detail++;

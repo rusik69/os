@@ -43,9 +43,10 @@ void gdt_init(void) {
 
     /* TSS high half (entry 6 holds upper 32 bits of base) */
     struct gdt_entry *tss_high = &gdt[6];
-    uint32_t *tss_high_raw = (uint32_t *)tss_high;
+    uint32_t tss_high_raw[2];
     tss_high_raw[0] = (uint32_t)(tss_base >> 32);
     tss_high_raw[1] = 0;
+    __builtin_memcpy(tss_high, tss_high_raw, sizeof(tss_high_raw));
 
     gdt_ptr.limit = sizeof(gdt) - 1;
     gdt_ptr.base = (uint64_t)&gdt;
