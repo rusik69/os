@@ -18,10 +18,10 @@ static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp_d
     for (int i = 0; i < (int)sizeof(pseudo); i += 2) {
         uint16_t w; __builtin_memcpy(&w, pb + i, 2); sum += w;
     }
-    p = (const uint16_t *)tcp_data;
+    pb = (const uint8_t *)tcp_data;
     int len = tcp_len;
-    while (len > 1) { sum += *p++; len -= 2; }
-    if (len == 1) sum += *(const uint8_t *)p;
+    while (len > 1) { uint16_t w; __builtin_memcpy(&w, pb, 2); sum += w; pb += 2; len -= 2; }
+    if (len == 1) sum += *pb;
     while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
     return ~(uint16_t)sum;
 }
