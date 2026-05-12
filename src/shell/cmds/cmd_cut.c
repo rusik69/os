@@ -47,23 +47,22 @@ void cmd_cut(const char *args) {
     buf[size] = '\0';
 
     /* Process line by line */
+    char delim_str[2] = { delim, '\0' };
     char *line = buf;
     for (uint32_t i = 0; i <= size; i++) {
         if (buf[i] == '\n' || i == size) {
             buf[i] = '\0';
-            /* Extract field */
+            /* Extract field using strcspn for delimiter scanning */
             char *fp = line;
             int cur = 1;
             while (cur < field && *fp) {
-                if (*fp == delim) cur++;
-                fp++;
+                size_t span = strcspn(fp, delim_str);
+                fp += span;
+                if (*fp == delim) { fp++; cur++; }
             }
             if (cur == field) {
-                /* Print until next delim or end */
-                while (*fp && *fp != delim) {
-                    kprintf("%c", (uint64_t)(uint8_t)*fp);
-                    fp++;
-                }
+                size_t flen = strcspn(fp, delim_str);
+                for (size_t k = 0; k < flen; k++) kprintf("%c", (uint64_t)(uint8_t)fp[k]);
             }
             kprintf("\n");
             line = &buf[i + 1];

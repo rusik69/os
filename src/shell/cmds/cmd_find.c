@@ -4,25 +4,7 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
-
-/* Simple wildcard match: * matches any sequence, ? matches one char */
-static int wildmatch(const char *pattern, const char *str) {
-    while (*pattern) {
-        if (*pattern == '*') {
-            pattern++;
-            if (!*pattern) return 1; /* trailing * matches all */
-            while (*str) { if (wildmatch(pattern, str)) return 1; str++; }
-            return 0;
-        } else if (*pattern == '?') {
-            if (!*str) return 0;
-            pattern++; str++;
-        } else {
-            if (*pattern != *str) return 0;
-            pattern++; str++;
-        }
-    }
-    return *str == '\0';
-}
+#include "stdlib.h"
 
 void cmd_find(const char *args) {
     if (!args || !args[0]) { kprintf("Usage: find <pattern>\n"); return; }
@@ -33,13 +15,13 @@ void cmd_find(const char *args) {
     int pl = strlen(pattern);
     while (pl > 0 && pattern[pl-1] == ' ') pattern[--pl] = '\0';
 
-    /* List all files and match */
+    /* List all files and match using fnmatch for proper glob support */
     char names[128][FS_MAX_NAME];
     int n = fs_list_names("/", 0, names, 128);
 
     int found = 0;
     for (int i = 0; i < n; i++) {
-        if (wildmatch(pattern, names[i])) {
+        if (fnmatch(pattern, names[i], 0) == 0) {
             kprintf("  /%s\n", names[i]);
             found++;
         }

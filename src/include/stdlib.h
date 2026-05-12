@@ -39,4 +39,24 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
 /* ---- Heap-allocated string copy ---- */
 char *strdup(const char *s);
 
+/* ---- Integer to ASCII conversions ---- */
+char *itoa(int value, char *buf, int base);
+char *ltoa(long value, char *buf, int base);
+
+/* ---- Pseudo-random number generator ---- */
+void srand(unsigned int seed);
+int  rand(void);
+#define RAND_MAX 0x7FFFFFFF
+
+/* ---- POSIX option parser ---- */
+extern char *optarg;
+extern int   optind;
+extern int   opterr;
+extern int   optopt;
+int getopt(int argc, char * const argv[], const char *optstring);
+
+/* ---- Shell-style glob matching ---- */
+#define FNM_NOMATCH 1
+int fnmatch(const char *pattern, const char *string, int flags);
+
 #endif

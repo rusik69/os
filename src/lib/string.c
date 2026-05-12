@@ -202,3 +202,26 @@ char *strsep(char **stringp, const char *delim) {
     else     *stringp = (char *)0;
     return s;
 }
+
+/* strspn: length of initial segment of s containing only chars in accept */
+size_t strspn(const char *s, const char *accept) {
+    size_t n = 0;
+    while (*s && strchr(accept, *s)) { n++; s++; }
+    return n;
+}
+
+/* strcspn: length of initial segment of s NOT containing any char in reject */
+size_t strcspn(const char *s, const char *reject) {
+    size_t n = 0;
+    while (*s && !strchr(reject, *s)) { n++; s++; }
+    return n;
+}
+
+/* strpbrk: find first occurrence in s of any char from accept; NULL if none */
+char *strpbrk(const char *s, const char *accept) {
+    while (*s) {
+        if (strchr(accept, *s)) return (char *)s;
+        s++;
+    }
+    return (char *)0;
+}

@@ -489,6 +489,28 @@ void shell_exec_cmd(const char *cmd, const char *args) {
             kprintf("Usage: gui\n  Launch GUI desktop environment (experimental)\n");
         else if (strcmp(cmd, "serial") == 0)
             kprintf("Usage: serial status | serial write <text>\n  COM1 serial port operations\n");
+        else if (strcmp(cmd, "fold") == 0)
+            kprintf("Usage: fold [-w width] <file>\n  Wrap lines to given width (default 80)\n");
+        else if (strcmp(cmd, "expand") == 0)
+            kprintf("Usage: expand [-t tabstop] <file>\n  Convert tabs to spaces (default tabstop 8)\n");
+        else if (strcmp(cmd, "comm") == 0)
+            kprintf("Usage: comm [-123] <file1> <file2>\n  Compare two sorted files line by line\n");
+        else if (strcmp(cmd, "split") == 0)
+            kprintf("Usage: split [-l lines] <file> [prefix]\n  Split file into chunks (default 100 lines each)\n");
+        else if (strcmp(cmd, "which") == 0)
+            kprintf("Usage: which <command>\n  Show whether command is a shell built-in\n");
+        else if (strcmp(cmd, "ln") == 0)
+            kprintf("Usage: ln <source> <dest>\n  Create a copy-link to a file\n");
+        else if (strcmp(cmd, "true") == 0)
+            kprintf("Usage: true\n  Do nothing, successfully\n");
+        else if (strcmp(cmd, "false") == 0)
+            kprintf("Usage: false\n  Do nothing, unsuccessfully\n");
+        else if (strcmp(cmd, "more") == 0)
+            kprintf("Usage: more <file>\n  Display file one page at a time\n");
+        else if (strcmp(cmd, "file") == 0)
+            kprintf("Usage: file <path>\n  Determine file type (text/binary/ELF/directory)\n");
+        else if (strcmp(cmd, "nslookup") == 0)
+            kprintf("Usage: nslookup <hostname>\n  Resolve hostname to IP address\n");
         else
             kprintf("Unknown command: %s\n", cmd);
         return;
@@ -597,6 +619,17 @@ void shell_exec_cmd(const char *cmd, const char *args) {
     else if (strcmp(cmd, "users") == 0) cmd_users();
     else if (strcmp(cmd, "capprof") == 0) cmd_capprof(args);
     else if (strcmp(cmd, "service") == 0) cmd_service(args);
+    else if (strcmp(cmd, "fold") == 0) cmd_fold(args);
+    else if (strcmp(cmd, "expand") == 0) cmd_expand(args);
+    else if (strcmp(cmd, "comm") == 0) cmd_comm(args);
+    else if (strcmp(cmd, "split") == 0) cmd_split(args);
+    else if (strcmp(cmd, "which") == 0) cmd_which(args);
+    else if (strcmp(cmd, "ln") == 0) cmd_ln(args);
+    else if (strcmp(cmd, "true") == 0) cmd_true(args);
+    else if (strcmp(cmd, "false") == 0) cmd_false(args);
+    else if (strcmp(cmd, "more") == 0) cmd_more(args);
+    else if (strcmp(cmd, "file") == 0) cmd_file(args);
+    else if (strcmp(cmd, "nslookup") == 0) cmd_nslookup(args);
     else kprintf("Unknown command: %s\n", cmd);
 }
 
