@@ -25,7 +25,7 @@ typedef enum {
     /* type keywords */
     TK_INT, TK_CHAR, TK_VOID, TK_UNSIGNED, TK_LONG, TK_SHORT,
     TK_STRUCT, TK_TYPEDEF, TK_ENUM, TK_CONST, TK_EXTERN, TK_INLINE,
-    TK_STATIC, TK_UNION,
+    TK_STATIC, TK_UNION, TK_VOLATILE, TK_RESTRICT,
     /* control flow */
     TK_RETURN, TK_IF, TK_ELSE, TK_WHILE, TK_DO, TK_FOR,
     TK_BREAK, TK_CONTINUE, TK_SWITCH, TK_CASE, TK_DEFAULT, TK_GOTO,
@@ -167,7 +167,8 @@ typedef struct {
     int      ngoto_patches;
 
     int      error;
-    char     errmsg[128];
+    int      nerrors;    /* number of errors (for multi-error reporting) */
+    char     errmsg[256]; /* extended to hold line number prefix */
 
     int      main_offset;  /* offset of main() in code[] */
 } CompilerState;

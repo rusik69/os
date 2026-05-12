@@ -1015,12 +1015,14 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
 
     cc_lex(cc);
     if (cc->error) {
+        kprintf("cc: lex error: %s\n", cc->errmsg);
         kfree(cc);
         return (uint64_t)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
+        kprintf("cc: error: %s\n", cc->errmsg);
         kfree(cc);
         return (uint64_t)-4;
     }

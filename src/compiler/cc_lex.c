@@ -5,9 +5,11 @@
 #include "printf.h"
 
 static void cc_error(CompilerState *cc, const char *msg) {
+    cc->nerrors++;
     if (!cc->error) {
         cc->error = 1;
         strncpy(cc->errmsg, msg, sizeof(cc->errmsg) - 1);
+        cc->errmsg[sizeof(cc->errmsg) - 1] = '\0';
     }
 }
 
@@ -79,6 +81,9 @@ static const KW kwtab[] = {
     {"goto",     TK_GOTO},
     {"sizeof",   TK_SIZEOF},
     {"union",    TK_UNION},
+    {"volatile", TK_VOLATILE},
+    {"restrict", TK_RESTRICT},
+    {"auto",     TK_STATIC},  /* treat auto as static (ignored) */
     {0, TK_EOF}
 };
 

@@ -9,20 +9,38 @@
 /* ------------------------------------------------------------------ */
 
 static void cc_error(CompilerState *cc, const char *msg) {
+    cc->nerrors++;
     if (!cc->error) {
         cc->error = 1;
-        strncpy(cc->errmsg, msg, sizeof(cc->errmsg) - 1);
+        int line = (cc->tok_pos < cc->ntokens) ? cc->tokens[cc->tok_pos].line : 0;
+        if (line > 0) {
+            /* prefix with line number: "line N: msg" */
+            int i = 0;
+            /* write "line " */
+            const char *pre = "line "; while (*pre && i < 240) cc->errmsg[i++] = *pre++;
+            /* write number */
+            int tmp[10]; int tn = 0;
+            int n = line; if (n <= 0) n = 1;
+            do { tmp[tn++] = n % 10; n /= 10; } while (n > 0);
+            while (tn > 0) cc->errmsg[i++] = (char)('0' + tmp[--tn]);
+            cc->errmsg[i++] = ':'; cc->errmsg[i++] = ' ';
+            while (*msg && i < 253) cc->errmsg[i++] = *msg++;
+            cc->errmsg[i] = '\0';
+        } else {
+            strncpy(cc->errmsg, msg, sizeof(cc->errmsg) - 1);
+        }
+        cc->errmsg[sizeof(cc->errmsg) - 1] = '\0';
     }
 }
 
 static void cc_errorf(CompilerState *cc, const char *fmt, const char *arg) {
     if (!cc->error) {
-        char buf[128];
+        char buf[200];
         int i = 0, j = 0;
-        while (fmt[i] && i < 100) {
+        while (fmt[i] && i < 180) {
             if (fmt[i] == '%' && fmt[i+1] == 's') {
                 const char *a = arg;
-                while (*a && j < 126) buf[j++] = *a++;
+                while (*a && j < 196) buf[j++] = *a++;
                 i += 2;
             } else {
                 buf[j++] = fmt[i++];
@@ -215,6 +233,11 @@ static int type_sizeof(CompilerState *cc, const TypeDesc *t) {
     switch (t->kind) {
     case TY_CHAR:  return 1;
     case TY_VOID:  return 0;
+    case TY_ARRAY:
+        /* sizeof(array) = num_elements * 8 (default element size).
+           We don't track the base type in TypeDesc for arrays, so assume 8-byte elements.
+           char arrays use 1-byte elements but are sized at alloc time via local_frame. */
+        return (t->arr_size > 0) ? t->arr_size * 8 : 8;
     case TY_STRUCT:
         if (t->struct_idx >= 0 && t->struct_idx < cc->nstructs)
             return cc->structs[t->struct_idx].total_size;
@@ -333,7 +356,7 @@ static int is_type_kw(TokenType t) {
     return t == TK_INT || t == TK_CHAR || t == TK_VOID ||
            t == TK_UNSIGNED || t == TK_LONG || t == TK_SHORT ||
            t == TK_STRUCT || t == TK_UNION || t == TK_CONST || t == TK_STATIC ||
-           t == TK_EXTERN || t == TK_INLINE || t == TK_UNSIGNED;
+           t == TK_EXTERN || t == TK_INLINE || t == TK_VOLATILE || t == TK_RESTRICT;
 }
 
 /* Returns 1 if cur token starts a type (keyword or typedef name) */
@@ -356,7 +379,8 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
 
     /* qualifiers/storage that don't affect type */
     while (cur(cc)->type == TK_CONST || cur(cc)->type == TK_STATIC ||
-           cur(cc)->type == TK_EXTERN || cur(cc)->type == TK_INLINE)
+           cur(cc)->type == TK_EXTERN || cur(cc)->type == TK_INLINE ||
+           cur(cc)->type == TK_VOLATILE || cur(cc)->type == TK_RESTRICT)
         advance(cc);
 
     int is_unsigned = 0;
@@ -621,6 +645,46 @@ static void parse_primary(CompilerState *cc) {
         char name[64]; strncpy(name, t->sval, 63); name[63]=0;
         advance(cc);
 
+        /* ---- __syscall(nr, a1..a5) builtin ---- */
+        if (strcmp(name, "__syscall") == 0) {
+            expect(cc, TK_LPAREN, "expected '(' after __syscall");
+            /* Collect up to 6 arguments */
+            int nargs = 0;
+            while (cur(cc)->type != TK_RPAREN && !cc->error) {
+                parse_expr(cc);
+                emit_push_rax(cc);
+                nargs++;
+                if (cur(cc)->type == TK_COMMA) advance(cc);
+            }
+            expect(cc, TK_RPAREN, "expected ')' after __syscall args");
+            /* Pop args in reverse into syscall registers:
+               SysV: rax=nr, rdi=a1, rsi=a2, rdx=a3, r10=a4, r8=a5, r9=a6 */
+            static const uint8_t load_reg[6][3] = {
+                {0x48,0x89,0xC7}, /* pop rcx; mov rdi,rcx */
+                {0x48,0x89,0xCE}, /* mov rsi,rcx */
+                {0x48,0x89,0xCA}, /* mov rdx,rcx */
+                {0x49,0x89,0xCA}, /* mov r10,rcx */
+                {0x49,0x89,0xC8}, /* mov r8,rcx */
+                {0x49,0x89,0xC9}, /* mov r9,rcx */
+            };
+            /* pop syscall number last (first arg) */
+            /* We push left-to-right, so top of stack = last arg */
+            for (int ai = nargs - 1; ai >= 0; ai--) {
+                emit_pop_rcx(cc); /* rcx = arg[ai] */
+                if (ai == 0) {
+                    /* syscall number goes in rax */
+                    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC8); /* mov rax,rcx */
+                } else if (ai - 1 < 6) {
+                    int reg_idx = ai - 1; /* a1=0=rdi, a2=1=rsi, ... */
+                    emit1(cc, load_reg[reg_idx][0]);
+                    emit1(cc, load_reg[reg_idx][1]);
+                    emit1(cc, load_reg[reg_idx][2]);
+                }
+            }
+            emit1(cc, 0x0F); emit1(cc, 0x05); /* syscall */
+            return;
+        }
+
         /* function call or function pointer call */
         if (cur(cc)->type == TK_LPAREN) {
             /* Check for function pointer variable (not a known function) */
@@ -757,7 +821,7 @@ static void parse_primary(CompilerState *cc) {
             const char *field = cur(cc)->sval; advance(cc);
             /* find field offset from pointed-to struct */
             int sidx = s->type.struct_idx;
-            if (s->type.ptr_depth == 1 && sidx >= 0 && sidx < cc->nstructs) {
+            if (s->type.ptr_depth >= 1 && sidx >= 0 && sidx < cc->nstructs) {
                 StructDef *sd = &cc->structs[sidx];
                 for (int fi = 0; fi < sd->nfields; fi++) {
                     if (strcmp(sd->fields[fi].name, field) == 0) {
@@ -772,11 +836,9 @@ static void parse_primary(CompilerState *cc) {
                         return;
                     }
                 }
-            } else {
-                /* Unknown struct — just deref at offset 0 */
-                emit_deref_rax(cc);
+                cc_error(cc, "unknown field in ->"); return;
             }
-            cc_error(cc, "unknown field in ->"); return;
+            cc_error(cc, "not a struct pointer for ->"); return;
         }
 
         /* plain variable load */
@@ -785,159 +847,6 @@ static void parse_primary(CompilerState *cc) {
     }
 
     cc_error(cc, "unexpected token in expression");
-}
-
-/* ------------------------------------------------------------------ */
-/*  Lvalue emission: put address of lvalue in rax,                    */
-/*  return elem size (for store) and set *is_byte                     */
-/* ------------------------------------------------------------------ */
-
-static int __attribute__((unused)) emit_lvalue_addr(CompilerState *cc, int *is_byte) {
-    Token *t = cur(cc);
-    *is_byte = 0;
-    /* *ptr = ... */
-    if (t->type == TK_STAR) {
-        advance(cc);
-        parse_primary(cc); /* ptr in rax */
-        return 8;
-    }
-    if (t->type == TK_IDENT) {
-        char name[64]; strncpy(name, t->sval, 63); name[63]=0;
-        advance(cc);
-        /* arr[i] = ... */
-        if (cur(cc)->type == TK_LBRACKET) {
-            advance(cc);
-            Symbol *s = find_sym(cc, name);
-            if (!s) { cc_errorf(cc, "undefined: %s", name); return 8; }
-            int esz = type_elem_size(cc, &s->type);
-            if (s->is_global) emit_mov_rax_imm64(cc, s->gaddr);
-            else              emit_lea_local(cc, s->offset);
-            emit_push_rax(cc);
-            parse_expr(cc); /* index */
-            if (esz > 1) {
-                emit1(cc,0x48);emit1(cc,0x69);emit1(cc,0xC0); emit4(cc,(uint32_t)esz);
-            }
-            emit_pop_rcx(cc);
-            emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xC8);
-            expect(cc, TK_RBRACKET, "expected ']'");
-            if (esz == 1) *is_byte = 1;
-            return esz;
-        }
-        /* name->field = ... */
-        if (cur(cc)->type == TK_ARROW) {
-            advance(cc);
-            Symbol *s = find_sym(cc, name);
-            if (!s) { cc_errorf(cc, "undefined: %s", name); return 8; }
-            if (cur(cc)->type != TK_IDENT) { cc_error(cc, "expected field name"); return 8; }
-            const char *field = cur(cc)->sval; advance(cc);
-            int sidx = s->type.struct_idx;
-            if (sidx < 0 || sidx >= cc->nstructs) { cc_error(cc, "not a struct ptr"); return 8; }
-            /* load pointer value */
-            if (s->is_global) emit_load_global(cc, s->gaddr);
-            else              emit_load_local(cc, s->offset);
-            StructDef *sd = &cc->structs[sidx];
-            for (int fi = 0; fi < sd->nfields; fi++) {
-                if (strcmp(sd->fields[fi].name, field) == 0) {
-                    int foff = sd->fields[fi].offset;
-                    if (foff != 0) {
-                        emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)foff);
-                    }
-                    int ffsz = type_sizeof(cc, &sd->fields[fi].type);
-                    if (ffsz == 1) *is_byte = 1;
-                    return ffsz;
-                }
-            }
-            cc_error(cc, "unknown field"); return 8;
-        }
-        /* name.field = ... */
-        if (cur(cc)->type == TK_DOT) {
-            advance(cc);
-            Symbol *s = find_sym(cc, name);
-            if (!s) { cc_errorf(cc, "undefined: %s", name); return 8; }
-            if (cur(cc)->type != TK_IDENT) { cc_error(cc, "expected field name"); return 8; }
-            const char *field = cur(cc)->sval; advance(cc);
-            int sidx = s->type.struct_idx;
-            if (sidx < 0 || sidx >= cc->nstructs) { cc_error(cc, "not a struct"); return 8; }
-            StructDef *sd = &cc->structs[sidx];
-            for (int fi = 0; fi < sd->nfields; fi++) {
-                if (strcmp(sd->fields[fi].name, field) == 0) {
-                    int foff = sd->fields[fi].offset;
-                    if (s->is_global)
-                        emit_mov_rax_imm64(cc, s->gaddr + (uint64_t)foff);
-                    else
-                        emit_lea_local(cc, s->offset + foff);
-                    int ffsz = type_sizeof(cc, &sd->fields[fi].type);
-                    if (ffsz == 1) *is_byte = 1;
-                    return ffsz;
-                }
-            }
-            cc_error(cc, "unknown field"); return 8;
-        }
-        /* sym */
-        Symbol *s = find_sym(cc, name);
-        if (!s) { cc_errorf(cc, "undefined: %s", name); return 8; }
-        if (type_is_char(&s->type)) *is_byte = 1;
-        if (s->is_global) emit_mov_rax_imm64(cc, s->gaddr);
-        else              emit_lea_local(cc, s->offset);
-        return *is_byte ? 1 : 8;
-    }
-    cc_error(cc, "expected lvalue");
-    return 8;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Compound assignment helper                                         */
-/* ------------------------------------------------------------------ */
-
-/* rax = rhs already pushed on stack. Load old value, apply op, store.
-   addr is in rcx (set before call). op is TK_PLUSEQ etc. */
-static void __attribute__((unused)) emit_compound_op(CompilerState *cc, TokenType op, int is_byte, Symbol *sym) {
-    /* Stack: [rhs]. We have sym's address computed. */
-    /* Load old value of sym */
-    emit_push_rax(cc); /* push rhs */
-    if (sym) {
-        if (sym->is_global) {
-            if (type_is_char(&sym->type)) emit_load_global_byte(cc, sym->gaddr);
-            else                          emit_load_global(cc, sym->gaddr);
-        } else {
-            if (type_is_char(&sym->type)) emit_load_local_byte(cc, sym->offset);
-            else                          emit_load_local(cc, sym->offset);
-        }
-    } else {
-        /* indirect — push_rax pushed rhs, rcx has addr */
-        /* but we already emitted addr earlier; just use rax with deref */
-        if (is_byte) emit_deref_rax_byte(cc); else emit_deref_rax(cc);
-    }
-    emit_pop_rcx(cc); /* rcx = rhs */
-    switch (op) {
-    case TK_PLUSEQ:    emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xC8); break; /* add rax,rcx */
-    case TK_MINUSEQ:   emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xC8); break; /* sub rax,rcx */
-    case TK_STAREQ:    emit1(cc,0x48);emit1(cc,0x0F);emit1(cc,0xAF);emit1(cc,0xC1); break;
-    case TK_SLASHEQ:
-        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xC1); /* xchg rax,rcx */
-        emit1(cc,0x48);emit1(cc,0x99);                 /* cqo */
-        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xF9); /* idiv rcx */
-        break;
-    case TK_PERCENTEQ:
-        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xC1);
-        emit1(cc,0x48);emit1(cc,0x99);
-        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xF9);
-        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD0); /* mov rax,rdx */
-        break;
-    case TK_AMPEQ:     emit1(cc,0x48);emit1(cc,0x21);emit1(cc,0xC8); break; /* and rax,rcx */
-    case TK_PIPEEQ:    emit1(cc,0x48);emit1(cc,0x09);emit1(cc,0xC8); break; /* or rax,rcx  */
-    case TK_CARETEQ:   emit1(cc,0x48);emit1(cc,0x31);emit1(cc,0xC8); break; /* xor rax,rcx */
-    case TK_LSHIFTEQ:
-        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1); /* mov rcx,rax */
-        /* old value needs reload — this gets complex; just emit shl */ 
-        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xE0); /* shl rax,cl */
-        break;
-    case TK_RSHIFTEQ:
-        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
-        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xF8); /* sar rax,cl */
-        break;
-    default: break;
-    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -977,16 +886,36 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
             parse_expr_prec(cc, 0);         /* rhs in rax */
             emit_pop_rcx(cc);               /* rcx = addr */
             if (op != TK_ASSIGN) {
-                /* load old, apply op */
-                emit_push_rax(cc);           /* push rhs */
-                emit_deref_rax(cc);          /* rax = *addr (but addr in rcx) */
-                /* Actually: need deref via rcx */
-                emit1(cc,0x48);emit1(cc,0x8B);emit1(cc,0x01); /* mov rax,[rcx] */
-                emit_pop_rdx(cc);
-                /* now rax=old, rdx=rhs — apply op using rdx as rhs */
+                /* load old value via rcx, apply op, result in rax */
+                emit_push_rax(cc);                             /* push rhs */
+                emit1(cc,0x48);emit1(cc,0x8B);emit1(cc,0x01); /* mov rax,[rcx] (old value) */
+                emit_pop_rdx(cc);                              /* rdx = rhs */
                 switch(op) {
-                case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break;
-                case TK_MINUSEQ: emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xD0); break;
+                case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break; /* add rax,rdx */
+                case TK_MINUSEQ: emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xD0); break; /* sub rax,rdx */
+                case TK_STAREQ:  emit1(cc,0x48);emit1(cc,0x0F);emit1(cc,0xAF);emit1(cc,0xC2); break; /* imul rax,rdx */
+                case TK_SLASHEQ:
+                    emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0); /* xchg rax,rdx */
+                    emit1(cc,0x48);emit1(cc,0x99);                 /* cqo */
+                    emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA); /* idiv rdx */
+                    break;
+                case TK_PERCENTEQ:
+                    emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0); /* xchg rax,rdx */
+                    emit1(cc,0x48);emit1(cc,0x99);
+                    emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA);
+                    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD0); /* mov rax,rdx */
+                    break;
+                case TK_AMPEQ:   emit1(cc,0x48);emit1(cc,0x21);emit1(cc,0xD0); break; /* and rax,rdx */
+                case TK_PIPEEQ:  emit1(cc,0x48);emit1(cc,0x09);emit1(cc,0xD0); break; /* or  rax,rdx */
+                case TK_CARETEQ: emit1(cc,0x48);emit1(cc,0x31);emit1(cc,0xD0); break; /* xor rax,rdx */
+                case TK_LSHIFTEQ:
+                    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1); /* mov rcx,rdx (count) */
+                    emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xE0); /* shl rax,cl */
+                    break;
+                case TK_RSHIFTEQ:
+                    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1);
+                    emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xF8); /* sar rax,cl */
+                    break;
                 default: break;
                 }
             }
@@ -1045,8 +974,31 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
                                     else           { emit1(cc,0x48);emit1(cc,0x8B);emit1(cc,0x01); }
                                     emit_pop_rdx(cc); /* rdx = rhs */
                                     switch(op) {
-                                    case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break;
-                                    case TK_MINUSEQ: emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xD0); break;
+                                    case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break; /* add rax,rdx */
+                                    case TK_MINUSEQ: emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xD0); break; /* sub rax,rdx */
+                                    case TK_STAREQ:  emit1(cc,0x48);emit1(cc,0x0F);emit1(cc,0xAF);emit1(cc,0xC2); break;
+                                    case TK_SLASHEQ:
+                                        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0);
+                                        emit1(cc,0x48);emit1(cc,0x99);
+                                        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA);
+                                        break;
+                                    case TK_PERCENTEQ:
+                                        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0);
+                                        emit1(cc,0x48);emit1(cc,0x99);
+                                        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA);
+                                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD0);
+                                        break;
+                                    case TK_AMPEQ:   emit1(cc,0x48);emit1(cc,0x21);emit1(cc,0xD0); break;
+                                    case TK_PIPEEQ:  emit1(cc,0x48);emit1(cc,0x09);emit1(cc,0xD0); break;
+                                    case TK_CARETEQ: emit1(cc,0x48);emit1(cc,0x31);emit1(cc,0xD0); break;
+                                    case TK_LSHIFTEQ:
+                                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1);
+                                        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xE0);
+                                        break;
+                                    case TK_RSHIFTEQ:
+                                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1);
+                                        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xF8);
+                                        break;
                                     default: break;
                                     }
                                 }
@@ -1142,8 +1094,31 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
                     else         { emit1(cc,0x48);emit1(cc,0x8B);emit1(cc,0x01); } /* mov rax,[rcx] */
                     emit_pop_rdx(cc);
                     switch(op) {
-                    case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break; /* add rax,rdx */
+                    case TK_PLUSEQ:  emit1(cc,0x48);emit1(cc,0x01);emit1(cc,0xD0); break;
                     case TK_MINUSEQ: emit1(cc,0x48);emit1(cc,0x29);emit1(cc,0xD0); break;
+                    case TK_STAREQ:  emit1(cc,0x48);emit1(cc,0x0F);emit1(cc,0xAF);emit1(cc,0xC2); break;
+                    case TK_SLASHEQ:
+                        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0);
+                        emit1(cc,0x48);emit1(cc,0x99);
+                        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA);
+                        break;
+                    case TK_PERCENTEQ:
+                        emit1(cc,0x48);emit1(cc,0x87);emit1(cc,0xD0);
+                        emit1(cc,0x48);emit1(cc,0x99);
+                        emit1(cc,0x48);emit1(cc,0xF7);emit1(cc,0xFA);
+                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD0);
+                        break;
+                    case TK_AMPEQ:   emit1(cc,0x48);emit1(cc,0x21);emit1(cc,0xD0); break;
+                    case TK_PIPEEQ:  emit1(cc,0x48);emit1(cc,0x09);emit1(cc,0xD0); break;
+                    case TK_CARETEQ: emit1(cc,0x48);emit1(cc,0x31);emit1(cc,0xD0); break;
+                    case TK_LSHIFTEQ:
+                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1);
+                        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xE0);
+                        break;
+                    case TK_RSHIFTEQ:
+                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD1);
+                        emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xF8);
+                        break;
                     default: break;
                     }
                 }
@@ -1546,7 +1521,13 @@ static void parse_stmt(CompilerState *cc,
             if (cur(cc)->type == TK_CASE) {
                 advance(cc);
                 int64_t v = 0;
-                if (cur(cc)->type == TK_INTLIT || cur(cc)->type == TK_CHARLIT) {
+                /* Handle optional unary minus for negative case values */
+                if (cur(cc)->type == TK_MINUS) {
+                    advance(cc);
+                    if (cur(cc)->type == TK_INTLIT || cur(cc)->type == TK_CHARLIT) {
+                        v = -(cur(cc)->ival); advance(cc);
+                    }
+                } else if (cur(cc)->type == TK_INTLIT || cur(cc)->type == TK_CHARLIT) {
                     v = cur(cc)->ival; advance(cc);
                 }
                 expect(cc, TK_COLON, "expected ':' after case");
@@ -1689,11 +1670,11 @@ static void parse_struct_def(CompilerState *cc, int is_union) {
                 f->offset = 0; /* all union fields at offset 0 */
                 if (fsz > sd->total_size) sd->total_size = fsz;
             } else {
+                    /* Set field offset at current (aligned) position, then advance */
                 f->offset = sd->total_size;
                 sd->total_size += fsz;
-                /* align each field to 8 */
+                /* Align total_size to 8 bytes for next field */
                 sd->total_size = (sd->total_size + 7) & ~7;
-                f->offset = sd->total_size - ((fsz+7)&~7);
             }
             if (cur(cc)->type == TK_COMMA) { advance(cc); continue; }
             break;
@@ -1832,11 +1813,42 @@ static void parse_global_decl(CompilerState *cc, const char *vname, TypeDesc *td
             for (int bi=0; bi<8 && bi<esz; bi++)
                 cc->data[doff+bi] = (uint8_t)(v >> (bi*8));
         } else if (cur(cc)->type == TK_STRLIT) {
-            /* char *p = "string" — store pointer into data */
-            int soff = data_add_string(cc, cur(cc)->sval); advance(cc);
-            uint64_t sva = data_vaddr(soff);
+            if (td->kind == TY_CHAR && td->ptr_depth == 0 && arr_n > 0) {
+                /* char msg[] = "hello" — copy bytes into data segment */
+                const char *str = cur(cc)->sval;
+                int slen = (int)strlen(str);
+                int doff = (int)(g->gaddr - (CC_LOAD_BASE + CC_DATA_OFFSET));
+                for (int ci = 0; ci < arr_n && ci <= slen; ci++)
+                    cc->data[doff + ci] = (uint8_t)(ci < slen ? str[ci] : 0);
+            } else {
+                /* char *p = "string" — store pointer into data */
+                int soff = data_add_string(cc, cur(cc)->sval);
+                uint64_t sva = data_vaddr(soff);
+                int doff = (int)(g->gaddr - (CC_LOAD_BASE + CC_DATA_OFFSET));
+                for (int bi=0; bi<8; bi++) cc->data[doff+bi] = (uint8_t)(sva >> (bi*8));
+            }
+            advance(cc);
+        } else if (cur(cc)->type == TK_LBRACE && arr_n > 0) {
+            /* int arr[] = {1, 2, 3} — global array initializer */
+            advance(cc); /* skip { */
+            int idx = 0;
             int doff = (int)(g->gaddr - (CC_LOAD_BASE + CC_DATA_OFFSET));
-            for (int bi=0; bi<8; bi++) cc->data[doff+bi] = (uint8_t)(sva >> (bi*8));
+            while (cur(cc)->type != TK_RBRACE && cur(cc)->type != TK_EOF && !cc->error) {
+                int64_t v = 0;
+                int neg = 0;
+                if (cur(cc)->type == TK_MINUS) { neg = 1; advance(cc); }
+                if (cur(cc)->type == TK_INTLIT || cur(cc)->type == TK_CHARLIT) {
+                    v = cur(cc)->ival; advance(cc);
+                }
+                if (neg) v = -v;
+                if (idx < arr_n && doff + idx * esz + 8 <= CC_DATA_MAX) {
+                    for (int bi = 0; bi < 8 && bi < esz; bi++)
+                        cc->data[doff + idx * esz + bi] = (uint8_t)(v >> (bi * 8));
+                }
+                idx++;
+                if (cur(cc)->type == TK_COMMA) advance(cc);
+            }
+            if (cur(cc)->type == TK_RBRACE) advance(cc);
         }
     }
     expect(cc, TK_SEMI, "expected ';'");
@@ -1862,10 +1874,10 @@ void cc_parse(CompilerState *cc) {
 
     cc_seed_builtin_typedefs(cc);
 
-    /* _start: call main, then exit(rax) syscall */
+    /* _start: call main, then exit(rax) — SYS_EXIT = 4 */
     int call_off = emit_call(cc);
-    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC7); /* mov rdi,rax */
-    emit1(cc,0x48);emit1(cc,0xC7);emit1(cc,0xC0); emit4(cc,60); /* mov rax,60 */
+    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC7); /* mov rdi,rax (exit code) */
+    emit1(cc,0x48);emit1(cc,0xC7);emit1(cc,0xC0); emit4(cc,4); /* mov rax,4 (SYS_EXIT) */
     emit1(cc,0x0F);emit1(cc,0x05); /* syscall */
 
     while (cur(cc)->type != TK_EOF && !cc->error) {
