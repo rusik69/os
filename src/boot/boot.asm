@@ -174,7 +174,7 @@ long_mode_entry:
     mov esi, r13d
 
     extern kernel_main
-    movabs rax, kernel_main         ; absolute call - kernel_main is at high VMA
+    mov rax, kernel_main            ; absolute call - kernel_main is at high VMA
     call rax
 
 .halt:
