@@ -15,6 +15,7 @@ static int nservices = 0;
  * Prepare the standard directory tree on the filesystem.
  *
  *  /etc          — configuration files
+ *  /etc/services — one line per service: "<name> <enabled>"
  *  /var          — variable data
  *  /var/log      — service log files
  *  /var/run      — PID / state files
@@ -37,15 +38,31 @@ void service_init(void) {
             fs_create(dirs[i], FS_TYPE_DIR);
     }
 
+    /* Write default /etc/services configuration (name enabled) */
+    const char *svcconf = "/etc/services";
+    {
+        uint32_t sz; uint8_t tp;
+        if (fs_stat(svcconf, &sz, &tp) < 0) {
+            const char cfg[] =
+                "# /etc/services — service configuration\n"
+                "# Format: <name> <enabled>\n"
+                "telnetd enabled\n"
+                "httpd   enabled\n";
+            fs_write_file(svcconf, cfg, strlen(cfg));
+        }
+    }
+
     /* Write a default index page for the HTTP server if not present */
-    const char *index = "/tmp/www/index.html";
-    uint32_t sz; uint8_t tp;
-    if (fs_stat(index, &sz, &tp) < 0) {
-        const char html[] =
-            "<html><body><h1>OS Web Server</h1>"
-            "<p>This is the default page served by the built-in HTTP server.</p>"
-            "</body></html>\n";
-        fs_write_file(index, html, strlen(html));
+    const char *index = "/index.html";
+    {
+        uint32_t sz; uint8_t tp;
+        if (fs_stat(index, &sz, &tp) < 0) {
+            const char html[] =
+                "<html><body><h1>OS Web Server</h1>"
+                "<p>This is the default page served by the built-in HTTP server.</p>"
+                "</body></html>\n";
+            fs_write_file(index, html, strlen(html));
+        }
     }
 }
 
@@ -104,6 +121,36 @@ int service_register(const char *name, int (*start)(void), void (*stop)(void)) {
     return 0;
 }
 
+/* ── /etc/services config writer ──────────────────────────────────────────── */
+
+/* Rewrite /etc/services to reflect current enable/disable state of all
+ * registered services.  Called after every start/stop. */
+static void write_etc_services(void) {
+    /* Build file content in a local buffer */
+    static char buf[512];
+    int pos = 0;
+    const char *hdr =
+        "# /etc/services — service configuration\n"
+        "# Format: <name> <enabled>\n";
+    int hlen = strlen(hdr);
+    if (hlen < (int)(sizeof(buf) - pos - 1)) {
+        memcpy(buf + pos, hdr, hlen);
+        pos += hlen;
+    }
+    for (int i = 0; i < nservices && pos < (int)(sizeof(buf) - 30); i++) {
+        const char *state_str = (services[i].state == SERVICE_RUNNING)
+                                ? "enabled\n" : "disabled\n";
+        int nlen = strlen(services[i].name);
+        memcpy(buf + pos, services[i].name, nlen);
+        pos += nlen;
+        buf[pos++] = ' ';
+        int slen = strlen(state_str);
+        memcpy(buf + pos, state_str, slen);
+        pos += slen;
+    }
+    fs_write_file("/etc/services", buf, (uint32_t)pos);
+}
+
 int service_start(const char *name) {
     struct service *svc = service_find(name);
     if (!svc) { kprintf("service: unknown service '%s'\n", name); return -1; }
@@ -115,6 +162,7 @@ int service_start(const char *name) {
     if (rc == 0) {
         svc->state = SERVICE_RUNNING;
         log_line(svc, "started");
+        write_etc_services();
         kprintf("[svc] %s started\n", name);
     } else {
         log_line(svc, "start failed");
@@ -133,6 +181,7 @@ int service_stop(const char *name) {
     svc->stop();
     svc->state = SERVICE_STOPPED;
     log_line(svc, "stopped");
+    write_etc_services();
     kprintf("[svc] %s stopped\n", name);
     return 0;
 }

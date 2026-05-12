@@ -12,6 +12,7 @@ Environment variables:
   E2E_BOOT_TIMEOUT initial banner timeout in seconds (default 90)
 """
 
+import http.client
 import os
 import re
 import socket
@@ -22,6 +23,7 @@ import time
 
 HOST         = os.environ.get("E2E_HOST", "127.0.0.1")
 PORT         = int(os.environ.get("E2E_PORT", "2323"))
+HTTP_PORT    = int(os.environ.get("E2E_HTTP_PORT", "12380"))
 TIMEOUT      = int(os.environ.get("E2E_TIMEOUT", "30"))
 BOOT_TIMEOUT = int(os.environ.get("E2E_BOOT_TIMEOUT", "90"))
 
@@ -1208,8 +1210,92 @@ def test_permissions(t: Telnet):
     ok("permissions — full chmod/chown/ls cycle")
 
 
+def _http_get(path: str, timeout: int = 10) -> tuple[int, str]:
+    """Make an HTTP GET request to the OS HTTP server from the host.
+    Returns (status_code, body_text).  Raises on connection error."""
+    conn = http.client.HTTPConnection(HOST, HTTP_PORT, timeout=timeout)
+    conn.request("GET", path, headers={"Host": f"{HOST}:{HTTP_PORT}",
+                                        "Connection": "close"})
+    resp = conn.getresponse()
+    body = resp.read().decode("latin-1", errors="replace")
+    conn.close()
+    return resp.status, body
+
+
+def test_httpd(t: Telnet):
+    """HTTP server reachability and basic response tests."""
+    # Ensure httpd is running (it should be started at boot)
+    r = t.send_cmd("service status httpd")
+    if "stopped" in r:
+        t.send_cmd("service start httpd")
+
+    # Recreate FS directories that may have been wiped by a prior 'format' call
+    t.send_cmd("mkdir /var")
+    t.send_cmd("mkdir /var/log")
+
+    # Write test pages at FS root level (httpd serves directly from FS root).
+    # /index.html is also created by service_init at boot, but may have been
+    # wiped by a prior 'format' call in the permissions test.
+    t.send_cmd("write /index.html <html><body><h1>OS Web Server</h1></body></html>")
+    # Put the check keyword at the very start so it's in the first bytes received
+    t.send_cmd("write /hello.html hello-from-os")
+
+    # ── GET / — index page ────────────────────────────────────────────────────
+    try:
+        status, body = _http_get("/")
+        if check("httpd GET / — 200 OK", str(status), "200"):
+            check("httpd GET / — html body", body.lower(), "<html")
+    except OSError as e:
+        fail("httpd GET /", f"connection failed: {e}")
+        return
+
+    # ── GET /hello.html — file we just created ────────────────────────────────
+    try:
+        status, body = _http_get("/hello.html")
+        check("httpd GET /hello.html — 200 OK", str(status), "200")
+        check("httpd GET /hello.html — content", body, "hello-from-os")
+    except OSError as e:
+        fail("httpd GET /hello.html", f"connection failed: {e}")
+
+    # ── GET /nonexistent — 404 ────────────────────────────────────────────────
+    try:
+        status, _ = _http_get("/nonexistent_xyz")
+        check("httpd GET /nonexistent — 404", str(status), "404")
+    except OSError as e:
+        fail("httpd GET /nonexistent", f"connection failed: {e}")
+
+    # ── Stop httpd and verify it becomes unreachable ──────────────────────────
+    t.send_cmd("service stop httpd")
+    try:
+        _http_get("/", timeout=3)
+        fail("httpd stopped — should be unreachable", "got a response")
+    except OSError:
+        ok("httpd stopped — unreachable after stop")
+
+    # ── Restart httpd ─────────────────────────────────────────────────────────
+    t.send_cmd("service start httpd")
+    # Give it a moment to start listening
+    time.sleep(1)
+    try:
+        status, _ = _http_get("/hello.html")
+        check("httpd restarted — 200 OK", str(status), "200")
+    except OSError as e:
+        fail("httpd restarted", f"connection failed: {e}")
+
+    # ── Log file written ──────────────────────────────────────────────────────
+    r = t.send_cmd("ls /var/log")
+    check("httpd log file created", r, "httpd.log")
+
+    ok("httpd — host-accessible HTTP server tests")
+
+
 def test_service(t: Telnet):
     """Service management (start/stop/status/list) tests."""
+    # Ensure directories exist (may have been wiped by a prior 'format')
+    t.send_cmd("mkdir /var")
+    t.send_cmd("mkdir /var/log")
+    t.send_cmd("mkdir /etc")
+
     # List registered services
     r = t.send_cmd("service list")
     check("service list — shows httpd",   r, "httpd")
@@ -1237,6 +1323,12 @@ def test_service(t: Telnet):
     # Check log file created
     r = t.send_cmd("ls /var/log")
     check("service log dir — httpd.log exists", r, "httpd.log")
+
+    # ── /etc/services configuration file ─────────────────────────────────────
+    r = t.send_cmd("cat /etc/services")
+    check("etc/services — httpd entry",   r, "httpd")
+    check("etc/services — telnetd entry", r, "telnetd")
+    check("etc/services — enabled entry", r, "enabled")
 
     ok("service — start/stop/status/list/log")
 
@@ -1358,6 +1450,7 @@ def main() -> int:
         ("users",      test_users),
         ("login",      test_login),
         ("permissions",test_permissions),
+        ("httpd",      test_httpd),
         ("service",    test_service),
     ]
 

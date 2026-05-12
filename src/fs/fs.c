@@ -70,24 +70,47 @@ static int find_parent(const char *path) {
     /* Skip leading / */
     if (*path == '/') path++;
 
-    /* Count slashes to find depth */
+    /* Find the last slash — everything before it is the parent path */
     const char *last_slash = NULL;
     for (const char *p = path; *p; p++) {
         if (*p == '/') last_slash = p;
     }
 
-    if (!last_slash) return 0; /* directly in root */
+    /* File is directly in root */
+    if (!last_slash) return 0;
 
-    /* Extract parent dir name */
-    size_t len = last_slash - path;
-    for (int i = 0; i < FS_MAX_FILES; i++) {
-        if (inodes[i].type == FS_TYPE_DIR &&
-            inodes[i].parent == 0 &&
-            strlen(inodes[i].name) == len &&
-            strncmp(inodes[i].name, path, len) == 0)
-            return i;
+    /* Walk each directory component from root to the direct parent.
+     *   e.g. "var/log/httpd.log"  →  walk "var" then "log"
+     */
+    int parent = 0;  /* start at root (inode 0 parent field) */
+    const char *seg = path;
+
+    while (seg <= last_slash) {
+        /* Find end of this segment */
+        const char *end = seg;
+        while (*end && *end != '/') end++;
+
+        if (end == seg) { seg = end + 1; continue; } /* skip empty segs */
+
+        size_t slen = (size_t)(end - seg);
+        int found = -1;
+        for (int i = 0; i < FS_MAX_FILES; i++) {
+            if (inodes[i].type == FS_TYPE_DIR &&
+                inodes[i].parent == (uint16_t)parent &&
+                strlen(inodes[i].name) == slen &&
+                strncmp(inodes[i].name, seg, slen) == 0) {
+                found = i;
+                break;
+            }
+        }
+        if (found < 0) return -1; /* component not found */
+        parent = found;
+
+        seg = end + 1; /* move past the '/' */
+        if (end >= last_slash) break; /* we've found the direct parent */
     }
-    return -1;
+
+    return parent;
 }
 
 static int find_inode(const char *path) {

@@ -248,11 +248,25 @@ static void handle_get(int conn_id, const char *path, int head_only) {
     strncpy(ctype, content_type(path), sizeof(ctype) - 1);
     ctype[sizeof(ctype) - 1] = '\0';
 
-    /* Stream: send headers then chunks */
-    send_response(conn_id, 200, "OK", ctype, (uint64_t)-1, 0, 0, head_only);
+    /* For small files send headers + body in one TCP segment to avoid FIN
+     * arriving before the body data.  Large files fall back to streaming. */
+#define HTTPD_INLINE_MAX  4096
+    if (!head_only && fsize <= HTTPD_INLINE_MAX) {
+        static char filebuf[HTTPD_INLINE_MAX];
+        uint32_t rsize = 0;
+        if (fs_read_file(full_path, filebuf, sizeof(filebuf), &rsize) == 0)
+            send_response(conn_id, 200, "OK", ctype, (uint64_t)rsize,
+                          filebuf, (int)rsize, 0);
+        else
+            send_error(conn_id, 500, "Internal Server Error", "Read error");
+        return;
+    }
+
+    /* Large file: send headers first, then stream in chunks */
+    send_response(conn_id, 200, "OK", ctype, (uint64_t)fsize, 0, 0, head_only);
     if (head_only) return;
 
-    char chunk[HTTPD_BODY_SIZE];
+    static char chunk[HTTPD_BODY_SIZE];
     for (uint32_t off = 0; off < fsize; off += HTTPD_BODY_SIZE) {
         uint32_t rlen = fsize - off;
         if (rlen > HTTPD_BODY_SIZE) rlen = HTTPD_BODY_SIZE;
