@@ -153,6 +153,7 @@ static volatile int send_ip_resolving = 0;  /* prevent recursive ARP resolve */
 
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len) {
     static uint8_t frame[1518];
+    if (len > 1518 - sizeof(struct eth_header)) return;
     struct eth_header *eth = (struct eth_header *)frame;
     memcpy(eth->dst, dst_mac, 6);
     memcpy(eth->src, net_our_mac, 6);
@@ -163,6 +164,7 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
 
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
     static uint8_t buf[1500];
+    if (len > 1500 - sizeof(struct ip_header)) return;
     struct ip_header *ip = (struct ip_header *)buf;
     memset(ip, 0, sizeof(*ip));
     ip->version_ihl = 0x45;
@@ -273,6 +275,7 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
     if (total > len) return;
 
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
+    if (ihl < 20 || ihl > total) return;
     const uint8_t *payload = data + ihl;
     uint16_t payload_len = total - ihl;
 

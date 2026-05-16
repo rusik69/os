@@ -21,7 +21,7 @@ void cmd_expr(const char *args) {
     long a = parse_num(&p);
     while (*p == ' ') p++;
 
-    if (!*p) { kprintf("%d\n", (uint64_t)a); return; }
+    if (!*p) { kprintf("%ld\n", (uint64_t)a); return; }
 
     char op = *p++;
     /* Handle multi-char ops: !=, >=, <= */
@@ -35,24 +35,24 @@ void cmd_expr(const char *args) {
     if (op == '+') result = a + b;
     else if (op == '-') result = a - b;
     else if (op == '*') result = a * b;
-    else if (op == '/' && b != 0) result = a / b;
-    else if (op == '%' && b != 0) result = a % b;
-    else if (op == '<' && op2 == '=') result = (a <= b);
-    else if (op == '>' && op2 == '=') result = (a >= b);
-    else if (op == '!' && op2 == '=') result = (a != b);
-    else if (op == '<') result = (a < b);
-    else if (op == '>') result = (a > b);
-    else if (op == '=') result = (a == b);
     else if (op == '/' && b == 0) {
         kprintf("expr: division by zero\n");
         return;
     } else if (op == '%' && b == 0) {
         kprintf("expr: division by zero\n");
         return;
-    } else {
+    } else if (op == '/') result = a / b;
+    else if (op == '%') result = a % b;
+    else if (op == '<' && op2 == '=') result = (a <= b);
+    else if (op == '>' && op2 == '=') result = (a >= b);
+    else if (op == '!' && op2 == '=') result = (a != b);
+    else if (op == '<') result = (a < b);
+    else if (op == '>') result = (a > b);
+    else if (op == '=') result = (a == b);
+    else {
         kprintf("expr: unknown operator '%c'\n", (uint64_t)(uint8_t)op);
         return;
     }
 
-    kprintf("%d\n", (uint64_t)result);
+    kprintf("%ld\n", (uint64_t)result);
 }

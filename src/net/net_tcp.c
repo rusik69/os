@@ -79,6 +79,7 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     uint32_t ack = ntohl(tcp->ack_num);
     uint8_t flags = tcp->flags;
     uint16_t hdr_len = (tcp->data_off >> 4) * 4;
+    if (hdr_len < sizeof(struct tcp_header) || hdr_len > len) return;
     uint16_t data_len = len - hdr_len;
     const uint8_t *data = payload + hdr_len;
 
@@ -171,6 +172,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             uint16_t skip = 0;
             if (seq < expected) {
                 skip = (uint16_t)(expected - seq);
+                if (skip >= data_len) {
+                    send_tcp(c, TCP_ACK, NULL, 0);
+                    return;
+                }
                 data = (const uint8_t *)data + skip;
                 data_len -= skip;
             }

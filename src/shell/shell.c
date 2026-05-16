@@ -241,11 +241,14 @@ static void process_cmd(void) {
         char combined_args[CMD_BUF_SIZE];
         if (rargs && rargs[0]) {
             int n = strlen(rargs);
+            if (n > CMD_BUF_SIZE - 2) n = CMD_BUF_SIZE - 2;
             memcpy(combined_args, rargs, n);
             combined_args[n] = ' ';
-            strcpy(combined_args + n + 1, pipe_file);
+            strncpy(combined_args + n + 1, pipe_file, CMD_BUF_SIZE - n - 2);
+            combined_args[CMD_BUF_SIZE - 1] = '\0';
         } else {
-            strcpy(combined_args, pipe_file);
+            strncpy(combined_args, pipe_file, CMD_BUF_SIZE - 1);
+            combined_args[CMD_BUF_SIZE - 1] = '\0';
         }
         shell_exec_cmd(rcmd, combined_args);
         vfs_unlink(pipe_file);

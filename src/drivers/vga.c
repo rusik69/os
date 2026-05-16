@@ -272,7 +272,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     uint64_t fb_addr = mbi->framebuffer_addr;
     uint32_t fb_w = mbi->framebuffer_width;
     uint32_t fb_h = mbi->framebuffer_height;
-    uint32_t fb_pitch = mbi->framebuffer_pitch;
+    uint32_t fb_pitch_val = mbi->framebuffer_pitch;
     uint8_t fb_bpp_val = mbi->framebuffer_bpp;
     uint8_t fb_type = mbi->framebuffer_type;
     
@@ -282,11 +282,11 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         fb_addr = (uint64_t)vmi->phys_base;
         fb_w = vmi->width;
         fb_h = vmi->height;
-        fb_pitch = vmi->pitch;
+        fb_pitch_val = vmi->pitch;
         fb_bpp_val = vmi->bits_per_pixel;
         fb_type = 1;  /* Assume RGB */
         kprintf("[..] Using VBE mode info: addr=0x%llx %ux%u bpp=%d pitch=%u\n",
-                (unsigned long long)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch);
+                (unsigned long long)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch_val);
     }
     
     /* If still no framebuffer, return failure - will try to allocate later */
@@ -297,7 +297,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     kprintf("[..] Framebuffer: addr=0x%llx type=%d bpp=%d %ux%u pitch=%u\n",
             (unsigned long long)fb_addr, fb_type,
             fb_bpp_val, fb_w, fb_h,
-            fb_pitch);
+            fb_pitch_val);
     
     if (fb_type != 1) {
         kprintf("[--] Framebuffer type %d (need 1 = RGB)\n", fb_type);
@@ -315,7 +315,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         return -1;
     }
 
-    uint64_t fb_size = (uint64_t)fb_pitch * fb_h;
+    uint64_t fb_size = (uint64_t)fb_pitch_val * fb_h;
     
     /* Only map to MMU if it's a hardware framebuffer (high address) */
     if (fb_addr > 0x100000) {
@@ -326,7 +326,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     }
 
     fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;
-    fb_pitch = fb_pitch;
+    fb_pitch = fb_pitch_val;
     fb_width = fb_w;
     fb_height = fb_h;
     fb_bpp = fb_bpp_val;

@@ -241,6 +241,7 @@ uint32_t ahci_get_sectors(void) { return ahci_sectors; }
 int ahci_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     if (!ahci_present || ahci_port < 0) return -1;
     if (count == 0) return 0;
+    if (count > 8) return -1;  /* data_phys buffer is 4 KB = 8 sectors */
 
     port_stop(ahci_port);
     build_cmd(ATA_CMD_READ_DMA_EX, lba, count, data_phys, 0,
@@ -256,6 +257,7 @@ int ahci_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 int ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (!ahci_present || ahci_port < 0) return -1;
     if (count == 0) return 0;
+    if (count > 8) return -1;  /* data_phys buffer is 4 KB = 8 sectors */
 
     memcpy((void *)data_phys, buf, (size_t)count * AHCI_SECTOR_SIZE);
     port_stop(ahci_port);
@@ -367,11 +369,11 @@ found:
             kprintf("  AHCI port %d: %u sectors (%u MB)\n",
                     (uint64_t)p, (uint64_t)ahci_sectors,
                     (uint64_t)(ahci_sectors / 2048));
-        }
 
-        ahci_port    = p;
-        ahci_present = 1;
+            ahci_port    = p;
+            ahci_present = 1;
             blockdev_register(BLOCKDEV_AHCI, "ahci", ahci_read_sectors, ahci_write_sectors, ahci_get_sectors);
+        }
         break;
     }
 

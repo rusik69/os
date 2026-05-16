@@ -6,7 +6,7 @@
 #define KB_DATA_PORT 0x60
 #define KB_BUF_SIZE  256
 
-static char kb_buffer[KB_BUF_SIZE];
+static volatile char kb_buffer[KB_BUF_SIZE];
 static volatile int kb_head = 0;
 static volatile int kb_tail = 0;
 static volatile uint8_t kb_shift = 0;

@@ -225,6 +225,7 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     uint16_t dst_port = ntohs(udp->dst_port);
     uint16_t src_port = ntohs(udp->src_port);
     uint16_t udp_len = ntohs(udp->length);
+    if (udp_len < sizeof(struct udp_header) || udp_len > len) return;
     const uint8_t *data = payload + sizeof(struct udp_header);
     uint16_t data_len = udp_len - sizeof(struct udp_header);
     uint32_t src_ip = ntohl(ip_hdr->src_ip);

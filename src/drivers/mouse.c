@@ -68,7 +68,7 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
         case 0:
             /* First byte: buttons + overflow bits */
             /* Verify bit 3 is always set (synchronisation bit) */
-            if (!(byte & 0x08)) return;
+            if (!(byte & 0x08)) { mouse_cycle = 0; return; }
             mouse_bytes[0] = (int8_t)byte;
             mouse_cycle = 1;
             break;

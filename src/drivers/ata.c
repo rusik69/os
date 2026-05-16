@@ -70,11 +70,12 @@ void ata_init(void) {
     }
 
     /* Wait for DRQ or ERR */
-    while (1) {
+    for (int timeout = 0; timeout < 100000; timeout++) {
         status = inb(ATA_STATUS);
         if (status & ATA_SR_ERR) { ata_present = 0; return; }
         if (status & ATA_SR_DRQ) break;
     }
+    if (!(status & ATA_SR_DRQ)) { ata_present = 0; return; }
 
     /* Read identify data (256 words) */
     uint16_t identify[256];

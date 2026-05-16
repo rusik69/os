@@ -83,6 +83,7 @@ int user_add(const char *username, uint32_t uid, const char *password) {
         else {
             memcpy(user_table[i].home, "/home/", 6);
             strncpy(user_table[i].home + 6, username, USER_MAX_HOME - 7);
+            user_table[i].home[USER_MAX_HOME - 1] = '\0';
         }
         user_table[i].active = 1;
         uint16_t home_mode = (uid == 0) ? 0700 : 0750;
