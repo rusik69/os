@@ -89,6 +89,13 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_NET_UDP_SEND);
     process_caps_allow(proc, SYS_NET_HTTP_GET);
     process_caps_allow(proc, SYS_NET_ARP_LIST);
+    /* TCP server syscalls */
+    process_caps_allow(proc, SYS_NET_TCP_LISTEN);
+    process_caps_allow(proc, SYS_NET_TCP_ACCEPT);
+    process_caps_allow(proc, SYS_NET_TCP_SEND_CONN);
+    process_caps_allow(proc, SYS_NET_TCP_RECV_CONN);
+    process_caps_allow(proc, SYS_NET_TCP_CLOSE_CONN);
+    process_caps_allow(proc, SYS_NET_TCP_UNLISTEN);
 
     /* User program execution helpers */
     process_caps_allow(proc, SYS_ELF_EXEC);

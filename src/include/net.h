@@ -135,6 +135,11 @@ uint32_t net_dns_resolve(const char *hostname);
 int net_tcp_connect(uint32_t ip, uint16_t port);
 int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
 
+/* Blocking TCP server accept — waits up to timeout_ticks for a new
+ * connection on a port registered with net_tcp_listen(..., NULL, NULL, NULL).
+ * Returns conn_id >= 0, or -1 on timeout / error. */
+int net_tcp_accept(uint16_t port, int timeout_ticks);
+
 /* UDP send */
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
                   const void *data, uint16_t len);

@@ -1,4 +1,4 @@
-/* httpd.c — HTTP server: listen on port 80, parse GET/HEAD, serve files */
+/* httpd.c — HTTP server: userspace-style task using blocking accept */
 
 #include "httpd.h"
 #include "net.h"
@@ -7,11 +7,15 @@
 #include "fs.h"
 #include "rtc.h"
 #include "service.h"
+#include "process.h"
+#include "scheduler.h"
 
-#define HTTPD_MAX_CONNS 8
 #define HTTPD_RECV_SIZE 4096
 #define HTTPD_RESP_SIZE 8192
 #define HTTPD_BODY_SIZE 4096
+
+/* Accept timeout in scheduler ticks — keeps the task responsive to stop */
+#define HTTPD_ACCEPT_TIMEOUT 100
 
 /* --- String helpers (no snprintf/strchr/strstr in freestanding) --- */
 
@@ -116,47 +120,14 @@ static char *http_date(char *buf) {
     return buf;
 }
 
-/* --- Session --- */
-
-struct httpd_session {
-    int conn_id;
-    int active;
-    char recv_buf[HTTPD_RECV_SIZE];
-    int recv_len;
-    char method[8];
-    char path[256];
-};
-
-static struct httpd_session sessions[HTTPD_MAX_CONNS];
-
-static struct httpd_session *find_session(int conn_id) {
-    for (int i = 0; i < HTTPD_MAX_CONNS; i++)
-        if (sessions[i].active && sessions[i].conn_id == conn_id)
-            return &sessions[i];
-    return 0;
-}
-
-static struct httpd_session *alloc_session(int conn_id) {
-    for (int i = 0; i < HTTPD_MAX_CONNS; i++) {
-        if (!sessions[i].active) {
-            memset(&sessions[i], 0, sizeof(sessions[i]));
-            sessions[i].conn_id = conn_id;
-            sessions[i].active = 1;
-            return &sessions[i];
-        }
-    }
-    return 0;
-}
-
 /* --- Response builder --- */
 
-/* Build HTTP response into resp, return total bytes written */
 static int build_response(char *resp, int status, const char *status_text,
                           const char *ctype, uint64_t clen,
                           const char *body, int body_len, int head_only) {
     char *p = resp;
 
-    /* Status line: "HTTP/1.1 NNN Text\r\n" */
+    /* Status line */
     *p++ = 'H'; *p++ = 'T'; *p++ = 'T'; *p++ = 'P'; *p++ = '/'; *p++ = '1';
     *p++ = '.'; *p++ = '1'; *p++ = ' ';
     p = u64toa((uint64_t)status, p);
@@ -211,7 +182,7 @@ static void send_error(int conn_id, int status, const char *text, const char *de
     send_response(conn_id, status, text, "text/html", (uint64_t)n, body, n, 0);
 }
 
-/* --- Handlers --- */
+/* --- File handler --- */
 
 static void handle_get(int conn_id, const char *path, int head_only) {
     /* Strip query string */
@@ -246,8 +217,6 @@ static void handle_get(int conn_id, const char *path, int head_only) {
     strncpy(ctype, content_type(path), sizeof(ctype) - 1);
     ctype[sizeof(ctype) - 1] = '\0';
 
-    /* For small files send headers + body in one TCP segment to avoid FIN
-     * arriving before the body data.  Large files fall back to streaming. */
 #define HTTPD_INLINE_MAX  4096
     if (!head_only && fsize <= HTTPD_INLINE_MAX) {
         static char filebuf[HTTPD_INLINE_MAX];
@@ -260,7 +229,6 @@ static void handle_get(int conn_id, const char *path, int head_only) {
         return;
     }
 
-    /* Large file: send headers first, then stream in chunks */
     send_response(conn_id, 200, "OK", ctype, (uint64_t)fsize, 0, 0, head_only);
     if (head_only) return;
 
@@ -273,85 +241,74 @@ static void handle_get(int conn_id, const char *path, int head_only) {
     }
 }
 
-static void on_connect(int conn_id) {
-    if (!alloc_session(conn_id)) { net_tcp_close(conn_id); return; }
-    kprintf("[httpd] new connection conn=%d\n", conn_id);
-}
+/* --- Per-request state (stack-allocated in httpd_task) --- */
 
-static void on_data(int conn_id, const void *data, uint16_t len) {
-    struct httpd_session *s = find_session(conn_id);
-    if (!s) return;
+static void handle_request(int conn_id) {
+    char recv_buf[HTTPD_RECV_SIZE];
+    int recv_len = 0;
 
-    /* Too large */
-    if (s->recv_len + len >= (int)sizeof(s->recv_buf) - 1) {
-        send_error(conn_id, 414, "URI Too Long", "URI Too Long");
-        s->active = 0; net_tcp_close(conn_id); return;
+    /* Read until we have the full HTTP header (\r\n\r\n) */
+    while (recv_len < (int)sizeof(recv_buf) - 1) {
+        int got = net_tcp_recv(conn_id, recv_buf + recv_len,
+                               (uint16_t)(sizeof(recv_buf) - 1 - recv_len), 200);
+        if (got <= 0) break;
+        recv_len += got;
+        recv_buf[recv_len] = '\0';
+        if (my_strstr(recv_buf, "\r\n\r\n")) break;
     }
 
-    memcpy(s->recv_buf + s->recv_len, data, len);
-    s->recv_len += len;
-    s->recv_buf[s->recv_len] = '\0';
+    if (recv_len == 0) return;
+    recv_buf[recv_len] = '\0';
 
-    /* Look for header end */
-    char *hdr_end = my_strstr(s->recv_buf, "\r\n\r\n");
-    if (!hdr_end) return;
+    char *hdr_end = my_strstr(recv_buf, "\r\n\r\n");
+    if (!hdr_end) { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
 
-    /* Extract request line */
-    char *req = s->recv_buf;
+    char *req = recv_buf;
     int rlen = (int)(hdr_end - req);
     while (rlen > 0 && (req[rlen-1] == '\r' || req[rlen-1] == '\n')) rlen--;
     req[rlen] = '\0';
 
-    /* METHOD SP PATH SP HTTP/... */
     char *sp1 = my_strchr(req, ' ');
-    if (!sp1) { send_error(conn_id, 400, "Bad Request", "Bad Request"); goto done; }
+    if (!sp1) { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
     *sp1 = '\0';
-    strncpy(s->method, req, sizeof(s->method) - 1);
-    s->method[sizeof(s->method) - 1] = '\0';
+    char method[8];
+    strncpy(method, req, sizeof(method) - 1);
+    method[sizeof(method) - 1] = '\0';
 
-    char *path = sp1 + 1;
-    char *sp2 = my_strchr(path, ' ');
-    if (!sp2) { send_error(conn_id, 400, "Bad Request", "Bad Request"); goto done; }
+    char *path_start = sp1 + 1;
+    char *sp2 = my_strchr(path_start, ' ');
+    if (!sp2) { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
     *sp2 = '\0';
-    strncpy(s->path, path, sizeof(s->path) - 1);
-    s->path[sizeof(s->path) - 1] = '\0';
+    char path[256];
+    strncpy(path, path_start, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
 
-    if (strcmp(s->method, "GET") != 0 && strcmp(s->method, "HEAD") != 0) {
+    if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0) {
         send_error(conn_id, 501, "Not Implemented", "Not Implemented");
-        goto done;
+        return;
     }
 
-    kprintf("[httpd] %s %s\n", s->method, s->path);
+    kprintf("[httpd] %s %s\n", method, path);
     {
         char logmsg[80];
-        strncpy(logmsg, s->method, sizeof(logmsg) - 1);
+        strncpy(logmsg, method, sizeof(logmsg) - 1);
         strncat(logmsg, " ", sizeof(logmsg) - strlen(logmsg) - 1);
-        strncat(logmsg, s->path, sizeof(logmsg) - strlen(logmsg) - 1);
+        strncat(logmsg, path, sizeof(logmsg) - strlen(logmsg) - 1);
         service_log("httpd", logmsg);
     }
-    handle_get(conn_id, s->path, strcmp(s->method, "HEAD") == 0);
-
-done:
-    s->active = 0;
-    net_tcp_close(conn_id);
+    handle_get(conn_id, path, strcmp(method, "HEAD") == 0);
 }
 
-static void on_close(int conn_id) {
-    for (int i = 0; i < HTTPD_MAX_CONNS; i++) {
-        if (sessions[i].active && sessions[i].conn_id == conn_id) {
-            sessions[i].active = 0; return;
-        }
-    }
-}
+/* --- Service interface --- */
 
-/* --- Init --- */
-
-static int httpd_running = 0;
+static volatile int httpd_running = 0;
 
 int httpd_start(void) {
     if (httpd_running) return 0;
-    memset(sessions, 0, sizeof(sessions));
-    net_tcp_listen(80, on_connect, on_data, on_close);
+    /* Register port without callbacks — accept-queue mode */
+    net_tcp_listen(80, (tcp_connect_handler)0,
+                       (tcp_data_handler)0,
+                       (tcp_close_handler)0);
     httpd_running = 1;
     kprintf("[OK] HTTP server on port 80 (root: %s)\n", HTTPD_ROOT_DIR);
     return 0;
@@ -359,12 +316,35 @@ int httpd_start(void) {
 
 void httpd_stop(void) {
     if (!httpd_running) return;
-    net_tcp_unlisten(80);
-    memset(sessions, 0, sizeof(sessions));
     httpd_running = 0;
+    net_tcp_unlisten(80);
     kprintf("[--] HTTP server stopped\n");
 }
 
 void httpd_init(void) {
     httpd_start();
+}
+
+/* --- Userspace-style task: own kernel process, persistent accept loop --- */
+
+void httpd_task(void) {
+    for (;;) {
+        if (!httpd_running) {
+            /* Service stopped — idle until restarted */
+            scheduler_yield();
+            continue;
+        }
+        int conn_id = net_tcp_accept(80, HTTPD_ACCEPT_TIMEOUT);
+        if (conn_id < 0) {
+            /* No connection yet or stopped during wait — yield then retry */
+            scheduler_yield();
+            continue;
+        }
+        kprintf("[httpd] connection accepted conn=%d\n", conn_id);
+        handle_request(conn_id);
+        net_tcp_close(conn_id);
+        /* Drain pending packets (FIN/ACK cleanup) before next accept */
+        for (int i = 0; i < 32; i++) net_poll();
+        scheduler_yield();
+    }
 }

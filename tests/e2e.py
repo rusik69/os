@@ -1210,20 +1210,34 @@ def test_permissions(t: Telnet):
     ok("permissions — full chmod/chown/ls cycle")
 
 
+def _http_request(method: str, path: str, timeout: int = 10) -> tuple[int, dict, str]:
+    """Make an HTTP request to the OS HTTP server from the host.
+    Returns (status_code, headers_dict, body_text).  Raises on connection error."""
+    conn = http.client.HTTPConnection(HOST, HTTP_PORT, timeout=timeout)
+    conn.request(method, path, headers={"Host": f"{HOST}:{HTTP_PORT}",
+                                         "Connection": "close"})
+    resp = conn.getresponse()
+    body = resp.read().decode("latin-1", errors="replace")
+    hdrs = {k.lower(): v for k, v in resp.getheaders()}
+    conn.close()
+    return resp.status, hdrs, body
+
+
 def _http_get(path: str, timeout: int = 10) -> tuple[int, str]:
     """Make an HTTP GET request to the OS HTTP server from the host.
     Returns (status_code, body_text).  Raises on connection error."""
-    conn = http.client.HTTPConnection(HOST, HTTP_PORT, timeout=timeout)
-    conn.request("GET", path, headers={"Host": f"{HOST}:{HTTP_PORT}",
-                                        "Connection": "close"})
-    resp = conn.getresponse()
-    body = resp.read().decode("latin-1", errors="replace")
-    conn.close()
-    return resp.status, body
+    status, _, body = _http_request("GET", path, timeout)
+    return status, body
+
+
+def _http_head(path: str, timeout: int = 10) -> tuple[int, dict]:
+    """Make an HTTP HEAD request. Returns (status_code, headers_dict)."""
+    status, hdrs, _ = _http_request("HEAD", path, timeout)
+    return status, hdrs
 
 
 def test_httpd(t: Telnet):
-    """HTTP server reachability and basic response tests."""
+    """HTTP server reachability and comprehensive host-side tests."""
     # Ensure httpd is running (it should be started at boot)
     r = t.send_cmd("service status httpd")
     if "stopped" in r:
@@ -1234,11 +1248,12 @@ def test_httpd(t: Telnet):
     t.send_cmd("mkdir /var/log")
 
     # Write test pages at FS root level (httpd serves directly from FS root).
-    # /index.html is also created by service_init at boot, but may have been
-    # wiped by a prior 'format' call in the permissions test.
     t.send_cmd("write /index.html <html><body><h1>OS Web Server</h1></body></html>")
-    # Put the check keyword at the very start so it's in the first bytes received
     t.send_cmd("write /hello.html hello-from-os")
+    t.send_cmd("write /style.css body{color:red}")
+    t.send_cmd("write /data.json {\"key\":\"value\"}")
+    t.send_cmd("write /readme.txt plain-text-content-here")
+    t.send_cmd("write /app.js console.log(1)")
 
     # ── GET / — index page ────────────────────────────────────────────────────
     try:
@@ -1264,6 +1279,71 @@ def test_httpd(t: Telnet):
     except OSError as e:
         fail("httpd GET /nonexistent", f"connection failed: {e}")
 
+    # ── HEAD / — should return 200 with headers but no body ───────────────────
+    try:
+        status, hdrs = _http_head("/")
+        check("httpd HEAD / — 200 OK", str(status), "200")
+    except OSError as e:
+        fail("httpd HEAD /", f"connection failed: {e}")
+
+    # ── HEAD /nonexistent — should return 404 ────────────────────────────────
+    try:
+        status, _ = _http_head("/nonexistent_xyz")
+        check("httpd HEAD /nonexistent — 404", str(status), "404")
+    except OSError as e:
+        fail("httpd HEAD /nonexistent", f"connection failed: {e}")
+
+    # ── Content-Type: text/css for .css file ──────────────────────────────────
+    try:
+        status, hdrs, body = _http_request("GET", "/style.css")
+        check("httpd GET /style.css — 200", str(status), "200")
+        check("httpd GET /style.css — body", body, "body{color:red}")
+    except OSError as e:
+        fail("httpd GET /style.css", f"connection failed: {e}")
+
+    # ── Content-Type: application/json for .json file ─────────────────────────
+    try:
+        status, hdrs, body = _http_request("GET", "/data.json")
+        check("httpd GET /data.json — 200", str(status), "200")
+        check("httpd GET /data.json — body", body, "key")
+    except OSError as e:
+        fail("httpd GET /data.json", f"connection failed: {e}")
+
+    # ── Content-Type: text/plain for .txt file ────────────────────────────────
+    try:
+        status, hdrs, body = _http_request("GET", "/readme.txt")
+        check("httpd GET /readme.txt — 200", str(status), "200")
+        check("httpd GET /readme.txt — body", body, "plain-text-content-here")
+    except OSError as e:
+        fail("httpd GET /readme.txt", f"connection failed: {e}")
+
+    # ── Content-Type: application/javascript for .js file ─────────────────────
+    try:
+        status, hdrs, body = _http_request("GET", "/app.js")
+        check("httpd GET /app.js — 200", str(status), "200")
+        check("httpd GET /app.js — body", body, "console.log")
+    except OSError as e:
+        fail("httpd GET /app.js", f"connection failed: {e}")
+
+    # ── Path traversal rejection — 403 ────────────────────────────────────────
+    try:
+        status, _ = _http_get("/../../../etc/passwd")
+        check("httpd path traversal — 403", str(status), "403")
+    except OSError as e:
+        fail("httpd path traversal", f"connection failed: {e}")
+
+    # ── Multiple sequential requests (connection reuse not expected) ──────────
+    try:
+        for i in range(3):
+            s, b = _http_get("/hello.html")
+            if s != 200:
+                fail(f"httpd sequential req {i+1}", f"status={s}")
+                break
+        else:
+            ok("httpd 3 sequential requests — all 200")
+    except OSError as e:
+        fail("httpd sequential requests", f"connection failed: {e}")
+
     # ── Stop httpd and verify it becomes unreachable ──────────────────────────
     t.send_cmd("service stop httpd")
     try:
@@ -1274,7 +1354,6 @@ def test_httpd(t: Telnet):
 
     # ── Restart httpd ─────────────────────────────────────────────────────────
     t.send_cmd("service start httpd")
-    # Give it a moment to start listening
     time.sleep(1)
     try:
         status, _ = _http_get("/hello.html")

@@ -177,6 +177,10 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a3) &&
                    syscall_user_write_ok(a4, bufsize);
         }
+        case SYS_NET_TCP_SEND_CONN:
+            return syscall_user_read_ok(a2, a3);
+        case SYS_NET_TCP_RECV_CONN:
+            return syscall_user_write_ok(a2, a3);
         case SYS_PROC_LIST:
             if (a2 == 0) return 1;
             if (a2 > PROCESS_MAX) return 0;
@@ -544,6 +548,41 @@ static uint64_t sys_net_http_get(uint64_t host_addr, uint64_t port, uint64_t pat
     return (uint64_t)net_http_get_ex((const char *)host_addr, (uint16_t)port,
                                      (const char *)path_addr, (char *)buf_addr,
                                      bufsize, follow);
+}
+
+/* ── TCP server syscalls ─────────────────────────────────────── */
+
+static uint64_t sys_net_tcp_listen(uint64_t port) {
+    net_tcp_listen((uint16_t)port,
+                   (tcp_connect_handler)0,
+                   (tcp_data_handler)0,
+                   (tcp_close_handler)0);
+    return 0;
+}
+
+static uint64_t sys_net_tcp_accept(uint64_t port, uint64_t timeout_ticks) {
+    return (uint64_t)(int64_t)net_tcp_accept((uint16_t)port, (int)timeout_ticks);
+}
+
+static uint64_t sys_net_tcp_send_conn(uint64_t conn_id, uint64_t buf_addr, uint64_t len) {
+    return (uint64_t)(int64_t)net_tcp_send((int)conn_id,
+                                           (const void *)buf_addr, (uint16_t)len);
+}
+
+static uint64_t sys_net_tcp_recv_conn(uint64_t conn_id, uint64_t buf_addr,
+                                      uint64_t len, uint64_t timeout_ticks) {
+    return (uint64_t)(int64_t)net_tcp_recv((int)conn_id, (void *)buf_addr,
+                                           (uint16_t)len, (int)timeout_ticks);
+}
+
+static uint64_t sys_net_tcp_close_conn(uint64_t conn_id) {
+    net_tcp_close((int)conn_id);
+    return 0;
+}
+
+static uint64_t sys_net_tcp_unlisten(uint64_t port) {
+    net_tcp_unlisten((uint16_t)port);
+    return 0;
 }
 
 static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
@@ -1147,6 +1186,12 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_NET_UDP_SEND:  return sys_net_udp_send(a1, a2, a3, a4, a5);
         case SYS_NET_HTTP_GET:  return sys_net_http_get(a1, a2, a3, a4, a5);
         case SYS_NET_ARP_LIST:  return sys_net_arp_list();
+        case SYS_NET_TCP_LISTEN:     return sys_net_tcp_listen(a1);
+        case SYS_NET_TCP_ACCEPT:     return sys_net_tcp_accept(a1, a2);
+        case SYS_NET_TCP_SEND_CONN:  return sys_net_tcp_send_conn(a1, a2, a3);
+        case SYS_NET_TCP_RECV_CONN:  return sys_net_tcp_recv_conn(a1, a2, a3, a4);
+        case SYS_NET_TCP_CLOSE_CONN: return sys_net_tcp_close_conn(a1);
+        case SYS_NET_TCP_UNLISTEN:   return sys_net_tcp_unlisten(a1);
         case SYS_PROC_LIST:     return sys_proc_list(a1, a2);
         case SYS_PCI_LIST:      return sys_pci_list();
         case SYS_USB_LIST:      return sys_usb_list();

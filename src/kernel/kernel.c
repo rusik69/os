@@ -241,8 +241,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     process_create(test_task_a, "task_a");
     process_create(test_task_b, "task_b");
     process_create(shell_task, "shell");
-    if (e1000_is_present())
+    if (e1000_is_present()) {
         process_create(net_task, "netd");
+        process_create(httpd_task, "httpd");
+    }
     if (vga_is_framebuffer())
         process_create(gui_task, "gui");
     kprintf("[OK] Processes created\n");

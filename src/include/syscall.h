@@ -122,6 +122,14 @@
 #define SYS_REALLOC             181
 #define SYS_CALLOC              182
 
+/* TCP server syscalls — userspace can act as a TCP server */
+#define SYS_NET_TCP_LISTEN      183  /* listen on port (no callbacks) */
+#define SYS_NET_TCP_ACCEPT      184  /* blocking accept → conn_id or -1 */
+#define SYS_NET_TCP_SEND_CONN   185  /* send data on conn_id */
+#define SYS_NET_TCP_RECV_CONN   186  /* recv data from conn_id */
+#define SYS_NET_TCP_CLOSE_CONN  187  /* close conn_id */
+#define SYS_NET_TCP_UNLISTEN    188  /* stop listening on port */
+
 void syscall_init(void);
 
 /*

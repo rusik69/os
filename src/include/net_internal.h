@@ -56,11 +56,17 @@ struct tcp_conn {
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
 
 /* TCP listener */
+#define ACCEPT_QUEUE_SIZE 8
 struct tcp_listener {
     uint16_t port;
     tcp_connect_handler on_connect;
     tcp_data_handler on_data;
     tcp_close_handler on_close;
+    /* Accept queue — used when callbacks are NULL (userspace accept model) */
+    int accept_queue[ACCEPT_QUEUE_SIZE];
+    int accept_head;
+    int accept_tail;
+    int accept_count;
 };
 
 #define MAX_LISTENERS 4

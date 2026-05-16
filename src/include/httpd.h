@@ -10,4 +10,8 @@ void httpd_init(void);
 int  httpd_start(void);
 void httpd_stop(void);
 
+/* Userspace-style task: run as its own process_create'd kernel process.
+ * Call httpd_start() before spawning this task. */
+void httpd_task(void);
+
 #endif

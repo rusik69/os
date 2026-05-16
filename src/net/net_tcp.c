@@ -4,6 +4,7 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "scheduler.h"
 
 static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip, const void *tcp_data, uint16_t tcp_len) {
     struct tcp_pseudo pseudo;
@@ -109,6 +110,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->our_seq = 1000 + net_ip_id_counter * 1000;
         c->their_seq = seq + 1;
         c->their_window = ntohs(tcp->window);
+        c->rxlen = 0;    /* reset stale state from previous use */
+        c->rx_fin = 0;
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
@@ -135,7 +138,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     if (c->state == TCP_SYN_RECEIVED) {
         if (flags & TCP_ACK) {
             c->state = TCP_ESTABLISHED;
-            if (l && l->on_connect) l->on_connect(conn_id);
+            if (l && l->on_connect) {
+                l->on_connect(conn_id);
+            } else if (l && l->accept_count < ACCEPT_QUEUE_SIZE) {
+                /* Accept-queue mode: enqueue the conn_id for net_tcp_accept() */
+                l->accept_queue[l->accept_tail] = conn_id;
+                l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
+                l->accept_count++;
+            }
         }
         return;
     }
@@ -289,10 +299,14 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
 void net_tcp_listen(uint16_t port, tcp_connect_handler on_connect,
                     tcp_data_handler on_data, tcp_close_handler on_close) {
     if (net_num_listeners >= MAX_LISTENERS) return;
-    net_listeners[net_num_listeners].port = port;
-    net_listeners[net_num_listeners].on_connect = on_connect;
-    net_listeners[net_num_listeners].on_data = on_data;
-    net_listeners[net_num_listeners].on_close = on_close;
+    struct tcp_listener *l = &net_listeners[net_num_listeners];
+    l->port       = port;
+    l->on_connect = on_connect;
+    l->on_data    = on_data;
+    l->on_close   = on_close;
+    l->accept_head  = 0;
+    l->accept_tail  = 0;
+    l->accept_count = 0;
     net_num_listeners++;
 }
 
@@ -332,4 +346,26 @@ void net_tcp_close(int conn_id) {
         c->our_seq++;
         c->state = TCP_FIN_WAIT;
     }
+}
+
+/* --- Blocking server accept --- */
+
+int net_tcp_accept(uint16_t port, int timeout_ticks) {
+    struct tcp_listener *l = find_listener(port);
+    if (!l) return -1;
+
+    uint64_t start = timer_get_ticks();
+    while (l->accept_count == 0) {
+        net_poll();
+        scheduler_yield();  /* allow other processes to run while waiting */
+        if (timeout_ticks > 0) {
+            uint64_t now = timer_get_ticks();
+            if (now != start && (int)(now - start) > timeout_ticks)
+                return -1;
+        }
+    }
+    int conn_id = l->accept_queue[l->accept_head];
+    l->accept_head = (l->accept_head + 1) % ACCEPT_QUEUE_SIZE;
+    l->accept_count--;
+    return conn_id;
 }

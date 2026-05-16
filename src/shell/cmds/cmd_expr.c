@@ -21,7 +21,7 @@ void cmd_expr(const char *args) {
     long a = parse_num(&p);
     while (*p == ' ') p++;
 
-    if (!*p) { kprintf("%ld\n", (uint64_t)a); return; }
+    if (!*p) { kprintf("%d\n", (uint64_t)(int)a); return; }
 
     char op = *p++;
     /* Handle multi-char ops: !=, >=, <= */
@@ -54,5 +54,5 @@ void cmd_expr(const char *args) {
         return;
     }
 
-    kprintf("%ld\n", (uint64_t)result);
+    kprintf("%d\n", (uint64_t)(int)result);
 }
