@@ -17,9 +17,10 @@ endif
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Isrc/include -Isrc/gui -mcmodel=large -g
+         -Wall -Wextra -Isrc/include -Isrc/gui -mcmodel=large -g \
+         -Wa,--noexecstack
 ASFLAGS = -f elf64 -g
-LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000
+LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
 
 BUILDDIR = build
 

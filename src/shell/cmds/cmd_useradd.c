@@ -70,30 +70,6 @@ void cmd_userdel(const char *args) {
         kprintf("userdel: user '%s' not found\n", args);
 }
 
-/* passwd [username] */
-void cmd_passwd(const char *args) {
-    struct user_session *s = session_get();
-    const char *target = (args && *args) ? args : s->username;
-
-    /* Non-root can only change their own password */
-    if (!session_is_root() && strcmp(target, s->username) != 0) {
-        kprintf("passwd: permission denied\n");
-        return;
-    }
-
-    kprintf("New password: ");
-    char pw[USER_MAX_PASS];
-    libc_shell_read_line(pw, USER_MAX_PASS);
-
-    int rc = user_passwd(target, pw);
-    if (rc == 0)
-        kprintf("Password updated for '%s'\n", target);
-    else if (rc == -2)
-        kprintf("passwd: password must be non-empty\n");
-    else
-        kprintf("passwd: user '%s' not found\n", target);
-}
-
 /* users - list all users */
 void cmd_users(void) {
     kprintf("UID   GID   USERNAME         HOME\n");

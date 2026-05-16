@@ -82,3 +82,5 @@ user_entry_trampoline:
     xor r15, r15
 
     iretq
+
+section .note.GNU-stack noalloc noexec nowrite progbits
