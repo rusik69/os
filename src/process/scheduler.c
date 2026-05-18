@@ -1,6 +1,5 @@
 #include "scheduler.h"
 #include "process.h"
-#include "signal.h"
 #include "io.h"
 #include "gdt.h"
 #include "vmm.h"
@@ -9,58 +8,90 @@
 extern void process_set_current(struct process *proc);
 extern uint64_t syscall_kernel_rsp;
 
-static struct process *ready_queue_head = NULL;
-static struct process *ready_queue_tail = NULL;
+/* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
+#define SCHED_LEVELS 4
+static struct process *queue_head[SCHED_LEVELS];
+static struct process *queue_tail[SCHED_LEVELS];
 static int scheduler_enabled = 0;
 
 void scheduler_init(void) {
-    ready_queue_head = NULL;
-    ready_queue_tail = NULL;
+    for (int i = 0; i < SCHED_LEVELS; i++) {
+        queue_head[i] = NULL;
+        queue_tail[i] = NULL;
+    }
     scheduler_enabled = 1;
 }
 
+/* Add a process to its priority queue */
 void scheduler_add(struct process *proc) {
+    int lvl = (int)proc->priority;
+    if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
     proc->next = NULL;
-    if (!ready_queue_tail) {
-        ready_queue_head = proc;
-        ready_queue_tail = proc;
+    if (!queue_tail[lvl]) {
+        queue_head[lvl] = proc;
+        queue_tail[lvl] = proc;
     } else {
-        ready_queue_tail->next = proc;
-        ready_queue_tail = proc;
+        queue_tail[lvl]->next = proc;
+        queue_tail[lvl] = proc;
     }
 }
 
+/* Remove a process from whatever queue it is in */
 void scheduler_remove(struct process *proc) {
+    int lvl = (int)proc->priority;
+    if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
     struct process *prev = NULL;
-    struct process *cur = ready_queue_head;
-
+    struct process *cur  = queue_head[lvl];
     while (cur) {
         if (cur == proc) {
             if (prev) prev->next = cur->next;
-            else ready_queue_head = cur->next;
-            if (cur == ready_queue_tail) ready_queue_tail = prev;
+            else queue_head[lvl] = cur->next;
+            if (cur == queue_tail[lvl]) queue_tail[lvl] = prev;
             cur->next = NULL;
             return;
         }
         prev = cur;
-        cur = cur->next;
+        cur  = cur->next;
     }
+}
+
+int scheduler_set_priority(struct process *proc, uint8_t priority) {
+    if (!proc || priority >= SCHED_LEVELS) return -1;
+
+    if (proc->state == PROCESS_READY) {
+        scheduler_remove(proc);
+        proc->priority = priority;
+        scheduler_add(proc);
+        return 0;
+    }
+
+    proc->priority = priority;
+    return 0;
+}
+
+/* Pick the highest-priority non-empty queue */
+static struct process *dequeue_next(void) {
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        if (queue_head[lvl]) {
+            struct process *p = queue_head[lvl];
+            queue_head[lvl] = p->next;
+            if (!queue_head[lvl]) queue_tail[lvl] = NULL;
+            p->next = NULL;
+            return p;
+        }
+    }
+    return NULL;
 }
 
 void schedule(void) {
     if (!scheduler_enabled) return;
 
     struct process *current = process_get_current();
-    struct process *next = ready_queue_head;
+    struct process *next = dequeue_next();
 
     if (!next) return; /* no ready processes, keep running current */
 
-    /* Remove next from head of ready queue */
-    ready_queue_head = next->next;
-    if (!ready_queue_head) ready_queue_tail = NULL;
-    next->next = NULL;
-
-    /* Put current back in ready queue if it's still runnable */
+    /* Put current back in its priority queue if still runnable */
     if (current->state == PROCESS_RUNNING) {
         current->state = PROCESS_READY;
         scheduler_add(current);
@@ -79,9 +110,6 @@ void schedule(void) {
     } else {
         vmm_switch_pml4(vmm_get_pml4());
     }
-
-    /* Check and deliver any pending signals before returning to next process */
-    signal_check();
 
     __asm__ volatile("cli");
     context_switch(&current->context, next->context);
@@ -105,3 +133,4 @@ void scheduler_wake_sleepers(void) {
         }
     }
 }
+

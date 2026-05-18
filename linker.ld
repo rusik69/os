@@ -56,6 +56,10 @@ SECTIONS
         _bss_end = .;
     }
 
+    .lbss ALIGN(4K) : AT(ADDR(.lbss) - KERNEL_VMA_OFFSET) {
+        *(.lbss .lbss.*)
+    }
+
     _kernel_end = .;
 
     /DISCARD/ : {

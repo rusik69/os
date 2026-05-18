@@ -3,11 +3,11 @@
 
 #include "types.h"
 
-#define PROCESS_MAX 64
+#define PROCESS_MAX 256
 #define KERNEL_STACK_SIZE (32 * 1024)  /* 32 KB — network TX chain uses ~5KB of stack */
 #define USER_STACK_SIZE   (64 * 1024)  /* 64 KB user stack */
 #define PROCESS_SIG_MAX 32
-#define PROCESS_SYSCALL_MAX 192
+#define PROCESS_SYSCALL_MAX 256
 #define PROCESS_SYSCALL_CAP_WORDS (PROCESS_SYSCALL_MAX / 64)
 
 /* User-space virtual addresses (canonical lower-half) */
@@ -55,11 +55,16 @@ struct process {
     uint64_t *pml4;           /* per-process page table (NULL = use kernel_pml4) */
     /* Multitasking */
     uint32_t parent_pid;      /* parent process PID */
+    uint32_t pgid;            /* process group ID */
+    uint32_t sid;             /* session ID */
     int      exit_code;       /* exit code when ZOMBIE */
     uint64_t sleep_until;     /* tick count to wake up (0 = not sleeping) */
     int      is_background;   /* 1 = launched with & */
+    int      is_suspended;    /* 1 = stopped by job-control signal */
     uint8_t  cap_profile;     /* enum process_cap_profile */
+    uint8_t  priority;        /* scheduler priority: 0=high .. 3=low */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
+    char     cwd[64];         /* current working directory */
 };
 
 void process_init(void);
@@ -80,5 +85,7 @@ void process_caps_allow(struct process *proc, uint32_t num);
 void process_caps_allow_all(struct process *proc);
 int process_caps_has(const struct process *proc, uint32_t num);
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile);
+int process_fork(void); /* fork current process, returns child PID or 0 in child */
+void process_set_current(struct process *proc);
 
 #endif

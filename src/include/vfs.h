@@ -6,7 +6,7 @@
 /* Maximum open files across all processes */
 #define VFS_MAX_OPEN 32
 /* Maximum filesystem mounts */
-#define VFS_MAX_MOUNTS 4
+#define VFS_MAX_MOUNTS 8
 /* Maximum filesystem type registrations */
 #define VFS_MAX_FS_TYPES 4
 

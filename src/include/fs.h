@@ -3,16 +3,17 @@
 
 #include "types.h"
 
-#define FS_MAGIC       0x53464D54   /* "SMFT" v2 – with permissions */
+#define FS_MAGIC       0x53464D56   /* "SMFT" v4 – 256 inodes, 64-block files, mtime */
 #define FS_MAX_NAME    28
-#define FS_MAX_FILES   128
+#define FS_MAX_FILES   256
 #define FS_BLOCK_SIZE  512
-#define FS_MAX_BLOCKS  16         /* max blocks per file = 8KB */
-#define FS_DATA_START  40         /* sector: 0=super, 1-39=inodes */
+#define FS_MAX_BLOCKS  64         /* max blocks per file = 32KB */
+#define FS_DATA_START  160        /* sector: 0=super, 1-159=inodes (256*304B) */
 
 #define FS_TYPE_FREE   0
 #define FS_TYPE_FILE   1
 #define FS_TYPE_DIR    2
+#define FS_TYPE_LINK   3  /* symbolic link — target stored in first data block */
 
 /* Unix-style permission bits (stored in inode.mode) */
 #define FS_PERM_RUSR   0400   /* owner read    */
@@ -29,7 +30,7 @@
 #define FS_MODE_FILE   0644   /* default file: rw-r--r-- */
 #define FS_MODE_DIR    0755   /* default dir:  rwxr-xr-x */
 
-/* Inode — on-disk structure */
+/* Inode — on-disk structure (304 bytes with FS_MAX_BLOCKS=64) */
 struct fs_inode {
     uint8_t  type;               /* FS_TYPE_* */
     uint8_t  _pad;
@@ -39,7 +40,8 @@ struct fs_inode {
     uint16_t uid;                /* owning user id  */
     uint16_t gid;                /* owning group id */
     uint16_t mode;               /* permission bits (octal, includes sticky) */
-    uint8_t  _pad2[6];           /* reserved / future use */
+    uint32_t mtime;              /* modification time (seconds since boot) */
+    uint8_t  _pad2[2];           /* reserved */
     char     name[FS_MAX_NAME];
 } __attribute__((packed));
 
@@ -63,6 +65,7 @@ int fs_list(const char *path);
 int fs_stat(const char *path, uint32_t *size, uint8_t *type);
 int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
                uint16_t *uid, uint16_t *gid, uint16_t *mode);
+int fs_stat_mtime(const char *path);  /* returns mtime seconds, or -1 */
 int fs_chmod(const char *path, uint16_t mode);
 int fs_chown(const char *path, uint16_t uid, uint16_t gid);
 int fs_check_perm(const char *path, char op); /* op: 'r','w','x' */
@@ -70,6 +73,10 @@ void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
                   uint32_t *used_blocks, uint32_t *data_start);
 int fs_list_names(const char *dir, const char *prefix,
                   char names[][FS_MAX_NAME], int max);
+int fs_symlink(const char *path, const char *target);
+int fs_readlink(const char *path, char *buf, int bufsize);
+int fs_lstat(const char *path, uint32_t *size, uint8_t *type); /* stat without following symlinks */
+int fs_truncate(const char *path, uint32_t len); /* truncate file to len bytes */
 
 /* Format a mode word as "rwxrwxrwx" into a 9-char buffer (+ NUL) */
 void fs_mode_str(uint16_t mode, char out[10]);

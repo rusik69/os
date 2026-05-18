@@ -2,6 +2,44 @@
 #include "fs.h"
 #include "string.h"
 #include "printf.h"
+#include "process.h"
+
+extern struct vfs_ops procfs_ops;
+extern struct vfs_ops devfs_ops;
+
+/*
+ * Resolve a possibly-relative path against the current process's cwd.
+ * If path already starts with '/', copies it verbatim.
+ * Also normalises ".." components (one level only).
+ */
+static void vfs_abs_path(const char *path, char *out, int out_max) {
+    if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return; }
+    if (path[0] == '/') {
+        strncpy(out, path, out_max - 1); out[out_max - 1] = '\0'; return;
+    }
+    /* Relative: prepend cwd */
+    const char *cwd = "/";
+    struct process *p = process_get_current();
+    if (p && p->cwd[0]) cwd = p->cwd;
+    int cl = (int)strlen(cwd);
+    int pl = (int)strlen(path);
+    /* Handle special components */
+    if (pl == 1 && path[0] == '.') { strncpy(out, cwd, out_max-1); out[out_max-1]='\0'; return; }
+    if (pl == 2 && path[0]=='.' && path[1]=='.') {
+        /* Go up one level */
+        strncpy(out, cwd, out_max-1); out[out_max-1]='\0';
+        int len = (int)strlen(out);
+        while (len > 1 && out[len-1] != '/') len--;
+        if (len > 1) len--; /* remove trailing slash too */
+        if (len < 1) len = 1;
+        out[len] = '\0'; return;
+    }
+    /* Combine cwd + path */
+    if (cl + 1 + pl >= out_max) { out[0] = '/'; out[1] = '\0'; return; }
+    memcpy(out, cwd, cl);
+    if (out[cl-1] != '/') out[cl++] = '/';
+    memcpy(out + cl, path, pl + 1);
+}
 
 /* ------------------------------------------------------------------
  * SMFS backend — adapts the existing fs.c API to vfs_ops
@@ -89,43 +127,53 @@ static struct vfs_mount *resolve(const char *path) {
  * ------------------------------------------------------------------ */
 
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->read) return -1;
-    return m->ops->read(m->priv, path, buf, max, out_size);
+    return m->ops->read(m->priv, ap, buf, max, out_size);
 }
 
 int vfs_write(const char *path, const void *data, uint32_t size) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->write) return -1;
-    return m->ops->write(m->priv, path, data, size);
+    return m->ops->write(m->priv, ap, data, size);
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->stat) return -1;
-    return m->ops->stat(m->priv, path, st);
+    return m->ops->stat(m->priv, ap, st);
 }
 
 int vfs_create(const char *path, uint8_t type) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->create) return -1;
-    return m->ops->create(m->priv, path, type);
+    return m->ops->create(m->priv, ap, type);
 }
 
 int vfs_unlink(const char *path) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->unlink) return -1;
-    return m->ops->unlink(m->priv, path);
+    return m->ops->unlink(m->priv, ap);
 }
 
 int vfs_readdir(const char *path) {
-    struct vfs_mount *m = resolve(path);
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->readdir) return -1;
-    return m->ops->readdir(m->priv, path);
+    return m->ops->readdir(m->priv, ap);
 }
 
 void vfs_init(void) {
     num_mounts = 0;
     /* Mount the SMFS filesystem as root */
     vfs_mount("/", &smfs_ops, NULL);
+    /* Mount the /proc virtual filesystem */
+    vfs_mount("/proc", &procfs_ops, NULL);
+    /* Mount the /dev device filesystem */
+    vfs_mount("/dev", &devfs_ops, NULL);
 }

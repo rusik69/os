@@ -10,6 +10,9 @@
 #define SIGCONT  18
 #define SIGUSR1  10
 #define SIGUSR2  12
+#define SIGTSTP  20
+#define SIGTTIN  21
+#define SIGTTOU  22
 
 #define SIG_MAX  32
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
@@ -19,6 +22,7 @@ typedef void (*signal_handler_t)(int signum);
 
 /* Send signal to process by pid; 0 = success, -1 = not found */
 int signal_send(uint32_t pid, int signum);
+int signal_send_group(uint32_t pgid, int signum);
 
 /* Check and deliver any pending signals for the current process.
  * Called by scheduler before returning to a READY process. */

@@ -64,8 +64,9 @@ void cmd_help(void) {
     kprintf("  uniq     - Remove duplicate lines (uniq <file>)\n");
     kprintf("  tr       - Translate chars (tr <from> <to> <file>)\n");
     kprintf("  tmux     - Terminal multiplexer (Ctrl-B prefix)\n");
-    kprintf("  jobs     - List background processes\n");
-    kprintf("  fg       - Bring background process to foreground (fg <pid>)\n");
+    kprintf("  jobs     - List background jobs\n");
+    kprintf("  fg       - Bring job to foreground (fg <pid|%%job>)\n");
+    kprintf("  bg       - Resume stopped job in background\n");
     kprintf("  wait     - Wait for process to finish (wait <pid>)\n");
     kprintf("  tee      - Write stdin to file and stdout\n");
     kprintf("  cut      - Extract field from delimited file\n");
@@ -116,6 +117,10 @@ void cmd_help(void) {
     kprintf("  more     - Page through a file (more <file>)\n");
     kprintf("  file     - Show file type (file <path>)\n");
     kprintf("  nslookup - DNS lookup (nslookup <host>)\n");
+    kprintf("  nc       - Netcat (nc <host> <port> [data])\n");
+    kprintf("  wget     - Download file (wget <url> [filename])\n");
+    kprintf("  watch    - Run command repeatedly (watch [-n secs] <cmd>)\n");
+    kprintf("  sha256sum - SHA-256 hash of a file (sha256sum <file>)\n");
     kprintf("  sort     - Sort lines (sort [-r|-R] <file>)\n");
     kprintf("  grep     - Search text (grep [-g|-i|-v] <pattern> <file>)\n");
     kprintf("  find     - Find files with glob pattern (find <glob>)\n");

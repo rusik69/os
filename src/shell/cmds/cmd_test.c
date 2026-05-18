@@ -103,4 +103,5 @@ void cmd_test(const char *args) {
     }
 
     kprintf("%s\n", result ? "true" : "false");
+    shell_set_exit_status(result ? 0 : 1);
 }

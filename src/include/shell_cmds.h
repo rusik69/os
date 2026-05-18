@@ -64,6 +64,7 @@ void cmd_tr(const char *args);
 void cmd_tmux(const char *args);
 void cmd_jobs(void);
 void cmd_fg(const char *args);
+void cmd_bg(const char *args);
 void cmd_wait(const char *args);
 
 /* Additional tool commands */
@@ -136,5 +137,28 @@ void cmd_false(const char *args);
 void cmd_more(const char *args);
 void cmd_file(const char *args);
 void cmd_nslookup(const char *args);
+
+/* Phase-3 new commands */
+void cmd_nc(const char *args);
+void cmd_wget(const char *args);
+void cmd_watch(const char *args);
+void cmd_sha256sum(const char *args);
+
+/* Phase-6 new commands */
+void cmd_alias(const char *args);
+void cmd_unalias(const char *args);
+void cmd_readlink(const char *args);
+void cmd_cd(const char *args);
+void cmd_pwd(void);
+void cmd_nice(const char *args);
+void cmd_renice(const char *args);
+void cmd_awk(const char *args);
+void cmd_netstat(const char *args);
+void cmd_trap(const char *args);
+void cmd_rawsend(const char *args);
+
+/* Exit status API */
+void shell_set_exit_status(int s);
+int  shell_get_exit_status(void);
 
 #endif

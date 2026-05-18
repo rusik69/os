@@ -54,9 +54,13 @@ struct libc_fs_stat_ex {
 struct libc_process_info {
     uint32_t pid;
     uint32_t ppid;
+    uint32_t pgid;
+    uint32_t sid;
     uint8_t state;
     uint8_t is_user;
     uint8_t is_background;
+    uint8_t is_suspended;
+    uint8_t priority;
     char name[32];
 };
 
@@ -248,6 +252,71 @@ void libc_vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col);
 void libc_vga_set_cursor(uint16_t row, uint16_t col);
 void libc_vga_clear(void);
 int libc_gui_shell_run(void);
+
+/* TCP client connect (syscall 189) */
+int libc_net_tcp_connect(uint32_t ip, uint16_t port);
+int libc_net_tcp_send(int conn_id, const void *data, uint16_t len);
+int libc_net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
+void libc_net_tcp_close(int conn_id);
+
+/* Mutex (syscalls 190-193) */
+int  libc_mutex_init(void);
+void libc_mutex_lock(int id);
+void libc_mutex_unlock(int id);
+void libc_mutex_destroy(int id);
+
+/* Semaphore (syscalls 194-197) */
+int  libc_sem_init(int count);
+void libc_sem_wait(int id);
+void libc_sem_post(int id);
+void libc_sem_destroy(int id);
+
+/* UDP server (syscalls 198-200) */
+int  libc_net_udp_listen(uint16_t port);
+int  libc_net_udp_recv(uint16_t port, void *buf, uint16_t bufsz,
+                       uint32_t *src_ip, uint16_t *src_port, int timeout_ticks);
+void libc_net_udp_unlisten(uint16_t port);
+
+/* Filesystem extended (syscalls 201-203) */
+int libc_fs_symlink(const char *path, const char *target);
+int libc_fs_readlink(const char *path, char *buf, int bufsz);
+int libc_fs_lstat(const char *path, uint32_t *size, uint8_t *type);
+
+/* Working directory (syscalls 204-205) */
+int libc_chdir(const char *path);
+int libc_getcwd(char *buf, int size);
+int libc_setpriority(int pri);  /* 0=high, 1=normal, 2=low, 3=idle */
+int libc_setpriority_pid(uint32_t pid, int pri);
+int libc_getpriority(uint32_t pid);
+int libc_setpgid(uint32_t pid, uint32_t pgid);
+int libc_getpgid(uint32_t pid);
+int libc_killpg(uint32_t pgid, int sig);
+
+/* Shared memory (syscalls 207-210) */
+int      libc_shm_get(int key);  /* get/create segment by key, returns id or -1 */
+uint64_t libc_shm_at(int id);    /* map segment into caller, returns virt addr or 0 */
+int      libc_shm_dt(int id);    /* decrement ref count */
+int      libc_shm_free(int id);  /* free segment */
+
+/* Process fork (syscall 211) */
+int libc_fork(void); /* fork current process; returns child PID or 0 in child */
+
+/* Network connection listing (syscall 212) */
+void libc_netstat(void); /* print TCP/UDP connection table */
+
+/* Signal handling (syscall 213) */
+void libc_signal(int signum, void (*handler)(int)); /* register signal handler */
+
+/* File seek/truncate (syscalls 214-215) */
+int64_t libc_lseek(int fd, int64_t offset, int whence); /* SEEK_SET=0,SEEK_CUR=1,SEEK_END=2 */
+int     libc_truncate(const char *path, uint32_t len);  /* truncate file to len */
+
+/* Raw network send (syscall 216) */
+int libc_raw_send(const void *buf, uint32_t len); /* send raw Ethernet frame */
+
+/* FD-based read/write (syscalls 217-218) */
+int libc_fd_read(int fd, void *buf, uint32_t count);
+int libc_fd_write(int fd, const void *buf, uint32_t count);
 
 /* Heap syscall-backed operations (userspace malloc/free/calloc/realloc) */
 void *libc_malloc(size_t size);

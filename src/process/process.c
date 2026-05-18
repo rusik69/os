@@ -4,6 +4,7 @@
 #include "scheduler.h"
 #include "timer.h"
 #include "syscall.h"
+#include "vmm.h"
 
 extern void process_entry_trampoline(void);
 extern void user_entry_trampoline(void);
@@ -138,9 +139,13 @@ void process_init(void) {
     process_table[0].is_user = 0;
     process_table[0].pml4 = NULL;
     process_table[0].parent_pid = 0;
+    process_table[0].pgid = 0;
+    process_table[0].sid = 0;
     process_table[0].exit_code = 0;
     process_table[0].sleep_until = 0;
     process_table[0].is_background = 0;
+    process_table[0].is_suspended = 0;
+    process_table[0].priority = 1;
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
@@ -174,10 +179,20 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->user_entry = 0;
     proc->user_rsp = 0;
     proc->pml4 = NULL;
-    proc->parent_pid = current_process ? current_process->pid : 0;
-    proc->exit_code = 0;
+    proc->parent_pid  = current_process ? current_process->pid : 0;
+    proc->pgid = current_process ? current_process->pgid : proc->pid;
+    proc->sid = current_process ? current_process->sid : proc->pid;
+    proc->exit_code   = 0;
     proc->sleep_until = 0;
     proc->is_background = 0;
+    proc->is_suspended = 0;
+    proc->priority    = 1; /* normal priority */
+    /* Inherit cwd from parent */
+    if (current_process && current_process->cwd[0])
+        strncpy(proc->cwd, current_process->cwd, 63);
+    else
+        strncpy(proc->cwd, "/", 63);
+    proc->cwd[63] = '\0';
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_TRUSTED);
 
     /* Set up initial context on the stack */
@@ -231,9 +246,13 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->user_rsp = user_rsp;
     proc->pml4 = pml4;
     proc->parent_pid = current_process ? current_process->pid : 0;
+    proc->pgid = current_process ? current_process->pgid : proc->pid;
+    proc->sid = current_process ? current_process->sid : proc->pid;
     proc->exit_code = 0;
     proc->sleep_until = 0;
     proc->is_background = 0;
+    proc->is_suspended = 0;
+    proc->priority = 1;
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
 
     /* Set up initial context on kernel stack.
@@ -275,6 +294,57 @@ void process_exit_code(int code) {
 
 struct process *process_get_current(void) {
     return current_process;
+}
+
+/*
+ * fork() — clone current process, child starts running at same instruction.
+ * Returns child PID to parent, 0 to child, -1 on error.
+ * NOTE: This is a simplified fork for kernel processes. The saved register
+ * context trick that real unix kernels use requires assembly glue.
+ * Here we create a child process that calls a simple wake function.
+ * For shell scripting, this mainly demonstrates the API is wired.
+ */
+int process_fork(void) {
+    struct process *parent = current_process;
+    struct process *child = NULL;
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (process_table[i].state == PROCESS_UNUSED) {
+            child = &process_table[i];
+            break;
+        }
+    }
+    if (!child) return -1;
+
+    /* Copy process state */
+    *child = *parent;
+    child->pid = next_pid++;
+    child->parent_pid = parent->pid;
+    child->state = PROCESS_READY;
+    child->is_suspended = 0;
+
+    /* Allocate fresh kernel stack */
+    uint8_t *new_stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
+    if (!new_stack) return -1;
+    child->kernel_stack = (uint64_t)new_stack;
+    child->stack_top    = (uint64_t)(new_stack + KERNEL_STACK_SIZE);
+
+    /* Clone user address space if process has one */
+    if (parent->pml4) {
+        child->pml4 = vmm_clone_user_pml4(parent->pml4);
+        if (!child->pml4) { kfree(new_stack); child->state = PROCESS_UNUSED; return -1; }
+    }
+
+    /* Set up child kernel stack so it wakes returning 0 from fork */
+    uint64_t *sp = (uint64_t *)child->stack_top;
+    sp -= 7;
+    sp[0] = 0;  /* r15 = child fork return = 0 */
+    sp[1] = 0;  sp[2] = 0; sp[3] = 0; sp[4] = 0; sp[5] = 0;
+    sp[6] = (uint64_t)process_entry_trampoline;
+    child->context = (struct cpu_context *)sp;
+
+    scheduler_add(child);
+    return (int)child->pid;
 }
 
 void process_set_current(struct process *proc) {
@@ -329,6 +399,11 @@ void process_cleanup(struct process *proc) {
     proc->context = NULL;
     proc->next = NULL;
     proc->sleep_until = 0;
+    proc->is_background = 0;
+    proc->is_suspended = 0;
+    proc->pgid = 0;
+    proc->sid = 0;
+    proc->priority = 1;
     proc->cap_profile = PROCESS_CAP_PROFILE_NONE;
     process_caps_clear_all(proc);
 }

@@ -6,12 +6,20 @@
 
 void cmd_ln(const char *args) {
     if (!args || !args[0]) {
-        kprintf("Usage: ln <source> <dest>\n");
+        kprintf("Usage: ln [-s] <source> <dest>\n");
         return;
     }
 
-    char src[64], dst[64];
+    /* Check for -s flag */
+    int symbolic = 0;
     const char *p = args;
+    if (p[0] == '-' && p[1] == 's' && (p[2] == ' ' || p[2] == '\0')) {
+        symbolic = 1;
+        p += 2;
+        while (*p == ' ') p++;
+    }
+
+    char src[64], dst[64];
     int i = 0;
     while (*p && *p != ' ' && i < 63) src[i++] = *p++;
     src[i] = '\0';
@@ -20,13 +28,19 @@ void cmd_ln(const char *args) {
     while (*p && *p != ' ' && i < 63) dst[i++] = *p++;
     dst[i] = '\0';
 
-    if (!src[0] || !dst[0]) { kprintf("Usage: ln <source> <dest>\n"); return; }
+    if (!src[0] || !dst[0]) { kprintf("Usage: ln [-s] <source> <dest>\n"); return; }
 
     char s[64], d[64];
     if (src[0] != '/') { s[0] = '/'; strncpy(s+1, src, 62); } else strncpy(s, src, 63);
     s[63] = '\0';
     if (dst[0] != '/') { d[0] = '/'; strncpy(d+1, dst, 62); } else strncpy(d, dst, 63);
     d[63] = '\0';
+
+    if (symbolic) {
+        if (libc_fs_symlink(d, s) != 0)
+            kprintf("ln: cannot create symlink '%s' -> '%s'\n", d, s);
+        return;
+    }
 
     static char buf[4096];
     uint32_t size = 0;

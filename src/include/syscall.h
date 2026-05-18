@@ -129,8 +129,67 @@
 #define SYS_NET_TCP_RECV_CONN   186  /* recv data from conn_id */
 #define SYS_NET_TCP_CLOSE_CONN  187  /* close conn_id */
 #define SYS_NET_TCP_UNLISTEN    188  /* stop listening on port */
+#define SYS_NET_TCP_CONNECT     189  /* outbound TCP connect → conn_id or -1 */
 
-void syscall_init(void);
+/* Mutex syscalls */
+#define SYS_MUTEX_INIT          190  /* allocate mutex → id or -1 */
+#define SYS_MUTEX_LOCK          191  /* lock(id) */
+#define SYS_MUTEX_UNLOCK        192  /* unlock(id) */
+#define SYS_MUTEX_DESTROY       193  /* free(id) */
+
+/* Semaphore syscalls */
+#define SYS_SEM_INIT            194  /* allocate sem(count) → id or -1 */
+#define SYS_SEM_WAIT            195  /* wait/decrement */
+#define SYS_SEM_POST            196  /* post/increment */
+#define SYS_SEM_DESTROY         197  /* free */
+
+/* UDP server syscalls */
+#define SYS_NET_UDP_LISTEN   198  /* listen on port → 0 or -1 */
+#define SYS_NET_UDP_RECV     199  /* recv pkt → bytes or -1/0 */
+#define SYS_NET_UDP_UNLISTEN 200  /* stop listening */
+
+/* Filesystem extended syscalls */
+#define SYS_FS_SYMLINK  201  /* create symlink */
+#define SYS_FS_READLINK 202  /* read symlink target */
+#define SYS_FS_LSTAT    203  /* stat without following symlinks */
+
+/* Working directory */
+#define SYS_CHDIR        204  /* change cwd → 0 or -1 */
+#define SYS_GETCWD       205  /* copy cwd into buffer → 0 or -1 */
+#define SYS_SETPRIORITY  206  /* set process priority 0-3 */
+
+/* Shared memory (IPC) */
+#define SYS_SHM_GET   207  /* get/create segment by key → id */
+#define SYS_SHM_AT    208  /* map segment → virt addr */
+#define SYS_SHM_DT    209  /* decrement ref count */
+#define SYS_SHM_FREE  210  /* free segment */
+
+/* Process fork */
+#define SYS_FORK      211  /* fork current process */
+
+/* Network connection list */
+#define SYS_NET_CONNLIST  212  /* fill buffer with tcp connection info */
+
+/* Signal handling */
+#define SYS_SIGNAL        213  /* register signal handler for current process */
+
+/* File seek/truncate */
+#define SYS_LSEEK         214  /* seek within open file (returns new offset) */
+#define SYS_TRUNCATE      215  /* truncate file to given length */
+
+/* Raw network send */
+#define SYS_RAW_SEND      216  /* send raw Ethernet frame */
+
+/* FD-based read/write (uses open file descriptor offset) */
+#define SYS_FD_READ       217  /* read count bytes from fd at current offset */
+#define SYS_FD_WRITE      218  /* write count bytes to fd at current offset */
+
+/* Job control / priority management */
+#define SYS_SETPRIORITY_PID 219  /* set target process priority */
+#define SYS_GETPRIORITY     220  /* get target process priority */
+#define SYS_SETPGID         221  /* set process group ID */
+#define SYS_GETPGID         222  /* get process group ID */
+#define SYS_KILLPG          223  /* send signal to process group */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
@@ -141,6 +200,7 @@ void syscall_init(void);
  * called directly from libc or application code.
  */
 #ifdef KERNEL_INTERNAL
+void syscall_init(void);
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
 #endif

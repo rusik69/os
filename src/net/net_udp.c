@@ -254,6 +254,128 @@ void net_udp_bind(uint16_t port, udp_recv_handler handler) {
     net_num_udp_bindings++;
 }
 
+/* ── UDP server: userspace listen/recv ─────────────────────────────────────────────── */
+
+#define UDP_LISTEN_MAX   8    /* max simultaneously listened ports */
+#define UDP_RING_SIZE    16   /* packets per port ring buffer */
+#define UDP_PKT_MAX      1472 /* max UDP payload (Ethernet MTU - headers) */
+
+struct udp_pkt {
+    uint8_t  data[UDP_PKT_MAX];
+    uint16_t len;
+    uint32_t src_ip;
+    uint16_t src_port;
+};
+
+struct udp_listen_slot {
+    uint16_t port;         /* 0 = slot free */
+    struct udp_pkt ring[UDP_RING_SIZE];
+    volatile int head;     /* producer (ISR/poll) writes here */
+    volatile int tail;     /* consumer reads here */
+    volatile int count;
+};
+
+static struct udp_listen_slot udp_slots[UDP_LISTEN_MAX];
+
+/* Per-slot trampoline: we create one per slot at listen time.
+   Since we can't dynamically create functions, we use a small array
+   of static handlers that each know their own slot index. */
+static void udp_slot_handler_0(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_1(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_2(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_3(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_4(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_5(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_6(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+static void udp_slot_handler_7(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l);
+
+static void udp_enqueue(int si, uint32_t ip, uint16_t sport,
+                        const uint8_t *data, uint16_t len) {
+    struct udp_listen_slot *s = &udp_slots[si];
+    if (s->count >= UDP_RING_SIZE) return; /* drop */
+    struct udp_pkt *pkt = &s->ring[s->head];
+    uint16_t copy = len < UDP_PKT_MAX ? len : UDP_PKT_MAX;
+    memcpy(pkt->data, data, copy);
+    pkt->len = copy;
+    pkt->src_ip = ip;
+    pkt->src_port = sport;
+    s->head = (s->head + 1) % UDP_RING_SIZE;
+    s->count++;
+}
+
+#define SLOT_HANDLER(N) \
+static void udp_slot_handler_##N(uint32_t ip, uint16_t p, const uint8_t *d, uint16_t l) { \
+    (void)p; udp_enqueue(N, ip, p, d, l); }
+SLOT_HANDLER(0) SLOT_HANDLER(1) SLOT_HANDLER(2) SLOT_HANDLER(3)
+SLOT_HANDLER(4) SLOT_HANDLER(5) SLOT_HANDLER(6) SLOT_HANDLER(7)
+
+static udp_recv_handler slot_handlers[UDP_LISTEN_MAX] = {
+    udp_slot_handler_0, udp_slot_handler_1, udp_slot_handler_2, udp_slot_handler_3,
+    udp_slot_handler_4, udp_slot_handler_5, udp_slot_handler_6, udp_slot_handler_7
+};
+
+int net_udp_listen(uint16_t port) {
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port == port) return 0; /* already listening */
+    }
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port == 0) {
+            udp_slots[i].port  = port;
+            udp_slots[i].head  = 0;
+            udp_slots[i].tail  = 0;
+            udp_slots[i].count = 0;
+            net_udp_bind(port, slot_handlers[i]);
+            return 0;
+        }
+    }
+    return -1; /* no free slot */
+}
+
+int net_udp_recv(uint16_t port, void *buf, uint16_t bufsize,
+                 uint32_t *src_ip_out, uint16_t *src_port_out, int timeout_ticks) {
+    struct udp_listen_slot *s = NULL;
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port == port) { s = &udp_slots[i]; break; }
+    }
+    if (!s) return -1;
+
+    uint64_t start = timer_get_ticks();
+    while (s->count == 0) {
+        net_poll();
+        if (timeout_ticks > 0 && (int)(timer_get_ticks() - start) >= timeout_ticks) return 0;
+    }
+    if (s->count == 0) return 0;
+
+    struct udp_pkt *pkt = &s->ring[s->tail];
+    uint16_t copy = pkt->len < bufsize ? pkt->len : bufsize;
+    memcpy(buf, pkt->data, copy);
+    if (src_ip_out)   *src_ip_out   = pkt->src_ip;
+    if (src_port_out) *src_port_out = pkt->src_port;
+    s->tail  = (s->tail + 1) % UDP_RING_SIZE;
+    s->count--;
+    return (int)copy;
+}
+
+void net_udp_unlisten(uint16_t port) {
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port == port) {
+            /* Remove from bindings table */
+            for (int j = 0; j < net_num_udp_bindings; j++) {
+                if (net_udp_bindings[j].port == port) {
+                    /* Shift remaining entries left */
+                    for (int k = j; k < net_num_udp_bindings - 1; k++)
+                        net_udp_bindings[k] = net_udp_bindings[k + 1];
+                    net_num_udp_bindings--;
+                    break;
+                }
+            }
+            udp_slots[i].port  = 0;
+            udp_slots[i].count = 0;
+            return;
+        }
+    }
+}
+
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
                   const void *data, uint16_t data_len) {
     uint8_t buf[1500];
@@ -265,6 +387,45 @@ void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
     udp->checksum = 0;
     memcpy(buf + sizeof(struct udp_header), data, data_len);
     send_ip(dst_ip, IP_PROTO_UDP, buf, udp_len);
+}
+
+/* ── DNS cache ────────────────────────────────────────────────────── */
+#define DNS_CACHE_SIZE  16
+#define DNS_CACHE_TTL   3000   /* ticks (~30 seconds at 100 Hz) */
+
+static struct {
+    char     name[64];
+    uint32_t ip;
+    uint64_t expires;   /* timer_get_ticks() + DNS_CACHE_TTL */
+    int      valid;
+} dns_cache[DNS_CACHE_SIZE];
+
+static uint32_t dns_cache_lookup(const char *name) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (dns_cache[i].valid && strcmp(dns_cache[i].name, name) == 0) {
+            if (now < dns_cache[i].expires) return dns_cache[i].ip;
+            dns_cache[i].valid = 0;
+        }
+    }
+    return 0;
+}
+
+static void dns_cache_store(const char *name, uint32_t ip) {
+    if (!ip) return;
+    /* Find existing slot or LRU */
+    int slot = 0;
+    uint64_t oldest = dns_cache[0].expires;
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (!dns_cache[i].valid) { slot = i; break; }
+        if (dns_cache[i].expires < oldest) { oldest = dns_cache[i].expires; slot = i; }
+        if (strcmp(dns_cache[i].name, name) == 0) { slot = i; break; }
+    }
+    strncpy(dns_cache[slot].name, name, 63);
+    dns_cache[slot].name[63] = '\0';
+    dns_cache[slot].ip      = ip;
+    dns_cache[slot].expires = timer_get_ticks() + DNS_CACHE_TTL;
+    dns_cache[slot].valid   = 1;
 }
 
 uint32_t net_dns_resolve(const char *hostname) {
@@ -280,6 +441,10 @@ uint32_t net_dns_resolve(const char *hostname) {
         }
         return (parts[0]<<24)|(parts[1]<<16)|(parts[2]<<8)|parts[3];
     }
+
+    /* Check DNS cache first */
+    uint32_t cached = dns_cache_lookup(hostname);
+    if (cached) return cached;
 
     uint32_t srv = net_dns_server ? net_dns_server : net_gateway_ip;
     if (!srv) return 0;
@@ -319,6 +484,8 @@ uint32_t net_dns_resolve(const char *hostname) {
             if (now - start > 300) break;  /* 3 second timeout per attempt */
         }
     }
+    /* Store result in cache */
+    dns_cache_store(hostname, dns_result_ip);
     return dns_result_ip;
 }
 
@@ -496,4 +663,11 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
 int net_http_get(const char *host, uint16_t port, const char *path,
                  char *buf, int bufsize) {
     return net_http_get_ex(host, port, path, buf, bufsize, 0);
+}
+
+void net_udp_list(void (*cb)(uint16_t port)) {
+    for (int i = 0; i < UDP_LISTEN_MAX; i++) {
+        if (udp_slots[i].port != 0)
+            cb(udp_slots[i].port);
+    }
 }

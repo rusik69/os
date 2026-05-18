@@ -149,6 +149,12 @@ typedef void (*udp_recv_handler)(uint32_t src_ip, uint16_t src_port,
                                   const uint8_t *data, uint16_t len);
 void net_udp_bind(uint16_t port, udp_recv_handler handler);
 
+/* UDP server — userspace listen/recv */
+int  net_udp_listen(uint16_t port);
+int  net_udp_recv(uint16_t port, void *buf, uint16_t bufsize,
+                  uint32_t *src_ip_out, uint16_t *src_port_out, int timeout_ticks);
+void net_udp_unlisten(uint16_t port);
+
 /* HTTP client - fetches URL, writes body to buf. Returns bytes written or -1 */
 int net_http_get(const char *host, uint16_t port, const char *path,
                  char *buf, int bufsize);
@@ -158,5 +164,11 @@ int net_http_get_ex(const char *host, uint16_t port, const char *path,
 
 /* ARP cache dump - calls cb(ip, mac) for each valid entry.  Returns count. */
 int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac));
+
+/* TCP connection list for netstat — calls cb(local_port, remote_ip, remote_port, state) */
+void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int state));
+
+/* UDP listener list — calls cb(port) for each active listener */
+void net_udp_list(void (*cb)(uint16_t port));
 
 #endif

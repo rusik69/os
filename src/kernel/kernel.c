@@ -38,6 +38,10 @@
 #include "vfs.h"
 #include "pipe.h"
 #include "blockdev.h"
+#include "shm.h"
+#include "virtio_net.h"
+#include "virtio_blk.h"
+#include "ac97.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -156,6 +160,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     pipe_init();
     kprintf("[OK] Pipes initialized\n");
 
+    /* Shared memory */
+    shm_init();
+    kprintf("[OK] Shared memory initialized\n");
+
     /* Block device registry */
     blockdev_init();
 
@@ -209,6 +217,21 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] Multiuser initialized\n");
 
     /* Network */
+    if (virtio_net_init() == 0)
+        kprintf("[OK] virtio-net: initialized\n");
+    else
+        kprintf("[--] virtio-net: not present\n");
+
+    if (virtio_blk_init() == 0)
+        kprintf("[OK] virtio-blk: %llu sectors\n", virtio_blk_sector_count());
+    else
+        kprintf("[--] virtio-blk: not present\n");
+
+    if (ac97_init() == 0)
+        kprintf("[OK] AC97 audio: initialized\n");
+    else
+        kprintf("[--] AC97 audio: not present\n");
+
     if (e1000_init() == 0) {
         uint8_t mac[6];
         e1000_get_mac(mac);

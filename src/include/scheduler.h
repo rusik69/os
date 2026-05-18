@@ -7,6 +7,7 @@ void scheduler_init(void);
 void schedule(void);
 void scheduler_add(struct process *proc);
 void scheduler_remove(struct process *proc);
+int scheduler_set_priority(struct process *proc, uint8_t priority);
 void scheduler_yield(void);
 void scheduler_wake_sleepers(void);
 

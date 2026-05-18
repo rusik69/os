@@ -1,0 +1,177 @@
+/*
+ * procfs.c — /proc virtual filesystem
+ *
+ * Read-only VFS that exposes kernel state as pseudo-files.
+ */
+
+#include "vfs.h"
+#include "timer.h"
+#include "process.h"
+#include "printf.h"
+#include "string.h"
+#include "types.h"
+
+/* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
+
+static void proc_u64_to_str(uint64_t v, char *buf, int *pos, int max) {
+    if (v == 0) {
+        if (*pos < max - 1) buf[(*pos)++] = '0';
+        return;
+    }
+    char tmp[24]; int n = 0;
+    while (v > 0) { tmp[n++] = '0' + (int)(v % 10); v /= 10; }
+    while (n-- > 0 && *pos < max - 1) buf[(*pos)++] = tmp[n];
+}
+
+static void proc_str(const char *s, char *buf, int *pos, int max) {
+    while (*s && *pos < max - 1) buf[(*pos)++] = *s++;
+}
+
+/* ─── File content generators ───────────────────────────────────────────────── */
+
+static int procfs_gen_uptime(char *buf, int max) {
+    int p = 0;
+    uint64_t secs = timer_get_ticks() / TIMER_FREQ;
+    proc_u64_to_str(secs, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    uint64_t idle = 0; /* not tracked */
+    proc_u64_to_str(idle, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+static int procfs_gen_meminfo(char *buf, int max) {
+    /* We report the kernel heap size as MemTotal */
+    int p = 0;
+    proc_str("MemTotal:   12288 kB\n", buf, &p, max);
+    proc_str("MemFree:    unknown\n",  buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+static int procfs_gen_cpuinfo(char *buf, int max) {
+    int p = 0;
+    proc_str("processor\t: 0\n", buf, &p, max);
+    proc_str("vendor_id\t: GenuineIntel\n", buf, &p, max);
+    proc_str("model name\t: x86_64\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+static int procfs_gen_version(char *buf, int max) {
+    int p = 0;
+    proc_str("OS version 1.0 (x86_64)\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/<pid>/status */
+static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    proc_str("Name:\t", buf, &pos, max);
+    proc_str(p->name ? p->name : "?", buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("Pid:\t", buf, &pos, max);
+    proc_u64_to_str(p->pid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    const char *state_str = "unknown";
+    switch (p->state) {
+        case PROCESS_READY:   state_str = "R (running)"; break;
+        case PROCESS_RUNNING: state_str = "R (running)"; break;
+        case PROCESS_BLOCKED: state_str = "S (sleeping)"; break;
+        case PROCESS_ZOMBIE:  state_str = "Z (zombie)"; break;
+        default: break;
+    }
+    proc_str("State:\t", buf, &pos, max);
+    proc_str(state_str, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* ─── VFS ops ────────────────────────────────────────────────────────────────── */
+
+static int procfs_read(void *priv, const char *path, void *buf_v,
+                       uint32_t max_size, uint32_t *out_size) {
+    (void)priv;
+    char *buf = (char *)buf_v;
+    int len = 0;
+
+    if (strcmp(path, "/proc/uptime") == 0) {
+        len = procfs_gen_uptime(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/meminfo") == 0) {
+        len = procfs_gen_meminfo(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/cpuinfo") == 0) {
+        len = procfs_gen_cpuinfo(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/version") == 0) {
+        len = procfs_gen_version(buf, (int)max_size);
+    } else {
+        /* Try /proc/<pid>/status */
+        const char *p = path + 6; /* skip "/proc/" */
+        uint32_t pid = 0; int got = 0;
+        while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
+        if (got && strcmp(p, "/status") == 0) {
+            len = procfs_gen_pid_status(pid, buf, (int)max_size);
+            if (len < 0) return -1;
+        } else {
+            return -1;
+        }
+    }
+
+    if (out_size) *out_size = (uint32_t)len;
+    return 0;
+}
+
+static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
+    (void)priv;
+    /* /proc itself is a directory */
+    if (strcmp(path, "/proc") == 0) {
+        st->type = 2; st->size = 0; return 0;
+    }
+    /* Known files */
+    if (strcmp(path, "/proc/uptime") == 0 ||
+        strcmp(path, "/proc/meminfo") == 0 ||
+        strcmp(path, "/proc/cpuinfo") == 0 ||
+        strcmp(path, "/proc/version") == 0) {
+        st->type = 1; st->size = 128; return 0;
+    }
+    /* /proc/<pid>/status */
+    const char *p = path + 6;
+    uint32_t pid = 0; int got = 0;
+    while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
+    if (got && strcmp(p, "/status") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 256; return 0;
+        }
+    }
+    return -1;
+}
+
+static int procfs_readdir(void *priv, const char *path) {
+    (void)priv;
+    if (strcmp(path, "/proc") != 0) return -1;
+    kprintf("uptime\nmeminfo\ncpuinfo\nversion\n");
+    /* Also list active PIDs */
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED) {
+            kprintf("%u\n", (uint64_t)table[i].pid);
+        }
+    }
+    return 0;
+}
+
+struct vfs_ops procfs_ops = {
+    .read    = procfs_read,
+    .write   = NULL,
+    .stat    = procfs_stat,
+    .create  = NULL,
+    .unlink  = NULL,
+    .readdir = procfs_readdir,
+};

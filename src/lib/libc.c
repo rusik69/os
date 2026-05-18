@@ -435,7 +435,176 @@ void *libc_calloc(size_t nmemb, size_t size) {
         (uint64_t)nmemb, (uint64_t)size, 0, 0, 0);
 }
 
+/* ---- TCP client connect (syscall 189) + reuse send/recv/close ---- */
 
+int libc_net_tcp_connect(uint32_t ip, uint16_t port) {
+    return (int)(int64_t)libc_syscall(SYS_NET_TCP_CONNECT,
+        (uint64_t)ip, (uint64_t)port, 0, 0, 0);
+}
 
+int libc_net_tcp_send(int conn_id, const void *data, uint16_t len) {
+    return (int)(int64_t)libc_syscall(SYS_NET_TCP_SEND_CONN,
+        (uint64_t)conn_id, (uint64_t)(uintptr_t)data, (uint64_t)len, 0, 0);
+}
 
+int libc_net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks) {
+    return (int)(int64_t)libc_syscall(SYS_NET_TCP_RECV_CONN,
+        (uint64_t)conn_id, (uint64_t)(uintptr_t)buf,
+        (uint64_t)bufsize, (uint64_t)timeout_ticks, 0);
+}
+
+void libc_net_tcp_close(int conn_id) {
+    (void)libc_syscall(SYS_NET_TCP_CLOSE_CONN, (uint64_t)conn_id, 0, 0, 0, 0);
+}
+
+/* ---- Mutex ---- */
+
+int libc_mutex_init(void) {
+    return (int)(int64_t)libc_syscall(SYS_MUTEX_INIT, 0, 0, 0, 0, 0);
+}
+void libc_mutex_lock(int id) {
+    (void)libc_syscall(SYS_MUTEX_LOCK, (uint64_t)id, 0, 0, 0, 0);
+}
+void libc_mutex_unlock(int id) {
+    (void)libc_syscall(SYS_MUTEX_UNLOCK, (uint64_t)id, 0, 0, 0, 0);
+}
+void libc_mutex_destroy(int id) {
+    (void)libc_syscall(SYS_MUTEX_DESTROY, (uint64_t)id, 0, 0, 0, 0);
+}
+
+/* ---- Semaphore ---- */
+
+int libc_sem_init(int count) {
+    return (int)(int64_t)libc_syscall(SYS_SEM_INIT, (uint64_t)count, 0, 0, 0, 0);
+}
+void libc_sem_wait(int id) {
+    (void)libc_syscall(SYS_SEM_WAIT, (uint64_t)id, 0, 0, 0, 0);
+}
+void libc_sem_post(int id) {
+    (void)libc_syscall(SYS_SEM_POST, (uint64_t)id, 0, 0, 0, 0);
+}
+void libc_sem_destroy(int id) {
+    (void)libc_syscall(SYS_SEM_DESTROY, (uint64_t)id, 0, 0, 0, 0);
+}
+
+/* ── UDP server ── */
+
+int libc_net_udp_listen(uint16_t port) {
+    return (int)(int64_t)libc_syscall(SYS_NET_UDP_LISTEN, (uint64_t)port, 0, 0, 0, 0);
+}
+int libc_net_udp_recv(uint16_t port, void *buf, uint16_t bufsz,
+                      uint32_t *src_ip, uint16_t *src_port, int timeout_ticks) {
+    return (int)(int64_t)libc_syscall(SYS_NET_UDP_RECV,
+        (uint64_t)port, (uint64_t)(uintptr_t)buf, (uint64_t)bufsz,
+        (uint64_t)(uintptr_t)src_ip, (uint64_t)(uintptr_t)src_port);
+    (void)timeout_ticks; /* handled kernel-side */
+}
+void libc_net_udp_unlisten(uint16_t port) {
+    (void)libc_syscall(SYS_NET_UDP_UNLISTEN, (uint64_t)port, 0, 0, 0, 0);
+}
+
+/* ── Filesystem extended ── */
+
+int libc_fs_symlink(const char *path, const char *target) {
+    return (int)(int64_t)libc_syscall(SYS_FS_SYMLINK,
+        (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)target, 0, 0, 0);
+}
+int libc_fs_readlink(const char *path, char *buf, int bufsz) {
+    return (int)(int64_t)libc_syscall(SYS_FS_READLINK,
+        (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)buf, (uint64_t)bufsz, 0, 0);
+}
+int libc_fs_lstat(const char *path, uint32_t *size, uint8_t *type) {
+    return (int)(int64_t)libc_syscall(SYS_FS_LSTAT,
+        (uint64_t)(uintptr_t)path, (uint64_t)(uintptr_t)size,
+        (uint64_t)(uintptr_t)type, 0, 0);
+}
+
+/* ── Working directory ── */
+
+int libc_chdir(const char *path) {
+    return (int)(int64_t)libc_syscall(SYS_CHDIR,
+        (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
+}
+int libc_getcwd(char *buf, int size) {
+    return (int)(int64_t)libc_syscall(SYS_GETCWD,
+        (uint64_t)(uintptr_t)buf, (uint64_t)size, 0, 0, 0);
+}
+int libc_setpriority(int pri) {
+    return (int)(int64_t)libc_syscall(SYS_SETPRIORITY,
+        (uint64_t)pri, 0, 0, 0, 0);
+}
+
+int libc_setpriority_pid(uint32_t pid, int pri) {
+    return (int)(int64_t)libc_syscall(SYS_SETPRIORITY_PID,
+        (uint64_t)pid, (uint64_t)pri, 0, 0, 0);
+}
+
+int libc_getpriority(uint32_t pid) {
+    return (int)(int64_t)libc_syscall(SYS_GETPRIORITY,
+        (uint64_t)pid, 0, 0, 0, 0);
+}
+
+int libc_setpgid(uint32_t pid, uint32_t pgid) {
+    return (int)(int64_t)libc_syscall(SYS_SETPGID,
+        (uint64_t)pid, (uint64_t)pgid, 0, 0, 0);
+}
+
+int libc_getpgid(uint32_t pid) {
+    return (int)(int64_t)libc_syscall(SYS_GETPGID,
+        (uint64_t)pid, 0, 0, 0, 0);
+}
+
+int libc_killpg(uint32_t pgid, int sig) {
+    return (int)(int64_t)libc_syscall(SYS_KILLPG,
+        (uint64_t)pgid, (uint64_t)sig, 0, 0, 0);
+}
+
+int libc_shm_get(int key) {
+    return (int)(int64_t)libc_syscall(SYS_SHM_GET, (uint64_t)key, 0, 0, 0, 0);
+}
+uint64_t libc_shm_at(int id) {
+    return libc_syscall(SYS_SHM_AT, (uint64_t)id, 0, 0, 0, 0);
+}
+int libc_shm_dt(int id) {
+    return (int)(int64_t)libc_syscall(SYS_SHM_DT, (uint64_t)id, 0, 0, 0, 0);
+}
+int libc_shm_free(int id) {
+    return (int)(int64_t)libc_syscall(SYS_SHM_FREE, (uint64_t)id, 0, 0, 0, 0);
+}
+int libc_fork(void) {
+    return (int)(int64_t)libc_syscall(SYS_FORK, 0, 0, 0, 0, 0);
+}
+
+void libc_netstat(void) {
+    libc_syscall(SYS_NET_CONNLIST, 0, 0, 0, 0, 0);
+}
+
+void libc_signal(int signum, void (*handler)(int)) {
+    libc_syscall(SYS_SIGNAL, (uint64_t)(int64_t)signum, (uint64_t)(uintptr_t)handler, 0, 0, 0);
+}
+
+int64_t libc_lseek(int fd, int64_t offset, int whence) {
+    return (int64_t)libc_syscall(SYS_LSEEK, (uint64_t)(int64_t)fd,
+                                 (uint64_t)offset, (uint64_t)(int64_t)whence, 0, 0);
+}
+
+int libc_truncate(const char *path, uint32_t len) {
+    return (int)(int64_t)libc_syscall(SYS_TRUNCATE, (uint64_t)(uintptr_t)path,
+                                      (uint64_t)len, 0, 0, 0);
+}
+
+int libc_raw_send(const void *buf, uint32_t len) {
+    return (int)(int64_t)libc_syscall(SYS_RAW_SEND, (uint64_t)(uintptr_t)buf,
+                                      (uint64_t)len, 0, 0, 0);
+}
+
+int libc_fd_read(int fd, void *buf, uint32_t count) {
+    return (int)(int64_t)libc_syscall(SYS_FD_READ, (uint64_t)(int64_t)fd,
+                                      (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
+}
+
+int libc_fd_write(int fd, const void *buf, uint32_t count) {
+    return (int)(int64_t)libc_syscall(SYS_FD_WRITE, (uint64_t)(int64_t)fd,
+                                      (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
+}
 

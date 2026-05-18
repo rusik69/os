@@ -3,18 +3,52 @@
 #include "scheduler.h"
 
 int signal_send(uint32_t pid, int signum) {
+    if (signum == 0) {
+        struct process *probe = process_get_by_pid(pid);
+        return (probe && probe->state != PROCESS_UNUSED) ? 0 : -1;
+    }
     if (signum <= 0 || signum >= SIG_MAX) return -1;
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
+    if (signum == SIGKILL || signum == SIGTERM) {
+        p->state = PROCESS_ZOMBIE;
+        p->is_suspended = 0;
+        p->sleep_until = 0;
+        scheduler_remove(p);
+        if (p == process_get_current()) scheduler_yield();
+        return 0;
+    }
+
+    if (signum == SIGSTOP || signum == SIGTSTP || signum == SIGTTIN || signum == SIGTTOU) {
+        p->is_suspended = 1;
+        p->sleep_until = 0;
+        p->state = PROCESS_BLOCKED;
+        scheduler_remove(p);
+        if (p == process_get_current()) scheduler_yield();
+        return 0;
+    }
+
     p->pending_signals |= (1u << signum);
 
-    /* SIGCONT: wake blocked processes */
-    if (signum == SIGCONT && p->state == PROCESS_BLOCKED) {
+    if (signum == SIGCONT && p->is_suspended) {
+        p->is_suspended = 0;
+        p->sleep_until = 0;
         p->state = PROCESS_READY;
         scheduler_add(p);
     }
     return 0;
+}
+
+int signal_send_group(uint32_t pgid, int signum) {
+    if (pgid == 0) return -1;
+    struct process *table = process_get_table();
+    int sent = 0;
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED || table[i].pgid != pgid) continue;
+        if (signal_send(table[i].pid, signum) == 0) sent++;
+    }
+    return sent > 0 ? 0 : -1;
 }
 
 void signal_check(void) {
@@ -48,6 +82,10 @@ void signal_check(void) {
                 scheduler_yield();
                 break;
             case SIGSTOP:
+            case SIGTSTP:
+            case SIGTTIN:
+            case SIGTTOU:
+                p->is_suspended = 1;
                 p->state = PROCESS_BLOCKED;
                 scheduler_remove(p);
                 scheduler_yield();

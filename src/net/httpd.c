@@ -243,6 +243,43 @@ static void handle_get(int conn_id, const char *path, int head_only) {
 
 /* --- Per-request state (stack-allocated in httpd_task) --- */
 
+/* --- POST handler: write body to file --- */
+static void handle_post(int conn_id, const char *path, const char *body, int body_len) {
+    /* Build absolute path */
+    char full_path[64]; int pi = 0;
+    if (path[0] != '/') full_path[pi++] = '/';
+    for (int i = 0; path[i] && pi < 63; i++) full_path[pi++] = path[i];
+    full_path[pi] = '\0';
+
+    if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+
+    /* Create or overwrite */
+    fs_create(full_path, FS_TYPE_FILE);  /* ignore error if already exists */
+    if (fs_write_file(full_path, body, (uint32_t)body_len) < 0) {
+        send_error(conn_id, 500, "Internal Server Error", "Write error"); return;
+    }
+    static const char created_body[] = "Created";
+    send_response(conn_id, 201, "Created", "text/plain",
+                  sizeof(created_body)-1, created_body, sizeof(created_body)-1, 0);
+}
+
+/* --- DELETE handler --- */
+static void handle_delete(int conn_id, const char *path) {
+    char full_path[64]; int pi = 0;
+    if (path[0] != '/') full_path[pi++] = '/';
+    for (int i = 0; path[i] && pi < 63; i++) full_path[pi++] = path[i];
+    full_path[pi] = '\0';
+
+    if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+
+    if (fs_delete(full_path) < 0) {
+        send_error(conn_id, 404, "Not Found", "Not Found"); return;
+    }
+    static const char ok_body[] = "Deleted";
+    send_response(conn_id, 200, "OK", "text/plain",
+                  sizeof(ok_body)-1, ok_body, sizeof(ok_body)-1, 0);
+}
+
 static void handle_request(int conn_id) {
     char recv_buf[HTTPD_RECV_SIZE];
     int recv_len = 0;
@@ -262,6 +299,32 @@ static void handle_request(int conn_id) {
 
     char *hdr_end = my_strstr(recv_buf, "\r\n\r\n");
     if (!hdr_end) { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
+
+    /* Parse Content-Length and body_offset BEFORE modifying the buffer with
+     * null bytes (my_strstr stops at '\0', so we must search the clean buffer). */
+    int content_length = 0;
+    {
+        char *cl = my_strstr(recv_buf, "Content-Length:");
+        if (!cl) cl = my_strstr(recv_buf, "content-length:");
+        if (cl) {
+            cl += 15;
+            while (*cl == ' ') cl++;
+            while (*cl >= '0' && *cl <= '9') {
+                content_length = content_length * 10 + (*cl - '0');
+                cl++;
+            }
+        }
+    }
+    int body_offset = (int)(hdr_end + 4 - recv_buf);
+    /* If body not yet fully received, read more (before buffer is modified). */
+    while (recv_len - body_offset < content_length &&
+           recv_len < (int)sizeof(recv_buf) - 1) {
+        int got = net_tcp_recv(conn_id, recv_buf + recv_len,
+                               (uint16_t)(sizeof(recv_buf) - 1 - recv_len), 200);
+        if (got <= 0) break;
+        recv_len += got;
+        recv_buf[recv_len] = '\0';
+    }
 
     char *req = recv_buf;
     int rlen = (int)(hdr_end - req);
@@ -283,7 +346,8 @@ static void handle_request(int conn_id) {
     strncpy(path, path_start, sizeof(path) - 1);
     path[sizeof(path) - 1] = '\0';
 
-    if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0) {
+    if (strcmp(method, "GET") != 0 && strcmp(method, "HEAD") != 0 &&
+        strcmp(method, "POST") != 0 && strcmp(method, "DELETE") != 0) {
         send_error(conn_id, 501, "Not Implemented", "Not Implemented");
         return;
     }
@@ -296,6 +360,20 @@ static void handle_request(int conn_id) {
         strncat(logmsg, path, sizeof(logmsg) - strlen(logmsg) - 1);
         service_log("httpd", logmsg);
     }
+
+    if (strcmp(method, "POST") == 0) {
+        char *body = recv_buf + body_offset;
+        int body_available = recv_len - body_offset;
+        if (body_available < 0) body_available = 0;
+        handle_post(conn_id, path, body, body_available > content_length ? content_length : body_available);
+        return;
+    }
+
+    if (strcmp(method, "DELETE") == 0) {
+        handle_delete(conn_id, path);
+        return;
+    }
+
     handle_get(conn_id, path, strcmp(method, "HEAD") == 0);
 }
 

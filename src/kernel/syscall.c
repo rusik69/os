@@ -2,6 +2,7 @@
 #include "syscall.h"
 #include "process.h"
 #include "scheduler.h"
+#include "signal.h"
 #include "fs.h"
 #include "vfs.h"
 #include "ata.h"
@@ -32,6 +33,15 @@
 #include "cc.h"
 #include "heap.h"
 #include "gui_shell.h"
+#include "shm.h"
+
+/* ── Open file descriptor table (for lseek support) ────────────── */
+#define SYS_FD_MAX  16
+static struct {
+    char     path[64];
+    uint32_t offset;
+    int      used;
+} g_fd_table[SYS_FD_MAX];
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -44,9 +54,13 @@ struct syscall_fs_stat_ex {
 struct syscall_process_info {
     uint32_t pid;
     uint32_t ppid;
+    uint32_t pgid;
+    uint32_t sid;
     uint8_t state;
     uint8_t is_user;
     uint8_t is_background;
+    uint8_t is_suspended;
+    uint8_t priority;
     char name[32];
 };
 
@@ -256,14 +270,25 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
 static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)flags; (void)mode;
     const char *path = (const char *)path_addr;
-    uint32_t size; uint8_t type;
-    if (fs_stat(path, &size, &type) < 0) return (uint64_t)-1;
-    /* Return a dummy fd (full fd table not implemented yet) */
-    return 3;
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+    /* Allocate fd slot */
+    for (int i = 0; i < 16; i++) {
+        if (!g_fd_table[i].used) {
+            strncpy(g_fd_table[i].path, path, 63);
+            g_fd_table[i].path[63] = '\0';
+            g_fd_table[i].offset = 0;
+            g_fd_table[i].used = 1;
+            return (uint64_t)(i + 3);
+        }
+    }
+    return (uint64_t)-1;
 }
 
 static uint64_t sys_close(uint64_t fd) {
-    (void)fd;
+    int i = (int)fd - 3;
+    if (i >= 0 && i < 16 && g_fd_table[i].used)
+        g_fd_table[i].used = 0;
     return 0;
 }
 
@@ -286,17 +311,77 @@ static uint64_t sys_getpid(void) {
 }
 
 static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
-    (void)sig;
-    struct process *p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)-1;
-    p->state = PROCESS_ZOMBIE;
-    return 0;
+    return (uint64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
 static uint64_t sys_brk(uint64_t addr) {
     /* Minimal stub — user-space heap management not yet implemented */
     (void)addr;
     return addr;
+}
+
+/* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
+static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
+    signal_register((int)signum, (signal_handler_t)(uintptr_t)handler_addr);
+    return 0;
+}
+
+/* ── File seek / truncate (SYS_LSEEK=214, SYS_TRUNCATE=215) ───── */
+static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
+    int i = (int)fd - 3;
+    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+    struct vfs_stat st; uint32_t fsz = 0;
+    if (vfs_stat(g_fd_table[i].path, &st) == 0) fsz = st.size;
+    uint32_t new_off;
+    switch (whence) {
+        case 0: new_off = (uint32_t)offset; break;
+        case 1: new_off = g_fd_table[i].offset + (uint32_t)offset; break;
+        case 2: new_off = fsz + (uint32_t)offset; break;
+        default: return (uint64_t)-1;
+    }
+    g_fd_table[i].offset = new_off;
+    return (uint64_t)new_off;
+}
+
+static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
+    return (uint64_t)fs_truncate((const char *)(uintptr_t)path_addr, (uint32_t)len);
+}
+
+/* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
+static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
+    if (len == 0 || len > 1514) return (uint64_t)-1;
+    e1000_send((const uint8_t *)(uintptr_t)buf_addr, (uint32_t)len);
+    return len;
+}
+
+/* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
+static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+    int i = (int)fd - 3;
+    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+    /* Read whole file into heap buffer, copy slice at offset */
+    uint32_t fsize = 0;
+    struct vfs_stat st;
+    if (vfs_stat(g_fd_table[i].path, &st) < 0) return (uint64_t)-1;
+    fsize = st.size;
+    if (g_fd_table[i].offset >= fsize) return 0;
+    uint32_t avail = fsize - g_fd_table[i].offset;
+    uint32_t to_read = (uint32_t)count < avail ? (uint32_t)count : avail;
+    uint8_t *tmp = kmalloc(fsize);
+    if (!tmp) return (uint64_t)-1;
+    uint32_t nread = 0;
+    vfs_read(g_fd_table[i].path, tmp, fsize, &nread);
+    memcpy((void *)(uintptr_t)buf_addr, tmp + g_fd_table[i].offset, to_read);
+    kfree(tmp);
+    g_fd_table[i].offset += to_read;
+    return (uint64_t)to_read;
+}
+
+static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
+    int i = (int)fd - 3;
+    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+    int r = vfs_write(g_fd_table[i].path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+    if (r >= 0) g_fd_table[i].offset += (uint32_t)count;
+    return (r >= 0) ? count : (uint64_t)-1;
 }
 
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */
@@ -585,6 +670,198 @@ static uint64_t sys_net_tcp_unlisten(uint64_t port) {
     return 0;
 }
 
+static uint64_t sys_net_tcp_connect(uint64_t ip, uint64_t port) {
+    return (uint64_t)(int64_t)net_tcp_connect((uint32_t)ip, (uint16_t)port);
+}
+
+/* ── Mutex syscalls ────────────────────────────────────────────────────────── */
+#include "mutex.h"
+#include "semaphore.h"
+
+static uint64_t sys_mutex_init(void) {
+    return (uint64_t)(int64_t)mutex_init();
+}
+static uint64_t sys_mutex_lock(uint64_t id) {
+    mutex_lock((int)id);
+    return 0;
+}
+static uint64_t sys_mutex_unlock(uint64_t id) {
+    mutex_unlock((int)id);
+    return 0;
+}
+static uint64_t sys_mutex_destroy(uint64_t id) {
+    mutex_destroy((int)id);
+    return 0;
+}
+
+/* ── Semaphore syscalls ────────────────────────────────────────────────────── */
+static uint64_t sys_sem_init(uint64_t count) {
+    return (uint64_t)(int64_t)sem_init((int)count);
+}
+static uint64_t sys_sem_wait(uint64_t id) {
+    sem_wait((int)id);
+    return 0;
+}
+static uint64_t sys_sem_post(uint64_t id) {
+    sem_post((int)id);
+    return 0;
+}
+static uint64_t sys_sem_destroy(uint64_t id) {
+    sem_destroy((int)id);
+    return 0;
+}
+
+/* ── UDP server syscalls ──────────────────────────────────────────────────── */
+static uint64_t sys_net_udp_listen(uint64_t port) {
+    return (uint64_t)(int64_t)net_udp_listen((uint16_t)port);
+}
+static uint64_t sys_net_udp_recv(uint64_t port, uint64_t buf, uint64_t bufsz,
+                                 uint64_t src_ip_ptr, uint64_t src_port_ptr) {
+    return (uint64_t)(int64_t)net_udp_recv((uint16_t)port,
+        (void *)buf, (uint16_t)bufsz,
+        (uint32_t *)src_ip_ptr, (uint16_t *)src_port_ptr, 200);
+}
+static uint64_t sys_net_udp_unlisten(uint64_t port) {
+    net_udp_unlisten((uint16_t)port);
+    return 0;
+}
+
+/* ── FS extended syscalls ────────────────────────────────────────────────── */
+static uint64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
+    return (uint64_t)(int64_t)fs_symlink((const char *)path_addr,
+                                         (const char *)target_addr);
+}
+static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t bufsz) {
+    return (uint64_t)(int64_t)fs_readlink((const char *)path_addr,
+                                          (char *)buf_addr, (int)bufsz);
+}
+static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t type_addr) {
+    return (uint64_t)(int64_t)fs_lstat((const char *)path_addr,
+                                       (uint32_t *)size_addr, (uint8_t *)type_addr);
+}
+
+static uint64_t sys_chdir(uint64_t path_addr) {
+    const char *path = (const char *)path_addr;
+    /* Resolve to absolute path via VFS */
+    char ap[128];
+    if (path[0] != '/') {
+        /* Use vfs to resolve via cwd */
+        struct process *cur = process_get_current();
+        const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+        int cl = (int)strlen(cwd);
+        int pl = (int)strlen(path);
+        if (cl + 1 + pl < (int)sizeof(ap)) {
+            memcpy(ap, cwd, cl);
+            if (ap[cl-1] != '/') ap[cl++] = '/';
+            memcpy(ap + cl, path, pl + 1);
+        } else { ap[0] = '/'; ap[1] = '\0'; }
+    } else {
+        strncpy(ap, path, sizeof(ap)-1); ap[sizeof(ap)-1] = '\0';
+    }
+    /* Verify it's a directory */
+    struct vfs_stat st;
+    if (vfs_stat(ap, &st) < 0 || st.type != 2) return (uint64_t)(int64_t)-1;
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-1;
+    /* Remove trailing slash (except root) */
+    int len = (int)strlen(ap);
+    while (len > 1 && ap[len-1] == '/') { ap[--len] = '\0'; }
+    strncpy(cur->cwd, ap, 63); cur->cwd[63] = '\0';
+    return 0;
+}
+
+static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
+    struct process *cur = process_get_current();
+    const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+    char *buf = (char *)buf_addr;
+    int max = (int)buf_size;
+    strncpy(buf, cwd, max - 1); buf[max-1] = '\0';
+    return 0;
+}
+
+static uint64_t sys_setpriority(uint64_t pri) {
+    if (pri >= 4) return (uint64_t)(int64_t)-1;
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-1;
+    return (uint64_t)(int64_t)scheduler_set_priority(cur, (uint8_t)pri);
+}
+
+static uint64_t sys_setpriority_pid(uint64_t pid, uint64_t pri) {
+    if (pri >= 4) return (uint64_t)(int64_t)-1;
+    struct process *p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    return (uint64_t)(int64_t)scheduler_set_priority(p, (uint8_t)pri);
+}
+
+static uint64_t sys_getpriority(uint64_t pid) {
+    struct process *p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    return p->priority;
+}
+
+static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
+    struct process *p;
+    if (pid == 0) p = process_get_current();
+    else p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    p->pgid = pgid ? (uint32_t)pgid : p->pid;
+    if (p->sid == 0) p->sid = p->pgid;
+    return 0;
+}
+
+static uint64_t sys_getpgid(uint64_t pid) {
+    struct process *p;
+    if (pid == 0) p = process_get_current();
+    else p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
+    return p->pgid;
+}
+
+static uint64_t sys_killpg(uint64_t pgid, uint64_t sig) {
+    return (uint64_t)(int64_t)signal_send_group((uint32_t)pgid, (int)sig);
+}
+
+static uint64_t sys_shm_get(uint64_t key) {
+    return (uint64_t)(int64_t)shm_get((int)key);
+}
+
+static uint64_t sys_shm_at(uint64_t id) {
+    return shm_at((int)id);
+}
+
+static uint64_t sys_shm_dt(uint64_t id) {
+    return (uint64_t)(int64_t)shm_dt((int)id);
+}
+
+static uint64_t sys_shm_free(uint64_t id) {
+    return (uint64_t)(int64_t)shm_free((int)id);
+}
+
+static uint64_t sys_fork(void) {
+    return (uint64_t)(int64_t)process_fork();
+}
+
+static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
+    const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT"};
+    const char *sname = (state >= 0 && state < 7) ? snames[state] : "?";
+    kprintf("  TCP  %5u  %u.%u.%u.%u:%u  %s\n",
+        (uint64_t)lport,
+        (uint64_t)((rip >> 24) & 0xFF), (uint64_t)((rip >> 16) & 0xFF),
+        (uint64_t)((rip >>  8) & 0xFF), (uint64_t)(rip & 0xFF),
+        (uint64_t)rport, sname);
+}
+
+static void netstat_udp_cb(uint16_t port) {
+    kprintf("  UDP  %5u  *:*  LISTEN\n", (uint64_t)port);
+}
+
+static uint64_t sys_net_connlist(void) {
+    kprintf("Proto  LPort  Remote          State\n");
+    net_conn_list(netstat_tcp_cb);
+    net_udp_list(netstat_udp_cb);
+    return 0;
+}
+
 static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
     kprintf("  %u.%u.%u.%u  ->  %x:%x:%x:%x:%x:%x\n",
             (uint64_t)((ip >> 24) & 0xFF), (uint64_t)((ip >> 16) & 0xFF),
@@ -608,10 +885,17 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
         if (table[i].state == PROCESS_UNUSED) continue;
         out[written].pid = table[i].pid;
         out[written].ppid = table[i].parent_pid;
+        out[written].pgid = table[i].pgid;
+        out[written].sid = table[i].sid;
         out[written].state = (uint8_t)table[i].state;
         out[written].is_user = (uint8_t)(table[i].is_user ? 1 : 0);
         out[written].is_background = (uint8_t)(table[i].is_background ? 1 : 0);
-        if (table[i].name) {
+        out[written].is_suspended = (uint8_t)(table[i].is_suspended ? 1 : 0);
+        out[written].priority = table[i].priority;
+        /* Only dereference kernel-space name pointers (bit 63 set).
+         * User processes may have a name pointer from user address space
+         * which is not accessible in the kernel page table context. */
+        if (table[i].name && ((uint64_t)table[i].name >> 63)) {
             strncpy(out[written].name, table[i].name, sizeof(out[written].name) - 1);
             out[written].name[sizeof(out[written].name) - 1] = '\0';
         } else {
@@ -1192,6 +1476,41 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_NET_TCP_RECV_CONN:  return sys_net_tcp_recv_conn(a1, a2, a3, a4);
         case SYS_NET_TCP_CLOSE_CONN: return sys_net_tcp_close_conn(a1);
         case SYS_NET_TCP_UNLISTEN:   return sys_net_tcp_unlisten(a1);
+        case SYS_NET_TCP_CONNECT:    return sys_net_tcp_connect(a1, a2);
+        case SYS_MUTEX_INIT:         return sys_mutex_init();
+        case SYS_MUTEX_LOCK:         return sys_mutex_lock(a1);
+        case SYS_MUTEX_UNLOCK:       return sys_mutex_unlock(a1);
+        case SYS_MUTEX_DESTROY:      return sys_mutex_destroy(a1);
+        case SYS_SEM_INIT:           return sys_sem_init(a1);
+        case SYS_SEM_WAIT:           return sys_sem_wait(a1);
+        case SYS_SEM_POST:           return sys_sem_post(a1);
+        case SYS_SEM_DESTROY:        return sys_sem_destroy(a1);
+        case SYS_NET_UDP_LISTEN:      return sys_net_udp_listen(a1);
+        case SYS_NET_UDP_RECV:        return sys_net_udp_recv(a1, a2, a3, a4, a5);
+        case SYS_NET_UDP_UNLISTEN:    return sys_net_udp_unlisten(a1);
+        case SYS_FS_SYMLINK:          return sys_fs_symlink(a1, a2);
+        case SYS_FS_READLINK:         return sys_fs_readlink(a1, a2, a3);
+        case SYS_FS_LSTAT:            return sys_fs_lstat(a1, a2, a3);
+        case SYS_CHDIR:               return sys_chdir(a1);
+        case SYS_GETCWD:              return sys_getcwd(a1, a2);
+        case SYS_SETPRIORITY:         return sys_setpriority(a1);
+        case SYS_SHM_GET:             return sys_shm_get(a1);
+        case SYS_SHM_AT:              return sys_shm_at(a1);
+        case SYS_SHM_DT:              return sys_shm_dt(a1);
+        case SYS_SHM_FREE:            return sys_shm_free(a1);
+        case SYS_FORK:                return sys_fork();
+        case SYS_NET_CONNLIST:         return sys_net_connlist();
+        case SYS_SIGNAL:              return sys_signal(a1, a2);
+        case SYS_LSEEK:               return sys_lseek(a1, a2, a3);
+        case SYS_TRUNCATE:            return sys_truncate(a1, a2);
+        case SYS_RAW_SEND:            return sys_raw_send(a1, a2);
+        case SYS_FD_READ:             return sys_fd_read(a1, a2, a3);
+        case SYS_FD_WRITE:            return sys_fd_write(a1, a2, a3);
+        case SYS_SETPRIORITY_PID:     return sys_setpriority_pid(a1, a2);
+        case SYS_GETPRIORITY:         return sys_getpriority(a1);
+        case SYS_SETPGID:             return sys_setpgid(a1, a2);
+        case SYS_GETPGID:             return sys_getpgid(a1);
+        case SYS_KILLPG:              return sys_killpg(a1, a2);
         case SYS_PROC_LIST:     return sys_proc_list(a1, a2);
         case SYS_PCI_LIST:      return sys_pci_list();
         case SYS_USB_LIST:      return sys_usb_list();

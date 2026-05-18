@@ -4,10 +4,10 @@
 
 void cmd_true(const char *args) {
     (void)args;
-    /* success — no output */
+    shell_set_exit_status(0);
 }
 
 void cmd_false(const char *args) {
     (void)args;
-    /* failure — in a real shell this sets $? to 1; no output */
+    shell_set_exit_status(1);
 }

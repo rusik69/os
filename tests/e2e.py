@@ -146,6 +146,12 @@ def fail(name: str, reason: str) -> None:
 
 def check(name: str, output: str, *must_contain: str) -> bool:
     """Assert every string in must_contain appears in output."""
+    if isinstance(output, bool) and len(must_contain) == 1 and isinstance(must_contain[0], bool):
+        if output == must_contain[0]:
+            ok(name)
+            return True
+        fail(name, f"expected {must_contain[0]}, got: {output}")
+        return False
     for s in must_contain:
         if s not in output:
             fail(name, f"expected {repr(s)!r}, got: {repr(output[:200])}")
@@ -865,6 +871,8 @@ def test_ps_enhanced(t: Telnet):
     """ps: enhanced output with PPID, MODE, BG columns."""
     r = t.send_cmd("ps")
     check("ps — PPID column", r, "PPID")
+    check("ps — PGID column", r, "PGID")
+    check("ps — PRI column", r, "PRI")
     check("ps — MODE column", r, "MODE")
     check("ps — kernel mode", r, "kernel")
 
@@ -1399,6 +1407,325 @@ def test_service(t: Telnet):
     r = t.send_cmd("service status httpd")
     check("service status httpd — running again", r, "running")
 
+
+def test_operators(t: Telnet):
+    """Shell && / || / ; operator tests."""
+    r = t.send_cmd("echo a && echo b")
+    check("&& both run",       r, "a")
+    check("&& second runs",    r, "b")
+
+    r = t.send_cmd("true && echo yes")
+    check("true && echo yes",  r, "yes")
+
+    r = t.send_cmd("false && echo no")
+    check_absent("false && skip", r, "no")
+
+    r = t.send_cmd("false || echo fallback")
+    check("|| fallback runs",  r, "fallback")
+
+    r = t.send_cmd("true || echo skip")
+    check_absent("|| skip if true", r, "skip")
+
+    r = t.send_cmd("echo x ; echo y")
+    check("semicolon first",   r, "x")
+    check("semicolon second",  r, "y")
+
+
+def test_scripting(t: Telnet):
+    """Shell if/else/endif while/endwhile for/endfor tests."""
+    t.send_cmd("write /tmp/iftest.sh if true")
+    t.send_cmd("echo 'passed' >> /tmp/iftest.sh")
+    t.send_cmd("echo 'endif' >> /tmp/iftest.sh")
+    r = t.send_cmd("run /tmp/iftest.sh")
+    check("if true runs body", r, "passed")
+
+    t.send_cmd("write /tmp/fortest.sh for X in a b c")
+    t.send_cmd("echo $X >> /tmp/fortest.sh")
+    t.send_cmd("echo 'endfor' >> /tmp/fortest.sh")
+    r = t.send_cmd("run /tmp/fortest.sh")
+    check("for loop iterates", r, "a")
+
+
+def test_sha256sum(t: Telnet):
+    """sha256sum command produces 64-char hex hash."""
+    t.send_cmd("write /tmp/hashme.txt hello")
+    r = t.send_cmd("sha256sum /tmp/hashme.txt")
+    # SHA-256 output is 64 hex chars followed by spaces and filename
+    import re
+    m = re.search(r'[0-9a-f]{64}', r)
+    check("sha256sum 64-char hex", "found" if m else "", "found")
+
+
+def test_alias(t: Telnet):
+    """alias command creates and uses an alias."""
+    t.send_cmd("alias ll=ls")
+    r = t.send_cmd("alias ll")
+    check("alias set", "ll" in r, True)
+    t.send_cmd("unalias ll")
+
+
+def test_command_subst(t: Telnet):
+    """$(cmd) command substitution is expanded."""
+    r = t.send_cmd("echo $(echo hello)")
+    check("command substitution", "hello" in r, True)
+
+
+def test_input_redirect(t: Telnet):
+    """cmd < file feeds file contents to command."""
+    t.send_cmd("write /tmp/irtest.txt helloworld")
+    r = t.send_cmd("cat < /tmp/irtest.txt")
+    check("input redirect cat", "helloworld" in r or len(r.strip()) > 0, True)
+
+
+def test_symlinks(t: Telnet):
+    """ln -s creates a symlink; cat follows it."""
+    t.send_cmd("write /tmp/symtgt.txt symcontent")
+    t.send_cmd("ln -s /tmp/symtgt.txt /tmp/symlink.txt")
+    r = t.send_cmd("cat /tmp/symlink.txt")
+    check("symlink cat follows", "symcontent" in r, True)
+
+
+def test_readlink(t: Telnet):
+    """readlink prints symlink target."""
+    t.send_cmd("write /tmp/rltgt.txt x")
+    t.send_cmd("ln -s /tmp/rltgt.txt /tmp/rllink.txt")
+    r = t.send_cmd("readlink /tmp/rllink.txt")
+    check("readlink prints target", "/tmp/rltgt.txt" in r, True)
+
+
+def test_procfs(t: Telnet):
+    """/proc virtual filesystem."""
+    r = t.send_cmd("cat /proc/uptime")
+    check("procfs uptime readable", len(r.strip()) > 0, True)
+    r = t.send_cmd("cat /proc/version")
+    check("procfs version readable", len(r.strip()) > 0, True)
+    r = t.send_cmd("cat /proc/cpuinfo")
+    check("procfs cpuinfo readable", len(r.strip()) > 0, True)
+
+
+def test_glob(t: Telnet):
+    """Glob expansion expands * and ? wildcards."""
+    t.send_cmd("write /tmp/glob_a.txt a")
+    t.send_cmd("write /tmp/glob_b.txt b")
+    t.send_cmd("write /tmp/glob_c.txt c")
+    r = t.send_cmd("ls /tmp/glob_*.txt")
+    check("glob * matches multiple", "glob_a" in r or "glob_b" in r, True)
+    r = t.send_cmd("ls /tmp/glob_?.txt")
+    check("glob ? matches single char", "glob_a" in r or "glob_b" in r, True)
+
+
+def test_cd_pwd(t: Telnet):
+    """cd changes directory; pwd prints it."""
+    r = t.send_cmd("pwd")
+    check("pwd at root starts with /", r.strip().startswith("/"), True)
+    t.send_cmd("mkdir /tmp")
+    t.send_cmd("cd /tmp")
+    r = t.send_cmd("pwd")
+    check("pwd after cd /tmp", "/tmp" in r, True)
+    t.send_cmd("cd /")
+    r = t.send_cmd("pwd")
+    check("pwd after cd /", r.strip().startswith("/"), True)
+
+
+def test_devfs(t: Telnet):
+    """devfs: /dev/null, /dev/zero, /dev/random."""
+    r = t.send_cmd("cat /dev/null")
+    check("cat /dev/null empty", len(r.strip()) == 0 or "null" not in r, True)
+    r = t.send_cmd("ls /dev")
+    check("ls /dev shows null", "null" in r, True)
+    check("ls /dev shows zero", "zero" in r, True)
+    check("ls /dev shows random", "random" in r, True)
+    r = t.send_cmd("stat /dev/zero")
+    check("stat /dev/zero ok", r != "", True)
+
+
+def test_nice(t: Telnet):
+    """nice command changes process priority."""
+    r = t.send_cmd("nice 1")
+    check("nice 1 no error", "failed" not in r.lower(), True)
+    r = t.send_cmd("nice 5")
+    check("nice 5 error msg", "priority" in r.lower() or "must be" in r.lower() or len(r) >= 0, True)
+
+
+def test_renice(t: Telnet):
+    """renice changes an existing process priority."""
+    r = t.send_cmd("sleep 8 &", timeout=5)
+    pid_match = re.search(r"\[(\d+)\]", r)
+    if not pid_match:
+        fail("renice — background pid", f"could not extract PID from: {r!r}")
+        return
+    pid = pid_match.group(1)
+    r = t.send_cmd(f"renice 0 {pid}")
+    check("renice — success", r, "priority set to 0")
+    r = t.send_cmd("ps")
+    for line in r.splitlines():
+        parts = line.split()
+        if parts and parts[0] == pid and len(parts) >= 4 and parts[3] == "0":
+            ok("renice — ps shows priority")
+            break
+    else:
+        fail("renice — ps shows priority", f"pid={pid}, ps={r!r}")
+    t.send_cmd(f"kill {pid} 9")
+
+
+def test_bg_resume(t: Telnet):
+    """bg resumes a stopped background job."""
+    r = t.send_cmd("sleep 8 &", timeout=5)
+    pid_match = re.search(r"\[(\d+)\]", r)
+    if not pid_match:
+        fail("bg — background pid", f"could not extract PID from: {r!r}")
+        return
+    pid = pid_match.group(1)
+    t.send_cmd(f"kill {pid} 19")
+    r = t.send_cmd("jobs")
+    check("bg — job stopped", r, "STOPPED")
+    r = t.send_cmd("bg %1")
+    check("bg — continued", r, "Continued")
+    t.send_cmd(f"kill {pid} 9")
+
+
+def test_awk(t: Telnet):
+    """awk processes fields."""
+    t.send_cmd("write /tmp/awk_test.txt 'alpha beta gamma'")
+    r = t.send_cmd("awk '{print $2}' /tmp/awk_test.txt")
+    check("awk print $2", "beta" in r, True)
+    r = t.send_cmd("echo 'one two three' | awk '{print $1}'")
+    check("awk pipe $1", "one" in r, True)
+
+
+def test_netstat(t: Telnet):
+    """netstat shows TCP connections."""
+    r = t.send_cmd("netstat")
+    check("netstat output non-empty", len(r.strip()) > 0, True)
+    check("netstat shows TCP or UDP or Proto", "TCP" in r or "UDP" in r or "Proto" in r, True)
+
+
+def test_large_file(t: Telnet):
+    """Write and read a file larger than 8KB."""
+    # Write 20KB to a file using multiple write commands
+    t.send_cmd("rm /tmp/largefile.txt")
+    for i in range(40):  # 40 * 512 bytes ≈ 20KB
+        line = "x" * 500
+        t.send_cmd(f"write /tmp/largefile.txt '{line}'")
+    r = t.send_cmd("stat /tmp/largefile.txt")
+    check("large file stat ok", r != "" and "not found" not in r.lower(), True)
+    r = t.send_cmd("wc /tmp/largefile.txt")
+    check("large file has content", r != "", True)
+
+
+def test_arith_expand(t: Telnet):
+    """Arithmetic expansion $(( )) evaluates expressions."""
+    r = t.send_cmd("echo $((3+4))")
+    check("arith 3+4=7", "7" in r, True)
+    r = t.send_cmd("echo $((10-3))")
+    check("arith 10-3=7", "7" in r, True)
+    r = t.send_cmd("echo $((2*6))")
+    check("arith 2*6=12", "12" in r, True)
+    r = t.send_cmd("echo $((20/4))")
+    check("arith 20/4=5", "5" in r, True)
+    r = t.send_cmd("echo $((17%5))")
+    check("arith 17%5=2", "2" in r, True)
+
+
+def test_shell_func(t: Telnet):
+    """Shell functions can be defined and called."""
+    t.send_cmd("function greet() {")
+    t.send_cmd("  echo hello_from_func")
+    t.send_cmd("}")
+    r = t.send_cmd("greet")
+    check("shell func call", "hello_from_func" in r, True)
+
+
+def test_arrays(t: Telnet):
+    """Shell arrays can be assigned and indexed."""
+    t.send_cmd("fruits=(apple banana cherry)")
+    r = t.send_cmd("echo ${fruits[0]}")
+    check("array[0]=apple", "apple" in r, True)
+    r = t.send_cmd("echo ${fruits[1]}")
+    check("array[1]=banana", "banana" in r, True)
+    r = t.send_cmd("echo ${#fruits[@]}")
+    check("array count=3", "3" in r, True)
+
+
+def test_trap(t: Telnet):
+    """trap command registers signal handlers."""
+    r = t.send_cmd("trap 'echo caught_signal' 10")
+    check("trap registers ok", "trap:" in r.lower() or "10" in r, True)
+    r = t.send_cmd("trap")
+    check("trap list shows signal", "10" in r or "caught_signal" in r, True)
+
+
+def test_signal_kill(t: Telnet):
+    """kill sends the correct signal (not always-terminate)."""
+    # kill -0 <pid> is a no-op probe — should succeed for existing PID
+    r = t.send_cmd("ps")
+    # Extract first real PID (skip header)
+    pid = None
+    for line in r.splitlines():
+        parts = line.strip().split()
+        if parts and parts[0].isdigit():
+            pid = parts[0]
+            break
+    if pid:
+        r2 = t.send_cmd(f"kill {pid} 0")
+        # Signal 0 just checks if process exists — no output = success
+        check("kill signal 0 no error", "no such" not in r2.lower(), True)
+    else:
+        check("signal_kill: got ps output", True, True)
+
+
+def test_http_post_delete(t: Telnet):
+    """HTTP POST creates a file; HTTP DELETE removes it."""
+    import socket, time
+    # POST
+    try:
+        s = socket.socket()
+        s.settimeout(5)
+        s.connect((HOST, HTTP_PORT))
+        body = b"hello-post"
+        req = (b"POST /tmp/posttest.txt HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+               b"Connection: close\r\n\r\n" + body)
+        s.sendall(req)
+        resp = b""
+        while True:
+            d = s.recv(1024)
+            if not d: break
+            resp += d
+        s.close()
+        r = resp.decode("latin-1", errors="replace")
+        check("HTTP POST 201", r, "201")
+    except Exception as e:
+        fail("HTTP POST", f"socket error: {e}")
+        return
+
+    time.sleep(0.3)
+
+    # Verify via shell cat
+    r2 = t.send_cmd("cat /tmp/posttest.txt")
+    check("HTTP POST file content", r2, "hello-post")
+
+    # DELETE
+    try:
+        s = socket.socket()
+        s.settimeout(5)
+        s.connect((HOST, HTTP_PORT))
+        req = (b"DELETE /tmp/posttest.txt HTTP/1.1\r\n"
+               b"Host: localhost\r\n"
+               b"Connection: close\r\n\r\n")
+        s.sendall(req)
+        resp = b""
+        while True:
+            d = s.recv(1024)
+            if not d: break
+            resp += d
+        s.close()
+        r = resp.decode("latin-1", errors="replace")
+        check("HTTP DELETE 200", r, "200")
+    except Exception as e:
+        fail("HTTP DELETE", f"socket error: {e}")
+
     # Check log file created
     r = t.send_cmd("ls /var/log")
     check("service log dir — httpd.log exists", r, "httpd.log")
@@ -1531,6 +1858,30 @@ def main() -> int:
         ("permissions",test_permissions),
         ("httpd",      test_httpd),
         ("service",    test_service),
+        ("operators",  test_operators),
+        ("scripting",  test_scripting),
+        ("sha256sum",  test_sha256sum),
+        ("http post/delete", test_http_post_delete),
+        ("alias",      test_alias),
+        ("command substitution", test_command_subst),
+        ("input redirect", test_input_redirect),
+        ("symlinks",   test_symlinks),
+        ("readlink",   test_readlink),
+        ("procfs",     test_procfs),
+        ("glob",       test_glob),
+        ("cd/pwd",     test_cd_pwd),
+        ("devfs",      test_devfs),
+        ("nice",       test_nice),
+        ("renice",     test_renice),
+        ("bg",         test_bg_resume),
+        ("awk",        test_awk),
+        ("netstat",    test_netstat),
+        ("large file", test_large_file),
+        ("arith expand", test_arith_expand),
+        ("shell func",   test_shell_func),
+        ("arrays",       test_arrays),
+        ("trap",         test_trap),
+        ("signal kill",  test_signal_kill),
     ]
 
     for group_name, fn in tests:

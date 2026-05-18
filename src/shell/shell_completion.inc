@@ -123,8 +123,10 @@ static void shell_tab_complete(char *buf, int *len) {
 }
 
 static void shell_prompt(void) {
+    struct process *cur = process_get_current();
+    const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
     vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    kprintf("os> ");
+    kprintf("os:%s> ", cwd);
     vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
 }
 

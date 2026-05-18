@@ -112,6 +112,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->their_window = ntohs(tcp->window);
         c->rxlen = 0;    /* reset stale state from previous use */
         c->rx_fin = 0;
+        c->cwnd = 1;
+        c->ssthresh = 65535;
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
@@ -191,6 +193,12 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             }
             c->their_seq = expected + data_len;
             send_tcp(c, TCP_ACK, NULL, 0);
+            /* Congestion control: advance cwnd on successful data receipt */
+            if (c->cwnd < c->ssthresh)
+                c->cwnd *= 2;  /* slow start: exponential growth */
+            else
+                c->cwnd++;     /* congestion avoidance: linear growth */
+            if (c->cwnd > 64) c->cwnd = 64;  /* cap at 64 segments */
             if (l && l->on_data) {
                 l->on_data(conn_id, data, data_len);
             } else {
@@ -242,6 +250,8 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->their_window = 0;
     c->rxlen = 0;
     c->rx_fin = 0;
+    c->cwnd = 1;
+    c->ssthresh = 65535;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -368,4 +378,12 @@ int net_tcp_accept(uint16_t port, int timeout_ticks) {
     l->accept_head = (l->accept_head + 1) % ACCEPT_QUEUE_SIZE;
     l->accept_count--;
     return conn_id;
+}
+
+void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int state)) {
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        if (tcp_conns[i].state != TCP_CLOSED)
+            cb(tcp_conns[i].local_port, tcp_conns[i].remote_ip,
+               tcp_conns[i].remote_port, (int)tcp_conns[i].state);
+    }
 }

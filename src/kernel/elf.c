@@ -76,6 +76,18 @@ int elf_exec(const char *path) {
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
     if (!buf) return -1;
 
+    /* Copy path to kernel heap so proc->name is a stable kernel-space pointer,
+     * regardless of whether path came from user space or a caller's stack. */
+    size_t plen = strlen(path);
+    if (plen > 255) plen = 255;
+    char *name = (char *)kmalloc(plen + 1);
+    if (name) {
+        memcpy(name, path, plen);
+        name[plen] = '\0';
+    } else {
+        name = (char *)path; /* fallback: use caller's pointer as-is */
+    }
+
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
         kprintf("elf: cannot read %s\n", path);
@@ -156,27 +168,27 @@ int elf_exec(const char *path) {
         kfree(buf);
 
         /* Create user-mode process */
-        struct process *p = process_create_user(entry, user_rsp, user_pml4, path);
+        struct process *p = process_create_user(entry, user_rsp, user_pml4, name);
         if (!p) {
             kprintf("elf: cannot create user process\n");
             return -1;
         }
 
         kprintf("elf: launched %s (pid %u, ring 3, entry 0x%x)\n",
-                path, (uint64_t)p->pid, entry);
+                name, (uint64_t)p->pid, entry);
         return 0;
     }
 
     /* Kernel-mode fallback for non-userland ELFs */
     kfree(buf);
     exec_entry_addr = entry;
-    struct process *p = process_create(elf_trampoline, path);
+    struct process *p = process_create(elf_trampoline, name);
     if (!p) {
         kprintf("elf: cannot create process\n");
         return -1;
     }
 
     kprintf("elf: launched %s (pid %u, entry 0x%x)\n",
-            path, (uint64_t)p->pid, entry);
+            name, (uint64_t)p->pid, entry);
     return 0;
 }

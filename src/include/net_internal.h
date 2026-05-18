@@ -51,6 +51,9 @@ struct tcp_conn {
     uint8_t  rxbuf[4096];
     int      rxlen;
     volatile int rx_fin;
+    /* Congestion control (slow start / AIMD) */
+    uint32_t cwnd;      /* congestion window in segments */
+    uint32_t ssthresh;  /* slow-start threshold */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];

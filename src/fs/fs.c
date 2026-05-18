@@ -3,6 +3,7 @@
 #include "string.h"
 #include "printf.h"
 #include "users.h"
+#include "timer.h"
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -25,20 +26,26 @@ static int save_super(void) {
 }
 
 static int load_inodes(void) {
-    uint8_t buf[INODE_SECTORS * ATA_SECTOR_SIZE];
+    uint8_t buf[ATA_SECTOR_SIZE];
     for (uint32_t i = 0; i < INODE_SECTORS; i++) {
-        if (ata_read_sectors(1 + i, 1, buf + i * ATA_SECTOR_SIZE) < 0) return -1;
+        if (ata_read_sectors(1 + i, 1, buf) < 0) return -1;
+        uint32_t offset = i * ATA_SECTOR_SIZE;
+        uint32_t left   = (uint32_t)sizeof(inodes) - offset;
+        uint32_t n      = left > ATA_SECTOR_SIZE ? ATA_SECTOR_SIZE : left;
+        memcpy((uint8_t *)inodes + offset, buf, n);
     }
-    memcpy(inodes, buf, sizeof(inodes));
     return 0;
 }
 
 static int save_inodes(void) {
-    uint8_t buf[INODE_SECTORS * ATA_SECTOR_SIZE];
-    memset(buf, 0, sizeof(buf));
-    memcpy(buf, inodes, sizeof(inodes));
+    uint8_t buf[ATA_SECTOR_SIZE];
     for (uint32_t i = 0; i < INODE_SECTORS; i++) {
-        if (ata_write_sectors(1 + i, 1, buf + i * ATA_SECTOR_SIZE) < 0) return -1;
+        memset(buf, 0, ATA_SECTOR_SIZE);
+        uint32_t offset = i * ATA_SECTOR_SIZE;
+        uint32_t left   = (uint32_t)sizeof(inodes) - offset;
+        uint32_t n      = left > ATA_SECTOR_SIZE ? ATA_SECTOR_SIZE : left;
+        memcpy(buf, (uint8_t *)inodes + offset, n);
+        if (ata_write_sectors(1 + i, 1, buf) < 0) return -1;
     }
     return 0;
 }
@@ -135,8 +142,29 @@ static int find_inode(const char *path) {
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type != FS_TYPE_FREE &&
             inodes[i].parent == (uint16_t)parent &&
-            strcmp(inodes[i].name, name) == 0)
-            return i;
+            strcmp(inodes[i].name, name) == 0) {
+            /* Follow symlinks (depth limit 8) */
+            int cur = i, depth = 0;
+            static char link_buf[FS_BLOCK_SIZE];
+            while (inodes[cur].type == FS_TYPE_LINK && depth < 8) {
+                uint32_t tsz = 0;
+                /* Read target from first block directly */
+                if (inodes[cur].size == 0 || inodes[cur].blocks[0] == 0) return -1;
+                if (ata_read_sectors(inodes[cur].blocks[0], 1,
+                                     (uint8_t*)link_buf) < 0) return -1;
+                uint32_t sz = inodes[cur].size;
+                if (sz >= FS_BLOCK_SIZE) sz = FS_BLOCK_SIZE - 1;
+                link_buf[sz] = '\0';
+                tsz = sz;
+                (void)tsz;
+                int next = find_inode(link_buf);
+                if (next < 0) return -1;
+                cur = next;
+                depth++;
+            }
+            if (depth >= 8) return -1;
+            return cur;
+        }
     }
     return -1;
 }
@@ -257,6 +285,7 @@ int fs_create(const char *path, uint8_t type) {
     inodes[idx].uid    = cur_uid;
     inodes[idx].gid    = cur_gid;
     inodes[idx].mode   = (type == FS_TYPE_DIR) ? FS_MODE_DIR : FS_MODE_FILE;
+    inodes[idx].mtime  = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
     strncpy(inodes[idx].name, name, FS_MAX_NAME - 1);
 
     save_inodes();
@@ -288,7 +317,8 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
         if (ata_write_sectors(blk, 1, buf) < 0) return -1;
     }
 
-    inodes[idx].size = size;
+    inodes[idx].size  = size;
+    inodes[idx].mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
     save_inodes();
     save_super();
     return 0;
@@ -423,6 +453,12 @@ int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
     return 0;
 }
 
+int fs_stat_mtime(const char *path) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    return (int)inodes[idx].mtime;
+}
+
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
@@ -532,4 +568,105 @@ int fs_list_names(const char *dir, const char *prefix,
         n++;
     }
     return n;
+}
+
+/* ── Symbolic link support ──────────────────────────────────────────────── */
+
+/* Like find_inode but does NOT follow symlinks (for readlink/lstat) */
+static int find_inode_nofollow(const char *path) {
+    if (*path == '/') path++;
+    if (*path == '\0') return -1;
+    int parent = find_parent(path);
+    if (parent < 0) return -1;
+    const char *name;
+    const char *slash = NULL;
+    for (const char *p = path; *p; p++) if (*p == '/') slash = p;
+    name = slash ? slash + 1 : path;
+    if (*name == '\0') return -1;
+    for (int i = 0; i < FS_MAX_FILES; i++) {
+        if (inodes[i].type != FS_TYPE_FREE &&
+            inodes[i].parent == (uint16_t)parent &&
+            strcmp(inodes[i].name, name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+int fs_symlink(const char *path, const char *target) {
+    if (!path || !target) return -1;
+    int parent = find_parent(path);
+    if (parent < 0) return -1;
+    if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
+    int idx = find_free_inode();
+    if (idx < 0) return -1;
+    struct user_session *s = session_get();
+    uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
+    uint16_t cur_gid = s ? (uint16_t)s->gid : 0;
+    const char *name = basename(path);
+    memset(&inodes[idx], 0, sizeof(struct fs_inode));
+    inodes[idx].type   = FS_TYPE_LINK;
+    inodes[idx].parent = (uint16_t)parent;
+    inodes[idx].uid    = cur_uid;
+    inodes[idx].gid    = cur_gid;
+    inodes[idx].mode   = 0777;
+    strncpy(inodes[idx].name, name, FS_MAX_NAME - 1);
+    save_inodes();
+    /* Store target in first data block */
+    uint32_t tlen = (uint32_t)strlen(target);
+    if (tlen >= FS_BLOCK_SIZE) tlen = FS_BLOCK_SIZE - 1;
+    uint32_t blk = alloc_block();
+    save_super();
+    uint8_t blk_buf[FS_BLOCK_SIZE];
+    memset(blk_buf, 0, FS_BLOCK_SIZE);
+    memcpy(blk_buf, target, tlen);
+    ata_write_sectors(blk, 1, blk_buf);
+    inodes[idx].blocks[0] = blk;
+    inodes[idx].size = tlen;
+    save_inodes();
+    return 0;
+}
+
+int fs_readlink(const char *path, char *buf, int bufsize) {
+    int idx = find_inode_nofollow(path);
+    if (idx < 0) return -1;
+    if (inodes[idx].type != FS_TYPE_LINK) return -1;
+    if (inodes[idx].size == 0 || inodes[idx].blocks[0] == 0) { buf[0]='\0'; return 0; }
+    uint8_t blk_buf[FS_BLOCK_SIZE];
+    if (ata_read_sectors(inodes[idx].blocks[0], 1, blk_buf) < 0) return -1;
+    uint32_t sz = inodes[idx].size;
+    if (sz >= (uint32_t)bufsize) sz = (uint32_t)(bufsize - 1);
+    memcpy(buf, blk_buf, sz);
+    buf[sz] = '\0';
+    return (int)sz;
+}
+
+int fs_lstat(const char *path, uint32_t *size, uint8_t *type) {
+    int idx = find_inode_nofollow(path);
+    if (idx < 0) return -1;
+    if (size) *size = inodes[idx].size;
+    if (type) *type = inodes[idx].type;
+    return 0;
+}
+
+int fs_truncate(const char *path, uint32_t len) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    uint32_t old_size = inodes[idx].size;
+    if (len >= old_size) { inodes[idx].size = len; return save_inodes(); }
+    /* Free blocks beyond len */
+    uint32_t new_blocks = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
+    for (uint32_t b = new_blocks; b < FS_MAX_BLOCKS; b++) {
+        if (inodes[idx].blocks[b] != 0) {
+            uint32_t blk = inodes[idx].blocks[b];
+            /* Zero the block on disk */
+            uint8_t zero[ATA_SECTOR_SIZE];
+            memset(zero, 0, ATA_SECTOR_SIZE);
+            ata_write_sectors(FS_DATA_START + blk * (FS_BLOCK_SIZE / ATA_SECTOR_SIZE),
+                              FS_BLOCK_SIZE / ATA_SECTOR_SIZE, zero);
+            inodes[idx].blocks[b] = 0;
+        }
+    }
+    inodes[idx].size = len;
+    return save_inodes();
 }

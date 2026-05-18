@@ -232,6 +232,59 @@ void vmm_switch_pml4(uint64_t *pml4) {
     write_cr3(phys);
 }
 
+/*
+ * Deep-copy user half (entries 0-255) of src_pml4 into a new PML4.
+ * Allocates fresh physical frames and copies the data — no COW.
+ * Returns new PML4 pointer, or NULL on allocation failure.
+ */
+uint64_t *vmm_clone_user_pml4(uint64_t *src) {
+    uint64_t *dst = vmm_create_user_pml4(); /* copies kernel half */
+    if (!dst) return NULL;
+
+    for (int i = 0; i < 256; i++) {
+        if (!(src[i] & PTE_PRESENT)) continue;
+        uint64_t *src_pdpt = (uint64_t *)(src[i] & PTE_ADDR_MASK);
+        /* Allocate dst PDPT */
+        uint64_t dst_pdpt_phys = pmm_alloc_frame();
+        if (!dst_pdpt_phys) return dst; /* partial clone */
+        memset((void *)dst_pdpt_phys, 0, 4096);
+        dst[i] = dst_pdpt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
+        uint64_t *dst_pdpt = (uint64_t *)dst_pdpt_phys;
+
+        for (int j = 0; j < 512; j++) {
+            if (!(src_pdpt[j] & PTE_PRESENT)) continue;
+            uint64_t *src_pd = (uint64_t *)(src_pdpt[j] & PTE_ADDR_MASK);
+            uint64_t dst_pd_phys = pmm_alloc_frame();
+            if (!dst_pd_phys) return dst;
+            memset((void *)dst_pd_phys, 0, 4096);
+            dst_pdpt[j] = dst_pd_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
+            uint64_t *dst_pd = (uint64_t *)dst_pd_phys;
+
+            for (int k = 0; k < 512; k++) {
+                if (!(src_pd[k] & PTE_PRESENT)) continue;
+                if (src_pd[k] & (1ULL << 7)) { dst_pd[k] = src_pd[k]; continue; } /* 2MB */
+                uint64_t *src_pt = (uint64_t *)(src_pd[k] & PTE_ADDR_MASK);
+                uint64_t dst_pt_phys = pmm_alloc_frame();
+                if (!dst_pt_phys) return dst;
+                memset((void *)dst_pt_phys, 0, 4096);
+                dst_pd[k] = dst_pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
+                uint64_t *dst_pt = (uint64_t *)dst_pt_phys;
+
+                for (int l = 0; l < 512; l++) {
+                    if (!(src_pt[l] & PTE_PRESENT)) continue;
+                    /* Allocate and copy the page frame */
+                    uint64_t new_frame = pmm_alloc_frame();
+                    if (!new_frame) return dst;
+                    uint64_t *src_page = (uint64_t *)(src_pt[l] & PTE_ADDR_MASK);
+                    memcpy((void *)new_frame, src_page, 4096);
+                    dst_pt[l] = new_frame | (src_pt[l] & 0xFFF);
+                }
+            }
+        }
+    }
+    return dst;
+}
+
 void vmm_destroy_user_pml4(uint64_t *pml4) {
     /* Free user-half page table pages (entries 0-255 only) */
     for (int i = 0; i < 256; i++) {
