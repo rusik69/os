@@ -9,4 +9,7 @@ void telnetd_task(void);
 int  telnetd_start(void);
 void telnetd_stop(void);
 
+/* Returns the active telnet session's CWD buffer, or NULL if not in a command */
+char *telnet_get_cwd_ctx(void);
+
 #endif

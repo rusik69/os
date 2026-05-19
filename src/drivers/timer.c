@@ -15,8 +15,9 @@ static void timer_handler(struct interrupt_frame *frame) {
     ticks++;
     pic_eoi(0);
     scheduler_wake_sleepers();
-    if (ticks % 5 == 0) { /* every 50ms */
-        schedule();
+    scheduler_tick();
+    if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
+        scheduler_age();
     }
     if (ticks % TIMER_FREQ == 0) { /* every second */
         process_reap_zombies();

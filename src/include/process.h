@@ -65,6 +65,11 @@ struct process {
     uint8_t  priority;        /* scheduler priority: 0=high .. 3=low */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
     char     cwd[64];         /* current working directory */
+    /* Waitpid: non-spinning wait for child */
+    uint32_t wait_for_pid;    /* PID we are blocked waiting on (0 = none) */
+    /* Scheduler: time-slice accounting */
+    uint16_t ticks_remaining; /* ticks left in current quantum */
+    uint64_t last_run_tick;   /* timer tick when process last ran (for aging) */
 };
 
 void process_init(void);

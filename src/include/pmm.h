@@ -9,5 +9,9 @@ uint64_t pmm_alloc_frame(void);
 void pmm_free_frame(uint64_t frame);
 uint64_t pmm_get_total_frames(void);
 uint64_t pmm_get_used_frames(void);
+/* Reference counting for COW */
+void pmm_ref_frame(uint64_t phys);      /* increment refcount */
+int  pmm_unref_frame(uint64_t phys);    /* decrement; frees if 0, returns new count */
+int  pmm_refcount(uint64_t phys);       /* query current refcount */
 
 #endif

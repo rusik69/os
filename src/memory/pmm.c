@@ -24,7 +24,8 @@ struct multiboot_mmap_entry {
 } __attribute__((packed));
 
 #define MAX_FRAMES (256 * 1024) /* up to 1GB with 4KB pages */
-static uint8_t frame_bitmap[MAX_FRAMES / 8];
+static uint8_t  frame_bitmap[MAX_FRAMES / 8];
+static uint16_t frame_refcount[MAX_FRAMES]; /* COW reference counts */
 static uint64_t total_frames = 0;
 static uint64_t used_frames = 0;
 
@@ -122,6 +123,7 @@ uint64_t pmm_alloc_frame(void) {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             used_frames++;
+            frame_refcount[i] = 1;
             return i * PAGE_SIZE;
         }
     }
@@ -132,8 +134,33 @@ void pmm_free_frame(uint64_t addr) {
     uint64_t frame = addr / PAGE_SIZE;
     if (frame < total_frames && bitmap_test(frame)) {
         bitmap_clear(frame);
+        frame_refcount[frame] = 0;
         used_frames--;
     }
+}
+
+void pmm_ref_frame(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame < MAX_FRAMES && frame_refcount[frame] < 65535)
+        frame_refcount[frame]++;
+}
+
+int pmm_unref_frame(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES) return 0;
+    if (frame_refcount[frame] == 0) return 0;
+    frame_refcount[frame]--;
+    if (frame_refcount[frame] == 0) {
+        bitmap_clear(frame);
+        used_frames--;
+    }
+    return (int)frame_refcount[frame];
+}
+
+int pmm_refcount(uint64_t phys) {
+    uint64_t frame = phys / PAGE_SIZE;
+    if (frame >= MAX_FRAMES) return 0;
+    return (int)frame_refcount[frame];
 }
 
 uint64_t pmm_get_total_frames(void) { return total_frames; }

@@ -37,9 +37,17 @@ struct telnet_session {
     int negotiated;
     int hist_pos;    /* current history navigation position */
     int esc_state;   /* 0=normal, 1=got ESC, 2=got ESC[ */
+    char cwd[64];    /* per-session working directory */
 };
 
 static struct telnet_session sessions[8];
+
+/* Global pointer to the active session's CWD buffer, set around each command.
+ * This lets sys_chdir/sys_getcwd use the correct CWD regardless of which
+ * process happens to call net_poll() and trigger on_data(). */
+static char *g_session_cwd = NULL;
+
+char *telnet_get_cwd_ctx(void) { return g_session_cwd; }
 
 static struct telnet_session *find_session(int conn_id) {
     for (int i = 0; i < 8; i++)
@@ -53,6 +61,8 @@ static struct telnet_session *alloc_session(int conn_id) {
             memset(&sessions[i], 0, sizeof(sessions[i]));
             sessions[i].conn_id = conn_id;
             sessions[i].active = 1;
+            sessions[i].cwd[0] = '/';
+            sessions[i].cwd[1] = '\0';
             return &sessions[i];
         }
     }
@@ -116,6 +126,11 @@ static void process_telnet_cmd(struct telnet_session *s) {
      * (e.g., if net_poll is called during a long-running command) */
     s->processing = 1;
 
+    /* Point global CWD context at this session's cwd buffer so that
+     * sys_chdir/sys_getcwd operate on the right directory even when
+     * net_poll() is called from a different process (e.g. httpd). */
+    g_session_cwd = s->cwd;
+
     /* Redirect kprintf output to this session, run the full command line
      * processor (supports pipes, redirection, background &) */
     kprintf_set_hook(telnet_output_hook, s);
@@ -124,6 +139,7 @@ static void process_telnet_cmd(struct telnet_session *s) {
     kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
 
+    g_session_cwd = NULL;
     s->processing = 0;
 
     /* Prompt */

@@ -28,6 +28,7 @@
 #include "io.h"
 #include "elf.h"
 #include "script.h"
+#include "telnetd.h"
 #include "fat32.h"
 #include "shell.h"
 #include "cc.h"
@@ -742,37 +743,56 @@ static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t ty
 
 static uint64_t sys_chdir(uint64_t path_addr) {
     const char *path = (const char *)path_addr;
+    /* Prefer per-session CWD so that cd/pwd work correctly even when
+     * net_poll() is called from a different process (e.g. httpd). */
+    char *ses_cwd = telnet_get_cwd_ctx();
     /* Resolve to absolute path via VFS */
     char ap[128];
     if (path[0] != '/') {
-        /* Use vfs to resolve via cwd */
-        struct process *cur = process_get_current();
-        const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
-        int cl = (int)strlen(cwd);
+        const char *base = ses_cwd ? (ses_cwd[0] ? ses_cwd : "/")
+                                   : (process_get_current() && process_get_current()->cwd[0]
+                                      ? process_get_current()->cwd : "/");
+        int cl = (int)strlen(base);
         int pl = (int)strlen(path);
         if (cl + 1 + pl < (int)sizeof(ap)) {
-            memcpy(ap, cwd, cl);
+            memcpy(ap, base, cl);
             if (ap[cl-1] != '/') ap[cl++] = '/';
             memcpy(ap + cl, path, pl + 1);
         } else { ap[0] = '/'; ap[1] = '\0'; }
     } else {
         strncpy(ap, path, sizeof(ap)-1); ap[sizeof(ap)-1] = '\0';
     }
+    /* Special case: root always exists */
+    if (ap[0] == '/' && ap[1] == '\0') {
+        if (ses_cwd) { ses_cwd[0] = '/'; ses_cwd[1] = '\0'; return 0; }
+        struct process *cur = process_get_current();
+        if (!cur) return (uint64_t)(int64_t)-1;
+        cur->cwd[0] = '/'; cur->cwd[1] = '\0';
+        return 0;
+    }
     /* Verify it's a directory */
     struct vfs_stat st;
-    if (vfs_stat(ap, &st) < 0 || st.type != 2) return (uint64_t)(int64_t)-1;
-    struct process *cur = process_get_current();
-    if (!cur) return (uint64_t)(int64_t)-1;
+    int vstat_r = vfs_stat(ap, &st);
+    if (vstat_r < 0 || st.type != 2) return (uint64_t)(int64_t)-1;
     /* Remove trailing slash (except root) */
     int len = (int)strlen(ap);
     while (len > 1 && ap[len-1] == '/') { ap[--len] = '\0'; }
+    if (ses_cwd) { strncpy(ses_cwd, ap, 63); ses_cwd[63] = '\0'; return 0; }
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-1;
     strncpy(cur->cwd, ap, 63); cur->cwd[63] = '\0';
     return 0;
 }
 
 static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
-    struct process *cur = process_get_current();
-    const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+    char *ses_cwd = telnet_get_cwd_ctx();
+    const char *cwd;
+    if (ses_cwd)
+        cwd = (ses_cwd[0] != '\0') ? ses_cwd : "/";
+    else {
+        struct process *cur = process_get_current();
+        cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+    }
     char *buf = (char *)buf_addr;
     int max = (int)buf_size;
     strncpy(buf, cwd, max - 1); buf[max-1] = '\0';

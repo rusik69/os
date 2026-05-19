@@ -4,6 +4,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "pic.h"
+#include "fault.h"
 #include "timer.h"
 #include "keyboard.h"
 #include "pmm.h"
@@ -97,6 +98,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* IDT */
     idt_init();
     kprintf("[OK] IDT initialized\n");
+
+    /* Page fault handler */
+    fault_init();
+    kprintf("[OK] Page fault handler registered\n");
 
     /* Physical memory manager */
     pmm_init(multiboot_info_phys);

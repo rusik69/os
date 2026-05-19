@@ -27,6 +27,7 @@ BUILDDIR = build
 C_SRCS = src/kernel/kernel.c \
          src/kernel/gdt.c \
          src/kernel/idt.c \
+         src/kernel/fault.c \
          src/kernel/syscall.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \

@@ -187,6 +187,9 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority    = 1; /* normal priority */
+    proc->wait_for_pid   = 0;
+    proc->ticks_remaining = 0; /* set by scheduler on first run */
+    proc->last_run_tick  = timer_get_ticks();
     /* Inherit cwd from parent */
     if (current_process && current_process->cwd[0])
         strncpy(proc->cwd, current_process->cwd, 63);
@@ -253,6 +256,9 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority = 1;
+    proc->wait_for_pid   = 0;
+    proc->ticks_remaining = 0;
+    proc->last_run_tick  = timer_get_ticks();
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
 
     /* Set up initial context on kernel stack.
@@ -275,10 +281,24 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     return proc;
 }
 
+/* Wake any process blocked in waitpid waiting for 'pid'. */
+static void process_wake_waiter(uint32_t pid) {
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        struct process *p = &process_table[i];
+        if (p->state == PROCESS_BLOCKED && p->wait_for_pid == pid) {
+            p->wait_for_pid = 0;
+            p->state = PROCESS_READY;
+            p->last_run_tick = timer_get_ticks();
+            scheduler_add(p);
+        }
+    }
+}
+
 void process_exit(void) {
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = 0;
     scheduler_remove(current_process);
+    process_wake_waiter(current_process->pid);
     scheduler_yield();
     /* should never reach here */
     for (;;) __asm__ volatile("hlt");
@@ -288,6 +308,7 @@ void process_exit_code(int code) {
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = code;
     scheduler_remove(current_process);
+    process_wake_waiter(current_process->pid);
     scheduler_yield();
     for (;;) __asm__ volatile("hlt");
 }
@@ -333,6 +354,8 @@ int process_fork(void) {
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
         if (!child->pml4) { kfree(new_stack); child->state = PROCESS_UNUSED; return -1; }
+        /* Flush parent TLB: COW marking made parent pages read-only in the page tables */
+        vmm_switch_pml4(parent->pml4);
     }
 
     /* Set up child kernel stack so it wakes returning 0 from fork */
@@ -365,16 +388,23 @@ struct process *process_get_table(void) {
 }
 
 /* Wait for a specific child process to become ZOMBIE.
- * Returns 0 on success (exit code in *status), -1 if not found. */
+ * Returns 0 on success (exit code in *status), -1 if not found.
+ * Blocks (does NOT spin) until the child exits. */
 int process_waitpid(uint32_t pid, int *status) {
     struct process *child = process_get_by_pid(pid);
     if (!child) return -1;
-    /* Spin-yield until child becomes zombie */
-    while (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
+
+    if (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
+        /* Block until child's process_exit_code wakes us */
+        current_process->wait_for_pid = pid;
+        current_process->state = PROCESS_BLOCKED;
+        scheduler_remove(current_process);
         scheduler_yield();
+        /* Resumed by process_wake_waiter */
+        current_process->wait_for_pid = 0;
     }
+
     if (status) *status = child->exit_code;
-    /* Reap the zombie */
     process_cleanup(child);
     return 0;
 }
@@ -392,6 +422,11 @@ void process_cleanup(struct process *proc) {
     if (proc->kernel_stack) {
         kfree((void *)proc->kernel_stack);
         proc->kernel_stack = 0;
+    }
+    /* Free user page tables (fixes leak) */
+    if (proc->is_user && proc->pml4) {
+        vmm_destroy_user_pml4(proc->pml4);
+        proc->pml4 = NULL;
     }
     proc->state = PROCESS_UNUSED;
     proc->pid = 0;
