@@ -3,12 +3,12 @@
 
 #include "types.h"
 
-#define FS_MAGIC       0x53464D56   /* "SMFT" v4 – 256 inodes, 64-block files, mtime */
+#define FS_MAGIC       0x53464D57   /* "SMFT" v5 – 256 inodes, 256-block files, mtime */
 #define FS_MAX_NAME    28
 #define FS_MAX_FILES   256
 #define FS_BLOCK_SIZE  512
-#define FS_MAX_BLOCKS  64         /* max blocks per file = 32KB */
-#define FS_DATA_START  160        /* sector: 0=super, 1-159=inodes (256*304B) */
+#define FS_MAX_BLOCKS  256        /* max blocks per file = 128KB */
+/* Data starts after superblock (1) + inode table (computed at format time) */
 
 #define FS_TYPE_FREE   0
 #define FS_TYPE_FILE   1
@@ -30,7 +30,7 @@
 #define FS_MODE_FILE   0644   /* default file: rw-r--r-- */
 #define FS_MODE_DIR    0755   /* default dir:  rwxr-xr-x */
 
-/* Inode — on-disk structure (304 bytes with FS_MAX_BLOCKS=64) */
+/* Inode — on-disk structure (grows with FS_MAX_BLOCKS) */
 struct fs_inode {
     uint8_t  type;               /* FS_TYPE_* */
     uint8_t  _pad;

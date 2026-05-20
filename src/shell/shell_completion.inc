@@ -1,23 +1,8 @@
 /* ------------------------------------------------------------------ */
-/*  Command name table for tab completion                              */
+/*  Tab completion (uses shell_cmd_table)                            */
 /* ------------------------------------------------------------------ */
 
-static const char *all_cmds[] = {
-    "arp", "base64", "basename", "beep", "calc", "cat", "cc", "ccbuilder", "clear",
-    "cmos", "color", "cp", "cpuinfo", "curl", "cut", "date", "df", "diff", "dmesg",
-    "dirname", "dns", "du", "echo", "edit", "env", "exec", "exit", "expr",
-    "fg", "find", "format", "free", "grep", "head", "help", "hexdump",
-    "history", "hostname", "hwinfo", "id", "ifconfig", "jobs", "kill", "ls", "lspci",
-    "fbinfo", "gui",
-    "md5sum", "meminfo", "mkdir", "mouse", "mv", "nl", "od", "paste",
-    "ping", "play", "printf", "ps", "reboot", "rev", "rm", "route",
-    "run", "seq", "serial", "shutdown", "sleep", "sort", "stat", "strings", "tac",
-    "tail", "tee", "test", "time", "tmux", "touch", "tr", "udpsend",
-    "uname", "uniq", "uptime", "users", "useradd", "userdel", "wait", "wc",
-    "whoami", "write", "xargs", "xxd", "yes",
-    "fat", "login", "logout", "lsblk", "lsusb", "passwd",
-    "chmod", "chown", "capprof", 0
-};
+#include "shell_cmd_table.h"
 
 /* ------------------------------------------------------------------ */
 /*  Tab completion                                                     */
@@ -37,15 +22,15 @@ static void shell_tab_complete(char *buf, int *len) {
         int plen = *len > 63 ? 63 : *len;
         memcpy(prefix, buf, plen); prefix[plen] = '\0';
 
-        /* Find all matching commands */
         const char *matches[64]; int nmatch = 0;
-        for (int i = 0; all_cmds[i]; i++) {
-            if (strncmp(all_cmds[i], prefix, plen) == 0 && nmatch < 64)
-                matches[nmatch++] = all_cmds[i];
+        int ncmds = shell_cmd_count();
+        for (int i = 0; i < ncmds && nmatch < 64; i++) {
+            const shell_cmd_entry_t *e = shell_cmd_entry(i);
+            if (strncmp(e->name, prefix, plen) == 0)
+                matches[nmatch++] = e->name;
         }
         if (nmatch == 0) return;
         if (nmatch == 1) {
-            /* Unique match — complete it */
             erase_line(*len);
             int clen = strlen(matches[0]);
             memcpy(buf, matches[0], clen);
@@ -53,7 +38,6 @@ static void shell_tab_complete(char *buf, int *len) {
             *len = clen + 1;
             kprintf("%s ", matches[0]);
         } else {
-            /* Multiple matches — find common prefix and show options */
             int common = strlen(matches[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
@@ -84,7 +68,7 @@ static void shell_tab_complete(char *buf, int *len) {
         if (plen > 63) plen = 63;
         memcpy(prefix, buf + wstart, plen); prefix[plen] = '\0';
 
-        char fnames[16][FS_MAX_NAME]; /* up to 16 matches */
+        char fnames[16][FS_MAX_NAME];
         int nmatch = fs_list_names("/", prefix, fnames, 16);
         if (nmatch == 0) return;
         if (nmatch == 1) {
@@ -97,7 +81,6 @@ static void shell_tab_complete(char *buf, int *len) {
             buf[*len] = '\0';
             kprintf("%s", buf);
         } else {
-            /* Find common prefix */
             int common = strlen(fnames[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
@@ -137,24 +120,25 @@ static void erase_line(int len) {
 }
 
 void shell_tab_complete_telnet(char *buf, int *len, void *session) {
-    (void)session; /* kprintf hooks are already set by telnetd */
+    (void)session;
     int has_space = 0;
     for (int i = 0; i < *len; i++) if (buf[i] == ' ') { has_space = 1; break; }
 
     if (!has_space) {
-        /* Command completion */
         char prefix[64];
         int plen = *len > 63 ? 63 : *len;
         memcpy(prefix, buf, plen); prefix[plen] = '\0';
 
         const char *matches[64]; int nmatch = 0;
-        for (int i = 0; all_cmds[i]; i++)
-            if (strncmp(all_cmds[i], prefix, plen) == 0 && nmatch < 64)
-                matches[nmatch++] = all_cmds[i];
+        int ncmds = shell_cmd_count();
+        for (int i = 0; i < ncmds && nmatch < 64; i++) {
+            const shell_cmd_entry_t *e = shell_cmd_entry(i);
+            if (strncmp(e->name, prefix, plen) == 0)
+                matches[nmatch++] = e->name;
+        }
 
         if (nmatch == 0) return;
         if (nmatch == 1) {
-            /* Erase and rewrite */
             for (int k = 0; k < *len; k++) kprintf("\b \b");
             int clen = strlen(matches[0]);
             memcpy(buf, matches[0], clen);
@@ -182,7 +166,6 @@ void shell_tab_complete_telnet(char *buf, int *len, void *session) {
             }
         }
     } else {
-        /* Filename completion */
         int wstart = *len;
         while (wstart > 0 && buf[wstart - 1] != ' ') wstart--;
         char prefix[64];

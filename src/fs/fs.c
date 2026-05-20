@@ -10,6 +10,7 @@ static struct fs_inode inodes[FS_MAX_FILES];
 
 /* How many sectors the inode table takes */
 #define INODE_SECTORS ((FS_MAX_FILES * sizeof(struct fs_inode) + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE)
+#define FS_DATA_START   (1 + INODE_SECTORS)
 
 static int load_super(void) {
     uint8_t buf[ATA_SECTOR_SIZE];
@@ -200,7 +201,7 @@ int fs_format(void) {
     super.magic = FS_MAGIC;
     super.num_inodes = FS_MAX_FILES;
     super.num_data_blocks = 0;
-    super.next_free_block = FS_DATA_START;
+    super.next_free_block = 1 + INODE_SECTORS;
 
     memset(inodes, 0, sizeof(inodes));
 
@@ -662,8 +663,7 @@ int fs_truncate(const char *path, uint32_t len) {
             /* Zero the block on disk */
             uint8_t zero[ATA_SECTOR_SIZE];
             memset(zero, 0, ATA_SECTOR_SIZE);
-            ata_write_sectors(FS_DATA_START + blk * (FS_BLOCK_SIZE / ATA_SECTOR_SIZE),
-                              FS_BLOCK_SIZE / ATA_SECTOR_SIZE, zero);
+            ata_write_sectors(blk, 1, zero);
             inodes[idx].blocks[b] = 0;
         }
     }

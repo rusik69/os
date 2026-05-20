@@ -13,6 +13,14 @@ extern uint64_t syscall_kernel_rsp;
 static struct process *queue_head[SCHED_LEVELS];
 static struct process *queue_tail[SCHED_LEVELS];
 static int scheduler_enabled = 0;
+static uint64_t scheduler_idle_ticks = 0;
+
+static int scheduler_queues_empty(void) {
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        if (queue_head[lvl]) return 0;
+    }
+    return 1;
+}
 
 /* Time slices in ticks (100Hz): higher priority = larger quantum.
  * Priority 1 (default) keeps 5 ticks to match original preemption rate. */
@@ -135,8 +143,14 @@ void scheduler_yield(void) {
  * triggers a context switch when it expires.
  * On the first tick for a process (ticks_remaining==0), assigns the quantum.
  */
+uint64_t scheduler_get_idle_ticks(void) {
+    return scheduler_idle_ticks;
+}
+
 void scheduler_tick(void) {
     if (!scheduler_enabled) return;
+    if (scheduler_queues_empty())
+        scheduler_idle_ticks++;
     struct process *cur = process_get_current();
     if (!cur || cur->state != PROCESS_RUNNING) return;
     /* First tick: assign quantum without preempting */

@@ -217,6 +217,7 @@ void gui_shell_run(void) {
                     gui_remove_window(hit);
                     gui_add_window(hit);
                 }
+                gui_set_focused_window(hit);
 
                 if (gui_window_has_title(hit) && on_close_button(hit, px, py)) {
                     if (hit == g_file_win) close_file_window(NULL);

@@ -14,6 +14,8 @@ struct pipe {
     int      readers;   /* number of open read ends */
     int      writers;   /* number of open write ends */
     int      in_use;
+    uint32_t blocked_read_pid;  /* process sleeping for data */
+    uint32_t blocked_write_pid; /* process sleeping for space */
 };
 
 /* Allocate a new pipe; returns its index or -1 on error */

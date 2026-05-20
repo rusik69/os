@@ -24,4 +24,10 @@ int  fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max);
 /* Returns file size in bytes, or -1 if not found */
 int  fat32_file_size(const char *path);
 
+/* Write/create file (8.3 path components); returns bytes written or negative */
+int  fat32_write_file(const char *path, const void *data, uint32_t size);
+
+/* Flush FAT copies to disk */
+int  fat32_sync(void);
+
 #endif

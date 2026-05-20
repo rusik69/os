@@ -29,7 +29,15 @@
 #include "ata.h"
 #include "fs.h"
 #include "e1000.h"
+#include "virtio_net.h"
 #include "net.h"
+#include "fat32.h"
+#include "shm.h"
+#include "mutex.h"
+#include "ac97.h"
+#include "heap.h"
+#include "pmm.h"
+#include "scheduler.h"
 
 /* ── Test framework ─────────────────────────────────────────── */
 
@@ -245,6 +253,26 @@ static void test_filesystem(void) {
         ASSERT("fs multi write",  fs_write_file(path, "x", 1) == 0);
     }
     t_ok("fs multi-file create/write");
+
+    /* Large file (>32KB) — use heap; 40KB does not fit on 32KB kernel stack */
+    {
+        const uint32_t big_len = 40000;
+        char *big = (char *)kmalloc(big_len);
+        ASSERT("fs big kmalloc", big != NULL);
+        if (big) {
+            for (uint32_t i = 0; i < big_len; i++) big[i] = (char)('A' + (i % 26));
+            ASSERT("fs create big", fs_create("/bigfile", FS_TYPE_FILE) >= 0);
+            ASSERT("fs write big", fs_write_file("/bigfile", big, big_len) == 0);
+            sz = 0;
+            memset(rbuf, 0, sizeof(rbuf));
+            ASSERT("fs read big head", fs_read_file("/bigfile", rbuf, 64, &sz) == 0);
+            uint32_t bigsz = 0;
+            fs_stat("/bigfile", &bigsz, &ftype);
+            ASSERT_EQ("fs big stat size", bigsz, big_len);
+            kfree(big);
+            t_ok("fs large file 40KB");
+        }
+    }
 }
 
 /* ── VFS ─────────────────────────────────────────────────────── */
@@ -371,14 +399,88 @@ static void test_signal(void) {
 
 /* ── Network ─────────────────────────────────────────────────── */
 
+static void test_procfs(void) {
+    char buf[256];
+    uint32_t sz = 0;
+    ASSERT("procfs meminfo read", vfs_read("/proc/meminfo", buf, sizeof(buf) - 1, &sz) == 0);
+    buf[sz] = '\0';
+    ASSERT("procfs MemTotal present", strstr(buf, "MemTotal:") != NULL);
+    ASSERT("procfs MemFree numeric", strstr(buf, "MemFree:") != NULL &&
+           strstr(buf, "unknown") == NULL);
+    ASSERT("procfs HeapUsed present", strstr(buf, "HeapUsed:") != NULL);
+    t_ok("procfs meminfo");
+}
+
+static void test_fork(void) {
+    int child = process_fork();
+    if (child < 0) {
+        t_ok("fork SKIP");
+        return;
+    }
+    if (child == 0) {
+        process_exit_code(0);
+    }
+    t_ok("fork parent");
+}
+
+static void test_shm_mutex(void) {
+    int sid = shm_get(42);
+    ASSERT("shm_get >= 0", sid >= 0);
+    if (sid >= 0) {
+        uint64_t addr = shm_at(sid);
+        ASSERT("shm_at non-zero", addr != 0);
+        shm_dt(sid);
+        shm_free(sid);
+    }
+    int mid = mutex_init();
+    ASSERT("mutex_init >= 0", mid >= 0);
+    if (mid >= 0) {
+        mutex_lock(mid);
+        mutex_unlock(mid);
+        mutex_destroy(mid);
+    }
+    t_ok("shm mutex");
+}
+
+static void test_fat32(void) {
+    if (!ata_is_present()) {
+        t_ok("fat32 SKIP (no ATA)");
+        return;
+    }
+    if (fat32_mount(FAT32_DISK_ATA, 0) != 0) {
+        t_ok("fat32 SKIP (no FAT partition)");
+        return;
+    }
+    ASSERT("fat32 write", fat32_write_file("/testos.txt", "hi", 2) == 2);
+    char buf[8];
+    ASSERT("fat32 read", fat32_read_file("/testos.txt", buf, sizeof(buf)) == 2);
+    buf[2] = '\0';
+    ASSERT_STR("fat32 content", buf, "hi");
+    t_ok("fat32 rw");
+}
+
+static void test_ac97(void) {
+    if (!ac97_present()) {
+        t_ok("ac97 SKIP");
+        return;
+    }
+    static int16_t samples[64];
+    for (int i = 0; i < 64; i++) samples[i] = (int16_t)(i * 100);
+    ac97_play_pcm(samples, sizeof(samples), 8000);
+    t_ok("ac97 play pcm");
+}
+
 static void test_network(void) {
-    if (!e1000_is_present()) {
+    if (!virtio_net_present() && !e1000_is_present()) {
         t_ok("net SKIP (no NIC)");
         return;
     }
 
     uint8_t mac[6];
-    e1000_get_mac(mac);
+    if (virtio_net_present())
+        virtio_net_get_mac(mac);
+    else
+        e1000_get_mac(mac);
     int nonzero = 0;
     for (int i = 0; i < 6; i++) if (mac[i]) { nonzero = 1; break; }
     ASSERT("e1000 MAC non-zero", nonzero);
@@ -406,7 +508,7 @@ static void test_udp_handler(uint32_t src_ip, uint16_t src_port,
 }
 
 static void test_udp_binding(void) {
-    if (!e1000_is_present()) {
+    if (!virtio_net_present() && !e1000_is_present()) {
         t_ok("udp binding SKIP (no NIC)");
         return;
     }
@@ -437,6 +539,11 @@ void test_run_all(void) {
     test_signal();
     test_network();
     test_udp_binding();
+    test_procfs();
+    test_fork();
+    test_shm_mutex();
+    test_fat32();
+    test_ac97();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",

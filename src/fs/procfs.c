@@ -7,6 +7,9 @@
 #include "vfs.h"
 #include "timer.h"
 #include "process.h"
+#include "scheduler.h"
+#include "pmm.h"
+#include "heap.h"
 #include "printf.h"
 #include "string.h"
 #include "types.h"
@@ -29,12 +32,19 @@ static void proc_str(const char *s, char *buf, int *pos, int max) {
 
 /* ─── File content generators ───────────────────────────────────────────────── */
 
+static void proc_kb_line(const char *label, uint64_t bytes, char *buf, int *p, int max) {
+    uint64_t kb = bytes / 1024;
+    proc_str(label, buf, p, max);
+    proc_u64_to_str(kb, buf, p, max);
+    proc_str(" kB\n", buf, p, max);
+}
+
 static int procfs_gen_uptime(char *buf, int max) {
     int p = 0;
     uint64_t secs = timer_get_ticks() / TIMER_FREQ;
     proc_u64_to_str(secs, buf, &p, max);
     proc_str(" ", buf, &p, max);
-    uint64_t idle = 0; /* not tracked */
+    uint64_t idle = scheduler_get_idle_ticks() / TIMER_FREQ;
     proc_u64_to_str(idle, buf, &p, max);
     proc_str("\n", buf, &p, max);
     buf[p] = '\0';
@@ -42,10 +52,14 @@ static int procfs_gen_uptime(char *buf, int max) {
 }
 
 static int procfs_gen_meminfo(char *buf, int max) {
-    /* We report the kernel heap size as MemTotal */
     int p = 0;
-    proc_str("MemTotal:   12288 kB\n", buf, &p, max);
-    proc_str("MemFree:    unknown\n",  buf, &p, max);
+    uint64_t pmm_total = pmm_get_total_frames() * 4096;
+    uint64_t pmm_free  = (pmm_get_total_frames() - pmm_get_used_frames()) * 4096;
+    proc_kb_line("MemTotal:       ", pmm_total, buf, &p, max);
+    proc_kb_line("MemFree:        ", pmm_free, buf, &p, max);
+    proc_kb_line("HeapTotal:      ", heap_get_total(), buf, &p, max);
+    proc_kb_line("HeapUsed:       ", heap_get_used(), buf, &p, max);
+    proc_kb_line("HeapFree:       ", heap_get_free(), buf, &p, max);
     buf[p] = '\0';
     return p;
 }

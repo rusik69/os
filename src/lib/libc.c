@@ -339,6 +339,15 @@ int libc_fat32_file_size(const char *path) {
     return (int)libc_syscall(SYS_FAT_FILE_SIZE, (uint64_t)(uintptr_t)path, 0, 0, 0, 0);
 }
 
+int libc_fat32_write_file(const char *path, const void *data, uint32_t size) {
+    return (int)libc_syscall(SYS_FAT_WRITE_FILE, (uint64_t)(uintptr_t)path,
+                             (uint64_t)(uintptr_t)data, (uint64_t)size, 0, 0);
+}
+
+int libc_fat32_sync(void) {
+    return (int)libc_syscall(SYS_FAT_SYNC, 0, 0, 0, 0, 0);
+}
+
 void libc_shell_history_show(void) {
     (void)libc_syscall(SYS_SHELL_HISTORY_SHOW, 0, 0, 0, 0, 0);
 }
@@ -413,6 +422,14 @@ void libc_vga_clear(void) {
 
 int libc_gui_shell_run(void) {
     return (int)libc_syscall(SYS_GUI_SHELL_RUN, 0, 0, 0, 0, 0);
+}
+
+int libc_ac97_present(void) {
+    return (int)libc_syscall(SYS_AC97_PRESENT, 0, 0, 0, 0, 0);
+}
+
+void libc_ac97_beep(uint32_t frequency, uint32_t duration_ms) {
+    (void)libc_syscall(SYS_AC97_BEEP, (uint64_t)frequency, (uint64_t)duration_ms, 0, 0, 0);
 }
 
 /* ---- Heap: malloc/free/calloc/realloc backed by kernel syscalls ---- */

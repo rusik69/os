@@ -212,6 +212,8 @@ struct libc_user_entry *libc_users_get_table(void);
 
 /* Hardware/audio syscall-backed operations (phase 3 group 2) */
 void libc_speaker_beep(uint32_t frequency, uint32_t duration_ms);
+int  libc_ac97_present(void);
+void libc_ac97_beep(uint32_t frequency, uint32_t duration_ms);
 int libc_rtc_get_time(struct libc_rtc_time *out);
 void libc_acpi_shutdown(void);
 
@@ -230,6 +232,8 @@ int libc_fat32_is_mounted(void);
 int libc_fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max);
 int libc_fat32_read_file(const char *path, void *buf, uint32_t max_size);
 int libc_fat32_file_size(const char *path);
+int libc_fat32_write_file(const char *path, const void *data, uint32_t size);
+int libc_fat32_sync(void);
 
 /* Shell-core syscall-backed operations (phase 3 group 3b shell linkage slice) */
 void libc_shell_history_show(void);
@@ -464,6 +468,12 @@ static inline int fat32_read_file(const char *path, void *buf, uint32_t max_size
 }
 static inline int fat32_file_size(const char *path) {
     return libc_fat32_file_size(path);
+}
+static inline int fat32_write_file(const char *path, const void *data, uint32_t size) {
+    return libc_fat32_write_file(path, data, size);
+}
+static inline int fat32_sync(void) {
+    return libc_fat32_sync();
 }
 static inline void vga_set_color(uint8_t fg, uint8_t bg) {
     libc_vga_set_color(fg, bg);

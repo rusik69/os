@@ -243,6 +243,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[OK] e1000 NIC: %x:%x:%x:%x:%x:%x\n",
                 (uint64_t)mac[0], (uint64_t)mac[1], (uint64_t)mac[2],
                 (uint64_t)mac[3], (uint64_t)mac[4], (uint64_t)mac[5]);
+    } else {
+        kprintf("[--] e1000 NIC not found\n");
+    }
+
+    if (virtio_net_present() || e1000_is_present()) {
         net_init();
         kprintf("[..] DHCP discovering...\n");
         net_dhcp_discover();
@@ -269,7 +274,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     process_create(test_task_a, "task_a");
     process_create(test_task_b, "task_b");
     process_create(shell_task, "shell");
-    if (e1000_is_present()) {
+    if (virtio_net_present() || e1000_is_present()) {
         process_create(net_task, "netd");
         process_create(httpd_task, "httpd");
     }

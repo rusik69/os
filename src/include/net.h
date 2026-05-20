@@ -109,6 +109,8 @@ struct tcp_pseudo {
 
 void net_init(void);
 void net_poll(void);
+void net_rx_signal(void);
+int  net_rx_pending(void);
 uint16_t net_checksum(const void *data, int len);
 void net_get_ip(uint8_t *ip);
 uint32_t net_get_gateway(void);

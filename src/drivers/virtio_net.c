@@ -90,11 +90,26 @@ struct virtio_net_hdr {
 static int      vnet_present = 0;
 static uint16_t vnet_iobase  = 0;
 
-/* TX virtqueue (queue 1) — statically allocated, 4KB aligned */
+#define RX_QUEUE_IDX 0
 #define TX_QUEUE_IDX 1
+static uint8_t  __attribute__((aligned(4096))) rx_queue_mem[4096];
 static uint8_t  __attribute__((aligned(4096))) tx_queue_mem[4096];
+static uint8_t  rx_pkt_bufs[VRING_SIZE][2048];
+static uint16_t rx_last_used = 0;
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
+static struct vring_avail *vring_avail_ptr(void *base) {
+    return (struct vring_avail *)((uint8_t *)base +
+                                  sizeof(struct vring_desc) * VRING_SIZE);
+}
+
+static struct vring_used *vring_used_ptr(void *base) {
+    size_t off = sizeof(struct vring_desc) * VRING_SIZE;
+    off += sizeof(uint16_t) * 2 + (size_t)VRING_SIZE * sizeof(uint16_t);
+    off = (off + 3) & ~3u;
+    return (struct vring_used *)((uint8_t *)base + off);
+}
+
 static inline void vio_outb(uint8_t off, uint8_t v)  { outb(vnet_iobase + off, v); }
 static inline void vio_outw(uint8_t off, uint16_t v) { outw(vnet_iobase + off, v); }
 static inline void vio_outl(uint8_t off, uint32_t v) {
@@ -105,6 +120,12 @@ static inline void vio_outl(uint8_t off, uint32_t v) {
 }
 static inline uint8_t  vio_inb(uint8_t off)  { return inb(vnet_iobase + off); }
 static inline uint16_t vio_inw(uint8_t off)  { return inw(vnet_iobase + off); }
+static inline uint32_t vio_inl(uint8_t off) {
+    return (uint32_t)inb(vnet_iobase + off)
+         | ((uint32_t)inb(vnet_iobase + off + 1) << 8)
+         | ((uint32_t)inb(vnet_iobase + off + 2) << 16)
+         | ((uint32_t)inb(vnet_iobase + off + 3) << 24);
+}
 
 /* ── Init ────────────────────────────────────────────────────────── */
 int virtio_net_init(void) {
@@ -122,20 +143,52 @@ int virtio_net_init(void) {
     vio_outb(VIRTIO_PCI_STATUS, 0);
     /* Acknowledge & driver */
     vio_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-    /* Accept all features (we don't negotiate selectively) */
-    vio_outl(VIRTIO_PCI_GUEST_FEAT, vio_inb(VIRTIO_PCI_HOST_FEAT));
+    /* Accept host features except mergeable RX buffers (simpler header layout) */
+    uint32_t host_feat = vio_inl(VIRTIO_PCI_HOST_FEAT);
+    host_feat &= ~(1u << 15);
+    vio_outl(VIRTIO_PCI_GUEST_FEAT, host_feat);
 
-    /* Set up TX queue (index 1) */
+    /* RX queue (0): populate ring memory before publishing PFN */
+    vio_outw(VIRTIO_PCI_QUEUE_SEL, RX_QUEUE_IDX);
+    {
+        struct vring_desc  *descs = (struct vring_desc  *)rx_queue_mem;
+        struct vring_avail *avail = vring_avail_ptr(rx_queue_mem);
+        struct vring_used  *used  = vring_used_ptr(rx_queue_mem);
+        avail->flags = 0;
+        avail->idx = 0;
+        used->flags = 0;
+        used->idx = 0;
+        for (int i = 0; i < VRING_SIZE; i++) {
+            descs[i].addr  = VIRT_TO_PHYS(rx_pkt_bufs[i]);
+            descs[i].len   = sizeof(rx_pkt_bufs[0]);
+            descs[i].flags = VRING_DESC_F_WRITE;
+            descs[i].next  = 0;
+            uint16_t slot = avail->idx & (VRING_SIZE - 1);
+            avail->ring[slot] = (uint16_t)i;
+            avail->idx++;
+        }
+        rx_last_used = 0;
+    }
+    vio_outl(VIRTIO_PCI_QUEUE_PFN,
+             (uint32_t)(VIRT_TO_PHYS(rx_queue_mem) >> 12));
+
+    /* TX queue (1) */
     vio_outw(VIRTIO_PCI_QUEUE_SEL, TX_QUEUE_IDX);
-    uint16_t qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
-    if (qsz == 0) qsz = VRING_SIZE;
-    /* Write queue PFN (4096-byte pages) */
-    uint64_t phys = (uint64_t)(uintptr_t)tx_queue_mem;
-    vio_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
+    {
+        struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
+        struct vring_used  *used  = vring_used_ptr(tx_queue_mem);
+        avail->flags = 0;
+        avail->idx = 0;
+        used->flags = 0;
+        used->idx = 0;
+    }
+    vio_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(VIRT_TO_PHYS(tx_queue_mem) >> 12));
 
-    /* Driver OK */
+    /* Driver OK, then kick RX so the device picks up buffers */
     vio_outb(VIRTIO_PCI_STATUS,
              VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
+    vio_outw(VIRTIO_PCI_QUEUE_SEL, RX_QUEUE_IDX);
+    vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
 
     vnet_present = 1;
     kprintf("virtio-net: initialized (iobase=0x%x)\n", (uint64_t)vnet_iobase);
@@ -148,18 +201,17 @@ void virtio_net_send(const uint8_t *data, uint32_t len) {
 
     /* Build descriptor ring in tx_queue_mem */
     struct vring_desc  *descs = (struct vring_desc  *)tx_queue_mem;
-    struct vring_avail *avail = (struct vring_avail *)(tx_queue_mem +
-                                 sizeof(struct vring_desc) * VRING_SIZE);
+    struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
 
     /* Descriptor 0: virtio-net header */
     static struct virtio_net_hdr hdr;
     memset(&hdr, 0, sizeof(hdr));
-    descs[0].addr  = (uint64_t)(uintptr_t)&hdr;
+    descs[0].addr  = VIRT_TO_PHYS(&hdr);
     descs[0].len   = sizeof(hdr);
     descs[0].flags = VRING_DESC_F_NEXT;
     descs[0].next  = 1;
     /* Descriptor 1: packet payload */
-    descs[1].addr  = (uint64_t)(uintptr_t)data;
+    descs[1].addr  = VIRT_TO_PHYS(data);
     descs[1].len   = len;
     descs[1].flags = 0;
     descs[1].next  = 0;
@@ -173,6 +225,44 @@ void virtio_net_send(const uint8_t *data, uint32_t len) {
 
     /* Notify device */
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, TX_QUEUE_IDX);
+}
+
+int virtio_net_receive(void *buf, uint16_t max_len) {
+    if (!vnet_present) return -1;
+
+    struct vring_used *used = vring_used_ptr(rx_queue_mem);
+    struct vring_avail *avail = vring_avail_ptr(rx_queue_mem);
+
+    if (used->idx == rx_last_used) return 0;
+
+    __asm__ volatile("" ::: "memory");
+    uint16_t uidx = rx_last_used & (VRING_SIZE - 1);
+    uint32_t id = used->ring[uidx].id;
+    uint32_t total = used->ring[uidx].len;
+    rx_last_used++;
+
+    uint32_t skip = sizeof(struct virtio_net_hdr);
+    if (total <= skip) return 0;
+    uint32_t plen = total - skip;
+    if (plen > max_len) plen = max_len;
+    memcpy(buf, rx_pkt_bufs[id] + skip, plen);
+
+    struct vring_desc *descs = (struct vring_desc *)rx_queue_mem;
+    descs[id].addr  = VIRT_TO_PHYS(rx_pkt_bufs[id]);
+    descs[id].len   = sizeof(rx_pkt_bufs[0]);
+    descs[id].flags = VRING_DESC_F_WRITE;
+    uint16_t slot = avail->idx & (VRING_SIZE - 1);
+    avail->ring[slot] = (uint16_t)id;
+    __asm__ volatile("" ::: "memory");
+    avail->idx++;
+    __asm__ volatile("" ::: "memory");
+    vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
+    return (int)plen;
+}
+
+void virtio_net_get_mac(uint8_t *mac) {
+    mac[0] = 0x52; mac[1] = 0x54; mac[2] = 0x00;
+    mac[3] = 0x12; mac[4] = 0x34; mac[5] = 0x56;
 }
 
 int virtio_net_present(void) { return vnet_present; }

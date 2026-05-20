@@ -35,6 +35,7 @@
 #include "heap.h"
 #include "gui_shell.h"
 #include "shm.h"
+#include "ac97.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 #define SYS_FD_MAX  16
@@ -225,6 +226,8 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3 * FAT32_MAX_NAME);
         case SYS_FAT_READ_FILE:
             return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3);
+        case SYS_FAT_WRITE_FILE:
+            return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
         case SYS_SHELL_READ_LINE:
             return syscall_user_write_ok(a1, a2);
         case SYS_SHELL_VAR_SET:
@@ -1162,6 +1165,14 @@ static uint64_t sys_fat_file_size(uint64_t path_addr) {
     return (uint64_t)fat32_file_size((const char *)path_addr);
 }
 
+static uint64_t sys_fat_write_file(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
+    return (uint64_t)fat32_write_file((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+}
+
+static uint64_t sys_fat_sync(void) {
+    return (uint64_t)fat32_sync();
+}
+
 static uint64_t sys_shell_history_show(void) {
     shell_history_show_entries();
     return 0;
@@ -1560,6 +1571,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FAT_LIST_DIR:  return sys_fat_list_dir(a1, a2, a3);
         case SYS_FAT_READ_FILE: return sys_fat_read_file(a1, a2, a3);
         case SYS_FAT_FILE_SIZE: return sys_fat_file_size(a1);
+        case SYS_FAT_WRITE_FILE: return sys_fat_write_file(a1, a2, a3);
+        case SYS_FAT_SYNC: return sys_fat_sync();
         case SYS_SHELL_HISTORY_SHOW: return sys_shell_history_show();
         case SYS_SHELL_READ_LINE: return sys_shell_read_line(a1, a2);
         case SYS_SHELL_VAR_SET: return sys_shell_var_set(a1, a2);
@@ -1576,6 +1589,21 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
         case SYS_GUI_SHELL_RUN: return sys_gui_shell_run();
+        case SYS_AC97_PRESENT: return ac97_present() ? 1 : 0;
+        case SYS_AC97_BEEP: {
+            if (!ac97_present()) return (uint64_t)-1;
+            uint32_t freq = (uint32_t)a1;
+            uint32_t ms   = (uint32_t)a2;
+            if (freq < 100) freq = 440;
+            if (ms == 0) ms = 100;
+            uint32_t n = (freq * ms) / 1000;
+            if (n > 512) n = 512;
+            static int16_t pcm[512];
+            for (uint32_t i = 0; i < n; i++)
+                pcm[i] = (int16_t)(2000 * ((i & 1) ? 1 : -1));
+            ac97_play_pcm(pcm, n * sizeof(int16_t), freq);
+            return 0;
+        }
         case SYS_MALLOC:  return sys_malloc(a1);
         case SYS_FREE:    return sys_free(a1);
         case SYS_REALLOC: return sys_realloc(a1, a2);

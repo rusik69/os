@@ -48,9 +48,10 @@ make e2e
 - **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
 - **Shell** — 60+ built-in commands, command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
-  serial (COM1), ATA/IDE disk, PCI bus, Intel e1000 NIC, PC speaker, ACPI, Intel GPU detection
+  serial (COM1), ATA/AHCI/USB block devices, PCI bus, e1000 and virtio-net,
+  virtio-blk, USB EHCI/MSC, AC97 audio, PC speaker, ACPI, Intel GPU detection
 - **Block device abstraction** — ATA/AHCI registered behind a shared sector I/O layer
-- **FAT32 mount targets** — `fat mount ata|ahci|usb` (`usb` path is integration groundwork)
+- **FAT32 mount** — `fat mount ata|ahci|usb` with read/write (`fat write`, `fat sync`)
 - **Multiboot graphics** — Framebuffer support with 1024×768 RGB rendering
 - **GUI framework** — Window system, widgets (button, textbox, label), event handling, mouse cursor
 - **CI** — GitHub Actions with unit tests and full E2E test suite
@@ -132,11 +133,11 @@ os/
 │   │   ├── string.c       String/memory utilities
 │   │   └── printf.c       kprintf with output hook
 │   ├── test/
-│   │   └── test.c         In-kernel test suite (95 tests)
+│   │   └── test.c         In-kernel unit test suite
 │   └── include/           Header files
 ├── tests/
 │   ├── e2e.sh             E2E test harness (QEMU boot + telnet)
-│   ├── e2e.py             E2E test suite (110+ tests via telnet)
+│   ├── e2e.py             E2E test suite (~105 groups via telnet)
 │   └── run_tests.sh       In-kernel test runner
 └── .github/workflows/
     └── ci.yml             GitHub Actions CI pipeline
@@ -279,6 +280,7 @@ Lives in the identity-mapped region immediately after the kernel image.
 **API:**
 - `kmalloc(size)` — allocate; splits oversized blocks
 - `kfree(ptr)` — deallocate; coalesces with next free block
+- `heap_get_total()` / `heap_get_used()` / `heap_get_free()` — heap statistics
 
 ---
 
@@ -515,22 +517,23 @@ Uses the `SYSCALL` / `SYSRET` mechanism (AMD64 fast syscall):
 ## Filesystem — SMFS
 
 **SMFS** (Simple Micro File System) is a custom on-disk format stored on
-the ATA disk image.
+the ATA disk image. Also supported: **procfs** (`/proc`), **devfs** (`/dev`),
+and read/write **FAT32** via `fat mount`.
 
 ### Disk Layout
 
 | Sector(s) | Content |
 |-----------|---------|
 | 0 | Superblock (512 B) |
-| 1–33 | Inode table (128 inodes × 64 B = 8192 B, 16 sectors) |
-| 34+ | Data blocks (allocated on demand) |
+| 1–N | Inode table (256 inodes, size depends on `FS_MAX_BLOCKS`) |
+| N+1+ | Data blocks (allocated on demand) |
 
 ### Superblock
 
 ```c
 struct fs_super {           // 512 bytes total
-    uint32_t magic;         // 0x53464D53 ("SMFS")
-    uint32_t num_inodes;    // 128
+    uint32_t magic;         // 0x53464D57 ("SMFT" v5)
+    uint32_t num_inodes;    // 256
     uint32_t num_data_blocks;
     uint32_t next_free_block;  // next sector to allocate
     uint8_t  padding[496];
@@ -540,13 +543,14 @@ struct fs_super {           // 512 bytes total
 ### Inode
 
 ```c
-struct fs_inode {           // 64 bytes, packed
-    uint8_t  type;          // 0=free, 1=file, 2=directory
-    uint8_t  reserved;
-    uint16_t parent;        // parent inode index
-    uint32_t size;          // file size in bytes
-    uint32_t blocks[8];     // up to 8 sector numbers
-    char     name[28];      // null-terminated filename
+struct fs_inode {           // packed; includes uid/gid/mode/mtime
+    uint8_t  type;          // 0=free, 1=file, 2=dir, 3=symlink
+    uint16_t parent;
+    uint32_t size;
+    uint32_t blocks[256];   // up to 256 sector numbers (128 KB/file)
+    uint16_t uid, gid, mode;
+    uint32_t mtime;
+    char     name[28];
 };
 ```
 
@@ -554,8 +558,8 @@ struct fs_inode {           // 64 bytes, packed
 
 | Limit | Value |
 |-------|-------|
-| Max files/dirs | 128 |
-| Max file size | 4096 B (8 blocks × 512 B) |
+| Max files/dirs | 256 |
+| Max file size | 128 KB (256 blocks × 512 B) |
 | Block size | 512 B (= ATA sector) |
 | Max filename | 27 chars |
 | Max nesting | Arbitrary (parent pointer chain) |

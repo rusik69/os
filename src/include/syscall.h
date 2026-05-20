@@ -190,6 +190,10 @@
 #define SYS_SETPGID         221  /* set process group ID */
 #define SYS_GETPGID         222  /* get process group ID */
 #define SYS_KILLPG          223  /* send signal to process group */
+#define SYS_AC97_PRESENT    224  /* returns 1 if AC97 available */
+#define SYS_AC97_BEEP       225  /* play square-wave PCM (freq_hz, duration_ms) */
+#define SYS_FAT_WRITE_FILE  226  /* write/create file on mounted FAT volume */
+#define SYS_FAT_SYNC        227  /* flush FAT tables to disk */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the

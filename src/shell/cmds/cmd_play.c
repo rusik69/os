@@ -25,7 +25,11 @@ void cmd_play(const char *args) {
         int ni = 0;
         while (*args && *args != ' ' && ni < 7) note[ni++] = *args++;
         note[ni] = '\0';
-        speaker_beep(note_freq(note), 200);
+        uint32_t f = note_freq(note);
+        if (libc_ac97_present())
+            libc_ac97_beep(f, 200);
+        else
+            libc_speaker_beep(f, 200);
         uint64_t start = libc_uptime_ticks();
         while (libc_uptime_ticks() - start < (uint64_t)TIMER_FREQ / 20);
     }

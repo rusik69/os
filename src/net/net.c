@@ -2,6 +2,7 @@
 
 #include "net_internal.h"
 #include "e1000.h"
+#include "virtio_net.h"
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
@@ -33,6 +34,28 @@ int net_num_udp_bindings = 0;
 
 /* Packet receive buffer */
 static uint8_t pkt_buf[2048];
+static volatile int net_rx_flag = 0;
+
+void net_rx_signal(void) { net_rx_flag = 1; }
+int  net_rx_pending(void) { return net_rx_flag; }
+
+static int net_link_send(const void *data, uint16_t len) {
+    if (virtio_net_present()) {
+        virtio_net_send((const uint8_t *)data, len);
+        return 0;
+    }
+    return e1000_send(data, len);
+}
+
+static int net_link_recv(void *buf, uint16_t max_len) {
+    if (e1000_is_present()) {
+        int n = e1000_receive(buf, max_len);
+        if (n != 0) return n;
+    }
+    if (virtio_net_present())
+        return virtio_net_receive(buf, max_len);
+    return 0;
+}
 
 /* ICMP ping state */
 static volatile int ping_reply_received = 0;
@@ -159,7 +182,7 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
     memcpy(eth->src, net_our_mac, 6);
     eth->type = htons(type);
     memcpy(frame + sizeof(struct eth_header), payload, len);
-    e1000_send(frame, sizeof(struct eth_header) + len);
+    net_link_send(frame, sizeof(struct eth_header) + len);
 }
 
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
@@ -265,6 +288,81 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
     }
 }
 
+/* --- IPv4 fragment reassembly (receive path) --- */
+
+#define IP_FRAG_SLOTS 4
+struct ip_frag_slot {
+    uint16_t id;
+    uint32_t src;
+    uint32_t dst;
+    uint8_t  proto;
+    uint8_t  buf[2048];
+    uint16_t len;
+    uint16_t expect_off;
+    int      valid;
+};
+
+static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
+
+static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, uint8_t proto) {
+    for (int i = 0; i < IP_FRAG_SLOTS; i++) {
+        if (ip_frags[i].valid && ip_frags[i].id == id &&
+            ip_frags[i].src == src && ip_frags[i].dst == dst && ip_frags[i].proto == proto)
+            return &ip_frags[i];
+    }
+    for (int i = 0; i < IP_FRAG_SLOTS; i++) {
+        if (!ip_frags[i].valid) {
+            ip_frags[i].valid = 1;
+            ip_frags[i].id = id;
+            ip_frags[i].src = src;
+            ip_frags[i].dst = dst;
+            ip_frags[i].proto = proto;
+            ip_frags[i].len = 0;
+            ip_frags[i].expect_off = 0;
+            return &ip_frags[i];
+        }
+    }
+    return NULL;
+}
+
+static void handle_ip(const uint8_t *data, uint16_t len);
+
+static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_t len) {
+    uint16_t flags_frag = ntohs(ip->flags_frag);
+    uint16_t frag_off = (flags_frag & 0x1FFF) * 8;
+    int more = (flags_frag & 0x2000) != 0;
+
+    if (frag_off == 0 && !more)
+        return 0; /* not fragmented */
+
+    uint32_t src = ntohl(ip->src_ip);
+    uint32_t dst = ntohl(ip->dst_ip);
+    struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst, ip->protocol);
+    if (!slot) return -1;
+
+    uint16_t ihl = (ip->version_ihl & 0xF) * 4;
+    uint16_t part = len - ihl;
+    if (frag_off + part > sizeof(slot->buf)) return -1;
+    memcpy(slot->buf + frag_off, data + ihl, part);
+    if (frag_off + part > slot->len) slot->len = frag_off + part;
+
+    if (more) return 1;
+
+    slot->valid = 0;
+    struct ip_header reasm;
+    memcpy(&reasm, ip, sizeof(reasm));
+    reasm.flags_frag = 0;
+    reasm.total_len = htons(sizeof(struct ip_header) + slot->len);
+    reasm.checksum = 0;
+    uint8_t pkt[2048];
+    memcpy(pkt, &reasm, ihl);
+    memcpy(pkt + ihl, slot->buf, slot->len);
+    reasm.checksum = net_checksum(pkt, ihl);
+    memcpy(pkt, &reasm, ihl);
+    handle_ip(pkt, ihl + slot->len);
+    return 1;
+}
+
 /* --- IP dispatcher --- */
 
 static void handle_ip(const uint8_t *data, uint16_t len) {
@@ -276,6 +374,10 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
 
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     if (ihl < 20 || ihl > total) return;
+
+    if (handle_ip_fragment(ip, data, len) != 0)
+        return;
+
     const uint8_t *payload = data + ihl;
     uint16_t payload_len = total - ihl;
 
@@ -323,7 +425,8 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
-    int len = e1000_receive(pkt_buf, sizeof(pkt_buf));
+    net_rx_flag = 0;
+    int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
     if (len > 0) {
         if (len >= (int)sizeof(struct eth_header)) {
             struct eth_header *eth = (struct eth_header *)pkt_buf;
@@ -360,7 +463,11 @@ void net_init(void) {
     net_our_ip = 0;
     net_gateway_ip = 0;
     net_subnet_mask = 0;
-    e1000_get_mac(net_our_mac);
+    if (virtio_net_present())
+        virtio_net_get_mac(net_our_mac);
+    else
+        e1000_get_mac(net_our_mac);
+    memset(ip_frags, 0, sizeof(ip_frags));
     memset(tcp_conns, 0, sizeof(tcp_conns));
     memset(net_listeners, 0, sizeof(net_listeners));
     memset(net_arp_cache, 0, sizeof(net_arp_cache));

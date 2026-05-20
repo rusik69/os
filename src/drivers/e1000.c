@@ -4,6 +4,9 @@
 #include "vmm.h"
 #include "string.h"
 #include "printf.h"
+#include "idt.h"
+#include "pic.h"
+#include "net.h"
 
 /* E1000 register offsets */
 #define REG_CTRL    0x0000
@@ -89,6 +92,7 @@ static uint8_t mac_addr[6];
 static int nic_present = 0;
 static int rx_cur = 0;
 static int tx_cur = 0;
+static uint8_t e1000_irq_line = 0;
 
 static void e1000_write(uint32_t reg, uint32_t val) {
     *(volatile uint32_t *)(mmio_base + reg) = val;
@@ -96,6 +100,13 @@ static void e1000_write(uint32_t reg, uint32_t val) {
 
 static uint32_t e1000_read(uint32_t reg) {
     return *(volatile uint32_t *)(mmio_base + reg);
+}
+
+static void e1000_irq_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    e1000_read(REG_ICR);
+    pic_eoi(e1000_irq_line);
+    net_rx_signal();
 }
 
 static void e1000_read_mac(void) {
@@ -172,9 +183,13 @@ int e1000_init(void) {
         if (e1000_read(REG_STATUS) & 0x02) break;
     }
 
-    /* Disable interrupts (we poll) */
+    /* Enable RX interrupt; clear pending */
     e1000_write(REG_IMC, 0xFFFFFFFF);
     e1000_read(REG_ICR);
+    e1000_write(REG_IMS, 0x80); /* RXT0 */
+    e1000_irq_line = dev.irq;
+    idt_register_handler(32 + dev.irq, e1000_irq_handler);
+    pic_unmask(dev.irq);
 
     /* Clear multicast table */
     for (int i = 0; i < 128; i++)

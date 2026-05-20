@@ -9,10 +9,12 @@
  *   fat ls [path]           - list directory
  *   fat cat <path>          - dump file contents
  *   fat stat <path>         - show file size
+ *   fat write <path> <text> - create/overwrite file on FAT volume
+ *   fat sync                - flush FAT tables
  */
 void cmd_fat(const char *args) {
     if (!args || !*args) {
-        kprintf("Usage: fat mount [ata|ahci|usb] | ls [path] | cat <path> | stat <path>\n");
+        kprintf("Usage: fat mount [ata|ahci|usb] | ls [path] | cat <path> | stat <path> | write <path> <text> | sync\n");
         kprintf("  mounted: %s\n", fat32_is_mounted() ? "yes" : "no");
         return;
     }
@@ -84,6 +86,36 @@ void cmd_fat(const char *args) {
         int sz = fat32_file_size(path);
         if (sz < 0) { kprintf("fat stat: not found\n"); return; }
         kprintf("%s: %d bytes\n", path, (uint64_t)(uint32_t)sz);
+        return;
+    }
+
+    /* ── write ── */
+    if (strncmp(args, "write", 5) == 0) {
+        const char *rest = args + 5;
+        while (*rest == ' ') rest++;
+        const char *sp = rest;
+        while (*sp && *sp != ' ') sp++;
+        if (!*rest || sp == rest) {
+            kprintf("Usage: fat write <path> <text>\n");
+            return;
+        }
+        char path[FAT32_MAX_NAME];
+        int plen = (int)(sp - rest);
+        if (plen >= FAT32_MAX_NAME) plen = FAT32_MAX_NAME - 1;
+        memcpy(path, rest, plen);
+        path[plen] = '\0';
+        while (*sp == ' ') sp++;
+        if (!*sp) { kprintf("Usage: fat write <path> <text>\n"); return; }
+        int n = fat32_write_file(path, sp, (uint32_t)strlen(sp));
+        if (n < 0) kprintf("fat write failed: %d\n", (uint64_t)(-n));
+        else kprintf("wrote %d bytes to %s\n", (uint64_t)(uint32_t)n, path);
+        return;
+    }
+
+    /* ── sync ── */
+    if (strncmp(args, "sync", 4) == 0) {
+        if (fat32_sync() == 0) kprintf("FAT synced\n");
+        else kprintf("fat sync failed\n");
         return;
     }
 

@@ -97,6 +97,31 @@ void *kmalloc(size_t size) {
     return (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
 }
 
+static uint64_t heap_walk_used(void) {
+    uint64_t used = 0;
+    struct heap_block *block = heap_start_block;
+    while (block) {
+        if (!block->free)
+            used += block->size + BLOCK_HDR_SIZE;
+        block = block->next;
+    }
+    return used;
+}
+
+uint64_t heap_get_total(void) {
+    return HEAP_MAX_SIZE;
+}
+
+uint64_t heap_get_used(void) {
+    return heap_walk_used();
+}
+
+uint64_t heap_get_free(void) {
+    uint64_t used = heap_walk_used();
+    if (used >= HEAP_MAX_SIZE) return 0;
+    return HEAP_MAX_SIZE - used;
+}
+
 void kfree(void *ptr) {
     if (!ptr) return;
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);

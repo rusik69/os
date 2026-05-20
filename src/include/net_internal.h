@@ -28,7 +28,7 @@ uint8_t *arp_cache_lookup(uint32_t ip);
 void     arp_resolve_gateway(void);
 
 /* TCP connection table */
-#define MAX_TCP_CONNS 8
+#define MAX_TCP_CONNS 16
 
 enum tcp_state {
     TCP_CLOSED = 0,

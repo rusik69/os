@@ -56,6 +56,7 @@ C_SRCS = src/kernel/kernel.c \
          src/process/signal.c \
          src/process/users.c \
          src/shell/shell.c \
+         src/shell/shell_cmd_table.c \
          src/shell/shell_vars.c \
          src/shell/editor.c \
          src/shell/script.c \
