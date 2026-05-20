@@ -13,6 +13,8 @@
 #define SIGTSTP  20
 #define SIGTTIN  21
 #define SIGTTOU  22
+#define SIGPIPE  13
+#define SIGCHLD  17
 
 #define SIG_MAX  32
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
@@ -30,5 +32,9 @@ void signal_check(void);
 
 /* Register a signal handler for the current process */
 void signal_register(int signum, signal_handler_t handler);
+
+/* Mask/unmask signals for the current process (1-bit per signal number) */
+void signal_mask(uint32_t sigmask);
+void signal_unmask(uint32_t sigmask);
 
 #endif

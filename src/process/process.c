@@ -3,6 +3,7 @@
 #include "string.h"
 #include "scheduler.h"
 #include "timer.h"
+#include "signal.h"
 #include "syscall.h"
 #include "vmm.h"
 
@@ -136,6 +137,7 @@ void process_init(void) {
     process_table[0].state = PROCESS_RUNNING;
     process_table[0].name = "idle";
     process_table[0].pending_signals = 0;
+    process_table[0].sig_mask = 0;
     process_table[0].is_user = 0;
     process_table[0].pml4 = NULL;
     process_table[0].parent_pid = 0;
@@ -174,6 +176,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->stack_top = (uint64_t)(stack + KERNEL_STACK_SIZE);
     proc->next = NULL;
     proc->pending_signals = 0;
+    proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
     proc->is_user = 0;
     proc->user_entry = 0;
@@ -243,6 +246,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->stack_top = (uint64_t)(stack + KERNEL_STACK_SIZE);
     proc->next = NULL;
     proc->pending_signals = 0;
+    proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
     proc->is_user = 1;
     proc->user_entry = entry;

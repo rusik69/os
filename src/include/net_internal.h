@@ -54,6 +54,13 @@ struct tcp_conn {
     /* Congestion control (slow start / AIMD) */
     uint32_t cwnd;      /* congestion window in segments */
     uint32_t ssthresh;  /* slow-start threshold */
+    /* Retransmission (simple stop-and-wait per-connection) */
+    uint8_t  tx_unacked_buf[4096];  /* copy of last sent data awaiting ACK */
+    uint16_t tx_unacked_len;        /* bytes currently unacked (0 = nothing pending) */
+    uint32_t tx_unacked_seq;        /* seq number of first unacked byte */
+    uint64_t last_send_tick;        /* tick when segment was last sent/retransmitted */
+    uint8_t  retrans_count;         /* number of retransmit attempts so far */
+    uint16_t rto;                   /* retransmit timeout in ticks (100 = 1 s) */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
@@ -95,5 +102,6 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
 
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
+void net_tcp_check_retransmit(void);
 
 #endif

@@ -11,7 +11,23 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
-    if (signum == SIGKILL || signum == SIGTERM) {
+    /* SIGKILL cannot be masked or ignored — immediate terminate */
+    if (signum == SIGKILL) {
+        p->state = PROCESS_ZOMBIE;
+        p->is_suspended = 0;
+        p->sleep_until = 0;
+        scheduler_remove(p);
+        if (p == process_get_current()) scheduler_yield();
+        return 0;
+    }
+
+    /* If signal is masked, just set the pending bit — deliver when unmasked */
+    if (p->sig_mask & (1u << signum)) {
+        p->pending_signals |= (1u << signum);
+        return 0;
+    }
+
+    if (signum == SIGTERM) {
         p->state = PROCESS_ZOMBIE;
         p->is_suspended = 0;
         p->sleep_until = 0;
@@ -58,6 +74,9 @@ void signal_check(void) {
     for (int sig = 1; sig < SIG_MAX; sig++) {
         if (!(p->pending_signals & (1u << sig))) continue;
 
+        /* Skip masked signals — leave them pending until unmasked */
+        if (p->sig_mask & (1u << sig)) continue;
+
         p->pending_signals &= ~(1u << sig);
 
         signal_handler_t handler = p->sig_handlers[sig];
@@ -77,9 +96,13 @@ void signal_check(void) {
         switch (sig) {
             case SIGKILL:
             case SIGTERM:
+            case SIGPIPE:
                 p->state = PROCESS_ZOMBIE;
                 scheduler_remove(p);
                 scheduler_yield();
+                break;
+            case SIGCHLD:
+                /* Default for SIGCHLD is to ignore */
                 break;
             case SIGSTOP:
             case SIGTSTP:
@@ -108,4 +131,16 @@ void signal_register(int signum, signal_handler_t handler) {
     struct process *p = process_get_current();
     if (!p) return;
     p->sig_handlers[signum] = handler;
+}
+
+void signal_mask(uint32_t sigmask) {
+    struct process *p = process_get_current();
+    if (!p) return;
+    p->sig_mask |= sigmask;
+}
+
+void signal_unmask(uint32_t sigmask) {
+    struct process *p = process_get_current();
+    if (!p) return;
+    p->sig_mask &= ~sigmask;
 }

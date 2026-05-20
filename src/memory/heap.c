@@ -16,6 +16,7 @@ struct heap_block {
     size_t size;
     int    free;
     struct heap_block *next;
+    struct heap_block *prev;
 };
 
 #define BLOCK_HDR_SIZE sizeof(struct heap_block)
@@ -48,6 +49,7 @@ void heap_init(void) {
     heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
     heap_start_block->free  = 1;
     heap_start_block->next  = NULL;
+    heap_start_block->prev  = NULL;
 }
 
 void *kmalloc(size_t size) {
@@ -66,6 +68,8 @@ void *kmalloc(size_t size) {
                 new_block->size = block->size - size - BLOCK_HDR_SIZE;
                 new_block->free = 1;
                 new_block->next = block->next;
+                new_block->prev = block;
+                if (new_block->next) new_block->next->prev = new_block;
                 block->next = new_block;
                 block->size = size;
             }
@@ -85,6 +89,7 @@ void *kmalloc(size_t size) {
     new_block->size = size;
     new_block->free = 0;
     new_block->next = NULL;
+    new_block->prev = block;
 
     if (block) block->next = new_block;
     else heap_start_block = new_block;
@@ -97,9 +102,19 @@ void kfree(void *ptr) {
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
     block->free = 1;
 
-    /* Coalesce with next block */
+    /* Forward coalesce with next block */
     if (block->next && block->next->free) {
         block->size += BLOCK_HDR_SIZE + block->next->size;
-        block->next = block->next->next;
+        struct heap_block *old_next = block->next->next;
+        block->next = old_next;
+        if (old_next) old_next->prev = block;
+    }
+
+    /* Backward coalesce with previous block */
+    if (block->prev && block->prev->free) {
+        struct heap_block *prev = block->prev;
+        prev->size += BLOCK_HDR_SIZE + block->size;
+        prev->next = block->next;
+        if (block->next) block->next->prev = prev;
     }
 }

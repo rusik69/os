@@ -47,6 +47,7 @@ struct process {
     const char *name;
     /* Signal state */
     uint32_t pending_signals;               /* bitmask of pending signals */
+    uint32_t sig_mask;                      /* bitmask of blocked (masked) signals */
     signal_handler_t sig_handlers[PROCESS_SIG_MAX]; /* per-signal handler */
     /* Ring 3 support */
     int      is_user;         /* 1 = runs in ring 3, 0 = kernel thread */

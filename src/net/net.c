@@ -323,6 +323,14 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
+    /* Periodic TCP retransmit check — safe here (process context, not ISR) */
+    static uint64_t last_retransmit_tick = 0;
+    uint64_t now = timer_get_ticks();
+    if (now - last_retransmit_tick >= 10) {
+        last_retransmit_tick = now;
+        net_tcp_check_retransmit();
+    }
+
     int len = e1000_receive(pkt_buf, sizeof(pkt_buf));
     if (len <= 0) return;
     if (len < (int)sizeof(struct eth_header)) return;

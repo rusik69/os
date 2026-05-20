@@ -114,6 +114,11 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->rx_fin = 0;
         c->cwnd = 1;
         c->ssthresh = 65535;
+        c->tx_unacked_len  = 0;
+        c->tx_unacked_seq  = 0;
+        c->last_send_tick  = 0;
+        c->retrans_count   = 0;
+        c->rto             = 100;
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
@@ -158,6 +163,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             c->rx_fin = 1;
             if (l && l->on_close) l->on_close(conn_id);
             return;
+        }
+
+        /* Clear unacked buffer when peer ACKs our data */
+        if ((flags & TCP_ACK) && c->tx_unacked_len > 0) {
+            if (ack >= c->tx_unacked_seq + c->tx_unacked_len) {
+                c->tx_unacked_len = 0;
+                c->retrans_count  = 0;
+            }
         }
 
         if (flags & TCP_FIN) {
@@ -252,6 +265,11 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->rx_fin = 0;
     c->cwnd = 1;
     c->ssthresh = 65535;
+    c->tx_unacked_len  = 0;
+    c->tx_unacked_seq  = 0;
+    c->last_send_tick  = 0;
+    c->retrans_count   = 0;
+    c->rto             = 100;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -337,6 +355,16 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     struct tcp_conn *c = &tcp_conns[conn_id];
     if (c->state != TCP_ESTABLISHED) return -1;
 
+    /* Buffer the full payload for potential retransmission (capped at tx_unacked_buf) */
+    c->tx_unacked_seq = c->our_seq;
+    uint16_t buf_len = (len > (uint16_t)sizeof(c->tx_unacked_buf))
+                       ? (uint16_t)sizeof(c->tx_unacked_buf) : len;
+    memcpy(c->tx_unacked_buf, data, buf_len);
+    c->tx_unacked_len  = buf_len;
+    c->last_send_tick  = timer_get_ticks();
+    c->retrans_count   = 0;
+    if (c->rto == 0) c->rto = 100;   /* 1-second initial RTO */
+
     const uint8_t *p = (const uint8_t *)data;
     while (len > 0) {
         uint16_t chunk = len > 1400 ? 1400 : len;
@@ -385,5 +413,38 @@ void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int 
         if (tcp_conns[i].state != TCP_CLOSED)
             cb(tcp_conns[i].local_port, tcp_conns[i].remote_ip,
                tcp_conns[i].remote_port, (int)tcp_conns[i].state);
+    }
+}
+
+/* Periodic retransmission check — called from timer every N ticks */
+void net_tcp_check_retransmit(void) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        struct tcp_conn *c = &tcp_conns[i];
+        if (c->state != TCP_ESTABLISHED) continue;
+        if (c->tx_unacked_len == 0) continue;
+        if (now - c->last_send_tick < c->rto) continue;
+
+        /* Give up after 5 retransmissions (RTO would be ~32 s at that point) */
+        if (c->retrans_count >= 5) {
+            c->state = TCP_CLOSED;
+            c->rx_fin = 1;
+            c->tx_unacked_len = 0;
+            continue;
+        }
+
+        /* Retransmit using the saved sequence number */
+        uint32_t saved_seq = c->our_seq;
+        c->our_seq = c->tx_unacked_seq;
+        send_tcp(c, TCP_PSH | TCP_ACK, c->tx_unacked_buf, c->tx_unacked_len);
+        c->our_seq = saved_seq;
+
+        c->last_send_tick = now;
+        c->retrans_count++;
+        /* Exponential back-off, cap at 64 s */
+        c->rto = (c->rto * 2 > 6400) ? 6400 : (uint16_t)(c->rto * 2);
+        /* Congestion control: halve cwnd */
+        c->ssthresh = (c->cwnd / 2 < 2) ? 2 : c->cwnd / 2;
+        c->cwnd = 1;
     }
 }

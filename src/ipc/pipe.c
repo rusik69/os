@@ -1,6 +1,8 @@
 #include "pipe.h"
 #include "scheduler.h"
 #include "string.h"
+#include "signal.h"
+#include "process.h"
 
 static struct pipe pipe_table[PIPE_MAX];
 
@@ -28,7 +30,12 @@ int pipe_write(int pipe_id, const void *buf, int len) {
         return -1;
 
     struct pipe *p = &pipe_table[pipe_id];
-    if (p->readers == 0) return -1;  /* broken pipe */
+    if (p->readers == 0) {
+        /* Broken pipe — signal writer and return error */
+        struct process *cur = process_get_current();
+        if (cur) signal_send(cur->pid, SIGPIPE);
+        return -1;
+    }
 
     const uint8_t *src = (const uint8_t *)buf;
     int written = 0;
