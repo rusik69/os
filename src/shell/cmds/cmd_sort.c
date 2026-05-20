@@ -1,4 +1,4 @@
-/* cmd_sort.c — Sort lines of a file alphabetically */
+/* cmd_sort.c -- Sort lines of a file alphabetically */
 
 #include "shell_cmds.h"
 #include "libc.h"
@@ -11,10 +11,9 @@ static int cmp_strptr(const void *a, const void *b) {
 }
 
 void cmd_sort(const char *args) {
-    if (!args || !args[0]) { kprintf("Usage: sort [-r] [-R] <file>\n"); return; }
-
     int reverse = 0, shuffle = 0;
-    const char *p = args;
+    const char *p = args ? args : "";
+
     while (*p == '-') {
         p++;
         while (*p && *p != ' ') {
@@ -25,15 +24,20 @@ void cmd_sort(const char *args) {
         while (*p == ' ') p++;
     }
 
-    char path[64];
-    snprintf(path, sizeof(path), "%s%s", p[0] == '/' ? "" : "/", p);
-    strtrim(path);
-
     static char buf[4096];
     uint32_t size = 0;
-    if (vfs_read(path, buf, 4095, &size) != 0) {
-        kprintf("sort: cannot read '%s'\n", path);
-        return;
+
+    if (!*p) {
+        if (!shell_has_stdin()) { kprintf("Usage: sort [-r] [-R] <file>\n"); return; }
+        size = (uint32_t)shell_stdin_read(buf, (int)sizeof(buf) - 1);
+    } else {
+        char path[64];
+        snprintf(path, sizeof(path), "%s%s", p[0] == '/' ? "" : "/", p);
+        strtrim(path);
+        if (vfs_read(path, buf, 4095, &size) != 0) {
+            kprintf("sort: cannot read '%s'\n", path);
+            return;
+        }
     }
     buf[size] = '\0';
 
@@ -48,7 +52,6 @@ void cmd_sort(const char *args) {
     }
 
     if (shuffle) {
-        /* Fisher-Yates shuffle using rand() */
         for (int i = nlines - 1; i > 0; i--) {
             int j = rand() % (i + 1);
             char *tmp = lines[i]; lines[i] = lines[j]; lines[j] = tmp;

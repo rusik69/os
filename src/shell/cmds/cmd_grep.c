@@ -1,4 +1,4 @@
-/* cmd_grep.c — grep command */
+/* cmd_grep.c -- grep command */
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
@@ -6,7 +6,7 @@
 #include "stdlib.h"
 
 void cmd_grep(const char *args) {
-    if (!args) { kprintf("Usage: grep [-g] [-i] [-v] <pattern> <file>\n"); return; }
+    if (!args) { kprintf("Usage: grep [-g] [-i] [-v] <pattern> [file]\n"); return; }
 
     int glob_mode = 0, invert = 0, ignore_case = 0;
     const char *p = args;
@@ -27,20 +27,28 @@ void cmd_grep(const char *args) {
     while (*p && *p != ' ' && pi < 127) pattern[pi++] = *p++;
     pattern[pi] = '\0';
     while (*p == ' ') p++;
-    if (!*p) { kprintf("Usage: grep [-g] [-i] [-v] <pattern> <file>\n"); return; }
-
-    char path[64];
-    if (*p != '/') { path[0] = '/'; strncpy(path + 1, p, 62); }
-    else strncpy(path, p, 63);
-    path[63] = '\0';
-    int pl = strlen(path);
-    while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
 
     static char fbuf[4096];
     uint32_t size = 0;
-    if (vfs_read(path, fbuf, sizeof(fbuf) - 1, &size) != 0) {
-        kprintf("grep: cannot read '%s'\n", path);
-        return;
+
+    if (!*p) {
+        /* No file argument: try piped stdin */
+        if (!shell_has_stdin()) {
+            kprintf("Usage: grep [-g] [-i] [-v] <pattern> [file]\n");
+            return;
+        }
+        size = (uint32_t)shell_stdin_read(fbuf, (int)sizeof(fbuf) - 1);
+    } else {
+        char path[64];
+        if (*p != '/') { path[0] = '/'; strncpy(path + 1, p, 62); }
+        else strncpy(path, p, 63);
+        path[63] = '\0';
+        int pl = strlen(path);
+        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        if (vfs_read(path, fbuf, sizeof(fbuf) - 1, &size) != 0) {
+            kprintf("grep: cannot read '%s'\n", path);
+            return;
+        }
     }
     fbuf[size] = '\0';
 
@@ -59,7 +67,6 @@ void cmd_grep(const char *args) {
             if (glob_mode) {
                 matched = (fnmatch(pattern, line, 0) == 0);
             } else if (ignore_case) {
-                /* lowercase copy of line for case-insensitive search */
                 char lline[256];
                 int li = 0;
                 while (line[li] && li < 255) { lline[li] = (char)tolower((unsigned char)line[li]); li++; }

@@ -4,7 +4,15 @@
 #include "libc.h"
 
 void cmd_cat(const char *args) {
-    if (!args) { kprintf("Usage: cat <file>\n"); return; }
+    /* No filename: try piped stdin */
+    if (!args || !args[0]) {
+        if (!shell_has_stdin()) { kprintf("Usage: cat <file>\n"); return; }
+        static char sbuf[32768];
+        int slen = shell_stdin_read(sbuf, (int)sizeof(sbuf) - 1);
+        sbuf[slen] = '\0';
+        kprintf("%s", sbuf);
+        return;
+    }
     if (!ata_is_present()) { kprintf("No disk\n"); return; }
     static char fbuf[4096];
     uint32_t size;

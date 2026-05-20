@@ -33,4 +33,10 @@ void        shell_alias_list(void);
 const char *shell_cwd_get(void);
 int         shell_cwd_set(const char *path);  /* 0=ok, -1=not a dir */
 
+/* Shell stdin (pipe input) API — used by commands to support piped input */
+void        shell_set_stdin(const char *buf, int len);
+void        shell_clear_stdin(void);
+int         shell_has_stdin(void);
+int         shell_stdin_read(char *buf, int max); /* returns bytes copied */
+
 #endif

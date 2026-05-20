@@ -161,4 +161,10 @@ void cmd_rawsend(const char *args);
 void shell_set_exit_status(int s);
 int  shell_get_exit_status(void);
 
+/* Shell stdin (pipe input) API */
+void shell_set_stdin(const char *buf, int len);
+void shell_clear_stdin(void);
+int  shell_has_stdin(void);
+int  shell_stdin_read(char *buf, int max);
+
 #endif

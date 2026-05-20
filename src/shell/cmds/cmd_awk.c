@@ -239,6 +239,23 @@ void cmd_awk(const char *args) {
             awk_run_line(main_body, line);
             ptr = *nl ? nl + 1 : nl;
         }
+    } else if (shell_has_stdin()) {
+        /* Read from piped stdin buffer */
+        static char sbuf[4096];
+        int slen = shell_stdin_read(sbuf, (int)sizeof(sbuf) - 1);
+        sbuf[slen] = '\0';
+        char *ptr = sbuf;
+        while (*ptr) {
+            char *nl = ptr;
+            while (*nl && *nl != '\n') nl++;
+            int len = (int)(nl - ptr);
+            if (len >= AWK_MAX_LINE) len = AWK_MAX_LINE - 1;
+            for (int i = 0; i < len; i++) line[i] = ptr[i];
+            line[len] = '\0';
+            if (len > 0 && line[len-1] == '\r') line[--len] = '\0';
+            awk_run_line(main_body, line);
+            ptr = *nl ? nl + 1 : nl;
+        }
     } else {
         /* Read from stdin line by line */
         while (1) {

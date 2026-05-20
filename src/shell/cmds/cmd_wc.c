@@ -1,20 +1,27 @@
-/* cmd_wc.c — wc command */
+/* cmd_wc.c -- wc command */
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
 #include "libc.h"
 
 void cmd_wc(const char *args) {
-    if (!args) { kprintf("Usage: wc <file>\n"); return; }
-    if (!ata_is_present()) { kprintf("No disk\n"); return; }
-    char path[64];
-    if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
-    else strcpy(path, args);
     static char fbuf[4096];
-    uint32_t size;
-    if (fs_read_file(path, fbuf, sizeof(fbuf) - 1, &size) < 0) {
-        kprintf("Cannot read: %s\n", path);
-        return;
+    uint32_t size = 0;
+    const char *label = "-";
+
+    if (!args || !args[0]) {
+        if (!shell_has_stdin()) { kprintf("Usage: wc <file>\n"); return; }
+        size = (uint32_t)shell_stdin_read(fbuf, (int)sizeof(fbuf) - 1);
+    } else {
+        if (!ata_is_present()) { kprintf("No disk\n"); return; }
+        char path[64];
+        if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
+        else strcpy(path, args);
+        if (fs_read_file(path, fbuf, sizeof(fbuf) - 1, &size) < 0) {
+            kprintf("Cannot read: %s\n", args);
+            return;
+        }
+        label = args;
     }
     fbuf[size] = '\0';
     uint32_t lines = 0, words = 0;
@@ -29,5 +36,5 @@ void cmd_wc(const char *args) {
         }
     }
     kprintf("  %u %u %u %s\n", (uint64_t)lines, (uint64_t)words,
-            (uint64_t)size, args);
+            (uint64_t)size, label);
 }

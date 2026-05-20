@@ -191,11 +191,42 @@ int  shell_get_exit_status(void)  { return last_exit_status; }
 struct shell_capture_ctx {
     char *buf;
     int  *len;
+    int   max;    /* buffer capacity (buf[max] is the NUL terminator slot) */
 };
 
 static void shell_capture_cb(char c, void *ctx) {
     struct shell_capture_ctx *sc = (struct shell_capture_ctx *)ctx;
-    if (*sc->len < 4095) sc->buf[(*sc->len)++] = c;
+    if (*sc->len < sc->max) sc->buf[(*sc->len)++] = c;
+}
+
+/* ── Shell stdin (pipe input) ───────────────────────────────────── */
+static const char *g_stdin_buf = NULL;
+static int         g_stdin_len = 0;
+static int         g_stdin_pos = 0;
+
+void shell_set_stdin(const char *buf, int len) {
+    g_stdin_buf = buf;
+    g_stdin_len = len;
+    g_stdin_pos = 0;
+}
+
+void shell_clear_stdin(void) {
+    g_stdin_buf = NULL;
+    g_stdin_len = 0;
+    g_stdin_pos = 0;
+}
+
+int shell_has_stdin(void) {
+    return (g_stdin_buf != NULL && g_stdin_pos < g_stdin_len);
+}
+
+int shell_stdin_read(char *buf, int max) {
+    if (!g_stdin_buf || g_stdin_pos >= g_stdin_len) return 0;
+    int avail = g_stdin_len - g_stdin_pos;
+    int n = (avail < max) ? avail : max;
+    for (int i = 0; i < n; i++) buf[i] = g_stdin_buf[g_stdin_pos + i];
+    g_stdin_pos += n;
+    return n;
 }
 
 /* ── Arithmetic evaluator for $(( expr )) ───────────────────────── */
@@ -381,7 +412,7 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 int sub_len = 0;
                 void (*sh_hook)(char, void *) = 0; void *sh_ctx = 0;
                 kprintf_get_hook(&sh_hook, &sh_ctx);
-                struct shell_capture_ctx sub_ctx = { sub_out, &sub_len };
+                struct shell_capture_ctx sub_ctx = { sub_out, &sub_len, (int)sizeof(sub_out) - 1 };
                 kprintf_set_hook(shell_capture_cb, &sub_ctx);
                 /* Parse and exec sub_cmd */
                 char sc_buf[256]; char *sc_cmd = sc_buf;
@@ -762,72 +793,81 @@ static void process_cmd(void) {
         return;
     }
 
-    /* --- Check for pipe: cmd1 | cmd2 --- */
-    char *pipe_pos = 0;
-    for (char *p = cmd; *p; p++) {
-        if (*p == '|') { pipe_pos = p; break; }
-    }
-    if (pipe_pos) {
-        *pipe_pos = '\0';
-        char *left = cmd;
-        char *right = pipe_pos + 1;
-        while (*right == ' ') right++;
-        /* Trim trailing spaces from left */
-        char *lt = pipe_pos - 1;
-        while (lt > left && *lt == ' ') { *lt = '\0'; lt--; }
-
-        /* Create a temporary pipe file */
-        const char *pipe_file = "/.pipe_tmp";
-        /* Execute left side, capturing output to pipe file */
-        /* We use kprintf output redirect via a buffer */
-        static char pipe_buf[4096];
-        int pipe_len = 0;
-        /* Save kprintf hook state and redirect output */
-        void (*saved_hook)(char, void*) = 0;
-        void *saved_ctx = 0;
-        kprintf_get_hook(&saved_hook, &saved_ctx);
-
-        /* Parse left command */
-        char *lcmd = left; while (*lcmd == ' ') lcmd++;
-        char *largs = lcmd;
-        while (*largs && *largs != ' ') largs++;
-        if (*largs) { *largs = '\0'; largs++; while (*largs == ' ') largs++; }
-        else largs = 0;
-
-        /* Execute left, capture to pipe_buf via kprintf hook */
-        pipe_len = 0;
-        struct shell_capture_ctx pipe_ctx = { pipe_buf, &pipe_len };
-        kprintf_set_hook(shell_capture_cb, &pipe_ctx);
-        shell_exec_cmd(lcmd, largs);
-        kprintf_set_hook(saved_hook, saved_ctx);
-        pipe_buf[pipe_len] = '\0';
-
-        /* Write captured output to temp file */
-        vfs_write(pipe_file, pipe_buf, (uint32_t)pipe_len);
-
-        /* Parse right command and inject pipe file as arg */
-        char *rcmd = right;
-        char *rargs = rcmd;
-        while (*rargs && *rargs != ' ') rargs++;
-        if (*rargs) { *rargs = '\0'; rargs++; while (*rargs == ' ') rargs++; }
-        else rargs = 0;
-
-        /* For pipe: append pipe_file as last arg if no file arg given */
-        char combined_args[CMD_BUF_SIZE];
-        if (rargs && rargs[0]) {
-            int n = strlen(rargs);
-            if (n > CMD_BUF_SIZE - 2) n = CMD_BUF_SIZE - 2;
-            memcpy(combined_args, rargs, n);
-            combined_args[n] = ' ';
-            strncpy(combined_args + n + 1, pipe_file, CMD_BUF_SIZE - n - 2);
-            combined_args[CMD_BUF_SIZE - 1] = '\0';
-        } else {
-            strncpy(combined_args, pipe_file, CMD_BUF_SIZE - 1);
-            combined_args[CMD_BUF_SIZE - 1] = '\0';
+    /* --- Check for pipe: cmd1 | cmd2 | ... (multi-pipe, no VFS temp file) --- */
+    {
+        int pipe_count = 0;
+        for (const char *p = cmd; *p; p++) {
+            if (*p == '|') pipe_count++;
         }
-        shell_exec_cmd(rcmd, combined_args);
-        vfs_unlink(pipe_file);
-        return;
+        if (pipe_count > 0) {
+            /* Ping-pong static buffers: 32 KB each covers the FS 32 KB file limit */
+            static char pipe_buf_a[32768];
+            static char pipe_buf_b[32768];
+
+            /* Work on a mutable copy */
+            static char pipe_work[CMD_BUF_SIZE];
+            strncpy(pipe_work, cmd, CMD_BUF_SIZE - 1);
+            pipe_work[CMD_BUF_SIZE - 1] = '\0';
+
+            char *cur_stdin_buf = NULL;
+            int   cur_stdin_len = 0;
+            int   buf_toggle    = 0;  /* 0 → write into pipe_buf_a, 1 → pipe_buf_b */
+
+            char *seg = pipe_work;
+            while (seg) {
+                /* Find next | */
+                char *pipe_sep = NULL;
+                for (char *p = seg; *p; p++) {
+                    if (*p == '|') { pipe_sep = p; break; }
+                }
+                int is_last = (pipe_sep == NULL);
+                if (pipe_sep) *pipe_sep = '\0';
+
+                /* Trim leading/trailing spaces in segment */
+                while (*seg == ' ') seg++;
+                int slen = (int)strlen(seg);
+                while (slen > 0 && seg[slen - 1] == ' ') seg[--slen] = '\0';
+
+                /* Parse command name and args from segment */
+                char *scmd  = seg;
+                char *sargs = seg;
+                while (*sargs && *sargs != ' ') sargs++;
+                if (*sargs) { *sargs = '\0'; sargs++; while (*sargs == ' ') sargs++; }
+                else sargs = NULL;
+
+                /* Install previous stage output as stdin */
+                if (cur_stdin_buf) shell_set_stdin(cur_stdin_buf, cur_stdin_len);
+                else               shell_clear_stdin();
+
+                if (is_last) {
+                    /* Last segment: run normally; output goes to screen */
+                    shell_exec_cmd(scmd, sargs);
+                    shell_clear_stdin();
+                    return;
+                }
+
+                /* Non-last: capture output into the ping-pong buffer */
+                char *out_buf = buf_toggle ? pipe_buf_b : pipe_buf_a;
+                int   out_len = 0;
+
+                void (*saved_hook)(char, void *) = NULL;
+                void  *saved_ctx                  = NULL;
+                kprintf_get_hook(&saved_hook, &saved_ctx);
+
+                struct shell_capture_ctx cap_ctx = { out_buf, &out_len, 32767 };
+                kprintf_set_hook(shell_capture_cb, &cap_ctx);
+                shell_exec_cmd(scmd, sargs);
+                kprintf_set_hook(saved_hook, saved_ctx);
+                out_buf[out_len] = '\0';
+
+                cur_stdin_buf = out_buf;
+                cur_stdin_len = out_len;
+                buf_toggle    = !buf_toggle;
+                seg = pipe_sep + 1;
+            }
+            shell_clear_stdin();
+            return;
+        }
     }
 
     /* --- Check for input redirection: cmd < file --- */
@@ -934,7 +974,7 @@ static void process_cmd(void) {
         void (*saved_hook)(char, void*) = 0;
         void *saved_ctx = 0;
         kprintf_get_hook(&saved_hook, &saved_ctx);
-        struct shell_capture_ctx redir_ctx = { redir_buf, &redir_len };
+        struct shell_capture_ctx redir_ctx = { redir_buf, &redir_len, (int)sizeof(redir_buf) - 1 };
         kprintf_set_hook(shell_capture_cb, &redir_ctx);
         shell_exec_cmd(lcmd, largs);
         kprintf_set_hook(saved_hook, saved_ctx);

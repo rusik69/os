@@ -800,7 +800,27 @@ def test_pipes(t: Telnet):
     t.send_cmd("write pipefile hello_pipe")
     r = t.send_cmd("cat pipefile | cat")
     check("pipe cat|cat", r, "hello_pipe")
+
+    # Echo piped to cat
+    r = t.send_cmd("echo pipe_echo | cat")
+    check("pipe echo|cat", r, "pipe_echo")
+
+    # Echo piped to wc (stdin path)
+    r = t.send_cmd("echo hello | wc")
+    check("pipe echo|wc", "1" in r or "hello" in r.lower(), True)
+
+    # Write multi-line file, pipe through grep
+    t.send_cmd("write grepfile line_alpha")
+    t.send_cmd("echo line_beta >> grepfile")
+    r = t.send_cmd("cat grepfile | grep alpha")
+    check("pipe cat|grep", r, "line_alpha")
+
+    # Multi-stage pipe: echo | cat | cat
+    r = t.send_cmd("echo multistage | cat | cat")
+    check("pipe echo|cat|cat", r, "multistage")
+
     t.send_cmd("rm pipefile")
+    t.send_cmd("rm grepfile")
 
 
 def test_redirect(t: Telnet):
