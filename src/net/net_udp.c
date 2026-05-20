@@ -31,9 +31,11 @@ struct dhcp_packet {
 #define DHCP_ACK      5
 
 /* DHCP state */
-static uint32_t dhcp_xid = 0x12345678;
+static uint32_t dhcp_xid = 0;
 static uint32_t dhcp_offered_ip = 0;
 static uint32_t dhcp_server_ip = 0;
+static uint32_t dhcp_lease_secs = 0;
+static uint64_t dhcp_lease_start = 0;
 static volatile int dhcp_state = 0;
 
 static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
@@ -144,6 +146,9 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
         if (code == 3 && olen >= 4) router = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
         if (code == 6 && olen >= 4) dns = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
         if (code == 54 && olen >= 4) server_id = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) | ((uint32_t)opt[2] << 8) | opt[3];
+        if (code == 51 && olen >= 4)
+            dhcp_lease_secs = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) |
+                              ((uint32_t)opt[2] << 8) | opt[3];
         opt += olen;
     }
 
@@ -171,6 +176,7 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
         net_gw_mac_known = 0;
         dhcp_state = 3;
         net_dhcp_done = 1;
+        dhcp_lease_start = timer_get_ticks();
     }
 }
 
@@ -490,17 +496,17 @@ uint32_t net_dns_resolve(const char *hostname) {
 }
 
 void net_dhcp_discover(void) {
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u);
     kprintf("[..] DHCP: Sending DISCOVER...\n");
     dhcp_send_discover();
 
-    /* Poll for DHCP completion; resend discover periodically */
-    volatile uint32_t total = 0;
+    uint64_t start = timer_get_ticks();
     int resends = 0;
-    while (dhcp_state != 3 && total < 200000000U) {
+    while (dhcp_state != 3) {
         net_poll();
-        total++;
-        /* Resend discover every 20M iterations if still waiting for offer */
-        if (dhcp_state <= 1 && total % 20000000 == 0 && resends < 4) {
+        uint64_t now = timer_get_ticks();
+        if (now - start > 500) break; /* ~5s timeout */
+        if (dhcp_state <= 1 && (now - start) > (uint64_t)(resends + 1) * 100 && resends < 4) {
             dhcp_send_discover();
             resends++;
         }
@@ -521,6 +527,19 @@ void net_dhcp_discover(void) {
 
     if (net_gateway_ip)
         arp_resolve_gateway();
+}
+
+void net_dhcp_renew_if_needed(void) {
+    if (dhcp_state != 3 || !dhcp_lease_secs) return;
+    uint64_t elapsed = timer_get_ticks() - dhcp_lease_start;
+    /* Renew at half lease (ticks ~10ms) */
+    if (elapsed < (uint64_t)dhcp_lease_secs * 50) return;
+    dhcp_state = 1;
+    net_dhcp_done = 0;
+    dhcp_send_discover();
+    uint64_t start = timer_get_ticks();
+    while (dhcp_state != 3 && timer_get_ticks() - start < 200)
+        net_poll();
 }
 
 /* Parse an absolute URL into host, port, path (modifies all three) */

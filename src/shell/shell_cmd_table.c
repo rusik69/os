@@ -1,7 +1,45 @@
-/* shell_cmd_table.c — shared command name/description table */
+/* shell_cmd_table.c — shared command table + dispatch */
 
 #include "shell_cmd_table.h"
+#include "shell_cmds.h"
+#include "vga.h"
+#include "editor.h"
 #include "string.h"
+
+static void sh_help(const char *a)       { (void)a; cmd_help(); }
+static void sh_clear(const char *a)      { (void)a; vga_clear(); }
+static void sh_meminfo(const char *a)    { (void)a; cmd_meminfo(); }
+static void sh_ps(const char *a)         { (void)a; cmd_ps(); }
+static void sh_uptime(const char *a)     { (void)a; cmd_uptime(); }
+static void sh_reboot(const char *a)     { (void)a; cmd_reboot(); }
+static void sh_shutdown(const char *a)   { (void)a; cmd_shutdown(); }
+static void sh_date(const char *a)       { (void)a; cmd_date(); }
+static void sh_cpuinfo(const char *a)    { (void)a; cmd_cpuinfo(); }
+static void sh_history(const char *a)  { (void)a; cmd_history_show(); }
+static void sh_format(const char *a)     { (void)a; cmd_format_disk(); }
+static void sh_ifconfig(const char *a)   { (void)a; cmd_ifconfig(); }
+static void sh_df(const char *a)         { (void)a; cmd_df(); }
+static void sh_free(const char *a)       { (void)a; cmd_free(); }
+static void sh_whoami(const char *a)     { (void)a; cmd_whoami(); }
+static void sh_hostname(const char *a)   { (void)a; cmd_hostname(); }
+static void sh_env(const char *a)        { (void)a; cmd_env(); }
+static void sh_arp(const char *a)        { (void)a; cmd_arp(); }
+static void sh_route(const char *a)      { (void)a; cmd_route(); }
+static void sh_uname(const char *a)      { (void)a; cmd_uname(); }
+static void sh_lspci(const char *a)      { (void)a; cmd_lspci(); }
+static void sh_dmesg(const char *a)      { (void)a; cmd_dmesg(); }
+static void sh_jobs(const char *a)       { (void)a; cmd_jobs(); }
+static void sh_cmos(const char *a)       { (void)a; cmd_cmos(); }
+static void sh_hwinfo(const char *a)     { (void)a; cmd_hwinfo(); }
+static void sh_fbinfo(const char *a)     { (void)a; cmd_fbinfo(); }
+static void sh_gui(const char *a)        { (void)a; cmd_gui(); }
+static void sh_lsusb(const char *a)      { (void)a; cmd_lsusb(); }
+static void sh_lsblk(const char *a)      { (void)a; cmd_lsblk(); }
+static void sh_logout(const char *a)     { (void)a; cmd_logout(); }
+static void sh_users(const char *a)      { (void)a; cmd_users(); }
+static void sh_top(const char *a)        { (void)a; cmd_top(); }
+static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
+static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }
 
 #include "cmd_table.inc"
 
@@ -22,4 +60,18 @@ const char *shell_cmd_lookup_desc(const char *name) {
             return shell_cmd_table[i].desc;
     }
     return 0;
+}
+
+shell_cmd_fn shell_cmd_lookup_fn(const char *name) {
+    for (int i = 0; shell_cmd_table[i].name; i++) {
+        if (strcmp(shell_cmd_table[i].name, name) == 0)
+            return shell_cmd_table[i].fn;
+    }
+    return 0;
+}
+
+int shell_cmd_exists(const char *name) {
+    if (!name || !*name) return 0;
+    if (strcmp(name, "[") == 0) return 1;
+    return shell_cmd_lookup_fn(name) != 0;
 }

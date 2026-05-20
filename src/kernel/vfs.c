@@ -58,11 +58,18 @@ static int smfs_write(void *priv, const char *path, const void *data, uint32_t s
 
 static int smfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     (void)priv;
-    uint32_t size; uint8_t type;
-    int r = fs_stat(path, &size, &type);
+    uint32_t size;
+    uint8_t type;
+    uint16_t uid = 0, gid = 0, mode = 0;
+    int r = fs_stat_ex(path, &size, &type, &uid, &gid, &mode);
     if (r < 0) return r;
-    st->size = size;
-    st->type = type;
+    st->size  = size;
+    st->type  = type;
+    st->uid   = uid;
+    st->gid   = gid;
+    st->mode  = mode;
+    st->mtime = (uint32_t)fs_stat_mtime(path);
+    if ((int32_t)st->mtime < 0) st->mtime = 0;
     return 0;
 }
 

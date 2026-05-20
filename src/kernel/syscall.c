@@ -354,8 +354,8 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
 static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
     if (len == 0 || len > 1514) return (uint64_t)-1;
-    e1000_send((const uint8_t *)(uintptr_t)buf_addr, (uint32_t)len);
-    return len;
+    int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint32_t)len);
+    return r < 0 ? (uint64_t)-1 : len;
 }
 
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */

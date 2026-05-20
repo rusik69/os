@@ -137,6 +137,12 @@ run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0 ; \
 	stty sane
 
+run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+		-no-reboot
+
 # ── Test build (separate output dir, compiled with -DTEST_MODE) ──────────────
 
 BUILDDIR_TEST = build_test

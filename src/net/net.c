@@ -39,22 +39,22 @@ static volatile int net_rx_flag = 0;
 void net_rx_signal(void) { net_rx_flag = 1; }
 int  net_rx_pending(void) { return net_rx_flag; }
 
-static int net_link_send(const void *data, uint16_t len) {
+static int net_link_recv(void *buf, uint16_t max_len) {
+    if (virtio_net_present()) {
+        int n = virtio_net_receive(buf, max_len);
+        if (n != 0) return n;
+    }
+    if (e1000_is_present())
+        return e1000_receive(buf, max_len);
+    return 0;
+}
+
+int net_link_send(const void *data, uint16_t len) {
     if (virtio_net_present()) {
         virtio_net_send((const uint8_t *)data, len);
         return 0;
     }
     return e1000_send(data, len);
-}
-
-static int net_link_recv(void *buf, uint16_t max_len) {
-    if (e1000_is_present()) {
-        int n = e1000_receive(buf, max_len);
-        if (n != 0) return n;
-    }
-    if (virtio_net_present())
-        return virtio_net_receive(buf, max_len);
-    return 0;
 }
 
 /* ICMP ping state */
@@ -299,12 +299,23 @@ struct ip_frag_slot {
     uint8_t  buf[2048];
     uint16_t len;
     uint16_t expect_off;
+    uint64_t tick;
     int      valid;
 };
 
 static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
+#define IP_FRAG_TTL_TICKS 500
+
+static void frag_evict_stale(void) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < IP_FRAG_SLOTS; i++) {
+        if (ip_frags[i].valid && now - ip_frags[i].tick > IP_FRAG_TTL_TICKS)
+            ip_frags[i].valid = 0;
+    }
+}
 
 static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, uint8_t proto) {
+    frag_evict_stale();
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
         if (ip_frags[i].valid && ip_frags[i].id == id &&
             ip_frags[i].src == src && ip_frags[i].dst == dst && ip_frags[i].proto == proto)
@@ -319,6 +330,7 @@ static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, u
             ip_frags[i].proto = proto;
             ip_frags[i].len = 0;
             ip_frags[i].expect_off = 0;
+            ip_frags[i].tick = timer_get_ticks();
             return &ip_frags[i];
         }
     }
@@ -340,11 +352,15 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_
     struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst, ip->protocol);
     if (!slot) return -1;
 
+    if (frag_off != slot->expect_off) return 1; /* wait for next fragment in order */
+
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     uint16_t part = len - ihl;
     if (frag_off + part > sizeof(slot->buf)) return -1;
     memcpy(slot->buf + frag_off, data + ihl, part);
-    if (frag_off + part > slot->len) slot->len = frag_off + part;
+    slot->expect_off = (uint16_t)(frag_off + part);
+    if (frag_off + part > slot->len) slot->len = (uint16_t)(frag_off + part);
+    slot->tick = timer_get_ticks();
 
     if (more) return 1;
 
@@ -425,9 +441,10 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
-    net_rx_flag = 0;
-    int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
-    if (len > 0) {
+    for (int drain = 0; drain < 32; drain++) {
+        net_rx_flag = 0;
+        int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
+        if (len <= 0) break;
         if (len >= (int)sizeof(struct eth_header)) {
             struct eth_header *eth = (struct eth_header *)pkt_buf;
             uint16_t type = ntohs(eth->type);

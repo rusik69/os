@@ -2,6 +2,7 @@
 
 #include "shell.h"
 #include "shell_cmds.h"
+#include "shell_cmd_table.h"
 #include "vga.h"
 #include "keyboard.h"
 #include "printf.h"
@@ -1095,324 +1096,29 @@ void shell_process_line(const char *line) {
 }
 
 void shell_exec_cmd(const char *cmd, const char *args) {
-    /* Reset exit status; individual commands may override via shell_set_exit_status() */
     last_exit_status = 0;
 
-    /* Per-command --help */
     if (args && strcmp(args, "--help") == 0) {
-        if (strcmp(cmd, "echo") == 0)
-            kprintf("Usage: echo [text]\n  Print text to console\n");
-        else if (strcmp(cmd, "clear") == 0)
-            kprintf("Usage: clear\n  Clear the screen\n");
-        else if (strcmp(cmd, "meminfo") == 0)
-            kprintf("Usage: meminfo\n  Show physical memory statistics\n");
-        else if (strcmp(cmd, "ps") == 0)
-            kprintf("Usage: ps\n  List all processes and their states\n");
-        else if (strcmp(cmd, "uptime") == 0)
-            kprintf("Usage: uptime\n  Show time since boot\n");
-        else if (strcmp(cmd, "reboot") == 0)
-            kprintf("Usage: reboot\n  Reboot the system\n");
-        else if (strcmp(cmd, "shutdown") == 0)
-            kprintf("Usage: shutdown\n  Power off via ACPI\n");
-        else if (strcmp(cmd, "kill") == 0)
-            kprintf("Usage: kill <pid> [signal]\n  Send signal to process (default signal 9 = SIGKILL)\n");
-        else if (strcmp(cmd, "color") == 0)
-            kprintf("Usage: color <fg> [bg]\n  Set console text/background color (0-15)\n");
-        else if (strcmp(cmd, "hexdump") == 0)
-            kprintf("Usage: hexdump <addr> [len]\n  Dump memory at address in hex (default len=64, max 256)\n");
-        else if (strcmp(cmd, "date") == 0)
-            kprintf("Usage: date\n  Show current date and time from RTC\n");
-        else if (strcmp(cmd, "cpuinfo") == 0)
-            kprintf("Usage: cpuinfo\n  Show CPU vendor and brand string\n");
-        else if (strcmp(cmd, "history") == 0)
-            kprintf("Usage: history\n  Show recent command history\n");
-        else if (strcmp(cmd, "ls") == 0)
-            kprintf("Usage: ls [path]\n  List directory contents (default /)\n");
-        else if (strcmp(cmd, "cat") == 0)
-            kprintf("Usage: cat <file>\n  Print file contents\n");
-        else if (strcmp(cmd, "write") == 0)
-            kprintf("Usage: write <file> <text>\n  Write text to file\n");
-        else if (strcmp(cmd, "touch") == 0)
-            kprintf("Usage: touch <file>\n  Create empty file\n");
-        else if (strcmp(cmd, "rm") == 0)
-            kprintf("Usage: rm <path>\n  Remove file or directory\n");
-        else if (strcmp(cmd, "mkdir") == 0)
-            kprintf("Usage: mkdir <dir>\n  Create directory\n");
-        else if (strcmp(cmd, "stat") == 0)
-            kprintf("Usage: stat <path>\n  Show file or directory metadata (type, size)\n");
-        else if (strcmp(cmd, "format") == 0)
-            kprintf("Usage: format\n  Format the filesystem (WARNING: destroys all data)\n");
-        else if (strcmp(cmd, "edit") == 0)
-            kprintf("Usage: edit <file>\n  Open file in text editor (Ctrl-S save, Ctrl-Q quit)\n");
-        else if (strcmp(cmd, "exec") == 0)
-            kprintf("Usage: exec <path>\n  Load and run a static ELF64 binary\n");
-        else if (strcmp(cmd, "run") == 0)
-            kprintf("Usage: run <path>\n  Execute a shell script file\n");
-        else if (strcmp(cmd, "ifconfig") == 0)
-            kprintf("Usage: ifconfig\n  Show network interface configuration (MAC, IP, mask, gateway)\n");
-        else if (strcmp(cmd, "ping") == 0)
-            kprintf("Usage: ping [ip|hostname]\n  Send ICMP echo request (default: gateway)\n");
-        else if (strcmp(cmd, "dns") == 0)
-            kprintf("Usage: dns <hostname>\n  Resolve hostname to IP address\n");
-        else if (strcmp(cmd, "curl") == 0)
-            kprintf("Usage: curl [-F] <url>\n  HTTP GET request. -F follows redirects (301/302/303/307/308, max 5)\n  Example: curl -F http://example.com/\n");
-        else if (strcmp(cmd, "udpsend") == 0)
-            kprintf("Usage: udpsend <ip> <port> <data>\n  Send a UDP datagram\n");
-        else if (strcmp(cmd, "beep") == 0)
-            kprintf("Usage: beep [freq] [ms]\n  Play tone on PC speaker (default 1000 Hz, 200 ms)\n");
-        else if (strcmp(cmd, "play") == 0)
-            kprintf("Usage: play <note> [note ...]\n  Play musical notes (C4 D4 E4 F4 G4 A4 B4 C5)\n");
-        else if (strcmp(cmd, "mouse") == 0)
-            kprintf("Usage: mouse\n  Show current mouse position and button state\n");
-        else if (strcmp(cmd, "wc") == 0)
-            kprintf("Usage: wc <file>\n  Count lines, words, and bytes in file\n");
-        else if (strcmp(cmd, "head") == 0)
-            kprintf("Usage: head <file> [n]\n  Show first n lines of file (default 10)\n");
-        else if (strcmp(cmd, "tail") == 0)
-            kprintf("Usage: tail <file> [n]\n  Show last n lines of file (default 10)\n");
-        else if (strcmp(cmd, "cp") == 0)
-            kprintf("Usage: cp <src> <dst>\n  Copy file\n");
-        else if (strcmp(cmd, "mv") == 0)
-            kprintf("Usage: mv <src> <dst>\n  Move or rename file\n");
-        else if (strcmp(cmd, "grep") == 0)
-            kprintf("Usage: grep <pattern> <file>\n  Search for pattern in file\n");
-        else if (strcmp(cmd, "df") == 0)
-            kprintf("Usage: df\n  Show disk usage statistics\n");
-        else if (strcmp(cmd, "free") == 0)
-            kprintf("Usage: free\n  Show memory usage (total/used/free)\n");
-        else if (strcmp(cmd, "whoami") == 0)
-            kprintf("Usage: whoami\n  Show current process PID and name\n");
-        else if (strcmp(cmd, "hostname") == 0)
-            kprintf("Usage: hostname\n  Print system hostname\n");
-        else if (strcmp(cmd, "env") == 0)
-            kprintf("Usage: env\n  Print environment variables (PID, NAME, IP, UPTIME, ...)\n");
-        else if (strcmp(cmd, "xxd") == 0)
-            kprintf("Usage: xxd <file>\n  Hex dump file contents (first 256 bytes)\n");
-        else if (strcmp(cmd, "sleep") == 0)
-            kprintf("Usage: sleep <seconds>\n  Pause for n seconds (max 60)\n");
-        else if (strcmp(cmd, "seq") == 0)
-            kprintf("Usage: seq <end>  or  seq <start> <end>\n  Print integer sequence\n");
-        else if (strcmp(cmd, "arp") == 0)
-            kprintf("Usage: arp\n  Show ARP cache entries\n");
-        else if (strcmp(cmd, "route") == 0)
-            kprintf("Usage: route\n  Show routing table\n");
-        else if (strcmp(cmd, "uname") == 0)
-            kprintf("Usage: uname\n  Print system information\n");
-        else if (strcmp(cmd, "lspci") == 0)
-            kprintf("Usage: lspci\n  List PCI devices\n");
-        else if (strcmp(cmd, "dmesg") == 0)
-            kprintf("Usage: dmesg\n  Show kernel boot log\n");
-        else if (strcmp(cmd, "cc") == 0)
-            kprintf("Usage: cc <source.c> [output]\n  Compile C source to static ELF64 binary\n");
-        else if (strcmp(cmd, "ccbuilder") == 0)
-            kprintf("Usage: ccbuilder [-k|--keep-going] <manifest.txt>\n  Run manifest steps: cc/exec/run/echo\n");
-        else if (strcmp(cmd, "sort") == 0)
-            kprintf("Usage: sort <file>\n  Sort lines of a file alphabetically\n");
-        else if (strcmp(cmd, "find") == 0)
-            kprintf("Usage: find <pattern>\n  Search for files matching pattern\n");
-        else if (strcmp(cmd, "calc") == 0)
-            kprintf("Usage: calc <expression>\n  Evaluate arithmetic expression (+, -, *, /, %%, parens)\n");
-        else if (strcmp(cmd, "uniq") == 0)
-            kprintf("Usage: uniq <file>\n  Remove adjacent duplicate lines\n");
-        else if (strcmp(cmd, "tr") == 0)
-            kprintf("Usage: tr <from> <to> <file>\n  Translate characters in file\n");
-        else if (strcmp(cmd, "tmux") == 0)
-            kprintf("Usage: tmux\n  Terminal multiplexer (Ctrl-B prefix, see tmux --help)\n");
-        else if (strcmp(cmd, "jobs") == 0)
-            kprintf("Usage: jobs\n  List background jobs\n");
-        else if (strcmp(cmd, "fg") == 0)
-            kprintf("Usage: fg <pid|%%job>\n  Bring background job to foreground\n");
-        else if (strcmp(cmd, "bg") == 0)
-            kprintf("Usage: bg [pid|%%job]\n  Resume a stopped job in the background\n");
-        else if (strcmp(cmd, "renice") == 0)
-            kprintf("Usage: renice <priority> <pid>\n  Change process priority, 0=high..3=idle\n");
-        else if (strcmp(cmd, "wait") == 0)
-            kprintf("Usage: wait <pid>\n  Wait for a process to finish\n");
-        else if (strcmp(cmd, "help") == 0)
-            kprintf("Usage: help\n  List all available commands\n");
-        else if (strcmp(cmd, "exit") == 0)
-            kprintf("Usage: exit\n  Disconnect telnet session\n");
-        else if (strcmp(cmd, "printf") == 0)
-            kprintf("Usage: printf <format> [args...]\n  Format and print. Supports \\n \\t %%s %%d\n");
-        else if (strcmp(cmd, "time") == 0)
-            kprintf("Usage: time <command> [args...]\n  Measure execution time of a command\n");
-        else if (strcmp(cmd, "strings") == 0)
-            kprintf("Usage: strings <file>\n  Print printable strings found in a file\n");
-        else if (strcmp(cmd, "tac") == 0)
-            kprintf("Usage: tac <file>\n  Print file lines in reverse order\n");
-        else if (strcmp(cmd, "base64") == 0)
-            kprintf("Usage: base64 <file>\n  Encode file contents as base64\n");
-        else if (strcmp(cmd, "cmos") == 0)
-            kprintf("Usage: cmos\n  Show CMOS/NVRAM hardware configuration\n");
-        else if (strcmp(cmd, "hwinfo") == 0)
-            kprintf("Usage: hwinfo\n  Show comprehensive hardware information\n");
-        else if (strcmp(cmd, "fbinfo") == 0)
-            kprintf("Usage: fbinfo\n  Show active display backend and framebuffer geometry\n");
-        else if (strcmp(cmd, "gui") == 0)
-            kprintf("Usage: gui\n  Launch GUI desktop environment (experimental)\n");
-        else if (strcmp(cmd, "serial") == 0)
-            kprintf("Usage: serial status | serial write <text>\n  COM1 serial port operations\n");
-        else if (strcmp(cmd, "fold") == 0)
-            kprintf("Usage: fold [-w width] <file>\n  Wrap lines to given width (default 80)\n");
-        else if (strcmp(cmd, "expand") == 0)
-            kprintf("Usage: expand [-t tabstop] <file>\n  Convert tabs to spaces (default tabstop 8)\n");
-        else if (strcmp(cmd, "comm") == 0)
-            kprintf("Usage: comm [-123] <file1> <file2>\n  Compare two sorted files line by line\n");
-        else if (strcmp(cmd, "split") == 0)
-            kprintf("Usage: split [-l lines] <file> [prefix]\n  Split file into chunks (default 100 lines each)\n");
-        else if (strcmp(cmd, "which") == 0)
-            kprintf("Usage: which <command>\n  Show whether command is a shell built-in\n");
-        else if (strcmp(cmd, "ln") == 0)
-            kprintf("Usage: ln <source> <dest>\n  Create a copy-link to a file\n");
-        else if (strcmp(cmd, "true") == 0)
-            kprintf("Usage: true\n  Do nothing, successfully\n");
-        else if (strcmp(cmd, "false") == 0)
-            kprintf("Usage: false\n  Do nothing, unsuccessfully\n");
-        else if (strcmp(cmd, "more") == 0)
-            kprintf("Usage: more <file>\n  Display file one page at a time\n");
-        else if (strcmp(cmd, "file") == 0)
-            kprintf("Usage: file <path>\n  Determine file type (text/binary/ELF/directory)\n");
-        else if (strcmp(cmd, "nslookup") == 0)
-            kprintf("Usage: nslookup <hostname>\n  Resolve hostname to IP address\n");
-        else
-            kprintf("Unknown command: %s\n", cmd);
+        const char *d = shell_cmd_lookup_desc(cmd);
+        if (d) {
+            kprintf("Usage: %s\n  %s\n", cmd, d);
+            return;
+        }
+        kprintf("Unknown command: %s\n", cmd);
         return;
     }
 
-    if (strcmp(cmd, "help") == 0) cmd_help();
-    else if (strcmp(cmd, "echo") == 0) cmd_echo(args);
-    else if (strcmp(cmd, "clear") == 0) vga_clear();
-    else if (strcmp(cmd, "meminfo") == 0) cmd_meminfo();
-    else if (strcmp(cmd, "ps") == 0) cmd_ps();
-    else if (strcmp(cmd, "uptime") == 0) cmd_uptime();
-    else if (strcmp(cmd, "reboot") == 0) cmd_reboot();
-    else if (strcmp(cmd, "shutdown") == 0) cmd_shutdown();
-    else if (strcmp(cmd, "kill") == 0) cmd_kill(args);
-    else if (strcmp(cmd, "color") == 0) cmd_color(args);
-    else if (strcmp(cmd, "hexdump") == 0) cmd_hexdump(args);
-    else if (strcmp(cmd, "date") == 0) cmd_date();
-    else if (strcmp(cmd, "cpuinfo") == 0) cmd_cpuinfo();
-    else if (strcmp(cmd, "history") == 0) cmd_history_show();
-    else if (strcmp(cmd, "ls") == 0) cmd_ls(args);
-    else if (strcmp(cmd, "cat") == 0) cmd_cat(args);
-    else if (strcmp(cmd, "write") == 0) cmd_write(args);
-    else if (strcmp(cmd, "touch") == 0) cmd_touch(args);
-    else if (strcmp(cmd, "rm") == 0) cmd_rm(args);
-    else if (strcmp(cmd, "mkdir") == 0) cmd_mkdir(args);
-    else if (strcmp(cmd, "stat") == 0) cmd_stat_file(args);
-    else if (strcmp(cmd, "format") == 0) cmd_format_disk();
-    else if (strcmp(cmd, "edit") == 0) editor_open(args);
-    else if (strcmp(cmd, "exec") == 0) cmd_exec(args);
-    else if (strcmp(cmd, "run") == 0) cmd_run(args);
-    else if (strcmp(cmd, "beep") == 0) cmd_beep(args);
-    else if (strcmp(cmd, "play") == 0) cmd_play(args);
-    else if (strcmp(cmd, "mouse") == 0) cmd_mouse_status();
-    else if (strcmp(cmd, "udpsend") == 0) cmd_udpsend(args);
-    else if (strcmp(cmd, "ifconfig") == 0) cmd_ifconfig();
-    else if (strcmp(cmd, "ping") == 0) cmd_ping(args);
-    else if (strcmp(cmd, "dns") == 0) cmd_dns(args);
-    else if (strcmp(cmd, "curl") == 0) cmd_curl(args);
-    else if (strcmp(cmd, "wc") == 0) cmd_wc(args);
-    else if (strcmp(cmd, "head") == 0) cmd_head(args);
-    else if (strcmp(cmd, "tail") == 0) cmd_tail(args);
-    else if (strcmp(cmd, "cp") == 0) cmd_cp(args);
-    else if (strcmp(cmd, "mv") == 0) cmd_mv(args);
-    else if (strcmp(cmd, "grep") == 0) cmd_grep(args);
-    else if (strcmp(cmd, "df") == 0) cmd_df();
-    else if (strcmp(cmd, "free") == 0) cmd_free();
-    else if (strcmp(cmd, "whoami") == 0) cmd_whoami();
-    else if (strcmp(cmd, "hostname") == 0) cmd_hostname();
-    else if (strcmp(cmd, "env") == 0) cmd_env();
-    else if (strcmp(cmd, "xxd") == 0) cmd_xxd(args);
-    else if (strcmp(cmd, "sleep") == 0) cmd_sleep(args);
-    else if (strcmp(cmd, "seq") == 0) cmd_seq(args);
-    else if (strcmp(cmd, "arp") == 0) cmd_arp();
-    else if (strcmp(cmd, "route") == 0) cmd_route();
-    else if (strcmp(cmd, "uname") == 0) cmd_uname();
-    else if (strcmp(cmd, "lspci") == 0) cmd_lspci();
-    else if (strcmp(cmd, "dmesg") == 0) cmd_dmesg();
-    else if (strcmp(cmd, "cc") == 0) cmd_cc(args);
-    else if (strcmp(cmd, "ccbuilder") == 0) cmd_ccbuilder(args);
-    else if (strcmp(cmd, "sort") == 0) cmd_sort(args);
-    else if (strcmp(cmd, "find") == 0) cmd_find(args);
-    else if (strcmp(cmd, "calc") == 0) cmd_calc(args);
-    else if (strcmp(cmd, "uniq") == 0) cmd_uniq(args);
-    else if (strcmp(cmd, "tr") == 0) cmd_tr(args);
-    else if (strcmp(cmd, "tmux") == 0) cmd_tmux(args);
-    else if (strcmp(cmd, "jobs") == 0) cmd_jobs();
-    else if (strcmp(cmd, "fg") == 0) cmd_fg(args);
-    else if (strcmp(cmd, "bg") == 0) cmd_bg(args);
-    else if (strcmp(cmd, "wait") == 0) cmd_wait(args);
-    else if (strcmp(cmd, "tee") == 0) cmd_tee(args);
-    else if (strcmp(cmd, "cut") == 0) cmd_cut(args);
-    else if (strcmp(cmd, "paste") == 0) cmd_paste(args);
-    else if (strcmp(cmd, "basename") == 0) cmd_basename(args);
-    else if (strcmp(cmd, "dirname") == 0) cmd_dirname(args);
-    else if (strcmp(cmd, "yes") == 0) cmd_yes(args);
-    else if (strcmp(cmd, "rev") == 0) cmd_rev(args);
-    else if (strcmp(cmd, "nl") == 0) cmd_nl(args);
-    else if (strcmp(cmd, "du") == 0) cmd_du(args);
-    else if (strcmp(cmd, "id") == 0) cmd_id(args);
-    else if (strcmp(cmd, "diff") == 0) cmd_diff(args);
-    else if (strcmp(cmd, "md5sum") == 0) cmd_md5sum(args);
-    else if (strcmp(cmd, "od") == 0) cmd_od(args);
-    else if (strcmp(cmd, "expr") == 0) cmd_expr(args);
-    else if (strcmp(cmd, "test") == 0) cmd_test(args);
-    else if (strcmp(cmd, "[") == 0) cmd_test(args);
-    else if (strcmp(cmd, "xargs") == 0) cmd_xargs(args);
-    else if (strcmp(cmd, "printf") == 0) cmd_printf(args);
-    else if (strcmp(cmd, "time") == 0) cmd_time(args);
-    else if (strcmp(cmd, "strings") == 0) cmd_strings(args);
-    else if (strcmp(cmd, "tac") == 0) cmd_tac(args);
-    else if (strcmp(cmd, "base64") == 0) cmd_base64(args);
-    else if (strcmp(cmd, "cmos") == 0) cmd_cmos();
-    else if (strcmp(cmd, "hwinfo") == 0) cmd_hwinfo();
-    else if (strcmp(cmd, "fbinfo") == 0) cmd_fbinfo();
-    else if (strcmp(cmd, "gui") == 0) cmd_gui();
-    else if (strcmp(cmd, "serial") == 0) cmd_serial(args);
-    else if (strcmp(cmd, "lsusb") == 0) cmd_lsusb();
-    else if (strcmp(cmd, "lsblk") == 0) cmd_lsblk();
-    else if (strcmp(cmd, "fat") == 0) cmd_fat(args);
-    else if (strcmp(cmd, "chmod") == 0) cmd_chmod(args);
-    else if (strcmp(cmd, "chown") == 0) cmd_chown(args);
-    else if (strcmp(cmd, "login") == 0) cmd_login(args);
-    else if (strcmp(cmd, "logout") == 0) cmd_logout();
-    else if (strcmp(cmd, "useradd") == 0) cmd_useradd(args);
-    else if (strcmp(cmd, "userdel") == 0) cmd_userdel(args);
-    else if (strcmp(cmd, "passwd") == 0) cmd_passwd(args);
-    else if (strcmp(cmd, "users") == 0) cmd_users();
-    else if (strcmp(cmd, "capprof") == 0) cmd_capprof(args);
-    else if (strcmp(cmd, "service") == 0) cmd_service(args);
-    else if (strcmp(cmd, "fold") == 0) cmd_fold(args);
-    else if (strcmp(cmd, "expand") == 0) cmd_expand(args);
-    else if (strcmp(cmd, "comm") == 0) cmd_comm(args);
-    else if (strcmp(cmd, "split") == 0) cmd_split(args);
-    else if (strcmp(cmd, "top") == 0) cmd_top();
-    else if (strcmp(cmd, "sed") == 0) cmd_sed(args);
-    else if (strcmp(cmd, "tar") == 0) cmd_tar(args);
-    else if (strcmp(cmd, "which") == 0) cmd_which(args);
-    else if (strcmp(cmd, "ln") == 0) cmd_ln(args);
-    else if (strcmp(cmd, "true") == 0) cmd_true(args);
-    else if (strcmp(cmd, "false") == 0) cmd_false(args);
-    else if (strcmp(cmd, "more") == 0) cmd_more(args);
-    else if (strcmp(cmd, "file") == 0) cmd_file(args);
-    else if (strcmp(cmd, "nslookup") == 0) cmd_nslookup(args);
-    else if (strcmp(cmd, "nc") == 0) cmd_nc(args);
-    else if (strcmp(cmd, "wget") == 0) cmd_wget(args);
-    else if (strcmp(cmd, "watch") == 0) cmd_watch(args);
-    else if (strcmp(cmd, "sha256sum") == 0) cmd_sha256sum(args);
-    else if (strcmp(cmd, "alias") == 0) cmd_alias(args);
-    else if (strcmp(cmd, "unalias") == 0) cmd_unalias(args);
-    else if (strcmp(cmd, "readlink") == 0) cmd_readlink(args);
-    else if (strcmp(cmd, "cd") == 0) cmd_cd(args);
-    else if (strcmp(cmd, "pwd") == 0) cmd_pwd();
-    else if (strcmp(cmd, "nice") == 0) cmd_nice(args);
-    else if (strcmp(cmd, "renice") == 0) cmd_renice(args);
-    else if (strcmp(cmd, "awk") == 0) cmd_awk(args);
-    else if (strcmp(cmd, "netstat") == 0) cmd_netstat(args);
-    else if (strcmp(cmd, "trap") == 0) cmd_trap(args);
-    else if (strcmp(cmd, "rawsend") == 0) cmd_rawsend(args);
-    else { kprintf("Unknown command: %s\n", cmd); last_exit_status = 127; }
+    shell_cmd_fn fn = shell_cmd_lookup_fn(cmd);
+    if (fn) {
+        fn(args);
+        return;
+    }
+    if (strcmp(cmd, "[") == 0) {
+        cmd_test(args);
+        return;
+    }
+    kprintf("Unknown command: %s\n", cmd);
+    last_exit_status = 127;
 }
 
 void shell_run(void) {

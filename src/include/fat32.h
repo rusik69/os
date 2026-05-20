@@ -30,4 +30,10 @@ int  fat32_write_file(const char *path, const void *data, uint32_t size);
 /* Flush FAT copies to disk */
 int  fat32_sync(void);
 
+/* Create directory (8.3 path components) */
+int  fat32_mkdir(const char *path);
+
+/* Remove file (not directories) */
+int  fat32_unlink(const char *path);
+
 #endif

@@ -46,7 +46,7 @@ make e2e
 - **C compiler** — single-pass recursive descent, outputs native x86-64 ELF64 binaries
 - **C17 toolchain mode** — kernel and in-kernel compiler build with `-std=c17`
 - **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
-- **Shell** — 60+ built-in commands, command history, tab completion, pipes, redirection
+- **Shell** — ~100 built-in commands (single dispatch table), command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
   serial (COM1), ATA/AHCI/USB block devices, PCI bus, e1000 and virtio-net,
   virtio-blk, USB EHCI/MSC, AC97 audio, PC speaker, ACPI, Intel GPU detection
@@ -876,7 +876,7 @@ all test groups at boot, outputs `[PASS]`/`[FAIL]` to serial, and calls
 - **Network tests** — IP config, ARP, DHCP, TCP handshake
 - **UDP tests** — port binding
 
-### E2E Tests (110+ tests)
+### E2E Tests (~220 assertions)
 
 Built with `make e2e`. Boots the kernel in QEMU with user-mode networking
 and drives every shell command over a telnet connection:
@@ -907,8 +907,9 @@ Every push and pull request triggers the full test suite on Ubuntu:
 
 1. Install cross-compiler (`x86_64-linux-gnu-gcc`), NASM, and QEMU
 2. Build the kernel
-3. Run in-kernel unit tests (95 assertions)
-4. Run E2E tests over telnet (110+ assertions)
+3. Run in-kernel unit tests (115 assertions)
+4. Run E2E tests over telnet (~220 assertions)
+5. Optional: virtio-net smoke workflow on virtio driver changes
 
 ---
 

@@ -24,7 +24,8 @@
 
 /* Per-connection state */
 #define TELNET_BUF_SIZE 256
-#define TELNET_OUT_SIZE 4096
+#define TELNET_OUT_SIZE 32768
+#define TELNET_OUT_FLUSH  (TELNET_OUT_SIZE - 512)
 
 struct telnet_session {
     int conn_id;
@@ -69,10 +70,16 @@ static struct telnet_session *alloc_session(int conn_id) {
     return NULL;
 }
 
-/* Append to session output buffer */
+static void ses_flush(struct telnet_session *s);
+
+/* Append to session output buffer; flush when nearing capacity */
 static void ses_write(struct telnet_session *s, const char *data, int len) {
-    for (int i = 0; i < len && s->out_len < TELNET_OUT_SIZE; i++)
-        s->out_buf[s->out_len++] = data[i];
+    for (int i = 0; i < len; i++) {
+        if (s->out_len >= TELNET_OUT_FLUSH)
+            ses_flush(s);
+        if (s->out_len < TELNET_OUT_SIZE)
+            s->out_buf[s->out_len++] = data[i];
+    }
 }
 
 static void ses_flush(struct telnet_session *s) {
@@ -318,6 +325,7 @@ void telnetd_init(void) {
 void telnetd_task(void) {
     for (;;) {
         net_poll();
+        net_dhcp_renew_if_needed();
         scheduler_yield();
     }
 }

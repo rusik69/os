@@ -111,11 +111,13 @@ void net_init(void);
 void net_poll(void);
 void net_rx_signal(void);
 int  net_rx_pending(void);
+int  net_link_send(const void *data, uint16_t len);
 uint16_t net_checksum(const void *data, int len);
 void net_get_ip(uint8_t *ip);
 uint32_t net_get_gateway(void);
 uint32_t net_get_mask(void);
 void net_dhcp_discover(void);
+void net_dhcp_renew_if_needed(void);
 int net_ping(uint32_t target_ip);
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask);
 

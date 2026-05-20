@@ -57,6 +57,18 @@ static uint32_t alloc_block(void) {
     return blk;
 }
 
+/* Zero and clear data blocks from index `from` onward */
+static void fs_free_inode_blocks_from(int idx, uint32_t from) {
+    uint8_t zero[ATA_SECTOR_SIZE];
+    memset(zero, 0, ATA_SECTOR_SIZE);
+    for (uint32_t b = from; b < FS_MAX_BLOCKS; b++) {
+        if (inodes[idx].blocks[b] != 0) {
+            ata_write_sectors(inodes[idx].blocks[b], 1, zero);
+            inodes[idx].blocks[b] = 0;
+        }
+    }
+}
+
 static int find_free_inode(void) {
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type == FS_TYPE_FREE) return i;
@@ -305,9 +317,13 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
     uint32_t blocks_needed = (size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
     if (blocks_needed > FS_MAX_BLOCKS) return -1;
 
+    fs_free_inode_blocks_from(idx, blocks_needed);
+
     const uint8_t *src = (const uint8_t *)data;
     for (uint32_t i = 0; i < blocks_needed; i++) {
-        uint32_t blk = alloc_block();
+        uint32_t blk = inodes[idx].blocks[i];
+        if (blk == 0)
+            blk = alloc_block();
         inodes[idx].blocks[i] = blk;
 
         uint8_t buf[ATA_SECTOR_SIZE];
@@ -396,6 +412,7 @@ int fs_delete(const char *path) {
         }
     }
 
+    fs_free_inode_blocks_from(idx, 0);
     memset(&inodes[idx], 0, sizeof(struct fs_inode));
     save_inodes();
     return 0;
@@ -657,16 +674,7 @@ int fs_truncate(const char *path, uint32_t len) {
     if (len >= old_size) { inodes[idx].size = len; return save_inodes(); }
     /* Free blocks beyond len */
     uint32_t new_blocks = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
-    for (uint32_t b = new_blocks; b < FS_MAX_BLOCKS; b++) {
-        if (inodes[idx].blocks[b] != 0) {
-            uint32_t blk = inodes[idx].blocks[b];
-            /* Zero the block on disk */
-            uint8_t zero[ATA_SECTOR_SIZE];
-            memset(zero, 0, ATA_SECTOR_SIZE);
-            ata_write_sectors(blk, 1, zero);
-            inodes[idx].blocks[b] = 0;
-        }
-    }
+    fs_free_inode_blocks_from(idx, new_blocks);
     inodes[idx].size = len;
     return save_inodes();
 }

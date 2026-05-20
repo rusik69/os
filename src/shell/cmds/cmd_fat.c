@@ -1,5 +1,7 @@
 #include "shell_cmds.h"
-#include "libc.h"
+#include "fat32.h"
+#include "ata.h"
+#include "ahci.h"
 #include "string.h"
 #include "printf.h"
 
@@ -14,7 +16,8 @@
  */
 void cmd_fat(const char *args) {
     if (!args || !*args) {
-        kprintf("Usage: fat mount [ata|ahci|usb] | ls [path] | cat <path> | stat <path> | write <path> <text> | sync\n");
+        kprintf("Usage: fat mount [ata|ahci|usb] | ls [path] | cat <path> | stat <path>\n");
+        kprintf("       fat write <path> <text> | mkdir <path> | unlink <path> | sync\n");
         kprintf("  mounted: %s\n", fat32_is_mounted() ? "yes" : "no");
         return;
     }
@@ -116,6 +119,28 @@ void cmd_fat(const char *args) {
     if (strncmp(args, "sync", 4) == 0) {
         if (fat32_sync() == 0) kprintf("FAT synced\n");
         else kprintf("fat sync failed\n");
+        return;
+    }
+
+    /* ── mkdir ── */
+    if (strncmp(args, "mkdir", 5) == 0) {
+        const char *path = args + 5;
+        while (*path == ' ') path++;
+        if (!*path) { kprintf("Usage: fat mkdir <path>\n"); return; }
+        int rc = fat32_mkdir(path);
+        if (rc == 0) kprintf("created %s\n", path);
+        else kprintf("fat mkdir failed: %d\n", (uint64_t)(-rc));
+        return;
+    }
+
+    /* ── unlink ── */
+    if (strncmp(args, "unlink", 6) == 0) {
+        const char *path = args + 6;
+        while (*path == ' ') path++;
+        if (!*path) { kprintf("Usage: fat unlink <path>\n"); return; }
+        int rc = fat32_unlink(path);
+        if (rc == 0) kprintf("removed %s\n", path);
+        else kprintf("fat unlink failed: %d\n", (uint64_t)(-rc));
         return;
     }
 

@@ -19,6 +19,10 @@
 struct vfs_stat {
     uint32_t size;
     uint8_t  type;   /* 1=file, 2=dir */
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mode;
+    uint32_t mtime;
 };
 
 /* Operations a filesystem must implement */

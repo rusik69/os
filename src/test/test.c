@@ -230,9 +230,13 @@ static void test_filesystem(void) {
     fs_stat("/kdir", &fsz, &dtype);
     ASSERT("fs mkdir type",     dtype == FS_TYPE_DIR);
 
-    /* Overwrite file */
+    /* Overwrite file — should reuse blocks, not leak */
+    uint32_t used_before = 0, used_after = 0;
+    fs_get_usage(NULL, NULL, &used_before, NULL);
     const char *content2 = "overwritten";
     ASSERT("fs overwrite", fs_write_file("/ktest", content2, strlen(content2)) == 0);
+    fs_get_usage(NULL, NULL, &used_after, NULL);
+    ASSERT("fs overwrite no block leak", used_after <= used_before);
     memset(rbuf, 0, sizeof(rbuf));
     sz = 0;
     fs_read_file("/ktest", rbuf, sizeof(rbuf) - 1, &sz);
@@ -241,6 +245,9 @@ static void test_filesystem(void) {
 
     /* Delete file */
     ASSERT("fs delete file", fs_delete("/ktest") == 0);
+    uint32_t used_after_del = 0;
+    fs_get_usage(NULL, NULL, &used_after_del, NULL);
+    ASSERT("fs delete no block leak", used_after_del <= used_before);
 
     /* Stat after delete should fail */
     ASSERT("fs post-delete stat fails", fs_stat("/ktest", &fsz, &ftype) < 0);
@@ -456,6 +463,7 @@ static void test_fat32(void) {
     ASSERT("fat32 read", fat32_read_file("/testos.txt", buf, sizeof(buf)) == 2);
     buf[2] = '\0';
     ASSERT_STR("fat32 content", buf, "hi");
+    ASSERT("fat32 sync", fat32_sync() == 0);
     t_ok("fat32 rw");
 }
 
