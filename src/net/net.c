@@ -323,32 +323,34 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
-    /* Periodic TCP retransmit check — safe here (process context, not ISR) */
+    int len = e1000_receive(pkt_buf, sizeof(pkt_buf));
+    if (len > 0) {
+        if (len >= (int)sizeof(struct eth_header)) {
+            struct eth_header *eth = (struct eth_header *)pkt_buf;
+            uint16_t type = ntohs(eth->type);
+            const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
+            uint16_t payload_len = len - sizeof(struct eth_header);
+
+            if (type == ETH_TYPE_ARP)
+                handle_arp(payload, payload_len);
+            else if (type == ETH_TYPE_IP) {
+                if (payload_len >= sizeof(struct ip_header)) {
+                    struct ip_header *ip = (struct ip_header *)payload;
+                    uint32_t src = ntohl(ip->src_ip);
+                    if (src) arp_cache_add(src, eth->src);
+                }
+                handle_ip(payload, payload_len);
+            }
+        }
+    }
+
+    /* Periodic TCP retransmit check — runs AFTER receive so any pending ACKs
+     * are already processed, preventing spurious retransmits of ACKed data. */
     static uint64_t last_retransmit_tick = 0;
     uint64_t now = timer_get_ticks();
     if (now - last_retransmit_tick >= 10) {
         last_retransmit_tick = now;
         net_tcp_check_retransmit();
-    }
-
-    int len = e1000_receive(pkt_buf, sizeof(pkt_buf));
-    if (len <= 0) return;
-    if (len < (int)sizeof(struct eth_header)) return;
-
-    struct eth_header *eth = (struct eth_header *)pkt_buf;
-    uint16_t type = ntohs(eth->type);
-    const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
-    uint16_t payload_len = len - sizeof(struct eth_header);
-
-    if (type == ETH_TYPE_ARP)
-        handle_arp(payload, payload_len);
-    else if (type == ETH_TYPE_IP) {
-        if (payload_len >= sizeof(struct ip_header)) {
-            struct ip_header *ip = (struct ip_header *)payload;
-            uint32_t src = ntohl(ip->src_ip);
-            if (src) arp_cache_add(src, eth->src);
-        }
-        handle_ip(payload, payload_len);
     }
 }
 
