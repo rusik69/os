@@ -182,6 +182,22 @@ static void send_error(int conn_id, int status, const char *text, const char *de
     send_response(conn_id, status, text, "text/html", (uint64_t)n, body, n, 0);
 }
 
+/* Build path under HTTPD_ROOT_DIR */
+static void httpd_build_path(const char *path, char *full_path, int max) {
+    int pi = 0;
+    const char *root = HTTPD_ROOT_DIR;
+    for (int i = 0; root[i] && pi < max - 1; i++) full_path[pi++] = root[i];
+    if (path[0] == '\0' || strcmp(path, "/") == 0) {
+        full_path[pi] = '\0';
+        return;
+    }
+    const char *p = path;
+    if (*p == '/') p++;
+    if (pi < max - 1 && full_path[pi - 1] != '/') full_path[pi++] = '/';
+    for (; *p && pi < max - 1; p++) full_path[pi++] = *p;
+    full_path[pi] = '\0';
+}
+
 /* --- File handler --- */
 
 static void handle_get(int conn_id, const char *path, int head_only) {
@@ -193,12 +209,8 @@ static void handle_get(int conn_id, const char *path, int head_only) {
     if (path[0] == '\0' || strcmp(path, "/") == 0)
         path = "/index.html";
 
-    /* Build absolute path */
     char full_path[64];
-    int pi = 0;
-    if (path[0] != '/') full_path[pi++] = '/';
-    for (int i = 0; path[i] && pi < 63; i++) full_path[pi++] = path[i];
-    full_path[pi] = '\0';
+    httpd_build_path(path, full_path, (int)sizeof(full_path));
 
     /* Reject path traversal */
     if (my_strstr(full_path, "..") != 0) {
@@ -245,11 +257,8 @@ static void handle_get(int conn_id, const char *path, int head_only) {
 
 /* --- POST handler: write body to file --- */
 static void handle_post(int conn_id, const char *path, const char *body, int body_len) {
-    /* Build absolute path */
-    char full_path[64]; int pi = 0;
-    if (path[0] != '/') full_path[pi++] = '/';
-    for (int i = 0; path[i] && pi < 63; i++) full_path[pi++] = path[i];
-    full_path[pi] = '\0';
+    char full_path[64];
+    httpd_build_path(path, full_path, (int)sizeof(full_path));
 
     if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
 
@@ -265,10 +274,8 @@ static void handle_post(int conn_id, const char *path, const char *body, int bod
 
 /* --- DELETE handler --- */
 static void handle_delete(int conn_id, const char *path) {
-    char full_path[64]; int pi = 0;
-    if (path[0] != '/') full_path[pi++] = '/';
-    for (int i = 0; path[i] && pi < 63; i++) full_path[pi++] = path[i];
-    full_path[pi] = '\0';
+    char full_path[64];
+    httpd_build_path(path, full_path, (int)sizeof(full_path));
 
     if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
 

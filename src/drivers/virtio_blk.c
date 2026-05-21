@@ -6,6 +6,7 @@
  *   -drive file=disk.img,if=virtio
  */
 
+#include "blockdev.h"
 #include "virtio_blk.h"
 #include "pci.h"
 #include "string.h"
@@ -190,3 +191,22 @@ int virtio_blk_write_sectors(uint64_t lba, uint32_t count, const void *buf) {
 }
 
 uint64_t virtio_blk_sector_count(void) { return vblk_sectors; }
+
+static int vblk_bd_read(uint32_t lba, uint8_t count, void *buf) {
+    return virtio_blk_read_sectors(lba, count, buf);
+}
+
+static int vblk_bd_write(uint32_t lba, uint8_t count, const void *buf) {
+    return virtio_blk_write_sectors(lba, count, buf);
+}
+
+static uint32_t vblk_bd_size(void) {
+    uint64_t n = vblk_sectors;
+    return (n > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)n;
+}
+
+void virtio_blk_register_blockdev(void) {
+    if (!vblk_present) return;
+    blockdev_register(BLOCKDEV_VIRTIO0, "virtio0",
+                      vblk_bd_read, vblk_bd_write, vblk_bd_size);
+}

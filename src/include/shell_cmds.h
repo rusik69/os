@@ -100,6 +100,7 @@ void cmd_serial(const char *args);
 
 /* GUI commands */
 void cmd_gui(void);
+void cmd_doom(const char *args);
 
 /* New hardware & FS commands */
 void cmd_lsusb(void);

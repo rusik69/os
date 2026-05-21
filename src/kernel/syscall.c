@@ -36,6 +36,7 @@
 #include "gui_shell.h"
 #include "shm.h"
 #include "ac97.h"
+#include "doom.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 #define SYS_FD_MAX  16
@@ -256,8 +257,25 @@ static void wrmsr(uint32_t msr, uint64_t val) {
 /* ── Syscall handlers ─────────────────────────────────────────── */
 
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    (void)fd; (void)buf_addr; (void)len;
-    /* Placeholder: stdin not wired for user processes yet */
+    if (fd == 0) return 0; /* stdin EOF until telnet fd wiring */
+    if (fd >= 3) {
+        int i = (int)fd - 3;
+        if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+        struct vfs_stat st;
+        if (vfs_stat(g_fd_table[i].path, &st) < 0) return (uint64_t)-1;
+        uint32_t fsize = st.size;
+        if (g_fd_table[i].offset >= fsize) return 0;
+        uint32_t avail = fsize - g_fd_table[i].offset;
+        uint32_t to_read = (uint32_t)len < avail ? (uint32_t)len : avail;
+        uint8_t *tmp = kmalloc(fsize);
+        if (!tmp) return (uint64_t)-1;
+        uint32_t nread = 0;
+        vfs_read(g_fd_table[i].path, tmp, fsize, &nread);
+        memcpy((void *)(uintptr_t)buf_addr, tmp + g_fd_table[i].offset, to_read);
+        kfree(tmp);
+        g_fd_table[i].offset += to_read;
+        return (uint64_t)to_read;
+    }
     return (uint64_t)-1;
 }
 
@@ -1220,173 +1238,166 @@ static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
     return 0;
 }
 
+/* Single static workspace avoids ~7MB heap alloc/free churn per cc invocation. */
+static CompilerState cc_workspace;
+
+#define CC_INCLUDE_MAX_DEPTH 16
+#define CC_PATH_MAX_LEN 256
+
+static int cc_append_src(CompilerState *st, const char *buf, uint32_t n) {
+    if (st->src_len + n >= CC_SRC_MAX) return -1;
+    memcpy(st->src + st->src_len, buf, n);
+    st->src_len += n;
+    st->src[st->src_len] = '\0';
+    return 0;
+}
+
+static void cc_path_dirname(const char *path, char out[CC_PATH_MAX_LEN]) {
+    int last_slash = -1;
+    int i = 0;
+    while (path[i] && i < CC_PATH_MAX_LEN - 1) {
+        if (path[i] == '/') last_slash = i;
+        i++;
+    }
+    if (last_slash <= 0) {
+        out[0] = '/';
+        out[1] = '\0';
+        return;
+    }
+    memcpy(out, path, (uint32_t)last_slash);
+    out[last_slash] = '\0';
+}
+
+static int cc_path_join(const char *dir, const char *name, char out[CC_PATH_MAX_LEN]) {
+    int di = 0;
+    if (name[0] == '/') {
+        while (name[di] && di < CC_PATH_MAX_LEN - 1) {
+            out[di] = name[di];
+            di++;
+        }
+        out[di] = '\0';
+        return 0;
+    }
+
+    while (dir[di] && di < CC_PATH_MAX_LEN - 1) {
+        out[di] = dir[di];
+        di++;
+    }
+    if (di == 0 || out[di - 1] != '/') {
+        if (di >= CC_PATH_MAX_LEN - 1) return -1;
+        out[di++] = '/';
+    }
+    int ni = 0;
+    while (name[ni] && di < CC_PATH_MAX_LEN - 1) {
+        out[di++] = name[ni++];
+    }
+    out[di] = '\0';
+    return name[ni] ? -1 : 0;
+}
+
+static int cc_load_with_includes(CompilerState *st, const char *path, int depth);
+
+static int cc_load_with_includes(CompilerState *st, const char *path, int depth) {
+    if (depth > CC_INCLUDE_MAX_DEPTH) return -1;
+
+    char *fbuf = (char *)kmalloc(CC_SRC_MAX);
+    if (!fbuf) return -1;
+    uint32_t sz = 0;
+    int rr = vfs_read(path, fbuf, CC_SRC_MAX - 1, &sz);
+    if (rr < 0 || sz == 0) {
+        kfree(fbuf);
+        return -1;
+    }
+    fbuf[sz] = '\0';
+
+    char base[CC_PATH_MAX_LEN];
+    cc_path_dirname(path, base);
+
+    uint32_t i = 0;
+    while (i < sz) {
+        uint32_t line_start = i;
+        while (i < sz && fbuf[i] != '\n') i++;
+        uint32_t line_end = i;
+        if (i < sz && fbuf[i] == '\n') i++;
+
+        uint32_t p = line_start;
+        while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+
+        if (p < line_end && fbuf[p] == '#') {
+            p++;
+            while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+
+            char dirkw[16] = {0};
+            int dk = 0;
+            while (p < line_end && ((fbuf[p] >= 'a' && fbuf[p] <= 'z') ||
+                   (fbuf[p] >= 'A' && fbuf[p] <= 'Z')) && dk < 15) {
+                dirkw[dk++] = fbuf[p++];
+            }
+            dirkw[dk] = '\0';
+
+            if (strcmp(dirkw, "include") == 0) {
+                while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
+                if (p < line_end && fbuf[p] == '"') {
+                    p++;
+                    char inc[CC_PATH_MAX_LEN] = {0};
+                    int ii = 0;
+                    while (p < line_end && fbuf[p] != '"' && ii < CC_PATH_MAX_LEN - 1)
+                        inc[ii++] = fbuf[p++];
+                    inc[ii] = '\0';
+
+                    char full[CC_PATH_MAX_LEN] = {0};
+                    if (cc_path_join(base, inc, full) < 0) {
+                        kfree(fbuf);
+                        return -1;
+                    }
+                    if (cc_load_with_includes(st, full, depth + 1) < 0) {
+                        kfree(fbuf);
+                        return -1;
+                    }
+                    continue;
+                }
+            }
+        }
+
+        if (cc_append_src(st, fbuf + line_start, line_end - line_start) < 0 ||
+            cc_append_src(st, "\n", 1) < 0) {
+            kfree(fbuf);
+            return -1;
+        }
+    }
+
+    kfree(fbuf);
+    return 0;
+}
+
 static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     const char *inpath = (const char *)inpath_addr;
     const char *outpath = (const char *)outpath_addr;
     if (!inpath || !outpath) return (uint64_t)-1;
 
-    CompilerState *cc = (CompilerState *)kmalloc(sizeof(CompilerState));
-    if (!cc) return (uint64_t)-1;
+    CompilerState *cc = &cc_workspace;
     memset(cc, 0, sizeof(CompilerState));
-
-    /* Expand #include "..." recursively before lexing. */
     cc->src_len = 0;
     cc->src[0] = '\0';
 
-    {
-        #define CC_INCLUDE_MAX_DEPTH 16
-        #define CC_PATH_MAX_LEN 256
-
-        int append_src(CompilerState *st, const char *buf, uint32_t n) {
-            if (st->src_len + n >= CC_SRC_MAX) return -1;
-            memcpy(st->src + st->src_len, buf, n);
-            st->src_len += n;
-            st->src[st->src_len] = '\0';
-            return 0;
-        }
-
-        void path_dirname(const char *path, char out[CC_PATH_MAX_LEN]) {
-            int last_slash = -1;
-            int i = 0;
-            while (path[i] && i < CC_PATH_MAX_LEN - 1) {
-                if (path[i] == '/') last_slash = i;
-                i++;
-            }
-            if (last_slash <= 0) {
-                out[0] = '/';
-                out[1] = '\0';
-                return;
-            }
-            memcpy(out, path, (uint32_t)last_slash);
-            out[last_slash] = '\0';
-        }
-
-        int path_join(const char *dir, const char *name, char out[CC_PATH_MAX_LEN]) {
-            int di = 0;
-            if (name[0] == '/') {
-                while (name[di] && di < CC_PATH_MAX_LEN - 1) {
-                    out[di] = name[di];
-                    di++;
-                }
-                out[di] = '\0';
-                return 0;
-            }
-
-            while (dir[di] && di < CC_PATH_MAX_LEN - 1) {
-                out[di] = dir[di];
-                di++;
-            }
-            if (di == 0 || out[di - 1] != '/') {
-                if (di >= CC_PATH_MAX_LEN - 1) return -1;
-                out[di++] = '/';
-            }
-            int ni = 0;
-            while (name[ni] && di < CC_PATH_MAX_LEN - 1) {
-                out[di++] = name[ni++];
-            }
-            out[di] = '\0';
-            return name[ni] ? -1 : 0;
-        }
-
-        int load_with_includes(CompilerState *st, const char *path, int depth) {
-            if (depth > CC_INCLUDE_MAX_DEPTH) return -1;
-
-            char *fbuf = (char *)kmalloc(CC_SRC_MAX);
-            if (!fbuf) return -1;
-            uint32_t sz = 0;
-            int rr = vfs_read(path, fbuf, CC_SRC_MAX - 1, &sz);
-            if (rr < 0 || sz == 0) {
-                kfree(fbuf);
-                return -1;
-            }
-            fbuf[sz] = '\0';
-
-            char base[CC_PATH_MAX_LEN];
-            path_dirname(path, base);
-
-            uint32_t i = 0;
-            while (i < sz) {
-                uint32_t line_start = i;
-                while (i < sz && fbuf[i] != '\n') i++;
-                uint32_t line_end = i;
-                if (i < sz && fbuf[i] == '\n') i++;
-
-                uint32_t p = line_start;
-                while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-
-                if (p < line_end && fbuf[p] == '#') {
-                    p++;
-                    while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-
-                    char dirkw[16] = {0};
-                    int dk = 0;
-                    while (p < line_end && ((fbuf[p] >= 'a' && fbuf[p] <= 'z') ||
-                           (fbuf[p] >= 'A' && fbuf[p] <= 'Z')) && dk < 15) {
-                        dirkw[dk++] = fbuf[p++];
-                    }
-                    dirkw[dk] = '\0';
-
-                    if (strcmp(dirkw, "include") == 0) {
-                        while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-                        if (p < line_end && fbuf[p] == '"') {
-                            p++;
-                            char inc[CC_PATH_MAX_LEN] = {0};
-                            int ii = 0;
-                            while (p < line_end && fbuf[p] != '"' && ii < CC_PATH_MAX_LEN - 1)
-                                inc[ii++] = fbuf[p++];
-                            inc[ii] = '\0';
-
-                            char full[CC_PATH_MAX_LEN] = {0};
-                            if (path_join(base, inc, full) < 0) {
-                                kfree(fbuf);
-                                return -1;
-                            }
-                            if (load_with_includes(st, full, depth + 1) < 0) {
-                                kfree(fbuf);
-                                return -1;
-                            }
-                            continue;
-                        }
-                    }
-                }
-
-                if (append_src(st, fbuf + line_start, line_end - line_start) < 0 ||
-                    append_src(st, "\n", 1) < 0) {
-                    kfree(fbuf);
-                    return -1;
-                }
-            }
-
-            kfree(fbuf);
-            return 0;
-        }
-
-        if (load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
-            kfree(cc);
-            return (uint64_t)-2;
-        }
-    }
+    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0)
+        return (uint64_t)-2;
 
     cc_lex(cc);
     if (cc->error) {
         kprintf("cc: lex error: %s\n", cc->errmsg);
-        kfree(cc);
         return (uint64_t)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
         kprintf("cc: error: %s\n", cc->errmsg);
-        kfree(cc);
         return (uint64_t)-4;
     }
 
-    if (cc_write_elf(cc, outpath) < 0) {
-        kfree(cc);
+    if (cc_write_elf(cc, outpath) < 0)
         return (uint64_t)-5;
-    }
 
-    kfree(cc);
     return 0;
 }
 
@@ -1436,6 +1447,28 @@ static uint64_t sys_vga_clear(void) {
 
 static uint64_t sys_gui_shell_run(void) {
     gui_shell_run();
+    return 0;
+}
+
+static struct process *g_doom_proc = NULL;
+
+static uint64_t sys_doom_run(void) {
+    if (g_doom_proc && g_doom_proc->state != PROCESS_ZOMBIE &&
+        g_doom_proc->state != PROCESS_UNUSED) {
+        return (uint64_t)-2;
+    }
+    if (!vga_is_framebuffer()) {
+        if (vga_try_alloc_software_framebuffer() != 0)
+            return (uint64_t)-1;
+    }
+    g_doom_proc = process_create(doom_task, "doom");
+    if (!g_doom_proc)
+        return (uint64_t)-1;
+    int status = 0;
+    process_waitpid(g_doom_proc->pid, &status);
+    g_doom_proc = NULL;
+    keyboard_reset_state();
+    vga_refresh_console();
     return 0;
 }
 
@@ -1589,6 +1622,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
         case SYS_GUI_SHELL_RUN: return sys_gui_shell_run();
+        case SYS_DOOM_RUN: return sys_doom_run();
         case SYS_AC97_PRESENT: return ac97_present() ? 1 : 0;
         case SYS_AC97_BEEP: {
             if (!ac97_present()) return (uint64_t)-1;

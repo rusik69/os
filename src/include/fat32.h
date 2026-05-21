@@ -3,6 +3,8 @@
 
 #include "types.h"
 
+struct vfs_ops;
+
 #define FAT32_MAX_NAME 256
 
 /* Mount point: which disk to use for FAT32 */
@@ -35,5 +37,7 @@ int  fat32_mkdir(const char *path);
 
 /* Remove file (not directories) */
 int  fat32_unlink(const char *path);
+
+extern struct vfs_ops fat32_vfs_ops;
 
 #endif

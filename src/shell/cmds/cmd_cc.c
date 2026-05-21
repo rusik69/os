@@ -39,7 +39,7 @@ static int cc_compile_one(const char *inpath, const char *maybe_out) {
 }
 
 static void cc_batch_compile(const char *list_path) {
-    char listbuf[8192];
+    static char listbuf[8192];
     uint32_t sz = 0;
     if (fs_read_file(list_path, listbuf, sizeof(listbuf) - 1, &sz) < 0 || sz == 0) {
         kprintf("cc: cannot read list file %s\n", list_path);

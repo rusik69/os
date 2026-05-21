@@ -62,7 +62,7 @@ int pipe_write(int pipe_id, const void *buf, int len) {
                 scheduler_yield();
                 p->blocked_write_pid = 0;
             } else {
-                scheduler_yield();
+                return written ? written : -1;
             }
         }
 
@@ -101,7 +101,7 @@ int pipe_read(int pipe_id, void *buf, int len) {
             scheduler_yield();
             p->blocked_read_pid = 0;
         } else {
-            scheduler_yield();
+            return 0;
         }
     }
 

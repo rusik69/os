@@ -424,6 +424,10 @@ int libc_gui_shell_run(void) {
     return (int)libc_syscall(SYS_GUI_SHELL_RUN, 0, 0, 0, 0, 0);
 }
 
+int libc_doom_run(void) {
+    return (int)libc_syscall(SYS_DOOM_RUN, 0, 0, 0, 0, 0);
+}
+
 int libc_ac97_present(void) {
     return (int)libc_syscall(SYS_AC97_PRESENT, 0, 0, 0, 0, 0);
 }

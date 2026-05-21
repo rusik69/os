@@ -11,7 +11,6 @@
 #include "editor.h"
 #include "vfs.h"
 #include "fs.h"
-#include "pipe.h"
 #include "process.h"
 #include "scheduler.h"
 
@@ -371,7 +370,7 @@ static void var_expand(const char *src, char *dst, int dst_max) {
     while (*src && di < dst_max - 1) {
         if (*src == '\'') {
             in_sq ^= 1;
-            dst[di++] = *src++;
+            src++;
             continue;
         }
         if (*src == '$' && !in_sq) {
@@ -670,20 +669,27 @@ static void process_cmd(void) {
             static char glob_out[CMD_BUF_SIZE];
             /* Copy first word verbatim */
             int fw_len = (int)(first_end - cmd_buf);
-            memcpy(glob_out, cmd_buf, fw_len);
-            /* Expand the rest */
-            char rest[CMD_BUF_SIZE];
-            strncpy(rest, first_end, CMD_BUF_SIZE - 1); rest[CMD_BUF_SIZE-1] = '\0';
-            char expanded_rest[CMD_BUF_SIZE];
-            glob_expand_line(rest, expanded_rest, CMD_BUF_SIZE);
-            int er_len = strlen(expanded_rest);
-            if (fw_len + er_len < CMD_BUF_SIZE - 1) {
-                memcpy(glob_out + fw_len, expanded_rest, er_len);
-                glob_out[fw_len + er_len] = '\0';
-                strncpy(cmd_buf, glob_out, CMD_BUF_SIZE - 1);
-                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
-                cmd = cmd_buf;
-                while (*cmd == ' ') cmd++;
+            char fw[32];
+            int fw_cmp = fw_len;
+            if (fw_cmp >= (int)sizeof(fw)) fw_cmp = (int)sizeof(fw) - 1;
+            memcpy(fw, cmd_buf, fw_cmp);
+            fw[fw_cmp] = '\0';
+            int skip_glob = (strcmp(fw, "expr") == 0 || strcmp(fw, "calc") == 0);
+            if (!skip_glob) {
+                memcpy(glob_out, cmd_buf, fw_len);
+                char rest[CMD_BUF_SIZE];
+                strncpy(rest, first_end, CMD_BUF_SIZE - 1); rest[CMD_BUF_SIZE-1] = '\0';
+                char expanded_rest[CMD_BUF_SIZE];
+                glob_expand_line(rest, expanded_rest, CMD_BUF_SIZE);
+                int er_len = strlen(expanded_rest);
+                if (fw_len + er_len < CMD_BUF_SIZE - 1) {
+                    memcpy(glob_out + fw_len, expanded_rest, er_len);
+                    glob_out[fw_len + er_len] = '\0';
+                    strncpy(cmd_buf, glob_out, CMD_BUF_SIZE - 1);
+                    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                    cmd = cmd_buf;
+                    while (*cmd == ' ') cmd++;
+                }
             }
         }
     }
@@ -794,76 +800,64 @@ static void process_cmd(void) {
         return;
     }
 
-    /* --- Check for pipe: cmd1 | cmd2 | ... (multi-pipe, no VFS temp file) --- */
+    /* --- Check for pipe: cmd1 | cmd2 | ... (sync capture buffer, no blocking) --- */
     {
         int pipe_count = 0;
         for (const char *p = cmd; *p; p++) {
-            if (*p == '|') pipe_count++;
+            if (*p == '|' && p[1] != '|' && (p == cmd || p[-1] != '|'))
+                pipe_count++;
         }
         if (pipe_count > 0) {
-            /* Ping-pong static buffers: 32 KB each covers the FS 32 KB file limit */
-            static char pipe_buf_a[32768];
-            static char pipe_buf_b[32768];
-
-            /* Work on a mutable copy */
             static char pipe_work[CMD_BUF_SIZE];
+            static char pipe_xfer[4096];
+            int pipe_xfer_len = 0;
+
             strncpy(pipe_work, cmd, CMD_BUF_SIZE - 1);
             pipe_work[CMD_BUF_SIZE - 1] = '\0';
 
-            char *cur_stdin_buf = NULL;
-            int   cur_stdin_len = 0;
-            int   buf_toggle    = 0;  /* 0 → write into pipe_buf_a, 1 → pipe_buf_b */
-
             char *seg = pipe_work;
             while (seg) {
-                /* Find next | */
                 char *pipe_sep = NULL;
                 for (char *p = seg; *p; p++) {
-                    if (*p == '|') { pipe_sep = p; break; }
+                    if (*p == '|' && p[1] != '|' && (p == seg || p[-1] != '|')) {
+                        pipe_sep = p;
+                        break;
+                    }
                 }
                 int is_last = (pipe_sep == NULL);
                 if (pipe_sep) *pipe_sep = '\0';
 
-                /* Trim leading/trailing spaces in segment */
                 while (*seg == ' ') seg++;
                 int slen = (int)strlen(seg);
                 while (slen > 0 && seg[slen - 1] == ' ') seg[--slen] = '\0';
 
-                /* Parse command name and args from segment */
                 char *scmd  = seg;
                 char *sargs = seg;
                 while (*sargs && *sargs != ' ') sargs++;
                 if (*sargs) { *sargs = '\0'; sargs++; while (*sargs == ' ') sargs++; }
                 else sargs = NULL;
 
-                /* Install previous stage output as stdin */
-                if (cur_stdin_buf) shell_set_stdin(cur_stdin_buf, cur_stdin_len);
-                else               shell_clear_stdin();
+                if (pipe_xfer_len > 0)
+                    shell_set_stdin(pipe_xfer, pipe_xfer_len);
+                else
+                    shell_clear_stdin();
 
                 if (is_last) {
-                    /* Last segment: run normally; output goes to screen */
                     shell_exec_cmd(scmd, sargs);
                     shell_clear_stdin();
                     return;
                 }
 
-                /* Non-last: capture output into the ping-pong buffer */
-                char *out_buf = buf_toggle ? pipe_buf_b : pipe_buf_a;
-                int   out_len = 0;
-
+                pipe_xfer_len = 0;
                 void (*saved_hook)(char, void *) = NULL;
                 void  *saved_ctx                  = NULL;
                 kprintf_get_hook(&saved_hook, &saved_ctx);
-
-                struct shell_capture_ctx cap_ctx = { out_buf, &out_len, 32767 };
+                struct shell_capture_ctx cap_ctx = { pipe_xfer, &pipe_xfer_len, (int)sizeof(pipe_xfer) - 1 };
                 kprintf_set_hook(shell_capture_cb, &cap_ctx);
                 shell_exec_cmd(scmd, sargs);
                 kprintf_set_hook(saved_hook, saved_ctx);
-                out_buf[out_len] = '\0';
+                pipe_xfer[pipe_xfer_len] = '\0';
 
-                cur_stdin_buf = out_buf;
-                cur_stdin_len = out_len;
-                buf_toggle    = !buf_toggle;
                 seg = pipe_sep + 1;
             }
             shell_clear_stdin();

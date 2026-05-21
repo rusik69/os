@@ -13,6 +13,7 @@
 #include "printf.h"
 #include "string.h"
 #include "types.h"
+#include "net.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -80,6 +81,74 @@ static int procfs_gen_version(char *buf, int max) {
     return p;
 }
 
+static char *proc_arp_buf;
+static int   proc_arp_pos;
+static int   proc_arp_max;
+
+static void proc_arp_cb(uint32_t ip, const uint8_t *mac) {
+    proc_u64_to_str((ip >> 24) & 0xFF, proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_str(".", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_u64_to_str((ip >> 16) & 0xFF, proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_str(".", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_u64_to_str((ip >> 8) & 0xFF, proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_str(".", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_u64_to_str(ip & 0xFF, proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    proc_str(" ", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    for (int i = 0; i < 6; i++) {
+        if (i) proc_str(":", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+        proc_u64_to_str(mac[i], proc_arp_buf, &proc_arp_pos, proc_arp_max);
+    }
+    proc_str("\n", proc_arp_buf, &proc_arp_pos, proc_arp_max);
+}
+
+static int procfs_gen_arp(char *buf, int max) {
+    proc_arp_buf = buf;
+    proc_arp_pos = 0;
+    proc_arp_max = max;
+    net_arp_list(proc_arp_cb);
+    buf[proc_arp_pos] = '\0';
+    return proc_arp_pos;
+}
+
+static int procfs_gen_route(char *buf, int max) {
+    int p = 0;
+    uint8_t ipb[4];
+    net_get_ip(ipb);
+    for (int i = 0; i < 4; i++) {
+        if (i) proc_str(".", buf, &p, max);
+        proc_u64_to_str(ipb[i], buf, &p, max);
+    }
+    proc_str(" dev eth0\n", buf, &p, max);
+    uint32_t gw = net_get_gateway();
+    if (gw) {
+        proc_str("default via ", buf, &p, max);
+        proc_u64_to_str((gw >> 24) & 0xFF, buf, &p, max);
+        proc_str(".", buf, &p, max);
+        proc_u64_to_str((gw >> 16) & 0xFF, buf, &p, max);
+        proc_str(".", buf, &p, max);
+        proc_u64_to_str((gw >> 8) & 0xFF, buf, &p, max);
+        proc_str(".", buf, &p, max);
+        proc_u64_to_str(gw & 0xFF, buf, &p, max);
+        proc_str(" dev eth0\n", buf, &p, max);
+    }
+    buf[p] = '\0';
+    return p;
+}
+
+static int procfs_gen_mounts(char *buf, int max) {
+    int p = 0;
+    char mnt[8][64];
+    int n = vfs_list_mountpoints(mnt, 8);
+    for (int i = 0; i < n; i++) {
+        proc_str(mnt[i], buf, &p, max);
+        proc_str(" / ", buf, &p, max);
+        proc_str(mnt[i], buf, &p, max);
+        proc_str("\n", buf, &p, max);
+    }
+    buf[p] = '\0';
+    return p;
+}
+
 /* /proc/<pid>/status */
 static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -124,6 +193,12 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_cpuinfo(buf, (int)max_size);
     } else if (strcmp(path, "/proc/version") == 0) {
         len = procfs_gen_version(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/net/arp") == 0) {
+        len = procfs_gen_arp(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/net/route") == 0) {
+        len = procfs_gen_route(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/mounts") == 0) {
+        len = procfs_gen_mounts(buf, (int)max_size);
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */
@@ -151,7 +226,10 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     if (strcmp(path, "/proc/uptime") == 0 ||
         strcmp(path, "/proc/meminfo") == 0 ||
         strcmp(path, "/proc/cpuinfo") == 0 ||
-        strcmp(path, "/proc/version") == 0) {
+        strcmp(path, "/proc/version") == 0 ||
+        strcmp(path, "/proc/net/arp") == 0 ||
+        strcmp(path, "/proc/net/route") == 0 ||
+        strcmp(path, "/proc/mounts") == 0) {
         st->type = 1; st->size = 128; return 0;
     }
     /* /proc/<pid>/status */
@@ -170,7 +248,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") != 0) return -1;
-    kprintf("uptime\nmeminfo\ncpuinfo\nversion\n");
+    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nnet\nmounts\n");
     /* Also list active PIDs */
     struct process *table = process_get_table();
     for (int i = 0; i < PROCESS_MAX; i++) {

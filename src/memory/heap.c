@@ -9,7 +9,7 @@
  * steal those frames.
  */
 
-#define HEAP_MAX_SIZE (12ULL * 1024 * 1024)   /* 12 MB */
+#define HEAP_MAX_SIZE (64ULL * 1024 * 1024)   /* 64 MB — cc needs ~7 MB per compile */
 #define HEAP_INITIAL  (4ULL * 4096)            /* 4 pages */
 
 struct heap_block {
@@ -28,11 +28,12 @@ static uint64_t heap_base    = 0;
 static uint64_t heap_current = 0;
 static uint64_t heap_limit   = 0;
 
-static void heap_expand(size_t needed) {
+static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
     if (new_limit > heap_base + HEAP_MAX_SIZE)
-        return;   /* exhausted */
+        return -1;
     heap_limit = new_limit;
+    return 0;
 }
 
 void heap_init(void) {
@@ -82,7 +83,8 @@ void *kmalloc(size_t size) {
 
     /* No free block found, expand heap */
     size_t total = size + BLOCK_HDR_SIZE;
-    heap_expand(total);
+    if (heap_expand(total) < 0)
+        return NULL;
 
     struct heap_block *new_block = (struct heap_block *)heap_current;
     heap_current += total;

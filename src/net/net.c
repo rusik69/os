@@ -51,7 +51,8 @@ static int net_link_recv(void *buf, uint16_t max_len) {
 
 int net_link_send(const void *data, uint16_t len) {
     if (virtio_net_present()) {
-        virtio_net_send((const uint8_t *)data, len);
+        if (virtio_net_send((const uint8_t *)data, len) < 0)
+            return -1;
         return 0;
     }
     return e1000_send(data, len);
@@ -185,9 +186,56 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
     net_link_send(frame, sizeof(struct eth_header) + len);
 }
 
+static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
+                               const void *payload, uint16_t len) {
+    uint16_t ip_id = net_ip_id_counter++;
+    uint16_t max_payload = 1500 - (uint16_t)sizeof(struct ip_header);
+    uint16_t off = 0;
+    while (off < len) {
+        uint16_t chunk = (uint16_t)(len - off);
+        int more = 0;
+        if (chunk > max_payload) {
+            chunk = max_payload;
+            more = 1;
+        }
+        static uint8_t buf[1500];
+        struct ip_header *ip = (struct ip_header *)buf;
+        memset(ip, 0, sizeof(*ip));
+        ip->version_ihl = 0x45;
+        ip->ttl = 64;
+        ip->protocol = protocol;
+        ip->src_ip = htonl(net_our_ip);
+        ip->dst_ip = htonl(dst_ip);
+        ip->total_len = htons((uint16_t)(sizeof(struct ip_header) + chunk));
+        ip->id = htons(ip_id);
+        ip->flags_frag = htons((uint16_t)((more ? 0x2000 : 0) | (off / 8)));
+        ip->checksum = 0;
+        memcpy(buf + sizeof(struct ip_header), (const uint8_t *)payload + off, chunk);
+        ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+
+        uint8_t *dst_mac;
+        uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        int on_local = 0;
+        if (net_subnet_mask && ((dst_ip & net_subnet_mask) == (net_our_ip & net_subnet_mask)))
+            on_local = 1;
+        if (dst_ip == 0xFFFFFFFF) on_local = 0;
+        if (on_local) {
+            uint8_t *cached = arp_cache_lookup(dst_ip);
+            dst_mac = cached ? cached : bcast;
+        } else {
+            dst_mac = net_gw_mac_known ? net_gw_mac : bcast;
+        }
+        send_eth(dst_mac, ETH_TYPE_IP, buf, (uint16_t)(sizeof(struct ip_header) + chunk));
+        off = (uint16_t)(off + chunk);
+    }
+}
+
 void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t len) {
+    if (len > 1500 - sizeof(struct ip_header)) {
+        send_ip_fragmented(dst_ip, protocol, payload, len);
+        return;
+    }
     static uint8_t buf[1500];
-    if (len > 1500 - sizeof(struct ip_header)) return;
     struct ip_header *ip = (struct ip_header *)buf;
     memset(ip, 0, sizeof(*ip));
     ip->version_ihl = 0x45;
@@ -299,6 +347,8 @@ struct ip_frag_slot {
     uint8_t  buf[2048];
     uint16_t len;
     uint16_t expect_off;
+    uint16_t frag_end;
+    uint8_t  frag_map[256];
     uint64_t tick;
     int      valid;
 };
@@ -330,6 +380,8 @@ static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, u
             ip_frags[i].proto = proto;
             ip_frags[i].len = 0;
             ip_frags[i].expect_off = 0;
+            ip_frags[i].frag_end = 0;
+            memset(ip_frags[i].frag_map, 0, sizeof(ip_frags[i].frag_map));
             ip_frags[i].tick = timer_get_ticks();
             return &ip_frags[i];
         }
@@ -352,17 +404,22 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_
     struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst, ip->protocol);
     if (!slot) return -1;
 
-    if (frag_off != slot->expect_off) return 1; /* wait for next fragment in order */
-
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     uint16_t part = len - ihl;
     if (frag_off + part > sizeof(slot->buf)) return -1;
     memcpy(slot->buf + frag_off, data + ihl, part);
-    slot->expect_off = (uint16_t)(frag_off + part);
+    for (uint16_t b = frag_off; b < frag_off + part; b++)
+        slot->frag_map[b / 8] |= (uint8_t)(1u << (b % 8));
     if (frag_off + part > slot->len) slot->len = (uint16_t)(frag_off + part);
+    if (frag_off + part > slot->frag_end) slot->frag_end = (uint16_t)(frag_off + part);
     slot->tick = timer_get_ticks();
 
     if (more) return 1;
+
+    for (uint16_t b = 0; b < slot->len; b++) {
+        if (!(slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8))))
+            return 1;
+    }
 
     slot->valid = 0;
     struct ip_header reasm;

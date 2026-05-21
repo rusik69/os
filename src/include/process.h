@@ -4,7 +4,7 @@
 #include "types.h"
 
 #define PROCESS_MAX 256
-#define KERNEL_STACK_SIZE (32 * 1024)  /* 32 KB — network TX chain uses ~5KB of stack */
+#define KERNEL_STACK_SIZE (128 * 1024) /* 128 KB — cc parser + network call chains */
 #define USER_STACK_SIZE   (64 * 1024)  /* 64 KB user stack */
 #define PROCESS_SIG_MAX 32
 #define PROCESS_SYSCALL_MAX 256

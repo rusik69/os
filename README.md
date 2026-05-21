@@ -23,7 +23,12 @@ make test
 
 # Run E2E tests over telnet
 make e2e
+
+# Run with virtio-net NIC (QEMU)
+make run-virtio
 ```
+
+Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default in CI).
 
 ## Features
 
@@ -35,7 +40,9 @@ make e2e
 - **Zombie reaping** — automatic cleanup of terminated processes
 - **TCP/IP networking** — DHCP, ARP, ICMP, TCP, UDP, DNS
 - **Telnet server** on port 23 — remote shell access
-- **Simple filesystem (SMFS)** — on an IDE disk with directories and files
+- **Simple filesystem (SMFS)** — on an IDE disk with free-block bitmap reuse, directories and files
+- **HTTP server** — document root at `/tmp/www` (`HTTPD_ROOT_DIR`)
+- **SYS_READ** — wired to fd read path for Ring 3 programs (fd ≥ 3)
 - **Unix-style permissions** — owner/group/other rwx bits, `chmod`, `chown`, `stat`
 - **Multiuser auth** — password-backed users (`login`, `passwd`, `useradd`, `userdel`, `users`)
 - **Owned home directories** — `/root`, `/home/<user>` auto-created and ownership tracked by uid/gid
@@ -51,9 +58,11 @@ make e2e
   serial (COM1), ATA/AHCI/USB block devices, PCI bus, e1000 and virtio-net,
   virtio-blk, USB EHCI/MSC, AC97 audio, PC speaker, ACPI, Intel GPU detection
 - **Block device abstraction** — ATA/AHCI registered behind a shared sector I/O layer
-- **FAT32 mount** — `fat mount ata|ahci|usb` with read/write (`fat write`, `fat sync`)
+- **FAT32 mount** — `fat mount ata|ahci|usb` with read/write; VFS mount at `/mnt`
+- **IP fragmentation** — TX fragmentation for large payloads; improved RX reassembly
 - **Multiboot graphics** — Framebuffer support with 1024×768 RGB rendering
 - **GUI framework** — Window system, widgets (button, textbox, label), event handling, mouse cursor
+- **Doom-like raycast game** — `doom` shell command (WASD + mouse, kernel framebuffer renderer)
 - **CI** — GitHub Actions with unit tests and full E2E test suite
 
 ## Multiuser Notes
@@ -129,6 +138,8 @@ os/
 │   ├── gui/
 │   │   ├── gui.h          GUI core types, window API, widget system
 │   │   └── gui.c          Window management, widgets, rendering
+│   ├── doom/
+│   │   └── doom_*.c       Raycast FPS engine (doom shell command)
 │   ├── lib/
 │   │   ├── string.c       String/memory utilities
 │   │   └── printf.c       kprintf with output hook
@@ -975,6 +986,20 @@ The [linker.ld](linker.ld) places the kernel at physical address
 | `make debug` | Run QEMU with GDB stub (`-s -S`) |
 | `make clean` | Remove build artifacts |
 | `make deps` | Install toolchain via Homebrew |
+
+---
+
+## Games
+
+### Doom-like raycast shooter
+
+Run `doom` from the shell to launch an original raycast FPS (not id Doom / WAD-compatible).
+Requires a framebuffer (`make run` with QEMU `-vga std`).
+
+**Controls:** WASD move, mouse look, left-click fire, ESC quit.
+
+The game runs as a kernel task with direct framebuffer access, same as the GUI desktop.
+Internal resolution is 320×200 upscaled 2× to the center of the 1024×768 screen.
 
 ---
 

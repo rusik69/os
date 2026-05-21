@@ -4,9 +4,29 @@
 #include "vmm.h"
 #include "printf.h"
 #include "heap.h"
+#include "pci.h"
 
 #define FB_CELL_W 8
 #define FB_CELL_H 16
+
+/* Bochs/QEMU stdvga DISPI (portable VBE) */
+#define VBE_DISPI_INDEX         0x01CE
+#define VBE_DISPI_DATA          0x01CF
+#define VBE_DISPI_ID            0xB0C5
+#define VBE_DISPI_INDEX_ID      0x0
+#define VBE_DISPI_INDEX_XRES    0x1
+#define VBE_DISPI_INDEX_YRES    0x2
+#define VBE_DISPI_INDEX_BPP     0x3
+#define VBE_DISPI_INDEX_ENABLE  0x4
+#define VBE_DISPI_INDEX_VIRT_W  0x6
+#define VBE_DISPI_ENABLED       0x01
+#define VBE_DISPI_LFB_ENABLED   0x40
+#define VBE_DISPI_LFB_PHYS      0xE0000000ULL
+
+/* VBE 32bpp X8R8G8B8 (stored little-endian as B,G,R,X in memory) */
+static inline uint32_t vga_pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
 
 struct vbe_mode_info {
     uint16_t mode_attributes;
@@ -86,6 +106,91 @@ static uint32_t fb_width;
 static uint32_t fb_height;
 static uint8_t fb_bpp;
 static int fb_active;
+
+static void vbe_write(uint16_t index, uint16_t value) {
+    outw(VBE_DISPI_INDEX, index);
+    outw(VBE_DISPI_DATA, value);
+}
+
+static uint16_t vbe_read(uint16_t index) {
+    outw(VBE_DISPI_INDEX, index);
+    return inw(VBE_DISPI_DATA);
+}
+
+static uint64_t pci_bar_mem_addr(uint32_t bar_lo, uint32_t bar_hi) {
+    if (bar_lo & 1)
+        return 0;
+    if (bar_lo & 0x4)
+        return ((uint64_t)bar_hi << 32) | (bar_lo & 0xFFFFFFF0ULL);
+    return bar_lo & 0xFFFFFFF0ULL;
+}
+
+/* QEMU -vga std (PCI): framebuffer is BAR0, not 0xE0000000 (ISA only). */
+static uint64_t vga_lookup_pci_fb(void) {
+    struct pci_device vga;
+
+    if (pci_find_device(0x1234, 0x1111, &vga) != 0 &&
+        pci_find_class(0x03, 0x00, &vga) != 0)
+        return 0;
+
+    uint32_t cmd = pci_read(vga.bus, vga.slot, vga.func, 0x04);
+    pci_write(vga.bus, vga.slot, vga.func, 0x04, cmd | (1u << 1)); /* mem space */
+
+    uint32_t bar0 = pci_read(vga.bus, vga.slot, vga.func, 0x10);
+    uint32_t bar1 = pci_read(vga.bus, vga.slot, vga.func, 0x14);
+    uint64_t addr = pci_bar_mem_addr(bar0, bar1);
+
+    /* QEMU stdvga BAR2 MMIO: set little-endian scanout (spec offset 0x604) */
+    uint32_t bar2 = pci_read(vga.bus, vga.slot, vga.func, 0x18);
+    uint64_t mmio = pci_bar_mem_addr(bar2, 0);
+    if (mmio) {
+        volatile uint32_t *end_reg = (volatile uint32_t *)(uintptr_t)(mmio + 0x604);
+        *end_reg = 0x1e1e1e1e;
+        __asm__ volatile("mfence" ::: "memory");
+    }
+
+    return addr;
+}
+
+static int vga_fb_selftest(void) {
+    if (!fb_base || fb_bpp != 32) return -1;
+    volatile uint32_t *p = (volatile uint32_t *)fb_base;
+    uint32_t saved = p[0];
+    uint32_t probe = 0x00AABBCC;
+    p[0] = probe;
+    __asm__ volatile("mfence" ::: "memory");
+    uint32_t got = p[0];
+    p[0] = saved;
+    __asm__ volatile("mfence" ::: "memory");
+    return got == probe ? 0 : -1;
+}
+
+static int vga_try_bochs_vbe(uint32_t width, uint32_t height, uint8_t bpp) {
+    uint16_t id = vbe_read(VBE_DISPI_INDEX_ID);
+    if (id != VBE_DISPI_ID && id != 0xB0C4)
+        return -1;
+
+    vbe_write(VBE_DISPI_INDEX_ENABLE, 0);
+    vbe_write(VBE_DISPI_INDEX_XRES, (uint16_t)width);
+    vbe_write(VBE_DISPI_INDEX_YRES, (uint16_t)height);
+    vbe_write(VBE_DISPI_INDEX_BPP, bpp);
+    vbe_write(VBE_DISPI_INDEX_VIRT_W, (uint16_t)width);
+    vbe_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
+
+    uint64_t fb_addr = vga_lookup_pci_fb();
+    if (!fb_addr)
+        fb_addr = VBE_DISPI_LFB_PHYS;
+
+    fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;
+    fb_pitch = width * (bpp / 8);
+    fb_width = width;
+    fb_height = height;
+    fb_bpp = bpp;
+    fb_active = 1;
+
+    vmm_set_range_uncacheable(fb_addr, (uint64_t)fb_pitch * height);
+    return 0;
+}
 
 static const uint32_t vga_palette[16] = {
     0x000000, 0x0000AA, 0x00AA00, 0x00AAAA,
@@ -233,12 +338,20 @@ static void render_all(void) {
 }
 
 static void clear_framebuffer(uint32_t rgb) {
-    if (!fb_active) return;
-    for (uint32_t y = 0; y < fb_height; y++) {
-        for (uint32_t x = 0; x < fb_width; x++) {
-            fb_put_pixel(x, y, rgb);
+    if (!fb_active || !fb_base) return;
+    if (fb_bpp == 32) {
+        for (uint32_t y = 0; y < fb_height; y++) {
+            volatile uint32_t *row = (volatile uint32_t *)(fb_base + y * fb_pitch);
+            for (uint32_t x = 0; x < fb_width; x++)
+                row[x] = rgb;
+        }
+    } else {
+        for (uint32_t y = 0; y < fb_height; y++) {
+            for (uint32_t x = 0; x < fb_width; x++)
+                fb_put_pixel(x, y, rgb);
         }
     }
+    __asm__ volatile("mfence" ::: "memory");
 }
 
 static void vga_scroll(void) {
@@ -285,8 +398,8 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         fb_pitch_val = vmi->pitch;
         fb_bpp_val = vmi->bits_per_pixel;
         fb_type = 1;  /* Assume RGB */
-        kprintf("[..] Using VBE mode info: addr=0x%llx %ux%u bpp=%d pitch=%u\n",
-                (unsigned long long)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch_val);
+        kprintf("[..] Using VBE mode info: addr=0x%x %ux%u bpp=%d pitch=%u\n",
+                (unsigned)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch_val);
     }
     
     /* If still no framebuffer, return failure - will try to allocate later */
@@ -294,8 +407,8 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         return -1;
     }
     
-    kprintf("[..] Framebuffer: addr=0x%llx type=%d bpp=%d %ux%u pitch=%u\n",
-            (unsigned long long)fb_addr, fb_type,
+    kprintf("[..] Framebuffer: addr=0x%x type=%d bpp=%d %ux%u pitch=%u\n",
+            (unsigned)fb_addr, fb_type,
             fb_bpp_val, fb_w, fb_h,
             fb_pitch_val);
     
@@ -317,8 +430,8 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
 
     uint64_t fb_size = (uint64_t)fb_pitch_val * fb_h;
     
-    /* Only map to MMU if it's a hardware framebuffer (high address) */
-    if (fb_addr > 0x100000) {
+    /* Only map low RAM framebuffers; boot huge pages cover 0xC0000000+ (incl. Bochs LFB) */
+    if (fb_addr > 0x100000 && fb_addr < 0xC0000000ULL) {
         uint64_t start = fb_addr & ~(PAGE_SIZE - 1ULL);
         uint64_t end = (fb_addr + fb_size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
         for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
@@ -331,6 +444,10 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     fb_height = fb_h;
     fb_bpp = fb_bpp_val;
     fb_active = 1;
+
+    if (fb_addr >= 0xC0000000ULL)
+        vmm_set_range_uncacheable(fb_addr, fb_size);
+
     clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
     render_all();
     return 0;
@@ -341,36 +458,45 @@ int vga_is_framebuffer(void) {
 }
 
 int vga_try_alloc_software_framebuffer(void) {
-    /* If framebuffer is already initialized, don't reallocate */
-    if (fb_active) {
+    if (fb_active)
+        return 0;
+
+    /* Prefer Bochs VBE — QEMU -vga std scans out PCI BAR0 framebuffer */
+    if (vga_try_bochs_vbe(1024, 768, 32) == 0) {
+        if (vga_fb_selftest() != 0)
+            kprintf("[--] Framebuffer write/read failed at 0x%x\n",
+                    (unsigned)(uintptr_t)fb_base);
+        kprintf("[OK] Bochs VBE framebuffer: 1024x768x32 at 0x%x\n",
+                (unsigned)(uintptr_t)fb_base);
+        clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
+        render_all();
         return 0;
     }
-    
-    /* Allocate software framebuffer from heap */
+
+    /* Fallback: heap buffer (visible only with hardware multiboot FB) */
     uint32_t new_width = 1024;
     uint32_t new_height = 768;
     uint8_t new_bpp = 32;
     uint32_t new_pitch = new_width * (new_bpp / 8);
     uint64_t new_size = (uint64_t)new_pitch * new_height;
-    
+
     uint8_t *new_fb = (uint8_t *)kmalloc(new_size);
     if (!new_fb) {
-        kprintf("[--] Failed to allocate software framebuffer (%u KB)\n", (unsigned)(new_size / 1024));
+        kprintf("[--] Failed to allocate software framebuffer (%u KB)\n",
+                (unsigned)(new_size / 1024));
         return -1;
     }
-    
-    kprintf("[OK] Allocated software framebuffer: %ux%u bpp=%d size=%u KB at 0x%lx\n",
-            new_width, new_height, new_bpp, (unsigned)(new_size / 1024), (unsigned long)new_fb);
-    
-    /* Initialize framebuffer variables */
+
+    kprintf("[--] Using off-screen framebuffer at 0x%x (no Bochs VBE)\n",
+            (unsigned)(uint64_t)new_fb);
+
     fb_base = (volatile uint8_t *)new_fb;
     fb_pitch = new_pitch;
     fb_width = new_width;
     fb_height = new_height;
     fb_bpp = new_bpp;
     fb_active = 1;
-    
-    /* Clear and render */
+
     clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
     render_all();
     return 0;
@@ -471,11 +597,25 @@ void vga_put_pixel(int32_t x, int32_t y, uint32_t color) {
 void vga_clear_framebuffer(uint32_t color) {
     if (!fb_base) return;
 
-    for (uint32_t y = 0; y < fb_height; y++) {
-        for (uint32_t x = 0; x < fb_width; x++) {
-            vga_put_pixel(x, y, color);
+    if (fb_bpp == 32) {
+        for (uint32_t y = 0; y < fb_height; y++) {
+            volatile uint32_t *row = (volatile uint32_t *)(fb_base + y * fb_pitch);
+            for (uint32_t x = 0; x < fb_width; x++)
+                row[x] = color;
+        }
+    } else {
+        for (uint32_t y = 0; y < fb_height; y++) {
+            for (uint32_t x = 0; x < fb_width; x++)
+                vga_put_pixel(x, y, color);
         }
     }
+    __asm__ volatile("mfence" ::: "memory");
+}
+
+void vga_refresh_console(void) {
+    if (!fb_active) return;
+    render_all();
+    vga_update_cursor();
 }
 
 void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, uint32_t *pitch) {

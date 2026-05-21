@@ -51,9 +51,86 @@ static int save_inodes(void) {
     return 0;
 }
 
+#define FS_BITMAP_BYTES 496
+#define FS_BITMAP_MAX_BLOCKS (FS_BITMAP_BYTES * 8)
+
+static uint8_t *fs_bitmap(void) { return super.padding; }
+
+static int bitmap_idx(uint32_t sector) {
+    if (sector < FS_DATA_START) return -1;
+    uint32_t idx = sector - FS_DATA_START;
+    if (idx >= FS_BITMAP_MAX_BLOCKS) return -1;
+    return (int)idx;
+}
+
+static int bitmap_is_free(int idx) {
+    return !(fs_bitmap()[idx / 8] & (uint8_t)(1u << (idx % 8)));
+}
+
+static void bitmap_mark_used(int idx) {
+    fs_bitmap()[idx / 8] |= (uint8_t)(1u << (idx % 8));
+}
+
+static void bitmap_mark_free(int idx) {
+    fs_bitmap()[idx / 8] &= (uint8_t)~(1u << (idx % 8));
+}
+
+static void bitmap_init_all_free(void) {
+    memset(fs_bitmap(), 0, FS_BITMAP_BYTES);
+}
+
+static void bitmap_rebuild_from_inodes(void) {
+    bitmap_init_all_free();
+    uint32_t hi = FS_DATA_START;
+    for (int i = 0; i < FS_MAX_FILES; i++) {
+        for (uint32_t b = 0; b < FS_MAX_BLOCKS; b++) {
+            uint32_t sec = inodes[i].blocks[b];
+            if (!sec) continue;
+            int idx = bitmap_idx(sec);
+            if (idx >= 0) bitmap_mark_used(idx);
+            if (sec >= hi) hi = sec + 1;
+        }
+    }
+    if (hi > super.next_free_block) super.next_free_block = hi;
+}
+
+static uint32_t bitmap_alloc_block(void) {
+    uint32_t start = super.next_free_block > FS_DATA_START
+                   ? super.next_free_block - FS_DATA_START : 0;
+    for (uint32_t pass = 0; pass < FS_BITMAP_MAX_BLOCKS; pass++) {
+        uint32_t idx = (start + pass) % FS_BITMAP_MAX_BLOCKS;
+        if (bitmap_is_free((int)idx)) {
+            bitmap_mark_used((int)idx);
+            uint32_t sec = FS_DATA_START + idx;
+            if (sec >= super.next_free_block) super.next_free_block = sec + 1;
+            return sec;
+        }
+    }
+    return 0;
+}
+
+static void bitmap_free_sector(uint32_t sector) {
+    int idx = bitmap_idx(sector);
+    if (idx >= 0) bitmap_mark_free(idx);
+}
+
+static uint32_t bitmap_used_count(void) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < FS_BITMAP_MAX_BLOCKS; i++)
+        if (!bitmap_is_free((int)i)) n++;
+    return n;
+}
+
 static uint32_t alloc_block(void) {
-    uint32_t blk = super.next_free_block;
-    super.next_free_block++;
+    uint32_t blk = bitmap_alloc_block();
+    if (!blk) {
+        blk = super.next_free_block;
+        int idx = bitmap_idx(blk);
+        if (idx >= 0 && idx < (int)FS_BITMAP_MAX_BLOCKS) {
+            bitmap_mark_used(idx);
+            super.next_free_block++;
+        }
+    }
     return blk;
 }
 
@@ -63,10 +140,12 @@ static void fs_free_inode_blocks_from(int idx, uint32_t from) {
     memset(zero, 0, ATA_SECTOR_SIZE);
     for (uint32_t b = from; b < FS_MAX_BLOCKS; b++) {
         if (inodes[idx].blocks[b] != 0) {
+            bitmap_free_sector(inodes[idx].blocks[b]);
             ata_write_sectors(inodes[idx].blocks[b], 1, zero);
             inodes[idx].blocks[b] = 0;
         }
     }
+    save_super();
 }
 
 static int find_free_inode(void) {
@@ -249,6 +328,8 @@ int fs_format(void) {
     inodes[3].mode   = 01777;
     strncpy(inodes[3].name, "tmp", FS_MAX_NAME - 1);
 
+    bitmap_init_all_free();
+
     if (save_super() < 0) return -1;
     if (save_inodes() < 0) return -1;
     return 0;
@@ -272,8 +353,9 @@ void fs_init(void) {
             kprintf("  Failed to load inodes\n");
             return;
         }
-        kprintf("  Filesystem loaded (%u data blocks)\n",
-                (uint64_t)(super.next_free_block - FS_DATA_START));
+        bitmap_rebuild_from_inodes();
+        kprintf("  Filesystem loaded (%u data blocks used)\n",
+                (uint64_t)bitmap_used_count());
     }
 }
 
@@ -560,7 +642,7 @@ void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
         if (inodes[i].type != FS_TYPE_FREE) ui++;
     if (used_inodes)  *used_inodes  = ui;
     if (total_inodes) *total_inodes = FS_MAX_FILES;
-    if (used_blocks)  *used_blocks  = super.next_free_block - FS_DATA_START;
+    if (used_blocks)  *used_blocks  = bitmap_used_count();
     if (data_start)   *data_start   = FS_DATA_START;
 }
 
@@ -633,7 +715,6 @@ int fs_symlink(const char *path, const char *target) {
     uint32_t tlen = (uint32_t)strlen(target);
     if (tlen >= FS_BLOCK_SIZE) tlen = FS_BLOCK_SIZE - 1;
     uint32_t blk = alloc_block();
-    save_super();
     uint8_t blk_buf[FS_BLOCK_SIZE];
     memset(blk_buf, 0, FS_BLOCK_SIZE);
     memcpy(blk_buf, target, tlen);
@@ -641,6 +722,7 @@ int fs_symlink(const char *path, const char *target) {
     inodes[idx].blocks[0] = blk;
     inodes[idx].size = tlen;
     save_inodes();
+    save_super();
     return 0;
 }
 

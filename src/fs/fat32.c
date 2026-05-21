@@ -12,6 +12,7 @@
  */
 #include "fat32.h"
 #include "blockdev.h"
+#include "vfs.h"
 #include "string.h"
 #include "printf.h"
 
@@ -99,6 +100,7 @@ static uint32_t     bps           = 512; /* bytes per sector */
 static uint32_t     num_fats      = 2;
 static uint32_t     fat_sectors   = 0;
 static uint32_t     fs_info_lba   = 0;
+static uint32_t     fsinfo_next_free = 2;
 
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
@@ -110,6 +112,17 @@ static int read_sector(uint32_t lba, void *buf) {
 
 static int write_sector(uint32_t lba, const void *buf) {
     return blockdev_write_sectors(disk_id, lba, 1, buf);
+}
+
+static void fsinfo_write_hint(uint32_t next) {
+    if (!fs_info_lba) return;
+    uint8_t buf[SECT_SIZE];
+    if (read_sector(fs_info_lba, buf) != 0) return;
+    buf[488] = (uint8_t)(next & 0xFF);
+    buf[489] = (uint8_t)((next >> 8) & 0xFF);
+    buf[490] = (uint8_t)((next >> 16) & 0xFF);
+    buf[491] = (uint8_t)((next >> 24) & 0xFF);
+    write_sector(fs_info_lba, buf);
 }
 
 /* ── FAT chain traversal ────────────────────────────────────────────────────── */
@@ -149,12 +162,16 @@ static uint32_t fat_next_cluster(uint32_t cluster) {
 }
 
 static uint32_t fat_alloc_cluster(void) {
-    /* Scan FAT starting at cluster 2 */
-    for (uint32_t c = 2; c < 0x0FFFFFF0; c++) {
+    uint32_t start = fsinfo_next_free >= 2 ? fsinfo_next_free : 2;
+    for (uint32_t pass = 0; pass < 0x0FFFFFF0; pass++) {
+        uint32_t c = (start + pass) % 0x0FFFFFF0;
+        if (c < 2) c = 2;
         uint32_t val;
         if (fat_read_entry(c, &val) != 0) return 0;
         if (val == FAT32_FREE) {
             if (fat_write_entry(c, FAT32_EOC) != 0) return 0;
+            fsinfo_next_free = c + 1;
+            fsinfo_write_hint(fsinfo_next_free);
             return c;
         }
     }
@@ -401,6 +418,16 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     data_start   = fat_start + num_fats * fat_sectors;
     part_start   = part_lba;
     fs_info_lba  = bpb->fs_info ? part_lba + bpb->fs_info : 0;
+    if (fs_info_lba) {
+        uint8_t fbuf[SECT_SIZE];
+        if (read_sector(fs_info_lba, fbuf) == 0) {
+            fsinfo_next_free = (uint32_t)fbuf[488]
+                             | ((uint32_t)fbuf[489] << 8)
+                             | ((uint32_t)fbuf[490] << 16)
+                             | ((uint32_t)fbuf[491] << 24);
+            if (fsinfo_next_free < 2) fsinfo_next_free = 2;
+        }
+    }
     mounted      = 1;
 
     kprintf("  FAT32 mounted: vol='%.11s' root_clus=%u\n",
@@ -614,6 +641,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
 
 int fat32_sync(void) {
     if (!mounted) return -1;
+    fsinfo_write_hint(fsinfo_next_free);
     if (fs_info_lba) {
         uint8_t buf[SECT_SIZE];
         if (read_sector(fs_info_lba, buf) != 0) return -1;
@@ -776,3 +804,74 @@ int fat32_unlink(const char *path) {
     fat_free_chain(clus);
     return 0;
 }
+
+/* ── VFS backend at /mnt ───────────────────────────────────────────────────── */
+
+static const char *fat32_vfs_rel(const char *path) {
+    if (strncmp(path, "/mnt", 4) == 0) {
+        if (path[4] == '\0') return "/";
+        if (path[4] == '/') return path + 4;
+    }
+    return path;
+}
+
+static int fat32_vfs_read(void *priv, const char *path, void *buf,
+                          uint32_t max_size, uint32_t *out_size) {
+    (void)priv;
+    if (!mounted) return -1;
+    int n = fat32_read_file(fat32_vfs_rel(path), buf, max_size);
+    if (n < 0) return -1;
+    if (out_size) *out_size = (uint32_t)n;
+    return 0;
+}
+
+static int fat32_vfs_write(void *priv, const char *path, const void *data, uint32_t size) {
+    (void)priv;
+    if (!mounted) return -1;
+    return fat32_write_file(fat32_vfs_rel(path), data, size) < 0 ? -1 : 0;
+}
+
+static int fat32_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
+    (void)priv;
+    if (!mounted) return -1;
+    int sz = fat32_file_size(fat32_vfs_rel(path));
+    if (sz < 0) return -1;
+    st->size = (uint32_t)sz;
+    st->type = 1;
+    st->uid = st->gid = 0;
+    st->mode = 0644;
+    st->mtime = 0;
+    return 0;
+}
+
+static int fat32_vfs_create(void *priv, const char *path, uint8_t type) {
+    (void)priv;
+    if (!mounted) return -1;
+    if (type == 2) return fat32_mkdir(fat32_vfs_rel(path));
+    return fat32_write_file(fat32_vfs_rel(path), "", 0) < 0 ? -1 : 0;
+}
+
+static int fat32_vfs_unlink(void *priv, const char *path) {
+    (void)priv;
+    if (!mounted) return -1;
+    return fat32_unlink(fat32_vfs_rel(path));
+}
+
+static int fat32_vfs_readdir(void *priv, const char *path) {
+    (void)priv;
+    if (!mounted) return -1;
+    char names[64][FAT32_MAX_NAME];
+    int n = fat32_list_dir(fat32_vfs_rel(path), names, 64);
+    for (int i = 0; i < n; i++)
+        kprintf("%s\n", names[i]);
+    return 0;
+}
+
+struct vfs_ops fat32_vfs_ops = {
+    .read    = fat32_vfs_read,
+    .write   = fat32_vfs_write,
+    .stat    = fat32_vfs_stat,
+    .create  = fat32_vfs_create,
+    .unlink  = fat32_vfs_unlink,
+    .readdir = fat32_vfs_readdir,
+};

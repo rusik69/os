@@ -3,6 +3,8 @@
 #include "string.h"
 #include "heap.h"
 #include "printf.h"
+#include "fs.h"
+#include "vfs.h"
 
 #define MAX_FILES 64
 #define MAX_PATH_LEN 256
@@ -54,35 +56,50 @@ struct gui_filebrowser {
 static void fb_refresh_list(gui_filebrowser_t *fb) {
     memset(fb->files, 0, sizeof(fb->files));
     fb->file_count = 0;
-    
-    /* List directory using VFS */
     int count = 0;
-    /* Simplified: just add parent dir entry and a few dummy files */
-    /* In production, would use fs_list() or vfs_readdir() */
-    if (strcmp(fb->current_path, "/") != 0) {
+
+    if (strcmp(fb->current_path, "/") != 0 && count < MAX_FILES) {
         strcpy(fb->files[count].name, "..");
         fb->files[count].is_dir = 1;
         count++;
     }
-    
-    /* Add some example entries */
-    if (count < MAX_FILES) {
-        strcpy(fb->files[count].name, "home");
-        fb->files[count].is_dir = 1;
+
+    char names[MAX_FILES][64];
+    int n = vfs_readdir_names(fb->current_path, names, MAX_FILES);
+    if (n < 0) {
+        char smfs_names[MAX_FILES][FS_MAX_NAME];
+        n = fs_list_names(fb->current_path, "", smfs_names, MAX_FILES);
+        for (int j = 0; j < n; j++) {
+            strncpy(names[j], smfs_names[j], 63);
+            names[j][63] = '\0';
+        }
+    }
+
+    for (int i = 0; i < n && count < MAX_FILES; i++) {
+        char full[128];
+        if (fb->current_path[0] == '/' && fb->current_path[1] == '\0') {
+            full[0] = '/';
+            strncpy(full + 1, names[i], sizeof(full) - 2);
+            full[sizeof(full) - 1] = '\0';
+        } else {
+            strncpy(full, fb->current_path, sizeof(full) - 1);
+            full[sizeof(full) - 1] = '\0';
+            int fl = (int)strlen(full);
+            if (fl + 1 + (int)strlen(names[i]) < (int)sizeof(full)) {
+                full[fl++] = '/';
+                strcpy(full + fl, names[i]);
+            }
+        }
+        uint32_t sz = 0;
+        uint8_t ty = 0;
+        fs_stat(full, &sz, &ty);
+        strncpy(fb->files[count].name, names[i], 63);
+        fb->files[count].name[63] = '\0';
+        fb->files[count].is_dir = (ty == FS_TYPE_DIR);
+        fb->files[count].size = sz;
         count++;
     }
-    if (count < MAX_FILES) {
-        strcpy(fb->files[count].name, "boot");
-        fb->files[count].is_dir = 1;
-        count++;
-    }
-    if (count < MAX_FILES) {
-        strcpy(fb->files[count].name, "kernel.elf");
-        fb->files[count].is_dir = 0;
-        fb->files[count].size = 1024000;
-        count++;
-    }
-    
+
     fb->file_count = count;
     fb->selected_index = 0;
     memset(fb->selected, 0, sizeof(fb->selected));

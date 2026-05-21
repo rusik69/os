@@ -7,7 +7,8 @@
 
 #define BLOCKDEV_ATA    0
 #define BLOCKDEV_AHCI   1
-#define BLOCKDEV_USB0  16
+#define BLOCKDEV_USB0   16
+#define BLOCKDEV_VIRTIO0 2
 
 typedef int      (*blockdev_read_fn)(uint32_t lba, uint8_t count, void *buf);
 typedef int      (*blockdev_write_fn)(uint32_t lba, uint8_t count, const void *buf);

@@ -256,6 +256,7 @@ void libc_vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col);
 void libc_vga_set_cursor(uint16_t row, uint16_t col);
 void libc_vga_clear(void);
 int libc_gui_shell_run(void);
+int libc_doom_run(void);
 
 /* TCP client connect (syscall 189) */
 int libc_net_tcp_connect(uint32_t ip, uint16_t port);

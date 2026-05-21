@@ -38,6 +38,7 @@
 #include "heap.h"
 #include "pmm.h"
 #include "scheduler.h"
+#include "doom.h"
 
 /* ── Test framework ─────────────────────────────────────────── */
 
@@ -248,6 +249,21 @@ static void test_filesystem(void) {
     uint32_t used_after_del = 0;
     fs_get_usage(NULL, NULL, &used_after_del, NULL);
     ASSERT("fs delete no block leak", used_after_del <= used_before);
+
+    /* Bitmap block reuse: delete then rewrite should not grow usage */
+    {
+        uint32_t u_write = 0, u_del = 0, u_rewrite = 0;
+        ASSERT("fs bitmap create", fs_create("/reuse", FS_TYPE_FILE) >= 0);
+        ASSERT("fs bitmap write", fs_write_file("/reuse", "0123456789", 10) == 0);
+        fs_get_usage(NULL, NULL, &u_write, NULL);
+        ASSERT("fs bitmap rm", fs_delete("/reuse") == 0);
+        fs_get_usage(NULL, NULL, &u_del, NULL);
+        ASSERT("fs bitmap recreate", fs_create("/reuse", FS_TYPE_FILE) >= 0);
+        ASSERT("fs bitmap rewrite", fs_write_file("/reuse", "0123456789", 10) == 0);
+        fs_get_usage(NULL, NULL, &u_rewrite, NULL);
+        ASSERT("fs bitmap reuse stable", u_rewrite <= u_write);
+        fs_delete("/reuse");
+    }
 
     /* Stat after delete should fail */
     ASSERT("fs post-delete stat fails", fs_stat("/ktest", &fsz, &ftype) < 0);
@@ -478,6 +494,17 @@ static void test_ac97(void) {
     t_ok("ac97 play pcm");
 }
 
+static void test_doom(void) {
+    doom_math_init();
+    ASSERT("doom trig sin/cos", doom_test_trig());
+    ASSERT("doom ray hit", doom_test_ray_hit());
+    ASSERT("doom wall collision", doom_test_collision());
+    ASSERT("doom column sky", doom_test_column_has_sky());
+    ASSERT("doom column wall", doom_test_column_has_wall());
+    ASSERT("doom frame varies", doom_test_frame_varies());
+    ASSERT("doom door opens", doom_test_door_opens());
+}
+
 static void test_network(void) {
     if (!virtio_net_present() && !e1000_is_present()) {
         t_ok("net SKIP (no NIC)");
@@ -552,6 +579,7 @@ void test_run_all(void) {
     test_shm_mutex();
     test_fat32();
     test_ac97();
+    test_doom();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",

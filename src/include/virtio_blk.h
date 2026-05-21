@@ -11,4 +11,6 @@ int  virtio_blk_write_sectors(uint64_t lba, uint32_t count, const void *buf);
 /* Returns total sector count, or 0 if device absent. */
 uint64_t virtio_blk_sector_count(void);
 
+void virtio_blk_register_blockdev(void);
+
 #endif

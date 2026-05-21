@@ -60,6 +60,12 @@ int vfs_create(const char *path, uint8_t type);
 int vfs_unlink(const char *path);
 int vfs_readdir(const char *path);
 
+/* Fill names[] with up to max directory entries; returns count or <0 */
+int vfs_readdir_names(const char *path, char names[][64], int max);
+
+/* List mounted filesystem paths; returns count */
+int vfs_list_mountpoints(char mounts[][64], int max);
+
 void vfs_init(void);
 
 #endif

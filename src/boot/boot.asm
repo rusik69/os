@@ -3,7 +3,7 @@ bits 32
 
 ; Multiboot1 constants
 MULTIBOOT_MAGIC     equ 0x1BADB002
-MULTIBOOT_FLAGS     equ 0x00010807  ; align + memory map + video mode + VBE mode + address fields
+MULTIBOOT_FLAGS     equ 0x00010003  ; align + mem + aout (no VBE — QEMU -kernel ignores it)
 MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 extern _kernel_end
@@ -19,10 +19,6 @@ multiboot_header:
     dd 0                         ; load_end_addr (0 = load entire file)
     dd 0                         ; bss_end_addr (0 = no BSS clearing by loader)
     dd _start                    ; entry_addr
-    dd 0                         ; mode_type: linear graphics
-    dd 1024                      ; width
-    dd 768                       ; height
-    dd 32                        ; depth
 
 section .boot
 align 4
@@ -110,7 +106,7 @@ _start:
     mov eax, ecx
     shl eax, 21                     ; N * 2MB
     add eax, 0xC0000000             ; base at 3GB
-    or eax, 0x83                    ; present + writable + huge page
+    or eax, 0x93                    ; present + writable + huge + PCD (uncacheable MMIO)
     mov [boot_pd2 + ecx * 8], eax
     inc ecx
     cmp ecx, 512

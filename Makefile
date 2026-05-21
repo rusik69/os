@@ -17,7 +17,7 @@ endif
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Isrc/include -Isrc/gui -mcmodel=large -g \
+         -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
@@ -97,9 +97,11 @@ COMPILER_SRCS = $(wildcard src/compiler/*.c)
 COMPILER_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(COMPILER_SRCS))
 GUI_SRCS = $(wildcard src/gui/*.c)
 GUI_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(GUI_SRCS))
-OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS)
+DOOM_SRCS = $(wildcard src/doom/*.c)
+DOOM_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(DOOM_SRCS))
+OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJS)
 
-.PHONY: all run debug clean deps test test-kernel test-serial test-clean check-app-boundary
+.PHONY: all run debug clean deps test test-kernel test-serial test-clean check-app-boundary doom-test
 
 check-app-boundary:
     @bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|printf\.h|string\.h|types\.h)' $(APP_SRCS) 2>/dev/null || true); \
@@ -133,6 +135,7 @@ $(BUILDDIR)/disk.img:
 
 run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+		-display cocoa -k en-us \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
 		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0 ; \
 	stty sane
@@ -148,7 +151,7 @@ run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 BUILDDIR_TEST = build_test
 TEST_CFLAGS   = $(CFLAGS) -DTEST_MODE
 
-C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) src/test/test.c
+C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
 ASM_TEST_SRCS = $(ASM_SRCS)
 
 C_TEST_OBJS  = $(patsubst src/%.c,$(BUILDDIR_TEST)/%.o,$(C_TEST_SRCS))
@@ -196,6 +199,11 @@ test-clean: clean
 e2e: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	@chmod +x tests/e2e.sh tests/e2e.py
 	@./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+
+# Verify doom framebuffer (PCI BAR0) renders non-black pixels in QEMU -vga std
+doom-test: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	@chmod +x tests/doom_fb.sh
+	@./tests/doom_fb.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 
 # E2E with explicit telnet port (override default 2323)
 e2e-port-%: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img

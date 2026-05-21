@@ -150,6 +150,7 @@ void cmd_ccbuilder(const char *args) {
                 rc = ccb_compile_one(src, out);
             }
             if (rc == 0) cc_ok++; else cc_fail++;
+            kprintf("ccbuilder: cc(ok=%d) %s\n", rc == 0 ? 1 : 0, src && *src ? src : "?");
         } else if (strcmp(cmd, "exec") == 0) {
             char *path = next_token(&cursor);
             if (!path || !*path) {
@@ -163,6 +164,7 @@ void cmd_ccbuilder(const char *args) {
                     kprintf("ccbuilder: exec failed %s (%d)\n", path, (uint64_t)(-rc));
             }
             if (rc == 0) exec_ok++; else exec_fail++;
+            kprintf("ccbuilder: exec(ok=%d) %s\n", rc == 0 ? 1 : 0, path ? path : "?");
         } else if (strcmp(cmd, "run") == 0) {
             char *path = next_token(&cursor);
             if (!path || !*path) {
@@ -176,9 +178,10 @@ void cmd_ccbuilder(const char *args) {
                     kprintf("ccbuilder: run failed %s (%d)\n", path, (uint64_t)(-rc));
             }
             if (rc == 0) run_ok++; else run_fail++;
+            kprintf("ccbuilder: run(ok=%d) %s\n", rc == 0 ? 1 : 0, path ? path : "?");
         } else if (strcmp(cmd, "echo") == 0) {
             while (*cursor == ' ' || *cursor == '\t') cursor++;
-            kprintf("%s\n", cursor);
+            kprintf("ccbuilder: echo(ok=1) %s\n", cursor);
             rc = 0;
         } else {
             kprintf("ccbuilder:%d: unknown step '%s'\n", (uint64_t)line_no, cmd);

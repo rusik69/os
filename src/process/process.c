@@ -79,6 +79,8 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_VFS_CREATE);
     process_caps_allow(proc, SYS_VFS_UNLINK);
     process_caps_allow(proc, SYS_VFS_READDIR);
+    process_caps_allow(proc, SYS_FD_READ);
+    process_caps_allow(proc, SYS_FD_WRITE);
 
     /* Network stack access */
     process_caps_allow(proc, SYS_NET_PRESENT);

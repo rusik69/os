@@ -11,6 +11,7 @@
 #   E2E_PORT         host telnet port (auto-selected if not set)
 #   E2E_TIMEOUT      per-command timeout seconds  (default 30)
 #   E2E_BOOT_TIMEOUT boot + DHCP timeout seconds  (default 90)
+#   Boot wait greps serial for "Services started" or "HTTP server on port 80"
 #
 # Exit codes:
 #   0  all e2e tests passed

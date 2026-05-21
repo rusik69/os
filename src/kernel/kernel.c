@@ -111,12 +111,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Virtual memory manager */
     vmm_init();
     kprintf("[OK] VMM initialized\n");
-    if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
-        kprintf("[OK] Framebuffer console enabled\n");
 
-    /* Kernel heap */
+    /* Kernel heap (framebuffer may allocate from heap) */
     heap_init();
     kprintf("[OK] Heap initialized\n");
+
+    if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
+        kprintf("[OK] Framebuffer console enabled\n");
+    else
+        kprintf("[OK] VGA text console (QEMU window or serial terminal)\n");
 
     /* Process subsystem */
     process_init();
@@ -215,7 +218,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     }
 
     /* FAT32 */
-    fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0);
+    if (fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0) == 0)
+        vfs_mount("/mnt", &fat32_vfs_ops, NULL);
 
     /* Multiuser */
     users_init();
@@ -227,9 +231,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] virtio-net: not present\n");
 
-    if (virtio_blk_init() == 0)
+    if (virtio_blk_init() == 0) {
+        virtio_blk_register_blockdev();
         kprintf("[OK] virtio-blk: %llu sectors\n", virtio_blk_sector_count());
-    else
+    } else
         kprintf("[--] virtio-blk: not present\n");
 
     if (ac97_init() == 0)

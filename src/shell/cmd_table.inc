@@ -32,6 +32,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("dirname",     "Extract directory from path",                           cmd_dirname)
     CMD("dmesg",       "Show boot log",                                         sh_dmesg)
     CMD("dns",         "Resolve hostname (dns <host>)",                         cmd_dns)
+    CMD("doom",        "Play Doom-like raycast shooter",                        cmd_doom)
     CMD("du",          "Disk usage by directory",                               cmd_du)
     CMD("echo",        "Print arguments",                                       cmd_echo)
     CMD("edit",        "Text editor (edit <file>)",                             editor_open)

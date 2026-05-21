@@ -11,5 +11,8 @@
 void keyboard_init(void);
 char keyboard_getchar(void);
 int keyboard_has_input(void);
+int keyboard_is_down(char c);
+int keyboard_escape_down(void);
+void keyboard_reset_state(void);
 
 #endif

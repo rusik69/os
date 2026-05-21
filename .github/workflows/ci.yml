@@ -45,3 +45,30 @@ jobs:
         env:
           E2E_BOOT_TIMEOUT: "120"
           E2E_TIMEOUT: "45"
+          E2E_EXTERNAL_DNS: "0"
+
+  virtio-net-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu nasm qemu-system-x86 python3
+      - name: Build kernel
+        run: |
+          make CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-objcopy
+      - name: Boot with virtio-net and check serial markers
+        run: |
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
+          SERIAL=$(mktemp)
+          timeout 60 qemu-system-x86_64 \
+            -kernel build/kernel.bin -m 256M \
+            -serial file:$SERIAL -display none -vga none \
+            -drive file=build/disk.img,format=raw,if=ide \
+            -netdev user,id=net0,hostfwd=tcp::2324-:23 \
+            -device virtio-net-pci,netdev=net0 \
+            -no-reboot || true
+          grep -E "virtio-net: initialized|DHCP:" "$SERIAL" || \
+            (echo "virtio-net smoke markers not found"; cat "$SERIAL"; exit 1)

@@ -1,5 +1,6 @@
 #include "vfs.h"
 #include "fs.h"
+#include "fat32.h"
 #include "string.h"
 #include "printf.h"
 #include "process.h"
@@ -173,6 +174,45 @@ int vfs_readdir(const char *path) {
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->readdir) return -1;
     return m->ops->readdir(m->priv, ap);
+}
+
+int vfs_readdir_names(const char *path, char names[][64], int max) {
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -1;
+    if (strcmp(m->mountpoint, "/") == 0) {
+        char smfs_names[64][FS_MAX_NAME];
+        int n = fs_list_names(ap, "", smfs_names, max < 64 ? max : 64);
+        for (int i = 0; i < n; i++) {
+            strncpy(names[i], smfs_names[i], 63);
+            names[i][63] = '\0';
+        }
+        return n;
+    }
+    if (strcmp(m->mountpoint, "/mnt") == 0 && fat32_is_mounted()) {
+        const char *rel = ap;
+        if (strncmp(ap, "/mnt", 4) == 0) {
+            if (ap[4] == '\0') rel = "/";
+            else if (ap[4] == '/') rel = ap + 4;
+        }
+        char fat_names[64][FAT32_MAX_NAME];
+        int n = fat32_list_dir(rel, fat_names, max < 64 ? max : 64);
+        for (int i = 0; i < n; i++) {
+            strncpy(names[i], fat_names[i], 63);
+            names[i][63] = '\0';
+        }
+        return n;
+    }
+    return -1;
+}
+
+int vfs_list_mountpoints(char mounts_out[][64], int max) {
+    int n = num_mounts < max ? num_mounts : max;
+    for (int i = 0; i < n; i++) {
+        strncpy(mounts_out[i], mounts[i].mountpoint, 63);
+        mounts_out[i][63] = '\0';
+    }
+    return n;
 }
 
 void vfs_init(void) {

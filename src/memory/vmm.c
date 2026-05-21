@@ -6,6 +6,8 @@
 #define PTE_PRESENT  (1ULL << 0)
 #define PTE_WRITE    (1ULL << 1)
 #define PTE_USER     (1ULL << 2)
+#define PTE_PCD      (1ULL << 4)
+#define PTE_HUGE     (1ULL << 7)
 #define PTE_COW      (1ULL << 9)   /* software bit: copy-on-write */
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 #define USER_VADDR_MAX 0x0000800000000000ULL
@@ -43,6 +45,11 @@ void vmm_init(void) {
 }
 
 void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
+    /* Boot identity-maps 0xC0000000–0xFFFFFFFF with 2MB pages; remapping here
+     * would treat MMIO/LFB huge pages as page-table pointers. */
+    if (virt >= 0xC0000000ULL && virt < 0x100000000ULL && virt == phys)
+        return;
+
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
@@ -57,6 +64,41 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     invlpg(virt);
+}
+
+void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
+    if (!size) return;
+    uint64_t end = virt + size;
+
+    while (virt < end) {
+        int pml4_idx = (virt >> 39) & 0x1FF;
+        int pdpt_idx = (virt >> 30) & 0x1FF;
+        int pd_idx   = (virt >> 21) & 0x1FF;
+
+        if (!(kernel_pml4[pml4_idx] & PTE_PRESENT))
+            return;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT))
+            return;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+
+        if (pd[pd_idx] & PTE_HUGE) {
+            pd[pd_idx] |= PTE_PCD;
+            invlpg(virt & ~0x1FFFFFULL);
+            virt = (virt & ~0x1FFFFFULL) + (2ULL * 1024 * 1024);
+            continue;
+        }
+
+        if (!(pd[pd_idx] & PTE_PRESENT))
+            return;
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        int pt_idx = (virt >> 12) & 0x1FF;
+        if (pt[pt_idx] & PTE_PRESENT) {
+            pt[pt_idx] |= PTE_PCD;
+            invlpg(virt & ~(PAGE_SIZE - 1ULL));
+        }
+        virt += PAGE_SIZE;
+    }
 }
 
 void vmm_unmap_page(uint64_t virt) {

@@ -61,25 +61,41 @@ void cmd_trap(const char *args) {
         return;
     }
 
-    /* Parse: trap 'cmd' SIGNAL  or  trap - SIGNAL */
-    const char *cmd_str = args;
-    /* Extract command string (single-quoted or bare word) */
-    int in_quote = (*cmd_str == '\'');
-    if (in_quote) cmd_str++;
-    char trap_cmd[TRAP_CMD_MAX]; int ci = 0;
-    while (*cmd_str && ci < TRAP_CMD_MAX - 1) {
-        if (in_quote && *cmd_str == '\'') break;  /* closing quote */
-        if (!in_quote && *cmd_str == ' ') break;  /* unquoted word end */
-        trap_cmd[ci++] = *cmd_str++;
-    }
-    trap_cmd[ci] = '\0';
-    if (in_quote && *cmd_str == '\'') cmd_str++;  /* skip closing quote */
-    while (*cmd_str == ' ') cmd_str++;
+    /* Parse: trap 'cmd' SIGNAL  or  trap cmd SIGNAL (after quote removal) */
+    char trap_cmd[TRAP_CMD_MAX];
+    int ci = 0;
+    const char *sig_str;
 
-    /* Signal part */
-    if (!*cmd_str) { kprintf("Usage: trap 'cmd' SIGNAL\n"); return; }
-    int sig = signame_to_num(cmd_str);
-    if (sig <= 0) { kprintf("trap: unknown signal: %s\n", cmd_str); return; }
+    if (*args == '\'') {
+        const char *p = args + 1;
+        while (*p && *p != '\'' && ci < TRAP_CMD_MAX - 1)
+            trap_cmd[ci++] = *p++;
+        trap_cmd[ci] = '\0';
+        if (*p == '\'') p++;
+        while (*p == ' ') p++;
+        sig_str = p;
+    } else {
+        int len = (int)strlen(args);
+        while (len > 0 && args[len - 1] == ' ') len--;
+        int sig_at = len;
+        while (sig_at > 0 && args[sig_at - 1] != ' ') sig_at--;
+        if (sig_at <= 0 || sig_at >= len) {
+            kprintf("Usage: trap 'cmd' SIGNAL\n");
+            return;
+        }
+        int cmd_len = sig_at;
+        while (cmd_len > 0 && args[cmd_len - 1] == ' ') cmd_len--;
+        if (cmd_len >= TRAP_CMD_MAX) cmd_len = TRAP_CMD_MAX - 1;
+        memcpy(trap_cmd, args, cmd_len);
+        trap_cmd[cmd_len] = '\0';
+        sig_str = args + sig_at;
+        while (*sig_str == ' ') sig_str++;
+    }
+
+    if (!trap_cmd[0]) { kprintf("Usage: trap 'cmd' SIGNAL\n"); return; }
+    if (!*sig_str) { kprintf("Usage: trap 'cmd' SIGNAL\n"); return; }
+    int sig = signame_to_num(sig_str);
+    if (sig <= 0) { kprintf("trap: unknown signal: %s\n", sig_str); return; }
 
     int is_reset = (trap_cmd[0] == '-' && trap_cmd[1] == '\0');
 

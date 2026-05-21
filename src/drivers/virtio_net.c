@@ -226,8 +226,8 @@ int virtio_net_init(void) {
 }
 
 /* ── Send ────────────────────────────────────────────────────────── */
-void virtio_net_send(const uint8_t *data, uint32_t len) {
-    if (!vnet_present) return;
+int virtio_net_send(const uint8_t *data, uint32_t len) {
+    if (!vnet_present) return -1;
 
     struct vring_desc  *descs = (struct vring_desc  *)tx_queue_mem;
     struct vring_avail *avail = vring_avail_ptr(tx_queue_mem);
@@ -237,6 +237,7 @@ void virtio_net_send(const uint8_t *data, uint32_t len) {
     uint64_t spin = 0;
     while (used->idx == tx_last_used && spin++ < 1000000)
         __asm__ volatile("" ::: "memory");
+    if (used->idx == tx_last_used) return -1;
 
     if (len > sizeof(tx_pkt_buf)) len = sizeof(tx_pkt_buf);
     memcpy(tx_pkt_buf, data, len);
@@ -262,7 +263,9 @@ void virtio_net_send(const uint8_t *data, uint32_t len) {
     spin = 0;
     while (used->idx == tx_last_used && spin++ < 1000000)
         __asm__ volatile("" ::: "memory");
+    if (used->idx == tx_last_used) return -1;
     tx_last_used = used->idx;
+    return 0;
 }
 
 int virtio_net_receive(void *buf, uint16_t max_len) {

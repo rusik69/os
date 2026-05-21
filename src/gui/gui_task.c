@@ -7,6 +7,9 @@
 #include "string.h"
 #include "heap.h"
 #include "printf.h"
+#include "net.h"
+#include "timer.h"
+#include "fs.h"
 
 /* ================================================================
  * Desktop state (background kernel GUI task)
@@ -81,6 +84,39 @@ static void draw_taskbar(void) {
     gui_rect_t f = {2, TASKBAR_Y+2, 56, 14};
     gui_window_draw_rect(NULL, f, GUI_COLOR(70,70,100));
     gui_window_draw_text(NULL, 6, TASKBAR_Y+3, "FILES", GUI_WHITE, GUI_COLOR(70,70,100));
+
+    char status[80];
+    status[0] = '\0';
+    uint8_t ip[4];
+    net_get_ip(ip);
+    int sp = 0;
+    status[sp++] = 'I'; status[sp++] = 'P'; status[sp++] = ' ';
+    for (int i = 0; i < 4; i++) {
+        if (i) status[sp++] = '.';
+        uint8_t b = ip[i];
+        if (b >= 100) status[sp++] = (char)('0' + b / 100);
+        if (b >= 10)  status[sp++] = (char)('0' + (b / 10) % 10);
+        status[sp++] = (char)('0' + b % 10);
+    }
+    status[sp++] = ' '; status[sp++] = '|'; status[sp++] = ' ';
+    uint64_t up = timer_get_ticks() / TIMER_FREQ;
+    for (int d = 3; d >= 0; d--) {
+        uint64_t div = 1;
+        for (int k = 0; k < d; k++) div *= 10;
+        status[sp++] = (char)('0' + (up / div) % 10);
+    }
+    status[sp++] = 's';
+    uint32_t used = 0;
+    fs_get_usage(NULL, NULL, &used, NULL);
+    status[sp++] = ' '; status[sp++] = '|'; status[sp++] = ' ';
+    status[sp++] = 'B'; status[sp++] = 'L'; status[sp++] = 'K'; status[sp++] = ' ';
+    for (int d = 4; d >= 0; d--) {
+        uint32_t div = 1;
+        for (int k = 0; k < d; k++) div *= 10;
+        status[sp++] = (char)('0' + (used / div) % 10);
+    }
+    status[sp] = '\0';
+    gui_window_draw_text(NULL, 70, TASKBAR_Y+3, status, GUI_LIGHT_GRAY, GUI_DARK_GRAY);
 }
 
 /* ================================================================
