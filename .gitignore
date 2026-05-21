@@ -1,0 +1,8 @@
+build/
+build_test/
+__pycache__/
+*.pyc
+*.o
+*.elf
+*.iso
+*.log
