@@ -59,6 +59,9 @@
 #define R_X86_64_64    1   /* 64-bit absolute */
 #define R_X86_64_PC32  2   /* 32-bit PC-relative */
 
+/* Forward declarations */
+static FuncInfo *find_func_by_name(CompilerState *cc, const char *name);
+
 /* Section header indices */
 #define SHN_UNDEF  0
 #define SEC_TEXT   1
@@ -435,7 +438,7 @@ int cc_write_obj(CompilerState *cc, const char *outpath) {
 }
 
 /* Helper used by cc_obj: find function info by name */
-FuncInfo *find_func_by_name(CompilerState *cc, const char *name) {
+static FuncInfo *find_func_by_name(CompilerState *cc, const char *name) {
     for (int i = 0; i < cc->nfuncs; i++)
         if (strcmp(cc->funcs[i].name, name) == 0)
             return &cc->funcs[i];
