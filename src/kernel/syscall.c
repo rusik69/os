@@ -1401,6 +1401,47 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     return 0;
 }
 
+static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) {
+    const char *inpath = (const char *)inpath_addr;
+    const char *outpath = (const char *)outpath_addr;
+    if (!inpath || !outpath) return (uint64_t)-1;
+
+    CompilerState *cc = &cc_workspace;
+    memset(cc, 0, sizeof(CompilerState));
+    cc->src_len = 0;
+    cc->src[0] = '\0';
+    cc->obj_mode = 1;
+
+    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0)
+        return (uint64_t)-2;
+
+    cc_lex(cc);
+    if (cc->error) {
+        kprintf("cc: lex error: %s\n", cc->errmsg);
+        return (uint64_t)-3;
+    }
+
+    cc_parse(cc);
+    if (cc->error) {
+        kprintf("cc: error: %s\n", cc->errmsg);
+        return (uint64_t)-4;
+    }
+
+    if (cc_write_obj(cc, outpath) < 0)
+        return (uint64_t)-5;
+
+    return 0;
+}
+
+static uint64_t sys_cc_link(uint64_t obj_paths_addr, uint64_t nobj, uint64_t outpath_addr) {
+    const char **obj_paths = (const char **)obj_paths_addr;
+    const char *outpath = (const char *)outpath_addr;
+    if (!obj_paths || !outpath || nobj == 0 || nobj > 256) return (uint64_t)-1;
+
+    int ret = cc_link(obj_paths, (int)nobj, outpath, CC_LOAD_BASE);
+    return (uint64_t)(int64_t)ret;
+}
+
 static uint64_t sys_keyboard_getchar(void) {
     return (uint64_t)(uint8_t)keyboard_getchar();
 }
@@ -1613,6 +1654,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
         case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
         case SYS_CC_COMPILE: return sys_cc_compile(a1, a2);
+        case SYS_CC_COMPILE_OBJ: return sys_cc_compile_obj(a1, a2);
+        case SYS_CC_LINK: return sys_cc_link(a1, a2, a3);
         case SYS_KEYBOARD_GETCHAR: return sys_keyboard_getchar();
         case SYS_SHELL_HISTORY_ADD: return sys_shell_history_add(a1);
         case SYS_SHELL_HISTORY_COUNT: return sys_shell_history_count();

@@ -48,12 +48,14 @@ Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default
 - **Owned home directories** — `/root`, `/home/<user>` auto-created and ownership tracked by uid/gid
 - **VFS layer** with mount table
 - **IPC via pipes** — 16 blocking circular-buffer pipes
+- **Shared memory** — named segments shared between processes
+- **Mutexes & semaphores** — cooperative kernel synchronization primitives
 - **Signal delivery** — SIGKILL, SIGTERM, SIGSTOP/SIGCONT, user signals
 - **ELF loader** — load and run static 64-bit ELF binaries in ring 3
 - **C compiler** — single-pass recursive descent, outputs native x86-64 ELF64 binaries
 - **C17 toolchain mode** — kernel and in-kernel compiler build with `-std=c17`
 - **Terminal multiplexer (tmux)** — split panes, Ctrl-B prefix key bindings
-- **Shell** — ~100 built-in commands (single dispatch table), command history, tab completion, pipes, redirection
+- **Shell** — ~120 built-in commands (single dispatch table), command history, tab completion, pipes, redirection
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
   serial (COM1), ATA/AHCI/USB block devices, PCI bus, e1000 and virtio-net,
   virtio-blk, USB EHCI/MSC, AC97 audio, PC speaker, ACPI, Intel GPU detection
@@ -61,7 +63,7 @@ Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default
 - **FAT32 mount** — `fat mount ata|ahci|usb` with read/write; VFS mount at `/mnt`
 - **IP fragmentation** — TX fragmentation for large payloads; improved RX reassembly
 - **Multiboot graphics** — Framebuffer support with 1024×768 RGB rendering
-- **GUI framework** — Window system, widgets (button, textbox, label), event handling, mouse cursor
+- **GUI framework** — Window system, widgets (button, textbox, label, file browser, taskbar), GUI terminal emulator, event handling, mouse cursor
 - **Doom-like raycast game** — `doom` shell command (WASD + mouse, kernel framebuffer renderer)
 - **CI** — GitHub Actions with unit tests and full E2E test suite
 
@@ -94,7 +96,9 @@ os/
 │   │   ├── syscall.c      SYSCALL/SYSRET interface
 │   │   ├── syscall_asm.asm Syscall entry point
 │   │   ├── vfs.c          Virtual filesystem layer
-│   │   └── elf.c          ELF64 binary loader
+│   │   ├── elf.c          ELF64 binary loader
+│   │   ├── fault.c        CPU exception fault handler
+│   │   └── service.c      Kernel service manager
 │   ├── drivers/
 │   │   ├── vga.c          80×25 text mode console
 │   │   ├── pic.c          8259 PIC (IRQ remapping)
@@ -102,8 +106,16 @@ os/
 │   │   ├── keyboard.c     PS/2 keyboard (scancode set 1)
 │   │   ├── serial.c       COM1 at 38400 baud
 │   │   ├── ata.c          IDE disk (PIO, LBA28)
+│   │   ├── ahci.c         AHCI/SATA controller
+│   │   ├── blockdev.c     Block device abstraction layer
 │   │   ├── pci.c          PCI bus enumeration
 │   │   ├── e1000.c        Intel 82540EM NIC (polled MMIO)
+│   │   ├── virtio_net.c   virtio-net NIC driver
+│   │   ├── virtio_blk.c   virtio-blk storage driver
+│   │   ├── usb_ehci.c     USB EHCI host controller
+│   │   ├── usb_msc.c      USB mass storage (BOT)
+│   │   ├── ac97.c         AC97 audio codec
+│   │   ├── intel_gpu.c    Intel GPU detection
 │   │   ├── rtc.c          CMOS real-time clock
 │   │   ├── mouse.c        PS/2 mouse (3-byte packets)
 │   │   ├── speaker.c      PC speaker (PIT channel 2)
@@ -115,34 +127,51 @@ os/
 │   ├── process/
 │   │   ├── process.c      Process table, creation, exit
 │   │   ├── scheduler.c    Round-robin scheduler
-│   │   ├── switch.asm      Context switch (cli-protected)
-│   │   └── signal.c       POSIX-like signal delivery
+│   │   ├── switch.asm     Context switch (cli-protected)
+│   │   ├── signal.c       POSIX-like signal delivery
+│   │   └── users.c        User/group database and auth
 │   ├── fs/
-│   │   └── fs.c           SMFS filesystem implementation
+│   │   ├── fs.c           SMFS filesystem implementation
+│   │   ├── fat32.c        FAT32 read/write driver
+│   │   ├── procfs.c       /proc virtual filesystem
+│   │   └── devfs.c        /dev virtual filesystem
 │   ├── net/
 │   │   ├── net.c          Core networking (ETH/ARP/IP/ICMP, poll loop)
 │   │   ├── net_tcp.c      TCP state machine, connect, listen, send
 │   │   ├── net_udp.c      UDP, DHCP, DNS, HTTP client
-│   │   └── telnetd.c      Telnet server (port 23)
+│   │   ├── telnetd.c      Telnet server (port 23)
+│   │   └── httpd.c        HTTP server (document root /tmp/www)
 │   ├── ipc/
-│   │   └── pipe.c         Inter-process pipes
+│   │   ├── pipe.c         Inter-process pipes
+│   │   ├── shm.c          Shared memory segments
+│   │   ├── mutex.c        Kernel mutexes
+│   │   └── semaphore.c    Counting semaphores
 │   ├── shell/
 │   │   ├── shell.c        Shell core (input, dispatch, history, background)
+│   │   ├── shell_cmd_table.c  Command dispatch table
+│   │   ├── shell_vars.c   Shell variable expansion
 │   │   ├── editor.c       Text editor (vi-like)
 │   │   ├── script.c       Script runner with variables
-│   │   └── cmds/          One file per command (cmd_*.c)
+│   │   └── cmds/          One file per command (cmd_*.c, ~120 commands)
 │   ├── compiler/
 │   │   ├── cc_lex.c       Lexer (tokenizer)
 │   │   ├── cc_parse.c     Parser + code generator
 │   │   └── cc_elf.c       ELF64 binary output
 │   ├── gui/
 │   │   ├── gui.h          GUI core types, window API, widget system
-│   │   └── gui.c          Window management, widgets, rendering
+│   │   ├── gui.c          Window management, widgets, rendering
+│   │   ├── gui_widgets.h  Extended widget types
+│   │   ├── gui_widgets.c  FileBrowser, Taskbar widgets
+│   │   ├── gui_shell.h    GUI terminal emulator types
+│   │   ├── gui_shell.c    Terminal pane with scrollback
+│   │   └── gui_task.c     Desktop kernel process
 │   ├── doom/
 │   │   └── doom_*.c       Raycast FPS engine (doom shell command)
 │   ├── lib/
 │   │   ├── string.c       String/memory utilities
-│   │   └── printf.c       kprintf with output hook
+│   │   ├── printf.c       kprintf with output hook
+│   │   ├── stdlib.c       Standard library helpers (atoi, itoa, …)
+│   │   └── libc.c         Libc shim for userspace ELF programs
 │   ├── test/
 │   │   └── test.c         In-kernel unit test suite
 │   └── include/           Header files
@@ -528,8 +557,7 @@ Uses the `SYSCALL` / `SYSRET` mechanism (AMD64 fast syscall):
 ## Filesystem — SMFS
 
 **SMFS** (Simple Micro File System) is a custom on-disk format stored on
-the ATA disk image. Also supported: **procfs** (`/proc`), **devfs** (`/dev`),
-and read/write **FAT32** via `fat mount`.
+the ATA disk image. Also supported: **procfs** (`/proc`), **devfs** (`/dev`), and read/write **FAT32** via `fat mount`.
 
 ### Disk Layout
 
@@ -741,7 +769,73 @@ RX descriptor ring, then dispatches by EtherType (ARP or IP → ICMP/TCP/UDP).
 | `tmux` | Terminal multiplexer (split panes, Ctrl-B prefix) |
 | `jobs` | List background processes |
 | `fg <pid>` | Bring background process to foreground |
+| `bg <pid>` | Resume stopped process in background |
 | `wait <pid>` | Wait for process to finish |
+| `top` | Dynamic process viewer (auto-refresh) |
+| `nice <n> <cmd>` | Run command with adjusted priority |
+| `renice <n> <pid>` | Change priority of running process |
+| `time <cmd>` | Measure command execution time |
+| `watch <n> <cmd>` | Repeat command every n seconds |
+| `cd <dir>` | Change working directory |
+| `pwd` | Print working directory |
+| `ln <src> <dst>` | Create hard or symbolic link |
+| `chmod <mode> <path>` | Change file permissions |
+| `chown <uid> <path>` | Change file owner |
+| `login <user>` | Switch user (password-authenticated) |
+| `passwd [user]` | Change user password |
+| `useradd <user>` | Create a new user account |
+| `userdel <user>` | Delete a user account |
+| `users` | List logged-in users |
+| `id` | Print user and group IDs |
+| `alias <name>=<val>` | Define a command alias |
+| `which <cmd>` | Locate a command |
+| `type <cmd>` | Show command type |
+| `true` / `false` | Return exit code 0 / 1 |
+| `test <expr>` | Evaluate conditional expression |
+| `trap <sig> <cmd>` | Set signal trap |
+| `expr <args>` | Arithmetic/string expression evaluator |
+| `printf <fmt> [args]` | Formatted print |
+| `more <file>` | Paged file viewer |
+| `tee <file>` | Copy stdin to file and stdout |
+| `tac <file>` | Print file in reverse line order |
+| `rev <file>` | Reverse each line |
+| `nl <file>` | Number output lines |
+| `od <file>` | Octal/hex dump |
+| `strings <file>` | Extract printable strings from file |
+| `cut <opts> <file>` | Cut fields from lines |
+| `paste <f1> <f2>` | Merge lines of files |
+| `comm <f1> <f2>` | Compare sorted files line by line |
+| `diff <f1> <f2>` | Show line differences between files |
+| `split <file>` | Split file into pieces |
+| `fold <file>` | Wrap long lines |
+| `expand <file>` | Expand tabs to spaces |
+| `base64 <file>` | Encode/decode base64 |
+| `md5sum <file>` | Compute MD5 checksum |
+| `sha256sum <file>` | Compute SHA-256 checksum |
+| `tar <opts> <file>` | Archive files (create/extract) |
+| `awk <prog> <file>` | Pattern-action text processor |
+| `sed <expr> <file>` | Stream editor |
+| `xargs <cmd>` | Build and execute command from stdin |
+| `yes [str]` | Repeatedly output a string |
+| `basename <path>` | Strip directory from path |
+| `readlink <path>` | Print resolved symlink path |
+| `du [path]` | Disk usage of files/directories |
+| `lsblk` | List block devices |
+| `lsusb` | List USB devices |
+| `hwinfo` | Hardware summary |
+| `fbinfo` | Framebuffer mode information |
+| `cmos` | Dump CMOS/RTC registers |
+| `netstat` | Network connection statistics |
+| `nc <ip> <port>` | Simple TCP netcat |
+| `nslookup <host>` | DNS name server lookup |
+| `wget <url>` | Download file via HTTP |
+| `rawsend <data>` | Send raw Ethernet frame |
+| `fat <cmd>` | FAT32 filesystem operations |
+| `service <cmd>` | Manage kernel background services |
+| `serial <cmd>` | Serial port control |
+| `gui` | Launch GUI desktop |
+| `fbinfo` | Framebuffer mode information |
+| `file <path>` | Identify file type |
 | `exit` | Disconnect telnet session |
 
 ### Text Editor
@@ -758,7 +852,9 @@ to 16 simple `$variables` and a max script size of 4096 bytes.
 
 ---
 
-## IPC — Pipes
+## IPC — Pipes, Shared Memory, Mutexes, Semaphores
+
+### Pipes
 
 16 kernel pipes, each with a 4096-byte circular buffer.
 
@@ -771,6 +867,18 @@ pipe_close_read(id);          // broken pipe for writers
 ```
 
 Blocking is cooperative (spin on `scheduler_yield()`).
+
+### Shared Memory
+
+Named shared memory segments accessible by multiple processes via `shm_create` / `shm_open` / `shm_close`. Backed by kmalloc'd pages; no copy-on-write.
+
+### Mutexes
+
+Kernel mutexes (`mutex_lock` / `mutex_unlock`) with cooperative blocking — the locker yields until the mutex is released.
+
+### Semaphores
+
+Counting semaphores (`sem_wait` / `sem_post`) for producer/consumer synchronization.
 
 ---
 
@@ -887,7 +995,7 @@ all test groups at boot, outputs `[PASS]`/`[FAIL]` to serial, and calls
 - **Network tests** — IP config, ARP, DHCP, TCP handshake
 - **UDP tests** — port binding
 
-### E2E Tests (~220 assertions)
+### E2E Tests (~113 test groups, 300+ assertions)
 
 Built with `make e2e`. Boots the kernel in QEMU with user-mode networking
 and drives every shell command over a telnet connection:
@@ -909,8 +1017,12 @@ color, hexdump, mouse, ifconfig, beep, play, udpsend, ping, dns, kill,
 filesystem (format, ls, mkdir, touch, write, cat, stat, rm), run/script,
 wc, head, tail, cp, mv, grep, df, free, whoami, hostname, env, xxd,
 sleep, seq, arp, route, uname, lspci, dmesg, sort, find, calc, uniq,
-tr, cc (compiler), pipes, redirection, background processes, jobs, fg,
-wait, enhanced ps, error cases, exit.
+tr, cc (compiler), pipes, redirection, background processes, jobs, fg, bg,
+wait, top, nice, renice, time, watch, alias, chmod, chown, login, passwd,
+useradd, userdel, id, md5sum, sha256sum, base64, tar, sed, awk, xargs,
+diff, comm, cut, paste, tac, rev, nl, od, strings, split, fold, expand,
+netstat, nc, nslookup, wget, fat, service, lsblk, lsusb, enhanced ps,
+error cases, exit.
 
 ### CI — GitHub Actions
 
@@ -949,9 +1061,9 @@ make CC=x86_64-linux-gnu-gcc LD=x86_64-linux-gnu-ld OBJCOPY=x86_64-linux-gnu-obj
 ### Compiler Flags
 
 ```
--std=c11 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2
+-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2
 -fno-stack-protector -nostdlib -nostdinc -fno-builtin
--Wall -Wextra -Isrc/include -mcmodel=large -g
+-Wall -Wextra -Isrc/include -mcmodel=large -g -Wa,--noexecstack
 ```
 
 Key flags:
@@ -1010,10 +1122,12 @@ A basic graphical user interface system built on the Multiboot framebuffer:
 ### Core Components
 
 - **Window System** — Z-ordered layered windows with titles and borders
-- **Widget Library** — button, textbox, label with event routing
+- **Widget Library** — button, textbox, label, FileBrowser, Taskbar with event routing
+- **GUI Terminal** (`gui_shell`) — scrollback terminal emulator pane running a shell inside a window
 - **Drawing API** — pixel-based rendering (24/32-bit RGB), built-in 5×7 font
 - **Mouse Integration** — pointer driven by PS/2 mouse events
 - **Event Dispatch** — mouse move/click, keyboard input routing to focused widget
+- **Desktop** — wallpaper, file browser launcher, taskbar, auto-started at boot via `gui_task`
 
 ### Architecture
 

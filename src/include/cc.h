@@ -3,22 +3,26 @@
 
 #include "types.h"
 
-#define CC_MAX_TOKENS  65536
+#define CC_MAX_TOKENS  131072
 #define CC_MAX_LOCALS   1024
-#define CC_MAX_GLOBALS  1024
-#define CC_MAX_FUNCS     256
-#define CC_MAX_STRUCTS   32
-#define CC_MAX_FIELDS    32
-#define CC_MAX_TYPEDEFS  32
-#define CC_CODE_MAX   524288  /* 512KB code */
-#define CC_DATA_MAX   131072  /* 128KB data/strings */
-#define CC_SRC_MAX    524288  /* 512KB max preprocessed source */
-#define CC_MAX_PATCHES 8192
-#define CC_MAX_LABELS       128
-#define CC_MAX_MACROS        64
-#define CC_MAX_GOTO_PATCHES 128
+#define CC_MAX_GLOBALS  2048
+#define CC_MAX_FUNCS     512
+#define CC_MAX_STRUCTS   128
+#define CC_MAX_FIELDS    64
+#define CC_MAX_TYPEDEFS  128
+#define CC_CODE_MAX   1048576  /* 1MB code */
+#define CC_DATA_MAX   262144   /* 256KB data/strings */
+#define CC_SRC_MAX    1048576  /* 1MB max preprocessed source */
+#define CC_MAX_PATCHES 16384
+#define CC_MAX_LABELS       256
+#define CC_MAX_MACROS       256
+#define CC_MAX_GOTO_PATCHES 256
 #define CC_LOAD_BASE  0x400000ULL
 #define CC_DATA_OFFSET 0x1000ULL  /* data section offset from load base */
+
+/* Object file / linker support */
+#define CC_MAX_RELOCS   4096
+#define CC_MAX_SYMBOLS  2048
 
 typedef enum {
     TK_EOF=0, TK_IDENT, TK_INTLIT, TK_STRLIT, TK_CHARLIT,
@@ -124,6 +128,31 @@ typedef struct {
     char name[32];
 } GotoPatch;
 
+/* Relocation types for object file output */
+#define CC_RELOC_CALL    1   /* E8 rel32 call to named function */
+#define CC_RELOC_ABS64   2   /* 64-bit absolute address of symbol */
+#define CC_RELOC_DATA64  3   /* 64-bit absolute address into data section */
+
+typedef struct {
+    int  code_off;       /* offset in code[] where patch is needed */
+    int  type;           /* CC_RELOC_* */
+    char name[32];       /* symbol name (for CALL/ABS64) */
+    int  data_off;       /* for DATA64: offset within data section */
+    int  addend;         /* addend for relocation */
+} RelocEntry;
+
+/* ELF symbol for object file output */
+#define CC_SYM_LOCAL   0
+#define CC_SYM_GLOBAL  1
+#define CC_SYM_UNDEF   2
+
+typedef struct {
+    char name[32];
+    int  section;        /* 0=undef, 1=text, 2=data */
+    int  offset;         /* offset within section */
+    int  binding;        /* CC_SYM_LOCAL/GLOBAL/UNDEF */
+} ObjSymbol;
+
 typedef struct {
     char     src[CC_SRC_MAX];
     uint32_t src_len;
@@ -166,6 +195,15 @@ typedef struct {
     GotoPatch goto_patches[CC_MAX_GOTO_PATCHES];
     int      ngoto_patches;
 
+    /* Object file support */
+    RelocEntry relocs[CC_MAX_RELOCS];
+    int        nrelocs;
+
+    ObjSymbol  obj_syms[CC_MAX_SYMBOLS];
+    int        nobj_syms;
+
+    int        obj_mode;   /* 1 = emit relocatable .o, 0 = emit executable */
+
     int      error;
     int      nerrors;    /* number of errors (for multi-error reporting) */
     char     errmsg[256]; /* extended to hold line number prefix */
@@ -176,6 +214,9 @@ typedef struct {
 void cc_lex(CompilerState *cc);
 void cc_parse(CompilerState *cc);
 int  cc_write_elf(CompilerState *cc, const char *outpath);
+int  cc_write_obj(CompilerState *cc, const char *outpath);
+int  cc_link(const char **obj_paths, int nobj, const char *outpath,
+             uint64_t load_base);
 
 #endif /* CC_H */
 

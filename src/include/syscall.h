@@ -195,6 +195,8 @@
 #define SYS_FAT_WRITE_FILE  226  /* write/create file on mounted FAT volume */
 #define SYS_FAT_SYNC        227  /* flush FAT tables to disk */
 #define SYS_DOOM_RUN        228  /* start raycast doom game (blocking) */
+#define SYS_CC_COMPILE_OBJ  229  /* compile C source to relocatable .o file */
+#define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the

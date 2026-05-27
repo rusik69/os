@@ -85,9 +85,10 @@ static void cc_batch_compile(const char *list_path) {
 
 void cmd_cc(const char *args) {
     if (!args || !*args) {
-        kprintf("Usage: cc <source.c> [output]\n");
+        kprintf("Usage: cc [-c] <source.c> [output]\n");
         kprintf("   or: cc --batch <list.txt>\n");
         kprintf("  Compile a C source file to a static ELF64 binary.\n");
+        kprintf("  -c: compile to relocatable object (.o) instead of executable.\n");
         kprintf("  Output defaults to the source name without .c extension.\n");
         kprintf("  Batch list format: '<inpath> [outpath]' per line.\n");
         return;
@@ -104,17 +105,48 @@ void cmd_cc(const char *args) {
         return;
     }
 
-    /* parse args: "infile [outfile]" */
+    /* parse args: "[-c] infile [outfile]" */
+    int obj_mode = 0;
+    const char *argp = args;
+
+    if (argp[0] == '-' && argp[1] == 'c' && (argp[2] == ' ' || argp[2] == '\0')) {
+        obj_mode = 1;
+        argp += 2;
+        while (*argp == ' ') argp++;
+    }
+
     char inpath[256] = {0};
     char outpath[256] = {0};
 
     int i = 0, j = 0;
-    while (args[i] && args[i] != ' ' && j < 255) inpath[j++] = args[i++];
+    while (argp[i] && argp[i] != ' ' && j < 255) inpath[j++] = argp[i++];
     inpath[j] = '\0';
-    while (args[i] == ' ') i++;
+    while (argp[i] == ' ') i++;
     j = 0;
-    while (args[i] && j < 255) outpath[j++] = args[i++];
+    while (argp[i] && j < 255) outpath[j++] = argp[i++];
     outpath[j] = '\0';
 
-    (void)cc_compile_one(inpath, outpath[0] ? outpath : NULL);
+    if (!outpath[0]) {
+        if (obj_mode) {
+            /* Default: replace .c with .o */
+            strncpy(outpath, inpath, 255);
+            int len = strlen(outpath);
+            if (len > 2 && outpath[len-2] == '.' && outpath[len-1] == 'c')
+                outpath[len-1] = 'o';
+            else {
+                /* append .o */
+                if (len < 253) { outpath[len] = '.'; outpath[len+1] = 'o'; outpath[len+2] = '\0'; }
+            }
+        }
+    }
+
+    if (obj_mode) {
+        int rc = cc_compile_obj(inpath, outpath[0] ? outpath : 0);
+        if (rc == 0)
+            kprintf("cc: OK %s -> %s\n", inpath, outpath);
+        else
+            kprintf("cc: compile failed %s (%d)\n", inpath, (uint64_t)(-rc));
+    } else {
+        (void)cc_compile_one(inpath, outpath[0] ? outpath : NULL);
+    }
 }

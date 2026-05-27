@@ -56,6 +56,7 @@ void cmd_lspci(void);
 void cmd_dmesg(void);
 void cmd_cc(const char *args);
 void cmd_ccbuilder(const char *args);
+void cmd_ld(const char *args);
 void cmd_sort(const char *args);
 void cmd_find(const char *args);
 void cmd_calc(const char *args);

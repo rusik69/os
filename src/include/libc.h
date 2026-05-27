@@ -247,6 +247,8 @@ int libc_vga_get_fb_info(struct libc_fb_info *out);
 
 /* Compiler syscall-backed operation (phase 3 group 3b cmd_cc slice) */
 int libc_cc_compile(const char *inpath, const char *outpath);
+int libc_cc_compile_obj(const char *inpath, const char *outpath);
+int libc_cc_link_files(int nobj, const char **obj_paths, const char *outpath);
 char libc_keyboard_getchar(void);
 void libc_shell_history_add(const char *cmd_line);
 int libc_shell_history_count(void);
@@ -484,6 +486,12 @@ static inline int vga_get_fb_info(struct libc_fb_info *out) {
 }
 static inline int cc_compile(const char *inpath, const char *outpath) {
     return libc_cc_compile(inpath, outpath);
+}
+static inline int cc_compile_obj(const char *inpath, const char *outpath) {
+    return libc_cc_compile_obj(inpath, outpath);
+}
+static inline int cc_link_files(int nobj, const char **obj_paths, const char *outpath) {
+    return libc_cc_link_files(nobj, obj_paths, outpath);
 }
 static inline char keyboard_getchar(void) {
     return libc_keyboard_getchar();

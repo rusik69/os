@@ -379,6 +379,16 @@ int libc_cc_compile(const char *inpath, const char *outpath) {
                              (uint64_t)(uintptr_t)outpath, 0, 0, 0);
 }
 
+int libc_cc_compile_obj(const char *inpath, const char *outpath) {
+    return (int)libc_syscall(SYS_CC_COMPILE_OBJ, (uint64_t)(uintptr_t)inpath,
+                             (uint64_t)(uintptr_t)outpath, 0, 0, 0);
+}
+
+int libc_cc_link_files(int nobj, const char **obj_paths, const char *outpath) {
+    return (int)libc_syscall(SYS_CC_LINK, (uint64_t)(uintptr_t)obj_paths,
+                             (uint64_t)nobj, (uint64_t)(uintptr_t)outpath, 0, 0);
+}
+
 char libc_keyboard_getchar(void) {
     return (char)libc_syscall(SYS_KEYBOARD_GETCHAR, 0, 0, 0, 0, 0);
 }
