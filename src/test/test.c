@@ -564,7 +564,9 @@ static void test_doom(void) {
     ASSERT("doom column sky", doom_test_column_has_sky());
     ASSERT("doom column wall", doom_test_column_has_wall());
     ASSERT("doom frame varies", doom_test_frame_varies());
+    kprintf("  [doom] frame done, testing door...\n");
     ASSERT("doom door opens", doom_test_door_opens());
+    kprintf("  [doom] door done\n");
 }
 
 static void test_network(void) {
