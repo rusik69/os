@@ -115,22 +115,22 @@ int elf_exec(const char *path) {
         uint64_t *user_pml4 = vmm_create_user_pml4();
         if (!user_pml4) {
             kprintf("elf: cannot create page tables\n");
-            kfree(buf);
+            kfree(buf); kfree(name);
             return -1;
         }
 
         uint64_t *kernel_pml4 = vmm_get_pml4();
 
         /* Map each PT_LOAD segment into user address space */
-        for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+        int map_ok = 1;
+        for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
             const struct elf64_phdr *ph =
                 (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
             if (ph->p_type != PT_LOAD) continue;
 
             if (ph->p_vaddr >= 0x0000800000000000ULL) {
                 kprintf("elf: user segment outside user address space\n");
-                kfree(buf);
-                return -1;
+                map_ok = 0; break;
             }
 
             /* Map pages covering [vaddr, vaddr+memsz) */
@@ -142,34 +142,53 @@ int elf_exec(const char *path) {
             for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
                 /* Allocate a physical frame and map it */
                 uint64_t frame = pmm_alloc_frame();
-                if (!frame) { kprintf("elf: OOM mapping segment\n"); kfree(buf); return -1; }
+                if (!frame) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
                 /* Zero the frame first */
                 memset((void *)frame, 0, PAGE_SIZE);
                 if (vmm_map_user_page(user_pml4, va, frame, flags) < 0) {
                     kprintf("elf: vmm_map_user_page failed\n");
                     pmm_free_frame(frame);
-                    kfree(buf); return -1;
+                    map_ok = 0; break;
                 }
             }
 
-            /* Copy segment data while running on target address space */
+            if (!map_ok) break;
+
+            /* Copy segment data while running on target address space.
+             * Disable interrupts to prevent a handler from running with
+             * user page tables active. */
+            __asm__ volatile("cli");
             vmm_switch_pml4(user_pml4);
             memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
             vmm_switch_pml4(kernel_pml4);
+            __asm__ volatile("sti");
             /* BSS is already zeroed from memset above */
+        }
+
+        if (!map_ok) {
+            vmm_destroy_user_pml4(user_pml4);
+            kfree(buf); kfree(name);
+            return -1;
         }
 
         /* Allocate user stack (16 pages = 64KB) */
         uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
         for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) { kprintf("elf: OOM for user stack\n"); kfree(buf); return -1; }
+            if (!frame) {
+                kprintf("elf: OOM for user stack\n");
+                vmm_destroy_user_pml4(user_pml4);
+                kfree(buf); kfree(name);
+                return -1;
+            }
             memset((void *)frame, 0, PAGE_SIZE);
             if (vmm_map_user_page(user_pml4, va, frame,
                                   VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
                 kprintf("elf: vmm_map_user_page failed for stack\n");
                 pmm_free_frame(frame);
-                kfree(buf); return -1;
+                vmm_destroy_user_pml4(user_pml4);
+                kfree(buf); kfree(name);
+                return -1;
             }
         }
 
@@ -183,6 +202,8 @@ int elf_exec(const char *path) {
         struct process *p = process_create_user(entry, user_rsp, user_pml4, name);
         if (!p) {
             kprintf("elf: cannot create user process\n");
+            vmm_destroy_user_pml4(user_pml4);
+            kfree(name);
             return -1;
         }
 

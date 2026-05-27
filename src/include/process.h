@@ -72,6 +72,7 @@ struct process {
     uint64_t sleep_until;     /* tick count to wake up (0 = not sleeping) */
     int      is_background;   /* 1 = launched with & */
     int      is_suspended;    /* 1 = stopped by job-control signal */
+    int      on_queue;        /* 1 = currently on a scheduler run queue */
     uint8_t  cap_profile;     /* enum process_cap_profile */
     uint8_t  priority;        /* scheduler priority: 0=high .. 3=low */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
@@ -103,7 +104,7 @@ void process_caps_allow(struct process *proc, uint32_t num);
 void process_caps_allow_all(struct process *proc);
 int process_caps_has(const struct process *proc, uint32_t num);
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile);
-int process_fork(void); /* fork current process, returns child PID or 0 in child */
+int process_fork(void); /* fork current process, returns child PID, child starts in fork_child_entry */
 void process_set_current(struct process *proc);
 
 #endif

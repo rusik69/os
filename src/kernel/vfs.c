@@ -4,6 +4,7 @@
 #include "string.h"
 #include "printf.h"
 #include "process.h"
+#include "heap.h"
 
 extern struct vfs_ops procfs_ops;
 extern struct vfs_ops devfs_ops;
@@ -68,6 +69,7 @@ static void vfs_abs_path(const char *path, char *out, int out_max) {
             if (wpos >= (int)sizeof(tmp) - 1) break;
             tmp[wpos++] = '/';
         }
+        if (wpos >= (int)sizeof(tmp) - 1) break;
         if (wpos + comp_len >= (int)sizeof(tmp) - 1)
             comp_len = (int)sizeof(tmp) - 1 - wpos;
         memcpy(tmp + wpos, path + comp_start, comp_len);
@@ -231,12 +233,14 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
     struct vfs_mount *m = resolve(ap);
     if (!m) return -1;
     if (strcmp(m->mountpoint, "/") == 0) {
-        char smfs_names[64][FS_MAX_NAME];
+        char (*smfs_names)[FS_MAX_NAME] = kmalloc((size_t)64 * FS_MAX_NAME);
+        if (!smfs_names) return -1;
         int n = fs_list_names(ap, "", smfs_names, max < 64 ? max : 64);
         for (int i = 0; i < n; i++) {
             strncpy(names[i], smfs_names[i], 63);
             names[i][63] = '\0';
         }
+        kfree(smfs_names);
         return n;
     }
     if (strcmp(m->mountpoint, "/mnt") == 0 && fat32_is_mounted()) {
@@ -245,12 +249,14 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
             if (ap[4] == '\0') rel = "/";
             else if (ap[4] == '/') rel = ap + 4;
         }
-        char fat_names[64][FAT32_MAX_NAME];
+        char (*fat_names)[FAT32_MAX_NAME] = kmalloc((size_t)64 * FAT32_MAX_NAME);
+        if (!fat_names) return -1;
         int n = fat32_list_dir(rel, fat_names, max < 64 ? max : 64);
         for (int i = 0; i < n; i++) {
             strncpy(names[i], fat_names[i], 63);
             names[i][63] = '\0';
         }
+        kfree(fat_names);
         return n;
     }
     return -1;

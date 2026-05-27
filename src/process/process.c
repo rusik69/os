@@ -14,6 +14,23 @@ static struct process process_table[PROCESS_MAX];
 static uint32_t next_pid = 1;
 static struct process *current_process = NULL;
 
+/* Allocate a unique PID, avoiding wrap-around aliasing */
+static uint32_t alloc_pid(void) {
+    uint32_t pid = next_pid++;
+    if (next_pid == 0 || next_pid > 0xFFFF) {
+        /* Near wrap — scan for an unused PID and reset */
+        next_pid = 1;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (process_table[i].state != PROCESS_UNUSED &&
+                process_table[i].pid >= next_pid &&
+                process_table[i].pid <= 0xFFFF) {
+                next_pid = process_table[i].pid + 1;
+            }
+        }
+    }
+    return pid;
+}
+
 static inline int process_cap_valid(uint32_t num) {
     return num < PROCESS_SYSCALL_MAX;
 }
@@ -171,7 +188,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     uint8_t *stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
     if (!stack) return NULL;
 
-    proc->pid = next_pid++;
+    proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
     proc->name = name;
     proc->kernel_stack = (uint64_t)stack;
@@ -242,7 +259,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     uint8_t *stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
     if (!stack) return NULL;
 
-    proc->pid = next_pid++;
+    proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
     proc->name = name;
     proc->kernel_stack = (uint64_t)stack;
@@ -326,16 +343,23 @@ struct process *process_get_current(void) {
 }
 
 /*
- * fork() — clone current process, child starts running at same instruction.
- * Returns child PID to parent, 0 to child, -1 on error.
- * NOTE: This is a simplified fork for kernel processes. The saved register
- * context trick that real unix kernels use requires assembly glue.
- * Here we create a child process that calls a simple wake function.
- * For shell scripting, this mainly demonstrates the API is wired.
+ * fork() — clone current process, child starts at fork_child_entry.
+ * Returns child PID to parent, -1 on error.
+ * NOTE: The child does NOT return from process_fork() with value 0.
+ * Instead, the child begins execution in fork_child_entry().
  */
+int process_fork(void);
+extern void fork_child_trampoline(void); /* defined in switch.asm */
+
+static void fork_child_entry(void) {
+    process_exit_code(0);
+}
+
 int process_fork(void) {
     struct process *parent = current_process;
     struct process *child = NULL;
+
+    __asm__ volatile("cli");
 
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (process_table[i].state == PROCESS_UNUSED) {
@@ -343,42 +367,48 @@ int process_fork(void) {
             break;
         }
     }
-    if (!child) return -1;
+    if (!child) { __asm__ volatile("sti"); return -1; }
 
-    /* Clear child state first so the process table slot is safe even if
-     * an interrupt occurs between here and the state being set to READY. */
     child->state = PROCESS_UNUSED;
-
-    /* Copy process state */
     *child = *parent;
-    child->pid = next_pid++;
+    child->pid = alloc_pid();
     child->parent_pid = parent->pid;
-    child->state = PROCESS_READY;
     child->is_suspended = 0;
 
-    /* Allocate fresh kernel stack */
+    /* Allocate fresh kernel stack BEFORE setting state to READY */
     uint8_t *new_stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
-    if (!new_stack) return -1;
+    if (!new_stack) {
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -1;
+    }
     child->kernel_stack = (uint64_t)new_stack;
     child->stack_top    = (uint64_t)(new_stack + KERNEL_STACK_SIZE);
+    child->state = PROCESS_READY;
 
     /* Clone user address space if process has one */
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
-        if (!child->pml4) { kfree(new_stack); child->state = PROCESS_UNUSED; return -1; }
+        if (!child->pml4) {
+            kfree(new_stack);
+            child->state = PROCESS_UNUSED;
+            __asm__ volatile("sti");
+            return -1;
+        }
         /* Flush parent TLB: COW marking made parent pages read-only in the page tables */
         vmm_switch_pml4(parent->pml4);
     }
 
-    /* Set up child kernel stack so it wakes returning 0 from fork */
+    /* Set up child kernel stack */
     uint64_t *sp = (uint64_t *)child->stack_top;
     sp -= 7;
-    sp[0] = 0;  /* r15 = child fork return = 0 */
+    sp[0] = (uint64_t)fork_child_entry;  /* r15 = child entry point */
     sp[1] = 0;  sp[2] = 0; sp[3] = 0; sp[4] = 0; sp[5] = 0;
-    sp[6] = (uint64_t)process_entry_trampoline;
+    sp[6] = (uint64_t)fork_child_trampoline;
     child->context = (struct cpu_context *)sp;
 
     scheduler_add(child);
+    __asm__ volatile("sti");
     return (int)child->pid;
 }
 
@@ -387,11 +417,16 @@ void process_set_current(struct process *proc) {
 }
 
 struct process *process_get_by_pid(uint32_t pid) {
+    struct process *fallback = NULL;
     for (int i = 0; i < PROCESS_MAX; i++) {
-        if (process_table[i].state != PROCESS_UNUSED && process_table[i].pid == pid)
-            return &process_table[i];
+        if (process_table[i].state != PROCESS_UNUSED && process_table[i].pid == pid) {
+            /* Prefer non-zombie processes (live) over zombie (dead) */
+            if (process_table[i].state != PROCESS_ZOMBIE)
+                return &process_table[i];
+            if (!fallback) fallback = &process_table[i];
+        }
     }
-    return NULL;
+    return fallback;
 }
 
 /* For shell `ps` command */
@@ -412,8 +447,11 @@ int process_waitpid(uint32_t pid, int *status) {
         current_process->state = PROCESS_BLOCKED;
         scheduler_remove(current_process);
         scheduler_yield();
-        /* Resumed by process_wake_waiter */
+        /* After wake, re-lookup the child — it may have been cleaned up
+         * by another concurrent waitpid (race). */
         current_process->wait_for_pid = 0;
+        child = process_get_by_pid(pid);
+        if (!child || child->state == PROCESS_UNUSED) return -1;
     }
 
     if (status) *status = child->exit_code;

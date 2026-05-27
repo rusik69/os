@@ -73,13 +73,22 @@ void shell_alias_list(void) {
 /* ─── Glob expansion ─────────────────────────────────────────────────────────── */
 
 /* Returns 1 if pattern matches string (supports * and ?) */
+static int glob_match_depth(const char *pat, const char *str, int depth);
+
+#define GLOB_MAX_DEPTH 32
+
 static int glob_match(const char *pat, const char *str) {
+    return glob_match_depth(pat, str, 0);
+}
+
+static int glob_match_depth(const char *pat, const char *str, int depth) {
+    if (depth > GLOB_MAX_DEPTH) return 0;
     while (*pat) {
         if (*pat == '*') {
             pat++;
             if (!*pat) return 1; /* trailing * matches everything */
             while (*str) {
-                if (glob_match(pat, str)) return 1;
+                if (glob_match_depth(pat, str, depth + 1)) return 1;
                 str++;
             }
             return 0;
@@ -151,7 +160,7 @@ static void glob_expand_line(const char *line, char *out, int out_max) {
                 prefix[pi] = pat[pi];
             prefix[pi] = '\0';
             /* List files with that prefix */
-            static char gnames[GLOB_MAX_MATCHES][FS_MAX_NAME];
+            char gnames[GLOB_MAX_MATCHES][FS_MAX_NAME];
             int n = fs_list_names(dir, prefix[0] ? prefix : NULL, gnames, GLOB_MAX_MATCHES);
             int matched = 0;
             for (int i = 0; i < n; i++) {
@@ -388,7 +397,15 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 /* convert to string */
                 char numstr[24]; int ni = 0;
                 int64_t r = result;
-                if (r < 0) { if (di < dst_max - 1) dst[di++] = '-'; r = -r; }
+                if (r < 0) {
+                    if (di < dst_max - 1) dst[di++] = '-';
+                    if (r == (-9223372036854775807LL - 1)) {
+                        char *ns = "-9223372036854775808";
+                        while (*ns && di < dst_max - 1) dst[di++] = *ns++;
+                        continue;
+                    }
+                    r = -r;
+                }
                 if (r == 0) { if (di < dst_max - 1) dst[di++] = '0'; }
                 else {
                     while (r > 0 && ni < 22) { numstr[ni++] = '0' + (int)(r % 10); r /= 10; }
@@ -457,15 +474,19 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 if (*src == '[') {
                     src++;
                     int idx = 0;
-                    while (*src >= '0' && *src <= '9') idx = idx * 10 + (*src++ - '0');
+                    while (*src >= '0' && *src <= '9') {
+                        int nd = *src++ - '0';
+                        if (idx > (2147483647 - nd) / 10) break;
+                        idx = idx * 10 + nd;
+                    }
                     if (*src == ']') src++;
                     if (*src == '}') src++;
                     void *arrp = shell_array_get(aname);
-                    if (arrp) {
+                    if (arrp && idx >= 0 && idx < SHELL_ARRAY_ELEM_MAX) {
                         struct shell_array *a = (struct shell_array *)arrp;
-                        if (idx >= 0 && idx < a->count) {
-                            const char *val = a->elems[idx];
-                            while (*val && di < dst_max - 1) dst[di++] = *val++;
+                        if (idx < a->count) {
+                            const char *ev = a->elems[idx];
+                            while (*ev && di < dst_max - 1) dst[di++] = *ev++;
                         }
                     }
                     continue;
@@ -473,7 +494,7 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 /* ${name} — regular variable in braces */
                 if (*src == '}') src++;
                 const char *val = shell_var_get(aname);
-                if (*val) {
+                if (val && *val) {
                     while (*val && di < dst_max - 1) dst[di++] = *val++;
                 } else {
                     if (di < dst_max - 1) dst[di++] = '$';
@@ -634,7 +655,7 @@ static void process_cmd(void) {
     }
 
     /* --- Variable expansion: replace $VAR with its value --- */
-    static char expanded[CMD_BUF_SIZE];
+    char expanded[CMD_BUF_SIZE];
     var_expand(cmd_buf, expanded, CMD_BUF_SIZE);
     strncpy(cmd_buf, expanded, CMD_BUF_SIZE - 1);
     cmd_buf[CMD_BUF_SIZE - 1] = '\0';
@@ -650,7 +671,7 @@ static void process_cmd(void) {
         first_word[fw] = '\0';
         const char *aval = shell_alias_get(first_word);
         if (aval) {
-            static char alias_expanded[CMD_BUF_SIZE];
+            char alias_expanded[CMD_BUF_SIZE];
             strncpy(alias_expanded, aval, CMD_BUF_SIZE - 1);
             alias_expanded[CMD_BUF_SIZE - 1] = '\0';
             if (*p == ' ') {
@@ -679,7 +700,7 @@ static void process_cmd(void) {
             if (*gp == '*' || *gp == '?') { has_glob = 1; break; }
         }
         if (has_glob && *first_end) {
-            static char glob_out[CMD_BUF_SIZE];
+            char glob_out[CMD_BUF_SIZE];
             /* Copy first word verbatim */
             int fw_len = (int)(first_end - cmd_buf);
             char fw[32];
@@ -821,7 +842,7 @@ static void process_cmd(void) {
                 pipe_count++;
         }
         if (pipe_count > 0) {
-            static char pipe_work[CMD_BUF_SIZE];
+            char pipe_work[CMD_BUF_SIZE];
             char pipe_xfer[4096];
             int pipe_xfer_len = 0;
 
@@ -911,7 +932,7 @@ static void process_cmd(void) {
             if (*ia) { *ia = '\0'; ia++; while (*ia == ' ') ia++; }
             else ia = NULL;
             /* Read file contents and pass as argument (inject via env) */
-            static char iredir_buf[4096];
+            char iredir_buf[4096];
             uint32_t iredir_sz = 0;
             char ipath[64];
             if (ifile[0] != '/') {
@@ -927,7 +948,7 @@ static void process_cmd(void) {
                 shell_var_set("__STDIN__", iredir_buf);
             }
             /* Build combined args: original_args + file contents via shell var */
-            static char iredir_args[CMD_BUF_SIZE];
+            char iredir_args[CMD_BUF_SIZE];
             if (ia && ia[0]) {
                 strncpy(iredir_args, ia, CMD_BUF_SIZE - 1);
             } else {
@@ -977,7 +998,7 @@ static void process_cmd(void) {
         else largs = 0;
 
         /* Capture output */
-        static char redir_buf[4096];
+        char redir_buf[4096];
         int redir_len = 0;
         void (*saved_hook)(char, void*) = 0;
         void *saved_ctx = 0;
@@ -1265,7 +1286,10 @@ void shell_run(void) {
                         here_buf[here_len] = '\0';
 
                         /* Write heredoc content as pipe file for the command */
-                        const char *hpipe = "/.heredoc_tmp";
+                        char hpipe[32];
+                        struct process *self = process_get_current();
+                        snprintf(hpipe, sizeof(hpipe), "/.heredoc_%u",
+                                 self ? self->pid : 0u);
                         vfs_write(hpipe, here_buf, (uint32_t)here_len);
 
                         /* Trim trailing space from cmd part */

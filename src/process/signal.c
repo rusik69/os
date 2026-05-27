@@ -11,13 +11,29 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
+    /* Do not deliver signals to zombie processes */
+    if (p->state == PROCESS_ZOMBIE) return 0;
+
     /* SIGKILL cannot be masked or ignored — immediate terminate */
     if (signum == SIGKILL) {
         p->state = PROCESS_ZOMBIE;
+        p->exit_code = 128 + signum;
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
         if (p == process_get_current()) scheduler_yield();
+        return 0;
+    }
+
+    /* SIGCONT always resumes a stopped process, regardless of mask (POSIX) */
+    if (signum == SIGCONT) {
+        p->pending_signals |= (1u << signum);
+        if (p->is_suspended) {
+            p->is_suspended = 0;
+            p->sleep_until = 0;
+            p->state = PROCESS_READY;
+            scheduler_add(p);
+        }
         return 0;
     }
 
@@ -29,6 +45,7 @@ int signal_send(uint32_t pid, int signum) {
 
     if (signum == SIGTERM) {
         p->state = PROCESS_ZOMBIE;
+        p->exit_code = 128 + signum;
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
@@ -47,12 +64,6 @@ int signal_send(uint32_t pid, int signum) {
 
     p->pending_signals |= (1u << signum);
 
-    if (signum == SIGCONT && p->is_suspended) {
-        p->is_suspended = 0;
-        p->sleep_until = 0;
-        p->state = PROCESS_READY;
-        scheduler_add(p);
-    }
     return 0;
 }
 
@@ -71,6 +82,11 @@ void signal_check(void) {
     struct process *p = process_get_current();
     if (!p || !p->pending_signals) return;
 
+    /* Disable interrupts while manipulating the pending-signals bitmap
+     * to prevent a timer interrupt from re-entering signal_check for
+     * the same process mid-way through bit manipulation. */
+    __asm__ volatile("cli");
+
     for (int sig = 1; sig < SIG_MAX; sig++) {
         if (!(p->pending_signals & (1u << sig))) continue;
 
@@ -87,8 +103,15 @@ void signal_check(void) {
         }
 
         if (handler != SIG_DFL) {
-            /* User handler installed — call it */
-            handler(sig);
+            /* User handler installed — only call if we are in kernel mode.
+             * User processes cannot safely register custom handlers because
+             * we lack a proper user-mode signal delivery mechanism; calling
+             * a user-provided address from ring-0 is a privilege escalation. */
+            if (!p->is_user) {
+                __asm__ volatile("sti");
+                handler(sig);
+                __asm__ volatile("cli");
+            }
             continue;
         }
 
@@ -98,8 +121,11 @@ void signal_check(void) {
             case SIGTERM:
             case SIGPIPE:
                 p->state = PROCESS_ZOMBIE;
+                p->exit_code = 128 + sig;
                 scheduler_remove(p);
+                __asm__ volatile("sti");
                 scheduler_yield();
+                /* not reached */
                 break;
             case SIGCHLD:
                 /* Default for SIGCHLD is to ignore */
@@ -111,7 +137,9 @@ void signal_check(void) {
                 p->is_suspended = 1;
                 p->state = PROCESS_BLOCKED;
                 scheduler_remove(p);
+                __asm__ volatile("sti");
                 scheduler_yield();
+                /* not reached */
                 break;
             case SIGCONT:
                 /* Already handled in signal_send */
@@ -119,11 +147,16 @@ void signal_check(void) {
             default:
                 /* Unknown signal with default action: terminate */
                 p->state = PROCESS_ZOMBIE;
+                p->exit_code = 128 + sig;
                 scheduler_remove(p);
+                __asm__ volatile("sti");
                 scheduler_yield();
+                /* not reached */
                 break;
         }
     }
+
+    __asm__ volatile("sti");
 }
 
 void signal_register(int signum, signal_handler_t handler) {

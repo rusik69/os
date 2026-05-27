@@ -394,7 +394,7 @@ static void handle_ip(const uint8_t *data, uint16_t len);
 
 static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_t len) {
     uint16_t flags_frag = ntohs(ip->flags_frag);
-    uint16_t frag_off = (flags_frag & 0x1FFF) * 8;
+    uint32_t frag_off = (uint32_t)(flags_frag & 0x1FFF) * 8;
     int more = (flags_frag & 0x2000) != 0;
 
     if (frag_off == 0 && !more)
@@ -407,7 +407,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_
 
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     uint16_t part = len - ihl;
-    if (frag_off + part > sizeof(slot->buf)) return -1;
+    if (frag_off + (uint32_t)part > sizeof(slot->buf)) return -1;
 
     /* Reject overlapping fragments (security: prevent data injection attacks) */
     for (uint16_t b = frag_off; b < frag_off + part; b++) {
@@ -416,7 +416,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_
     }
 
     memcpy(slot->buf + frag_off, data + ihl, part);
-    for (uint16_t b = frag_off; b < frag_off + part; b++)
+    for (uint32_t b = frag_off; b < frag_off + part; b++)
         slot->frag_map[b / 8] |= (uint8_t)(1u << (b % 8));
     if (frag_off + part > slot->len) slot->len = (uint16_t)(frag_off + part);
     if (frag_off + part > slot->frag_end) slot->frag_end = (uint16_t)(frag_off + part);

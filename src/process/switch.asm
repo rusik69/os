@@ -83,4 +83,16 @@ user_entry_trampoline:
 
     iretq
 
+; ──────────────────────────────────────────────────────────────────
+; Fork child trampoline.
+; context_switch returns here with:
+;   r15 = fork child entry function
+; The child starts executing the entry function.
+; ──────────────────────────────────────────────────────────────────
+global fork_child_trampoline
+fork_child_trampoline:
+    xor rax, rax           ; fork return value = 0
+    sti
+    jmp r15                ; jump to fork child entry
+
 section .note.GNU-stack noalloc noexec nowrite progbits

@@ -37,9 +37,11 @@ void scheduler_init(void) {
 
 /* Add a process to its priority queue */
 void scheduler_add(struct process *proc) {
+    if (proc->on_queue) return; /* already enqueued */
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
     proc->next = NULL;
+    proc->on_queue = 1;
     if (!queue_tail[lvl]) {
         queue_head[lvl] = proc;
         queue_tail[lvl] = proc;
@@ -51,6 +53,7 @@ void scheduler_add(struct process *proc) {
 
 /* Remove a process from whatever queue it is in */
 void scheduler_remove(struct process *proc) {
+    if (!proc->on_queue) return; /* not on any queue */
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
     struct process *prev = NULL;
@@ -61,11 +64,14 @@ void scheduler_remove(struct process *proc) {
             else queue_head[lvl] = cur->next;
             if (cur == queue_tail[lvl]) queue_tail[lvl] = prev;
             cur->next = NULL;
+            proc->on_queue = 0;
             return;
         }
         prev = cur;
         cur  = cur->next;
     }
+    /* Not found in the queue — clear flag anyway */
+    proc->on_queue = 0;
 }
 
 int scheduler_set_priority(struct process *proc, uint8_t priority) {
@@ -90,6 +96,7 @@ static struct process *dequeue_next(void) {
             queue_head[lvl] = p->next;
             if (!queue_head[lvl]) queue_tail[lvl] = NULL;
             p->next = NULL;
+            p->on_queue = 0;
             return p;
         }
     }
@@ -136,9 +143,6 @@ void schedule(void) {
 
     context_switch(&current->context, next->context);
     __asm__ volatile("sti");
-
-    /* Deliver any pending signals for the now-current process */
-    signal_check();
 }
 
 void scheduler_yield(void) {
@@ -160,9 +164,24 @@ void scheduler_tick(void) {
         scheduler_idle_ticks++;
     struct process *cur = process_get_current();
     if (!cur || cur->state != PROCESS_RUNNING) return;
+
+    /* Check pending signals for the current process.
+     * If a fatal signal was received, signal_check changes the state to
+     * ZOMBIE/BLOCKED and we yield to let another process run. */
+    if (cur->pending_signals) {
+        signal_check();
+        cur = process_get_current();
+        if (!cur || cur->state != PROCESS_RUNNING) {
+            schedule();
+            return;
+        }
+    }
+
     /* First tick: assign quantum without preempting */
     if (cur->ticks_remaining == 0) {
-        cur->ticks_remaining = time_slices[(int)cur->priority];
+        int lvl = (int)cur->priority;
+        if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+        cur->ticks_remaining = time_slices[lvl];
         return;
     }
     cur->ticks_remaining--;

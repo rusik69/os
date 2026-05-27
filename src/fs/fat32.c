@@ -15,6 +15,7 @@
 #include "vfs.h"
 #include "string.h"
 #include "printf.h"
+#include "heap.h"
 
 /* ── FAT32 on-disk structures ───────────────────────────────────────────────── */
 struct fat32_bpb {
@@ -179,7 +180,13 @@ static uint32_t fat_alloc_cluster(void) {
 }
 
 static void fat_free_chain(uint32_t cluster) {
+    uint32_t max_clusters = 0;
+    /* Estimate max clusters from the FAT region */
+    if (fat_sectors) max_clusters = (fat_sectors * SECT_SIZE * 2) / 3; /* approx */
+    if (!max_clusters) max_clusters = 65536;
+    uint32_t visited = 0;
     while (cluster >= 2 && cluster < FAT32_EOC) {
+        if (++visited > max_clusters) break; /* cycle detected */
         uint32_t next = fat_next_cluster(cluster);
         fat_write_entry(cluster, FAT32_FREE);
         cluster = next;
@@ -340,7 +347,7 @@ static uint32_t path_resolve(const char *path, int *is_dir, uint32_t *file_size)
         /* Extract next component */
         char comp[FAT32_MAX_NAME];
         int  ci = 0;
-        while (*path && *path != '/') comp[ci++] = *path++;
+        while (*path && *path != '/' && ci < FAT32_MAX_NAME - 1) comp[ci++] = *path++;
         comp[ci] = '\0';
         while (*path == '/') path++;
 
@@ -714,8 +721,10 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     }
 
     if (!old_clus) {
-        if (dir_add_entry(parent, n8, n3, first, size, 0) != 0)
+        if (dir_add_entry(parent, n8, n3, first, size, 0) != 0) {
+            if (first) fat_free_chain(first);
             return -4;
+        }
     } else {
         dir_update_size(parent, cmp, first, size);
     }
@@ -787,9 +796,16 @@ int fat32_mkdir(const char *path) {
     uint32_t lba = cluster_to_lba(dir_clus);
     uint8_t zbuf[SECT_SIZE];
     memset(zbuf, 0, SECT_SIZE);
-    for (uint32_t s = 0; s < spc; s++)
-        if (write_sector(lba + s, zbuf) != 0) return -5;
-    if (dir_add_entry(parent, n8, n3, dir_clus, 0, 1) != 0) return -6;
+    for (uint32_t s = 0; s < spc; s++) {
+        if (write_sector(lba + s, zbuf) != 0) { fat_free_chain(dir_clus); return -5; }
+    }
+    /* Create "." and ".." entries in the new directory (required by FAT32) */
+    char dot8[8] = {'.', ' ', ' ', ' ', ' ', ' ', ' ', ' '};
+    char dot38[3] = {' ', ' ', ' '};
+    char dot8_2[8] = {'.', '.', ' ', ' ', ' ', ' ', ' ', ' '};
+    if (dir_add_entry(dir_clus, dot8, dot38, dir_clus, 0, 1) != 0) { fat_free_chain(dir_clus); return -5; }
+    if (dir_add_entry(dir_clus, dot8_2, dot38, parent, 0, 1) != 0) { fat_free_chain(dir_clus); return -5; }
+    if (dir_add_entry(parent, n8, n3, dir_clus, 0, 1) != 0) { fat_free_chain(dir_clus); return -6; }
     return 0;
 }
 
@@ -863,10 +879,12 @@ static int fat32_vfs_unlink(void *priv, const char *path) {
 static int fat32_vfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (!mounted) return -1;
-    char names[64][FAT32_MAX_NAME];
+    char (*names)[FAT32_MAX_NAME] = kmalloc((size_t)64 * FAT32_MAX_NAME);
+    if (!names) return -1;
     int n = fat32_list_dir(fat32_vfs_rel(path), names, 64);
     for (int i = 0; i < n; i++)
         kprintf("%s\n", names[i]);
+    kfree(names);
     return 0;
 }
 

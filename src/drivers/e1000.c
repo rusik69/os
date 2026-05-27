@@ -239,6 +239,25 @@ int e1000_receive(void *buf, uint16_t max_len) {
     if (!(rx_descs[idx].status & RDESC_STA_DD))
         return 0; /* nothing to receive */
 
+    /* Check for errors (CRC, alignment, etc.) */
+    if (rx_descs[idx].errors != 0) {
+        rx_descs[idx].status = 0;
+        int old_cur = rx_cur;
+        rx_cur = (rx_cur + 1) % NUM_RX_DESC;
+        e1000_write(REG_RDT, old_cur);
+        return -2; /* error — skip this packet */
+    }
+
+    /* Check End-Of-Packet: if not set, packet spans multiple descriptors
+     * (jumbo frame) — drop it since we don't support reassembly. */
+    if (!(rx_descs[idx].status & RDESC_STA_EOP)) {
+        rx_descs[idx].status = 0;
+        int old_cur = rx_cur;
+        rx_cur = (rx_cur + 1) % NUM_RX_DESC;
+        e1000_write(REG_RDT, old_cur);
+        return -3;
+    }
+
     uint16_t len = rx_descs[idx].length;
     if (len > max_len) len = max_len;
     memcpy(buf, rx_buffers[idx], len);

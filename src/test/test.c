@@ -140,6 +140,34 @@ static void test_memory(void) {
     t_ok("kfree x8");
 }
 
+/* Extended heap tests: coalescing and accounting correctness */
+static void test_heap_ext(void) {
+    uint64_t free_before = heap_get_free();
+
+    /* Allocate adjacent blocks */
+    void *a = kmalloc(64);
+    void *b = kmalloc(64);
+    ASSERT("heap_ext kmalloc a", a != NULL);
+    ASSERT("heap_ext kmalloc b", b != NULL);
+
+    /* Free them — coalescing should not corrupt heap_used_bytes */
+    kfree(a);
+    kfree(b);
+
+    uint64_t free_after = heap_get_free();
+    ASSERT("heap coalesce no underflow", free_after > 0 && free_after <= heap_get_total());
+    ASSERT("heap coalesce same as before", free_after == free_before);
+
+    /* Allocate a larger block */
+    void *c = kmalloc(512);
+    ASSERT("heap_ext kmalloc 512", c != NULL);
+    kfree(c);
+    free_after = heap_get_free();
+    ASSERT("heap free 512 same", free_after == free_before);
+
+    t_ok("heap extended");
+}
+
 /* ── Timer ───────────────────────────────────────────────────── */
 
 static void test_timer(void) {
@@ -325,6 +353,18 @@ static void test_vfs(void) {
 
     ASSERT("vfs unlink",  vfs_unlink("/vf") == 0);
     ASSERT("vfs unlink post-stat fails", vfs_stat("/vf", &st) < 0);
+
+    /* Test vfs path resolution — root "/" */
+    ASSERT("vfs stat root", vfs_stat("/", &st) == 0);
+    ASSERT("vfs stat root dir", st.type == FS_TYPE_DIR);
+
+    /* Test ".." resolution */
+    ASSERT("vfs create deep", vfs_create("/a", FS_TYPE_DIR) >= 0);
+    ASSERT("vfs create deeper", vfs_create("/a/b", FS_TYPE_DIR) >= 0);
+    ASSERT("vfs stat /a/b", vfs_stat("/a/b", &st) == 0);
+    ASSERT("vfs stat /a/../a/b", vfs_stat("/a/../a/b", &st) == 0);
+    ASSERT("vfs stat /a/b/..", vfs_stat("/a/b/..", &st) == 0);
+    ASSERT("vfs stat /a/b/.. eq /a", st.type == FS_TYPE_DIR);
 }
 
 /* ── Pipes ───────────────────────────────────────────────────── */
@@ -370,6 +410,19 @@ static void test_pipe(void) {
         pipe_close_write(id2);
         pipe_close_read(id2);
         t_ok("pipe2 independent");
+    }
+
+    /* Edge cases: negative length returns error */
+    int id3 = pipe_create();
+    ASSERT("pipe3 create", id3 >= 0);
+    if (id3 >= 0) {
+        int wn = pipe_write(id3, "test", -1);
+        ASSERT("pipe write neg len error", wn < 0);
+        int rn = pipe_read(id3, buf, -1);
+        ASSERT("pipe read neg len error", rn < 0);
+        pipe_close_write(id3);
+        pipe_close_read(id3);
+        t_ok("pipe edge cases");
     }
 }
 
@@ -417,6 +470,14 @@ static void test_signal(void) {
     signal_register(SIGUSR1, (signal_handler_t)1 /* SIG_IGN */);
     signal_register(SIGUSR1, (signal_handler_t)0 /* SIG_DFL */);
     t_ok("signal_register handler");
+
+    /* Signal mask: mask SIGTERM, then send it — process should not terminate */
+    uint32_t old_mask = cur->sig_mask;
+    signal_mask((1u << SIGTERM));
+    ASSERT("signal_send masked SIGTERM OK", signal_send(cur->pid, SIGTERM) == 0);
+    signal_unmask((1u << SIGTERM));
+    cur->sig_mask = old_mask;
+    t_ok("signal mask/unmask");
 }
 
 /* ── Network ─────────────────────────────────────────────────── */
@@ -439,9 +500,10 @@ static void test_fork(void) {
         t_ok("fork SKIP");
         return;
     }
-    if (child == 0) {
-        process_exit_code(0);
-    }
+    /* Child starts at fork_child_entry and exits immediately with code 0 */
+    int status;
+    process_waitpid(child, &status);
+    ASSERT("fork child exit 0", status == 0);
     t_ok("fork parent");
 }
 
@@ -561,6 +623,13 @@ static void test_vmm(void) {
     uint64_t vga_phys = vmm_get_physaddr(0xB8000ULL);
     ASSERT("vmm vga physaddr", vga_phys == 0xB8000ULL);
 
+    /* Test vmm_virt_to_phys (returns 0 on success) */
+    uint64_t phys = 0;
+    ASSERT("vmm virt_to_phys vga", vmm_virt_to_phys(0xB8000ULL, &phys) == 0);
+    ASSERT("vmm virt_to_phys vga val", phys == 0xB8000ULL);
+    /* Test that invalid addresses return error */
+    ASSERT("vmm virt_to_phys invalid", vmm_virt_to_phys(~0ULL, &phys) != 0);
+
     /* Test vmm_user_range_ok rejects kernel addresses */
     ASSERT("vmm user range kernel", vmm_user_range_ok(NULL, 0xFFFFFFFFFFFFFFFFULL, 1, 0) == 0);
 }
@@ -606,6 +675,7 @@ void test_run_all(void) {
 
     test_string();
     test_memory();
+    test_heap_ext();
     test_timer();
     test_rtc();
     test_process();

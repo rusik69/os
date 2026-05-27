@@ -14,6 +14,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size);
 void vmm_unmap_page(uint64_t virt);
 uint64_t vmm_get_physaddr(uint64_t virt);
+int vmm_virt_to_phys(uint64_t virt, uint64_t *phys);
 uint64_t *vmm_get_pml4(void);
 
 /* Per-process user address space */

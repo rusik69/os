@@ -79,11 +79,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     uint32_t csum_src = ntohl(ip_hdr->src_ip);
     uint32_t csum_dst = ntohl(ip_hdr->dst_ip);
     uint16_t saved_csum = tcp->checksum;
-    if (saved_csum != 0) {
-        tcp->checksum = 0;
-        if (net_transport_checksum(csum_src, csum_dst, IP_PROTO_TCP, payload, len) != saved_csum)
-            return;
-    }
+    if (saved_csum == 0) return; /* RFC 793: TCP requires a valid checksum; 0 is never valid for TCP */
+    tcp->checksum = 0;
+    if (net_transport_checksum(csum_src, csum_dst, IP_PROTO_TCP, payload, len) != saved_csum)
+        return;
 
     uint16_t src_port = ntohs(tcp->src_port);
     uint16_t dst_port = ntohs(tcp->dst_port);
@@ -164,6 +163,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 l->accept_queue[l->accept_tail] = conn_id;
                 l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
                 l->accept_count++;
+            } else if (l) {
+                /* Accept queue full — reject the connection */
+                send_tcp(c, TCP_RST, NULL, 0);
+                c->state = TCP_CLOSED;
             }
         }
         return;
@@ -188,8 +191,6 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         if (flags & TCP_FIN) {
             c->their_seq = seq + data_len + 1;
             send_tcp(c, TCP_ACK, NULL, 0);
-            send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
-            c->our_seq++;
             c->state = TCP_CLOSE_WAIT;
             c->rx_fin = 1;
             if (l && l->on_close) l->on_close(conn_id);
@@ -207,9 +208,9 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 send_tcp(c, TCP_ACK, NULL, 0);
                 return;
             }
-            uint16_t skip = 0;
+            uint32_t skip = 0;
             if ((int32_t)(seq - expected) < 0) {
-                skip = (uint16_t)(expected - seq);
+                skip = (uint32_t)(expected - seq);
                 if (skip >= data_len) {
                     send_tcp(c, TCP_ACK, NULL, 0);
                     return;
@@ -240,13 +241,22 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     }
 
     if (c->state == TCP_FIN_WAIT) {
+        if (flags & TCP_ACK) {
+            c->state = TCP_FIN_WAIT_2;
+        }
         if (flags & TCP_FIN) {
             c->their_seq = seq + 1;
             send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_TIME_WAIT;
-            c->last_send_tick = timer_get_ticks(); /* track when TIME_WAIT started */
+            c->last_send_tick = timer_get_ticks();
         }
-        if (flags & TCP_ACK) {
+        return;
+    }
+
+    if (c->state == TCP_FIN_WAIT_2) {
+        if (flags & TCP_FIN) {
+            c->their_seq = seq + 1;
+            send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_TIME_WAIT;
             c->last_send_tick = timer_get_ticks();
         }
@@ -259,6 +269,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     }
 
     if (c->state == TCP_CLOSE_WAIT) {
+        /* Application should call net_tcp_close to send FIN */
+        if (flags & TCP_RST) {
+            c->state = TCP_CLOSED;
+        }
+        return;
+    }
+
+    if (c->state == TCP_LAST_ACK) {
         if (flags & TCP_ACK) {
             c->state = TCP_CLOSED;
         }
@@ -419,10 +437,14 @@ void net_tcp_close(int conn_id) {
     struct tcp_conn *c = &tcp_conns[conn_id];
     switch (c->state) {
         case TCP_ESTABLISHED:
-        case TCP_CLOSE_WAIT:
             send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
             c->our_seq++;
             c->state = TCP_FIN_WAIT;
+            break;
+        case TCP_CLOSE_WAIT:
+            send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
+            c->our_seq++;
+            c->state = TCP_LAST_ACK;
             break;
         case TCP_SYN_SENT:
         case TCP_SYN_RECEIVED:
@@ -430,6 +452,8 @@ void net_tcp_close(int conn_id) {
             c->state = TCP_CLOSED;
             break;
         case TCP_FIN_WAIT:
+        case TCP_FIN_WAIT_2:
+        case TCP_LAST_ACK:
         case TCP_CLOSED:
         default:
             break;
@@ -491,10 +515,18 @@ void net_tcp_check_retransmit(void) {
             continue;
         }
 
-        /* Retransmit using the saved sequence number */
+        /* Retransmit using the saved sequence number, in MSS-sized chunks */
         uint32_t saved_seq = c->our_seq;
         c->our_seq = c->tx_unacked_seq;
-        send_tcp(c, TCP_PSH | TCP_ACK, c->tx_unacked_buf, c->tx_unacked_len);
+        uint16_t remain = c->tx_unacked_len;
+        const uint8_t *rp = c->tx_unacked_buf;
+        while (remain > 0) {
+            uint16_t chunk = remain > 1400 ? 1400 : remain;
+            send_tcp(c, TCP_PSH | TCP_ACK, rp, chunk);
+            c->our_seq += chunk;
+            rp += chunk;
+            remain -= chunk;
+        }
         c->our_seq = saved_seq;
 
         c->last_send_tick = now;

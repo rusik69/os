@@ -239,6 +239,19 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_REALLOC:
             /* old ptr is arbitrary; just validate that the new result ptr location is writable */
             return 1;
+        case SYS_CHDIR:
+        case SYS_TRUNCATE:
+            return syscall_user_cstr_ok(a1);
+        case SYS_GETCWD:
+            if (a2 == 0) return 0;
+            return syscall_user_write_ok(a1, a2);
+        case SYS_FD_READ:
+            return syscall_user_write_ok(a2, a3);
+        case SYS_FD_WRITE:
+            return syscall_user_read_ok(a2, a3);
+        case SYS_RAW_SEND:
+            if (a2 == 0 || a2 > 1514) return 0;
+            return syscall_user_read_ok(a1, a2);
         default:
             return 1;
     }
@@ -269,10 +282,12 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (pfd->offset >= fsize) return 0;
         uint32_t avail = fsize - pfd->offset;
         uint32_t to_read = (uint32_t)len < avail ? (uint32_t)len : avail;
-        uint8_t *tmp = kmalloc(fsize);
+        uint32_t need_end = pfd->offset + to_read;
+        if (need_end > fsize) need_end = fsize;
+        uint8_t *tmp = kmalloc(need_end);
         if (!tmp) return (uint64_t)-1;
         uint32_t nread = 0;
-        vfs_read(pfd->path, tmp, fsize, &nread);
+        vfs_read(pfd->path, tmp, need_end, &nread);
         memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
         kfree(tmp);
         pfd->offset += to_read;
@@ -319,7 +334,6 @@ static uint64_t sys_close(uint64_t fd) {
 }
 
 static uint64_t sys_exit(uint64_t code) {
-    (void)code;
     struct process *p = process_get_current();
     /* If this is a user-mode process, clean up page tables */
     if (p && p->is_user && p->pml4) {
@@ -327,7 +341,7 @@ static uint64_t sys_exit(uint64_t code) {
         vmm_destroy_user_pml4(p->pml4);
         p->pml4 = NULL;
     }
-    process_exit();
+    process_exit_code((int)code);
     return 0; /* unreachable */
 }
 
@@ -348,6 +362,9 @@ static uint64_t sys_brk(uint64_t addr) {
 
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
 static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
+    if (syscall_is_user_process() &&
+        handler_addr != (uint64_t)SIG_DFL && handler_addr != (uint64_t)SIG_IGN)
+        return (uint64_t)-1;
     signal_register((int)signum, (signal_handler_t)(uintptr_t)handler_addr);
     return 0;
 }
@@ -393,10 +410,12 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     if (pfd->offset >= fsize) return 0;
     uint32_t avail = fsize - pfd->offset;
     uint32_t to_read = (uint32_t)count < avail ? (uint32_t)count : avail;
-    uint8_t *tmp = kmalloc(fsize);
+    uint32_t need_end = pfd->offset + to_read;
+    if (need_end > fsize) need_end = fsize;
+    uint8_t *tmp = kmalloc(need_end);
     if (!tmp) return (uint64_t)-1;
     uint32_t nread = 0;
-    vfs_read(pfd->path, tmp, fsize, &nread);
+    vfs_read(pfd->path, tmp, need_end, &nread);
     memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
     kfree(tmp);
     pfd->offset += to_read;
@@ -426,16 +445,11 @@ static uint64_t sys_free(uint64_t ptr) {
 static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
     if (!ptr) return sys_malloc(new_size);
     if (!new_size) { kfree((void *)(uintptr_t)ptr); return 0; }
-    /* Simple realloc: allocate new block, copy, free old */
-    void *old = (void *)(uintptr_t)ptr;
-    /* Retrieve old size from block header (24 bytes before ptr) */
-    struct heap_block_hdr { size_t size; int free; void *next; };
-    size_t old_size = ((struct heap_block_hdr *)((uint8_t *)old - sizeof(struct heap_block_hdr)))->size;
     void *newp = kmalloc((size_t)new_size);
     if (!newp) return 0;
-    size_t copy = old_size < (size_t)new_size ? old_size : (size_t)new_size;
-    for (size_t i = 0; i < copy; i++) ((uint8_t *)newp)[i] = ((uint8_t *)old)[i];
-    kfree(old);
+    size_t copy = (size_t)new_size;
+    for (size_t i = 0; i < copy; i++) ((uint8_t *)newp)[i] = ((uint8_t *)(uintptr_t)ptr)[i];
+    kfree((void *)(uintptr_t)ptr);
     return (uint64_t)(uintptr_t)newp;
 }
 
@@ -820,6 +834,7 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
         cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
     }
     char *buf = (char *)buf_addr;
+    if (buf_size == 0) return (uint64_t)-1;
     int max = (int)buf_size;
     strncpy(buf, cwd, max - 1); buf[max-1] = '\0';
     return 0;
@@ -1409,7 +1424,7 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
 
     int ret = 0;
     if (cc_write_elf(cc, outpath) < 0)
-        ret = (uint64_t)-5;
+        ret = -5;
 
     if (cc_mutex >= 0) mutex_unlock(cc_mutex);
     return ret;
@@ -1448,7 +1463,7 @@ static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) 
 
     int ret = 0;
     if (cc_write_obj(cc, outpath) < 0)
-        ret = (uint64_t)-5;
+        ret = -5;
 
     if (cc_mutex >= 0) mutex_unlock(cc_mutex);
     return ret;

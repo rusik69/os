@@ -124,7 +124,6 @@ void kfree(void *ptr) {
 
     /* Forward coalesce with next block */
     if (block->next && block->next->free) {
-        heap_used_bytes -= BLOCK_HDR_SIZE + block->next->size; /* merging removes next block's hdr+size */
         block->size += BLOCK_HDR_SIZE + block->next->size;
         struct heap_block *old_next = block->next->next;
         block->next = old_next;
@@ -134,7 +133,6 @@ void kfree(void *ptr) {
     /* Backward coalesce with previous block */
     if (block->prev && block->prev->free) {
         struct heap_block *prev = block->prev;
-        heap_used_bytes -= BLOCK_HDR_SIZE + block->size; /* merging removes current block's hdr+size */
         prev->size += BLOCK_HDR_SIZE + block->size;
         prev->next = block->next;
         if (block->next) block->next->prev = prev;

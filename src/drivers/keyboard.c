@@ -148,11 +148,14 @@ void keyboard_reset_state(void) {
 
 char keyboard_getchar(void) {
     while (1) {
+        __asm__ volatile("cli");
         if (keyboard_has_input()) {
             char c = kb_buffer[kb_tail];
             kb_tail = (kb_tail + 1) % KB_BUF_SIZE;
+            __asm__ volatile("sti");
             return c;
         }
+        __asm__ volatile("sti");
         if (serial_has_input()) {
             char c = inb(SERIAL_DATA);
             if (serial_esc_state == 0 && c == 27) { serial_esc_state = 1; continue; }

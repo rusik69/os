@@ -13,11 +13,14 @@ static struct mutex_entry mutexes[MUTEX_MAX];
 
 int mutex_init(void) {
     for (int i = 0; i < MUTEX_MAX; i++) {
+        __asm__ volatile("cli");
         if (!mutexes[i].in_use) {
             mutexes[i].in_use  = 1;
             mutexes[i].locked  = 0;
+            __asm__ volatile("sti");
             return i;
         }
+        __asm__ volatile("sti");
     }
     return -1;
 }

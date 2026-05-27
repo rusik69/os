@@ -4,6 +4,7 @@
 #include "printf.h"
 #include "users.h"
 #include "timer.h"
+#include "heap.h"
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -212,9 +213,18 @@ static int find_parent(const char *path) {
     return parent;
 }
 
+static int find_inode_depth(const char *path, int depth);
+
 static int find_inode(const char *path) {
+    return find_inode_depth(path, 0);
+}
+
+#define SYMLINK_MAX_DEPTH 8
+
+static int find_inode_depth(const char *path, int depth) {
+    if (depth > SYMLINK_MAX_DEPTH) return -1;
     if (*path == '/') path++;
-    if (*path == '\0') return -1; /* root itself */
+    if (*path == '\0') return 0; /* root itself = inode 0 */
 
     int parent = find_parent(path);
     if (parent < 0) return -1;
@@ -236,8 +246,8 @@ static int find_inode(const char *path) {
             inodes[i].parent == (uint16_t)parent &&
             strcmp(inodes[i].name, name) == 0) {
             /* Follow symlinks (depth limit 8) */
-            int cur = i, depth = 0;
-            while (inodes[cur].type == FS_TYPE_LINK && depth < 8) {
+            int cur = i;
+            while (inodes[cur].type == FS_TYPE_LINK) {
                 char link_buf[FS_BLOCK_SIZE];
                 uint32_t tsz = 0;
                 /* Read target from first block directly */
@@ -249,12 +259,11 @@ static int find_inode(const char *path) {
                 link_buf[sz] = '\0';
                 tsz = sz;
                 (void)tsz;
-                int next = find_inode(link_buf);
+                int next = find_inode_depth(link_buf, depth + 1);
                 if (next < 0) return -1;
                 cur = next;
                 depth++;
             }
-            if (depth >= 8) return -1;
             return cur;
         }
     }
@@ -431,7 +440,20 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
         }
     }
 
-    /* Free all old blocks */
+    /* Assign new blocks to inode FIRST, then free old blocks.
+     * This ensures crash-consistency: if we crash right after updating the
+     * inode, the old blocks are still in the bitmap (allocated, not reusable)
+     * and the new blocks are referenced by the inode.  If we crashed with
+     * the reverse order, freed old blocks in the bitmap could be re-allocated
+     * while the inode still references them. */
+    for (uint32_t i = 0; i < blocks_needed; i++)
+        inodes[idx].blocks[i] = new_blocks[i];
+    for (uint32_t i = blocks_needed; i < FS_MAX_BLOCKS; i++)
+        inodes[idx].blocks[i] = 0;
+    inodes[idx].size  = size;
+    inodes[idx].mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+    /* Free all old blocks after inode is updated */
     {
         uint8_t zs[ATA_SECTOR_SIZE];
         memset(zs, 0, sizeof(zs));
@@ -444,14 +466,6 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
         }
     }
 
-    /* Assign new blocks to inode */
-    for (uint32_t i = 0; i < blocks_needed; i++)
-        inodes[idx].blocks[i] = new_blocks[i];
-    for (uint32_t i = blocks_needed; i < FS_MAX_BLOCKS; i++)
-        inodes[idx].blocks[i] = 0;
-
-    inodes[idx].size  = size;
-    inodes[idx].mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
     save_inodes();
     save_super();
     return 0;
@@ -461,21 +475,31 @@ int fs_append(const char *path, const void *data, uint32_t len) {
     if (len == 0) return 0;
 
     /* Read existing content */
-    static uint8_t tmp[FS_MAX_BLOCKS * FS_BLOCK_SIZE];
     uint32_t existing = 0;
     int idx = find_inode(path);
     if (idx >= 0) {
         if (inodes[idx].type != FS_TYPE_FILE) return -1;
         if (fs_check_perm(path, 'w') < 0) return -3;
-        if (fs_read_file(path, tmp, sizeof(tmp), &existing) < 0) existing = 0;
+        existing = inodes[idx].size;
     }
 
     uint32_t total = existing + len;
-    if (total > sizeof(tmp)) total = sizeof(tmp); /* clamp to max */
+    uint32_t max_total = FS_MAX_BLOCKS * FS_BLOCK_SIZE;
+    if (total > max_total) total = max_total;
+
+    uint8_t *tmp = (uint8_t *)kmalloc(total);
+    if (!tmp) return -1;
+
     uint32_t copy = total - existing;
+    if (existing > 0 && fs_read_file(path, tmp, existing, &existing) < 0) {
+        kfree(tmp);
+        return -1;
+    }
     memcpy(tmp + existing, data, copy);
 
-    return fs_write_file(path, tmp, total);
+    int ret = fs_write_file(path, tmp, total);
+    kfree(tmp);
+    return ret;
 }
 
 int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_size) {
@@ -492,7 +516,12 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
 
     for (uint32_t i = 0; i < blocks; i++) {
         uint8_t sector_buf[ATA_SECTOR_SIZE];
-        if (ata_read_sectors(inodes[idx].blocks[i], 1, sector_buf) < 0) return -1;
+        if (inodes[idx].blocks[i] != 0) {
+            if (ata_read_sectors(inodes[idx].blocks[i], 1, sector_buf) < 0) return -1;
+        } else {
+            /* Unallocated block — zero-fill (sector 0 = superblock, must not read it) */
+            memset(sector_buf, 0, ATA_SECTOR_SIZE);
+        }
         uint32_t chunk = size - i * ATA_SECTOR_SIZE;
         if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
         memcpy(dst + i * ATA_SECTOR_SIZE, sector_buf, chunk);
@@ -787,8 +816,26 @@ int fs_truncate(const char *path, uint32_t len) {
     if (idx < 0) return -1;
     if (inodes[idx].type != FS_TYPE_FILE) return -1;
     uint32_t old_size = inodes[idx].size;
-    if (len >= old_size) { inodes[idx].size = len; return save_inodes(); }
-    /* Free blocks beyond len */
+    if (len == old_size) return 0;
+    if (len > old_size) {
+        /* Extending: allocate new blocks and zero-fill */
+        uint32_t old_blocks = (old_size + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
+        uint32_t new_blocks = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
+        int free_start = -1;
+        for (uint32_t b = old_blocks; b < new_blocks; b++) {
+            uint32_t blk = alloc_block();
+            if (!blk) {
+                /* Allocation failed — free any blocks we allocated */
+                if (free_start >= 0) fs_free_inode_blocks_from(idx, free_start);
+                return -1;
+            }
+            inodes[idx].blocks[b] = blk;
+            if (free_start < 0) free_start = (int)b;
+        }
+        inodes[idx].size = len;
+        return save_inodes();
+    }
+    /* Shrinking: free blocks beyond len */
     uint32_t new_blocks = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
     fs_free_inode_blocks_from(idx, new_blocks);
     inodes[idx].size = len;

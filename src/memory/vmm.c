@@ -57,10 +57,10 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
 
     uint64_t *pdpt = get_or_create_table(kernel_pml4, pml4_idx, flags);
     if (!pdpt) return -1;
-    uint64_t *pd = get_or_create_table(pdpt, pdpt_idx, flags);
-    if (!pd) return -1;
-    uint64_t *pt = get_or_create_table(pd, pd_idx, flags);
-    if (!pt) return -1;
+    uint64_t *pd  = get_or_create_table(pdpt, pdpt_idx, flags);
+    if (!pd)  return -1;
+    uint64_t *pt  = get_or_create_table(pd, pd_idx, flags);
+    if (!pt)  return -1;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     invlpg(virt);
@@ -121,28 +121,36 @@ void vmm_unmap_page(uint64_t virt) {
     invlpg(virt);
 }
 
-uint64_t vmm_get_physaddr(uint64_t virt) {
+int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return 0;
+    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return -1;
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return 0;
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -1;
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
     /* Check for 2MB huge page */
     if (pd[pd_idx] & (1ULL << 7)) {
-        return (pd[pd_idx] & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
+        if (phys) *phys = (pd[pd_idx] & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
+        return 0;
     }
 
-    if (!(pd[pd_idx] & PTE_PRESENT)) return 0;
+    if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
-    if (!(pt[pt_idx] & PTE_PRESENT)) return 0;
-    return (pt[pt_idx] & PTE_ADDR_MASK) + (virt & 0xFFF);
+    if (!(pt[pt_idx] & PTE_PRESENT)) return -1;
+    if (phys) *phys = (pt[pt_idx] & PTE_ADDR_MASK) + (virt & 0xFFF);
+    return 0;
+}
+
+uint64_t vmm_get_physaddr(uint64_t virt) {
+    uint64_t phys = 0;
+    vmm_virt_to_phys(virt, &phys);
+    return phys;
 }
 
 uint64_t *vmm_get_pml4(void) {
@@ -280,18 +288,28 @@ int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
 
 int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len) {
     if (!pml4 || addr >= USER_VADDR_MAX || max_len == 0) return 0;
-    for (uint64_t i = 0; i < max_len; i++) {
+    uint64_t i;
+    for (i = 0; i < max_len; i++) {
         uint64_t cur = addr + i;
         if (cur < addr || cur >= USER_VADDR_MAX) return 0;
-        if (!vmm_user_range_ok(pml4, cur, 1, 0)) return 0;
-        if (*(const char *)cur == '\0') return 1;
+        /* Check + access atomically: disable interrupts to prevent the page
+         * from being unmapped by another process between validation and read. */
+        __asm__ volatile("cli");
+        if (!vmm_user_range_ok(pml4, cur, 1, 0)) {
+            __asm__ volatile("sti");
+            return 0;
+        }
+        if (*(const volatile char *)cur == '\0') {
+            __asm__ volatile("sti");
+            return 1;
+        }
+        __asm__ volatile("sti");
     }
     return 0;
 }
 
 void vmm_switch_pml4(uint64_t *pml4) {
-    /* Convert virtual address of PML4 to physical for CR3 */
-    uint64_t phys = (uint64_t)pml4; /* identity mapped */
+    uint64_t phys = VIRT_TO_PHYS((uint64_t)pml4);
     write_cr3(phys);
 }
 
@@ -382,7 +400,7 @@ void vmm_destroy_user_pml4(uint64_t *pml4) {
         pmm_free_frame(pml4[i] & PTE_ADDR_MASK); /* free PDPT */
     }
     /* Free the PML4 itself */
-    uint64_t pml4_phys = (uint64_t)pml4; /* identity mapped */
+    uint64_t pml4_phys = VIRT_TO_PHYS((uint64_t)pml4);
     pmm_free_frame(pml4_phys);
 }
 

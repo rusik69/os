@@ -37,7 +37,9 @@ enum tcp_state {
     TCP_SYN_RECEIVED,
     TCP_ESTABLISHED,
     TCP_FIN_WAIT,
+    TCP_FIN_WAIT_2,
     TCP_CLOSE_WAIT,
+    TCP_LAST_ACK,
     TCP_TIME_WAIT,
 };
 

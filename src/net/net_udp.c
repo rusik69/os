@@ -439,13 +439,20 @@ static uint32_t dns_cache_lookup(const char *name) {
 
 static void dns_cache_store(const char *name, uint32_t ip) {
     if (!ip) return;
-    /* Find existing slot or LRU */
+    /* First, look for an existing entry with the same name */
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        if (dns_cache[i].valid && strcmp(dns_cache[i].name, name) == 0) {
+            dns_cache[i].ip      = ip;
+            dns_cache[i].expires = timer_get_ticks() + DNS_CACHE_TTL;
+            return;
+        }
+    }
+    /* Find LRU or invalid slot */
     int slot = 0;
     uint64_t oldest = dns_cache[0].expires;
     for (int i = 0; i < DNS_CACHE_SIZE; i++) {
         if (!dns_cache[i].valid) { slot = i; break; }
         if (dns_cache[i].expires < oldest) { oldest = dns_cache[i].expires; slot = i; }
-        if (strcmp(dns_cache[i].name, name) == 0) { slot = i; break; }
     }
     strncpy(dns_cache[slot].name, name, 63);
     dns_cache[slot].name[63] = '\0';
@@ -616,15 +623,17 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
         char req[512];
         int rlen = 0;
         const char *method = "GET ";
-        while (*method) req[rlen++] = *method++;
-        if (!path[0]) req[rlen++] = '/';
-        else { const char *pp = path; while (*pp) req[rlen++] = *pp++; }
+        while (*method && rlen < (int)sizeof(req) - 1) req[rlen++] = *method++;
+        if (!path[0]) { if (rlen < (int)sizeof(req) - 1) req[rlen++] = '/'; }
+        else { const char *pp = path; while (*pp && rlen < (int)sizeof(req) - 1) req[rlen++] = *pp++; }
         const char *ver = " HTTP/1.0\r\nHost: ";
-        while (*ver) req[rlen++] = *ver++;
+        while (*ver && rlen < (int)sizeof(req) - 1) req[rlen++] = *ver++;
         const char *h = host;
-        while (*h) req[rlen++] = *h++;
+        while (*h && rlen < (int)sizeof(req) - 1) req[rlen++] = *h++;
         const char *end = "\r\nConnection: close\r\n\r\n";
-        while (*end) req[rlen++] = *end++;
+        while (*end && rlen < (int)sizeof(req) - 1) req[rlen++] = *end++;
+        if (rlen >= (int)sizeof(req)) { net_tcp_close(conn); return -1; }
+        req[rlen] = '\0';
 
         net_tcp_send(conn, req, rlen);
 
