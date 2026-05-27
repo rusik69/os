@@ -21,6 +21,7 @@
 #include "dos.h"
 #include "string.h"
 #include "scheduler.h"
+#include "printf.h"
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                */
@@ -425,6 +426,7 @@ void dos_emu_run(struct dos_cpu_state *state)
 
     state->running = 1;
     int insn_count = 0;
+    int total_insns = 0;
 
     while (state->running) {
         uint8_t rep_prefix = 0;
@@ -1856,9 +1858,14 @@ void dos_emu_run(struct dos_cpu_state *state)
         }
 
         insn_count++;
+        total_insns++;
         if (insn_count >= 1000) {
             scheduler_yield();
             insn_count = 0;
+        }
+        /* Hard limit to prevent hangs in case of emulation bugs */
+        if (total_insns >= 1000000) {
+            state->running = 0;
         }
     }
 }

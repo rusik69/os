@@ -668,7 +668,6 @@ static void test_shm_ext(void) {
 
 /* ── DOS emulator tests ───────────────────────────────────────── */
 static void test_dos(void) {
-    /* dos_load_com, dos_emu_init, dos_emu_run are in dos_load.c / dos_emu.c */
     int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size);
     void dos_emu_init(struct dos_cpu_state *state);
     void dos_emu_run(struct dos_cpu_state *state);
@@ -676,12 +675,15 @@ static void test_dos(void) {
     struct dos_cpu_state state;
     dos_emu_init(&state);
 
-    /* Minimal .COM program: MOV AX, 0x4C00; INT 0x21 (exit with code 0) */
     uint8_t com[] = { 0xB8, 0x00, 0x4C, 0xCD, 0x21 };
     int ret = dos_load_com(&state, com, sizeof(com));
     ASSERT("dos load com", ret == 0);
 
+    /* Run the emulator (should execute ~5 instructions then exit via INT 21h) */
+    kprintf("  [dos] running emulator...\n");
     dos_emu_run(&state);
+    kprintf("  [dos] emulator stopped, running=%d\n", (uint64_t)(uintptr_t)state.running);
+
     ASSERT("dos ran and stopped", state.running == 0);
     ASSERT("dos exit code 0", state.ax == 0x0000);
     t_ok("dos minimal");
