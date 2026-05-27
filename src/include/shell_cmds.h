@@ -168,5 +168,7 @@ void shell_set_stdin(const char *buf, int len);
 void shell_clear_stdin(void);
 int  shell_has_stdin(void);
 int  shell_stdin_read(char *buf, int max);
+void cmd_dosbox(const char *args);
+void cmd_dosimg(const char *args);
 
 #endif

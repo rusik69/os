@@ -137,6 +137,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("xargs",       "Build args from pipe input",                            cmd_xargs)
     CMD("xxd",         "Hex dump file",                                         cmd_xxd)
     CMD("yes",         "Repeatedly output a string",                            cmd_yes)
+    CMD("dosbox",      "Run DOS program under emulation",                        cmd_dosbox)
     { 0, 0, 0 }
 };
 

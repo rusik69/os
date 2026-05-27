@@ -77,6 +77,10 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ac97.c \
          src/ipc/mutex.c \
          src/ipc/semaphore.c \
+         src/dos/dos_emu.c \
+         src/dos/dos_ints.c \
+         src/dos/dos_int21.c \
+         src/dos/dos_load.c \
          src/lib/string.c \
          src/lib/printf.c \
          src/lib/stdlib.c \
