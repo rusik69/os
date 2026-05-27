@@ -33,8 +33,8 @@ Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default
 ## Features
 
 - **64-bit long mode** with Multiboot1 boot, identity-mapped first 1 GB
-- **Preemptive multitasking** — round-robin scheduler with 50 ms time slices
-- **Kernel/User separation (Ring 3)** — per-process page tables, SYSCALL/SYSRET, TSS RSP0
+- **Preemptive multitasking** — round-robin scheduler with 50 ms time slices, priority levels (0-3)
+- **Kernel/User separation (Ring 3)** — per-process page tables, SYSCALL/SYSRET, TSS RSP0, fork() support
 - **Background processes & job control** — `&` operator, `jobs`, `fg`, `wait`
 - **Blocking sleep** — timer-based process wakeup, no busy-wait
 - **Zombie reaping** — automatic cleanup of terminated processes
@@ -315,7 +315,7 @@ Lives in the identity-mapped region immediately after the kernel image.
 | Max size | 12 MB |
 | Initial size | 16 KB (4 pages) |
 | Alignment | 16 bytes |
-| Block overhead | 24 bytes (`size` + `free` + `next`) |
+| Block overhead | 32 bytes (`size` + `free` + `next` + `prev`) |
 
 **API:**
 - `kmalloc(size)` — allocate; splits oversized blocks
@@ -328,7 +328,7 @@ Lives in the identity-mapped region immediately after the kernel image.
 
 ### Process Model
 
-Up to **64 processes** in a flat table. Each process has a 32 KB kernel
+Up to **256 processes** in a flat table. Each process has a 128 KB kernel
 stack allocated from the heap.
 
 ```c
@@ -340,18 +340,31 @@ struct process {
     struct cpu_context *context;  // Saved registers on stack
     struct process     *next;     // Ready-queue link
     const char         *name;
+    /* Signal state */
     uint32_t           pending_signals;
+    uint32_t           sig_mask;
     signal_handler_t   sig_handlers[32];
+    /* Ring 3 support */
     int                is_user;        // 1 = ring 3 process
     uint64_t           user_entry;     // Ring 3 entry point
     uint64_t           user_rsp;       // Ring 3 stack pointer
     uint64_t          *pml4;           // Per-process page table
-    uint32_t           parent_pid;     // Parent PID
-    int                exit_code;      // Exit status
-    uint64_t           sleep_until;    // Timer wakeup tick
-    int                is_background;  // Launched with &
-};
-```
+    /* Multitasking */
+    uint32_t           parent_pid;
+    uint32_t           pgid;
+    uint32_t           sid;
+    int                exit_code;
+    uint64_t           sleep_until;
+    int                is_background;
+    int                is_suspended;
+    uint8_t            priority;       // 0=high .. 3=low
+    uint64_t           syscall_caps[4];
+    char               cwd[64];
+    uint32_t           wait_for_pid;
+    uint16_t           ticks_remaining;
+    uint64_t           last_run_tick;
+    struct process_fd  fd_table[16];   // Per-process file descriptors
+};```
 
 **States:**
 - `READY` — in the scheduler's ready queue
@@ -407,8 +420,8 @@ POSIX-like signals with a pending bitmask per process:
 | SIGUSR2 | 12 | Terminate |
 
 Custom handlers can be registered with `signal_register(sig, handler)`.
-Signal delivery happens in `signal_check()`, called by the scheduler
-right before each context switch.
+Signal delivery happens in `scheduler_tick()`, called by the timer ISR.
+Signals set `exit_code = 128 + signum` on termination (SIGKILL, SIGTERM, SIGPIPE).
 
 ---
 
@@ -656,7 +669,8 @@ All packet processing is polled (no NIC interrupts).
 | Window size | 8192 B |
 | Retransmit handling | Duplicate detection + partial trim |
 
-**States:** CLOSED → SYN_SENT/SYN_RECEIVED → ESTABLISHED → FIN_WAIT/CLOSE_WAIT → CLOSED
+**States:** CLOSED → SYN_SENT/SYN_RECEIVED → ESTABLISHED → FIN_WAIT/FIN_WAIT_2 → TIME_WAIT,
+ESTABLISHED → CLOSE_WAIT → LAST_ACK → CLOSED
 
 The TCP implementation handles SLIRP (QEMU user-mode networking)
 retransmissions by:
@@ -866,7 +880,7 @@ pipe_close_write(id);         // EOF for readers when empty
 pipe_close_read(id);          // broken pipe for writers
 ```
 
-Blocking is cooperative (spin on `scheduler_yield()`).
+Blocking is cooperative (spin on `scheduler_yield()`). Supports multiple concurrent readers/writers.
 
 ### Shared Memory
 
@@ -974,21 +988,21 @@ The shell supports background execution and job management:
 
 ## Testing
 
-### In-Kernel Tests (95 tests)
+### In-Kernel Tests (~140 tests)
 
 Built with `make test` (adds `-DTEST_MODE`). A dedicated process runs
 all test groups at boot, outputs `[PASS]`/`[FAIL]` to serial, and calls
 `acpi_shutdown()`:
 
 - **String tests** — strlen, strcmp, strcpy, memcpy, memset, strncmp, etc.
-- **Memory tests** — PMM frame alloc/free, heap alloc/free/coalesce
+- **Memory tests** — PMM frame alloc/free, heap alloc/free/coalesce accounting
 - **Timer tests** — tick counter advancement
 - **RTC tests** — time reading sanity
-- **Process tests** — creation, PID assignment
-- **Scheduler tests** — round-robin yield
-- **Filesystem tests** — format, create, write, read, delete, stat
-- **VFS tests** — mount/read/write through VFS layer
-- **Pipe tests** — create, write, read, close, EOF
+- **Process tests** — creation, PID assignment, fork + waitpid
+- **Scheduler tests** — round-robin yield, priority change
+- **Filesystem tests** — format, create, write, read, delete, stat, truncate
+- **VFS tests** — mount/read/write through VFS layer, path resolution (root, "..")
+- **Pipe tests** — create, write, read, close, EOF, negative-len edge cases
 - **Speaker tests** — tone generation
 - **Mouse tests** — position queries
 - **Signal tests** — send/receive, SIGKILL termination
@@ -1030,7 +1044,7 @@ Every push and pull request triggers the full test suite on Ubuntu:
 
 1. Install cross-compiler (`x86_64-linux-gnu-gcc`), NASM, and QEMU
 2. Build the kernel
-3. Run in-kernel unit tests (115 assertions)
+3. Run in-kernel unit tests (~140 assertions)
 4. Run E2E tests over telnet (~220 assertions)
 5. Optional: virtio-net smoke workflow on virtio driver changes
 
@@ -1181,19 +1195,20 @@ mode, cells are rendered as 8×16-pixel glyphs using the built-in font.
 4. **Poll-based NIC** — the e1000 driver disables interrupts and instead
    the `netd` task polls `e1000_receive()` each iteration.  This trades
    latency for simplicity (no interrupt-driven RX path or bottom-half
-   processing).
+   processing). RX packets are validated for errors and EOP markers.
 
 5. **Global kprintf hook** — telnet output redirection uses a single
    global function pointer in `kprintf`. Only the `netd` task runs shell
    commands, so there's no concurrent access.
 
-6. **Static buffers in TX path** — `send_tcp`, `send_ip`, and `send_eth`
-   use `static` local buffers to avoid overflowing kernel stacks (the
-   chained TX path would put ~4.5 KB on stack otherwise).
+6. **Stack allocation in TX path** — `send_tcp`, `send_ip`, and `send_eth`
+   use stack-allocated headers (up to ~500 bytes) to build Ethernet/IP/TCP
+   frames, avoiding collisions from shared `static` buffers.
 
 7. **TCP retransmit handling** — since QEMU's SLIRP backend aggressively
    retransmits, the kernel's TCP stack detects and trims duplicate/partial
-   segments to prevent commands from executing twice.
+   segments to prevent commands from executing twice. Retransmission uses
+   MSS-sized chunks to avoid IP fragmentation.
 
 8. **Dual-backend display** — unified VGA cell buffer with pluggable rendering
    backends (text mode and framebuffer graphics). Automatic selection based on
@@ -1201,4 +1216,16 @@ mode, cells are rendered as 8×16-pixel glyphs using the built-in font.
 
 9. **GUI kernel-mode execution** — GUI runs with full framebuffer access,
    no separate graphics daemon. Event polling integrated into kernel event loop.
-# os
+
+10. **Per-process file descriptor table** — each process has its own 16-entry
+    fd table embedded in `struct process`, avoiding global fd state and
+    cross-process fd leaks.
+
+11. **Syscall argument validation** — user-space syscall arguments are
+    validated for safe memory access (read/write ranges, string bounds)
+    before any kernel operation is performed.
+
+12. **Interrupt-safe signal delivery** — signal_check runs from the timer
+    tick with interrupts disabled, preventing race conditions on the
+    pending-signal bitmap. SIGCONT always wakes a stopped process regardless
+    of signal mask.
