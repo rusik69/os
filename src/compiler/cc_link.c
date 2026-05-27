@@ -149,13 +149,13 @@ int cc_link(const char **obj_paths, int nobj, const char *outpath,
         uint8_t *file_buf = 0;
 
         /* Read object file */
-        int stat_sz = 0;
-        int stat_type = 0;
-        if (vfs_stat(obj_paths[oi], &stat_sz, &stat_type) < 0 || stat_sz <= 0) {
+        struct vfs_stat st;
+        memset(&st, 0, sizeof(st));
+        if (vfs_stat(obj_paths[oi], &st) < 0 || st.size <= 0) {
             kprintf("ld: cannot stat %s\n", obj_paths[oi]);
             goto fail;
         }
-        file_sz = (uint32_t)stat_sz;
+        file_sz = st.size;
         file_buf = (uint8_t *)kmalloc(file_sz);
         if (!file_buf) { kprintf("ld: out of memory for %s\n", obj_paths[oi]); goto fail; }
 
@@ -311,13 +311,11 @@ int cc_link(const char **obj_paths, int nobj, const char *outpath,
                 /* Resolve symbol for this relocation */
                 const char *rsym_name = "";
                 int rsym_shndx = 0;
-                uint64_t rsym_value = 0;
                 if (r_sym > 0 && r_sym < (uint32_t)sym_count) {
                     const uint8_t *rsym = file_buf + symtab_off + r_sym * SYM_SIZE;
                     uint32_t rsn = lnk_read_le32(rsym + 0);
                     uint8_t rsinfo = rsym[4];
                     rsym_shndx = lnk_read_le16(rsym + 6);
-                    rsym_value = lnk_read_le64(rsym + 8);
                     rsym_name = strtab_p ? (const char *)(strtab_p + rsn) : "";
                     (void)rsinfo;
                 }
@@ -402,9 +400,10 @@ int cc_link(const char **obj_paths, int nobj, const char *outpath,
     /* Pass 2: Re-read each object and apply named relocations */
     for (int oi = 0; oi < nobj; oi++) {
         uint32_t file_sz = 0;
-        int stat_sz2 = 0, stat_type2 = 0;
-        if (vfs_stat(obj_paths[oi], &stat_sz2, &stat_type2) < 0) continue;
-        file_sz = (uint32_t)stat_sz2;
+        struct vfs_stat st2;
+        memset(&st2, 0, sizeof(st2));
+        if (vfs_stat(obj_paths[oi], &st2) < 0) continue;
+        file_sz = st2.size;
         uint8_t *file_buf = (uint8_t *)kmalloc(file_sz);
         if (!file_buf) continue;
         uint32_t read_sz2 = 0;
