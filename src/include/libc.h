@@ -9,7 +9,7 @@
 #define FS_TYPE_FILE   1
 #define FS_TYPE_DIR    2
 #define FS_MAX_NAME    28
-#define PROCESS_MAX    64
+#define PROCESS_MAX    256
 #define VGA_WIDTH      80
 #define VGA_HEIGHT     25
 
@@ -41,6 +41,10 @@ enum libc_vga_color {
 struct vfs_stat {
     uint32_t size;
     uint8_t  type;
+    uint16_t uid;
+    uint16_t gid;
+    uint16_t mode;
+    uint32_t mtime;
 };
 
 struct libc_fs_stat_ex {

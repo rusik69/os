@@ -14,14 +14,14 @@ KERNEL_LMA = 0x100000;
  * (physical 0x100000), so: KERNEL_TEXT_LMA = 0x100000 + (0xa000 - 0x1000) = 0x109000
  */
 KERNEL_VMA_OFFSET = 0xFFFF800000000000;
-KERNEL_TEXT_LMA   = 0x10A000;
+KERNEL_TEXT_LMA   = 0x10E000;
 
 SECTIONS
 {
     . = KERNEL_LMA;
 
-    .multiboot2 ALIGN(4) : {
-        KEEP(*(.multiboot2))
+    .multiboot ALIGN(4) : {
+        KEEP(*(.multiboot))
     }
 
     .boot ALIGN(4) : {
@@ -57,7 +57,9 @@ SECTIONS
     }
 
     .lbss ALIGN(4K) : AT(ADDR(.lbss) - KERNEL_VMA_OFFSET) {
+        _lbss_start = .;
         *(.lbss .lbss.*)
+        _lbss_end = .;
     }
 
     _kernel_end = .;

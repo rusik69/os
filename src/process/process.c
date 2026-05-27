@@ -180,6 +180,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->pending_signals = 0;
     proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
+    memset(proc->fd_table, 0, sizeof(proc->fd_table));
     proc->is_user = 0;
     proc->user_entry = 0;
     proc->user_rsp = 0;
@@ -250,6 +251,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->pending_signals = 0;
     proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
+    memset(proc->fd_table, 0, sizeof(proc->fd_table));
     proc->is_user = 1;
     proc->user_entry = entry;
     proc->user_rsp = user_rsp;
@@ -342,6 +344,10 @@ int process_fork(void) {
         }
     }
     if (!child) return -1;
+
+    /* Clear child state first so the process table slot is safe even if
+     * an interrupt occurs between here and the state being set to READY. */
+    child->state = PROCESS_UNUSED;
 
     /* Copy process state */
     *child = *parent;
@@ -447,6 +453,7 @@ void process_cleanup(struct process *proc) {
     proc->priority = 1;
     proc->cap_profile = PROCESS_CAP_PROFILE_NONE;
     process_caps_clear_all(proc);
+    memset(proc->fd_table, 0, sizeof(proc->fd_table));
 }
 
 /* Reap zombie processes: background jobs are reaped immediately,

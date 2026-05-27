@@ -67,9 +67,9 @@ static void kputchar(char c) {
     serial_putchar(c);
 }
 
-static void print_uint(uint64_t val, int base, int pad, char padchar) {
+static int print_uint(uint64_t val, int base, int pad, char padchar) {
     char buf[64];
-    int i = 0;
+    int i = 0, chars = 0;
     const char *digits = "0123456789abcdef";
 
     if (val == 0) { buf[i++] = '0'; }
@@ -80,15 +80,20 @@ static void print_uint(uint64_t val, int base, int pad, char padchar) {
         }
     }
     while (i < pad) buf[i++] = padchar;
-    while (i > 0) kputchar(buf[--i]);
+    while (i > 0) { kputchar(buf[--i]); chars++; }
+    return chars;
 }
 
-static void print_int(int64_t val, int pad, char padchar) {
+static int print_int(int64_t val, int pad, char padchar) {
+    int chars = 0;
     if (val < 0) {
         kputchar('-');
-        val = -val;
+        chars++;
+        /* Avoid UB on INT64_MIN: negate as unsigned */
+        val = -(val + 1);
+        return chars + print_uint((uint64_t)val + 1, 10, pad, padchar);
     }
-    print_uint((uint64_t)val, 10, pad, padchar);
+    return chars + print_uint((uint64_t)val, 10, pad, padchar);
 }
 
 int kprintf(const char *fmt, ...) {
@@ -114,6 +119,9 @@ int kprintf(const char *fmt, ...) {
             pad = pad * 10 + (*fmt - '0');
             fmt++;
         }
+        /* Skip length modifiers (l, ll, z — all are same on LP64) */
+        if (*fmt == 'l') { fmt++; if (*fmt == 'l') fmt++; }
+        else if (*fmt == 'z') fmt++;
 
         switch (*fmt) {
         case 's': {
@@ -130,19 +138,19 @@ int kprintf(const char *fmt, ...) {
         case 'd': case 'i': {
             int64_t val = va_arg(ap, int64_t);
             if (left_align) {
-                /* Print to temp, then pad */
                 char buf[64]; int bi = 0;
                 int64_t v = val;
-                if (v < 0) { buf[bi++] = '-'; v = -v; }
+                if (v < 0) { buf[bi++] = '-'; v = -(v + 1); }
                 char dbuf[32]; int di = 0;
-                if (v == 0) dbuf[di++] = '0';
-                else while (v > 0) { dbuf[di++] = '0' + v % 10; v /= 10; }
+                if (v == 0 && val < 0) { dbuf[di++] = '1'; v = 0; }
+                uint64_t uv = val < 0 ? (uint64_t)v + 1 : (uint64_t)v;
+                if (uv == 0) dbuf[di++] = '0';
+                else while (uv > 0) { dbuf[di++] = '0' + uv % 10; uv /= 10; }
                 while (di > 0) buf[bi++] = dbuf[--di];
                 for (int i = 0; i < bi; i++) { kputchar(buf[i]); count++; }
                 for (int i = bi; i < pad; i++) { kputchar(' '); count++; }
             } else {
-                print_int(val, pad, padchar);
-                count++;
+                count += print_int(val, pad, padchar);
             }
             break;
         }
@@ -155,22 +163,19 @@ int kprintf(const char *fmt, ...) {
                 for (int i = 0; i < bi; i++) { kputchar(buf[i]); count++; }
                 for (int i = bi; i < pad; i++) { kputchar(' '); count++; }
             } else {
-                print_uint(val, 10, pad, padchar);
-                count++;
+                count += print_uint(val, 10, pad, padchar);
             }
             break;
         }
         case 'x': {
             uint64_t val = va_arg(ap, uint64_t);
-            print_uint(val, 16, pad, padchar);
-            count++;
+            count += print_uint(val, 16, pad, padchar);
             break;
         }
         case 'p': {
             uint64_t val = va_arg(ap, uint64_t);
-            kputchar('0'); kputchar('x');
-            print_uint(val, 16, 16, '0');
-            count++;
+            kputchar('0'); kputchar('x'); count += 2;
+            count += print_uint(val, 16, 16, '0');
             break;
         }
         case 'c': {

@@ -237,8 +237,8 @@ static int find_inode(const char *path) {
             strcmp(inodes[i].name, name) == 0) {
             /* Follow symlinks (depth limit 8) */
             int cur = i, depth = 0;
-            static char link_buf[FS_BLOCK_SIZE];
             while (inodes[cur].type == FS_TYPE_LINK && depth < 8) {
+                char link_buf[FS_BLOCK_SIZE];
                 uint32_t tsz = 0;
                 /* Read target from first block directly */
                 if (inodes[cur].size == 0 || inodes[cur].blocks[0] == 0) return -1;
@@ -389,7 +389,7 @@ int fs_create(const char *path, uint8_t type) {
 
 int fs_write_file(const char *path, const void *data, uint32_t size) {
     int idx = find_inode(path);
-    if (idx >= 0 && fs_check_perm(path, 'w') < 0) return -3; /* perm denied on existing file */
+    if (idx >= 0 && fs_check_perm(path, 'w') < 0) return -3;
     if (idx < 0) {
         idx = fs_create(path, FS_TYPE_FILE);
         if (idx < 0) return idx;
@@ -399,22 +399,56 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
     uint32_t blocks_needed = (size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
     if (blocks_needed > FS_MAX_BLOCKS) return -1;
 
-    fs_free_inode_blocks_from(idx, blocks_needed);
+    /* Save old blocks so we can free them after writing new data */
+    uint32_t old_blocks[FS_MAX_BLOCKS];
+    memcpy(old_blocks, inodes[idx].blocks, sizeof(old_blocks));
 
+    /* Allocate new blocks and write data first (atomicity: don't free old until
+     * new data is on disk) */
+    uint32_t new_blocks[FS_MAX_BLOCKS];
+    memset(new_blocks, 0, sizeof(new_blocks));
     const uint8_t *src = (const uint8_t *)data;
     for (uint32_t i = 0; i < blocks_needed; i++) {
-        uint32_t blk = inodes[idx].blocks[i];
-        if (blk == 0)
-            blk = alloc_block();
-        inodes[idx].blocks[i] = blk;
+        uint32_t blk = alloc_block();
+        if (blk == 0) {
+            for (uint32_t j = 0; j < i; j++) {
+                if (new_blocks[j]) bitmap_free_sector(new_blocks[j]);
+            }
+            return -1;
+        }
+        new_blocks[i] = blk;
 
         uint8_t buf[ATA_SECTOR_SIZE];
         memset(buf, 0, ATA_SECTOR_SIZE);
         uint32_t chunk = size - i * ATA_SECTOR_SIZE;
         if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
         memcpy(buf, src + i * ATA_SECTOR_SIZE, chunk);
-        if (ata_write_sectors(blk, 1, buf) < 0) return -1;
+        if (ata_write_sectors(blk, 1, buf) < 0) {
+            for (uint32_t j = 0; j <= i; j++) {
+                if (new_blocks[j]) bitmap_free_sector(new_blocks[j]);
+            }
+            return -1;
+        }
     }
+
+    /* Free all old blocks */
+    {
+        uint8_t zs[ATA_SECTOR_SIZE];
+        memset(zs, 0, sizeof(zs));
+        for (uint32_t i = 0; i < FS_MAX_BLOCKS; i++) {
+            if (old_blocks[i] != 0) {
+                bitmap_free_sector(old_blocks[i]);
+                (void)ata_write_sectors(old_blocks[i], 1, zs);
+                old_blocks[i] = 0;
+            }
+        }
+    }
+
+    /* Assign new blocks to inode */
+    for (uint32_t i = 0; i < blocks_needed; i++)
+        inodes[idx].blocks[i] = new_blocks[i];
+    for (uint32_t i = blocks_needed; i < FS_MAX_BLOCKS; i++)
+        inodes[idx].blocks[i] = 0;
 
     inodes[idx].size  = size;
     inodes[idx].mtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);

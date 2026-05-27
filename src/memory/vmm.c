@@ -44,11 +44,11 @@ void vmm_init(void) {
     kernel_pml4 = (uint64_t *)PHYS_TO_VIRT(read_cr3() & PTE_ADDR_MASK);
 }
 
-void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
+int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     /* Boot identity-maps 0xC0000000–0xFFFFFFFF with 2MB pages; remapping here
      * would treat MMIO/LFB huge pages as page-table pointers. */
     if (virt >= 0xC0000000ULL && virt < 0x100000000ULL && virt == phys)
-        return;
+        return 0;
 
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
@@ -56,14 +56,15 @@ void vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pt_idx   = (virt >> 12) & 0x1FF;
 
     uint64_t *pdpt = get_or_create_table(kernel_pml4, pml4_idx, flags);
-    if (!pdpt) return;
+    if (!pdpt) return -1;
     uint64_t *pd = get_or_create_table(pdpt, pdpt_idx, flags);
-    if (!pd) return;
+    if (!pd) return -1;
     uint64_t *pt = get_or_create_table(pd, pd_idx, flags);
-    if (!pt) return;
+    if (!pt) return -1;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     invlpg(virt);
+    return 0;
 }
 
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
@@ -177,9 +178,9 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
     return (uint64_t *)PHYS_TO_VIRT(table[index] & PTE_ADDR_MASK);
 }
 
-void vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
-    if (!pml4) return;
-    if (virt >= USER_VADDR_MAX) return;
+int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
+    if (!pml4) return -1;
+    if (virt >= USER_VADDR_MAX) return -1;
 
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
@@ -187,13 +188,32 @@ void vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fl
     int pt_idx   = (virt >> 12) & 0x1FF;
 
     uint64_t *pdpt = get_or_create_table_in(pml4, pml4_idx, flags);
-    if (!pdpt) return;
+    if (!pdpt) return -1;
     uint64_t *pd = get_or_create_table_in(pdpt, pdpt_idx, flags);
-    if (!pd) return;
+    if (!pd) return -1;
     uint64_t *pt = get_or_create_table_in(pd, pd_idx, flags);
-    if (!pt) return;
+    if (!pt) return -1;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
+    return 0;
+}
+
+void vmm_unmap_user_page(uint64_t *pml4, uint64_t virt) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return;
+    int pml4_idx = (virt >> 39) & 0x1FF;
+    int pdpt_idx = (virt >> 30) & 0x1FF;
+    int pd_idx   = (virt >> 21) & 0x1FF;
+    int pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+    if (pd[pd_idx] & (1ULL << 7)) return; /* skip 2MB pages */
+    if (!(pd[pd_idx] & PTE_PRESENT)) return;
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+    pt[pt_idx] = 0;
+    invlpg(virt);
 }
 
 static uint64_t *vmm_walk_to_pt(uint64_t *pml4, uint64_t virt,
@@ -291,7 +311,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
         uint64_t *src_pdpt = (uint64_t *)PHYS_TO_VIRT(src[i] & PTE_ADDR_MASK);
 
         uint64_t dst_pdpt_phys = pmm_alloc_frame();
-        if (!dst_pdpt_phys) return dst;
+        if (!dst_pdpt_phys) { vmm_destroy_user_pml4(dst); return NULL; }
         uint64_t *dst_pdpt = (uint64_t *)PHYS_TO_VIRT(dst_pdpt_phys);
         memset(dst_pdpt, 0, PAGE_SIZE);
         dst[i] = dst_pdpt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -302,7 +322,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
             uint64_t *src_pd = (uint64_t *)PHYS_TO_VIRT(src_pdpt[j] & PTE_ADDR_MASK);
 
             uint64_t dst_pd_phys = pmm_alloc_frame();
-            if (!dst_pd_phys) return dst;
+            if (!dst_pd_phys) { vmm_destroy_user_pml4(dst); return NULL; }
             uint64_t *dst_pd = (uint64_t *)PHYS_TO_VIRT(dst_pd_phys);
             memset(dst_pd, 0, PAGE_SIZE);
             dst_pdpt[j] = dst_pd_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -315,7 +335,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                 uint64_t *src_pt = (uint64_t *)PHYS_TO_VIRT(src_pd[k] & PTE_ADDR_MASK);
 
                 uint64_t dst_pt_phys = pmm_alloc_frame();
-                if (!dst_pt_phys) return dst;
+                if (!dst_pt_phys) { vmm_destroy_user_pml4(dst); return NULL; }
                 uint64_t *dst_pt = (uint64_t *)PHYS_TO_VIRT(dst_pt_phys);
                 memset(dst_pt, 0, PAGE_SIZE);
                 dst_pd[k] = dst_pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;

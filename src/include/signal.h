@@ -16,11 +16,11 @@
 #define SIGPIPE  13
 #define SIGCHLD  17
 
+typedef void (*signal_handler_t)(int signum);
+
 #define SIG_MAX  32
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
 #define SIG_IGN  ((signal_handler_t)1)  /* Ignore */
-
-typedef void (*signal_handler_t)(int signum);
 
 /* Send signal to process by pid; 0 = success, -1 = not found */
 int signal_send(uint32_t pid, int signum);

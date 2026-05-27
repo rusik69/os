@@ -14,8 +14,10 @@ void serial_init(void) {
 }
 
 void serial_putchar(char c) {
-    while (!(inb(COM1 + 5) & 0x20));
-    outb(COM1, c);
+    int timeout = 10000000;
+    while (!(inb(COM1 + 5) & 0x20) && --timeout > 0)
+        __asm__ volatile("pause");
+    if (timeout > 0) outb(COM1, c);
 }
 
 void serial_write(const char *str) {
@@ -30,8 +32,10 @@ int serial_readable(void) {
 }
 
 char serial_getchar(void) {
-    while (!serial_readable());
-    return (char)inb(COM1);
+    int timeout = 10000000;
+    while (!serial_readable() && --timeout > 0)
+        __asm__ volatile("pause");
+    return timeout > 0 ? (char)inb(COM1) : 0;
 }
 
 void serial_read_line(char *buf, int max) {

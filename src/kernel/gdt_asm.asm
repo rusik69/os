@@ -29,3 +29,5 @@ tss_load:
     mov ax, di
     ltr ax
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits

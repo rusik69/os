@@ -435,7 +435,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         uint64_t start = fb_addr & ~(PAGE_SIZE - 1ULL);
         uint64_t end = (fb_addr + fb_size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
         for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
-            vmm_map_page(addr, addr, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+            (void)vmm_map_page(addr, addr, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
     }
 
     fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;

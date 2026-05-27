@@ -24,9 +24,16 @@ int sem_init(int count) {
 
 void sem_wait(int id) {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use) return;
-    while (sems[id].count <= 0)
+    for (;;) {
+        __asm__ volatile("cli");
+        if (sems[id].count > 0) {
+            sems[id].count--;
+            __asm__ volatile("sti");
+            return;
+        }
+        __asm__ volatile("sti");
         scheduler_yield();
-    sems[id].count--;
+    }
 }
 
 void sem_post(int id) {

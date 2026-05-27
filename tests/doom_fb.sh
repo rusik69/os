@@ -96,8 +96,8 @@ print("PASS: doom session ran, screendump captured")
 PY
 
 if [ ! -f "$PPM" ]; then
-    echo "WARN: screendump missing"
-    exit 0
+    echo "FAIL: screendump missing"
+    exit 1
 fi
 
 python3 - <<PY

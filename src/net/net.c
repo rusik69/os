@@ -176,7 +176,7 @@ void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
 static volatile int send_ip_resolving = 0;  /* prevent recursive ARP resolve */
 
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len) {
-    static uint8_t frame[1518];
+    uint8_t frame[1518];
     if (len > 1518 - sizeof(struct eth_header)) return;
     struct eth_header *eth = (struct eth_header *)frame;
     memcpy(eth->dst, dst_mac, 6);
@@ -198,7 +198,7 @@ static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
             chunk = max_payload;
             more = 1;
         }
-        static uint8_t buf[1500];
+        uint8_t buf[1500];
         struct ip_header *ip = (struct ip_header *)buf;
         memset(ip, 0, sizeof(*ip));
         ip->version_ihl = 0x45;
@@ -235,7 +235,7 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
         send_ip_fragmented(dst_ip, protocol, payload, len);
         return;
     }
-    static uint8_t buf[1500];
+    uint8_t buf[1500];
     struct ip_header *ip = (struct ip_header *)buf;
     memset(ip, 0, sizeof(*ip));
     ip->version_ihl = 0x45;
@@ -325,12 +325,13 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
 
     if (icmp->type == 8) {
         uint8_t reply_buf[1500];
-        memcpy(reply_buf, payload, len);
+        uint16_t reply_len = len < sizeof(reply_buf) ? len : sizeof(reply_buf);
+        memcpy(reply_buf, payload, reply_len);
         struct icmp_header *reply = (struct icmp_header *)reply_buf;
         reply->type = 0;
         reply->checksum = 0;
-        reply->checksum = net_checksum(reply_buf, len);
-        send_ip(ntohl(ip->src_ip), IP_PROTO_ICMP, reply_buf, len);
+        reply->checksum = net_checksum(reply_buf, reply_len);
+        send_ip(ntohl(ip->src_ip), IP_PROTO_ICMP, reply_buf, reply_len);
     } else if (icmp->type == 0) {
         ping_reply_received = 1;
     }
@@ -407,6 +408,13 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     uint16_t part = len - ihl;
     if (frag_off + part > sizeof(slot->buf)) return -1;
+
+    /* Reject overlapping fragments (security: prevent data injection attacks) */
+    for (uint16_t b = frag_off; b < frag_off + part; b++) {
+        if (slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8)))
+            return -1;
+    }
+
     memcpy(slot->buf + frag_off, data + ihl, part);
     for (uint16_t b = frag_off; b < frag_off + part; b++)
         slot->frag_map[b / 8] |= (uint8_t)(1u << (b % 8));
@@ -447,6 +455,11 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
 
     uint16_t ihl = (ip->version_ihl & 0xF) * 4;
     if (ihl < 20 || ihl > total) return;
+
+    /* Verify IP header checksum (checksum field must be zero for computation) */
+    uint16_t saved_csum = ip->checksum;
+    ip->checksum = 0;
+    if (net_checksum(ip, ihl) != saved_csum) return;
 
     if (handle_ip_fragment(ip, data, len) != 0)
         return;

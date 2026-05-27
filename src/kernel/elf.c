@@ -47,6 +47,19 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
             kprintf("elf: segment out of bounds\n");
             return 0;
         }
+        if (ph->p_filesz > 0 && ph->p_vaddr + ph->p_filesz < ph->p_vaddr) {
+            kprintf("elf: segment address overflow\n");
+            return 0;
+        }
+        if (ph->p_memsz > ph->p_filesz &&
+            ph->p_vaddr + ph->p_memsz < ph->p_vaddr) {
+            kprintf("elf: segment memsz overflow\n");
+            return 0;
+        }
+        if (ph->p_vaddr < 0x1000) {
+            kprintf("elf: segment targets NULL page\n");
+            return 0;
+        }
 
         /* Copy file bytes to vaddr */
         uint8_t *dst = (uint8_t *)ph->p_vaddr;
@@ -62,15 +75,6 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
 }
 
 /* Trampoline: each exec'd process gets its own entry-point stub */
-static uint64_t exec_entry_addr = 0;
-
-static void elf_trampoline(void) {
-    /* Jump to the ELF entry point (kernel-mode fallback) */
-    void (*entry)(void) = (void (*)(void))exec_entry_addr;
-    entry();
-    /* If ELF returns, terminate */
-    process_exit();
-}
 
 int elf_exec(const char *path) {
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
@@ -141,7 +145,11 @@ int elf_exec(const char *path) {
                 if (!frame) { kprintf("elf: OOM mapping segment\n"); kfree(buf); return -1; }
                 /* Zero the frame first */
                 memset((void *)frame, 0, PAGE_SIZE);
-                vmm_map_user_page(user_pml4, va, frame, flags);
+                if (vmm_map_user_page(user_pml4, va, frame, flags) < 0) {
+                    kprintf("elf: vmm_map_user_page failed\n");
+                    pmm_free_frame(frame);
+                    kfree(buf); return -1;
+                }
             }
 
             /* Copy segment data while running on target address space */
@@ -157,8 +165,12 @@ int elf_exec(const char *path) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) { kprintf("elf: OOM for user stack\n"); kfree(buf); return -1; }
             memset((void *)frame, 0, PAGE_SIZE);
-            vmm_map_user_page(user_pml4, va, frame,
-                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+            if (vmm_map_user_page(user_pml4, va, frame,
+                                  VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
+                kprintf("elf: vmm_map_user_page failed for stack\n");
+                pmm_free_frame(frame);
+                kfree(buf); return -1;
+            }
         }
 
         uint64_t user_rsp = USER_STACK_TOP - 8; /* stack grows down */
@@ -181,8 +193,7 @@ int elf_exec(const char *path) {
 
     /* Kernel-mode fallback for non-userland ELFs */
     kfree(buf);
-    exec_entry_addr = entry;
-    struct process *p = process_create(elf_trampoline, name);
+    struct process *p = process_create((void (*)(void))(uintptr_t)entry, name);
     if (!p) {
         kprintf("elf: cannot create process\n");
         return -1;

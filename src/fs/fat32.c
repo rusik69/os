@@ -686,7 +686,10 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     uint32_t first = 0, prev = 0;
     for (uint32_t i = 0; i < clusters_needed; i++) {
         uint32_t c = fat_alloc_cluster();
-        if (!c) return -3;
+        if (!c) {
+            if (first) fat_free_chain(first);
+            return -3;
+        }
         if (!first) first = c;
         if (prev) fat_write_entry(prev, c);
         prev = c;

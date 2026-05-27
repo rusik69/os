@@ -9,6 +9,7 @@
 #define PROCESS_SIG_MAX 32
 #define PROCESS_SYSCALL_MAX 256
 #define PROCESS_SYSCALL_CAP_WORDS (PROCESS_SYSCALL_MAX / 64)
+#define PROCESS_FD_MAX 16
 
 /* User-space virtual addresses (canonical lower-half) */
 #define USER_STACK_TOP    0x00007FFFFFFFE000ULL  /* top of user stack region */
@@ -30,6 +31,15 @@ struct cpu_context {
 } __attribute__((packed));
 
 typedef void (*signal_handler_t)(int signum);
+
+/* Per-process file descriptor table entry */
+struct process_fd {
+    char     path[64];
+    uint32_t offset;
+    int      used;
+};
+
+
 
 enum process_cap_profile {
     PROCESS_CAP_PROFILE_NONE = 0,
@@ -71,6 +81,8 @@ struct process {
     /* Scheduler: time-slice accounting */
     uint16_t ticks_remaining; /* ticks left in current quantum */
     uint64_t last_run_tick;   /* timer tick when process last ran (for aging) */
+    /* Per-process file descriptor table */
+    struct process_fd fd_table[PROCESS_FD_MAX];
 };
 
 void process_init(void);

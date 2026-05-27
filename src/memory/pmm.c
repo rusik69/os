@@ -28,16 +28,20 @@ static uint8_t  frame_bitmap[MAX_FRAMES / 8];
 static uint16_t frame_refcount[MAX_FRAMES]; /* COW reference counts */
 static uint64_t total_frames = 0;
 static uint64_t used_frames = 0;
+static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
 
 static void bitmap_set(uint64_t frame) {
+    if (frame >= MAX_FRAMES) return;
     frame_bitmap[frame / 8] |= (1 << (frame % 8));
 }
 
 static void bitmap_clear(uint64_t frame) {
+    if (frame >= MAX_FRAMES) return;
     frame_bitmap[frame / 8] &= ~(1 << (frame % 8));
 }
 
 static int bitmap_test(uint64_t frame) {
+    if (frame >= MAX_FRAMES) return 1; /* out-of-range frames appear used */
     return frame_bitmap[frame / 8] & (1 << (frame % 8));
 }
 
@@ -119,14 +123,20 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
 }
 
 uint64_t pmm_alloc_frame(void) {
-    for (uint64_t i = 0; i < total_frames; i++) {
+    /* Start from hint to avoid scanning already-allocated frames */
+    uint64_t i = pmm_hint;
+    do {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             used_frames++;
             frame_refcount[i] = 1;
+            pmm_hint = i + 1;
+            if (pmm_hint >= total_frames) pmm_hint = 0;
             return i * PAGE_SIZE;
         }
-    }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
     return 0; /* out of memory */
 }
 

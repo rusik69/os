@@ -1616,7 +1616,7 @@ def test_nice(t: Telnet):
     r = t.send_cmd("nice 1")
     check("nice 1 no error", "failed" not in r.lower(), True)
     r = t.send_cmd("nice 5")
-    check("nice 5 error msg", "priority" in r.lower() or "must be" in r.lower() or len(r) >= 0, True)
+    check("nice 5 error msg", "priority" in r.lower() or "must be" in r.lower() or "invalid" in r.lower(), True)
 
 
 def test_renice(t: Telnet):
@@ -1675,11 +1675,10 @@ def test_netstat(t: Telnet):
 
 def test_large_file(t: Telnet):
     """Write and read a file larger than 8KB."""
-    # Write 20KB to a file using multiple write commands
     t.send_cmd("rm /tmp/largefile.txt")
-    for i in range(40):  # 40 * 512 bytes ≈ 20KB
-        line = "x" * 500
-        t.send_cmd(f"write /tmp/largefile.txt '{line}'")
+    # Write a single large file (12KB of text)
+    line = "X" * 12000
+    t.send_cmd(f"write /tmp/largefile.txt '{line}'")
     r = t.send_cmd("stat /tmp/largefile.txt")
     check("large file stat ok", r != "" and "not found" not in r.lower(), True)
     r = t.send_cmd("wc /tmp/largefile.txt")

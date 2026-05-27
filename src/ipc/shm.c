@@ -70,8 +70,9 @@ uint64_t shm_at(int id) {
 
     /* Map into current process PML4 (kernel PML4 if kernel process) */
     uint64_t *pml4 = cur->pml4 ? cur->pml4 : vmm_get_pml4();
-    vmm_map_user_page(pml4, virt, shm_table[id].phys,
-                      VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER);
+    if (vmm_map_user_page(pml4, virt, shm_table[id].phys,
+                          VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0)
+        return 0;
     shm_table[id].refs++;
     return virt;
 }
@@ -79,13 +80,23 @@ uint64_t shm_at(int id) {
 /* Unmap segment from current process */
 int shm_dt(int id) {
     if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
-    if (shm_table[id].refs > 0) shm_table[id].refs--;
+    if (shm_table[id].refs > 0) {
+        shm_table[id].refs--;
+        /* Unmap from current process's page table */
+        struct process *cur = process_get_current();
+        if (cur) {
+            uint64_t virt = SHM_VIRT_BASE + (uint64_t)id * 0x10000ULL;
+            uint64_t *pml4 = cur->pml4 ? cur->pml4 : vmm_get_pml4();
+            vmm_unmap_user_page(pml4, virt);
+        }
+    }
     return 0;
 }
 
 /* Free the segment (releases physical frame) */
 int shm_free(int id) {
     if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
+    if (shm_table[id].refs > 0) return -1; /* still mapped by one or more processes */
     pmm_free_frame(shm_table[id].phys);
     shm_table[id].used = 0;
     shm_table[id].refs = 0;

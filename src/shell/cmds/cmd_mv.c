@@ -18,10 +18,10 @@ void cmd_mv(const char *args) {
     dst[di] = '\0';
     if (!dst[0]) { kprintf("Usage: mv <src> <dst>\n"); return; }
     char spath[64], dpath[64];
-    if (src[0] != '/') { spath[0] = '/'; strcpy(spath + 1, src); }
-    else strcpy(spath, src);
-    if (dst[0] != '/') { dpath[0] = '/'; strcpy(dpath + 1, dst); }
-    else strcpy(dpath, dst);
+    if (src[0] != '/') { spath[0] = '/'; spath[1] = '\0'; strncpy(spath + 1, src, 62); spath[63] = '\0'; }
+    else { strncpy(spath, src, 63); spath[63] = '\0'; }
+    if (dst[0] != '/') { dpath[0] = '/'; dpath[1] = '\0'; strncpy(dpath + 1, dst, 62); dpath[63] = '\0'; }
+    else { strncpy(dpath, dst, 63); dpath[63] = '\0'; }
     static char fbuf[4096];
     uint32_t size;
     if (fs_read_file(spath, fbuf, sizeof(fbuf), &size) < 0) {

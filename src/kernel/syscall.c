@@ -39,12 +39,6 @@
 #include "doom.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
-#define SYS_FD_MAX  16
-static struct {
-    char     path[64];
-    uint32_t offset;
-    int      used;
-} g_fd_table[SYS_FD_MAX];
 
 struct syscall_fs_stat_ex {
     uint32_t size;
@@ -256,24 +250,32 @@ static void wrmsr(uint32_t msr, uint64_t val) {
 
 /* ── Syscall handlers ─────────────────────────────────────────── */
 
+/* Get per-process FD table entry */
+static struct process_fd *sys_get_fd(int i) {
+    struct process *p = process_get_current();
+    if (!p || i < 0 || i >= PROCESS_FD_MAX) return NULL;
+    return &p->fd_table[i];
+}
+
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd == 0) return 0; /* stdin EOF until telnet fd wiring */
     if (fd >= 3) {
         int i = (int)fd - 3;
-        if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+        struct process_fd *pfd = sys_get_fd(i);
+        if (!pfd || !pfd->used) return (uint64_t)-1;
         struct vfs_stat st;
-        if (vfs_stat(g_fd_table[i].path, &st) < 0) return (uint64_t)-1;
+        if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
         uint32_t fsize = st.size;
-        if (g_fd_table[i].offset >= fsize) return 0;
-        uint32_t avail = fsize - g_fd_table[i].offset;
+        if (pfd->offset >= fsize) return 0;
+        uint32_t avail = fsize - pfd->offset;
         uint32_t to_read = (uint32_t)len < avail ? (uint32_t)len : avail;
         uint8_t *tmp = kmalloc(fsize);
         if (!tmp) return (uint64_t)-1;
         uint32_t nread = 0;
-        vfs_read(g_fd_table[i].path, tmp, fsize, &nread);
-        memcpy((void *)(uintptr_t)buf_addr, tmp + g_fd_table[i].offset, to_read);
+        vfs_read(pfd->path, tmp, fsize, &nread);
+        memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
         kfree(tmp);
-        g_fd_table[i].offset += to_read;
+        pfd->offset += to_read;
         return (uint64_t)to_read;
     }
     return (uint64_t)-1;
@@ -294,13 +296,15 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     const char *path = (const char *)path_addr;
     struct vfs_stat st;
     if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
-    /* Allocate fd slot */
-    for (int i = 0; i < 16; i++) {
-        if (!g_fd_table[i].used) {
-            strncpy(g_fd_table[i].path, path, 63);
-            g_fd_table[i].path[63] = '\0';
-            g_fd_table[i].offset = 0;
-            g_fd_table[i].used = 1;
+    /* Allocate fd slot in current process's table */
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!p->fd_table[i].used) {
+            strncpy(p->fd_table[i].path, path, 63);
+            p->fd_table[i].path[63] = '\0';
+            p->fd_table[i].offset = 0;
+            p->fd_table[i].used = 1;
             return (uint64_t)(i + 3);
         }
     }
@@ -309,8 +313,8 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 
 static uint64_t sys_close(uint64_t fd) {
     int i = (int)fd - 3;
-    if (i >= 0 && i < 16 && g_fd_table[i].used)
-        g_fd_table[i].used = 0;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (pfd) pfd->used = 0;
     return 0;
 }
 
@@ -351,17 +355,18 @@ static uint64_t sys_signal(uint64_t signum, uint64_t handler_addr) {
 /* ── File seek / truncate (SYS_LSEEK=214, SYS_TRUNCATE=215) ───── */
 static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     int i = (int)fd - 3;
-    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used) return (uint64_t)-1;
     struct vfs_stat st; uint32_t fsz = 0;
-    if (vfs_stat(g_fd_table[i].path, &st) == 0) fsz = st.size;
+    if (vfs_stat(pfd->path, &st) == 0) fsz = st.size;
     uint32_t new_off;
     switch (whence) {
         case 0: new_off = (uint32_t)offset; break;
-        case 1: new_off = g_fd_table[i].offset + (uint32_t)offset; break;
+        case 1: new_off = pfd->offset + (uint32_t)offset; break;
         case 2: new_off = fsz + (uint32_t)offset; break;
         default: return (uint64_t)-1;
     }
-    g_fd_table[i].offset = new_off;
+    pfd->offset = new_off;
     return (uint64_t)new_off;
 }
 
@@ -379,30 +384,31 @@ static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
 /* ── FD-based read/write (SYS_FD_READ=217, SYS_FD_WRITE=218) ──── */
 static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
-    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
-    /* Read whole file into heap buffer, copy slice at offset */
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used) return (uint64_t)-1;
     uint32_t fsize = 0;
     struct vfs_stat st;
-    if (vfs_stat(g_fd_table[i].path, &st) < 0) return (uint64_t)-1;
+    if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
     fsize = st.size;
-    if (g_fd_table[i].offset >= fsize) return 0;
-    uint32_t avail = fsize - g_fd_table[i].offset;
+    if (pfd->offset >= fsize) return 0;
+    uint32_t avail = fsize - pfd->offset;
     uint32_t to_read = (uint32_t)count < avail ? (uint32_t)count : avail;
     uint8_t *tmp = kmalloc(fsize);
     if (!tmp) return (uint64_t)-1;
     uint32_t nread = 0;
-    vfs_read(g_fd_table[i].path, tmp, fsize, &nread);
-    memcpy((void *)(uintptr_t)buf_addr, tmp + g_fd_table[i].offset, to_read);
+    vfs_read(pfd->path, tmp, fsize, &nread);
+    memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
     kfree(tmp);
-    g_fd_table[i].offset += to_read;
+    pfd->offset += to_read;
     return (uint64_t)to_read;
 }
 
 static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
-    if (i < 0 || i >= SYS_FD_MAX || !g_fd_table[i].used) return (uint64_t)-1;
-    int r = vfs_write(g_fd_table[i].path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
-    if (r >= 0) g_fd_table[i].offset += (uint32_t)count;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used) return (uint64_t)-1;
+    int r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+    if (r >= 0) pfd->offset += (uint32_t)count;
     return (r >= 0) ? count : (uint64_t)-1;
 }
 
@@ -434,6 +440,8 @@ static uint64_t sys_realloc(uint64_t ptr, uint64_t new_size) {
 }
 
 static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
+    if (nmemb != 0 && (size_t)(nmemb * size) / (size_t)nmemb != (size_t)size)
+        return 0;
     size_t total = (size_t)(nmemb * size);
     void *p = kmalloc(total);
     if (p) for (size_t i = 0; i < total; i++) ((uint8_t *)p)[i] = 0;
@@ -600,10 +608,7 @@ static uint64_t sys_waitpid(uint64_t pid, uint64_t status_addr) {
 }
 
 static uint64_t sys_sleep_ticks(uint64_t ticks) {
-    uint64_t start = timer_get_ticks();
-    while ((timer_get_ticks() - start) < ticks) {
-        __asm__ volatile("pause");
-    }
+    process_sleep_ticks(ticks);
     return 0;
 }
 
@@ -883,8 +888,8 @@ static uint64_t sys_fork(void) {
 }
 
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
-    const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT"};
-    const char *sname = (state >= 0 && state < 7) ? snames[state] : "?";
+    const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
+    const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
     kprintf("  TCP  %5u  %u.%u.%u.%u:%u  %s\n",
         (uint64_t)lport,
         (uint64_t)((rip >> 24) & 0xFF), (uint64_t)((rip >> 16) & 0xFF),
@@ -1238,8 +1243,10 @@ static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
     return 0;
 }
 
-/* Single static workspace avoids ~7MB heap alloc/free churn per cc invocation. */
+/* Single static workspace avoids ~7MB heap alloc/free churn per cc invocation.
+ * Protected by a mutex to prevent concurrent access. */
 static CompilerState cc_workspace;
+static int cc_mutex = -1;
 
 #define CC_INCLUDE_MAX_DEPTH 16
 #define CC_PATH_MAX_LEN 256
@@ -1375,30 +1382,37 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     const char *outpath = (const char *)outpath_addr;
     if (!inpath || !outpath) return (uint64_t)-1;
 
+    if (cc_mutex >= 0) mutex_lock(cc_mutex);
     CompilerState *cc = &cc_workspace;
     memset(cc, 0, sizeof(CompilerState));
     cc->src_len = 0;
     cc->src[0] = '\0';
 
-    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0)
+    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-2;
+    }
 
     cc_lex(cc);
     if (cc->error) {
         kprintf("cc: lex error: %s\n", cc->errmsg);
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
         kprintf("cc: error: %s\n", cc->errmsg);
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-4;
     }
 
+    int ret = 0;
     if (cc_write_elf(cc, outpath) < 0)
-        return (uint64_t)-5;
+        ret = (uint64_t)-5;
 
-    return 0;
+    if (cc_mutex >= 0) mutex_unlock(cc_mutex);
+    return ret;
 }
 
 static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) {
@@ -1406,31 +1420,38 @@ static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) 
     const char *outpath = (const char *)outpath_addr;
     if (!inpath || !outpath) return (uint64_t)-1;
 
+    if (cc_mutex >= 0) mutex_lock(cc_mutex);
     CompilerState *cc = &cc_workspace;
     memset(cc, 0, sizeof(CompilerState));
     cc->src_len = 0;
     cc->src[0] = '\0';
     cc->obj_mode = 1;
 
-    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0)
+    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-2;
+    }
 
     cc_lex(cc);
     if (cc->error) {
         kprintf("cc: lex error: %s\n", cc->errmsg);
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
         kprintf("cc: error: %s\n", cc->errmsg);
+        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
         return (uint64_t)-4;
     }
 
+    int ret = 0;
     if (cc_write_obj(cc, outpath) < 0)
-        return (uint64_t)-5;
+        ret = (uint64_t)-5;
 
-    return 0;
+    if (cc_mutex >= 0) mutex_unlock(cc_mutex);
+    return ret;
 }
 
 static uint64_t sys_cc_link(uint64_t obj_paths_addr, uint64_t nobj, uint64_t outpath_addr) {
@@ -1692,6 +1713,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
 /* ── Init ─────────────────────────────────────────────────────── */
 
 void syscall_init(void) {
+    /* Initialize the compiler mutex */
+    cc_mutex = mutex_init();
+
     /* Enable SCE bit in EFER */
     wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_SCE);
 

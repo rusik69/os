@@ -8,8 +8,8 @@ void cmd_rm(const char *args) {
     if (!args) { kprintf("Usage: rm <path>\n"); return; }
     if (!ata_is_present()) { kprintf("No disk\n"); return; }
     char path[64];
-    if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
-    else strcpy(path, args);
+    if (args[0] != '/') { path[0] = '/'; path[1] = '\0'; strncpy(path + 1, args, 62); path[63] = '\0'; }
+    else { strncpy(path, args, 63); path[63] = '\0'; }
     if (fs_delete(path) < 0)
         kprintf("Cannot remove: %s\n", path);
 }

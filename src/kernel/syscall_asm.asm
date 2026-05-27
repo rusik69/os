@@ -129,3 +129,5 @@ libc_syscall:
 
 section .bss
 syscall_user_rsp: resq 1
+
+section .note.GNU-stack noalloc noexec nowrite progbits

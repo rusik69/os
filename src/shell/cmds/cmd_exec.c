@@ -8,7 +8,7 @@ void cmd_exec(const char *args) {
     if (!args || !*args) { kprintf("Usage: exec <path>\n"); return; }
     if (!ata_is_present()) { kprintf("No disk\n"); return; }
     static char path[64];
-    if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
-    else strcpy(path, args);
+    if (args[0] != '/') { path[0] = '/'; path[1] = '\0'; strncpy(path + 1, args, 62); path[63] = '\0'; }
+    else { strncpy(path, args, 63); path[63] = '\0'; }
     elf_exec(path);
 }

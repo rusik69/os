@@ -192,6 +192,19 @@ char *strtok(char *str, const char *delim) {
     return start;
 }
 
+/* strtok_r: reentrant version of strtok */
+char *strtok_r(char *str, const char *delim, char **saveptr) {
+    char *p = str ? str : *saveptr;
+    if (!p) return (char *)0;
+    while (*p && strchr(delim, *p)) p++;
+    if (!*p) { *saveptr = (char *)0; return (char *)0; }
+    char *start = p;
+    while (*p && !strchr(delim, *p)) p++;
+    if (*p) *p++ = '\0';
+    *saveptr = p;
+    return start;
+}
+
 /* strsep: like strtok but caller manages state via pointer-to-pointer */
 char *strsep(char **stringp, const char *delim) {
     char *s = *stringp;

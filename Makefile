@@ -18,7 +18,7 @@ endif
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
-         -Wa,--noexecstack
+         -Wa,--noexecstack -O2 -MMD -MP
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
 
@@ -100,6 +100,9 @@ GUI_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(GUI_SRCS))
 DOOM_SRCS = $(wildcard src/doom/*.c)
 DOOM_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(DOOM_SRCS))
 OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJS)
+# Header dependency tracking: include .d files when they exist
+DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(DOOM_OBJS:.o=.d)
+-include $(wildcard $(DEPS))
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean check-app-boundary doom-test
 

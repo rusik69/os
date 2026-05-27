@@ -164,7 +164,7 @@ int e1000_init(void) {
 
     /* Map MMIO region (128KB) into virtual address space */
     for (uint64_t off = 0; off < 0x20000; off += PAGE_SIZE) {
-        vmm_map_page(bar0 + off, bar0 + off, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+        (void)vmm_map_page(bar0 + off, bar0 + off, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
     }
     mmio_base = (volatile uint8_t *)(uintptr_t)bar0;
 
@@ -216,7 +216,10 @@ int e1000_send(const void *data, uint16_t len) {
 
     int idx = tx_cur;
     /* Wait for descriptor to be available */
-    while (!(tx_descs[idx].status & TDESC_STA_DD));
+    int tx_timeout = 10000000;
+    while (!(tx_descs[idx].status & TDESC_STA_DD) && --tx_timeout > 0)
+        __asm__ volatile("pause");
+    if (tx_timeout <= 0) return -1;
 
     memcpy(tx_buffers[idx], data, len);
     tx_descs[idx].length = len;

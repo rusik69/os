@@ -2,6 +2,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "io.h"
+#include "scheduler.h"
 
 #define KB_DATA_PORT 0x60
 #define KB_BUF_SIZE  256
@@ -171,6 +172,7 @@ char keyboard_getchar(void) {
             if (c == 127) c = '\b';
             return c;
         }
-        __asm__ volatile("hlt");
+        __asm__ volatile("pause");
+        scheduler_yield();
     }
 }

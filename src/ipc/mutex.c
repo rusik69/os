@@ -24,10 +24,16 @@ int mutex_init(void) {
 
 void mutex_lock(int id) {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return;
-    /* Single-CPU: spin-yield until free, then claim. */
-    while (mutexes[id].locked)
+    for (;;) {
+        __asm__ volatile("cli");
+        if (!mutexes[id].locked) {
+            mutexes[id].locked = 1;
+            __asm__ volatile("sti");
+            return;
+        }
+        __asm__ volatile("sti");
         scheduler_yield();
-    mutexes[id].locked = 1;
+    }
 }
 
 void mutex_unlock(int id) {

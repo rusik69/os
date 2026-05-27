@@ -30,11 +30,15 @@ static int ata_present = 0;
 static uint32_t ata_total_sectors = 0;
 
 static void ata_wait_bsy(void) {
-    while (inb(ATA_STATUS) & ATA_SR_BSY);
+    int timeout = 10000000;
+    while ((inb(ATA_STATUS) & ATA_SR_BSY) && --timeout > 0)
+        __asm__ volatile("pause");
 }
 
 static void ata_wait_drq(void) {
-    while (!(inb(ATA_STATUS) & ATA_SR_DRQ));
+    int timeout = 10000000;
+    while (!(inb(ATA_STATUS) & ATA_SR_DRQ) && --timeout > 0)
+        __asm__ volatile("pause");
 }
 
 static void ata_400ns_delay(void) {

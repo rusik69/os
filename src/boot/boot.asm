@@ -8,7 +8,7 @@ MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 extern _kernel_end
 
-section .multiboot2
+section .multiboot
 align 4
 multiboot_header:
     dd MULTIBOOT_MAGIC
@@ -44,7 +44,7 @@ boot_pd2:
 ; Bootstrap stack
 align 16
 boot_stack_bottom:
-    times 16384 db 0
+    times 32768 db 0
 boot_stack_top:
 
 ; GDT for 64-bit mode
@@ -177,3 +177,5 @@ long_mode_entry:
     cli
     hlt
     jmp .halt
+
+section .note.GNU-stack noalloc noexec nowrite progbits

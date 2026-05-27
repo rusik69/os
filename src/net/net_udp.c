@@ -197,18 +197,28 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
 
     int pos = 12;
     for (uint16_t q = 0; q < qdcount && pos < len; q++) {
-        while (pos < len) {
+        int hops = 0;
+        while (pos < len && hops < 128) {
+            hops++;
             uint8_t lbl = data[pos];
             if (lbl == 0) { pos++; break; }
             if ((lbl & 0xC0) == 0xC0) { pos += 2; break; }
             pos += lbl + 1;
         }
+        if (hops >= 128) { dns_reply_received = 1; return; }
+        if (pos + 4 > len) { dns_reply_received = 1; return; }
         pos += 4;
     }
 
     for (uint16_t a = 0; a < ancount && pos + 12 <= len; a++) {
-        if ((data[pos] & 0xC0) == 0xC0) pos += 2;
-        else { while (pos < len && data[pos] != 0) { if ((data[pos] & 0xC0) == 0xC0) { pos += 2; goto got_name; } pos += data[pos] + 1; } pos++; }
+        int hops = 0;
+        while (pos < len && hops < 128) {
+            hops++;
+            if ((data[pos] & 0xC0) == 0xC0) { pos += 2; goto got_name; }
+            if (data[pos] == 0) { pos++; break; }
+            pos += data[pos] + 1;
+        }
+        if (hops >= 128) { dns_reply_received = 1; return; }
         got_name:;
         if (pos + 10 > len) break;
         uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos+1];
@@ -232,6 +242,16 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
     uint16_t src_port = ntohs(udp->src_port);
     uint16_t udp_len = ntohs(udp->length);
     if (udp_len < sizeof(struct udp_header) || udp_len > len) return;
+
+    /* Verify UDP checksum if present (0 = disabled per RFC 768) */
+    if (udp->checksum != 0) {
+        uint16_t saved = udp->checksum;
+        udp->checksum = 0;
+        if (net_transport_checksum(ntohl(ip_hdr->src_ip), ntohl(ip_hdr->dst_ip),
+                                   IP_PROTO_UDP, payload, udp_len) != saved)
+            return;
+    }
+
     const uint8_t *data = payload + sizeof(struct udp_header);
     uint16_t data_len = udp_len - sizeof(struct udp_header);
     uint32_t src_ip = ntohl(ip_hdr->src_ip);
@@ -648,7 +668,8 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
             kprintf("Redirect %d -> %s\n", (uint64_t)status, locbuf);
             if (locbuf[0] == '/') {
                 /* Relative path: keep host and port, update path only */
-                for (i = 0; i <= li; i++) path[i] = locbuf[i];
+                for (i = 0; i < 255 && i < li; i++) path[i] = locbuf[i];
+                path[i] = '\0';
             } else {
                 url_parse_absolute(locbuf, host, &port, path);
             }

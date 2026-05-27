@@ -27,6 +27,7 @@ static struct heap_block *heap_start_block = NULL;
 static uint64_t heap_base    = 0;
 static uint64_t heap_current = 0;
 static uint64_t heap_limit   = 0;
+static uint64_t heap_used_bytes = 0; /* running total of bytes in use */
 
 static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
@@ -75,6 +76,7 @@ void *kmalloc(size_t size) {
                 block->size = size;
             }
             block->free = 0;
+            heap_used_bytes += block->size + BLOCK_HDR_SIZE;
             return (void *)((uint8_t *)block + BLOCK_HDR_SIZE);
         }
         if (!block->next) break;
@@ -96,18 +98,8 @@ void *kmalloc(size_t size) {
     if (block) block->next = new_block;
     else heap_start_block = new_block;
 
+    heap_used_bytes += total;
     return (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
-}
-
-static uint64_t heap_walk_used(void) {
-    uint64_t used = 0;
-    struct heap_block *block = heap_start_block;
-    while (block) {
-        if (!block->free)
-            used += block->size + BLOCK_HDR_SIZE;
-        block = block->next;
-    }
-    return used;
 }
 
 uint64_t heap_get_total(void) {
@@ -115,11 +107,11 @@ uint64_t heap_get_total(void) {
 }
 
 uint64_t heap_get_used(void) {
-    return heap_walk_used();
+    return heap_used_bytes;
 }
 
 uint64_t heap_get_free(void) {
-    uint64_t used = heap_walk_used();
+    uint64_t used = heap_used_bytes;
     if (used >= HEAP_MAX_SIZE) return 0;
     return HEAP_MAX_SIZE - used;
 }
@@ -128,9 +120,11 @@ void kfree(void *ptr) {
     if (!ptr) return;
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
     block->free = 1;
+    heap_used_bytes -= (block->size + BLOCK_HDR_SIZE);
 
     /* Forward coalesce with next block */
     if (block->next && block->next->free) {
+        heap_used_bytes -= BLOCK_HDR_SIZE + block->next->size; /* merging removes next block's hdr+size */
         block->size += BLOCK_HDR_SIZE + block->next->size;
         struct heap_block *old_next = block->next->next;
         block->next = old_next;
@@ -140,6 +134,7 @@ void kfree(void *ptr) {
     /* Backward coalesce with previous block */
     if (block->prev && block->prev->free) {
         struct heap_block *prev = block->prev;
+        heap_used_bytes -= BLOCK_HDR_SIZE + block->size; /* merging removes current block's hdr+size */
         prev->size += BLOCK_HDR_SIZE + block->size;
         prev->next = block->next;
         if (block->next) block->next->prev = prev;

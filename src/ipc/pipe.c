@@ -55,6 +55,8 @@ int pipe_write(int pipe_id, const void *buf, int len) {
         while (p->count == PIPE_BUF_SIZE) {
             if (p->readers == 0) return written ? written : -1;
             struct process *cur = process_get_current();
+            /* Detect self-deadlock: same process is the only reader */
+            if (cur && p->blocked_read_pid == cur->pid) return written ? written : -1;
             if (cur && cur->state == PROCESS_RUNNING) {
                 p->blocked_write_pid = cur->pid;
                 cur->state = PROCESS_BLOCKED;

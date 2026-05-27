@@ -8,17 +8,24 @@ static void swap_bytes(char *a, char *b, size_t sz) {
 
 /*
  * qsort — Lomuto-partition quicksort with insertion sort for small subarrays.
- * Pivot is chosen as the middle element to avoid O(n²) on sorted input.
+ * Uses a recursion depth limit (2*log2(n)) and falls back to insertion sort
+ * to guarantee O(n log n) worst-case stack depth.
  */
-void qsort(void *base, size_t n, size_t sz,
-           int (*cmp)(const void *, const void *)) {
+#define QSORT_DEPTH_MAX 64
+
+static void qsort_insertion(char *b, size_t n, size_t sz,
+                             int (*cmp)(const void *, const void *)) {
+    for (size_t i = 1; i < n; i++)
+        for (size_t j = i; j > 0 && cmp(b + (j-1)*sz, b + j*sz) > 0; j--)
+            swap_bytes(b + (j-1)*sz, b + j*sz, sz);
+}
+
+static void qsort_impl(void *base, size_t n, size_t sz,
+                        int (*cmp)(const void *, const void *), int depth) {
     char *b = (char *)base;
 
-    /* Insertion sort for small arrays */
-    if (n <= 16) {
-        for (size_t i = 1; i < n; i++)
-            for (size_t j = i; j > 0 && cmp(b + (j-1)*sz, b + j*sz) > 0; j--)
-                swap_bytes(b + (j-1)*sz, b + j*sz, sz);
+    if (n <= 16 || depth >= QSORT_DEPTH_MAX) {
+        qsort_insertion(b, n, sz, cmp);
         return;
     }
 
@@ -28,7 +35,6 @@ void qsort(void *base, size_t n, size_t sz,
     if (cmp(b, b + (n-1)*sz) > 0)   swap_bytes(b,          b + (n-1)*sz,  sz);
     if (cmp(b + mid*sz, b + (n-1)*sz) > 0)
                                      swap_bytes(b + mid*sz, b + (n-1)*sz,  sz);
-    /* pivot is now at b[(n-1)*sz]; Lomuto partition */
     char *pivot = b + (n-1)*sz;
     size_t i = 0;
     for (size_t j = 0; j < n - 1; j++) {
@@ -39,8 +45,13 @@ void qsort(void *base, size_t n, size_t sz,
     }
     swap_bytes(b + i*sz, pivot, sz);
 
-    if (i > 0)       qsort(b,            i,       sz, cmp);
-    if (i + 1 < n)   qsort(b + (i+1)*sz, n-i-1,   sz, cmp);
+    if (i > 0)       qsort_impl(b,            i,       sz, cmp, depth + 1);
+    if (i + 1 < n)   qsort_impl(b + (i+1)*sz, n-i-1,   sz, cmp, depth + 1);
+}
+
+void qsort(void *base, size_t n, size_t sz,
+           int (*cmp)(const void *, const void *)) {
+    qsort_impl(base, n, sz, cmp, 0);
 }
 
 /*

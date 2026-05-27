@@ -408,7 +408,7 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 }
                 sub_cmd[si] = '\0';
                 /* Capture output of sub_cmd */
-                static char sub_out[512];
+                char sub_out[512];
                 int sub_len = 0;
                 void (*sh_hook)(char, void *) = 0; void *sh_ctx = 0;
                 kprintf_get_hook(&sh_hook, &sh_ctx);
@@ -822,7 +822,7 @@ static void process_cmd(void) {
         }
         if (pipe_count > 0) {
             static char pipe_work[CMD_BUF_SIZE];
-            static char pipe_xfer[4096];
+            char pipe_xfer[4096];
             int pipe_xfer_len = 0;
 
             strncpy(pipe_work, cmd, CMD_BUF_SIZE - 1);
@@ -1245,7 +1245,7 @@ void shell_run(void) {
                             delim[--dl] = '\0';
 
                         /* Collect heredoc lines into pipe buffer */
-                        static char here_buf[2048];
+                        char here_buf[2048];
                         int here_len = 0;
                         for (;;) {
                             kprintf("> ");

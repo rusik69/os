@@ -34,10 +34,9 @@
 #include "fat32.h"
 #include "shm.h"
 #include "mutex.h"
+#include "semaphore.h"
+#include "vmm.h"
 #include "ac97.h"
-#include "heap.h"
-#include "pmm.h"
-#include "scheduler.h"
 #include "doom.h"
 
 /* ── Test framework ─────────────────────────────────────────── */
@@ -552,6 +551,51 @@ static void test_udp_binding(void) {
     /* Can't easily self-inject a packet here; just verifying it doesn't crash */
 }
 
+/* ── VMM tests ────────────────────────────────────────────────── */
+static void test_vmm(void) {
+    /* Test vmm_get_pml4 returns a non-null page table */
+    uint64_t *pml4 = vmm_get_pml4();
+    ASSERT("vmm get pml4", pml4 != NULL);
+
+    /* Test vmm_get_physaddr on known identity-mapped VGA memory */
+    uint64_t vga_phys = vmm_get_physaddr(0xB8000ULL);
+    ASSERT("vmm vga physaddr", vga_phys == 0xB8000ULL);
+
+    /* Test vmm_user_range_ok rejects kernel addresses */
+    ASSERT("vmm user range kernel", vmm_user_range_ok(NULL, 0xFFFFFFFFFFFFFFFFULL, 1, 0) == 0);
+}
+
+/* ── Semaphore tests ──────────────────────────────────────────── */
+static void test_semaphore(void) {
+    int id = sem_init(2);
+    ASSERT("sem init", id >= 0);
+    sem_wait(id);
+    ASSERT("sem wait ok", 1);
+    sem_post(id);
+    sem_post(id);
+    sem_post(id);
+    ASSERT("sem post ok", 1);
+    sem_destroy(id);
+}
+
+/* ── Enhanced SHM tests ───────────────────────────────────────── */
+static void test_shm_ext(void) {
+    int id = shm_get(42);
+    ASSERT("shm ext get", id >= 0);
+    uint64_t addr = shm_at(id);
+    ASSERT("shm ext at", addr != 0);
+    /* Verify we can write to mapped memory */
+    if (addr) {
+        volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)addr;
+        p[0] = 0xAB;
+        p[4095] = 0xCD;
+        ASSERT("shm ext write byte0", p[0] == 0xAB);
+        ASSERT("shm ext write byte4095", p[4095] == 0xCD);
+    }
+    ASSERT("shm ext dt", shm_dt(id) == 0);
+    ASSERT("shm ext free", shm_free(id) == 0);
+}
+
 /* ── Master runner ───────────────────────────────────────────── */
 
 void test_run_all(void) {
@@ -580,6 +624,9 @@ void test_run_all(void) {
     test_fat32();
     test_ac97();
     test_doom();
+    test_vmm();
+    test_semaphore();
+    test_shm_ext();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",

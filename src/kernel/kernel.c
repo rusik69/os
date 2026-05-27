@@ -272,19 +272,28 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
 #ifdef TEST_MODE
     /* Test mode: run the test suite then shut down */
-    process_create(test_run_all, "tests");
-    kprintf("[OK] Test task created\n");
+    if (!process_create(test_run_all, "tests"))
+        kprintf("[!!] Failed to create test process\n");
+    else
+        kprintf("[OK] Test task created\n");
 #else
     /* Normal mode: interactive shell + background tasks */
-    process_create(test_task_a, "task_a");
-    process_create(test_task_b, "task_b");
-    process_create(shell_task, "shell");
+    if (!process_create(test_task_a, "task_a"))
+        kprintf("[!!] Failed to create task_a\n");
+    if (!process_create(test_task_b, "task_b"))
+        kprintf("[!!] Failed to create task_b\n");
+    if (!process_create(shell_task, "shell"))
+        kprintf("[!!] Failed to create shell\n");
     if (virtio_net_present() || e1000_is_present()) {
-        process_create(net_task, "netd");
-        process_create(httpd_task, "httpd");
+        if (!process_create(net_task, "netd"))
+            kprintf("[!!] Failed to create netd\n");
+        if (!process_create(httpd_task, "httpd"))
+            kprintf("[!!] Failed to create httpd\n");
     }
-    if (vga_is_framebuffer())
-        process_create(gui_task, "gui");
+    if (vga_is_framebuffer()) {
+        if (!process_create(gui_task, "gui"))
+            kprintf("[!!] Failed to create gui\n");
+    }
     kprintf("[OK] Processes created\n");
 #endif
 

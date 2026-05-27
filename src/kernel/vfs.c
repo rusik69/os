@@ -11,35 +11,76 @@ extern struct vfs_ops devfs_ops;
 /*
  * Resolve a possibly-relative path against the current process's cwd.
  * If path already starts with '/', copies it verbatim.
- * Also normalises ".." components (one level only).
+ * Normalises "." and ".." components.
  */
 static void vfs_abs_path(const char *path, char *out, int out_max) {
+    char tmp[128];
+    int wpos = 0;
+    int i;
+
     if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return; }
+
+    /* Start with cwd for relative paths, empty for absolute */
     if (path[0] == '/') {
-        strncpy(out, path, out_max - 1); out[out_max - 1] = '\0'; return;
+        wpos = 0;
+        i = 0;
+    } else {
+        const char *cwd = "/";
+        struct process *p = process_get_current();
+        if (p && p->cwd[0]) cwd = p->cwd;
+        int cwdl = (int)strlen(cwd);
+        if (cwdl >= (int)sizeof(tmp)) cwdl = (int)sizeof(tmp) - 1;
+        memcpy(tmp, cwd, cwdl);
+        wpos = cwdl;
+        i = 0;
     }
-    /* Relative: prepend cwd */
-    const char *cwd = "/";
-    struct process *p = process_get_current();
-    if (p && p->cwd[0]) cwd = p->cwd;
-    int cl = (int)strlen(cwd);
-    int pl = (int)strlen(path);
-    /* Handle special components */
-    if (pl == 1 && path[0] == '.') { strncpy(out, cwd, out_max-1); out[out_max-1]='\0'; return; }
-    if (pl == 2 && path[0]=='.' && path[1]=='.') {
-        /* Go up one level */
-        strncpy(out, cwd, out_max-1); out[out_max-1]='\0';
-        int len = (int)strlen(out);
-        while (len > 1 && out[len-1] != '/') len--;
-        if (len > 1) len--; /* remove trailing slash too */
-        if (len < 1) len = 1;
-        out[len] = '\0'; return;
+
+    /* Normalize the starting path: remove trailing slash unless it's just "/" */
+    while (wpos > 1 && tmp[wpos - 1] == '/') wpos--;
+
+    /* Tokenize the input path and process each component */
+    while (path[i]) {
+        /* Skip slashes */
+        while (path[i] == '/') i++;
+        if (!path[i]) break;
+
+        /* Read the next component */
+        int comp_start = i;
+        while (path[i] && path[i] != '/') i++;
+        int comp_len = i - comp_start;
+
+        if (comp_len == 1 && path[comp_start] == '.') {
+            /* "." — skip */
+            continue;
+        }
+        if (comp_len == 2 && path[comp_start] == '.' && path[comp_start + 1] == '.') {
+            /* ".." — go up one level */
+            while (wpos > 0 && tmp[wpos - 1] != '/') wpos--;
+            if (wpos > 0) wpos--; /* remove the slash too */
+            if (wpos < 0) wpos = 0;
+            continue;
+        }
+        /* Regular component: append */
+        if (wpos > 0 && tmp[wpos - 1] != '/') {
+            if (wpos >= (int)sizeof(tmp) - 1) break;
+            tmp[wpos++] = '/';
+        } else if (wpos == 0) {
+            if (wpos >= (int)sizeof(tmp) - 1) break;
+            tmp[wpos++] = '/';
+        }
+        if (wpos + comp_len >= (int)sizeof(tmp) - 1)
+            comp_len = (int)sizeof(tmp) - 1 - wpos;
+        memcpy(tmp + wpos, path + comp_start, comp_len);
+        wpos += comp_len;
     }
-    /* Combine cwd + path */
-    if (cl + 1 + pl >= out_max) { out[0] = '/'; out[1] = '\0'; return; }
-    memcpy(out, cwd, cl);
-    if (out[cl-1] != '/') out[cl++] = '/';
-    memcpy(out + cl, path, pl + 1);
+
+    /* Ensure result is non-empty */
+    if (wpos == 0) { tmp[wpos++] = '/'; }
+    tmp[wpos] = '\0';
+
+    /* Copy to output with size limit */
+    strncpy(out, tmp, out_max - 1);
+    out[out_max - 1] = '\0';
 }
 
 /* ------------------------------------------------------------------
@@ -123,8 +164,17 @@ static struct vfs_mount *resolve(const char *path) {
     size_t best_len = 0;
     for (int i = 0; i < num_mounts; i++) {
         size_t mlen = strlen(mounts[i].mountpoint);
+        if (mlen == 0) continue;
+        /* Root mount "/" matches everything */
+        if (mlen == 1 && mounts[i].mountpoint[0] == '/') {
+            if (1 > best_len) { best = &mounts[i]; best_len = 1; }
+            continue;
+        }
         if (strncmp(path, mounts[i].mountpoint, mlen) == 0) {
-            if (mlen > best_len) { best = &mounts[i]; best_len = mlen; }
+            /* Exact match or path continues after a separator */
+            if (path[mlen] == '\0' || path[mlen] == '/') {
+                if (mlen > best_len) { best = &mounts[i]; best_len = mlen; }
+            }
         }
     }
     return best;

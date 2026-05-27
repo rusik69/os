@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "process.h"
+#include "signal.h"
 #include "io.h"
 #include "gdt.h"
 #include "vmm.h"
@@ -98,15 +99,18 @@ static struct process *dequeue_next(void) {
 void schedule(void) {
     if (!scheduler_enabled) return;
 
+    /* Disable interrupts before touching scheduler/process state to prevent
+     * the race where dequeue_next() is called but an interrupt re-enters
+     * schedule() and dequeues the same process.
+     * Also prevents the race where current_process is updated but the CPU
+     * hasn't yet switched stacks (a timer IRQ in that window sees the wrong
+     * process). */
+    __asm__ volatile("cli");
+
     struct process *current = process_get_current();
     struct process *next = dequeue_next();
 
-    if (!next) return; /* no ready processes, keep running current */
-
-    /* Disable interrupts before touching scheduler/process state to prevent
-     * the race where current_process is updated but the CPU hasn't yet
-     * switched stacks (a timer IRQ in that window sees the wrong process). */
-    __asm__ volatile("cli");
+    if (!next) { __asm__ volatile("sti"); return; }
 
     /* Put current back in its priority queue if still runnable */
     if (current->state == PROCESS_RUNNING) {
@@ -132,6 +136,9 @@ void schedule(void) {
 
     context_switch(&current->context, next->context);
     __asm__ volatile("sti");
+
+    /* Deliver any pending signals for the now-current process */
+    signal_check();
 }
 
 void scheduler_yield(void) {

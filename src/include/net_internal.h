@@ -38,6 +38,7 @@ enum tcp_state {
     TCP_ESTABLISHED,
     TCP_FIN_WAIT,
     TCP_CLOSE_WAIT,
+    TCP_TIME_WAIT,
 };
 
 struct tcp_conn {
@@ -103,5 +104,7 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
 void net_tcp_check_retransmit(void);
+uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
+                                 const void *data, uint16_t data_len);
 
 #endif
