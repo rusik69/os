@@ -271,17 +271,23 @@ static void ensure_parent_dirs(const char *path) {
     }
 }
 
-/* --- POST handler: write body to file --- */
+/* --- POST handler: write body to file (raw path, no HTTPD_ROOT_DIR) --- */
 static void handle_post(int conn_id, const char *path, const char *body, int body_len) {
-    char full_path[64];
-    httpd_build_path(path, full_path, (int)sizeof(full_path));
+    /* Strip leading / for raw fs path */
+    const char *rp = path;
+    while (*rp == '/') rp++;
+    char file_path[64];
+    file_path[0] = '/';
+    int pi = 1;
+    for (; *rp && pi < (int)sizeof(file_path) - 1; rp++) file_path[pi++] = *rp;
+    file_path[pi] = '\0';
 
-    if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+    if (my_strstr(file_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+    if (file_path[1] == '\0') { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
 
-    ensure_parent_dirs(full_path);
-    /* Create or overwrite */
-    fs_create(full_path, FS_TYPE_FILE);  /* ignore error if already exists */
-    if (fs_write_file(full_path, body, (uint32_t)body_len) < 0) {
+    ensure_parent_dirs(file_path);
+    fs_create(file_path, FS_TYPE_FILE);
+    if (fs_write_file(file_path, body, (uint32_t)body_len) < 0) {
         send_error(conn_id, 500, "Internal Server Error", "Write error"); return;
     }
     static const char created_body[] = "Created";
@@ -289,14 +295,20 @@ static void handle_post(int conn_id, const char *path, const char *body, int bod
                   sizeof(created_body)-1, created_body, sizeof(created_body)-1, 0);
 }
 
-/* --- DELETE handler --- */
+/* --- DELETE handler: remove file (raw path, no HTTPD_ROOT_DIR) --- */
 static void handle_delete(int conn_id, const char *path) {
-    char full_path[64];
-    httpd_build_path(path, full_path, (int)sizeof(full_path));
+    const char *rp = path;
+    while (*rp == '/') rp++;
+    char file_path[64];
+    file_path[0] = '/';
+    int pi = 1;
+    for (; *rp && pi < (int)sizeof(file_path) - 1; rp++) file_path[pi++] = *rp;
+    file_path[pi] = '\0';
 
-    if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+    if (my_strstr(file_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
+    if (file_path[1] == '\0') { send_error(conn_id, 400, "Bad Request", "Bad Request"); return; }
 
-    if (fs_delete(full_path) < 0) {
+    if (fs_delete(file_path) < 0) {
         send_error(conn_id, 404, "Not Found", "Not Found"); return;
     }
     static const char ok_body[] = "Deleted";
