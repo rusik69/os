@@ -255,6 +255,22 @@ static void handle_get(int conn_id, const char *path, int head_only) {
 
 /* --- Per-request state (stack-allocated in httpd_task) --- */
 
+/* Ensure all parent directories of a path exist */
+static void ensure_parent_dirs(const char *path) {
+    char buf[64];
+    int bi = 0;
+    for (int i = 0; path[i] && bi < (int)sizeof(buf) - 1; i++) {
+        if (path[i] == '/' && bi > 0) {
+            buf[bi] = '\0';
+            uint32_t sz; uint8_t tp;
+            if (fs_stat(buf, &sz, &tp) != 0 || tp != FS_TYPE_DIR) {
+                fs_create(buf, FS_TYPE_DIR);
+            }
+        }
+        buf[bi++] = path[i];
+    }
+}
+
 /* --- POST handler: write body to file --- */
 static void handle_post(int conn_id, const char *path, const char *body, int body_len) {
     char full_path[64];
@@ -262,6 +278,7 @@ static void handle_post(int conn_id, const char *path, const char *body, int bod
 
     if (my_strstr(full_path, "..")) { send_error(conn_id, 403, "Forbidden", "Forbidden"); return; }
 
+    ensure_parent_dirs(full_path);
     /* Create or overwrite */
     fs_create(full_path, FS_TYPE_FILE);  /* ignore error if already exists */
     if (fs_write_file(full_path, body, (uint32_t)body_len) < 0) {

@@ -26,5 +26,5 @@ void cmd_du(const char *args) {
 
     /* Show size in blocks (512-byte blocks) and bytes */
     uint32_t blocks = (st.size + 511) / 512;
-    kprintf("%u\t%s\n", (uint64_t)blocks, path);
+    kprintf("%u %s\n", (uint64_t)blocks, path);
 }

@@ -187,6 +187,13 @@ void cmd_awk(const char *args) {
         int i = 0;
         while (*p && *p != '\'' && i < AWK_MAX_PROG - 1) prog[i++] = *p++;
         if (*p == '\'') p++;
+    } else if (*p == '{') {
+        int i = 0, depth = 0;
+        while (*p && i < AWK_MAX_PROG - 1) {
+            if      (*p == '{') depth++;
+            else if (*p == '}') { depth--; if (depth == 0) { prog[i++] = *p++; break; } }
+            prog[i++] = *p++;
+        }
     } else {
         int i = 0;
         while (*p && *p != ' ' && i < AWK_MAX_PROG - 1) prog[i++] = *p++;

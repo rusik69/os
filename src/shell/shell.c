@@ -473,7 +473,14 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 /* ${name} — regular variable in braces */
                 if (*src == '}') src++;
                 const char *val = shell_var_get(aname);
-                while (*val && di < dst_max - 1) dst[di++] = *val++;
+                if (*val) {
+                    while (*val && di < dst_max - 1) dst[di++] = *val++;
+                } else {
+                    if (di < dst_max - 1) dst[di++] = '$';
+                    if (di < dst_max - 1) dst[di++] = '{';
+                    for (int i = 0; i < ani && di < dst_max - 1; i++) dst[di++] = aname[i];
+                    if (di < dst_max - 1) dst[di++] = '}';
+                }
                 continue;
             }
             /* $? — last exit status */
@@ -502,8 +509,14 @@ static void var_expand(const char *src, char *dst, int dst_max) {
             }
             name[ni] = '\0';
             const char *val = shell_var_get(name);
-            while (*val && di < dst_max - 1)
-                dst[di++] = *val++;
+            if (*val) {
+                while (*val && di < dst_max - 1)
+                    dst[di++] = *val++;
+            } else {
+                if (di < dst_max - 1) dst[di++] = '$';
+                for (int i = 0; i < ni && di < dst_max - 1; i++)
+                    dst[di++] = name[i];
+            }
         } else {
             dst[di++] = *src++;
         }
@@ -979,9 +992,11 @@ static void process_cmd(void) {
             /* Read existing content, append */
             uint32_t existing = 0;
             char old[4096];
-            if (vfs_read(filepath, old, 4095, &existing) == 0 && existing > 0) {
-                int total = (int)existing + redir_len;
+            if (vfs_read(filepath, old, 4093, &existing) == 0 && existing > 0) {
+                int add_nl = (old[existing-1] != '\n') ? 1 : 0;
+                int total = (int)existing + add_nl + redir_len;
                 if (total > 4095) total = 4095;
+                if (add_nl && existing < 4095) old[existing++] = '\n';
                 memcpy(old + existing, redir_buf, total - (int)existing);
                 old[total] = '\0';
                 vfs_write(filepath, old, (uint32_t)total);
