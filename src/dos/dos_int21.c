@@ -29,7 +29,9 @@
 #include "printf.h"
 #include "keyboard.h"
 #include "string.h"
+#include "vfs.h"
 #include "fs.h"
+#include "heap.h"
 
 /* Memory-access helpers defined in dos_emu.c */
 extern uint8_t  dos_read_seg_b(struct dos_cpu_state *, uint16_t, uint16_t);
@@ -221,11 +223,25 @@ void dos_handle_int21(struct dos_cpu_state *state)
 
         /* Try to read the file */
         uint32_t out_size = 0;
-        uint8_t tmp[65536];
-        int ret = fs_read_file(path, tmp, sizeof(tmp), &out_size);
+        struct vfs_stat st;
+        if (vfs_stat(path, &st) != 0) {
+            state->ax = 2; /* file not found */
+            state->flags |= DOS_FLAG_CF;
+            break;
+        }
+        uint32_t fsize = st.size;
+        if (fsize > 65536) fsize = 65536; /* cap for emulator */
+        uint8_t *fbuf = (uint8_t *)kmalloc(fsize ? fsize : 1);
+        if (!fbuf) {
+            state->ax = 8; /* insufficient memory */
+            state->flags |= DOS_FLAG_CF;
+            break;
+        }
+        int ret = vfs_read(path, fbuf, fsize, &out_size);
         if (ret == 0) {
             int h = dos_alloc_handle();
             if (h < 0) {
+                kfree(fbuf);
                 state->ax = 4; /* too many open files */
                 state->flags |= DOS_FLAG_CF;
                 break;
@@ -234,12 +250,11 @@ void dos_handle_int21(struct dos_cpu_state *state)
             dos_handles[h].size = out_size;
             dos_handles[h].mode = mode;
             dos_handles[h].position = 0;
-            if (out_size > 0) {
-                dos_handles[h].cache = tmp;
-            }
+            dos_handles[h].cache = fbuf;
             state->ax = (uint16_t)h;
             state->flags &= ~DOS_FLAG_CF;
         } else {
+            kfree(fbuf);
             state->ax = 2; /* file not found */
             state->flags |= DOS_FLAG_CF;
         }
@@ -250,6 +265,10 @@ void dos_handle_int21(struct dos_cpu_state *state)
     case 0x3E: {
         uint16_t handle = state->bx;
         if (handle >= DOS_HANDLE_START && handle < DOS_MAX_HANDLES && dos_handles[handle].in_use) {
+            if (dos_handles[handle].cache) {
+                kfree(dos_handles[handle].cache);
+                dos_handles[handle].cache = 0;
+            }
             dos_free_handle(handle);
             state->flags &= ~DOS_FLAG_CF;
         } else {

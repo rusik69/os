@@ -12,7 +12,7 @@
 #include "string.h"
 #include "printf.h"
 #include "scheduler.h"
-#include "fs.h"
+#include "vfs.h"
 
 /* ------------------------------------------------------------------ */
 /* Emulator functions defined in dos_emu.c                             */
@@ -155,7 +155,7 @@ int dos_exec(const char *path)
     uint8_t file_buf[65536];
     uint32_t file_size = 0;
 
-    if (fs_read_file(path, file_buf, sizeof(file_buf), &file_size) != 0) {
+    if (vfs_read(path, file_buf, sizeof(file_buf), &file_size) != 0) {
         kprintf("dos_exec: cannot read '%s'\n", path);
         return -1;
     }
