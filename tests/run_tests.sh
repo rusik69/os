@@ -11,7 +11,7 @@
 
 KERNEL="${1:-build_test/kernel.bin}"
 DISK="${2:-build/disk.img}"
-TIMEOUT="${TIMEOUT:-600}"
+TIMEOUT="${TIMEOUT:-240}"
 
 err() { echo "ERROR: $*" >&2; exit 2; }
 
