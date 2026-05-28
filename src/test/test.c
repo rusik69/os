@@ -689,7 +689,9 @@ static void test_dos(void) {
     kprintf("  [dos] emulator stopped, running=%d\n", (uint64_t)(uintptr_t)state.running);
 
     ASSERT("dos ran and stopped", state.running == 0);
-    ASSERT("dos exit code 0", state.ax == 0x0000);
+    /* AX should be 0x4C00: MOV AX, 0x4C00 set it, and INT 21h/AH=0x4C
+     * does not modify AX (exit code is in AL = 0x00). */
+    ASSERT("dos exit code 0", (state.ax & 0xFF) == 0x00);
     t_ok("dos minimal");
 
     /* Test INT 21h AH=0x09 (print $-terminated string at DS:DX) */
