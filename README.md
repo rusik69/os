@@ -30,6 +30,24 @@ make run-virtio
 
 Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default in CI).
 
+## Roadmap
+
+**[Process Isolation TODO](TODO.md)** — Full plan for kernel process isolation:
+- Memory isolation (remove identity map, Ring 3 page table separation, ASLR)
+- Shared memory permissions
+- Kernel stack protection
+- Syscall isolation
+- ELF loader validation
+
+**[Improvements](IMPROVEMENTS.md)** — Engineering improvements:
+- CI pipeline, test coverage, code quality, documentation
+
+## Security
+
+If running a self-hosted GitHub Actions runner, see
+[scripts/runner-hardening/](scripts/runner-hardening/) for network isolation,
+filesystem protection, and process hardening scripts.
+
 ## Features
 
 - **64-bit long mode** with Multiboot1 boot, identity-mapped first 1 GB
