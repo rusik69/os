@@ -15,9 +15,6 @@ env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_MAXSIZE: 500M
 
-# Alias for the pre-built CI image
-x-ci-image: &ci-image ghcr.io/rusik69/os-ci:latest
-
 jobs:
   # ── Security check: prevent code execution from forks ────────────────
   security-check:
@@ -37,7 +34,7 @@ jobs:
   # ── Build with -Wall -Wextra (requires approval) ─────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
-    container: *ci-image
+    container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -65,7 +62,7 @@ jobs:
   # ── Build with -Werror (requires approval) ───────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
-    container: *ci-image
+    container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -96,7 +93,7 @@ jobs:
   # ── Static analysis (requires approval) ─────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
-    container: *ci-image
+    container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -116,7 +113,7 @@ jobs:
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
-    container: *ci-image
+    container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
@@ -152,7 +149,7 @@ jobs:
   # ── E2E tests (requires approval) ───────────────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
-    container: *ci-image
+    container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
