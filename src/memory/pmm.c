@@ -141,6 +141,7 @@ uint64_t pmm_alloc_frame(void) {
 }
 
 void pmm_free_frame(uint64_t addr) {
+    if (addr & (PAGE_SIZE - 1)) return; /* misaligned address */
     uint64_t frame = addr / PAGE_SIZE;
     if (frame < total_frames && bitmap_test(frame)) {
         bitmap_clear(frame);

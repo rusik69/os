@@ -13,11 +13,14 @@ static struct sem_entry sems[SEM_MAX];
 
 int sem_init(int count) {
     for (int i = 0; i < SEM_MAX; i++) {
+        __asm__ volatile("cli");
         if (!sems[i].in_use) {
             sems[i].in_use = 1;
             sems[i].count  = count;
+            __asm__ volatile("sti");
             return i;
         }
+        __asm__ volatile("sti");
     }
     return -1;
 }
@@ -38,7 +41,10 @@ void sem_wait(int id) {
 
 void sem_post(int id) {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use) return;
-    sems[id].count++;
+    __asm__ volatile("cli");
+    if (sems[id].count < (int)0x7FFFFFFF)
+        sems[id].count++;
+    __asm__ volatile("sti");
 }
 
 void sem_destroy(int id) {
