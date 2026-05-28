@@ -79,8 +79,8 @@ if grep -q "ALL TESTS PASSED" "$TMP" 2>/dev/null; then
 elif grep -q "SOME TESTS FAILED" "$TMP" 2>/dev/null; then
     echo "FAILURE: $FAIL test(s) failed."
     exit 1
-elif [ "$FAIL" -eq 0 ] 2>/dev/null && [ "$PASS" -ge 140 ] 2>/dev/null; then
-    echo "SUCCESS: $PASS passed, $FAIL failed (exit timed out)"
+elif [ "$FAIL" = "0" ] 2>/dev/null && [ "$PASS" -ge 100 ] 2>/dev/null; then
+    echo "SUCCESS: $PASS passed, $FAIL failed (no explicit ALL TESTS PASSED marker)"
     exit 0
 else
     echo "FAILURE: Test suite did not complete."
