@@ -138,6 +138,14 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("xxd",         "Hex dump file",                                         cmd_xxd)
     CMD("yes",         "Repeatedly output a string",                            cmd_yes)
     CMD("dosbox",      "Run DOS program under emulation",                        cmd_dosbox)
+    CMD("shuf",        "Shuffle lines of a file randomly",                       cmd_shuf)
+    CMD("logname",     "Print user's login name",                               cmd_logname)
+    CMD("who",         "Show who is logged in",                                cmd_who)
+    CMD("banner",      "Print large ASCII banner (banner <text>)",                cmd_banner)
+    CMD("tsort",       "Topological sort (tsort <file>)",                        cmd_tsort)
+    CMD("join",        "Join lines of two files (join [-j N] <f1> <f2>)",        cmd_join)
+    CMD("sum",         "Checksum and count blocks (sum <file>)",                 cmd_sum)
+    CMD("unexpand",    "Convert spaces to tabs (unexpand [-t N] <file>)",         cmd_unexpand)
     { 0, 0, 0 }
 };
 

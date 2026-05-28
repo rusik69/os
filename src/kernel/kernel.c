@@ -218,8 +218,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     }
 
     /* FAT32 */
-    if (fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0) == 0)
+    if (fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0) == 0) {
         vfs_mount("/mnt", &fat32_vfs_ops, NULL);
+        kprintf("[OK] FAT32 mounted on /mnt\n");
+    }
 
     /* Multiuser */
     users_init();

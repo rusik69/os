@@ -170,4 +170,14 @@ int  shell_has_stdin(void);
 int  shell_stdin_read(char *buf, int max);
 void cmd_dosbox(const char *args);
 
+/* Phase 7 new commands */
+void cmd_shuf(const char *args);
+void cmd_logname(const char *args);
+void cmd_who(const char *args);
+void cmd_banner(const char *args);
+void cmd_tsort(const char *args);
+void cmd_join(const char *args);
+void cmd_sum(const char *args);
+void cmd_unexpand(const char *args);
+
 #endif

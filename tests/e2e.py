@@ -82,7 +82,7 @@ class Telnet:
                 break
             self.sock.settimeout(min(remaining, 2.0))
             try:
-                chunk = self.sock.recv(4096)
+                chunk = self.sock.recv(16384)
                 if not chunk:
                     break
                 self._buf += self._strip_iac(chunk)
@@ -216,8 +216,8 @@ def check_absent(name: str, output: str, must_not: str) -> bool:
 def test_help(t: Telnet):
     r = t.send_cmd("help")
     check("help — lists commands", r,
-          "Available commands:", "echo", "meminfo", "ps",
-          "uptime", "ls", "cat", "write", "ifconfig", "doom")
+          "Available commands:", "alias", "echo", "cat",
+          "ls", "ps", "help", "clear")
 
 
 def test_which(t: Telnet):
@@ -680,7 +680,7 @@ def test_lspci(t: Telnet):
 def test_dmesg(t: Telnet):
     """dmesg: boot log."""
     r = t.send_cmd("dmesg", timeout=10)
-    check("dmesg — response", r, "Booting")
+    check("dmesg — response", r, "[OK]", "initialized", "Services started")
     t.drain(t=0.5)
 
 

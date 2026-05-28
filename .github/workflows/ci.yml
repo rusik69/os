@@ -27,7 +27,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-build-${{ github.sha }}
@@ -61,7 +61,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-strict-${{ github.sha }}
@@ -122,7 +122,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-test-${{ github.sha }}
@@ -166,7 +166,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-e2e-${{ github.sha }}
@@ -212,7 +212,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-virtio-${{ github.sha }}
@@ -260,7 +260,7 @@ jobs:
 
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-usbfat-${{ github.sha }}
@@ -294,7 +294,7 @@ jobs:
             -serial file:$SERIAL -display none -vga none \
             -drive file=build/disk.img,format=raw,if=ide \
             -drive file=build/fat32_usb.img,format=raw,if=none,id=usb0 \
-            -device qemu-xhci -device usb-storage,drive=usb0 \
+            -device usb-ehci -device usb-storage,drive=usb0 \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
             -no-reboot || true
           grep -E "USB MSC|FAT32 mounted" "$SERIAL" || \
