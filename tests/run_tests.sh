@@ -62,8 +62,8 @@ echo "--- End serial output ---"
 echo ""
 
 # ── Parse results ─────────────────────────────────────────────────────────────
-PASS=$(grep -c "^\[PASS\]" "$TMP" 2>/dev/null || echo 0)
-FAIL=$(grep -c "^\[FAIL\]" "$TMP" 2>/dev/null || echo 0)
+PASS=$(grep -c "^\[PASS\]" "$TMP" 2>/dev/null || true)
+FAIL=$(grep -c "^\[FAIL\]" "$TMP" 2>/dev/null || true)
 echo "Results: $PASS passed, $FAIL failed"
 
 if [ "$FAIL" -gt 0 ] 2>/dev/null; then
@@ -79,7 +79,7 @@ if grep -q "ALL TESTS PASSED" "$TMP" 2>/dev/null; then
 elif grep -q "SOME TESTS FAILED" "$TMP" 2>/dev/null; then
     echo "FAILURE: $FAIL test(s) failed."
     exit 1
-elif [ "$FAIL" = "0" ] 2>/dev/null && [ "$PASS" -ge 100 ] 2>/dev/null; then
+elif [ "$FAIL" -eq 0 ] 2>/dev/null && [ "$PASS" -ge 100 ] 2>/dev/null; then
     echo "SUCCESS: $PASS passed, $FAIL failed (no explicit ALL TESTS PASSED marker)"
     exit 0
 else
