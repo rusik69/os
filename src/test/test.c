@@ -1177,6 +1177,170 @@ static void test_syscall(void) {
     t_ok("syscall tests");
 }
 
+/* ── Heap stress: fragmentation and OOM ────────────────────── */
+
+static void test_heap_stress(void) {
+    /* Allocate many small blocks to stress fragmentation */
+    void *ptrs[64];
+    int i;
+    for (i = 0; i < 64; i++) {
+        ptrs[i] = kmalloc(32);
+        if (!ptrs[i]) break;
+    }
+    ASSERT("heap stress alloc many", i >= 8);
+    /* Free every other block */
+    for (i = 0; i < 64; i += 2) {
+        if (ptrs[i]) kfree(ptrs[i]);
+    }
+    /* Allocate a large block — should succeed if coalescing works */
+    void *big = kmalloc(1024);
+    ASSERT("heap stress large after frag", big != NULL);
+    if (big) kfree(big);
+    /* Free remaining */
+    for (i = 1; i < 64; i += 2) {
+        if (ptrs[i]) kfree(ptrs[i]);
+    }
+    t_ok("heap stress");
+}
+
+/* ── ELF edge cases ───────────────────────────────────────────── */
+
+static void test_elf_edge(void) {
+    /* 1. Segment with p_memsz > p_filesz (BSS extension) */
+    uint8_t buf[256];
+    memset(buf, 0, sizeof(buf));
+    struct elf64_header *hdr = (struct elf64_header *)buf;
+    *(uint32_t *)hdr->e_ident = ELF_MAGIC;
+    hdr->e_ident[4] = ELF_CLASS64;
+    hdr->e_ident[5] = ELF_DATA2LSB;
+    hdr->e_ident[6] = 1;
+    hdr->e_type = ET_EXEC;
+    hdr->e_machine = EM_X86_64;
+    hdr->e_version = 1;
+    hdr->e_phoff = sizeof(struct elf64_header);
+    hdr->e_ehsize = sizeof(struct elf64_header);
+    hdr->e_phentsize = sizeof(struct elf64_phdr);
+    hdr->e_phnum = 1;
+
+    struct elf64_phdr *ph = (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+    ph->p_type = PT_LOAD;
+    ph->p_flags = 5; /* RX */
+    ph->p_offset = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
+    ph->p_vaddr = 0x100000;
+    ph->p_paddr = 0;
+    ph->p_filesz = 4;
+    ph->p_memsz = 4096 + 256; /* Much larger than filesz (BSS) */
+    ph->p_align = 0x1000;
+
+    /* Should succeed — BSS extension is normal */
+    uint64_t entry = elf_load(buf, sizeof(buf));
+    /* Note: we may not have a real frame at 0x100000 mapped */
+    /* Just verify it doesn't crash parsing; entry may be 0 if mapping fails */
+    t_ok("elf bss extension");
+
+    /* 2. Zero-length segment (p_filesz = 0, p_memsz = 0) */
+    ph->p_filesz = 0;
+    ph->p_memsz = 0;
+    ph->p_vaddr = 0x200000;
+    entry = elf_load(buf, sizeof(buf));
+    t_ok("elf zero-length segment");
+
+    /* 3. Segment wrapping vaddr (vaddr + memsz overflow) */
+    ph->p_filesz = 16;
+    ph->p_memsz = 16;
+    ph->p_vaddr = 0xFFFFFFFFFFFFF000ULL; /* Near top of address space */
+    entry = elf_load(buf, sizeof(buf));
+    /* Should return 0 (safety check prevents mapping) */
+    ASSERT_EQ("elf vaddr overflow reject", entry, 0);
+
+    t_ok("elf edge cases");
+}
+
+/* ── VMM page allocation and mapping tests ──────────────────── */
+
+static void test_vmm_alloc(void) {
+    /* Allocate a physical frame and map it into the virtual address space */
+    uint64_t frame = pmm_alloc_frame();
+    ASSERT("vmm alloc frame", frame != 0 && frame != ~0ULL);
+    if (!frame || frame == ~0ULL) {
+        t_ok("vmm alloc SKIP (no memory)");
+        return;
+    }
+
+    /* Map the frame at a test virtual address */
+    uint64_t test_vaddr = 0x70000000ULL; /* High enough to not conflict */
+    int map_ret = vmm_map_page(test_vaddr, frame, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    ASSERT("vmm map page", map_ret == 0);
+
+    /* Write to the page and read back */
+    volatile uint8_t *test_page = (volatile uint8_t *)(uintptr_t)test_vaddr;
+    test_page[0] = 0xAB;
+    test_page[1] = 0xCD;
+    test_page[4095] = 0xEF; /* Last byte in page */
+    ASSERT("vmm write-read", test_page[0] == 0xAB);
+    ASSERT("vmm write-read2", test_page[1] == 0xCD);
+    ASSERT("vmm write-read last", test_page[4095] == 0xEF);
+
+    /* Verify physical address resolves correctly */
+    uint64_t resolved = vmm_get_physaddr(test_vaddr);
+    ASSERT("vmm get_physaddr mapped", resolved == frame);
+
+    /* Unmap the page */
+    int unmap_ret = vmm_unmap_page(test_vaddr);
+    ASSERT("vmm unmap page", unmap_ret == 0);
+
+    /* After unmapping, get_physaddr should return 0 or error */
+    uint64_t after_unmap = vmm_get_physaddr(test_vaddr);
+    ASSERT("vmm get_physaddr after unmap", after_unmap == 0 || after_unmap == ~0ULL);
+
+    /* Free the frame */
+    pmm_free_frame(frame);
+    t_ok("vmm alloc tests");
+}
+
+/* ── Pipe edge cases ─────────────────────────────────────────── */
+
+static void test_pipe_edge(void) {
+    /* Create a pipe */
+    int pipe_fds[2];
+    int ret = pipe_create(pipe_fds);
+    ASSERT("pipe edge create", ret == 0);
+    if (ret != 0) return;
+
+    /* Write a small amount and verify available */
+    const char *msg = "Hello!";
+    int written = pipe_write(pipe_fds[1], msg, 6);
+    ASSERT_EQ("pipe edge write 6", written, 6);
+
+    int avail = pipe_available(pipe_fds[0]);
+    ASSERT("pipe edge avail > 0", avail > 0);
+
+    /* Read it back */
+    char buf[16];
+    int rd = pipe_read(pipe_fds[0], buf, sizeof(buf));
+    ASSERT("pipe edge read", rd == 6);
+    ASSERT("pipe edge content", buf[0] == 'H' && buf[5] == '!');
+
+    /* Write in chunks to test partial read */
+    written = 0;
+    while (written < 256) {
+        int n = pipe_write(pipe_fds[1], "abcdefghij", 10);
+        if (n <= 0) break;
+        written += n;
+    }
+    ASSERT("pipe edge write many", written > 0);
+
+    /* Read partial */
+    char small[4];
+    rd = pipe_read(pipe_fds[0], small, 4);
+    ASSERT_EQ("pipe edge partial read", rd, 4);
+
+    /* Close and verify cleanup */
+    pipe_close_write(pipe_fds[1]);
+    pipe_close_read(pipe_fds[0]);
+    t_ok("pipe edge tests");
+}
+
 /* ── Master runner ───────────────────────────────────────────── */
 
 void test_run_all(void) {
@@ -1188,6 +1352,7 @@ void test_run_all(void) {
     test_string();
     test_memory();
     test_heap_ext();
+    test_heap_stress();
     test_timer();
     test_rtc();
     test_process();
@@ -1195,13 +1360,16 @@ void test_run_all(void) {
     test_filesystem();
     test_vfs();
     test_pipe();
+    test_pipe_edge();
     test_speaker();
     test_mouse();
     test_signal();
     test_network();
     test_udp_binding();
     test_elf();
+    test_elf_edge();
     test_vmm();
+    test_vmm_alloc();
     test_tcp();
     test_procfs();
     test_fork();

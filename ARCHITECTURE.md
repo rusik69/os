@@ -389,3 +389,10 @@ os/
 ├── ARCHITECTURE.md            This file
 └── linker.ld                  Linker script
 ```
+
+
+## Architecture Diagram
+
+An interactive SVG architecture diagram is available at
+[docs/architecture-diagram.html](docs/architecture-diagram.html).
+Open it in any browser to explore the system layout.
