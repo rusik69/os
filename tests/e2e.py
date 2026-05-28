@@ -679,7 +679,8 @@ def test_lspci(t: Telnet):
 
 def test_dmesg(t: Telnet):
     """dmesg: boot log."""
-    r = t.send_cmd("dmesg", timeout=10)
+    t.drain(t=0.5)
+    r = t.send_cmd("dmesg")
     check("dmesg — response", r, "[OK]", "initialized", "Services started")
     t.drain(t=0.5)
 
