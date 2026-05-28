@@ -113,6 +113,7 @@ static int should_exec(void) {
 
 /* Advance *pp past lines until we exit an if/else/endif block at depth 1.
  * Returns pointer after the matching endif line.  */
+static const char *scan_to_endif(const char *p) __attribute__((unused));
 static const char *scan_to_endif(const char *p) {
     int depth = 1;
     char line[SCRIPT_MAX_LINE];

@@ -673,7 +673,7 @@ static void test_elf(void) {
     ASSERT_EQ("elf bad magic", elf_load(bad, sizeof(bad)), 0);
 
     /* 2. Wrong architecture → returns 0 */
-    uint8_t wrong[64];
+    uint8_t wrong[128];
     memset(wrong, 0, sizeof(wrong));
     *(uint32_t *)wrong = ELF_MAGIC;
     wrong[4] = ELF_CLASS64;
@@ -1156,7 +1156,7 @@ static void test_syscall(void) {
     /* SYS_UPTIME — should return non-zero ticks */
     {
         uint64_t uptime = syscall_dispatch(SYS_UPTIME, 0, 0, 0, 0, 0);
-        ASSERT("syscall uptime >= 0", uptime >= 0);
+        ASSERT("syscall uptime > 0", uptime > 0);
         t_ok("syscall uptime");
     }
 
