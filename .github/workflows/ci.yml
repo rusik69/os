@@ -4,8 +4,6 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
-  pull_request:
-    branches: [main, master]
 
 env:
   CCACHE_DIR: /tmp/ccache
@@ -57,8 +55,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            gcc-x86_64-linux-gnu \
-            binutils-x86_64-linux-gnu \
+            gcc-x86-64-linux-gnu \
+            binutils-x86-64-linux-gnu \
             nasm ccache
 
       - name: ccache cache
@@ -248,7 +246,7 @@ jobs:
   usb-fat-smoke:
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master'))
+    if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
     steps:
       - uses: actions/checkout@v6
 
@@ -348,7 +346,7 @@ jobs:
           mkdir -p build
           dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
