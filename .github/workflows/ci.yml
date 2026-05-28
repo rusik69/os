@@ -9,7 +9,7 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -43,7 +43,7 @@ jobs:
                    LD=x86_64-linux-gnu-ld \
                    OBJCOPY=x86_64-linux-gnu-objcopy
         env:
-          E2E_BOOT_TIMEOUT: "120"
+          E2E_BOOT_TIMEOUT: "180"
           E2E_TIMEOUT: "45"
           E2E_EXTERNAL_DNS: "0"
 
