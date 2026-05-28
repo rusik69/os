@@ -33,6 +33,42 @@
 #include "fs.h"
 #include "heap.h"
 
+/* ── DOS path → VFS path translation ─────────────────────────────────────── */
+/* Converts "C:\PATH\FILE" -> "/mnt/path/file", handles backslashes, drive
+ * letters, and uppercase.  The output buffer must be at least 256 bytes. */
+static void dos_path_to_vfs(const char *dos, char *vfs, int vfs_max) {
+    int vi = 0;
+    /* Skip leading drive letter (e.g., "C:" or "c:") */
+    if (dos[0] && dos[1] == ':') dos += 2;
+
+    /* Determine mount root: paths with a leading separator go to /mnt,
+     * otherwise we try /mnt/ as well (DOS C: drive convention). */
+    if (vi < vfs_max - 1) vfs[vi++] = '/';
+    if (vi < vfs_max - 1) vfs[vi++] = 'm';
+    if (vi < vfs_max - 1) vfs[vi++] = 'n';
+    if (vi < vfs_max - 1) vfs[vi++] = 't';
+
+    /* Copy and translate the rest */
+    while (*dos && vi < vfs_max - 1) {
+        char c = *dos++;
+        if (c == '\\') c = '/';
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32); /* lowercase */
+        vfs[vi++] = c;
+    }
+    vfs[vi] = '\0';
+
+    /* Collapse double slashes (from "C:\" -> "/mnt/") */
+    char *dst = vfs;
+    for (char *src = vfs; *src; src++) {
+        *dst = *src;
+        if (*src == '/') {
+            while (src[1] == '/') src++;
+        }
+        dst++;
+    }
+    *dst = '\0';
+}
+
 /* Memory-access helpers defined in dos_emu.c */
 extern uint8_t  dos_read_seg_b(struct dos_cpu_state *, uint16_t, uint16_t);
 extern uint16_t dos_read_seg_w(struct dos_cpu_state *, uint16_t, uint16_t);
@@ -210,14 +246,18 @@ void dos_handle_int21(struct dos_cpu_state *state)
     /* 0x3D – open file */
     case 0x3D: {
         uint16_t off = state->dx;
-        char path[256];
+        char dos_path[256];
         int i;
         for (i = 0; i < 255; i++) {
             uint8_t c = dos_read_seg_b(state, state->ds, off + i);
-            path[i] = (char)c;
+            dos_path[i] = (char)c;
             if (c == 0) break;
         }
-        path[i] = 0;
+        dos_path[i] = 0;
+
+        /* Translate DOS path to VFS path */
+        char path[256];
+        dos_path_to_vfs(dos_path, path, sizeof(path));
 
         uint8_t mode = (uint8_t)(state->ax & 0xFF);
 
