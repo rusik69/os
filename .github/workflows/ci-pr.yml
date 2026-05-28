@@ -15,33 +15,8 @@ env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_MAXSIZE: 500M
 
-# YAML anchors for common step patterns
-x-ccache: &ccache
-  name: ccache cache
-  continue-on-error: true
-  uses: actions/cache@v5
-
-x-checkout: &checkout
-  uses: actions/checkout@v6
-
-x-build-kernel: &build-kernel
-  name: Build kernel
-  run: |
-    make all \
-      CC="ccache x86_64-linux-gnu-gcc" \
-      LD=x86_64-linux-gnu-ld \
-      OBJCOPY=x86_64-linux-gnu-objcopy \
-      -j$(nproc)
-
-x-disk-image: &disk-image
-  name: Create disk image
-  run: |
-    mkdir -p build
-    dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
-# Base CI image with all tools pre-installed
-x-ci-container: &ci-container
-  container: ghcr.io/rusik69/os-ci:latest
+# Alias for the pre-built CI image
+x-ci-image: &ci-image ghcr.io/rusik69/os-ci:latest
 
 jobs:
   # ── Security check: prevent code execution from forks ────────────────
@@ -62,35 +37,45 @@ jobs:
   # ── Build with -Wall -Wextra (requires approval) ─────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     needs: [security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-build-${{ github.event.pull_request.head.sha }}
           restore-keys: ccache-build-
-      - *build-kernel
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
       - name: Check binary
         run: ls -lh build/kernel.bin
 
   # ── Build with -Werror (requires approval) ───────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     needs: [security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-strict-${{ github.event.pull_request.head.sha }}
@@ -111,14 +96,14 @@ jobs:
   # ── Static analysis (requires approval) ─────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     needs: [security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
     steps:
-      - *checkout
+      - uses: actions/checkout@v6
       - name: Run cppcheck
         run: |
           cppcheck --enable=all --suppress=missingIncludeSystem \
@@ -131,15 +116,17 @@ jobs:
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-test-${{ github.event.pull_request.head.sha }}
@@ -151,7 +138,10 @@ jobs:
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy \
             -j$(nproc)
-      - *disk-image
+      - name: Create disk image
+        run: |
+          mkdir -p build
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Run unit tests
         run: |
           chmod +x tests/run_tests.sh
@@ -162,21 +152,32 @@ jobs:
   # ── E2E tests (requires approval) ───────────────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-e2e-${{ github.event.pull_request.head.sha }}
           restore-keys: ccache-e2e-
-      - *build-kernel
-      - *disk-image
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
+      - name: Create disk image
+        run: |
+          mkdir -p build
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Run E2E tests
         run: |
           chmod +x tests/e2e.sh tests/e2e.py
@@ -192,7 +193,7 @@ jobs:
     timeout-minutes: 5
     needs: [security-check]
     steps:
-      - *checkout
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: |
           sudo apt-get update

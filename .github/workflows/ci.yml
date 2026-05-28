@@ -9,68 +9,44 @@ env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_MAXSIZE: 500M
 
-# YAML anchors for common step patterns
-x-ccache: &ccache
-  name: ccache cache
-  continue-on-error: true
-  uses: actions/cache@v5
-
-x-checkout: &checkout
-  uses: actions/checkout@v6
-
-x-build-kernel: &build-kernel
-  name: Build kernel
-  run: |
-    make all \
-      CC="ccache x86_64-linux-gnu-gcc" \
-      LD=x86_64-linux-gnu-ld \
-      OBJCOPY=x86_64-linux-gnu-objcopy \
-      -j$(nproc)
-
-x-build-test-kernel: &build-test-kernel
-  name: Build test kernel
-  run: |
-    make test-kernel \
-      CC="ccache x86_64-linux-gnu-gcc" \
-      LD=x86_64-linux-gnu-ld \
-      OBJCOPY=x86_64-linux-gnu-objcopy \
-      -j$(nproc)
-
-x-disk-image: &disk-image
-  name: Create disk image
-  run: |
-    mkdir -p build
-    dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
-# Base CI image with all tools pre-installed
-x-ci-container: &ci-container
-  container: ghcr.io/rusik69/os-ci:latest
+# Alias for the pre-built CI image
+x-ci-image: &ci-image ghcr.io/rusik69/os-ci:latest
 
 jobs:
   # ── Build with -Wall -Wextra (baseline) ──────────────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-build-${{ github.sha }}
           restore-keys: ccache-build-
-      - *build-kernel
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
       - name: Check binary
         run: ls -lh build/kernel.bin
 
   # ── Build with -Werror (strict mode) ─────────────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-strict-${{ github.sha }}
@@ -91,10 +67,10 @@ jobs:
   # ── Static analysis (cppcheck) ───────────────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     steps:
-      - *checkout
+      - uses: actions/checkout@v6
       - name: Run cppcheck
         run: |
           cppcheck --enable=all --suppress=missingIncludeSystem \
@@ -107,18 +83,29 @@ jobs:
   # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 15
     needs: [build]
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-test-${{ github.sha }}
           restore-keys: ccache-test-
-      - *build-test-kernel
-      - *disk-image
+      - name: Build test kernel
+        run: |
+          make test-kernel \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
+      - name: Create disk image
+        run: |
+          mkdir -p build
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Run unit tests
         run: |
           chmod +x tests/run_tests.sh
@@ -129,18 +116,29 @@ jobs:
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 15
     needs: [build]
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-e2e-${{ github.sha }}
           restore-keys: ccache-e2e-
-      - *build-kernel
-      - *disk-image
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
+      - name: Create disk image
+        run: |
+          mkdir -p build
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Run E2E tests
         run: |
           chmod +x tests/e2e.sh tests/e2e.py
@@ -153,17 +151,25 @@ jobs:
   # ── virtio-net smoke test ────────────────────────────────────────────
   virtio-net-smoke:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     needs: [build]
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-virtio-${{ github.sha }}
           restore-keys: ccache-virtio-
-      - *build-kernel
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
       - name: Create disk image
         run: dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Boot with virtio-net and check serial markers
@@ -182,17 +188,25 @@ jobs:
   # ── USB + FAT32 smoke test ───────────────────────────────────────────
   usb-fat-smoke:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-usbfat-${{ github.sha }}
           restore-keys: ccache-usbfat-
-      - *build-kernel
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
       - name: Create disk images
         run: |
           mkdir -p build
@@ -220,7 +234,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - *checkout
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -233,18 +247,29 @@ jobs:
   # ── Release (tag pushes only) ────────────────────────────────────────
   release:
     runs-on: [self-hosted, linux, x64]
-    <<: *ci-container
+    container: *ci-image
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - *checkout
-      - <<: *ccache
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-release-${{ github.sha }}
           restore-keys: ccache-release-
-      - *build-kernel
-      - *disk-image
+      - name: Build kernel
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
+      - name: Create disk image
+        run: |
+          mkdir -p build
+          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
