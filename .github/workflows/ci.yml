@@ -43,7 +43,7 @@ jobs:
             -j$(nproc)
 
       - name: Check binary
-        run: ls -lh build/kernel.bin && file build/kernel.bin
+        run: ls -lh build/kernel.bin
 
   # ── Build with -Werror (strict mode) ─────────────────────────────────
   build-strict:
@@ -263,7 +263,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
-            nasm ccache make binutils qemu-system-x86 dosfstools
+            nasm ccache make binutils qemu-system-x86 dosfstools mtools
 
       - name: ccache cache
         continue-on-error: true
@@ -287,11 +287,8 @@ jobs:
           dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
           dd if=/dev/zero of=build/fat32_usb.img bs=4M count=1 2>/dev/null
           mkfs.vfat -F 32 build/fat32_usb.img
-          echo smoke > /tmp/mnt_$$.txt
-          sudo mkdir -p /tmp/fatmnt
-          sudo mount -o loop build/fat32_usb.img /tmp/fatmnt
-          sudo cp /tmp/mnt_$$.txt /tmp/fatmnt/smoke.txt
-          sudo umount /tmp/fatmnt
+          echo smoke > /tmp/mnt_smoke.txt
+          mcopy -i build/fat32_usb.img /tmp/mnt_smoke.txt ::smoke.txt
 
       - name: QEMU USB FAT smoke
         run: |
@@ -318,7 +315,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends gcc make binutils
+          apt-get install -y --no-install-recommends gcc libc6-dev make binutils
 
       - name: Build and run host-side libc tests
         run: |

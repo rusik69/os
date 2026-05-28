@@ -68,7 +68,7 @@ jobs:
             -j$(nproc)
 
       - name: Check binary
-        run: ls -lh build/kernel.bin && file build/kernel.bin
+        run: ls -lh build/kernel.bin
 
   # ── Build with -Werror (requires approval) ───────────────────────────
   build-strict:

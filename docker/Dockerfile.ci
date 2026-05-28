@@ -17,8 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Analysis
     cppcheck \
     dosfstools \
+    mtools \
     # E2E tests
     python3 \
+    # Native gcc for host-side libc tests
+    gcc \
+    libc6-dev \
     # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
