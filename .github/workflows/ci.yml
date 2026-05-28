@@ -28,6 +28,7 @@ jobs:
             nasm ccache
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -61,6 +62,7 @@ jobs:
             nasm ccache
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -121,6 +123,7 @@ jobs:
             nasm ccache qemu-system-x86
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -164,6 +167,7 @@ jobs:
             nasm ccache qemu-system-x86 python3
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -209,6 +213,7 @@ jobs:
             nasm ccache qemu-system-x86
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -256,6 +261,7 @@ jobs:
             nasm ccache qemu-system-x86 dosfstools
 
       - name: ccache cache
+        continue-on-error: true
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
