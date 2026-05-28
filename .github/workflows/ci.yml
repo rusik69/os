@@ -9,66 +9,72 @@ env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_MAXSIZE: 500M
 
+# YAML anchors for common step patterns
+x-ccache: &ccache
+  name: ccache cache
+  continue-on-error: true
+  uses: actions/cache@v5
+
+x-checkout: &checkout
+  uses: actions/checkout@v6
+
+x-build-kernel: &build-kernel
+  name: Build kernel
+  run: |
+    make all \
+      CC="ccache x86_64-linux-gnu-gcc" \
+      LD=x86_64-linux-gnu-ld \
+      OBJCOPY=x86_64-linux-gnu-objcopy \
+      -j$(nproc)
+
+x-build-test-kernel: &build-test-kernel
+  name: Build test kernel
+  run: |
+    make test-kernel \
+      CC="ccache x86_64-linux-gnu-gcc" \
+      LD=x86_64-linux-gnu-ld \
+      OBJCOPY=x86_64-linux-gnu-objcopy \
+      -j$(nproc)
+
+x-disk-image: &disk-image
+  name: Create disk image
+  run: |
+    mkdir -p build
+    dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
+
+# Base CI image with all tools pre-installed
+x-ci-container: &ci-container
+  container: ghcr.io/rusik69/os-ci:latest
+
 jobs:
   # ── Build with -Wall -Wextra (baseline) ──────────────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-build-${{ github.sha }}
           restore-keys: ccache-build-
-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
+      - *build-kernel
       - name: Check binary
         run: ls -lh build/kernel.bin
 
   # ── Build with -Werror (strict mode) ─────────────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-strict-${{ github.sha }}
           restore-keys: ccache-strict-
-
       - name: Build kernel with -Werror
         run: |
           make all \
@@ -85,16 +91,10 @@ jobs:
   # ── Static analysis (cppcheck) ───────────────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends cppcheck
-
+      - *checkout
       - name: Run cppcheck
         run: |
           cppcheck --enable=all --suppress=missingIncludeSystem \
@@ -103,48 +103,22 @@ jobs:
             --inline-suppr \
             --error-exitcode=1 \
             src/ 2>&1 || true
-        # Note: || true because cppcheck on freestanding kernel code
-        # will flag things like implicit function declarations that
-        # are intentional. This is informational for now.
 
   # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 15
     needs: [build]
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils qemu-system-x86
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-test-${{ github.sha }}
           restore-keys: ccache-test-
-
-      - name: Build test kernel
-        run: |
-          make test-kernel \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
+      - *build-test-kernel
+      - *disk-image
       - name: Run unit tests
         run: |
           chmod +x tests/run_tests.sh
@@ -155,41 +129,18 @@ jobs:
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 15
     needs: [build]
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils qemu-system-x86 python3
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-e2e-${{ github.sha }}
           restore-keys: ccache-e2e-
-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
+      - *build-kernel
+      - *disk-image
       - name: Run E2E tests
         run: |
           chmod +x tests/e2e.sh tests/e2e.py
@@ -202,39 +153,19 @@ jobs:
   # ── virtio-net smoke test ────────────────────────────────────────────
   virtio-net-smoke:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     needs: [build]
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils qemu-system-x86
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-virtio-${{ github.sha }}
           restore-keys: ccache-virtio-
-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
+      - *build-kernel
       - name: Create disk image
         run: dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
       - name: Boot with virtio-net and check serial markers
         run: |
           SERIAL=$(mktemp)
@@ -251,36 +182,17 @@ jobs:
   # ── USB + FAT32 smoke test ───────────────────────────────────────────
   usb-fat-smoke:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils qemu-system-x86 dosfstools mtools
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
+      - *checkout
+      - <<: *ccache
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-usbfat-${{ github.sha }}
           restore-keys: ccache-usbfat-
-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
+      - *build-kernel
       - name: Create disk images
         run: |
           mkdir -p build
@@ -289,7 +201,6 @@ jobs:
           mkfs.vfat -F 32 build/fat32_usb.img
           echo smoke > /tmp/mnt_smoke.txt
           mcopy -i build/fat32_usb.img /tmp/mnt_smoke.txt ::smoke.txt
-
       - name: QEMU USB FAT smoke
         run: |
           SERIAL=$(mktemp)
@@ -306,17 +217,14 @@ jobs:
 
   # ── Host-side libc unit tests ────────────────────────────────────────
   libc-test:
-    runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-
+      - *checkout
       - name: Install dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends gcc libc6-dev make binutils
-
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev make binutils
       - name: Build and run host-side libc tests
         run: |
           cd tests/host_libc
@@ -325,33 +233,18 @@ jobs:
   # ── Release (tag pushes only) ────────────────────────────────────────
   release:
     runs-on: [self-hosted, linux, x64]
-    container: ubuntu:24.04
+    <<: *ci-container
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            nasm ccache make binutils
-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-
+      - *checkout
+      - <<: *ccache
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ github.sha }}
+          restore-keys: ccache-release-
+      - *build-kernel
+      - *disk-image
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

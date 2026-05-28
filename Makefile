@@ -130,7 +130,7 @@ all:
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check-app-boundary doom-test format lint
+        check-app-boundary doom-test format lint ccache-stats count build-info
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -296,3 +296,30 @@ lint:
 
 deps:
 	brew install x86_64-elf-gcc nasm qemu xorriso
+
+# ── Build info & stats ─────────────────────────────────────────────────
+
+build-info:
+	@echo "=== Build Info ==="
+	@echo "Kernel size: $$(ls -lh $(BUILDDIR)/kernel.bin 2>/dev/null | awk '{print $$5}')"
+	@echo "Object count: $$(find $(BUILDDIR) -name '*.o' 2>/dev/null | wc -l)"
+	@echo "Source files: $$(find src -name '*.c' -o -name '*.asm' -o -name '*.h' | wc -l)"
+	@echo "Total LOC: $$(find src -name '*.c' -o -name '*.asm' -o -name '*.h' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}')"
+
+# ── Source code line count ─────────────────────────────────────────────
+
+count:
+	@echo "=== Source Code Statistics ==="
+	@echo "  C sources:  $$(find src -name '*.c' | wc -l) files, $$(find src -name '*.c' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}') lines"
+	@echo "  Assembly:   $$(find src -name '*.asm' | wc -l) files, $$(find src -name '*.asm' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}') lines"
+	@echo "  Headers:    $$(find src -name '*.h' | wc -l) files, $$(find src -name '*.h' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}') lines"
+	@echo "  Tests:      $$(find tests -name '*.c' -o -name '*.sh' -o -name '*.py' | wc -l) files"
+
+# ── ccache statistics ──────────────────────────────────────────────────
+
+ccache-stats:
+	@if command -v ccache >/dev/null 2>&1; then \
+		ccache --show-stats; \
+	else \
+		echo "ccache not installed."; \
+	fi
