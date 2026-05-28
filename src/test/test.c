@@ -691,6 +691,33 @@ static void test_dos(void) {
     ASSERT("dos ran and stopped", state.running == 0);
     ASSERT("dos exit code 0", state.ax == 0x0000);
     t_ok("dos minimal");
+
+    /* Test INT 21h AH=0x09 (print $-terminated string at DS:DX) */
+    struct dos_cpu_state state2;
+    dos_emu_init(&state2);
+    /* MOV AH, 0x09; MOV DX, 0x0200; INT 0x21; MOV AX, 0x4C00; INT 0x21 */
+    uint8_t com2[] = { 0xB4, 0x09, 0xBA, 0x00, 0x02, 0xCD, 0x21,
+                       0xB8, 0x00, 0x4C, 0xCD, 0x21 };
+    ret = dos_load_com(&state2, com2, sizeof(com2));
+    ASSERT("dos2 load", ret == 0);
+    /* Put '$'-terminated string at offset 0x200 */
+    const char *msg = "Hello from DOS!$";
+    for (int i = 0; msg[i]; i++)
+        state2.memory[0x200 + i] = (uint8_t)msg[i];
+    dos_emu_run(&state2);
+    ASSERT("dos2 stopped", state2.running == 0);
+    t_ok("dos print string");
+
+    /* Test instruction limit: program that loops forever should be stopped */
+    struct dos_cpu_state state3;
+    dos_emu_init(&state3);
+    /* JMP short -2 (infinite loop: 0xEB 0xFE) */
+    uint8_t com3[] = { 0xEB, 0xFE };
+    ret = dos_load_com(&state3, com3, sizeof(com3));
+    ASSERT("dos3 load", ret == 0);
+    dos_emu_run(&state3);
+    ASSERT("dos3 limit stopped", state3.running == 0);
+    t_ok("dos instruction limit");
 }
 
 /* ── Master runner ───────────────────────────────────────────── */
