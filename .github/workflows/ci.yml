@@ -14,7 +14,7 @@ env:
 jobs:
   # ── Build with -Wall -Wextra (baseline) ──────────────────────────────
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -47,7 +47,7 @@ jobs:
 
   # ── Build with -Werror (strict mode) ─────────────────────────────────
   build-strict:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -82,7 +82,7 @@ jobs:
 
   # ── Static analysis (cppcheck) ───────────────────────────────────────
   static-analysis:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -106,7 +106,7 @@ jobs:
 
   # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     needs: [build]
     steps:
@@ -149,7 +149,7 @@ jobs:
 
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 15
     needs: [build]
     steps:
@@ -194,7 +194,7 @@ jobs:
 
   # ── virtio-net smoke test ────────────────────────────────────────────
   virtio-net-smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     needs: [build]
     steps:
@@ -241,7 +241,7 @@ jobs:
 
   # ── USB + FAT32 smoke test ───────────────────────────────────────────
   usb-fat-smoke:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master'))
     steps:
@@ -298,7 +298,7 @@ jobs:
 
   # ── Host-side libc unit tests ────────────────────────────────────────
   libc-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
@@ -315,7 +315,7 @@ jobs:
 
   # ── Release (tag pushes only) ────────────────────────────────────────
   release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
