@@ -1837,6 +1837,7 @@ def main() -> int:
 
     # Run all test groups
     tests = [
+        ("dmesg",      test_dmesg),
         ("help",       test_help),
         ("which",      test_which),
         ("echo",       test_echo),
@@ -1877,7 +1878,6 @@ def main() -> int:
         ("route",      test_route),
         ("uname",      test_uname),
         ("lspci",      test_lspci),
-        ("dmesg",      test_dmesg),
         ("sort",       test_sort),
         ("find",       test_find),
         ("calc",       test_calc),

@@ -24,8 +24,8 @@ void kprintf_flush(void) {
     if (flush_hook) flush_hook(flush_hook_ctx);
 }
 
-/* dmesg ring buffer: 16 KB, always captures every character */
-#define DMESG_BUF_SIZE 16384
+/* dmesg ring buffer: 64 KB, always captures every character */
+#define DMESG_BUF_SIZE 65536
 static char dmesg_buf[DMESG_BUF_SIZE];
 static int  dmesg_pos = 0;          /* next write position (wraps) */
 static int  dmesg_full = 0;         /* 1 once the buffer has wrapped */
