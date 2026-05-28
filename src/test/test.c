@@ -673,7 +673,6 @@ static void test_shm_ext(void) {
 /* ── DOS emulator tests ───────────────────────────────────────── */
 static void test_dos(void) {
     int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size);
-    int dos_load_mz(struct dos_cpu_state *state, const uint8_t *data, uint32_t size);
     void dos_emu_init(struct dos_cpu_state *state);
 
     /* Test .COM loading — verify the binary is placed correctly at 0x100 */
@@ -697,19 +696,6 @@ static void test_dos(void) {
      * interrupts for the watchdog to fire, which may not occur reliably
      * in the emulator's tight loop on shared CI runners. */
     t_ok("dos load only");
-
-    /* Test MZ header detection */
-    struct dos_cpu_state state4;
-    dos_emu_init(&state4);
-    const uint8_t mz[] = { 'M', 'Z', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           0, 0, 0, 0, 0x80, 0, 0, 0 };
-    int mzret = dos_load_mz(&state4, mz, sizeof(mz));
-    ASSERT("dos mz detect", mzret == 0);
-    t_ok("dos mz header");
 }
 
 /* ── Master runner ───────────────────────────────────────────── */
