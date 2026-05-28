@@ -1,0 +1,51 @@
+# GitHub Actions Runner container image
+# Runs the runner agent inside Docker so the host stays clean.
+FROM ubuntu:24.04
+
+ARG RUNNER_VERSION=2.334.0
+ARG DOCKER_COMPOSE_VERSION=v2.34.0
+
+# Install dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    jq \
+    git \
+    docker.io \
+    libicu-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create runner user (uid 1001; 1000 is taken by ubuntu user in base image)
+RUN adduser --disabled-password --gecos "" --uid 1001 runner && \
+    usermod -aG docker runner
+
+USER runner
+WORKDIR /home/runner
+
+# Download and install the runner
+RUN curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" \
+    -o actions-runner.tar.gz && \
+    tar xzf actions-runner.tar.gz && \
+    rm actions-runner.tar.gz
+
+# Runner config/credentials live in a mounted volume
+VOLUME /home/runner/config
+
+# Entrypoint: symlink credentials, then start runner
+COPY --chmod=0755 <<'ENTRYPOINT' /home/runner/entrypoint.sh
+#!/bin/bash
+set -euo pipefail
+
+# Restore runner configuration from the config volume
+CONFIG_DIR=/home/runner/config
+if [ -f "$CONFIG_DIR/.runner" ] && [ -f "$CONFIG_DIR/.credentials" ]; then
+    ln -sf "$CONFIG_DIR/.runner" .runner
+    ln -sf "$CONFIG_DIR/.credentials" .credentials
+    ln -sf "$CONFIG_DIR/.credentials_rsaparams" .credentials_rsaparams 2>/dev/null || true
+fi
+
+# Start the runner
+exec ./run.sh "$@"
+ENTRYPOINT
+
+ENTRYPOINT ["/home/runner/entrypoint.sh"]
