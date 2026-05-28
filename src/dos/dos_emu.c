@@ -22,6 +22,7 @@
 #include "string.h"
 #include "scheduler.h"
 #include "printf.h"
+#include "timer.h"
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                */
@@ -427,6 +428,7 @@ void dos_emu_run(struct dos_cpu_state *state)
     state->running = 1;
     int insn_count = 0;
     int total_insns = 0;
+    uint64_t start_tick = timer_get_ticks();
 
     while (state->running) {
         uint8_t rep_prefix = 0;
@@ -1865,6 +1867,10 @@ void dos_emu_run(struct dos_cpu_state *state)
         }
         /* Hard limit to prevent hangs in case of emulation bugs */
         if (total_insns >= 1000000) {
+            state->running = 0;
+        }
+        /* Time-based limit: 3 seconds real time (300 ticks at 100 Hz) */
+        if ((timer_get_ticks() - start_tick) > 300) {
             state->running = 0;
         }
     }
