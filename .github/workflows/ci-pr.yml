@@ -34,6 +34,7 @@ jobs:
   # ── Build with -Wall -Wextra (requires approval) ─────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -44,8 +45,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache
@@ -72,6 +73,7 @@ jobs:
   # ── Build with -Werror (requires approval) ───────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -82,8 +84,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache
@@ -112,6 +114,7 @@ jobs:
   # ── Static analysis (requires approval) ─────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     needs: [security-check]
     environment:
@@ -122,8 +125,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cppcheck
+          apt-get update
+          apt-get install -y --no-install-recommends cppcheck
 
       - name: Run cppcheck
         run: |
@@ -137,6 +140,7 @@ jobs:
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
@@ -147,8 +151,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86
@@ -184,6 +188,7 @@ jobs:
   # ── E2E tests (requires approval) ───────────────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 15
     needs: [build, security-check]
     environment:
@@ -194,8 +199,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86 python3

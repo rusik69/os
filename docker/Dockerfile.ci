@@ -1,0 +1,26 @@
+# CI Builder Image for rusik69/os
+# Contains all cross-compilation, QEMU, and analysis tools
+# for running CI jobs in isolated Docker containers.
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Cross-compilation toolchain
+    gcc-x86-64-linux-gnu \
+    binutils-x86-64-linux-gnu \
+    nasm \
+    ccache \
+    # QEMU for kernel tests
+    qemu-system-x86 \
+    # Analysis
+    cppcheck \
+    dosfstools \
+    # E2E tests
+    python3 \
+    # Build essentials
+    make \
+    # Cleanup
+    && rm -rf /var/lib/apt/lists/*
+
+# ccache defaults
+ENV CCACHE_DIR=/tmp/ccache \
+    CCACHE_MAXSIZE=500M

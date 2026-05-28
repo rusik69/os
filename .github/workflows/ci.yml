@@ -13,14 +13,15 @@ jobs:
   # ── Build with -Wall -Wextra (baseline) ──────────────────────────────
   build:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache
@@ -47,14 +48,15 @@ jobs:
   # ── Build with -Werror (strict mode) ─────────────────────────────────
   build-strict:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache
@@ -83,14 +85,15 @@ jobs:
   # ── Static analysis (cppcheck) ───────────────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cppcheck
+          apt-get update
+          apt-get install -y --no-install-recommends cppcheck
 
       - name: Run cppcheck
         run: |
@@ -107,6 +110,7 @@ jobs:
   # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 15
     needs: [build]
     steps:
@@ -114,8 +118,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86
@@ -151,6 +155,7 @@ jobs:
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 15
     needs: [build]
     steps:
@@ -158,8 +163,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86 python3
@@ -197,6 +202,7 @@ jobs:
   # ── virtio-net smoke test ────────────────────────────────────────────
   virtio-net-smoke:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     needs: [build]
     steps:
@@ -204,8 +210,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86
@@ -245,6 +251,7 @@ jobs:
   # ── USB + FAT32 smoke test ───────────────────────────────────────────
   usb-fat-smoke:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
     steps:
@@ -252,8 +259,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache qemu-system-x86 dosfstools
@@ -303,14 +310,15 @@ jobs:
   # ── Host-side libc unit tests ────────────────────────────────────────
   libc-test:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu
+          apt-get update
+          apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu
 
       - name: Build and run host-side libc tests
         run: |
@@ -320,6 +328,7 @@ jobs:
   # ── Release (tag pushes only) ────────────────────────────────────────
   release:
     runs-on: [self-hosted, linux, x64]
+    container: ubuntu:24.04
     timeout-minutes: 10
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -327,8 +336,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
             nasm ccache
