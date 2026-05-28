@@ -9,7 +9,6 @@
 #include "blockdev.h"
 #include "virtio_blk.h"
 #include "pci.h"
-#include "string.h"
 #include "printf.h"
 #include "io.h"
 #include "types.h"

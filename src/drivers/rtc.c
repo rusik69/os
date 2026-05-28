@@ -1,8 +1,6 @@
 #include "rtc.h"
 #include "io.h"
 #include "idt.h"
-#include "pic.h"
-#include "printf.h"
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71

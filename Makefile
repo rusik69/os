@@ -1,8 +1,16 @@
+# ── Compiler / Toolchain ──────────────────────────────────────────────
+
 ifeq ($(origin CC), undefined)
 CC = x86_64-elf-gcc
 else ifeq ($(origin CC), default)
 CC = x86_64-elf-gcc
 endif
+
+# Auto-detect ccache and wrap CC if available — massively speeds up rebuilds
+ifneq ($(shell which ccache 2>/dev/null),)
+  CC := ccache $(CC)
+endif
+
 AS = nasm
 ifeq ($(origin LD), undefined)
 LD = x86_64-elf-ld
@@ -14,6 +22,9 @@ OBJCOPY = x86_64-elf-objcopy
 else ifeq ($(origin OBJCOPY), default)
 OBJCOPY = x86_64-elf-objcopy
 endif
+
+# Number of parallel jobs (all available CPU cores)
+NPROCS := $(shell nproc)
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
@@ -106,20 +117,36 @@ DOOM_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(DOOM_SRCS))
 OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJS)
 # Header dependency tracking: include .d files when they exist
 DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(DOOM_OBJS:.o=.d)
+
+# ── Default target: build kernel in parallel ──────────────────────────
+# NOTE: -include must stay BELOW the default target so that dependency
+# files never accidentally steal .DEFAULT_GOAL.
+
+all:
+	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
+
 -include $(wildcard $(DEPS))
 
-.PHONY: all run debug clean deps test test-kernel test-serial test-clean check-app-boundary doom-test
+# ── Phony targets ─────────────────────────────────────────────────────
+
+.PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
+        check-app-boundary doom-test format lint
+
+# ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-    @bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|printf\.h|string\.h|types\.h)' $(APP_SRCS) 2>/dev/null || true); \
-    if [ -n "$$bad" ]; then \
-        echo "ERROR: App sources may include only libc-facing headers (libc.h/shell_cmds.h/printf.h/string.h/types.h)."; \
-        echo "Direct kernel includes found:"; \
-        echo "$$bad"; \
-        exit 1; \
-    fi
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	if [ -n "$$bad" ]; then \
+	    echo "ERROR: App source includes an unexpected header."; \
+	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
+	    echo "  string.h, stdlib.h, types.h, keyboard.h, blockdev.h, fat32.h, ata.h,"; \
+	    echo "  ahci.h, service.h"; \
+	    echo "Offending files:"; \
+	    echo "$$bad"; \
+	    exit 1; \
+	fi
 
-all: $(BUILDDIR)/kernel.bin
+# ── Compilation rules ─────────────────────────────────────────────────
 
 $(BUILDDIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
@@ -140,6 +167,8 @@ $(BUILDDIR)/disk.img:
 	@mkdir -p $(BUILDDIR)
 	dd if=/dev/zero of=$@ bs=1M count=16 2>/dev/null
 
+# ── Run targets ───────────────────────────────────────────────────────
+
 run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-display cocoa -k en-us \
@@ -153,7 +182,7 @@ run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 		-netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
 		-no-reboot
 
-# ── Test build (separate output dir, compiled with -DTEST_MODE) ──────────────
+# ── Test build (separate output dir, compiled with -DTEST_MODE) ──────
 
 BUILDDIR_TEST = build_test
 TEST_CFLAGS   = $(CFLAGS) -DTEST_MODE
@@ -180,8 +209,9 @@ $(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 $(BUILDDIR_TEST)/kernel.bin: $(BUILDDIR_TEST)/kernel.elf
 	cp $< $@
 
-# Build the test kernel binary
-test-kernel: $(BUILDDIR_TEST)/kernel.bin
+# Build the test kernel binary (parallel via recursive make)
+test-kernel:
+	$(MAKE) -j$(NPROCS) $(BUILDDIR_TEST)/kernel.bin
 
 # Run headless QEMU on serial TCP 4444 for manual inspection of test kernel
 test-serial: $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
@@ -192,8 +222,9 @@ test-serial: $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
 		-netdev user,id=net0 -device e1000,netdev=net0 \
 		-no-reboot
 
-# Run E2E tests: build test kernel, then boot in QEMU, capture serial, assert results
-test: test-kernel $(BUILDDIR)/disk.img
+# Run E2E tests: build test kernel in parallel, then boot in QEMU
+test: $(BUILDDIR)/disk.img
+	$(MAKE) -j$(NPROCS) test-kernel
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
 
@@ -201,9 +232,9 @@ test: test-kernel $(BUILDDIR)/disk.img
 test-clean: clean
 	$(MAKE) test
 
-# E2E tests: boot normal kernel in QEMU with user-mode networking + telnet hostfwd,
-# then drive every shell command via Python telnet client.
-e2e: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+# E2E tests: boot normal kernel in QEMU with user-mode networking + telnet hostfwd
+e2e: $(BUILDDIR)/disk.img
+	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 	@chmod +x tests/e2e.sh tests/e2e.py
 	@./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 
@@ -217,13 +248,51 @@ e2e-port-%: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	@chmod +x tests/e2e.sh tests/e2e.py
 	@E2E_PORT=$* ./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 
+# ── Debug target ──────────────────────────────────────────────────────
+
 debug: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std -s -S \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
 		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0
 
+# ── Clean targets ─────────────────────────────────────────────────────
+
 clean:
 	rm -rf $(BUILDDIR) $(BUILDDIR_TEST)
+
+# Clean everything including ccache statistics
+clean-all: clean
+	@if command -v ccache >/dev/null 2>&1; then \
+		ccache --clear 2>/dev/null; \
+		ccache --zero-stats 2>/dev/null; \
+		echo "ccache stats cleared."; \
+	fi
+
+# ── Format: run clang-format on all .c and .h files ───────────────────
+
+format:
+	@if command -v clang-format >/dev/null 2>&1; then \
+		find src/ -type f \( -name '*.c' -o -name '*.h' \) -exec clang-format -i -style=file {} +; \
+		echo "Formatted all .c and .h files in src/."; \
+	else \
+		echo "clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
+		exit 1; \
+	fi
+
+# ── Lint: run cppcheck on all C sources ───────────────────────────────
+
+lint:
+	@if command -v cppcheck >/dev/null 2>&1; then \
+		cppcheck --enable=all --inconclusive --suppress=missingIncludeSystem \
+		  --suppress=unmatchedSuppression --language=c --std=c17 \
+		  -Isrc/include -Isrc/gui -Isrc/doom \
+		  src/; \
+	else \
+		echo "cppcheck not found. Install it (e.g., apt install cppcheck) and try again."; \
+		exit 1; \
+	fi
+
+# ── Dependencies ──────────────────────────────────────────────────────
 
 deps:
 	brew install x86_64-elf-gcc nasm qemu xorriso

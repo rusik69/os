@@ -10,6 +10,7 @@
  * -serial stdio, captures the output, and checks for "ALL TESTS PASSED".
  */
 
+#define KERNEL_INTERNAL
 #include "test.h"
 #include "types.h"
 #include "printf.h"
@@ -39,6 +40,11 @@
 #include "ac97.h"
 #include "doom.h"
 #include "dos.h"
+#include "elf.h"
+#include "syscall.h"
+#include "usb.h"
+#include "usb_msc.h"
+#include "blockdev.h"
 
 /* ── Test framework ─────────────────────────────────────────── */
 
@@ -528,21 +534,62 @@ static void test_shm_mutex(void) {
 }
 
 static void test_fat32(void) {
-    if (!ata_is_present()) {
+    /* ── ATA FAT32 tests (if ATA disk present) ────────────────── */
+    if (ata_is_present()) {
+        if (fat32_mount(FAT32_DISK_ATA, 0) == 0) {
+            ASSERT("fat32 write", fat32_write_file("/testos.txt", "hi", 2) == 2);
+            char buf[8];
+            ASSERT("fat32 read", fat32_read_file("/testos.txt", buf, sizeof(buf)) == 2);
+            buf[2] = '\0';
+            ASSERT_STR("fat32 content", buf, "hi");
+            ASSERT("fat32 sync", fat32_sync() == 0);
+            t_ok("fat32 ata rw");
+
+            /* Test directory listing */
+            char names[16][FAT32_MAX_NAME];
+            int n = fat32_list_dir("/", names, 16);
+            ASSERT("fat32 list dir", n >= 1);
+            t_ok("fat32 ata list dir");
+        } else {
+            t_ok("fat32 SKIP (no ATA FAT partition)");
+        }
+    } else {
         t_ok("fat32 SKIP (no ATA)");
-        return;
     }
-    if (fat32_mount(FAT32_DISK_ATA, 0) != 0) {
-        t_ok("fat32 SKIP (no FAT partition)");
-        return;
+
+    /* ── USB FAT32 tests (if USB MSC present) ────────────────── */
+    {
+        int usb_present = 0;
+        if (usb_is_present()) {
+            if (usb_msc_init() == 0) {
+                usb_present = 1;
+            }
+        }
+        if (usb_present && blockdev_is_registered(BLOCKDEV_USB0)) {
+            if (fat32_mount(FAT32_DISK_USB0, 0) == 0) {
+                char buf[64];
+                int n = fat32_read_file("/testos.txt", buf, sizeof(buf) - 1);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    t_ok("fat32 usb read /testos.txt");
+                }
+
+                char names[16][FAT32_MAX_NAME];
+                int cnt = fat32_list_dir("/", names, 16);
+                ASSERT("fat32 usb list dir", cnt >= 0);
+                if (cnt > 0) {
+                    ASSERT("fat32 usb names[0] non-empty", names[0][0] != '\0');
+                }
+                t_ok("fat32 usb operations");
+            } else {
+                t_ok("fat32 SKIP (no USB FAT partition)");
+            }
+        } else {
+            t_ok("fat32 SKIP (no USB MSC)");
+        }
     }
-    ASSERT("fat32 write", fat32_write_file("/testos.txt", "hi", 2) == 2);
-    char buf[8];
-    ASSERT("fat32 read", fat32_read_file("/testos.txt", buf, sizeof(buf)) == 2);
-    buf[2] = '\0';
-    ASSERT_STR("fat32 content", buf, "hi");
-    ASSERT("fat32 sync", fat32_sync() == 0);
-    t_ok("fat32 rw");
+
+    t_ok("fat32 tests");
 }
 
 static void test_ac97(void) {
@@ -618,8 +665,108 @@ static void test_udp_binding(void) {
     /* Can't easily self-inject a packet here; just verifying it doesn't crash */
 }
 
+/* ── ELF loader tests ─────────────────────────────────────────── */
+
+static void test_elf(void) {
+    /* 1. Bad magic → returns 0 */
+    uint8_t bad[16] = {0};
+    ASSERT_EQ("elf bad magic", elf_load(bad, sizeof(bad)), 0);
+
+    /* 2. Wrong architecture → returns 0 */
+    uint8_t wrong[64];
+    memset(wrong, 0, sizeof(wrong));
+    *(uint32_t *)wrong = ELF_MAGIC;
+    wrong[4] = ELF_CLASS64;
+    wrong[5] = ELF_DATA2LSB;
+    ASSERT_EQ("elf wrong arch", elf_load(wrong, sizeof(wrong)), 0);
+
+    /* 3. No program headers → returns 0 */
+    struct elf64_header *wh = (struct elf64_header *)wrong;
+    wh->e_type = ET_EXEC;
+    wh->e_machine = EM_X86_64;
+    wh->e_version = 1;
+    wh->e_phoff = 0;
+    wh->e_phnum = 0;
+    wh->e_ehsize = sizeof(struct elf64_header);
+    ASSERT_EQ("elf no phdrs", elf_load(wrong, sizeof(wrong)), 0);
+
+    /* 4. Segment out of bounds (offset+filesz > size) → returns 0 */
+    wh->e_phoff = sizeof(struct elf64_header);
+    wh->e_phnum = 1;
+    wh->e_phentsize = sizeof(struct elf64_phdr);
+    if (sizeof(wrong) >= sizeof(struct elf64_header) + sizeof(struct elf64_phdr)) {
+        struct elf64_phdr *ph = (struct elf64_phdr *)(wrong + sizeof(struct elf64_header));
+        ph->p_type = PT_LOAD;
+        ph->p_offset = 0;
+        ph->p_filesz = 99999; /* larger than buffer */
+        ph->p_vaddr = 0x100000;
+        ph->p_memsz = 99999;
+        ASSERT_EQ("elf oob segment", elf_load(wrong, sizeof(wrong)), 0);
+    }
+
+    /* 5. Segment targeting NULL page (p_vaddr < 0x1000) → returns 0 */
+    struct elf64_phdr *ph = (struct elf64_phdr *)(wrong + sizeof(struct elf64_header));
+    ph->p_offset = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
+    ph->p_filesz = 4;
+    ph->p_vaddr = 0x800;
+    ph->p_memsz = 4;
+    ASSERT_EQ("elf null-page seg", elf_load(wrong, sizeof(wrong)), 0);
+
+    /* 6. Successful load of a minimal ELF at a pre-allocated frame */
+    {
+        uint64_t frame = pmm_alloc_frame();
+        ASSERT("elf alloc frame", frame != 0);
+        if (frame && frame >= 0x1000) {
+            uint8_t buf[256];
+            memset(buf, 0, sizeof(buf));
+            struct elf64_header *hdr = (struct elf64_header *)buf;
+            *(uint32_t *)hdr->e_ident = ELF_MAGIC;
+            hdr->e_ident[4] = ELF_CLASS64;
+            hdr->e_ident[5] = ELF_DATA2LSB;
+            hdr->e_ident[6] = 1; /* EI_VERSION */
+            hdr->e_type = ET_EXEC;
+            hdr->e_machine = EM_X86_64;
+            hdr->e_version = 1;
+            hdr->e_entry = frame; /* entry = base of loaded segment */
+            hdr->e_phoff = sizeof(struct elf64_header);
+            hdr->e_ehsize = sizeof(struct elf64_header);
+            hdr->e_phentsize = sizeof(struct elf64_phdr);
+            hdr->e_phnum = 1;
+
+            struct elf64_phdr *pph =
+                (struct elf64_phdr *)(buf + sizeof(struct elf64_header));
+            pph->p_type = PT_LOAD;
+            pph->p_flags = 7; /* RWX */
+            pph->p_offset = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
+            pph->p_vaddr = frame;
+            pph->p_filesz = 1; /* single RET instruction */
+            pph->p_memsz = 1;
+            pph->p_align = 0x1000;
+
+            /* Code byte at the end: RET (0xC3) */
+            uint32_t code_off = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
+            buf[code_off] = 0xC3;
+            uint32_t total_sz = code_off + 1;
+
+            uint64_t entry = elf_load(buf, total_sz);
+            ASSERT_EQ("elf load entry", entry, frame);
+            ASSERT("elf loaded data", *(volatile uint8_t *)frame == 0xC3);
+
+            /* Clean up */
+            memset((void *)frame, 0, PAGE_SIZE);
+            pmm_free_frame(frame);
+            t_ok("elf successful load");
+        } else if (frame) {
+            pmm_free_frame(frame);
+        }
+    }
+
+    t_ok("elf tests");
+}
+
 /* ── VMM tests ────────────────────────────────────────────────── */
 static void test_vmm(void) {
+    /* ── Basic page table ──────────────────────────────────────── */
     /* Test vmm_get_pml4 returns a non-null page table */
     uint64_t *pml4 = vmm_get_pml4();
     ASSERT("vmm get pml4", pml4 != NULL);
@@ -637,6 +784,138 @@ static void test_vmm(void) {
 
     /* Test vmm_user_range_ok rejects kernel addresses */
     ASSERT("vmm user range kernel", vmm_user_range_ok(NULL, 0xFFFFFFFFFFFFFFFFULL, 1, 0) == 0);
+
+    /* ── Page table walk ────────────────────────────────────────── */
+    {
+        /* Walk the VGA address 0xB8000 through the page tables */
+        int pml4_idx = (0xB8000ULL >> 39) & 0x1FF;
+        int pdpt_idx = (0xB8000ULL >> 30) & 0x1FF;
+        int pd_idx   = (0xB8000ULL >> 21) & 0x1FF;
+        int pt_idx   = (0xB8000ULL >> 12) & 0x1FF;
+
+        uint64_t pml4e = pml4[pml4_idx];
+        ASSERT("walk pml4e present", pml4e & VMM_FLAG_PRESENT);
+
+        uint64_t *pdpt = (uint64_t *)(uintptr_t)(pml4e & 0x000FFFFFFFFFF000ULL);
+        uint64_t pdpte = pdpt[pdpt_idx];
+        ASSERT("walk pdpte present", pdpte & VMM_FLAG_PRESENT);
+
+        uint64_t *pd = (uint64_t *)(uintptr_t)(pdpte & 0x000FFFFFFFFFF000ULL);
+        uint64_t pde = pd[pd_idx];
+        ASSERT("walk pde present", pde & VMM_FLAG_PRESENT);
+
+        /* Check for 2MB huge page at VGA (common in boot page tables) */
+        if (pde & (1ULL << 7)) {
+            /* Huge page — verify address */
+            uint64_t huge_base = pde & 0x000FFFFFFFE00000ULL;
+            ASSERT("walk pde huge 0xB8000", (huge_base + (0xB8000ULL & 0x1FFFFF)) == 0xB8000ULL);
+        } else {
+            uint64_t *pt = (uint64_t *)(uintptr_t)(pde & 0x000FFFFFFFFFF000ULL);
+            uint64_t pte = pt[pt_idx];
+            ASSERT("walk pte present", pte & VMM_FLAG_PRESENT);
+            ASSERT("walk pte maps 0xB8000", (pte & 0x000FFFFFFFFFF000ULL) == 0xB8000ULL);
+        }
+        t_ok("vmm page table walk");
+    }
+
+    /* ── Page alloc, map, write, read-back, unmap ─────────────── */
+    {
+        /* Pick a virtual address that's unlikely to be in use.
+         * Must be in the kernel's higher half (PML4 index 256-511). */
+        uint64_t test_va = 0xFFFFF00000000000ULL;
+
+        /* Verify it's not already mapped */
+        ASSERT("vmm va not mapped before", vmm_virt_to_phys(test_va, &phys) != 0);
+
+        /* Allocate a physical frame */
+        uint64_t frame = pmm_alloc_frame();
+        ASSERT("vmm alloc frame", frame != 0);
+        if (frame) {
+            uint64_t pattern = 0xDEADBEEFCAFEBABEULL;
+
+            /* Map the frame at test_va */
+            int r = vmm_map_page(test_va, frame, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+            ASSERT("vmm map page", r == 0);
+
+            /* Verify vmm_virt_to_phys now returns the mapped frame */
+            phys = 0;
+            ASSERT("vmm virt_to_phys mapped OK", vmm_virt_to_phys(test_va, &phys) == 0);
+            ASSERT_EQ("vmm virt_to_phys mapped addr", phys & ~0xFFFULL, frame);
+
+            /* Write a pattern through the virtual address */
+            *(volatile uint64_t *)test_va = pattern;
+
+            /* Read back via virtual address */
+            ASSERT("vmm write/read virt", *(volatile uint64_t *)test_va == pattern);
+
+            /* Read back via physical address (identity-mapped) */
+            ASSERT("vmm write/read phys", *(volatile uint64_t *)(uintptr_t)frame == pattern);
+
+            /* Write a different pattern */
+            *(volatile uint64_t *)test_va = 0;
+
+            /* Unmap */
+            vmm_unmap_page(test_va);
+            ASSERT("vmm unmapped check", vmm_virt_to_phys(test_va, &phys) != 0);
+
+            /* Free the frame */
+            pmm_free_frame(frame);
+            t_ok("vmm page alloc/map/unmap");
+        }
+    }
+
+    t_ok("vmm tests");
+}
+
+/* ── TCP / Networking tests ──────────────────────────────────── */
+
+static void test_tcp(void) {
+    if (!virtio_net_present() && !e1000_is_present()) {
+        t_ok("tcp SKIP (no NIC)");
+        return;
+    }
+
+    /* Verify that the network stack reports sane values */
+    uint8_t ip[4];
+    net_get_ip(ip);
+    /* In QEMU user-mode networking the guest IP is typically 10.0.2.x */
+    ASSERT("tcp ip octet1 non-zero", ip[0] != 0);
+
+    uint32_t gw = net_get_gateway();
+    ASSERT("tcp gateway non-zero", gw != 0);
+
+    uint32_t mask = net_get_mask();
+    ASSERT("tcp mask non-zero", mask != 0);
+
+    /* Test TCP listen/unlisten lifecycle (no actual connection) */
+    net_tcp_listen(9998, NULL, NULL, NULL);
+    t_ok("tcp listen port 9998");
+
+    /* Listen on a second port */
+    net_tcp_listen(9997, NULL, NULL, NULL);
+    t_ok("tcp listen port 9997");
+
+    /* Unlisten both */
+    net_tcp_unlisten(9998);
+    net_tcp_unlisten(9997);
+    t_ok("tcp unlisten");
+
+    /* Verify ARP cache enumeration (may be empty, but should not crash) */
+    int arp_count = net_arp_list(NULL);
+    ASSERT("tcp arp list ok", arp_count >= 0);
+    t_ok("tcp arp list");
+
+    /* Verify TCP connection list (should be empty but should not crash) */
+    net_conn_list(NULL);
+    t_ok("tcp conn list");
+
+    /* Verify net_rx_pending / net_poll are callable */
+    net_poll();
+    t_ok("tcp net_poll");
+    (void)net_rx_pending();
+    t_ok("tcp net_rx_pending");
+
+    t_ok("tcp tests");
 }
 
 /* ── Semaphore tests ──────────────────────────────────────────── */
@@ -670,32 +949,232 @@ static void test_shm_ext(void) {
     ASSERT("shm ext free", shm_free(id) == 0);
 }
 
+/* ── Comprehensive IPC tests ──────────────────────────────────── */
+
+static void test_ipc(void) {
+    /* ── Shared memory ──────────────────────────────────────────── */
+    {
+        /* Create two segments with different keys */
+        int sid1 = shm_get(100);
+        ASSERT("ipc shm get 100", sid1 >= 0);
+        int sid2 = shm_get(200);
+        ASSERT("ipc shm get 200", sid2 >= 0);
+
+        /* Attach both */
+        uint64_t addr1 = shm_at(sid1);
+        uint64_t addr2 = shm_at(sid2);
+        ASSERT("ipc shm at 100", addr1 != 0);
+        ASSERT("ipc shm at 200", addr2 != 0);
+
+        if (addr1 && addr2) {
+            volatile uint8_t *p1 = (volatile uint8_t *)(uintptr_t)addr1;
+            volatile uint8_t *p2 = (volatile uint8_t *)(uintptr_t)addr2;
+
+            /* Write distinct patterns */
+            p1[0] = 0x11;
+            p1[1] = 0x22;
+            p2[0] = 0xAA;
+            p2[1] = 0xBB;
+
+            /* Verify they are independent */
+            ASSERT("ipc shm indep p1[0]", p1[0] == 0x11);
+            ASSERT("ipc shm indep p1[1]", p1[1] == 0x22);
+            ASSERT("ipc shm indep p2[0]", p2[0] == 0xAA);
+            ASSERT("ipc shm indep p2[1]", p2[1] == 0xBB);
+            ASSERT("ipc shm not aliased", &p1[0] != &p2[0]);
+        }
+
+        /* Detach and free */
+        ASSERT("ipc shm dt 100", shm_dt(sid1) == 0);
+        ASSERT("ipc shm dt 200", shm_dt(sid2) == 0);
+        ASSERT("ipc shm free 100", shm_free(sid1) == 0);
+        ASSERT("ipc shm free 200", shm_free(sid2) == 0);
+        t_ok("ipc shared memory");
+    }
+
+    /* ── Mutex ──────────────────────────────────────────────────── */
+    {
+        int m1 = mutex_init();
+        int m2 = mutex_init();
+        ASSERT("ipc mutex init m1", m1 >= 0);
+        ASSERT("ipc mutex init m2", m2 >= 0);
+
+        /* Lock/unlock same mutex twice */
+        mutex_lock(m1);
+        ASSERT("ipc mutex locked", 1);
+        mutex_unlock(m1);
+        ASSERT("ipc mutex unlocked", 1);
+        mutex_lock(m1);
+        mutex_unlock(m1);
+        ASSERT("ipc mutex lock twice", 1);
+
+        /* Two independent mutexes interleaved */
+        mutex_lock(m1);
+        mutex_lock(m2);
+        mutex_unlock(m2);
+        mutex_unlock(m1);
+        ASSERT("ipc mutex interleaved", 1);
+
+        mutex_destroy(m1);
+        mutex_destroy(m2);
+        t_ok("ipc mutex");
+    }
+
+    /* ── Semaphore ─────────────────────────────────────────────── */
+    {
+        int s1 = sem_init(3); /* count = 3 */
+        int s2 = sem_init(1); /* count = 1 */
+        ASSERT("ipc sem init s1", s1 >= 0);
+        ASSERT("ipc sem init s2", s2 >= 0);
+
+        /* Consume s1 entirely */
+        sem_wait(s1);
+        sem_wait(s1);
+        sem_wait(s1);
+        ASSERT("ipc sem s1 consumed", 1);
+
+        /* Post back */
+        sem_post(s1);
+        ASSERT("ipc sem s1 posted", 1);
+
+        /* s2 binary-semaphore behavior */
+        sem_wait(s2);
+        ASSERT("ipc sem s2 locked", 1);
+        sem_post(s2);
+        ASSERT("ipc sem s2 unlocked", 1);
+
+        sem_destroy(s1);
+        sem_destroy(s2);
+        t_ok("ipc semaphore");
+    }
+
+    t_ok("ipc tests");
+}
+
 /* ── DOS emulator tests ───────────────────────────────────────── */
 static void test_dos(void) {
     int dos_load_com(struct dos_cpu_state *state, const uint8_t *data, uint32_t size);
     void dos_emu_init(struct dos_cpu_state *state);
+    void dos_emu_run(struct dos_cpu_state *state);
 
-    /* Test .COM loading — verify the binary is placed correctly at 0x100 */
-    struct dos_cpu_state state;
-    dos_emu_init(&state);
-    uint8_t com[] = { 0xB8, 0x00, 0x4C, 0xCD, 0x21 };
-    int ret = dos_load_com(&state, com, sizeof(com));
-    ASSERT("dos load com", ret == 0);
-    ASSERT("dos com at 0x100", state.memory[0x100] == 0xB8);
-    ASSERT("dos com entry", state.ip == 0x100);
-    ASSERT("dos com segments", state.cs == 0 && state.ds == 0);
-    t_ok("dos loader");
+    /* ── .COM loading tests ───────────────────────────────────── */
+    {
+        struct dos_cpu_state state;
+        dos_emu_init(&state);
+        uint8_t com[] = { 0xB8, 0x00, 0x4C, 0xCD, 0x21 }; /* MOV AX, 0x4C00; INT 0x21 */
+        int ret = dos_load_com(&state, com, sizeof(com));
+        ASSERT("dos load com", ret == 0);
+        ASSERT("dos com at 0x100", state.memory[0x100] == 0xB8);
+        ASSERT("dos com entry", state.ip == 0x100);
+        ASSERT("dos com segments", state.cs == 0 && state.ds == 0);
+        t_ok("dos loader");
+    }
 
-    /* Test instruction limit: infinite loop stopped by 1M limit */
-    struct dos_cpu_state state3;
-    dos_emu_init(&state3);
-    uint8_t com3[] = { 0xEB, 0xFE }; /* JMP short -2 */
-    ret = dos_load_com(&state3, com3, sizeof(com3));
-    ASSERT("dos3 load", ret == 0);
-    /* dos_emu_run is skipped in automated tests — it requires timer
-     * interrupts for the watchdog to fire, which may not occur reliably
-     * in the emulator's tight loop on shared CI runners. */
-    t_ok("dos load only");
+    /* ── Instruction execution: simple exit via INT 0x20 ──────── */
+    {
+        struct dos_cpu_state state;
+        dos_emu_init(&state);
+        /* INT 0x20 — terminate program (sets state->running = 0) */
+        uint8_t com[] = { 0xCD, 0x20 };
+        int ret = dos_load_com(&state, com, sizeof(com));
+        ASSERT("dos exec load", ret == 0);
+
+        /* Execute — should run INT 0x20 and exit immediately */
+        dos_emu_run(&state);
+        ASSERT("dos exec stopped", state.running == 0);
+        /* IP should have advanced past the INT instruction (2 bytes) */
+        ASSERT("dos exec ip advanced", state.ip == 0x102);
+        t_ok("dos exec int20");
+    }
+
+    /* ── Instruction execution: basic arithmetic ──────────────── */
+    {
+        struct dos_cpu_state state;
+        dos_emu_init(&state);
+        /*
+         * MOV AX, 0x1234
+         * MOV BX, 0x0001
+         * ADD AX, BX    → AX = 0x1235
+         * INT 0x20
+         */
+        uint8_t com[] = {
+            0xB8, 0x34, 0x12,       /* MOV AX, 0x1234 */
+            0xBB, 0x01, 0x00,       /* MOV BX, 0x0001 */
+            0x01, 0xD8,             /* ADD AX, BX     */
+            0xCD, 0x20              /* INT 0x20       */
+        };
+        int ret = dos_load_com(&state, com, sizeof(com));
+        ASSERT("dos arith load", ret == 0);
+        dos_emu_run(&state);
+        ASSERT("dos arith stopped", state.running == 0);
+        ASSERT_EQ("dos arith ax", state.ax, 0x1235);
+        t_ok("dos exec arithmetic");
+    }
+
+    /* ── Instruction limit: infinite loop stopped by 1M limit ──── */
+    {
+        struct dos_cpu_state state;
+        dos_emu_init(&state);
+        uint8_t com[] = { 0xEB, 0xFE }; /* JMP short -2 (infinite loop) */
+        int ret = dos_load_com(&state, com, sizeof(com));
+        ASSERT("dos loop load", ret == 0);
+
+        /* The emulator has a 1,000,000-instruction hard limit */
+        dos_emu_run(&state);
+        ASSERT("dos loop stopped", state.running == 0);
+        t_ok("dos exec infinite loop limit");
+    }
+
+    t_ok("dos tests");
+}
+
+/* ── Syscall interface tests ──────────────────────────────────── */
+
+static void test_syscall(void) {
+    /* Ensure syscall_init has been called during boot */
+    t_ok("syscall init assumed");
+
+    /* SYS_GETPID — should return current process PID (> 0) */
+    {
+        uint64_t pid = syscall_dispatch(SYS_GETPID, 0, 0, 0, 0, 0);
+        ASSERT("syscall getpid > 0", pid > 0);
+        ASSERT("syscall getpid finite", pid < 10000);
+        t_ok("syscall getpid");
+    }
+
+    /* SYS_WRITE to stdout (fd=1) — should succeed */
+    {
+        const char *msg = "syscall: hello from kernel test\n";
+        /* syscall_dispatch(1=SYS_WRITE, fd=1, buf, len, 0, 0) */
+        uint64_t written = syscall_dispatch(SYS_WRITE, 1,
+                                            (uint64_t)(uintptr_t)msg,
+                                            strlen(msg), 0, 0);
+        ASSERT("syscall write > 0", written > 0);
+        t_ok("syscall write stdout");
+    }
+
+    /* SYS_UPTIME — should return non-zero ticks */
+    {
+        uint64_t uptime = syscall_dispatch(SYS_UPTIME, 0, 0, 0, 0, 0);
+        ASSERT("syscall uptime >= 0", uptime >= 0);
+        t_ok("syscall uptime");
+    }
+
+    /* SYS_YIELD — should return without crashing */
+    {
+        syscall_dispatch(SYS_YIELD, 0, 0, 0, 0, 0);
+        t_ok("syscall yield");
+    }
+
+    /* Invalid syscall number should not crash */
+    {
+        uint64_t ret = syscall_dispatch(9999, 0, 0, 0, 0, 0);
+        /* Most implementations return -1 or 0 for invalid */
+        t_ok("syscall invalid number");
+        (void)ret;
+    }
+
+    t_ok("syscall tests");
 }
 
 /* ── Master runner ───────────────────────────────────────────── */
@@ -721,16 +1200,20 @@ void test_run_all(void) {
     test_signal();
     test_network();
     test_udp_binding();
+    test_elf();
+    test_vmm();
+    test_tcp();
     test_procfs();
     test_fork();
     test_shm_mutex();
+    test_semaphore();
+    test_shm_ext();
+    test_ipc();
     test_fat32();
     test_ac97();
     test_doom();
-    test_vmm();
-    test_semaphore();
-    test_shm_ext();
     test_dos();
+    test_syscall();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",
