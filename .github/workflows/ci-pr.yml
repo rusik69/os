@@ -49,7 +49,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
-            nasm ccache make
+            nasm ccache make binutils
 
       - name: ccache cache
         continue-on-error: true
@@ -88,7 +88,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
-            nasm ccache make
+            nasm ccache make binutils
 
       - name: ccache cache
         continue-on-error: true
@@ -155,7 +155,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
-            nasm ccache make qemu-system-x86
+            nasm ccache make binutils qemu-system-x86
 
       - name: ccache cache
         continue-on-error: true
@@ -203,7 +203,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             gcc-x86-64-linux-gnu \
             binutils-x86-64-linux-gnu \
-            nasm ccache make qemu-system-x86 python3
+            nasm ccache make binutils qemu-system-x86 python3
 
       - name: ccache cache
         continue-on-error: true

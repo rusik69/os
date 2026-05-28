@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils-x86-64-linux-gnu \
     nasm \
     ccache \
+    # Native tools (gcc cross-compiler still calls `as`)
+    binutils \
+    make \
     # QEMU for kernel tests
     qemu-system-x86 \
     # Analysis
@@ -16,8 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dosfstools \
     # E2E tests
     python3 \
-    # Build essentials
-    make \
     # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
