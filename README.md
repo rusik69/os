@@ -59,8 +59,10 @@ Set `E2E_EXTERNAL_DNS=1` to enable external hostname ping in E2E (off by default
 - **Drivers** — VGA text mode, PS/2 keyboard & mouse, PIT timer, RTC,
   serial (COM1), ATA/AHCI/USB block devices, PCI bus, e1000 and virtio-net,
   virtio-blk, USB EHCI/MSC, AC97 audio, PC speaker, ACPI, Intel GPU detection
-- **Block device abstraction** — ATA/AHCI registered behind a shared sector I/O layer
-- **FAT32 mount** — `fat mount ata|ahci|usb` with read/write; VFS mount at `/mnt`
+- **Block device abstraction** — ATA/AHCI/USB registered behind a shared sector I/O layer
+- **FAT12/FAT16/FAT32** — auto-detected read/write filesystem support via `fat mount`; VFS mount at `/mnt`
+- **x86-16 DOS emulator** — software interpreter for 16-bit real-mode .COM and MZ executables;
+  `dosbox <file>` runs legacy DOS programs under emulation with INT 21h/10h/16h API support
 - **IP fragmentation** — TX fragmentation for large payloads; improved RX reassembly
 - **Multiboot graphics** — Framebuffer support with 1024×768 RGB rendering
 - **GUI framework** — Window system, widgets (button, textbox, label, file browser, taskbar), GUI terminal emulator, event handling, mouse cursor
@@ -570,7 +572,7 @@ Uses the `SYSCALL` / `SYSRET` mechanism (AMD64 fast syscall):
 ## Filesystem — SMFS
 
 **SMFS** (Simple Micro File System) is a custom on-disk format stored on
-the ATA disk image. Also supported: **procfs** (`/proc`), **devfs** (`/dev`), and read/write **FAT32** via `fat mount`.
+the ATA disk image. Also supported: **procfs** (`/proc`), **devfs** (`/dev`), and read/write **FAT12/FAT16/FAT32** via `fat mount`.
 
 ### Disk Layout
 
@@ -850,6 +852,7 @@ RX descriptor ring, then dispatches by EtherType (ARP or IP → ICMP/TCP/UDP).
 | `gui` | Launch GUI desktop |
 | `fbinfo` | Framebuffer mode information |
 | `file <path>` | Identify file type |
+| `dosbox <file>` | Run DOS program under x86-16 emulation |
 | `exit` | Disconnect telnet session |
 
 ### Text Editor
@@ -925,6 +928,47 @@ Processes can run in **ring 3** (user mode) with full hardware isolation:
 
 User-mode ELF binaries are loaded at `0x400000` with a 64 KB user stack
 below `0x7FFFFFFFE000`.
+
+---
+
+## DOS Emulator
+
+A software x86-16 interpreter that can run real-mode MS-DOS .COM and MZ
+executables inside a 64-bit long-mode kernel process. Since 16-bit real-mode
+code cannot execute directly in long mode, the emulator provides a
+fetch-decode-execute loop that interprets x86-16 instructions.
+
+**Architecture:**
+- 1 MB conventional memory space (segment:offset → linear addressing)
+- Emulated CPU with 16-bit registers, flags, segment registers
+- INT 21h DOS API handler (18 subfunctions: console I/O, file I/O, exit)
+- INT 10h (video teletype), INT 16h (keyboard), INT 20h (exit)
+- 1,000,000 instruction hard limit to prevent hangs
+
+**Usage:** `dosbox CHKDSK.COM` or `dosbox EDIT.EXE`
+
+**Supported DOS calls:**
+
+| AH | Function | Implementation |
+|----|----------|---------------|
+| 0x00/0x4C | Exit program | Stops emulator |
+| 0x01 | Read char with echo | `keyboard_getchar()` + `kprintf` |
+| 0x02 | Print char | `kprintf` |
+| 0x07/0x08 | Read char without echo | `keyboard_getchar()` |
+| 0x09 | Print $-terminated string | Loop + `kprintf` |
+| 0x0A | Buffered input | Line input via keyboard |
+| 0x25/0x35 | Get/set interrupt vector | Stub |
+| 0x2A/0x2C | Get date/time | Stub |
+| 0x30 | Get DOS version | Returns 3.0 |
+| 0x3D | Open file | `vfs_read` + heap cache |
+| 0x3E | Close file | Frees cache |
+| 0x3F | Read from file | From heap cache |
+| 0x40 | Write to file | `fs_append` |
+| 0x47 | Get current directory | Stub |
+
+**Limitations:** 16-bit real-mode DOS programs expecting direct hardware
+access (VGA registers, timers, DPMI extenders) will not work. Programs
+that only use INT 21h/10h/16h for system calls are supported.
 
 ---
 
@@ -1005,7 +1049,8 @@ all test groups at boot, outputs `[PASS]`/`[FAIL]` to serial, and calls
 - **Pipe tests** — create, write, read, close, EOF, negative-len edge cases
 - **Speaker tests** — tone generation
 - **Mouse tests** — position queries
-- **Signal tests** — send/receive, SIGKILL termination
+- **Signal tests** — send/receive, SIGKILL termination, mask/unmask
+- **DOS emulator tests** — load and run minimal .COM program under emulation
 - **Network tests** — IP config, ARP, DHCP, TCP handshake
 - **UDP tests** — port binding
 
