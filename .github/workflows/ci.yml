@@ -75,14 +75,13 @@ jobs:
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \
             --error-exitcode=1 \
-            src/ 2>&1 || true
+            src/ 2>&1
 
   # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
-    needs: [build]
     steps:
       - uses: actions/checkout@v6
       - name: ccache cache
@@ -115,7 +114,6 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
-    needs: [build]
     steps:
       - uses: actions/checkout@v6
       - name: ccache cache
@@ -150,7 +148,6 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
-    needs: [build]
     steps:
       - uses: actions/checkout@v6
       - name: ccache cache

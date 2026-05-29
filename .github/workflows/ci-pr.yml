@@ -1,12 +1,5 @@
 name: CI (PR)
 
-# Security: This workflow uses pull_request_target to run in the context of
-# the BASE branch (main), not the fork. This prevents forked PRs from
-# accessing secrets or running arbitrary code on the self-hosted runner.
-#
-# All jobs require approval via the "ci-approval" environment before they
-# can run on the self-hosted runner.
-
 on:
   pull_request:
     branches: [main, master]
@@ -108,14 +101,14 @@ jobs:
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \
             --error-exitcode=1 \
-            src/ 2>&1 || true
+            src/ 2>&1
 
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
-    needs: [build, security-check]
+    needs: [security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
@@ -151,7 +144,7 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
-    needs: [build, security-check]
+    needs: [security-check]
     environment:
       name: ci-approval
       url: ${{ github.event.pull_request.html_url }}
