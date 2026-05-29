@@ -96,6 +96,36 @@ static int print_int(int64_t val, int pad, char padchar) {
     return chars + print_uint((uint64_t)val, 10, pad, padchar);
 }
 
+int vkprintf(const char *fmt, va_list ap) {
+    /* Re-use kprintf's format engine by simulating variadic dispatch.
+     * kprintf uses va_arg internally, so we provide the caller's va_list
+     * by copying its state into a new va_list. */
+    /* NOTE: This is a simplified version that only supports basic formats.
+     * For full format support, use kprintf directly. */
+    int count = 0;
+    while (*fmt) {
+        if (*fmt != '%') { kputchar(*fmt++); count++; continue; }
+        fmt++;
+        int pad = 0; char padchar = ' ';
+        if (*fmt == '0') { padchar = '0'; fmt++; }
+        while (*fmt >= '0' && *fmt <= '9') { pad = pad * 10 + (*fmt - '0'); fmt++; }
+        if (*fmt == 'l') { fmt++; if (*fmt == 'l') fmt++; }
+        else if (*fmt == 'z') fmt++;
+        switch (*fmt) {
+        case 's': { const char *s = va_arg(ap, const char *); if (!s) s = "(null)"; while (*s) { kputchar(*s++); count++; } break; }
+        case 'd': case 'i': count += print_int(va_arg(ap, int64_t), pad, padchar); break;
+        case 'u': count += print_uint(va_arg(ap, uint64_t), 10, pad, padchar); break;
+        case 'x': count += print_uint(va_arg(ap, uint64_t), 16, pad, padchar); break;
+        case 'p': { uint64_t v = va_arg(ap, uint64_t); kputchar('0');kputchar('x');count+=2; count += print_uint(v,16,16,'0'); break; }
+        case 'c': { char c = (char)va_arg(ap, int); kputchar(c); count++; break; }
+        case '%': kputchar('%'); count++; break;
+        default: kputchar('%'); kputchar(*fmt); count += 2; break;
+        }
+        fmt++;
+    }
+    return count;
+}
+
 int kprintf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);

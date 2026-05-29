@@ -4,6 +4,7 @@
 #include "types.h"
 
 int kprintf(const char *fmt, ...);
+int vkprintf(const char *fmt, __builtin_va_list ap);
 void kprintf_set_hook(void (*hook)(char, void *), void *ctx);
 void kprintf_get_hook(void (**hook)(char,void*), void **ctx);
 void kprintf_set_flush(void (*flush)(void *), void *ctx);

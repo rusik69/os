@@ -10,6 +10,24 @@ static inline uint64_t read_cr2(void) {
     return val;
 }
 
+static inline uint64_t read_cr0(void) {
+    uint64_t val;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(val));
+    return val;
+}
+
+static inline uint64_t read_cr3(void) {
+    uint64_t val;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(val));
+    return val;
+}
+
+static inline uint64_t read_cr4(void) {
+    uint64_t val;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(val));
+    return val;
+}
+
 /*
  * Page fault handler (ISR 14).
  *
@@ -62,4 +80,23 @@ static void page_fault_handler(struct interrupt_frame *frame) {
 
 void fault_init(void) {
     idt_register_handler(14, page_fault_handler);
+}
+
+/* ── kpanic — print a formatted message then halt ─────────────────── */
+
+#include "io.h"
+#include "printf.h"
+
+void kpanic(const char *fmt, ...) {
+    __builtin_va_list ap;
+    __asm__ volatile("cli");
+    kprintf("\n*** KERNEL PANIC ***\n");
+    __builtin_va_start(ap, fmt);
+    vkprintf(fmt, ap);
+    __builtin_va_end(ap);
+    kprintf("\n");
+    kprintf("CR0=0x%x  CR2=0x%x  CR3=0x%x  CR4=0x%x\n",
+            read_cr0(), read_cr2(), read_cr3(), read_cr4());
+    for (;;) __asm__ volatile("hlt");
+    __builtin_unreachable();
 }
