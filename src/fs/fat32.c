@@ -444,11 +444,6 @@ static uint32_t path_resolve(const char *path, int *is_dir, uint32_t *file_size)
         if (file_size) *file_size = 0;
         return cluster;
     }
-    while (*path) {
-        if (is_dir)    *is_dir    = 1;
-        if (file_size) *file_size = 0;
-        return cluster;
-    }
 
     while (*path) {
         /* Extract next component */
