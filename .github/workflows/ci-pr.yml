@@ -212,7 +212,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev make binutils
       - name: Build and run host-side libc tests
         run: |
           cd tests/host_libc

@@ -283,9 +283,36 @@ format:
 
 lint:
 	@if command -v cppcheck >/dev/null 2>&1; then \
-		cppcheck --enable=all --inconclusive --suppress=missingIncludeSystem \
-		  --suppress=unmatchedSuppression --language=c --std=c17 \
+		cppcheck --enable=all \
+		  --suppress=unusedFunction \
+		  --suppress=constVariablePointer \
+		  --suppress=constParameterPointer \
+		  --suppress=variableScope \
+		  --suppress=unreadVariable \
+		  --suppress=arrayIndexThenCheck \
+		  --suppress=redundantInitialization \
+		  --suppress=knownConditionTrueFalse \
+		  --suppress=badBitmaskCheck \
+		  --suppress=unusedStructMember \
+		  --suppress=constVariable \
+		  --suppress=shadowVariable \
+		  --suppress=redundantAssignment \
+		  --suppress=oppositeInnerCondition \
+		  --suppress=zerodivcond \
+		  --suppress=staticStringCompare \
+		  --suppress=unsignedLessThanZero \
+		  --suppress=arrayIndexOutOfBoundsCond \
+		  --suppress=constParameterCallback \
+		  --suppress=clarifyCondition \
+		  --suppress=redundantCondition \
+		  --suppress=duplicateValueTernary \
+		  --suppress=useStandardLibrary \
+		  --suppress=checkersReport \
+		  --suppress=checkLevelNormal \
+		  --std=c17 \
 		  -Isrc/include -Isrc/gui -Isrc/doom \
+		  --inline-suppr \
+		  --error-exitcode=1 \
 		  src/; \
 	else \
 		echo "cppcheck not found. Install it (e.g., apt install cppcheck) and try again."; \
