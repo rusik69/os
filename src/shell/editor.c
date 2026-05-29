@@ -328,8 +328,8 @@ static void ed_save(void) {
         } else {
             uint8_t color = VGA_WHITE | (VGA_RED << 4);
             const char *msg = " SAVE FAILED ";
-            /* cppcheck-suppress arrayIndexOutOfBounds */
             for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
+                /* cppcheck-suppress arrayIndexOutOfBounds */
                 vga_put_entry_at(msg[i], color, VGA_HEIGHT - 1, i);
         }
     } else {
