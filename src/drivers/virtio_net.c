@@ -20,6 +20,7 @@
 #include "types.h"
 #include "idt.h"
 #include "pic.h"
+#include "apic.h"
 #include "net.h"
 
 /* ── Virtio PCI constants ───────────────────────────────────────── */
@@ -112,7 +113,7 @@ static inline uint8_t vio_inb(uint8_t off);
 static void virtio_net_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
     (void)vio_inb(VIRTIO_PCI_ISR);
-    if (vnet_irq) pic_eoi(vnet_irq);
+    if (vnet_irq) irq_ack(vnet_irq);
     net_rx_signal();
 }
 
@@ -218,6 +219,8 @@ int virtio_net_init(void) {
 
     vnet_irq = dev.irq;
     idt_register_handler(32 + dev.irq, virtio_net_irq_handler);
+    if (apic_is_init_complete())
+        ioapic_unmask_irq(dev.irq);
     pic_unmask(dev.irq);
 
     vnet_present = 1;

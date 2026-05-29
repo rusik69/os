@@ -1,6 +1,8 @@
 #include "rtc.h"
 #include "io.h"
 #include "idt.h"
+#include "apic.h"
+#include "pic.h"
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71
@@ -33,12 +35,18 @@ static void rtc_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
     /* Read status C to clear the interrupt */
     cmos_read(RTC_STATUS_C);
+    irq_ack(8);
 }
 
 void rtc_init(void) {
     /* Enable RTC IRQ8 by unmasking it in PIC */
     /* Register our handler for IRQ8 (vector 40) */
     idt_register_handler(40, rtc_irq_handler);
+
+    if (apic_is_init_complete()) {
+        ioapic_unmask_irq(8);
+    }
+    pic_unmask(8);
 
     /* Enable Update-Ended interrupt (bit 4 of status B) */
     outb(CMOS_ADDR, 0x8B);   /* disable NMI, select status B */

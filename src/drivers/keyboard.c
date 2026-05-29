@@ -1,8 +1,10 @@
 #include "keyboard.h"
 #include "idt.h"
 #include "pic.h"
+#include "apic.h"
 #include "io.h"
 #include "scheduler.h"
+#include "printf.h"
 
 #define KB_DATA_PORT 0x60
 #define KB_BUF_SIZE  256
@@ -54,9 +56,10 @@ static void keyboard_handler(struct interrupt_frame *frame) {
     (void)frame;
     uint8_t scancode = inb(KB_DATA_PORT);
 
+    irq_ack(1);
+
     if (scancode == 0xE0) {
         kb_extend = 1;
-        pic_eoi(1);
         return;
     }
 
@@ -66,32 +69,30 @@ static void keyboard_handler(struct interrupt_frame *frame) {
             key_set_down(scancode & 0x7F, 0);
         else
             key_set_down(scancode, 1);
-        pic_eoi(1);
         return;
     }
 
     switch (scancode) {
-    case 0x2A: case 0x36: kb_shift = 1; pic_eoi(1); return;
-    case 0xAA: case 0xB6: kb_shift = 0; pic_eoi(1); return;
-    case 0x1D: kb_ctrl = 1; pic_eoi(1); return;
-    case 0x9D: kb_ctrl = 0; pic_eoi(1); return;
-    case 0x3A: kb_capslock = !kb_capslock; pic_eoi(1); return;
+    case 0x2A: case 0x36: kb_shift = 1; return;
+    case 0xAA: case 0xB6: kb_shift = 0; return;
+    case 0x1D: kb_ctrl = 1; return;
+    case 0x9D: kb_ctrl = 0; return;
+    case 0x3A: kb_capslock = !kb_capslock; return;
     }
 
     if (scancode & 0x80) {
         key_set_down(scancode & 0x7F, 0);
-        pic_eoi(1);
         return;
     }
 
     key_set_down(scancode, 1);
 
-    if (scancode == 0x48) { kb_push(KEY_UP); pic_eoi(1); return; }
-    if (scancode == 0x50) { kb_push(KEY_DOWN); pic_eoi(1); return; }
-    if (scancode == 0x4B) { kb_push(KEY_LEFT); pic_eoi(1); return; }
-    if (scancode == 0x4D) { kb_push(KEY_RIGHT); pic_eoi(1); return; }
+    if (scancode == 0x48) { kb_push(KEY_UP); return; }
+    if (scancode == 0x50) { kb_push(KEY_DOWN); return; }
+    if (scancode == 0x4B) { kb_push(KEY_LEFT); return; }
+    if (scancode == 0x4D) { kb_push(KEY_RIGHT); return; }
 
-    if (scancode >= 128) { pic_eoi(1); return; }
+    if (scancode >= 128) return;
 
     char base = scancode_to_ascii[scancode];
     int use_shift = kb_shift;
@@ -100,11 +101,14 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 
     if (kb_ctrl && c >= 'a' && c <= 'z') c = c - 'a' + 1;
     if (c) kb_push(c);
-    pic_eoi(1);
 }
 
 void keyboard_init(void) {
     idt_register_handler(33, keyboard_handler);
+    if (apic_is_init_complete()) {
+        ioapic_redirect_extint(1);
+        ioapic_unmask_irq(1);
+    }
     pic_unmask(1);
 }
 

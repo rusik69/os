@@ -6,6 +6,7 @@
 #include "printf.h"
 #include "idt.h"
 #include "pic.h"
+#include "apic.h"
 #include "net.h"
 
 /* E1000 register offsets */
@@ -104,8 +105,8 @@ static uint32_t e1000_read(uint32_t reg) {
 
 static void e1000_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
-    e1000_read(REG_ICR);
-    pic_eoi(e1000_irq_line);
+    e1000_read(REG_ICR); /* clear the interrupt cause */
+    irq_ack(e1000_irq_line);
     net_rx_signal();
 }
 
@@ -189,6 +190,8 @@ int e1000_init(void) {
     e1000_write(REG_IMS, 0x80); /* RXT0 */
     e1000_irq_line = dev.irq;
     idt_register_handler(32 + dev.irq, e1000_irq_handler);
+    if (apic_is_init_complete())
+        ioapic_unmask_irq(dev.irq);
     pic_unmask(dev.irq);
 
     /* Clear multicast table */

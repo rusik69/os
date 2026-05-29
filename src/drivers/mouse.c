@@ -2,6 +2,7 @@
 #include "io.h"
 #include "idt.h"
 #include "pic.h"
+#include "apic.h"
 #include "printf.h"
 
 #define PS2_DATA    0x60
@@ -63,6 +64,7 @@ static uint8_t mouse_read(void) {
 static void mouse_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
     uint8_t byte = inb(PS2_DATA);
+    irq_ack(12);
 
     switch (mouse_cycle) {
         case 0:
@@ -143,6 +145,10 @@ void mouse_init(void) {
 
     /* Register handler for IRQ12 (vector 44) */
     idt_register_handler(44, mouse_irq_handler);
+    if (apic_is_init_complete()) {
+        ioapic_unmask_irq(12);
+    }
+    pic_unmask(12);
 }
 
 void mouse_get_pos(int *x, int *y) {

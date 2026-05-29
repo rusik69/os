@@ -204,6 +204,34 @@ void ioapic_init(void) {
         ioapic_write_reg(IOAPIC_REDTBL + i * 2, IOAPIC_MASKED);
         ioapic_write_reg(IOAPIC_REDTBL + i * 2 + 1, 0);
     }
+
+    /* Set first 16 pins to ExtINT delivery (legacy PIC-compatible mode).
+     * On many chipsets the PIT, keyboard, RTC, etc. are only connected
+     * to the PIC, not directly to the I/O APIC.  ExtINT forwards the
+     * PIC's output through the I/O APIC, so each driver only needs
+     * pic_unmask() + ioapic_unmask_irq(). */
+    for (int i = 0; i < 16 && i <= max_redir; i++) {
+        uint32_t low = IOAPIC_MASKED | (7 << 8) | (0 << 11) | (0 << 15);
+        ioapic_write_reg(IOAPIC_REDTBL + i * 2, low);
+        ioapic_write_reg(IOAPIC_REDTBL + i * 2 + 1, 0);
+    }
+}
+
+void ioapic_redirect_extint(uint8_t irq) {
+    /* Configure I/O APIC pin for ExtINT delivery.
+     * ExtINT forwards whatever the legacy PIC outputs — used for
+     * backward-compatible interrupt routing (PIT, keyboard, etc.). */
+    uint32_t low = (7 << 8) | (0 << 11) | (0 << 15); /* ExtINT, phys, edge */
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
+    ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, 0);
+}
+
+/* Universal interrupt acknowledge — sends EOI to both APIC and PIC.
+ * Under ExtINT routing both controllers must be acknowledged. */
+void irq_ack(uint8_t irq) {
+    if (apic_is_init_complete())
+        apic_eoi();
+    pic_eoi(irq);
 }
 
 void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id) {

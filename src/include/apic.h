@@ -80,9 +80,11 @@ int apic_is_init_complete(void);
 
 /* I/O APIC */
 void ioapic_init(void);
+void ioapic_redirect_extint(uint8_t irq);
 void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id);
 void ioapic_mask_irq(uint8_t irq);
 void ioapic_unmask_irq(uint8_t irq);
+void irq_ack(uint8_t irq);
 
 /* APIC timer calibration (returns bus frequency in Hz) */
 uint32_t apic_timer_calibrate(void);

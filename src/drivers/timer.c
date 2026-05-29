@@ -5,6 +5,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "apic.h"
+#include "printf.h"
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -14,10 +15,7 @@ static volatile uint64_t ticks = 0;
 static void timer_handler(struct interrupt_frame *frame) {
     (void)frame;
     ticks++;
-    if (apic_is_init_complete())
-        apic_eoi();
-    else
-        pic_eoi(0);
+    irq_ack(0);
     scheduler_wake_sleepers();
     scheduler_tick();
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
@@ -37,11 +35,14 @@ void timer_init(void) {
 
     idt_register_handler(32, timer_handler);
 
-    /* If the I/O APIC is active, route IRQ 0 through the I/O APIC only.
-     * Otherwise fall back to the legacy PIC. */
+    /* Legacy PIC → ExtINT → I/O APIC routing.
+     * On many chipsets the PIT output is only connected to the PIC,
+     * not directly to the I/O APIC.  Using ExtINT delivery makes the
+     * I/O APIC forward whatever the legacy PIC generates. */
     if (apic_is_init_complete()) {
-        ioapic_redirect_irq(0, 32, 0);
+        ioapic_redirect_extint(0);
         ioapic_unmask_irq(0);
+        pic_unmask(0);
     } else {
         pic_unmask(0);
     }
