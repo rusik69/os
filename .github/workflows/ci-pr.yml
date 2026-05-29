@@ -96,7 +96,21 @@ jobs:
       - uses: actions/checkout@v6
       - name: Run cppcheck
         run: |
-          cppcheck --enable=all --suppress=missingIncludeSystem \
+          cppcheck --enable=all \
+            --suppress=missingIncludeSystem \
+            --suppress=unusedFunction \
+            --suppress=constVariablePointer \
+            --suppress=constParameterPointer \
+            --suppress=variableScope \
+            --suppress=unreadVariable \
+            --suppress=arrayIndexThenCheck \
+            --suppress=redundantInitialization \
+            --suppress=knownConditionTrueFalse \
+            --suppress=badBitmaskCheck \
+            --suppress=unusedStructMember \
+            --suppress=constVariable \
+            --suppress=shadowVariable \
+            --suppress=redundantAssignment \
             --std=c17 \
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \

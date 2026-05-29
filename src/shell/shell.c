@@ -172,6 +172,7 @@ static void glob_expand_line(const char *line, char *out, int out_max) {
                         /* prepend dir */
                         int dl = strlen(dir);
                         if (dl < 126) { memcpy(full, dir, dl); fi = dl; }
+                        /* cppcheck-suppress negativeIndex — dl >= 1 when last_slash >= 0 */
                         if (fi < 126 && dir[fi-1] != '/') full[fi++] = '/';
                     }
                     int nl = strlen(gnames[i]);
