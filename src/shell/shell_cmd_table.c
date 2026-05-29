@@ -27,7 +27,7 @@ static void sh_arp(const char *a)        { (void)a; cmd_arp(); }
 static void sh_route(const char *a)      { (void)a; cmd_route(); }
 static void sh_uname(const char *a)      { (void)a; cmd_uname(); }
 static void sh_lspci(const char *a)      { (void)a; cmd_lspci(); }
-static void sh_dmesg(const char *a)      { (void)a; cmd_dmesg(); }
+static void sh_dmesg(const char *a)      { cmd_dmesg(a); }
 static void sh_jobs(const char *a)       { (void)a; cmd_jobs(); }
 static void sh_cmos(const char *a)       { (void)a; cmd_cmos(); }
 static void sh_hwinfo(const char *a)     { (void)a; cmd_hwinfo(); }
@@ -40,6 +40,7 @@ static void sh_users(const char *a)      { (void)a; cmd_users(); }
 static void sh_top(const char *a)        { (void)a; cmd_top(); }
 static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
 static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }
+static void sh_sync(const char *a)       { (void)a; cmd_sync(); }
 
 #include "cmd_table.inc"
 

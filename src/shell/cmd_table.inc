@@ -107,6 +107,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("split",       "Split file into chunks",                                cmd_split)
     CMD("stat",        "Show file info",                                        cmd_stat_file)
     CMD("strings",     "Print printable strings from file",                     cmd_strings)
+    CMD("sum",         "Checksum and count blocks (sum <file>)",                 cmd_sum)
+    CMD("sync",        "Flush filesystem buffers",                               sh_sync)
     CMD("tac",         "Print file lines in reverse",                           cmd_tac)
     CMD("tail",        "Show last N lines",                                     cmd_tail)
     CMD("tar",         "Simple tar archive (tar -c|-x ...)",                    cmd_tar)
@@ -144,7 +146,6 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("banner",      "Print large ASCII banner (banner <text>)",                cmd_banner)
     CMD("tsort",       "Topological sort (tsort <file>)",                        cmd_tsort)
     CMD("join",        "Join lines of two files (join [-j N] <f1> <f2>)",        cmd_join)
-    CMD("sum",         "Checksum and count blocks (sum <file>)",                 cmd_sum)
     CMD("unexpand",    "Convert spaces to tabs (unexpand [-t N] <file>)",         cmd_unexpand)
     { 0, 0, 0 }
 };

@@ -67,9 +67,64 @@ static int procfs_gen_meminfo(char *buf, int max) {
 
 static int procfs_gen_cpuinfo(char *buf, int max) {
     int p = 0;
+    uint32_t eax, ebx, ecx, edx;
+    char vendor[13];
+
+    /* Leaf 0: vendor string */
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    *(uint32_t*)&vendor[0] = ebx;
+    *(uint32_t*)&vendor[4] = edx;
+    *(uint32_t*)&vendor[8] = ecx;
+    vendor[12] = 0;
+
     proc_str("processor\t: 0\n", buf, &p, max);
-    proc_str("vendor_id\t: GenuineIntel\n", buf, &p, max);
-    proc_str("model name\t: x86_64\n", buf, &p, max);
+    proc_str("vendor_id\t: ", buf, &p, max);
+    proc_str(vendor, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* Leaf 0x80000002-4: brand string */
+    char brand[49];
+    memset(brand, 0, 49);
+    uint32_t max_ext;
+    uint32_t _dummy_ebx, _dummy_ecx, _dummy_edx;
+    __asm__ volatile("cpuid" : "=a"(max_ext), "=b"(_dummy_ebx), "=c"(_dummy_ecx), "=d"(_dummy_edx) : "a"(0x80000000));
+    if (max_ext >= 0x80000004) {
+        for (uint32_t i = 0; i < 3; i++) {
+            __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000002 + i));
+            *(uint32_t*)&brand[i*16+0] = eax;
+            *(uint32_t*)&brand[i*16+4] = ebx;
+            *(uint32_t*)&brand[i*16+8] = ecx;
+            *(uint32_t*)&brand[i*16+12] = edx;
+        }
+    }
+    if (brand[0]) {
+        proc_str("model name\t: ", buf, &p, max);
+        proc_str(brand, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+    }
+
+    /* Leaf 1: family/model/stepping + features */
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    proc_str("cpu family\t: ", buf, &p, max);
+    proc_u64_to_str((eax >> 8) & 0xF, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+    proc_str("model\t\t: ", buf, &p, max);
+    proc_u64_to_str((eax >> 4) & 0xF, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+    proc_str("stepping\t: ", buf, &p, max);
+    proc_u64_to_str(eax & 0xF, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* Extended features from leaf 0x80000001 */
+    if (max_ext >= 0x80000001) {
+        uint32_t ex_eax, ex_ebx, ex_ecx, ex_edx;
+        __asm__ volatile("cpuid" : "=a"(ex_eax), "=b"(ex_ebx), "=c"(ex_ecx), "=d"(ex_edx) : "a"(0x80000001));
+        (void)ex_eax; (void)ex_ebx; (void)ex_ecx;
+        if (ex_edx & (1u << 29)) {
+            proc_str("flags\t\t: lm\n", buf, &p, max);
+        }
+    }
+
     buf[p] = '\0';
     return p;
 }

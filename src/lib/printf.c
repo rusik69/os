@@ -53,6 +53,11 @@ int kprintf_dmesg(char *buf, int max) {
     return written;
 }
 
+void kprintf_dmesg_clear(void) {
+    dmesg_pos = 0;
+    dmesg_full = 0;
+}
+
 static void kputchar(char c) {
     /* Always record in ring buffer (even when hook is active) */
     dmesg_buf[dmesg_pos++] = c;

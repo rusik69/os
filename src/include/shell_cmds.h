@@ -53,7 +53,7 @@ void cmd_arp(void);
 void cmd_route(void);
 void cmd_uname(void);
 void cmd_lspci(void);
-void cmd_dmesg(void);
+void cmd_dmesg(const char *args);
 void cmd_cc(const char *args);
 void cmd_ccbuilder(const char *args);
 void cmd_ld(const char *args);
@@ -178,6 +178,7 @@ void cmd_banner(const char *args);
 void cmd_tsort(const char *args);
 void cmd_join(const char *args);
 void cmd_sum(const char *args);
+void cmd_sync(void);
 void cmd_unexpand(const char *args);
 
 #endif
