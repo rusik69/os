@@ -24,11 +24,24 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     uint64_t cr2 = read_cr2();
     uint64_t err = frame->error_code;
 
-    /* Kernel-mode fault: panic */
+    /* Kernel-mode fault: panic with register dump */
     if (!(err & (1ULL << 2))) {
         kprintf("\n*** KERNEL PAGE FAULT ***\n");
-        kprintf("CR2=0x%x  error=0x%x\n", cr2, err);
-        kprintf("RIP=0x%x  RSP=0x%x  CS=0x%x\n", frame->rip, frame->rsp, frame->cs);
+        kprintf("CR2=0x%x  error=0x%x  (PF: %s %s %s)\n", cr2, err,
+                (err & 1) ? "prot" : "np",
+                (err & 2) ? "wr" : "rd",
+                (err & 4) ? "usr" : "sup");
+        kprintf("RIP=0x%x  RSP=0x%x  RBP=0x%x\n",
+                frame->rip, frame->rsp, frame->rbp);
+        kprintf("RAX=0x%x  RBX=0x%x  RCX=0x%x  RDX=0x%x\n",
+                frame->rax, frame->rbx, frame->rcx, frame->rdx);
+        kprintf("RSI=0x%x  RDI=0x%x  R8=0x%x   R9=0x%x\n",
+                frame->rsi, frame->rdi, frame->r8, frame->r9);
+        kprintf("R10=0x%x  R11=0x%x  R12=0x%x  R13=0x%x\n",
+                frame->r10, frame->r11, frame->r12, frame->r13);
+        kprintf("R14=0x%x  R15=0x%x\n", frame->r14, frame->r15);
+        kprintf("CS=0x%x  SS=0x%x  RFLAGS=0x%x\n",
+                frame->cs, frame->ss, frame->rflags);
         __asm__ volatile("cli");
         for (;;) __asm__ volatile("hlt");
     }

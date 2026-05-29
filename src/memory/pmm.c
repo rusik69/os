@@ -141,13 +141,15 @@ uint64_t pmm_alloc_frame(void) {
 }
 
 void pmm_free_frame(uint64_t addr) {
-    if (addr & (PAGE_SIZE - 1)) return; /* misaligned address */
+    if (addr & (PAGE_SIZE - 1)) return;
     uint64_t frame = addr / PAGE_SIZE;
-    if (frame < total_frames && bitmap_test(frame)) {
-        bitmap_clear(frame);
-        frame_refcount[frame] = 0;
-        used_frames--;
-    }
+    if (frame >= MAX_FRAMES) return;
+    if (!bitmap_test(frame)) return;
+    /* Safety: refuse to free a frame with outstanding COW references */
+    if (frame_refcount[frame] > 1) return;
+    bitmap_clear(frame);
+    frame_refcount[frame] = 0;
+    used_frames--;
 }
 
 void pmm_ref_frame(uint64_t phys) {
