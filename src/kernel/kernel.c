@@ -43,6 +43,8 @@
 #include "virtio_net.h"
 #include "virtio_blk.h"
 #include "ac97.h"
+#include "smp.h"
+#include "apic.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -128,6 +130,20 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
+
+    /* Per-CPU data for SMP */
+    smp_init_bsp();
+    kprintf("[OK] SMP per-CPU data initialized\n");
+
+    /* Local APIC (replaces PIC for interrupt delivery) */
+    apic_init_local();
+    kprintf("[OK] Local APIC initialized\n");
+
+    /* I/O APIC and SMP boot */
+    int ap_count = smp_boot_aps();
+    if (ap_count > 0)
+        kprintf("[OK] SMP: %d AP(s) booted, total %d CPU(s)\n",
+                (uint64_t)ap_count, (uint64_t)smp_get_cpu_count());
 
     /* Timer (starts scheduling) */
     timer_init();

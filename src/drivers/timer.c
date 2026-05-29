@@ -4,6 +4,7 @@
 #include "io.h"
 #include "scheduler.h"
 #include "process.h"
+#include "apic.h"
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -13,7 +14,10 @@ static volatile uint64_t ticks = 0;
 static void timer_handler(struct interrupt_frame *frame) {
     (void)frame;
     ticks++;
-    pic_eoi(0);
+    if (apic_is_init_complete())
+        apic_eoi();
+    else
+        pic_eoi(0);
     scheduler_wake_sleepers();
     scheduler_tick();
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */

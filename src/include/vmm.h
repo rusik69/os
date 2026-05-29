@@ -8,6 +8,8 @@
 #define VMM_FLAG_USER     (1 << 2)
 /* Software bit 9 (available to OS) used for Copy-on-Write */
 #define VMM_FLAG_COW      (1ULL << 9)
+/* Page-level cache disable (PAT bit) for MMIO */
+#define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
 
 void vmm_init(void);
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);

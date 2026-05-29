@@ -5,16 +5,21 @@
 #include "gdt.h"
 #include "vmm.h"
 #include "timer.h"
-
-extern void process_set_current(struct process *proc);
-extern uint64_t syscall_kernel_rsp;
+#include "smp.h"
+#include "spinlock.h"
+#include "apic.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
-#define SCHED_LEVELS 4
 static struct process *queue_head[SCHED_LEVELS];
 static struct process *queue_tail[SCHED_LEVELS];
 static int scheduler_enabled = 0;
 static uint64_t scheduler_idle_ticks = 0;
+
+/* SMP: global lock for all scheduler data structures */
+static spinlock_t sched_lock = SPINLOCK_INIT;
+
+/* Per-CPU kernel stack for syscall handling */
+extern uint64_t syscall_kernel_rsp;
 
 static int scheduler_queues_empty(void) {
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {

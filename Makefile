@@ -42,6 +42,8 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/syscall.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
+         src/kernel/apic.c \
+         src/kernel/smp.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \
@@ -101,7 +103,8 @@ ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
            src/kernel/idt_asm.asm \
            src/kernel/syscall_asm.asm \
-           src/process/switch.asm
+           src/process/switch.asm \
+           src/kernel/ap_trampoline.asm
 
 C_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(C_SRCS))
 ASM_OBJS = $(patsubst src/%.asm,$(BUILDDIR)/%.o,$(ASM_SRCS))

@@ -1,16 +1,18 @@
 #include "process.h"
+#include "scheduler.h"
+#include "printf.h"
 #include "heap.h"
 #include "string.h"
-#include "scheduler.h"
 #include "timer.h"
+#include "vmm.h"
+#include "pmm.h"
+#include "smp.h"
 #include "signal.h"
 #include "syscall.h"
-#include "vmm.h"
-
-extern void process_entry_trampoline(void);
-extern void user_entry_trampoline(void);
 
 static struct process process_table[PROCESS_MAX];
+extern void user_entry_trampoline(void);
+extern void process_entry_trampoline(void);
 static uint32_t next_pid = 1;
 static struct process *current_process = NULL;
 
@@ -339,7 +341,9 @@ void process_exit_code(int code) {
 }
 
 struct process *process_get_current(void) {
-    return current_process;
+    struct process *proc = get_current_process();
+    if (!proc) return current_process;
+    return proc;
 }
 
 /*
@@ -413,6 +417,7 @@ int process_fork(void) {
 }
 
 void process_set_current(struct process *proc) {
+    set_current_process(proc);
     current_process = proc;
 }
 

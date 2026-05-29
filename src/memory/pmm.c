@@ -140,6 +140,41 @@ uint64_t pmm_alloc_frame(void) {
     return 0; /* out of memory */
 }
 
+/* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
+uint64_t *pmm_alloc_frames(size_t count) {
+    if (count == 0) return NULL;
+    if (count == 1) return (uint64_t *)pmm_alloc_frame();
+
+    /* Scan for 'count' contiguous free frames */
+    uint64_t start = pmm_hint;
+    uint64_t found = 0;
+
+    uint64_t i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            if (found == 0) start = i;
+            found++;
+            if (found == count) {
+                /* Allocate all frames */
+                for (uint64_t j = start; j < start + count; j++) {
+                    bitmap_set(j);
+                    used_frames++;
+                    frame_refcount[j] = 1;
+                }
+                pmm_hint = start + count;
+                if (pmm_hint >= total_frames) pmm_hint = 0;
+                return (uint64_t *)(start * PAGE_SIZE);
+            }
+        } else {
+            found = 0;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+
+    return NULL; /* out of memory */
+}
+
 void pmm_free_frame(uint64_t addr) {
     if (addr & (PAGE_SIZE - 1)) return;
     uint64_t frame = addr / PAGE_SIZE;

@@ -3,6 +3,9 @@
 
 #include "process.h"
 
+/* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
+#define SCHED_LEVELS 4
+
 void scheduler_init(void);
 void schedule(void);
 void scheduler_add(struct process *proc);
