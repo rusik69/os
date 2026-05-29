@@ -1,0 +1,7 @@
+# Everything excluded by default; Dockerfiles that need files use explicit COPY
+# This avoids sending the entire repo to the Docker daemon as build context.
+
+*
+!docker/
+!.dockerignore
+!linker.ld

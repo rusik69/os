@@ -7,6 +7,14 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+concurrency:
+  group: docker-ci-image
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}-ci

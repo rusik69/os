@@ -5,6 +5,16 @@ on:
     branches: [main, master]
     tags: ['v*']
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  # release job needs contents: write for creating releases
+  # override at job level below
+
 env:
   CCACHE_DIR: /tmp/ccache
   CCACHE_MAXSIZE: 500M
@@ -22,8 +32,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-build-${{ github.sha }}
-          restore-keys: ccache-build-
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Build kernel
         run: |
           make all \
@@ -146,8 +156,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-e2e-${{ github.sha }}
-          restore-keys: ccache-e2e-
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Build kernel
         run: |
           make all \
@@ -180,8 +190,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-virtio-${{ github.sha }}
-          restore-keys: ccache-virtio-
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Build kernel
         run: |
           make all \
@@ -217,8 +227,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-usbfat-${{ github.sha }}
-          restore-keys: ccache-usbfat-
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Build kernel
         run: |
           make all \
@@ -270,6 +280,8 @@ jobs:
     timeout-minutes: 10
     needs: [build, test, e2e]
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write  # create GitHub Release
     steps:
       - uses: actions/checkout@v6
       - name: ccache cache
@@ -277,8 +289,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-release-${{ github.sha }}
-          restore-keys: ccache-release-
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
       - name: Build kernel
         run: |
           make all \
