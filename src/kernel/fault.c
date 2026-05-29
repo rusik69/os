@@ -60,6 +60,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         kprintf("R14=0x%x  R15=0x%x\n", frame->r14, frame->r15);
         kprintf("CS=0x%x  SS=0x%x  RFLAGS=0x%x\n",
                 frame->cs, frame->ss, frame->rflags);
+        arch_print_backtrace();
         __asm__ volatile("cli");
         for (;;) __asm__ volatile("hlt");
     }
@@ -82,10 +83,51 @@ void fault_init(void) {
     idt_register_handler(14, page_fault_handler);
 }
 
-/* ── kpanic — print a formatted message then halt ─────────────────── */
+/* ── Frame-pointer-based backtrace ──────────────────────────── */
 
 #include "io.h"
 #include "printf.h"
+#include "process.h"
+
+/* Print a backtrace by walking the RBP-linked frame pointer chain.
+ * Each frame: [rbp+0] = previous rbp, [rbp+8] = return address.
+ */
+void arch_print_backtrace(void) {
+    uint64_t rbp;
+    __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
+
+    /* Determine stack bounds from current process if available */
+    uint64_t stack_low = 0, stack_high = ~0ULL;
+    struct process *proc = process_get_current();
+    if (proc) {
+        stack_low  = proc->kernel_stack;
+        stack_high = proc->stack_top;
+    }
+
+    kprintf("Backtrace:\n");
+    for (int i = 0; i < 32; i++) {
+        /* Validate frame pointer is in reasonable kernel range */
+        if (rbp < 0xFFFF800000000000ULL || rbp >= 0xFFFFFFFFFFFFFFFFULL)
+            break;
+        /* Validate within kernel stack if we know bounds */
+        if (stack_low && (rbp < stack_low || rbp >= stack_high))
+            break;
+        /* Check alignment */
+        if (rbp & 0xF)
+            break;
+
+        uint64_t *frame = (uint64_t *)rbp;
+        uint64_t ret_addr = frame[1];
+        if (ret_addr == 0)
+            break;
+
+        kprintf("  [%02d] 0x%x\n", (uint64_t)i, ret_addr);
+
+        rbp = frame[0];
+    }
+}
+
+/* ── kpanic — print a formatted message then halt ─────────────────── */
 
 void kpanic(const char *fmt, ...) {
     __builtin_va_list ap;
@@ -97,6 +139,7 @@ void kpanic(const char *fmt, ...) {
     kprintf("\n");
     kprintf("CR0=0x%x  CR2=0x%x  CR3=0x%x  CR4=0x%x\n",
             read_cr0(), read_cr2(), read_cr3(), read_cr4());
+    arch_print_backtrace();
     for (;;) __asm__ volatile("hlt");
     __builtin_unreachable();
 }

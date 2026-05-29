@@ -10,6 +10,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("basename",    "Extract filename from path",                            cmd_basename)
     CMD("beep",        "PC speaker beep (beep [freq] [ms])",                    cmd_beep)
     CMD("bg",          "Resume stopped job in background",                      cmd_bg)
+    CMD("bt",          "Print kernel backtrace",                                sh_bt)
     CMD("calc",        "Calculator (calc <expr>)",                              cmd_calc)
     CMD("capprof",     "Set syscall profile (capprof <pid> <none|default|trusted>)", cmd_capprof)
     CMD("cat",         "Show file contents",                                    cmd_cat)

@@ -41,6 +41,7 @@ static void sh_top(const char *a)        { (void)a; cmd_top(); }
 static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
 static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }
 static void sh_sync(const char *a)       { (void)a; cmd_sync(); }
+static void sh_bt(const char *a)         { (void)a; cmd_bt(); }
 
 #include "cmd_table.inc"
 

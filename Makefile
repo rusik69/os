@@ -27,7 +27,7 @@ endif
 NPROCS := $(shell nproc)
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-         -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
+         -fno-stack-protector -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP
 ASFLAGS = -f elf64 -g
@@ -135,12 +135,12 @@ all:
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
 	    echo "  string.h, stdlib.h, types.h, keyboard.h, blockdev.h, fat32.h, ata.h,"; \
-	    echo "  ahci.h, service.h"; \
+	    echo "  ahci.h, service.h, fault.h"; \
 	    echo "Offending files:"; \
 	    echo "$$bad"; \
 	    exit 1; \

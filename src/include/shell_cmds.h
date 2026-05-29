@@ -180,5 +180,6 @@ void cmd_join(const char *args);
 void cmd_sum(const char *args);
 void cmd_sync(void);
 void cmd_unexpand(const char *args);
+void cmd_bt(void);
 
 #endif
