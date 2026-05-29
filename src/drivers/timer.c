@@ -36,7 +36,15 @@ void timer_init(void) {
     outb(PIT_CH0, (uint8_t)((divisor >> 8) & 0xFF));
 
     idt_register_handler(32, timer_handler);
-    pic_unmask(0);
+
+    /* If the I/O APIC is active, route IRQ 0 through the I/O APIC only.
+     * Otherwise fall back to the legacy PIC. */
+    if (apic_is_init_complete()) {
+        ioapic_redirect_irq(0, 32, 0);
+        ioapic_unmask_irq(0);
+    } else {
+        pic_unmask(0);
+    }
 }
 
 uint64_t timer_get_ticks(void) {

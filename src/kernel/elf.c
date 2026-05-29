@@ -234,8 +234,8 @@ int elf_exec(const char *path) {
             return -1;
         }
 
-        kprintf("elf: launched %s (pid %u, ring 3, entry 0x%x)\n",
-                name, (uint64_t)p->pid, entry);
+        kprintf("elf: launched '%s' (pid %u, ring 3, entry 0x%x)\n",
+                name ? name : "(null)", (uint64_t)p->pid, entry);
         return 0;
     }
 

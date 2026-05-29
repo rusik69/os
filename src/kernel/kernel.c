@@ -324,6 +324,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
 
+    /* Always create a kernel-mode shell alongside init for debugging */
+    if (!process_create(shell_task, "shell"))
+        kprintf("[!!] Failed to create shell\n");
+
     if (!init_ok) {
         /* Fall back to kernel threads */
         kprintf("[--] No userspace init binary found, using kernel-mode shell\n");

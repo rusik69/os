@@ -302,8 +302,10 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd == 1 || fd == 2) {
         const char *s = (const char *)buf_addr;
-        for (uint64_t i = 0; i < len; i++)
+        for (uint64_t i = 0; i < len; i++) {
             vga_putchar(s[i]);
+            serial_putchar(s[i]);
+        }
         return len;
     }
     return (uint64_t)-1;

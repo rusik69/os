@@ -250,12 +250,16 @@ int smp_boot_aps(void) {
 
     /* Detect available CPUs from MADT */
     int total = detect_cpus_from_madt();
+
+    /* Initialize I/O APIC (needed for interrupt routing even on UP) */
+    ioapic_init();
+
     if (total <= 1) {
         kprintf("[--] SMP: 1 CPU detected (no APs to boot)\n");
         return 0;
     }
 
-    /* Initialize I/O APIC */
+    /* Initialize I/O APIC — already done above */
     ioapic_init();
 
     /* Copy trampoline to low memory (physical page 0x7000) */
