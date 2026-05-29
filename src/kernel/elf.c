@@ -224,3 +224,127 @@ int elf_exec(const char *path) {
             name, (uint64_t)p->pid, entry);
     return 0;
 }
+
+/* ── execve: replace current process image with a new ELF ─────────── */
+
+/* These are defined in syscall_asm.asm */
+extern volatile uint64_t execve_pending;
+extern volatile uint64_t execve_user_rip;
+extern volatile uint64_t execve_user_rflags;
+extern volatile uint64_t execve_user_rsp;
+
+int process_execve(const char *path, char *const argv[], char *const envp[]) {
+    (void)argv; (void)envp;
+
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+    if (!cur->is_user) return -1;
+
+    uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
+    if (!buf) return -1;
+
+    uint32_t size = 0;
+    if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
+        kfree(buf);
+        return -1;
+    }
+
+    uint64_t entry = elf_load(buf, (uint64_t)size);
+    if (!entry) {
+        kfree(buf);
+        return -1;
+    }
+
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    if (entry >= 0x800000000000ULL) {
+        kfree(buf);
+        return -1;
+    }
+
+    uint64_t *old_pml4 = cur->pml4;
+    uint64_t *new_pml4 = vmm_create_user_pml4();
+    if (!new_pml4) { kfree(buf); return -1; }
+
+    int map_ok = 1;
+    for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
+        const struct elf64_phdr *ph =
+            (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
+        if (ph->p_type != PT_LOAD) continue;
+        if (ph->p_vaddr >= 0x0000800000000000ULL) { map_ok = 0; break; }
+
+        uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
+        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+        uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+        if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
+
+        for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
+            uint64_t frame = pmm_alloc_frame();
+            if (!frame) { map_ok = 0; break; }
+            memset((void *)frame, 0, PAGE_SIZE);
+            if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
+                pmm_free_frame(frame);
+                map_ok = 0; break;
+            }
+        }
+        if (!map_ok) break;
+
+        __asm__ volatile("cli");
+        vmm_switch_pml4(new_pml4);
+        memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
+        vmm_switch_pml4(vmm_get_pml4());
+        __asm__ volatile("sti");
+    }
+
+    kfree(buf);
+    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -1; }
+
+    /* Allocate user stack (64KB) */
+    uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
+        uint64_t frame = pmm_alloc_frame();
+        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
+        memset((void *)frame, 0, PAGE_SIZE);
+        if (vmm_map_user_page(new_pml4, va, frame,
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
+            pmm_free_frame(frame);
+            vmm_destroy_user_pml4(new_pml4);
+            return -1;
+        }
+    }
+
+    uint64_t new_rsp = USER_STACK_TOP - 8;
+
+    /* Update process name */
+    size_t plen = strlen(path);
+    if (plen > 255) plen = 255;
+    char *kname = (char *)kmalloc(plen + 1);
+    if (kname) {
+        memcpy(kname, path, plen);
+        kname[plen] = '\0';
+        cur->name = kname;
+    }
+
+    /* Destroy old user page tables */
+    if (old_pml4) vmm_destroy_user_pml4(old_pml4);
+
+    /* Switch to new page tables */
+    cur->pml4 = new_pml4;
+    cur->user_entry = entry;
+    __asm__ volatile("cli");
+    vmm_switch_pml4(new_pml4);
+    __asm__ volatile("sti");
+
+    /* Set up the execve return state.
+     * The syscall return path (syscall_asm.asm) checks execve_pending
+     * and uses these values for the sysret instead of the stack state. */
+    __asm__ volatile("cli");
+    execve_user_rip = entry;
+    execve_user_rflags = 0x202;  /* IF=1 */
+    execve_user_rsp = new_rsp;
+    execve_pending = 1;
+    __asm__ volatile("sti");
+
+    kprintf("execve: %s (entry 0x%x, rsp 0x%x, pid %u)\n",
+            path, entry, new_rsp, (uint64_t)cur->pid);
+    return 0;
+}

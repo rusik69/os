@@ -36,6 +36,17 @@ global syscall_user_rflags
 syscall_user_rip: dq 0
 syscall_user_rflags: dq 0
 
+; execve state: when execve_pending is non-zero, the syscall return path
+; uses these values instead of the saved stack state.
+global execve_pending
+global execve_user_rip
+global execve_user_rflags
+global execve_user_rsp
+execve_pending: dq 0
+execve_user_rip: dq 0
+execve_user_rflags: dq 0
+execve_user_rsp: dq 0
+
 ; ============================================================================
 ; syscall_entry — ring-3 path only
 ; ============================================================================
@@ -80,6 +91,22 @@ syscall_entry:
 
     call    syscall_dispatch ; result in rax
 
+    ; Check if execve() was called — if so, use the execve state instead
+    ; of the saved stack values for the return to user mode.
+    cmp     qword [rel execve_pending], 0
+    je      .normal_return
+
+    ; Force execve return: use the preset RIP/RFLAGS/RSP
+    xor     eax, eax               ; execve returns 0
+    mov     rcx, [rel execve_user_rip]
+    mov     r11, [rel execve_user_rflags]
+    mov     rsp, [rel execve_user_rsp]
+
+    ; Zero the pending flag so subsequent syscalls use normal return
+    mov     qword [rel execve_pending], 0
+    o64 sysret
+
+.normal_return:
     pop     r15
     pop     r14
     pop     r13

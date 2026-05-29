@@ -45,6 +45,7 @@
 #include "ac97.h"
 #include "smp.h"
 #include "apic.h"
+#include "elf.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -295,22 +296,46 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[OK] Test task created\n");
 #else
-    /* Normal mode: interactive shell + background tasks */
-    if (!process_create(test_task_a, "task_a"))
-        kprintf("[!!] Failed to create task_a\n");
-    if (!process_create(test_task_b, "task_b"))
-        kprintf("[!!] Failed to create task_b\n");
-    if (!process_create(shell_task, "shell"))
-        kprintf("[!!] Failed to create shell\n");
-    if (virtio_net_present() || e1000_is_present()) {
-        if (!process_create(net_task, "netd"))
-            kprintf("[!!] Failed to create netd\n");
-        if (!process_create(httpd_task, "httpd"))
-            kprintf("[!!] Failed to create httpd\n");
+    /* Normal mode: try to load a userspace init binary from the filesystem.
+     * If successful, the init process runs in ring 3 and can spawn shell, etc.
+     * If no init binary is found, fall back to kernel-mode shell. */
+    int init_ok = 0;
+
+    /* Try common init paths */
+    const char *init_paths[] = {
+        "/init.elf",
+        "/bin/init",
+        "/shell.elf",
+        "/bin/sh.elf",
+    };
+
+    for (size_t i = 0; i < sizeof(init_paths) / sizeof(init_paths[0]); i++) {
+        if (elf_exec(init_paths[i]) == 0) {
+            init_ok = 1;
+            kprintf("[OK] Userspace init: %s\n", init_paths[i]);
+            break;
+        }
     }
-    if (vga_is_framebuffer()) {
-        if (!process_create(gui_task, "gui"))
-            kprintf("[!!] Failed to create gui\n");
+
+    if (!init_ok) {
+        /* Fall back to kernel threads */
+        kprintf("[--] No userspace init binary found, using kernel-mode shell\n");
+        if (!process_create(test_task_a, "task_a"))
+            kprintf("[!!] Failed to create task_a\n");
+        if (!process_create(test_task_b, "task_b"))
+            kprintf("[!!] Failed to create task_b\n");
+        if (!process_create(shell_task, "shell"))
+            kprintf("[!!] Failed to create shell\n");
+        if (virtio_net_present() || e1000_is_present()) {
+            if (!process_create(net_task, "netd"))
+                kprintf("[!!] Failed to create netd\n");
+            if (!process_create(httpd_task, "httpd"))
+                kprintf("[!!] Failed to create httpd\n");
+        }
+        if (vga_is_framebuffer()) {
+            if (!process_create(gui_task, "gui"))
+                kprintf("[!!] Failed to create gui\n");
+        }
     }
     kprintf("[OK] Processes created\n");
 #endif

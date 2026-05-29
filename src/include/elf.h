@@ -60,4 +60,14 @@ uint64_t elf_load(const uint8_t *data, uint64_t size);
  */
 int elf_exec(const char *path);
 
+/*
+ * execve: replace the current user process image with a new ELF.
+ * Destroys old user page tables, loads the new binary, allocates
+ * a fresh user stack, and redirects the syscall return path to
+ * start execution at the new entry point with rax=0.
+ * Kernel threads cannot call execve (must be a user process).
+ * argv/envp are currently not passed to userspace.
+ */
+int process_execve(const char *path, char *const argv[], char *const envp[]);
+
 #endif

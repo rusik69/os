@@ -940,6 +940,17 @@ static uint64_t sys_tkill(uint64_t pid, uint64_t sig) {
     return (uint64_t)(int64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
+static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+    /* For now, ignore argv/envp */
+    (void)argv_addr; (void)envp_addr;
+    int ret = process_execve(path, NULL, NULL);
+    /* If execve succeeds, we never return here (the process is redirected).
+     * If it fails, we return -1. */
+    return (uint64_t)(int64_t)ret;
+}
+
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
     const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
@@ -1681,6 +1692,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
+        case SYS_EXECVE:              return sys_execve(a1, a2, a3);
         case SYS_NET_CONNLIST:         return sys_net_connlist();
         case SYS_SIGNAL:              return sys_signal(a1, a2);
         case SYS_LSEEK:               return sys_lseek(a1, a2, a3);

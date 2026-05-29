@@ -202,6 +202,7 @@
 #define SYS_CLONE           231
 #define SYS_GETTID          232
 #define SYS_TKILL           233
+#define SYS_EXECVE          234
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
