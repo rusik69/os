@@ -121,6 +121,7 @@ jobs:
             --suppress=duplicateValueTernary \
             --suppress=useStandardLibrary \
             --suppress=checkersReport \
+            --suppress=checkLevelNormal \
             --std=c17 \
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \
