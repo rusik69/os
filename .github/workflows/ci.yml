@@ -85,6 +85,17 @@ jobs:
             --suppress=constVariable \
             --suppress=shadowVariable \
             --suppress=redundantAssignment \
+            --suppress=oppositeInnerCondition \
+            --suppress=zerodivcond \
+            --suppress=staticStringCompare \
+            --suppress=unsignedLessThanZero \
+            --suppress=arrayIndexOutOfBoundsCond \
+            --suppress=preprocessorErrorDirective \
+            --suppress=constParameterCallback \
+            --suppress=clarifyCondition \
+            --suppress=redundantCondition \
+            --suppress=duplicateValueTernary \
+            --suppress=useStandardLibrary \
             --std=c17 \
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \

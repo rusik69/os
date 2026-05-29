@@ -244,7 +244,7 @@ static struct modrm decode_modrm(struct dos_cpu_state *s, int word_mode __attrib
     if (mod == 3) {
         m.is_reg = 1;
         m.rm_reg = rm;
-        /* cppcheck-suppress uninitvar — addr/disp only valid if !is_reg */
+        /* cppcheck-suppress uninitvar */
         return m;
     }
 
