@@ -120,6 +120,7 @@ jobs:
             --suppress=redundantCondition \
             --suppress=duplicateValueTernary \
             --suppress=useStandardLibrary \
+            --suppress=checkersReport \
             --std=c17 \
             -Isrc/include -Isrc/gui -Isrc/doom \
             --inline-suppr \
