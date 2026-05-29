@@ -97,7 +97,6 @@ jobs:
       - name: Run cppcheck
         run: |
           cppcheck --enable=all \
-            --suppress=missingIncludeSystem \
             --suppress=unusedFunction \
             --suppress=constVariablePointer \
             --suppress=constParameterPointer \
