@@ -1286,8 +1286,8 @@ static void test_vmm_alloc(void) {
     ASSERT("vmm get_physaddr mapped", resolved == frame);
 
     /* Unmap the page */
-    int unmap_ret = vmm_unmap_page(test_vaddr);
-    ASSERT("vmm unmap page", unmap_ret == 0);
+    vmm_unmap_page(test_vaddr);
+    /* No ASSERT for void return — unmapping succeeded if we got here */
 
     /* After unmapping, get_physaddr should return 0 or error */
     uint64_t after_unmap = vmm_get_physaddr(test_vaddr);
@@ -1301,30 +1301,29 @@ static void test_vmm_alloc(void) {
 /* ── Pipe edge cases ─────────────────────────────────────────── */
 
 static void test_pipe_edge(void) {
-    /* Create a pipe */
-    int pipe_fds[2];
-    int ret = pipe_create(pipe_fds);
-    ASSERT("pipe edge create", ret == 0);
-    if (ret != 0) return;
+    /* Create a pipe — pipe_create() returns a single pipe index */
+    int pid = pipe_create();
+    ASSERT("pipe edge create", pid >= 0);
+    if (pid < 0) return;
 
     /* Write a small amount and verify available */
     const char *msg = "Hello!";
-    int written = pipe_write(pipe_fds[1], msg, 6);
+    int written = pipe_write(pid, msg, 6);
     ASSERT_EQ("pipe edge write 6", written, 6);
 
-    int avail = pipe_available(pipe_fds[0]);
+    int avail = pipe_available(pid);
     ASSERT("pipe edge avail > 0", avail > 0);
 
     /* Read it back */
     char buf[16];
-    int rd = pipe_read(pipe_fds[0], buf, sizeof(buf));
+    int rd = pipe_read(pid, buf, sizeof(buf));
     ASSERT("pipe edge read", rd == 6);
     ASSERT("pipe edge content", buf[0] == 'H' && buf[5] == '!');
 
     /* Write in chunks to test partial read */
     written = 0;
     while (written < 256) {
-        int n = pipe_write(pipe_fds[1], "abcdefghij", 10);
+        int n = pipe_write(pid, "abcdefghij", 10);
         if (n <= 0) break;
         written += n;
     }
@@ -1332,12 +1331,12 @@ static void test_pipe_edge(void) {
 
     /* Read partial */
     char small[4];
-    rd = pipe_read(pipe_fds[0], small, 4);
+    rd = pipe_read(pid, small, 4);
     ASSERT_EQ("pipe edge partial read", rd, 4);
 
     /* Close and verify cleanup */
-    pipe_close_write(pipe_fds[1]);
-    pipe_close_read(pipe_fds[0]);
+    pipe_close_write(pid);
+    pipe_close_read(pid);
     t_ok("pipe edge tests");
 }
 
