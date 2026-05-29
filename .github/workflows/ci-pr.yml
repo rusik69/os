@@ -116,7 +116,6 @@ jobs:
             --suppress=staticStringCompare \
             --suppress=unsignedLessThanZero \
             --suppress=arrayIndexOutOfBoundsCond \
-            --suppress=preprocessorErrorDirective \
             --suppress=constParameterCallback \
             --suppress=clarifyCondition \
             --suppress=redundantCondition \
