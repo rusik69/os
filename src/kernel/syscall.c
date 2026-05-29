@@ -92,6 +92,9 @@ struct syscall_fb_info {
 #define EFER_SCE (1 << 0)  /* Syscall Enable */
 
 extern void syscall_entry(void);
+extern uint64_t syscall_kernel_rsp;
+extern uint64_t syscall_user_rip;
+extern uint64_t syscall_user_rflags;
 
 static uint64_t rdmsr(uint32_t msr) {
     uint32_t lo, hi;
@@ -902,6 +905,41 @@ static uint64_t sys_fork(void) {
     return (uint64_t)(int64_t)process_fork();
 }
 
+static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
+                           uint64_t tls, uint64_t ctid) {
+    (void)ptid; (void)tls; (void)ctid;
+
+    struct process *parent = process_get_current();
+    if (!parent) return (uint64_t)-1;
+
+    uint64_t user_rip = syscall_user_rip;
+    uint64_t user_rflags = syscall_user_rflags;
+
+    /* For kernel-mode callers: RIP/RFLAGS from syscall_user_* may be stale.
+     * Use a default: treat kernel callers differently. */
+    if (parent->is_user) {
+        int ret = process_clone(parent, flags, (void *)child_stack,
+                                user_rip, user_rflags);
+        return (uint64_t)(int64_t)ret;
+    }
+
+    /* Kernel-mode clone: create a thread that calls a function.
+     * child_stack is actually a function pointer for kernel threads. */
+    int ret = process_clone(parent, flags, (void *)child_stack,
+                            0, 0);
+    return (uint64_t)(int64_t)ret;
+}
+
+static uint64_t sys_gettid(void) {
+    struct process *p = process_get_current();
+    if (!p) return 0;
+    return (uint64_t)p->tgid ? (uint64_t)p->tgid : (uint64_t)p->pid;
+}
+
+static uint64_t sys_tkill(uint64_t pid, uint64_t sig) {
+    return (uint64_t)(int64_t)signal_send((uint32_t)pid, (int)sig);
+}
+
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
     const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
@@ -1640,6 +1678,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SHM_DT:              return sys_shm_dt(a1);
         case SYS_SHM_FREE:            return sys_shm_free(a1);
         case SYS_FORK:                return sys_fork();
+        case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
+        case SYS_GETTID:              return sys_gettid();
+        case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_NET_CONNLIST:         return sys_net_connlist();
         case SYS_SIGNAL:              return sys_signal(a1, a2);
         case SYS_LSEEK:               return sys_lseek(a1, a2, a3);

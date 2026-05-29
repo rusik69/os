@@ -39,6 +39,15 @@ struct process_fd {
     int      used;
 };
 
+/* Clone flags (subset of Linux CLONE_*) */
+#define CLONE_VM            0x00000100
+#define CLONE_FILES         0x00000400
+#define CLONE_SIGHAND       0x00000800
+#define CLONE_THREAD        0x00010000
+#define CLONE_CHILD_SETTID  0x01000000
+#define CLONE_CHILD_CLEARTID 0x02000000
+#define CLONE_SETTLS        0x00080000
+
 
 
 enum process_cap_profile {
@@ -84,6 +93,10 @@ struct process {
     uint64_t last_run_tick;   /* timer tick when process last ran (for aging) */
     /* Per-process file descriptor table */
     struct process_fd fd_table[PROCESS_FD_MAX];
+    /* Thread group ID (same as pid for leader, same as leader for threads) */
+    uint32_t tgid;
+    /* SetChildTID / ClearChildTID userspace pointers for thread teardown */
+    void *ctid_ptr;
 };
 
 void process_init(void);
@@ -105,6 +118,8 @@ void process_caps_allow_all(struct process *proc);
 int process_caps_has(const struct process *proc, uint32_t num);
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile);
 int process_fork(void); /* fork current process, returns child PID, child starts in fork_child_entry */
+int process_clone(struct process *parent, uint64_t flags, void *child_stack,
+                  uint64_t user_rip, uint64_t user_rflags);
 void process_set_current(struct process *proc);
 
 #endif

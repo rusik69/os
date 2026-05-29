@@ -30,6 +30,12 @@ section .data
 global syscall_kernel_rsp
 syscall_kernel_rsp: dq 0   ; Set by scheduler when switching to a user process
 
+; Save user RIP/RFLAGS at syscall entry so clone() can read them
+global syscall_user_rip
+global syscall_user_rflags
+syscall_user_rip: dq 0
+syscall_user_rflags: dq 0
+
 ; ============================================================================
 ; syscall_entry — ring-3 path only
 ; ============================================================================
@@ -58,6 +64,10 @@ syscall_entry:
     push    r13                                ; (7)
     push    r14                                ; (8)
     push    r15                                ; (9)
+
+    ; Save user RIP and RFLAGS for clone()
+    mov     [rel syscall_user_rip], rcx
+    mov     [rel syscall_user_rflags], r11
 
     ; Arg shuffle: syscall_dispatch(num, a1, a2, a3, a4, a5) — SysV
     ;   target: rdi=num  rsi=a1  rdx=a2  rcx=a3  r8=a4  r9=a5

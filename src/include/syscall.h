@@ -198,9 +198,13 @@
 #define SYS_CC_COMPILE_OBJ  229  /* compile C source to relocatable .o file */
 #define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
+/* Clone / threading */
+#define SYS_CLONE           231
+#define SYS_GETTID          232
+#define SYS_TKILL           233
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
- * syscall_entry assembly stub (syscall_asm.asm).  It is NOT part of the
  * userspace API: user code and libc must go through the `syscall` instruction.
  * The declaration is kept here so that syscall.c (which defines it) and
  * kernel.c (which includes syscall.h) can see it, but it should never be

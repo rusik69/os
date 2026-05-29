@@ -95,4 +95,28 @@ fork_child_trampoline:
     sti
     jmp r15                ; jump to fork child entry
 
+; ──────────────────────────────────────────────────────────────────
+; Clone child trampoline.
+; Called after context_switch to start a cloned thread.
+; Stack layout (from low to high after context_switch returns):
+;   [junk r15] ← RSP
+;   [junk r14]
+;   [junk r13]
+;   [junk r12]
+;   [junk rbx]
+;   [junk rbp]
+;   [user RFLAGS]   → pop into r11  (for sysret)
+;   [user RIP]       → pop into rcx  (for sysret)
+;   [user RSP]       → pop into rsp  (for sysret)
+; ──────────────────────────────────────────────────────────────────
+global clone_child_trampoline
+clone_child_trampoline:
+    xor rax, rax           ; clone return value = 0 (child)
+    ; Skip the 6 junk callee-saved register slots
+    add rsp, 48            ; skip r15, r14, r13, r12, rbx, rbp
+    pop r11                ; user RFLAGS
+    pop rcx                ; user RIP
+    pop rsp                ; user RSP
+    o64 sysret
+
 section .note.GNU-stack noalloc noexec nowrite progbits

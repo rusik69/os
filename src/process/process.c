@@ -416,6 +416,110 @@ int process_fork(void) {
     return (int)child->pid;
 }
 
+/* ── Clone: create a thread (child may share address space) ──── */
+extern void clone_child_trampoline(void);
+
+int process_clone(struct process *parent, uint64_t flags, void *child_stack,
+                  uint64_t user_rip, uint64_t user_rflags) {
+    struct process *child = NULL;
+
+    __asm__ volatile("cli");
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (process_table[i].state == PROCESS_UNUSED) {
+            child = &process_table[i];
+            break;
+        }
+    }
+    if (!child) { __asm__ volatile("sti"); return -1; }
+
+    child->state = PROCESS_UNUSED;
+    *child = *parent;
+    child->pid = alloc_pid();
+    child->parent_pid = parent->pid;
+    child->is_suspended = 0;
+    child->wait_for_pid = 0;
+    child->on_queue = 0;
+    child->context = NULL;
+    child->next = NULL;
+    child->tgid = (flags & CLONE_THREAD) ? parent->tgid : child->pid;
+
+    /* Allocate fresh kernel stack */
+    uint8_t *new_stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
+    if (!new_stack) {
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -1;
+    }
+    child->kernel_stack = (uint64_t)new_stack;
+    child->stack_top    = (uint64_t)(new_stack + KERNEL_STACK_SIZE);
+
+    /* Handle CLONE_VM — share address space */
+    if (flags & CLONE_VM) {
+        /* Child shares parent's page tables — no copy needed */
+        /* Kernel page tables are already shared via the higher-half mapping */
+        if (parent->pml4) {
+            child->pml4 = parent->pml4;
+        }
+    } else {
+        /* Full fork-style: deep-copy user address space */
+        if (parent->pml4) {
+            child->pml4 = vmm_clone_user_pml4(parent->pml4);
+            if (!child->pml4) {
+                kfree(new_stack);
+                child->state = PROCESS_UNUSED;
+                __asm__ volatile("sti");
+                return -1;
+            }
+            vmm_switch_pml4(parent->pml4);
+        }
+    }
+
+    /* Handle CLONE_FILES — share FD table */
+    if (flags & CLONE_FILES) {
+        /* Child shares parent's FD table — no-op since struct copy above inherited it */
+    } else {
+        /* Private FD table: already copied from parent, no extra work needed */
+    }
+
+    child->state = PROCESS_READY;
+
+    /* Set up child's kernel stack with sysret return frame.
+     * Layout (from stack_top down):
+     *   [context_switch frame: r15..rbp, rip → clone_child_trampoline]
+     *   [syscall return frame: r15..rbp, r11, rcx, user_rsp]
+     */
+    uint64_t *sp = (uint64_t *)child->stack_top;
+
+    /* Syscall return frame (9 values, bottom): */
+    sp -= 9;
+    sp[0] = 0;                    /* junk r15 (unused) */
+    sp[1] = 0;                    /* junk r14 */
+    sp[2] = 0;                    /* junk r13 */
+    sp[3] = 0;                    /* junk r12 */
+    sp[4] = 0;                    /* junk rbx */
+    sp[5] = 0;                    /* junk rbp */
+    sp[6] = user_rflags;         /* r11 → user RFLAGS for sysret */
+    sp[7] = user_rip;            /* rcx → user RIP for sysret */
+    sp[8] = (uint64_t)child_stack; /* user RSP for sysret */
+
+    /* Context switch frame (7 values, above): */
+    sp -= 7;
+    sp[0] = 0;                    /* r15 */
+    sp[1] = 0;                    /* r14 */
+    sp[2] = 0;                    /* r13 */
+    sp[3] = 0;                    /* r12 */
+    sp[4] = 0;                    /* rbx */
+    sp[5] = 0;                    /* rbp */
+    sp[6] = (uint64_t)clone_child_trampoline;  /* rip → trampoline */
+
+    child->context = (struct cpu_context *)sp;
+
+    scheduler_add(child);
+    __asm__ volatile("sti");
+    return (int)child->pid;
+}
+
 void process_set_current(struct process *proc) {
     set_current_process(proc);
     current_process = proc;
