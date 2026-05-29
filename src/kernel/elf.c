@@ -10,7 +10,9 @@
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE 65536
 
-uint64_t elf_load(const uint8_t *data, uint64_t size) {
+/* Validate ELF headers and return entry point, WITHOUT copying segments.
+ * The caller is responsible for mapping/loading segments afterward. */
+static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_userland) {
     if (size < sizeof(struct elf64_header)) return 0;
 
     const struct elf64_header *hdr = (const struct elf64_header *)data;
@@ -37,7 +39,9 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
         return 0;
     }
 
-    /* Load PT_LOAD segments directly at their vaddr (static, no ASLR) */
+    int userland = (hdr->e_entry < 0x800000000000ULL);
+    if (out_is_userland) *out_is_userland = userland;
+
     for (uint16_t i = 0; i < hdr->e_phnum; i++) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
@@ -60,6 +64,31 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
             kprintf("elf: segment targets NULL page\n");
             return 0;
         }
+        if (!userland && ph->p_vaddr >= 0x800000000000ULL) {
+            kprintf("elf: kernel segment in user-space range\n");
+            return 0;
+        }
+    }
+
+    return hdr->e_entry;
+}
+
+uint64_t elf_load(const uint8_t *data, uint64_t size) {
+    int is_userland = 0;
+    uint64_t entry = elf_validate(data, size, &is_userland);
+    if (!entry) return 0;
+
+    /* For kernel-mode ELFs, load segments directly (they target mapped vaddrs).
+     * For userland ELFs, this is a no-op; the caller does the mapping. */
+    if (is_userland) return entry;
+
+    const struct elf64_header *hdr = (const struct elf64_header *)data;
+
+    for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+        const struct elf64_phdr *ph =
+            (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
+
+        if (ph->p_type != PT_LOAD) continue;
 
         /* Copy file bytes to vaddr */
         uint8_t *dst = (uint8_t *)ph->p_vaddr;
@@ -71,7 +100,7 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
             memset(dst + ph->p_filesz, 0, (size_t)(ph->p_memsz - ph->p_filesz));
     }
 
-    return hdr->e_entry;
+    return entry;
 }
 
 /* Trampoline: each exec'd process gets its own entry-point stub */
@@ -98,7 +127,6 @@ int elf_exec(const char *path) {
         kfree(buf);
         return -1;
     }
-
     uint64_t entry = elf_load(buf, (uint64_t)size);
     if (!entry) {
         kprintf("elf: load failed\n");
@@ -118,8 +146,6 @@ int elf_exec(const char *path) {
             kfree(buf); kfree(name);
             return -1;
         }
-
-        uint64_t *kernel_pml4 = vmm_get_pml4();
 
         /* Map each PT_LOAD segment into user address space */
         int map_ok = 1;
@@ -145,6 +171,17 @@ int elf_exec(const char *path) {
                 if (!frame) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
                 /* Zero the frame first */
                 memset((void *)frame, 0, PAGE_SIZE);
+
+                /* Copy segment data directly to the physical frame via identity map.
+                 * Can't switch to user PML4 for this because buf is a kernel address
+                 * not reachable from user page tables. */
+                uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+                if (ph->p_filesz > page_off) {
+                    uint64_t copy_sz = ph->p_filesz - page_off;
+                    if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
+                    memcpy((void *)frame, buf + ph->p_offset + page_off, copy_sz);
+                }
+
                 if (vmm_map_user_page(user_pml4, va, frame, flags) < 0) {
                     kprintf("elf: vmm_map_user_page failed\n");
                     pmm_free_frame(frame);
@@ -153,16 +190,6 @@ int elf_exec(const char *path) {
             }
 
             if (!map_ok) break;
-
-            /* Copy segment data while running on target address space.
-             * Disable interrupts to prevent a handler from running with
-             * user page tables active. */
-            __asm__ volatile("cli");
-            vmm_switch_pml4(user_pml4);
-            memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
-            vmm_switch_pml4(kernel_pml4);
-            __asm__ volatile("sti");
-            /* BSS is already zeroed from memset above */
         }
 
         if (!map_ok) {
@@ -261,7 +288,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         return -1;
     }
 
-    uint64_t *old_pml4 = cur->pml4;
     uint64_t *new_pml4 = vmm_create_user_pml4();
     if (!new_pml4) { kfree(buf); return -1; }
 
@@ -281,18 +307,21 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) { map_ok = 0; break; }
             memset((void *)frame, 0, PAGE_SIZE);
+
+            /* Copy segment data via identity map (buf is kernel addr). */
+            uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+            if (ph->p_filesz > page_off) {
+                uint64_t copy_sz = ph->p_filesz - page_off;
+                if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
+                memcpy((void *)frame, buf + ph->p_offset + page_off, copy_sz);
+            }
+
             if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
                 pmm_free_frame(frame);
                 map_ok = 0; break;
             }
         }
         if (!map_ok) break;
-
-        __asm__ volatile("cli");
-        vmm_switch_pml4(new_pml4);
-        memcpy((void *)ph->p_vaddr, buf + ph->p_offset, (size_t)ph->p_filesz);
-        vmm_switch_pml4(vmm_get_pml4());
-        __asm__ volatile("sti");
     }
 
     kfree(buf);
@@ -325,7 +354,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     }
 
     /* Destroy old user page tables */
-    if (old_pml4) vmm_destroy_user_pml4(old_pml4);
+    if (cur->pml4) vmm_destroy_user_pml4(cur->pml4);
 
     /* Switch to new page tables */
     cur->pml4 = new_pml4;

@@ -36,7 +36,13 @@ struct cpu_info {
 /* Per-CPU accessors using GS segment */
 static inline struct cpu_info *get_cpu_info(void) {
     struct cpu_info *info;
-    __asm__ volatile("mov %%gs:0, %0" : "=r"(info));
+    /* GS.base = &cpu_info_array[cpu_id]. Read the base MSR directly
+     * rather than the value at GS:0 (which would be the struct's first
+     * 8 bytes, i.e. cpu_id + apic_id, not a useful pointer). */
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000101));
+    uint64_t base = ((uint64_t)hi << 32) | lo;
+    info = (struct cpu_info *)base;
     return info;
 }
 

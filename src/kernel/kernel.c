@@ -205,6 +205,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] No AHCI controller\n");
 
+    /* FAT32 — try to mount before fs_init so we don't format over it */
+    if (ahci_is_present()) {
+        if (fat32_mount(FAT32_DISK_AHCI, 0) == 0) {
+            vfs_mount("/mnt", &fat32_vfs_ops, NULL);
+            kprintf("[OK] FAT32 mounted on /mnt\n");
+        }
+    } else if (ata_is_present()) {
+        if (fat32_mount(FAT32_DISK_ATA, 0) == 0) {
+            vfs_mount("/mnt", &fat32_vfs_ops, NULL);
+            kprintf("[OK] FAT32 mounted on /mnt\n");
+        }
+    }
+
     /* Filesystem */
     fs_init();
     kprintf("[OK] Filesystem initialized\n");
@@ -232,12 +245,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             kprintf("[--] No USB MSC device\n");
     } else {
         kprintf("[--] No USB controllers\n");
-    }
-
-    /* FAT32 */
-    if (fat32_mount(ahci_is_present() ? FAT32_DISK_AHCI : FAT32_DISK_ATA, 0) == 0) {
-        vfs_mount("/mnt", &fat32_vfs_ops, NULL);
-        kprintf("[OK] FAT32 mounted on /mnt\n");
     }
 
     /* Multiuser */
@@ -303,10 +310,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Try common init paths */
     const char *init_paths[] = {
-        "/init.elf",
-        "/bin/init",
-        "/shell.elf",
-        "/bin/sh.elf",
+        "/mnt/init.elf",
+        "/mnt/bin/init",
+        "/mnt/shell.elf",
+        "/mnt/bin/sh.elf",
     };
 
     for (size_t i = 0; i < sizeof(init_paths) / sizeof(init_paths[0]); i++) {

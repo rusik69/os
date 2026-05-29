@@ -5,6 +5,7 @@
 #include "users.h"
 #include "timer.h"
 #include "heap.h"
+#include "fat32.h"
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -347,6 +348,12 @@ int fs_format(void) {
 void fs_init(void) {
     if (!ata_is_present()) {
         kprintf("  No disk found, filesystem unavailable\n");
+        return;
+    }
+
+    /* If FAT32 is already mounted, skip formatting — don't clobber it */
+    if (fat32_is_mounted()) {
+        kprintf("  FAT32 present, skipping native FS format\n");
         return;
     }
 
