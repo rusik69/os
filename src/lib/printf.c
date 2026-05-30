@@ -58,6 +58,34 @@ void kprintf_dmesg_clear(void) {
     dmesg_full = 0;
 }
 
+/* Flush the dmesg ring buffer directly to serial in small chunks.
+ * No intermediate buffer needed — avoids stack overflow from large
+ * buffers in callers that previously allocated char[65536] on the stack. */
+void kprintf_dmesg_flush_serial(void) {
+    char chunk[513]; /* 512 + NUL */
+    int chunk_idx;
+
+    if (dmesg_full) {
+        for (int i = dmesg_pos; i < DMESG_BUF_SIZE; ) {
+            chunk_idx = 0;
+            while (i < DMESG_BUF_SIZE && chunk_idx < 512)
+                chunk[chunk_idx++] = dmesg_buf[i++];
+            chunk[chunk_idx] = '\0';
+            serial_write(chunk);
+        }
+    }
+    {
+        int i = 0;
+        while (i < dmesg_pos) {
+            chunk_idx = 0;
+            while (i < dmesg_pos && chunk_idx < 512)
+                chunk[chunk_idx++] = dmesg_buf[i++];
+            chunk[chunk_idx] = '\0';
+            serial_write(chunk);
+        }
+    }
+}
+
 static void kputchar(char c) {
     /* Always record in ring buffer (even when hook is active) */
     dmesg_buf[dmesg_pos++] = c;

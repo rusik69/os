@@ -48,6 +48,21 @@
 #include "blockdev.h"
 #include "serial.h"
 
+/* ── Progress tracking ────────────────────────────────────────── */
+/* Every PROGRESS_INTERVAL tests, write a dot directly to serial
+ * so the host can see the suite is alive even on timeout. */
+#define PROGRESS_INTERVAL 5
+static int test_count = 0;
+
+static void test_progress_tick(void) {
+    test_count++;
+    if (test_count % PROGRESS_INTERVAL == 0) {
+        outb(0x3F8, '.');
+        if (test_count % (PROGRESS_INTERVAL * 10) == 0)
+            outb(0x3F8, '\n');
+    }
+}
+
 /* ── Test framework ─────────────────────────────────────────── */
 
 static int tpass = 0;
@@ -1394,40 +1409,40 @@ void test_run_all(void) {
     kprintf("       OS KERNEL TEST SUITE             \n");
     kprintf("========================================\n");
 
-    kprintf("[TEST] string\n");      test_string();
-    kprintf("[TEST] memory\n");      test_memory();
-    kprintf("[TEST] heap_ext\n");    test_heap_ext();
-    kprintf("[TEST] heap_stress\n"); test_heap_stress();
-    kprintf("[TEST] timer\n");       test_timer();
-    kprintf("[TEST] rtc\n");         test_rtc();
-    kprintf("[TEST] process\n");     test_process();
-    kprintf("[TEST] scheduler\n");   test_scheduler();
-    kprintf("[TEST] filesystem\n");  test_filesystem();
-    kprintf("[TEST] vfs\n");         test_vfs();
-    kprintf("[TEST] pipe\n");        test_pipe();
-    kprintf("[TEST] pipe_edge\n");   test_pipe_edge();
-    kprintf("[TEST] speaker\n");     test_speaker();
-    kprintf("[TEST] mouse\n");       test_mouse();
-    kprintf("[TEST] signal\n");      test_signal();
-    kprintf("[TEST] network\n");     test_network();
+    kprintf("[TEST] string\n");      test_string();      test_progress_tick();
+    kprintf("[TEST] memory\n");      test_memory();      test_progress_tick();
+    kprintf("[TEST] heap_ext\n");    test_heap_ext();    test_progress_tick();
+    kprintf("[TEST] heap_stress\n"); test_heap_stress(); test_progress_tick();
+    kprintf("[TEST] timer\n");       test_timer();       test_progress_tick();
+    kprintf("[TEST] rtc\n");         test_rtc();         test_progress_tick();
+    kprintf("[TEST] process\n");     test_process();     test_progress_tick();
+    kprintf("[TEST] scheduler\n");   test_scheduler();   test_progress_tick();
+    kprintf("[TEST] filesystem\n");  test_filesystem();  test_progress_tick();
+    kprintf("[TEST] vfs\n");         test_vfs();         test_progress_tick();
+    kprintf("[TEST] pipe\n");        test_pipe();        test_progress_tick();
+    kprintf("[TEST] pipe_edge\n");   test_pipe_edge();   test_progress_tick();
+    kprintf("[TEST] speaker\n");     test_speaker();     test_progress_tick();
+    kprintf("[TEST] mouse\n");       test_mouse();       test_progress_tick();
+    kprintf("[TEST] signal\n");      test_signal();      test_progress_tick();
+    kprintf("[TEST] network\n");     test_network();     test_progress_tick();
     kprintf("[XX] after network\n");
-    kprintf("[TEST] udp_binding\n"); test_udp_binding();
-    kprintf("[TEST] elf\n");         test_elf();
-    kprintf("[TEST] elf_edge\n");    test_elf_edge();
-    kprintf("[TEST] vmm\n");         test_vmm();
-    kprintf("[TEST] vmm_alloc\n");   test_vmm_alloc();
-    kprintf("[TEST] tcp\n");         test_tcp();
-    kprintf("[TEST] procfs\n");      test_procfs();
-    kprintf("[TEST] fork\n");        test_fork();
-    kprintf("[TEST] shm_mutex\n");   test_shm_mutex();
-    kprintf("[TEST] semaphore\n");   test_semaphore();
-    kprintf("[TEST] shm_ext\n");     test_shm_ext();
-    kprintf("[TEST] ipc\n");         test_ipc();
-    kprintf("[TEST] fat32\n");       test_fat32();
-    kprintf("[TEST] ac97\n");        test_ac97();
-    kprintf("[TEST] doom\n");        test_doom();
-    kprintf("[TEST] dos\n");         test_dos();
-    kprintf("[TEST] syscall\n");     test_syscall();
+    kprintf("[TEST] udp_binding\n"); test_udp_binding(); test_progress_tick();
+    kprintf("[TEST] elf\n");         test_elf();         test_progress_tick();
+    kprintf("[TEST] elf_edge\n");    test_elf_edge();    test_progress_tick();
+    kprintf("[TEST] vmm\n");         test_vmm();         test_progress_tick();
+    kprintf("[TEST] vmm_alloc\n");   test_vmm_alloc();   test_progress_tick();
+    kprintf("[TEST] tcp\n");         test_tcp();         test_progress_tick();
+    kprintf("[TEST] procfs\n");      test_procfs();      test_progress_tick();
+    kprintf("[TEST] fork\n");        test_fork();        test_progress_tick();
+    kprintf("[TEST] shm_mutex\n");   test_shm_mutex();   test_progress_tick();
+    kprintf("[TEST] semaphore\n");   test_semaphore();   test_progress_tick();
+    kprintf("[TEST] shm_ext\n");     test_shm_ext();     test_progress_tick();
+    kprintf("[TEST] ipc\n");         test_ipc();         test_progress_tick();
+    kprintf("[TEST] fat32\n");       test_fat32();       test_progress_tick();
+    kprintf("[TEST] ac97\n");        test_ac97();        test_progress_tick();
+    kprintf("[TEST] doom\n");        test_doom();        test_progress_tick();
+    kprintf("[TEST] dos\n");         test_dos();         test_progress_tick();
+    kprintf("[TEST] syscall\n");     test_syscall();     test_progress_tick();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",
@@ -1442,14 +1457,11 @@ void test_run_all(void) {
     /* Restore normal VGA/serial output. */
     kprintf_set_hook(NULL, NULL);
 
-    /* Dump the dmesg ring buffer to serial so that the host-side
-     * test runner (tests/run_tests.sh) can parse PASS/FAIL lines. */
-    {
-        char buf[65536];
-        int len = kprintf_dmesg(buf, (int)sizeof(buf));
-        if (len > 0)
-            serial_write(buf);
-    }
+    /* Flush the dmesg ring buffer to serial in small chunks.
+     * Using kprintf_dmesg_flush_serial() avoids the 64 KB stack buffer
+     * that previously caused stack overflow when allocated on a small
+     * kernel stack. */
+    kprintf_dmesg_flush_serial();
 
     /* Shut down QEMU so the host script can read the serial output */
     acpi_shutdown();
