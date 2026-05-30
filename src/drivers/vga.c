@@ -144,9 +144,15 @@ static uint64_t vga_lookup_pci_fb(void) {
     uint32_t bar2 = pci_read(vga.bus, vga.slot, vga.func, 0x18);
     uint64_t mmio = pci_bar_mem_addr(bar2, 0);
     if (mmio) {
-        volatile uint32_t *end_reg = (volatile uint32_t *)(uintptr_t)(mmio + 0x604);
-        *end_reg = 0x1e1e1e1e;
-        __asm__ volatile("mfence" ::: "memory");
+        /* Map the stdvga MMIO region for endianness setup (identity map removed) */
+        volatile uint8_t *mmio_virt = (volatile uint8_t *)vmm_map_phys(mmio, 0x1000,
+                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+        if (mmio_virt) {
+            volatile uint32_t *end_reg = (volatile uint32_t *)(mmio_virt + 0x604 / sizeof(uint8_t));
+            *end_reg = 0x1e1e1e1e;
+            __asm__ volatile("mfence" ::: "memory");
+            vmm_unmap_phys((void *)mmio_virt, 0x1000);
+        }
     }
 
     return addr;
@@ -181,14 +187,20 @@ static int vga_try_bochs_vbe(uint32_t width, uint32_t height, uint8_t bpp) {
     if (!fb_addr)
         fb_addr = VBE_DISPI_LFB_PHYS;
 
-    fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;
     fb_pitch = width * (bpp / 8);
     fb_width = width;
     fb_height = height;
     fb_bpp = bpp;
+
+    /* Map framebuffer in high-half VMA space (identity map removed) */
+    fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, (uint64_t)fb_pitch * height,
+                VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (!fb_base)
+        return -1;
+
     fb_active = 1;
 
-    vmm_set_range_uncacheable(fb_addr, (uint64_t)fb_pitch * height);
+    vmm_set_range_uncacheable((uint64_t)(uintptr_t)fb_base, (uint64_t)fb_pitch * height);
     return 0;
 }
 

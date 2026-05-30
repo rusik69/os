@@ -95,10 +95,11 @@ static int ehci_init_controller(uint8_t bus, uint8_t slot, uint32_t bar0) {
     if (cap == 0) return -2;
 
     int c = ehci_count;
-    ehci_ctrl[c].cap_base = cap;
+    /* Convert BAR0 physical address to high-half VMA (identity map removed) */
+    ehci_ctrl[c].cap_base = (uint64_t)PHYS_TO_VIRT(cap);
 
     /* caplength: offset of operational registers from cap_base */
-    uint8_t caplength = *(volatile uint8_t *)cap;
+    uint8_t caplength = *(volatile uint8_t *)PHYS_TO_VIRT(cap);
     ehci_ctrl[c].op_base = cap + caplength;
 
     uint32_t hcsparams = cap_read(c, EHCI_HCSPARAMS);

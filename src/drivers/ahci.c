@@ -125,7 +125,7 @@ struct ahci_recv_fis {
 
 /* ── Driver state ───────────────────────────────────────────────────────────── */
 static int           ahci_present  = 0;
-static uint64_t      hba_base      = 0;   /* MMIO base (virt == phys for identity map) */
+static uint64_t      hba_base      = 0;   /* MMIO base (high-half VMA vmm_map_phys) */
 static int           ahci_port     = -1;  /* first SATA port with a device */
 static uint32_t      ahci_sectors  = 0;
 
@@ -199,7 +199,7 @@ static int port_issue_cmd(int p, int slot) {
 static void build_cmd(uint8_t ata_cmd, uint32_t lba, uint8_t count,
                       uint64_t data_phys_addr, int is_write, int fis_len_dw) {
     /* Command Header (slot 0) */
-    struct ahci_cmd_hdr *hdr = (struct ahci_cmd_hdr *)cmd_list_phys;
+    struct ahci_cmd_hdr *hdr = (struct ahci_cmd_hdr *)PHYS_TO_VIRT(cmd_list_phys);
     memset(hdr, 0, sizeof(*hdr));
     hdr->flags  = (uint16_t)fis_len_dw;           /* CFL = FIS length in DW */
     if (is_write) hdr->flags |= (1u << 6);          /* W bit */
@@ -208,7 +208,7 @@ static void build_cmd(uint8_t ata_cmd, uint32_t lba, uint8_t count,
     hdr->ctbau  = (uint32_t)(cmd_tbl_phys >> 32);
 
     /* Command Table */
-    struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)cmd_tbl_phys;
+    struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)PHYS_TO_VIRT(cmd_tbl_phys);
     memset(tbl, 0, sizeof(*tbl));
 
     /* Command FIS */
@@ -250,7 +250,7 @@ int ahci_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 
     int rc = port_issue_cmd(ahci_port, 0);
     if (rc == 0)
-        memcpy(buf, (void *)data_phys, (size_t)count * AHCI_SECTOR_SIZE);
+        memcpy(buf, PHYS_TO_VIRT(data_phys), (size_t)count * AHCI_SECTOR_SIZE);
     return rc;
 }
 
@@ -259,7 +259,7 @@ int ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (count == 0) return 0;
     if (count > 8) return -1;  /* data_phys buffer is 4 KB = 8 sectors */
 
-    memcpy((void *)data_phys, buf, (size_t)count * AHCI_SECTOR_SIZE);
+    memcpy(PHYS_TO_VIRT(data_phys), buf, (size_t)count * AHCI_SECTOR_SIZE);
     port_stop(ahci_port);
     build_cmd(ATA_CMD_WRITE_DMA_EX, lba, count, data_phys, 1,
               sizeof(struct fis_reg_h2d) / 4);
@@ -301,6 +301,12 @@ found:
     kprintf("  AHCI %04x:%04x HBA@0x%x\n",
             (uint64_t)found_vid, (uint64_t)found_did, hba_base);
 
+    /* Map HBA MMIO in high-half VMA space */
+    hba_base = (uint64_t)vmm_map_phys(hba_base, 0x2000,
+                VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (!hba_base)
+        return -2;
+
     /* Enable bus master on the AHCI controller */
     {
         struct pci_device dev;
@@ -312,7 +318,7 @@ found:
     uint32_t ghc = hba_read(HBA_GHC_OFFSET);
     hba_write(HBA_GHC_OFFSET, ghc | GHC_AE);
 
-    /* Allocate DMA memory (identity-mapped in first 1 GB) */
+    /* Allocate DMA memory (accessed via PHYS_TO_VIRT in high-half VMA) */
     cmd_list_phys = pmm_alloc_frame();   /* 4 KB frame for command list (1KB used) */
     recv_fis_phys = pmm_alloc_frame();   /* 4 KB frame for received FIS (256B used) */
     cmd_tbl_phys  = pmm_alloc_frame();   /* 4 KB frame for command table */
@@ -321,10 +327,10 @@ found:
     if (!cmd_list_phys || !recv_fis_phys || !cmd_tbl_phys || !data_phys)
         return -3;
 
-    memset((void *)cmd_list_phys, 0, 4096);
-    memset((void *)recv_fis_phys, 0, 4096);
-    memset((void *)cmd_tbl_phys,  0, 4096);
-    memset((void *)data_phys,     0, 4096);
+    memset(PHYS_TO_VIRT(cmd_list_phys), 0, 4096);
+    memset(PHYS_TO_VIRT(recv_fis_phys), 0, 4096);
+    memset(PHYS_TO_VIRT(cmd_tbl_phys),  0, 4096);
+    memset(PHYS_TO_VIRT(data_phys),     0, 4096);
 
     /* Scan implemented ports */
     uint32_t pi = hba_read(HBA_PI_OFFSET);
@@ -350,12 +356,12 @@ found:
         port_start(p);
 
         /* IDENTIFY to get sector count */
-        memset((void *)data_phys, 0, 512);
+        memset(PHYS_TO_VIRT(data_phys), 0, 512);
         build_cmd(ATA_CMD_IDENTIFY, 0, 1, data_phys, 0,
                   sizeof(struct fis_reg_h2d) / 4);
         /* IDENTIFY uses count=0 in FIS */
         {
-            struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)cmd_tbl_phys;
+            struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)PHYS_TO_VIRT(cmd_tbl_phys);
             struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
             fis->countl = 0;
             /* PRDT byte count: 512 - 1 */

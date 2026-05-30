@@ -126,7 +126,7 @@ static void *alloc_dma(size_t sz) {
     (void)sz;
     uint64_t frame = pmm_alloc_frame();
     if (!frame) return (void *)0;
-    void *p = (void *)frame;
+    void *p = PHYS_TO_VIRT(frame);
     memset(p, 0, 4096);
     return p;
 }
@@ -163,14 +163,14 @@ static int ehci_do_transfer(uint32_t pid, uint8_t ep, void *data,
     qtd->next     = 1;   /* terminate */
     qtd->alt_next = 1;
     qtd->token    = token;
-    qtd->buf[0]   = (uint32_t)(uint64_t)data;
-    qtd->buf[1]   = ((uint32_t)(uint64_t)data & ~0xFFFu) + 0x1000u;
+    qtd->buf[0]   = (uint32_t)VIRT_TO_PHYS(data);
+    qtd->buf[1]   = (VIRT_TO_PHYS(data) & ~0xFFFu) + 0x1000u;
     qtd->buf[2]   = qtd->buf[1] + 0x1000u;
     qtd->buf[3]   = qtd->buf[2] + 0x1000u;
     qtd->buf[4]   = qtd->buf[3] + 0x1000u;
 
     /* Build qH — points to itself (circular list of one) */
-    uint32_t qh_phys = (uint32_t)(uint64_t)qh;
+    uint32_t qh_phys = (uint32_t)VIRT_TO_PHYS(qh);
     qh->next_qh  = qh_phys | 0;   /* T=0, type=00 (qH) */
     qh->ep_char  = QH_DEVADDR(g_dev_addr)
                  | QH_EP(ep)
@@ -181,7 +181,7 @@ static int ehci_do_transfer(uint32_t pid, uint8_t ep, void *data,
                  | QH_RL(4);
     qh->ep_cap   = QH_MULT(1);
     qh->cur_qtd  = 0;
-    qh->next_qtd = (uint32_t)(uint64_t)qtd;   /* first qTD */
+    qh->next_qtd = (uint32_t)VIRT_TO_PHYS(qtd);   /* first qTD */
     qh->alt_qtd  = 1;
     qh->token    = 0;
 
@@ -217,15 +217,15 @@ static int ehci_do_transfer(uint32_t pid, uint8_t ep, void *data,
         if (qtd->token & QTD_STATUS_HALTED) rc = -3;
     }
 
-    pmm_free_frame((uint64_t)qtd);
-    pmm_free_frame((uint64_t)qh);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)qtd));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)qh));
     return rc;
 
 fail:
     op_wr(EHCI_USBCMD, old_cmd & ~EHCI_CMD_ASE);
     op_wr(EHCI_ASYNCLISTADDR, old_async);
-    pmm_free_frame((uint64_t)qtd);
-    pmm_free_frame((uint64_t)qh);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)qtd));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)qh));
     return -4;
 }
 
@@ -252,7 +252,7 @@ static int usb_control(uint8_t bm_req_type, uint8_t b_req,
 
     /* SETUP phase (toggle=0, PID_SETUP) */
     int rc = ehci_do_transfer(QTD_PID_SETUP, 0, setup, 8, 0);
-    pmm_free_frame((uint64_t)setup);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)setup));
     if (rc < 0) return rc;
 
     /* DATA phase (toggle=1) */
@@ -268,7 +268,7 @@ static int usb_control(uint8_t bm_req_type, uint8_t b_req,
         uint8_t *dummy = (uint8_t *)alloc_dma(4);
         if (!dummy) return -1;
         rc = ehci_do_transfer(pid, 0, dummy, 0, 1);
-        pmm_free_frame((uint64_t)dummy);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)dummy));
     }
     return rc;
 }
@@ -329,9 +329,9 @@ static int scsi_read_capacity(uint32_t *max_lba_out)
         *max_lba_out = lba;
     }
 
-    pmm_free_frame((uint64_t)cbw);
-    pmm_free_frame((uint64_t)csw);
-    pmm_free_frame((uint64_t)buf);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)buf));
     return rc;
 }
 
@@ -361,8 +361,8 @@ static int scsi_read10(uint32_t lba, uint8_t count, void *buf)
     if (rc == 0) rc = bot_recv_data(buf, (uint32_t)count * 512);
     if (rc == 0) rc = bot_recv_csw(csw);
 
-    pmm_free_frame((uint64_t)cbw);
-    pmm_free_frame((uint64_t)csw);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
     return rc;
 }
 
@@ -392,8 +392,8 @@ static int scsi_write10(uint32_t lba, uint8_t count, const void *buf)
     if (rc == 0) rc = bot_send_data(buf, (uint32_t)count * 512);
     if (rc == 0) rc = bot_recv_csw(csw);
 
-    pmm_free_frame((uint64_t)cbw);
-    pmm_free_frame((uint64_t)csw);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)cbw));
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)csw));
     return rc;
 }
 
@@ -446,11 +446,11 @@ int usb_msc_init(void)
     rc = usb_control(0x80, 0x06, 0x0100, 0, 18, desc);
     if (rc < 0) {
         kprintf("  USB MSC: GET_DESCRIPTOR failed (%d)\n", (uint64_t)rc);
-        pmm_free_frame((uint64_t)desc);
+        pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
         return rc;
     }
     /* desc[4]=bDeviceClass, [14]=bNumConfigurations */
-    pmm_free_frame((uint64_t)desc);
+    pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
 
     /* SET_CONFIGURATION 1 */
     rc = usb_control(0x00, 0x09, 1, 0, 0, (void *)0);

@@ -263,7 +263,7 @@ int smp_boot_aps(void) {
     ioapic_init();
 
     /* Copy trampoline to low memory (physical page 0x7000) */
-    size_t tramp_size = (size_t)(ap_trampoline_end - ap_trampoline_start);
+    size_t tramp_size = (size_t)((uintptr_t)ap_trampoline_end - (uintptr_t)ap_trampoline_start);
     if (tramp_size > 0x1000) {
         kprintf("[!!] SMP: trampoline too large (%u bytes)\n", (uint64_t)tramp_size);
         return 0;
