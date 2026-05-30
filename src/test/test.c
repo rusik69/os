@@ -669,11 +669,14 @@ static void test_udp_binding(void) {
 /* ── ELF loader tests ─────────────────────────────────────────── */
 
 static void test_elf(void) {
+    kprintf("[DBG] test_elf enter\n");
     /* 1. Bad magic → returns 0 */
+    kprintf("[DBG] test_elf #1\n");
     uint8_t bad[16] = {0};
     ASSERT_EQ("elf bad magic", elf_load(bad, sizeof(bad)), 0);
 
     /* 2. Wrong architecture → returns 0 */
+    kprintf("[DBG] test_elf #2\n");
     uint8_t wrong[128];
     memset(wrong, 0, sizeof(wrong));
     *(uint32_t *)wrong = ELF_MAGIC;
@@ -682,6 +685,7 @@ static void test_elf(void) {
     ASSERT_EQ("elf wrong arch", elf_load(wrong, sizeof(wrong)), 0);
 
     /* 3. No program headers → returns 0 */
+    kprintf("[DBG] test_elf #3\n");
     struct elf64_header *wh = (struct elf64_header *)wrong;
     wh->e_type = ET_EXEC;
     wh->e_machine = EM_X86_64;
@@ -692,6 +696,7 @@ static void test_elf(void) {
     ASSERT_EQ("elf no phdrs", elf_load(wrong, sizeof(wrong)), 0);
 
     /* 4. Segment out of bounds (offset+filesz > size) → returns 0 */
+    kprintf("[DBG] test_elf #4\n");
     wh->e_phoff = sizeof(struct elf64_header);
     wh->e_phnum = 1;
     wh->e_phentsize = sizeof(struct elf64_phdr);
@@ -706,6 +711,7 @@ static void test_elf(void) {
     }
 
     /* 5. Segment targeting NULL page (p_vaddr < 0x1000) → returns 0 */
+    kprintf("[DBG] test_elf #5\n");
     struct elf64_phdr *ph = (struct elf64_phdr *)(wrong + sizeof(struct elf64_header));
     ph->p_offset = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
     ph->p_filesz = 4;
@@ -713,6 +719,7 @@ static void test_elf(void) {
     ph->p_memsz = 4;
     ASSERT_EQ("elf null-page seg", elf_load(wrong, sizeof(wrong)), 0);
 
+    kprintf("[DBG] test_elf #5 passed\n");
     /* 6. Successful load of a minimal ELF at a pre-allocated frame */
     {
         kprintf("[DBG] test_elf #6 enter\n");
