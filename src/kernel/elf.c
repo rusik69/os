@@ -64,7 +64,7 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
             kprintf("elf: segment targets NULL page\n");
             return 0;
         }
-        if (!userland && ph->p_vaddr >= 0x800000000000ULL) {
+        if (!userland && ph->p_vaddr < 0x800000000000ULL) {
             kprintf("elf: kernel segment in user-space range\n");
             return 0;
         }

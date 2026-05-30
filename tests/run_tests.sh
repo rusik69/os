@@ -24,7 +24,7 @@ if ! timeout "$TIMEOUT" qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -m 256M \
     -serial file:"$SERIAL_LOG" \
-    -vga std \
+    -vga none \
     -display none \
     -drive file="$DISK",format=raw,if=ide \
     -netdev user,id=net0 -device e1000,netdev=net0 \
