@@ -116,7 +116,7 @@ jobs:
   test:
     runs-on: [self-hosted, linux, x64]
     container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: ccache cache
@@ -142,7 +142,7 @@ jobs:
           chmod +x tests/run_tests.sh
           ./tests/run_tests.sh build_test/kernel.bin build/disk.img
         env:
-          TIMEOUT: "1500"
+          TIMEOUT: "300"
 
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:

@@ -46,6 +46,7 @@
 #include "usb.h"
 #include "usb_msc.h"
 #include "blockdev.h"
+#include "serial.h"
 
 /* ── Test framework ─────────────────────────────────────────── */
 
@@ -1374,8 +1375,20 @@ static void test_pipe_edge(void) {
 
 /* ── Master runner ───────────────────────────────────────────── */
 
+/* Discard hook: suppresses VGA/serial during test execution.
+ * Output still flows to the dmesg ring buffer, so no data is lost. */
+static void discard_hook(char c, void *ctx) {
+    (void)c; (void)ctx;
+}
+
 void test_run_all(void) {
     outb(0x3F8, 'Z');  /* marker: test task is running */
+
+    /* Suppress VGA/serial output during tests.
+     * Under TCG emulation every serial OUT instruction causes a costly
+     * translation-block exit; buffering all output in the dmesg ring
+     * buffer and flushing at the end dramatically speeds up the suite. */
+    kprintf_set_hook(discard_hook, NULL);
     kprintf("\n");
     kprintf("========================================\n");
     kprintf("       OS KERNEL TEST SUITE             \n");
@@ -1425,6 +1438,18 @@ void test_run_all(void) {
         kprintf("SOME TESTS FAILED\n");
     }
     kprintf("========================================\n");
+
+    /* Restore normal VGA/serial output. */
+    kprintf_set_hook(NULL, NULL);
+
+    /* Dump the dmesg ring buffer to serial so that the host-side
+     * test runner (tests/run_tests.sh) can parse PASS/FAIL lines. */
+    {
+        char buf[65536];
+        int len = kprintf_dmesg(buf, (int)sizeof(buf));
+        if (len > 0)
+            serial_write(buf);
+    }
 
     /* Shut down QEMU so the host script can read the serial output */
     acpi_shutdown();
