@@ -100,7 +100,7 @@ static int ehci_init_controller(uint8_t bus, uint8_t slot, uint32_t bar0) {
 
     /* caplength: offset of operational registers from cap_base */
     uint8_t caplength = *(volatile uint8_t *)PHYS_TO_VIRT(cap);
-    ehci_ctrl[c].op_base = cap + caplength;
+    ehci_ctrl[c].op_base = (uint64_t)PHYS_TO_VIRT(cap) + caplength;
 
     uint32_t hcsparams = cap_read(c, EHCI_HCSPARAMS);
     int n_ports = (int)(hcsparams & 0x0F);
