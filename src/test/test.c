@@ -715,9 +715,12 @@ static void test_elf(void) {
 
     /* 6. Successful load of a minimal ELF at a pre-allocated frame */
     {
+        outb(0x3F8, '1');
         uint64_t frame = pmm_alloc_frame();
+        outb(0x3F8, '2');
         ASSERT("elf alloc frame", frame != 0);
         if (frame && frame >= 0x1000) {
+            outb(0x3F8, '3');
             uint8_t buf[256];
             memset(buf, 0, sizeof(buf));
             struct elf64_header *hdr = (struct elf64_header *)buf;
