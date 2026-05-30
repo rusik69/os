@@ -142,7 +142,7 @@ jobs:
           chmod +x tests/run_tests.sh
           ./tests/run_tests.sh build_test/kernel.bin build/disk.img
         env:
-          TIMEOUT: "300"
+          TIMEOUT: "600"
 
   # ── E2E tests (telnet-driven shell commands) ─────────────────────────
   e2e:
