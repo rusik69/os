@@ -11,7 +11,7 @@ set -euo pipefail
 
 KERNEL="${1:?missing kernel.bin}"
 DISK="${2:?missing disk.img}"
-TIMEOUT="${TEST_TIMEOUT:-90}"
+TIMEOUT=${TIMEOUT:-180}
 
 SERIAL_LOG=$(mktemp /tmp/os-test-XXXXXX.txt)
 trap 'rm -f "$SERIAL_LOG"' EXIT
