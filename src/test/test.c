@@ -715,12 +715,12 @@ static void test_elf(void) {
 
     /* 6. Successful load of a minimal ELF at a pre-allocated frame */
     {
-        outb(0x3F8, '1');
+        kprintf("[DBG] test_elf #6 enter\n");
         uint64_t frame = pmm_alloc_frame();
-        outb(0x3F8, '2');
+        kprintf("[DBG] test_elf #6 frame=0x%x\n", frame);
         ASSERT("elf alloc frame", frame != 0);
         if (frame && frame >= 0x1000) {
-            outb(0x3F8, '3');
+            kprintf("[DBG] test_elf #6 alloc ok\n");
             uint8_t buf[256];
             memset(buf, 0, sizeof(buf));
             struct elf64_header *hdr = (struct elf64_header *)buf;
@@ -758,9 +758,9 @@ static void test_elf(void) {
             hdr->e_entry = frame_vma;
             pph->p_vaddr  = frame_vma;
 
-            outb(0x3F8, 'L');  /* before elf_load */
+            kprintf("[DBG] test_elf before elf_load\n");
             uint64_t entry = elf_load(buf, total_sz);
-            outb(0x3F8, 'E');  /* after elf_load */
+            kprintf("[DBG] test_elf after elf_load entry=0x%x\n", entry);
             ASSERT_EQ("elf load entry", entry, frame_vma);
             ASSERT("elf loaded data", *(volatile uint8_t *)PHYS_TO_VIRT(frame) == 0xC3);
 
