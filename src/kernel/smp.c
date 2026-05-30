@@ -139,17 +139,17 @@ static int detect_cpus_from_madt(void) {
     /* Find RSDP first */
     uint64_t rsdp_addr = 0;
     for (uint64_t addr = 0x80000; addr < 0x9FFFF; addr += 16) {
-        if (memcmp((void *)addr, "RSD PTR ", 8) == 0) {
+        if (memcmp(PHYS_TO_VIRT(addr), "RSD PTR ", 8) == 0) {
             uint8_t sum = 0;
-            for (int i = 0; i < 20; i++) sum += ((uint8_t *)addr)[i];
+            for (int i = 0; i < 20; i++) sum += ((uint8_t *)PHYS_TO_VIRT(addr))[i];
             if (sum == 0) { rsdp_addr = addr; break; }
         }
     }
     if (!rsdp_addr) {
         for (uint64_t addr = 0xE0000; addr < 0xFFFFF; addr += 16) {
-            if (memcmp((void *)addr, "RSD PTR ", 8) == 0) {
+            if (memcmp(PHYS_TO_VIRT(addr), "RSD PTR ", 8) == 0) {
                 uint8_t sum = 0;
-                for (int i = 0; i < 20; i++) sum += ((uint8_t *)addr)[i];
+                for (int i = 0; i < 20; i++) sum += ((uint8_t *)PHYS_TO_VIRT(addr))[i];
                 if (sum == 0) { rsdp_addr = addr; break; }
             }
         }
@@ -176,8 +176,8 @@ static int detect_cpus_from_madt(void) {
         uint32_t creator_rev;
     } __attribute__((packed));
 
-    struct rsdp *rsdp = (struct rsdp *)rsdp_addr;
-    struct acpi_hdr *rsdt_hdr = (struct acpi_hdr *)(uint64_t)rsdp->rsdt_addr;
+    struct rsdp *rsdp = (struct rsdp *)PHYS_TO_VIRT(rsdp_addr);
+    struct acpi_hdr *rsdt_hdr = (struct acpi_hdr *)PHYS_TO_VIRT((uint64_t)rsdp->rsdt_addr);
 
     if (memcmp(rsdt_hdr->sig, "RSDT", 4) != 0) return 1;
 
@@ -186,7 +186,7 @@ static int detect_cpus_from_madt(void) {
 
     struct acpi_hdr *madt = NULL;
     for (uint32_t i = 0; i < entry_count; i++) {
-        struct acpi_hdr *hdr = (struct acpi_hdr *)(uint64_t)entries[i];
+        struct acpi_hdr *hdr = (struct acpi_hdr *)PHYS_TO_VIRT((uint64_t)entries[i]);
         if (memcmp(hdr->sig, "APIC", 4) == 0) {
             madt = hdr;
             break;

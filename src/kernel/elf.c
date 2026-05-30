@@ -170,16 +170,16 @@ int elf_exec(const char *path) {
                 uint64_t frame = pmm_alloc_frame();
                 if (!frame) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
                 /* Zero the frame first */
-                memset((void *)frame, 0, PAGE_SIZE);
+                memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-                /* Copy segment data directly to the physical frame via identity map.
-                 * Can't switch to user PML4 for this because buf is a kernel address
-                 * not reachable from user page tables. */
+                /* Copy segment data to the physical frame via the high-half VMA.
+                 * buf is safe because it's a kernel heap address already in the
+                 * high-half, reachable regardless of which PML4 is active. */
                 uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
                 if (ph->p_filesz > page_off) {
                     uint64_t copy_sz = ph->p_filesz - page_off;
                     if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
-                    memcpy((void *)frame, buf + ph->p_offset + page_off, copy_sz);
+                    memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
                 }
 
                 if (vmm_map_user_page(user_pml4, va, frame, flags) < 0) {
@@ -208,7 +208,7 @@ int elf_exec(const char *path) {
                 kfree(buf); kfree(name);
                 return -1;
             }
-            memset((void *)frame, 0, PAGE_SIZE);
+            memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             if (vmm_map_user_page(user_pml4, va, frame,
                                   VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
                 kprintf("elf: vmm_map_user_page failed for stack\n");
@@ -306,14 +306,14 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) { map_ok = 0; break; }
-            memset((void *)frame, 0, PAGE_SIZE);
+            memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
-            /* Copy segment data via identity map (buf is kernel addr). */
+            /* Copy segment data via high-half VMA (buf is kernel addr). */
             uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
             if (ph->p_filesz > page_off) {
                 uint64_t copy_sz = ph->p_filesz - page_off;
                 if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
-                memcpy((void *)frame, buf + ph->p_offset + page_off, copy_sz);
+                memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
             }
 
             if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
@@ -332,7 +332,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
-        memset((void *)frame, 0, PAGE_SIZE);
+        memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
             pmm_free_frame(frame);

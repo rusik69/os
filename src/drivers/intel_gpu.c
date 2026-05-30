@@ -24,11 +24,9 @@ static uint32_t intel_gpu_read32(uint32_t reg) {
 
 static void intel_gpu_map_mmio(struct intel_gpu_info *gpu) {
     if (!gpu->mmio_base) return;
-    for (uint64_t off = 0; off < gpu->mmio_size; off += PAGE_SIZE)
-        (void)vmm_map_page(gpu->mmio_base + off, gpu->mmio_base + off,
-                           VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    g_mmio = (volatile uint8_t *)(uintptr_t)gpu->mmio_base;
-    gpu->mmio_mapped = 1;
+    g_mmio = (volatile uint8_t *)vmm_map_phys(gpu->mmio_base, gpu->mmio_size,
+                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (g_mmio) gpu->mmio_mapped = 1;
 }
 
 static void intel_gpu_read_state(struct intel_gpu_info *gpu) {

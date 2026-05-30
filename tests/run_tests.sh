@@ -1,89 +1,61 @@
-#!/bin/sh
-# tests/run_tests.sh — Run the OS kernel in QEMU (test mode) and report results.
+#!/bin/bash
+# run_tests.sh — Boot test kernel in QEMU, capture output, validate results
 #
-# Usage: ./tests/run_tests.sh [kernel.bin] [disk.img]
-# Defaults: build_test/kernel.bin  build/disk.img
+# Usage:  ./run_tests.sh <kernel.bin> <disk.img>
 #
-# Exit codes:
-#   0  ALL TESTS PASSED
-#   1  test failures or suite did not complete
-#   2  prerequisites missing
+# Launches QEMU with the test kernel, captures serial output,
+# and checks for "ALL TESTS PASSED" or "SOME TESTS FAILED".
+# Exits 0 on pass, 1 on failure, 124 on timeout.
 
-KERNEL="${1:-build_test/kernel.bin}"
-DISK="${2:-build/disk.img}"
-TIMEOUT="${TIMEOUT:-600}"
+set -euo pipefail
 
-err() { echo "ERROR: $*" >&2; exit 2; }
+KERNEL="${1:?missing kernel.bin}"
+DISK="${2:?missing disk.img}"
+TIMEOUT="${TEST_TIMEOUT:-90}"
 
-# ── Prerequisites ─────────────────────────────────────────────────────────────
-command -v qemu-system-x86_64 >/dev/null 2>&1 || \
-    err "qemu-system-x86_64 not found. Install QEMU: brew install qemu"
-[ -f "$KERNEL" ] || err "kernel not found at '$KERNEL'. Run: make test-kernel"
-[ -f "$DISK"   ] || err "disk image not found at '$DISK'. Run: make"
+SERIAL_LOG=$(mktemp /tmp/os-test-XXXXXX.txt)
+trap 'rm -f "$SERIAL_LOG"' EXIT
 
-# ── Run QEMU ──────────────────────────────────────────────────────────────────
-TMP=$(mktemp /tmp/os_test_XXXXXX.txt)
-trap 'rm -f "$TMP"' EXIT
+echo "==> Booting test kernel (timeout=${TIMEOUT}s)..."
 
-echo "==> Booting $KERNEL in QEMU (timeout ${TIMEOUT}s)..."
-
-# Use -serial file:... so output goes straight to TMP without TTY/printf issues.
-# -no-reboot: QEMU exits when the kernel halts (after acpi_shutdown).
-qemu-system-x86_64 \
+# Launch QEMU with -serial file: for clean capture
+# Use -no-reboot so QEMU exits on triple-fault or ACPI shutdown
+if ! timeout "$TIMEOUT" qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -m 256M \
-    -serial "file:$TMP" \
+    -serial file:"$SERIAL_LOG" \
+    -vga std \
     -display none \
-    -vga none \
-    -drive "file=$DISK,format=raw,if=ide" \
-    -netdev user,id=net0 \
-    -device e1000,netdev=net0 \
-    -no-reboot \
-    2>/dev/null &
-QEMU_PID=$!
-
-# Wait for QEMU to exit or timeout (macOS-compatible poll loop, no 'timeout' cmd)
-elapsed=0
-while kill -0 "$QEMU_PID" 2>/dev/null; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-    if [ "$elapsed" -ge "$TIMEOUT" ]; then
-        echo "TIMEOUT: QEMU still running after ${TIMEOUT}s, killing..." >&2
-        kill "$QEMU_PID" 2>/dev/null || true
-        break
-    fi
-done
-wait "$QEMU_PID" 2>/dev/null || true
-
-# ── Display serial output ─────────────────────────────────────────────────────
-echo "--- Serial output ---"
-cat "$TMP"
-echo "--- End serial output ---"
-echo ""
-
-# ── Parse results ─────────────────────────────────────────────────────────────
-PASS=$(grep -c "^\[PASS\]" "$TMP" 2>/dev/null || true)
-FAIL=$(grep -c "^\[FAIL\]" "$TMP" 2>/dev/null || true)
-echo "Results: $PASS passed, $FAIL failed"
-
-if [ "$FAIL" -gt 0 ] 2>/dev/null; then
-    echo ""
-    echo "Failed tests:"
-    grep "^\[FAIL\]" "$TMP" || true
+    -drive file="$DISK",format=raw,if=ide \
+    -netdev user,id=net0 -device e1000,netdev=net0 \
+    -no-reboot 2>/dev/null; then
+    # timeout or QEMU exit
+    :
 fi
 
-echo ""
-if grep -q "ALL TESTS PASSED" "$TMP" 2>/dev/null; then
-    echo "SUCCESS: All $PASS tests passed!"
+echo "==> Checking results..."
+if grep -q "ALL TESTS PASSED" "$SERIAL_LOG"; then
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)
+    echo "========================================"
+    echo "  ALL TESTS PASSED  ($PASS passed)"
+    echo "========================================"
     exit 0
-elif grep -q "SOME TESTS FAILED" "$TMP" 2>/dev/null; then
-    echo "FAILURE: $FAIL test(s) failed."
+elif grep -q "SOME TESTS FAILED" "$SERIAL_LOG"; then
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)
+    echo "========================================"
+    echo "  SOME TESTS FAILED  ($PASS passed, $FAIL failed)"
+    echo "========================================"
+    grep "FAIL" "$SERIAL_LOG" || true
     exit 1
-elif [ "$FAIL" -eq 0 ] 2>/dev/null && [ "$PASS" -ge 100 ] 2>/dev/null; then
-    echo "SUCCESS: $PASS passed, $FAIL failed (no explicit ALL TESTS PASSED marker)"
-    exit 0
 else
-    echo "FAILURE: Test suite did not complete."
-    echo "(Check for kernel boot errors above)"
-    exit 1
+    echo "========================================"
+    echo "  TESTS INCOMPLETE (timeout or crash)"
+    echo "========================================"
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)
+    echo "  $PASS passed, $FAIL failed before timeout"
+    tail -20 "$SERIAL_LOG"
+    exit 124
 fi

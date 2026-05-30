@@ -47,7 +47,7 @@ int shm_get(int key) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) return -1;
             /* Zero the shared page */
-            memset((void *)frame, 0, SHM_PAGE);
+            memset(PHYS_TO_VIRT(frame), 0, SHM_PAGE);
             shm_table[i].used = 1;
             shm_table[i].key  = key;
             shm_table[i].phys = frame;

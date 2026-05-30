@@ -3,10 +3,10 @@
 #include "string.h"
 
 /*
- * Heap lives in the identity-mapped 0-1GB region (boot code maps it via 2MB huge
- * pages so no vmm_map_page calls are needed).  We place it right above the kernel
- * binary and pre-reserve the region in PMM so VMM page-table allocations cannot
- * steal those frames.
+ * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
+ * huge pages so no vmm_map_page calls are needed for the heap).  We place it
+ * right above the kernel binary and incrementally reserve the physical frames
+ * in PMM as the heap grows, so VMM page-table allocations cannot steal heap pages.
  */
 
 #define HEAP_MAX_SIZE (64ULL * 1024 * 1024)   /* 64 MB — cc needs ~7 MB per compile */
@@ -27,12 +27,20 @@ static struct heap_block *heap_start_block = NULL;
 static uint64_t heap_base    = 0;
 static uint64_t heap_current = 0;
 static uint64_t heap_limit   = 0;
+static uint64_t heap_base_phys = 0; /* physical address of heap base */
 static uint64_t heap_used_bytes = 0; /* running total of bytes in use */
 
 static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
     if (new_limit > heap_base + HEAP_MAX_SIZE)
         return -1;
+
+    /* Reserve the newly expanded physical frames in PMM */
+    uint64_t old_limit_phys = heap_base_phys + (heap_limit - heap_base);
+    uint64_t new_limit_phys = heap_base_phys + (new_limit - heap_base);
+    if (new_limit_phys > old_limit_phys)
+        pmm_reserve_frames(old_limit_phys, new_limit_phys - old_limit_phys);
+
     heap_limit = new_limit;
     return 0;
 }
@@ -42,11 +50,16 @@ void heap_init(void) {
     heap_base    = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
     heap_current = heap_base + HEAP_INITIAL;
     heap_limit   = heap_current;
+    heap_base_phys = VIRT_TO_PHYS(heap_base);
 
-    /* Reserve the entire heap region in PMM so nobody else allocates those frames */
-    pmm_reserve_frames(heap_base, HEAP_MAX_SIZE);
+    /* Reserve the initial heap pages in PMM so they are not stolen.
+     * heap_base_phys is the physical address of the heap region. */
+    pmm_reserve_frames(heap_base_phys, HEAP_INITIAL);
 
-    /* Set up initial free block (no vmm_map_page needed – identity-mapped) */
+    /* Advance PMM alloc hint past the initial heap region */
+    pmm_advance_hint(heap_base_phys + HEAP_INITIAL);
+
+    /* Set up initial free block (high-half VMA — mapped via PML4[256] huge pages) */
     heap_start_block        = (struct heap_block *)heap_base;
     heap_start_block->size  = HEAP_INITIAL - BLOCK_HDR_SIZE;
     heap_start_block->free  = 1;

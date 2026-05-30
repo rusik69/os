@@ -163,11 +163,13 @@ int e1000_init(void) {
     uint64_t bar0 = dev.bar[0] & ~0xFULL;
     kprintf("  e1000 BAR0=0x%x IRQ=%u\n", bar0, (uint64_t)dev.irq);
 
-    /* Map MMIO region (128KB) into virtual address space */
-    for (uint64_t off = 0; off < 0x20000; off += PAGE_SIZE) {
-        (void)vmm_map_page(bar0 + off, bar0 + off, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    /* Map MMIO region (128KB) into high-half VMA space */
+    mmio_base = (volatile uint8_t *)vmm_map_phys(bar0, 0x20000,
+                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (!mmio_base) {
+        kprintf("  e1000: failed to map MMIO\n");
+        return -1;
     }
-    mmio_base = (volatile uint8_t *)(uintptr_t)bar0;
 
     /* Enable PCI bus mastering */
     pci_enable_bus_master(&dev);

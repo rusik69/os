@@ -35,6 +35,20 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
         table[index] = frame | flags | PTE_PRESENT | PTE_WRITE;
+        return virt;
+    }
+    /* If the entry is a 2MB huge page, split it into 512 × 4KB entries. */
+    if (table[index] & PTE_HUGE) {
+        uint64_t huge = table[index];
+        uint64_t pt_phys = pmm_alloc_frame();
+        if (!pt_phys) return NULL;
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+        uint64_t base  = huge & 0x000FFFFFFFE00000ULL;
+        uint64_t pflags = (huge & 0x1FF) & ~(uint64_t)PTE_HUGE;
+        for (int i = 0; i < 512; i++)
+            pt[i] = (base + (uint64_t)i * PAGE_SIZE) | pflags | PTE_PRESENT;
+        table[index] = pt_phys | (flags & 0xFFF) | PTE_PRESENT | PTE_WRITE;
+        return pt;
     }
     return (uint64_t *)PHYS_TO_VIRT(table[index] & PTE_ADDR_MASK);
 }
@@ -42,14 +56,19 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
 void vmm_init(void) {
     /* Use current PML4 set up by boot code */
     kernel_pml4 = (uint64_t *)PHYS_TO_VIRT(read_cr3() & PTE_ADDR_MASK);
+
+    /* Remove the identity map (PML4[0]) — the boot code sets up two mappings
+     * for every physical address (identity via PML4[0] and high-half via
+     * PML4[256]).  The kernel uses PHYS_TO_VIRT(addr) which now adds
+     * KERNEL_VMA_OFFSET, so we only need the high-half mapping.
+     * The boot code already set RSP to the high-half alias of the bootstrap
+     * stack, so all C local variables are at high-half addresses and remain
+     * valid after the identity map is removed. */
+    kernel_pml4[0] = 0;
+    write_cr3(read_cr3()); /* flush TLB */
 }
 
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
-    /* Boot identity-maps 0xC0000000–0xFFFFFFFF with 2MB pages; remapping here
-     * would treat MMIO/LFB huge pages as page-table pointers. */
-    if (virt >= 0xC0000000ULL && virt < 0x100000000ULL && virt == phys)
-        return 0;
-
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
@@ -155,6 +174,31 @@ uint64_t vmm_get_physaddr(uint64_t virt) {
 
 uint64_t *vmm_get_pml4(void) {
     return kernel_pml4;
+}
+
+/*
+ * Map a region of physical memory in the kernel's high-half VMA space.
+ * Returns the virtual address (KERNEL_VMA_OFFSET + phys) on success, NULL on failure.
+ * This is the canonical way to map MMIO or temporary physical memory after
+ * the identity map is removed.
+ */
+void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
+    uint64_t start = phys & ~(PAGE_SIZE - 1ULL);
+    uint64_t end   = (phys + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    for (uint64_t off = 0; off < end - start; off += PAGE_SIZE) {
+        uint64_t vaddr = KERNEL_VMA_OFFSET + start + off;
+        if (vmm_map_page(vaddr, start + off, flags) < 0)
+            return NULL;
+    }
+    return (void *)(KERNEL_VMA_OFFSET + phys);
+}
+
+/* Unmap a region previously mapped with vmm_map_phys. */
+void vmm_unmap_phys(void *vaddr, uint64_t size) {
+    uint64_t start = (uint64_t)(uintptr_t)vaddr & ~(PAGE_SIZE - 1ULL);
+    uint64_t end   = ((uint64_t)(uintptr_t)vaddr + size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
+        vmm_unmap_page(addr);
 }
 
 /* ------------------------------------------------------------------ */

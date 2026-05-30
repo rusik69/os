@@ -430,15 +430,15 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
 
     uint64_t fb_size = (uint64_t)fb_pitch_val * fb_h;
     
-    /* Only map low RAM framebuffers; boot huge pages cover 0xC0000000+ (incl. Bochs LFB) */
-    if (fb_addr > 0x100000 && fb_addr < 0xC0000000ULL) {
-        uint64_t start = fb_addr & ~(PAGE_SIZE - 1ULL);
-        uint64_t end = (fb_addr + fb_size + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
-        for (uint64_t addr = start; addr < end; addr += PAGE_SIZE)
-            (void)vmm_map_page(addr, addr, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    /* Map framebuffer in high-half VMA space */
+    fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, fb_size,
+                VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+
+    if (!fb_base) {
+        kprintf("[--] Failed to map framebuffer at 0x%x\n", (unsigned)fb_addr);
+        return -1;
     }
 
-    fb_base = (volatile uint8_t *)(uintptr_t)fb_addr;
     fb_pitch = fb_pitch_val;
     fb_width = fb_w;
     fb_height = fb_h;
@@ -446,7 +446,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     fb_active = 1;
 
     if (fb_addr >= 0xC0000000ULL)
-        vmm_set_range_uncacheable(fb_addr, fb_size);
+        vmm_set_range_uncacheable((uint64_t)(uintptr_t)fb_base, fb_size);
 
     clear_framebuffer(vga_palette[(vga_color >> 4) & 0x0F]);
     render_all();

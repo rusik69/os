@@ -19,6 +19,10 @@ uint64_t vmm_get_physaddr(uint64_t virt);
 int vmm_virt_to_phys(uint64_t virt, uint64_t *phys);
 uint64_t *vmm_get_pml4(void);
 
+/* Map/unmap physical memory in the kernel's high-half VMA space. */
+void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags);
+void  vmm_unmap_phys(void *vaddr, uint64_t size);
+
 /* Per-process user address space */
 uint64_t *vmm_create_user_pml4(void);
 uint64_t *vmm_clone_user_pml4(uint64_t *src); /* deep-copy user half */

@@ -122,6 +122,12 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     }
 }
 
+void pmm_advance_hint(uint64_t phys_addr) {
+    uint64_t frame = phys_addr / PAGE_SIZE;
+    if (frame + 1 > pmm_hint)
+        pmm_hint = frame + 1;
+}
+
 uint64_t pmm_alloc_frame(void) {
     /* Start from hint to avoid scanning already-allocated frames */
     uint64_t i = pmm_hint;

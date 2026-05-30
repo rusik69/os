@@ -8,6 +8,9 @@ MULTIBOOT_CHECKSUM  equ -(MULTIBOOT_MAGIC + MULTIBOOT_FLAGS)
 
 extern _kernel_end
 
+; Constants
+KERNEL_VMA_OFFSET equ 0xFFFF800000000000
+
 section .multiboot
 align 4
 multiboot_header:
@@ -168,6 +171,13 @@ long_mode_entry:
     ; Prepare arguments for kernel_main
     mov edi, r12d
     mov esi, r13d
+
+    ; Switch to high-half stack so all C code uses high-half VMA addresses,
+    ; preventing local-variable references from producing low identity-mapped
+    ; addresses that become invalid when the identity map is removed.
+    mov rsp, boot_stack_top
+    mov rax, KERNEL_VMA_OFFSET
+    add rsp, rax
 
     extern kernel_main
     mov rax, kernel_main            ; absolute call - kernel_main is at high VMA

@@ -6,18 +6,18 @@
 void serial_init(void) {
     outb(COM1 + 1, 0x00); /* Disable interrupts */
     outb(COM1 + 3, 0x80); /* Enable DLAB */
-    outb(COM1 + 0, 0x03); /* 38400 baud lo */
-    outb(COM1 + 1, 0x00); /* 38400 baud hi */
+    outb(COM1 + 0, 0x01); /* 115200 baud lo */
+    outb(COM1 + 1, 0x00); /* 115200 baud hi */
     outb(COM1 + 3, 0x03); /* 8 bits, no parity, 1 stop */
     outb(COM1 + 2, 0xC7); /* Enable FIFO */
     outb(COM1 + 4, 0x0B); /* IRQs enabled, RTS/DSR set */
 }
 
 void serial_putchar(char c) {
-    int timeout = 10000000;
-    while (!(inb(COM1 + 5) & 0x20) && --timeout > 0)
-        __asm__ volatile("pause");
-    if (timeout > 0) outb(COM1, c);
+    /* Skip THRE handshake check: on QEMU with -serial file:/stdio the
+     * FIFO drains immediately, and in TCG mode a busy-wait check can
+     * degrade to a long spin loop that makes kprintf appear to hang. */
+    outb(COM1, c);
 }
 
 void serial_write(const char *str) {

@@ -38,6 +38,7 @@
 #include "semaphore.h"
 #include "vmm.h"
 #include "ac97.h"
+#include "io.h"
 #include "doom.h"
 #include "dos.h"
 #include "elf.h"
@@ -748,12 +749,20 @@ static void test_elf(void) {
             buf[code_off] = 0xC3;
             uint32_t total_sz = code_off + 1;
 
+            /* Use the high-half VMA for the segment so elf_load treats this
+             * as a kernel-mode ELF and actually copies the segment data. */
+            uint64_t frame_vma = (uint64_t)PHYS_TO_VIRT(frame);
+            hdr->e_entry = frame_vma;
+            pph->p_vaddr  = frame_vma;
+
+            outb(0x3F8, 'L');  /* before elf_load */
             uint64_t entry = elf_load(buf, total_sz);
-            ASSERT_EQ("elf load entry", entry, frame);
-            ASSERT("elf loaded data", *(volatile uint8_t *)frame == 0xC3);
+            outb(0x3F8, 'E');  /* after elf_load */
+            ASSERT_EQ("elf load entry", entry, frame_vma);
+            ASSERT("elf loaded data", *(volatile uint8_t *)PHYS_TO_VIRT(frame) == 0xC3);
 
             /* Clean up */
-            memset((void *)frame, 0, PAGE_SIZE);
+            memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             pmm_free_frame(frame);
             t_ok("elf successful load");
         } else if (frame) {
@@ -1343,44 +1352,46 @@ static void test_pipe_edge(void) {
 /* ── Master runner ───────────────────────────────────────────── */
 
 void test_run_all(void) {
+    outb(0x3F8, 'Z');  /* marker: test task is running */
     kprintf("\n");
     kprintf("========================================\n");
     kprintf("       OS KERNEL TEST SUITE             \n");
     kprintf("========================================\n");
 
-    test_string();
-    test_memory();
-    test_heap_ext();
-    test_heap_stress();
-    test_timer();
-    test_rtc();
-    test_process();
-    test_scheduler();
-    test_filesystem();
-    test_vfs();
-    test_pipe();
-    test_pipe_edge();
-    test_speaker();
-    test_mouse();
-    test_signal();
-    test_network();
-    test_udp_binding();
-    test_elf();
-    test_elf_edge();
-    test_vmm();
-    test_vmm_alloc();
-    test_tcp();
-    test_procfs();
-    test_fork();
-    test_shm_mutex();
-    test_semaphore();
-    test_shm_ext();
-    test_ipc();
-    test_fat32();
-    test_ac97();
-    test_doom();
-    test_dos();
-    test_syscall();
+    kprintf("[TEST] string\n");      test_string();
+    kprintf("[TEST] memory\n");      test_memory();
+    kprintf("[TEST] heap_ext\n");    test_heap_ext();
+    kprintf("[TEST] heap_stress\n"); test_heap_stress();
+    kprintf("[TEST] timer\n");       test_timer();
+    kprintf("[TEST] rtc\n");         test_rtc();
+    kprintf("[TEST] process\n");     test_process();
+    kprintf("[TEST] scheduler\n");   test_scheduler();
+    kprintf("[TEST] filesystem\n");  test_filesystem();
+    kprintf("[TEST] vfs\n");         test_vfs();
+    kprintf("[TEST] pipe\n");        test_pipe();
+    kprintf("[TEST] pipe_edge\n");   test_pipe_edge();
+    kprintf("[TEST] speaker\n");     test_speaker();
+    kprintf("[TEST] mouse\n");       test_mouse();
+    kprintf("[TEST] signal\n");      test_signal();
+    kprintf("[TEST] network\n");     test_network();
+    kprintf("[XX] after network\n");
+    kprintf("[TEST] udp_binding\n"); test_udp_binding();
+    kprintf("[TEST] elf\n");         test_elf();
+    kprintf("[TEST] elf_edge\n");    test_elf_edge();
+    kprintf("[TEST] vmm\n");         test_vmm();
+    kprintf("[TEST] vmm_alloc\n");   test_vmm_alloc();
+    kprintf("[TEST] tcp\n");         test_tcp();
+    kprintf("[TEST] procfs\n");      test_procfs();
+    kprintf("[TEST] fork\n");        test_fork();
+    kprintf("[TEST] shm_mutex\n");   test_shm_mutex();
+    kprintf("[TEST] semaphore\n");   test_semaphore();
+    kprintf("[TEST] shm_ext\n");     test_shm_ext();
+    kprintf("[TEST] ipc\n");         test_ipc();
+    kprintf("[TEST] fat32\n");       test_fat32();
+    kprintf("[TEST] ac97\n");        test_ac97();
+    kprintf("[TEST] doom\n");        test_doom();
+    kprintf("[TEST] dos\n");         test_dos();
+    kprintf("[TEST] syscall\n");     test_syscall();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",

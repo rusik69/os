@@ -62,7 +62,10 @@ void apic_init_local(void) {
     /* Mask all LVT entries */
     apic_write(LAPIC_LVT_TIMER, TIMER_MASKED);
     apic_write(LAPIC_LVT_PC,    TIMER_MASKED);
-    apic_write(LAPIC_LVT_LINT0, TIMER_MASKED);
+    /* LINT0 must be unmasked with ExtINT delivery for the legacy PIC
+     * (PIT, keyboard, RTC) to work.  It will be properly configured
+     * when timer_init calls apic_enable_extint(). */
+    apic_write(LAPIC_LVT_LINT0, TIMER_MASKED | (7 << 8)); /* masked + ExtINT */
     apic_write(LAPIC_LVT_LINT1, TIMER_MASKED);
     apic_write(LAPIC_LVT_ERROR, TIMER_MASKED);
 

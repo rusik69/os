@@ -58,12 +58,12 @@ static int acpi_ready = 0;
 
 static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
     for (uint64_t addr = start; addr < end; addr += 16) {
-        if (memcmp((void *)addr, RSDP_SIG, 8) == 0) {
+        if (memcmp(PHYS_TO_VIRT(addr), RSDP_SIG, 8) == 0) {
             /* Validate checksum */
-            uint8_t *p = (uint8_t *)addr;
+            uint8_t *p = (uint8_t *)PHYS_TO_VIRT(addr);
             uint8_t sum = 0;
             for (int i = 0; i < 20; i++) sum += p[i];
-            if (sum == 0) return (struct rsdp *)addr;
+            if (sum == 0) return (struct rsdp *)PHYS_TO_VIRT(addr);
         }
     }
     return NULL;
@@ -78,7 +78,7 @@ void acpi_init(void) {
         return;
     }
 
-    struct rsdt *rsdt = (struct rsdt *)(uint64_t)rsdp->rsdt_addr;
+    struct rsdt *rsdt = (struct rsdt *)PHYS_TO_VIRT((uint64_t)rsdp->rsdt_addr);
     if (!rsdt) return;
 
     /* Validate RSDT signature */
@@ -89,7 +89,7 @@ void acpi_init(void) {
     struct fadt *fadt = NULL;
 
     for (uint32_t i = 0; i < num_entries; i++) {
-        struct acpi_header *hdr = (struct acpi_header *)(uint64_t)rsdt->entries[i];
+        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)rsdt->entries[i]);
         if (memcmp(hdr->signature, FADT_SIG, 4) == 0) {
             fadt = (struct fadt *)hdr;
         }

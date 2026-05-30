@@ -43,6 +43,9 @@ void timer_init(void) {
         ioapic_redirect_extint(0);
         ioapic_unmask_irq(0);
         pic_unmask(0);
+        /* Unmask the local APIC LINT0 for ExtINT delivery so the PIC's
+         * interrupts actually reach the CPU through the local APIC. */
+        apic_write(LAPIC_LVT_LINT0, (7 << 8)); /* ExtINT, unmasked */
     } else {
         pic_unmask(0);
     }
