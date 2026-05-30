@@ -780,7 +780,9 @@ static void test_elf(void) {
         }
     }
 
+    kprintf("[DBG] test_elf pre-t_ok\\n");
     t_ok("elf tests");
+    kprintf("[DBG] test_elf done\\n");
 }
 
 /* ── VMM tests ────────────────────────────────────────────────── */
@@ -1225,6 +1227,7 @@ static void test_heap_stress(void) {
 /* ── ELF edge cases ───────────────────────────────────────────── */
 
 static void test_elf_edge(void) {
+    kprintf("[DBG] test_elf_edge enter\n");
     /* 1. Segment with p_memsz > p_filesz (BSS extension) */
     uint8_t buf[256];
     memset(buf, 0, sizeof(buf));
