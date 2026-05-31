@@ -198,9 +198,12 @@ int elf_exec(const char *path) {
             return -1;
         }
 
-        /* Allocate user stack (16 pages = 64KB) */
+        /* Allocate user stack (16 pages = 64KB) with guard page at bottom.
+         * The guard page (lowest page, at USER_STACK_TOP - USER_STACK_SIZE)
+         * is deliberately left unmapped — a stack overflow will hit it and
+         * cause a page fault (SIGSEGV). */
         uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-        for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
+        for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < USER_STACK_TOP; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) {
                 kprintf("elf: OOM for user stack\n");
