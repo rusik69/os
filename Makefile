@@ -80,6 +80,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/devfs.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
+         src/fs/bufcache.c \
          src/net/net.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \

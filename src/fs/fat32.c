@@ -12,6 +12,7 @@
  */
 #include "fat32.h"
 #include "blockdev.h"
+#include "bufcache.h"
 #include "vfs.h"
 #include "string.h"
 #include "printf.h"
@@ -114,13 +115,18 @@ static uint32_t     fsinfo_next_free = 2;
 /* Sector-sized scratch buffer (on stack in helpers) */
 #define SECT_SIZE 512
 
-/* ── Low-level sector I/O ───────────────────────────────────────────────────── */
+/* ── Low-level sector I/O (with buffer cache) ──────────────────────────── */
 static int read_sector(uint32_t lba, void *buf) {
+    void *cached = bufcache_read(lba, (uint8_t)disk_id);
+    if (cached) {
+        memcpy(buf, cached, SECT_SIZE);
+        return 0;
+    }
     return blockdev_read_sectors(disk_id, lba, 1, buf);
 }
 
 static int write_sector(uint32_t lba, const void *buf) {
-    return blockdev_write_sectors(disk_id, lba, 1, buf);
+    return bufcache_write(lba, (uint8_t)disk_id, buf);
 }
 
 static void fsinfo_write_hint(uint32_t next) {
@@ -488,6 +494,10 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
             break;
     }
     if (!blockdev_is_registered(disk_id)) return -10;
+
+    /* Initialize and enable buffer cache for FAT32 sector caching */
+    bufcache_init();
+    bufcache_enable();
 
     uint8_t mbr[SECT_SIZE];
     /* Auto-detect: if part_lba == 0, read MBR and find any FAT partition */
@@ -893,6 +903,7 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
 
 int fat32_sync(void) {
     if (!mounted) return -1;
+    bufcache_flush();
     fsinfo_write_hint(fsinfo_next_free);
     if (fs_info_lba) {
         uint8_t buf[SECT_SIZE];
