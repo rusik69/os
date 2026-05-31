@@ -21,6 +21,7 @@ int pipe_create(void) {
             pipe_table[i].writers   = 1;
             pipe_table[i].in_use    = 1;
             pipe_table[i].flags    = 0;
+            pipe_table[i].sigio_pid = 0;
             wait_queue_init(&pipe_table[i].read_wq);
             wait_queue_init(&pipe_table[i].write_wq);
             return i;
@@ -74,6 +75,11 @@ int pipe_write(int pipe_id, const void *buf, int len) {
 
         /* Wake any readers waiting for data */
         wait_queue_wake_all(&p->read_wq);
+
+        /* SIGIO: send to owner when data becomes available */
+        if (p->sigio_pid && p->count > 0) {
+            signal_send(p->sigio_pid, SIGIO);
+        }
     }
     return written;
 }
@@ -108,6 +114,11 @@ int pipe_read(int pipe_id, void *buf, int len) {
 
     /* Wake any writers waiting for space */
     wait_queue_wake_all(&p->write_wq);
+
+    /* SIGIO: send to owner when space becomes available */
+    if (p->sigio_pid && p->count < PIPE_BUF_SIZE) {
+        signal_send(p->sigio_pid, SIGIO);
+    }
     return to_read;
 }
 
@@ -142,4 +153,10 @@ void pipe_set_nonblock(int pipe_id, int nonblock) {
         pipe_table[pipe_id].flags |= PIPE_FLAG_NONBLOCK;
     else
         pipe_table[pipe_id].flags &= ~PIPE_FLAG_NONBLOCK;
+}
+
+void pipe_set_sigio(int pipe_id, uint32_t pid) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return;
+    pipe_table[pipe_id].sigio_pid = pid;
 }

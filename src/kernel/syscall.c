@@ -1236,6 +1236,10 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 #define F_SETFD   2
 #define F_GETFL   3
 #define F_SETFL   4
+#define F_SETOWN  5
+#define F_GETOWN  6
+#define O_ASYNC   0x2000
+/* O_NONBLOCK is defined in types.h (04000) */
 
 static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *proc = process_get_current();
@@ -1266,12 +1270,27 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         case F_SETFL: {
             /* Handle O_NONBLOCK for pipe FDs */
             uint8_t nonblock = (arg & O_NONBLOCK) ? 1 : 0;
+            /* Handle O_ASYNC for pipe FDs */
+            if (arg & O_ASYNC) {
+                proc->fd_table[fd].sigio_pid = process_get_current()->pid;
+            }
             /* Try to find pipe ID from fd path pattern */
             if (strncmp(proc->fd_table[fd].path, "pipe_", 5) == 0) {
                 int pid = (int)proc->fd_table[fd].offset;
                 pipe_set_nonblock(pid, nonblock);
+                if (arg & O_ASYNC)
+                    pipe_set_sigio(pid, process_get_current()->pid);
             }
             return 0;
+        }
+        case F_SETOWN: {
+            /* Set the owner PID for SIGIO */
+            proc->fd_table[fd].sigio_pid = (uint32_t)arg;
+            return 0;
+        }
+        case F_GETOWN: {
+            /* Get the owner PID for SIGIO */
+            return (uint64_t)proc->fd_table[fd].sigio_pid;
         }
         default:
             return (uint64_t)-1;

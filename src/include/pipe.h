@@ -16,6 +16,7 @@ struct pipe {
     int      writers;   /* number of open write ends */
     int      in_use;
     uint8_t  flags;     /* PIPE_FLAG_NONBLOCK etc. */
+    uint32_t sigio_pid; /* PID to receive SIGIO (0 = none) */
     struct wait_queue read_wq;   /* waiters waiting for data */
     struct wait_queue write_wq;  /* waiters waiting for space */
 };
@@ -40,5 +41,6 @@ int pipe_available(int pipe_id);
 
 void pipe_init(void);
 void pipe_set_nonblock(int pipe_id, int nonblock);
+void pipe_set_sigio(int pipe_id, uint32_t pid);
 
 #endif

@@ -47,6 +47,7 @@ struct process_fd {
     uint32_t offset;
     int      used;
     uint8_t  flags;       /* FD_CLOEXEC etc. */
+    uint32_t sigio_pid;   /* PID to receive SIGIO (0 = none) */
 };
 
 /* Per-process interval timer (setitimer) */
