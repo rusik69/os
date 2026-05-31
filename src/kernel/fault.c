@@ -45,20 +45,20 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* Kernel-mode fault: panic with register dump */
     if (!(err & (1ULL << 2))) {
         kprintf("\n*** KERNEL PAGE FAULT ***\n");
-        kprintf("CR2=0x%x  error=0x%x  (PF: %s %s %s)\n", cr2, err,
+        kprintf("CR2=0x%llx  error=0x%llx  (PF: %s %s %s)\n", cr2, err,
                 (err & 1) ? "prot" : "np",
                 (err & 2) ? "wr" : "rd",
                 (err & 4) ? "usr" : "sup");
-        kprintf("RIP=0x%x  RSP=0x%x  RBP=0x%x\n",
+        kprintf("RIP=0x%llx  RSP=0x%llx  RBP=0x%llx\n",
                 frame->rip, frame->rsp, frame->rbp);
-        kprintf("RAX=0x%x  RBX=0x%x  RCX=0x%x  RDX=0x%x\n",
+        kprintf("RAX=0x%llx  RBX=0x%llx  RCX=0x%llx  RDX=0x%llx\n",
                 frame->rax, frame->rbx, frame->rcx, frame->rdx);
-        kprintf("RSI=0x%x  RDI=0x%x  R8=0x%x   R9=0x%x\n",
+        kprintf("RSI=0x%llx  RDI=0x%llx  R8=0x%llx   R9=0x%llx\n",
                 frame->rsi, frame->rdi, frame->r8, frame->r9);
-        kprintf("R10=0x%x  R11=0x%x  R12=0x%x  R13=0x%x\n",
+        kprintf("R10=0x%llx  R11=0x%llx  R12=0x%llx  R13=0x%llx\n",
                 frame->r10, frame->r11, frame->r12, frame->r13);
-        kprintf("R14=0x%x  R15=0x%x\n", frame->r14, frame->r15);
-        kprintf("CS=0x%x  SS=0x%x  RFLAGS=0x%x\n",
+        kprintf("R14=0x%llx  R15=0x%llx\n", frame->r14, frame->r15);
+        kprintf("CS=0x%llx  SS=0x%llx  RFLAGS=0x%llx\n",
                 frame->cs, frame->ss, frame->rflags);
         arch_print_backtrace();
         __asm__ volatile("cli");
@@ -74,8 +74,8 @@ static void page_fault_handler(struct interrupt_frame *frame) {
 
     /* Unhandled user fault: kill the process with SIGSEGV (code 11) */
     struct process *proc = process_get_current();
-    kprintf("[fault] SIGSEGV pid=%u addr=0x%x err=0x%x rip=0x%x\n",
-            proc ? (uint64_t)proc->pid : 0ULL, cr2, err, frame->rip);
+    kprintf("[fault] SIGSEGV pid=%u addr=0x%llx err=0x%llx rip=0x%llx\n",
+            proc ? (unsigned int)proc->pid : 0, cr2, err, frame->rip);
     process_exit_code(11); /* SIGSEGV = 11 — does not return */
 }
 
@@ -121,7 +121,7 @@ void arch_print_backtrace(void) {
         if (ret_addr == 0)
             break;
 
-        kprintf("  [%02d] 0x%x\n", (uint64_t)i, ret_addr);
+        kprintf("  [%02d] 0x%llx\n", i, ret_addr);
 
         rbp = frame[0];
     }
@@ -137,7 +137,7 @@ void kpanic(const char *fmt, ...) {
     vkprintf(fmt, ap);
     __builtin_va_end(ap);
     kprintf("\n");
-    kprintf("CR0=0x%x  CR2=0x%x  CR3=0x%x  CR4=0x%x\n",
+    kprintf("CR0=0x%llx  CR2=0x%llx  CR3=0x%llx  CR4=0x%llx\n",
             read_cr0(), read_cr2(), read_cr3(), read_cr4());
     arch_print_backtrace();
     for (;;) __asm__ volatile("hlt");

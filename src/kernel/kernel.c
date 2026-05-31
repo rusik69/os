@@ -84,7 +84,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Verify multiboot */
     if (magic != 0x2BADB002) {
-        kprintf("ERROR: Not booted by Multiboot (magic: 0x%x)\n", (uint64_t)magic);
+        kprintf("ERROR: Not booted by Multiboot (magic: 0x%x)\n", magic);
         cli();
         for (;;) hlt();
     }
@@ -108,8 +108,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Physical memory manager */
     pmm_init(multiboot_info_phys);
-    kprintf("[OK] PMM initialized: %u KB total, %u KB used\n",
-            pmm_get_total_frames() * 4, pmm_get_used_frames() * 4);
+    kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
+            (unsigned long long)pmm_get_total_frames() * 4, (unsigned long long)pmm_get_used_frames() * 4);
 
     /* Virtual memory manager */
     vmm_init();
@@ -144,11 +144,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     int ap_count = smp_boot_aps();
     if (ap_count > 0)
         kprintf("[OK] SMP: %d AP(s) booted, total %d CPU(s)\n",
-                (uint64_t)ap_count, (uint64_t)smp_get_cpu_count());
+                ap_count, (int)smp_get_cpu_count());
 
     /* Timer (starts scheduling) */
     timer_init();
-    kprintf("[OK] Timer initialized at %d Hz\n", (uint64_t)TIMER_FREQ);
+    kprintf("[OK] Timer initialized at %d Hz\n", TIMER_FREQ);
 
     /* Keyboard */
     keyboard_init();
@@ -159,8 +159,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     struct rtc_time rtc;
     rtc_get_time(&rtc);
     kprintf("[OK] RTC: %u-%u-%u %u:%u:%u\n",
-            (uint64_t)rtc.year, (uint64_t)rtc.month, (uint64_t)rtc.day,
-            (uint64_t)rtc.hour, (uint64_t)rtc.minute, (uint64_t)rtc.second);
+            rtc.year, rtc.month, rtc.day,
+            rtc.hour, rtc.minute, rtc.second);
 
     /* PS/2 Mouse */
     mouse_init();
@@ -272,8 +272,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         uint8_t mac[6];
         e1000_get_mac(mac);
         kprintf("[OK] e1000 NIC: %x:%x:%x:%x:%x:%x\n",
-                (uint64_t)mac[0], (uint64_t)mac[1], (uint64_t)mac[2],
-                (uint64_t)mac[3], (uint64_t)mac[4], (uint64_t)mac[5]);
+                mac[0], mac[1], mac[2],
+                mac[3], mac[4], mac[5]);
     } else {
         kprintf("[--] e1000 NIC not found\n");
     }
@@ -285,7 +285,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         uint8_t ip[4];
         net_get_ip(ip);
         kprintf("[OK] Network: %u.%u.%u.%u\n",
-                (uint64_t)ip[0], (uint64_t)ip[1], (uint64_t)ip[2], (uint64_t)ip[3]);
+                ip[0], ip[1], ip[2], ip[3]);
         /* Register & start services */
         service_register("telnetd", telnetd_start, telnetd_stop);
         service_register("httpd",   httpd_start,   httpd_stop);
