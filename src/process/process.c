@@ -245,6 +245,7 @@ void process_init(void) {
     process_table[0].is_background = 0;
     process_table[0].is_suspended = 0;
     process_table[0].priority = 1;
+    process_table[0].base_priority = 1;
     process_table[0].cpu_affinity = 0;  /* allow any CPU */
     process_table[0].uid = 0;     /* root */
     process_table[0].gid = 0;
@@ -384,6 +385,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->is_suspended = 0;
     proc->priority = 1;
     proc->cpu_affinity = 0;
+    proc->base_priority = 1;
     proc->uid = 0; proc->gid = 0; proc->euid = 0; proc->egid = 0;
     proc->umask = 0022;
     proc->wait_for_pid   = 0;

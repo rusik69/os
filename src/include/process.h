@@ -120,6 +120,7 @@ struct process {
     /* Scheduler: time-slice accounting */
     uint16_t ticks_remaining; /* ticks left in current quantum */
     uint64_t last_run_tick;   /* timer tick when process last ran (for aging) */
+    uint8_t  base_priority;    /* original priority before PI boost (restored on unlock) */
     /* Per-process file descriptor table */
     struct process_fd fd_table[PROCESS_FD_MAX];
     /* Thread group ID (same as pid for leader, same as leader for threads) */
