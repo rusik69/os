@@ -394,6 +394,13 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_stat(buf, (int)max_size);
     } else if (strcmp(path, "/proc/loadavg") == 0) {
         len = procfs_gen_loadavg(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/self") == 0) {
+        /* /proc/self → /proc/<current_pid>/status */
+        struct process *proc = process_get_current();
+        if (proc)
+            len = procfs_gen_pid_status(proc->pid, buf, (int)max_size);
+        else
+            return -1;
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */
@@ -432,8 +439,9 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         strcmp(path, "/proc/net/route") == 0 ||
         strcmp(path, "/proc/mounts") == 0 ||
         strcmp(path, "/proc/stat") == 0 ||
-        strcmp(path, "/proc/loadavg") == 0) {
-        st->type = 1; st->size = 128; return 0;
+        strcmp(path, "/proc/loadavg") == 0 ||
+        strcmp(path, "/proc/self") == 0) {
+        st->type = 1; st->size = 256; return 0;
     }
     /* /proc/<pid>/status */
     const char *p = path + 6;
@@ -463,7 +471,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") != 0) return -1;
-    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nstat\nloadavg\nnet\nmounts\n");
+    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nself\nstat\nloadavg\nnet\nmounts\n");
     /* Also list active PIDs */
     struct process *table = process_get_table();
     struct process *caller = process_get_current();
