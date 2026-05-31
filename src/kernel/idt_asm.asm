@@ -86,6 +86,10 @@ IRQ 13, 45
 IRQ 14, 46
 IRQ 15, 47
 
+; IPI vectors (beyond standard IRQ range)
+IRQ 16, 240  ; IPI_VECTOR_RESCHEDULE (0xF0)
+IRQ 17, 241  ; IPI_VECTOR_TLB_SHOOT (0xF1)
+
 ; Common stub: save all registers, call C handler, restore, iretq
 isr_common_stub:
     ; Save general-purpose registers

@@ -159,6 +159,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     apic_init_local();
     kprintf("[OK] Local APIC initialized\n");
 
+    /* Register IPI handlers for SMP coordination */
+    ipi_init();
+    kprintf("[OK] IPI handlers registered\n");
+
     /* I/O APIC and SMP boot */
     int ap_count = smp_boot_aps();
     if (ap_count > 0)

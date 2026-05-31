@@ -3,6 +3,12 @@
 #include "string.h"
 #include "types.h"
 #include "printf.h"
+#include "smp.h"
+
+/* If SMP is enabled, use IPI-based TLB shootdown; otherwise local invlpg */
+static inline void tlb_flush(uint64_t addr) {
+    smp_tlb_shootdown(&addr, 1);
+}
 
 #define PTE_PRESENT  (1ULL << 0)
 #define PTE_WRITE    (1ULL << 1)
@@ -84,7 +90,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     if (!pt)  return -1;
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
-    invlpg(virt);
+    tlb_flush(virt);
     return 0;
 }
 
@@ -106,7 +112,7 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
 
         if (pd[pd_idx] & PTE_HUGE) {
             pd[pd_idx] |= PTE_PCD;
-            invlpg(virt & ~0x1FFFFFULL);
+            tlb_flush(virt & ~0x1FFFFFULL);
             virt = (virt & ~0x1FFFFFULL) + (2ULL * 1024 * 1024);
             continue;
         }
@@ -117,7 +123,7 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
         int pt_idx = (virt >> 12) & 0x1FF;
         if (pt[pt_idx] & PTE_PRESENT) {
             pt[pt_idx] |= PTE_PCD;
-            invlpg(virt & ~(PAGE_SIZE - 1ULL));
+            tlb_flush(virt & ~(PAGE_SIZE - 1ULL));
         }
         virt += PAGE_SIZE;
     }
@@ -139,7 +145,7 @@ void vmm_unmap_page(uint64_t virt) {
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
     pt[pt_idx] = 0;
-    invlpg(virt);
+    tlb_flush(virt);
 }
 
 int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
@@ -267,7 +273,7 @@ void vmm_unmap_user_page(uint64_t *pml4, uint64_t virt) {
     if (!(pd[pd_idx] & PTE_PRESENT)) return;
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
     pt[pt_idx] = 0;
-    invlpg(virt);
+    tlb_flush(virt);
 }
 
 static uint64_t *vmm_walk_to_pt(uint64_t *pml4, uint64_t virt,
@@ -488,7 +494,7 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
         pmm_unref_frame(old_phys);
         pt[pt_idx] = new_phys | (pte & 0xFFF & ~(uint64_t)PTE_COW) | PTE_WRITE | PTE_PRESENT;
     }
-    invlpg(virt);
+    tlb_flush(virt);
     return 1;
 }
 
@@ -586,7 +592,7 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
 
         /* Preserve physical address, replace flags */
         pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | PTE_PRESENT;
-        invlpg(addr);
+        tlb_flush(addr);
     }
     return 0;
 }

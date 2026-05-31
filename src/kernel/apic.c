@@ -8,6 +8,8 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "string.h"
+#include "idt.h"
+#include "smp.h"
 
 /* ── Local APIC MMIO access ────────────────────────────────────────── */
 /* Map the LAPIC at a fixed high-half virtual address */
@@ -252,4 +254,87 @@ void ioapic_mask_irq(uint8_t irq) {
 void ioapic_unmask_irq(uint8_t irq) {
     uint32_t low = ioapic_read_reg(IOAPIC_REDTBL + irq * 2);
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low & ~IOAPIC_MASKED);
+}
+
+/* ── IPI (Inter-Processor Interrupts) handlers ────────────────────── */
+
+#define TLB_SHOOTDOWN_MAX 64
+struct tlb_shootdown_info {
+    volatile int active_request;
+    volatile int nr_addrs;
+    uint64_t addrs[TLB_SHOOTDOWN_MAX];
+    volatile int finished;
+};
+
+static struct tlb_shootdown_info tlb_info[SMP_MAX_CPUS];
+
+/* Register IPI handlers in the IDT */
+void ipi_init(void) {
+    idt_register_handler(IPI_VECTOR_RESCHEDULE, ipi_reschedule_handler);
+    idt_register_handler(IPI_VECTOR_TLB_SHOOT,   ipi_tlb_shootdown_handler);
+    memset(tlb_info, 0, sizeof(tlb_info));
+}
+
+/* Reschedule IPI: triggers the receiving CPU to re-evaluate the scheduler.
+ * The next timer tick or interrupt will cause a reschedule anyway, so this
+ * is mainly a kick to get out of HLT. */
+void ipi_reschedule_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    apic_eoi();
+}
+
+/* TLB shootdown IPI: invalidate all pending addresses on this CPU */
+void ipi_tlb_shootdown_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    int cpu_id = smp_get_cpu_id();
+
+    struct tlb_shootdown_info *info = &tlb_info[cpu_id];
+    int nr = info->nr_addrs;
+    for (int i = 0; i < nr; i++) {
+        __asm__ volatile("invlpg (%0)" : : "r"(info->addrs[i]) : "memory");
+    }
+    info->finished = 1;
+    apic_eoi();
+}
+
+/* Send TLB shootdown to all other CPUs.
+ * Queues addresses, sends IPI, spins until completion. */
+void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
+    int cpu_count = smp_get_cpu_count();
+
+    if (cpu_count <= 1) {
+        /* Single CPU: local invalidation only */
+        for (int i = 0; i < nr; i++)
+            __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
+        return;
+    }
+
+    int my_cpu = smp_get_cpu_id();
+
+    /* Write addresses to each remote CPU's info struct */
+    for (int cpu = 0; cpu < cpu_count; cpu++) {
+        if (cpu == my_cpu) continue;
+        struct tlb_shootdown_info *info = &tlb_info[cpu];
+        while (info->active_request) __asm__ volatile("pause");
+        info->active_request = 1;
+        info->nr_addrs = (nr < TLB_SHOOTDOWN_MAX) ? nr : TLB_SHOOTDOWN_MAX;
+        for (int i = 0; i < info->nr_addrs; i++)
+            info->addrs[i] = addrs[i];
+        info->finished = 0;
+    }
+
+    /* Send IPI to all other CPUs */
+    __asm__ volatile("mfence" ::: "memory");
+    apic_send_ipi_all_except(IPI_VECTOR_TLB_SHOOT);
+
+    /* Also invalidate local TLB (our own page tables changed too) */
+    for (int i = 0; i < nr; i++)
+        __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
+
+    /* Wait for remote ACKs */
+    for (int cpu = 0; cpu < cpu_count; cpu++) {
+        if (cpu == my_cpu) continue;
+        while (!tlb_info[cpu].finished) __asm__ volatile("pause");
+        tlb_info[cpu].active_request = 0;
+    }
 }

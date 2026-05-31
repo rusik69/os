@@ -74,6 +74,16 @@ int smp_get_cpu_count(void);
 extern struct cpu_info cpu_info_array[SMP_MAX_CPUS];
 extern int smp_cpu_count;
 
+/* Get current CPU ID (inline for speed) */
+static inline int smp_get_cpu_id(void) {
+    struct cpu_info *info;
+    __asm__ volatile("mov %%gs:0, %0" : "=r"(info));
+    return info ? info->cpu_id : 0;
+}
+
+/* SMP TLB shootdown: invalidate addresses on all CPUs */
+void smp_tlb_shootdown(const uint64_t *addrs, int nr);
+
 /* AP trampoline entry point (defined in ap_trampoline.asm) */
 extern void ap_trampoline(void);
 extern void ap_entry_64(void);

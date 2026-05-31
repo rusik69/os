@@ -2,6 +2,7 @@
 #define APIC_H
 
 #include "types.h"
+#include "idt.h"
 
 /* Local APIC MMIO offsets */
 #define LAPIC_ID        0x020   /* APIC ID (RO) */
@@ -85,6 +86,11 @@ void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id);
 void ioapic_mask_irq(uint8_t irq);
 void ioapic_unmask_irq(uint8_t irq);
 void irq_ack(uint8_t irq);
+
+/* IPI handlers */
+void ipi_init(void);
+void ipi_reschedule_handler(struct interrupt_frame *frame);
+void ipi_tlb_shootdown_handler(struct interrupt_frame *frame);
 
 /* APIC timer calibration (returns bus frequency in Hz) */
 uint32_t apic_timer_calibrate(void);
