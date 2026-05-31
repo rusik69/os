@@ -1475,6 +1475,10 @@ void test_run_all(void) {
      * kernel stack. */
     kprintf_dmesg_flush_serial();
 
+    /* Write sentinel so run_tests.sh can detect completion even if
+     * ACPI shutdown fails (e.g. in TCG mode). */
+    serial_write("[[TEST_DONE]]\n");
+
     /* Shut down QEMU so the host script can read the serial output */
     acpi_shutdown();
 

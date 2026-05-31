@@ -49,6 +49,15 @@ elif grep -q "SOME TESTS FAILED" "$SERIAL_LOG"; then
     echo "========================================"
     grep "FAIL" "$SERIAL_LOG" || true
     exit 1
+elif grep -q "\[\[TEST_DONE\]\]" "$SERIAL_LOG"; then
+    echo "================================================"
+    echo "  TESTS COMPLETED but no PASS/FAIL marker found"
+    echo "================================================"
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)
+    echo "  $PASS passed, $FAIL failed"
+    tail -20 "$SERIAL_LOG"
+    exit 1
 else
     echo "========================================"
     echo "  TESTS INCOMPLETE (timeout or crash)"
