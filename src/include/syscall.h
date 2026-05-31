@@ -365,6 +365,11 @@
 #define SYS_MQ_RECEIVE        358  /* mq_receive(mqd, msg, len, prio) */
 #define SYS_MQ_UNLINK         359  /* mq_unlink(name) */
 
+/* New syscalls */
+#define SYS_GETCPU            360  /* getcpu(cpu, node, tcache) → 0 */
+#define SYS_PREADV            361  /* preadv(fd, iov, iovcnt, offset) */
+#define SYS_PWRITEV           362  /* pwritev(fd, iov, iovcnt, offset) */
+
 /* ── Constants for *at syscalls ─────────────────────────────── */
 #define AT_FDCWD            (-100)
 #define AT_SYMLINK_NOFOLLOW  0x100

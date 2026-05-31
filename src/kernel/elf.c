@@ -42,7 +42,18 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     int userland = (hdr->e_entry < 0x800000000000ULL);
     if (out_is_userland) *out_is_userland = userland;
 
-    for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+    /* Validate program header table lies within file */
+    if (hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize > size) {
+        kprintf("elf: program header table out of bounds\n");
+        return 0;
+    }
+
+    /* First pass: collect PT_LOAD segment bounds */
+    struct seg_bounds { uint64_t start, end; } segs[64];
+    int nsegs = 0;
+    uint64_t entry_in_seg = 0;
+
+    for (uint16_t i = 0; i < hdr->e_phnum && nsegs < 64; i++) {
         const struct elf64_phdr *ph =
             (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
 
@@ -67,6 +78,39 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
         if (!userland && ph->p_vaddr < 0x800000000000ULL) {
             kprintf("elf: kernel segment in user-space range\n");
             return 0;
+        }
+
+        /* Check p_align is page-aligned for user segments */
+        if (ph->p_align > 0 && (ph->p_align & 0xFFF) != 0) {
+            kprintf("elf: segment alignment not page-aligned\n");
+            return 0;
+        }
+
+        /* Check entry point falls in this segment */
+        uint64_t seg_end = ph->p_vaddr + ph->p_memsz;
+        if (hdr->e_entry >= ph->p_vaddr && hdr->e_entry < seg_end)
+            entry_in_seg = 1;
+
+        /* Record bounds for overlap detection */
+        segs[nsegs].start = ph->p_vaddr;
+        segs[nsegs].end   = seg_end;
+        nsegs++;
+    }
+
+    /* Entry point must be within at least one PT_LOAD segment */
+    if (!entry_in_seg) {
+        kprintf("elf: entry point 0x%x outside all loadable segments\n", hdr->e_entry);
+        return 0;
+    }
+
+    /* Check for overlapping segments */
+    for (int i = 0; i < nsegs; i++) {
+        for (int j = i + 1; j < nsegs; j++) {
+            if (segs[i].start < segs[j].end && segs[j].start < segs[i].end) {
+                kprintf("elf: overlapping segments [0x%x-0x%x] and [0x%x-0x%x]\n",
+                        segs[i].start, segs[i].end, segs[j].start, segs[j].end);
+                return 0;
+            }
         }
     }
 

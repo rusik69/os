@@ -2527,22 +2527,43 @@ static uint64_t sys_doom_run(void) {
 /* ── OOM Killer ──────────────────────────────────────────────────────── */
 
 void pmm_oom_kill(void) {
+    /* First try to reclaim slab caches before killing a process */
+    extern void kmem_cache_reap(void);
+    kmem_cache_reap();
+
     struct process *table = process_get_table();
     struct process *victim = NULL;
     uint64_t worst_score = 0;
+    uint64_t now = timer_get_ticks();
 
-    /* Score processes: higher score = better victim candidate */
+    /* Score processes: higher score = better victim candidate.
+     * Heuristic based on Linux badness() simplified: */
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state == PROCESS_UNUSED || table[i].state == PROCESS_ZOMBIE)
             continue;
         if (table[i].pid == 0 || table[i].pid == 1) continue; /* spare init & idle */
 
         uint64_t score = 0;
-        if (table[i].is_user) score += 100;      /* user > kernel threads */
-        if (!table[i].is_background) score += 50; /* foreground > bg */
-        /* Favor the process using the most resources (approximate via kernel stack) */
-        if (table[i].kernel_stack) score += 1;
-        /* Add numeric value to make selection deterministic */
+        /* Base: rough memory usage approximation */
+        score += 50;  /* assume at least stack + kernel pages */
+
+        /* User processes > kernel threads */
+        if (table[i].is_user) score += 100;
+
+        /* Foreground > background (interactive > service) */
+        if (!table[i].is_background) score += 50;
+
+        /* Long-running processes are less likely to be short-lived temp processes */
+        if (table[i].last_run_tick && now > table[i].last_run_tick) {
+            uint64_t runtime = now - table[i].last_run_tick;
+            if (runtime > 100) score += 25; /* >1s runtime */
+            if (runtime > 600) score += 25; /* >6s */
+        }
+
+        /* Root-owned processes get a penalty (more likely to be critical) */
+        if (table[i].euid == 0) score = (score > 25) ? score - 25 : 0;
+
+        /* Deterministic tiebreaker */
         score += table[i].pid;
 
         if (score > worst_score) {
@@ -2552,8 +2573,9 @@ void pmm_oom_kill(void) {
     }
 
     if (victim) {
-        kprintf("[OOM] Killing pid=%u name=%s\n",
-                victim->pid, victim->name ? victim->name : "?");
+        kprintf("[OOM] Killing pid=%u name=%s runtime=%u\n",
+                victim->pid, victim->name ? victim->name : "?",
+                (uint64_t)(now > victim->last_run_tick ? now - victim->last_run_tick : 0));
         signal_send(victim->pid, SIGKILL);
     }
 }
@@ -4796,6 +4818,38 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MQ_SEND:         return sys_mq_send(a1, a2, a3, a4);
         case SYS_MQ_RECEIVE:      return sys_mq_receive(a1, a2, a3, a4);
         case SYS_MQ_UNLINK:       return sys_mq_unlink(a1);
+        case SYS_GETCPU: {
+            int cpu = smp_get_cpu_id();
+            if (a1) { int *cpup = (int *)a1; *cpup = cpu; }
+            if (a2) { int *nodep = (int *)a2; *nodep = 0; }
+            return 0;
+        }
+        case SYS_PREADV: {
+            /* preadv(fd, iov, iovcnt, offset) — vectored read at position */
+            uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
+            if (fd < 3) return (uint64_t)-1;
+            int i = (int)fd - 3;
+            struct process_fd *pfd = sys_get_fd(i);
+            if (!pfd || !pfd->used) return (uint64_t)-1;
+            uint64_t saved_off = pfd->offset;
+            pfd->offset = offset;
+            uint64_t ret = sys_readv(fd, iov_addr, iovcnt);
+            if (ret == (uint64_t)-1) pfd->offset = saved_off;
+            return ret;
+        }
+        case SYS_PWRITEV: {
+            /* pwritev(fd, iov, iovcnt, offset) — vectored write at position */
+            uint64_t fd = a1, iov_addr = a2, iovcnt = a3, offset = a4;
+            if (fd < 3) return (uint64_t)-1;
+            int i = (int)fd - 3;
+            struct process_fd *pfd = sys_get_fd(i);
+            if (!pfd || !pfd->used) return (uint64_t)-1;
+            uint64_t saved_off = pfd->offset;
+            pfd->offset = offset;
+            uint64_t ret = sys_writev(fd, iov_addr, iovcnt);
+            if (ret == (uint64_t)-1) pfd->offset = saved_off;
+            return ret;
+        }
         default:         return (uint64_t)-1;
     }
 }
