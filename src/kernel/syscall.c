@@ -1713,13 +1713,13 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
 
     /* Return old mask */
     if (oldset_addr) {
-        uint32_t old = proc->sig_mask;
+        uint64_t old = proc->sig_mask;
         memcpy((void*)oldset_addr, &old, sizeof(old));
     }
 
     /* Apply new mask */
     if (set_addr) {
-        uint32_t new_mask = 0;
+        uint64_t new_mask = 0;
         memcpy(&new_mask, (void*)set_addr, sizeof(new_mask));
 
         switch (how) {
@@ -1745,7 +1745,8 @@ static uint64_t sys_sigpending(uint64_t set_addr) {
     if (!proc) return (uint64_t)-1;
     if (!set_addr) return (uint64_t)-1;
 
-    memcpy((void*)set_addr, &proc->pending_signals, sizeof(uint32_t));
+    uint64_t pending = proc->pending_signals;
+    memcpy((void*)set_addr, &pending, sizeof(uint64_t));
     return 0;
 }
 

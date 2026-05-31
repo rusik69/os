@@ -511,10 +511,10 @@ static void test_signal(void) {
     t_ok("signal_register handler");
 
     /* Signal mask: mask SIGTERM, then send it — process should not terminate */
-    uint32_t old_mask = cur->sig_mask;
-    signal_mask((1u << SIGTERM));
+    uint64_t old_mask = cur->sig_mask;
+    signal_mask((1ULL << SIGTERM));
     ASSERT("signal_send masked SIGTERM OK", signal_send(cur->pid, SIGTERM) == 0);
-    signal_unmask((1u << SIGTERM));
+    signal_unmask((1ULL << SIGTERM));
     cur->sig_mask = old_mask;
     t_ok("signal mask/unmask");
 }

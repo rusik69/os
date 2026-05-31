@@ -456,9 +456,19 @@ void process_exit_code(int code) {
     current_process->exit_code = code;
     scheduler_remove(current_process);
     process_wake_waiter(current_process->pid);
-    /* Send SIGCHLD to parent */
+    /* Send SIGCHLD to parent with siginfo */
     struct process *parent = process_get_by_pid(current_process->parent_pid);
-    if (parent) signal_send(parent->pid, SIGCHLD);
+    if (parent) {
+        struct siginfo info;
+        info.si_signo = SIGCHLD;
+        info.si_errno = 0;
+        info.si_code  = CLD_EXITED;
+        info.si_pid   = current_process->pid;
+        info.si_uid   = current_process->uid;
+        info.si_addr  = NULL;
+        info.si_status = code;
+        signal_send_info(parent->pid, SIGCHLD, &info);
+    }
     scheduler_yield();
     for (;;) __asm__ volatile("hlt");
 }

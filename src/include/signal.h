@@ -54,9 +54,21 @@ struct siginfo {
 #define SIGIO     29
 #define SIGSYS    31
 
+/* Real-time signals */
+#define SIGRTMIN  32
+#define SIGRTMAX  64
+
+/* SIGCHLD si_code values */
+#define CLD_EXITED    1
+#define CLD_KILLED    2
+#define CLD_DUMPED    3
+#define CLD_TRAPPED   4
+#define CLD_STOPPED   5
+#define CLD_CONTINUED 6
+
 typedef void (*signal_handler_t)(int signum);
 
-#define SIG_MAX  32
+#define SIG_MAX  65  /* signals 1-64 */
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
 #define SIG_IGN  ((signal_handler_t)1)  /* Ignore */
 
@@ -92,7 +104,7 @@ void signal_check(void);
 void signal_register(int signum, signal_handler_t handler);
 
 /* Mask/unmask signals for the current process (1-bit per signal number) */
-void signal_mask(uint32_t sigmask);
-void signal_unmask(uint32_t sigmask);
+void signal_mask(uint64_t sigmask);
+void signal_unmask(uint64_t sigmask);
 
 #endif

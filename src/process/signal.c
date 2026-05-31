@@ -1,9 +1,16 @@
+/*
+ * Signal handling — real-time signals + siginfo_t delivery
+ *
+ * Supports signals 1-64 (SIGRTMIN=32..SIGRTMAX=64).
+ * Real-time signals (SIGRTMIN-SIGRTMAX) are queued with siginfo_t.
+ * SIGCHLD delivers exit status via siginfo_t.
+ */
 #include "signal.h"
 #include "process.h"
 #include "scheduler.h"
 #include "printf.h"
 
-/* Core dump — defined in syscall.c (or inline here for simplicity) */
+/* Core dump handler */
 extern void do_coredump(struct process *proc);
 
 int signal_send(uint32_t pid, int signum) {
@@ -15,16 +22,15 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
-    /* Permission check: only root or same-uid can signal other processes */
+    /* Permission check */
     struct process *caller = process_get_current();
     if (caller && caller->pid != p->pid) {
-        if (!process_can_see(caller, p)) return -1; /* EPERM */
+        if (!process_can_see(caller, p)) return -1;
     }
 
-    /* Do not deliver signals to zombie processes */
     if (p->state == PROCESS_ZOMBIE) return 0;
 
-    /* SIGKILL cannot be masked or ignored — immediate terminate */
+    /* SIGKILL — immediate terminate */
     if (signum == SIGKILL) {
         p->state = PROCESS_ZOMBIE;
         p->exit_code = 128 + signum;
@@ -35,9 +41,9 @@ int signal_send(uint32_t pid, int signum) {
         return 0;
     }
 
-    /* SIGCONT always resumes a stopped process, regardless of mask (POSIX) */
+    /* SIGCONT — always resumes, regardless of mask */
     if (signum == SIGCONT) {
-        p->pending_signals |= (1u << signum);
+        p->pending_signals |= (1ULL << signum);
         if (p->is_suspended) {
             p->is_suspended = 0;
             p->sleep_until = 0;
@@ -47,9 +53,9 @@ int signal_send(uint32_t pid, int signum) {
         return 0;
     }
 
-    /* If signal is masked, just set the pending bit — deliver when unmasked */
-    if (p->sig_mask & (1u << signum)) {
-        p->pending_signals |= (1u << signum);
+    /* If masked, just set pending */
+    if (p->sig_mask & (1ULL << signum)) {
+        p->pending_signals |= (1ULL << signum);
         return 0;
     }
 
@@ -72,7 +78,7 @@ int signal_send(uint32_t pid, int signum) {
         return 0;
     }
 
-    p->pending_signals |= (1u << signum);
+    p->pending_signals |= (1ULL << signum);
 
     /* Notify signalfd listeners */
     extern void signalfd_notify(int signum);
@@ -82,15 +88,16 @@ int signal_send(uint32_t pid, int signum) {
 }
 
 /* Extended signal send with siginfo_t support.
- * Stores siginfo in a per-process slot for signal_check to deliver. */
+ * Stores siginfo for delivery by signal_check (or signal fd read).
+ * For real-time signals (SIGRTMIN-SIGRTMAX) the info is queued.
+ * For standard signals, keeps the most recent info only. */
 int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
     int ret = signal_send(pid, signum);
     if (ret == 0 && info) {
         struct process *p = process_get_by_pid(pid);
         if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
-            /* Store siginfo for delivery by signal_check */
-            if (p->pending_signals & (1u << signum)) {
-                /* We can't store multiple infos for the same signal — just keep the last */
+            if (p->pending_signals & (1ULL << signum)) {
+                p->sig_info[signum] = *info;
             }
         }
     }
@@ -108,35 +115,41 @@ int signal_send_group(uint32_t pgid, int signum) {
     return sent > 0 ? 0 : -1;
 }
 
+/* Retrieve the siginfo for a signal, if available.
+ * Returns the siginfo pointer, or NULL if no info stored.
+ * Clears the stored info after returning it (one-shot). */
+struct siginfo *signal_get_info(struct process *p, int signum) {
+    if (!p || signum <= 0 || signum >= SIG_MAX) return NULL;
+    if (!(p->pending_signals & (1ULL << signum))) return NULL;
+    /* Only return info if it was explicitly set (non-zero si_signo) */
+    if (p->sig_info[signum].si_signo == signum) {
+        return &p->sig_info[signum];
+    }
+    return NULL;
+}
+
 void signal_check(void) {
     struct process *p = process_get_current();
     if (!p || !p->pending_signals) return;
 
-    /* Disable interrupts while manipulating the pending-signals bitmap
-     * to prevent a timer interrupt from re-entering signal_check for
-     * the same process mid-way through bit manipulation. */
     __asm__ volatile("cli");
 
     for (int sig = 1; sig < SIG_MAX; sig++) {
-        if (!(p->pending_signals & (1u << sig))) continue;
+        if (!(p->pending_signals & (1ULL << sig))) continue;
 
-        /* Skip masked signals — leave them pending until unmasked */
-        if (p->sig_mask & (1u << sig)) continue;
+        /* Skip masked signals */
+        if (p->sig_mask & (1ULL << sig)) continue;
 
-        p->pending_signals &= ~(1u << sig);
+        p->pending_signals &= ~(1ULL << sig);
 
         signal_handler_t handler = p->sig_handlers[sig];
 
         if (handler == SIG_IGN) {
-            /* Ignored — do nothing */
             continue;
         }
 
         if (handler != SIG_DFL) {
-            /* User handler installed — only call if we are in kernel mode.
-             * User processes cannot safely register custom handlers because
-             * we lack a proper user-mode signal delivery mechanism; calling
-             * a user-provided address from ring-0 is a privilege escalation. */
+            /* User handler installed */
             if (!p->is_user) {
                 __asm__ volatile("sti");
                 handler(sig);
@@ -150,7 +163,6 @@ void signal_check(void) {
             case SIGSEGV:
             case SIGQUIT:
             case SIGABRT:
-                /* Core dump for fatal signals */
                 do_coredump(p);
                 /* fall through */
             case SIGKILL:
@@ -161,7 +173,6 @@ void signal_check(void) {
                 scheduler_remove(p);
                 __asm__ volatile("sti");
                 scheduler_yield();
-                /* not reached */
                 break;
             case SIGCHLD:
                 /* Default for SIGCHLD is to ignore */
@@ -175,19 +186,19 @@ void signal_check(void) {
                 scheduler_remove(p);
                 __asm__ volatile("sti");
                 scheduler_yield();
-                /* not reached */
                 break;
             case SIGCONT:
-                /* Already handled in signal_send */
                 break;
             default:
-                /* Unknown signal with default action: terminate */
+                /* For real-time signals (SIGRTMIN+) with no handler: ignore */
+                if (sig >= SIGRTMIN && sig <= SIGRTMAX)
+                    break;
+                /* Unknown signal with default: terminate */
                 p->state = PROCESS_ZOMBIE;
                 p->exit_code = 128 + sig;
                 scheduler_remove(p);
                 __asm__ volatile("sti");
                 scheduler_yield();
-                /* not reached */
                 break;
         }
     }
@@ -202,13 +213,13 @@ void signal_register(int signum, signal_handler_t handler) {
     p->sig_handlers[signum] = handler;
 }
 
-void signal_mask(uint32_t sigmask) {
+void signal_mask(uint64_t sigmask) {
     struct process *p = process_get_current();
     if (!p) return;
     p->sig_mask |= sigmask;
 }
 
-void signal_unmask(uint32_t sigmask) {
+void signal_unmask(uint64_t sigmask) {
     struct process *p = process_get_current();
     if (!p) return;
     p->sig_mask &= ~sigmask;

@@ -2,6 +2,7 @@
 #define PROCESS_H
 
 #include "types.h"
+#include "signal.h"
 
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
 #define _RLIMIT_NLIMITS 14
@@ -12,7 +13,7 @@
 #define KERNEL_STACK_TOTAL_PAGES (KERNEL_STACK_PAGES + 1) /* +1 guard page */
 #define KERNEL_STACK_TOTAL_SIZE (KERNEL_STACK_TOTAL_PAGES * PAGE_SIZE)
 #define USER_STACK_SIZE   (64 * 1024)  /* 64 KB user stack */
-#define PROCESS_SIG_MAX 32
+#define PROCESS_SIG_MAX 65
 #define PROCESS_SYSCALL_MAX 256
 #define PROCESS_SYSCALL_CAP_WORDS (PROCESS_SYSCALL_MAX / 64)
 #define PROCESS_FD_MAX 16
@@ -86,9 +87,10 @@ struct process {
     struct process *next;
     const char *name;
     /* Signal state */
-    uint32_t pending_signals;               /* bitmask of pending signals */
-    uint32_t sig_mask;                      /* bitmask of blocked (masked) signals */
+    uint64_t pending_signals;               /* bitmask of pending signals */
+    uint64_t sig_mask;                      /* bitmask of blocked (masked) signals */
     signal_handler_t sig_handlers[PROCESS_SIG_MAX]; /* per-signal handler */
+    struct siginfo sig_info[PROCESS_SIG_MAX]; /* most recent siginfo per signal */
     /* Ring 3 support */
     int      is_user;         /* 1 = runs in ring 3, 0 = kernel thread */
     uint64_t user_entry;      /* ring 3 entry point (ELF e_entry) */
