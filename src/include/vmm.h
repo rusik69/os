@@ -11,6 +11,9 @@
 /* Page-level cache disable (PAT bit) for MMIO */
 #define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
 
+/* User virtual address space limit */
+#define USER_VADDR_MAX 0x0000800000000000ULL
+
 void vmm_init(void);
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_set_range_uncacheable(uint64_t virt, uint64_t size);
@@ -38,5 +41,11 @@ int vmm_user_string_ok(uint64_t *pml4, uint64_t addr, uint64_t max_len);
 /* COW fault handler: handles write fault on a COW page.
  * Returns 1 if fault was handled, 0 if not a COW fault. */
 int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt);
+
+/* mmap/munmap/mprotect helpers */
+int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t flags);
+int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
+int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t new_flags);
+int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
 
 #endif

@@ -5,37 +5,7 @@
 #include "process.h"
 #include "timer.h"
 
-#define PIPE_WAITERS 4
-
 static struct pipe pipe_table[PIPE_MAX];
-
-static void pipe_add_waiter(uint32_t *waiters, uint32_t pid) {
-    for (int i = 0; i < PIPE_WAITERS; i++) {
-        if (waiters[i] == 0) { waiters[i] = pid; return; }
-    }
-}
-
-static void pipe_wake_waiters(uint32_t *waiters) {
-    for (int i = 0; i < PIPE_WAITERS; i++) {
-        if (waiters[i]) {
-            uint32_t pid = waiters[i];
-            waiters[i] = 0;
-            struct process *p = process_get_by_pid(pid);
-            if (p && p->state == PROCESS_BLOCKED) {
-                p->state = PROCESS_READY;
-                p->last_run_tick = timer_get_ticks();
-                scheduler_add(p);
-            }
-        }
-    }
-}
-
-static int pipe_is_self_deadlock(uint32_t *waiters, uint32_t pid) {
-    for (int i = 0; i < PIPE_WAITERS; i++) {
-        if (waiters[i] == pid) return 1;
-    }
-    return 0;
-}
 
 void pipe_init(void) {
     memset(pipe_table, 0, sizeof(pipe_table));
@@ -50,8 +20,8 @@ int pipe_create(void) {
             pipe_table[i].readers   = 1;
             pipe_table[i].writers   = 1;
             pipe_table[i].in_use    = 1;
-            memset(pipe_table[i].blocked_read_pids, 0, sizeof(pipe_table[i].blocked_read_pids));
-            memset(pipe_table[i].blocked_write_pids, 0, sizeof(pipe_table[i].blocked_write_pids));
+            wait_queue_init(&pipe_table[i].read_wq);
+            wait_queue_init(&pipe_table[i].write_wq);
             return i;
         }
     }
@@ -77,17 +47,15 @@ int pipe_write(int pipe_id, const void *buf, int len) {
         while (p->count == PIPE_BUF_SIZE) {
             if (p->readers == 0) return written ? written : -1;
             struct process *cur = process_get_current();
-            /* Detect self-deadlock: same process is the only reader */
-            if (cur && pipe_is_self_deadlock(p->blocked_read_pids, cur->pid))
+
+            /* Prevent self-deadlock: same process writing and reading */
+            if (cur && wait_queue_wake_pid(&p->read_wq, cur->pid))
                 return written ? written : -1;
-            if (cur && cur->state == PROCESS_RUNNING) {
-                pipe_add_waiter(p->blocked_write_pids, cur->pid);
-                cur->state = PROCESS_BLOCKED;
-                scheduler_remove(cur);
-                scheduler_yield();
-            } else {
-                return written ? written : -1;
-            }
+
+            /* Block until space is available */
+            cur->state = PROCESS_BLOCKED;
+            scheduler_remove(cur);
+            wait_queue_sleep(&p->write_wq);
         }
 
         int space = PIPE_BUF_SIZE - p->count;
@@ -100,7 +68,9 @@ int pipe_write(int pipe_id, const void *buf, int len) {
         }
         p->count  += to_write;
         written   += to_write;
-        pipe_wake_waiters(p->blocked_read_pids);
+
+        /* Wake any readers waiting for data */
+        wait_queue_wake_all(&p->read_wq);
     }
     return written;
 }
@@ -113,16 +83,13 @@ int pipe_read(int pipe_id, void *buf, int len) {
     struct pipe *p = &pipe_table[pipe_id];
 
     while (p->count == 0) {
-        if (p->writers == 0) return 0;
+        if (p->writers == 0) return 0;  /* EOF */
         struct process *cur = process_get_current();
-        if (cur && cur->state == PROCESS_RUNNING) {
-            pipe_add_waiter(p->blocked_read_pids, cur->pid);
-            cur->state = PROCESS_BLOCKED;
-            scheduler_remove(cur);
-            scheduler_yield();
-        } else {
-            return 0;
-        }
+
+        /* Block until data is available */
+        cur->state = PROCESS_BLOCKED;
+        scheduler_remove(cur);
+        wait_queue_sleep(&p->read_wq);
     }
 
     uint8_t *dst = (uint8_t *)buf;
@@ -133,7 +100,9 @@ int pipe_read(int pipe_id, void *buf, int len) {
         p->read_pos = (p->read_pos + 1) % PIPE_BUF_SIZE;
     }
     p->count -= to_read;
-    pipe_wake_waiters(p->blocked_write_pids);
+
+    /* Wake any writers waiting for space */
+    wait_queue_wake_all(&p->write_wq);
     return to_read;
 }
 
@@ -141,7 +110,8 @@ void pipe_close_read(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
     struct pipe *p = &pipe_table[pipe_id];
     if (p->readers > 0) p->readers--;
-    pipe_wake_waiters(p->blocked_write_pids);
+    /* Wake blocked writers so they can detect EOF */
+    wait_queue_wake_all(&p->write_wq);
     if (p->readers == 0 && p->writers == 0) p->in_use = 0;
 }
 
@@ -149,7 +119,8 @@ void pipe_close_write(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
     struct pipe *p = &pipe_table[pipe_id];
     if (p->writers > 0) p->writers--;
-    pipe_wake_waiters(p->blocked_read_pids);
+    /* Wake blocked readers so they can detect EOF */
+    wait_queue_wake_all(&p->read_wq);
     if (p->readers == 0 && p->writers == 0) p->in_use = 0;
 }
 

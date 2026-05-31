@@ -217,6 +217,7 @@ void process_init(void) {
     process_table[0].is_background = 0;
     process_table[0].is_suspended = 0;
     process_table[0].priority = 1;
+    process_table[0].cpu_affinity = 0;  /* allow any CPU */
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
@@ -257,6 +258,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority    = 1; /* normal priority */
+    proc->cpu_affinity = 0; /* allow any CPU */
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0; /* set by scheduler on first run */
     proc->last_run_tick  = timer_get_ticks();
@@ -325,6 +327,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority = 1;
+    proc->cpu_affinity = 0;
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0;
     proc->last_run_tick  = timer_get_ticks();
@@ -656,4 +659,25 @@ void process_reap_zombies(void) {
             }
         }
     }
+}
+
+/* ── Per-CPU kthread API ────────────────────────────────────── */
+
+struct process *kthread_create(void (*entry)(void *arg), void *arg,
+                                const char *name) {
+    return kthread_create_on_cpu(entry, arg, name, -1);
+}
+
+struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
+                                       const char *name, int cpu_id) {
+    struct process *proc = process_create((void (*)(void))entry, name);
+    if (!proc) return NULL;
+
+    proc->kthread_arg = arg;
+    if (cpu_id >= 0 && cpu_id < SMP_MAX_CPUS)
+        proc->cpu_affinity = (uint8_t)(1 << cpu_id);
+    else
+        proc->cpu_affinity = 0; /* any CPU */
+
+    return proc;
 }

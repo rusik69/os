@@ -198,6 +198,15 @@
 #define SYS_CC_COMPILE_OBJ  229  /* compile C source to relocatable .o file */
 #define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
+/* Memory mapping syscalls */
+#define SYS_MMAP            235  /* (addr, length, prot) → addr or -1 */
+#define SYS_MUNMAP          236  /* (addr, length) → 0 or -1 */
+#define SYS_MPROTECT        237  /* (addr, length, prot) → 0 or -1 */
+
+/* CPU affinity */
+#define SYS_SCHED_SETAFFINITY 238
+#define SYS_SCHED_GETAFFINITY 239
+
 /* Clone / threading */
 #define SYS_CLONE           231
 #define SYS_GETTID          232

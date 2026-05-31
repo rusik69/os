@@ -48,6 +48,9 @@
 #include "usb_msc.h"
 #include "blockdev.h"
 #include "serial.h"
+#include "waitqueue.h"
+#include "completion.h"
+#include "rwlock.h"
 
 /* ── Progress tracking ────────────────────────────────────────── */
 /* Every PROGRESS_INTERVAL tests, write a dot directly to serial
@@ -1512,6 +1515,145 @@ static void test_pipe_edge(void) {
     t_ok("pipe edge tests");
 }
 
+/* ── Wait queue tests ─────────────────────────────────────────── */
+
+static void test_waitqueue(void) {
+    struct wait_queue wq;
+    wait_queue_init(&wq);
+    ASSERT("waitqueue init no waiters", !wait_queue_has_waiters(&wq));
+    ASSERT("waitqueue wake empty = 0", wait_queue_wake(&wq) == 0);
+    ASSERT("waitqueue wake_all empty = 0", wait_queue_wake_all(&wq) == 0);
+    t_ok("waitqueue empty ops");
+
+    /* Wake from an empty queue with a specific PID */
+    ASSERT("waitqueue wake_pid empty = 0", wait_queue_wake_pid(&wq, 42) == 0);
+    t_ok("waitqueue wake_pid empty");
+}
+
+/* ── Completion tests ─────────────────────────────────────────── */
+
+static volatile int completion_test_flag = 0;
+
+static void test_completion_done_first(void) {
+    struct completion c;
+    completion_init(&c);
+    ASSERT("completion init not done", !completion_is_done(&c));
+
+    /* done before wait → waiter returns immediately */
+    completion_done(&c);
+    ASSERT("completion done after signal", completion_is_done(&c));
+    completion_wait(&c);
+    t_ok("completion done before wait");
+
+    /* wait on already-done returns immediately */
+    completion_wait(&c);
+    t_ok("completion wait after done");
+}
+
+/* ── RW-lock tests (single-threaded kernel-mode, basic semantics) ── */
+
+static void test_rwlock(void) {
+    rwlock_t rw;
+    rwlock_init(&rw);
+
+    /* Read lock should be acquirable */
+    rwlock_rdlock(&rw);
+    rwlock_runlock(&rw);
+    t_ok("rwlock rdlock/runlock");
+
+    /* Write lock should be acquirable */
+    rwlock_wrlock(&rw);
+    rwlock_wrunlock(&rw);
+    t_ok("rwlock wrlock/wrunlock");
+
+    /* Multiple read locks */
+    rwlock_rdlock(&rw);
+    rwlock_rdlock(&rw);
+    rwlock_runlock(&rw);
+    rwlock_runlock(&rw);
+    t_ok("rwlock recursive rdlock");
+}
+
+/* ── VMM user page tests (kernel-mode access to helpers) ───────── */
+
+static void test_vmm_user_pages(void) {
+    /* Test page mapping helpers on the kernel PML4 for basic validation */
+    uint64_t *pml4 = vmm_get_pml4();
+    ASSERT("vmm get pml4", pml4 != NULL);
+
+    /* Create a user PML4 for testing */
+    uint64_t *user_pml4 = vmm_create_user_pml4();
+    ASSERT("vmm create user pml4", user_pml4 != NULL);
+    if (!user_pml4) return;
+
+    /* Map a page in user space */
+    uint64_t test_virt = 0x0000000001000000ULL;
+    int ret = vmm_map_user_pages(user_pml4, test_virt, 1,
+                                 VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
+    ASSERT("vmm map 1 user page", ret == 0);
+
+    /* Verify it's mapped */
+    ASSERT("vmm page is mapped",
+           vmm_page_is_mapped_user(user_pml4, test_virt));
+
+    /* Unmap it */
+    ret = vmm_unmap_user_pages(user_pml4, test_virt, 1);
+    ASSERT("vmm unmap user page", ret == 0);
+
+    /* Verify unmapped */
+    ASSERT("vmm page not mapped after unmap",
+           !vmm_page_is_mapped_user(user_pml4, test_virt));
+
+    /* Map multiple pages and change protection */
+    ret = vmm_map_user_pages(user_pml4, test_virt, 4,
+                             VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
+    ASSERT("vmm map 4 user pages", ret == 0);
+
+    ret = vmm_set_user_pages_flags(user_pml4, test_virt, 2,
+                                   VMM_FLAG_PRESENT | VMM_FLAG_USER);
+    ASSERT("vmm mprotect 2 pages (remove write)", ret == 0);
+
+    /* Clean up */
+    vmm_unmap_user_pages(user_pml4, test_virt, 4);
+    vmm_destroy_user_pml4(user_pml4);
+    t_ok("vmm user page helpers");
+}
+
+/* ── Pipe with waitqueue integration test ─────────────────────── */
+
+static void test_pipe_waitqueue(void) {
+    /* Basic lifecycle — already tested in test_pipe, but confirm wait queue path */
+    int id = pipe_create();
+    ASSERT("pipe_wq create", id >= 0);
+    if (id < 0) return;
+
+    const char *msg = "wqpipe";
+    int n = pipe_write(id, msg, 6);
+    ASSERT_EQ("pipe_wq write", n, 6);
+    ASSERT("pipe_wq available", pipe_available(id) > 0);
+
+    char buf[16];
+    int r = pipe_read(id, buf, 16);
+    ASSERT_EQ("pipe_wq read", r, 6);
+    buf[r] = '\0';
+    ASSERT_STR("pipe_wq content", buf, msg);
+
+    /* Write many to ensure wait queue path for full pipe */
+    char big[PIPE_BUF_SIZE];
+    memset(big, 'x', sizeof(big));
+    n = pipe_write(id, big, PIPE_BUF_SIZE);
+    ASSERT_EQ("pipe_wq write full", n, PIPE_BUF_SIZE);
+    ASSERT_EQ("pipe_wq available after full", pipe_available(id), PIPE_BUF_SIZE);
+
+    /* Read partial to trigger writer wake */
+    r = pipe_read(id, buf, 16);
+    ASSERT_EQ("pipe_wq partial drain", r, 16);
+
+    pipe_close_write(id);
+    pipe_close_read(id);
+    t_ok("pipe with waitqueue");
+}
+
 /* ── Master runner ───────────────────────────────────────────── */
 
 /* Discard hook: suppresses VGA/serial during test execution.
@@ -1581,6 +1723,11 @@ void test_run_all(void) {
     kprintf("[TEST] doom\n");        test_doom();        test_progress_tick();
     kprintf("[TEST] dos\n");         test_dos();         test_progress_tick();
     kprintf("[TEST] syscall\n");     test_syscall();     test_progress_tick();
+    kprintf("[TEST] waitqueue\n");   test_waitqueue();   test_progress_tick();
+    kprintf("[TEST] completion\n");  test_completion_done_first(); test_progress_tick();
+    kprintf("[TEST] rwlock\n");      test_rwlock();      test_progress_tick();
+    kprintf("[TEST] vmm_user\n");    test_vmm_user_pages(); test_progress_tick();
+    kprintf("[TEST] pipe_wq\n");     test_pipe_waitqueue(); test_progress_tick();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",

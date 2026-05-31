@@ -88,6 +88,11 @@ struct syscall_fb_info {
 #define MSR_LSTAR  0xC0000082
 #define MSR_SFMASK 0xC0000084
 
+/* Local TLB invalidation */
+static inline void local_invlpg(uint64_t addr) {
+    __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
 /* EFER bits */
 #define EFER_SCE (1 << 0)  /* Syscall Enable */
 
@@ -953,6 +958,111 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
     return (uint64_t)(int64_t)ret;
 }
 
+/* ── mmap / munmap / mprotect syscalls ──────────────────────── */
+
+static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4) return (uint64_t)-1;
+
+    /* Anonymous private mapping only for now */
+    if (length == 0) return (uint64_t)-1;
+
+    /* Round up to page size */
+    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* If addr is 0, find a free region starting at USER_CODE_BASE + 2MB */
+    if (addr == 0) {
+        /* Simple allocation from a growing heap area above the ELF */
+        /* Start searching from a reasonable user address */
+        addr = 0x0000000001000000ULL;
+        /* Scan for a free region of the right size */
+        while (addr + length < USER_VADDR_MAX) {
+            int free = 1;
+            for (uint64_t check = addr; check < addr + length; check += PAGE_SIZE) {
+                if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                    free = 0;
+                    break;
+                }
+            }
+            if (free) break;
+            addr += 0x100000ULL; /* 1MB steps */
+        }
+        if (addr + length >= USER_VADDR_MAX) return (uint64_t)-1;
+    }
+
+    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+    if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
+    if (vmm_map_user_pages(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
+        return (uint64_t)-1;
+
+    if (proc->pml4 == vmm_get_pml4()) {
+        /* If this process is running, flush TLB for the new region */
+        for (uint64_t v = addr; v < addr + length; v += PAGE_SIZE)
+            local_invlpg(v);
+    }
+
+    return addr;
+}
+
+static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4) return (uint64_t)-1;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+
+    if (length == 0) return 0;
+    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (addr + length < addr) return (uint64_t)-1;
+    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+
+    if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
+        return (uint64_t)-1;
+    return 0;
+}
+
+static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4) return (uint64_t)-1;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+
+    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (addr + length < addr) return (uint64_t)-1;
+    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+
+    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+    if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
+    /* PROT_READ is always set; PROT_EXEC needs NX but we skip that */
+
+    if (vmm_set_user_pages_flags(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
+        return (uint64_t)-1;
+    return 0;
+}
+
+/* ── CPU affinity syscalls ──────────────────────────────────── */
+
+static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
+    struct process *proc = NULL;
+    if (pid == 0) {
+        proc = process_get_current();
+    } else {
+        proc = process_get_by_pid((uint32_t)pid);
+    }
+    if (!proc) return (uint64_t)-1;
+    /* Only the low 8 bits represent CPU affinity; bit 0 = CPU 0, etc. */
+    proc->cpu_affinity = (uint8_t)(cpuset & 0xFF);
+    return 0;
+}
+
+static uint64_t sys_sched_getaffinity(uint64_t pid) {
+    struct process *proc = NULL;
+    if (pid == 0) {
+        proc = process_get_current();
+    } else {
+        proc = process_get_by_pid((uint32_t)pid);
+    }
+    if (!proc) return (uint64_t)-1;
+    return (uint64_t)proc->cpu_affinity;
+}
+
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
     const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
@@ -1776,6 +1886,11 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FREE:    return sys_free(a1);
         case SYS_REALLOC: return sys_realloc(a1, a2);
         case SYS_CALLOC:  return sys_calloc(a1, a2);
+        case SYS_MMAP:    return sys_mmap(a1, a2, a3);
+        case SYS_MUNMAP:  return sys_munmap(a1, a2);
+        case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
+        case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity(a1, a2);
+        case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity(a1);
         default:         return (uint64_t)-1;
     }
 }

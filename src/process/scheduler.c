@@ -46,6 +46,7 @@ void scheduler_add(struct process *proc) {
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
     proc->next = NULL;
+    spinlock_acquire(&sched_lock);
     proc->on_queue = 1;
     if (!queue_tail[lvl]) {
         queue_head[lvl] = proc;
@@ -54,6 +55,7 @@ void scheduler_add(struct process *proc) {
         queue_tail[lvl]->next = proc;
         queue_tail[lvl] = proc;
     }
+    spinlock_release(&sched_lock);
 }
 
 /* Remove a process from whatever queue it is in */
@@ -61,6 +63,7 @@ void scheduler_remove(struct process *proc) {
     if (!proc->on_queue) return; /* not on any queue */
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+    spinlock_acquire(&sched_lock);
     struct process *prev = NULL;
     struct process *cur  = queue_head[lvl];
     while (cur) {
@@ -70,6 +73,7 @@ void scheduler_remove(struct process *proc) {
             if (cur == queue_tail[lvl]) queue_tail[lvl] = prev;
             cur->next = NULL;
             proc->on_queue = 0;
+            spinlock_release(&sched_lock);
             return;
         }
         prev = cur;
@@ -77,6 +81,7 @@ void scheduler_remove(struct process *proc) {
     }
     /* Not found in the queue — clear flag anyway */
     proc->on_queue = 0;
+    spinlock_release(&sched_lock);
 }
 
 int scheduler_set_priority(struct process *proc, uint8_t priority) {
@@ -120,7 +125,10 @@ void schedule(void) {
     __asm__ volatile("cli");
 
     struct process *current = process_get_current();
+
+    spinlock_acquire(&sched_lock);
     struct process *next = dequeue_next();
+    spinlock_release(&sched_lock);
 
     if (!next) { __asm__ volatile("sti"); return; }
 

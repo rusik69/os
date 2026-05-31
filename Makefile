@@ -91,6 +91,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ramdisk.c \
          src/ipc/mutex.c \
          src/ipc/semaphore.c \
+         src/ipc/waitqueue.c \
          src/dos/dos_emu.c \
          src/dos/dos_ints.c \
          src/dos/dos_int21.c \

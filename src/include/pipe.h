@@ -2,6 +2,7 @@
 #define PIPE_H
 
 #include "types.h"
+#include "waitqueue.h"
 
 #define PIPE_BUF_SIZE 4096
 #define PIPE_MAX      16
@@ -14,8 +15,8 @@ struct pipe {
     int      readers;   /* number of open read ends */
     int      writers;   /* number of open write ends */
     int      in_use;
-    uint32_t blocked_read_pids[4];   /* processes sleeping for data */
-    uint32_t blocked_write_pids[4];  /* processes sleeping for space */
+    struct wait_queue read_wq;   /* waiters waiting for data */
+    struct wait_queue write_wq;  /* waiters waiting for space */
 };
 
 /* Allocate a new pipe; returns its index or -1 on error */

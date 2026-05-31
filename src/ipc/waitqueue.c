@@ -1,0 +1,142 @@
+#include "waitqueue.h"
+#include "process.h"
+#include "scheduler.h"
+#include "io.h"
+#include "string.h"
+
+/*
+ * Wait queue implementation.
+ *
+ * Each wait queue holds up to WAITQUEUE_MAX_WAITERS PIDs of BLOCKED
+ * processes.  wait_queue_sleep() marks the current process BLOCKED,
+ * saves its PID in the queue, and yields the CPU.
+ *
+ * wait_queue_wake() extracts the oldest PID from the queue and moves
+ * it to READY.  wait_queue_wake_all() wakes every waiter.
+ *
+ * All operations are IRQ-safe: interrupts are disabled while manipulating
+ * shared state, then restored to their previous state.
+ */
+
+int wait_queue_sleep(struct wait_queue *wq) {
+    uint64_t flags;
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    if (wq->count >= WAITQUEUE_MAX_WAITERS) {
+        spinlock_irqsave_release(&wq->lock, flags);
+        return -1;  /* queue full */
+    }
+
+    /* Insert at the tail (FIFO) */
+    int tail = (wq->head + wq->count) % WAITQUEUE_MAX_WAITERS;
+    wq->pids[tail] = cur->pid;
+    wq->count++;
+
+    /* Mark process BLOCKED and remove from scheduler */
+    cur->state = PROCESS_BLOCKED;
+    spinlock_release(&wq->lock);  /* release lock — IRQs still disabled */
+    scheduler_remove(cur);
+
+    uint64_t iflags;
+    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
+    if (iflags & 0x200) __asm__ volatile("sti");
+
+    /* Yield the CPU — scheduler will pick another process */
+    scheduler_yield();
+
+    /* Woken up: re-acquire lock to clean up */
+    spinlock_irqsave_acquire(&wq->lock, &iflags);
+
+    /* Find and remove our PID from the queue (in case of wake_all) */
+    for (int i = 0; i < wq->count; i++) {
+        int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;
+        if (wq->pids[idx] == cur->pid) {
+            /* Compact by moving last element here */
+            int last = (wq->head + wq->count - 1) % WAITQUEUE_MAX_WAITERS;
+            if (idx != last)
+                wq->pids[idx] = wq->pids[last];
+            wq->pids[last] = 0;
+            wq->count--;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&wq->lock, flags);
+    return 0;
+}
+
+int wait_queue_wake(struct wait_queue *wq) {
+    uint64_t flags;
+    int woken = 0;
+
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    if (wq->count == 0) {
+        spinlock_irqsave_release(&wq->lock, flags);
+        return 0;
+    }
+
+    /* Dequeue oldest waiter (FIFO) */
+    uint32_t pid = wq->pids[wq->head];
+    wq->pids[wq->head] = 0;
+    wq->head = (wq->head + 1) % WAITQUEUE_MAX_WAITERS;
+    wq->count--;
+
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].pid == pid && table[i].state == PROCESS_BLOCKED) {
+            table[i].state = PROCESS_READY;
+            table[i].last_run_tick = 0; /* will be set when scheduled */
+            scheduler_add(&table[i]);
+            woken = 1;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&wq->lock, flags);
+    return woken;
+}
+
+int wait_queue_wake_all(struct wait_queue *wq) {
+    int total = 0;
+    while (wait_queue_wake(wq) > 0)
+        total++;
+    return total;
+}
+
+int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid) {
+    uint64_t flags;
+    int found = 0;
+
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    for (int i = 0; i < wq->count; i++) {
+        int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;
+        if (wq->pids[idx] == pid) {
+            /* Remove by compacting */
+            int last = (wq->head + wq->count - 1) % WAITQUEUE_MAX_WAITERS;
+            if (idx != last)
+                wq->pids[idx] = wq->pids[last];
+            wq->pids[last] = 0;
+            wq->count--;
+
+            struct process *table = process_get_table();
+            for (int j = 0; j < PROCESS_MAX; j++) {
+                if (table[j].pid == pid && table[j].state == PROCESS_BLOCKED) {
+                    table[j].state = PROCESS_READY;
+                    table[j].last_run_tick = 0;
+                    scheduler_add(&table[j]);
+                    found = 1;
+                    break;
+                }
+            }
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&wq->lock, flags);
+    return found;
+}

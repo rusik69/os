@@ -10,10 +10,10 @@
 #define PTE_HUGE     (1ULL << 7)
 #define PTE_COW      (1ULL << 9)   /* software bit: copy-on-write */
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
-#define USER_VADDR_MAX 0x0000800000000000ULL
 
 static uint64_t *kernel_pml4;
 
+/* Page invalidation */
 static inline void invlpg(uint64_t addr) {
     __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
 }
@@ -488,4 +488,103 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
     }
     invlpg(virt);
     return 1;
+}
+
+/* ── mmap / munmap / mprotect syscall helpers ───────────────────── */
+
+int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return 0;
+    int pml4_idx = (virt >> 39) & 0x1FF;
+    int pdpt_idx = (virt >> 30) & 0x1FF;
+    int pd_idx   = (virt >> 21) & 0x1FF;
+    int pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return 0;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return 0;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+    if (!(pd[pd_idx] & PTE_PRESENT)) return 0;
+    if (pd[pd_idx] & (1ULL << 7)) return 1; /* 2MB page present */
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+    return (pt[pt_idx] & PTE_PRESENT) ? 1 : 0;
+}
+
+int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
+                       uint64_t flags) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    if (virt + num_pages * PAGE_SIZE < virt) return -1; /* overflow */
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys) {
+            /* Unwind: free already-mapped pages */
+            for (size_t j = 0; j < i; j++) {
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                uint64_t p;
+                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0)
+                    pmm_free_frame(p);
+            }
+            return -1;
+        }
+        memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+        if (vmm_map_user_page(pml4, virt + i * PAGE_SIZE, phys, flags) < 0) {
+            pmm_free_frame(phys);
+            for (size_t j = 0; j < i; j++) {
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                uint64_t p;
+                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0)
+                    pmm_free_frame(p);
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    if (virt + num_pages * PAGE_SIZE < virt) return -1;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t addr = virt + i * PAGE_SIZE;
+        uint64_t phys = 0;
+        if (vmm_virt_to_phys(addr, &phys) == 0 && phys) {
+            pmm_unref_frame(phys);
+        }
+        vmm_unmap_user_page(pml4, addr);
+    }
+    return 0;
+}
+
+int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
+                             uint64_t new_flags) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    if (virt + num_pages * PAGE_SIZE < virt) return -1;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t addr = virt + i * PAGE_SIZE;
+        int pml4_idx = (addr >> 39) & 0x1FF;
+        int pdpt_idx = (addr >> 30) & 0x1FF;
+        int pd_idx   = (addr >> 21) & 0x1FF;
+        int pt_idx   = (addr >> 12) & 0x1FF;
+
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) return -1;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -1;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (pd[pd_idx] & (1ULL << 7)) return -1; /* skip 2MB pages */
+        if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+
+        uint64_t pte = pt[pt_idx];
+        if (!(pte & PTE_PRESENT)) return -1;
+
+        /* Preserve physical address, replace flags */
+        pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | PTE_PRESENT;
+        invlpg(addr);
+    }
+    return 0;
 }

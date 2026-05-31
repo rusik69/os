@@ -98,17 +98,13 @@ static void ap_entry_c(void) {
 
     /* Simple idle loop — the scheduler will pick processes */
     for (;;) {
-        if (!info->scheduler_enabled ||
-            (info->queue_head[0] == NULL &&
-             info->queue_head[1] == NULL &&
-             info->queue_head[2] == NULL &&
-             info->queue_head[3] == NULL)) {
-            info->idle_ticks++;
-            __asm__ volatile("hlt");
-        } else {
-            /* Yield to let scheduler pick next process */
+        /* Try to find work through the global scheduler */
+        if (info->scheduler_enabled) {
+            /* Don't HLT — keep trying to steal work */
             schedule();
         }
+        info->idle_ticks++;
+        __asm__ volatile("hlt");
     }
 }
 

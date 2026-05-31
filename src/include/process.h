@@ -88,6 +88,7 @@ struct process {
     int      on_queue;        /* 1 = currently on a scheduler run queue */
     uint8_t  cap_profile;     /* enum process_cap_profile */
     uint8_t  priority;        /* scheduler priority: 0=high .. 3=low */
+    uint8_t  cpu_affinity;    /* bitmask of allowed CPUs (0 = all) */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
     char     cwd[64];         /* current working directory */
     /* Waitpid: non-spinning wait for child */
@@ -101,6 +102,8 @@ struct process {
     uint32_t tgid;
     /* SetChildTID / ClearChildTID userspace pointers for thread teardown */
     void *ctid_ptr;
+    /* Per-CPU kthread argument */
+    void *kthread_arg;
 };
 
 void process_init(void);
@@ -125,5 +128,12 @@ int process_fork(void); /* fork current process, returns child PID, child starts
 int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags);
 void process_set_current(struct process *proc);
+
+/* ── Per-CPU kthread API ────────────────────────────────────── */
+
+struct process *kthread_create(void (*entry)(void *arg), void *arg,
+                                const char *name);
+struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
+                                       const char *name, int cpu_id);
 
 #endif
