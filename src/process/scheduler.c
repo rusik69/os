@@ -319,15 +319,33 @@ void scheduler_tick(void) {
 
     /* First tick: assign quantum without preempting */
     if (cur->ticks_remaining == 0) {
-        int lvl = (int)cur->priority;
-        if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-        cur->ticks_remaining = time_slices[lvl];
+        if (cur->sched_policy == SCHED_OTHER) {
+            int lvl = (int)cur->priority;
+            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+            cur->ticks_remaining = time_slices[lvl];
+        } else {
+            /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
+            int lvl = (int)cur->priority;
+            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+            cur->ticks_remaining = time_slices[lvl] * 2;
+        }
         return;
     }
 
     cur->ticks_remaining--;
+
     if (cur->ticks_remaining == 0) {
-        schedule();
+        if (cur->sched_policy == SCHED_FIFO) {
+            /* SCHED_FIFO: replenish quantum, don't preempt */
+            int lvl = (int)cur->priority;
+            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+            cur->ticks_remaining = time_slices[lvl] * 2;
+        } else {
+            /* SCHED_OTHER / SCHED_RR: preempt on quantum expiry.
+             * SCHED_RR places the process at the end of its priority queue
+             * (handled by schedule() re-adding it). */
+            schedule();
+        }
     }
 }
 

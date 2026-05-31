@@ -58,6 +58,19 @@ int wait_queue_sleep(struct wait_queue *wq);
 int wait_queue_sleep_interruptible(struct wait_queue *wq);
 
 /*
+ * Sleep with timeout on the wait queue.
+ * Blocks for at most 'ticks' timer ticks before returning -ETIME (-62).
+ * Returns 0 if woken normally, -62 (-ETIME) on timeout, -1 on queue full.
+ */
+int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks);
+
+/*
+ * Interruptible sleep with timeout.
+ * Returns 0 if woken normally, -4 (-EINTR) if signal, -62 (-ETIME) on timeout.
+ */
+int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks);
+
+/*
  * Wake the oldest waiter (FIFO).  The woken process is moved to READY.
  * Returns 1 if a process was woken, 0 if queue was empty.
  */
