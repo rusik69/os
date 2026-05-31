@@ -89,6 +89,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/socket.c \
          src/kernel/service.c \
          src/ipc/pipe.c \
+         src/ipc/eventfd.c \
          src/drivers/virtio_net.c \
          src/drivers/virtio_blk.c \
          src/drivers/ac97.c \

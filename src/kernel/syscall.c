@@ -14,6 +14,7 @@
 #include "io.h"
 #include "vmm.h"
 #include "string.h"
+#include "eventfd.h"
 #include "net.h"
 #include "e1000.h"
 #include "pci.h"
@@ -385,7 +386,7 @@ static struct process_fd *sys_get_fd(int i) {
 
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd == 0) return 0; /* stdin EOF until telnet fd wiring */
-    if (fd >= 3) {
+    if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
         if (!pfd || !pfd->used) return (uint64_t)-1;
@@ -406,6 +407,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         pfd->offset += to_read;
         return (uint64_t)to_read;
     }
+    /* eventfd read */
+    if (fd >= 700 && fd < 716) {
+        if (len < 8) return (uint64_t)-1;
+        uint64_t val;
+        if (eventfd_read((int)fd, &val) < 0) return (uint64_t)-1;
+        *(uint64_t*)(uintptr_t)buf_addr = val;
+        return 8;
+    }
     return (uint64_t)-1;
 }
 
@@ -417,6 +426,13 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
             serial_putchar(s[i]);
         }
         return len;
+    }
+    /* eventfd write */
+    if (fd >= 700 && fd < 716) {
+        if (len < 8) return (uint64_t)-1;
+        uint64_t val = *(uint64_t*)(uintptr_t)buf_addr;
+        if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
+        return 8;
     }
     return (uint64_t)-1;
 }
@@ -2820,25 +2836,10 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
 
 /* ── eventfd ──────────────────────────────────────────────────────────── */
 
-#define EVENTFD_MAX 16
-static uint64_t eventfd_counters[EVENTFD_MAX];
-static int eventfd_in_use[EVENTFD_MAX];
-
 static uint64_t sys_eventfd(uint64_t initval, uint64_t flags) {
-    (void)flags;
-    /* Find a free eventfd slot */
-    int slot = -1;
-    for (int i = 0; i < EVENTFD_MAX; i++) {
-        if (!eventfd_in_use[i]) { slot = i; break; }
-    }
-    if (slot < 0) return (uint64_t)-1;
-
-    eventfd_counters[slot] = initval;
-    eventfd_in_use[slot] = 1;
-
-    /* For this simple implementation, return the slot index directly.
-     * A full implementation would use the fd_table. */
-    return (uint64_t)(300 + slot); /* Use fd indices above normal range */
+    int fd = eventfd_syscall((uint32_t)initval, (int)flags);
+    if (fd < 0) return (uint64_t)-1;
+    return (uint64_t)fd;
 }
 
 /* ── sendfile ──────────────────────────────────────────────────────────── */
