@@ -36,10 +36,24 @@ struct cpu_context {
 typedef void (*signal_handler_t)(int signum);
 
 /* Per-process file descriptor table entry */
+#define FD_CLOEXEC 1
+
 struct process_fd {
     char     path[64];
     uint32_t offset;
     int      used;
+    uint8_t  flags;       /* FD_CLOEXEC etc. */
+};
+
+/* Per-process interval timer (setitimer) */
+#define ITIMER_REAL    0
+#define ITIMER_VIRTUAL 1
+#define ITIMER_PROF    2
+#define ITIMER_MAX     3
+
+struct itimerval {
+    uint64_t it_interval;  /* ticks between deliveries */
+    uint64_t it_value;     /* ticks until next delivery */
 };
 
 /* Clone flags (subset of Linux CLONE_*) */
@@ -104,6 +118,8 @@ struct process {
     void *ctid_ptr;
     /* Per-CPU kthread argument */
     void *kthread_arg;
+    /* Per-process interval timers */
+    struct itimerval itimers[ITIMER_MAX];
 };
 
 void process_init(void);
@@ -135,5 +151,8 @@ struct process *kthread_create(void (*entry)(void *arg), void *arg,
                                 const char *name);
 struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
                                        const char *name, int cpu_id);
+
+/* Per-process interval timer tick (called from timer interrupt) */
+void process_timer_tick(void);
 
 #endif

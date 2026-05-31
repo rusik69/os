@@ -207,6 +207,31 @@
 #define SYS_SCHED_SETAFFINITY 238
 #define SYS_SCHED_GETAFFINITY 239
 
+/* File descriptor manipulation */
+#define SYS_DUP              240  /* dup(old_fd) → new_fd or -1 */
+#define SYS_DUP2             241  /* dup2(old_fd, new_fd) → new_fd or -1 */
+#define SYS_FCNTL            242  /* fcntl(fd, cmd, arg) → varies */
+
+/* I/O multiplexing */
+#define SYS_SELECT           243  /* select(nfds, readfds, writefds, exceptfds, timeout) */
+
+/* Per-process timers */
+#define SYS_SETITIMER        244  /* setitimer(which, new_val, old_val) */
+#define SYS_GETITIMER        245  /* getitimer(which, cur_val) */
+
+/* High-resolution sleep */
+#define SYS_NANOSLEEP        246  /* nanosleep(req, rem) */
+
+/* System configuration */
+#define SYS_SYSCONF          247  /* sysconf(name) → value or -1 */
+#define SYS_UNAME            248  /* uname(struct utsname *) → 0 or -1 */
+
+/* sysconf names (Linux compatible) */
+#define _SC_CLK_TCK         2
+#define _SC_PAGESIZE        30
+#define _SC_NPROCESSORS_CONF  83
+#define _SC_NPROCESSORS_ONLN  84
+
 /* Clone / threading */
 #define SYS_CLONE           231
 #define SYS_GETTID          232

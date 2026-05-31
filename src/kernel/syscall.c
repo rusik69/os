@@ -33,6 +33,7 @@
 #include "shell.h"
 #include "cc.h"
 #include "heap.h"
+#include "smp.h"
 #include "gui_shell.h"
 #include "shm.h"
 #include "ac97.h"
@@ -1063,6 +1064,335 @@ static uint64_t sys_sched_getaffinity(uint64_t pid) {
     return (uint64_t)proc->cpu_affinity;
 }
 
+/* ── dup / dup2 ─────────────────────────────────────────────── */
+
+/* Find lowest available FD slot */
+static int fd_find_free(struct process *proc) {
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!proc->fd_table[i].used) return i;
+    }
+    return -1;
+}
+
+static uint64_t sys_dup(uint64_t old_fd) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
+        return (uint64_t)-1;
+
+    int new_fd = fd_find_free(proc);
+    if (new_fd < 0) return (uint64_t)-1;
+
+    proc->fd_table[new_fd] = proc->fd_table[old_fd];
+    proc->fd_table[new_fd].offset = proc->fd_table[old_fd].offset;
+    return (uint64_t)new_fd;
+}
+
+static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
+        return (uint64_t)-1;
+    if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+
+    /* If new_fd is the same as old_fd, just return it */
+    if (old_fd == new_fd) return new_fd;
+
+    /* Close new_fd if open */
+    if (proc->fd_table[new_fd].used) {
+        memset(&proc->fd_table[new_fd], 0, sizeof(struct process_fd));
+    }
+
+    proc->fd_table[new_fd] = proc->fd_table[old_fd];
+    proc->fd_table[new_fd].offset = proc->fd_table[old_fd].offset;
+    return new_fd;
+}
+
+/* ── fcntl ──────────────────────────────────────────────────── */
+
+#define F_DUPFD   0
+#define F_GETFD   1
+#define F_SETFD   2
+#define F_GETFL   3
+#define F_SETFL   4
+
+static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
+        return (uint64_t)-1;
+
+    switch (cmd) {
+        case F_DUPFD: {
+            /* Duplicate fd to lowest FD >= arg */
+            int new_fd = (int)arg;
+            if (new_fd < 0) new_fd = 0;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
+                new_fd++;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            proc->fd_table[new_fd] = proc->fd_table[fd];
+            return (uint64_t)new_fd;
+        }
+        case F_GETFD:
+            return (uint64_t)proc->fd_table[fd].flags;
+        case F_SETFD:
+            proc->fd_table[fd].flags = (uint8_t)arg;
+            return 0;
+        case F_GETFL:
+            /* Return simulated flags (always RDWR for now) */
+            return 2; /* O_RDWR */
+        case F_SETFL:
+            /* Nothing to do for now */
+            return 0;
+        default:
+            return (uint64_t)-1;
+    }
+}
+
+/* ── select (I/O multiplexing) ──────────────────────────────── */
+
+/* Maximum select timeout in ticks (about 1 second at 100Hz) when blocking.
+ * For simplicity, we yield and re-check. */
+#define SELECT_MAX_TICKS 1
+
+static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
+                            uint64_t writefds_addr, uint64_t exceptfds_addr,
+                            uint64_t timeout_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (nfds > FD_SETSIZE) nfds = FD_SETSIZE;
+
+    fd_set readfds, writefds, exceptfds;
+    fd_set orig_readfds, orig_writefds, orig_exceptfds;
+
+    /* Copy in from userspace — skip NULL sets */
+    if (readfds_addr) {
+        memcpy(&orig_readfds, (void*)readfds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_readfds);
+    }
+    if (writefds_addr) {
+        memcpy(&orig_writefds, (void*)writefds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_writefds);
+    }
+    if (exceptfds_addr) {
+        memcpy(&orig_exceptfds, (void*)exceptfds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_exceptfds);
+    }
+
+    uint64_t timeout = 0;
+    if (timeout_addr) {
+        struct timespec ts;
+        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
+        /* Convert to ticks */
+        timeout = ts.tv_sec * 100 + ts.tv_nsec / 10000000;
+    }
+
+    int loops = 0;
+    int max_loops = (timeout == 0) ? 1 : (int)(timeout / SELECT_MAX_TICKS);
+    if (max_loops < 1) max_loops = 1;
+
+    int ready = 0;
+    while (loops < max_loops) {
+        ready = 0;
+        if (readfds_addr) {
+            memcpy(&readfds, &orig_readfds, sizeof(fd_set));
+            /* Check each FD for readability */
+            for (int i = 0; i < (int)nfds; i++) {
+                if (!FD_ISSET(i, &readfds)) continue;
+                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                    /* Bad FD — remove from set */
+                    FD_CLR(i, &readfds);
+                    continue;
+                }
+                /* For now, pipes are readable if they have data */
+                /* For real implementation, check pipe count and other sources */
+                /* Simple: always mark as readable */
+                /* In a full implementation, check pipe_available() etc. */
+            }
+        }
+        if (writefds_addr) {
+            memcpy(&writefds, &orig_writefds, sizeof(fd_set));
+            for (int i = 0; i < (int)nfds; i++) {
+                if (!FD_ISSET(i, &writefds)) continue;
+                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                    FD_CLR(i, &writefds);
+                    continue;
+                }
+                /* Most FDs are writable unless pipe is full */
+            }
+        }
+        if (exceptfds_addr) {
+            (void)0; /* not implemented */
+        }
+
+        /* Count ready FDs */
+        int total = 0;
+        for (int i = 0; i < (int)nfds; i++) {
+            if ((readfds_addr && FD_ISSET(i, &readfds)) ||
+                (writefds_addr && FD_ISSET(i, &writefds)))
+                total++;
+        }
+
+        if (total > 0) {
+            /* Copy results back */
+            if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
+            if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
+            if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+            return (uint64_t)total;
+        }
+
+        if (timeout == 0) break; /* Non-blocking */
+        loops++;
+
+        /* Yield and try again */
+        scheduler_yield();
+    }
+
+    /* Timeout — return 0 */
+    if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
+    if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
+    if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+    return 0;
+}
+
+/* ── setitimer / getitimer (per-process interval timers) ────── */
+
+/* SIGALRM */
+#ifndef SIGALRM
+#define SIGALRM 14
+#endif
+
+/* Called from timer tick to decrement per-process timers */
+void process_timer_tick(void) {
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        struct process *p = &table[i];
+        if (p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE)
+            continue;
+        for (int t = 0; t < ITIMER_MAX; t++) {
+            if (p->itimers[t].it_value > 0) {
+                p->itimers[t].it_value--;
+                if (p->itimers[t].it_value == 0) {
+                    /* Timer expired — send signal and reload */
+                    if (t == ITIMER_REAL)
+                        signal_send(p->pid, SIGALRM);
+                    /* Reload interval if periodic */
+                    p->itimers[t].it_value = p->itimers[t].it_interval;
+                }
+            }
+        }
+    }
+}
+
+static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
+                               uint64_t old_val_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (which >= ITIMER_MAX) return (uint64_t)-1;
+
+    struct itimerval new_val;
+    memset(&new_val, 0, sizeof(new_val));
+
+    if (new_val_addr) {
+        memcpy(&new_val, (void*)new_val_addr, sizeof(struct itimerval));
+    }
+
+    /* Return old value if requested */
+    if (old_val_addr) {
+        memcpy((void*)old_val_addr, &proc->itimers[which], sizeof(struct itimerval));
+    }
+
+    /* Set new value */
+    proc->itimers[which] = new_val;
+    return 0;
+}
+
+static uint64_t sys_getitimer(uint64_t which, uint64_t cur_val_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (which >= ITIMER_MAX) return (uint64_t)-1;
+    if (!cur_val_addr) return (uint64_t)-1;
+
+    memcpy((void*)cur_val_addr, &proc->itimers[which], sizeof(struct itimerval));
+    return 0;
+}
+
+/* ── nanosleep ──────────────────────────────────────────────── */
+
+static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (!req_addr) return (uint64_t)-1;
+
+    struct timespec req;
+    memcpy(&req, (void*)req_addr, sizeof(req));
+
+    /* Convert to ticks */
+    uint64_t ticks = req.tv_sec * 100 + req.tv_nsec / 10000000;
+    if (ticks == 0 && req.tv_nsec > 0) ticks = 1; /* minimum 1 tick */
+
+    /* Block by setting sleep_until */
+    uint64_t now = timer_get_ticks();
+    proc->sleep_until = now + ticks;
+    proc->state = PROCESS_BLOCKED;
+    scheduler_remove(proc);
+    scheduler_yield();
+
+    /* Process woke up — check if it was from timer or signal */
+    if (rem_addr && timer_get_ticks() < proc->sleep_until) {
+        /* Woke early (signal) — compute remaining */
+        struct timespec rem;
+        uint64_t remaining = proc->sleep_until - timer_get_ticks();
+        rem.tv_sec = remaining / 100;
+        rem.tv_nsec = (remaining % 100) * 10000000;
+        memcpy((void*)rem_addr, &rem, sizeof(rem));
+    }
+
+    return 0;
+}
+
+/* ── sysconf ────────────────────────────────────────────────── */
+
+#define _SC_CLK_TCK       2
+#define _SC_PAGESIZE      30
+#define _SC_NPROCESSORS_CONF 83
+#define _SC_NPROCESSORS_ONLN 84
+
+static uint64_t sys_sysconf(uint64_t name) {
+    switch (name) {
+        case _SC_CLK_TCK:
+            return 100;  /* PIT frequency */
+        case _SC_PAGESIZE:
+            return PAGE_SIZE;
+        case _SC_NPROCESSORS_CONF:
+        case _SC_NPROCESSORS_ONLN:
+            return (uint64_t)smp_get_cpu_count();
+        default:
+            return (uint64_t)-1;
+    }
+}
+
+/* ── uname ──────────────────────────────────────────────────── */
+
+static uint64_t sys_uname(uint64_t buf_addr) {
+    if (!buf_addr) return (uint64_t)-1;
+    struct utsname *buf = (struct utsname *)buf_addr;
+
+    /* Verify user pointer */
+
+    memset(buf, 0, sizeof(struct utsname));
+    memcpy(buf->sysname, "OS", 3);
+    memcpy(buf->nodename, "localhost", 10);
+    memcpy(buf->release, "1.0.0", 6);
+    memcpy(buf->version, __DATE__, 12);
+    memcpy(buf->machine, "x86_64", 7);
+    return 0;
+}
+
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
     const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
@@ -1891,6 +2221,15 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
         case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity(a1, a2);
         case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity(a1);
+        case SYS_DUP:    return sys_dup(a1);
+        case SYS_DUP2:   return sys_dup2(a1, a2);
+        case SYS_FCNTL:  return sys_fcntl(a1, a2, a3);
+        case SYS_SELECT: return sys_select(a1, a2, a3, a4, a5);
+        case SYS_SETITIMER: return sys_setitimer(a1, a2, a3);
+        case SYS_GETITIMER: return sys_getitimer(a1, a2);
+        case SYS_NANOSLEEP: return sys_nanosleep(a1, a2);
+        case SYS_SYSCONF: return sys_sysconf(a1);
+        case SYS_UNAME:  return sys_uname(a1);
         default:         return (uint64_t)-1;
     }
 }

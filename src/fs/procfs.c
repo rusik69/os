@@ -216,6 +216,15 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     proc_str("Pid:\t", buf, &pos, max);
     proc_u64_to_str(p->pid, buf, &pos, max);
     proc_str("\n", buf, &pos, max);
+    proc_str("PPid:\t", buf, &pos, max);
+    proc_u64_to_str(p->parent_pid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("Tgid:\t", buf, &pos, max);
+    proc_u64_to_str(p->tgid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("Priority:\t", buf, &pos, max);
+    proc_u64_to_str(p->priority, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
 
     const char *state_str = "unknown";
     switch (p->state) {
@@ -230,6 +239,71 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     proc_str("\n", buf, &pos, max);
     buf[pos] = '\0';
     return pos;
+}
+
+/* /proc/stat — CPU and system statistics */
+static int procfs_gen_stat(char *buf, int max) {
+    int p = 0;
+    uint64_t uptime_ticks = timer_get_ticks();
+    uint64_t idle_ticks = scheduler_get_idle_ticks();
+
+    proc_str("cpu  ", buf, &p, max);
+    proc_u64_to_str(uptime_ticks, buf, &p, max); /* user ticks */
+    proc_str(" 0 0 ", buf, &p, max);   /* nice, system, idle placeholder */
+    proc_u64_to_str(idle_ticks, buf, &p, max); /* idle */
+    proc_str(" 0 0 0 0\n", buf, &p, max);
+
+    proc_str("procs_running ", buf, &p, max);
+    int running = 0;
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++)
+        if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
+            running++;
+    proc_u64_to_str(running, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    proc_str("procs_blocked ", buf, &p, max);
+    int blocked = 0;
+    for (int i = 0; i < PROCESS_MAX; i++)
+        if (table[i].state == PROCESS_BLOCKED)
+            blocked++;
+    proc_u64_to_str(blocked, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/loadavg */
+static int procfs_gen_loadavg(char *buf, int max) {
+    int p = 0;
+    /* Simple: count running/ready processes as load */
+    int run = 0, total = 0;
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED) {
+            total++;
+            if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
+                run++;
+        }
+    }
+
+    /* Show runnable/total as load averages */
+    proc_u64_to_str(run, buf, &p, max);
+    proc_str(".00 ", buf, &p, max);
+    proc_u64_to_str(run, buf, &p, max);
+    proc_str(".00 ", buf, &p, max);
+    proc_u64_to_str(run, buf, &p, max);
+    proc_str(".00 ", buf, &p, max);
+    proc_u64_to_str(run, buf, &p, max);
+    proc_str("/", buf, &p, max);
+    proc_u64_to_str(total, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(run, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    buf[p] = '\0';
+    return p;
 }
 
 /* ─── VFS ops ────────────────────────────────────────────────────────────────── */
@@ -254,6 +328,10 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_route(buf, (int)max_size);
     } else if (strcmp(path, "/proc/mounts") == 0) {
         len = procfs_gen_mounts(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/stat") == 0) {
+        len = procfs_gen_stat(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/loadavg") == 0) {
+        len = procfs_gen_loadavg(buf, (int)max_size);
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */
@@ -284,7 +362,9 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         strcmp(path, "/proc/version") == 0 ||
         strcmp(path, "/proc/net/arp") == 0 ||
         strcmp(path, "/proc/net/route") == 0 ||
-        strcmp(path, "/proc/mounts") == 0) {
+        strcmp(path, "/proc/mounts") == 0 ||
+        strcmp(path, "/proc/stat") == 0 ||
+        strcmp(path, "/proc/loadavg") == 0) {
         st->type = 1; st->size = 128; return 0;
     }
     /* /proc/<pid>/status */

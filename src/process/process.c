@@ -218,6 +218,7 @@ void process_init(void) {
     process_table[0].is_suspended = 0;
     process_table[0].priority = 1;
     process_table[0].cpu_affinity = 0;  /* allow any CPU */
+    memset(process_table[0].itimers, 0, sizeof(process_table[0].itimers));
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));

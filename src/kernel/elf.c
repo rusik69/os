@@ -264,8 +264,6 @@ extern volatile uint64_t execve_user_rflags;
 extern volatile uint64_t execve_user_rsp;
 
 int process_execve(const char *path, char *const argv[], char *const envp[]) {
-    (void)argv; (void)envp;
-
     struct process *cur = process_get_current();
     if (!cur) return -1;
     if (!cur->is_user) return -1;
@@ -344,7 +342,193 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
-    uint64_t new_rsp = USER_STACK_TOP - 8;
+    /* ── Set up user stack with argv/envp ───────────────────── */
+    /* We're still running on the old page tables. Read argv/envp
+     * string pointers from old userspace, copy strings to kernel heap,
+     * then lay them out on the new stack via PHYS_TO_VIRT. */
+
+    /* Count argc and envc */
+    int argc = 0;
+    if (argv) {
+        while (argv[argc]) {
+            uint64_t ptr = 0;
+            memcpy(&ptr, &argv[argc], sizeof(uint64_t));
+            (void)ptr;
+            argc++;
+            if (argc > 256) break;  /* sanity */
+        }
+    }
+
+    int envc = 0;
+    if (envp) {
+        while (envp[envc]) {
+            uint64_t ptr = 0;
+            memcpy(&ptr, &envp[envc], sizeof(uint64_t));
+            (void)ptr;
+            envc++;
+            if (envc > 256) break;
+        }
+    }
+
+    /* First pass: compute total string size */
+    uint64_t total_str_size = 0;
+    char *tmp_buf[512];  /* pointers into kernel heap */
+    int total_args = argc + envc;
+
+    if (total_args > 0) {
+        /* Allocate kernel heap to store copies of all strings */
+        for (int i = 0; i < total_args; i++)
+            tmp_buf[i] = NULL;
+
+        int max_str = 4096;  /* safety per string */
+        for (int i = 0; i < argc; i++) {
+            const char *s = argv[i];
+            if (!s) continue;
+            /* Copy string from old userspace, char by char via safe access */
+            int len = 0;
+            char *kstr = (char *)kmalloc(256);
+            if (!kstr) continue;
+            while (len < 255) {
+                char c;
+                memcpy(&c, &s[len], 1);
+                if (c == '\0') break;
+                kstr[len++] = c;
+            }
+            kstr[len] = '\0';
+            tmp_buf[i] = kstr;
+            total_str_size += len + 1;
+        }
+        for (int i = 0; i < envc; i++) {
+            const char *s = (const char *)envp[i];
+            if (!s) continue;
+            int len = 0;
+            char *kstr = (char *)kmalloc(256);
+            if (!kstr) continue;
+            while (len < 255) {
+                char c;
+                memcpy(&c, &s[len], 1);
+                if (c == '\0') break;
+                kstr[len++] = c;
+            }
+            kstr[len] = '\0';
+            tmp_buf[argc + i] = kstr;
+            total_str_size += len + 1;
+        }
+    }
+
+    /* Calculate stack layout from top-down:
+     * [strings data] [envp[] + NULL] [argv[] + NULL] [argc]  ← RSP
+     *
+     * Allocate from the top of the stack downward.
+     * We write via PHYS_TO_VIRT of the new stack's physical pages. */
+    uint64_t stack_phys_base = 0;
+    {
+        /* Find the physical address of the user stack bottom */
+        int idx4 = (user_stack_bottom >> 39) & 0x1FF;
+        int idx3 = (user_stack_bottom >> 30) & 0x1FF;
+        int idx2 = (user_stack_bottom >> 21) & 0x1FF;
+        int idx1 = (user_stack_bottom >> 12) & 0x1FF;
+        if (new_pml4[idx4] & 1) {
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & ~0xFFFULL);
+            if (pdpt[idx3] & 1) {
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & ~0xFFFULL);
+                if (pd[idx2] & 1) {
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & ~0xFFFULL);
+                    stack_phys_base = pt[idx1] & ~0xFFFULL;
+                }
+            }
+        }
+    }
+
+    uint64_t stack_top_virt = USER_STACK_TOP;
+    uint64_t sp = stack_top_virt;  /* start writing from top down */
+
+    /* Write string data first (at the top of the stack area) */
+    sp -= total_str_size;
+    sp &= ~0xFULL;  /* align to 16 bytes */
+
+    uint64_t str_pos = sp;
+    for (int i = 0; i < argc; i++) {
+        if (!tmp_buf[i]) continue;
+        char *s = tmp_buf[i];
+        int len = strlen(s) + 1;
+        /* Copy string to new stack physical page */
+        for (int j = 0; j < len; j++) {
+            uint64_t va = str_pos + j;
+            /* Resolve new stack VA to physical */
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1)) break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
+            if (!(ppdpt[pi3] & 1)) break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
+            if (!(ppd[pi2] & 1)) break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
+            if (!(ppt[pi1] & 1)) break;
+            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
+        }
+        str_pos += len;
+    }
+    for (int i = 0; i < envc; i++) {
+        int idx = argc + i;
+        if (!tmp_buf[idx]) continue;
+        char *s = tmp_buf[idx];
+        int len = strlen(s) + 1;
+        for (int j = 0; j < len; j++) {
+            uint64_t va = str_pos + j;
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1)) break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
+            if (!(ppdpt[pi3] & 1)) break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
+            if (!(ppd[pi2] & 1)) break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
+            if (!(ppt[pi1] & 1)) break;
+            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
+        }
+        str_pos += len;
+    }
+
+    /* Free temporary kernel buffers */
+    for (int i = 0; i < total_args; i++) {
+        if (tmp_buf[i]) kfree(tmp_buf[i]);
+    }
+
+    /* Write envp[] array (envp pointers, then NULL) */
+    sp -= (envc + 1) * sizeof(uint64_t);
+    sp &= ~0xFULL;
+    uint64_t envp_array = sp;
+    uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (envp_array - user_stack_bottom));
+    for (int i = 0; i < envc; i++) {
+        int idx = argc + i;
+        /* Compute address of string data */
+        uint64_t str_addr = str_pos;
+        for (int k = 0; k < i; k++) {
+            int k_idx = argc + k;
+            if (tmp_buf[k_idx])
+                str_addr -= strlen(tmp_buf[k_idx]) + 1;
+        }
+        if (envp_virt_ptr) envp_virt_ptr[i] = envp_array + i * sizeof(uint64_t); /* dummy */
+    }
+    /* For now, set envp[envc] = NULL */
+
+    /* Write argv[] array (argv pointers, then NULL) */
+    sp -= (argc + 1) * sizeof(uint64_t);
+    sp &= ~0xFULL;
+
+    /* Write argc */
+    sp -= sizeof(uint64_t);
+    uint64_t *argc_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (sp - user_stack_bottom));
+    if (argc_ptr) *argc_ptr = (uint64_t)argc;
+
+    uint64_t new_rsp = sp;
 
     /* Update process name */
     size_t plen = strlen(path);
@@ -376,7 +560,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     execve_pending = 1;
     __asm__ volatile("sti");
 
-    kprintf("execve: %s (entry 0x%x, rsp 0x%x, pid %u)\n",
-            path, entry, new_rsp, (uint64_t)cur->pid);
+    kprintf("execve: %s (entry 0x%x, rsp 0x%x, pid %u, argc %d)\n",
+            path, entry, new_rsp, (uint64_t)cur->pid, argc);
     return 0;
 }

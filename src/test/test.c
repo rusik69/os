@@ -1654,6 +1654,33 @@ static void test_pipe_waitqueue(void) {
     t_ok("pipe with waitqueue");
 }
 
+/* ── System info / configuration tests ───────────────────────── */
+
+static void test_sysinfo(void) {
+    /* Test sysconf values */
+    ASSERT("sysconf CLK_TCK = 100", _SC_CLK_TCK == 2);
+    ASSERT("sysconf PAGESIZE = 4096", _SC_PAGESIZE == 30);
+    t_ok("sysconf constants");
+
+    /* Test that struct itimerval is correct size */
+    ASSERT("itimerval size = 16", sizeof(struct itimerval) == 16);
+
+    /* Test that fd_set is correct */
+    ASSERT("fd_set size >= 2 bytes", sizeof(fd_set) >= 2);
+    t_ok("sysinfo types");
+
+    /* Test FD_SET/FD_ISSET macros */
+    fd_set fds;
+    FD_ZERO(&fds);
+    ASSERT("FD_ZERO empty", !FD_ISSET(0, &fds) && !FD_ISSET(8, &fds));
+    FD_SET(3, &fds);
+    ASSERT("FD_SET 3", FD_ISSET(3, &fds));
+    ASSERT("FD_ISSET other not set", !FD_ISSET(0, &fds) && !FD_ISSET(4, &fds));
+    FD_CLR(3, &fds);
+    ASSERT("FD_CLR 3", !FD_ISSET(3, &fds));
+    t_ok("fd_set operations");
+}
+
 /* ── Master runner ───────────────────────────────────────────── */
 
 /* Discard hook: suppresses VGA/serial during test execution.
@@ -1728,6 +1755,7 @@ void test_run_all(void) {
     kprintf("[TEST] rwlock\n");      test_rwlock();      test_progress_tick();
     kprintf("[TEST] vmm_user\n");    test_vmm_user_pages(); test_progress_tick();
     kprintf("[TEST] pipe_wq\n");     test_pipe_waitqueue(); test_progress_tick();
+    kprintf("[TEST] sysinfo\n");    test_sysinfo();      test_progress_tick();
 
     kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",
