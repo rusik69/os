@@ -64,6 +64,12 @@ struct tcp_conn {
     uint64_t last_send_tick;        /* tick when segment was last sent/retransmitted */
     uint8_t  retrans_count;         /* number of retransmit attempts so far */
     uint16_t rto;                   /* retransmit timeout in ticks (100 = 1 s) */
+    /* Keepalive */
+    int      keepalive;             /* 1 = send keepalive probes */
+    uint64_t last_activity_tick;    /* last data rx/tx tick (for keepalive) */
+    uint16_t keepalive_interval;    /* ticks between keepalive probes (default ~5s=500) */
+    uint8_t  keepalive_probes;      /* probes sent without reply */
+    uint8_t  keepalive_probes_max;  /* max probes before disconnect (default 3) */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];

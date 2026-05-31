@@ -59,6 +59,17 @@ void scheduler_init(void) {
      * This function ensures the BSP's scheduler is marked enabled. */
     struct cpu_info *ci = this_cpu();
     ci->scheduler_enabled = 1;
+
+    /* Sync the per-CPU current_process pointer.
+     * process_init() set the global 'current_process' to &process_table[0]
+     * (the boot/idle process), but smp_init_bsp() then cleared the
+     * per-CPU copy to NULL.  Without this, scheduler_tick() sees NULL
+     * via ci->current_process and returns immediately — no quantum is
+     * assigned and schedule() is never called, so test tasks (and any
+     * other process) never get to run. */
+    if (!ci->current_process) {
+        ci->current_process = process_get_current();
+    }
 }
 
 /* ── Add process to its CPU's runqueue ──────────────────────────────── */
@@ -400,4 +411,20 @@ void scheduler_wake_sleepers(void) {
     }
 
     spinlock_irqsave_release(&sched_lock, irq_flags);
+}
+
+/* ── Scheduler statistics ────────────────────────────────────── */
+
+static struct sched_stats sched_stats_data;
+
+void scheduler_stats_inc_ctx_switch(void) { sched_stats_data.context_switches++; }
+void scheduler_stats_inc_preempt(void)    { sched_stats_data.preemptions++; }
+void scheduler_stats_inc_yield(void)      { sched_stats_data.yields++; }
+
+void scheduler_get_stats(struct sched_stats *stats) {
+    if (!stats) return;
+    stats->context_switches = sched_stats_data.context_switches;
+    stats->preemptions = sched_stats_data.preemptions;
+    stats->yields = sched_stats_data.yields;
+    stats->idle_ticks_total = sched_stats_data.idle_ticks_total;
 }

@@ -43,8 +43,23 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
          src/kernel/apic.c \
+         src/kernel/cmdline.c \
          src/kernel/smp.c \
          src/kernel/cpu.c \
+         src/kernel/oom.c \
+         src/kernel/rcu.c \
+         src/kernel/aslr.c \
+         src/kernel/seccomp.c \
+         src/kernel/sysrq.c \
+         src/kernel/panic.c \
+         src/kernel/nmi_watchdog.c \
+         src/kernel/lockdep.c \
+         src/kernel/timers.c \
+         src/kernel/workqueue.c \
+         src/kernel/idr.c \
+         src/kernel/rng.c \
+         src/kernel/fsnotify.c \
+         src/kernel/module.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \
@@ -66,6 +81,7 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/vmm.c \
          src/memory/heap.c \
          src/memory/slab.c \
+         src/memory/compaction.c \
          src/process/process.c \
          src/process/scheduler.c \
          src/process/signal.c \
@@ -78,6 +94,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/fs.c \
          src/fs/procfs.c \
          src/fs/devfs.c \
+         src/fs/tmpfs.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
          src/fs/bufcache.c \
@@ -94,6 +111,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/virtio_blk.c \
          src/drivers/ac97.c \
          src/drivers/ramdisk.c \
+         src/drivers/watchdog.c \
          src/ipc/mutex.c \
          src/ipc/semaphore.c \
          src/ipc/waitqueue.c \

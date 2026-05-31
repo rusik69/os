@@ -25,6 +25,7 @@ struct bc_entry {
     uint8_t       dirty;         /* 1 = modified, needs write-back */
     uint8_t       lru_node;      /* index of this entry in LRU list */
     int16_t       hash_next;     /* next entry in hash bucket chain (-1 = end) */
+    uint16_t      access_count;  /* access frequency counter (for working-set est.) */
     uint8_t       data[SECT_SIZE]; /* cached sector data (512 bytes) */
 };
 
@@ -49,6 +50,15 @@ static spinlock_t g_bc_lock;
 static int g_hits = 0;
 static int g_misses = 0;
 static int g_writes = 0;
+
+/* Enhanced stats */
+static uint64_t g_total_accesses = 0;
+static uint64_t g_evictions = 0;
+static uint64_t g_dirty_forced_writes = 0;
+
+/* Working-set estimation: track access frequency per entry */
+#define WS_DECAY_SHIFT 4  /* exponential decay factor */
+static uint32_t g_ws_est = 0;  /* working set estimate (active entries count) */
 
 /* ── Forward declarations ───────────────────────────────────────────── */
 static void lru_touch(int16_t idx);
@@ -185,9 +195,12 @@ static int16_t evict_one(void) {
     /* Write dirty data back */
     blockdev_write_sectors(e->dev_id, (uint32_t)e->lba, 1, e->data);
     g_writes++;
+    g_dirty_forced_writes++;
 
     e->valid = 0;
     e->dirty = 0;
+    e->access_count = 0;  /* reset on eviction */
+    g_evictions++;
     return idx;
 }
 
@@ -200,6 +213,7 @@ static int cache_fill(int16_t idx, uint64_t lba, uint8_t dev_id) {
     e->dev_id = dev_id;
     e->valid = 1;
     e->dirty = 0;
+    e->access_count = 1;  /* first access */
 
     /* Read from disk */
     if (blockdev_read_sectors(dev_id, (uint32_t)lba, 1, e->data) != 0) {
@@ -227,14 +241,20 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
     /* Check cache */
     int16_t idx = hash_lookup(lba, dev_id);
     if (idx >= 0) {
-        /* Cache hit — touch LRU and return data pointer */
+        /* Cache hit — touch LRU, increment access count, and return data pointer */
         lru_touch(idx);
         g_hits++;
+        g_total_accesses++;
+        g_entries[idx].access_count++;
+        /* Update working set estimate */
+        if (g_entries[idx].access_count > g_ws_est)
+            g_ws_est = (g_ws_est + 1) * 2;
         spinlock_irqsave_release(&g_bc_lock, irq_flags);
         return g_entries[idx].data;
     }
 
     g_misses++;
+    g_total_accesses++;
 
     /* Cache miss — need to fill */
     int16_t victim;
@@ -298,6 +318,9 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
         memcpy(e->data, data, SECT_SIZE);
         e->dirty = 1;
         lru_touch(idx);
+        g_writes++;
+        g_total_accesses++;
+        e->access_count++;
         spinlock_irqsave_release(&g_bc_lock, irq_flags);
         return 0;
     }
@@ -380,5 +403,17 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
         g_count--;
     }
 
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+}
+
+/* Enhanced stats */
+void bufcache_stats_ex(uint64_t *total_accesses, uint64_t *evictions,
+                        uint64_t *dirty_forced_writes, uint32_t *ws_est) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+    if (total_accesses)       *total_accesses       = g_total_accesses;
+    if (evictions)            *evictions            = g_evictions;
+    if (dirty_forced_writes)  *dirty_forced_writes  = g_dirty_forced_writes;
+    if (ws_est)               *ws_est               = g_ws_est;
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
 }

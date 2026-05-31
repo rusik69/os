@@ -2,6 +2,7 @@
 #include "vga.h"
 #include "serial.h"
 #include "string.h"
+#include "timer.h"
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
@@ -56,6 +57,24 @@ int kprintf_dmesg(char *buf, int max) {
 void kprintf_dmesg_clear(void) {
     dmesg_pos = 0;
     dmesg_full = 0;
+}
+
+/* ── Ratelimited printing ────────────────────────────────────────────── */
+
+static uint64_t g_ratelimit_last_tick = 0;
+
+int kprintf_ratelimited(const char *fmt, ...) {
+    uint64_t now = timer_get_ticks();
+    if (now - g_ratelimit_last_tick < TIMER_FREQ) {
+        return 0; /* suppressed */
+    }
+    g_ratelimit_last_tick = now;
+
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = vkprintf(fmt, ap);
+    va_end(ap);
+    return ret;
 }
 
 /* Flush the dmesg ring buffer directly to serial in small chunks.

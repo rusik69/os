@@ -49,12 +49,52 @@ struct fadt {
     uint32_t pm1b_evt_blk;
     uint32_t pm1a_cnt_blk;   /* PM1a control block port */
     uint32_t pm1b_cnt_blk;
-    /* ... rest of FADT; we only need pm1a_cnt_blk */
+    uint32_t pm1a_evt_blk_len;
+    uint32_t pm1b_evt_blk_len;
+    uint32_t pm2_cnt_blk;
+    uint32_t pm_tmr_blk;
+    uint32_t gpe0_blk;
+    uint32_t gpe1_blk;
+    uint8_t  pm1_evt_len;
+    uint8_t  pm1_cnt_len;
+    uint8_t  pm2_cnt_len;
+    uint8_t  pm_tmr_len;
+    uint8_t  gpe0_blk_len;
+    uint8_t  gpe1_blk_len;
+    uint8_t  gpe1_base;
+    uint8_t  _cst_cnt;
+    uint16_t p_lvl2_lat;
+    uint16_t p_lvl3_lat;
+    uint16_t flush_size;
+    uint16_t flush_stride;
+    uint8_t  duty_offset;
+    uint8_t  duty_width;
+    uint8_t  day_alrm;
+    uint8_t  mon_alrm;
+    uint8_t  century;
+    uint16_t iapc_boot_arch;
+    uint8_t  _flags2;
+    uint8_t  _res3[3];
+    /* Reset register (Generic Address Structure) — 12 bytes */
+    uint8_t  reset_reg_addr_space;
+    uint8_t  reset_reg_bit_width;
+    uint8_t  reset_reg_bit_offset;
+    uint8_t  reset_reg_access_size;
+    uint64_t reset_reg_address;
+    uint8_t  reset_value;
+    /* ... rest of FADT */
 } __attribute__((packed));
 
 static uint16_t pm1a_cnt = 0;    /* PM1a control port */
 static uint16_t slp_typa = 0;    /* SLP_TYP_a for S5 */
 static int acpi_ready = 0;
+
+/* Reset register state */
+static int reset_reg_available = 0;
+static uint8_t reset_reg_addr_space = 0;
+static uint8_t reset_reg_access_size = 0;
+static uint64_t reset_reg_address = 0;
+static uint8_t reset_value = 0;
 
 static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
     for (uint64_t addr = start; addr < end; addr += 16) {
@@ -115,6 +155,18 @@ void acpi_init(void) {
     pm1a_cnt = (uint16_t)fadt->pm1a_cnt_blk;
     acpi_ready = 1;
 
+    /* Parse reset register from FADT */
+    if (fadt->reset_reg_address != 0) {
+        reset_reg_available = 1;
+        reset_reg_addr_space = fadt->reset_reg_addr_space;
+        reset_reg_access_size = fadt->reset_reg_access_size;
+        reset_reg_address = fadt->reset_reg_address;
+        reset_value = fadt->reset_value;
+        kprintf("[OK] ACPI: Reset register at 0x%llx (space=%u, val=0x%x)\n",
+                (unsigned long long)reset_reg_address,
+                (uint32_t)reset_reg_addr_space, (uint32_t)reset_value);
+    }
+
     /* Try to find S5 sleep type from DSDT (simplified: try common values) */
     /* On QEMU, SLP_TYPa for S5 is typically 0x07: write (7<<10)|SLP_EN */
     slp_typa = 0x07;  /* QEMU default */
@@ -136,4 +188,38 @@ void acpi_shutdown(void) {
 
     /* If we're still here, halt */
     __asm__ volatile("cli; hlt");
+}
+
+int acpi_find_reset_register(void) {
+    return reset_reg_available;
+}
+
+void acpi_reboot(void) {
+    if (reset_reg_available) {
+        kprintf("ACPI: Using reset register\n");
+        if (reset_reg_addr_space == 1) {
+            /* System I/O space */
+            switch (reset_reg_access_size) {
+                case 1: outb((uint16_t)reset_reg_address, reset_value); break;
+                case 2: outw((uint16_t)reset_reg_address, reset_value); break;
+                case 3: outl((uint16_t)reset_reg_address, reset_value); break;
+                default: outb((uint16_t)reset_reg_address, reset_value); break;
+            }
+        } else if (reset_reg_addr_space == 0) {
+            /* Memory space — must map and write */
+            uint64_t *reset_ptr = (uint64_t *)PHYS_TO_VIRT(reset_reg_address);
+            *((volatile uint8_t *)reset_ptr) = reset_value;
+        }
+    }
+
+    /* Fallback: try keyboard controller reset */
+    outb(0x64, 0xFE);
+
+    /* Bochs/QEMU-specific */
+    outw(0x604, 0x2000);
+    outw(0xB004, 0x2000);
+
+    kprintf("ACPI: Reboot failed, halting\n");
+    cli();
+    for (;;) hlt();
 }

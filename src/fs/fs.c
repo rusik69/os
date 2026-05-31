@@ -629,6 +629,14 @@ int fs_stat_mtime(const char *path) {
     return (int)inodes[idx].mtime;
 }
 
+int fs_set_mtime(const char *path, uint32_t mtime) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    inodes[idx].mtime = mtime;
+    save_inodes();
+    return 0;
+}
+
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
     if (idx < 0) return -1;

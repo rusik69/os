@@ -278,16 +278,15 @@ struct process *process_create(void (*entry)(void), const char *name) {
     }
     if (!proc) return NULL;
 
-    /* Enforce RLIMIT_NPROC: count children of the current process */
+    /* Enforce RLIMIT_NPROC: check total process count */
     struct process *cur = process_get_current();
     if (cur) {
-        int child_count = 0;
+        int total_count = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
-            if (process_table[i].state != PROCESS_UNUSED &&
-                process_table[i].parent_pid == cur->pid)
-                child_count++;
+            if (process_table[i].state != PROCESS_UNUSED)
+                total_count++;
         }
-        if ((uint64_t)child_count >= cur->rlim_cur[RLIMIT_NPROC])
+        if ((uint64_t)total_count >= cur->rlim_cur[RLIMIT_NPROC])
             return NULL;
     }
 
@@ -466,6 +465,19 @@ static void process_wake_waiter(uint32_t pid) {
 }
 
 void process_exit(void) {
+    /* Send SIGCHLD to parent */
+    struct process *parent = process_get_by_pid(current_process->parent_pid);
+    if (parent) {
+        struct siginfo info;
+        info.si_signo = SIGCHLD;
+        info.si_errno = 0;
+        info.si_code  = CLD_EXITED;
+        info.si_pid   = current_process->pid;
+        info.si_uid   = current_process->uid;
+        info.si_addr  = NULL;
+        info.si_status = 0;
+        signal_send_info(parent->pid, SIGCHLD, &info);
+    }
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = 0;
     scheduler_remove(current_process);
@@ -489,6 +501,12 @@ void process_exit_code(int code) {
     current_process->exit_code = code;
     scheduler_remove(current_process);
     process_wake_waiter(current_process->pid);
+
+    /* CLONE_CHILD_CLEARTID: write 0 to userspace CTID pointer and futex-wake */
+    if (current_process->ctid_ptr && current_process->is_user) {
+        volatile uint32_t *ctid = (volatile uint32_t *)current_process->ctid_ptr;
+        *ctid = 0;
+    }
     /* Send SIGCHLD to parent with siginfo */
     struct process *parent = process_get_by_pid(current_process->parent_pid);
     if (parent) {
@@ -510,6 +528,30 @@ struct process *process_get_current(void) {
     struct process *proc = get_current_process();
     if (!proc) return current_process;
     return proc;
+}
+
+/* ── Process credential API ─────────────────────────────────── */
+
+int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
+                     uint32_t *euid, uint32_t *egid) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (uid)  *uid  = p->uid;
+    if (gid)  *gid  = p->gid;
+    if (euid) *euid = p->euid;
+    if (egid) *egid = p->egid;
+    return 0;
+}
+
+int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
+                     uint32_t euid, uint32_t egid) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+    p->uid  = uid;
+    p->gid  = gid;
+    p->euid = euid;
+    p->egid = egid;
+    return 0;
 }
 
 /*
@@ -815,4 +857,29 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
         proc->cpu_affinity = 0; /* any CPU */
 
     return proc;
+}
+
+/* ── process_is_kthread / process_set_user_process ──────────── */
+
+int process_is_kthread(struct process *proc) {
+    if (!proc) return 0;
+    return (proc->is_user == 0 && proc->pid > 0);
+}
+
+int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4) {
+    struct process *proc = process_get_current();
+    if (!proc) return -1;
+
+    /* Can only convert kernel threads to user processes */
+    if (proc->is_user) return -1;  /* already a user process */
+
+    proc->is_user = 1;
+    proc->user_entry = entry;
+    proc->user_rsp = stack;
+    proc->pml4 = pml4;
+
+    /* Update capability profile for user execution */
+    process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
+
+    return 0;
 }

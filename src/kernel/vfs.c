@@ -5,6 +5,8 @@
 #include "printf.h"
 #include "process.h"
 #include "heap.h"
+#include "signal.h"
+#include "syscall.h"
 
 extern struct vfs_ops procfs_ops;
 extern struct vfs_ops devfs_ops;
@@ -197,6 +199,26 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->write) return -1;
+
+    /* Enforce RLIMIT_FSIZE: check if write would exceed file size limit */
+    struct process *proc = process_get_current();
+    if (proc) {
+        /* Get the existing file size (if any) and check the new total */
+        struct vfs_stat st;
+        uint32_t existing_size = 0;
+        if (vfs_stat(ap, &st) == 0) {
+            existing_size = st.size;
+        }
+        uint64_t new_total = (uint64_t)existing_size + size;
+        if (new_total > proc->rlim_cur[RLIMIT_FSIZE]) {
+            kprintf("RLIMIT_FSIZE: write would exceed %llu bytes\n",
+                    (unsigned long long)proc->rlim_cur[RLIMIT_FSIZE]);
+            /* Send SIGXFSZ */
+            signal_send(proc->pid, SIGXFSZ);
+            return -1;
+        }
+    }
+
     return m->ops->write(m->priv, ap, data, size);
 }
 

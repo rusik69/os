@@ -17,6 +17,18 @@ void scheduler_tick(int was_user);  /* called each timer tick; handles time-slic
 void scheduler_age(void);   /* called periodically; boosts starved processes */
 uint64_t scheduler_get_idle_ticks(void);
 
+/* Scheduler statistics */
+struct sched_stats {
+    uint64_t context_switches;
+    uint64_t preemptions;
+    uint64_t yields;
+    uint64_t idle_ticks_total;
+};
+void scheduler_get_stats(struct sched_stats *stats);
+void scheduler_stats_inc_ctx_switch(void);
+void scheduler_stats_inc_preempt(void);
+void scheduler_stats_inc_yield(void);
+
 extern void context_switch(struct cpu_context **old, struct cpu_context *new_ctx);
 
 #endif

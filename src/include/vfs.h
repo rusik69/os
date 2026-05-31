@@ -40,6 +40,10 @@ struct vfs_ops {
     int (*unlink)(void *priv, const char *path);
     /* List directory: calls kprintf per entry; returns 0 or <0 */
     int (*readdir)(void *priv, const char *path);
+    /* Optional: get directory entry names */
+    int (*readdir_names)(void *priv, const char *path, char names[][64], int max);
+    /* Optional: truncate file */
+    int (*truncate)(void *priv, const char *path, uint32_t len);
 };
 
 /* A mounted filesystem */

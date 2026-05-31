@@ -2,6 +2,28 @@
 #define WAITQUEUE_H
 
 #include "types.h"
+
+/* wait_event: atomically check condition and sleep until woken */
+#define wait_event(wq, condition) do { \
+    while (!(condition)) { \
+        wait_queue_sleep(&(wq)); \
+    } \
+} while(0)
+
+#define wait_event_timeout(wq, condition, timeout_ticks) ({ \
+    int __ret = 0; \
+    uint64_t __start = 0; \
+    extern uint64_t timer_get_ticks(void); \
+    __start = timer_get_ticks(); \
+    while (!(condition)) { \
+        if (timeout_ticks > 0 && (timer_get_ticks() - __start) >= (timeout_ticks)) { \
+            __ret = -1; \
+            break; \
+        } \
+        wait_queue_sleep(&(wq)); \
+    } \
+    __ret; \
+})
 #include "spinlock.h"
 #include "process.h"
 

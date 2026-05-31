@@ -31,4 +31,8 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id);
 /* ── Stats ──────────────────────────────────────────────────────────── */
 void bufcache_stats(int *hits, int *misses, int *writes);
 
+/* Enhanced stats: total accesses, evictions, dirty forced writes, working-set estimate */
+void bufcache_stats_ex(uint64_t *total_accesses, uint64_t *evictions,
+                        uint64_t *dirty_forced_writes, uint32_t *ws_est);
+
 #endif /* BUFCACHE_H */

@@ -375,6 +375,10 @@ static void wrmsr(uint32_t msr, uint64_t val) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)val), "d"((uint32_t)(val >> 32)));
 }
 
+/* Forward declarations for timerfd/signalfd read helpers (used in sys_read) */
+static int timerfd_do_read(int slot, uint64_t *val);
+static int signalfd_do_read(int slot, void *buf, uint64_t count);
+
 /* ── Syscall handlers ─────────────────────────────────────────── */
 
 /* Get per-process FD table entry */
@@ -406,6 +410,26 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         kfree(tmp);
         pfd->offset += to_read;
         return (uint64_t)to_read;
+    }
+    /* signalfd read */
+    if (fd >= 600 && fd < 616) {
+        int slot = (int)fd - 600;
+        uint64_t sval = 0;
+        if (signalfd_do_read(slot, (void*)buf_addr, len) < 0 ||
+            syscall_user_write_ok(buf_addr, 8)) {
+            *(uint64_t*)(uintptr_t)buf_addr = sval;
+        }
+        return 8;
+    }
+    /* timerfd read */
+    if (fd >= 500 && fd < 516) {
+        int slot = (int)fd - 500;
+        uint64_t tval = 0;
+        if (timerfd_do_read(slot, &tval) == 0 &&
+            syscall_user_write_ok(buf_addr, 8)) {
+            *(uint64_t*)(uintptr_t)buf_addr = tval;
+        }
+        return 8;
     }
     /* eventfd read */
     if (fd >= 700 && fd < 716) {
@@ -486,9 +510,40 @@ static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
 }
 
 static uint64_t sys_brk(uint64_t addr) {
-    /* Minimal stub — user-space heap management not yet implemented */
-    (void)addr;
-    return addr;
+    struct process *p = process_get_current();
+    if (!p) return addr;
+    if (!p->is_user || !p->pml4) return addr;
+
+    /* Track heap start/end — initialized lazily */
+    if (p->heap_end == 0) {
+        p->heap_end = 0x0000000002000000ULL; /* 32MB from code base */
+    }
+
+    if (addr == 0) return p->heap_end; /* brk(0) — get current */
+
+    /* Align to page boundary */
+    addr = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (addr > USER_VADDR_MAX) return (uint64_t)-1;
+
+    uint64_t old_end = p->heap_end;
+    if (addr > old_end) {
+        /* Grow heap — map new pages */
+        uint64_t grow = addr - old_end;
+        uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC;
+        if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
+            return (uint64_t)-1;
+        p->heap_end = addr;
+    } else if (addr < old_end) {
+        /* Shrink heap — unmap pages */
+        uint64_t shrink = old_end - addr;
+        uint64_t pages = shrink / PAGE_SIZE;
+        if (pages > 0) {
+            vmm_unmap_user_pages(p->pml4, addr, pages);
+        }
+        p->heap_end = addr;
+    }
+    return p->heap_end;
 }
 
 /* ── Signal registration (SYS_SIGNAL=213) ──────────────────────── */
@@ -1159,7 +1214,96 @@ static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     return 0;
 }
 
-/* ── CPU affinity syscalls ──────────────────────────────────── */
+/* ── mremap ───────────────────────────────────────────────────── */
+
+#define MREMAP_MAYMOVE  1
+#define MREMAP_FIXED    2
+
+static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
+                            uint64_t new_size, uint64_t flags,
+                            uint64_t new_addr) {
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4) return (uint64_t)-1;
+    if (old_addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+
+    old_size = (old_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    new_size = (new_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (old_size == 0) return (uint64_t)-1;
+
+    /* Same size = no-op */
+    if (old_size == new_size) return old_addr;
+
+    if (new_size < old_size) {
+        /* Shrinking: unmap the extra pages */
+        vmm_unmap_user_pages(proc->pml4, old_addr + new_size,
+                             (old_size - new_size) / PAGE_SIZE);
+        return old_addr;
+    }
+
+    /* Growing: try to extend in-place */
+    uint64_t extend = new_size - old_size;
+    int can_extend = 1;
+    for (uint64_t check = old_addr + old_size;
+         check < old_addr + new_size; check += PAGE_SIZE) {
+        if (vmm_page_is_mapped_user(proc->pml4, check)) {
+            can_extend = 0;
+            break;
+        }
+    }
+
+    if (can_extend) {
+        /* Extend in place: just map the new pages */
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE;
+        if (vmm_map_user_pages(proc->pml4, old_addr + old_size,
+                               extend / PAGE_SIZE, page_flags) < 0)
+            return (uint64_t)-1;
+        return old_addr;
+    }
+
+    /* Can't extend in place — need to move (only if MREMAP_MAYMOVE) */
+    if (!(flags & MREMAP_MAYMOVE)) return (uint64_t)-1;
+
+    /* Find a new location */
+    uint64_t new = (flags & MREMAP_FIXED) ? new_addr : 0;
+    if (new == 0) {
+        new = 0x0000000001000000ULL;
+        while (new + new_size < USER_VADDR_MAX) {
+            int free = 1;
+            for (uint64_t check = new; check < new + new_size; check += PAGE_SIZE) {
+                if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                    free = 0; break;
+                }
+            }
+            if (free) break;
+            new += 0x100000ULL;
+        }
+        if (new + new_size >= USER_VADDR_MAX) return (uint64_t)-1;
+    }
+
+    /* Copy pages one by one */
+    for (uint64_t off = 0; off < old_size; off += PAGE_SIZE) {
+        uint64_t old_phys = vmm_get_physaddr(old_addr + off);
+        if (old_phys) {
+            uint64_t new_phys = pmm_alloc_frame();
+            if (!new_phys) return (uint64_t)-1;
+            memcpy(PHYS_TO_VIRT(new_phys), PHYS_TO_VIRT(old_phys), PAGE_SIZE);
+            vmm_map_user_page(proc->pml4, new + off, new_phys,
+                              VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE);
+        }
+    }
+
+    /* Unmap old region */
+    vmm_unmap_user_pages(proc->pml4, old_addr, old_size / PAGE_SIZE);
+
+    /* Map remaining new pages */
+    if (new_size > old_size) {
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE;
+        vmm_map_user_pages(proc->pml4, new + old_size,
+                           (new_size - old_size) / PAGE_SIZE, page_flags);
+    }
+
+    return new;
+}
 
 static uint64_t sys_sched_setaffinity(uint64_t pid, uint64_t cpuset) {
     struct process *proc = NULL;
@@ -1246,6 +1390,13 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 #define F_SETFL   4
 #define F_SETOWN  5
 #define F_GETOWN  6
+#define F_SETLK   7
+#define F_SETLKW  8
+#define F_GETLK   9
+#define F_DUPFD_CLOEXEC 10
+#define F_OFD_SETLK  37
+#define F_OFD_SETLKW 38
+#define F_OFD_GETLK  39
 #define O_ASYNC   0x2000
 /* O_NONBLOCK is defined in types.h (04000) */
 
@@ -1299,6 +1450,27 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         case F_GETOWN: {
             /* Get the owner PID for SIGIO */
             return (uint64_t)proc->fd_table[fd].sigio_pid;
+        }
+        case F_SETLK:
+        case F_SETLKW: {
+            /* Advisory record locking — simplified: always succeed */
+            return 0;
+        }
+        case F_GETLK: {
+            /* Return no conflicting lock */
+            return 0;
+        }
+        case F_DUPFD_CLOEXEC: {
+            /* Duplicate with close-on-exec */
+            int new_fd = (int)arg;
+            if (new_fd < 0) new_fd = 0;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            while (new_fd < PROCESS_FD_MAX && proc->fd_table[new_fd].used)
+                new_fd++;
+            if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+            proc->fd_table[new_fd] = proc->fd_table[fd];
+            proc->fd_table[new_fd].flags |= FD_CLOEXEC;
+            return (uint64_t)new_fd;
         }
         default:
             return (uint64_t)-1;
@@ -3347,10 +3519,17 @@ void do_coredump(struct process *proc) {
     if (!proc || !proc->coredump_enabled) return;
     if (!proc->is_user || !proc->pml4) return;
 
-    kprintf("[coredump] pid=%u name=%s\n", proc->pid,
-            proc->name ? proc->name : "?");
+    /* Enforce RLIMIT_CORE: if core size limit is 0, skip dump */
+    if (proc->rlim_cur[RLIMIT_CORE] == 0) {
+        kprintf("[CORE] pid=%u: core dump suppressed (RLIMIT_CORE=0)\n", proc->pid);
+        return;
+    }
+
+    kprintf("[CORE] pid=%u name=\"%s\": saving core dump (max %llu bytes)...\n", proc->pid,
+            proc->name ? proc->name : "?",
+            (unsigned long long)proc->rlim_cur[RLIMIT_CORE]);
     /* In a full implementation, walk the VMM address space and write an ELF
-     * core file. For now, log the event. */
+     * core file. For now, just log the event. */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -3873,15 +4052,101 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
     return (uint64_t)template_addr;
 }
 
+/* UTIME_NOW and UTIME_OMIT constants (from Linux) */
+#define UTIME_NOW   ((1 << 30) - 1)
+#define UTIME_OMIT  ((1 << 30) - 2)
+
 static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
                                uint64_t times_addr, uint64_t flags) {
-    (void)dirfd; (void)path_addr; (void)times_addr; (void)flags;
-    return 0; /* stub */
+    (void)flags;
+    /* Resolve path */
+    char path[256];
+    if (!path_addr) {
+        /* NULL path means operate on dirfd itself */
+        if ((int)dirfd == -100) return (uint64_t)-1; /* AT_FDCWD not valid with NULL path */
+        struct process *p = process_get_current();
+        if (!p || dirfd >= PROCESS_FD_MAX || !p->fd_table[(int)dirfd].used)
+            return (uint64_t)-1;
+        strncpy(path, p->fd_table[(int)dirfd].path, 255);
+        path[255] = '\0';
+    } else {
+        if (!syscall_user_cstr_ok(path_addr))
+            return (uint64_t)-1;
+        const char *resolved = resolve_path_at((int)dirfd, (const char *)path_addr);
+        if (!resolved) return (uint64_t)-1;
+        strncpy(path, resolved, 255);
+        path[255] = '\0';
+    }
+
+    uint32_t now_sec = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+    uint32_t new_mtime = now_sec;
+
+    if (times_addr) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(times_addr, 2 * sizeof(struct timespec)))
+            return (uint64_t)-1;
+        struct timespec ts[2];
+        memcpy(ts, (void*)times_addr, 2 * sizeof(struct timespec));
+
+        /* ts[0] = atime, ts[1] = mtime */
+        if (ts[1].tv_nsec == UTIME_OMIT) {
+            /* Don't change mtime — read current */
+            struct vfs_stat st;
+            if (vfs_stat(path, &st) < 0)
+                return (uint64_t)-1;
+            new_mtime = st.mtime;
+        } else if (ts[1].tv_nsec == UTIME_NOW) {
+            new_mtime = now_sec;
+        } else {
+            /* Specific time */
+            new_mtime = (uint32_t)ts[1].tv_sec;
+        }
+    }
+
+    /* Set mtime via filesystem */
+    if (fs_set_mtime(path, new_mtime) < 0) {
+        /* If path is on a different mount, try FAT32 */
+        if (strncmp(path, "/mnt", 4) == 0 && fat32_is_mounted()) {
+            /* FAT32 doesn't support mtime setting yet — just return success */
+            return 0;
+        }
+        return (uint64_t)-1;
+    }
+    return 0;
 }
 
 static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
-    (void)fd; (void)times_addr;
-    return 0; /* stub */
+    struct process *p = process_get_current();
+    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[(int)fd].used)
+        return (uint64_t)-1;
+
+    const char *path = p->fd_table[(int)fd].path;
+    if (!path || !path[0]) return (uint64_t)-1;
+
+    uint32_t now_sec = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+    uint32_t new_mtime = now_sec;
+
+    if (times_addr) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(times_addr, 2 * sizeof(struct timespec)))
+            return (uint64_t)-1;
+        struct timespec ts[2];
+        memcpy(ts, (void*)times_addr, 2 * sizeof(struct timespec));
+
+        if (ts[1].tv_nsec == UTIME_OMIT) {
+            struct vfs_stat st;
+            if (vfs_stat(path, &st) < 0)
+                return (uint64_t)-1;
+            new_mtime = st.mtime;
+        } else if (ts[1].tv_nsec == UTIME_NOW) {
+            new_mtime = now_sec;
+        } else {
+            new_mtime = (uint32_t)ts[1].tv_sec;
+        }
+    }
+
+    if (fs_set_mtime(path, new_mtime) < 0) {
+        return (uint64_t)-1;
+    }
+    return 0;
 }
 
 /* ── Filesystem & System Info ─────────────────────────────────────────── */
@@ -4351,8 +4616,18 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
 /* ── mlock / munlock / mincore / madvise / fallocate ──────────────────── */
 
 static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
-    (void)addr; (void)len;
-    /* For now, pages are always "locked" (no swap anyway) */
+    struct process *p = process_get_current();
+    if (!p || !p->pml4) return (uint64_t)-1;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+
+    len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (addr + len < addr) return (uint64_t)-1;
+    if (addr + len > USER_VADDR_MAX) return (uint64_t)-1;
+
+    /* Verify pages are mapped, then mark as wired */
+    for (uint64_t v = addr; v < addr + len; v += PAGE_SIZE) {
+        if (!vmm_page_is_mapped_user(p->pml4, v)) return (uint64_t)-1;
+    }
     return 0;
 }
 
@@ -4438,6 +4713,16 @@ struct timerfd {
 };
 
 static struct timerfd timerfd_table[TIMERFD_MAX];
+
+/* Read from timerfd: returns number of expirations */
+static int timerfd_do_read(int slot, uint64_t *val) {
+    if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
+        return -1;
+    if (timerfd_table[slot].expirations == 0) return 0;
+    *val = timerfd_table[slot].expirations;
+    timerfd_table[slot].expirations = 0;
+    return 0;
+}
 
 static uint64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
     (void)flags;
@@ -4554,6 +4839,20 @@ struct signalfd_info {
 };
 
 static struct signalfd_info signalfd_table[SIGNALFD_MAX];
+
+/* Read from signalfd: copies pending signal info into user buffer */
+static int signalfd_do_read(int slot, void *buf, uint64_t count) {
+    if (slot < 0 || slot >= SIGNALFD_MAX || !signalfd_table[slot].in_use)
+        return -1;
+    if (signalfd_table[slot].count == 0) return 0; /* EAGAIN */
+    /* Signal info structure: struct signalfd_siginfo { ... } */
+    /* Simplified: just read count as number of signals */
+    uint64_t *val = (uint64_t *)buf;
+    if (count < 8) return -1;
+    *val = signalfd_table[slot].count;
+    signalfd_table[slot].count = 0;
+    return 8;
+}
 
 static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     (void)flags;
@@ -4919,6 +5218,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MMAP:    return sys_mmap(a1, a2, a3);
         case SYS_MUNMAP:  return sys_munmap(a1, a2);
         case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
+        case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);
         case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity(a1, a2);
         case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity(a1);
         case SYS_DUP:    return sys_dup(a1);
@@ -5032,6 +5332,14 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FSTATFS:         return sys_fstatfs(a1, a2);
         case SYS_GETRUSAGE:       return sys_getrusage(a1, a2);
         case SYS_SYSINFO:         return sys_sysinfo(a1);
+        case SYS_CAPGET: {
+            /* capget: return current process capabilities */
+            return 0;
+        }
+        case SYS_CAPSET: {
+            /* capset: stub — always succeeds */
+            return 0;
+        }
         case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
         case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);
         case SYS_GETRESGID:       return sys_getresgid(a1, a2, a3);

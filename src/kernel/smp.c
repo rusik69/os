@@ -12,10 +12,14 @@
 #include "process.h"
 #include "scheduler.h"
 #include "signal.h"
+#include "cpuhp.h"
 
 /* ── Per-CPU data ──────────────────────────────────────────────────── */
 struct cpu_info cpu_info_array[SMP_MAX_CPUS] __attribute__((aligned(64)));
 int smp_cpu_count = 1;  /* BSP is always CPU 0 */
+
+/* CPU hotplug state table (defined in cpuhp.h header, storage here) */
+enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
 
 /* ── GS.base accessor ──────────────────────────────────────────────── */
 void smp_set_gs_base(struct cpu_info *info) {
@@ -41,6 +45,9 @@ void smp_init_bsp(void) {
 
     /* Set GS.base to BSP per-CPU struct */
     smp_set_gs_base(bsp);
+
+    /* Initialize CPU hotplug subsystem */
+    cpuhp_init();
 
     kprintf("[OK] Per-CPU data initialized for CPU 0\n");
 }

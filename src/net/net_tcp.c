@@ -538,3 +538,62 @@ void net_tcp_check_retransmit(void) {
         c->cwnd = 1;
     }
 }
+
+/* ── Keepalive check ──────────────────────────────────────────── */
+
+#define KEEPALIVE_INTERVAL_DEFAULT 500
+#define KEEPALIVE_PROBES_MAX_DEFAULT 3
+
+void net_tcp_set_keepalive(int conn_id, int keepalive) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    c->keepalive = keepalive;
+    if (keepalive) {
+        c->keepalive_interval = KEEPALIVE_INTERVAL_DEFAULT;
+        c->keepalive_probes = 0;
+        c->keepalive_probes_max = KEEPALIVE_PROBES_MAX_DEFAULT;
+        c->last_activity_tick = timer_get_ticks();
+    }
+}
+
+int net_tcp_get_keepalive(int conn_id) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    return tcp_conns[conn_id].keepalive;
+}
+
+void net_tcp_check_keepalive(void) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        struct tcp_conn *c = &tcp_conns[i];
+        if (c->state != TCP_ESTABLISHED || !c->keepalive) continue;
+        if (now - c->last_activity_tick >= c->keepalive_interval) {
+            if (c->keepalive_probes >= c->keepalive_probes_max) {
+                c->state = TCP_CLOSED;
+                c->rx_fin = 1;
+                continue;
+            }
+            uint32_t saved_seq = c->our_seq;
+            c->our_seq = c->tx_unacked_seq > 0 ?
+                         c->tx_unacked_seq - 1 : c->our_seq - 1;
+            send_tcp(c, TCP_ACK, NULL, 0);
+            c->our_seq = saved_seq;
+            c->keepalive_probes++;
+            c->last_activity_tick = now;
+        }
+    }
+}
+
+int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -1;
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    if (c->state == TCP_CLOSED) return -1;
+    info->local_port = c->local_port;
+    info->remote_ip = c->remote_ip;
+    info->remote_port = c->remote_port;
+    info->state = (int)c->state;
+    info->cwnd = c->cwnd;
+    info->ssthresh = c->ssthresh;
+    info->last_send_tick = c->last_send_tick;
+    info->retrans_count = c->retrans_count;
+    return 0;
+}

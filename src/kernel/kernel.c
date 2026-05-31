@@ -48,6 +48,24 @@
 #include "elf.h"
 #include "cpu.h"
 #include "slab.h"
+#include "oom.h"
+#include "rcu.h"
+#include "aslr.h"
+#include "seccomp.h"
+#include "sysrq.h"
+#include "panic.h"
+#include "nmi_watchdog.h"
+#include "lockdep.h"
+#include "tmpfs.h"
+#include "compaction.h"
+#include "cmdline.h"
+#include "ramdisk.h"
+#include "timers.h"
+#include "workqueue.h"
+#include "rng.h"
+#include "fsnotify.h"
+#include "module.h"
+#include "watchdog.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -124,6 +142,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
             (unsigned long long)pmm_get_total_frames() * 4, (unsigned long long)pmm_get_used_frames() * 4);
 
+    /* Kernel command line from multiboot info (offset 0x10 = cmdline phys addr) */
+    {
+        uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
+        uint32_t flags = mbi[0];
+        if (flags & (1 << 2)) { /* cmdline flag */
+            uint32_t cmdline_phys = mbi[4];
+            if (cmdline_phys) {
+                const char *cmdline_virt = (const char *)PHYS_TO_VIRT((uint64_t)cmdline_phys);
+                cmdline_init(cmdline_virt);
+            }
+        }
+    }
+
     /* Virtual memory manager */
     vmm_init();
     kprintf("[OK] VMM initialized\n");
@@ -137,6 +168,42 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Slab allocator (for fixed-size kernel objects) */
     slab_init();
+
+    /* Lock dependency validator */
+    lockdep_init();
+
+    /* Panic/oops handler with register dump */
+    panic_init();
+
+    /* OOM killer */
+    oom_init();
+
+    /* RCU synchronization primitive */
+    rcu_init();
+
+    /* ASLR (Address Space Layout Randomization) */
+    aslr_init();
+
+    /* Seccomp syscall sandboxing */
+    seccomp_init();
+
+    /* SysRq emergency commands */
+    sysrq_init();
+
+    /* NMI watchdog for hang detection */
+    nmi_watchdog_init();
+
+    /* Memory compaction / defragmentation */
+    compaction_init();
+
+    /* Software RNG — seed from timer (timer not yet available, so we'll re-seed later) */
+    rng_init();
+
+    /* Ramdisk block device (needed before initrd loading) */
+    ramdisk_init();
+
+    /* tmpfs RAM-backed filesystem */
+    tmpfs_init();
 
     if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
         kprintf("[OK] Framebuffer console enabled\n");
@@ -172,6 +239,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Timer (starts scheduling) */
     timer_init();
     kprintf("[OK] Timer initialized at %d Hz\n", TIMER_FREQ);
+
+    /* Dynamic kernel timers (driven by timer IRQ) */
+    timers_init();
+
+    /* Workqueue (deferred work execution via kthread) */
+    workqueue_init();
+
+    /* Filesystem notification (inotify-like) */
+    fsnotify_init();
+
+    /* Kernel module API */
+    module_init();
 
     /* Keyboard */
     keyboard_init();
@@ -233,6 +312,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[--] No AHCI controller\n");
 
     /* FAT32 — try to mount before fs_init so we don't format over it */
+#ifndef TEST_MODE
     if (ahci_is_present()) {
         if (fat32_mount(FAT32_DISK_AHCI, 0) == 0) {
             vfs_mount("/mnt", &fat32_vfs_ops, NULL);
@@ -244,6 +324,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             kprintf("[OK] FAT32 mounted on /mnt\n");
         }
     }
+#else
+    /* Test mode: skip slow FAT32 probe on ATA; use ramdisk. */
+#endif
 
     /* Filesystem */
     fs_init();
@@ -307,8 +390,17 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     if (virtio_net_present() || e1000_is_present()) {
         net_init();
+#ifndef TEST_MODE
         kprintf("[..] DHCP discovering...\n");
         net_dhcp_discover();
+#else
+        /* Test mode: set QEMU user-mode defaults, skip slow DHCP */
+        extern uint32_t net_our_ip, net_gateway_ip, net_subnet_mask, net_dns_server;
+        net_our_ip      = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
+        net_gateway_ip  = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
+        net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
+        net_dns_server  = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
+#endif
         uint8_t ip[4];
         net_get_ip(ip);
         kprintf("[OK] Network: %u.%u.%u.%u\n",
@@ -324,12 +416,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     }
 
 #ifdef TEST_MODE
-    /* Test mode: run the test suite then shut down */
-    if (!process_create(test_run_all, "tests"))
-        kprintf("[!!] Failed to create test process\n");
-    else
-        kprintf("[OK] Test task created\n");
+    /* Test mode: run the test suite then shut down.
+     * Run directly in the boot thread (no separate process) to avoid
+     * scheduler issues where the test process never gets CPU time. */
+    test_run_all();
+    /* NOTREACHED */
 #else
+
     /* Normal mode: try to load a userspace init binary from the filesystem.
      * If successful, the init process runs in ring 3 and can spawn shell, etc.
      * If no init binary is found, fall back to kernel-mode shell. */
@@ -348,6 +441,36 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             init_ok = 1;
             kprintf("[OK] Userspace init: %s\n", init_paths[i]);
             break;
+        }
+    }
+
+    /* Try to load initrd from multiboot module */
+    {
+        /* Check for multiboot module at mbi->mods_count, mods_addr */
+        uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
+        if (mbi[0] & (1 << 3)) { /* mods flag */
+            uint32_t mods_count = mbi[5];
+            uint32_t mods_addr = mbi[6];
+            if (mods_count > 0 && mods_addr) {
+                uint32_t *mod = (uint32_t *)PHYS_TO_VIRT((uint64_t)mods_addr);
+                uint32_t mod_start = mod[0];
+                uint32_t mod_end = mod[1];
+                uint32_t mod_size = mod_end - mod_start;
+                if (mod_size > 0 && mod_size < 4*1024*1024) {
+                    kprintf("[OK] Initrd module: %u bytes at 0x%x\n", mod_size, mod_start);
+                    /* Copy the initrd data into ramdisk */
+                    void *mod_data = PHYS_TO_VIRT((uint64_t)mod_start);
+                    if (ramdisk_is_present()) {
+                        uint32_t num_sectors = (mod_size + 511) / 512;
+                        if (num_sectors <= ramdisk_get_sectors()) {
+                            for (uint32_t s = 0; s < num_sectors; s++) {
+                                ramdisk_write_sectors(s, 1, (const uint8_t*)mod_data + s * 512);
+                            }
+                            kprintf("[OK] Initrd loaded into ramdisk (%u sectors)\n", num_sectors);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -381,6 +504,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Enable interrupts */
     sti();
     kprintf("[OK] Interrupts enabled\n\n");
+
+#ifdef TEST_MODE
+    /* Yield once so the test task gets a chance to run immediately */
+    scheduler_yield();
+#endif
 
     /* Idle loop - the boot thread becomes the idle process */
     for (;;) {

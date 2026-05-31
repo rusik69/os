@@ -123,6 +123,27 @@ void net_dhcp_renew_if_needed(void);
 int net_ping(uint32_t target_ip);
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask);
 
+/* Loopback interface */
+int  net_loopback_init(void);
+int  net_loopback_send(const void *data, uint16_t len);
+
+/* TCP keepalive support */
+void net_tcp_set_keepalive(int conn_id, int keepalive);
+int  net_tcp_get_keepalive(int conn_id);
+
+/* TCP connection info for netstat */
+struct tcp_conn_info {
+    uint16_t local_port;
+    uint32_t remote_ip;
+    uint16_t remote_port;
+    int      state;
+    uint32_t cwnd;
+    uint32_t ssthresh;
+    uint64_t last_send_tick;
+    uint8_t  retrans_count;
+};
+int net_tcp_get_info(int conn_id, struct tcp_conn_info *info);
+
 /* Callbacks for TCP data - called by net stack */
 typedef void (*tcp_data_handler)(int conn_id, const void *data, uint16_t len);
 typedef void (*tcp_connect_handler)(int conn_id);
@@ -145,6 +166,11 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
  * connection on a port registered with net_tcp_listen(..., NULL, NULL, NULL).
  * Returns conn_id >= 0, or -1 on timeout / error. */
 int net_tcp_accept(uint16_t port, int timeout_ticks);
+
+/* DNS caching */
+void net_dns_cache_set(const char *hostname, uint32_t ip);
+uint32_t net_dns_cache_get(const char *hostname);
+void net_dns_cache_clear(void);
 
 /* UDP send */
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,

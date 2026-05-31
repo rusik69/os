@@ -182,4 +182,41 @@ void cmd_sync(void);
 void cmd_unexpand(const char *args);
 void cmd_bt(void);
 
+/* Phase 8 — new shell commands */
+void cmd_cmp(const char *args);
+void cmd_dirname(const char *args);
+void cmd_groups(const char *args);
+void cmd_link(const char *args);
+void cmd_mknod(const char *args);
+void cmd_nohup(const char *args);
+void cmd_printenv(const char *args);
+void cmd_realpath(const char *args);
+void cmd_rmdir(const char *args);
+void cmd_shred(const char *args);
+void cmd_truncate(const char *args);
+void cmd_tty(const char *args);
+void cmd_unlink(const char *args);
+void cmd_chgrp(const char *args);
+void cmd_hostid(const char *args);
+void cmd_arch(const char *args);
+void cmd_factor(const char *args);
+void cmd_fmt(const char *args);
+void cmd_mktemp(const char *args);
+void cmd_pathchk(const char *args);
+void cmd_size(const char *args);
+void cmd_chrt(const char *args);
+void cmd_taskset(const char *args);
+void cmd_clear(const char *args);
+
+/* Phase 9 — new shell commands */
+void cmd_dd(const char *args);
+void cmd_cksum(const char *args);
+void cmd_mkfifo(const char *args);
+void cmd_logger(const char *args);
+void cmd_mesg(const char *args);
+void cmd_nproc(const char *args);
+void cmd_pinky(const char *args);
+void cmd_tset(const char *args);
+void cmd_reset(const char *args);
+
 #endif

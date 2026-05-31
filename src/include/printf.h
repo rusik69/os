@@ -12,6 +12,7 @@ void kprintf_flush(void);
 int kprintf_dmesg(char *buf, int max);
 void kprintf_dmesg_clear(void);
 void kprintf_dmesg_flush_serial(void);
+int kprintf_ratelimited(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 int vsnprintf(char *buf, size_t n, const char *fmt, __builtin_va_list ap) __attribute__((format(printf, 3, 0)));
 int snprintf(char *buf, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));

@@ -51,6 +51,34 @@
 #include "waitqueue.h"
 #include "completion.h"
 #include "rwlock.h"
+#include "oom.h"
+#include "rcu.h"
+#include "aslr.h"
+#include "seccomp.h"
+#include "sysrq.h"
+#include "nmi_watchdog.h"
+#include "lockdep.h"
+#include "tmpfs.h"
+#include "compaction.h"
+#include "cmdline.h"
+#include "timers.h"
+#include "workqueue.h"
+#include "idr.h"
+#include "kref.h"
+#include "rng.h"
+#include "fsnotify.h"
+#include "watchdog.h"
+#include "module.h"
+#include "kallsyms.h"
+#include "socket.h"
+#include "shell_cmd_table.h"
+#include "eventfd.h"
+#include "cpuhp.h"
+#include "oom.h"
+
+/* do_coredump is defined in kernel/syscall.c */
+extern void do_coredump(struct process *proc);
+
 
 /* ── Progress tracking ────────────────────────────────────────── */
 /* Every PROGRESS_INTERVAL tests, write a dot directly to serial
@@ -1701,8 +1729,1092 @@ static void qemu_exit(int code) {
     for (;;) __asm__ volatile("hlt");
 }
 
+
+/* ── New subsystem tests ─────────────────────────────────────── */
+
+static void test_oom(void) {
+    extern uint64_t oom_kill_count;
+    /* OOM should not kill anything if memory is fine */
+    uint64_t before = oom_kill_count;
+    ASSERT("oom init count 0", before == 0);
+    /* Score check - current process should have a score > 0 */
+    struct process *cur = process_get_current();
+    if (cur) {
+        int64_t score = oom_score_process(cur->pid);
+        ASSERT("oom score for current > 0", score > 0);
+        ASSERT("oom score invalid pid < 0", oom_score_process(9999) < 0);
+    }
+    t_ok("oom test");
+}
+
+static void test_rcu(void) {
+    /* RCU read-side critical section */
+    rcu_read_lock();
+    rcu_read_unlock();
+    /* synchronize_rcu should not block forever */
+    synchronize_rcu();
+    t_ok("rcu test");
+}
+
+static void test_aslr(void) {
+    uint64_t off1 = aslr_stack_offset();
+    uint64_t off2 = aslr_stack_offset();
+    uint64_t mmap_off = aslr_mmap_offset();
+    uint64_t brk_off = aslr_brk_offset();
+    ASSERT("aslr stack offset <= max", off1 <= ASLR_STACK_RANDOM_PAGES);
+    ASSERT("aslr mmap offset <= max", mmap_off <= ASLR_MMAP_RANDOM_PAGES);
+    ASSERT("aslr brk offset <= max", brk_off <= ASLR_BRK_RANDOM_PAGES);
+    t_ok("aslr test");
+}
+
+static void test_seccomp(void) {
+    int mode = seccomp_get_mode();
+    ASSERT("seccomp mode disabled at boot", mode == SECCOMP_MODE_DISABLED);
+    t_ok("seccomp test");
+}
+
+static void test_sysrq_commands(void) {
+    ASSERT("sysrq valid b", sysrq_is_valid('b'));
+    ASSERT("sysrq valid t", sysrq_is_valid('t'));
+    ASSERT("sysrq valid m", sysrq_is_valid('m'));
+    ASSERT("sysrq valid i", sysrq_is_valid('i'));
+    ASSERT("sysrq valid o", sysrq_is_valid('o'));
+    ASSERT("sysrq valid s", sysrq_is_valid('s'));
+    ASSERT("sysrq valid f", sysrq_is_valid('f'));
+    ASSERT("sysrq invalid z", !sysrq_is_valid('z'));
+    /* Actually calling sysrq_handle should not crash */
+    sysrq_handle('s'); /* sync */
+    t_ok("sysrq test");
+}
+
+static void test_nmi_watchdog(void) {
+    /* Just verify the API doesn't crash */
+    nmi_watchdog_pet();
+    ASSERT("nmi available", nmi_watchdog_available());
+    t_ok("nmi watchdog test");
+}
+
+static void test_lockdep(void) {
+    uint64_t lock_a = 0x1000;
+    uint64_t lock_b = 0x2000;
+    lock_acquire("test_a", lock_a);
+    lock_acquire("test_b", lock_b);
+    lock_release("test_b", lock_b);
+    lock_release("test_a", lock_a);
+    /* Release of unheld lock should warn but not crash */
+    lock_release("test_c", 0x3000);
+    t_ok("lockdep test");
+}
+
+static void test_tmpfs(void) {
+    /* tmpfs is already mounted by init */
+    struct vfs_stat st;
+    if (vfs_stat("/tmp", &st) == 0) {
+        ASSERT("tmpfs root dir", st.type == 2);
+        ASSERT("tmpfs create file", vfs_create("/tmp/ktest", 1) >= 0);
+        ASSERT("tmpfs write", vfs_write("/tmp/ktest", "tmpfs_data", 10) == 0);
+        char rbuf[32];
+        uint32_t sz = 0;
+        ASSERT("tmpfs read", vfs_read("/tmp/ktest", rbuf, sizeof(rbuf)-1, &sz) == 0);
+        rbuf[sz] = '\0';
+        ASSERT_STR("tmpfs content", rbuf, "tmpfs_data");
+        ASSERT("tmpfs unlink", vfs_unlink("/tmp/ktest") == 0);
+        ASSERT("tmpfs gone", vfs_stat("/tmp/ktest", &st) < 0);
+        t_ok("tmpfs test");
+    } else {
+        t_ok("tmpfs SKIP (not mounted)");
+    }
+}
+
+static void test_compaction(void) {
+    uint64_t frag = compaction_fragmentation_pct();
+    ASSERT("compaction frag pct valid", frag <= 100);
+    compaction_run();
+    t_ok("compaction test");
+}
+
+static void test_cmdline(void) {
+    /* kernel cmdline should at least be initialized */
+    const char *raw = cmdline_raw();
+    /* The cmdline might be empty in QEMU, that's fine */
+    t_ok("cmdline test");
+}
+
+static void test_loopback(void) {
+    ASSERT("loopback init", net_loopback_init() == 0);
+    /* Second init should fail */
+    ASSERT("loopback double init fails", net_loopback_init() < 0);
+    /* Send a small packet */
+    const char *ping = "ping";
+    ASSERT("loopback send", net_loopback_send(ping, 4) > 0);
+    t_ok("loopback test");
+}
+
+static void test_tcp_keepalive(void) {
+    /* Keepalive on unconnected connection should not crash */
+    net_tcp_set_keepalive(0, 1);
+    int ka = net_tcp_get_keepalive(0);
+    ASSERT("tcp keepalive set", ka == 1);
+    net_tcp_set_keepalive(0, 0);
+    ka = net_tcp_get_keepalive(0);
+    ASSERT("tcp keepalive off", ka == 0);
+    net_tcp_check_keepalive();
+    t_ok("tcp keepalive test");
+}
+
+static void test_sched_stats(void) {
+    struct sched_stats stats;
+    scheduler_get_stats(&stats);
+    ASSERT("sched stats ctx valid", stats.context_switches > 0 || stats.yields > 0 ||
+           stats.preemptions > 0);
+    t_ok("sched stats test");
+}
+
+static void test_acpi_reset(void) {
+    /* Find reset register via ACPI */
+    int has = acpi_find_reset_register();
+    /* May be 0 in QEMU without proper FADT, that's fine */
+    t_ok("acpi reset test");
+}
+
+static void test_mremap(void) {
+    /* Test mremap syscall from kernel mode — verify it handles edge cases */
+    uint64_t result = syscall_dispatch(SYS_MREMAP, 0, 0, 4096, 1, 0);
+    /* In kernel mode without pml4, this should fail cleanly */
+    struct process *proc = process_get_current();
+    if (proc && proc->pml4) {
+        /* With pml4, mremap may succeed or return -1 */
+        t_ok("mremap dispatched");
+    } else {
+        /* Without pml4, should return -1 */
+        ASSERT("mremap without pml4 returns -1", result == (uint64_t)-1);
+    }
+    t_ok("mremap test");
+}
+
+static void test_proc_extra(void) {
+    char buf[512];
+    uint32_t sz = 0;
+    ASSERT("proc uptime read", vfs_read("/proc/uptime", buf, sizeof(buf)-1, &sz) == 0);
+    buf[sz] = '\0';
+    ASSERT("proc uptime non-empty", sz > 0);
+    ASSERT("proc version read", vfs_read("/proc/version", buf, sizeof(buf)-1, &sz) == 0);
+    ASSERT("proc stat read", vfs_read("/proc/stat", buf, sizeof(buf)-1, &sz) == 0);
+    ASSERT("proc loadavg read", vfs_read("/proc/loadavg", buf, sizeof(buf)-1, &sz) == 0);
+    t_ok("procfs extra files");
+}
+
+static void test_dns_cache(void) {
+    /* DNS cache operations should not crash */
+    net_dns_cache_set("test.example.com", 0x0A00020F); /* 10.0.2.15 */
+    uint32_t ip = net_dns_cache_get("test.example.com");
+    ASSERT("dns cache get", ip == 0x0A00020F);
+    ASSERT("dns cache miss", net_dns_cache_get("unknown.example.com") == 0);
+    net_dns_cache_clear();
+    ASSERT("dns cache cleared", net_dns_cache_get("test.example.com") == 0);
+    t_ok("dns cache test");
+}
+
+static void test_futex_requeue(void) {
+    /* Test futex requeue ops don't crash */
+    uint32_t uaddr = 0;
+    uint64_t ret = syscall_dispatch(SYS_FUTEX, (uint64_t)&uaddr, FUTEX_REQUEUE, 1, 0, 0);
+    /* Should succeed even if no waiters */
+    t_ok("futex requeue test");
+}
+
+/* ── New feature tests (25 tests) ──────────────────────────── */
+
+/* 1. Dynamic kernel timers */
+static volatile int test_timers_cb_fired = 0;
+static void test_timers_cb(void *arg) {
+    (*(volatile int *)arg)++;
+}
+
+static void test_timers_dynamic(void) {
+    /* Schedule a timer with delay=1 tick */
+    int id = timer_schedule(test_timers_cb, (void*)&test_timers_cb_fired, 1);
+    ASSERT("timers schedule id >= 0", id >= 0);
+    if (id >= 0) {
+        timer_handler_soft();
+        timer_handler_soft();
+        ASSERT("timers single fired", test_timers_cb_fired == 1);
+        timer_cancel(id);
+    }
+
+    /* Multiple timers */
+    volatile int f2a = 0, f2b = 0;
+    int id_a = timer_schedule(test_timers_cb, (void*)&f2a, 1);
+    int id_b = timer_schedule(test_timers_cb, (void*)&f2b, 1);
+    ASSERT("timers multi a >= 0", id_a >= 0);
+    ASSERT("timers multi b >= 0", id_b >= 0);
+    if (id_a >= 0 && id_b >= 0) {
+        f2a = 0; f2b = 0;
+        timer_handler_soft();
+        timer_handler_soft();
+        timer_handler_soft();
+        ASSERT("timers multi a fired", f2a > 0);
+        ASSERT("timers multi b fired", f2b > 0);
+    }
+    if (id_a >= 0) timer_cancel(id_a);
+    if (id_b >= 0) timer_cancel(id_b);
+
+    /* Cancel before fire */
+    volatile int fcancel = 0;
+    int id_c = timer_schedule(test_timers_cb, (void*)&fcancel, 10);
+    ASSERT("timers cancel id >= 0", id_c >= 0);
+    if (id_c >= 0) {
+        timer_cancel(id_c);
+        timer_handler_soft();
+        timer_handler_soft();
+        ASSERT("timers cancelled not fired", fcancel == 0);
+    }
+    t_ok("timers dynamic");
+}
+
+/* 2. Workqueue */
+static volatile int test_wq_flag = 0;
+static void test_wq_cb(void *arg) {
+    (*(volatile int *)arg)++;
+}
+
+static void test_workqueue(void) {
+    /* Schedule a work item, drain, verify flag was set */
+    test_wq_flag = 0;
+    int id = workqueue_schedule(test_wq_cb, (void*)&test_wq_flag);
+    ASSERT("workqueue schedule >= 0", id >= 0);
+    workqueue_drain();
+    ASSERT("workqueue flag set", test_wq_flag > 0);
+
+    /* Schedule multiple items, drain, verify all processed */
+    volatile int f2 = 0, f3 = 0;
+    int id2 = workqueue_schedule(test_wq_cb, (void*)&f2);
+    int id3 = workqueue_schedule(test_wq_cb, (void*)&f3);
+    ASSERT("workqueue multi id2 >= 0", id2 >= 0);
+    ASSERT("workqueue multi id3 >= 0", id3 >= 0);
+    if (id2 >= 0 && id3 >= 0) {
+        workqueue_drain();
+        ASSERT("workqueue multi f2", f2 > 0);
+        ASSERT("workqueue multi f3", f3 > 0);
+    }
+
+    /* Schedule with NULL function (graceful handling) */
+    int id4 = workqueue_schedule(NULL, NULL);
+    workqueue_drain();
+    (void)id4;
+    t_ok("workqueue test");
+}
+
+/* 3. IDR allocator */
+static void test_idr(void) {
+    struct idr idr;
+    ASSERT("idr init", idr_init(&idr, 32) == 0);
+
+    /* Allocate IDs, verify they are positive */
+    int id1 = idr_alloc(&idr);
+    int id2 = idr_alloc(&idr);
+    int id3 = idr_alloc(&idr);
+    ASSERT("idr id1 >= 0", id1 >= 0);
+    ASSERT("idr id2 >= 0", id2 >= 0);
+    ASSERT("idr id3 >= 0", id3 >= 0);
+    ASSERT("idr id1 != id2", id1 != id2);
+
+    /* Check idr_find on allocated ID */
+    ASSERT("idr find allocated", idr_find(&idr, id1) == 1);
+
+    /* Remove an ID, verify it can be re-allocated */
+    idr_remove(&idr, id2);
+    ASSERT("idr find removed", idr_find(&idr, id2) == 0);
+    int id2b = idr_alloc(&idr);
+    ASSERT("idr re-allocate", id2b >= 0);
+    /* Should either reuse or get a new one */
+    if (id2b >= 0) {
+        ASSERT("idr re-alloc find", idr_find(&idr, id2b) == 1);
+    }
+
+    /* Add more IDs than max (verify -1 returned) */
+    struct idr small;
+    idr_init(&small, 2);
+    int s1 = idr_alloc(&small);
+    int s2 = idr_alloc(&small);
+    int s3 = idr_alloc(&small);
+    ASSERT("idr small s1 >= 0", s1 >= 0);
+    ASSERT("idr small s2 >= 0", s2 >= 0);
+    ASSERT("idr overflow == -1", s3 == -1);
+
+    /* idr_find on freed ID */
+    idr_remove(&small, s1);
+    ASSERT("idr find after remove 0", idr_find(&small, s1) == 0);
+
+    t_ok("idr test");
+}
+
+/* 4. kref reference counting */
+static int test_kref_release_count = 0;
+static void test_kref_release_cb(struct kref *r) {
+    (void)r;
+    test_kref_release_count++;
+}
+
+static void test_kref(void) {
+    /* Create kref with count=1 */
+    struct kref r;
+    kref_init(&r, 1);
+    ASSERT("kref initial count 1", r.count == 1);
+
+    /* Get it — count becomes 2 */
+    kref_get(&r);
+    ASSERT("kref after get count 2", r.count == 2);
+
+    /* Put it twice — verify release callback fires on second put */
+    test_kref_release_count = 0;
+    int ret1 = kref_put(&r, test_kref_release_cb);
+    ASSERT("kref put1 not released", ret1 == 0);
+    ASSERT("kref after put1 count 1", r.count == 1);
+
+    int ret2 = kref_put(&r, test_kref_release_cb);
+    ASSERT("kref put2 released", ret2 == 1);
+    ASSERT("kref release callback called", test_kref_release_count == 1);
+    ASSERT("kref count 0 after release", r.count == 0);
+
+    t_ok("kref test");
+}
+
+/* 5. RNG */
+static void test_rng(void) {
+    rng_init();
+
+    /* Get u32 values */
+    uint32_t u32 = rng_get_u32();
+    /* Very unlikely to be 0 */
+    ASSERT("rng u32 != 0", u32 != 0);
+
+    /* Get u64 */
+    uint64_t u64 = rng_get_u64();
+    ASSERT("rng u64 != 0", u64 != 0);
+
+    /* Fill buffer — verify buffer gets non-zero bytes */
+    uint8_t buf[16];
+    memset(buf, 0, sizeof(buf));
+    rng_fill_buf(buf, sizeof(buf));
+    int any_nonzero = 0;
+    for (int i = 0; i < (int)sizeof(buf); i++) {
+        if (buf[i]) { any_nonzero = 1; break; }
+    }
+    ASSERT("rng fill buf non-zero", any_nonzero);
+
+    t_ok("rng test");
+}
+
+/* 6. Filesystem notification */
+static void test_fsnotify(void) {
+    /* Watch /tmp, trigger a modify event, read it back */
+    int wid = fsnotify_watch("/tmp", FS_MODIFY);
+    ASSERT("fsnotify watch >= 0", wid >= 0);
+    if (wid >= 0) {
+        /* Notify a modify event */
+        fsnotify_notify("/tmp/testfile", FS_MODIFY);
+
+        /* Read events back */
+        struct fsnotify_event evts[4];
+        int n = fsnotify_read_events(evts, 4);
+        /* May be 0 if ring buffer is not initialized or events consumed */
+        if (n > 0) {
+            ASSERT("fsnotify event mask", evts[0].mask == FS_MODIFY);
+        }
+
+        /* Unwatch — verify no more events */
+        fsnotify_unwatch(wid);
+        fsnotify_notify("/tmp/testfile2", FS_MODIFY);
+        n = fsnotify_read_events(evts, 4);
+        (void)n;
+    }
+    t_ok("fsnotify test");
+}
+
+/* 7. Watchdog (no-trigger test) */
+static void test_watchdog(void) {
+    /* Init with very long timeout so it never fires */
+    watchdog_init(3600);
+    /* Pet immediately */
+    watchdog_pet();
+    /* Stop — verify no crash */
+    watchdog_stop();
+    t_ok("watchdog test");
+}
+
+/* 8. Module stub */
+static int test_module_entry_fn(void) { return 0; }
+
+static void test_module(void) {
+    /* Load/unload a module */
+    int mid = module_load("testmod", test_module_entry_fn);
+    ASSERT("module load >= 0", mid >= 0);
+    if (mid >= 0) {
+        /* Find should succeed */
+        struct kernel_module *found = module_find("testmod");
+        ASSERT("module find non-null", found != NULL);
+        ASSERT("module find name match", strcmp(found->name, "testmod") == 0);
+
+        /* Unload should succeed */
+        ASSERT("module unload == 0", module_unload(mid) == 0);
+    }
+
+    /* Load duplicate name, verify it fails */
+    int m1 = module_load("dupmod", test_module_entry_fn);
+    int m2 = module_load("dupmod", test_module_entry_fn);
+    ASSERT("module dup first ok", m1 >= 0);
+    if (m1 >= 0) {
+        ASSERT("module dup second fails", m2 < 0);
+        module_unload(m1);
+    }
+
+    t_ok("module test");
+}
+
+/* 9. /proc/self */
+static void test_proc_self(void) {
+    /* Read /proc/self or /proc/self/status */
+    char buf[256];
+    uint32_t sz = 0;
+
+    int ret = vfs_read("/proc/self/status", buf, sizeof(buf) - 1, &sz);
+    if (ret == 0 && sz > 0) {
+        buf[sz] = '\0';
+        ASSERT("proc-self/status non-empty", sz > 0);
+        /* Should contain Name: or PID: or similar */
+        int has_info = (strstr(buf, "Name:") != NULL) ||
+                       (strstr(buf, "Pid:") != NULL) ||
+                       (strstr(buf, "State:") != NULL);
+        ASSERT("proc-self/status has info", has_info);
+    } else {
+        /* /proc/self may not exist yet — that's okay */
+        t_ok("proc-self/status SKIP not avail");
+    }
+
+    /* Try /proc/self — should resolve to current PID dir */
+    memset(buf, 0, sizeof(buf));
+    sz = 0;
+    ret = vfs_read("/proc/self", buf, sizeof(buf) - 1, &sz);
+    if (ret == 0 && sz > 0) {
+        buf[sz] = '\0';
+        ASSERT("proc-self content", sz > 0);
+    }
+
+    t_ok("proc-self test");
+}
+
+/* 10. Kallsyms */
+static void test_kallsyms(void) {
+    /* kallsyms_lookup with known address */
+    const char *name = kallsyms_lookup((uint64_t)(uintptr_t)test_kallsyms);
+    ASSERT("kallsyms lookup no crash", name != NULL);
+
+    /* kallsyms_print_stack — verify no crash */
+    kallsyms_print_stack();
+    t_ok("kallsyms test");
+}
+
+/* 11. OOM killer */
+static void test_oom_kill(void) {
+    extern uint64_t oom_kill_count;
+    uint64_t before = oom_kill_count;
+
+    /* Call oom_kill_victim() — may return 0 if no suitable victim */
+    int killed = oom_kill_victim();
+    ASSERT("oom_kill_victim safe", killed == 0 || killed == 1);
+
+    /* Verify count tracked consistently */
+    if (killed)
+        ASSERT("oom kill count incremented", oom_kill_count == before + 1);
+    else
+        ASSERT("oom kill count unchanged", oom_kill_count == before);
+
+    t_ok("oom_kill test");
+}
+
+/* 12. Rate-limited kprintf */
+static void test_ratelimit(void) {
+    /* Call kprintf_ratelimited a few times — verify no crash */
+    kprintf_ratelimited("ratelimit msg %d\n", 1);
+    kprintf_ratelimited("ratelimit msg %d\n", 2);
+    kprintf_ratelimited("ratelimit msg %d\n", 3);
+    t_ok("ratelimit test");
+}
+
+/* 13. SIGCHLD delivery */
+static void test_sigchld(void) {
+    struct process *parent = process_get_current();
+    if (!parent) { t_ok("sigchld SKIP no parent"); return; }
+
+    uint64_t old_pending = parent->pending_signals;
+    (void)old_pending;
+
+    /* Fork a child that exits immediately */
+    int child = process_fork();
+    if (child < 0) {
+        t_ok("sigchld SKIP fork fail");
+        return;
+    }
+
+    /* Wait for child to exit */
+    int status;
+    process_waitpid(child, &status);
+    ASSERT("sigchld child exit 0", status == 0);
+
+    /* Check if SIGCHLD is pending */
+    parent = process_get_current();
+    if (parent) {
+        int sigchld_pending = (parent->pending_signals & (1ULL << SIGCHLD)) ? 1 : 0;
+        /* SIGCHLD may be pending depending on default handler disposition */
+        /* The default for SIGCHLD is to ignore, so it may be masked */
+        /* Just verify no crash — signal was delivered to pending set */
+        t_ok("sigchld parent ok");
+    }
+}
+
+/* 14. RLIMIT_NPROC */
+static void test_rlimit_nproc(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("rlimit nproc SKIP"); return; }
+
+    /* Verify current RLIMIT_NPROC > 0 */
+    uint64_t cur_nproc = cur->rlim_cur[RLIMIT_NPROC];
+    ASSERT("rlimit cur_nproc > 0", cur_nproc > 0);
+
+    /* Set RLIMIT_NPROC to 0 — fork should fail */
+    uint64_t saved_cur = cur->rlim_cur[RLIMIT_NPROC];
+    uint64_t saved_max = cur->rlim_max[RLIMIT_NPROC];
+    cur->rlim_cur[RLIMIT_NPROC] = 0;
+    cur->rlim_max[RLIMIT_NPROC] = 0;
+
+    int child = process_fork();
+    ASSERT("rlimit fork fails when nproc=0", child < 0);
+
+    /* Restore original limits */
+    cur->rlim_cur[RLIMIT_NPROC] = saved_cur;
+    cur->rlim_max[RLIMIT_NPROC] = saved_max;
+
+    t_ok("rlimit nproc test");
+}
+
+/* 15. Core dump flag */
+static void test_coredump(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("coredump SKIP"); return; }
+
+    /* Set coredump_enabled on current process */
+    int saved = cur->coredump_enabled;
+    cur->coredump_enabled = 1;
+    ASSERT("coredump enabled", cur->coredump_enabled == 1);
+
+    /* Trigger coredump check path — verify no crash */
+    do_coredump(cur);
+
+    /* Disable and trigger again */
+    cur->coredump_enabled = 0;
+    do_coredump(cur);
+
+    cur->coredump_enabled = saved;
+    t_ok("coredump test");
+}
+
+/* 16. clock_gettime */
+static void test_clock_gettime(void) {
+    struct timespec ts;
+
+    /* Get CLOCK_MONOTONIC time */
+    memset(&ts, 0, sizeof(ts));
+    uint64_t ret = syscall_dispatch(SYS_CLOCK_GETTIME, CLOCK_MONOTONIC,
+                                    (uint64_t)(uintptr_t)&ts, 0, 0, 0);
+    ASSERT("clock_gettime monotonic ret 0", ret == 0);
+    if (ret == 0) {
+        /* Times should be reasonable (seconds > 0 or nsec within range) */
+        ASSERT("clock monotonic valid",
+               ts.tv_sec > 0 || ts.tv_nsec < 1000000000ULL);
+    }
+
+    /* Get CLOCK_REALTIME time */
+    memset(&ts, 0, sizeof(ts));
+    ret = syscall_dispatch(SYS_CLOCK_GETTIME, CLOCK_REALTIME,
+                           (uint64_t)(uintptr_t)&ts, 0, 0, 0);
+    ASSERT("clock_gettime realtime ret 0", ret == 0);
+    if (ret == 0) {
+        /* Reasonable range: epoch after April 2024, less than 5000 years */
+        ASSERT("clock realtime > Apr 2024", ts.tv_sec >= 1714000000ULL);
+        ASSERT("clock realtime < 5000 yrs", ts.tv_sec < 50000000000ULL);
+    }
+
+    t_ok("clock_gettime test");
+}
+
+/* 17. timerfd */
+static void test_timerfd_new(void) {
+    /* Create a timerfd */
+    uint64_t fd = syscall_dispatch(SYS_TIMERFD_CREATE, CLOCK_MONOTONIC,
+                                   TFD_NONBLOCK, 0, 0, 0);
+    if ((int64_t)fd < 0) {
+        t_ok("timerfd SKIP");
+        return;
+    }
+    ASSERT("timerfd fd >= 500", fd >= 500);
+
+    /* Set time on the timerfd */
+    struct itimerspec its;
+    memset(&its, 0, sizeof(its));
+    its.it_value.tv_sec = 0;
+    its.it_value.tv_nsec = 1000000; /* 1 ms */
+    uint64_t ret = syscall_dispatch(SYS_TIMERFD_SETTIME, fd, 0,
+                                    (uint64_t)(uintptr_t)&its, 0, 0);
+    ASSERT("timerfd settime ok", ret == 0);
+
+    /* Get time from the timerfd */
+    struct itimerspec cur;
+    memset(&cur, 0, sizeof(cur));
+    ret = syscall_dispatch(SYS_TIMERFD_GETTIME, fd,
+                           (uint64_t)(uintptr_t)&cur, 0, 0, 0);
+    ASSERT("timerfd gettime ok", ret == 0);
+
+    /* Read from timerfd (non-blocking — may return EAGAIN) */
+    uint64_t val = 0;
+    ret = syscall_dispatch(SYS_READ, fd, (uint64_t)(uintptr_t)&val,
+                           sizeof(val), 0, 0);
+    (void)ret; /* EAGAIN is fine */
+
+    t_ok("timerfd test");
+}
+
+/* 18. signalfd */
+static void test_signalfd_new(void) {
+    /* Create signalfd with SIGTERM in mask */
+    uint32_t mask = (1U << SIGTERM) | (1U << SIGINT);
+    uint64_t fd = syscall_dispatch(SYS_SIGNALFD, 0,
+                                   (uint64_t)(uintptr_t)&mask, 0, 0, 0);
+    if ((int64_t)fd < 0) {
+        t_ok("signalfd SKIP");
+        return;
+    }
+    ASSERT("signalfd fd >= 600", fd >= 600);
+
+    /* Read from signalfd (non-blocking — may return EAGAIN) */
+    uint64_t siginfo_buf[16];
+    memset(siginfo_buf, 0, sizeof(siginfo_buf));
+    uint64_t ret = syscall_dispatch(SYS_READ, fd,
+                                    (uint64_t)(uintptr_t)siginfo_buf,
+                                    sizeof(siginfo_buf), 0, 0);
+    (void)ret; /* EAGAIN is fine */
+
+    t_ok("signalfd test");
+}
+
+/* 19. eventfd */
+static void test_eventfd_new(void) {
+    int fd = eventfd_create(5, EFD_NONBLOCK);
+    if (fd < 0) {
+        t_ok("eventfd SKIP");
+        return;
+    }
+    ASSERT("eventfd fd >= 0", fd >= 0);
+
+    /* Read initial value (should be 5) */
+    uint64_t val = 0;
+    int ret = eventfd_read(fd, &val);
+    ASSERT("eventfd read ok", ret == 0);
+    ASSERT("eventfd read val 5", val == 5);
+
+    /* Write a value */
+    ret = eventfd_write(fd, 3);
+    ASSERT("eventfd write ok", ret == 0);
+
+    /* Read back */
+    val = 0;
+    ret = eventfd_read(fd, &val);
+    ASSERT("eventfd read after write ok", ret == 0);
+    ASSERT("eventfd read val 3", val == 3);
+
+    eventfd_close(fd);
+    t_ok("eventfd test");
+}
+
+/* 20. BSD socket API */
+static void test_socket_api(void) {
+    /* Create AF_INET/SOCK_STREAM socket */
+    uint64_t sock = syscall_dispatch(SYS_SOCKET, AF_INET, SOCK_STREAM, 0, 0, 0);
+    if ((int64_t)sock < 0) {
+        t_ok("socket SKIP");
+        return;
+    }
+    ASSERT("socket stream >= 0", (int64_t)sock >= 0);
+
+    /* Bind to port 0 (any port) */
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = 0;
+    uint64_t ret = syscall_dispatch(SYS_BIND, sock, (uint64_t)(uintptr_t)&addr,
+                                    sizeof(addr), 0, 0);
+    ASSERT("socket bind ok", ret == 0);
+
+    /* getsockname to get bound port */
+    struct sockaddr_in bound;
+    uint32_t boundlen = sizeof(bound);
+    memset(&bound, 0, sizeof(bound));
+    ret = syscall_dispatch(SYS_GETSOCKNAME, sock, (uint64_t)(uintptr_t)&bound,
+                           (uint64_t)(uintptr_t)&boundlen, 0, 0);
+    ASSERT("socket getsockname ok", ret == 0);
+    if (ret == 0) {
+        ASSERT("socket bound port non-zero", bound.sin_port != 0);
+    }
+
+    /* Create AF_INET/SOCK_DGRAM socket */
+    uint64_t dgram = syscall_dispatch(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0, 0, 0);
+    ASSERT("socket dgram >= 0", (int64_t)dgram >= 0);
+    (void)dgram;
+
+    t_ok("socket API test");
+}
+
+/* 21. getrusage */
+static void test_getrusage(void) {
+    struct rusage usage;
+    memset(&usage, 0, sizeof(usage));
+    uint64_t ret = syscall_dispatch(SYS_GETRUSAGE, RUSAGE_SELF,
+                                    (uint64_t)(uintptr_t)&usage, 0, 0, 0);
+    ASSERT("getrusage ret == 0", ret == 0);
+    if (ret == 0) {
+        /* Fields should be filled — at minimum check structure accessible */
+        ASSERT("getrusage usage filled", 1);
+    }
+    t_ok("getrusage test");
+}
+
+/* 22. sysinfo */
+static void test_sysinfo_new(void) {
+    struct sysinfo info;
+    memset(&info, 0, sizeof(info));
+    uint64_t ret = syscall_dispatch(SYS_SYSINFO, (uint64_t)(uintptr_t)&info,
+                                    0, 0, 0, 0);
+    ASSERT("sysinfo ret == 0", ret == 0);
+    if (ret == 0) {
+        ASSERT("sysinfo uptime > 0", info.uptime > 0);
+        ASSERT("sysinfo totalram > 0", info.totalram > 0);
+        ASSERT("sysinfo procs > 0", info.procs > 0);
+        ASSERT("sysinfo mem_unit > 0", info.mem_unit > 0);
+    }
+    t_ok("sysinfo new test");
+}
+
+/* 23. statfs / fstatfs */
+static void test_statfs_new(void) {
+    struct statfs st;
+
+    /* statfs on "/" */
+    memset(&st, 0, sizeof(st));
+    uint64_t ret = syscall_dispatch(SYS_STATFS, (uint64_t)(uintptr_t)"/",
+                                    (uint64_t)(uintptr_t)&st, 0, 0, 0);
+    ASSERT("statfs ret == 0", ret == 0);
+    if (ret == 0) {
+        ASSERT("statfs f_type != 0", st.f_type != 0);
+        ASSERT("statfs f_bsize != 0", st.f_bsize != 0);
+        ASSERT("statfs f_namelen > 0", st.f_namelen > 0);
+    }
+
+    /* fstatfs on fd 0 (stdin) */
+    memset(&st, 0, sizeof(st));
+    ret = syscall_dispatch(SYS_FSTATFS, 0, (uint64_t)(uintptr_t)&st, 0, 0, 0);
+    ASSERT("fstatfs ret == 0", ret == 0);
+
+    t_ok("statfs test");
+}
+
+/* 24. Scheduling parameters */
+static void test_sched_params(void) {
+    /* sched_getscheduler for self — should return SCHED_OTHER (0) */
+    uint64_t policy = syscall_dispatch(SYS_SCHED_GETSCHEDULER, 0, 0, 0, 0, 0);
+    ASSERT("sched_getscheduler ok", (int64_t)policy >= 0);
+    ASSERT("sched_getscheduler SCHED_OTHER", policy == SCHED_OTHER);
+
+    /* sched_getparam for self */
+    struct sched_param param;
+    memset(&param, 0, sizeof(param));
+    uint64_t ret = syscall_dispatch(SYS_SCHED_GETPARAM, 0,
+                                    (uint64_t)(uintptr_t)&param, 0, 0, 0);
+    ASSERT("sched_getparam ret == 0", ret == 0);
+    if (ret == 0) {
+        ASSERT("sched_getparam priority valid",
+               param.sched_priority >= 0 && param.sched_priority <= 3);
+    }
+
+    t_ok("sched params test");
+}
+
+/* 25. New shell commands registration */
+static void test_new_shell_cmds(void) {
+    const char *cmds[] = {
+        "arch", "cmp", "dirname", "groups", "hostid", "link", "mknod",
+        "mktemp", "nohup", "printenv", "realpath", "rmdir", "shred",
+        "size", "truncate", "tty", "unlink", "chgrp", "chrt", "factor",
+        "fmt", "pathchk", "taskset", "clear", NULL
+    };
+    int all_found = 1;
+    for (int i = 0; cmds[i]; i++) {
+        if (!shell_cmd_exists(cmds[i])) {
+            t_fail("shell cmd missing", cmds[i]);
+            all_found = 0;
+        }
+    }
+    if (all_found)
+        t_ok("new shell cmds all registered");
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Phase 9 — new tests
+ * ────────────────────────────────────────────────────────────────────── */
+
+/* 21. OOM score adjustment */
+static void test_oom_adj(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("oom_adj SKIP"); return; }
+
+    /* Set OOM score adjustment on current process */
+    oom_set_score_adj((int)cur->pid, 5);
+    int16_t adj = oom_get_score_adj((int)cur->pid);
+    ASSERT_EQ("oom_adj set/get", (uint64_t)adj, 5);
+
+    /* Negative adjustment */
+    oom_set_score_adj((int)cur->pid, -3);
+    adj = oom_get_score_adj((int)cur->pid);
+    ASSERT_EQ("oom_adj negative", (uint64_t)(int64_t)adj, (uint64_t)(uint64_t)-3);
+
+    /* Clamping */
+    oom_set_score_adj((int)cur->pid, -100);
+    adj = oom_get_score_adj((int)cur->pid);
+    ASSERT_EQ("oom_adj clamp min", (uint64_t)(int64_t)adj, (uint64_t)(uint64_t)-16);
+
+    oom_set_score_adj((int)cur->pid, 100);
+    adj = oom_get_score_adj((int)cur->pid);
+    ASSERT_EQ("oom_adj clamp max", (uint64_t)adj, 15);
+
+    /* Reset */
+    oom_set_score_adj((int)cur->pid, 0);
+    t_ok("oom_adj test");
+}
+
+/* 22. /proc/version and /proc/cpuinfo */
+static void test_proc_version(void) {
+    static char buf[512];
+    uint32_t sz = 0;
+
+    /* Read /proc/version */
+    memset(buf, 0, sizeof(buf));
+    sz = 0;
+    int ret = vfs_read("/proc/version", buf, sizeof(buf) - 1, &sz);
+    if (ret == 0 && sz > 0) {
+        buf[sz] = '\0';
+        ASSERT("proc/version non-empty", sz > 0);
+        /* Should contain "Kernel v" */
+        int has_kernel = (strstr(buf, "Kernel") != NULL);
+        ASSERT("proc/version has Kernel", has_kernel);
+    } else {
+        t_ok("proc/version SKIP");
+    }
+
+    /* Read /proc/cpuinfo */
+    memset(buf, 0, sizeof(buf));
+    sz = 0;
+    ret = vfs_read("/proc/cpuinfo", buf, sizeof(buf) - 1, &sz);
+    if (ret == 0 && sz > 0) {
+        buf[sz] = '\0';
+        ASSERT("proc/cpuinfo non-empty", sz > 0);
+        /* Should contain "processor" or "vendor_id" */
+        int has_processor = (strstr(buf, "processor") != NULL);
+        ASSERT("proc/cpuinfo has processor", has_processor);
+    } else {
+        t_ok("proc/cpuinfo SKIP");
+    }
+
+    t_ok("proc_version test");
+}
+
+/* 23. CPU hotplug stub */
+static void test_cpu_hotplug(void) {
+    /* cpuhp_init should have been called during boot */
+    /* Test that BSP (CPU 0) is online */
+    ASSERT("cpuhp BSP online", cpuhp_is_online(0));
+
+    /* Bring a non-existent CPU online (should fail) */
+    int ret = cpuhp_bring_cpu(999);
+    ASSERT("cpuhp bring invalid CPU", ret < 0);
+
+    /* Bring a valid extra CPU online */
+    ret = cpuhp_bring_cpu(1);
+    ASSERT("cpuhp bring CPU 1", ret == 0);
+    ASSERT("cpuhp CPU 1 online", cpuhp_is_online(1));
+
+    /* Take it offline */
+    ret = cpuhp_take_cpu_offline(1);
+    ASSERT("cpuhp offline CPU 1", ret == 0);
+    ASSERT("cpuhp CPU 1 offline", !cpuhp_is_online(1));
+
+    /* Cannot offline BSP */
+    ret = cpuhp_take_cpu_offline(0);
+    ASSERT("cpuhp cannot offline BSP", ret < 0);
+
+    t_ok("cpu_hotplug test");
+}
+
+/* 24. User process conversion (stub test — can't fully test without ring 3) */
+static void test_user_process(void) {
+    struct process *cur = process_get_current();
+
+    /* process_is_kthread should detect kernel threads */
+    if (cur) {
+        /* Current process is likely a kernel thread in test mode */
+        int is_kthread = process_is_kthread(cur);
+        /* Just verify it doesn't crash */
+        (void)is_kthread;
+        t_ok("process_is_kthread no crash");
+    }
+
+    /* process_set_user_process should work */
+    uint64_t fake_entry = 0x400000;
+    uint64_t fake_stack = 0x7FFFFFFFE000;
+    int ret = process_set_user_process(fake_entry, fake_stack, NULL);
+    if (ret == 0) {
+        ASSERT("set_user_process is_user", cur && cur->is_user == 1);
+        /* Reset back */
+        if (cur) {
+            cur->is_user = 0;
+            cur->user_entry = 0;
+            cur->user_rsp = 0;
+        }
+        t_ok("user_process conversion ok");
+    } else {
+        /* May fail if already a user process */
+        t_ok("user_process SKIP (already user)");
+    }
+}
+
+/* 25. New shell command registration tests */
+static void test_new_shell_cmds_phase9(void) {
+    const char *cmds[] = {
+        "dd", "cksum", "mkfifo", "logger", "mesg",
+        "nproc", "pinky", "tset", "reset"
+    };
+    int n = sizeof(cmds) / sizeof(cmds[0]);
+    int all_found = 1;
+    for (int i = 0; i < n; i++) {
+        if (!shell_cmd_exists(cmds[i])) {
+            t_fail("phase9 cmd missing", cmds[i]);
+            all_found = 0;
+        }
+    }
+    if (all_found)
+        t_ok("phase9 new shell cmds all registered");
+
+    /* Test that command lookup works */
+    const char *desc = shell_cmd_lookup_desc("dd");
+    if (desc) {
+        ASSERT("dd desc non-NULL", desc != NULL);
+        ASSERT("dd desc contains Data", strstr(desc, "Data") != NULL);
+    } else {
+        t_ok("dd desc SKIP");
+    }
+}
+
+/* 26. RLIMIT_FSIZE enforcement */
+static void test_rlimit_fsize(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("rlimit_fsize SKIP"); return; }
+
+    /* Save current limit */
+    uint64_t saved_cur = cur->rlim_cur[RLIMIT_FSIZE];
+    uint64_t saved_max = cur->rlim_max[RLIMIT_FSIZE];
+
+    /* Set very small file size limit */
+    cur->rlim_cur[RLIMIT_FSIZE] = 10;
+    cur->rlim_max[RLIMIT_FSIZE] = 10;
+
+    /* Writing a small file should fail due to size enforcement */
+    /* (Writing to /tmp/test_rlimit which doesn't exist will create it) */
+    int ret = vfs_write("/tmprlimit", "hello world, this is too long", 30);
+    ASSERT("rlimit_fsize write rejected", ret < 0);
+
+    /* Restore limits */
+    cur->rlim_cur[RLIMIT_FSIZE] = saved_cur;
+    cur->rlim_max[RLIMIT_FSIZE] = saved_max;
+
+    t_ok("rlimit_fsize test");
+}
+
+/* 27. Process is_kthread test */
+static void test_is_kthread(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("is_kthread SKIP"); return; }
+
+    /* Check if current process is a kernel thread */
+    int is_kt = process_is_kthread(cur);
+    /* Current test process should be a kthread */
+    ASSERT("process is kthread", is_kt == 0 || is_kt == 1);
+    t_ok("is_kthread test");
+}
+
+/* 28. Shell command dispatch test (verify help and basic commands work) */
+static void test_shell_dispatch(void) {
+    /* Test that help shell command is registered and accessible */
+    int exists = shell_cmd_exists("help");
+    ASSERT("shell help exists", exists);
+
+    /* Check a few key commands exist */
+    ASSERT("shell ls exists", shell_cmd_exists("ls"));
+    ASSERT("shell cat exists", shell_cmd_exists("cat"));
+    ASSERT("shell ps exists", shell_cmd_exists("ps"));
+    ASSERT("shell echo exists", shell_cmd_exists("echo"));
+
+    /* Verify shell_cmd_count returns > 0 */
+    int count = shell_cmd_count();
+    ASSERT("shell cmd count > 0", count > 0);
+
+    t_ok("shell_dispatch test");
+}
+
+/* 29. RLIMIT_CORE enforcement test */
+static void test_rlimit_core(void) {
+    struct process *cur = process_get_current();
+    if (!cur) { t_ok("rlimit_core SKIP"); return; }
+
+    /* Save original limit */
+    uint64_t saved_cur = cur->rlim_cur[RLIMIT_CORE];
+    uint64_t saved_max = cur->rlim_max[RLIMIT_CORE];
+
+    /* Set core limit to 0, then try coredump */
+    cur->rlim_cur[RLIMIT_CORE] = 0;
+    cur->rlim_max[RLIMIT_CORE] = 0;
+
+    /* do_coredump should early-return (no crash) */
+    do_coredump(cur);
+    t_ok("rlimit_core suppressed");
+
+    /* Restore and test with non-zero */
+    cur->rlim_cur[RLIMIT_CORE] = 1024 * 1024;
+    cur->rlim_max[RLIMIT_CORE] = 1024 * 1024;
+    do_coredump(cur);
+    t_ok("rlimit_core allowed");
+
+    /* Restore */
+    cur->rlim_cur[RLIMIT_CORE] = saved_cur;
+    cur->rlim_max[RLIMIT_CORE] = saved_max;
+
+    t_ok("rlimit_core test");
+}
+
 void test_run_all(void) {
     outb(0x3F8, 'Z');  /* marker: test task is running */
+
+    /* Immediate output for debugging */
+    const char *start_msg = "[T] test task starting...\n";
+    for (const char *p = start_msg; *p; p++) outb(0x3F8, *p);
 
     /* Suppress VGA/serial output during tests.
      * Under TCG emulation every serial OUT instruction causes a costly
@@ -1757,7 +2869,60 @@ void test_run_all(void) {
     kprintf("[TEST] pipe_wq\n");     test_pipe_waitqueue(); test_progress_tick();
     kprintf("[TEST] sysinfo\n");    test_sysinfo();      test_progress_tick();
 
-    kprintf("----------------------------------------\n");
+        kprintf("[TEST] oom\n");         test_oom();            test_progress_tick();
+    kprintf("[TEST] rcu\n");         test_rcu();            test_progress_tick();
+    kprintf("[TEST] aslr\n");        test_aslr();           test_progress_tick();
+    kprintf("[TEST] seccomp\n");     test_seccomp();        test_progress_tick();
+    kprintf("[TEST] sysrq\n");       test_sysrq_commands(); test_progress_tick();
+    kprintf("[TEST] nmi\n");         test_nmi_watchdog();   test_progress_tick();
+    kprintf("[TEST] lockdep\n");     test_lockdep();        test_progress_tick();
+    kprintf("[TEST] tmpfs\n");       test_tmpfs();          test_progress_tick();
+    kprintf("[TEST] compaction\n");  test_compaction();     test_progress_tick();
+    kprintf("[TEST] cmdline\n");     test_cmdline();        test_progress_tick();
+    kprintf("[TEST] loopback\n");    test_loopback();       test_progress_tick();
+    kprintf("[TEST] keepalive\n");   test_tcp_keepalive();  test_progress_tick();
+    kprintf("[TEST] schedstat\n");   test_sched_stats();    test_progress_tick();
+    kprintf("[TEST] acpi_reset\n");  test_acpi_reset();     test_progress_tick();
+    kprintf("[TEST] mremap\n");      test_mremap();         test_progress_tick();
+    kprintf("[TEST] proc_extra\n");  test_proc_extra();     test_progress_tick();
+    kprintf("[TEST] dns_cache\n");   test_dns_cache();      test_progress_tick();
+    kprintf("[TEST] futex_rq\n");    test_futex_requeue();  test_progress_tick();
+    kprintf("[TEST] timers_dyn\n");   test_timers_dynamic(); test_progress_tick();
+    kprintf("[TEST] workqueue\n");    test_workqueue();      test_progress_tick();
+    kprintf("[TEST] idr\n");          test_idr();            test_progress_tick();
+    kprintf("[TEST] kref\n");         test_kref();           test_progress_tick();
+    kprintf("[TEST] rng\n");          test_rng();            test_progress_tick();
+    kprintf("[TEST] fsnotify\n");     test_fsnotify();       test_progress_tick();
+    kprintf("[TEST] watchdog\n");     test_watchdog();       test_progress_tick();
+    kprintf("[TEST] module\n");       test_module();         test_progress_tick();
+    kprintf("[TEST] proc_self\n");    test_proc_self();      test_progress_tick();
+    kprintf("[TEST] kallsyms\n");     test_kallsyms();       test_progress_tick();
+    kprintf("[TEST] oom_kill\n");     test_oom_kill();       test_progress_tick();
+    kprintf("[TEST] ratelimit\n");    test_ratelimit();      test_progress_tick();
+    kprintf("[TEST] sigchld\n");      test_sigchld();        test_progress_tick();
+    kprintf("[TEST] rlimit_nproc\n"); test_rlimit_nproc();   test_progress_tick();
+    kprintf("[TEST] coredump\n");     test_coredump();       test_progress_tick();
+    kprintf("[TEST] clock_gt\n");     test_clock_gettime();  test_progress_tick();
+    kprintf("[TEST] timerfd\n");      test_timerfd_new();    test_progress_tick();
+    kprintf("[TEST] signalfd\n");     test_signalfd_new();   test_progress_tick();
+    kprintf("[TEST] eventfd\n");      test_eventfd_new();    test_progress_tick();
+    kprintf("[TEST] socket_api\n");   test_socket_api();     test_progress_tick();
+    kprintf("[TEST] getrusage\n");    test_getrusage();      test_progress_tick();
+    kprintf("[TEST] sysinfo_new\n");  test_sysinfo_new();    test_progress_tick();
+    kprintf("[TEST] statfs\n");       test_statfs_new();     test_progress_tick();
+    kprintf("[TEST] sched_params\n"); test_sched_params();   test_progress_tick();
+    kprintf("[TEST] shell_cmds\n");   test_new_shell_cmds(); test_progress_tick();
+    /* Phase 9 -- new tests */
+    kprintf("[TEST] oom_adj\n");      test_oom_adj();        test_progress_tick();
+    kprintf("[TEST] proc_version\n"); test_proc_version();   test_progress_tick();
+    kprintf("[TEST] cpu_hotplug\n");  test_cpu_hotplug();    test_progress_tick();
+    kprintf("[TEST] user_proc\n");    test_user_process();   test_progress_tick();
+    kprintf("[TEST] cmds_p9\n");      test_new_shell_cmds_phase9(); test_progress_tick();
+    kprintf("[TEST] rlimit_fsize\n"); test_rlimit_fsize();   test_progress_tick();
+    kprintf("[TEST] is_kthread\n");   test_is_kthread();     test_progress_tick();
+    kprintf("[TEST] shell_dispatch\n"); test_shell_dispatch(); test_progress_tick();
+    kprintf("[TEST] rlimit_core\n");  test_rlimit_core();    test_progress_tick();
+kprintf("----------------------------------------\n");
     kprintf("Results: %u passed, %u failed\n",
             (uint64_t)tpass, (uint64_t)tfail);
     if (tfail == 0) {

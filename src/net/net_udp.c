@@ -720,3 +720,19 @@ void net_udp_list(void (*cb)(uint16_t port)) {
             cb(udp_slots[i].port);
     }
 }
+
+/* ── DNS cache public API ────────────────────────────────────────── */
+
+void net_dns_cache_set(const char *hostname, uint32_t ip) {
+    dns_cache_store(hostname, ip);
+}
+
+uint32_t net_dns_cache_get(const char *hostname) {
+    return dns_cache_lookup(hostname);
+}
+
+void net_dns_cache_clear(void) {
+    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
+        dns_cache[i].valid = 0;
+    }
+}

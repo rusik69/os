@@ -24,6 +24,9 @@
 #define SO_SNDTIMEO     21
 #define SO_TYPE         3
 #define SO_ERROR        4
+#define SO_RCVTIMEO     20
+#define SO_SNDTIMEO     21
+#define SO_TIMESTAMP    29
 
 #define IPPROTO_TCP     6
 #define IPPROTO_UDP     17

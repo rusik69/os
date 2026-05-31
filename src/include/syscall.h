@@ -199,6 +199,7 @@
 #define SYS_CC_LINK          230  /* link multiple .o files into executable */
 
 /* Memory mapping syscalls */
+#define SYS_MREMAP           370
 #define SYS_MMAP            235  /* (addr, length, prot) → addr or -1 */
 #define SYS_MUNMAP          236  /* (addr, length) → 0 or -1 */
 #define SYS_MPROTECT        237  /* (addr, length, prot) → 0 or -1 */
@@ -435,6 +436,18 @@ struct epoll_event {
     uint64_t data;     /* User data variable */
 };
 
+/* ── flock structure (file locking) ──────────────────────────── */
+struct flock {
+    int16_t l_type;    /* F_RDLCK=0, F_WRLCK=1, F_UNLCK=2 */
+    int16_t l_whence;  /* SEEK_SET=0, SEEK_CUR=1, SEEK_END=2 */
+    int64_t l_start;
+    int64_t l_len;     /* 0 = to EOF */
+    int32_t l_pid;
+};
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
 /* ── statfs structure ────────────────────────────────────────── */
 #define STATFS_MAX 64
 
@@ -543,6 +556,8 @@ struct mq_attr {
 /* Futex operations */
 #define FUTEX_WAIT         0
 #define FUTEX_WAKE         1
+#define FUTEX_REQUEUE      3
+#define FUTEX_CMP_REQUEUE  4
 #define FUTEX_PRIVATE_FLAG 128
 #define FUTEX_WAIT_PRIVATE (FUTEX_WAIT  | FUTEX_PRIVATE_FLAG)
 #define FUTEX_WAKE_PRIVATE (FUTEX_WAKE  | FUTEX_PRIVATE_FLAG)
@@ -634,6 +649,10 @@ struct linux_dirent64 {
 /* Clone / threading */
 #define SYS_CLONE           231
 #define SYS_GETTID          232
+/* Process Credentials & Scheduling */
+#define SYS_CAPGET            570
+#define SYS_CAPSET            571
+#define SYS_GETRESUID         350
 #define SYS_TKILL           233
 #define SYS_EXECVE          234
 

@@ -1,4 +1,5 @@
 #include "timer.h"
+#include "timers.h"
 #include "idt.h"
 #include "pic.h"
 #include "io.h"
@@ -22,6 +23,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     process_timer_tick(was_user);
     timerfd_tick();
     posix_timer_tick();
+    timer_handler_soft(); /* drive dynamic kernel timers */
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
         scheduler_age();
     }

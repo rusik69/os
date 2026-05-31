@@ -155,6 +155,8 @@ struct process {
     uint64_t nivcsw;          /* involuntary context switches (preemption) */
     uint64_t minflt;          /* minor page faults (no disk I/O) */
     uint64_t majflt;          /* major page faults (disk I/O required) */
+    /* Heap tracking for brk */
+    uint64_t heap_end;        /* current end of data segment for brk() */
 };
 
 void process_init(void);
@@ -181,6 +183,12 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags);
 void process_set_current(struct process *proc);
 
+/* ── Process credential API ────────────────────────────────── */
+int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
+                     uint32_t *euid, uint32_t *egid);
+int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
+                     uint32_t euid, uint32_t egid);
+
 /* ── Per-CPU kthread API ────────────────────────────────────── */
 
 struct process *kthread_create(void (*entry)(void *arg), void *arg,
@@ -190,5 +198,9 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
 
 /* Per-process interval timer tick (called from timer interrupt) */
 void process_timer_tick(int was_user);
+
+/* ── User process conversion / query ───────────────────────── */
+int process_is_kthread(struct process *proc);
+int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4);
 
 #endif
