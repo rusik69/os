@@ -65,6 +65,7 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/pmm.c \
          src/memory/vmm.c \
          src/memory/heap.c \
+         src/memory/slab.c \
          src/process/process.c \
          src/process/scheduler.c \
          src/process/signal.c \

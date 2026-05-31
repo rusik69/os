@@ -47,6 +47,7 @@
 #include "apic.h"
 #include "elf.h"
 #include "cpu.h"
+#include "slab.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -122,6 +123,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel heap (framebuffer may allocate from heap) */
     heap_init();
     kprintf("[OK] Heap initialized\n");
+
+    /* Slab allocator (for fixed-size kernel objects) */
+    slab_init();
 
     if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
         kprintf("[OK] Framebuffer console enabled\n");
