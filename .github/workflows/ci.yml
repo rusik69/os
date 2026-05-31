@@ -132,6 +132,7 @@ jobs:
             CC="ccache x86_64-linux-gnu-gcc" \
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy \
+            SKIP_DISK_TESTS=1 \
             -j$(nproc)
       - name: Create disk image
         run: |

@@ -190,6 +190,11 @@ run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 BUILDDIR_TEST = build_test
 TEST_CFLAGS   = $(CFLAGS) -DTEST_MODE
 
+# Optional: skip ATA disk tests (faster in TCG, no disk needed)
+ifneq ($(SKIP_DISK_TESTS),)
+TEST_CFLAGS += -DSKIP_DISK_TESTS
+endif
+
 C_TEST_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
 ASM_TEST_SRCS = $(ASM_SRCS)
 

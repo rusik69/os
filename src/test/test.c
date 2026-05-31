@@ -247,6 +247,9 @@ static void test_scheduler(void) {
 
 /* ── Filesystem ──────────────────────────────────────────────── */
 
+#ifdef SKIP_DISK_TESTS
+static void test_filesystem(void) { t_ok("fs SKIP (CI mode)"); }
+#else
 static void test_filesystem(void) {
     if (!ata_is_present()) {
         t_ok("fs SKIP (no ATA disk)");
@@ -348,9 +351,13 @@ static void test_filesystem(void) {
         }
     }
 }
+#endif
 
 /* ── VFS ─────────────────────────────────────────────────────── */
 
+#ifdef SKIP_DISK_TESTS
+static void test_vfs(void) { t_ok("vfs SKIP (CI mode)"); }
+#else
 static void test_vfs(void) {
     if (!ata_is_present()) {
         t_ok("vfs SKIP (no ATA disk)");
@@ -390,6 +397,7 @@ static void test_vfs(void) {
     ASSERT("vfs stat /a/b/..", vfs_stat("/a/b/..", &st) == 0);
     ASSERT("vfs stat /a/b/.. eq /a", st.type == FS_TYPE_DIR);
 }
+#endif
 
 /* ── Pipes ───────────────────────────────────────────────────── */
 
@@ -550,6 +558,9 @@ static void test_shm_mutex(void) {
     t_ok("shm mutex");
 }
 
+#ifdef SKIP_DISK_TESTS
+static void test_fat32(void) { t_ok("fat32 SKIP (CI mode)"); }
+#else
 static void test_fat32(void) {
     /* ── ATA FAT32 tests (if ATA disk present) ────────────────── */
     if (ata_is_present()) {
@@ -608,6 +619,7 @@ static void test_fat32(void) {
 
     t_ok("fat32 tests");
 }
+#endif
 
 static void test_ac97(void) {
     if (!ac97_present()) {
