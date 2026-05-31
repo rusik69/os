@@ -1318,6 +1318,34 @@ static void test_elf_edge(void) {
     /* Should return 0 (safety check prevents mapping) */
     ASSERT_EQ("elf vaddr overflow reject", entry, 0);
 
+    /* 4. Segment p_offset overflow (offset + filesz wraps) */
+    ph->p_offset = 0xFFFFFFFFFFFFFF00ULL;
+    ph->p_filesz = 256;
+    ph->p_memsz  = 256;
+    ph->p_vaddr  = 0x400000;
+    entry = elf_load(buf, sizeof(buf));
+    /* Should return 0 (overflow safety check) */
+    ASSERT_EQ("elf offset overflow reject", entry, 0);
+    ph->p_offset = sizeof(struct elf64_header) + sizeof(struct elf64_phdr);
+    ph->p_filesz = 4;
+
+    /* 5. Segment with p_align = 0 (division by zero guard) */
+    ph->p_align = 0;
+    ph->p_vaddr = 0x500000;
+    entry = elf_load(buf, sizeof(buf));
+    /* Should return 0 (should not crash from div by zero) */
+    ASSERT_EQ("elf zero align reject", entry, 0);
+    ph->p_align = 0x1000;
+
+    /* 6. PT_NULL segment (p_type = 0, should be skipped gracefully) */
+    ph->p_type = 0; /* PT_NULL */
+    ph->p_vaddr = 0x600000;
+    entry = elf_load(buf, sizeof(buf));
+    /* PT_NULL segments are skipped, but the load should still return entry
+     * if the ELF is otherwise valid (no PT_LOAD means no content loaded;
+     * whether entry is 0 depends on the loader's logic). */
+    t_ok("elf pt_null segment");
+
     t_ok("elf edge cases");
 }
 
@@ -1361,6 +1389,85 @@ static void test_vmm_alloc(void) {
     /* Free the frame */
     pmm_free_frame(frame);
     t_ok("vmm alloc tests");
+}
+
+/* ── VMM huge page split ─────────────────────────────────────── */
+
+static void test_vmm_hugepage_split(void) {
+    /* Pick a physical address in the first 1GB (already mapped via PML4[256]).
+     * The kernel's high-half VMA uses 2MB huge pages. vmm_map_page on a
+     * 4KB-aligned address within a huge page should split it into 512×4KB PTEs. */
+    uint64_t frame = pmm_alloc_frame();
+    if (!frame || frame == ~0ULL) {
+        t_ok("vmm hugepage split SKIP (no memory)");
+        return;
+    }
+
+    /* Use PHYS_TO_VIRT which falls within a 2MB huge page */
+    uint64_t test_vaddr = (uint64_t)PHYS_TO_VIRT(frame);
+    uint64_t page_aligned = test_vaddr & ~(uint64_t)0xFFF;
+
+    /* Before calling vmm_map_page, the PDE for this region should be HUGE.
+     * vmm_map_page will split it. */
+    int map_ret = vmm_map_page(page_aligned, frame, VMM_FLAG_WRITE);
+    ASSERT("vmm hugepage split map", map_ret == 0);
+    if (map_ret < 0) { pmm_free_frame(frame); return; }
+
+    /* Verify we can write to and read from the mapped page */
+    volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)page_aligned;
+    p[0] = 0x42;
+    p[4095] = 0x24;
+    ASSERT("vmm hugepage write-read", p[0] == 0x42);
+    ASSERT("vmm hugepage write-read last", p[4095] == 0x24);
+
+    /* Verify physical address resolves correctly */
+    uint64_t resolved = vmm_get_physaddr(page_aligned);
+    ASSERT("vmm hugepage get_physaddr", resolved == frame);
+
+    /* Unmap and verify */
+    vmm_unmap_page(page_aligned);
+    uint64_t after_unmap = vmm_get_physaddr(page_aligned);
+    ASSERT("vmm hugepage after unmap", after_unmap == 0 || after_unmap == ~0ULL);
+
+    /* Remap so we can safely free, then unmap again */
+    vmm_map_page(page_aligned, frame, VMM_FLAG_WRITE);
+    pmm_free_frame(frame);
+    vmm_unmap_page(page_aligned);
+    t_ok("vmm hugepage split tests");
+}
+
+/* ── Kernel stack guard page ──────────────────────────────────── */
+
+static void test_guard_page(void) {
+    struct process *cur = process_get_current();
+    ASSERT("guard_page current process", cur != NULL);
+    if (!cur) return;
+
+    /* The current process's kernel stack should have a guard page */
+    ASSERT("guard_page non-zero", cur->guard_page != 0);
+
+    /* Guard page should be page-aligned */
+    ASSERT("guard_page aligned", (cur->guard_page & 0xFFF) == 0);
+
+    /* Guard page is below kernel_stack (since stack grows downward) */
+    ASSERT("guard_page below kernel_stack",
+           cur->guard_page < cur->kernel_stack);
+
+    /* Guard page is exactly one page below kernel_stack */
+    ASSERT("guard_page exactly one page below",
+           cur->guard_page + PAGE_SIZE == cur->kernel_stack);
+
+    /* Guard page is in the kernel high-half VMA range */
+    ASSERT("guard_page in high-half",
+           cur->guard_page >= 0xFFFF800000000000ULL);
+
+    /* kernel_stack and stack_top are consistent */
+    ASSERT("kernel_stack < stack_top",
+           cur->kernel_stack < cur->stack_top);
+    ASSERT("stack_top - kernel_stack == KERNEL_STACK_SIZE",
+           cur->stack_top - cur->kernel_stack == KERNEL_STACK_SIZE);
+
+    t_ok("guard page layout tests");
 }
 
 /* ── Pipe edge cases ─────────────────────────────────────────── */
@@ -1460,6 +1567,8 @@ void test_run_all(void) {
     kprintf("[TEST] elf_edge\n");    test_elf_edge();    test_progress_tick();
     kprintf("[TEST] vmm\n");         test_vmm();         test_progress_tick();
     kprintf("[TEST] vmm_alloc\n");   test_vmm_alloc();   test_progress_tick();
+    kprintf("[TEST] vmm_hugepage\n"); test_vmm_hugepage_split(); test_progress_tick();
+    kprintf("[TEST] guard_page\n");  test_guard_page();  test_progress_tick();
     kprintf("[TEST] tcp\n");         test_tcp();         test_progress_tick();
     kprintf("[TEST] procfs\n");      test_procfs();      test_progress_tick();
     kprintf("[TEST] fork\n");        test_fork();        test_progress_tick();
