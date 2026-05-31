@@ -18,6 +18,9 @@
 #define BLK_REQ_FUA       (1ULL << 3)  /* Force Unit Access */
 #define BLK_REQ_PREFLUSH  (1ULL << 4)
 
+/* Driver flags */
+#define BLK_DRIVER_ASYNC 1   /* Driver handles completion asynchronously via blk_request_done() */
+
 /* I/O scheduler types */
 enum blk_scheduler {
     BLK_SCHED_NOOP = 0,      /* FIFO */
@@ -73,6 +76,9 @@ struct blockdev_entry {
     uint64_t sector_count;
     uint32_t sector_size;       /* usually 512 */
 
+    /* Driver flags (BLK_DRIVER_ASYNC etc.) */
+    int     flags;
+
     /* Low-level driver hooks */
     blk_driver_submit_fn submit_fn;   /* submit one request for processing */
     blk_driver_idle_fn   idle_fn;     /* optional: flush pending commands */
@@ -84,7 +90,8 @@ void           blockdev_init(void);
 int            blockdev_register(int id, const char *name,
                                  blk_driver_submit_fn submit_fn,
                                  blk_driver_idle_fn idle_fn,
-                                 uint64_t sector_count);
+                                 uint64_t sector_count,
+                                 int flags);
 
 /* Legacy registration: wraps read/write/size into a submit_fn internally */
 #if !defined(BLOCKDEV_NEW_ONLY)

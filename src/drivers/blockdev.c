@@ -117,8 +117,11 @@ int blk_submit_async(struct blk_request *req) {
         spinlock_irqsave_release(&q->lock, irq_flags);
 
         int ret = g_blockdevs[dev_id].submit_fn(req);
-        /* Synchronous drivers complete the request during submit_fn.
-         * Mark done and wake waiter on success or failure. */
+        /* Async drivers handle completion via blk_request_done().
+         * Sync drivers complete during submit_fn — mark done and wake. */
+        if (g_blockdevs[dev_id].flags & BLK_DRIVER_ASYNC) {
+            return ret < 0 ? ret : 0;
+        }
         q->inflight_count--;
         req->done = 1;
         if (req->done_wq) {
@@ -244,7 +247,8 @@ void blockdev_init(void) {
 int blockdev_register(int id, const char *name,
                       blk_driver_submit_fn submit_fn,
                       blk_driver_idle_fn idle_fn,
-                      uint64_t sector_count) {
+                      uint64_t sector_count,
+                      int flags) {
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
     if (!submit_fn) return -1;
 
@@ -257,6 +261,7 @@ int blockdev_register(int id, const char *name,
     }
 
     g_blockdevs[id].active = 1;
+    g_blockdevs[id].flags = flags;
     g_blockdevs[id].submit_fn = submit_fn;
     g_blockdevs[id].idle_fn = idle_fn;
     g_blockdevs[id].sector_count = sector_count;
@@ -328,7 +333,7 @@ int blockdev_register_legacy(int id, const char *name,
     uint64_t nsectors = size_fn ? size_fn() : 0;
 
     /* Register with the new API using our adapter submit_fn */
-    int ret = blockdev_register(id, name, legacy_submit_fn_adapter, NULL, nsectors);
+    int ret = blockdev_register(id, name, legacy_submit_fn_adapter, NULL, nsectors, 0);
     if (ret < 0) return ret;
 
     return 0;
