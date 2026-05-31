@@ -88,6 +88,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/virtio_net.c \
          src/drivers/virtio_blk.c \
          src/drivers/ac97.c \
+         src/drivers/ramdisk.c \
          src/ipc/mutex.c \
          src/ipc/semaphore.c \
          src/dos/dos_emu.c \

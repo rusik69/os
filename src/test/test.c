@@ -28,6 +28,7 @@
 #include "mouse.h"
 #include "acpi.h"
 #include "ata.h"
+#include "ramdisk.h"
 #include "fs.h"
 #include "e1000.h"
 #include "virtio_net.h"
@@ -247,15 +248,18 @@ static void test_scheduler(void) {
 
 /* ── Filesystem ──────────────────────────────────────────────── */
 
-#ifdef SKIP_DISK_TESTS
-static void test_filesystem(void) { t_ok("fs SKIP (CI mode)"); }
-#else
 static void test_filesystem(void) {
+#ifdef SKIP_DISK_TESTS
+    /* In CI/TCG mode, run FS tests on a ramdisk instead of ATA.
+     * The ramdisk is much faster because it avoids ATA PIO emulation. */
+    ramdisk_init();
+    ata_set_redirect(ramdisk_read_sectors, ramdisk_write_sectors);
+#else
     if (!ata_is_present()) {
         t_ok("fs SKIP (no ATA disk)");
         return;
     }
-
+#endif
     ASSERT("fs format", fs_format() == 0);
 
     /* Create file */
@@ -351,19 +355,20 @@ static void test_filesystem(void) {
         }
     }
 }
-#endif
 
 /* ── VFS ─────────────────────────────────────────────────────── */
 
-#ifdef SKIP_DISK_TESTS
-static void test_vfs(void) { t_ok("vfs SKIP (CI mode)"); }
-#else
 static void test_vfs(void) {
+#ifdef SKIP_DISK_TESTS
+    ramdisk_init();
+    ata_set_redirect(ramdisk_read_sectors, ramdisk_write_sectors);
+    /* Format for clean state — happens below */
+#else
     if (!ata_is_present()) {
         t_ok("vfs SKIP (no ATA disk)");
         return;
     }
-
+#endif
     /* Format for clean state */
     fs_format();
 
@@ -397,7 +402,6 @@ static void test_vfs(void) {
     ASSERT("vfs stat /a/b/..", vfs_stat("/a/b/..", &st) == 0);
     ASSERT("vfs stat /a/b/.. eq /a", st.type == FS_TYPE_DIR);
 }
-#endif
 
 /* ── Pipes ───────────────────────────────────────────────────── */
 
@@ -558,10 +562,11 @@ static void test_shm_mutex(void) {
     t_ok("shm mutex");
 }
 
-#ifdef SKIP_DISK_TESTS
-static void test_fat32(void) { t_ok("fat32 SKIP (CI mode)"); }
-#else
 static void test_fat32(void) {
+#ifdef SKIP_DISK_TESTS
+    t_ok("fat32 SKIP (ramdisk — requires FAT32 format support)");
+    return;
+#else
     /* ── ATA FAT32 tests (if ATA disk present) ────────────────── */
     if (ata_is_present()) {
         if (fat32_mount(FAT32_DISK_ATA, 0) == 0) {
@@ -618,8 +623,8 @@ static void test_fat32(void) {
     }
 
     t_ok("fat32 tests");
-}
 #endif
+}
 
 static void test_ac97(void) {
     if (!ac97_present()) {

@@ -3,6 +3,18 @@
 #include "io.h"
 #include "printf.h"
 
+/* Optional redirect: if set, ata_read_sectors/write_sectors delegate
+ * to these callbacks instead of real ATA PIO.  Used by the ramdisk
+ * driver so that fs.c works without ATA hardware. */
+static int (*redirect_read)(uint32_t lba, uint8_t count, void *buf) = NULL;
+static int (*redirect_write)(uint32_t lba, uint8_t count, const void *buf) = NULL;
+
+void ata_set_redirect(int (*read_fn)(uint32_t, uint8_t, void *),
+                      int (*write_fn)(uint32_t, uint8_t, const void *)) {
+    redirect_read = read_fn;
+    redirect_write = write_fn;
+}
+
 /* Primary ATA bus ports */
 #define ATA_DATA       0x1F0
 #define ATA_ERROR      0x1F1
@@ -99,7 +111,7 @@ void ata_init(void) {
 }
 
 int ata_is_present(void) {
-    return ata_present;
+    return ata_present || redirect_read;
 }
 
 uint32_t ata_get_sectors(void) {
@@ -107,6 +119,8 @@ uint32_t ata_get_sectors(void) {
 }
 
 int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
+    /* If a redirect is active (ramdisk mode), use it instead of real ATA */
+    if (redirect_read) return redirect_read(lba, count, buf);
     if (!ata_present) return -1;
     if (lba + count > ata_total_sectors) return -1;
 
@@ -135,6 +149,8 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
 }
 
 int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
+    /* If a redirect is active (ramdisk mode), use it instead of real ATA */
+    if (redirect_write) return redirect_write(lba, count, buf);
     if (!ata_present) return -1;
     if (lba + count > ata_total_sectors) return -1;
 
