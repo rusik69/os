@@ -3,13 +3,20 @@
 
 #include "types.h"
 
-#define VMM_FLAG_PRESENT  (1 << 0)
-#define VMM_FLAG_WRITE    (1 << 1)
-#define VMM_FLAG_USER     (1 << 2)
+#define VMM_FLAG_PRESENT  (1ULL << 0)
+#define VMM_FLAG_WRITE    (1ULL << 1)
+#define VMM_FLAG_USER     (1ULL << 2)
 /* Software bit 9 (available to OS) used for Copy-on-Write */
 #define VMM_FLAG_COW      (1ULL << 9)
 /* Page-level cache disable (PAT bit) for MMIO */
 #define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
+#define VMM_FLAG_NOEXEC   (1ULL << 63) /* No-Execute (NX bit) */
+
+/* mmap/mprotect protection flags */
+#define PROT_NONE   0
+#define PROT_READ   1
+#define PROT_WRITE  2
+#define PROT_EXEC   4
 
 /* User virtual address space limit */
 #define USER_VADDR_MAX 0x0000800000000000ULL

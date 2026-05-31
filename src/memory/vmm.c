@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "types.h"
+#include "printf.h"
 
 #define PTE_PRESENT  (1ULL << 0)
 #define PTE_WRITE    (1ULL << 1)
@@ -9,6 +10,7 @@
 #define PTE_PCD      (1ULL << 4)
 #define PTE_HUGE     (1ULL << 7)
 #define PTE_COW      (1ULL << 9)   /* software bit: copy-on-write */
+#define PTE_NX       (1ULL << 63)  /* No-Execute (only active when EFER.NXE=1) */
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
 static uint64_t *kernel_pml4;

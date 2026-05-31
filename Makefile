@@ -44,6 +44,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/elf.c \
          src/kernel/apic.c \
          src/kernel/smp.c \
+         src/kernel/cpu.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \

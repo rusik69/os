@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/* Resource limits (local defines since we can't rely on syscall.h include order) */
+#define _RLIMIT_NLIMITS 14
+
 #define PROCESS_MAX 256
 #define KERNEL_STACK_SIZE (128 * 1024) /* 128 KB — cc parser + network call chains */
 #define KERNEL_STACK_PAGES ((KERNEL_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE)
@@ -125,6 +128,15 @@ struct process {
     void *kthread_arg;
     /* Per-process interval timers */
     struct itimerval itimers[ITIMER_MAX];
+    /* Resource limits (rlimit) */
+    uint64_t rlim_cur[_RLIMIT_NLIMITS];
+    uint64_t rlim_max[_RLIMIT_NLIMITS];
+    /* Scheduling policy: SCHED_OTHER, SCHED_FIFO, SCHED_RR */
+    uint8_t  sched_policy;
+    /* Core dump enabled? */
+    int      coredump_enabled;
+    /* Process name (for prctl PR_SET_NAME) */
+    char     proc_comm[16];
 };
 
 void process_init(void);

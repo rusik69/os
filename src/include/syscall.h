@@ -251,6 +251,127 @@
 #define SYS_UMASK            270  /* umask(mask) → old mask */
 #define SYS_MKNOD            271  /* mknod(path, mode, dev) → 0 or -1 */
 
+/* ── Production-ready improvements ──────────────────────────── */
+#define SYS_PRLIMIT64         272  /* prlimit64(pid, resource, new, old) → 0 or -1 */
+#define SYS_FUTEX             273  /* futex(uaddr, op, val, timeout, uaddr2, val3) → varies */
+#define SYS_ARCH_PRCTL        274  /* arch_prctl(code, addr) → 0 or -1 */
+#define SYS_POLL              275  /* poll(fds, nfds, timeout_ms) → count or -1 */
+#define SYS_EVENTFD           276  /* eventfd(initval, flags) → fd or -1 */
+#define SYS_SENDFILE          277  /* sendfile(out_fd, in_fd, offset, count) → bytes or -1 */
+#define SYS_IOCTL             278  /* ioctl(fd, cmd, arg) → 0 or -1 */
+#define SYS_SYSLOG            279  /* syslog(opt, buf, len) → varies */
+#define SYS_PRCTL             280  /* prctl(op, a2, a3, a4, a5) → 0 or -1 */
+#define SYS_MOUNT             281  /* mount(src, target, fstype, flags, data) → 0 or -1 */
+#define SYS_UMOUNT            282  /* umount(target) → 0 or -1 */
+#define SYS_FTRUNCATE         283  /* ftruncate(fd, length) → 0 or -1 */
+#define SYS_READDIR           284  /* readdir(fd, buf, count) → bytes or 0 */
+#define SYS_EXECVEAT          285  /* execveat(dirfd, path, argv, envp, flags) → 0 or -1 */
+#define SYS_SCHED_SETSCHEDULER 286 /* sched_setscheduler(pid, policy, param) → 0 or -1 */
+#define SYS_SCHED_GETSCHEDULER 287 /* sched_getscheduler(pid) → policy or -1 */
+
+/* rlimit resources (Linux-compatible) */
+#define RLIMIT_AS          0   /* Address space limit (bytes) */
+#define RLIMIT_CORE        1   /* Core file size (bytes) */
+#define RLIMIT_CPU         2   /* CPU time (seconds) */
+#define RLIMIT_DATA        3   /* Data segment size (bytes) */
+#define RLIMIT_FSIZE       4   /* File size (bytes) */
+#define RLIMIT_NOFILE      5   /* Number of open files */
+#define RLIMIT_STACK       6   /* Stack size (bytes) */
+#define RLIMIT_NPROC       7   /* Number of processes */
+#define RLIMIT_MEMLOCK     8   /* Locked memory (bytes) */
+#define RLIMIT_LOCKS       9   /* Number of file locks */
+#define RLIMIT_SIGPENDING  10  /* Number of pending signals */
+#define RLIMIT_MSGQUEUE    11  /* POSIX message queue size */
+#define RLIMIT_NICE        12  /* Nice value */
+#define RLIMIT_RTPRIO      13  /* Real-time priority */
+#define RLIMIT_NLIMITS     14
+#define RLIM_INFINITY      (~0ULL)
+
+/* Futex operations */
+#define FUTEX_WAIT         0
+#define FUTEX_WAKE         1
+#define FUTEX_PRIVATE_FLAG 128
+#define FUTEX_WAIT_PRIVATE (FUTEX_WAIT  | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAKE_PRIVATE (FUTEX_WAKE  | FUTEX_PRIVATE_FLAG)
+
+/* arch_prctl codes */
+#define ARCH_SET_FS        0x1002
+#define ARCH_GET_FS        0x1003
+#define ARCH_SET_GS        0x1004
+#define ARCH_GET_GS        0x1005
+
+/* Scheduling policies */
+#define SCHED_OTHER        0
+#define SCHED_FIFO         1
+#define SCHED_RR           2
+
+/* struct sched_param */
+struct sched_param {
+    int sched_priority;
+};
+
+/* struct pollfd for poll() */
+#define POLLIN     0x001
+#define POLLOUT    0x004
+#define POLLERR    0x008
+#define POLLHUP    0x010
+#define POLLNVAL   0x020
+
+struct pollfd {
+    int   fd;
+    int16_t events;
+    int16_t revents;
+};
+
+/* struct rlimit64 for prlimit64 */
+struct rlimit64 {
+    uint64_t rlim_cur;  /* soft limit */
+    uint64_t rlim_max;  /* hard limit */
+};
+
+/* struct linux_dirent64 for readdir */
+struct linux_dirent64 {
+    uint64_t  d_ino;
+    int64_t   d_off;
+    unsigned short d_reclen;
+    unsigned char  d_type;
+    char      d_name[];
+};
+
+#define DT_UNKNOWN  0
+#define DT_REG      1
+#define DT_DIR      2
+#define DT_LNK      3
+
+/* syslog operations (Linux-compatible) */
+#define SYSLOG_ACTION_CLOSE      0
+#define SYSLOG_ACTION_OPEN       1
+#define SYSLOG_ACTION_READ       2
+#define SYSLOG_ACTION_READ_ALL   3
+#define SYSLOG_ACTION_READ_CLEAR 4
+#define SYSLOG_ACTION_CLEAR      5
+#define SYSLOG_ACTION_CONSOLE_OFF 6
+#define SYSLOG_ACTION_CONSOLE_ON 7
+#define SYSLOG_ACTION_CONSOLE_LEVEL 8
+#define SYSLOG_ACTION_SIZE_UNREAD 9
+#define SYSLOG_ACTION_SIZE_BUFFER 10
+
+/* prctl operations */
+#define PR_SET_NAME     15
+#define PR_GET_NAME     16
+#define PR_SET_SECCOMP  22
+#define PR_GET_SECCOMP  23
+#define PR_SET_PDEATHSIG 1
+#define PR_GET_PDEATHSIG 2
+
+/* execveat flags */
+#define AT_EMPTY_PATH  0x1000
+#define AT_SYMLINK_NOFOLLOW 0x100
+
+/* ioctl commands (generic) */
+#define TIOCGWINSZ     0x5413
+#define TIOCSWINSZ     0x5414
+
 /* sysconf names (Linux compatible) */
 #define _SC_CLK_TCK         2
 #define _SC_PAGESIZE        30

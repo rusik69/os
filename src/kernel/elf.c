@@ -164,6 +164,7 @@ int elf_exec(const char *path) {
             uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
             uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
             if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE; /* PF_W */
+            if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC; /* PF_X not set → NX */
 
             for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
                 /* Allocate a physical frame and map it */
@@ -213,7 +214,7 @@ int elf_exec(const char *path) {
             }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             if (vmm_map_user_page(user_pml4, va, frame,
-                                  VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
+                                  VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
                 kprintf("elf: vmm_map_user_page failed for stack\n");
                 pmm_free_frame(frame);
                 vmm_destroy_user_pml4(user_pml4);
@@ -303,6 +304,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
         if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
+        if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
 
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
@@ -335,7 +337,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
-                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER) < 0) {
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
             pmm_free_frame(frame);
             vmm_destroy_user_pml4(new_pml4);
             return -1;

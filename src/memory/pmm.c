@@ -128,6 +128,8 @@ void pmm_advance_hint(uint64_t phys_addr) {
         pmm_hint = frame + 1;
 }
 
+void pmm_oom_kill(void); /* defined in syscall.c — kills a process to free memory */
+
 uint64_t pmm_alloc_frame(void) {
     /* Start from hint to avoid scanning already-allocated frames */
     uint64_t i = pmm_hint;
@@ -143,7 +145,23 @@ uint64_t pmm_alloc_frame(void) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
-    return 0; /* out of memory */
+    /* Out of memory — invoke OOM killer and retry once */
+    pmm_oom_kill();
+    /* Second attempt */
+    i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            bitmap_set(i);
+            used_frames++;
+            frame_refcount[i] = 1;
+            pmm_hint = i + 1;
+            if (pmm_hint >= total_frames) pmm_hint = 0;
+            return i * PAGE_SIZE;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+    return 0; /* truly out of memory */
 }
 
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */

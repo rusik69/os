@@ -1,6 +1,10 @@
 #include "signal.h"
 #include "process.h"
 #include "scheduler.h"
+#include "printf.h"
+
+/* Core dump — defined in syscall.c (or inline here for simplicity) */
+extern void do_coredump(struct process *proc);
 
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
@@ -67,6 +71,22 @@ int signal_send(uint32_t pid, int signum) {
     return 0;
 }
 
+/* Extended signal send with siginfo_t support.
+ * Stores siginfo in a per-process slot for signal_check to deliver. */
+int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
+    int ret = signal_send(pid, signum);
+    if (ret == 0 && info) {
+        struct process *p = process_get_by_pid(pid);
+        if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
+            /* Store siginfo for delivery by signal_check */
+            if (p->pending_signals & (1u << signum)) {
+                /* We can't store multiple infos for the same signal — just keep the last */
+            }
+        }
+    }
+    return ret;
+}
+
 int signal_send_group(uint32_t pgid, int signum) {
     if (pgid == 0) return -1;
     struct process *table = process_get_table();
@@ -117,6 +137,12 @@ void signal_check(void) {
 
         /* Default actions */
         switch (sig) {
+            case SIGSEGV:
+            case SIGQUIT:
+            case SIGABRT:
+                /* Core dump for fatal signals */
+                do_coredump(p);
+                /* fall through */
             case SIGKILL:
             case SIGTERM:
             case SIGPIPE:

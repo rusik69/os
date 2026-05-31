@@ -58,15 +58,15 @@ pmode_entry:
     mov eax, [0x7200]
     mov cr3, eax
 
-    ; Enable PAE
+    ; Enable PAE + SMEP + SMAP + UMIP
     mov eax, cr4
-    or eax, (1 << 5)
+    or eax, (1 << 5) | (1 << 20) | (1 << 21) | (1 << 11)  ; PAE | SMEP | SMAP | UMIP
     mov cr4, eax
 
-    ; Enable long mode
+    ; Enable long mode + NXE
     mov ecx, 0xC0000080          ; IA32_EFER MSR
     rdmsr
-    or eax, (1 << 8)             ; LME
+    or eax, (1 << 8) | (1 << 11) ; LME | NXE
     wrmsr
 
     ; Enable paging (PG) and write-protect (WP)

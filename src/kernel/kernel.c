@@ -46,6 +46,7 @@
 #include "smp.h"
 #include "apic.h"
 #include "elf.h"
+#include "cpu.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -114,6 +115,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Virtual memory manager */
     vmm_init();
     kprintf("[OK] VMM initialized\n");
+
+    /* Enable CPU security features: SMEP, SMAP, NXE, UMIP */
+    cpu_security_init();
 
     /* Kernel heap (framebuffer may allocate from heap) */
     heap_init();

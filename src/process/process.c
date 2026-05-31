@@ -198,6 +198,25 @@ int process_set_cap_profile(struct process *proc, enum process_cap_profile profi
     return 0;
 }
 
+static void rlimit_init_defaults(struct process *proc) {
+    /* Default resource limits (RLIM_INFINITY for most) */
+    for (int i = 0; i < _RLIMIT_NLIMITS; i++) {
+        proc->rlim_cur[i] = ~0ULL;
+        proc->rlim_max[i] = ~0ULL;
+    }
+    /* Set sensible defaults */
+    proc->rlim_cur[5] = 256;   /* RLIMIT_NOFILE = 256 */
+    proc->rlim_max[5] = 256;
+    proc->rlim_cur[7] = 64;    /* RLIMIT_NPROC = 64 */
+    proc->rlim_max[7] = 64;
+    proc->rlim_cur[0] = 1024ULL * 1024 * 1024;  /* RLIMIT_AS = 1GB */
+    proc->rlim_max[0] = 1024ULL * 1024 * 1024;
+    proc->rlim_cur[1] = 1024ULL * 1024;          /* RLIMIT_CORE = 1MB */
+    proc->rlim_max[1] = 1024ULL * 1024;
+    proc->rlim_cur[6] = 1024ULL * 64;            /* RLIMIT_STACK = 64KB */
+    proc->rlim_max[6] = 1024ULL * 64;
+}
+
 void process_init(void) {
     memset(process_table, 0, sizeof(process_table));
 
@@ -227,6 +246,10 @@ void process_init(void) {
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
+    process_table[0].sched_policy = SCHED_OTHER;
+    process_table[0].coredump_enabled = 1;
+    memset(process_table[0].proc_comm, 0, 16);
+    rlimit_init_defaults(&process_table[0]);
     current_process = &process_table[0];
 }
 
@@ -280,6 +303,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
         strncpy(proc->cwd, "/", 63);
     proc->cwd[63] = '\0';
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_TRUSTED);
+    proc->sched_policy = SCHED_OTHER;
+    proc->coredump_enabled = 1;
+    memset(proc->proc_comm, 0, 16);
+    memset(proc->itimers, 0, sizeof(proc->itimers));
+    rlimit_init_defaults(proc);
 
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
@@ -345,6 +373,10 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->ticks_remaining = 0;
     proc->last_run_tick  = timer_get_ticks();
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
+    proc->sched_policy = SCHED_OTHER;
+    proc->coredump_enabled = 1;
+    memset(proc->proc_comm, 0, 16);
+    rlimit_init_defaults(proc);
 
     /* Set up initial context on kernel stack.
      * context_switch will pop r15..rbp then ret → user_entry_trampoline
@@ -390,10 +422,22 @@ void process_exit(void) {
 }
 
 void process_exit_code(int code) {
+    /* Reparent orphans to init (PID 1) */
+    uint32_t my_pid = current_process->pid;
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (process_table[i].state != PROCESS_UNUSED &&
+            process_table[i].parent_pid == my_pid &&
+            process_table[i].pid != my_pid) {
+            process_table[i].parent_pid = 1;
+        }
+    }
     current_process->state = PROCESS_ZOMBIE;
     current_process->exit_code = code;
     scheduler_remove(current_process);
     process_wake_waiter(current_process->pid);
+    /* Send SIGCHLD to parent */
+    struct process *parent = process_get_by_pid(current_process->parent_pid);
+    if (parent) signal_send(parent->pid, SIGCHLD);
     scheduler_yield();
     for (;;) __asm__ volatile("hlt");
 }
