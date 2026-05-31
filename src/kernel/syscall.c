@@ -1416,20 +1416,38 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
 /* Called from timer tick to decrement per-process timers */
 void process_timer_tick(void) {
     struct process *table = process_get_table();
+    struct process *current = process_get_current();
+
+    /* ITIMER_REAL: wall-clock — tick for every process */
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *p = &table[i];
         if (p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE)
             continue;
-        for (int t = 0; t < ITIMER_MAX; t++) {
-            if (p->itimers[t].it_value > 0) {
-                p->itimers[t].it_value--;
-                if (p->itimers[t].it_value == 0) {
-                    /* Timer expired — send signal and reload */
-                    if (t == ITIMER_REAL)
-                        signal_send(p->pid, SIGALRM);
-                    /* Reload interval if periodic */
-                    p->itimers[t].it_value = p->itimers[t].it_interval;
-                }
+        if (p->itimers[ITIMER_REAL].it_value > 0) {
+            p->itimers[ITIMER_REAL].it_value--;
+            if (p->itimers[ITIMER_REAL].it_value == 0) {
+                signal_send(p->pid, SIGALRM);
+                p->itimers[ITIMER_REAL].it_value = p->itimers[ITIMER_REAL].it_interval;
+            }
+        }
+    }
+
+    /* ITIMER_VIRTUAL: user CPU — tick only for the currently running process */
+    if (current && current->state == PROCESS_RUNNING) {
+        if (current->itimers[ITIMER_VIRTUAL].it_value > 0) {
+            current->itimers[ITIMER_VIRTUAL].it_value--;
+            if (current->itimers[ITIMER_VIRTUAL].it_value == 0) {
+                signal_send(current->pid, SIGVTALRM);
+                current->itimers[ITIMER_VIRTUAL].it_value = current->itimers[ITIMER_VIRTUAL].it_interval;
+            }
+        }
+
+        /* ITIMER_PROF: user + system CPU — tick only for the currently running process */
+        if (current->itimers[ITIMER_PROF].it_value > 0) {
+            current->itimers[ITIMER_PROF].it_value--;
+            if (current->itimers[ITIMER_PROF].it_value == 0) {
+                signal_send(current->pid, SIGPROF);
+                current->itimers[ITIMER_PROF].it_value = current->itimers[ITIMER_PROF].it_interval;
             }
         }
     }
@@ -1783,6 +1801,131 @@ static uint64_t sys_sigpending(uint64_t set_addr) {
     uint64_t pending = proc->pending_signals;
     memcpy((void*)set_addr, &pending, sizeof(uint64_t));
     return 0;
+}
+
+/* ── sigwaitinfo / sigtimedwait (synchronous signal acceptance) ── */
+
+/* Internal: block until a signal in the given mask is pending.
+ * Returns the signal number, or -1 on error (with errno in *out_errno).
+ * If info is non-NULL, fills in siginfo for the delivered signal.
+ * If timeout_ticks > 0, blocks at most that many timer ticks. */
+static int do_sigwait(uint64_t set_mask, int timeout_ticks,
+                      struct siginfo *out_info, int *out_errno) {
+    struct process *proc = process_get_current();
+    if (!proc) { *out_errno = 1; return -1; }
+
+    uint64_t start = timer_get_ticks();
+
+    for (;;) {
+        /* Mask away signals we don't care about */
+        uint64_t relevant = proc->pending_signals & set_mask;
+
+        if (relevant) {
+            /* Find lowest pending signal in the set */
+            int sig = __builtin_ctzll(relevant);
+            if (sig > 0 && sig < SIG_MAX) {
+                /* Dequeue the signal */
+                proc->pending_signals &= ~(1ULL << sig);
+
+                /* Copy out siginfo if requested */
+                if (out_info) {
+                    struct siginfo *info = signal_get_info(proc, sig);
+                    if (info) {
+                        memcpy(out_info, info, sizeof(struct siginfo));
+                        memset(info, 0, sizeof(struct siginfo));
+                    } else {
+                        memset(out_info, 0, sizeof(struct siginfo));
+                        out_info->si_signo = sig;
+                        out_info->si_code = SI_USER;
+                    }
+                }
+                return sig;
+            }
+        }
+
+        /* Check timeout */
+        if (timeout_ticks > 0) {
+            uint64_t elapsed = timer_get_ticks() - start;
+            if (elapsed >= (uint64_t)timeout_ticks) {
+                *out_errno = 11; /* EAGAIN */
+                return -1;
+            }
+        }
+
+        /* Block until woken (we'll be woken when a signal arrives) */
+        process_get_current()->wait_for_pid = 0; /* not waiting for child */
+        process_get_current()->sleep_until = timeout_ticks > 0
+            ? start + (uint64_t)timeout_ticks : 0;
+        process_get_current()->state = PROCESS_BLOCKED;
+        scheduler_remove(process_get_current());
+        scheduler_yield();
+
+        /* Woken — loop back and check signals */
+    }
+}
+
+static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
+    if (!set_addr) return (uint64_t)-1;
+
+    uint64_t sigmask;
+    memcpy(&sigmask, (void*)set_addr, sizeof(uint64_t));
+
+    /* Mask out signals that can't be waited on (SIGKILL, SIGSTOP) */
+    sigmask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+
+    /* Temporarily unmask the waited signals so signal_check can deliver them */
+    struct process *proc = process_get_current();
+    uint64_t saved_mask = proc ? proc->sig_mask : 0;
+    if (proc) proc->sig_mask &= ~sigmask;
+
+    struct siginfo info_buf;
+    int errno_val = 0;
+    int sig = do_sigwait(sigmask, 0, &info_buf, &errno_val);
+
+    /* Restore signal mask */
+    if (proc) proc->sig_mask = saved_mask;
+
+    if (sig < 0) return (uint64_t)-1;
+
+    /* Copy siginfo back to userspace if requested */
+    if (info_addr && syscall_user_write_ok(info_addr, sizeof(struct siginfo))) {
+        memcpy((void*)info_addr, &info_buf, sizeof(struct siginfo));
+    }
+
+    return (uint64_t)(unsigned int)sig;
+}
+
+static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
+                                  uint64_t timeout_addr) {
+    if (!set_addr || !timeout_addr) return (uint64_t)-1;
+
+    uint64_t sigmask;
+    memcpy(&sigmask, (void*)set_addr, sizeof(uint64_t));
+    sigmask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
+
+    /* Read timeout as timespec and convert to ticks */
+    struct timespec ts;
+    memcpy(&ts, (void*)timeout_addr, sizeof(struct timespec));
+    int timeout_ticks = (int)(ts.tv_sec * TIMER_FREQ + ts.tv_nsec * TIMER_FREQ / 1000000000ULL);
+    if (timeout_ticks < 0) timeout_ticks = 0;
+
+    struct process *proc = process_get_current();
+    uint64_t saved_mask = proc ? proc->sig_mask : 0;
+    if (proc) proc->sig_mask &= ~sigmask;
+
+    struct siginfo info_buf;
+    int errno_val = 0;
+    int sig = do_sigwait(sigmask, timeout_ticks, &info_buf, &errno_val);
+
+    if (proc) proc->sig_mask = saved_mask;
+
+    if (sig < 0) return (uint64_t)-1;
+
+    if (info_addr && syscall_user_write_ok(info_addr, sizeof(struct siginfo))) {
+        memcpy((void*)info_addr, &info_buf, sizeof(struct siginfo));
+    }
+
+    return (uint64_t)(unsigned int)sig;
 }
 
 /* ── readv / writev (vectored I/O) ──────────────────────────── */
@@ -3758,9 +3901,54 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(usage_addr, sizeof(struct rusage)))
         return (uint64_t)-1;
 
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
-    /* Return minimal info */
+
+    if (who == RUSAGE_SELF) {
+        uint64_t hz = TIMER_FREQ;
+        /* Convert ticks to timeval (seconds + microseconds) */
+        uint64_t utime_s = proc->utime_ticks / hz;
+        uint64_t utime_us = (proc->utime_ticks % hz) * (1000000ULL / hz);
+        uint64_t stime_s = proc->stime_ticks / hz;
+        uint64_t stime_us = (proc->stime_ticks % hz) * (1000000ULL / hz);
+
+        ru.ru_utime.tv_sec  = utime_s;
+        ru.ru_utime.tv_usec = utime_us;
+        ru.ru_stime.tv_sec  = stime_s;
+        ru.ru_stime.tv_usec = stime_us;
+
+        ru.ru_minflt  = proc->minflt;
+        ru.ru_majflt  = proc->majflt;
+        ru.ru_nvcsw   = proc->nvcsw;
+        ru.ru_nivcsw  = proc->nivcsw;
+
+        /* Approximations */
+        ru.ru_maxrss  = 0; /* not tracked yet */
+    } else if (who == RUSAGE_CHILDREN) {
+        /* Sum children's resource usage */
+        struct process *table = process_get_table();
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].parent_pid != proc->pid) continue;
+            if (table[i].state == PROCESS_ZOMBIE) {
+                uint64_t hz = TIMER_FREQ;
+                ru.ru_utime.tv_sec  += table[i].utime_ticks / hz;
+                ru.ru_utime.tv_usec += (table[i].utime_ticks % hz) * (1000000ULL / hz);
+                ru.ru_stime.tv_sec  += table[i].stime_ticks / hz;
+                ru.ru_stime.tv_usec += (table[i].stime_ticks % hz) * (1000000ULL / hz);
+            }
+            ru.ru_minflt  += table[i].minflt;
+            ru.ru_majflt  += table[i].majflt;
+            ru.ru_nvcsw   += table[i].nvcsw;
+            ru.ru_nivcsw  += table[i].nivcsw;
+        }
+    } else {
+        return (uint64_t)-1; /* RUSAGE_THREAD not implemented */
+    }
+
     memcpy((void*)usage_addr, &ru, sizeof(struct rusage));
     return 0;
 }
@@ -4871,6 +5059,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
             if (ret == (uint64_t)-1) pfd->offset = saved_off;
             return ret;
         }
+        case SYS_SIGWAITINFO:     return sys_sigwaitinfo(a1, a2);
+        case SYS_SIGTIMEDWAIT:    return sys_sigtimedwait(a1, a2, a3);
         default:         return (uint64_t)-1;
     }
 }

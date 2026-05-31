@@ -48,6 +48,16 @@ static inline void wait_queue_init(struct wait_queue *wq) {
 int wait_queue_sleep(struct wait_queue *wq);
 
 /*
+ * Interruptible sleep on the wait queue.
+ * Like wait_queue_sleep, but returns -EINTR (-4) if a signal is
+ * pending before sleeping or when woken.  Use this for syscalls
+ * that must be interruptible by signals (pause, sigsuspend, etc.).
+ *
+ * Returns 0 if woken normally, -4 (-EINTR) if interrupted by signal.
+ */
+int wait_queue_sleep_interruptible(struct wait_queue *wq);
+
+/*
  * Wake the oldest waiter (FIFO).  The woken process is moved to READY.
  * Returns 1 if a process was woken, 0 if queue was empty.
  */

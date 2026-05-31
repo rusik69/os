@@ -91,6 +91,12 @@
 | Enhanced `.gdbinit` with `walk_page` and `ps` macros | ✅ |
 | Enhanced procfs (CPU info, meminfo, uptime, mounts) | ✅ |
 | PRNG (non-cryptographic random number generator) | ✅ |
+| Process CPU time accounting + getrusage (utime/stime/nvcsw/nivcsw/minflt/majflt) | ✅ |
+| ITIMER_VIRTUAL + ITIMER_PROF (SIGVTALRM + SIGPROF delivery) | ✅ |
+| Interruptible wait queues (signal-aware `wait_queue_sleep_interruptible`) | ✅ |
+| `sigwaitinfo`/`sigtimedwait` syscalls (synchronous signal acceptance) | ✅ |
+| `/proc/stat` with Linux-compatible user/system/idle columns | ✅ |
+| `/proc/uptime` file (uptime + idle seconds) | ✅ |
 
 ---
 

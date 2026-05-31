@@ -327,6 +327,15 @@ struct process *process_create(void (*entry)(void), const char *name) {
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
 
+    /* Initialize CPU time accounting */
+    proc->utime_ticks = 0;
+    proc->stime_ticks = 0;
+    proc->start_time_tick = timer_get_ticks();
+    proc->nvcsw = 0;
+    proc->nivcsw = 0;
+    proc->minflt = 0;
+    proc->majflt = 0;
+
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
 
@@ -400,6 +409,15 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->coredump_enabled = 1;
     memset(proc->proc_comm, 0, 16);
     rlimit_init_defaults(proc);
+
+    /* Initialize CPU time accounting */
+    proc->utime_ticks = 0;
+    proc->stime_ticks = 0;
+    proc->start_time_tick = timer_get_ticks();
+    proc->nvcsw = 0;
+    proc->nivcsw = 0;
+    proc->minflt = 0;
+    proc->majflt = 0;
 
     /* Set up initial context on kernel stack.
      * context_switch will pop r15..rbp then ret → user_entry_trampoline

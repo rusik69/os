@@ -259,10 +259,13 @@ void schedule(void) {
 
     /* Put current back on queue if still runnable */
     if (current && current->state == PROCESS_RUNNING) {
+        current->nivcsw++;  /* preempted — involuntary context switch */
         current->state = PROCESS_READY;
         spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         scheduler_add(current);
         spinlock_irqsave_release(&sched_lock, irq_flags);
+    } else if (current) {
+        current->nvcsw++;   /* yielded or blocked — voluntary context switch */
     }
 
     next->state = PROCESS_RUNNING;
@@ -300,6 +303,9 @@ void scheduler_tick(void) {
 
     struct process *cur = ci->current_process;
     if (!cur || cur->state != PROCESS_RUNNING) return;
+
+    /* Account system time (we're in IRQ context) */
+    cur->stime_ticks++;
 
     /* Check pending signals */
     if (cur->pending_signals) {

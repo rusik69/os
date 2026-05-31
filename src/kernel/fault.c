@@ -79,8 +79,10 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* User-mode write fault — check for COW */
     if ((err & (1ULL << 1))) {
         struct process *proc = process_get_current();
-        if (proc && proc->pml4 && vmm_handle_cow_fault(proc->pml4, cr2))
+        if (proc && proc->pml4 && vmm_handle_cow_fault(proc->pml4, cr2)) {
+            if (proc) proc->minflt++;
             return; /* handled */
+        }
     }
 
     /* Unhandled user fault: kill the process with SIGSEGV (code 11) */

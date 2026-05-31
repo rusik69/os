@@ -140,3 +140,66 @@ int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid) {
     spinlock_irqsave_release(&wq->lock, flags);
     return found;
 }
+
+/* Interruptible wait: like wait_queue_sleep, but returns -EINTR if a
+ * signal is pending before sleeping or after being woken. */
+int wait_queue_sleep_interruptible(struct wait_queue *wq) {
+    uint64_t flags;
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+
+    /* Check for pending signals before blocking */
+    if (cur->pending_signals) {
+        return -4; /* -EINTR */
+    }
+
+    spinlock_irqsave_acquire(&wq->lock, &flags);
+
+    if (wq->count >= WAITQUEUE_MAX_WAITERS) {
+        spinlock_irqsave_release(&wq->lock, flags);
+        return -1;  /* queue full */
+    }
+
+    /* Insert at the tail (FIFO) */
+    int tail = (wq->head + wq->count) % WAITQUEUE_MAX_WAITERS;
+    wq->pids[tail] = cur->pid;
+    wq->count++;
+
+    /* Mark process BLOCKED and remove from scheduler */
+    cur->state = PROCESS_BLOCKED;
+    spinlock_release(&wq->lock);  /* release lock — IRQs still disabled */
+    scheduler_remove(cur);
+
+    uint64_t iflags;
+    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
+    if (iflags & 0x200) __asm__ volatile("sti");
+
+    /* Yield the CPU — scheduler will pick another process */
+    scheduler_yield();
+
+    /* Woken up: re-acquire lock to clean up */
+    spinlock_irqsave_acquire(&wq->lock, &iflags);
+
+    /* Find and remove our PID from the queue (in case of wake_all) */
+    for (int i = 0; i < wq->count; i++) {
+        int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;
+        if (wq->pids[idx] == cur->pid) {
+            /* Compact by moving last element here */
+            int last = (wq->head + wq->count - 1) % WAITQUEUE_MAX_WAITERS;
+            if (idx != last)
+                wq->pids[idx] = wq->pids[last];
+            wq->pids[last] = 0;
+            wq->count--;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&wq->lock, flags);
+
+    /* Check for signals that may have woken us */
+    if (cur->pending_signals) {
+        return -4; /* -EINTR — caller should handle signal delivery */
+    }
+
+    return 0;
+}

@@ -107,4 +107,9 @@ void signal_register(int signum, signal_handler_t handler);
 void signal_mask(uint64_t sigmask);
 void signal_unmask(uint64_t sigmask);
 
+/* Retrieve siginfo for a pending signal (returns NULL if none stored).
+ * Caller should clear the info after use. */
+struct process;
+struct siginfo *signal_get_info(struct process *p, int signum);
+
 #endif

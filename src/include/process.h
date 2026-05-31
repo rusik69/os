@@ -147,6 +147,14 @@ struct process {
     int      coredump_enabled;
     /* Process name (for prctl PR_SET_NAME) */
     char     proc_comm[16];
+    /* ── CPU time accounting ─────────────────────────────────── */
+    uint64_t utime_ticks;    /* ticks spent in user mode */
+    uint64_t stime_ticks;    /* ticks spent in kernel mode (syscalls + IRQs) */
+    uint64_t start_time_tick; /* tick when process was created */
+    uint64_t nvcsw;           /* voluntary context switches (yield, sleep) */
+    uint64_t nivcsw;          /* involuntary context switches (preemption) */
+    uint64_t minflt;          /* minor page faults (no disk I/O) */
+    uint64_t majflt;          /* major page faults (disk I/O required) */
 };
 
 void process_init(void);

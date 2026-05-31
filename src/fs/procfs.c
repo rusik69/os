@@ -237,6 +237,23 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     proc_str("State:\t", buf, &pos, max);
     proc_str(state_str, buf, &pos, max);
     proc_str("\n", buf, &pos, max);
+    proc_str("Utime:\t", buf, &pos, max);
+    proc_u64_to_str(p->utime_ticks, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("Stime:\t", buf, &pos, max);
+    proc_u64_to_str(p->stime_ticks, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("nvcsw:\t", buf, &pos, max);
+    proc_u64_to_str(p->nvcsw, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("nivcsw:\t", buf, &pos, max);
+    proc_u64_to_str(p->nivcsw, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("minflt:\t", buf, &pos, max);
+    proc_u64_to_str(p->minflt, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("majflt:\t", buf, &pos, max);
+    proc_u64_to_str(p->majflt, buf, &pos, max);
     buf[pos] = '\0';
     return pos;
 }
@@ -244,18 +261,29 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
 /* /proc/stat — CPU and system statistics */
 static int procfs_gen_stat(char *buf, int max) {
     int p = 0;
-    uint64_t uptime_ticks = timer_get_ticks();
+    uint64_t now = timer_get_ticks();
     uint64_t idle_ticks = scheduler_get_idle_ticks();
 
+    /* Aggregate per-process CPU time into system-wide counters */
+    uint64_t user_ticks = 0, system_ticks = 0;
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_UNUSED) continue;
+        user_ticks   += table[i].utime_ticks;
+        system_ticks += table[i].stime_ticks;
+    }
+
+    /* Linux /proc/stat format: cpu user nice system idle iowait irq softirq steal */
     proc_str("cpu  ", buf, &p, max);
-    proc_u64_to_str(uptime_ticks, buf, &p, max); /* user ticks */
-    proc_str(" 0 0 ", buf, &p, max);   /* nice, system, idle placeholder */
-    proc_u64_to_str(idle_ticks, buf, &p, max); /* idle */
-    proc_str(" 0 0 0 0\n", buf, &p, max);
+    proc_u64_to_str(user_ticks, buf, &p, max);      /* user */
+    proc_str(" 0 ", buf, &p, max);                   /* nice */
+    proc_u64_to_str(system_ticks, buf, &p, max);    /* system */
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(idle_ticks, buf, &p, max);      /* idle */
+    proc_str(" 0 0 0 0\n", buf, &p, max);            /* iowait irq softirq steal */
 
     proc_str("procs_running ", buf, &p, max);
     int running = 0;
-    struct process *table = process_get_table();
     for (int i = 0; i < PROCESS_MAX; i++)
         if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
             running++;
@@ -268,6 +296,10 @@ static int procfs_gen_stat(char *buf, int max) {
         if (table[i].state == PROCESS_BLOCKED)
             blocked++;
     proc_u64_to_str(blocked, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    proc_str("btime ", buf, &p, max);
+    proc_u64_to_str(0, buf, &p, max); /* boot time (0 = not tracked) */
     proc_str("\n", buf, &p, max);
 
     buf[p] = '\0';
@@ -431,7 +463,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") != 0) return -1;
-    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nnet\nmounts\n");
+    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nstat\nloadavg\nnet\nmounts\n");
     /* Also list active PIDs */
     struct process *table = process_get_table();
     struct process *caller = process_get_current();
