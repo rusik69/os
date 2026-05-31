@@ -1,3 +1,10 @@
+/*
+ * Per-CPU scheduler with SMP load balancing
+ *
+ * Each CPU maintains its own multilevel priority queue (4 levels).
+ * Idle CPUs pull tasks from busy CPUs via load_balance().
+ * Cross-CPU wakeups use IPI reschedule.
+ */
 #include "scheduler.h"
 #include "process.h"
 #include "signal.h"
@@ -10,80 +17,115 @@
 #include "apic.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
-static struct process *queue_head[SCHED_LEVELS];
-static struct process *queue_tail[SCHED_LEVELS];
-static int scheduler_enabled = 0;
-static uint64_t scheduler_idle_ticks = 0;
 
-/* SMP: global lock for all scheduler data structures */
+/* Global lock for cross-CPU operations (load balancing, process table walks) */
 static spinlock_t sched_lock = SPINLOCK_INIT;
 
-/* Per-CPU kernel stack for syscall handling */
 extern uint64_t syscall_kernel_rsp;
 
-static int scheduler_queues_empty(void) {
+/* Time slices in ticks (100Hz): higher priority = larger quantum. */
+static const uint16_t time_slices[SCHED_LEVELS] = {10, 5, 3, 2};
+
+/* ── Per-CPU helpers ────────────────────────────────────────────────── */
+static inline struct cpu_info *this_cpu(void) {
+    return get_cpu_info();
+}
+
+static inline int cpu_queue_empty(struct cpu_info *ci, int lvl) {
+    return ci->queue_head[lvl] == NULL;
+}
+
+static inline int cpu_queues_empty(struct cpu_info *ci) {
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
-        if (queue_head[lvl]) return 0;
+        if (ci->queue_head[lvl]) return 0;
     }
     return 1;
 }
 
-/* Time slices in ticks (100Hz): higher priority = larger quantum.
- * Priority 1 (default) keeps 5 ticks to match original preemption rate. */
-static const uint16_t time_slices[SCHED_LEVELS] = {10, 5, 3, 2};
+/* Count runnable tasks on a given CPU (approximate, no lock needed for stats) */
+static int cpu_nr_runnable(struct cpu_info *ci) {
+    int count = 0;
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+        while (p) { count++; p = p->next; }
+    }
+    return count;
+}
 
+/* ── Initialization ─────────────────────────────────────────────────── */
 void scheduler_init(void) {
-    for (int i = 0; i < SCHED_LEVELS; i++) {
-        queue_head[i] = NULL;
-        queue_tail[i] = NULL;
-    }
-    scheduler_enabled = 1;
+    /* Per-CPU queues are zero-initialized by smp_init_bsp.
+     * This function ensures the BSP's scheduler is marked enabled. */
+    struct cpu_info *ci = this_cpu();
+    ci->scheduler_enabled = 1;
 }
 
-/* Add a process to its priority queue */
+/* ── Add process to its CPU's runqueue ──────────────────────────────── */
 void scheduler_add(struct process *proc) {
-    if (proc->on_queue) return; /* already enqueued */
+    if (proc->on_queue) return;
+
+    /* Determine target CPU: use cpu_affinity hint, or current CPU */
+    uint32_t cpu_id = get_cpu_id();
+    struct cpu_info *ci = &cpu_info_array[cpu_id];
+
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+
     proc->next = NULL;
-    spinlock_acquire(&sched_lock);
     proc->on_queue = 1;
-    if (!queue_tail[lvl]) {
-        queue_head[lvl] = proc;
-        queue_tail[lvl] = proc;
+
+    /* Lock the per-CPU queue */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
+    if (!ci->queue_tail[lvl]) {
+        ci->queue_head[lvl] = proc;
+        ci->queue_tail[lvl] = proc;
     } else {
-        queue_tail[lvl]->next = proc;
-        queue_tail[lvl] = proc;
+        ci->queue_tail[lvl]->next = proc;
+        ci->queue_tail[lvl] = proc;
     }
-    spinlock_release(&sched_lock);
+
+    spinlock_irqsave_release(&sched_lock, irq_flags);
 }
 
-/* Remove a process from whatever queue it is in */
+/* ── Remove process from its queue ──────────────────────────────────── */
 void scheduler_remove(struct process *proc) {
-    if (!proc->on_queue) return; /* not on any queue */
+    if (!proc->on_queue) return;
+
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-    spinlock_acquire(&sched_lock);
-    struct process *prev = NULL;
-    struct process *cur  = queue_head[lvl];
-    while (cur) {
-        if (cur == proc) {
-            if (prev) prev->next = cur->next;
-            else queue_head[lvl] = cur->next;
-            if (cur == queue_tail[lvl]) queue_tail[lvl] = prev;
-            cur->next = NULL;
-            proc->on_queue = 0;
-            spinlock_release(&sched_lock);
-            return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
+    /* Search all CPUs for this process (it could be on any queue) */
+    for (int cpu = 0; cpu < smp_cpu_count; cpu++) {
+        struct cpu_info *ci = &cpu_info_array[cpu];
+        struct process *prev = NULL;
+        struct process *cur = ci->queue_head[lvl];
+
+        while (cur) {
+            if (cur == proc) {
+                if (prev) prev->next = cur->next;
+                else ci->queue_head[lvl] = cur->next;
+                if (cur == ci->queue_tail[lvl])
+                    ci->queue_tail[lvl] = prev;
+                cur->next = NULL;
+                proc->on_queue = 0;
+                spinlock_irqsave_release(&sched_lock, irq_flags);
+                return;
+            }
+            prev = cur;
+            cur = cur->next;
         }
-        prev = cur;
-        cur  = cur->next;
     }
-    /* Not found in the queue — clear flag anyway */
+
     proc->on_queue = 0;
-    spinlock_release(&sched_lock);
+    spinlock_irqsave_release(&sched_lock, irq_flags);
 }
 
+/* ── Priority change ────────────────────────────────────────────────── */
 int scheduler_set_priority(struct process *proc, uint8_t priority) {
     if (!proc || priority >= SCHED_LEVELS) return -1;
 
@@ -98,13 +140,15 @@ int scheduler_set_priority(struct process *proc, uint8_t priority) {
     return 0;
 }
 
-/* Pick the highest-priority non-empty queue */
+/* ── Dequeue next runnable process from current CPU ─────────────────── */
 static struct process *dequeue_next(void) {
+    struct cpu_info *ci = this_cpu();
+
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
-        if (queue_head[lvl]) {
-            struct process *p = queue_head[lvl];
-            queue_head[lvl] = p->next;
-            if (!queue_head[lvl]) queue_tail[lvl] = NULL;
+        if (ci->queue_head[lvl]) {
+            struct process *p = ci->queue_head[lvl];
+            ci->queue_head[lvl] = p->next;
+            if (!ci->queue_head[lvl]) ci->queue_tail[lvl] = NULL;
             p->next = NULL;
             p->on_queue = 0;
             return p;
@@ -113,29 +157,112 @@ static struct process *dequeue_next(void) {
     return NULL;
 }
 
-void schedule(void) {
-    if (!scheduler_enabled) return;
+/* ── Load balancing: steal from the busiest CPU ─────────────────────── */
+static int load_balance(void) {
+    struct cpu_info *ci = this_cpu();
+    int this_nr = cpu_nr_runnable(ci);
 
-    /* Disable interrupts before touching scheduler/process state to prevent
-     * the race where dequeue_next() is called but an interrupt re-enters
-     * schedule() and dequeues the same process.
-     * Also prevents the race where current_process is updated but the CPU
-     * hasn't yet switched stacks (a timer IRQ in that window sees the wrong
-     * process). */
+    /* Don't steal if we already have tasks */
+    if (this_nr > 1) return 0;
+
+    /* Find the busiest CPU with a significant load imbalance */
+    int busiest_cpu = -1;
+    int busiest_nr = 0;
+
+    for (int cpu = 0; cpu < smp_cpu_count; cpu++) {
+        if ((uint32_t)cpu == get_cpu_id()) continue;
+        struct cpu_info *other = &cpu_info_array[cpu];
+        int nr = cpu_nr_runnable(other);
+        /* Steal if imbalance > 1 (i.e., other has at least 2 more than us) */
+        if (nr > busiest_nr && nr - this_nr >= 2) {
+            busiest_nr = nr;
+            busiest_cpu = cpu;
+        }
+    }
+
+    if (busiest_cpu < 0) return 0;
+
+    /* Steal the lowest-priority task from the busiest CPU */
+    struct cpu_info *busy = &cpu_info_array[busiest_cpu];
+
+    for (int lvl = SCHED_LEVELS - 1; lvl >= 0; lvl--) {
+        if (!busy->queue_head[lvl]) continue;
+
+        struct process *prev = NULL;
+        struct process *cur = busy->queue_head[lvl];
+
+        /* Find the last (tail) process in this priority level */
+        while (cur->next) {
+            prev = cur;
+            cur = cur->next;
+        }
+
+        /* Unlink from busy CPU */
+        if (prev) prev->next = NULL;
+        else busy->queue_head[lvl] = NULL;
+        busy->queue_tail[lvl] = prev;
+
+        cur->next = NULL;
+        cur->on_queue = 0;
+
+        /* Add to our queue */
+        {
+            int our_lvl = (int)cur->priority;
+            if (!ci->queue_tail[our_lvl]) {
+                ci->queue_head[our_lvl] = cur;
+                ci->queue_tail[our_lvl] = cur;
+            } else {
+                ci->queue_tail[our_lvl]->next = cur;
+                ci->queue_tail[our_lvl] = cur;
+            }
+            cur->on_queue = 1;
+        }
+
+        return 1; /* stole one task */
+    }
+
+    return 0;
+}
+
+/* ── Main scheduler entry: pick next process, context-switch ────────── */
+void schedule(void) {
+    struct cpu_info *ci = this_cpu();
+    if (!ci->scheduler_enabled) return;
+
     __asm__ volatile("cli");
 
-    struct process *current = process_get_current();
+    struct process *current = ci->current_process;
 
-    spinlock_acquire(&sched_lock);
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
     struct process *next = dequeue_next();
-    spinlock_release(&sched_lock);
+    spinlock_irqsave_release(&sched_lock, irq_flags);
 
-    if (!next) { __asm__ volatile("sti"); return; }
+    if (!next) {
+        /* No tasks — try load balancing */
+        spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+        int stole = load_balance();
+        spinlock_irqsave_release(&sched_lock, irq_flags);
 
-    /* Put current back in its priority queue if still runnable */
-    if (current->state == PROCESS_RUNNING) {
+        if (stole) {
+            spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+            next = dequeue_next();
+            spinlock_irqsave_release(&sched_lock, irq_flags);
+        }
+
+        if (!next) {
+            ci->idle_ticks++;
+            __asm__ volatile("sti");
+            return;
+        }
+    }
+
+    /* Put current back on queue if still runnable */
+    if (current && current->state == PROCESS_RUNNING) {
         current->state = PROCESS_READY;
+        spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         scheduler_add(current);
+        spinlock_irqsave_release(&sched_lock, irq_flags);
     }
 
     next->state = PROCESS_RUNNING;
@@ -154,7 +281,7 @@ void schedule(void) {
         vmm_switch_pml4(vmm_get_pml4());
     }
 
-    context_switch(&current->context, next->context);
+    context_switch(current ? &current->context : NULL, next->context);
     __asm__ volatile("sti");
 }
 
@@ -162,28 +289,22 @@ void scheduler_yield(void) {
     schedule();
 }
 
-/*
- * Called every timer tick. Decrements the current process's quantum and
- * triggers a context switch when it expires.
- * On the first tick for a process (ticks_remaining==0), assigns the quantum.
- */
 uint64_t scheduler_get_idle_ticks(void) {
-    return scheduler_idle_ticks;
+    return this_cpu()->idle_ticks;
 }
 
+/* ── Timer tick handler ─────────────────────────────────────────────── */
 void scheduler_tick(void) {
-    if (!scheduler_enabled) return;
-    if (scheduler_queues_empty())
-        scheduler_idle_ticks++;
-    struct process *cur = process_get_current();
+    struct cpu_info *ci = this_cpu();
+    if (!ci->scheduler_enabled) return;
+
+    struct process *cur = ci->current_process;
     if (!cur || cur->state != PROCESS_RUNNING) return;
 
-    /* Check pending signals for the current process.
-     * If a fatal signal was received, signal_check changes the state to
-     * ZOMBIE/BLOCKED and we yield to let another process run. */
+    /* Check pending signals */
     if (cur->pending_signals) {
         signal_check();
-        cur = process_get_current();
+        cur = ci->current_process;
         if (!cur || cur->state != PROCESS_RUNNING) {
             schedule();
             return;
@@ -197,45 +318,56 @@ void scheduler_tick(void) {
         cur->ticks_remaining = time_slices[lvl];
         return;
     }
+
     cur->ticks_remaining--;
     if (cur->ticks_remaining == 0) {
-        /* Quantum expired */
         schedule();
     }
 }
 
-/*
- * Called periodically. Boosts the priority of READY processes that have not
- * run for more than 200 ticks (2 s at 100 Hz) to prevent starvation.
- */
+/* ── Aging: boost starved processes ─────────────────────────────────── */
 void scheduler_age(void) {
     uint64_t now = timer_get_ticks();
     struct process *table = process_get_table();
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *p = &table[i];
         if (p->state != PROCESS_READY) continue;
-        if (p->priority == 0) continue;          /* already highest */
-        if (p->last_run_tick == 0) continue;      /* never ran yet */
+        if (p->priority == 0) continue;
+        if (p->last_run_tick == 0) continue;
         if (now - p->last_run_tick > 200) {
+            /* Remove, boost, re-add */
             scheduler_remove(p);
             p->priority--;
-            p->last_run_tick = now; /* reset so we don't boost again immediately */
+            p->last_run_tick = now;
             scheduler_add(p);
         }
     }
+
+    spinlock_irqsave_release(&sched_lock, irq_flags);
 }
 
-/* Wake any processes whose sleep timer has expired. Called from timer interrupt. */
+/* ── Wake blocked processes whose sleep timer expired ───────────────── */
 void scheduler_wake_sleepers(void) {
     uint64_t now = timer_get_ticks();
     struct process *table = process_get_table();
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state == PROCESS_BLOCKED && table[i].sleep_until > 0 &&
             now >= table[i].sleep_until) {
             table[i].sleep_until = 0;
             table[i].state = PROCESS_READY;
+
+            /* Add to the CPU that last ran this process (affinity-based) */
             scheduler_add(&table[i]);
         }
     }
-}
 
+    spinlock_irqsave_release(&sched_lock, irq_flags);
+}
