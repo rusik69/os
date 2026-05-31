@@ -134,7 +134,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check-app-boundary doom-test format lint ccache-stats count build-info
+        check-app-boundary doom-test format lint ccache-stats count build-info run-test
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -246,6 +246,10 @@ e2e: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 	@chmod +x tests/e2e.sh tests/e2e.py
 	@./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+
+# Fast run: build test-kernel and run tests in one invocation
+run-test:
+	$(MAKE) test
 
 # Verify doom framebuffer (PCI BAR0) renders non-black pixels in QEMU -vga std
 doom-test: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img

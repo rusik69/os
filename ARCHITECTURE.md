@@ -1,6 +1,8 @@
 # OS Architecture
 
-A minimal 64-bit x86 hobby kernel (~35,000 lines of C + ASM). Boots via Multiboot1, runs on QEMU, and provides a Unix-like shell over telnet with filesystem, networking, process management, and more.
+A minimal 64-bit x86 hobby kernel (~38,000 lines of C + ASM). Boots via Multiboot1, runs on QEMU, and provides a Unix-like shell over telnet with filesystem, networking, process management, and more.
+
+> **Architecture diagram:** [docs/architecture-diagram.html](docs/architecture-diagram.html) — interactive dark-themed SVG (open in browser).
 
 ---
 
