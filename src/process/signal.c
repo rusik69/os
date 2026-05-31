@@ -68,6 +68,10 @@ int signal_send(uint32_t pid, int signum) {
 
     p->pending_signals |= (1u << signum);
 
+    /* Notify signalfd listeners */
+    extern void signalfd_notify(int signum);
+    signalfd_notify(signum);
+
     return 0;
 }
 

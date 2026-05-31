@@ -269,6 +269,88 @@
 #define SYS_SCHED_SETSCHEDULER 286 /* sched_setscheduler(pid, policy, param) → 0 or -1 */
 #define SYS_SCHED_GETSCHEDULER 287 /* sched_getscheduler(pid) → policy or -1 */
 
+/* ── *at syscall family (musl/glibc requirement) ────────────── */
+#define SYS_OPENAT            288  /* openat(dirfd, path, flags, mode) */
+#define SYS_MKDIRAT           289  /* mkdirat(dirfd, path, mode) */
+#define SYS_FSTATAT           290  /* fstatat(dirfd, path, buf, flags) */
+#define SYS_UNLINKAT          291  /* unlinkat(dirfd, path, flags) */
+#define SYS_RENAMEAT          292  /* renameat(olddirfd, oldpath, newdirfd, newpath) */
+#define SYS_SYMLINKAT         293  /* symlinkat(target, newdirfd, linkpath) */
+#define SYS_READLINKAT        294  /* readlinkat(dirfd, path, buf, bufsize) */
+
+/* ── Memory management ──────────────────────────────────────── */
+#define SYS_GETDENTS64        295  /* getdents64(fd, dirp, count) → bytes */
+#define SYS_MLOCK             296  /* mlock(addr, len) → 0 or -1 */
+#define SYS_MLOCKALL          297  /* mlockall(flags) → 0 or -1 */
+#define SYS_MUNLOCK           298  /* munlock(addr, len) → 0 or -1 */
+#define SYS_MUNLOCKALL        299  /* munlockall() → 0 or -1 */
+#define SYS_MINCORE           300  /* mincore(addr, len, vec) → 0 or -1 */
+#define SYS_MADVISE           301  /* madvise(addr, len, advice) → 0 or -1 */
+#define SYS_FALLOCATE         302  /* fallocate(fd, mode, offset, len) → 0 or -1 */
+
+/* ── Event/timer file descriptors ───────────────────────────── */
+#define SYS_TIMERFD_CREATE    303  /* timerfd_create(clockid, flags) → fd or -1 */
+#define SYS_TIMERFD_SETTIME   304  /* timerfd_settime(fd, flags, new, old) → 0 or -1 */
+#define SYS_TIMERFD_GETTIME   305  /* timerfd_gettime(fd, cur) → 0 or -1 */
+#define SYS_SIGNALFD          306  /* signalfd(fd, mask, flags) → fd or -1 */
+
+/* ── I/O and data transfer ──────────────────────────────────── */
+#define SYS_SPLICE            307  /* splice(fd_in, off_in, fd_out, off_out, len, flags) */
+#define SYS_TEE               308  /* tee(fd_in, fd_out, len, flags) */
+#define SYS_SENDMMSG          309  /* sendmmsg(sockfd, msgvec, vlen, flags) */
+#define SYS_RECVMMSG          310  /* recvmmsg(sockfd, msgvec, vlen, flags, timeout) */
+#define SYS_SYNC              311  /* sync() → void */
+#define SYS_SYNCFS            312  /* syncfs(fd) → 0 or -1 */
+
+/* ── Process and session management ─────────────────────────── */
+#define SYS_SETSID            313  /* setsid() → sid or -1 */
+#define SYS_GETSID            314  /* getsid(pid) → sid or -1 */
+#define SYS_SIGALTSTACK       315  /* sigaltstack(ss, old_ss) → 0 or -1 */
+#define SYS_PERSONALITY       316  /* personality(persona) → old persona */
+
+/* ── Constants for *at syscalls ─────────────────────────────── */
+#define AT_FDCWD            (-100)
+#define AT_SYMLINK_NOFOLLOW  0x100
+#define AT_REMOVEDIR         0x200
+
+/* mlockall flags */
+#define MCL_CURRENT    1
+#define MCL_FUTURE     2
+#define MCL_ONFAULT    4
+
+/* madvise advice values */
+#define MADV_NORMAL      0
+#define MADV_RANDOM      1
+#define MADV_SEQUENTIAL  2
+#define MADV_WILLNEED    3
+#define MADV_DONTNEED    4
+#define MADV_FREE        8
+#define MADV_REMOVE      9
+#define MADV_MERGEABLE   12
+#define MADV_UNMERGEABLE 13
+
+/* fallocate mode flags */
+#define FALLOC_FL_KEEP_SIZE     1
+#define FALLOC_FL_PUNCH_HOLE    2
+
+/* signalfd flags */
+#define SFD_CLOEXEC 02000000
+#define SFD_NONBLOCK 04000
+
+/* timerfd flags */
+#define TFD_CLOEXEC 02000000
+#define TFD_NONBLOCK 04000
+
+/* timerfd clock sources */
+#define CLOCK_REALTIME  0
+#define CLOCK_MONOTONIC 1
+
+/* struct itimerspec for timerfd_settime */
+struct itimerspec {
+    struct timespec it_interval;
+    struct timespec it_value;
+};
+
 /* rlimit resources (Linux-compatible) */
 #define RLIMIT_AS          0   /* Address space limit (bytes) */
 #define RLIMIT_CORE        1   /* Core file size (bytes) */
@@ -395,6 +477,8 @@ struct linux_dirent64 {
 void syscall_init(void);
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
+/* Timer fd tick — called from timer interrupt */
+void timerfd_tick(void);
 #endif
 
 #endif

@@ -6,6 +6,7 @@
 #include "process.h"
 #include "apic.h"
 #include "printf.h"
+#include "syscall.h" /* for timerfd_tick */
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -19,6 +20,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     scheduler_wake_sleepers();
     scheduler_tick();
     process_timer_tick();
+    timerfd_tick();
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
         scheduler_age();
     }

@@ -133,6 +133,12 @@ struct process {
     uint64_t rlim_max[_RLIMIT_NLIMITS];
     /* Scheduling policy: SCHED_OTHER, SCHED_FIFO, SCHED_RR */
     uint8_t  sched_policy;
+    /* Alternate signal stack */
+    void    *alt_stack_sp;     /* ss_sp */
+    uint64_t alt_stack_size;   /* ss_size */
+    int      alt_stack_flags;  /* ss_flags: SS_DISABLE=2 */
+    /* Personality (exec domain) */
+    uint64_t personality;
     /* Core dump enabled? */
     int      coredump_enabled;
     /* Process name (for prctl PR_SET_NAME) */

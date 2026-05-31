@@ -60,6 +60,23 @@ typedef void (*signal_handler_t)(int signum);
 #define SIG_DFL  ((signal_handler_t)0)  /* Default action */
 #define SIG_IGN  ((signal_handler_t)1)  /* Ignore */
 
+/* Alternate signal stack (sigaltstack) */
+typedef struct {
+    void   *ss_sp;       /* stack base/pointer */
+    int     ss_flags;    /* SS_DISABLE, SS_ONSTACK */
+    size_t  ss_size;     /* stack size */
+} stack_t;
+
+#define SS_DISABLE  2
+#define SS_ONSTACK  1
+
+/* sigaltstack flags for syscall */
+#define SA_ONSTACK     0x08000000
+#define SA_SIGINFO     0x00000004
+#define SA_RESTART     0x10000000
+#define SA_NODEFER     0x40000000
+#define SA_RESETHAND   0x80000000
+
 /* Send signal to process by pid; 0 = success, -1 = not found */
 int signal_send(uint32_t pid, int signum);
 int signal_send_group(uint32_t pgid, int signum);

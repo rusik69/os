@@ -247,6 +247,10 @@ void process_init(void) {
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
     process_table[0].sched_policy = SCHED_OTHER;
+    process_table[0].alt_stack_sp = NULL;
+    process_table[0].alt_stack_size = 0;
+    process_table[0].alt_stack_flags = SS_DISABLE;
+    process_table[0].personality = 0;
     process_table[0].coredump_enabled = 1;
     memset(process_table[0].proc_comm, 0, 16);
     rlimit_init_defaults(&process_table[0]);
@@ -304,6 +308,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->cwd[63] = '\0';
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_TRUSTED);
     proc->sched_policy = SCHED_OTHER;
+    proc->alt_stack_sp = NULL;
+    proc->alt_stack_size = 0;
+    proc->alt_stack_flags = SS_DISABLE;
+    proc->personality = 0;
     proc->coredump_enabled = 1;
     memset(proc->proc_comm, 0, 16);
     memset(proc->itimers, 0, sizeof(proc->itimers));
@@ -374,6 +382,10 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->last_run_tick  = timer_get_ticks();
     process_set_cap_profile(proc, PROCESS_CAP_PROFILE_USER_DEFAULT);
     proc->sched_policy = SCHED_OTHER;
+    proc->alt_stack_sp = NULL;
+    proc->alt_stack_size = 0;
+    proc->alt_stack_flags = SS_DISABLE;
+    proc->personality = 0;
     proc->coredump_enabled = 1;
     memset(proc->proc_comm, 0, 16);
     rlimit_init_defaults(proc);
