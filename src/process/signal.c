@@ -15,6 +15,12 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
+    /* Permission check: only root or same-uid can signal other processes */
+    struct process *caller = process_get_current();
+    if (caller && caller->pid != p->pid) {
+        if (!process_can_see(caller, p)) return -1; /* EPERM */
+    }
+
     /* Do not deliver signals to zombie processes */
     if (p->state == PROCESS_ZOMBIE) return 0;
 

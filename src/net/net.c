@@ -6,6 +6,7 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "waitqueue.h"
 
 /* Shared network state */
 uint8_t  net_our_mac[6];
@@ -35,8 +36,13 @@ int net_num_udp_bindings = 0;
 /* Packet receive buffer */
 static uint8_t pkt_buf[2048];
 static volatile int net_rx_flag = 0;
+static struct wait_queue net_rx_wq;
 
-void net_rx_signal(void) { net_rx_flag = 1; }
+void net_rx_signal(void) {
+    net_rx_flag = 1;
+    wait_queue_wake(&net_rx_wq);
+}
+
 int  net_rx_pending(void) { return net_rx_flag; }
 
 static int net_link_recv(void *buf, uint16_t max_len) {
@@ -511,16 +517,20 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
+    /* Fast path: if no IRQ signaled data, skip descriptor read (saves MMIO) */
+    if (!net_rx_flag) return;
+    net_rx_flag = 0;
+
+    int drained = 0;
     for (int drain = 0; drain < 32; drain++) {
-        net_rx_flag = 0;
         int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
         if (len <= 0) break;
+        drained++;
         if (len >= (int)sizeof(struct eth_header)) {
             struct eth_header *eth = (struct eth_header *)pkt_buf;
             uint16_t type = ntohs(eth->type);
             const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
             uint16_t payload_len = len - sizeof(struct eth_header);
-
             if (type == ETH_TYPE_ARP)
                 handle_arp(payload, payload_len);
             else if (type == ETH_TYPE_IP) {
@@ -532,6 +542,14 @@ void net_poll(void) {
                 handle_ip(payload, payload_len);
             }
         }
+    }
+
+    /* Re-enable NIC interrupts (NAPI-style: mask in IRQ handler, unmask after drain) */
+    if (drained > 0) {
+        if (e1000_is_present())
+            e1000_irq_rearm();
+        if (virtio_net_present())
+            virtio_net_irq_rearm();
     }
 
     /* Periodic TCP retransmit check — runs AFTER receive so any pending ACKs
@@ -546,10 +564,15 @@ void net_poll(void) {
 
 /* --- Init --- */
 
+void net_wait_for_packet(void) {
+    wait_queue_sleep(&net_rx_wq);
+}
+
 void net_init(void) {
     net_our_ip = 0;
     net_gateway_ip = 0;
     net_subnet_mask = 0;
+    wait_queue_init(&net_rx_wq);
     if (virtio_net_present())
         virtio_net_get_mac(net_our_mac);
     else

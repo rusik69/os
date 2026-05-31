@@ -105,7 +105,10 @@ static uint32_t e1000_read(uint32_t reg) {
 
 static void e1000_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
-    e1000_read(REG_ICR); /* clear the interrupt cause */
+    uint32_t icr = e1000_read(REG_ICR); /* read to clear, also see what caused it */
+    (void)icr;
+    /* Mask RX interrupt — NAPI-style: we'll re-enable after draining in net_poll */
+    e1000_write(REG_IMC, 0x80); /* mask RXT0 */
     irq_ack(e1000_irq_line);
     net_rx_signal();
 }
@@ -214,6 +217,13 @@ int e1000_is_present(void) {
 
 void e1000_get_mac(uint8_t *mac) {
     memcpy(mac, mac_addr, 6);
+}
+
+/* Re-enable RX interrupts after NAPI-style polling drain */
+void e1000_irq_rearm(void) {
+    if (nic_present) {
+        e1000_write(REG_IMS, 0x80); /* unmask RXT0 */
+    }
 }
 
 int e1000_send(const void *data, uint16_t len) {

@@ -154,6 +154,7 @@ void process_exit_code(int code);
 struct process *process_get_current(void);
 struct process *process_get_by_pid(uint32_t pid);
 struct process *process_get_table(void);
+int process_can_see(const struct process *caller, const struct process *target);
 int  process_waitpid(uint32_t pid, int *status);
 void process_sleep_ticks(uint64_t ticks);
 void process_reap_zombies(void);

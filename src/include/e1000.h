@@ -11,5 +11,6 @@ int e1000_send(const void *data, uint16_t len);
 int e1000_receive(void *buf, uint16_t max_len);
 void e1000_get_mac(uint8_t *mac);
 int e1000_is_present(void);
+void e1000_irq_rearm(void);
 
 #endif

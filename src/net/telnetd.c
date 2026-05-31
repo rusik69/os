@@ -324,8 +324,8 @@ void telnetd_init(void) {
 
 void telnetd_task(void) {
     for (;;) {
+        net_wait_for_packet();
         net_poll();
         net_dhcp_renew_if_needed();
-        scheduler_yield();
     }
 }

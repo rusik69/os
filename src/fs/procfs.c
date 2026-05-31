@@ -434,9 +434,11 @@ static int procfs_readdir(void *priv, const char *path) {
     kprintf("uptime\nmeminfo\ncpuinfo\nversion\nnet\nmounts\n");
     /* Also list active PIDs */
     struct process *table = process_get_table();
+    struct process *caller = process_get_current();
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state != PROCESS_UNUSED) {
-            kprintf("%u\n", (uint64_t)table[i].pid);
+            if (!caller || process_can_see(caller, &table[i]))
+                kprintf("%u\n", (uint64_t)table[i].pid);
         }
     }
     return 0;

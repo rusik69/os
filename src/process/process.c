@@ -660,6 +660,17 @@ struct process *process_get_table(void) {
     return process_table;
 }
 
+/* Check if the caller process can see (access) the target process.
+ * Returns 1 if visible, 0 if not. */
+int process_can_see(const struct process *caller, const struct process *target) {
+    if (!caller || !target) return 0;
+    if (caller == target) return 1;                /* self */
+    if (caller->euid == 0) return 1;               /* root sees all */
+    if (caller->euid == target->euid) return 1;    /* same uid */
+    if (target->parent_pid == caller->pid) return 1; /* caller is parent */
+    return 0;
+}
+
 /* Wait for a specific child process to become ZOMBIE.
  * Returns 0 on success (exit code in *status), -1 if not found.
  * Blocks (does NOT spin) until the child exits. */

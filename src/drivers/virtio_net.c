@@ -310,3 +310,13 @@ void virtio_net_get_mac(uint8_t *mac) {
 }
 
 int virtio_net_present(void) { return vnet_present; }
+
+/* Re-enable RX interrupts after NAPI-style draining */
+void virtio_net_irq_rearm(void) {
+    /* Virtio legacy uses ISR register as a status register.
+     * The interrupt is level-sensitive — reading ISR acks it.
+     * No explicit re-enable needed (virtio auto-masks). Just ensure ISR is read. */
+    if (vnet_present) {
+        vio_inb(VIRTIO_PCI_ISR);
+    }
+}

@@ -111,6 +111,8 @@ void net_init(void);
 void net_poll(void);
 void net_rx_signal(void);
 int  net_rx_pending(void);
+/* Block until a network packet is available (waitqueue-based) */
+void net_wait_for_packet(void);
 int  net_link_send(const void *data, uint16_t len);
 uint16_t net_checksum(const void *data, int len);
 void net_get_ip(uint8_t *ip);
