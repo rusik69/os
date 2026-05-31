@@ -100,6 +100,8 @@
 | Boot ordering fix: `smp_init_bsp()` before `scheduler_init()` (GS_BASE crash) | ✅ |
 | Wait queue with timeout: `wait_queue_sleep_timeout()` + interruptible variant | ✅ |
 | SCHED_FIFO (run-to-completion) + SCHED_RR (round-robin) scheduling policies | ✅ |
+| User/system CPU time separation (CS register check in timer ISR) | ✅ |
+| O_CLOEXEC enforcement on `execve` (close-on-exec FD cleanup) | ✅ |
 
 ---
 
