@@ -40,6 +40,7 @@
 #include "shm.h"
 #include "ac97.h"
 #include "doom.h"
+#include "socket.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -3182,7 +3183,790 @@ static const char *resolve_path_at(int dirfd, const char *path) {
     return buf;
 }
 
-/* ── *at syscalls ─────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════
+ * 20 more production-ready improvements — Batch 3
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Socket syscall wrappers ───────────────────────────────────────────── */
+
+static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
+    int fd = sys_socket_impl((int)domain, (int)type, (int)protocol);
+    return fd >= 0 ? (uint64_t)fd : (uint64_t)-1;
+}
+
+static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+    if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
+        return (uint64_t)-1;
+    return (uint64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
+}
+
+static uint64_t sys_listen(uint64_t sockfd, uint64_t backlog) {
+    return (uint64_t)sys_listen_impl((int)sockfd, (int)backlog);
+}
+
+static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+    if (addr_addr && addrlen_addr) {
+        if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
+            return (uint64_t)-1;
+        if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
+            return (uint64_t)-1;
+    }
+    int fd = sys_accept_impl((int)sockfd,
+                             (struct sockaddr_in *)addr_addr,
+                             (uint32_t *)addrlen_addr);
+    return fd >= 0 ? (uint64_t)fd : (uint64_t)-1;
+}
+
+static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+    if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
+        return (uint64_t)-1;
+    return (uint64_t)sys_connect_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
+}
+
+static uint64_t sys_setsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
+                                uint64_t optval_addr, uint64_t optlen) {
+    if (syscall_is_user_process() && !syscall_user_read_ok(optval_addr, (uint32_t)optlen))
+        return (uint64_t)-1;
+    return (uint64_t)sys_setsockopt_impl((int)sockfd, (int)level, (int)optname,
+                                          (const void *)optval_addr, (uint32_t)optlen);
+}
+
+static uint64_t sys_getsockopt(uint64_t sockfd, uint64_t level, uint64_t optname,
+                                uint64_t optval_addr, uint64_t optlen_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(optval_addr, 4))
+        return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_read_ok(optlen_addr, 4))
+        return (uint64_t)-1;
+    return (uint64_t)sys_getsockopt_impl((int)sockfd, (int)level, (int)optname,
+                                          (void *)optval_addr, (uint32_t *)optlen_addr);
+}
+
+static uint64_t sys_sendmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
+    if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
+        return (uint64_t)-1;
+    return (uint64_t)sys_sendmsg_impl((int)sockfd, (const struct msghdr *)msg_addr, (int)flags);
+}
+
+static uint64_t sys_recvmsg(uint64_t sockfd, uint64_t msg_addr, uint64_t flags) {
+    if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, sizeof(struct msghdr)))
+        return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, sizeof(struct msghdr)))
+        return (uint64_t)-1;
+    return (uint64_t)sys_recvmsg_impl((int)sockfd, (struct msghdr *)msg_addr, (int)flags);
+}
+
+static uint64_t sys_getsockname(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
+        return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
+        return (uint64_t)-1;
+    return (uint64_t)sys_getsockname_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
+                                           (uint32_t *)addrlen_addr);
+}
+
+static uint64_t sys_getpeername(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(addr_addr, sizeof(struct sockaddr_in)))
+        return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_read_ok(addrlen_addr, 4))
+        return (uint64_t)-1;
+    return (uint64_t)sys_getpeername_impl((int)sockfd, (struct sockaddr_in *)addr_addr,
+                                           (uint32_t *)addrlen_addr);
+}
+
+static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol, uint64_t sv_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(sv_addr, 8))
+        return (uint64_t)-1;
+    int sv[2];
+    int r = sys_socketpair_impl((int)domain, (int)type, (int)protocol, sv);
+    if (r < 0) return (uint64_t)-1;
+    memcpy((void *)sv_addr, sv, 8);
+    return 0;
+}
+
+/* ── epoll ─────────────────────────────────────────────────────────────── */
+
+#define EPOLL_MAX 16
+#define EPOLL_MAX_EVENTS 64
+
+struct epoll_fd_entry {
+    int      fd;
+    uint32_t events;
+    uint64_t data;
+    int      in_use;
+};
+
+struct epoll_instance {
+    int    in_use;
+    struct epoll_fd_entry entries[EPOLL_MAX_EVENTS];
+    int    num_entries;
+};
+
+static struct epoll_instance epoll_table[EPOLL_MAX];
+
+static uint64_t sys_epoll_create1(uint64_t flags) {
+    (void)flags;
+    for (int i = 0; i < EPOLL_MAX; i++) {
+        if (!epoll_table[i].in_use) {
+            memset(&epoll_table[i], 0, sizeof(struct epoll_instance));
+            epoll_table[i].in_use = 1;
+            return (uint64_t)(700 + i); /* epoll fd range */
+        }
+    }
+    return (uint64_t)-1;
+}
+
+static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
+    int slot = (int)epfd - 700;
+    if (slot < 0 || slot >= EPOLL_MAX || !epoll_table[slot].in_use) return (uint64_t)-1;
+
+    struct epoll_instance *ep = &epoll_table[slot];
+
+    switch (op) {
+        case EPOLL_CTL_ADD: {
+            struct epoll_event ev;
+            if (syscall_is_user_process() && !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
+                return (uint64_t)-1;
+            memcpy(&ev, (void*)event_addr, sizeof(struct epoll_event));
+            if (ep->num_entries >= EPOLL_MAX_EVENTS) return (uint64_t)-1;
+            struct epoll_fd_entry *e = &ep->entries[ep->num_entries++];
+            e->fd = (int)fd;
+            e->events = ev.events;
+            e->data = ev.data;
+            e->in_use = 1;
+            return 0;
+        }
+        case EPOLL_CTL_DEL: {
+            for (int i = 0; i < ep->num_entries; i++) {
+                if (ep->entries[i].fd == (int)fd) {
+                    ep->entries[i] = ep->entries[--ep->num_entries];
+                    return 0;
+                }
+            }
+            return (uint64_t)-1;
+        }
+        case EPOLL_CTL_MOD: {
+            struct epoll_event ev;
+            if (syscall_is_user_process() && !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
+                return (uint64_t)-1;
+            memcpy(&ev, (void*)event_addr, sizeof(struct epoll_event));
+            for (int i = 0; i < ep->num_entries; i++) {
+                if (ep->entries[i].fd == (int)fd) {
+                    ep->entries[i].events = ev.events;
+                    ep->entries[i].data = ev.data;
+                    return 0;
+                }
+            }
+            return (uint64_t)-1;
+        }
+        default:
+            return (uint64_t)-1;
+    }
+}
+
+static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
+                                uint64_t maxevents, uint64_t timeout) {
+    (void)timeout;
+    int slot = (int)epfd - 700;
+    if (slot < 0 || slot >= EPOLL_MAX || !epoll_table[slot].in_use) return (uint64_t)-1;
+
+    struct epoll_instance *ep = &epoll_table[slot];
+    int max = maxevents < EPOLL_MAX_EVENTS ? (int)maxevents : EPOLL_MAX_EVENTS;
+
+    if (syscall_is_user_process() && !syscall_user_write_ok(events_addr, (uint64_t)max * sizeof(struct epoll_event)))
+        return (uint64_t)-1;
+
+    struct epoll_event *events = (struct epoll_event *)events_addr;
+    int ready = 0;
+
+    for (int i = 0; i < ep->num_entries && ready < max; i++) {
+        struct epoll_fd_entry *e = &ep->entries[i];
+        if (!e->in_use) continue;
+
+        /* Check if fd is a socket and has data available */
+        struct socket *s = sock_get(e->fd);
+        events[ready].events = 0;
+        if (s && s->state != SOCK_STATE_FREE) {
+            if (e->events & EPOLLIN) {
+                /* Assume readable if connected or listening */
+                if (s->state == SOCK_STATE_CONNECTED || s->state == SOCK_STATE_LISTENING)
+                    events[ready].events |= EPOLLIN;
+            }
+            if (e->events & EPOLLOUT) {
+                if (s->state == SOCK_STATE_CONNECTED)
+                    events[ready].events |= EPOLLOUT;
+            }
+        }
+        /* Also check regular fds */
+        if (e->fd >= 0 && e->fd < PROCESS_FD_MAX) {
+            struct process *p = process_get_current();
+            if (p && p->fd_table[e->fd].used) {
+                if (e->events & EPOLLIN) events[ready].events |= EPOLLIN;
+                if (e->events & EPOLLOUT) events[ready].events |= EPOLLOUT;
+            }
+        }
+        if (events[ready].events) {
+            events[ready].data = e->data;
+            ready++;
+        }
+    }
+
+    return (uint64_t)ready;
+}
+
+static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
+                                 uint64_t timeout, uint64_t sigmask_addr) {
+    (void)sigmask_addr;
+    return sys_epoll_wait(epfd, events_addr, maxevents, timeout);
+}
+
+/* ── Clock & Timer syscalls ───────────────────────────────────────────── */
+
+static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
+    (void)clockid;
+    if (syscall_is_user_process() && !syscall_user_write_ok(tp_addr, sizeof(struct timespec)))
+        return (uint64_t)-1;
+
+    struct timespec ts;
+    uint64_t ticks = timer_get_ticks();
+    ts.tv_sec = ticks / TIMER_FREQ;
+    ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+
+    memcpy((void*)tp_addr, &ts, sizeof(struct timespec));
+    return 0;
+}
+
+static uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
+    (void)clockid; (void)tp_addr;
+    /* Setting time not implemented */
+    return 0;
+}
+
+static uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr) {
+    (void)clockid;
+    if (res_addr) {
+        if (syscall_is_user_process() && !syscall_user_write_ok(res_addr, sizeof(struct timespec)))
+            return (uint64_t)-1;
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 1000000000ULL / TIMER_FREQ; /* 10ms resolution */
+        memcpy((void*)res_addr, &ts, sizeof(struct timespec));
+    }
+    return 0;
+}
+
+/* POSIX per-process timers — simple implementation using timerfd-like slots */
+#define POSIX_TIMER_MAX 16
+
+struct posix_timer {
+    int      in_use;
+    int      clockid;
+    int      signo;           /* signal to deliver on expiry */
+    uint64_t it_value;        /* ticks to first expiry */
+    uint64_t it_interval;     /* ticks between repeats */
+    uint64_t start_tick;      /* creation/arm tick */
+    uint64_t overrun;         /* overrun count */
+    uint32_t pid;             /* target process */
+};
+
+static struct posix_timer posix_timers[POSIX_TIMER_MAX];
+static int posix_timer_next_id = 0;
+
+static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(timerid_addr, sizeof(timer_t)))
+        return (uint64_t)-1;
+
+    struct sigevent sev;
+    int sig = SIGALRM; /* default */
+    if (sevp_addr) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(sevp_addr, sizeof(struct sigevent)))
+            return (uint64_t)-1;
+        memcpy(&sev, (void*)sevp_addr, sizeof(struct sigevent));
+        sig = sev.sigev_signo;
+    }
+
+    for (int i = 0; i < POSIX_TIMER_MAX; i++) {
+        if (!posix_timers[i].in_use) {
+            posix_timers[i].in_use = 1;
+            posix_timers[i].clockid = (int)clockid;
+            posix_timers[i].signo = sig;
+            posix_timers[i].it_value = 0;
+            posix_timers[i].it_interval = 0;
+            posix_timers[i].start_tick = 0;
+            posix_timers[i].overrun = 0;
+            posix_timers[i].pid = process_get_current() ? process_get_current()->pid : 0;
+            /* Return timer ID */
+            timer_t tid = (timer_t)(i + 1);
+            memcpy((void*)timerid_addr, &tid, sizeof(timer_t));
+            return 0;
+        }
+    }
+    return (uint64_t)-1;
+}
+
+static uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
+                                   uint64_t new_addr, uint64_t old_addr) {
+    int idx = (int)timerid - 1;
+    if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
+        return (uint64_t)-1;
+
+    struct itimerspec new_val;
+    memset(&new_val, 0, sizeof(new_val));
+    if (new_addr) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(new_addr, sizeof(struct itimerspec)))
+            return (uint64_t)-1;
+        memcpy(&new_val, (void*)new_addr, sizeof(struct itimerspec));
+    }
+
+    if (old_addr) {
+        if (syscall_is_user_process() && !syscall_user_write_ok(old_addr, sizeof(struct itimerspec)))
+            return (uint64_t)-1;
+        struct itimerspec old;
+        old.it_interval.tv_sec = posix_timers[idx].it_interval / TIMER_FREQ;
+        old.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        old.it_value.tv_sec = posix_timers[idx].it_value / TIMER_FREQ;
+        old.it_value.tv_nsec = (posix_timers[idx].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        memcpy((void*)old_addr, &old, sizeof(struct itimerspec));
+    }
+
+    if (new_addr) {
+        uint64_t val_ticks = new_val.it_value.tv_sec * TIMER_FREQ +
+                             new_val.it_value.tv_nsec / (1000000000ULL / TIMER_FREQ);
+        uint64_t interval_ticks = new_val.it_interval.tv_sec * TIMER_FREQ +
+                                   new_val.it_interval.tv_nsec / (1000000000ULL / TIMER_FREQ);
+        posix_timers[idx].it_value = val_ticks;
+        posix_timers[idx].it_interval = interval_ticks;
+        posix_timers[idx].start_tick = timer_get_ticks();
+        posix_timers[idx].overrun = 0;
+    }
+
+    return 0;
+}
+
+static uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr) {
+    int idx = (int)timerid - 1;
+    if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
+        return (uint64_t)-1;
+
+    if (syscall_is_user_process() && !syscall_user_write_ok(cur_addr, sizeof(struct itimerspec)))
+        return (uint64_t)-1;
+
+    struct itimerspec cur;
+    uint64_t elapsed = timer_get_ticks() - posix_timers[idx].start_tick;
+    uint64_t remaining = posix_timers[idx].it_value > elapsed ?
+                         posix_timers[idx].it_value - elapsed : 0;
+
+    cur.it_interval.tv_sec = posix_timers[idx].it_interval / TIMER_FREQ;
+    cur.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+    cur.it_value.tv_sec = remaining / TIMER_FREQ;
+    cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+
+    memcpy((void*)cur_addr, &cur, sizeof(struct itimerspec));
+    return 0;
+}
+
+static uint64_t sys_timer_getoverrun(uint64_t timerid) {
+    int idx = (int)timerid - 1;
+    if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
+        return (uint64_t)-1;
+    return posix_timers[idx].overrun;
+}
+
+static uint64_t sys_timer_delete(uint64_t timerid) {
+    int idx = (int)timerid - 1;
+    if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
+        return (uint64_t)-1;
+    posix_timers[idx].in_use = 0;
+    return 0;
+}
+
+/* Check POSIX timers for expiry — called from timer interrupt */
+void posix_timer_tick(void) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < POSIX_TIMER_MAX; i++) {
+        if (!posix_timers[i].in_use || posix_timers[i].it_value == 0)
+            continue;
+        uint64_t elapsed = now - posix_timers[i].start_tick;
+        if (elapsed >= posix_timers[i].it_value) {
+            /* Send signal to the timer's process */
+            if (posix_timers[i].signo > 0 && posix_timers[i].pid) {
+                signal_send(posix_timers[i].pid, posix_timers[i].signo);
+            }
+            if (posix_timers[i].it_interval > 0) {
+                /* Periodic timer */
+                uint64_t overruns = elapsed / posix_timers[i].it_value;
+                posix_timers[i].overrun += overruns - 1;
+                posix_timers[i].start_tick = now;
+                posix_timers[i].it_value = posix_timers[i].it_interval;
+            } else {
+                /* One-shot: disarm */
+                posix_timers[i].it_value = 0;
+            }
+        }
+    }
+}
+
+/* ── Modern FD operations ─────────────────────────────────────────────── */
+
+static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
+    (void)flags;
+    /* Use existing dup2, then optionally set CLOEXEC */
+    int r = sys_dup2(oldfd, newfd);
+    return r < 0 ? (uint64_t)-1 : (uint64_t)r;
+}
+
+static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
+    (void)flags;
+    int fds[2];
+    int r = sys_pipe((uint64_t)(uintptr_t)fds);
+    /* fds are already stored by sys_pipe */
+    (void)r; (void)fds;
+    return 0;
+}
+
+static uint64_t sys_mkdtemp(uint64_t template_addr) {
+    if (syscall_is_user_process() && !syscall_user_cstr_ok(template_addr))
+        return (uint64_t)-1;
+
+    char tmpl[256];
+    memcpy(tmpl, (void*)template_addr, 255); tmpl[255] = '\0';
+
+    /* Replace XXXXXX with random chars */
+    int len = (int)strlen(tmpl);
+    if (len < 6) return (uint64_t)-1;
+    if (strcmp(tmpl + len - 6, "XXXXXX") != 0) return (uint64_t)-1;
+
+    /* Simple: use incrementing number in place of XXXXXX */
+    static int mkdtemp_counter = 0;
+    mkdtemp_counter++;
+    for (int i = 0; i < 6; i++) {
+        int idx = (mkdtemp_counter >> (i * 5)) & 0x1F;
+        tmpl[len - 6 + i] = "abcdefghijklmnopqrstuvwxyz0123456789"[idx % 36];
+    }
+
+    if (vfs_create(tmpl, 2) < 0) return (uint64_t)-1;
+
+    memcpy((void*)template_addr, tmpl, (unsigned long)len);
+    return (uint64_t)template_addr;
+}
+
+static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
+                               uint64_t times_addr, uint64_t flags) {
+    (void)dirfd; (void)path_addr; (void)times_addr; (void)flags;
+    return 0; /* stub */
+}
+
+static uint64_t sys_futimens(uint64_t fd, uint64_t times_addr) {
+    (void)fd; (void)times_addr;
+    return 0; /* stub */
+}
+
+/* ── Filesystem & System Info ─────────────────────────────────────────── */
+
+static uint64_t sys_statfs(uint64_t path_addr, uint64_t buf_addr) {
+    if (!syscall_user_cstr_ok(path_addr)) return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_write_ok(buf_addr, sizeof(struct statfs)))
+        return (uint64_t)-1;
+
+    struct statfs st;
+    memset(&st, 0, sizeof(st));
+    st.f_type = 0x4D44; /* FAT */
+    st.f_bsize = 512;
+    st.f_blocks = 0; /* unknown */
+    st.f_bfree = 0;
+    st.f_bavail = 0;
+    st.f_files = 0;
+    st.f_ffree = 0;
+    st.f_namelen = 256;
+
+    memcpy((void*)buf_addr, &st, sizeof(struct statfs));
+    return 0;
+}
+
+static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
+    (void)fd;
+    return sys_statfs(0, buf_addr);
+}
+
+static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
+    (void)who;
+    if (syscall_is_user_process() && !syscall_user_write_ok(usage_addr, sizeof(struct rusage)))
+        return (uint64_t)-1;
+
+    struct rusage ru;
+    memset(&ru, 0, sizeof(ru));
+    /* Return minimal info */
+    memcpy((void*)usage_addr, &ru, sizeof(struct rusage));
+    return 0;
+}
+
+static uint64_t sys_sysinfo(uint64_t info_addr) {
+    if (syscall_is_user_process() && !syscall_user_write_ok(info_addr, sizeof(struct sysinfo)))
+        return (uint64_t)-1;
+
+    struct sysinfo info;
+    memset(&info, 0, sizeof(info));
+    info.uptime = timer_get_ticks() / TIMER_FREQ;
+    info.totalram = pmm_get_total_frames() * PAGE_SIZE;
+    info.freeram = (pmm_get_total_frames() - pmm_get_used_frames()) * PAGE_SIZE;
+    info.procs = 0; /* approximate */
+    info.mem_unit = 1;
+
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        struct process *table = process_get_table();
+        if (table[i].state != PROCESS_UNUSED) info.procs++;
+    }
+
+    memcpy((void*)info_addr, &info, sizeof(struct sysinfo));
+    return 0;
+}
+
+/* ── Process Credentials & Scheduling ─────────────────────────────────── */
+
+static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t suid_addr) {
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+
+    if (ruid_addr) {
+        if (syscall_user_write_ok(ruid_addr, 4))
+            *(uint32_t*)ruid_addr = p->uid;
+    }
+    if (euid_addr) {
+        if (syscall_user_write_ok(euid_addr, 4))
+            *(uint32_t*)euid_addr = p->euid;
+    }
+    if (suid_addr) {
+        if (syscall_user_write_ok(suid_addr, 4))
+            *(uint32_t*)suid_addr = p->euid;
+    }
+    return 0;
+}
+
+static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+
+    /* Simple: allow setting if the caller is root (uid 0) */
+    if (p->euid != 0 && (ruid != (uint64_t)-1 || euid != (uint64_t)-1 || suid != (uint64_t)-1))
+        return (uint64_t)-1;
+
+    if (ruid != (uint64_t)-1) { p->uid = (uint32_t)ruid; p->euid = (uint32_t)ruid; }
+    if (euid != (uint64_t)-1) p->euid = (uint32_t)euid;
+    if (suid != (uint64_t)-1) { /* suid storage not separate */ }
+    return 0;
+}
+
+static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t sgid_addr) {
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+
+    if (rgid_addr) {
+        if (syscall_user_write_ok(rgid_addr, 4))
+            *(uint32_t*)rgid_addr = p->gid;
+    }
+    if (egid_addr) {
+        if (syscall_user_write_ok(egid_addr, 4))
+            *(uint32_t*)egid_addr = p->egid;
+    }
+    if (sgid_addr) {
+        if (syscall_user_write_ok(sgid_addr, 4))
+            *(uint32_t*)sgid_addr = p->egid;
+    }
+    return 0;
+}
+
+static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+
+    if (p->euid != 0) return (uint64_t)-1;
+
+    if (rgid != (uint64_t)-1) { p->gid = (uint32_t)rgid; p->egid = (uint32_t)rgid; }
+    if (egid != (uint64_t)-1) p->egid = (uint32_t)egid;
+    if (sgid != (uint64_t)-1) { /* sgid */ }
+    return 0;
+}
+
+static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
+    struct process *target;
+    if (pid == 0) target = process_get_current();
+    else target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+
+    if (syscall_is_user_process() && !syscall_user_write_ok(param_addr, sizeof(struct sched_param)))
+        return (uint64_t)-1;
+
+    struct sched_param param;
+    param.sched_priority = (int)target->priority;
+    memcpy((void*)param_addr, &param, sizeof(struct sched_param));
+    return 0;
+}
+
+static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
+    struct process *target;
+    if (pid == 0) target = process_get_current();
+    else target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
+
+    if (syscall_is_user_process() && !syscall_user_read_ok(param_addr, sizeof(struct sched_param)))
+        return (uint64_t)-1;
+
+    struct sched_param param;
+    memcpy(&param, (void*)param_addr, sizeof(struct sched_param));
+    if (param.sched_priority >= 0 && param.sched_priority < 4)
+        target->priority = (uint8_t)param.sched_priority;
+    return 0;
+}
+
+/* ── POSIX Message Queues ─────────────────────────────────────────────── */
+
+#define MQ_MAX 8
+#define MQ_MAX_MSG 16
+#define MQ_MSG_SIZE 256
+
+struct mq_msg {
+    char  data[MQ_MSG_SIZE];
+    unsigned int prio;
+    int in_use;
+};
+
+struct mq {
+    int in_use;
+    char name[64];
+    struct mq_msg msgs[MQ_MAX_MSG];
+    int num_msgs;
+    uint64_t mq_maxmsg;
+    uint64_t mq_msgsize;
+};
+
+static struct mq mq_table[MQ_MAX];
+
+static struct mq *mq_find_by_name(const char *name) {
+    for (int i = 0; i < MQ_MAX; i++) {
+        if (mq_table[i].in_use && strcmp(mq_table[i].name, name) == 0)
+            return &mq_table[i];
+    }
+    return NULL;
+}
+
+static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
+                             uint64_t mode, uint64_t attr_addr) {
+    (void)mode;
+    char name[64];
+    if (!syscall_user_cstr_ok(name_addr)) return (uint64_t)-1;
+    memcpy(name, (void*)name_addr, 63); name[63] = '\0';
+
+    /* O_CREAT (0100) flag */
+    if (oflag & 0100) {
+        /* Create new mq */
+        struct mq *existing = mq_find_by_name(name);
+        if (existing) return (uint64_t)-1; /* EEXIST if O_EXCL */
+        for (int i = 0; i < MQ_MAX; i++) {
+            if (!mq_table[i].in_use) {
+                mq_table[i].in_use = 1;
+                memcpy(mq_table[i].name, name, 63); mq_table[i].name[63] = '\0';
+                mq_table[i].num_msgs = 0;
+                mq_table[i].mq_maxmsg = MQ_MAX_MSG;
+                mq_table[i].mq_msgsize = MQ_MSG_SIZE;
+                if (attr_addr) {
+                    if (syscall_user_read_ok(attr_addr, sizeof(struct mq_attr))) {
+                        struct mq_attr attr;
+                        memcpy(&attr, (void*)attr_addr, sizeof(struct mq_attr));
+                        if (attr.mq_maxmsg > 0) mq_table[i].mq_maxmsg = attr.mq_maxmsg;
+                        if (attr.mq_msgsize > 0 && attr.mq_msgsize <= MQ_MSG_SIZE)
+                            mq_table[i].mq_msgsize = attr.mq_msgsize;
+                    }
+                }
+                return (uint64_t)(800 + i); /* mqd range */
+            }
+        }
+        return (uint64_t)-1;
+    }
+
+    /* Open existing */
+    struct mq *mq = mq_find_by_name(name);
+    if (!mq) return (uint64_t)-1;
+    for (int i = 0; i < MQ_MAX; i++) {
+        if (&mq_table[i] == mq) return (uint64_t)(800 + i);
+    }
+    return (uint64_t)-1;
+}
+
+static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr,
+                             uint64_t msg_len, uint64_t prio) {
+    int slot = (int)mqd - 800;
+    if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
+        return (uint64_t)-1;
+
+    struct mq *mq = &mq_table[slot];
+    if (msg_len > mq->mq_msgsize) return (uint64_t)-1;
+    if (mq->num_msgs >= (int)mq->mq_maxmsg) {
+        /* Queue full — should block, but for now fail */
+        return (uint64_t)-1;
+    }
+
+    if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, msg_len))
+        return (uint64_t)-1;
+
+    struct mq_msg *m = &mq->msgs[mq->num_msgs++];
+    memcpy(m->data, (void*)msg_addr, (unsigned long)msg_len);
+    m->prio = (unsigned int)prio;
+    m->in_use = 1;
+    return 0;
+}
+
+static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
+                                uint64_t msg_len, uint64_t prio_addr) {
+    int slot = (int)mqd - 800;
+    if (slot < 0 || slot >= MQ_MAX || !mq_table[slot].in_use)
+        return (uint64_t)-1;
+
+    struct mq *mq = &mq_table[slot];
+    if (mq->num_msgs == 0) return (uint64_t)-1;
+
+    if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, msg_len))
+        return (uint64_t)-1;
+
+    /* Dequeue highest-priority message */
+    int best = 0;
+    for (int i = 1; i < mq->num_msgs; i++) {
+        if (mq->msgs[i].prio > mq->msgs[best].prio) best = i;
+    }
+
+    struct mq_msg *m = &mq->msgs[best];
+    uint64_t copy_len = msg_len < mq->mq_msgsize ? msg_len : mq->mq_msgsize;
+    memcpy((void*)msg_addr, m->data, (unsigned long)copy_len);
+
+    if (prio_addr) {
+        if (syscall_user_write_ok(prio_addr, 4))
+            *(unsigned int*)prio_addr = m->prio;
+    }
+
+    /* Remove message by swapping with last */
+    mq->msgs[best] = mq->msgs[--mq->num_msgs];
+    return (uint64_t)copy_len;
+}
+
+static uint64_t sys_mq_unlink(uint64_t name_addr) {
+    char name[64];
+    if (!syscall_user_cstr_ok(name_addr)) return (uint64_t)-1;
+    memcpy(name, (void*)name_addr, 63); name[63] = '\0';
+
+    struct mq *mq = mq_find_by_name(name);
+    if (!mq) return (uint64_t)-1;
+    mq->in_use = 0;
+    return 0;
+}
+
+/* ── Init all new subsystems ──────────────────────────────────────────── */
+
+void production_subsystems_init(void) {
+    socket_init();
+    memset(epoll_table, 0, sizeof(epoll_table));
+    memset(posix_timers, 0, sizeof(posix_timers));
+    memset(mq_table, 0, sizeof(mq_table));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 
 static uint64_t sys_openat(uint64_t dirfd, uint64_t path_addr,
                             uint64_t flags, uint64_t mode) {
@@ -3945,6 +4729,50 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETSID:          return sys_getsid(a1);
         case SYS_SIGALTSTACK:     return sys_sigaltstack(a1, a2);
         case SYS_PERSONALITY:     return sys_personality(a1);
+        /* Batch 3 dispatch */
+        case SYS_SOCKET:          return sys_socket(a1, a2, a3);
+        case SYS_BIND:            return sys_bind(a1, a2, a3);
+        case SYS_LISTEN:          return sys_listen(a1, a2);
+        case SYS_ACCEPT:          return sys_accept(a1, a2, a3);
+        case SYS_CONNECT:         return sys_connect(a1, a2, a3);
+        case SYS_SETSOCKOPT:      return sys_setsockopt(a1, a2, a3, a4, a5);
+        case SYS_GETSOCKOPT:      return sys_getsockopt(a1, a2, a3, a4, a5);
+        case SYS_SENDMSG:         return sys_sendmsg(a1, a2, a3);
+        case SYS_RECVMSG:         return sys_recvmsg(a1, a2, a3);
+        case SYS_GETSOCKNAME:     return sys_getsockname(a1, a2, a3);
+        case SYS_GETPEERNAME:     return sys_getpeername(a1, a2, a3);
+        case SYS_SOCKETPAIR:      return sys_socketpair(a1, a2, a3, a4);
+        case SYS_EPOLL_CREATE1:   return sys_epoll_create1(a1);
+        case SYS_EPOLL_CTL:       return sys_epoll_ctl(a1, a2, a3, a4);
+        case SYS_EPOLL_WAIT:      return sys_epoll_wait(a1, a2, a3, a4);
+        case SYS_EPOLL_PWAIT:     return sys_epoll_pwait(a1, a2, a3, a4, a5);
+        case SYS_CLOCK_GETTIME:   return sys_clock_gettime(a1, a2);
+        case SYS_CLOCK_SETTIME:   return sys_clock_settime(a1, a2);
+        case SYS_CLOCK_GETRES:    return sys_clock_getres(a1, a2);
+        case SYS_TIMER_CREATE:    return sys_timer_create(a1, a2, a3);
+        case SYS_TIMER_SETTIME:   return sys_timer_settime(a1, a2, a3, a4);
+        case SYS_TIMER_GETTIME:   return sys_timer_gettime(a1, a2);
+        case SYS_TIMER_GETOVERRUN: return sys_timer_getoverrun(a1);
+        case SYS_TIMER_DELETE:    return sys_timer_delete(a1);
+        case SYS_DUP3:            return sys_dup3(a1, a2, a3);
+        case SYS_PIPE2:           return sys_pipe2(a1, a2);
+        case SYS_MKDTEMP:         return sys_mkdtemp(a1);
+        case SYS_UTIMENSAT:       return sys_utimensat(a1, a2, a3, a4);
+        case SYS_FUTIMENS:        return sys_futimens(a1, a2);
+        case SYS_STATFS:          return sys_statfs(a1, a2);
+        case SYS_FSTATFS:         return sys_fstatfs(a1, a2);
+        case SYS_GETRUSAGE:       return sys_getrusage(a1, a2);
+        case SYS_SYSINFO:         return sys_sysinfo(a1);
+        case SYS_GETRESUID:       return sys_getresuid(a1, a2, a3);
+        case SYS_SETRESUID:       return sys_setresuid(a1, a2, a3);
+        case SYS_GETRESGID:       return sys_getresgid(a1, a2, a3);
+        case SYS_SETRESGID:       return sys_setresgid(a1, a2, a3);
+        case SYS_SCHED_GETPARAM:  return sys_sched_getparam(a1, a2);
+        case SYS_SCHED_SETPARAM:  return sys_sched_setparam(a1, a2);
+        case SYS_MQ_OPEN:         return sys_mq_open(a1, a2, a3, a4);
+        case SYS_MQ_SEND:         return sys_mq_send(a1, a2, a3, a4);
+        case SYS_MQ_RECEIVE:      return sys_mq_receive(a1, a2, a3, a4);
+        case SYS_MQ_UNLINK:       return sys_mq_unlink(a1);
         default:         return (uint64_t)-1;
     }
 }

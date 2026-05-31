@@ -308,6 +308,63 @@
 #define SYS_SIGALTSTACK       315  /* sigaltstack(ss, old_ss) → 0 or -1 */
 #define SYS_PERSONALITY       316  /* personality(persona) → old persona */
 
+/* ── BSD Socket API ─────────────────────────────────────────── */
+#define SYS_SOCKET            317  /* socket(domain, type, protocol) → fd */
+#define SYS_BIND              318  /* bind(sockfd, addr, addrlen) */
+#define SYS_LISTEN            319  /* listen(sockfd, backlog) */
+#define SYS_ACCEPT            320  /* accept(sockfd, addr, addrlen) → fd */
+#define SYS_CONNECT           321  /* connect(sockfd, addr, addrlen) */
+#define SYS_SETSOCKOPT        322  /* setsockopt(sockfd, level, optname, optval, optlen) */
+#define SYS_GETSOCKOPT        323  /* getsockopt(sockfd, level, optname, optval, optlen) */
+#define SYS_SENDMSG           324  /* sendmsg(sockfd, msg, flags) */
+#define SYS_RECVMSG           325  /* recvmsg(sockfd, msg, flags) */
+#define SYS_GETSOCKNAME       326  /* getsockname(sockfd, addr, addrlen) */
+#define SYS_GETPEERNAME       327  /* getpeername(sockfd, addr, addrlen) */
+#define SYS_SOCKETPAIR        328  /* socketpair(domain, type, protocol, sv) */
+
+/* ── epoll ──────────────────────────────────────────────────── */
+#define SYS_EPOLL_CREATE1     329  /* epoll_create1(flags) → fd */
+#define SYS_EPOLL_CTL         330  /* epoll_ctl(epfd, op, fd, event) */
+#define SYS_EPOLL_WAIT        331  /* epoll_wait(epfd, events, maxevents, timeout) */
+#define SYS_EPOLL_PWAIT       332  /* epoll_pwait(epfd, events, maxevents, timeout, sigmask) */
+
+/* ── POSIX Clocks & Timers ──────────────────────────────────── */
+#define SYS_CLOCK_GETTIME     333  /* clock_gettime(clockid, tp) */
+#define SYS_CLOCK_SETTIME     334  /* clock_settime(clockid, tp) */
+#define SYS_CLOCK_GETRES      335  /* clock_getres(clockid, res) */
+#define SYS_TIMER_CREATE      336  /* timer_create(clockid, sevp, timerid) */
+#define SYS_TIMER_SETTIME     337  /* timer_settime(timerid, flags, new, old) */
+#define SYS_TIMER_GETTIME     338  /* timer_gettime(timerid, cur) */
+#define SYS_TIMER_GETOVERRUN  339  /* timer_getoverrun(timerid) → overrun count */
+#define SYS_TIMER_DELETE      340  /* timer_delete(timerid) */
+
+/* ── Modern FD operations ───────────────────────────────────── */
+#define SYS_DUP3              341  /* dup3(oldfd, newfd, flags) */
+#define SYS_PIPE2             342  /* pipe2(fds, flags) */
+#define SYS_MKDTEMP           343  /* mkdtemp(template) → path or NULL */
+#define SYS_UTIMENSAT         344  /* utimensat(dirfd, path, times, flags) */
+#define SYS_FUTIMENS          345  /* futimens(fd, times) */
+
+/* ── Filesystem & System Info ───────────────────────────────── */
+#define SYS_STATFS            346  /* statfs(path, buf) */
+#define SYS_FSTATFS           347  /* fstatfs(fd, buf) */
+#define SYS_GETRUSAGE         348  /* getrusage(who, usage) */
+#define SYS_SYSINFO           349  /* sysinfo(info) */
+
+/* ── Process Credentials & Scheduling ───────────────────────── */
+#define SYS_GETRESUID         350  /* getresuid(ruid, euid, suid) */
+#define SYS_SETRESUID         351  /* setresuid(ruid, euid, suid) */
+#define SYS_GETRESGID         352  /* getresgid(rgid, egid, sgid) */
+#define SYS_SETRESGID         353  /* setresgid(rgid, egid, sgid) */
+#define SYS_SCHED_GETPARAM    354  /* sched_getparam(pid, param) */
+#define SYS_SCHED_SETPARAM    355  /* sched_setparam(pid, param) */
+
+/* ── POSIX IPC (Message Queues) ─────────────────────────────── */
+#define SYS_MQ_OPEN           356  /* mq_open(name, oflag, mode, attr) → mqd */
+#define SYS_MQ_SEND           357  /* mq_send(mqd, msg, len, prio) */
+#define SYS_MQ_RECEIVE        358  /* mq_receive(mqd, msg, len, prio) */
+#define SYS_MQ_UNLINK         359  /* mq_unlink(name) */
+
 /* ── Constants for *at syscalls ─────────────────────────────── */
 #define AT_FDCWD            (-100)
 #define AT_SYMLINK_NOFOLLOW  0x100
@@ -349,6 +406,111 @@
 struct itimerspec {
     struct timespec it_interval;
     struct timespec it_value;
+};
+
+/* ── epoll structures ────────────────────────────────────────── */
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+#define EPOLL_CTL_MOD 3
+
+enum EPOLL_EVENTS {
+    EPOLLIN  = 0x001,
+    EPOLLOUT = 0x004,
+    EPOLLERR = 0x008,
+    EPOLLHUP = 0x010,
+    EPOLLET  = 0x80000000,
+};
+
+struct epoll_event {
+    uint32_t events;   /* Epoll events */
+    uint64_t data;     /* User data variable */
+};
+
+/* ── statfs structure ────────────────────────────────────────── */
+#define STATFS_MAX 64
+
+struct statfs {
+    uint64_t f_type;
+    uint64_t f_bsize;
+    uint64_t f_blocks;
+    uint64_t f_bfree;
+    uint64_t f_bavail;
+    uint64_t f_files;
+    uint64_t f_ffree;
+    uint64_t f_fsid;
+    uint64_t f_namelen;
+    uint64_t f_frsize;
+    uint64_t f_flags;
+    uint64_t f_spare[4];
+};
+
+/* ── sysinfo structure ───────────────────────────────────────── */
+struct sysinfo {
+    uint64_t uptime;
+    uint64_t loads[3];
+    uint64_t totalram;
+    uint64_t freeram;
+    uint64_t sharedram;
+    uint64_t bufferram;
+    uint64_t totalswap;
+    uint64_t freeswap;
+    uint16_t procs;
+    uint16_t totalhigh;
+    uint16_t freehigh;
+    uint32_t mem_unit;
+};
+
+/* ── rusage structure ────────────────────────────────────────── */
+#define RUSAGE_SELF     0
+#define RUSAGE_CHILDREN -1
+
+struct timeval {
+    uint64_t tv_sec;
+    uint64_t tv_usec;
+};
+
+struct rusage {
+    struct timeval ru_utime;    /* user time used */
+    struct timeval ru_stime;    /* system time used */
+    uint64_t ru_maxrss;         /* max resident set size */
+    uint64_t ru_ixrss;          /* integral shared text memory size */
+    uint64_t ru_idrss;          /* integral unshared data size */
+    uint64_t ru_isrss;          /* integral unshared stack size */
+    uint64_t ru_minflt;         /* page reclaims */
+    uint64_t ru_majflt;         /* page faults */
+    uint64_t ru_nswap;          /* swaps */
+    uint64_t ru_inblock;        /* block input operations */
+    uint64_t ru_oublock;        /* block output operations */
+    uint64_t ru_msgsnd;         /* IPC messages sent */
+    uint64_t ru_msgrcv;         /* IPC messages received */
+    uint64_t ru_nsignals;       /* signals received */
+    uint64_t ru_nvcsw;          /* voluntary context switches */
+    uint64_t ru_nivcsw;         /* involuntary context switches */
+};
+
+/* ── POSIX timer signal event ───────────────────────────────── */
+struct sigevent {
+    int      sigev_notify;    /* notification type */
+    int      sigev_signo;     /* signal number */
+    union {
+        int   sigev_notify_function; /* function address (SIGEV_THREAD) */
+        int   sigev_notify_attributes;
+    };
+};
+
+#define SIGEV_SIGNAL   0
+#define SIGEV_NONE     1
+#define SIGEV_THREAD   2
+
+/* POSIX timer ID type */
+typedef int timer_t;
+
+/* ── POSIX message queue structures ──────────────────────────── */
+struct mq_attr {
+    uint64_t mq_flags;
+    uint64_t mq_maxmsg;
+    uint64_t mq_msgsize;
+    uint64_t mq_curmsgs;
 };
 
 /* rlimit resources (Linux-compatible) */
@@ -479,6 +641,10 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
 /* Timer fd tick — called from timer interrupt */
 void timerfd_tick(void);
+/* POSIX per-process timer tick — called from timer interrupt */
+void posix_timer_tick(void);
+/* Initialize production subsystems (socket, epoll, timers, mq) */
+void production_subsystems_init(void);
 #endif
 
 #endif

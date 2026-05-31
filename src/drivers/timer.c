@@ -21,6 +21,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     scheduler_tick();
     process_timer_tick();
     timerfd_tick();
+    posix_timer_tick();
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
         scheduler_age();
     }

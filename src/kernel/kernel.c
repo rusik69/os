@@ -181,6 +181,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     syscall_init();
     kprintf("[OK] Syscall interface initialized\n");
 
+    /* Production subsystems (socket, epoll, timers, mq) */
+    production_subsystems_init();
+    kprintf("[OK] Production subsystems initialized\n");
+
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
