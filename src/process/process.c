@@ -278,6 +278,19 @@ struct process *process_create(void (*entry)(void), const char *name) {
     }
     if (!proc) return NULL;
 
+    /* Enforce RLIMIT_NPROC: count children of the current process */
+    struct process *cur = process_get_current();
+    if (cur) {
+        int child_count = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (process_table[i].state != PROCESS_UNUSED &&
+                process_table[i].parent_pid == cur->pid)
+                child_count++;
+        }
+        if ((uint64_t)child_count >= cur->rlim_cur[RLIMIT_NPROC])
+            return NULL;
+    }
+
     /* Allocate kernel stack with guard page */
     if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
 

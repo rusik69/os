@@ -1189,6 +1189,14 @@ static uint64_t sys_sched_getaffinity(uint64_t pid) {
 
 /* Find lowest available FD slot */
 static int fd_find_free(struct process *proc) {
+    /* Count open FDs and check against RLIMIT_NOFILE */
+    int open_count = 0;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (proc->fd_table[i].used) open_count++;
+    }
+    if ((uint64_t)open_count >= proc->rlim_cur[RLIMIT_NOFILE])
+        return -1;
+    /* Find first free slot */
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!proc->fd_table[i].used) return i;
     }
