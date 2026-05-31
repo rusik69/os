@@ -20,6 +20,7 @@ echo "==> Booting test kernel (timeout=${TIMEOUT}s)..."
 
 # Launch QEMU with -serial file: for clean capture
 # Use -no-reboot so QEMU exits on triple-fault or ACPI shutdown
+# Use -device isa-debug-exit for reliable test-completion exit
 if ! timeout "$TIMEOUT" qemu-system-x86_64 \
     -kernel "$KERNEL" \
     -m 256M \
@@ -28,12 +29,32 @@ if ! timeout "$TIMEOUT" qemu-system-x86_64 \
     -display none \
     -drive file="$DISK",format=raw,if=ide \
     -netdev user,id=net0 -device e1000,netdev=net0 \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
     -no-reboot 2>/dev/null; then
     # timeout or QEMU exit
     :
 fi
+QEMU_EXIT=$?
 
 echo "==> Checking results..."
+
+# Check for QEMU isa-debug-exit exit codes first (most reliable)
+# Exit code 33 (0x31) = PASS, 16 (0x10) = FAIL
+if [ "$QEMU_EXIT" -eq 33 ]; then
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    echo "========================================"
+    echo "  ALL TESTS PASSED  ($PASS passed)"
+    echo "========================================"
+    exit 0
+elif [ "$QEMU_EXIT" -eq 16 ]; then
+    PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
+    FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)
+    echo "========================================"
+    echo "  SOME TESTS FAILED  ($PASS passed, $FAIL failed)"
+    echo "========================================"
+    grep "FAIL" "$SERIAL_LOG" || true
+    exit 1
+fi
 if grep -q "ALL TESTS PASSED" "$SERIAL_LOG"; then
     PASS=$(grep -c "PASS" "$SERIAL_LOG" || true)
     FAIL=$(grep -c "FAIL" "$SERIAL_LOG" || true)

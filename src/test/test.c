@@ -1408,6 +1408,18 @@ static void discard_hook(char c, void *ctx) {
     (void)c; (void)ctx;
 }
 
+/* QEMU isa-debug-exit device at port 0xF4.
+ * Enabled with: -device isa-debug-exit,iobase=0xf4,iosize=0x04
+ * Writing value N makes QEMU exit with exit code (N & 0xff).
+ * Passing: write 0x31 → exit 33. Failing: write 0x10 → exit 16.
+ * More reliable than ACPI shutdown in TCG mode. */
+#define QEMU_DEBUG_EXIT_PORT 0xF4
+
+static void qemu_exit(int code) {
+    outb(QEMU_DEBUG_EXIT_PORT, (uint8_t)code);
+    for (;;) __asm__ volatile("hlt");
+}
+
 void test_run_all(void) {
     outb(0x3F8, 'Z');  /* marker: test task is running */
 
@@ -1479,9 +1491,13 @@ void test_run_all(void) {
      * ACPI shutdown fails (e.g. in TCG mode). */
     serial_write("[[TEST_DONE]]\n");
 
-    /* Shut down QEMU so the host script can read the serial output */
-    acpi_shutdown();
+    /* Try ACPI shutdown first; fall back to QEMU debug exit if it fails.
+     * The isa-debug-exit device must be enabled in QEMU CLI. */
+    if (tfail == 0)
+        qemu_exit(0x31);  /* exit code 33 = PASS */
+    else
+        qemu_exit(0x10);  /* exit code 16 = FAIL */
 
-    /* Halt in case ACPI shutdown is not available */
+    /* Halt in case both shutdown methods fail */
     for (;;) __asm__ volatile("hlt");
 }
