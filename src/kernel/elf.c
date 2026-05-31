@@ -1,3 +1,4 @@
+#define KERNEL_INTERNAL
 #include "elf.h"
 #include "vfs.h"
 #include "process.h"
@@ -6,6 +7,7 @@
 #include "printf.h"
 #include "vmm.h"
 #include "pmm.h"
+#include "syscall.h" /* for prng_rand64 (ASLR) */
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE 65536
@@ -374,9 +376,11 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     kfree(buf);
     if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -1; }
 
-    /* Allocate user stack (64KB) */
-    uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-    for (uint64_t va = user_stack_bottom; va < USER_STACK_TOP; va += PAGE_SIZE) {
+    /* Allocate user stack (64KB) with ASLR offset */
+    uint64_t aslr_pages = prng_rand64() % 32; /* 0-31 pages of random shift */
+    uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
+    uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
@@ -486,7 +490,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         }
     }
 
-    uint64_t stack_top_virt = USER_STACK_TOP;
+    uint64_t stack_top_virt = user_stack_top;
     uint64_t sp = stack_top_virt;  /* start writing from top down */
 
     /* Write string data first (at the top of the stack area) */

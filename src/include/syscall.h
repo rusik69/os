@@ -648,6 +648,8 @@ struct linux_dirent64 {
 void syscall_init(void);
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
+/* PRNG for kernel subsystems (ASLR, etc.) */
+uint64_t prng_rand64(void);
 /* Timer fd tick — called from timer interrupt */
 void timerfd_tick(void);
 /* POSIX per-process timer tick — called from timer interrupt */

@@ -1993,6 +1993,11 @@ static uint64_t xorshift64(void) {
     return x;
 }
 
+/* Non-static PRNG accessor for use by other kernel subsystems (e.g. ASLR) */
+uint64_t prng_rand64(void) {
+    return xorshift64();
+}
+
 static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
                                uint64_t flags) {
     if (!buf_addr || count == 0) return 0;
