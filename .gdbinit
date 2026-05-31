@@ -135,21 +135,78 @@ define walk_page
         set $pt_idx   = ($virt >> 12) & 0x1FF
         set $offset   = $virt & 0xFFF
 
-        printf "Virtual address: 0x%016llx\n", $virt
-        printf "  PML4[0x%03lx]  → ", $pml4_idx
-        set $pml4_phys = $cr3 & 0x000FFFFFFFFFF000
-        set $pml4_virt = $pml4_phys
-        set $pml4e = *(unsigned long long*)$pml4_virt + $pml4_idx*8
-        # Actually we need proper dereference. Let's do it step by step.
-        # PML4 is at CR3 physical address. Since boot identity-maps low 1GB,
-        # and kernel is in high half but PML4 may be in low mem, just use phys as virt.
-        # Actually we read from QEMU memory at physical address directly if < 1GB.
+        printf "Virtual: 0x%016llx → PML4[0x%03lx] PDPT[0x%03lx] PD[0x%03lx] PT[0x%03lx] +0x%03lx\n", \
+               $virt, $pml4_idx, $pdpt_idx, $pd_idx, $pt_idx, $offset
+
+        # PML4 lives at CR3 (physical). Since kernel identity-maps the first 1GB,
+        # PHYS_TO_VIRT(CR3) = CR3 + KERNEL_VMA_OFFSET — but CR3 may point above 1GB
+        # if PML4 was allocated later by pmm_alloc_frame. Try PHYS_TO_VIRT first:
+        set $KERNEL_VMA = 0xFFFF800000000000
+        set $cr3_phys = $cr3 & 0x000FFFFFFFFFF000
+        set $pml4_virt = $cr3_phys + $KERNEL_VMA
+
+        # Read PML4 entry
+        set $pml4e = *(unsigned long long*)$pml4_virt + $pml4_idx
+        # Actually need to dereference the pointer. use x/gx instead.
+        # GDB can do: set $pml4e = *(unsigned long long*)($pml4_virt + $pml4_idx*8)
+        set $pml4e = *(unsigned long long*)($pml4_virt + $pml4_idx * 8)
+        printf "PML4E[0x%03lx] = 0x%016llx", $pml4_idx, $pml4e
+        if $pml4e & 1
+            printf "  Present\n"
+            set $pdpt_phys = $pml4e & 0x000FFFFFFFFFF000
+            set $pdpt_virt = $pdpt_phys + $KERNEL_VMA
+            set $pdpte = *(unsigned long long*)($pdpt_virt + $pdpt_idx * 8)
+            printf "PDPTE[0x%03lx] = 0x%016llx", $pdpt_idx, $pdpte
+            if $pdpte & 1
+                printf "  Present"
+                if $pdpte & 0x80
+                    printf "  (1GB huge page!)\n"
+                    set $phys = ($pdpte & 0x000FFFFFC0000000) | ($virt & 0x3FFFFFFF)
+                    printf "  → Phys: 0x%016llx\n", $phys
+                else
+                    printf "\n"
+                    set $pd_phys = $pdpte & 0x000FFFFFFFFFF000
+                    set $pd_virt = $pd_phys + $KERNEL_VMA
+                    set $pde = *(unsigned long long*)($pd_virt + $pd_idx * 8)
+                    printf "  PDE[0x%03lx]  = 0x%016llx", $pd_idx, $pde
+                    if $pde & 1
+                        printf "  Present"
+                        if $pde & 0x80
+                            printf "  (2MB huge page!)\n"
+                            set $phys = ($pde & 0x000FFFFFFFE00000) | ($virt & 0x1FFFFF)
+                            printf "  → Phys: 0x%016llx\n", $phys
+                        else
+                            printf "\n"
+                            set $pt_phys = $pde & 0x000FFFFFFFFFF000
+                            set $pt_virt = $pt_phys + $KERNEL_VMA
+                            set $pte = *(unsigned long long*)($pt_virt + $pt_idx * 8)
+                            printf "    PTE[0x%03lx] = 0x%016llx", $pt_idx, $pte
+                            if $pte & 1
+                                printf "  Present\n"
+                                set $phys = ($pte & 0x000FFFFFFFFFF000)
+                                printf "    → Phys: 0x%016llx\n", $phys
+                            else
+                                printf "  Not Present\n"
+                            end
+                        end
+                    else
+                        printf "  Not Present\n"
+                    end
+                end
+            else
+                printf "  Not Present\n"
+            end
+        else
+            printf "  Not Present\n"
+        end
     end
 end
 document walk_page
     Walk the 4-level x86-64 page table hierarchy for a given virtual address.
     Shows PML4E → PDPTE → PDE → PTE → physical frame.
-    Note: requires identity-mapped low memory (our boot does identity-map 0-1GB).
+    Handles 2MB and 1GB huge pages.
+    Usage: walk_page VIRTUAL_ADDR
+    Example: walk_page 0xFFFF800001234000
 end
 
 # ─── Process info helper ───────────────────────────────────────
@@ -180,7 +237,55 @@ document proc
     Display process info.
     Usage: proc PID      — show process by PID
            proc current  — show current (running) process
+    Shows kernel_stack, stack_top, guard_page, and other fields.
     Example: proc 2
+end
+
+# ─── List all processes (ps) ───────────────────────────────────
+define ps
+    set $tbl = process_get_table()
+    if $tbl != 0
+        printf "PID  STATE  NAME                         KERNEL_STACK         STACK_TOP            GUARD_PAGE           PML4\n"
+        printf "───  ─────  ────                         ────────────         ──────────           ──────────           ────\n"
+        set $i = 0
+        while $i < 256
+            set $p = $tbl + $i * (sizeof "struct process")
+            # GDB's sizeof works differently — use pointer arithmetic on struct pointer
+            # Actually, cast $tbl to (struct process *) and index it
+            if 1
+                set $proc = ((struct process *)$tbl)[$i]
+                if $proc.state != 0  # PROCESS_UNUSED = 0
+                    printf "%3d  ", $proc.pid
+                    if $proc.state == 1
+                        printf "READY  "
+                    end
+                    if $proc.state == 2
+                        printf "RUNNING"
+                    end
+                    if $proc.state == 3
+                        printf "BLOCKED"
+                    end
+                    if $proc.state == 4
+                        printf "ZOMBIE "
+                    end
+                    printf "  %-28s 0x%016llx 0x%016llx 0x%016llx ", \
+                           $proc.name, $proc.kernel_stack, $proc.stack_top, $proc.guard_page
+                    if $proc.pml4 != 0
+                        printf "%s\n", "user"
+                    else
+                        printf "%s\n", "kernel"
+                    end
+                end
+            end
+            set $i = $i + 1
+        end
+    else
+        printf "Process table not available\n"
+    end
+end
+document ps
+    List all processes with PID, state, name, kernel stack range, guard page, and page table type.
+    Shows kernel threads (pml4=NULL) and user processes (pml4=user).
 end
 
 # ─── Object dump ───────────────────────────────────────────────

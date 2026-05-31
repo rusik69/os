@@ -126,7 +126,7 @@ DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d
 # NOTE: -include must stay BELOW the default target so that dependency
 # files never accidentally steal .DEFAULT_GOAL.
 
-all:
+all: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 
 -include $(wildcard $(DEPS))
