@@ -478,7 +478,7 @@ int usb_msc_init(void)
             (uint64_t)((g_max_lba + 1) / 2048));
 
     /* Register with block device layer */
-    blockdev_register(BLOCKDEV_USB0, "usb0",
+    blockdev_register_legacy(BLOCKDEV_USB0, "usb0",
                       usb_msc_read_sectors,
                       usb_msc_write_sectors,
                       usb_msc_get_sectors);

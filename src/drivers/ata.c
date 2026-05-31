@@ -105,7 +105,7 @@ void ata_init(void) {
 
     uint32_t sectors = identify[60] | ((uint32_t)identify[61] << 16);
     ata_total_sectors = sectors;
-    blockdev_register(BLOCKDEV_ATA, "ata", ata_read_sectors, ata_write_sectors, ata_get_sectors);
+    blockdev_register_legacy(BLOCKDEV_ATA, "ata", ata_read_sectors, ata_write_sectors, ata_get_sectors);
     kprintf("  ATA disk: %llu sectors (%llu MB)\n", (unsigned long long)sectors,
             (unsigned long long)(sectors / 2048));
 }

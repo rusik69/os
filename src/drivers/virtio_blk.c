@@ -206,6 +206,6 @@ static uint32_t vblk_bd_size(void) {
 
 void virtio_blk_register_blockdev(void) {
     if (!vblk_present) return;
-    blockdev_register(BLOCKDEV_VIRTIO0, "virtio0",
+    blockdev_register_legacy(BLOCKDEV_VIRTIO0, "virtio0",
                       vblk_bd_read, vblk_bd_write, vblk_bd_size);
 }

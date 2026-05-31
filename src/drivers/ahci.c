@@ -378,7 +378,7 @@ found:
 
             ahci_port    = p;
             ahci_present = 1;
-            blockdev_register(BLOCKDEV_AHCI, "ahci", ahci_read_sectors, ahci_write_sectors, ahci_get_sectors);
+            blockdev_register_legacy(BLOCKDEV_AHCI, "ahci", ahci_read_sectors, ahci_write_sectors, ahci_get_sectors);
         }
         break;
     }

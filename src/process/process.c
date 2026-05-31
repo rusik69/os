@@ -13,24 +13,31 @@
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
 extern void process_entry_trampoline(void);
-static uint32_t next_pid = 1;
 static struct process *current_process = NULL;
 
-/* Allocate a unique PID, avoiding wrap-around aliasing */
+/* PID bitmap allocator: 256 processes → 4 × uint64_t.
+ * Bit N ≡ PID N allocated.  Bit 0 always set (idle process).
+ * O(1) alloc via __builtin_ctzll on inverted word. */
+static uint64_t pid_bitmap[4];
+#define PID_BITMAP_WORDS 4
+
 static uint32_t alloc_pid(void) {
-    uint32_t pid = next_pid++;
-    if (next_pid == 0 || next_pid > 0xFFFF) {
-        /* Near wrap — scan for an unused PID and reset */
-        next_pid = 1;
-        for (int i = 0; i < PROCESS_MAX; i++) {
-            if (process_table[i].state != PROCESS_UNUSED &&
-                process_table[i].pid >= next_pid &&
-                process_table[i].pid <= 0xFFFF) {
-                next_pid = process_table[i].pid + 1;
-            }
-        }
+    for (int w = 0; w < PID_BITMAP_WORDS; w++) {
+        if (pid_bitmap[w] == ~0ULL) continue;
+        int bit = __builtin_ctzll(~pid_bitmap[w]);
+        uint32_t pid = (uint32_t)(w * 64 + bit);
+        if (pid >= PROCESS_MAX) break;
+        pid_bitmap[w] |= (1ULL << bit);
+        return pid;
     }
-    return pid;
+    return (uint32_t)-1; /* no free PIDs */
+}
+
+static void free_pid(uint32_t pid) {
+    if (pid >= PROCESS_MAX) return;
+    int w = pid / 64;
+    int bit = pid % 64;
+    pid_bitmap[w] &= ~(1ULL << bit);
 }
 
 /* ── Kernel stack with guard page ───────────────────────────────────── */
@@ -219,6 +226,8 @@ static void rlimit_init_defaults(struct process *proc) {
 
 void process_init(void) {
     memset(process_table, 0, sizeof(process_table));
+    memset(pid_bitmap, 0, sizeof(pid_bitmap));
+    pid_bitmap[0] = 1; /* PID 0 (idle) is always allocated */
 
     /* Create idle process (pid 0) - represents the boot thread */
     process_table[0].pid = 0;
@@ -695,6 +704,9 @@ void process_cleanup(struct process *proc) {
         proc->pml4 = NULL;
     }
     proc->state = PROCESS_UNUSED;
+    if (proc->pid) {
+        free_pid(proc->pid);
+    }
     proc->pid = 0;
     proc->name = NULL;
     proc->context = NULL;
