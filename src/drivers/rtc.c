@@ -23,6 +23,55 @@ static uint8_t cmos_read(uint8_t reg) {
     return inb(CMOS_DATA);
 }
 
+static int is_leap(int year) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+/* Days in each month (non-leap) */
+static const int days_in_mon[12] = {
+    31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+};
+
+uint64_t rtc_to_epoch(const struct rtc_time *t) {
+    /* Compute days since 2000-01-01 (Unix time for 2000 = 946684800) */
+    int y = (int)t->year;
+    int m = (int)t->month;
+    int d = (int)t->day;
+    int h = (int)t->hour;
+    int min = (int)t->minute;
+    int s = (int)t->second;
+
+    /* Count days from 2000 to the target year */
+    uint64_t days = 0;
+    for (int yr = 2000; yr < y; yr++)
+        days += is_leap(yr) ? 366 : 365;
+
+    /* Days in current year up to current month */
+    for (int mo = 1; mo < m; mo++) {
+        days += days_in_mon[mo - 1];
+        if (mo == 2 && is_leap(y)) days++;
+    }
+    days += (d - 1);
+
+    /* Convert to seconds (2000 epoch) then add Unix base offset */
+    uint64_t epoch = days * 86400ULL + h * 3600ULL + min * 60ULL + s;
+    return epoch + 946684800ULL;  /* Unix epoch for 2000-01-01 */
+}
+
+/* ── Boot epoch (Unix wall clock seconds at boot time) ────────────── */
+
+static uint64_t boot_epoch_seconds = 0;
+
+uint64_t rtc_get_epoch(void) {
+    return boot_epoch_seconds;
+}
+
+void rtc_set_epoch(uint64_t s) {
+    boot_epoch_seconds = s;
+}
+
+/* ── RTC read helpers ─────────────────────────────────────────────── */
+
 static int is_updating(void) {
     return cmos_read(RTC_STATUS_A) & 0x80;
 }
@@ -61,6 +110,11 @@ void rtc_init(void) {
     outb(CMOS_ADDR, 0x0C);
     io_wait();
     inb(CMOS_DATA);
+
+    /* Capture boot epoch from RTC so clock_gettime(CLOCK_REALTIME) works */
+    struct rtc_time boot_time;
+    rtc_get_time(&boot_time);
+    boot_epoch_seconds = rtc_to_epoch(&boot_time);
 }
 
 void rtc_get_time(struct rtc_time *t) {

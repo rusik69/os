@@ -3422,22 +3422,45 @@ static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t ma
 /* ── Clock & Timer syscalls ───────────────────────────────────────────── */
 
 static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
-    (void)clockid;
     if (syscall_is_user_process() && !syscall_user_write_ok(tp_addr, sizeof(struct timespec)))
         return (uint64_t)-1;
 
     struct timespec ts;
     uint64_t ticks = timer_get_ticks();
-    ts.tv_sec = ticks / TIMER_FREQ;
-    ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+
+    switch (clockid) {
+    case CLOCK_REALTIME: {
+        uint64_t epoch = rtc_get_epoch();
+        ts.tv_sec = epoch + (ticks / TIMER_FREQ);
+        ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        break;
+    }
+    case CLOCK_MONOTONIC:
+    default:
+        ts.tv_sec = ticks / TIMER_FREQ;
+        ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        break;
+    }
 
     memcpy((void*)tp_addr, &ts, sizeof(struct timespec));
     return 0;
 }
 
 static uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
-    (void)clockid; (void)tp_addr;
-    /* Setting time not implemented */
+    if (clockid != CLOCK_REALTIME)
+        return (uint64_t)-1;  /* CLOCK_MONOTONIC is not settable */
+
+    if (syscall_is_user_process() && !syscall_user_read_ok(tp_addr, sizeof(struct timespec)))
+        return (uint64_t)-1;
+
+    struct timespec ts;
+    memcpy(&ts, (void*)tp_addr, sizeof(struct timespec));
+
+    /* Adjust boot epoch so that rtc_get_epoch() + ticks_since_boot = new time */
+    uint64_t ticks = timer_get_ticks();
+    uint64_t ticks_sec = ticks / TIMER_FREQ;
+    uint64_t new_epoch = ts.tv_sec - ticks_sec;
+    rtc_set_epoch(new_epoch);
     return 0;
 }
 
