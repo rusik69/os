@@ -45,6 +45,17 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* Kernel-mode fault: panic with register dump */
     if (!(err & (1ULL << 2))) {
         kprintf("\n*** KERNEL PAGE FAULT ***\n");
+
+        /* Check for kernel stack overflow via guard page access */
+        struct process *pt = process_get_table();
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (pt[i].guard_page &&
+                (cr2 & ~(uint64_t)0xFFF) == (pt[i].guard_page & ~(uint64_t)0xFFF)) {
+                kprintf("*** KERNEL STACK OVERFLOW *** pid=%u name=%s\n",
+                        pt[i].pid, pt[i].name ? pt[i].name : "?");
+                break;
+            }
+        }
         kprintf("CR2=0x%llx  error=0x%llx  (PF: %s %s %s)\n", cr2, err,
                 (err & 1) ? "prot" : "np",
                 (err & 2) ? "wr" : "rd",

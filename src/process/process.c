@@ -33,6 +33,54 @@ static uint32_t alloc_pid(void) {
     return pid;
 }
 
+/* ── Kernel stack with guard page ───────────────────────────────────── */
+
+/* Allocate a kernel stack with an unmapped guard page at the bottom.
+ * Stack grows downward: [guard (unmapped)][kernel_stack ... stack_top]
+ * A stack overflow past kernel_stack will hit the guard page and fault.
+ * Returns 0 on success, -1 on failure (all frames freed on error). */
+static int alloc_guarded_kernel_stack(struct process *proc) {
+    uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
+    if (!phys) return -1;
+
+    uint64_t guard_phys  = (uint64_t)phys;
+    uint64_t stack_phys  = guard_phys + PAGE_SIZE;
+    uint64_t guard_vma   = (uint64_t)PHYS_TO_VIRT(guard_phys);
+    uint64_t stack_vma   = (uint64_t)PHYS_TO_VIRT(stack_phys);
+
+    /* Call vmm_map_page for the guard VMA — this splits the 2MB huge page
+     * into 4KB PTEs for the region if needed.  Then unmap just the guard. */
+    if (vmm_map_page(guard_vma, guard_phys, VMM_FLAG_WRITE) < 0) {
+        for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
+            pmm_free_frame(guard_phys + i * PAGE_SIZE);
+        return -1;
+    }
+    vmm_unmap_page(guard_vma);
+
+    proc->guard_page    = guard_vma;
+    proc->kernel_stack  = stack_vma;
+    proc->stack_top     = stack_vma + KERNEL_STACK_SIZE;
+    return 0;
+}
+
+/* Free a kernel stack previously allocated by alloc_guarded_kernel_stack.
+ * Re-maps the guard page first so freeing its physical frame is safe. */
+static void free_guarded_kernel_stack(struct process *proc) {
+    if (!proc->kernel_stack) return;
+
+    uint64_t guard_phys = VIRT_TO_PHYS(proc->guard_page);
+
+    /* Re-map guard page so the PTEs are consistent while we free */
+    vmm_map_page(proc->guard_page, guard_phys, VMM_FLAG_WRITE);
+
+    for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
+        pmm_free_frame(guard_phys + i * PAGE_SIZE);
+
+    proc->guard_page    = 0;
+    proc->kernel_stack  = 0;
+    proc->stack_top     = 0;
+}
+
 static inline int process_cap_valid(uint32_t num) {
     return num < PROCESS_SYSCALL_MAX;
 }
@@ -186,15 +234,12 @@ struct process *process_create(void (*entry)(void), const char *name) {
     }
     if (!proc) return NULL;
 
-    /* Allocate kernel stack */
-    uint8_t *stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
-    if (!stack) return NULL;
+    /* Allocate kernel stack with guard page */
+    if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
 
     proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
     proc->name = name;
-    proc->kernel_stack = (uint64_t)stack;
-    proc->stack_top = (uint64_t)(stack + KERNEL_STACK_SIZE);
     proc->next = NULL;
     proc->pending_signals = 0;
     proc->sig_mask = 0;
@@ -258,14 +303,11 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     if (!proc) return NULL;
 
     /* Allocate kernel stack for syscall handling */
-    uint8_t *stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
-    if (!stack) return NULL;
+    if (alloc_guarded_kernel_stack(proc) < 0) return NULL;
 
     proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
     proc->name = name;
-    proc->kernel_stack = (uint64_t)stack;
-    proc->stack_top = (uint64_t)(stack + KERNEL_STACK_SIZE);
     proc->next = NULL;
     proc->pending_signals = 0;
     proc->sig_mask = 0;
@@ -380,21 +422,18 @@ int process_fork(void) {
     child->is_suspended = 0;
 
     /* Allocate fresh kernel stack BEFORE setting state to READY */
-    uint8_t *new_stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
-    if (!new_stack) {
+    if (alloc_guarded_kernel_stack(child) < 0) {
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
         return -1;
     }
-    child->kernel_stack = (uint64_t)new_stack;
-    child->stack_top    = (uint64_t)(new_stack + KERNEL_STACK_SIZE);
     child->state = PROCESS_READY;
 
     /* Clone user address space if process has one */
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
         if (!child->pml4) {
-            kfree(new_stack);
+            free_guarded_kernel_stack(child);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -1;
@@ -445,14 +484,11 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     child->tgid = (flags & CLONE_THREAD) ? parent->tgid : child->pid;
 
     /* Allocate fresh kernel stack */
-    uint8_t *new_stack = (uint8_t *)kmalloc(KERNEL_STACK_SIZE);
-    if (!new_stack) {
+    if (alloc_guarded_kernel_stack(child) < 0) {
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
         return -1;
     }
-    child->kernel_stack = (uint64_t)new_stack;
-    child->stack_top    = (uint64_t)(new_stack + KERNEL_STACK_SIZE);
 
     /* Handle CLONE_VM — share address space */
     if (flags & CLONE_VM) {
@@ -466,7 +502,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         if (parent->pml4) {
             child->pml4 = vmm_clone_user_pml4(parent->pml4);
             if (!child->pml4) {
-                kfree(new_stack);
+                free_guarded_kernel_stack(child);
                 child->state = PROCESS_UNUSED;
                 __asm__ volatile("sti");
                 return -1;
@@ -579,8 +615,7 @@ void process_sleep_ticks(uint64_t nticks) {
 /* Free resources of a zombie process. */
 void process_cleanup(struct process *proc) {
     if (proc->kernel_stack) {
-        kfree((void *)proc->kernel_stack);
-        proc->kernel_stack = 0;
+        free_guarded_kernel_stack(proc);
     }
     /* Free user page tables (fixes leak) */
     if (proc->is_user && proc->pml4) {

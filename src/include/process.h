@@ -5,6 +5,9 @@
 
 #define PROCESS_MAX 256
 #define KERNEL_STACK_SIZE (128 * 1024) /* 128 KB — cc parser + network call chains */
+#define KERNEL_STACK_PAGES ((KERNEL_STACK_SIZE + PAGE_SIZE - 1) / PAGE_SIZE)
+#define KERNEL_STACK_TOTAL_PAGES (KERNEL_STACK_PAGES + 1) /* +1 guard page */
+#define KERNEL_STACK_TOTAL_SIZE (KERNEL_STACK_TOTAL_PAGES * PAGE_SIZE)
 #define USER_STACK_SIZE   (64 * 1024)  /* 64 KB user stack */
 #define PROCESS_SIG_MAX 32
 #define PROCESS_SYSCALL_MAX 256
@@ -61,6 +64,7 @@ struct process {
     enum process_state state;
     uint64_t kernel_stack;
     uint64_t stack_top;
+    uint64_t guard_page;           /* VMA of unmapped guard page (0 if none) */
     struct cpu_context *context;
     struct process *next;
     const char *name;
