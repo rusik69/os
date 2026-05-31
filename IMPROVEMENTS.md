@@ -97,6 +97,9 @@
 | `sigwaitinfo`/`sigtimedwait` syscalls (synchronous signal acceptance) | ✅ |
 | `/proc/stat` with Linux-compatible user/system/idle columns | ✅ |
 | `/proc/uptime` file (uptime + idle seconds) | ✅ |
+| Boot ordering fix: `smp_init_bsp()` before `scheduler_init()` (GS_BASE crash) | ✅ |
+| Wait queue with timeout: `wait_queue_sleep_timeout()` + interruptible variant | ✅ |
+| SCHED_FIFO (run-to-completion) + SCHED_RR (round-robin) scheduling policies | ✅ |
 
 ---
 
