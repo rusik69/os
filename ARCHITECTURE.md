@@ -1,6 +1,6 @@
 # OS Architecture
 
-A minimal 64-bit x86 hobby kernel (~38,000 lines of C + ASM). Boots via Multiboot1, runs on QEMU, and provides a Unix-like shell over telnet with filesystem, networking, process management, and more.
+A 64-bit x86 hobby kernel (~47,000 lines of C + ASM). Boots via Multiboot1, runs on QEMU, and provides a Unix-like shell over telnet with filesystem, networking, process management, SMP, GUI, and more.
 
 > **Architecture diagram:** [docs/architecture-diagram.html](docs/architecture-diagram.html) — interactive dark-themed SVG (open in browser).
 
@@ -24,9 +24,15 @@ long_mode_entry (boot.asm, 64-bit)
     │  call kernel_main(multiboot_magic, multiboot_info_ptr)
     ▼
 kernel_main() (kernel.c)
-    │  strict linear init of every subsystem (29 steps)
-    │  timers → memory → processes → drivers → VFS → FS → PCI → net → shell
-    │  enable interrupts, become idle process (PID 0, hlt loop)
+    │  strict linear init of every subsystem
+    │  serial → VGA → GDT → PIC → IDT → fault → PMM → VMM →
+    │  cpu_security_init (SMEP/SMAP/NXE/UMIP) → heap → framebuffer →
+    │  process → scheduler → SMP/APIC → timer → drivers →
+    │  syscall → production_subsystems (socket,epoll,mq,timers) →
+    │  VFS → pipes → SHM → blockdev → ATA → AHCI → FAT32 → FS →
+    │  service_mgr → PCI → Intel GPU → USB/MSC → users →
+    │  virtio-net → virtio-blk → AC97 → e1000 → network →
+    │  dhcp → telnetd → httpd → processes → sti
     ▼
 Idle loop (PID 0)
     └─ hlt in a loop, wakes only on interrupts
@@ -36,24 +42,53 @@ Idle loop (PID 0)
 
 | # | Call | Purpose |
 |---|------|---------|
-| 1 | `serial_init()` | COM1 debug output |
+| 1 | `serial_init()` | COM1 debug output (38400 baud) |
 | 2 | `vga_init()` | 80×25 text mode |
-| 3 | `gdt_init()` | 7-entry GDT + TSS |
-| 4 | `pic_init()` | Remap IRQs to INT 32–47 |
+| 3 | `gdt_init()` | 7-entry GDT + TSS (also for SMP APs) |
+| 4 | `pic_init()` | Remap IRQs to INT 32–47 (fallback until APIC) |
 | 5 | `idt_init()` | 32 exception + 16 IRQ handlers |
-| 6 | `pmm_init()` | Bitmap PMM from Multiboot memory map |
-| 7 | `vmm_init()` | 4-level page table walker |
-| 8 | `heap_init()` | Kernel heap (12 MB limit) |
-| 9 | `process_init()` | Process table; idle = PID 0 |
-| 10 | `scheduler_init()` | Ready queue (round-robin) |
-| 11 | `timer_init()` | PIT at 100 Hz; preempt every 5 ticks |
-| 12–16 | Driver init | Keyboard, RTC, mouse, speaker, ACPI |
-| 17 | `syscall_init()` | MSR_LSTAR for SYSCALL/SYSRET |
-| 18 | `vfs_init()` | VFS mount table |
-| 19–20 | `pipe_init()`, `ata_init()` | Pipes + IDE disk |
-| 21 | `fs_init()` | SMFS superblock + inodes |
-| 22–28 | PCI, net, DHCP, telnetd, services | Network stack + service mgr |
-| 29 | `sti()` | Interrupts on → idle loop |
+| 6 | `fault_init()` | Register page fault handler with guard-page detection |
+| 7 | `pmm_init()` | Bitmap PMM from Multiboot memory map |
+| 8 | `vmm_init()` | 4-level page table walker |
+| 9 | `cpu_security_init()` | SMEP, SMAP, NXE, UMIP enable |
+| 10 | `heap_init()` | Kernel heap (12 MB limit) |
+| 11 | `vga_try_init_framebuffer()` | Multiboot framebuffer (1024×768, if available) |
+| 12 | `process_init()` | Process table; idle = PID 0 |
+| 13 | `scheduler_init()` | Ready queue (round-robin, 4 priority levels) |
+| 14 | `smp_init_bsp()` | Per-CPU data for BSP |
+| 15 | `apic_init_local()` | Local APIC (replaces PIC) |
+| 16 | `smp_boot_aps()` | SIPI bringup of application processors |
+| 17 | `timer_init()` | PIT at 100 Hz → APIC timer |
+| 18 | `keyboard_init()` | PS/2 keyboard on IRQ1 |
+| 19 | `rtc_init()` | CMOS RTC on IRQ8 |
+| 20 | `mouse_init()` | PS/2 mouse on IRQ12 |
+| 21 | `speaker_init()` | PC speaker via PIT channel 2 |
+| 22 | `acpi_init()` | RSDP → RSDT → FADT; PM1a port |
+| 23 | `syscall_init()` | MSR_LSTAR for SYSCALL/SYSRET |
+| 24 | `production_subsystems_init()` | Socket, epoll, POSIX timers, mq |
+| 25 | `vfs_init()` | VFS mount table |
+| 26 | `pipe_init()` | 16 kernel pipes |
+| 27 | `shm_init()` | Named shared memory segments |
+| 28 | `blockdev_init()` | Block device registry |
+| 29 | `ata_init()` | IDE PIO disk |
+| 30 | `ahci_init()` | AHCI SATA disk |
+| 31 | `fat32_mount()` / `vfs_mount()` | FAT32 on /mnt (if present) |
+| 32 | `fs_init()` | SMFS superblock + inodes |
+| 33 | `service_init()` | Service manager + FS directory tree |
+| 34 | `pci_init()` | PCI bus enumeration |
+| 35 | `intel_gpu_init()` | Intel integrated GPU detection |
+| 36 | `usb_init()` / `usb_msc_init()` | USB EHCI + mass storage |
+| 37 | `users_init()` | Multiuser database (root/guest) |
+| 38 | `virtio_net_init()` | virtio-net NIC |
+| 39 | `virtio_blk_init()` | virtio-blk storage |
+| 40 | `ac97_init()` | AC97 audio |
+| 41 | `e1000_init()` | Intel e1000 NIC (if present) |
+| 42 | `net_init()` | TCP/IP stack |
+| 43 | `net_dhcp_discover()` | DHCP |
+| 44 | `service_register/start` | telnetd, httpd |
+| 45 | `elf_exec()` autodetect | Userspace init binary |
+| 46 | `process_create()` | shell, netd, gui, httpd tasks |
+| 47 | `sti()` | Interrupts on → idle loop |
 
 ---
 
@@ -83,7 +118,9 @@ First 1 GB is identity-mapped via 2 MB huge pages. The same PDPT is referenced f
 
 - Boot code pre-creates identity-mapped 2 MB pages for the first 1 GB
 - VMM can add 4 KB mappings on demand (`vmm_map_page`, `vmm_unmap_page`)
-- Per-process page tables for ring 3 isolation
+- Per-process page tables for ring 3 isolation (with SMEP/SMAP enforcement)
+- **NX bit** enforced: user `.data`/`.bss`/`.rodata` segments are non-executable
+- **Guard pages** unmapped below kernel stacks and user stacks for overflow detection
 
 ### Kernel Heap
 
@@ -98,33 +135,34 @@ First 1 GB is identity-mapped via 2 MB huge pages. The same PDPT is referenced f
 
 ```
 shell ────────────────────────────────────────────────┐
-  │  commands (127 cmd_*.c files)                     │
-  ├─ editor, script, shell_vars                       │
-  ├─ pipe ────── ipc (mutex, semaphore, shm) ─────────┤
-  ├─ fat32 ───────────────────────────────────────────┤
-  ├─ fs (SMFS, procfs, devfs) ── vfs (mount table) ───┤
-  │       └─ ata / ahci / virtio_blk / usb_msc ──────┤
-  │              └─ blockdev (sector I/O abstraction)  │
-  ├─ net ────────── e1000 / virtio_net ───────────────┤
-  │    ├─ net_tcp (TCP state machine)                 │
-  │    ├─ net_udp (UDP, DHCP, DNS, HTTP client)       │
-  │    ├─ telnetd (port 23)                           │
-  │    └─ httpd (port 80, /tmp/www)                   │
-  ├─ process ──── scheduler ──── timer ───────────────┤
-  │    ├─ signal                                       │
-  │    ├─ users (multiuser auth)                      │
-  │    └─ syscall (SYSCALL/SYSRET, ring 3)            │
-  ├─ elf (ELF64 loader → ring 3) ─────────────────────┤
-  ├─ compiler (C compiler → native ELF64) ────────────┤
-  ├─ doom (raycast engine, framebuffer) ──────────────┤
-  ├─ gui (windows, widgets, taskbar) ─────────────────┤
-  └─ dos (x86-16 emulator) ───────────────────────────┘
+  │  commands (137 cmd_*.c files)                      │
+  ├─ editor, script, shell_vars                        │
+  ├─ pipe ────── ipc (mutex, semaphore, shm) ──────────┤
+  ├─ fat32 ────────────────────────────────────────────┤
+  ├─ fs (SMFS, procfs, devfs) ── vfs (mount table) ────┤
+  │       └─ ata / ahci / virtio_blk / usb_msc ───────┤
+  │              └─ blockdev (sector I/O abstraction)   │
+  ├─ net ────────── e1000 / virtio_net ────────────────┤
+  │    ├─ net_tcp (TCP state machine)                  │
+  │    ├─ net_udp (UDP, DHCP, DNS, HTTP client)        │
+  │    ├─ telnetd (port 23)                            │
+  │    └─ httpd (port 80, /tmp/www)                    │
+  ├─ process ──── scheduler ──── timer ────────────────┤
+  │    ├─ signal                                        │
+  │    ├─ users (multiuser auth)                       │
+  │    └─ syscall (SYSCALL/SYSRET, ring 3, 274 calls)  │
+  ├─ elf (ELF64 loader → ring 3) ──────────────────────┤
+  ├─ compiler (C compiler → native ELF64) ─────────────┤
+  ├─ doom (raycast engine, framebuffer) ───────────────┤
+  ├─ gui (windows, widgets, taskbar) ──────────────────┤
+  ├─ dos (x86-16 emulator) ────────────────────────────┤
+  └─ production (socket, epoll, POSIX timers, mq) ─────┘
            │
            ▼
-       kernel (GDT, IDT, fault, service)
+       kernel (GDT, IDT, fault, service, SMP, APIC)
            │
            ▼
-       memory (pmm → vmm → heap)
+       memory (pmm → vmm → heap; cpu_security_init)
            │
            ▼
        drivers (vga, pic, timer, keyboard, serial, pci, ...)
@@ -150,11 +188,26 @@ A custom flat filesystem designed for simplicity and minimal code. Uses a free-b
 ### Ring 3 Separation
 
 User processes run at Ring 3 with per-process page tables. The kernel uses:
+
+- **SMEP** — prevents Ring 0 from jumping to Ring 3 code pages (ret2usr mitigation)
+- **SMAP** — prevents Ring 0 from accidentally dereferencing user pointers (AC flag gating)
 - **SYSCALL/SYSRET** (MSR_LSTAR) for fast ring transitions
 - **TSS RSP0** per-process kernel stack for interrupt entry from ring 3
 - **fork()** support: full page table + process struct copy
 - **Per-process syscall capabilities** (bitmask limiting which syscalls a user process can call)
-- **ELF loader** loads static 64-bit ELF binaries into ring 3
+- **ELF loader** loads static 64-bit ELF binaries into ring 3 with NX page enforcement
+- **User stack guard pages** — unmapped page below each ring 3 stack for overflow detection
+- **Kernel stack guard pages** — unmapped page below each kernel stack
+
+### SMP Support
+
+The kernel supports SMP via:
+- **Local APIC** replaces the legacy PIC for interrupt delivery
+- **I/O APIC** for IRQ routing to all CPUs
+- **SIPI bringup** of application processors (APs)
+- **Per-CPU data** via `smp_get_cpu_id()` / per-CPU areas
+- **Work stealing** — idle CPUs steal tasks from busy CPU run queues
+- **CPU affinity** — `sched_setaffinity` for pinning processes to CPUs
 
 ### Polled Networking (No Interrupts)
 
@@ -166,6 +219,15 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 - Kernel code at high VMA can dereference physical addresses directly (e.g., VGA buffer at `0xB8000`)
 - Device MMIO regions are accessible without special remapping
 - The PMM bitmap can manage frames using physical addresses directly
+
+### Production Subsystems
+
+Socket, epoll, POSIX timers, and message queues are initialized as a batch after the basic kernel subsystems:
+
+- **Socket API** — `socket()`, `bind()`, `listen()`, `accept()`, `connect()`, `sendmsg()`/`recvmsg()`, setsockopt/getsockopt
+- **epoll** — `epoll_create1()`, `epoll_ctl()`, `epoll_wait()`/`epoll_pwait()`
+- **POSIX timers** — `timer_create()`, `timer_settime()`, `timer_gettime()`, `timer_getoverrun()`, `timer_delete()`
+- **Message queues** — `mq_open()`, `mq_send()`, `mq_receive()`, `mq_unlink()`
 
 ---
 
@@ -180,7 +242,7 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 | LD | `x86_64-elf-ld` | env `LD` |
 | OBJCOPY | `x86_64-elf-objcopy` | env `OBJCOPY` |
 
-`ccache` is auto-detected and wrapped around `$(CC)` for faster rebuilds.
+`ccache` is auto-detected and wrapped around `$(CC)` for faster rebuilds. Parallel builds with `-j$(nproc)` are the default.
 
 ### Flags
 
@@ -194,7 +256,7 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 
 | Target | Description |
 |--------|-------------|
-| `all` (default) | Build `build/kernel.bin` |
+| `all` (default) | Build `build/kernel.bin` (parallel, auto-dep tracking) |
 | `run` | Boot in QEMU (VGA + e1000, macOS vmnet-shared) |
 | `run-virtio` | Boot in QEMU with virtio-net NIC |
 | `test` | Build test kernel + run in-kernel unit tests |
@@ -207,6 +269,7 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 | `deps` | Install toolchain (macOS Homebrew) |
 | `doom-test` | Verify framebuffer renders non-black pixels |
 | `e2e-port-N` | E2E with explicit telnet port |
+| `test-serial` | Headless QEMU with serial on TCP `:4444` |
 
 ### Output
 
@@ -222,11 +285,11 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 
 - **30+ tests** in `src/test/test.c`
 - Built as `test-kernel` target (separate `build_test/` directory, `-DTEST_MODE` flag)
-- Runs as a dedicated kernel process: exercises PMM, heap, timer, process, scheduler, VFS, pipes, signals, ATA, SMFS, networking, FAT32, SHM, mutex, semaphore, VMM, etc.
+- Runs as a dedicated kernel process: exercises PMM, heap, timer, process, scheduler, VFS, pipes, signals, ATA, SMFS, networking, FAT32, SHM, mutex, semaphore, VMM, guard pages, ELF edge cases, etc.
 - Outputs `[PASS]`/`[FAIL]` lines to serial console
-- Test runner: `tests/run_tests.sh` launches QEMU headless, captures serial output, parses results
-- On completion calls `acpi_shutdown()` so QEMU exits cleanly
-- CI: GitHub Actions `test` job (needs `build`), timeout 15 min
+- Test runner: `tests/run_tests.sh` launches QEMU headless (`-nographic`, `isa-debug-exit`), captures serial output, parses results
+- Exits cleanly via `acpi_shutdown()` or `isa-debug-exit` (exit 33 = PASS, 16 = FAIL)
+- CI: GitHub Actions `test` job (needs `build`), timeout 15 min, `SKIP_DISK_TESTS=1` for TCG speed
 
 ### E2E Tests (Telnet-Driven)
 
@@ -234,20 +297,21 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 - Connects to the kernel's telnet daemon (port 23) forwarded through QEMU user-mode networking
 - Exercises every shell command: filesystem ops, networking, process control, pipes, permissions, etc.
 - Test runner: `tests/e2e.sh` boots QEMU, waits for "Services started" marker, then runs `e2e.py`
-- CI: GitHub Actions `e2e` job (needs `build`), timeout 15 min, `E2E_EXTERNAL_DNS=0` in CI
+- CI: GitHub Actions `e2e` job, timeout 15 min, `E2E_EXTERNAL_DNS=0` in CI
 
 ### CI Pipeline (`.github/workflows/ci.yml`)
 
 | Job | Description |
 |-----|-------------|
-| `build` | Baseline build (`-Wall -Wextra`) |
+| `build` | Baseline build (`-Wall -Wextra`, ccache, parallel) |
 | `build-strict` | Strict build with `-Werror` |
 | `static-analysis` | cppcheck (informational) |
 | `test` | In-kernel unit tests |
 | `e2e` | Full E2E test suite over telnet |
-| `virtio-net-smoke` | Quick smoke test: QEMU + virtio-net, check serial for "virtio-net: initialized" and "DHCP:" |
-| `usb-fat-smoke` | Quick smoke test: USB EHCI + FAT32 on push to main/master |
-| `libc-test` | Host-side libc unit tests |
+| `virtio-net-smoke` | Quick smoke: QEMU + virtio-net, check serial for markers |
+| `usb-fat-smoke` | Quick smoke: USB EHCI + FAT32 (main/master only) |
+| `libc-test` | Host-side libc unit tests (ubuntu-latest) |
+| `release` | GitHub Release on tag push (needs build, test, e2e) |
 
 ### Additional Tests
 
@@ -261,7 +325,7 @@ The boot page tables map physical 0–1 GB to both low virtual (PML4[0]) and hig
 
 ```
 os/
-├── Makefile                   Build system (295 lines)
+├── Makefile                   Build system (parallel, ccache, -j$(nproc))
 ├── linker.ld                  Linker script (VMA = LMA + 0xFFFF800000000000)
 │
 ├── src/
@@ -269,19 +333,22 @@ os/
 │   │   └── boot.asm           Multiboot1 header, 32→64 bit transition, paging
 │   │
 │   ├── kernel/                Core kernel
-│   │   ├── kernel.c           Main init sequence (kernel_main)
-│   │   ├── gdt.c / gdt_asm.asm    GDT + TSS
+│   │   ├── kernel.c           Main init sequence (kernel_main, 47 steps)
+│   │   ├── gdt.c / gdt_asm.asm    GDT + TSS (BSP + AP trampoline)
 │   │   ├── idt.c / idt_asm.asm    IDT, ISR/IRQ stubs
-│   │   ├── syscall.c / syscall_asm.asm  SYSCALL/SYSRET
+│   │   ├── syscall.c / syscall_asm.asm  SYSCALL/SYSRET (274 syscalls, 419 cases)
 │   │   ├── vfs.c              Virtual filesystem layer (mount table)
-│   │   ├── elf.c              ELF64 binary loader
-│   │   ├── fault.c            CPU exception handlers
-│   │   └── service.c          Service manager (start/stop services)
+│   │   ├── elf.c              ELF64 binary loader (NX enforcement)
+│   │   ├── fault.c            CPU exception handlers (guard page detection)
+│   │   ├── service.c          Service manager (start/stop services)
+│   │   ├── smp.c              SMP boot (AP bringup via SIPI)
+│   │   ├── apic.c             Local APIC + I/O APIC
+│   │   └── cpu.c              CPU feature detection (SMEP/SMAP/NXE/UMIP)
 │   │
 │   ├── drivers/               Hardware drivers
-│   │   ├── vga.c              80×25 text mode, framebuffer
-│   │   ├── pic.c              8259 PIC
-│   │   ├── timer.c            8254 PIT (100 Hz)
+│   │   ├── vga.c              80×25 text mode, framebuffer (1024×768)
+│   │   ├── pic.c              8259 PIC (legacy, for pre-APIC init)
+│   │   ├── timer.c            8254 PIT (100 Hz) → APIC timer
 │   │   ├── keyboard.c         PS/2 keyboard (scancode set 1)
 │   │   ├── serial.c           COM1 (38400 baud)
 │   │   ├── ata.c              IDE PIO (LBA28)
@@ -302,12 +369,12 @@ os/
 │   │
 │   ├── memory/                Memory management
 │   │   ├── pmm.c              Bitmap-based physical frame allocator
-│   │   ├── vmm.c              4-level page table manager
+│   │   ├── vmm.c              4-level page table manager (hugepage split)
 │   │   └── heap.c             First-fit kernel heap (12 MB max)
 │   │
 │   ├── process/               Process management
 │   │   ├── process.c          Process table, fork, caps
-│   │   ├── scheduler.c        Round-robin scheduler
+│   │   ├── scheduler.c        Round-robin scheduler (4 levels, work stealing)
 │   │   ├── switch.asm         Context switch (cli-protected)
 │   │   ├── signal.c           POSIX-like signal delivery
 │   │   └── users.c            User/group database, passwords
@@ -323,7 +390,8 @@ os/
 │   │   ├── net_tcp.c          TCP state machine (connect, listen, send)
 │   │   ├── net_udp.c          UDP, DHCP, DNS, HTTP client
 │   │   ├── telnetd.c          Telnet server (port 23)
-│   │   └── httpd.c            HTTP server (port 80, /tmp/www)
+│   │   ├── httpd.c            HTTP server (port 80, /tmp/www)
+│   │   └── socket.c           BSD socket layer (syscall backend)
 │   │
 │   ├── ipc/                   Inter-process communication
 │   │   ├── pipe.c             Blocking circular-buffer pipes (16 max)
@@ -331,13 +399,16 @@ os/
 │   │   ├── mutex.c            Kernel mutexes
 │   │   └── semaphore.c        Counting semaphores
 │   │
+│   ├── production/            High-level subsystem stubs
+│   │   └── production.c       Production subsystems init (socket, epoll, mq, timers)
+│   │
 │   ├── shell/                 Interactive shell
 │   │   ├── shell.c            Core: input, dispatch, history, background
 │   │   ├── shell_cmd_table.c  Command dispatch table
 │   │   ├── shell_vars.c       Variable expansion ($VAR)
 │   │   ├── editor.c           vi-like text editor
 │   │   ├── script.c           Script runner
-│   │   └── cmds/              127 cmd_*.c files (one per command)
+│   │   └── cmds/              137 cmd_*.c files (one per command)
 │   │
 │   ├── compiler/              C compiler (runs inside the OS)
 │   │   ├── cc_lex.c           Lexer / tokenizer
@@ -354,7 +425,7 @@ os/
 │   │
 │   ├── doom/                  Doom-like raycast engine
 │   │   ├── doom.h                 Types and constants
-│   │   └── doom_*.c (11 files)    Combat, doors, raycast, render, etc.
+│   │   └── doom_*.c (12 files)    Combat, doors, raycast, render, etc.
 │   │
 │   ├── dos/                   x86-16 DOS emulator
 │   │   ├── dos_emu.c              Emulator core
@@ -364,31 +435,41 @@ os/
 │   │
 │   ├── lib/                   Kernel utility library
 │   │   ├── string.c           memcpy, memset, strlen, strcmp, etc.
-│   │   ├── printf.c           kprintf (VGA + serial output hook)
+│   │   ├── printf.c           kprintf (VGA + serial output hook, -Wformat)
 │   │   ├── stdlib.c           atoi, itoa, rand, etc.
 │   │   └── libc.c             Libc shim for userspace ELF programs
 │   │
 │   ├── test/
 │   │   └── test.c             In-kernel test suite (~30+ tests)
 │   │
-│   └── include/               Header files (50 .h files)
+│   └── include/               Header files (72 .h files)
 │       ├── types.h            Base types + macros
 │       ├── libc.h             Userspace libc header
+│       ├── syscall.h          274 syscall numbers
 │       ├── shell.h, shell_cmds.h
+│       ├── socket.h           BSD socket types
+│       ├── epoll.h            epoll types
+│       ├── timer.h            POSIX timer types
 │       └── ...                One header per subsystem
 │
 ├── tests/                     Test infrastructure
 │   ├── e2e.sh                 E2E harness (launches QEMU, waits for boot)
 │   ├── e2e.py                 113 test groups via telnet (~2000 lines)
-│   ├── run_tests.sh           In-kernel test runner
+│   ├── run_tests.sh           In-kernel test runner (serial capture)
 │   ├── host_libc/             Host-side libc tests
 │   └── doom_fb.sh             Framebuffer validation
 │
+├── docs/
+│   └── architecture-diagram.html  Interactive dark-themed SVG
+│
 ├── .github/workflows/
-│   └── ci.yml                 GitHub Actions CI (8 jobs, consolidated)
+│   └── ci.yml                 GitHub Actions CI (9 jobs incl. release)
 │
 ├── README.md                  Project overview and quick start
 ├── ARCHITECTURE.md            This file
+├── TODO.md                    Process isolation roadmap
+├── IMPROVEMENTS.md            Feature tracking
+├── DEBUGGING.md               GDB/QEMU debug reference
 └── linker.ld                  Linker script
 ```
 

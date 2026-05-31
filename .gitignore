@@ -7,3 +7,4 @@ __pycache__/
 *.iso
 *.log
 tests/host_libc/test_libc
+.hermes/

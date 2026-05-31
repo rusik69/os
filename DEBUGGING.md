@@ -9,13 +9,18 @@ The project lives at `/home/ubuntu/os/` (repo root).
 
 | Target | Use |
 |--------|-----|
-| `make` | Build the kernel (parallel, auto-dep tracking) |
+| `make` | Build the kernel (parallel via `-j$(nproc)`, ccache, auto-dep tracking) |
 | `make debug` | Build + launch QEMU with GDB stub on port 1234 (paused at cold boot) |
 | `make run` | Normal QEMU boot with serial stdio and VGA |
 | `make run-virtio` | QEMU boot with virtio-net instead of e1000 |
 | `make test-serial` | Headless test-kernel boot with serial on TCP `:4444` |
-| `make test` | Build test kernel + run automated E2E test suite |
+| `make test` | Build test kernel + run automated in-kernel test suite |
+| `make e2e` | Build normal kernel + run E2E tests via telnet |
+| `make lint` | Run cppcheck static analysis |
+| `make doom-test` | Verify framebuffer renders non-black pixels |
 | `make clean` | Remove build artifacts |
+
+> The CI pipeline has 9 additional targets (build-strict, static-analysis, virtio-net-smoke, usb-fat-smoke, libc-test, release) — see `.github/workflows/ci.yml`.
 
 ### The `make debug` target (from Makefile)
 
@@ -109,6 +114,16 @@ break vmm_init
 break vmm_map_page
 break serial_putchar
 break kmalloc
+break cpu_security_init
+break smp_init_bsp
+break smp_boot_aps
+break apic_init_local
+break production_subsystems_init
+break sys_socket
+break sys_epoll_create1
+break sys_mq_open
+break net_poll
+break syscall_handler
 
 # File + line number
 break kernel.c:72        # kernel_main
@@ -345,7 +360,100 @@ info trace-events       # list available trace events
 
 ## 6. Common Kernel Debug Scenarios
 
-### 6.1 Triple Fault / Hang at Boot
+### 6.1 Guard Page Fault (Kernel Stack Overflow)
+
+**Symptom:** Unmapped page fault in kernel mode at an address just below a kernel stack region.
+
+**What it means:** A kernel thread's stack overflowed past its guard page. This usually indicates a massive stack allocation or deep recursion in kernel code.
+
+**Debugging:**
+1. Check CR2 — it should be within the guard page range for a process kernel stack
+2. Check which process was running (`process_get_current()->pid`)
+3. Examine the kernel stack pointer — it'll be below the guard page boundary:
+   ```gdb
+   print $rsp
+   print process_get_current()->kernel_stack
+   ```
+4. The guard page is at `kernel_stack - 0x1000` (4 KB below). If CR2 equals this, it's a confirmed stack overflow.
+
+**Typical causes:**
+- Large stack-allocated buffers in a kernel function
+- Deep recursion in VFS or net code
+- Interrupt nesting exhausting the remaining stack
+
+### 6.2 SMEP / SMAP Faults
+
+**Symptom:** Page fault with error code bit 0 (protection violation) when kernel code tries to execute a user page (SMEP) or access user data without clearing AC (SMAP).
+
+**SMEP detection:**
+- Page fault error code: present=1 (bit 0=1), user=0 (bit 2=0 because the faulting source is ring 0), write=0
+- RIP is in kernel code (`0xFFFF8000...`)
+- The faulting address (CR2) is a user-mode page
+
+**SMAP detection:**
+- `kprintf` may show spurious garbage or the fault address is in user range
+- Fault happens on kernel data access to user memory
+- Check the AC flag state: the kernel must execute `stac` before accessing user memory and `clac` after
+
+**Fix:** Add `stac`/`clac` around any kernel code that dereferences user pointers, or use the `copy_from_user()` / `copy_to_user()` wrappers.
+
+### 6.3 SMP / APIC Debugging
+
+**Symptom:** APs don't come online, or cross-CPU crashes.
+
+**SIPI bringup — what to check:**
+1. Is the Local APIC initialized (`apic_init_local()`)?
+2. Check the BSP's APIC ID:
+   ```gdb
+   print smp_get_cpu_id()
+   print smp_bsp_lapic_id
+   ```
+3. Break on the AP trampoline entry:
+   ```gdb
+   break ap_trampoline_start   # in smp.asm or boot.asm
+   ```
+4. Verify IPI delivery for TLB shootdowns/work stealing:
+   ```gdb
+   break smp_send_ipi
+   ```
+
+**APIC vs PIC mode:**
+- The kernel initializes the legacy PIC first, then switches to APIC mode
+- If APIC init fails, inter-CPU interrupts (IPIs) don't work
+- All SMP operations depend on Local APIC being functional
+
+### 6.4 Production Subsystem Debugging
+
+**Socket/epoll/POSIX timer/message queue faults:**
+
+1. Check that `production_subsystems_init()` completed during boot (look for "[OK] Production subsystems initialized" in serial output)
+
+2. **Socket layer:**
+   ```gdb
+   break sys_socket
+   break sys_bind
+   break sys_listen
+   ```
+
+3. **epoll:**
+   ```gdb
+   break sys_epoll_create1
+   break epoll_add_fd
+   ```
+
+4. **POSIX timers:**
+   ```gdb
+   break sys_timer_create
+   break timer_signal_handler
+   ```
+
+5. **Message queues:**
+   ```gdb
+   break sys_mq_open
+   break mq_send_wake
+   ```
+
+### 6.5 Triple Fault / Hang at Boot
 
 **Symptom:** QEMU window shows "Guest has not initialized the display (yet)" or
 QEMU silently resets. The kernel never reaches `kernel_main` or hangs shortly after.
@@ -396,7 +504,7 @@ QEMU silently resets. The kernel never reaches `kernel_main` or hangs shortly af
    `vga_init()` then `kprintf`. If serial works but VGA doesn't, try
    `-vga none` and watch serial output.
 
-### 6.2 Page Fault
+### 6.6 Page Fault
 
 **Symptom:** The kernel prints `*** KERNEL PAGE FAULT ***` and halts, or a user
 process receives SIGSEGV.
@@ -455,7 +563,7 @@ RIP=0xFFFF800000109ABC  RSP=0xFFFF8000001FF000  CS=0x08
    print process_table[1]
    ```
 
-### 6.3 Process Stuck / No Scheduling
+### 6.7 Process Stuck / No Scheduling
 
 **Symptom:** The kernel boots but no process runs, or one process hogs the CPU.
 
@@ -513,7 +621,7 @@ RIP=0xFFFF800000109ABC  RSP=0xFFFF8000001FF000  CS=0x08
    break scheduler_wake_sleepers
    ```
 
-### 6.4 Memory Corruption
+### 6.8 Memory Corruption
 
 **Symptom:** Random crashes, corrupted strings, page faults on valid pointers,
 or data mysteriously changing.
