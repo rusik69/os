@@ -20,6 +20,7 @@ int pipe_create(void) {
             pipe_table[i].readers   = 1;
             pipe_table[i].writers   = 1;
             pipe_table[i].in_use    = 1;
+            pipe_table[i].flags    = 0;
             wait_queue_init(&pipe_table[i].read_wq);
             wait_queue_init(&pipe_table[i].write_wq);
             return i;
@@ -46,6 +47,8 @@ int pipe_write(int pipe_id, const void *buf, int len) {
     while (written < len) {
         while (p->count == PIPE_BUF_SIZE) {
             if (p->readers == 0) return written ? written : -1;
+            /* Non-blocking mode: return immediately */
+            if (p->flags & PIPE_FLAG_NONBLOCK) return written ? written : -1;
             struct process *cur = process_get_current();
 
             /* Prevent self-deadlock: same process writing and reading */
@@ -84,6 +87,8 @@ int pipe_read(int pipe_id, void *buf, int len) {
 
     while (p->count == 0) {
         if (p->writers == 0) return 0;  /* EOF */
+        /* Non-blocking mode: return immediately */
+        if (p->flags & PIPE_FLAG_NONBLOCK) return -1;
         struct process *cur = process_get_current();
 
         /* Block until data is available */
@@ -128,4 +133,13 @@ int pipe_available(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return 0;
     return pipe_table[pipe_id].count;
+}
+
+void pipe_set_nonblock(int pipe_id, int nonblock) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return;
+    if (nonblock)
+        pipe_table[pipe_id].flags |= PIPE_FLAG_NONBLOCK;
+    else
+        pipe_table[pipe_id].flags &= ~PIPE_FLAG_NONBLOCK;
 }

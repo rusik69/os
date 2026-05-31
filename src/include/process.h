@@ -103,6 +103,11 @@ struct process {
     uint8_t  cap_profile;     /* enum process_cap_profile */
     uint8_t  priority;        /* scheduler priority: 0=high .. 3=low */
     uint8_t  cpu_affinity;    /* bitmask of allowed CPUs (0 = all) */
+    uint32_t uid;             /* user ID */
+    uint32_t gid;             /* group ID */
+    uint32_t euid;            /* effective user ID */
+    uint32_t egid;            /* effective group ID */
+    uint16_t umask;           /* file creation mask */
     uint64_t syscall_caps[PROCESS_SYSCALL_CAP_WORDS];
     char     cwd[64];         /* current working directory */
     /* Waitpid: non-spinning wait for child */

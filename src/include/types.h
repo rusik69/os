@@ -62,4 +62,31 @@ struct utsname {
     char machine[65];
 };
 
+/* iovec for readv/writev */
+struct iovec {
+    void  *iov_base;
+    uint64_t iov_len;
+};
+
+/* access() mode constants */
+#define F_OK 0
+#define R_OK 4
+#define W_OK 2
+#define X_OK 1
+
+/* sigprocmask how constants */
+#define SIG_BLOCK   0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+
+/* open() flag constants */
+#define O_RDONLY    0
+#define O_WRONLY    1
+#define O_RDWR      2
+#define O_CREAT   0100
+#define O_TRUNC   01000
+#define O_APPEND  02000
+#define O_NONBLOCK 04000
+#define O_CLOEXEC 02000000
+
 #endif

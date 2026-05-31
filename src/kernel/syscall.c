@@ -34,6 +34,8 @@
 #include "cc.h"
 #include "heap.h"
 #include "smp.h"
+#include "pipe.h"
+#include "users.h"
 #include "gui_shell.h"
 #include "shm.h"
 #include "ac97.h"
@@ -1142,9 +1144,16 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         case F_GETFL:
             /* Return simulated flags (always RDWR for now) */
             return 2; /* O_RDWR */
-        case F_SETFL:
-            /* Nothing to do for now */
+        case F_SETFL: {
+            /* Handle O_NONBLOCK for pipe FDs */
+            uint8_t nonblock = (arg & O_NONBLOCK) ? 1 : 0;
+            /* Try to find pipe ID from fd path pattern */
+            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) == 0) {
+                int pid = (int)proc->fd_table[fd].offset;
+                pipe_set_nonblock(pid, nonblock);
+            }
             return 0;
+        }
         default:
             return (uint64_t)-1;
     }
@@ -1390,6 +1399,374 @@ static uint64_t sys_uname(uint64_t buf_addr) {
     memcpy(buf->release, "1.0.0", 6);
     memcpy(buf->version, __DATE__, 12);
     memcpy(buf->machine, "x86_64", 7);
+    return 0;
+}
+
+/* ── Global hostname ─────────────────────────────────────────── */
+
+#define HOSTNAME_MAX 64
+static char system_hostname[HOSTNAME_MAX] = "os";
+
+/* ── pipe() ──────────────────────────────────────────────────── */
+
+static uint64_t sys_pipe(uint64_t fds_addr) {
+    if (!fds_addr) return (uint64_t)-1;
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    int id = pipe_create();
+    if (id < 0) return (uint64_t)-1;
+
+    /* Allocate two FD slots */
+    int read_fd = -1, write_fd = -1;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!proc->fd_table[i].used) {
+            if (read_fd < 0) read_fd = i;
+            else if (write_fd < 0) { write_fd = i; break; }
+        }
+    }
+    if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
+
+    /* Store pipe index as part of fd path */
+    proc->fd_table[read_fd].used = 1;
+    proc->fd_table[read_fd].offset = (uint32_t)id; /* store pipe id */
+    snprintf(proc->fd_table[read_fd].path, 64, "pipe_read_%d", id);
+    proc->fd_table[read_fd].flags = 0;
+
+    proc->fd_table[write_fd].used = 1;
+    proc->fd_table[write_fd].offset = (uint32_t)id;
+    snprintf(proc->fd_table[write_fd].path, 64, "pipe_write_%d", id);
+    proc->fd_table[write_fd].flags = 0;
+
+    /* Write fds back to userspace */
+    uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
+    memcpy((void*)fds_addr, fds, sizeof(fds));
+    return 0;
+}
+
+/* ── getppid() ───────────────────────────────────────────────── */
+
+static uint64_t sys_getppid(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return 0;
+    return (uint64_t)proc->parent_pid;
+}
+
+/* ── alarm() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_alarm(uint64_t seconds) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    /* Convert seconds to ticks (100 Hz) */
+    uint64_t ticks = seconds * 100;
+    uint64_t old_value = 0;
+
+    /* Get old value */
+    if (proc->itimers[ITIMER_REAL].it_value > 0)
+        old_value = proc->itimers[ITIMER_REAL].it_value / 100;
+
+    /* Set new alarm */
+    proc->itimers[ITIMER_REAL].it_value = ticks;
+    proc->itimers[ITIMER_REAL].it_interval = 0; /* one-shot */
+
+    return old_value;
+}
+
+/* ── pause() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_pause(void) {
+    /* Block the current process until a signal arrives */
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    proc->state = PROCESS_BLOCKED;
+    scheduler_remove(proc);
+    scheduler_yield();
+
+    /* Woken by signal — return -1 (always interrupted) */
+    return (uint64_t)-1;
+}
+
+/* ── access() ────────────────────────────────────────────────── */
+
+static uint64_t sys_access(uint64_t path_addr, uint64_t mode) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+
+    /* Check if file exists */
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+
+    /* For now, we don't check permissions (always OK if file exists) */
+    (void)mode;
+    return 0;
+}
+
+/* ── getuid / geteuid / getgid / getegid ────────────────────── */
+
+static uint64_t sys_getuid(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    return (uint64_t)proc->uid;
+}
+
+static uint64_t sys_geteuid(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    return (uint64_t)proc->euid;
+}
+
+static uint64_t sys_getgid(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    return (uint64_t)proc->gid;
+}
+
+static uint64_t sys_getegid(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    return (uint64_t)proc->egid;
+}
+
+/* ── rmdir() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_rmdir(uint64_t path_addr) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+
+    /* Use VFS unlink (same as delete for directories) */
+    if (vfs_unlink(path) < 0) return (uint64_t)-1;
+    return 0;
+}
+
+/* ── rename() ────────────────────────────────────────────────── */
+
+static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
+    const char *old_path = (const char *)old_addr;
+    const char *new_path = (const char *)new_addr;
+    if (!old_path || !new_path) return (uint64_t)-1;
+
+    /* Simple rename: create new, copy data, delete old.
+     * For files only; directories not supported yet. */
+    struct vfs_stat st;
+    if (vfs_stat(old_path, &st) < 0) return (uint64_t)-1;
+
+    /* Read old file */
+    uint8_t *buf = (uint8_t *)kmalloc(st.size + 1);
+    if (!buf) return (uint64_t)-1;
+    uint32_t sz = 0;
+    if (vfs_read(old_path, buf, st.size, &sz) < 0) {
+        kfree(buf);
+        return (uint64_t)-1;
+    }
+
+    /* Create new file */
+    if (vfs_create(new_path, st.type) < 0) {
+        kfree(buf);
+        return (uint64_t)-1;
+    }
+
+    /* Write data */
+    if (st.size > 0 && vfs_write(new_path, buf, st.size) < 0) {
+        kfree(buf);
+        vfs_unlink(new_path);
+        return (uint64_t)-1;
+    }
+    kfree(buf);
+
+    /* Delete old */
+    vfs_unlink(old_path);
+    return 0;
+}
+
+/* ── chmod() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+    return (uint64_t)fs_chmod(path, (uint16_t)mode);
+}
+
+/* ── fsync() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_fsync(uint64_t fd) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
+        return (uint64_t)-1;
+
+    /* For now, assume data is written through. In a real OS this would
+     * flush disk caches. We just validate the fd and return success. */
+    (void)fd;
+    return 0;
+}
+
+/* ── sigprocmask / sigpending ────────────────────────────────── */
+
+static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    /* Return old mask */
+    if (oldset_addr) {
+        uint32_t old = proc->sig_mask;
+        memcpy((void*)oldset_addr, &old, sizeof(old));
+    }
+
+    /* Apply new mask */
+    if (set_addr) {
+        uint32_t new_mask = 0;
+        memcpy(&new_mask, (void*)set_addr, sizeof(new_mask));
+
+        switch (how) {
+            case SIG_BLOCK:
+                proc->sig_mask |= new_mask;
+                break;
+            case SIG_UNBLOCK:
+                proc->sig_mask &= ~new_mask;
+                break;
+            case SIG_SETMASK:
+                proc->sig_mask = new_mask;
+                break;
+            default:
+                return (uint64_t)-1;
+        }
+    }
+
+    return 0;
+}
+
+static uint64_t sys_sigpending(uint64_t set_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (!set_addr) return (uint64_t)-1;
+
+    memcpy((void*)set_addr, &proc->pending_signals, sizeof(uint32_t));
+    return 0;
+}
+
+/* ── readv / writev (vectored I/O) ──────────────────────────── */
+
+static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
+    if (!iov_addr || iovcnt == 0) return 0;
+    if (iovcnt > 16) iovcnt = 16; /* sanity */
+
+    struct iovec iov[16];
+    memcpy(iov, (void*)iov_addr, sizeof(struct iovec) * iovcnt);
+
+    uint64_t total = 0;
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        if (iov[i].iov_base && iov[i].iov_len > 0) {
+            int64_t n = (int64_t)sys_read(fd, (uint64_t)iov[i].iov_base,
+                                          iov[i].iov_len);
+            if (n < 0) return total ? total : (uint64_t)-1;
+            total += (uint64_t)n;
+            if ((uint64_t)n < iov[i].iov_len) break; /* short read */
+        }
+    }
+    return total;
+}
+
+static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
+    if (!iov_addr || iovcnt == 0) return 0;
+    if (iovcnt > 16) iovcnt = 16;
+
+    struct iovec iov[16];
+    memcpy(iov, (void*)iov_addr, sizeof(struct iovec) * iovcnt);
+
+    uint64_t total = 0;
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        if (iov[i].iov_base && iov[i].iov_len > 0) {
+            int64_t n = (int64_t)sys_write(fd, (uint64_t)iov[i].iov_base,
+                                           iov[i].iov_len);
+            if (n < 0) return total ? total : (uint64_t)-1;
+            total += (uint64_t)n;
+        }
+    }
+    return total;
+}
+
+/* ── getrandom / PRNG ────────────────────────────────────────── */
+
+/* xorshift64 PRNG state */
+static uint64_t prng_state = 0xDEADBEEFCAFEBABEULL;
+
+static uint64_t xorshift64(void) {
+    uint64_t x = prng_state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    prng_state = x;
+    return x;
+}
+
+static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
+                               uint64_t flags) {
+    if (!buf_addr || count == 0) return 0;
+    if (count > 4096) count = 4096; /* limit per call */
+
+    uint8_t *buf = (uint8_t *)buf_addr;
+    for (uint64_t i = 0; i < count; i++) {
+        buf[i] = (uint8_t)(xorshift64() >> 56);
+    }
+
+    (void)flags;
+    return count;
+}
+
+/* ── reboot() ────────────────────────────────────────────────── */
+
+static uint64_t sys_reboot(void) {
+    /* Call ACPI shutdown */
+    acpi_shutdown();
+    /* Should not reach here */
+    for (;;) __asm__ volatile("hlt");
+    return (uint64_t)-1;
+}
+
+/* ── sethostname / gethostname ───────────────────────────────── */
+
+static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
+    if (!name_addr) return (uint64_t)-1;
+    if (len > HOSTNAME_MAX - 1) len = HOSTNAME_MAX - 1;
+    memcpy(system_hostname, (void*)name_addr, (size_t)len);
+    system_hostname[len] = '\0';
+    return 0;
+}
+
+static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
+    if (!name_addr || len == 0) return (uint64_t)-1;
+    size_t slen = strlen(system_hostname);
+    if (slen > (size_t)len - 1) slen = (size_t)len - 1;
+    memcpy((void*)name_addr, system_hostname, slen);
+    ((char*)name_addr)[slen] = '\0';
+    return 0;
+}
+
+/* ── umask() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_umask(uint64_t mask) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    uint16_t old = proc->umask;
+    proc->umask = (uint16_t)(mask & 0777);
+    return (uint64_t)old;
+}
+
+/* ── mknod() ─────────────────────────────────────────────────── */
+
+static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
+    const char *path = (const char *)path_addr;
+    if (!path) return (uint64_t)-1;
+
+    /* Simple: just create an empty file (FIFOs/devices not supported yet) */
+    /* For named FIFOs we could create a pipe-backed file */
+    if (vfs_create(path, FS_TYPE_FILE) < 0)
+        return (uint64_t)-1;
+
+    (void)mode;
+    (void)dev;
     return 0;
 }
 
@@ -2230,6 +2607,29 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_NANOSLEEP: return sys_nanosleep(a1, a2);
         case SYS_SYSCONF: return sys_sysconf(a1);
         case SYS_UNAME:  return sys_uname(a1);
+        case SYS_PIPE:        return sys_pipe(a1);
+        case SYS_GETPPID:     return sys_getppid();
+        case SYS_ALARM:       return sys_alarm(a1);
+        case SYS_PAUSE:       return sys_pause();
+        case SYS_ACCESS:      return sys_access(a1, a2);
+        case SYS_GETUID:      return sys_getuid();
+        case SYS_GETEUID:     return sys_geteuid();
+        case SYS_GETGID:      return sys_getgid();
+        case SYS_GETEGID:     return sys_getegid();
+        case SYS_RMDIR:       return sys_rmdir(a1);
+        case SYS_RENAME:      return sys_rename(a1, a2);
+        case SYS_CHMOD:       return sys_chmod(a1, a2);
+        case SYS_FSYNC:       return sys_fsync(a1);
+        case SYS_SIGPROCMASK: return sys_sigprocmask(a1, a2, a3);
+        case SYS_SIGPENDING:  return sys_sigpending(a1);
+        case SYS_READV:       return sys_readv(a1, a2, a3);
+        case SYS_WRITEV:      return sys_writev(a1, a2, a3);
+        case SYS_GETRANDOM:   return sys_getrandom(a1, a2, a3);
+        case SYS_REBOOT:      return sys_reboot();
+        case SYS_SETHOSTNAME: return sys_sethostname(a1, a2);
+        case SYS_GETHOSTNAME: return sys_gethostname(a1, a2);
+        case SYS_UMASK:       return sys_umask(a1);
+        case SYS_MKNOD:       return sys_mknod(a1, a2, a3);
         default:         return (uint64_t)-1;
     }
 }

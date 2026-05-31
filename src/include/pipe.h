@@ -15,9 +15,12 @@ struct pipe {
     int      readers;   /* number of open read ends */
     int      writers;   /* number of open write ends */
     int      in_use;
+    uint8_t  flags;     /* PIPE_FLAG_NONBLOCK etc. */
     struct wait_queue read_wq;   /* waiters waiting for data */
     struct wait_queue write_wq;  /* waiters waiting for space */
 };
+
+#define PIPE_FLAG_NONBLOCK 1
 
 /* Allocate a new pipe; returns its index or -1 on error */
 int pipe_create(void);
@@ -36,5 +39,6 @@ void pipe_close_write(int pipe_id);
 int pipe_available(int pipe_id);
 
 void pipe_init(void);
+void pipe_set_nonblock(int pipe_id, int nonblock);
 
 #endif

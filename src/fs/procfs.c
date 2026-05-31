@@ -306,6 +306,36 @@ static int procfs_gen_loadavg(char *buf, int max) {
     return p;
 }
 
+/* /proc/<pid>/fd — list open file descriptors */
+static int procfs_gen_pid_fd(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!p->fd_table[i].used) continue;
+        proc_u64_to_str((uint64_t)i, buf, &pos, max);
+        proc_str(" -> ", buf, &pos, max);
+        proc_str(p->fd_table[i].path, buf, &pos, max);
+        proc_str("\n", buf, &pos, max);
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* /proc/<pid>/cmdline — command line (just the name for now) */
+static int procfs_gen_pid_cmdline(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    if (p->name) {
+        proc_str(p->name, buf, &pos, max);
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* ─── VFS ops ────────────────────────────────────────────────────────────────── */
 
 static int procfs_read(void *priv, const char *path, void *buf_v,
@@ -340,6 +370,12 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         if (got && strcmp(p, "/status") == 0) {
             len = procfs_gen_pid_status(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strcmp(p, "/fd") == 0) {
+            len = procfs_gen_pid_fd(pid, buf, (int)max_size);
+            if (len < 0) return -1;
+        } else if (got && strcmp(p, "/cmdline") == 0) {
+            len = procfs_gen_pid_cmdline(pid, buf, (int)max_size);
+            if (len < 0) return -1;
         } else {
             return -1;
         }
@@ -372,6 +408,18 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     uint32_t pid = 0; int got = 0;
     while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
     if (got && strcmp(p, "/status") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 256; return 0;
+        }
+    }
+    if (got && strcmp(p, "/fd") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 512; return 0;
+        }
+    }
+    if (got && strcmp(p, "/cmdline") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
             st->type = 1; st->size = 256; return 0;

@@ -218,6 +218,11 @@ void process_init(void) {
     process_table[0].is_suspended = 0;
     process_table[0].priority = 1;
     process_table[0].cpu_affinity = 0;  /* allow any CPU */
+    process_table[0].uid = 0;     /* root */
+    process_table[0].gid = 0;
+    process_table[0].euid = 0;
+    process_table[0].egid = 0;
+    process_table[0].umask = 0022;  /* default: rwxr-xr-x */
     memset(process_table[0].itimers, 0, sizeof(process_table[0].itimers));
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
@@ -260,6 +265,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->is_suspended = 0;
     proc->priority    = 1; /* normal priority */
     proc->cpu_affinity = 0; /* allow any CPU */
+    proc->uid = 0;
+    proc->gid = 0;
+    proc->euid = 0;
+    proc->egid = 0;
+    proc->umask = 0022;
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0; /* set by scheduler on first run */
     proc->last_run_tick  = timer_get_ticks();
@@ -329,6 +339,8 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->is_suspended = 0;
     proc->priority = 1;
     proc->cpu_affinity = 0;
+    proc->uid = 0; proc->gid = 0; proc->euid = 0; proc->egid = 0;
+    proc->umask = 0022;
     proc->wait_for_pid   = 0;
     proc->ticks_remaining = 0;
     proc->last_run_tick  = timer_get_ticks();

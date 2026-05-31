@@ -226,6 +226,31 @@
 #define SYS_SYSCONF          247  /* sysconf(name) → value or -1 */
 #define SYS_UNAME            248  /* uname(struct utsname *) → 0 or -1 */
 
+/* Filesystem / directory operations */
+#define SYS_PIPE             249  /* pipe(int fds[2]) → 0 or -1 */
+#define SYS_GETPPID          250  /* getppid() → parent PID */
+#define SYS_ALARM            251  /* alarm(seconds) → previous alarm */
+#define SYS_PAUSE            252  /* pause() → -1 (always interrupted) */
+#define SYS_ACCESS           253  /* access(path, mode) → 0 or -1 */
+#define SYS_GETUID           254  /* getuid() → uid */
+#define SYS_GETEUID          255  /* geteuid() → euid */
+#define SYS_GETGID           256  /* getgid() → gid */
+#define SYS_GETEGID          257  /* getegid() → egid */
+#define SYS_RMDIR            258  /* rmdir(path) → 0 or -1 */
+#define SYS_RENAME           259  /* rename(old, new) → 0 or -1 */
+#define SYS_CHMOD            260  /* chmod(path, mode) → 0 or -1 */
+#define SYS_FSYNC            261  /* fsync(fd) → 0 or -1 */
+#define SYS_SIGPROCMASK      262  /* sigprocmask(how, set, oldset) → 0 or -1 */
+#define SYS_SIGPENDING       263  /* sigpending(set) → 0 or -1 */
+#define SYS_READV            264  /* readv(fd, iov, iovcnt) → bytes or -1 */
+#define SYS_WRITEV           265  /* writev(fd, iov, iovcnt) → bytes or -1 */
+#define SYS_GETRANDOM        266  /* getrandom(buf, count, flags) → bytes or -1 */
+#define SYS_REBOOT           267  /* reboot() → never returns */
+#define SYS_SETHOSTNAME      268  /* sethostname(name, len) → 0 or -1 */
+#define SYS_GETHOSTNAME      269  /* gethostname(name, len) → 0 or -1 */
+#define SYS_UMASK            270  /* umask(mask) → old mask */
+#define SYS_MKNOD            271  /* mknod(path, mode, dev) → 0 or -1 */
+
 /* sysconf names (Linux compatible) */
 #define _SC_CLK_TCK         2
 #define _SC_PAGESIZE        30
