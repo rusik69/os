@@ -14,12 +14,12 @@
 static volatile uint64_t ticks = 0;
 
 static void timer_handler(struct interrupt_frame *frame) {
-    (void)frame;
     ticks++;
     irq_ack(0);
     scheduler_wake_sleepers();
-    scheduler_tick();
-    process_timer_tick();
+    scheduler_tick(frame->cs == 0x1b); /* was_user if CS==0x1b (ring 3) */
+    int was_user = (frame->cs == 0x1b);
+    process_timer_tick(was_user);
     timerfd_tick();
     posix_timer_tick();
     if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */

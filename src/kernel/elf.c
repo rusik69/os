@@ -586,6 +586,13 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         cur->name = kname;
     }
 
+    /* Close all file descriptors with FD_CLOEXEC flag */
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (cur->fd_table[i].used && (cur->fd_table[i].flags & FD_CLOEXEC)) {
+            memset(&cur->fd_table[i], 0, sizeof(struct process_fd));
+        }
+    }
+
     /* Destroy old user page tables */
     if (cur->pml4) vmm_destroy_user_pml4(cur->pml4);
 

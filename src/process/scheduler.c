@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "signal.h"
+#include "syscall.h"
 #include "io.h"
 #include "gdt.h"
 #include "vmm.h"
@@ -297,15 +298,20 @@ uint64_t scheduler_get_idle_ticks(void) {
 }
 
 /* ── Timer tick handler ─────────────────────────────────────────────── */
-void scheduler_tick(void) {
+void scheduler_tick(int was_user) {
     struct cpu_info *ci = this_cpu();
     if (!ci->scheduler_enabled) return;
 
     struct process *cur = ci->current_process;
     if (!cur || cur->state != PROCESS_RUNNING) return;
 
-    /* Account system time (we're in IRQ context) */
-    cur->stime_ticks++;
+    /* Account CPU time: user time if we interrupted user code,
+     * system time if we interrupted kernel code. */
+    if (was_user && cur->is_user) {
+        cur->utime_ticks++;
+    } else {
+        cur->stime_ticks++;
+    }
 
     /* Check pending signals */
     if (cur->pending_signals) {

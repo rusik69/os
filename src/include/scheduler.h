@@ -13,7 +13,7 @@ void scheduler_remove(struct process *proc);
 int scheduler_set_priority(struct process *proc, uint8_t priority);
 void scheduler_yield(void);
 void scheduler_wake_sleepers(void);
-void scheduler_tick(void);  /* called each timer tick; handles time-slice expiry */
+void scheduler_tick(int was_user);  /* called each timer tick; handles time-slice expiry */
 void scheduler_age(void);   /* called periodically; boosts starved processes */
 uint64_t scheduler_get_idle_ticks(void);
 

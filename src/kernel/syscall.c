@@ -1414,7 +1414,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
 #endif
 
 /* Called from timer tick to decrement per-process timers */
-void process_timer_tick(void) {
+void process_timer_tick(int was_user) {
     struct process *table = process_get_table();
     struct process *current = process_get_current();
 
@@ -1432,8 +1432,8 @@ void process_timer_tick(void) {
         }
     }
 
-    /* ITIMER_VIRTUAL: user CPU — tick only for the currently running process */
-    if (current && current->state == PROCESS_RUNNING) {
+    /* ITIMER_VIRTUAL: counts only user-mode CPU time */
+    if (current && current->state == PROCESS_RUNNING && was_user && current->is_user) {
         if (current->itimers[ITIMER_VIRTUAL].it_value > 0) {
             current->itimers[ITIMER_VIRTUAL].it_value--;
             if (current->itimers[ITIMER_VIRTUAL].it_value == 0) {
@@ -1441,8 +1441,10 @@ void process_timer_tick(void) {
                 current->itimers[ITIMER_VIRTUAL].it_value = current->itimers[ITIMER_VIRTUAL].it_interval;
             }
         }
+    }
 
-        /* ITIMER_PROF: user + system CPU — tick only for the currently running process */
+    /* ITIMER_PROF: counts user + system CPU time (any tick while running) */
+    if (current && current->state == PROCESS_RUNNING) {
         if (current->itimers[ITIMER_PROF].it_value > 0) {
             current->itimers[ITIMER_PROF].it_value--;
             if (current->itimers[ITIMER_PROF].it_value == 0) {

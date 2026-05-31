@@ -189,6 +189,6 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
                                        const char *name, int cpu_id);
 
 /* Per-process interval timer tick (called from timer interrupt) */
-void process_timer_tick(void);
+void process_timer_tick(int was_user);
 
 #endif
