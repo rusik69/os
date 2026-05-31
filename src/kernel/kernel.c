@@ -74,7 +74,18 @@ static void __attribute__((unused)) net_task(void) {
     telnetd_task();
 }
 
+/* Stack-smashing protector (SSP) canary */
+uint64_t __stack_chk_guard = 0xDEADBEEFCAFEBABEULL;
+
+void __attribute__((noreturn)) __stack_chk_fail(void) {
+    kprintf("\n*** KERNEL STACK SMASHING DETECTED ***\n");
+    cli();
+    for (;;) hlt();
+}
+
 void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
+    /* Initialize stack canary from PRNG as early as possible */
+    __stack_chk_guard = (uint64_t)magic ^ multiboot_info_phys ^ 0xA5A5A5A5A5A5A5A5ULL;
     /* Initialize serial first for debug output */
     serial_init();
 

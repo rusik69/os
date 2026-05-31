@@ -27,7 +27,7 @@ endif
 NPROCS := $(shell nproc)
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-         -fno-stack-protector -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
+         -fstack-protector-strong -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP
 ASFLAGS = -f elf64 -g
