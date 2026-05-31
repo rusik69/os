@@ -147,13 +147,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     process_init();
     kprintf("[OK] Process subsystem initialized\n");
 
+    /* Per-CPU data for SMP — must be before scheduler_init (needs GS_BASE) */
+    smp_init_bsp();
+    kprintf("[OK] SMP per-CPU data initialized\n");
+
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
-
-    /* Per-CPU data for SMP */
-    smp_init_bsp();
-    kprintf("[OK] SMP per-CPU data initialized\n");
 
     /* Local APIC (replaces PIC for interrupt delivery) */
     apic_init_local();
