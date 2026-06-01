@@ -91,6 +91,33 @@
 #include "initcall.h"
 #include "watchdog.h"
 #include "fbcon.h"
+#include "perf_events.h"
+#include "jump_label.h"
+#include "pstore.h"
+#include "stack_guard.h"
+#include "rseq.h"
+#include "kasan_light.h"
+#include "firmware.h"
+#include "memfd.h"
+#include "mseal.h"
+#include "userfaultfd.h"
+#include "madvise_ext.h"
+#include "mem_policy.h"
+#include "page_idle.h"
+#include "page_allocator_ext.h"
+#include "sched_attr.h"
+#include "cpuset.h"
+#include "pidfd.h"
+#include "landlock.h"
+#include "seccomp_bpf.h"
+#include "process_rlimit.h"
+#include "devtmpfs.h"
+#include "overlay.h"
+#include "fanotify.h"
+#include "fs_mount_prop.h"
+#include "net_igmp.h"
+#include "net_lldp.h"
+#include "aio_enhanced.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -178,6 +205,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     fault_init();
     kprintf("[OK] Page fault handler registered\n");
 
+    /* Kernel stack guard pages */
+    stack_guard_init();
+
     /* Physical memory manager */
     pmm_init(multiboot_info_phys);
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
@@ -222,8 +252,17 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Lock dependency validator */
     lockdep_init();
 
+    /* Jump labels / static keys for efficient feature toggling */
+    jump_label_init();
+
+    /* KASAN light — kernel address sanitizer (heap only) */
+    kasan_init();
+
     /* Panic/oops handler with register dump */
     panic_init();
+
+    /* PStore — persistent storage for panic/oops messages */
+    pstore_init();
 
     /* OOM killer */
     oom_init();
@@ -236,6 +275,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Seccomp syscall sandboxing */
     seccomp_init();
+
+    /* Landlock sandbox (path-based access control) */
+    landlock_init();
+
+    /* Seccomp BPF filter support */
+    seccomp_bpf_init();
 
     /* Audit subsystem */
     audit_init();
@@ -265,9 +310,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     ksm_init();
     thp_init();
 
+    /* Extended memory management features */
+    madvise_ext_init();
+    mem_policy_init();
+    page_idle_init();
+    page_allocator_ext_init();
+
     /* TSC deadline timer (after APIC is up) */
     /* Software RNG — seed from timer (timer not yet available, so we'll re-seed later) */
     rng_init();
+
+    /* Performance monitoring (PMU counters if available) */
+    perf_init();
 
     /* Ramdisk block device (needed before initrd loading) */
     ramdisk_init();
@@ -291,6 +345,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     process_init();
     kprintf("[OK] Process subsystem initialized\n");
 
+    /* Process resource limits */
+    rlimit_init();
+
+    /* PID file descriptors */
+    pidfd_init();
+
     /* Per-CPU data for SMP — must be before scheduler_init (needs GS_BASE) */
     smp_init_bsp();
     kprintf("[OK] SMP per-CPU data initialized\n");
@@ -298,6 +358,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
+
+    /* Extended scheduler attributes (sched_setattr/getattr) */
+    sched_attr_init();
+
+    /* CPU set (affinity) management */
+    cpuset_init();
+
+    /* Restartable sequences (per-CPU user-space operations) */
+    rseq_init();
 
     /* Local APIC (replaces PIC for interrupt delivery) */
     apic_init_local();
@@ -324,6 +393,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Workqueue (deferred work execution via kthread) */
     workqueue_init();
 
+    /* Fanotify — file system event monitoring */
+    fanotify_init();
+
     /* Filesystem notification (inotify-like) */
     fsnotify_init();
 
@@ -333,6 +405,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Initcall system — run all registered initcalls in order */
     do_initcalls();
+
+    /* Firmware loading API */
+    firmware_init();
+
+    /* Devtmpfs — dynamic device node creation */
+    devtmpfs_init();
+
+    /* Overlay/union filesystem */
+    overlay_init();
 
     /* Keyboard */
     keyboard_init();
@@ -370,12 +451,27 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     production_subsystems_init();
     kprintf("[OK] Production subsystems initialized\n");
 
+    /* Enhanced async I/O (aio_read/write/poll) */
+    aio_enhanced_init();
+
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
 
+    /* Mount propagation attributes */
+    mount_prop_init();
+
     /* vsyscall page for fast user-space syscalls */
     vsyscall_init();
+
+    /* Anonymous file descriptors (memfd_create) */
+    memfd_init();
+
+    /* Memory sealing (mseal) */
+    mseal_init();
+
+    /* User page fault handling (userfaultfd) */
+    uffd_init();
 
     /* Pipes */
     pipe_init();
@@ -515,6 +611,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         service_start("telnetd");
         service_start("httpd");
         kprintf("[OK] Services started\n");
+
+        /* Multicast group management (IGMP) */
+        igmp_init();
+
+        /* Link Layer Discovery Protocol (LLDP) */
+        lldp_init();
     } else {
         kprintf("[--] No network device found\n");
     }

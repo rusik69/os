@@ -197,7 +197,34 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/cma.c \
          src/memory/zram.c \
          src/memory/ksm.c \
-         src/memory/thp.c
+         src/memory/thp.c \
+         src/kernel/perf_events.c \
+         src/kernel/jump_label.c \
+         src/kernel/pstore.c \
+         src/kernel/stack_guard.c \
+         src/kernel/rseq.c \
+         src/kernel/kasan_light.c \
+         src/kernel/firmware.c \
+         src/kernel/memfd.c \
+         src/kernel/mseal.c \
+         src/kernel/userfaultfd.c \
+         src/kernel/madvise_ext.c \
+         src/kernel/mem_policy.c \
+         src/kernel/page_idle.c \
+         src/kernel/page_allocator_ext.c \
+         src/kernel/sched_attr.c \
+         src/kernel/cpuset.c \
+         src/kernel/pidfd.c \
+         src/kernel/landlock.c \
+         src/kernel/seccomp_bpf.c \
+         src/kernel/process_rlimit.c \
+         src/kernel/devtmpfs.c \
+         src/kernel/overlay.c \
+         src/kernel/fanotify.c \
+         src/kernel/fs_mount_prop.c \
+         src/kernel/net_igmp.c \
+         src/kernel/net_lldp.c \
+         src/kernel/aio_enhanced.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
