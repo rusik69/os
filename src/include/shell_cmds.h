@@ -135,8 +135,8 @@ void cmd_sed(const char *args);
 void cmd_tar(const char *args);
 void cmd_which(const char *args);
 void cmd_ln(const char *args);
-void cmd_true(const char *args);
-void cmd_false(const char *args);
+void cmd_true(void);
+void cmd_false(void);
 void cmd_more(const char *args);
 void cmd_file(const char *args);
 void cmd_nslookup(const char *args);
@@ -173,7 +173,7 @@ void cmd_dosbox(const char *args);
 
 /* Phase 7 new commands */
 void cmd_shuf(const char *args);
-void cmd_logname(const char *args);
+void cmd_logname(void);
 void cmd_who(const char *args);
 void cmd_banner(const char *args);
 int cmd_tsort(int argc, char **argv);
@@ -186,7 +186,7 @@ void cmd_bt(void);
 /* Phase 8 — new shell commands */
 void cmd_cmp(const char *args);
 void cmd_dirname(const char *args);
-void cmd_groups(const char *args);
+void cmd_groups(void);
 void cmd_link(const char *args);
 void cmd_mknod(const char *args);
 void cmd_nohup(const char *args);
@@ -195,10 +195,10 @@ void cmd_realpath(const char *args);
 void cmd_rmdir(const char *args);
 void cmd_shred(const char *args);
 void cmd_truncate(const char *args);
-void cmd_tty(const char *args);
+void cmd_tty(void);
 void cmd_unlink(const char *args);
 void cmd_chgrp(const char *args);
-void cmd_hostid(const char *args);
+void cmd_hostid(void);
 void cmd_arch(const char *args);
 void cmd_factor(const char *args);
 int cmd_fmt(int argc, char **argv);
@@ -214,9 +214,9 @@ void cmd_dd(const char *args);
 void cmd_cksum(const char *args);
 void cmd_mkfifo(const char *args);
 void cmd_logger(const char *args);
-void cmd_mesg(const char *args);
-void cmd_nproc(const char *args);
-void cmd_pinky(const char *args);
+void cmd_mesg(void);
+void cmd_nproc(void);
+void cmd_pinky(void);
 void cmd_tset(const char *args);
 void cmd_reset(const char *args);
 
@@ -272,7 +272,7 @@ void cmd_shar(const char *args);
 void cmd_timeout(const char *args);
 void cmd_stdbuf(const char *args);
 void cmd_b2sum(const char *args);
-void cmd_base32(const char *args);
+int cmd_base32(int argc, char **argv);
 void cmd_basenc(const char *args);
 void cmd_chcon(const char *args);
 void cmd_runcon(const char *args);
@@ -303,7 +303,7 @@ void cmd_col(const char *args);
 /* Phase 12 — system utility commands */
 void cmd_moc(const char *args);
 void cmd_pmap(const char *args);
-void cmd_pwdx(const char *args);
+void cmd_pwdx(void);
 void cmd_flock(const char *args);
 void cmd_lslocks(const char *args);
 void cmd_nsenter(const char *args);
@@ -311,4 +311,15 @@ void cmd_unshare(const char *args);
 void cmd_setsid(const char *args);
 void cmd_stdbuf_pipe(const char *args);
 void cmd_time_verbose(const char *args);
+
+/* Phase 13 — new commands */
+int cmd_ar(int argc, char **argv);
+int cmd_chvt(int argc, char **argv);
+int cmd_cpio(int argc, char **argv);
+int cmd_dc(int argc, char **argv);
+int cmd_devmem(int argc, char **argv);
+int cmd_dnsdomainname(int argc, char **argv);
+int cmd_dos2unix(int argc, char **argv);
+int cmd_eject(int argc, char **argv);
+int cmd_fgconsole(int argc, char **argv);
 #endif

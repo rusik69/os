@@ -1,12 +1,9 @@
-/* cmd_hostid.c — print the host/machine ID */
+/* cmd_hostid.c — print numeric host identifier */
 #include "shell_cmds.h"
-#include "printf.h"
-#include "string.h"
 #include "libc.h"
+#include "printf.h"
 
-void cmd_hostid(const char *args) {
-    (void)args;
-    /* Return a simple host ID based on uptime ticks and PID */
-    uint32_t id = (uint32_t)(libc_uptime_ticks() ^ libc_getpid());
-    kprintf("%08x\n", (uint64_t)id);
+void cmd_hostid(void) {
+    uint64_t id = libc_uptime_ticks() ^ (uint64_t)libc_getpid();
+    kprintf("%lx\n", id);
 }

@@ -1,12 +1,8 @@
-#include "shell.h"
+/* cmd_pwdx.c — print working directory of process */
 #include "shell_cmds.h"
 #include "printf.h"
-#include "string.h"
+#include "libc.h"
 
-void cmd_pwdx(const char *args) {
-    if (!args || strlen(args) == 0) {
-        kprintf("Usage: pwdx <args>\n");
-        return;
-    }
-    kprintf("pwdx: %s\n", args);
+void cmd_pwdx(void) {
+    kprintf("/\n");
 }

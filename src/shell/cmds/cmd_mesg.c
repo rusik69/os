@@ -1,12 +1,9 @@
-#include "shell.h"
+/* cmd_mesg.c — control write access to terminal */
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
+#include "libc.h"
 
-void cmd_mesg(const char *args) {
-    if (!args || strlen(args) == 0) {
-        kprintf("Usage: mesg <args>\n");
-        return;
-    }
-    kprintf("mesg: %s\n", args);
+void cmd_mesg(void) {
+    kprintf("mesg: access control is not supported\n");
 }

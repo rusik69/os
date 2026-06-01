@@ -42,6 +42,16 @@ static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
 static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }
 static void sh_sync(const char *a)       { (void)a; cmd_sync(); }
 static void sh_bt(const char *a)         { (void)a; cmd_bt(); }
+static void sh_true(const char *a)      { (void)a; cmd_true(); }
+static void sh_false(const char *a)     { (void)a; cmd_false(); }
+static void sh_logname(const char *a)   { (void)a; cmd_logname(); }
+static void sh_groups(const char *a)    { (void)a; cmd_groups(); }
+static void sh_hostid(const char *a)    { (void)a; cmd_hostid(); }
+static void sh_tty(const char *a)       { (void)a; cmd_tty(); }
+static void sh_mesg(const char *a)      { (void)a; cmd_mesg(); }
+static void sh_nproc(const char *a)     { (void)a; cmd_nproc(); }
+static void sh_pinky(const char *a)     { (void)a; cmd_pinky(); }
+static void sh_pwdx(const char *a)      { (void)a; cmd_pwdx(); }
 
 #include "cmd_table.inc"
 

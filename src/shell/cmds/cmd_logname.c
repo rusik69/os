@@ -1,15 +1,14 @@
-/* cmd_logname.c — print login name of current user */
+/* cmd_logname.c — print user's login name */
 #include "shell_cmds.h"
-#include "printf.h"
 #include "libc.h"
+#include "printf.h"
+#include "types.h"
 
-void cmd_logname(const char *args) {
-    (void)args;
-    struct user_session *s = session_get();
-    if (!s || !s->logged_in || !s->username[0]) {
-        shell_set_exit_status(1);
-        return;
+void cmd_logname(void) {
+    struct libc_user_session *s = libc_session_get();
+    if (!s || !s->logged_in) {
+        kprintf("root\n");
+    } else {
+        kprintf("%s\n", s->username);
     }
-    kprintf("%s\n", s->username);
-    shell_set_exit_status(0);
 }

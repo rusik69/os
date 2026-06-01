@@ -189,6 +189,14 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/search.c \
          src/lib/errno_ext.c \
          src/lib/assert.c \
+         src/lib/base64.c \
+         src/lib/aes.c \
+         src/lib/sha256.c \
+         src/lib/sha512.c \
+         src/lib/md5.c \
+         src/lib/hmac.c \
+         src/lib/crc64.c \
+         src/lib/adler32.c \
          src/kernel/rwsem.c \
          src/kernel/x2apic.c \
          src/kernel/tsc_deadline.c \
@@ -239,7 +247,20 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/sort_ext.c \
          src/kernel/timer_source.c \
          src/kernel/klist.c \
-         src/kernel/cpu_bitmask.c
+         src/kernel/cpu_bitmask.c \
+         src/kernel/cpu_topology.c \
+         src/kernel/llist.c \
+         src/kernel/percpu_counter.c \
+         src/kernel/ratelimit_ext.c \
+         src/kernel/refcount_ext.c \
+         src/kernel/dynamic_debug.c \
+         src/kernel/irq_work.c \
+         src/kernel/taskstats.c \
+         src/kernel/irq_regs.c \
+         src/kernel/timeconst.c \
+         src/kernel/div64.c \
+         src/kernel/gpiolib.c \
+         src/kernel/io_map.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
