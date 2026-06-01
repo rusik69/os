@@ -41,4 +41,21 @@ void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s);
 
 extern void context_switch(struct cpu_context **old, struct cpu_context *new_ctx);
 
+/* ── Autogroup support ──────────────────────────────────────── */
+#define SCHED_AUTOGROUP_MAX 16
+struct sched_autogroup {
+    int id;
+    uint64_t vruntime;       /* group vruntime */
+    int member_count;
+};
+
+/* Get or create autogroup for the given session ID */
+int sched_autogroup_get(int session_id);
+
+/* Assign process to an autogroup */
+void sched_autogroup_assign(struct process *proc, int group_id);
+
+/* Find highest vruntime among group members */
+uint64_t sched_autogroup_max_vruntime(int group_id);
+
 #endif

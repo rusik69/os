@@ -22,6 +22,9 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
+    /* Track resource usage */
+    p->signals_received++;
+
     /* Permission check */
     struct process *caller = process_get_current();
     if (caller && caller->pid != p->pid) {

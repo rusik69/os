@@ -244,4 +244,28 @@ void cmd_lscpu(const char *args);
 void cmd_lshw(const char *args);
 void cmd_blkid(const char *args);
 
+/* Phase 11 — new shell commands */
+void cmd_404(const char *args);
+void cmd_zcmp(const char *args);
+void cmd_zdiff(const char *args);
+void cmd_zegrep(const char *args);
+void cmd_zfgrep(const char *args);
+void cmd_zforce(const char *args);
+void cmd_zgrep(const char *args);
+void cmd_zip(const char *args);
+void cmd_zipcloak(const char *args);
+void cmd_zipnote(const char *args);
+void cmd_zipsplit(const char *args);
+void cmd_less(const char *args);
+void cmd_ed(const char *args);
+void cmd_patch(const char *args);
+void cmd_pr(const char *args);
+void cmd_look(const char *args);
+void cmd_locale(const char *args);
+void cmd_localedef(const char *args);
+void cmd_iconv(const char *args);
+void cmd_script(const char *args);
+void cmd_mcookie(const char *args);
+void cmd_shar(const char *args);
+
 #endif

@@ -10,6 +10,18 @@
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
 
+/* ── Quota table ────────────────────────────────────────── */
+#define FS_QUOTA_MAX_USERS 16
+static struct {
+    uint16_t uid;
+    struct fs_quota quota;
+    int in_use;
+} fs_quota_table[FS_QUOTA_MAX_USERS];
+
+/* ── Block reference counts for COW ─────────────────────── */
+#define FS_MAX_BLOCKS_TOTAL (FS_MAX_FILES * FS_MAX_BLOCKS)
+static uint8_t fs_block_refcount[FS_MAX_BLOCKS_TOTAL]; /* simple refcount per block index */
+
 /* How many sectors the inode table takes */
 #define INODE_SECTORS ((FS_MAX_FILES * sizeof(struct fs_inode) + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE)
 #define FS_DATA_START   (1 + INODE_SECTORS)
@@ -855,4 +867,109 @@ int fs_truncate(const char *path, uint32_t len) {
     fs_free_inode_blocks_from(idx, new_blocks);
     inodes[idx].size = len;
     return save_inodes();
+}
+
+/* ── Quota implementation ──────────────────────────────────── */
+
+int fs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit) {
+    int slot = -1;
+    for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
+        if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
+            slot = i; break;
+        }
+        if (!fs_quota_table[i].in_use && slot < 0) slot = i;
+    }
+    if (slot < 0) return -1;
+
+    /* Recalculate current usage */
+    uint32_t blocks_used = 0, inodes_used = 0;
+    for (int i = 0; i < FS_MAX_FILES; i++) {
+        if (inodes[i].type != FS_TYPE_FREE) {
+            inodes_used++;
+            for (uint32_t b = 0; b < FS_MAX_BLOCKS; b++) {
+                if (inodes[i].blocks[b]) blocks_used++;
+            }
+        }
+    }
+
+    fs_quota_table[slot].uid = uid;
+    fs_quota_table[slot].quota.block_limit = block_limit;
+    fs_quota_table[slot].quota.inode_limit = inode_limit;
+    fs_quota_table[slot].quota.block_usage = blocks_used;
+    fs_quota_table[slot].quota.inode_usage = inodes_used;
+    fs_quota_table[slot].in_use = 1;
+    return 0;
+}
+
+int fs_get_quota(uint16_t uid, struct fs_quota *quota) {
+    if (!quota) return -1;
+    for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
+        if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
+            *quota = fs_quota_table[i].quota;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int fs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed) {
+    for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
+        if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
+            struct fs_quota *q = &fs_quota_table[i].quota;
+            if (q->block_limit > 0 && q->block_usage + blocks_needed > q->block_limit)
+                return -1;
+            return 0;
+        }
+    }
+    return 0; /* no quota set for this uid */
+}
+
+int fs_check_quota_inodes(uint16_t uid) {
+    for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
+        if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
+            struct fs_quota *q = &fs_quota_table[i].quota;
+            if (q->inode_limit > 0 && q->inode_usage + 1 > q->inode_limit)
+                return -1;
+            return 0;
+        }
+    }
+    return 0;
+}
+
+/* ── Copy-on-Write for data blocks ────────────────────────── */
+
+uint32_t fs_cow_block(uint32_t block) {
+    if (block == 0) return 0;
+    /* Calculate block index (0-based from data start) */
+    int bmap_idx = (int)(block - FS_DATA_START);
+    if (bmap_idx < 0 || bmap_idx >= FS_MAX_BLOCKS_TOTAL) return 0;
+
+    /* Check refcount: if only 1 reference, no COW needed */
+    if (fs_block_refcount[bmap_idx] <= 1) return block;
+
+    /* Allocate a new block */
+    uint32_t new_block = alloc_block();
+    if (new_block == 0) return 0;
+
+    /* Copy data from old block to new block */
+    uint8_t buf[ATA_SECTOR_SIZE];
+    if (ata_read_sectors(block, 1, buf) < 0) {
+        bitmap_free_sector(new_block);
+        return 0;
+    }
+    if (ata_write_sectors(new_block, 1, buf) < 0) {
+        bitmap_free_sector(new_block);
+        return 0;
+    }
+
+    /* Decrement old refcount */
+    if (fs_block_refcount[bmap_idx] > 0)
+        fs_block_refcount[bmap_idx]--;
+
+    /* Set new refcount to 1 */
+    int new_bmap_idx = (int)(new_block - FS_DATA_START);
+    if (new_bmap_idx >= 0 && new_bmap_idx < FS_MAX_BLOCKS_TOTAL)
+        fs_block_refcount[new_bmap_idx] = 1;
+
+    return new_block;
 }

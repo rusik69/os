@@ -1,14 +1,9 @@
 #include "pci.h"
 #include "io.h"
 #include "printf.h"
+#include "string.h"
 
-/* ── PCIe ECAM (Memory-Mapped Configuration Space) ──────────────────────────
- * On real hardware (ThinkPad X220 / Sandy Bridge), the ACPI MCFG table
- * provides the base physical address of the PCIe ECAM window.
- * Each device's config space is at:
- *   ecam_base + (bus << 20) | (slot << 15) | (func << 12)
- * This gives access to all 4 KB of PCIe extended config space (vs 256 B via port I/O).
- */
+/* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
 
 void pcie_ecam_set_base(uint64_t base) {
@@ -38,6 +33,178 @@ void pcie_write(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset, uint32
                   | (offset & 0xFFC);
     *(volatile uint32_t *)addr = val;
 }
+
+/* ── PCI Express capability detection ─────────────────────────────── */
+
+int pci_find_pcie_cap(uint8_t bus, uint8_t slot, uint8_t func, uint8_t *cap_offset) {
+    /* PCI Express capability ID = 0x10 */
+    /* Read status register at offset 0x06 to check Capabilities List bit */
+    uint16_t status;
+    if (ecam_base) {
+        status = (uint16_t)pcie_read(bus, slot, func, 0x06);
+    } else {
+        status = (uint16_t)pci_read(bus, slot, func, 0x06);
+    }
+
+    if (!(status & (1 << 4))) {
+        /* Capabilities list not present */
+        return -1;
+    }
+
+    /* Read capabilities pointer at offset 0x34 */
+    uint8_t cap_ptr;
+    if (ecam_base) {
+        cap_ptr = (uint8_t)(pcie_read(bus, slot, func, 0x34) & 0xFF);
+    } else {
+        cap_ptr = (uint8_t)(pci_read(bus, slot, func, 0x34) & 0xFF);
+    }
+
+    while (cap_ptr != 0) {
+        uint32_t cap_reg;
+        if (ecam_base) {
+            cap_reg = pcie_read(bus, slot, func, cap_ptr);
+        } else {
+            cap_reg = pci_read(bus, slot, func, cap_ptr);
+        }
+
+        uint8_t cap_id = cap_reg & 0xFF;
+
+        if (cap_id == 0x10) {
+            /* Found PCI Express capability */
+            if (cap_offset) *cap_offset = cap_ptr;
+            return 0;
+        }
+
+        /* Next capability pointer */
+        cap_ptr = (cap_reg >> 8) & 0xFF;
+    }
+
+    return -1;
+}
+
+int pcie_is_present(void) {
+    /* Scan for at least one PCIe device */
+    for (int bus = 0; bus < 256; bus++) {
+        for (int slot = 0; slot < 32; slot++) {
+            uint32_t reg0;
+            if (ecam_base) {
+                reg0 = pcie_read(bus, slot, 0, 0);
+            } else {
+                reg0 = pci_read(bus, slot, 0, 0);
+            }
+            uint16_t vid = reg0 & 0xFFFF;
+            if (vid == 0xFFFF) continue;
+
+            uint8_t cap_off;
+            if (pci_find_pcie_cap(bus, slot, 0, &cap_off) == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+uint8_t pcie_device_type(uint8_t bus, uint8_t slot, uint8_t func) {
+    uint8_t cap_off;
+    if (pci_find_pcie_cap(bus, slot, func, &cap_off) < 0)
+        return PCIE_DEV_TYPE_UNKNOWN;
+
+    uint16_t cap_reg;
+    if (ecam_base) {
+        cap_reg = (uint16_t)pcie_read(bus, slot, func, cap_off + 2);
+    } else {
+        cap_reg = (uint16_t)pci_read(bus, slot, func, cap_off + 2);
+    }
+
+    uint8_t dev_type = (cap_reg >> 4) & 0x0F;
+    switch (dev_type) {
+    case 0: return PCIE_DEV_TYPE_ENDPOINT;
+    case 1: return PCIE_DEV_TYPE_ROOT_PORT;
+    case 2: return PCIE_DEV_TYPE_UPSTREAM;
+    case 3: return PCIE_DEV_TYPE_DOWNSTREAM;
+    case 4: return PCIE_DEV_TYPE_SWITCH;
+    default: return PCIE_DEV_TYPE_UNKNOWN;
+    }
+}
+
+/* ── MSI-X capability parsing ─────────────────────────────────────── */
+
+int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
+                      struct msix_info *info) {
+    if (!info) return -1;
+
+    /* MSI-X capability ID = 0x11 */
+    /* Check capabilities list bit in status register */
+    uint16_t status;
+    if (ecam_base) {
+        status = (uint16_t)pcie_read(bus, slot, func, 0x06);
+    } else {
+        status = (uint16_t)pci_read(bus, slot, func, 0x06);
+    }
+
+    if (!(status & (1 << 4))) return -1;
+
+    uint8_t cap_ptr;
+    if (ecam_base) {
+        cap_ptr = (uint8_t)(pcie_read(bus, slot, func, 0x34) & 0xFF);
+    } else {
+        cap_ptr = (uint8_t)(pci_read(bus, slot, func, 0x34) & 0xFF);
+    }
+
+    while (cap_ptr != 0) {
+        uint32_t cap_reg;
+        if (ecam_base) {
+            cap_reg = pcie_read(bus, slot, func, cap_ptr);
+        } else {
+            cap_reg = pci_read(bus, slot, func, cap_ptr);
+        }
+
+        uint8_t cap_id = cap_reg & 0xFF;
+
+        if (cap_id == 0x11) {
+            /* Found MSI-X capability */
+            info->cap_offset = cap_ptr;
+
+            /* Read Message Control at cap_ptr + 2 */
+            uint16_t msg_ctrl;
+            if (ecam_base) {
+                msg_ctrl = (uint16_t)pcie_read(bus, slot, func, cap_ptr + 2);
+            } else {
+                msg_ctrl = (uint16_t)pci_read(bus, slot, func, cap_ptr + 2);
+            }
+
+            info->table_size = (msg_ctrl & 0x07FF) + 1;  /* bits 0-10: table size */
+
+            /* Read MSI-X Table BAR/offset at cap_ptr + 4 */
+            uint32_t tbl_reg;
+            if (ecam_base) {
+                tbl_reg = pcie_read(bus, slot, func, cap_ptr + 4);
+            } else {
+                tbl_reg = pci_read(bus, slot, func, cap_ptr + 4);
+            }
+            info->table_bir = tbl_reg & PCI_MSIX_TBL_BIR;
+            info->table_offset = tbl_reg & PCI_MSIX_TBL_OFFSET;
+
+            /* Read PBA BAR/offset at cap_ptr + 8 */
+            uint32_t pba_reg;
+            if (ecam_base) {
+                pba_reg = pcie_read(bus, slot, func, cap_ptr + 8);
+            } else {
+                pba_reg = pci_read(bus, slot, func, cap_ptr + 8);
+            }
+            info->pba_bir = pba_reg & PCI_MSIX_TBL_BIR;
+            info->pba_offset = pba_reg & PCI_MSIX_TBL_OFFSET;
+
+            return 0;
+        }
+
+        cap_ptr = (cap_reg >> 8) & 0xFF;
+    }
+
+    return -1;
+}
+
+/* ── PCI class name ───────────────────────────────────────────────── */
 
 static const char *pci_class_name(uint8_t cls, uint8_t sub) {
     switch (cls) {
@@ -166,11 +333,26 @@ void pci_list(void) {
             uint32_t reg2 = pci_read(bus, slot, 0, 0x08);
             uint8_t cls = (reg2 >> 24) & 0xFF;
             uint8_t sub = (reg2 >> 16) & 0xFF;
-            kprintf(" %02x   %02x  %04x:%04x %02x.%02x %s\n",
+
+            /* Check for PCIe capability */
+            uint8_t cap_off;
+            const char *extra = "";
+            if (pci_find_pcie_cap(bus, slot, 0, &cap_off) == 0) {
+                uint8_t dtype = pcie_device_type(bus, slot, 0);
+                switch (dtype) {
+                case PCIE_DEV_TYPE_ENDPOINT:   extra = " [PCIe Endpoint]"; break;
+                case PCIE_DEV_TYPE_ROOT_PORT:  extra = " [PCIe Root Port]"; break;
+                case PCIE_DEV_TYPE_UPSTREAM:   extra = " [PCIe Upstream]"; break;
+                case PCIE_DEV_TYPE_DOWNSTREAM: extra = " [PCIe Downstream]"; break;
+                case PCIE_DEV_TYPE_SWITCH:     extra = " [PCIe Switch]"; break;
+                }
+            }
+
+            kprintf(" %02x   %02x  %04x:%04x %02x.%02x %s%s\n",
                     (uint64_t)bus, (uint64_t)slot,
                     (uint64_t)vid, (uint64_t)did,
                     (uint64_t)cls, (uint64_t)sub,
-                    pci_class_name(cls, sub));
+                    pci_class_name(cls, sub), extra);
         }
     }
 }

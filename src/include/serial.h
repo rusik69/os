@@ -3,11 +3,84 @@
 
 #include "types.h"
 
+/* Standard COM port base addresses */
+#define SERIAL_COM1 0x3F8
+#define SERIAL_COM2 0x2F8
+#define SERIAL_COM3 0x3E8
+#define SERIAL_COM4 0x2E8
+
+#define SERIAL_PORTS_MAX 4
+
+/* UART registers (offset from port base) */
+#define UART_RBR  0   /* Receive Buffer Register (DLAB=0, read) */
+#define UART_THR  0   /* Transmit Holding Register (DLAB=0, write) */
+#define UART_IER  1   /* Interrupt Enable Register */
+#define UART_IIR  2   /* Interrupt Identification Register */
+#define UART_FCR  2   /* FIFO Control Register */
+#define UART_LCR  3   /* Line Control Register */
+#define UART_MCR  4   /* Modem Control Register */
+#define UART_LSR  5   /* Line Status Register */
+#define UART_MSR  6   /* Modem Status Register */
+#define UART_DLL  0   /* Divisor Latch Low (DLAB=1) */
+#define UART_DLM  1   /* Divisor Latch High (DLAB=1) */
+
+/* UART flags */
+#define UART_IER_RX     (1 << 0)  /* Enable Received Data Available Interrupt */
+#define UART_IER_TX     (1 << 1)  /* Enable Transmitter Holding Register Empty Interrupt */
+#define UART_IER_LINE   (1 << 2)  /* Enable Receiver Line Status Interrupt */
+#define UART_IER_MS     (1 << 3)  /* Enable Modem Status Interrupt */
+#define UART_LSR_DR     (1 << 0)  /* Data Ready */
+#define UART_LSR_THRE   (1 << 5)  /* Transmitter Holding Register Empty */
+#define UART_FCR_ENABLE (1 << 0)  /* FIFO Enable */
+#define UART_FCR_RXCLR  (1 << 1)  /* Clear Receive FIFO */
+#define UART_FCR_TXCLR  (1 << 2)  /* Clear Transmit FIFO */
+#define UART_FCR_TRIG1  (0 << 6)  /* RX FIFO trigger level: 1 byte */
+#define UART_FCR_TRIG4  (1 << 6)  /* RX FIFO trigger level: 4 bytes */
+#define UART_FCR_TRIG8  (2 << 6)  /* RX FIFO trigger level: 8 bytes */
+#define UART_FCR_TRIG14 (3 << 6)  /* RX FIFO trigger level: 14 bytes */
+#define UART_LCR_8BIT   (3 << 0)  /* 8 data bits */
+#define UART_LCR_DLAB   (1 << 7)  /* Divisor Latch Access Bit */
+
+/* Initialise COM1 (original behaviour). */
 void serial_init(void);
+
+/* Initialise a specific serial port (port_idx 0..3 for COM1..COM4).
+   Must be called before using that port. */
+int  serial_port_init(int port_idx);
+
+/* Write a single character to a specific serial port. */
+void serial_port_write(int port_idx, char c);
+
+/* Write a string to a specific serial port. */
+void serial_port_write_str(int port_idx, const char *str);
+
+/* Legacy: write 'c' to COM1. */
 void serial_putchar(char c);
+
+/* Legacy: write 'str' to COM1. */
 void serial_write(const char *str);
+
+/* Poll for data on COM1. */
 int  serial_readable(void);
+
+/* Read one char from COM1 (polling). */
 char serial_getchar(void);
+
+/* Read a line from COM1. */
 void serial_read_line(char *buf, int max);
 
-#endif
+/* ── IRQ mode ──────────────────────────────────────────────────────── */
+
+/* Enable (1) or disable (0) interrupt-driven receive on a serial port.
+   When enabled, the port will generate IRQ 4 (COM1/3) or IRQ 3 (COM2/4)
+   on received data. */
+int  serial_set_irq_mode(int port_idx, int enable);
+
+/* Read a character from the IRQ-driven receive buffer for a port.
+   Returns 0 if no data available. */
+char serial_read_irq(int port_idx);
+
+/* Check if IRQ data is available on a port (returns non-zero if yes). */
+int  serial_has_irq(int port_idx);
+
+#endif /* SERIAL_H */

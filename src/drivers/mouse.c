@@ -1,13 +1,10 @@
 #include "mouse.h"
+#include "ps2.h"
 #include "io.h"
 #include "idt.h"
 #include "pic.h"
 #include "apic.h"
 #include "printf.h"
-
-#define PS2_DATA    0x60
-#define PS2_STATUS  0x64
-#define PS2_CMD     0x64
 
 #define VGA_COLS 80
 #define VGA_ROWS 25
@@ -23,37 +20,15 @@ static int mouse_py = 384;
 #define FB_HEIGHT 768
 #define MOUSE_SENSITIVITY 4
 
-/* 3-byte packet accumulator */
+/* 4-byte packet accumulator (IntelliMouse: 4 bytes) */
 static uint8_t mouse_cycle = 0;
-static int8_t  mouse_bytes[3];
+static int8_t  mouse_bytes[4];
 
-static void ps2_wait_write(void) {
-    uint32_t timeout = 100000;
-    while (timeout-- && (inb(PS2_STATUS) & 0x02));
-}
-
-static void ps2_wait_read(void) {
-    uint32_t timeout = 100000;
-    while (timeout-- && !(inb(PS2_STATUS) & 0x01));
-}
-
-static void ps2_write_cmd(uint8_t cmd) {
-    ps2_wait_write();
-    outb(PS2_CMD, cmd);
-}
-
-static void ps2_write_data(uint8_t data) {
-    ps2_wait_write();
-    outb(PS2_DATA, data);
-}
-
-static uint8_t ps2_read_data(void) {
-    ps2_wait_read();
-    return inb(PS2_DATA);
-}
+/* Scroll wheel */
+static int mouse_wheel_delta = 0;
 
 static void mouse_write(uint8_t cmd) {
-    ps2_write_cmd(0xD4);  /* next byte goes to mouse */
+    ps2_write_command(0xD4);  /* next byte goes to mouse */
     ps2_write_data(cmd);
 }
 
@@ -69,7 +44,6 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
     switch (mouse_cycle) {
         case 0:
             /* First byte: buttons + overflow bits */
-            /* Verify bit 3 is always set (synchronisation bit) */
             if (!(byte & 0x08)) { mouse_cycle = 0; return; }
             mouse_bytes[0] = (int8_t)byte;
             mouse_cycle = 1;
@@ -80,15 +54,19 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
             break;
         case 2:
             mouse_bytes[2] = (int8_t)byte;
+            mouse_cycle = 3;
+            break;
+        case 3:
+            mouse_bytes[3] = (int8_t)byte;
             mouse_cycle = 0;
 
-            /* decode */
+            /* Decode 4-byte IntelliMouse packet */
             mouse_buttons = (uint8_t)(mouse_bytes[0] & 0x07);
 
             int dx = mouse_bytes[1];
             int dy = mouse_bytes[2];
 
-            /* Apply sign extension from packet flags */
+            /* Sign extension from packet flags */
             if (mouse_bytes[0] & 0x10) dx |= ~0xFF;
             if (mouse_bytes[0] & 0x20) dy |= ~0xFF;
 
@@ -96,15 +74,17 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
             if (mouse_bytes[0] & 0x40) dx = 0;
             if (mouse_bytes[0] & 0x80) dy = 0;
 
+            /* Scroll wheel is in byte 3 (signed) */
+            mouse_wheel_delta += (int8_t)mouse_bytes[3];
+
             mouse_x += dx;
-            mouse_y -= dy;  /* screen Y is inverted vs PS/2 dy */
+            mouse_y -= dy;
 
             if (mouse_x < 0) mouse_x = 0;
             if (mouse_x >= VGA_COLS) mouse_x = VGA_COLS - 1;
             if (mouse_y < 0) mouse_y = 0;
             if (mouse_y >= VGA_ROWS) mouse_y = VGA_ROWS - 1;
 
-            /* Pixel-space tracking */
             mouse_px += dx * MOUSE_SENSITIVITY;
             mouse_py -= dy * MOUSE_SENSITIVITY;
             if (mouse_px < 0) mouse_px = 0;
@@ -117,14 +97,14 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
 
 void mouse_init(void) {
     /* Enable auxiliary PS/2 device (mouse) */
-    ps2_write_cmd(0xA8);
+    ps2_write_command(0xA8);
 
     /* Enable mouse interrupts: read controller config, set bit 1 (IRQ12) */
-    ps2_write_cmd(0x20);
+    ps2_write_command(0x20);
     uint8_t config = ps2_read_data();
     config |= 0x02;   /* enable IRQ12 */
     config &= ~0x20;  /* clear mouse disable bit */
-    ps2_write_cmd(0x60);
+    ps2_write_command(0x60);
     ps2_write_data(config);
 
     /* Reset mouse */
@@ -136,6 +116,18 @@ void mouse_init(void) {
     /* Set defaults */
     mouse_write(0xF6);
     mouse_read(); /* ACK */
+
+    /* Enable IntelliMouse (scroll wheel) protocol:
+       0xF3 200 = set sample rate 200
+       0xF3 100 = set sample rate 100
+       0xF3 80  = set sample rate 80
+       After this sequence, the mouse uses 4-byte packets. */
+    mouse_write(0xF3); mouse_read(); /* ACK */
+    mouse_write(200);  mouse_read(); /* ACK */
+    mouse_write(0xF3); mouse_read(); /* ACK */
+    mouse_write(100);  mouse_read(); /* ACK */
+    mouse_write(0xF3); mouse_read(); /* ACK */
+    mouse_write(80);   mouse_read(); /* ACK */
 
     /* Enable data reporting */
     mouse_write(0xF4);
@@ -163,4 +155,10 @@ void mouse_get_pixel_pos(int *x, int *y) {
 
 uint8_t mouse_get_buttons(void) {
     return mouse_buttons;
+}
+
+int mouse_get_wheel(void) {
+    int delta = mouse_wheel_delta;
+    mouse_wheel_delta = 0;
+    return delta;
 }

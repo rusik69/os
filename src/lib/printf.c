@@ -176,7 +176,7 @@ void kprintf_dmesg_flush_serial(void) {
     }
 }
 
-static void kputchar(char c) {
+void kputchar(char c) {
     /* Lazily initialize dmesg buffer */
     if (!dmesg_initialized) dmesg_init();
     if (!dmesg_buf) return; /* allocation failed, skip */

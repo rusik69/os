@@ -12,7 +12,6 @@ static spinlock_t g_dev_lock;
 static int g_initialized = 0;
 
 /* ── Legacy adapter ───────────────────────────────────────────────── */
-/* Wraps a pair of read_fn/write_fn into a submit_fn for backward compat */
 
 struct legacy_adapter {
     blockdev_read_fn  read_fn;
@@ -20,9 +19,9 @@ struct legacy_adapter {
 };
 
 static int legacy_submit_fn(struct blk_request *req) {
-    struct legacy_adapter *ad = (struct legacy_adapter *)req->buf; /* not used */
+    struct legacy_adapter *ad = (struct legacy_adapter *)req->buf;
     (void)ad;
-    return -1; /* shouldn't be called directly — we handle sync inline */
+    return -1;
 }
 
 /* ── Request slab cache ───────────────────────────────────────────── */
@@ -44,7 +43,6 @@ static void queue_insert(struct blk_request_queue *q, struct blk_request *req) {
     q->queued_count++;
 
     if (q->sched == BLK_SCHED_NOOP || !q->head) {
-        /* NOOP: append to tail (FIFO) */
         if (q->tail) {
             q->tail->next = req;
             q->tail = req;
@@ -56,9 +54,8 @@ static void queue_insert(struct blk_request_queue *q, struct blk_request *req) {
         return;
     }
 
-    /* Deadline scheduler: insert in expiry order, reads before writes */
     if (q->sched == BLK_SCHED_DEADLINE) {
-        req->expiry = timer_get_ticks() + 5; /* 50ms deadline at 100Hz */
+        req->expiry = timer_get_ticks() + 5;
         struct blk_request **pp = &q->head;
         while (*pp) {
             int insert_here = 0;
@@ -93,6 +90,42 @@ static struct blk_request *queue_pop(struct blk_request_queue *q) {
     return req;
 }
 
+/* ── Statistics API ───────────────────────────────────────────────── */
+
+void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms) {
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    if (is_write) {
+        g_blockdevs[dev_id].stats.write_ops++;
+        g_blockdevs[dev_id].stats.write_sectors += sectors;
+        g_blockdevs[dev_id].stats.write_ms += duration_ms;
+    } else {
+        g_blockdevs[dev_id].stats.read_ops++;
+        g_blockdevs[dev_id].stats.read_sectors += sectors;
+        g_blockdevs[dev_id].stats.read_ms += duration_ms;
+    }
+
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+}
+
+int blockdev_get_stats(int dev, struct blockdev_stats *s) {
+    if (!g_initialized) return -1;
+    if (dev < 0 || dev >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev].active)
+        return -1;
+    if (!s) return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+    *s = g_blockdevs[dev].stats;
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+
+    return 0;
+}
+
 /* ── Core submission path ─────────────────────────────────────────── */
 
 int blk_submit_async(struct blk_request *req) {
@@ -110,27 +143,36 @@ int blk_submit_async(struct blk_request *req) {
     req->inflight = 0;
     req->done = 0;
 
-    /* If no requests in flight and queue was empty, dispatch directly */
+    uint64_t start_ticks = timer_get_ticks();
+
     if (q->inflight_count == 0 && q->queued_count == 0) {
         req->inflight = 1;
         q->inflight_count++;
         spinlock_irqsave_release(&q->lock, irq_flags);
 
         int ret = g_blockdevs[dev_id].submit_fn(req);
-        /* Async drivers handle completion via blk_request_done().
-         * Sync drivers complete during submit_fn — mark done and wake. */
+
+        /* Track statistics for synchronous completion */
+        uint64_t elapsed_ticks = timer_get_ticks() - start_ticks;
+        uint64_t elapsed_ms = elapsed_ticks * 1000 / TIMER_FREQ;
+
         if (g_blockdevs[dev_id].flags & BLK_DRIVER_ASYNC) {
             return ret < 0 ? ret : 0;
         }
+
         q->inflight_count--;
         req->done = 1;
+
+        /* Update stats */
+        blockdev_stats_update(dev_id, !(req->flags & BLK_REQ_READ),
+                              req->count, elapsed_ms);
+
         if (req->done_wq) {
             wait_queue_wake(req->done_wq);
         }
         return ret < 0 ? ret : 0;
     }
 
-    /* Queue for later dispatch */
     queue_insert(q, req);
     spinlock_irqsave_release(&q->lock, irq_flags);
     return 0;
@@ -143,7 +185,7 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
         return -1;
 
     struct blk_request *req = blk_request_alloc();
-    if (!req) return -6; /* ENOMEM */
+    if (!req) return -6;
 
     req->dev_id = dev_id;
     req->lba = lba;
@@ -151,7 +193,6 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
     req->buf = buf;
     req->flags = flags;
 
-    /* Synchronous: use a waitqueue on the stack */
     struct wait_queue wq;
     wait_queue_init(&wq);
     req->done_wq = &wq;
@@ -162,7 +203,6 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
         return ret;
     }
 
-    /* Wait for completion */
     while (!req->done) {
         wait_queue_sleep(&wq);
     }
@@ -172,7 +212,6 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
     return ret;
 }
 
-/* Driver calls this when an async request completes */
 void blk_request_done(struct blk_request *req) {
     if (!req) return;
 
@@ -186,14 +225,11 @@ void blk_request_done(struct blk_request *req) {
     q->inflight_count--;
     spinlock_irqsave_release(&q->lock, irq_flags);
 
-    /* Wake synchronous waiter */
     if (req->done_wq) {
         wait_queue_wake(req->done_wq);
     }
 }
 
-/* Dequeue the next request for the driver to process.
- * Returns 1 if a request was dequeued, 0 if queue empty. */
 int blk_request_dequeue(struct blk_request_queue *q, struct blk_request **out) {
     if (!q || !out) return 0;
     uint64_t irq_flags;
@@ -215,13 +251,10 @@ int blk_request_dequeue(struct blk_request_queue *q, struct blk_request **out) {
     return 1;
 }
 
-/* Deadline scheduler: peek the next request with read priority */
 struct blk_request *blk_request_deadline_peek(struct blk_request_queue *q) {
     if (!q) return NULL;
     return queue_peek(q);
 }
-
-/* ── Release all resources for a driver's queue ───────────────────── */
 
 static void drain_queue(struct blk_request_queue *q) {
     struct blk_request *req = q->head;
@@ -255,7 +288,6 @@ int blockdev_register(int id, const char *name,
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
 
-    /* Drain any stale queue (re-registration) */
     if (g_blockdevs[id].active) {
         drain_queue(&g_queues[id]);
     }
@@ -267,6 +299,9 @@ int blockdev_register(int id, const char *name,
     g_blockdevs[id].sector_count = sector_count;
     g_blockdevs[id].sector_size = 512;
 
+    /* Zero out stats */
+    memset(&g_blockdevs[id].stats, 0, sizeof(struct blockdev_stats));
+
     if (name && *name) {
         strncpy(g_blockdevs[id].name, name, sizeof(g_blockdevs[id].name) - 1);
         g_blockdevs[id].name[sizeof(g_blockdevs[id].name) - 1] = '\0';
@@ -274,7 +309,6 @@ int blockdev_register(int id, const char *name,
         g_blockdevs[id].name[0] = '\0';
     }
 
-    /* Initialize request queue */
     struct blk_request_queue *q = &g_queues[id];
     spinlock_init(&q->lock);
     q->head = NULL;
@@ -289,7 +323,6 @@ int blockdev_register(int id, const char *name,
 }
 
 #if !defined(BLOCKDEV_NEW_ONLY)
-/* Legacy registration: adapts old read/write/size functions to new API. */
 struct legacy_driver {
     blockdev_read_fn  read_fn;
     blockdev_write_fn write_fn;
@@ -301,6 +334,8 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
     int dev_id = req->dev_id;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -1;
+
+    uint64_t start_ticks = timer_get_ticks();
 
     if (req->flags & BLK_REQ_READ) {
         if (!g_legacy[dev_id].read_fn) { req->result = -1; return -1; }
@@ -316,6 +351,11 @@ static int legacy_submit_fn_adapter(struct blk_request *req) {
         req->result = -1;
         return -1;
     }
+
+    uint64_t elapsed_ms = (timer_get_ticks() - start_ticks) * 1000 / TIMER_FREQ;
+    blockdev_stats_update(dev_id, !(req->flags & BLK_REQ_READ),
+                          req->count, elapsed_ms);
+
     return req->result;
 }
 
@@ -326,13 +366,11 @@ int blockdev_register_legacy(int id, const char *name,
     if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
     if (!read_fn) return -1;
 
-    /* Store legacy callbacks */
     g_legacy[id].read_fn = read_fn;
     g_legacy[id].write_fn = write_fn;
 
     uint64_t nsectors = size_fn ? size_fn() : 0;
 
-    /* Register with the new API using our adapter submit_fn */
     int ret = blockdev_register(id, name, legacy_submit_fn_adapter, NULL, nsectors, 0);
     if (ret < 0) return ret;
 

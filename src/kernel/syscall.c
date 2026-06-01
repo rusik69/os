@@ -43,6 +43,11 @@
 #include "doom.h"
 #include "socket.h"
 #include "seccomp.h"
+#include "futex.h"
+#include "audit.h"
+#include "yama.h"
+#include "kptr_restrict.h"
+#include "dmesg.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -3001,22 +3006,93 @@ static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
 /* Simple futex: uaddr is a userspace 32-bit integer.
  * FUTEX_WAIT: if *uaddr == val, block the process until FUTEX_WAKE.
  * FUTEX_WAKE: wake up to 'val' waiters.
- * This is a simplified (non-PI, non-robust) implementation sufficient for
- * basic pthread_mutex and condvar implementations. */
-#define FUTEX_MAX_WAITERS 64
+ * Extended with: FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_CMP_REQUEUE_PI,
+ * and robust list support. */
 
-struct futex_waiter {
+/* PI futex state table (local - backing store for futex.h API) */
+struct futex_waiter futex_waiters[FUTEX_MAX_WAITERS];
+int futex_num_waiters = 0;
+
+#define FUTEX_PI_MAX 16
+static struct {
     uint32_t *uaddr;
-    struct process *proc;
-};
+    uint32_t owner_pid;
+    int waiter_count;
+    uint32_t waiter_pids[4];
+    int in_use;
+} futex_pi_table[FUTEX_PI_MAX];
 
-static struct futex_waiter futex_waiters[FUTEX_MAX_WAITERS];
-static int futex_num_waiters = 0;
+static int futex_pi_find(uint32_t *uaddr) {
+    for (int i = 0; i < FUTEX_PI_MAX; i++)
+        if (futex_pi_table[i].in_use && futex_pi_table[i].uaddr == uaddr)
+            return i;
+    return -1;
+}
+
+static int futex_pi_alloc_internal(uint32_t *uaddr, uint32_t owner_pid) {
+    int idx = futex_pi_find(uaddr);
+    if (idx >= 0) return idx;
+    for (int i = 0; i < FUTEX_PI_MAX; i++) {
+        if (!futex_pi_table[i].in_use) {
+            futex_pi_table[i].uaddr = uaddr;
+            futex_pi_table[i].owner_pid = owner_pid;
+            futex_pi_table[i].waiter_count = 0;
+            futex_pi_table[i].in_use = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* ── Robust list support ───────────────────────────────────── */
+
+int sys_set_robust_list(struct robust_list_head *head, size_t len) {
+    (void)head; (void)len;
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+    /* Store robust list head pointer for later cleanup */
+    cur->ctid_ptr = (void*)head; /* reuse ctid_ptr for robust list head */
+    return 0;
+}
+
+int sys_get_robust_list(int pid, struct robust_list_head **head_ptr, size_t *len_ptr) {
+    struct process *p = process_get_by_pid((uint32_t)pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (head_ptr) *head_ptr = (struct robust_list_head *)p->ctid_ptr;
+    if (len_ptr) *len_ptr = sizeof(struct robust_list_head);
+    return 0;
+}
+
+/* On thread exit, walk robust list and wake waiters */
+void futex_robust_list_cleanup(struct process *proc) {
+    if (!proc || !proc->ctid_ptr) return;
+    struct robust_list_head *head = (struct robust_list_head *)proc->ctid_ptr;
+    /* Wake waiters on all futexes in the robust list */
+    struct robust_list *list = head->list.next;
+    while (list && list != &head->list) {
+        uint32_t *uaddr = (uint32_t *)((uint8_t *)list + head->futex_offset);
+        /* Wake all waiters on this uaddr */
+        for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+            if (futex_waiters[i].proc && futex_waiters[i].uaddr == uaddr) {
+                struct process *p = futex_waiters[i].proc;
+                futex_waiters[i].proc = NULL;
+                futex_waiters[i].uaddr = NULL;
+                futex_num_waiters--;
+                if (p->state == PROCESS_BLOCKED) {
+                    p->state = PROCESS_READY;
+                    scheduler_add(p);
+                }
+            }
+        }
+        list = list->next;
+    }
+}
 
 static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
                            uint64_t timeout, uint64_t uaddr2, uint64_t val3) {
-    (void)timeout; (void)uaddr2; (void)val3;
+    (void)timeout;
     uint32_t *addr = (uint32_t *)uaddr;
+    uint32_t *addr2 = (uint32_t *)uaddr2;
 
     switch (op & ~FUTEX_PRIVATE_FLAG) {
         case FUTEX_WAIT: {
@@ -3074,6 +3150,198 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
                     woken++;
                 }
             }
+            __asm__ volatile("sti");
+            return (uint64_t)woken;
+        }
+
+        case FUTEX_REQUEUE: {
+            /* Requeue 'val' waiters from addr to addr2 */
+            int requeued = 0;
+            __asm__ volatile("cli");
+            int max_wake = (int)(val & 0x7FFFFFFF);
+            int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
+            if (max_wake < 1) max_wake = 1;
+            if (max_requeue < 1) max_requeue = 1;
+
+            /* First, wake up to max_wake waiters */
+            int woken = 0;
+            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                    struct process *p = futex_waiters[i].proc;
+                    futex_waiters[i].proc = NULL;
+                    futex_waiters[i].uaddr = NULL;
+                    futex_num_waiters--;
+                    if (p->state == PROCESS_BLOCKED) {
+                        p->state = PROCESS_READY;
+                        scheduler_add(p);
+                    }
+                    woken++;
+                }
+            }
+            /* Then requeue remaining to addr2 */
+            for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                    futex_waiters[i].uaddr = addr2;
+                    requeued++;
+                }
+            }
+            __asm__ volatile("sti");
+            return (uint64_t)woken;
+        }
+
+        case FUTEX_CMP_REQUEUE: {
+            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+                return (uint64_t)-1;
+            uint32_t cur;
+            memcpy(&cur, addr, 4);
+            if (cur != (uint32_t)val3)
+                return (uint64_t)-1; /* values don't match */
+            return sys_futex(uaddr, FUTEX_REQUEUE, val, timeout, uaddr2, val3);
+        }
+
+        case FUTEX_LOCK_PI: {
+            /* Priority Inheritance futex lock */
+            struct process *cur = process_get_current();
+            if (!cur) return (uint64_t)-1;
+
+            uint32_t cur_val;
+            memcpy(&cur_val, addr, 4);
+
+            if (cur_val == 0) {
+                /* Free — try to acquire directly */
+                uint32_t tid = cur->pid;
+                memcpy(addr, &tid, 4);
+                return 0;
+            }
+
+            /* Contended — register as PI waiter and block */
+            int pi_idx = futex_pi_alloc_internal(addr, cur_val);
+            if (pi_idx < 0) return (uint64_t)-1;
+
+            /* Boost owner priority */
+            struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
+            if (owner && owner->priority > cur->priority) {
+                owner->base_priority = owner->priority;
+                owner->priority = cur->priority;
+                scheduler_set_priority(owner, cur->priority);
+            }
+
+            /* Register as waiter */
+            {
+                int w = futex_pi_table[pi_idx].waiter_count;
+                if (w < 4) {
+                    futex_pi_table[pi_idx].waiter_pids[w] = cur->pid;
+                    futex_pi_table[pi_idx].waiter_count++;
+                }
+            }
+
+            /* Block */
+            uint32_t tid = cur->pid | 0x80000000U; /* set high bit = contended */
+            memcpy(addr, &tid, 4);
+
+            cur->state = PROCESS_BLOCKED;
+            scheduler_remove(cur);
+            scheduler_yield();
+            return 0;
+        }
+
+        case FUTEX_UNLOCK_PI: {
+            /* Priority Inheritance futex unlock */
+            struct process *cur = process_get_current();
+            if (!cur) return (uint64_t)-1;
+
+            uint32_t cur_val;
+            memcpy(&cur_val, addr, 4);
+
+            if ((cur_val & 0x7FFFFFFF) != cur->pid)
+                return (uint64_t)-1; /* not owner */
+
+            int pi_idx = futex_pi_find(addr);
+            if (pi_idx >= 0) {
+                struct process *owner = process_get_by_pid(futex_pi_table[pi_idx].owner_pid);
+                if (owner && owner->priority != owner->base_priority) {
+                    /* Restore base priority */
+                    owner->priority = owner->base_priority;
+                    scheduler_set_priority(owner, owner->base_priority);
+                }
+
+                if (futex_pi_table[pi_idx].waiter_count > 0) {
+                    /* Wake the first waiter */
+                    uint32_t next_pid = futex_pi_table[pi_idx].waiter_pids[0];
+                    /* Shift remaining waiters */
+                    for (int w = 1; w < futex_pi_table[pi_idx].waiter_count; w++)
+                        futex_pi_table[pi_idx].waiter_pids[w-1] = futex_pi_table[pi_idx].waiter_pids[w];
+                    futex_pi_table[pi_idx].waiter_count--;
+
+                    /* Transfer ownership to next waiter */
+                    futex_pi_table[pi_idx].owner_pid = next_pid;
+                    uint32_t new_owner_tid = next_pid;
+                    memcpy(addr, &new_owner_tid, 4);
+
+                    /* Wake the next owner */
+                    struct process *next = process_get_by_pid(next_pid);
+                    if (next && next->state == PROCESS_BLOCKED) {
+                        next->state = PROCESS_READY;
+                        scheduler_add(next);
+                    }
+                } else {
+                    /* No waiters — mark as free */
+                    uint32_t zero = 0;
+                    memcpy(addr, &zero, 4);
+                    futex_pi_table[pi_idx].in_use = 0;
+                }
+            } else {
+                uint32_t zero = 0;
+                memcpy(addr, &zero, 4);
+            }
+            return 0;
+        }
+
+        case FUTEX_CMP_REQUEUE_PI: {
+            /* Requeue from non-PI futex to PI futex with PI boosting */
+            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+                return (uint64_t)-1;
+            uint32_t cur;
+            memcpy(&cur, addr, 4);
+            if (cur != (uint32_t)val3)
+                return (uint64_t)-1;
+
+            int max_wake = (int)(val & 0x7FFFFFFF);
+            int max_requeue = (int)((val >> 32) & 0x7FFFFFFF);
+            if (max_wake < 1) max_wake = 1;
+            if (max_requeue < 1) max_requeue = 1;
+
+            __asm__ volatile("cli");
+
+            /* Wake up to max_wake waiters on addr */
+            int woken = 0;
+            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < max_wake; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                    struct process *p = futex_waiters[i].proc;
+                    futex_waiters[i].proc = NULL;
+                    futex_waiters[i].uaddr = NULL;
+                    futex_num_waiters--;
+                    if (p->state == PROCESS_BLOCKED) {
+                        p->state = PROCESS_READY;
+                        scheduler_add(p);
+                    }
+                    woken++;
+                }
+            }
+
+            /* Requeue remaining to addr2 (PI futex) with PI boosting */
+            int requeued = 0;
+            for (int i = 0; i < FUTEX_MAX_WAITERS && requeued < max_requeue; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                    futex_waiters[i].uaddr = addr2;
+                    requeued++;
+                    /* PI boost the requeued waiter */
+                    struct process *rp = futex_waiters[i].proc;
+                    if (rp && rp->priority > 0)
+                        rp->priority--;
+                }
+            }
+
             __asm__ volatile("sti");
             return (uint64_t)woken;
         }
@@ -3292,6 +3560,13 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 /* ── syslog/kmsg ───────────────────────────────────────────────────────── */
 
 static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
+    /* Check dmesg_restrict: only root can read dmesg when set */
+    if (dmesg_restrict) {
+        struct process *p = process_get_current();
+        if (p && p->euid != 0 && p->uid != 0)
+            return (uint64_t)-1;  /* EPERM */
+    }
+
     switch (type) {
         case SYSLOG_ACTION_READ_ALL:
         case SYSLOG_ACTION_READ_CLEAR: {
@@ -3353,6 +3628,12 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         }
         case 39: { /* PR_GET_NO_NEW_PRIVS */
             return p->no_new_privs ? 1 : 0;
+        }
+        case 22: { /* PR_SET_SECCOMP */
+            return (uint64_t)seccomp_set_mode((int)a2);
+        }
+        case 23: { /* PR_GET_SECCOMP */
+            return (uint64_t)seccomp_get_mode();
         }
         default:
             return (uint64_t)-1;
@@ -5097,6 +5378,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         if (!seccomp_check_syscall(num)) return (uint64_t)-1; /* EPERM */
     }
 
+    /* Audit syscall entry */
+    audit_syscall_entry(num, a1, a2, a3, a4, a5);
+
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
         if (!p || !process_caps_has(p, (uint32_t)num)) return (uint64_t)-1;
@@ -5438,8 +5722,16 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         }
         case SYS_SIGWAITINFO:     return sys_sigwaitinfo(a1, a2);
         case SYS_SIGTIMEDWAIT:    return sys_sigtimedwait(a1, a2, a3);
-        default:         return (uint64_t)-1;
+        case SYS_SET_ROBUST_LIST: return (uint64_t)sys_set_robust_list((struct robust_list_head*)a1, (size_t)a2);
+        case SYS_GET_ROBUST_LIST: return (uint64_t)sys_get_robust_list((int)a1, (struct robust_list_head**)a2, (size_t*)a3);
+        default: {
+            uint64_t ret = (uint64_t)-1;
+            audit_syscall_exit(ret);
+            return ret;
+        }
     }
+    /* NOTREACHED */
+    return (uint64_t)-1;
 }
 
 /* ── Init ─────────────────────────────────────────────────────── */

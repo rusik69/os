@@ -46,4 +46,11 @@ void vga_clear_framebuffer(uint32_t color);
 void vga_refresh_console(void);
 void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, uint32_t *pitch);
 
+/* ── VGA scrollback buffer ──────────────────────────────────── */
+#define VGA_SCROLLBACK_SIZE 2000
+void vga_scrollback_push(char c);
+int vga_scrollback_view(int lines);
+void vga_scrollback_reset(void);
+int vga_scrollback_available(void);
+
 #endif

@@ -1,0 +1,258 @@
+/* netfilter.c — Packet filtering framework, connection tracking, NAT */
+
+#define KERNEL_INTERNAL
+#include "netfilter.h"
+#include "printf.h"
+#include "string.h"
+#include "timer.h"
+#include "heap.h"
+
+/* ── Static state ────────────────────────────────────────────────── */
+
+/* Hook chains — one linked list per hook point */
+static struct nf_hook_entry *nf_hooks[NF_MAX_HOOKS];
+
+/* Packet filter rules */
+#define NF_RULES_MAX 64
+static struct nf_rule nf_rules[NF_RULES_MAX];
+static int nf_num_rules = 0;
+
+/* Connection tracking table */
+static struct nf_conn nf_conns[NF_CONNTRACK_MAX];
+static int nf_conn_count = 0;
+
+/* NAT rules */
+#define NF_NAT_RULES_MAX 16
+static struct nf_nat_rule nf_nat_rules[NF_NAT_RULES_MAX];
+static int nf_nat_num_rules = 0;
+
+/* Connection tracking defaults */
+#define CONNTRACK_DEFAULT_TIMEOUT 300  /* 30 seconds at 10 ticks/s */
+
+/* ── Hook management ────────────────────────────────────────────── */
+
+int nf_register_hook(int hook, nf_hookfn fn, int priority) {
+    if (hook < 0 || hook >= NF_MAX_HOOKS) return -1;
+    if (!fn) return -1;
+
+    struct nf_hook_entry *entry = (struct nf_hook_entry *)
+        kmalloc(sizeof(struct nf_hook_entry));
+    if (!entry) return -1;
+
+    entry->fn = fn;
+    entry->priority = priority;
+    entry->next = NULL;
+
+    /* Insert in priority order (higher priority first) */
+    if (!nf_hooks[hook] || nf_hooks[hook]->priority > priority) {
+        entry->next = nf_hooks[hook];
+        nf_hooks[hook] = entry;
+    } else {
+        struct nf_hook_entry *cur = nf_hooks[hook];
+        while (cur->next && cur->next->priority <= priority)
+            cur = cur->next;
+        entry->next = cur->next;
+        cur->next = entry;
+    }
+    return 0;
+}
+
+void nf_unregister_hook(int hook, nf_hookfn fn) {
+    if (hook < 0 || hook >= NF_MAX_HOOKS || !fn) return;
+
+    struct nf_hook_entry **pp = &nf_hooks[hook];
+    while (*pp) {
+        if ((*pp)->fn == fn) {
+            struct nf_hook_entry *tmp = *pp;
+            *pp = (*pp)->next;
+            kfree(tmp);
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
+
+int nf_iterate_hooks(int hook, void *skb) {
+    if (hook < 0 || hook >= NF_MAX_HOOKS) return NF_ACCEPT;
+
+    struct nf_hook_entry *entry = nf_hooks[hook];
+    while (entry) {
+        int verdict = entry->fn(skb, hook);
+        if (verdict != NF_ACCEPT)
+            return verdict;
+        entry = entry->next;
+    }
+    return NF_ACCEPT;
+}
+
+/* ── Rule management ────────────────────────────────────────────── */
+
+int nf_add_rule(const struct nf_rule *rule) {
+    if (!rule) return -1;
+    if (nf_num_rules >= NF_RULES_MAX) return -1;
+    nf_rules[nf_num_rules++] = *rule;
+    return 0;
+}
+
+int nf_del_rule(const struct nf_rule *rule) {
+    if (!rule) return -1;
+    for (int i = 0; i < nf_num_rules; i++) {
+        if (nf_rules[i].src_ip  == rule->src_ip  &&
+            nf_rules[i].src_mask == rule->src_mask &&
+            nf_rules[i].dst_ip  == rule->dst_ip  &&
+            nf_rules[i].dst_mask == rule->dst_mask &&
+            nf_rules[i].src_port == rule->src_port &&
+            nf_rules[i].dst_port == rule->dst_port &&
+            nf_rules[i].protocol  == rule->protocol &&
+            nf_rules[i].action   == rule->action) {
+            /* Remove by shifting */
+            for (int j = i; j < nf_num_rules - 1; j++)
+                nf_rules[j] = nf_rules[j + 1];
+            nf_num_rules--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+void nf_flush_rules(void) {
+    nf_num_rules = 0;
+}
+
+int nf_check_rules(void *skb, uint32_t src_ip, uint32_t dst_ip,
+                   uint16_t src_port, uint16_t dst_port, uint8_t protocol) {
+    (void)skb;
+    for (int i = 0; i < nf_num_rules; i++) {
+        struct nf_rule *r = &nf_rules[i];
+        /* Check protocol match (0 = any) */
+        if (r->protocol != 0 && r->protocol != protocol)
+            continue;
+        /* Check source IP */
+        if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
+            continue;
+        /* Check destination IP */
+        if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
+            continue;
+        /* Check ports (only for TCP/UDP) */
+        if (r->src_port != 0 && r->src_port != src_port)
+            continue;
+        if (r->dst_port != 0 && r->dst_port != dst_port)
+            continue;
+        /* Match found */
+        return r->action;
+    }
+    return NF_ACCEPT;  /* default: accept */
+}
+
+/* ── Connection tracking ────────────────────────────────────────── */
+
+struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
+                                 uint16_t src_port, uint16_t dst_port,
+                                 uint8_t protocol) {
+    /* Look for existing connection */
+    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
+        if (!nf_conns[i].used) continue;
+        if (nf_conns[i].src_ip   == src_ip   &&
+            nf_conns[i].dst_ip   == dst_ip   &&
+            nf_conns[i].src_port == src_port &&
+            nf_conns[i].dst_port == dst_port &&
+            nf_conns[i].protocol == protocol) {
+            nf_conns[i].timeout = CONNTRACK_DEFAULT_TIMEOUT;
+            return &nf_conns[i];
+        }
+    }
+    /* Create new connection entry */
+    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
+        if (!nf_conns[i].used) {
+            nf_conns[i].src_ip   = src_ip;
+            nf_conns[i].dst_ip   = dst_ip;
+            nf_conns[i].src_port = src_port;
+            nf_conns[i].dst_port = dst_port;
+            nf_conns[i].protocol = protocol;
+            nf_conns[i].state    = NF_CONN_NEW;
+            nf_conns[i].timeout  = CONNTRACK_DEFAULT_TIMEOUT;
+            nf_conns[i].used     = 1;
+            nf_conn_count++;
+            return &nf_conns[i];
+        }
+    }
+    return NULL;  /* table full */
+}
+
+void nf_conntrack_put(struct nf_conn *conn) {
+    if (!conn) return;
+    /* Mark as established on first put after NEW */
+    if (conn->state == NF_CONN_NEW)
+        conn->state = NF_CONN_ESTABLISHED;
+    conn->timeout = CONNTRACK_DEFAULT_TIMEOUT;
+}
+
+void nf_conntrack_timeout(struct nf_conn *conn, uint32_t timeout) {
+    if (conn) conn->timeout = timeout;
+}
+
+void nf_conntrack_purge(void) {
+    uint64_t now = timer_get_ticks();
+    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
+        if (!nf_conns[i].used) continue;
+        /* Simple timeout: if our tick delta > timeout, expire */
+        if (now > (uint64_t)nf_conns[i].timeout * 10) {
+            nf_conns[i].used = 0;
+            nf_conn_count--;
+        }
+    }
+}
+
+/* ── NAT ────────────────────────────────────────────────────────── */
+
+int nf_nat_register_rule(uint32_t orig_ip, uint16_t orig_port,
+                          uint32_t new_ip, uint16_t new_port) {
+    if (nf_nat_num_rules >= NF_NAT_RULES_MAX) return -1;
+    nf_nat_rules[nf_nat_num_rules].orig_ip   = orig_ip;
+    nf_nat_rules[nf_nat_num_rules].orig_port = orig_port;
+    nf_nat_rules[nf_nat_num_rules].new_ip    = new_ip;
+    nf_nat_rules[nf_nat_num_rules].new_port  = new_port;
+    nf_nat_rules[nf_nat_num_rules].used      = 1;
+    nf_nat_num_rules++;
+    return 0;
+}
+
+int nf_nat_apply_pre_routing(uint32_t *ip, uint16_t *port) {
+    if (!ip || !port) return 0;
+    for (int i = 0; i < NF_NAT_RULES_MAX; i++) {
+        if (!nf_nat_rules[i].used) continue;
+        /* Match on destination IP/port (DNAT) */
+        if (nf_nat_rules[i].orig_ip == *ip &&
+            (nf_nat_rules[i].orig_port == 0 || nf_nat_rules[i].orig_port == *port)) {
+            *ip   = nf_nat_rules[i].new_ip;
+            *port = nf_nat_rules[i].new_port;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int nf_nat_apply_post_routing(uint32_t *ip, uint16_t *port) {
+    if (!ip || !port) return 0;
+    for (int i = 0; i < NF_NAT_RULES_MAX; i++) {
+        if (!nf_nat_rules[i].used) continue;
+        /* Match on source IP/port (SNAT/MASQUERADE) */
+        if (nf_nat_rules[i].orig_ip == *ip &&
+            (nf_nat_rules[i].orig_port == 0 || nf_nat_rules[i].orig_port == *port)) {
+            *ip   = nf_nat_rules[i].new_ip;
+            *port = nf_nat_rules[i].new_port;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* ── Init ────────────────────────────────────────────────────────── */
+
+void nf_init(void) {
+    memset(nf_hooks, 0, sizeof(nf_hooks));
+    memset(nf_rules, 0, sizeof(nf_rules));
+    memset(nf_conns, 0, sizeof(nf_conns));
+    memset(nf_nat_rules, 0, sizeof(nf_nat_rules));
+    kprintf("[OK] Netfilter initialized\\n");
+}

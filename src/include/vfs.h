@@ -18,6 +18,29 @@
 
 /* Mount flags */
 #define MS_RDONLY 1
+#define MS_BIND   0x40
+
+/* POSIX ACL tags */
+#define ACL_USER_OBJ  1
+#define ACL_USER      2
+#define ACL_GROUP_OBJ 3
+#define ACL_GROUP     4
+#define ACL_MASK      5
+#define ACL_OTHER     6
+
+/* POSIX ACL entry */
+struct posix_acl_entry {
+    uint16_t tag;   /* ACL_USER_OBJ, ACL_USER, etc. */
+    uint16_t perm;  /* permission bits (r/w/x) */
+    uint32_t id;    /* user/group ID (for ACL_USER/ACL_GROUP) */
+};
+
+/* POSIX ACL: up to 3 entries */
+#define POSIX_ACL_MAX_ENTRIES 3
+struct posix_acl {
+    struct posix_acl_entry entries[POSIX_ACL_MAX_ENTRIES];
+    int count;
+};
 
 /* File lock types */
 #define F_RDLCK 0
@@ -103,6 +126,8 @@ struct vfs_mount {
     struct vfs_ops *ops;
     void          *priv;           /* private data passed to ops */
     int           flags;           /* mount flags (MS_RDONLY, etc.) */
+    char          bind_source[64]; /* source path for bind mounts */
+    int           is_bind;         /* 1 = bind mount */
 };
 
 /* Registered filesystem type */
@@ -154,6 +179,15 @@ void vfs_update_atime(const char *path);
 
 /* Truncate file */
 int vfs_truncate(const char *path, uint32_t len);
+
+/* Bind mount support */
+int vfs_bind_mount(const char *src, const char *target);
+int vfs_is_bind_mount(const char *path);
+const char *vfs_bind_source(const char *path);
+
+/* POSIX ACL */
+int vfs_set_acl(const char *path, struct posix_acl *acl);
+int vfs_get_acl(const char *path, struct posix_acl *acl);
 
 void vfs_init(void);
 

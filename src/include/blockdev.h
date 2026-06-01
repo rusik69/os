@@ -19,13 +19,23 @@
 #define BLK_REQ_PREFLUSH  (1ULL << 4)
 
 /* Driver flags */
-#define BLK_DRIVER_ASYNC 1   /* Driver handles completion asynchronously via blk_request_done() */
+#define BLK_DRIVER_ASYNC  1   /* Driver handles completion asynchronously via blk_request_done() */
 
 /* I/O scheduler types */
 enum blk_scheduler {
     BLK_SCHED_NOOP = 0,      /* FIFO */
     BLK_SCHED_DEADLINE,      /* deadline with read-bias sorting */
     BLK_SCHED_COUNT
+};
+
+/* Block I/O statistics */
+struct blockdev_stats {
+    uint64_t read_ops;       /* number of read requests completed */
+    uint64_t write_ops;      /* number of write requests completed */
+    uint64_t read_sectors;   /* total sectors read */
+    uint64_t write_sectors;  /* total sectors written */
+    uint64_t read_ms;        /* total time spent reading (ms) */
+    uint64_t write_ms;       /* total time spent writing (ms) */
 };
 
 /* Block I/O request */
@@ -82,6 +92,9 @@ struct blockdev_entry {
     /* Low-level driver hooks */
     blk_driver_submit_fn submit_fn;   /* submit one request for processing */
     blk_driver_idle_fn   idle_fn;     /* optional: flush pending commands */
+
+    /* I/O statistics */
+    struct blockdev_stats stats;
 };
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -131,5 +144,11 @@ static inline int blockdev_read_sectors(int id, uint32_t lba, uint8_t count, voi
 static inline int blockdev_write_sectors(int id, uint32_t lba, uint8_t count, const void *buf) {
     return blk_submit_sync(id, lba, count, (void*)buf, BLK_REQ_WRITE);
 }
+
+/* Block device statistics */
+int blockdev_get_stats(int dev, struct blockdev_stats *s);
+
+/* Internal: update statistics (called by drivers when a request completes) */
+void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms);
 
 #endif /* BLOCKDEV_H */

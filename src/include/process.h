@@ -164,6 +164,21 @@ struct process {
     uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
     /* no_new_privs flag */
     int no_new_privs;
+    /* Securebits flags */
+    uint8_t securebits;
+    /* ── CFS vruntime (nanosecond-scale) ───────────────────── */
+    uint64_t vruntime;           /* virtual runtime for CFS */
+    uint64_t sched_weight;       /* scheduling weight (default 1024) */
+    int      sched_autogroup_id; /* autogroup ID (-1 = none) */
+    /* ── Resource tracking ──────────────────────────────────── */
+    uint64_t cpu_user;           /* user CPU time (ticks) */
+    uint64_t cpu_system;         /* system CPU time (ticks) */
+    uint64_t max_rss;            /* max resident set size (pages) */
+    uint64_t page_faults;        /* total page faults */
+    uint64_t signals_received;   /* total signals received */
+    uint64_t context_switches;   /* total context switches */
+    /* ── Stack usage tracking ───────────────────────────────── */
+    uint64_t stack_watermark;    /* lowest RSP observed */
 };
 
 void process_init(void);
@@ -199,10 +214,21 @@ int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
 /* Close all file descriptors with FD_CLOEXEC set */
 void process_exec_close_cloexec(void);
 
+/* Apply securebits and capabilities on exec */
+void process_exec_caps(void);
+
 /* Capability bounding set API */
 void cap_bset_drop(uint32_t cap);
 int  cap_bset_has(uint32_t cap);
 void cap_bset_init(struct process *proc);
+
+/* Securebits */
+#define SECBIT_KEEP_CAPS       (1 << 0)
+#define SECBIT_NO_SETUID_FIXUP (1 << 1)
+#define SECBIT_KEEP_CAPS_LOCKED       (1 << 2)
+#define SECBIT_NO_SETUID_FIXUP_LOCKED (1 << 3)
+int  securebits_get(struct process *proc);
+int  securebits_set(struct process *proc, uint8_t bits);
 
 /* ── Per-CPU kthread API ────────────────────────────────────── */
 

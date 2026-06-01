@@ -262,6 +262,8 @@
 #define SYS_IOCTL             278  /* ioctl(fd, cmd, arg) → 0 or -1 */
 #define SYS_SYSLOG            279  /* syslog(opt, buf, len) → varies */
 #define SYS_PRCTL             280  /* prctl(op, a2, a3, a4, a5) → 0 or -1 */
+#define SYS_SET_ROBUST_LIST   573  /* set_robust_list(head, len) → 0 or -1 */
+#define SYS_GET_ROBUST_LIST   574  /* get_robust_list(pid, head_ptr, len_ptr) → 0 or -1 */
 #define SYS_MOUNT             281  /* mount(src, target, fstype, flags, data) → 0 or -1 */
 #define SYS_UMOUNT            282  /* umount(target) → 0 or -1 */
 #define SYS_FTRUNCATE         283  /* ftruncate(fd, length) → 0 or -1 */

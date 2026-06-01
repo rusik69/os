@@ -21,6 +21,15 @@
 #include "pci.h"
 #include "e1000.h"
 #include "net.h"
+#include "netfilter.h"
+#include "pkt_sched.h"
+#include "bridge.h"
+#include "vlan.h"
+#include "tun.h"
+#include "net_ns.h"
+#include "ipip.h"
+#include "wireguard.h"
+#include "ipvs.h"
 #include "telnetd.h"
 #include "rtc.h"
 #include "mouse.h"
@@ -52,6 +61,10 @@
 #include "rcu.h"
 #include "aslr.h"
 #include "seccomp.h"
+#include "audit.h"
+#include "yama.h"
+#include "kptr_restrict.h"
+#include "dmesg.h"
 #include "sysrq.h"
 #include "panic.h"
 #include "nmi_watchdog.h"
@@ -67,6 +80,7 @@
 #include "module.h"
 #include "initcall.h"
 #include "watchdog.h"
+#include "fbcon.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -204,6 +218,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Seccomp syscall sandboxing */
     seccomp_init();
 
+    /* Audit subsystem */
+    audit_init();
+
+    /* YAMA ptrace security */
+    yama_init();
+
+    /* Kernel pointer restrict */
+    kptr_restrict_init();
+
+    /* dmesg restrict */
+    dmesg_init();
+
     /* SysRq emergency commands */
     sysrq_init();
 
@@ -222,9 +248,16 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* tmpfs RAM-backed filesystem */
     tmpfs_init();
 
-    if (vga_try_init_framebuffer(multiboot_info_phys) == 0)
+    if (vga_try_init_framebuffer(multiboot_info_phys) == 0) {
         kprintf("[OK] Framebuffer console enabled\n");
-    else
+        /* Initialize fbcon with framebuffer info */
+        uint8_t *fb_ptr;
+        uint32_t fb_w, fb_h, fb_pitch;
+        vga_get_framebuffer_ptr(&fb_ptr, &fb_w, &fb_h, &fb_pitch);
+        if (fb_ptr) {
+            fbcon_init((uint32_t *)fb_ptr, fb_w, fb_h, fb_pitch);
+        }
+    } else
         kprintf("[OK] VGA text console (QEMU window or serial terminal)\n");
 
     /* Process subsystem */
@@ -410,6 +443,17 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     }
 
     if (virtio_net_present() || e1000_is_present()) {
+        /* Networking subsystem inits */
+        nf_init();
+        pkt_sched_init();
+        bridge_init();
+        vlan_init();
+        tun_init();
+        net_ns_init();
+        ipip_init();
+        wg_init();
+        ipvs_init();
+
         net_init();
 #ifndef TEST_MODE
         kprintf("[..] DHCP discovering...\n");

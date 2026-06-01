@@ -269,7 +269,22 @@ void process_init(void) {
     memset(process_table[0].proc_comm, 0, 16);
     rlimit_init_defaults(&process_table[0]);
     cap_bset_init(&process_table[0]);
+    process_table[0].securebits = 0;
     current_process = &process_table[0];
+
+    /* ── Initialize CFS and resource tracking fields ── */
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        process_table[i].vruntime = 0;
+        process_table[i].sched_weight = 1024;
+        process_table[i].sched_autogroup_id = -1;
+        process_table[i].cpu_user = 0;
+        process_table[i].cpu_system = 0;
+        process_table[i].max_rss = 0;
+        process_table[i].page_faults = 0;
+        process_table[i].signals_received = 0;
+        process_table[i].context_switches = 0;
+        process_table[i].stack_watermark = 0;
+    }
 }
 
 struct process *process_create(void (*entry)(void), const char *name) {
@@ -353,6 +368,18 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->nivcsw = 0;
     proc->minflt = 0;
     proc->majflt = 0;
+
+    /* CFS vruntime and resource tracking */
+    proc->vruntime = 0;
+    proc->sched_weight = 1024;
+    proc->sched_autogroup_id = -1;
+    proc->cpu_user = 0;
+    proc->cpu_system = 0;
+    proc->max_rss = 0;
+    proc->page_faults = 0;
+    proc->signals_received = 0;
+    proc->context_switches = 0;
+    proc->stack_watermark = 0;
 
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
@@ -582,6 +609,40 @@ void cap_bset_init(struct process *proc) {
     /* Initialize bounding set to all ones (all caps allowed by default) */
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         proc->cap_bset[i] = ~0ULL;
+}
+
+/* ── Securebits ─────────────────────────────────────────────────────── */
+
+int securebits_get(struct process *proc) {
+    if (!proc) return 0;
+    return (int)proc->securebits;
+}
+
+int securebits_set(struct process *proc, uint8_t bits) {
+    if (!proc) return -1;
+    /* Only allow setting bits that aren't locked */
+    if (proc->securebits & (SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED))
+        return -1;
+    proc->securebits = bits;
+    return 0;
+}
+
+/* ── Capabilities on exec ────────────────────────────────────────────── */
+
+void process_exec_caps(void) {
+    struct process *p = process_get_current();
+    if (!p) return;
+
+    /* If SECBIT_KEEP_CAPS is not set, clear the permitted set */
+    if (!(p->securebits & SECBIT_KEEP_CAPS)) {
+        process_caps_clear_all(p);
+    }
+
+    /* effective = permitted & inheritable (simplified) */
+    /* bounding set &= permitted */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+        p->cap_bset[i] &= p->syscall_caps[i];
+    }
 }
 
 /* ── Process credential API ─────────────────────────────────── */
@@ -845,6 +906,10 @@ void process_sleep_ticks(uint64_t nticks) {
 
 /* Free resources of a zombie process. */
 void process_cleanup(struct process *proc) {
+    /* Cleanup robust futex list */
+    extern void futex_robust_list_cleanup(struct process *proc);
+    futex_robust_list_cleanup(proc);
+
     if (proc->kernel_stack) {
         free_guarded_kernel_stack(proc);
     }

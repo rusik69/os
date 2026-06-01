@@ -78,6 +78,14 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ahci.c \
          src/drivers/usb_ehci.c \
          src/drivers/usb_msc.c \
+         src/drivers/ps2.c \
+         src/drivers/fbcon.c \
+         src/drivers/partitions.c \
+         src/drivers/mdadm.c \
+         src/drivers/cmos.c \
+         src/drivers/floppy.c \
+         src/drivers/battery.c \
+         src/drivers/i2c.c \
          src/memory/pmm.c \
          src/memory/vmm.c \
          src/memory/heap.c \
@@ -105,6 +113,15 @@ C_SRCS = src/kernel/kernel.c \
          src/net/telnetd.c \
          src/net/httpd.c \
          src/net/socket.c \
+         src/net/netfilter.c \
+         src/net/pkt_sched.c \
+         src/net/bridge.c \
+         src/net/vlan.c \
+         src/net/tun.c \
+         src/net/net_ns.c \
+         src/net/ipip.c \
+         src/net/wireguard.c \
+         src/net/ipvs.c \
          src/kernel/service.c \
          src/ipc/pipe.c \
          src/ipc/eventfd.c \
@@ -114,7 +131,15 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/ipc/mutex.c \
+         src/ipc/fifo.c \
+         src/ipc/mqueue.c \
+         src/fs/sysfs.c \
+         src/fs/debugfs.c \
          src/ipc/semaphore.c \
+         src/kernel/audit.c \
+         src/kernel/yama.c \
+         src/kernel/kptr_restrict.c \
+         src/kernel/dmesg.c \
          src/ipc/waitqueue.c \
          src/dos/dos_emu.c \
          src/dos/dos_ints.c \

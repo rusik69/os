@@ -82,4 +82,27 @@ int fs_truncate(const char *path, uint32_t len); /* truncate file to len bytes *
 /* Format a mode word as "rwxrwxrwx" into a 9-char buffer (+ NUL) */
 void fs_mode_str(uint16_t mode, char out[10]);
 
+/* ── Quota support ────────────────────────────────────────────── */
+struct fs_quota {
+    uint32_t block_limit;
+    uint32_t inode_limit;
+    uint32_t block_usage;
+    uint32_t inode_usage;
+};
+
+/* Set quota limits for a user ID */
+int fs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit);
+
+/* Get quota for a user ID */
+int fs_get_quota(uint16_t uid, struct fs_quota *quota);
+
+/* Check quota before allocating blocks/inodes (returns 0 if allowed, -1 if denied) */
+int fs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed);
+int fs_check_quota_inodes(uint16_t uid);
+
+/* ── Copy-on-Write for data blocks ────────────────────────────── */
+/* When a block is referenced by multiple inodes, allocate a new block,
+ * copy the data, and update the inode. Returns the new block number or 0. */
+uint32_t fs_cow_block(uint32_t block);
+
 #endif

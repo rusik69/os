@@ -7,6 +7,7 @@
 #include "printf.h"
 #include "timer.h"
 #include "waitqueue.h"
+#include "netfilter.h"
 
 /* Shared network state */
 uint8_t  net_our_mac[6];
@@ -374,6 +375,14 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
         dst_mac = net_gw_mac_known ? net_gw_mac : bcast;
     }
 
+    /* Netfilter LOCAL_OUT */
+    if (nf_iterate_hooks(NF_INET_LOCAL_OUT, (void *)buf) != NF_ACCEPT)
+        return;
+
+    /* Netfilter POST_ROUTING */
+    if (nf_iterate_hooks(NF_INET_POST_ROUTING, (void *)buf) != NF_ACCEPT)
+        return;
+
     send_eth(dst_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + len);
 }
 
@@ -657,6 +666,19 @@ void net_poll(void) {
                     struct ip_header *ip = (struct ip_header *)payload;
                     uint32_t src = ntohl(ip->src_ip);
                     if (src) arp_cache_add(src, eth->src);
+
+                    /* Netfilter PRE_ROUTING */
+                    if (nf_iterate_hooks(NF_INET_PRE_ROUTING, (void *)pkt_buf) != NF_ACCEPT)
+                        continue;
+                }
+                /* Netfilter LOCAL_IN for packets destined to us */
+                {
+                    struct ip_header *ip = (struct ip_header *)payload;
+                    uint32_t dst_ip = ntohl(ip->dst_ip);
+                    if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
+                        if (nf_iterate_hooks(NF_INET_LOCAL_IN, (void *)pkt_buf) != NF_ACCEPT)
+                            continue;
+                    }
                 }
                 handle_ip(payload, payload_len);
             }

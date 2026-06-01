@@ -3,6 +3,8 @@
 #include "idt.h"
 #include "apic.h"
 #include "pic.h"
+#include "printf.h"
+#include "string.h"
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71
@@ -16,11 +18,34 @@
 #define RTC_STATUS_A  0x0A
 #define RTC_STATUS_B  0x0B
 #define RTC_STATUS_C  0x0C
+#define RTC_STATUS_D  0x0D
+
+/* Alarm registers */
+#define RTC_ALRM_SEC  0x01
+#define RTC_ALRM_MIN  0x03
+#define RTC_ALRM_HRS  0x05
+#define RTC_ALRM_DAY  0x06
+
+/* Status register B bits */
+#define RTC_B_UPD_END  (1 << 4)  /* Update-ended interrupt enable */
+#define RTC_B_PER_INT  (1 << 6)  /* Periodic interrupt enable */
+#define RTC_B_ALRM_INT (1 << 5)  /* Alarm interrupt enable */
+
+/* Status register A bits */
+#define RTC_A_RATE_MASK 0x0F     /* Periodic rate select */
+#define RTC_A_UIP       0x80     /* Update in progress */
 
 static uint8_t cmos_read(uint8_t reg) {
     outb(CMOS_ADDR, reg);
     io_wait();
     return inb(CMOS_DATA);
+}
+
+static void cmos_write(uint8_t reg, uint8_t val) {
+    outb(CMOS_ADDR, reg);
+    io_wait();
+    outb(CMOS_DATA, val);
+    io_wait();
 }
 
 static int is_leap(int year) {
@@ -33,7 +58,6 @@ static const int days_in_mon[12] = {
 };
 
 uint64_t rtc_to_epoch(const struct rtc_time *t) {
-    /* Compute days since 2000-01-01 (Unix time for 2000 = 946684800) */
     int y = (int)t->year;
     int m = (int)t->month;
     int d = (int)t->day;
@@ -41,24 +65,21 @@ uint64_t rtc_to_epoch(const struct rtc_time *t) {
     int min = (int)t->minute;
     int s = (int)t->second;
 
-    /* Count days from 2000 to the target year */
     uint64_t days = 0;
     for (int yr = 2000; yr < y; yr++)
         days += is_leap(yr) ? 366 : 365;
 
-    /* Days in current year up to current month */
     for (int mo = 1; mo < m; mo++) {
         days += days_in_mon[mo - 1];
         if (mo == 2 && is_leap(y)) days++;
     }
     days += (d - 1);
 
-    /* Convert to seconds (2000 epoch) then add Unix base offset */
     uint64_t epoch = days * 86400ULL + h * 3600ULL + min * 60ULL + s;
-    return epoch + 946684800ULL;  /* Unix epoch for 2000-01-01 */
+    return epoch + 946684800ULL;
 }
 
-/* ── Boot epoch (Unix wall clock seconds at boot time) ────────────── */
+/* ── Boot epoch ───────────────────────────────────────────────────── */
 
 static uint64_t boot_epoch_seconds = 0;
 
@@ -70,6 +91,15 @@ void rtc_set_epoch(uint64_t s) {
     boot_epoch_seconds = s;
 }
 
+/* ── Periodic interrupt state ─────────────────────────────────────── */
+
+static volatile uint64_t g_periodic_ticks = 0;
+static volatile int g_periodic_enabled = 0;
+
+/* ── Alarm state ──────────────────────────────────────────────────── */
+
+static volatile int g_alarm_fired = 0;
+
 /* ── RTC read helpers ─────────────────────────────────────────────── */
 
 static int is_updating(void) {
@@ -80,16 +110,30 @@ static uint8_t bcd_to_bin(uint8_t bcd) {
     return (bcd & 0x0F) + ((bcd >> 4) * 10);
 }
 
+static uint8_t bin_to_bcd(uint8_t bin) {
+    return ((bin / 10) << 4) | (bin % 10);
+}
+
 static void rtc_irq_handler(struct interrupt_frame *frame) {
     (void)frame;
-    /* Read status C to clear the interrupt */
-    cmos_read(RTC_STATUS_C);
+
+    /* Read status C to clear the interrupt and determine source */
+    uint8_t status_c = cmos_read(RTC_STATUS_C);
+
+    /* Periodic interrupt */
+    if (g_periodic_enabled && (status_c & 0x40)) {
+        g_periodic_ticks++;
+    }
+
+    /* Alarm interrupt */
+    if (status_c & 0x20) {
+        g_alarm_fired = 1;
+    }
+
     irq_ack(8);
 }
 
 void rtc_init(void) {
-    /* Enable RTC IRQ8 by unmasking it in PIC */
-    /* Register our handler for IRQ8 (vector 40) */
     idt_register_handler(40, rtc_irq_handler);
 
     if (apic_is_init_complete()) {
@@ -98,30 +142,116 @@ void rtc_init(void) {
     pic_unmask(8);
 
     /* Enable Update-Ended interrupt (bit 4 of status B) */
-    outb(CMOS_ADDR, 0x8B);   /* disable NMI, select status B */
-    io_wait();
-    uint8_t regb = inb(CMOS_DATA);
-    outb(CMOS_ADDR, 0x8B);
-    io_wait();
-    outb(CMOS_DATA, regb | 0x10);
-    io_wait();
+    uint8_t regb = cmos_read(RTC_STATUS_B);
+    cmos_write(RTC_STATUS_B, regb | RTC_B_UPD_END);
 
     /* Read status C once to clear any pending interrupt */
-    outb(CMOS_ADDR, 0x0C);
-    io_wait();
-    inb(CMOS_DATA);
+    cmos_read(RTC_STATUS_C);
 
-    /* Capture boot epoch from RTC so clock_gettime(CLOCK_REALTIME) works */
+    /* Capture boot epoch from RTC */
     struct rtc_time boot_time;
     rtc_get_time(&boot_time);
     boot_epoch_seconds = rtc_to_epoch(&boot_time);
 }
 
+/* ── Periodic interrupt API ────────────────────────────────────────── */
+
+/* Convert rate in Hz to the 4-bit RTC rate select code.
+   RTC uses divider 32768 >> (rate_select - 1) for rate_select >= 3 */
+static int hz_to_rate_select(int rate_hz) {
+    if (rate_hz <= 0) return -1;
+    /* Rate = 32768 >> (rs - 1), so rs = 16 - log2(32768/rate) */
+    int div = 32768 / rate_hz;
+    int rs = 16;
+    while (div > 1 && rs > 2) {
+        div >>= 1;
+        rs--;
+    }
+    if (rs < 3 || rs > 15) return -1;
+    return rs;
+}
+
+int rtc_set_periodic(int enable, int rate_hz) {
+    if (enable) {
+        int rs = hz_to_rate_select(rate_hz);
+        if (rs < 0) return -1;
+
+        /* Set rate in Status Register A */
+        uint8_t rega = cmos_read(RTC_STATUS_A);
+        rega = (rega & ~RTC_A_RATE_MASK) | (uint8_t)(rs & 0x0F);
+        cmos_write(RTC_STATUS_A, rega);
+
+        /* Enable periodic interrupt in Status Register B */
+        uint8_t regb = cmos_read(RTC_STATUS_B);
+        cmos_write(RTC_STATUS_B, regb | RTC_B_PER_INT);
+
+        g_periodic_ticks = 0;
+        g_periodic_enabled = 1;
+    } else {
+        /* Disable periodic interrupt */
+        uint8_t regb = cmos_read(RTC_STATUS_B);
+        cmos_write(RTC_STATUS_B, regb & ~RTC_B_PER_INT);
+        g_periodic_enabled = 0;
+    }
+
+    return 0;
+}
+
+int rtc_wait_ticks(uint32_t ticks) {
+    if (!g_periodic_enabled) return -1;
+
+    uint64_t target = g_periodic_ticks + ticks;
+    while (g_periodic_ticks < target) {
+        __asm__ volatile("pause; pause; pause");
+    }
+
+    return 0;
+}
+
+/* Return current RTC periodic tick count */
+uint64_t rtc_get_ticks(void) {
+    return g_periodic_ticks;
+}
+
+/* ── Alarm API ─────────────────────────────────────────────────────── */
+
+int rtc_set_alarm(const struct rtc_time *t) {
+    if (!t) return -1;
+
+    /* Write alarm registers */
+    cmos_write(RTC_ALRM_SEC, bin_to_bcd(t->second));
+    cmos_write(RTC_ALRM_MIN, bin_to_bcd(t->minute));
+    cmos_write(RTC_ALRM_HRS, bin_to_bcd(t->hour));
+
+    return 0;
+}
+
+int rtc_alarm_enable(int enable) {
+    uint8_t regb = cmos_read(RTC_STATUS_B);
+    if (enable) {
+        cmos_write(RTC_STATUS_B, regb | RTC_B_ALRM_INT);
+    } else {
+        cmos_write(RTC_STATUS_B, regb & ~RTC_B_ALRM_INT);
+    }
+    return 0;
+}
+
+int rtc_alarm_fired(void) {
+    return g_alarm_fired ? 1 : 0;
+}
+
+void rtc_alarm_clear(void) {
+    g_alarm_fired = 0;
+    /* Read status C to clear pending alarm flag */
+    cmos_read(RTC_STATUS_C);
+}
+
+/* ── Time reading ──────────────────────────────────────────────────── */
+
 void rtc_get_time(struct rtc_time *t) {
     uint8_t sec, min, hr, day, mon, yr;
     uint8_t last_sec, last_min, last_hr, last_day, last_mon, last_yr;
 
-    /* Wait for RTC to be stable - read twice until consistent */
     do {
         while (is_updating());
         sec = cmos_read(RTC_SECONDS);
@@ -141,18 +271,16 @@ void rtc_get_time(struct rtc_time *t) {
     } while (sec != last_sec || min != last_min || hr != last_hr ||
              day != last_day || mon != last_mon || yr != last_yr);
 
-    /* Check if BCD mode (bit 2 of status B clear = BCD) */
     uint8_t regb = cmos_read(RTC_STATUS_B);
     if (!(regb & 0x04)) {
         sec = bcd_to_bin(sec);
         min = bcd_to_bin(min);
-        hr  = bcd_to_bin(hr & 0x7F) | (hr & 0x80); /* preserve PM bit */
+        hr  = bcd_to_bin(hr & 0x7F) | (hr & 0x80);
         day = bcd_to_bin(day);
         mon = bcd_to_bin(mon);
         yr  = bcd_to_bin(yr);
     }
 
-    /* 12/24 hour: if 12-hour mode (bit 1 of regb clear) and PM bit set */
     if (!(regb & 0x02) && (hr & 0x80)) {
         hr = ((hr & 0x7F) + 12) % 24;
     }
@@ -162,6 +290,5 @@ void rtc_get_time(struct rtc_time *t) {
     t->hour   = hr;
     t->day    = day;
     t->month  = mon;
-    /* Year: assume 2000s. RTC gives 2-digit year. */
     t->year   = (yr < 70) ? (2000 + yr) : (1900 + yr);
 }

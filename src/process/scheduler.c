@@ -17,6 +17,7 @@
 #include "spinlock.h"
 #include "apic.h"
 #include "string.h"
+#include "rtc.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -27,6 +28,15 @@ extern uint64_t syscall_kernel_rsp;
 
 /* Time slices in ticks (100Hz): higher priority = larger quantum. */
 static const uint16_t time_slices[SCHED_LEVELS] = {10, 5, 3, 2};
+
+/* CFS constants */
+#define CFS_NICE_0_WEIGHT 1024
+#define CFS_WEIGHT_SHIFT 10  /* 1024 = 1<<10 */
+#define CFS_VRUNTIME_MAX_DIFF 100000000ULL /* 100ms */
+
+/* ── Autogroup state ──────────────────────────────────────── */
+static struct sched_autogroup autogroups[SCHED_AUTOGROUP_MAX];
+static int autogroup_count = 0;
 
 /* ── Per-CPU helpers ────────────────────────────────────────────────── */
 static inline struct cpu_info *this_cpu(void) {
@@ -170,25 +180,36 @@ static struct process *dequeue_next(void) {
     return NULL;
 }
 
-/* ── Load balancing: steal from the busiest CPU ─────────────────────── */
+/* ── Load balancing: steal from the busiest CPU (weighted) ──── */
+static int calculate_cpu_load(struct cpu_info *ci) {
+    int load = 0;
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+        while (p) {
+            load += (int)(p->sched_weight ? p->sched_weight : CFS_NICE_0_WEIGHT);
+            p = p->next;
+        }
+    }
+    return load;
+}
+
 static int load_balance(void) {
     struct cpu_info *ci = this_cpu();
-    int this_nr = cpu_nr_runnable(ci);
+    int this_load = calculate_cpu_load(ci);
 
-    /* Don't steal if we already have tasks */
-    if (this_nr > 1) return 0;
+    /* Don't steal if we already have significant load */
+    if (this_load > CFS_NICE_0_WEIGHT * 2) return 0;
 
     /* Find the busiest CPU with a significant load imbalance */
     int busiest_cpu = -1;
-    int busiest_nr = 0;
+    int busiest_load = 0;
 
     for (int cpu = 0; cpu < smp_cpu_count; cpu++) {
         if ((uint32_t)cpu == get_cpu_id()) continue;
         struct cpu_info *other = &cpu_info_array[cpu];
-        int nr = cpu_nr_runnable(other);
-        /* Steal if imbalance > 1 (i.e., other has at least 2 more than us) */
-        if (nr > busiest_nr && nr - this_nr >= 2) {
-            busiest_nr = nr;
+        int load = calculate_cpu_load(other);
+        if (load > busiest_load && load - this_load > CFS_NICE_0_WEIGHT) {
+            busiest_load = load;
             busiest_cpu = cpu;
         }
     }
@@ -201,10 +222,9 @@ static int load_balance(void) {
     for (int lvl = SCHED_LEVELS - 1; lvl >= 0; lvl--) {
         if (!busy->queue_head[lvl]) continue;
 
+        /* Find the last (tail) process in this priority level */
         struct process *prev = NULL;
         struct process *cur = busy->queue_head[lvl];
-
-        /* Find the last (tail) process in this priority level */
         while (cur->next) {
             prev = cur;
             cur = cur->next;
@@ -321,9 +341,14 @@ void scheduler_tick(int was_user) {
      * system time if we interrupted kernel code. */
     if (was_user && cur->is_user) {
         cur->utime_ticks++;
+        cur->cpu_user++;
     } else {
         cur->stime_ticks++;
+        cur->cpu_system++;
     }
+
+    /* Update CFS vruntime */
+    update_vruntime(cur, 1);
 
     /* Check pending signals */
     if (cur->pending_signals) {
@@ -371,9 +396,12 @@ void scheduler_tick(int was_user) {
     }
 }
 
-/* ── Aging: boost starved processes ─────────────────────────────────── */
+/* ── Aging: boost starved processes (using RTC for precision) ──── */
 void scheduler_age(void) {
+    extern uint64_t rtc_get_ticks(void);
     uint64_t now = timer_get_ticks();
+    if (rtc_get_ticks)
+        now = rtc_get_ticks();
     struct process *table = process_get_table();
 
     uint64_t irq_flags;
@@ -384,7 +412,8 @@ void scheduler_age(void) {
         if (p->state != PROCESS_READY) continue;
         if (p->priority == 0) continue;
         if (p->last_run_tick == 0) continue;
-        if (now - p->last_run_tick > 200) {
+        uint64_t age_threshold = rtc_get_ticks ? 1000 : 200;
+        if (now - p->last_run_tick > age_threshold) {
             /* Remove, boost, re-add */
             scheduler_remove(p);
             p->priority--;
@@ -461,3 +490,100 @@ void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s) {
         if (table[i].state == PROCESS_BLOCKED) s->nr_uninterruptible++;
     }
 }
+
+/* ── Autogroup implementation ───────────────────────────────── */
+
+int sched_autogroup_get(int session_id) {
+    /* Session ID maps to autogroup index via simple hash */
+    int target = session_id % SCHED_AUTOGROUP_MAX;
+    if (autogroups[target].id == session_id) return target;
+
+    /* Find existing group */
+    for (int i = 0; i < SCHED_AUTOGROUP_MAX; i++) {
+        if (autogroups[i].id == session_id) return i;
+    }
+
+    /* Create new group */
+    for (int i = 0; i < SCHED_AUTOGROUP_MAX; i++) {
+        if (autogroups[i].id == 0 || autogroups[i].member_count == 0) {
+            autogroups[i].id = session_id;
+            autogroups[i].vruntime = 0;
+            autogroups[i].member_count = 0;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void sched_autogroup_assign(struct process *proc, int group_id) {
+    if (group_id < 0 || group_id >= SCHED_AUTOGROUP_MAX) return;
+    if (proc->sched_autogroup_id >= 0 && proc->sched_autogroup_id < SCHED_AUTOGROUP_MAX) {
+        if (autogroups[proc->sched_autogroup_id].member_count > 0)
+            autogroups[proc->sched_autogroup_id].member_count--;
+    }
+    proc->sched_autogroup_id = group_id;
+    if (group_id >= 0)
+        autogroups[group_id].member_count++;
+}
+
+uint64_t sched_autogroup_max_vruntime(int group_id) {
+    if (group_id < 0 || group_id >= SCHED_AUTOGROUP_MAX) return 0;
+    uint64_t max = 0;
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED &&
+            table[i].sched_autogroup_id == group_id &&
+            table[i].vruntime > max)
+            max = table[i].vruntime;
+    }
+    return max;
+}
+
+/* ── Update vruntime on each tick (CFS) ─────────────────────── */
+void update_vruntime(struct process *p, int ticks) {
+    if (!p) return;
+    uint64_t weight = p->sched_weight ? p->sched_weight : CFS_NICE_0_WEIGHT;
+    /* vruntime += time_slice * 1000000 / weight */
+    uint64_t increment = (uint64_t)ticks * 1000000ULL * CFS_NICE_0_WEIGHT / weight;
+    p->vruntime += increment;
+}
+
+/* ── Dequeue next process based on lowest vruntime (CFS) ──── */
+static struct process *dequeue_next_cfs(void) {
+    struct cpu_info *ci = this_cpu();
+    struct process *best = NULL;
+    int best_lvl = -1;
+    struct process *best_prev = NULL;
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *prev = NULL;
+        struct process *cur = ci->queue_head[lvl];
+        while (cur) {
+            if (!best || cur->vruntime < best->vruntime) {
+                best = cur;
+                best_lvl = lvl;
+                best_prev = prev;
+            }
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+
+    if (!best) return NULL;
+
+    /* Unlink best from its queue */
+    if (best_prev)
+        best_prev->next = best->next;
+    else
+        ci->queue_head[best_lvl] = best->next;
+
+    if (best == ci->queue_tail[best_lvl])
+        ci->queue_tail[best_lvl] = best_prev;
+
+    best->next = NULL;
+    best->on_queue = 0;
+    return best;
+}
+
+/* ── Replace old dequeue_next with CFS version ────────────── */
+#define dequeue_next dequeue_next_cfs

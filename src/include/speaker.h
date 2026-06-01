@@ -8,6 +8,14 @@ void speaker_tone(uint32_t frequency);
 void speaker_off(void);
 void speaker_beep(uint32_t frequency, uint32_t duration_ms);
 
+/* Volume control (0 = off, 100 = max).
+   Controls the PIT channel 2 gate enable timing.
+   Default is 50. */
+void speaker_set_volume(uint8_t volume);
+
+/* Get current volume setting (0..100). */
+uint8_t speaker_get_volume(void);
+
 /* Note frequencies in Hz */
 #define NOTE_C4  262
 #define NOTE_D4  294

@@ -22,6 +22,9 @@ int kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 int vkprintf(const char *fmt, __builtin_va_list ap) __attribute__((format(printf, 1, 0)));
 int kprintf_level(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
+/* Low-level character output */
+void kputchar(char c);
+
 void kprintf_set_hook(void (*hook)(char, void *), void *ctx);
 void kprintf_get_hook(void (**hook)(char,void*), void **ctx);
 void kprintf_set_flush(void (*flush)(void *), void *ctx);

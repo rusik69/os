@@ -539,6 +539,9 @@ void vga_set_color(uint8_t fg, uint8_t bg) {
 }
 
 void vga_putchar(char c) {
+    /* Push to scrollback buffer */
+    vga_scrollback_push(c);
+
     if (c == '\n') {
         vga_col = 0;
         vga_row++;
@@ -635,4 +638,45 @@ void vga_get_framebuffer_ptr(uint8_t **ptr, uint32_t *width, uint32_t *height, u
     if (width) *width = fb_width;
     if (height) *height = fb_height;
     if (pitch) *pitch = fb_pitch;
+}
+
+/* ── VGA scrollback buffer ──────────────────────────────────── */
+
+static char scrollback_buf[VGA_SCROLLBACK_SIZE];
+static int scrollback_pos = 0;
+static int scrollback_count = 0;
+
+void vga_scrollback_push(char c) {
+    scrollback_buf[scrollback_pos] = c;
+    scrollback_pos = (scrollback_pos + 1) % VGA_SCROLLBACK_SIZE;
+    if (scrollback_count < VGA_SCROLLBACK_SIZE)
+        scrollback_count++;
+}
+
+int vga_scrollback_view(int lines) {
+    if (scrollback_count == 0) return 0;
+    int start;
+    if (scrollback_count < VGA_SCROLLBACK_SIZE) {
+        start = 0;
+    } else {
+        start = scrollback_pos;
+    }
+    int count = scrollback_count < lines ? scrollback_count : lines;
+    int idx = start;
+    for (int i = 0; i < count; i++) {
+        char c = scrollback_buf[idx];
+        if (c) kputchar(c);
+        idx = (idx + 1) % VGA_SCROLLBACK_SIZE;
+    }
+    return count;
+}
+
+void vga_scrollback_reset(void) {
+    memset(scrollback_buf, 0, VGA_SCROLLBACK_SIZE);
+    scrollback_pos = 0;
+    scrollback_count = 0;
+}
+
+int vga_scrollback_available(void) {
+    return scrollback_count;
 }

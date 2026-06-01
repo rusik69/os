@@ -169,9 +169,28 @@ static struct {
     int  count;
 } xattr_table[XATTR_PATH_TABLE];
 
+/* ── ACL storage ──────────────────────────────────────────────── */
+#define VFS_ACL_TABLE 16
+static struct {
+    char path[64];
+    struct posix_acl acl;
+    int in_use;
+} acl_table[VFS_ACL_TABLE];
+
+/* ── Bind mount storage ───────────────────────────────────────── */
+#define VFS_MAX_BIND_MOUNTS 4
+static struct {
+    char source[64];
+    char target[64];
+    int  in_use;
+} bind_mounts[VFS_MAX_BIND_MOUNTS];
+
 int vfs_mount(const char *mountpoint, struct vfs_ops *ops, void *priv) {
     return vfs_mount_ex(mountpoint, ops, priv, 0);
 }
+
+/* Find the best-matching mount for a path */
+static struct vfs_mount *resolve(const char *path);
 
 int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int flags) {
     if (num_mounts >= VFS_MAX_MOUNTS) return -1;
@@ -182,6 +201,22 @@ int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int fl
     mounts[num_mounts].ops  = ops;
     mounts[num_mounts].priv = priv;
     mounts[num_mounts].flags = flags;
+    mounts[num_mounts].is_bind = 0;
+    mounts[num_mounts].bind_source[0] = '\0';
+
+    /* Handle MS_BIND: duplicate the source entry and redirect VFS ops */
+    if (flags & MS_BIND) {
+        /* Find the source mount */
+        struct vfs_mount *src = resolve(mountpoint);
+        if (src) {
+            mounts[num_mounts].ops = src->ops;
+            mounts[num_mounts].priv = src->priv;
+            mounts[num_mounts].is_bind = 1;
+            strncpy(mounts[num_mounts].bind_source, src->mountpoint, 63);
+            mounts[num_mounts].bind_source[63] = '\0';
+        }
+    }
+
     num_mounts++;
     return 0;
 }
@@ -561,6 +596,81 @@ int vfs_listxattr(const char *path, char *buf, int size) {
         return pos;
     }
     return 0; /* no xattrs */
+}
+
+/* ── Bind mount support ────────────────────────────────────────── */
+
+int vfs_bind_mount(const char *src, const char *target) {
+    if (!src || !target) return -1;
+    char ap_src[128]; vfs_abs_path(src, ap_src, sizeof(ap_src));
+    char ap_tgt[128]; vfs_abs_path(target, ap_tgt, sizeof(ap_tgt));
+
+    /* Find free slot */
+    for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
+        if (!bind_mounts[i].in_use) {
+            strncpy(bind_mounts[i].source, ap_src, 63);
+            bind_mounts[i].source[63] = '\0';
+            strncpy(bind_mounts[i].target, ap_tgt, 63);
+            bind_mounts[i].target[63] = '\0';
+            bind_mounts[i].in_use = 1;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int vfs_is_bind_mount(const char *path) {
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
+        if (bind_mounts[i].in_use && strcmp(bind_mounts[i].target, ap) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+const char *vfs_bind_source(const char *path) {
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    for (int i = 0; i < VFS_MAX_BIND_MOUNTS; i++) {
+        if (bind_mounts[i].in_use && strcmp(bind_mounts[i].target, ap) == 0)
+            return bind_mounts[i].source;
+    }
+    return NULL;
+}
+
+/* ── POSIX ACL ─────────────────────────────────────────────────── */
+
+int vfs_set_acl(const char *path, struct posix_acl *acl) {
+    if (!path || !acl) return -EINVAL;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Find existing or free slot */
+    int found = -1;
+    for (int i = 0; i < VFS_ACL_TABLE; i++) {
+        if (!acl_table[i].in_use) { found = i; break; }
+        if (strcmp(acl_table[i].path, ap) == 0) { found = i; break; }
+    }
+    if (found < 0) return -ENOSPC;
+
+    if (!acl_table[found].in_use) {
+        strncpy(acl_table[found].path, ap, 63);
+        acl_table[found].path[63] = '\0';
+    }
+    acl_table[found].acl = *acl;
+    acl_table[found].in_use = 1;
+    return 0;
+}
+
+int vfs_get_acl(const char *path, struct posix_acl *acl) {
+    if (!path || !acl) return -EINVAL;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    for (int i = 0; i < VFS_ACL_TABLE; i++) {
+        if (acl_table[i].in_use && strcmp(acl_table[i].path, ap) == 0) {
+            *acl = acl_table[i].acl;
+            return 0;
+        }
+    }
+    return -ENODATA;
 }
 
 /* ── Access time update ─────────────────────────────────────────── */

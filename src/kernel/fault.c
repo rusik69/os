@@ -203,3 +203,33 @@ void kpanic(const char *fmt, ...) {
     for (;;) __asm__ volatile("hlt");
     __builtin_unreachable();
 }
+
+/* ── Per-task stack usage ─────────────────────────────────────── */
+
+uint64_t task_stack_usage(struct process *p) {
+    if (!p || p->kernel_stack == 0 || p->stack_top == 0) return 0;
+    /* Read current RSP */
+    uint64_t rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    /* If we're not running in this process's context, try to estimate */
+    struct process *cur = process_get_current();
+    if (cur != p) {
+        /* Return last known watermark */
+        return p->stack_watermark;
+    }
+    /* Stack usage = current stack top - current RSP */
+    uint64_t used = p->stack_top - rsp;
+    /* Update watermark (lowest RSP = deepest stack usage) */
+    if (rsp < p->stack_watermark || p->stack_watermark == 0)
+        p->stack_watermark = rsp;
+    return used;
+}
+
+/* Update stack watermark on context switch - called from scheduler */
+void task_update_stack_watermark(struct process *p) {
+    if (!p) return;
+    uint64_t rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    if (rsp < p->stack_watermark || p->stack_watermark == 0)
+        p->stack_watermark = rsp;
+}

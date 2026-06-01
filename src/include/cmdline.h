@@ -28,4 +28,8 @@ int cmdline_get_int(const char *key, int default_val);
 /* Get the full raw cmdline */
 const char *cmdline_raw(void);
 
+/* CMOS NVRAM persistence for kernel cmdline (64 bytes max) */
+int cmdline_nvram_save(const char *cmdline);
+int cmdline_nvram_restore(char *buf, int max_len);
+
 #endif

@@ -3,10 +3,15 @@
 #include "cmdline.h"
 #include "string.h"
 #include "printf.h"
+#include "cmos.h"
 
 #define CMDLINE_MAX_PARAMS 64
 #define CMDLINE_MAX_KEY    64
 #define CMDLINE_MAX_VAL    256
+
+/* CMOS NVRAM offsets for kernel cmdline storage */
+#define CMDLINE_NVRAM_OFFSET 0  /* offset 0..63 maps to CMOS reg 14..77 */
+#define CMDLINE_NVRAM_LEN    64
 
 static char raw_cmdline[1024];
 static int num_params = 0;
@@ -88,4 +93,36 @@ int cmdline_get_int(const char *key, int default_val) {
 
 const char *cmdline_raw(void) {
     return raw_cmdline;
+}
+
+/* ── CMOS NVRAM persistence ─────────────────────────────────── */
+
+int cmdline_nvram_save(const char *cmdline) {
+    if (!cmdline) return -1;
+    uint8_t buf[CMDLINE_NVRAM_LEN];
+    memset(buf, 0, CMDLINE_NVRAM_LEN);
+    int len = (int)strlen(cmdline);
+    if (len > CMDLINE_NVRAM_LEN - 1) len = CMDLINE_NVRAM_LEN - 1;
+    memcpy(buf, cmdline, (size_t)len);
+    buf[len] = '\0';
+    /* Write to CMOS NVRAM */
+    for (int i = 0; i < CMDLINE_NVRAM_LEN; i++) {
+        cmos_nvram_write((uint8_t)(CMDLINE_NVRAM_OFFSET + i), buf[i]);
+    }
+    return 0;
+}
+
+int cmdline_nvram_restore(char *buf, int max_len) {
+    if (!buf || max_len <= 0) return -1;
+    uint8_t raw[CMDLINE_NVRAM_LEN];
+    /* Read from CMOS NVRAM */
+    for (int i = 0; i < CMDLINE_NVRAM_LEN; i++) {
+        raw[i] = cmos_nvram_read((uint8_t)(CMDLINE_NVRAM_OFFSET + i));
+    }
+    raw[CMDLINE_NVRAM_LEN - 1] = '\0';
+    int len = (int)strlen((const char *)raw);
+    if (len > max_len - 1) len = max_len - 1;
+    memcpy(buf, raw, (size_t)len);
+    buf[len] = '\0';
+    return len;
 }

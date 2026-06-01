@@ -2,6 +2,7 @@
 #define FAULT_H
 
 #include "types.h"
+#include "process.h"
 
 /* Register the page fault handler (ISR 14). Call once after idt_init(). */
 void fault_init(void);
@@ -20,5 +21,9 @@ int check_kernel_stack_depth(void);
 /* Page fault tracing: when enabled, print detailed info for every page fault */
 extern int page_fault_trace;
 void page_fault_trace_enable(int enable);
+
+/* Per-task stack usage */
+uint64_t task_stack_usage(struct process *p);
+void task_update_stack_watermark(struct process *p);
 
 #endif

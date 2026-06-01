@@ -384,6 +384,9 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         cur->syscall_caps[i] &= cur->cap_bset[i];
     }
 
+    /* Apply securebits and capabilities-on-exec rules */
+    process_exec_caps();
+
     /* When NO_NEW_PRIVS is set, execve can't gain new capabilities - 
      * the bounding set AND operation above already enforces this. */
 

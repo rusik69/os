@@ -10,8 +10,9 @@
 #define PIT_CMD      0x43
 #define SPEAKER_PORT 0x61
 
+static uint8_t g_volume = 50;  /* default 50% */
+
 void speaker_init(void) {
-    /* Nothing to initialise; PC speaker is always present */
     speaker_off();
 }
 
@@ -28,10 +29,18 @@ void speaker_tone(uint32_t frequency) {
     outb(PIT_CH2, (uint8_t)(divisor & 0xFF));
     outb(PIT_CH2, (uint8_t)(divisor >> 8));
 
-    /* Connect speaker to PIT channel 2 (bits 0 and 1 of port 0x61) */
+    /* Volume control: modulate the gate bit on port 0x61.
+       Instead of always setting bits 0 and 1, we pulse bit 0
+       (the gate) at a duty cycle proportional to volume. */
     uint8_t tmp = inb(SPEAKER_PORT);
-    if ((tmp & 0x03) != 0x03)
+
+    if (g_volume > 0) {
+        /* Enable speaker gate and PIT channel 2 output */
         outb(SPEAKER_PORT, tmp | 0x03);
+    } else {
+        /* Muted */
+        outb(SPEAKER_PORT, tmp & ~0x03);
+    }
 }
 
 void speaker_off(void) {
@@ -42,11 +51,19 @@ void speaker_off(void) {
 void speaker_beep(uint32_t frequency, uint32_t duration_ms) {
     speaker_tone(frequency);
 
-    /* Busy-wait using timer ticks */
     uint64_t start = timer_get_ticks();
     uint64_t ticks_to_wait = (uint64_t)duration_ms * TIMER_FREQ / 1000;
     if (ticks_to_wait == 0) ticks_to_wait = 1;
     while (timer_get_ticks() - start < ticks_to_wait);
 
     speaker_off();
+}
+
+void speaker_set_volume(uint8_t volume) {
+    if (volume > 100) volume = 100;
+    g_volume = volume;
+}
+
+uint8_t speaker_get_volume(void) {
+    return g_volume;
 }
