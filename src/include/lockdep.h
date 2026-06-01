@@ -2,6 +2,7 @@
 #define LOCKDEP_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /*
  * Lockdep — Lock Dependency Validator.
@@ -50,5 +51,20 @@ void lockdep_dump(void);
 
 /* Validate that no locks are held at process exit */
 void lockdep_check_exit(void);
+
+/* ── Spinlock owner tracking and lockup detection ───────────────── */
+
+/* Register ownership of a spinlock (called by spinlock_acquire internals) */
+void spinlock_register_owner(spinlock_t *lock, uint64_t caller_rip);
+
+/* Clear ownership of a spinlock (called by spinlock_release internals) */
+void spinlock_unregister_owner(spinlock_t *lock);
+
+/* Diagnose a spinlock lockup — called from spinlock_acquire when
+ * SPINLOCK_LOCKUP_THRESHOLD is exceeded. */
+void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count);
+
+/* Forcibly release all spinlocks held by the current CPU (panic path) */
+void spinlock_release_all_on_panic(void);
 
 #endif

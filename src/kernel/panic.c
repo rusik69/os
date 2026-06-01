@@ -11,6 +11,7 @@
 #include "sysrq.h"
 #include "kallsyms.h"
 #include "pstore.h"
+#include "notifier.h"
 
 /*
  * Save kernel panic state to the persistent storage region (pstore)
@@ -283,6 +284,9 @@ void panic(const char *fmt, ...) {
 
     dump_regs();
     dump_stack();
+
+    /* Notify panic notifier chain (releases spinlocks, etc.) */
+    notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
 
     kprintf("=== SYSTEM HALTED ===\n");
 
