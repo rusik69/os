@@ -117,9 +117,18 @@ static int emit_call(CompilerState *cc) {
     emit1(cc, 0xE8); int off = cc->code_len; emit4(cc, 0); return off;
 }
 
-static void emit_push_rax(CompilerState *cc) { emit1(cc, 0x50); }
-static void emit_pop_rcx(CompilerState *cc)  { emit1(cc, 0x59); }
-static void emit_pop_rdx(CompilerState *cc)  { emit1(cc, 0x5A); }
+static void emit_push_rax(CompilerState *cc) {
+    if (cc->unsigned_depth < 64) cc->unsigned_stack[cc->unsigned_depth++] = cc->last_unsigned;
+    emit1(cc, 0x50);
+}
+static void emit_pop_rcx(CompilerState *cc)  {
+    if (cc->unsigned_depth > 0) cc->last_unsigned = cc->unsigned_stack[--cc->unsigned_depth];
+    emit1(cc, 0x59);
+}
+static void emit_pop_rdx(CompilerState *cc)  {
+    if (cc->unsigned_depth > 0) cc->last_unsigned = cc->unsigned_stack[--cc->unsigned_depth];
+    emit1(cc, 0x5A);
+}
 static void emit_xor_rax(CompilerState *cc)  { emit1(cc, 0x31); emit1(cc, 0xC0); }
 
 static void emit_mov_rax_imm64(CompilerState *cc, uint64_t v) {
@@ -356,7 +365,8 @@ static int is_type_kw(TokenType t) {
     return t == TK_INT || t == TK_CHAR || t == TK_VOID ||
            t == TK_UNSIGNED || t == TK_LONG || t == TK_SHORT ||
            t == TK_STRUCT || t == TK_UNION || t == TK_CONST || t == TK_STATIC ||
-           t == TK_EXTERN || t == TK_INLINE || t == TK_VOLATILE || t == TK_RESTRICT;
+           t == TK_EXTERN || t == TK_INLINE || t == TK_VOLATILE || t == TK_RESTRICT ||
+           t == TK__ALIGNAS || t == TK__NORETURN || t == TK__THREAD_LOCAL;
 }
 
 /* Returns 1 if cur token starts a type (keyword or typedef name) */
@@ -380,7 +390,9 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
     /* qualifiers/storage that don't affect type */
     while (cur(cc)->type == TK_CONST || cur(cc)->type == TK_STATIC ||
            cur(cc)->type == TK_EXTERN || cur(cc)->type == TK_INLINE ||
-           cur(cc)->type == TK_VOLATILE || cur(cc)->type == TK_RESTRICT)
+           cur(cc)->type == TK_VOLATILE || cur(cc)->type == TK_RESTRICT ||
+           cur(cc)->type == TK__ALIGNAS || cur(cc)->type == TK__NORETURN ||
+           cur(cc)->type == TK__THREAD_LOCAL)
         advance(cc);
 
     int is_unsigned = 0;
@@ -455,9 +467,10 @@ static int alloc_local(CompilerState *cc, const char *name, TypeDesc *td, int ar
 /*  Compare + setcc helper                                             */
 /* ------------------------------------------------------------------ */
 
-static void emit_cmp_setcc(CompilerState *cc, uint8_t op) {
+static void emit_cmp_setcc(CompilerState *cc, uint8_t s_op, uint8_t u_op) {
     emit_pop_rcx(cc);
     emit1(cc,0x48);emit1(cc,0x39);emit1(cc,0xC1); /* cmp rcx,rax */
+    uint8_t op = cc->last_unsigned ? u_op : s_op;
     emit1(cc,0x0F);emit1(cc,op);emit1(cc,0xC0);    /* setXX al */
     emit1(cc,0x48);emit1(cc,0x0F);emit1(cc,0xB6);emit1(cc,0xC0); /* movzx rax,al */
 }
@@ -567,6 +580,28 @@ static void parse_primary(CompilerState *cc) {
         return;
     }
 
+    /* _Alignof(type) */
+    if (t->type == TK__ALIGNOF) {
+        advance(cc);
+        int sz = 8;
+        expect(cc, TK_LPAREN, "expected '(' after _Alignof");
+        if (starts_type(cc)) {
+            TypeDesc td; parse_type(cc, &td);
+            sz = type_sizeof(cc, &td);
+            if (sz < 1) sz = 1;
+        } else {
+            int depth = 1;
+            while (cur(cc)->type != TK_EOF && depth > 0) {
+                if (cur(cc)->type == TK_LPAREN) depth++;
+                else if (cur(cc)->type == TK_RPAREN) depth--;
+                if (depth > 0) advance(cc);
+            }
+        }
+        expect(cc, TK_RPAREN, "expected ')' after _Alignof");
+        emit_mov_rax_imm32(cc, sz);
+        return;
+    }
+
     /* parenthesised expression or cast */
     if (t->type == TK_LPAREN) {
         advance(cc);
@@ -575,7 +610,55 @@ static void parse_primary(CompilerState *cc) {
             TypeDesc cast_td;
             parse_type(cc, &cast_td);
             expect(cc, TK_RPAREN, "expected ')' after cast type");
-            parse_primary(cc); /* value in rax */
+            /* Compound literal: (type){ init } */
+            if (cur(cc)->type == TK_LBRACE) {
+                int esz = type_sizeof(cc, &cast_td);
+                if (esz < 1) esz = 8;
+                cc->local_frame += esz;
+                int off = -(int)cc->local_frame;
+                advance(cc);
+                int idx = 0;
+                while (cur(cc)->type != TK_RBRACE && cur(cc)->type != TK_EOF && !cc->error) {
+                    if (cur(cc)->type == TK_DOT) {
+                        advance(cc);
+                        if (cur(cc)->type == TK_IDENT) {
+                            const char *fname = cur(cc)->sval; advance(cc);
+                            if (cur(cc)->type == TK_ASSIGN) advance(cc);
+                            int foff = -1;
+                            if (cast_td.struct_idx >= 0 && cast_td.struct_idx < cc->nstructs) {
+                                StructDef *sd = &cc->structs[cast_td.struct_idx];
+                                for (int fi = 0; fi < sd->nfields; fi++)
+                                    if (strcmp(sd->fields[fi].name, fname) == 0)
+                                        { foff = sd->fields[fi].offset; break; }
+                            }
+                            parse_expr(cc);
+                            emit_push_rax(cc);
+                            emit_lea_local(cc, off);
+                            if (foff > 0)
+                                emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)foff);
+                            emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
+                            emit1(cc, 0x58);
+                            emit_store_via_rcx(cc);
+                        }
+                    } else {
+                        parse_expr(cc);
+                        emit_push_rax(cc);
+                        emit_lea_local(cc, off);
+                        if (idx > 0 && esz > 1)
+                            emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)(idx * esz));
+                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
+                        emit1(cc, 0x58);
+                        if (esz == 1) emit_store_via_rcx_byte(cc);
+                        else          emit_store_via_rcx(cc);
+                        idx++;
+                    }
+                    if (cur(cc)->type == TK_COMMA) advance(cc);
+                }
+                expect(cc, TK_RBRACE, "expected '}' after compound literal");
+                emit_lea_local(cc, off);
+                return;
+            }
+            /* Normal cast */
             /* For char cast: truncate to 8-bit */
             if (type_is_char(&cast_td)) {
                 emit1(cc,0x0F);emit1(cc,0xB6);emit1(cc,0xC0); /* movzx eax,al */
@@ -844,8 +927,18 @@ static void parse_primary(CompilerState *cc) {
             cc_error(cc, "not a struct pointer for ->"); return;
         }
 
+        /* __func__ — return address of function name string */
+        if (strcmp(name, "__func__") == 0) {
+            if (cc->func_name_data_off >= 0)
+                emit_mov_rax_imm64(cc, data_vaddr(cc->func_name_data_off));
+            else
+                emit_xor_rax(cc);
+            return;
+        }
+
         /* plain variable load */
         TypeDesc td; emit_sym_load(cc, name, &td);
+        cc->last_unsigned = td.is_unsigned;
         return;
     }
 
@@ -1237,12 +1330,12 @@ static void parse_expr_prec(CompilerState *cc, int prec) {
             emit1(cc,0x48);emit1(cc,0xD3);emit1(cc,0xFA); /* sar rdx,cl */
             emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xD0);
             break;
-        case TK_EQ:  emit_cmp_setcc(cc,0x94); break;
-        case TK_NEQ: emit_cmp_setcc(cc,0x95); break;
-        case TK_LT:  emit_cmp_setcc(cc,0x9C); break;
-        case TK_GT:  emit_cmp_setcc(cc,0x9F); break;
-        case TK_LEQ: emit_cmp_setcc(cc,0x9E); break;
-        case TK_GEQ: emit_cmp_setcc(cc,0x9D); break;
+        case TK_EQ:  emit_cmp_setcc(cc,0x94,0x94); break;
+            case TK_NEQ: emit_cmp_setcc(cc,0x95,0x95); break;
+            case TK_LT:  emit_cmp_setcc(cc,0x9C,0x92); break;
+            case TK_GT:  emit_cmp_setcc(cc,0x9F,0x97); break;
+            case TK_LEQ: emit_cmp_setcc(cc,0x9E,0x96); break;
+            case TK_GEQ: emit_cmp_setcc(cc,0x9D,0x93); break;
         default: break;
         }
     }
@@ -1298,23 +1391,54 @@ static void parse_var_decl(CompilerState *cc, TypeDesc *base_td) {
             Symbol *s = find_local(cc, vname);
 
             if (cur(cc)->type == TK_LBRACE && s) {
-                /* Array initializer: int a[] = {1, 2, 3}; */
+                /* Array/struct initializer with optional designated inits */
                 advance(cc); /* skip { */
                 int idx = 0;
                 int esz = type_sizeof(cc, &td);
                 if (esz < 1) esz = 8;
+                int is_struct = (td.kind == TY_STRUCT && td.struct_idx >= 0 &&
+                                 td.struct_idx < cc->nstructs);
+                StructDef *init_sd = is_struct ? &cc->structs[td.struct_idx] : 0;
                 while (cur(cc)->type != TK_RBRACE && cur(cc)->type != TK_EOF && !cc->error) {
-                    parse_expr(cc); /* value in rax */
-                    emit_push_rax(cc); /* save value */
-                    emit_lea_local(cc, s->offset); /* rax = &arr[0] */
-                    if (idx > 0) {
-                        emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)(idx*esz));
+                    if (cur(cc)->type == TK_DOT && init_sd) {
+                        /* Designated: .field = expr */
+                        advance(cc);
+                        if (cur(cc)->type == TK_IDENT) {
+                            const char *fname = cur(cc)->sval; advance(cc);
+                            if (cur(cc)->type == TK_ASSIGN) advance(cc);
+                            int foff = -1;
+                            int fsz = 8;
+                            for (int fi = 0; fi < init_sd->nfields; fi++) {
+                                if (strcmp(init_sd->fields[fi].name, fname) == 0) {
+                                    foff = init_sd->fields[fi].offset;
+                                    fsz = type_sizeof(cc, &init_sd->fields[fi].type);
+                                    break;
+                                }
+                            }
+                            parse_expr(cc);
+                            emit_push_rax(cc);
+                            emit_lea_local(cc, s->offset);
+                            if (foff > 0)
+                                emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)foff);
+                            emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
+                            emit1(cc, 0x58);
+                            if (fsz == 1) emit_store_via_rcx_byte(cc);
+                            else          emit_store_via_rcx(cc);
+                        }
+                    } else {
+                        /* Positional initializer */
+                        parse_expr(cc); /* value in rax */
+                        emit_push_rax(cc); /* save value */
+                        emit_lea_local(cc, s->offset); /* rax = &arr[0] */
+                        if (idx > 0) {
+                            emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)(idx*esz));
+                        }
+                        emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1); /* mov rcx,rax */
+                        emit1(cc, 0x58); /* pop rax (value) */
+                        if (esz == 1) emit_store_via_rcx_byte(cc);
+                        else          emit_store_via_rcx(cc);
+                        idx++;
                     }
-                    emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1); /* mov rcx,rax */
-                    emit1(cc, 0x58); /* pop rax (value) */
-                    if (esz == 1) emit_store_via_rcx_byte(cc);
-                    else          emit_store_via_rcx(cc);
-                    idx++;
                     if (cur(cc)->type == TK_COMMA) advance(cc);
                 }
                 expect(cc, TK_RBRACE, "expected '}'");
@@ -1578,6 +1702,26 @@ static void parse_stmt(CompilerState *cc,
         return;
     }
 
+    /* _Static_assert inside function body */
+    if (t->type == TK__STATIC_ASSERT) {
+        advance(cc);
+        expect(cc, TK_LPAREN, "expected '(' after _Static_assert");
+        int assert_fail = 0;
+        if (cur(cc)->type == TK_INTLIT && cur(cc)->ival == 0)
+            assert_fail = 1;
+        while (cur(cc)->type != TK_EOF && cur(cc)->type != TK_RPAREN &&
+               cur(cc)->type != TK_COMMA) advance(cc);
+        if (cur(cc)->type == TK_COMMA) {
+            advance(cc);
+            if (cur(cc)->type == TK_STRLIT) advance(cc);
+        }
+        expect(cc, TK_RPAREN, "expected ')' after _Static_assert");
+        expect(cc, TK_SEMI, "expected ';' after _Static_assert");
+        if (assert_fail)
+            cc_error(cc, "_Static_assert failed");
+        return;
+    }
+
     /* continue */
     if (t->type == TK_CONTINUE) {
         advance(cc);
@@ -1743,6 +1887,11 @@ static void parse_function(CompilerState *cc, const char *fname, TypeDesc *ret_t
     expect(cc, TK_RPAREN, "expected ')'");
     finfo->nparams = nparam;
 
+    /* Set up __func__ predefined identifier string in data section */
+    cc->current_func_name[0] = '\0';
+    strncpy(cc->current_func_name, fname, sizeof(cc->current_func_name) - 1);
+    cc->func_name_data_off = data_add_string(cc, fname);
+
     /* body */
     expect(cc, TK_LBRACE, "expected '{'");
     int dummy_br[64]; int dummy_nb=0;
@@ -1874,6 +2023,8 @@ void cc_parse(CompilerState *cc) {
     cc->ntypedefs = 0;
     cc->main_offset = -1;
     cc->local_frame = 0;
+    cc->last_unsigned = 0;
+    cc->unsigned_depth = 0;
 
     cc_seed_builtin_typedefs(cc);
 
@@ -1930,6 +2081,26 @@ void cc_parse(CompilerState *cc) {
                 advance(cc);
             }
             if (cur(cc)->type == TK_SEMI) { advance(cc); continue; }
+            continue;
+        }
+
+        /* _Static_assert(expr, "msg"); */
+        if (t->type == TK__STATIC_ASSERT) {
+            advance(cc);
+            expect(cc, TK_LPAREN, "expected '(' after _Static_assert");
+            int assert_fail = 0;
+            if (cur(cc)->type == TK_INTLIT && cur(cc)->ival == 0)
+                assert_fail = 1;
+            while (cur(cc)->type != TK_EOF && cur(cc)->type != TK_RPAREN &&
+                   cur(cc)->type != TK_COMMA) advance(cc);
+            if (cur(cc)->type == TK_COMMA) {
+                advance(cc);
+                if (cur(cc)->type == TK_STRLIT) advance(cc);
+            }
+            expect(cc, TK_RPAREN, "expected ')' after _Static_assert");
+            expect(cc, TK_SEMI, "expected ';' after _Static_assert");
+            if (assert_fail)
+                cc_error(cc, "_Static_assert failed");
             continue;
         }
 

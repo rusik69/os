@@ -30,6 +30,7 @@ typedef enum {
     TK_INT, TK_CHAR, TK_VOID, TK_UNSIGNED, TK_LONG, TK_SHORT,
     TK_STRUCT, TK_TYPEDEF, TK_ENUM, TK_CONST, TK_EXTERN, TK_INLINE,
     TK_STATIC, TK_UNION, TK_VOLATILE, TK_RESTRICT,
+    TK__STATIC_ASSERT, TK__ALIGNOF, TK__ALIGNAS, TK__NORETURN, TK__THREAD_LOCAL,
     /* control flow */
     TK_RETURN, TK_IF, TK_ELSE, TK_WHILE, TK_DO, TK_FOR,
     TK_BREAK, TK_CONTINUE, TK_SWITCH, TK_CASE, TK_DEFAULT, TK_GOTO,
@@ -212,6 +213,11 @@ typedef struct {
     int      main_offset;  /* offset of main() in code[] */
 
     char     filename[256]; /* source filename for __FILE__ */
+    char     current_func_name[64]; /* current function name for __func__ */
+    int      func_name_data_off;    /* data offset of __func__ string */
+    int      last_unsigned;         /* 1 if last expr result is unsigned */
+    int      unsigned_stack[64];    /* saved unsigned flags for pushed values */
+    int      unsigned_depth;        /* depth of unsigned stack */
 } CompilerState;
 
 void cc_lex(CompilerState *cc);

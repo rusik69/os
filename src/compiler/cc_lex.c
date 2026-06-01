@@ -286,6 +286,19 @@ void cc_lex(CompilerState *cc) {
                 while (i < len && s[i] != '\n') i++;
             } else if (strcmp(dir, "endif") == 0) {
                 while (i < len && s[i] != '\n') i++;
+            } else if (strcmp(dir, "warning") == 0) {
+                /* #warning "message" — print warning, continue */
+                kprintf("cc warning: ");
+                while (i < len && (s[i]==' '||s[i]=='\t')) i++;
+                if (i < len && s[i] == '"') {
+                    i++;
+                    while (i < len && s[i] != '"') kprintf("%c", s[i++]);
+                    if (i < len && s[i] == '"') i++;
+                } else {
+                    while (i < len && s[i] != '\n') kprintf("%c", s[i++]);
+                }
+                kprintf("\n");
+                while (i < len && s[i] != '\n') i++;
             } else if (strcmp(dir, "error") == 0) {
                 /* #error "message" — stop with error */
                 while (i < len && (s[i]==' '||s[i]=='\t')) i++;
@@ -311,6 +324,10 @@ void cc_lex(CompilerState *cc) {
                 while (i < len && s[i] != '\n') i++;
             } else if (strcmp(dir, "pragma") == 0) {
                 /* #pragma ... — silently skip (handles once, pack, etc.) */
+                while (i < len && s[i] != '\n') i++;
+            } else if (strcmp(dir, "warning") == 0 || strcmp(dir, "line") == 0) {
+                /* #warning / #line — already handled above; just skip */
+                /* #line — skip silently */
                 while (i < len && s[i] != '\n') i++;
             } else {
                 /* unknown directive (#include, etc.) — skip line */
@@ -423,6 +440,28 @@ void cc_lex(CompilerState *cc) {
             if (t->type == TK_IDENT && strcmp(t->sval, "__LINE__") == 0) {
                 t->type = TK_INTLIT;
                 t->ival = line;
+            }
+            /* __DATE__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__DATE__") == 0) {
+                t->type = TK_STRLIT;
+                strncpy(t->sval, __DATE__, 63);
+                t->sval[63] = '\0';
+            }
+            /* __TIME__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__TIME__") == 0) {
+                t->type = TK_STRLIT;
+                strncpy(t->sval, __TIME__, 63);
+                t->sval[63] = '\0';
+            }
+            /* __STDC_VERSION__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__STDC_VERSION__") == 0) {
+                t->type = TK_INTLIT;
+                t->ival = 201112L;
+            }
+            /* __STDC__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__STDC__") == 0) {
+                t->type = TK_INTLIT;
+                t->ival = 1;
             }
             /* macro expansion */
             if (t->type == TK_IDENT) {
