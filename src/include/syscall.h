@@ -488,11 +488,6 @@ struct sysinfo {
 #define RUSAGE_SELF     0
 #define RUSAGE_CHILDREN -1
 
-struct timeval {
-    uint64_t tv_sec;
-    uint64_t tv_usec;
-};
-
 struct rusage {
     struct timeval ru_utime;    /* user time used */
     struct timeval ru_stime;    /* system time used */
@@ -513,6 +508,8 @@ struct rusage {
 };
 
 /* ── POSIX timer signal event ───────────────────────────────── */
+#ifndef SIGEVENT_DEFINED
+#define SIGEVENT_DEFINED
 struct sigevent {
     int      sigev_notify;    /* notification type */
     int      sigev_signo;     /* signal number */
@@ -521,6 +518,7 @@ struct sigevent {
         int   sigev_notify_attributes;
     };
 };
+#endif
 
 #define SIGEV_SIGNAL   0
 #define SIGEV_NONE     1
@@ -530,12 +528,15 @@ struct sigevent {
 typedef int timer_t;
 
 /* ── POSIX message queue structures ──────────────────────────── */
+#ifndef MQ_ATTR_DEFINED
+#define MQ_ATTR_DEFINED
 struct mq_attr {
     uint64_t mq_flags;
     uint64_t mq_maxmsg;
     uint64_t mq_msgsize;
     uint64_t mq_curmsgs;
 };
+#endif
 
 /* rlimit resources (Linux-compatible) */
 #define RLIMIT_AS          0   /* Address space limit (bytes) */

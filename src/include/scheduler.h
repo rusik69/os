@@ -3,6 +3,12 @@
 
 #include "process.h"
 
+/* Scheduling policies */
+#define SCHED_OTHER  0
+#define SCHED_FIFO   1
+#define SCHED_RR     2
+#define SCHED_BATCH  3
+
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 #define SCHED_LEVELS 4
 

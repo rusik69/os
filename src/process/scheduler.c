@@ -322,6 +322,12 @@ void schedule(void) {
 }
 
 void scheduler_yield(void) {
+    /* Priority boost: voluntarily yielding processes get a temporary
+     * priority bump to discourage busy-waiting and improve interactivity */
+    struct process *cur = process_get_current();
+    if (cur && cur->priority > 0) {
+        cur->priority--; /* boost by one level */
+    }
     schedule();
 }
 
@@ -366,6 +372,9 @@ void scheduler_tick(int was_user) {
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
             cur->ticks_remaining = time_slices[lvl];
+        } else if (cur->sched_policy == SCHED_BATCH) {
+            /* SCHED_BATCH: longer timeslices, lower priority (level 3) */
+            cur->ticks_remaining = time_slices[3] * 3;
         } else {
             /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
             int lvl = (int)cur->priority;

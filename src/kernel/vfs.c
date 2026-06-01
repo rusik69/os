@@ -8,6 +8,7 @@
 #include "signal.h"
 #include "syscall.h"
 #include "fsnotify.h"
+#include "tmpfs.h"
 
 #define EROFS_KERNEL 30
 
@@ -721,6 +722,83 @@ int vfs_truncate(const char *path, uint32_t len) {
     return -ENOSYS;
 }
 
+/* nlink tracking table */
+#define NLINK_TABLE_SIZE 128
+static struct {
+    char path[128];
+    uint32_t nlink;
+    int in_use;
+} nlink_table[NLINK_TABLE_SIZE];
+
+static uint32_t vfs_get_nlink(const char *path) {
+    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
+        if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0)
+            return nlink_table[i].nlink;
+    }
+    return 1; /* default: 1 link */
+}
+
+static void vfs_inc_nlink(const char *path) {
+    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
+        if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0) {
+            nlink_table[i].nlink++;
+            return;
+        }
+    }
+    /* Create new entry */
+    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
+        if (!nlink_table[i].in_use) {
+            strncpy(nlink_table[i].path, path, 127);
+            nlink_table[i].path[127] = '\0';
+            nlink_table[i].nlink = 2; /* existing link + new link */
+            nlink_table[i].in_use = 1;
+            return;
+        }
+    }
+}
+
+static void vfs_dec_nlink(const char *path) {
+    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
+        if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0) {
+            if (nlink_table[i].nlink > 0) nlink_table[i].nlink--;
+            return;
+        }
+    }
+}
+
+/* ── vfs_link: create a hard link ────────────────────────────────── */
+int vfs_link(const char *oldpath, const char *newpath) {
+    if (!oldpath || !newpath) return -EINVAL;
+    char ap_old[128], ap_new[128];
+    vfs_abs_path(oldpath, ap_old, sizeof(ap_old));
+    vfs_abs_path(newpath, ap_new, sizeof(ap_new));
+    
+    /* Read old file data and create new entry */
+    struct vfs_stat st;
+    if (vfs_stat(ap_old, &st) < 0) return -ENOENT;
+    if (vfs_stat(ap_new, &st) == 0) return -EEXIST;
+    
+    uint8_t *buf = kmalloc(st.size + 1);
+    if (!buf) return -ENOMEM;
+    
+    uint32_t out_size = 0;
+    int ret = vfs_read(ap_old, buf, st.size, &out_size);
+    if (ret < 0) { kfree(buf); return ret; }
+    
+    ret = vfs_create(ap_new, st.type);
+    if (ret < 0) { kfree(buf); return ret; }
+    
+    ret = vfs_write(ap_new, buf, out_size);
+    kfree(buf);
+    
+    if (ret == 0) {
+        vfs_inc_nlink(ap_old);
+        vfs_inc_nlink(ap_new);
+    }
+    
+    return ret;
+}
+
 void vfs_init(void) {
     num_mounts = 0;
     /* Mount the SMFS filesystem as root */
@@ -729,4 +807,13 @@ void vfs_init(void) {
     vfs_mount("/proc", &procfs_ops, NULL);
     /* Mount the /dev device filesystem */
     vfs_mount("/dev", &devfs_ops, NULL);
+    /* Mount tmpfs as /dev/shm for POSIX shared memory & semaphores */
+    tmpfs_mount();
+    vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);
+    /* Initialize nlink tracking */
+    memset(nlink_table, 0, sizeof(nlink_table));
+    /* Initialize file locking */
+    memset(file_locks, 0, sizeof(file_locks));
+    /* Initialize xattr */
+    memset(xattr_table, 0, sizeof(xattr_table));
 }

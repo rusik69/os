@@ -47,7 +47,8 @@
 #define IP_MTU          14
 #define IP_OPTIONS      1
 #define IP_RECVTTL      33
-#define IP_RECVDSTADDR  25
+#define IP_RECVDSTADDR 20
+#define IP_FREEBIND 21
 
 #define ETH_P_ALL       0x0003
 

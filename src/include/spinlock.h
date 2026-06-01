@@ -8,14 +8,22 @@ typedef volatile int spinlock_t;
 
 #define SPINLOCK_INIT 0
 
+/* Adaptive spinlock with exponential backoff */
 static inline void spinlock_init(spinlock_t *lock) {
     *lock = 0;
 }
 
 static inline void spinlock_acquire(spinlock_t *lock) {
+    int backoff = 1;
+    const int max_backoff = 256;
+    
     while (__sync_lock_test_and_set(lock, 1)) {
-        /* Wait (PAUSE instruction for hyper-threading efficiency) */
-        __asm__ volatile("pause");
+        /* Adaptive backoff with PAUSE */
+        for (int i = 0; i < backoff; i++) {
+            __asm__ volatile("pause");
+        }
+        if (backoff < max_backoff)
+            backoff <<= 1;  /* exponential backoff */
     }
     __sync_synchronize(); /* full memory barrier */
 }
@@ -47,6 +55,18 @@ static inline void spinlock_irqsave_release(spinlock_t *lock, uint64_t flags) {
     if (!(flags & 0x200)) { /* IF bit */
         __asm__ volatile("sti");
     }
+}
+
+/* Spinlock with timeout (try for N iterations) */
+static inline int spinlock_acquire_timeout(spinlock_t *lock, int max_iters) {
+    int iter = 0;
+    while (__sync_lock_test_and_set(lock, 1)) {
+        __asm__ volatile("pause");
+        iter++;
+        if (iter >= max_iters) return -1; /* timeout */
+    }
+    __sync_synchronize();
+    return 0;
 }
 
 #endif

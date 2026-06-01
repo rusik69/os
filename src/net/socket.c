@@ -206,6 +206,16 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
             case SO_NO_CHECK:
                 s->no_check = *(int*)optval;
                 return 0;
+            case SO_RCVTIMEO: {
+                struct timeval *tv = (struct timeval *)optval;
+                s->busy_poll_usecs = (int)(tv->tv_sec * 1000000 + tv->tv_usec);
+                return 0;
+            }
+            case SO_SNDTIMEO: {
+                struct timeval *tv = (struct timeval *)optval;
+                s->max_pacing_rate = (uint32_t)(tv->tv_sec * 1000000 + tv->tv_usec);
+                return 0;
+            }
         }
     } else if (level == SOL_TCP) {
         switch (optname) {
@@ -257,6 +267,10 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
             }
             case IP_RECVDSTADDR: {
                 s->ip_recvdstaddr = *(int*)optval;
+                return 0;
+            }
+            case IP_FREEBIND: {
+                s->broadcast = *(int*)optval;
                 return 0;
             }
         }

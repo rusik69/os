@@ -109,6 +109,16 @@ void pmm_init(uint64_t multiboot_info_phys) {
             bitmap_clear(f);
             used_frames--;
         }
+
+        /* If mem_upper was 0 (QEMU -kernel multiboot fallback), assume 256MB */
+        if (end_frame <= 256) {
+            uint64_t assume_total = (256ULL * 1024 * 1024) / PAGE_SIZE;
+            if (assume_total > MAX_FRAMES) assume_total = MAX_FRAMES;
+            total_frames = assume_total;
+            for (uint64_t f = 256; f < total_frames; f++) {
+                bitmap_clear(f);
+            }
+        }
     }
 
     /* Reserve kernel frames — use physical address since _kernel_end has a high VMA */

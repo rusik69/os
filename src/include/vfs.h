@@ -66,6 +66,7 @@ struct vfs_stat {
     uint16_t mode;
     uint32_t mtime;
     uint32_t atime;
+    uint32_t nlink;  /* link count */
 };
 
 /* POSIX advisory file lock */
@@ -179,6 +180,9 @@ void vfs_update_atime(const char *path);
 
 /* Truncate file */
 int vfs_truncate(const char *path, uint32_t len);
+
+/* Hard link */
+int vfs_link(const char *oldpath, const char *newpath);
 
 /* Bind mount support */
 int vfs_bind_mount(const char *src, const char *target);

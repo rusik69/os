@@ -179,6 +179,8 @@ struct process {
     uint64_t context_switches;   /* total context switches */
     /* ── Stack usage tracking ───────────────────────────────── */
     uint64_t stack_watermark;    /* lowest RSP observed */
+    /* ── File descriptor limits ──────────────────────────────── */
+    uint64_t file_max;    /* max open files (rlimit NOFILE) */
 };
 
 void process_init(void);

@@ -15,6 +15,8 @@
 #define MQUEUE_MAX_SIZE 64
 
 /* Notification type for mq_notify */
+#ifndef SIGEVENT_DEFINED
+#define SIGEVENT_DEFINED
 struct sigevent {
     int      sigev_notify;            /* SIGEV_SIGNAL, SIGEV_NONE, SIGEV_THREAD */
     int      sigev_signo;             /* signal number */
@@ -22,6 +24,7 @@ struct sigevent {
     void    (*sigev_notify_function)(void *);
     void    *sigev_notify_attributes;
 };
+#endif
 
 #define SIGEV_SIGNAL 0
 #define SIGEV_NONE   1
@@ -80,11 +83,14 @@ int mq_getattr(mqd_t mqdes, struct mq_attr *attr);
 void mqueue_init(void);
 
 /* ── Attributes structure ────────────────────────────────────────── */
+#ifndef MQ_ATTR_DEFINED
+#define MQ_ATTR_DEFINED
 struct mq_attr {
     long mq_flags;
     long mq_maxmsg;
     long mq_msgsize;
     long mq_curmsgs;
 };
+#endif
 
 #endif /* MQUEUE_H */

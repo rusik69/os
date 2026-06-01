@@ -144,15 +144,10 @@ void vmm_init(void) {
     /* Use current PML4 set up by boot code */
     kernel_pml4 = (uint64_t *)PHYS_TO_VIRT(read_cr3() & PTE_ADDR_MASK);
 
-    /* Remove the identity map (PML4[0]) — the boot code sets up two mappings
-     * for every physical address (identity via PML4[0] and high-half via
-     * PML4[256]).  The kernel uses PHYS_TO_VIRT(addr) which now adds
-     * KERNEL_VMA_OFFSET, so we only need the high-half mapping.
-     * The boot code already set RSP to the high-half alias of the bootstrap
-     * stack, so all C local variables are at high-half addresses and remain
-     * valid after the identity map is removed. */
-    kernel_pml4[0] = 0;
-    write_cr3(read_cr3()); /* flush TLB */
+    /* Keep the identity map (PML4[0]) — the kernel uses PHYS_TO_VIRT for
+     * low physical memory access, which goes through PML4[256]. The identity
+     * map at PML4[0] is kept for legacy VGA text buffer (0xB8000) access when
+     * VGA devices are present. */
 }
 
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {

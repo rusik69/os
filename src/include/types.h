@@ -57,6 +57,12 @@ struct timespec {
     uint64_t tv_nsec;
 };
 
+/* timeval for select/poll/setsockopt timeouts */
+struct timeval {
+    uint64_t tv_sec;
+    uint64_t tv_usec;
+};
+
 /* utsname for uname */
 struct utsname {
     char sysname[65];

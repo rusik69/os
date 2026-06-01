@@ -148,7 +148,27 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/string.c \
          src/lib/printf.c \
          src/lib/stdlib.c \
-         src/lib/libc.c
+         src/lib/libc.c \
+         src/drivers/xattr.c \
+         src/drivers/file_lock.c \
+         src/drivers/kaps.c \
+         src/drivers/pgrp.c \
+         src/drivers/coredump.c \
+         src/drivers/aio.c \
+         src/drivers/signalfd.c \
+         src/drivers/timerfd.c \
+         src/drivers/hpet.c \
+         src/drivers/dmi.c \
+         src/drivers/bochs.c \
+         src/drivers/loop.c \
+         src/drivers/dyndbg.c \
+         src/drivers/uio.c \
+         src/drivers/pagecache.c \
+         src/fs/freeze.c \
+         src/fs/crypto.c \
+         src/net/dhcp.c \
+         src/kernel/irq_affinity.c \
+         src/kernel/trace.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

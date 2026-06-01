@@ -318,9 +318,14 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             rtc.year, rtc.month, rtc.day,
             rtc.hour, rtc.minute, rtc.second);
 
+#ifdef TEST_MODE
+    /* Test mode: skip mouse init (PS/2 may not have a mouse attached) */
+    kprintf("[OK] Mouse (test mode: skipped)\n");
+#else
     /* PS/2 Mouse */
     mouse_init();
     kprintf("[OK] Mouse initialized\n");
+#endif
 
     /* PC Speaker */
     speaker_init();

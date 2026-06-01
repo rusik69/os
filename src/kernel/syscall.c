@@ -482,8 +482,11 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-1;
+    /* Enforce per-process fd limit */
+    uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!p->fd_table[i].used) {
+            if ((uint64_t)i >= max_fds) return (uint64_t)-EMFILE;
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
@@ -4042,7 +4045,6 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t 
 
 static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
                                 uint64_t maxevents, uint64_t timeout) {
-    (void)timeout;
     int slot = (int)epfd - 700;
     if (slot < 0 || slot >= EPOLL_MAX || !epoll_table[slot].in_use) return (uint64_t)-1;
 
@@ -4053,41 +4055,58 @@ static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
         return (uint64_t)-1;
 
     struct epoll_event *events = (struct epoll_event *)events_addr;
-    int ready = 0;
-
-    for (int i = 0; i < ep->num_entries && ready < max; i++) {
-        struct epoll_fd_entry *e = &ep->entries[i];
-        if (!e->in_use) continue;
-
-        /* Check if fd is a socket and has data available */
-        struct socket *s = sock_get(e->fd);
-        events[ready].events = 0;
-        if (s && s->state != SOCK_STATE_FREE) {
-            if (e->events & EPOLLIN) {
-                /* Assume readable if connected or listening */
-                if (s->state == SOCK_STATE_CONNECTED || s->state == SOCK_STATE_LISTENING)
-                    events[ready].events |= EPOLLIN;
-            }
-            if (e->events & EPOLLOUT) {
-                if (s->state == SOCK_STATE_CONNECTED)
-                    events[ready].events |= EPOLLOUT;
-            }
-        }
-        /* Also check regular fds */
-        if (e->fd >= 0 && e->fd < PROCESS_FD_MAX) {
-            struct process *p = process_get_current();
-            if (p && p->fd_table[e->fd].used) {
-                if (e->events & EPOLLIN) events[ready].events |= EPOLLIN;
-                if (e->events & EPOLLOUT) events[ready].events |= EPOLLOUT;
-            }
-        }
-        if (events[ready].events) {
-            events[ready].data = e->data;
-            ready++;
-        }
+    
+    /* Wait loop with timeout */
+    uint64_t deadline = 0;
+    if (timeout != (uint64_t)-1) {
+        deadline = timer_get_ticks() + (timeout / 10); /* convert ms to ticks */
     }
 
-    return (uint64_t)ready;
+    while (1) {
+        int ready = 0;
+
+        for (int i = 0; i < ep->num_entries && ready < max; i++) {
+            struct epoll_fd_entry *e = &ep->entries[i];
+            if (!e->in_use) continue;
+
+            /* Check if fd is a socket and has data available */
+            struct socket *s = sock_get(e->fd);
+            events[ready].events = 0;
+            if (s && s->state != SOCK_STATE_FREE) {
+                if (e->events & EPOLLIN) {
+                    /* Assume readable if connected or listening */
+                    if (s->state == SOCK_STATE_CONNECTED || s->state == SOCK_STATE_LISTENING)
+                        events[ready].events |= EPOLLIN;
+                }
+                if (e->events & EPOLLOUT) {
+                    if (s->state == SOCK_STATE_CONNECTED)
+                        events[ready].events |= EPOLLOUT;
+                }
+            }
+            /* Also check regular fds */
+            if (e->fd >= 0 && e->fd < PROCESS_FD_MAX) {
+                struct process *p = process_get_current();
+                if (p && p->fd_table[e->fd].used) {
+                    if (e->events & EPOLLIN) events[ready].events |= EPOLLIN;
+                    if (e->events & EPOLLOUT) events[ready].events |= EPOLLOUT;
+                }
+            }
+            if (events[ready].events) {
+                events[ready].data = e->data;
+                ready++;
+            }
+        }
+
+        if (ready > 0) return (uint64_t)ready;
+
+        /* Check timeout */
+        if (timeout != (uint64_t)-1 && timer_get_ticks() >= deadline) {
+            return 0; /* timeout, no events ready */
+        }
+
+        /* Yield CPU while waiting */
+        scheduler_yield();
+    }
 }
 
 static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
