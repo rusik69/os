@@ -70,7 +70,7 @@ static inline void wrgsbase(uint64_t val) {
 /* RDPID wrapper */
 static inline uint32_t rdpid(void) {
     uint32_t val;
-    __asm__ volatile("rdpid %0" : "=r"(val));
+    __asm__ volatile(".byte 0xF3, 0x0F, 0xC7, 0xF8" : "=a"(val));
     return val;
 }
 

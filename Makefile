@@ -179,6 +179,12 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/crc32.c \
          src/lib/uuid.c \
          src/lib/hexdump.c \
+         src/lib/radix_tree.c \
+         src/lib/bitmap.c \
+         src/lib/find_bit.c \
+         src/lib/mempool.c \
+         src/lib/crc16.c \
+         src/kernel/rwsem.c \
          src/kernel/x2apic.c \
          src/kernel/tsc_deadline.c \
          src/kernel/invpcid.c \

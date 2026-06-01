@@ -11,6 +11,7 @@
 /* Maximum filesystem type registrations */
 #define VFS_MAX_FS_TYPES 16
 
+struct fs_quota;
 #define VFS_O_RDONLY 0
 #define VFS_O_WRONLY 1
 #define VFS_O_RDWR   2

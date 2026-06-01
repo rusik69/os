@@ -4104,6 +4104,22 @@ void test_run_all(void) {
     kprintf("[TEST] cmds_p11\n");      test_new_cmds_phase11();   test_progress_tick();
     kprintf("[TEST] cmd_less\n");      test_cmd_less();           test_progress_tick();
     kprintf("[TEST] cmd_iconv\n");     test_cmd_iconv();          test_progress_tick();
+    /* Phase 11+ — new CPU/memory feature tests */
+    kprintf("[TEST] smap_smep\n");     test_smap_smep();          test_progress_tick();
+    kprintf("[TEST] umip\n");          test_umip();               test_progress_tick();
+    kprintf("[TEST] x2apic\n");        test_x2apic();             test_progress_tick();
+    kprintf("[TEST] tsc_deadline\n");  test_tsc_deadline();       test_progress_tick();
+    kprintf("[TEST] invpcid\n");       test_invpcid();            test_progress_tick();
+    kprintf("[TEST] fsgsbase\n");      test_fsgsbase();           test_progress_tick();
+    kprintf("[TEST] rdpid\n");         test_rdpid();              test_progress_tick();
+    kprintf("[TEST] nx_enforce\n");    test_nx_enforce();         test_progress_tick();
+    kprintf("[TEST] vsyscall\n");      test_vsyscall();           test_progress_tick();
+    kprintf("[TEST] memhotplug\n");    test_memhotplug();         test_progress_tick();
+    kprintf("[TEST] page_poison\n");   test_page_poison_new();    test_progress_tick();
+    kprintf("[TEST] cma\n");           test_cma();                test_progress_tick();
+    kprintf("[TEST] zram\n");          test_zram();               test_progress_tick();
+    kprintf("[TEST] ksm\n");           test_ksm();                test_progress_tick();
+    kprintf("[TEST] thp\n");           test_thp();                test_progress_tick();
 kprintf("----------------------------------------\n");
     kprintf("Results: %llu passed, %llu failed\n",
             (uint64_t)tpass, (uint64_t)tfail);
