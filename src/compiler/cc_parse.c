@@ -634,8 +634,9 @@ static void parse_primary(CompilerState *cc) {
                             parse_expr(cc);
                             emit_push_rax(cc);
                             emit_lea_local(cc, off);
-                            if (foff > 0)
+                            if (foff > 0) {
                                 emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)foff);
+                            }
                             emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
                             emit1(cc, 0x58);
                             emit_store_via_rcx(cc);
@@ -644,8 +645,9 @@ static void parse_primary(CompilerState *cc) {
                         parse_expr(cc);
                         emit_push_rax(cc);
                         emit_lea_local(cc, off);
-                        if (idx > 0 && esz > 1)
+                        if (idx > 0 && esz > 1) {
                             emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)(idx * esz));
+                        }
                         emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
                         emit1(cc, 0x58);
                         if (esz == 1) emit_store_via_rcx_byte(cc);
@@ -1418,8 +1420,9 @@ static void parse_var_decl(CompilerState *cc, TypeDesc *base_td) {
                             parse_expr(cc);
                             emit_push_rax(cc);
                             emit_lea_local(cc, s->offset);
-                            if (foff > 0)
+                            if (foff > 0) {
                                 emit1(cc,0x48);emit1(cc,0x05); emit4(cc,(uint32_t)foff);
+                            }
                             emit1(cc,0x48);emit1(cc,0x89);emit1(cc,0xC1);
                             emit1(cc, 0x58);
                             if (fsz == 1) emit_store_via_rcx_byte(cc);
