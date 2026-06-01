@@ -204,6 +204,8 @@ The kernel has ~200 built-in tests covering: scheduler, VM, PMM, slab, IPC, VFS,
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed walkthrough of the kernel design, boot sequence, memory layout, subsystem relationships, and data flow.
 
+See [MODULARITY.md](MODULARITY.md) for the monolithic-to-modular transition plan — turning the kernel into a loadable module system.
+
 Also see [docs/architecture-diagram.html](docs/architecture-diagram.html) for an interactive visual diagram.
 
 ## License
