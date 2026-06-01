@@ -18,6 +18,7 @@
 #include "apic.h"
 #include "string.h"
 #include "rtc.h"
+#include "nmi_watchdog.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -288,6 +289,9 @@ void schedule(void) {
 
         if (!next) {
             ci->idle_ticks++;
+            /* Pet the watchdog: even in idle, proving we're alive prevents
+             * false hard lockup detection from the NMI handler. */
+            nmi_watchdog_pet();
             __asm__ volatile("sti");
             return;
         }
@@ -320,6 +324,10 @@ void schedule(void) {
         vmm_switch_pml4(vmm_get_pml4());
     }
 
+    /* Pet the watchdog: we just context-switched, proving the scheduler
+     * is making forward progress on this CPU. */
+    nmi_watchdog_pet();
+
     context_switch(current ? &current->context : NULL, next->context);
     __asm__ volatile("sti");
 }
@@ -342,6 +350,14 @@ uint64_t scheduler_get_idle_ticks(void) {
 void scheduler_tick(int was_user) {
     struct cpu_info *ci = this_cpu();
     if (!ci->scheduler_enabled) return;
+
+    /* Pet the soft watchdog — this proves timer IRQs are reaching the
+     * scheduler, which distinguishes soft lockups (scheduler stuck) from
+     * hard lockups (IRQs disabled entirely). */
+    nmi_watchdog_soft_pet();
+
+    /* Check for soft lockup (scheduler not invoked despite timer ticks) */
+    nmi_watchdog_check_soft();
 
     struct process *cur = ci->current_process;
     if (!cur || cur->state != PROCESS_RUNNING) return;

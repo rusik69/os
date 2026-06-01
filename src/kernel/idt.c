@@ -26,6 +26,7 @@ extern void irq12(void); extern void irq13(void); extern void irq14(void);
 extern void irq15(void);
 extern void irq16(void);
 extern void irq17(void);
+extern void irq18(void);
 
 static const char *exception_names[] = {
     "Division By Zero", "Debug", "NMI", "Breakpoint",
@@ -131,9 +132,10 @@ void idt_init(void) {
     idt_set_gate(46, (uint64_t)irq14, 0x08, 0x8E);
     idt_set_gate(47, (uint64_t)irq15, 0x08, 0x8E);
 
-    /* IPI vectors: 240 (reschedule), 241 (TLB shootdown) */
+    /* IPI vectors: 240 (reschedule), 241 (TLB shootdown), 242 (backtrace) */
     idt_set_gate(240, (uint64_t)irq16, 0x08, 0x8E);
     idt_set_gate(241, (uint64_t)irq17, 0x08, 0x8E);
+    idt_set_gate(242, (uint64_t)irq18, 0x08, 0x8E);
 
     idt_ptr.limit = sizeof(idt) - 1;
     idt_ptr.base = (uint64_t)&idt;

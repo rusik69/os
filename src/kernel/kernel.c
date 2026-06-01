@@ -722,6 +722,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     sti();
     kprintf("[OK] Interrupts enabled\n\n");
 
+    /* Start the NMI watchdog now that the scheduler is running and we
+     * can pet it from the tick handler and context-switch paths. */
+    nmi_watchdog_start();
+
 #ifdef TEST_MODE
     /* Yield once so the test task gets a chance to run immediately */
     scheduler_yield();
@@ -729,6 +733,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Idle loop - the boot thread becomes the idle process */
     for (;;) {
+        nmi_watchdog_pet();
         __asm__ volatile("hlt");
     }
 }

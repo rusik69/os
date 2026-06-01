@@ -52,6 +52,7 @@
 /* IPI vector numbers */
 #define IPI_VECTOR_RESCHEDULE  0xF0
 #define IPI_VECTOR_TLB_SHOOT   0xF1
+#define IPI_VECTOR_BACKTRACE   0xF2
 
 /* I/O APIC registers */
 #define IOAPIC_INDEX   0x00

@@ -10,6 +10,7 @@
 #include "string.h"
 #include "idt.h"
 #include "smp.h"
+#include "panic.h"
 
 /* ── Local APIC MMIO access ────────────────────────────────────────── */
 /* Map the LAPIC at a fixed high-half virtual address */
@@ -268,10 +269,23 @@ struct tlb_shootdown_info {
 
 static struct tlb_shootdown_info tlb_info[SMP_MAX_CPUS];
 
+/* Backtrace IPI: dump register state and stack backtrace on receiving CPU.
+ * Called when another CPU detects a lockup and wants diagnostic info. */
+void ipi_backtrace_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    uint32_t cpu_id = smp_get_cpu_id();
+    kprintf("\n=== BACKTRACE REQUEST on CPU %u ===\n", (unsigned int)cpu_id);
+    dump_regs();
+    dump_stack();
+    kprintf("=== END BACKTRACE CPU %u ===\n", (unsigned int)cpu_id);
+    apic_eoi();
+}
+
 /* Register IPI handlers in the IDT */
 void ipi_init(void) {
     idt_register_handler(IPI_VECTOR_RESCHEDULE, ipi_reschedule_handler);
     idt_register_handler(IPI_VECTOR_TLB_SHOOT,   ipi_tlb_shootdown_handler);
+    idt_register_handler(IPI_VECTOR_BACKTRACE,   ipi_backtrace_handler);
     memset(tlb_info, 0, sizeof(tlb_info));
 }
 
