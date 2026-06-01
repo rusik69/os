@@ -40,6 +40,8 @@ test_libc.o: test_libc.c
 	$(CC) $(CFLAGS) \
 	  -Wno-memset-transposed-args \
 	  -Wno-format \
+	  -Wno-stringop-truncation \
+	  -Wno-stringop-overflow \
 	  -c -o $@ $<
 
 clean:

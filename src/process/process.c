@@ -905,6 +905,16 @@ void process_sleep_ticks(uint64_t nticks) {
 }
 
 /* Free resources of a zombie process. */
+uint32_t process_get_count(void) {
+    struct process *table = process_get_table();
+    uint32_t count = 0;
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED)
+            count++;
+    }
+    return count;
+}
+
 void process_cleanup(struct process *proc) {
     /* Cleanup robust futex list */
     extern void futex_robust_list_cleanup(struct process *proc);

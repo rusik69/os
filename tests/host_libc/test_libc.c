@@ -12,6 +12,7 @@
 
 #include <stddef.h>   /* size_t */
 #include <stdio.h>    /* printf */
+#include <limits.h>   /* INT_MAX, INT_MIN, LONG_MAX, LONG_MIN */
 
 /* ===================================================================
  *  Declarations of kernel libc functions being tested
@@ -26,17 +27,30 @@ extern size_t strlen(const char *s);
 extern int    strcmp(const char *s1, const char *s2);
 extern int    strncmp(const char *s1, const char *s2, size_t n);
 extern void  *memcpy(void *dest, const void *src, size_t n);
+extern void  *memmove(void *dest, const void *src, size_t n);
 extern int    memcmp(const void *s1, const void *s2, size_t n);
 extern void  *memset(void *s, int c, size_t n);
+extern void  *memchr(const void *s, int c, size_t n);
 extern char  *strcpy(char *dest, const char *src);
+extern char  *strncpy(char *dest, const char *src, size_t n);
 extern char  *strcat(char *dest, const char *src);
+extern char  *strncat(char *dest, const char *src, size_t n);
 extern char  *strstr(const char *haystack, const char *needle);
 extern char  *strchr(const char *s, int c);
+extern char  *strrchr(const char *s, int c);
 extern char  *strtok(char *str, const char *delim);
+extern char  *strtok_r(char *str, const char *delim, char **saveptr);
+extern char  *strsep(char **stringp, const char *delim);
+extern size_t strspn(const char *s, const char *accept);
+extern size_t strcspn(const char *s, const char *reject);
+extern char  *strpbrk(const char *s, const char *accept);
 extern long   strtol(const char *nptr, char **endptr, int base);
+extern unsigned long strtoul(const char *nptr, char **endptr, int base);
 
 /* --- stdlib.c --- */
 extern char  *itoa(int value, char *buf, int base);
+extern char  *ltoa(long value, char *buf, int base);
+extern char  *strdup(const char *s);
 
 /* --- printf.c --- */
 extern int sprintf(char *buf, const char *fmt, ...);
@@ -142,6 +156,19 @@ static int tests_failed = 0;
     }                                              \
 } while (0)
 
+#define ASSERT_PTR_EQ(got, expected, msg) do {     \
+    if ((got) != (expected)) {                     \
+        tests_failed++;                            \
+        printf("FAIL\n");                          \
+        printf("        %s\n", msg);               \
+        printf("        Expected: %p\n",           \
+               (void *)(expected));                \
+        printf("        Got:      %p\n",           \
+               (void *)(got));                     \
+        return;                                    \
+    }                                              \
+} while (0)
+
 /* ===================================================================
  *  String function tests
  * =================================================================== */
@@ -196,6 +223,18 @@ static void test_strcmp(void)
     TEST("strcmp case difference");
     ASSERT(strcmp("ABC", "abc") != 0, "\"ABC\" != \"abc\"");
     PASS();
+
+    TEST("strcmp long equal strings");
+    ASSERT_INT_EQ(strcmp("abcdefghijklmnopqrstuvwxyz0123456789",
+                         "abcdefghijklmnopqrstuvwxyz0123456789"),
+                  0, "long equal strings");
+    PASS();
+
+    TEST("strcmp diff at very end of long string");
+    ASSERT(strcmp("abcdefghijklmnopqrstuvwxyz0123456789",
+                  "abcdefghijklmnopqrstuvwxyz0123456788") > 0,
+           "diff at last char");
+    PASS();
 }
 
 static void test_strncmp(void)
@@ -224,6 +263,10 @@ static void test_strncmp(void)
     TEST("strncmp different at position n-1");
     ASSERT(strncmp("abx", "aby", 3) < 0, "diff at last position");
     PASS();
+
+    TEST("strncmp n larger than strings");
+    ASSERT_INT_EQ(strncmp("ab", "ab", 10), 0, "n larger than both strings");
+    PASS();
 }
 
 static void test_memcpy(void)
@@ -249,6 +292,79 @@ static void test_memcpy(void)
     memcpy(partial_dst, partial_src, 3);
     ASSERT_INT_EQ(memcmp(partial_dst, "abc", 3), 0, "first 3 bytes");
     PASS();
+
+    TEST("memcpy large copy");
+    char large_src[4096];
+    char large_dst[4096];
+    for (int i = 0; i < 4096; i++) large_src[i] = (char)(i & 0xFF);
+    memset(large_dst, 0, 4096);
+    memcpy(large_dst, large_src, 4096);
+    ASSERT_INT_EQ(memcmp(large_dst, large_src, 4096), 0,
+                  "large 4096-byte copy matches");
+    PASS();
+
+    TEST("memcpy single byte");
+    char one_dst[4] = {0};
+    char one_src = 'X';
+    memcpy(one_dst, &one_src, 1);
+    ASSERT_INT_EQ(one_dst[0], 'X', "single byte copied");
+    ASSERT_INT_EQ(one_dst[1], 0, "rest unchanged");
+    PASS();
+
+    TEST("memcpy returns dest pointer");
+    char ret_dst[16];
+    ASSERT(memcpy(ret_dst, "test", 5) == ret_dst, "returns dest pointer");
+    PASS();
+}
+
+static void test_memmove(void)
+{
+    TEST("memmove non-overlapping copy");
+    char buf1[32] = "hello world";
+    char dest1[32] = {0};
+    ASSERT(memmove(dest1, buf1, 12) == dest1, "returns dest");
+    ASSERT_INT_EQ(memcmp(dest1, buf1, 12), 0, "data matches");
+    PASS();
+
+    TEST("memmove overlapping forward (dest < src)");
+    char ovfwd[32] = "abcdefghij";
+    memmove(ovfwd + 2, ovfwd, 6);
+    ASSERT_INT_EQ(memcmp(ovfwd, "ababcdef", 8), 0,
+                  "forward overlap: dest < src");
+    PASS();
+
+    TEST("memmove overlapping backward (dest > src)");
+    char ovbwd[32] = "abcdefghij";
+    memmove(ovbwd, ovbwd + 2, 6);
+    ASSERT_INT_EQ(memcmp(ovbwd, "cdefgh", 6), 0,
+                  "backward overlap: dest > src");
+    PASS();
+
+    TEST("memmove same pointer");
+    char same[16] = "test data";
+    char same_orig[16];
+    memcpy(same_orig, same, 10);
+    memmove(same, same, 10);
+    ASSERT_INT_EQ(memcmp(same, same_orig, 10), 0,
+                  "same pointer no change");
+    PASS();
+
+    TEST("memmove zero bytes");
+    char zbuf[16] = "preserved";
+    char zorig[16];
+    memcpy(zorig, zbuf, 10);
+    memmove(zbuf + 2, zbuf, 0);
+    ASSERT_INT_EQ(memcmp(zbuf, zorig, 10), 0, "zero bytes no change");
+    PASS();
+
+    TEST("memmove exact overlap identical");
+    char exov[16] = "identical";
+    char exov_orig[16];
+    memcpy(exov_orig, exov, 10);
+    memmove(exov, exov, 10);
+    ASSERT_INT_EQ(memcmp(exov, exov_orig, 10), 0,
+                  "exact same region unchanged");
+    PASS();
 }
 
 static void test_memcmp(void)
@@ -272,6 +388,22 @@ static void test_memcmp(void)
     TEST("memcmp returns signed diff");
     ASSERT(memcmp("abc", "bbc", 3) < 0, "'a' < 'b' returns negative");
     ASSERT(memcmp("bbc", "abc", 3) > 0, "'b' > 'a' returns positive");
+    PASS();
+
+    TEST("memcmp last byte differs");
+    ASSERT(memcmp("abc", "abd", 3) != 0, "last byte differs");
+    ASSERT(memcmp("abc", "abd", 3) < 0, "'c' < 'd' returns negative");
+    PASS();
+
+    TEST("memcmp single byte");
+    ASSERT_INT_EQ(memcmp("a", "a", 1), 0, "single byte equal");
+    ASSERT(memcmp("a", "b", 1) < 0, "single byte diff negative");
+    PASS();
+
+    TEST("memcmp all zeros vs all zeros");
+    char zeros1[16] = {0};
+    char zeros2[16] = {0};
+    ASSERT_INT_EQ(memcmp(zeros1, zeros2, 16), 0, "all zeros equal");
     PASS();
 }
 
@@ -312,6 +444,71 @@ static void test_memset(void)
     memset(nbuf, 0xFF, 0);
     ASSERT_INT_EQ(memcmp(nbuf, "test", 5), 0, "zero bytes unchanged");
     PASS();
+
+    TEST("memset large fill");
+    char large[4096];
+    memset(large, 0x55, 4096);
+    for (int i = 0; i < 4096; i++)
+        ASSERT((unsigned char)large[i] == 0x55, "all 4096 bytes = 0x55");
+    PASS();
+
+    TEST("memset pattern fill 0xAB");
+    char pat[64];
+    memset(pat, 0xAB, 64);
+    for (int i = 0; i < 64; i++)
+        ASSERT((unsigned char)pat[i] == 0xAB, "all 64 bytes = 0xAB");
+    PASS();
+
+    TEST("memset fill with char value -1 (0xFF)");
+    char neg[32];
+    memset(neg, -1, 32);
+    for (int i = 0; i < 32; i++)
+        ASSERT((unsigned char)neg[i] == 0xFF, "all bytes = 0xFF");
+    PASS();
+
+    TEST("memset n=1 single byte");
+    char one[4] = {0};
+    memset(one, 'Z', 1);
+    ASSERT_INT_EQ(one[0], 'Z', "first byte set");
+    ASSERT_INT_EQ(one[1], 0, "second byte unchanged");
+    PASS();
+}
+
+static void test_memchr(void)
+{
+    TEST("memchr find char in middle");
+    const char *mcs = "hello world";
+    ASSERT(memchr(mcs, 'w', 11) == (void *)(mcs + 6), "found 'w' at offset 6");
+    PASS();
+
+    TEST("memchr char not found");
+    ASSERT(memchr("hello", 'z', 5) == NULL, "'z' not found");
+    PASS();
+
+    TEST("memchr zero length");
+    ASSERT(memchr("hello", 'h', 0) == NULL, "zero length returns NULL");
+    PASS();
+
+    TEST("memchr find first char");
+    ASSERT(memchr("abcde", 'a', 5) == (void *)("abcde"),
+           "first char at start");
+    PASS();
+
+    TEST("memchr find last char");
+    ASSERT(memchr("abcde", 'e', 5) == (void *)("abcde" + 4),
+           "last char at end");
+    PASS();
+
+    TEST("memchr null byte in buffer");
+    char nb[] = "ab\0cd";
+    ASSERT(memchr(nb, '\0', 5) == (void *)(nb + 2), "null byte found");
+    PASS();
+
+    TEST("memchr find byte by numeric value");
+    unsigned char nbuf[] = {0x00, 0x10, 0x20, 0x30, 0x40};
+    ASSERT(memchr(nbuf, 0x20, 5) == (void *)(nbuf + 2),
+           "found 0x20 at offset 2");
+    PASS();
 }
 
 static void test_strcpy(void)
@@ -340,6 +537,78 @@ static void test_strcpy(void)
     strcpy(ndst, "hi");
     ASSERT(ndst[2] == '\0', "null terminator written");
     PASS();
+
+    TEST("strcpy long string");
+    char ldst[256];
+    const char *lsrc = "abcdefghijklmnopqrstuvwxyz0123456789";
+    strcpy(ldst, lsrc);
+    ASSERT_STR_EQ(ldst, lsrc, "long string copied");
+    PASS();
+
+    TEST("strcpy exact buffer");
+    char exdst[4];
+    strcpy(exdst, "abc");
+    ASSERT_STR_EQ(exdst, "abc", "exact 3-char string fits");
+    PASS();
+}
+
+static void test_strncpy(void)
+{
+    TEST("strncpy basic copy");
+    char dst[16];
+    memset(dst, 'X', sizeof(dst));
+    strncpy(dst, "hello", 16);
+    ASSERT_STR_EQ(dst, "hello", "basic copy");
+    PASS();
+
+    TEST("strncpy null padding");
+    char npad[8];
+    memset(npad, 'X', sizeof(npad));
+    strncpy(npad, "hi", 8);
+    ASSERT_INT_EQ(npad[0], 'h', "first char");
+    ASSERT_INT_EQ(npad[1], 'i', "second char");
+    ASSERT_INT_EQ(npad[2], '\0', "null-padded start");
+    ASSERT_INT_EQ(npad[7], '\0', "null-padded to end");
+    PASS();
+
+    TEST("strncpy truncation (n < src length)");
+    {
+        char trunc[4];
+        memset(trunc, 'X', sizeof(trunc));
+        (void)strncpy(trunc, "hello world", 4);
+        ASSERT_INT_EQ(memcmp(trunc, "hell", 4), 0,
+                      "all 4 chars from source copied, no null-term");
+    }
+    PASS();
+
+    TEST("strncpy exact fit");
+    char exact[4];
+    memset(exact, 'X', sizeof(exact));
+    strncpy(exact, "abc", 4);
+    ASSERT_INT_EQ(exact[0], 'a', "first char");
+    ASSERT_INT_EQ(exact[3], '\0', "null-padded to n");
+    PASS();
+
+    TEST("strncpy empty source");
+    char empty[8];
+    memset(empty, 'X', sizeof(empty));
+    strncpy(empty, "", 8);
+    for (int i = 0; i < 8; i++)
+        ASSERT_INT_EQ(empty[i], '\0', "all bytes nulled");
+    PASS();
+
+    TEST("strncpy n=0 no-op");
+    {
+        char noop[16] = "unchanged";
+        (void)strncpy(noop, "new", 0);
+        ASSERT_STR_EQ(noop, "unchanged", "n=0 leaves buffer unchanged");
+    }
+    PASS();
+
+    TEST("strncpy returns dest");
+    char retdst[16];
+    ASSERT(strncpy(retdst, "test", 16) == retdst, "returns dest pointer");
+    PASS();
 }
 
 static void test_strcat(void)
@@ -367,6 +636,59 @@ static void test_strcat(void)
     strcat(mdst, "b");
     strcat(mdst, "c");
     ASSERT_STR_EQ(mdst, "abc", "multiple concatenations");
+    PASS();
+
+    TEST("strcat long string");
+    char ldst[256] = "start";
+    strcat(ldst, "-middle");
+    strcat(ldst, "-end");
+    ASSERT_STR_EQ(ldst, "start-middle-end", "long concatenation");
+    PASS();
+
+    TEST("strcat single char multiple times");
+    char sdst[32] = "";
+    strcat(sdst, "x");
+    strcat(sdst, "x");
+    strcat(sdst, "x");
+    ASSERT_STR_EQ(sdst, "xxx", "three single-char appends");
+    PASS();
+}
+
+static void test_strncat(void)
+{
+    TEST("strncat basic");
+    char dst[32] = "hello";
+    ASSERT(strncat(dst, " world", 7) == dst, "returns dest");
+    ASSERT_STR_EQ(dst, "hello world", "basic concatenation");
+    PASS();
+
+    TEST("strncat truncation");
+    char trunc[16] = "ab";
+    strncat(trunc, "cdefghijklmnop", 4);
+    ASSERT_STR_EQ(trunc, "abcdef", "copied up to 4 chars + null");
+    PASS();
+
+    TEST("strncat n=0");
+    char n0[32] = "test";
+    strncat(n0, "extra", 0);
+    ASSERT_STR_EQ(n0, "test", "n=0 does nothing");
+    PASS();
+
+    TEST("strncat empty source");
+    char esrc[32] = "hello";
+    strncat(esrc, "", 10);
+    ASSERT_STR_EQ(esrc, "hello", "empty src unchanged");
+    PASS();
+
+    TEST("strncat to empty dest");
+    char edst[32] = "";
+    strncat(edst, "hi", 3);
+    ASSERT_STR_EQ(edst, "hi", "append to empty dest");
+    PASS();
+
+    TEST("strncat returns dest");
+    char retdst[32] = "x";
+    ASSERT(strncat(retdst, "y", 2) == retdst, "returns dest pointer");
     PASS();
 }
 
@@ -403,6 +725,25 @@ static void test_strstr(void)
     TEST("strstr repeated pattern");
     ASSERT_STR_EQ(strstr("aaaa", "aa"), "aaaa", "overlapping match");
     PASS();
+
+    TEST("strstr empty haystack");
+    ASSERT(strstr("", "a") == NULL, "empty haystack returns NULL");
+    ASSERT(strstr("", "") == (void *)"", "empty haystack + empty needle returns haystack");
+    PASS();
+
+    TEST("strstr needle longer than haystack");
+    ASSERT(strstr("abc", "abcdef") == NULL,
+           "needle longer than haystack returns NULL");
+    PASS();
+
+    TEST("strstr multiple occurrences");
+    ASSERT_STR_EQ(strstr("ababab", "aba"), "ababab",
+                  "first occurrence of multiple");
+    PASS();
+
+    TEST("strstr not found single char");
+    ASSERT(strstr("hello", "z") == NULL, "single char not found");
+    PASS();
 }
 
 static void test_strchr(void)
@@ -426,6 +767,53 @@ static void test_strchr(void)
     TEST("strchr find null terminator");
     ASSERT(strchr("test", '\0') == (void *)("test" + 4),
            "null terminator found at end");
+    PASS();
+
+    TEST("strchr empty string");
+    ASSERT(strchr("", 'a') == NULL, "empty string no char");
+    ASSERT(strchr("", '\0') == (void *)"", "empty string null terminator");
+    PASS();
+
+    TEST("strchr multiple occurrences returns first");
+    ASSERT_STR_EQ(strchr("banana", 'a'), "anana",
+                  "first 'a' in banana");
+    PASS();
+
+    TEST("strchr char numeric value");
+    ASSERT(strchr("abc", 0x62) == (void *)("abc" + 1), "0x62 is 'b'");
+    PASS();
+}
+
+static void test_strrchr(void)
+{
+    TEST("strrchr last occurrence");
+    ASSERT_STR_EQ(strrchr("hello", 'l'), "lo", "last 'l' in hello");
+    PASS();
+
+    TEST("strrchr single occurrence");
+    ASSERT_STR_EQ(strrchr("abcde", 'c'), "cde", "single 'c' in middle");
+    PASS();
+
+    TEST("strrchr not found returns NULL");
+    ASSERT(strrchr("hello", 'z') == NULL, "'z' not found");
+    PASS();
+
+    TEST("strrchr null terminator");
+    ASSERT(strrchr("test", '\0') == (void *)("test" + 4),
+           "null terminator at end");
+    PASS();
+
+    TEST("strrchr first char is last");
+    ASSERT_STR_EQ(strrchr("aaaa", 'a'), "a", "last of repeated chars");
+    PASS();
+
+    TEST("strrchr char at start");
+    ASSERT(strrchr("hello", 'h') == (void *)"hello", "only 'h' at start");
+    PASS();
+
+    TEST("strrchr empty string");
+    ASSERT(strrchr("", 'a') == NULL, "empty string no char");
+    ASSERT(strrchr("", '\0') == (void *)"", "empty string null terminator");
     PASS();
 }
 
@@ -465,6 +853,166 @@ static void test_strtok(void)
     ASSERT_STR_EQ(strtok(NULL, " \t"), "world", "tab skipped");
     ASSERT_STR_EQ(strtok(NULL, " \t"), "foo", "third token");
     ASSERT(strtok(NULL, " \t") == NULL, "no more");
+    PASS();
+
+    TEST("strtok all delimiters");
+    char s6[] = ",,,";
+    ASSERT(strtok(s6, ",") == NULL, "all delimiters returns NULL");
+    PASS();
+
+    TEST("strtok empty string");
+    char s7[] = "";
+    ASSERT(strtok(s7, ",") == NULL, "empty string returns NULL");
+    PASS();
+
+    TEST("strtok single char token");
+    char s8[] = "a";
+    ASSERT_STR_EQ(strtok(s8, ","), "a", "single char token");
+    ASSERT(strtok(NULL, ",") == NULL, "no more");
+    PASS();
+}
+
+static void test_strtok_r(void)
+{
+    TEST("strtok_r basic");
+    char s1[] = "hello,world,test";
+    char *save1;
+    ASSERT_STR_EQ(strtok_r(s1, ",", &save1), "hello", "first token");
+    ASSERT_STR_EQ(strtok_r(NULL, ",", &save1), "world", "second token");
+    ASSERT_STR_EQ(strtok_r(NULL, ",", &save1), "test", "third token");
+    ASSERT(strtok_r(NULL, ",", &save1) == NULL, "no more tokens");
+    PASS();
+
+    TEST("strtok_r interleaved state");
+    char s2[] = "a,b,c";
+    char s3[] = "1:2:3";
+    char *sp2, *sp3;
+    ASSERT_STR_EQ(strtok_r(s2, ",", &sp2), "a", "first s2 token");
+    ASSERT_STR_EQ(strtok_r(s3, ":", &sp3), "1", "first s3 token");
+    ASSERT_STR_EQ(strtok_r(NULL, ",", &sp2), "b", "second s2 token");
+    ASSERT_STR_EQ(strtok_r(NULL, ":", &sp3), "2", "second s3 token");
+    ASSERT_STR_EQ(strtok_r(NULL, ",", &sp2), "c", "third s2 token");
+    ASSERT_STR_EQ(strtok_r(NULL, ":", &sp3), "3", "third s3 token");
+    ASSERT(strtok_r(NULL, ",", &sp2) == NULL, "s2 done");
+    ASSERT(strtok_r(NULL, ":", &sp3) == NULL, "s3 done");
+    PASS();
+
+    TEST("strtok_r empty string");
+    char s4[] = "";
+    char *sp4;
+    ASSERT(strtok_r(s4, ",", &sp4) == NULL, "empty string returns NULL");
+    PASS();
+
+    TEST("strtok_r consecutive delimiters");
+    char s5[] = "x,,y";
+    char *sp5;
+    ASSERT_STR_EQ(strtok_r(s5, ",", &sp5), "x", "first");
+    ASSERT_STR_EQ(strtok_r(NULL, ",", &sp5), "y", "skips empty");
+    ASSERT(strtok_r(NULL, ",", &sp5) == NULL, "done");
+    PASS();
+}
+
+static void test_strsep(void)
+{
+    TEST("strsep basic");
+    char s1[] = "hello,world,test";
+    char *sp1 = s1;
+    ASSERT_STR_EQ(strsep(&sp1, ","), "hello", "first token");
+    ASSERT_STR_EQ(strsep(&sp1, ","), "world", "second token");
+    ASSERT_STR_EQ(strsep(&sp1, ","), "test", "third token");
+    ASSERT(strsep(&sp1, ",") == NULL, "no more tokens");
+    PASS();
+
+    TEST("strsep consecutive delimiters");
+    char s2[] = "a,,b";
+    char *sp2 = s2;
+    ASSERT_STR_EQ(strsep(&sp2, ","), "a", "first");
+    ASSERT_STR_EQ(strsep(&sp2, ","), "", "empty token between delimiters");
+    ASSERT_STR_EQ(strsep(&sp2, ","), "b", "last");
+    ASSERT(strsep(&sp2, ",") == NULL, "done");
+    PASS();
+
+    TEST("strsep leading delimiters");
+    char s3[] = ",,x";
+    char *sp3 = s3;
+    ASSERT_STR_EQ(strsep(&sp3, ","), "", "leading empty");
+    ASSERT_STR_EQ(strsep(&sp3, ","), "", "second leading empty");
+    ASSERT_STR_EQ(strsep(&sp3, ","), "x", "token after");
+    ASSERT(strsep(&sp3, ",") == NULL, "done");
+    PASS();
+}
+
+static void test_strspn(void)
+{
+    TEST("strspn basic");
+    ASSERT_INT_EQ(strspn("hello", "he"), 2, "first 2 chars 'h','e' match");
+    PASS();
+
+    TEST("strspn full string match");
+    ASSERT_INT_EQ(strspn("abc", "abc"), 3, "all chars match");
+    PASS();
+
+    TEST("strspn no match");
+    ASSERT_INT_EQ(strspn("xyz", "abc"), 0, "no chars match");
+    PASS();
+
+    TEST("strspn empty string");
+    ASSERT_INT_EQ(strspn("", "abc"), 0, "empty string returns 0");
+    PASS();
+
+    TEST("strspn accept all printable");
+    ASSERT_INT_EQ(strspn("hello", "abcdefghijklmnopqrstuvwxyz"), 5,
+                  "all lowercase letters accept");
+    PASS();
+}
+
+static void test_strcspn(void)
+{
+    TEST("strcspn basic");
+    ASSERT_INT_EQ(strcspn("hello", "o"), 4, "'o' at position 4");
+    PASS();
+
+    TEST("strcspn no reject chars");
+    ASSERT_INT_EQ(strcspn("abc", "xyz"), 3, "no chars to reject");
+    PASS();
+
+    TEST("strcspn first char matches");
+    ASSERT_INT_EQ(strcspn("hello", "h"), 0, "first char matches");
+    PASS();
+
+    TEST("strcspn empty string");
+    ASSERT_INT_EQ(strcspn("", "abc"), 0, "empty string returns 0");
+    PASS();
+
+    TEST("strcspn char not found");
+    ASSERT_INT_EQ(strcspn("abc", "d"), 3, "not found returns full length");
+    PASS();
+}
+
+static void test_strpbrk(void)
+{
+    TEST("strpbrk found");
+    ASSERT(strpbrk("hello world", "ow") == (void *)("hello world" + 4),
+           "finds 'o' first");
+    PASS();
+
+    TEST("strpbrk not found");
+    ASSERT(strpbrk("hello", "xyz") == NULL, "no chars found");
+    PASS();
+
+    TEST("strpbrk first matching char");
+    ASSERT(strpbrk("abcdef", "cba") == (void *)("abcdef"),
+           "'a' matches first (char 'a' in set)");
+    ASSERT(strpbrk("abcdef", "fed") == (void *)("abcdef" + 3),
+           "'d' matches first at offset 3");
+    PASS();
+
+    TEST("strpbrk empty accept");
+    ASSERT(strpbrk("hello", "") == NULL, "empty accept returns NULL");
+    PASS();
+
+    TEST("strpbrk empty string");
+    ASSERT(strpbrk("", "abc") == NULL, "empty string returns NULL");
     PASS();
 }
 
@@ -510,6 +1058,115 @@ static void test_atoi(void)
     TEST("atoi INT_MIN");
     ASSERT_INT_EQ(atoi("-2147483648"), -2147483648,
                   "\"-2147483648\" -> -2147483648");
+    PASS();
+}
+
+static void test_strtol_func(void)
+{
+    char *endptr;
+
+    TEST("strtol base 10");
+    ASSERT_LONG_EQ(strtol("12345", &endptr, 10), 12345, "base 10 parse");
+    ASSERT(*endptr == '\0', "endptr at end for base 10");
+    PASS();
+
+    TEST("strtol base 16");
+    ASSERT_LONG_EQ(strtol("1a2b", &endptr, 16), 0x1a2b, "base 16 parse");
+    ASSERT(*endptr == '\0', "endptr at end for base 16");
+    PASS();
+
+    TEST("strtol base 16 uppercase");
+    ASSERT_LONG_EQ(strtol("FF", &endptr, 16), 255, "base 16 uppercase");
+    PASS();
+
+    TEST("strtol base 8");
+    ASSERT_LONG_EQ(strtol("777", &endptr, 8), 511, "base 8 parse");
+    ASSERT(*endptr == '\0', "endptr at end for base 8");
+    PASS();
+
+    TEST("strtol base 2");
+    ASSERT_LONG_EQ(strtol("101010", &endptr, 2), 42, "base 2 parse");
+    ASSERT(*endptr == '\0', "endptr at end for base 2");
+    PASS();
+
+    TEST("strtol negative");
+    ASSERT_LONG_EQ(strtol("-42", &endptr, 10), -42, "negative decimal");
+    ASSERT(*endptr == '\0', "endptr at end for negative");
+    PASS();
+
+    TEST("strtol positive sign");
+    ASSERT_LONG_EQ(strtol("+99", &endptr, 10), 99, "positive sign");
+    PASS();
+
+    TEST("strtol base 0 auto-detect hex");
+    ASSERT_LONG_EQ(strtol("0xFF", &endptr, 0), 255, "0x prefix -> base 16");
+    PASS();
+
+    TEST("strtol base 0 auto-detect octal");
+    ASSERT_LONG_EQ(strtol("077", &endptr, 0), 63, "leading 0 -> base 8");
+    PASS();
+
+    TEST("strtol base 0 auto-detect decimal");
+    ASSERT_LONG_EQ(strtol("42", &endptr, 0), 42, "no prefix -> base 10");
+    PASS();
+
+    TEST("strtol base 16 with 0x prefix");
+    ASSERT_LONG_EQ(strtol("0xABC", &endptr, 16), 0xABC,
+                   "base 16 with explicit 0x");
+    PASS();
+
+    TEST("strtol invalid input (no digits)");
+    ASSERT_LONG_EQ(strtol("abc", &endptr, 10), 0,
+                   "no valid digits -> 0");
+    ASSERT(endptr == (void *)"abc", "endptr points to start");
+    PASS();
+
+    TEST("strtol large valid within range");
+    ASSERT_LONG_EQ(strtol("2147483647", &endptr, 10), 2147483647L,
+                   "INT_MAX in decimal works");
+    ASSERT_LONG_EQ(strtol("-2147483648", &endptr, 10), -2147483648L,
+                   "INT_MIN in decimal works");
+    PASS();
+
+    TEST("strtol 10-digit value");
+    ASSERT_LONG_EQ(strtol("9999999999", &endptr, 10), 9999999999L,
+                   "large 10-digit value fits in long");
+    PASS();
+
+    TEST("strtol negative large");
+    ASSERT_LONG_EQ(strtol("-9999999999", &endptr, 10), -9999999999L,
+                   "negative large value");
+    PASS();
+
+    TEST("strtol whitespace");
+    ASSERT_LONG_EQ(strtol("   -123", &endptr, 10), -123,
+                   "leading whitespace consumed");
+    PASS();
+
+    TEST("strtol stops at invalid char");
+    ASSERT_LONG_EQ(strtol("123xyz", &endptr, 10), 123,
+                   "stops at 'x'");
+    ASSERT(*endptr == 'x', "endptr at invalid char");
+    PASS();
+}
+
+static void test_strtoul_func(void)
+{
+    char *endptr;
+
+    TEST("strtoul base 10");
+    ASSERT_LONG_EQ((long)strtoul("3000000000", &endptr, 10),
+                   (long)3000000000UL, "large unsigned decimal");
+    PASS();
+
+    TEST("strtoul base 16");
+    ASSERT_LONG_EQ((long)strtoul("DEADBEEF", &endptr, 16),
+                   (long)0xDEADBEEF, "large hex value");
+    PASS();
+
+    TEST("strtoul auto hex");
+    ASSERT_LONG_EQ((long)strtoul("0x100", &endptr, 0),
+                   (long)256, "auto-detect hex");
     PASS();
 }
 
@@ -565,6 +1222,64 @@ static void test_itoa(void)
     TEST("itoa invalid base");
     ASSERT_STR_EQ(itoa(42, buf, 1), "", "base 1 returns empty");
     ASSERT_STR_EQ(itoa(42, buf, 37), "", "base 37 returns empty");
+    PASS();
+}
+
+static void test_ltoa(void)
+{
+    char buf[128];
+
+    TEST("ltoa zero");
+    ASSERT_STR_EQ(ltoa(0, buf, 10), "0", "ltoa zero");
+    PASS();
+
+    TEST("ltoa positive");
+    ASSERT_STR_EQ(ltoa(123456789L, buf, 10), "123456789",
+                  "ltoa positive decimal");
+    PASS();
+
+    TEST("ltoa negative");
+    ASSERT_STR_EQ(ltoa(-123456789L, buf, 10), "-123456789",
+                  "ltoa negative decimal");
+    PASS();
+
+    TEST("ltoa LONG_MAX");
+    ASSERT_STR_EQ(ltoa(9223372036854775807L, buf, 10),
+                  "9223372036854775807", "ltoa LONG_MAX");
+    PASS();
+
+    TEST("ltoa LONG_MIN");
+    ASSERT_STR_EQ(ltoa(-9223372036854775807L - 1L, buf, 10),
+                  "-9223372036854775808", "ltoa LONG_MIN");
+    PASS();
+
+    TEST("ltoa hex");
+    ASSERT_STR_EQ(ltoa(255L, buf, 16), "ff", "ltoa 255 in hex");
+    PASS();
+}
+
+static void test_strdup_func(void)
+{
+    TEST("strdup basic");
+    char *dup = strdup("hello world");
+    ASSERT(dup != NULL, "strdup returns non-NULL");
+    ASSERT_STR_EQ(dup, "hello world", "duplicate matches");
+    __builtin_free(dup);
+    PASS();
+
+    TEST("strdup empty string");
+    char *edup = strdup("");
+    ASSERT(edup != NULL, "empty strdup returns non-NULL");
+    ASSERT_STR_EQ(edup, "", "empty duplicate");
+    __builtin_free(edup);
+    PASS();
+
+    TEST("strdup long string");
+    char *ldup = strdup("abcdefghijklmnopqrstuvwxyz0123456789");
+    ASSERT(ldup != NULL, "long strdup returns non-NULL");
+    ASSERT_STR_EQ(ldup, "abcdefghijklmnopqrstuvwxyz0123456789",
+                  "long duplicate matches");
+    __builtin_free(ldup);
     PASS();
 }
 
@@ -743,6 +1458,41 @@ static void test_snprintf(void)
     ASSERT_INT_EQ(snprintf(NULL, 0, "test"), 0,
                   "NULL/0 returns 0");
     PASS();
+
+    TEST("snprintf truncation with %d");
+    char dbuf[16];
+    memset(dbuf, 0xAA, sizeof(dbuf));
+    snprintf(dbuf, 5, "%d", (long long)123456);
+    ASSERT_STR_EQ(dbuf, "1234", "%d truncated to 4 chars");
+    PASS();
+
+    TEST("snprintf truncation with %s");
+    char sbuf[16];
+    memset(sbuf, 0xAA, sizeof(sbuf));
+    snprintf(sbuf, 5, "%s", "abcdefgh");
+    ASSERT_STR_EQ(sbuf, "abcd", "%s truncated to 4 chars");
+    PASS();
+
+    TEST("snprintf n=2");
+    char n2buf[4] = "xxx";
+    snprintf(n2buf, 2, "hello");
+    ASSERT_STR_EQ(n2buf, "h", "n=2 copies 1 char");
+    PASS();
+
+    TEST("snprintf large format string");
+    char lbuf[256];
+    snprintf(lbuf, 256, "%s %d %x %u %c %s",
+             "hello", (long long)42, (unsigned long long)0xFF,
+             (unsigned long long)100, '!', "world");
+    ASSERT_STR_EQ(lbuf, "hello 42 ff 100 ! world",
+                  "multiple format specifiers");
+    PASS();
+
+    TEST("snprintf zero buffer n=0");
+    char zbuf[4] = "xxx";
+    snprintf(zbuf, 0, "hello");
+    ASSERT_STR_EQ(zbuf, "xxx", "n=0 leaves buffer unchanged");
+    PASS();
 }
 
 /* ===================================================================
@@ -760,18 +1510,32 @@ int main(void)
     test_strcmp();
     test_strncmp();
     test_memcpy();
+    test_memmove();
     test_memcmp();
     test_memset();
+    test_memchr();
     test_strcpy();
+    test_strncpy();
     test_strcat();
+    test_strncat();
     test_strstr();
     test_strchr();
+    test_strrchr();
     test_strtok();
+    test_strtok_r();
+    test_strsep();
+    test_strspn();
+    test_strcspn();
+    test_strpbrk();
 
     /* --- stdlib.h tests --- */
     printf("\n--- stdlib.h ---\n");
     test_atoi();
+    test_strtol_func();
+    test_strtoul_func();
     test_itoa();
+    test_ltoa();
+    test_strdup_func();
     test_abs();
 
     /* --- printf tests --- */

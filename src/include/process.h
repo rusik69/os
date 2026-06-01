@@ -214,6 +214,7 @@ int process_fork(void); /* fork current process, returns child PID, child starts
 int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags);
 void process_set_current(struct process *proc);
+uint32_t process_get_count(void);
 
 /* ── Process credential API ────────────────────────────────── */
 int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
