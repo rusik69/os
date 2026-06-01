@@ -19,6 +19,7 @@
 #include "string.h"
 #include "rtc.h"
 #include "nmi_watchdog.h"
+#include "cpuhp.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -615,3 +616,85 @@ static struct process *dequeue_next_cfs(void) {
 
 /* ── Replace old dequeue_next with CFS version ────────────── */
 #define dequeue_next dequeue_next_cfs
+
+/* ── CPU hotplug: migrate all tasks away from a CPU ──────── */
+
+/*
+ * Migrate every runnable process from @from_cpu to other online CPUs.
+ * This is called by cpuhp_migrate_tasks_away() while holding the hotplug
+ * lock. It iterates the per-CPU runqueue of @from_cpu, removes each
+ * process, and distributes them across the remaining online CPUs.
+ *
+ * Returns the number of tasks migrated (0 if none).
+ *
+ * NOTE: This function expects cpuhp_lock to already be held by the caller
+ * and interrupts to be disabled. It does NOT acquire sched_lock itself
+ * since the hotplug lock serialises all scheduling modifications during
+ * the offline transition.
+ */
+int scheduler_migrate_tasks_from(int from_cpu)
+{
+    struct cpu_info *ci;
+    int migrated = 0;
+
+    if (from_cpu < 0 || from_cpu >= smp_cpu_count)
+        return -1;
+
+    ci = &cpu_info_array[from_cpu];
+
+    /* ── Count available destination CPUs ────────────────────────── */
+    int dst_cpus[SMP_MAX_CPUS];
+    int num_dst = 0;
+
+    for (int i = 0; i < smp_cpu_count; i++) {
+        if (i != from_cpu && cpuhp_is_online(i)) {
+            dst_cpus[num_dst++] = i;
+        }
+    }
+
+    if (num_dst == 0)
+        return 0; /* no targets — nothing to do */
+
+    /* ── Migrate tasks from each priority level ──────────────────── */
+    int spread = (int)timer_get_ticks(); /* pseudo-random spread seed */
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+
+        while (p) {
+            struct process *next = p->next;
+
+            /* Pick a destination CPU (round-robin) */
+            int dst = dst_cpus[spread % num_dst];
+            spread++;
+
+            /* Unlink from source queue */
+            p->next = NULL;
+            p->on_queue = 0;
+
+            /* Link into destination queue */
+            struct cpu_info *dci = &cpu_info_array[dst];
+            int dlvl = (int)p->priority;
+            if (dlvl < 0 || dlvl >= SCHED_LEVELS)
+                dlvl = 1;
+
+            if (!dci->queue_tail[dlvl]) {
+                dci->queue_head[dlvl] = p;
+                dci->queue_tail[dlvl] = p;
+            } else {
+                dci->queue_tail[dlvl]->next = p;
+                dci->queue_tail[dlvl] = p;
+            }
+            p->on_queue = 1;
+            migrated++;
+
+            p = next;
+        }
+
+        /* Clear the source queue for this level */
+        ci->queue_head[lvl] = NULL;
+        ci->queue_tail[lvl] = NULL;
+    }
+
+    return migrated;
+}

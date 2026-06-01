@@ -70,6 +70,23 @@ int smp_boot_aps(void);
 /* Check how many CPUs are online */
 int smp_get_cpu_count(void);
 
+/* ── CPU hotplug ──────────────────────────────────────────────────── */
+
+/*
+ * Gracefully take CPU @cpu_id offline.
+ * Migrates all runnable tasks to other CPUs.
+ * Returns 0 on success, negative error code on failure.
+ * CPU 0 (BSP) cannot be offlined.
+ */
+int smp_cpu_disable(int cpu_id);
+
+/*
+ * Bring CPU @cpu_id back online.
+ * The CPU must have been previously disabled via smp_cpu_disable().
+ * Returns 0 on success, negative error code on failure.
+ */
+int smp_cpu_enable(int cpu_id);
+
 /* Per-CPU info array (BSP writes AP info before SIPI) */
 extern struct cpu_info cpu_info_array[SMP_MAX_CPUS];
 extern int smp_cpu_count;

@@ -2,60 +2,98 @@
 #define CPUHP_H
 
 #include "types.h"
+#include "spinlock.h"
 
 /*
- * CPU hotplug stub interface.
+ * CPU hotplug interface.
  *
- * Simple header-only stubs that allow the kernel to register and
- * manage CPU hotplug events. In a full implementation these would
- * interact with APIC, ACPI, and the scheduler.
+ * Provides per-CPU state management with proper task migration.
+ * The real implementation lives in src/kernel/cpu.c.
  */
 
 /* Maximum supported CPU count */
 #define CPUHP_MAX_CPUS 16
 
-/* CPU hotplug states */
+/* CPU hotplug states — in increasing order of "aliveness" */
 enum cpuhp_state {
-    CPUHP_STATE_OFFLINE = 0,
-    CPUHP_STATE_ONLINE  = 1,
-    CPUHP_STATE_DEAD    = 2,
+    CPUHP_STATE_DEAD     = 0,  /* CPU physically removed / not present */
+    CPUHP_STATE_OFFLINE  = 1,  /* CPU present but not schedulable */
+    CPUHP_STATE_ONLINE   = 2,  /* CPU fully up and accepting tasks */
 };
 
-/* Per-CPU hotplug state table */
+/* Hotplug return codes */
+#define CPUHP_OK         0
+#define CPUHP_ERR_INVAL -1  /* bad CPU id */
+#define CPUHP_ERR_BUSY  -2  /* cannot offline: tasks refused to migrate */
+#define CPUHP_ERR_BSP   -3  /* cannot offline the boot CPU */
+
+/* Notifier callback type for CPU hotplug state changes */
+typedef void (*cpuhp_notify_fn)(void);
+
+/* Per-CPU hotplug state table (defined in smp.c) */
 extern enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
 
-/* Initialize the CPU hotplug subsystem */
-static inline void cpuhp_init(void) {
-    for (int i = 0; i < CPUHP_MAX_CPUS; i++)
-        cpuhp_cpu_state[i] = CPUHP_STATE_OFFLINE;
-    cpuhp_cpu_state[0] = CPUHP_STATE_ONLINE; /* BSP is always online */
-}
+/* Lock protecting hotplug state transitions */
+extern spinlock_t cpuhp_lock;
 
-/* Bring a CPU online (stub — does nothing in UP configuration) */
-static inline int cpuhp_bring_cpu(int cpu_id) {
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
-        return -1;
-    if (cpuhp_cpu_state[cpu_id] == CPUHP_STATE_ONLINE)
-        return 0; /* already online */
-    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
-    return 0;
-}
+/*
+ * ── Initialization ─────────────────────────────────────────────
+ */
 
-/* Take a CPU offline (stub) */
-static inline int cpuhp_take_cpu_offline(int cpu_id) {
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
-        return -1;
-    if (cpu_id == 0)
-        return -1; /* cannot offline BSP */
-    cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
-    return 0;
-}
+/* Initialize CPU hotplug subsystem. Called once during boot (from smp.c). */
+void cpuhp_init(void);
 
-/* Query online/offline state */
-static inline int cpuhp_is_online(int cpu_id) {
-    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS)
-        return 0;
-    return cpuhp_cpu_state[cpu_id] == CPUHP_STATE_ONLINE;
-}
+/*
+ * ── State transitions ──────────────────────────────────────────
+ */
+
+/*
+ * Bring a CPU online.
+ * If the CPU was previously offline, this transitions it to CPUHP_STATE_ONLINE.
+ * Returns 0 on success, negative on error.
+ */
+int cpuhp_bring_cpu(int cpu_id);
+
+/*
+ * Take a CPU offline.
+ * If the CPU is currently online, this migrates all runnable tasks away
+ * and transitions it to CPUHP_STATE_OFFLINE. Cannot offline the BSP (CPU 0).
+ * Returns 0 on success, negative on error.
+ */
+int cpuhp_take_cpu_offline(int cpu_id);
+
+/*
+ * ── Query helpers ──────────────────────────────────────────────
+ */
+
+/* Check whether a given CPU is online (schedulable). */
+int cpuhp_is_online(int cpu_id);
+
+/* Get the number of currently online CPUs (excluding offline ones). */
+int cpuhp_online_count(void);
+
+/*
+ * ── SMP integration ────────────────────────────────────────────
+ */
+
+/*
+ * Called by smp_cpu_disable() to begin taking a CPU offline.
+ * Migrates all tasks from @cpu_id to other online CPUs.
+ * Returns 0 on success, negative on error.
+ */
+int cpuhp_migrate_tasks_away(int cpu_id);
+
+/*
+* Notify hotplug listeners that a CPU state changed.
+* Called internally after state transitions.
+*/
+void cpuhp_notify(void);
+
+/*
+* Register a callback invoked on CPU hotplug state changes.
+* Maximum CPUHP_NOTIFIER_MAX callbacks can be registered.
+* Returns 0 on success, -1 if the table is full.
+*/
+int cpuhp_register_notify(cpuhp_notify_fn fn);
 
 #endif /* CPUHP_H */

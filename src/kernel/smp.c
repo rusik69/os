@@ -352,3 +352,76 @@ int smp_boot_aps(void) {
 int smp_get_cpu_count(void) {
     return smp_cpu_count;
 }
+
+/* ── CPU hotplug ───────────────────────────────────────────────── */
+
+/*
+ * smp_cpu_disable() — Take a CPU offline gracefully.
+ *
+ * Migrates all runnable tasks away from @cpu_id and marks the CPU
+ * as offline. The BSP (CPU 0) cannot be offlined.
+ *
+ * Returns 0 on success, or a negative CPUHP_ERR_* code on failure.
+ *
+ * Usage:  smp_cpu_disable(1);   // offline CPU 1
+ */
+int smp_cpu_disable(int cpu_id)
+{
+    int ret;
+
+    if (cpu_id < 0 || cpu_id >= smp_cpu_count)
+        return CPUHP_ERR_INVAL;
+
+    if (cpu_id == 0) {
+        kprintf("[smp] Cannot disable BSP (CPU 0)\n");
+        return CPUHP_ERR_BSP;
+    }
+
+    kprintf("[smp] Disabling CPU %d...\n", cpu_id);
+
+    /* Delegate to cpuhp subsystem which handles locking, task migration */
+    ret = cpuhp_take_cpu_offline(cpu_id);
+
+    if (ret == CPUHP_OK) {
+        kprintf("[smp] CPU %d disabled (%d CPUs now online)\n",
+                cpu_id, cpuhp_online_count());
+    } else {
+        kprintf("[smp] Failed to disable CPU %d: error %d\n", cpu_id, ret);
+    }
+
+    return ret;
+}
+
+/*
+ * smp_cpu_enable() — Bring a CPU online.
+ *
+ * Transitions @cpu_id from OFFLINE back to ONLINE state so that the
+ * scheduler can assign tasks to it.
+ *
+ * Returns 0 on success, or a negative CPUHP_ERR_* code on failure.
+ *
+ * Usage:  smp_cpu_enable(1);   // online CPU 1
+ */
+int smp_cpu_enable(int cpu_id)
+{
+    int ret;
+
+    if (cpu_id < 0 || cpu_id >= smp_cpu_count)
+        return CPUHP_ERR_INVAL;
+
+    kprintf("[smp] Enabling CPU %d...\n", cpu_id);
+
+    ret = cpuhp_bring_cpu(cpu_id);
+
+    if (ret == CPUHP_OK) {
+        /* Re-enable the scheduler on this CPU */
+        cpu_info_array[cpu_id].scheduler_enabled = 1;
+
+        kprintf("[smp] CPU %d enabled (%d CPUs now online)\n",
+                cpu_id, cpuhp_online_count());
+    } else {
+        kprintf("[smp] Failed to enable CPU %d: error %d\n", cpu_id, ret);
+    }
+
+    return ret;
+}
