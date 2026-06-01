@@ -219,6 +219,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/pstore.c \
          src/kernel/stack_guard.c \
          src/kernel/rseq.c \
+         src/kernel/mce.c \
          src/kernel/kasan_light.c \
          src/kernel/firmware.c \
          src/kernel/memfd.c \

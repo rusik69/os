@@ -95,6 +95,7 @@
 #include "perf_events.h"
 #include "jump_label.h"
 #include "pstore.h"
+#include "mce.h"
 #include "stack_guard.h"
 #include "rseq.h"
 #include "kasan_light.h"
@@ -268,6 +269,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* PStore — persistent storage for panic/oops messages */
     pstore_init();
+
+    /* Machine Check Exception (MCE) handler — hardware error detection */
+    mce_init();
 
     /* OOM killer */
     oom_init();
