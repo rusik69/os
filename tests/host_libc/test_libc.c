@@ -55,7 +55,7 @@ void vga_putchar(char c)     { (void)c; }
 void serial_putchar(char c)  { (void)c; }
 
 /* Called by malloc() inline → strdup() in stdlib.c */
-void *libc_malloc(size_t sz) { (void)sz; return NULL; }
+/* Stubs are in stubs.c — see stubs.c for libc_malloc, libc_free, etc. */
 
 /* ===================================================================
  *  Implementations of static-inline kernel functions
