@@ -168,7 +168,21 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/crypto.c \
          src/net/dhcp.c \
          src/kernel/irq_affinity.c \
-         src/kernel/trace.c
+         src/kernel/trace.c \
+         src/kernel/smap_smep_umip.c \
+         src/kernel/x2apic.c \
+         src/kernel/tsc_deadline.c \
+         src/kernel/invpcid.c \
+         src/kernel/fsgsbase.c \
+         src/kernel/rdpid.c \
+         src/kernel/nx_enforce.c \
+         src/kernel/vsyscall.c \
+         src/memory/memhotplug.c \
+         src/memory/page_poison.c \
+         src/memory/cma.c \
+         src/memory/zram.c \
+         src/memory/ksm.c \
+         src/memory/thp.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

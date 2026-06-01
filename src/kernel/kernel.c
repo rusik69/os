@@ -56,6 +56,10 @@
 #include "apic.h"
 #include "elf.h"
 #include "cpu.h"
+#include "cpu_features.h"
+#include "x2apic.h"
+#include "tsc_deadline.h"
+#include "vsyscall.h"
 #include "slab.h"
 #include "oom.h"
 #include "rcu.h"
@@ -71,6 +75,12 @@
 #include "lockdep.h"
 #include "tmpfs.h"
 #include "compaction.h"
+#include "memhotplug.h"
+#include "page_poison.h"
+#include "cma.h"
+#include "zram.h"
+#include "ksm.h"
+#include "thp.h"
 #include "cmdline.h"
 #include "ramdisk.h"
 #include "timers.h"
@@ -193,6 +203,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Enable CPU security features: SMEP, SMAP, NXE, UMIP */
     cpu_security_init();
 
+    /* Extended CPU features */
+    smap_smep_init();
+    umip_init();
+    fsgsbase_init();
+    invpcid_init();
+    rdpid_init();
+    x2apic_init();
+    nx_enforce_init();
+
     /* Kernel heap (framebuffer may allocate from heap) */
     heap_init();
     kprintf("[OK] Heap initialized\n");
@@ -239,6 +258,14 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Memory compaction / defragmentation */
     compaction_init();
 
+    /* Memory features */
+    memhp_init();
+    page_poison_init();
+    cma_init();
+    ksm_init();
+    thp_init();
+
+    /* TSC deadline timer (after APIC is up) */
     /* Software RNG — seed from timer (timer not yet available, so we'll re-seed later) */
     rng_init();
 
@@ -274,6 +301,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Local APIC (replaces PIC for interrupt delivery) */
     apic_init_local();
+    tsc_deadline_init();
     kprintf("[OK] Local APIC initialized\n");
 
     /* Register IPI handlers for SMP coordination */
@@ -346,6 +374,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     vfs_init();
     kprintf("[OK] VFS initialized\n");
 
+    /* vsyscall page for fast user-space syscalls */
+    vsyscall_init();
+
     /* Pipes */
     pipe_init();
     kprintf("[OK] Pipes initialized\n");
@@ -356,6 +387,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Block device registry */
     blockdev_init();
+
+    /* ZRAM compressed RAM block device */
+    zram_init();
 
     /* ATA disk */
     ata_init();

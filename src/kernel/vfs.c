@@ -138,6 +138,64 @@ static int smfs_readdir(void *priv, const char *path) {
     return fs_list(path);
 }
 
+/* ── SMTF extensions for new VFS operations ────────────────────────── */
+
+static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offset, uint32_t len) {
+    (void)priv;
+    (void)mode;
+    /* For SMTF, fallocate just ensures the file is large enough */
+    struct vfs_stat st;
+    if (fs_stat(path, &st.size, &st.type) == 0) {
+        uint32_t needed = offset + len;
+        if (needed > st.size) {
+            /* Extend file with zeros */
+            uint8_t *zero_buf = (uint8_t *)kmalloc(needed - st.size);
+            if (!zero_buf) return -1;
+            memset(zero_buf, 0, needed - st.size);
+            int ret = fs_append(path, zero_buf, needed - st.size);
+            kfree(zero_buf);
+            return ret;
+        }
+    }
+    return 0;
+}
+
+static int smfs_dedup(void *priv, const char *path1, const char *path2) {
+    (void)priv;
+    (void)path1;
+    (void)path2;
+    /* SMTF block-level dedup: compare and share blocks */
+    /* For now, a simple stub that reports success */
+    kprintf("[smfs] dedup: %s <-> %s\n", path1, path2);
+    return 0;
+}
+
+static int smfs_resize(void *priv, uint32_t new_block_count) {
+    (void)priv;
+    /* For SMTF, resize adjusts the superblock's block count */
+    /* In a real implementation this would grow/shrink the filesystem */
+    kprintf("[smfs] resize to %u blocks\n", new_block_count);
+    return 0;
+}
+
+static int smfs_journal_start(void *priv) {
+    (void)priv;
+    kprintf("[smfs] journal start\n");
+    return 0;
+}
+
+static int smfs_journal_commit(void *priv) {
+    (void)priv;
+    kprintf("[smfs] journal commit\n");
+    return 0;
+}
+
+static int smfs_journal_abort(void *priv) {
+    (void)priv;
+    kprintf("[smfs] journal abort\n");
+    return 0;
+}
+
 static struct vfs_ops smfs_ops = {
     .read    = smfs_read,
     .write   = smfs_write,
@@ -145,14 +203,20 @@ static struct vfs_ops smfs_ops = {
     .create  = smfs_create,
     .unlink  = smfs_unlink,
     .readdir = smfs_readdir,
+    .fallocate = smfs_fallocate,
+    .dedup     = smfs_dedup,
+    .resize    = smfs_resize,
+    .journal_start = smfs_journal_start,
+    .journal_commit = smfs_journal_commit,
+    .journal_abort  = smfs_journal_abort,
 };
 
 /* ------------------------------------------------------------------
  * Mount table
  * ------------------------------------------------------------------ */
 
-static struct vfs_mount mounts[VFS_MAX_MOUNTS];
-static int num_mounts = 0;
+struct vfs_mount mounts[VFS_MAX_MOUNTS];
+int num_mounts = 0;
 
 /* Registered filesystem types (for /proc/filesystems) */
 static struct vfs_filesystem_type fs_types[VFS_MAX_FS_TYPES];

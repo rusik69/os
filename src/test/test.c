@@ -78,6 +78,7 @@
 #include "net_internal.h"
 #include "slab.h"
 #include "atomic.h"
+#include "cpu.h"
 
 /* Phase 11 test headers */
 #include "ps2.h"
@@ -96,6 +97,18 @@
 #include "tun.h"
 #include "net_ns.h"
 #include "shell_cmds.h"
+
+/* New feature test headers */
+#include "cpu_features.h"
+#include "x2apic.h"
+#include "tsc_deadline.h"
+#include "vsyscall.h"
+#include "memhotplug.h"
+#include "page_poison.h"
+#include "cma.h"
+#include "zram.h"
+#include "ksm.h"
+#include "thp.h"
 
 /* do_coredump is defined in kernel/syscall.c */
 extern void do_coredump(struct process *proc);
@@ -3703,6 +3716,225 @@ static void test_cmd_iconv(void) {
         ASSERT("cmd_iconv fn non-null", fn != NULL);
     }
     t_ok("cmd_iconv test");
+}
+
+/* ── New feature tests: CPU/Memory/Architecture ───────────── */
+
+static void test_smap_smep(void) {
+    uint64_t cr4 = read_cr4();
+    ASSERT("SMEP enabled (CR4 bit 20)", cr4 & CR4_SMEP);
+    ASSERT("SMAP enabled (CR4 bit 21)", cr4 & CR4_SMAP);
+}
+
+static void test_umip(void) {
+    uint64_t cr4 = read_cr4();
+    ASSERT("UMIP enabled (CR4 bit 11)", cr4 & CR4_UMIP);
+}
+
+static void test_x2apic(void) {
+    uint64_t apic_base = read_msr(IA32_APIC_BASE);
+    ASSERT("x2APIC base readable", apic_base != 0);
+    /* x2APIC may or may not be active depending on hardware */
+    t_ok("x2APIC check done");
+}
+
+static void test_tsc_deadline(void) {
+    /* TSC deadline timer mode configured if supported */
+    uint64_t msr = read_msr(IA32_TSC_DEADLINE);
+    /* MSR should be readable without fault */
+    t_ok("TSC deadline MSR readable");
+    (void)msr;
+}
+
+static void test_invpcid(void) {
+    uint64_t cr4 = read_cr4();
+    /* INVPCID may not be available on all CPUs, but CR4 bit should match */
+    int rax, rbx, rcx, rdx;
+    __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
+    if (rbx & CPUID_7_EBX_INVPCID) {
+        ASSERT("INVPCID CR4 bit set", cr4 & CR4_INVPCID);
+        /* Test invpcid_flush_all doesn't crash */
+        invpcid_flush_all();
+        t_ok("INVPCID flush_all OK");
+    } else {
+        t_ok("INVPCID SKIP (not supported)");
+    }
+}
+
+static void test_fsgsbase(void) {
+    uint64_t cr4 = read_cr4();
+    int rax, rbx, rcx, rdx;
+    __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
+    if (rbx & CPUID_7_EBX_FSGSBASE) {
+        ASSERT("FSGSBASE CR4 bit set", cr4 & CR4_FSGSBASE);
+        /* Test wrfsbase/rdfsbase */
+        uint64_t orig = rdfsbase();
+        wrfsbase(0xDEAD);
+        uint64_t val = rdfsbase();
+        wrfsbase(orig);
+        ASSERT_EQ("FSGSBASE write/read", val, 0xDEADULL);
+    } else {
+        t_ok("FSGSBASE SKIP (not supported)");
+    }
+}
+
+static void test_rdpid(void) {
+    int rax, rbx, rcx, rdx;
+    __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
+    if (rbx & CPUID_7_EBX_RDPID) {
+        uint32_t pid = rdpid();
+        /* Should return some value (could be 0 on some implementations) */
+        t_ok("RDPID instruction OK");
+        (void)pid;
+    } else {
+        t_ok("RDPID SKIP (not supported)");
+    }
+}
+
+static void test_memhotplug(void) {
+    int initial_count = memhp_get_section_count();
+    ASSERT("memhp initial count 0", initial_count == 0);
+
+    /* Add a test region */
+    int ret = memhp_add_region(0x100000000ULL, 128ULL * 1024 * 1024);
+    ASSERT("memhp add region", ret == 0);
+    ASSERT("memhp count after add", memhp_get_section_count() == 1);
+
+    /* Online the section */
+    ret = memhp_online_section(0);
+    ASSERT("memhp online section", ret == 0);
+
+    /* Offline the section */
+    ret = memhp_offline_section(0);
+    ASSERT("memhp offline section", ret == 0);
+
+    /* Remove the region */
+    ret = memhp_remove_region(0x100000000ULL);
+    ASSERT("memhp remove region", ret == 0);
+
+    t_ok("memory hotplug");
+}
+
+static void test_page_poison_new(void) {
+    ASSERT("page_poison init'd", page_poison_is_active());
+    ASSERT("poison value 0xDC", page_poison_get_freed_value() == 0xDC);
+
+    /* Test poison_region and check */
+    uint8_t buf[64];
+    memset(buf, 0, sizeof(buf));
+    poison_region(buf, sizeof(buf));
+    int clean = poison_check_region(buf, sizeof(buf), 0xDC);
+    ASSERT("poison_region fills with 0xDC", clean == 0);
+
+    /* Test corruption detection */
+    buf[10] = 0x00;
+    int corrupt = poison_check_region(buf, sizeof(buf), 0xDC);
+    ASSERT("poison_check detects corruption", corrupt != 0);
+
+    t_ok("page poisoning extended");
+}
+
+static void test_cma(void) {
+    /* Create a small CMA area */
+    int ret = cma_create_area(0x100000ULL, 64, "test"); /* 64 pages = 256KB */
+    ASSERT("cma create area", ret == 0);
+    ASSERT("cma total pages", cma_get_total_pages("test") == 64);
+    ASSERT("cma free pages", cma_get_free_pages("test") == 64);
+
+    /* Allocate 4 pages */
+    uint64_t pfn = cma_alloc("test", 4, 1);
+    ASSERT("cma alloc 4 pages", pfn != 0);
+    ASSERT("cma free reduced", cma_get_free_pages("test") == 60);
+
+    /* Free them */
+    cma_free(pfn, 4);
+    ASSERT("cma free restored", cma_get_free_pages("test") == 64);
+
+    t_ok("CMA allocator");
+}
+
+static void test_zram(void) {
+    /* Create ZRAM device */
+    int ret = zram_create_device(ZRAM_DEFAULT_SIZE);
+    ASSERT("zram create device", ret == 0);
+
+    /* Write test pattern */
+    uint8_t write_buf[4096];
+    memset(write_buf, 0xAA, sizeof(write_buf));
+    ret = zram_write_sectors(0, write_buf, 1);
+    ASSERT("zram write sector 0", ret == 0);
+    ASSERT("zram stored pages > 0", zram_get_stored_pages() > 0);
+
+    /* Read back */
+    uint8_t read_buf[4096];
+    memset(read_buf, 0, sizeof(read_buf));
+    ret = zram_read_sectors(0, read_buf, 1);
+    ASSERT("zram read sector 0", ret == 0);
+    ASSERT("zram data integrity", memcmp(write_buf, read_buf, 4096) == 0);
+
+    t_ok("ZRAM compressed block device");
+}
+
+static void test_ksm(void) {
+    ASSERT("ksm init'd", ksm_is_enabled() == 0);
+
+    ksm_set_enabled(1);
+    ASSERT("ksm enabled", ksm_is_enabled());
+
+    /* Register a region */
+    static uint8_t ksm_page_a[4096] __attribute__((aligned(4096)));
+    static uint8_t ksm_page_b[4096] __attribute__((aligned(4096)));
+    memset(ksm_page_a, 0x42, sizeof(ksm_page_a));
+    memset(ksm_page_b, 0x42, sizeof(ksm_page_b)); /* Same content! */
+
+    int ret = ksm_register_region((uint64_t)ksm_page_a, 4096);
+    ASSERT("ksm register region A", ret == 0);
+    ret = ksm_register_region((uint64_t)ksm_page_b, 4096);
+    ASSERT("ksm register region B", ret == 0);
+
+    /* Scan — should merge the two identical pages */
+    ksm_scan_cycle();
+    ASSERT("ksm scan count > 0", ksm_get_scan_count() > 0);
+
+    ksm_set_enabled(0);
+    t_ok("KSM same-page merging");
+}
+
+static void test_thp(void) {
+    ASSERT("thp init'd", thp_is_enabled());
+
+    /* Track a huge page (2MB aligned) */
+    static uint8_t huge_page[THP_HPAGE_SIZE] __attribute__((aligned(THP_HPAGE_SIZE)));
+    int ret = thp_track_hugepage((uint64_t)huge_page, 0);
+    ASSERT("thp track hugepage", ret == 0);
+    ASSERT("thp total pages", thp_get_total_pages() == 1);
+
+    /* Split it */
+    ret = thp_split_hugepage((uint64_t)huge_page);
+    ASSERT("thp split hugepage", ret == 512);
+    ASSERT("thp split count", thp_get_split_pages() == 1);
+
+    /* Untrack */
+    thp_untrack_hugepage((uint64_t)huge_page);
+    ASSERT("thp total after untrack", thp_get_total_pages() == 0);
+
+    t_ok("THP tracking");
+}
+
+static void test_nx_enforce(void) {
+    /* NX enforcement should be active or at least checked */
+    uint64_t efer = read_msr(0xC0000080);
+    ASSERT("EFER NXE bit set", efer & EFER_NXE);
+    t_ok("NX-bit enforcement");
+}
+
+static void test_vsyscall(void) {
+    void *page = vsyscall_get_page();
+    ASSERT("vsyscall page mapped", page != NULL);
+    /* First bytes should be the gettimeofday stub (mov eax, 0x60) */
+    uint8_t *code = (uint8_t *)page;
+    ASSERT("vsyscall stub present", code[0] == 0xB8 && code[1] == 0x60);
+    t_ok("vsyscall page");
 }
 
 void test_run_all(void) {

@@ -7,9 +7,9 @@
 /* Maximum open files across all processes */
 #define VFS_MAX_OPEN 32
 /* Maximum filesystem mounts */
-#define VFS_MAX_MOUNTS 8
+#define VFS_MAX_MOUNTS 16
 /* Maximum filesystem type registrations */
-#define VFS_MAX_FS_TYPES 4
+#define VFS_MAX_FS_TYPES 16
 
 #define VFS_O_RDONLY 0
 #define VFS_O_WRONLY 1
@@ -119,6 +119,16 @@ struct vfs_ops {
     int (*readdir_names)(void *priv, const char *path, char names[][64], int max);
     /* Optional: truncate file */
     int (*truncate)(void *priv, const char *path, uint32_t len);
+    /* Optional: pre-allocate disk space */
+    int (*fallocate)(void *priv, const char *path, int mode, uint32_t offset, uint32_t len);
+    /* Optional: file deduplication (find and share identical blocks) */
+    int (*dedup)(void *priv, const char *path1, const char *path2);
+    /* Optional: filesystem resize (new_block_count) */
+    int (*resize)(void *priv, uint32_t new_block_count);
+    /* Optional: journal transaction operations */
+    int (*journal_start)(void *priv);
+    int (*journal_commit)(void *priv);
+    int (*journal_abort)(void *priv);
 };
 
 /* A mounted filesystem */
@@ -129,6 +139,12 @@ struct vfs_mount {
     int           flags;           /* mount flags (MS_RDONLY, etc.) */
     char          bind_source[64]; /* source path for bind mounts */
     int           is_bind;         /* 1 = bind mount */
+    /* Journal state */
+    int           journal_active;  /* 1 = in transaction */
+    uint32_t      journal_seq;     /* transaction sequence number */
+    /* Encryption state */
+    int           encrypted;       /* 1 = encryption enabled */
+    uint8_t       enc_key[16];    /* per-mount encryption key */
 };
 
 /* Registered filesystem type */
@@ -188,11 +204,63 @@ int vfs_link(const char *oldpath, const char *newpath);
 int vfs_bind_mount(const char *src, const char *target);
 int vfs_is_bind_mount(const char *path);
 const char *vfs_bind_source(const char *path);
+/* Recursive bind mount: binds a subtree */
+int vfs_bind_mount_recursive(const char *src, const char *target);
+/* List all bind mounts */
+int vfs_list_bind_mounts(char srcs[][64], char targets[][64], int max);
 
 /* POSIX ACL */
 int vfs_set_acl(const char *path, struct posix_acl *acl);
 int vfs_get_acl(const char *path, struct posix_acl *acl);
 
+/* Fallocate: pre-allocate disk space */
+int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
+
+/* File deduplication */
+int vfs_dedup(const char *path1, const char *path2);
+
+/* Filesystem resize */
+int vfs_resize(const char *path, uint32_t new_block_count);
+
+/* FS journal operations */
+int vfs_journal_start(const char *path);
+int vfs_journal_commit(const char *path);
+int vfs_journal_abort(const char *path);
+
+/* Initramfs / CPIO extraction */
+int cpio_extract_initramfs(uint32_t addr, uint32_t size);
+int cpio_init(void);
+
+/* tarfs init */
+int tarfs_init(void);
+
+/* ext2 init */
+int ext2_init(void);
+
+/* iso9660 init */
+int iso9660_init(void);
+
+/* romfs init */
+int romfs_init(void);
+
+/* FS encryption for SMTF */
+int vfs_set_encryption(const char *path, int enabled);
+int vfs_get_encryption(const char *path);
+
+/* Block device cache stats extended */
+void bufcache_stats_all(uint64_t *hits, uint64_t *misses, uint64_t *writes,
+                        uint64_t *evictions, uint64_t *dirty_writes, uint32_t *ws_est);
+
+/* FS quota enforcement at VFS level */
+int vfs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit);
+int vfs_get_quota(uint16_t uid, struct fs_quota *quota);
+int vfs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed);
+int vfs_check_quota_inodes(uint16_t uid);
+
 void vfs_init(void);
+
+/* Mount table (extern for enhanced features) */
+extern struct vfs_mount mounts[VFS_MAX_MOUNTS];
+extern int num_mounts;
 
 #endif

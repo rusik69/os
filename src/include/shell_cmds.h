@@ -294,4 +294,20 @@ void cmd_lesskey(const char *args);
 void cmd_ipcrm(const char *args);
 void cmd_ipcs(const char *args);
 void cmd_isosize(const char *args);
+
+/* Phase 11+ — recently added utility commands (missing from earlier phases) */
+void cmd_host(const char *args);
+void cmd_col(const char *args);
+
+/* Phase 12 — system utility commands */
+void cmd_moc(const char *args);
+void cmd_pmap(const char *args);
+void cmd_pwdx(const char *args);
+void cmd_flock(const char *args);
+void cmd_lslocks(const char *args);
+void cmd_nsenter(const char *args);
+void cmd_unshare(const char *args);
+void cmd_setsid(const char *args);
+void cmd_stdbuf_pipe(const char *args);
+void cmd_time_verbose(const char *args);
 #endif
