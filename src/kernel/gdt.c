@@ -1,5 +1,8 @@
 #include "gdt.h"
 #include "string.h"
+#include "pmm.h"
+#include "printf.h"
+#include "idt.h"
 
 #define GDT_ENTRIES 7
 
@@ -57,4 +60,66 @@ void gdt_init(void) {
 
 void tss_set_rsp0(uint64_t rsp0) {
     kernel_tss.rsp0 = rsp0;
+}
+
+/* ── IST stack management ────────────────────────────────────────── */
+
+static uint64_t ist_stack_phys[4]; /* physical base of IST stacks (index 0 unused) */
+
+void tss_set_ist(int index, uint64_t stack_top) {
+    if (index < 1 || index > 7) return;
+    switch (index) {
+        case 1: kernel_tss.ist1 = stack_top; break;
+        case 2: kernel_tss.ist2 = stack_top; break;
+        case 3: kernel_tss.ist3 = stack_top; break;
+        case 4: kernel_tss.ist4 = stack_top; break;
+        case 5: kernel_tss.ist5 = stack_top; break;
+        case 6: kernel_tss.ist6 = stack_top; break;
+        case 7: kernel_tss.ist7 = stack_top; break;
+    }
+}
+
+void ist_init(void) {
+    /* ── Double fault IST stack (4 pages = 16 KB) ── */
+    uint64_t df_phys = (uint64_t)(uintptr_t)pmm_alloc_frames(4);
+    if (!df_phys) {
+        kprintf("[!!] IST: failed to allocate double-fault stack\n");
+        return;
+    }
+    kernel_tss.ist1 = (uint64_t)PHYS_TO_VIRT(df_phys) + 4 * PAGE_SIZE;
+    ist_stack_phys[1] = df_phys;
+    kprintf("[OK] IST1 (DF)  virt=0x%llx phys=0x%llx\n",
+            (unsigned long long)kernel_tss.ist1,
+            (unsigned long long)df_phys);
+
+    /* ── NMI IST stack (2 pages = 8 KB) ── */
+    uint64_t nmi_phys = (uint64_t)(uintptr_t)pmm_alloc_frames(2);
+    if (!nmi_phys) {
+        kprintf("[!!] IST: failed to allocate NMI stack\n");
+        return;
+    }
+    kernel_tss.ist2 = (uint64_t)PHYS_TO_VIRT(nmi_phys) + 2 * PAGE_SIZE;
+    ist_stack_phys[2] = nmi_phys;
+    kprintf("[OK] IST2 (NMI) virt=0x%llx phys=0x%llx\n",
+            (unsigned long long)kernel_tss.ist2,
+            (unsigned long long)nmi_phys);
+
+    /* ── Machine Check IST stack (2 pages = 8 KB) ── */
+    uint64_t mce_phys = (uint64_t)(uintptr_t)pmm_alloc_frames(2);
+    if (!mce_phys) {
+        kprintf("[!!] IST: failed to allocate MCE stack\n");
+        return;
+    }
+    kernel_tss.ist3 = (uint64_t)PHYS_TO_VIRT(mce_phys) + 2 * PAGE_SIZE;
+    ist_stack_phys[3] = mce_phys;
+    kprintf("[OK] IST3 (MCE) virt=0x%llx phys=0x%llx\n",
+            (unsigned long long)kernel_tss.ist3,
+            (unsigned long long)mce_phys);
+
+    /* Patch IDT entries to use IST entries */
+    idt_set_gate_ist(8, IST_INDEX_DF);   /* Double fault  → IST1 */
+    idt_set_gate_ist(2, IST_INDEX_NMI);  /* NMI           → IST2 */
+    idt_set_gate_ist(18, IST_INDEX_MCE); /* Machine Check → IST3 */
+
+    kprintf("[OK] IST stacks configured for DF/NMI/MCE protection\n");
 }

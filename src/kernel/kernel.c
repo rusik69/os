@@ -214,6 +214,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
             (unsigned long long)pmm_get_total_frames() * 4, (unsigned long long)pmm_get_used_frames() * 4);
 
+    /* IST stacks for double fault, NMI, MCE protection (needs PMM) */
+    ist_init();
+    kprintf("[OK] IST stacks initialized\n");
+
     /* Kernel command line from multiboot info (offset 0x10 = cmdline phys addr) */
     {
         uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);

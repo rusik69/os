@@ -43,6 +43,17 @@ struct gdt_pointer {
 void gdt_init(void);
 void tss_set_rsp0(uint64_t rsp0);
 
+/* IST stack indices for TSS entries */
+#define IST_INDEX_DF  1  /* Double fault  (vector 8)  */
+#define IST_INDEX_NMI 2  /* NMI           (vector 2)  */
+#define IST_INDEX_MCE 3  /* Machine Check (vector 18) */
+
+/* Set an IST stack pointer in the TSS */
+void tss_set_ist(int index, uint64_t stack_top);
+
+/* Allocate and configure IST stacks for DF/NMI/MCE protection */
+void ist_init(void);
+
 extern void gdt_load(struct gdt_pointer *ptr, uint16_t code_seg, uint16_t data_seg);
 extern void tss_load(uint16_t selector);
 

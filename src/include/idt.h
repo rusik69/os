@@ -30,6 +30,9 @@ typedef void (*isr_handler_t)(struct interrupt_frame *frame);
 void idt_init(void);
 void idt_register_handler(uint8_t vector, isr_handler_t handler);
 
+/* Update the IST field of an already-registered IDT entry */
+void idt_set_gate_ist(uint8_t num, uint8_t ist);
+
 extern void idt_load(struct idt_pointer *ptr);
 
 #endif

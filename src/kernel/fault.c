@@ -139,8 +139,39 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     process_exit_code(11); /* SIGSEGV = 11 — does not return */
 }
 
+/* ── Double-fault handler (#DF, vector 8) ────────────────────────── */
+/* Runs on a dedicated IST stack, safe even when the regular kernel
+ * stack has overflowed.  Prints full register dump and halts. */
+static void double_fault_handler(struct interrupt_frame *frame) {
+    kprintf("\n*** DOUBLE FAULT (#DF) ***\n");
+    kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
+    kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
+            (unsigned long)frame->rip, (unsigned long)frame->rsp,
+            (unsigned long)frame->rbp);
+    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
+            (unsigned long)frame->rax, (unsigned long)frame->rbx,
+            (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+    kprintf("RSI: 0x%lx  RDI: 0x%lx\n",
+            (unsigned long)frame->rsi, (unsigned long)frame->rdi);
+    kprintf("R8: 0x%lx   R9: 0x%lx   R10: 0x%lx  R11: 0x%lx\n",
+            (unsigned long)frame->r8, (unsigned long)frame->r9,
+            (unsigned long)frame->r10, (unsigned long)frame->r11);
+    kprintf("R12: 0x%lx  R13: 0x%lx  R14: 0x%lx  R15: 0x%lx\n",
+            (unsigned long)frame->r12, (unsigned long)frame->r13,
+            (unsigned long)frame->r14, (unsigned long)frame->r15);
+    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n",
+            (unsigned long)frame->cs, (unsigned long)frame->ss,
+            (unsigned long)frame->rflags);
+    arch_print_backtrace();
+    kprintf("*** SYSTEM HALTED (double fault, cannot recover) ***\n");
+    __asm__ volatile("cli");
+    for (;;) __asm__ volatile("hlt");
+    __builtin_unreachable();
+}
+
 void fault_init(void) {
     idt_register_handler(14, page_fault_handler);
+    idt_register_handler(8, double_fault_handler);
 }
 
 /* ── Frame-pointer-based backtrace ──────────────────────────── */
