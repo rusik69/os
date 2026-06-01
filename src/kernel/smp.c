@@ -95,10 +95,13 @@ static void ap_entry_c(void) {
     info->current_process = NULL;
     info->idle_process = NULL;
 
+    /* Initialize per-CPU cpuidle data */
+    cpuidle_init_cpu();
+
     /* Mark CPU as ready */
     info->ready_flag = 1;
 
-    kprintf("[OK] AP #%d (APIC ID %u) online\n", (unsigned long)cpu_id, (unsigned long)apic_id);
+    kprintf("[OK] AP #%lu (APIC ID %lu) online\n", (unsigned long)cpu_id, (unsigned long)apic_id);
 
     /* Enable interrupts and enter idle loop */
     __asm__ volatile("sti");
@@ -107,11 +110,10 @@ static void ap_entry_c(void) {
     for (;;) {
         /* Try to find work through the global scheduler */
         if (info->scheduler_enabled) {
-            /* Don't HLT — keep trying to steal work */
             schedule();
         }
-        info->idle_ticks++;
-        __asm__ volatile("hlt");
+        /* Enter idle state using cpuidle */
+        cpuidle_idle();
     }
 }
 
@@ -338,10 +340,10 @@ int smp_boot_aps(void) {
 
         if (info->ready_flag) {
             ap_count++;
-            kprintf("[OK] SMP: AP #%d (APIC ID %u) booted successfully\n",
+            kprintf("[OK] SMP: AP #%lu (APIC ID %lu) booted successfully\n",
                     (unsigned long)i, (unsigned long)ap_apic_id);
         } else {
-            kprintf("[!!] SMP: AP #%d (APIC ID %u) failed to boot (timeout)\n",
+            kprintf("[!!] SMP: AP #%lu (APIC ID %lu) failed to boot (timeout)\n",
                     (unsigned long)i, (unsigned long)ap_apic_id);
         }
     }

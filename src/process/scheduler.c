@@ -20,6 +20,7 @@
 #include "rtc.h"
 #include "nmi_watchdog.h"
 #include "cpuhp.h"
+#include "cpuidle.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -290,9 +291,9 @@ void schedule(void) {
 
         if (!next) {
             ci->idle_ticks++;
-            /* Pet the watchdog: even in idle, proving we're alive prevents
-             * false hard lockup detection from the NMI handler. */
-            nmi_watchdog_pet();
+            /* Use cpuidle to enter an appropriate C-state.
+             * cpuidle_idle() handles watchdog petting internally. */
+            cpuidle_idle();
             __asm__ volatile("sti");
             return;
         }

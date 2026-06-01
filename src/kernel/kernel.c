@@ -106,6 +106,7 @@
 #include "softirq.h"
 #include "mseal.h"
 #include "userfaultfd.h"
+#include "cpuidle.h"
 #include "madvise_ext.h"
 #include "mem_policy.h"
 #include "page_idle.h"
@@ -373,6 +374,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
+
+    /* CPU idle state management */
+    cpuidle_init();
 
     /* Extended scheduler attributes (sched_setattr/getattr) */
     sched_attr_init();
@@ -748,7 +752,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Idle loop - the boot thread becomes the idle process */
     for (;;) {
-        nmi_watchdog_pet();
-        __asm__ volatile("hlt");
+        cpuidle_idle();
     }
 }

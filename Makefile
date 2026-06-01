@@ -46,6 +46,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cmdline.c \
          src/kernel/smp.c \
          src/kernel/cpu.c \
+         src/kernel/cpuidle.c \
          src/kernel/oom.c \
          src/kernel/rcu.c \
          src/kernel/aslr.c \

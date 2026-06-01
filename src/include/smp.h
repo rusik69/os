@@ -5,6 +5,7 @@
 #include "process.h"
 #include "scheduler.h"
 #include "gdt.h"
+#include "cpuidle.h"
 
 /* Maximum CPUs supported */
 #define SMP_MAX_CPUS 16
@@ -29,6 +30,9 @@ struct cpu_info {
 
     /* BSP sets up AP trampoline info here before SIPI */
     uint64_t ready_flag;         /* AP sets to 1 when fully initialized */
+
+    /* CPU idle state data (cpuidle) */
+    struct cpuidle_cpu idle_data;
 
     uint8_t _pad[64];            /* cache line padding */
 } __attribute__((aligned(64)));
