@@ -1,10 +1,10 @@
-build/
-build_test/
-__pycache__/
-*.pyc
-*.o
 *.elf
 *.iso
 *.log
-tests/host_libc/test_libc
+*.o
+*.pyc
 .hermes/
+__pycache__/
+build/
+build_test/
+tests/host_libc/test_libc
