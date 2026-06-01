@@ -1832,12 +1832,12 @@ static void test_nmi_watchdog(void) {
 static void test_lockdep(void) {
     uint64_t lock_a = 0x1000;
     uint64_t lock_b = 0x2000;
-    lock_acquire("test_a", lock_a);
-    lock_acquire("test_b", lock_b);
-    lock_release("test_b", lock_b);
-    lock_release("test_a", lock_a);
+    lock_acquire("test_a", lock_a, LOCK_TYPE_SPINLOCK);
+    lock_acquire("test_b", lock_b, LOCK_TYPE_SPINLOCK);
+    lock_release("test_b", lock_b, LOCK_TYPE_SPINLOCK);
+    lock_release("test_a", lock_a, LOCK_TYPE_SPINLOCK);
     /* Release of unheld lock should warn but not crash */
-    lock_release("test_c", 0x3000);
+    lock_release("test_c", 0x3000, LOCK_TYPE_SPINLOCK);
     t_ok("lockdep test");
 }
 

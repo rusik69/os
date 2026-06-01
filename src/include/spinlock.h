@@ -40,6 +40,11 @@ void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count);
 /* Release all tracked spinlocks (panic notifier) */
 void spinlock_release_all_on_panic(void);
 
+/* Spinlock nesting tracking for sleeping-while-atomic detection */
+void lockdep_spinlock_acquired(void);
+void lockdep_spinlock_released(void);
+int  lockdep_holding_spinlock(void);
+
 #else
 
 /* Stubs when debugging is disabled */
@@ -47,6 +52,9 @@ static inline void spinlock_register_owner(spinlock_t *lock, uint64_t caller_rip
 static inline void spinlock_unregister_owner(spinlock_t *lock) { (void)lock; }
 static inline void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) { (void)lock; (void)spin_count; }
 static inline void spinlock_release_all_on_panic(void) {}
+static inline void lockdep_spinlock_acquired(void) {}
+static inline void lockdep_spinlock_released(void) {}
+static inline int  lockdep_holding_spinlock(void) { return 0; }
 
 #endif /* SPINLOCK_DEBUG_DISABLE */
 
@@ -81,11 +89,17 @@ static inline void spinlock_acquire(spinlock_t *lock) {
 
     /* Record ownership for diagnostic tracking */
     spinlock_register_owner(lock, (uint64_t)__builtin_return_address(0));
+
+    /* Track nesting for sleeping-while-atomic detection */
+    lockdep_spinlock_acquired();
 }
 
 static inline void spinlock_release(spinlock_t *lock) {
     /* Clear ownership before releasing */
     spinlock_unregister_owner(lock);
+
+    /* Update nesting counter */
+    lockdep_spinlock_released();
 
     __sync_synchronize();
     __sync_lock_release(lock);

@@ -25,7 +25,7 @@ void down_read(struct rw_semaphore *sem) {
     if (!sem) return;
 
     /* Lockdep: track reader lock acquisition */
-    lock_acquire("rwsem-read", (uint64_t)sem);
+    lock_acquire("rwsem-read", (uint64_t)sem, LOCK_TYPE_RWSEM);
 
     for (;;) {
         if (sem->count >= 0) {
@@ -42,7 +42,7 @@ void down_read(struct rw_semaphore *sem) {
 void up_read(struct rw_semaphore *sem) {
     if (!sem) return;
 
-    lock_release("rwsem-read", (uint64_t)sem);
+    lock_release("rwsem-read", (uint64_t)sem, LOCK_TYPE_RWSEM);
 
     __sync_fetch_and_sub(&sem->count, 1);
     if (sem->reader_count > 0)
@@ -53,7 +53,7 @@ void down_write(struct rw_semaphore *sem) {
     if (!sem) return;
 
     /* Lockdep: track writer lock acquisition */
-    lock_acquire("rwsem-write", (uint64_t)sem);
+    lock_acquire("rwsem-write", (uint64_t)sem, LOCK_TYPE_RWSEM);
 
     for (;;) {
         if (sem->count == 0) {
@@ -71,7 +71,7 @@ void down_write(struct rw_semaphore *sem) {
 void up_write(struct rw_semaphore *sem) {
     if (!sem) return;
 
-    lock_release("rwsem-write", (uint64_t)sem);
+    lock_release("rwsem-write", (uint64_t)sem, LOCK_TYPE_RWSEM);
 
     sem->owner_pid = 0;
     __sync_fetch_and_add(&sem->count, 1);

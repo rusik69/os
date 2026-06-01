@@ -62,7 +62,7 @@ void mutex_lock(int id) {
     if (!self) return;
 
     /* Lockdep: check if we already hold this mutex (recursive deadlock) */
-    lock_acquire("mutex", (uint64_t)&mutexes[id]);
+    lock_acquire("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
 
     for (;;) {
         __asm__ volatile("cli");
@@ -102,7 +102,7 @@ void mutex_unlock(int id) {
     struct mutex_entry *m = &mutexes[id];
 
     /* Lockdep: release before unlocking */
-    lock_release("mutex", (uint64_t)&mutexes[id]);
+    lock_release("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
 
     /* Restore owner's original priority */
     restore_owner(m);
@@ -119,7 +119,7 @@ void mutex_destroy(int id) {
 
     /* If held, force-release lockdep tracking */
     if (mutexes[id].locked) {
-        lock_release("mutex", (uint64_t)&mutexes[id]);
+        lock_release("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
     }
 
     /* Restore owner priority before destroying */
