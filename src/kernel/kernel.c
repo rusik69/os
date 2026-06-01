@@ -101,6 +101,8 @@
 #include "kasan_light.h"
 #include "firmware.h"
 #include "memfd.h"
+#include "irq_regs.h"
+#include "softirq.h"
 #include "mseal.h"
 #include "userfaultfd.h"
 #include "madvise_ext.h"
@@ -218,6 +220,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* IST stacks for double fault, NMI, MCE protection (needs PMM) */
     ist_init();
     kprintf("[OK] IST stacks initialized\n");
+
+    /* Per-CPU IRQ stacks for safe interrupt handling (needs PMM) */
+    irq_regs_init();
 
     /* Kernel command line from multiboot info (offset 0x10 = cmdline phys addr) */
     {
@@ -385,6 +390,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Register IPI handlers for SMP coordination */
     ipi_init();
     kprintf("[OK] IPI handlers registered\n");
+
+    /* SoftIRQ subsystem (deferred interrupt processing) */
+    softirq_init();
 
     /* I/O APIC and SMP boot */
     int ap_count = smp_boot_aps();
