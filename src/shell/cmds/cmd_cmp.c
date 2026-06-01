@@ -37,13 +37,13 @@ void cmd_cmp(const char *args) {
     uint32_t line = 1, col = 1;
     for (uint32_t j = 0; j < min; j++) {
         if (buf1[j] != buf2[j]) {
-            kprintf("%s %s differ: byte %u, line %u\n", f1, f2, (uint64_t)(j+1), (uint64_t)line);
+            kprintf("%s %s differ: byte %u, line %u\n", f1, f2, (unsigned long)(j+1), (unsigned long)line);
             return;
         }
         if (buf1[j] == '\n') { line++; col = 1; } else col++;
     }
     if (s1 != s2)
-        kprintf("%s %s differ: size %u vs %u\n", f1, f2, (uint64_t)s1, (uint64_t)s2);
+        kprintf("%s %s differ: size %u vs %u\n", f1, f2, (unsigned long)s1, (unsigned long)s2);
     else
         kprintf("%s %s are identical\n", f1, f2);
 }

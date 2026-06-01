@@ -4122,7 +4122,7 @@ void test_run_all(void) {
     kprintf("[TEST] thp\n");           test_thp();                test_progress_tick();
 kprintf("----------------------------------------\n");
     kprintf("Results: %llu passed, %llu failed\n",
-            (uint64_t)tpass, (uint64_t)tfail);
+            (unsigned long)tpass, (unsigned long)tfail);
     if (tfail == 0) {
         kprintf("ALL TESTS PASSED\n");
     } else {

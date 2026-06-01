@@ -21,7 +21,7 @@ void cmd_expr(const char *args) {
     long a = parse_num(&p);
     while (*p == ' ') p++;
 
-    if (!*p) { kprintf("%d\n", (uint64_t)(int)a); return; }
+    if (!*p) { kprintf("%d\n", (unsigned long)(int)a); return; }
 
     char op = *p++;
     /* Handle multi-char ops: !=, >=, <= */
@@ -50,9 +50,9 @@ void cmd_expr(const char *args) {
     else if (op == '>') result = (a > b);
     else if (op == '=') result = (a == b);
     else {
-        kprintf("expr: unknown operator '%c'\n", (uint64_t)(uint8_t)op);
+        kprintf("expr: unknown operator '%c'\n", (unsigned long)(uint8_t)op);
         return;
     }
 
-    kprintf("%d\n", (uint64_t)(int)result);
+    kprintf("%d\n", (unsigned long)(int)result);
 }

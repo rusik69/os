@@ -98,7 +98,7 @@ static void ap_entry_c(void) {
     /* Mark CPU as ready */
     info->ready_flag = 1;
 
-    kprintf("[OK] AP #%d (APIC ID %u) online\n", (uint64_t)cpu_id, (uint64_t)apic_id);
+    kprintf("[OK] AP #%d (APIC ID %u) online\n", (unsigned long)cpu_id, (unsigned long)apic_id);
 
     /* Enable interrupts and enter idle loop */
     __asm__ volatile("sti");
@@ -242,7 +242,7 @@ static int detect_cpus_from_madt(void) {
     if (smp_cpu_count > SMP_MAX_CPUS) smp_cpu_count = SMP_MAX_CPUS;
     madt_scanned = 1;
 
-    kprintf("[OK] MADT: %u CPU%c found\n", (uint64_t)local_apics,
+    kprintf("[OK] MADT: %u CPU%c found\n", (unsigned long)local_apics,
             local_apics == 1 ? ' ' : 's');
 
     return smp_cpu_count;
@@ -268,7 +268,7 @@ int smp_boot_aps(void) {
     /* Copy trampoline to low memory (physical page 0x7000) */
     size_t tramp_size = (size_t)((uintptr_t)ap_trampoline_end - (uintptr_t)ap_trampoline_start);
     if (tramp_size > 0x1000) {
-        kprintf("[!!] SMP: trampoline too large (%u bytes)\n", (uint64_t)tramp_size);
+        kprintf("[!!] SMP: trampoline too large (%u bytes)\n", (unsigned long)tramp_size);
         return 0;
     }
 
@@ -290,11 +290,11 @@ int smp_boot_aps(void) {
         /* Allocate kernel stack for this AP */
         uint8_t *stack = (uint8_t *)pmm_alloc_frames(32); /* 32 pages = 128 KB */
         if (!stack) {
-            kprintf("[!!] SMP: cannot allocate stack for AP %d\n", (uint64_t)i);
+            kprintf("[!!] SMP: cannot allocate stack for AP %d\n", (unsigned long)i);
             continue;
         }
         /* Map the stack at a known virtual address */
-        uint64_t stack_virt = 0xFFFF8000FFF00000ULL - (uint64_t)i * 0x100000ULL;
+        uint64_t stack_virt = 0xFFFF8000FFF00000ULL - (unsigned long)i * 0x100000ULL;
         for (uint64_t off = 0; off < 128 * 1024; off += 4096) {
             vmm_map_page(stack_virt + off, (uint64_t)(stack + off),
                          VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
@@ -339,10 +339,10 @@ int smp_boot_aps(void) {
         if (info->ready_flag) {
             ap_count++;
             kprintf("[OK] SMP: AP #%d (APIC ID %u) booted successfully\n",
-                    (uint64_t)i, (uint64_t)ap_apic_id);
+                    (unsigned long)i, (unsigned long)ap_apic_id);
         } else {
             kprintf("[!!] SMP: AP #%d (APIC ID %u) failed to boot (timeout)\n",
-                    (uint64_t)i, (uint64_t)ap_apic_id);
+                    (unsigned long)i, (unsigned long)ap_apic_id);
         }
     }
 

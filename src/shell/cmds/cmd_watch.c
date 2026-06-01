@@ -27,8 +27,8 @@ void cmd_watch(const char *args) {
     /* Repeat ~10 times (no interactive quit in kernel shell) */
     for (int iter = 0; iter < 10; iter++) {
         kprintf("\033[2J\033[H");  /* ANSI clear — VGA ignores, telnet respects */
-        kprintf("Every %ds: %s\n\n", (uint64_t)interval, cmd);
+        kprintf("Every %ds: %s\n\n", (unsigned long)interval, cmd);
         libc_shell_exec_cmd(cmd, NULL);
-        libc_sleep_ticks((uint64_t)(interval * 100)); /* 100 ticks/sec */
+        libc_sleep_ticks((unsigned long)(interval * 100)); /* 100 ticks/sec */
     }
 }

@@ -50,5 +50,5 @@ void cmd_ld(const char *args) {
     if (rc == 0)
         kprintf("ld: OK -> %s\n", outpath);
     else
-        kprintf("ld: link failed (%d)\n", (uint64_t)(-rc));
+        kprintf("ld: link failed (%d)\n", (unsigned long)(-rc));
 }

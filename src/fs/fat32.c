@@ -591,7 +591,7 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
     const char *type_name = fat_type == FAT12 ? "FAT12" :
                             fat_type == FAT16 ? "FAT16" : "FAT32";
     kprintf("  %s mounted: vol='%.11s' clusters=%u\n",
-            type_name, bpb->volume_label, (uint64_t)total_clusters);
+            type_name, bpb->volume_label, (unsigned long)total_clusters);
     return 0;
 }
 

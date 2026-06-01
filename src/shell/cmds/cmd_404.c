@@ -20,7 +20,7 @@ void cmd_404(const char *args) {
     for (int i = 0; i < count; i++) {
         struct vfs_stat st;
         if (vfs_stat(names[i], &st) == 0) {
-            kprintf("  %s  (mode=%o)\n", names[i], (uint64_t)st.mode);
+            kprintf("  %s  (mode=%o)\n", names[i], (unsigned long)st.mode);
         }
     }
 }

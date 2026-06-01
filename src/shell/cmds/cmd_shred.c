@@ -60,6 +60,6 @@ void cmd_shred(const char *args) {
         shell_set_exit_status(1);
         return;
     }
-    kprintf("shred: %s removed (%u bytes overwritten)\n", args, (uint64_t)size);
+    kprintf("shred: %s removed (%u bytes overwritten)\n", args, (unsigned long)size);
     shell_set_exit_status(0);
 }

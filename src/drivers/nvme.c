@@ -276,7 +276,7 @@ void nvme_print_info(void) {
         return;
     }
     kprintf("NVMe: present, regs at 0x%llX, max_q_depth=%u, namespaces=%u\n",
-            (uint64_t)g_nvme_ctrl.phys_regs,
+            (unsigned long)g_nvme_ctrl.phys_regs,
             g_nvme_ctrl.max_q_depth,
             g_nvme_ctrl.nn);
 }

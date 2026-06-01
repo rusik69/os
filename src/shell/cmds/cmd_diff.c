@@ -52,11 +52,11 @@ void cmd_diff(const char *args) {
         int differ = (len1 != len2) || memcmp(l1, l2, len1) != 0;
         if (differ) {
             diffs++;
-            kprintf("%dc%d\n", (uint64_t)lineno, (uint64_t)lineno);
+            kprintf("%dc%d\n", (unsigned long)lineno, (unsigned long)lineno);
             kprintf("< ");
-            for (int j = 0; j < len1; j++) kprintf("%c", (uint64_t)(uint8_t)l1[j]);
+            for (int j = 0; j < len1; j++) kprintf("%c", (unsigned long)(uint8_t)l1[j]);
             kprintf("\n---\n> ");
-            for (int j = 0; j < len2; j++) kprintf("%c", (uint64_t)(uint8_t)l2[j]);
+            for (int j = 0; j < len2; j++) kprintf("%c", (unsigned long)(uint8_t)l2[j]);
             kprintf("\n");
         }
 

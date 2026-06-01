@@ -68,7 +68,7 @@ int vsyscall_init(void) {
                  VMM_FLAG_PRESENT | VMM_FLAG_USER); /* No VMM_FLAG_NOEXEC — pages are executable */
 
     vsyscall_initialized = 1;
-    kprintf("[cpu] vsyscall page at 0x%llx\n", (uint64_t)VSYSCALL_PAGE_VADDR);
+    kprintf("[cpu] vsyscall page at 0x%llx\n", (unsigned long)VSYSCALL_PAGE_VADDR);
     return 0;
 }
 

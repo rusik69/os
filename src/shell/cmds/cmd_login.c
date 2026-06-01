@@ -50,9 +50,9 @@ void cmd_login(const char *args) {
             libc_shell_var_set("HOME", ue.home);
             libc_shell_var_set("PWD", ue.home);
             kprintf("Welcome, %s (uid=%u, home=%s)\n",
-                    s->username, (uint64_t)s->uid, ue.home);
+                    s->username, (unsigned long)s->uid, ue.home);
         } else {
-            kprintf("Welcome, %s (uid=%u)\n", s->username, (uint64_t)s->uid);
+            kprintf("Welcome, %s (uid=%u)\n", s->username, (unsigned long)s->uid);
         }
     } else if (rc == -1) {
         kprintf("login: user '%s' not found\n", username);

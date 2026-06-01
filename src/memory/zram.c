@@ -84,7 +84,7 @@ int zram_create_device(uint64_t disk_size) {
     zram_dev.initialized = 1;
 
     kprintf("[mem] ZRAM device: %llu MB, %llu slots\n",
-            (uint64_t)(disk_size / (1024 * 1024)), (uint64_t)zram_dev.num_slots);
+            (unsigned long)(disk_size / (1024 * 1024)), (unsigned long)zram_dev.num_slots);
     return 0;
 }
 

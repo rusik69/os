@@ -103,6 +103,6 @@ void cmd_sha256sum(const char *args) {
 
     uint8_t digest[32];
     sha256(buf, size, digest);
-    for (int i = 0; i < 32; i++) kprintf("%x%x", (uint64_t)(digest[i]>>4), (uint64_t)(digest[i]&0xF));
+    for (int i = 0; i < 32; i++) kprintf("%x%x", (unsigned long)(digest[i]>>4), (unsigned long)(digest[i]&0xF));
     kprintf("  %s\n", path);
 }

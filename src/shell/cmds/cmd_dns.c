@@ -12,7 +12,7 @@ void cmd_dns(const char *args) {
         kprintf("failed\n");
     } else {
         kprintf("%u.%u.%u.%u\n",
-                (uint64_t)((ip >> 24) & 0xFF), (uint64_t)((ip >> 16) & 0xFF),
-                (uint64_t)((ip >> 8) & 0xFF), (uint64_t)(ip & 0xFF));
+                (unsigned long)((ip >> 24) & 0xFF), (unsigned long)((ip >> 16) & 0xFF),
+                (unsigned long)((ip >> 8) & 0xFF), (unsigned long)(ip & 0xFF));
     }
 }

@@ -205,8 +205,8 @@ static int ehci_init_controller(uint8_t bus, uint8_t slot, uint32_t bar0) {
 
     ehci_count++;
     kprintf("  EHCI controller %d: %d ports, %d devices\n",
-            (uint64_t)c, (uint64_t)n_ports,
-            (uint64_t)usb_device_count);
+            (unsigned long)c, (unsigned long)n_ports,
+            (unsigned long)usb_device_count);
     return 0;
 }
 

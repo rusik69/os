@@ -88,12 +88,12 @@ void cmd_zcmp(const char *args) {
     uint32_t min = ds1 < ds2 ? ds1 : ds2;
     for (uint32_t j = 0; j < min; j++) {
         if (d1[j] != d2[j]) {
-            kprintf("%s %s differ: byte %u\n", f1, f2, (uint64_t)(j+1));
+            kprintf("%s %s differ: byte %u\n", f1, f2, (unsigned long)(j+1));
             return;
         }
     }
     if (ds1 != ds2)
-        kprintf("%s %s differ: size %u vs %u\n", f1, f2, (uint64_t)ds1, (uint64_t)ds2);
+        kprintf("%s %s differ: size %u vs %u\n", f1, f2, (unsigned long)ds1, (unsigned long)ds2);
     else
         kprintf("%s %s are identical\n", f1, f2);
 }

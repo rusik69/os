@@ -38,7 +38,7 @@ void cmd_fat(const char *args) {
         if (rc == 0)
             kprintf("FAT32 mounted\n");
         else
-            kprintf("fat mount failed: %d\n", (uint64_t)(-rc));
+            kprintf("fat mount failed: %d\n", (unsigned long)(-rc));
         return;
     }
 
@@ -88,7 +88,7 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat stat <path>\n"); return; }
         int sz = fat32_file_size(path);
         if (sz < 0) { kprintf("fat stat: not found\n"); return; }
-        kprintf("%s: %d bytes\n", path, (uint64_t)(uint32_t)sz);
+        kprintf("%s: %d bytes\n", path, (unsigned long)(uint32_t)sz);
         return;
     }
 
@@ -110,8 +110,8 @@ void cmd_fat(const char *args) {
         while (*sp == ' ') sp++;
         if (!*sp) { kprintf("Usage: fat write <path> <text>\n"); return; }
         int n = fat32_write_file(path, sp, (uint32_t)strlen(sp));
-        if (n < 0) kprintf("fat write failed: %d\n", (uint64_t)(-n));
-        else kprintf("wrote %d bytes to %s\n", (uint64_t)(uint32_t)n, path);
+        if (n < 0) kprintf("fat write failed: %d\n", (unsigned long)(-n));
+        else kprintf("wrote %d bytes to %s\n", (unsigned long)(uint32_t)n, path);
         return;
     }
 
@@ -129,7 +129,7 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat mkdir <path>\n"); return; }
         int rc = fat32_mkdir(path);
         if (rc == 0) kprintf("created %s\n", path);
-        else kprintf("fat mkdir failed: %d\n", (uint64_t)(-rc));
+        else kprintf("fat mkdir failed: %d\n", (unsigned long)(-rc));
         return;
     }
 
@@ -140,7 +140,7 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat unlink <path>\n"); return; }
         int rc = fat32_unlink(path);
         if (rc == 0) kprintf("removed %s\n", path);
-        else kprintf("fat unlink failed: %d\n", (uint64_t)(-rc));
+        else kprintf("fat unlink failed: %d\n", (unsigned long)(-rc));
         return;
     }
 

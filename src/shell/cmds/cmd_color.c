@@ -14,5 +14,5 @@ void cmd_color(const char *args) {
     if (fg > 15) fg = 15;
     if (bg > 15) bg = 15;
     vga_set_color(fg, bg);
-    kprintf("Color set to %u on %u\n", (uint64_t)fg, (uint64_t)bg);
+    kprintf("Color set to %u on %u\n", (unsigned long)fg, (unsigned long)bg);
 }

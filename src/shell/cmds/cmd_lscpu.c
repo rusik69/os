@@ -61,11 +61,11 @@ void cmd_lscpu(const char *args) {
     kprintf("CPU op-mode(s):      64-bit\n");
     kprintf("Vendor ID:           %s\n", vendor);
     if (brand[0]) kprintf("Model name:          %s\n", brand);
-    kprintf("CPU family:          %u\n", (uint64_t)family);
-    kprintf("Model:               %u\n", (uint64_t)model);
-    kprintf("Stepping:            %u\n", (uint64_t)stepping);
-    kprintf("CPU(s):              %u\n", (uint64_t)logical);
-    kprintf("Thread(s) per core:  %u\n", (uint64_t)(logical));
-    kprintf("CLFLUSH line size:   %u\n", (uint64_t)clflush);
-    kprintf("L1d cache:           %uK\n", (uint64_t)l1_size);
+    kprintf("CPU family:          %u\n", (unsigned long)family);
+    kprintf("Model:               %u\n", (unsigned long)model);
+    kprintf("Stepping:            %u\n", (unsigned long)stepping);
+    kprintf("CPU(s):              %u\n", (unsigned long)logical);
+    kprintf("Thread(s) per core:  %u\n", (unsigned long)(logical));
+    kprintf("CLFLUSH line size:   %u\n", (unsigned long)clflush);
+    kprintf("L1d cache:           %uK\n", (unsigned long)l1_size);
 }

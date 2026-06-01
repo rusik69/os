@@ -40,7 +40,7 @@ void cmd_useradd(const char *args) {
 
     int rc = user_add(username, uid, pw);
     if (rc == 0)
-        kprintf("User '%s' added (uid=%u)\n", username, (uint64_t)uid);
+        kprintf("User '%s' added (uid=%u)\n", username, (unsigned long)uid);
     else if (rc == -2)
         kprintf("useradd: user '%s' already exists\n", username);
     else if (rc == -4)
@@ -48,7 +48,7 @@ void cmd_useradd(const char *args) {
     else if (rc == -5)
         kprintf("useradd: failed to create home directory\n");
     else
-        kprintf("useradd: failed (%d)\n", (uint64_t)(-rc));
+        kprintf("useradd: failed (%d)\n", (unsigned long)(-rc));
 }
 
 /* userdel <username> */
@@ -77,7 +77,7 @@ void cmd_users(void) {
     for (int i = 0; i < USER_MAX_ENTRIES; i++) {
         if (!tbl[i].active) continue;
         kprintf("%-5u %-5u %-16s %s\n",
-                (uint64_t)tbl[i].uid,
+                (unsigned long)tbl[i].uid,
                 (uint64_t)tbl[i].gid,
                 tbl[i].username,
                 tbl[i].home);

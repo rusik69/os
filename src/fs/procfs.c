@@ -939,7 +939,7 @@ static int procfs_readdir(void *priv, const char *path) {
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state != PROCESS_UNUSED) {
             if (!caller || process_can_see(caller, &table[i]))
-                kprintf("%u\n", (uint64_t)table[i].pid);
+                kprintf("%u\n", (unsigned long)table[i].pid);
         }
     }
     return 0;

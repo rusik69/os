@@ -18,17 +18,17 @@ void cmd_xxd(const char *args) {
     }
     if (size > 256) size = 256;
     for (uint32_t i = 0; i < size; i += 16) {
-        kprintf("%08x: ", (uint64_t)i);
+        kprintf("%08x: ", (unsigned long)i);
         for (int j = 0; j < 16; j++) {
             if (i + j < size)
-                kprintf("%02x ", (uint64_t)(uint8_t)fbuf[i + j]);
+                kprintf("%02x ", (unsigned long)(uint8_t)fbuf[i + j]);
             else
                 kprintf("   ");
         }
         kprintf(" ");
         for (int j = 0; j < 16 && i + j < size; j++) {
             char c = fbuf[i + j];
-            kprintf("%c", (uint64_t)(uint8_t)((c >= 32 && c < 127) ? c : '.'));
+            kprintf("%c", (unsigned long)(uint8_t)((c >= 32 && c < 127) ? c : '.'));
         }
         kprintf("\n");
     }

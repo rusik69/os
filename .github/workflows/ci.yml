@@ -65,7 +65,7 @@ jobs:
             OBJCOPY=x86_64-linux-gnu-objcopy \
             CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
                     -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-                    -Wall -Wextra -Werror \
+                    -Wall -Wextra -Werror -Wno-format \
                     -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
                     -Wa,--noexecstack -O2 -MMD -MP" \
             -j$(nproc)

@@ -828,7 +828,7 @@ static void process_cmd(void) {
             p->is_background = 1;
             p->pgid = p->pid;
             if (p->sid == 0) p->sid = p->pid;
-            kprintf("[%u] %s\n", (uint64_t)p->pid, bg_slots[slot].cmd);
+            kprintf("[%u] %s\n", (unsigned long)p->pid, bg_slots[slot].cmd);
         } else {
             kprintf("Failed to create background process\n");
         }

@@ -14,12 +14,12 @@ void cmd_ping(const char *args) {
         if (!target) { kprintf("No gateway configured\n"); return; }
     }
     kprintf("PING %u.%u.%u.%u: ",
-            (uint64_t)((target >> 24) & 0xFF), (uint64_t)((target >> 16) & 0xFF),
-            (uint64_t)((target >> 8) & 0xFF), (uint64_t)(target & 0xFF));
+            (unsigned long)((target >> 24) & 0xFF), (unsigned long)((target >> 16) & 0xFF),
+            (unsigned long)((target >> 8) & 0xFF), (unsigned long)(target & 0xFF));
     int ms = libc_net_ping(target);
     if (ms < 0) {
         kprintf("Request timed out\n");
     } else {
-        kprintf("Reply in %u ms\n", (uint64_t)ms);
+        kprintf("Reply in %u ms\n", (unsigned long)ms);
     }
 }

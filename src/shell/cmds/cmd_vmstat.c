@@ -14,10 +14,10 @@ void cmd_vmstat(const char *args) {
 
     kprintf("Virtual Memory Statistics:\n");
     kprintf("-------------------------\n");
-    kprintf("Total RAM:      %u KB (%u pages)\n", (uint64_t)total_kb, (uint64_t)stats.total_pages);
-    kprintf("Used RAM:       %u KB (%u pages)\n", (uint64_t)used_kb, (uint64_t)stats.used_pages);
-    kprintf("Free RAM:       %u KB (%u pages)\n", (uint64_t)free_kb, (uint64_t)stats.free_pages);
+    kprintf("Total RAM:      %u KB (%u pages)\n", (unsigned long)total_kb, (unsigned long)stats.total_pages);
+    kprintf("Used RAM:       %u KB (%u pages)\n", (unsigned long)used_kb, (unsigned long)stats.used_pages);
+    kprintf("Free RAM:       %u KB (%u pages)\n", (unsigned long)free_kb, (unsigned long)stats.free_pages);
     kprintf("\n");
-    kprintf("Uptime ticks:   %u\n", (uint64_t)libc_uptime_ticks());
-    kprintf("Active PIDs:    %u\n", (uint64_t)libc_getpid());
+    kprintf("Uptime ticks:   %u\n", (unsigned long)libc_uptime_ticks());
+    kprintf("Active PIDs:    %u\n", (unsigned long)libc_getpid());
 }

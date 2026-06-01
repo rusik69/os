@@ -76,6 +76,6 @@ void cmd_rawsend(const char *args) {
     while (flen < 60) frame[flen++] = 0;
 
     int r = libc_raw_send(frame, (uint32_t)flen);
-    if (r >= 0) kprintf("rawsend: sent %d bytes\n", (uint64_t)flen);
+    if (r >= 0) kprintf("rawsend: sent %d bytes\n", (unsigned long)flen);
     else        kprintf("rawsend: failed\n");
 }

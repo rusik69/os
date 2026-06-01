@@ -443,7 +443,7 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
             uint32_t serr = port_read(p, PORT_SERR);
             port_write(p, PORT_SERR, serr);
             kprintf("AHCI port %d error: IS=0x%x TFD=0x%x SERR=0x%x\n",
-                    (uint64_t)p, (uint64_t)port_is, (uint64_t)tfd, (uint64_t)serr);
+                    (unsigned long)p, (unsigned long)port_is, (unsigned long)tfd, (unsigned long)serr);
         }
 
         if (port_is & PORT_IS_SDBS) {
@@ -520,8 +520,8 @@ int ahci_init(void) {
 
     uint64_t bar5 = dev.bar[5] & ~0xFULL;
     kprintf("  AHCI %04x:%04x (IRQ %u) HBA@0x%x\n",
-            (uint64_t)dev.vendor_id, (uint64_t)dev.device_id,
-            (uint64_t)dev.irq, bar5);
+            (unsigned long)dev.vendor_id, (unsigned long)dev.device_id,
+            (unsigned long)dev.irq, bar5);
 
     hba_base = bar5;
     if (hba_base == 0) return -2;
@@ -632,8 +632,8 @@ int ahci_init(void) {
                 }
 
                 kprintf("  AHCI port %d: %u sectors (%u MB)%s\n",
-                        (uint64_t)p, (uint64_t)port->sector_count,
-                        (uint64_t)(port->sector_count / 2048),
+                        (unsigned long)p, (unsigned long)port->sector_count,
+                        (unsigned long)(port->sector_count / 2048),
                         port->ncq_capable ? " NCQ" : "");
 
                 pmm_free_frame(identify_data);
@@ -666,7 +666,7 @@ int ahci_init(void) {
     pic_unmask(ahci_ports[0].irq_line);
 
     kprintf("  AHCI: %d port(s) active, NCQ depth %d\n",
-            (uint64_t)ahci_port_count, (uint64_t)AHCI_NCQ_SLOTS);
+            (unsigned long)ahci_port_count, (unsigned long)AHCI_NCQ_SLOTS);
     return 0;
 }
 

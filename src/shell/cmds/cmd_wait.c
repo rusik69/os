@@ -13,8 +13,8 @@ void cmd_wait(const char *args) {
 
     int status = 0;
     if (libc_waitpid(pid, &status) == 0) {
-        kprintf("[%u] Exited with status %d\n", (uint64_t)pid, (uint64_t)status);
+        kprintf("[%u] Exited with status %d\n", (unsigned long)pid, (unsigned long)status);
     } else {
-        kprintf("Failed to wait for process %u\n", (uint64_t)pid);
+        kprintf("Failed to wait for process %u\n", (unsigned long)pid);
     }
 }

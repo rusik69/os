@@ -19,7 +19,7 @@ void cmd_dosbox(const char *args) {
     kprintf("dosbox: loading %s...\n", args);
     int ret = dos_exec(args);
     if (ret < 0) {
-        kprintf("dosbox: failed with error %d\n", (uint64_t)(int64_t)ret);
+        kprintf("dosbox: failed with error %d\n", (unsigned long)(int64_t)ret);
     } else {
         kprintf("dosbox: program exited\n");
     }

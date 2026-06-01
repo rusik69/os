@@ -41,7 +41,7 @@ void cmd_uuencode(const char *args) {
     uint32_t off = 0;
     while (off < size) {
         int chunk = (size - off < 45) ? size - off : 45;
-        kprintf("%c", (uint64_t)uu_tbl[chunk]);
+        kprintf("%c", (unsigned long)uu_tbl[chunk]);
         for (int k = 0; k < chunk; k += 3) {
             unsigned char b0 = buf[off + k];
             unsigned char b1 = (k + 1 < chunk) ? buf[off + k + 1] : 0;

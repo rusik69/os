@@ -88,11 +88,11 @@ void cmd_unzip(const char *args) {
                 strncpy(outpath + 1, fname, 62);
                 outpath[63] = '\0';
                 libc_vfs_write(outpath, inbuf + data_start, comp_size);
-                kprintf("(%u bytes)\n", (uint64_t)comp_size);
+                kprintf("(%u bytes)\n", (unsigned long)comp_size);
                 extracted++;
             } else if (compression == 8) {
                 /* Deflated — try our simple decompressor */
-                kprintf("(deflated, %u -> %u bytes)\n", (uint64_t)comp_size, (uint64_t)uncomp_size);
+                kprintf("(deflated, %u -> %u bytes)\n", (unsigned long)comp_size, (unsigned long)uncomp_size);
                 /* For deflated entries, copy raw compressed data as-is */
                 char outpath[64];
                 outpath[0] = '/';
@@ -102,7 +102,7 @@ void cmd_unzip(const char *args) {
                 libc_vfs_write(outpath, inbuf + data_start, comp_size);
                 extracted++;
             } else {
-                kprintf("(unsupported compression method %u)\n", (uint64_t)compression);
+                kprintf("(unsupported compression method %u)\n", (unsigned long)compression);
             }
         }
 
@@ -128,7 +128,7 @@ void cmd_unzip(const char *args) {
             uint16_t clen = fnlen < 255 ? fnlen : 255;
             memcpy(fname2, inbuf + pos + 30, clen);
             fname2[clen] = '\0';
-            kprintf("  %7u   %s\n", (uint64_t)usz, fname2);
+            kprintf("  %7u   %s\n", (unsigned long)usz, fname2);
             pos += 30 + fnlen + exlen + csz;
         }
     }

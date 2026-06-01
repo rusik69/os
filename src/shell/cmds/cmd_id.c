@@ -20,6 +20,6 @@ void cmd_id(const char *args) {
                 (uint64_t)ue.gid, ue.username);
     else
         kprintf("uid=%u(%s) gid=%u\n",
-                (uint64_t)s->uid, s->username,
-                (uint64_t)s->gid);
+                (unsigned long)s->uid, s->username,
+                (unsigned long)s->gid);
 }

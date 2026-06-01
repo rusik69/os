@@ -238,5 +238,5 @@ void cmd_patch(const char *args) {
     if (applied_changes == 0)
         kprintf("patch: no changes applied\n");
     else
-        kprintf("patch: %d hunk(s) applied\n", (uint64_t)applied_changes);
+        kprintf("patch: %d hunk(s) applied\n", (unsigned long)applied_changes);
 }

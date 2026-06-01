@@ -34,7 +34,7 @@ static int cc_compile_one(const char *inpath, const char *maybe_out) {
     else if (rc == -5)
         kprintf("cc: failed to write %s\n", outpath);
     else
-        kprintf("cc: failed %s (%d)\n", inpath, (uint64_t)(-rc));
+        kprintf("cc: failed %s (%d)\n", inpath, (unsigned long)(-rc));
     return rc;
 }
 
@@ -80,7 +80,7 @@ static void cc_batch_compile(const char *list_path) {
         if (rc == 0) ok++; else fail++;
     }
 
-    kprintf("cc: batch done, %d ok, %d failed\n", (uint64_t)ok, (uint64_t)fail);
+    kprintf("cc: batch done, %d ok, %d failed\n", (unsigned long)ok, (unsigned long)fail);
 }
 
 void cmd_cc(const char *args) {
@@ -145,7 +145,7 @@ void cmd_cc(const char *args) {
         if (rc == 0)
             kprintf("cc: OK %s -> %s\n", inpath, outpath);
         else
-            kprintf("cc: compile failed %s (%d)\n", inpath, (uint64_t)(-rc));
+            kprintf("cc: compile failed %s (%d)\n", inpath, (unsigned long)(-rc));
     } else {
         (void)cc_compile_one(inpath, outpath[0] ? outpath : NULL);
     }

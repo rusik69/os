@@ -116,5 +116,5 @@ void cmd_gunzip(const char *args) {
         outpath[plen-3] = '\0';
 
     libc_vfs_write(outpath, out, opos);
-    kprintf("Decompressed %u -> %u bytes (%s)\n", (uint64_t)size, (uint64_t)opos, outpath);
+    kprintf("Decompressed %u -> %u bytes (%s)\n", (unsigned long)size, (unsigned long)opos, outpath);
 }

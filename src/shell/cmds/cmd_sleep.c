@@ -18,5 +18,5 @@ void cmd_sleep(const char *args) {
     uint32_t sec = parse_uint(&p);
     if (sec > 60) sec = 60;
     libc_sleep_ticks((uint64_t)sec * TIMER_FREQ);
-    kprintf("Slept %u seconds\n", (uint64_t)sec);
+    kprintf("Slept %u seconds\n", (unsigned long)sec);
 }

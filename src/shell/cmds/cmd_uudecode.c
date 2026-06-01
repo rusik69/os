@@ -58,5 +58,5 @@ void cmd_uudecode(const char *args) {
         while (*p && *p != '\n') p++;
         if (*p == '\n') p++;
     }
-    kprintf("Decoded %u bytes to stdout\n", (uint64_t)outpos);
+    kprintf("Decoded %u bytes to stdout\n", (unsigned long)outpos);
 }

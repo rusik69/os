@@ -435,7 +435,7 @@ int usb_msc_init(void)
     /* SET_ADDRESS (standard SETUP to ep0, device address = 1) */
     int rc = usb_control(0x00, 0x05, g_dev_addr, 0, 0, (void *)0);
     if (rc < 0) {
-        kprintf("  USB MSC: SET_ADDRESS failed (%d)\n", (uint64_t)rc);
+        kprintf("  USB MSC: SET_ADDRESS failed (%d)\n", (unsigned long)rc);
         return rc;
     }
     busy_wait(50000);
@@ -445,17 +445,17 @@ int usb_msc_init(void)
     if (!desc) return -4;
     rc = usb_control(0x80, 0x06, 0x0100, 0, 18, desc);
     if (rc < 0) {
-        kprintf("  USB MSC: GET_DESCRIPTOR failed (%d)\n", (uint64_t)rc);
-        pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
+        kprintf("  USB MSC: GET_DESCRIPTOR failed (%d)\n", (unsigned long)rc);
+        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
         return rc;
     }
     /* desc[4]=bDeviceClass, [14]=bNumConfigurations */
-    pmm_free_frame(VIRT_TO_PHYS((uint64_t)desc));
+    pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
 
     /* SET_CONFIGURATION 1 */
     rc = usb_control(0x00, 0x09, 1, 0, 0, (void *)0);
     if (rc < 0) {
-        kprintf("  USB MSC: SET_CONFIGURATION failed (%d)\n", (uint64_t)rc);
+        kprintf("  USB MSC: SET_CONFIGURATION failed (%d)\n", (unsigned long)rc);
         return rc;
     }
 
@@ -463,18 +463,18 @@ int usb_msc_init(void)
     rc = usb_control(0x21, 0xFF, 0, 0, 0, (void *)0);
     if (rc < 0) {
         /* Non-fatal — some devices ignore it */
-        kprintf("  USB MSC: BOT reset warning (%d)\n", (uint64_t)rc);
+        kprintf("  USB MSC: BOT reset warning (%d)\n", (unsigned long)rc);
     }
 
     /* READ CAPACITY to discover drive size */
     rc = scsi_read_capacity(&g_max_lba);
     if (rc < 0) {
-        kprintf("  USB MSC: READ CAPACITY failed (%d)\n", (uint64_t)rc);
+        kprintf("  USB MSC: READ CAPACITY failed (%d)\n", (unsigned long)rc);
         return rc;
     }
 
     kprintf("  USB MSC: %u sectors (%u MB)\n",
-            (uint64_t)(g_max_lba + 1),
+            (unsigned long)(g_max_lba + 1),
             (uint64_t)((g_max_lba + 1) / 2048));
 
     /* Register with block device layer */

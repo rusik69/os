@@ -173,7 +173,7 @@ int virtio_net_init(void) {
     {
         uint16_t qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
         if (qsz != 0 && qsz < VRING_SIZE) {
-            kprintf("virtio-net: queue size %u < %u\n", (uint64_t)qsz, (uint64_t)VRING_SIZE);
+            kprintf("virtio-net: queue size %u < %u\n", (unsigned long)qsz, (unsigned long)VRING_SIZE);
             return -1;
         }
         struct vring_desc  *descs = (struct vring_desc  *)rx_queue_mem;
@@ -224,7 +224,7 @@ int virtio_net_init(void) {
     pic_unmask(dev.irq);
 
     vnet_present = 1;
-    kprintf("virtio-net: initialized (iobase=0x%x)\n", (uint64_t)vnet_iobase);
+    kprintf("virtio-net: initialized (iobase=0x%x)\n", (unsigned long)vnet_iobase);
     return 0;
 }
 

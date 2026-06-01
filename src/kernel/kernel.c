@@ -668,7 +668,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                 if (mod_size > 0 && mod_size < 4*1024*1024) {
                     kprintf("[OK] Initrd module: %u bytes at 0x%x\n", mod_size, mod_start);
                     /* Copy the initrd data into ramdisk */
-                    void *mod_data = PHYS_TO_VIRT((uint64_t)mod_start);
+                    void *mod_data = PHYS_TO_VIRT((unsigned long)mod_start);
                     if (ramdisk_is_present()) {
                         uint32_t num_sectors = (mod_size + 511) / 512;
                         if (num_sectors <= ramdisk_get_sectors()) {

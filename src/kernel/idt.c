@@ -55,11 +55,12 @@ void isr_common_handler(struct interrupt_frame *frame) {
     }
 
     if (frame->int_no < 32) {
-        kprintf("\n*** EXCEPTION: %s (#%d) ***\n", exception_names[frame->int_no], frame->int_no);
-        kprintf("Error code: 0x%x\n", frame->error_code);
-        kprintf("RIP: 0x%x  RSP: 0x%x\n", frame->rip, frame->rsp);
-        kprintf("RAX: 0x%x  RBX: 0x%x  RCX: 0x%x  RDX: 0x%x\n",
-                frame->rax, frame->rbx, frame->rcx, frame->rdx);
+        kprintf("\n*** EXCEPTION: %s (#%lu) ***\n", exception_names[frame->int_no], (unsigned long)frame->int_no);
+        kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
+        kprintf("RIP: 0x%lx  RSP: 0x%lx\n", (unsigned long)frame->rip, (unsigned long)frame->rsp);
+        kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
+                (unsigned long)frame->rax, (unsigned long)frame->rbx,
+                (unsigned long)frame->rcx, (unsigned long)frame->rdx);
         cli();
         for (;;) hlt();
     }

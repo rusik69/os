@@ -1538,9 +1538,7 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
     int max_loops = (timeout == 0) ? 1 : (int)(timeout / SELECT_MAX_TICKS);
     if (max_loops < 1) max_loops = 1;
 
-    int ready = 0;
     while (loops < max_loops) {
-        ready = 0;
         if (readfds_addr) {
             memcpy(&readfds, &orig_readfds, sizeof(fd_set));
             /* Check each FD for readability */
@@ -2279,15 +2277,15 @@ static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
     const char *snames[] = {"CLOSED","LISTEN","SYN_SENT","SYN_RCV","ESTABLISHED","FIN_WAIT","CLOSE_WAIT","TIME_WAIT"};
     const char *sname = (state >= 0 && state < 8) ? snames[state] : "?";
-    kprintf("  TCP  %5u  %u.%u.%u.%u:%u  %s\n",
-        (uint64_t)lport,
-        (uint64_t)((rip >> 24) & 0xFF), (uint64_t)((rip >> 16) & 0xFF),
-        (uint64_t)((rip >>  8) & 0xFF), (uint64_t)(rip & 0xFF),
-        (uint64_t)rport, sname);
+    kprintf("  TCP  %5lu  %lu.%lu.%lu.%lu:%lu  %s\n",
+        (unsigned long)lport,
+        (unsigned long)((rip >> 24) & 0xFF), (unsigned long)((rip >> 16) & 0xFF),
+        (unsigned long)((rip >>  8) & 0xFF), (unsigned long)(rip & 0xFF),
+        (unsigned long)rport, sname);
 }
 
 static void netstat_udp_cb(uint16_t port) {
-    kprintf("  UDP  %5u  *:*  LISTEN\n", (uint64_t)port);
+    kprintf("  UDP  %5lu  *:*  LISTEN\n", (unsigned long)port);
 }
 
 static uint64_t sys_net_connlist(void) {
@@ -2298,11 +2296,11 @@ static uint64_t sys_net_connlist(void) {
 }
 
 static void arp_print_entry_sys(uint32_t ip, const uint8_t *mac) {
-    kprintf("  %u.%u.%u.%u  ->  %x:%x:%x:%x:%x:%x\n",
-            (uint64_t)((ip >> 24) & 0xFF), (uint64_t)((ip >> 16) & 0xFF),
-            (uint64_t)((ip >> 8) & 0xFF), (uint64_t)(ip & 0xFF),
-            (uint64_t)mac[0], (uint64_t)mac[1], (uint64_t)mac[2],
-            (uint64_t)mac[3], (uint64_t)mac[4], (uint64_t)mac[5]);
+    kprintf("  %lu.%lu.%lu.%lu  ->  %lx:%lx:%lx:%lx:%lx:%lx\n",
+            (unsigned long)((ip >> 24) & 0xFF), (unsigned long)((ip >> 16) & 0xFF),
+            (unsigned long)((ip >> 8) & 0xFF), (unsigned long)(ip & 0xFF),
+            (unsigned long)mac[0], (unsigned long)mac[1], (unsigned long)mac[2],
+            (unsigned long)mac[3], (unsigned long)mac[4], (unsigned long)mac[5]);
 }
 
 static uint64_t sys_net_arp_list(void) {
@@ -2348,18 +2346,18 @@ static uint64_t sys_pci_list(void) {
 
 static uint64_t sys_usb_list(void) {
     int n = usb_get_device_count();
-    kprintf("USB devices: %d\n", (uint64_t)n);
+    kprintf("USB devices: %lu\n", (unsigned long)n);
     for (int i = 0; i < n; i++) {
         struct usb_device *dev = usb_get_device(i);
         if (!dev) continue;
         const char *spd = dev->speed == 2 ? "High" :
                           dev->speed == 1 ? "Low"  : "Full";
-        kprintf("  Bus %03d Device %03d: %s-speed class=%02x\n",
-                (uint64_t)1, (uint64_t)dev->addr,
-                spd, (uint64_t)dev->class_code);
+        kprintf("  Bus %03lu Device %03lu: %s-speed class=%02lx\n",
+                (unsigned long)1, (unsigned long)dev->addr,
+                spd, (unsigned long)dev->class_code);
     }
     if (n == 0) kprintf("  (no devices connected)\n");
-    return (uint64_t)n;
+    return (unsigned long)n;
 }
 
 static uint64_t sys_hwinfo_print(void) {
@@ -2376,8 +2374,8 @@ static uint64_t sys_hwinfo_print(void) {
     kprintf("CPU vendor: %s\n", vendor);
 
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
-    kprintf("CPU family/model/stepping: %u/%u/%u\n",
-            (uint64_t)((eax >> 8) & 0xF), (uint64_t)((eax >> 4) & 0xF), (uint64_t)(eax & 0xF));
+    kprintf("CPU family/model/stepping: %lu/%lu/%lu\n",
+            (unsigned long)((eax >> 8) & 0xF), (unsigned long)((eax >> 4) & 0xF), (unsigned long)(eax & 0xF));
 
     kprintf("PCI devices:\n");
     pci_list();
@@ -2786,14 +2784,14 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     if (cc->error) {
         kprintf("cc: lex error: %s\n", cc->errmsg);
         if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-3;
+        return (unsigned long)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
         kprintf("cc: error: %s\n", cc->errmsg);
         if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-4;
+        return (unsigned long)-4;
     }
 
     int ret = 0;
@@ -2825,14 +2823,14 @@ static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) 
     if (cc->error) {
         kprintf("cc: lex error: %s\n", cc->errmsg);
         if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-3;
+        return (unsigned long)-3;
     }
 
     cc_parse(cc);
     if (cc->error) {
         kprintf("cc: error: %s\n", cc->errmsg);
         if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-4;
+        return (unsigned long)-4;
     }
 
     int ret = 0;
@@ -2976,9 +2974,9 @@ void pmm_oom_kill(void) {
     }
 
     if (victim) {
-        kprintf("[OOM] Killing pid=%u name=%s runtime=%u\n",
-                victim->pid, victim->name ? victim->name : "?",
-                (uint64_t)(now > victim->last_run_tick ? now - victim->last_run_tick : 0));
+        kprintf("[OOM] Killing pid=%lu name=%s runtime=%lu\n",
+                (unsigned long)victim->pid, victim->name ? victim->name : "?",
+                (unsigned long)(now > victim->last_run_tick ? now - victim->last_run_tick : 0));
         signal_send(victim->pid, SIGKILL);
     }
 }
@@ -3600,7 +3598,7 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
             int copied = kprintf_dmesg(dst, (int)len);
             if (type == SYSLOG_ACTION_READ_CLEAR)
                 kprintf_dmesg_clear();
-            return (uint64_t)copied;
+            return (unsigned long)copied;
         }
         case SYSLOG_ACTION_SIZE_BUFFER:
             return (uint64_t)(65536); /* DMESG_BUF_SIZE */
@@ -3611,7 +3609,7 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
             kprintf_dmesg_clear();
             return 0;
         default:
-            return (uint64_t)-1;
+            return (unsigned long)-1;
     }
 }
 
@@ -3890,12 +3888,27 @@ static const char *resolve_path_at(int dirfd, const char *path) {
 
 /* ── Socket syscall wrappers ───────────────────────────────────────────── */
 
+/* Forward declarations from net/socket.c */
+int sys_socket_impl(int domain, int type, int protocol);
+int sys_bind_impl(int sockfd, const struct sockaddr_in *addr);
+int sys_listen_impl(int sockfd, int backlog);
+int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen);
+int sys_connect_impl(int sockfd, const struct sockaddr_in *addr);
+int sys_setsockopt_impl(int sockfd, int level, int optname, const void *optval, uint32_t optlen);
+int sys_getsockopt_impl(int sockfd, int level, int optname, void *optval, uint32_t *optlen);
+int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags);
+int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags);
+int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen);
+int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen);
+int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]);
+
 static uint64_t sys_socket(uint64_t domain, uint64_t type, uint64_t protocol) {
     int fd = sys_socket_impl((int)domain, (int)type, (int)protocol);
     return fd >= 0 ? (uint64_t)fd : (uint64_t)-1;
 }
 
 static uint64_t sys_bind(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+    (void)addrlen;
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
         return (uint64_t)-1;
     return (uint64_t)sys_bind_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
@@ -3919,6 +3932,7 @@ static uint64_t sys_accept(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen
 }
 
 static uint64_t sys_connect(uint64_t sockfd, uint64_t addr_addr, uint64_t addrlen) {
+    (void)addrlen;
     if (syscall_is_user_process() && !syscall_user_read_ok(addr_addr, sizeof(struct sockaddr_in)))
         return (uint64_t)-1;
     return (uint64_t)sys_connect_impl((int)sockfd, (const struct sockaddr_in *)addr_addr);
@@ -4209,7 +4223,6 @@ struct posix_timer {
 };
 
 static struct posix_timer posix_timers[POSIX_TIMER_MAX];
-static int posix_timer_next_id = 0;
 
 static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t timerid_addr) {
     if (syscall_is_user_process() && !syscall_user_write_ok(timerid_addr, sizeof(timer_t)))
@@ -4245,6 +4258,7 @@ static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t 
 
 static uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
                                    uint64_t new_addr, uint64_t old_addr) {
+    (void)flags;
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
         return (uint64_t)-1;
@@ -4356,9 +4370,9 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
 
 static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     (void)flags;
+    (void)fds_addr;
     int fds[2];
     int r = sys_pipe((uint64_t)(uintptr_t)fds);
-    /* fds are already stored by sys_pipe */
     (void)r; (void)fds;
     return 0;
 }
@@ -4544,7 +4558,7 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
 
         /* Approximations */
         ru.ru_maxrss  = 0; /* not tracked yet */
-    } else if (who == RUSAGE_CHILDREN) {
+    } else if ((int)who == RUSAGE_CHILDREN) {
         /* Sum children's resource usage */
         struct process *table = process_get_table();
         for (int i = 0; i < PROCESS_MAX; i++) {
@@ -4860,7 +4874,6 @@ static uint64_t sys_mkdirat(uint64_t dirfd, uint64_t path_addr, uint64_t mode) {
 static uint64_t sys_fstatat(uint64_t dirfd, uint64_t path_addr,
                              uint64_t buf_addr, uint64_t flags) {
     (void)flags;
-    char path[256];
     if (!syscall_user_cstr_ok(path_addr)) return (uint64_t)-1;
     const char *resolved = resolve_path_at((int)dirfd, (const char *)path_addr);
     if (!resolved) return (uint64_t)-1;
@@ -5067,7 +5080,6 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
     if (!pfd || !pfd->used) return (uint64_t)-1;
 
     /* Resolve path to mount */
-    char ap[128];
     const char *path = pfd->path;
 
     /* Preallocate blocks keeping size (FALLOC_FL_KEEP_SIZE) or punch hole */

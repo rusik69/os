@@ -7,6 +7,6 @@ void cmd_date(void) {
     struct rtc_time t;
     rtc_get_time(&t);
     kprintf("%u-%02u-%02u %02u:%02u:%02u\n",
-            (uint64_t)t.year, (uint64_t)t.month, (uint64_t)t.day,
-            (uint64_t)t.hour, (uint64_t)t.minute, (uint64_t)t.second);
+            (unsigned long)t.year, (unsigned long)t.month, (unsigned long)t.day,
+            (unsigned long)t.hour, (unsigned long)t.minute, (unsigned long)t.second);
 }

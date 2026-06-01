@@ -23,10 +23,10 @@ void ramdisk_init(void) {
     for (int i = 0; i < RAMDISK_PAGES; i++) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) {
-            kprintf("[!!] ramdisk: OOM at page %d/%d\n", (uint64_t)i, (uint64_t)RAMDISK_PAGES);
+            kprintf("[!!] ramdisk: OOM at page %d/%d\n", (unsigned long)i, (unsigned long)RAMDISK_PAGES);
             /* Free what we allocated so far */
             for (int j = 0; j < i; j++)
-                pmm_free_frame((uint64_t)VIRT_TO_PHYS((uint64_t)ramdisk_pages[j]));
+                pmm_free_frame((unsigned long)VIRT_TO_PHYS((unsigned long)ramdisk_pages[j]));
             return;
         }
         ramdisk_pages[i] = (uint8_t *)PHYS_TO_VIRT(frame);
@@ -35,9 +35,9 @@ void ramdisk_init(void) {
 
     ramdisk_ready = 1;
     kprintf("[OK] Ramdisk: %u sectors (%u KB, %u pages)\n",
-            (uint64_t)RAMDISK_SECTORS,
-            (uint64_t)(RAMDISK_SECTORS * RAMDISK_SECTOR_SIZE / 1024),
-            (uint64_t)RAMDISK_PAGES);
+            (unsigned long)RAMDISK_SECTORS,
+            (unsigned long)(RAMDISK_SECTORS * RAMDISK_SECTOR_SIZE / 1024),
+            (unsigned long)RAMDISK_PAGES);
 }
 
 int ramdisk_read_sectors(uint32_t lba, uint8_t count, void *buf) {

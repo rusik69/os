@@ -63,14 +63,14 @@ static void awk_exec_print(const char *stmt, char *fields[], int nfields, char *
             else if (n <= nfields) kprintf("%s", fields[n-1]);
         } else if (*p == '"') {
             p++;
-            while (*p && *p != '"') { kprintf("%c", (uint64_t)(unsigned char)*p); p++; }
+            while (*p && *p != '"') { kprintf("%c", (unsigned long)(unsigned char)*p); p++; }
             if (*p == '"') p++;
         } else {
             /* bare token */
             const char *start = p;
             while (*p && *p != ' ' && *p != '\t' && *p != ',') p++;
             int len = (int)(p - start);
-            for (int i = 0; i < len; i++) kprintf("%c", (uint64_t)(unsigned char)start[i]);
+            for (int i = 0; i < len; i++) kprintf("%c", (unsigned long)(unsigned char)start[i]);
         }
         while (*p == ',') p++;  /* skip comma separator */
     }

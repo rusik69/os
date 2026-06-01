@@ -35,8 +35,8 @@ int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
 
     cma_area_count++;
     kprintf("[mem] CMA area '%s': base_pfn=0x%llx, count=%llu pages (%llu MB)\n",
-            name, (uint64_t)base_pfn, (uint64_t)count,
-            (uint64_t)(count * 4 / 1024));
+            name, (unsigned long)base_pfn, (unsigned long)count,
+            (unsigned long)(count * 4 / 1024));
     return 0;
 }
 
@@ -88,7 +88,7 @@ uint64_t cma_alloc(const char *name, size_t count, size_t align) {
                 }
                 uint64_t pfn = area->base_pfn + start;
                 kprintf("[mem] CMA alloc '%s': %llu pages at PFN 0x%llx\n",
-                        name, (uint64_t)count, (uint64_t)pfn);
+                        name, (unsigned long)count, (unsigned long)pfn);
                 return pfn;
             }
         } else {
@@ -108,7 +108,7 @@ void cma_free(uint64_t pfn, size_t count) {
                 cma_bitmap_clear(area, j);
             }
             kprintf("[mem] CMA free '%s': %llu pages at PFN 0x%llx\n",
-                    area->name, (uint64_t)count, (uint64_t)pfn);
+                    area->name, (unsigned long)count, (unsigned long)pfn);
             return;
         }
     }

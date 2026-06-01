@@ -43,7 +43,7 @@ void cmd_printf(const char *args) {
             if      (fmt[i] == 'n')  kprintf("\n");
             else if (fmt[i] == 't')  kprintf("\t");
             else if (fmt[i] == '\\') kprintf("\\");
-            else { kprintf("\\"); kprintf("%c", (uint64_t)(unsigned char)fmt[i]); }
+            else { kprintf("\\"); kprintf("%c", (unsigned long)(unsigned char)fmt[i]); }
         } else if (fmt[i] == '%') {
             i++;
             if (fmt[i] == 's') {
@@ -56,14 +56,14 @@ void cmd_printf(const char *args) {
                     int64_t val = 0;
                     while (*s >= '0' && *s <= '9') val = val * 10 + (*s++ - '0');
                     if (neg) val = -val;
-                    kprintf("%d", (uint64_t)val);
+                    kprintf("%d", (unsigned long)val);
                 }
             } else {
                 kprintf("%%");
-                kprintf("%c", (uint64_t)(unsigned char)fmt[i]);
+                kprintf("%c", (unsigned long)(unsigned char)fmt[i]);
             }
         } else {
-            kprintf("%c", (uint64_t)(unsigned char)fmt[i]);
+            kprintf("%c", (unsigned long)(unsigned char)fmt[i]);
         }
     }
 }

@@ -86,7 +86,7 @@ void apic_init_local(void) {
 
     apic_initialized = 1;
 
-    kprintf("[OK] Local APIC (ID=%u) initialized\n", (uint64_t)apic_id);
+    kprintf("[OK] Local APIC (ID=%u) initialized\n", (unsigned int)apic_id);
 }
 
 /* ── IPI (Inter-Processor Interrupts) ─────────────────────────────── */
@@ -174,7 +174,7 @@ uint32_t apic_timer_calibrate(void) {
     outb(PIT_CH0, (uint8_t)(divisor & 0xFF));
     outb(PIT_CH0, (uint8_t)((divisor >> 8) & 0xFF));
 
-    kprintf("[OK] APIC bus frequency: ~%u Hz\n", (uint64_t)(ticks * 18));
+    kprintf("[OK] APIC bus frequency: ~%lu Hz\n", (unsigned long)(ticks * 18));
     return ticks * 18;  /* PIT period is ~1/18.2 second */
 }
 
@@ -202,7 +202,7 @@ void ioapic_init(void) {
     uint32_t ver = ioapic_read_reg(IOAPIC_VER);
     uint8_t max_redir = (ver >> 16) & 0xFF;
 
-    kprintf("[OK] I/O APIC (ID=0x%x, max_redir=%u)\n", (uint64_t)(id >> 24), (uint64_t)max_redir + 1);
+    kprintf("[OK] I/O APIC (ID=0x%lx, max_redir=%u)\n", (unsigned long)(id >> 24), (unsigned int)(max_redir + 1));
 
     /* Mask all redirection entries by setting the mask bit */
     for (int i = 0; i <= max_redir; i++) {

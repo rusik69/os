@@ -125,7 +125,7 @@ int virtio_blk_init(void) {
 
     vblk_present = 1;
     kprintf("virtio-blk: initialized (iobase=0x%x, sectors=%llu)\n",
-            (uint64_t)vblk_iobase, vblk_sectors);
+            (unsigned long)vblk_iobase, vblk_sectors);
     return 0;
 }
 

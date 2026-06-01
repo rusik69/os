@@ -31,8 +31,8 @@ void cmd_udpsend(const char *args) {
 
     libc_net_udp_send(dst_ip, 12345, port, p, (uint16_t)strlen(p));
     kprintf("UDP sent %u bytes to %u.%u.%u.%u:%u\n",
-            (uint64_t)strlen(p),
-            (uint64_t)((dst_ip >> 24) & 0xFF), (uint64_t)((dst_ip >> 16) & 0xFF),
+            (unsigned long)strlen(p),
+            (unsigned long)((dst_ip >> 24) & 0xFF), (unsigned long)((dst_ip >> 16) & 0xFF),
             (uint64_t)((dst_ip >> 8) & 0xFF), (uint64_t)(dst_ip & 0xFF),
             (uint64_t)port);
 }

@@ -806,14 +806,6 @@ static struct {
     int in_use;
 } nlink_table[NLINK_TABLE_SIZE];
 
-static uint32_t vfs_get_nlink(const char *path) {
-    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
-        if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0)
-            return nlink_table[i].nlink;
-    }
-    return 1; /* default: 1 link */
-}
-
 static void vfs_inc_nlink(const char *path) {
     for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
         if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0) {
@@ -833,14 +825,6 @@ static void vfs_inc_nlink(const char *path) {
     }
 }
 
-static void vfs_dec_nlink(const char *path) {
-    for (int i = 0; i < NLINK_TABLE_SIZE; i++) {
-        if (nlink_table[i].in_use && strcmp(nlink_table[i].path, path) == 0) {
-            if (nlink_table[i].nlink > 0) nlink_table[i].nlink--;
-            return;
-        }
-    }
-}
 
 /* ── vfs_link: create a hard link ────────────────────────────────── */
 int vfs_link(const char *oldpath, const char *newpath) {

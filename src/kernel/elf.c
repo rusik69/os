@@ -101,7 +101,7 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
 
     /* Entry point must be within at least one PT_LOAD segment */
     if (!entry_in_seg) {
-        kprintf("elf: entry point 0x%x outside all loadable segments\n", hdr->e_entry);
+        kprintf("elf: entry point 0x%lx outside all loadable segments\n", (unsigned long)hdr->e_entry);
         return 0;
     }
 
@@ -109,8 +109,9 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     for (int i = 0; i < nsegs; i++) {
         for (int j = i + 1; j < nsegs; j++) {
             if (segs[i].start < segs[j].end && segs[j].start < segs[i].end) {
-                kprintf("elf: overlapping segments [0x%x-0x%x] and [0x%x-0x%x]\n",
-                        segs[i].start, segs[i].end, segs[j].start, segs[j].end);
+                kprintf("elf: overlapping segments [0x%lx-0x%lx] and [0x%lx-0x%lx]\n",
+                        (unsigned long)segs[i].start, (unsigned long)segs[i].end,
+                        (unsigned long)segs[j].start, (unsigned long)segs[j].end);
                 return 0;
             }
         }
@@ -173,7 +174,7 @@ int elf_exec(const char *path) {
         kfree(buf);
         return -1;
     }
-    uint64_t entry = elf_load(buf, (uint64_t)size);
+    uint64_t entry = elf_load(buf, (unsigned long)size);
     if (!entry) {
         kprintf("elf: load failed\n");
         kfree(buf);
@@ -284,8 +285,8 @@ int elf_exec(const char *path) {
             return -1;
         }
 
-        kprintf("elf: launched '%s' (pid %u, ring 3, entry 0x%x)\n",
-                name ? name : "(null)", (uint64_t)p->pid, entry);
+        kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n",
+                name ? name : "(null)", (unsigned long)p->pid, (unsigned long)entry);
         return 0;
     }
 
@@ -297,8 +298,8 @@ int elf_exec(const char *path) {
         return -1;
     }
 
-    kprintf("elf: launched %s (pid %u, entry 0x%x)\n",
-            name, (uint64_t)p->pid, entry);
+    kprintf("elf: creating kernel process pid=%lu entry=0x%lx\n",
+            (unsigned long)p->pid, (unsigned long)entry);
     return 0;
 }
 
@@ -444,7 +445,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         for (int i = 0; i < total_args; i++)
             tmp_buf[i] = NULL;
 
-        int max_str = 4096;  /* safety per string */
         for (int i = 0; i < argc; i++) {
             const char *s = argv[i];
             if (!s) continue;
@@ -571,7 +571,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t envp_array = sp;
     uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (envp_array - user_stack_bottom));
     for (int i = 0; i < envc; i++) {
-        int idx = argc + i;
         /* Compute address of string data */
         uint64_t str_addr = str_pos;
         for (int k = 0; k < i; k++) {
@@ -631,7 +630,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     execve_pending = 1;
     __asm__ volatile("sti");
 
-    kprintf("execve: %s (entry 0x%x, rsp 0x%x, pid %u, argc %d)\n",
-            path, entry, new_rsp, (uint64_t)cur->pid, argc);
+    kprintf("execve: %s (entry 0x%lx, rsp 0x%lx, pid %lu, argc %d)\n",
+            path, (unsigned long)entry, (unsigned long)new_rsp, (unsigned long)cur->pid, argc);
     return 0;
 }

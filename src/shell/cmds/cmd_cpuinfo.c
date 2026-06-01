@@ -31,7 +31,7 @@ void cmd_cpuinfo(void) {
     uint8_t family    = (eax >> 8) & 0xF;
     uint8_t logical   = (ebx >> 16) & 0xFF;
     kprintf("Family: %u  Model: %u  Stepping: %u  LogicalCPUs: %u\n",
-            (uint64_t)family, (uint64_t)model, (uint64_t)stepping, (uint64_t)logical);
+            (unsigned long)family, (unsigned long)model, (unsigned long)stepping, (unsigned long)logical);
 
     kprintf("Features:");
     if (edx & (1u<< 0)) kprintf(" FPU");

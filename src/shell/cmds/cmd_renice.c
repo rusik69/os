@@ -29,8 +29,8 @@ void cmd_renice(const char *args) {
         return;
     }
     if (libc_setpriority_pid(pid, (int)pri) != 0) {
-        kprintf("renice: no such process: %u\n", (uint64_t)pid);
+        kprintf("renice: no such process: %u\n", (unsigned long)pid);
         return;
     }
-    kprintf("%u priority set to %u\n", (uint64_t)pid, (uint64_t)pri);
+    kprintf("%u priority set to %u\n", (unsigned long)pid, (unsigned long)pri);
 }

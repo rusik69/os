@@ -111,7 +111,7 @@ void cmd_ed(const char *args) {
             ed_num_lines++;
             line = (*eol == '\n') ? eol + 1 : eol;
         }
-        kprintf("%d\n", (uint64_t)ed_num_lines);
+        kprintf("%d\n", (unsigned long)ed_num_lines);
         ed_current = ed_num_lines - 1;
     } else {
         kprintf("?%s\n", ed_filename);
@@ -165,7 +165,7 @@ void cmd_ed(const char *args) {
             case 'n':
             case 'N':
                 for (int i = addr1; i <= addr2 && i < ed_num_lines; i++)
-                    kprintf("%d\t%s\n", (uint64_t)(i+1), ed_buffer[i]);
+                    kprintf("%d\t%s\n", (unsigned long)(i+1), ed_buffer[i]);
                 ed_current = addr2;
                 break;
 
@@ -175,8 +175,8 @@ void cmd_ed(const char *args) {
                     const char *s = ed_buffer[i];
                     while (*s) {
                         if (*s == '\t') kprintf("\\t");
-                        else if (*s < 32) { kprintf("^%c", (uint64_t)(*s + 64)); }
-                        else kprintf("%c", (uint64_t)(uint8_t)*s);
+                        else if (*s < 32) { kprintf("^%c", (unsigned long)(*s + 64)); }
+                        else kprintf("%c", (unsigned long)(uint8_t)*s);
                         s++;
                     }
                     kprintf("$\n");
@@ -234,7 +234,7 @@ void cmd_ed(const char *args) {
                     }
                 }
                 if (replaced) ed_modified = 1;
-                kprintf("%d\n", (uint64_t)replaced);
+                kprintf("%d\n", (unsigned long)replaced);
                 break;
             }
 
@@ -251,7 +251,7 @@ void cmd_ed(const char *args) {
                     write_buf[wpos++] = '\n';
                 }
                 libc_vfs_write(ed_filename, write_buf, wpos);
-                kprintf("%d\n", (uint64_t)wpos);
+                kprintf("%d\n", (unsigned long)wpos);
                 ed_modified = 0;
                 break;
             }

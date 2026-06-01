@@ -12,12 +12,12 @@ void cmd_route(void) {
     kprintf("Destination     Gateway         Mask            Iface\n");
     kprintf("%-15s %-15s %u.%u.%u.%u   eth0\n",
             "0.0.0.0", "0.0.0.0",
-            (uint64_t)((mask >> 24) & 0xFF), (uint64_t)((mask >> 16) & 0xFF),
-            (uint64_t)((mask >> 8) & 0xFF), (uint64_t)(mask & 0xFF));
+            (unsigned long)((mask >> 24) & 0xFF), (unsigned long)((mask >> 16) & 0xFF),
+            (unsigned long)((mask >> 8) & 0xFF), (unsigned long)(mask & 0xFF));
     kprintf("%-15s %u.%u.%u.%u  %u.%u.%u.%u   eth0\n",
             "default",
-            (uint64_t)((gw >> 24) & 0xFF), (uint64_t)((gw >> 16) & 0xFF),
-            (uint64_t)((gw >> 8) & 0xFF), (uint64_t)(gw & 0xFF),
-            (uint64_t)((mask >> 24) & 0xFF), (uint64_t)((mask >> 16) & 0xFF),
-            (uint64_t)((mask >> 8) & 0xFF), (uint64_t)(mask & 0xFF));
+            (unsigned long)((gw >> 24) & 0xFF), (unsigned long)((gw >> 16) & 0xFF),
+            (unsigned long)((gw >> 8) & 0xFF), (unsigned long)(gw & 0xFF),
+            (unsigned long)((mask >> 24) & 0xFF), (unsigned long)((mask >> 16) & 0xFF),
+            (unsigned long)((mask >> 8) & 0xFF), (unsigned long)(mask & 0xFF));
 }

@@ -13,8 +13,8 @@ void cmd_env(void) {
     kprintf("NAME=shell\n");
     kprintf("UPTIME=%u\n", sec);
     kprintf("IP=%u.%u.%u.%u\n",
-            (uint64_t)ip[0], (uint64_t)ip[1],
-            (uint64_t)ip[2], (uint64_t)ip[3]);
+            (unsigned long)ip[0], (unsigned long)ip[1],
+            (unsigned long)ip[2], (unsigned long)ip[3]);
     kprintf("HOSTNAME=os-kernel\n");
     kprintf("DISK=%s\n", ata_is_present() ? "yes" : "no");
     kprintf("NET=%s\n", libc_net_is_present() ? "yes" : "no");

@@ -107,20 +107,20 @@ int intel_gpu_init(void) {
         intel_gpu_read_state(&g_gpu);
 
         kprintf("  Intel GPU %04x at %02x:%02x.%u mmio=0x%x aper=0x%x stolen=0x%x irq=%u\n",
-            (uint64_t)g_gpu.device_id,
-            (uint64_t)g_gpu.bus, (uint64_t)g_gpu.slot, (uint64_t)g_gpu.func,
+            (unsigned long)g_gpu.device_id,
+            (unsigned long)g_gpu.bus, (unsigned long)g_gpu.slot, (unsigned long)g_gpu.func,
             g_gpu.mmio_base, g_gpu.aperture_base, g_gpu.stolen_mem_base,
-            (uint64_t)g_gpu.irq);
+            (unsigned long)g_gpu.irq);
         if (g_gpu.mode_width && g_gpu.mode_height) {
         kprintf("  Intel GPU state: pipeA=%u planeA=%u vga=%s mode=%ux%u\n",
-            (uint64_t)g_gpu.pipe_a_active,
-            (uint64_t)g_gpu.plane_a_active,
+            (unsigned long)g_gpu.pipe_a_active,
+            (unsigned long)g_gpu.plane_a_active,
             g_gpu.vga_disabled ? "disabled" : "enabled",
-            (uint64_t)g_gpu.mode_width, (uint64_t)g_gpu.mode_height);
+            (unsigned long)g_gpu.mode_width, (unsigned long)g_gpu.mode_height);
         } else {
         kprintf("  Intel GPU state: pipeA=%u planeA=%u vga=%s\n",
-            (uint64_t)g_gpu.pipe_a_active,
-            (uint64_t)g_gpu.plane_a_active,
+            (unsigned long)g_gpu.pipe_a_active,
+            (unsigned long)g_gpu.plane_a_active,
             g_gpu.vga_disabled ? "disabled" : "enabled");
         }
     return 0;

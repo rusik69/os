@@ -164,7 +164,7 @@ int e1000_init(void) {
 
     /* Get MMIO base from BAR0 (memory-mapped, mask lower 4 bits) */
     uint64_t bar0 = dev.bar[0] & ~0xFULL;
-    kprintf("  e1000 BAR0=0x%x IRQ=%u\n", bar0, (uint64_t)dev.irq);
+    kprintf("  e1000 BAR0=0x%x IRQ=%u\n", bar0, (unsigned long)dev.irq);
 
     /* Map MMIO region (128KB) into high-half VMA space */
     mmio_base = (volatile uint8_t *)vmm_map_phys(bar0, 0x20000,

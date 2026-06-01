@@ -47,13 +47,13 @@ void cmd_paste(const char *args) {
     while (*l1 || *l2) {
         /* Print line from file1 */
         if (*l1) {
-            while (*l1 && *l1 != '\n') { kprintf("%c", (uint64_t)(uint8_t)*l1); l1++; }
+            while (*l1 && *l1 != '\n') { kprintf("%c", (unsigned long)(uint8_t)*l1); l1++; }
             if (*l1 == '\n') l1++;
         }
         kprintf("\t");
         /* Print line from file2 */
         if (*l2) {
-            while (*l2 && *l2 != '\n') { kprintf("%c", (uint64_t)(uint8_t)*l2); l2++; }
+            while (*l2 && *l2 != '\n') { kprintf("%c", (unsigned long)(uint8_t)*l2); l2++; }
             if (*l2 == '\n') l2++;
         }
         kprintf("\n");

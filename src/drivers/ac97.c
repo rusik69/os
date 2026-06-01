@@ -116,7 +116,7 @@ int ac97_init(void) {
 
     ac97_dev_present = 1;
     kprintf("ac97: initialized (NAM=0x%x, NABM=0x%x)\n",
-            (uint64_t)ac97_nam_base, (uint64_t)ac97_nabm_base);
+            (unsigned long)ac97_nam_base, (unsigned long)ac97_nabm_base);
     return 0;
 }
 

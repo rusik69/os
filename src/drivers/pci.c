@@ -349,9 +349,9 @@ void pci_list(void) {
             }
 
             kprintf(" %02x   %02x  %04x:%04x %02x.%02x %s%s\n",
-                    (uint64_t)bus, (uint64_t)slot,
-                    (uint64_t)vid, (uint64_t)did,
-                    (uint64_t)cls, (uint64_t)sub,
+                    (unsigned long)bus, (unsigned long)slot,
+                    (unsigned long)vid, (unsigned long)did,
+                    (unsigned long)cls, (unsigned long)sub,
                     pci_class_name(cls, sub), extra);
         }
     }
@@ -365,5 +365,5 @@ void pci_init(void) {
             if ((reg0 & 0xFFFF) != 0xFFFF) count++;
         }
     }
-    kprintf("  %u PCI devices found\n", (uint64_t)count);
+    kprintf("  %u PCI devices found\n", (unsigned long)count);
 }

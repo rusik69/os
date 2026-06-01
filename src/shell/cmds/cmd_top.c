@@ -26,8 +26,8 @@ void cmd_top(void) {
             if (st > 4) st = 0;
 
             kprintf("%-6u %-6u %-10s %-8s %-10s %s\n",
-                    (uint64_t)procs[i].pid,
-                    (uint64_t)procs[i].ppid,
+                    (unsigned long)procs[i].pid,
+                    (unsigned long)procs[i].ppid,
                     state_names[st],
                     procs[i].is_user ? "user" : "kernel",
                     procs[i].is_user ? "user" : "root", // Simplification: user vs root
