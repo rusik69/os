@@ -18,6 +18,10 @@ typedef uint64_t            uintptr_t;
 #define false 0
 typedef _Bool bool;
 
+#define INT64_MAX  ((int64_t)9223372036854775807LL)
+#define INT32_MAX  2147483647
+#define UINT64_MAX ((uint64_t)-1)
+
 #define KERNEL_VMA_OFFSET  0xFFFF800000000000ULL
 /* Convert between physical addresses and kernel virtual addresses.
  * Kernel uses a high-half VMA mapping: all physical accesses go through

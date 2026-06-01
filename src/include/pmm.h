@@ -16,4 +16,8 @@ void pmm_ref_frame(uint64_t phys);      /* increment refcount */
 int  pmm_unref_frame(uint64_t phys);    /* decrement; frees if 0, returns new count */
 int  pmm_refcount(uint64_t phys);       /* query current refcount */
 
+/* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
+extern int pmm_poison_enabled;
+void pmm_set_poison(int enable);
+
 #endif

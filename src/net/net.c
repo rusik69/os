@@ -19,6 +19,16 @@ uint8_t  net_gw_mac[6];
 int      net_gw_mac_known = 0;
 uint16_t net_ip_id_counter = 1;
 
+/* IP routing table */
+struct rt_entry rt_table[RT_MAX_ENTRIES];
+int rt_num_entries = 0;
+
+/* IP forwarding */
+int net_ip_forwarding = 0;
+
+/* Network interface statistics */
+struct net_iface_stats net_iface_stats;
+
 /* ARP cache */
 struct arp_entry net_arp_cache[ARP_CACHE_SIZE];
 
@@ -66,6 +76,79 @@ int net_link_send(const void *data, uint16_t len) {
 
 /* ICMP ping state */
 static volatile int ping_reply_received = 0;
+
+/* ── IP routing table ───────────────────────────────────────────── */
+
+int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
+    if (rt_num_entries >= RT_MAX_ENTRIES) return -1;
+    /* Check for duplicate */
+    for (int i = 0; i < rt_num_entries; i++) {
+        if (rt_table[i].dst == dst && rt_table[i].mask == mask)
+            return -1;
+    }
+    rt_table[rt_num_entries].dst   = dst;
+    rt_table[rt_num_entries].mask  = mask;
+    rt_table[rt_num_entries].gw    = gw;
+    rt_table[rt_num_entries].iface = iface;
+    rt_num_entries++;
+    return 0;
+}
+
+int rt_del(uint32_t dst, uint32_t mask) {
+    for (int i = 0; i < rt_num_entries; i++) {
+        if (rt_table[i].dst == dst && rt_table[i].mask == mask) {
+            for (int j = i; j < rt_num_entries - 1; j++)
+                rt_table[j] = rt_table[j + 1];
+            rt_num_entries--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
+    int best = -1;
+    uint32_t best_mask = 0;
+    for (int i = 0; i < rt_num_entries; i++) {
+        if ((ip & rt_table[i].mask) == (rt_table[i].dst & rt_table[i].mask)) {
+            if (rt_table[i].mask > best_mask) {
+                best = i;
+                best_mask = rt_table[i].mask;
+            }
+        }
+    }
+    if (best < 0) return -1;
+    if (gw_out)   *gw_out   = rt_table[best].gw;
+    if (iface_out) *iface_out = rt_table[best].iface;
+    return 0;
+}
+
+void rt_flush(void) {
+    rt_num_entries = 0;
+}
+
+/* ── Gratuitous ARP ────────────────────────────────────────────── */
+
+void arp_announce(void) {
+    if (!net_our_ip) return;
+    struct arp_packet arp;
+    arp.hw_type = htons(1);
+    arp.proto_type = htons(ETH_TYPE_IP);
+    arp.hw_len = 6;
+    arp.proto_len = 4;
+    arp.opcode = htons(2); /* ARP reply */
+    memcpy(arp.sender_mac, net_our_mac, 6);
+    arp.sender_ip = htonl(net_our_ip);
+    memcpy(arp.target_mac, net_our_mac, 6);
+    arp.target_ip = htonl(net_our_ip);
+    uint8_t bc[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    send_eth(bc, ETH_TYPE_ARP, &arp, sizeof(arp));
+}
+
+/* ── Interface stats tracking ──────────────────────────────────── */
+/* Call these from link-level send/recv after successful operations.
+   net.c's send_eth and net_poll already call net_link_send/net_link_recv,
+   so we hook into those. */
 
 /* --- ARP cache --- */
 
@@ -175,6 +258,7 @@ void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
     net_our_ip = ip;
     net_gateway_ip = gw;
     net_subnet_mask = mask;
+    arp_announce();
 }
 
 /* --- Ethernet/IP send --- */
@@ -183,13 +267,21 @@ static volatile int send_ip_resolving = 0;  /* prevent recursive ARP resolve */
 
 void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16_t len) {
     uint8_t frame[1518];
-    if (len > 1518 - sizeof(struct eth_header)) return;
+    if (len > 1518 - sizeof(struct eth_header)) {
+        net_iface_stats.tx_errors++;
+        return;
+    }
     struct eth_header *eth = (struct eth_header *)frame;
     memcpy(eth->dst, dst_mac, 6);
     memcpy(eth->src, net_our_mac, 6);
     eth->type = htons(type);
     memcpy(frame + sizeof(struct eth_header), payload, len);
-    net_link_send(frame, sizeof(struct eth_header) + len);
+    if (net_link_send(frame, sizeof(struct eth_header) + len) == 0) {
+        net_iface_stats.tx_packets++;
+        net_iface_stats.tx_bytes += sizeof(struct eth_header) + len;
+    } else {
+        net_iface_stats.tx_errors++;
+    }
 }
 
 static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
@@ -472,6 +564,31 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
 
     const uint8_t *payload = data + ihl;
     uint16_t payload_len = total - ihl;
+    uint32_t dst_ip = ntohl(ip->dst_ip);
+
+    /* IP forwarding: if packet is not for us and forwarding is enabled, forward it */
+    if (dst_ip != net_our_ip && dst_ip != 0xFFFFFFFF) {
+        if (net_ip_forwarding) {
+            uint32_t fwd_gw;
+            int fwd_iface;
+            if (rt_lookup(dst_ip, &fwd_gw, &fwd_iface) == 0) {
+                /* Decrement TTL, recompute checksum */
+                ip->ttl--;
+                if (ip->ttl > 0) {
+                    ip->checksum = 0;
+                    uint8_t *pkt_copy = (uint8_t *)data; /* discard const */
+                    struct ip_header *fwd_ip = (struct ip_header *)pkt_copy;
+                    fwd_ip->checksum = net_checksum(fwd_ip, ihl);
+                    /* Forward via gateway if specified, otherwise directly to dest */
+                    if (fwd_gw)
+                        send_ip(fwd_gw, ip->protocol, (void*)data + ihl, payload_len);
+                    else
+                        send_ip(dst_ip, ip->protocol, (void*)data + ihl, payload_len);
+                }
+            }
+        }
+        return;
+    }
 
     if (ip->protocol == IP_PROTO_ICMP)
         handle_icmp(ip, payload, payload_len);
@@ -531,6 +648,8 @@ void net_poll(void) {
             uint16_t type = ntohs(eth->type);
             const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
             uint16_t payload_len = len - sizeof(struct eth_header);
+            net_iface_stats.rx_packets++;
+            net_iface_stats.rx_bytes += len;
             if (type == ETH_TYPE_ARP)
                 handle_arp(payload, payload_len);
             else if (type == ETH_TYPE_IP) {
@@ -541,6 +660,8 @@ void net_poll(void) {
                 }
                 handle_ip(payload, payload_len);
             }
+        } else {
+            net_iface_stats.rx_drops++;
         }
     }
 
@@ -559,6 +680,7 @@ void net_poll(void) {
     if (now - last_retransmit_tick >= 10) {
         last_retransmit_tick = now;
         net_tcp_check_retransmit();
+        net_tcp_check_keepalive();
     }
 }
 

@@ -1,4 +1,5 @@
 #include "pmm.h"
+#include "vmm.h"
 #include "string.h"
 #include "printf.h"
 
@@ -29,6 +30,22 @@ static uint16_t frame_refcount[MAX_FRAMES]; /* COW reference counts */
 static uint64_t total_frames = 0;
 static uint64_t used_frames = 0;
 static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
+
+/* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
+int pmm_poison_enabled = 1;
+
+static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
+    if (!pmm_poison_enabled) return;
+    if (phys_addr == 0) return;
+    uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(phys_addr);
+    /* Fill 4KB page with 64-bit pattern */
+    uint64_t pat64 = ((uint64_t)pattern << 32) | pattern;
+    if (pattern == 0xDEADBEEF) {
+        pat64 = 0xDEADBEEFDEADBEEFULL;
+    }
+    for (int i = 0; i < (int)(PAGE_SIZE / 8); i++)
+        virt[i] = pat64;
+}
 
 static void bitmap_set(uint64_t frame) {
     if (frame >= MAX_FRAMES) return;
@@ -140,7 +157,10 @@ uint64_t pmm_alloc_frame(void) {
             frame_refcount[i] = 1;
             pmm_hint = i + 1;
             if (pmm_hint >= total_frames) pmm_hint = 0;
-            return i * PAGE_SIZE;
+            uint64_t addr = i * PAGE_SIZE;
+            poison_fill(addr, 0xDEADBEEF);
+            vm_pgalloc++;
+            return addr;
         }
         i++;
         if (i >= total_frames) i = 0;
@@ -156,7 +176,10 @@ uint64_t pmm_alloc_frame(void) {
             frame_refcount[i] = 1;
             pmm_hint = i + 1;
             if (pmm_hint >= total_frames) pmm_hint = 0;
-            return i * PAGE_SIZE;
+            uint64_t addr = i * PAGE_SIZE;
+            poison_fill(addr, 0xDEADBEEF);
+            vm_pgalloc++;
+            return addr;
         }
         i++;
         if (i >= total_frames) i = 0;
@@ -184,6 +207,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
                     bitmap_set(j);
                     used_frames++;
                     frame_refcount[j] = 1;
+                    poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
                 }
                 pmm_hint = start + count;
                 if (pmm_hint >= total_frames) pmm_hint = 0;
@@ -206,6 +230,9 @@ void pmm_free_frame(uint64_t addr) {
     if (!bitmap_test(frame)) return;
     /* Safety: refuse to free a frame with outstanding COW references */
     if (frame_refcount[frame] > 1) return;
+    /* Poison the page before freeing */
+    poison_fill(addr, 0xDC);
+    vm_pgfree++;
     bitmap_clear(frame);
     frame_refcount[frame] = 0;
     used_frames--;
@@ -237,3 +264,7 @@ int pmm_refcount(uint64_t phys) {
 
 uint64_t pmm_get_total_frames(void) { return total_frames; }
 uint64_t pmm_get_used_frames(void)  { return used_frames; }
+
+void pmm_set_poison(int enable) {
+    pmm_poison_enabled = enable;
+}

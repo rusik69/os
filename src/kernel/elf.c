@@ -376,6 +376,17 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     kfree(buf);
     if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -1; }
 
+    /* Close all FD_CLOEXEC file descriptors before exec */
+    process_exec_close_cloexec();
+
+    /* On exec, AND bounding set with permitted set (capabilities drop but never gain) */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+        cur->syscall_caps[i] &= cur->cap_bset[i];
+    }
+
+    /* When NO_NEW_PRIVS is set, execve can't gain new capabilities - 
+     * the bounding set AND operation above already enforces this. */
+
     /* Allocate user stack (64KB) with ASLR offset */
     uint64_t aslr_pages = prng_rand64() % 32; /* 0-31 pages of random shift */
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);

@@ -55,4 +55,25 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t new_flags);
 int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
 
+/* NX bit support */
+void vmm_nx_init(void);
+int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec);
+
+/* VM statistics counters (for /proc/vmstat) */
+extern uint64_t vm_pgalloc;
+extern uint64_t vm_pgfree;
+extern uint64_t vm_pgfault;
+extern uint64_t vm_pgmajfault;
+extern uint64_t vm_pgswapin;
+extern uint64_t vm_pgswapout;
+extern uint64_t vm_pgin;
+extern uint64_t vm_pgout;
+
+/* Memory overcommit tracking */
+extern uint64_t vmm_committed_bytes;
+#define VMM_OVERCOMMIT_LIMIT (256ULL * 1024 * 1024) /* 256 MB overcommit limit */
+int vmm_get_committed(void);
+int vmm_commit(uint64_t bytes);
+void vmm_uncommit(uint64_t bytes);
+
 #endif

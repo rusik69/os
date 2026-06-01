@@ -60,6 +60,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/rng.c \
          src/kernel/fsnotify.c \
          src/kernel/module.c \
+         src/kernel/sysctl.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \
@@ -186,7 +187,7 @@ $(BUILDDIR)/%.o: src/%.asm
 
 $(BUILDDIR)/kernel.elf: check-app-boundary $(OBJS)
 	@mkdir -p $(BUILDDIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
 
 $(BUILDDIR)/kernel.bin: $(BUILDDIR)/kernel.elf
 	cp $< $@
@@ -237,7 +238,7 @@ $(BUILDDIR_TEST)/%.o: src/%.asm
 
 $(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 	@mkdir -p $(BUILDDIR_TEST)
-	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
 
 $(BUILDDIR_TEST)/kernel.bin: $(BUILDDIR_TEST)/kernel.elf
 	cp $< $@

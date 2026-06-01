@@ -19,7 +19,86 @@ static inline void tlb_flush(uint64_t addr) {
 #define PTE_NX       (1ULL << 63)  /* No-Execute (only active when EFER.NXE=1) */
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
+#ifndef FEATURE_NX_SUPPORTED
+#define FEATURE_NX_SUPPORTED 1
+#endif
+
+/* Check if NX is supported via CPUID */
+static int nx_enabled = 0;
+
+/* Initialize NX support detection */
+void vmm_nx_init(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000001));
+    nx_enabled = (edx & (1u << 20)) ? 1 : 0; /* bit 20 = NX */
+    if (!nx_enabled) {
+        kprintf("[WARN] NX not supported by CPU\n");
+    }
+}
+
+/* Check if an instruction fetch access violates NX on a PTE */
+static int nx_check_violation(uint64_t pte, int is_exec_fetch) {
+    if (!is_exec_fetch) return 0; /* only check on instruction fetches */
+    if (!nx_enabled) return 0;
+    if (pte & PTE_NX) return 1; /* NX set and this is a fetch — violation */
+    return 0;
+}
+
+/* Per-process PML4-based NX check for user page table walks.
+ * Returns 1 if the access is allowed, 0 if NX violation (should raise PF).
+ * 'write'=1 for write access, 'exec'=1 for instruction fetch. */
+int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec) {
+    (void)write;
+    if (!nx_enabled || !exec) return 1;
+
+    int pml4_idx = (virt >> 39) & 0x1FF;
+    int pdpt_idx = (virt >> 30) & 0x1FF;
+    int pd_idx   = (virt >> 21) & 0x1FF;
+    int pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return 1;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return 1;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+    if (!(pd[pd_idx] & PTE_PRESENT)) return 1;
+    /* Check NX on PDE */
+    if (pd[pd_idx] & PTE_NX) return 0;
+
+    if (pd[pd_idx] & PTE_HUGE) return 1; /* 2MB page, NX already checked */
+
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+    if (!(pt[pt_idx] & PTE_PRESENT)) return 1;
+    /* Check NX on PTE */
+    if (pt[pt_idx] & PTE_NX) return 0;
+
+    return 1;
+}
+
 static uint64_t *kernel_pml4;
+
+/* VM statistics counters */
+uint64_t vm_pgalloc = 0;
+uint64_t vm_pgfree = 0;
+uint64_t vm_pgfault = 0;
+uint64_t vm_pgmajfault = 0;
+uint64_t vm_pgswapin = 0;
+uint64_t vm_pgswapout = 0;
+uint64_t vm_pgin = 0;
+uint64_t vm_pgout = 0;
+
+/* Memory overcommit accounting */
+uint64_t vmm_committed_bytes = 0;
+
+int vmm_get_committed(void) { return (int)(vmm_committed_bytes / PAGE_SIZE); }
+int vmm_commit(uint64_t bytes) {
+    if (vmm_committed_bytes + bytes > VMM_OVERCOMMIT_LIMIT) return -1;
+    vmm_committed_bytes += bytes;
+    return 0;
+}
+void vmm_uncommit(uint64_t bytes) {
+    if (bytes > vmm_committed_bytes) vmm_committed_bytes = 0;
+    else vmm_committed_bytes -= bytes;
+}
 
 /* Page invalidation */
 static inline void invlpg(uint64_t addr) {

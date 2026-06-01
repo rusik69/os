@@ -42,6 +42,15 @@ void kmem_cache_destroy(struct kmem_cache *cache);
 /* Return all empty slabs to the page allocator. Called by the kernel when memory is tight. */
 void kmem_cache_reap(void);
 
+/* Slab statistics */
+struct slab_stats {
+    uint64_t total_objects;
+    uint64_t used_objects;
+    uint64_t cache_count;
+    uint64_t memory_used;
+};
+void slab_get_stats(struct slab_stats *s);
+
 /* Initialize the slab subsystem and create built-in caches. Must be called after heap_init. */
 void slab_init(void);
 

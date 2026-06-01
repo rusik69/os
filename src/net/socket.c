@@ -1,5 +1,6 @@
 #include "socket.h"
 #include "net.h"
+#include "net_internal.h"
 #include "process.h"
 #include "scheduler.h"
 #include "string.h"
@@ -54,7 +55,10 @@ void sock_free(int fd) {
 /* ── Socket syscall implementations ──────────────────────────── */
 
 int sys_socket_impl(int domain, int type, int protocol) {
-    if (domain != AF_INET && domain != AF_UNIX) return -1;
+    if (domain != AF_INET && domain != AF_UNIX) {
+        /* Allow AF_PACKET / AF_UNSPEC for raw packet sockets */
+        if (domain != 0 && domain != 17) return -1;
+    }
     int slot = sock_alloc();
     if (slot < 0) return -1;
 
@@ -62,10 +66,17 @@ int sys_socket_impl(int domain, int type, int protocol) {
     s->domain = domain;
     s->type = type;
     s->protocol = protocol;
+    s->rcvbuf = 65536;
+    s->sndbuf = 65536;
 
     /* Map SOCK_STREAM → TCP, SOCK_DGRAM → UDP */
     if (protocol == 0) {
-        s->protocol = (type == SOCK_STREAM) ? IPPROTO_TCP : IPPROTO_UDP;
+        if (type == SOCK_RAW && domain == 0) {
+            /* ETH_P_ALL raw socket */
+            s->protocol = ETH_P_ALL;
+        } else {
+            s->protocol = (type == SOCK_STREAM) ? IPPROTO_TCP : IPPROTO_UDP;
+        }
     }
 
     return sock_fd_from_slot(slot);
@@ -163,9 +174,91 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
             case SO_REUSEADDR:
                 s->reuseaddr = *(int*)optval;
                 return 0;
-            case SO_KEEPALIVE:
+            case SO_KEEPALIVE: {
                 s->keepalive = *(int*)optval;
+                if (s->conn_id >= 0)
+                    net_tcp_set_keepalive(s->conn_id, s->keepalive);
                 return 0;
+            }
+            case SO_RCVBUF:
+                s->rcvbuf = *(int*)optval;
+                if (s->rcvbuf < 256) s->rcvbuf = 256;
+                return 0;
+            case SO_SNDBUF:
+                s->sndbuf = *(int*)optval;
+                if (s->sndbuf < 256) s->sndbuf = 256;
+                return 0;
+            case SO_BROADCAST:
+                s->broadcast = *(int*)optval;
+                return 0;
+            case SO_PRIORITY:
+                s->priority = *(int*)optval;
+                return 0;
+            case SO_MARK:
+                s->sk_mark = *(uint32_t*)optval;
+                return 0;
+            case SO_BUSY_POLL:
+                s->busy_poll_usecs = *(int*)optval;
+                return 0;
+            case SO_MAX_PACING_RATE:
+                s->max_pacing_rate = *(uint32_t*)optval;
+                return 0;
+            case SO_NO_CHECK:
+                s->no_check = *(int*)optval;
+                return 0;
+        }
+    } else if (level == SOL_TCP) {
+        switch (optname) {
+            case TCP_NODELAY: {
+                int val = *(int*)optval;
+                s->tcp_nodelay = val;
+                if (s->conn_id >= 0)
+                    tcp_conns[s->conn_id].tcp_nodelay = val;
+                return 0;
+            }
+            case TCP_CORK: {
+                int val = *(int*)optval;
+                s->tcp_cork = val;
+                if (s->conn_id >= 0) {
+                    struct tcp_conn *c = &tcp_conns[s->conn_id];
+                    int old = c->tcp_cork;
+                    c->tcp_cork = val;
+                    /* Uncorking: flush buffered data */
+                    if (old && !val && c->tx_unacked_len > 0) {
+                        const uint8_t *p = c->tx_unacked_buf;
+                        uint16_t remain = c->tx_unacked_len;
+                        while (remain > 0) {
+                            uint16_t chunk = remain > 1400 ? 1400 : remain;
+                            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
+                            c->our_seq += chunk;
+                            p += chunk;
+                            remain -= chunk;
+                        }
+                    }
+                }
+                return 0;
+            }
+            case TCP_KEEPIDLE:
+            case TCP_KEEPINTVL:
+            case TCP_KEEPCNT:
+                /* Keepalive tuning — store for later use if needed */
+                return 0;
+        }
+    } else if (level == SOL_IP) {
+        switch (optname) {
+            case IP_TTL: {
+                int val = *(int*)optval;
+                s->ip_ttl = val;
+                return 0;
+            }
+            case IP_RECVTTL: {
+                s->ip_recvttl = *(int*)optval;
+                return 0;
+            }
+            case IP_RECVDSTADDR: {
+                s->ip_recvdstaddr = *(int*)optval;
+                return 0;
+            }
         }
     }
     return 0;
@@ -186,6 +279,147 @@ int sys_getsockopt_impl(int sockfd, int level, int optname,
             }
             case SO_ERROR: {
                 int val = 0;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_RCVBUF: {
+                int val = s->rcvbuf ? s->rcvbuf : 65536;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_SNDBUF: {
+                int val = s->sndbuf ? s->sndbuf : 65536;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_KEEPALIVE: {
+                int val = s->keepalive;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_REUSEADDR: {
+                int val = s->reuseaddr;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_PRIORITY: {
+                int val = s->priority;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_MARK: {
+                uint32_t val = s->sk_mark;
+                if (*optlen > sizeof(uint32_t)) *optlen = sizeof(uint32_t);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_BUSY_POLL: {
+                int val = s->busy_poll_usecs;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_MAX_PACING_RATE: {
+                uint32_t val = s->max_pacing_rate;
+                if (*optlen > sizeof(uint32_t)) *optlen = sizeof(uint32_t);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case SO_NO_CHECK: {
+                int val = s->no_check;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+        }
+    } else if (level == SOL_TCP) {
+        switch (optname) {
+            case TCP_NODELAY: {
+                int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_nodelay : s->tcp_nodelay;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case TCP_CORK: {
+                int val = (s->conn_id >= 0) ? tcp_conns[s->conn_id].tcp_cork : s->tcp_cork;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case TCP_INFO: {
+                struct tcp_info info;
+                memset(&info, 0, sizeof(info));
+                if (s->conn_id >= 0) {
+                    struct tcp_conn *c = &tcp_conns[s->conn_id];
+                    info.tcpi_state = (uint8_t)c->state;
+                    info.tcpi_ca_state = 0;
+                    info.tcpi_retransmits = c->retrans_count;
+                    info.tcpi_probes = 0;
+                    info.tcpi_backoff = 0;
+                    info.tcpi_options = 0;
+                    info.tcpi_snd_wscale = 0;
+                    info.tcpi_rcv_wscale = 0;
+                    info.tcpi_rto = c->rto * 10; /* convert ticks to ms */
+                    info.tcpi_snd_mss = 1460;
+                    info.tcpi_rcv_mss = 1460;
+                    info.tcpi_unacked = c->tx_unacked_len;
+                    info.tcpi_lost = 0;
+                    info.tcpi_retrans = c->retrans_count;
+                    info.tcpi_pmtu = 1500;
+                    info.tcpi_rcv_ssthresh = c->ssthresh;
+                    info.tcpi_rtt = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 0;
+                    info.tcpi_rttvar = (uint32_t)(c->rttvar / 4);
+                    info.tcpi_snd_ssthresh = c->ssthresh;
+                    info.tcpi_snd_cwnd = c->cwnd;
+                    info.tcpi_reordering = 3;
+                    info.tcpi_rcv_space = sizeof(c->rxbuf);
+                    info.tcpi_total_retrans = c->retrans_count;
+                } else {
+                    info.tcpi_snd_cwnd = 1;
+                    info.tcpi_rtt = 0;
+                }
+                uint32_t copylen = sizeof(info);
+                if (*optlen < copylen) copylen = *optlen;
+                memcpy(optval, &info, copylen);
+                *optlen = copylen;
+                return 0;
+            }
+        }
+    } else if (level == SOL_IP) {
+        switch (optname) {
+            case IP_TTL: {
+                int val = s->ip_ttl ? s->ip_ttl : 64;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case IP_MTU: {
+                int val = 1500;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case IP_OPTIONS: {
+                /* Return empty options */
+                uint8_t empty = 0;
+                if (*optlen > sizeof(uint8_t)) *optlen = sizeof(uint8_t);
+                memcpy(optval, &empty, *optlen);
+                return 0;
+            }
+            case IP_RECVTTL: {
+                int val = s->ip_recvttl;
+                if (*optlen > sizeof(int)) *optlen = sizeof(int);
+                memcpy(optval, &val, *optlen);
+                return 0;
+            }
+            case IP_RECVDSTADDR: {
+                int val = s->ip_recvdstaddr;
                 if (*optlen > sizeof(int)) *optlen = sizeof(int);
                 memcpy(optval, &val, *optlen);
                 return 0;

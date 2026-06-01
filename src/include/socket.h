@@ -24,9 +24,32 @@
 #define SO_SNDTIMEO     21
 #define SO_TYPE         3
 #define SO_ERROR        4
-#define SO_RCVTIMEO     20
-#define SO_SNDTIMEO     21
+#define SO_RCVBUF       8
+#define SO_SNDBUF       7
 #define SO_TIMESTAMP    29
+#define SO_PRIORITY     12
+#define SO_MARK         36
+#define SO_BUSY_POLL    46
+#define SO_MAX_PACING_RATE 34
+#define SO_NO_CHECK     11
+
+#define SOL_TCP         6
+#define SOL_IP          0
+
+#define TCP_NODELAY     1
+#define TCP_CORK        3
+#define TCP_KEEPIDLE    4
+#define TCP_KEEPINTVL   5
+#define TCP_KEEPCNT     6
+#define TCP_INFO        11
+
+#define IP_TTL          2
+#define IP_MTU          14
+#define IP_OPTIONS      1
+#define IP_RECVTTL      33
+#define IP_RECVDSTADDR  25
+
+#define ETH_P_ALL       0x0003
 
 #define IPPROTO_TCP     6
 #define IPPROTO_UDP     17
@@ -78,6 +101,43 @@ struct msghdr {
     int           msg_flags;      /* flags on received message */
 };
 
+/* tcp_info structure for TCP_INFO getsockopt */
+struct tcp_info {
+    uint8_t  tcpi_state;
+    uint8_t  tcpi_ca_state;
+    uint8_t  tcpi_retransmits;
+    uint8_t  tcpi_probes;
+    uint8_t  tcpi_backoff;
+    uint8_t  tcpi_options;
+    uint8_t  tcpi_snd_wscale : 4, tcpi_rcv_wscale : 4;
+    uint32_t tcpi_rto;
+    uint32_t tcpi_ato;
+    uint32_t tcpi_snd_mss;
+    uint32_t tcpi_rcv_mss;
+    uint32_t tcpi_unacked;
+    uint32_t tcpi_sacked;
+    uint32_t tcpi_lost;
+    uint32_t tcpi_retrans;
+    uint32_t tcpi_fackets;
+    /* Times */
+    uint32_t tcpi_last_data_sent;
+    uint32_t tcpi_last_ack_sent;
+    uint32_t tcpi_last_data_recv;
+    uint32_t tcpi_last_ack_recv;
+    /* Metrics */
+    uint32_t tcpi_pmtu;
+    uint32_t tcpi_rcv_ssthresh;
+    uint32_t tcpi_rtt;
+    uint32_t tcpi_rttvar;
+    uint32_t tcpi_snd_ssthresh;
+    uint32_t tcpi_snd_cwnd;
+    uint32_t tcpi_advmss;
+    uint32_t tcpi_reordering;
+    uint32_t tcpi_rcv_rtt;
+    uint32_t tcpi_rcv_space;
+    uint32_t tcpi_total_retrans;
+};
+
 /* Per-socket structure */
 struct socket {
     int           in_use;
@@ -97,6 +157,19 @@ struct socket {
     /* Socket options */
     int           reuseaddr;
     int           keepalive;
+    int           rcvbuf;
+    int           sndbuf;
+    int           tcp_nodelay;
+    int           tcp_cork;
+    int           ip_ttl;
+    int           broadcast;
+    int           priority;           /* SO_PRIORITY */
+    uint32_t      sk_mark;            /* SO_MARK */
+    int           busy_poll_usecs;    /* SO_BUSY_POLL */
+    uint32_t      max_pacing_rate;    /* SO_MAX_PACING_RATE */
+    int           no_check;           /* SO_NO_CHECK (UDP checksum disable) */
+    int           ip_recvttl;         /* IP_RECVTTL */
+    int           ip_recvdstaddr;     /* IP_RECVDSTADDR */
     /* UDP listener index (for net_udp_listen) */
     int           udp_listener;
 };

@@ -27,6 +27,9 @@ struct mutex_entry {
 
 static struct mutex_entry mutexes[MUTEX_MAX];
 
+/* Priority Inheritance boost tracking array */
+uint8_t mutex_boost[MUTEX_MAX_PI_BOOST];
+
 static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio);
 static void restore_owner(struct mutex_entry *m);
 
@@ -126,6 +129,9 @@ static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio) {
     if (waiter_prio < owner->priority) {
         m->owner_orig_prio = owner->priority; /* save current before boost */
         owner->priority = waiter_prio;
+        /* Track the boost */
+        if (m->owner_pid < MUTEX_MAX_PI_BOOST)
+            mutex_boost[m->owner_pid] = waiter_prio;
     }
 }
 
@@ -136,4 +142,7 @@ static void restore_owner(struct mutex_entry *m) {
 
     owner->priority = owner->base_priority;
     m->owner_orig_prio = owner->base_priority;
+    /* Clear boost tracking */
+    if (m->owner_pid < MUTEX_MAX_PI_BOOST)
+        mutex_boost[m->owner_pid] = 0;
 }

@@ -4,6 +4,8 @@
 #include "process.h"
 #include "printf.h"
 
+/* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
+
 static inline uint64_t read_cr2(void) {
     uint64_t val;
     __asm__ volatile("mov %%cr2, %0" : "=r"(val));
@@ -28,6 +30,30 @@ static inline uint64_t read_cr4(void) {
     return val;
 }
 
+/* Page fault tracing flag */
+int page_fault_trace = 0;
+
+void page_fault_trace_enable(int enable) {
+    page_fault_trace = enable;
+}
+
+/* Kernel stack depth check: verify RSP is within the current process's kernel stack */
+int check_kernel_stack_depth(void) {
+    struct process *proc = process_get_current();
+    if (!proc) return 1; /* no process context, assume OK */
+    uint64_t rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+    /* Kernel stack is between kernel_stack and stack_top */
+    if (rsp < proc->kernel_stack || rsp >= proc->stack_top) {
+        kprintf("*** KERNEL STACK OVERFLOW DETECTED *** pid=%u name=%s "
+                "rsp=0x%llx stack_base=0x%llx stack_top=0x%llx\n",
+                proc->pid, proc->name ? proc->name : "?",
+                rsp, proc->kernel_stack, proc->stack_top);
+        return 0;
+    }
+    return 1;
+}
+
 /*
  * Page fault handler (ISR 14).
  *
@@ -42,6 +68,26 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     uint64_t cr2 = read_cr2();
     uint64_t err = frame->error_code;
 
+    /* Update vmstat counters */
+    vm_pgfault++;
+    if (err & (1ULL << 1) && (err & (1ULL << 2))) {
+        /* User write fault — could be COW (minor) or major */
+        /* We don't have a way to differentiate yet; count as minor for now */
+    }
+
+    /* Page fault tracing */
+    if (page_fault_trace) {
+        struct process *proc = process_get_current();
+        kprintf("[PFTRACE] addr=0x%llx err=0x%llx (%s %s %s) rip=0x%llx pid=%u name=%s\n",
+                cr2, err,
+                (err & 1) ? "prot" : "np",
+                (err & 2) ? "wr" : "rd",
+                (err & 4) ? "usr" : "sup",
+                frame->rip,
+                proc ? (unsigned int)proc->pid : 0,
+                proc && proc->name ? proc->name : "?");
+    }
+
     /* Kernel-mode fault: panic with register dump */
     if (!(err & (1ULL << 2))) {
         kprintf("\n*** KERNEL PAGE FAULT ***\n");
@@ -51,8 +97,9 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         for (int i = 0; i < PROCESS_MAX; i++) {
             if (pt[i].guard_page &&
                 (cr2 & ~(uint64_t)0xFFF) == (pt[i].guard_page & ~(uint64_t)0xFFF)) {
-                kprintf("*** KERNEL STACK OVERFLOW *** pid=%u name=%s\n",
-                        pt[i].pid, pt[i].name ? pt[i].name : "?");
+                kprintf("*** KERNEL STACK OVERFLOW DETECTED! Process: %s (pid=%u) ***\n",
+                        pt[i].name ? pt[i].name : "?",
+                        (unsigned int)pt[i].pid);
                 break;
             }
         }

@@ -92,6 +92,7 @@ typedef struct {
 /* Send signal to process by pid; 0 = success, -1 = not found */
 int signal_send(uint32_t pid, int signum);
 int signal_send_group(uint32_t pgid, int signum);
+int signal_send_pgid(uint32_t pgid, int signum);
 
 /* Extended signal send with siginfo */
 int signal_send_info(uint32_t pid, int signum, struct siginfo *info);

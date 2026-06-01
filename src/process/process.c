@@ -111,7 +111,11 @@ void process_caps_allow_all(struct process *proc) {
 
 int process_caps_has(const struct process *proc, uint32_t num) {
     if (!proc || !process_cap_valid(num)) return 0;
-    return (proc->syscall_caps[num / 64] & (1ULL << (num % 64))) != 0;
+    /* Check capability and bounding set */
+    if (!(proc->syscall_caps[num / 64] & (1ULL << (num % 64)))) return 0;
+    /* Also check bounding set */
+    if (!(proc->cap_bset[num / 64] & (1ULL << (num % 64)))) return 0;
+    return 1;
 }
 
 static void process_caps_apply_user_default(struct process *proc) {
@@ -264,6 +268,7 @@ void process_init(void) {
     process_table[0].coredump_enabled = 1;
     memset(process_table[0].proc_comm, 0, 16);
     rlimit_init_defaults(&process_table[0]);
+    cap_bset_init(&process_table[0]);
     current_process = &process_table[0];
 }
 
@@ -338,6 +343,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     memset(proc->proc_comm, 0, 16);
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
+    cap_bset_init(proc);
 
     /* Initialize CPU time accounting */
     proc->utime_ticks = 0;
@@ -421,6 +427,13 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->coredump_enabled = 1;
     memset(proc->proc_comm, 0, 16);
     rlimit_init_defaults(proc);
+    cap_bset_init(proc);
+
+    /* Inherit parent's bounding set */
+    if (current_process && current_process->state != PROCESS_UNUSED) {
+        for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
+            proc->cap_bset[i] = current_process->cap_bset[i];
+    }
 
     /* Initialize CPU time accounting */
     proc->utime_ticks = 0;
@@ -524,10 +537,51 @@ void process_exit_code(int code) {
     for (;;) __asm__ volatile("hlt");
 }
 
+/* ── O_CLOEXEC support ───────────────────────────────────────────────── */
+
+/* Close all file descriptors with FD_CLOEXEC flag set */
+void process_exec_close_cloexec(void) {
+    struct process *cur = process_get_current();
+    if (!cur) return;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (cur->fd_table[i].used && (cur->fd_table[i].flags & FD_CLOEXEC)) {
+            cur->fd_table[i].used = 0;
+            cur->fd_table[i].offset = 0;
+            cur->fd_table[i].path[0] = '\0';
+            cur->fd_table[i].flags = 0;
+        }
+    }
+}
+
 struct process *process_get_current(void) {
     struct process *proc = get_current_process();
     if (!proc) return current_process;
     return proc;
+}
+
+/* ── Capability bounding set ─────────────────────────────────────────── */
+
+void cap_bset_drop(uint32_t cap) {
+    struct process *p = process_get_current();
+    if (!p || cap >= PROCESS_SYSCALL_MAX) return;
+    int word = cap / 64;
+    int bit  = cap % 64;
+    p->cap_bset[word] &= ~(1ULL << bit);
+}
+
+int cap_bset_has(uint32_t cap) {
+    struct process *p = process_get_current();
+    if (!p || cap >= PROCESS_SYSCALL_MAX) return 0;
+    int word = cap / 64;
+    int bit  = cap % 64;
+    return (p->cap_bset[word] & (1ULL << bit)) ? 1 : 0;
+}
+
+void cap_bset_init(struct process *proc) {
+    if (!proc) return;
+    /* Initialize bounding set to all ones (all caps allowed by default) */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
+        proc->cap_bset[i] = ~0ULL;
 }
 
 /* ── Process credential API ─────────────────────────────────── */

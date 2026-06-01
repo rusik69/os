@@ -43,6 +43,13 @@ enum tcp_state {
     TCP_TIME_WAIT,
 };
 
+struct tcp_sack_block {
+    uint32_t left;   /* SACK block left edge (seq number) */
+    uint32_t right;  /* SACK block right edge (seq number) */
+};
+
+#define TCP_MAX_SACK_BLOCKS 4
+
 struct tcp_conn {
     enum tcp_state state;
     uint32_t remote_ip;
@@ -54,22 +61,39 @@ struct tcp_conn {
     uint8_t  rxbuf[4096];
     int      rxlen;
     volatile int rx_fin;
-    /* Congestion control (slow start / AIMD) */
-    uint32_t cwnd;      /* congestion window in segments */
-    uint32_t ssthresh;  /* slow-start threshold */
-    /* Retransmission (simple stop-and-wait per-connection) */
+    /* Congestion control (Reno: slow start / AIMD / fast recovery) */
+    uint32_t cwnd;              /* congestion window in segments */
+    uint32_t ssthresh;          /* slow-start threshold */
+    uint8_t  dupack_count;      /* duplicate ACK counter for fast recovery */
+    /* RTT estimation (Jacobson's algorithm) */
+    int32_t  srtt;              /* smoothed round-trip time (scaled by 8) */
+    int32_t  rttvar;            /* round-trip time variation (scaled by 4) */
+    /* Retransmission */
     uint8_t  tx_unacked_buf[4096];  /* copy of last sent data awaiting ACK */
     uint16_t tx_unacked_len;        /* bytes currently unacked (0 = nothing pending) */
     uint32_t tx_unacked_seq;        /* seq number of first unacked byte */
     uint64_t last_send_tick;        /* tick when segment was last sent/retransmitted */
     uint8_t  retrans_count;         /* number of retransmit attempts so far */
-    uint16_t rto;                   /* retransmit timeout in ticks (100 = 1 s) */
-    /* Keepalive */
-    int      keepalive;             /* 1 = send keepalive probes */
+    uint16_t rto;                   /* retransmit timeout in ticks (30 = 3000ms default) */
+    /* Last ACK received (for duplicate ACK detection) */
+    uint32_t last_ack;
+    /* SACK */
+    struct tcp_sack_block sack_blocks[TCP_MAX_SACK_BLOCKS];
+    int     sack_pending;           /* 1 if we are waiting for SACK-permitted */
+    /* Socket options */
+    int     tcp_nodelay;            /* 1 = disable Nagle's algorithm */
+    int     tcp_cork;               /* 1 = buffer until uncorked */
+    int     keepalive;              /* 1 = send keepalive probes */
     uint64_t last_activity_tick;    /* last data rx/tx tick (for keepalive) */
     uint16_t keepalive_interval;    /* ticks between keepalive probes (default ~5s=500) */
     uint8_t  keepalive_probes;      /* probes sent without reply */
     uint8_t  keepalive_probes_max;  /* max probes before disconnect (default 3) */
+    /* TCP MD5 signature option (kind 19) */
+    int     md5_enabled;            /* 1 = MD5 signature enabled on this connection */
+    uint8_t md5_digest[16];         /* MD5 digest (placeholder — not computed) */
+    /* TCP Fast Open (kind 34) */
+    int     tfo_cookie_present;     /* 1 if TFO cookie was received */
+    uint8_t tfo_cookie[8];          /* TFO cookie value */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
@@ -112,7 +136,29 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
 void net_tcp_check_retransmit(void);
+void net_tcp_check_keepalive(void);
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
                                  const void *data, uint16_t data_len);
+
+/* IP routing table (net.c) */
+#define RT_MAX_ENTRIES 16
+struct rt_entry {
+    uint32_t dst;
+    uint32_t mask;
+    uint32_t gw;
+    int      iface;
+};
+extern struct rt_entry rt_table[RT_MAX_ENTRIES];
+extern int rt_num_entries;
+int  rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface);
+int  rt_del(uint32_t dst, uint32_t mask);
+int  rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out);
+void rt_flush(void);
+
+/* ARP gratuitous announcement (net.c) */
+void arp_announce(void);
+
+/* ICMP destination unreachable (net_udp.c) */
+void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len);
 
 #endif

@@ -65,6 +65,7 @@
 #include "rng.h"
 #include "fsnotify.h"
 #include "module.h"
+#include "initcall.h"
 #include "watchdog.h"
 #ifdef TEST_MODE
 #include "test.h"
@@ -90,6 +91,22 @@ static void __attribute__((unused)) shell_task(void) {
 
 static void __attribute__((unused)) net_task(void) {
     telnetd_task();
+}
+
+/* ── Initcall support ─────────────────────────────────────────────── */
+
+extern initcall_t __initcall_start[];
+extern initcall_t __initcall_end[];
+
+void do_initcalls(void) {
+    initcall_t *fn;
+    for (fn = __initcall_start; fn < __initcall_end; fn++) {
+        if (*fn) {
+            int ret = (*fn)();
+            (void)ret;
+        }
+    }
+    kprintf("[OK] Initcalls completed\n");
 }
 
 /* Stack-smashing protector (SSP) canary */
@@ -251,6 +268,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Kernel module API */
     module_init();
+    kprintf("[OK] Kernel module API initialized (%d slots)\n", MODULE_MAX);
+
+    /* Initcall system — run all registered initcalls in order */
+    do_initcalls();
 
     /* Keyboard */
     keyboard_init();

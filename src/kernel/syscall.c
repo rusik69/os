@@ -42,6 +42,7 @@
 #include "ac97.h"
 #include "doom.h"
 #include "socket.h"
+#include "seccomp.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -462,10 +463,17 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
 }
 
 static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
-    (void)flags; (void)mode;
+    (void)mode;
     const char *path = (const char *)path_addr;
     struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+    int exists = (vfs_stat(path, &st) >= 0);
+
+    /* Handle O_TRUNC: truncate file to zero length */
+    if (exists && (flags & O_TRUNC)) {
+        vfs_truncate(path, 0);
+    }
+
+    if (!exists) return (uint64_t)-1;
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-1;
@@ -3338,6 +3346,14 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         case PR_GET_PDEATHSIG: {
             return 0;
         }
+        case 38: { /* PR_SET_NO_NEW_PRIVS */
+            if (a2 != 1) return (uint64_t)-1;
+            p->no_new_privs = 1;
+            return 0;
+        }
+        case 39: { /* PR_GET_NO_NEW_PRIVS */
+            return p->no_new_privs ? 1 : 0;
+        }
         default:
             return (uint64_t)-1;
     }
@@ -4691,11 +4707,44 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
 }
 
 static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
-    (void)mode; (void)offset; (void)len;
-    struct process *p = process_get_current();
-    if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used)
-        return (uint64_t)-1;
-    /* For filesystem-backed fds, just return success (no sparse files yet) */
+    int i = (int)fd - 3;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used) return (uint64_t)-1;
+
+    /* Resolve path to mount */
+    char ap[128];
+    const char *path = pfd->path;
+
+    /* Preallocate blocks keeping size (FALLOC_FL_KEEP_SIZE) or punch hole */
+    if (mode & FALLOC_FL_PUNCH_HOLE) {
+        /* Punch hole: free blocks in range. For now, truncate if the hole
+         * reaches the end of file. */
+        struct vfs_stat st;
+        if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+        if (offset == 0 && len >= (uint64_t)st.size) {
+            /* Truncate to zero */
+            return (uint64_t)vfs_truncate(path, 0);
+        }
+        /* Simple approach: if we can't punch a hole, treat as success */
+        return 0;
+    }
+
+    /* Preallocate (FALLOC_FL_KEEP_SIZE or default): ensure the file can
+     * hold offset+len bytes. We do this by updating the file size if needed. */
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+    uint64_t needed = offset + len;
+    if (needed > (uint64_t)st.size && !(mode & FALLOC_FL_KEEP_SIZE)) {
+        /* Expand file size by writing zeros at the end */
+        uint32_t expand = (uint32_t)(needed - (uint64_t)st.size);
+        uint8_t *zeros = kmalloc(expand);
+        if (!zeros) return (uint64_t)-1;
+        memset(zeros, 0, expand);
+        int r = vfs_write(path, zeros, expand);
+        kfree(zeros);
+        if (r < 0) return (uint64_t)-1;
+    }
+
     return 0;
 }
 
@@ -5043,6 +5092,11 @@ static uint64_t sys_personality(uint64_t persona) {
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    /* Seccomp check — must happen before any capability or argument validation */
+    if (syscall_is_user_process()) {
+        if (!seccomp_check_syscall(num)) return (uint64_t)-1; /* EPERM */
+    }
+
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
         if (!p || !process_caps_has(p, (uint32_t)num)) return (uint64_t)-1;

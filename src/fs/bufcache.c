@@ -377,6 +377,56 @@ void bufcache_flush_all(void) {
     bufcache_flush();
 }
 
+/* ── Writeback: flush dirty pages without invalidating ──────────────── */
+
+int bufcache_writeback(void) {
+    if (!g_initialized) return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+
+    int written = 0;
+    /* Walk the LRU list from tail (coldest) to head (hottest) */
+    int16_t idx = g_lru_tail;
+    while (idx >= 0) {
+        if (g_entries[idx].valid && g_entries[idx].dirty) {
+            blockdev_write_sectors(g_entries[idx].dev_id,
+                                    (uint32_t)g_entries[idx].lba, 1,
+                                    g_entries[idx].data);
+            g_entries[idx].dirty = 0;
+            g_writes++;
+            written++;
+        }
+        idx = g_lru[idx].prev;
+    }
+
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+    return written;
+}
+
+void bufcache_set_dirty(uint64_t lba, uint8_t dev_id) {
+    if (!g_active || !g_initialized) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+    int16_t idx = hash_lookup(lba, dev_id);
+    if (idx >= 0) {
+        g_entries[idx].dirty = 1;
+        lru_touch(idx);
+    }
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+}
+
+void bufcache_clear_dirty(uint64_t lba, uint8_t dev_id) {
+    if (!g_active || !g_initialized) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+    int16_t idx = hash_lookup(lba, dev_id);
+    if (idx >= 0) {
+        g_entries[idx].dirty = 0;
+    }
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+}
+
 void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     if (!g_active || !g_initialized) return;
 

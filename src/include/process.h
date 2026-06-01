@@ -147,6 +147,9 @@ struct process {
     int      coredump_enabled;
     /* Process name (for prctl PR_SET_NAME) */
     char     proc_comm[16];
+    /* seccomp mode and filter */
+    int      seccomp_mode;
+    struct seccomp_filter *seccomp_filter;  /* NULL if no filter installed */
     /* ── CPU time accounting ─────────────────────────────────── */
     uint64_t utime_ticks;    /* ticks spent in user mode */
     uint64_t stime_ticks;    /* ticks spent in kernel mode (syscalls + IRQs) */
@@ -157,6 +160,10 @@ struct process {
     uint64_t majflt;          /* major page faults (disk I/O required) */
     /* Heap tracking for brk */
     uint64_t heap_end;        /* current end of data segment for brk() */
+    /* Capability bounding set */
+    uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
+    /* no_new_privs flag */
+    int no_new_privs;
 };
 
 void process_init(void);
@@ -188,6 +195,14 @@ int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
                      uint32_t *euid, uint32_t *egid);
 int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
                      uint32_t euid, uint32_t egid);
+
+/* Close all file descriptors with FD_CLOEXEC set */
+void process_exec_close_cloexec(void);
+
+/* Capability bounding set API */
+void cap_bset_drop(uint32_t cap);
+int  cap_bset_has(uint32_t cap);
+void cap_bset_init(struct process *proc);
 
 /* ── Per-CPU kthread API ────────────────────────────────────── */
 

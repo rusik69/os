@@ -48,4 +48,8 @@ extern uint64_t oom_kill_count;
 void oom_set_score_adj(int pid, int16_t adjustment);
 int16_t oom_get_score_adj(int pid);
 
+/* OOM Reaper kthread — periodically kills the highest-scored process when memory is low */
+int oom_reaper_init(void);
+extern int oom_reaper_running;
+
 #endif

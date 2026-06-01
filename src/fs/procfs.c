@@ -14,7 +14,11 @@
 #include "string.h"
 #include "types.h"
 #include "net.h"
+#include "net_internal.h"
 #include "smp.h"
+#include "vmm.h"
+#include "slab.h"
+#include "sysctl.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -59,6 +63,16 @@ static int procfs_gen_meminfo(char *buf, int max) {
     uint64_t pmm_free  = (pmm_get_total_frames() - pmm_get_used_frames()) * 4096;
     proc_kb_line("MemTotal:       ", pmm_total, buf, &p, max);
     proc_kb_line("MemFree:        ", pmm_free, buf, &p, max);
+    proc_kb_line("Buffers:        ", 0, buf, &p, max);
+    proc_kb_line("Cached:         ", 0, buf, &p, max);
+    proc_kb_line("SwapTotal:      ", 0, buf, &p, max);
+    proc_kb_line("SwapFree:       ", 0, buf, &p, max);
+    proc_kb_line("Dirty:          ", 0, buf, &p, max);
+    proc_kb_line("Writeback:      ", 0, buf, &p, max);
+    proc_kb_line("Mapped:         ", 0, buf, &p, max);
+    proc_kb_line("PageTables:     ", 0, buf, &p, max);
+    proc_kb_line("VmallocTotal:   ", 0, buf, &p, max);
+    proc_kb_line("VmallocUsed:    ", 0, buf, &p, max);
     proc_kb_line("HeapTotal:      ", heap_get_total(), buf, &p, max);
     proc_kb_line("HeapUsed:       ", heap_get_used(), buf, &p, max);
     proc_kb_line("HeapFree:       ", heap_get_free(), buf, &p, max);
@@ -238,21 +252,195 @@ static int procfs_gen_route(char *buf, int max) {
     return p;
 }
 
+/* /proc/net/dev — interface statistics (Linux: Inter-|   Receive  |  Transmit) */
+static int procfs_gen_net_dev(char *buf, int max) {
+    int p = 0;
+    proc_str("Inter-|   Receive                                                |  Transmit\n", buf, &p, max);
+    proc_str(" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n", buf, &p, max);
+    proc_str("  eth0: ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.rx_bytes, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.rx_packets, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.rx_errors, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.rx_drops, buf, &p, max);
+    proc_str(" 0 0 0 0 ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.tx_bytes, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.tx_packets, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.tx_errors, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(net_iface_stats.tx_drops, buf, &p, max);
+    proc_str(" 0 0 0 0\n", buf, &p, max);
+    /* Also show loopback */
+    proc_str("    lo: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/net/tcp — TCP connection table */
+static char *proc_tcp_buf;
+static int   proc_tcp_pos;
+static int   proc_tcp_max;
+
+static void proc_tcp_entry_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    /* Format: sl local_address rem_address st tx_queue rx_queue ... */
+    /* Convert IP to hex manually using nibble helper */
+    uint8_t ip_bytes[4];
+    net_get_ip(ip_bytes);
+
+    /* Write local_addr:port as hex */
+    for (int i = 0; i < 4; i++) {
+        uint8_t hi = (ip_bytes[i] >> 4) & 0xF;
+        uint8_t lo = ip_bytes[i] & 0xF;
+        proc_tcp_buf[proc_tcp_pos++] = hi < 10 ? '0' + hi : 'a' + hi - 10;
+        proc_tcp_buf[proc_tcp_pos++] = lo < 10 ? '0' + lo : 'a' + lo - 10;
+        if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    }
+    proc_tcp_buf[proc_tcp_pos++] = ':';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    uint8_t ph = (lport >> 8) & 0xFF;
+    uint8_t pl = lport & 0xFF;
+    proc_tcp_buf[proc_tcp_pos++] = ph < 10 ? '0' + ph : 'a' + ph - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = pl < 10 ? '0' + pl : 'a' + pl - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = ' ';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+
+    /* Remote addr:port */
+    uint8_t rip_bytes[4];
+    rip_bytes[0] = (rip >> 24) & 0xFF;
+    rip_bytes[1] = (rip >> 16) & 0xFF;
+    rip_bytes[2] = (rip >> 8) & 0xFF;
+    rip_bytes[3] = rip & 0xFF;
+    for (int i = 0; i < 4; i++) {
+        uint8_t hi = (rip_bytes[i] >> 4) & 0xF;
+        uint8_t lo = rip_bytes[i] & 0xF;
+        proc_tcp_buf[proc_tcp_pos++] = hi < 10 ? '0' + hi : 'a' + hi - 10;
+        proc_tcp_buf[proc_tcp_pos++] = lo < 10 ? '0' + lo : 'a' + lo - 10;
+        if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    }
+    proc_tcp_buf[proc_tcp_pos++] = ':';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    ph = (rport >> 8) & 0xFF;
+    pl = rport & 0xFF;
+    proc_tcp_buf[proc_tcp_pos++] = ph < 10 ? '0' + ph : 'a' + ph - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = pl < 10 ? '0' + pl : 'a' + pl - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = ' ';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+
+    /* State in hex */
+    uint8_t sh = (state >> 4) & 0xF;
+    uint8_t sl2 = state & 0xF;
+    proc_tcp_buf[proc_tcp_pos++] = sh < 10 ? '0' + sh : 'a' + sh - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = sl2 < 10 ? '0' + sl2 : 'a' + sl2 - 10;
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_tcp_buf[proc_tcp_pos++] = ' ';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+
+    /* tx_queue:rx_queue (both 0 for now) */
+    proc_tcp_buf[proc_tcp_pos++] = '0'; proc_tcp_buf[proc_tcp_pos++] = ':'; proc_tcp_buf[proc_tcp_pos++] = '0';
+    if (proc_tcp_pos >= proc_tcp_max - 1) return;
+    proc_str(" 00:00000000 00000000     0 1 0\n", proc_tcp_buf, &proc_tcp_pos, proc_tcp_max);
+}
+
+static int procfs_gen_net_tcp(char *buf, int max) {
+    int p = 0;
+    proc_str("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n", buf, &p, max);
+    buf[p] = '\0';
+    proc_tcp_buf = buf + p;
+    proc_tcp_pos = p;
+    proc_tcp_max = max;
+    net_conn_list(proc_tcp_entry_cb);
+    if (proc_tcp_pos < max) buf[proc_tcp_pos] = '\0';
+    return proc_tcp_pos < max ? proc_tcp_pos : max - 1;
+}
+
 static int procfs_gen_mounts(char *buf, int max) {
     int p = 0;
     char mnt[8][64];
     int n = vfs_list_mountpoints(mnt, 8);
     for (int i = 0; i < n; i++) {
+        /* Format: device mount_point fstype flags */
+        proc_str("none ", buf, &p, max);
         proc_str(mnt[i], buf, &p, max);
-        proc_str(" / ", buf, &p, max);
-        proc_str(mnt[i], buf, &p, max);
+        proc_str(" ", buf, &p, max);
+        if (strcmp(mnt[i], "/proc") == 0)
+            proc_str("proc ", buf, &p, max);
+        else if (strcmp(mnt[i], "/dev") == 0)
+            proc_str("devfs ", buf, &p, max);
+        else if (strcmp(mnt[i], "/mnt") == 0)
+            proc_str("fat32 ", buf, &p, max);
+        else
+            proc_str("smfs ", buf, &p, max);
+        proc_str("rw 0 0\n", buf, &p, max);
+    }
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/filesystems — registered filesystem types */
+static int procfs_gen_filesystems(char *buf, int max) {
+    int p = 0;
+    char names[VFS_MAX_FS_TYPES][32];
+    int n = vfs_list_filesystems(names, VFS_MAX_FS_TYPES);
+    proc_str("nodev\tsysfs\n", buf, &p, max);
+    proc_str("nodev\tproc\n", buf, &p, max);
+    proc_str("nodev\tdevfs\n", buf, &p, max);
+    proc_str("nodev\ttmpfs\n", buf, &p, max);
+    proc_str("\tsmfs\n", buf, &p, max);
+    proc_str("\tfat32\n", buf, &p, max);
+    for (int i = 0; i < n; i++) {
+        proc_str("\t", buf, &p, max);
+        proc_str(names[i], buf, &p, max);
         proc_str("\n", buf, &p, max);
     }
     buf[p] = '\0';
     return p;
 }
 
-/* /proc/<pid>/status */
+/* /proc/vmstat — virtual memory statistics */
+static int procfs_gen_vmstat(char *buf, int max) {
+    int p = 0;
+    proc_str("pgalloc ", buf, &p, max); proc_u64_to_str(vm_pgalloc, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgfree ", buf, &p, max); proc_u64_to_str(vm_pgfree, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgfault ", buf, &p, max); proc_u64_to_str(vm_pgfault, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgmajfault ", buf, &p, max); proc_u64_to_str(vm_pgmajfault, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgswapin ", buf, &p, max); proc_u64_to_str(vm_pgswapin, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgswapout ", buf, &p, max); proc_u64_to_str(vm_pgswapout, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgin ", buf, &p, max); proc_u64_to_str(vm_pgin, buf, &p, max); proc_str("\n", buf, &p, max);
+    proc_str("pgout ", buf, &p, max); proc_u64_to_str(vm_pgout, buf, &p, max); proc_str("\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/slabinfo — slab allocator statistics */
+static int procfs_gen_slabinfo(char *buf, int max) {
+    int p = 0;
+    struct slab_stats s;
+    slab_get_stats(&s);
+    proc_str("slabinfo - version: 1.0\n", buf, &p, max);
+    proc_str("# name            <total_objs> <used_objs> <cache_count> <memory_used>\n", buf, &p, max);
+    proc_u64_to_str(s.total_objects, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(s.used_objects, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(s.cache_count, buf, &p, max);
+    proc_str(" ", buf, &p, max);
+    proc_u64_to_str(s.memory_used, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/<pid>/status — per-process status */
 static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
@@ -260,18 +448,6 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     int pos = 0;
     proc_str("Name:\t", buf, &pos, max);
     proc_str(p->name ? p->name : "?", buf, &pos, max);
-    proc_str("\n", buf, &pos, max);
-    proc_str("Pid:\t", buf, &pos, max);
-    proc_u64_to_str(p->pid, buf, &pos, max);
-    proc_str("\n", buf, &pos, max);
-    proc_str("PPid:\t", buf, &pos, max);
-    proc_u64_to_str(p->parent_pid, buf, &pos, max);
-    proc_str("\n", buf, &pos, max);
-    proc_str("Tgid:\t", buf, &pos, max);
-    proc_u64_to_str(p->tgid, buf, &pos, max);
-    proc_str("\n", buf, &pos, max);
-    proc_str("Priority:\t", buf, &pos, max);
-    proc_u64_to_str(p->priority, buf, &pos, max);
     proc_str("\n", buf, &pos, max);
 
     const char *state_str = "unknown";
@@ -284,6 +460,93 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     }
     proc_str("State:\t", buf, &pos, max);
     proc_str(state_str, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("Pid:\t", buf, &pos, max);
+    proc_u64_to_str(p->pid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("PPid:\t", buf, &pos, max);
+    proc_u64_to_str(p->parent_pid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("Tgid:\t", buf, &pos, max);
+    proc_u64_to_str(p->tgid, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("Uid:\t", buf, &pos, max);
+    proc_u64_to_str(p->uid, buf, &pos, max);
+    proc_str("\t", buf, &pos, max);
+    proc_u64_to_str(p->euid, buf, &pos, max);
+    proc_str("\t0\t0\n", buf, &pos, max);
+
+    proc_str("Gid:\t", buf, &pos, max);
+    proc_u64_to_str(p->gid, buf, &pos, max);
+    proc_str("\t", buf, &pos, max);
+    proc_u64_to_str(p->egid, buf, &pos, max);
+    proc_str("\t0\t0\n", buf, &pos, max);
+
+    /* Thread count: count processes with same tgid */
+    int threads = 0;
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state != PROCESS_UNUSED && table[i].tgid == p->tgid)
+            threads++;
+    }
+    proc_str("Threads:\t", buf, &pos, max);
+    proc_u64_to_str(threads, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    /* Signal pending/blocked/ignored */
+    proc_str("SigQ:\t", buf, &pos, max);
+    proc_u64_to_str(__builtin_popcountll(p->pending_signals), buf, &pos, max);
+    proc_str("/", buf, &pos, max);
+    proc_u64_to_str(PROCESS_SIG_MAX, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("SigPnd:\t", buf, &pos, max);
+    proc_u64_to_str(p->pending_signals, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("ShdPnd:\t0\n", buf, &pos, max);
+
+    proc_str("SigBlk:\t", buf, &pos, max);
+    proc_u64_to_str(p->sig_mask, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("SigIgn:\t0\n", buf, &pos, max);
+
+    /* Capabilities */
+    proc_str("CapInh:\t0000000000000000\n", buf, &pos, max);
+    proc_str("CapPrm:\t", buf, &pos, max);
+    for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
+        for (int nib = 15; nib >= 0; nib--) {
+            uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
+            buf[pos++] = nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
+            if (pos >= max - 1) break;
+        }
+    }
+    buf[pos] = '\0'; /* don't advance pos yet, just safety */
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("CapEff:\t", buf, &pos, max);
+    for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
+        for (int nib = 15; nib >= 0; nib--) {
+            uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
+            buf[pos++] = nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
+            if (pos >= max - 1) break;
+        }
+    }
+    buf[pos] = '\0';
+    proc_str("\n", buf, &pos, max);
+
+    proc_str("Cpus_allowed:\t", buf, &pos, max);
+    proc_u64_to_str(p->cpu_affinity, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+
+    /* Keep existing fields too */
+    proc_str("Priority:\t", buf, &pos, max);
+    proc_u64_to_str(p->priority, buf, &pos, max);
     proc_str("\n", buf, &pos, max);
     proc_str("Utime:\t", buf, &pos, max);
     proc_u64_to_str(p->utime_ticks, buf, &pos, max);
@@ -302,6 +565,7 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     proc_str("\n", buf, &pos, max);
     proc_str("majflt:\t", buf, &pos, max);
     proc_u64_to_str(p->majflt, buf, &pos, max);
+
     buf[pos] = '\0';
     return pos;
 }
@@ -460,12 +724,22 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_arp(buf, (int)max_size);
     } else if (strcmp(path, "/proc/net/route") == 0) {
         len = procfs_gen_route(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/net/dev") == 0) {
+        len = procfs_gen_net_dev(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/net/tcp") == 0) {
+        len = procfs_gen_net_tcp(buf, (int)max_size);
     } else if (strcmp(path, "/proc/mounts") == 0) {
         len = procfs_gen_mounts(buf, (int)max_size);
     } else if (strcmp(path, "/proc/stat") == 0) {
         len = procfs_gen_stat(buf, (int)max_size);
     } else if (strcmp(path, "/proc/loadavg") == 0) {
         len = procfs_gen_loadavg(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/vmstat") == 0) {
+        len = procfs_gen_vmstat(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/slabinfo") == 0) {
+        len = procfs_gen_slabinfo(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/filesystems") == 0) {
+        len = procfs_gen_filesystems(buf, (int)max_size);
     } else if (strcmp(path, "/proc/self") == 0) {
         /* Redirect to status of current process */
         struct process *proc = process_get_current();
@@ -473,6 +747,16 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             len = procfs_gen_pid_status(proc->pid, buf, (int)max_size);
         else
             return -1;
+    } else if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
+        /* Sysctl read */
+        len = sysctl_read(path + 17, buf, (int)max_size);
+        if (len < 0) return -1;
+    } else if (strcmp(path, "/proc/sys") == 0) {
+        /* /proc/sys is a directory */
+        return -1;
+    } else if (strcmp(path, "/proc/sys/kernel") == 0) {
+        /* /proc/sys/kernel is a directory */
+        return -1;
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */
@@ -496,6 +780,19 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
     return 0;
 }
 
+static int procfs_write(void *priv, const char *path, const void *data, uint32_t size) {
+    (void)priv;
+    const char *buf = (const char *)data;
+
+    /* Sysctl write */
+    if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
+        if (sysctl_write(path + 17, buf, (int)size) < 0) return -1;
+        return 0;
+    }
+
+    return -1;
+}
+
 static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     (void)priv;
     /* /proc itself is a directory */
@@ -509,10 +806,26 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         strcmp(path, "/proc/version") == 0 ||
         strcmp(path, "/proc/net/arp") == 0 ||
         strcmp(path, "/proc/net/route") == 0 ||
+        strcmp(path, "/proc/net/dev") == 0 ||
+        strcmp(path, "/proc/net/tcp") == 0 ||
         strcmp(path, "/proc/mounts") == 0 ||
         strcmp(path, "/proc/stat") == 0 ||
-        strcmp(path, "/proc/loadavg") == 0) {
+        strcmp(path, "/proc/loadavg") == 0 ||
+        strcmp(path, "/proc/vmstat") == 0 ||
+        strcmp(path, "/proc/slabinfo") == 0) {
         st->type = 1; st->size = 256; return 0;
+    }
+    /* /proc/filesystems */
+    if (strcmp(path, "/proc/filesystems") == 0) {
+        st->type = 1; st->size = 512; return 0;
+    }
+    /* /proc/sys/kernel/ files */
+    if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
+        st->type = 1; st->size = 256; return 0;
+    }
+    /* /proc/sys and /proc/sys/kernel directories */
+    if (strcmp(path, "/proc/sys") == 0 || strcmp(path, "/proc/sys/kernel") == 0) {
+        st->type = 2; st->size = 0; return 0;
     }
     /* /proc/self is a symlink to /proc/<pid>/ — return directory type */
     if (strcmp(path, "/proc/self") == 0) {
@@ -561,7 +874,7 @@ static int procfs_readdir(void *priv, const char *path) {
 
 struct vfs_ops procfs_ops = {
     .read    = procfs_read,
-    .write   = NULL,
+    .write   = procfs_write,
     .stat    = procfs_stat,
     .create  = NULL,
     .unlink  = NULL,

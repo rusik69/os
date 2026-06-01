@@ -235,6 +235,27 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
     dns_reply_received = 1;
 }
 
+/* ICMP Destination Unreachable (type 3, code 3 = Port Unreachable) */
+void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len) {
+    uint8_t buf[576];  /* ICMP error must fit in 576 bytes guaranteed */
+    struct icmp_header *icmp = (struct icmp_header *)buf;
+    memset(icmp, 0, sizeof(*icmp));
+    icmp->type = 3;
+    icmp->code = 3;  /* Port Unreachable */
+
+    /* ICMP error payload: IP header of original packet + 8 bytes of original payload */
+    uint16_t payload_len = sizeof(struct ip_header) + 8;
+    if (payload_len > orig_len) payload_len = orig_len;
+    if (sizeof(*icmp) + payload_len > sizeof(buf))
+        payload_len = sizeof(buf) - sizeof(*icmp);
+
+    memcpy(buf + sizeof(struct icmp_header), orig_pkt, payload_len);
+    uint16_t icmp_len = sizeof(struct icmp_header) + payload_len;
+    icmp->checksum = net_checksum(buf, icmp_len);
+
+    send_ip(dst, IP_PROTO_ICMP, buf, icmp_len);
+}
+
 void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) {
     if (len < sizeof(struct udp_header)) return;
     struct udp_header *udp = (struct udp_header *)payload;
@@ -270,6 +291,12 @@ void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             net_udp_bindings[i].handler(src_ip, src_port, data, data_len);
             return;
         }
+    }
+
+    /* No handler found — send ICMP Destination Unreachable (Port Unreachable) */
+    if (net_our_ip && dst_port != DHCP_CLIENT_PORT && dst_port != DNS_PORT) {
+        icmp_send_unreachable(src_ip, ntohl(ip_hdr->dst_ip),
+                              (uint8_t*)ip_hdr, (uint16_t)(sizeof(struct ip_header) + udp_len));
     }
 }
 
@@ -561,12 +588,29 @@ void net_dhcp_renew_if_needed(void) {
     uint64_t elapsed = timer_get_ticks() - dhcp_lease_start;
     /* Renew at half lease (ticks ~10ms) */
     if (elapsed < (uint64_t)dhcp_lease_secs * 50) return;
+    kprintf("[..] DHCP: Lease 50%% expired, renewing...\n");
     dhcp_state = 1;
     net_dhcp_done = 0;
-    dhcp_send_discover();
+    /* Send DHCPREQUEST directly (RFC 2131 §4.3.6 — client uses REQUEST to extend lease) */
+    dhcp_send_request();
     uint64_t start = timer_get_ticks();
-    while (dhcp_state != 3 && timer_get_ticks() - start < 200)
+    int resends = 0;
+    while (dhcp_state != 3) {
         net_poll();
+        uint64_t now = timer_get_ticks();
+        if (now - start > 500) break; /* ~5s timeout */
+        if (dhcp_state <= 2 && (now - start) > (uint64_t)(resends + 1) * 100 && resends < 4) {
+            dhcp_send_request();
+            resends++;
+        }
+    }
+    if (dhcp_state == 3) {
+        kprintf("[OK] DHCP: Renewed IP %u.%u.%u.%u\n",
+            (uint64_t)((net_our_ip >> 24) & 0xFF), (uint64_t)((net_our_ip >> 16) & 0xFF),
+            (uint64_t)((net_our_ip >> 8) & 0xFF), (uint64_t)(net_our_ip & 0xFF));
+    } else {
+        kprintf("[!!] DHCP: Renew failed, will retry\n");
+    }
 }
 
 /* Parse an absolute URL into host, port, path (modifies all three) */

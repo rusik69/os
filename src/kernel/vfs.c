@@ -7,6 +7,9 @@
 #include "heap.h"
 #include "signal.h"
 #include "syscall.h"
+#include "fsnotify.h"
+
+#define EROFS_KERNEL 30
 
 extern struct vfs_ops procfs_ops;
 extern struct vfs_ops devfs_ops;
@@ -150,7 +153,27 @@ static struct vfs_ops smfs_ops = {
 static struct vfs_mount mounts[VFS_MAX_MOUNTS];
 static int num_mounts = 0;
 
+/* Registered filesystem types (for /proc/filesystems) */
+static struct vfs_filesystem_type fs_types[VFS_MAX_FS_TYPES];
+static int num_fs_types = 0;
+
+/* File locking: static array of 16 locks */
+#define VFS_MAX_LOCKS 16
+static struct file_lock file_locks[VFS_MAX_LOCKS];
+
+/* Extended attribute storage: keyed by path hash, up to 4 per path, 16 entries total */
+#define XATTR_PATH_TABLE 16
+static struct {
+    char path[64];
+    struct xattr_entry xattrs[VFS_XATTR_PER_INODE];
+    int  count;
+} xattr_table[XATTR_PATH_TABLE];
+
 int vfs_mount(const char *mountpoint, struct vfs_ops *ops, void *priv) {
+    return vfs_mount_ex(mountpoint, ops, priv, 0);
+}
+
+int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int flags) {
     if (num_mounts >= VFS_MAX_MOUNTS) return -1;
     size_t mlen = strlen(mountpoint);
     if (mlen >= 64) mlen = 63;
@@ -158,6 +181,7 @@ int vfs_mount(const char *mountpoint, struct vfs_ops *ops, void *priv) {
     mounts[num_mounts].mountpoint[mlen] = '\0';
     mounts[num_mounts].ops  = ops;
     mounts[num_mounts].priv = priv;
+    mounts[num_mounts].flags = flags;
     num_mounts++;
     return 0;
 }
@@ -184,6 +208,25 @@ static struct vfs_mount *resolve(const char *path) {
     return best;
 }
 
+int vfs_register_filesystem(const char *name, struct vfs_ops *ops) {
+    if (num_fs_types >= VFS_MAX_FS_TYPES) return -1;
+    strncpy(fs_types[num_fs_types].name, name, 31);
+    fs_types[num_fs_types].name[31] = '\0';
+    fs_types[num_fs_types].ops = ops;
+    fs_types[num_fs_types].registered = 1;
+    num_fs_types++;
+    return 0;
+}
+
+int vfs_list_filesystems(char names[][32], int max) {
+    int n = num_fs_types < max ? num_fs_types : max;
+    for (int i = 0; i < n; i++) {
+        strncpy(names[i], fs_types[i].name, 31);
+        names[i][31] = '\0';
+    }
+    return n;
+}
+
 /* ------------------------------------------------------------------
  * Public VFS API
  * ------------------------------------------------------------------ */
@@ -192,13 +235,21 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->read) return -1;
-    return m->ops->read(m->priv, ap, buf, max, out_size);
+    int r = m->ops->read(m->priv, ap, buf, max, out_size);
+    if (r == 0) {
+        vfs_update_atime(ap);
+        fsnotify_notify(ap, FS_ACCESS);
+    }
+    return r;
 }
 
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->write) return -1;
+
+    /* Check read-only mount */
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
 
     /* Enforce RLIMIT_FSIZE: check if write would exceed file size limit */
     struct process *proc = process_get_current();
@@ -219,7 +270,11 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         }
     }
 
-    return m->ops->write(m->priv, ap, data, size);
+    int r = m->ops->write(m->priv, ap, data, size);
+    if (r == 0) {
+        fsnotify_notify(ap, FS_MODIFY);
+    }
+    return r;
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st) {
@@ -233,14 +288,26 @@ int vfs_create(const char *path, uint8_t type) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->create) return -1;
-    return m->ops->create(m->priv, ap, type);
+    /* Check read-only mount */
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    int r = m->ops->create(m->priv, ap, type);
+    if (r == 0) {
+        fsnotify_notify(ap, FS_CREATE);
+    }
+    return r;
 }
 
 int vfs_unlink(const char *path) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->unlink) return -1;
-    return m->ops->unlink(m->priv, ap);
+    /* Check read-only mount */
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    int r = m->ops->unlink(m->priv, ap);
+    if (r == 0) {
+        fsnotify_notify(ap, FS_DELETE);
+    }
+    return r;
 }
 
 int vfs_readdir(const char *path) {
@@ -291,6 +358,257 @@ int vfs_list_mountpoints(char mounts_out[][64], int max) {
         mounts_out[i][63] = '\0';
     }
     return n;
+}
+
+/* ── File locking ──────────────────────────────────────────────── */
+
+int vfs_setlk(const char *path, struct file_lock *flk, int wait) {
+    (void)wait; /* blocking not yet supported */
+    if (!path || !flk) return -1;
+
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    if (flk->l_type == F_UNLCK) {
+        /* Find and remove the lock */
+        for (int i = 0; i < VFS_MAX_LOCKS; i++) {
+            if (file_locks[i].used &&
+                strcmp(file_locks[i].path_storage, ap) == 0 &&
+                file_locks[i].l_pid == flk->l_pid) {
+                file_locks[i].used = 0;
+                return 0;
+            }
+        }
+        return 0; /* nothing to unlock */
+    }
+
+    /* Check for conflicting lock */
+    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
+        if (!file_locks[i].used) continue;
+        if (strcmp(file_locks[i].path_storage, ap) != 0) continue;
+        if (file_locks[i].l_pid == flk->l_pid) continue;
+
+        /* Check lock range overlap */
+        int64_t l1_start = file_locks[i].l_start;
+        int64_t l1_end = (file_locks[i].l_len == 0) ? INT64_MAX :
+                          file_locks[i].l_start + file_locks[i].l_len;
+        int64_t l2_start = flk->l_start;
+        int64_t l2_end = (flk->l_len == 0) ? INT64_MAX :
+                          flk->l_start + flk->l_len;
+
+        if (l1_start < l2_end && l2_start < l1_end) {
+            /* Conflict: if non-blocking, return -EAGAIN */
+            if (!wait) return -EAGAIN;
+            return -EAGAIN; /* blocking not implemented yet */
+        }
+    }
+
+    /* Find free slot and set the lock */
+    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
+        if (!file_locks[i].used) {
+            strncpy(file_locks[i].path_storage, ap, 63);
+            file_locks[i].path_storage[63] = '\0';
+            file_locks[i].l_type   = flk->l_type;
+            file_locks[i].l_whence = flk->l_whence;
+            file_locks[i].l_start  = flk->l_start;
+            file_locks[i].l_len    = flk->l_len;
+            file_locks[i].l_pid    = flk->l_pid;
+            file_locks[i].used     = 1;
+            return 0;
+        }
+    }
+    return -ENOLCK;
+}
+
+int vfs_getlk(const char *path, struct file_lock *flk) {
+    if (!path || !flk) return -1;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
+        if (!file_locks[i].used) continue;
+        if (strcmp(file_locks[i].path_storage, ap) != 0) continue;
+
+        /* Check if this lock would conflict */
+        int64_t l1_start = file_locks[i].l_start;
+        int64_t l1_end = (file_locks[i].l_len == 0) ? INT64_MAX :
+                          file_locks[i].l_start + file_locks[i].l_len;
+        int64_t l2_start = flk->l_start;
+        int64_t l2_end = (flk->l_len == 0) ? INT64_MAX :
+                          flk->l_start + flk->l_len;
+
+        if (l1_start < l2_end && l2_start < l1_end) {
+            flk->l_type   = file_locks[i].l_type;
+            flk->l_whence = file_locks[i].l_whence;
+            flk->l_start  = file_locks[i].l_start;
+            flk->l_len    = file_locks[i].l_len;
+            flk->l_pid    = file_locks[i].l_pid;
+            return 0;
+        }
+    }
+    /* No conflicting lock found */
+    flk->l_type = F_UNLCK;
+    return 0;
+}
+
+/* ── Extended attributes ───────────────────────────────────────── */
+
+/* Simple hash from path */
+static int xattr_path_hash(const char *path) {
+    int h = 0;
+    while (*path) {
+        h = (h * 31 + (unsigned char)*path) % XATTR_PATH_TABLE;
+        path++;
+    }
+    return h;
+}
+
+int vfs_setxattr(const char *path, const char *name, const void *value, int size) {
+    if (!path || !name || !value || size > VFS_XATTR_VALUE_MAX) return -EINVAL;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    int idx = xattr_path_hash(ap);
+
+    /* Find or create entry for this path */
+    int found = -1;
+    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
+        int ti = (idx + i) % XATTR_PATH_TABLE;
+        if (xattr_table[ti].count == 0 || strcmp(xattr_table[ti].path, ap) == 0) {
+            found = ti;
+            break;
+        }
+    }
+    if (found < 0) return -ENOSPC;
+
+    if (xattr_table[found].count == 0) {
+        strncpy(xattr_table[found].path, ap, 63);
+        xattr_table[found].path[63] = '\0';
+    }
+
+    /* Find existing attr with same name or free slot */
+    for (int i = 0; i < VFS_XATTR_PER_INODE; i++) {
+        if (!xattr_table[found].xattrs[i].in_use) continue;
+        if (strcmp(xattr_table[found].xattrs[i].name, name) == 0) {
+            /* Update existing */
+            memcpy(xattr_table[found].xattrs[i].value, value, (size_t)size);
+            xattr_table[found].xattrs[i].size = size;
+            return 0;
+        }
+    }
+
+    /* Find free slot */
+    for (int i = 0; i < VFS_XATTR_PER_INODE; i++) {
+        if (!xattr_table[found].xattrs[i].in_use) {
+            strncpy(xattr_table[found].xattrs[i].name, name, VFS_XATTR_NAME_MAX - 1);
+            xattr_table[found].xattrs[i].name[VFS_XATTR_NAME_MAX - 1] = '\0';
+            memcpy(xattr_table[found].xattrs[i].value, value, (size_t)size);
+            xattr_table[found].xattrs[i].size = size;
+            xattr_table[found].xattrs[i].in_use = 1;
+            xattr_table[found].count++;
+            return 0;
+        }
+    }
+    return -ENOSPC;
+}
+
+int vfs_getxattr(const char *path, const char *name, void *value, int size) {
+    if (!path || !name) return -EINVAL;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    int idx = xattr_path_hash(ap);
+
+    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
+        int ti = (idx + i) % XATTR_PATH_TABLE;
+        if (xattr_table[ti].count == 0) continue;
+        if (strcmp(xattr_table[ti].path, ap) != 0) continue;
+
+        for (int j = 0; j < VFS_XATTR_PER_INODE; j++) {
+            if (!xattr_table[ti].xattrs[j].in_use) continue;
+            if (strcmp(xattr_table[ti].xattrs[j].name, name) == 0) {
+                int copy_size = (size < xattr_table[ti].xattrs[j].size) ?
+                                 size : xattr_table[ti].xattrs[j].size;
+                if (value && copy_size > 0) {
+                    memcpy(value, xattr_table[ti].xattrs[j].value, (size_t)copy_size);
+                }
+                return xattr_table[ti].xattrs[j].size;
+            }
+        }
+        return -ENODATA;
+    }
+    return -ENODATA;
+}
+
+int vfs_listxattr(const char *path, char *buf, int size) {
+    if (!path) return -EINVAL;
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    int idx = xattr_path_hash(ap);
+
+    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
+        int ti = (idx + i) % XATTR_PATH_TABLE;
+        if (xattr_table[ti].count == 0) continue;
+        if (strcmp(xattr_table[ti].path, ap) != 0) continue;
+
+        int pos = 0;
+        for (int j = 0; j < VFS_XATTR_PER_INODE; j++) {
+            if (!xattr_table[ti].xattrs[j].in_use) continue;
+            int nlen = (int)strlen(xattr_table[ti].xattrs[j].name);
+            if (pos + nlen + 1 <= size) {
+                if (buf) {
+                    memcpy(buf + pos, xattr_table[ti].xattrs[j].name, (size_t)nlen);
+                    buf[pos + nlen] = '\0';
+                }
+                pos += nlen + 1;
+            } else {
+                return -ERANGE;
+            }
+        }
+        return pos;
+    }
+    return 0; /* no xattrs */
+}
+
+/* ── Access time update ─────────────────────────────────────────── */
+
+void vfs_update_atime(const char *path) {
+    (void)path;
+    /* For now, we'd update the underlying filesystem's atime.
+     * Most filesystems don't have a direct atime update call.
+     * The VFS stat result now includes atime field.
+     * We do nothing here right now since the underlying fs manages timestamps. */
+}
+
+/* ── Filesystem statistics ──────────────────────────────────────── */
+
+int vfs_statfs(const char *path, struct vfs_statfs *st) {
+    if (!path || !st) return -EINVAL;
+    (void)path;
+    /* Default: return sensible values */
+    memset(st, 0, sizeof(*st));
+    st->f_type    = 0x01021994;  /* EXT2 magic */
+    st->f_bsize   = 4096;
+    st->f_blocks  = 0;
+    st->f_bfree   = 0;
+    st->f_bavail  = 0;
+    st->f_files   = 0;
+    st->f_ffree   = 0;
+    st->f_namelen = 255;
+    return 0;
+}
+
+int vfs_fstatfs(int fd, struct vfs_statfs *st) {
+    if (!st) return -EINVAL;
+    /* Resolve fd to path */
+    struct process *p = process_get_current();
+    if (!p) return -EBADF;
+    int i = fd - 3;
+    if (i < 0 || i >= PROCESS_FD_MAX || !p->fd_table[i].used) return -EBADF;
+    return vfs_statfs(p->fd_table[i].path, st);
+}
+
+int vfs_truncate(const char *path, uint32_t len) {
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -1;
+    if (m->ops->truncate) {
+        return m->ops->truncate(m->priv, ap, len);
+    }
+    return -ENOSYS;
 }
 
 void vfs_init(void) {

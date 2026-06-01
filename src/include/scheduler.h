@@ -29,6 +29,16 @@ void scheduler_stats_inc_ctx_switch(void);
 void scheduler_stats_inc_preempt(void);
 void scheduler_stats_inc_yield(void);
 
+/* Per-CPU runqueue statistics */
+struct runqueue_stats {
+    int nr_runnable;
+    int nr_running;
+    int nr_uninterruptible;
+    int load_weight;
+    int prio_distribution[SCHED_LEVELS];
+};
+void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s);
+
 extern void context_switch(struct cpu_context **old, struct cpu_context *new_ctx);
 
 #endif

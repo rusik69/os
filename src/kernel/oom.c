@@ -169,3 +169,44 @@ void oom_init(void) {
 void oom_print_status(void) {
     kprintf("OOM kills: %llu\n", (unsigned long long)oom_kill_count);
 }
+
+/* ── OOM Reaper kthread ─────────────────────────────────────────────── */
+
+int oom_reaper_running = 0;
+
+static void oom_reaper_task(void *arg) {
+    (void)arg;
+    kprintf("[OOM] Reaper kthread started\n");
+    oom_reaper_running = 1;
+
+    while (oom_reaper_running) {
+        /* Check memory pressure every 10 ticks (~100ms at 100Hz) */
+        /* Compute free page ratio */
+        uint64_t total = pmm_get_total_frames();
+        uint64_t used = pmm_get_used_frames();
+        uint64_t free_pct = total > 0 ? ((total - used) * 100) / total : 0;
+
+        /* If free memory is below 5%, try to kill a victim */
+        if (free_pct < 5) {
+            kprintf("[OOM] Reaper: low memory (free=%llu%%), killing victim\n",
+                    (unsigned long long)free_pct);
+            oom_kill_victim();
+        }
+
+        /* Sleep for 10 ticks */
+        process_sleep_ticks(10);
+    }
+
+    oom_reaper_running = 0;
+}
+
+int oom_reaper_init(void) {
+    if (oom_reaper_running) return -1;
+
+    struct process *reaper = kthread_create(oom_reaper_task, NULL, "oom_reaper");
+    if (!reaper) {
+        kprintf("[OOM] Failed to create reaper kthread\n");
+        return -1;
+    }
+    return 0;
+}

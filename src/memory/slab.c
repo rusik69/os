@@ -58,6 +58,34 @@ struct kmem_cache {
 static struct kmem_cache *cache_list = NULL;
 static int slab_initialized = 0;
 
+/* ── Slab statistics ────────────────────────────────────────────────── */
+
+void slab_get_stats(struct slab_stats *s) {
+    if (!s) return;
+    memset(s, 0, sizeof(*s));
+    struct kmem_cache *cache = cache_list;
+    while (cache) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+        s->cache_count++;
+        size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
+        /* Count objects across all slabs */
+        int total_in_cache = 0;
+        int free_in_cache = 0;
+        struct slab *slab;
+        slab = cache->slabs_full;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        slab = cache->slabs_partial;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        slab = cache->slabs_free;
+        while (slab) { total_in_cache += slab->total; free_in_cache += slab->free_count; s->memory_used += slab_size; slab = slab->next; }
+        s->total_objects += total_in_cache;
+        s->used_objects += (total_in_cache - free_in_cache);
+        spinlock_irqsave_release(&cache->lock, irq_flags);
+        cache = cache->next;
+    }
+}
+
 /* ── Helper: free a physical page (given kernel virtual address) ──────── */
 static void slab_page_free(void *virt) {
     pmm_free_frame(VIRT_TO_PHYS((uint64_t)virt));

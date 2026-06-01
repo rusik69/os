@@ -219,4 +219,29 @@ void cmd_pinky(const char *args);
 void cmd_tset(const char *args);
 void cmd_reset(const char *args);
 
+/* Phase 10 — new compression/network/system commands */
+void cmd_chroot(const char *args);
+void cmd_pax(const char *args);
+void cmd_uuencode(const char *args);
+void cmd_uudecode(const char *args);
+void cmd_unzip(const char *args);
+void cmd_gzip(const char *args);
+void cmd_gunzip(const char *args);
+void cmd_bunzip2(const char *args);
+void cmd_bzcat(const char *args);
+void cmd_xz(const char *args);
+void cmd_unxz(const char *args);
+void cmd_lzma(const char *args);
+void cmd_unlzma(const char *args);
+void cmd_zcat(const char *args);
+void cmd_telnet(const char *args);
+void cmd_ftp(const char *args);
+void cmd_ip(const char *args);
+void cmd_ss(const char *args);
+void cmd_iostat(const char *args);
+void cmd_vmstat(const char *args);
+void cmd_lscpu(const char *args);
+void cmd_lshw(const char *args);
+void cmd_blkid(const char *args);
+
 #endif

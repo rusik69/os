@@ -3,11 +3,16 @@
 #include "serial.h"
 #include "string.h"
 #include "timer.h"
+#include "heap.h"
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
 #define va_end(ap)         __builtin_va_end(ap)
 #define va_arg(ap, type)   __builtin_va_arg(ap, type)
+
+/* Kernel log level configuration */
+int console_loglevel = 7;       /* default: print everything */
+int default_message_loglevel = 4; /* default: KERN_WARNING */
 
 /* Output redirect hook: if set, kputchar sends to hook instead of VGA/serial */
 static void (*output_hook)(char c, void *ctx) = 0;
@@ -25,11 +30,75 @@ void kprintf_flush(void) {
     if (flush_hook) flush_hook(flush_hook_ctx);
 }
 
-/* dmesg ring buffer: 64 KB, always captures every character */
-#define DMESG_BUF_SIZE 65536
-static char dmesg_buf[DMESG_BUF_SIZE];
-static int  dmesg_pos = 0;          /* next write position (wraps) */
-static int  dmesg_full = 0;         /* 1 once the buffer has wrapped */
+/* dmesg ring buffer: dynamically allocated, default 64 KB */
+static int dmesg_ring_size = 65536;
+static char *dmesg_buf = NULL;
+static int dmesg_pos = 0;          /* next write position (wraps) */
+static int dmesg_full = 0;         /* 1 once the buffer has wrapped */
+static int dmesg_initialized = 0;
+
+/* Initialize dmesg buffer on first use */
+static void dmesg_init(void) {
+    if (!dmesg_initialized) {
+        if (!dmesg_buf) {
+            dmesg_buf = (char *)kmalloc((size_t)dmesg_ring_size);
+            if (!dmesg_buf) {
+                /* Fallback to minimal static buffer */
+                dmesg_ring_size = 4096;
+                dmesg_buf = (char *)kmalloc((size_t)dmesg_ring_size);
+                if (!dmesg_buf) return;
+            }
+        }
+        memset(dmesg_buf, 0, (size_t)dmesg_ring_size);
+        dmesg_pos = 0;
+        dmesg_full = 0;
+        dmesg_initialized = 1;
+    }
+}
+
+int dmesg_get_size(void) {
+    return dmesg_ring_size;
+}
+
+void dmesg_resize(int new_size) {
+    if (new_size < 1024) new_size = 1024;
+    if (new_size > 1024 * 1024) new_size = 1024 * 1024;
+
+    char *new_buf = (char *)kmalloc((size_t)new_size);
+    if (!new_buf) return;
+
+    memset(new_buf, 0, (size_t)new_size);
+
+    /* Copy old data */
+    if (dmesg_buf && dmesg_initialized) {
+        int copy_size = dmesg_ring_size < new_size ? dmesg_ring_size : new_size;
+        if (dmesg_full) {
+            int first_part = dmesg_ring_size - dmesg_pos;
+            if (first_part > copy_size) first_part = copy_size;
+            memcpy(new_buf, dmesg_buf + dmesg_pos, (size_t)first_part);
+            if (first_part < copy_size) {
+                memcpy(new_buf + first_part, dmesg_buf, (size_t)(copy_size - first_part));
+            }
+        } else {
+            int copy = dmesg_pos < copy_size ? dmesg_pos : copy_size;
+            memcpy(new_buf, dmesg_buf, (size_t)copy);
+        }
+    }
+
+    if (dmesg_buf) kfree(dmesg_buf);
+    dmesg_buf = new_buf;
+    dmesg_ring_size = new_size;
+    dmesg_pos = 0;
+    dmesg_full = 0;
+    dmesg_initialized = 1;
+}
+
+void dmesg_clear(void) {
+    dmesg_pos = 0;
+    dmesg_full = 0;
+    if (dmesg_buf && dmesg_initialized)
+        memset(dmesg_buf, 0, (size_t)dmesg_ring_size);
+}
 
 void kprintf_set_hook(void (*hook)(char, void *), void *ctx) {
     output_hook = hook;
@@ -42,10 +111,11 @@ void kprintf_get_hook(void (**hook)(char,void*), void **ctx) {
 
 /* Fill buf with the dmesg contents (oldest first). Returns bytes written. */
 int kprintf_dmesg(char *buf, int max) {
+    if (!dmesg_initialized) return 0;
     int written = 0;
     if (dmesg_full) {
         /* Start from the character just after the current write pointer */
-        for (int i = dmesg_pos; i < DMESG_BUF_SIZE && written < max - 1; i++)
+        for (int i = dmesg_pos; i < dmesg_ring_size && written < max - 1; i++)
             buf[written++] = dmesg_buf[i];
     }
     for (int i = 0; i < dmesg_pos && written < max - 1; i++)
@@ -81,13 +151,14 @@ int kprintf_ratelimited(const char *fmt, ...) {
  * No intermediate buffer needed — avoids stack overflow from large
  * buffers in callers that previously allocated char[65536] on the stack. */
 void kprintf_dmesg_flush_serial(void) {
+    if (!dmesg_initialized) return;
     char chunk[513]; /* 512 + NUL */
     int chunk_idx;
 
     if (dmesg_full) {
-        for (int i = dmesg_pos; i < DMESG_BUF_SIZE; ) {
+        for (int i = dmesg_pos; i < dmesg_ring_size; ) {
             chunk_idx = 0;
-            while (i < DMESG_BUF_SIZE && chunk_idx < 512)
+            while (i < dmesg_ring_size && chunk_idx < 512)
                 chunk[chunk_idx++] = dmesg_buf[i++];
             chunk[chunk_idx] = '\0';
             serial_write(chunk);
@@ -106,9 +177,13 @@ void kprintf_dmesg_flush_serial(void) {
 }
 
 static void kputchar(char c) {
+    /* Lazily initialize dmesg buffer */
+    if (!dmesg_initialized) dmesg_init();
+    if (!dmesg_buf) return; /* allocation failed, skip */
+
     /* Always record in ring buffer (even when hook is active) */
     dmesg_buf[dmesg_pos++] = c;
-    if (dmesg_pos >= DMESG_BUF_SIZE) { dmesg_pos = 0; dmesg_full = 1; }
+    if (dmesg_pos >= dmesg_ring_size) { dmesg_pos = 0; dmesg_full = 1; }
 
     if (output_hook) {
         output_hook(c, output_hook_ctx);
@@ -279,6 +354,17 @@ int kprintf(const char *fmt, ...) {
         fmt++;
     }
 
+    va_end(ap);
+    return count;
+}
+
+int kprintf_level(int level, const char *fmt, ...) {
+    /* Filter by console_loglevel: only print if level <= console_loglevel */
+    if (level > console_loglevel) return 0;
+
+    va_list ap;
+    va_start(ap, fmt);
+    int count = vkprintf(fmt, ap);
     va_end(ap);
     return count;
 }

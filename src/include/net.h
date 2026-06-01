@@ -203,4 +203,20 @@ void net_conn_list(void (*cb)(uint16_t lport, uint32_t rip, uint16_t rport, int 
 /* UDP listener list — calls cb(port) for each active listener */
 void net_udp_list(void (*cb)(uint16_t port));
 
+/* IP forwarding control */
+extern int net_ip_forwarding;
+
+/* /proc/net interfaces */
+struct net_iface_stats {
+    uint64_t rx_packets;
+    uint64_t rx_bytes;
+    uint64_t rx_errors;
+    uint64_t rx_drops;
+    uint64_t tx_packets;
+    uint64_t tx_bytes;
+    uint64_t tx_errors;
+    uint64_t tx_drops;
+};
+extern struct net_iface_stats net_iface_stats;
+
 #endif

@@ -28,6 +28,11 @@ void bufcache_flush(void);         /* write back all dirty entries */
 void bufcache_flush_all(void);     /* alias */
 void bufcache_invalidate(uint64_t lba, uint8_t dev_id);
 
+/* Writeback: flush dirty pages from cache */
+int bufcache_writeback(void);
+void bufcache_set_dirty(uint64_t lba, uint8_t dev_id);
+void bufcache_clear_dirty(uint64_t lba, uint8_t dev_id);
+
 /* ── Stats ──────────────────────────────────────────────────────────── */
 void bufcache_stats(int *hits, int *misses, int *writes);
 

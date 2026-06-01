@@ -25,6 +25,24 @@
 #define SECCOMP_MODE_STRICT    1
 #define SECCOMP_MODE_FILTER    2
 
+/* Seccomp filter actions */
+#define SECCOMP_RET_KILL  0x80000000U
+#define SECCOMP_RET_ALLOW 0x7fff0000U
+
+#define SECCOMP_FILTER_RULES_MAX 32
+
+/* Seccomp filter rule */
+struct seccomp_rule {
+    int     syscall_nr;
+    uint32_t action; /* SECCOMP_RET_KILL or SECCOMP_RET_ALLOW */
+};
+
+/* Per-process seccomp filter */
+struct seccomp_filter {
+    int num_rules;
+    struct seccomp_rule rules[SECCOMP_FILTER_RULES_MAX];
+};
+
 /* Initialize seccomp subsystem */
 void seccomp_init(void);
 
@@ -37,5 +55,11 @@ int seccomp_set_mode(int mode);
 
 /* Get seccomp mode for the current process. */
 int seccomp_get_mode(void);
+
+/* Add a seccomp filter rule for the current process */
+int seccomp_add_rule(int syscall_nr, uint32_t action);
+
+/* Check syscall against the seccomp filter (mode FILTER) */
+int seccomp_filter_check(uint64_t num);
 
 #endif

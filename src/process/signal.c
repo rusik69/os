@@ -115,6 +115,10 @@ int signal_send_group(uint32_t pgid, int signum) {
     return sent > 0 ? 0 : -1;
 }
 
+int signal_send_pgid(uint32_t pgid, int signum) {
+    return signal_send_group(pgid, signum);
+}
+
 /* Retrieve the siginfo for a signal, if available.
  * Returns the siginfo pointer, or NULL if no info stored.
  * Clears the stored info after returning it (one-shot). */

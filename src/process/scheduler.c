@@ -16,6 +16,7 @@
 #include "smp.h"
 #include "spinlock.h"
 #include "apic.h"
+#include "string.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -356,11 +357,15 @@ void scheduler_tick(int was_user) {
             /* SCHED_FIFO: replenish quantum, don't preempt */
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = time_slices[lvl] * 2;
+            cur->ticks_remaining = time_slices[lvl];
+        } else if (cur->sched_policy == SCHED_RR) {
+            /* SCHED_RR: rotate to end of queue on slice expiry */
+            int lvl = (int)cur->priority;
+            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+            cur->ticks_remaining = time_slices[lvl];
+            schedule();
         } else {
-            /* SCHED_OTHER / SCHED_RR: preempt on quantum expiry.
-             * SCHED_RR places the process at the end of its priority queue
-             * (handled by schedule() re-adding it). */
+            /* SCHED_OTHER: preempt on quantum expiry */
             schedule();
         }
     }
@@ -427,4 +432,32 @@ void scheduler_get_stats(struct sched_stats *stats) {
     stats->preemptions = sched_stats_data.preemptions;
     stats->yields = sched_stats_data.yields;
     stats->idle_ticks_total = sched_stats_data.idle_ticks_total;
+}
+
+/* ── Per-CPU runqueue statistics ─────────────────────────────── */
+
+void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s) {
+    if (!s || cpu < 0 || cpu >= smp_cpu_count) return;
+    struct cpu_info *ci = &cpu_info_array[cpu];
+    memset(s, 0, sizeof(*s));
+
+    int total_load = 0;
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+        while (p) {
+            s->nr_runnable++;
+            s->prio_distribution[lvl]++;
+            /* Load weight: each runnable process contributes (4 - priority) */
+            total_load += (SCHED_LEVELS - lvl);
+            p = p->next;
+        }
+    }
+    s->load_weight = total_load;
+
+    /* Count processes in various states from the process table */
+    struct process *table = process_get_table();
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_RUNNING) s->nr_running++;
+        if (table[i].state == PROCESS_BLOCKED) s->nr_uninterruptible++;
+    }
 }
