@@ -125,7 +125,7 @@ void cmd_zip(const char *args) {
         memcpy(zipbuf + zip_pos, filebuf, file_size);
         zip_pos += file_size;
 
-        kprintf("  adding: %s (%u bytes)\n", filenames[i], (unsigned long)file_size);
+        kprintf("  adding: %s (%lu bytes)\n", filenames[i], (unsigned long)file_size);
     }
 
     /* Write central directory */
@@ -201,5 +201,5 @@ void cmd_zip(const char *args) {
     }
 
     libc_vfs_write(archive_path, zipbuf, zip_pos);
-    kprintf("Archive: %s (%u bytes, %u files)\n", archive_path, (unsigned long)zip_pos, (unsigned long)num_entries);
+    kprintf("Archive: %s (%lu bytes, %lu files)\n", archive_path, (unsigned long)zip_pos, (unsigned long)num_entries);
 }

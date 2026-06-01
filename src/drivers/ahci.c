@@ -10,6 +10,7 @@
 #include "blockdev.h"
 #include "pci.h"
 #include "pmm.h"
+#include "heap.h"
 #include "vmm.h"
 #include "string.h"
 #include "printf.h"
@@ -442,7 +443,7 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
             /* Error interrupt — read SERR to see what happened */
             uint32_t serr = port_read(p, PORT_SERR);
             port_write(p, PORT_SERR, serr);
-            kprintf("AHCI port %d error: IS=0x%x TFD=0x%x SERR=0x%x\n",
+            kprintf("AHCI port %lu error: IS=0x%lx TFD=0x%lx SERR=0x%lx\n",
                     (unsigned long)p, (unsigned long)port_is, (unsigned long)tfd, (unsigned long)serr);
         }
 
@@ -519,9 +520,9 @@ int ahci_init(void) {
         return -1; /* no AHCI controller */
 
     uint64_t bar5 = dev.bar[5] & ~0xFULL;
-    kprintf("  AHCI %04x:%04x (IRQ %u) HBA@0x%x\n",
+    kprintf("  AHCI %04lx:%04lx (IRQ %lu) HBA@0x%llx\n",
             (unsigned long)dev.vendor_id, (unsigned long)dev.device_id,
-            (unsigned long)dev.irq, bar5);
+            (unsigned long)dev.irq, (unsigned long long)bar5);
 
     hba_base = bar5;
     if (hba_base == 0) return -2;
@@ -631,7 +632,7 @@ int ahci_init(void) {
                     port->ncq_capable = 1;
                 }
 
-                kprintf("  AHCI port %d: %u sectors (%u MB)%s\n",
+                kprintf("  AHCI port %lu: %lu sectors (%lu MB)%s\n",
                         (unsigned long)p, (unsigned long)port->sector_count,
                         (unsigned long)(port->sector_count / 2048),
                         port->ncq_capable ? " NCQ" : "");
@@ -665,7 +666,7 @@ int ahci_init(void) {
         ioapic_unmask_irq(ahci_ports[0].irq_line);
     pic_unmask(ahci_ports[0].irq_line);
 
-    kprintf("  AHCI: %d port(s) active, NCQ depth %d\n",
+    kprintf("  AHCI: %ld port(s) active, NCQ depth %ld\n",
             (unsigned long)ahci_port_count, (unsigned long)AHCI_NCQ_SLOTS);
     return 0;
 }

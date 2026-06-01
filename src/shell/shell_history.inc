@@ -53,7 +53,7 @@ void shell_history_add(const char *cmd_line) {
 void shell_history_show_entries(void) {
     int start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
     for (int i = start; i < history_count; i++)
-        kprintf("  %u: %s\n", (uint64_t)(i - start + 1), history[i % HISTORY_SIZE]);
+        kprintf("  %llu: %s\n", (uint64_t)(i - start + 1), history[i % HISTORY_SIZE]);
 }
 
 int shell_history_count(void) {

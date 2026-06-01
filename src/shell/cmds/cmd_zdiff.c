@@ -55,9 +55,9 @@ void cmd_zdiff(const char *args) {
 
     char p1[64], p2[64];
     if (f1[0] != '/') { p1[0] = '/'; strncpy(p1+1, f1, 62); p1[63] = '\0'; }
-    else strncpy(p1, f1, 63); p1[63] = '\0';
+    else { strncpy(p1, f1, 63); p1[63] = '\0'; }
     if (f2[0] != '/') { p2[0] = '/'; strncpy(p2+1, f2, 62); p2[63] = '\0'; }
-    else strncpy(p2, f2, 63); p2[63] = '\0';
+    else { strncpy(p2, f2, 63); p2[63] = '\0'; }
 
     static unsigned char b1[4096], b2[4096], d1[4096], d2[4096];
     uint32_t s1, s2, ds1, ds2;
@@ -84,11 +84,11 @@ void cmd_zdiff(const char *args) {
 
         if (len1 != len2 || memcmp(l1, l2, len1) != 0) {
             diffs++;
-            kprintf("%dc%d\n", (unsigned long)lineno, (unsigned long)lineno);
+            kprintf("%ldc%ld\n", (unsigned long)lineno, (unsigned long)lineno);
             kprintf("< ");
-            for (int j = 0; j < len1; j++) kprintf("%c", (unsigned long)(uint8_t)l1[j]);
+            for (int j = 0; j < len1; j++) kprintf("%c", (unsigned char)l1[j]);
             kprintf("\n---\n> ");
-            for (int j = 0; j < len2; j++) kprintf("%c", (unsigned long)(uint8_t)l2[j]);
+            for (int j = 0; j < len2; j++) kprintf("%c", (unsigned char)l2[j]);
             kprintf("\n");
         }
         l1 = (*e1 == '\n') ? e1 + 1 : e1;
