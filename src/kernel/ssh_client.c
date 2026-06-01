@@ -288,7 +288,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
 }
 
 /* Process raw data from network */
-static void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
+void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
     if(c->rlen+len>CLI_BUF)len=CLI_BUF-c->rlen;
     memcpy(c->rbuf+c->rlen,data,len);
     c->rlen+=len;
@@ -309,10 +309,10 @@ static void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
             int pad=pkt[4];type=pkt[5];pl=pkt+6;
             plen=pktlen-pad-1-1;if(plen<0)plen=0;
         } else {
-            uint8_t dec[CLI_BUF];int dl=pktlen<CLI_BUF?pktlen:CLI_BUF;
-            memcpy(dec,pkt+4,dl);
-            aes_cbc_decrypt(&c->recv_ctx,c->recv_iv,dec,dec,dl);
-            int pad=dec[0];type=dec[1];pl=dec+2;
+            /* Decrypt in-place in the rbuf (overwriting encrypted data) */
+            int dl=pktlen; /* decrypt from byte 4 onwards */
+            aes_cbc_decrypt(&c->recv_ctx,c->recv_iv,pkt+4,pkt+4,dl);
+            int pad=pkt[4];type=pkt[5];pl=pkt+6;
             plen=pktlen-pad-1-1;if(plen<0)plen=0;
             c->seq_recv++;
         }
@@ -326,21 +326,7 @@ static void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
     else if(consumed>=c->rlen)
         c->rlen=0;
 }
-
-/* Callbacks from net layer */
-static struct ssh_client *g_cl_cb_ctx = NULL;
-static void cl_on_data(int conn_id, const void *data, uint16_t len) {
-    (void)conn_id;
-    if(g_cl_cb_ctx) cl_feed(g_cl_cb_ctx,(const uint8_t*)data,len);
-}
-static void cl_on_close(int conn_id) {
-    (void)conn_id;
-    if(g_cl_cb_ctx) {
-        g_cl_cb_ctx->connected=0;
-        if(g_cl_cb_ctx->on_close) g_cl_cb_ctx->on_close(g_cl_cb_ctx->ctx);
-    }
-}
-
+ 
 /* ── Public API ──────────────────────────────────────────────── */
 
 struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
@@ -384,7 +370,6 @@ struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
     cl->on_close=on_close;
     cl->ctx=ctx;
     
-    g_cl_cb_ctx = cl;
     cl_send(cl,"SSH-2.0-OSSSH\r\n",17);
     
     return cl;
@@ -393,6 +378,10 @@ struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
 void ssh_client_poll(struct ssh_client *cl) {
     if(!cl||!cl->connected) return;
     net_poll();
+    /* Read any received data from TCP buffer */
+    uint8_t buf[4096];
+    int n = net_tcp_recv(cl->conn_id, buf, sizeof(buf), 0);
+    if(n > 0) cl_feed(cl, buf, n);
 }
 
 int ssh_client_send(struct ssh_client *cl, const char *data, int len) {
@@ -413,7 +402,6 @@ void ssh_client_close(struct ssh_client *cl) {
     }
     net_tcp_close(cl->conn_id);
     cl->connected=0;
-    if(g_cl_cb_ctx==cl) g_cl_cb_ctx=NULL;
     kfree(cl);
 }
 

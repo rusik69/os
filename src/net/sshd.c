@@ -162,7 +162,6 @@ static int ses_send_raw(struct ssh_session *s, const uint8_t *data, int len) {
 static int ses_send_packet(struct ssh_session *s, uint8_t type,
                            const uint8_t *payload, int payload_len) {
     uint8_t pkt[SSH_SESS_BUF];
-    int pkt_len;
     
     /* Build plaintext: uint32 length || byte pad_len || payload || padding */
     int pad_len = 16 - ((1 + payload_len) % 16);
@@ -219,19 +218,6 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
     return 0;
 }
 
-/* Send a formatted SSH packet (type + string components) */
-static int ses_send_packet_v(struct ssh_session *s, uint8_t type,
-                             const uint8_t **parts, const int *part_lens, int nparts) {
-    uint8_t payload[SSH_SESS_BUF];
-    int off = 0;
-    for (int i = 0; i < nparts; i++) {
-        if (part_lens[i] > 0 && off + part_lens[i] <= SSH_SESS_BUF) {
-            memcpy(payload + off, parts[i], part_lens[i]);
-            off += part_lens[i];
-        }
-    }
-    return ses_send_packet(s, type, payload, off);
-}
 
 /* ── SSH helpers ────────────────────────────────────────────── */
 
@@ -305,13 +291,9 @@ static int compute_exchange_hash(struct ssh_session *s,
 static void derive_keys(struct ssh_session *s,
                          const bignum *K, const uint8_t *H, int H_len,
                          uint8_t session_id[32]) {
-    uint8_t buf[64];
-    int off;
+    /* Compute multiple rounds of HASH(K || H || X || session_id)
     
-    /* Initial IV client -> server: HASH(K || H || "A" || session_id) */
-    /* We compute using SHA-256 in a sequence */
-    
-    /* For simplicity, derive using the standard SSH key derivation:
+       For simplicity, derive using the standard SSH key derivation:
        Multiple rounds of HASH(K || H || X || session_id)
        where X = 'A', 'B', 'C', 'D', 'E', 'F' for each key */
     
@@ -334,11 +316,7 @@ static void derive_keys(struct ssh_session *s,
     for (int i = 0; i < 6; i++) {
         struct sha256_ctx ctx;
         sha256_init(&ctx);
-        /* K (mpint format: length prefix + value) */
-        uint8_t K_mpint[260];
-        int mp_len = pmpint(K_mpint, K);
-        /* Actually we need K as mpint without the int prefix - 
-           let's do it simpler: K as bignum bytes with mpint format */
+        /* K in mpint format for hashing */
         uint8_t K_prefixed[260];
         int kp_len = 0;
         K_prefixed[kp_len++] = 0; K_prefixed[kp_len++] = 0; K_prefixed[kp_len++] = 0;
@@ -646,10 +624,6 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
 
 static void handle_kexdh_init(struct ssh_session *s, const uint8_t *data, int len) {
     int off = 0;
-    /* Skip packet length (4) and padding_length (1) and message type (1) */
-    off = 0;
-    int pkt_len = g32(data); off += 4;
-    int pad_len = data[off++];
     uint8_t msg_type = data[off++]; (void)msg_type;
     
     /* Skip padding to get to the payload */
