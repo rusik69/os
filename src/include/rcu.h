@@ -37,6 +37,11 @@
 /* Called at each context switch — records a quiescent state for the current CPU */
 void rcu_quiescent_state(void);
 
+/* Periodic stall check — call from timer tick or NMI context.
+ * Returns 1 if a stall was detected and handled, 0 otherwise.
+ * Prints warnings at RCU_STALL_WARN_TICKS, panics at RCU_STALL_PANIC_TICKS. */
+int rcu_check_stall(void);
+
 /* Reader-side critical section markers */
 static inline void rcu_read_lock(void)   { __asm__ volatile("": : :"memory"); }
 static inline void rcu_read_unlock(void) { __asm__ volatile("": : :"memory"); }
