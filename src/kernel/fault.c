@@ -3,6 +3,7 @@
 #include "vmm.h"
 #include "process.h"
 #include "printf.h"
+#include "nx_enforce.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -78,14 +79,23 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     /* Page fault tracing */
     if (page_fault_trace) {
         struct process *proc = process_get_current();
-        kprintf("[PFTRACE] addr=0x%llx err=0x%llx (%s %s %s) rip=0x%llx pid=%u name=%s\n",
+        kprintf("[PFTRACE] addr=0x%llx err=0x%llx (%s %s %s %s) rip=0x%llx pid=%u name=%s\n",
                 cr2, err,
                 (err & 1) ? "prot" : "np",
                 (err & 2) ? "wr" : "rd",
                 (err & 4) ? "usr" : "sup",
+                (err & 16) ? "if" : "",
                 frame->rip,
                 proc ? (unsigned int)proc->pid : 0,
                 proc && proc->name ? proc->name : "?");
+    }
+
+    /* Check for NX violation (instruction fetch on a non-executable page) */
+    if ((err & (1ULL << 4)) && (err & 1ULL)) {
+        if (nx_enforce_check_fault(cr2, err, frame)) {
+            /* NX violation was handled (kernel: panic, user: SIGSEGV) */
+            return;
+        }
     }
 
     /* Kernel-mode fault: panic with register dump */

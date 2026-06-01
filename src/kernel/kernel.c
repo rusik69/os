@@ -96,6 +96,7 @@
 #include "jump_label.h"
 #include "pstore.h"
 #include "mce.h"
+#include "nx_enforce.h"
 #include "stack_guard.h"
 #include "rseq.h"
 #include "kasan_light.h"
@@ -728,11 +729,17 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Enable interrupts */
     sti();
-    kprintf("[OK] Interrupts enabled\n\n");
 
     /* Start the NMI watchdog now that the scheduler is running and we
      * can pet it from the tick handler and context-switch paths. */
     nmi_watchdog_start();
+
+    /* ── NX enforcement audit ──────────────────────────────────────
+     * Walk the kernel page tables and verify that NX is set correctly:
+     *   - .text pages are executable (NX cleared)
+     *   - All other sections (.rodata, .data, .bss) have NX set
+     * This is a safety net to catch any improperly mapped pages. */
+    nx_enforce_audit_kernel();
 
 #ifdef TEST_MODE
     /* Yield once so the test task gets a chance to run immediately */

@@ -5,6 +5,9 @@
 #include "printf.h"
 #include "smp.h"
 
+/* NX support status — defined in this file, exported for nx_enforce */
+int nx_enabled = 0;
+
 /* If SMP is enabled, use IPI-based TLB shootdown; otherwise local invlpg */
 static inline void tlb_flush(uint64_t addr) {
     smp_tlb_shootdown(&addr, 1);
@@ -24,7 +27,7 @@ static inline void tlb_flush(uint64_t addr) {
 #endif
 
 /* Check if NX is supported via CPUID */
-static int nx_enabled = 0;
+/* (nx_enabled is defined below and exported for nx_enforce) */
 
 /* Initialize NX support detection */
 void vmm_nx_init(void) {
@@ -36,13 +39,8 @@ void vmm_nx_init(void) {
     }
 }
 
-/* Check if an instruction fetch access violates NX on a PTE */
-static int nx_check_violation(uint64_t pte, int is_exec_fetch) {
-    if (!is_exec_fetch) return 0; /* only check on instruction fetches */
-    if (!nx_enabled) return 0;
-    if (pte & PTE_NX) return 1; /* NX set and this is a fetch — violation */
-    return 0;
-}
+/* NX checking is now handled by nx_enforce.c — the per-PTE helper below
+ * was a preliminary implementation that has been superseded. */
 
 /* Per-process PML4-based NX check for user page table walks.
  * Returns 1 if the access is allowed, 0 if NX violation (should raise PF).
@@ -74,7 +72,7 @@ int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec) {
     return 1;
 }
 
-static uint64_t *kernel_pml4;
+uint64_t *kernel_pml4;
 
 /* VM statistics counters */
 uint64_t vm_pgalloc = 0;
