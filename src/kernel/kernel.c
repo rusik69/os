@@ -267,7 +267,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Jump labels / static keys for efficient feature toggling */
     jump_label_init();
 
-    /* KASAN light — kernel address sanitizer (heap only) */
+    /* KASAN light — kernel address sanitizer (heap + stack redzones) */
     kasan_init();
 
     /* Panic/oops handler with register dump */
