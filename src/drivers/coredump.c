@@ -9,6 +9,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "elf.h"
+#include "heap.h"          /* kmalloc, kfree */
 
 /*
  * Core dump generation — writes ELF core file to /tmp/core.

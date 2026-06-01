@@ -1,5 +1,6 @@
 /* cmd_dd.c — Data Duplicator (simple file copy with count/skip) */
 #include "shell_cmds.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

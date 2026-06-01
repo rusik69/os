@@ -3,6 +3,7 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"    /* itoa */
 
 void cmd_split(const char *args) {
     if (!args || !args[0]) {

@@ -1,5 +1,6 @@
 /* cmd_cksum.c — CRC checksum (simplified additive checksum) */
 #include "shell_cmds.h"
+#include "libc.h"
 #include "printf.h"
 #include "string.h"
 

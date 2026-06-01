@@ -4,6 +4,7 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"    /* fnmatch */
 
 void cmd_find(const char *args) {
     if (!args || !args[0]) { kprintf("Usage: find <pattern>\n"); return; }

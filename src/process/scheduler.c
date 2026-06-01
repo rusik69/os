@@ -257,6 +257,9 @@ static int load_balance(void) {
     return 0;
 }
 
+/* Forward declaration — defined below (line ~552), called from scheduler_tick */
+static void update_vruntime(struct process *p, int ticks);
+
 /* ── Main scheduler entry: pick next process, context-switch ────────── */
 void schedule(void) {
     struct cpu_info *ci = this_cpu();

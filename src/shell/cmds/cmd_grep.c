@@ -3,6 +3,7 @@
 #include "printf.h"
 #include "string.h"
 #include "libc.h"
+#include "stdlib.h"    /* fnmatch */
 
 void cmd_grep(const char *args) {
     if (!args) { kprintf("Usage: grep [-g] [-i] [-v] <pattern> [file]\n"); return; }
