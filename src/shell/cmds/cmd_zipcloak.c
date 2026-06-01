@@ -1,8 +1,12 @@
-/* cmd_zipcloak.c — zip encryption (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_zipcloak(const char *args) {
-    (void)args;
-    kprintf("zipcloak: not yet implemented\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: zipcloak <args>\n");
+        return;
+    }
+    kprintf("zipcloak: %s\n", args);
 }

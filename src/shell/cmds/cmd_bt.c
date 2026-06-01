@@ -1,9 +1,7 @@
-/* cmd_bt.c — print kernel backtrace */
-
-#include "fault.h"
+#include "shell.h"
+#include "shell_cmds.h"
 #include "printf.h"
-
 void cmd_bt(void) {
-    kprintf("\n");
-    arch_print_backtrace();
+    extern void print_stack_trace(void);
+    print_stack_trace();
 }

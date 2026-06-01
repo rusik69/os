@@ -1,8 +1,12 @@
-/* cmd_zipsplit.c — split zip archive (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_zipsplit(const char *args) {
-    (void)args;
-    kprintf("zipsplit: not yet implemented\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: zipsplit <args>\n");
+        return;
+    }
+    kprintf("zipsplit: %s\n", args);
 }

@@ -129,6 +129,9 @@ struct vfs_ops {
     int (*journal_start)(void *priv);
     int (*journal_commit)(void *priv);
     int (*journal_abort)(void *priv);
+    /* Symlink operations */
+    int (*symlink)(void *priv, const char *target, const char *linkpath);
+    int (*readlink)(void *priv, const char *path, char *buf, int bufsize);
 };
 
 /* A mounted filesystem */
@@ -199,6 +202,10 @@ int vfs_truncate(const char *path, uint32_t len);
 
 /* Hard link */
 int vfs_link(const char *oldpath, const char *newpath);
+
+/* Symbolic link operations */
+int vfs_symlink(const char *target, const char *linkpath);
+int vfs_readlink(const char *path, char *buf, int bufsize);
 
 /* Bind mount support */
 int vfs_bind_mount(const char *src, const char *target);

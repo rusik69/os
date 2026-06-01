@@ -1,6 +1,7 @@
 #include "shell.h"
-#include "string.h"
+#include "shell_cmds.h"
+#include "shell_cmds.h"
 void cmd_dir(const char *args) {
-    (void)args;
-    kprintf("dir: not yet implemented\n");
+    if (!args || strlen(args) == 0) cmd_ls(".");
+    else cmd_ls(args);
 }

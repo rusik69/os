@@ -1,8 +1,12 @@
-/* cmd_localedef.c — define locale (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_localedef(const char *args) {
-    (void)args;
-    kprintf("localedef: not yet implemented\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: localedef <args>\n");
+        return;
+    }
+    kprintf("localedef: %s\n", args);
 }

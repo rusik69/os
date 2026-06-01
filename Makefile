@@ -170,6 +170,15 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/irq_affinity.c \
          src/kernel/trace.c \
          src/kernel/smap_smep_umip.c \
+         src/kernel/notifier.c \
+         src/kernel/softirq.c \
+         src/kernel/tasklet.c \
+         src/kernel/stacktrace.c \
+         src/kernel/ratelimit.c \
+         src/kernel/logbuf.c \
+         src/lib/crc32.c \
+         src/lib/uuid.c \
+         src/lib/hexdump.c \
          src/kernel/x2apic.c \
          src/kernel/tsc_deadline.c \
          src/kernel/invpcid.c \

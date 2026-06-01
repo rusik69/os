@@ -138,6 +138,16 @@ static int smfs_readdir(void *priv, const char *path) {
     return fs_list(path);
 }
 
+static int smfs_symlink(void *priv, const char *target, const char *linkpath) {
+    (void)priv;
+    return fs_symlink(target, linkpath);
+}
+
+static int smfs_readlink(void *priv, const char *path, char *buf, int bufsize) {
+    (void)priv;
+    return fs_readlink(path, buf, bufsize);
+}
+
 /* ── SMTF extensions for new VFS operations ────────────────────────── */
 
 static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offset, uint32_t len) {
@@ -209,6 +219,8 @@ static struct vfs_ops smfs_ops = {
     .journal_start = smfs_journal_start,
     .journal_commit = smfs_journal_commit,
     .journal_abort  = smfs_journal_abort,
+    .symlink   = smfs_symlink,
+    .readlink  = smfs_readlink,
 };
 
 /* ------------------------------------------------------------------
@@ -861,6 +873,38 @@ int vfs_link(const char *oldpath, const char *newpath) {
     }
     
     return ret;
+}
+
+/* ── vfs_symlink / vfs_readlink ──────────────────────────────── */
+int vfs_symlink(const char *target, const char *linkpath) {
+    if (!target || !linkpath) return -EINVAL;
+    char ap[128];
+    vfs_abs_path(linkpath, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -ENOENT;
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m->ops->symlink)
+        return m->ops->symlink(m->priv, target, ap);
+    /* Fallback: create a link inode and write target into it */
+    int r = vfs_create(ap, 3); /* FS_TYPE_LINK */
+    if (r < 0) return r;
+    return vfs_write(ap, target, (uint32_t)strlen(target));
+}
+
+int vfs_readlink(const char *path, char *buf, int bufsize) {
+    if (!path || !buf || bufsize <= 0) return -EINVAL;
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -ENOENT;
+    if (m->ops->readlink)
+        return m->ops->readlink(m->priv, ap, buf, bufsize);
+    /* Fallback: read the raw content (the target string) */
+    uint32_t out_size = 0;
+    int r = vfs_read(ap, buf, (uint32_t)(bufsize - 1), &out_size);
+    if (r < 0) return r;
+    buf[out_size] = '\0';
+    return (int)out_size;
 }
 
 void vfs_init(void) {

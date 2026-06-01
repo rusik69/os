@@ -1,8 +1,7 @@
-/* cmd_echo.c — echo command */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
-
 void cmd_echo(const char *args) {
-    if (args) kprintf("%s\n", args);
-    else kprintf("\n");
+    if (!args) { kprintf("\n"); return; }
+    kprintf("%s\n", args);
 }

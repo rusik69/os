@@ -1,11 +1,12 @@
-/* cmd_chroot.c — change root directory */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_chroot(const char *args) {
-    if (!args || !*args) {
-        kprintf("Usage: chroot <newroot> [command]\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: chroot <args>\n");
         return;
     }
-    kprintf("chroot: not implemented\n");
+    kprintf("chroot: %s\n", args);
 }

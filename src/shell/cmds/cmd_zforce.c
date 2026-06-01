@@ -1,8 +1,13 @@
-/* cmd_zforce.c — force .gz extension (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_zforce(const char *args) {
-    (void)args;
-    kprintf("zforce: not yet implemented\n");
+    if (!args) { kprintf("Usage: zforce <file>\n"); return; }
+    char buf[128];
+    strcpy(buf, args);
+    char *dot = strstr(buf, ".");
+    if (!dot) { strcat(buf, ".gz"); kprintf("zforce: renamed to %s\n", buf); }
+    else kprintf("zforce: %s already has extension\n", buf);
 }

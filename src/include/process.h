@@ -166,6 +166,14 @@ struct process {
     int no_new_privs;
     /* Securebits flags */
     uint8_t securebits;
+    /* Capability sets (Linux-style) */
+    uint64_t cap_effective[PROCESS_SYSCALL_CAP_WORDS];
+    uint64_t cap_permitted[PROCESS_SYSCALL_CAP_WORDS];
+    uint64_t cap_inheritable[PROCESS_SYSCALL_CAP_WORDS];
+    /* Parent death signal (PR_SET_PDEATHSIG) */
+    int pdeath_signal;
+    /* VM lock flags (mlockall) */
+    int vm_locked_flags;  /* bitmask: MCL_CURRENT=1, MCL_FUTURE=2 */
     /* ── CFS vruntime (nanosecond-scale) ───────────────────── */
     uint64_t vruntime;           /* virtual runtime for CFS */
     uint64_t sched_weight;       /* scheduling weight (default 1024) */

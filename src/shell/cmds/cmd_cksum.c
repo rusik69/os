@@ -2,7 +2,6 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "stdlib.h"
 
 /* Simple CRC32 using the standard polynomial */
 static uint32_t crc32(const uint8_t *data, uint32_t len) {

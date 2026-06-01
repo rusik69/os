@@ -3,7 +3,6 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
-#include "stdlib.h"
 
 void cmd_fold(const char *args) {
     if (!args || !args[0]) {

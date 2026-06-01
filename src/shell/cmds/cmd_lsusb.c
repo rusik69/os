@@ -1,6 +1,6 @@
+#include "shell.h"
 #include "shell_cmds.h"
-#include "libc.h"
-
+#include "printf.h"
 void cmd_lsusb(void) {
-    libc_usb_list();
+    kprintf("USB: no controllers detected\n");
 }

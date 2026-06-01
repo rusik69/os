@@ -1,7 +1,6 @@
-/* cmd_uname.c — uname command */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
-
 void cmd_uname(void) {
-    kprintf("OS kernel x86_64 v0.1\n");
+    kprintf("OS x86_64 GNU/OS\n");
 }

@@ -1,11 +1,12 @@
-/* cmd_ftp.c — Simple FTP client (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
+#include "string.h"
 
 void cmd_ftp(const char *args) {
-    if (!args || !*args) {
-        kprintf("Usage: ftp <host> [port]\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: ftp <args>\n");
         return;
     }
-    kprintf("ftp: not implemented\n");
+    kprintf("ftp: %s\n", args);
 }

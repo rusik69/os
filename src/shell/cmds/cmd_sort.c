@@ -4,7 +4,6 @@
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
-#include "stdlib.h"
 
 static int cmp_strptr(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);

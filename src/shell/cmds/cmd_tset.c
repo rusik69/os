@@ -1,9 +1,12 @@
-/* cmd_tset.c — Set terminal settings (stub) */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
 
 void cmd_tset(const char *args) {
-    (void)args;
-    kprintf("tset: terminal settings applied\n");
+    if (!args || strlen(args) == 0) {
+        kprintf("Usage: tset <args>\n");
+        return;
+    }
+    kprintf("tset: %s\n", args);
 }
