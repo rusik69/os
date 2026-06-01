@@ -238,3 +238,30 @@ char *strpbrk(const char *s, const char *accept) {
     }
     return (char *)0;
 }
+
+/*
+ * strnlen — return min(strlen(s), maxlen)
+ * Safe bounded string length, POSIX.1-2008.
+ */
+size_t strnlen(const char *s, size_t maxlen) {
+    size_t len = 0;
+    while (len < maxlen && s[len]) len++;
+    return len;
+}
+
+/*
+ * memccpy — copy bytes from src to dest until c is found or n bytes copied.
+ * Returns pointer to byte after c in dest (if found), or NULL if c not found
+ * within first n bytes.  POSIX.1-2001.
+ */
+void *memccpy(void *dest, const void *src, int c, size_t n) {
+    unsigned char *d = (unsigned char *)dest;
+    const unsigned char *s = (const unsigned char *)src;
+    unsigned char uc = (unsigned char)c;
+    while (n--) {
+        *d = *s;
+        if (*d == uc) return (void *)(d + 1);
+        d++; s++;
+    }
+    return (void *)0;
+}

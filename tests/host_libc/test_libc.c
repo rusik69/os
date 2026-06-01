@@ -46,6 +46,8 @@ extern size_t strcspn(const char *s, const char *reject);
 extern char  *strpbrk(const char *s, const char *accept);
 extern long   strtol(const char *nptr, char **endptr, int base);
 extern unsigned long strtoul(const char *nptr, char **endptr, int base);
+extern size_t strnlen(const char *s, size_t maxlen);
+extern void  *memccpy(void *dest, const void *src, int c, size_t n);
 
 /* --- stdlib.c --- */
 extern char  *itoa(int value, char *buf, int base);
@@ -55,6 +57,14 @@ extern char  *strdup(const char *s);
 /* --- printf.c --- */
 extern int sprintf(char *buf, const char *fmt, ...);
 extern int snprintf(char *buf, size_t n, const char *fmt, ...);
+
+/* ---- string_ext.c functions (extended string ops) ---- */
+extern size_t strlcat(char *dst, const char *src, size_t size);
+extern size_t strlcpy(char *dst, const char *src, size_t size);
+extern int    strcasecmp(const char *s1, const char *s2);
+extern int    strncasecmp(const char *s1, const char *s2, size_t n);
+extern char  *strchrnul(const char *s, int c);
+extern char  *strcasestr(const char *haystack, const char *needle);
 
 /* ===================================================================
  *  Stub implementations for kernel-specific functions
@@ -1017,6 +1027,325 @@ static void test_strpbrk(void)
 }
 
 /* ===================================================================
+ *  strnlen / memccpy tests (new in string.c)
+ * =================================================================== */
+
+static void test_strnlen(void)
+{
+    TEST("strnlen normal string");
+    {
+        char s[] = "hello";
+        ASSERT_INT_EQ(strnlen(s, 10), 5, "strnlen within maxlen");
+    }
+    PASS();
+
+    TEST("strnlen truncated by maxlen");
+    ASSERT_INT_EQ(strnlen("hello world", 5), 5, "truncated at maxlen");
+    PASS();
+
+    TEST("strnlen empty string");
+    {
+        char s[] = "";
+        ASSERT_INT_EQ(strnlen(s, 10), 0, "empty string");
+    }
+    PASS();
+
+    TEST("strnlen zero maxlen");
+    ASSERT_INT_EQ(strnlen("hello", 0), 0, "zero maxlen returns 0");
+    PASS();
+
+    TEST("strnlen exact fit");
+    ASSERT_INT_EQ(strnlen("abc", 3), 3, "exact length match");
+    PASS();
+
+    TEST("strnlen null bytes not counted");
+    {
+        char nb[] = "ab\0cdef";
+        ASSERT_INT_EQ(strnlen(nb, 10), 2, "stops at null byte");
+    }
+    PASS();
+
+    TEST("strnlen maxlen < actual length");
+    ASSERT_INT_EQ(strnlen("abcdefghij", 4), 4, "maxlen smaller than string");
+    PASS();
+
+    TEST("strnlen very large maxlen");
+    {
+        char s[] = "hi";
+        ASSERT_INT_EQ(strnlen(s, 999999), 2, "large maxlen capped at strlen");
+    }
+    PASS();
+}
+
+static void test_memccpy(void)
+{
+    TEST("memccpy copy until char found");
+    char dst1[32] = {0};
+    const char *src1 = "hello world";
+    void *result1 = memccpy(dst1, src1, 'w', 32);
+    ASSERT(result1 == (void *)(dst1 + 7), "returns ptr after 'w'");
+    ASSERT_INT_EQ(memcmp(dst1, "hello w", 7), 0, "copied up to 'w'");
+    PASS();
+
+    TEST("memccpy char not found returns NULL");
+    char dst2[32] = {0};
+    void *result2 = memccpy(dst2, "hello", 'z', 32);
+    ASSERT(result2 == NULL, "char not found returns NULL");
+    ASSERT_INT_EQ(memcmp(dst2, "hello", 6), 0, "all bytes copied even without match");
+    PASS();
+
+    TEST("memccpy zero bytes");
+    char dst3[32] = "unchanged";
+    char orig3[32];
+    memcpy(orig3, dst3, 10);
+    void *result3 = memccpy(dst3, "new", 'x', 0);
+    ASSERT(result3 == NULL, "zero length returns NULL");
+    ASSERT_INT_EQ(memcmp(dst3, orig3, 10), 0, "no change with n=0");
+    PASS();
+
+    TEST("memccpy first byte matches");
+    char dst4[32] = {0};
+    void *result4 = memccpy(dst4, "abc", 'a', 32);
+    ASSERT(result4 == (void *)(dst4 + 1), "first byte matches, returns ptr after");
+    ASSERT_INT_EQ(dst4[0], 'a', "first byte copied");
+    ASSERT_INT_EQ(dst4[1], 0, "stopped after first byte");
+    PASS();
+
+    TEST("memccpy last byte matches");
+    char dst5[32] = {0};
+    void *result5 = memccpy(dst5, "abcdef", 'f', 32);
+    ASSERT(result5 == (void *)(dst5 + 6), "last byte matches");
+    ASSERT_INT_EQ(memcmp(dst5, "abcdef", 7), 0, "all bytes copied");
+    PASS();
+
+    TEST("memccpy null byte in middle");
+    char dst6[32] = {0};
+    unsigned char src6[] = {'a', 'b', '\0', 'c', 'd'};
+    void *result6 = memccpy(dst6, src6, '\0', 5);
+    ASSERT(result6 == (void *)(dst6 + 3), "null byte found at offset 2, return ptr after");
+    ASSERT_INT_EQ((unsigned char)dst6[0], 'a', "first byte");
+    ASSERT_INT_EQ((unsigned char)dst6[1], 'b', "second byte");
+    ASSERT_INT_EQ((unsigned char)dst6[2], '\0', "null byte copied");
+    PASS();
+
+    TEST("memccpy n smaller than match position");
+    char dst7[8] = {0};
+    memset(dst7, 0xAA, 4);
+    void *result7 = memccpy(dst7, "abcdef", 'f', 3);
+    ASSERT(result7 == NULL, "n too small, char not found");
+    ASSERT_INT_EQ(memcmp(dst7, "abc", 3), 0, "first 3 bytes copied");
+    PASS();
+}
+
+/* ===================================================================
+ *  Extended string function tests (string_ext.c)
+ * =================================================================== */
+
+static void test_strlcpy_func(void)
+{
+    TEST("strlcpy basic copy");
+    char buf[16];
+    memset(buf, 'X', sizeof(buf));
+    size_t ret = strlcpy(buf, "hello", sizeof(buf));
+    ASSERT_INT_EQ((int)ret, 5, "returns strlen of src");
+    ASSERT_STR_EQ(buf, "hello", "copied string");
+    ASSERT_INT_EQ((unsigned char)buf[10], 'X', "rest of buffer unchanged");
+    PASS();
+
+    TEST("strlcpy truncation");
+    char tbuf[4];
+    memset(tbuf, 'X', sizeof(tbuf));
+    size_t tret = strlcpy(tbuf, "hello world", sizeof(tbuf));
+    ASSERT_INT_EQ((int)tret, 11, "returns strlen of src (not truncated)");
+    ASSERT_INT_EQ(memcmp(tbuf, "hel", 3), 0, "truncated to 3 chars");
+    ASSERT_INT_EQ((unsigned char)tbuf[3], '\0', "null-terminated");
+    PASS();
+
+    TEST("strlcpy exact fit");
+    char fbuf[4];
+    memset(fbuf, 'X', sizeof(fbuf));
+    strlcpy(fbuf, "abc", sizeof(fbuf));
+    ASSERT_STR_EQ(fbuf, "abc", "exact fit");
+    PASS();
+
+    TEST("strlcpy size=0");
+    char zbuf[16] = "unchanged";
+    size_t zret = strlcpy(zbuf, "new", 0);
+    ASSERT_INT_EQ((int)zret, 3, "returns strlen of src");
+    ASSERT_STR_EQ(zbuf, "unchanged", "buffer unchanged with size=0");
+    PASS();
+
+    TEST("strlcpy empty src");
+    char ebuf[16] = "XXXXXXXXXXXXX";
+    strlcpy(ebuf, "", sizeof(ebuf));
+    ASSERT_STR_EQ(ebuf, "", "empty src produces empty string");
+    PASS();
+}
+
+static void test_strlcat_func(void)
+{
+    TEST("strlcat basic concatenation");
+    char buf[16] = "hello";
+    size_t ret = strlcat(buf, " world", sizeof(buf));
+    ASSERT_INT_EQ((int)ret, 11, "returns total length (5+6)");
+    ASSERT_STR_EQ(buf, "hello world", "concatenated");
+    PASS();
+
+    TEST("strlcat truncation");
+    char tbuf[8] = "ab";
+    size_t tret = strlcat(tbuf, "cdefghijklmnop", sizeof(tbuf));
+    ASSERT_INT_EQ((int)tret, 16, "returns theoretical total length (2+14)");
+    ASSERT_STR_EQ(tbuf, "abcdefg", "truncated to 7 chars (2+5) with null");
+    PASS();
+
+    TEST("strlcat to empty dest");
+    char ebuf[16] = "";
+    strlcat(ebuf, "hello", sizeof(ebuf));
+    ASSERT_STR_EQ(ebuf, "hello", "append to empty dest");
+    PASS();
+
+    TEST("strlcat size=0");
+    char zbuf[16] = "test";
+    size_t zret = strlcat(zbuf, "extra", 0);
+    ASSERT_INT_EQ((int)zret, 5, "returns strlen(src) when size=0");
+    ASSERT_STR_EQ(zbuf, "test", "buffer unchanged with size=0");
+    PASS();
+
+    TEST("strlcat full buffer (no space)");
+    char fbuf[4] = "abc";
+    size_t fret = strlcat(fbuf, "d", sizeof(fbuf));
+    ASSERT_INT_EQ((int)fret, 4, "returns total length");
+    ASSERT(strlen(fbuf) <= 3, "buffer does not overflow");
+    PASS();
+}
+
+static void test_strcasecmp_func(void)
+{
+    TEST("strcasecmp equal strings");
+    ASSERT_INT_EQ(strcasecmp("hello", "hello"), 0, "identical strings");
+    PASS();
+
+    TEST("strcasecmp case difference");
+    ASSERT_INT_EQ(strcasecmp("HELLO", "hello"), 0, "case-insensitive equal");
+    PASS();
+
+    TEST("strcasecmp mixed case");
+    ASSERT_INT_EQ(strcasecmp("HeLLo", "hElLo"), 0, "mixed case equal");
+    PASS();
+
+    TEST("strcasecmp different strings");
+    ASSERT(strcasecmp("abc", "abd") < 0, "\"abc\" < \"abd\"");
+    ASSERT(strcasecmp("abd", "abc") > 0, "\"abd\" > \"abc\"");
+    PASS();
+
+    TEST("strcasecmp different case");
+    ASSERT(strcasecmp("ABC", "abd") < 0, "ABC < abd (case-insensitive)");
+    PASS();
+
+    TEST("strcasecmp empty strings");
+    ASSERT_INT_EQ(strcasecmp("", ""), 0, "empty strings");
+    PASS();
+
+    TEST("strcasecmp string with prefix");
+    ASSERT(strcasecmp("hello", "HELLO, WORLD") < 0, "shorter string < longer (case-insensitive)");
+    PASS();
+}
+
+static void test_strncasecmp_func(void)
+{
+    TEST("strncasecmp equal strings");
+    ASSERT_INT_EQ(strncasecmp("hello", "hello", 5), 0, "identical strings");
+    PASS();
+
+    TEST("strncasecmp case difference within n");
+    ASSERT_INT_EQ(strncasecmp("HELLO", "hello", 5), 0, "case-insensitive within n");
+    PASS();
+
+    TEST("strncasecmp n=0");
+    ASSERT_INT_EQ(strncasecmp("abc", "xyz", 0), 0, "n=0 returns 0");
+    PASS();
+
+    TEST("strncasecmp prefix match");
+    ASSERT_INT_EQ(strncasecmp("HELLO", "hello, world", 5), 0, "prefix match first 5 chars");
+    PASS();
+
+    TEST("strncasecmp different case, different string");
+    ASSERT(strncasecmp("ABC", "abb", 3) > 0, "ABC > abb case-insensitive");
+    PASS();
+
+    TEST("strncasecmp different within n");
+    ASSERT(strncasecmp("abc", "abd", 3) < 0, "abc < abd at n=3");
+    PASS();
+}
+
+static void test_strchrnul_func(void)
+{
+    TEST("strchrnul char found");
+    ASSERT(strchrnul("hello", 'e') == (void *)("hello" + 1),
+           "finds 'e' at offset 1");
+    PASS();
+
+    TEST("strchrnul char not found returns end pointer");
+    ASSERT(strchrnul("hello", 'z') == (void *)("hello" + 5),
+           "not found returns pointer to null terminator");
+    PASS();
+
+    TEST("strchrnul empty string");
+    ASSERT(strchrnul("", 'a') == (void *)(""),
+           "empty string returns pointer to null");
+    ASSERT(strchrnul("", '\0') == (void *)(""),
+           "empty string null byte returns start");
+    PASS();
+
+    TEST("strchrnul null terminator");
+    ASSERT(strchrnul("test", '\0') == (void *)("test" + 4),
+           "null terminator found at end");
+    PASS();
+
+    TEST("strchrnul first char matches");
+    ASSERT(strchrnul("abc", 'a') == (void *)("abc"),
+           "first char matches, returned");
+    PASS();
+}
+
+static void test_strcasestr_func(void)
+{
+    TEST("strcasestr find at start");
+    ASSERT(strcasestr("hello world", "HELLO") == (void *)"hello world",
+           "case-insensitive find at start");
+    PASS();
+
+    TEST("strcasestr find in middle");
+    ASSERT_STR_EQ(strcasestr("hello WORLD", "world"),
+                  "WORLD", "case-insensitive find in middle");
+    PASS();
+
+    TEST("strcasestr not found");
+    ASSERT(strcasestr("hello", "xyz") == NULL, "needle not found");
+    PASS();
+
+    TEST("strcasestr empty needle");
+    ASSERT(strcasestr("hello", "") == (void *)"hello",
+           "empty needle returns haystack");
+    PASS();
+
+    TEST("strcasestr mixed case needle");
+    ASSERT_STR_EQ(strcasestr("Hello World", "woRlD"),
+                  "World", "mixed case needle");
+    PASS();
+
+    TEST("strcasestr empty haystack");
+    ASSERT(strcasestr("", "a") == NULL, "empty haystack returns NULL");
+    ASSERT(strcasestr("", "") == (void *)"", "both empty returns haystack");
+    PASS();
+
+    TEST("strcasestr repeated pattern");
+    ASSERT_STR_EQ(strcasestr("abABab", "aba"), "abABab",
+                  "first occurrence of multiple, case-insensitive");
+    PASS();
+}
+
+/* ===================================================================
  *  stdlib function tests
  * =================================================================== */
 
@@ -1527,6 +1856,8 @@ int main(void)
     test_strspn();
     test_strcspn();
     test_strpbrk();
+    test_strnlen();
+    test_memccpy();
 
     /* --- stdlib.h tests --- */
     printf("\n--- stdlib.h ---\n");
@@ -1544,6 +1875,15 @@ int main(void)
     test_sprintf_padding();
     test_sprintf_multiple();
     test_snprintf();
+
+    /* --- string_ext.h tests --- */
+    printf("\n--- string_ext.h ---\n");
+    test_strlcpy_func();
+    test_strlcat_func();
+    test_strcasecmp_func();
+    test_strncasecmp_func();
+    test_strchrnul_func();
+    test_strcasestr_func();
 
     /* --- Summary --- */
     printf("\n=== Results: %d/%d passed, %d failed ===\n",

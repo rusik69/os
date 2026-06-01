@@ -27,6 +27,8 @@ char *strsep(char **stringp, const char *delim);
 size_t strspn(const char *s, const char *accept);
 size_t strcspn(const char *s, const char *reject);
 char *strpbrk(const char *s, const char *accept);
+size_t strnlen(const char *s, size_t maxlen);
+void *memccpy(void *dest, const void *src, int c, size_t n);
 
 /* Character classification — inline for zero overhead */
 static inline int isdigit(int c)  { return c >= '0' && c <= '9'; }

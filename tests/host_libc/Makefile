@@ -12,7 +12,7 @@ CFLAGS = -DTEST_MODE_HOST \
 # Source files — only compile the pure-logic libc implementation files.
 # libc.c is excluded because it contains only syscall wrappers (kernel-specific).
 SRCDIR = ../../src/lib
-OBJS = stubs.o string.o stdlib.o printf.o test_libc.o
+OBJS = stubs.o string.o stdlib.o printf.o string_ext.o test_libc.o
 
 .PHONY: all clean
 
@@ -36,12 +36,16 @@ stdlib.o: $(SRCDIR)/stdlib.c
 printf.o: $(SRCDIR)/printf.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+string_ext.o: $(SRCDIR)/string_ext.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 test_libc.o: test_libc.c
 	$(CC) $(CFLAGS) \
 	  -Wno-memset-transposed-args \
 	  -Wno-format \
 	  -Wno-stringop-truncation \
 	  -Wno-stringop-overflow \
+	  -Wno-stringop-overread \
 	  -c -o $@ $<
 
 clean:
