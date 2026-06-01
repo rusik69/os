@@ -6,11 +6,16 @@
  * held by a low-priority task, the holder is temporarily boosted
  * to the waiter's priority. On unlock, the original priority is
  * restored.
+ *
+ * Integrates with lockdep for deadlock detection and provides
+ * owner-tracking debug helpers (mutex_owner(), mutex_owner_name(),
+ * mutex_is_locked()).
  */
 #include "mutex.h"
 #include "scheduler.h"
 #include "process.h"
 #include "string.h"
+#include "lockdep.h"
 
 #define MUTEX_MAX 32
 #define MUTEX_WAITERS_MAX 8
@@ -56,6 +61,9 @@ void mutex_lock(int id) {
     struct process *self = process_get_current();
     if (!self) return;
 
+    /* Lockdep: check if we already hold this mutex (recursive deadlock) */
+    lock_acquire("mutex", (uint64_t)&mutexes[id]);
+
     for (;;) {
         __asm__ volatile("cli");
         if (!m->locked) {
@@ -93,6 +101,9 @@ void mutex_unlock(int id) {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return;
     struct mutex_entry *m = &mutexes[id];
 
+    /* Lockdep: release before unlocking */
+    lock_release("mutex", (uint64_t)&mutexes[id]);
+
     /* Restore owner's original priority */
     restore_owner(m);
 
@@ -106,6 +117,11 @@ void mutex_destroy(int id) {
     if (id < 0 || id >= MUTEX_MAX) return;
     struct mutex_entry *m = &mutexes[id];
 
+    /* If held, force-release lockdep tracking */
+    if (mutexes[id].locked) {
+        lock_release("mutex", (uint64_t)&mutexes[id]);
+    }
+
     /* Restore owner priority before destroying */
     restore_owner(m);
 
@@ -114,6 +130,25 @@ void mutex_destroy(int id) {
     mutexes[id].owner_pid = 0;
     mutexes[id].waiter_count = 0;
     mutexes[id].highest_waiter_prio = 9;
+}
+
+/* ── Owner tracking debug helpers ──────────────────────────────────── */
+
+uint32_t mutex_owner(int id) {
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return 0;
+    return mutexes[id].locked ? mutexes[id].owner_pid : 0;
+}
+
+const char *mutex_owner_name(int id) {
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use || !mutexes[id].locked)
+        return NULL;
+    struct process *owner = process_get_by_pid(mutexes[id].owner_pid);
+    return owner ? owner->name : NULL;
+}
+
+int mutex_is_locked(int id) {
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return 0;
+    return mutexes[id].locked ? 1 : 0;
 }
 
 /* ── Priority inheritance helpers ──────────────────────────────────── */

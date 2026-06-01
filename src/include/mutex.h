@@ -10,6 +10,17 @@ void mutex_lock(int id);
 void mutex_unlock(int id);
 void mutex_destroy(int id);
 
+/* ── Owner tracking / debug helpers ───────────────────────────── */
+
+/* Returns PID of current mutex owner, or 0 if unlocked/invalid. */
+uint32_t mutex_owner(int id);
+
+/* Returns name of current mutex owner, or NULL if unlocked/invalid. */
+const char *mutex_owner_name(int id);
+
+/* Returns 1 if mutex is locked, 0 if free (or invalid id). */
+int mutex_is_locked(int id);
+
 /* Priority Inheritance tracking — boost array indexed by PID */
 #define MUTEX_MAX_PI_BOOST 256
 extern uint8_t mutex_boost[MUTEX_MAX_PI_BOOST];
