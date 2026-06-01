@@ -184,6 +184,11 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/find_bit.c \
          src/lib/mempool.c \
          src/lib/crc16.c \
+         src/lib/string_ext.c \
+         src/lib/stdlib_ext.c \
+         src/lib/search.c \
+         src/lib/errno_ext.c \
+         src/lib/assert.c \
          src/kernel/rwsem.c \
          src/kernel/x2apic.c \
          src/kernel/tsc_deadline.c \
@@ -224,7 +229,17 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/fs_mount_prop.c \
          src/kernel/net_igmp.c \
          src/kernel/net_lldp.c \
-         src/kernel/aio_enhanced.c
+         src/kernel/aio_enhanced.c \
+         src/kernel/range.c \
+         src/kernel/hashtable.c \
+         src/kernel/interval_tree.c \
+         src/kernel/prio_tree.c \
+         src/kernel/bitfield.c \
+         src/kernel/hweight.c \
+         src/kernel/sort_ext.c \
+         src/kernel/timer_source.c \
+         src/kernel/klist.c \
+         src/kernel/cpu_bitmask.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

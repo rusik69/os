@@ -48,7 +48,8 @@ void cmd_hostname(void);
 void cmd_env(void);
 void cmd_xxd(const char *args);
 void cmd_sleep(const char *args);
-void cmd_seq(const char *args);
+int cmd_seq(int argc, char **argv);
+int cmd_cal(int argc, char **argv);
 void cmd_arp(void);
 void cmd_route(void);
 void cmd_uname(void);
@@ -69,12 +70,12 @@ void cmd_bg(const char *args);
 void cmd_wait(const char *args);
 
 /* Additional tool commands */
-void cmd_tee(const char *args);
+int cmd_tee(int argc, char **argv);
 void cmd_cut(const char *args);
 void cmd_paste(const char *args);
 void cmd_basename(const char *args);
 void cmd_dirname(const char *args);
-void cmd_yes(const char *args);
+int cmd_yes(int argc, char **argv);
 void cmd_rev(const char *args);
 void cmd_nl(const char *args);
 void cmd_du(const char *args);
@@ -123,9 +124,9 @@ void cmd_capprof(const char *args);
 void cmd_service(const char *args);
 
 /* New text processing utilities */
-void cmd_fold(const char *args);
-void cmd_expand(const char *args);
-void cmd_comm(const char *args);
+int cmd_fold(int argc, char **argv);
+int cmd_expand(int argc, char **argv);
+int cmd_comm(int argc, char **argv);
 void cmd_split(const char *args);
 
 /* New system utilities */
@@ -175,11 +176,11 @@ void cmd_shuf(const char *args);
 void cmd_logname(const char *args);
 void cmd_who(const char *args);
 void cmd_banner(const char *args);
-void cmd_tsort(const char *args);
-void cmd_join(const char *args);
+int cmd_tsort(int argc, char **argv);
+int cmd_join(int argc, char **argv);
 void cmd_sum(const char *args);
 void cmd_sync(void);
-void cmd_unexpand(const char *args);
+int cmd_unexpand(int argc, char **argv);
 void cmd_bt(void);
 
 /* Phase 8 — new shell commands */
@@ -200,7 +201,7 @@ void cmd_chgrp(const char *args);
 void cmd_hostid(const char *args);
 void cmd_arch(const char *args);
 void cmd_factor(const char *args);
-void cmd_fmt(const char *args);
+int cmd_fmt(int argc, char **argv);
 void cmd_mktemp(const char *args);
 void cmd_pathchk(const char *args);
 void cmd_size(const char *args);
@@ -259,7 +260,7 @@ void cmd_zipsplit(const char *args);
 void cmd_less(const char *args);
 void cmd_ed(const char *args);
 void cmd_patch(const char *args);
-void cmd_pr(const char *args);
+int cmd_pr(int argc, char **argv);
 void cmd_look(const char *args);
 void cmd_locale(const char *args);
 void cmd_localedef(const char *args);

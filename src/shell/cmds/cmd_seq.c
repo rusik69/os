@@ -1,24 +1,44 @@
-/* cmd_seq.c — seq command */
+/* cmd_seq.c -- Print a sequence of numbers */
 #include "shell_cmds.h"
+#include "libc.h"
 #include "printf.h"
+#include "string.h"
+#include "stdlib.h"
+#include "types.h"
 
-static uint32_t parse_uint(const char **s) {
-    uint32_t v = 0;
-    while (**s >= '0' && **s <= '9') { v = v * 10 + (**s - '0'); (*s)++; }
-    return v;
-}
+int cmd_seq(int argc, char **argv) {
+    long first = 1, inc = 1, last;
 
-void cmd_seq(const char *args) {
-    if (!args) { kprintf("Usage: seq <end> or seq <start> <end>\n"); return; }
-    const char *p = args;
-    uint32_t a = parse_uint(&p);
-    while (*p == ' ') p++;
-    uint32_t start = 1, end = a;
-    if (*p >= '0' && *p <= '9') {
-        start = a;
-        end = parse_uint(&p);
+    if (argc < 2) {
+        kprintf("Usage: seq [FIRST [INCREMENT]] LAST\n");
+        return 1;
     }
-    if (end > 1000) end = 1000;
-    for (uint32_t i = start; i <= end; i++)
-        kprintf("%u\n", (uint64_t)i);
+
+    if (argc == 2) {
+        last = atol(argv[1]);
+    } else if (argc == 3) {
+        first = atol(argv[1]);
+        last  = atol(argv[2]);
+    } else if (argc == 4) {
+        first = atol(argv[1]);
+        inc   = atol(argv[2]);
+        last  = atol(argv[3]);
+    } else {
+        kprintf("seq: too many arguments\n");
+        return 1;
+    }
+
+    if (inc == 0) {
+        kprintf("seq: increment cannot be zero\n");
+        return 1;
+    }
+
+    if (inc > 0) {
+        for (long i = first; i <= last; i += inc)
+            kprintf("%ld\n", i);
+    } else {
+        for (long i = first; i >= last; i += inc)
+            kprintf("%ld\n", i);
+    }
+    return 0;
 }

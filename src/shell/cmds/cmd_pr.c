@@ -1,56 +1,102 @@
-/* cmd_pr.c — paginate/file print (simple column formatter) */
+/* cmd_pr.c -- Paginate files for printing (headers, page numbers) */
 #include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"
+#include "types.h"
 
-void cmd_pr(const char *args) {
-    if (!args || !args[0]) {
-        kprintf("Usage: pr <file>\n");
-        return;
-    }
+int cmd_pr(int argc, char **argv) {
+    int page_size = 66;
+    int header_cols = 1;
+    int optind = 1;
 
-    char path[64];
-    const char *p = args;
-    int i = 0;
-    while (*p && *p != ' ' && i < 63) path[i++] = *p++;
-    path[i] = '\0';
-
-    char fpath[64];
-    if (path[0] != '/') { fpath[0] = '/'; strncpy(fpath+1, path, 62); }
-    else strncpy(fpath, path, 63);
-    fpath[63] = '\0';
-
-    static char buf[8192];
-    uint32_t size = 0;
-    if (vfs_read(fpath, buf, sizeof(buf)-1, &size) != 0) {
-        kprintf("pr: cannot read '%s'\n", fpath);
-        return;
-    }
-    buf[size] = '\0';
-
-    /* Add page headers and line numbers */
-    int line_no = 1;
-    int page_no = 1;
-    kprintf("=== Page %d ===\n", page_no);
-    char *line = buf;
-    for (uint32_t idx = 0; idx < size; idx++) {
-        if (buf[idx] == '\n') {
-            buf[idx] = '\0';
-            kprintf("  %4d  %s\n", line_no, line);
-            buf[idx] = '\n';
-            line = buf + idx + 1;
-            line_no++;
-            if (line_no % 66 == 0) {
-                page_no++;
-                kprintf("=== Page %d ===\n", page_no);
+    while (optind < argc && argv[optind][0] == '-') {
+        if (strcmp(argv[optind], "-l") == 0) {
+            if (optind + 1 >= argc) {
+                kprintf("pr: -l requires an argument\n");
+                return 1;
             }
+            page_size = atoi(argv[optind + 1]);
+            if (page_size < 1) page_size = 1;
+            optind += 2;
+        } else if (strcmp(argv[optind], "--") == 0) {
+            optind++; break;
+        } else {
+            kprintf("pr: unknown option '%s'\n", argv[optind]);
+            return 1;
         }
     }
-    /* Last line if not empty */
-    if (line < buf + size) {
-        kprintf("  %4d  %s\n", line_no, line);
+
+    /* We may read from stdin or a file */
+    static char fbuf[32768];
+    uint32_t fsize = 0;
+    const char *filename = "stdin";
+
+    if (optind < argc) {
+        char path[64];
+        const char *fn = argv[optind];
+        filename = fn;
+        if (fn[0] != '/') { path[0] = '/'; strncpy(path + 1, fn, 61); path[62] = '\0'; }
+        else { strncpy(path, fn, 63); path[63] = '\0'; }
+        int pl = (int)strlen(path);
+        while (pl > 0 && path[pl - 1] == ' ') path[--pl] = '\0';
+        if (vfs_read(path, fbuf, (uint32_t)(sizeof(fbuf) - 1), &fsize) != 0) {
+            kprintf("pr: cannot read '%s'\n", fn);
+            return 1;
+        }
+        fbuf[fsize] = '\0';
+    } else {
+        if (!shell_has_stdin()) {
+            kprintf("Usage: pr [-l PAGESIZE] [file]\n");
+            return 1;
+        }
+        fsize = (uint32_t)shell_stdin_read(fbuf, (int)sizeof(fbuf) - 1);
+        fbuf[fsize] = '\0';
     }
 
-    (void)page_no;
+    /* Get current time for header */
+    struct libc_rtc_time tm;
+    int has_time = (libc_rtc_get_time(&tm) == 0);
+
+    /* Page numbering */
+    int page_num = 1;
+    int line_on_page = 0;
+
+    /* Write header */
+    void write_header(void) {
+        if (has_time) {
+            kprintf("%04d-%02d-%02d %02d:%02d  %s  Page %d\n\n",
+                    tm.year, tm.month, tm.day,
+                    tm.hour, tm.minute,
+                    filename, page_num);
+        } else {
+            kprintf("%s  Page %d\n\n", filename, page_num);
+        }
+        line_on_page = 2; /* header + blank line */
+    }
+
+    write_header();
+
+    /* Output each line */
+    char *p = fbuf;
+    while (*p) {
+        char line[4096];
+        int li = 0;
+        while (*p && *p != '\n' && li < 4095)
+            line[li++] = *p++;
+        line[li] = '\0';
+        if (*p == '\n') p++;
+
+        kprintf("%s\n", line);
+        line_on_page++;
+
+        if (line_on_page >= page_size) {
+            /* Form feed */
+            kprintf("\f");
+            page_num++;
+            write_header();
+        }
+    }
+    return 0;
 }

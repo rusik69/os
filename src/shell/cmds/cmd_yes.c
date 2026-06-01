@@ -1,12 +1,18 @@
-/* cmd_yes.c — Output a string repeatedly */
-
+/* cmd_yes.c -- Repeatedly output 'y' or a given string */
 #include "shell_cmds.h"
+#include "libc.h"
 #include "printf.h"
+#include "string.h"
+#include "stdlib.h"
+#include "types.h"
 
-void cmd_yes(const char *args) {
-    const char *str = (args && args[0]) ? args : "y";
-    /* Print limited number of lines (no infinite loop in kernel) */
-    for (int i = 0; i < 20; i++) {
+int cmd_yes(int argc, char **argv) {
+    const char *str = "y";
+    if (argc >= 2)
+        str = argv[1];
+
+    for (;;) {
         kprintf("%s\n", str);
     }
+    return 0; /* unreachable */
 }

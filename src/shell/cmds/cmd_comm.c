@@ -1,99 +1,99 @@
-/* cmd_comm.c — compare two sorted files line by line */
+/* cmd_comm.c -- Compare two sorted files line by line */
 #include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"
+#include "types.h"
 
-/* comm: compare sorted files A and B, printing:
- *   col1: lines only in A
- *   col2: lines only in B
- *   col3: lines in both
- * Options: -1 suppress col1, -2 suppress col2, -3 suppress col3
- */
-void cmd_comm(const char *args) {
-    if (!args || !args[0]) {
+/* Read a file into a static buffer. Returns number of lines or -1 on error. */
+static int read_file_lines(const char *path, char *buf, int bufsz,
+                           char *lines[], int max_lines)
+{
+    uint32_t size = 0;
+    char fullpath[64];
+    if (path[0] != '/') {
+        fullpath[0] = '/';
+        strncpy(fullpath + 1, path, 61);
+        fullpath[62] = '\0';
+    } else {
+        strncpy(fullpath, path, 63);
+        fullpath[63] = '\0';
+    }
+    /* Trim trailing spaces */
+    int pl = (int)strlen(fullpath);
+    while (pl > 0 && fullpath[pl - 1] == ' ') fullpath[--pl] = '\0';
+
+    if (vfs_read(fullpath, buf, (uint32_t)(bufsz - 1), &size) != 0) {
+        kprintf("comm: cannot read '%s'\n", path);
+        return -1;
+    }
+    buf[size] = '\0';
+
+    int n = 0;
+    char *p = buf;
+    while (*p && n < max_lines) {
+        lines[n++] = p;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') { *p = '\0'; p++; }
+    }
+    return n;
+}
+
+int cmd_comm(int argc, char **argv) {
+    int flag1 = 1, flag2 = 1, flag3 = 1;
+    int i = 1;
+
+    while (i < argc && argv[i][0] == '-') {
+        char *opt = argv[i] + 1;
+        while (*opt) {
+            if (*opt == '1')      flag1 = 0;
+            else if (*opt == '2') flag2 = 0;
+            else if (*opt == '3') flag3 = 0;
+            else {
+                kprintf("comm: invalid option -- '%c'\n", *opt);
+                return 1;
+            }
+            opt++;
+        }
+        i++;
+    }
+
+    if (argc - i < 2) {
         kprintf("Usage: comm [-123] <file1> <file2>\n");
-        return;
+        return 1;
     }
 
-    int sup1 = 0, sup2 = 0, sup3 = 0;
-    const char *p = args;
+    static char buf1[8192], buf2[8192];
+    char *lines1[1024], *lines2[1024];
 
-    while (*p == '-') {
-        p++;
-        while (*p && *p != ' ') {
-            if (*p == '1') sup1 = 1;
-            else if (*p == '2') sup2 = 1;
-            else if (*p == '3') sup3 = 1;
-            p++;
-        }
-        while (*p == ' ') p++;
-    }
+    int n1 = read_file_lines(argv[i], buf1, sizeof(buf1), lines1, 1024);
+    if (n1 < 0) return 1;
+    int n2 = read_file_lines(argv[i + 1], buf2, sizeof(buf2), lines2, 1024);
+    if (n2 < 0) return 1;
 
-    /* Parse two filenames */
-    char path1[64], path2[64];
-    int i = 0;
-    while (*p && *p != ' ' && i < 63) path1[i++] = *p++;
-    path1[i] = '\0';
-    while (*p == ' ') p++;
-    i = 0;
-    while (*p && *p != ' ' && i < 63) path2[i++] = *p++;
-    path2[i] = '\0';
-
-    if (!path1[0] || !path2[0]) { kprintf("comm: need two files\n"); return; }
-
-    /* Prepend / if needed */
-    char f1[64], f2[64];
-    if (path1[0] != '/') { f1[0] = '/'; strncpy(f1+1, path1, 62); }
-    else strncpy(f1, path1, 63);
-    f1[63] = '\0';
-    if (path2[0] != '/') { f2[0] = '/'; strncpy(f2+1, path2, 62); }
-    else strncpy(f2, path2, 63);
-    f2[63] = '\0';
-
-    static char buf1[4096], buf2[4096];
-    uint32_t s1 = 0, s2 = 0;
-    if (vfs_read(f1, buf1, sizeof(buf1)-1, &s1) != 0) {
-        kprintf("comm: cannot read '%s'\n", f1); return;
-    }
-    if (vfs_read(f2, buf2, sizeof(buf2)-1, &s2) != 0) {
-        kprintf("comm: cannot read '%s'\n", f2); return;
-    }
-    buf1[s1] = '\0'; buf2[s2] = '\0';
-
-    /* Split into line arrays */
-    char *lines1[256], *lines2[256];
-    int n1 = 0, n2 = 0;
-    char *q = buf1;
-    while (*q && n1 < 256) {
-        lines1[n1++] = q;
-        while (*q && *q != '\n') q++;
-        if (*q == '\n') { *q++ = '\0'; }
-    }
-    q = buf2;
-    while (*q && n2 < 256) {
-        lines2[n2++] = q;
-        while (*q && *q != '\n') q++;
-        if (*q == '\n') { *q++ = '\0'; }
-    }
-
-    /* Merge compare */
-    int i1 = 0, i2 = 0;
-    while (i1 < n1 || i2 < n2) {
-        int cmp;
-        if (i1 >= n1) cmp = 1;
-        else if (i2 >= n2) cmp = -1;
-        else cmp = strcmp(lines1[i1], lines2[i2]);
-
+    int idx1 = 0, idx2 = 0;
+    while (idx1 < n1 && idx2 < n2) {
+        int cmp = strcmp(lines1[idx1], lines2[idx2]);
         if (cmp < 0) {
-            if (!sup1) kprintf("%s\n", lines1[i1]);
-            i1++;
+            if (flag1) kprintf("%s\n", lines1[idx1]);
+            idx1++;
         } else if (cmp > 0) {
-            if (!sup2) kprintf("\t%s\n", lines2[i2]);
-            i2++;
+            if (flag2) kprintf("\t%s\n", lines2[idx2]);
+            idx2++;
         } else {
-            if (!sup3) kprintf("\t\t%s\n", lines1[i1]);
-            i1++; i2++;
+            if (flag3) kprintf("\t\t%s\n", lines1[idx1]);
+            idx1++;
+            idx2++;
         }
     }
+    while (idx1 < n1) {
+        if (flag1) kprintf("%s\n", lines1[idx1]);
+        idx1++;
+    }
+    while (idx2 < n2) {
+        if (flag2) kprintf("\t%s\n", lines2[idx2]);
+        idx2++;
+    }
+    return 0;
 }
