@@ -83,6 +83,7 @@ static const KW kwtab[] = {
     {"union",    TK_UNION},
     {"volatile", TK_VOLATILE},
     {"restrict", TK_RESTRICT},
+    {"_Bool",    TK_CHAR},    /* treat _Bool as char (1 byte) */
     {"auto",     TK_STATIC},  /* treat auto as static (ignored) */
     {0, TK_EOF}
 };
@@ -285,8 +286,34 @@ void cc_lex(CompilerState *cc) {
                 while (i < len && s[i] != '\n') i++;
             } else if (strcmp(dir, "endif") == 0) {
                 while (i < len && s[i] != '\n') i++;
+            } else if (strcmp(dir, "error") == 0) {
+                /* #error "message" — stop with error */
+                while (i < len && (s[i]==' '||s[i]=='\t')) i++;
+                /* copy the message into errmsg */
+                char errbuf[128]; int ei=0;
+                if (i < len && s[i] == '"') {
+                    i++;
+                    while (i < len && s[i] != '"' && ei < 126) errbuf[ei++] = s[i++];
+                    if (i < len && s[i] == '"') i++;
+                } else {
+                    while (i < len && s[i] != '\n' && ei < 126) errbuf[ei++] = s[i++];
+                }
+                errbuf[ei] = '\0';
+                /* Use sprintf-like error with #error prefix */
+                char fullmsg[160];
+                int fi = 0;
+                const char *ep = "#error: ";
+                while (*ep && fi < 150) fullmsg[fi++] = *ep++;
+                int ei2 = 0;
+                while (errbuf[ei2] && fi < 158) fullmsg[fi++] = errbuf[ei2++];
+                fullmsg[fi] = '\0';
+                cc_error(cc, fullmsg);
+                while (i < len && s[i] != '\n') i++;
+            } else if (strcmp(dir, "pragma") == 0) {
+                /* #pragma ... — silently skip (handles once, pack, etc.) */
+                while (i < len && s[i] != '\n') i++;
             } else {
-                /* unknown directive (#include, #pragma, etc.) — skip line */
+                /* unknown directive (#include, etc.) — skip line */
                 while (i < len && s[i] != '\n') i++;
             }
             continue;
@@ -385,6 +412,17 @@ void cc_lex(CompilerState *cc) {
                     t->type = kwtab[k].type;
                     break;
                 }
+            }
+            /* __FILE__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__FILE__") == 0) {
+                t->type = TK_STRLIT;
+                strncpy(t->sval, cc->filename, 63);
+                t->sval[63] = '\0';
+            }
+            /* __LINE__ predefined macro */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__LINE__") == 0) {
+                t->type = TK_INTLIT;
+                t->ival = line;
             }
             /* macro expansion */
             if (t->type == TK_IDENT) {

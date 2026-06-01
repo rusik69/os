@@ -2774,6 +2774,7 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
     memset(cc, 0, sizeof(CompilerState));
     cc->src_len = 0;
     cc->src[0] = '\0';
+    strncpy(cc->filename, inpath, sizeof(cc->filename) - 1);
 
     if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
         if (cc_mutex >= 0) mutex_unlock(cc_mutex);
@@ -2812,6 +2813,7 @@ static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) 
     memset(cc, 0, sizeof(CompilerState));
     cc->src_len = 0;
     cc->src[0] = '\0';
+    strncpy(cc->filename, inpath, sizeof(cc->filename) - 1);
     cc->obj_mode = 1;
 
     if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {

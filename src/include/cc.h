@@ -69,6 +69,7 @@ typedef struct {
     int  ptr_depth;   /* number of * levels (0 = not pointer) */
     int  struct_idx;  /* index into cc->structs[] for TY_STRUCT */
     int  arr_size;    /* number of elements for TY_ARRAY */
+    int  is_unsigned; /* 1 = unsigned type */
 } TypeDesc;
 
 typedef struct {
@@ -209,6 +210,8 @@ typedef struct {
     char     errmsg[256]; /* extended to hold line number prefix */
 
     int      main_offset;  /* offset of main() in code[] */
+
+    char     filename[256]; /* source filename for __FILE__ */
 } CompilerState;
 
 void cc_lex(CompilerState *cc);

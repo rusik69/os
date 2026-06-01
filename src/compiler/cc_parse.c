@@ -390,6 +390,9 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
         td->kind = TY_INT; advance(cc);
         /* skip optional 'int' after 'long' */
         if (cur(cc)->type == TK_INT) advance(cc);
+        else if (cur(cc)->type == TK_CHAR) { td->kind = TY_CHAR; advance(cc); }
+        /* skip optional second 'long' for 'long long' */
+        if (cur(cc)->type == TK_LONG) advance(cc);
     } else if (cur(cc)->type == TK_SHORT) {
         td->kind = TY_INT; advance(cc);
         if (cur(cc)->type == TK_INT) advance(cc);
@@ -418,7 +421,7 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
     } else {
         /* Fallback for multi-word like 'unsigned long long' already handled */
     }
-    (void)is_unsigned; /* unsigned just changes signedness; we use 64-bit everywhere */
+    td->is_unsigned = is_unsigned;
 done_base:
     /* consume const after type */
     if (cur(cc)->type == TK_CONST) advance(cc);
@@ -1970,7 +1973,7 @@ void cc_parse(CompilerState *cc) {
                             Symbol *g = &cc->globals[cc->nglobals++];
                             strncpy(g->name, ename, 31);
                             TypeDesc etd; etd.kind=TY_INT; etd.ptr_depth=0;
-                            etd.struct_idx=-1; etd.arr_size=0;
+                            etd.struct_idx=-1; etd.arr_size=0; etd.is_unsigned=0;
                             g->type = etd;
                             g->is_global = 1; g->is_param = 0;
                             int off = cc->data_len;
