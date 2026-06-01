@@ -13,6 +13,12 @@
 #define PSTORE_TYPE_PANIC     2
 #define PSTORE_TYPE_OOPS      3
 #define PSTORE_TYPE_EMERG     4
+#define PSTORE_TYPE_DMESG_COMPRESSED  5
+#define PSTORE_TYPE_PANIC_COMPRESSED  6
+#define PSTORE_TYPE_OOPS_COMPRESSED   7
+
+/* Compression threshold: records larger than this are compressed */
+#define PSTORE_COMPRESS_THRESH  64
 
 /* Header for each pstore record */
 struct pstore_record {
