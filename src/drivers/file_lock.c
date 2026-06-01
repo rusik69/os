@@ -4,12 +4,13 @@
 #include "string.h"
 #include "list.h"
 #include "spinlock.h"
+#include "list.h"
 #include "file_lock.h"
 static spinlock_t flock_lock;
 static struct list_head flock_list;
 void file_lock_init(void) {
     spinlock_init(&flock_lock);
-    list_init(&flock_list);
+    INIT_LIST_HEAD(&flock_list);
 }
 int file_lock_set(const char *path, int type) {
     if (!path) return -1;

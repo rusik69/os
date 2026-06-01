@@ -250,9 +250,9 @@ static void test_heap_ext(void) {
 static void test_timer(void) {
     uint64_t t0 = timer_get_ticks();
 
-    /* Spin so at least one tick fires (reduced for TCG emulation) */
-    volatile uint64_t i;
-    for (i = 0; i < 20000ULL; i++);
+    /* Brief spin; under TCG emulation 'volatile' loops are extremely slow
+     * so we keep this minimal — just enough for one tick at 100 Hz. */
+    for (volatile int i = 0; i < 1000; i++);
 
     uint64_t t1 = timer_get_ticks();
     ASSERT("ticks advance", t1 >= t0);
