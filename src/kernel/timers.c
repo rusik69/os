@@ -20,7 +20,6 @@ static struct {
 
 static spinlock_t g_timers_lock;
 static int g_timers_initialized = 0;
-static int g_next_timer_id = 0;
 
 void timers_init(void) {
     memset(g_timers, 0, sizeof(g_timers));

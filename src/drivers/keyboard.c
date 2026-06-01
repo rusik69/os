@@ -87,15 +87,6 @@ static void key_set_down(uint8_t sc, int down) {
         key_down[sc] = down ? 1 : 0;
 }
 
-/* Send a command byte to the keyboard controller */
-static void kb_send_cmd(uint8_t cmd) {
-    /* Wait for KB controller to be ready */
-    uint32_t timeout = 100000;
-    while (timeout-- && (inb(KB_CMD_PORT) & 0x02))
-        __asm__ volatile("pause");
-    outb(KB_CMD_PORT, cmd);
-}
-
 /* Send data to the keyboard */
 static void kb_write_data(uint8_t data) {
     uint32_t timeout = 100000;

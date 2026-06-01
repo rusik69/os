@@ -11,19 +11,6 @@ static struct blk_request_queue g_queues[BLOCKDEV_MAX_DEVICES];
 static spinlock_t g_dev_lock;
 static int g_initialized = 0;
 
-/* ── Legacy adapter ───────────────────────────────────────────────── */
-
-struct legacy_adapter {
-    blockdev_read_fn  read_fn;
-    blockdev_write_fn write_fn;
-};
-
-static int legacy_submit_fn(struct blk_request *req) {
-    struct legacy_adapter *ad = (struct legacy_adapter *)req->buf;
-    (void)ad;
-    return -1;
-}
-
 /* ── Request slab cache ───────────────────────────────────────────── */
 
 struct blk_request *blk_request_alloc(void) {

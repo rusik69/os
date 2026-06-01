@@ -1,3 +1,11 @@
+/*
+ * src/drivers/timer.c — PIT-based system timer.
+ *
+ * Drives the scheduler, dynamic timers, timerfd, and POSIX per-process
+ * timers on every tick.  Handles PIT → PIC → I/O APIC ExtINT routing.
+ */
+#define KERNEL_INTERNAL
+
 #include "timer.h"
 #include "timers.h"
 #include "idt.h"
@@ -7,7 +15,7 @@
 #include "process.h"
 #include "apic.h"
 #include "printf.h"
-#include "syscall.h" /* for timerfd_tick */
+#include "syscall.h"   /* timerfd_tick, posix_timer_tick */
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
