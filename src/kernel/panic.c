@@ -12,6 +12,180 @@
 #include "kallsyms.h"
 #include "pstore.h"
 #include "notifier.h"
+#include "watchdog.h"
+
+/*
+ * ── Panic timeout ─────────────────────────────────────────────────
+ *
+ * After a panic, instead of hanging forever the system will reset
+ * after `panic_timeout` seconds.  Set to 0 to disable (infinite hang).
+ */
+int panic_timeout = 30;  /* default: reset after 30 seconds */
+
+static uint64_t g_tsc_freq_hz = 0;  /* Calibrated TSC frequency in Hz */
+
+/*
+ * Read the x86 Time-Stamp Counter (RDTSC).
+ * Serialising via CPUID to ensure monotonicity across CPUs.
+ */
+static inline uint64_t rdtsc(void)
+{
+    uint32_t lo, hi;
+    /* CPUID serialisation prevents instruction reordering across RDTSC */
+    __asm__ volatile(
+        "cpuid\n\t"
+        "rdtsc\n\t"
+        : "=a"(lo), "=d"(hi)
+        : "a"(0)
+        : "rbx", "rcx"
+    );
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/*
+ * Calibrate the TSC frequency using the PIT channel 2.
+ *
+ * We program the PIT in one-shot mode with a known count, measure the
+ * elapsed TSC ticks, and compute the frequency.  This works even with
+ * interrupts disabled because the PIT is a hardware counter.
+ *
+ * On platforms where PIT is unavailable (e.g. HPET-only chipsets) we
+ * fall back to CPUID leaf 0x15 if available, else a safe default.
+ */
+static void calibrate_tsc(void)
+{
+    /* ── Attempt 1: CPUID leaf 0x15 (TSC / core crystal clock ratio) ── */
+    {
+        uint32_t eax, ebx, ecx, edx;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x15));
+        if (ecx != 0 && ebx != 0 && eax != 0) {
+            /* TSC frequency = ecx * ebx / eax  (in Hz if ecx is Hz) */
+            g_tsc_freq_hz = (uint64_t)ecx * (uint64_t)ebx / (uint64_t)eax;
+            if (g_tsc_freq_hz > 0)
+                return;
+        }
+    }
+
+    /* ── Attempt 2: CPUID leaf 0x16 (Processor Base Frequency in MHz) ── */
+    {
+        uint32_t eax, ebx, ecx, edx;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x16));
+        if (eax > 0) {
+            g_tsc_freq_hz = (uint64_t)eax * 1000000ULL;
+            return;
+        }
+    }
+
+    /* ── Attempt 3: PIT-based calibration ───────────────────────────── */
+    {
+        const uint16_t pit_count = 65535;  /* max count for longest delay */
+        const uint32_t pit_rate_hz = 1193182;  /* PIT input clock */
+
+        /* Set PIT channel 2: one-shot, mode 0, binary */
+        cli();
+        outb(0x43, 0xB0);
+        outb(0x42, pit_count & 0xFF);
+        outb(0x42, (pit_count >> 8) & 0xFF);
+
+        /* Make sure the gate is high (bit 0 of port 0x61) */
+        uint8_t gate = inb(0x61);
+        outb(0x61, gate | 1);
+
+        uint64_t tsc_start = rdtsc();
+
+        /* Wait for the PIT to count down to zero (OUT bit = bit 5 of port 0x61) */
+        while (!(inb(0x61) & 0x20));
+
+        uint64_t tsc_end = rdtsc();
+
+        /* Compute TSC frequency */
+        uint64_t elapsed_tsc = tsc_end - tsc_start;
+        /* Total time = pit_count / pit_rate_hz seconds */
+        /* TSC freq = elapsed_tsc * pit_rate_hz / pit_count */
+        g_tsc_freq_hz = elapsed_tsc * (uint64_t)pit_rate_hz / (uint64_t)pit_count;
+
+        if (g_tsc_freq_hz > 0)
+            return;
+    }
+
+    /* ── Fallback: assume 2 GHz ─────────────────────────────────── */
+    g_tsc_freq_hz = 2000000000ULL;
+}
+
+/*
+ * Return the estimated TSC frequency in Hz (cached from calibration).
+ */
+uint64_t panic_get_tsc_freq(void)
+{
+    return g_tsc_freq_hz;
+}
+
+/*
+ * Set the panic timeout.  Pass 0 to disable timeout-based reset
+ * (system hangs forever on panic, as before).
+ */
+void panic_set_timeout(int seconds)
+{
+    if (seconds < 0)
+        seconds = 0;
+    panic_timeout = seconds;
+}
+
+/*
+ * Panic halt loop — replaces the old `for (;;) hlt()`.
+ *
+ * If panic_timeout > 0, the system will attempt to reset after that
+ * many seconds.  During the waiting period we print periodic messages
+ * so the user/operator can observe the countdown.
+ */
+static __attribute__((noreturn))
+void panic_halt_loop(void)
+{
+    if (panic_timeout <= 0 || g_tsc_freq_hz == 0) {
+        /* Legacy behaviour: hang forever */
+        for (;;) hlt();
+    }
+
+    uint64_t start_tsc = rdtsc();
+    uint64_t timeout_ticks = (uint64_t)panic_timeout * g_tsc_freq_hz;
+    int last_reported = 0;
+
+    for (;;) {
+        uint64_t now = rdtsc();
+        uint64_t elapsed = (now - start_tsc);
+
+        /* Check for TSC wraparound (extremely rare, but handle it) */
+        if (now < start_tsc) {
+            /* TSC wrapped; restart measurement */
+            start_tsc = now;
+            continue;
+        }
+
+        /* Report progress every 5 seconds */
+        int elapsed_sec = (int)(elapsed / g_tsc_freq_hz);
+        if (elapsed_sec >= last_reported + 5) {
+            int remaining = panic_timeout - elapsed_sec;
+            if (remaining > 0) {
+                kprintf("panic: System will reset in %d seconds... (Ctrl-Alt-Del to halt)\n",
+                        remaining);
+            } else {
+                kprintf("panic: Timeout reached — resetting system\n");
+            }
+            last_reported = elapsed_sec;
+        }
+
+        if (elapsed >= timeout_ticks) {
+            /* Timeout expired — trigger system reset */
+            watchdog_system_reset();
+        }
+
+        /* Brief pause to reduce power consumption while polling */
+        for (volatile int i = 0; i < 10000; i++) {
+            __asm__ volatile("pause");
+        }
+        io_wait();
+    }
+}
 
 /*
  * Save kernel panic state to the persistent storage region (pstore)
@@ -128,7 +302,7 @@ static void kdump_save_panic(const char *msg)
         int frame = 0;
         const char *sym;
 
-        len = snprintf(buf, sizeof(buf), "Stack trace:");
+        len = snprintf(buf, sizeof(buf), "Stack trace:"); /* Linux format */
         if (len > 0) {
             if (len >= (int)sizeof(buf))
                 len = (int)sizeof(buf) - 1;
@@ -288,11 +462,15 @@ void panic(const char *fmt, ...) {
     /* Notify panic notifier chain (releases spinlocks, etc.) */
     notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
 
-    kprintf("=== SYSTEM HALTED ===\n");
+    kprintf("=== SYSTEM HALTED (will reset in %d seconds) ===\n", panic_timeout);
 
-    for (;;) hlt();
+    /* Enter the timeout-based halt loop (replaces old `for (;;) hlt()`) */
+    panic_halt_loop();
 }
 
 void panic_init(void) {
-    kprintf("[OK] Panic/oops handler initialized (kdump to pstore enabled)\n");
+    calibrate_tsc();
+
+    kprintf("[OK] Panic/oops handler initialized (timeout=%ds, TSC=%llu MHz)\n",
+            panic_timeout, (unsigned long long)(g_tsc_freq_hz / 1000000));
 }

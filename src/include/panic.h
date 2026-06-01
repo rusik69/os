@@ -11,7 +11,7 @@
  *   WARN_ON(condition);
  *   dump_stack();
  *
- * A BUG_ON hit calls dump_regs + dump_stack then halts.
+ * A BUG_ON hit calls dump_regs + dump_stack then panics.
  * A WARN_ON hit calls dump_stack but continues.
  * A PANIC halts the system after printing.
  */
@@ -29,12 +29,33 @@ void dump_regs(void);
 /* Set up exception stack for better backtraces */
 void panic_init(void);
 
+/*
+ * Panic timeout in seconds.  When panic() is called, instead of hanging
+ * forever, the system will attempt to reset after this many seconds.
+ * Set to 0 to disable the timeout (infinite hang, legacy behaviour).
+ * Default: 30 seconds.
+ */
+extern int panic_timeout;
+
+/*
+ * Set the panic timeout.  Pass 0 to disable timeout-based reset
+ * (system will hang forever on panic as before).
+ */
+void panic_set_timeout(int seconds);
+
+/*
+ * Return the estimated TSC frequency in Hz (calibrated during panic_init).
+ * Returns 0 if not yet calibrated.  Useful for other subsystems that
+ * need a rough TSC-based time measurement.
+ */
+uint64_t panic_get_tsc_freq(void);
+
 /* Helper macros */
 #define BUG_ON(cond) do { \
     if (__builtin_expect(!!(cond), 0)) { \
         kprintf("BUG at %s:%d: " #cond "\n", __FILE__, __LINE__); \
         dump_stack(); \
-        cli(); for(;;) hlt(); \
+        panic("BUG at %s:%d: %s", __FILE__, __LINE__, #cond); \
     } \
 } while(0)
 

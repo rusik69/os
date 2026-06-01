@@ -10,6 +10,7 @@
 #include "panic.h"
 #include "apic.h"
 #include "smp.h"
+#include "string.h"
 
 /* ── Per-CPU watchdog data ───────────────────────────────────────── */
 static struct nmi_watchdog_cpu watchdog_per_cpu[SMP_MAX_CPUS];

@@ -28,4 +28,19 @@ void watchdog_set_pretimeout(int secs);
    Pass NULL to clear the callback. */
 void watchdog_set_pretimeout_fn(watchdog_pretimeout_fn_t fn);
 
+/* ── System reset (usable from interrupt-disabled panic context) ──── */
+
+/*
+ * Attempt to reset the machine using multiple fallback methods:
+ *   1. ACPI reset register (FADT RESET_REG)
+ *   2. Keyboard controller (port 0x64, 0xFE)
+ *   3. Legacy reset ports (0x604 BX_RST, 0xB004)
+ *   4. Triple-fault via zero-IDT trick
+ *
+ * This function never returns — if all reset methods fail it halts.
+ * Safe to call with interrupts disabled.
+ */
+__attribute__((noreturn))
+void watchdog_system_reset(void);
+
 #endif /* WATCHDOG_H */

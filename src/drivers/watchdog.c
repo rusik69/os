@@ -1,10 +1,13 @@
 /*
- * watchdog.c — Software watchdog timer
+ * watchdog.c — Software watchdog timer and system reset
  *
  * Uses the dynamic timer subsystem to implement a software watchdog.
  * If watchdog_pet() is not called within the timeout period, the system
  * is rebooted via the keyboard controller reset port.
  * Supports a pretimeout callback that fires before the full timeout.
+ *
+ * Also provides watchdog_system_reset() — a multi-method machine reset
+ * usable from interrupt-disabled contexts (e.g., panic).
  */
 
 #include "watchdog.h"
@@ -129,4 +132,64 @@ void watchdog_set_pretimeout(int secs) {
 
 void watchdog_set_pretimeout_fn(watchdog_pretimeout_fn_t fn) {
     g_pretimeout_fn = fn;
+}
+
+/*
+ * watchdog_system_reset — Multi-method machine reset usable from panic
+ *
+ * Attempts the following reset methods in order:
+ *   1. ACPI reset register (via acpi_reboot)
+ *   2. Keyboard controller (0x64, 0xFE)
+ *   3. Legacy chipset reset ports (0x604 BX_RST, 0xB004)
+ *   4. Triple-fault by loading an IDT with zero limit
+ *   5. Infinite halt as last resort
+ *
+ * This function never returns.
+ */
+__attribute__((noreturn))
+void watchdog_system_reset(void)
+{
+    /* Attempt ACPI reset register (FADT RESET_REG) if available */
+    extern int acpi_find_reset_register(void);
+    if (acpi_find_reset_register()) {
+        extern void acpi_reboot(void);
+        acpi_reboot();
+        /* If we're still alive, acpi_reboot failed — continue */
+    }
+
+    kprintf("watchdog: Trying keyboard controller reset...\n");
+
+    /* Method 2: Keyboard controller (standard PC/AT reset) */
+    cli();
+    for (int i = 0; i < 3; i++) {
+        outb(0x64, 0xFE);
+        io_wait();
+    }
+
+    kprintf("watchdog: Trying legacy chipset reset ports...\n");
+
+    /* Method 3: Legacy chipset reset ports (Bochs/QEMU, real hw) */
+    outw(0x604, 0x2000); /* BX_RST — Bochs/QEMU reset port */
+    io_wait();
+    outw(0xB004, 0x2000); /* QEMU/KVM alternative */
+    io_wait();
+    outw(0xCF9, 0x06);    /* Intel ICH/PCH reset control — hard reset */
+    io_wait();
+
+    kprintf("watchdog: Trying triple-fault reset...\n");
+
+    /* Method 4: Triple fault — load zero-length IDT and trigger an interrupt.
+     * The CPU will attempt to read the IDT, get a limit=0 fault, which in
+     * protected mode triggers a triple-fault and resets the machine. */
+    __asm__ volatile(
+        "movw $0, %%ax\n\t"
+        "lidt (%%rax)\n\t"
+        "int3\n\t"
+        : : : "memory"
+    );
+
+    kprintf("watchdog: All reset methods failed — system halted\n");
+
+    /* Last resort */
+    for (;;) hlt();
 }
