@@ -167,6 +167,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("rmdir",       "Remove empty directory",                                     cmd_rmdir)
     CMD("shred",       "Overwrite file with random data before unlinking",           cmd_shred)
     CMD("size",        "Print size of sections in ELF file",                         cmd_size)
+    CMD("ssh",         "SSH client (ssh <user>@<host>[:port])",                       cmd_ssh)
+    CMD("sshd",        "Manage SSH server (sshd start|stop|status)",                  cmd_sshd)
     CMD("taskset",     "Get/set CPU affinity for processes",                         cmd_taskset)
     CMD("truncate",    "Shrink or extend file to specified size",                    cmd_truncate)
     CMD("tty",         "Print terminal device name",                                 cmd_tty)

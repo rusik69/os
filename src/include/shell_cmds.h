@@ -322,4 +322,8 @@ int cmd_dnsdomainname(int argc, char **argv);
 int cmd_dos2unix(int argc, char **argv);
 int cmd_eject(int argc, char **argv);
 int cmd_fgconsole(int argc, char **argv);
+
+/* SSH commands */
+void cmd_ssh(const char *args);
+void cmd_sshd(const char *args);
 #endif

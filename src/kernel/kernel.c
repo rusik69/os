@@ -31,6 +31,7 @@
 #include "wireguard.h"
 #include "ipvs.h"
 #include "telnetd.h"
+#include "ssh.h"
 #include "rtc.h"
 #include "mouse.h"
 #include "speaker.h"
@@ -608,8 +609,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         /* Register & start services */
         service_register("telnetd", telnetd_start, telnetd_stop);
         service_register("httpd",   httpd_start,   httpd_stop);
+        service_register("sshd",   sshd_start,    sshd_stop);
         service_start("telnetd");
         service_start("httpd");
+        service_start("sshd");
         kprintf("[OK] Services started\n");
 
         /* Multicast group management (IGMP) */
