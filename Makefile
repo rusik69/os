@@ -169,6 +169,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/libc.c \
          src/lib/stdio.c \
          src/lib/unistd.c \
+         src/lib/signal_libc.c \
          src/drivers/xattr.c \
          src/drivers/file_lock.c \
          src/drivers/kaps.c \
