@@ -43,4 +43,11 @@ void pipe_init(void);
 void pipe_set_nonblock(int pipe_id, int nonblock);
 void pipe_set_sigio(int pipe_id, uint32_t pid);
 
+/* Poll a pipe for readiness.
+ * @pipe_id     Pipe index
+ * @is_read_end 1 for read end, 0 for write end
+ * @return      Bitmask of POLLIN|POLLOUT|POLLHUP|POLLERR|POLLNVAL
+ */
+int pipe_poll(int pipe_id, int is_read_end);
+
 #endif

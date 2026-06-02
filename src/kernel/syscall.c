@@ -3411,12 +3411,26 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
             }
 
             int fd_idx = fds[i].fd;
-            (void)fd_idx;
+            struct process_fd *pfd = &p->fd_table[fd_idx];
+            int revents = 0;
 
-            /* For now, assume all open fds are readable/writable.
-             * A real implementation would check fd type and state. */
-            if (fds[i].events & POLLIN)  fds[i].revents |= POLLIN;
-            if (fds[i].events & POLLOUT) fds[i].revents |= POLLOUT;
+            /* Determine fd type and check readiness */
+            if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
+                /* Pipe read end */
+                int pipe_id = (int)pfd->offset;
+                revents = pipe_poll(pipe_id, 1 /* is_read_end */);
+            } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
+                /* Pipe write end */
+                int pipe_id = (int)pfd->offset;
+                revents = pipe_poll(pipe_id, 0 /* is_write_end */);
+            } else {
+                /* Regular file / other: always readable and writable */
+                if (fds[i].events & POLLIN)  revents |= POLLIN;
+                if (fds[i].events & POLLOUT) revents |= POLLOUT;
+            }
+
+            /* Mask with requested events — only report what was asked for */
+            fds[i].revents = revents & fds[i].events;
 
             if (fds[i].revents) ready++;
         }

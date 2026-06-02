@@ -4,6 +4,7 @@
 #include "signal.h"
 #include "process.h"
 #include "timer.h"
+#include "syscall.h"
 
 static struct pipe pipe_table[PIPE_MAX];
 
@@ -159,4 +160,36 @@ void pipe_set_sigio(int pipe_id, uint32_t pid) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return;
     pipe_table[pipe_id].sigio_pid = pid;
+}
+
+/* ── pipe_poll: check pipe readiness for poll()/select() ─────────── */
+
+int pipe_poll(int pipe_id, int is_read_end) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX)
+        return POLLNVAL;
+
+    struct pipe *p = &pipe_table[pipe_id];
+    if (!p->in_use)
+        return POLLNVAL;
+
+    int revents = 0;
+
+    if (is_read_end) {
+        /* Read end: readable if data available or write side closed (EOF) */
+        if (p->count > 0) {
+            revents |= POLLIN;
+        } else if (p->writers == 0) {
+            revents |= POLLIN;   /* EOF — read returns 0 */
+            revents |= POLLHUP;  /* hung up */
+        }
+    } else {
+        /* Write end: writable if space available */
+        if (p->count < PIPE_BUF_SIZE) {
+            revents |= POLLOUT;
+        } else if (p->readers == 0) {
+            revents |= POLLERR;  /* broken pipe — no readers */
+        }
+    }
+
+    return revents;
 }
