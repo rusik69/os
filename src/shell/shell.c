@@ -14,6 +14,9 @@
 #include "process.h"
 #include "scheduler.h"
 
+/* Forward declaration for fnmatch (defined in lib/stdlib.c) */
+int fnmatch(const char *pattern, const char *string, int flags);
+
 #define MAX_VAR_NAME 32
 #define MAX_VAR_VALUE 128
 
@@ -1165,6 +1168,209 @@ static char   s_if_block_body[IF_BLOCK_BODY_MAX];
 static int    s_if_block_len  = 0;
 static int    s_if_block_depth = 0;  /* nested if depth */
 
+/* Case-block accumulation state */
+#define CASE_BLOCK_BODY_MAX 2048
+static int    s_in_case_block   = 0;
+static char   s_case_block_body[CASE_BLOCK_BODY_MAX];
+static int    s_case_block_len  = 0;
+static int    s_case_block_depth = 0;  /* nested case depth */
+
+/*
+ * Parse and execute a case word / in / PATTERN) COMMANDS ;; esac block.
+ *
+ * Syntax:
+ *   case WORD in
+ *     PATTERN1) COMMANDS1 ;;
+ *     PATTERN2|PATTERN3) COMMANDS2 ;;
+ *     *) DEFAULT ;;
+ *   esac
+ *
+ * Returns the exit status of the executed branch, or 0 if no pattern matched.
+ */
+static int process_case_block(const char *block) {
+    if (!block || !*block) return 0;
+
+    /* Work on a mutable copy */
+    char buf[CASE_BLOCK_BODY_MAX];
+    strncpy(buf, block, CASE_BLOCK_BODY_MAX - 1);
+    buf[CASE_BLOCK_BODY_MAX - 1] = '\0';
+
+    /* Strip leading whitespace */
+    char *p = buf;
+    while (*p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "case ", 5) != 0 && strncmp(p, "case\t", 5) != 0) {
+        return 0;
+    }
+    p += 4; /* skip "case" */
+    while (*p == ' ' || *p == '\t') p++;
+
+    if (!*p) return 0;
+
+    /* Extract the word (everything between "case" and "in") */
+    char word[128];
+    int wi = 0;
+    int in_sq = 0, in_dq = 0;
+    while (*p && wi < (int)sizeof(word) - 1) {
+        if (*p == '\'' && !in_dq) { in_sq = !in_sq; p++; continue; }
+        if (*p == '"'  && !in_sq) { in_dq = !in_dq; p++; continue; }
+        if (!in_sq && !in_dq &&
+            ((*p == ' ' || *p == '\t') && (strncmp(p, " in", 3) == 0 || strncmp(p, "\tin", 3) == 0)))
+            break;
+        word[wi++] = *p++;
+    }
+    word[wi] = '\0';
+
+    /* Skip whitespace and the "in" keyword */
+    while (*p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "in", 2) == 0) {
+        p += 2;
+        while (*p == ' ' || *p == '\t') p++;
+    }
+
+    /* If no word was extracted, fall back to executing normally */
+    if (wi == 0) return 0;
+
+    /* Now parse clauses separated by ;;, each with PATTERN) COMMANDS */
+    int executed = 0;
+    int last_status = 0;
+
+    while (*p && !executed) {
+        /* Skip whitespace and newlines */
+        while (*p == ' ' || *p == '\t' || *p == '\n') p++;
+        if (!*p) break;
+
+        /* Check for esac terminator */
+        if (strncmp(p, "esac", 4) == 0 &&
+            (*(p+4) == '\0' || *(p+4) == ' ' || *(p+4) == '\t' || *(p+4) == ';' || *(p+4) == '\n'))
+            break;
+
+        /* Extract pattern(s): everything up to ')' */
+        char pattern[128];
+        int pi = 0;
+        in_sq = 0; in_dq = 0;
+        while (*p && pi < (int)sizeof(pattern) - 1) {
+            if (*p == '\'' && !in_dq) { in_sq = !in_sq; p++; continue; }
+            if (*p == '"'  && !in_sq) { in_dq = !in_dq; p++; continue; }
+            if (!in_sq && !in_dq && *p == ')') break;
+            pattern[pi++] = *p++;
+        }
+        pattern[pi] = '\0';
+        if (*p == ')') p++; /* skip ')' */
+        while (*p == ' ' || *p == '\t') p++;
+
+        /* Extract commands: everything up to ;; or esac */
+        char commands[2048];
+        int ci = 0;
+        in_sq = 0; in_dq = 0;
+        int found_term = 0;
+        while (*p && ci < (int)sizeof(commands) - 1) {
+            if (*p == '\'' && !in_dq) { in_sq = !in_sq; commands[ci++] = *p++; continue; }
+            if (*p == '"'  && !in_sq) { in_dq = !in_dq; commands[ci++] = *p++; continue; }
+            if (!in_sq && !in_dq) {
+                /* Check for ;; terminator */
+                if (strncmp(p, ";;", 2) == 0) {
+                    found_term = 1;
+                    p += 2;
+                    break;
+                }
+                /* Check for esac terminator */
+                if (strncmp(p, "esac", 4) == 0 &&
+                    (*(p+4) == '\0' || *(p+4) == ' ' || *(p+4) == '\t' || *(p+4) == ';' || *(p+4) == '\n'))
+                    break;
+            }
+            commands[ci++] = *p++;
+        }
+        commands[ci] = '\0';
+
+        /* Try to match the word against the pattern(s).
+         * Patterns can be separated by | (alternatives). */
+        int matched = 0;
+        char pat_copy[128];
+        strncpy(pat_copy, pattern, sizeof(pat_copy) - 1);
+        pat_copy[sizeof(pat_copy) - 1] = '\0';
+
+        char *pat_token = pat_copy;
+        while (pat_token && *pat_token) {
+            /* Trim leading whitespace */
+            while (*pat_token == ' ' || *pat_token == '\t') pat_token++;
+            if (!*pat_token) break;
+
+            /* Find end of this alternative (| or end) */
+            char *pat_end = pat_token;
+            while (*pat_end && *pat_end != '|') pat_end++;
+            char saved = *pat_end;
+            if (*pat_end == '|') *pat_end = '\0';
+
+            /* Trim trailing whitespace */
+            char *pe = pat_end - 1;
+            while (pe >= pat_token && (*pe == ' ' || *pe == '\t')) *pe-- = '\0';
+
+            /* Check match — use fnmatch for wildcard patterns */
+            if (strcmp(pat_token, "*") == 0) {
+                matched = 1;
+            } else if (fnmatch(pat_token, word, 0) == 0) {
+                matched = 1;
+            }
+
+            *pat_end = saved;
+            if (*pat_end == '|')
+                pat_token = pat_end + 1;
+            else
+                break;
+
+            if (matched) break;
+        }
+
+        if (matched && !executed) {
+            /* Execute the commands */
+            executed = 1;
+
+            /* Strip leading/trailing whitespace/newlines from commands */
+            char *cmd_start = commands;
+            while (*cmd_start == ' ' || *cmd_start == '\t' || *cmd_start == '\n') cmd_start++;
+
+            if (*cmd_start) {
+                /* Execute each line of the commands */
+                char line_copy[2048];
+                strncpy(line_copy, cmd_start, sizeof(line_copy) - 1);
+                line_copy[sizeof(line_copy) - 1] = '\0';
+
+                char *line_save = NULL;
+                char *line = strtok_r(line_copy, "\n", &line_save);
+                while (line) {
+                    /* Trim whitespace */
+                    char *l = line;
+                    while (*l == ' ' || *l == '\t') l++;
+                    if (*l) {
+                        /* Execute the line as a shell command */
+                        char saved_cmd[CMD_BUF_SIZE];
+                        strncpy(saved_cmd, cmd_buf, CMD_BUF_SIZE - 1);
+                        saved_cmd[CMD_BUF_SIZE - 1] = '\0';
+                        int saved_len = cmd_len;
+
+                        strncpy(cmd_buf, l, CMD_BUF_SIZE - 1);
+                        cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                        cmd_len = strlen(cmd_buf);
+                        process_cmd();
+                        last_status = last_exit_status;
+
+                        strncpy(cmd_buf, saved_cmd, CMD_BUF_SIZE - 1);
+                        cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                        cmd_len = saved_len;
+                    }
+                    line = strtok_r(NULL, "\n", &line_save);
+                }
+            }
+            break;
+        }
+
+        /* If we found ;; but didn't match, continue to next clause */
+        if (!found_term) break;
+    }
+
+    return last_status;
+}
+
 /*
  * Parse and execute an if/then/elif/else/fi block.
  *
@@ -1782,6 +1988,74 @@ void shell_process_line(const char *line) {
         }
     }
 
+    /* --- Case-block accumulation (telnet path) --- */
+    if (s_in_case_block) {
+        const char *l = line;
+        while (*l == ' ' || *l == '\t') l++;
+        /* Count opening case keywords in this line for nesting */
+        for (const char *p = line; *p; p++) {
+            if ((strncmp(p, "case ", 5) == 0 || strncmp(p, "case\t", 5) == 0) &&
+                (p == line || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';'))
+                s_case_block_depth++;
+        }
+        if (strcmp(l, "esac") == 0 || strcmp(l, "esac;") == 0) {
+            s_case_block_depth--;
+            if (s_case_block_depth <= 0) {
+                /* Close case-block */
+                s_case_block_body[s_case_block_len] = '\0';
+                /* Process the complete case-block */
+                process_case_block(s_case_block_body);
+                s_in_case_block = 0;
+                s_case_block_len = 0;
+                return;
+            }
+        }
+        /* Append line to case-block body */
+        int ll = strlen(line);
+        if (s_case_block_len + ll + 1 < CASE_BLOCK_BODY_MAX) {
+            memcpy(s_case_block_body + s_case_block_len, line, ll);
+            s_case_block_len += ll;
+            s_case_block_body[s_case_block_len++] = '\n';
+        }
+        return;
+    }
+
+    /* --- Detect start of case-block (telnet path) --- */
+    {
+        const char *p = line;
+        while (*p == ' ') p++;
+        /* Check if line starts with "case " (word-level keyword) */
+        if ((strncmp(p, "case ", 5) == 0 || strncmp(p, "case\t", 5) == 0) &&
+            !(p[4] && p[4] != ' ' && p[4] != '\t')) {
+            /* Check if single-line (has both "in" and "esac") */
+            int has_in = 0, has_esac = 0;
+            int in_sq = 0, in_dq = 0;
+            for (const char *q = line; *q; q++) {
+                if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                if (in_sq || in_dq) continue;
+                if (strncmp(q, " in", 3) == 0 && (q == line || *(q-1) == ' ' || *(q-1) == '\t')) has_in = 1;
+                if (strncmp(q, "esac", 4) == 0 && (q == line || *(q-1) == ' ' || *(q-1) == '\t')) has_esac = 1;
+            }
+            if (has_in && has_esac) {
+                /* Single-line case: process immediately */
+                process_case_block(line);
+                return;
+            }
+            /* Multi-line case: start accumulation */
+            s_in_case_block = 1;
+            s_case_block_len = 0;
+            s_case_block_depth = 1;
+            int ll = strlen(line);
+            if (s_case_block_len + ll + 1 < CASE_BLOCK_BODY_MAX) {
+                memcpy(s_case_block_body + s_case_block_len, line, ll);
+                s_case_block_len += ll;
+                s_case_block_body[s_case_block_len++] = '\n';
+            }
+            return;
+        }
+    }
+
     /* --- If-block accumulation --- */
     if (s_in_if_block) {
         /* Check for "fi" terminator */
@@ -1985,8 +2259,14 @@ void shell_run(void) {
     static int    loop_block_len   = 0;
     static int    loop_block_depth = 0;
 
+    /* Case-block accumulation state (local to keyboard path) */
+    static int    in_case_block   = 0;
+    static char   case_block_body[CASE_BLOCK_BODY_MAX];
+    static int    case_block_len  = 0;
+    static int    case_block_depth = 0;
+
     for (;;) {
-        if (in_func_def || in_if_block || in_loop_block)
+        if (in_func_def || in_if_block || in_loop_block || in_case_block)
             kprintf("> ");
         else
             shell_prompt();
@@ -2000,7 +2280,7 @@ void shell_run(void) {
             if (c == '\n') {
                 putchar_both('\n');
                 cmd_buf[cmd_len] = '\0';
-                if (!in_func_def && !in_if_block && !in_loop_block) history_add(cmd_buf);
+                if (!in_func_def && !in_if_block && !in_loop_block && !in_case_block) history_add(cmd_buf);
 
                 /* --- If-block accumulation mode (keyboard path) --- */
                 if (in_if_block) {
@@ -2142,6 +2422,72 @@ void shell_run(void) {
                             memcpy(loop_block_body + loop_block_len, cmd_buf, ll);
                             loop_block_len += ll;
                             loop_block_body[loop_block_len++] = '\n';
+                        }
+                        break;
+                    }
+                }
+
+                /* --- Case-block accumulation mode (keyboard path) --- */
+                if (in_case_block) {
+                    const char *l = cmd_buf;
+                    while (*l == ' ' || *l == '\t') l++;
+                    /* Count case keywords in this line for nesting */
+                    for (const char *p = cmd_buf; *p; p++) {
+                        if ((strncmp(p, "case ", 5) == 0 || strncmp(p, "case\t", 5) == 0) &&
+                            (p == cmd_buf || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';'))
+                            case_block_depth++;
+                    }
+                    if (strcmp(l, "esac") == 0 || strcmp(l, "esac;") == 0) {
+                        case_block_depth--;
+                        if (case_block_depth <= 0) {
+                            /* Close case-block */
+                            case_block_body[case_block_len] = '\0';
+                            process_case_block(case_block_body);
+                            in_case_block = 0;
+                            case_block_len = 0;
+                            break;
+                        }
+                    }
+                    /* Append line to case-block body */
+                    int ll = strlen(cmd_buf);
+                    if (case_block_len + ll + 1 < CASE_BLOCK_BODY_MAX) {
+                        memcpy(case_block_body + case_block_len, cmd_buf, ll);
+                        case_block_len += ll;
+                        case_block_body[case_block_len++] = '\n';
+                    }
+                    break;
+                }
+
+                /* --- Detect start of case-block (keyboard path) --- */
+                {
+                    const char *p = cmd_buf;
+                    while (*p == ' ') p++;
+                    if ((strncmp(p, "case ", 5) == 0 || strncmp(p, "case\t", 5) == 0) &&
+                        !(p[4] && p[4] != ' ' && p[4] != '\t')) {
+                        /* Check if single-line (has both "in" and "esac") */
+                        int has_in = 0, has_esac = 0;
+                        int in_sq = 0, in_dq = 0;
+                        for (const char *q = cmd_buf; *q; q++) {
+                            if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                            if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                            if (in_sq || in_dq) continue;
+                            if (strncmp(q, " in", 3) == 0 && (q == cmd_buf || *(q-1) == ' ' || *(q-1) == '\t')) has_in = 1;
+                            if (strncmp(q, "esac", 4) == 0 && (q == cmd_buf || *(q-1) == ' ' || *(q-1) == '\t')) has_esac = 1;
+                        }
+                        if (has_in && has_esac) {
+                            /* Single-line case: process immediately */
+                            process_case_block(cmd_buf);
+                            break;
+                        }
+                        /* Multi-line case: start accumulation */
+                        in_case_block = 1;
+                        case_block_len = 0;
+                        case_block_depth = 1;
+                        int ll = strlen(cmd_buf);
+                        if (case_block_len + ll + 1 < CASE_BLOCK_BODY_MAX) {
+                            memcpy(case_block_body + case_block_len, cmd_buf, ll);
+                            case_block_len += ll;
+                            case_block_body[case_block_len++] = '\n';
                         }
                         break;
                     }
