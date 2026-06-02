@@ -136,6 +136,8 @@ struct vfs_ops {
     /* Optional: create device node */
     int (*mknod)(void *priv, const char *path, uint16_t mode,
                  uint16_t dev_major, uint16_t dev_minor);
+    /* Optional: flush / sync all cached data for this filesystem to backing store */
+    int (*flush)(void *priv);
 };
 
 /* A mounted filesystem */
@@ -229,6 +231,10 @@ int vfs_get_acl(const char *path, struct posix_acl *acl);
 
 /* Fallocate: pre-allocate disk space */
 int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
+
+/* Flush / sync operations */
+int vfs_flush(const char *path);     /* flush a single filesystem by path */
+int vfs_sync_all(void);              /* sync all mounted filesystems */
 
 /* File deduplication */
 int vfs_dedup(const char *path1, const char *path2);

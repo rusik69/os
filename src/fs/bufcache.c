@@ -377,6 +377,27 @@ void bufcache_flush_all(void) {
     bufcache_flush();
 }
 
+/* ── Flush dirty entries for a specific device ──────────────────────── */
+
+void bufcache_flush_dev(uint8_t dev_id) {
+    if (!g_initialized) return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+
+    for (int i = 0; i < BC_CAPACITY; i++) {
+        if (g_entries[i].valid && g_entries[i].dirty && g_entries[i].dev_id == dev_id) {
+            blockdev_write_sectors(g_entries[i].dev_id,
+                                    (uint32_t)g_entries[i].lba, 1,
+                                    g_entries[i].data);
+            g_writes++;
+            g_entries[i].dirty = 0;
+        }
+    }
+
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
+}
+
 /* ── Writeback: flush dirty pages without invalidating ──────────────── */
 
 int bufcache_writeback(void) {

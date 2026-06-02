@@ -9,6 +9,7 @@
 #include "syscall.h"
 #include "fsnotify.h"
 #include "tmpfs.h"
+#include "bufcache.h"
 
 #define EROFS_KERNEL 30
 
@@ -902,6 +903,43 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
     if (m->ops->mknod)
         return m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
     return -EOPNOTSUPP;
+}
+
+/* ── vfs_flush: flush cached writes for a filesystem identified by path ── */
+
+int vfs_flush(const char *path) {
+    if (!path) return -EINVAL;
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -ENOENT;
+
+    int ret = 0;
+
+    /* Call the filesystem-specific flush op if present */
+    if (m->ops->flush) {
+        ret = m->ops->flush(m->priv);
+    }
+
+    /* Flush the buffer cache (block device cache) to backing store */
+    bufcache_flush();
+
+    return ret;
+}
+
+/* ── vfs_sync_all: sync all mounted filesystems ───────────────────── */
+
+int vfs_sync_all(void) {
+    int ret = 0;
+    for (int i = 0; i < num_mounts; i++) {
+        if (mounts[i].ops->flush) {
+            int r = mounts[i].ops->flush(mounts[i].priv);
+            if (r < 0) ret = r;
+        }
+    }
+    /* Flush the global buffer cache */
+    bufcache_flush();
+    return ret;
 }
 
 void vfs_init(void) {

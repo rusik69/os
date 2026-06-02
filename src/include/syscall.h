@@ -281,6 +281,9 @@
 #define SYS_SYMLINKAT         293  /* symlinkat(target, newdirfd, linkpath) */
 #define SYS_READLINKAT        294  /* readlinkat(dirfd, path, buf, bufsize) */
 
+/* FD-oriented data synchronization */
+#define SYS_FDATASYNC         572  /* fdatasync(fd) → 0 or -1 */
+
 /* ── Memory management ──────────────────────────────────────── */
 #define SYS_GETDENTS64        295  /* getdents64(fd, dirp, count) → bytes */
 #define SYS_MLOCK             296  /* mlock(addr, len) → 0 or -1 */

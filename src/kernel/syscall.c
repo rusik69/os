@@ -1961,18 +1961,31 @@ static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
     return (uint64_t)fs_chmod(path, (uint16_t)mode);
 }
 
-/* ── fsync() ─────────────────────────────────────────────────── */
+/* ── fsync() / fdatasync() ─────────────────────────────────────── */
 
 static uint64_t sys_fsync(uint64_t fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (fd >= PROCESS_FD_MAX || !proc->fd_table[fd].used)
-        return (uint64_t)-1;
+    if (!proc) return (uint64_t)-EBADF;
 
-    /* For now, assume data is written through. In a real OS this would
-     * flush disk caches. We just validate the fd and return success. */
-    (void)fd;
+    /* Regular file fd (3+) */
+    if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
+        int i = (int)fd - 3;
+        if (i < 0 || i >= PROCESS_FD_MAX || !proc->fd_table[i].used)
+            return (uint64_t)-EBADF;
+
+        int ret = vfs_flush(proc->fd_table[i].path);
+        return (ret < 0) ? (uint64_t)-1 : 0;
+    }
+
+    /* For special fds (stdin/stdout/stderr, eventfd, timerfd, signalfd, sockets),
+     * fsync is a no-op (data is not buffered or not applicable) */
     return 0;
+}
+
+static uint64_t sys_fdatasync(uint64_t fd) {
+    /* In this kernel, we don't separate metadata from data flushing.
+     * fdatasync is equivalent to fsync. */
+    return sys_fsync(fd);
 }
 
 /* ── sigprocmask / sigpending ────────────────────────────────── */
@@ -5328,16 +5341,25 @@ static uint64_t sys_recvmmsg(uint64_t sockfd, uint64_t msgvec_addr,
 /* ── sync / syncfs ────────────────────────────────────────────────────── */
 
 static uint64_t sys_sync(void) {
-    /* Flush FAT filesystem if mounted */
-    extern int fat32_sync(void);
-    fat32_sync();
-    return 0;
+    /* Flush all mounted filesystems and the buffer cache */
+    return (uint64_t)vfs_sync_all();
 }
 
 static uint64_t sys_syncfs(uint64_t fd) {
-    (void)fd;
-    fat32_sync();
-    return 0;
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-EBADF;
+
+    /* Regular file fd (3+) */
+    if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
+        int i = (int)fd - 3;
+        if (i < 0 || i >= PROCESS_FD_MAX || !proc->fd_table[i].used)
+            return (uint64_t)-EBADF;
+
+        return (uint64_t)vfs_flush(proc->fd_table[i].path);
+    }
+
+    /* For special fds, fall back to global sync */
+    return (uint64_t)vfs_sync_all();
 }
 
 /* ── setsid / getsid ──────────────────────────────────────────────────── */
@@ -5807,6 +5829,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         }
         case SYS_SIGWAITINFO:     return sys_sigwaitinfo(a1, a2);
         case SYS_SIGTIMEDWAIT:    return sys_sigtimedwait(a1, a2, a3);
+        case SYS_FDATASYNC:       return sys_fdatasync(a1);
         case SYS_SET_ROBUST_LIST: return (uint64_t)sys_set_robust_list((struct robust_list_head*)a1, (size_t)a2);
         case SYS_GET_ROBUST_LIST: return (uint64_t)sys_get_robust_list((int)a1, (struct robust_list_head**)a2, (size_t*)a3);
         default: {

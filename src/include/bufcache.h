@@ -26,6 +26,7 @@ int   bufcache_write(uint64_t lba, uint8_t dev_id, const void *data);
 /* ── Flush / Invalidate ─────────────────────────────────────────────── */
 void bufcache_flush(void);         /* write back all dirty entries */
 void bufcache_flush_all(void);     /* alias */
+void bufcache_flush_dev(uint8_t dev_id); /* flush dirty entries for a specific device */
 void bufcache_invalidate(uint64_t lba, uint8_t dev_id);
 
 /* Writeback: flush dirty pages from cache */
