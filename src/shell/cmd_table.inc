@@ -31,6 +31,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("date",        "Show RTC date/time",                                    sh_date)
     CMD("df",          "Show disk usage",                                       sh_df)
     CMD("diff",        "Compare two files",                                     cmd_diff)
+    CMD("ncdu",        "Disk usage analyzer (ncdu [path])",                      cmd_ncdu)
     CMD("dirname",     "Extract directory from path",                           cmd_dirname)
     CMD("dmesg",       "Show boot log",                                         sh_dmesg)
     CMD("dns",         "Resolve hostname (dns <host>)",                         cmd_dns)

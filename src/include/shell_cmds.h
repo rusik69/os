@@ -84,6 +84,7 @@ void cmd_nl(const char *args);
 void cmd_du(const char *args);
 void cmd_id(const char *args);
 void cmd_diff(const char *args);
+void cmd_ncdu(const char *args);
 void cmd_md5sum(const char *args);
 void cmd_od(const char *args);
 void cmd_expr(const char *args);
