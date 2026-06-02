@@ -48,6 +48,7 @@
 #include "yama.h"
 #include "kptr_restrict.h"
 #include "dmesg.h"
+#include "aslr.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -530,9 +531,10 @@ static uint64_t sys_brk(uint64_t addr) {
     if (!p) return addr;
     if (!p->is_user || !p->pml4) return addr;
 
-    /* Track heap start/end — initialized lazily */
+    /* Track heap start/end — initialized lazily with ASLR offset */
     if (p->heap_end == 0) {
-        p->heap_end = 0x0000000002000000ULL; /* 32MB from code base */
+        uint64_t brk_aslr = aslr_brk_offset() * PAGE_SIZE;
+        p->heap_end = 0x0000000002000000ULL + brk_aslr;
     }
 
     if (addr == 0) return p->heap_end; /* brk(0) — get current */
@@ -1062,7 +1064,7 @@ static int nice_to_priority(int nice) {
 
 /* Return the "middle" nice value corresponding to a given priority level.
  * Used by getpriority to report a representative nice value. */
-static int priority_to_nice(int prio) {
+static int __attribute__((unused)) priority_to_nice(int prio) {
     switch (prio) {
         case 0: return -15;
         case 1: return  -5;
@@ -1316,13 +1318,16 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
-    /* If addr is 0, find a free region starting at 16MB.
+    /* If addr is 0, find a free region starting at a randomized base.
+     * Apply ASLR: shift the mmap search base by a random number of pages.
      * For large mappings (>= 2MB), search at 2MB granularity to enable
      * huge page use — this aligns the mapping and finds 2MB-aligned free
      * space more efficiently. */
     if (addr == 0) {
+        uint64_t mmap_base = 0x0000000001000000ULL +
+                             (aslr_mmap_offset() * PAGE_SIZE);
         if (length >= HUGE_PAGE_SIZE) {
-            addr = 0x0000000001000000ULL;
+            addr = mmap_base;
             /* Align start to 2MB boundary */
             addr = (addr + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1ULL);
             while (addr + length < USER_VADDR_MAX) {
@@ -1337,7 +1342,7 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
                 addr += HUGE_PAGE_SIZE;
             }
         } else {
-            addr = 0x0000000001000000ULL;
+            addr = mmap_base;
             while (addr + length < USER_VADDR_MAX) {
                 int free = 1;
                 for (uint64_t check = addr; check < addr + length; check += PAGE_SIZE) {
@@ -2419,6 +2424,14 @@ static uint64_t xorshift64(void) {
 /* Non-static PRNG accessor for use by other kernel subsystems (e.g. ASLR) */
 uint64_t prng_rand64(void) {
     return xorshift64();
+}
+
+/* Allow kernel subsystems to add external entropy to the PRNG.
+ * XORs the given entropy into the state to avoid reducing existing entropy. */
+void prng_add_entropy(uint64_t entropy) {
+    prng_state ^= entropy;
+    /* Mix one round to spread the bits */
+    xorshift64();
 }
 
 static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,

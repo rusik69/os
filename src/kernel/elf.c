@@ -1,13 +1,14 @@
 #define KERNEL_INTERNAL
 #include "elf.h"
-#include "vfs.h"
 #include "process.h"
-#include "heap.h"
-#include "string.h"
-#include "printf.h"
 #include "vmm.h"
 #include "pmm.h"
-#include "syscall.h" /* for prng_rand64 (ASLR) */
+#include "printf.h"
+#include "string.h"
+#include "heap.h"
+#include "vfs.h"
+#include "scheduler.h"
+#include "aslr.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE 65536
@@ -249,9 +250,12 @@ int elf_exec(const char *path) {
         /* Allocate user stack (16 pages = 64KB) with guard page at bottom.
          * The guard page (lowest page, at USER_STACK_TOP - USER_STACK_SIZE)
          * is deliberately left unmapped — a stack overflow will hit it and
-         * cause a page fault (SIGSEGV). */
-        uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-        for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < USER_STACK_TOP; va += PAGE_SIZE) {
+         * cause a page fault (SIGSEGV).
+         * Apply ASLR: shift stack down by a random number of pages. */
+        uint64_t aslr_pages_initial = aslr_stack_offset();
+        uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages_initial * PAGE_SIZE);
+        uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+        for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) {
                 kprintf("elf: OOM for user stack\n");
@@ -270,7 +274,7 @@ int elf_exec(const char *path) {
             }
         }
 
-        uint64_t user_rsp = USER_STACK_TOP - 8; /* stack grows down */
+        uint64_t user_rsp = user_stack_top - 8; /* stack grows down */
 
         (void)hdr;
 
@@ -388,7 +392,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     process_exec_cred_security();
 
     /* Allocate user stack (64KB) with ASLR offset */
-    uint64_t aslr_pages = prng_rand64() % 32; /* 0-31 pages of random shift */
+    uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {

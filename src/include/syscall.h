@@ -156,7 +156,7 @@
 /* Working directory */
 #define SYS_CHDIR        204  /* change cwd → 0 or -1 */
 #define SYS_GETCWD       205  /* copy cwd into buffer → 0 or -1 */
-#define SYS_SETPRIORITY  206  /* set process priority 0-3 */
+#define SYS_SETPRIORITY  206  /* setpriority(which, who, prio) — POSIX nice */
 
 /* Shared memory (IPC) */
 #define SYS_SHM_GET   207  /* get/create segment by key → id */
@@ -685,6 +685,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5);
 /* PRNG for kernel subsystems (ASLR, etc.) */
 uint64_t prng_rand64(void);
+void prng_add_entropy(uint64_t entropy);
 /* Timer fd tick — called from timer interrupt */
 void timerfd_tick(void);
 /* POSIX per-process timer tick — called from timer interrupt */
