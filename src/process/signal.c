@@ -103,6 +103,12 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
                 p->sig_info[signum] = *info;
             }
         }
+        /* Notify signalfd listeners with full siginfo */
+        extern void signalfd_notify_ext(int signum, int si_code,
+                                        uint32_t si_pid, uint32_t si_uid,
+                                        uint64_t si_addr, int si_status);
+        signalfd_notify_ext(signum, info->si_code, info->si_pid, info->si_uid,
+                           (uint64_t)(uintptr_t)info->si_addr, info->si_status);
     }
     return ret;
 }

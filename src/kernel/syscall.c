@@ -15,6 +15,7 @@
 #include "vmm.h"
 #include "string.h"
 #include "eventfd.h"
+#include "signalfd.h"
 #include "net.h"
 #include "e1000.h"
 #include "pci.h"
@@ -425,12 +426,11 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* signalfd read */
     if (fd >= 600 && fd < 616) {
         int slot = (int)fd - 600;
-        uint64_t sval = 0;
-        if (signalfd_do_read(slot, (void*)buf_addr, len) < 0 ||
-            syscall_user_write_ok(buf_addr, 8)) {
-            *(uint64_t*)(uintptr_t)buf_addr = sval;
+        int ret = signalfd_do_read(slot, (void *)buf_addr, len);
+        if (ret < 0) {
+            /* Error or invalid slot */
         }
-        return 8;
+        return (uint64_t)(ret > 0 ? ret : 0);
     }
     /* timerfd read */
     if (fd >= 500 && fd < 516) {
@@ -5595,33 +5595,61 @@ void timerfd_tick(void) {
 /* ── signalfd ─────────────────────────────────────────────────────────── */
 
 #define SIGNALFD_MAX 16
+#define SIGNALFD_BUF 8  /* ring buffer size per fd */
 
 struct signalfd_info {
     int      in_use;
-    uint32_t sigmask;        /* signals to catch */
-    uint64_t count;          /* signals pending read */
+    uint32_t sigmask;               /* signals to catch */
+    /* Ring buffer of siginfo entries */
+    struct siginfo ring[SIGNALFD_BUF];
+    int      head;                  /* next write position */
+    int      tail;                  /* next read position */
+    int      count;                 /* number of pending entries */
 };
 
-static struct signalfd_info signalfd_table[SIGNALFD_MAX];
+struct signalfd_info signalfd_table[SIGNALFD_MAX];
 
-/* Read from signalfd: copies pending signal info into user buffer */
+/* Read from signalfd: copies next signalfd_siginfo entry to user buffer.
+ * Returns bytes read (sizeof(signalfd_siginfo)) or 0 if none pending. */
 static int signalfd_do_read(int slot, void *buf, uint64_t count) {
     if (slot < 0 || slot >= SIGNALFD_MAX || !signalfd_table[slot].in_use)
         return -1;
-    if (signalfd_table[slot].count == 0) return 0; /* EAGAIN */
-    /* Signal info structure: struct signalfd_siginfo { ... } */
-    /* Simplified: just read count as number of signals */
-    uint64_t *val = (uint64_t *)buf;
-    if (count < 8) return -1;
-    *val = signalfd_table[slot].count;
-    signalfd_table[slot].count = 0;
-    return 8;
+    if (signalfd_table[slot].count == 0)
+        return 0; /* EAGAIN — no signals pending */
+
+    struct signalfd_info *sf = &signalfd_table[slot];
+
+    /* Pop the oldest entry from the ring buffer */
+    struct siginfo *si = &sf->ring[sf->tail];
+
+    /* Build the signalfd_siginfo from the stored siginfo */
+    struct signalfd_siginfo out;
+    memset(&out, 0, sizeof(out));
+    out.ssi_signo = (uint32_t)si->si_signo;
+    out.ssi_errno = si->si_errno;
+    out.ssi_code  = si->si_code;
+    out.ssi_pid   = si->si_pid;
+    out.ssi_uid   = si->si_uid;
+    out.ssi_status = si->si_status;
+    out.ssi_addr  = (uint64_t)(uintptr_t)si->si_addr;
+
+    /* Advance ring buffer */
+    sf->tail = (sf->tail + 1) % SIGNALFD_BUF;
+    sf->count--;
+
+    /* Copy to user buffer (up to one struct) */
+    size_t copy_size = sizeof(out);
+    if ((size_t)count < copy_size)
+        copy_size = (size_t)count;
+
+    memcpy(buf, &out, copy_size);
+    return (int)copy_size;
 }
 
 static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
-    (void)flags;
-
     uint32_t sigmask = 0;
+    (void)flags;  /* SFD_CLOEXEC, SFD_NONBLOCK accepted but not yet implemented */
+
     if (mask_addr) {
         if (syscall_is_user_process() && !syscall_user_read_ok(mask_addr, 8))
             return (uint64_t)-1;
@@ -5643,18 +5671,56 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
         if (!signalfd_table[i].in_use) {
             signalfd_table[i].in_use = 1;
             signalfd_table[i].sigmask = sigmask;
+            signalfd_table[i].head = 0;
+            signalfd_table[i].tail = 0;
             signalfd_table[i].count = 0;
+            memset(signalfd_table[i].ring, 0, sizeof(signalfd_table[i].ring));
             return (uint64_t)(600 + i);
         }
     }
     return (uint64_t)-1;
 }
 
-/* Called from signal delivery path — increments signalfd counters */
+/* Legacy signalfd_notify — called from signal_send().
+ * Enqueues a basic siginfo with SI_KERNEL code for the given signal number. */
 void signalfd_notify(int signum) {
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (signalfd_table[i].in_use && (signalfd_table[i].sigmask & (1u << signum))) {
-            signalfd_table[i].count++;
+            struct signalfd_info *sf = &signalfd_table[i];
+            if (sf->count < SIGNALFD_BUF) {
+                struct siginfo *si = &sf->ring[sf->head];
+                memset(si, 0, sizeof(*si));
+                si->si_signo = signum;
+                si->si_code  = SI_KERNEL;
+                sf->head = (sf->head + 1) % SIGNALFD_BUF;
+                sf->count++;
+            }
+            /* If buffer full, the signal is dropped (oldest entries survive) */
+        }
+    }
+}
+
+/* Extended signalfd_notify — called from signal_send_info() with full siginfo.
+ * Enqueues the full siginfo data for each matching signalfd. */
+void signalfd_notify_ext(int signum, int si_code,
+                         uint32_t si_pid, uint32_t si_uid,
+                         uint64_t si_addr, int si_status)
+{
+    for (int i = 0; i < SIGNALFD_MAX; i++) {
+        if (signalfd_table[i].in_use && (signalfd_table[i].sigmask & (1u << signum))) {
+            struct signalfd_info *sf = &signalfd_table[i];
+            if (sf->count < SIGNALFD_BUF) {
+                struct siginfo *si = &sf->ring[sf->head];
+                memset(si, 0, sizeof(*si));
+                si->si_signo = signum;
+                si->si_code  = si_code;
+                si->si_pid   = si_pid;
+                si->si_uid   = si_uid;
+                si->si_addr  = (void *)(uintptr_t)si_addr;
+                si->si_status = si_status;
+                sf->head = (sf->head + 1) % SIGNALFD_BUF;
+                sf->count++;
+            }
         }
     }
 }
