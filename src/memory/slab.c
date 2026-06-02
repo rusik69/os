@@ -106,6 +106,31 @@ static inline int slab_check_redzone(struct kmem_cache *cache, void *obj) {
     return 1;
 }
 
+/* ── Random freelist insertion ───────────────────────────────────────────
+ *
+ * Instead of always pushing freed objects to the head of the slab's free
+ * list (LIFO), insert at a random depth of up to FREELIST_RANDOM_DEPTH
+ * entries.  This scrambles the allocation order so that sequential kmalloc
+ * calls return unpredictably-arranged addresses, making heap exploits
+ * harder to construct.
+ *
+ * The depth is bounded to keep the operation O(1) in practice (the linked
+ * list walk is at most a few pointer chases).  Objects freed to the head
+ * of an empty list are placed at depth 0 (the only option).
+ */
+#define FREELIST_RANDOM_DEPTH 4
+
+static void slab_freelist_insert_random(struct slab *slab, void *obj) {
+    void **insert = &slab->free_list;
+    /* Pick a random depth in [0, FREELIST_RANDOM_DEPTH).  Walk that far
+     * into the list (or until we hit the end).  Then splice @obj in. */
+    int depth = (int)(rng_get_u32() % (uint32_t)FREELIST_RANDOM_DEPTH);
+    for (int i = 0; i < depth && *insert; i++)
+        insert = (void **)(*insert);
+    *(void **)obj = *insert;
+    *insert = obj;
+}
+
 /* Poison a freshly freed object (before adding to free list).
  * The first 8 bytes are left intact for the free-list pointer. */
 static inline void slab_poison_free(struct kmem_cache *cache, void *obj) {
@@ -383,9 +408,9 @@ static void cpu_slab_drain(struct kmem_cache *cache) {
         size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
         struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
 
-        /* Push object onto slab free list */
-        *(void **)obj = slab->free_list;
-        slab->free_list = obj;
+        /* Insert object into slab free list at a random depth
+         * to scramble allocation order (heap exploit hardening). */
+        slab_freelist_insert_random(slab, obj);
         slab->free_count++;
 
         /* Update slab list position */
@@ -504,8 +529,7 @@ void kmem_cache_free(struct kmem_cache *cache, void *obj) {
         size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
         struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
 
-        *(void **)obj = slab->free_list;
-        slab->free_list = obj;
+        slab_freelist_insert_random(slab, obj);
         slab->free_count++;
 
         if (slab->free_count == 1) {
