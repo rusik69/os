@@ -301,6 +301,11 @@ int module_param_format_value(struct kernel_param *kp, char *buf, int max);
 
 /* ── Module autoloading (M34-M38) ─────────────────────────────────── */
 
+/* Apply any cached boot-time cmdline parameters to a loaded module.
+ * Called after the module's init function runs so that params
+ * registered via module_add_param() are available. */
+void module_apply_cmdline_params(struct kernel_module *mod);
+
 /* Kernel-initiated module load — request a module by name.
  * Probes /modules/<name>.ko and loads it via the ELF loader.
  * May sleep; must not be called from atomic context.

@@ -18,6 +18,42 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "errno.h"
+#include "cmdline.h"
+
+/* ── Boot-time module parameters (M33) ──────────────────────────────
+ *
+ * The kernel cmdline may include module parameters in the form:
+ *
+ *   module_name.param_name=value
+ *
+ * These are parsed at boot and cached.  When a module loads, any
+ * matching parameters are applied automatically before the module's
+ * entry function runs.  Examples:
+ *
+ *   e1000.debug=1
+ *   ext2.verbose_mount=1
+ *   my_mod.buf_size=4096
+ *
+ * The cache holds up to CMDLINE_MOD_PARAMS_MAX entries parsed from
+ * the boot command line.  Each entry stores a module name, parameter
+ * name, and value string.
+ */
+#define CMDLINE_MOD_PARAMS_MAX 32
+
+struct cmdline_mod_param {
+    char modname[32];   /* e.g. "e1000", "ext2" */
+    char param[32];     /* e.g. "debug", "buf_size" */
+    char value[128];    /* e.g. "1", "4096" */
+    int  in_use;
+};
+
+/* Static pool for boot-time module parameters */
+static struct cmdline_mod_param
+    g_cmdline_params[CMDLINE_MOD_PARAMS_MAX];
+static int g_cmdline_param_count = 0;
+
+/* Forward declarations */
+static void module_scan_cmdline_params(void);
 
 /* ── Global module table ────────────────────────────────────────── */
 
@@ -48,6 +84,9 @@ void module_init(void) {
     g_mod_initialized = 1;
     kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX)\n",
             MODULE_MAX, (unsigned long long)MODULES_VADDR);
+
+    /* Scan the kernel cmdline for module.param=value entries */
+    module_scan_cmdline_params();
 }
 
 /* ── Module memory allocator (M10) ──────────────────────────────── */
@@ -149,6 +188,152 @@ void module_free_region(uint64_t vaddr, uint64_t size) {
 
 uint64_t module_allocated_bytes(void) {
     return module_region_allocated;
+}
+
+/* ── Boot-time cmdline parameter helpers (M33) ──────────────────── */
+
+/*
+ * Scan the kernel command line for module parameters of the form
+ *   module_name.param_name=value
+ * and cache them for later application when each module loads.
+ *
+ * The cmdline raw string uses space-separated key=value pairs.
+ * Keys that contain a '.' (dot) before the '=' are module parameters.
+ * Example: "e1000.debug=1 ext2.verbose=1 root=/dev/sda1"
+ *
+ * Called once during module_init().
+ */
+static void module_scan_cmdline_params(void)
+{
+    memset(g_cmdline_params, 0, sizeof(g_cmdline_params));
+    g_cmdline_param_count = 0;
+
+    const char *raw = cmdline_raw();
+    if (!raw || !raw[0])
+        return;
+
+    /* Parse the raw cmdline by tokenising on spaces.
+     * Each token is either a standalone key or key=value. */
+    char buf[1024];
+    size_t raw_len = strlen(raw);
+    if (raw_len >= sizeof(buf))
+        raw_len = sizeof(buf) - 1;
+    memcpy(buf, raw, raw_len);
+    buf[raw_len] = '\0';
+
+    const char *delim = " \t";
+    char *token = strtok(buf, delim);
+    while (token && g_cmdline_param_count < CMDLINE_MOD_PARAMS_MAX) {
+        /* Look for a dot in the token before any '=' */
+        const char *eq = strchr(token, '=');
+        const char *dot = strchr(token, '.');
+
+        if (dot && (!eq || dot < eq)) {
+            /* This token looks like module.param=value */
+            size_t mod_len = (size_t)(dot - token);
+            const char *par_start = dot + 1;
+            size_t par_len;
+            const char *val_start = NULL;
+
+            if (eq) {
+                par_len = (size_t)(eq - par_start);
+                val_start = eq + 1;
+            } else {
+                /* No '=' means param with no value (bool = 1) */
+                par_len = strlen(par_start);
+                /* val_start remains NULL */
+            }
+
+            if (mod_len > 0 && mod_len < 32 &&
+                par_len > 0 && par_len < 32) {
+                struct cmdline_mod_param *cp =
+                    &g_cmdline_params[g_cmdline_param_count];
+
+                memcpy(cp->modname, token, mod_len);
+                cp->modname[mod_len] = '\0';
+                memcpy(cp->param, par_start, par_len);
+                cp->param[par_len] = '\0';
+
+                if (val_start) {
+                    size_t vlen = strlen(val_start);
+                    if (vlen >= sizeof(cp->value))
+                        vlen = sizeof(cp->value) - 1;
+                    memcpy(cp->value, val_start, vlen);
+                    cp->value[vlen] = '\0';
+                } else {
+                    cp->value[0] = '1';  /* bare module.param is like boolean true */
+                    cp->value[1] = '\0';
+                }
+
+                cp->in_use = 1;
+                g_cmdline_param_count++;
+
+                kprintf("[MOD] Cmdline param: %s.%s=%s\n",
+                        cp->modname, cp->param, cp->value);
+            }
+        }
+
+        token = strtok(NULL, delim);
+    }
+}
+
+/*
+ * Apply any cached cmdline parameters that match a newly loaded module.
+ * Called after a module's init function has run, so that any parameters
+ * the module registered via module_add_param() are available.
+ *
+ * For each matching parameter, we construct "param=value" and call
+ * module_parse_params() which handles individual param=value pairs.
+ *
+ * @mod: the newly loaded module (must be in MODULE_LIVE state)
+ */
+void module_apply_cmdline_params(struct kernel_module *mod)
+{
+    if (!mod || !mod->name[0])
+        return;
+
+    /* Build a parameter string for all matching cmdline entries.
+     * We construct it as a comma-separated param=val list. */
+    char params[512];
+    int pos = 0;
+
+    for (int i = 0; i < CMDLINE_MOD_PARAMS_MAX; i++) {
+        if (!g_cmdline_params[i].in_use)
+            continue;
+        if (strcmp(g_cmdline_params[i].modname, mod->name) != 0)
+            continue;
+
+        /* Append "param=value" to the parameter string */
+        int needed = (int)strlen(g_cmdline_params[i].param) + 1 +
+                     (int)strlen(g_cmdline_params[i].value) + 2; /* "param=val," or "\0" */
+        if (pos + needed > (int)sizeof(params))
+            break;
+
+        if (pos > 0)
+            params[pos++] = ',';
+        int n = snprintf(params + pos, sizeof(params) - (size_t)pos, "%s=%s",
+                         g_cmdline_params[i].param,
+                         g_cmdline_params[i].value);
+        if (n > 0)
+            pos += n;
+
+        /* Mark as consumed so we don't apply it again */
+        g_cmdline_params[i].in_use = 0;
+    }
+
+    if (pos == 0)
+        return; /* no matching parameters */
+
+    /* Apply the parameter string to the module */
+    int ret = module_parse_params(mod, params);
+    if (ret == 0) {
+        kprintf("[MOD] Applied boot-time parameters to '%s': %s\n",
+                mod->name, params);
+    } else {
+        kprintf("[MOD] Warning: boot-time parameters for '%s' "
+                "partially applied (error %d): %s\n",
+                mod->name, ret, params);
+    }
 }
 
 /* ── Module loading ─────────────────────────────────────────────── */
