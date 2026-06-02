@@ -54,60 +54,28 @@ uint64_t alloc_pages(int gfp_mask, int order)
     (void)atomic_ok;  /* reserve for future use — GFP_ATOMIC disables sleep */
 
     uint64_t num_pages = 1ULL << order;
-    uint64_t total = pmm_get_total_frames();
     uint64_t frame = 0;
     int found = 0;
 
     /* Allocate from the base physical allocator.
      * For single-page allocations (order=0) we use pmm_alloc_frame().
-     * For larger orders we fall back to loop-based allocation. */
+     * For larger orders we use pmm_alloc_frames() for contiguous blocks. */
     if (order == 0) {
         frame = pmm_alloc_frame();
         if (frame == 0)
             return 0;  /* OOM */
         found = 1;
     } else {
-        /* Find a contiguous block of 2^order free frames.
-         * This is a naive first-fit scan over physical frames. */
-        uint64_t consecutive = 0;
-        for (uint64_t i = 0; i < total && !found; i++) {
-            uint64_t candidate = pmm_alloc_frame();
-            if (candidate != 0) {
-                /* We can't easily check contiguity with a simple allocator.
-                 * In a full buddy allocator this would be O(1).  Here we
-                 * allocate one frame at a time and track contiguity.
-                 * For now we always set order=0 and defer to the PMM. */
-                pmm_free_frame(candidate);
-                break;
+        /* Use the PMM's contiguous frame allocator for order > 0.
+         * pmm_alloc_frames returns the physical address of the first
+         * page in a contiguous block of 2^order pages, or NULL. */
+        uint64_t *block = pmm_alloc_frames(num_pages);
+        if (block) {
+            for (uint64_t i = 0; i < num_pages; i++) {
+                uint64_t idx = ((uint64_t)block / PAGE_SIZE) + i;
+                bitmap_set(idx);
             }
-            break;
-        }
-
-        /* Fallback: allocate each individual page with pmm_alloc_frame. */
-        uint64_t first_frame = 0;
-        int ok = 1;
-        for (uint64_t i = 0; i < num_pages; i++) {
-            uint64_t f = pmm_alloc_frame();
-            if (f == 0) {
-                /* Free pages allocated so far. */
-                for (uint64_t j = 0; j < i; j++)
-                    pmm_free_frame(first_frame + j * PAGE_SIZE);
-                ok = 0;
-                break;
-            }
-            if (i == 0)
-                first_frame = f;
-            else if (f != first_frame + i * PAGE_SIZE) {
-                /* Not contiguous — free everything. */
-                pmm_free_frame(f);
-                for (uint64_t j = 0; j < i; j++)
-                    pmm_free_frame(first_frame + j * PAGE_SIZE);
-                ok = 0;
-                break;
-            }
-        }
-        if (ok) {
-            frame = first_frame;
+            frame = (uint64_t)block;
             found = 1;
         }
     }

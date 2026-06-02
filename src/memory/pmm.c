@@ -279,6 +279,35 @@ void pmm_advance_hint(uint64_t phys_addr) {
 
 /* ── Memory statistics dumping ──────────────────────────────────────────── */
 
+/* Scan the bitmap to find the largest contiguous free block (in frames) */
+uint64_t pmm_largest_free_block(void) {
+    uint64_t max_run = 0, cur_run = 0;
+    for (uint64_t f = 0; f < total_frames; f++) {
+        if (!bitmap_test(f)) {
+            cur_run++;
+        } else {
+            if (cur_run > max_run) max_run = cur_run;
+            cur_run = 0;
+        }
+    }
+    if (cur_run > max_run) max_run = cur_run;
+    return max_run;
+}
+
+/* Count distinct free page runs (higher = more fragmented) */
+uint64_t pmm_free_block_count(void) {
+    uint64_t runs = 0;
+    int in_run = 0;
+    for (uint64_t f = 0; f < total_frames; f++) {
+        if (!bitmap_test(f)) {
+            if (!in_run) { runs++; in_run = 1; }
+        } else {
+            in_run = 0;
+        }
+    }
+    return runs;
+}
+
 /* Print detailed physical memory state: usage, largest free block, fragmentation */
 void pmm_dump_stats(void) {
     uint64_t total = total_frames;
@@ -291,22 +320,8 @@ void pmm_dump_stats(void) {
             (unsigned long long)used, (unsigned long long)free,
             (unsigned long long)free_pct);
 
-    /* Scan bitmap to find the largest contiguous free block and count free runs */
-    uint64_t max_run = 0, cur_run = 0;
-    uint64_t free_runs = 0;
-    int in_run = 0;
-    for (uint64_t f = 0; f < total_frames; f++) {
-        if (!bitmap_test(f)) {
-            cur_run++;
-            in_run = 1;
-        } else {
-            if (in_run) { free_runs++; in_run = 0; }
-            if (cur_run > max_run) max_run = cur_run;
-            cur_run = 0;
-        }
-    }
-    if (in_run) { free_runs++; }
-    if (cur_run > max_run) max_run = cur_run;
+    uint64_t max_run   = pmm_largest_free_block();
+    uint64_t free_runs = pmm_free_block_count();
 
     uint64_t frag_pct = (free > 0) ? ((free_runs * 100ULL) / free) : 0;
     if (frag_pct > 100) frag_pct = 100;

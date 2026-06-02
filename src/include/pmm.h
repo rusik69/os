@@ -19,6 +19,12 @@ int  pmm_refcount(uint64_t phys);       /* query current refcount */
 /* Dump detailed physical memory statistics (total, used, free, largest block, fragmentation) */
 void pmm_dump_stats(void);
 
+/* Return the size (in frames) of the largest contiguous free block */
+uint64_t pmm_largest_free_block(void);
+
+/* Return the number of distinct free page runs (higher = more fragmented) */
+uint64_t pmm_free_block_count(void);
+
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
 extern int pmm_poison_enabled;
 void pmm_set_poison(int enable);
