@@ -4142,12 +4142,57 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
         return 0;
     }
 
-    /* Only support tmpfs for now */
-    if (strcmp(fstype, "tmpfs") == 0 || strcmp(fstype, "ramfs") == 0) {
-        /* Mount procfs itself as a stand-in for a real tmpfs.
-         * In a full implementation this would create a tmpfs instance. */
-        kprintf("[mount] %s at %s (type=%s)\n", src, target, fstype);
-        return 0;
+    /* ── Filesystem module autoloading (M36) ────────────────────────
+     * If the requested filesystem type is not currently registered in
+     * the VFS, attempt to autoload the corresponding kernel module.
+     * This allows filesystems like ext2, fat32, iso9660 to be loaded
+     * on demand when `mount -t ext2 ...` is invoked.
+     */
+    if (fstype[0] != '\0') {
+        /* Quick check: is this filesystem already registered? */
+        int found = 0;
+        {
+            char names[VFS_MAX_FS_TYPES][32];
+            int n = vfs_list_filesystems(names, VFS_MAX_FS_TYPES);
+            for (int i = 0; i < n && !found; i++) {
+                if (strcmp(names[i], fstype) == 0)
+                    found = 1;
+            }
+        }
+
+        /* If not found, try to autoload it */
+        if (!found) {
+            request_module("%s", fstype);
+            /* Check again after potential module load */
+            {
+                char names[VFS_MAX_FS_TYPES][32];
+                int n = vfs_list_filesystems(names, VFS_MAX_FS_TYPES);
+                for (int i = 0; i < n && !found; i++) {
+                    if (strcmp(names[i], fstype) == 0)
+                        found = 1;
+                }
+            }
+        }
+
+        /* Only support tmpfs for now */
+        if (strcmp(fstype, "tmpfs") == 0 || strcmp(fstype, "ramfs") == 0) {
+            kprintf("[mount] %s at %s (type=%s)\n", src, target, fstype);
+            return 0;
+        }
+
+        /* If the filesystem type was loaded but we don't have a generic
+         * mount handler for it, log success and return.  A full
+         * implementation would call into the registered fs's ops. */
+        if (found) {
+            kprintf("[mount] %s at %s (type=%s) — module loaded, VFS mount pending\n",
+                    src, target, fstype);
+            return 0;
+        }
+
+        /* Filesystem type not found and not loaded — return error */
+        kprintf("[mount] %s at %s (type=%s): filesystem not supported\n",
+                src, target, fstype);
+        return (uint64_t)-1;
     }
 
     /* For the existing fs.c (smfs), just treat as a no-op */
