@@ -12,8 +12,185 @@
 #include "tmpfs.h"
 #include "bufcache.h"
 #include "file_lock.h"
+#include "dcache.h"
+#include "spinlock.h"
 
 #define EROFS_KERNEL 30
+
+/*
+ * ── Dentry Cache (Item 43) — path resolution cache with LRU shrink ──────
+ *
+ * Fixed-size array caching vfs_stat results keyed by absolute path.
+ * LRU eviction on insert when full; dcache_shrink() is called from
+ * the OOM path to reclaim entries under memory pressure.
+ * All operations are spinlock-protected for SMP safety.
+ */
+
+static struct dcache_entry dcache[DCACHE_SIZE];
+static spinlock_t dcache_lock = SPINLOCK_INIT;
+static uint32_t dcache_global_tick = 1;  /* monotonic tick for LRU aging */
+
+void dcache_init(void)
+{
+    memset(dcache, 0, sizeof(dcache));
+    dcache_global_tick = 1;
+}
+
+static int dcache_match(const struct dcache_entry *e, const char *path)
+{
+    return e->in_use && (strcmp(e->path, path) == 0);
+}
+
+struct dcache_entry *dcache_lookup(const char *path)
+{
+    if (!path || !path[0])
+        return NULL;
+
+    struct dcache_entry *best = NULL;
+    spinlock_acquire(&dcache_lock);
+
+    for (int i = 0; i < DCACHE_SIZE; i++) {
+        if (dcache_match(&dcache[i], path)) {
+            dcache[i].last_tick = dcache_global_tick++;
+            best = &dcache[i];
+            break;
+        }
+    }
+
+    spinlock_release(&dcache_lock);
+    return best;
+}
+
+void dcache_add(const char *path, void *mount,
+                uint8_t type, uint32_t size,
+                uint16_t uid, uint16_t gid, uint16_t mode,
+                uint32_t mtime, uint32_t atime, uint32_t nlink)
+{
+    if (!path || !path[0])
+        return;
+
+    spinlock_acquire(&dcache_lock);
+
+    int target = -1;
+    int empty  = -1;
+    int lru_idx = 0;
+    uint32_t lru_tick = dcache[0].last_tick;
+
+    for (int i = 0; i < DCACHE_SIZE; i++) {
+        if (dcache_match(&dcache[i], path)) {
+            target = i;
+            break;
+        }
+        if (!dcache[i].in_use) {
+            empty = i;
+        }
+        if (dcache[i].in_use && dcache[i].last_tick < lru_tick) {
+            lru_tick = dcache[i].last_tick;
+            lru_idx  = i;
+        }
+    }
+
+    if (target < 0) {
+        target = (empty >= 0) ? empty : lru_idx;
+    }
+
+    struct dcache_entry *e = &dcache[target];
+    strncpy(e->path, path, DCACHE_PATH_LEN - 1);
+    e->path[DCACHE_PATH_LEN - 1] = '\0';
+    e->mount   = mount;
+    e->type    = type;
+    e->size    = size;
+    e->uid     = uid;
+    e->gid     = gid;
+    e->mode    = mode;
+    e->mtime   = mtime;
+    e->atime   = atime;
+    e->nlink   = nlink;
+    e->last_tick = dcache_global_tick++;
+    e->in_use  = 1;
+
+    spinlock_release(&dcache_lock);
+}
+
+void dcache_remove(const char *path)
+{
+    if (!path || !path[0])
+        return;
+
+    spinlock_acquire(&dcache_lock);
+    for (int i = 0; i < DCACHE_SIZE; i++) {
+        if (dcache_match(&dcache[i], path)) {
+            memset(&dcache[i], 0, sizeof(dcache[i]));
+            break;
+        }
+    }
+    spinlock_release(&dcache_lock);
+}
+
+void dcache_remove_mount(void *mount)
+{
+    spinlock_acquire(&dcache_lock);
+    for (int i = 0; i < DCACHE_SIZE; i++) {
+        if (dcache[i].in_use && dcache[i].mount == mount) {
+            memset(&dcache[i], 0, sizeof(dcache[i]));
+        }
+    }
+    spinlock_release(&dcache_lock);
+}
+
+int dcache_shrink(int target_count)
+{
+    if (target_count <= 0)
+        return 0;
+
+    int evicted = 0;
+    spinlock_acquire(&dcache_lock);
+
+    for (int round = 0; round < target_count; round++) {
+        int lru_idx = -1;
+        uint32_t lru_tick = (uint32_t)-1;
+
+        for (int i = 0; i < DCACHE_SIZE; i++) {
+            if (dcache[i].in_use && dcache[i].last_tick < lru_tick) {
+                lru_tick = dcache[i].last_tick;
+                lru_idx  = i;
+            }
+        }
+
+        if (lru_idx < 0)
+            break;
+
+        memset(&dcache[lru_idx], 0, sizeof(dcache[lru_idx]));
+        evicted++;
+    }
+
+    spinlock_release(&dcache_lock);
+    return evicted;
+}
+
+int dcache_evict_one(void)
+{
+    return dcache_shrink(1);
+}
+
+int dcache_fill_count(void)
+{
+    int count = 0;
+    spinlock_acquire(&dcache_lock);
+    for (int i = 0; i < DCACHE_SIZE; i++) {
+        if (dcache[i].in_use)
+            count++;
+    }
+    spinlock_release(&dcache_lock);
+    return count;
+}
+
+int dcache_capacity(void)
+{
+    return DCACHE_SIZE;
+}
+
+/* ── End of dentry cache ──────────────────────────────────────── */
 
 extern struct vfs_ops procfs_ops;
 extern struct vfs_ops devfs_ops;
@@ -403,15 +580,40 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     int r = m->ops->write(m->priv, ap, data, size);
     if (r == 0) {
         fsnotify_notify(ap, FS_MODIFY);
+        /* File metadata (size, mtime) changed — invalidate cache */
+        dcache_remove(ap);
     }
     return r;
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Try the dentry cache first */
+    struct dcache_entry *de = dcache_lookup(ap);
+    if (de) {
+        st->size  = de->size;
+        st->type  = de->type;
+        st->uid   = de->uid;
+        st->gid   = de->gid;
+        st->mode  = de->mode;
+        st->mtime = de->mtime;
+        st->atime = de->atime;
+        st->nlink = de->nlink;
+        return 0;
+    }
+
+    /* Cache miss — query the real filesystem */
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->stat) return -1;
-    return m->ops->stat(m->priv, ap, st);
+    int r = m->ops->stat(m->priv, ap, st);
+    if (r == 0) {
+        /* Cache the result for future lookups */
+        dcache_add(ap, (void *)m, st->type, st->size,
+                   st->uid, st->gid, st->mode,
+                   st->mtime, st->atime, st->nlink);
+    }
+    return r;
 }
 
 int vfs_create(const char *path, uint8_t type) {
@@ -423,6 +625,18 @@ int vfs_create(const char *path, uint8_t type) {
     int r = m->ops->create(m->priv, ap, type);
     if (r == 0) {
         fsnotify_notify(ap, FS_CREATE);
+        /* Invalidate the parent directory's cache entry */
+        dcache_remove(ap);
+        char parent[128];
+        strncpy(parent, ap, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        char *slash = strrchr(parent, '/');
+        if (slash && slash != parent) {
+            *slash = '\0';
+            dcache_remove(parent);
+        } else if (slash == parent) {
+            dcache_remove("/");
+        }
     }
     return r;
 }
@@ -436,6 +650,17 @@ int vfs_unlink(const char *path) {
     int r = m->ops->unlink(m->priv, ap);
     if (r == 0) {
         fsnotify_notify(ap, FS_DELETE);
+        dcache_remove(ap);
+        char parent[128];
+        strncpy(parent, ap, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        char *slash = strrchr(parent, '/');
+        if (slash && slash != parent) {
+            *slash = '\0';
+            dcache_remove(parent);
+        } else if (slash == parent) {
+            dcache_remove("/");
+        }
     }
     return r;
 }
@@ -891,6 +1116,7 @@ int vfs_sync_all(void) {
 
 void vfs_init(void) {
     num_mounts = 0;
+    dcache_init();
     /* Mount the SMFS filesystem as root */
     vfs_mount("/", &smfs_ops, NULL);
     /* Mount the /proc virtual filesystem */

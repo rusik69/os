@@ -9,6 +9,7 @@
 #include "signal.h"
 #include "timer.h"
 #include "syscall.h"
+#include "dcache.h"
 
 /* OOM score adjustment table (by PID) */
 #define OOM_ADJ_MIN  (-16)
@@ -148,6 +149,13 @@ static uint32_t select_victim(void) {
 int oom_kill(uint64_t needed_pages) {
     (void)needed_pages;
 
+    /* Before killing a process, try reclaiming the dentry cache — it's cheap. */
+    int evicted = dcache_shrink(DCACHE_SIZE);
+    if (evicted > 0) {
+        kprintf("[OOM] Freed %d dentry cache entries, retrying allocation...\n", evicted);
+        return 1;  /* caller may retry allocation */
+    }
+
     uint32_t victim_pid = select_victim();
     if (victim_pid == 0) {
         kprintf("[OOM] No suitable victim found!\n");
@@ -274,6 +282,9 @@ static void oom_reaper_task(void *arg) {
 
         /* If free memory is below 5%, try to kill a victim */
         if (free_pct < 5) {
+            kprintf("[OOM] Reaper: low memory (free=%llu%%), shrinking dcache first\n",
+                    (unsigned long long)free_pct);
+            dcache_shrink(DCACHE_SIZE / 2);
             kprintf("[OOM] Reaper: low memory (free=%llu%%), killing victim\n",
                     (unsigned long long)free_pct);
             oom_kill_victim();
