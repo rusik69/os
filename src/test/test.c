@@ -3887,9 +3887,9 @@ static void test_ksm(void) {
     memset(ksm_page_a, 0x42, sizeof(ksm_page_a));
     memset(ksm_page_b, 0x42, sizeof(ksm_page_b)); /* Same content! */
 
-    int ret = ksm_register_region((uint64_t)ksm_page_a, 4096);
+    int ret = ksm_register_region_legacy((uint64_t)ksm_page_a, 4096);
     ASSERT("ksm register region A", ret == 0);
-    ret = ksm_register_region((uint64_t)ksm_page_b, 4096);
+    ret = ksm_register_region_legacy((uint64_t)ksm_page_b, 4096);
     ASSERT("ksm register region B", ret == 0);
 
     /* Scan — should merge the two identical pages */
