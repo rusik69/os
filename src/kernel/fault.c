@@ -4,6 +4,8 @@
 #include "process.h"
 #include "printf.h"
 #include "nx_enforce.h"
+#include "io.h"
+#include "panic.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -129,8 +131,10 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         kprintf("CS=0x%llx  SS=0x%llx  RFLAGS=0x%llx\n",
                 frame->cs, frame->ss, frame->rflags);
         arch_print_backtrace();
-        __asm__ volatile("cli");
-        for (;;) __asm__ volatile("hlt");
+        panic("KERNEL PAGE FAULT at RIP=0x%llx CR2=0x%llx error=0x%llx",
+              (unsigned long long)frame->rip,
+              (unsigned long long)cr2,
+              (unsigned long long)err);
     }
 
     /* User-mode write fault — check for COW */
@@ -151,44 +155,134 @@ static void page_fault_handler(struct interrupt_frame *frame) {
 
 /* ── Double-fault handler (#DF, vector 8) ────────────────────────── */
 /* Runs on a dedicated IST stack, safe even when the regular kernel
- * stack has overflowed.  Prints full register dump and halts. */
+ * stack has overflowed.  Calls panic() for full state capture and
+ * post-mortem analysis via kdump. */
 static void double_fault_handler(struct interrupt_frame *frame) {
+    uint64_t cr0, cr2, cr3, cr4;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+
     kprintf("\n*** DOUBLE FAULT (#DF) ***\n");
-    kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
+    kprintf("Error code: %lu  (always 0 on modern x86-64)\n",
+            (unsigned long)frame->error_code);
     kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
             (unsigned long)frame->rip, (unsigned long)frame->rsp,
             (unsigned long)frame->rbp);
     kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
             (unsigned long)frame->rax, (unsigned long)frame->rbx,
             (unsigned long)frame->rcx, (unsigned long)frame->rdx);
-    kprintf("RSI: 0x%lx  RDI: 0x%lx\n",
-            (unsigned long)frame->rsi, (unsigned long)frame->rdi);
-    kprintf("R8: 0x%lx   R9: 0x%lx   R10: 0x%lx  R11: 0x%lx\n",
-            (unsigned long)frame->r8, (unsigned long)frame->r9,
-            (unsigned long)frame->r10, (unsigned long)frame->r11);
-    kprintf("R12: 0x%lx  R13: 0x%lx  R14: 0x%lx  R15: 0x%lx\n",
-            (unsigned long)frame->r12, (unsigned long)frame->r13,
+    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8: 0x%lx   R9: 0x%lx\n",
+            (unsigned long)frame->rsi, (unsigned long)frame->rdi,
+            (unsigned long)frame->r8, (unsigned long)frame->r9);
+    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n",
+            (unsigned long)frame->r10, (unsigned long)frame->r11,
+            (unsigned long)frame->r12, (unsigned long)frame->r13);
+    kprintf("R14: 0x%lx  R15: 0x%lx\n",
             (unsigned long)frame->r14, (unsigned long)frame->r15);
     kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n",
             (unsigned long)frame->cs, (unsigned long)frame->ss,
             (unsigned long)frame->rflags);
+    kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
+            (unsigned long)cr0, (unsigned long)cr2,
+            (unsigned long)cr3, (unsigned long)cr4);
     arch_print_backtrace();
-    kprintf("*** SYSTEM HALTED (double fault, cannot recover) ***\n");
-    __asm__ volatile("cli");
-    for (;;) __asm__ volatile("hlt");
-    __builtin_unreachable();
+
+    /* Check if the original fault was a page fault (stack overflow) */
+    struct process *proc = process_get_current();
+    if (proc && (cr2 != 0)) {
+        kprintf("Faulting address (CR2): 0x%lx\n", (unsigned long)cr2);
+        kprintf("Process: %s (pid=%u)\n",
+                proc->name ? proc->name : "?", (unsigned int)proc->pid);
+        if (proc->guard_page && (cr2 & ~0xFFFULL) == (proc->guard_page & ~0xFFFULL)) {
+            kprintf("*** CAUSE: Kernel stack overflow (guard page hit) ***\n");
+        }
+    }
+
+    /* Delegate to panic() for full dump + kdump capture + timeout reset */
+    panic("DOUBLE FAULT (#DF) — irrcoverable\n"
+          "  RIP=0x%lx  CR2=0x%lx",
+          (unsigned long)frame->rip, (unsigned long)cr2);
+}
+
+/* ── NMI handler (vector 2) ─────────────────────────────────────── */
+/* Runs on dedicated IST stack. NMI is non-maskable and can indicate
+ * hardware issues (ECC errors, watchdog, etc.) */
+static void nmi_handler(struct interrupt_frame *frame) {
+    kprintf("\n*** NMI — Non-Maskable Interrupt ***\n");
+    kprintf("RIP: 0x%lx  RSP: 0x%lx\n",
+            (unsigned long)frame->rip, (unsigned long)frame->rsp);
+
+    /* Attempt to check for NMI source via port 0x61 (PC-style) */
+    uint8_t nmi_status = inb(0x61);
+    if (nmi_status & 0x80) {
+        kprintf("NMI source: RAM parity error (port 0x61 bit 7 set)\n");
+    } else if (nmi_status & 0x40) {
+        kprintf("NMI source: Channel check (port 0x61 bit 6 set)\n");
+    } else {
+        kprintf("NMI source: unknown (0x61=0x%02x)\n", (unsigned int)nmi_status);
+    }
+
+    /* Log via dmesg for post-mortem analysis */
+    kprintf("*** NMI received — continuing ***\n");
+    /* NMI is often recoverable; return and continue execution */
+}
+
+/* ── Machine Check Exception handler (vector 18) ───────────────── */
+/* Runs on dedicated IST stack. Called when CPU detects hardware error. */
+static void mce_handler(struct interrupt_frame *frame) {
+    kprintf("\n*** MACHINE CHECK EXCEPTION (#MC) ***\n");
+    kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
+            (unsigned long)frame->rip, (unsigned long)frame->rsp,
+            (unsigned long)frame->rbp);
+
+    /* Try to read IA32_MCi_STATUS MSRs for each bank */
+    for (int bank = 0; bank < 32; bank++) {
+        uint32_t msr_addr = 0x400 + bank * 2;  /* IA32_MC0_STATUS */
+        uint32_t msr_addr_reg = 0x402 + bank * 2; /* IA32_MC0_ADDR */
+
+        uint64_t status;
+        __asm__ volatile("rdmsr" : "=A"(status) : "c"(msr_addr));
+
+        if (status & (1ULL << 63)) {  /* VALID bit */
+            uint64_t addr_val = 0;
+            if (status & (1ULL << 59)) {  /* ADDRV */
+                __asm__ volatile("rdmsr" : "=A"(addr_val) : "c"(msr_addr_reg));
+            }
+
+            uint8_t corrected = (status >> 62) & 1;  /* PCC */
+            uint8_t uc        = (status >> 61) & 1;  /* UC */
+            uint16_t mca_err  = (status >> 0) & 0xFFFF;
+
+            kprintf("  MC bank %d: MCG_STATUS=0x%llx%s%s mca_err=0x%x", bank,
+                    (unsigned long long)status,
+                    uc ? " [UC]" : "",
+                    corrected ? " [PCC]" : "",
+                    mca_err);
+            if (addr_val)
+                kprintf(" addr=0x%llx", (unsigned long long)addr_val);
+            kprintf("\n");
+
+            /* Clear the status by writing 0 to the lower bits */
+            __asm__ volatile("wrmsr" : : "c"(msr_addr), "A"(0ULL));
+        }
+    }
+
+    /* Machine checks can be fatal or recoverable. If UC (uncorrectable), panic. */
+    kprintf("*** MACHINE CHECK — system halted ***\n");
+    panic("MACHINE CHECK EXCEPTION (#MC) at RIP=0x%lx",
+          (unsigned long)frame->rip);
 }
 
 void fault_init(void) {
     idt_register_handler(14, page_fault_handler);
     idt_register_handler(8, double_fault_handler);
+    idt_register_handler(2, nmi_handler);
+    idt_register_handler(18, mce_handler);
 }
 
 /* ── Frame-pointer-based backtrace ──────────────────────────── */
-
-#include "io.h"
-#include "printf.h"
-#include "process.h"
 
 /* Print a backtrace by walking the RBP-linked frame pointer chain.
  * Each frame: [rbp+0] = previous rbp, [rbp+8] = return address.
