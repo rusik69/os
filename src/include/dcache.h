@@ -37,6 +37,7 @@ struct dcache_entry {
     uint32_t mtime;
     uint32_t atime;
     uint32_t nlink;
+    uint32_t ino;             /* inode number */
 
     uint32_t last_tick;       /* system tick at last access (for LRU) */
     int      in_use;          /* 1 = slot occupied */
@@ -57,7 +58,8 @@ struct dcache_entry *dcache_lookup(const char *path);
 void dcache_add(const char *path, void *mount,
                 uint8_t type, uint32_t size,
                 uint16_t uid, uint16_t gid, uint16_t mode,
-                uint32_t mtime, uint32_t atime, uint32_t nlink);
+                uint32_t mtime, uint32_t atime, uint32_t nlink,
+                uint32_t ino);
 
 /* Remove a single entry by path (called when a file is deleted). */
 void dcache_remove(const char *path);

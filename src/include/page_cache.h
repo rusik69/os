@@ -31,6 +31,9 @@ void page_cache_mark_dirty(uint64_t ino, uint64_t block);
 /* Flush all dirty pages to backing store. */
 void page_cache_flush(void);
 
+/* Flush dirty pages for a specific inode (targeted fsync). */
+void page_cache_flush_inode(uint64_t ino);
+
 /* Get a pointer to cached page data, or NULL if not present. */
 void *page_cache_get_data(uint64_t ino, uint64_t block);
 

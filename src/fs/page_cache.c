@@ -263,6 +263,44 @@ void page_cache_flush(void) {
 }
 
 
+/* ── Flush dirty pages for a specific inode ─────────────────────────── */
+
+void page_cache_flush_inode(uint64_t ino) {
+    if (!writeback_fn) return;  /* no writeback registered — can't flush */
+
+    int flushed = 0;
+    spinlock_acquire(&dirty_lock);
+
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
+        if (page_cache[i].in_use && page_cache[i].ino == ino &&
+            (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
+            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
+            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+            if (writeback_fn(lba, count, page_cache[i].data) < 0) {
+                kprintf("[page_cache] flush_inode: writeback failed for ino=%llu block=%llu\n",
+                        (unsigned long long)page_cache[i].ino,
+                        (unsigned long long)page_cache[i].block);
+                continue;  /* retry next time */
+            }
+            page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
+            flushed++;
+        }
+    }
+
+    if (flushed > 0) {
+        nr_dirty_pages -= flushed;
+        if (nr_dirty_pages < 0) nr_dirty_pages = 0;
+    }
+
+    spinlock_release(&dirty_lock);
+
+    if (flushed > 0) {
+        kprintf("[page_cache] flush_inode: %d dirty pages written back for ino=%llu\n",
+                flushed, (unsigned long long)ino);
+    }
+}
+
+
 /* ── Background writeback (periodic dirty page flush) ────────────── */
 /*
  * Called from scheduler_tick() periodically.  If the number of dirty

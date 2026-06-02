@@ -798,6 +798,14 @@ int fs_set_mtime(const char *path, uint32_t mtime) {
     return 0;
 }
 
+/* ── fs_get_ino: return inode number for a path ─────────────────────── */
+
+int fs_get_ino(const char *path) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    return idx;
+}
+
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
     if (idx < 0) return -1;

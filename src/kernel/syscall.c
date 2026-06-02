@@ -53,6 +53,8 @@
 #include "dmesg.h"
 #include "aslr.h"
 #include "memfd.h"
+#include "page_cache.h"
+#include "bufcache.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -2259,6 +2261,13 @@ static uint64_t sys_chmod(uint64_t path_addr, uint64_t mode) {
 
 /* ── fsync() / fdatasync() ─────────────────────────────────────── */
 
+/*
+ * fsync - synchronize a file's in-core state with storage device.
+ *
+ * Flushes dirty page cache pages for the file, then flushes the
+ * filesystem metadata via the VFS flush op, then flushes the block
+ * device buffer cache.  Returns 0 on success or -errno on error.
+ */
 static uint64_t sys_fsync(uint64_t fd) {
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-EBADF;
@@ -2269,19 +2278,83 @@ static uint64_t sys_fsync(uint64_t fd) {
         if (i < 0 || i >= PROCESS_FD_MAX || !proc->fd_table[i].used)
             return (uint64_t)-EBADF;
 
-        int ret = vfs_flush(proc->fd_table[i].path);
-        return (ret < 0) ? (uint64_t)-1 : 0;
+        const char *path = proc->fd_table[i].path;
+
+        /* Step 1: Get the inode number so we can do a targeted page flush */
+        struct vfs_stat st;
+        int r = vfs_stat(path, &st);
+        if (r < 0) {
+            /* If stat fails (e.g. file was deleted), fall back to full flush */
+            kprintf("[fsync] stat failed (%d), falling back to full flush\n", r);
+            int ret = vfs_flush(path);
+            return (ret < 0) ? (uint64_t)-EIO : 0;
+        }
+
+        /* Step 2: Flush dirty page cache pages for this specific inode */
+        if (st.ino != 0) {
+            page_cache_flush_inode(st.ino);
+        }
+
+        /* Step 3: Flush the filesystem metadata via VFS flush op */
+        r = vfs_flush(path);
+        if (r < 0) {
+            kprintf("[fsync] vfs_flush failed (%d) for %s\n", r, path);
+            return (uint64_t)-EIO;
+        }
+
+        return 0;
     }
 
-    /* For special fds (stdin/stdout/stderr, eventfd, timerfd, signalfd, sockets),
-     * fsync is a no-op (data is not buffered or not applicable) */
+    /* For special fds (stdin/stdout/stderr, eventfd, timerfd,
+     * signalfd, sockets, pipes), fsync is a no-op because data
+     * is not buffered or not applicable. */
     return 0;
 }
 
+/*
+ * fdatasync - synchronize a file's data, but metadata may be skipped
+ *             if not needed for subsequent data access.
+ *
+ * In this kernel, fdatasync is nearly identical to fsync but we
+ * skip the VFS-level metadata flush (step 3 above) and only flush
+ * dirty page cache pages + buffer cache.  This is a performance
+ * optimization for applications that only need data durability.
+ */
 static uint64_t sys_fdatasync(uint64_t fd) {
-    /* In this kernel, we don't separate metadata from data flushing.
-     * fdatasync is equivalent to fsync. */
-    return sys_fsync(fd);
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-EBADF;
+
+    /* Regular file fd (3+) */
+    if (fd >= 3 && fd < (uint64_t)(3 + PROCESS_FD_MAX)) {
+        int i = (int)fd - 3;
+        if (i < 0 || i >= PROCESS_FD_MAX || !proc->fd_table[i].used)
+            return (uint64_t)-EBADF;
+
+        const char *path = proc->fd_table[i].path;
+
+        /* Get the inode number for targeted flush */
+        struct vfs_stat st;
+        int r = vfs_stat(path, &st);
+        if (r < 0) {
+            kprintf("[fdatasync] stat failed (%d), falling back to full flush\n", r);
+            int ret = vfs_flush(path);
+            return (ret < 0) ? (uint64_t)-EIO : 0;
+        }
+
+        /* Flush dirty page cache pages for this specific inode */
+        if (st.ino != 0) {
+            page_cache_flush_inode(st.ino);
+        }
+
+        /* Flush the buffer cache (block device cache) to backing store.
+         * This ensures data pages are physically written to disk. */
+        bufcache_flush();
+
+        return 0;
+    }
+
+    /* Special fds: no-op */
+    return 0;
 }
 
 /* ── sigprocmask / sigpending ────────────────────────────────── */

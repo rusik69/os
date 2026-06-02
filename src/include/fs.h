@@ -69,6 +69,7 @@ int fs_stat_mtime(const char *path);  /* returns mtime seconds, or -1 */
 int fs_set_mtime(const char *path, uint32_t mtime);  /* set mtime seconds, or -1 on error */
 void fs_register_page_cache_writeback(void);
 int fs_chmod(const char *path, uint16_t mode);
+int fs_get_ino(const char *path);  /* returns inode number, or -1 on error */
 int fs_chown(const char *path, uint16_t uid, uint16_t gid);
 int fs_check_perm(const char *path, char op); /* op: 'r','w','x' */
 void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,

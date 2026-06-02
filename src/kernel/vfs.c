@@ -67,7 +67,8 @@ struct dcache_entry *dcache_lookup(const char *path)
 void dcache_add(const char *path, void *mount,
                 uint8_t type, uint32_t size,
                 uint16_t uid, uint16_t gid, uint16_t mode,
-                uint32_t mtime, uint32_t atime, uint32_t nlink)
+                uint32_t mtime, uint32_t atime, uint32_t nlink,
+                uint32_t ino)
 {
     if (!path || !path[0])
         return;
@@ -109,6 +110,7 @@ void dcache_add(const char *path, void *mount,
     e->mtime   = mtime;
     e->atime   = atime;
     e->nlink   = nlink;
+    e->ino     = ino;
     e->last_tick = dcache_global_tick++;
     e->in_use  = 1;
 
@@ -303,6 +305,11 @@ static int smfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     st->mode  = mode;
     st->mtime = (uint32_t)fs_stat_mtime(path);
     if ((int32_t)st->mtime < 0) st->mtime = 0;
+    st->atime = 0;
+    st->nlink = 1;
+    /* Populate inode number from the underlying filesystem */
+    int ino = fs_get_ino(path);
+    st->ino = (ino >= 0) ? (uint32_t)ino : 0;
     return 0;
 }
 
@@ -696,6 +703,7 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
         st->mtime = de->mtime;
         st->atime = de->atime;
         st->nlink = de->nlink;
+        st->ino   = de->ino;
         return 0;
     }
 
@@ -707,7 +715,8 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
         /* Cache the result for future lookups */
         dcache_add(ap, (void *)m, st->type, st->size,
                    st->uid, st->gid, st->mode,
-                   st->mtime, st->atime, st->nlink);
+                   st->mtime, st->atime, st->nlink,
+                   st->ino);
     }
     return r;
 }

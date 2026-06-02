@@ -68,6 +68,7 @@ struct vfs_stat {
     uint32_t mtime;
     uint32_t atime;
     uint32_t nlink;  /* link count */
+    uint32_t ino;    /* inode number (0 = unknown/not applicable) */
 };
 
 /* POSIX advisory file lock */
