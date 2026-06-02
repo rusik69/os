@@ -492,6 +492,7 @@ void net_get_ip(uint8_t *ip) {
 
 uint32_t net_get_gateway(void) { return net_gateway_ip; }
 uint32_t net_get_mask(void)    { return net_subnet_mask; }
+uint32_t net_get_dns(void)     { return net_dns_server; }
 
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask) {
     net_our_ip = ip;

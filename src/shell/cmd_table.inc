@@ -283,6 +283,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("modinfo",     "Show kernel module information (modinfo [name])", sh_modinfo)
     /* System logger daemon (U7) */
     CMD("syslogd",     "System logger daemon (syslogd [stop|status])",   cmd_syslogd)
+    /* DHCP client daemon (U8) */
+    CMD("dhcpcd",      "DHCP client daemon (dhcpcd [stop|status|renew|release])", cmd_dhcpcd)
     { 0, 0, 0 }
 };
 

@@ -118,6 +118,7 @@ uint16_t net_checksum(const void *data, int len);
 void net_get_ip(uint8_t *ip);
 uint32_t net_get_gateway(void);
 uint32_t net_get_mask(void);
+uint32_t net_get_dns(void);
 void net_dhcp_discover(void);
 void net_dhcp_renew_if_needed(void);
 int net_ping(uint32_t target_ip);
