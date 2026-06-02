@@ -558,7 +558,13 @@ uint32_t net_dns_resolve(const char *hostname) {
     uint32_t cached = dns_cache_lookup(hostname);
     if (cached) return cached;
 
-    uint32_t srv = net_dns_server ? net_dns_server : net_gateway_ip;
+    uint32_t srv = net_dns_server;
+    if (!srv) {
+        /* Try reading nameserver from /etc/resolv.conf */
+        srv = net_resolv_conf_read_first();
+    }
+    if (!srv)
+        srv = net_gateway_ip;
     if (!srv) return 0;
 
     uint8_t pkt[512];

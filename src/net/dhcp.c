@@ -8,6 +8,8 @@
 #include "timer.h"
 #include "e1000.h"
 #include "virtio_net.h"
+#include "vfs.h"
+#include "errno.h"
 
 /*
  * Real DHCP client implementation.
@@ -262,6 +264,102 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
     }
 }
 
+/* ── /etc/resolv.conf management ─────────────────────────────────── */
+
+/* Write a nameserver line to /etc/resolv.conf.  Replaces the entire file
+ * content with "nameserver A.B.C.D\\n".  Returns 0 on success, negative on error. */
+static int resolv_conf_write_nameserver(uint32_t dns_ip)
+{
+    char buf[64];
+    int len;
+
+    if (dns_ip == 0)
+        return 0; /* no DNS server — nothing to write */
+
+    /* Format: "nameserver A.B.C.D\\n" */
+    len = snprintf(buf, sizeof(buf), "nameserver %u.%u.%u.%u\n",
+                   (uint32_t)((dns_ip >> 24) & 0xFF),
+                   (uint32_t)((dns_ip >> 16) & 0xFF),
+                   (uint32_t)((dns_ip >>  8) & 0xFF),
+                   (uint32_t)( dns_ip        & 0xFF));
+    if (len < 0 || len >= (int)sizeof(buf))
+        return -EINVAL;
+
+    /* Create or truncate /etc/resolv.conf */
+    int ret = vfs_create("/etc/resolv.conf", 1); /* 1 = file type */
+    if (ret < 0 && ret != -EEXIST) {
+        kprintf("[resolv.conf] failed to create /etc/resolv.conf: err=%d\n", ret);
+        return ret;
+    }
+
+    ret = vfs_write("/etc/resolv.conf", buf, (uint32_t)len);
+    if (ret < 0) {
+        kprintf("[resolv.conf] failed to write /etc/resolv.conf: err=%d\n", ret);
+        return ret;
+    }
+
+    kprintf("[resolv.conf] wrote 'nameserver %u.%u.%u.%u'\n",
+            (uint32_t)((dns_ip >> 24) & 0xFF),
+            (uint32_t)((dns_ip >> 16) & 0xFF),
+            (uint32_t)((dns_ip >>  8) & 0xFF),
+            (uint32_t)( dns_ip        & 0xFF));
+    return 0;
+}
+
+/* Read the first nameserver line from /etc/resolv.conf and return its
+ * IP in host byte order, or 0 if none found / file missing / error. */
+uint32_t net_resolv_conf_read_first(void)
+{
+    char buf[128];
+    uint32_t out_size = 0;
+
+    int ret = vfs_read("/etc/resolv.conf", buf, sizeof(buf) - 1, &out_size);
+    if (ret < 0 || out_size == 0)
+        return 0;
+
+    buf[out_size] = '\0';
+
+    /* Parse "nameserver" lines — take the first one found */
+    const char *p = buf;
+    while (p && *p) {
+        /* Skip whitespace */
+        while (*p == ' ' || *p == '\t')
+            p++;
+
+        if (strncmp(p, "nameserver", 10) == 0) {
+            p += 10;
+            /* Skip whitespace after nameserver */
+            while (*p == ' ' || *p == '\t')
+                p++;
+
+            /* Parse A.B.C.D */
+            uint32_t parts[4] = {0};
+            int pi = 0;
+            while (*p && *p != '\n' && *p != '\r' && pi < 4) {
+                if (*p >= '0' && *p <= '9')
+                    parts[pi] = parts[pi] * 10 + (uint32_t)(*p - '0');
+                else if (*p == '.')
+                    pi++;
+                else
+                    break; /* invalid character */
+                p++;
+            }
+            if (pi == 3) {
+                uint32_t ip = (parts[0] << 24) | (parts[1] << 16) |
+                              (parts[2] << 8)  | parts[3];
+                return ip;
+            }
+            break; /* malformed nameserver line */
+        }
+
+        /* Skip to end of line */
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+
+    return 0;
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 void dhcp_init(void) {
@@ -376,6 +474,9 @@ int dhcp_discover(void) {
 
     /* Update networking state with our new configuration */
     net_set_ip(dhcp_result_ip, dhcp_result_gateway, dhcp_result_netmask);
+
+    /* Write DNS server to /etc/resolv.conf for userspace tools */
+    resolv_conf_write_nameserver(dhcp_result_dns);
 
     kprintf("[OK] DHCP: assigned %u.%u.%u.%u, GW %u.%u.%u.%u, MASK %u.%u.%u.%u\n",
             (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
