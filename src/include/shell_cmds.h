@@ -347,6 +347,9 @@ void cmd_syslogd(const char *args);
 /* DHCP client daemon (U8) */
 void cmd_dhcpcd(const char *args);
 
+/* Cron daemon (U10) */
+void cmd_crond(const char *args);
+
 /* Filesystem table / mount command (U25) */
 void cmd_mount(const char *args);
 #endif
