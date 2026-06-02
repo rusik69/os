@@ -12,7 +12,7 @@ static void sh_meminfo(const char *a)    { (void)a; cmd_meminfo(); }
 static void sh_ps(const char *a)         { (void)a; cmd_ps(); }
 static void sh_uptime(const char *a)     { (void)a; cmd_uptime(); }
 static void sh_reboot(const char *a)     { (void)a; cmd_reboot(); }
-static void sh_shutdown(const char *a)   { (void)a; cmd_shutdown(); }
+static void sh_shutdown(const char *a)   { cmd_shutdown(a); }
 static void sh_date(const char *a)       { (void)a; cmd_date(); }
 static void sh_cpuinfo(const char *a)    { (void)a; cmd_cpuinfo(); }
 static void sh_history(const char *a)  { (void)a; cmd_history_show(); }

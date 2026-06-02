@@ -8,7 +8,7 @@ void cmd_meminfo(void);
 void cmd_ps(void);
 void cmd_uptime(void);
 void cmd_reboot(void);
-void cmd_shutdown(void);
+void cmd_shutdown(const char *args);
 void cmd_kill(const char *args);
 void cmd_color(const char *args);
 void cmd_hexdump(const char *args);
