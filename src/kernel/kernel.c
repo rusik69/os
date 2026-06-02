@@ -60,6 +60,7 @@
 #include "elf.h"
 #include "cpu.h"
 #include "cpu_features.h"
+#include "cpu_topology.h"
 #include "x2apic.h"
 #include "tsc_deadline.h"
 #include "vsyscall.h"
@@ -382,6 +383,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Per-CPU data for SMP — must be before scheduler_init (needs GS_BASE) */
     smp_init_bsp();
     kprintf("[OK] SMP per-CPU data initialized\n");
+
+    /* CPU topology and NUMA detection */
+    cpu_topology_init();
+    numa_init();
 
     /* Scheduler */
     scheduler_init();

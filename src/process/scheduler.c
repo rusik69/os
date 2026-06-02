@@ -26,6 +26,7 @@
 #include "sysctl.h"
 #include "pelt.h"
 #include "cpuset.h"
+#include "cpu_topology.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -264,8 +265,33 @@ void scheduler_add(struct process *proc) {
     if (proc->sched_policy == SCHED_DEADLINE)
         return;
 
-    /* Determine target CPU: use cpu_affinity hint, or current CPU */
+    /* ── NUMA-aware target CPU selection ─────────────────────────────
+     *
+     * If the process has a NUMA home node (assigned at creation),
+     * prefer placing it on a CPU belonging to that node.  This keeps
+     * memory accesses local and reduces cross-node traffic.
+     *
+     * Selection priority:
+     *   1. Current CPU, if it belongs to the process's home node
+     *   2. Another CPU on the home node if the current CPU is remote
+     *   3. Current CPU (fallback — always safe)
+     */
     uint32_t cpu_id = get_cpu_id();
+    int home = proc->home_node;
+
+    if (home >= 0 && home < NUMA_MAX_NODES) {
+        /* Check whether the current CPU is on the desired NUMA node */
+        if (!numa_cpu_is_on_node((int)cpu_id, home)) {
+            /* Current CPU is remote — try to find a home-node CPU */
+            int home_cpu = numa_first_cpu_on_node(home);
+            if (home_cpu >= 0 && home_cpu < smp_cpu_count &&
+                cpuhp_is_online(home_cpu)) {
+                cpu_id = (uint32_t)home_cpu;
+            }
+            /* If no home-node CPU is online, fall through to current CPU */
+        }
+    }
+
     struct cpu_info *ci = &cpu_info_array[cpu_id];
 
     int lvl = (int)proc->priority;
@@ -397,7 +423,7 @@ static struct process *dequeue_next(void) {
     return NULL;
 }
 
-/* ── Load balancing: steal from the busiest CPU (weighted) ──── */
+/* ── Load balancing: steal from the busiest CPU (weighted, NUMA-aware) ──── */
 static int calculate_cpu_load(struct cpu_info *ci) {
     int load = 0;
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
@@ -410,26 +436,55 @@ static int calculate_cpu_load(struct cpu_info *ci) {
     return load;
 }
 
+/*
+ * load_balance() - Steal a runnable task from a busy CPU to balance load.
+ *
+ * Selection strategy (NUMA-aware):
+ *   1. Prefer stealing from CPUs on the same NUMA node (lower latency).
+ *   2. If no same-node CPU is overloaded, fall back to the busiest CPU
+ *      regardless of node.
+ *   3. Steal the lowest-priority task (highest priority level number) to
+ *      minimise disruption.
+ */
 static int load_balance(void) {
     struct cpu_info *ci = this_cpu();
+    int this_cpu_id = (int)get_cpu_id();
     int this_load = calculate_cpu_load(ci);
 
     /* Don't steal if we already have significant load */
     if (this_load > CFS_NICE_0_WEIGHT * 2) return 0;
 
-    /* Find the busiest CPU with a significant load imbalance */
+    int this_node = numa_node_of_cpu(this_cpu_id);
+
+    /* Find the busiest CPU, preferring same-NUMA-node CPUs */
     int busiest_cpu = -1;
     int busiest_load = 0;
+    int same_node_busiest_cpu = -1;
+    int same_node_busiest_load = 0;
 
     for (int cpu = 0; cpu < smp_cpu_count; cpu++) {
-        if ((uint32_t)cpu == get_cpu_id()) continue;
+        if (cpu == this_cpu_id) continue;
         struct cpu_info *other = &cpu_info_array[cpu];
         int load = calculate_cpu_load(other);
-        if (load > busiest_load && load - this_load > CFS_NICE_0_WEIGHT) {
-            busiest_load = load;
-            busiest_cpu = cpu;
+        int diff = load - this_load;
+
+        if (diff > CFS_NICE_0_WEIGHT) {
+            /* Track the busiest overall */
+            if (load > busiest_load) {
+                busiest_load = load;
+                busiest_cpu = cpu;
+            }
+            /* Track the busiest on the same NUMA node */
+            if (numa_node_of_cpu(cpu) == this_node && load > same_node_busiest_load) {
+                same_node_busiest_load = load;
+                same_node_busiest_cpu = cpu;
+            }
         }
     }
+
+    /* Prefer same-node CPU; fall back to busiest CPU on any node */
+    if (same_node_busiest_cpu >= 0)
+        busiest_cpu = same_node_busiest_cpu;
 
     if (busiest_cpu < 0) return 0;
 

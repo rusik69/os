@@ -9,6 +9,7 @@
 #include "smp.h"
 #include "signal.h"
 #include "syscall.h"
+#include "cpu_topology.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -378,6 +379,8 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->vruntime = 0;
     proc->sched_weight = 1024;
     proc->sched_autogroup_id = -1;
+    /* NUMA home node — default to current CPU's NUMA node */
+    proc->home_node = numa_home_node();
     proc->cpu_user = 0;
     proc->cpu_system = 0;
     proc->max_rss = 0;
