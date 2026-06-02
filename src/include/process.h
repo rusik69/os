@@ -178,6 +178,15 @@ struct process {
     uint64_t vruntime;           /* virtual runtime for CFS */
     uint64_t sched_weight;       /* scheduling weight (default 1024) */
     int      sched_autogroup_id; /* autogroup ID (-1 = none) */
+    /* ── SCHED_DEADLINE parameters ─────────────────────────── */
+    uint64_t dl_runtime;         /* worst-case execution time per period (ns) */
+    uint64_t dl_deadline;        /* relative deadline (ns) */
+    uint64_t dl_period;          /* period (ns) */
+    uint64_t dl_deadline_abs;    /* absolute deadline for current period (ns) */
+    uint64_t dl_runtime_remaining; /* remaining budget (ns) */
+    uint64_t dl_period_start;    /* start time of current period (ns) */
+    int      dl_throttled;       /* 1 = budget exhausted before deadline */
+    int      dl_active;          /* 1 = deadline scheduling active */
     /* ── Resource tracking ──────────────────────────────────── */
     uint64_t cpu_user;           /* user CPU time (ticks) */
     uint64_t cpu_system;         /* system CPU time (ticks) */

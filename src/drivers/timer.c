@@ -70,3 +70,7 @@ void timer_init(void) {
 uint64_t timer_get_ticks(void) {
     return ticks;
 }
+
+uint64_t timer_get_ns(void) {
+    return ticks * NS_PER_TICK;
+}

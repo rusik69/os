@@ -21,6 +21,7 @@
 #include "nmi_watchdog.h"
 #include "cpuhp.h"
 #include "cpuidle.h"
+#include "sched_deadline.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -75,6 +76,9 @@ void scheduler_init(void) {
     struct cpu_info *ci = this_cpu();
     ci->scheduler_enabled = 1;
 
+    /* Initialize the per-CPU deadline runqueue */
+    sched_deadline_init_cpu(get_cpu_id());
+
     /* Sync the per-CPU current_process pointer.
      * process_init() set the global 'current_process' to &process_table[0]
      * (the boot/idle process), but smp_init_bsp() then cleared the
@@ -90,6 +94,11 @@ void scheduler_init(void) {
 /* ── Add process to its CPU's runqueue ──────────────────────────────── */
 void scheduler_add(struct process *proc) {
     if (proc->on_queue) return;
+
+    /* SCHED_DEADLINE tasks are managed by the deadline runqueue, not the
+     * general priority queues. */
+    if (proc->sched_policy == SCHED_DEADLINE)
+        return;
 
     /* Determine target CPU: use cpu_affinity hint, or current CPU */
     uint32_t cpu_id = get_cpu_id();
@@ -274,9 +283,17 @@ void schedule(void) {
     struct process *current = ci->current_process;
 
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
-    struct process *next = dequeue_next();
-    spinlock_irqsave_release(&sched_lock, irq_flags);
+    struct process *next = NULL;
+
+    /* First, try to pick a SCHED_DEADLINE task (EDF) */
+    next = sched_deadline_pick_next();
+
+    if (!next) {
+        /* No deadline task available — fall back to regular CFS */
+        spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+        next = dequeue_next();
+        spinlock_irqsave_release(&sched_lock, irq_flags);
+    }
 
     if (!next) {
         /* No tasks — try load balancing */
@@ -378,6 +395,16 @@ void scheduler_tick(int was_user) {
     /* Update CFS vruntime */
     update_vruntime(cur, 1);
 
+    /* Handle SCHED_DEADLINE budget accounting */
+    if (cur->sched_policy == SCHED_DEADLINE && cur->dl_active) {
+        sched_deadline_tick(cur);
+        /* If throttled, reschedule immediately to let another task run */
+        if (cur->dl_throttled) {
+            schedule();
+            return;
+        }
+    }
+
     /* Check pending signals */
     if (cur->pending_signals) {
         signal_check();
@@ -397,6 +424,9 @@ void scheduler_tick(int was_user) {
         } else if (cur->sched_policy == SCHED_BATCH) {
             /* SCHED_BATCH: longer timeslices, lower priority (level 3) */
             cur->ticks_remaining = time_slices[3] * 3;
+        } else if (cur->sched_policy == SCHED_DEADLINE) {
+            /* SCHED_DEADLINE: managed by CBS budget, not time-slice ticks */
+            cur->ticks_remaining = 1; /* don't trigger reschedule on expiry */
         } else {
             /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
             int lvl = (int)cur->priority;
@@ -420,10 +450,19 @@ void scheduler_tick(int was_user) {
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
             cur->ticks_remaining = time_slices[lvl];
             schedule();
+        } else if (cur->sched_policy == SCHED_DEADLINE) {
+            /* SCHED_DEADLINE: never preempt based on time-slice expiry;
+             * budget is managed by sched_deadline_tick() above. */
+            cur->ticks_remaining = 1; /* keep running unless throttled */
         } else {
             /* SCHED_OTHER: preempt on quantum expiry */
             schedule();
         }
+    }
+
+    /* Periodically check for deadline task replenishment */
+    if (cur->dl_active || (timer_get_ticks() & 0x3) == 0) {
+        sched_deadline_replenish();
     }
 }
 

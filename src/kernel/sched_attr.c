@@ -5,6 +5,7 @@
 #include "string.h"
 #include "errno.h"
 #include "kernel.h"
+#include "sched_deadline.h"
 
 /*
  * Per-pid scheduling attributes table.
@@ -48,7 +49,7 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
         return -EINVAL;
 
     /* Validate scheduling policy */
-    if (attr->sched_policy < SCHED_OTHER || attr->sched_policy > SCHED_BATCH)
+    if (attr->sched_policy < SCHED_OTHER || attr->sched_policy > SCHED_DEADLINE)
         return -EINVAL;
 
     /* Validate priority ranges */
@@ -58,6 +59,16 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
     /* Validate nice range */
     if (attr->sched_nice < -20 || attr->sched_nice > 19)
         return -EINVAL;
+
+    /* Validate deadline parameters */
+    if (attr->sched_policy == SCHED_DEADLINE) {
+        if (attr->sched_runtime == 0 || attr->sched_deadline == 0 || attr->sched_period == 0)
+            return -EINVAL;
+        if (attr->sched_runtime > attr->sched_deadline)
+            return -EINVAL;
+        if (attr->sched_deadline > attr->sched_period)
+            return -EINVAL;
+    }
 
     /* Find the process (must exist) */
     struct process *proc = process_get_by_pid(pid);
@@ -75,6 +86,26 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
         attr->sched_policy == SCHED_OTHER || attr->sched_policy == SCHED_BATCH) {
         proc->sched_policy = (uint8_t)attr->sched_policy;
         proc->priority     = (uint8_t)(attr->sched_priority & 0xFF);
+    } else if (attr->sched_policy == SCHED_DEADLINE) {
+        /* Configure SCHED_DEADLINE parameters */
+        proc->sched_policy  = SCHED_DEADLINE;
+        proc->dl_runtime    = attr->sched_runtime;
+        proc->dl_deadline   = attr->sched_deadline;
+        proc->dl_period     = attr->sched_period;
+        proc->dl_active     = 0;
+        proc->dl_throttled  = 0;
+
+        /* Register with the deadline scheduler (admission control) */
+        int ret = sched_deadline_add_task(proc);
+        if (ret != 0) {
+            kprintf("sched_deadline: admission control failed for pid %u "
+                    "(runtime=%llu deadline=%llu period=%llu)\n",
+                    pid,
+                    (unsigned long long)attr->sched_runtime,
+                    (unsigned long long)attr->sched_deadline,
+                    (unsigned long long)attr->sched_period);
+            return -EBUSY;
+        }
     }
 
     return 0;
