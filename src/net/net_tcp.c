@@ -39,6 +39,11 @@
  *
  * Returns floor(cbrt(a)) for a > 0.  Uses at most 10 iterations.
  */
+
+/* ── Forward declarations for Nagle/Delayed ACK helpers ────────── */
+static void tcp_flush_delayed_ack(struct tcp_conn *c);
+static void tcp_flush_nagle(struct tcp_conn *c);
+
 static uint32_t cubic_root(uint64_t a)
 {
     if (a == 0 || a == 1)
@@ -338,6 +343,17 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
     tcp->seq_num = htonl(conn->our_seq);
     tcp->ack_num = htonl(conn->their_seq);
 
+    /*
+     * Delayed ACK piggyback (RFC 1122 §4.2.3.2):
+     * If we have a pending delayed ACK and this segment carries data,
+     * piggyback the ACK flag instead of sending a separate pure ACK.
+     */
+    if (conn->delayed_ack_pending && (data_len > 0 || (flags & (TCP_SYN | TCP_FIN | TCP_RST)))) {
+        flags |= TCP_ACK;
+        tcp->ack_num = htonl(conn->their_seq);
+        conn->delayed_ack_pending = 0;
+    }
+
     uint16_t opt_len = 0;
     uint8_t *opts = buf + sizeof(struct tcp_header);
 
@@ -546,6 +562,9 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->cubic_epoch_start = 0;
         c->cubic_origin_point = 0;
         c->cubic_use_cubic = 0;
+        /* Nagle / Delayed ACK initialization */
+        c->delayed_ack_pending = 0;
+        c->nagle_buf_len = 0;
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
@@ -653,6 +672,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         c->tx_unacked_len = 0;
                         c->retrans_count  = 0;
                         c->dupack_count = 0;
+                        /* Flush any Nagle-accumulated data now */
+                        tcp_flush_nagle(c);
                     } else if ((int32_t)(ack - c->tx_unacked_seq) > 0) {
                         /* Partial ACK */
                         acked_some = 1;
@@ -664,6 +685,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                             c->tx_unacked_seq = ack;
                         } else {
                             c->tx_unacked_seq = 0;
+                            /* Entire buffer ACKed — flush Nagle data now */
+                            tcp_flush_nagle(c);
                         }
                         c->retrans_count = 0;
                         c->dupack_count = 0;
@@ -777,10 +800,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             uint32_t expected = c->their_seq;
             /* Signed comparisons handle 32-bit sequence number wraparound */
             if ((int32_t)((seq + data_len) - expected) <= 0) {
+                /* Duplicate data — send immediate ACK (RFC 5681 §4.2) */
+                tcp_flush_delayed_ack(c);
                 send_tcp(c, TCP_ACK, NULL, 0);
                 return;
             }
             if ((int32_t)(seq - expected) > 0) {
+                /* Out-of-order data — send immediate ACK, do not delay */
+                tcp_flush_delayed_ack(c);
                 send_tcp(c, TCP_ACK, NULL, 0);
                 return;
             }
@@ -788,6 +815,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             if ((int32_t)(seq - expected) < 0) {
                 skip = (uint32_t)(expected - seq);
                 if (skip >= data_len) {
+                    /* Fully retransmitted — send immediate ACK */
+                    tcp_flush_delayed_ack(c);
                     send_tcp(c, TCP_ACK, NULL, 0);
                     return;
                 }
@@ -795,7 +824,23 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 data_len -= skip;
             }
             c->their_seq = expected + data_len;
-            send_tcp(c, TCP_ACK, NULL, 0);
+            /*
+             * Delayed ACK (RFC 1122 §4.2.3.2):
+             * Defer the ACK for normal in-order data so it can be piggybacked
+             * on the next outgoing segment. Send immediately if PSH is set.
+             */
+            if (flags & TCP_PSH) {
+                /* PSH means the sender wants quick delivery — ACK now */
+                tcp_flush_delayed_ack(c);
+                send_tcp(c, TCP_ACK, NULL, 0);
+            } else {
+                /* Schedule a delayed ACK — start the timer */
+                c->delayed_ack_pending = 1;
+                c->delayed_ack_tick = timer_get_ticks();
+                /* If we have a pending Nagle send, flush it now — it carries the ACK */
+                if (c->nagle_buf_len > 0)
+                    tcp_flush_nagle(c);
+            }
             /* Update activity for keepalive */
             c->last_activity_tick = timer_get_ticks();
             if (l && l->on_data) {
@@ -916,6 +961,9 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->cubic_epoch_start = 0;
     c->cubic_origin_point = 0;
     c->cubic_use_cubic = 0;
+    /* Nagle / Delayed ACK initialization */
+    c->delayed_ack_pending = 0;
+    c->nagle_buf_len = 0;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -1001,62 +1049,158 @@ int net_tcp_send(int conn_id, const void *data, uint16_t len) {
     struct tcp_conn *c = &tcp_conns[conn_id];
     if (c->state != TCP_ESTABLISHED) return -1;
 
-    /* Limit to what fits in the retransmit buffer */
+    /* Clamp to fit in the retransmit buffer */
     uint16_t send_len = len;
     if (send_len > (uint16_t)sizeof(c->tx_unacked_buf))
         send_len = (uint16_t)sizeof(c->tx_unacked_buf);
 
-    /* Buffer the full payload for potential retransmission */
+    /* ── TCP_CORK: buffer unconditionally until uncorked ────── */
+    if (c->tcp_cork) {
+        uint16_t space = (uint16_t)sizeof(c->nagle_buf) - c->nagle_buf_len;
+        uint16_t copy = send_len < space ? send_len : space;
+        if (copy > 0) {
+            memcpy(c->nagle_buf + c->nagle_buf_len, data, copy);
+            c->nagle_buf_len += copy;
+        }
+        c->last_activity_tick = timer_get_ticks();
+        return 0;
+    }
+
+    /* ── TCP_NODELAY or full-MSS: send immediately ──────────── */
+    if (c->tcp_nodelay || send_len >= 1400) {
+        uint16_t total = send_len;
+
+        /* Merge any accumulated Nagle data with this send */
+        if (c->nagle_buf_len > 0) {
+            uint16_t merge = (uint16_t)sizeof(c->tx_unacked_buf) - send_len;
+            if (merge > c->nagle_buf_len) merge = c->nagle_buf_len;
+            /* Build merged buffer: Nagle data first, then new data */
+            memcpy(c->tx_unacked_buf, c->nagle_buf, merge);
+            memcpy(c->tx_unacked_buf + merge, data, send_len);
+            total = send_len + merge;
+            c->nagle_buf_len = 0;
+        } else {
+            memcpy(c->tx_unacked_buf, data, send_len);
+        }
+
+        c->tx_unacked_seq = c->our_seq;
+        c->tx_unacked_len = total;
+
+        const uint8_t *p = c->tx_unacked_buf;
+        uint16_t remaining = total;
+        while (remaining > 0) {
+            uint16_t chunk = remaining > 1400 ? 1400 : remaining;
+            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
+            c->our_seq += chunk;
+            p += chunk;
+            remaining -= chunk;
+        }
+
+        c->last_send_tick = timer_get_ticks();
+        c->retrans_count = 0;
+        c->dupack_count = 0;
+        c->last_activity_tick = c->last_send_tick;
+        if (c->rto == 0) c->rto = 30;
+        return 0;
+    }
+
+    /* ── Nagle algorithm (RFC 896) ───────────────────────────
+     *
+     * If there is unacknowledged data outstanding, delay sending
+     * small segments (< MSS).  Accumulate into the tx_unacked_buf
+     * right after the outstanding data and send when either:
+     *   a) the ACK for the outstanding data arrives (tcp_flush_nagle)
+     *   b) a subsequent send with full-MSS or NODELAY flushes it
+     *   c) the caller sets TCP_CORK and later clears it
+     */
+    if (c->tx_unacked_len > 0) {
+        /* Accumulate into the Nagle buffer for later merging */
+        uint16_t space = (uint16_t)sizeof(c->nagle_buf) - c->nagle_buf_len;
+        uint16_t copy = send_len < space ? send_len : space;
+        if (copy > 0) {
+            memcpy(c->nagle_buf + c->nagle_buf_len, data, copy);
+            c->nagle_buf_len += copy;
+        }
+        c->last_activity_tick = timer_get_ticks();
+        return 0;
+    }
+
+    /* ── No outstanding data — send immediately ────────────── */
     c->tx_unacked_seq = c->our_seq;
     memcpy(c->tx_unacked_buf, data, send_len);
-    c->tx_unacked_len  = send_len;
-    c->last_send_tick  = timer_get_ticks();
-    c->retrans_count   = 0;
-    c->dupack_count    = 0;
-    c->last_activity_tick = timer_get_ticks();
+    c->tx_unacked_len = send_len;
+
+    const uint8_t *p = (const uint8_t *)data;
+    uint16_t remaining = send_len;
+    while (remaining > 0) {
+        uint16_t chunk = remaining > 1400 ? 1400 : remaining;
+        send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
+        c->our_seq += chunk;
+        p += chunk;
+        remaining -= chunk;
+    }
+
+    c->last_send_tick = timer_get_ticks();
+    c->retrans_count = 0;
+    c->dupack_count = 0;
+    c->last_activity_tick = c->last_send_tick;
     if (c->rto == 0) c->rto = 30;
-
-    /* If TCP_CORK is set, buffer data but don't send yet (caller must uncork) */
-    if (c->tcp_cork) {
-        return 0;
-    }
-
-    /* TCP_NODELAY: send immediately, bypassing Nagle */
-    if (c->tcp_nodelay) {
-        const uint8_t *p = (const uint8_t *)data;
-        uint16_t remaining = send_len;
-        while (remaining > 0) {
-            uint16_t chunk = remaining > 1400 ? 1400 : remaining;
-            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
-            c->our_seq += chunk;
-            p += chunk;
-            remaining -= chunk;
-        }
-        return 0;
-    }
-
-    /* Default (Nagle's algorithm): send immediately if:
-     * - we have no outstanding data, OR
-     * - the data fits in a full MSS (MSS-based Nagle) */
-    if (c->tx_unacked_len == 0 || send_len >= 1400) {
-        const uint8_t *p = (const uint8_t *)data;
-        uint16_t remaining = send_len;
-        while (remaining > 0) {
-            uint16_t chunk = remaining > 1400 ? 1400 : remaining;
-            send_tcp(c, TCP_PSH | TCP_ACK, p, chunk);
-            c->our_seq += chunk;
-            p += chunk;
-            remaining -= chunk;
-        }
-    }
-    /* If Nagle delays the data, it stays buffered and will be sent
-     * on the next poll cycle when the previous data is ACKed */
     return 0;
+}
+
+/* ── Nagle / Delayed ACK helpers ────────────────────────────────── */
+
+/*
+ * Send (or flush) a pending delayed ACK.
+ * Called when we need to stop delaying and send the ACK now.
+ */
+static void tcp_flush_delayed_ack(struct tcp_conn *c) {
+    if (c->delayed_ack_pending) {
+        c->delayed_ack_pending = 0;
+        send_tcp(c, TCP_ACK, NULL, 0);
+    }
+}
+
+/*
+ * Flush the Nagle buffer -- send accumulated small writes.
+ * Called when the previous outstanding data has been ACKed and we
+ * have data waiting in the buffer.
+ */
+static void tcp_flush_nagle(struct tcp_conn *c) {
+    if (c->nagle_buf_len == 0) return;
+
+    uint16_t remaining = c->nagle_buf_len;
+    const uint8_t *p = c->nagle_buf;
+    c->tx_unacked_seq = c->our_seq;
+
+    while (remaining > 0) {
+        uint16_t chunk = remaining > 1400 ? 1400 : remaining;
+        /* Piggyback any pending delayed ACK on the data segment */
+        uint8_t flags = TCP_PSH | TCP_ACK;
+        send_tcp(c, flags, p, chunk);
+        c->our_seq += chunk;
+        p += chunk;
+        remaining -= chunk;
+    }
+
+    /* Data is now outstanding — copy to retransmission buffer */
+    memcpy(c->tx_unacked_buf, c->nagle_buf, c->nagle_buf_len);
+    c->tx_unacked_len = c->nagle_buf_len;
+    c->nagle_buf_len = 0;
+    c->last_send_tick = timer_get_ticks();
+    c->retrans_count = 0;
+    c->last_activity_tick = c->last_send_tick;
 }
 
 void net_tcp_close(int conn_id) {
     if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return;
     struct tcp_conn *c = &tcp_conns[conn_id];
+
+    /* Flush any pending delayed ACK and Nagle data before closing */
+    tcp_flush_delayed_ack(c);
+    if (c->nagle_buf_len > 0)
+        tcp_flush_nagle(c);
+
     switch (c->state) {
         case TCP_ESTABLISHED:
             send_tcp(c, TCP_FIN | TCP_ACK, NULL, 0);
@@ -1125,7 +1269,55 @@ void net_tcp_check_retransmit(void) {
             continue;
         }
 
+        /* Skip connections that are not established */
         if (c->state != TCP_ESTABLISHED) continue;
+
+        /*
+         * Delayed ACK timeout (RFC 1122 §4.2.3.2):
+         * Send a pure ACK if we've been delaying for more than ~20ms (2 ticks).
+         * This bounds the acknowledgment delay so the sender doesn't stall.
+         */
+        if (c->delayed_ack_pending && (now - c->delayed_ack_tick >= 2)) {
+            c->delayed_ack_pending = 0;
+            send_tcp(c, TCP_ACK, NULL, 0);
+        }
+
+        /*
+         * Nagle accumulation timeout:
+         * If we have accumulated data in the Nagle buffer but the
+         * outstanding data hasn't been ACKed for a while, send the
+         * accumulated data anyway (up to ~50ms = 5 ticks).
+         * This prevents starvation when the peer is slow to ACK.
+         */
+        if (c->nagle_buf_len > 0 && c->tx_unacked_len > 0 &&
+            (now - c->last_send_tick >= 5)) {
+            /* Merge Nagle buffer with outstanding data and send */
+            uint16_t total = c->tx_unacked_len + c->nagle_buf_len;
+            if (total > sizeof(c->tx_unacked_buf))
+                total = sizeof(c->tx_unacked_buf);
+            uint16_t merge = total - c->tx_unacked_len;
+            if (merge > c->nagle_buf_len) merge = c->nagle_buf_len;
+            memcpy(c->tx_unacked_buf + c->tx_unacked_len, c->nagle_buf, merge);
+            c->nagle_buf_len -= merge;
+            if (c->nagle_buf_len > 0)
+                memmove(c->nagle_buf, c->nagle_buf + merge, c->nagle_buf_len);
+
+            uint32_t saved_seq = c->our_seq;
+            c->our_seq = c->tx_unacked_seq;
+            const uint8_t *rp = c->tx_unacked_buf;
+            uint16_t remain = c->tx_unacked_len + merge;
+            while (remain > 0) {
+                uint16_t chunk = remain > 1400 ? 1400 : remain;
+                send_tcp(c, TCP_PSH | TCP_ACK, rp, chunk);
+                c->our_seq += chunk;
+                rp += chunk;
+                remain -= chunk;
+            }
+            c->tx_unacked_len = c->tx_unacked_len + merge;
+            c->our_seq = saved_seq + merge; /* advance past what we just sent */
+        }
+
+        /* ── Retransmission ───────────────────────────────── */
         if (c->tx_unacked_len == 0) continue;
         if (now - c->last_send_tick < c->rto) continue;
 

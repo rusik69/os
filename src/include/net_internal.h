@@ -140,6 +140,11 @@ struct tcp_conn {
     uint64_t cubic_epoch_start;     /* tick when the current epoch started */
     uint32_t cubic_origin_point;    /* origin point for cubic growth */
     int      cubic_use_cubic;       /* 1 = using CUBIC algorithm */
+    /* Nagle / Delayed ACK */
+    int     delayed_ack_pending;    /* 1 = ACK is pending (delay before sending) */
+    uint64_t delayed_ack_tick;      /* tick when delayed ACK timer was started */
+    uint8_t  nagle_buf[4096];       /* Nagle accumulation buffer for small writes */
+    uint16_t nagle_buf_len;         /* bytes accumulated in Nagle buffer */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
