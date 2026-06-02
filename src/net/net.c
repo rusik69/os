@@ -930,6 +930,14 @@ void net_poll(void) {
                     }
                 }
                 handle_ip(payload, payload_len);
+            } else if (type == ETH_TYPE_IPV6) {
+                /* Update neighbor cache from source MAC for IPv6 link-local */
+                if (payload_len >= sizeof(struct ipv6_header)) {
+                    struct ipv6_header *ip6 = (struct ipv6_header *)payload;
+                    if (ipv6_addr_is_linklocal(&ip6->src_ip))
+                        ipv6_nd_cache_add(&ip6->src_ip, eth->src);
+                }
+                handle_ipv6(payload, payload_len);
             }
         } else {
             net_iface_stats.rx_drops++;
@@ -952,6 +960,7 @@ void net_poll(void) {
         last_retransmit_tick = now;
         net_tcp_check_retransmit();
         net_tcp_check_keepalive();
+        ipv6_poll();
     }
 }
 
@@ -975,6 +984,9 @@ void net_init(void) {
     memset(net_listeners, 0, sizeof(net_listeners));
     memset(net_arp_cache, 0, sizeof(net_arp_cache));
     net_num_listeners = 0;
+
+    /* Initialize IPv6 */
+    ipv6_init();
 }
 
 /* --- ARP list --- */

@@ -19,10 +19,12 @@ static inline uint32_t ntohl(uint32_t v) { return htonl(v); }
 
 #define ETH_TYPE_IP   0x0800
 #define ETH_TYPE_ARP  0x0806
+#define ETH_TYPE_IPV6 0x86DD
 
-#define IP_PROTO_ICMP 1
-#define IP_PROTO_TCP  6
-#define IP_PROTO_UDP  17
+#define IP_PROTO_ICMP   1
+#define IP_PROTO_TCP    6
+#define IP_PROTO_UDP    17
+#define IP_PROTO_ICMPV6 58
 
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68
@@ -61,6 +63,83 @@ struct ip_header {
     uint32_t src_ip;
     uint32_t dst_ip;
 } __attribute__((packed));
+
+/* IPv6 address (128 bits, network byte order) */
+struct in6_addr {
+    uint8_t s6_addr[16];
+} __attribute__((packed));
+
+/* IPv6 header (40 bytes) */
+struct ipv6_header {
+    uint32_t vcl_flow;          /* version(4), traffic_class(8), flow_label(20) */
+    uint16_t payload_length;    /* length of payload after this header */
+    uint8_t  next_header;       /* next header type (protocol) */
+    uint8_t  hop_limit;         /* hop limit */
+    struct in6_addr src_ip;     /* source address */
+    struct in6_addr dst_ip;     /* destination address */
+} __attribute__((packed));
+
+/* ICMPv6 header */
+struct icmpv6_header {
+    uint8_t  type;
+    uint8_t  code;
+    uint16_t checksum;
+} __attribute__((packed));
+
+/* ICMPv6 Echo Request / Reply (adds id and seq after checksum) */
+struct icmpv6_echo {
+    struct icmpv6_header hdr;
+    uint16_t id;
+    uint16_t seq;
+} __attribute__((packed));
+
+/* ICMPv6 Neighbor Solicitation / Advertisement */
+struct nd_neighbor {
+    struct icmpv6_header icmp;
+    uint32_t reserved;          /* NS: reserved; NA: R/S/O flags in top 3 bits */
+    struct in6_addr target;     /* target address */
+    /* Options follow (type, len, ...) */
+} __attribute__((packed));
+
+/* ICMPv6 Router Solicitation */
+struct nd_router_solicit {
+    struct icmpv6_header icmp;
+    uint32_t reserved;
+    /* Options follow */
+} __attribute__((packed));
+
+/* ICMPv6 Router Advertisement */
+struct nd_router_advert {
+    struct icmpv6_header icmp;
+    uint8_t  cur_hop_limit;
+    uint8_t  flags;
+    uint16_t router_lifetime;
+    uint32_t reachable_time;
+    uint32_t retrans_timer;
+    /* Options follow */
+} __attribute__((packed));
+
+/* NDP Option header */
+struct nd_option {
+    uint8_t type;
+    uint8_t len;   /* length in units of 8 octets */
+    /* data follows */
+} __attribute__((packed));
+
+#define ND_OPT_SRC_LLADDR   1   /* source link-layer address */
+#define ND_OPT_TGT_LLADDR   2   /* target link-layer address */
+#define ND_OPT_PREFIX_INFO  3   /* prefix information */
+#define ND_OPT_MTU          5   /* MTU option */
+
+#define ICMPV6_RS           133 /* Router Solicitation */
+#define ICMPV6_RA           134 /* Router Advertisement */
+#define ICMPV6_NS           135 /* Neighbor Solicitation */
+#define ICMPV6_NA           136 /* Neighbor Advertisement */
+
+/* IPv6 multicast addresses (network byte order) */
+#define IPV6_ADDR_ALL_NODES     { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,1 } }
+#define IPV6_ADDR_ALL_ROUTERS   { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } }
+#define IPV6_ADDR_LINKLOCAL_PFX { { 0xFE,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } }
 
 /* ICMP header */
 struct icmp_header {
@@ -123,6 +202,14 @@ void net_dhcp_discover(void);
 void net_dhcp_renew_if_needed(void);
 int net_ping(uint32_t target_ip);
 void net_set_ip(uint32_t ip, uint32_t gw, uint32_t mask);
+
+/* IPv6 support */
+void ipv6_init(void);
+void ipv6_poll(void);
+int  ipv6_has_linklocal(void);
+void ipv6_get_linklocal(struct in6_addr *addr);
+int  ipv6_ping6(const struct in6_addr *target);
+void ipv6_send_rs(void);
 
 /* Loopback interface */
 int  net_loopback_init(void);

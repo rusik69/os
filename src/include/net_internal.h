@@ -15,6 +15,15 @@ extern uint8_t  net_gw_mac[6];
 extern int      net_gw_mac_known;
 extern uint16_t net_ip_id_counter;
 
+/* IPv6 state — defined in ipv6.c */
+extern struct in6_addr net_our_ipv6_ll;   /* link-local address (FE80::/10) */
+extern struct in6_addr net_our_ipv6_gua;  /* global unicast (via SLAAC) */
+extern int             net_ipv6_ll_ready; /* 1 = link-local address configured */
+extern int             net_ipv6_gua_valid;/* 1 = GUA configured via SLAAC */
+extern struct in6_addr net_ipv6_gateway;  /* default gateway (from RA) */
+extern struct in6_addr net_ipv6_dns;      /* DNS server (from RDNSS) */
+extern uint32_t        net_ipv6_ns_count; /* NS counter for NDP */
+
 /* ── ARP cache with timeout and retry ───────────────────────────── */
 #define ARP_CACHE_SIZE 16
 
@@ -185,6 +194,25 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
 /* Protocol handlers (called from net.c net_poll/handle_ip) */
 void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
 void handle_udp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len);
+
+/* IPv6 protocol handlers (called from net.c net_poll) */
+void handle_ipv6(const uint8_t *data, uint16_t len);
+void handle_icmpv6(struct ipv6_header *ip6, const uint8_t *payload, uint16_t len);
+
+/* IPv6 send helpers */
+void send_ipv6(const struct in6_addr *dst, uint8_t next_hdr, const void *payload, uint16_t len);
+void send_eth_ipv6(const uint8_t *dst_mac, const void *payload, uint16_t len);
+
+/* IPv6 internal helpers */
+void ipv6_calc_solicited_node(const struct in6_addr *addr, struct in6_addr *mcast);
+void ipv6_eui64_from_mac(const uint8_t *mac, struct in6_addr *out);
+int  ipv6_addr_is_multicast(const struct in6_addr *addr);
+int  ipv6_addr_is_linklocal(const struct in6_addr *addr);
+int  ipv6_addr_is_unspecified(const struct in6_addr *addr);
+int  ipv6_addr_equal(const struct in6_addr *a, const struct in6_addr *b);
+uint16_t ipv6_checksum(const struct in6_addr *src, const struct in6_addr *dst,
+                        uint8_t next_hdr, const void *data, uint16_t data_len);
+void ipv6_nd_cache_add(const struct in6_addr *ip6, const uint8_t *mac);
 
 /* TCP internal helpers (net_tcp.c) */
 void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t data_len);
