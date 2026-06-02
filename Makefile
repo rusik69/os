@@ -201,6 +201,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/mempool.c \
          src/lib/crc16.c \
          src/lib/string_ext.c \
+         src/lib/time.c \
          src/lib/stdlib_ext.c \
          src/lib/search.c \
          src/lib/errno_ext.c \

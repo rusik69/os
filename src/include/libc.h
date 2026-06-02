@@ -178,6 +178,11 @@ void libc_pci_list(void);
 void libc_usb_list(void);
 void libc_hwinfo_print(void);
 
+/* ── Time functions (U16) ──────────────────────────────────────── */
+int libc_clock_gettime(uint64_t clk_id, struct timespec *tp);
+int libc_clock_settime(uint64_t clk_id, const struct timespec *tp);
+int libc_nanosleep(const struct timespec *req, struct timespec *rem);
+
 int libc_fs_format(void);
 int libc_fs_create(const char *path, uint8_t type);
 int libc_fs_write_file(const char *path, const void *data, uint32_t size);

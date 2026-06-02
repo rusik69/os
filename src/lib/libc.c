@@ -12,6 +12,24 @@
 
 
 
+/* ── Time functions (U16) ──────────────────────────────────────── */
+
+int libc_clock_gettime(uint64_t clk_id, struct timespec *tp) {
+    return (int)libc_syscall(SYS_CLOCK_GETTIME, clk_id,
+                             (uint64_t)(uintptr_t)tp, 0, 0, 0);
+}
+
+int libc_clock_settime(uint64_t clk_id, const struct timespec *tp) {
+    return (int)libc_syscall(SYS_CLOCK_SETTIME, clk_id,
+                             (uint64_t)(uintptr_t)tp, 0, 0, 0);
+}
+
+int libc_nanosleep(const struct timespec *req, struct timespec *rem) {
+    return (int)libc_syscall(SYS_NANOSLEEP,
+                             (uint64_t)(uintptr_t)req,
+                             (uint64_t)(uintptr_t)rem, 0, 0, 0);
+}
+
 int libc_ata_is_present(void) {
     return (int)libc_syscall(SYS_ATA_PRESENT, 0, 0, 0, 0, 0);
 }
