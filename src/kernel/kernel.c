@@ -48,6 +48,7 @@
 #include "fat32.h"
 #include "users.h"
 #include "vfs.h"
+#include "fstab.h"
 #include "pipe.h"
 #include "blockdev.h"
 #include "shm.h"
@@ -524,6 +525,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
+
+    /* Auto-mount filesystems from /etc/fstab */
+    {
+        int nm = fstab_mount_all();
+        if (nm > 0)
+            kprintf("[OK] fstab: %d filesystems auto-mounted\n", nm);
+    }
 
     /* Sysfs — virtual filesystem exposing kernel objects */
     sysfs_init();

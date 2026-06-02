@@ -285,6 +285,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("syslogd",     "System logger daemon (syslogd [stop|status])",   cmd_syslogd)
     /* DHCP client daemon (U8) */
     CMD("dhcpcd",      "DHCP client daemon (dhcpcd [stop|status|renew|release])", cmd_dhcpcd)
+    /* Filesystem table (U25) */
+    CMD("mount",       "Mount filesystems (mount [-a] [-t fstype] [-o opts] [dev] [mp])", cmd_mount)
     { 0, 0, 0 }
 };
 
