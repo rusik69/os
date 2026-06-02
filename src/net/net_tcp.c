@@ -35,10 +35,13 @@
 /* Ticks-per-second for time conversion (timer runs at ~100 Hz) */
 #define TICKS_PER_SEC      100ULL
 
-/* ── Integer cube root (Newton-Raphson, rounds toward zero) ────────
- *
- * Returns floor(cbrt(a)) for a > 0.  Uses at most 10 iterations.
- */
+/* TCP connection table entry timeout for 2*MSL (60 seconds at ~100 Hz) */
+#define TCP_TIME_WAIT_MSL_TICKS 6000
+
+/*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ *  Fixed-point integer cube root (Newton-Raphson, rounds toward zero)
+ *  Returns floor(cbrt(a)) for a > 0.  Uses at most 10 iterations.
+ *━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━*/
 
 /* ── Forward declarations for Nagle/Delayed ACK helpers ────────── */
 static void tcp_flush_delayed_ack(struct tcp_conn *c);
@@ -386,6 +389,7 @@ static struct tcp_listener *find_listener(uint16_t port) {
 static int find_conn(uint32_t remote_ip, uint16_t remote_port, uint16_t local_port) {
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (tcp_conns[i].state != TCP_CLOSED &&
+            tcp_conns[i].state != TCP_TIME_WAIT && /* skip TIME_WAIT for reuse */
             tcp_conns[i].remote_ip == remote_ip &&
             tcp_conns[i].remote_port == remote_port &&
             tcp_conns[i].local_port == local_port)
@@ -557,6 +561,11 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         memset(c->tfo_cookie, 0, sizeof(c->tfo_cookie));
         memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
         c->sack_pending = 0;
+        c->delayed_ack_pending = 0;
+        c->delayed_ack_tick = 0;
+        c->nagle_buf_len = 0;
+        c->time_wait_deadline = 0;
+        c->cubic_use_cubic = 1;
         /* CUBIC congestion control initialization */
         c->cubic_wmax = 0;
         c->cubic_epoch_start = 0;
@@ -865,7 +874,7 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             c->their_seq = seq + 1;
             send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_TIME_WAIT;
-            c->last_send_tick = timer_get_ticks();
+            c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
         }
         return;
     }
@@ -875,13 +884,16 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             c->their_seq = seq + 1;
             send_tcp(c, TCP_ACK, NULL, 0);
             c->state = TCP_TIME_WAIT;
-            c->last_send_tick = timer_get_ticks();
+            c->time_wait_deadline = timer_get_ticks() + TCP_TIME_WAIT_MSL_TICKS;
         }
         return;
     }
 
     if (c->state == TCP_TIME_WAIT) {
-        /* Stay in TIME_WAIT; the periodic retransmit check cleans up after 2*MSL */
+        /* RFC 1337: send challenge ACK for any segment received in TIME_WAIT.
+         * This prevents stale segments from confusing a new connection that
+         * reuses the same (src_ip, src_port, dst_ip, dst_port) tuple. */
+        send_tcp(c, TCP_ACK, NULL, 0);
         return;
     }
 
@@ -1262,9 +1274,9 @@ void net_tcp_check_retransmit(void) {
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         struct tcp_conn *c = &tcp_conns[i];
 
-        /* Clean up TIME_WAIT connections after 2*MSL (100 ticks ≈ 1s) */
+        /* Clean up TIME_WAIT connections after 2*MSL (60 seconds at 100Hz) */
         if (c->state == TCP_TIME_WAIT) {
-            if (now - c->last_send_tick >= 100)
+            if (now >= c->time_wait_deadline)
                 c->state = TCP_CLOSED;
             continue;
         }

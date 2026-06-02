@@ -141,10 +141,12 @@ struct tcp_conn {
     uint32_t cubic_origin_point;    /* origin point for cubic growth */
     int      cubic_use_cubic;       /* 1 = using CUBIC algorithm */
     /* Nagle / Delayed ACK */
-    int     delayed_ack_pending;    /* 1 = ACK is pending (delay before sending) */
+    uint8_t  delayed_ack_pending;   /* 1 if we have a pending delayed ACK */
     uint64_t delayed_ack_tick;      /* tick when delayed ACK timer was started */
     uint8_t  nagle_buf[4096];       /* Nagle accumulation buffer for small writes */
     uint16_t nagle_buf_len;         /* bytes accumulated in Nagle buffer */
+    /* TIME_WAIT tracking */
+    uint64_t time_wait_deadline;    /* tick when TIME_WAIT expires (2*MSL) */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
