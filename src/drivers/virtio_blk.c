@@ -22,8 +22,10 @@
 #define VIRTIO_BLK_CAPACITY_LO  0x14
 #define VIRTIO_BLK_CAPACITY_HI  0x18
 
-/* Features this driver supports */
+/* Features this driver supports (none currently — basic operation only) */
 #define VBLK_SUPPORTED_FEATURES 0u
+/* Features this driver REQUIRES from the device (none for basic I/O) */
+#define VBLK_REQUIRED_FEATURES  0u
 
 #define VRING_SIZE    16
 #define VRING_DESC_F_NEXT  1
@@ -104,12 +106,16 @@ int virtio_blk_init(void) {
     vb_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
     /* Negotiate features: the helper validates that the device
-     * accepts our feature set (FEATURES_OK protocol step). */
-    if (virtio_negotiate_features(vb_inl,   /* readl  — 32-bit port read  */
-                                   vb_outl,  /* writel — 32-bit port write */
-                                   vb_outb,  /* writeb — 8-bit port write  */
-                                   vb_inb,   /* readb  — 8-bit port read   */
-                                   VBLK_SUPPORTED_FEATURES) < 0) {
+     * accepts our feature set (FEATURES_OK protocol step), validates
+     * required features, and logs human-readable feature names. */
+    if (virtio_negotiate_features_ex(vb_inl,   /* readl  — 32-bit port read  */
+                                      vb_outl,  /* writel — 32-bit port write */
+                                      vb_outb,  /* writeb — 8-bit port write  */
+                                      vb_inb,   /* readb  — 8-bit port read   */
+                                      VBLK_SUPPORTED_FEATURES,
+                                      VBLK_REQUIRED_FEATURES,
+                                      virtio_blk_features,
+                                      "virtio-blk") < 0) {
         kprintf("virtio-blk: device rejected feature negotiation\n");
         return -1;
     }

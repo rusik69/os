@@ -35,6 +35,10 @@
  * reject mergeable RX buffers (simpler header layout). */
 #define VNET_SUPPORTED_FEATURES \
     (VIRTIO_NET_F_MAC | VIRTIO_F_NOTIFY_ON_EMPTY)
+/* Features this driver REQUIRES from the device:
+ * - VIRTIO_NET_F_MAC: we don't support random MAC assignment */
+#define VNET_REQUIRED_FEATURES \
+    (VIRTIO_NET_F_MAC)
 
 /* Virtqueue size (must be power of 2) */
 #define VRING_SIZE 16
@@ -156,13 +160,18 @@ int virtio_net_init(void) {
     /* Acknowledge & driver */
     vio_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    /* Negotiate features: accept only what we support, then
-     * set FEATURES_OK and validate the device accepted. */
-    if (virtio_negotiate_features(vio_inl,   /* readl  — 32-bit port read  */
-                                   vio_outl,  /* writel — 32-bit port write */
-                                   vio_outb,  /* writeb — 8-bit port write  */
-                                   vio_inb,   /* readb  — 8-bit port read   */
-                                   VNET_SUPPORTED_FEATURES) < 0) {
+    /* Negotiate features: accept only what we support, validate
+     * required features (VIRTIO_NET_F_MAC is mandatory), then
+     * set FEATURES_OK and validate the device accepted. Logs
+     * human-readable feature names for debugging. */
+    if (virtio_negotiate_features_ex(vio_inl,   /* readl  — 32-bit port read  */
+                                      vio_outl,  /* writel — 32-bit port write */
+                                      vio_outb,  /* writeb — 8-bit port write  */
+                                      vio_inb,   /* readb  — 8-bit port read   */
+                                      VNET_SUPPORTED_FEATURES,
+                                      VNET_REQUIRED_FEATURES,
+                                      virtio_net_features,
+                                      "virtio-net") < 0) {
         kprintf("virtio-net: device rejected feature negotiation\n");
         return -1;
     }
