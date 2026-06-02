@@ -3753,7 +3753,8 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             return p->no_new_privs ? 1 : 0;
         }
         case 22: { /* PR_SET_SECCOMP */
-            return (uint64_t)seccomp_set_mode((int)a2);
+            /* arg2 = seccomp mode, arg3 = flags (e.g. SECCOMP_FILTER_FLAG_TSYNC) */
+            return (uint64_t)seccomp_set_mode((int)a2, (unsigned int)a3);
         }
         case 23: { /* PR_GET_SECCOMP */
             return (uint64_t)seccomp_get_mode();

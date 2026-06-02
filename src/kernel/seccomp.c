@@ -228,7 +228,7 @@ int seccomp_check_syscall(uint64_t num) {
     }
 }
 
-int seccomp_set_mode(int mode) {
+int seccomp_set_mode(int mode, unsigned int flags) {
     struct process *p = process_get_current();
     if (!p) return -1;
 
@@ -246,7 +246,78 @@ int seccomp_set_mode(int mode) {
             memset(p->seccomp_filter, 0, sizeof(struct seccomp_filter));
         }
     }
+
+    /* Propagate to all threads if TSYNC flag is set */
+    if (flags & SECCOMP_FILTER_FLAG_TSYNC) {
+        int ret = seccomp_tsync();
+        if (ret < 0)
+            kprintf("[seccomp] TSYNC warning: failed to propagate filter to all threads (%d)\n", ret);
+    }
+
     return 0;
+}
+
+/*
+ * Synchronize the current process's seccomp mode and filter to all
+ * threads sharing the same thread group ID (tgid).
+ *
+ * Each thread (except the caller) receives its own heap-allocated copy
+ * of the filter rules so that deallocation on process exit is clean.
+ *
+ * Returns 0 on success, -1 on allocation failure (some threads may
+ * have been updated, but the caller's filter is already installed).
+ */
+int seccomp_tsync(void) {
+    struct process *caller = process_get_current();
+    if (!caller) return -1;
+
+    uint32_t tgid = caller->tgid;
+    if (tgid == 0) return 0; /* kernel thread — no siblings */
+
+    int failures = 0;
+
+    /* Scan the global process table for sibling threads */
+    for (uint32_t pid = 0; pid < PROCESS_MAX; pid++) {
+        struct process *p = process_get_by_pid(pid);
+        if (!p || p == caller) continue;
+        if (p->tgid != tgid) continue;
+
+        /* Copy the seccomp mode */
+        p->seccomp_mode = caller->seccomp_mode;
+
+        /* In strict mode there is no filter pointer to copy */
+        if (caller->seccomp_mode == SECCOMP_MODE_STRICT) {
+            /* Free any previously installed filter on the sibling */
+            if (p->seccomp_filter) {
+                kfree(p->seccomp_filter);
+                p->seccomp_filter = NULL;
+            }
+            continue;
+        }
+
+        /* FILTER mode — deep-copy the filter rules */
+        if (caller->seccomp_mode == SECCOMP_MODE_FILTER && caller->seccomp_filter) {
+            /* Free any old filter on the sibling first */
+            if (p->seccomp_filter) {
+                kfree(p->seccomp_filter);
+                p->seccomp_filter = NULL;
+            }
+
+            struct seccomp_filter *new_filter =
+                (struct seccomp_filter *)kmalloc(sizeof(struct seccomp_filter));
+            if (!new_filter) {
+                failures++;
+                continue;
+            }
+            memcpy(new_filter, caller->seccomp_filter, sizeof(struct seccomp_filter));
+            p->seccomp_filter = new_filter;
+        }
+    }
+
+    if (failures)
+        kprintf("[seccomp] TSYNC: %d thread(s) could not receive filter (OOM)\n", failures);
+
+    return failures ? -1 : 0;
 }
 
 int seccomp_get_mode(void) {

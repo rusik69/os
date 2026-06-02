@@ -29,6 +29,9 @@
 #define SECCOMP_MODE_STRICT    1
 #define SECCOMP_MODE_FILTER    2
 
+/* Flags for seccomp_set_mode */
+#define SECCOMP_FILTER_FLAG_TSYNC  1U  /* synchronize filters to all threads */
+
 /* Filter actions (Linux-compatible high bits) */
 #define SECCOMP_RET_KILL  0x80000000U
 #define SECCOMP_RET_TRAP  0x00030000U
@@ -79,8 +82,11 @@ uint32_t seccomp_evaluate_syscall(uint64_t num, uint64_t a1, uint64_t a2,
  */
 int seccomp_check_syscall(uint64_t num);
 
-/* Set seccomp mode for the current process. Returns 0 on success. */
-int seccomp_set_mode(int mode);
+/* Set seccomp mode for the current process.
+ * @mode   seccomp mode (SECCOMP_MODE_STRICT or SECCOMP_MODE_FILTER)
+ * @flags  bitmask of SECCOMP_FILTER_FLAG_* (e.g., SECCOMP_FILTER_FLAG_TSYNC)
+ * Returns 0 on success. */
+int seccomp_set_mode(int mode, unsigned int flags);
 
 /* Get seccomp mode for the current process. */
 int seccomp_get_mode(void);
@@ -90,6 +96,11 @@ int seccomp_add_rule(int syscall_nr, uint32_t action);
 
 /* Check syscall against the seccomp filter (mode FILTER) */
 int seccomp_filter_check(uint64_t num);
+
+/* Synchronize the current process's seccomp filter to all threads
+ * in the same thread group (tgid).  Each thread gets its own copy
+ * of the filter rules.  Returns 0 on success. */
+int seccomp_tsync(void);
 
 /* Send SIGSYS with seccomp data to the current process (RET_TRAP action).
  * This fills in a siginfo with si_code=SI_KERNEL and seccomp data. */
