@@ -23,6 +23,7 @@
 #include "cpuidle.h"
 #include "sched_deadline.h"
 #include "preempt.h"
+#include "sysctl.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -31,8 +32,113 @@ static spinlock_t sched_lock = SPINLOCK_INIT;
 
 extern uint64_t syscall_kernel_rsp;
 
-/* Time slices in ticks (100Hz): higher priority = larger quantum. */
-static const uint16_t time_slices[SCHED_LEVELS] = {10, 5, 3, 2};
+/* ── Scheduler latency and granularity tunables ────────────────────────
+ *
+ * These values serve a function analogous to Linux's
+ * /proc/sys/kernel/sched_{latency,min_granularity}_ns.  They control the
+ * target scheduling latency (the maximum time a runnable task may wait
+ * before being scheduled) and the minimum time slice (the smallest
+ * quantum any task receives before being preempted).
+ *
+ * The time_slices[] array is computed from these values so that higher
+ * priority levels get larger slices while preserving the target latency
+ * bound.  Both knobs are adjustable at runtime via sysctl.
+ */
+static uint64_t sched_latency_ns      = 6000000ULL;   /*  6 ms target latency */
+static uint64_t sched_min_granularity_ns = 1000000ULL; /*  1 ms minimum slice  */
+
+/* Convert nanoseconds to ticks at the timer's frequency.
+ * Uses 64-bit arithmetic to avoid overflow: ns * freq / 1e9.
+ * freq defaults to 100 (Hz), so 1 tick = 10 ms = 10,000,000 ns. */
+static inline uint64_t ns_to_ticks(uint64_t ns) {
+    return (ns * (uint64_t)TIMER_FREQ + 999999999ULL) / 1000000000ULL;
+}
+
+/* Recompute the per-priority time slices from sched_latency_ns and
+ * sched_min_granularity_ns.  Called whenever a tunable is updated. */
+static uint16_t computed_slices[SCHED_LEVELS];
+
+static void recompute_time_slices(void) {
+    uint64_t lat_ticks = ns_to_ticks(sched_latency_ns);
+    uint64_t min_ticks = ns_to_ticks(sched_min_granularity_ns);
+
+    /* Clamp: minimum slice must be at least 1 tick, latency at least 2 ticks */
+    if (min_ticks < 1)   min_ticks = 1;
+    if (lat_ticks < min_ticks * SCHED_LEVELS)
+        lat_ticks = min_ticks * SCHED_LEVELS;
+
+    /* Distribute: higher priority (lower index) gets larger share.
+     * Level 0 (highest prio) gets ~40% of the window,
+     * level 1 gets ~30%, level 2 gets ~20%, level 3 gets ~10%. */
+    static const uint8_t weight[SCHED_LEVELS] = { 40, 30, 20, 10 };
+    uint64_t total_weight = 0;
+    for (int i = 0; i < SCHED_LEVELS; i++) total_weight += weight[i];
+
+    for (int i = 0; i < SCHED_LEVELS; i++) {
+        uint64_t slice = (lat_ticks * weight[i]) / total_weight;
+        if (slice < min_ticks) slice = min_ticks;
+        if (slice > 0xFFFF)    slice = 0xFFFF;
+        computed_slices[i] = (uint16_t)slice;
+    }
+}
+
+/* Accessor used throughout the scheduler; replaces direct use of the
+ * old static time_slices[] array.  Falls back to a reasonable default
+ * if the computed table hasn't been initialised yet. */
+static inline uint16_t slice_for_prio(int lvl) {
+    if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+    if (computed_slices[lvl] == 0)
+        recompute_time_slices();
+    return computed_slices[lvl];
+}
+
+/* ── Sysctl handlers for scheduler latency/granularity ──────────── */
+
+static int sysctl_read_sched_latency(char *buf, int max) {
+    int p = 0;
+    uint64_t v = sched_latency_ns;
+    char tmp[24]; int ti = 0;
+    if (v == 0) { tmp[ti++] = '0'; }
+    else { while (v) { tmp[ti++] = '0' + (char)(v % 10); v /= 10; } }
+    for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
+    if (p < max - 1) buf[p++] = '\n';
+    buf[p] = '\0';
+    return p;
+}
+
+static int sysctl_write_sched_latency(const char *buf, int len) {
+    uint64_t v = 0;
+    for (int i = 0; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        v = v * 10 + (uint64_t)(buf[i] - '0');
+    if (v < 100000ULL)    v = 100000ULL;       /* floor: 100 µs */
+    if (v > 1000000000ULL) v = 1000000000ULL;   /* ceil:  1 s   */
+    sched_latency_ns = v;
+    recompute_time_slices();
+    return 0;
+}
+
+static int sysctl_read_sched_min_granularity(char *buf, int max) {
+    int p = 0;
+    uint64_t v = sched_min_granularity_ns;
+    char tmp[24]; int ti = 0;
+    if (v == 0) { tmp[ti++] = '0'; }
+    else { while (v) { tmp[ti++] = '0' + (char)(v % 10); v /= 10; } }
+    for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
+    if (p < max - 1) buf[p++] = '\n';
+    buf[p] = '\0';
+    return p;
+}
+
+static int sysctl_write_sched_min_granularity(const char *buf, int len) {
+    uint64_t v = 0;
+    for (int i = 0; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        v = v * 10 + (uint64_t)(buf[i] - '0');
+    if (v < 50000ULL)     v = 50000ULL;        /* floor: 50 µs  */
+    if (v > 100000000ULL)  v = 100000000ULL;    /* ceil: 100 ms  */
+    sched_min_granularity_ns = v;
+    recompute_time_slices();
+    return 0;
+}
 
 /* CFS constants */
 #define CFS_NICE_0_WEIGHT 1024
@@ -90,6 +196,17 @@ void scheduler_init(void) {
     if (!ci->current_process) {
         ci->current_process = process_get_current();
     }
+
+    /* Pre-compute time slices from the default latency/min-granularity */
+    recompute_time_slices();
+
+    /* Register scheduler sysctl tunables */
+    sysctl_register("sched_latency_ns",
+                    sysctl_read_sched_latency,
+                    sysctl_write_sched_latency);
+    sysctl_register("sched_min_granularity_ns",
+                    sysctl_read_sched_min_granularity,
+                    sysctl_write_sched_min_granularity);
 }
 
 /* ── Add process to its CPU's runqueue ──────────────────────────────── */
@@ -333,7 +450,7 @@ void schedule(void) {
     }
 
     next->state = PROCESS_RUNNING;
-    next->ticks_remaining = time_slices[(int)next->priority];
+    next->ticks_remaining = slice_for_prio((int)next->priority);
     next->last_run_tick = timer_get_ticks();
     process_set_current(next);
 
@@ -440,10 +557,10 @@ void scheduler_tick(int was_user) {
         if (cur->sched_policy == SCHED_OTHER) {
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = time_slices[lvl];
+            cur->ticks_remaining = slice_for_prio(lvl);
         } else if (cur->sched_policy == SCHED_BATCH) {
             /* SCHED_BATCH: longer timeslices, lower priority (level 3) */
-            cur->ticks_remaining = time_slices[3] * 3;
+            cur->ticks_remaining = slice_for_prio(3) * 3;
         } else if (cur->sched_policy == SCHED_DEADLINE) {
             /* SCHED_DEADLINE: managed by CBS budget, not time-slice ticks */
             cur->ticks_remaining = 1; /* don't trigger reschedule on expiry */
@@ -451,7 +568,7 @@ void scheduler_tick(int was_user) {
             /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = time_slices[lvl] * 2;
+            cur->ticks_remaining = slice_for_prio(lvl) * 2;
         }
         return;
     }
@@ -463,12 +580,12 @@ void scheduler_tick(int was_user) {
             /* SCHED_FIFO: replenish quantum, don't preempt */
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = time_slices[lvl];
+            cur->ticks_remaining = slice_for_prio(lvl);
         } else if (cur->sched_policy == SCHED_RR) {
             /* SCHED_RR: rotate to end of queue on slice expiry */
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = time_slices[lvl];
+            cur->ticks_remaining = slice_for_prio(lvl);
             if (preemptible()) {
                 schedule();
             } else {
