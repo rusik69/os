@@ -201,6 +201,52 @@ void kasan_free(const void *addr, size_t size)
 
 /* ── Runtime Coverage Extension ──────────────────────────────────────── */
 
+/*
+ * Poison the unused portion of a kernel stack, leaving the upper
+ * portion accessible.  Detects stack overflow via KASAN.
+ *
+ * Called from the scheduler after context switch.
+ * @stack_base: low address (bottom) of the kernel stack.
+ * @stack_top:  high address (top).
+ * @used_from_top: bytes currently in use (stack_top - RSP).
+ */
+void kasan_poison_stack(uint64_t stack_base, uint64_t stack_top,
+                         uint64_t used_from_top)
+{
+    if (!kasan_enabled || stack_base >= stack_top)
+        return;
+
+    /* The active region is [stack_top - used_from_top, stack_top).
+     * Everything below that is potential overflow territory. */
+    uint64_t active_bottom = stack_top - used_from_top;
+
+    /* Clamp to stack boundaries */
+    if (active_bottom < stack_base)
+        active_bottom = stack_base;
+
+    /* Poison the unused (cold) portion of the stack */
+    if (active_bottom > stack_base) {
+        kasan_poison((const void *)(uintptr_t)stack_base,
+                     (size_t)(active_bottom - stack_base));
+    }
+
+    /* Unpoison the active (hot) portion so stack operations work */
+    kasan_unpoison((const void *)(uintptr_t)active_bottom,
+                   (size_t)(stack_top - active_bottom));
+}
+
+/*
+ * Mark an entire kernel stack as accessible.
+ * Used during process creation before the stack is in use.
+ */
+void kasan_unpoison_stack(uint64_t stack_base, uint64_t stack_top)
+{
+    if (!kasan_enabled || stack_base >= stack_top)
+        return;
+    kasan_unpoison((const void *)(uintptr_t)stack_base,
+                   (size_t)(stack_top - stack_base));
+}
+
 int kasan_extend_coverage(uint64_t start, uint64_t end)
 {
     uint64_t off_start, off_end;

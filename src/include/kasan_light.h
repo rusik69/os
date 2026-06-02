@@ -93,6 +93,25 @@
  * VERIFY/UNPOISON.  For simple functions, use the three-macro sequence above
  * with the actual buffer operations in between. */
 
+/* ── Stack memory management (for kernel stack overflow detection) ─── */
+
+/*
+ * Poison the unused portion of a kernel stack, leaving the upper
+ * portion accessible.  Detects stack overflow via KASAN.
+ *
+ * @stack_base: low address (bottom) of the kernel stack.
+ * @stack_top:  high address (top).
+ * @used_from_top: bytes currently in use (RSP - stack_base).
+ */
+void kasan_poison_stack(uint64_t stack_base, uint64_t stack_top,
+                         uint64_t used_from_top);
+
+/*
+ * Mark an entire kernel stack as accessible.
+ * Used during process creation before the stack is in use.
+ */
+void kasan_unpoison_stack(uint64_t stack_base, uint64_t stack_top);
+
 /* ─── Function Declarations ─────────────────────────────────────── */
 
 /* Initialize shadow memory region for the kernel.
