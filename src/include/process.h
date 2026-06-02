@@ -189,6 +189,8 @@ struct process {
     uint64_t stack_watermark;    /* lowest RSP observed */
     /* ── File descriptor limits ──────────────────────────────── */
     uint64_t file_max;    /* max open files (rlimit NOFILE) */
+    /* ── Exec credential security ────────────────────────────── */
+    int dumpable;         /* SUID_DUMP_USER=1 (default), SUID_DUMP_DISABLE=0 */
 };
 
 void process_init(void);
@@ -216,11 +218,18 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 void process_set_current(struct process *proc);
 uint32_t process_get_count(void);
 
-/* ── Process credential API ────────────────────────────────── */
+/* Process credential API */
 int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
                      uint32_t *euid, uint32_t *egid);
 int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
                      uint32_t euid, uint32_t egid);
+
+/* Dumpable flag API */
+int process_get_dumpable(struct process *proc);
+int process_set_dumpable(struct process *proc, int val);
+
+/* Exec credential security — call during execve */
+void process_exec_cred_security(void);
 
 /* Close all file descriptors with FD_CLOEXEC set */
 void process_exec_close_cloexec(void);

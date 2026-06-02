@@ -380,16 +380,12 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     /* Close all FD_CLOEXEC file descriptors before exec */
     process_exec_close_cloexec();
 
-    /* On exec, AND bounding set with permitted set (capabilities drop but never gain) */
-    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
-        cur->syscall_caps[i] &= cur->cap_bset[i];
-    }
-
-    /* Apply securebits and capabilities-on-exec rules */
-    process_exec_caps();
-
-    /* When NO_NEW_PRIVS is set, execve can't gain new capabilities - 
-     * the bounding set AND operation above already enforces this. */
+    /* Apply exec credential security:
+     *  - Capability bounding set AND with permitted set
+     *  - Securebits processing
+     *  - Dumpable flag based on credential changes
+     *  - NO_NEW_PRIVS enforcement */
+    process_exec_cred_security();
 
     /* Allocate user stack (64KB) with ASLR offset */
     uint64_t aslr_pages = prng_rand64() % 32; /* 0-31 pages of random shift */

@@ -266,6 +266,7 @@ void process_init(void) {
     process_table[0].alt_stack_flags = SS_DISABLE;
     process_table[0].personality = 0;
     process_table[0].coredump_enabled = 1;
+    process_table[0].dumpable = 1;        /* SUID_DUMP_USER */
     memset(process_table[0].proc_comm, 0, 16);
     rlimit_init_defaults(&process_table[0]);
     cap_bset_init(&process_table[0]);
@@ -355,6 +356,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
+    proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
     memset(proc->proc_comm, 0, 16);
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
@@ -452,6 +454,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
+    proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
     memset(proc->proc_comm, 0, 16);
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
@@ -667,6 +670,74 @@ int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
     p->euid = euid;
     p->egid = egid;
     return 0;
+}
+
+/* ── Dumpable flag ──────────────────────────────────────────────── */
+
+int process_get_dumpable(struct process *proc) {
+    if (!proc) return -1;
+    return proc->dumpable;
+}
+
+int process_set_dumpable(struct process *proc, int val) {
+    if (!proc) return -1;
+    if (val != 0 && val != 1) return -1;
+    proc->dumpable = val;
+    return 0;
+}
+
+/* ── Exec credential security ──────────────────────────────────── */
+
+void process_exec_cred_security(void) {
+    struct process *p = process_get_current();
+    if (!p) return;
+
+    /* Save the credentials before exec for comparison */
+    uint32_t old_euid = p->euid;
+    uint32_t old_egid = p->egid;
+
+    /*
+     * Apply capabilities on exec:
+     *  - If SECBIT_KEEP_CAPS is not set, clear the permitted set
+     *  - AND bounding set with permitted set (caps drop but never gain)
+     */
+    process_exec_caps();
+
+    /*
+     * Detect credential change:
+     * If euid or egid changed during exec (e.g., setuid binary),
+     * or if NO_NEW_PRIVS is set, we reduce privileges.
+     *
+     * Since we don't yet have setuid binary support, the euid/egid
+     * won't change here, but the infrastructure is in place for
+     * when setuid is added.
+     */
+    int creds_changed = (p->euid != old_euid || p->egid != old_egid);
+
+    if (creds_changed || p->no_new_privs) {
+        /*
+         * When credentials change or NO_NEW_PRIVS is set:
+         *  - Disable core dumps (SUID_DUMP_DISABLE)
+         *  - Clear securebits exec state
+         *  - Reset capability effective set
+         */
+        p->dumpable = 0;  /* SUID_DUMP_DISABLE */
+
+        /*
+         * Clear sensitive state: if the new binary changed credentials,
+         * we must not leak privileged state from before exec.
+         */
+        if (creds_changed) {
+            /* Clear the no_new_privs flag (it was inherited, but after
+             * a credential change the new binary gets a fresh slate) */
+            /* Actually, Linux keeps no_new_privs across exec even with
+             * credential changes, so we don't clear it. */
+
+            /* Clear securebits keep_caps (re-evaluate on exec) */
+            p->securebits &= ~(uint8_t)SECBIT_KEEP_CAPS;
+        }
+    }
+    /* else: no credential change — dumpable stays as-is (default 1) */
 }
 
 /*
