@@ -61,6 +61,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/rng.c \
          src/kernel/fsnotify.c \
          src/kernel/module.c \
+         src/kernel/module_elf.c \
          src/kernel/sysctl.c \
          src/kernel/ksym.c \
          src/drivers/vga.c \
