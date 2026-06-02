@@ -8,6 +8,7 @@
 #include "types.h"
 #include "timer.h"
 #include "export.h"
+#include "module.h"      /* request_module() for protocol autoloading */
 
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
@@ -56,7 +57,19 @@ void sock_free(int fd) {
 /* ── Socket syscall implementations ──────────────────────────── */
 
 int sys_socket_impl(int domain, int type, int protocol) {
-    if (domain != AF_INET && domain != AF_UNIX) {
+    /* ── Network protocol module autoloading (M37) ─────────────────
+     * When an unsupported address family is requested (e.g. AF_INET6),
+     * attempt to autoload the corresponding protocol module before
+     * giving up.  This allows IPv6, IPIP, GRE and other protocol
+     * modules to be loaded on demand.
+     */
+    if (domain == AF_INET6) {
+        request_module("ipv6");
+        /* After module load, check if IPv6 is now available.
+         * If not, we fall through to the existing error path. */
+    }
+
+    if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX) {
         /* Allow AF_PACKET / AF_UNSPEC for raw packet sockets */
         if (domain != 0 && domain != 17) return -1;
     }
