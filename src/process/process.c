@@ -386,6 +386,9 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->context_switches = 0;
     proc->stack_watermark = 0;
 
+    /* Initialize PELT load tracking */
+    pelt_init(&proc->pelt);
+
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
 

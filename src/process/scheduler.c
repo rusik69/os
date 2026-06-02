@@ -24,6 +24,7 @@
 #include "sched_deadline.h"
 #include "preempt.h"
 #include "sysctl.h"
+#include "pelt.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -520,6 +521,10 @@ void scheduler_tick(int was_user) {
         cur->stime_ticks++;
         cur->cpu_system++;
     }
+
+    /* Update PELT load tracking: running = 1 (we are on CPU),
+     * runnable = 1 (we're the current process and thus runnable). */
+    pelt_update(&cur->pelt, 1, 1, timer_get_ticks());
 
     /* Update CFS vruntime */
     update_vruntime(cur, 1);

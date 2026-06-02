@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "signal.h"
+#include "pelt.h"
 
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
 #define _RLIMIT_NLIMITS 14
@@ -201,6 +202,8 @@ struct process {
     uint64_t file_max;    /* max open files (rlimit NOFILE) */
     /* ── Exec credential security ────────────────────────────── */
     int dumpable;         /* SUID_DUMP_USER=1 (default), SUID_DUMP_DISABLE=0 */
+    /* ── PELT load tracking ──────────────────────────────────── */
+    struct pelt_state pelt;  /* per-entity load tracking state */
 };
 
 void process_init(void);

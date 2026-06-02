@@ -98,6 +98,7 @@ C_SRCS = src/kernel/kernel.c \
          src/process/process.c \
          src/process/scheduler.c \
          src/process/sched_deadline.c \
+         src/process/pelt.c \
          src/process/signal.c \
          src/process/users.c \
          src/shell/shell.c \

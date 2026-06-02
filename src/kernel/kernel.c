@@ -111,6 +111,7 @@
 #include "mseal.h"
 #include "userfaultfd.h"
 #include "cpuidle.h"
+#include "pelt.h"
 #include "madvise_ext.h"
 #include "mem_policy.h"
 #include "page_idle.h"
@@ -387,6 +388,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* CPU idle state management */
     cpuidle_init();
+
+    /* PELT load tracking */
+    pelt_subsys_init();
 
     /* Extended scheduler attributes (sched_setattr/getattr) */
     sched_attr_init();
