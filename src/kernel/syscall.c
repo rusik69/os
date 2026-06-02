@@ -5953,13 +5953,18 @@ static uint64_t sys_personality(uint64_t persona) {
 static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
 {
     const char *path = (const char *)path_addr;
-    (void)params_addr; /* Module parameters are parsed in M29+ */
+    const char *params = (params_addr) ? (const char *)params_addr : NULL;
 
     /* Only root (or kernel context) can load modules */
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
         if (!p || p->euid != 0)
             return (uint64_t)-EPERM;
+        /* Validate user-space pointers */
+        if (path && !syscall_user_cstr_ok(path_addr))
+            return (uint64_t)-EFAULT;
+        if (params && !syscall_user_cstr_ok(params_addr))
+            return (uint64_t)-EFAULT;
     }
 
     /* Validate the path string */
@@ -6035,6 +6040,23 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
     }
 
     kprintf("[MOD] init_module(%s): loaded as id=%d\n", path, result);
+
+    /* Parse module parameters if provided (M29) */
+    if (params && params[0]) {
+        struct kernel_module *mod = module_get_by_id(result);
+        if (mod) {
+            int pret = module_parse_params(mod, params);
+            if (pret < 0) {
+                kprintf("[MOD] init_module(%s): parameter parsing failed (%d), unloading\n",
+                        path, pret);
+                module_unload(result);
+                return (uint64_t)(pret == -ENOENT ? (uint64_t)-ENOENT :
+                                  pret == -ENOMEM ? (uint64_t)-ENOMEM :
+                                  (uint64_t)-EINVAL);
+            }
+        }
+    }
+
     return (uint64_t)result;
 }
 
@@ -6050,7 +6072,7 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
  */
 static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags)
 {
-    (void)params_addr;
+    const char *params = (params_addr) ? (const char *)params_addr : NULL;
     (void)flags;
 
     /* Only root can load modules */
@@ -6058,6 +6080,9 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
         struct process *p = process_get_current();
         if (!p || p->euid != 0)
             return (uint64_t)-EPERM;
+        /* Validate user-space pointer for params */
+        if (params && !syscall_user_cstr_ok(params_addr))
+            return (uint64_t)-EFAULT;
     }
 
     /* Validate the fd */
@@ -6141,6 +6166,23 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     }
 
     kprintf("[MOD] finit_module(fd=%llu): loaded as id=%d\n", fd, result);
+
+    /* Parse module parameters if provided (M29) */
+    if (params && params[0]) {
+        struct kernel_module *mod = module_get_by_id(result);
+        if (mod) {
+            int pret = module_parse_params(mod, params);
+            if (pret < 0) {
+                kprintf("[MOD] finit_module(fd=%llu): parameter parsing failed (%d), unloading\n",
+                        fd, pret);
+                module_unload(result);
+                return (uint64_t)(pret == -ENOENT ? (uint64_t)-ENOENT :
+                                  pret == -ENOMEM ? (uint64_t)-ENOMEM :
+                                  (uint64_t)-EINVAL);
+            }
+        }
+    }
+
     return (uint64_t)result;
 }
 

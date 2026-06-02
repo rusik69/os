@@ -37,9 +37,12 @@ typedef void (*module_exit_t)(void);
 
 /* Module parameter types */
 enum module_param_type {
-    PARAM_TYPE_INT,
-    PARAM_TYPE_CHAR,
-    PARAM_TYPE_STRING,
+    PARAM_TYPE_INT,      /* int */
+    PARAM_TYPE_UINT,     /* unsigned int */
+    PARAM_TYPE_CHARP,    /* char pointer (string, set to copy) */
+    PARAM_TYPE_STRING,   /* fixed-size char buffer */
+    PARAM_TYPE_BOOL,     /* bool (0/1, y/n, on/off) */
+    PARAM_TYPE_INVALID,
 };
 
 /* A named module parameter */
@@ -113,6 +116,10 @@ struct kernel_module *module_find(const char *name);
 /* Return the name of the module at slot @id, or NULL if unused. */
 const char *module_name_by_id(int id);
 
+/* Return the module struct at slot @id, or NULL if unused/not live.
+ * The caller must not hold the module lock across long operations. */
+struct kernel_module *module_get_by_id(int id);
+
 /* Return the number of currently loaded modules. */
 int module_count(void);
 
@@ -148,6 +155,11 @@ int module_add_param(struct kernel_module *mod, const char *name,
 
 /* Find a parameter in a module by name. */
 struct kernel_param *module_find_param(struct kernel_module *mod, const char *name);
+
+/* Parse a param=val,param2=val2 string and set values on the module.
+ * Called during module loading (sys_init_module / sys_finit_module).
+ * Returns 0 on success, -EINVAL on parse error, -ENOENT for unknown param. */
+int module_parse_params(struct kernel_module *mod, const char *params_str);
 
 /* ── Dependency support (M23-M25 integration) ────────────────────── */
 

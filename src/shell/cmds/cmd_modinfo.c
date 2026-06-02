@@ -33,7 +33,7 @@ static const char *param_type_str(enum module_param_type type)
 {
     switch (type) {
     case PARAM_TYPE_INT:    return "int";
-    case PARAM_TYPE_CHAR:   return "char";
+    case PARAM_TYPE_CHARP:   return "charp";
     case PARAM_TYPE_STRING: return "string";
     default:                return "?";
     }

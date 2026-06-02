@@ -16,6 +16,7 @@
 #include "heap.h"
 #include "vmm.h"
 #include "pmm.h"
+#include "errno.h"
 
 /* ── Global module table ────────────────────────────────────────── */
 
@@ -309,6 +310,23 @@ int module_count(void) {
     return count;
 }
 
+/* Return the module struct at slot @id, or NULL if unused/not live. */
+struct kernel_module *module_get_by_id(int id) {
+    if (id < 0 || id >= MODULE_MAX || !g_mod_initialized) return NULL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    struct kernel_module *mod = NULL;
+    if (g_modules[id].state == MODULE_LIVE ||
+        g_modules[id].state == MODULE_LOADING) {
+        mod = &g_modules[id];
+    }
+
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    return mod;
+}
+
 /* ── Reference counting (M26) ───────────────────────────────────── */
 
 void module_get(struct kernel_module *mod) {
@@ -430,4 +448,232 @@ int module_deps_resolved(struct kernel_module *mod) {
 
     spinlock_irqsave_release(&g_mod_lock, irq_flags);
     return 1; /* all deps resolved */
+}
+
+/* ── Module parameter parsing (M29) ─────────────────────────────── */
+
+/*
+ * module_parse_params — Parse a param=val,param2=val2 string.
+ *
+ * Called during module loading (from sys_init_module / sys_finit_module)
+ * to apply the caller-supplied parameter string to the module's registered
+ * kernel_param entries.
+ *
+ * The parameter string uses comma as the delimiter between key=value pairs.
+ * Values containing commas are not supported (same as Linux's module_param).
+ *
+ * Supported types:
+ *   PARAM_TYPE_INT    → strtol()
+ *   PARAM_TYPE_UINT   → strtoul()
+ *   PARAM_TYPE_BOOL   → 0/1, y/n, on/off, true/false
+ *   PARAM_TYPE_CHARP  → kmalloc'd copy of value string
+ *   PARAM_TYPE_STRING → strncpy into fixed-size buffer
+ *
+ * If the parameter has a custom set_fn, it is called instead of the
+ * default type-based parsing.
+ *
+ * Returns 0 on success, -EINVAL on parse error, -ENOENT if param not found.
+ */
+int module_parse_params(struct kernel_module *mod, const char *params_str)
+{
+    if (!mod || !params_str || !params_str[0])
+        return 0; /* No params to parse is not an error */
+
+    /* Duplicate the string so we can safely strtok it */
+    size_t len = strlen(params_str);
+    if (len > 4096)
+        return -EINVAL; /* sanity: prohibit >4K parameter blobs */
+
+    char *buf = (char *)kmalloc(len + 1);
+    if (!buf)
+        return -ENOMEM;
+    memcpy(buf, params_str, len + 1);
+
+    int ret = 0;
+    char *saveptr = NULL;
+    char *token = strtok_r(buf, ",", &saveptr);
+
+    while (token) {
+        /* Skip leading whitespace */
+        while (*token == ' ' || *token == '\t')
+            token++;
+
+        /* Skip empty tokens */
+        if (*token == '\0') {
+            token = strtok_r(NULL, ",", &saveptr);
+            continue;
+        }
+
+        /* Find the '=' separator */
+        char *eq = strchr(token, '=');
+        if (!eq) {
+            /* Without '=', treat as boolean parameter set to 1 */
+            /* The param name is the whole token */
+            char *pname = token;
+            /* Trim trailing whitespace from name */
+            char *end = pname + strlen(pname) - 1;
+            while (end > pname && (*end == ' ' || *end == '\t'))
+                *end-- = '\0';
+
+            if (*pname == '\0') {
+                token = strtok_r(NULL, ",", &saveptr);
+                continue;
+            }
+
+            struct kernel_param *kp = module_find_param(mod, pname);
+            if (!kp) {
+                kprintf("[MOD] Unknown parameter: '%s' for module '%s'\n",
+                        pname, mod->name);
+                ret = -ENOENT;
+                break;
+            }
+
+            /* Boolean true / set to 1 for non-bool types */
+            if (kp->set_fn) {
+                if (kp->set_fn("1", kp) < 0) {
+                    ret = -EINVAL;
+                    break;
+                }
+            } else if (kp->data && kp->data_len >= (int)sizeof(int)) {
+                *(int *)kp->data = 1;
+            }
+        } else {
+            /* Split into name and value */
+            *eq = '\0';
+            char *pname = token;
+            char *pval  = eq + 1;
+
+            /* Trim trailing whitespace from name */
+            char *end = pname + strlen(pname) - 1;
+            while (end > pname && (*end == ' ' || *end == '\t'))
+                *end-- = '\0';
+
+            /* Trim leading whitespace from value */
+            while (*pval == ' ' || *pval == '\t')
+                pval++;
+
+            if (*pname == '\0') {
+                token = strtok_r(NULL, ",", &saveptr);
+                continue;
+            }
+
+            struct kernel_param *kp = module_find_param(mod, pname);
+            if (!kp) {
+                kprintf("[MOD] Unknown parameter: '%s' for module '%s'\n",
+                        pname, mod->name);
+                ret = -ENOENT;
+                break;
+            }
+
+            /* If the module registered a custom setter, use it */
+            if (kp->set_fn) {
+                if (kp->set_fn(pval, kp) < 0) {
+                    kprintf("[MOD] Parameter '%s' set_fn rejected value '%s'\n",
+                            pname, pval);
+                    ret = -EINVAL;
+                    break;
+                }
+                token = strtok_r(NULL, ",", &saveptr);
+                continue;
+            }
+
+            /* Default type-based parsing */
+            if (!kp->data || kp->data_len <= 0) {
+                token = strtok_r(NULL, ",", &saveptr);
+                continue;
+            }
+
+            switch (kp->type) {
+            case PARAM_TYPE_INT: {
+                if (kp->data_len < (int)sizeof(int)) break;
+                char *endp = NULL;
+                long val = strtol(pval, &endp, 0);
+                if (endp == pval || (*endp != '\0' && !isspace((unsigned char)*endp))) {
+                    ret = -EINVAL;
+                    break;
+                }
+                *(int *)kp->data = (int)val;
+                break;
+            }
+            case PARAM_TYPE_UINT: {
+                if (kp->data_len < (int)sizeof(unsigned int)) break;
+                char *endp = NULL;
+                unsigned long val = strtoul(pval, &endp, 0);
+                if (endp == pval || (*endp != '\0' && !isspace((unsigned char)*endp))) {
+                    ret = -EINVAL;
+                    break;
+                }
+                *(unsigned int *)kp->data = (unsigned int)val;
+                break;
+            }
+            case PARAM_TYPE_BOOL: {
+                if (kp->data_len < (int)sizeof(int)) break;
+                unsigned long bval;
+                /* Try numeric first */
+                char *endp = NULL;
+                bval = strtoul(pval, &endp, 0);
+                if (endp != pval && (*endp == '\0' || isspace((unsigned char)*endp))) {
+                    *(int *)kp->data = (bval != 0) ? 1 : 0;
+                    break;
+                }
+                /* Try string keywords */
+                if (strcmp(pval, "y") == 0 || strcmp(pval, "Y") == 0 ||
+                    strcmp(pval, "yes") == 0 || strcmp(pval, "YES") == 0 ||
+                    strcmp(pval, "on") == 0 || strcmp(pval, "ON") == 0 ||
+                    strcmp(pval, "true") == 0 || strcmp(pval, "TRUE") == 0 ||
+                    strcmp(pval, "1") == 0) {
+                    *(int *)kp->data = 1;
+                } else if (strcmp(pval, "n") == 0 || strcmp(pval, "N") == 0 ||
+                           strcmp(pval, "no") == 0 || strcmp(pval, "NO") == 0 ||
+                           strcmp(pval, "off") == 0 || strcmp(pval, "OFF") == 0 ||
+                           strcmp(pval, "false") == 0 || strcmp(pval, "FALSE") == 0 ||
+                           strcmp(pval, "0") == 0) {
+                    *(int *)kp->data = 0;
+                } else {
+                    ret = -EINVAL;
+                }
+                break;
+            }
+            case PARAM_TYPE_CHARP: {
+                /* Free previous allocation if any */
+                char *old = *(char **)kp->data;
+                if (old) kfree(old);
+
+                size_t vlen = strlen(pval);
+                char *copy = (char *)kmalloc(vlen + 1);
+                if (!copy) {
+                    ret = -ENOMEM;
+                    break;
+                }
+                memcpy(copy, pval, vlen + 1);
+                *(char **)kp->data = copy;
+                kp->data_len = (int)(vlen + 1);
+                break;
+            }
+            case PARAM_TYPE_STRING: {
+                /* Fixed-size buffer: copy up to data_len-1 chars */
+                size_t copy_len = strlen(pval);
+                if (copy_len >= (size_t)kp->data_len)
+                    copy_len = (size_t)kp->data_len - 1;
+                memset(kp->data, 0, (size_t)kp->data_len);
+                memcpy(kp->data, pval, copy_len);
+                break;
+            }
+            default:
+                ret = -EINVAL;
+                break;
+            }
+
+            if (ret < 0) {
+                kprintf("[MOD] Parameter '%s': failed to parse value '%s' (type=%d)\n",
+                        pname, pval, (int)kp->type);
+                break;
+            }
+        }
+
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+
+    kfree(buf);
+    return ret;
 }
