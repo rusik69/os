@@ -75,6 +75,10 @@ struct syscall_process_info {
     uint8_t is_suspended;
     uint8_t priority;
     char name[32];
+    uint64_t cpu_user_ticks;   /* utime */
+    uint64_t cpu_system_ticks; /* stime */
+    int      nice;             /* nice value (-20..+19) */
+    uint64_t max_rss;          /* max resident set size (pages) */
 };
 
 /* I/O and Memory structs (Phase 3 Group 3a) - must match libc definitions */
@@ -2638,6 +2642,11 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
         out[written].is_background = (uint8_t)(table[i].is_background ? 1 : 0);
         out[written].is_suspended = (uint8_t)(table[i].is_suspended ? 1 : 0);
         out[written].priority = table[i].priority;
+        /* CPU time and resource info */
+        out[written].cpu_user_ticks   = table[i].utime_ticks;
+        out[written].cpu_system_ticks = table[i].stime_ticks;
+        out[written].nice             = table[i].nice;
+        out[written].max_rss          = table[i].max_rss;
         /* Only dereference kernel-space name pointers (bit 63 set).
          * User processes may have a name pointer from user address space
          * which is not accessible in the kernel page table context. */

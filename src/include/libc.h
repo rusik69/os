@@ -66,6 +66,10 @@ struct libc_process_info {
     uint8_t is_suspended;
     uint8_t priority;
     char name[32];
+    uint64_t cpu_user_ticks;   /* utime in ticks */
+    uint64_t cpu_system_ticks; /* stime in ticks */
+    int      nice;             /* nice value (-20..+19) */
+    uint64_t max_rss;          /* max resident set size (pages) */
 };
 
 /* Opaque user/session structures for phase 3 group 1. */
