@@ -9,6 +9,7 @@ void pmm_advance_hint(uint64_t phys_addr); /* advance alloc hint past given phys
 uint64_t pmm_alloc_frame(void);
 uint64_t *pmm_alloc_frames(size_t count);
 void pmm_free_frame(uint64_t frame);
+void pmm_free_frames_contiguous(uint64_t phys, size_t count); /* free contiguous frames */
 uint64_t pmm_get_total_frames(void);
 uint64_t pmm_get_used_frames(void);
 /* Reference counting for COW */

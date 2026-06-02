@@ -592,6 +592,32 @@ void pmm_free_frame(uint64_t addr) {
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
+/* Free 'count' contiguous physical frames starting at 'phys'.
+ * Bypasses the per-CPU hot cache for efficiency with bulk operations. */
+void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
+    if (count == 0 || phys == 0) return;
+    if (phys & (PAGE_SIZE - 1)) return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    for (size_t i = 0; i < count; i++) {
+        uint64_t addr = phys + i * PAGE_SIZE;
+        uint64_t frame = addr / PAGE_SIZE;
+        if (frame >= MAX_FRAMES) break;
+        if (!bitmap_test(frame)) continue;
+        if (frame_refcount[frame] > 1) continue;
+
+        poison_fill(addr, 0xDC);
+        vm_pgfree++;
+        bitmap_clear(frame);
+        frame_refcount[frame] = 0;
+        used_frames--;
+    }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+}
+
 void pmm_ref_frame(uint64_t phys) {
     uint64_t frame = phys / PAGE_SIZE;
     if (frame < MAX_FRAMES && frame_refcount[frame] < 65535)

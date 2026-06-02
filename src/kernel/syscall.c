@@ -1162,22 +1162,39 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
-    /* If addr is 0, find a free region starting at USER_CODE_BASE + 2MB */
+    /* If addr is 0, find a free region starting at 16MB.
+     * For large mappings (>= 2MB), search at 2MB granularity to enable
+     * huge page use — this aligns the mapping and finds 2MB-aligned free
+     * space more efficiently. */
     if (addr == 0) {
-        /* Simple allocation from a growing heap area above the ELF */
-        /* Start searching from a reasonable user address */
-        addr = 0x0000000001000000ULL;
-        /* Scan for a free region of the right size */
-        while (addr + length < USER_VADDR_MAX) {
-            int free = 1;
-            for (uint64_t check = addr; check < addr + length; check += PAGE_SIZE) {
-                if (vmm_page_is_mapped_user(proc->pml4, check)) {
-                    free = 0;
-                    break;
+        if (length >= HUGE_PAGE_SIZE) {
+            addr = 0x0000000001000000ULL;
+            /* Align start to 2MB boundary */
+            addr = (addr + HUGE_PAGE_SIZE - 1) & ~(HUGE_PAGE_SIZE - 1ULL);
+            while (addr + length < USER_VADDR_MAX) {
+                int free = 1;
+                for (uint64_t check = addr; check < addr + length; check += HUGE_PAGE_SIZE) {
+                    if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                        free = 0;
+                        break;
+                    }
                 }
+                if (free) break;
+                addr += HUGE_PAGE_SIZE;
             }
-            if (free) break;
-            addr += 0x100000ULL; /* 1MB steps */
+        } else {
+            addr = 0x0000000001000000ULL;
+            while (addr + length < USER_VADDR_MAX) {
+                int free = 1;
+                for (uint64_t check = addr; check < addr + length; check += PAGE_SIZE) {
+                    if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                        free = 0;
+                        break;
+                    }
+                }
+                if (free) break;
+                addr += 0x100000ULL; /* 1MB steps */
+            }
         }
         if (addr + length >= USER_VADDR_MAX) return (uint64_t)-1;
     }
@@ -1185,8 +1202,20 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
     uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_LAZY;
     if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
     if (!(prot & 4)) page_flags |= VMM_FLAG_NOEXEC; /* no PROT_EXEC → NX */
-    if (vmm_map_user_pages(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
-        return (uint64_t)-1;
+
+    /* For large 2MB-aligned mappings, use huge page support.
+     * Huge pages allocate physical memory eagerly rather than lazily
+     * (VMM_FLAG_LAZY is not used with huge pages because the shared
+     * zero page is only 4KB and COW-splitting a 2MB page is complex). */
+    if (length >= HUGE_PAGE_SIZE && (addr & (HUGE_PAGE_SIZE - 1)) == 0) {
+        uint64_t hp_flags = page_flags & ~(uint64_t)VMM_FLAG_LAZY;
+        hp_flags |= VMM_FLAG_WRITE; /* eager allocation needs write access */
+        if (vmm_map_user_huge_pages(proc->pml4, addr, length / PAGE_SIZE, hp_flags) < 0)
+            return (uint64_t)-1;
+    } else {
+        if (vmm_map_user_pages(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
+            return (uint64_t)-1;
+    }
 
     if (proc->pml4 == vmm_get_pml4()) {
         /* If this process is running, flush TLB for the new region */

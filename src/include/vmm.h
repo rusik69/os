@@ -59,6 +59,11 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages);
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages, uint64_t new_flags);
 int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
 
+/* Huge page (2MB) support for anonymous mappings */
+#define HUGE_PAGE_SIZE      (2ULL * 1024 * 1024)
+#define HUGE_PAGE_NFRAMES   512
+int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, uint64_t flags);
+
 /* NX bit support */
 void vmm_nx_init(void);
 int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec);
@@ -72,6 +77,7 @@ extern uint64_t vm_pgswapin;
 extern uint64_t vm_pgswapout;
 extern uint64_t vm_pgin;
 extern uint64_t vm_pgout;
+extern uint64_t vm_hugepages;       /* number of 2MB huge pages allocated */
 
 /* Shared zero page for demand/lazy allocation.
  * A single zero-filled physical frame shared among all lazy mappings.
