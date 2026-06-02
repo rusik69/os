@@ -122,6 +122,7 @@
 #include "seccomp_bpf.h"
 #include "process_rlimit.h"
 #include "devtmpfs.h"
+#include "export.h"
 #include "overlay.h"
 #include "fanotify.h"
 #include "fs_mount_prop.h"
@@ -433,6 +434,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel module API */
     module_init();
     kprintf("[OK] Kernel module API initialized (%d slots)\n", MODULE_MAX);
+
+    /* Kernel symbol export table — for module symbol resolution */
+    ksym_init();
 
     /* Initcall system — run all registered initcalls in order */
     do_initcalls();

@@ -5,6 +5,7 @@
 #include "timer.h"
 #include "heap.h"
 #include "kptr_restrict.h"
+#include "export.h"
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
@@ -522,3 +523,6 @@ int sprintf(char *buf, const char *fmt, ...) {
     int r = vsnprintf(buf, (size_t)-1, fmt, ap);
     va_end(ap); return r;
 }
+
+/* ── Exported symbols for module loading ──────────────────────────── */
+EXPORT_SYMBOL(kprintf);

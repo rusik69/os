@@ -1,6 +1,7 @@
 #include "heap.h"
 #include "pmm.h"
 #include "string.h"
+#include "export.h"
 
 /*
  * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
@@ -151,3 +152,7 @@ void kfree(void *ptr) {
         if (block->next) block->next->prev = prev;
     }
 }
+
+/* ── Exported symbols for module loading ──────────────────────────── */
+EXPORT_SYMBOL(kmalloc);
+EXPORT_SYMBOL(kfree);

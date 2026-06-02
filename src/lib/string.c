@@ -1,4 +1,5 @@
 #include "string.h"
+#include "export.h"
 
 void *memset(void *s, int c, size_t n) {
     uint8_t *p = (uint8_t *)s;
@@ -265,3 +266,8 @@ void *memccpy(void *dest, const void *src, int c, size_t n) {
     }
     return (void *)0;
 }
+
+/* ── Exported symbols for module loading ──────────────────────────── */
+EXPORT_SYMBOL(memset);
+EXPORT_SYMBOL(memcpy);
+EXPORT_SYMBOL(strlen);

@@ -73,6 +73,15 @@ SECTIONS
         _lbss_end = .;
     }
 
+    /* ── Kernel symbol export table ────────────────────────────────
+     * Collected from EXPORT_SYMBOL / EXPORT_SYMBOL_GPL uses across
+     * the kernel.  Used by the module loader for symbol resolution. */
+    .ksymtab ALIGN(16) : AT(ADDR(.ksymtab) - KERNEL_VMA_OFFSET) {
+        __ksymtab_start = .;
+        KEEP(*(.ksymtab))
+        __ksymtab_end = .;
+    }
+
     _kernel_end = .;
 
     /DISCARD/ : {
