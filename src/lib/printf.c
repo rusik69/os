@@ -4,6 +4,7 @@
 #include "string.h"
 #include "timer.h"
 #include "heap.h"
+#include "kptr_restrict.h"
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
@@ -243,7 +244,27 @@ int vkprintf(const char *fmt, va_list ap) {
         case 'd': case 'i': count += print_int(va_arg(ap, int64_t), pad, padchar); break;
         case 'u': count += print_uint(va_arg(ap, uint64_t), 10, pad, padchar); break;
         case 'x': count += print_uint(va_arg(ap, uint64_t), 16, pad, padchar); break;
-        case 'p': { uint64_t v = va_arg(ap, uint64_t); kputchar('0');kputchar('x');count+=2; count += print_uint(v,16,16,'0'); break; }
+        case 'p': {
+            /* Check for %pK (kernel pointer restriction) */
+            if (*(fmt + 1) == 'K') {
+                fmt++;
+                if (kptr_restrict_check()) {
+                    /* Restricted: hide kernel pointer — output 0x0000000000000000 */
+                    kputchar('0'); kputchar('x'); count += 2;
+                    for (int i = 0; i < 16; i++) { kputchar('0'); count++; }
+                } else {
+                    uint64_t v = va_arg(ap, uint64_t);
+                    kputchar('0'); kputchar('x'); count += 2;
+                    count += print_uint(v, 16, 16, '0');
+                }
+                break;
+            }
+            /* Regular %p */
+            uint64_t v = va_arg(ap, uint64_t);
+            kputchar('0'); kputchar('x'); count += 2;
+            count += print_uint(v, 16, 16, '0');
+            break;
+        }
         case 'c': { char c = (char)va_arg(ap, int); kputchar(c); count++; break; }
         case '%': kputchar('%'); count++; break;
         default: kputchar('%'); kputchar(*fmt); count += 2; break;
@@ -330,6 +351,21 @@ int kprintf(const char *fmt, ...) {
             break;
         }
         case 'p': {
+            /* Check for %pK (kernel pointer restriction) */
+            if (*(fmt + 1) == 'K') {
+                fmt++;
+                if (kptr_restrict_check()) {
+                    /* Restricted: hide kernel pointer — output 0x0000000000000000 */
+                    kputchar('0'); kputchar('x'); count += 2;
+                    for (int i = 0; i < 16; i++) { kputchar('0'); count++; }
+                } else {
+                    uint64_t val = va_arg(ap, uint64_t);
+                    kputchar('0'); kputchar('x'); count += 2;
+                    count += print_uint(val, 16, 16, '0');
+                }
+                break;
+            }
+            /* Regular %p — always show pointer */
             uint64_t val = va_arg(ap, uint64_t);
             kputchar('0'); kputchar('x'); count += 2;
             count += print_uint(val, 16, 16, '0');
@@ -440,6 +476,22 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
             break;
         }
         case 'p': {
+            /* Check for %pK (kernel pointer restriction) */
+            if (*(fmt + 1) == 'K') {
+                fmt++;
+                if (kptr_restrict_check()) {
+                    /* Restricted: hide kernel pointer — output 0x0000000000000000 */
+                    sn_write(&b, '0'); sn_write(&b, 'x');
+                    count += 2;
+                    for (int i = 0; i < 16; i++) { sn_write(&b, '0'); count++; }
+                } else {
+                    uint64_t val = va_arg(ap, uint64_t);
+                    sn_write(&b, '0'); sn_write(&b, 'x');
+                    count += sn_uint(&b, val, 16, 16, '0', 0);
+                }
+                break;
+            }
+            /* Regular %p — always show pointer */
             uint64_t val = va_arg(ap, uint64_t);
             sn_write(&b, '0'); sn_write(&b, 'x');
             count += sn_uint(&b, val, 16, 16, '0', 0);

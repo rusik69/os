@@ -4,12 +4,35 @@
 #include "dmesg.h"
 #include "printf.h"
 #include "process.h"
+#include "sysctl.h"
+#include "string.h"
 
 /* dmesg_restrict: when set, only root can read dmesg */
 int dmesg_restrict = 1;
 
+/* ── Sysctl handlers ──────────────────────────────────────────────── */
+
+static int sysctl_read_dmesg_restrict(char *buf, int max) {
+    if (max < 3) return 0;
+    buf[0] = '0' + (char)dmesg_restrict;
+    buf[1] = '\n';
+    buf[2] = '\0';
+    return 2;
+}
+
+static int sysctl_write_dmesg_restrict(const char *buf, int len) {
+    if (len > 0 && buf[0] >= '0' && buf[0] <= '1')
+        dmesg_restrict = buf[0] - '0';
+    return 0;
+}
+
+/* ── API ──────────────────────────────────────────────────────────── */
+
 void dmesg_init(void) {
-    kprintf("[OK] dmesg_restrict initialized (value=%d)\\n", dmesg_restrict);
+    kprintf("[OK] dmesg_restrict initialized (value=%d)\n", dmesg_restrict);
+
+    /* Register sysctl entry: kernel.dmesg_restrict */
+    sysctl_register("dmesg_restrict", sysctl_read_dmesg_restrict, sysctl_write_dmesg_restrict);
 }
 
 int dmesg_check_access(void) {
