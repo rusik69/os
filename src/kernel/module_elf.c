@@ -28,6 +28,7 @@
 #include "module_elf.h"
 #include "module.h"
 #include "module_signature.h"
+#include "module_deps.h"
 #include "printf.h"
 #include "string.h"
 #include "pmm.h"
@@ -425,6 +426,17 @@ int module_elf_parse(struct module_elf_context *ctx)
                     name = modinfo_data + pos + 5;
                 } else if (strncmp(modinfo_data + pos, "vermagic=", 9) == 0) {
                     mod_vermagic = modinfo_data + pos + 9;
+                } else if (strncmp(modinfo_data + pos, "depends=", 8) == 0) {
+                    /* Extract the dependency list for M25 resolution */
+                    const char *d = modinfo_data + pos + 8;
+                    int dlen = 0;
+                    while (pos + 8 + dlen < modinfo_size &&
+                           modinfo_data[pos + 8 + dlen] != '\0')
+                        dlen++;
+                    if (dlen > 0 && dlen < (int)sizeof(ctx->depends)) {
+                        memcpy(ctx->depends, d, (size_t)dlen);
+                        ctx->depends[dlen] = '\0';
+                    }
                 }
                 /* Skip to next null terminator */
                 while (pos < modinfo_size && modinfo_data[pos] != '\0')
@@ -1020,6 +1032,20 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
         if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
                           "module_elf_finalize: NULL context");
         return -1;
+    }
+
+    /* Step 0: Resolve dependencies (M25)
+     * Before resolving symbols or loading sections, ensure all
+     * modules declared via "depends=" in .modinfo are loaded.
+     * Their exported symbols must be available for symbol resolution. */
+    if (ctx->depends[0]) {
+        kprintf("[MOD_ELF] Resolving dependencies for '%s': %s\n",
+                name ? name : ctx->name, ctx->depends);
+        if (module_dep_resolve_list(ctx->depends,
+                                     ctx->error_msg,
+                                     (int)sizeof(ctx->error_msg)) < 0) {
+            return -1;
+        }
     }
 
     /* Step 1: Resolve symbols */

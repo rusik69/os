@@ -103,6 +103,9 @@ struct module_elf_context {
     /* Name string for the module (derived from .modinfo or filename) */
     char name[64];
 
+    /* Dependency string from .modinfo "depends=..." (M25) */
+    char depends[128];
+
     /* Error message from last failed operation */
     char error_msg[256];
 };

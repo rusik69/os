@@ -297,6 +297,22 @@ int module_deps_resolved(struct kernel_module *mod);
 #define MODULE_VERSION(ver)        static const char __mod_version[] \
     __attribute__((section(".modinfo"), used)) = "version=" ver
 
+/* MODULE_DEPENDS — declare module dependencies.
+ *
+ * Usage in a kernel module source file:
+ *   MODULE_DEPENDS("ext2", "crc32");
+ *
+ * This embeds "depends=ext2,crc32" in the .modinfo section.  The module
+ * loader ensures these modules are loaded (auto-loading if needed) before
+ * this module's init function is called.
+ *
+ * Dependencies are separated by commas.  At most 16 dependencies are
+ * supported (see MODULE_MAX_DEPS).
+ */
+#define MODULE_DEPENDS(deps) \
+    static const char __mod_depends[] \
+    __attribute__((section(".modinfo"), used)) = "depends=" deps
+
 /* Set a module parameter from a string value (used by sysfs write callbacks).
  * Supports all standard parameter types. Returns 0 on success, -1 on error. */
 int module_param_set_value(struct kernel_param *kp, const char *val);
