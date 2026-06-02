@@ -208,6 +208,10 @@ struct process {
     int cpu_cgroup_id;
     /* ── NUMA home node — preferred NUMA node for scheduling this task ── */
     int home_node;         /* NUMA node ID (0 = default, -1 = not assigned) */
+    /* ── Held mutex tracking for Priority Inheritance ─────────────── */
+#define PROCESS_MAX_HELD_MUTEXES 4
+    int held_mutex_count;          /* number of mutexes currently held */
+    int held_mutex_ids[PROCESS_MAX_HELD_MUTEXES]; /* mutex IDs held by this process */
 };
 
 void process_init(void);

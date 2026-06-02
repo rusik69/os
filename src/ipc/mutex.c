@@ -4,13 +4,16 @@
  * Implements the Priority Inheritance Protocol (PIP) to prevent
  * priority inversion: when a high-priority task waits on a mutex
  * held by a low-priority task, the holder is temporarily boosted
- * to the waiter's priority. On unlock, the original priority is
- * restored.
+ * to the waiter's priority.  Properly handles nested mutexes:
+ * when a process holds multiple mutexes and releases one, the
+ * priority is recomputed from the remaining held mutexes' highest
+ * waiter priorities.
  *
  * Integrates with lockdep for deadlock detection and provides
  * owner-tracking debug helpers (mutex_owner(), mutex_owner_name(),
  * mutex_is_locked()).
  */
+
 #include "mutex.h"
 #include "scheduler.h"
 #include "process.h"
@@ -38,7 +41,80 @@ static struct mutex_entry mutexes[MUTEX_MAX];
 uint8_t mutex_boost[MUTEX_MAX_PI_BOOST];
 
 static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio);
-static void restore_owner(struct mutex_entry *m);
+static void restore_owner_priority(struct mutex_entry *m);
+
+/* ── Held-mutex tracking helpers ───────────────────────────────────── */
+
+/* Add a mutex ID to the process's held-mutex list.
+ * Silently ignores duplicates and full list (caller must ensure
+ * a process never holds more than PROCESS_MAX_HELD_MUTEXES). */
+static void held_mutex_add(struct process *proc, int mutex_id) {
+    if (!proc) return;
+
+    /* Check for duplicate */
+    for (int i = 0; i < proc->held_mutex_count; i++) {
+        if (proc->held_mutex_ids[i] == mutex_id)
+            return;
+    }
+
+    /* Add if there's room */
+    if (proc->held_mutex_count < PROCESS_MAX_HELD_MUTEXES) {
+        proc->held_mutex_ids[proc->held_mutex_count++] = mutex_id;
+    }
+}
+
+/* Remove a mutex ID from the process's held-mutex list.
+ * No-op if the mutex is not found. */
+static void held_mutex_remove(struct process *proc, int mutex_id) {
+    if (!proc) return;
+
+    for (int i = 0; i < proc->held_mutex_count; i++) {
+        if (proc->held_mutex_ids[i] == mutex_id) {
+            /* Shift remaining entries left */
+            int remaining = proc->held_mutex_count - i - 1;
+            if (remaining > 0) {
+                __builtin_memmove(&proc->held_mutex_ids[i],
+                                  &proc->held_mutex_ids[i + 1],
+                                  (size_t)remaining * sizeof(int));
+            }
+            proc->held_mutex_count--;
+            return;
+        }
+    }
+}
+
+/* Compute the effective priority for a process based on all held mutexes.
+ *
+ * The effective priority is the highest (lowest numeric value) among:
+ *   - the process's base priority
+ *   - the highest waiter priority from each held mutex
+ *
+ * Returns the priority to set on the process (same unit: 0=highest, 3=lowest). */
+static uint8_t held_mutex_effective_prio(uint32_t pid) {
+    struct process *owner = process_get_by_pid(pid);
+    if (!owner || owner->state == PROCESS_UNUSED)
+        return 9; /* sentinel: don't care */
+
+    uint8_t best = owner->base_priority; /* start with base (lower = higher prio) */
+
+    /* Scan all held mutexes for their highest_waiter_prio */
+    for (int i = 0; i < owner->held_mutex_count; i++) {
+        int id = owner->held_mutex_ids[i];
+        if (id < 0 || id >= MUTEX_MAX) continue;
+        struct mutex_entry *m = &mutexes[id];
+        if (!m->in_use || !m->locked) continue;
+
+        /* highest_waiter_prio is 9 when no waiters (i.e., no one waiting).
+         * Only consider mutexes with actual waiters. */
+        if (m->highest_waiter_prio < best) {
+            best = m->highest_waiter_prio;
+        }
+    }
+
+    return best;
+}
+
+/* ── Initialization ──────────────────────────────────────────────── */
 
 int mutex_init(void) {
     for (int i = 0; i < MUTEX_MAX; i++) {
@@ -58,6 +134,8 @@ int mutex_init(void) {
     return -1;
 }
 
+/* ── Lock / Unlock ─────────────────────────────────────────────────── */
+
 void mutex_lock(int id) {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use) return;
     struct mutex_entry *m = &mutexes[id];
@@ -74,21 +152,33 @@ void mutex_lock(int id) {
             m->locked = 1;
             m->owner_pid = self->pid;
             m->owner_rip = (uint64_t)__builtin_return_address(0);
-            m->owner_orig_prio = self->priority;
+            m->owner_orig_prio = self->base_priority;
+
+            /* Register this mutex in the owner's held-mutex list */
+            held_mutex_add(self, id);
+
             __asm__ volatile("sti");
             return;
         }
 
-        /* Mutex is held by another process — check for priority inheritance */
+        /* Mutex is held by another process — perform priority inheritance */
         struct process *owner = process_get_by_pid(m->owner_pid);
         if (owner && owner->state != PROCESS_UNUSED) {
-            /* If waiter has higher priority than current owner's base priority,
-             * record the highest waiter priority for potential boost */
+            /* Track the highest waiter priority for this mutex */
             if (self->priority < m->highest_waiter_prio) {
                 m->highest_waiter_prio = self->priority;
             }
-            /* Boost owner if waiter has higher priority */
+
+            /* Boost the owner if this waiter has higher priority */
             boost_owner(m, self->priority);
+
+            /* Reflect the waiter into the owner's priority immediately:
+             * the owner might hold other mutexes with different waiters,
+             * so recompute the effective priority from all mutexes held. */
+            uint8_t effective = held_mutex_effective_prio(m->owner_pid);
+            if (effective < owner->priority) {
+                owner->priority = effective;
+            }
         }
 
         /* Register as waiter */
@@ -108,9 +198,15 @@ void mutex_unlock(int id) {
     /* Lockdep: release before unlocking */
     lock_release("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
 
-    /* Restore owner's original priority */
-    restore_owner(m);
+    /* Remove this mutex from the owner's held-mutex list, then
+     * recompute the owner's priority from any remaining held mutexes. */
+    struct process *owner = process_get_by_pid(m->owner_pid);
+    if (owner && owner->state != PROCESS_UNUSED) {
+        held_mutex_remove(owner, id);
+        restore_owner_priority(m);
+    }
 
+    /* Release the mutex */
     m->locked = 0;
     m->owner_pid = 0;
     m->owner_rip = 0;
@@ -128,7 +224,13 @@ void mutex_destroy(int id) {
     }
 
     /* Restore owner priority before destroying */
-    restore_owner(m);
+    restore_owner_priority(m);
+
+    /* Remove from owner's held-mutex list if present */
+    struct process *owner = process_get_by_pid(m->owner_pid);
+    if (owner && owner->state != PROCESS_UNUSED) {
+        held_mutex_remove(owner, id);
+    }
 
     mutexes[id].in_use  = 0;
     mutexes[id].locked  = 0;
@@ -165,8 +267,19 @@ int mutex_is_locked(int id) {
 
 /* ── Priority inheritance helpers ──────────────────────────────────── */
 
-/* Boost the mutex owner to waiter_prio if the waiter has higher priority
- * (lower numeric value = higher priority in this scheduler) */
+/* Boost the mutex owner to waiter_prio if the waiter has higher priority.
+ *
+ * "Higher priority" means a lower numeric value (0=highest, 3=lowest).
+ * The owner's original base priority is saved in owner_orig_prio on the
+ * first boost (i.e., when the owner's current priority still equals its
+ * base priority), so it can be used when all boosts are released.
+ *
+ * Note: the final effective priority is computed by held_mutex_effective_prio()
+ * which scans ALL held mutexes.  boost_owner() provides the initial single-mutex
+ * boost, and mutex_lock() additionally calls held_mutex_effective_prio() after
+ * boost_owner() to ensure the priority reflects the maximum across all held
+ * mutexes.
+ */
 static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio) {
     struct process *owner = process_get_by_pid(m->owner_pid);
     if (!owner || owner->state == PROCESS_UNUSED) return;
@@ -174,21 +287,41 @@ static void boost_owner(struct mutex_entry *m, uint8_t waiter_prio) {
     /* waiter_prio is lower number = higher priority.
      * Boost if waiter_prio < owner->priority (meaning waiter is more important) */
     if (waiter_prio < owner->priority) {
-        m->owner_orig_prio = owner->priority; /* save current before boost */
+        /* Save original priority only on the first boost.
+         * If owner->priority != owner->base_priority, it's already been boosted
+         * by another mutex and owner_orig_prio was already captured. */
+        if (owner->priority == owner->base_priority) {
+            m->owner_orig_prio = owner->priority;
+        }
         owner->priority = waiter_prio;
+
         /* Track the boost */
         if (m->owner_pid < MUTEX_MAX_PI_BOOST)
             mutex_boost[m->owner_pid] = waiter_prio;
     }
 }
 
-/* Restore the owner's original (base) priority after unlock */
-static void restore_owner(struct mutex_entry *m) {
+/* Restore the owner's priority after unlocking a mutex.
+ *
+ * Instead of unconditionally resetting to base_priority (which would
+ * break nested PI), we compute the effective priority across all
+ * remaining held mutexes via held_mutex_effective_prio().
+ *
+ * If no other held mutex requires a boost, the effective priority
+ * will be base_priority — the correct behaviour.
+ */
+static void restore_owner_priority(struct mutex_entry *m) {
     struct process *owner = process_get_by_pid(m->owner_pid);
     if (!owner || owner->state == PROCESS_UNUSED) return;
 
-    owner->priority = owner->base_priority;
+    /* Compute the new priority considering all OTHER held mutexes.
+     * held_mutex_remove() was already called before this, so the
+     * current mutex is no longer in the owner's held list. */
+    uint8_t new_prio = held_mutex_effective_prio(m->owner_pid);
+
+    owner->priority = new_prio;
     m->owner_orig_prio = owner->base_priority;
+
     /* Clear boost tracking */
     if (m->owner_pid < MUTEX_MAX_PI_BOOST)
         mutex_boost[m->owner_pid] = 0;
