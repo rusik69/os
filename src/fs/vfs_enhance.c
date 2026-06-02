@@ -2,7 +2,6 @@
  * src/fs/vfs_enhance.c — VFS enhancement features.
  *
  * Implements:
- *   - FS quota enforcement       (6)
  *   - POSIX ACL enforcement      (7)
  *   - VFS mount table list       (8)
  *   - Bind mount enhancements    (9)
@@ -23,74 +22,7 @@
 #include "printf.h"
 #include "heap.h"
 #include "errno.h"
-
-/* ====================================================================
- * 6. FS Quota Enforcement at VFS level
- * ==================================================================== */
-
-#define VFS_QUOTA_MAX_USERS 16
-static struct {
-    uint16_t uid;
-    struct fs_quota quota;
-    int in_use;
-} vfs_quota_table[VFS_QUOTA_MAX_USERS];
-
-int vfs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit) {
-    for (int i = 0; i < VFS_QUOTA_MAX_USERS; i++) {
-        if (vfs_quota_table[i].in_use && vfs_quota_table[i].uid == uid) {
-            vfs_quota_table[i].quota.block_limit = block_limit;
-            vfs_quota_table[i].quota.inode_limit = inode_limit;
-            return 0;
-        }
-    }
-    /* Find free slot */
-    for (int i = 0; i < VFS_QUOTA_MAX_USERS; i++) {
-        if (!vfs_quota_table[i].in_use) {
-            vfs_quota_table[i].uid = uid;
-            vfs_quota_table[i].quota.block_limit = block_limit;
-            vfs_quota_table[i].quota.inode_limit = inode_limit;
-            vfs_quota_table[i].quota.block_usage = 0;
-            vfs_quota_table[i].quota.inode_usage = 0;
-            vfs_quota_table[i].in_use = 1;
-            return 0;
-        }
-    }
-    return -ENOSPC;
-}
-
-int vfs_get_quota(uint16_t uid, struct fs_quota *quota) {
-    for (int i = 0; i < VFS_QUOTA_MAX_USERS; i++) {
-        if (vfs_quota_table[i].in_use && vfs_quota_table[i].uid == uid) {
-            memcpy(quota, &vfs_quota_table[i].quota, sizeof(*quota));
-            return 0;
-        }
-    }
-    return -1;
-}
-
-int vfs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed) {
-    for (int i = 0; i < VFS_QUOTA_MAX_USERS; i++) {
-        if (vfs_quota_table[i].in_use && vfs_quota_table[i].uid == uid) {
-            struct fs_quota *q = &vfs_quota_table[i].quota;
-            if (q->block_limit > 0 && q->block_usage + blocks_needed > q->block_limit)
-                return -EDQUOT;
-            return 0;
-        }
-    }
-    return 0; /* no quota set for this user */
-}
-
-int vfs_check_quota_inodes(uint16_t uid) {
-    for (int i = 0; i < VFS_QUOTA_MAX_USERS; i++) {
-        if (vfs_quota_table[i].in_use && vfs_quota_table[i].uid == uid) {
-            struct fs_quota *q = &vfs_quota_table[i].quota;
-            if (q->inode_limit > 0 && q->inode_usage >= q->inode_limit)
-                return -EDQUOT;
-            return 0;
-        }
-    }
-    return 0;
-}
+#include "quota.h"
 
 /* ====================================================================
  * 7. POSIX ACL Enforcement in VFS operations
@@ -516,8 +448,8 @@ int vfs_journal_abort(const char *path) {
  * ==================================================================== */
 
 void vfs_enhance_init(void) {
-    memset(vfs_quota_table, 0, sizeof(vfs_quota_table));
+    vfs_quota_init();
     memset(vfs_enh_bind_mounts, 0, sizeof(vfs_enh_bind_mounts));
     memset(&journal_state, 0, sizeof(journal_state));
-    kprintf("[vfs_enh] Quota, ACL, bind, fallocate, encryption, dedup, resize, journal, cache stats initialized\n");
+    kprintf("[vfs_enh] ACL, bind, fallocate, encryption, dedup, resize, journal, cache stats initialized\n");
 }

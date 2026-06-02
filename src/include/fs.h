@@ -85,10 +85,15 @@ void fs_mode_str(uint16_t mode, char out[10]);
 
 /* ── Quota support ────────────────────────────────────────────── */
 struct fs_quota {
-    uint32_t block_limit;
-    uint32_t inode_limit;
-    uint32_t block_usage;
-    uint32_t inode_usage;
+    uint16_t uid;
+    uint32_t block_soft_limit;   /* soft limit in 512-byte blocks (0 = unlimited) */
+    uint32_t block_hard_limit;   /* hard limit in 512-byte blocks (0 = unlimited) */
+    uint32_t inode_soft_limit;   /* soft limit in inodes (0 = unlimited) */
+    uint32_t inode_hard_limit;   /* hard limit in inodes (0 = unlimited) */
+    uint32_t cur_blocks;         /* current block usage */
+    uint32_t cur_inodes;         /* current inode usage */
+    int      block_grace;        /* 1 = block grace period active */
+    int      inode_grace;        /* 1 = inode grace period active */
 };
 
 /* Set quota limits for a user ID */

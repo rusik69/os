@@ -976,10 +976,15 @@ int fs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit) {
     }
 
     fs_quota_table[slot].uid = uid;
-    fs_quota_table[slot].quota.block_limit = block_limit;
-    fs_quota_table[slot].quota.inode_limit = inode_limit;
-    fs_quota_table[slot].quota.block_usage = blocks_used;
-    fs_quota_table[slot].quota.inode_usage = inodes_used;
+    fs_quota_table[slot].quota.block_hard_limit = block_limit;
+    fs_quota_table[slot].quota.inode_hard_limit = inode_limit;
+    fs_quota_table[slot].quota.block_soft_limit = block_limit > 0 ? (uint32_t)((uint64_t)block_limit * 80 / 100) : 0;
+    fs_quota_table[slot].quota.inode_soft_limit = inode_limit > 0 ? (uint32_t)((uint64_t)inode_limit * 80 / 100) : 0;
+    fs_quota_table[slot].quota.cur_blocks = blocks_used;
+    fs_quota_table[slot].quota.cur_inodes = inodes_used;
+    fs_quota_table[slot].quota.uid = uid;
+    fs_quota_table[slot].quota.block_grace = 0;
+    fs_quota_table[slot].quota.inode_grace = 0;
     fs_quota_table[slot].in_use = 1;
     return 0;
 }
@@ -999,7 +1004,7 @@ int fs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed) {
     for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
         if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
             struct fs_quota *q = &fs_quota_table[i].quota;
-            if (q->block_limit > 0 && q->block_usage + blocks_needed > q->block_limit)
+            if (q->block_hard_limit > 0 && q->cur_blocks + blocks_needed > q->block_hard_limit)
                 return -1;
             return 0;
         }
@@ -1011,7 +1016,7 @@ int fs_check_quota_inodes(uint16_t uid) {
     for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
         if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
             struct fs_quota *q = &fs_quota_table[i].quota;
-            if (q->inode_limit > 0 && q->inode_usage + 1 > q->inode_limit)
+            if (q->inode_hard_limit > 0 && q->cur_inodes + 1 > q->inode_hard_limit)
                 return -1;
             return 0;
         }

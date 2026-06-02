@@ -15,6 +15,7 @@
 #include "dcache.h"
 #include "spinlock.h"
 #include "export.h"
+#include "quota.h"
 
 #define EROFS_KERNEL 30
 
@@ -545,6 +546,7 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
 
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+    uint32_t existing_size = 0;
 
     /* Check mandatory locks before write */
     {
@@ -564,7 +566,6 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     if (proc) {
         /* Get the existing file size (if any) and check the new total */
         struct vfs_stat st;
-        uint32_t existing_size = 0;
         if (vfs_stat(ap, &st) == 0) {
             existing_size = st.size;
         }
@@ -578,11 +579,40 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         }
     }
 
+    /* Enforce filesystem quotas: check block quota before write */
+    {
+        struct process *qproc = process_get_current();
+        uint16_t uid = qproc ? (uint16_t)qproc->uid : 0;
+        uint32_t blocks_needed = bytes_to_blocks(size);
+        int qret = vfs_check_quota_blocks(uid, blocks_needed);
+        if (qret < 0) {
+            kprintf("QUOTA: write denied for UID %u (needs %u blocks)\n",
+                    (unsigned int)uid, (unsigned int)blocks_needed);
+            return -EDQUOT;
+        }
+    }
+
     int r = m->ops->write(m->priv, ap, data, size);
     if (r == 0) {
         fsnotify_notify(ap, FS_MODIFY);
         /* File metadata (size, mtime) changed — invalidate cache */
         dcache_remove(ap);
+
+        /* Update block quota usage after successful write */
+        struct process *qproc = process_get_current();
+        if (qproc) {
+            uint32_t new_size;
+            struct vfs_stat st2;
+            if (vfs_stat(ap, &st2) == 0)
+                new_size = st2.size;
+            else
+                new_size = existing_size + size;
+            uint32_t new_blocks = bytes_to_blocks(new_size);
+            uint32_t old_blocks = bytes_to_blocks(existing_size);
+            int32_t delta = (int32_t)new_blocks - (int32_t)old_blocks;
+            if (delta != 0)
+                vfs_update_quota_blocks((uint16_t)qproc->uid, delta);
+        }
     }
     return r;
 }
@@ -623,6 +653,20 @@ int vfs_create(const char *path, uint8_t type) {
     if (!m || !m->ops->create) return -1;
     /* Check read-only mount */
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+
+    /* Enforce filesystem quotas: check inode quota before create */
+    {
+        struct process *proc = process_get_current();
+        if (proc) {
+            int qret = vfs_check_quota_inodes((uint16_t)proc->uid);
+            if (qret < 0) {
+                kprintf("QUOTA: inode creation denied for UID %u\n",
+                        (unsigned int)proc->uid);
+                return -EDQUOT;
+            }
+        }
+    }
+
     int r = m->ops->create(m->priv, ap, type);
     if (r == 0) {
         fsnotify_notify(ap, FS_CREATE);
@@ -638,6 +682,11 @@ int vfs_create(const char *path, uint8_t type) {
         } else if (slash == parent) {
             dcache_remove("/");
         }
+
+        /* Update inode quota after successful creation */
+        struct process *proc = process_get_current();
+        if (proc)
+            vfs_update_quota_inodes((uint16_t)proc->uid, 1);
     }
     return r;
 }
@@ -648,6 +697,11 @@ int vfs_unlink(const char *path) {
     if (!m || !m->ops->unlink) return -1;
     /* Check read-only mount */
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+
+    /* Save stat before unlink for quota adjustment */
+    struct vfs_stat pre_st;
+    int have_pre_stat = (vfs_stat(ap, &pre_st) == 0) ? 1 : 0;
+
     int r = m->ops->unlink(m->priv, ap);
     if (r == 0) {
         fsnotify_notify(ap, FS_DELETE);
@@ -661,6 +715,18 @@ int vfs_unlink(const char *path) {
             dcache_remove(parent);
         } else if (slash == parent) {
             dcache_remove("/");
+        }
+
+        /* Update quota after successful unlink */
+        struct process *proc = process_get_current();
+        if (proc) {
+            vfs_update_quota_inodes((uint16_t)proc->uid, -1);
+            if (have_pre_stat) {
+                uint32_t blocks_freed = bytes_to_blocks(pre_st.size);
+                if (blocks_freed > 0)
+                    vfs_update_quota_blocks((uint16_t)proc->uid,
+                                            -(int32_t)blocks_freed);
+            }
         }
     }
     return r;
@@ -959,8 +1025,25 @@ int vfs_truncate(const char *path, uint32_t len) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     struct vfs_mount *m = resolve(ap);
     if (!m) return -1;
+
+    /* Get the old size before truncate for quota adjustment */
+    struct vfs_stat old_st;
+    int have_old = (vfs_stat(ap, &old_st) == 0) ? 1 : 0;
+
     if (m->ops->truncate) {
-        return m->ops->truncate(m->priv, ap, len);
+        int r = m->ops->truncate(m->priv, ap, len);
+        if (r == 0) {
+            /* Update block quota after truncate */
+            struct process *proc = process_get_current();
+            if (proc && have_old) {
+                uint32_t old_blocks = bytes_to_blocks(old_st.size);
+                uint32_t new_blocks = bytes_to_blocks(len);
+                int32_t delta = (int32_t)new_blocks - (int32_t)old_blocks;
+                if (delta != 0)
+                    vfs_update_quota_blocks((uint16_t)proc->uid, delta);
+            }
+        }
+        return r;
     }
     return -ENOSYS;
 }

@@ -177,6 +177,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/uio.c \
          src/drivers/pagecache.c \
          src/fs/freeze.c \
+         src/fs/quota.c \
          src/fs/crypto.c \
          src/net/dhcp.c \
          src/kernel/irq_affinity.c \
