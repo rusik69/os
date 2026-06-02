@@ -21,6 +21,7 @@
 #include "printf.h"
 #include "serial.h"
 #include "net.h"
+#include "syntax.h"
 
 /* ── Limits ──────────────────────────────────────────────────────── */
 #define ED_MAX_BUFS     4          /* number of simultaneously open buffers */
@@ -56,6 +57,8 @@ struct ed_buffer {
     char  filename[64];
     int   dirty;
     int   in_use;
+    syntax_lang_t lang;      /* detected language for syntax highlighting */
+    int   in_multi;          /* multi-line comment/string state for syntax */
 };
 
 static struct ed_buffer ed_buffers[ED_MAX_BUFS];
@@ -201,21 +204,62 @@ static void vga_ed_status_bottom(void) {
 
 static void vga_ed_lines(void) {
     struct ed_buffer *b = BUF();
-    uint8_t color = VGA_LIGHT_GREY | (VGA_BLACK << 4);
+    uint8_t default_color = VGA_LIGHT_GREY | (VGA_BLACK << 4);
+    /* Syntax highlighting state */
+    syntax_token_t stokens[SYN_LINE_MAX];
+    int s_multi = 0;
+
     for (int r = 0; r < ED_VIEW_ROWS; r++) {
         int line = b->scroll + r;
         int scr_row = r + 1;
         if (line < b->num_lines) {
             int len = (int)strlen(b->lines[line]);
-            int c;
-            for (c = 0; c < len && c < VGA_WIDTH; c++)
-                vga_put_entry_at(b->lines[line][c], color, scr_row, c);
-            for (; c < VGA_WIDTH; c++)
-                vga_put_entry_at(' ', color, scr_row, c);
+            if (len > VGA_WIDTH) len = VGA_WIDTH;
+
+            if (b->lang != SYNTAX_NONE) {
+                /* Tokenize with language-aware highlighting */
+                if (line == b->scroll + r) {
+                    /* Re-tokenize from start of visible region to maintain
+                     * multi-line state; for C we need to track slash-asterisk */
+                    s_multi = 0;
+                    for (int tl = 0; tl <= line; tl++) {
+                        int llen = (int)strlen(b->lines[tl]);
+                        if (llen > SYN_LINE_MAX) llen = SYN_LINE_MAX;
+                        if (tl == line) {
+                            syntax_tokenize(b->lang, b->lines[tl], llen,
+                                           stokens, &s_multi);
+                        } else {
+                            syntax_tokenize(b->lang, b->lines[tl], llen,
+                                           NULL, &s_multi);
+                        }
+                    }
+                } else {
+                    int llen = (int)strlen(b->lines[line]);
+                    if (llen > SYN_LINE_MAX) llen = SYN_LINE_MAX;
+                    syntax_tokenize(b->lang, b->lines[line], llen,
+                                   stokens, &s_multi);
+                }
+
+                int c;
+                for (c = 0; c < len; c++) {
+                    uint8_t color = syntax_token_to_vga(
+                        (syntax_token_t)(c < SYN_LINE_MAX ? stokens[c] : TOKEN_DEFAULT));
+                    vga_put_entry_at(b->lines[line][c], color, scr_row, c);
+                }
+                for (; c < VGA_WIDTH; c++)
+                    vga_put_entry_at(' ', default_color, scr_row, c);
+            } else {
+                /* No syntax highlighting — plain text */
+                int c;
+                for (c = 0; c < len; c++)
+                    vga_put_entry_at(b->lines[line][c], default_color, scr_row, c);
+                for (; c < VGA_WIDTH; c++)
+                    vga_put_entry_at(' ', default_color, scr_row, c);
+            }
         } else {
             vga_put_entry_at('~', VGA_DARK_GREY | (VGA_BLACK << 4), scr_row, 0);
             for (int c = 1; c < VGA_WIDTH; c++)
-                vga_put_entry_at(' ', color, scr_row, c);
+                vga_put_entry_at(' ', default_color, scr_row, c);
         }
     }
 }
@@ -257,7 +301,37 @@ static void ansi_ed_refresh(void) {
         ansi_goto(r + 1, 0);
         int line = b->scroll + r;
         if (line < b->num_lines) {
-            kprintf("%s\x1b[K", b->lines[line]);
+            if (b->lang != SYNTAX_NONE) {
+                /* Syntax-highlighted ANSI output */
+                syntax_token_t stokens2[SYN_LINE_MAX];
+                int s_multi2 = 0;
+                /* Re-tokenize from visible start for multi-line state */
+                for (int tl = b->scroll; tl <= line; tl++) {
+                    int llen = (int)strlen(b->lines[tl]);
+                    if (llen > SYN_LINE_MAX) llen = SYN_LINE_MAX;
+                    if (tl == line) {
+                        syntax_tokenize(b->lang, b->lines[tl], llen,
+                                       stokens2, &s_multi2);
+                    } else {
+                        syntax_tokenize(b->lang, b->lines[tl], llen,
+                                       NULL, &s_multi2);
+                    }
+                }
+                int len = (int)strlen(b->lines[line]);
+                if (len > VGA_WIDTH) len = VGA_WIDTH;
+                syntax_token_t prev_tok = TOKEN_DEFAULT;
+                for (int c = 0; c < len; c++) {
+                    syntax_token_t tok = (c < SYN_LINE_MAX) ? stokens2[c] : TOKEN_DEFAULT;
+                    if (tok != prev_tok) {
+                        kprintf("%s", syntax_token_to_ansi(tok));
+                        prev_tok = tok;
+                    }
+                    kprintf("%c", b->lines[line][c]);
+                }
+                kprintf("%s\x1b[K", SYN_ANSI_RESET);
+            } else {
+                kprintf("%s\x1b[K", b->lines[line]);
+            }
         } else {
             kprintf("\x1b[34m~\x1b[0m\x1b[K");
         }
@@ -467,6 +541,8 @@ static void ed_handle_command(const char *input) {
         b->cx = 0; b->cy = 0; b->scroll = 0;
         b->dirty = 0;
         b->in_use = 1;
+        b->lang = syntax_detect(fname);
+        b->in_multi = 0;
         strncpy(b->filename, fname, sizeof(b->filename) - 1);
         b->filename[sizeof(b->filename) - 1] = '\0';
 
@@ -889,6 +965,8 @@ void editor_open(const char *filename) {
         b->cx = 0; b->cy = 0; b->scroll = 0;
         b->dirty = 0;
         b->in_use = 1;
+        b->lang = syntax_detect(filename);
+        b->in_multi = 0;
         strncpy(b->filename, filename, sizeof(b->filename) - 1);
         b->filename[sizeof(b->filename) - 1] = '\0';
         ed_load(b);

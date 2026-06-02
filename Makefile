@@ -110,6 +110,7 @@ C_SRCS = src/kernel/kernel.c \
          src/shell/shell_cmd_table.c \
          src/shell/shell_vars.c \
          src/shell/editor.c \
+         src/shell/syntax.c \
          src/shell/script.c \
          src/fs/fs.c \
          src/fs/procfs.c \
