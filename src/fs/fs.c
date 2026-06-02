@@ -535,6 +535,24 @@ static int fs_backing_store_read(uint32_t lba, uint8_t count, void *buf)
     return ata_read_sectors(lba, count, buf);
 }
 
+/* Backing store write callback for page cache dirty writeback */
+static int fs_backing_store_write(uint32_t lba, uint8_t count, const void *buf)
+{
+    for (uint8_t i = 0; i < count; i++) {
+        if (ata_write_sectors(lba + i, 1, (const uint8_t *)buf + (uint32_t)i * 512) < 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Register the backing store write callback with the page cache.
+ * Called from kernel.c after page_cache_init(). */
+void fs_register_page_cache_writeback(void)
+{
+    page_cache_set_writeback(fs_backing_store_write);
+    kprintf("[fs] page cache writeback registered\n");
+}
+
 
 /*
  * Read file contents using the page cache with automatic readahead.

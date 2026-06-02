@@ -552,6 +552,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * so it can be used by the simple block filesystem's fs_read_file(). */
     page_cache_init();
 
+    /* Register the filesystem writeback callback so dirty pages in the
+     * page cache are actually flushed to disk on eviction and sync. */
+    fs_register_page_cache_writeback();
+
     /* Service infrastructure + FS directory tree */
     service_init();
     kprintf("[OK] Service manager initialized\n");

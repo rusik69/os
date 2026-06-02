@@ -3,6 +3,7 @@
 #include "fat32.h"
 #include "string.h"
 #include "printf.h"
+#include "page_cache.h"
 #include "process.h"
 #include "heap.h"
 #include "signal.h"
@@ -924,6 +925,9 @@ int vfs_flush(const char *path) {
     /* Flush the buffer cache (block device cache) to backing store */
     bufcache_flush();
 
+    /* Flush the page cache (file data cache) dirty pages to disk */
+    page_cache_flush();
+
     return ret;
 }
 
@@ -939,6 +943,10 @@ int vfs_sync_all(void) {
     }
     /* Flush the global buffer cache */
     bufcache_flush();
+
+    /* Flush the page cache (file data cache) dirty pages to disk */
+    page_cache_flush();
+
     return ret;
 }
 

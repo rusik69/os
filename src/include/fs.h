@@ -67,6 +67,7 @@ int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
                uint16_t *uid, uint16_t *gid, uint16_t *mode);
 int fs_stat_mtime(const char *path);  /* returns mtime seconds, or -1 */
 int fs_set_mtime(const char *path, uint32_t mtime);  /* set mtime seconds, or -1 on error */
+void fs_register_page_cache_writeback(void);
 int fs_chmod(const char *path, uint16_t mode);
 int fs_chown(const char *path, uint16_t uid, uint16_t gid);
 int fs_check_perm(const char *path, char op); /* op: 'r','w','x' */

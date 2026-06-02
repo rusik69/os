@@ -93,4 +93,20 @@ void page_cache_readahead_reset(uint64_t ino);
 /* Print readahead statistics (for debugging / /proc). */
 void page_cache_readahead_stats(int *hits, int *misses, int *prefetches);
 
+/* ── Writeback / dirty page flushing ─────────────────────────────── */
+
+/* Register backing-store write callback for dirty page writeback.
+ * Called by the filesystem layer during init. */
+void page_cache_set_writeback(int (*writeback)(uint32_t lba, uint8_t count, const void *buf));
+
+/* Write data to the page cache and mark the page dirty.
+ * The data is cached in memory; actual disk write happens when the
+ * page is evicted or page_cache_flush() is called.
+ * Returns 0 on success, negative on error. */
+int page_cache_write(uint64_t ino, uint64_t block, const void *data);
+
+/* Remove a page from the cache without writing it back.
+ * Use when discarding data (e.g., truncate, unlink). */
+void page_cache_discard(uint64_t ino, uint64_t block);
+
 #endif /* PAGE_CACHE_H */

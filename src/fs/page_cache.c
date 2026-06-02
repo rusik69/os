@@ -32,6 +32,9 @@ static int page_cache_initialized = 0;
 static uint64_t cache_hits   = 0;
 static uint64_t cache_misses = 0;
 
+/* Writeback callback — registered by the filesystem layer */
+static int (*writeback_fn)(uint32_t lba, uint8_t count, const void *buf) = NULL;
+
 /* ── Readahead tracking tables ────────────────────────────────────── */
 static struct readahead_state readahead_trackers[READAHEAD_MAX_TRACKERS];
 static int                    readahead_initialized = 0;
@@ -113,11 +116,18 @@ static int evict_one(void) {
         return slot;  /* free slot found, or all slots in use and no evictable */
 
     /* Evict the selected slot */
-    if (page_cache[slot].flags & PAGE_CACHE_DIRTY) {
-        kprintf("[page_cache] evicting dirty page ino=%llu block=%llu\n",
-                (unsigned long long)page_cache[slot].ino,
-                (unsigned long long)page_cache[slot].block);
-        /* In a full implementation, call backing_store writeback here */
+    if ((page_cache[slot].flags & PAGE_CACHE_DIRTY) && writeback_fn) {
+        /* Write dirty page back to backing store before evicting.
+         * The page cache block maps to a logical block on the device
+         * at (block * PAGE_SIZE / SECTOR_SIZE) sectors. */
+        uint32_t lba = (uint32_t)(page_cache[slot].block * (PAGE_SIZE / 512));
+        uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+        if (writeback_fn(lba, count, page_cache[slot].data) < 0) {
+            kprintf("[page_cache] WARNING: writeback failed for ino=%llu block=%llu\n",
+                    (unsigned long long)page_cache[slot].ino,
+                    (unsigned long long)page_cache[slot].block);
+        }
+        page_cache[slot].flags &= ~PAGE_CACHE_DIRTY;
     }
 
     if (page_cache[slot].phys_addr) {
@@ -180,10 +190,68 @@ void page_cache_mark_dirty(uint64_t ino, uint64_t block) {
 
 /* ── Flush all dirty pages ─────────────────────────────────────────── */
 void page_cache_flush(void) {
+    if (!writeback_fn) return;  /* no writeback registered — can't flush */
+
     for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
         if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
-            /* Would write back to backing store */
+            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
+            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+            if (writeback_fn(lba, count, page_cache[i].data) < 0) {
+                kprintf("[page_cache] flush: writeback failed for ino=%llu block=%llu\n",
+                        (unsigned long long)page_cache[i].ino,
+                        (unsigned long long)page_cache[i].block);
+            }
             page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
+        }
+    }
+}
+
+/* ── Register writeback callback ───────────────────────────────── */
+void page_cache_set_writeback(int (*writeback)(uint32_t lba, uint8_t count, const void *buf)) {
+    writeback_fn = writeback;
+    kprintf("[page_cache] writeback callback registered\n");
+}
+
+
+/* ── Write through page cache (mark dirty) ──────────────────────── */
+int page_cache_write(uint64_t ino, uint64_t block, const void *data) {
+    if (!page_cache_initialized || !data) return -EINVAL;
+
+    /* Check if already cached — update in place */
+    struct page_cache_entry *pce = page_cache_lookup(ino, block);
+    if (pce && pce->data) {
+        memcpy(pce->data, data, PAGE_SIZE);
+        pce->flags |= PAGE_CACHE_DIRTY;
+        return 0;
+    }
+
+    /* Not cached — add new entry, copy data, mark dirty */
+    int ret = page_cache_add(ino, block, data);
+    if (ret < 0) return ret;
+
+    /* Mark the newly added page as dirty */
+    pce = page_cache_lookup(ino, block);
+    if (pce) {
+        pce->flags |= PAGE_CACHE_DIRTY;
+    }
+    return 0;
+}
+
+
+/* ── Discard a page from cache without writeback ────────────────── */
+void page_cache_discard(uint64_t ino, uint64_t block) {
+    if (!page_cache_initialized) return;
+
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
+        if (page_cache[i].in_use &&
+            page_cache[i].ino == ino &&
+            page_cache[i].block == block) {
+            /* Free the physical frame without writeback */
+            if (page_cache[i].phys_addr) {
+                pmm_free_frame(page_cache[i].phys_addr);
+            }
+            memset(&page_cache[i], 0, sizeof(struct page_cache_entry));
+            return;
         }
     }
 }
