@@ -37,6 +37,7 @@ static void sh_lsusb(const char *a)      { (void)a; cmd_lsusb(); }
 static void sh_lsblk(const char *a)      { (void)a; cmd_lsblk(); }
 static void sh_logout(const char *a)     { (void)a; cmd_logout(); }
 static void sh_users(const char *a)      { (void)a; cmd_users(); }
+static void sh_su(const char *a)         { cmd_su(a); }
 static void sh_top(const char *a)        { (void)a; cmd_top(); }
 static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
 static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }

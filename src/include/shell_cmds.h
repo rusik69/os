@@ -117,6 +117,7 @@ void cmd_chown(const char *args);
 /* Multiuser commands */
 void cmd_login(const char *args);
 void cmd_logout(void);
+void cmd_su(const char *args);
 void cmd_useradd(const char *args);
 void cmd_userdel(const char *args);
 void cmd_passwd(const char *args);

@@ -108,6 +108,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("sort",        "Sort file lines",                                       cmd_sort)
     CMD("split",       "Split file into chunks",                                cmd_split)
     CMD("stat",        "Show file info",                                        cmd_stat_file)
+    CMD("su",          "Substitute user identity (su [-] [user])",               sh_su)
     CMD("strings",     "Print printable strings from file",                     cmd_strings)
     CMD("sum",         "Checksum and count blocks (sum <file>)",                 cmd_sum)
     CMD("sync",        "Flush filesystem buffers",                               sh_sync)
