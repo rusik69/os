@@ -19,6 +19,7 @@
 #include "vmm.h"
 #include "slab.h"
 #include "sysctl.h"
+#include "config_gz.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -573,7 +574,6 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
 /* /proc/stat — CPU and system statistics */
 static int procfs_gen_stat(char *buf, int max) {
     int p = 0;
-    uint64_t now = timer_get_ticks();
     uint64_t idle_ticks = scheduler_get_idle_ticks();
 
     /* Aggregate per-process CPU time into system-wide counters */
@@ -775,6 +775,16 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_cpuinfo(buf, (int)max_size);
     } else if (strcmp(path, "/proc/version") == 0) {
         len = procfs_gen_version(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/config.gz") == 0) {
+        uint32_t gz_size = 0;
+        const void *gz_data = config_gz_get_data(&gz_size);
+        if (gz_data && gz_size > 0) {
+            uint32_t copy = (gz_size < max_size) ? gz_size : max_size;
+            memcpy(buf, gz_data, copy);
+            *out_size = copy;
+            return 0;
+        }
+        return -1;
     } else if (strcmp(path, "/proc/net/arp") == 0) {
         len = procfs_gen_arp(buf, (int)max_size);
     } else if (strcmp(path, "/proc/net/route") == 0) {
@@ -865,6 +875,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         strcmp(path, "/proc/meminfo") == 0 ||
         strcmp(path, "/proc/cpuinfo") == 0 ||
         strcmp(path, "/proc/version") == 0 ||
+        strcmp(path, "/proc/config.gz") == 0 ||
         strcmp(path, "/proc/net/arp") == 0 ||
         strcmp(path, "/proc/net/route") == 0 ||
         strcmp(path, "/proc/net/dev") == 0 ||
@@ -932,14 +943,14 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") != 0) return -1;
-    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nself\nstat\nloadavg\nnet\nmounts\n");
+    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\n");
     /* Also list active PIDs */
     struct process *table = process_get_table();
     struct process *caller = process_get_current();
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state != PROCESS_UNUSED) {
             if (!caller || process_can_see(caller, &table[i]))
-                kprintf("%u\n", (unsigned long)table[i].pid);
+                kprintf("%lu\n", (unsigned long)table[i].pid);
         }
     }
     return 0;

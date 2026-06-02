@@ -281,7 +281,8 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/timeconst.c \
          src/kernel/div64.c \
          src/kernel/gpiolib.c \
-         src/kernel/io_map.c
+         src/kernel/io_map.c \
+         src/kernel/config_gz.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
@@ -304,6 +305,46 @@ DOOM_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(DOOM_SRCS))
 OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJS)
 # Header dependency tracking: include .d files when they exist
 DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(DOOM_OBJS:.o=.d)
+
+# ── /proc/config.gz — embedded compressed kernel build config ──────
+#
+# Pipeline: gen_config.sh → build_config.txt → gzip → build_config.gz
+#           → xxd -i → build/build_config_gz.h (included by config_gz.c)
+#
+BUILD_CONFIG_TXT  = $(BUILDDIR)/build_config.txt
+BUILD_CONFIG_GZ   = $(BUILDDIR)/build_config.gz
+BUILD_CONFIG_GZ_H = $(BUILDDIR)/build_config_gz.h
+
+# The header must be generated before config_gz.c is compiled.
+# We add the build directory as an include path so #include "build_config_gz.h" resolves.
+$(BUILDDIR)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR)
+
+# Generate the header: config text → gzip → xxd -i → header
+$(BUILD_CONFIG_GZ_H): $(BUILD_CONFIG_GZ)
+	@mkdir -p $(dir $@)
+	@echo '/* Auto-generated — do not edit. */' > $@
+	@echo '#ifndef BUILD_CONFIG_GZ_H' >> $@
+	@echo '#define BUILD_CONFIG_GZ_H' >> $@
+	xxd -i -n build_config_gz < $< >> $@
+	@echo '#endif /* BUILD_CONFIG_GZ_H */' >> $@
+
+$(BUILD_CONFIG_GZ): $(BUILD_CONFIG_TXT)
+	gzip -c < $< > $@
+
+$(BUILD_CONFIG_TXT): scripts/gen_config.sh
+	@mkdir -p $(dir $@)
+	scripts/gen_config.sh $@
+
+# Also add the test build variant
+BUILD_CONFIG_GZ_H_TEST = $(BUILDDIR_TEST)/build_config_gz.h
+$(BUILDDIR_TEST)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR_TEST)
+$(BUILD_CONFIG_GZ_H_TEST): $(BUILD_CONFIG_GZ)
+	@mkdir -p $(dir $@)
+	@echo '/* Auto-generated — do not edit. */' > $@
+	@echo '#ifndef BUILD_CONFIG_GZ_H' >> $@
+	@echo '#define BUILD_CONFIG_GZ_H' >> $@
+	xxd -i -n build_config_gz < $< >> $@
+	@echo '#endif /* BUILD_CONFIG_GZ_H */' >> $@
 
 # ── Default target: build kernel in parallel ──────────────────────────
 # NOTE: -include must stay BELOW the default target so that dependency
@@ -346,6 +387,9 @@ $(BUILDDIR)/%.o: src/%.asm
 $(BUILDDIR)/kernel.elf: check-app-boundary $(OBJS)
 	@mkdir -p $(BUILDDIR)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+
+# config_gz.o depends on the auto-generated header
+$(BUILDDIR)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)
 
 $(BUILDDIR)/kernel.bin: $(BUILDDIR)/kernel.elf
 	cp $< $@
@@ -397,6 +441,9 @@ $(BUILDDIR_TEST)/%.o: src/%.asm
 $(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 	@mkdir -p $(BUILDDIR_TEST)
 	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+
+# config_gz.o depends on the auto-generated header for test build too
+$(BUILDDIR_TEST)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
 
 $(BUILDDIR_TEST)/kernel.bin: $(BUILDDIR_TEST)/kernel.elf
 	cp $< $@

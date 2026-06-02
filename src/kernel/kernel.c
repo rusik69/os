@@ -103,6 +103,7 @@
 #include "pstore.h"
 #include "kdump.h"
 #include "mce.h"
+#include "config_gz.h"
 #include "nx_enforce.h"
 #include "stack_guard.h"
 #include "rseq.h"
@@ -297,6 +298,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Machine Check Exception (MCE) handler — hardware error detection */
     mce_init();
+
+    /* /proc/config.gz — embedded kernel build configuration */
+    config_gz_init();
 
     /* OOM killer */
     oom_init();
