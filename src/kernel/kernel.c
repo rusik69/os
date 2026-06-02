@@ -77,6 +77,7 @@
 #include "lockdep.h"
 #include "tmpfs.h"
 #include "acpi_thermal.h"
+#include "acpi_ec.h"
 #include "compaction.h"
 #include "memhotplug.h"
 #include "page_poison.h"
@@ -473,6 +474,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* ACPI thermal zones with adaptive polling governor */
     acpi_thermal_init();
+
+    /* ACPI embedded controller with burst mode */
+    ec_init();
 
     /* Syscall interface */
     syscall_init();
