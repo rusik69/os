@@ -336,6 +336,7 @@ void cmd_sshd(const char *args);
 void cmd_insmod(const char *args);
 void cmd_rmmod(const char *args);
 void cmd_lsmod(const char *args);
+void cmd_modinfo(const char *args);
 
 /* User privilege commands (U31) */
 void cmd_sudo(const char *args);

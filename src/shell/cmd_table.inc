@@ -280,6 +280,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("insmod",      "Load a kernel module (insmod <path> [params])", sh_insmod)
     CMD("rmmod",       "Unload a kernel module (rmmod <name>)", sh_rmmod)
     CMD("lsmod",       "List loaded kernel modules", sh_lsmod)
+    CMD("modinfo",     "Show kernel module information (modinfo [name])", sh_modinfo)
     { 0, 0, 0 }
 };
 
