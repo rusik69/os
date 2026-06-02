@@ -16,6 +16,7 @@
 #include "spinlock.h"
 #include "export.h"
 #include "quota.h"
+#include "landlock.h"
 
 #define EROFS_KERNEL 30
 
@@ -527,6 +528,13 @@ int vfs_list_filesystems(char names[][32], int max) {
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 
+    /* Check Landlock read-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+            return -EACCES;
+    }
+
     /* Check mandatory locks before read */
     {
         int lock_ret = file_lock_check_mandatory(ap, 0);
@@ -547,6 +555,13 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     uint32_t existing_size = 0;
+
+    /* Check Landlock write-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
 
     /* Check mandatory locks before write */
     {
@@ -620,6 +635,13 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
 int vfs_stat(const char *path, struct vfs_stat *st) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 
+    /* Check Landlock read-file permission (reading metadata) */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+            return -EACCES;
+    }
+
     /* Try the dentry cache first */
     struct dcache_entry *de = dcache_lookup(ap);
     if (de) {
@@ -649,6 +671,14 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
 
 int vfs_create(const char *path, uint8_t type) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock write-file permission (creating a new file writes to parent dir) */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->create) return -1;
     /* Check read-only mount */
@@ -693,6 +723,14 @@ int vfs_create(const char *path, uint8_t type) {
 
 int vfs_unlink(const char *path) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock write-file permission (removing a file writes to parent dir) */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->unlink) return -1;
     /* Check read-only mount */
@@ -734,6 +772,14 @@ int vfs_unlink(const char *path) {
 
 int vfs_readdir(const char *path) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock read-dir permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_DIR) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->readdir) return -1;
     return m->ops->readdir(m->priv, ap);
@@ -741,6 +787,14 @@ int vfs_readdir(const char *path) {
 
 int vfs_readdir_names(const char *path, char names[][64], int max) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock read-dir permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_DIR) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m) return -1;
     if (strcmp(m->mountpoint, "/") == 0) {
@@ -1023,6 +1077,14 @@ int vfs_fstatfs(int fd, struct vfs_statfs *st) {
 
 int vfs_truncate(const char *path, uint32_t len) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock write-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m) return -1;
 
@@ -1114,6 +1176,14 @@ int vfs_symlink(const char *target, const char *linkpath) {
     if (!target || !linkpath) return -EINVAL;
     char ap[128];
     vfs_abs_path(linkpath, ap, sizeof(ap));
+
+    /* Check Landlock write-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m) return -ENOENT;
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
@@ -1129,6 +1199,14 @@ int vfs_readlink(const char *path, char *buf, int bufsize) {
     if (!path || !buf || bufsize <= 0) return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock read-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m) return -ENOENT;
     if (m->ops->readlink)
@@ -1146,6 +1224,14 @@ int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_
     if (!path) return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock write-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m) return -ENOENT;
     if (m->flags & MS_RDONLY) return -EROFS_KERNEL;

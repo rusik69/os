@@ -3,15 +3,18 @@
 #include "string.h"
 #include "errno.h"
 #include "kernel.h"
-#include "heap.h"
+#include "process.h"
+#include "scheduler.h"
 
 /*
- * Landlock implementation.
+ * Landlock implementation — path-based access-control sandboxing.
  *
  * We maintain a static table of rulesets, each containing a fixed-size
  * array of path-beneath rules.  A process that has called
- * landlock_restrict_self is subject to access checks via
- * landlock_check_path().
+ * landlock_restrict_self() stores the ruleset index in its
+ * landlock_ruleset_id field.  Access checks via landlock_check_path()
+ * verify that the requested operation is permitted by the process's
+ * own ruleset.  This enforcement is called from VFS operations.
  */
 
 /* A single path-beneath rule */
@@ -44,22 +47,9 @@ void landlock_init(void)
     kprintf("[OK] landlock: path-based access control initialised\n");
 }
 
-/* Helper: find length-limited path from a fake fd.
- * In a real kernel this would resolve from the VFS layer.
- * Here we just copy the string from the fd's path if available. */
+/* Helper: resolve a parent_fd to a path string for use in rules. */
 static int resolve_path_from_fd(int fd, char *buf, size_t bufsz)
 {
-    /* The "parent_fd" in our mock is actually a path string stored
-     * in the process's fd table, or we treat small fd values as
-     * well-known roots:
-     *   fd 0 = /dev/tty  (not a directory)
-     *   fd 1 = stdout    (not a directory)
-     *   For a real implementation we would walk the VFS.
-     *
-     * Since this is a simplified model, we stub it out:
-     * if fd == 0 we treat as "/" (root).
-     * Otherwise we try to read from the process fd table.
-     */
     if (fd < 0) {
         strncpy(buf, "/", bufsz);
         buf[bufsz - 1] = '\0';
@@ -175,25 +165,29 @@ int landlock_restrict_self(int ruleset_fd, uint32_t flags)
     if (!current)
         return -ESRCH;
 
-    /* Attach the ruleset to the current process.
-     * We store the ruleset index directly in the process for checks.
-     * We reuse a spare field: no_new_privs indicates sandboxing.
-     */
-    /* Store the ruleset fd as a negative value so we can look it up.
-     * Actually, we store it in a separate field or just a static mapping.
-     * For simplicity, we use the process's 'no_new_privs' flag to
-     * indicate that landlock is active + store the ruleset index
-     * via a separate per-pid table.
-     */
+    /* If the process already has a landlock ruleset, reject (no stacking yet) */
+    if (current->landlock_ruleset_id >= 0)
+        return -EPERM;
+
+    /* Set no_new_privs as required by Landlock semantics */
     current->no_new_privs = 1;
 
-    /* Store the mapping: we use a simple static array process -> ruleset */
-    /* For this simplified model we just note that the process is restricted.
-     * The actual enforcement happens in landlock_check_path(). */
+    /* Store the ruleset index so landlock_check_path() can find it */
+    current->landlock_ruleset_id = ruleset_fd;
 
     return 0;
 }
 
+/*
+ * landlock_check_path() — verify that the given process is allowed
+ * to perform the requested access_bits on the given path.
+ *
+ * Only the ruleset associated with this process (via landlock_ruleset_id)
+ * is checked.  If the process has no landlock ruleset, all access is
+ * permitted.
+ *
+ * Returns 0 if allowed, -EACCES if denied.
+ */
 int landlock_check_path(const struct process *proc, const char *path,
                         uint64_t access_bits)
 {
@@ -201,36 +195,42 @@ int landlock_check_path(const struct process *proc, const char *path,
         return -EACCES;
 
     /* If the process has no landlock restrictions, all access allowed */
-    if (!proc->no_new_privs)
+    if (proc->landlock_ruleset_id < 0)
         return 0;
 
-    /* Scan all rulesets and find any that apply to this process.
-     * In a real implementation we'd walk the process's ruleset chain.
-     * For this simplified model, we check all active rulesets. */
-    for (int r = 0; r < LANDLOCK_MAX_RULESETS; r++) {
-        if (!landlock_table[r].used)
+    int rs_id = proc->landlock_ruleset_id;
+    if (rs_id >= LANDLOCK_MAX_RULESETS)
+        return -EACCES;
+
+    const struct landlock_ruleset *rs = &landlock_table[rs_id];
+    if (!rs->used)
+        return -EACCES;
+
+    /* If no access bits are requested, trivially allowed */
+    if (access_bits == 0)
+        return 0;
+
+    /* Only check the access types that this ruleset handles */
+    uint64_t relevant = access_bits & rs->handled_access_fs;
+
+    /* If the requested access doesn't touch any handled bits, allowed */
+    if (relevant == 0)
+        return 0;
+
+    /* Check each rule in the ruleset — if any rule grants all relevant
+     * access bits for a matching path prefix, the operation is allowed. */
+    for (int i = 0; i < rs->rule_count; i++) {
+        const struct landlock_path_rule *rule = &rs->rules[i];
+        if (!rule->used)
             continue;
 
-        const struct landlock_ruleset *rs = &landlock_table[r];
-
-        /* Only check the access types that this ruleset handles */
-        if ((access_bits & ~rs->handled_access_fs) != 0)
-            continue;   /* this ruleset doesn't govern these bits */
-
-        /* Check each rule in the ruleset */
-        for (int i = 0; i < rs->rule_count; i++) {
-            const struct landlock_path_rule *rule = &rs->rules[i];
-            if (!rule->used)
-                continue;
-
-            /* Check if the path matches (simple prefix match) */
-            size_t plen = strlen(rule->path);
-            if (strncmp(path, rule->path, plen) == 0) {
-                /* Path under this rule — check access bits */
-                if ((access_bits & ~rule->allowed_access) == 0) {
-                    /* All requested access is granted by this rule */
-                    return 0;
-                }
+        /* Check if the path matches (simple prefix match) */
+        size_t plen = strlen(rule->path);
+        if (plen > 0 && strncmp(path, rule->path, plen) == 0) {
+            /* Path under this rule — check access bits */
+            if ((relevant & ~rule->allowed_access) == 0) {
+                /* All requested access is granted by this rule */
+                return 0;
             }
         }
     }

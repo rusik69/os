@@ -365,6 +365,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
+    proc->landlock_ruleset_id = -1;  /* no landlock restrictions */
 
     /* Initialize CPU time accounting */
     proc->utime_ticks = 0;
@@ -468,6 +469,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     memset(proc->proc_comm, 0, 16);
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
+    proc->landlock_ruleset_id = -1;  /* no landlock restrictions */
 
     /* Inherit parent's bounding set */
     if (current_process && current_process->state != PROCESS_UNUSED) {
