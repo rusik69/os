@@ -22,6 +22,7 @@
 #include "cpuhp.h"
 #include "cpuidle.h"
 #include "sched_deadline.h"
+#include "preempt.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -280,6 +281,9 @@ void schedule(void) {
 
     __asm__ volatile("cli");
 
+    /* Clear the reschedule request — we're handling it now. */
+    ci->need_resched = 0;
+
     struct process *current = ci->current_process;
 
     uint64_t irq_flags;
@@ -359,7 +363,15 @@ void scheduler_yield(void) {
     if (cur && cur->priority > 0) {
         cur->priority--; /* boost by one level */
     }
-    schedule();
+
+    /* If preemption is disabled (e.g., holding a spinlock), yield is
+     * dangerous and could lead to deadlock (nobody else can run to
+     * release the lock we need).  Defer the reschedule instead. */
+    if (preemptible()) {
+        schedule();
+    } else {
+        set_need_resched();
+    }
 }
 
 uint64_t scheduler_get_idle_ticks(void) {
@@ -400,7 +412,11 @@ void scheduler_tick(int was_user) {
         sched_deadline_tick(cur);
         /* If throttled, reschedule immediately to let another task run */
         if (cur->dl_throttled) {
-            schedule();
+            if (preemptible()) {
+                schedule();
+            } else {
+                set_need_resched();
+            }
             return;
         }
     }
@@ -410,7 +426,11 @@ void scheduler_tick(int was_user) {
         signal_check();
         cur = ci->current_process;
         if (!cur || cur->state != PROCESS_RUNNING) {
-            schedule();
+            if (preemptible()) {
+                schedule();
+            } else {
+                set_need_resched();
+            }
             return;
         }
     }
@@ -449,14 +469,26 @@ void scheduler_tick(int was_user) {
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
             cur->ticks_remaining = time_slices[lvl];
-            schedule();
+            if (preemptible()) {
+                schedule();
+            } else {
+                set_need_resched();
+            }
         } else if (cur->sched_policy == SCHED_DEADLINE) {
             /* SCHED_DEADLINE: never preempt based on time-slice expiry;
              * budget is managed by sched_deadline_tick() above. */
             cur->ticks_remaining = 1; /* keep running unless throttled */
         } else {
-            /* SCHED_OTHER: preempt on quantum expiry */
-            schedule();
+            /* SCHED_OTHER / SCHED_BATCH: preempt on quantum expiry.
+             * If the kernel is not preemptible right now (e.g., in a
+             * spinlock critical section), defer the reschedule by
+             * setting need_resched.  The actual context switch will
+             * happen at the next preempt_enable() or preemption point. */
+            if (preemptible()) {
+                schedule();
+            } else {
+                set_need_resched();
+            }
         }
     }
 

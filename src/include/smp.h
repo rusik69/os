@@ -37,7 +37,11 @@ struct cpu_info {
     /* CFS minimum vruntime on this CPU's runqueue (for sleeper fairness) */
     uint64_t cfs_min_vruntime;
 
-    uint8_t _pad[56];            /* cache line padding */
+    /* ── Preemptible kernel state ────────────────────────────────── */
+    int preempt_count;           /* > 0 = preemption disabled (nested) */
+    volatile int need_resched;   /* non-zero = schedule() requested */
+
+    uint8_t _pad[48];            /* cache line padding */
 } __attribute__((aligned(64)));
 
 /* Per-CPU accessors using GS segment */

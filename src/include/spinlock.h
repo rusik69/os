@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "io.h"  /* for pause/rep nop */
+#include "preempt.h"  /* preempt_disable / preempt_enable */
 
 /*
  * Spinlock — busy-wait lock with exponential backoff.
@@ -70,6 +71,12 @@ static inline void spinlock_acquire(spinlock_t *lock) {
     const int max_backoff = 256;
     uint64_t spin_count = 0;
 
+    /* Disable preemption before we start spinning.  This ensures the
+     * lock holder (which could be this same CPU if the lock is not
+     * actually contended) will not be preempted while holding the lock,
+     * preventing deadlocks and unbounded spinning. */
+    preempt_disable();
+
     while (__sync_lock_test_and_set(lock, 1)) {
         /* Adaptive backoff with PAUSE */
         for (int i = 0; i < backoff; i++) {
@@ -103,11 +110,21 @@ static inline void spinlock_release(spinlock_t *lock) {
 
     __sync_synchronize();
     __sync_lock_release(lock);
+
+    /* Re-enable preemption after releasing the lock.  If a reschedule
+     * was requested while we held the lock (and thus had preemption
+     * disabled), schedule() runs here — this is the primary preemption
+     * point for kernel code. */
+    preempt_enable();
 }
 
 static inline int spinlock_try_acquire(spinlock_t *lock) {
     if (__sync_lock_test_and_set(lock, 1) == 0) {
         __sync_synchronize();
+
+        /* Disable preemption on successful try-acquire, since we now
+         * hold the lock and must not be preempted. */
+        preempt_disable();
 
         /* Record ownership for successful try-acquire */
         spinlock_register_owner(lock, (uint64_t)__builtin_return_address(0));
@@ -126,11 +143,16 @@ static inline void spinlock_irqsave_acquire(spinlock_t *lock, uint64_t *flags) {
         :
         : "memory"
     );
+    /* spinlock_acquire() calls preempt_disable() internally, which
+     * pairs with the preempt_enable() inside spinlock_release().
+     * IRQs are off so preemption is implicitly blocked as well. */
     spinlock_acquire(lock);
 }
 
 static inline void spinlock_irqsave_release(spinlock_t *lock, uint64_t flags) {
     spinlock_release(lock);
+    /* spinlock_release() already called preempt_enable() above.
+     * Now restore the original interrupt state. */
     if (!(flags & 0x200)) { /* IF bit */
         __asm__ volatile("sti");
     }
@@ -139,10 +161,16 @@ static inline void spinlock_irqsave_release(spinlock_t *lock, uint64_t flags) {
 /* Spinlock with timeout (try for N iterations) */
 static inline int spinlock_acquire_timeout(spinlock_t *lock, int max_iters) {
     int iter = 0;
+
+    preempt_disable();
+
     while (__sync_lock_test_and_set(lock, 1)) {
         __asm__ volatile("pause");
         iter++;
-        if (iter >= max_iters) return -1; /* timeout */
+        if (iter >= max_iters) {
+            preempt_enable_no_resched();
+            return -1; /* timeout */
+        }
     }
     __sync_synchronize();
 
