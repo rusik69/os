@@ -392,9 +392,31 @@ $(BUILDDIR)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)
 $(BUILDDIR)/kernel.bin: $(BUILDDIR)/kernel.elf
 	cp $< $@
 
-$(BUILDDIR)/disk.img:
+# ── Userspace init binary (standalone ELF for kernel loader) ─────────
+
+# Userspace programs need different flags: PIE, no kernel restrictions,
+# but still freestanding (no libc).  The init.ld linker script produces
+# a raw ELF with proper phdrs for the kernel's ELF loader.
+INIT_CFLAGS = -std=gnu17 -ffreestanding -nostdlib -nostdinc -fno-builtin \
+              -fno-stack-protector -mcmodel=large -O2 \
+              -Wall -Wextra -Isrc/include -g
+
+$(BUILDDIR)/init.o: src/init/init.c
+	@mkdir -p $(dir $@)
+	$(CC) $(INIT_CFLAGS) -c $< -o $@
+
+$(BUILDDIR)/init.elf: $(BUILDDIR)/init.o init.ld
+	$(LD) -T init.ld -nostdlib -o $@ $<
+
+# Userspace programs to inject into disk image
+USERSPACE_BINS = $(BUILDDIR)/init.elf
+
+# ── Disk image ───────────────────────────────────────────────────────
+
+$(BUILDDIR)/disk.img: $(USERSPACE_BINS)
 	@mkdir -p $(BUILDDIR)
 	dd if=/dev/zero of=$@ bs=1M count=16 2>/dev/null
+	@python3 scripts/mkfat32img.py $@ 16 $(BUILDDIR)/init.elf /mnt/init.elf
 
 # ── Run targets ───────────────────────────────────────────────────────
 
