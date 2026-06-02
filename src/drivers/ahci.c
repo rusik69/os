@@ -1,10 +1,19 @@
 /*
- * AHCI (Advanced Host Controller Interface) driver with NCQ
+ * AHCI (Advanced Host Controller Interface) driver with NCQ and Port Multiplier support
+ *
  * Supports SATA devices with multi-slot interrupt-driven I/O.
+ * Handles Port Multiplier (PM) devices behind a single physical port.
  *
  * Uses Native Command Queuing (NCQ) for up to 31 concurrent commands.
  * Slot 0 is reserved for non-NCQ commands (IDENTIFY, etc.).
  * Slots 1-31 are used for NCQ READ/WRITE FPDMA QUEUED.
+ *
+ * Port Multiplier architecture:
+ *   Physical ports with PORT_CMD.PMP=1 have a PM attached.
+ *   Up to 15 devices (PM Ports 0-14) can connect via the PM.
+ *   Each PM device registers as a separate block device but shares
+ *   the physical port's command list, slots, and PRDT entries.
+ *   The PM Port number is encoded in the FIS pmport_c field.
  */
 #include "ahci.h"
 #include "blockdev.h"
@@ -52,6 +61,7 @@
 #define PORT_CMD_FRE    (1u << 4)   /* FIS Receive Enable */
 #define PORT_CMD_FR     (1u << 14)  /* FIS Receive Running */
 #define PORT_CMD_CR     (1u << 15)  /* Command List Running */
+#define PORT_CMD_PMP    (1u << 17)  /* Port Multiplier Attached */
 
 /* PORT_IS bits */
 #define PORT_IS_D2H     (1u << 0)   /* D2H Register FIS */
@@ -85,13 +95,14 @@
 #define AHCI_NCQ_SLOTS     (AHCI_SLOT_COUNT - 1)  /* 31 NCQ slots */
 #define AHCI_PRDT_ENTRIES  1
 #define AHCI_DATA_FRAME_SECTORS 8  /* 4KB data buffer = 8 sectors */
+#define AHCI_MAX_PHYS_PORTS     32
 
 /* ── Data structures ────────────────────────────────────────────────── */
 
 /* Register FIS – Host to Device (20 bytes) */
 struct fis_reg_h2d {
     uint8_t  fis_type;
-    uint8_t  pmport_c;
+    uint8_t  pmport_c;     /* bits 3:0 = PM Port, bit 7 = C (update) */
     uint8_t  command;
     uint8_t  featurel;
     uint8_t  lba0, lba1, lba2;
@@ -145,32 +156,34 @@ struct ahci_recv_fis {
 
 /* Per-slot state */
 struct ahci_slot {
-    struct blk_request *req;      /* current request, NULL if free */
-    uint64_t            cmd_tbl_phys;    /* physical address of command table */
-    void               *cmd_tbl_virt;    /* kernel virtual address of command table */
-    uint64_t            data_buf_phys;   /* physical address of data buffer (4KB) */
-    void               *data_buf_virt;   /* kernel virtual address of data buffer */
+    struct blk_request *req;          /* current request, NULL if free */
+    uint64_t            cmd_tbl_phys; /* physical address of command table */
+    void               *cmd_tbl_virt; /* kernel virtual address of command table */
+    uint64_t            data_buf_phys;/* physical address of data buffer (4KB) */
+    void               *data_buf_virt;/* kernel virtual address of data buffer */
 };
 
-/* Per-port state */
+/* Per-port state — represents one addressable device (direct-attached or PM sub-port) */
 struct ahci_port {
     int                 present;
-    int                 port_num;
+    int                 port_num;          /* physical port index (0-31) */
+    int                 pm_port;           /* PM Port (-1 = direct, 0-14 = via PM) */
+    int                 is_pm;             /* 1 if this is a PM sub-port entry */
     uint32_t            sector_count;
-    int                 ncq_capable;     /* word 76 bit 8 */
+    int                 ncq_capable;       /* word 76 bit 8 */
     int                 blockdev_id;
     uint8_t             irq_line;
     struct ahci_slot    slots[AHCI_SLOT_COUNT];
     uint64_t            cmd_list_phys;
     uint64_t            recv_fis_phys;
-    uint32_t            inflight_mask;   /* bits set for issued slots */
+    uint32_t            inflight_mask;     /* bits set for issued slots */
 };
 
 /* ── Driver state ───────────────────────────────────────────────────── */
-static int              ahci_present   = 0;
-static uint64_t         hba_base       = 0;
-static struct ahci_port ahci_ports[32]; /* max 32 ports */
-static int              ahci_port_count = 0;
+static int              ahci_present      = 0;
+static uint64_t         hba_base          = 0;
+static struct ahci_port ahci_ports[AHCI_MAX_PHYS_PORTS * (1 + AHCI_MAX_PM_PORTS)];
+static int              ahci_port_count   = 0;
 static spinlock_t       ahci_lock;
 
 /* ── MMIO helpers ───────────────────────────────────────────────────── */
@@ -251,10 +264,15 @@ static void ahci_build_ncq_cmd(struct ahci_port *port, int slot,
     hdr->ctba   = (uint32_t)(s->cmd_tbl_phys & 0xFFFFFFFF);
     hdr->ctbau  = (uint32_t)(s->cmd_tbl_phys >> 32);
 
-    /* Command FIS */
+    /* Command FIS — set PM Port if this is a PM device */
     struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
     fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->pmport_c = 0x80;  /* C=1 */
+    if (port->is_pm && port->pm_port >= 0) {
+        /* PM Port in bits 3:0, C=1 (update) in bit 7 */
+        fis->pmport_c = 0x80 | (uint8_t)(port->pm_port & 0x0F);
+    } else {
+        fis->pmport_c = 0x80;  /* direct-attached, C=1, PM Port=0 */
+    }
     fis->command  = is_write ? ATA_CMD_WRITE_FPDMA_QUEUED
                              : ATA_CMD_READ_FPDMA_QUEUED;
     fis->device   = (1u << 6);  /* LBA mode */
@@ -302,7 +320,11 @@ static void ahci_build_raw_cmd(struct ahci_port *port, int slot,
 
     struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
     fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->pmport_c = 0x80;
+    if (port->is_pm && port->pm_port >= 0) {
+        fis->pmport_c = 0x80 | (uint8_t)(port->pm_port & 0x0F);
+    } else {
+        fis->pmport_c = 0x80;
+    }
     fis->command  = ata_cmd;
     fis->device   = (1u << 6);
     fis->lba0 = (uint8_t)(lba >>  0);
@@ -429,8 +451,6 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
 
     for (int p = 0; p < 32; p++) {
         if (!(is & (1u << p))) continue;
-        struct ahci_port *port = &ahci_ports[p];
-        if (!port->present) continue;
 
         uint32_t port_is = port_read(p, PORT_IS);
         uint32_t tfd = port_read(p, PORT_TFD);
@@ -443,36 +463,47 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
             /* Error interrupt — read SERR to see what happened */
             uint32_t serr = port_read(p, PORT_SERR);
             port_write(p, PORT_SERR, serr);
-            kprintf("AHCI port %lu error: IS=0x%lx TFD=0x%lx SERR=0x%lx\n",
-                    (unsigned long)p, (unsigned long)port_is, (unsigned long)tfd, (unsigned long)serr);
+            kprintf("AHCI port %d error: IS=0x%x TFD=0x%x SERR=0x%x\n",
+                    p, port_is, tfd, serr);
         }
 
         if (port_is & PORT_IS_SDBS) {
-            /* NCQ completion: check which slots completed */
+            /* NCQ completion: check which slots completed.
+             * We iterate all port entries (direct + PM sub-ports) and
+             * let each one handle its own inflight slots. */
             uint32_t ci   = port_read(p, PORT_CI);
             uint32_t sact = port_read(p, PORT_SACT);
-            uint32_t done = port->inflight_mask & ~(ci | sact);
+            uint32_t all_done = ~(ci | sact);  /* completed slots */
 
-            for (int slot = 1; slot < AHCI_SLOT_COUNT; slot++) {
-                if (done & (1u << slot)) {
-                    struct ahci_slot *s = &port->slots[slot];
-                    struct blk_request *req = s->req;
-                    if (req) {
-                        s->req = NULL;
-                        port->inflight_mask &= ~(1u << slot);
+            for (int i = 0; i < ahci_port_count; i++) {
+                struct ahci_port *port = &ahci_ports[i];
+                if (!port->present || port->port_num != p)
+                    continue;
 
-                        /* Check for errors */
-                        if (tfd & PORT_TFD_ERR) {
-                            req->result = -1;
-                        } else {
-                            req->result = 0;
-                            /* Copy data back for reads */
-                            if (req->flags & BLK_REQ_READ) {
-                                memcpy(req->buf, s->data_buf_virt,
-                                       (size_t)req->count * AHCI_SECTOR_SIZE);
+                uint32_t done = port->inflight_mask & all_done;
+                if (!done) continue;
+
+                for (int slot = 1; slot < AHCI_SLOT_COUNT; slot++) {
+                    if (done & (1u << slot)) {
+                        struct ahci_slot *s = &port->slots[slot];
+                        struct blk_request *req = s->req;
+                        if (req) {
+                            s->req = NULL;
+                            port->inflight_mask &= ~(1u << slot);
+
+                            /* Check for errors */
+                            if (tfd & PORT_TFD_ERR) {
+                                req->result = -1;
+                            } else {
+                                req->result = 0;
+                                /* Copy data back for reads */
+                                if (req->flags & BLK_REQ_READ) {
+                                    memcpy(req->buf, s->data_buf_virt,
+                                           (size_t)req->count * AHCI_SECTOR_SIZE);
+                                }
                             }
+                            blk_request_done(req);
                         }
-                        blk_request_done(req);
                     }
                 }
             }
@@ -482,8 +513,12 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
             /* Non-NCQ D2H completion — handled inline in ahci_issue_non_ncq */
         }
 
-        /* Drain request queue to submit more commands */
-        ahci_drain_queue(port);
+        /* Drain all PM sub-ports associated with this physical port */
+        for (int i = 0; i < ahci_port_count; i++) {
+            if (ahci_ports[i].present && ahci_ports[i].port_num == p) {
+                ahci_drain_queue(&ahci_ports[i]);
+            }
+        }
     }
 
     /* Ack IRQ to IOAPIC/PIC */
@@ -513,6 +548,166 @@ static int ahci_idle_fn(struct blk_request_queue *q, int force_flush) {
     return -1;
 }
 
+/* ── Physical port initialization (direct-attached or PM host) ──────── */
+
+/**
+ * Initialize a physical AHCI port: allocate command list, FIS area, slots.
+ * Returns the index in ahci_ports array, or -1 on failure.
+ */
+static int ahci_init_phys_port(int p, int irq, int *is_pm) {
+    *is_pm = 0;
+
+    /* Check for Port Multiplier: PORT_CMD.PMP (bit 17) */
+    uint32_t cmd_reg = port_read(p, PORT_CMD);
+    if (cmd_reg & PORT_CMD_PMP) {
+        *is_pm = 1;
+        kprintf("  AHCI port %d: Port Multiplier detected\n", p);
+    }
+
+    /* Allocate port structure at the current end of the array */
+    int idx = ahci_port_count;
+    struct ahci_port *port = &ahci_ports[idx];
+    memset(port, 0, sizeof(*port));
+    port->present = 1;
+    port->port_num = p;
+    port->pm_port = -1;  /* direct attached by default */
+    port->is_pm = 0;
+    port->irq_line = (uint8_t)irq;
+    port->inflight_mask = 0;
+
+    /* Allocate command list (1 frame = 32 × 32-byte headers) */
+    port->cmd_list_phys = pmm_alloc_frame();
+    if (!port->cmd_list_phys) return -1;
+    /* pmm_alloc_frame returns frame index, convert to phys address */
+    uint64_t cmd_list_addr = port->cmd_list_phys * 4096;
+    memset(PHYS_TO_VIRT((void*)(uintptr_t)cmd_list_addr), 0, 4096);
+    port->cmd_list_phys = cmd_list_addr;
+
+    /* Allocate FIS receive area (1 frame) */
+    uint64_t fis_frame = pmm_alloc_frame();
+    if (!fis_frame) return -1;
+    uint64_t fis_addr = fis_frame * 4096;
+    memset(PHYS_TO_VIRT((void*)(uintptr_t)fis_addr), 0, 4096);
+    port->recv_fis_phys = fis_addr;
+
+    /* Allocate per-slot command tables and data buffers */
+    int alloc_ok = 1;
+    for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+        struct ahci_slot *slot = &port->slots[s];
+
+        /* Command table: kmalloc (small, ~144 bytes each) */
+        slot->cmd_tbl_virt = kmalloc(sizeof(struct ahci_cmd_table));
+        if (!slot->cmd_tbl_virt) { alloc_ok = 0; break; }
+        memset(slot->cmd_tbl_virt, 0, sizeof(struct ahci_cmd_table));
+        slot->cmd_tbl_phys = VIRT_TO_PHYS(slot->cmd_tbl_virt);
+
+        /* Data buffer: one 4KB frame per slot */
+        uint64_t data_frame = pmm_alloc_frame();
+        if (!data_frame) { alloc_ok = 0; break; }
+        slot->data_buf_phys = data_frame * 4096;
+        slot->data_buf_virt = PHYS_TO_VIRT((void*)(uintptr_t)slot->data_buf_phys);
+        memset(slot->data_buf_virt, 0, 4096);
+    }
+    if (!alloc_ok) return -1;
+
+    port_stop(p);
+    port_write(p, PORT_CLB,  (uint32_t)(port->cmd_list_phys & 0xFFFFFFFF));
+    port_write(p, PORT_CLBU, (uint32_t)(port->cmd_list_phys >> 32));
+    port_write(p, PORT_FB,   (uint32_t)(port->recv_fis_phys & 0xFFFFFFFF));
+    port_write(p, PORT_FBU,  (uint32_t)(port->recv_fis_phys >> 32));
+    port_write(p, PORT_SERR, 0xFFFFFFFF);
+    port_write(p, PORT_IS,   0xFFFFFFFF);
+
+    /* Enable interrupts — mask SDBS and D2H */
+    port_write(p, PORT_IE, PORT_IS_D2H | PORT_IS_SDBS | PORT_IS_PCS | PORT_IS_ERR);
+    port_start(p);
+
+    /* Don't increment ahci_port_count here — the caller (ahci_probe_device
+     * or inline PM probe logic) will do that on successful registration. */
+    return idx;
+}
+
+/**
+ * Probe a device behind a physical port (direct or via PM) and register it.
+ * Returns 0 on success, -1 on failure.
+ */
+static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((unused)),
+                              const char *devname_fmt, const char *blkdev_name) {
+    /* IDENTIFY device */
+    uint64_t identify_data = pmm_alloc_frame();
+    if (!identify_data) return -1;
+    memset(PHYS_TO_VIRT((void*)(uintptr_t)(identify_data * 4096)), 0, 4096);
+
+    ahci_build_raw_cmd(port, 0, ATA_CMD_IDENTIFY, 0, 1,
+                       port->slots[0].data_buf_phys, 0,
+                       sizeof(struct fis_reg_h2d) / 4);
+    /* IDENTIFY uses count=0 in FIS */
+    {
+        struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
+            port->slots[0].cmd_tbl_virt;
+        struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
+        fis->countl = 0;
+        fis->counth = 0;
+        /* PRDT byte count: 512 - 1 */
+        tbl->prdt[0].dbc = 511;
+    }
+
+    if (ahci_issue_non_ncq(port, 0) == 0) {
+        uint16_t *id = (uint16_t *)port->slots[0].data_buf_virt;
+        uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
+        uint32_t sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
+
+        /* Bail out if zero size (no device on this PM port) */
+        if (sector_count == 0) {
+            pmm_free_frame(identify_data);
+            return -1;
+        }
+
+        port->sector_count = sector_count;
+
+        /* Check NCQ support: word 76 bits 8 = NCQ queue depth > 0 */
+        if (id[76] & (1u << 8)) {
+            port->ncq_capable = 1;
+        }
+
+        char capacity_str[32];
+        uint32_t capacity_mb = sector_count / 2048;
+        if (capacity_mb >= 1024) {
+            snprintf(capacity_str, sizeof(capacity_str), "%lu GB",
+                     (unsigned long)(capacity_mb / 1024));
+        } else {
+            snprintf(capacity_str, sizeof(capacity_str), "%lu MB",
+                     (unsigned long)capacity_mb);
+        }
+
+        kprintf("  %s: %lu sectors (%s)%s\n",
+                devname_fmt,
+                (unsigned long)sector_count,
+                capacity_str,
+                port->ncq_capable ? " NCQ" : "");
+
+        pmm_free_frame(identify_data);
+
+        /* Register with block device layer */
+        int bd_id = BLOCKDEV_AHCI + ahci_port_count;
+        int ret = blockdev_register(bd_id, blkdev_name,
+                                    ahci_submit_fn,
+                                    ahci_idle_fn,
+                                    sector_count,
+                                    BLK_DRIVER_ASYNC);
+        if (ret == 0) {
+            port->blockdev_id = bd_id;
+            ahci_port_count++;
+            ahci_present = 1;
+            return 0;
+        }
+        return -1;
+    } else {
+        pmm_free_frame(identify_data);
+        return -1;
+    }
+}
+
 /* ── Initialization ─────────────────────────────────────────────────── */
 int ahci_init(void) {
     struct pci_device dev;
@@ -520,9 +715,9 @@ int ahci_init(void) {
         return -1; /* no AHCI controller */
 
     uint64_t bar5 = dev.bar[5] & ~0xFULL;
-    kprintf("  AHCI %04lx:%04lx (IRQ %lu) HBA@0x%llx\n",
-            (unsigned long)dev.vendor_id, (unsigned long)dev.device_id,
-            (unsigned long)dev.irq, (unsigned long long)bar5);
+    kprintf("  AHCI %04x:%04x (IRQ %d) HBA@0x%llx\n",
+            dev.vendor_id, dev.device_id,
+            dev.irq, (unsigned long long)bar5);
 
     hba_base = bar5;
     if (hba_base == 0) return -2;
@@ -551,109 +746,110 @@ int ahci_init(void) {
         if (det != SSTS_DET_PRESENT) continue;
 
         uint32_t sig = port_read(p, PORT_SIG);
-        if (sig != AHCI_SIG_ATA) continue;
+        /* For PM-attached ports, sig might be 0 or the first device's sig.
+         * We probe via IDENTIFY regardless. */
 
-        /* Initialize port structure */
-        struct ahci_port *port = &ahci_ports[ahci_port_count];
-        memset(port, 0, sizeof(*port));
-        port->present = 1;
-        port->port_num = p;
-        port->irq_line = dev.irq;
-        port->inflight_mask = 0;
+        /* Initialize the physical port */
+        int is_pm = 0;
+        int phys_idx = ahci_init_phys_port(p, dev.irq, &is_pm);
+        if (phys_idx < 0) continue;
+        ahci_port_count = phys_idx + 1;  /* slot is now occupied */
 
-        /* Allocate command list (1 frame = 32 × 32-byte headers) */
-        port->cmd_list_phys = pmm_alloc_frame();
-        if (!port->cmd_list_phys) continue;
-        memset(PHYS_TO_VIRT(port->cmd_list_phys), 0, 4096);
+        struct ahci_port *phys_port = &ahci_ports[phys_idx];
 
-        /* Allocate FIS receive area (1 frame) */
-        port->recv_fis_phys = pmm_alloc_frame();
-        if (!port->recv_fis_phys) continue;
-        memset(PHYS_TO_VIRT(port->recv_fis_phys), 0, 4096);
+        if (is_pm) {
+            /* Port Multiplier present — probe each PM sub-port (0-14) */
+            int pm_devices_found = 0;
+            for (int pm = 0; pm < AHCI_MAX_PM_PORTS; pm++) {
+                /* IDENTIFY this PM port using the physical port's slot 0 */
+                struct ahci_port probe_port;
+                memcpy(&probe_port, phys_port, sizeof(probe_port));
+                probe_port.pm_port = pm;
+                probe_port.is_pm = 1;
+                probe_port.sector_count = 0;
+                probe_port.ncq_capable = 0;
+                probe_port.blockdev_id = 0;
+                /* Clear req ptrs from slots (borrowing phys_port's slots) */
+                for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+                    probe_port.slots[s].req = NULL;
+                }
 
-        /* Allocate per-slot command tables and data buffers */
-        int alloc_ok = 1;
-        for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
-            struct ahci_slot *slot = &port->slots[s];
+                ahci_build_raw_cmd(&probe_port, 0, ATA_CMD_IDENTIFY, 0, 1,
+                                   phys_port->slots[0].data_buf_phys, 0,
+                                   sizeof(struct fis_reg_h2d) / 4);
+                {
+                    struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
+                        phys_port->slots[0].cmd_tbl_virt;
+                    struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
+                    fis->countl = 0;
+                    fis->counth = 0;
+                    tbl->prdt[0].dbc = 511;
+                }
 
-            /* Command table: kmalloc (small, ~144 bytes each) */
-            slot->cmd_tbl_virt = kmalloc(sizeof(struct ahci_cmd_table));
-            if (!slot->cmd_tbl_virt) { alloc_ok = 0; break; }
-            memset(slot->cmd_tbl_virt, 0, sizeof(struct ahci_cmd_table));
-            slot->cmd_tbl_phys = VIRT_TO_PHYS(slot->cmd_tbl_virt);
+                if (ahci_issue_non_ncq(&probe_port, 0) == 0) {
+                    uint16_t *id = (uint16_t *)phys_port->slots[0].data_buf_virt;
+                    uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
+                    uint32_t sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
 
-            /* Data buffer: one 4KB frame per slot */
-            slot->data_buf_phys = pmm_alloc_frame();
-            if (!slot->data_buf_phys) { alloc_ok = 0; break; }
-            slot->data_buf_virt = PHYS_TO_VIRT(slot->data_buf_phys);
-            memset(slot->data_buf_virt, 0, 4096);
-        }
-        if (!alloc_ok) continue;
+                    if (sector_count == 0) continue;
 
-        port_stop(p);
-        port_write(p, PORT_CLB,  (uint32_t)(port->cmd_list_phys & 0xFFFFFFFF));
-        port_write(p, PORT_CLBU, (uint32_t)(port->cmd_list_phys >> 32));
-        port_write(p, PORT_FB,   (uint32_t)(port->recv_fis_phys & 0xFFFFFFFF));
-        port_write(p, PORT_FBU,  (uint32_t)(port->recv_fis_phys >> 32));
-        port_write(p, PORT_SERR, 0xFFFFFFFF);
-        port_write(p, PORT_IS,   0xFFFFFFFF);
+                    /* Create a new port entry for this PM device */
+                    struct ahci_port *sub_port = &ahci_ports[ahci_port_count];
+                    memcpy(sub_port, phys_port, sizeof(struct ahci_port));
+                    sub_port->pm_port = pm;
+                    sub_port->is_pm = 1;
+                    sub_port->sector_count = sector_count;
+                    sub_port->ncq_capable = (id[76] & (1u << 8)) ? 1 : 0;
+                    sub_port->inflight_mask = 0;
+                    /* Clear req ptrs (borrowing phys_port's slot buffers) */
+                    for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+                        sub_port->slots[s].req = NULL;
+                    }
 
-        /* Enable interrupts — mask SDBS and D2H */
-        port_write(p, PORT_IE, PORT_IS_D2H | PORT_IS_SDBS | PORT_IS_PCS | PORT_IS_ERR);
-        port_start(p);
+                    /* Overwrite the slot 0 data with the IDENTIFY result
+                     * (already done via the probe above — the data is in
+                     * phys_port->slots[0].data_buf_virt) */
 
-        /* IDENTIFY device */
-        {
-            uint64_t identify_data = pmm_alloc_frame();
-            if (!identify_data) continue;
-            memset(PHYS_TO_VIRT(identify_data), 0, 4096);
+                    char blkname[16];
+                    snprintf(blkname, sizeof(blkname), "ahci%dp%d", p, pm);
 
-            ahci_build_raw_cmd(port, 0, ATA_CMD_IDENTIFY, 0, 1,
-                               port->slots[0].data_buf_phys, 0,
-                               sizeof(struct fis_reg_h2d) / 4);
-            /* IDENTIFY uses count=0 in FIS */
-            {
-                struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
-                    port->slots[0].cmd_tbl_virt;
-                struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
-                fis->countl = 0;
-                fis->counth = 0;
-                /* PRDT byte count: 512 - 1 */
-                tbl->prdt[0].dbc = 511;
+                    int bd_id = BLOCKDEV_AHCI_PM_BASE + ahci_port_count;
+                    int ret = blockdev_register(bd_id, blkname,
+                                                ahci_submit_fn,
+                                                ahci_idle_fn,
+                                                sector_count,
+                                                BLK_DRIVER_ASYNC);
+                    if (ret == 0) {
+                        sub_port->blockdev_id = bd_id;
+                        ahci_port_count++;
+                        ahci_present = 1;
+                        pm_devices_found++;
+                        kprintf("  AHCI port %d PM %d: %lu sectors (%lu MB)%s\n",
+                                p, pm,
+                                (unsigned long)sector_count,
+                                (unsigned long)(sector_count / 2048),
+                                sub_port->ncq_capable ? " NCQ" : "");
+                    }
+                } else {
+                }
             }
 
-            if (ahci_issue_non_ncq(port, 0) == 0) {
-                uint16_t *id = (uint16_t *)port->slots[0].data_buf_virt;
-                uint32_t lo = ((uint32_t)id[101] << 16) | id[100];
-                port->sector_count = lo ? lo : ((uint32_t)id[57] | ((uint32_t)id[58] << 16));
-
-                /* Check NCQ support: word 76 bits 8 = NCQ queue depth > 0 */
-                if (id[76] & (1u << 8)) {
-                    port->ncq_capable = 1;
-                }
-
-                kprintf("  AHCI port %lu: %lu sectors (%lu MB)%s\n",
-                        (unsigned long)p, (unsigned long)port->sector_count,
-                        (unsigned long)(port->sector_count / 2048),
-                        port->ncq_capable ? " NCQ" : "");
-
-                pmm_free_frame(identify_data);
-
-                /* Register with block device layer */
-                int bd_id = BLOCKDEV_AHCI + ahci_port_count;
-                int ret = blockdev_register(bd_id, "ahci",
-                                            ahci_submit_fn,
-                                            ahci_idle_fn,
-                                            port->sector_count,
-                                            BLK_DRIVER_ASYNC);
-                if (ret == 0) {
-                    port->blockdev_id = bd_id;
-                    ahci_port_count++;
-                    ahci_present = 1;
-                }
+            if (pm_devices_found == 0) {
+                kprintf("  AHCI port %d: no PM devices found\n", p);
             } else {
-                pmm_free_frame(identify_data);
-                continue;
+                kprintf("  AHCI port %d: %d PM device(s) found\n", p, pm_devices_found);
+            }
+        } else {
+            /* Direct-attached device */
+            if (sig != AHCI_SIG_ATA) continue;
+
+            char devname[32];
+            snprintf(devname, sizeof(devname), "AHCI port %d", p);
+
+            int found = ahci_probe_device(phys_port, -1, devname, "ahci");
+            if (found < 0) {
+                /* Roll back the port we allocated */
+                ahci_port_count--;
             }
         }
     }
@@ -661,13 +857,14 @@ int ahci_init(void) {
     if (!ahci_present) return -4;
 
     /* Register IRQ handler for the first AHCI port's IRQ line */
-    idt_register_handler(32 + ahci_ports[0].irq_line, ahci_irq_handler);
+    int irq_line = dev.irq;
+    idt_register_handler(32 + irq_line, ahci_irq_handler);
     if (apic_is_init_complete())
-        ioapic_unmask_irq(ahci_ports[0].irq_line);
-    pic_unmask(ahci_ports[0].irq_line);
+        ioapic_unmask_irq(irq_line);
+    pic_unmask(irq_line);
 
-    kprintf("  AHCI: %ld port(s) active, NCQ depth %ld\n",
-            (unsigned long)ahci_port_count, (unsigned long)AHCI_NCQ_SLOTS);
+    kprintf("  AHCI: %d device(s) active, NCQ depth %ld\n",
+            ahci_port_count, (long)AHCI_NCQ_SLOTS);
     return 0;
 }
 

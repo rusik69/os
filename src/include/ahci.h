@@ -9,6 +9,12 @@
 #define AHCI_SIG_ATA    0x00000101  /* SATA drive */
 #define AHCI_SIG_ATAPI  0xEB140101  /* SATAPI drive */
 
+/* Maximum number of PM (Port Multiplier) ports per physical port */
+#define AHCI_MAX_PM_PORTS  15
+
+/* Block device ID base for PM sub-ports */
+#define BLOCKDEV_AHCI_PM_BASE  100
+
 int  ahci_init(void);
 int  ahci_is_present(void);
 uint32_t ahci_get_sectors(void);
