@@ -1099,15 +1099,339 @@ static void process_cmd(void) {
 
 /* Process a full command line (with pipe/redirect/background support).
  * Used by telnet daemon to get the same features as the local shell. */
-/* --- Function definition state shared between telnet and keyboard paths --- */
+
+/* ── State shared between keyboard and telnet paths ─────────────── */
+
+/* Function definition state */
 static int    s_in_func_def  = 0;
 static char   s_func_def_name[SHELL_FUNC_NAME_MAX];
 static char   s_func_def_body[SHELL_FUNC_BODY_MAX];
 static int    s_func_def_len = 0;
 static int    s_func_brace   = 0;
 
+/* If-block accumulation state */
+#define IF_BLOCK_BODY_MAX 2048
+static int    s_in_if_block   = 0;
+static char   s_if_block_body[IF_BLOCK_BODY_MAX];
+static int    s_if_block_len  = 0;
+static int    s_if_block_depth = 0;  /* nested if depth */
+
+/*
+ * Parse and execute an if/then/elif/else/fi block.
+ *
+ * The block looks like:
+ *   if CONDITION_COMMAND ; then
+ *       THEN_BODY
+ *   elif CONDITION ; then
+ *       ELIF_BODY
+ *   else
+ *       ELSE_BODY
+ *   fi
+ *
+ * CONDITION_COMMAND may be `test ...` or `[ ... ]` or any command.
+ * Returns the exit status of the executed branch, or 1 if no branch matched.
+ */
+static int process_if_block(const char *block) {
+    if (!block || !*block) return 1;
+
+    /* Work on a mutable copy */
+    char buf[IF_BLOCK_BODY_MAX];
+    strncpy(buf, block, IF_BLOCK_BODY_MAX - 1);
+    buf[IF_BLOCK_BODY_MAX - 1] = '\0';
+
+    /* Strip leading "if " keyword */
+    char *p = buf;
+    while (*p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "if ", 3) != 0 && strncmp(p, "if\t", 3) != 0) {
+        /* Not a valid if block — execute as a normal command */
+        char tmp[CMD_BUF_SIZE];
+        strncpy(tmp, block, CMD_BUF_SIZE - 1);
+        tmp[CMD_BUF_SIZE - 1] = '\0';
+        strncpy(cmd_buf, tmp, CMD_BUF_SIZE - 1);
+        cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+        cmd_len = (int)strlen(cmd_buf);
+        process_cmd();
+        return last_exit_status;
+    }
+    p += 2; /* skip "if" */
+    while (*p == ' ' || *p == '\t') p++;
+
+    /*
+     * Strategy: find the matching "fi" at the end, then split into clauses.
+     * Each clause is separated by "then", "elif", "else", "fi".
+     *
+     * We parse from left to right:
+     *   1. Extract condition (everything up to "then")
+     *   2. Extract then-body (everything up to "elif"/"else"/"fi")
+     *   3. If condition succeeds: execute then-body, return
+     *   4. Else if "elif": extract condition, repeat from step 1
+     *   5. Else if "else": execute else-body, return
+     *   6. If no branch matched: return 1
+     *
+     * To handle quotes and nested if, we track brace/quote depth.
+     */
+    char *clause = p;          /* current position in the block */
+    int branch_taken = 0;
+
+    while (*clause && !branch_taken) {
+        /* Find the next "then" / "elif" / "else" / "fi" token */
+        char *then_pos = NULL;
+        char *elif_pos = NULL;
+        char *else_pos = NULL;
+        char *fi_pos   = NULL;
+
+        /* Scan for tokens, respecting quoting */
+        int in_squote = 0, in_dquote = 0;
+        int if_nest = 0;
+        char *scan = clause;
+
+        while (*scan) {
+            if (*scan == '\'' && !in_dquote) { in_squote = !in_squote; scan++; continue; }
+            if (*scan == '"'  && !in_squote) { in_dquote = !in_dquote; scan++; continue; }
+            if (in_squote || in_dquote) { scan++; continue; }
+
+            /* Track nested if blocks inside condition bodies (e.g. if ... fi inside then) */
+            if (strncmp(scan, "if ", 3) == 0 || strncmp(scan, "if\t", 3) == 0) {
+                /* Check this is at a word boundary */
+                if (scan == clause || *(scan - 1) == ' ' || *(scan - 1) == '\t' ||
+                    *(scan - 1) == ';' || *(scan - 1) == '\n')
+                    if_nest++;
+                scan++;
+                continue;
+            }
+            if (strncmp(scan, "fi", 2) == 0 && if_nest > 0 &&
+                (*(scan + 2) == '\0' || *(scan + 2) == ' ' || *(scan + 2) == '\t' ||
+                 *(scan + 2) == ';' || *(scan + 2) == '\n')) {
+                /* Check word boundary */
+                if (scan == clause || *(scan - 1) == ' ' || *(scan - 1) == '\t' ||
+                    *(scan - 1) == ';' || *(scan - 1) == '\n') {
+                    if_nest--;
+                    scan += 2;
+                    continue;
+                }
+            }
+
+            /* Check for keywords at word boundaries */
+            int at_boundary = (scan == clause || *(scan - 1) == ' ' || *(scan - 1) == '\t' ||
+                               *(scan - 1) == ';' || *(scan - 1) == '\n');
+
+            if (at_boundary) {
+                if (!then_pos && strncmp(scan, "then", 4) == 0 &&
+                    (*(scan + 4) == '\0' || *(scan + 4) == ' ' || *(scan + 4) == '\t' ||
+                     *(scan + 4) == ';' || *(scan + 4) == '\n')) {
+                    if (if_nest == 0) then_pos = scan;
+                    scan += 4;
+                    continue;
+                }
+                if (!elif_pos && strncmp(scan, "elif", 4) == 0 &&
+                    (*(scan + 4) == '\0' || *(scan + 4) == ' ' || *(scan + 4) == '\t' ||
+                     *(scan + 4) == ';' || *(scan + 4) == '\n')) {
+                    if (if_nest == 0) elif_pos = scan;
+                    scan += 4;
+                    continue;
+                }
+                if (!else_pos && strncmp(scan, "else", 4) == 0 &&
+                    (*(scan + 4) == '\0' || *(scan + 4) == ' ' || *(scan + 4) == '\t' ||
+                     *(scan + 4) == ';' || *(scan + 4) == '\n')) {
+                    if (if_nest == 0) else_pos = scan;
+                    scan += 4;
+                    continue;
+                }
+                if (!fi_pos && strncmp(scan, "fi", 2) == 0 && if_nest == 0 &&
+                    (*(scan + 2) == '\0' || *(scan + 2) == ' ' || *(scan + 2) == '\t' ||
+                     *(scan + 2) == ';' || *(scan + 2) == '\n')) {
+                    fi_pos = scan;
+                    scan += 2;
+                    continue;
+                }
+            }
+            scan++;
+        }
+
+        /* We must have at least "then" and "fi" */
+        if (!then_pos || !fi_pos) {
+            kprintf("if: syntax error — missing then or fi\n");
+            last_exit_status = 2;
+            return 2;
+        }
+
+        /* ── Step 1: Execute the condition clause ───────────────── */
+        /* Condition is from clause up to then_pos */
+        char condition[IF_BLOCK_BODY_MAX];
+        int cond_len = (int)(then_pos - clause);
+        if (cond_len >= IF_BLOCK_BODY_MAX) cond_len = IF_BLOCK_BODY_MAX - 1;
+        memcpy(condition, clause, cond_len);
+        condition[cond_len] = '\0';
+
+        /* Trim trailing whitespace from condition */
+        while (cond_len > 0 && (condition[cond_len - 1] == ' ' || condition[cond_len - 1] == '\t'))
+            condition[--cond_len] = '\0';
+
+        /* Execute condition command */
+        if (*condition) {
+            strncpy(cmd_buf, condition, CMD_BUF_SIZE - 1);
+            cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+            cmd_len = (int)strlen(cmd_buf);
+            process_cmd();
+        } else {
+            /* Empty condition — treat as failure */
+            last_exit_status = 1;
+        }
+
+        /* ── Step 2: If condition succeeded (exit 0), execute then-body ── */
+        if (last_exit_status == 0) {
+            /* Find the end of this then-body: next elif/else/fi */
+            char *then_end;
+            if (elif_pos)      then_end = elif_pos;
+            else if (else_pos) then_end = else_pos;
+            else               then_end = fi_pos;
+
+            char then_body[IF_BLOCK_BODY_MAX];
+            int tb_len = (int)(then_end - (then_pos + 4)); /* skip "then" */
+            if (tb_len > 0) {
+                char *tb_start = then_pos + 4;
+                while (*tb_start == ' ' || *tb_start == '\t' || *tb_start == ';' || *tb_start == '\n')
+                    { tb_start++; tb_len--; }
+                if (tb_len > 0) {
+                    if (tb_len >= IF_BLOCK_BODY_MAX) tb_len = IF_BLOCK_BODY_MAX - 1;
+                    memcpy(then_body, tb_start, tb_len);
+                    then_body[tb_len] = '\0';
+
+                    strncpy(cmd_buf, then_body, CMD_BUF_SIZE - 1);
+                    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                    cmd_len = (int)strlen(cmd_buf);
+                    process_cmd();
+                }
+            }
+            branch_taken = 1;
+            break;
+        }
+
+        /* ── Step 3: Condition failed. Try elif / else / fi ────────── */
+        if (elif_pos) {
+            /* Move clause to after "elif" for next iteration */
+            clause = elif_pos + 4;
+            while (*clause == ' ' || *clause == '\t' || *clause == ';' || *clause == '\n') clause++;
+            continue;
+        }
+        if (else_pos) {
+            /* Execute else-body */
+            char else_body[IF_BLOCK_BODY_MAX];
+            int eb_len = (int)(fi_pos - (else_pos + 4));
+            if (eb_len > 0) {
+                char *eb_start = else_pos + 4;
+                while (*eb_start == ' ' || *eb_start == '\t' || *eb_start == ';' || *eb_start == '\n')
+                    { eb_start++; eb_len--; }
+                if (eb_len > 0) {
+                    if (eb_len >= IF_BLOCK_BODY_MAX) eb_len = IF_BLOCK_BODY_MAX - 1;
+                    memcpy(else_body, eb_start, eb_len);
+                    else_body[eb_len] = '\0';
+
+                    strncpy(cmd_buf, else_body, CMD_BUF_SIZE - 1);
+                    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                    cmd_len = (int)strlen(cmd_buf);
+                    process_cmd();
+                }
+            }
+            branch_taken = 1;
+            break;
+        }
+
+        /* No elif and no else — condition was false, do nothing */
+        break;
+    }
+
+    if (!branch_taken && last_exit_status != 0) {
+        /* No branch taken — condition was false and no else/elif */
+        /* last_exit_status reflects the failed condition */
+    }
+
+    return last_exit_status;
+}
+
 void shell_process_line(const char *line) {
     if (!line || !*line) return;
+
+    /* --- If-block accumulation --- */
+    if (s_in_if_block) {
+        /* Check for "fi" terminator */
+        const char *l = line;
+        while (*l == ' ' || *l == '\t') l++;
+        if (strcmp(l, "fi") == 0 || strcmp(l, "fi;") == 0) {
+            s_if_block_depth--;
+            if (s_if_block_depth <= 0) {
+                /* Close if-block */
+                s_if_block_body[s_if_block_len] = '\0';
+                /* Process the complete if-block */
+                process_if_block(s_if_block_body);
+                s_in_if_block = 0;
+                s_if_block_len = 0;
+                return;
+            }
+        }
+        /* Count "if" in this line to track nesting */
+        for (const char *p = line; *p; p++) {
+            if ((strncmp(p, "if ", 3) == 0 || strncmp(p, "if\t", 3) == 0) &&
+                (p == line || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';'))
+                s_if_block_depth++;
+        }
+        /* Append line to if-block body */
+        int ll = strlen(line);
+        if (s_if_block_len + ll + 1 < IF_BLOCK_BODY_MAX) {
+            memcpy(s_if_block_body + s_if_block_len, line, ll);
+            s_if_block_len += ll;
+            s_if_block_body[s_if_block_len++] = '\n';
+        }
+        return;
+    }
+
+    /* --- Detect start of if-block --- */
+    {
+        const char *p = line;
+        while (*p == ' ') p++;
+        /* Check if line starts with "if " (but not "ifconfig" or similar) */
+        if ((strncmp(p, "if ", 3) == 0 || strncmp(p, "if\t", 3) == 0) &&
+            !(p[3] && p[3] != ' ' && p[3] != '\t')) {
+            /* Enter if-block accumulation mode */
+            s_in_if_block = 1;
+            s_if_block_len = 0;
+            s_if_block_depth = 1;  /* this is the outer if */
+
+            /* Count any nested "if" in the first line */
+            const char *scan = p + 2; /* skip "if" */
+            while (*scan == ' ' || *scan == '\t') scan++;
+            /* Check if the whole block fits on one line (contains "then" and "fi") */
+            int has_then = 0, has_fi = 0;
+            int in_sq = 0, in_dq = 0;
+            for (const char *q = line; *q; q++) {
+                if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                if (in_sq || in_dq) continue;
+                if (strncmp(q, "then", 4) == 0 && (q == line || *(q-1) == ' ')) has_then = 1;
+                if (strncmp(q, "fi", 2) == 0 && (q == line || *(q-1) == ' ')) has_fi = 1;
+            }
+
+            if (has_then && has_fi) {
+                /* Single-line if: process immediately */
+                s_in_if_block = 0;
+                /* Copy the full line and process */
+                char if_line[CMD_BUF_SIZE];
+                strncpy(if_line, line, CMD_BUF_SIZE - 1);
+                if_line[CMD_BUF_SIZE - 1] = '\0';
+                process_if_block(if_line);
+                return;
+            }
+
+            /* Multi-line if: start accumulation */
+            int ll = strlen(line);
+            if (s_if_block_len + ll + 1 < IF_BLOCK_BODY_MAX) {
+                memcpy(s_if_block_body + s_if_block_len, line, ll);
+                s_if_block_len += ll;
+                s_if_block_body[s_if_block_len++] = '\n';
+            }
+            return;
+        }
+    }
 
     /* --- Function definition accumulation (telnet/shell_process_line path) --- */
     if (s_in_func_def) {
@@ -1219,8 +1543,14 @@ void shell_run(void) {
     /* Brace depth for multi-line function bodies */
     static int    func_brace   = 0;
 
+    /* If-block accumulation state (local to keyboard path) */
+    static int    in_if_block   = 0;
+    static char   if_block_body[IF_BLOCK_BODY_MAX];
+    static int    if_block_len  = 0;
+    static int    if_block_depth = 0;
+
     for (;;) {
-        if (in_func_def)
+        if (in_func_def || in_if_block)
             kprintf("> ");
         else
             shell_prompt();
@@ -1234,7 +1564,73 @@ void shell_run(void) {
             if (c == '\n') {
                 putchar_both('\n');
                 cmd_buf[cmd_len] = '\0';
-                if (!in_func_def) history_add(cmd_buf);
+                if (!in_func_def && !in_if_block) history_add(cmd_buf);
+
+                /* --- If-block accumulation mode (keyboard path) --- */
+                if (in_if_block) {
+                    const char *l = cmd_buf;
+                    while (*l == ' ' || *l == '\t') l++;
+                    if (strcmp(l, "fi") == 0 || strcmp(l, "fi;") == 0) {
+                        if_block_depth--;
+                        if (if_block_depth <= 0) {
+                            /* Close if-block */
+                            if_block_body[if_block_len] = '\0';
+                            process_if_block(if_block_body);
+                            in_if_block = 0;
+                            if_block_len = 0;
+                            break;
+                        }
+                    }
+                    /* Count "if" in this line for nesting */
+                    for (const char *p = cmd_buf; *p; p++) {
+                        if ((strncmp(p, "if ", 3) == 0 || strncmp(p, "if\t", 3) == 0) &&
+                            (p == cmd_buf || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';'))
+                            if_block_depth++;
+                    }
+                    /* Append line to if-block body */
+                    int ll = strlen(cmd_buf);
+                    if (if_block_len + ll + 1 < IF_BLOCK_BODY_MAX) {
+                        memcpy(if_block_body + if_block_len, cmd_buf, ll);
+                        if_block_len += ll;
+                        if_block_body[if_block_len++] = '\n';
+                    }
+                    break;
+                }
+
+                /* --- Detect start of if-block (keyboard path) --- */
+                {
+                    const char *p = cmd_buf;
+                    while (*p == ' ') p++;
+                    if ((strncmp(p, "if ", 3) == 0 || strncmp(p, "if\t", 3) == 0) &&
+                        !(p[3] && p[3] != ' ' && p[3] != '\t')) {
+                        /* Check if single-line (has then and fi) */
+                        int has_then = 0, has_fi = 0;
+                        int in_sq = 0, in_dq = 0;
+                        for (const char *q = cmd_buf; *q; q++) {
+                            if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                            if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                            if (in_sq || in_dq) continue;
+                            if (strncmp(q, "then", 4) == 0 && (q == cmd_buf || *(q-1) == ' ')) has_then = 1;
+                            if (strncmp(q, "fi", 2) == 0 && (q == cmd_buf || *(q-1) == ' ')) has_fi = 1;
+                        }
+                        if (has_then && has_fi) {
+                            /* Single-line if: process immediately */
+                            process_if_block(cmd_buf);
+                            break;
+                        }
+                        /* Multi-line if: start accumulation */
+                        in_if_block = 1;
+                        if_block_len = 0;
+                        if_block_depth = 1;
+                        int ll = strlen(cmd_buf);
+                        if (if_block_len + ll + 1 < IF_BLOCK_BODY_MAX) {
+                            memcpy(if_block_body + if_block_len, cmd_buf, ll);
+                            if_block_len += ll;
+                            if_block_body[if_block_len++] = '\n';
+                        }
+                        break;
+                    }
+                }
 
                 /* --- Function definition mode --- */
                 if (in_func_def) {
