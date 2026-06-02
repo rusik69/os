@@ -4,6 +4,23 @@
 #include "types.h"
 #include "net.h" /* for net_tcp_* API */
 
+/* ── Poll event flags ────────────────────────────────────────── */
+#ifndef POLLIN
+#define POLLIN     0x001
+#endif
+#ifndef POLLOUT
+#define POLLOUT    0x004
+#endif
+#ifndef POLLERR
+#define POLLERR    0x008
+#endif
+#ifndef POLLHUP
+#define POLLHUP    0x010
+#endif
+#ifndef POLLNVAL
+#define POLLNVAL   0x020
+#endif
+
 /* ── Socket types ───────────────────────────────────────────── */
 #define AF_UNSPEC       0
 #define AF_INET         2
@@ -191,5 +208,12 @@ int sock_fd_from_slot(int slot);
 
 /* Initialize socket subsystem */
 void socket_init(void);
+
+/* Poll a socket for readiness.
+ * @sockfd  Socket FD (must be a valid socket)
+ * @events  Requested events (POLLIN | POLLOUT)
+ * @return  Bitmask of POLLIN|POLLOUT|POLLHUP|POLLERR|POLLNVAL
+ */
+int sock_poll(int sockfd, int events);
 
 #endif

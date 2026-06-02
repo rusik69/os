@@ -563,6 +563,89 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
     return -1;
 }
 
+/* ── Socket poll support ─────────────────────────────────────── */
+
+int sock_poll(int sockfd, int events)
+{
+    struct socket *s = sock_get(sockfd);
+    if (!s) return POLLNVAL;
+
+    int revents = 0;
+
+    switch (s->type) {
+        case SOCK_STREAM: {
+            /* ── TCP / stream socket ────────────────────────── */
+            if (s->state == SOCK_STATE_LISTENING) {
+                /* Listening socket: readable if accept queue has connections.
+                 * Use the listener's accept_count. We look up the listener
+                 * by iterating net_listeners (declared in net_internal.h).
+                 * For now, a simpler approach: check if accept_count > 0
+                 * by trying to peek at the listener state via net_tcp_get_info.
+                 * Since we don't have direct access to the listener table
+                 * from socket.c, we return POLLIN optimistically and handle
+                 * it in sys_accept_impl (which will block if nothing pending). */
+                /* On a listening socket, POLLIN means a connection is pending.
+                 * Since we can't easily peek at the accept queue from here,
+                 * we always report POLLIN — the accept() call will block
+                 * if nothing is available. */
+                revents |= POLLOUT; /* listening sockets can accept new connections */
+                if (events & POLLIN) revents |= POLLIN;
+            } else if (s->state == SOCK_STATE_CONNECTED && s->conn_id >= 0) {
+                /* Connected stream socket */
+                /* POLLIN: data available or FIN received (EOF) */
+                if (events & POLLIN) {
+                    if (net_tcp_available(s->conn_id) > 0 || net_tcp_has_closed(s->conn_id))
+                        revents |= POLLIN;
+                }
+                /* POLLOUT: connected and writable (buffer space available) */
+                if (events & POLLOUT) {
+                    if (net_tcp_is_connected(s->conn_id))
+                        revents |= POLLOUT;
+                }
+                /* POLLHUP: connection closed */
+                if (net_tcp_has_closed(s->conn_id))
+                    revents |= POLLHUP;
+            } else if (s->state == SOCK_STATE_CONNECTING) {
+                /* Socket is in the process of connecting — not yet
+                 * readable or writable. POLLOUT will fire when connected.
+                 * For now, never report ready — the caller will poll again. */
+                /* Could add a check here if connect completed */
+            } else {
+                /* Not connected: POLLHUP */
+                revents |= POLLHUP;
+            }
+            break;
+        }
+
+        case SOCK_DGRAM: {
+            /* ── UDP / datagram socket ───────────────────────── */
+            /* POLLOUT: UDP is always writable (no connection state) */
+            if (events & POLLOUT)
+                revents |= POLLOUT;
+            /* POLLIN: data may be available; we optimistically report
+             * POLLIN if bound (listening on a port). The recvmsg()
+             * call will block or return -EAGAIN if no data. */
+            if (events & POLLIN && s->udp_listener >= 0)
+                revents |= POLLIN;
+            if (s->state == SOCK_STATE_CONNECTED) {
+                /* Connected UDP: also report POLLIN optimistically */
+                if (events & POLLIN)
+                    revents |= POLLIN;
+                /* POLLOUT already set above */
+            }
+            break;
+        }
+
+        default:
+            /* Unknown socket type */
+            revents = POLLERR;
+            break;
+    }
+
+    /* Mask with requested events — only report what was asked for */
+    return revents & events;
+}
+
 /* ── Exported symbols for network protocol/driver modules ─────────── */
 EXPORT_SYMBOL(socket_init);
 EXPORT_SYMBOL(sock_get);
@@ -577,3 +660,6 @@ EXPORT_SYMBOL(sys_sendmsg_impl);
 EXPORT_SYMBOL(sys_recvmsg_impl);
 EXPORT_SYMBOL(sys_setsockopt_impl);
 EXPORT_SYMBOL(sys_getsockopt_impl);
+
+/* Export socket poll for protocol modules */
+EXPORT_SYMBOL(sock_poll);

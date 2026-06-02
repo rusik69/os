@@ -131,6 +131,15 @@ int  net_loopback_send(const void *data, uint16_t len);
 void net_tcp_set_keepalive(int conn_id, int keepalive);
 int  net_tcp_get_keepalive(int conn_id);
 
+/* Return number of bytes available in TCP receive buffer (0 = no data) */
+int net_tcp_available(int conn_id);
+
+/* Return 1 if the TCP connection is in ESTABLISHED state (writable) */
+int net_tcp_is_connected(int conn_id);
+
+/* Return 1 if the TCP connection is closed or has received FIN */
+int net_tcp_has_closed(int conn_id);
+
 /* TCP connection info for netstat */
 struct tcp_conn_info {
     uint16_t local_port;

@@ -1451,3 +1451,27 @@ int net_tcp_get_info(int conn_id, struct tcp_conn_info *info) {
     info->retrans_count = c->retrans_count;
     return 0;
 }
+
+/* Return number of bytes available in the TCP receive buffer */
+int net_tcp_available(int conn_id)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    if (c->state == TCP_CLOSED) return 0;
+    return c->rxlen;
+}
+
+/* Return 1 if the TCP connection is in ESTABLISHED state (writable) */
+int net_tcp_is_connected(int conn_id)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 0;
+    return (tcp_conns[conn_id].state == TCP_ESTABLISHED) ? 1 : 0;
+}
+
+/* Return 1 if the TCP connection has received FIN or is closed */
+int net_tcp_has_closed(int conn_id)
+{
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return 1; /* invalid = closed */
+    struct tcp_conn *c = &tcp_conns[conn_id];
+    return (c->state == TCP_CLOSED || c->rx_fin) ? 1 : 0;
+}

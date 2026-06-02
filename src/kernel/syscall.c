@@ -1782,46 +1782,70 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
             /* Check each FD for readability */
             for (int i = 0; i < (int)nfds; i++) {
                 if (!FD_ISSET(i, &readfds)) continue;
+                /* Socket FDs */
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    int revents = sock_poll(i, POLLIN);
+                    if (!(revents & POLLIN))
+                        FD_CLR(i, &readfds);
+                    continue;
+                }
                 if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
-                    /* Bad FD — remove from set */
                     FD_CLR(i, &readfds);
                     continue;
                 }
-                /* For now, pipes are readable if they have data */
-                /* For real implementation, check pipe count and other sources */
-                /* Simple: always mark as readable */
-                /* In a full implementation, check pipe_available() etc. */
+                /* Pipe read end: check pipe_available() via poll */
+                if (strncmp(proc->fd_table[i].path, "pipe_read_", 10) == 0) {
+                    int pipe_id = (int)proc->fd_table[i].offset;
+                    int revents = pipe_poll(pipe_id, 1);
+                    if (!(revents & POLLIN))
+                        FD_CLR(i, &readfds);
+                    continue;
+                }
+                /* Default: always readable (regular files, devices) */
             }
         }
         if (writefds_addr) {
             memcpy(&writefds, &orig_writefds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
                 if (!FD_ISSET(i, &writefds)) continue;
+                /* Socket FDs */
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    int revents = sock_poll(i, POLLOUT);
+                    if (!(revents & POLLOUT))
+                        FD_CLR(i, &writefds);
+                    continue;
+                }
                 if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
                     FD_CLR(i, &writefds);
                     continue;
                 }
-                /* Most FDs are writable unless pipe is full */
+                /* Pipe write end: check pipe_poll() */
+                if (strncmp(proc->fd_table[i].path, "pipe_write_", 11) == 0) {
+                    int pipe_id = (int)proc->fd_table[i].offset;
+                    int revents = pipe_poll(pipe_id, 0);
+                    if (!(revents & POLLOUT))
+                        FD_CLR(i, &writefds);
+                    continue;
+                }
+                /* Default: always writable (regular files, devices) */
             }
         }
         if (exceptfds_addr) {
             memcpy(&exceptfds, &orig_exceptfds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
                 if (!FD_ISSET(i, &exceptfds)) continue;
-                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                /* Socket FDs */
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    struct socket *s = sock_get(i);
+                    if (!s || s->state == SOCK_STATE_CLOSED) {
+                        continue; /* keep in set — closed socket is exceptional */
+                    }
                     FD_CLR(i, &exceptfds);
                     continue;
                 }
-                /* Check for exceptional conditions:
-                 * - Sockets with out-of-band data or error state
-                 * - Pipe read-ends whose write side is closed
-                 * Check if this is a socket with error pending */
-                if (i >= 100) {
-                    struct socket *s = sock_get(i);
-                    if (s && s->state == SOCK_STATE_CLOSED) {
-                        /* Closed socket has the "error" condition */
-                        continue; /* keep in set */
-                    }
+                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                    FD_CLR(i, &exceptfds);
+                    continue;
                 }
                 /* Default: clear exceptfds — no exception pending */
                 FD_CLR(i, &exceptfds);
@@ -3778,15 +3802,31 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
 
             /* Check if fd is valid */
             struct process *p = process_get_current();
-            if (!p || fds[i].fd >= PROCESS_FD_MAX || !p->fd_table[fds[i].fd].used) {
+            if (!p) {
                 fds[i].revents = POLLNVAL;
                 ready++;
                 continue;
             }
 
             int fd_idx = fds[i].fd;
-            struct process_fd *pfd = &p->fd_table[fd_idx];
             int revents = 0;
+
+            /* ── Socket FDs (fd 100..100+SOCK_MAX-1) ──────────── */
+            if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
+                revents = sock_poll(fd_idx, fds[i].events);
+                fds[i].revents = revents;
+                if (revents) ready++;
+                continue;
+            }
+
+            /* ── Regular process FDs ─────────────────────────── */
+            if (fd_idx >= PROCESS_FD_MAX || !p->fd_table[fd_idx].used) {
+                fds[i].revents = POLLNVAL;
+                ready++;
+                continue;
+            }
+
+            struct process_fd *pfd = &p->fd_table[fd_idx];
 
             /* Determine fd type and check readiness */
             if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
