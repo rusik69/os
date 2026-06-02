@@ -3,6 +3,7 @@
 #include "kernel.h"
 #include "string.h"
 #include "spinlock.h"
+#include "export.h"
 /*
  * I/O memory mapping.
  *
@@ -123,3 +124,11 @@ void io_map_init(void)
 
     kprintf("[OK] io_map: I/O memory mapping initialised\n");
 }
+
+/* ── Exported symbols for driver modules ─────────────────────────── */
+EXPORT_SYMBOL(io_map_create);
+EXPORT_SYMBOL(io_map_destroy);
+EXPORT_SYMBOL(io_map_read);
+EXPORT_SYMBOL(io_map_write);
+EXPORT_SYMBOL(io_map_read8);
+EXPORT_SYMBOL(io_map_write8);

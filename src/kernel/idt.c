@@ -2,6 +2,7 @@
 #include "io.h"
 #include "printf.h"
 #include "string.h"
+#include "export.h"
 
 static struct idt_entry idt[256];
 static struct idt_pointer idt_ptr;
@@ -141,3 +142,6 @@ void idt_init(void) {
     idt_ptr.base = (uint64_t)&idt;
     idt_load(&idt_ptr);
 }
+
+/* ── Exported symbols for driver modules ─────────────────────────── */
+EXPORT_SYMBOL(idt_register_handler);

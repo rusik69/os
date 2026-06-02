@@ -5,6 +5,7 @@
 #include "apic.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "export.h"
 
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
@@ -889,3 +890,15 @@ void pci_init(void) {
     kprintf("  %lu PCI devices found (%d MSI, %d MSI-X capable)\n",
             (unsigned long)count, msi_count, msix_count);
 }
+
+/* ── Exported symbols for driver modules ─────────────────────────── */
+EXPORT_SYMBOL(pci_read);
+EXPORT_SYMBOL(pci_write);
+EXPORT_SYMBOL(pci_find_device);
+EXPORT_SYMBOL(pci_find_class);
+EXPORT_SYMBOL(pci_enable_msi);
+EXPORT_SYMBOL(pci_enable_msix);
+EXPORT_SYMBOL(pci_disable_msi);
+EXPORT_SYMBOL(pci_disable_msix);
+EXPORT_SYMBOL(pci_setup_interrupts);
+EXPORT_SYMBOL(pci_enable_bus_master);

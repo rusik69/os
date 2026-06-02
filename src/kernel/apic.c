@@ -8,6 +8,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "string.h"
+#include "export.h"
 #include "idt.h"
 #include "smp.h"
 #include "panic.h"
@@ -379,3 +380,7 @@ void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
         tlb_info[cpu].active_request = 0;
     }
 }
+
+/* ── Exported symbols for driver modules ─────────────────────────── */
+EXPORT_SYMBOL(ioapic_mask_irq);
+EXPORT_SYMBOL(ioapic_unmask_irq);

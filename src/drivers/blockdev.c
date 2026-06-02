@@ -4,6 +4,7 @@
 #include "heap.h"
 #include "spinlock.h"
 #include "timer.h"
+#include "export.h"
 
 /* Global device table */
 static struct blockdev_entry g_blockdevs[BLOCKDEV_MAX_DEVICES];
@@ -396,3 +397,13 @@ enum blk_scheduler blockdev_get_scheduler(int id) {
     if (!blockdev_is_registered(id)) return BLK_SCHED_NOOP;
     return g_queues[id].sched;
 }
+
+/* ── Exported symbols for driver modules ─────────────────────────── */
+EXPORT_SYMBOL(blockdev_register);
+EXPORT_SYMBOL(blockdev_register_legacy);
+EXPORT_SYMBOL(blockdev_name);
+EXPORT_SYMBOL(blockdev_is_registered);
+EXPORT_SYMBOL(blockdev_get_scheduler);
+EXPORT_SYMBOL(blk_request_alloc);
+EXPORT_SYMBOL(blk_request_free);
+EXPORT_SYMBOL(blk_request_done);
