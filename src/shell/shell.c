@@ -15,6 +15,7 @@
 #include "scheduler.h"
 
 #define MAX_VAR_NAME 32
+#define MAX_VAR_VALUE 128
 
 /* ─── Alias table ──────────────────────────────────────────────────────────── */
 #define ALIAS_MAX 32
@@ -729,7 +730,11 @@ static void process_cmd(void) {
         }
     }
 
-    /* --- Check for variable assignment: NAME=value (no spaces around =) --- */
+    /* --- Check for variable assignment: NAME=value [command] ---
+     * Supports:
+     *   NAME=value              — set variable permanently
+     *   NAME=value command ...  — set variable for one command only
+     *   NAME=(elem1 elem2 ...)  — set array */
     {
         const char *p = cmd;
         int valid_name = 1;
@@ -746,12 +751,62 @@ static void process_cmd(void) {
             if (nl > MAX_VAR_NAME - 1) nl = MAX_VAR_NAME - 1;
             memcpy(name, cmd, nl);
             name[nl] = '\0';
+
             /* Array assignment: NAME=(elem1 elem2 ...) */
             if (*(p + 1) == '(') {
                 shell_array_define(name, p + 1);
-            } else {
-                shell_var_set(name, p + 1);
+                return;
             }
+
+            /* Find end of value (up to next space) */
+            const char *val_start = p + 1;
+            const char *val_end = val_start;
+            while (*val_end && *val_end != ' ') val_end++;
+
+            /* Check if there's a command after the value */
+            const char *after_val = val_end;
+            while (*after_val == ' ') after_val++;
+
+            if (*after_val) {
+                /* Per-command environment: NAME=value command */
+                /* Save old value for restoration after command */
+                char saved_value[MAX_VAR_VALUE];
+                const char *old_val = shell_var_get(name);
+                int had_old = (old_val && *old_val);
+                if (had_old) {
+                    strncpy(saved_value, old_val, MAX_VAR_VALUE - 1);
+                    saved_value[MAX_VAR_VALUE - 1] = '\0';
+                }
+
+                /* Set temporary value */
+                char val_buf[MAX_VAR_VALUE];
+                int vl = (int)(val_end - val_start);
+                if (vl > MAX_VAR_VALUE - 1) vl = MAX_VAR_VALUE - 1;
+                memcpy(val_buf, val_start, vl);
+                val_buf[vl] = '\0';
+                shell_var_set(name, val_buf);
+
+                /* Rewrite cmd_buf with just the command part */
+                char cmd_rest[CMD_BUF_SIZE];
+                strncpy(cmd_rest, after_val, CMD_BUF_SIZE - 1);
+                cmd_rest[CMD_BUF_SIZE - 1] = '\0';
+                strncpy(cmd_buf, cmd_rest, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+
+                /* Execute the command with the temporary variable */
+                process_cmd();
+
+                /* Restore old value (or remove if it didn't exist) */
+                if (had_old)
+                    shell_var_set(name, saved_value);
+                else
+                    shell_var_set(name, "");
+                return;
+            }
+
+            /* Standalone assignment: NAME=value */
+            shell_var_set(name, val_start);
             return;
         }
     }

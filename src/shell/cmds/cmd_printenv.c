@@ -2,18 +2,33 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-#include "libc.h"
+
+/* shell_var API — declared in shell.h, implemented in shell_vars.c */
+extern int      shell_var_count(void);
+extern const char *shell_var_name(int i);
+extern const char *shell_var_value(int i);
+
+/* Export check */
+extern int shell_var_is_exported(const char *name);
 
 void cmd_printenv(const char *args) {
     (void)args;
-    /* The shell maintains environment variables accessible via libc_shell_var_set/var_get.
-     * For now we list common known environment variables. */
-    /* In a real implementation we'd iterate over the shell's env table. */
-    /* Since the kernel shell doesn't have an env variable API we can iterate,
-     * just print a note that no env vars are currently exported. */
-    kprintf("HOME=/\n");
-    kprintf("SHELL=/bin/sh\n");
-    kprintf("PATH=/bin:/usr/bin\n");
-    kprintf("PWD=/\n");
-    kprintf("USER=root\n");
+
+    int count = shell_var_count();
+    int printed = 0;
+
+    for (int i = 0; i < count; i++) {
+        const char *name  = shell_var_name(i);
+        const char *value = shell_var_value(i);
+
+        if (!name || !*name) continue;
+        if (!value || !*value) continue;
+
+        kprintf("%s=%s\n", name, value);
+        printed++;
+    }
+
+    if (printed == 0) {
+        kprintf("(no environment variables set)\n");
+    }
 }

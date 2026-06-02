@@ -52,6 +52,8 @@ static void sh_mesg(const char *a)      { (void)a; cmd_mesg(); }
 static void sh_nproc(const char *a)     { (void)a; cmd_nproc(); }
 static void sh_pinky(const char *a)     { (void)a; cmd_pinky(); }
 static void sh_pwdx(const char *a)      { (void)a; cmd_pwdx(); }
+static void sh_export(const char *a)    { cmd_export(a); }
+static void sh_unset(const char *a)     { cmd_unset(a); }
 
 #include "cmd_table.inc"
 

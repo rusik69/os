@@ -268,6 +268,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("lslocks",     "List kernel file locks (lslocks)",                               cmd_lslocks)
     CMD("nsenter",     "Run command in namespace (stub)",                                cmd_nsenter)
     CMD("unshare",     "Run command in new namespace (stub)",                            cmd_unshare)
+    CMD("export",      "Set export attribute for shell variable",                        cmd_export)
+    CMD("unset",       "Unset a shell variable",                                        cmd_unset)
     CMD("setsid",      "Run command in new session (setsid <cmd>)",                      cmd_setsid)
     CMD("stdbuf_pipe", "Send to pipe with buffer (stdbuf_pipe <cmd>)",                   cmd_stdbuf_pipe)
     CMD("time_verbose","Detailed timing output (time -v <cmd>)",                         cmd_time_verbose)
