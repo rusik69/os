@@ -20,6 +20,27 @@
 #define FUTEX_WAIT_PRIVATE   (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
 #define FUTEX_WAKE_PRIVATE   (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
 
+/* ── FUTEX_WAKE_OP: atomic operations on uaddr2 ─────────────────── */
+#define FUTEX_OP_SET         0  /* uaddr2 = oparg */
+#define FUTEX_OP_ADD         1  /* uaddr2 += oparg */
+#define FUTEX_OP_OR          2  /* uaddr2 |= oparg */
+#define FUTEX_OP_ANDN        3  /* uaddr2 &= ~oparg */
+#define FUTEX_OP_XOR         4  /* uaddr2 ^= oparg */
+#define FUTEX_OP_OPARG_SHIFT 8  /* if set, oparg << 8 before use */
+
+/* ── FUTEX_WAKE_OP: comparison operators ─────────────────────────── */
+#define FUTEX_OP_CMP_EQ      0  /* oldval == cmparg */
+#define FUTEX_OP_CMP_NE      1  /* oldval != cmparg */
+#define FUTEX_OP_CMP_LT      2  /* oldval < cmparg */
+#define FUTEX_OP_CMP_LE      3  /* oldval <= cmparg */
+#define FUTEX_OP_CMP_GT      4  /* oldval > cmparg */
+#define FUTEX_OP_CMP_GE      5  /* oldval >= cmparg */
+
+/* ── FUTEX_WAKE_OP: encode val3 from op/cmp/oparg/cmparg ────────── */
+#define FUTEX_OP_ENCODE(op, oparg, cmp, cmparg) \
+    ((((op) & 0xf) << 28) | (((cmp) & 0xf) << 24) | \
+     (((oparg) & 0xfff) << 12) | ((cmparg) & 0xfff))
+
 /* ── Robust list (for robust futex) ──────────────────────────────── */
 struct robust_list {
     struct robust_list *next;

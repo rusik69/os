@@ -3278,6 +3278,134 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             return 0;
         }
 
+        case FUTEX_WAKE_OP: {
+            /* ── FUTEX_WAKE_OP: atomic modify uaddr2, then conditional wake uaddr ──
+             *
+             * val3 encodes op, cmp, oparg, cmparg (see futex.h):
+             *   bits [31:28] = operation (FUTEX_OP_*)
+             *   bits [27:24] = comparison (FUTEX_OP_CMP_*)
+             *   bits [23:12] = oparg (12-bit signed)
+             *   bits [11: 0] = cmparg (12-bit signed)
+             *
+             * 1. Atomically read oldval from *uaddr2, compute newval = op(oldval, oparg),
+             *    write newval to *uaddr2.
+             * 2. Always wake up to 'val2' waiters on uaddr2.
+             * 3. If comparison (oldval OP cmp cmparg) is true, wake up to 'val' waiters on uaddr.
+             */
+            if (syscall_is_user_process()) {
+                if (!syscall_user_read_ok(uaddr, 4) || !syscall_user_read_ok(uaddr2, 4))
+                    return (uint64_t)-1;
+                if (!syscall_user_write_ok(uaddr2, 4))
+                    return (uint64_t)-1;
+            }
+
+            /* Decode val3 */
+            unsigned op   = (unsigned)((val3 >> 28) & 0xf);
+            unsigned cmp  = (unsigned)((val3 >> 24) & 0xf);
+            /* Sign-extend 12-bit oparg */
+            int32_t oparg = (int32_t)((val3 >> 12) & 0xfff);
+            if (oparg & 0x800) oparg |= 0xfffff000;
+            /* Sign-extend 12-bit cmparg */
+            int32_t cmparg = (int32_t)(val3 & 0xfff);
+            if (cmparg & 0x800) cmparg |= 0xfffff000;
+
+            /* If OPARG_SHIFT is set, shift oparg left by 8 */
+            if (op & FUTEX_OP_OPARG_SHIFT)
+                oparg <<= 8;
+
+            op &= 7; /* mask to just the operation bits */
+
+            /* Read old value from uaddr2 */
+            uint32_t oldval;
+            memcpy(&oldval, addr2, 4);
+
+            /* Compute new value */
+            uint32_t newval = oldval;
+            switch (op) {
+                case FUTEX_OP_SET:
+                    newval = (uint32_t)oparg;
+                    break;
+                case FUTEX_OP_ADD:
+                    newval = oldval + (uint32_t)oparg;
+                    break;
+                case FUTEX_OP_OR:
+                    newval = oldval | (uint32_t)oparg;
+                    break;
+                case FUTEX_OP_ANDN:
+                    newval = oldval & ~(uint32_t)oparg;
+                    break;
+                case FUTEX_OP_XOR:
+                    newval = oldval ^ (uint32_t)oparg;
+                    break;
+                default:
+                    return (uint64_t)-1; /* ENOSYS */
+            }
+
+            /* Write new value to uaddr2 */
+            memcpy(addr2, &newval, 4);
+
+            /* ── Always wake up to 'val2' waiters on uaddr2 ────────── */
+            int woken1 = 0;
+            int woken2 = 0;
+            __asm__ volatile("cli");
+            int max_wake2 = (int)(val & 0x7FFFFFFF);
+            if (max_wake2 < 1) max_wake2 = 1;
+            for (int i = 0; i < FUTEX_MAX_WAITERS && woken2 < max_wake2; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr2) {
+                    struct process *p = futex_waiters[i].proc;
+                    futex_waiters[i].proc = NULL;
+                    futex_waiters[i].uaddr = NULL;
+                    futex_num_waiters--;
+                    if (p->state == PROCESS_BLOCKED) {
+                        p->state = PROCESS_READY;
+                        scheduler_add(p);
+                    }
+                    woken2++;
+                }
+            }
+            __asm__ volatile("sti");
+
+            /* ── Conditional wake on uaddr based on comparison ─────── */
+            /* Per Linux semantics, we use val2 (upper 32 bits) for unconditional
+             * wake on uaddr2 and val (lower 32 bits) for conditional wake on uaddr.
+             * (val is actually in a1, val2 corresponds to timeout parameter) */
+
+            /* Determine if comparison is true */
+            int cmp_result = 0;
+            switch (cmp) {
+                case FUTEX_OP_CMP_EQ: cmp_result = ((int32_t)oldval == cmparg); break;
+                case FUTEX_OP_CMP_NE: cmp_result = ((int32_t)oldval != cmparg); break;
+                case FUTEX_OP_CMP_LT: cmp_result = ((int32_t)oldval <  cmparg); break;
+                case FUTEX_OP_CMP_LE: cmp_result = ((int32_t)oldval <= cmparg); break;
+                case FUTEX_OP_CMP_GT: cmp_result = ((int32_t)oldval >  cmparg); break;
+                case FUTEX_OP_CMP_GE: cmp_result = ((int32_t)oldval >= cmparg); break;
+                default: cmp_result = 0; break;
+            }
+
+            if (cmp_result) {
+                __asm__ volatile("cli");
+                int max_wake1 = (int)(val & 0x7FFFFFFF);
+                if (max_wake1 < 1) max_wake1 = 1;
+                for (int i = 0; i < FUTEX_MAX_WAITERS && woken1 < max_wake1; i++) {
+                    if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr) {
+                        struct process *p = futex_waiters[i].proc;
+                        futex_waiters[i].proc = NULL;
+                        futex_waiters[i].uaddr = NULL;
+                        futex_num_waiters--;
+                        if (p->state == PROCESS_BLOCKED) {
+                            p->state = PROCESS_READY;
+                            scheduler_add(p);
+                        }
+                        woken1++;
+                    }
+                }
+                __asm__ volatile("sti");
+            }
+
+            /* Return total waiters woken (on uaddr + uaddr2) */
+            return (uint64_t)(woken1 + woken2);
+        }
+
         case FUTEX_CMP_REQUEUE_PI: {
             /* Requeue from non-PI futex to PI futex with PI boosting */
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
