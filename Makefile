@@ -316,6 +316,74 @@ OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJ
 # Header dependency tracking: include .d files when they exist
 DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(DOOM_OBJS:.o=.d)
 
+# ── Kernel module build rules (M39) ──────────────────────────────────
+# Loadable kernel modules (.ko) are compiled with -DMODULE and partially
+# linked via `ld -r` to produce relocatable files for the module loader.
+#
+# Module source files live alongside the regular kernel sources in src/.
+# obj-m lists the module .ko names to build (without path or extension).
+# Each module .ko is built from one or more .c source files compiled with
+# -DMODULE, then partially linked together.
+#
+# Example usage:
+#   make modules          # build all modules listed in obj-m
+#   make modules_install  # copy .ko files into the disk image
+#
+# Module compilation flags: same as CFLAGS but with -DMODULE and without
+# -nostdinc (modules include kernel headers via the same include paths).
+MODULE_CFLAGS  = $(filter-out -nostdinc -fno-builtin -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) \
+                 -DMODULE -ffreestanding -nostdlib -fno-builtin -Isrc/include
+MODULE_LDFLAGS = -r -z max-page-size=0x1000
+
+# Build directory for module objects and .ko files
+MODULE_BUILDDIR = $(BUILDDIR)/modules
+
+# obj-m lists module .ko names to build (relative to MODULE_BUILDDIR, .ko suffix)
+# Each entry creates a build target: $(MODULE_BUILDDIR)/<name>.ko
+# Override this in a submake or set in environment to add custom modules.
+obj-m ?=
+
+# Derive module .ko paths from obj-m list
+MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
+
+# Module .o files: for each <name>.ko, we need at least one <name>.o
+# The source file for <name>.o is found by searching src/ for <name>.c
+# This supports flat and hierarchical source layouts.
+MODULE_OBJS = $(foreach ko,$(obj-m), \
+    $(MODULE_BUILDDIR)/$(basename $(ko)).o )
+
+# Rule to compile a module source file into a module .o file
+# Source file is located under src/ relative to the .ko name
+# e.g., build/modules/drivers/e1000.ko ← src/drivers/e1000.c
+$(MODULE_BUILDDIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(MODULE_CFLAGS) -c $< -o $@
+
+# Rule to partially-link module .o(s) into a .ko relocatable file
+# Supports multi-source modules: <name>.ko can depend on multiple .o files
+$(MODULE_BUILDDIR)/%.ko: $(MODULE_BUILDDIR)/%.o
+	@mkdir -p $(dir $@)
+	$(LD) $(MODULE_LDFLAGS) -o $@ $^
+
+# Build all kernel modules listed in obj-m
+modules: $(MODULE_KOS)
+
+# Install built modules into the filesystem disk image
+# Copies .ko files to /modules/ on the FAT32 disk image (where the
+# kernel's module loader expects to find them at runtime).
+modules_install: modules
+	@echo "=== Installing modules ==="
+	@mkdir -p /tmp/modules_staging
+	@for ko in $(MODULE_KOS); do \
+	    if [ -f "$$ko" ]; then \
+	        name=$$(basename $$ko); \
+	        echo "  INSTALL $$name"; \
+	        cp "$$ko" /tmp/modules_staging/$$name; \
+	    fi; \
+	done
+	@echo "Modules staged in /tmp/modules_staging/"
+	@echo "Run: scripts/install_modules.sh <disk_image> to add to disk image"
+
 # ── /proc/config.gz — embedded compressed kernel build config ──────
 #
 # Pipeline: gen_config.sh → build_config.txt → gzip → build_config.gz
@@ -352,6 +420,8 @@ $(BUILD_CONFIG_TXT): scripts/gen_config.sh
 # NOTE: -include must stay BELOW the default target so that dependency
 # files never accidentally steal .DEFAULT_GOAL.
 
+.DEFAULT_GOAL := all
+
 all: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 
@@ -360,7 +430,8 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test unit-test bench
+        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test unit-test bench \
+        modules modules_install
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
