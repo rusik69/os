@@ -1,7 +1,7 @@
 # tests/unit/Makefile
-# Compiles host-side unit tests for kernel memory allocator algorithms
+# Compiles host-side unit tests for kernel algorithms
 #
-# Usage:  make          → builds and runs tests
+# Usage:  make          → builds and runs all tests
 #         make test     → same
 #         make clean    → remove binaries
 
@@ -12,13 +12,19 @@ CFLAGS  = -Wall -Werror -g -O0
 
 all: test
 
-test: test_memory
+test: test_memory test_fs
 	@echo ""
 	@echo "Running memory allocator unit tests..."
 	@./test_memory
+	@echo ""
+	@echo "Running filesystem operation unit tests..."
+	@./test_fs
 
 test_memory: test_memory.c
 	$(CC) $(CFLAGS) -o $@ $<
 
+test_fs: test_fs.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 clean:
-	rm -f test_memory
+	rm -f test_memory test_fs
