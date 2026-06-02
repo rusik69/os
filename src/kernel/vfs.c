@@ -14,6 +14,7 @@
 #include "file_lock.h"
 #include "dcache.h"
 #include "spinlock.h"
+#include "export.h"
 
 #define EROFS_KERNEL 30
 
@@ -1132,3 +1133,23 @@ void vfs_init(void) {
     /* Initialize xattr */
     memset(xattr_table, 0, sizeof(xattr_table));
 }
+
+/* ── Exported symbols for loadable kernel modules ─────────────────── */
+EXPORT_SYMBOL(vfs_register_filesystem);
+EXPORT_SYMBOL(vfs_mount);
+EXPORT_SYMBOL(vfs_mount_ex);
+EXPORT_SYMBOL(vfs_read);
+EXPORT_SYMBOL(vfs_write);
+EXPORT_SYMBOL(vfs_stat);
+EXPORT_SYMBOL(vfs_create);
+EXPORT_SYMBOL(vfs_unlink);
+EXPORT_SYMBOL(vfs_readdir_names);
+EXPORT_SYMBOL(vfs_truncate);
+EXPORT_SYMBOL(vfs_link);
+EXPORT_SYMBOL(vfs_symlink);
+EXPORT_SYMBOL(vfs_readlink);
+EXPORT_SYMBOL(vfs_mknod);
+EXPORT_SYMBOL(vfs_flush);
+EXPORT_SYMBOL(vfs_sync_all);
+EXPORT_SYMBOL(vfs_statfs);
+EXPORT_SYMBOL(vfs_bind_mount);
