@@ -781,9 +781,14 @@ int fs_check_perm(const char *path, char op) {
     if (cur_uid == 0) return 0;
 
     int shift;
-    if (cur_uid == inodes[idx].uid)      shift = 6; /* owner */
-    else if (cur_gid == inodes[idx].gid) shift = 3; /* group */
-    else                                 shift = 0; /* other */
+    if (cur_uid == inodes[idx].uid) {
+        shift = 6; /* owner */
+    } else if (cur_gid == inodes[idx].gid || user_in_group(cur_uid, inodes[idx].gid)) {
+        /* Check primary gid and supplementary groups */
+        shift = 3; /* group */
+    } else {
+        shift = 0; /* other */
+    }
 
     uint16_t bits;
     switch (op) {
