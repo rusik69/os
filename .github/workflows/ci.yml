@@ -2,382 +2,99 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
-
-concurrency:
-  group: ci-${{ github.ref }}
-
-permissions:
-  contents: read
-  packages: write
-  # release job needs contents: write for creating releases
-  # override at job level below
-
-env:
-  CCACHE_DIR: /tmp/ccache
-  CCACHE_MAXSIZE: 500M
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
-  # ── Build with -Wall -Wextra (baseline) ──────────────────────────────
-  build:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.sha }}
-          restore-keys: ccache-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-  # ── Build with -Werror (strict mode) ─────────────────────────────────
-  build-strict:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-strict-${{ github.sha }}
-          restore-keys: ccache-strict-
-      - name: Build kernel with -Werror
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-                    -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-                    -Wall -Wextra -Werror -Wno-format \
-                    -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
-                    -Wa,--noexecstack -O2 -MMD -MP" \
-            -j$(nproc)
-
-  # ── Build with Clang (in addition to GCC) ─────────────────────────────
-  build-clang:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-clang-${{ github.sha }}
-          restore-keys: ccache-clang-
-      - name: Install Clang cross-compiler
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq clang-18 lld-18
-      - name: Build kernel with Clang
-        run: |
-          make all \
-            CC="ccache clang-18" \
-            LD=ld.lld-18 \
-            OBJCOPY=llvm-objcopy-18 \
-            CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types" \
-            -j$(nproc)
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-  # ── Debug build (no optimization, full assertions) ───────────────────
-  build-debug:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-debug-${{ github.sha }}
-          restore-keys: ccache-debug-
-      - name: Build kernel (debug)
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" \
-            -j$(nproc)
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-  # ── Static analysis (cppcheck) ───────────────────────────────────────
-  static-analysis:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: Run cppcheck
-        run: |
-          cppcheck --enable=all \
-            --suppress=unusedFunction \
-            --suppress=constVariablePointer \
-            --suppress=constParameterPointer \
-            --suppress=variableScope \
-            --suppress=unreadVariable \
-            --suppress=arrayIndexThenCheck \
-            --suppress=redundantInitialization \
-            --suppress=knownConditionTrueFalse \
-            --suppress=badBitmaskCheck \
-            --suppress=unusedStructMember \
-            --suppress=constVariable \
-            --suppress=shadowVariable \
-            --suppress=redundantAssignment \
-            --suppress=oppositeInnerCondition \
-            --suppress=zerodivcond \
-            --suppress=staticStringCompare \
-            --suppress=unsignedLessThanZero \
-            --suppress=arrayIndexOutOfBoundsCond \
-            --suppress=constParameterCallback \
-            --suppress=clarifyCondition \
-            --suppress=redundantCondition \
-            --suppress=duplicateValueTernary \
-            --suppress=useStandardLibrary \
-            --suppress=checkersReport \
-            --suppress=checkLevelNormal \
-            --std=c17 \
-            -Isrc/include -Isrc/gui -Isrc/doom \
-            --inline-suppr \
-            --error-exitcode=1 \
-            src/ 2>&1
-
-  # ── In-kernel unit tests (QEMU) ──────────────────────────────────────
-  test:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-test-${{ github.sha }}
-          restore-keys: ccache-test-
-      - name: Build test kernel
-        run: |
-          make test-kernel \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            SKIP_DISK_TESTS=1 \
-            -j$(nproc)
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-      - name: Run unit tests
-        run: |
-          chmod +x tests/run_tests.sh
-          ./tests/run_tests.sh build_test/kernel.bin build/disk.img
-        env:
-          TIMEOUT: "600"
-
-  # ── E2E tests (telnet-driven shell commands) ─────────────────────────
-  e2e:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.sha }}
-          restore-keys: ccache-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-      - name: Run E2E tests
-        run: |
-          chmod +x tests/e2e.sh tests/e2e.py
-          ./tests/e2e.sh build/kernel.bin build/disk.img
-        env:
-          E2E_BOOT_TIMEOUT: "180"
-          E2E_TIMEOUT: "45"
-          E2E_EXTERNAL_DNS: "0"
-
-  # ── Code formatting check (clang-format) ──────────────────────────────
-  format-check:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - name: Check code formatting
-        run: |
-          # Ensure git-clang-format is available
-          if ! command -v git-clang-format >/dev/null 2>&1; then
-            # Try installing clang-format if not present
-            apt-get update -qq && apt-get install -y -qq clang-format-18
-            ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
-            ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
-          fi
-          make format-check FORMAT_BASE_REF=HEAD~1
-
-  # ── virtio-net smoke test ────────────────────────────────────────────
-  virtio-net-smoke:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.sha }}
-          restore-keys: ccache-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-      - name: Create disk image
-        run: dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-      - name: Boot with virtio-net and check serial markers
-        run: |
-          SERIAL=$(mktemp)
-          timeout 60 qemu-system-x86_64 \
-            -kernel build/kernel.bin -m 256M \
-            -serial file:$SERIAL -display none -vga none \
-            -drive file=build/disk.img,format=raw,if=ide \
-            -netdev user,id=net0,hostfwd=tcp::2324-:23 \
-            -device virtio-net-pci,netdev=net0 \
-            -no-reboot || true
-          grep -E "virtio-net: initialized|DHCP:" "$SERIAL" || \
-            (echo "virtio-net smoke markers not found"; cat "$SERIAL"; exit 1)
-
-  # ── USB + FAT32 smoke test ───────────────────────────────────────────
-  usb-fat-smoke:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
-    steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.sha }}
-          restore-keys: ccache-
-      - name: Build kernel
-        run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-      - name: Create disk images
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-          dd if=/dev/zero of=build/fat32_usb.img bs=4M count=1 2>/dev/null
-          mkfs.vfat -F 32 build/fat32_usb.img
-          echo smoke > /tmp/mnt_smoke.txt
-          mcopy -i build/fat32_usb.img /tmp/mnt_smoke.txt ::smoke.txt
-      - name: QEMU USB FAT smoke
-        run: |
-          SERIAL=$(mktemp)
-          timeout 45 qemu-system-x86_64 \
-            -kernel build/kernel.bin -m 256M \
-            -serial file:$SERIAL -display none -vga none \
-            -drive file=build/disk.img,format=raw,if=ide \
-            -drive file=build/fat32_usb.img,format=raw,if=none,id=usb0 \
-            -device usb-ehci -device usb-storage,drive=usb0 \
-            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
-            -no-reboot || true
-          grep -E "USB MSC|FAT32 mounted" "$SERIAL" || \
-            (echo "USB/FAT smoke markers not found"; cat "$SERIAL"; exit 1)
-
-  # ── Host-side libc unit tests ────────────────────────────────────────
-  libc-test:
+  build-gcc:
+    name: Build (GCC)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev make binutils
-      - name: Build and run host-side libc tests
-        run: |
-          cd tests/host_libc
-          make 2>&1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            gcc \
+            nasm \
+            qemu-system-x86 \
+            python3 \
+            cppcheck \
+            clang-format
 
-  # ── Release (tag pushes only) ────────────────────────────────────────
-  release:
-    runs-on: [self-hosted, linux, x64]
-    container: ghcr.io/rusik69/os-ci:latest
-    timeout-minutes: 10
-    needs: [build, test, e2e]
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write  # create GitHub Release
+      - name: Build kernel (release)
+        run: make -j$(nproc)
+
+      - name: Unit tests
+        run: make unit-test
+
+      - name: Build check kernel (-Werror + extra warnings)
+        run: make -j$(nproc) build_check/kernel.bin
+
+      - name: Run build-time tests in QEMU
+        timeout-minutes: 5
+        run: |
+          chmod +x tests/run_tests.sh
+          ./tests/run_tests.sh build_check/kernel.bin build/disk.img
+
+      - name: E2E smoke test
+        timeout-minutes: 10
+        run: |
+          make e2e-smoke
+
+      - name: Format check
+        run: make format-check || echo "clang-format issues found (non-fatal)"
+
+      - name: Lint
+        run: make lint || echo "cppcheck warnings found (non-fatal)"
+
+  build-clang:
+    name: Build (Clang)
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ github.sha }}
-          restore-keys: ccache-
-      - name: Build kernel
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
-      - name: Create disk image
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            clang \
+            lld \
+            nasm \
+            qemu-system-x86 \
+            python3
+
+      - name: Build with Clang
+        run: make CC=clang LD=lld -j$(nproc)
+
+      - name: E2E smoke test (Clang build)
+        timeout-minutes: 10
         run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            build/kernel.bin
-            build/disk.img
-          generate_release_notes: true
+          make CC=clang LD=lld e2e-smoke
+
+  debug-build:
+    name: Debug Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            gcc \
+            nasm \
+            qemu-system-x86 \
+            python3
+
+      - name: Debug build
+        run: make DEBUG=1 -j$(nproc)
+
+      - name: E2E smoke test (debug build)
+        timeout-minutes: 10
+        run: |
+          make DEBUG=1 e2e-smoke

@@ -111,7 +111,9 @@ echo ""
 
 # ── Run e2e Python test suite ─────────────────────────────────────────────────
 export E2E_HOST E2E_PORT E2E_HTTP_PORT
-python3 -u "$SCRIPT_DIR/e2e.py"
+PY_ARGS=""
+[ "$E2E_SMOKE" = "1" ] && PY_ARGS="--smoke"
+python3 -u "$SCRIPT_DIR/e2e.py" $PY_ARGS
 RESULT=$?
 
 echo ""

@@ -506,6 +506,9 @@ check: $(BUILDDIR)/disk.img unit-test
 	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK)/kernel.bin
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_CHECK)/kernel.bin $(BUILDDIR)/disk.img
+	@echo ""
+	@echo "=== Build-time tests passed, running E2E smoke test ==="
+	$(MAKE) e2e-smoke
 
 # Clean the check build artifacts
 check-clean:
@@ -526,6 +529,12 @@ e2e: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 	@chmod +x tests/e2e.sh tests/e2e.py
 	@./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+
+# E2E smoke test: fast CI subset of e2e tests
+e2e-smoke: $(BUILDDIR)/disk.img
+	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
+	@chmod +x tests/e2e.sh tests/e2e.py
+	@E2E_SMOKE=1 ./tests/e2e.sh $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 
 # Fast run: build test-kernel and run tests in one invocation
 run-test:
