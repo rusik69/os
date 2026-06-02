@@ -384,7 +384,7 @@ void fs_init(void) {
             return;
         }
         bitmap_rebuild_from_inodes();
-        kprintf("  Filesystem loaded (%u data blocks used)\n",
+        kprintf("  Filesystem loaded (%lu data blocks used)\n",
                 (unsigned long)bitmap_used_count());
     }
 }
@@ -684,7 +684,7 @@ int fs_list(const char *path) {
             char mstr[10];
             fs_mode_str(inodes[i].mode, mstr);
             char type_char = inodes[i].type == FS_TYPE_DIR ? 'd' : '-';
-            kprintf("%c%s %u:%u\t%u\t%s\n",
+            kprintf("%c%s %lu:%lu\t%lu\t%s\n",
                     type_char, mstr,
                     (unsigned long)inodes[i].uid, (unsigned long)inodes[i].gid,
                     (unsigned long)inodes[i].size,

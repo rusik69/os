@@ -1,117 +1,57 @@
-/* cmd_insmod.c — insmod: load a kernel module (.ko file)
- *
- * M21: insmod shell command for the modular kernel transition.
+/* cmd_insmod.c — Load a kernel module (M21)
  *
  * Usage: insmod <path> [param=val ...]
  *
- * Reads the .ko file via VFS, then calls the ELF module loader
- * (module_elf_validate -> module_elf_parse -> module_elf_finalize)
- * to load and initialize the module.
+ * Calls the SYS_INIT_MODULE syscall to load a .ko ELF file
+ * from the filesystem and optionally set module parameters.
  */
-
 #include "shell_cmds.h"
-#include "printf.h"
+#include "syscall.h"
+#include "libc.h"
 #include "string.h"
-#include "vfs.h"
-#include "heap.h"
-#include "module.h"
-#include "module_elf.h"
+#include "printf.h"
 
 void cmd_insmod(const char *args)
 {
-    if (!args || !args[0]) {
+    if (!args || !*args) {
         kprintf("Usage: insmod <path> [param=val ...]\n");
         return;
     }
 
-    /* Extract the first space-delimited token as the path */
+    /* Parse the first token as path */
     char path[128];
     const char *p = args;
-    char *d = path;
-    while (*p && *p != ' ' && (size_t)(d - path) < sizeof(path) - 1) {
-        *d++ = *p++;
-    }
-    *d = '\0';
+    while (*p == ' ') p++;
+    int pi = 0;
+    while (*p && *p != ' ' && pi < (int)sizeof(path) - 1)
+        path[pi++] = *p++;
+    path[pi] = '\0';
 
-    if (path[0] == '\0') {
-        kprintf("insmod: missing path\n");
-        return;
-    }
+    /* Rest is parameter string (if any) */
+    while (*p == ' ') p++;
+    const char *params = (*p) ? p : NULL;
 
-    /* Skip params for now (module params parsing is M29+) */
-    /* while (*p == ' ') p++; */
+    /* Call sys_init_module(path, params) via libc_syscall */
+    int64_t ret = (int64_t)libc_syscall(SYS_INIT_MODULE,
+                                         (uint64_t)(uintptr_t)path,
+                                         params ? (uint64_t)(uintptr_t)params : 0,
+                                         0, 0, 0);
 
-    /* Stat the file to get its size */
-    struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) {
-        kprintf("insmod: cannot stat '%s'\n", path);
-        return;
-    }
-
-    uint64_t file_size = st.size;
-    if (file_size == 0 || file_size > 8 * 1024 * 1024) {
-        kprintf("insmod: '%s' has bad size (%llu)\n", path,
-                (unsigned long long)file_size);
-        return;
-    }
-
-    /* Allocate a buffer for the file contents */
-    void *buf = kmalloc((size_t)file_size);
-    if (!buf) {
-        kprintf("insmod: out of memory (%llu bytes)\n",
-                (unsigned long long)file_size);
-        return;
-    }
-
-    /* Read the file */
-    uint32_t bytes_read = 0;
-    if (vfs_read(path, buf, (uint32_t)file_size, &bytes_read) < 0 ||
-        bytes_read != file_size) {
-        kprintf("insmod: failed to read '%s'\n", path);
-        kfree(buf);
-        return;
-    }
-
-    /* Run the ELF module loader */
-    struct module_elf_context ctx;
-    int result;
-
-    /* Step 1: Validate ELF header */
-    result = module_elf_validate(&ctx, (const uint8_t *)buf, file_size);
-    if (result < 0) {
-        kprintf("insmod: '%s' validation failed: %s\n", path, ctx.error_msg);
-        kfree(buf);
-        return;
-    }
-
-    /* Step 2: Parse ELF sections, symbols, relocations */
-    result = module_elf_parse(&ctx);
-    if (result < 0) {
-        kprintf("insmod: '%s' parse failed: %s\n", path, ctx.error_msg);
-        kfree(buf);
-        return;
-    }
-
-    /* Step 3: Finalize (resolve, load, relocate, set perms, call init) */
-    const char *mod_name = ctx.name;
-    if (mod_name[0] == '\0') {
-        /* Fall back to filename (without path) */
-        const char *slash = path;
-        const char *last = path;
-        while (*slash) {
-            if (*slash == '/') last = slash + 1;
-            slash++;
-        }
-        mod_name = last;
-    }
-
-    result = module_elf_finalize(&ctx, mod_name);
-    module_elf_free(&ctx);
-    kfree(buf);
-
-    if (result < 0) {
-        kprintf("insmod: '%s' loading failed: %s\n", path, ctx.error_msg);
+    if (ret >= 0) {
+        kprintf("insmod: loaded module '%s' (id=%lld)\n", path, (long long)ret);
     } else {
-        kprintf("insmod: Loaded '%s' (module id %d)\n", path, result);
+        int err = (int)(-ret);
+        const char *msg = "Unknown error";
+        switch (err) {
+            case 2:  msg = "No such file or directory"; break;  /* ENOENT */
+            case 5:  msg = "I/O error"; break;                  /* EIO */
+            case 12: msg = "Out of memory"; break;              /* ENOMEM */
+            case 22: msg = "Invalid argument"; break;           /* EINVAL */
+            case 27: msg = "File too large"; break;             /* EFBIG */
+            case 63: msg = "File is not executable"; break;     /* ENOEXEC */
+            case 1:  msg = "Operation not permitted"; break;    /* EPERM */
+            default: break;
+        }
+        kprintf("insmod: failed to load '%s': %s\n", path, msg);
     }
 }

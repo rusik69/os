@@ -7,7 +7,7 @@
 #include "string.h"
 
 static void sh_help(const char *a)       { (void)a; cmd_help(); }
-static void sh_clear(const char *a)      { (void)a; vga_clear(); }
+static void __attribute__((unused)) sh_clear(const char *a)      { (void)a; vga_clear(); }
 static void sh_meminfo(const char *a)    { (void)a; cmd_meminfo(); }
 static void sh_ps(const char *a)         { (void)a; cmd_ps(); }
 static void sh_uptime(const char *a)     { (void)a; cmd_uptime(); }
@@ -45,16 +45,16 @@ static void sh_sync(const char *a)       { (void)a; cmd_sync(); }
 static void sh_bt(const char *a)         { (void)a; cmd_bt(); }
 static void sh_true(const char *a)      { (void)a; cmd_true(); }
 static void sh_false(const char *a)     { (void)a; cmd_false(); }
-static void sh_logname(const char *a)   { (void)a; cmd_logname(); }
-static void sh_groups(const char *a)    { (void)a; cmd_groups(); }
-static void sh_hostid(const char *a)    { (void)a; cmd_hostid(); }
-static void sh_tty(const char *a)       { (void)a; cmd_tty(); }
-static void sh_mesg(const char *a)      { (void)a; cmd_mesg(); }
-static void sh_nproc(const char *a)     { (void)a; cmd_nproc(); }
-static void sh_pinky(const char *a)     { (void)a; cmd_pinky(); }
-static void sh_pwdx(const char *a)      { (void)a; cmd_pwdx(); }
-static void sh_export(const char *a)    { cmd_export(a); }
-static void sh_unset(const char *a)     { cmd_unset(a); }
+static void __attribute__((unused)) sh_logname(const char *a)   { (void)a; cmd_logname(); }
+static void __attribute__((unused)) sh_groups(const char *a)    { (void)a; cmd_groups(); }
+static void __attribute__((unused)) sh_hostid(const char *a)    { (void)a; cmd_hostid(); }
+static void __attribute__((unused)) sh_tty(const char *a)       { (void)a; cmd_tty(); }
+static void __attribute__((unused)) sh_mesg(const char *a)      { (void)a; cmd_mesg(); }
+static void __attribute__((unused)) sh_nproc(const char *a)     { (void)a; cmd_nproc(); }
+static void __attribute__((unused)) sh_pinky(const char *a)     { (void)a; cmd_pinky(); }
+static void __attribute__((unused)) sh_pwdx(const char *a)      { (void)a; cmd_pwdx(); }
+static void __attribute__((unused)) sh_export(const char *a)    { cmd_export(a); }
+static void __attribute__((unused)) sh_unset(const char *a)     { cmd_unset(a); }
 static void sh_sysctl(const char *a)    { cmd_sysctl(a); }
 static void sh_insmod(const char *a)    { cmd_insmod(a); }
 static void sh_rmmod(const char *a)     { cmd_rmmod(a); }

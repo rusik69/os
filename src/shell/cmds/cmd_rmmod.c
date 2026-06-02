@@ -1,56 +1,50 @@
-/* cmd_rmmod.c — rmmod: unload a kernel module by name
- *
- * M22: rmmod shell command for the modular kernel transition.
+/* cmd_rmmod.c — Unload a kernel module (M22)
  *
  * Usage: rmmod <name>
  *
- * Calls module_find + module_unload to remove a loaded module.
+ * Calls the SYS_DELETE_MODULE syscall to unload a module by name.
  */
-
 #include "shell_cmds.h"
-#include "printf.h"
+#include "syscall.h"
+#include "libc.h"
 #include "string.h"
-#include "module.h"
+#include "printf.h"
 
 void cmd_rmmod(const char *args)
 {
-    if (!args || !args[0]) {
+    if (!args || !*args) {
         kprintf("Usage: rmmod <name>\n");
         return;
     }
 
-    /* Extract the module name (first token) */
+    while (*args == ' ') args++;
+
     char name[64];
-    const char *p = args;
-    char *d = name;
-    while (*p && *p != ' ' && (size_t)(d - name) < sizeof(name) - 1) {
-        *d++ = *p++;
-    }
-    *d = '\0';
+    int ni = 0;
+    while (*args && *args != ' ' && ni < (int)sizeof(name) - 1)
+        name[ni++] = *args++;
+    name[ni] = '\0';
 
-    if (name[0] == '\0') {
-        kprintf("rmmod: missing module name\n");
+    if (ni == 0) {
+        kprintf("Usage: rmmod <name>\n");
         return;
     }
 
-    /* Find the module */
-    struct kernel_module *mod = module_find(name);
-    if (!mod) {
-        kprintf("rmmod: module '%s' not found\n", name);
-        return;
-    }
+    int64_t ret = (int64_t)libc_syscall(SYS_DELETE_MODULE,
+                                         (uint64_t)(uintptr_t)name,
+                                         0, 0, 0, 0);
 
-    /* Check refcount */
-    if (mod->refcount > 0) {
-        kprintf("rmmod: '%s' is in use (refcount=%d)\n", name, mod->refcount);
-        return;
-    }
-
-    /* Unload the module */
-    int result = module_unload(mod->module_id);
-    if (result < 0) {
-        kprintf("rmmod: failed to unload '%s'\n", name);
+    if (ret == 0) {
+        kprintf("rmmod: unloaded module '%s'\n", name);
     } else {
-        kprintf("rmmod: Unloaded '%s'\n", name);
+        int err = (int)(-ret);
+        const char *msg = "Unknown error";
+        switch (err) {
+            case 2:  msg = "No such module"; break;             /* ENOENT */
+            case 16: msg = "Module is busy (refcount > 0)"; break; /* EBUSY */
+            case 1:  msg = "Operation not permitted"; break;    /* EPERM */
+            default: break;
+        }
+        kprintf("rmmod: failed to unload '%s': %s\n", name, msg);
     }
 }
