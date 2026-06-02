@@ -355,7 +355,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test
+        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test unit-test bench
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -501,7 +501,7 @@ $(BUILDDIR_CHECK)/kernel.elf: check-app-boundary $(CHECK_OBJS)
 $(BUILDDIR_CHECK)/kernel.bin: $(BUILDDIR_CHECK)/kernel.elf
 	cp $< $@
 
-check: $(BUILDDIR)/disk.img
+check: $(BUILDDIR)/disk.img unit-test
 	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK)/kernel.bin
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_CHECK)/kernel.bin $(BUILDDIR)/disk.img
@@ -509,6 +509,12 @@ check: $(BUILDDIR)/disk.img
 # Clean the check build artifacts
 check-clean:
 	rm -rf $(BUILDDIR_CHECK)
+
+# ── Host-side unit tests (compiled with host gcc, no kernel deps) ───
+unit-test:
+	@echo "=== Host-side unit tests ==="
+	$(MAKE) -C tests/host_libc all
+	$(MAKE) -C tests/unit all
 
 # Full clean rebuild + test
 test-clean: clean
