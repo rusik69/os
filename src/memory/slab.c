@@ -25,6 +25,20 @@
 /* Size of per-CPU object cache (number of free object pointers per CPU) */
 #define SLAB_CPU_CACHE_SIZE 8
 
+/* Object poisoning and redzoning — detect use-after-free and buffer overruns */
+#define SLAB_POISON_FREE  0x6b  /* fill freed objects with this pattern */
+#define SLAB_POISON_ALLOC 0x6a  /* fill freshly allocated objects with this */
+#define SLAB_REDZONE_SIZE 8     /* redzone bytes at end of each object */
+#define SLAB_REDZONE_PATTERN 0xFDULL /* fill redzone with this canary */
+
+/* Helpers */
+static inline uint64_t make_redzone_pattern(void) {
+    uint64_t pat = 0;
+    for (int i = 0; i < 8; i++)
+        pat = (pat << 8) | SLAB_REDZONE_PATTERN;
+    return pat;
+}
+
 /* Per-CPU slab cache — small array of objects for lockless fast path */
 struct cpu_slab {
     void *objects[SLAB_CPU_CACHE_SIZE]; /* cached free object pointers */
@@ -52,7 +66,8 @@ struct slab {
 
 struct kmem_cache {
     const char       *name;
-    size_t            obj_size;   /* actual object size (rounded + aligned) */
+    size_t            obj_size;   /* actual object size (rounded + aligned), includes redzone */
+    size_t            user_size;  /* caller-requested object size (without redzone) */
     size_t            align;      /* requested alignment */
     int               gfporder;   /* 2^gfporder pages per slab */
     int               num;        /* objects per slab */
@@ -69,6 +84,40 @@ struct kmem_cache {
 
     struct kmem_cache *next;     /* linked list of all caches (for reaper) */
 };
+
+/* ── Poisoning and redzone helpers ────────────────────────────────────── */
+
+/* Write the redzone canary at the end of a freshly allocated object */
+static inline void slab_set_redzone(struct kmem_cache *cache, void *obj) {
+    uint64_t *rz = (uint64_t *)((uint8_t *)obj + cache->user_size);
+    *rz = make_redzone_pattern();
+}
+
+/* Verify the redzone canary is intact.  Returns 0 on corruption. */
+static inline int slab_check_redzone(struct kmem_cache *cache, void *obj) {
+    uint64_t *rz = (uint64_t *)((uint8_t *)obj + cache->user_size);
+    uint64_t expected = make_redzone_pattern();
+    if (*rz != expected) {
+        kprintf("[SLAB] REDZONE CORRUPTED in '%s': obj=%p, expected=0x%llx, actual=0x%llx\n",
+                cache->name, obj, (unsigned long long)expected, (unsigned long long)*rz);
+        return 0;
+    }
+    return 1;
+}
+
+/* Poison a freshly freed object (before adding to free list).
+ * The first 8 bytes are left intact for the free-list pointer. */
+static inline void slab_poison_free(struct kmem_cache *cache, void *obj) {
+    size_t poison_len = cache->obj_size;
+    if (poison_len > 8) {
+        memset((uint8_t *)obj + 8, SLAB_POISON_FREE, poison_len - 8);
+    }
+}
+
+/* Poison a freshly allocated object before handing it to the caller. */
+static inline void slab_poison_alloc(struct kmem_cache *cache, void *obj) {
+    memset(obj, SLAB_POISON_ALLOC, cache->obj_size);
+}
 
 /* ── All-caches linked list ──────────────────────────────────────────── */
 
@@ -327,9 +376,13 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
     if (!cache) return NULL;
 
     memset(cache, 0, sizeof(*cache));
-    cache->name     = name;
-    cache->align    = (align == 0) ? 16 : align;
-    cache->ctor     = ctor;
+    cache->name      = name;
+    cache->align     = (align == 0) ? 16 : align;
+    cache->ctor      = ctor;
+    cache->user_size = obj_size;
+
+    /* Expand the internal object size to include the redzone canary */
+    obj_size += SLAB_REDZONE_SIZE;
 
     slab_sizing(obj_size, &cache->gfporder, &cache->num);
     cache->obj_size = (obj_size + 15) & ~15ULL;
@@ -362,6 +415,10 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
         cpu_s->count--;
         void *obj = cpu_s->objects[cpu_s->count];
         if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+
+        /* Poison with allocation pattern and set redzone */
+        slab_poison_alloc(cache, obj);
+        slab_set_redzone(cache, obj);
         return obj;
     }
 
@@ -374,11 +431,22 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
     void *obj = cpu_slab_refill(cache);
 
     spinlock_irqsave_release(&cache->lock, lock_flags);
+
+    if (obj) {
+        slab_poison_alloc(cache, obj);
+        slab_set_redzone(cache, obj);
+    }
     return obj;
 }
 
 void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     if (!obj || !cache) return;
+
+    /* Check redzone before modifying the object */
+    slab_check_redzone(cache, obj);
+
+    /* Poison the object with the free pattern (reserving first 8 bytes) */
+    slab_poison_free(cache, obj);
 
     int cpu = smp_get_cpu_id();
     struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
