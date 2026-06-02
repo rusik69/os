@@ -741,8 +741,10 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             continue;
         }
 
-        /* Preserve physical address, replace flags */
-        pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | PTE_PRESENT;
+        /* Preserve physical address, replace flags.
+         * Only set PRESENT if the caller asked for it (PROT_NONE clears it). */
+        pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF)
+                     | ((new_flags & VMM_FLAG_PRESENT) ? PTE_PRESENT : 0);
         tlb_flush(addr);
     }
     return 0;

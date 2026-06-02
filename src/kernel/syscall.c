@@ -1215,15 +1215,35 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
 static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4) return (uint64_t)-1;
+
+    /* Validate prot: only PROT_READ (1), PROT_WRITE (2), PROT_EXEC (4),
+     * combinations thereof, or PROT_NONE (0) are valid.  Bits 3-63 must be 0. */
+    if (prot & ~(uint64_t)(PROT_READ | PROT_WRITE | PROT_EXEC))
+        return (uint64_t)-1;
+
+    /* Address must be page-aligned */
     if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
 
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     if (addr + length < addr) return (uint64_t)-1;
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
 
-    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
-    if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
-    if (!(prot & 4)) page_flags |= VMM_FLAG_NOEXEC; /* no PROT_EXEC → NX */
+    uint64_t page_flags = VMM_FLAG_USER;
+
+    if (prot == 0) {
+        /* PROT_NONE: page becomes completely inaccessible.
+         * Clear the PRESENT bit so any access triggers a page fault
+         * with "not-present" error code → SIGSEGV. */
+        page_flags |= VMM_FLAG_NOEXEC;
+    } else {
+        /* PROT_READ, PROT_WRITE, PROT_EXEC (or any combination):
+         * On x86-64, PRESENT implies read access — there is no
+         * separate read-enable bit.  PROT_WRITE adds the write bit;
+         * absence of PROT_EXEC sets the NX (No-Execute) bit. */
+        page_flags |= VMM_FLAG_PRESENT;
+        if (prot & PROT_WRITE) page_flags |= VMM_FLAG_WRITE;
+        if (!(prot & PROT_EXEC)) page_flags |= VMM_FLAG_NOEXEC;
+    }
 
     if (vmm_set_user_pages_flags(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
         return (uint64_t)-1;
