@@ -136,6 +136,27 @@ jobs:
             --error-exitcode=1 \
             src/ 2>&1
 
+  # ── Code formatting check (no approval needed) ───────────────────────
+  format-check:
+    runs-on: [self-hosted, linux, x64]
+    container: ghcr.io/rusik69/os-ci:latest
+    timeout-minutes: 5
+    needs: [security-check]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check code formatting
+        run: |
+          if ! command -v git-clang-format >/dev/null 2>&1; then
+            # Install clang-format if not present in container
+            apt-get update -qq && apt-get install -y -qq clang-format-18
+            ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+            ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
+          fi
+          # For PRs, check against the merge-base
+          BASE_REF="origin/${{ github.base_ref }}"
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          make format-check FORMAT_BASE_REF="$BASE_REF"
+
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
     runs-on: [self-hosted, linux, x64]

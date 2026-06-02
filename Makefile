@@ -348,7 +348,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-clean check-app-boundary doom-test format lint ccache-stats count build-info run-test
+        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -555,6 +555,29 @@ format:
 		echo "Formatted all .c and .h files in src/."; \
 	else \
 		echo "clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
+		exit 1; \
+	fi
+
+# ── Format check: verify code matches clang-format style ────────────
+# Uses git-clang-format to check only lines that differ from the base
+# ref (default: HEAD~1). Exits with 1 if any formatting issues found.
+
+format-check:
+	@if command -v git-clang-format >/dev/null 2>&1; then \
+		BASE_REF="$${FORMAT_BASE_REF:-HEAD~1}"; \
+		echo "Checking code formatting against $${BASE_REF}..."; \
+		git clang-format --diff "$${BASE_REF}" 2>/dev/null > /tmp/format_diff.$$$$; \
+		if [ -s /tmp/format_diff.$$$$ ]; then \
+			echo "❌ Code formatting issues found:"; \
+			cat /tmp/format_diff.$$$$; \
+			rm -f /tmp/format_diff.$$$$; \
+			exit 1; \
+		else \
+			echo "✅ Code formatting is clean."; \
+			rm -f /tmp/format_diff.$$$$; \
+		fi \
+	else \
+		echo "git-clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
 		exit 1; \
 	fi
 

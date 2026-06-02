@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     # Analysis
     cppcheck \
+    clang-format-18 \
     dosfstools \
     mtools \
     # E2E tests

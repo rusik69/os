@@ -178,6 +178,24 @@ jobs:
           E2E_TIMEOUT: "45"
           E2E_EXTERNAL_DNS: "0"
 
+  # ── Code formatting check (clang-format) ──────────────────────────────
+  format-check:
+    runs-on: [self-hosted, linux, x64]
+    container: ghcr.io/rusik69/os-ci:latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check code formatting
+        run: |
+          # Ensure git-clang-format is available
+          if ! command -v git-clang-format >/dev/null 2>&1; then
+            # Try installing clang-format if not present
+            apt-get update -qq && apt-get install -y -qq clang-format-18
+            ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+            ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
+          fi
+          make format-check FORMAT_BASE_REF=HEAD~1
+
   # ── virtio-net smoke test ────────────────────────────────────────────
   virtio-net-smoke:
     runs-on: [self-hosted, linux, x64]
