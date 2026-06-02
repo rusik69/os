@@ -11,6 +11,7 @@
 #include "fsnotify.h"
 #include "tmpfs.h"
 #include "bufcache.h"
+#include "file_lock.h"
 
 #define EROFS_KERNEL 30
 
@@ -237,8 +238,7 @@ static struct vfs_filesystem_type fs_types[VFS_MAX_FS_TYPES];
 static int num_fs_types = 0;
 
 /* File locking: static array of 16 locks */
-#define VFS_MAX_LOCKS 16
-static struct file_lock file_locks[VFS_MAX_LOCKS];
+/* no more internal file_locks array — delegated to file_lock.c */
 
 /* Extended attribute storage: keyed by path hash, up to 4 per path, 16 entries total */
 #define XATTR_PATH_TABLE 16
@@ -347,6 +347,14 @@ int vfs_list_filesystems(char names[][32], int max) {
 
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check mandatory locks before read */
+    {
+        int lock_ret = file_lock_check_mandatory(ap, 0);
+        if (lock_ret < 0)
+            return lock_ret; /* -EAGAIN if blocked by mandatory write lock */
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->read) return -1;
     int r = m->ops->read(m->priv, ap, buf, max, out_size);
@@ -359,6 +367,14 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
 
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check mandatory locks before write */
+    {
+        int lock_ret = file_lock_check_mandatory(ap, 1);
+        if (lock_ret < 0)
+            return lock_ret; /* -EAGAIN if blocked by mandatory read or write lock */
+    }
+
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->write) return -1;
 
@@ -476,91 +492,14 @@ int vfs_list_mountpoints(char mounts_out[][64], int max) {
 
 /* ── File locking ──────────────────────────────────────────────── */
 
-int vfs_setlk(const char *path, struct file_lock *flk, int wait) {
-    (void)wait; /* blocking not yet supported */
-    if (!path || !flk) return -1;
-
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-
-    if (flk->l_type == F_UNLCK) {
-        /* Find and remove the lock */
-        for (int i = 0; i < VFS_MAX_LOCKS; i++) {
-            if (file_locks[i].used &&
-                strcmp(file_locks[i].path_storage, ap) == 0 &&
-                file_locks[i].l_pid == flk->l_pid) {
-                file_locks[i].used = 0;
-                return 0;
-            }
-        }
-        return 0; /* nothing to unlock */
-    }
-
-    /* Check for conflicting lock */
-    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
-        if (!file_locks[i].used) continue;
-        if (strcmp(file_locks[i].path_storage, ap) != 0) continue;
-        if (file_locks[i].l_pid == flk->l_pid) continue;
-
-        /* Check lock range overlap */
-        int64_t l1_start = file_locks[i].l_start;
-        int64_t l1_end = (file_locks[i].l_len == 0) ? INT64_MAX :
-                          file_locks[i].l_start + file_locks[i].l_len;
-        int64_t l2_start = flk->l_start;
-        int64_t l2_end = (flk->l_len == 0) ? INT64_MAX :
-                          flk->l_start + flk->l_len;
-
-        if (l1_start < l2_end && l2_start < l1_end) {
-            /* Conflict: if non-blocking, return -EAGAIN */
-            if (!wait) return -EAGAIN;
-            return -EAGAIN; /* blocking not implemented yet */
-        }
-    }
-
-    /* Find free slot and set the lock */
-    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
-        if (!file_locks[i].used) {
-            strncpy(file_locks[i].path_storage, ap, 63);
-            file_locks[i].path_storage[63] = '\0';
-            file_locks[i].l_type   = flk->l_type;
-            file_locks[i].l_whence = flk->l_whence;
-            file_locks[i].l_start  = flk->l_start;
-            file_locks[i].l_len    = flk->l_len;
-            file_locks[i].l_pid    = flk->l_pid;
-            file_locks[i].used     = 1;
-            return 0;
-        }
-    }
-    return -ENOLCK;
+int vfs_setlk(const char *path, struct file_lock *flk, int wait)
+{
+    return file_lock_set(path, flk, wait);
 }
 
-int vfs_getlk(const char *path, struct file_lock *flk) {
-    if (!path || !flk) return -1;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-
-    for (int i = 0; i < VFS_MAX_LOCKS; i++) {
-        if (!file_locks[i].used) continue;
-        if (strcmp(file_locks[i].path_storage, ap) != 0) continue;
-
-        /* Check if this lock would conflict */
-        int64_t l1_start = file_locks[i].l_start;
-        int64_t l1_end = (file_locks[i].l_len == 0) ? INT64_MAX :
-                          file_locks[i].l_start + file_locks[i].l_len;
-        int64_t l2_start = flk->l_start;
-        int64_t l2_end = (flk->l_len == 0) ? INT64_MAX :
-                          flk->l_start + flk->l_len;
-
-        if (l1_start < l2_end && l2_start < l1_end) {
-            flk->l_type   = file_locks[i].l_type;
-            flk->l_whence = file_locks[i].l_whence;
-            flk->l_start  = file_locks[i].l_start;
-            flk->l_len    = file_locks[i].l_len;
-            flk->l_pid    = file_locks[i].l_pid;
-            return 0;
-        }
-    }
-    /* No conflicting lock found */
-    flk->l_type = F_UNLCK;
-    return 0;
+int vfs_getlk(const char *path, struct file_lock *flk)
+{
+    return file_lock_get(path, flk);
 }
 
 /* ── Extended attributes ───────────────────────────────────────── */
@@ -963,8 +902,7 @@ void vfs_init(void) {
     vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);
     /* Initialize nlink tracking */
     memset(nlink_table, 0, sizeof(nlink_table));
-    /* Initialize file locking */
-    memset(file_locks, 0, sizeof(file_locks));
+    memset(mounts, 0, sizeof(mounts));
     /* Initialize xattr */
     memset(xattr_table, 0, sizeof(xattr_table));
 }

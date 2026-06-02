@@ -78,6 +78,7 @@ struct file_lock {
     int64_t  l_len;     /* 0 = to EOF */
     int32_t  l_pid;
     int      used;
+    int      mandatory; /* 1 = kernel-enforced mandatory lock */
     char     path_storage[64]; /* path this lock applies to */
 };
 

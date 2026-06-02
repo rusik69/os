@@ -128,6 +128,7 @@
 #include "net_igmp.h"
 #include "net_lldp.h"
 #include "aio_enhanced.h"
+#include "file_lock.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif
@@ -493,6 +494,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
+
+    /* File locking (advisory + mandatory) */
+    file_lock_init();
 
     /* Mount propagation attributes */
     mount_prop_init();
