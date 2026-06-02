@@ -2927,62 +2927,6 @@ static uint64_t sys_doom_run(void) {
  * Production-ready OS improvements — Tier 1-5 syscall implementations
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── OOM Killer ──────────────────────────────────────────────────────── */
-
-void pmm_oom_kill(void) {
-    /* First try to reclaim slab caches before killing a process */
-    extern void kmem_cache_reap(void);
-    kmem_cache_reap();
-
-    struct process *table = process_get_table();
-    struct process *victim = NULL;
-    uint64_t worst_score = 0;
-    uint64_t now = timer_get_ticks();
-
-    /* Score processes: higher score = better victim candidate.
-     * Heuristic based on Linux badness() simplified: */
-    for (int i = 0; i < PROCESS_MAX; i++) {
-        if (table[i].state == PROCESS_UNUSED || table[i].state == PROCESS_ZOMBIE)
-            continue;
-        if (table[i].pid == 0 || table[i].pid == 1) continue; /* spare init & idle */
-
-        uint64_t score = 0;
-        /* Base: rough memory usage approximation */
-        score += 50;  /* assume at least stack + kernel pages */
-
-        /* User processes > kernel threads */
-        if (table[i].is_user) score += 100;
-
-        /* Foreground > background (interactive > service) */
-        if (!table[i].is_background) score += 50;
-
-        /* Long-running processes are less likely to be short-lived temp processes */
-        if (table[i].last_run_tick && now > table[i].last_run_tick) {
-            uint64_t runtime = now - table[i].last_run_tick;
-            if (runtime > 100) score += 25; /* >1s runtime */
-            if (runtime > 600) score += 25; /* >6s */
-        }
-
-        /* Root-owned processes get a penalty (more likely to be critical) */
-        if (table[i].euid == 0) score = (score > 25) ? score - 25 : 0;
-
-        /* Deterministic tiebreaker */
-        score += table[i].pid;
-
-        if (score > worst_score) {
-            worst_score = score;
-            victim = &table[i];
-        }
-    }
-
-    if (victim) {
-        kprintf("[OOM] Killing pid=%lu name=%s runtime=%lu\n",
-                (unsigned long)victim->pid, victim->name ? victim->name : "?",
-                (unsigned long)(now > victim->last_run_tick ? now - victim->last_run_tick : 0));
-        signal_send(victim->pid, SIGKILL);
-    }
-}
-
 /* ── rlimit/prlimit64 ────────────────────────────────────────────────── */
 
 static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,

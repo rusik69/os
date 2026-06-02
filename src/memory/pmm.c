@@ -2,6 +2,11 @@
 #include "vmm.h"
 #include "string.h"
 #include "printf.h"
+#include "oom.h"
+#include "panic.h"
+#include "scheduler.h"
+#include "compaction.h"
+#include "slab.h"
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -155,7 +160,54 @@ void pmm_advance_hint(uint64_t phys_addr) {
         pmm_hint = frame + 1;
 }
 
-void pmm_oom_kill(void); /* defined in syscall.c — kills a process to free memory */
+/* ── Memory statistics dumping ──────────────────────────────────────────── */
+
+/* Print detailed physical memory state: usage, largest free block, fragmentation */
+void pmm_dump_stats(void) {
+    uint64_t total = total_frames;
+    uint64_t used  = used_frames;
+    uint64_t free  = (total > used) ? (total - used) : 0;
+    uint64_t free_pct = (total > 0) ? (free * 100ULL) / total : 0;
+
+    kprintf("[PMM] frames: total=%llu (%llu MB), used=%llu, free=%llu (%llu%%)\n",
+            (unsigned long long)total, (unsigned long long)((total * 4ULL) / 1024ULL),
+            (unsigned long long)used, (unsigned long long)free,
+            (unsigned long long)free_pct);
+
+    /* Scan bitmap to find the largest contiguous free block and count free runs */
+    uint64_t max_run = 0, cur_run = 0;
+    uint64_t free_runs = 0;
+    int in_run = 0;
+    for (uint64_t f = 0; f < total_frames; f++) {
+        if (!bitmap_test(f)) {
+            cur_run++;
+            in_run = 1;
+        } else {
+            if (in_run) { free_runs++; in_run = 0; }
+            if (cur_run > max_run) max_run = cur_run;
+            cur_run = 0;
+        }
+    }
+    if (in_run) { free_runs++; }
+    if (cur_run > max_run) max_run = cur_run;
+
+    uint64_t frag_pct = (free > 0) ? ((free_runs * 100ULL) / free) : 0;
+    if (frag_pct > 100) frag_pct = 100;
+
+    kprintf("[PMM] largest free block: %llu frames (%llu KB), free runs: %llu, frag: %llu%%\n",
+            (unsigned long long)max_run, (unsigned long long)(max_run * 4ULL),
+            (unsigned long long)free_runs, (unsigned long long)frag_pct);
+
+    /* Append OOM subsystem statistics */
+    extern uint64_t oom_kill_count;
+    kprintf("[PMM] OOM kills: %llu  |  pgalloc=%llu pgfree=%llu pgfault=%llu\n",
+            (unsigned long long)oom_kill_count,
+            (unsigned long long)vm_pgalloc,
+            (unsigned long long)vm_pgfree,
+            (unsigned long long)vm_pgfault);
+}
+
+/* ── Page allocator ─────────────────────────────────────────────────────── */
 
 uint64_t pmm_alloc_frame(void) {
     /* Start from hint to avoid scanning already-allocated frames */
@@ -175,8 +227,14 @@ uint64_t pmm_alloc_frame(void) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
-    /* Out of memory — invoke OOM killer and retry once */
-    pmm_oom_kill();
+
+    /* ── Out of memory: recovery level 1 — slab reaping + OOM killer ── */
+    kprintf("[PMM] Out of memory! Attempting OOM recovery (slab reaping + OOM kill)...\n");
+
+    kmem_cache_reap();
+    oom_kill(1);
+    scheduler_yield();
+
     /* Second attempt */
     i = pmm_hint;
     do {
@@ -194,7 +252,37 @@ uint64_t pmm_alloc_frame(void) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
-    return 0; /* truly out of memory */
+
+    /* ── Recovery level 2 — compaction + aggressive OOM ── */
+    kprintf("[PMM] OOM recovery level 1 failed! Running compaction + aggressive OOM...\n");
+
+    compaction_run();
+    oom_kill(1);
+    scheduler_yield();
+
+    /* Third attempt */
+    i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            bitmap_set(i);
+            used_frames++;
+            frame_refcount[i] = 1;
+            pmm_hint = i + 1;
+            if (pmm_hint >= total_frames) pmm_hint = 0;
+            uint64_t addr = i * PAGE_SIZE;
+            poison_fill(addr, 0xDEADBEEF);
+            vm_pgalloc++;
+            return addr;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+
+    /* ── Final: panic with full memory diagnostics ── */
+    pmm_dump_stats();
+    panic("[PMM] Out of memory — OOM killer and compaction failed to reclaim any frames");
+    /* unreachable */
+    return 0;
 }
 
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
@@ -230,7 +318,80 @@ uint64_t *pmm_alloc_frames(size_t count) {
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
 
-    return NULL; /* out of memory */
+    /* ── First recovery: slab reaping + OOM killer ── */
+    kprintf("[PMM] Out of memory for %llu contiguous frames! Attempting OOM recovery...\n",
+            (unsigned long long)count);
+
+    kmem_cache_reap();
+    oom_kill(1);
+    scheduler_yield();
+
+    /* Second attempt */
+    start = pmm_hint;
+    found = 0;
+    i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            if (found == 0) start = i;
+            found++;
+            if (found == count) {
+                for (uint64_t j = start; j < start + count; j++) {
+                    bitmap_set(j);
+                    used_frames++;
+                    frame_refcount[j] = 1;
+                    poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
+                }
+                pmm_hint = start + count;
+                if (pmm_hint >= total_frames) pmm_hint = 0;
+                return (uint64_t *)(start * PAGE_SIZE);
+            }
+        } else {
+            found = 0;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+
+    /* ── Second recovery: compaction ── */
+    kprintf("[PMM] OOM recovery for %llu contiguous frames failed! Running compaction...\n",
+            (unsigned long long)count);
+
+    compaction_run();
+    oom_kill(1);
+    scheduler_yield();
+
+    /* Third attempt */
+    start = pmm_hint;
+    found = 0;
+    i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            if (found == 0) start = i;
+            found++;
+            if (found == count) {
+                for (uint64_t j = start; j < start + count; j++) {
+                    bitmap_set(j);
+                    used_frames++;
+                    frame_refcount[j] = 1;
+                    poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
+                }
+                pmm_hint = start + count;
+                if (pmm_hint >= total_frames) pmm_hint = 0;
+                return (uint64_t *)(start * PAGE_SIZE);
+            }
+        } else {
+            found = 0;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+
+    /* ── Final: panic with full diagnostics ── */
+    pmm_dump_stats();
+    panic("[PMM] Out of memory — cannot allocate %llu contiguous frames",
+          (unsigned long long)count);
+    /* unreachable */
+    return NULL;
 }
 
 void pmm_free_frame(uint64_t addr) {
