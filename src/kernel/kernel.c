@@ -95,6 +95,7 @@
 #include "perf_events.h"
 #include "jump_label.h"
 #include "pstore.h"
+#include "kdump.h"
 #include "mce.h"
 #include "nx_enforce.h"
 #include "stack_guard.h"
@@ -276,6 +277,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* PStore — persistent storage for panic/oops messages */
     pstore_init();
+
+    /* Kdump — kernel crash dump capture region (post-mortem analysis) */
+    kdump_init();
 
     /* Machine Check Exception (MCE) handler — hardware error detection */
     mce_init();

@@ -11,6 +11,7 @@
 #include "sysrq.h"
 #include "kallsyms.h"
 #include "pstore.h"
+#include "kdump.h"
 #include "notifier.h"
 #include "watchdog.h"
 
@@ -193,8 +194,11 @@ void panic_halt_loop(void)
  *
  * Splits the dump across multiple pstore records (max 256 bytes each).
  * Callers should cli() first to ensure consistent register state.
+ *
+ * @rip  The actual instruction pointer where the panic was triggered
+ *       (use __builtin_return_address(0) from panic()).
  */
-static void kdump_save_panic(const char *msg)
+static void kdump_save_panic(const char *msg, uint64_t actual_rip)
 {
     char buf[PSTORE_MAX_DATA_LEN];
     int len;
@@ -234,7 +238,7 @@ static void kdump_save_panic(const char *msg)
     __asm__ volatile("mov %%fs,  %0"  : "=r"(fs));
     __asm__ volatile("mov %%gs,  %0"  : "=r"(gs));
     __asm__ volatile("mov %%ss,  %0"  : "=r"(ss));
-    rip = (uint64_t)kdump_save_panic;
+    rip = actual_rip;
 
     /* ── Record 0: panic header (message + process info) ── */
     cur = process_get_current();
@@ -398,8 +402,8 @@ void dump_regs(void) {
     __asm__ volatile("mov %%gs,  %0"  : "=r"(gs));
     __asm__ volatile("mov %%ss,  %0"  : "=r"(ss));
 
-    /* RIP via call trick */
-    rip = (uint64_t)dump_regs;
+    /* RIP via return address — captures the actual caller */
+    rip = (uint64_t)__builtin_return_address(0);
 
     kprintf("=== REGISTER DUMP ===\n");
     kprintf(" RAX=%016llx RBX=%016llx RCX=%016llx RDX=%016llx\n",
@@ -438,8 +442,14 @@ void panic(const char *fmt, ...) {
         __builtin_va_end(args);
     }
 
+    /* Capture the real RIP at the panic call site */
+    uint64_t panic_rip = (uint64_t)__builtin_return_address(0);
+
     /* Save state to persistent storage for post-mortem analysis */
-    kdump_save_panic(msg_buf);
+    kdump_save_panic(msg_buf, panic_rip);
+
+    /* Save to the dedicated kdump memory region (if available) */
+    kdump_capture(msg_buf, panic_rip);
 
     vga_set_color(VGA_WHITE, VGA_RED);
     kprintf("\n\n=== KERNEL PANIC ===\n");
