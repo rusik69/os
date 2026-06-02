@@ -163,6 +163,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/printf.c \
          src/lib/stdlib.c \
          src/lib/libc.c \
+         src/lib/stdio.c \
          src/drivers/xattr.c \
          src/drivers/file_lock.c \
          src/drivers/kaps.c \

@@ -127,6 +127,7 @@
 #include "process_rlimit.h"
 #include "devtmpfs.h"
 #include "export.h"
+#include "stdio.h"
 #include "overlay.h"
 #include "sysfs.h"
 #include "fanotify.h"
@@ -138,6 +139,9 @@
 #ifdef TEST_MODE
 #include "test.h"
 #endif
+
+/* ── Forward declarations ─────────────────────────────── */
+void stdio_init(void);
 
 static void __attribute__((unused)) test_task_a(void) {
     for (;;) {
