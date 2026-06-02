@@ -56,6 +56,10 @@
 #define MAX_ARGS      16
 #define MAX_PATH      128
 
+/* Runlevel constants (Item U4) */
+#define DEFAULT_RUNLEVEL    2   /* multi-user default */
+#define INITPIPE_PATH       "/var/run/initpipe"
+
 /* Avoid requiring <stddef.h> */
 #define NULL          ((void *)0)
 typedef unsigned long size_t;
@@ -90,11 +94,15 @@ struct service {
     int             critical;              /* respawn limit applies */
     int             respawn_count;
     int             respawn_limit;         /* max respawns before giving up */
+    unsigned int    runlevels;             /* bitmask of allowed runlevels (Item U4) */
 };
 
 static struct service services[MAX_SERVICES];
 static int service_count = 0;
 static volatile int shutdown_requested = 0;
+
+/* Current system runlevel (0=halt, 1=single, 2=multi-user, 5=graphical) */
+static int current_runlevel = DEFAULT_RUNLEVEL;
 
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
@@ -103,6 +111,13 @@ static void service_start(struct service *svc);
 static void service_stop(struct service *svc);
 static void reap_children(void);
 static void boot_services(void);
+static unsigned int runlevel_bitmask(int rl);
+static void set_runlevel(int new_rl);
+static void check_initpipe(void);
+
+/* Console output forward declarations (used by runlevel functions before they are defined) */
+static void puts(const char *s);
+static void put_dec(int n);
 
 /* ── Inline syscall (x86-64: args in RDI, RSI, RDX, R10, R8, R9) ──── */
 
@@ -206,15 +221,29 @@ static char *strchr(const char *s, int c)
     return (c == '\0') ? (char *)s : 0;
 }
 
+/* ── Runlevel helper ─────────────────────────────────────────────────── */
+
+/* Convert a runlevel digit (0-9) to a bitmask for matching against
+ * the service's runlevels field.  Returns 0 for invalid runlevels. */
+static unsigned int runlevel_bitmask(int rl)
+{
+    if (rl < 0 || rl > 9) return 0;
+    return 1u << rl;
+}
+
 /* ── Inittab parsing ──────────────────────────────────────────────────── */
 
 /*
  * Parse one line of /etc/inittab.
  * Format:  id:runlevels:action:process
  *   id       ::= 1-4 char identifier
- *   runlevels ::= (ignored in this implementation, treated as enabled)
+ *   runlevels ::= string of digits (e.g. "2345") indicating allowed runlevels
  *   action   ::= respawn | once | wait | sysinit | boot | bootwait | askfirst | off
  *   process  ::= full path to executable + optional arguments
+ *
+ * Runlevel semantics (SysV convention):
+ *   0 = halt, 1 = single-user, 2 = multi-user (default),
+ *   3 = networking, 4 = reserved, 5 = graphical, 6 = reboot, s/S = single
  */
 static int parse_inittab_line(const char *line, struct service *svc)
 {
@@ -247,8 +276,19 @@ static int parse_inittab_line(const char *line, struct service *svc)
             strncpy(svc->id, p, sizeof(svc->id) - 1);
             svc->id[sizeof(svc->id) - 1] = '\0';
             break;
-        case 1: /* runlevels — ignored for now */
+        case 1: /* runlevels — parse digit string into bitmask */
+        {
+            const char *rp = p;
+            svc->runlevels = 0;
+            while (rp && *rp) {
+                if (*rp >= '0' && *rp <= '9')
+                    svc->runlevels |= runlevel_bitmask(*rp - '0');
+                else if (*rp == 's' || *rp == 'S')
+                    svc->runlevels |= runlevel_bitmask(1);  /* 's' = single-user */
+                rp++;
+            }
             break;
+        }
         case 2: /* action */
             if (strcmp(p, "respawn") == 0)      svc->action = ACT_RESPAWN;
             else if (strcmp(p, "once") == 0)     svc->action = ACT_ONCE;
@@ -316,6 +356,10 @@ static int parse_inittab_line(const char *line, struct service *svc)
     svc->critical = (svc->action == ACT_RESPAWN);
     svc->respawn_count = 0;
     svc->respawn_limit = (svc->critical) ? 10 : 0;  /* max 10 respawns for critical */
+
+    /* If no runlevels were explicitly specified, default to all runlevels */
+    if (svc->runlevels == 0)
+        svc->runlevels = ~0u;
 
     return 0;
 }
@@ -435,6 +479,9 @@ static int handle_child_exit(struct service *svc, int status)
 
     switch (svc->action) {
     case ACT_RESPAWN:
+        /* Only respawn if the service is allowed in the current runlevel */
+        if (!(svc->runlevels & runlevel_bitmask(current_runlevel)))
+            return 0;
         svc->respawn_count++;
         if (svc->respawn_limit > 0 && svc->respawn_count > svc->respawn_limit) {
             /* Exceeded respawn limit — give up */
@@ -483,8 +530,12 @@ static void reap_children(void)
 
 static void boot_services(void)
 {
+    unsigned int rlmask = runlevel_bitmask(current_runlevel);
+
     /* Phase 1: sysinit — run and wait for each */
     for (int i = 0; i < service_count; i++) {
+        if (!(services[i].runlevels & rlmask))
+            continue;
         if (services[i].action == ACT_SYSINIT && services[i].state == ST_DEAD) {
             services[i].state = ST_WAITING;
             service_start(&services[i]);
@@ -502,6 +553,8 @@ static void boot_services(void)
 
     /* Phase 2: boot and bootwait */
     for (int i = 0; i < service_count; i++) {
+        if (!(services[i].runlevels & rlmask))
+            continue;
         if (services[i].action == ACT_BOOT && services[i].state == ST_DEAD) {
             service_start(&services[i]);
         }
@@ -521,6 +574,8 @@ static void boot_services(void)
 
     /* Phase 3: respawn services */
     for (int i = 0; i < service_count; i++) {
+        if (!(services[i].runlevels & rlmask))
+            continue;
         if (services[i].action == ACT_RESPAWN && services[i].state == ST_DEAD) {
             service_start(&services[i]);
         }
@@ -528,10 +583,147 @@ static void boot_services(void)
 
     /* Phase 4: once services (fire-and-forget) */
     for (int i = 0; i < service_count; i++) {
+        if (!(services[i].runlevels & rlmask))
+            continue;
         if (services[i].action == ACT_ONCE && services[i].state == ST_DEAD) {
             service_start(&services[i]);
         }
     }
+}
+
+/* ── Runlevel switching (Item U4) ────────────────────────────────────── */
+
+/*
+ * Transition the system to a new runlevel.
+ *
+ * Semantics:
+ *   0 = halt (system shutdown)
+ *   1 = single-user (maintenance mode)
+ *   2 = multi-user (default)
+ *   3 = networking
+ *   5 = graphical
+ *   6 = reboot
+ *
+ * Implementation:
+ *   1. Stop services that are running but NOT allowed in the new runlevel
+ *   2. Start services that are allowed in the new runlevel but not running
+ *   3. Update current_runlevel
+ *   4. For runlevels 0 and 6, trigger shutdown/reboot after stopping services
+ */
+static void set_runlevel(int new_rl)
+{
+    if (new_rl < 0 || new_rl > 9) {
+        puts("init: invalid runlevel ");
+        put_dec(new_rl);
+        puts("\n");
+        return;
+    }
+
+    if (new_rl == current_runlevel) {
+        puts("init: already in runlevel ");
+        put_dec(new_rl);
+        puts("\n");
+        return;
+    }
+
+    puts("init: switching to runlevel ");
+    put_dec(new_rl);
+    puts("\n");
+
+    unsigned int old_mask = runlevel_bitmask(current_runlevel);
+    unsigned int new_mask = runlevel_bitmask(new_rl);
+    int old_rl = current_runlevel;
+    current_runlevel = new_rl;
+
+    /* Phase 1: Stop services not allowed in the new runlevel */
+    for (int i = 0; i < service_count; i++) {
+        if (services[i].state == ST_RUNNING) {
+            if (!(services[i].runlevels & new_mask)) {
+                puts("init: stopping '");
+                puts(services[i].id);
+                puts("' for runlevel change\n");
+                service_stop(&services[i]);
+            }
+        }
+    }
+
+    /* Reap any children that stopped */
+    reap_children();
+
+    /* Phase 2: Start services that are now allowed but not running */
+    for (int i = 0; i < service_count; i++) {
+        if (services[i].state == ST_DEAD &&
+            (services[i].runlevels & new_mask) &&
+            (services[i].action == ACT_RESPAWN ||
+             services[i].action == ACT_BOOT ||
+             services[i].action == ACT_BOOTWAIT ||
+             services[i].action == ACT_WAIT)) {
+            puts("init: starting '");
+            puts(services[i].id);
+            puts("' for runlevel ");
+            put_dec(new_rl);
+            puts("\n");
+            service_start(&services[i]);
+        }
+    }
+
+    /* Handle special runlevels */
+    if (new_rl == 0) {
+        puts("init: runlevel 0 -- halting system\n");
+        shutdown_requested = 1;
+    } else if (new_rl == 6) {
+        puts("init: runlevel 6 -- rebooting system\n");
+        shutdown_requested = 1;
+    }
+
+    (void)old_rl;
+    (void)old_mask;
+}
+
+/* ── Init pipe: runlevel change notification (Item U4) ───────────────── */
+
+/*
+ * Check /var/run/initpipe for a pending runlevel change request.
+ *
+ * The kernel's 'init N' shell command writes a single ASCII digit to
+ * this file.  Init reads it on each main-loop iteration and processes
+ * any pending runlevel switch.  After processing, the file is truncated.
+ *
+ * If the file doesn't exist yet, it is created empty so that future
+ * writes by the init command will succeed.
+ */
+static void check_initpipe(void)
+{
+    /* Open the pipe file (read-only) */
+    int fd = open(INITPIPE_PATH, O_RDONLY);
+    if (fd < 0) {
+        /* File doesn't exist yet -- try to create it */
+        fd = open(INITPIPE_PATH, O_WRONLY | O_CREAT);
+        if (fd >= 0)
+            close(fd);
+        return;
+    }
+
+    /* Read one byte */
+    char buf[2];
+    long n = read(fd, buf, 1);
+    close(fd);
+
+    if (n <= 0)
+        return;  /* empty or error */
+
+    buf[1] = '\0';
+
+    /* Validate: must be a single digit 0-9 */
+    if (buf[0] >= '0' && buf[0] <= '9') {
+        int new_rl = buf[0] - '0';
+        set_runlevel(new_rl);
+    }
+
+    /* Truncate the file by reopening with O_TRUNC */
+    fd = open(INITPIPE_PATH, O_WRONLY | O_TRUNC);
+    if (fd >= 0)
+        close(fd);
 }
 
 /* ── Console output helpers (no snprintf) ─────────────────────────────── */
@@ -575,9 +767,10 @@ void _start(void)
     boot_services();
     puts("init: boot sequence complete, entering service loop\n");
 
-    /* Main loop: reap children and handle shutdown */
+    /* Main loop: reap children, check runlevel changes, and handle shutdown */
     while (!shutdown_requested) {
         reap_children();
+        check_initpipe();
 
         /* Brief pause to avoid busy-waiting */
         for (volatile int i = 0; i < 100000; i++)

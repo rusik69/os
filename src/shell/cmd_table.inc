@@ -256,6 +256,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("crontab",     "Schedule periodic commands (stub)",                              cmd_crontab)
     CMD("diff3",       "Compare three files line by line (diff3 f1 f2 f3)",              cmd_diff3)
     CMD("host",        "DNS lookup utility (host <name> [server])",                     cmd_host)
+    CMD("init",        "Switch system runlevel (init N)",                               cmd_init)
     CMD("lsattr",      "List extended file attributes (lsattr <file>)",                  cmd_lsattr)
     CMD("lessecho",    "Echo arguments with metacharacter escaping (lessecho)",          cmd_lessecho)
     CMD("lesskey",     "Customize less key bindings (lesskey <file>)",                   cmd_lesskey)

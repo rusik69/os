@@ -127,6 +127,9 @@ void cmd_capprof(const char *args);
 /* Service management */
 void cmd_service(const char *args);
 
+/* Init runlevel switching (U4) */
+void cmd_init(const char *args);
+
 /* New text processing utilities */
 int cmd_fold(int argc, char **argv);
 int cmd_expand(int argc, char **argv);
