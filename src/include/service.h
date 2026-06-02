@@ -14,6 +14,9 @@
 /* Maximum length of service name */
 #define SERVICE_NAME_MAX 16
 
+/* Maximum number of dependencies per service */
+#define SERVICE_DEPS_MAX 8
+
 /* Log path template: /var/log/<name>.log */
 #define SERVICE_LOG_DIR  "/var/log"
 
@@ -43,6 +46,10 @@ struct service {
     int    (*start)(void);    /* returns 0 on success */
     void   (*stop)(void);
 
+    /* ── Dependency metadata (Item U3) ────────────────────────── */
+    char     deps[SERVICE_DEPS_MAX][SERVICE_NAME_MAX]; /* Required-Start dependency names */
+    int      ndeps;                                      /* number of valid deps */
+
     /* ── Watchdog fields ─────────────────────────────────────────── */
     int      pid;             /* PID of the service process (0 = kernel service) */
     int      crash_count;     /* number of times this service has crashed */
@@ -69,6 +76,25 @@ struct service *service_find(const char *name);
 
 /* Write a line to the service's log file (appends with newline) */
 void service_log(const char *name, const char *msg);
+
+/* ── Dependency management (Item U3) ──────────────────────────────── */
+
+/* Add a Required-Start dependency: service 'name' depends on 'dep'.
+ * Returns 0 on success, -1 if name not found or dep table full. */
+int service_add_dep(const char *name, const char *dep);
+
+/* Return the number of dependencies for a given service.
+ * Returns -1 if the service is not found. */
+int service_num_deps(const char *name);
+
+/* Get the i-th dependency name for a service.
+ * Returns NULL if i is out of range or service not found. */
+const char *service_get_dep(const char *name, int i);
+
+/* Topological sort of service start order.
+ * Fills 'order' array with service indices in dependency order.
+ * Returns the number of entries in 'order', or -1 on error (cycle detected). */
+int service_sort_deps(int *order, int max_order);
 
 /* ── Watchdog health-monitoring API ─────────────────────────────────── */
 

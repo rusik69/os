@@ -266,6 +266,10 @@ int service_register(const char *name, int (*start)(void), void (*stop)(void)) {
     svc->last_heartbeat = 0;
     svc->last_restart   = 0;
 
+    /* ── Initialise dependency fields ── */
+    svc->ndeps = 0;
+    memset(svc->deps, 0, sizeof(svc->deps));
+
     return 0;
 }
 
@@ -306,6 +310,28 @@ int service_start(const char *name) {
         kprintf("service: %s is already running\n", name);
         return -1;
     }
+
+    /* ── Recursively start dependencies first (Item U3) ──────────── */
+    for (int d = 0; d < svc->ndeps; d++) {
+        struct service *dep = service_find(svc->deps[d]);
+        if (!dep) {
+            kprintf("[svc] %s: dependency '%s' not registered, skipping\n",
+                    name, svc->deps[d]);
+            continue;
+        }
+        if (dep->state != SERVICE_RUNNING) {
+            kprintf("[svc] %s: starting dependency '%s' first\n",
+                    name, svc->deps[d]);
+            int dep_rc = service_start(svc->deps[d]);
+            if (dep_rc != 0) {
+                kprintf("[svc] %s: dependency '%s' failed (rc=%d), aborting\n",
+                        name, svc->deps[d], dep_rc);
+                log_line(svc, "dependency start failed, aborting");
+                return -1;
+            }
+        }
+    }
+
     int rc = svc->start();
     if (rc == 0) {
         svc->state = SERVICE_RUNNING;
@@ -329,6 +355,21 @@ int service_stop(const char *name) {
         kprintf("service: %s is already stopped\n", name);
         return -1;
     }
+
+    /* ── Stop dependents first (reverse dependency order, Item U3) ─ */
+    for (int i = 0; i < nservices; i++) {
+        if (i == (int)(svc - services) || services[i].state != SERVICE_RUNNING)
+            continue;
+        for (int d = 0; d < services[i].ndeps; d++) {
+            if (strcmp(services[i].deps[d], name) == 0) {
+                kprintf("[svc] %s: stopping dependent '%s' first\n",
+                        name, services[i].name);
+                service_stop(services[i].name);
+                break;
+            }
+        }
+    }
+
     svc->stop();
     svc->state = SERVICE_STOPPED;
     svc->crash_count = 0;
@@ -354,6 +395,110 @@ struct service *service_find(const char *name) {
 void service_log(const char *name, const char *msg) {
     struct service *svc = service_find(name);
     if (svc) log_line(svc, msg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ── Dependency Management (Item U3) ─────────────────────────────────────
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Add a dependency: service 'name' depends on 'dep' (Required-Start). */
+int service_add_dep(const char *name, const char *dep) {
+    struct service *svc = service_find(name);
+    if (!svc) return -1;
+    if (!dep || !*dep) return -1;
+    if (svc->ndeps >= SERVICE_DEPS_MAX) return -1;
+
+    /* Avoid duplicate entries */
+    for (int i = 0; i < svc->ndeps; i++) {
+        if (strcmp(svc->deps[i], dep) == 0)
+            return 0; /* already present */
+    }
+
+    strncpy(svc->deps[svc->ndeps], dep, SERVICE_NAME_MAX - 1);
+    svc->deps[svc->ndeps][SERVICE_NAME_MAX - 1] = '\0';
+    svc->ndeps++;
+    return 0;
+}
+
+/* Return the number of dependencies for a service, or -1 if not found. */
+int service_num_deps(const char *name) {
+    struct service *svc = service_find(name);
+    if (!svc) return -1;
+    return svc->ndeps;
+}
+
+/* Get the i-th dependency name for a service.  Returns NULL on error. */
+const char *service_get_dep(const char *name, int i) {
+    struct service *svc = service_find(name);
+    if (!svc) return NULL;
+    if (i < 0 || i >= svc->ndeps) return NULL;
+    return svc->deps[i];
+}
+
+/*
+ * Topological sort of services by dependency order (Kahn's algorithm).
+ *
+ * Fills 'order' with service indices such that if service A depends on
+ * service B, then B appears before A in the output.  This means callers
+ * should start services in order[0], order[1], ... order[n-1] and stop
+ * in reverse.
+ *
+ * Returns the number of entries placed in 'order', or -1 if a dependency
+ * cycle is detected.
+ */
+int service_sort_deps(int *order, int max_order) {
+    /* Temporary copy of ndeps so we can decrement without modifying originals */
+    int remaining[SERVICE_MAX];
+    int queue[SERVICE_MAX];
+    int qhead = 0, qtail = 0;
+    int sorted = 0;
+
+    if (max_order < nservices) return -1;
+
+    /* Initialise */
+    for (int i = 0; i < nservices; i++) {
+        remaining[i] = services[i].ndeps;
+
+        /* Services with no deps go straight into the queue */
+        if (remaining[i] == 0) {
+            queue[qtail++] = i;
+        }
+    }
+
+    /* Process the queue */
+    while (qhead < qtail && sorted < max_order) {
+        int idx = queue[qhead++];
+        order[sorted++] = idx;
+
+        /* Find all services that depend on this one and decrement their count */
+        for (int i = 0; i < nservices; i++) {
+            if (i == idx || remaining[i] <= 0) continue;
+            for (int d = 0; d < services[i].ndeps; d++) {
+                if (strcmp(services[i].deps[d], services[idx].name) == 0) {
+                    remaining[i]--;
+                    if (remaining[i] == 0) {
+                        queue[qtail++] = i;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /* If we didn't sort all services, there's a cycle or missing deps */
+    if (sorted < nservices) {
+        kprintf("[svc] dependency cycle detected! sorted=%d total=%d\n",
+                sorted, nservices);
+        for (int i = 0; i < nservices; i++) {
+            if (remaining[i] > 0) {
+                kprintf("[svc]   '%s' still waiting on %d deps\n",
+                        services[i].name, remaining[i]);
+            }
+        }
+        return -1;
+    }
+
+    return sorted;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

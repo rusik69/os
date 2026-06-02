@@ -728,9 +728,16 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         service_register("telnetd", telnetd_start, telnetd_stop);
         service_register("httpd",   httpd_start,   httpd_stop);
         service_register("sshd",   sshd_start,    sshd_stop);
-        service_start("telnetd");
-        service_start("httpd");
-        service_start("sshd");
+
+        /* ── Service dependency setup (Item U3) ────────────────────
+         * httpd depends on telnetd; sshd depends on httpd.
+         * This means start order is: telnetd -> httpd -> sshd.
+         * Stop order is: sshd -> httpd -> telnetd. */
+        service_add_dep("httpd", "telnetd");
+        service_add_dep("sshd", "httpd");
+
+        /* Start services in dependency order (telnetd first, then httpd, then sshd) */
+        service_start("sshd");  /* triggers sorted start of deps */
         kprintf("[OK] Services started\n");
 
         /* Multicast group management (IGMP) */
