@@ -46,6 +46,9 @@ int shm_get(int key) {
         if (!shm_table[i].used) {
             uint64_t frame = pmm_alloc_frame();
             if (!frame) return -1;
+            /* Pin the shared page: increment refcount so that page reclaim
+             * (when swap exists) will not swap out shared memory segments. */
+            pmm_ref_frame(frame);
             /* Zero the shared page */
             memset(PHYS_TO_VIRT(frame), 0, SHM_PAGE);
             shm_table[i].used = 1;
@@ -97,7 +100,9 @@ int shm_dt(int id) {
 int shm_free(int id) {
     if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
     if (shm_table[id].refs > 0) return -1; /* still mapped by one or more processes */
-    pmm_free_frame(shm_table[id].phys);
+    /* Use unref to decrement the pin count set during shm_get();
+     * the page is freed back to the PMM when the refcount reaches 0. */
+    pmm_unref_frame(shm_table[id].phys);
     shm_table[id].used = 0;
     shm_table[id].refs = 0;
     shm_table[id].phys = 0;
