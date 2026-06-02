@@ -331,4 +331,9 @@ int cmd_fgconsole(int argc, char **argv);
 /* SSH commands */
 void cmd_ssh(const char *args);
 void cmd_sshd(const char *args);
+
+/* Module commands (M21-M22) */
+void cmd_insmod(const char *args);
+void cmd_rmmod(const char *args);
+void cmd_lsmod(const char *args);
 #endif

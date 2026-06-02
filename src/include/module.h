@@ -110,6 +110,12 @@ int module_unload(int module_id);
 /* Find a module by name. Returns NULL if not found. */
 struct kernel_module *module_find(const char *name);
 
+/* Return the name of the module at slot @id, or NULL if unused. */
+const char *module_name_by_id(int id);
+
+/* Return the number of currently loaded modules. */
+int module_count(void);
+
 /* ── Module memory allocator (M10) ───────────────────────────────── */
 
 /* Allocate a block of the given size from the module virtual region.

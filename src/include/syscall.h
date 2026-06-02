@@ -383,6 +383,12 @@
 #define SYS_SIGWAITINFO       363  /* sigwaitinfo(set, info) → signum or -1 */
 #define SYS_SIGTIMEDWAIT      364  /* sigtimedwait(set, info, timeout) → signum or -1 */
 
+/* ── Module syscalls (M17-M20) ────────────────────────────────── */
+#define SYS_INIT_MODULE       366  /* init_module(path, params) → module_id or -errno */
+#define SYS_FINIT_MODULE      367  /* finit_module(fd, params, flags) → module_id or -errno */
+#define SYS_DELETE_MODULE     368  /* delete_module(name, flags) → 0 or -errno */
+#define SYS_QUERY_MODULE      369  /* query_module(name, info_buf, buf_size) → 0 or -errno */
+
 /* ── Constants for *at syscalls ─────────────────────────────── */
 #define AT_FDCWD            (-100)
 #define AT_SYMLINK_NOFOLLOW  0x100

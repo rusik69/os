@@ -275,6 +275,10 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("stdbuf_pipe", "Send to pipe with buffer (stdbuf_pipe <cmd>)",                   cmd_stdbuf_pipe)
     CMD("time_verbose","Detailed timing output (time -v <cmd>)",                         cmd_time_verbose)
     CMD("sysctl",      "Read/write kernel parameters at runtime (sysctl [-a] [-w name=val] [-p file])", sh_sysctl)
+    /* Module commands (M21-M22) */
+    CMD("insmod",      "Load a kernel module (insmod <path> [params])", sh_insmod)
+    CMD("rmmod",       "Unload a kernel module (rmmod <name>)", sh_rmmod)
+    CMD("lsmod",       "List loaded kernel modules", sh_lsmod)
     { 0, 0, 0 }
 };
 

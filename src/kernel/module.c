@@ -271,6 +271,44 @@ struct kernel_module *module_find(const char *name) {
     return found;
 }
 
+/* ── Module enumeration (for sys_query_module) ────────────────────── */
+
+/* Return the name of the module at slot @id, or NULL if that slot is unused. */
+const char *module_name_by_id(int id) {
+    if (id < 0 || id >= MODULE_MAX || !g_mod_initialized) return NULL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    const char *name = NULL;
+    if (g_modules[id].state == MODULE_LIVE ||
+        g_modules[id].state == MODULE_LOADING) {
+        name = g_modules[id].name;
+    }
+
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    return name;
+}
+
+/* Return the number of currently loaded modules. */
+int module_count(void) {
+    if (!g_mod_initialized) return 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
+
+    int count = 0;
+    for (int i = 0; i < MODULE_MAX; i++) {
+        if (g_modules[i].state == MODULE_LIVE ||
+            g_modules[i].state == MODULE_LOADING) {
+            count++;
+        }
+    }
+
+    spinlock_irqsave_release(&g_mod_lock, irq_flags);
+    return count;
+}
+
 /* ── Reference counting (M26) ───────────────────────────────────── */
 
 void module_get(struct kernel_module *mod) {

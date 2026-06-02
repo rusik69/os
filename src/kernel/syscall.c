@@ -38,6 +38,8 @@
 #include "smp.h"
 #include "pipe.h"
 #include "users.h"
+#include "module.h"
+#include "module_elf.h"
 #include "gui_shell.h"
 #include "shm.h"
 #include "ac97.h"
@@ -5920,6 +5922,331 @@ static uint64_t sys_personality(uint64_t persona) {
     return old;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Module syscalls (M17-M20)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * sys_init_module — Load a kernel module from a filesystem path.
+ *
+ *   @path:   Userspace path string to the .ko file.
+ *   @params: Optional parameter string (can be NULL).
+ *
+ * Reads the file into a temporary kernel buffer, runs the ELF module loader
+ * (validate → parse → finalize), and returns the module_id (>= 0) on success
+ * or -errno on failure.
+ *
+ * Only callable by privileged (kernel-mode) code — user processes get -EPERM.
+ */
+static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
+{
+    const char *path = (const char *)path_addr;
+    (void)params_addr; /* Module parameters are parsed in M29+ */
+
+    /* Only root (or kernel context) can load modules */
+    if (syscall_is_user_process()) {
+        struct process *p = process_get_current();
+        if (!p || p->euid != 0)
+            return (uint64_t)-EPERM;
+    }
+
+    /* Validate the path string */
+    if (!path || !path[0])
+        return (uint64_t)-EINVAL;
+
+    /* Stat the file to get its size */
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0)
+        return (uint64_t)-ENOENT;
+
+    uint64_t file_size = st.size;
+    if (file_size == 0 || file_size > 8 * 1024 * 1024) {
+        /* Reject empty or >8MB modules */
+        return (uint64_t)-EFBIG;
+    }
+
+    /* Allocate a kernel buffer for the file contents */
+    void *buf = kmalloc((size_t)file_size);
+    if (!buf)
+        return (uint64_t)-ENOMEM;
+
+    /* Read the file */
+    uint32_t bytes_read = 0;
+    int ret = vfs_read(path, buf, (uint32_t)file_size, &bytes_read);
+    if (ret < 0 || bytes_read != file_size) {
+        kfree(buf);
+        return (uint64_t)-EIO;
+    }
+
+    /* Run the ELF module loader */
+    struct module_elf_context ctx;
+    int result = -1;
+
+    /* Step 1: Validate ELF header */
+    if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
+        kprintf("[MOD] init_module(%s): validation failed: %s\n",
+                path, ctx.error_msg);
+        kfree(buf);
+        return (uint64_t)-EINVAL;
+    }
+
+    /* Step 2: Parse ELF sections, symbols, relocations */
+    if (module_elf_parse(&ctx) < 0) {
+        kprintf("[MOD] init_module(%s): parse failed: %s\n",
+                path, ctx.error_msg);
+        kfree(buf);
+        return (uint64_t)-EINVAL;
+    }
+
+    /* Step 3: Finalize (resolve, load, relocate, set perms, call init) */
+    /* Use the filename (without .ko suffix) as the module name */
+    const char *mod_name = ctx.name;
+    if (mod_name[0] == '\0') {
+        /* Fall back to filename without path */
+        const char *slash = path;
+        const char *last = path;
+        while (*slash) {
+            if (*slash == '/') last = slash + 1;
+            slash++;
+        }
+        mod_name = last;
+    }
+
+    result = module_elf_finalize(&ctx, mod_name);
+    module_elf_free(&ctx);
+    kfree(buf);
+
+    if (result < 0) {
+        kprintf("[MOD] init_module(%s): finalize failed: %s\n",
+                path, ctx.error_msg);
+        return (uint64_t)-EINVAL;
+    }
+
+    kprintf("[MOD] init_module(%s): loaded as id=%d\n", path, result);
+    return (uint64_t)result;
+}
+
+/*
+ * sys_finit_module — Load a kernel module from an already-open file descriptor.
+ *
+ *   @fd:     Open file descriptor to the .ko file.
+ *   @params: Optional parameter string (can be NULL).
+ *   @flags:  Module loading flags (reserved, must be 0).
+ *
+ * Same loading sequence as sys_init_module, but reads from the caller's
+ * fd table instead of opening a path.
+ */
+static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t flags)
+{
+    (void)params_addr;
+    (void)flags;
+
+    /* Only root can load modules */
+    if (syscall_is_user_process()) {
+        struct process *p = process_get_current();
+        if (!p || p->euid != 0)
+            return (uint64_t)-EPERM;
+    }
+
+    /* Validate the fd */
+    int i = (int)fd - 3;
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-ESRCH;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used)
+        return (uint64_t)-EBADF;
+
+    const char *path = pfd->path;
+    if (!path || !path[0])
+        return (uint64_t)-EINVAL;
+
+    /* Stat the file to get its size */
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0)
+        return (uint64_t)-ENOENT;
+
+    uint64_t file_size = st.size;
+    if (file_size == 0 || file_size > 8 * 1024 * 1024)
+        return (uint64_t)-EFBIG;
+
+    /* Allocate a kernel buffer for the file contents */
+    void *buf = kmalloc((size_t)file_size);
+    if (!buf)
+        return (uint64_t)-ENOMEM;
+
+    /* Read the file using the saved path + offset */
+    /* We need to reset the offset to 0 for a full read */
+    uint64_t saved_offset = pfd->offset;
+    pfd->offset = 0;
+
+    uint32_t bytes_read = 0;
+    int ret = vfs_read(path, buf, (uint32_t)file_size, &bytes_read);
+    pfd->offset = saved_offset; /* restore original offset */
+
+    if (ret < 0 || bytes_read != file_size) {
+        kfree(buf);
+        return (uint64_t)-EIO;
+    }
+
+    /* Run the ELF module loader */
+    struct module_elf_context ctx;
+    int result = -1;
+
+    if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
+        kprintf("[MOD] finit_module(fd=%lu): validation failed: %s\n",
+                fd, ctx.error_msg);
+        kfree(buf);
+        return (uint64_t)-EINVAL;
+    }
+
+    if (module_elf_parse(&ctx) < 0) {
+        kprintf("[MOD] finit_module(fd=%lu): parse failed: %s\n",
+                fd, ctx.error_msg);
+        kfree(buf);
+        return (uint64_t)-EINVAL;
+    }
+
+    /* Derive module name from the file path */
+    const char *mod_name = ctx.name;
+    if (mod_name[0] == '\0') {
+        const char *slash = path;
+        const char *last = path;
+        while (*slash) {
+            if (*slash == '/') last = slash + 1;
+            slash++;
+        }
+        mod_name = last;
+    }
+
+    result = module_elf_finalize(&ctx, mod_name);
+    module_elf_free(&ctx);
+    kfree(buf);
+
+    if (result < 0) {
+        kprintf("[MOD] finit_module(fd=%lu): finalize failed: %s\n",
+                fd, ctx.error_msg);
+        return (uint64_t)-EINVAL;
+    }
+
+    kprintf("[MOD] finit_module(fd=%lu): loaded as id=%d\n", fd, result);
+    return (uint64_t)result;
+}
+
+/*
+ * sys_delete_module — Unload a kernel module by name.
+ *
+ *   @name:  Module name string.
+ *   @flags: May contain O_NONBLOCK to fail instead of waiting for refcount drain.
+ *
+ * Only callable by root.
+ */
+static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
+{
+    const char *name = (const char *)name_addr;
+
+    /* Only root can unload modules */
+    if (syscall_is_user_process()) {
+        struct process *p = process_get_current();
+        if (!p || p->euid != 0)
+            return (uint64_t)-EPERM;
+    }
+
+    if (!name || !name[0])
+        return (uint64_t)-EINVAL;
+
+    /* Find the module by name */
+    struct kernel_module *mod = module_find(name);
+    if (!mod)
+        return (uint64_t)-ENOENT;
+
+    /* Check refcount */
+    if (mod->refcount > 0) {
+        if (flags & 1) { /* O_NONBLOCK */
+            return (uint64_t)-EBUSY;
+        }
+        /* Non-blocking case: just report busy for now.
+         * A full implementation would wait with timeout. */
+        kprintf("[MOD] delete_module(%s): refcount=%d, cannot unload\n",
+                name, mod->refcount);
+        return (uint64_t)-EBUSY;
+    }
+
+    /* Unload the module */
+    int ret = module_unload(mod->module_id);
+    if (ret < 0) {
+        kprintf("[MOD] delete_module(%s): unload failed\n", name);
+        return (uint64_t)-EINVAL;
+    }
+
+    kprintf("[MOD] delete_module(%s): unloaded successfully\n", name);
+    return 0;
+}
+
+/*
+ * sys_query_module — Query information about loaded modules.
+ *
+ *   @name:     Module name to query, or NULL/empty to enumerate.
+ *   @info_buf: Output buffer for module information.
+ *   @buf_size: Size of the output buffer.
+ *
+ * When name is NULL or empty, enumerates all loaded modules into the buffer
+ * as a series of null-terminated strings ("name1\0name2\0...\0").
+ * When name is given, returns details about that specific module
+ * in key=value format (one per line).
+ *
+ * On success, returns the number of bytes written (not including trailing \0
+ * for enumeration mode). Returns -errno on failure.
+ */
+static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
+                                  uint64_t buf_size)
+{
+    const char *name = (const char *)name_addr;
+    char *info_buf = (char *)info_buf_addr;
+
+    if (!info_buf || buf_size == 0)
+        return (uint64_t)-EINVAL;
+
+    /* If name is NULL or empty, enumerate all loaded modules */
+    if (!name || !name[0]) {
+        uint64_t remaining = buf_size;
+        int written = 0;
+
+        for (int i = 0; i < MODULE_MAX; i++) {
+            const char *mod_name = module_name_by_id(i);
+            if (!mod_name)
+                continue;
+
+            /* Write module name + null terminator */
+            int len = (int)strlen(mod_name) + 1; /* include null */
+            if (len > (int)remaining)
+                break; /* buffer full */
+
+            memcpy(info_buf + written, mod_name, (size_t)len);
+            written += len;
+            remaining -= (uint64_t)len;
+        }
+
+        return (uint64_t)written;
+    }
+
+    /* Query specific module */
+    struct kernel_module *mod = module_find(name);
+    if (!mod)
+        return (uint64_t)-ENOENT;
+
+    /* Format module info into buffer */
+    int written = snprintf(info_buf, (size_t)buf_size,
+        "name=%s\nstate=%d\nrefcount=%d\nbase=0x%llx\nsize=%llu\n",
+        mod->name, (int)mod->state, mod->refcount,
+        (unsigned long long)mod->base_addr,
+        (unsigned long long)mod->size);
+
+    if (written < 0)
+        return (uint64_t)-EINVAL;
+
+    return (uint64_t)(written < (int)buf_size ? written : (int)buf_size - 1);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -6342,6 +6669,11 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FDATASYNC:       return sys_fdatasync(a1);
         case SYS_SET_ROBUST_LIST: return (uint64_t)sys_set_robust_list((struct robust_list_head*)a1, (size_t)a2);
         case SYS_GET_ROBUST_LIST: return (uint64_t)sys_get_robust_list((int)a1, (struct robust_list_head**)a2, (size_t*)a3);
+        /* ── Module syscalls (M17-M20) ─────────────────────────────── */
+        case SYS_INIT_MODULE:     return sys_init_module(a1, a2);
+        case SYS_FINIT_MODULE:    return sys_finit_module(a1, a2, a3);
+        case SYS_DELETE_MODULE:   return sys_delete_module(a1, a2);
+        case SYS_QUERY_MODULE:    return sys_query_module(a1, a2, a3);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);
