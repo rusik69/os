@@ -8,6 +8,7 @@
 #include "timer.h"
 #include "waitqueue.h"
 #include "netfilter.h"
+#include "export.h"
 
 /* Shared network state */
 uint8_t  net_our_mac[6];
@@ -1009,3 +1010,35 @@ int net_loopback_send(const void *data, uint16_t len) {
     loopback_len = len;
     return len;
 }
+
+/* ── Exported symbols for network protocol/driver modules ─────────── */
+EXPORT_SYMBOL(net_init);
+EXPORT_SYMBOL(net_poll);
+EXPORT_SYMBOL(net_link_send);
+EXPORT_SYMBOL(net_checksum);
+EXPORT_SYMBOL(net_get_ip);
+EXPORT_SYMBOL(net_set_ip);
+EXPORT_SYMBOL(net_get_gateway);
+EXPORT_SYMBOL(net_get_mask);
+EXPORT_SYMBOL(net_dhcp_discover);
+EXPORT_SYMBOL(net_loopback_init);
+EXPORT_SYMBOL(net_loopback_send);
+EXPORT_SYMBOL(rt_add);
+EXPORT_SYMBOL(rt_del);
+EXPORT_SYMBOL(rt_lookup);
+EXPORT_SYMBOL(arp_cache_add);
+EXPORT_SYMBOL(arp_resolve_or_queue);
+EXPORT_SYMBOL(net_dns_resolve);
+EXPORT_SYMBOL(net_dns_cache_set);
+EXPORT_SYMBOL(net_dns_cache_get);
+EXPORT_SYMBOL(net_tcp_connect);
+EXPORT_SYMBOL(net_tcp_send);
+EXPORT_SYMBOL(net_tcp_recv);
+EXPORT_SYMBOL(net_tcp_close);
+EXPORT_SYMBOL(net_tcp_listen);
+EXPORT_SYMBOL(net_tcp_unlisten);
+EXPORT_SYMBOL(net_udp_send);
+EXPORT_SYMBOL(net_udp_bind);
+EXPORT_SYMBOL(net_udp_listen);
+EXPORT_SYMBOL(net_udp_recv);
+EXPORT_SYMBOL(net_udp_unlisten);

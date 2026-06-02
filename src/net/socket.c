@@ -7,6 +7,7 @@
 #include "printf.h"
 #include "types.h"
 #include "timer.h"
+#include "export.h"
 
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
@@ -561,3 +562,18 @@ int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
     /* Socketpair not yet implemented */
     return -1;
 }
+
+/* ── Exported symbols for network protocol/driver modules ─────────── */
+EXPORT_SYMBOL(socket_init);
+EXPORT_SYMBOL(sock_get);
+EXPORT_SYMBOL(sock_alloc);
+EXPORT_SYMBOL(sock_free);
+EXPORT_SYMBOL(sys_socket_impl);
+EXPORT_SYMBOL(sys_bind_impl);
+EXPORT_SYMBOL(sys_connect_impl);
+EXPORT_SYMBOL(sys_listen_impl);
+EXPORT_SYMBOL(sys_accept_impl);
+EXPORT_SYMBOL(sys_sendmsg_impl);
+EXPORT_SYMBOL(sys_recvmsg_impl);
+EXPORT_SYMBOL(sys_setsockopt_impl);
+EXPORT_SYMBOL(sys_getsockopt_impl);
