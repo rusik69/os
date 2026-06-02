@@ -58,6 +58,125 @@ struct iso_dir_record {
 
 #define ISO_FLAG_DIRECTORY 0x02
 
+/* ── Rock Ridge Interchange Protocol (RRIP) / SUSP structures ──── */
+
+/* SUSP (System Use Sharing Protocol) entry header */
+struct susp_entry_header {
+    uint8_t  sig[2];     /* two-character signature */
+    uint8_t  len;        /* length of this entry (including header) */
+    uint8_t  version;    /* version (usually 1) */
+} __attribute__((packed));
+
+/* SUSP SP (Signature Processing) entry — must be first in root's system use */
+struct susp_sp_entry {
+    struct susp_entry_header hdr;  /* sig = "SP", len = 7, version = 1 */
+    uint8_t  magic_byte1;          /* 0xBE */
+    uint8_t  magic_byte2;          /* 0xEF */
+    uint8_t  skip_bytes;           /* bytes to skip before SUSP entries */
+} __attribute__((packed));
+
+/* SUSP CE (Continuation Entry) — more SUSP entries in another location */
+struct susp_ce_entry {
+    struct susp_entry_header hdr;  /* sig = "CE", len = 28, version = 1 */
+    uint32_t block_loc_le;         /* logical block location of continuation */
+    uint32_t block_loc_be;
+    uint32_t offset_le;            /* byte offset within that block */
+    uint32_t offset_be;
+    uint32_t cont_len_le;          /* length of continuation data */
+    uint32_t cont_len_be;
+} __attribute__((packed));
+
+/* RRIP PX (POSIX Attributes) entry */
+struct rrip_px_entry {
+    struct susp_entry_header hdr;  /* sig = "PX", len = 44, version = 1 */
+    uint32_t mode_le;              /* file mode (S_IXXX flags) */
+    uint32_t mode_be;
+    uint32_t nlink_le;             /* number of hard links */
+    uint32_t nlink_be;
+    uint32_t uid_le;               /* user ID */
+    uint32_t uid_be;
+    uint32_t gid_le;               /* group ID */
+    uint32_t gid_be;
+    uint32_t atime_le;             /* access time */
+    uint32_t atime_be;
+    uint32_t mtime_le;             /* modification time */
+    uint32_t mtime_be;
+    uint32_t ctime_le;             /* creation time */
+    uint32_t ctime_be;
+} __attribute__((packed));
+
+/* RRIP NM (Alternative Name) entry */
+struct rrip_nm_entry {
+    struct susp_entry_header hdr;  /* sig = "NM", version = 1 */
+    uint8_t  flags;                /* 1 = CONTINUE, 2 = CURRENT */
+    char     name[1];              /* variable-length name */
+} __attribute__((packed));
+
+/* RRIP SL (Symbolic Link) entry */
+struct rrip_sl_entry {
+    struct susp_entry_header hdr;  /* sig = "SL", version = 1 */
+    uint8_t  flags;                /* 0 = no continue, 1 = continue */
+    char     link_data[1];         /* variable-length link components */
+} __attribute__((packed));
+
+/* SL component header */
+struct rrip_sl_component {
+    uint8_t flags;                 /* 0 = plain, 1 = "." 2 = "..", 8 = root */
+    uint8_t len;                   /* length of this component name */
+    char    name[1];               /* variable-length name */
+} __attribute__((packed));
+
+/* RRIP flags for what we've parsed */
+#define RRIP_HAS_PX   0x01
+#define RRIP_HAS_NM   0x02
+#define RRIP_HAS_SL   0x04
+#define RRIP_HAS_CL   0x08
+#define RRIP_HAS_PL   0x10
+#define RRIP_HAS_RE   0x20
+
+/* Rock Ridge enhanced directory entry (fully parsed) */
+struct iso_rrip_entry {
+    uint32_t extent;
+    uint32_t size;
+    uint8_t  flags;
+    /* Rock Ridge fields */
+    uint32_t rr_mode;      /* POSIX mode from PX */
+    uint32_t rr_uid;
+    uint32_t rr_gid;
+    char     rr_name[256]; /* long file name from NM */
+    char     rr_symlink[256]; /* symlink target from SL */
+    uint8_t  rr_flags;     /* RRIP_HAS_* bitmask */
+    /* ISO fields */
+    char     iso_name[256];
+};
+
+/* VFS stat mode conversion */
+#define RR_S_IFMT     0170000
+#define RR_S_IFDIR    0040000
+#define RR_S_IFREG    0100000
+#define RR_S_IFLNK    0120000
+#define RR_S_IFBLK    0060000
+#define RR_S_IFCHR    0020000
+#define RR_S_IRWXU    00700
+#define RR_S_IRUSR    00400
+#define RR_S_IWUSR    00200
+#define RR_S_IXUSR    00100
+#define RR_S_IRWXG    00070
+#define RR_S_IRGRP    00040
+#define RR_S_IWGRP    00020
+#define RR_S_IXGRP    00010
+#define RR_S_IRWXO    00007
+#define RR_S_IROTH    00004
+#define RR_S_IWOTH    00002
+#define RR_S_IXOTH    00001
+
+/* Helper: check SUSP entry signature */
+static inline int susp_sig_match(const struct susp_entry_header *hdr,
+                                  const char sig0, const char sig1)
+{
+    return hdr->sig[0] == (uint8_t)sig0 && hdr->sig[1] == (uint8_t)sig1;
+}
+
 int iso9660_mount(const char *mountpoint, uint8_t dev_id);
 int iso9660_init(void);
 

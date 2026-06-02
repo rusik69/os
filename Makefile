@@ -107,6 +107,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/tmpfs.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
+         src/fs/iso9660.c \
          src/fs/bufcache.c \
          src/fs/page_cache.c \
          src/net/net.c \
