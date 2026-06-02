@@ -25,6 +25,10 @@
 #define GROUP_FILE  "/etc/group"
 #define GROUP_LINE_MAX  256
 
+#define PASSWD_FILE "/etc/passwd"
+#define SHADOW_FILE "/etc/shadow"
+#define PASSWD_LINE_MAX 256
+
 static struct user_entry  user_table[USER_MAX_ENTRIES];
 static int                user_count = 0;
 
@@ -50,6 +54,197 @@ static int ensure_home_owned(const char *path, uint16_t uid, uint16_t gid, uint1
 
     if (fs_chown(path, uid, gid) < 0) return -1;
     if (fs_chmod(path, mode) < 0) return -1;
+    return 0;
+}
+
+/* ── /etc/passwd file I/O helpers (Item U21) ──────────────────────────────── */
+
+/* Write the entire user table to /etc/passwd.
+ * Format: name:x:UID:GID:gecos:home:shell (one per line).
+ * Hashed password goes in /etc/shadow; 'x' in the passwd field.
+ * Returns 0 on success, -1 on failure. */
+static int passwd_file_write(void) {
+    char buf[2048];
+    int  off = 0;
+
+    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
+        if (!user_table[i].active) continue;
+
+        /* name:x:UID:GID:gecos:home:shell */
+        int n = snprintf(buf + off, (int)sizeof(buf) - off, "%s:x:%u:%u:%s:%s:%s\n",
+                         user_table[i].username,
+                         (unsigned)user_table[i].uid,
+                         (unsigned)user_table[i].gid,
+                         user_table[i].gecos[0] ? user_table[i].gecos : "user",
+                         user_table[i].home,
+                         user_table[i].shell[0] ? user_table[i].shell : "/bin/sh");
+        if (n < 0 || off + n >= (int)sizeof(buf) - 2) break;
+        off += n;
+    }
+
+    buf[off] = '\0';
+
+    /* Write the file (truncate + rewrite) */
+    if (fs_write_file(PASSWD_FILE, buf, (uint32_t)off) < 0) {
+        if (fs_create(PASSWD_FILE, FS_TYPE_FILE) < 0)
+            return -1;
+        if (fs_write_file(PASSWD_FILE, buf, (uint32_t)off) < 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Write hashed passwords to /etc/shadow.
+ * Format: name:hashed_password:lastchange:min:max:warn:inactive:expire
+ * Stores the djb2 hash as a hexadecimal string.
+ * Returns 0 on success, -1 on failure. */
+static int shadow_file_write(void) {
+    char buf[2048];
+    int  off = 0;
+
+    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
+        if (!user_table[i].active) continue;
+
+        /* name:hashed::::::: */
+        int n = snprintf(buf + off, (int)sizeof(buf) - off, "%s:%08x::::::\n",
+                         user_table[i].username,
+                         (unsigned)user_table[i].pw_hash);
+        if (n < 0 || off + n >= (int)sizeof(buf) - 2) break;
+        off += n;
+    }
+
+    buf[off] = '\0';
+
+    if (fs_write_file(SHADOW_FILE, buf, (uint32_t)off) < 0) {
+        if (fs_create(SHADOW_FILE, FS_TYPE_FILE) < 0)
+            return -1;
+        if (fs_write_file(SHADOW_FILE, buf, (uint32_t)off) < 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Parse a single /etc/passwd line into a user_entry.
+ * Line format: name:password:UID:GID:gecos:home:shell
+ * Returns 0 on success, -1 on parse error. */
+static int parse_passwd_line(const char *line, struct user_entry *ue) {
+    if (!line || !*line || line[0] == '#') return -1;
+
+    memset(ue, 0, sizeof(*ue));
+    const char *p = line;
+
+    /* Username */
+    int i = 0;
+    while (*p && *p != ':' && i < USER_MAX_NAME - 1)
+        ue->username[i++] = *p++;
+    ue->username[i] = '\0';
+    if (i == 0) return -1;
+    if (*p != ':') return -1;
+    p++; /* skip ':' */
+
+    /* Password field (should be 'x' if shadow is used) */
+    while (*p && *p != ':') p++;
+    if (*p != ':') return -1;
+    p++;
+
+    /* UID */
+    uint32_t uid = 0;
+    while (*p && *p != ':') {
+        if (*p >= '0' && *p <= '9')
+            uid = uid * 10 + (uint32_t)(*p - '0');
+        else
+            return -1;
+        p++;
+    }
+    ue->uid = uid;
+    if (*p != ':') return -1;
+    p++;
+
+    /* GID */
+    uint32_t gid = 0;
+    while (*p && *p != ':') {
+        if (*p >= '0' && *p <= '9')
+            gid = gid * 10 + (uint32_t)(*p - '0');
+        else
+            return -1;
+        p++;
+    }
+    ue->gid = gid;
+    if (*p != ':') return -1;
+    p++;
+
+    /* GECOS (full name / description) */
+    i = 0;
+    while (*p && *p != ':' && i < USER_MAX_GECOS - 1)
+        ue->gecos[i++] = *p++;
+    ue->gecos[i] = '\0';
+    if (*p != ':') return -1;
+    p++;
+
+    /* Home directory */
+    i = 0;
+    while (*p && *p != ':' && i < USER_MAX_HOME - 1)
+        ue->home[i++] = *p++;
+    ue->home[i] = '\0';
+    if (!*p || *p == '\n' || *p == '\r') {
+        /* Shell is optional (default: /bin/sh) */
+        memcpy(ue->shell, "/bin/sh", 8);
+        ue->active = 1;
+        return 0;
+    }
+    if (*p != ':') return -1;
+    p++;
+
+    /* Shell */
+    i = 0;
+    while (*p && *p != ':' && *p != '\n' && *p != '\r' && i < USER_MAX_SHELL - 1)
+        ue->shell[i++] = *p++;
+    ue->shell[i] = '\0';
+    if (!ue->shell[0])
+        memcpy(ue->shell, "/bin/sh", 8);
+
+    ue->active = 1;
+    return 0;
+}
+
+/* Parse a single /etc/shadow line to extract the hashed password.
+ * Line format: name:hashed_password:lastchange:min:max:warn:inactive:expire
+ * Returns 0 on success (sets *hash_out), -1 on parse error. */
+static int parse_shadow_line(const char *line, char *username, uint32_t *hash_out) {
+    if (!line || !*line || line[0] == '#') return -1;
+
+    if (!username || !hash_out) return -1;
+    const char *p = line;
+
+    /* Username */
+    int i = 0;
+    while (*p && *p != ':' && i < USER_MAX_NAME - 1)
+        username[i++] = *p++;
+    username[i] = '\0';
+    if (i == 0) return -1;
+    if (*p != ':') return -1;
+    p++;
+
+    /* Hashed password (hex string) */
+    if (*p == ':' || *p == '!' || *p == '*' || !*p) {
+        /* Empty/disabled password */
+        *hash_out = 0;
+        return 0;
+    }
+
+    uint32_t hash = 0;
+    for (int j = 0; j < 8 && *p && *p != ':'; j++, p++) {
+        hash <<= 4;
+        if (*p >= '0' && *p <= '9')
+            hash |= (uint32_t)(*p - '0');
+        else if (*p >= 'a' && *p <= 'f')
+            hash |= (uint32_t)(*p - 'a' + 10);
+        else if (*p >= 'A' && *p <= 'F')
+            hash |= (uint32_t)(*p - 'A' + 10);
+        else
+            return -1;
+    }
+    *hash_out = hash;
     return 0;
 }
 
@@ -446,9 +641,88 @@ void users_init(void) {
     if (fs_stat("/home", (uint32_t *)0, (uint8_t *)0) < 0)
         fs_create("/home", FS_TYPE_DIR);
 
-    /* Create default users with non-empty passwords */
-    user_add("root",  0,    DEFAULT_ROOT_PASSWORD);
-    user_add("guest", 1000, DEFAULT_GUEST_PASSWORD);
+    /* Try to read /etc/passwd first */
+    char buf[2048];
+    uint32_t size = 0;
+    int loaded_from_file = 0;
+
+    if (fs_read_file(PASSWD_FILE, buf, (uint32_t)sizeof(buf) - 1, &size) == 0 && size > 0) {
+        buf[size] = '\0';
+
+        /* Parse each line into user table */
+        char *line = buf;
+        while (line && *line) {
+            char *nl = strchr(line, '\n');
+            if (nl) *nl = '\0';
+
+            struct user_entry ue;
+            if (parse_passwd_line(line, &ue) == 0 && user_count < USER_MAX_ENTRIES) {
+                /* Check for duplicate UID */
+                int dup = 0;
+                for (int i = 0; i < user_count; i++) {
+                    if (user_table[i].active && user_table[i].uid == ue.uid) {
+                        dup = 1; break;
+                    }
+                }
+                if (!dup) {
+                    memcpy(&user_table[user_count], &ue, sizeof(ue));
+                    user_count++;
+                }
+            }
+
+            if (nl) {
+                *nl = '\n';
+                line = nl + 1;
+            } else {
+                break;
+            }
+        }
+        loaded_from_file = 1;
+    }
+
+    /* Try to load hashed passwords from /etc/shadow */
+    if (loaded_from_file) {
+        char shadow_buf[2048];
+        uint32_t shadow_size = 0;
+        if (fs_read_file(SHADOW_FILE, shadow_buf, (uint32_t)sizeof(shadow_buf) - 1, &shadow_size) == 0 && shadow_size > 0) {
+            shadow_buf[shadow_size] = '\0';
+
+            char *line = shadow_buf;
+            while (line && *line) {
+                char *nl = strchr(line, '\n');
+                if (nl) *nl = '\0';
+
+                char s_user[USER_MAX_NAME];
+                uint32_t s_hash = 0;
+                if (parse_shadow_line(line, s_user, &s_hash) == 0) {
+                    /* Match with user table */
+                    for (int i = 0; i < user_count; i++) {
+                        if (user_table[i].active && strcmp(user_table[i].username, s_user) == 0) {
+                            user_table[i].pw_hash = s_hash;
+                            break;
+                        }
+                    }
+                }
+
+                if (nl) {
+                    *nl = '\n';
+                    line = nl + 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    /* If no users loaded (first boot), create defaults */
+    if (!loaded_from_file || user_count == 0) {
+        user_add("root",  0,    DEFAULT_ROOT_PASSWORD);
+        user_add("guest", 1000, DEFAULT_GUEST_PASSWORD);
+
+        /* Persist the default users */
+        passwd_file_write();
+        shadow_file_write();
+    }
 
     /* Initialize /etc/group */
     groups_init();
@@ -471,6 +745,9 @@ int user_add(const char *username, uint32_t uid, const char *password) {
         user_table[i].uid     = uid;
         user_table[i].gid     = uid;  /* default gid = uid */
         user_table[i].pw_hash = djb2_hash(password);
+        /* Shell and GECOS defaults */
+        memcpy(user_table[i].shell, "/bin/sh", 8);
+        memcpy(user_table[i].gecos, username, USER_MAX_GECOS - 1);
         /* Home directory */
         if (uid == 0)
             memcpy(user_table[i].home, "/root", 6);
@@ -486,6 +763,11 @@ int user_add(const char *username, uint32_t uid, const char *password) {
             return -5;
         }
         user_count++;
+
+        /* Persist to /etc/passwd and /etc/shadow */
+        passwd_file_write();
+        shadow_file_write();
+
         return 0;
     }
     return -3;
@@ -497,6 +779,9 @@ int user_delete(const char *username) {
         if (user_table[i].active && strcmp(user_table[i].username, username) == 0) {
             user_table[i].active = 0;
             user_count--;
+            /* Persist the change */
+            passwd_file_write();
+            shadow_file_write();
             return 0;
         }
     }
@@ -518,6 +803,8 @@ int user_passwd(const char *username, const char *new_pass) {
     for (int i = 0; i < USER_MAX_ENTRIES; i++) {
         if (user_table[i].active && strcmp(user_table[i].username, username) == 0) {
             user_table[i].pw_hash = djb2_hash(new_pass);
+            /* Persist the updated hash to /etc/shadow */
+            shadow_file_write();
             return 0;
         }
     }

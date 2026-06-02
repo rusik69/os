@@ -6,6 +6,8 @@
 #define USER_MAX_NAME    32
 #define USER_MAX_PASS    64   /* stored as simple hash */
 #define USER_MAX_HOME    64
+#define USER_MAX_SHELL   32
+#define USER_MAX_GECOS   64
 #define USER_MAX_ENTRIES 16
 
 struct user_entry {
@@ -13,6 +15,8 @@ struct user_entry {
     uint32_t uid;
     uint32_t gid;
     char    home[USER_MAX_HOME];
+    char    shell[USER_MAX_SHELL];  /* login shell, e.g. /bin/sh */
+    char    gecos[USER_MAX_GECOS];  /* full name / description */
     uint32_t pw_hash;   /* djb2 hash of password */
     int     active;     /* 1 = valid entry */
 };
