@@ -9,6 +9,15 @@
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
+/* PTE flags needed for execute-only page-table walking in the
+ * page-fault handler.  These match the definitions in vmm.c but
+ * are replicated here because vmm.c's internal constants are not
+ * exposed via vmm.h.  VMM_FLAG_* equivalents (from vmm.h) are used
+ * for the software-defined bits. */
+#define PF_PTE_PRESENT   (1ULL << 0)
+#define PF_PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define PF_PTE_HUGE      (1ULL << 7)
+
 static inline uint64_t read_cr2(void) {
     uint64_t val;
     __asm__ volatile("mov %%cr2, %0" : "=r"(val));
@@ -97,6 +106,67 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         if (nx_enforce_check_fault(cr2, err, frame)) {
             /* NX violation was handled (kernel: panic, user: SIGSEGV) */
             return;
+        }
+    }
+
+    /* Check for execute-only violation: a read/write access (not an
+     * instruction fetch) to a page tagged with VMM_FLAG_EXECONLY.
+     *
+     * On x86-64, PTE PRESENT always implies readability — there is no
+     * separate read-enable bit.  We therefore approximate execute-only
+     * semantics by tagging the page with a software bit (PTE_EXECONLY,
+     * bit 11 of the PTE) and enforcing it here in software:
+     *
+     *   - If the faulting address has PTE_EXECONLY set AND
+     *   - The access is NOT an instruction fetch (err bit 4 = 0)
+     *
+     * Then this is a read (or write) to an execute-only page → SIGSEGV.
+     *
+     * The instruction fetch case (err bit 4 = 1) is allowed — that's
+     * the whole point of execute-only pages: code can be fetched but
+     * not read or written. */
+    if ((err & (1ULL << 4)) == 0 && (err & 1ULL)) {
+        /* Read/write access to a present page — check EXECONLY flag */
+        struct process *proc = process_get_current();
+        if (proc && proc->pml4) {
+            uint64_t *pml4 = proc->pml4;
+            /* Walk the page table to check PTE_EXECONLY */
+            int pml4_idx = (cr2 >> 39) & 0x1FF;
+            int pdpt_idx = (cr2 >> 30) & 0x1FF;
+            int pd_idx   = (cr2 >> 21) & 0x1FF;
+            int pt_idx   = (cr2 >> 12) & 0x1FF;
+
+            if ((pml4[pml4_idx] & PF_PTE_PRESENT)) {
+                uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PF_PTE_ADDR_MASK);
+                if ((pdpt[pdpt_idx] & PF_PTE_PRESENT)) {
+                    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PF_PTE_ADDR_MASK);
+                    if ((pd[pd_idx] & PF_PTE_PRESENT)) {
+                        if (pd[pd_idx] & PF_PTE_HUGE) {
+                            /* 2MB huge page — check PDE for EXECONLY */
+                            if (pd[pd_idx] & VMM_FLAG_EXECONLY) {
+                                kprintf("[exec-only] SIGSEGV pid=%u addr=0x%llx "
+                                        "execute-only page read%s at rip=0x%llx\n",
+                                        (unsigned int)proc->pid, cr2,
+                                        (err & 2) ? "/write" : "",
+                                        frame->rip);
+                                process_exit_code(11);
+                                /* Not reached */
+                            }
+                        } else {
+                            uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PF_PTE_ADDR_MASK);
+                            if ((pt[pt_idx] & PF_PTE_PRESENT) && (pt[pt_idx] & VMM_FLAG_EXECONLY)) {
+                                kprintf("[exec-only] SIGSEGV pid=%u addr=0x%llx "
+                                        "execute-only page read%s at rip=0x%llx\n",
+                                        (unsigned int)proc->pid, cr2,
+                                        (err & 2) ? "/write" : "",
+                                        frame->rip);
+                                process_exit_code(11);
+                                /* Not reached */
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

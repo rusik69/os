@@ -21,6 +21,8 @@ static inline void tlb_flush(uint64_t addr) {
 #define PTE_PCD      (1ULL << 4)
 #define PTE_HUGE     (1ULL << 7)
 #define PTE_COW      (1ULL << 9)   /* software bit: copy-on-write */
+#define PTE_LAZY     (1ULL << 10)  /* software bit: lazy/demand allocation */
+#define PTE_EXECONLY (1ULL << 11)  /* software bit: execute-only tracking */
 #define PTE_NX       (1ULL << 63)  /* No-Execute (only active when EFER.NXE=1) */
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
@@ -900,15 +902,19 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
 
         /* Handle 2MB huge pages: update flags directly in the PDE.
          * The PDE low 9 bits (8:0) contain page flags; bits 9-11 are
-         * available for software use (PTE_COW, etc.).  We preserve the
-         * physical address and HUGE bit, replacing the flags. */
+         * available for software use (PTE_COW, PTE_EXECONLY, etc.).
+         * We preserve the physical address and HUGE bit, replacing the
+         * flags but keeping software bits 9-11. */
         if (pd[pd_idx] & (1ULL << 7)) {
             uint64_t pde = pd[pd_idx];
             /* Preserve the physical address base and the HUGE bit */
             uint64_t base = pde & 0x000FFFFFFFE00000ULL;
             uint64_t had_big = pde & PTE_HUGE;
-            /* Write new flags and re-apply PRESENT + HUGE */
-            pd[pd_idx] = base | (new_flags & 0x1FF)
+            /* Preserve software bits (9-11) from new_flags */
+            uint64_t sw_bits = new_flags & (PTE_COW | PTE_LAZY | PTE_EXECONLY);
+            /* Write new flags and re-apply PRESENT + HUGE + software bits */
+            uint64_t hw_flags = (new_flags & 0x1FF) | sw_bits;
+            pd[pd_idx] = base | hw_flags
                          | had_big
                          | ((new_flags & VMM_FLAG_PRESENT) ? PTE_PRESENT : 0);
             tlb_flush(addr & ~(HUGE_PAGE_SIZE - 1ULL));
@@ -940,19 +946,32 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             memcpy((void *)PHYS_TO_VIRT(new_phys),
                    (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
             pmm_unref_frame(old_phys);
+            /* Preserve NX and EXECONLY from the old PTE if the new
+             * flags don't explicitly override them.  The low 12 bits
+             * of new_flags become the new low-12 PTE flags. */
+            uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY);
+            /* If new_flags says executable (no NOEXEC), don't inherit NX */
+            if (!(new_flags & VMM_FLAG_NOEXEC))
+                preserved &= ~(uint64_t)PTE_NX;
             uint64_t new_pte = (pte & (PTE_ADDR_MASK | 0xFFF))
                                & ~(uint64_t)VMM_FLAG_COW;
             new_pte = (new_pte & ~PTE_ADDR_MASK) | new_phys;
             new_pte = (new_pte & ~(uint64_t)0xFFF)
-                      | (new_flags & 0xFFF) | PTE_PRESENT;
+                      | (new_flags & 0xFFF) | preserved | PTE_PRESENT;
             pt[pt_idx] = new_pte;
             tlb_flush(addr);
             continue;
         }
 
         /* Preserve physical address, replace flags.
-         * Only set PRESENT if the caller asked for it (PROT_NONE clears it). */
-        pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF)
+         * Only set PRESENT if the caller asked for it (PROT_NONE clears it).
+         * Preserve NX and EXECONLY from the old PTE if the new flags don't
+         * explicitly override them. */
+        uint64_t preserved = pte & (PTE_NX | PTE_EXECONLY);
+        /* If new_flags says executable (no NOEXEC), don't inherit NX */
+        if (!(new_flags & VMM_FLAG_NOEXEC))
+            preserved &= ~(uint64_t)PTE_NX;
+        pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | preserved
                      | ((new_flags & VMM_FLAG_PRESENT) ? PTE_PRESENT : 0);
         tlb_flush(addr);
     }
@@ -1006,7 +1025,38 @@ done:
     return total;
 }
 
+/* ── Execute-only page check ──────────────────────────────────────
+ * Check whether a given user virtual address is mapped with the
+ * EXECONLY software tag (bit 11).  Returns 1 if the page is present
+ * and tagged EXECONLY, 0 otherwise.
+ *
+ * Used by the page-fault handler and /proc/self/maps to determine
+ * whether a page is execute-only (executable but not readable in
+ * software-enforced semantics). */
+int vmm_page_is_execonly(uint64_t *pml4, uint64_t virt) {
+    if (!pml4 || virt >= USER_VADDR_MAX) return 0;
+    int pml4_idx = (virt >> 39) & 0x1FF;
+    int pdpt_idx = (virt >> 30) & 0x1FF;
+    int pd_idx   = (virt >> 21) & 0x1FF;
+    int pt_idx   = (virt >> 12) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return 0;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return 0;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+    if (!(pd[pd_idx] & PTE_PRESENT)) return 0;
+
+    if (pd[pd_idx] & PTE_HUGE) {
+        return (pd[pd_idx] & PTE_EXECONLY) ? 1 : 0;
+    }
+
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+    if (!(pt[pt_idx] & PTE_PRESENT)) return 0;
+    return (pt[pt_idx] & PTE_EXECONLY) ? 1 : 0;
+}
+
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(vmm_map_page);
 EXPORT_SYMBOL(vmm_unmap_page);
 EXPORT_SYMBOL(vmm_get_physaddr);
+EXPORT_SYMBOL(vmm_page_is_execonly);

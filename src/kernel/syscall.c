@@ -1374,9 +1374,18 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
         if (addr + length >= USER_VADDR_MAX) return (uint64_t)-1;
     }
 
-    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_LAZY;
-    if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
-    if (!(prot & 4)) page_flags |= VMM_FLAG_NOEXEC; /* no PROT_EXEC → NX */
+    /*
+     * Convert POSIX PROT_* flags to VMM page-table flags using the
+     * AST (Address Space Type) abstraction.  This automatically:
+     *   - Sets PRESENT and USER for non-PROT_NONE mappings
+     *   - Sets WRITE when PROT_WRITE is present
+     *   - Clears NX (allows exec) when PROT_EXEC is present
+     *   - Tags execute-only pages (PROT_EXEC without PROT_READ)
+     *     with VMM_FLAG_EXECONLY for software-level enforcement
+     *   - Clears PRESENT (guard page) for PROT_NONE
+     */
+    uint8_t ast = vmm_prot_to_ast(prot);
+    uint64_t page_flags = vmm_ast_to_vmm_flags(ast, 1, 1) | VMM_FLAG_LAZY;
 
     /* For large 2MB-aligned mappings, use huge page support.
      * Huge pages allocate physical memory eagerly rather than lazily
@@ -1432,22 +1441,17 @@ static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     if (addr + length < addr) return (uint64_t)-1;
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
 
-    uint64_t page_flags = VMM_FLAG_USER;
-
-    if (prot == 0) {
-        /* PROT_NONE: page becomes completely inaccessible.
-         * Clear the PRESENT bit so any access triggers a page fault
-         * with "not-present" error code → SIGSEGV. */
-        page_flags |= VMM_FLAG_NOEXEC;
-    } else {
-        /* PROT_READ, PROT_WRITE, PROT_EXEC (or any combination):
-         * On x86-64, PRESENT implies read access — there is no
-         * separate read-enable bit.  PROT_WRITE adds the write bit;
-         * absence of PROT_EXEC sets the NX (No-Execute) bit. */
-        page_flags |= VMM_FLAG_PRESENT;
-        if (prot & PROT_WRITE) page_flags |= VMM_FLAG_WRITE;
-        if (!(prot & PROT_EXEC)) page_flags |= VMM_FLAG_NOEXEC;
-    }
+    /*
+     * Convert POSIX PROT_* to VMM page-table flags via the AST layer.
+     * This automatically handles:
+     *   - PROT_NONE    → guard page (no PRESENT, sets NX)
+     *   - PROT_READ    → readable (PRESENT|USER, NX)
+     *   - PROT_EXEC    → executable (PRESENT|USER, no NX)
+     *   - PROT_EXEC without PROT_READ → execute-only tag (EXECONLY bit)
+     *     for software-level enforcement in the page-fault handler.
+     */
+    uint8_t ast = vmm_prot_to_ast(prot);
+    uint64_t page_flags = vmm_ast_to_vmm_flags(ast, 1, 1);
 
     if (vmm_set_user_pages_flags(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
         return (uint64_t)-1;
