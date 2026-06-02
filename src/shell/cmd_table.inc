@@ -281,6 +281,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("rmmod",       "Unload a kernel module (rmmod <name>)", sh_rmmod)
     CMD("lsmod",       "List loaded kernel modules", sh_lsmod)
     CMD("modinfo",     "Show kernel module information (modinfo [name])", sh_modinfo)
+    /* System logger daemon (U7) */
+    CMD("syslogd",     "System logger daemon (syslogd [stop|status])",   cmd_syslogd)
     { 0, 0, 0 }
 };
 

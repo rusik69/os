@@ -340,4 +340,7 @@ void cmd_modinfo(const char *args);
 
 /* User privilege commands (U31) */
 void cmd_sudo(const char *args);
+
+/* System logger daemon (U7) */
+void cmd_syslogd(const char *args);
 #endif
