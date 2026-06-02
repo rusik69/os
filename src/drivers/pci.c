@@ -703,6 +703,170 @@ void pci_list(void) {
     }
 }
 
+/* ── PCIe Advanced Error Reporting (AER) ────────────────────────── */
+
+/*
+ * Find the AER extended capability on a PCIe device.
+ *
+ * PCIe extended capabilities live in the extended config space
+ * (offsets 0x100 - 0xFFF).  Each extended capability header is
+ * 4 bytes: [15:0] = capability ID, [19:16] = version, [31:20] = next.
+ *
+ * AER has extended capability ID = 0x0001.
+ */
+int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    if (!ecam_base) return -1;  /* AER requires ECAM access */
+
+    uint16_t offset = 0x100;  /* Start of extended config space */
+    while (offset < 0x1000) {
+        uint32_t header = pcie_read(bus, slot, func, offset);
+        uint16_t cap_id = header & 0xFFFF;
+        if (cap_id == 0xFFFF)
+            break;  /* No more capabilities */
+        if (cap_id == 0x0001)
+            return (int)offset;  /* Found AER capability */
+
+        uint16_t next = (uint16_t)((header >> 20) & 0xFFF);
+        if (next == 0)
+            break;  /* Last capability */
+        offset = next;
+    }
+    return -1;
+}
+
+/* Human-readable name for an uncorrectable AER error bit */
+static const char *aer_uncor_name(uint32_t bit) {
+    switch (bit) {
+    case 4:  return "DL Protocol Error";
+    case 5:  return "Surprise Down";
+    case 12: return "Poisoned TLP";
+    case 13: return "FC Protocol Error";
+    case 14: return "Completion Timeout";
+    case 15: return "Completer Abort";
+    case 16: return "Unexpected Completion";
+    case 17: return "Receiver Overflow";
+    case 18: return "Malformed TLP";
+    case 19: return "ECRC Error";
+    case 20: return "Unsupported Request";
+    case 21: return "ACS Violation";
+    case 22: return "Internal Error";
+    case 23: return "AtomicOp Egress Blocked";
+    case 24: return "TLP Prefix Blocked";
+    default: return "Unknown";
+    }
+}
+
+/* Human-readable name for a correctable AER error bit */
+static const char *aer_cor_name(uint32_t bit) {
+    switch (bit) {
+    case 0:  return "Receiver Error";
+    case 6:  return "Bad TLP";
+    case 7:  return "Bad DLLP";
+    case 8:  return "REPLAY_NUM Rollover";
+    case 12: return "Replay Timer Timeout";
+    case 13: return "Advisory Non-Fatal";
+    default: return "Unknown";
+    }
+}
+
+/*
+ * Check and log AER errors for a single PCIe device.
+ *
+ * Returns a bitmask: bit 0 = correctable error found,
+ * bit 1 = uncorrectable error found.
+ */
+int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
+    int aer_off = pci_find_aer_cap(bus, slot, func);
+    if (aer_off < 0)
+        return 0;  /* No AER capability */
+
+    int result = 0;
+
+    /* Read uncorrectable error status */
+    uint32_t uncor_status = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_UNCOR_STATUS);
+    if (uncor_status) {
+        uint32_t uncor_mask = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_UNCOR_MASK);
+        uint32_t active = uncor_status & ~uncor_mask;
+
+        if (active) {
+            /* Read header log for diagnostics */
+            uint32_t hdr_log[4];
+            for (int i = 0; i < 4; i++)
+                hdr_log[i] = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_HEADER_LOG + (uint16_t)(i * 4));
+
+            kprintf("[PCI AER] Bus %02x:%02x.%x Uncorrectable Error:\n",
+                    (unsigned int)bus, (unsigned int)slot, (unsigned int)func);
+            for (int b = 0; b < 32; b++) {
+                if (active & (1U << b)) {
+                    kprintf("  - %s (bit %d)\n", aer_uncor_name((uint32_t)b), b);
+                }
+            }
+            kprintf("  Header Log: %08x %08x %08x %08x\n",
+                    (unsigned int)hdr_log[0], (unsigned int)hdr_log[1],
+                    (unsigned int)hdr_log[2], (unsigned int)hdr_log[3]);
+
+            /* Clear the error by writing 1s to the status bits we saw */
+            pcie_write(bus, slot, func, (uint16_t)aer_off + PCI_AER_UNCOR_STATUS, uncor_status);
+            result |= 2;  /* Uncorrectable */
+        }
+    }
+
+    /* Read correctable error status */
+    uint32_t cor_status = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_COR_STATUS);
+    if (cor_status) {
+        uint32_t cor_mask = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_COR_MASK);
+        uint32_t active = cor_status & ~cor_mask;
+
+        if (active) {
+            kprintf("[PCI AER] Bus %02x:%02x.%x Correctable Error:\n",
+                    (unsigned int)bus, (unsigned int)slot, (unsigned int)func);
+            for (int b = 0; b < 32; b++) {
+                if (active & (1U << b)) {
+                    kprintf("  - %s (bit %d)\n", aer_cor_name((uint32_t)b), b);
+                }
+            }
+            /* Clear the error by writing 1s */
+            pcie_write(bus, slot, func, (uint16_t)aer_off + PCI_AER_COR_STATUS, cor_status);
+            result |= 1;  /* Correctable */
+        }
+    }
+
+    return result;
+}
+
+/*
+ * Check AER errors for all PCI devices.
+ * This should be called periodically (e.g., from a timer or workqueue).
+ * AER errors are logged but not fatal — the device continues operating.
+ */
+void pci_aer_check_all(void) {
+    if (!ecam_base)
+        return;  /* AER requires ECAM (memory-mapped PCIe config) */
+
+    int total_errs = 0;
+    for (int bus = 0; bus < 256; bus++) {
+        for (int slot = 0; slot < 32; slot++) {
+            uint32_t reg0;
+            if (ecam_base) {
+                reg0 = pcie_read((uint8_t)bus, (uint8_t)slot, 0, 0);
+            } else {
+                reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
+            }
+            if ((reg0 & 0xFFFF) == 0xFFFF)
+                continue;  /* No device */
+
+            int errs = pci_aer_check_device((uint8_t)bus, (uint8_t)slot, 0);
+            if (errs)
+                total_errs++;
+        }
+    }
+
+    if (total_errs > 0) {
+        kprintf("[PCI AER] Check complete: %d device(s) had errors\n",
+                total_errs);
+    }
+}
+
 void pci_init(void) {
     int count = 0;
     int msi_count = 0;

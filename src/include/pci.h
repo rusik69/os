@@ -138,4 +138,66 @@ int pci_setup_interrupts(struct pci_device *dev,
                          struct pci_interrupt_config *cfg,
                          isr_handler_t handler);
 
+/* ── PCIe Advanced Error Reporting (AER) ───────────────────────── */
+
+/* AER is a PCIe Extended Capability (ID = 0x0001) found in the
+ * extended config space (offset >= 0x100).  The AER capability
+ * allows reporting and logging of correctable and uncorrectable
+ * PCIe errors.
+ */
+
+/* AER capability register offsets (relative to capability base) */
+#define PCI_AER_UNCOR_STATUS      0x04  /* Uncorrectable Error Status */
+#define PCI_AER_UNCOR_MASK        0x08  /* Uncorrectable Error Mask */
+#define PCI_AER_UNCOR_SEVERITY    0x0C  /* Uncorrectable Error Severity */
+#define PCI_AER_COR_STATUS        0x10  /* Correctable Error Status */
+#define PCI_AER_COR_MASK          0x14  /* Correctable Error Mask */
+#define PCI_AER_CAP_CONTROL       0x18  /* Advanced Error Cap & Control */
+#define PCI_AER_HEADER_LOG        0x1C  /* Header Log (16 bytes) */
+#define PCI_AER_ROOT_ERR_CMD      0x2C  /* Root Error Command (RC only) */
+#define PCI_AER_ROOT_ERR_STATUS   0x30  /* Root Error Status (RC only) */
+#define PCI_AER_COR_SRC_ID        0x34  /* Error Source ID (correctable) */
+#define PCI_AER_UNCOR_SRC_ID      0x36  /* Error Source ID (uncorrectable) */
+
+/* AER Uncorrectable Error Status bits */
+#define PCI_AER_UNCOR_DL_PROTO     (1 << 4)  /* Data Link Protocol Error */
+#define PCI_AER_UNCOR_SURPRISE_DN  (1 << 5)  /* Surprise Down */
+#define PCI_AER_UNCOR_POISON_TLP   (1 << 12) /* Poisoned TLP */
+#define PCI_AER_UNCOR_FC_PROTO     (1 << 13) /* Flow Control Protocol */
+#define PCI_AER_UNCOR_COMP_TIME    (1 << 14) /* Completion Timeout */
+#define PCI_AER_UNCOR_COMP_ABORT   (1 << 15) /* Completer Abort */
+#define PCI_AER_UNCOR_UNEXP_CMP    (1 << 16) /* Unexpected Completion */
+#define PCI_AER_UNCOR_RCV_OVFLOW   (1 << 17) /* Receiver Overflow */
+#define PCI_AER_UNCOR_MALFORMED    (1 << 18) /* Malformed TLP */
+#define PCI_AER_UNCOR_ECRC_ERR     (1 << 19) /* ECRC Error */
+#define PCI_AER_UNCOR_UNSUP_REQ    (1 << 20) /* Unsupported Request */
+#define PCI_AER_UNCOR_ACS_VIOL     (1 << 21) /* ACS Violation */
+#define PCI_AER_UNCOR_INTERNAL     (1 << 22) /* Internal Error */
+#define PCI_AER_UNCOR_ATOMIC_EGR   (1 << 23) /* AtomicOp Egress Blocked */
+#define PCI_AER_UNCOR_TLP_PREFIX   (1 << 24) /* TLP Prefix Blocked */
+#define PCI_AER_UNCOR_POISON_SKIP  (1 << 25) /* Poisoned TLP (skip) */
+
+/* AER Correctable Error Status bits */
+#define PCI_AER_COR_RCV_ERR        (1 << 0)  /* Receiver Error */
+#define PCI_AER_COR_BAD_TLP        (1 << 6)  /* Bad TLP */
+#define PCI_AER_COR_BAD_DLLP       (1 << 7)  /* Bad DLLP */
+#define PCI_AER_COR_REPLAY_ROLL    (1 << 8)  /* REPLAY_NUM Rollover */
+#define PCI_AER_COR_REPLAY_TIMEOUT (1 << 12) /* Replay Timer Timeout */
+#define PCI_AER_COR_ADVISORY_NF    (1 << 13) /* Advisory Non-Fatal Error */
+
+/* Find the AER extended capability on a PCIe device.
+ * Returns the extended capability offset (>= 0x100) on success, or < 0
+ * if the device does not support AER.
+ */
+int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* Check and log AER errors for a single PCIe device.
+ * Returns a bitmask of error types found (bit 0 = correctable, bit 1 = uncorrectable),
+ * or 0 if no errors were found.
+ */
+int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* Check AER errors for all PCI devices.  Called periodically. */
+void pci_aer_check_all(void);
+
 #endif
