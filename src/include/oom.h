@@ -9,15 +9,24 @@
  * Interface:
  *   oom_kill() — called by pmm_alloc_frame when no frames are available.
  *                 Selects a victim, kills it, and reclaims its frames.
- *   oom_register_pressure(pages_needed) — hint to the OOM killer that memory
- *                                         pressure is building (for proactive use).
- *   oom_get_score(pid) — returns the oom_score for a given pid (or -1 on error).
+ *   oom_kill_victim() — kills the highest-scored process.
+ *   oom_score_process(pid) — returns the oom_score for a given pid (or -1 on error).
  *
- * Selection policy:
- *   Score = resident_pages * (1 + total_kids) + allocated_heap_pages
- *           + (5 if process is_suspended) - (10 if process is_user)
+ * Selection policy (Item 28 — enhanced RSS-aware scoring):
+ *   Score = rss_pages * 10
+ *         + dirty_pages * 3
+ *         + clean_pages * 1
+ *         + reclaimable_bonus (if >70% reclaimable)
+ *         + kids * 5
+ *         + suspended/background bonuses
+ *         - user_process_penalty
+ *         + priority * 3
+ *         + nice_adjustment
+ *         - age_discount (for long-running processes)
+ *         + oom_score_adj
+ *
  *   The highest-scoring process that is not PID 1, the idle process, or
- *   a kernel thread serving I/O is killed.
+ *   the current process is killed.
  */
 
 /* Initialize the OOM subsystem */
@@ -32,7 +41,8 @@ int oom_kill(uint64_t needed_pages);
 int oom_kill_victim(void);
 
 /* Compute the OOM score for a given process (higher = more likely to be killed).
- * Factors: resident pages, heap usage, process tree, nice adjustment. */
+ * Factors: actual RSS (via page table walk), dirty/clean page ratio,
+ * shared/reclaimable pages, process tree, nice/priority, age. */
 int64_t oom_score_process(uint32_t pid);
 
 /* Display OOM status (for /sys or shell) */

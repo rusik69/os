@@ -64,6 +64,12 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
 #define HUGE_PAGE_NFRAMES   512
 int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, uint64_t flags);
 
+/* Walk a user page table and count present pages.
+ * Returns: number of present 4KB pages (huge pages are counted as 512 each).
+ * If 'dirty_out' is non-NULL, receives count of writable/dirty pages.
+ * If 'shared_out' is non-NULL, receives count of COW/shared pages. */
+uint64_t vmm_count_user_pages(uint64_t *pml4, uint64_t *dirty_out, uint64_t *shared_out);
+
 /* NX bit support */
 void vmm_nx_init(void);
 int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec);

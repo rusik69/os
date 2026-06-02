@@ -957,3 +957,50 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
     }
     return 0;
 }
+
+/* ── Walk user page table and count present pages (for OOM scoring) ── */
+uint64_t vmm_count_user_pages(uint64_t *pml4, uint64_t *dirty_out, uint64_t *shared_out) {
+    uint64_t total = 0, dirty = 0, shared = 0;
+
+    if (!pml4) goto done;
+
+    for (int i = 0; i < 256; i++) {             /* user half of PML4 */
+        if (!(pml4[i] & PTE_PRESENT)) continue;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[i] & PTE_ADDR_MASK);
+
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & PTE_PRESENT)) continue;
+            uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[j] & PTE_ADDR_MASK);
+
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & PTE_PRESENT)) continue;
+
+                if (pd[k] & PTE_HUGE) {
+                    /* 2MB huge page = 512 × 4KB pages.  Refcounts are
+                     * maintained per-4KB-frame, but the huge page as a
+                     * whole is counted. */
+                    total += HUGE_PAGE_NFRAMES;
+                    if (pd[k] & PTE_WRITE) dirty += HUGE_PAGE_NFRAMES;
+                    continue;
+                }
+
+                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[k] & PTE_ADDR_MASK);
+
+                for (int l = 0; l < 512; l++) {
+                    if (!(pt[l] & PTE_PRESENT)) continue;
+                    total++;
+                    if (pt[l] & PTE_WRITE) dirty++;
+                    if (pt[l] & PTE_COW)  shared++;
+                    /* Also count lazy pages (shared zero page via COW) as shared */
+                    uint64_t phys = pt[l] & PTE_ADDR_MASK;
+                    if (phys == vmm_zero_page_frame) shared++;
+                }
+            }
+        }
+    }
+
+done:
+    if (dirty_out)  *dirty_out  = dirty;
+    if (shared_out) *shared_out = shared;
+    return total;
+}
