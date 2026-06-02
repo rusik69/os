@@ -6,6 +6,8 @@
 #include "timer.h"
 #include "heap.h"
 #include "fat32.h"
+#include "page_cache.h"
+#include "pmm.h"
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -521,6 +523,26 @@ int fs_append(const char *path, const void *data, uint32_t len) {
     return ret;
 }
 
+/*
+ * ── Backing store callback for page_cache_read ──────────────────────
+ *
+ * Translates a (block_index, count, buf) request into ATA sector reads.
+ * Block index here is assumed to be a filesystem data block number
+ * (i.e. an ATA LBA).  Returns 0 on success, <0 on error.
+ */
+static int fs_backing_store_read(uint32_t lba, uint8_t count, void *buf)
+{
+    return ata_read_sectors(lba, count, buf);
+}
+
+
+/*
+ * Read file contents using the page cache with automatic readahead.
+ *
+ * This replaces the naive per-sector ATA read with a page-cache-aware
+ * path that reads in PAGE_SIZE (4096-byte) chunks and triggers
+ * sequential prefetching.
+ */
 int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_size) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
@@ -530,20 +552,63 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
     uint32_t size = inodes[idx].size;
     if (size > max_size) size = max_size;
 
-    uint32_t blocks = (size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
     uint8_t *dst = (uint8_t *)buf;
+    uint32_t file_blocks = (size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
 
-    for (uint32_t i = 0; i < blocks; i++) {
-        uint8_t sector_buf[ATA_SECTOR_SIZE];
-        if (inodes[idx].blocks[i] != 0) {
-            if (ata_read_sectors(inodes[idx].blocks[i], 1, sector_buf) < 0) return -1;
-        } else {
-            /* Unallocated block — zero-fill (sector 0 = superblock, must not read it) */
+    /* ── Compute inode number for page cache key ────────────────── */
+    uint64_t ino = (uint64_t)idx + 1;  /* 1-based inode number */
+
+    for (uint32_t i = 0; i < file_blocks; ) {
+        /* Map the ATA sector index to the physical block number */
+        uint32_t blk = inodes[idx].blocks[i];
+
+        if (blk == 0) {
+            /* Unallocated block — zero-fill */
+            uint8_t sector_buf[ATA_SECTOR_SIZE];
             memset(sector_buf, 0, ATA_SECTOR_SIZE);
+            uint32_t chunk = size - i * ATA_SECTOR_SIZE;
+            if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
+            memcpy(dst + i * ATA_SECTOR_SIZE, sector_buf, chunk);
+            i++;
+            continue;
         }
-        uint32_t chunk = size - i * ATA_SECTOR_SIZE;
-        if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
-        memcpy(dst + i * ATA_SECTOR_SIZE, sector_buf, chunk);
+
+        /* ── Read via page cache ───────────────────────────────── */
+        /* The page cache works at PAGE_SIZE granularity.
+         * Determine which page cache block this sector falls in. */
+        uint64_t pc_block = (uint64_t)blk / (PAGE_SIZE / ATA_SECTOR_SIZE);
+        uint32_t sector_offset = blk % (PAGE_SIZE / ATA_SECTOR_SIZE);
+
+        /* Read the full page from cache (with readahead) */
+        uint8_t page_buf[PAGE_SIZE];
+
+        int ret = page_cache_read(ino, pc_block, page_buf, fs_backing_store_read);
+        if (ret < 0) {
+            /* Fallback: direct ATA read without caching */
+            uint8_t sector_buf[ATA_SECTOR_SIZE];
+            if (ata_read_sectors(blk, 1, sector_buf) < 0) return -1;
+            uint32_t chunk = size - i * ATA_SECTOR_SIZE;
+            if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
+            memcpy(dst + i * ATA_SECTOR_SIZE, sector_buf, chunk);
+            i++;
+            continue;
+        }
+
+        /* Copy the relevant sector(s) from the cached page */
+        uint32_t sectors_avail = (PAGE_SIZE / ATA_SECTOR_SIZE) - sector_offset;
+        uint32_t sectors_needed = file_blocks - i;
+        if (sectors_needed > sectors_avail)
+            sectors_needed = sectors_avail;
+
+        for (uint32_t s = 0; s < sectors_needed; s++) {
+            uint32_t chunk = size - (i + s) * ATA_SECTOR_SIZE;
+            if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
+            memcpy(dst + (i + s) * ATA_SECTOR_SIZE,
+                   page_buf + (sector_offset + s) * ATA_SECTOR_SIZE,
+                   chunk);
+        }
+
+        i += sectors_needed;
     }
 
     if (out_size) *out_size = size;

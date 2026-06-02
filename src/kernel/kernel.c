@@ -9,6 +9,7 @@
 #include "keyboard.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "page_cache.h"
 #include "heap.h"
 #include "process.h"
 #include "scheduler.h"
@@ -546,6 +547,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Filesystem */
     fs_init();
     kprintf("[OK] Filesystem initialized\n");
+
+    /* Page cache (file data caching + readahead) — initialized after filesystem
+     * so it can be used by the simple block filesystem's fs_read_file(). */
+    page_cache_init();
 
     /* Service infrastructure + FS directory tree */
     service_init();
