@@ -7,6 +7,9 @@
 #include "scheduler.h"
 #include "compaction.h"
 #include "slab.h"
+#include "io.h"
+#include "spinlock.h"
+#include "smp.h"
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -39,6 +42,27 @@ static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
 int pmm_poison_enabled = 1;
 
+/* ── Per-CPU page hot cache ────────────────────────────────────────────
+ * Each CPU keeps a small pool of pre-allocated pages to avoid lock
+ * contention on the global bitmap.  The hot cache is lock-free for the
+ * owning CPU (only local IRQ save/restore is needed for reentrancy from
+ * interrupt handlers on the same CPU).
+ */
+#define PMM_CPU_CACHE_SIZE 8
+
+struct pmm_cpu_cache {
+    uint64_t frames[PMM_CPU_CACHE_SIZE]; /* cached physical page addresses */
+    int      count;                       /* number of valid entries */
+};
+
+/* One cache slot per possible CPU */
+static struct pmm_cpu_cache pmm_cpu_cache[SMP_MAX_CPUS];
+
+/* Global spinlock protecting the bitmap and shared counters during
+ * cache refill/drain operations.  The fast per-CPU path avoids this. */
+static spinlock_t pmm_global_lock;
+
+/* ── Poison helpers ──────────────────────────────────────────────────── */
 static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
     if (!pmm_poison_enabled) return;
     if (phys_addr == 0) return;
@@ -65,6 +89,88 @@ static void bitmap_clear(uint64_t frame) {
 static int bitmap_test(uint64_t frame) {
     if (frame >= MAX_FRAMES) return 1; /* out-of-range frames appear used */
     return frame_bitmap[frame / 8] & (1 << (frame % 8));
+}
+
+/* ── Internal bitmap allocator (caller must hold pmm_global_lock) ────── */
+
+/* Allocate one frame from the bitmap; no lock acquired, no OOM recovery.
+ * Returns physical address, or 0 on failure. */
+static uint64_t bitmap_alloc_one_locked(void) {
+    uint64_t i = pmm_hint;
+    do {
+        if (!bitmap_test(i)) {
+            bitmap_set(i);
+            used_frames++;
+            frame_refcount[i] = 1;
+            pmm_hint = i + 1;
+            if (pmm_hint >= total_frames) pmm_hint = 0;
+            return i * PAGE_SIZE;
+        }
+        i++;
+        if (i >= total_frames) i = 0;
+    } while (i != pmm_hint);
+    return 0;
+}
+
+/* Free one frame back to the bitmap; caller must hold pmm_global_lock. */
+static void bitmap_free_one_locked(uint64_t addr) {
+    if (addr & (PAGE_SIZE - 1)) return;
+    uint64_t frame = addr / PAGE_SIZE;
+    if (frame >= MAX_FRAMES) return;
+    if (!bitmap_test(frame)) return;
+    if (frame_refcount[frame] > 1) return;
+
+    poison_fill(addr, 0xDC);
+    vm_pgfree++;
+    bitmap_clear(frame);
+    frame_refcount[frame] = 0;
+    used_frames--;
+}
+
+/* ── Per-CPU hot-cache helpers ─────────────────────────────────────────
+ * These must be called with local interrupts disabled to prevent
+ * reentrancy from interrupt handlers on the same CPU.
+ */
+
+/* Refill the current CPU's cache from the global bitmap.
+ * Takes pmm_global_lock, allocates up to PMM_CPU_CACHE_SIZE pages. */
+static void pmm_cache_refill(void) {
+    int cpu = smp_get_cpu_id();
+    struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+
+    if (cache->count >= PMM_CPU_CACHE_SIZE)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    while (cache->count < PMM_CPU_CACHE_SIZE) {
+        uint64_t frame = bitmap_alloc_one_locked();
+        if (!frame) break;
+        cache->frames[cache->count++] = frame;
+    }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+}
+
+/* Drain the current CPU's cache back to the global bitmap.
+ * Takes pmm_global_lock and frees all cached pages. */
+static void pmm_cache_drain(void) {
+    int cpu = smp_get_cpu_id();
+    struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+
+    if (cache->count == 0)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    while (cache->count > 0) {
+        cache->count--;
+        bitmap_free_one_locked(cache->frames[cache->count]);
+    }
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
 extern char _kernel_end[];
@@ -140,6 +246,17 @@ void pmm_init(uint64_t multiboot_info_phys) {
     for (uint64_t f = 0; f < total_frames; f++) {
         if (bitmap_test(f)) used_frames++;
     }
+
+    /* Initialize the global spinlock for SMP-safe bitmap access */
+    spinlock_init(&pmm_global_lock);
+
+    /* Pre-populate the boot CPU's hot cache */
+    pmm_cache_refill();
+
+    kprintf("[OK] Physical Memory Manager: %llu frames (%llu MB), %llu free\n",
+            (unsigned long long)total_frames,
+            (unsigned long long)((total_frames * 4ULL) / 1024ULL),
+            (unsigned long long)(total_frames - used_frames));
 }
 
 void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
@@ -205,28 +322,52 @@ void pmm_dump_stats(void) {
             (unsigned long long)vm_pgalloc,
             (unsigned long long)vm_pgfree,
             (unsigned long long)vm_pgfault);
+
+    /* Per-CPU hot cache occupancy */
+    int total_cached = 0;
+    for (int c = 0; c < smp_get_cpu_count(); c++)
+        total_cached += pmm_cpu_cache[c].count;
+    kprintf("[PMM] per-CPU caches: %d frames cached across %d CPUs\n",
+            total_cached, smp_get_cpu_count());
 }
 
 /* ── Page allocator ─────────────────────────────────────────────────────── */
 
 uint64_t pmm_alloc_frame(void) {
-    /* Start from hint to avoid scanning already-allocated frames */
-    uint64_t i = pmm_hint;
-    do {
-        if (!bitmap_test(i)) {
-            bitmap_set(i);
-            used_frames++;
-            frame_refcount[i] = 1;
-            pmm_hint = i + 1;
-            if (pmm_hint >= total_frames) pmm_hint = 0;
-            uint64_t addr = i * PAGE_SIZE;
-            poison_fill(addr, 0xDEADBEEF);
-            vm_pgalloc++;
-            return addr;
-        }
-        i++;
-        if (i >= total_frames) i = 0;
-    } while (i != pmm_hint);
+    int cpu = smp_get_cpu_id();
+    struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+
+    /* ── Fast path: pop from per-CPU hot cache ── */
+    /* Disable local IRQs to prevent reentrancy from interrupt handlers */
+    uint64_t irq_save;
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+
+    if (cache->count > 0) {
+        cache->count--;
+        uint64_t addr = cache->frames[cache->count];
+
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        poison_fill(addr, 0xDEADBEEF);
+        vm_pgalloc++;
+        return addr;
+    }
+
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+
+    /* ── Slow path: refill cache from global bitmap ── */
+    pmm_cache_refill();
+
+    /* Now try the cache again */
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+    if (cache->count > 0) {
+        cache->count--;
+        uint64_t addr = cache->frames[cache->count];
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        poison_fill(addr, 0xDEADBEEF);
+        vm_pgalloc++;
+        return addr;
+    }
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
 
     /* ── Out of memory: recovery level 1 — slab reaping + OOM killer ── */
     kprintf("[PMM] Out of memory! Attempting OOM recovery (slab reaping + OOM kill)...\n");
@@ -235,23 +376,18 @@ uint64_t pmm_alloc_frame(void) {
     oom_kill(1);
     scheduler_yield();
 
-    /* Second attempt */
-    i = pmm_hint;
-    do {
-        if (!bitmap_test(i)) {
-            bitmap_set(i);
-            used_frames++;
-            frame_refcount[i] = 1;
-            pmm_hint = i + 1;
-            if (pmm_hint >= total_frames) pmm_hint = 0;
-            uint64_t addr = i * PAGE_SIZE;
-            poison_fill(addr, 0xDEADBEEF);
-            vm_pgalloc++;
-            return addr;
-        }
-        i++;
-        if (i >= total_frames) i = 0;
-    } while (i != pmm_hint);
+    pmm_cache_refill();
+
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+    if (cache->count > 0) {
+        cache->count--;
+        uint64_t addr = cache->frames[cache->count];
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        poison_fill(addr, 0xDEADBEEF);
+        vm_pgalloc++;
+        return addr;
+    }
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
 
     /* ── Recovery level 2 — compaction + aggressive OOM ── */
     kprintf("[PMM] OOM recovery level 1 failed! Running compaction + aggressive OOM...\n");
@@ -260,23 +396,18 @@ uint64_t pmm_alloc_frame(void) {
     oom_kill(1);
     scheduler_yield();
 
-    /* Third attempt */
-    i = pmm_hint;
-    do {
-        if (!bitmap_test(i)) {
-            bitmap_set(i);
-            used_frames++;
-            frame_refcount[i] = 1;
-            pmm_hint = i + 1;
-            if (pmm_hint >= total_frames) pmm_hint = 0;
-            uint64_t addr = i * PAGE_SIZE;
-            poison_fill(addr, 0xDEADBEEF);
-            vm_pgalloc++;
-            return addr;
-        }
-        i++;
-        if (i >= total_frames) i = 0;
-    } while (i != pmm_hint);
+    pmm_cache_refill();
+
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+    if (cache->count > 0) {
+        cache->count--;
+        uint64_t addr = cache->frames[cache->count];
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        poison_fill(addr, 0xDEADBEEF);
+        vm_pgalloc++;
+        return addr;
+    }
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
 
     /* ── Final: panic with full memory diagnostics ── */
     pmm_dump_stats();
@@ -289,6 +420,9 @@ uint64_t pmm_alloc_frame(void) {
 uint64_t *pmm_alloc_frames(size_t count) {
     if (count == 0) return NULL;
     if (count == 1) return (uint64_t *)pmm_alloc_frame();
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
 
     /* Scan for 'count' contiguous free frames */
     uint64_t start = pmm_hint;
@@ -309,6 +443,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 }
                 pmm_hint = start + count;
                 if (pmm_hint >= total_frames) pmm_hint = 0;
+                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {
@@ -317,6 +452,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
+
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 
     /* ── First recovery: slab reaping + OOM killer ── */
     kprintf("[PMM] Out of memory for %llu contiguous frames! Attempting OOM recovery...\n",
@@ -327,6 +464,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
     scheduler_yield();
 
     /* Second attempt */
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
     start = pmm_hint;
     found = 0;
     i = pmm_hint;
@@ -343,6 +481,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 }
                 pmm_hint = start + count;
                 if (pmm_hint >= total_frames) pmm_hint = 0;
+                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {
@@ -351,6 +490,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 
     /* ── Second recovery: compaction ── */
     kprintf("[PMM] OOM recovery for %llu contiguous frames failed! Running compaction...\n",
@@ -361,6 +501,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
     scheduler_yield();
 
     /* Third attempt */
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
     start = pmm_hint;
     found = 0;
     i = pmm_hint;
@@ -377,6 +518,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 }
                 pmm_hint = start + count;
                 if (pmm_hint >= total_frames) pmm_hint = 0;
+                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {
@@ -385,6 +527,7 @@ uint64_t *pmm_alloc_frames(size_t count) {
         i++;
         if (i >= total_frames) i = 0;
     } while (i != pmm_hint);
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 
     /* ── Final: panic with full diagnostics ── */
     pmm_dump_stats();
@@ -396,17 +539,42 @@ uint64_t *pmm_alloc_frames(size_t count) {
 
 void pmm_free_frame(uint64_t addr) {
     if (addr & (PAGE_SIZE - 1)) return;
+
+    int cpu = smp_get_cpu_id();
+    struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+
+    /* ── Fast path: push to per-CPU hot cache if room ── */
+    uint64_t irq_save;
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+
+    if (cache->count < PMM_CPU_CACHE_SIZE) {
+        cache->frames[cache->count++] = addr;
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        return;
+    }
+
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+
+    /* ── Slow path: drain cache to global, then free ── */
+    pmm_cache_drain();
+
+    /* Now add the new page (should succeed since we just drained) */
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
+    if (cache->count < PMM_CPU_CACHE_SIZE) {
+        cache->frames[cache->count++] = addr;
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        return;
+    }
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+
+    /* Fallback: direct free to global if cache still full */
     uint64_t frame = addr / PAGE_SIZE;
     if (frame >= MAX_FRAMES) return;
-    if (!bitmap_test(frame)) return;
-    /* Safety: refuse to free a frame with outstanding COW references */
-    if (frame_refcount[frame] > 1) return;
-    /* Poison the page before freeing */
-    poison_fill(addr, 0xDC);
-    vm_pgfree++;
-    bitmap_clear(frame);
-    frame_refcount[frame] = 0;
-    used_frames--;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+    bitmap_free_one_locked(addr);
+    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 }
 
 void pmm_ref_frame(uint64_t phys) {
