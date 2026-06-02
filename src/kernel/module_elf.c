@@ -34,6 +34,15 @@
 #include "vmm.h"
 #include "export.h"
 
+/* ── Integer limit constants (not all compilers provide <stdint.h>
+ *     in -ffreestanding, and types.h only defines INT32_MAX). ─────── */
+#ifndef INT32_MIN
+#define INT32_MIN  (-2147483647 - 1)
+#endif
+#ifndef UINT32_MAX
+#define UINT32_MAX 4294967295U
+#endif
+
 /* ── Forward declarations of internal helpers ────────────────────────── */
 
 static int parse_section_headers(struct module_elf_context *ctx);
@@ -325,11 +334,7 @@ static int parse_rela_sections(struct module_elf_context *ctx)
             num_entries = MODULE_ELF_MAX_RELOCS;
         }
 
-        struct {
-            int section_idx;
-            struct module_elf_rela entries[MODULE_ELF_MAX_RELOCS];
-            int count;
-        } *rela = &ctx->relas[num_rela_seen];
+        struct module_elf_rela_group *rela = &ctx->relas[num_rela_seen];
 
         rela->section_idx = (int)target_idx;
         rela->count = 0;
@@ -533,4 +538,551 @@ void module_elf_free(struct module_elf_context *ctx)
      * dynamic allocations (e.g., if we move to heap-allocated
      * section descriptors for very large modules). */
     memset(ctx, 0, sizeof(*ctx));
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  M13 — Symbol resolver: connect module imports to kernel exports
+ * ══════════════════════════════════════════════════════════════════════ */
+
+int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
+{
+    if (!ctx || !ctx->file_data) {
+        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                          "module_elf_resolve: NULL context");
+        return -1;
+    }
+
+    int unresolved = 0;
+
+    for (int i = 1; i < ctx->num_syms; i++) { /* skip index 0 (null symbol) */
+        struct module_elf_sym *sym = &ctx->syms[i];
+
+        /* Only resolve symbols that are undefined (imported) */
+        if (sym->shndx != SHN_UNDEF) {
+            /* Local/defined symbols: mark as resolved with their value */
+            sym->resolved = 1;
+            continue;
+        }
+
+        /* Skip unnamed symbols (section-relative, etc.) */
+        if (!sym->name || sym->name[0] == '\0') {
+            sym->resolved = 1;
+            sym->value = 0;
+            continue;
+        }
+
+        /* Look up in kernel export table */
+        uint64_t addr = find_ksym(sym->name, gpl_ok);
+        if (addr != 0) {
+            sym->value = addr;
+            sym->resolved = 1;
+            continue;
+        }
+
+        /* Weak symbols: unresolved is OK — treat as 0 */
+        if (sym->bind == STB_WEAK) {
+            sym->value = 0;
+            sym->resolved = 1;
+            continue;
+        }
+
+        /* Unresolved required symbol — collect first error */
+        if (unresolved == 0) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf: unresolved symbol '%s' (index %d)",
+                     sym->name, i);
+        }
+        unresolved++;
+    }
+
+    if (unresolved > 0) {
+        /* Append total count if more than one */
+        if (unresolved > 1) {
+            char tmp[64];
+            snprintf(tmp, sizeof(tmp), " (+%d more unresolved symbols)",
+                     unresolved - 1);
+            size_t cur = strlen(ctx->error_msg);
+            size_t max = sizeof(ctx->error_msg) - cur - 1;
+            if (cur < sizeof(ctx->error_msg) - 1) {
+                strncat(ctx->error_msg, tmp, max);
+            }
+        }
+        return -1;
+    }
+
+    kprintf("[MOD_ELF] Resolved %d symbols (including %d imports)\n",
+            ctx->num_syms - 1, 0); /* second count is for imports only; skip detail */
+    return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  M12 (continued) — load PROGBITS sections to module memory, zero BSS
+ * ══════════════════════════════════════════════════════════════════════ */
+
+uint64_t module_elf_load_sections(struct module_elf_context *ctx,
+                                   uint64_t *total_out)
+{
+    if (!ctx || !ctx->file_data) {
+        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                          "module_elf_load_sections: NULL context");
+        return 0;
+    }
+
+    /* ── Phase 1: Calculate layout ─────────────────────────────────────
+     *
+     * Walk all sections; loadable ones (SHF_ALLOC) get a slot in module
+     * memory.  We lay them out sequentially with page-alignment for
+     * per-section permission changes.  Sections that are not SHF_ALLOC
+     * (debug, symbol tables, string tables, etc.) are not loaded.
+     */
+    uint64_t total = 0;
+    int loadable_count = 0;
+
+    for (int i = 0; i < ctx->num_sections; i++) {
+        struct module_elf_section *sec = &ctx->sections[i];
+
+        if (!(sec->sh_flags & SHF_ALLOC))
+            continue;
+
+        /* Determine memory size: for NOBITS it's sh_size; for PROGBITS
+         * it's the max of file_size and sh_size (usually they match). */
+        uint64_t mem_size;
+        if (sec->sh_type == SHT_NOBITS) {
+            mem_size = ctx->shdrs[i].sh_size;
+        } else {
+            mem_size = ctx->shdrs[i].sh_size;
+            if (sec->file_size > mem_size)
+                mem_size = sec->file_size;
+        }
+
+        /* Page-align the start of each section so we can set per-section
+         * page permissions independently. */
+        total = (total + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+        sec->mem_addr = total;  /* offset within module region (relative) */
+        sec->mem_size = (mem_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+        sec->loaded = 0;
+
+        total += sec->mem_size;
+        loadable_count++;
+    }
+
+    if (loadable_count == 0) {
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: no loadable (SHF_ALLOC) sections found");
+        return 0;
+    }
+
+    if (total > MODULES_SIZE) {
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: module too large (%llu bytes, max %llu)",
+                 (unsigned long long)total,
+                 (unsigned long long)MODULES_SIZE);
+        return 0;
+    }
+
+    /* ── Phase 2: Allocate module memory (RW initially for patching) ─── */
+    uint64_t base_vaddr = module_alloc_region(total,
+        VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+    if (base_vaddr == 0) {
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: failed to allocate %llu bytes in module region",
+                 (unsigned long long)total);
+        return 0;
+    }
+
+    /* ── Phase 3: Copy data and zero BSS ─────────────────────────────── */
+    uint64_t offset = 0;
+    for (int i = 0; i < ctx->num_sections; i++) {
+        struct module_elf_section *sec = &ctx->sections[i];
+
+        if (!(sec->sh_flags & SHF_ALLOC))
+            continue;
+
+        /* Align to page boundary */
+        offset = (offset + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+        uint64_t vaddr = base_vaddr + offset;
+        sec->mem_addr = vaddr;
+        sec->mem_size = ctx->shdrs[i].sh_size;  /* actual content size */
+
+        if (sec->sh_type == SHT_NOBITS) {
+            /* BSS: zero-fill */
+            memset((void *)vaddr, 0, ctx->shdrs[i].sh_size);
+        } else if (sec->sh_type == SHT_PROGBITS) {
+            /* Copy data from file */
+            if (sec->file_offset + sec->file_size > ctx->file_size) {
+                /* Truncated section — zero-fill what we can and error */
+                uint64_t copy_size = ctx->file_size - sec->file_offset;
+                if (copy_size > sec->file_size)
+                    copy_size = sec->file_size;
+                memcpy((void *)vaddr,
+                       ctx->file_data + sec->file_offset, copy_size);
+                if (sec->file_size > copy_size)
+                    memset((void *)(vaddr + copy_size), 0,
+                           sec->file_size - copy_size);
+            } else {
+                memcpy((void *)vaddr,
+                       ctx->file_data + sec->file_offset, sec->file_size);
+            }
+            /* Zero-fill any remaining memory beyond file_size (padding) */
+            uint64_t pg_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1)
+                               & ~(PAGE_SIZE - 1);
+            if (ctx->shdrs[i].sh_size < pg_size) {
+                memset((void *)(vaddr + ctx->shdrs[i].sh_size), 0,
+                       pg_size - ctx->shdrs[i].sh_size);
+            }
+        }
+        /* Round up the stored mem_size to page boundary for later
+         * permission changes */
+        sec->mem_size = (ctx->shdrs[i].sh_size + PAGE_SIZE - 1)
+                        & ~(PAGE_SIZE - 1);
+        sec->loaded = 1;
+
+        offset += sec->mem_size;
+
+        kprintf("[MOD_ELF]   Loaded section '%s' at 0x%llx (size=%llu)\n",
+                sec->name ? sec->name : "?",
+                (unsigned long long)vaddr,
+                (unsigned long long)ctx->shdrs[i].sh_size);
+    }
+
+    if (total_out)
+        *total_out = total;
+
+    kprintf("[MOD_ELF] Loaded %d sections, total %llu bytes at 0x%llx\n",
+            loadable_count, (unsigned long long)total,
+            (unsigned long long)base_vaddr);
+    return base_vaddr;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  M14 — Relocation applier
+ * ══════════════════════════════════════════════════════════════════════ */
+
+int module_elf_apply_rela(struct module_elf_context *ctx)
+{
+    if (!ctx || !ctx->file_data) {
+        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                          "module_elf_apply_rela: NULL context");
+        return -1;
+    }
+
+    if (ctx->num_rela_sections == 0)
+        return 0; /* No relocations to apply — success */
+
+    int applied = 0;
+
+    for (int r = 0; r < ctx->num_rela_sections; r++) {
+        int target_idx = ctx->relas[r].section_idx;
+        if (target_idx < 0 || target_idx >= ctx->num_sections) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf: RELA group %d has invalid target section %d",
+                     r, target_idx);
+            return -1;
+        }
+
+        /* Target section must be loaded */
+        struct module_elf_section *target = &ctx->sections[target_idx];
+        if (!target->loaded || target->mem_addr == 0) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf: RELA group %d targets unloaded section %d",
+                     r, target_idx);
+            return -1;
+        }
+
+        int count = ctx->relas[r].count;
+        for (int j = 0; j < count; j++) {
+            const struct module_elf_rela *rel = &ctx->relas[r].entries[j];
+
+            /* Calculate the location to patch (absolute virtual address) */
+            uint64_t patch_addr = target->mem_addr + rel->offset;
+
+            /* Get the symbol value */
+            if (rel->sym_idx >= (uint32_t)ctx->num_syms) {
+                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                         "module_elf: RELA entry (group %d, entry %d) "
+                         "has out-of-range sym_idx %u",
+                         r, j, (unsigned int)rel->sym_idx);
+                return -1;
+            }
+
+            struct module_elf_sym *sym = &ctx->syms[rel->sym_idx];
+            if (!sym->resolved) {
+                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                         "module_elf: RELA entry references unresolved "
+                         "symbol '%s' (index %u)",
+                         sym->name ? sym->name : "?",
+                         (unsigned int)rel->sym_idx);
+                return -1;
+            }
+
+            uint64_t S = sym->value;   /* resolved symbol address */
+            int64_t  A = rel->addend;  /* addend from RELA entry */
+            uint64_t P = patch_addr;   /* location being patched */
+
+            switch (rel->type) {
+            case R_X86_64_NONE:
+                /* No action required */
+                break;
+
+            case R_X86_64_64: {
+                /* S + A: 64-bit absolute value */
+                uint64_t value = S + (uint64_t)A;
+                *(volatile uint64_t *)patch_addr = value;
+                break;
+            }
+
+            case R_X86_64_PC32:
+            case R_X86_64_PLT32: {
+                /* S + A - P: 32-bit PC-relative offset */
+                int64_t value = (int64_t)(S + (uint64_t)A - P);
+                if (value < INT32_MIN || value > INT32_MAX) {
+                    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                             "module_elf: R_X86_64_PC32 overflow at "
+                             "0x%llx (value=%lld, sym='%s')",
+                             (unsigned long long)patch_addr,
+                             (long long)value,
+                             sym->name ? sym->name : "?");
+                    return -1;
+                }
+                *(volatile int32_t *)patch_addr = (int32_t)value;
+                break;
+            }
+
+            case R_X86_64_32: {
+                /* S + A: 32-bit absolute (zero-extended) */
+                uint64_t value = S + (uint64_t)A;
+                if (value > UINT32_MAX) {
+                    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                             "module_elf: R_X86_64_32 overflow at "
+                             "0x%llx (value=0x%llx, sym='%s')",
+                             (unsigned long long)patch_addr,
+                             (unsigned long long)value,
+                             sym->name ? sym->name : "?");
+                    return -1;
+                }
+                *(volatile uint32_t *)patch_addr = (uint32_t)value;
+                break;
+            }
+
+            case R_X86_64_32S: {
+                /* S + A: 32-bit absolute (sign-extended) */
+                int64_t value = (int64_t)(S + (uint64_t)A);
+                if (value < INT32_MIN || value > INT32_MAX) {
+                    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                             "module_elf: R_X86_64_32S overflow at "
+                             "0x%llx (value=%lld, sym='%s')",
+                             (unsigned long long)patch_addr,
+                             (long long)value,
+                             sym->name ? sym->name : "?");
+                    return -1;
+                }
+                *(volatile int32_t *)patch_addr = (int32_t)value;
+                break;
+            }
+
+            case R_X86_64_PC64: {
+                /* S + A - P: 64-bit PC-relative offset */
+                int64_t value = (int64_t)(S + (uint64_t)A - P);
+                *(volatile int64_t *)patch_addr = value;
+                break;
+            }
+
+            default:
+                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                         "module_elf: unsupported relocation type %d "
+                         "at 0x%llx (sym='%s')",
+                         rel->type,
+                         (unsigned long long)patch_addr,
+                         sym->name ? sym->name : "?");
+                return -1;
+            }
+
+            applied++;
+        }
+    }
+
+    kprintf("[MOD_ELF] Applied %d relocations across %d groups\n",
+            applied, ctx->num_rela_sections);
+    return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  M15 — Set per-section page permissions
+ * ══════════════════════════════════════════════════════════════════════ */
+
+static uint64_t section_to_vmm_flags(uint64_t sh_flags)
+{
+    uint64_t flags = VMM_FLAG_PRESENT;
+
+    if (sh_flags & SHF_WRITE)
+        flags |= VMM_FLAG_WRITE;
+
+    /* Executable sections do NOT have NX set */
+    if (!(sh_flags & SHF_EXECINSTR))
+        flags |= VMM_FLAG_NOEXEC;
+
+    return flags;
+}
+
+int module_elf_set_perms(struct module_elf_context *ctx)
+{
+    if (!ctx) {
+        return -1;
+    }
+
+    for (int i = 0; i < ctx->num_sections; i++) {
+        struct module_elf_section *sec = &ctx->sections[i];
+
+        if (!sec->loaded || sec->mem_addr == 0 || sec->mem_size == 0)
+            continue;
+
+        uint64_t flags = section_to_vmm_flags(sec->sh_flags);
+        uint64_t pages = sec->mem_size / PAGE_SIZE;
+        uint64_t vaddr = sec->mem_addr;
+
+        for (uint64_t p = 0; p < pages; p++) {
+            /* Get the physical address currently mapped and remap with
+             * new flags.  We cannot use module_alloc_region with different
+             * flags per page, so we update the page table entries directly. */
+            uint64_t phys = vmm_get_physaddr(vaddr + p * PAGE_SIZE);
+            if (phys == 0) {
+                /* Page not mapped — skip (should not happen for loaded sections) */
+                continue;
+            }
+
+            if (vmm_map_page(vaddr + p * PAGE_SIZE, phys, flags) < 0) {
+                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                         "module_elf: failed to set permissions on "
+                         "section '%s' at 0x%llx",
+                         sec->name ? sec->name : "?",
+                         (unsigned long long)(vaddr + p * PAGE_SIZE));
+                return -1;
+            }
+        }
+    }
+
+    kprintf("[MOD_ELF] Set page permissions on loaded sections\n");
+    return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  M16 — Module finalization (init + register)
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Find the module init function in the symbol table.
+ * Standard .ko files use the symbol name "init_module".
+ */
+static uint64_t find_module_entry(const struct module_elf_context *ctx)
+{
+    for (int i = 1; i < ctx->num_syms; i++) {
+        const struct module_elf_sym *sym = &ctx->syms[i];
+        if (sym->name && sym->resolved &&
+            sym->value != 0 &&
+            strcmp(sym->name, "init_module") == 0) {
+            return sym->value;
+        }
+    }
+    return 0;
+}
+
+int module_elf_finalize(struct module_elf_context *ctx, const char *name)
+{
+    if (!ctx || !ctx->file_data) {
+        if (ctx) snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                          "module_elf_finalize: NULL context");
+        return -1;
+    }
+
+    /* Step 1: Resolve symbols */
+    kprintf("[MOD_ELF] Resolving symbols for '%s'...\n",
+            name ? name : ctx->name);
+    if (module_elf_resolve(ctx, 1) < 0) {
+        /* error_msg already set */
+        return -1;
+    }
+
+    /* Step 2: Load sections to module memory */
+    uint64_t total_size = 0;
+    uint64_t base = module_elf_load_sections(ctx, &total_size);
+    if (base == 0) {
+        /* error_msg already set */
+        return -1;
+    }
+
+    /* Step 3: Apply relocations */
+    kprintf("[MOD_ELF] Applying relocations for '%s'...\n",
+            name ? name : ctx->name);
+    if (module_elf_apply_rela(ctx) < 0) {
+        /* Free the allocated region on failure */
+        if (base != 0 && total_size > 0)
+            module_free_region(base, total_size);
+        return -1;
+    }
+
+    /* Step 4: Set final page permissions */
+    kprintf("[MOD_ELF] Setting permissions for '%s'...\n",
+            name ? name : ctx->name);
+    if (module_elf_set_perms(ctx) < 0) {
+        if (base != 0 && total_size > 0)
+            module_free_region(base, total_size);
+        return -1;
+    }
+
+    /* Step 5: Find the init function */
+    uint64_t entry_addr = find_module_entry(ctx);
+    if (entry_addr == 0) {
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: no 'init_module' symbol found in '%s'",
+                 name ? name : ctx->name);
+        if (base != 0 && total_size > 0)
+            module_free_region(base, total_size);
+        return -1;
+    }
+
+    module_entry_t entry_fn = (module_entry_t)entry_addr;
+
+    /* Step 6: Register with module system */
+    const char *mod_name = name ? name : ctx->name;
+    int mod_id = module_load(mod_name, entry_fn);
+    if (mod_id < 0) {
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: failed to register module '%s' "
+                 "(duplicate or full table)", mod_name);
+        if (base != 0 && total_size > 0)
+            module_free_region(base, total_size);
+        return -1;
+    }
+
+    /* Record the module's base address and size for later unload */
+    struct kernel_module *mod = module_find(mod_name);
+    if (mod) {
+        mod->base_addr = base;
+        mod->size = total_size;
+    }
+
+    /* Step 7: Call the init function */
+    kprintf("[MOD] Initializing '%s' (entry=0x%llx)...\n",
+            mod_name, (unsigned long long)entry_addr);
+
+    int init_ret = entry_fn();
+
+    if (init_ret != 0) {
+        kprintf("[MOD] ERROR: '%s' init returned %d — unloading\n",
+                mod_name, init_ret);
+        module_unload(mod_id);
+        if (base != 0 && total_size > 0)
+            module_free_region(base, total_size);
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "module_elf: init function for '%s' returned %d",
+                 mod_name, init_ret);
+        return -1;
+    }
+
+    kprintf("[MOD] Loaded: %s (id=%d, base=0x%llx, size=%llu)\n",
+            mod_name, mod_id,
+            (unsigned long long)base, (unsigned long long)total_size);
+    return mod_id;
 }

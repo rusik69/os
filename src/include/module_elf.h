@@ -65,6 +65,13 @@ struct module_elf_sym {
  * Parsed context for a single .ko file.
  * Filled in by module_elf_parse(); used by load/resolve/apply stages.
  */
+/* Relocation sets by target section — named type for type-safety */
+struct module_elf_rela_group {
+    int                          section_idx;   /* index into sections[] of target */
+    struct module_elf_rela       entries[MODULE_ELF_MAX_RELOCS];
+    int                          count;
+};
+
 struct module_elf_context {
     const uint8_t       *file_data;          /* pointer to the full .ko file content */
     uint64_t             file_size;          /* total file size in bytes */
@@ -90,11 +97,7 @@ struct module_elf_context {
     int                  num_syms;
 
     /* Relocation sets by target section */
-    struct {
-        int                          section_idx;   /* index into sections[] of target */
-        struct module_elf_rela       entries[MODULE_ELF_MAX_RELOCS];
-        int                          count;
-    } relas[MODULE_ELF_MAX_SECTIONS];
+    struct module_elf_rela_group relas[MODULE_ELF_MAX_SECTIONS];
     int num_rela_sections;
 
     /* Name string for the module (derived from .modinfo or filename) */
@@ -140,6 +143,90 @@ void module_elf_print_info(const struct module_elf_context *ctx);
  * this provides a hook for future expansion.
  */
 void module_elf_free(struct module_elf_context *ctx);
+
+/*
+ * ── Section loading (M12 completion), symbol resolution (M13),
+ *    relocation (M14), permissions (M15), finalization (M16) ─────
+ */
+
+/*
+ * module_elf_load_sections - Allocate module memory, copy PROGBITS
+ * sections, and zero-fill BSS (NOBITS) sections.
+ *
+ * @ctx:      Parsed module context (from module_elf_parse).
+ * @total_out: On success, receives the total allocated size (bytes).
+ *
+ * Allocates a contiguous region from the module memory allocator,
+ * initially mapped RW (for patching).  On success, ctx->sections[i].mem_addr
+ * is set for each loaded section and ctx->sections[i].loaded = 1.
+ *
+ * Returns the virtual base address of the loaded module, or 0 on failure.
+ */
+uint64_t module_elf_load_sections(struct module_elf_context *ctx,
+                                   uint64_t *total_out);
+
+/*
+ * module_elf_resolve - Resolve undefined (imported) symbols in the
+ * module's symbol table against the kernel's export table.
+ *
+ * @ctx:    Parsed and loaded module context.
+ * @gpl_ok: Non-zero to allow GPL-only symbols.
+ *
+ * For each symbol with shndx == SHN_UNDEF, searches the kernel
+ * export table via find_ksym().  If found, sets sym->value to the
+ * kernel address and sym->resolved = 1.  Weak symbols (STB_WEAK)
+ * that remain unresolved are silently zeroed (treated as optional).
+ *
+ * Returns 0 on success (all required symbols resolved), -1 with
+ * error_msg set on failure.
+ */
+int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok);
+
+/*
+ * module_elf_apply_rela - Apply all RELA relocations to the loaded
+ * section data.
+ *
+ * @ctx: Parsed and loaded module context with symbols resolved.
+ *
+ * Handles: R_X86_64_NONE, R_X86_64_64, R_X86_64_PC32, R_X86_64_PLT32,
+ * R_X86_64_32, R_X86_64_32S, R_X86_64_PC64.
+ *
+ * Returns 0 on success, -1 with error_msg on failure (e.g. unresolved
+ * symbol, overflow on 32-bit relocation).
+ */
+int module_elf_apply_rela(struct module_elf_context *ctx);
+
+/*
+ * module_elf_set_perms - Set final page permissions on each loaded
+ * section based on its ELF section header flags (SHF_WRITE, SHF_EXECINSTR).
+ *
+ * @ctx: Loaded module context.
+ *
+ * Typical mapping:
+ *   .text   (SHF_ALLOC|SHF_EXECINSTR)          → RX  (present, no NX)
+ *   .rodata (SHF_ALLOC)                        → RO  (present, NX)
+ *   .data   (SHF_ALLOC|SHF_WRITE)              → RW  (present, write, NX)
+ *   .bss    (SHF_ALLOC|SHF_WRITE)              → RW  (present, write, NX)
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int module_elf_set_perms(struct module_elf_context *ctx);
+
+/*
+ * module_elf_finalize - Complete module loading: set final permissions,
+ * resolve symbols, apply relocations, call the module init function,
+ * and record the module in the kernel module table.
+ *
+ * @ctx:  Parsed module context.
+ * @name: Module name (or NULL to use name from .modinfo).
+ *
+ * Convenience wrapper that calls load_sections → resolve → apply_rela
+ * → set_perms, then calls module_init() from the module, sets state to
+ * LIVE, and registers the module.
+ *
+ * Returns module_id (>= 0) on success, -1 on failure.
+ */
+int module_elf_finalize(struct module_elf_context *ctx, const char *name);
 
 /*
  * ── Low-level helpers (public for unit testing) ──────────────────────
