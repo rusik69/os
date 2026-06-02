@@ -618,6 +618,31 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
     if (nf_iterate_hooks(NF_INET_LOCAL_OUT, (void *)buf) != NF_ACCEPT)
         return;
 
+    /* Track outgoing packets in conntrack */
+    {
+        uint16_t src_port = 0, dst_port = 0;
+        uint8_t tcp_flags = 0;
+        const uint8_t *l4 = (const uint8_t *)payload;
+
+        if (protocol == IPPROTO_TCP && len >= sizeof(struct tcp_header)) {
+            const struct tcp_header *tcp = (const struct tcp_header *)l4;
+            src_port = ntohs(tcp->src_port);
+            dst_port = ntohs(tcp->dst_port);
+            tcp_flags = tcp->flags;
+        } else if (protocol == IPPROTO_UDP && len >= sizeof(struct udp_header)) {
+            const struct udp_header *udp = (const struct udp_header *)l4;
+            src_port = ntohs(udp->src_port);
+            dst_port = ntohs(udp->dst_port);
+        } else if (protocol == IPPROTO_ICMP && len >= sizeof(struct icmp_header)) {
+            const struct icmp_header *icmp = (const struct icmp_header *)l4;
+            src_port = (uint16_t)icmp->type << 8 | icmp->code;
+            dst_port = icmp->id;
+        }
+        nf_conntrack_out(net_our_ip, dst_ip,
+                         src_port, dst_port,
+                         protocol, tcp_flags, len);
+    }
+
     /* Netfilter POST_ROUTING */
     if (nf_iterate_hooks(NF_INET_POST_ROUTING, (void *)buf) != NF_ACCEPT)
         return;
@@ -838,12 +863,35 @@ static void handle_ip(const uint8_t *data, uint16_t len) {
         return;
     }
 
-    if (ip->protocol == IP_PROTO_ICMP)
+    if (ip->protocol == IP_PROTO_ICMP) {
+        /* Track ICMP in conntrack — use ICMP id/seq as pseudo-ports */
+        if (payload_len >= sizeof(struct icmp_header)) {
+            const struct icmp_header *icmp = (const struct icmp_header *)payload;
+            uint16_t pseudo_src = (uint16_t)icmp->type << 8 | icmp->code;
+            uint16_t pseudo_dst = icmp->id;
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
+                            pseudo_src, pseudo_dst, IPPROTO_ICMP, 0, payload_len);
+        }
         handle_icmp(ip, payload, payload_len);
-    else if (ip->protocol == IP_PROTO_TCP)
+    } else if (ip->protocol == IP_PROTO_TCP) {
+        /* Track TCP in conntrack with full state machine */
+        if (payload_len >= sizeof(struct tcp_header)) {
+            const struct tcp_header *tcp = (const struct tcp_header *)payload;
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
+                            ntohs(tcp->src_port), ntohs(tcp->dst_port),
+                            IPPROTO_TCP, tcp->flags, payload_len);
+        }
         handle_tcp(ip, payload, payload_len);
-    else if (ip->protocol == IP_PROTO_UDP)
+    } else if (ip->protocol == IP_PROTO_UDP) {
+        /* Track UDP in conntrack */
+        if (payload_len >= sizeof(struct udp_header)) {
+            const struct udp_header *udp = (const struct udp_header *)payload;
+            nf_conntrack_in(ntohl(ip->src_ip), ntohl(ip->dst_ip),
+                            ntohs(udp->src_port), ntohs(udp->dst_port),
+                            IPPROTO_UDP, 0, payload_len);
+        }
         handle_udp(ip, payload, payload_len);
+    }
 }
 
 /* --- Ping --- */
@@ -955,12 +1003,18 @@ void net_poll(void) {
     /* Periodic TCP retransmit check — runs AFTER receive so any pending ACKs
      * are already processed, preventing spurious retransmits of ACKed data. */
     static uint64_t last_retransmit_tick = 0;
+    static uint64_t last_conntrack_tick = 0;
     uint64_t now = timer_get_ticks();
     if (now - last_retransmit_tick >= 10) {
         last_retransmit_tick = now;
         net_tcp_check_retransmit();
         net_tcp_check_keepalive();
         ipv6_poll();
+    }
+    /* Periodic conntrack expiry — every 100 ticks (~10s) */
+    if (now - last_conntrack_tick >= 100) {
+        last_conntrack_tick = now;
+        nf_conntrack_purge();
     }
 }
 

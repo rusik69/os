@@ -147,6 +147,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/httpd.c \
          src/net/socket.c \
          src/net/netfilter.c \
+         src/net/conntrack.c \
          src/net/pkt_sched.c \
          src/net/bridge.c \
          src/net/vlan.c \

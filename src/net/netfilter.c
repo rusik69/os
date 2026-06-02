@@ -17,17 +17,10 @@ static struct nf_hook_entry *nf_hooks[NF_MAX_HOOKS];
 static struct nf_rule nf_rules[NF_RULES_MAX];
 static int nf_num_rules = 0;
 
-/* Connection tracking table */
-static struct nf_conn nf_conns[NF_CONNTRACK_MAX];
-static int nf_conn_count = 0;
-
 /* NAT rules */
 #define NF_NAT_RULES_MAX 16
 static struct nf_nat_rule nf_nat_rules[NF_NAT_RULES_MAX];
 static int nf_nat_num_rules = 0;
-
-/* Connection tracking defaults */
-#define CONNTRACK_DEFAULT_TIMEOUT 300  /* 30 seconds at 10 ticks/s */
 
 /* ── Hook management ────────────────────────────────────────────── */
 
@@ -144,65 +137,6 @@ int nf_check_rules(void *skb, uint32_t src_ip, uint32_t dst_ip,
     return NF_ACCEPT;  /* default: accept */
 }
 
-/* ── Connection tracking ────────────────────────────────────────── */
-
-struct nf_conn *nf_conntrack_get(uint32_t src_ip, uint32_t dst_ip,
-                                 uint16_t src_port, uint16_t dst_port,
-                                 uint8_t protocol) {
-    /* Look for existing connection */
-    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
-        if (!nf_conns[i].used) continue;
-        if (nf_conns[i].src_ip   == src_ip   &&
-            nf_conns[i].dst_ip   == dst_ip   &&
-            nf_conns[i].src_port == src_port &&
-            nf_conns[i].dst_port == dst_port &&
-            nf_conns[i].protocol == protocol) {
-            nf_conns[i].timeout = CONNTRACK_DEFAULT_TIMEOUT;
-            return &nf_conns[i];
-        }
-    }
-    /* Create new connection entry */
-    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
-        if (!nf_conns[i].used) {
-            nf_conns[i].src_ip   = src_ip;
-            nf_conns[i].dst_ip   = dst_ip;
-            nf_conns[i].src_port = src_port;
-            nf_conns[i].dst_port = dst_port;
-            nf_conns[i].protocol = protocol;
-            nf_conns[i].state    = NF_CONN_NEW;
-            nf_conns[i].timeout  = CONNTRACK_DEFAULT_TIMEOUT;
-            nf_conns[i].used     = 1;
-            nf_conn_count++;
-            return &nf_conns[i];
-        }
-    }
-    return NULL;  /* table full */
-}
-
-void nf_conntrack_put(struct nf_conn *conn) {
-    if (!conn) return;
-    /* Mark as established on first put after NEW */
-    if (conn->state == NF_CONN_NEW)
-        conn->state = NF_CONN_ESTABLISHED;
-    conn->timeout = CONNTRACK_DEFAULT_TIMEOUT;
-}
-
-void nf_conntrack_timeout(struct nf_conn *conn, uint32_t timeout) {
-    if (conn) conn->timeout = timeout;
-}
-
-void nf_conntrack_purge(void) {
-    uint64_t now = timer_get_ticks();
-    for (int i = 0; i < NF_CONNTRACK_MAX; i++) {
-        if (!nf_conns[i].used) continue;
-        /* Simple timeout: if our tick delta > timeout, expire */
-        if (now > (uint64_t)nf_conns[i].timeout * 10) {
-            nf_conns[i].used = 0;
-            nf_conn_count--;
-        }
-    }
-}
-
 /* ── NAT ────────────────────────────────────────────────────────── */
 
 int nf_nat_register_rule(uint32_t orig_ip, uint16_t orig_port,
@@ -252,7 +186,7 @@ int nf_nat_apply_post_routing(uint32_t *ip, uint16_t *port) {
 void nf_init(void) {
     memset(nf_hooks, 0, sizeof(nf_hooks));
     memset(nf_rules, 0, sizeof(nf_rules));
-    memset(nf_conns, 0, sizeof(nf_conns));
     memset(nf_nat_rules, 0, sizeof(nf_nat_rules));
-    kprintf("[OK] Netfilter initialized\\n");
+    nf_conntrack_init();
+    kprintf("[OK] Netfilter initialized\n");
 }
