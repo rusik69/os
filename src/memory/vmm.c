@@ -5,6 +5,7 @@
 #include "printf.h"
 #include "smp.h"
 #include "thp.h"
+#include "export.h"
 
 /* NX support status — defined in this file, exported for nx_enforce */
 int nx_enabled = 0;
@@ -1004,3 +1005,8 @@ done:
     if (shared_out) *shared_out = shared;
     return total;
 }
+
+/* ── Exported symbols for module loading ──────────────────────────── */
+EXPORT_SYMBOL(vmm_map_page);
+EXPORT_SYMBOL(vmm_unmap_page);
+EXPORT_SYMBOL(vmm_get_physaddr);

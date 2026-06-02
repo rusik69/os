@@ -10,6 +10,7 @@
 #include "io.h"
 #include "spinlock.h"
 #include "smp.h"
+#include "export.h"
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -648,3 +649,8 @@ uint64_t pmm_get_used_frames(void)  { return used_frames; }
 void pmm_set_poison(int enable) {
     pmm_poison_enabled = enable;
 }
+
+/* ── Exported symbols for module loading ──────────────────────────── */
+EXPORT_SYMBOL(pmm_alloc_frame);
+EXPORT_SYMBOL(pmm_free_frame);
+EXPORT_SYMBOL(pmm_ref_frame);
