@@ -376,6 +376,9 @@
 #define SYS_PREADV            361  /* preadv(fd, iov, iovcnt, offset) */
 #define SYS_PWRITEV           362  /* pwritev(fd, iov, iovcnt, offset) */
 
+/* memfd_create — anonymous file descriptor with sealing support */
+#define SYS_MEMFD_CREATE      365  /* memfd_create(name, flags) → fd or -1 */
+
 /* Synchronous signal acceptance */
 #define SYS_SIGWAITINFO       363  /* sigwaitinfo(set, info) → signum or -1 */
 #define SYS_SIGTIMEDWAIT      364  /* sigtimedwait(set, info, timeout) → signum or -1 */

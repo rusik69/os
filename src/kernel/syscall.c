@@ -49,6 +49,7 @@
 #include "kptr_restrict.h"
 #include "dmesg.h"
 #include "aslr.h"
+#include "memfd.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -355,6 +356,9 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SIGNALFD:
             if (a2 && !syscall_user_read_ok(a2, 8)) return 0;
             return 1;
+        case SYS_MEMFD_CREATE:
+            if (a1 && !syscall_user_cstr_ok(a1)) return 0;
+            return 1;
         case SYS_SPLICE:
         case SYS_TEE:
             return 1;
@@ -446,6 +450,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         *(uint64_t*)(uintptr_t)buf_addr = val;
         return 8;
     }
+    /* memfd read */
+    if (memfd_is_fd((int)fd)) {
+        struct memfd *mfd = memfd_get_by_fd((int)fd);
+        if (!mfd) return (uint64_t)-1;
+        int64_t ret = memfd_read(mfd, (void*)buf_addr, len, 0);
+        memfd_put(mfd);
+        return (uint64_t)(ret >= 0 ? ret : (uint64_t)-1);
+    }
     return (uint64_t)-1;
 }
 
@@ -464,6 +476,14 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         uint64_t val = *(uint64_t*)(uintptr_t)buf_addr;
         if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
         return 8;
+    }
+    /* memfd write */
+    if (memfd_is_fd((int)fd)) {
+        struct memfd *mfd = memfd_get_by_fd((int)fd);
+        if (!mfd) return (uint64_t)-1;
+        int64_t ret = memfd_write(mfd, (const void*)buf_addr, len, 0);
+        memfd_put(mfd);
+        return (uint64_t)(ret >= 0 ? ret : (uint64_t)-1);
     }
     return (uint64_t)-1;
 }
@@ -1695,6 +1715,16 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             proc->fd_table[new_fd] = proc->fd_table[fd];
             proc->fd_table[new_fd].flags |= FD_CLOEXEC;
             return (uint64_t)new_fd;
+        }
+        case F_ADD_SEALS: {
+            /* Add seals to a memfd */
+            if (!memfd_is_fd((int)fd)) return (uint64_t)-1;
+            return (uint64_t)memfd_add_seals_fd((int)fd, (int)arg);
+        }
+        case F_GET_SEALS: {
+            /* Get seals from a memfd */
+            if (!memfd_is_fd((int)fd)) return (uint64_t)-1;
+            return (uint64_t)memfd_get_seals_fd((int)fd);
         }
         default:
             return (uint64_t)-1;
@@ -6055,6 +6085,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
         case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);
         case SYS_SIGNALFD:        return sys_signalfd(a1, a2, a3);
+        case SYS_MEMFD_CREATE:    return (uint64_t)memfd_syscall_create((const char*)a1, (unsigned int)a2);
         case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5);
         case SYS_TEE:             return sys_tee(a1, a2, a3, a4);
         case SYS_SENDMMSG:        return sys_sendmmsg(a1, a2, a3, a4);

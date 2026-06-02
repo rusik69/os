@@ -182,6 +182,7 @@ static void process_caps_apply_user_default(struct process *proc) {
     /* User program execution helpers */
     process_caps_allow(proc, SYS_ELF_EXEC);
     process_caps_allow(proc, SYS_SCRIPT_EXEC);
+    process_caps_allow(proc, SYS_MEMFD_CREATE);
 }
 
 static void process_caps_apply_user_trusted(struct process *proc) {

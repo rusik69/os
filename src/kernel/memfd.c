@@ -21,6 +21,8 @@ void memfd_init(void)
         mfd->size = 0;
         mfd->seals = 0;
         mfd->refcount = 0;
+        mfd->fd = -1;
+        mfd->flags = 0;
         memset(mfd->name, 0, MEMFD_NAME_MAX);
     }
     memfd_initialised = 1;
@@ -38,8 +40,6 @@ static int memfd_find_free(void)
 
 int memfd_create(const char *name, int flags)
 {
-    (void)flags;
-
     if (!memfd_initialised)
         return -ENOSYS;
 
@@ -57,17 +57,19 @@ int memfd_create(const char *name, int flags)
     mfd->seals = 0;
     mfd->refcount = 1;
     mfd->used = 1;
+    mfd->flags = flags;
+    mfd->fd = MEMFD_BASE + fd;
 
     spinlock_release(&mfd->lock);
-    return fd;
+    return mfd->fd;
 }
 
-struct memfd *memfd_get(int fd)
+struct memfd *memfd_get(int slot)
 {
-    if (fd < 0 || fd >= MEMFD_MAX)
+    if (slot < 0 || slot >= MEMFD_MAX)
         return NULL;
 
-    struct memfd *mfd = &memfd_table[fd];
+    struct memfd *mfd = &memfd_table[slot];
     spinlock_acquire(&mfd->lock);
     if (!mfd->used) {
         spinlock_release(&mfd->lock);
@@ -93,9 +95,49 @@ void memfd_put(struct memfd *mfd)
         mfd->size = 0;
         mfd->used = 0;
         mfd->seals = 0;
+        mfd->fd = -1;
+        mfd->flags = 0;
         memset(mfd->name, 0, MEMFD_NAME_MAX);
     }
     spinlock_release(&mfd->lock);
+}
+
+/* Lookup memfd by file descriptor number. */
+struct memfd *memfd_get_by_fd(int fd)
+{
+    if (!memfd_is_fd(fd))
+        return NULL;
+    int slot = fd - MEMFD_BASE;
+    if (slot < 0 || slot >= MEMFD_MAX)
+        return NULL;
+    return memfd_get(slot);
+}
+
+/* Syscall entry: create a memfd and return a file descriptor. */
+int memfd_syscall_create(const char *name, unsigned int flags)
+{
+    return memfd_create(name, (int)flags);
+}
+
+/* Read/write at offset within a memfd (by fd number). */
+int64_t memfd_read_fd(int fd, void *buf, uint64_t count, uint64_t offset)
+{
+    struct memfd *mfd = memfd_get_by_fd(fd);
+    if (!mfd)
+        return -EBADF;
+    int64_t ret = memfd_read(mfd, buf, count, offset);
+    memfd_put(mfd);
+    return ret;
+}
+
+int64_t memfd_write_fd(int fd, const void *buf, uint64_t count, uint64_t offset)
+{
+    struct memfd *mfd = memfd_get_by_fd(fd);
+    if (!mfd)
+        return -EBADF;
+    int64_t ret = memfd_write(mfd, buf, count, offset);
+    memfd_put(mfd);
+    return ret;
 }
 
 int64_t memfd_read(struct memfd *mfd, void *buf, uint64_t count, uint64_t offset)
@@ -136,6 +178,7 @@ int64_t memfd_write(struct memfd *mfd, const void *buf, uint64_t count, uint64_t
         return -EBADF;
     }
 
+    /* MEMFD_SEAL_WRITE prevents any write */
     if (mfd->seals & MEMFD_SEAL_WRITE) {
         spinlock_release(&mfd->lock);
         return -EPERM;
@@ -144,6 +187,7 @@ int64_t memfd_write(struct memfd *mfd, const void *buf, uint64_t count, uint64_t
     uint64_t needed = offset + count;
 
     if (needed > mfd->size) {
+        /* MEMFD_SEAL_GROW prevents expanding the size */
         if (mfd->seals & MEMFD_SEAL_GROW) {
             spinlock_release(&mfd->lock);
             return -EPERM;
@@ -189,6 +233,26 @@ int memfd_add_seal(struct memfd *mfd, int seal)
     mfd->seals |= seal;
     spinlock_release(&mfd->lock);
     return 0;
+}
+
+int memfd_add_seals_fd(int fd, int seals)
+{
+    struct memfd *mfd = memfd_get_by_fd(fd);
+    if (!mfd)
+        return -EBADF;
+    int ret = memfd_add_seal(mfd, seals);
+    memfd_put(mfd);
+    return ret;
+}
+
+int memfd_get_seals_fd(int fd)
+{
+    struct memfd *mfd = memfd_get_by_fd(fd);
+    if (!mfd)
+        return -EBADF;
+    int seals = memfd_get_seals(mfd);
+    memfd_put(mfd);
+    return seals;
 }
 
 int memfd_get_seals(struct memfd *mfd)
