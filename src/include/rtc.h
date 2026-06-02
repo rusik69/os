@@ -47,6 +47,13 @@ int rtc_wait_ticks(uint32_t ticks);
 int rtc_set_alarm(const struct rtc_time *t);
 int rtc_alarm_enable(int enable);
 
+/* Set RTC alarm from epoch seconds. Writing 0 disables the alarm.
+   Returns 0 on success, -1 on error. */
+int rtc_set_alarm_epoch(uint64_t epoch_sec);
+
+/* RTC sysfs interface — creates /sys/class/rtc/rtc0/wakealarm */
+void rtc_sysfs_init(void);
+
 /* RTC periodic counter */
 uint64_t rtc_get_ticks(void);
 

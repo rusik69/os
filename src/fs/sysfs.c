@@ -5,7 +5,6 @@
 #include "heap.h"
 
 static struct sysfs_entry sysfs_entries[SYSFS_MAX_ENTRIES];
-static int sysfs_num_entries = 0;
 static int sysfs_mounted = 0;
 
 /* ── helpers ───────────────────────────────────────────────────── */
@@ -45,7 +44,8 @@ static int find_entry(const char *path) {
 }
 
 /* Create entry under parent dir */
-static int create_entry(const char *name, uint8_t type, const char *content, int parent) {
+static int create_entry(const char *name, uint8_t type, const char *content,
+                        int parent, sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
     int idx = alloc_entry();
     if (idx < 0) return -1;
     int nlen = (int)strlen(name);
@@ -55,6 +55,8 @@ static int create_entry(const char *name, uint8_t type, const char *content, int
     sysfs_entries[idx].type = type;
     sysfs_entries[idx].parent = parent;
     sysfs_entries[idx].size = 0;
+    sysfs_entries[idx].read_cb = read_cb;
+    sysfs_entries[idx].write_cb = write_cb;
     sysfs_entries[idx].content[0] = '\0';
     if (content) {
         int clen = (int)strlen(content);
@@ -81,7 +83,25 @@ int sysfs_create_file(const char *path, const char *content) {
     if (sysfs_entries[parent].type != 2) return -1;
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, content, parent) < 0) return -1;
+    if (create_entry(name, 1, content, parent, NULL, NULL) < 0) return -1;
+    return 0;
+}
+
+int sysfs_create_writable_file(const char *path, const char *initial_content,
+                                sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
+    /* Find parent directory */
+    char dirpath[128];
+    const char *slash = strrchr(path, '/');
+    if (!slash || slash == path) return -1;
+    int dirlen = (int)(slash - path);
+    if (dirlen > 126) return -1;
+    memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
+    int parent = find_entry(dirpath);
+    if (parent < 0) return -1;
+    if (sysfs_entries[parent].type != 2) return -1;
+
+    const char *name = slash + 1;
+    if (create_entry(name, 1, initial_content, parent, read_cb, write_cb) < 0) return -1;
     return 0;
 }
 
@@ -103,7 +123,7 @@ int sysfs_create_dir(const char *path) {
     if (sysfs_entries[parent].type != 2) return -1;
 
     const char *name = slash + 1;
-    if (create_entry(name, 2, NULL, parent) < 0) return -1;
+    if (create_entry(name, 2, NULL, parent, NULL, NULL) < 0) return -1;
     return 0;
 }
 
@@ -115,6 +135,16 @@ static int sysfs_vfs_read(void *priv, const char *path, void *buf,
     int idx = find_entry(path);
     if (idx < 0 || sysfs_entries[idx].type != 1)
         return -1;
+
+    /* Use dynamic read callback if available */
+    if (sysfs_entries[idx].read_cb) {
+        int ret = sysfs_entries[idx].read_cb((char *)buf, max_size);
+        if (ret < 0) return -1;
+        *out_size = (uint32_t)ret;
+        return 0;
+    }
+
+    /* Fall back to static content */
     uint32_t copy = sysfs_entries[idx].size < max_size ? sysfs_entries[idx].size : max_size;
     if (copy > 0)
         memcpy(buf, sysfs_entries[idx].content, copy);
@@ -123,8 +153,17 @@ static int sysfs_vfs_read(void *priv, const char *path, void *buf,
 }
 
 static int sysfs_vfs_write(void *priv, const char *path, const void *data, uint32_t size) {
-    (void)priv; (void)path; (void)data; (void)size;
-    return -1; /* read-only */
+    (void)priv;
+    int idx = find_entry(path);
+    if (idx < 0 || sysfs_entries[idx].type != 1)
+        return -1;
+
+    /* Use write callback if available */
+    if (sysfs_entries[idx].write_cb) {
+        return sysfs_entries[idx].write_cb((const char *)data, size);
+    }
+
+    return -1; /* read-only if no write callback */
 }
 
 static int sysfs_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
@@ -196,8 +235,11 @@ void sysfs_init(void) {
     if (sysfs_mounted) return;
 
     /* Clear all entries */
-    for (int i = 0; i < SYSFS_MAX_ENTRIES; i++)
+    for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
         sysfs_entries[i].in_use = 0;
+        sysfs_entries[i].read_cb = NULL;
+        sysfs_entries[i].write_cb = NULL;
+    }
 
     /* Create root directory "sys" at index 0 */
     sysfs_entries[0].in_use = 1;
@@ -205,6 +247,8 @@ void sysfs_init(void) {
     sysfs_entries[0].name[0] = '\0';
     sysfs_entries[0].parent = -1;
     sysfs_entries[0].size = 0;
+    sysfs_entries[0].read_cb = NULL;
+    sysfs_entries[0].write_cb = NULL;
 
     /* Pre-populate standard directories */
     sysfs_create_dir("/sys/class");

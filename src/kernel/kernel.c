@@ -128,6 +128,7 @@
 #include "devtmpfs.h"
 #include "export.h"
 #include "overlay.h"
+#include "sysfs.h"
 #include "fanotify.h"
 #include "fs_mount_prop.h"
 #include "net_igmp.h"
@@ -476,6 +477,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             rtc.year, rtc.month, rtc.day,
             rtc.hour, rtc.minute, rtc.second);
 
+    /* RTC sysfs interface (wakealarm) */
+    rtc_sysfs_init();
+
 #ifdef TEST_MODE
     /* Test mode: skip mouse init (PS/2 may not have a mouse attached) */
     kprintf("[OK] Mouse (test mode: skipped)\n");
@@ -512,6 +516,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
+
+    /* Sysfs — virtual filesystem exposing kernel objects */
+    sysfs_init();
 
     /* File locking (advisory + mandatory) */
     file_lock_init();

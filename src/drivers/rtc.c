@@ -99,6 +99,7 @@ static volatile int g_periodic_enabled = 0;
 /* ── Alarm state ──────────────────────────────────────────────────── */
 
 static volatile int g_alarm_fired = 0;
+static uint64_t g_wakealarm_epoch = 0;  /* alarm set time in epoch seconds (0 = disabled) */
 
 /* ── RTC read helpers ─────────────────────────────────────────────── */
 
@@ -223,7 +224,55 @@ int rtc_set_alarm(const struct rtc_time *t) {
     cmos_write(RTC_ALRM_MIN, bin_to_bcd(t->minute));
     cmos_write(RTC_ALRM_HRS, bin_to_bcd(t->hour));
 
+    /* Convert the alarm time to epoch seconds and store it */
+    g_wakealarm_epoch = rtc_to_epoch(t);
+
     return 0;
+}
+
+/* Set alarm from epoch seconds (userspace wakealarm interface).
+ * Returns 0 on success, -1 if time is in the past (ignored). */
+int rtc_set_alarm_epoch(uint64_t epoch_sec) {
+    if (epoch_sec == 0) {
+        /* Disable alarm */
+        rtc_alarm_enable(0);
+        g_wakealarm_epoch = 0;
+        return 0;
+    }
+
+    /* Convert epoch seconds to rtc_time */
+    uint64_t remaining = epoch_sec;
+    struct rtc_time t;
+    t.year = 2000;
+
+    /* Subtract years */
+    while (1) {
+        int days = is_leap((int)t.year) ? 366 : 365;
+        uint64_t secs = (uint64_t)days * 86400ULL;
+        if (remaining < secs) break;
+        remaining -= secs;
+        t.year++;
+    }
+
+    /* Subtract months */
+    for (int mo = 1; mo <= 12; mo++) {
+        int days = days_in_mon[mo - 1];
+        if (mo == 2 && is_leap((int)t.year)) days++;
+        uint64_t secs = (uint64_t)days * 86400ULL;
+        if (remaining < secs) break;
+        remaining -= secs;
+        t.month = (uint8_t)mo;
+    }
+    t.month++; /* month is 1-indexed */
+    t.day = (uint8_t)(remaining / 86400ULL) + 1;
+    remaining %= 86400ULL;
+    t.hour = (uint8_t)(remaining / 3600ULL);
+    remaining %= 3600ULL;
+    t.minute = (uint8_t)(remaining / 60ULL);
+    t.second = (uint8_t)(remaining % 60ULL);
+
+    g_wakealarm_epoch = epoch_sec;
+    return rtc_set_alarm(&t);
 }
 
 int rtc_alarm_enable(int enable) {
@@ -291,4 +340,90 @@ void rtc_get_time(struct rtc_time *t) {
     t->day    = day;
     t->month  = mon;
     t->year   = (yr < 70) ? (2000 + yr) : (1900 + yr);
+}
+
+/* ── Sysfs interface ──────────────────────────────────────────────── */
+
+#include "sysfs.h"
+
+/* Read callback for /sys/class/rtc/rtc0/wakealarm.
+ * Returns the current alarm time as epoch seconds (or "0\n" if disabled). */
+static int wakealarm_read(char *buf, uint32_t max_size) {
+    if (max_size < 4) return -1;
+    if (g_wakealarm_epoch == 0) {
+        buf[0] = '0';
+        buf[1] = '\n';
+        buf[2] = '\0';
+        return 2;
+    }
+    /* Format epoch seconds as decimal string */
+    uint64_t val = g_wakealarm_epoch;
+    char tmp[24];
+    int len = 0;
+    do {
+        tmp[len++] = (char)('0' + (val % 10));
+        val /= 10;
+    } while (val > 0 && len < 22);
+    /* Reverse into buffer */
+    int out_len = len + 1; /* +1 for newline */
+    if ((uint32_t)out_len >= max_size) return -1;
+    for (int i = 0; i < len; i++)
+        buf[i] = tmp[len - 1 - i];
+    buf[len] = '\n';
+    buf[len + 1] = '\0';
+    return out_len;
+}
+
+/* Write callback for /sys/class/rtc/rtc0/wakealarm.
+ * Accepts an epoch-seconds value as a decimal string.
+ * Writing "0" disables the alarm. */
+static int wakealarm_write(const char *data, uint32_t size) {
+    if (size == 0) return -1;
+
+    /* Parse the first whitespace-delimited token as a number */
+    uint64_t val = 0;
+    uint32_t i = 0;
+    while (i < size && (data[i] == ' ' || data[i] == '\t'))
+        i++;
+    if (i >= size) return -1;
+
+    /* Check for negative sign */
+    int negative = 0;
+    if (data[i] == '-') { negative = 1; i++; }
+    else if (data[i] == '+') { i++; }
+
+    /* Parse decimal digits */
+    while (i < size && data[i] >= '0' && data[i] <= '9') {
+        val = val * 10 + (uint64_t)(data[i] - '0');
+        i++;
+    }
+
+    if (negative) val = 0; /* negative means disable */
+
+    return rtc_set_alarm_epoch(val);
+}
+
+/* Initialize RTC sysfs interface.
+ * Creates /sys/class/rtc/rtc0/wakealarm for wake-from-suspend. */
+void rtc_sysfs_init(void) {
+    /* Create /sys/class/rtc/ directory */
+    if (sysfs_create_dir("/sys/class/rtc") < 0) {
+        kprintf("[rtc] sysfs: failed to create /sys/class/rtc\n");
+        return;
+    }
+
+    /* Create /sys/class/rtc/rtc0/ directory */
+    if (sysfs_create_dir("/sys/class/rtc/rtc0") < 0) {
+        kprintf("[rtc] sysfs: failed to create /sys/class/rtc/rtc0\n");
+        return;
+    }
+
+    /* Create writable wakealarm file */
+    if (sysfs_create_writable_file("/sys/class/rtc/rtc0/wakealarm",
+                                    "0\n", wakealarm_read, wakealarm_write) < 0) {
+        kprintf("[rtc] sysfs: failed to create wakealarm\n");
+        return;
+    }
+
+    kprintf("[OK] RTC sysfs: /sys/class/rtc/rtc0/wakealarm\n");
 }
