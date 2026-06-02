@@ -4,6 +4,8 @@
 #include "string.h"
 #include "spinlock.h"
 #include "printf.h"
+#include "smp.h"
+#include "io.h"
 
 /*
  * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
@@ -15,7 +17,19 @@
  *   slabs_partial  — some objects free, some allocated (preferred for alloc)
  *   slabs_full     — all objects allocated
  *   slabs_free     — all objects free (candidate for reaping)
+ *
+ * Per-CPU object cache (cpu_slab) provides a lockless fast path for the
+ * common case, avoiding contention on the cache spinlock on SMP systems.
  */
+
+/* Size of per-CPU object cache (number of free object pointers per CPU) */
+#define SLAB_CPU_CACHE_SIZE 8
+
+/* Per-CPU slab cache — small array of objects for lockless fast path */
+struct cpu_slab {
+    void *objects[SLAB_CPU_CACHE_SIZE]; /* cached free object pointers */
+    int   count;                         /* number of valid entries */
+};
 
 enum slab_state {
     SLAB_FULL    = 0,
@@ -49,6 +63,9 @@ struct kmem_cache {
     struct slab      *slabs_free;
 
     spinlock_t        lock;
+
+    /* Per-CPU object cache for lockless fast path */
+    struct cpu_slab   cpu_slab[SMP_MAX_CPUS];
 
     struct kmem_cache *next;     /* linked list of all caches (for reaper) */
 };
@@ -207,6 +224,103 @@ static int slab_grow(struct kmem_cache *cache) {
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
+/* Refill the current CPU's object cache from the slab freelist.
+ * Must be called with cache->lock held and IRQs disabled.
+ * Returns one object for immediate use, and fills cpu_slab with extras. */
+static void *cpu_slab_refill(struct kmem_cache *cache) {
+    int cpu = smp_get_cpu_id();
+    struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
+    void *ret = NULL;
+
+    /* Reset local cache */
+    cpu_s->count = 0;
+
+    /* Pull objects from partial slabs first, then free slabs, then grow */
+    while (cpu_s->count < SLAB_CPU_CACHE_SIZE) {
+        void *obj = NULL;
+        struct slab *slab;
+
+        /* Try partial slabs first */
+        slab = cache->slabs_partial;
+        if (slab) {
+            obj = slab->free_list;
+            if (obj) {
+                slab->free_list = *(void **)obj;
+                slab->free_count--;
+                if (slab->free_count == 0)
+                    slab_relink(cache, slab, SLAB_FULL);
+            }
+        }
+
+        /* If no partial, try a free slab */
+        if (!obj && cache->slabs_free) {
+            slab = cache->slabs_free;
+            slab_relink(cache, slab, SLAB_PARTIAL);
+            obj = slab->free_list;
+            if (obj) {
+                slab->free_list = *(void **)obj;
+                slab->free_count--;
+                if (slab->free_count == 0)
+                    slab_relink(cache, slab, SLAB_FULL);
+            }
+        }
+
+        /* If still nothing, grow a new slab */
+        if (!obj && slab_grow(cache) == 0) {
+            slab = cache->slabs_partial;
+            if (slab) {
+                obj = slab->free_list;
+                if (obj) {
+                    slab->free_list = *(void **)obj;
+                    slab->free_count--;
+                    if (slab->free_count == 0)
+                        slab_relink(cache, slab, SLAB_FULL);
+                }
+            }
+        }
+
+        if (!obj) break; /* truly out of memory */
+
+        /* The first object is returned to the caller */
+        if (!ret) {
+            ret = obj;
+        } else {
+            /* Subsequent objects go into the per-CPU cache */
+            cpu_s->objects[cpu_s->count++] = obj;
+        }
+    }
+
+    return ret;
+}
+
+/* Drain the current CPU's object cache back into the slab freelist.
+ * Must be called with cache->lock held and IRQs disabled. */
+static void cpu_slab_drain(struct kmem_cache *cache) {
+    int cpu = smp_get_cpu_id();
+    struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
+
+    while (cpu_s->count > 0) {
+        cpu_s->count--;
+        void *obj = cpu_s->objects[cpu_s->count];
+
+        /* Find which slab this object belongs to */
+        size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
+        struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
+
+        /* Push object onto slab free list */
+        *(void **)obj = slab->free_list;
+        slab->free_list = obj;
+        slab->free_count++;
+
+        /* Update slab list position */
+        if (slab->free_count == 1) {
+            slab_relink(cache, slab, SLAB_PARTIAL);
+        } else if (slab->free_count == slab->total) {
+            slab_relink(cache, slab, SLAB_FREE);
+        }
+    }
+}
+
 struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
                                      size_t align, kmem_cache_ctor_t ctor) {
     struct kmem_cache *cache = (struct kmem_cache *)kmalloc(sizeof(struct kmem_cache));
@@ -237,82 +351,76 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t obj_size,
 }
 
 void *kmem_cache_alloc(struct kmem_cache *cache) {
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+    int cpu = smp_get_cpu_id();
+    struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
 
-    void *obj = NULL;
-    struct slab *slab;
+    /* ── Fast path: try per-CPU object cache first ── */
+    uint64_t irq_save;
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
 
-    /* Try partial slabs first */
-    slab = cache->slabs_partial;
-    if (slab) {
-        obj = slab->free_list;
-        if (obj) {
-            slab->free_list = *(void **)obj;
-            slab->free_count--;
-            if (slab->free_count == 0)
-                slab_relink(cache, slab, SLAB_FULL);
-        }
+    if (cpu_s->count > 0) {
+        cpu_s->count--;
+        void *obj = cpu_s->objects[cpu_s->count];
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        return obj;
     }
 
-    /* If no partial, try a free slab */
-    if (!obj && cache->slabs_free) {
-        slab = cache->slabs_free;
-        slab_relink(cache, slab, SLAB_PARTIAL);
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
 
-        obj = slab->free_list;
-        if (obj) {
-            slab->free_list = *(void **)obj;
-            slab->free_count--;
-            if (slab->free_count == 0)
-                slab_relink(cache, slab, SLAB_FULL);
-        }
-    }
+    /* ── Slow path: refill from slab under lock ── */
+    uint64_t lock_flags;
+    spinlock_irqsave_acquire(&cache->lock, &lock_flags);
 
-    /* If still nothing, grow a new slab */
-    if (!obj && slab_grow(cache) == 0) {
-        slab = cache->slabs_partial;  /* newest grown slab is at partial head */
-        if (slab) {
-            obj = slab->free_list;
-            if (obj) {
-                slab->free_list = *(void **)obj;
-                slab->free_count--;
-                if (slab->free_count == 0)
-                    slab_relink(cache, slab, SLAB_FULL);
-            }
-        }
-    }
+    void *obj = cpu_slab_refill(cache);
 
-    spinlock_irqsave_release(&cache->lock, irq_flags);
+    spinlock_irqsave_release(&cache->lock, lock_flags);
     return obj;
 }
 
 void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     if (!obj || !cache) return;
 
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&cache->lock, &irq_flags);
+    int cpu = smp_get_cpu_id();
+    struct cpu_slab *cpu_s = &cache->cpu_slab[cpu];
 
-    /* Find which slab this object belongs to (page-aligned) */
-    size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
-    struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
+    /* ── Fast path: push to per-CPU cache if room ── */
+    uint64_t irq_save;
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
 
-    /* Push object onto free list */
-    *(void **)obj = slab->free_list;
-    slab->free_list = obj;
-    slab->free_count++;
-
-    /* Update slab list position */
-    if (slab->free_count == 1) {
-        /* Was full, now partial */
-        slab_relink(cache, slab, SLAB_PARTIAL);
-    } else if (slab->free_count == slab->total) {
-        /* Was partial, now completely free */
-        slab_relink(cache, slab, SLAB_FREE);
+    if (cpu_s->count < SLAB_CPU_CACHE_SIZE) {
+        cpu_s->objects[cpu_s->count++] = obj;
+        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+        return;
     }
-    /* Otherwise stays in same list (SLAB_PARTIAL → SLAB_PARTIAL) */
 
-    spinlock_irqsave_release(&cache->lock, irq_flags);
+    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+
+    /* ── Slow path: drain cache to slabs under lock ── */
+    uint64_t lock_flags;
+    spinlock_irqsave_acquire(&cache->lock, &lock_flags);
+
+    cpu_slab_drain(cache);
+
+    /* Now add the new object (cache should have room after drain) */
+    if (cpu_s->count < SLAB_CPU_CACHE_SIZE) {
+        cpu_s->objects[cpu_s->count++] = obj;
+    } else {
+        /* Fallback: direct to slab if drain didn't clear enough space */
+        size_t slab_size = PAGE_SIZE * (1ULL << cache->gfporder);
+        struct slab *slab = (struct slab *)((uint64_t)obj & ~(slab_size - 1));
+
+        *(void **)obj = slab->free_list;
+        slab->free_list = obj;
+        slab->free_count++;
+
+        if (slab->free_count == 1) {
+            slab_relink(cache, slab, SLAB_PARTIAL);
+        } else if (slab->free_count == slab->total) {
+            slab_relink(cache, slab, SLAB_FREE);
+        }
+    }
+
+    spinlock_irqsave_release(&cache->lock, lock_flags);
 }
 
 void kmem_cache_destroy(struct kmem_cache *cache) {
