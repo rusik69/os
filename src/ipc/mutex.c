@@ -16,6 +16,7 @@
 #include "process.h"
 #include "string.h"
 #include "lockdep.h"
+#include "export.h"
 
 #define MUTEX_MAX 32
 #define MUTEX_WAITERS_MAX 8
@@ -192,3 +193,8 @@ static void restore_owner(struct mutex_entry *m) {
     if (m->owner_pid < MUTEX_MAX_PI_BOOST)
         mutex_boost[m->owner_pid] = 0;
 }
+
+/* ── Exported symbols for loadable kernel modules ────────────────── */
+EXPORT_SYMBOL(mutex_init);
+EXPORT_SYMBOL(mutex_lock);
+EXPORT_SYMBOL(mutex_unlock);

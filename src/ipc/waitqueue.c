@@ -4,6 +4,7 @@
 #include "io.h"
 #include "string.h"
 #include "timer.h"
+#include "export.h"
 
 /*
  * Wait queue implementation.
@@ -320,3 +321,8 @@ int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks
 
     return 0;
 }
+
+/* ── Exported symbols for loadable kernel modules ────────────────── */
+EXPORT_SYMBOL(wait_queue_sleep);
+EXPORT_SYMBOL(wait_queue_wake);
+EXPORT_SYMBOL(wait_queue_wake_all);
