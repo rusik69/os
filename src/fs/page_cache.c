@@ -8,6 +8,7 @@
 #include "page_cache.h"
 #include "errno.h"
 #include "timer.h"
+#include "spinlock.h"
 
 /* ── Page cache: generic file data caching in memory ─────────────────── */
 
@@ -32,8 +33,25 @@ static int page_cache_initialized = 0;
 static uint64_t cache_hits   = 0;
 static uint64_t cache_misses = 0;
 
+/* ── Dirty writeback state ───────────────────────────────────────── */
+
 /* Writeback callback — registered by the filesystem layer */
 static int (*writeback_fn)(uint32_t lba, uint8_t count, const void *buf) = NULL;
+
+/* Number of pages currently marked dirty in the cache */
+static int nr_dirty_pages = 0;
+
+/* Tick of the last background writeback scan (for rate-limiting) */
+static uint64_t last_writeback_tick = 0;
+
+/* Writeback thresholds (fractions of PAGE_CACHE_MAX_PAGES * 10,
+ * e.g. DIRTY_BG_RATIO=10 means 10% i.e. 102 dirty pages triggers flush).
+ * These are configurable via sysctl-like interface. */
+static int dirty_background_ratio  = 10;  /* 10% — start background writeback */
+static int dirty_throttle_ratio    = 50;  /* 50% — block new dirtiers */
+
+/* Lock to protect dirty page accounting (updated from multiple paths) */
+static spinlock_t dirty_lock;
 
 /* ── Readahead tracking tables ────────────────────────────────────── */
 static struct readahead_state readahead_trackers[READAHEAD_MAX_TRACKERS];
@@ -53,13 +71,21 @@ void page_cache_init(void) {
     if (page_cache_initialized) return;
     memset(page_cache, 0, sizeof(page_cache));
     page_cache_initialized = 1;
+    spinlock_init(&dirty_lock);
+
+    /* Initialize writeback state */
+    nr_dirty_pages = 0;
+    last_writeback_tick = 0;
 
     /* Initialize readahead tracking */
     memset(readahead_trackers, 0, sizeof(readahead_trackers));
     readahead_initialized = 1;
 
-    kprintf("[OK] page_cache initialized (%d pages, readahead window %d-%d)\n",
-            PAGE_CACHE_MAX_PAGES, READAHEAD_WINDOW_MIN, READAHEAD_WINDOW_MAX);
+    kprintf("[OK] page_cache initialized (%d pages, dirty_bg=%d%%, throttle=%d%%, "
+            "readahead %d-%d)\n",
+            PAGE_CACHE_MAX_PAGES,
+            dirty_background_ratio, dirty_throttle_ratio,
+            READAHEAD_WINDOW_MIN, READAHEAD_WINDOW_MAX);
 }
 
 
@@ -128,6 +154,10 @@ static int evict_one(void) {
                     (unsigned long long)page_cache[slot].block);
         }
         page_cache[slot].flags &= ~PAGE_CACHE_DIRTY;
+        /* Decrement dirty page counter */
+        spinlock_acquire(&dirty_lock);
+        if (nr_dirty_pages > 0) nr_dirty_pages--;
+        spinlock_release(&dirty_lock);
     }
 
     if (page_cache[slot].phys_addr) {
@@ -174,6 +204,11 @@ void page_cache_remove(uint64_t ino, uint64_t block) {
     struct page_cache_entry *pce = page_cache_lookup(ino, block);
     if (!pce) return;
 
+    spinlock_acquire(&dirty_lock);
+    if ((pce->flags & PAGE_CACHE_DIRTY) && nr_dirty_pages > 0)
+        nr_dirty_pages--;
+    spinlock_release(&dirty_lock);
+
     if (pce->phys_addr) {
         pmm_free_frame(pce->phys_addr);
     }
@@ -184,13 +219,21 @@ void page_cache_remove(uint64_t ino, uint64_t block) {
 /* ── Mark page as dirty ────────────────────────────────────────────── */
 void page_cache_mark_dirty(uint64_t ino, uint64_t block) {
     struct page_cache_entry *pce = page_cache_lookup(ino, block);
-    if (pce) pce->flags |= PAGE_CACHE_DIRTY;
+    if (pce && !(pce->flags & PAGE_CACHE_DIRTY)) {
+        pce->flags |= PAGE_CACHE_DIRTY;
+        spinlock_acquire(&dirty_lock);
+        nr_dirty_pages++;
+        spinlock_release(&dirty_lock);
+    }
 }
 
 
 /* ── Flush all dirty pages ─────────────────────────────────────────── */
 void page_cache_flush(void) {
     if (!writeback_fn) return;  /* no writeback registered — can't flush */
+
+    int flushed = 0;
+    spinlock_acquire(&dirty_lock);
 
     for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
         if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
@@ -200,11 +243,141 @@ void page_cache_flush(void) {
                 kprintf("[page_cache] flush: writeback failed for ino=%llu block=%llu\n",
                         (unsigned long long)page_cache[i].ino,
                         (unsigned long long)page_cache[i].block);
+                continue;  /* retry next time */
             }
             page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
+            flushed++;
         }
     }
+
+    if (flushed > 0) {
+        nr_dirty_pages -= flushed;
+        if (nr_dirty_pages < 0) nr_dirty_pages = 0;
+    }
+
+    spinlock_release(&dirty_lock);
+
+    if (flushed > 0) {
+        kprintf("[page_cache] flush: %d dirty pages written back\n", flushed);
+    }
 }
+
+
+/* ── Background writeback (periodic dirty page flush) ────────────── */
+/*
+ * Called from scheduler_tick() periodically.  If the number of dirty
+ * pages exceeds the background threshold, flushes a batch of pages.
+ * Returns the number of pages flushed.
+ */
+int page_cache_writeback_background(void) {
+    if (!page_cache_initialized || !writeback_fn)
+        return 0;
+
+    /* Rate-limit: check at most once per second */
+    uint64_t now = timer_get_ticks();
+    if (now - last_writeback_tick < (uint64_t)TIMER_FREQ)
+        return 0;
+    last_writeback_tick = now;
+
+    int threshold = PAGE_CACHE_MAX_PAGES * dirty_background_ratio / 100;
+    if (threshold < 1) threshold = 1;
+
+    spinlock_acquire(&dirty_lock);
+    int dirty = nr_dirty_pages;
+    spinlock_release(&dirty_lock);
+
+    if (dirty < threshold)
+        return 0;  /* not enough dirty pages to bother */
+
+    /* Flush up to 1/4 of the dirty pages per background scan */
+    int batch_size = dirty / 4;
+    if (batch_size < 1) batch_size = 1;
+    int flushed = 0;
+
+    spinlock_acquire(&dirty_lock);
+
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES && flushed < batch_size; i++) {
+        if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
+            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
+            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+            if (writeback_fn(lba, count, page_cache[i].data) == 0) {
+                page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
+                flushed++;
+            }
+        }
+    }
+
+    if (flushed > 0) {
+        nr_dirty_pages -= flushed;
+        if (nr_dirty_pages < 0) nr_dirty_pages = 0;
+    }
+
+    spinlock_release(&dirty_lock);
+
+    return flushed;
+}
+
+
+/* ── Writeback throttle — block callers that dirty too many pages ── */
+/*
+ * Called before write operations (page_cache_write).  If the number
+ * of dirty pages exceeds the throttle threshold, force a synchronous
+ * flush of some pages to make room.
+ *
+ * Returns 0 (always succeeds — the dirty ratio is advisory).
+ */
+int page_cache_writeback_throttle(void) {
+    if (!page_cache_initialized || !writeback_fn)
+        return 0;
+
+    int threshold = PAGE_CACHE_MAX_PAGES * dirty_throttle_ratio / 100;
+    if (threshold < 1) threshold = 1;
+
+    spinlock_acquire(&dirty_lock);
+    int dirty = nr_dirty_pages;
+    spinlock_release(&dirty_lock);
+
+    if (dirty < threshold)
+        return 0;  /* under the throttle threshold — allow freely */
+
+    /* Over threshold: flush a batch synchronously.
+     * This may block the caller, providing backpressure. */
+    int batch = dirty / 3;
+    if (batch < 1) batch = 1;
+    int flushed = 0;
+
+    spinlock_acquire(&dirty_lock);
+
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES && flushed < batch; i++) {
+        if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
+            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
+            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+            if (writeback_fn(lba, count, page_cache[i].data) == 0) {
+                page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
+                flushed++;
+            }
+        }
+    }
+
+    if (flushed > 0) {
+        nr_dirty_pages -= flushed;
+        if (nr_dirty_pages < 0) nr_dirty_pages = 0;
+    }
+
+    spinlock_release(&dirty_lock);
+
+    return flushed;
+}
+
+
+/* ── Query dirty page count (for monitoring / procfs) ───────────── */
+int page_cache_get_dirty_count(void) {
+    spinlock_acquire(&dirty_lock);
+    int dirty = nr_dirty_pages;
+    spinlock_release(&dirty_lock);
+    return dirty;
+}
+
 
 /* ── Register writeback callback ───────────────────────────────── */
 void page_cache_set_writeback(int (*writeback)(uint32_t lba, uint8_t count, const void *buf)) {
@@ -216,6 +389,9 @@ void page_cache_set_writeback(int (*writeback)(uint32_t lba, uint8_t count, cons
 /* ── Write through page cache (mark dirty) ──────────────────────── */
 int page_cache_write(uint64_t ino, uint64_t block, const void *data) {
     if (!page_cache_initialized || !data) return -EINVAL;
+
+    /* Throttle: if too many dirty pages, flush some first */
+    page_cache_writeback_throttle();
 
     /* Check if already cached — update in place */
     struct page_cache_entry *pce = page_cache_lookup(ino, block);
@@ -246,6 +422,12 @@ void page_cache_discard(uint64_t ino, uint64_t block) {
         if (page_cache[i].in_use &&
             page_cache[i].ino == ino &&
             page_cache[i].block == block) {
+            /* Decrement dirty counter if page was dirty */
+            spinlock_acquire(&dirty_lock);
+            if ((page_cache[i].flags & PAGE_CACHE_DIRTY) && nr_dirty_pages > 0)
+                nr_dirty_pages--;
+            spinlock_release(&dirty_lock);
+
             /* Free the physical frame without writeback */
             if (page_cache[i].phys_addr) {
                 pmm_free_frame(page_cache[i].phys_addr);

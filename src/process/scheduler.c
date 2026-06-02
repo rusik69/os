@@ -27,6 +27,7 @@
 #include "pelt.h"
 #include "cpuset.h"
 #include "cpu_topology.h"
+#include "page_cache.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -762,6 +763,12 @@ void scheduler_tick(int was_user) {
     /* Periodically check for deadline task replenishment */
     if (cur->dl_active || (timer_get_ticks() & 0x3) == 0) {
         sched_deadline_replenish();
+    }
+
+    /* Periodic background writeback: flush dirty pages every ~1 second.
+     * Only on CPU 0 to avoid thundering-herd flushes. */
+    if (get_cpu_id() == 0) {
+        page_cache_writeback_background();
     }
 }
 

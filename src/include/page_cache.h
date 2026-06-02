@@ -109,4 +109,24 @@ int page_cache_write(uint64_t ino, uint64_t block, const void *data);
  * Use when discarding data (e.g., truncate, unlink). */
 void page_cache_discard(uint64_t ino, uint64_t block);
 
+/*
+ * Background writeback: called periodically from scheduler_tick().
+ * Flushes a batch of dirty pages when the number exceeds the
+ * background threshold (dirty_background_ratio % of cache capacity).
+ * Returns the number of pages flushed.
+ */
+int page_cache_writeback_background(void);
+
+/*
+ * Writeback throttle: called before page_cache_write().
+ * If the number of dirty pages exceeds the throttle threshold
+ * (dirty_throttle_ratio % of cache capacity), synchronously flushes
+ * some pages to provide backpressure.
+ * Returns 0 (always succeeds — the ratio is advisory).
+ */
+int page_cache_writeback_throttle(void);
+
+/* Return the current number of dirty pages in the cache. */
+int page_cache_get_dirty_count(void);
+
 #endif /* PAGE_CACHE_H */
