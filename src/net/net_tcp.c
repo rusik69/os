@@ -6,6 +6,178 @@
 #include "timer.h"
 #include "scheduler.h"
 
+/* ── CUBIC congestion control (RFC 8312) ─────────────────────────────
+ *
+ * Replaces the legacy Reno AIMD with a cubic function for cwnd growth.
+ *
+ *   W_cubic(t) = C * (t - K)^3 + W_max
+ *
+ * where t is elapsed time since the last congestion event,
+ *       K = cbrt(W_max * (1-beta) / C) is the time to reach W_max again,
+ *       beta = 0.7 is the multiplicative-decrease factor,
+ *       C = 0.4 is a scaling constant.
+ *
+ * All arithmetic uses fixed-point with 10 fractional bits (SCALE=10).
+ */
+
+#define CUBIC_SCALE        10                /* fixed-point scale factor */
+#define CUBIC_ONE          (1 << CUBIC_SCALE) /* 1.0 in fixed point */
+#define CUBIC_C_FIXED      410               /* C = 0.4 * 1024 */
+#define CUBIC_BETA_FIXED   717               /* beta = 0.7 * 1024 */
+#define CUBIC_BETA_INV     (CUBIC_ONE - CUBIC_BETA_FIXED) /* (1-beta) = 307 */
+
+/* Standard CUBIC constant for K calculation: (1-beta) / C */
+#define CUBIC_K_FACTOR_FIXED ((CUBIC_BETA_INV * CUBIC_ONE) / CUBIC_C_FIXED)
+
+/* Ticks-per-second for time conversion (timer runs at ~100 Hz) */
+#define TICKS_PER_SEC      100ULL
+
+/* ── Integer cube root (Newton-Raphson, rounds toward zero) ────────
+ *
+ * Returns floor(cbrt(a)) for a > 0.  Uses at most 10 iterations.
+ */
+static uint32_t cubic_root(uint64_t a)
+{
+    if (a == 0 || a == 1)
+        return (uint32_t)a;
+
+    /* Initial guess: 2^(ceil(log2(a)/3)) */
+    uint32_t x;
+    if (a < 8)
+        x = 2;
+    else if (a < 64)
+        x = 4;
+    else if (a < 512)
+        x = 8;
+    else if (a < 4096)
+        x = 16;
+    else if (a < 32768)
+        x = 32;
+    else if (a < 262144)
+        x = 64;
+    else if (a < 2097152ULL)
+        x = 128;
+    else if (a < 16777216ULL)
+        x = 256;
+    else if (a < 134217728ULL)
+        x = 512;
+    else
+        x = 1024;
+
+    for (int i = 0; i < 12; i++) {
+        uint64_t x3 = (uint64_t)x * x * x;
+        if (x3 == a)
+            return x;
+        uint64_t next = (2 * (uint64_t)x + a / (uint64_t)x / x) / 3;
+        /* Check for convergence */
+        if (next == (uint64_t)x || (next > (uint64_t)x && next - (uint64_t)x <= 1))
+            return (uint32_t)next;
+        if ((uint64_t)x > next && (uint64_t)x - next <= 1)
+            return (uint32_t)next;
+        x = (uint32_t)next;
+    }
+    return x;
+}
+
+/* ── CUBIC cwnd calculation ────────────────────────────────────────
+ *
+ * Compute the target congestion window using the cubic function.
+ * All time values are in ticks (1 tick ≈ 10 ms).
+ *
+ * @ca   Per-connection CUBIC state
+ * @cwnd  Current congestion window (segments)
+ * @now   Current tick value
+ * @rtt   Smoothed RTT in ticks (for Reno-friendly region)
+ * Returns target cwnd in segments.
+ */
+static uint32_t cubic_update(struct tcp_conn *c, uint32_t cwnd, uint64_t now, uint32_t rtt_ticks)
+{
+    if (c->cubic_epoch_start == 0) {
+        /* No congestion event yet — behave like Reno */
+        return cwnd;
+    }
+
+    /* Elapsed time since the start of this epoch (in ticks) */
+    uint64_t elapsed_ticks = now - c->cubic_epoch_start;
+    if (elapsed_ticks == 0)
+        return cwnd;
+
+    /* Convert elapsed time to a fixed-point value (units of seconds * 1024).
+     * t_sec_fp = elapsed_ticks * 1024 / TICKS_PER_SEC */
+    uint64_t t_fp = (elapsed_ticks * CUBIC_ONE) / TICKS_PER_SEC;
+
+    /* Compute K = cbrt(W_max * (1-beta) / C) in the same time units.
+     * K is the time at which the cubic function reaches W_max.
+     * K_fp = cbrt(W_max * (1-beta)/C * 1024^2) roughly...
+     *
+     * More precisely: K = cbrt(W_max * (1-beta) / C) in seconds.
+     * In our fixed-point seconds*1024:
+     * We want (K*1024) = cbrt(W_max * (1-beta) / C) * 1024
+     *                    = cbrt(W_max * (1-beta) / C * 1024^3)
+     *                    = cbrt(W_max * (1-beta) / C * 1073741824)
+     *
+     * So: K_fp = cbrt(W_max * CUBIC_K_FACTOR_FIXED * CUBIC_ONE)
+     *     where CUBIC_K_FACTOR_FIXED = (1-beta)/C * 1024 ≈ 307/410*1024
+     *
+     * Simplify: K_fp = cbrt(W_max * 307 * 1024 / 410 * 1024)
+     *                = cbrt(W_max * 307 * 1024 * 1024 / 410)
+     *                = cbrt(W_max * 307 * 1024 * 1024 / 410)
+     */
+    uint64_t wmax_fp = (uint64_t)c->cubic_wmax * CUBIC_K_FACTOR_FIXED;
+    /* wmax_fp has units of (segments * (1-beta)/C), need to multiply by CUBIC_ONE^2
+     * to get the full argument for cubic root */
+    uint64_t k_arg = wmax_fp * CUBIC_ONE;
+    uint32_t k_fp = cubic_root(k_arg);
+
+    /* Compute t - K (may be negative, handled via signed arithmetic) */
+    int64_t delta_fp = (int64_t)t_fp - (int64_t)k_fp;
+
+    /* W_cubic = C * (t - K)^3 + W_max
+     *
+     * Compute in fixed point: 
+     * W_cubic_fp = C * delta_fp^3 / 1024^2 + W_max * 1024
+     *            = CUBIC_C_FIXED * delta_fp^3 / 1024^2 / 1024 + W_max * 1024
+     *            = CUBIC_C_FIXED * delta_fp^3 / 1073741824 + W_max * 1024
+     *
+     * Then cwnd = W_cubic_fp / 1024 */
+    int64_t delta3_fp = delta_fp * delta_fp * delta_fp;
+    /* Scale: delta3_fp is in (seconds*1024)^3 = seconds^3 * 1073741824
+     * CUBIC_C_FIXED * delta3_fp / 1073741824 gives cwnd in 1024-scale */
+    int64_t wcubic_fp;
+    if (delta3_fp >= 0) {
+        wcubic_fp = ((int64_t)CUBIC_C_FIXED * delta3_fp) / (int64_t)CUBIC_ONE;
+        /* wcubic_fp is now C * (t-K)^3 * 1024^2 / 1024 = C*(t-K)^3 * 1024 */
+        wcubic_fp = wcubic_fp / (int64_t)CUBIC_ONE;
+        /* wcubic_fp is now C * (t-K)^3 in 1024-scale */
+        wcubic_fp += (int64_t)c->cubic_wmax * CUBIC_ONE;
+    } else {
+        /* (t-K) < 0: cubic is decreasing, floor at W_max * (1-beta) */
+        uint64_t wmin = (uint64_t)c->cubic_wmax * CUBIC_BETA_FIXED / CUBIC_ONE;
+        if (wmin < 2) wmin = 2;
+        return (uint32_t)wmin;
+    }
+
+    /* Convert from fixed-point to integer cwnd (segments) */
+    uint32_t target;
+    if (wcubic_fp <= 0)
+        target = 2;
+    else
+        target = (uint32_t)((uint64_t)wcubic_fp / CUBIC_ONE);
+
+    /* Ensure minimum cwnd of 2 */
+    if (target < 2) target = 2;
+
+    /* Clamp growth: never grow faster than 32 segments per RTT to avoid
+     * excessive bursts when far from W_max */
+    uint32_t max_growth = (rtt_ticks > 0) ? (32 * elapsed_ticks / rtt_ticks) : 32;
+    if (max_growth < 2) max_growth = 2;
+    uint32_t max_limit = c->cubic_wmax + max_growth;
+    if (target > max_limit)
+        target = max_limit;
+
+    return target;
+}
+
 uint16_t net_transport_checksum(uint32_t src_ip, uint32_t dst_ip, uint8_t protocol,
                                  const void *data, uint16_t data_len) {
     struct tcp_pseudo pseudo;
@@ -202,6 +374,11 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         memset(c->tfo_cookie, 0, sizeof(c->tfo_cookie));
         memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
         c->sack_pending = 0;
+        /* CUBIC congestion control initialization */
+        c->cubic_wmax = 0;
+        c->cubic_epoch_start = 0;
+        c->cubic_origin_point = 0;
+        c->cubic_use_cubic = 0;
 
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
@@ -282,11 +459,24 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     c->last_ack = ack;
 
                     if (acked_some) {
-                        /* Reno congestion control — advance cwnd per ACK */
-                        if (c->cwnd < c->ssthresh)
-                            c->cwnd++;       /* slow start */
-                        else
-                            c->cwnd++;       /* congestion avoidance (1/cwnd approx) */
+                        /* ── CUBIC congestion control update ── */
+                        if (c->cwnd < c->ssthresh) {
+                            /* Slow start: exponential growth */
+                            c->cwnd++;
+                        } else {
+                            /* Congestion avoidance: use CUBIC cubic function */
+                            uint64_t now = timer_get_ticks();
+                            uint32_t rtt_ticks = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
+                            if (rtt_ticks < 1) rtt_ticks = 1;
+                            uint32_t target = cubic_update(c, c->cwnd, now, rtt_ticks);
+                            /* Aim for the CUBIC target, but ensure at least Reno-equivalent
+                             * growth (1 segment per RTT) for fairness with Reno flows */
+                            uint32_t reno_target = c->cwnd + 1;
+                            if (target > reno_target)
+                                c->cwnd = target;
+                            else
+                                c->cwnd = reno_target;
+                        }
                         if (c->cwnd > 1024) c->cwnd = 1024;
 
                         /* RTT estimation (Jacobson's algorithm) */
@@ -348,9 +538,13 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                             }
                         }
                         c->our_seq = saved_seq;
-                        if (c->cwnd > 2) c->ssthresh = c->cwnd / 2;
+                        /* CUBIC congestion event: record W_max and reduce cwnd */
+                        c->cubic_wmax = c->cwnd;
+                        if (c->cwnd > 2) c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
                         else c->ssthresh = 2;
                         c->cwnd = c->ssthresh + 3;  /* RFC 5681 fast recovery */
+                        c->cubic_epoch_start = timer_get_ticks();
+                        c->cubic_use_cubic = 1;
                         c->dupack_count = 0;
                         c->last_send_tick = timer_get_ticks();
                     }
@@ -505,6 +699,11 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     memset(c->tfo_cookie, 0, sizeof(c->tfo_cookie));
     memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
     c->sack_pending = 0;
+    /* CUBIC congestion control initialization */
+    c->cubic_wmax = 0;
+    c->cubic_epoch_start = 0;
+    c->cubic_origin_point = 0;
+    c->cubic_use_cubic = 0;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -768,9 +967,13 @@ void net_tcp_check_retransmit(void) {
         c->retrans_count++;
         /* Exponential back-off, cap at 64 s */
         c->rto = (c->rto * 2 > 6400) ? 6400 : (uint16_t)(c->rto * 2);
-        /* Congestion control: halve cwnd */
-        c->ssthresh = (c->cwnd / 2 < 2) ? 2 : c->cwnd / 2;
+        /* CUBIC congestion control: record W_max and reset to beta*W_max */
+        c->cubic_wmax = c->cwnd;
+        c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
+        if (c->ssthresh < 2) c->ssthresh = 2;
         c->cwnd = 1;
+        c->cubic_epoch_start = now;
+        c->cubic_use_cubic = 1;
     }
 }
 

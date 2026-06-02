@@ -94,6 +94,11 @@ struct tcp_conn {
     /* TCP Fast Open (kind 34) */
     int     tfo_cookie_present;     /* 1 if TFO cookie was received */
     uint8_t tfo_cookie[8];          /* TFO cookie value */
+    /* CUBIC congestion control state */
+    uint32_t cubic_wmax;            /* W_max: cwnd at last congestion event */
+    uint64_t cubic_epoch_start;     /* tick when the current epoch started */
+    uint32_t cubic_origin_point;    /* origin point for cubic growth */
+    int      cubic_use_cubic;       /* 1 = using CUBIC algorithm */
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
