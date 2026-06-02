@@ -66,6 +66,19 @@ const char *sysctl_get_hostname(void) {
     return g_hostname;
 }
 
+/* Set the kernel hostname from a NUL-terminated string.
+ * Copies up to 64 characters; trims trailing newlines/whitespace. */
+void sysctl_set_hostname(const char *name) {
+    if (!name) return;
+    size_t len = strlen(name);
+    if (len > 64) len = 64;
+    memcpy(g_hostname, name, len);
+    g_hostname[len] = '\0';
+    /* Trim trailing whitespace/newlines */
+    while (len > 0 && (g_hostname[len-1] == '\n' || g_hostname[len-1] == '\r' || g_hostname[len-1] == ' '))
+        g_hostname[--len] = '\0';
+}
+
 /* osrelease */
 static const char *g_osrelease = "6.1.0-os";
 

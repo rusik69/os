@@ -27,6 +27,9 @@ int sysctl_write(const char *name, const char *buf, int len);
 /* Hostname accessor for shell prompt and other kernel subsystems */
 const char *sysctl_get_hostname(void);
 
+/* Set hostname from NUL-terminated string (reads /etc/hostname at boot) */
+void sysctl_set_hostname(const char *name);
+
 /*
  * List all registered sysctl names.
  * Fills names[0..count-1] with up to max_names entry names.

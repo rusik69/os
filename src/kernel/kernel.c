@@ -607,6 +607,23 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     service_init();
     kprintf("[OK] Service manager initialized\n");
 
+    /* ── Read /etc/hostname and set kernel hostname ─────────────── */
+    {
+        char hostbuf[128];
+        uint32_t hostlen = 0;
+        if (vfs_read("/etc/hostname", hostbuf, sizeof(hostbuf) - 1, &hostlen) == 0 && hostlen > 0) {
+            hostbuf[hostlen] = '\0';
+            sysctl_set_hostname(hostbuf);
+            kprintf("[OK] Hostname set from /etc/hostname: %s\n", sysctl_get_hostname());
+        } else {
+            /* /etc/hostname doesn't exist yet — use default "os" */
+            /* Create it with the default hostname for future boots */
+            const char *def = "os\n";
+            vfs_create("/etc/hostname", 1);
+            vfs_write("/etc/hostname", def, strlen(def));
+        }
+    }
+
     /* PCI bus */
     pci_init();
     kprintf("[OK] PCI initialized\n");

@@ -21,7 +21,7 @@ static void sh_ifconfig(const char *a)   { (void)a; cmd_ifconfig(); }
 static void sh_df(const char *a)         { (void)a; cmd_df(); }
 static void sh_free(const char *a)       { (void)a; cmd_free(); }
 static void sh_whoami(const char *a)     { (void)a; cmd_whoami(); }
-static void sh_hostname(const char *a)   { (void)a; cmd_hostname(); }
+static void sh_hostname(const char *a)   { cmd_hostname(a); }
 static void sh_env(const char *a)        { (void)a; cmd_env(); }
 static void sh_arp(const char *a)        { (void)a; cmd_arp(); }
 static void sh_route(const char *a)      { (void)a; cmd_route(); }

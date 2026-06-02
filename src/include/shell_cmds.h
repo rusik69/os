@@ -44,7 +44,7 @@ void cmd_grep(const char *args);
 void cmd_df(void);
 void cmd_free(void);
 void cmd_whoami(void);
-void cmd_hostname(void);
+void cmd_hostname(const char *args);
 void cmd_env(void);
 void cmd_export(const char *args);
 void cmd_unset(const char *args);
