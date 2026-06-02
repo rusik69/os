@@ -579,6 +579,16 @@ struct mq_attr {
 #define SCHED_FIFO         1
 #define SCHED_RR           2
 
+/* Priority which values for setpriority/getpriority */
+#define PRIO_PROCESS        0
+#define PRIO_PGRP           1
+#define PRIO_USER           2
+
+/* Range for nice values */
+#define NICE_MIN          (-20)
+#define NICE_MAX            19
+#define NICE_DEFAULT         0
+
 /* struct sched_param */
 struct sched_param {
     int sched_priority;

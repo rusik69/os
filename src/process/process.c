@@ -250,6 +250,7 @@ void process_init(void) {
     process_table[0].is_suspended = 0;
     process_table[0].priority = 1;
     process_table[0].base_priority = 1;
+    process_table[0].nice = NICE_DEFAULT;
     process_table[0].cpu_affinity = 0;  /* allow any CPU */
     process_table[0].uid = 0;     /* root */
     process_table[0].gid = 0;
@@ -334,6 +335,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority    = 1; /* normal priority */
+    proc->nice        = NICE_DEFAULT;
     proc->cpu_affinity = 0; /* allow any CPU */
     proc->uid = 0;
     proc->gid = 0;
@@ -440,6 +442,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->is_background = 0;
     proc->is_suspended = 0;
     proc->priority = 1;
+    proc->nice = NICE_DEFAULT;
     proc->cpu_affinity = 0;
     proc->base_priority = 1;
     proc->uid = 0; proc->gid = 0; proc->euid = 0; proc->egid = 0;
@@ -1013,6 +1016,7 @@ void process_cleanup(struct process *proc) {
     proc->pgid = 0;
     proc->sid = 0;
     proc->priority = 1;
+    proc->nice = NICE_DEFAULT;
     proc->cap_profile = PROCESS_CAP_PROFILE_NONE;
     process_caps_clear_all(proc);
     memset(proc->fd_table, 0, sizeof(proc->fd_table));

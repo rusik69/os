@@ -1042,24 +1042,178 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
     return 0;
 }
 
-static uint64_t sys_setpriority(uint64_t pri) {
-    if (pri >= 4) return (uint64_t)(int64_t)-1;
+/*
+ * ── Nice value ↔ internal priority conversion ────────────────────────
+ *
+ * POSIX nice values range from -20 (highest) to +19 (lowest).
+ * The kernel's internal priority is 0 (highest) to 3 (lowest).
+ *
+ *   nice -20 .. -11  →  priority 0
+ *   nice -10 ..  -1  →  priority 1
+ *   nice   0 ..   9  →  priority 2
+ *   nice  10 ..  19  →  priority 3
+ */
+static int nice_to_priority(int nice) {
+    if (nice <= -11) return 0;
+    if (nice <=  -1) return 1;
+    if (nice <=   9) return 2;
+    return 3;
+}
+
+/* Return the "middle" nice value corresponding to a given priority level.
+ * Used by getpriority to report a representative nice value. */
+static int priority_to_nice(int prio) {
+    switch (prio) {
+        case 0: return -15;
+        case 1: return  -5;
+        case 2: return   5;
+        case 3: return  15;
+        default: return  0;
+    }
+}
+
+/* Clamp nice to valid range [-20, 19] */
+static int clamp_nice(int nice) {
+    if (nice < NICE_MIN) return NICE_MIN;
+    if (nice > NICE_MAX) return NICE_MAX;
+    return nice;
+}
+
+/*
+ * ── POSIX setpriority(which, who, prio) ──────────────────────────────
+ *
+ * Set the nice value for the specified process(es).
+ *   which: PRIO_PROCESS (0), PRIO_PGRP (1), PRIO_USER (2)
+ *   who:   PID, PGID, or UID depending on 'which'
+ *   prio:  nice value in [-20, +19] (lower = higher priority)
+ *
+ * Returns 0 on success, -1 on error (EINVAL, ESRCH, EPERM).
+ */
+static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     struct process *cur = process_get_current();
     if (!cur) return (uint64_t)(int64_t)-1;
-    return (uint64_t)(int64_t)scheduler_set_priority(cur, (uint8_t)pri);
+
+    int nice = clamp_nice((int)(int64_t)prio);
+    int new_prio = nice_to_priority(nice);
+
+    switch (which) {
+    case PRIO_PROCESS: {
+        /* Operate on a specific process */
+        struct process *p;
+        if (who == 0) {
+            p = cur;
+        } else {
+            p = process_get_by_pid((uint32_t)who);
+            if (!p || p->state == PROCESS_UNUSED)
+                return (uint64_t)(int64_t)-1; /* ESRCH */
+        }
+        p->nice = nice;
+        scheduler_set_priority(p, (uint8_t)new_prio);
+        return 0;
+    }
+    case PRIO_PGRP: {
+        /* Operate on all processes in a process group */
+        uint32_t pgid = (who == 0) ? cur->pgid : (uint32_t)who;
+        struct process *table = process_get_table();
+        uint32_t count = process_get_count();
+        int found = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].pgid == pgid) {
+                table[i].nice = nice;
+                scheduler_set_priority(&table[i], (uint8_t)new_prio);
+                found = 1;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-1; /* ESRCH */
+        return 0;
+    }
+    case PRIO_USER: {
+        /* Operate on all processes owned by a user */
+        uint32_t uid = (who == 0) ? cur->uid : (uint32_t)who;
+        struct process *table = process_get_table();
+        uint32_t count = process_get_count();
+        int found = 0;
+        for (uint32_t i = 0; i < count; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].uid == uid) {
+                table[i].nice = nice;
+                scheduler_set_priority(&table[i], (uint8_t)new_prio);
+                found = 1;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-1; /* ESRCH */
+        return 0;
+    }
+    default:
+        return (uint64_t)(int64_t)-1; /* EINVAL */
+    }
 }
 
-static uint64_t sys_setpriority_pid(uint64_t pid, uint64_t pri) {
-    if (pri >= 4) return (uint64_t)(int64_t)-1;
-    struct process *p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
-    return (uint64_t)(int64_t)scheduler_set_priority(p, (uint8_t)pri);
-}
+/*
+ * ── POSIX getpriority(which, who) ────────────────────────────────────
+ *
+ * Get the highest nice value (lowest priority) among matching processes.
+ *   which: PRIO_PROCESS (0), PRIO_PGRP (1), PRIO_USER (2)
+ *   who:   PID, PGID, or UID depending on 'which'
+ *
+ * Returns the nice value (as a 40-compatible int in the range -20..+19)
+ * on success, or -1 on error.  Note that nice values can legally be -1,
+ * so callers must also check errno on -1 return.
+ */
+static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-1;
 
-static uint64_t sys_getpriority(uint64_t pid) {
-    struct process *p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return (uint64_t)(int64_t)-1;
-    return p->priority;
+    int highest_nice = NICE_MIN - 1; /* sentinel: below valid range */
+
+    switch (which) {
+    case PRIO_PROCESS: {
+        struct process *p;
+        if (who == 0) {
+            p = cur;
+        } else {
+            p = process_get_by_pid((uint32_t)who);
+            if (!p || p->state == PROCESS_UNUSED)
+                return (uint64_t)(int64_t)-1; /* ESRCH */
+        }
+        highest_nice = p->nice;
+        break;
+    }
+    case PRIO_PGRP: {
+        uint32_t pgid = (who == 0) ? cur->pgid : (uint32_t)who;
+        struct process *table = process_get_table();
+        uint32_t count = process_get_count();
+        for (uint32_t i = 0; i < count; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].pgid == pgid && table[i].nice > highest_nice)
+                highest_nice = table[i].nice;
+        }
+        if (highest_nice < NICE_MIN)
+            return (uint64_t)(int64_t)-1; /* ESRCH */
+        break;
+    }
+    case PRIO_USER: {
+        uint32_t uid = (who == 0) ? cur->uid : (uint32_t)who;
+        struct process *table = process_get_table();
+        uint32_t count = process_get_count();
+        for (uint32_t i = 0; i < count; i++) {
+            if (table[i].state == PROCESS_UNUSED) continue;
+            if (table[i].uid == uid && table[i].nice > highest_nice)
+                highest_nice = table[i].nice;
+        }
+        if (highest_nice < NICE_MIN)
+            return (uint64_t)(int64_t)-1; /* ESRCH */
+        break;
+    }
+    default:
+        return (uint64_t)(int64_t)-1; /* EINVAL */
+    }
+
+    /* Return the nice value as a signed value properly cast.
+     * POSIX says getpriority returns the nice value in the range -20..+19,
+     * or -1 on error.  We return the raw signed value via (int64_t). */
+    return (uint64_t)(int64_t)highest_nice;
 }
 
 static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
@@ -5724,7 +5878,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FS_LSTAT:            return sys_fs_lstat(a1, a2, a3);
         case SYS_CHDIR:               return sys_chdir(a1);
         case SYS_GETCWD:              return sys_getcwd(a1, a2);
-        case SYS_SETPRIORITY:         return sys_setpriority(a1);
+        case SYS_SETPRIORITY:         return sys_setpriority(a1, a2, a3);
         case SYS_SHM_GET:             return sys_shm_get(a1);
         case SYS_SHM_AT:              return sys_shm_at(a1);
         case SYS_SHM_DT:              return sys_shm_dt(a1);
@@ -5741,8 +5895,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_RAW_SEND:            return sys_raw_send(a1, a2);
         case SYS_FD_READ:             return sys_fd_read(a1, a2, a3);
         case SYS_FD_WRITE:            return sys_fd_write(a1, a2, a3);
-        case SYS_SETPRIORITY_PID:     return sys_setpriority_pid(a1, a2);
-        case SYS_GETPRIORITY:         return sys_getpriority(a1);
+        case SYS_SETPRIORITY_PID:     return sys_setpriority(PRIO_PROCESS, a1, a2);
+        case SYS_GETPRIORITY:         return sys_getpriority(a1, a2);
         case SYS_SETPGID:             return sys_setpgid(a1, a2);
         case SYS_GETPGID:             return sys_getpgid(a1);
         case SYS_KILLPG:              return sys_killpg(a1, a2);

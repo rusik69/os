@@ -177,6 +177,7 @@ struct process {
     /* ── CFS vruntime (nanosecond-scale) ───────────────────── */
     uint64_t vruntime;           /* virtual runtime for CFS */
     uint64_t sched_weight;       /* scheduling weight (default 1024) */
+    int      nice;               /* POSIX nice value (-20..+19, default 0) */
     int      sched_autogroup_id; /* autogroup ID (-1 = none) */
     /* ── SCHED_DEADLINE parameters ─────────────────────────── */
     uint64_t dl_runtime;         /* worst-case execution time per period (ns) */

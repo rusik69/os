@@ -560,19 +560,19 @@ int libc_getcwd(char *buf, int size) {
     return (int)(int64_t)libc_syscall(SYS_GETCWD,
         (uint64_t)(uintptr_t)buf, (uint64_t)size, 0, 0, 0);
 }
-int libc_setpriority(int pri) {
+int libc_setpriority(int which, int who, int prio) {
     return (int)(int64_t)libc_syscall(SYS_SETPRIORITY,
-        (uint64_t)pri, 0, 0, 0, 0);
+        (uint64_t)which, (uint64_t)(int64_t)who, (uint64_t)(int64_t)prio, 0, 0);
 }
 
-int libc_setpriority_pid(uint32_t pid, int pri) {
+int libc_setpriority_pid(uint32_t pid, int prio) {
     return (int)(int64_t)libc_syscall(SYS_SETPRIORITY_PID,
-        (uint64_t)pid, (uint64_t)pri, 0, 0, 0);
+        (uint64_t)pid, (uint64_t)(int64_t)prio, 0, 0, 0);
 }
 
-int libc_getpriority(uint32_t pid) {
+int libc_getpriority(int which, int who) {
     return (int)(int64_t)libc_syscall(SYS_GETPRIORITY,
-        (uint64_t)pid, 0, 0, 0, 0);
+        (uint64_t)which, (uint64_t)(int64_t)who, 0, 0, 0);
 }
 
 int libc_setpgid(uint32_t pid, uint32_t pgid) {

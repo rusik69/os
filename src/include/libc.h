@@ -296,9 +296,9 @@ int libc_fs_lstat(const char *path, uint32_t *size, uint8_t *type);
 /* Working directory (syscalls 204-205) */
 int libc_chdir(const char *path);
 int libc_getcwd(char *buf, int size);
-int libc_setpriority(int pri);  /* 0=high, 1=normal, 2=low, 3=idle */
-int libc_setpriority_pid(uint32_t pid, int pri);
-int libc_getpriority(uint32_t pid);
+int libc_setpriority(int which, int who, int prio); /* POSIX setpriority */
+int libc_setpriority_pid(uint32_t pid, int prio);    /* convenience: set priority for PID */
+int libc_getpriority(int which, int who);            /* POSIX getpriority */
 int libc_setpgid(uint32_t pid, uint32_t pgid);
 int libc_getpgid(uint32_t pid);
 int libc_killpg(uint32_t pgid, int sig);
