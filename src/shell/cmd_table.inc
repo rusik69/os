@@ -77,6 +77,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("mouse",       "Show mouse position and buttons",                       sh_mouse)
     CMD("mv",          "Move/rename file",                                      cmd_mv)
     CMD("nc",          "Netcat (nc <host> <port> [data])",                      cmd_nc)
+    CMD("neofetch",    "Display system information with logo",                  cmd_neofetch)
     CMD("netstat",     "Show network connections",                              cmd_netstat)
     CMD("nice",        "Run command at priority (nice <pri> <cmd>)",            cmd_nice)
     CMD("nl",          "Number lines",                                          cmd_nl)

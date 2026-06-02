@@ -302,6 +302,7 @@ void cmd_col(const char *args);
 
 /* Phase 12 — system utility commands */
 void cmd_moc(const char *args);
+void cmd_neofetch(void);
 void cmd_pmap(const char *args);
 void cmd_pwdx(void);
 void cmd_flock(const char *args);
