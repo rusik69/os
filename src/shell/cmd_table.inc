@@ -51,6 +51,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("fold",        "Wrap lines to width (fold [-w N] <file>)",                cmd_fold)
     CMD("format",      "Format SMFS filesystem",                                sh_format)
     CMD("free",        "Show memory usage",                                     sh_free)
+    CMD("getty",       "Serial console login daemon (getty [baud] [line] [term])", cmd_getty)
     CMD("grep",        "Search text in file",                                   cmd_grep)
     CMD("gui",         "Launch GUI desktop (experimental)",                     sh_gui)
     CMD("head",        "Show first N lines (head <file> [n])",                    cmd_head)

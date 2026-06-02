@@ -347,6 +347,9 @@ void cmd_sudo(const char *args);
 /* System logger daemon (U7) */
 void cmd_syslogd(const char *args);
 
+/* Getty serial login daemon (U12) */
+void cmd_getty(const char *args);
+
 /* DHCP client daemon (U8) */
 void cmd_dhcpcd(const char *args);
 
