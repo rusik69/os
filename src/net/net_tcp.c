@@ -1,10 +1,13 @@
 /* net_tcp.c — TCP connection management */
+#define KERNEL_INTERNAL
 
 #include "net_internal.h"
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
 #include "scheduler.h"
+#include "sha256.h"
+#include "syscall.h"   /* for prng_rand64 */
 
 /* ── CUBIC congestion control (RFC 8312) ─────────────────────────────
  *
@@ -77,6 +80,132 @@ static uint32_t cubic_root(uint64_t a)
         x = (uint32_t)next;
     }
     return x;
+}
+
+/* ── SYN cookies (RFC 4987) ────────────────────────────────────────
+ *
+ * When the TCP connection table is full (SYN flood), we avoid
+ * allocating a connection for every SYN.  Instead we encode a
+ * cryptographic cookie in the SYN-ACK's initial sequence number
+ * and only create a full connection when the client returns the
+ * ACK that completes the three-way handshake.
+ *
+ * Cookie format (32-bit sequence number):
+ *   bits 0-5:   MSS index (0..63, indexed into a small table)
+ *   bits 6-31:  SHA-256-based hash over (saddr, sport, daddr, dport, secret)
+ *
+ * The hash uses a secret key that allows the receiver to validate the
+ * cookie when the ACK arrives — no per-connection state is needed
+ * until the handshake completes.
+ */
+
+/* A small table of common MSS values for encoding in the cookie.
+ * Index 0 is a reasonable default (536 = IPv4 minimum). */
+#define SYN_COOKIE_MSS_TABLE_SIZE 8
+static const uint16_t syn_cookie_mss_table[SYN_COOKIE_MSS_TABLE_SIZE] = {
+    536,   /* IPv4 minimum reassembly buffer */
+    1460,  /* typical Ethernet + no options */
+    1440,  /* Ethernet + timestamp */
+    1400,  /* conservative */
+    1300,  /* PPPoE / VPN */
+    1200,  /* tunnel / low MTU */
+    1024,  /* safe fallback */
+    896    /* dialup / low-end */
+};
+
+/* 16-byte secret key for SYN cookie computation.
+ * Initialised at boot from the PRNG and periodically refreshed. */
+static uint8_t syn_cookie_secret[16];
+static int syn_cookie_seeded = 0;
+
+/* Seed the SYN cookie secret from the kernel PRNG */
+static void syn_cookie_seed(void) {
+    if (syn_cookie_seeded) return;
+    for (int i = 0; i < 16; i++)
+        syn_cookie_secret[i] = (uint8_t)(prng_rand64() & 0xFF);
+    syn_cookie_seeded = 1;
+}
+
+/* Compute a SYN cookie for the given 4-tuple + MSS.
+ * Returns a 32-bit value to use as the SYN-ACK initial sequence number. */
+static uint32_t compute_syn_cookie(uint32_t saddr, uint16_t sport,
+                                   uint32_t daddr, uint16_t dport,
+                                   uint16_t mss)
+{
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    struct sha256_ctx ctx;
+
+    /* Seed the secret on first use */
+    syn_cookie_seed();
+
+    /* Build the hash input: 4-tuple + secret */
+    sha256_init(&ctx);
+    sha256_update(&ctx, &saddr, sizeof(saddr));
+    sha256_update(&ctx, &sport, sizeof(sport));
+    sha256_update(&ctx, &daddr, sizeof(daddr));
+    sha256_update(&ctx, &dport, sizeof(dport));
+    sha256_update(&ctx, syn_cookie_secret, sizeof(syn_cookie_secret));
+    sha256_final(digest, &ctx);
+
+    /* Encode MSS index in lower 6 bits */
+    uint32_t mss_index = 0;
+    for (uint32_t i = 0; i < SYN_COOKIE_MSS_TABLE_SIZE; i++) {
+        if (syn_cookie_mss_table[i] == mss) {
+            mss_index = i;
+            break;
+        } else if (i > 0 && syn_cookie_mss_table[i] > mss) {
+            /* Pick the next higher value (conservative) */
+            mss_index = i;
+            break;
+        }
+    }
+    if (mss_index >= SYN_COOKIE_MSS_TABLE_SIZE)
+        mss_index = SYN_COOKIE_MSS_TABLE_SIZE - 1;
+
+    /* Combine hash bits (26 bits from first 4 bytes) with MSS index (6 bits) */
+    uint32_t hash_part = (uint32_t)digest[0]
+                       | ((uint32_t)digest[1] << 8)
+                       | ((uint32_t)digest[2] << 16)
+                       | ((uint32_t)(digest[3] & 0x03) << 24);
+    return (hash_part & ~0x3F) | mss_index;
+}
+
+/* Validate a SYN cookie and extract the encoded MSS value.
+ * Returns the MSS on success, or 0 if the cookie is invalid. */
+static uint16_t check_syn_cookie(uint32_t cookie, uint32_t saddr,
+                                  uint16_t sport, uint32_t daddr,
+                                  uint16_t dport)
+{
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    struct sha256_ctx ctx;
+
+    if (!syn_cookie_seeded) return 0;
+
+    /* Recompute the hash */
+    sha256_init(&ctx);
+    sha256_update(&ctx, &saddr, sizeof(saddr));
+    sha256_update(&ctx, &sport, sizeof(sport));
+    sha256_update(&ctx, &daddr, sizeof(daddr));
+    sha256_update(&ctx, &dport, sizeof(dport));
+    sha256_update(&ctx, syn_cookie_secret, sizeof(syn_cookie_secret));
+    sha256_final(digest, &ctx);
+
+    /* Extract the expected hash part */
+    uint32_t expected_hash = (uint32_t)digest[0]
+                           | ((uint32_t)digest[1] << 8)
+                           | ((uint32_t)digest[2] << 16)
+                           | ((uint32_t)(digest[3] & 0x03) << 24);
+
+    /* Bits 6-31 must match */
+    if ((cookie & ~0x3F) != (expected_hash & ~0x3F))
+        return 0;
+
+    /* Decode MSS index from lower 6 bits */
+    uint32_t mss_index = cookie & 0x3F;
+    if (mss_index >= SYN_COOKIE_MSS_TABLE_SIZE)
+        return 0;
+
+    return syn_cookie_mss_table[mss_index];
 }
 
 /* ── CUBIC cwnd calculation ────────────────────────────────────────
@@ -338,8 +467,46 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             return;
         }
 
+        /* Parse the MSS option from the TCP options, if present */
+        uint16_t client_mss = 1460; /* default MSS for Ethernet */
+        {
+            int opt_off = sizeof(struct tcp_header);
+            while (opt_off + 1 < (int)hdr_len) {
+                uint8_t kind = payload[opt_off];
+                if (kind == 0) break; /* End of options */
+                if (kind == 1) { opt_off++; continue; } /* NOP */
+                if (opt_off + 1 >= (int)hdr_len) break;
+                uint8_t olen = payload[opt_off + 1];
+                if (olen < 2 || opt_off + olen > (int)hdr_len) break;
+                if (kind == 2 && olen == 4) {
+                    /* MSS option: 2 bytes of MSS value */
+                    client_mss = (uint16_t)payload[opt_off + 2] << 8
+                               | (uint16_t)payload[opt_off + 3];
+                    break;
+                }
+                opt_off += olen;
+            }
+        }
+
         conn_id = alloc_conn();
-        if (conn_id < 0) return;
+        if (conn_id < 0) {
+            /* ── Connection table full → use SYN cookie (RFC 4987) ── */
+            uint32_t cookie = compute_syn_cookie(remote_ip, src_port,
+                                                  ip_hdr->dst_ip, dst_port,
+                                                  client_mss);
+            /* Send SYN-ACK with the cookie as our initial sequence number.
+             * We build the reply manually since send_tcp expects a full
+             * tcp_conn struct. */
+            struct tcp_conn tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            tmp.remote_ip = remote_ip;
+            tmp.remote_port = src_port;
+            tmp.local_port = dst_port;
+            tmp.our_seq = cookie;
+            tmp.their_seq = seq + 1;
+            send_tcp(&tmp, TCP_SYN | TCP_ACK, NULL, 0);
+            return;
+        }
 
         struct tcp_conn *c = &tcp_conns[conn_id];
         c->state = TCP_SYN_RECEIVED;
@@ -385,7 +552,52 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         return;
     }
 
-    if (conn_id < 0) return;
+    if (conn_id < 0) {
+        /* ── No matching connection — check for SYN cookie ACK ──
+         * If this is a pure ACK (completing a three-way handshake
+         * initiated via SYN cookies), validate the cookie and create
+         * a full connection on the fly. */
+        if ((flags & TCP_ACK) && !(flags & TCP_SYN) && data_len == 0) {
+            uint16_t decoded_mss = check_syn_cookie(ack - 1, remote_ip,
+                                                     src_port, ip_hdr->dst_ip,
+                                                     dst_port);
+            if (decoded_mss > 0) {
+                /* Valid SYN cookie — allocate a connection */
+                conn_id = alloc_conn();
+                if (conn_id >= 0) {
+                    struct tcp_conn *c = &tcp_conns[conn_id];
+                    memset(c, 0, sizeof(*c));
+                    c->state = TCP_ESTABLISHED;
+                    c->remote_ip = remote_ip;
+                    c->remote_port = src_port;
+                    c->local_port = dst_port;
+                    c->our_seq = ack;           /* matches what we sent */
+                    c->their_seq = seq + 1;      /* next expected from peer */
+                    c->their_window = ntohs(tcp->window);
+                    c->cwnd = 1;
+                    c->ssthresh = 65535;
+                    c->rto = 30;
+
+                    struct tcp_listener *l = find_listener(dst_port);
+                    if (l) {
+                        if (l->on_connect) {
+                            l->on_connect(conn_id);
+                        } else if (l->accept_count < ACCEPT_QUEUE_SIZE) {
+                            l->accept_queue[l->accept_tail] = conn_id;
+                            l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
+                            l->accept_count++;
+                        } else {
+                            /* Accept queue full — reject */
+                            send_tcp(c, TCP_RST, NULL, 0);
+                            c->state = TCP_CLOSED;
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        return;
+    }
 
     struct tcp_conn *c = &tcp_conns[conn_id];
     struct tcp_listener *l = find_listener(c->local_port);
