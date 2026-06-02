@@ -204,6 +204,8 @@ struct process {
     int dumpable;         /* SUID_DUMP_USER=1 (default), SUID_DUMP_DISABLE=0 */
     /* ── PELT load tracking ──────────────────────────────────── */
     struct pelt_state pelt;  /* per-entity load tracking state */
+    /* ── CPU cgroup membership (0 = default/no cgroup) ───────── */
+    int cpu_cgroup_id;
 };
 
 void process_init(void);

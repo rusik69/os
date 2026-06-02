@@ -62,4 +62,33 @@ int sched_getaffinity(uint32_t pid, cpuset_t *cpuset);
 /* Init called during kernel boot */
 void cpuset_init(void);
 
+/* ── CPU cgroup controller (Item 40) ────────────────────────────────
+ *
+ * Each CPU cgroup tracks accumulated CPU usage ticks and an optional
+ * limit.  When a group exceeds its per-interval limit, all member
+ * processes are temporarily throttled (skipped by the scheduler)
+ * until the next accounting window.
+ *
+ * Group 0 is the default (unlimited, always runnable).
+ */
+
+#define CPU_CGROUP_MAX 16
+
+struct cpu_cgroup {
+    int      in_use;              /* 1 = this slot is active */
+    int      cg_id;               /* cgroup ID (1..CPU_CGROUP_MAX-1) */
+    uint64_t usage_ticks;         /* CPU ticks consumed in current window */
+    uint64_t limit_ticks;         /* max ticks per window (0 = unlimited) */
+    int      throttled;           /* 1 = group is currently throttled */
+    int      member_count;        /* number of processes in this group */
+};
+
+/* Accessor for the cgroup table (defined in cpuset.c) */
+struct cpu_cgroup *cpu_cgroup_get(int cg_id);
+int  cpu_cgroup_alloc(void);               /* allocate a new cgroup, returns ID */
+int  cpu_cgroup_set_limit(int cg_id, uint64_t limit_ticks);
+void cpu_cgroup_account(int cg_id, uint64_t ticks);
+int  cpu_cgroup_is_throttled(int cg_id);
+void cpu_cgroup_reset_window(void);        /* reset all usage counters (called periodically) */
+
 #endif /* CPUSET_H */

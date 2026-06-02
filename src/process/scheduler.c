@@ -25,6 +25,7 @@
 #include "preempt.h"
 #include "sysctl.h"
 #include "pelt.h"
+#include "cpuset.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -527,6 +528,10 @@ void scheduler_tick(int was_user) {
      * runnable = 1 (we're the current process and thus runnable). */
     pelt_update(&cur->pelt, 1, 1, timer_get_ticks());
 
+    /* Account this tick to the process's CPU cgroup (if assigned). */
+    if (cur->cpu_cgroup_id > 0)
+        cpu_cgroup_account(cur->cpu_cgroup_id, 1);
+
     /* Update CFS vruntime */
     update_vruntime(cur, 1);
 
@@ -904,18 +909,24 @@ static struct process *pick_next_task(void) {
                     best_rt_prev = prev;
                 }
             } else if (rank == 2) {
-                /* CFS class: pick by lowest vruntime. */
-                if (!best_cfs || cur->vruntime < best_cfs->vruntime) {
-                    best_cfs      = cur;
-                    best_cfs_lvl  = lvl;
-                    best_cfs_prev = prev;
+                /* CFS class: pick by lowest vruntime.
+                 * Skip processes belonging to a throttled CPU cgroup. */
+                if (!cpu_cgroup_is_throttled(cur->cpu_cgroup_id)) {
+                    if (!best_cfs || cur->vruntime < best_cfs->vruntime) {
+                        best_cfs      = cur;
+                        best_cfs_lvl  = lvl;
+                        best_cfs_prev = prev;
+                    }
                 }
             } else if (rank == 3) {
-                /* Idle class: pick by lowest vruntime (only when nothing else). */
-                if (!best_idle || cur->vruntime < best_idle->vruntime) {
-                    best_idle      = cur;
-                    best_idle_lvl  = lvl;
-                    best_idle_prev = prev;
+                /* Idle class: pick by lowest vruntime (only when nothing else).
+                 * Skip processes belonging to a throttled CPU cgroup. */
+                if (!cpu_cgroup_is_throttled(cur->cpu_cgroup_id)) {
+                    if (!best_idle || cur->vruntime < best_idle->vruntime) {
+                        best_idle      = cur;
+                        best_idle_lvl  = lvl;
+                        best_idle_prev = prev;
+                    }
                 }
             }
             prev = cur;
