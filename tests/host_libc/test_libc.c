@@ -11,6 +11,7 @@
  */
 
 #include <stddef.h>   /* size_t */
+#include <stdint.h>   /* uint8_t */
 #include <stdio.h>    /* printf */
 #include <limits.h>   /* INT_MAX, INT_MIN, LONG_MAX, LONG_MIN */
 
@@ -65,6 +66,9 @@ extern int    strcasecmp(const char *s1, const char *s2);
 extern int    strncasecmp(const char *s1, const char *s2, size_t n);
 extern char  *strchrnul(const char *s, int c);
 extern char  *strcasestr(const char *haystack, const char *needle);
+extern const char *strsignal(int signum);
+extern void  *memmem(const void *haystack, size_t haystacklen,
+                     const void *needle, size_t needlelen);
 
 /* ===================================================================
  *  Stub implementations for kernel-specific functions
@@ -1345,6 +1349,90 @@ static void test_strcasestr_func(void)
     PASS();
 }
 
+/* ── strsignal tests ───────────────────────────────────────────── */
+
+static void test_strsignal_func(void)
+{
+    TEST("strsignal known signal");
+    ASSERT(strcmp(strsignal(2), "SIGINT") == 0, "signal 2 = SIGINT");
+    PASS();
+
+    TEST("strsignal SIGHUP");
+    ASSERT(strcmp(strsignal(1), "SIGHUP") == 0, "signal 1 = SIGHUP");
+    PASS();
+
+    TEST("strsignal SIGKILL");
+    ASSERT(strcmp(strsignal(9), "SIGKILL") == 0, "signal 9 = SIGKILL");
+    PASS();
+
+    TEST("strsignal SIGSYS");
+    ASSERT(strcmp(strsignal(31), "SIGSYS") == 0, "signal 31 = SIGSYS");
+    PASS();
+
+    TEST("strsignal SIGRTMIN");
+    ASSERT(strcmp(strsignal(32), "Unknown signal") == 0, "signal 32+ = unknown");
+    PASS();
+
+    TEST("strsignal invalid signal");
+    ASSERT(strcmp(strsignal(0), "Unknown signal") == 0, "signal 0 = unknown");
+    ASSERT(strcmp(strsignal(99), "Unknown signal") == 0, "signal 99 = unknown");
+    PASS();
+}
+
+/* ── memmem tests ──────────────────────────────────────────────── */
+
+static void test_memmem_func(void)
+{
+    const char *haystack = "hello world, welcome to the kernel unit tests";
+
+    TEST("memmem find at start");
+    ASSERT(memmem(haystack, strlen(haystack), "hello", 5) == (void *)haystack,
+           "find at start");
+    PASS();
+
+    TEST("memmem find in middle");
+    const char *found = (const char *)memmem(haystack, strlen(haystack),
+                                              "welcome", 7);
+    ASSERT(found != NULL && strcmp(found, "welcome to the kernel unit tests") == 0,
+           "find in middle");
+    PASS();
+
+    TEST("memmem not found");
+    ASSERT(memmem(haystack, strlen(haystack), "xyzzy", 5) == NULL,
+           "needle not found");
+    PASS();
+
+    TEST("memmem empty needle");
+    ASSERT(memmem(haystack, strlen(haystack), "", 0) == (void *)haystack,
+           "empty needle returns haystack");
+    PASS();
+
+    TEST("memmem needle larger than haystack");
+    ASSERT(memmem(haystack, 5, "hello world", 11) == NULL,
+           "needle larger returns NULL");
+    PASS();
+
+    TEST("memmem binary data");
+    uint8_t data[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
+    uint8_t needle[] = {0x02, 0x03};
+    void *result = memmem(data, sizeof(data), needle, sizeof(needle));
+    ASSERT(result == (void *)(data + 2), "find binary substring");
+    PASS();
+
+    TEST("memmem exact match");
+    ASSERT(memmem(data, sizeof(data), data, sizeof(data)) == (void *)data,
+           "exact match of whole buffer");
+    PASS();
+
+    TEST("memmem null haystack");
+    ASSERT(memmem(NULL, 10, "hello", 5) == NULL, "null haystack returns NULL");
+    PASS();
+
+    TEST("memmem null needle");
+    ASSERT(memmem("hello", 5, NULL, 5) == NULL, "null needle returns NULL");
+    PASS();
+}
+
 /* ===================================================================
  *  stdlib function tests
  * =================================================================== */
@@ -1884,6 +1972,8 @@ int main(void)
     test_strncasecmp_func();
     test_strchrnul_func();
     test_strcasestr_func();
+    test_strsignal_func();
+    test_memmem_func();
 
     /* --- Summary --- */
     printf("\n=== Results: %d/%d passed, %d failed ===\n",

@@ -30,6 +30,16 @@ char *strpbrk(const char *s, const char *accept);
 size_t strnlen(const char *s, size_t maxlen);
 void *memccpy(void *dest, const void *src, int c, size_t n);
 
+/* Search for a byte string in a memory region (like strstr but for binary data) */
+void *memmem(const void *haystack, size_t haystacklen,
+             const void *needle, size_t needlelen);
+
+/* Return error string for errno value (POSIX strerror) */
+const char *strerror(int errnum);
+
+/* Return human-readable signal name string */
+const char *strsignal(int signum);
+
 /* Character classification — inline for zero overhead */
 static inline int isdigit(int c)  { return c >= '0' && c <= '9'; }
 static inline int isxdigit(int c) {

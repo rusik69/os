@@ -1,6 +1,44 @@
 #include "string_ext.h"
 #include "string.h"     /* strlen, memcpy, tolower, isupper */
 #include "heap.h"       /* kmalloc / kfree */
+#include "signal.h"     /* signal definitions for strsignal */
+
+/* ── Signal name table for strsignal ─────────────────────────────── */
+
+static const char * const sig_names[] = {
+    NULL,           /* 0 - not a signal */
+    "SIGHUP",       /* 1 */
+    "SIGINT",       /* 2 */
+    "SIGQUIT",      /* 3 */
+    "SIGILL",       /* 4 */
+    "SIGTRAP",      /* 5 */
+    "SIGABRT",      /* 6 */
+    "SIGBUS",       /* 7 */
+    "SIGFPE",       /* 8 */
+    "SIGKILL",      /* 9 */
+    "SIGUSR1",      /* 10 */
+    "SIGSEGV",      /* 11 */
+    "SIGUSR2",      /* 12 */
+    "SIGPIPE",      /* 13 */
+    "SIGALRM",      /* 14 */
+    "SIGTERM",      /* 15 */
+    "SIGSTKFLT",    /* 16 */
+    "SIGCHLD",      /* 17 */
+    "SIGCONT",      /* 18 */
+    "SIGSTOP",      /* 19 */
+    "SIGTSTP",      /* 20 */
+    "SIGTTIN",      /* 21 */
+    "SIGTTOU",      /* 22 */
+    "SIGURG",       /* 23 */
+    "SIGXCPU",      /* 24 */
+    "SIGXFSZ",      /* 25 */
+    "SIGVTALRM",    /* 26 */
+    "SIGPROF",      /* 27 */
+    "SIGWINCH",     /* 28 */
+    "SIGIO",        /* 29 */
+    NULL,           /* 30 */
+    "SIGSYS",       /* 31 */
+};
 
 /*
  * strcasestr — case-insensitive strstr.
@@ -113,4 +151,36 @@ int strncasecmp(const char *s1, const char *s2, size_t n) {
 char *strchrnul(const char *s, int c) {
     while (*s && *s != (char)c) s++;
     return (char *)s;
+}
+
+/* ── strsignal — map signal number to human-readable name ───────── */
+
+const char *strsignal(int signum) {
+    if (signum >= 1 && signum < (int)(sizeof(sig_names) / sizeof(sig_names[0]))) {
+        const char *name = sig_names[signum];
+        if (name) return name;
+    }
+    return "Unknown signal";
+}
+
+/* ── memmem — find byte string in memory (GNU/POSIX extension) ──── */
+
+void *memmem(const void *haystack, size_t haystacklen,
+             const void *needle, size_t needlelen) {
+    if (!haystack || !needle) return NULL;
+    if (needlelen == 0) return (void *)haystack;
+    if (needlelen > haystacklen) return NULL;
+
+    const unsigned char *h = (const unsigned char *)haystack;
+    const unsigned char *n = (const unsigned char *)needle;
+    size_t last = haystacklen - needlelen;
+
+    for (size_t i = 0; i <= last; i++) {
+        size_t j;
+        for (j = 0; j < needlelen; j++) {
+            if (h[i + j] != n[j]) break;
+        }
+        if (j == needlelen) return (void *)(h + i);
+    }
+    return NULL;
 }

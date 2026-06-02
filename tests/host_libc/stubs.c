@@ -31,3 +31,8 @@ unsigned long long timer_get_ticks(void) {
 void serial_write(const char *str) {
     (void)str;
 }
+
+/* ── kptr_restrict stub (used by printf %pK) ─────────────────── */
+int kptr_restrict_check(void) {
+    return 0;  /* allow all pointer prints in test mode */
+}
