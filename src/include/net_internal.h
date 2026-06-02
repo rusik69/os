@@ -15,17 +15,58 @@ extern uint8_t  net_gw_mac[6];
 extern int      net_gw_mac_known;
 extern uint16_t net_ip_id_counter;
 
-/* ARP cache */
+/* ── ARP cache with timeout and retry ───────────────────────────── */
 #define ARP_CACHE_SIZE 16
+
+/* ARP entry timeout: 300 seconds (5 minutes) since last confirmation
+ * At TIMER_FREQ=100 Hz: 300 * 100 = 30000 ticks */
+#define ARP_TIMEOUT_TICKS       30000
+
+/* ARP retry interval: 1 second between probes = 100 ticks */
+#define ARP_RETRY_INTERVAL_TICKS 100
+
+/* Max ARP resolution retries before declaring unreachable */
+#define ARP_MAX_RETRIES         3
+
 struct arp_entry {
     uint32_t ip;
-    uint8_t mac[6];
-    int valid;
+    uint8_t  mac[6];
+    int      valid;          /* 1 = entry has a known MAC */
+    uint64_t last_seen_tick; /* tick when MAC was last confirmed */
+    int      retry_count;    /* consecutive resolution failures */
+    int      resolving;      /* 1 = actively trying to resolve this IP */
+    uint64_t last_probe_tick;/* tick when last ARP probe was sent */
 };
+
 extern struct arp_entry net_arp_cache[ARP_CACHE_SIZE];
+
+/* ── Pending ARP resolution queue ───────────────────────────────── */
+#define ARP_PENDING_QUEUE_SIZE 8
+#define ARP_PENDING_MAX_PKT    1522  /* max Ethernet frame size */
+
+struct arp_pending_pkt {
+    uint32_t target_ip;               /* IP we're trying to resolve */
+    uint8_t  data[ARP_PENDING_MAX_PKT]; /* buffered frame */
+    uint16_t len;                      /* length of buffered frame */
+    int      in_use;                   /* slot active */
+    uint64_t enqueue_tick;            /* when this was queued */
+};
+
+extern struct arp_pending_pkt arp_pending_queue[ARP_PENDING_QUEUE_SIZE];
+
+/* ── ARP API ────────────────────────────────────────────────────── */
 void     arp_cache_add(uint32_t ip, const uint8_t *mac);
 uint8_t *arp_cache_lookup(uint32_t ip);
 void     arp_resolve_gateway(void);
+void     arp_send_request(uint32_t target_ip);
+
+/* Enhanced operations */
+int      arp_resolve_or_queue(uint32_t dst_ip,
+                              const void *frame, uint16_t frame_len);
+void     arp_gc(void);                  /* call periodically from net_poll */
+void     arp_retry_pending(void);       /* retry unresolved entries */
+void     arp_flush_pending(uint32_t ip);/* flush queued packets for resolved IP */
+int      arp_pending_count(void);       /* number of queued frames */
 
 /* TCP connection table */
 #define MAX_TCP_CONNS 16
@@ -166,4 +207,4 @@ void arp_announce(void);
 /* ICMP destination unreachable (net_udp.c) */
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len);
 
-#endif
+#endif /* NET_INTERNAL_H */

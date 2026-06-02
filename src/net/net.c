@@ -33,6 +33,9 @@ struct net_iface_stats net_iface_stats;
 /* ARP cache */
 struct arp_entry net_arp_cache[ARP_CACHE_SIZE];
 
+/* Pending ARP resolution queue — packets awaiting MAC resolution */
+struct arp_pending_pkt arp_pending_queue[ARP_PENDING_QUEUE_SIZE];
+
 /* TCP connection table */
 struct tcp_conn tcp_conns[MAX_TCP_CONNS];
 
@@ -154,9 +157,15 @@ void arp_announce(void) {
 /* --- ARP cache --- */
 
 void arp_cache_add(uint32_t ip, const uint8_t *mac) {
+    uint64_t now = timer_get_ticks();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (net_arp_cache[i].valid && net_arp_cache[i].ip == ip) {
             memcpy(net_arp_cache[i].mac, mac, 6);
+            net_arp_cache[i].last_seen_tick = now;
+            net_arp_cache[i].retry_count = 0;
+            net_arp_cache[i].resolving = 0;
+            /* Flush any packets queued for this IP */
+            arp_flush_pending(ip);
             return;
         }
     }
@@ -165,24 +174,51 @@ void arp_cache_add(uint32_t ip, const uint8_t *mac) {
             net_arp_cache[i].ip = ip;
             memcpy(net_arp_cache[i].mac, mac, 6);
             net_arp_cache[i].valid = 1;
+            net_arp_cache[i].last_seen_tick = now;
+            net_arp_cache[i].retry_count = 0;
+            net_arp_cache[i].resolving = 0;
+            net_arp_cache[i].last_probe_tick = 0;
+            /* Flush any packets queued for this IP */
+            arp_flush_pending(ip);
             return;
         }
     }
-    net_arp_cache[0].ip = ip;
-    memcpy(net_arp_cache[0].mac, mac, 6);
-    net_arp_cache[0].valid = 1;
+    /* Evict oldest entry */
+    int oldest = 0;
+    uint64_t oldest_tick = net_arp_cache[0].last_seen_tick;
+    for (int i = 1; i < ARP_CACHE_SIZE; i++) {
+        if (net_arp_cache[i].last_seen_tick < oldest_tick) {
+            oldest = i;
+            oldest_tick = net_arp_cache[i].last_seen_tick;
+        }
+    }
+    net_arp_cache[oldest].ip = ip;
+    memcpy(net_arp_cache[oldest].mac, mac, 6);
+    net_arp_cache[oldest].valid = 1;
+    net_arp_cache[oldest].last_seen_tick = now;
+    net_arp_cache[oldest].retry_count = 0;
+    net_arp_cache[oldest].resolving = 0;
+    net_arp_cache[oldest].last_probe_tick = 0;
+    arp_flush_pending(ip);
 }
 
 uint8_t *arp_cache_lookup(uint32_t ip) {
+    uint64_t now = timer_get_ticks();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
-        if (net_arp_cache[i].valid && net_arp_cache[i].ip == ip)
+        if (net_arp_cache[i].valid && net_arp_cache[i].ip == ip) {
+            /* Check if entry has expired */
+            if (now - net_arp_cache[i].last_seen_tick > ARP_TIMEOUT_TICKS) {
+                /* Mark stale — still return mac but GC will clean up */
+                /* We don't clear valid here; arp_gc() handles expiry */
+            }
             return net_arp_cache[i].mac;
+        }
     }
     return NULL;
 }
 
 /* Send an ARP request for the given IP */
-static void arp_send_request(uint32_t target_ip) {
+void arp_send_request(uint32_t target_ip) {
     struct arp_packet arp;
     arp.hw_type = htons(1);
     arp.proto_type = htons(ETH_TYPE_IP);
@@ -230,6 +266,207 @@ static void arp_resolve_ip(uint32_t ip) {
             if (now == start && w > 3000000) break;
         }
     }
+}
+
+/* ── ARP garbage collector — expire stale entries ─────────────────
+ *
+ * Called from net_poll() to clean up entries that haven't been
+ * refreshed within ARP_TIMEOUT_TICKS (5 min).  Stale entries are
+ * marked invalid so subsequent lookups will trigger fresh resolution.
+ */
+void arp_gc(void)
+{
+    uint64_t now = timer_get_ticks();
+
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        if (!net_arp_cache[i].valid)
+            continue;
+
+        uint64_t age = now - net_arp_cache[i].last_seen_tick;
+
+        /* Hard expiry: entry hasn't been seen in too long */
+        if (age > ARP_TIMEOUT_TICKS) {
+            net_arp_cache[i].valid = 0;
+            net_arp_cache[i].resolving = 0;
+            net_arp_cache[i].retry_count = 0;
+            continue;
+        }
+
+        /* If this entry is still marked as resolving but hasn't had
+         * activity recently, reset the flag so another resolver can try. */
+        if (net_arp_cache[i].resolving &&
+            age > (uint64_t)ARP_RETRY_INTERVAL_TICKS * (ARP_MAX_RETRIES + 2)) {
+            net_arp_cache[i].resolving = 0;
+            net_arp_cache[i].retry_count = 0;
+        }
+    }
+
+    /* Also expire any stale pending queue entries (stuck for > 30s) */
+    for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
+        if (arp_pending_queue[i].in_use) {
+            uint64_t age = now - arp_pending_queue[i].enqueue_tick;
+            if (age > (uint64_t)ARP_TIMEOUT_TICKS / 10) { /* 30 seconds */
+                arp_pending_queue[i].in_use = 0;
+            }
+        }
+    }
+}
+
+/* ── Retry pending ARP resolutions ────────────────────────────────
+ *
+ * Scans the ARP cache for entries that are marked "resolving" and
+ * have exceeded the retry interval.  Sends a fresh ARP probe and
+ * increments the retry count.  Entries exceeding ARP_MAX_RETRIES
+ * are marked invalid so callers get a fresh entry on next lookup.
+ */
+void arp_retry_pending(void)
+{
+    uint64_t now = timer_get_ticks();
+
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        if (!net_arp_cache[i].valid || !net_arp_cache[i].resolving)
+            continue;
+
+        uint64_t since_probe = now - net_arp_cache[i].last_probe_tick;
+
+        if (since_probe < ARP_RETRY_INTERVAL_TICKS)
+            continue;
+
+        /* Time to send another probe */
+        net_arp_cache[i].retry_count++;
+        net_arp_cache[i].last_probe_tick = now;
+
+        if (net_arp_cache[i].retry_count > ARP_MAX_RETRIES) {
+            /* Resolution failed — invalidate entry so callers start fresh */
+            net_arp_cache[i].valid = 0;
+            net_arp_cache[i].resolving = 0;
+            continue;
+        }
+
+        arp_send_request(net_arp_cache[i].ip);
+    }
+}
+
+/* ── Flush queued packets for a now-resolved IP ───────────────────
+ *
+ * When an ARP reply arrives, any packets buffered in the pending
+ * queue for that IP are sent out using the now-known MAC address.
+ */
+void arp_flush_pending(uint32_t ip)
+{
+    uint8_t *mac = arp_cache_lookup(ip);
+    if (!mac) return;  /* Not yet resolved — don't flush */
+
+    for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
+        if (!arp_pending_queue[i].in_use)
+            continue;
+        if (arp_pending_queue[i].target_ip != ip)
+            continue;
+
+        /* Send the buffered frame using the resolved MAC.
+         * The frame was stored as a complete Ethernet frame with the
+         * destination MAC at offset 0; we update it to the resolved MAC. */
+        memcpy(arp_pending_queue[i].data, mac, 6);
+        net_link_send(arp_pending_queue[i].data, arp_pending_queue[i].len);
+
+        arp_pending_queue[i].in_use = 0;
+    }
+}
+
+/* ── Count pending ARP resolutions ──────────────────────────────── */
+int arp_pending_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
+        if (arp_pending_queue[i].in_use)
+            count++;
+    }
+    return count;
+}
+
+/* ── Resolve a target IP, queueing a frame if unresolved ──────────
+ *
+ * This is the main entry point for sending IP packets to a local
+ * destination.  If the MAC is known, it returns 1 (caller can send
+ * immediately).  If unknown, it sends an ARP request, buffers the
+ * frame in the pending queue, and returns 0.  On queue overflow,
+ * returns -1.
+ *
+ * The caller should retry sending after net_poll() has been called
+ * enough times for the ARP reply to arrive.
+ */
+int arp_resolve_or_queue(uint32_t dst_ip,
+                          const void *frame, uint16_t frame_len)
+{
+    uint8_t *mac = arp_cache_lookup(dst_ip);
+    if (mac) {
+        /* MAC is known — caller can send */
+        return 1;
+    }
+
+    /* MAC unknown — start or continue resolution */
+    uint64_t now = timer_get_ticks();
+
+    /* Check if there's already an active resolution for this IP */
+    int already_resolving = 0;
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        if (net_arp_cache[i].valid &&
+            net_arp_cache[i].ip == dst_ip &&
+            net_arp_cache[i].resolving) {
+            already_resolving = 1;
+            break;
+        }
+    }
+
+    if (!already_resolving) {
+        /* Start a fresh resolution */
+        /* Allocate a temporary cache slot for the resolution state */
+        int slot = -1;
+        for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+            if (!net_arp_cache[i].valid) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            /* Cache full — evict the oldest entry */
+            uint64_t oldest_tick = net_arp_cache[0].last_seen_tick;
+            slot = 0;
+            for (int i = 1; i < ARP_CACHE_SIZE; i++) {
+                if (net_arp_cache[i].last_seen_tick < oldest_tick) {
+                    oldest_tick = net_arp_cache[i].last_seen_tick;
+                    slot = i;
+                }
+            }
+        }
+        net_arp_cache[slot].ip = dst_ip;
+        net_arp_cache[slot].valid = 1;
+        net_arp_cache[slot].last_seen_tick = now;
+        net_arp_cache[slot].resolving = 1;
+        net_arp_cache[slot].retry_count = 0;
+        net_arp_cache[slot].last_probe_tick = now;
+        memset(net_arp_cache[slot].mac, 0, 6);
+
+        /* Send the first ARP probe */
+        arp_send_request(dst_ip);
+    }
+
+    /* Queue the frame for later delivery */
+    if (frame_len > ARP_PENDING_MAX_PKT)
+        return -1;  /* Frame too large to buffer */
+
+    for (int i = 0; i < ARP_PENDING_QUEUE_SIZE; i++) {
+        if (!arp_pending_queue[i].in_use) {
+            arp_pending_queue[i].target_ip = dst_ip;
+            memcpy(arp_pending_queue[i].data, frame, frame_len);
+            arp_pending_queue[i].len = frame_len;
+            arp_pending_queue[i].in_use = 1;
+            arp_pending_queue[i].enqueue_tick = now;
+            return 0;  /* Queued */
+        }
+    }
+
+    return -1;  /* Queue full */
 }
 
 /* --- Checksum --- */
@@ -643,6 +880,16 @@ int net_ping(uint32_t target_ip) {
 /* --- Poll --- */
 
 void net_poll(void) {
+    static int poll_count = 0;
+
+    /* Periodic ARP maintenance: run GC and retries every ~100 polls */
+    poll_count++;
+    if (poll_count >= 100) {
+        poll_count = 0;
+        arp_gc();
+        arp_retry_pending();
+    }
+
     /* Fast path: if no IRQ signaled data, skip descriptor read (saves MMIO) */
     if (!net_rx_flag) return;
     net_rx_flag = 0;
