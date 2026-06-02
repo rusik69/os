@@ -600,10 +600,46 @@ static void bg_cmd_entry(void) {
     process_exit();
 }
 
+/* ── Loop execution state (for break/continue support) ──────────── */
+#define LOOP_NEST_MAX 16
+static int    s_loop_nest_level     = 0;  /* how many nested loops currently executing */
+static int    s_loop_break_level    = 0;  /* >0: break out of this many levels */
+static int    s_loop_continue_level = 0;  /* >0: continue this many levels */
+
 static void process_cmd(void) {
     char *cmd = cmd_buf;
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
+
+    /* --- break / continue handling --- */
+    {
+        char *b = cmd;
+        char bword[16]; int bi = 0;
+        while (*b && *b != ' ' && bi < 15) bword[bi++] = *b++;
+        bword[bi] = '\0';
+        if (strcmp(bword, "break") == 0 || strcmp(bword, "continue") == 0) {
+            int is_break = (strcmp(bword, "break") == 0);
+            /* Parse optional numeric argument */
+            int n = 1;
+            if (*b == ' ') {
+                const char *np = b;
+                while (*np == ' ') np++;
+                if (*np >= '1' && *np <= '9') {
+                    n = 0;
+                    while (*np >= '0' && *np <= '9') n = n * 10 + (*np++ - '0');
+                    if (n > LOOP_NEST_MAX) n = LOOP_NEST_MAX;
+                }
+            }
+            if (s_loop_nest_level > 0) {
+                if (is_break)
+                    s_loop_break_level = n;
+                else
+                    s_loop_continue_level = n;
+            }
+            last_exit_status = 0;
+            return;
+        }
+    }
 
     /* --- Sequence/conditional operators: ;  &&  ||  ---
      * Scanned BEFORE expansion so operators are not inside a variable value.
@@ -1102,6 +1138,19 @@ static void process_cmd(void) {
 
 /* ── State shared between keyboard and telnet paths ─────────────── */
 
+/* Loop-block accumulation state */
+#define LOOP_BLOCK_BODY_MAX 2048
+static int    s_in_loop_block    = 0;  /* 1=accumulating loop body */
+static char   s_loop_block_body[LOOP_BLOCK_BODY_MAX];
+static int    s_loop_block_len   = 0;
+static int    s_loop_block_depth = 0;  /* nested loop depth */
+static int    s_loop_block_type  = 0;  /* LOOP_FOR / LOOP_WHILE / LOOP_UNTIL */
+
+/* Loop type constants */
+#define LOOP_FOR   1
+#define LOOP_WHILE 2
+#define LOOP_UNTIL 3
+
 /* Function definition state */
 static int    s_in_func_def  = 0;
 static char   s_func_def_name[SHELL_FUNC_NAME_MAX];
@@ -1349,8 +1398,389 @@ static int process_if_block(const char *block) {
     return last_exit_status;
 }
 
+/*
+ * Parse and execute a loop block (for/while/until ... do ... done).
+ *
+ * Supported forms:
+ *   for VAR in WORD1 WORD2 ...; do BODY; done
+ *   while CONDITION; do BODY; done
+ *   until CONDITION; do BODY; done
+ *
+ * Returns 0 on normal completion, non-zero if break/error occurred.
+ */
+static int process_loop_block(const char *block) {
+    if (!block || !*block) return 1;
+
+    /* Work on a mutable copy */
+    char buf[LOOP_BLOCK_BODY_MAX];
+    strncpy(buf, block, LOOP_BLOCK_BODY_MAX - 1);
+    buf[LOOP_BLOCK_BODY_MAX - 1] = '\0';
+
+    /* Strip leading whitespace */
+    char *p = buf;
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p) return 1;
+
+    /* Determine loop type */
+    int type = 0;
+    if (strncmp(p, "for ", 4) == 0 || strncmp(p, "for\t", 4) == 0) {
+        type = LOOP_FOR;
+        p += 3;
+    } else if (strncmp(p, "while ", 6) == 0 || strncmp(p, "while\t", 6) == 0) {
+        type = LOOP_WHILE;
+        p += 5;
+    } else if (strncmp(p, "until ", 6) == 0 || strncmp(p, "until\t", 6) == 0) {
+        type = LOOP_UNTIL;
+        p += 5;
+    } else {
+        /* Not a loop — execute as normal command */
+        char tmp[CMD_BUF_SIZE];
+        strncpy(tmp, block, CMD_BUF_SIZE - 1);
+        tmp[CMD_BUF_SIZE - 1] = '\0';
+        strncpy(cmd_buf, tmp, CMD_BUF_SIZE - 1);
+        cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+        cmd_len = (int)strlen(cmd_buf);
+        process_cmd();
+        return last_exit_status;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* Find the "do" keyword that separates prelude from body, respecting quotes/nesting */
+    char *do_pos = NULL;
+    char *done_pos = NULL;
+    int in_squote = 0, in_dquote = 0;
+    int loop_nest = 0;
+    char *scan = p;
+
+    while (*scan) {
+        if (*scan == '\'' && !in_dquote) { in_squote = !in_squote; scan++; continue; }
+        if (*scan == '"'  && !in_squote) { in_dquote = !in_dquote; scan++; continue; }
+        if (in_squote || in_dquote) { scan++; continue; }
+
+        /* Track nested loop keywords */
+        if ((strncmp(scan, "for ", 4) == 0 || strncmp(scan, "for\t", 4) == 0 ||
+             strncmp(scan, "while ", 6) == 0 || strncmp(scan, "while\t", 6) == 0 ||
+             strncmp(scan, "until ", 6) == 0 || strncmp(scan, "until\t", 6) == 0) &&
+            (scan == p || *(scan - 1) == ' ' || *(scan - 1) == '\t' || *(scan - 1) == ';' || *(scan - 1) == '\n')) {
+            loop_nest++;
+            scan += 4; /* skip past keyword */
+            continue;
+        }
+        if (!do_pos && strncmp(scan, "do", 2) == 0 && loop_nest == 0 &&
+            (*(scan + 2) == '\0' || *(scan + 2) == ' ' || *(scan + 2) == '\t' ||
+             *(scan + 2) == ';' || *(scan + 2) == '\n') &&
+            (scan == p || *(scan - 1) == ' ' || *(scan - 1) == '\t' || *(scan - 1) == ';' || *(scan - 1) == '\n')) {
+            do_pos = scan;
+            scan += 2;
+            continue;
+        }
+        if (!done_pos && strncmp(scan, "done", 4) == 0 && loop_nest == 0 &&
+            (*(scan + 4) == '\0' || *(scan + 4) == ' ' || *(scan + 4) == '\t' ||
+             *(scan + 4) == ';' || *(scan + 4) == '\n') &&
+            (scan == p || *(scan - 1) == ' ' || *(scan - 1) == '\t' || *(scan - 1) == ';' || *(scan - 1) == '\n')) {
+            done_pos = scan;
+            scan += 4;
+            continue;
+        }
+        /* Track matching "done" for nested loops */
+        if (strncmp(scan, "done", 4) == 0 && loop_nest > 0 &&
+            (*(scan + 4) == '\0' || *(scan + 4) == ' ' || *(scan + 4) == '\t' ||
+             *(scan + 4) == ';' || *(scan + 4) == '\n') &&
+            (scan == p || *(scan - 1) == ' ' || *(scan - 1) == '\t' || *(scan - 1) == ';' || *(scan - 1) == '\n')) {
+            loop_nest--;
+            scan += 4;
+            continue;
+        }
+        scan++;
+    }
+
+    if (!do_pos || !done_pos) {
+        kprintf("loop: syntax error — missing do or done\n");
+        last_exit_status = 2;
+        return 2;
+    }
+
+    /* Extract the prelude (everything from keyword to "do") */
+    char prelude[LOOP_BLOCK_BODY_MAX];
+    int prelude_len = (int)(do_pos - p);
+    if (prelude_len >= LOOP_BLOCK_BODY_MAX) prelude_len = LOOP_BLOCK_BODY_MAX - 1;
+    memcpy(prelude, p, prelude_len);
+    prelude[prelude_len] = '\0';
+
+    /* Trim trailing whitespace from prelude */
+    while (prelude_len > 0 && (prelude[prelude_len - 1] == ' ' || prelude[prelude_len - 1] == '\t'))
+        prelude[--prelude_len] = '\0';
+
+    /* Extract the body (everything from after "do" to "done") */
+    char *body_start = do_pos + 2;
+    while (*body_start == ' ' || *body_start == '\t' || *body_start == ';' || *body_start == '\n')
+        body_start++;
+    int body_len = (int)(done_pos - body_start);
+    if (body_len < 0) body_len = 0;
+    char body[LOOP_BLOCK_BODY_MAX];
+    if (body_len > 0) {
+        if (body_len >= LOOP_BLOCK_BODY_MAX) body_len = LOOP_BLOCK_BODY_MAX - 1;
+        memcpy(body, body_start, body_len);
+        body[body_len] = '\0';
+        /* Trim trailing whitespace/semicolons from body */
+        while (body_len > 0 && (body[body_len - 1] == ' ' || body[body_len - 1] == '\t' ||
+                                body[body_len - 1] == ';' || body[body_len - 1] == '\n'))
+            body[--body_len] = '\0';
+    } else {
+        body[0] = '\0';
+    }
+
+    /* ── Execute the loop ── */
+    int result = 0;
+    s_loop_nest_level++;
+
+    if (type == LOOP_FOR) {
+        /* Parse: VAR in WORD1 WORD2 ... */
+        /* Skip variable name */
+        char *v = prelude;
+        while (*v == ' ' || *v == '\t') v++;
+        char var_name[MAX_VAR_NAME]; int vn = 0;
+        while (*v && *v != ' ' && *v != '\t' && vn < MAX_VAR_NAME - 1) var_name[vn++] = *v++;
+        var_name[vn] = '\0';
+
+        /* Skip "in" keyword */
+        while (*v == ' ' || *v == '\t') v++;
+        if (strncmp(v, "in ", 3) != 0 && strncmp(v, "in\t", 3) != 0) {
+            kprintf("for: syntax error — expected 'in' after variable\n");
+            if (s_loop_nest_level > 0) s_loop_nest_level--;
+            last_exit_status = 2;
+            return 2;
+        }
+        v += 2; /* skip "in" */
+        while (*v == ' ' || *v == '\t') v++;
+
+        /* Collect word list */
+        char words[64][MAX_VAR_VALUE]; int nwords = 0;
+        char wbuf[MAX_VAR_VALUE]; int wi = 0;
+        int wq = 0; /* quote flag */
+        while (*v && nwords < 64) {
+            if (*v == '"' && !wq) { wq = 1; v++; continue; }
+            if (*v == '"' && wq) { wq = 0; v++; continue; }
+            if (*v == '\'' && !wq) { wq = 1; v++; continue; }
+            if (*v == '\'' && wq) { wq = 0; v++; continue; }
+            if (!wq && (*v == ' ' || *v == '\t')) {
+                if (wi > 0) {
+                    wbuf[wi] = '\0';
+                    strncpy(words[nwords], wbuf, MAX_VAR_VALUE - 1);
+                    words[nwords][MAX_VAR_VALUE - 1] = '\0';
+                    nwords++;
+                    wi = 0;
+                }
+                v++;
+                continue;
+            }
+            if (wi < MAX_VAR_VALUE - 1) wbuf[wi++] = *v;
+            v++;
+        }
+        if (wi > 0) {
+            wbuf[wi] = '\0';
+            strncpy(words[nwords], wbuf, MAX_VAR_VALUE - 1);
+            words[nwords][MAX_VAR_VALUE - 1] = '\0';
+            nwords++;
+        }
+
+        /* Iterate over words */
+        for (int wi = 0; wi < nwords; wi++) {
+            /* Check for break request */
+            if (s_loop_break_level > 0) {
+                s_loop_break_level--;
+                break;
+            }
+            if (s_loop_continue_level > 0) {
+                s_loop_continue_level--;
+                if (s_loop_continue_level > 0) break; /* this continue targets outer loop */
+                /* this continue targets our loop — just go to next iteration */
+                continue;
+            }
+
+            /* Set the loop variable */
+            shell_var_set(var_name, words[wi]);
+
+            /* Execute the body */
+            if (*body) {
+                /* Save and restore cmd_buf around body execution */
+                char saved_cmd[CMD_BUF_SIZE];
+                strncpy(saved_cmd, cmd_buf, CMD_BUF_SIZE - 1);
+                saved_cmd[CMD_BUF_SIZE - 1] = '\0';
+
+                strncpy(cmd_buf, body, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+                process_cmd();
+                result = last_exit_status;
+
+                strncpy(cmd_buf, saved_cmd, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+            }
+        }
+
+    } else if (type == LOOP_WHILE || type == LOOP_UNTIL) {
+        /* while CONDITION; do BODY; done */
+        /* until CONDITION; do BODY; done */
+        int max_iter = 1000000; /* safety limit */
+        int iter = 0;
+
+        while (iter < max_iter) {
+            iter++;
+
+            /* Check for break request */
+            if (s_loop_break_level > 0) {
+                s_loop_break_level--;
+                break;
+            }
+            if (s_loop_continue_level > 0) {
+                s_loop_continue_level--;
+                if (s_loop_continue_level > 0) break;
+                /* continue this loop — go test condition again */
+            }
+
+            /* Execute condition */
+            {
+                char saved_cmd[CMD_BUF_SIZE];
+                strncpy(saved_cmd, cmd_buf, CMD_BUF_SIZE - 1);
+                saved_cmd[CMD_BUF_SIZE - 1] = '\0';
+
+                strncpy(cmd_buf, prelude, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+                process_cmd();
+
+                strncpy(cmd_buf, saved_cmd, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+            }
+
+            int cond_ok = (last_exit_status == 0);
+            int should_run = (type == LOOP_WHILE) ? cond_ok : !cond_ok;
+
+            if (!should_run) break;
+
+            /* Execute body */
+            if (*body) {
+                char saved_cmd[CMD_BUF_SIZE];
+                strncpy(saved_cmd, cmd_buf, CMD_BUF_SIZE - 1);
+                saved_cmd[CMD_BUF_SIZE - 1] = '\0';
+
+                strncpy(cmd_buf, body, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+                process_cmd();
+                result = last_exit_status;
+
+                strncpy(cmd_buf, saved_cmd, CMD_BUF_SIZE - 1);
+                cmd_buf[CMD_BUF_SIZE - 1] = '\0';
+                cmd_len = (int)strlen(cmd_buf);
+            }
+        }
+
+        if (iter >= max_iter) {
+            kprintf("loop: infinite loop protection — stopped after %d iterations\n", max_iter);
+        }
+    }
+
+    if (s_loop_nest_level > 0) s_loop_nest_level--;
+
+    /* Reset continue/break levels that targeted this loop (already decremented above) */
+    last_exit_status = result;
+    return result;
+}
+
 void shell_process_line(const char *line) {
     if (!line || !*line) return;
+
+    /* --- Loop-block accumulation --- */
+    if (s_in_loop_block) {
+        /* Check for "done" terminator */
+        const char *l = line;
+        while (*l == ' ' || *l == '\t') l++;
+        /* Count opening loop keywords in this line */
+        for (const char *p = line; *p; p++) {
+            if (((strncmp(p, "for ", 4) == 0 || strncmp(p, "for\t", 4) == 0 ||
+                  strncmp(p, "while ", 6) == 0 || strncmp(p, "while\t", 6) == 0 ||
+                  strncmp(p, "until ", 6) == 0 || strncmp(p, "until\t", 6) == 0) &&
+                 (p == line || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';')))
+                s_loop_block_depth++;
+        }
+        if (strcmp(l, "done") == 0 || strcmp(l, "done;") == 0) {
+            s_loop_block_depth--;
+            if (s_loop_block_depth <= 0) {
+                /* Close loop-block */
+                s_loop_block_body[s_loop_block_len] = '\0';
+                /* Process the complete loop-block */
+                process_loop_block(s_loop_block_body);
+                s_in_loop_block = 0;
+                s_loop_block_len = 0;
+                s_loop_block_type = 0;
+                return;
+            }
+        }
+        /* Append line to loop-block body */
+        int ll = strlen(line);
+        if (s_loop_block_len + ll + 1 < LOOP_BLOCK_BODY_MAX) {
+            memcpy(s_loop_block_body + s_loop_block_len, line, ll);
+            s_loop_block_len += ll;
+            s_loop_block_body[s_loop_block_len++] = '\n';
+        }
+        return;
+    }
+
+    /* --- Detect start of loop-block --- */
+    {
+        const char *p = line;
+        while (*p == ' ') p++;
+        /* Check if line starts with "for ", "while ", or "until " (word-level keywords) */
+        int is_loop = 0;
+        int loop_type = 0;
+        if ((strncmp(p, "for ", 4) == 0 || strncmp(p, "for\t", 4) == 0) &&
+            !(p[3] && p[3] != ' ' && p[3] != '\t')) {
+            is_loop = 1;
+            loop_type = LOOP_FOR;
+        } else if ((strncmp(p, "while ", 6) == 0 || strncmp(p, "while\t", 6) == 0) &&
+                   !(p[5] && p[5] != ' ' && p[5] != '\t')) {
+            is_loop = 1;
+            loop_type = LOOP_WHILE;
+        } else if ((strncmp(p, "until ", 6) == 0 || strncmp(p, "until\t", 6) == 0) &&
+                   !(p[5] && p[5] != ' ' && p[5] != '\t')) {
+            is_loop = 1;
+            loop_type = LOOP_UNTIL;
+        }
+        if (is_loop) {
+            /* Check if single-line (has both "do" and "done") */
+            int has_do = 0, has_done = 0;
+            int in_sq = 0, in_dq = 0;
+            for (const char *q = line; *q; q++) {
+                if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                if (in_sq || in_dq) continue;
+                if (strncmp(q, "do", 2) == 0 && (q == line || *(q-1) == ' ' || *(q-1) == '\t' || *(q-1) == ';') &&
+                    (*(q+2) == '\0' || *(q+2) == ' ' || *(q+2) == '\t' || *(q+2) == ';')) has_do = 1;
+                if (strncmp(q, "done", 4) == 0 && (q == line || *(q-1) == ' ' || *(q-1) == '\t' || *(q-1) == ';')) has_done = 1;
+            }
+            if (has_do && has_done) {
+                /* Single-line loop: process immediately */
+                process_loop_block(line);
+                return;
+            }
+            /* Multi-line loop: start accumulation */
+            s_in_loop_block = 1;
+            s_loop_block_len = 0;
+            s_loop_block_depth = 1;
+            s_loop_block_type = loop_type;
+            int ll = strlen(line);
+            if (s_loop_block_len + ll + 1 < LOOP_BLOCK_BODY_MAX) {
+                memcpy(s_loop_block_body + s_loop_block_len, line, ll);
+                s_loop_block_len += ll;
+                s_loop_block_body[s_loop_block_len++] = '\n';
+            }
+            return;
+        }
+    }
 
     /* --- If-block accumulation --- */
     if (s_in_if_block) {
@@ -1549,8 +1979,14 @@ void shell_run(void) {
     static int    if_block_len  = 0;
     static int    if_block_depth = 0;
 
+    /* Loop-block accumulation state (local to keyboard path) */
+    static int    in_loop_block    = 0;
+    static char   loop_block_body[LOOP_BLOCK_BODY_MAX];
+    static int    loop_block_len   = 0;
+    static int    loop_block_depth = 0;
+
     for (;;) {
-        if (in_func_def || in_if_block)
+        if (in_func_def || in_if_block || in_loop_block)
             kprintf("> ");
         else
             shell_prompt();
@@ -1564,7 +2000,7 @@ void shell_run(void) {
             if (c == '\n') {
                 putchar_both('\n');
                 cmd_buf[cmd_len] = '\0';
-                if (!in_func_def && !in_if_block) history_add(cmd_buf);
+                if (!in_func_def && !in_if_block && !in_loop_block) history_add(cmd_buf);
 
                 /* --- If-block accumulation mode (keyboard path) --- */
                 if (in_if_block) {
@@ -1627,6 +2063,85 @@ void shell_run(void) {
                             memcpy(if_block_body + if_block_len, cmd_buf, ll);
                             if_block_len += ll;
                             if_block_body[if_block_len++] = '\n';
+                        }
+                        break;
+                    }
+                }
+
+                /* --- Loop-block accumulation mode (keyboard path) --- */
+                if (in_loop_block) {
+                    const char *l = cmd_buf;
+                    while (*l == ' ' || *l == '\t') l++;
+                    /* Count loop keywords in this line for nesting */
+                    for (const char *p = cmd_buf; *p; p++) {
+                        if (((strncmp(p, "for ", 4) == 0 || strncmp(p, "for\t", 4) == 0 ||
+                              strncmp(p, "while ", 6) == 0 || strncmp(p, "while\t", 6) == 0 ||
+                              strncmp(p, "until ", 6) == 0 || strncmp(p, "until\t", 6) == 0) &&
+                             (p == cmd_buf || *(p-1) == ' ' || *(p-1) == '\t' || *(p-1) == ';')))
+                            loop_block_depth++;
+                    }
+                    if (strcmp(l, "done") == 0 || strcmp(l, "done;") == 0) {
+                        loop_block_depth--;
+                        if (loop_block_depth <= 0) {
+                            /* Close loop-block */
+                            loop_block_body[loop_block_len] = '\0';
+                            process_loop_block(loop_block_body);
+                            in_loop_block = 0;
+                            loop_block_len = 0;
+                            break;
+                        }
+                    }
+                    /* Append line to loop-block body */
+                    int ll = strlen(cmd_buf);
+                    if (loop_block_len + ll + 1 < LOOP_BLOCK_BODY_MAX) {
+                        memcpy(loop_block_body + loop_block_len, cmd_buf, ll);
+                        loop_block_len += ll;
+                        loop_block_body[loop_block_len++] = '\n';
+                    }
+                    break;
+                }
+
+                /* --- Detect start of loop-block (keyboard path) --- */
+                {
+                    const char *p = cmd_buf;
+                    while (*p == ' ') p++;
+                    int is_loop = 0;
+                    if ((strncmp(p, "for ", 4) == 0 || strncmp(p, "for\t", 4) == 0) &&
+                        !(p[3] && p[3] != ' ' && p[3] != '\t')) {
+                        is_loop = 1;
+                    } else if ((strncmp(p, "while ", 6) == 0 || strncmp(p, "while\t", 6) == 0) &&
+                               !(p[5] && p[5] != ' ' && p[5] != '\t')) {
+                        is_loop = 1;
+                    } else if ((strncmp(p, "until ", 6) == 0 || strncmp(p, "until\t", 6) == 0) &&
+                               !(p[5] && p[5] != ' ' && p[5] != '\t')) {
+                        is_loop = 1;
+                    }
+                    if (is_loop) {
+                        /* Check if single-line (has both do and done) */
+                        int has_do = 0, has_done = 0;
+                        int in_sq = 0, in_dq = 0;
+                        for (const char *q = cmd_buf; *q; q++) {
+                            if (*q == '\'' && !in_dq) { in_sq = !in_sq; continue; }
+                            if (*q == '"'  && !in_sq) { in_dq = !in_dq; continue; }
+                            if (in_sq || in_dq) continue;
+                            if (strncmp(q, "do", 2) == 0 && (q == cmd_buf || *(q-1) == ' ') &&
+                                (*(q+2) == '\0' || *(q+2) == ' ' || *(q+2) == '\t' || *(q+2) == ';')) has_do = 1;
+                            if (strncmp(q, "done", 4) == 0 && (q == cmd_buf || *(q-1) == ' ')) has_done = 1;
+                        }
+                        if (has_do && has_done) {
+                            /* Single-line loop: process immediately */
+                            process_loop_block(cmd_buf);
+                            break;
+                        }
+                        /* Multi-line loop: start accumulation */
+                        in_loop_block = 1;
+                        loop_block_len = 0;
+                        loop_block_depth = 1;
+                        int ll = strlen(cmd_buf);
+                        if (loop_block_len + ll + 1 < LOOP_BLOCK_BODY_MAX) {
+                            memcpy(loop_block_body + loop_block_len, cmd_buf, ll);
+                            loop_block_len += ll;
+                            loop_block_body[loop_block_len++] = '\n';
                         }
                         break;
                     }
