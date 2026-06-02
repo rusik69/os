@@ -30,4 +30,11 @@ uint64_t pmm_free_block_count(void);
 extern int pmm_poison_enabled;
 void pmm_set_poison(int enable);
 
+/* Memory reclaim watermark — minimum free pages before reclaim triggers */
+uint64_t pmm_get_reclaim_watermark(void);
+void pmm_set_reclaim_watermark(uint64_t pages);
+
+/* Check if memory is below reclaim watermark */
+int pmm_below_watermark(void);
+
 #endif

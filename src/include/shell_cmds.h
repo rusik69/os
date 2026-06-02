@@ -48,6 +48,7 @@ void cmd_hostname(void);
 void cmd_env(void);
 void cmd_export(const char *args);
 void cmd_unset(const char *args);
+void cmd_sysctl(const char *args);
 void cmd_xxd(const char *args);
 void cmd_sleep(const char *args);
 int cmd_seq(int argc, char **argv);

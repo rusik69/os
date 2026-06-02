@@ -273,6 +273,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("setsid",      "Run command in new session (setsid <cmd>)",                      cmd_setsid)
     CMD("stdbuf_pipe", "Send to pipe with buffer (stdbuf_pipe <cmd>)",                   cmd_stdbuf_pipe)
     CMD("time_verbose","Detailed timing output (time -v <cmd>)",                         cmd_time_verbose)
+    CMD("sysctl",      "Read/write kernel parameters at runtime (sysctl [-a] [-w name=val] [-p file])", sh_sysctl)
     { 0, 0, 0 }
 };
 

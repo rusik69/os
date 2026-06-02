@@ -9,9 +9,32 @@
 #include "printf.h"
 #include "types.h"
 
+/* ─── Default watermark values ───────────────────────────────────── */
+/* Memory reclaim watermark — minimum free pages before reclaim triggers.
+ * We maintain our own copy rather than depending on pmm_extras.c. */
+static uint64_t sysctl_reclaim_watermark = 64;
+
+/* ─── Helper: convert uint64_t to string ─────────────────────────-- */
+
+static void ul_to_str(uint64_t v, char *buf, int *pos, int max)
+{
+    if (v == 0) {
+        if (*pos < max - 1) buf[(*pos)++] = '0';
+        return;
+    }
+    char tmp[24];
+    int n = 0;
+    while (v > 0) {
+        tmp[n++] = '0' + (int)(v % 10);
+        v /= 10;
+    }
+    while (n-- > 0 && *pos < max - 1)
+        buf[(*pos)++] = tmp[n];
+}
+
 /* ─── Static sysctl table ────────────────────────────────────────── */
 
-#define SYSCTL_MAX_ENTRIES 16
+#define SYSCTL_MAX_ENTRIES 32
 
 static struct sysctl_entry g_entries[SYSCTL_MAX_ENTRIES];
 static int g_num_entries = 0;
@@ -105,6 +128,25 @@ static int sysctl_write_rand_va(const char *buf, int len) {
     return 0;
 }
 
+/* vm.reclaim_watermark — minimum free pages before reclaim triggers */
+static int sysctl_read_reclaim_watermark(char *buf, int max)
+{
+    int p = 0;
+    ul_to_str(sysctl_reclaim_watermark, buf, &p, max);
+    if (p < max - 1) buf[p++] = '\n';
+    if (p < max) buf[p] = '\0';
+    return p;
+}
+
+static int sysctl_write_reclaim_watermark(const char *buf, int len)
+{
+    uint64_t v = 0;
+    for (int i = 0; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        v = v * 10 + (uint64_t)(buf[i] - '0');
+    sysctl_reclaim_watermark = v;
+    return 0;
+}
+
 /* ─── Public API ─────────────────────────────────────────────────── */
 
 int sysctl_register(const char *name,
@@ -141,6 +183,8 @@ int sysctl_read(const char *name, char *buf, int max) {
         return sysctl_read_panic(buf, max);
     if (strcmp(name, "randomize_va_space") == 0)
         return sysctl_read_rand_va(buf, max);
+    if (strcmp(name, "vm.reclaim_watermark") == 0)
+        return sysctl_read_reclaim_watermark(buf, max);
     return -1;
 }
 
@@ -160,10 +204,65 @@ int sysctl_write(const char *name, const char *buf, int len) {
         return sysctl_write_panic(buf, len);
     if (strcmp(name, "randomize_va_space") == 0)
         return sysctl_write_rand_va(buf, len);
+    if (strcmp(name, "vm.reclaim_watermark") == 0)
+        return sysctl_write_reclaim_watermark(buf, len);
     return -1;
 }
 
+/* ─── List registered sysctl entries ──────────────────────────────── */
+
+int sysctl_list_names(char names[][48], int max_names)
+{
+    int count = 0;
+
+    /* First, collect dynamically registered entries */
+    for (int i = 0; i < g_num_entries && count < max_names; i++) {
+        int nlen = (int)strlen(g_entries[i].name);
+        int copylen = nlen < 47 ? nlen : 47;
+        memcpy(names[count], g_entries[i].name, (size_t)copylen);
+        names[count][copylen] = '\0';
+        count++;
+    }
+
+    /* Add built-in entries that aren't already in the table */
+    static const char *builtins[] = {
+        "hostname", "osrelease", "ostype",
+        "panic", "randomize_va_space",
+        "vm.reclaim_watermark",
+        NULL
+    };
+
+    for (int b = 0; builtins[b] && count < max_names; b++) {
+        /* Check if already registered */
+        int found = 0;
+        for (int i = 0; i < g_num_entries; i++) {
+            if (strcmp(g_entries[i].name, builtins[b]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            int nlen = (int)strlen(builtins[b]);
+            int copylen = nlen < 47 ? nlen : 47;
+            memcpy(names[count], builtins[b], (size_t)copylen);
+            names[count][copylen] = '\0';
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/* ─── Initialisation ────────────────────────────────────────────── */
+
 void sysctl_init(void) {
-    /* Built-in sysctl entries are registered statically */
-    kprintf("[OK] Sysctl interface initialized\n");
+    /* Register built-in sysctl entries dynamically so they appear in listings */
+    sysctl_register("hostname", sysctl_read_hostname, sysctl_write_hostname);
+    sysctl_register("osrelease", sysctl_read_osrelease, NULL);
+    sysctl_register("ostype", sysctl_read_ostype, NULL);
+    sysctl_register("panic", sysctl_read_panic, sysctl_write_panic);
+    sysctl_register("randomize_va_space", sysctl_read_rand_va, sysctl_write_rand_va);
+    sysctl_register("vm.reclaim_watermark", sysctl_read_reclaim_watermark, sysctl_write_reclaim_watermark);
+
+    kprintf("[OK] Sysctl interface initialized (%d entries)\n", g_num_entries);
 }

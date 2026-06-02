@@ -54,6 +54,7 @@ static void sh_pinky(const char *a)     { (void)a; cmd_pinky(); }
 static void sh_pwdx(const char *a)      { (void)a; cmd_pwdx(); }
 static void sh_export(const char *a)    { cmd_export(a); }
 static void sh_unset(const char *a)     { cmd_unset(a); }
+static void sh_sysctl(const char *a)    { cmd_sysctl(a); }
 
 #include "cmd_table.inc"
 
