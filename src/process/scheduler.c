@@ -147,6 +147,50 @@ static int sysctl_write_sched_min_granularity(const char *buf, int len) {
 #define CFS_WEIGHT_SHIFT 10  /* 1024 = 1<<10 */
 #define CFS_VRUNTIME_MAX_DIFF 100000000ULL /* 100ms */
 
+/*
+ * Nice-to-weight conversion table (Linux-compatible scale).
+ *
+ * Each nice level differs from the next by a factor of ~1.25 (5%).
+ * Nice 0 has weight 1024; nice -20 has weight ~88761 (~86× CPU share
+ * of nice 0); nice +19 has weight 15 (~1/68 of nice 0).
+ *
+ * The mapping formula: weight = 1024 / (1.25^nice), so that
+ * the CPU time ratio between two tasks is weight_a / weight_b.
+ */
+static const int sched_prio_to_weight[40] = {
+    /* -20 */ 88761, 71755, 56483, 46273, 36291,
+    /* -15 */ 29154, 23254, 18705, 14949, 11916,
+    /* -10 */  9548,  7620,  6100,  4904,  3906,
+    /*  -5 */  3121,  2501,  1991,  1586,  1277,
+    /*   0 */  1024,   820,   655,   526,   423,
+    /*   5 */   335,   272,   215,   172,   137,
+    /*  10 */   110,    87,    70,    56,    45,
+    /*  15 */    36,    29,    23,    18,    15,
+};
+
+/* Convert POSIX nice value (-20..+19) to CFS scheduling weight.
+ * Returns 1024 for nice 0, larger for lower nice (higher priority). */
+static inline int nice_to_weight(int nice) {
+    if (nice < NICE_MIN) nice = NICE_MIN;
+    if (nice > NICE_MAX) nice = NICE_MAX;
+    return sched_prio_to_weight[nice - NICE_MIN];
+}
+
+/* Return the nice value whose weight is closest to @weight.
+ * Used by getpriority / procfs when only the weight is available. */
+static inline int weight_to_nice(int weight) {
+    if (weight >= sched_prio_to_weight[0])
+        return NICE_MIN;
+    if (weight <= sched_prio_to_weight[39])
+        return NICE_MAX;
+    for (int i = 0; i < 39; i++) {
+        if (weight >= sched_prio_to_weight[i + 1] &&
+            weight <= sched_prio_to_weight[i])
+            return NICE_MIN + i;
+    }
+    return 0;
+}
+
 /* ── Autogroup state ──────────────────────────────────────── */
 static struct sched_autogroup autogroups[SCHED_AUTOGROUP_MAX];
 /* autogroup_count tracks total groups — kept for future use */
@@ -293,6 +337,46 @@ int scheduler_set_priority(struct process *proc, uint8_t priority) {
     }
 
     proc->priority = priority;
+    return 0;
+}
+
+/* ── Set process nice value and update CFS weight ─────────────────────
+ *
+ * POSIX setpriority(which, who, prio) should call this function
+ * instead of manually updating fields.  It:
+ *   1. Clamps @nice to the valid range [-20, +19]
+ *   2. Updates proc->nice and proc->sched_weight (CFS weight from table)
+ *   3. Maps the nice value to the legacy priority (0-3) for the
+ *      multilevel queue (used by RT scheduling and aging)
+ *   4. If the process is on the runqueue, re-inserts it so the new
+ *      weight takes effect immediately.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int scheduler_set_nice(struct process *proc, int nice) {
+    if (!proc) return -1;
+
+    if (nice < NICE_MIN) nice = NICE_MIN;
+    if (nice > NICE_MAX) nice = NICE_MAX;
+
+    proc->nice = nice;
+    proc->sched_weight = (uint64_t)nice_to_weight(nice);
+
+    /* Map nice → legacy priority level (0..3) for backward compat */
+    int new_prio;
+    if (nice <= -11)      new_prio = 0;
+    else if (nice <= -1)  new_prio = 1;
+    else if (nice <=  9)  new_prio = 2;
+    else                  new_prio = 3;
+
+    if (proc->state == PROCESS_READY) {
+        scheduler_remove(proc);
+        proc->priority = (uint8_t)new_prio;
+        scheduler_add(proc);
+        return 0;
+    }
+
+    proc->priority = (uint8_t)new_prio;
     return 0;
 }
 

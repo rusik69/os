@@ -19,6 +19,7 @@ void schedule(void);
 void scheduler_add(struct process *proc);
 void scheduler_remove(struct process *proc);
 int scheduler_set_priority(struct process *proc, uint8_t priority);
+int scheduler_set_nice(struct process *proc, int nice);   /* CFS nice → weight + legacy prio */
 void scheduler_yield(void);
 void scheduler_wakeup(struct process *proc);  /* CFS sleeper fairness on wakeup */
 void scheduler_wake_sleepers(void);

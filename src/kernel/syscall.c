@@ -1075,7 +1075,7 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
  *   nice   0 ..   9  →  priority 2
  *   nice  10 ..  19  →  priority 3
  */
-static int nice_to_priority(int nice) {
+static int __attribute__((unused)) nice_to_priority(int nice) {
     if (nice <= -11) return 0;
     if (nice <=  -1) return 1;
     if (nice <=   9) return 2;
@@ -1116,7 +1116,6 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
     if (!cur) return (uint64_t)(int64_t)-1;
 
     int nice = clamp_nice((int)(int64_t)prio);
-    int new_prio = nice_to_priority(nice);
 
     switch (which) {
     case PRIO_PROCESS: {
@@ -1129,8 +1128,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
             if (!p || p->state == PROCESS_UNUSED)
                 return (uint64_t)(int64_t)-1; /* ESRCH */
         }
-        p->nice = nice;
-        scheduler_set_priority(p, (uint8_t)new_prio);
+        scheduler_set_nice(p, nice);
         return 0;
     }
     case PRIO_PGRP: {
@@ -1142,8 +1140,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
         for (uint32_t i = 0; i < count; i++) {
             if (table[i].state == PROCESS_UNUSED) continue;
             if (table[i].pgid == pgid) {
-                table[i].nice = nice;
-                scheduler_set_priority(&table[i], (uint8_t)new_prio);
+                scheduler_set_nice(&table[i], nice);
                 found = 1;
             }
         }
@@ -1159,8 +1156,7 @@ static uint64_t sys_setpriority(uint64_t which, uint64_t who, uint64_t prio) {
         for (uint32_t i = 0; i < count; i++) {
             if (table[i].state == PROCESS_UNUSED) continue;
             if (table[i].uid == uid) {
-                table[i].nice = nice;
-                scheduler_set_priority(&table[i], (uint8_t)new_prio);
+                scheduler_set_nice(&table[i], nice);
                 found = 1;
             }
         }
