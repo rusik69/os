@@ -468,8 +468,8 @@ void scheduler_wake_sleepers(void) {
             table[i].sleep_until = 0;
             table[i].state = PROCESS_READY;
 
-            /* Add to the CPU that last ran this process (affinity-based) */
-            scheduler_add(&table[i]);
+            /* Apply CFS sleeper fairness before adding to runqueue */
+            scheduler_wakeup(&table[i]);
         }
     }
 
@@ -568,7 +568,73 @@ uint64_t sched_autogroup_max_vruntime(int group_id) {
     return max;
 }
 
-/* ── Update vruntime on each tick (CFS) ─────────────────────── */
+/* ── CFS minimum vruntime tracking ────────────────────────────
+ *
+ * Track the minimum vruntime across all runnable tasks on this
+ * CPU's runqueue.  Used by scheduler_wakeup() to apply sleeper
+ * fairness: prevent long-sleeping tasks from getting an excessive
+ * vruntime advantage that would let them monopolise the CPU.
+ *
+ * The offset below limits how far below min_vruntime a waking
+ * task is allowed to go — this prevents CPU-bound bursts after
+ * prolonged sleeps while still giving a modest advantage to
+ * tasks that have been waiting a long time.
+ */
+#define CFS_MIN_VRUNTIME_OFFSET 2000000ULL  /* 2 ms worth of credit */
+
+/* Update the minimum vruntime by scanning the current CPU's queue.
+ * Called after adding/removing tasks and after context switches. */
+static void cfs_update_min_vruntime(void) {
+    struct cpu_info *ci = this_cpu();
+    uint64_t min_vruntime = UINT64_MAX;
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+        while (p) {
+            if (p->vruntime < min_vruntime)
+                min_vruntime = p->vruntime;
+            p = p->next;
+        }
+    }
+
+    /* If there's a running process, also include its vruntime */
+    struct process *cur = ci->current_process;
+    if (cur && cur->state == PROCESS_RUNNING && cur->vruntime < min_vruntime)
+        min_vruntime = cur->vruntime;
+
+    ci->cfs_min_vruntime = (min_vruntime == UINT64_MAX) ? 0 : min_vruntime;
+}
+
+/* ── CFS sleeper fairness ─────────────────────────────────────
+ *
+ * Called when a blocked process is about to be woken up and added
+ * to the runqueue.  Adjusts the task's vruntime to prevent it from
+ * monopolising the CPU after a long sleep.
+ *
+ * The rule:
+ *   - If the task's vruntime is >= the current minimum, keep it as-is
+ *     (it wasn't at an advantage before sleeping).
+ *   - If the task's vruntime is below the minimum by more than the
+ *     offset, cap it so that it gets at most CFS_MIN_VRUNTIME_OFFSET
+ *     of advantage.  This prevents CPU-bound bursts after prolonged
+ *     sleeps while still providing a modest scheduling incentive for
+ *     I/O-bound interactive tasks.
+ */
+void scheduler_wakeup(struct process *proc) {
+    if (!proc) return;
+
+    /* Ensure min_vruntime is up-to-date */
+    cfs_update_min_vruntime();
+    uint64_t min_vr = this_cpu()->cfs_min_vruntime;
+
+    /* If the task's vruntime is far behind, cap it */
+    if (proc->vruntime + CFS_MIN_VRUNTIME_OFFSET < min_vr) {
+        proc->vruntime = min_vr - CFS_MIN_VRUNTIME_OFFSET;
+    }
+
+    /* Add to the runqueue */
+    scheduler_add(proc);
+}
 void update_vruntime(struct process *p, int ticks) {
     if (!p) return;
     uint64_t weight = p->sched_weight ? p->sched_weight : CFS_NICE_0_WEIGHT;

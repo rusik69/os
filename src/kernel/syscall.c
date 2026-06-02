@@ -3312,7 +3312,7 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
                     struct process *next = process_get_by_pid(next_pid);
                     if (next && next->state == PROCESS_BLOCKED) {
                         next->state = PROCESS_READY;
-                        scheduler_add(next);
+                        scheduler_wakeup(next);
                     }
                 } else {
                     /* No waiters — mark as free */

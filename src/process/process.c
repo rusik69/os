@@ -502,7 +502,7 @@ static void process_wake_waiter(uint32_t pid) {
             p->wait_for_pid = 0;
             p->state = PROCESS_READY;
             p->last_run_tick = timer_get_ticks();
-            scheduler_add(p);
+            scheduler_wakeup(p);
         }
     }
 }

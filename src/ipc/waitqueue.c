@@ -91,7 +91,7 @@ int wait_queue_wake(struct wait_queue *wq) {
         if (table[i].pid == pid && table[i].state == PROCESS_BLOCKED) {
             table[i].state = PROCESS_READY;
             table[i].last_run_tick = 0; /* will be set when scheduled */
-            scheduler_add(&table[i]);
+            scheduler_wakeup(&table[i]);
             woken = 1;
             break;
         }
@@ -129,7 +129,7 @@ int wait_queue_wake_pid(struct wait_queue *wq, uint32_t pid) {
                 if (table[j].pid == pid && table[j].state == PROCESS_BLOCKED) {
                     table[j].state = PROCESS_READY;
                     table[j].last_run_tick = 0;
-                    scheduler_add(&table[j]);
+                    scheduler_wakeup(&table[j]);
                     found = 1;
                     break;
                 }

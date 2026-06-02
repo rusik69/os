@@ -34,7 +34,10 @@ struct cpu_info {
     /* CPU idle state data (cpuidle) */
     struct cpuidle_cpu idle_data;
 
-    uint8_t _pad[64];            /* cache line padding */
+    /* CFS minimum vruntime on this CPU's runqueue (for sleeper fairness) */
+    uint64_t cfs_min_vruntime;
+
+    uint8_t _pad[56];            /* cache line padding */
 } __attribute__((aligned(64)));
 
 /* Per-CPU accessors using GS segment */
