@@ -9,6 +9,10 @@
  * The noise protocol handshake is simplified: we assume a pre-shared
  * symmetric session key derived from the DH key exchange, then use
  * ChaCha20Poly1305 for authenticated encryption of tunnel packets.
+ *
+ * Extended with:
+ *   - Persistent keepalive (WG_KEEPALIVE_DEFAULT_INTERVAL sec)
+ *   - Endpoint roaming detection (update peer IP:port on changed source)
  */
 
 #define KERNEL_INTERNAL
@@ -17,6 +21,7 @@
 #include "string.h"
 #include "heap.h"
 #include "rng.h"
+#include "timer.h"
 
 static struct wg_device g_wg;
 static int wg_initialized = 0;
@@ -722,6 +727,13 @@ int wg_create_peer(uint32_t endpoint_ip, uint16_t port) {
     peer->endpoint_port = port;
     peer->active = 1;
 
+    /* Initialize keepalive / roaming tracking */
+    peer->last_tx_time = 0;
+    peer->last_rx_time = 0;
+    peer->rx_ip = endpoint_ip;
+    peer->rx_port = port;
+    peer->persistent_keepalive_interval = WG_KEEPALIVE_DEFAULT_INTERVAL;
+
     /* Generate a peer public key (simulating remote peer's key) */
     uint8_t peer_priv[32];
     for (int i = 0; i < 32; i++)
@@ -798,11 +810,14 @@ int wg_send(const uint8_t *data, int len) {
             peer->endpoint_port,
             (unsigned long long)wg_tx_counter);
 
+    /* Update last transmit time for keepalive tracking */
+    peer->last_tx_time = timer_get_ticks();
+
     kfree(buf);
     return total_len;
 }
 
-int wg_receive(const uint8_t *data, int len) {
+int wg_receive(const uint8_t *data, int len, uint32_t src_ip, uint16_t src_port) {
     if (!wg_initialized || !data) return -1;
     if (len < 32) return -1;  /* Header + tag minimum */
 
@@ -815,6 +830,31 @@ int wg_receive(const uint8_t *data, int len) {
         }
     }
     if (!peer) return -1;
+
+    /* ── Roaming detection ───────────────────────────────────────────
+     * If the packet arrived from a different source address than what
+     * we have configured or last observed, update the endpoint so future
+     * sends go to the new address.  This handles NAT rebinding and
+     * mobile endpoint migration. */
+    if (src_ip != 0 && (src_ip != peer->rx_ip || src_port != peer->rx_port)) {
+        kprintf("[WG] Roaming detected: peer moved from %d.%d.%d.%d:%u to %d.%d.%d.%d:%u\n",
+                (uint8_t)(peer->rx_ip >> 24),
+                (uint8_t)(peer->rx_ip >> 16),
+                (uint8_t)(peer->rx_ip >> 8),
+                (uint8_t)peer->rx_ip,
+                peer->rx_port,
+                (uint8_t)(src_ip >> 24),
+                (uint8_t)(src_ip >> 16),
+                (uint8_t)(src_ip >> 8),
+                (uint8_t)src_ip,
+                src_port);
+
+        /* Update both the last observed and the configured endpoint */
+        peer->rx_ip       = src_ip;
+        peer->rx_port     = src_port;
+        peer->endpoint_ip = src_ip;
+        peer->endpoint_port = src_port;
+    }
 
     /* Derive session key */
     uint8_t shared_secret[32];
@@ -845,14 +885,116 @@ int wg_receive(const uint8_t *data, int len) {
     }
 
     int payload_len = ct_len - 16;
-    kprintf("[WG] Receive %d bytes decrypted from peer %d.%d.%d.%d:%u\n",
+    kprintf("[WG] Receive %d bytes decrypted from peer %d.%d.%d.%d:%u%s\n",
             payload_len,
             (uint8_t)(peer->endpoint_ip >> 24),
             (uint8_t)(peer->endpoint_ip >> 16),
             (uint8_t)(peer->endpoint_ip >> 8),
             (uint8_t)peer->endpoint_ip,
-            peer->endpoint_port);
+            peer->endpoint_port,
+            (payload_len == 0) ? " (keepalive)" : "");
+
+    /* Update last receive time for keepalive tracking */
+    peer->last_rx_time = timer_get_ticks();
 
     kfree(plaintext);
     return payload_len;
+}
+
+/* ── Persistent keepalive support ───────────────────────────────────── */
+
+int wg_set_persistent_keepalive(int index, uint32_t interval) {
+    if (!wg_initialized) return -1;
+    if (index < 0 || index >= g_wg.num_peers) return -1;
+    if (!g_wg.peers[index].active) return -1;
+
+    /* Clamp to minimum interval to avoid flooding */
+    if (interval > 0 && interval < WG_KEEPALIVE_MIN_INTERVAL)
+        interval = WG_KEEPALIVE_MIN_INTERVAL;
+
+    g_wg.peers[index].persistent_keepalive_interval = interval;
+    kprintf("[WG] Peer %d persistent keepalive set to %u seconds\n",
+            index, (unsigned int)interval);
+    return 0;
+}
+
+/* Send a keepalive (empty payload) packet to the given peer */
+static void wg_send_keepalive(struct wg_peer *peer) {
+    /* Use the existing encrypt path with zero-length payload.
+     * We build an empty message: header (16 bytes) + auth tag (16 bytes) = 32 bytes,
+     * with zero-length ciphertext. */
+    uint8_t session_key[32];
+    uint8_t shared_secret[32];
+
+    curve25519(shared_secret, g_wg.private_key, peer->public_key);
+    wg_kdf(session_key, shared_secret, g_wg.private_key, peer->public_key);
+
+    uint8_t buf[64];  /* More than enough for header + tag */
+    memset(buf, 0, 16);
+    buf[0] = WG_MSG_KEEPALIVE;  /* Keepalive / transport message type */
+
+    uint8_t nonce[12] = {0};
+    static uint64_t wg_ka_counter = 0;
+    wg_ka_counter++;
+    *(uint64_t *)nonce = wg_ka_counter;
+
+    /* Encrypt zero-length payload: just the auth tag */
+    uint8_t tag[16];
+    chacha20poly1305_encrypt(tag, NULL, 0, buf, 16, session_key, nonce);
+    memcpy(buf + 16, tag, 16);
+
+    kprintf("[WG] Sending keepalive to peer %d.%d.%d.%d:%u (counter=%llu)\n",
+            (uint8_t)(peer->endpoint_ip >> 24),
+            (uint8_t)(peer->endpoint_ip >> 16),
+            (uint8_t)(peer->endpoint_ip >> 8),
+            (uint8_t)peer->endpoint_ip,
+            peer->endpoint_port,
+            (unsigned long long)wg_ka_counter);
+
+    /* Update last transmit time */
+    peer->last_tx_time = timer_get_ticks();
+
+    /* In a full implementation this would enqueue the packet on the
+     * UDP socket.  For now we log the event — the underlying transport
+     * (net_udp_send) would be called by the integration layer. */
+    (void)buf;
+}
+
+/* Periodic poll: check if any peer needs a keepalive sent.
+ * Should be called from a timer (e.g., every second or from the
+ * scheduler tick). */
+void wg_poll(void) {
+    if (!wg_initialized) return;
+
+    uint64_t now = timer_get_ticks();
+    g_wg.last_poll_time = now;
+
+    /* Convert ticks to seconds (assumes ~100 Hz timer tick rate).
+     * timer_get_ticks() returns jiffies, typically 100 per second. */
+    const uint64_t ticks_per_sec = 100;  /* HZ */
+
+    for (int i = 0; i < g_wg.num_peers; i++) {
+        struct wg_peer *peer = &g_wg.peers[i];
+        if (!peer->active) continue;
+        if (peer->persistent_keepalive_interval == 0) continue;
+
+        /* Determine the most recent activity time (tx or rx) */
+        uint64_t last_activity = peer->last_tx_time;
+        if (peer->last_rx_time > last_activity)
+            last_activity = peer->last_rx_time;
+
+        /* If we've never sent/received, send a keepalive immediately */
+        if (last_activity == 0) {
+            wg_send_keepalive(peer);
+            continue;
+        }
+
+        uint64_t elapsed_ticks = now - last_activity;
+        uint64_t interval_ticks = (uint64_t)peer->persistent_keepalive_interval * ticks_per_sec;
+
+        /* Send keepalive if we've been idle longer than the interval */
+        if (elapsed_ticks >= interval_ticks) {
+            wg_send_keepalive(peer);
+        }
+    }
 }
