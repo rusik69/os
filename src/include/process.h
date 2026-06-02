@@ -284,6 +284,12 @@ struct process *kthread_create(void (*entry)(void *arg), void *arg,
 struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
                                        const char *name, int cpu_id);
 
+/* ── Thread management (pthread support) ───────────────────── */
+int  process_thread_create(void *(*start_routine)(void *), void *arg);
+int  process_thread_join(int thread_pid, void **retval);
+void process_thread_exit(void *retval) __attribute__((noreturn));
+void thread_info_init(void);
+
 /* Per-process interval timer tick (called from timer interrupt) */
 void process_timer_tick(int was_user);
 

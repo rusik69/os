@@ -452,6 +452,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Workqueue (deferred work execution via kthread) */
     workqueue_init();
 
+    /* Thread info table for pthread support */
+    thread_info_init();
+
     /* Fanotify — file system event monitoring */
     fanotify_init();
 

@@ -1126,6 +1126,195 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
     return proc;
 }
 
+/* ── Thread management for pthread support ────────────────────── */
+
+/*
+ * Thread info structure for pthread_create/pthread_join.
+ * Each thread gets an entry in a fixed-size table. When the thread
+ * finishes execution, the wrapper stores the return value and sets
+ * the finished flag, then becomes a zombie. pthread_join reads the
+ * stored return value and reclaims the thread info.
+ */
+#define THREAD_INFO_MAX 64
+
+struct thread_info {
+    volatile int  used;
+    volatile int  finished;
+    int           pid;               /* thread's kernel PID */
+    void         *retval;            /* returned value from start_routine */
+};
+
+static struct thread_info g_thread_info[THREAD_INFO_MAX];
+static int g_thread_info_inited = 0;
+
+/* Thread wrapper: calls the user's start routine, stores return value. */
+struct thread_start_args {
+    void *(*start_routine)(void *);
+    void *arg;
+    int   info_idx;   /* index into g_thread_info[] */
+};
+
+static void thread_wrapper(void *arg) {
+    struct thread_start_args *tsa = (struct thread_start_args *)arg;
+    void *(*start_routine)(void *) = tsa->start_routine;
+    void *user_arg = tsa->arg;
+    int idx = tsa->info_idx;
+
+    /* Call the user's start routine */
+    void *retval = start_routine(user_arg);
+
+    /* Store return value and mark finished */
+    if (idx >= 0 && idx < THREAD_INFO_MAX && g_thread_info[idx].used) {
+        g_thread_info[idx].retval   = retval;
+        g_thread_info[idx].finished = 1;
+    }
+
+    /* Exit the thread — kernel will wake parent in waitpid */
+    /* Use process_exit_code to exit */
+    current_process->state = PROCESS_ZOMBIE;
+    scheduler_remove(current_process);
+    process_wake_waiter(current_process->pid);
+    for (;;) __asm__ volatile("hlt"); /* should never reach here */
+}
+
+/*
+ * Initialize thread info table (called once during boot).
+ */
+void thread_info_init(void) {
+    if (g_thread_info_inited) return;
+    memset(g_thread_info, 0, sizeof(g_thread_info));
+    g_thread_info_inited = 1;
+}
+
+/*
+ * Create a new thread that executes start_routine(arg).
+ * Returns the thread ID (PID) on success, or -1 on error.
+ */
+int process_thread_create(void *(*start_routine)(void *), void *arg) {
+    if (!start_routine) return -1;
+    if (!g_thread_info_inited) thread_info_init();
+
+    /* Find a free thread info slot */
+    int idx = -1;
+    for (int i = 0; i < THREAD_INFO_MAX; i++) {
+        if (!g_thread_info[i].used) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return -1;
+
+    /* Allocate and fill the start arguments */
+    struct thread_start_args *tsa = (struct thread_start_args *)
+        kmalloc(sizeof(struct thread_start_args));
+    if (!tsa) return -1;
+    tsa->start_routine = start_routine;
+    tsa->arg           = arg;
+    tsa->info_idx      = idx;
+
+    /* Prepare the thread info slot */
+    g_thread_info[idx].used     = 1;
+    g_thread_info[idx].finished = 0;
+    g_thread_info[idx].retval   = NULL;
+
+    /* Create a kernel thread — it shares the kernel address space
+     * with the rest of the system, so CLONE_VM is implicit. */
+    struct process *thread = kthread_create(thread_wrapper, tsa, "pthread");
+    if (!thread) {
+        kfree(tsa);
+        g_thread_info[idx].used = 0;
+        return -1;
+    }
+
+    /* Share thread group ID with parent */
+    struct process *parent = current_process;
+    if (parent) {
+        thread->tgid = parent->tgid ? parent->tgid : parent->pid;
+    }
+
+    g_thread_info[idx].pid = (int)thread->pid;
+    return (int)thread->pid;
+}
+
+/*
+ * Wait for a thread to finish and retrieve its return value.
+ * Returns 0 on success, -1 on error.
+ */
+int process_thread_join(int thread_pid, void **retval) {
+    if (thread_pid <= 0) return -1;
+
+    /* Find the thread info slot */
+    int idx = -1;
+    for (int i = 0; i < THREAD_INFO_MAX; i++) {
+        if (g_thread_info[i].used && g_thread_info[i].pid == thread_pid) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return -1;
+
+    /* Wait for the thread to finish by blocking on its PID.
+     * We leverage the existing scheduler wake mechanism: when the
+     * thread exits (becomes ZOMBIE), the scheduler yields back to us. */
+    for (int spin = 0; spin < 10000000; spin++) {
+        if (g_thread_info[idx].finished) break;
+        /* Yield to let the thread run */
+        scheduler_yield();
+    }
+
+    if (!g_thread_info[idx].finished) {
+        /* Thread didn't finish — poll more aggressively */
+        struct process *thr = process_get_by_pid((uint32_t)thread_pid);
+        if (thr && thr->state == PROCESS_ZOMBIE) {
+            g_thread_info[idx].finished = 1;
+        } else {
+            /* Thread still running — block until zombie */
+            int status = 0;
+            process_waitpid((uint32_t)thread_pid, &status);
+        }
+    }
+
+    /* Read the return value */
+    if (retval) {
+        *retval = g_thread_info[idx].retval;
+    }
+
+    /* Clean up */
+    g_thread_info[idx].used = 0;
+
+    /* If the thread is still alive, waitpid will clean it up.
+     * Otherwise, it may already be a zombie. */
+    struct process *thr = process_get_by_pid((uint32_t)thread_pid);
+    if (thr && thr->state == PROCESS_ZOMBIE) {
+        process_cleanup(thr);
+    }
+
+    return 0;
+}
+
+/*
+ * Exit the current thread with the given return value.
+ * Never returns.
+ */
+void process_thread_exit(void *retval) {
+    int pid = current_process ? (int)current_process->pid : 0;
+
+    /* Find and update the thread info slot */
+    for (int i = 0; i < THREAD_INFO_MAX; i++) {
+        if (g_thread_info[i].used && g_thread_info[i].pid == pid) {
+            g_thread_info[i].retval   = retval;
+            g_thread_info[i].finished = 1;
+            break;
+        }
+    }
+
+    /* Become a zombie to notify the joiner */
+    current_process->state = PROCESS_ZOMBIE;
+    scheduler_remove(current_process);
+    process_wake_waiter(current_process->pid);
+    for (;;) __asm__ volatile("hlt"); /* never reached */
+}
+
 /* ── process_is_kthread / process_set_user_process ──────────── */
 
 int process_is_kthread(struct process *proc) {

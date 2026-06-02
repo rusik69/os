@@ -1303,6 +1303,34 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
     return (uint64_t)(int64_t)ret;
 }
 
+/* ── Thread syscalls (pthread support) ────────────────────────── */
+
+static uint64_t sys_thread_create(uint64_t fn_addr, uint64_t arg) {
+    void *(*fn)(void *) = (void *(*)(void *))(uintptr_t)fn_addr;
+    void *user_arg = (void *)(uintptr_t)arg;
+    int ret = process_thread_create(fn, user_arg);
+    return (uint64_t)(int64_t)ret;
+}
+
+static uint64_t sys_thread_join(uint64_t thread_pid, uint64_t retval_addr) {
+    void **retval_ptr = (void **)(uintptr_t)retval_addr;
+    int ret;
+    if (retval_ptr) {
+        void *retval;
+        ret = process_thread_join((int)thread_pid, &retval);
+        if (ret == 0)
+            *retval_ptr = retval;
+    } else {
+        ret = process_thread_join((int)thread_pid, NULL);
+    }
+    return (uint64_t)(int64_t)ret;
+}
+
+static void sys_thread_exit(void *retval) {
+    process_thread_exit(retval);
+    /* never reaches here */
+}
+
 static uint64_t sys_gettid(void) {
     struct process *p = process_get_current();
     if (!p) return 0;
@@ -6457,6 +6485,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
+        case SYS_THREAD_CREATE:       return sys_thread_create(a1, a2);
+        case SYS_THREAD_JOIN:         return sys_thread_join(a1, a2);
+        case SYS_THREAD_EXIT:         sys_thread_exit((void *)a1); return 0;
         case SYS_NET_CONNLIST:         return sys_net_connlist();
         case SYS_SIGNAL:              return sys_signal(a1, a2);
         case SYS_LSEEK:               return sys_lseek(a1, a2, a3);

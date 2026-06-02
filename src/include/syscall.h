@@ -684,6 +684,10 @@ struct linux_dirent64 {
 #define SYS_GETRESUID         350
 #define SYS_TKILL           233
 #define SYS_EXECVE          234
+/* Threading (pthread support) */
+#define SYS_THREAD_CREATE    550  /* thread_create(fn, arg) → thread_id */
+#define SYS_THREAD_JOIN      551  /* thread_join(thread_id, &retval) → 0 or error */
+#define SYS_THREAD_EXIT      552  /* thread_exit(retval) → never returns */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
