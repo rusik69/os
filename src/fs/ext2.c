@@ -1,9 +1,13 @@
 /*
- * src/fs/ext2.c — Ext2 read-only filesystem.
+ * src/fs/ext2.c — Ext2 read-only filesystem with HTree directory indexing.
  *
  * Implements a read-only ext2 filesystem on top of the VFS layer.
- * Supports block groups, inodes, directory traversal, and reading
- * regular files via direct/indirect blocks.
+ * Supports block groups, inodes, directory traversal (linear and
+ * HTree/indexed), and reading regular files via direct/indirect blocks.
+ *
+ * HTree (hash tree) directory indexing provides O(log n) directory
+ * lookups for large directories, as specified in the ext3/4 design.
+ * The hash function used is half MD4 (the most common for ext3/4).
  */
 
 #define KERNEL_INTERNAL
@@ -104,7 +108,418 @@ static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
     return -1; /* doubly/triply indirect not needed for basic support */
 }
 
-/* Read directory entries from inode */
+/* ── HTree: Half MD4 hash function ──────────────────────────────── */
+
+/*
+ * Half MD4 — a reduced-round variant of MD4 used by ext3/4 HTree.
+ * Produces a 32-bit hash from a filename and a seed (usually 0).
+ * Based on RFC 1320 MD4 with only the first two rounds of mixing.
+ */
+#define F(x, y, z) (((x) & (y)) | ((~x) & (z)))
+#define G(x, y, z) (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
+
+#define HALF_MD4_ROTLEFT(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
+
+#define HALF_MD4_ROUND1(a, b, c, d, k, s) do { \
+    a += F(b, c, d) + k;                       \
+    a = HALF_MD4_ROTLEFT(a, s);                \
+} while (0)
+
+#define HALF_MD4_ROUND2(a, b, c, d, k, s) do { \
+    a += G(b, c, d) + k + 0x5A827999;           \
+    a = HALF_MD4_ROTLEFT(a, s);                \
+} while (0)
+
+/* Chunk size for half-MD4: each chunk is 16 bytes (contradicts standard
+ * MD4 which is 64 bytes — ext3/4 half-MD4 processes 16-byte chunks). */
+#define HALF_MD4_CHUNK_WORDS 4  /* 16 bytes */
+
+/* Process one 16-byte chunk through the half-MD4 compression function */
+static void half_md4_transform(uint32_t state[4], const uint32_t chunk[4])
+{
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+    uint32_t x[4];
+    x[0] = chunk[0]; x[1] = chunk[1]; x[2] = chunk[2]; x[3] = chunk[3];
+
+    /* Round 1 (all 4 operations) */
+    HALF_MD4_ROUND1(a, b, c, d, x[0],  3);
+    HALF_MD4_ROUND1(d, a, b, c, x[1],  7);
+    HALF_MD4_ROUND1(c, d, a, b, x[2], 11);
+    HALF_MD4_ROUND1(b, c, d, a, x[3], 19);
+
+    /* Round 2 (all 4 operations) */
+    HALF_MD4_ROUND2(a, b, c, d, x[0],  3);
+    HALF_MD4_ROUND2(d, a, b, c, x[1],  5);
+    HALF_MD4_ROUND2(c, d, a, b, x[2],  9);
+    HALF_MD4_ROUND2(b, c, d, a, x[3], 13);
+
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+}
+
+/*
+ * Compute the half-MD4 hash of @name (up to @name_len bytes).
+ * Returns a 32-bit hash value suitable for HTree lookup.
+ * The seed (@hash_seed) comes from the ext2 superblock (if available)
+ * or defaults to a fixed seed (0).
+ */
+static uint32_t ext2_htree_hash(const unsigned char *name,
+                                 int name_len,
+                                 const uint32_t hash_seed[4])
+{
+    uint32_t state[4];
+    uint32_t seed[4];
+
+    if (hash_seed) {
+        seed[0] = hash_seed[0];
+        seed[1] = hash_seed[1];
+        seed[2] = hash_seed[2];
+        seed[3] = hash_seed[3];
+    } else {
+        seed[0] = 0;
+        seed[1] = 0;
+        seed[2] = 0;
+        seed[3] = 0;
+    }
+
+    /* Initialise state from seed */
+    state[0] = seed[0];
+    state[1] = seed[1];
+    state[2] = seed[2];
+    state[3] = seed[3];
+
+    /* Process the name in 16-byte (4 x uint32_t) chunks */
+    int pos = 0;
+    while (pos + 16 <= name_len) {
+        uint32_t chunk[4];
+        memcpy(chunk, name + pos, 16);
+        half_md4_transform(state, chunk);
+        pos += 16;
+    }
+
+    /* Process remaining bytes (pad with zeros) */
+    if (pos < name_len) {
+        uint32_t chunk[4] = {0, 0, 0, 0};
+        memcpy(chunk, name + pos, (size_t)(name_len - pos));
+        half_md4_transform(state, chunk);
+    }
+
+    /* Half-MD4 output: only the first 2 words (8 bytes) are XOR'd to
+     * produce a 32-bit hash, per ext3/4 HTree convention. */
+    return state[0] ^ state[1];
+}
+
+/*
+ * Compute the HTree hash for a filename, using the appropriate
+ * hash version.  For now we handle HALF_MD4 (the most common).
+ */
+static uint32_t ext2_dx_hash(const unsigned char *name, int name_len,
+                             uint8_t hash_version,
+                             const uint32_t hash_seed[4])
+{
+    (void)hash_version;  /* We only implement half-MD4; the caller should
+                          * fall back to linear search for unsupported versions. */
+    return ext2_htree_hash(name, name_len, hash_seed);
+}
+
+/* ── HTree directory lookup ─────────────────────────────────────── */
+
+/*
+ * Walk the HTree index to find the leaf block that could contain
+ * a directory entry with the given hash.  Uses binary search on
+ * the index entries at each level.
+ *
+ * @ep:          ext2 private data
+ * @inode:       directory inode
+ * @hash:        hash value computed from the filename
+ * @leaf_block:  (output) block number of the leaf data block
+ *
+ * Returns 0 on success, -1 on error (no HTree or unsupported format).
+ *
+ * HTree node layout (all multi-byte values are little-endian):
+ *
+ *   dx_root (first block of indexed directory):
+ *     - '.' and '..' entries (variable length via rec_len)
+ *     - uint32_t reserved (0)
+ *     - uint8_t  hash_version
+ *     - uint8_t  info_length (8)
+ *     - uint8_t  indirect_levels (0 = single-level tree)
+ *     - uint8_t  unused_flags
+ *     - uint16_t limit  (entry capacity in this node)
+ *     - uint16_t count  (used entry count)
+ *     - uint32_t block  (block number of this node; 0 for root)
+ *     - struct ext2_dx_entry entries[limit]
+ *
+ *   dx_node (internal node):
+ *     - Same layout but WITHOUT . and .. entries; starts at offset 0
+ *       with reserved/hash_version/info_length/indirect_levels/unused_flags
+ *       (8 bytes), then limit(2) + count(2) + block(4) = 16 bytes total
+ *       header, then entries[limit].
+ */
+static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
+                                  struct ext2_inode *inode,
+                                  uint32_t hash,
+                                  uint32_t *leaf_block)
+{
+    uint8_t block_buf[4096];
+
+    /* Read the first block of the directory — contains the dx_root */
+    if (ext2_read_inode_block(ep, inode, 0, block_buf) < 0)
+        return -1;
+
+    /* The dx_root starts after the '.' and '..' entries.  We skip them
+     * by following rec_len fields, then parse the index header. */
+    uint32_t pos = 0;
+
+    /* We define a local helper for raw directory entries */
+#define EXT2_DIRENT_SIZE(nl) ((sizeof(uint32_t) + sizeof(uint16_t) + 1 + 1) + (nl))
+    /* Simplified dirent header size: inode(4) + rec_len(2) + name_len(1) + file_type(1) = 8 + name */
+
+    /* Skip '.' entry */
+    {
+        uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
+        uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
+        if (*de_inode == 0 || *de_rec == 0)
+            return -1;
+        pos += *de_rec;
+    }
+
+    /* Skip '..' entry */
+    {
+        uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
+        uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
+        if (*de_inode == 0 || *de_rec == 0)
+            return -1;
+        pos += *de_rec;
+    }
+
+    /* At pos, we should have: reserved(4) + hash_version(1) + info_length(1)
+     * + indirect_levels(1) + unused_flags(1) = 8 bytes.  Then
+     * limit(2) + count(2) + block(4) = 8 bytes.
+     * So entries start at pos + 16. */
+
+    if (pos + 16 > ep->block_size)
+        return -1;
+
+    /* Read the info fields */
+    uint8_t info_bytes[8];
+    memcpy(info_bytes, block_buf + pos, 8);
+    uint8_t hash_version    = info_bytes[4];   /* offset 4 within the 8-byte info */
+    uint8_t info_length     = info_bytes[5];
+    uint8_t indirect_levels = info_bytes[6];
+    (void)hash_version;
+
+    if (info_length < 8)
+        return -1;
+
+    /* Read limit, count, block from the root node header */
+    uint16_t root_limit = *(uint16_t *)(block_buf + pos + 8);
+    uint16_t root_count = *(uint16_t *)(block_buf + pos + 10);
+    uint32_t root_block = *(uint32_t *)(block_buf + pos + 12);
+    (void)root_limit;
+
+    if (root_count == 0)
+        return -1;
+
+    /* The dx_root entries follow at pos + 16 */
+    struct ext2_dx_entry *root_entries = (struct ext2_dx_entry *)(block_buf + pos + 16);
+
+    /* Walk the tree */
+    int levels = (int)indirect_levels;
+    uint32_t current_block = root_block;
+    uint32_t current_hash  = hash;
+
+    while (levels >= 0) {
+        uint16_t count;
+        uint16_t limit;
+        struct ext2_dx_entry *entries;
+        uint8_t *node_buf;
+
+        if (levels == (int)indirect_levels && root_block == 0) {
+            /* At the root level: use the in-memory root */
+            count   = root_count;
+            limit   = root_limit;
+            entries = root_entries;
+            node_buf = block_buf;
+        } else {
+            /* Read an internal node block */
+            uint8_t *ibuf = (uint8_t *)kmalloc(ep->block_size);
+            if (!ibuf) return -1;
+            if (ext2_read_block(ep, current_block, ibuf) < 0) {
+                kfree(ibuf);
+                return -1;
+            }
+            node_buf = ibuf;
+
+            /* Internal node: 16-byte header before entries */
+            count   = *(uint16_t *)(node_buf + 8);
+            limit   = *(uint16_t *)(node_buf + 10);
+            entries = (struct ext2_dx_entry *)(node_buf + 16);
+        }
+
+        if (count == 0 || limit == 0) {
+            if (node_buf != block_buf)
+                kfree(node_buf);
+            return -1;
+        }
+
+        /* Binary search for the highest entry with hash <= current_hash */
+        int lo = 0;
+        int hi = (int)count - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (entries[mid].hash <= current_hash)
+                lo = mid + 1;
+            else
+                hi = mid - 1;
+        }
+
+        int idx = (hi >= 0) ? hi : 0;   /* clamp to 0 if hi < 0 */
+        if (idx >= count)
+            idx = count - 1;
+
+        if (levels == 0) {
+            /* Leaf level: return the block number */
+            *leaf_block = entries[idx].block;
+
+            if (node_buf != block_buf)
+                kfree(node_buf);
+            return 0;
+        }
+
+        /* Descend to the next level */
+        current_block = entries[idx].block;
+        current_hash  = hash;
+        levels--;
+
+        if (node_buf != block_buf)
+            kfree(node_buf);
+    }
+
+    return -1;
+#undef EXT2_DIRENT_SIZE
+}
+
+/* ── Combined directory entry lookup (HTree + linear fallback) ──── */
+
+/*
+ * Find a directory entry by name in an ext2 directory.
+ * Uses HTree if available (EXT2_INDEX_FL set and dir_index feature),
+ * falls back to linear scan otherwise.
+ */
+static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
+                             const char *name, uint32_t *ino)
+{
+    size_t nlen = strlen(name);
+    if (nlen == 0 || nlen > 255)
+        return -1;
+
+    /* Check if HTree indexing is available */
+    int use_htree = 0;
+    if (dir_inode->i_flags & EXT2_INDEX_FL) {
+        /* Verify the superblock has the dir_index feature */
+        if (ep->sb.s_feature_compat & EXT2_FEATURE_COMPAT_DIR_INDEX)
+            use_htree = 1;
+    }
+
+    if (use_htree) {
+        uint32_t hash_seed[4];
+        /* Read the hash seed from the superblock if available (ext2 rev 1+),
+         * otherwise use a fixed seed of 0.  The hash seed prevents
+         * intentional hash collisions that could degrade performance. */
+        if (ep->sb.s_rev_level >= 1 &&
+            ep->sb.s_def_hash_seed[0] != 0 &&
+            (ep->sb.s_def_hash_seed[0] | ep->sb.s_def_hash_seed[1] |
+             ep->sb.s_def_hash_seed[2] | ep->sb.s_def_hash_seed[3]) != 0) {
+            hash_seed[0] = ep->sb.s_def_hash_seed[0];
+            hash_seed[1] = ep->sb.s_def_hash_seed[1];
+            hash_seed[2] = ep->sb.s_def_hash_seed[2];
+            hash_seed[3] = ep->sb.s_def_hash_seed[3];
+        } else {
+            hash_seed[0] = 0;
+            hash_seed[1] = 0;
+            hash_seed[2] = 0;
+            hash_seed[3] = 0;
+        }
+        uint32_t hash = ext2_dx_hash((const unsigned char *)name,
+                                      (int)nlen,
+                                      EXT2_HTREE_HALF_MD4,
+                                      hash_seed);
+
+        uint32_t leaf_block = 0;
+        if (ext2_htree_lookup_leaf(ep, dir_inode, hash, &leaf_block) == 0) {
+            /* Read the leaf block and scan linearly */
+            uint8_t block_buf[4096];
+            if (ext2_read_block(ep, leaf_block, block_buf) == 0) {
+                uint32_t pos = 0;
+                while (pos + 8 < ep->block_size) {
+                    struct {
+                        uint32_t inode;
+                        uint16_t rec_len;
+                        uint8_t  name_len;
+                        uint8_t  file_type;
+                        char     name[255];
+                    } *dirent = (void *)(block_buf + pos);
+
+                    if (dirent->rec_len == 0) break;
+                    if (dirent->inode != 0 &&
+                        (size_t)dirent->name_len == nlen &&
+                        memcmp(dirent->name, name, nlen) == 0) {
+                        *ino = dirent->inode;
+                        return 0;
+                    }
+                    pos += dirent->rec_len;
+                }
+            }
+
+            /* ── Linear fallback ──────────────────────────────────────
+             * HTree lookup failed (e.g. unsupported hash version) or
+             * the entry wasn't in the leaf block (hash collision).
+             * Fall through to the linear scan below. */
+        }
+    }
+
+    /* ── Linear scan (original behaviour) ──────────────────────────── */
+    uint32_t iblock = 0;
+    uint32_t offset = 0;
+
+    while (offset < dir_inode->i_size) {
+        uint8_t block_buf[4096];
+        if (ext2_read_inode_block(ep, dir_inode, iblock, block_buf) < 0)
+            break;
+
+        uint32_t pos = 0;
+        while (pos < ep->block_size && offset + pos < dir_inode->i_size) {
+            struct {
+                uint32_t inode;
+                uint16_t rec_len;
+                uint8_t  name_len;
+                uint8_t  file_type;
+                char     name[255];
+            } *dirent = (void *)(block_buf + pos);
+
+            if (dirent->rec_len == 0) break;
+            if (dirent->inode == 0) { pos += dirent->rec_len; continue; }
+
+            if ((size_t)dirent->name_len == nlen &&
+                memcmp(dirent->name, name, nlen) == 0) {
+                *ino = dirent->inode;
+                return 0;
+            }
+
+            pos += dirent->rec_len;
+        }
+
+        iblock++;
+        offset += ep->block_size;
+    }
+
+    return -1;
+}
+
+/* Read directory entries from inode (linear, returns max entries). */
 static int ext2_read_dir(struct ext2_priv *ep, struct ext2_inode *inode,
                           char names[][64], int max) {
     uint32_t iblock = 0;
@@ -143,47 +558,6 @@ static int ext2_read_dir(struct ext2_priv *ep, struct ext2_inode *inode,
     }
 
     return count;
-}
-
-/* Find directory entry by name */
-static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
-                             const char *name, uint32_t *ino) {
-    uint32_t iblock = 0;
-    uint32_t offset = 0;
-    size_t nlen = strlen(name);
-
-    while (offset < dir_inode->i_size) {
-        uint8_t block_buf[4096];
-        if (ext2_read_inode_block(ep, dir_inode, iblock, block_buf) < 0)
-            break;
-
-        uint32_t pos = 0;
-        while (pos < ep->block_size && offset + pos < dir_inode->i_size) {
-            struct {
-                uint32_t inode;
-                uint16_t rec_len;
-                uint8_t  name_len;
-                uint8_t  file_type;
-                char     name[255];
-            } *dirent = (void *)(block_buf + pos);
-
-            if (dirent->rec_len == 0) break;
-            if (dirent->inode == 0) { pos += dirent->rec_len; continue; }
-
-            if ((size_t)dirent->name_len == nlen &&
-                memcmp(dirent->name, name, nlen) == 0) {
-                *ino = dirent->inode;
-                return 0;
-            }
-
-            pos += dirent->rec_len;
-        }
-
-        iblock++;
-        offset += ep->block_size;
-    }
-
-    return -1;
 }
 
 /* Resolve path to inode */

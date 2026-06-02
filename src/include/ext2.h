@@ -35,7 +35,21 @@ struct ext2_superblock {
     uint32_t s_rev_level;
     uint16_t s_def_resuid;
     uint16_t s_def_resgid;
-    /* more fields omitted for brevity */
+    /* EXT2 rev 1+ fields */
+    uint32_t s_first_ino;           /* First non-reserved inode */
+    uint16_t s_inode_size;          /* Size of each inode (128) */
+    uint16_t s_block_group_nr;      /* Block group hosting this superblock */
+    uint32_t s_feature_compat;      /* Compatible feature set */
+    uint32_t s_feature_incompat;    /* Incompatible feature set */
+    uint32_t s_feature_ro_compat;   /* Read-only compatible feature set */
+    uint8_t  s_uuid[16];
+    char     s_volume_name[16];
+    char     s_last_mounted[64];
+    uint32_t s_algo_bitmap;         /* Compression algorithm bitmap */
+    /* HTree-related fields */
+    uint8_t  s_def_hash_version;    /* Default hash version for HTree */
+    uint8_t  s_hash_seed[4];        /* Padding for hash seed alignment */
+    uint32_t s_def_hash_seed[4];    /* Hash seed for HTree directory indexing */
 } __attribute__((packed));
 
 /* Ext2 block group descriptor */
@@ -70,6 +84,68 @@ struct ext2_inode {
     uint32_t i_dir_acl;
     uint32_t i_faddr;
     uint8_t  i_osd2[12];
+} __attribute__((packed));
+
+/* Feature flags */
+#define EXT2_FEATURE_COMPAT_DIR_PREALLOC  0x0001
+#define EXT2_FEATURE_COMPAT_IMAGIC_INODES 0x0002
+#define EXT2_FEATURE_COMPAT_HAS_JOURNAL   0x0004
+#define EXT2_FEATURE_COMPAT_EXT_ATTR      0x0008
+#define EXT2_FEATURE_COMPAT_RESIZE_INO    0x0010
+#define EXT2_FEATURE_COMPAT_DIR_INDEX     0x0020  /* HTree directory indexing */
+
+/* Inode flags */
+#define EXT2_INDEX_FL   0x00001000  /* Has HTree index */
+#define EXT2_DIRSYNC_FL 0x00010000  /* Directory sync */
+
+/* HTree hash versions */
+#define EXT2_HTREE_LEGACY      0
+#define EXT2_HTREE_HALF_MD4    1
+#define EXT2_HTREE_TEA         2
+#define EXT2_HTREE_LEGACY_UNSIGNED  3
+#define EXT2_HTREE_HALF_MD4_UNSIGNED 4
+#define EXT2_HTREE_TEA_UNSIGNED      5
+
+/* HTree directory root structure (at beginning of first directory block) */
+struct ext2_dx_root {
+    uint32_t dot_inode;
+    uint16_t dot_rec_len;
+    uint8_t  dot_name_len;
+    uint8_t  dot_type;
+    char     dot_name[4];
+    uint32_t dotdot_inode;
+    uint16_t dotdot_rec_len;
+    uint8_t  dotdot_name_len;
+    uint8_t  dotdot_type;
+    char     dotdot_name[4];
+    uint32_t reserved;
+    uint8_t  hash_version;
+    uint8_t  info_length;       /* Should be 8 */
+    uint8_t  indirect_levels;   /* Tree depth (0 = single level) */
+    uint8_t  unused_flags;
+    uint16_t limit;             /* Entry capacity */
+    uint16_t count;             /* Entry count */
+    uint32_t block;             /* Block number of this node */
+    /* Followed by struct ext2_dx_entry entries[] */
+} __attribute__((packed));
+
+/* HTree index entry */
+struct ext2_dx_entry {
+    uint32_t hash;
+    uint32_t block;
+} __attribute__((packed));
+
+/* HTree internal node (same structure but no dot/dotdot) */
+struct ext2_dx_node {
+    uint32_t reserved;
+    uint8_t  hash_version;
+    uint8_t  info_length;
+    uint8_t  indirect_levels;
+    uint8_t  unused_flags;
+    uint16_t limit;
+    uint16_t count;
+    uint32_t block;
+    /* Followed by struct ext2_dx_entry entries[] */
 } __attribute__((packed));
 
 /* Mount an ext2 filesystem from a block device */
