@@ -31,6 +31,27 @@
 #define REG_RAL     0x5400
 #define REG_RAH     0x5404
 #define REG_MTA     0x5200
+#define REG_ITR     0x00C4  /* Interrupt Throttling Rate */
+
+/* ITR rates (value written is interval in 256 ns units).
+ * A higher ITR value = longer interval = fewer interrupts/sec.
+ * Common rates:
+ *   0    – no throttling (interrupt per packet, maximum CPU overhead)
+ *   122  – ~31 μs interval  (~32,000 int/s, high throughput)
+ *   488  – ~125 μs interval (~8,000 int/s, balanced)
+ *   1953 – ~500 μs interval (~2,000 int/s, low CPU)
+ *   8000 – ~2 ms interval   (~500 int/s, very low CPU)
+ */
+#define ITR_OFF        0
+#define ITR_HIGH       122     /* high throughput (~32K int/s) */
+#define ITR_BALANCED   488     /* balanced (~8K int/s) */
+#define ITR_LOW        1953    /* low CPU (~2K int/s) */
+#define ITR_MINIMAL    8000    /* minimal interrupts (~500 int/s) */
+
+/* Adaptive ITR tunables */
+#define ITR_SAMPLE_MS  100     /* re-evaluate every 100 ms */
+#define ITR_LOW_PPS    500     /* below this PPS → less throttling */
+#define ITR_HIGH_PPS   5000    /* above this PPS → more throttling */
 
 /* CTRL bits */
 #define CTRL_SLU    (1 << 6)    /* Set Link Up */
@@ -95,6 +116,12 @@ static int rx_cur = 0;
 static int tx_cur = 0;
 static uint8_t e1000_irq_line = 0;
 
+/* ── Adaptive interrupt moderation (ITR) state ──────────────────── */
+static uint32_t itr_current = ITR_BALANCED;   /* current ITR register value */
+static uint32_t itr_pkt_count = 0;             /* packets since last adjustment */
+static uint64_t itr_last_tick = 0;             /* timer tick of last adjustment */
+static int      itr_enabled = 0;               /* adaptive algorithm active */
+
 static void e1000_write(uint32_t reg, uint32_t val) {
     *(volatile uint32_t *)(mmio_base + reg) = val;
 }
@@ -110,6 +137,24 @@ static void e1000_irq_handler(struct interrupt_frame *frame) {
     /* Mask RX interrupt — NAPI-style: we'll re-enable after draining in net_poll */
     e1000_write(REG_IMC, 0x80); /* mask RXT0 */
     irq_ack(e1000_irq_line);
+
+    /* Count the interrupt for adaptive ITR (multiple packets may be pending) */
+    if (itr_enabled) {
+        /* The ICR's RXT0 bit (bit 7) indicates a receive interrupt.
+         * Count approximately how many packets arrived by sampling RDT. */
+        uint32_t rdh = e1000_read(REG_RDH);
+        uint32_t rdt = e1000_read(REG_RDT);
+        /* Packets available = (rdt - rdh) mod NUM_RX_DESC, bounded */
+        uint32_t avail;
+        if (rdt >= rdh)
+            avail = rdt - rdh;
+        else
+            avail = (NUM_RX_DESC - rdh) + rdt;
+        /* Cap at a reasonable burst */
+        if (avail > 32) avail = 32;
+        itr_pkt_count += (avail > 0) ? avail : 1;
+    }
+
     net_rx_signal();
 }
 
@@ -122,6 +167,119 @@ static void e1000_read_mac(void) {
     mac_addr[3] = (ral >> 24) & 0xFF;
     mac_addr[4] = rah & 0xFF;
     mac_addr[5] = (rah >> 8) & 0xFF;
+}
+
+/* ── Interrupt Throttling (ITR) ─────────────────────────────────── */
+
+/*
+ * e1000_set_itr — Set the interrupt throttling rate register.
+ *
+ * @value: ITR value in 256 ns units (the register field).
+ *         0 = no throttling, higher = fewer interrupts.
+ */
+static void e1000_set_itr(uint32_t value) {
+    if (!nic_present) return;
+    /* Clamp to a 16-bit register field */
+    if (value > 0xFFFF) value = 0xFFFF;
+    e1000_write(REG_ITR, value);
+    itr_current = value;
+}
+
+/*
+ * e1000_itr_adaptive — Adjust ITR rate based on observed packet rate.
+ *
+ * Called periodically from the IRQ handler. Counts packets received
+ * during ITR_SAMPLE_MS and adjusts the ITR register accordingly:
+ *   - High packet rate  → more throttling (fewer interrupts, higher throughput)
+ *   - Low packet rate   → less throttling (lower latency)
+ */
+static void e1000_itr_adaptive(void) {
+    if (!itr_enabled || !nic_present) return;
+
+    uint64_t now = 0;
+    /* Read timer ticks (assuming ~100 Hz timer) via RDTSC as a coarse estimate */
+    __asm__ volatile("rdtsc" : "=a"(((uint32_t *)&now)[0]),
+                              "=d"(((uint32_t *)&now)[1]));
+
+    /* Need a reference tick to compare — use TSC-direct if no timer ticks variable */
+    if (itr_last_tick == 0) {
+        itr_last_tick = now;
+        itr_pkt_count = 0;
+        return;
+    }
+
+    /* Estimate elapsed time: if TSC frequency is ~2 GHz, 100 ms = 200M ticks.
+     * We approximate by checking a reasonable TSC delta (200M ± 50%).
+     * A more precise approach would use timer_get_ticks() if available. */
+    uint64_t tsc_elapsed = now - itr_last_tick;
+
+    /* If the TSC wraps around, restart */
+    if (now < itr_last_tick) {
+        itr_last_tick = now;
+        itr_pkt_count = 0;
+        return;
+    }
+
+    /* Re-evaluate only after roughly ITR_SAMPLE_MS have elapsed.
+     * At 2 GHz, ITR_SAMPLE_MS = 100 ms → 200,000,000 TSC ticks.
+     * Use a generous comparison to handle variable TSC frequencies. */
+    if (tsc_elapsed < 100000000ULL)  /* ~50 ms at 2 GHz — minimum sample time */
+        return;
+
+    /* Compute packets per second (scaled to avoid float) */
+    /* pps = pkt_count / (tsc_elapsed / tsc_freq_hz) */
+    /* We approximate tsc_freq_hz ~ 2 GHz */
+    uint32_t approx_pps;
+    if (tsc_elapsed > 0) {
+        /* pps = pkt_count * (2G / tsc_elapsed). To avoid overflow, scale. */
+        uint64_t scaled = (uint64_t)itr_pkt_count * 2000000000ULL;
+        approx_pps = (uint32_t)(scaled / tsc_elapsed);
+    } else {
+        approx_pps = 0;
+    }
+
+    uint32_t new_itr = itr_current;
+
+    if (approx_pps > ITR_HIGH_PPS) {
+        /* High throughput: increase throttling (reduce interrupts) */
+        new_itr = itr_current + (itr_current / 4);  /* +25% */
+        if (new_itr > ITR_MINIMAL)
+            new_itr = ITR_MINIMAL;
+    } else if (approx_pps < ITR_LOW_PPS) {
+        /* Low throughput: decrease throttling (improve latency) */
+        if (new_itr > ITR_HIGH) {
+            new_itr = itr_current - (itr_current / 4);  /* -25% */
+            if (new_itr < ITR_HIGH)
+                new_itr = ITR_HIGH;
+        }
+    }
+    /* else: moderate throughput — keep current setting */
+
+    if (new_itr != itr_current) {
+        e1000_set_itr(new_itr);
+    }
+
+    itr_last_tick = now;
+    itr_pkt_count = 0;
+}
+
+/*
+ * e1000_itr_init — Initialise interrupt moderation with a balanced rate.
+ */
+static void e1000_itr_init(void) {
+    /* Start with balanced setting */
+    e1000_set_itr(ITR_BALANCED);
+    itr_pkt_count = 0;
+    itr_last_tick = 0;
+
+    /* Read initial TSC reference */
+    __asm__ volatile("rdtsc" : "=a"(((uint32_t *)&itr_last_tick)[0]),
+                              "=d"(((uint32_t *)&itr_last_tick)[1]));
+
+    itr_enabled = 1;
+    kprintf("  e1000: ITR enabled (rate=%u, ~%u int/s)\n",
+            (unsigned)ITR_BALANCED,
+            (unsigned)(1000000000ULL / (ITR_BALANCED * 256ULL + 1)));
 }
 
 static void e1000_init_rx(void) {
@@ -208,6 +366,7 @@ int e1000_init(void) {
     e1000_init_tx();
 
     nic_present = 1;
+    e1000_itr_init();
     return 0;
 }
 
@@ -222,6 +381,8 @@ void e1000_get_mac(uint8_t *mac) {
 /* Re-enable RX interrupts after NAPI-style polling drain */
 void e1000_irq_rearm(void) {
     if (nic_present) {
+        /* Adjust ITR based on recent packet rate before re-enabling interrupts */
+        e1000_itr_adaptive();
         e1000_write(REG_IMS, 0x80); /* unmask RXT0 */
     }
 }
