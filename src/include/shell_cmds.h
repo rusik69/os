@@ -362,4 +362,7 @@ void cmd_crond(const char *args);
 
 /* Filesystem table / mount command (U25) */
 void cmd_mount(const char *args);
+
+/* Device node manager (U11) */
+void cmd_mdev(const char *args);
 #endif

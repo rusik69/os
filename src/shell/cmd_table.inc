@@ -73,6 +73,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("lspci",       "List PCI devices",                                      sh_lspci)
     CMD("lsusb",       "List USB devices",                                      sh_lsusb)
     CMD("md5sum",      "MD5 hash of a file",                                    cmd_md5sum)
+    CMD("mdev",        "Device node manager (mdev [-s])",                        sh_mdev)
     CMD("meminfo",     "Show memory info",                                      sh_meminfo)
     CMD("mkdir",       "Create directory",                                      cmd_mkdir)
     CMD("more",        "Page through a file",                                   cmd_more)
