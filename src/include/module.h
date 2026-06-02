@@ -6,15 +6,34 @@
 
 #define MODULE_MAX 16
 
-/* Module states */
+/* Module states for the state machine */
 enum module_state {
-    MODULE_UNUSED = 0,
-    MODULE_LOADED,
-    MODULE_ERROR,
+    MODULE_UNUSED    = 0,
+    MODULE_LOADING   = 1,
+    MODULE_LIVE      = 2,
+    MODULE_UNLOADING = 3,
+    MODULE_DEAD      = 4,
+    MODULE_ERROR     = 5,
 };
 
-/* Module entry point signature */
+/* Module entry / exit point signatures */
 typedef int (*module_entry_t)(void);
+typedef void (*module_exit_t)(void);
+
+/* Maximum number of dependencies a module can declare */
+#define MODULE_MAX_DEPS 16
+
+/* ── Module memory region ────────────────────────────────────────────
+ * 64 MB virtual region in kernel space reserved for loadable modules.
+ * Modules are mapped here with appropriate permissions:
+ *   .text   → RX
+ *   .rodata → RO
+ *   .data   → RW
+ *   .bss    → RW (zero-fill)
+ */
+#define MODULES_VADDR  0xFFFF800100000000ULL  /* 4 GB above kernel base */
+#define MODULES_SIZE   0x04000000ULL           /* 64 MB                 */
+#define MODULES_END    (MODULES_VADDR + MODULES_SIZE)
 
 /* Module parameter types */
 enum module_param_type {
@@ -35,16 +54,54 @@ struct kernel_param {
     struct list_head list;
 };
 
-/* Module registration entry */
+/* Section descriptor — tracks a loaded ELF section within module memory */
+struct module_section {
+    uint64_t vaddr;       /* virtual address in module region */
+    uint64_t size;        /* size in bytes */
+    uint32_t sh_flags;    /* ELF section header flags (SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR) */
+};
+
+/* Module dependency entry */
+struct module_dep {
+    char name[32];        /* dependency module name */
+    int  loaded;          /* 1 = already resolved and loaded */
+};
+
+/* Module registration entry — extended runtime descriptor */
 struct kernel_module {
     char           name[32];
     module_entry_t entry;
+    module_exit_t  exit_fn;
     enum module_state state;
-    struct list_head params;  /* linked list of kernel_param */
-    int             param_count;
+
+    /* Memory region allocated for this module */
+    uint64_t base_addr;        /* virtual base address in module region */
+    uint64_t size;             /* total allocated size */
+
+    /* Section tracking (up to 16 sections per module) */
+    struct module_section sections[16];
+    int num_sections;
+
+    /* Lifecycle management */
+    int    refcount;           /* reference counter (module_get / module_put) */
+    int    module_id;          /* slot index in g_modules[] */
+
+    /* Dependency tracking */
+    struct module_dep deps[MODULE_MAX_DEPS];
+    int   num_deps;
+
+    /* Parameter list (linked list of kernel_param) */
+    struct list_head params;
+    int   param_count;
 };
 
-/* Load a kernel module with the given name and entry function. Returns module_id or -1. */
+/* ── Kernel module API ────────────────────────────────────────────── */
+
+/* Initialize the kernel module subsystem. */
+void module_init(void);
+
+/* Load a kernel module with the given name and entry function.
+ * Returns module_id (>= 0) on success, or -1 on failure. */
 int module_load(const char *name, module_entry_t entry);
 
 /* Unload a previously loaded module by its module_id. */
@@ -53,19 +110,50 @@ int module_unload(int module_id);
 /* Find a module by name. Returns NULL if not found. */
 struct kernel_module *module_find(const char *name);
 
-/* Initialize the kernel module subsystem. */
-void module_init(void);
+/* ── Module memory allocator (M10) ───────────────────────────────── */
 
-/* Module parameter registration */
+/* Allocate a block of the given size from the module virtual region.
+ * The region is mapped with the specified page flags (PAGE_RW, PAGE_NX, etc.)
+ * Returns the virtual address, or 0 on failure. */
+uint64_t module_alloc_region(uint64_t size, uint64_t page_flags);
+
+/* Free a previously allocated module region. */
+void module_free_region(uint64_t vaddr, uint64_t size);
+
+/* Return the number of bytes currently allocated from the module region. */
+uint64_t module_allocated_bytes(void);
+
+/* ── Reference counting (M26 integration) ────────────────────────── */
+
+/* Increment the reference count on a module. */
+void module_get(struct kernel_module *mod);
+
+/* Decrement the reference count on a module.
+ * Returns 1 if the count reached 0, 0 otherwise. */
+int module_put(struct kernel_module *mod);
+
+/* ── Module parameter support ────────────────────────────────────── */
+
+/* Register a named parameter for a module. */
 int module_add_param(struct kernel_module *mod, const char *name,
                      enum module_param_type type, void *data, int data_len,
                      int perm, int (*set_fn)(const char*, struct kernel_param*),
                      int (*get_fn)(char*, int, struct kernel_param*));
 
-/* Find a parameter in a module by name */
+/* Find a parameter in a module by name. */
 struct kernel_param *module_find_param(struct kernel_module *mod, const char *name);
 
-/* Macro for declaring a simple integer module parameter */
+/* ── Dependency support (M23-M25 integration) ────────────────────── */
+
+/* Add a dependency name to a module's dep list. */
+int module_add_dep(struct kernel_module *mod, const char *dep_name);
+
+/* Check whether all dependencies of a module are loaded. */
+int module_deps_resolved(struct kernel_module *mod);
+
+/* ── Convenience macros ──────────────────────────────────────────── */
+
+/* Simple integer module parameter macro */
 #define module_param(name, type, perm) \
     static struct kernel_param __module_param_##name = { \
         .name = #name, \
@@ -80,7 +168,7 @@ struct kernel_param *module_find_param(struct kernel_module *mod, const char *na
         (void)__module_param_##name; \
     }
 
-/* Macro for module parameter with callback functions */
+/* Module parameter macro with callback functions */
 #define module_param_cb(name, set_fn, get_fn) \
     static struct kernel_param __module_param_cb_##name = { \
         .name = #name, \
@@ -94,5 +182,15 @@ struct kernel_param *module_find_param(struct kernel_module *mod, const char *na
     __attribute__((constructor)) static void __register_param_cb_##name(void) { \
         (void)__module_param_cb_##name; \
     }
+
+/* MODULE_* macros for metadata (used in .modinfo section) */
+#define MODULE_LICENSE(license)    static const char __mod_license[] \
+    __attribute__((section(".modinfo"), used)) = "license=" license
+#define MODULE_AUTHOR(author)      static const char __mod_author[] \
+    __attribute__((section(".modinfo"), used)) = "author=" author
+#define MODULE_DESCRIPTION(desc)   static const char __mod_desc[] \
+    __attribute__((section(".modinfo"), used)) = "description=" desc
+#define MODULE_VERSION(ver)        static const char __mod_version[] \
+    __attribute__((section(".modinfo"), used)) = "version=" ver
 
 #endif /* MODULE_H */
