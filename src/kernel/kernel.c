@@ -332,6 +332,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     cma_init();
     ksm_init();
     thp_init();
+    khugepaged_start();
 
     /* Extended memory management features */
     madvise_ext_init();

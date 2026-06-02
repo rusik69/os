@@ -35,4 +35,22 @@ uint64_t thp_get_total_pages(void);
 uint64_t thp_get_merged_pages(void);
 uint64_t thp_get_split_pages(void);
 
+/* ── khugepaged daemon — background 4K→2MB promotion ───────────────── */
+
+/* Start the khugepaged daemon (called once during boot) */
+void khugepaged_start(void);
+
+/* Enable/disable the khugepaged daemon at runtime */
+void khugepaged_set_enabled(int enabled);
+int  khugepaged_is_enabled(void);
+
+/* Set the sleep interval between scan cycles (in milliseconds) */
+void khugepaged_set_sleep_ms(int ms);
+int  khugepaged_get_sleep_ms(void);
+
+/* Get khugepaged statistics */
+uint64_t khugepaged_get_scanned(void);
+uint64_t khugepaged_get_promoted(void);
+uint64_t khugepaged_get_failed(void);
+
 #endif /* THP_H */
