@@ -411,7 +411,8 @@ void schedule(void) {
     next = sched_deadline_pick_next();
 
     if (!next) {
-        /* No deadline task available — fall back to regular CFS */
+        /* No deadline task available — fall back to class-aware picker.
+         * Selection order: RT (SCHED_FIFO/RR) > CFS (SCHED_OTHER/BATCH) > SCHED_IDLE */
         spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         next = dequeue_next();
         spinlock_irqsave_release(&sched_lock, irq_flags);
@@ -559,7 +560,7 @@ void scheduler_tick(int was_user) {
 
     /* First tick: assign quantum without preempting */
     if (cur->ticks_remaining == 0) {
-        if (cur->sched_policy == SCHED_OTHER) {
+        if (cur->sched_policy == SCHED_OTHER || cur->sched_policy == SCHED_IDLE) {
             int lvl = (int)cur->priority;
             if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
             cur->ticks_remaining = slice_for_prio(lvl);
@@ -601,7 +602,7 @@ void scheduler_tick(int was_user) {
              * budget is managed by sched_deadline_tick() above. */
             cur->ticks_remaining = 1; /* keep running unless throttled */
         } else {
-            /* SCHED_OTHER / SCHED_BATCH: preempt on quantum expiry.
+            /* SCHED_OTHER / SCHED_BATCH / SCHED_IDLE: preempt on quantum expiry.
              * If the kernel is not preemptible right now (e.g., in a
              * spinlock critical section), defer the reschedule by
              * setting need_resched.  The actual context switch will
@@ -761,6 +762,33 @@ uint64_t sched_autogroup_max_vruntime(int group_id) {
     return max;
 }
 
+/* ── Scheduling class helpers ─────────────────────────────────
+ *
+ * Return 1 if the policy is a real-time class (SCHED_FIFO or SCHED_RR).
+ * These tasks have priority over all non-RT tasks and are selected
+ * by static priority level rather than vruntime.
+ */
+static inline int sched_rt_policy(uint8_t policy) {
+    return policy == SCHED_FIFO || policy == SCHED_RR;
+}
+
+static inline int sched_cfs_policy(uint8_t policy) {
+    return policy == SCHED_OTHER || policy == SCHED_BATCH;
+}
+
+static inline int sched_idle_policy(uint8_t policy) {
+    return policy == SCHED_IDLE;
+}
+
+/* Return a numeric class rank for ordering: 0 = deadline (picked separately),
+ * 1 = RT, 2 = CFS, 3 = Idle.  Lower number = higher priority. */
+static inline int sched_class_rank(uint8_t policy) {
+    if (sched_rt_policy(policy))  return 1;
+    if (sched_cfs_policy(policy)) return 2;
+    if (sched_idle_policy(policy)) return 3;
+    return 4; /* unknown — treated as lowest */
+}
+
 /* ── CFS minimum vruntime tracking ────────────────────────────
  *
  * Track the minimum vruntime across all runnable tasks on this
@@ -836,45 +864,99 @@ void update_vruntime(struct process *p, int ticks) {
     p->vruntime += increment;
 }
 
-/* ── Dequeue next process based on lowest vruntime (CFS) ──── */
-static __attribute__((unused)) struct process *dequeue_next_cfs(void) {
+/* ── Pick next process with scheduling class hierarchy ────────
+ *
+ * Selects the next process to run respecting the Linux scheduling
+ * class hierarchy:
+ *   1. SCHED_DEADLINE (EDF) — picked separately via sched_deadline_pick_next()
+ *   2. RT (SCHED_FIFO / SCHED_RR) — highest static priority first,
+ *      then by vruntime as tiebreaker
+ *   3. CFS (SCHED_OTHER / SCHED_BATCH) — lowest vruntime
+ *   4. SCHED_IDLE — lowest vruntime, but only when nothing RT/CFS wants CPU
+ *
+ * Returns the selected process (already unlinked from the queue)
+ * or NULL if no runnable task exists.
+ */
+static struct process *pick_next_task(void) {
     struct cpu_info *ci = this_cpu();
-    struct process *best = NULL;
-    int best_lvl = -1;
-    struct process *best_prev = NULL;
+    struct process *best_rt   = NULL;
+    int             best_rt_lvl  = -1;
+    struct process *best_rt_prev = NULL;
+    struct process *best_cfs  = NULL;
+    struct process *best_cfs_prev = NULL;
+    int             best_cfs_lvl  = -1;
+    struct process *best_idle = NULL;
+    struct process *best_idle_prev = NULL;
+    int             best_idle_lvl  = -1;
 
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
         struct process *prev = NULL;
         struct process *cur = ci->queue_head[lvl];
         while (cur) {
-            if (!best || cur->vruntime < best->vruntime) {
-                best = cur;
-                best_lvl = lvl;
-                best_prev = prev;
+            int rank = sched_class_rank(cur->sched_policy);
+            if (rank == 1) {
+                /* RT class: pick by highest priority (lowest level),
+                 * then by vruntime as tiebreaker. */
+                if (!best_rt || lvl < best_rt_lvl ||
+                    (lvl == best_rt_lvl && cur->vruntime < best_rt->vruntime)) {
+                    best_rt      = cur;
+                    best_rt_lvl  = lvl;
+                    best_rt_prev = prev;
+                }
+            } else if (rank == 2) {
+                /* CFS class: pick by lowest vruntime. */
+                if (!best_cfs || cur->vruntime < best_cfs->vruntime) {
+                    best_cfs      = cur;
+                    best_cfs_lvl  = lvl;
+                    best_cfs_prev = prev;
+                }
+            } else if (rank == 3) {
+                /* Idle class: pick by lowest vruntime (only when nothing else). */
+                if (!best_idle || cur->vruntime < best_idle->vruntime) {
+                    best_idle      = cur;
+                    best_idle_lvl  = lvl;
+                    best_idle_prev = prev;
+                }
             }
             prev = cur;
             cur = cur->next;
         }
     }
 
-    if (!best) return NULL;
+    /* Unlink and return the best candidate, in class priority order */
+    struct process *chosen = best_rt ? best_rt :
+                             (best_cfs ? best_cfs : best_idle);
+    if (!chosen) return NULL;
 
-    /* Unlink best from its queue */
-    if (best_prev)
-        best_prev->next = best->next;
+    int chosen_lvl;
+    struct process *chosen_prev;
+    if (chosen == best_rt) {
+        chosen_lvl = best_rt_lvl;
+        chosen_prev = best_rt_prev;
+    } else if (chosen == best_cfs) {
+        chosen_lvl = best_cfs_lvl;
+        chosen_prev = best_cfs_prev;
+    } else {
+        chosen_lvl = best_idle_lvl;
+        chosen_prev = best_idle_prev;
+    }
+
+    /* Unlink from the queue */
+    if (chosen_prev)
+        chosen_prev->next = chosen->next;
     else
-        ci->queue_head[best_lvl] = best->next;
+        ci->queue_head[chosen_lvl] = chosen->next;
 
-    if (best == ci->queue_tail[best_lvl])
-        ci->queue_tail[best_lvl] = best_prev;
+    if (chosen == ci->queue_tail[chosen_lvl])
+        ci->queue_tail[chosen_lvl] = chosen_prev;
 
-    best->next = NULL;
-    best->on_queue = 0;
-    return best;
+    chosen->next = NULL;
+    chosen->on_queue = 0;
+    return chosen;
 }
 
-/* ── Replace old dequeue_next with CFS version ────────────── */
-#define dequeue_next dequeue_next_cfs
+/* Replace the old dequeue_next with the class-aware version */
+#define dequeue_next pick_next_task
 
 /* ── CPU hotplug: migrate all tasks away from a CPU ──────── */
 

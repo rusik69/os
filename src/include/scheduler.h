@@ -9,6 +9,7 @@
 #define SCHED_RR     2
 #define SCHED_BATCH  3
 #define SCHED_DEADLINE 4
+#define SCHED_IDLE   5
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 #define SCHED_LEVELS 4
