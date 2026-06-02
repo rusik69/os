@@ -3,6 +3,9 @@
 /* ------------------------------------------------------------------ */
 
 #include "shell_cmd_table.h"
+#include "rtc.h"
+#include "process.h"
+#include "sysctl.h"
 
 /* ------------------------------------------------------------------ */
 /*  Tab completion                                                     */
@@ -107,10 +110,103 @@ static void shell_tab_complete(char *buf, int *len) {
 
 static void shell_prompt(void) {
     struct process *cur = process_get_current();
-    const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
-    vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
-    kprintf("os:%s> ", cwd);
-    vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    const char *ps1 = shell_var_get("PS1");
+    static int cmd_number = 0;
+    cmd_number++;
+
+    if (ps1 && ps1[0]) {
+        /* Parse PS1 escape sequences and print directly */
+        char buf[256];
+        int pos = 0;
+        for (const char *p = ps1; *p && pos < (int)sizeof(buf) - 2; p++) {
+            if (*p == '\\') {
+                p++;
+                switch (*p) {
+                    case 'h': { /* hostname */
+                        const char *h = sysctl_get_hostname();
+                        int hl = (int)strlen(h);
+                        int rem = (int)sizeof(buf) - 1 - pos;
+                        if (hl > rem) hl = rem;
+                        memcpy(buf + pos, h, (size_t)hl);
+                        pos += hl;
+                        break;
+                    }
+                    case 'u': { /* username */
+                        uint32_t uid = cur ? cur->uid : 0;
+                        const char *uname = (uid == 0) ? "root" : "user";
+                        int ul = (int)strlen(uname);
+                        int rem = (int)sizeof(buf) - 1 - pos;
+                        if (ul > rem) ul = rem;
+                        memcpy(buf + pos, uname, (size_t)ul);
+                        pos += ul;
+                        break;
+                    }
+                    case 'w': { /* working directory */
+                        const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+                        int wl = (int)strlen(cwd);
+                        int rem = (int)sizeof(buf) - 1 - pos;
+                        if (wl > rem) wl = rem;
+                        memcpy(buf + pos, cwd, (size_t)wl);
+                        pos += wl;
+                        break;
+                    }
+                    case 't': { /* time (HH:MM:SS) */
+                        struct rtc_time t;
+                        rtc_get_time(&t);
+                        int n = snprintf(buf + pos, (size_t)(sizeof(buf) - pos),
+                                         "%02u:%02u:%02u",
+                                         (unsigned)t.hour, (unsigned)t.minute,
+                                         (unsigned)t.second);
+                        if (n > 0) pos += n;
+                        if (pos >= (int)sizeof(buf)) pos = (int)sizeof(buf) - 1;
+                        break;
+                    }
+                    case '$': { /* prompt symbol */
+                        uint32_t uid = cur ? cur->uid : 0;
+                        buf[pos++] = (uid == 0) ? '#' : '$';
+                        break;
+                    }
+                    case '#': { /* command number */
+                        int n = snprintf(buf + pos, (size_t)(sizeof(buf) - pos),
+                                         "%d", cmd_number);
+                        if (n > 0) pos += n;
+                        if (pos >= (int)sizeof(buf)) pos = (int)sizeof(buf) - 1;
+                        break;
+                    }
+                    case '\\': { /* literal backslash */
+                        buf[pos++] = '\\';
+                        break;
+                    }
+                    case '\0': { /* backslash at end of string */
+                        buf[pos++] = '\\';
+                        p--; /* don't skip null */
+                        break;
+                    }
+                    default: { /* unknown escape: emit as-is */
+                        buf[pos++] = '\\';
+                        buf[pos++] = *p;
+                        break;
+                    }
+                }
+            } else {
+                buf[pos++] = *p;
+            }
+        }
+        buf[pos] = '\0';
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        kprintf("%s", buf);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    } else {
+        /* Default prompt: username@hostname:cwd$ */
+        const char *host = sysctl_get_hostname();
+        uint32_t uid = cur ? cur->uid : 0;
+        const char *uname = (uid == 0) ? "root" : "user";
+        const char *cwd = (cur && cur->cwd[0]) ? cur->cwd : "/";
+        char sym = (uid == 0) ? '#' : '$';
+        vga_set_color(VGA_LIGHT_GREEN, VGA_BLACK);
+        kprintf("%s@%s:%s%c ", uname, host, cwd, sym);
+        vga_set_color(VGA_LIGHT_GREY, VGA_BLACK);
+    }
 }
 
 static void erase_line(int len) {

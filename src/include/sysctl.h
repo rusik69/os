@@ -24,4 +24,7 @@ void sysctl_init(void);
 int sysctl_read(const char *name, char *buf, int max);
 int sysctl_write(const char *name, const char *buf, int len);
 
+/* Hostname accessor for shell prompt and other kernel subsystems */
+const char *sysctl_get_hostname(void);
+
 #endif /* SYSCTL_H */

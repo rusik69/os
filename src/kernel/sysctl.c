@@ -39,6 +39,10 @@ static int sysctl_write_hostname(const char *buf, int len) {
     return 0;
 }
 
+const char *sysctl_get_hostname(void) {
+    return g_hostname;
+}
+
 /* osrelease */
 static const char *g_osrelease = "6.1.0-os";
 
