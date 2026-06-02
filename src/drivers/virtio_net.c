@@ -11,6 +11,7 @@
  */
 
 #include "virtio_net.h"
+#include "virtio.h"
 #include "pci.h"
 #include "pmm.h"
 #include "vmm.h"
@@ -27,22 +28,13 @@
 #define VIRTIO_VENDOR          0x1AF4
 #define VIRTIO_NET_DEVICE      0x1000
 
-#define VIRTIO_PCI_HOST_FEAT   0x00  /* R   device feature bits    */
-#define VIRTIO_PCI_GUEST_FEAT  0x04  /* RW  driver feature bits    */
-#define VIRTIO_PCI_QUEUE_PFN   0x08  /* RW  queue phys page number */
-#define VIRTIO_PCI_QUEUE_SIZE  0x0C  /* R   queue size             */
-#define VIRTIO_PCI_QUEUE_SEL   0x0E  /* RW  queue selector         */
-#define VIRTIO_PCI_QUEUE_NOTIFY 0x10 /* W   queue notify           */
-#define VIRTIO_PCI_STATUS      0x12  /* RW  device status          */
-#define VIRTIO_PCI_ISR         0x13  /* R   ISR status             */
-#define VIRTIO_PCI_CONFIG      20    /* device-specific config     */
+/* virtio-net config starts at offset 20 */
+#define VIRTIO_PCI_CONFIG      20
 
-/* Status bits */
-#define VIRTIO_STATUS_ACKNOWLEDGE 1
-#define VIRTIO_STATUS_DRIVER      2
-#define VIRTIO_STATUS_DRIVER_OK   4
-#define VIRTIO_STATUS_FEATURES_OK 8
-#define VIRTIO_STATUS_FAILED      128
+/* Features this driver supports: we need MAC from host, and we
+ * reject mergeable RX buffers (simpler header layout). */
+#define VNET_SUPPORTED_FEATURES \
+    (VIRTIO_NET_F_MAC | VIRTIO_F_NOTIFY_ON_EMPTY)
 
 /* Virtqueue size (must be power of 2) */
 #define VRING_SIZE 16
@@ -163,17 +155,24 @@ int virtio_net_init(void) {
     vio_outb(VIRTIO_PCI_STATUS, 0);
     /* Acknowledge & driver */
     vio_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-    /* Accept host features except mergeable RX buffers (simpler header layout) */
-    uint32_t host_feat = vio_inl(VIRTIO_PCI_HOST_FEAT);
-    host_feat &= ~(1u << 15);
-    vio_outl(VIRTIO_PCI_GUEST_FEAT, host_feat);
+
+    /* Negotiate features: accept only what we support, then
+     * set FEATURES_OK and validate the device accepted. */
+    if (virtio_negotiate_features(vio_inl,   /* readl  — 32-bit port read  */
+                                   vio_outl,  /* writel — 32-bit port write */
+                                   vio_outb,  /* writeb — 8-bit port write  */
+                                   vio_inb,   /* readb  — 8-bit port read   */
+                                   VNET_SUPPORTED_FEATURES) < 0) {
+        kprintf("virtio-net: device rejected feature negotiation\n");
+        return -1;
+    }
 
     /* RX queue (0): populate ring memory before publishing PFN */
     vio_outw(VIRTIO_PCI_QUEUE_SEL, RX_QUEUE_IDX);
     {
         uint16_t qsz = vio_inw(VIRTIO_PCI_QUEUE_SIZE);
         if (qsz != 0 && qsz < VRING_SIZE) {
-            kprintf("virtio-net: queue size %u < %u\n", (unsigned long)qsz, (unsigned long)VRING_SIZE);
+            kprintf("virtio-net: queue size %u < %u\n", (unsigned int)qsz, (unsigned int)VRING_SIZE);
             return -1;
         }
         struct vring_desc  *descs = (struct vring_desc  *)rx_queue_mem;
@@ -224,7 +223,7 @@ int virtio_net_init(void) {
     pic_unmask(dev.irq);
 
     vnet_present = 1;
-    kprintf("virtio-net: initialized (iobase=0x%x)\n", (unsigned long)vnet_iobase);
+    kprintf("virtio-net: initialized (iobase=0x%x)\n", (unsigned int)vnet_iobase);
     return 0;
 }
 

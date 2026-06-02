@@ -8,30 +8,22 @@
 
 #include "blockdev.h"
 #include "virtio_blk.h"
+#include "virtio.h"
 #include "pci.h"
 #include "printf.h"
 #include "io.h"
 #include "types.h"
 
-/* ── Virtio PCI offsets (same as virtio-net) ────────────────────── */
+/* ── Virtio vendor/device IDs ──────────────────────────────────── */
 #define VIRTIO_VENDOR          0x1AF4
 #define VIRTIO_BLK_DEVICE      0x1001
 
-#define VIRTIO_PCI_HOST_FEAT    0x00
-#define VIRTIO_PCI_GUEST_FEAT   0x04
-#define VIRTIO_PCI_QUEUE_PFN    0x08
-#define VIRTIO_PCI_QUEUE_SIZE   0x0C
-#define VIRTIO_PCI_QUEUE_SEL    0x0E
-#define VIRTIO_PCI_QUEUE_NOTIFY 0x10
-#define VIRTIO_PCI_STATUS       0x12
-#define VIRTIO_PCI_ISR          0x13
 /* blk-specific config starts at 0x14 */
 #define VIRTIO_BLK_CAPACITY_LO  0x14
 #define VIRTIO_BLK_CAPACITY_HI  0x18
 
-#define VIRTIO_STATUS_ACKNOWLEDGE 1
-#define VIRTIO_STATUS_DRIVER      2
-#define VIRTIO_STATUS_DRIVER_OK   4
+/* Features this driver supports */
+#define VBLK_SUPPORTED_FEATURES 0u
 
 #define VRING_SIZE    16
 #define VRING_DESC_F_NEXT  1
@@ -105,10 +97,22 @@ int virtio_blk_init(void) {
 
     pci_enable_bus_master(&dev);
 
-    /* Reset */
+    /* Reset device */
     vb_outb(VIRTIO_PCI_STATUS, 0);
+
+    /* Acknowledge device presence and indicate driver OK */
     vb_outb(VIRTIO_PCI_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-    vb_outl(VIRTIO_PCI_GUEST_FEAT, vb_inb(VIRTIO_PCI_HOST_FEAT));
+
+    /* Negotiate features: the helper validates that the device
+     * accepts our feature set (FEATURES_OK protocol step). */
+    if (virtio_negotiate_features(vb_inl,   /* readl  — 32-bit port read  */
+                                   vb_outl,  /* writel — 32-bit port write */
+                                   vb_outb,  /* writeb — 8-bit port write  */
+                                   vb_inb,   /* readb  — 8-bit port read   */
+                                   VBLK_SUPPORTED_FEATURES) < 0) {
+        kprintf("virtio-blk: device rejected feature negotiation\n");
+        return -1;
+    }
 
     /* Read capacity */
     uint64_t cap_lo = vb_inl(VIRTIO_BLK_CAPACITY_LO);
@@ -120,12 +124,13 @@ int virtio_blk_init(void) {
     uint64_t phys = (uint64_t)(uintptr_t)vblk_queue_mem;
     vb_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
 
+    /* Driver OK — device can start processing requests */
     vb_outb(VIRTIO_PCI_STATUS,
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
 
     vblk_present = 1;
     kprintf("virtio-blk: initialized (iobase=0x%x, sectors=%llu)\n",
-            (unsigned long)vblk_iobase, vblk_sectors);
+            (unsigned int)vblk_iobase, vblk_sectors);
     return 0;
 }
 
