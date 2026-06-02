@@ -6,6 +6,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "export.h"
+#include "module.h"      /* request_module() for PCI driver autoloading */
 
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
@@ -878,6 +879,33 @@ void pci_init(void) {
             uint32_t reg0 = pci_read(bus, slot, 0, 0);
             if ((reg0 & 0xFFFF) != 0xFFFF) {
                 count++;
+
+                /* ── PCI module autoloading (M35) ─────────────────────
+                 * On device discovery, attempt to autoload a matching
+                 * driver module using the standard modalias format:
+                 *   pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX
+                 * This is best-effort — if no module matches, the
+                 * request_module() call simply fails silently.
+                 */
+                {
+                    uint16_t vendor  = (uint16_t)(reg0 & 0xFFFF);
+                    uint16_t device  = (uint16_t)(reg0 >> 16);
+                    uint32_t reg2c   = pci_read(bus, slot, 0, 0x2C);
+                    uint16_t subsys_v = (uint16_t)(reg2c & 0xFFFF);
+                    uint16_t subsys_d = (uint16_t)(reg2c >> 16);
+                    uint32_t reg08   = pci_read(bus, slot, 0, 0x08);
+                    uint8_t  base_cl = (uint8_t)(reg08 >> 24);
+                    uint8_t  sub_cl  = (uint8_t)((reg08 >> 16) & 0xFF);
+
+                    char modalias[128];
+                    snprintf(modalias, sizeof(modalias),
+                             "pci:v%08Xd%08Xsv%08Xsd%08Xbc%02Xcc%02X",
+                             (unsigned int)vendor, (unsigned int)device,
+                             (unsigned int)subsys_v, (unsigned int)subsys_d,
+                             (unsigned int)base_cl, (unsigned int)sub_cl);
+                    request_module("%s", modalias);
+                }
+
                 struct msi_info msi;
                 if (pci_find_msi_cap(bus, slot, 0, &msi) == 0)
                     msi_count++;
