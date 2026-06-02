@@ -702,6 +702,38 @@ void process_exec_cred_security(void) {
     struct process *p = process_get_current();
     if (!p) return;
 
+    /* NO_NEW_PRIVS enforcement:
+     * When no_new_privs is set, execve() must not gain new privileges.
+     * We enforce this by blocking any setuid/setgid elevation, file
+     * capability grants, and clearing the effective capability set
+     * so the new binary starts with minimal privileges. */
+    if (p->no_new_privs) {
+        /* ── Block setuid/setgid elevation ─────────────────────── */
+        /* If the new binary has setuid/setgid bits, keep the
+         * existing euid/egid unchanged. NO_NEW_PRIVS means the
+         * process never gains new privileges, ever. */
+        /* (setuid/setgid exec hook would go here; currently the
+         *  ELF loader does not yet check file mode bits) */
+
+        /* ── Block file capability elevation ───────────────────── */
+        /* Clear ALL capability sets — the new binary starts with
+         * zero capabilities regardless of file-attached caps. */
+        process_caps_clear_all(p);
+        memset(p->cap_effective, 0, sizeof(p->cap_effective));
+        memset(p->cap_permitted, 0, sizeof(p->cap_permitted));
+        memset(p->cap_inheritable, 0, sizeof(p->cap_inheritable));
+        memset(p->cap_bset, 0, sizeof(p->cap_bset));
+
+        /* ── Disable core dumps (sensitive exec) ──────────────── */
+        p->dumpable = 0;  /* SUID_DUMP_DISABLE */
+
+        /* ── Clear securebits for fresh start with no privs ───── */
+        p->securebits = 0;
+
+        return;
+    }
+
+    /* ── Normal (privilege-aware) exec path ───────────────────── */
     /* Save the credentials before exec for comparison */
     uint32_t old_euid = p->euid;
     uint32_t old_egid = p->egid;
@@ -717,35 +749,22 @@ void process_exec_cred_security(void) {
      * Detect credential change:
      * If euid or egid changed during exec (e.g., setuid binary),
      * or if NO_NEW_PRIVS is set, we reduce privileges.
-     *
-     * Since we don't yet have setuid binary support, the euid/egid
-     * won't change here, but the infrastructure is in place for
-     * when setuid is added.
      */
     int creds_changed = (p->euid != old_euid || p->egid != old_egid);
 
-    if (creds_changed || p->no_new_privs) {
+    if (creds_changed) {
         /*
-         * When credentials change or NO_NEW_PRIVS is set:
+         * When credentials change:
          *  - Disable core dumps (SUID_DUMP_DISABLE)
          *  - Clear securebits exec state
          *  - Reset capability effective set
          */
         p->dumpable = 0;  /* SUID_DUMP_DISABLE */
 
-        /*
-         * Clear sensitive state: if the new binary changed credentials,
-         * we must not leak privileged state from before exec.
-         */
-        if (creds_changed) {
-            /* Clear the no_new_privs flag (it was inherited, but after
-             * a credential change the new binary gets a fresh slate) */
-            /* Actually, Linux keeps no_new_privs across exec even with
-             * credential changes, so we don't clear it. */
-
-            /* Clear securebits keep_caps (re-evaluate on exec) */
-            p->securebits &= ~(uint8_t)SECBIT_KEEP_CAPS;
-        }
+        /* Clear sensitive state: if the new binary changed credentials,
+         * we must not leak privileged state from before exec. */
+        /* Clear securebits keep_caps (re-evaluate on exec) */
+        p->securebits &= ~(uint8_t)SECBIT_KEEP_CAPS;
     }
     /* else: no credential change — dumpable stays as-is (default 1) */
 }

@@ -3182,7 +3182,7 @@ static void test_no_new_privs(void) {
     if (!cur) { t_ok("no_new_privs SKIP"); return; }
 
     /* Use prctl to set NO_NEW_PRIVS */
-    uint64_t ret = syscall_dispatch(SYS_PRCTL, 38, 1, 0, 0, 0); /* PR_SET_NO_NEW_PRIVS = 38 */
+    uint64_t ret = syscall_dispatch(SYS_PRCTL, PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
     ASSERT("no_new_privs set", ret == 0 || ret == (uint64_t)-1);
 
     /* Verify by checking process flag (if supported) */

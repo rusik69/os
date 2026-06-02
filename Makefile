@@ -335,17 +335,6 @@ $(BUILD_CONFIG_TXT): scripts/gen_config.sh
 	@mkdir -p $(dir $@)
 	scripts/gen_config.sh $@
 
-# Also add the test build variant
-BUILD_CONFIG_GZ_H_TEST = $(BUILDDIR_TEST)/build_config_gz.h
-$(BUILDDIR_TEST)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR_TEST)
-$(BUILD_CONFIG_GZ_H_TEST): $(BUILD_CONFIG_GZ)
-	@mkdir -p $(dir $@)
-	@echo '/* Auto-generated — do not edit. */' > $@
-	@echo '#ifndef BUILD_CONFIG_GZ_H' >> $@
-	@echo '#define BUILD_CONFIG_GZ_H' >> $@
-	xxd -i -n build_config_gz < $< >> $@
-	@echo '#endif /* BUILD_CONFIG_GZ_H */' >> $@
-
 # ── Default target: build kernel in parallel ──────────────────────────
 # NOTE: -include must stay BELOW the default target so that dependency
 # files never accidentally steal .DEFAULT_GOAL.
@@ -429,6 +418,17 @@ ASM_TEST_SRCS = $(ASM_SRCS)
 C_TEST_OBJS  = $(patsubst src/%.c,$(BUILDDIR_TEST)/%.o,$(C_TEST_SRCS))
 ASM_TEST_OBJS = $(patsubst src/%.asm,$(BUILDDIR_TEST)/%.o,$(ASM_TEST_SRCS))
 TEST_OBJS    = $(ASM_TEST_OBJS) $(C_TEST_OBJS)
+
+# Test build variant config
+BUILD_CONFIG_GZ_H_TEST = $(BUILDDIR_TEST)/build_config_gz.h
+$(BUILDDIR_TEST)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR_TEST)
+$(BUILD_CONFIG_GZ_H_TEST): $(BUILD_CONFIG_GZ)
+	@mkdir -p $(dir $@)
+	@echo '/* Auto-generated — do not edit. */' > $@
+	@echo '#ifndef BUILD_CONFIG_GZ_H' >> $@
+	@echo '#define BUILD_CONFIG_GZ_H' >> $@
+	xxd -i -n build_config_gz < $< >> $@
+	@echo '#endif /* BUILD_CONFIG_GZ_H */' >> $@
 
 $(BUILDDIR_TEST)/%.o: src/%.c
 	@mkdir -p $(dir $@)

@@ -4032,19 +4032,22 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         case PR_GET_PDEATHSIG: {
             return 0;
         }
-        case 38: { /* PR_SET_NO_NEW_PRIVS */
-            if (a2 != 1) return (uint64_t)-1;
+        case PR_SET_NO_NEW_PRIVS: {
+            /* Once set to 1, no_new_privs is irreversible.
+             * After this, execve() cannot gain privileges via setuid/setgid
+             * or file capabilities. Foundation for modern seccomp usage. */
+            if (a2 != 1 || p->no_new_privs) return (uint64_t)-1;
             p->no_new_privs = 1;
             return 0;
         }
-        case 39: { /* PR_GET_NO_NEW_PRIVS */
+        case PR_GET_NO_NEW_PRIVS: {
             return p->no_new_privs ? 1 : 0;
         }
-        case 22: { /* PR_SET_SECCOMP */
+        case PR_SET_SECCOMP: {
             /* arg2 = seccomp mode, arg3 = flags (e.g. SECCOMP_FILTER_FLAG_TSYNC) */
             return (uint64_t)seccomp_set_mode((int)a2, (unsigned int)a3);
         }
-        case 23: { /* PR_GET_SECCOMP */
+        case PR_GET_SECCOMP: {
             return (uint64_t)seccomp_get_mode();
         }
         default:

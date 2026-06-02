@@ -237,6 +237,10 @@ int seccomp_set_mode(int mode, unsigned int flags) {
 
     if (mode != SECCOMP_MODE_STRICT && mode != SECCOMP_MODE_FILTER) return -1;
 
+    /* SECCOMP_MODE_FILTER requires no_new_privs to be set first
+     * (Linux semantics — prevents privilege escalation via seccomp). */
+    if (mode == SECCOMP_MODE_FILTER && !p->no_new_privs) return -1;
+
     p->seccomp_mode = mode;
     if (mode == SECCOMP_MODE_FILTER) {
         /* Allocate filter if not already present */

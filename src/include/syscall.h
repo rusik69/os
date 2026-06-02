@@ -650,12 +650,14 @@ struct linux_dirent64 {
 #define SYSLOG_ACTION_SIZE_BUFFER 10
 
 /* prctl operations */
-#define PR_SET_NAME     15
-#define PR_GET_NAME     16
-#define PR_SET_SECCOMP  22
-#define PR_GET_SECCOMP  23
-#define PR_SET_PDEATHSIG 1
-#define PR_GET_PDEATHSIG 2
+#define PR_SET_NAME        15
+#define PR_GET_NAME        16
+#define PR_SET_SECCOMP     22
+#define PR_GET_SECCOMP     23
+#define PR_SET_PDEATHSIG    1
+#define PR_GET_PDEATHSIG    2
+#define PR_SET_NO_NEW_PRIVS 38
+#define PR_GET_NO_NEW_PRIVS 39
 
 /* execveat flags */
 #define AT_EMPTY_PATH  0x1000
