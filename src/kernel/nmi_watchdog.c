@@ -11,6 +11,7 @@
 #include "apic.h"
 #include "smp.h"
 #include "string.h"
+#include "kallsyms.h"
 
 /* ── Per-CPU watchdog data ───────────────────────────────────────── */
 static struct nmi_watchdog_cpu watchdog_per_cpu[SMP_MAX_CPUS];
@@ -21,6 +22,16 @@ static volatile int watchdog_running = 0;
 /* Rate-limiting: prevent flooding the console with redundant lockup
  * messages on the same CPU within the cooldown period. */
 #define LOCKUP_COOLDOWN_TICKS (TIMER_FREQ * 30)  /* 30 seconds */
+
+/* Escalation: if a hard lockup repeats this many times on the same CPU
+ * within the cooldown window, call panic() with kdump capture. */
+#define HARD_LOCKUP_ESCALATION_LIMIT  3
+
+/* Threshold to treat a hard lockup as "immediate" (panic directly): < 1 sec */
+#define HARD_LOCKUP_IMMEDIATE_MS      1000UL
+
+/* Escalation for soft lockups: after this many occurrences, panic */
+#define SOFT_LOCKUP_ESCALATION_LIMIT  5
 
 /* ── Per-CPU accessor ────────────────────────────────────────────── */
 static inline struct nmi_watchdog_cpu *this_watchdog(void) {
@@ -103,6 +114,8 @@ void nmi_watchdog_check_soft(void) {
             (unsigned int)smp_get_cpu_id(),
             (unsigned long long)elapsed,
             (unsigned long)SOFT_LOCKUP_THRESHOLD_MS);
+    kprintf("Soft lockup count: %llu\n",
+            (unsigned long long)wd->soft_lockup_count);
 
     /* Dump local state */
     struct process *cur = get_current_process();
@@ -112,6 +125,18 @@ void nmi_watchdog_check_soft(void) {
     }
     dump_regs();
     dump_stack();
+
+    /* Read and dump control registers */
+    {
+        uint64_t cr0, cr2, cr3, cr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
+                (unsigned long)cr0, (unsigned long)cr2,
+                (unsigned long)cr3, (unsigned long)cr4);
+    }
 
     /* Dump process table */
     struct process *table = process_get_table();
@@ -132,6 +157,17 @@ void nmi_watchdog_check_soft(void) {
 
     /* Ask other CPUs to dump state */
     nmi_watchdog_request_backtrace();
+
+    /* Check for escalation: repeated soft lockups → panic */
+    if (wd->soft_lockup_count >= SOFT_LOCKUP_ESCALATION_LIMIT) {
+        vga_set_color(VGA_WHITE, VGA_RED);
+        kprintf("\n=== SOFT LOCKUP ESCALATION on CPU %u (%llu occurrences) ===\n",
+                (unsigned int)smp_get_cpu_id(),
+                (unsigned long long)wd->soft_lockup_count);
+        panic("SOFT LOCKUP on CPU %u — not scheduled for %llu ms",
+              (unsigned int)smp_get_cpu_id(),
+              (unsigned long long)elapsed);
+    }
 
     /* Pet to prevent immediate re-trigger */
     wd->hard_pet_tick = now;
@@ -165,6 +201,19 @@ void nmi_watchdog_handler(struct interrupt_frame *frame) {
     wd->lockup_active = 1;
     wd->hard_lockup_count++;
 
+    /* Check for escalation: if lockups repeat beyond limit, panic */
+    if (wd->hard_lockup_count >= HARD_LOCKUP_ESCALATION_LIMIT &&
+        elapsed_ms > HARD_LOCKUP_IMMEDIATE_MS) {
+        vga_set_color(VGA_WHITE, VGA_RED);
+        kprintf("\n=== HARD LOCKUP ESCALATION on CPU %u (%llu occurrences) ===\n",
+                (unsigned int)smp_get_cpu_id(),
+                (unsigned long long)wd->hard_lockup_count);
+        panic("HARD LOCKUP on CPU %u — not petted for %llu ms (threshold=%lu ms)",
+              (unsigned int)smp_get_cpu_id(),
+              (unsigned long long)elapsed_ms,
+              (unsigned long)HARD_LOCKUP_THRESHOLD_MS);
+    }
+
     /* Use raw VGA access to ensure visibility even if kprintf is
      * stuck (e.g. serial port locked).  We write directly since this
      * is NMI context and normal print paths may deadlock. */
@@ -177,14 +226,16 @@ void nmi_watchdog_handler(struct interrupt_frame *frame) {
             (unsigned int)smp_get_cpu_id(),
             (unsigned long long)elapsed_ms,
             (unsigned long)HARD_LOCKUP_THRESHOLD_MS);
-    kprintf("NMI count on this CPU: %llu\n",
-            (unsigned long long)wd->nmi_count);
+    kprintf("NMI count on this CPU: %llu  Hard lockup count: %llu\n",
+            (unsigned long long)wd->nmi_count,
+            (unsigned long long)wd->hard_lockup_count);
 
     /* Dump registers from the interrupt frame */
     kprintf("RIP: 0x%lx  RSP: 0x%lx  RFLAGS: 0x%lx\n",
             (unsigned long)frame->rip,
             (unsigned long)frame->rsp,
             (unsigned long)frame->rflags);
+    kprintf("Symbol: %s\n", kallsyms_lookup(frame->rip));
     kprintf("CS: 0x%lx  SS: 0x%lx  Error code: 0x%lx\n",
             (unsigned long)frame->cs,
             (unsigned long)frame->ss,
@@ -201,6 +252,18 @@ void nmi_watchdog_handler(struct interrupt_frame *frame) {
     kprintf("R12: 0x%lx  R13: 0x%lx  R14: 0x%lx  R15: 0x%lx\n",
             (unsigned long)frame->r12, (unsigned long)frame->r13,
             (unsigned long)frame->r14, (unsigned long)frame->r15);
+
+    /* Read and dump control registers */
+    {
+        uint64_t cr0, cr2, cr3, cr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
+                (unsigned long)cr0, (unsigned long)cr2,
+                (unsigned long)cr3, (unsigned long)cr4);
+    }
 
     /* Dump current process */
     struct process *cur = get_current_process();

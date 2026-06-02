@@ -11,6 +11,8 @@
 #include "idt.h"
 #include "smp.h"
 #include "panic.h"
+#include "process.h"
+#include "scheduler.h"
 
 /* ── Local APIC MMIO access ────────────────────────────────────────── */
 /* Map the LAPIC at a fixed high-half virtual address */
@@ -269,13 +271,38 @@ struct tlb_shootdown_info {
 
 static struct tlb_shootdown_info tlb_info[SMP_MAX_CPUS];
 
-/* Backtrace IPI: dump register state and stack backtrace on receiving CPU.
+/* Backtrace IPI: dump register state, kallsyms symbol, process info,
+ * and stack backtrace on the receiving CPU.
  * Called when another CPU detects a lockup and wants diagnostic info. */
 void ipi_backtrace_handler(struct interrupt_frame *frame) {
     (void)frame;
     uint32_t cpu_id = smp_get_cpu_id();
     kprintf("\n=== BACKTRACE REQUEST on CPU %u ===\n", (unsigned int)cpu_id);
     dump_regs();
+
+    /* Show symbol at the interrupted RIP */
+    struct process *cur = get_current_process();
+    if (cur) {
+        kprintf("Process: %s (pid=%u, state=%d, is_user=%d)\n",
+                cur->name ? cur->name : "?",
+                cur->pid, (int)cur->state, cur->is_user);
+        kprintf("Kernel stack: 0x%llx - 0x%llx\n",
+                (unsigned long long)cur->kernel_stack,
+                (unsigned long long)cur->stack_top);
+    }
+
+    /* Dump control registers for full diagnostic */
+    {
+        uint64_t cr0, cr2, cr3, cr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
+                (unsigned long)cr0, (unsigned long)cr2,
+                (unsigned long)cr3, (unsigned long)cr4);
+    }
+
     dump_stack();
     kprintf("=== END BACKTRACE CPU %u ===\n", (unsigned int)cpu_id);
     apic_eoi();
