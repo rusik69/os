@@ -458,7 +458,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!mfd) return (uint64_t)-1;
         int64_t ret = memfd_read(mfd, (void*)buf_addr, len, 0);
         memfd_put(mfd);
-        return (uint64_t)(ret >= 0 ? ret : (uint64_t)-1);
+        return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
     return (uint64_t)-1;
 }
@@ -485,7 +485,7 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!mfd) return (uint64_t)-1;
         int64_t ret = memfd_write(mfd, (const void*)buf_addr, len, 0);
         memfd_put(mfd);
-        return (uint64_t)(ret >= 0 ? ret : (uint64_t)-1);
+        return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
     return (uint64_t)-1;
 }
@@ -4059,7 +4059,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
 
 static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
                            uint64_t fstype_addr, uint64_t flags, uint64_t data_addr) {
-    (void)flags; (void)data_addr;
+    (void)data_addr;
     char src[64], target[64], fstype[16];
 
     if (!syscall_user_cstr_ok(src_addr) || !syscall_user_cstr_ok(target_addr))
@@ -4072,6 +4072,15 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
         memcpy(fstype, (void*)fstype_addr, 15); fstype[15] = '\0';
     } else {
         fstype[0] = '\0';
+    }
+
+    /* Handle bind mounts (mount --bind) */
+    if (flags & MS_BIND) {
+        int ret = vfs_bind_mount(src, target);
+        if (ret < 0)
+            return (uint64_t)-1;
+        kprintf("[mount] bind: %s at %s\n", src, target);
+        return 0;
     }
 
     /* Only support tmpfs for now */
@@ -6096,14 +6105,14 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     int result = -1;
 
     if (module_elf_validate(&ctx, (const uint8_t *)buf, file_size) < 0) {
-        kprintf("[MOD] finit_module(fd=%lu): validation failed: %s\n",
+        kprintf("[MOD] finit_module(fd=%llu): validation failed: %s\n",
                 fd, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
     }
 
     if (module_elf_parse(&ctx) < 0) {
-        kprintf("[MOD] finit_module(fd=%lu): parse failed: %s\n",
+        kprintf("[MOD] finit_module(fd=%llu): parse failed: %s\n",
                 fd, ctx.error_msg);
         kfree(buf);
         return (uint64_t)-EINVAL;
@@ -6126,12 +6135,12 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     kfree(buf);
 
     if (result < 0) {
-        kprintf("[MOD] finit_module(fd=%lu): finalize failed: %s\n",
+        kprintf("[MOD] finit_module(fd=%llu): finalize failed: %s\n",
                 fd, ctx.error_msg);
         return (uint64_t)-EINVAL;
     }
 
-    kprintf("[MOD] finit_module(fd=%lu): loaded as id=%d\n", fd, result);
+    kprintf("[MOD] finit_module(fd=%llu): loaded as id=%d\n", fd, result);
     return (uint64_t)result;
 }
 
