@@ -21,6 +21,9 @@ void up_write(struct rw_semaphore *sem);
 /* Returns PID of writer owner (0 if not write-locked). */
 uint32_t rwsem_owner(struct rw_semaphore *sem);
 
+/* Returns name of writer owner, or NULL if not write-locked. */
+const char *rwsem_owner_name(struct rw_semaphore *sem);
+
 /* Returns 1 if write-locked, 0 otherwise. */
 int rwsem_is_write_locked(struct rw_semaphore *sem);
 

@@ -87,6 +87,13 @@ uint32_t rwsem_owner(struct rw_semaphore *sem) {
     return 0;
 }
 
+const char *rwsem_owner_name(struct rw_semaphore *sem) {
+    if (!sem || sem->count >= 0)
+        return NULL;
+    struct process *owner = process_get_by_pid(sem->owner_pid);
+    return owner ? owner->name : NULL;
+}
+
 int rwsem_is_write_locked(struct rw_semaphore *sem) {
     if (!sem) return 0;
     return sem->count < 0 ? 1 : 0;

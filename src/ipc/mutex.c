@@ -24,6 +24,7 @@ struct mutex_entry {
     volatile int locked;
     int in_use;
     uint32_t owner_pid;              /* PID of current owner (0 = free) */
+    uint64_t owner_rip;              /* RIP where owner acquired the lock */
     uint8_t  owner_orig_prio;        /* owner's priority before any boost */
     uint8_t  highest_waiter_prio;    /* highest priority among waiters (9 = none) */
     int      waiter_count;
@@ -45,6 +46,7 @@ int mutex_init(void) {
             mutexes[i].in_use  = 1;
             mutexes[i].locked  = 0;
             mutexes[i].owner_pid = 0;
+            mutexes[i].owner_rip = 0;
             mutexes[i].highest_waiter_prio = 9; /* sentinel > any valid priority */
             mutexes[i].waiter_count = 0;
             __asm__ volatile("sti");
@@ -70,6 +72,7 @@ void mutex_lock(int id) {
             /* Acquire the mutex */
             m->locked = 1;
             m->owner_pid = self->pid;
+            m->owner_rip = (uint64_t)__builtin_return_address(0);
             m->owner_orig_prio = self->priority;
             __asm__ volatile("sti");
             return;
@@ -109,6 +112,7 @@ void mutex_unlock(int id) {
 
     m->locked = 0;
     m->owner_pid = 0;
+    m->owner_rip = 0;
     m->waiter_count = 0;
     m->highest_waiter_prio = 9;
 }
@@ -128,6 +132,7 @@ void mutex_destroy(int id) {
     mutexes[id].in_use  = 0;
     mutexes[id].locked  = 0;
     mutexes[id].owner_pid = 0;
+    mutexes[id].owner_rip = 0;
     mutexes[id].waiter_count = 0;
     mutexes[id].highest_waiter_prio = 9;
 }
@@ -144,6 +149,12 @@ const char *mutex_owner_name(int id) {
         return NULL;
     struct process *owner = process_get_by_pid(mutexes[id].owner_pid);
     return owner ? owner->name : NULL;
+}
+
+uint64_t mutex_owner_rip(int id) {
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use || !mutexes[id].locked)
+        return 0;
+    return mutexes[id].owner_rip;
 }
 
 int mutex_is_locked(int id) {

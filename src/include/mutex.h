@@ -18,6 +18,9 @@ uint32_t mutex_owner(int id);
 /* Returns name of current mutex owner, or NULL if unlocked/invalid. */
 const char *mutex_owner_name(int id);
 
+/* Returns RIP where current owner acquired the lock, or 0. */
+uint64_t mutex_owner_rip(int id);
+
 /* Returns 1 if mutex is locked, 0 if free (or invalid id). */
 int mutex_is_locked(int id);
 
