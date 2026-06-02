@@ -14,6 +14,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "heap.h"
+#include "sysfs.h"
 #include "vmm.h"
 #include "pmm.h"
 #include "errno.h"

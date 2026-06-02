@@ -138,6 +138,8 @@
 #include "net_lldp.h"
 #include "aio_enhanced.h"
 #include "file_lock.h"
+#include "string.h"
+#include "sysctl.h"
 #ifdef TEST_MODE
 #include "test.h"
 #endif

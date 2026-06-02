@@ -29,7 +29,8 @@ NPROCS := $(shell nproc)
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
-         -Wa,--noexecstack -O2 -MMD -MP
+         -Wa,--noexecstack -O2 -MMD -MP \
+         $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
 
@@ -324,13 +325,16 @@ BUILD_CONFIG_GZ_H = $(BUILDDIR)/build_config_gz.h
 $(BUILDDIR)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR)
 
 # Generate the header: config text → gzip → xxd -i → header
+# Write to a temp file and atomically rename to avoid parallel-build races
 $(BUILD_CONFIG_GZ_H): $(BUILD_CONFIG_GZ)
 	@mkdir -p $(dir $@)
-	@echo '/* Auto-generated — do not edit. */' > $@
-	@echo '#ifndef BUILD_CONFIG_GZ_H' >> $@
-	@echo '#define BUILD_CONFIG_GZ_H' >> $@
-	xxd -i -n build_config_gz < $< >> $@
-	@echo '#endif /* BUILD_CONFIG_GZ_H */' >> $@
+	@{ \
+	    echo '/* Auto-generated — do not edit. */'; \
+	    echo '#ifndef BUILD_CONFIG_GZ_H'; \
+	    echo '#define BUILD_CONFIG_GZ_H'; \
+	    xxd -i -n build_config_gz < $<; \
+	    echo '#endif /* BUILD_CONFIG_GZ_H */'; \
+	} > $@.tmp && mv $@.tmp $@
 
 $(BUILD_CONFIG_GZ): $(BUILD_CONFIG_TXT)
 	gzip -c < $< > $@

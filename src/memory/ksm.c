@@ -24,10 +24,13 @@
 #define KSM_BATCH_NORMAL   256   /* Normal scan rate */
 #define KSM_BATCH_MIN      16    /* Minimum scan rate (under pressure) */
 
-/* Memory pressure thresholds (free ratio thresholds) */
-#define KSM_PRESSURE_HIGH  0.50f /* Above 50% free → scan aggressively */
-#define KSM_PRESSURE_LOW   0.10f /* Below 10% free → scan minimally */
-#define KSM_PRESSURE_PAUSE 0.05f /* Below 5% free → pause entirely */
+/* Memory pressure thresholds (free ratio in permille: 0-1000)
+ * Using integer permille avoids SSE dependency from floating-point
+ * arithmetic, which conflicts with -mno-sse in debug builds. */
+#define KSM_FREE_PERMILLE(_ratio) ((int)((_ratio) * 1000))
+#define KSM_PRESSURE_HIGH   500   /* Above 50% free → scan aggressively */
+#define KSM_PRESSURE_LOW    100   /* Below 10% free → scan minimally */
+#define KSM_PRESSURE_PAUSE   50   /* Below 5% free → pause entirely */
 
 /* How many cycles before a page is re-scanned (to avoid rechecking same
  * pages every cycle — only relevant when max_batch >= KSM_MAX_PAGES) */
@@ -89,22 +92,20 @@ static int ksm_pages_equal(uint64_t phys_a, uint64_t phys_b)
 
 /* ── Memory pressure detection ────────────────────────────────────────
  *
- * Returns a value 0.0–1.0 indicating memory pressure (1.0 = severe).
+ * Returns free ratio in permille (0-1000) indicating how much free
+ * memory is available (1000 = all free, 0 = none).
  * Uses the PMM free ratio as a proxy.
  */
-static float ksm_memory_pressure(void)
+static int ksm_free_permille(void)
 {
     uint64_t total = pmm_get_total_frames();
     uint64_t used  = pmm_get_used_frames();
-    if (total == 0) return 1.0f;        /* No info → assume pressure */
-    if (used > total) return 1.0f;      /* Sanity */
+    if (total == 0) return 0;           /* No info → assume no free */
+    if (used > total) return 0;         /* Sanity */
+    if (used == 0) return 1000;         /* Fully free */
+    /* Calculate free/total as permille */
     uint64_t free = total - used;
-    float free_ratio = (float)free / (float)total;
-    /* Pressure = 1.0 - free_ratio, clamped to [0, 1] */
-    float pressure = 1.0f - free_ratio;
-    if (pressure < 0.0f) pressure = 0.0f;
-    if (pressure > 1.0f) pressure = 1.0f;
-    return pressure;
+    return (int)(free * 1000ULL / total);
 }
 
 /* ── Compute adaptive batch size ──────────────────────────────────────
@@ -120,27 +121,22 @@ static int ksm_compute_batch(void)
     if (!ksm_enabled)
         return 0;
 
-    uint64_t total = pmm_get_total_frames();
-    uint64_t used  = pmm_get_used_frames();
-    if (total == 0) return 0;
-
-    uint64_t free = (used < total) ? (total - used) : 0;
-    float free_ratio = (float)free / (float)total;
+    int free_perm = ksm_free_permille();
 
     /* Severe pressure — pause scanning, we need every CPU cycle */
-    if (free_ratio < KSM_PRESSURE_PAUSE)
+    if (free_perm < KSM_PRESSURE_PAUSE)
         return 0;
 
     /* High pressure — minimal scanning */
-    if (free_ratio < KSM_PRESSURE_LOW)
+    if (free_perm < KSM_PRESSURE_LOW)
         return KSM_BATCH_MIN;
 
     /* Medium pressure — linear scaling between MIN and NORMAL */
-    if (free_ratio < KSM_PRESSURE_HIGH) {
-        float t = (free_ratio - KSM_PRESSURE_LOW)
-                / (KSM_PRESSURE_HIGH - KSM_PRESSURE_LOW);
+    if (free_perm < KSM_PRESSURE_HIGH) {
+        int t_num = free_perm - KSM_PRESSURE_LOW;
+        int t_den = KSM_PRESSURE_HIGH - KSM_PRESSURE_LOW;
         int batch = KSM_BATCH_MIN
-                  + (int)(t * (float)(KSM_BATCH_NORMAL - KSM_BATCH_MIN));
+                  + (t_num * (KSM_BATCH_NORMAL - KSM_BATCH_MIN)) / t_den;
         if (batch < KSM_BATCH_MIN) batch = KSM_BATCH_MIN;
         if (batch > KSM_BATCH_NORMAL) batch = KSM_BATCH_NORMAL;
         return batch;

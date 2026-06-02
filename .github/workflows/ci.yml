@@ -70,6 +70,60 @@ jobs:
                     -Wa,--noexecstack -O2 -MMD -MP" \
             -j$(nproc)
 
+  # ── Build with Clang (in addition to GCC) ─────────────────────────────
+  build-clang:
+    runs-on: [self-hosted, linux, x64]
+    container: ghcr.io/rusik69/os-ci:latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-clang-${{ github.sha }}
+          restore-keys: ccache-clang-
+      - name: Install Clang cross-compiler
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq clang-18 lld-18
+      - name: Build kernel with Clang
+        run: |
+          make all \
+            CC="ccache clang-18" \
+            LD=ld.lld-18 \
+            OBJCOPY=llvm-objcopy-18 \
+            CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types" \
+            -j$(nproc)
+      - name: Check binary
+        run: ls -lh build/kernel.bin
+
+  # ── Debug build (no optimization, full assertions) ───────────────────
+  build-debug:
+    runs-on: [self-hosted, linux, x64]
+    container: ghcr.io/rusik69/os-ci:latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-debug-${{ github.sha }}
+          restore-keys: ccache-debug-
+      - name: Build kernel (debug)
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" \
+            -j$(nproc)
+      - name: Check binary
+        run: ls -lh build/kernel.bin
+
   # ── Static analysis (cppcheck) ───────────────────────────────────────
   static-analysis:
     runs-on: [self-hosted, linux, x64]
