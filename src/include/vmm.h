@@ -8,6 +8,10 @@
 #define VMM_FLAG_USER     (1ULL << 2)
 /* Software bit 9 (available to OS) used for Copy-on-Write */
 #define VMM_FLAG_COW      (1ULL << 9)
+/* Software bit 10 (available to OS) used for lazy/demand allocation.
+ * Pages mapped with this flag share the global zero page; on first write
+ * the COW handler allocates a real physical page. */
+#define VMM_FLAG_LAZY     (1ULL << 10)
 /* Page-level cache disable (PAT bit) for MMIO */
 #define VMM_FLAG_NOCACHE  (1ULL << 4)  /* PCD = Page Cache Disable */
 #define VMM_FLAG_NOEXEC   (1ULL << 63) /* No-Execute (NX bit) */
@@ -68,6 +72,11 @@ extern uint64_t vm_pgswapin;
 extern uint64_t vm_pgswapout;
 extern uint64_t vm_pgin;
 extern uint64_t vm_pgout;
+
+/* Shared zero page for demand/lazy allocation.
+ * A single zero-filled physical frame shared among all lazy mappings.
+ * Incremented on each lazy map; never freed. */
+extern uint64_t vmm_zero_page_frame;
 
 /* Memory overcommit tracking */
 extern uint64_t vmm_committed_bytes;

@@ -74,6 +74,9 @@ int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec) {
 
 uint64_t *kernel_pml4;
 
+/* Shared zero page for demand/lazy allocation */
+uint64_t vmm_zero_page_frame = 0;
+
 /* VM statistics counters */
 uint64_t vm_pgalloc = 0;
 uint64_t vm_pgfree = 0;
@@ -146,6 +149,17 @@ void vmm_init(void) {
      * low physical memory access, which goes through PML4[256]. The identity
      * map at PML4[0] is kept for legacy VGA text buffer (0xB8000) access when
      * VGA devices are present. */
+
+    /* Allocate the shared zero page for demand/lazy allocation.
+     * A single zero-filled page shared by all lazy mappings via COW.
+     * We take an extra refcount so the zero page is never freed — even
+     * when all lazy mappings are resolved or destroyed, the page persists
+     * for future allocations. */
+    vmm_zero_page_frame = pmm_alloc_frame();
+    if (vmm_zero_page_frame) {
+        memset((void *)PHYS_TO_VIRT(vmm_zero_page_frame), 0, PAGE_SIZE);
+        pmm_ref_frame(vmm_zero_page_frame); /* extra ref: permanent pin */
+    }
 }
 
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
@@ -395,14 +409,18 @@ int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
 
         if (pde & (1ULL << 7)) {
             if (!(pde & PTE_PRESENT) || !(pde & PTE_USER)) return 0;
-            if (write && !(pde & PTE_WRITE)) return 0;
+            /* COW pages are logically writable — the first write triggers
+             * allocation via the existing COW handler. */
+            if (write && !(pde & PTE_WRITE) && !(pde & PTE_COW)) return 0;
             cur = (cur & ~0x1FFFFFULL) + 0x200000ULL;
             continue;
         }
 
         if (!pt) return 0;
         if (!(pte & PTE_PRESENT) || !(pte & PTE_USER)) return 0;
-        if (write && !(pte & PTE_WRITE)) return 0;
+        /* COW pages are logically writable — the first write triggers
+         * allocation via the existing COW handler. */
+        if (write && !(pte & PTE_WRITE) && !(pte & PTE_COW)) return 0;
 
         cur = (cur & ~0xFFFULL) + 0x1000ULL;
     }
@@ -514,8 +532,13 @@ void vmm_destroy_user_pml4(uint64_t *pml4) {
                 uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[k] & PTE_ADDR_MASK);
                 /* Free each mapped leaf page frame via refcount */
                 for (int l = 0; l < 512; l++) {
-                    if (pt[l] & PTE_PRESENT)
-                        pmm_unref_frame(pt[l] & PTE_ADDR_MASK);
+                    if (pt[l] & PTE_PRESENT) {
+                        uint64_t p = pt[l] & PTE_ADDR_MASK;
+                        /* Don't free the shared zero page — it's a permanent
+                         * kernel allocation shared by all processes. */
+                        if (p != vmm_zero_page_frame)
+                            pmm_unref_frame(p);
+                    }
                 }
                 pmm_free_frame(pd[k] & PTE_ADDR_MASK); /* free PT */
             }
@@ -595,31 +618,64 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
     if (virt + num_pages * PAGE_SIZE < virt) return -1; /* overflow */
     if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
 
-    for (size_t i = 0; i < num_pages; i++) {
+    size_t i = 0;
+    for (i = 0; i < num_pages; i++) {
+        uint64_t cur_virt = virt + i * PAGE_SIZE;
+
+        if (flags & VMM_FLAG_LAZY) {
+            /* ── Demand / lazy allocation ──────────────────────────────
+             * Instead of allocating a physical frame now, map to the
+             * shared zero page with read-only + COW.  Reads succeed
+             * immediately (returning zeros).  On first write the COW
+             * handler allocates a private real page.
+             *
+             * We strip VMM_FLAG_LAZY and VMM_FLAG_WRITE from the PTE
+             * flags, then add VMM_FLAG_COW so the existing COW handler
+             * (vmm_handle_cow_fault) processes write faults. */
+            uint64_t lazy_flags = flags & ~(VMM_FLAG_LAZY | VMM_FLAG_WRITE);
+            lazy_flags |= VMM_FLAG_COW;
+            if (vmm_map_user_page(pml4, cur_virt, vmm_zero_page_frame, lazy_flags) < 0)
+                goto unwind;
+            pmm_ref_frame(vmm_zero_page_frame);
+            continue;
+        }
+
         uint64_t phys = pmm_alloc_frame();
         if (!phys) {
             /* Unwind: free already-mapped pages */
             for (size_t j = 0; j < i; j++) {
-                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
                 uint64_t p;
-                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0)
-                    pmm_free_frame(p);
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
+                    pmm_unref_frame(p);
             }
             return -1;
         }
         memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
-        if (vmm_map_user_page(pml4, virt + i * PAGE_SIZE, phys, flags) < 0) {
+        if (vmm_map_user_page(pml4, cur_virt, phys, flags) < 0) {
             pmm_free_frame(phys);
             for (size_t j = 0; j < i; j++) {
-                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
                 uint64_t p;
-                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0)
-                    pmm_free_frame(p);
+                vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
+                    pmm_unref_frame(p);
             }
             return -1;
         }
     }
     return 0;
+
+unwind:
+    for (size_t j = 0; j < i; j++) {
+        uint64_t p;
+        vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
+        if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p) {
+            /* Only unref non-zero-page frames; the zero page lives forever */
+            if (p != vmm_zero_page_frame)
+                pmm_unref_frame(p);
+        }
+    }
+    return -1;
 }
 
 int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
@@ -630,7 +686,7 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t addr = virt + i * PAGE_SIZE;
         uint64_t phys = 0;
-        if (vmm_virt_to_phys(addr, &phys) == 0 && phys) {
+        if (vmm_virt_to_phys(addr, &phys) == 0 && phys && phys != vmm_zero_page_frame) {
             pmm_unref_frame(phys);
         }
         vmm_unmap_user_page(pml4, addr);
@@ -661,6 +717,29 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
 
         uint64_t pte = pt[pt_idx];
         if (!(pte & PTE_PRESENT)) return -1;
+
+        /* ── COW-aware flag update ──────────────────────────────────
+         * If adding write permission to a COW page, break COW first by
+         * allocating a private copy.  Otherwise the shared zero page (or
+         * any other COW-shared frame) would become writable in this
+         * process's mapping while remaining read-only in the other,
+         * violating COW semantics. */
+        if ((new_flags & VMM_FLAG_WRITE) && (pte & VMM_FLAG_COW)) {
+            uint64_t old_phys = pte & PTE_ADDR_MASK;
+            uint64_t new_phys = pmm_alloc_frame();
+            if (!new_phys) return -1;
+            memcpy((void *)PHYS_TO_VIRT(new_phys),
+                   (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
+            pmm_unref_frame(old_phys);
+            uint64_t new_pte = (pte & (PTE_ADDR_MASK | 0xFFF))
+                               & ~(uint64_t)VMM_FLAG_COW;
+            new_pte = (new_pte & ~PTE_ADDR_MASK) | new_phys;
+            new_pte = (new_pte & ~(uint64_t)0xFFF)
+                      | (new_flags & 0xFFF) | PTE_PRESENT;
+            pt[pt_idx] = new_pte;
+            tlb_flush(addr);
+            continue;
+        }
 
         /* Preserve physical address, replace flags */
         pt[pt_idx] = (pte & PTE_ADDR_MASK) | (new_flags & 0xFFF) | PTE_PRESENT;

@@ -546,7 +546,7 @@ static uint64_t sys_brk(uint64_t addr) {
         /* Grow heap — map new pages */
         uint64_t grow = addr - old_end;
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC;
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
             return (uint64_t)-1;
         p->heap_end = addr;
@@ -1182,7 +1182,7 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
         if (addr + length >= USER_VADDR_MAX) return (uint64_t)-1;
     }
 
-    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+    uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_LAZY;
     if (prot & 2) page_flags |= VMM_FLAG_WRITE;  /* PROT_WRITE */
     if (!(prot & 4)) page_flags |= VMM_FLAG_NOEXEC; /* no PROT_EXEC → NX */
     if (vmm_map_user_pages(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
@@ -1269,7 +1269,7 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     if (can_extend) {
         /* Extend in place: just map the new pages */
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE;
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(proc->pml4, old_addr + old_size,
                                extend / PAGE_SIZE, page_flags) < 0)
             return (uint64_t)-1;
@@ -1313,7 +1313,7 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
 
     /* Map remaining new pages */
     if (new_size > old_size) {
-        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE;
+        uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_LAZY;
         vmm_map_user_pages(proc->pml4, new + old_size,
                            (new_size - old_size) / PAGE_SIZE, page_flags);
     }
