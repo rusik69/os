@@ -26,16 +26,23 @@
 #define TMPFS_TYPE_DIR   2
 #define TMPFS_TYPE_LINK  3
 
+/* Device number for mknod */
+struct tmpfs_devno {
+    uint16_t major;
+    uint16_t minor;
+};
+
 /* In-memory inode */
 struct tmpfs_inode {
     int      in_use;
     uint8_t  type;
     char     name[TMPFS_MAX_NAME];
     uint32_t size;
-    uint8_t  *data;          /* file content (kmalloc'd) */
+    uint8_t  *data;          /* file content (kmalloc'd), or symlink target */
     uint8_t  uid, gid;
     uint16_t mode;
     uint32_t parent;         /* index of parent dir */
+    struct tmpfs_devno dev;  /* device major/minor for device nodes */
 };
 
 /* Mount an empty tmpfs — returns 0 on success */

@@ -891,6 +891,19 @@ int vfs_readlink(const char *path, char *buf, int bufsize) {
     return (int)out_size;
 }
 
+/* ── vfs_mknod ────────────────────────────────────────────────── */
+int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
+    if (!path) return -EINVAL;
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -ENOENT;
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
+    if (m->ops->mknod)
+        return m->ops->mknod(m->priv, ap, mode, dev_major, dev_minor);
+    return -EOPNOTSUPP;
+}
+
 void vfs_init(void) {
     num_mounts = 0;
     /* Mount the SMFS filesystem as root */

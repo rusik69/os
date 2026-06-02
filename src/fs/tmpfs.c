@@ -125,7 +125,7 @@ static int tmpfs_mkdir(const char *path) {
 static int tmpfs_create(const char *path, uint8_t type) {
     if (find_inode(path) >= 0) return -1;
     if (type == FS_TYPE_DIR) return tmpfs_mkdir(path);
-    if (type != FS_TYPE_FILE) return -1;
+    if (type != FS_TYPE_FILE && type != FS_TYPE_LINK) return -1;
 
     char dir[TMPFS_MAX_NAME*2], name[TMPFS_MAX_NAME];
     const char *slash = strrchr(path, '/');
@@ -143,13 +143,14 @@ static int tmpfs_create(const char *path, uint8_t type) {
 
     int idx = alloc_inode();
     if (idx < 0) return -1;
-    inodes[idx].type = TMPFS_TYPE_FILE;
+    inodes[idx].type = (type == FS_TYPE_LINK) ? TMPFS_TYPE_LINK : TMPFS_TYPE_FILE;
     inodes[idx].parent = (uint32_t)parent;
     memcpy(inodes[idx].name, name, (size_t)len + 1);
     inodes[idx].size = 0;
     inodes[idx].data = NULL;
     inodes[idx].uid = 0; inodes[idx].gid = 0;
-    inodes[idx].mode = FS_MODE_FILE;
+    inodes[idx].mode = (type == FS_TYPE_LINK) ? 0777 : FS_MODE_FILE;
+    memset(&inodes[idx].dev, 0, sizeof(inodes[idx].dev));
     return 0;
 }
 
@@ -213,6 +214,88 @@ static int tmpfs_truncate(const char *path, uint32_t len) {
     return 0;
 }
 
+/* ── Symlink support ──────────────────────────────────────────── */
+
+static int tmpfs_symlink(const char *target, const char *linkpath) {
+    /* Create the link inode via the generic create helper */
+    if (tmpfs_create(linkpath, FS_TYPE_LINK) < 0)
+        return -1;
+
+    int idx = find_inode(linkpath);
+    if (idx < 0) return -1;
+
+    /* Store the target path in the inode's data buffer */
+    size_t target_len = strlen(target);
+    if (target_len == 0) {
+        inodes[idx].data = NULL;
+        inodes[idx].size = 0;
+        return 0;
+    }
+
+    inodes[idx].data = kmalloc(target_len + 1);
+    if (!inodes[idx].data) {
+        tmpfs_unlink(linkpath);
+        return -1;
+    }
+    memcpy(inodes[idx].data, target, target_len + 1);
+    inodes[idx].size = (uint32_t)target_len;
+    return 0;
+}
+
+static int tmpfs_readlink(const char *path, char *buf, int bufsize) {
+    int idx = find_inode(path);
+    if (idx < 0 || inodes[idx].type != TMPFS_TYPE_LINK)
+        return -1;
+    if (bufsize <= 0) return -1;
+
+    if (!inodes[idx].data || inodes[idx].size == 0) {
+        buf[0] = '\0';
+        return 0;
+    }
+
+    int copy_len = (int)inodes[idx].size;
+    if (copy_len >= bufsize)
+        copy_len = bufsize - 1;
+    memcpy(buf, inodes[idx].data, (size_t)copy_len);
+    buf[copy_len] = '\0';
+    return copy_len;
+}
+
+/* ── mknod support ────────────────────────────────────────────── */
+
+static int tmpfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
+    if (find_inode(path) >= 0) return -1; /* already exists */
+
+    char dir[TMPFS_MAX_NAME*2], name[TMPFS_MAX_NAME];
+    const char *slash = strrchr(path, '/');
+    if (!slash) return -1;
+    int dirlen = (int)(slash - path);
+    if (dirlen > (int)sizeof(dir)-1) return -1;
+    memcpy(dir, path, (size_t)dirlen); dir[dirlen] = '\0';
+    if (dirlen == 0) { dir[0] = '/'; dir[1] = '\0'; }
+    int parent = find_inode(dir);
+    if (parent < 0 || inodes[parent].type != TMPFS_TYPE_DIR)
+        return -1;
+
+    int len = (int)strlen(slash + 1);
+    if (len > TMPFS_MAX_NAME - 1) return -1;
+    memcpy(name, slash + 1, (size_t)len + 1);
+    if (find_inode_in_dir(parent, name) >= 0) return -1;
+
+    int idx = alloc_inode();
+    if (idx < 0) return -1;
+    inodes[idx].type = TMPFS_TYPE_FILE;  /* non-file, non-dir: treated as special */
+    inodes[idx].parent = (uint32_t)parent;
+    memcpy(inodes[idx].name, name, (size_t)len + 1);
+    inodes[idx].size = 0;
+    inodes[idx].data = NULL;
+    inodes[idx].uid = 0; inodes[idx].gid = 0;
+    inodes[idx].mode = mode;
+    inodes[idx].dev.major = dev_major;
+    inodes[idx].dev.minor = dev_minor;
+    return 0;
+}
+
 struct vfs_ops tmpfs_vfs_ops = {
     .read        = tmpfs_read,
     .write       = tmpfs_write,
@@ -222,6 +305,9 @@ struct vfs_ops tmpfs_vfs_ops = {
     .readdir     = tmpfs_readdir,
     .readdir_names = tmpfs_readdir_names,
     .truncate    = tmpfs_truncate,
+    .symlink     = tmpfs_symlink,
+    .readlink    = tmpfs_readlink,
+    .mknod       = tmpfs_mknod,
 };
 
 int tmpfs_mount(void) {

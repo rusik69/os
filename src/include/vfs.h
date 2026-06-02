@@ -133,6 +133,9 @@ struct vfs_ops {
     /* Symlink operations */
     int (*symlink)(void *priv, const char *target, const char *linkpath);
     int (*readlink)(void *priv, const char *path, char *buf, int bufsize);
+    /* Optional: create device node */
+    int (*mknod)(void *priv, const char *path, uint16_t mode,
+                 uint16_t dev_major, uint16_t dev_minor);
 };
 
 /* A mounted filesystem */
@@ -207,6 +210,9 @@ int vfs_link(const char *oldpath, const char *newpath);
 /* Symbolic link operations */
 int vfs_symlink(const char *target, const char *linkpath);
 int vfs_readlink(const char *path, char *buf, int bufsize);
+
+/* Create device node */
+int vfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor);
 
 /* Bind mount support */
 int vfs_bind_mount(const char *src, const char *target);
