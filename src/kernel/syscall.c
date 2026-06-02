@@ -6057,6 +6057,13 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
         }
     }
 
+    /* Create sysfs entries for module parameters (M30) */
+    {
+        struct kernel_module *mod = module_get_by_id(result);
+        if (mod)
+            module_sysfs_add_params(mod);
+    }
+
     return (uint64_t)result;
 }
 
@@ -6183,6 +6190,13 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
         }
     }
 
+    /* Create sysfs entries for module parameters (M30) */
+    {
+        struct kernel_module *mod = module_get_by_id(result);
+        if (mod)
+            module_sysfs_add_params(mod);
+    }
+
     return (uint64_t)result;
 }
 
@@ -6224,6 +6238,9 @@ static uint64_t sys_delete_module(uint64_t name_addr, uint64_t flags)
                 name, mod->refcount);
         return (uint64_t)-EBUSY;
     }
+
+    /* Remove sysfs entries for module parameters (M30) */
+    module_sysfs_remove_params(mod);
 
     /* Unload the module */
     int ret = module_unload(mod->module_id);

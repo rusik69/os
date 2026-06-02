@@ -348,7 +348,7 @@ void rtc_get_time(struct rtc_time *t) {
 
 /* Read callback for /sys/class/rtc/rtc0/wakealarm.
  * Returns the current alarm time as epoch seconds (or "0\n" if disabled). */
-static int wakealarm_read(char *buf, uint32_t max_size) {
+static int wakealarm_read(char *buf, uint32_t max_size, void *priv) {
     if (max_size < 4) return -1;
     if (g_wakealarm_epoch == 0) {
         buf[0] = '0';
@@ -377,7 +377,7 @@ static int wakealarm_read(char *buf, uint32_t max_size) {
 /* Write callback for /sys/class/rtc/rtc0/wakealarm.
  * Accepts an epoch-seconds value as a decimal string.
  * Writing "0" disables the alarm. */
-static int wakealarm_write(const char *data, uint32_t size) {
+static int wakealarm_write(const char *data, uint32_t size, void *priv) {
     if (size == 0) return -1;
 
     /* Parse the first whitespace-delimited token as a number */
@@ -420,7 +420,7 @@ void rtc_sysfs_init(void) {
 
     /* Create writable wakealarm file */
     if (sysfs_create_writable_file("/sys/class/rtc/rtc0/wakealarm",
-                                    "0\n", wakealarm_read, wakealarm_write) < 0) {
+                                    "0\n", NULL, wakealarm_read, wakealarm_write) < 0) {
         kprintf("[rtc] sysfs: failed to create wakealarm\n");
         return;
     }

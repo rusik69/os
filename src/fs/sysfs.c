@@ -45,7 +45,8 @@ static int find_entry(const char *path) {
 
 /* Create entry under parent dir */
 static int create_entry(const char *name, uint8_t type, const char *content,
-                        int parent, sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
+                        int parent, void *priv,
+                        sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
     int idx = alloc_entry();
     if (idx < 0) return -1;
     int nlen = (int)strlen(name);
@@ -55,6 +56,7 @@ static int create_entry(const char *name, uint8_t type, const char *content,
     sysfs_entries[idx].type = type;
     sysfs_entries[idx].parent = parent;
     sysfs_entries[idx].size = 0;
+    sysfs_entries[idx].priv = priv;
     sysfs_entries[idx].read_cb = read_cb;
     sysfs_entries[idx].write_cb = write_cb;
     sysfs_entries[idx].content[0] = '\0';
@@ -83,11 +85,12 @@ int sysfs_create_file(const char *path, const char *content) {
     if (sysfs_entries[parent].type != 2) return -1;
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, content, parent, NULL, NULL) < 0) return -1;
+    if (create_entry(name, 1, content, parent, NULL, NULL, NULL) < 0) return -1;
     return 0;
 }
 
 int sysfs_create_writable_file(const char *path, const char *initial_content,
+                                void *priv,
                                 sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
     /* Find parent directory */
     char dirpath[128];
@@ -101,7 +104,7 @@ int sysfs_create_writable_file(const char *path, const char *initial_content,
     if (sysfs_entries[parent].type != 2) return -1;
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, initial_content, parent, read_cb, write_cb) < 0) return -1;
+    if (create_entry(name, 1, initial_content, parent, priv, read_cb, write_cb) < 0) return -1;
     return 0;
 }
 
@@ -123,7 +126,7 @@ int sysfs_create_dir(const char *path) {
     if (sysfs_entries[parent].type != 2) return -1;
 
     const char *name = slash + 1;
-    if (create_entry(name, 2, NULL, parent, NULL, NULL) < 0) return -1;
+    if (create_entry(name, 2, NULL, parent, NULL, NULL, NULL) < 0) return -1;
     return 0;
 }
 
@@ -138,7 +141,7 @@ static int sysfs_vfs_read(void *priv, const char *path, void *buf,
 
     /* Use dynamic read callback if available */
     if (sysfs_entries[idx].read_cb) {
-        int ret = sysfs_entries[idx].read_cb((char *)buf, max_size);
+        int ret = sysfs_entries[idx].read_cb((char *)buf, max_size, sysfs_entries[idx].priv);
         if (ret < 0) return -1;
         *out_size = (uint32_t)ret;
         return 0;
@@ -160,7 +163,7 @@ static int sysfs_vfs_write(void *priv, const char *path, const void *data, uint3
 
     /* Use write callback if available */
     if (sysfs_entries[idx].write_cb) {
-        return sysfs_entries[idx].write_cb((const char *)data, size);
+        return sysfs_entries[idx].write_cb((const char *)data, size, sysfs_entries[idx].priv);
     }
 
     return -1; /* read-only if no write callback */
@@ -230,6 +233,84 @@ struct vfs_ops sysfs_vfs_ops = {
 };
 
 /* ── Initialisation ────────────────────────────────────────────── */
+
+/*
+ * sysfs_remove — Remove a single sysfs entry by path.
+ *
+ * Finds the entry, marks it as unused, and clears its callbacks.
+ * Returns 0 on success, -1 if not found.
+ */
+int sysfs_remove(const char *path)
+{
+    if (!path || path[0] != '/')
+        return -1;
+
+    int idx = find_entry(path);
+    if (idx < 0)
+        return -1;
+
+    /* Mark the entry as unused */
+    sysfs_entries[idx].in_use = 0;
+    sysfs_entries[idx].read_cb = NULL;
+    sysfs_entries[idx].write_cb = NULL;
+    sysfs_entries[idx].content[0] = '\0';
+    sysfs_entries[idx].size = 0;
+    return 0;
+}
+
+/*
+ * sysfs_remove_recursive — Remove a directory and all its children.
+ *
+ * Iterates all entries; removes any whose parent chain leads to @path.
+ * The directory itself is removed last.
+ */
+int sysfs_remove_recursive(const char *path)
+{
+    if (!path || path[0] != '/')
+        return -1;
+
+    int idx = find_entry(path);
+    if (idx < 0)
+        return -1;
+    if (sysfs_entries[idx].type != 2)
+        return -1; /* Not a directory */
+
+    /* Remove all children recursively (multi-pass because children may have children) */
+    int changed;
+    do {
+        changed = 0;
+        for (int i = 1; i < SYSFS_MAX_ENTRIES; i++) {
+            if (!sysfs_entries[i].in_use)
+                continue;
+
+            /* Check if this entry's parent is the target dir */
+            if (sysfs_entries[i].parent == idx) {
+                if (sysfs_entries[i].type == 2) {
+                    /* Directory child — remove children of this child too */
+                    int sub_idx = i;
+                    for (int j = 1; j < SYSFS_MAX_ENTRIES; j++) {
+                        if (sysfs_entries[j].in_use && sysfs_entries[j].parent == sub_idx) {
+                            sysfs_entries[j].in_use = 0;
+                            sysfs_entries[j].read_cb = NULL;
+                            sysfs_entries[j].write_cb = NULL;
+                        }
+                    }
+                }
+                /* Remove the child entry itself */
+                sysfs_entries[i].in_use = 0;
+                sysfs_entries[i].read_cb = NULL;
+                sysfs_entries[i].write_cb = NULL;
+                changed = 1;
+            }
+        }
+    } while (changed);
+
+    /* Finally remove the directory itself */
+    sysfs_entries[idx].in_use = 0;
+    sysfs_entries[idx].read_cb = NULL;
+    sysfs_entries[idx].write_cb = NULL;
+    return 0;
+}
 
 void sysfs_init(void) {
     if (sysfs_mounted) return;

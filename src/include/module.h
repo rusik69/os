@@ -211,4 +211,23 @@ int module_deps_resolved(struct kernel_module *mod);
 #define MODULE_VERSION(ver)        static const char __mod_version[] \
     __attribute__((section(".modinfo"), used)) = "version=" ver
 
+/* Set a module parameter from a string value (used by sysfs write callbacks).
+ * Supports all standard parameter types. Returns 0 on success, -1 on error. */
+int module_param_set_value(struct kernel_param *kp, const char *val);
+
+/* Format a module parameter's current value as a string (used by sysfs read callbacks).
+ * Returns the number of bytes written, or 0 on error. */
+int module_param_format_value(struct kernel_param *kp, char *buf, int max);
+
+/* ── Module sysfs interface (M30) ──────────────────────────────── */
+
+/* Create sysfs entries for all parameters of a loaded module.
+ * Creates /sys/module/<name>/parameters/<param> for each parameter.
+ * Called after module_parse_params() succeeds during module loading. */
+int module_sysfs_add_params(struct kernel_module *mod);
+
+/* Remove all sysfs entries for a module's parameters.
+ * Called before module_unload(). */
+int module_sysfs_remove_params(struct kernel_module *mod);
+
 #endif /* MODULE_H */

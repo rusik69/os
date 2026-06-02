@@ -677,3 +677,283 @@ int module_parse_params(struct kernel_module *mod, const char *params_str)
     kfree(buf);
     return ret;
 }
+
+/* ── Module parameter sysfs interface (M30) ────────────────────── */
+
+/* Buffer size for formatting a single parameter value */
+#define MOD_PARAM_BUF_SIZE 128
+
+/*
+ * Format a kernel parameter's current value into a string buffer.
+ * Returns the number of bytes written (excluding NUL), or 0 on error.
+ * Exported for use by sysfs read callbacks.
+ */
+int module_param_format_value(struct kernel_param *kp, char *buf, int max)
+{
+    if (!kp || !buf || max <= 0)
+        return 0;
+
+    /* If the module registered a custom getter, use it */
+    if (kp->get_fn)
+        return kp->get_fn(buf, max, kp);
+
+    if (!kp->data || kp->data_len <= 0)
+        return 0;
+
+    switch (kp->type) {
+    case PARAM_TYPE_INT:
+        if (kp->data_len >= (int)sizeof(int))
+            return snprintf(buf, (size_t)max, "%d", *(int *)kp->data);
+        break;
+    case PARAM_TYPE_UINT:
+        if (kp->data_len >= (int)sizeof(unsigned int))
+            return snprintf(buf, (size_t)max, "%u", *(unsigned int *)kp->data);
+        break;
+    case PARAM_TYPE_BOOL:
+        if (kp->data_len >= (int)sizeof(int))
+            return snprintf(buf, (size_t)max, "%s", *(int *)kp->data ? "Y" : "N");
+        break;
+    case PARAM_TYPE_CHARP:
+        if (kp->data_len >= (int)sizeof(char *) && *(char **)kp->data)
+            return snprintf(buf, (size_t)max, "%s", *(char **)kp->data);
+        return snprintf(buf, (size_t)max, "(null)");
+    case PARAM_TYPE_STRING:
+        if (kp->data && kp->data_len > 0)
+            return snprintf(buf, (size_t)max, "%s", (const char *)kp->data);
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+
+/*
+ * Set a kernel parameter's value from a string.
+ * Compatible with the sysfs_write_cb_t signature.
+ */
+static int module_param_write_cb(const char *data, uint32_t size, void *priv)
+{
+    struct kernel_param *kp = (struct kernel_param *)priv;
+    if (!kp || !data || size == 0)
+        return -1;
+
+    /* Allocate a NUL-terminated copy of the written data */
+    uint32_t copy_len = size;
+    if (copy_len > MOD_PARAM_BUF_SIZE - 1)
+        copy_len = MOD_PARAM_BUF_SIZE - 1;
+
+    char val_buf[MOD_PARAM_BUF_SIZE];
+    memcpy(val_buf, data, copy_len);
+    val_buf[copy_len] = '\0';
+
+    /* Strip trailing newline/carriage return if present */
+    while (copy_len > 0 && (val_buf[copy_len - 1] == '\n' || val_buf[copy_len - 1] == '\r'))
+        val_buf[--copy_len] = '\0';
+
+    return module_param_set_value(kp, val_buf);
+}
+
+/*
+ * Set a module parameter from a parsed string value.
+ * This is the core implementation used by both module_parse_params and
+ * the sysfs write callback.
+ * Exported for use by sysfs read/write wrappers.
+ */
+int module_param_set_value(struct kernel_param *kp, const char *val)
+{
+    if (!kp || !val)
+        return -1;
+
+    /* If the module registered a custom setter, delegate to it */
+    if (kp->set_fn)
+        return kp->set_fn(val, kp);
+
+    if (!kp->data || kp->data_len <= 0)
+        return -1;
+
+    switch (kp->type) {
+    case PARAM_TYPE_INT: {
+        if (kp->data_len < (int)sizeof(int)) return -1;
+        char *endp = NULL;
+        long v = strtol(val, &endp, 0);
+        if (endp == val || (*endp != '\0' && !isspace((unsigned char)*endp)))
+            return -1;
+        *(int *)kp->data = (int)v;
+        return 0;
+    }
+    case PARAM_TYPE_UINT: {
+        if (kp->data_len < (int)sizeof(unsigned int)) return -1;
+        char *endp = NULL;
+        unsigned long v = strtoul(val, &endp, 0);
+        if (endp == val || (*endp != '\0' && !isspace((unsigned char)*endp)))
+            return -1;
+        *(unsigned int *)kp->data = (unsigned int)v;
+        return 0;
+    }
+    case PARAM_TYPE_BOOL: {
+        if (kp->data_len < (int)sizeof(int)) return -1;
+        /* Try numeric first */
+        char *endp = NULL;
+        unsigned long bval = strtoul(val, &endp, 0);
+        if (endp != val && (*endp == '\0' || isspace((unsigned char)*endp))) {
+            *(int *)kp->data = (bval != 0) ? 1 : 0;
+            return 0;
+        }
+        /* String keywords */
+        if (strcmp(val, "y") == 0 || strcmp(val, "Y") == 0 ||
+            strcmp(val, "yes") == 0 || strcmp(val, "YES") == 0 ||
+            strcmp(val, "on") == 0 || strcmp(val, "ON") == 0 ||
+            strcmp(val, "true") == 0 || strcmp(val, "TRUE") == 0 ||
+            strcmp(val, "1") == 0) {
+            *(int *)kp->data = 1;
+            return 0;
+        }
+        if (strcmp(val, "n") == 0 || strcmp(val, "N") == 0 ||
+            strcmp(val, "no") == 0 || strcmp(val, "NO") == 0 ||
+            strcmp(val, "off") == 0 || strcmp(val, "OFF") == 0 ||
+            strcmp(val, "false") == 0 || strcmp(val, "FALSE") == 0 ||
+            strcmp(val, "0") == 0) {
+            *(int *)kp->data = 0;
+            return 0;
+        }
+        return -1;
+    }
+    case PARAM_TYPE_CHARP: {
+        char *old = *(char **)kp->data;
+        if (old) kfree(old);
+        size_t vlen = strlen(val);
+        char *copy = (char *)kmalloc(vlen + 1);
+        if (!copy) return -1;
+        memcpy(copy, val, vlen + 1);
+        *(char **)kp->data = copy;
+        kp->data_len = (int)(vlen + 1);
+        return 0;
+    }
+    case PARAM_TYPE_STRING: {
+        size_t copy_len = strlen(val);
+        if (copy_len >= (size_t)kp->data_len)
+            copy_len = (size_t)kp->data_len - 1;
+        memset(kp->data, 0, (size_t)kp->data_len);
+        memcpy(kp->data, val, copy_len);
+        return 0;
+    }
+    default:
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * Sysfs read callback for a module parameter.
+ * Compatible with sysfs_read_cb_t signature.
+ */
+static int module_param_read_cb(char *buf, uint32_t max_size, void *priv)
+{
+    struct kernel_param *kp = (struct kernel_param *)priv;
+    if (!kp || !buf || max_size == 0)
+        return 0;
+    return module_param_format_value(kp, buf, (int)max_size);
+}
+
+/* ── Module sysfs path construction helpers ────────────────────── */
+
+/* Build /sys/module/<name>/parameters/ path for a module.
+ * Returns the length written, or 0 on truncation. */
+static int build_mod_param_dir(char *buf, int max, const char *mod_name)
+{
+    return snprintf(buf, (size_t)max, "/sys/module/%s/parameters", mod_name);
+}
+
+/* Build /sys/module/<name>/parameters/<param> path.
+ * Returns the length written, or 0 on truncation. */
+static int build_mod_param_path(char *buf, int max, const char *mod_name,
+                                 const char *param_name)
+{
+    return snprintf(buf, (size_t)max, "/sys/module/%s/parameters/%s",
+                    mod_name, param_name);
+}
+
+/* Build /sys/module/<name> path.
+ * Returns the length written, or 0 on truncation. */
+static int build_mod_dir(char *buf, int max, const char *mod_name)
+{
+    return snprintf(buf, (size_t)max, "/sys/module/%s", mod_name);
+}
+
+/*
+ * Create sysfs entries for all parameters of a loaded module.
+ * This creates:
+ *   /sys/module/<name>/
+ *   /sys/module/<name>/parameters/
+ *   /sys/module/<name>/parameters/<param>  (one per parameter)
+ *
+ * Called after module_parse_params() succeeds during module loading.
+ */
+int module_sysfs_add_params(struct kernel_module *mod)
+{
+    if (!mod || mod->name[0] == '\0')
+        return -1;
+
+    /* Lazily create /sys/module/ directory if it doesn't exist yet */
+    static int sysfs_module_dir_created = 0;
+    if (!sysfs_module_dir_created) {
+        if (sysfs_create_dir("/sys/module") < 0) {
+            /* sysfs might not be mounted yet — defer silently */
+            return -1;
+        }
+        sysfs_module_dir_created = 1;
+    }
+
+    /* Check if the module has any parameters */
+    if (list_empty(&mod->params))
+        return 0; /* No params — nothing to do */
+
+    /* Create /sys/module/<name>/ directory */
+    char mod_dir[128];
+    if (build_mod_dir(mod_dir, (int)sizeof(mod_dir), mod->name) <= 0)
+        return -1;
+    sysfs_create_dir(mod_dir);
+
+    /* Create /sys/module/<name>/parameters/ directory */
+    char param_dir[128];
+    if (build_mod_param_dir(param_dir, (int)sizeof(param_dir), mod->name) <= 0)
+        return -1;
+    sysfs_create_dir(param_dir);
+
+    /* Create one file per parameter */
+    struct kernel_param *kp;
+    list_for_each_entry(kp, &mod->params, list) {
+        if (kp->name[0] == '\0')
+            continue;
+
+        char param_path[160];
+        if (build_mod_param_path(param_path, (int)sizeof(param_path),
+                                  mod->name, kp->name) <= 0)
+            continue;
+
+        /* Create a writable sysfs file with read/write callbacks.
+         * The priv (void*) is the kernel_param pointer. */
+        sysfs_create_writable_file(param_path, NULL, (void *)kp,
+            module_param_read_cb, module_param_write_cb);
+    }
+
+    return 0;
+}
+
+/*
+ * Remove all sysfs entries for a module's parameters.
+ * Called before module_unload().
+ */
+int module_sysfs_remove_params(struct kernel_module *mod)
+{
+    if (!mod || mod->name[0] == '\0')
+        return -1;
+
+    char mod_dir[128];
+    if (build_mod_dir(mod_dir, (int)sizeof(mod_dir), mod->name) <= 0)
+        return -1;
+
+    /* Recursively remove the entire module directory in sysfs */
+    sysfs_remove_recursive(mod_dir);
+    return 0;
+}
