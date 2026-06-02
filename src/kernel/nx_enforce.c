@@ -20,6 +20,7 @@
 #include "fault.h" /* for arch_print_backtrace, interrupt_frame */
 #include "idt.h"   /* for struct interrupt_frame */
 #include "types.h" /* for PHYS_TO_VIRT */
+#include "panic.h"
 
 /* ── Linker section boundaries ──────────────────────────────────────── */
 /* These are defined in linker.ld and resolved at link time.
@@ -379,23 +380,36 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
     }
 
     /* Kernel-mode NX violation — panic with full state */
-    kprintf("  CR0=0x%llx  CR2=0x%llx  CR3=0x%llx  CR4=0x%llx\n",
-            frame->error_code, cr2, 0ULL, 0ULL); /* approximate */
+    {
+        uint64_t cr0, cr2_val, cr3, cr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2_val));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        kprintf("  CR0=0x%llx  CR2=0x%llx  CR3=0x%llx  CR4=0x%llx\n",
+                (unsigned long long)cr0, (unsigned long long)cr2_val,
+                (unsigned long long)cr3, (unsigned long long)cr4);
+    }
     kprintf("  RAX=0x%llx  RBX=0x%llx  RCX=0x%llx  RDX=0x%llx\n",
-            frame->rax, frame->rbx, frame->rcx, frame->rdx);
+            (unsigned long long)frame->rax, (unsigned long long)frame->rbx,
+            (unsigned long long)frame->rcx, (unsigned long long)frame->rdx);
     kprintf("  RSI=0x%llx  RDI=0x%llx  R8=0x%llx   R9=0x%llx\n",
-            frame->rsi, frame->rdi, frame->r8, frame->r9);
+            (unsigned long long)frame->rsi, (unsigned long long)frame->rdi,
+            (unsigned long long)frame->r8, (unsigned long long)frame->r9);
     kprintf("  R10=0x%llx  R11=0x%llx  R12=0x%llx  R13=0x%llx\n",
-            frame->r10, frame->r11, frame->r12, frame->r13);
-    kprintf("  R14=0x%llx  R15=0x%llx\n", frame->r14, frame->r15);
-    kprintf("  RSP=0x%llx  RBP=0x%llx\n", frame->rsp, frame->rbp);
+            (unsigned long long)frame->r10, (unsigned long long)frame->r11,
+            (unsigned long long)frame->r12, (unsigned long long)frame->r13);
+    kprintf("  R14=0x%llx  R15=0x%llx\n",
+            (unsigned long long)frame->r14, (unsigned long long)frame->r15);
+    kprintf("  RSP=0x%llx  RBP=0x%llx\n",
+            (unsigned long long)frame->rsp, (unsigned long long)frame->rbp);
     kprintf("  CS=0x%llx  SS=0x%llx  RFLAGS=0x%llx\n",
-            frame->cs, frame->ss, frame->rflags);
+            (unsigned long long)frame->cs, (unsigned long long)frame->ss,
+            (unsigned long long)frame->rflags);
 
     arch_print_backtrace();
 
-    /* Halt permanently */
-    __asm__ volatile("cli");
-    for (;;) __asm__ volatile("hlt");
-    __builtin_unreachable();
+    panic("NX VIOLATION in kernel mode at RIP=0x%llx (fault addr=0x%llx)",
+          (unsigned long long)frame->rip,
+          (unsigned long long)cr2);
 }
