@@ -135,12 +135,18 @@ static struct spinlock_owner_entry *spinlock_find_owner(spinlock_t *lock) {
 
 void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) {
     int cpu = smp_get_cpu_id();
+    uint64_t now = timer_get_ticks();
 
     kprintf("\n============================================\n");
     kprintf("=== SPINLOCK LOCKUP DETECTED ===\n");
     kprintf("============================================\n");
     kprintf("CPU %d spinning on lock %p (spin count: %llu)\n",
             cpu, (void *)lock, (unsigned long long)spin_count);
+
+    /* Show elapsed time if timer is available */
+    if (now > 0) {
+        kprintf("Current tick: %llu\n", (unsigned long long)now);
+    }
 
     uint64_t rbp;
     __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
@@ -154,9 +160,13 @@ void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) {
 
     struct spinlock_owner_entry *owner = spinlock_find_owner(lock);
     if (owner) {
-        kprintf("Lock OWNER: CPU=%d PID=%u (acquired at tick %llu)\n",
+        uint64_t hold_time = now > owner->acquire_tick
+                             ? (now - owner->acquire_tick) * 1000ULL / TIMER_FREQ
+                             : 0;
+        kprintf("Lock OWNER: CPU=%d PID=%u (acquired at tick %llu, held for %llu ms)\n",
                 owner->cpu_id, (unsigned int)owner->pid,
-                (unsigned long long)owner->acquire_tick);
+                (unsigned long long)owner->acquire_tick,
+                (unsigned long long)hold_time);
         if (owner->caller_rip) {
             kprintf("Owner acquire RIP: 0x%llx",
                     (unsigned long long)owner->caller_rip);
@@ -177,6 +187,18 @@ void spinlock_detect_lockup(spinlock_t *lock, uint64_t spin_count) {
 
     int lock_val = *lock;
     kprintf("Lock value: %d (0=free, 1=held)\n", lock_val);
+
+    /* Dump control registers for diagnostic context */
+    {
+        uint64_t cr0, cr2, cr3, cr4;
+        __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+        kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
+                (unsigned long)cr0, (unsigned long)cr2,
+                (unsigned long)cr3, (unsigned long)cr4);
+    }
 
     kprintf("Stack backtrace of spinning CPU %d:\n", cpu);
     dump_stack();
