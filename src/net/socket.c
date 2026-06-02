@@ -158,6 +158,18 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     } else if (s->type == SOCK_DGRAM) {
         /* UDP is connectionless, but we cache the default destination */
         s->state = SOCK_STATE_CONNECTED;
+
+        /* Pre-resolve the MAC route for the connected UDP fast path.
+         * If ARP already has the entry, cache it so subsequent sends
+         * can bypass the ARP cache lookup.  If unresolved, the cache
+         * stays invalid and the normal send path is used instead. */
+        uint8_t *mac = arp_cache_lookup(s->remote_ip);
+        if (mac) {
+            memcpy(s->cached_dst_mac, mac, 6);
+            s->cache_valid = 1;
+        } else {
+            s->cache_valid = 0;
+        }
     }
 
     return 0;
@@ -468,8 +480,20 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
                 struct sockaddr_in *dst = (struct sockaddr_in *)msg->msg_name;
                 dst_ip = dst->sin_addr.s_addr;
                 dst_port = ntohs(dst->sin_port);
+                /* Explicit destination — invalidate route cache since
+                 * the next send may target a different peer. */
+                s->cache_valid = 0;
             }
-            net_udp_send(dst_ip, s->local_port, dst_port, data, (uint16_t)(len > 1500 ? 1500 : len));
+            /* Connected UDP fast path: use pre-resolved MAC to skip
+             * ARP cache lookup inside send_ip(). */
+            if (s->cache_valid && s->state == SOCK_STATE_CONNECTED && dst_ip == s->remote_ip) {
+                net_udp_send_cached(s->cached_dst_mac, dst_ip,
+                                    s->local_port, dst_port, data,
+                                    (uint16_t)(len > 1500 ? 1500 : len));
+            } else {
+                net_udp_send(dst_ip, s->local_port, dst_port, data,
+                             (uint16_t)(len > 1500 ? 1500 : len));
+            }
             total += len;
         }
     }

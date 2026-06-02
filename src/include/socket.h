@@ -173,6 +173,14 @@ struct socket {
     int           ip_recvdstaddr;     /* IP_RECVDSTADDR */
     /* UDP listener index (for net_udp_listen) */
     int           udp_listener;
+
+    /* UDP connected socket route cache — pre-resolved MAC address
+     * to avoid ARP cache lookup on every send when the socket is
+     * in connected state (SOCK_STATE_CONNECTED).  Populated during
+     * connect(), invalidated on explicit sendto() with a different
+     * destination or on close(). */
+    uint8_t       cached_dst_mac[6];
+    int           cache_valid;
 };
 
 /* Socket table operations */

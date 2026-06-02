@@ -442,6 +442,58 @@ void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
     send_ip(dst_ip, IP_PROTO_UDP, buf, udp_len);
 }
 
+/*
+ * net_udp_send_cached — Fast UDP send path with pre-resolved destination MAC.
+ *
+ * Builds the complete Ethernet/IP/UDP frame in one shot and hands it to
+ * the link layer, bypassing the ARP cache lookup inside send_ip().
+ * This is the "connected UDP" fast path — the caller must ensure that
+ * @dst_mac is a valid, resolved MAC address (e.g., from a socket's
+ * cached_dst_mac populated during connect()).
+ *
+ * @dst_mac   Pre-resolved Ethernet destination MAC (6 bytes)
+ * @dst_ip    Destination IP address (host byte order, for IP header)
+ * @src_port  Source UDP port (host byte order)
+ * @dst_port  Destination UDP port (host byte order)
+ * @data      UDP payload
+ * @data_len  Length of payload in bytes
+ */
+void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip,
+                          uint16_t src_port, uint16_t dst_port,
+                          const void *data, uint16_t data_len)
+{
+    /* ── Build UDP datagram ── */
+    uint16_t udp_len = sizeof(struct udp_header) + data_len;
+    uint8_t frame[1500];
+    memset(frame, 0, sizeof(frame));
+
+    struct udp_header *udp = (struct udp_header *)(frame + sizeof(struct ip_header));
+    udp->src_port = htons(src_port);
+    udp->dst_port = htons(dst_port);
+    udp->length   = htons(udp_len);
+    udp->checksum = 0;  /* UDP checksum is optional (RFC 768) */
+    memcpy(frame + sizeof(struct ip_header) + sizeof(struct udp_header), data, data_len);
+
+    /* ── Build IP header ── */
+    uint16_t ip_total_len = sizeof(struct ip_header) + udp_len;
+
+    struct ip_header *ip = (struct ip_header *)frame;
+    ip->version_ihl = 0x45;
+    ip->ttl         = 64;
+    ip->protocol    = IP_PROTO_UDP;
+    ip->src_ip      = htonl(net_our_ip);
+    ip->dst_ip      = htonl(dst_ip);
+    ip->total_len   = htons(ip_total_len);
+    ip->id          = htons(net_ip_id_counter++);
+    ip->checksum    = 0;
+
+    /* Compute IP header checksum */
+    ip->checksum = net_checksum(ip, sizeof(struct ip_header));
+
+    /* ── Send via Ethernet directly, bypassing send_ip()'s ARP lookup ── */
+    send_eth(dst_mac, ETH_TYPE_IP, frame, ip_total_len);
+}
+
 /* ── DNS cache ────────────────────────────────────────────────────── */
 #define DNS_CACHE_SIZE  16
 #define DNS_CACHE_TTL   3000   /* ticks (~30 seconds at 100 Hz) */

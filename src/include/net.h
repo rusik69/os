@@ -176,6 +176,13 @@ void net_dns_cache_clear(void);
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,
                   const void *data, uint16_t len);
 
+/* UDP connected-socket fast path — pre-resolved destination MAC.
+ * Builds the complete Ethernet/IP/UDP frame and sends directly via
+ * send_eth(), bypassing ARP cache lookups inside send_ip(). */
+void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip,
+                          uint16_t src_port, uint16_t dst_port,
+                          const void *data, uint16_t data_len);
+
 /* UDP receive binding - register a callback for packets arriving on port */
 typedef void (*udp_recv_handler)(uint32_t src_ip, uint16_t src_port,
                                   const uint8_t *data, uint16_t len);
