@@ -1,13 +1,22 @@
-/* service.c — service registry: start/stop/log for kernel network services */
+/* service.c — service registry: start/stop/log + watchdog health monitoring */
 
 #include "service.h"
 #include "fs.h"
 #include "printf.h"
 #include "string.h"
 #include "rtc.h"
+#include "timer.h"
+#include "panic.h"
+#include "process.h"
 
 static struct service services[SERVICE_MAX];
 static int nservices = 0;
+
+/* ── Watchdog state ───────────────────────────────────────────────────────── */
+
+/* Tracks the last tick when the watchdog check ran, to avoid busy-looping. */
+static uint64_t watchdog_last_check = 0;
+static int      watchdog_initialized = 0;
 
 /* ── Filesystem directory structure ───────────────────────────────────────── */
 
@@ -249,6 +258,14 @@ int service_register(const char *name, int (*start)(void), void (*stop)(void)) {
     strncat(svc->log_path, name, sizeof(svc->log_path) - strlen(svc->log_path) - 5);
     strncat(svc->log_path, ".log", sizeof(svc->log_path) - strlen(svc->log_path) - 1);
 
+    /* ── Initialise watchdog fields ── */
+    svc->pid            = 0;
+    svc->crash_count    = 0;
+    svc->max_restarts   = SERVICE_DEFAULT_MAX_RESTARTS;
+    svc->critical       = 0;
+    svc->last_heartbeat = 0;
+    svc->last_restart   = 0;
+
     return 0;
 }
 
@@ -292,6 +309,9 @@ int service_start(const char *name) {
     int rc = svc->start();
     if (rc == 0) {
         svc->state = SERVICE_RUNNING;
+        /* Reset watchdog counters on successful manual start */
+        svc->crash_count = 0;
+        svc->last_heartbeat = timer_get_ticks();
         log_line(svc, "started");
         write_etc_services();
         kprintf("[svc] %s started\n", name);
@@ -311,6 +331,7 @@ int service_stop(const char *name) {
     }
     svc->stop();
     svc->state = SERVICE_STOPPED;
+    svc->crash_count = 0;
     log_line(svc, "stopped");
     write_etc_services();
     kprintf("[svc] %s stopped\n", name);
@@ -333,4 +354,188 @@ struct service *service_find(const char *name) {
 void service_log(const char *name, const char *msg) {
     struct service *svc = service_find(name);
     if (svc) log_line(svc, msg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * ── Watchdog Health Monitoring (Item U6) ─────────────────────────────────
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void service_set_pid(const char *name, int pid) {
+    struct service *svc = service_find(name);
+    if (svc) svc->pid = pid;
+}
+
+void service_set_critical(const char *name, int critical) {
+    struct service *svc = service_find(name);
+    if (svc) svc->critical = critical ? 1 : 0;
+}
+
+void service_heartbeat(const char *name) {
+    struct service *svc = service_find(name);
+    if (svc && svc->state == SERVICE_RUNNING)
+        svc->last_heartbeat = timer_get_ticks();
+}
+
+void service_watchdog_init(void) {
+    watchdog_last_check = 0;
+
+    /* Set reasonable defaults for all existing services */
+    for (int i = 0; i < nservices; i++) {
+        services[i].max_restarts = SERVICE_DEFAULT_MAX_RESTARTS;
+        services[i].pid          = 0;
+        services[i].crash_count  = 0;
+        services[i].last_heartbeat = timer_get_ticks();
+        services[i].last_restart   = 0;
+    }
+
+    watchdog_initialized = 1;
+    kprintf("[OK] service watchdog initialized (check every %u ticks)\n",
+            (unsigned)SERVICE_WATCHDOG_INTERVAL_TICKS);
+}
+
+/*
+ * Check whether a running service appears to be alive.
+ *
+ * For process-based services (pid > 0): verify the PID still exists by
+ * checking the process table.
+ *
+ * For kernel services (pid == 0): check the heartbeat timestamp.  A
+ * healthy service periodically calls service_heartbeat(); if the last
+ * heartbeat is too old, we assume the service is stuck or deadlocked.
+ *
+ * Returns 1 if the service appears alive, 0 if it appears crashed/stale.
+ */
+static int service_is_alive(struct service *svc) {
+    /* Stopped services are not expected to be alive */
+    if (svc->state != SERVICE_RUNNING)
+        return 1; /* not our concern */
+
+    /* ── Process-based service: check PID existence ── */
+    if (svc->pid > 0) {
+        struct process *table = process_get_table();
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED && (int)table[i].pid == svc->pid) {
+                found = 1;
+                break;
+            }
+        }
+        return found;
+    }
+
+    /* ── Kernel service: check heartbeat freshness ── */
+    if (svc->last_heartbeat > 0) {
+        uint64_t now = timer_get_ticks();
+        uint64_t elapsed = now - svc->last_heartbeat;
+        if (elapsed > SERVICE_HEARTBEAT_TIMEOUT_TICKS)
+            return 0; /* heartbeat timeout — service is stale */
+    }
+
+    return 1; /* no heartbeat tracking — assume alive */
+}
+
+/*
+ * Attempt to restart a crashed service with rate-limiting.
+ *
+ * Returns 0 on success, -1 if escalation was triggered.
+ */
+static int service_restart_crashed(struct service *svc) {
+    uint64_t now = timer_get_ticks();
+
+    /* Enforce cooldown between restart attempts */
+    if (svc->last_restart > 0) {
+        uint64_t since_restart = now - svc->last_restart;
+        if (since_restart < SERVICE_RESTART_COOLDOWN_TICKS)
+            return -1; /* too soon — skip */
+    }
+
+    /* ── Check restart limit ── */
+    svc->crash_count++;
+    svc->last_restart = now;
+
+    kprintf("[svc-watchdog] %s: crash #%d (limit: %d/%s)\n",
+            svc->name,
+            svc->crash_count,
+            svc->max_restarts,
+            svc->critical ? "critical" : "non-critical");
+
+    log_line(svc, "watchdog detected crash/stale state");
+
+    if (svc->crash_count > svc->max_restarts) {
+        /* ── Escalation: too many restarts ── */
+        if (svc->critical) {
+            /* Critical service keeps crashing — panic with full state capture */
+            kprintf("[svc-watchdog] *** CRITICAL SERVICE '%s' KEEPS CRASHING ***\n"
+                    "    crash_count=%d max_restarts=%d\n"
+                    "    ==> PANIC ESCALATION\n",
+                    svc->name, svc->crash_count, svc->max_restarts);
+            log_line(svc, "CRITICAL ESCALATION — panic");
+            panic("SERVICE WATCHDOG: critical service '%s' exceeded restart limit",
+                  svc->name);
+            /* not reached */
+        }
+
+        /* Non-critical: log and stop trying */
+        kprintf("[svc-watchdog] %s: exceeded restart limit (%d). Giving up.\n",
+                svc->name, svc->max_restarts);
+        svc->state = SERVICE_STOPPED;
+        log_line(svc, "watchdog: max restarts exceeded, service stopped");
+        return -1;
+    }
+
+    /* ── Attempt restart ── */
+    kprintf("[svc-watchdog] %s: attempting restart (attempt %d/%d)...\n",
+            svc->name, svc->crash_count, svc->max_restarts);
+
+    int rc = svc->start();
+    if (rc == 0) {
+        svc->state = SERVICE_RUNNING;
+        svc->last_heartbeat = timer_get_ticks();
+        kprintf("[svc-watchdog] %s: restart successful\n", svc->name);
+        log_line(svc, "watchdog: auto-restart successful");
+        return 0;
+    }
+
+    kprintf("[svc-watchdog] %s: restart FAILED (rc=%d)\n", svc->name, (int64_t)rc);
+    log_line(svc, "watchdog: auto-restart FAILED");
+    return -1;
+}
+
+/*
+ * Periodic health check for all registered services.
+ *
+ * Intended to be called from a kernel timer callback or the idle loop at
+ * a moderate frequency (every ~3 seconds, controlled by the caller).
+ *
+ * For each running service:
+ *   1. Check PID existence (process services) or heartbeat freshness
+ *   2. If dead/stale, attempt auto-restart
+ *   3. Escalate to panic for critical services that keep crashing
+ */
+void service_watchdog_check(void) {
+    if (!watchdog_initialized)
+        return;
+
+    uint64_t now = timer_get_ticks();
+
+    /* Rate-limit: only run every SERVICE_WATCHDOG_INTERVAL_TICKS */
+    if (watchdog_last_check > 0) {
+        uint64_t elapsed = now - watchdog_last_check;
+        if (elapsed < SERVICE_WATCHDOG_INTERVAL_TICKS)
+            return;
+    }
+    watchdog_last_check = now;
+
+    /* Scan all services */
+    for (int i = 0; i < nservices; i++) {
+        struct service *svc = &services[i];
+
+        if (svc->state != SERVICE_RUNNING)
+            continue;
+
+        if (!service_is_alive(svc)) {
+            /* Service appears crashed/stale — attempt recovery */
+            service_restart_crashed(svc);
+        }
+    }
 }
