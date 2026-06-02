@@ -80,6 +80,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/acpi_thermal.c \
          src/drivers/acpi_ec.c \
          src/drivers/ahci.c \
+         src/drivers/nvme.c \
          src/drivers/usb_ehci.c \
          src/drivers/usb_msc.c \
          src/drivers/ps2.c \

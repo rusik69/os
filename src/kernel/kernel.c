@@ -53,6 +53,7 @@
 #include "shm.h"
 #include "virtio_net.h"
 #include "virtio_blk.h"
+#include "nvme.h"
 #include "ac97.h"
 #include "smp.h"
 #include "apic.h"
@@ -618,6 +619,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[OK] virtio-blk: %llu sectors\n", virtio_blk_sector_count());
     } else
         kprintf("[--] virtio-blk: not present\n");
+
+    /* NVMe SSD */
+    if (nvme_init() == 0)
+        kprintf("[OK] NVMe SSD initialized\n");
+    else
+        kprintf("[--] NVMe: not present\n");
 
     if (ac97_init() == 0)
         kprintf("[OK] AC97 audio: initialized\n");

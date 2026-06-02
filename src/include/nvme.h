@@ -2,6 +2,7 @@
 #define NVME_H
 
 #include "types.h"
+#include "cpu_bitmask.h"
 
 /* NVMe PCI class code */
 #define NVME_PCI_CLASS    0x01
@@ -49,9 +50,29 @@
 #define NVME_ADMIN_GET_FEATURES 0x0A
 #define NVME_ADMIN_ASYNC_EVENT  0x0C
 
+/* I/O commands */
+#define NVME_IO_WRITE     0x01
+#define NVME_IO_READ      0x02
+
 /* Identify CNS values */
 #define NVME_IDENTIFY_NS   0x00
 #define NVME_IDENTIFY_CTRL 0x01
+
+/* Feature identifiers */
+#define NVME_FEAT_NUMBER_OF_QUEUES 0x07
+
+/* Queue configuration */
+#define NVME_IO_QUEUE_SIZE   64   /* entries per I/O SQ/CQ */
+#define NVME_IO_QUEUE_MAX    16   /* max I/O queue pairs (bounded by CPUMASK_MAX_CPUS) */
+
+/* Max namespace count we support */
+#define NVME_MAX_NS          8
+
+/* Per-namespace block device info */
+#define NVME_BLOCKDEV_ID     8   /* starting dev_id for NVMe namespaces */
+
+/* Doorbell stride: SQ doorbell at 0x1000 + (2*qid)*stride, */
+/* CQ doorbell at 0x1000 + (2*qid+1)*stride, stride = 4 << dstrd */
 
 /* Submission queue entry (64 bytes) */
 struct nvme_sq_entry {
@@ -99,9 +120,68 @@ struct nvme_identify_ctrl {
     /* ... more fields ... */
 } __attribute__((packed));
 
+/* Identify namespace data (4096 bytes) */
+struct nvme_identify_ns {
+    uint64_t nsze;     /* Namespace size in LBA's */
+    uint64_t ncap;     /* Namespace capacity */
+    uint64_t nuse;     /* Namespace utilization */
+    uint8_t  nsfeat;
+    uint8_t  nlbaf;    /* Number of LBA formats - 1 */
+    uint8_t  flbas;
+    uint8_t  mc;
+    uint8_t  dpc;
+    uint8_t  dps;
+    uint8_t  nmic;
+    uint8_t  rescap;
+    uint8_t  fpi;
+    uint8_t  dlfeat;
+    uint16_t nawun;
+    uint16_t nawupf;
+    uint16_t nacwu;
+    uint16_t nabsn;
+    uint16_t nabo;
+    uint16_t nabspf;
+    uint16_t noiob;
+    uint8_t  _rsv[80];
+    uint64_t lbbaf[0];
+} __attribute__((packed));
+
+/* LBA format data */
+struct nvme_lba_format {
+    uint16_t ms;
+    uint8_t  ds;       /* Data block size = 2^ds */
+    uint8_t  rp;
+};
+
+/* Per-CPU I/O queue pair */
+struct nvme_io_queue {
+    uint8_t   valid;
+    uint8_t   cpu_id;      /* CPU this queue belongs to */
+    uint16_t  qid;         /* Queue ID (also the admin queue's CQ ID) */
+
+    /* Submission queue */
+    void     *sq_virt;
+    uint64_t  sq_phys;
+    uint16_t  sq_tail;
+    uint16_t  sq_size;
+
+    /* Completion queue */
+    void     *cq_virt;
+    uint64_t  cq_phys;
+    uint16_t  cq_head;
+    uint16_t  cq_size;
+
+    /* Doorbell stride (cached from CAP) */
+    uint32_t  stride;
+
+    /* IRQ vector */
+    int       irq_vector;
+};
+
 /* NVMe controller state */
 struct nvme_ctrl {
     int      present;
+    int      initialized;
     uint64_t regs;        /* MMIO register base (virtual) */
     uint64_t phys_regs;   /* Physical register base */
     int      irq;
@@ -109,12 +189,24 @@ struct nvme_ctrl {
     uint32_t nn;          /* Number of namespaces */
     uint32_t sq_entry_size;
     uint32_t cq_entry_size;
+
+    /* Admin queues */
     uint16_t admin_sq_tail;
     uint16_t admin_cq_head;
-    void    *admin_sq;    /* Admin submission queue (virtual) */
-    void    *admin_cq;    /* Admin completion queue (virtual) */
+    void    *admin_sq;
+    void    *admin_cq;
     uint64_t admin_sq_phys;
     uint64_t admin_cq_phys;
+
+    /* I/O queues */
+    uint32_t  nr_io_queues;       /* Number of I/O queue pairs created */
+    uint32_t  doorbell_stride;    /* Stride in bytes between doorbells */
+    struct nvme_io_queue io_queues[NVME_IO_QUEUE_MAX];
+
+    /* Namespace block device IDs */
+    int      ns_blkdev_id[NVME_MAX_NS];
+    uint64_t ns_sector_count[NVME_MAX_NS];
+    uint32_t ns_sector_size[NVME_MAX_NS];
 };
 
 /* API */
@@ -123,5 +215,9 @@ int  nvme_is_present(void);
 int  nvme_identify_ctrl(struct nvme_identify_ctrl *id);
 int  nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe);
 void nvme_print_info(void);
+
+/* I/O queue submit function (called from blockdev layer) */
+int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
+                        uint64_t count, void *buf);
 
 #endif /* NVME_H */
