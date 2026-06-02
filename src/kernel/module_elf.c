@@ -407,11 +407,12 @@ int module_elf_parse(struct module_elf_context *ctx)
     if (parse_rela_sections(ctx) < 0)
         return -1;
 
-    /* Try to extract module name from common sections */
+    /* Try to extract module name and verify vermagic from .modinfo */
     {
         const char *name = NULL;
+        const char *mod_vermagic = NULL;
 
-        /* Look for .modinfo section and parse 'name=' field */
+        /* Look for .modinfo section and parse key=value fields */
         int modinfo_idx = module_elf_find_section(ctx, ".modinfo");
         if (modinfo_idx >= 0) {
             const char *modinfo_data = (const char *)(ctx->file_data +
@@ -422,13 +423,38 @@ int module_elf_parse(struct module_elf_context *ctx)
             while (pos < modinfo_size) {
                 if (strncmp(modinfo_data + pos, "name=", 5) == 0) {
                     name = modinfo_data + pos + 5;
-                    break;
+                } else if (strncmp(modinfo_data + pos, "vermagic=", 9) == 0) {
+                    mod_vermagic = modinfo_data + pos + 9;
                 }
                 /* Skip to next null terminator */
                 while (pos < modinfo_size && modinfo_data[pos] != '\0')
                     pos++;
                 pos++; /* skip null */
             }
+        }
+
+        /* ── Vermagic validation ────────────────────────────────────
+         * If the module has a vermagic string embedded, check it against
+         * the running kernel's VERMAGIC_STRING.  A mismatch indicates
+         * the module was built for a different kernel version or with
+         * different configuration flags (SMP, preempt, etc.) and could
+         * cause subtle ABI corruption. */
+        if (mod_vermagic) {
+            if (strcmp(mod_vermagic, VERMAGIC_STRING) != 0) {
+                snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                         "module_elf: vermagic mismatch for '%s': "
+                         "kernel has \"%s\", module has \"%s\"",
+                         name ? name : "?",
+                         VERMAGIC_STRING, mod_vermagic);
+                return -1;
+            }
+            kprintf("[MOD_ELF] Vermagic OK for '%s' (%s)\n",
+                    name ? name : "?", VERMAGIC_STRING);
+        } else {
+            /* Modules without vermagic are allowed but warned.
+             * During transition, not all modules may have it yet. */
+            kprintf("[MOD_ELF] WARNING: '%s' has no vermagic field\n",
+                    name ? name : ctx->name);
         }
 
         /* Fall back to first text section name or "unnamed" */

@@ -26,10 +26,26 @@ endif
 # Number of parallel jobs (all available CPU cores)
 NPROCS := $(shell nproc)
 
+# Kernel version string — used in module vermagic checking
+KVERSION ?= 6.1.0-osdev
+
+# Determine preemption model for vermagic
+ifdef CONFIG_PREEMPT
+VERMAGIC_FLAGS := -DCONFIG_PREEMPT
+else ifdef CONFIG_PREEMPT_VOLUNTARY
+VERMAGIC_FLAGS := -DCONFIG_PREEMPT_VOLUNTARY
+else
+VERMAGIC_FLAGS :=
+endif
+
+# SMP enabled? (auto-detected from target)
+VERMAGIC_FLAGS += -DCONFIG_SMP
+
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
          -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
+         -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
          $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack

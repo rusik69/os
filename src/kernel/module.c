@@ -57,6 +57,29 @@ static void module_scan_cmdline_params(void);
 
 /* ── Global module table ────────────────────────────────────────── */
 
+/* ── Module version magic (vermagic) ────────────────────────────────
+ *
+ * This string records the kernel version and build configuration at the
+ * time the kernel was compiled.  When a loadable module is inserted, the
+ * module loader compares the module's embedded vermagic against this
+ * string.  A mismatch causes the load to be rejected with a clear error
+ * message, preventing subtle ABI corruption from incompatible modules.
+ *
+ * The string is defined by VERMAGIC_STRING from vermagic.h and
+ * constructed from:
+ *   - KVERSION  (kernel version, set in Makefile as -DKVERSION=...)
+ *   - SMP flag  (CONFIG_SMP set in Makefile for SMP builds)
+ *   - Preempt   (CONFIG_PREEMPT / CONFIG_PREEMPT_VOLUNTARY)
+ *   - ARCH      (always "x86_64" for this port)
+ */
+const char module_vermagic[] = VERMAGIC_STRING;
+
+/* Return the kernel's version magic string.  Used by the module loader
+ * to compare against any module's embedded vermagic. */
+const char *module_get_vermagic(void) {
+    return module_vermagic;
+}
+
 static struct kernel_module g_modules[MODULE_MAX];
 static spinlock_t g_mod_lock;
 static int g_mod_initialized = 0;
@@ -84,6 +107,9 @@ void module_init(void) {
     g_mod_initialized = 1;
     kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX)\n",
             MODULE_MAX, (unsigned long long)MODULES_VADDR);
+
+    /* Log the kernel's vermagic string so boot logs can be cross-checked */
+    kprintf("[OK] Kernel vermagic: %s\n", module_vermagic);
 
     /* Scan the kernel cmdline for module.param=value entries */
     module_scan_cmdline_params();

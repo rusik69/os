@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "list.h"
+#include "vermagic.h"
 
 #define MODULE_MAX 16
 
@@ -99,6 +100,11 @@ struct kernel_module {
 };
 
 /* ── Kernel module API ────────────────────────────────────────────── */
+
+/* Return the kernel's version magic (vermagic) string, used to verify
+ * that a loadable module was built against a compatible kernel version
+ * and with matching configuration flags. */
+const char *module_get_vermagic(void);
 
 /* Initialize the kernel module subsystem. */
 void module_init(void);
