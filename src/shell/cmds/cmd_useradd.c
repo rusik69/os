@@ -40,7 +40,7 @@ void cmd_useradd(const char *args) {
 
     int rc = user_add(username, uid, pw);
     if (rc == 0)
-        kprintf("User '%s' added (uid=%u)\n", username, (unsigned long)uid);
+        kprintf("User '%s' added (uid=%lu)\n", username, (unsigned long)uid);
     else if (rc == -2)
         kprintf("useradd: user '%s' already exists\n", username);
     else if (rc == -4)
@@ -48,26 +48,7 @@ void cmd_useradd(const char *args) {
     else if (rc == -5)
         kprintf("useradd: failed to create home directory\n");
     else
-        kprintf("useradd: failed (%d)\n", (unsigned long)(-rc));
-}
-
-/* userdel <username> */
-void cmd_userdel(const char *args) {
-    if (!args || !*args) {
-        kprintf("Usage: userdel <username>\n");
-        return;
-    }
-    if (!session_is_root()) {
-        kprintf("userdel: permission denied (root only)\n");
-        return;
-    }
-    int rc = user_delete(args);
-    if (rc == 0)
-        kprintf("User '%s' deleted\n", args);
-    else if (rc == -1)
-        kprintf("userdel: cannot delete root\n");
-    else
-        kprintf("userdel: user '%s' not found\n", args);
+        kprintf("useradd: failed (%d)\n", -rc);
 }
 
 /* users - list all users */
@@ -76,9 +57,9 @@ void cmd_users(void) {
     struct user_entry *tbl = users_get_table();
     for (int i = 0; i < USER_MAX_ENTRIES; i++) {
         if (!tbl[i].active) continue;
-        kprintf("%-5u %-5u %-16s %s\n",
-                (unsigned long)tbl[i].uid,
-                (uint64_t)tbl[i].gid,
+        kprintf("%-5llu %-5llu %-16s %s\n",
+                (unsigned long long)tbl[i].uid,
+                (unsigned long long)tbl[i].gid,
                 tbl[i].username,
                 tbl[i].home);
     }
