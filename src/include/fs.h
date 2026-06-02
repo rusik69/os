@@ -83,6 +83,15 @@ int fs_truncate(const char *path, uint32_t len); /* truncate file to len bytes *
 /* Format a mode word as "rwxrwxrwx" into a 9-char buffer (+ NUL) */
 void fs_mode_str(uint16_t mode, char out[10]);
 
+/*
+ * Readahead: prefetch file data for the given byte range into the page cache.
+ * This triggers the page cache to pre-load the backing blocks so that
+ * subsequent reads of this data are cache hits.
+ *
+ * Returns 0 on success, or negative on error.
+ */
+int fs_readahead(const char *path, uint32_t offset, uint32_t count);
+
 /* ── Quota support ────────────────────────────────────────────── */
 struct fs_quota {
     uint16_t uid;

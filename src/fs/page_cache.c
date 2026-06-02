@@ -627,6 +627,80 @@ void page_cache_readahead_stats(int *hits, int *misses, int *prefetches) {
 }
 
 
+/* ── Readahead a byte range of a file into the page cache ────────── */
+/*
+ * This is the backend for the readahead() syscall.  Given a byte range
+ * [offset, offset+count) within a file, it converts to page cache block
+ * granularity and prefetches each block from the backing store.
+ *
+ * The block_fn callback translates a logical file block (at PAGE_SIZE
+ * granularity) to a physical page cache block number.  If block_fn is
+ * NULL, the logical file block number is used directly (identity mapping).
+ *
+ * Sparse/unallocated blocks (block_fn returns UINT64_MAX) are skipped.
+ */
+int page_cache_readahead_range(uint64_t ino, uint32_t offset, uint32_t count,
+                                uint32_t file_size,
+                                int (*backing_store)(uint32_t lba, uint8_t count, void *buf),
+                                uint64_t (*block_fn)(uint32_t file_block))
+{
+    if (!page_cache_initialized || !backing_store)
+        return -EINVAL;
+
+    if (offset >= file_size)
+        return 0; /* nothing to prefetch */
+
+    /* Clamp count to file size */
+    if (offset + count > file_size)
+        count = file_size - offset;
+
+    /* Compute the page-aligned block range */
+    uint32_t start_block = offset / PAGE_SIZE;        /* logical file block */
+    uint32_t end_block   = (offset + count + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    if (end_block == 0)
+        return 0;
+
+    /* Prefetch each page cache block in the range.
+     * We iterate forward so that page_cache_readahead can batch
+     * consecutive blocks. */
+    for (uint32_t fb = start_block; fb < end_block; ) {
+        /* Determine the physical page cache block number */
+        uint64_t pc_block;
+        if (block_fn) {
+            pc_block = block_fn(fb);
+            if (pc_block == UINT64_MAX) {
+                fb++;
+                continue; /* sparse — skip */
+            }
+        } else {
+            pc_block = (uint64_t)fb; /* identity mapping */
+        }
+
+        /* How many consecutive blocks can we prefetch in one call?
+         * We scan ahead to find the run length. */
+        uint32_t run = 1;
+        for (uint32_t next = fb + 1; next < end_block; next++, run++) {
+            uint64_t next_pc;
+            if (block_fn) {
+                next_pc = block_fn(next);
+                if (next_pc == UINT64_MAX) break; /* hole ends the run */
+            } else {
+                next_pc = (uint64_t)next;
+            }
+            if (next_pc != pc_block + run) break; /* non-contiguous */
+        }
+
+        /* Prefetch this run of page cache blocks */
+        page_cache_readahead(ino, pc_block, (int)run, backing_store);
+
+        fb += run;
+    }
+
+    return 0;
+}
+
+
 /* ── Debug: dump readahead state ───────────────────────────────────── */
 void page_cache_dump_ra(void) {
     kprintf("=== Page Cache ===\n");

@@ -93,6 +93,34 @@ void page_cache_readahead_reset(uint64_t ino);
 /* Print readahead statistics (for debugging / /proc). */
 void page_cache_readahead_stats(int *hits, int *misses, int *prefetches);
 
+/*
+ * Readahead a byte range of a file into the page cache.
+ *
+ * Given an inode number, a byte offset within the file, and a byte count,
+ * this function computes the covering page cache blocks and prefetches
+ * them from the backing store.  This is the backend for the readahead()
+ * syscall and VFS-level readahead.
+ *
+ * @ino          Inode number (file identifier)
+ * @offset       Byte offset within the file (start of range)
+ * @count        Number of bytes to prefetch
+ * @file_size    Total file size (to clamp the range)
+ * @backing_store Callback that reads one block from the underlying device.
+ * @block_fn     Callback that translates a file block index to a physical
+ *               page cache block number.  Should return UINT64_MAX for
+ *               sparse/unallocated blocks.  May be NULL if the caller
+ *               uses a simpler mapping (logical block == page cache block).
+ *
+ * Returns 0 on success, or negative on error.
+ */
+int page_cache_readahead_range(uint64_t ino, uint32_t offset, uint32_t count,
+                                uint32_t file_size,
+                                int (*backing_store)(uint32_t lba, uint8_t count, void *buf),
+                                uint64_t (*block_fn)(uint32_t file_block));
+
+/* Debug: dump readahead state */
+void page_cache_dump_ra(void);
+
 /* ── Writeback / dirty page flushing ─────────────────────────────── */
 
 /* Register backing-store write callback for dirty page writeback.

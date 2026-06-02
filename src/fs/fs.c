@@ -633,6 +633,72 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
     return 0;
 }
 
+/*
+ * Readahead: prefetch file data for the given byte range into the page cache.
+ *
+ * Computes the page cache blocks covering [offset, offset+count) and
+ * prefetches them from the ATA backing store.  Subsequent reads of this
+ * data will be cache hits.
+ *
+ * Returns 0 on success, or negative on error.
+ */
+int fs_readahead(const char *path, uint32_t offset, uint32_t count) {
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+
+    uint32_t file_size = inodes[idx].size;
+    if (offset >= file_size) return 0;
+    if (offset + count > file_size)
+        count = file_size - offset;
+
+    uint64_t ino = (uint64_t)idx + 1;  /* 1-based inode number */
+
+    /* Compute sector range */
+    uint32_t start_sector = offset / ATA_SECTOR_SIZE;
+    uint32_t end_sector   = (offset + count + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
+    uint32_t sectors_per_page = PAGE_SIZE / ATA_SECTOR_SIZE; /* typically 8 */
+
+    /* Track the last page cache block we prefetched to avoid duplicates */
+    uint64_t last_pc_block = UINT64_MAX;
+
+    for (uint32_t s = start_sector; s < end_sector; ) {
+        uint32_t blk = inodes[idx].blocks[s];
+        if (blk == 0) {
+            s++;
+            continue; /* sparse/unallocated — skip */
+        }
+
+        uint64_t pc_block = (uint64_t)blk / sectors_per_page;
+
+        if (pc_block != last_pc_block) {
+            /* Count how many consecutive file sectors map to the same
+             * page cache block (or consecutive page cache blocks).
+             * We batch them into a single readahead call. */
+            uint32_t run_sectors = 1;
+            for (uint32_t ns = s + 1; ns < end_sector; ns++, run_sectors++) {
+                uint32_t nblk = inodes[idx].blocks[ns];
+                if (nblk == 0) break;
+                uint64_t npc = (uint64_t)nblk / sectors_per_page;
+                if (npc != pc_block + (run_sectors / sectors_per_page))
+                    break;
+            }
+
+            /* Convert run_sectors to page cache blocks */
+            uint32_t pc_run = (run_sectors + sectors_per_page - 1) / sectors_per_page;
+
+            /* Prefetch this run */
+            page_cache_readahead(ino, pc_block, (int)pc_run, fs_backing_store_read);
+
+            last_pc_block = pc_block;
+        }
+
+        s++;
+    }
+
+    return 0;
+}
+
 int fs_delete(const char *path) {
     int idx = find_inode(path);
     if (idx < 0) return -1;

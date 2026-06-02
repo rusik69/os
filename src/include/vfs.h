@@ -237,6 +237,19 @@ int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);
 int vfs_flush(const char *path);     /* flush a single filesystem by path */
 int vfs_sync_all(void);              /* sync all mounted filesystems */
 
+/*
+ * Readahead at VFS level.
+ *
+ * Hints that the kernel should prefetch file data for the given byte range
+ * into the page cache.  The actual behavior depends on the underlying
+ * filesystem:
+ *   - Block-device-backed filesystems (legacy SMFS): prefetch into page cache
+ *   - Memory-backed filesystems (tmpfs, procfs, sysfs): no-op
+ *
+ * Returns 0 on success, or negative on error.
+ */
+int vfs_readahead(const char *path, uint32_t offset, uint32_t count);
+
 /* File deduplication */
 int vfs_dedup(const char *path1, const char *path2);
 

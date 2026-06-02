@@ -632,6 +632,49 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     return r;
 }
 
+/*
+ * VFS-level readahead: hint to prefetch file data into the page cache.
+ *
+ * For block-device-backed filesystems (like the legacy SMFS), this maps
+ * the byte range to page cache blocks and prefetches them from the
+ * backing store.  For memory-backed filesystems (tmpfs, procfs, etc.)
+ * this is a no-op since there is no backing store to prefetch from.
+ *
+ * Returns 0 on success, or negative on error.
+ */
+int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
+    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock read-file permission (same as vfs_read) */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+            return -EACCES;
+    }
+
+    /* Check mandatory locks before readahead */
+    {
+        int lock_ret = file_lock_check_mandatory(ap, 0);
+        if (lock_ret < 0)
+            return lock_ret;
+    }
+
+    struct vfs_mount *m = resolve(ap);
+    if (!m) return -1;
+
+    /* For block-device-backed filesystems, delegate to the legacy
+     * filesystem's readahead which integrates with the page cache.
+     * The SMFS (Simple Memory File System) on "/" is backed by
+     * the legacy ATA block filesystem (fs.c). */
+    if (m->ops == &smfs_ops) {
+        return fs_readahead(ap, offset, count);
+    }
+
+    /* For other filesystems (tmpfs, procfs, sysfs, etc.), readahead
+     * is a no-op — they have no backing store to prefetch from. */
+    return 0;
+}
+
 int vfs_stat(const char *path, struct vfs_stat *st) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 

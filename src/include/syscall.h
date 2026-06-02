@@ -200,6 +200,9 @@
 
 /* Memory mapping syscalls */
 #define SYS_MREMAP           370
+
+/* Readahead: prefetch file data into page cache */
+#define SYS_READAHEAD        371
 #define SYS_MMAP            235  /* (addr, length, prot) → addr or -1 */
 #define SYS_MUNMAP          236  /* (addr, length) → 0 or -1 */
 #define SYS_MPROTECT        237  /* (addr, length, prot) → 0 or -1 */

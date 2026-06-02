@@ -5621,6 +5621,42 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
     return 0;
 }
 
+
+/* ── readahead() syscall (Item 49) ───────────────────────────────────── */
+/*
+ * POSIX readahead: advise the kernel to prefetch file data into the page
+ * cache for the given byte range.  The call is advisory; subsequent reads
+ * of the specified range will be served from cache if the prefetch succeeds.
+ *
+ *   int readahead(int fd, off64_t offset, size_t count);
+ *
+ * Returns 0 on success, or -1 on error.
+ */
+static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
+    if (fd == 0) return (uint64_t)-1; /* stdin not supported */
+
+    /* Look up the file descriptor */
+    int i;
+    if (fd >= 3 && fd < 700) {
+        i = (int)fd - 3;
+    } else {
+        return (uint64_t)-1; /* unsupported fd type for readahead */
+    }
+
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used) return (uint64_t)-1;
+
+    /* Check that the file is readable */
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
+    if (st.type != 1) return (uint64_t)-1; /* only regular files */
+
+    /* Delegate to VFS-level readahead */
+    int ret = vfs_readahead(pfd->path, (uint32_t)offset, (uint32_t)count);
+    return (ret == 0) ? 0 : (uint64_t)-1;
+}
+
+
 /* ── timerfd ──────────────────────────────────────────────────────────── */
 
 #define TIMERFD_MAX 16
@@ -6692,6 +6728,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MINCORE:      return sys_mincore(a1, a2, a3);
         case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
+        case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
         case SYS_TIMERFD_CREATE:  return sys_timerfd_create(a1, a2);
         case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
         case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);
