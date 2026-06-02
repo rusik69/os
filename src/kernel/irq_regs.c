@@ -4,6 +4,7 @@
 #include "smp.h"
 #include "pmm.h"
 #include "string.h"
+#include "process.h"
 
 /*
  * Per-CPU IRQ register save/restore with stack checking.
@@ -177,7 +178,27 @@ int irq_stack_check(void)
         return 0; /* Process context, not on IRQ stack — normal */
     }
 
-    /* Check II: Stack overflow detection — verify magic is intact */
+    /* Check II: If in IRQ context, verify we're not using the task's
+     * kernel stack (would indicate missing IRQ stack switch). */
+    if (irq_regs_per_cpu[cpu].depth > 0) {
+        struct process *cur = process_get_current();
+        if (cur && cur->kernel_stack && cur->stack_top) {
+            if (current_rsp >= cur->kernel_stack &&
+                current_rsp < cur->stack_top) {
+                kprintf("[!!] irq_stack_check: CPU %d IRQ context using TASK stack!\n"
+                        "    RSP=0x%llx in [0x%llx-0x%llx) task=%s pid=%u\n",
+                        cpu,
+                        (unsigned long long)current_rsp,
+                        (unsigned long long)cur->kernel_stack,
+                        (unsigned long long)cur->stack_top,
+                        cur->name ? cur->name : "?",
+                        (unsigned int)cur->pid);
+                return -1;
+            }
+        }
+    }
+
+    /* Check III: Stack overflow detection — verify magic is intact */
     uint64_t magic_val = *((volatile uint64_t *)info->stack_bottom);
     if (magic_val != IRQ_STACK_MAGIC) {
         kprintf("[!!] irq_stack_check: CPU %d IRQ stack OVERFLOW detected!\n"
@@ -189,7 +210,7 @@ int irq_stack_check(void)
         return -1;
     }
 
-    /* Check III: Update stack watermark (lowest RSP seen) */
+    /* Check IV: Update stack watermark (lowest RSP seen) */
     if (current_rsp < info->stack_watermark) {
         info->stack_watermark = current_rsp;
     }
