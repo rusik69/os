@@ -244,7 +244,7 @@ static int detect_cpus_from_madt(void) {
     if (smp_cpu_count > SMP_MAX_CPUS) smp_cpu_count = SMP_MAX_CPUS;
     madt_scanned = 1;
 
-    kprintf("[OK] MADT: %u CPU%c found\n", (unsigned long)local_apics,
+    kprintf("[OK] MADT: %u CPU%c found\n", (unsigned int)local_apics,
             local_apics == 1 ? ' ' : 's');
 
     return smp_cpu_count;
@@ -270,7 +270,7 @@ int smp_boot_aps(void) {
     /* Copy trampoline to low memory (physical page 0x7000) */
     size_t tramp_size = (size_t)((uintptr_t)ap_trampoline_end - (uintptr_t)ap_trampoline_start);
     if (tramp_size > 0x1000) {
-        kprintf("[!!] SMP: trampoline too large (%u bytes)\n", (unsigned long)tramp_size);
+        kprintf("[!!] SMP: trampoline too large (%lu bytes)\n", (unsigned long)tramp_size);
         return 0;
     }
 
@@ -292,7 +292,7 @@ int smp_boot_aps(void) {
         /* Allocate kernel stack for this AP */
         uint8_t *stack = (uint8_t *)pmm_alloc_frames(32); /* 32 pages = 128 KB */
         if (!stack) {
-            kprintf("[!!] SMP: cannot allocate stack for AP %d\n", (unsigned long)i);
+            kprintf("[!!] SMP: cannot allocate stack for AP %d\n", (int)i);
             continue;
         }
         /* Map the stack at a known virtual address */

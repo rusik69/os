@@ -204,10 +204,11 @@ static void draw_glyph(int px, int py, uint8_t ch, uint32_t fg_col, uint32_t bg_
 }
 
 /* Redraw one line of the console (from buffer or scrollback) */
-static void redraw_line(int screen_row, int buffer_row) {
+static void __attribute__((unused)) redraw_line(int screen_row, int buffer_row) {
     int py = screen_row * FONT_HEIGHT;
     uint32_t fg_c = fb_palette(g_fg);
     uint32_t bg_c = fb_palette(g_bg);
+    (void)fg_c; (void)bg_c;
 
     for (int col = 0; col < FBCON_COLS; col++) {
         struct fbcon_cell *cell;

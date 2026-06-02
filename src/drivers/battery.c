@@ -133,8 +133,6 @@ struct rsdt {
     uint32_t entries[1];
 } __attribute__((packed));
 
-#define PHYS_TO_VIRT(addr) ((void *)((uint64_t)(addr) + 0xFFFF800000000000ULL))
-
 static int scan_dsdt_for_battery(void) {
     /* Find RSDP (same as acpi.c does) */
     struct rsdp *rsdp = NULL;

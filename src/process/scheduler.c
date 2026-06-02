@@ -39,7 +39,8 @@ static const uint16_t time_slices[SCHED_LEVELS] = {10, 5, 3, 2};
 
 /* ── Autogroup state ──────────────────────────────────────── */
 static struct sched_autogroup autogroups[SCHED_AUTOGROUP_MAX];
-static int autogroup_count = 0;
+/* autogroup_count tracks total groups — kept for future use */
+static int autogroup_count __attribute__((unused)) = 0;
 
 /* ── Per-CPU helpers ────────────────────────────────────────────────── */
 static inline struct cpu_info *this_cpu(void) {
@@ -429,9 +430,7 @@ void scheduler_tick(int was_user) {
 /* ── Aging: boost starved processes (using RTC for precision) ──── */
 void scheduler_age(void) {
     extern uint64_t rtc_get_ticks(void);
-    uint64_t now = timer_get_ticks();
-    if (rtc_get_ticks)
-        now = rtc_get_ticks();
+    uint64_t now = rtc_get_ticks();
     struct process *table = process_get_table();
 
     uint64_t irq_flags;
@@ -442,7 +441,7 @@ void scheduler_age(void) {
         if (p->state != PROCESS_READY) continue;
         if (p->priority == 0) continue;
         if (p->last_run_tick == 0) continue;
-        uint64_t age_threshold = rtc_get_ticks ? 1000 : 200;
+        uint64_t age_threshold = 1000;
         if (now - p->last_run_tick > age_threshold) {
             /* Remove, boost, re-add */
             scheduler_remove(p);

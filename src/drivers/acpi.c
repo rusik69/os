@@ -190,7 +190,7 @@ void acpi_init(void) {
             memcpy(&ecam, body, 8);
             if (ecam) {
                 pcie_ecam_set_base(ecam);
-                kprintf("[OK] PCIe ECAM base: 0x%x\n", ecam);
+                kprintf("[OK] PCIe ECAM base: 0x%llx\n", (unsigned long long)ecam);
             }
         }
         /* FACP / FADT table */
@@ -226,7 +226,7 @@ void acpi_init(void) {
     /* Default S5 value if DSDT parsing didn't find it */
     if (slp_typa_s5 == 0) slp_typa_s5 = 0x07;
 
-    kprintf("[OK] ACPI: PM1a control port 0x%x\n", (unsigned long)pm1a_cnt);
+    kprintf("[OK] ACPI: PM1a control port 0x%lx\n", (unsigned long)pm1a_cnt);
     if (s3_supported) {
         kprintf("[OK] ACPI: S3 (Suspend-to-RAM) supported\n");
     }

@@ -196,10 +196,10 @@ static void e1000_set_itr(uint32_t value) {
 static void e1000_itr_adaptive(void) {
     if (!itr_enabled || !nic_present) return;
 
-    uint64_t now = 0;
     /* Read timer ticks (assuming ~100 Hz timer) via RDTSC as a coarse estimate */
-    __asm__ volatile("rdtsc" : "=a"(((uint32_t *)&now)[0]),
-                              "=d"(((uint32_t *)&now)[1]));
+    uint32_t now_lo, now_hi;
+    __asm__ volatile("rdtsc" : "=a"(now_lo), "=d"(now_hi));
+    uint64_t now = ((uint64_t)now_hi << 32) | now_lo;
 
     /* Need a reference tick to compare — use TSC-direct if no timer ticks variable */
     if (itr_last_tick == 0) {
@@ -273,8 +273,9 @@ static void e1000_itr_init(void) {
     itr_last_tick = 0;
 
     /* Read initial TSC reference */
-    __asm__ volatile("rdtsc" : "=a"(((uint32_t *)&itr_last_tick)[0]),
-                              "=d"(((uint32_t *)&itr_last_tick)[1]));
+    uint32_t init_lo, init_hi;
+    __asm__ volatile("rdtsc" : "=a"(init_lo), "=d"(init_hi));
+    itr_last_tick = ((uint64_t)init_hi << 32) | init_lo;
 
     itr_enabled = 1;
     kprintf("  e1000: ITR enabled (rate=%u, ~%u int/s)\n",
@@ -322,7 +323,7 @@ int e1000_init(void) {
 
     /* Get MMIO base from BAR0 (memory-mapped, mask lower 4 bits) */
     uint64_t bar0 = dev.bar[0] & ~0xFULL;
-    kprintf("  e1000 BAR0=0x%x IRQ=%u\n", bar0, (unsigned long)dev.irq);
+    kprintf("  e1000 BAR0=0x%llx IRQ=%lu\n", (unsigned long long)bar0, (unsigned long)dev.irq);
 
     /* Map MMIO region (128KB) into high-half VMA space */
     mmio_base = (volatile uint8_t *)vmm_map_phys(bar0, 0x20000,

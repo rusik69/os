@@ -305,7 +305,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check-app-boundary doom-test format lint ccache-stats count build-info run-test
+        check check-clean check-app-boundary doom-test format lint ccache-stats count build-info run-test
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -407,6 +407,41 @@ test: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) test-kernel
 	@chmod +x tests/run_tests.sh
 	@./tests/run_tests.sh $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
+
+# ── Check target: full build with -Werror + run all tests ──────────────
+CHECK_CFLAGS = $(CFLAGS) -Werror
+BUILDDIR_CHECK = build_check
+
+C_CHECK_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
+ASM_CHECK_SRCS = $(ASM_SRCS)
+
+C_CHECK_OBJS  = $(patsubst src/%.c,$(BUILDDIR_CHECK)/%.o,$(C_CHECK_SRCS))
+ASM_CHECK_OBJS = $(patsubst src/%.asm,$(BUILDDIR_CHECK)/%.o,$(ASM_CHECK_SRCS))
+CHECK_OBJS    = $(ASM_CHECK_OBJS) $(C_CHECK_OBJS)
+
+$(BUILDDIR_CHECK)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CHECK_CFLAGS) -c $< -o $@
+
+$(BUILDDIR_CHECK)/%.o: src/%.asm
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILDDIR_CHECK)/kernel.elf: check-app-boundary $(CHECK_OBJS)
+	@mkdir -p $(BUILDDIR_CHECK)
+	$(LD) $(LDFLAGS) -o $@ $(CHECK_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+
+$(BUILDDIR_CHECK)/kernel.bin: $(BUILDDIR_CHECK)/kernel.elf
+	cp $< $@
+
+check: $(BUILDDIR)/disk.img
+	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK)/kernel.bin
+	@chmod +x tests/run_tests.sh
+	@./tests/run_tests.sh $(BUILDDIR_CHECK)/kernel.bin $(BUILDDIR)/disk.img
+
+# Clean the check build artifacts
+check-clean:
+	rm -rf $(BUILDDIR_CHECK)
 
 # Full clean rebuild + test
 test-clean: clean

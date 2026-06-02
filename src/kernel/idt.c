@@ -71,7 +71,7 @@ void idt_register_handler(uint8_t vector, isr_handler_t handler) {
     handlers[vector] = handler;
 }
 
-void idt_set_gate_ist(uint8_t num, uint8_t ist) {
+void idt_set_gate_ist(int num, uint8_t ist) {
     if (num >= 256) return;
     idt[num].ist = ist;
 }

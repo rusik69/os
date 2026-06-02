@@ -76,7 +76,7 @@ static void cpuidle_detect_caps(void)
 /* Execute MONITOR for address tracking, then MWAIT with hint.
  * The hint is: bits [3:0] = C-state sub-state, bits [7:4] = C-state.
  * Returns immediately on wake (store to monitored address or interrupt). */
-static void __attribute__((always_inline))
+static inline void
 do_mwait(volatile uint64_t *addr, uint32_t hint)
 {
     /* MONITOR: addr in RAX, extensions in RCX, hints in RDX.

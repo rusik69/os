@@ -5573,7 +5573,21 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
     if (syscall_is_user_process()) {
-        if (!seccomp_check_syscall(num)) return (uint64_t)-1; /* EPERM */
+        uint32_t seccomp_action = seccomp_evaluate_syscall(num, a1, a2, a3, 0);
+        switch (seccomp_action) {
+        case SECCOMP_RET_ALLOW:
+        case SECCOMP_RET_LOG:
+            /* LOG already wrote audit record — allow to proceed */
+            break;
+        case SECCOMP_RET_TRAP:
+            seccomp_send_sigsys(num, 0);
+            return (uint64_t)-1; /* EPERM — caller may handle SIGSYS on return */
+        case SECCOMP_RET_KILL:
+        default:
+            /* seccomp_evaluate_syscall already logged audit — kill process */
+            process_exit_code(SIGSYS);
+            return (uint64_t)-1;
+        }
     }
 
     /* Audit syscall entry */

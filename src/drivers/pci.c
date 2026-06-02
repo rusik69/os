@@ -694,7 +694,7 @@ void pci_list(void) {
                 }
             }
 
-            kprintf(" %02x   %02x  %04x:%04x %02x.%02x %s%s%s\n",
+            kprintf(" %02lx   %02lx  %04lx:%04lx %02lx.%02lx %s%s%s\n",
                     (unsigned long)bus, (unsigned long)slot,
                     (unsigned long)vid, (unsigned long)did,
                     (unsigned long)cls, (unsigned long)sub,
@@ -722,6 +722,6 @@ void pci_init(void) {
             }
         }
     }
-    kprintf("  %u PCI devices found (%d MSI, %d MSI-X capable)\n",
+    kprintf("  %lu PCI devices found (%d MSI, %d MSI-X capable)\n",
             (unsigned long)count, msi_count, msix_count);
 }
