@@ -4050,6 +4050,28 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         case PR_GET_SECCOMP: {
             return (uint64_t)seccomp_get_mode();
         }
+        case PR_SET_SECUREBITS: {
+            /* arg2 = securebits bitmask. Only allow setting non-locked bits. */
+            uint8_t new_bits = (uint8_t)(a2 & 0xFF);
+            uint8_t current = (uint8_t)securebits_get(p);
+            /* Locked bits are immutable */
+            if ((current & SECBIT_LOCKED_MASK) & (new_bits & SECBIT_LOCKED_MASK))
+                return (uint64_t)-1;
+            /* Can only set bits in SECBIT_ALLOWED_MASK */
+            if (new_bits & ~SECBIT_ALLOWED_MASK & ~SECBIT_LOCKED_MASK)
+                return (uint64_t)-1;
+            /* Setting a locked bit requires the corresponding non-locked bit to be set */
+            if ((new_bits & SECBIT_KEEP_CAPS_LOCKED) && !(new_bits & SECBIT_KEEP_CAPS))
+                return (uint64_t)-1;
+            if ((new_bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(new_bits & SECBIT_NO_SETUID_FIXUP))
+                return (uint64_t)-1;
+            if ((new_bits & SECBIT_NOROOT_LOCKED) && !(new_bits & SECBIT_NOROOT))
+                return (uint64_t)-1;
+            return (uint64_t)securebits_set(p, new_bits);
+        }
+        case PR_GET_SECUREBITS: {
+            return (uint64_t)securebits_get(p);
+        }
         default:
             return (uint64_t)-1;
     }

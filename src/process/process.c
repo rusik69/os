@@ -10,6 +10,7 @@
 #include "signal.h"
 #include "syscall.h"
 #include "cpu_topology.h"
+#include "caps.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -636,7 +637,17 @@ int securebits_get(struct process *proc) {
 int securebits_set(struct process *proc, uint8_t bits) {
     if (!proc) return -1;
     /* Only allow setting bits that aren't locked */
-    if (proc->securebits & (SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED))
+    if (proc->securebits & SECBIT_LOCKED_MASK)
+        return -1;
+    /* Can only set bits that are in the allowed or locked mask */
+    if (bits & ~(SECBIT_ALLOWED_MASK | SECBIT_LOCKED_MASK))
+        return -1;
+    /* Setting a locked bit requires the corresponding non-locked bit */
+    if ((bits & SECBIT_KEEP_CAPS_LOCKED) && !(bits & SECBIT_KEEP_CAPS))
+        return -1;
+    if ((bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(bits & SECBIT_NO_SETUID_FIXUP))
+        return -1;
+    if ((bits & SECBIT_NOROOT_LOCKED) && !(bits & SECBIT_NOROOT))
         return -1;
     proc->securebits = bits;
     return 0;
@@ -653,8 +664,12 @@ void process_exec_caps(void) {
         process_caps_clear_all(p);
     }
 
-    /* effective = permitted & inheritable (simplified) */
-    /* bounding set &= permitted */
+    /* Apply system-wide bounding set: per-process caps must be
+     * further limited by the global bounding set that an admin
+     * has configured via caps.c APIs (e.g., sys_cap_bset_drop). */
+    sys_cap_bset_apply(p);
+
+    /* bounding set &= permitted (caps can only be dropped, never gained) */
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
         p->cap_bset[i] &= p->syscall_caps[i];
     }
@@ -735,23 +750,35 @@ void process_exec_cred_security(void) {
         return;
     }
 
-    /* ── Normal (privilege-aware) exec path ───────────────────── */
-    /* Save the credentials before exec for comparison */
+    /* ── SECBIT_NO_SETUID_FIXUP enforcement ───────────────────── */
+    /* When SECBIT_NO_SETUID_FIXUP is set, setuid/setgid bits on
+     * the executed binary must NOT change the effective UID/GID.
+     * Save the current credentials so setuid exec won't elevate. */
     uint32_t old_euid = p->euid;
     uint32_t old_egid = p->egid;
 
-    /*
-     * Apply capabilities on exec:
-     *  - If SECBIT_KEEP_CAPS is not set, clear the permitted set
-     *  - AND bounding set with permitted set (caps drop but never gain)
-     */
+    /* ── SECBIT_NOROOT enforcement ────────────────────────────── */
+    /* When SECBIT_NOROOT is set, the process must not gain root
+     * privileges even if the new binary would normally grant them.
+     * Force euid/egid to the real uid/gid if root would be gained. */
+    if (p->securebits & SECBIT_NOROOT) {
+        /* If the new binary is setuid-root, keep uid as real uid */
+        if (p->euid != p->uid && p->euid == 0 && p->uid != 0) {
+            p->euid = p->uid;
+        }
+        if (p->egid != p->gid && p->egid == 0 && p->gid != 0) {
+            p->egid = p->gid;
+        }
+    }
+
+    /* ── Apply capabilities on exec ───────────────────────────── */
+    /*  - If SECBIT_KEEP_CAPS is not set, clear the permitted set
+     *  - AND bounding set with permitted set (caps drop but never gain) */
     process_exec_caps();
 
-    /*
-     * Detect credential change:
-     * If euid or egid changed during exec (e.g., setuid binary),
-     * or if NO_NEW_PRIVS is set, we reduce privileges.
-     */
+    /* ── Detect credential change ─────────────────────────────── */
+    /* If euid or egid changed during exec (e.g., setuid binary),
+     * or if NO_NEW_PRIVS is set, we reduce privileges. */
     int creds_changed = (p->euid != old_euid || p->egid != old_egid);
 
     if (creds_changed) {
@@ -811,6 +838,10 @@ int process_fork(void) {
         return -1;
     }
     child->state = PROCESS_READY;
+
+    /* Apply system-wide bounding set on fork — child inherits
+     * parent's caps but must also respect the global mask. */
+    sys_cap_bset_apply(child);
 
     /* Clone user address space if process has one */
     if (parent->pml4) {
@@ -902,6 +933,10 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     }
 
     child->state = PROCESS_READY;
+
+    /* Apply system-wide bounding set on clone — caps must respect
+     * the global mask even if the parent had different caps. */
+    sys_cap_bset_apply(child);
 
     /* Set up child's kernel stack with sysret return frame.
      * Layout (from stack_top down):

@@ -658,6 +658,8 @@ struct linux_dirent64 {
 #define PR_GET_PDEATHSIG    2
 #define PR_SET_NO_NEW_PRIVS 38
 #define PR_GET_NO_NEW_PRIVS 39
+#define PR_SET_SECUREBITS  41
+#define PR_GET_SECUREBITS  42
 
 /* execveat flags */
 #define AT_EMPTY_PATH  0x1000

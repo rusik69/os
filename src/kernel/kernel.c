@@ -74,6 +74,7 @@
 #include "yama.h"
 #include "kptr_restrict.h"
 #include "dmesg.h"
+#include "caps.h"
 #include "sysrq.h"
 #include "panic.h"
 #include "nmi_watchdog.h"
@@ -334,6 +335,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* dmesg restrict */
     dmesg_init();
+
+    /* Capability bounding set — system-wide cap mask */
+    sys_cap_bset_init();
 
     /* SysRq emergency commands */
     sysrq_init();

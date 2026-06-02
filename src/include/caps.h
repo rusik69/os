@@ -3,11 +3,24 @@
 
 #include "types.h"
 
-/* Capability bounding set management */
-void cap_bset_drop(uint32_t cap);
-int cap_bset_has(uint32_t cap);
-void cap_bset_init(void);
+/* Forward declaration — process.h is included by calling code */
+struct process;
 
+/* System-wide capability bounding set management */
+
+/* Initialize the global bounding set (all caps allowed by default) */
+void sys_cap_bset_init(void);
+
+/* Permanently drop a capability from the system-wide set */
+void sys_cap_bset_drop(uint32_t cap);
+
+/* Check if a capability is present in the system-wide set */
+int  sys_cap_bset_has(uint32_t cap);
+
+/* Apply the system-wide bounding set to a process's cap sets */
+void sys_cap_bset_apply(struct process *proc);
+
+/* POSIX capability numbers */
 #define CAP_CHOWN           0
 #define CAP_DAC_OVERRIDE    1
 #define CAP_DAC_READ_SEARCH 2

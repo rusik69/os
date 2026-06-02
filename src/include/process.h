@@ -266,10 +266,14 @@ int  cap_bset_has(uint32_t cap);
 void cap_bset_init(struct process *proc);
 
 /* Securebits */
-#define SECBIT_KEEP_CAPS       (1 << 0)
-#define SECBIT_NO_SETUID_FIXUP (1 << 1)
+#define SECBIT_KEEP_CAPS              (1 << 0)
+#define SECBIT_NO_SETUID_FIXUP        (1 << 1)
 #define SECBIT_KEEP_CAPS_LOCKED       (1 << 2)
 #define SECBIT_NO_SETUID_FIXUP_LOCKED (1 << 3)
+#define SECBIT_NOROOT                 (1 << 4)  /* Don't grant root privileges even if UID 0 */
+#define SECBIT_NOROOT_LOCKED          (1 << 5)
+#define SECBIT_ALLOWED_MASK           (SECBIT_KEEP_CAPS | SECBIT_NO_SETUID_FIXUP | SECBIT_NOROOT)
+#define SECBIT_LOCKED_MASK            (SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED | SECBIT_NOROOT_LOCKED)
 int  securebits_get(struct process *proc);
 int  securebits_set(struct process *proc, uint8_t bits);
 
