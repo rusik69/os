@@ -64,6 +64,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/module.c \
          src/kernel/module_elf.c \
          src/kernel/module_signature.c \
+         src/kernel/module_autoload.c \
          src/kernel/sysctl.c \
          src/kernel/ksym.c \
          src/kernel/caps.c \

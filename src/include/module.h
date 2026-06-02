@@ -299,6 +299,18 @@ int module_param_set_value(struct kernel_param *kp, const char *val);
  * Returns the number of bytes written, or 0 on error. */
 int module_param_format_value(struct kernel_param *kp, char *buf, int max);
 
+/* ── Module autoloading (M34-M38) ─────────────────────────────────── */
+
+/* Kernel-initiated module load — request a module by name.
+ * Probes /modules/<name>.ko and loads it via the ELF loader.
+ * May sleep; must not be called from atomic context.
+ * Returns module ID (>0) on success, or a negative errno. */
+int request_module(const char *fmt, ...);
+
+/* request_module with explicit parameter string.
+ * Like request_module(), but passes @params to the module's init. */
+int request_module_params(const char *name, const char *params);
+
 /* ── Module sysfs interface (M30) ──────────────────────────────── */
 
 /* Create sysfs entries for all parameters of a loaded module.
