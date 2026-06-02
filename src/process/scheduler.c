@@ -60,7 +60,7 @@ static inline int cpu_queues_empty(struct cpu_info *ci) {
 }
 
 /* Count runnable tasks on a given CPU (approximate, no lock needed for stats) */
-static int cpu_nr_runnable(struct cpu_info *ci) {
+static __attribute__((unused)) int cpu_nr_runnable(struct cpu_info *ci) {
     int count = 0;
     for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
         struct process *p = ci->queue_head[lvl];
@@ -683,7 +683,7 @@ void update_vruntime(struct process *p, int ticks) {
 }
 
 /* ── Dequeue next process based on lowest vruntime (CFS) ──── */
-static struct process *dequeue_next_cfs(void) {
+static __attribute__((unused)) struct process *dequeue_next_cfs(void) {
     struct cpu_info *ci = this_cpu();
     struct process *best = NULL;
     int best_lvl = -1;

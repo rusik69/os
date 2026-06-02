@@ -528,7 +528,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Block device registry */
     blockdev_init();
 
-    /* ZRAM compressed RAM block device */
+    /* ZRAM compressed RAM block device — requires compression subsystem */
+    zcomp_init();
     zram_init();
 
     /* ATA disk */

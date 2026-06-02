@@ -3855,7 +3855,7 @@ static void test_cma(void) {
 
 static void test_zram(void) {
     /* Create ZRAM device */
-    int ret = zram_create_device(ZRAM_DEFAULT_SIZE);
+    int ret = zram_create_device(ZRAM_DEFAULT_SIZE, ZCOMP_ALGO_FAST);
     ASSERT("zram create device", ret == 0);
 
     /* Write test pattern */
