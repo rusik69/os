@@ -382,6 +382,9 @@
 /* memfd_create — anonymous file descriptor with sealing support */
 #define SYS_MEMFD_CREATE      365  /* memfd_create(name, flags) → fd or -1 */
 
+/* posix_fadvise — advise file access pattern */
+#define SYS_FADVISE64         372  /* fadvise64(fd, offset, len, advice) → 0 or -1 */
+
 /* Synchronous signal acceptance */
 #define SYS_SIGWAITINFO       363  /* sigwaitinfo(set, info) → signum or -1 */
 #define SYS_SIGTIMEDWAIT      364  /* sigtimedwait(set, info, timeout) → signum or -1 */
@@ -412,6 +415,14 @@
 #define MADV_REMOVE      9
 #define MADV_MERGEABLE   12
 #define MADV_UNMERGEABLE 13
+
+/* posix_fadvise advice values (Linux-compatible) */
+#define POSIX_FADV_NORMAL      0  /* no special treatment */
+#define POSIX_FADV_RANDOM      1  /* expected random access */
+#define POSIX_FADV_SEQUENTIAL  2  /* expected sequential access */
+#define POSIX_FADV_WILLNEED    3  /* will need in near future */
+#define POSIX_FADV_DONTNEED    4  /* not needed in near future */
+#define POSIX_FADV_NOREUSE     5  /* will be accessed only once */
 
 /* fallocate mode flags */
 #define FALLOC_FL_KEEP_SIZE     1

@@ -5730,6 +5730,91 @@ static uint64_t sys_readahead(uint64_t fd, uint64_t offset, uint64_t count) {
 }
 
 
+/* ── posix_fadvise64 (Item 302) ────────────────────────────────────── */
+/*
+ * posix_fadvise: advise kernel about expected file access pattern.
+ *
+ *   int fadvise64(int fd, off64_t offset, off64_t len, int advice);
+ *
+ * Advice values (from syscall.h):
+ *   POSIX_FADV_NORMAL      — no special treatment (default)
+ *   POSIX_FADV_RANDOM      — file will be accessed randomly
+ *   POSIX_FADV_SEQUENTIAL  — file will be accessed sequentially
+ *   POSIX_FADV_WILLNEED    — the specified range will be needed soon
+ *   POSIX_FADV_DONTNEED    — the specified range is not needed anymore
+ *   POSIX_FADV_NOREUSE     — data will be accessed only once
+ *
+ * Returns 0 on success, -1 on error with appropriate errno.
+ */
+static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64_t advice)
+{
+    /* Validate fd: must be a regular file descriptor */
+    if (fd < 3 || fd >= 700)
+        return (uint64_t)-EBADF;
+
+    int i = (int)fd - 3;
+    struct process_fd *pfd = sys_get_fd(i);
+    if (!pfd || !pfd->used)
+        return (uint64_t)-EBADF;
+
+    /* Validate advice value */
+    if (advice > POSIX_FADV_NOREUSE)
+        return (uint64_t)-EINVAL;
+
+    /* Get the file's inode number for page cache operations */
+    struct vfs_stat st;
+    if (vfs_stat(pfd->path, &st) < 0)
+        return (uint64_t)-EBADF;
+
+    /* Clamp len if it extends beyond file size */
+    uint64_t end_offset;
+    if (len == 0) {
+        /* len=0 means "to EOF" in POSIX */
+        end_offset = st.size;
+    } else {
+        end_offset = offset + len;
+        if (end_offset > st.size)
+            end_offset = st.size;
+    }
+    if (offset >= st.size)
+        return 0; /* nothing to do */
+
+    switch (advice) {
+    case POSIX_FADV_WILLNEED:
+        /* Trigger readahead for the requested byte range */
+        if (st.type == 1) {
+            (void)vfs_readahead(pfd->path, (uint32_t)offset,
+                                (uint32_t)(end_offset - offset));
+        }
+        break;
+
+    case POSIX_FADV_DONTNEED:
+        /* Evict pages from page cache for the byte range.
+         * Only operates on regular files that have an inode number. */
+        if (st.type == 1 && st.ino != 0) {
+            uint32_t start_block = (uint32_t)(offset / PAGE_SIZE);
+            uint32_t end_block   = (uint32_t)((end_offset + PAGE_SIZE - 1) / PAGE_SIZE);
+            for (uint32_t blk = start_block; blk < end_block; blk++) {
+                page_cache_discard(st.ino, blk);
+            }
+        }
+        break;
+
+    case POSIX_FADV_NORMAL:
+    case POSIX_FADV_RANDOM:
+    case POSIX_FADV_SEQUENTIAL:
+    case POSIX_FADV_NOREUSE:
+        /* Store the advice for use by readahead heuristics.
+         * The VFS readahead logic can later query pfd->advice to
+         * tune window sizes and prefetch behavior. */
+        pfd->advice = (int)advice;
+        break;
+    }
+
+    return 0;
+}
+
+
 /* ── timerfd ──────────────────────────────────────────────────────────── */
 
 #define TIMERFD_MAX 16
@@ -6811,6 +6896,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
         case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
+        case SYS_FADVISE64:    return sys_fadvise64(a1, a2, a3, a4);
         case SYS_TIMERFD_CREATE:  return sys_timerfd_create(a1, a2);
         case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
         case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);

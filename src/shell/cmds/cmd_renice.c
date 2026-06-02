@@ -49,8 +49,8 @@ void cmd_renice(const char *args) {
     if (nice_val > NICE_MAX) nice_val = NICE_MAX;
 
     if (libc_setpriority_pid(pid, nice_val) != 0) {
-        kprintf("renice: no such process: %u\n", (unsigned long)pid);
+        kprintf("renice: no such process: %lu\n", (unsigned long)pid);
         return;
     }
-    kprintf("%u (nice %d)\n", (unsigned long)pid, nice_val);
+    kprintf("%lu (nice %d)\n", (unsigned long)pid, nice_val);
 }
