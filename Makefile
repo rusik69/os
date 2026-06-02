@@ -76,6 +76,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/mouse.c \
          src/drivers/speaker.c \
          src/drivers/acpi.c \
+         src/drivers/acpi_thermal.c \
          src/drivers/ahci.c \
          src/drivers/usb_ehci.c \
          src/drivers/usb_msc.c \

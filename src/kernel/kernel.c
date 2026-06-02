@@ -76,6 +76,7 @@
 #include "nmi_watchdog.h"
 #include "lockdep.h"
 #include "tmpfs.h"
+#include "acpi_thermal.h"
 #include "compaction.h"
 #include "memhotplug.h"
 #include "page_poison.h"
@@ -469,6 +470,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* ACPI */
     acpi_init();
+
+    /* ACPI thermal zones with adaptive polling governor */
+    acpi_thermal_init();
 
     /* Syscall interface */
     syscall_init();
