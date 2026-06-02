@@ -186,6 +186,86 @@ int module_deps_resolved(struct kernel_module *mod);
         (void)__module_param_##name; \
     }
 
+/* String module parameter — copies a string value into a fixed-size buffer.
+ *
+ * Usage: module_param_string(my_buf, buf, sizeof(buf), 0644);
+ *
+ * The parameter stores a NUL-terminated string in @buf (up to @size-1 bytes).
+ * It uses PARAM_TYPE_STRING so that module_param_set_value() copies the
+ * incoming string (truncating if necessary) and always NUL-terminates.
+ */
+#define module_param_string(name, buf, size, perm) \
+    static struct kernel_param __module_param_str_##name = { \
+        .name = #name, \
+        .type = PARAM_TYPE_STRING, \
+        .data = (buf), \
+        .data_len = (size), \
+        .perm = (perm), \
+        .set_fn = NULL, \
+        .get_fn = NULL, \
+    }; \
+    __attribute__((constructor)) static void __register_param_str_##name(void) { \
+        (void)__module_param_str_##name; \
+    }
+
+/* Array module parameter — parses comma-separated values into a C array.
+ *
+ * Usage: static int my_arr[16];
+ *        static int my_arr_num;
+ *        module_param_array(my_arr, int, &my_arr_num, 0644);
+ *
+ * @name:  parameter name (used as the sysfs entry name)
+ * @type:  element type (int, uint, long, etc. — must match PARAM_TYPE_*)
+ * @nump:  pointer to an int that receives the number of elements parsed
+ * @perm:  sysfs permissions (0444, 0644, etc.)
+ *
+ * The macro declares a PARAM_TYPE_STRING parameter internally; the actual
+ * parsing of comma-separated values is handled by a registration helper
+ * that splits the string and converts each element.  For simplicity the
+ * array is stored as a raw C array; the element count is written to @nump.
+ *
+ * NOTE: The array must be statically allocated with enough room; there is
+ * no dynamic resizing.  The default max is 64 elements.
+ */
+#define module_param_array(name, type, nump, perm) \
+    static int __module_param_array_##name##_parse(const char *val, \
+                                                    struct kernel_param *kp) \
+    { \
+        (void)kp; \
+        if (!val || !*val) return -1; \
+        const char *p = val; \
+        int count = 0; \
+        while (*p && count < 64) { \
+            /* Skip leading whitespace */ \
+            while (*p == ' ' || *p == '\t') p++; \
+            if (!*p) break; \
+            long v = 0; \
+            int neg = 0; \
+            if (*p == '-') { neg = 1; p++; } \
+            else if (*p == '+') p++; \
+            while (*p >= '0' && *p <= '9') \
+                v = v * 10 + (*p++ - '0'); \
+            if (neg) v = -v; \
+            ((type *)(name))[count++] = (type)v; \
+            while (*p == ' ' || *p == '\t') p++; \
+            if (*p == ',') p++; \
+        } \
+        if (nump) *(nump) = count; \
+        return 0; \
+    } \
+    static struct kernel_param __module_param_arr_##name = { \
+        .name = #name, \
+        .type = PARAM_TYPE_STRING, \
+        .data = (name), \
+        .data_len = sizeof(name), \
+        .perm = (perm), \
+        .set_fn = __module_param_array_##name##_parse, \
+        .get_fn = NULL, \
+    }; \
+    __attribute__((constructor)) static void __register_param_arr_##name(void) { \
+        (void)__module_param_arr_##name; \
+    }
+
 /* Module parameter macro with callback functions */
 #define module_param_cb(name, set_fn, get_fn) \
     static struct kernel_param __module_param_cb_##name = { \
