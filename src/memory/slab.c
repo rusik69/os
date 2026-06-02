@@ -6,6 +6,7 @@
 #include "printf.h"
 #include "smp.h"
 #include "io.h"
+#include "rng.h"
 
 /*
  * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
@@ -253,18 +254,44 @@ static int slab_grow(struct kmem_cache *cache) {
     slab->prev     = NULL;
     slab->state    = SLAB_PARTIAL;
 
-    /* Build free list: each free object stores a pointer to the next */
+    /* Build an array of object pointers for shuffling */
     void *obj_base = (uint8_t *)virt + header;
-    void *prev_obj = NULL;
-    for (int i = 0; i < cache->num; i++) {
-        void *obj = (uint8_t *)obj_base + i * aligned;
-        *(void **)obj = prev_obj;
-        prev_obj = obj;
-
-        if (cache->ctor)
-            cache->ctor(obj);
+    void **obj_ptrs = (void **)kmalloc(sizeof(void *) * cache->num);
+    if (!obj_ptrs) {
+        /* Fall back to sequential order if we can't allocate the temp array */
+        for (int i = 0; i < cache->num; i++) {
+            void *obj = (uint8_t *)obj_base + i * aligned;
+            *(void **)obj = slab->free_list;
+            slab->free_list = obj;
+            if (cache->ctor)
+                cache->ctor(obj);
+        }
+        slab_relink(cache, slab, SLAB_PARTIAL);
+        return 0;
     }
-    slab->free_list = prev_obj;  /* head of free list = last object built */
+
+    /* Collect all object pointers */
+    for (int i = 0; i < cache->num; i++) {
+        obj_ptrs[i] = (uint8_t *)obj_base + i * aligned;
+        if (cache->ctor)
+            cache->ctor(obj_ptrs[i]);
+    }
+
+    /* Fisher-Yates shuffle using kernel RNG */
+    for (int i = cache->num - 1; i > 0; i--) {
+        int j = (int)(rng_get_u32() % (uint32_t)(i + 1));
+        void *tmp = obj_ptrs[i];
+        obj_ptrs[i] = obj_ptrs[j];
+        obj_ptrs[j] = tmp;
+    }
+
+    /* Build free list from shuffled array */
+    for (int i = 0; i < cache->num; i++) {
+        *(void **)obj_ptrs[i] = slab->free_list;
+        slab->free_list = obj_ptrs[i];
+    }
+
+    kfree(obj_ptrs);
 
     /* Link into cache's partial list via slab_relink */
     slab_relink(cache, slab, SLAB_PARTIAL);
