@@ -8,6 +8,7 @@
 #include "process.h"
 #include "stacktrace.h"
 #include "panic.h"
+#include "kallsyms.h"
 
 /*
  * RCU — Read-Copy-Update with grace-period stall detection.
@@ -127,15 +128,36 @@ static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning) {
     kprintf("\nCurrent state:\n");
     struct process *cur = get_current_process();
     if (cur) {
-        kprintf("  CPU %d: %s (pid=%u, state=%d)\n",
+        kprintf("  CPU %d: %s (pid=%u, state=%d, is_user=%d)\n",
                 smp_get_cpu_id(),
                 cur->name ? cur->name : "?",
-                cur->pid, (int)cur->state);
+                cur->pid, (int)cur->state, cur->is_user);
+        kprintf("  Kernel stack: 0x%llx - 0x%llx\n",
+                (unsigned long long)cur->kernel_stack,
+                (unsigned long long)cur->stack_top);
     }
 
     /* Stack backtrace of the current context */
     kprintf("\nStack backtrace on CPU %d:\n", smp_get_cpu_id());
     print_stack_trace();
+
+    /* Identify the first stalled CPU and its likely culprit */
+    for (int c = 0; c < ncpus; c++) {
+        if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
+            kprintf("\nStalled CPU %d last QS at tick %llu\n",
+                    c,
+                    (unsigned long long)rcu_state_percpu[c].last_qs_tick);
+            kprintf("Consider checking CPU %d for: spinlock hold, "
+                    "interrupts-off region, or infinite loop\n", c);
+            break;
+        }
+    }
+
+    /* Print kallsyms info for current context */
+    {
+        kprintf("Current context symbol: %s at RIP near caller\n",
+                kallsyms_lookup((uint64_t)__builtin_return_address(0)));
+    }
 }
 
 /*

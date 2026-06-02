@@ -16,6 +16,7 @@
 #include "apic.h"
 #include "printf.h"
 #include "syscall.h"   /* timerfd_tick, posix_timer_tick */
+#include "rcu.h"       /* rcu_check_stall */
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -37,6 +38,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     }
     if (ticks % TIMER_FREQ == 0) { /* every second */
         process_reap_zombies();
+        rcu_check_stall(); /* detect RCU grace-period stalls */
     }
 }
 
