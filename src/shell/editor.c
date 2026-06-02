@@ -7,6 +7,9 @@
  *   - Yank whole line (Ctrl-Y), delete line (Alt-D)
  *   - Buffer switching: Ctrl-N (next), Ctrl-P (prev)
  *   - :e filename, :bn, :bp in command mode
+ *   - /pattern forward search, ?pattern backward search
+ *   - n / N repeat last search forward/backward
+ *   - :%s/old/new/g global replace
  *   - VGA console and ANSI/telnet output
  */
 
@@ -61,6 +64,30 @@ static int              ed_cur_buf = 0;  /* index of active buffer */
 /* ── Clipboard ───────────────────────────────────────────────────── */
 static char ed_clipboard[ED_CLIP_LEN];
 static int  ed_clip_len = 0;
+
+/* ── Search state ────────────────────────────────────────────────── */
+static char ed_search_pattern[64] = "";
+static int  ed_search_backward    = 0;   /* 1 = last search was backward */
+static int  ed_search_last_line   = -1;  /* line of last match (-1 = none) */
+static int  ed_search_last_col    = -1;  /* column of last match (-1 = none) */
+
+/* ── Forward declarations ────────────────────────────────────────── */
+static void ed_insert_char(char c);
+static void ed_insert_newline(void);
+static void ed_backspace(void);
+static void ed_delete_char(void);
+static void ed_yank_line(void);
+static void ed_cut_line(void);
+static void ed_paste_below(void);
+static void ed_paste_above(void);
+static void ed_handle_command(const char *input);
+static void ed_read_command(char *buf, int max);
+static void ed_save(void);
+static void ed_load(struct ed_buffer *b);
+static int  ed_find_next(const char *pattern, int start_line, int start_col,
+                         int backward, int *out_line, int *out_col);
+static int  ed_do_search(const char *pattern, int backward);
+static int  ed_global_replace(const char *old_str, const char *new_str);
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 static struct ed_buffer *cur_buf(void) {
@@ -494,6 +521,44 @@ static void ed_handle_command(const char *input) {
         }
         return;
     }
+
+    /* ── Search and replace: :%s/old/new/g ─────────────────────── */
+    if (strncmp(input, ":%s", 3) == 0) {
+        const char *p = input + 3;
+        if (*p == '/') {
+            p++; /* skip first delimiter */
+            /* Extract old pattern */
+            char old_str[64], new_str[64];
+            int olen = 0;
+            while (*p && *p != '/' && olen < (int)sizeof(old_str) - 1) {
+                old_str[olen++] = *p++;
+            }
+            old_str[olen] = '\0';
+            if (*p == '/') {
+                p++; /* skip delimiter */
+                int nlen = 0;
+                while (*p && *p != '/' && *p != 'g' && nlen < (int)sizeof(new_str) - 1) {
+                    new_str[nlen++] = *p++;
+                }
+                new_str[nlen] = '\0';
+                /* Skip optional 'g' flag */
+                if (*p == 'g') p++;
+
+                int count = ed_global_replace(old_str, new_str);
+                /* Show result on status line */
+                if (ed_telnet_mode) {
+                    kprintf("\\x1b[%d;1H\\x1b[44m Replaced %d occurrence(s) \\x1b[0m", VGA_HEIGHT, count);
+                } else {
+                    uint8_t c = VGA_WHITE | (VGA_DARK_GREY << 4);
+                    char msg[48];
+                    int n = snprintf(msg, sizeof(msg), " Replaced %d occurrence(s) ", count);
+                    for (int i = 0; i < n && i < VGA_WIDTH; i++)
+                        vga_put_entry_at(msg[i], c, VGA_HEIGHT - 1, i);
+                }
+                return;
+            }
+        }
+    }
 }
 
 /* Read a single line from input for command mode */
@@ -518,7 +583,201 @@ static void ed_read_command(char *buf, int max) {
     }
 }
 
-/* ── Save / Load ─────────────────────────────────────────────────── */
+/* ── Search and Replace ──────────────────────────────────────────── */
+
+/* Find next occurrence of pattern starting from (start_line, start_col).
+ * If backward is 0, search forward; if 1, search backward.
+ * Returns 1 if found, with *out_line and *out_col set.
+ * Searches from (start_line, start_col) forward/backward, wrapping
+ * around the entire buffer. */
+static int ed_find_next(const char *pattern, int start_line, int start_col,
+                        int backward, int *out_line, int *out_col)
+{
+    struct ed_buffer *b = BUF();
+    if (!pattern || !pattern[0] || b->num_lines <= 0)
+        return 0;
+
+    int pat_len = (int)strlen(pattern);
+    int total_lines = b->num_lines;
+
+    if (backward) {
+        /* Search backward from (start_line, start_col) */
+        int line = start_line;
+        int col  = start_col;
+
+        while (1) {
+            /* On each line, search backward from current column */
+            int line_len = (int)strlen(b->lines[line]);
+
+            /* Start searching from col-1 downward to 0 */
+            int end = (line == start_line) ? col : line_len;
+            for (int c = end - pat_len; c >= 0; c--) {
+                if (memcmp(b->lines[line] + c, pattern, (size_t)pat_len) == 0) {
+                    *out_line = line;
+                    *out_col  = c;
+                    return 1;
+                }
+            }
+
+            /* Move to previous line */
+            line--;
+            if (line < 0) {
+                /* Wrap around to last line */
+                line = total_lines - 1;
+            }
+            /* If we wrapped back to start_line, we've searched everything */
+            if (line == start_line) {
+                /* Search start_line from the end */
+                col = (int)strlen(b->lines[line]);
+                /* If col <= start_col means we already searched this line above */
+                if (col <= start_col) break;
+                /* Otherwise continue at col for this line */
+                continue;
+            }
+            col = (int)strlen(b->lines[line]); /* search entire line */
+        }
+    } else {
+        /* Search forward from (start_line, start_col) */
+        int line = start_line;
+        int col  = start_col;
+
+        while (1) {
+            int line_len = (int)strlen(b->lines[line]);
+
+            /* Search from current position forward */
+            int start_c = (line == start_line) ? col : 0;
+            for (int c = start_c; c <= line_len - pat_len; c++) {
+                if (memcmp(b->lines[line] + c, pattern, (size_t)pat_len) == 0) {
+                    *out_line = line;
+                    *out_col  = c;
+                    return 1;
+                }
+            }
+
+            /* Move to next line */
+            line = (line + 1) % total_lines;
+            /* If we wrapped back to start_line, we've searched everything */
+            if (line == start_line) {
+                /* Check start_line from the beginning up to col */
+                for (int c = 0; c <= col - pat_len && c < start_c; c++) {
+                    if (memcmp(b->lines[line] + c, pattern, (size_t)pat_len) == 0) {
+                        *out_line = line;
+                        *out_col  = c;
+                        return 1;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    return 0; /* not found */
+}
+
+/* Search for a pattern entered by the user.
+ * mode: 0 = forward (/), 1 = backward (?)
+ * Returns 1 if found and cursor moved. */
+static int ed_do_search(const char *pattern, int backward)
+{
+    struct ed_buffer *b = BUF();
+    int match_line, match_col;
+
+    /* Start searching from cursor position */
+    int start_line = b->cy;
+    int start_col  = b->cx;
+
+    if (ed_find_next(pattern, start_line, start_col, backward,
+                     &match_line, &match_col))
+    {
+        b->cy = match_line;
+        b->cx = match_col;
+        strncpy(ed_search_pattern, pattern, sizeof(ed_search_pattern) - 1);
+        ed_search_pattern[sizeof(ed_search_pattern) - 1] = '\0';
+        ed_search_backward  = backward;
+        ed_search_last_line = match_line;
+        ed_search_last_col  = match_col;
+        return 1;
+    }
+
+    /* Try wrapping from the beginning/end of buffer */
+    if (backward) {
+        start_line = b->num_lines - 1;
+        start_col  = (int)strlen(b->lines[start_line]);
+    } else {
+        start_line = 0;
+        start_col  = 0;
+    }
+
+    if (ed_find_next(pattern, start_line, start_col, backward,
+                     &match_line, &match_col))
+    {
+        b->cy = match_line;
+        b->cx = match_col;
+        strncpy(ed_search_pattern, pattern, sizeof(ed_search_pattern) - 1);
+        ed_search_pattern[sizeof(ed_search_pattern) - 1] = '\0';
+        ed_search_backward  = backward;
+        ed_search_last_line = match_line;
+        ed_search_last_col  = match_col;
+        return 1;
+    }
+
+    return 0; /* not found anywhere */
+}
+
+/* Perform global replace: %s/old/new/g
+ * Returns number of replacements made. */
+static int ed_global_replace(const char *old_str, const char *new_str)
+{
+    struct ed_buffer *b = BUF();
+    if (!old_str || !old_str[0] || !new_str) return 0;
+
+    int old_len = (int)strlen(old_str);
+    int new_len = (int)strlen(new_str);
+    int count   = 0;
+
+    for (int i = 0; i < b->num_lines; i++) {
+        char *line = b->lines[i];
+        int line_len = (int)strlen(line);
+        char result[ED_LINE_LEN];
+        int  pos = 0;
+        int  cp  = 0; /* copy pointer into result */
+
+        while (cp <= line_len - old_len) {
+            /* Check for match at current position */
+            if (memcmp(line + cp, old_str, (size_t)old_len) == 0) {
+                /* Copy prefix up to match point */
+                memcpy(result + pos, line + cp, (size_t)(cp - pos));
+                pos += (cp - pos);
+                /* Copy replacement string */
+                if (pos + new_len < ED_LINE_LEN - 1) {
+                    memcpy(result + pos, new_str, (size_t)new_len);
+                    pos += new_len;
+                }
+                cp += old_len;
+                count++;
+                pos = cp; /* reset copy pointer */
+            } else {
+                cp++;
+            }
+        }
+        /* Copy remaining characters */
+        if (pos < line_len) {
+            int rem = line_len - pos;
+            if (pos + rem < ED_LINE_LEN - 1) {
+                memcpy(result + pos, line + pos, (size_t)rem);
+                pos += rem;
+            }
+        }
+        result[pos] = '\0';
+
+        if (count > 0) {
+            memcpy(line, result, (size_t)(pos + 1));
+            b->dirty = 1;
+        }
+    }
+
+    return count;
+}
 
 static void ed_save(void) {
     struct ed_buffer *b = BUF();
@@ -760,6 +1019,61 @@ void editor_open(const char *filename) {
             break;
         case '\t':
             for (int i = 0; i < 4; i++) ed_insert_char(' ');
+            break;
+        case '/':  /* ── Forward search ── */
+        case '?':  /* ── Backward search ── */
+            {
+                int backward = (k == '?');
+                int was_telnet = ed_telnet_mode;
+
+                /* Show search prompt on status line */
+                if (was_telnet) {
+                    kprintf("\x1b[%d;1H\x1b[7m %s \x1b[0m", VGA_HEIGHT,
+                            backward ? "?" : "/");
+                } else {
+                    uint8_t color = VGA_BLACK | (VGA_LIGHT_GREY << 4);
+                    for (int c = 0; c < VGA_WIDTH; c++)
+                        vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4),
+                                         VGA_HEIGHT - 1, c);
+                    vga_put_entry_at(backward ? '?' : '/', color,
+                                     VGA_HEIGHT - 1, 1);
+                    vga_set_cursor(VGA_HEIGHT - 1, 2);
+                }
+
+                /* Read search pattern */
+                char pattern[64];
+                ed_read_command(pattern, (int)sizeof(pattern));
+
+                if (pattern[0]) {
+                    if (!ed_do_search(pattern, backward)) {
+                        /* Pattern not found — show message */
+                        if (was_telnet) {
+                            kprintf("\x1b[%d;1H\x1b[41m Pattern not found: %s \x1b[0m",
+                                    VGA_HEIGHT, pattern);
+                        } else {
+                            uint8_t c = VGA_WHITE | (VGA_RED << 4);
+                            char msg[72];
+                            snprintf(msg, sizeof(msg),
+                                     " Pattern not found: %s ", pattern);
+                            for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
+                                vga_put_entry_at(msg[i], c, VGA_HEIGHT - 1, i);
+                        }
+                    }
+                }
+                b = BUF(); /* re-read after potential search */
+            }
+            break;
+        case 'n':  /* ── Repeat last search forward ── */
+            if (ed_search_pattern[0]) {
+                ed_do_search(ed_search_pattern, 0);
+                b = BUF();
+            }
+            break;
+        case 'N':  /* ── Repeat last search backward ── */
+            if (ed_search_pattern[0]) {
+                ed_do_search(ed_search_pattern, 1);
+                b = BUF();
+            }
             break;
         default:
             if (k >= 32 && k < 127) ed_insert_char((char)k);
