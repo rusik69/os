@@ -27,6 +27,7 @@
 #define KERNEL_INTERNAL
 #include "module_elf.h"
 #include "module.h"
+#include "module_signature.h"
 #include "printf.h"
 #include "string.h"
 #include "pmm.h"
@@ -116,6 +117,17 @@ int module_elf_validate(struct module_elf_context *ctx,
                  "module_elf: section header table out of bounds (%llu > %llu)",
                  (unsigned long long)shdr_table_end, (unsigned long long)size);
         return -1;
+    }
+
+    /* ── Verify module signature (Item 75) ── */
+    {
+        int sig_ret = module_verify_elf(data, size);
+        if (sig_ret != 0) {
+            snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                     "module_elf: signature verification failed (err=%d)",
+                     sig_ret);
+            return -1;
+        }
     }
 
     return 0;

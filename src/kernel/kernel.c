@@ -94,6 +94,7 @@
 #include "rng.h"
 #include "fsnotify.h"
 #include "module.h"
+#include "module_signature.h"
 #include "initcall.h"
 #include "watchdog.h"
 #include "fbcon.h"
@@ -444,6 +445,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel module API */
     module_init();
     kprintf("[OK] Kernel module API initialized (%d slots)\n", MODULE_MAX);
+
+    /* Module signature verification */
+    module_sig_init();
 
     /* Kernel symbol export table — for module symbol resolution */
     ksym_init();
