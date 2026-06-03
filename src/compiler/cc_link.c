@@ -25,9 +25,15 @@
 #define SHT_STRTAB     3
 #define SHT_RELA       4
 
+#ifndef SHF_WRITE
 #define SHF_WRITE      0x1
+#endif
+#ifndef SHF_ALLOC
 #define SHF_ALLOC      0x2
+#endif
+#ifndef SHF_EXECINSTR
 #define SHF_EXECINSTR  0x4
+#endif
 
 #define STB_LOCAL      0
 #define STB_GLOBAL     1

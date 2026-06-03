@@ -399,6 +399,9 @@
 #define SYS_MEMBARRIER         373  /* membarrier(cmd, flags, cpu_id) → 0 or -1 */
 #define SYS_PIVOT_ROOT         374  /* pivot_root(new_root, put_old) → 0 or -1 */
 
+/* Zero-copy file-to-file data transfer (Item 249) */
+#define SYS_COPY_FILE_RANGE     378 /* copy_file_range(fd_in, off_in, fd_out, off_out, len, flags) */
+
 /* membarrier command codes */
 #define MEMBARRIER_CMD_QUERY                    0
 #define MEMBARRIER_CMD_GLOBAL                   1

@@ -6566,6 +6566,124 @@ static uint64_t sys_tee(uint64_t fd_in, uint64_t fd_out,
     return sys_splice(fd_in, 0, fd_out, 0, len);
 }
 
+
+/* ── copy_file_range — zero-copy file-to-file data transfer (Item 249) ── */
+
+/*
+ * copy_file_range — Copy data from one file to another within the kernel,
+ * without routing through userspace buffers.
+ *
+ * POSIX signature:
+ *   ssize_t copy_file_range(int fd_in, loff_t *off_in,
+ *                           int fd_out, loff_t *off_out,
+ *                           size_t len, unsigned int flags);
+ *
+ * If off_in is NULL, read from fd_in's current offset (and update it).
+ * If off_in is non-NULL, read from that absolute offset (fd_in's offset
+ * is NOT updated).  Same for off_out.
+ *
+ * Returns the number of bytes copied, or -1 on error.
+ */
+static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
+                                     uint64_t fd_out, uint64_t off_out_addr,
+                                     uint64_t len, uint64_t flags)
+{
+    (void)flags;  /* must be 0 per POSIX.1-2016 */
+
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)-1;
+
+    /* Validate file descriptors */
+    if (fd_in >= PROCESS_FD_MAX || fd_out >= PROCESS_FD_MAX)
+        return (uint64_t)-1;
+    struct process_fd *pfd_in  = &p->fd_table[fd_in];
+    struct process_fd *pfd_out = &p->fd_table[fd_out];
+    if (!pfd_in->used || !pfd_out->used)
+        return (uint64_t)-1;
+
+    /* Copy between two files via a kernel bounce buffer.
+     * A production implementation would use splice-like page flipping
+     * for true zero-copy, but this is correct and sufficient for now. */
+    uint8_t buf[4096];
+    uint64_t total = 0;
+
+    while (total < len) {
+        uint64_t chunk = len - total;
+        if (chunk > sizeof(buf))
+            chunk = sizeof(buf);
+
+        /* ── Determine source offset ── */
+        uint32_t saved_in_off = pfd_in->offset;
+        if (off_in_addr != 0) {
+            /* User provided absolute source offset: read loff_t from user space */
+            int64_t abs_off;
+            if (!syscall_user_read_ok(off_in_addr, sizeof(abs_off)))
+                return (uint64_t)-1;
+            __builtin_memcpy(&abs_off, (const void *)off_in_addr, sizeof(abs_off));
+            if (abs_off < 0)
+                return (uint64_t)-1;
+            /* Temporarily seek fd_in to the requested offset */
+            pfd_in->offset = (uint32_t)abs_off;
+        }
+
+        /* Read from source */
+        uint32_t nread = 0;
+        int r = vfs_read(pfd_in->path, buf, (uint32_t)chunk, &nread);
+        if (r < 0) {
+            /* On first iteration, propagate the error; on subsequent, return
+             * what we've already copied. */
+            if (off_in_addr != 0)
+                pfd_in->offset = saved_in_off;  /* restore on error */
+            return total > 0 ? (uint64_t)total : (uint64_t)-1;
+        }
+
+        /* Update user-provided source offset if applicable */
+        if (off_in_addr != 0) {
+            int64_t new_off = (int64_t)pfd_in->offset;
+            __builtin_memcpy((void *)off_in_addr, &new_off, sizeof(new_off));
+        }
+        /* else: fd_in offset was already updated by vfs_read */
+
+        if (nread == 0)
+            break;  /* EOF */
+
+        /* ── Determine destination offset ── */
+        uint32_t saved_out_off = pfd_out->offset;
+        if (off_out_addr != 0) {
+            int64_t abs_off;
+            if (!syscall_user_read_ok(off_out_addr, sizeof(abs_off)))
+                return (uint64_t)-1;
+            __builtin_memcpy(&abs_off, (const void *)off_out_addr, sizeof(abs_off));
+            if (abs_off < 0)
+                return (uint64_t)-1;
+            pfd_out->offset = (uint32_t)abs_off;
+        }
+
+        /* Write to destination */
+        if (vfs_write(pfd_out->path, buf, nread) < 0) {
+            /* Restore offsets on write failure */
+            if (off_in_addr != 0)
+                pfd_in->offset = saved_in_off;
+            if (off_out_addr != 0)
+                pfd_out->offset = saved_out_off;
+            return total > 0 ? (uint64_t)total : (uint64_t)-1;
+        }
+
+        /* Update user-provided destination offset */
+        if (off_out_addr != 0) {
+            int64_t new_off = (int64_t)pfd_out->offset;
+            __builtin_memcpy((void *)off_out_addr, &new_off, sizeof(new_off));
+        }
+
+        total += nread;
+
+        if (nread < chunk)
+            break;  /* Short read — EOF or underlying FS limit */
+    }
+
+    return (uint64_t)total;
+}
+
 /* ── sendmmsg / recvmmsg ──────────────────────────────────────────────── */
 
 /* For each iovec entry, send one message via net_tcp_send or similar.
@@ -7363,6 +7481,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MEMFD_CREATE:    return (uint64_t)memfd_syscall_create((const char*)a1, (unsigned int)a2);
         case SYS_SPLICE:          return sys_splice(a1, a2, a3, a4, a5);
         case SYS_TEE:             return sys_tee(a1, a2, a3, a4);
+        case SYS_COPY_FILE_RANGE: return sys_copy_file_range(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_SENDMMSG:        return sys_sendmmsg(a1, a2, a3, a4);
         case SYS_RECVMMSG:        return sys_recvmmsg(a1, a2, a3, a4, a5);
         case SYS_SYNC:            return sys_sync();

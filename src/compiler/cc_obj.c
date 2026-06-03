@@ -42,9 +42,15 @@
 #define SHT_RELA     4
 
 /* ELF section flags */
+#ifndef SHF_WRITE
 #define SHF_WRITE     0x1
+#endif
+#ifndef SHF_ALLOC
 #define SHF_ALLOC     0x2
+#endif
+#ifndef SHF_EXECINSTR
 #define SHF_EXECINSTR 0x4
+#endif
 
 /* Symbol binding */
 #define STB_LOCAL  0
