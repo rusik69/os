@@ -901,27 +901,238 @@ done:
 
 /* ── Write support ──────────────────────────────────────────────────────────── */
 
-static void name_to_83(const char *name, char out_name[8], char out_ext[3]) {
-    memset(out_name, ' ', 8);
-    memset(out_ext, ' ', 3);
-    const char *dot = strchr(name, '.');
-    int nlen = dot ? (int)(dot - name) : (int)strlen(name);
-    if (nlen > 8) nlen = 8;
-    for (int i = 0; i < nlen; i++) {
-        char c = name[i];
-        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-        out_name[i] = c;
+/*
+ * ── VFAT 8.3 short name generation (Item 333) ─────────────────────────
+ *
+ * Generates a unique MS-DOS-compatible 8.3 name from a long filename,
+ * with collision resolution using numeric tails (~N).  Follows the
+ * Windows VFAT algorithm:
+ *   1. Strip invalid characters; uppercase allowed chars
+ *   2. Truncate base name to first 6 chars, append ~N (N=1..999999)
+ *   3. Truncate extension to first 3 chars (no dot in the 8.3 name)
+ *   4. If collision, increment N until unique or exhausted
+ */
+
+/* Valid 8.3 characters: A-Z, 0-9, $ % ' - _ @ ~ ` ! ( ) ^ # & */
+static int is_valid_83_char(char c)
+{
+    if (c >= 'A' && c <= 'Z') return 1;
+    if (c >= '0' && c <= '9') return 1;
+    const char valid_special[] = "$%'-_@~`!()^#&";
+    for (int i = 0; valid_special[i]; i++)
+        if (c == valid_special[i]) return 1;
+    return 0;
+}
+
+/* Check if an exact 8.3 name (8+3 bytes) already exists in a directory.
+ * Returns 1 if found, 0 if not found or error. */
+static int fat32_83_name_exists(uint32_t dir_cluster,
+                                const char name83_8[8],
+                                const char name83_3[3])
+{
+    uint8_t buf[SECT_SIZE];
+
+    if (dir_cluster == 0 && fat_type != FAT32) {
+        /* FAT12/16: fixed root directory */
+        uint32_t first_lba = fat_start + num_fats * fat_sectors;
+        for (uint32_t s = 0; s < root_dir_sectors; s++) {
+            if (read_sector(first_lba + s, buf) != 0) continue;
+            struct fat32_dirent *entries = (struct fat32_dirent *)buf;
+            int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            for (int i = 0; i < n_entries; i++) {
+                uint8_t first = (uint8_t)entries[i].name[0];
+                if (first == 0x00) return 0; /* end of directory */
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                /* Compare 8-byte name and 3-byte extension */
+                if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
+                    __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
+                    return 1;
+            }
+        }
+        return 0;
     }
-    if (dot && dot[1]) {
-        const char *e = dot + 1;
-        int elen = (int)strlen(e);
-        if (elen > 3) elen = 3;
-        for (int i = 0; i < elen; i++) {
-            char c = e[i];
-            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
-            out_ext[i] = c;
+
+    /* FAT32 / non-root: follow cluster chain */
+    uint32_t cluster = dir_cluster;
+    while (cluster >= 2 && cluster < FAT_EOC()) {
+        uint32_t lba = cluster_to_lba(cluster);
+        for (uint32_t s = 0; s < spc; s++) {
+            if (read_sector(lba + s, buf) != 0) continue;
+            struct fat32_dirent *entries = (struct fat32_dirent *)buf;
+            int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
+            for (int i = 0; i < n_entries; i++) {
+                uint8_t first = (uint8_t)entries[i].name[0];
+                if (first == 0x00) return 0;
+                if (first == 0xE5 || entries[i].attr == FAT32_ATTR_LFN) continue;
+                if (__builtin_memcmp(entries[i].name, name83_8, 8) == 0 &&
+                    __builtin_memcmp(entries[i].ext, name83_3, 3) == 0)
+                    return 1;
+            }
+        }
+        cluster = fat_next_cluster(cluster);
+    }
+    return 0;
+}
+
+/*
+ * Generate a unique 8.3 short name from a long filename.
+ *
+ * @long_name:  The full filename (may contain extension after last dot)
+ * @dir_cluster: Cluster of the parent directory (0 for FAT12/16 root)
+ * @out_name:   8-byte output buffer (space-padded, NOT null-terminated)
+ * @out_ext:    3-byte extension output buffer (space-padded)
+ *
+ * Returns 0 on success, -1 if unable to generate a unique name.
+ */
+static int fat32_generate_short_name(const char *long_name,
+                                     uint32_t dir_cluster,
+                                     char out_name[8],
+                                     char out_ext[3])
+{
+    char base[9];  /* 8 + NUL */
+    char ext[4];   /* 3 + NUL */
+    int base_len, ext_len;
+    const char *dot;
+
+    /* ---- Step 1: Split name and extension ---- */
+    /* Find the LAST dot (VFAT uses last dot for extension, not first) */
+    dot = NULL;
+    {
+        const char *p = long_name;
+        while (*p) {
+            if (*p == '.') dot = p;
+            p++;
         }
     }
+
+    if (dot && dot > long_name) {
+        base_len = (int)(dot - long_name);
+        /* Extension: everything after the last dot */
+        const char *e = dot + 1;
+        ext_len = (int)strlen(e);
+        if (ext_len > 3) ext_len = 3;
+        memcpy(ext, e, (size_t)ext_len);
+        ext[ext_len] = '\0';
+    } else {
+        base_len = (int)strlen(long_name);
+        ext_len = 0;
+        ext[0] = '\0';
+    }
+    if (base_len > 8) base_len = 8;
+
+    /* ---- Step 2: Uppercase and validate base characters ---- */
+    {
+        int oi = 0;
+        for (int i = 0; i < base_len && oi < 8; i++) {
+            char c = long_name[i];
+            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+            if (is_valid_83_char(c)) {
+                base[oi++] = c;
+            }
+        }
+        base[oi] = '\0';
+        base_len = oi;
+    }
+
+    /* ---- Step 3: Uppercase and validate extension characters ---- */
+    {
+        int oi = 0;
+        const char *e = (dot && dot[1]) ? dot + 1 : "";
+        for (int i = 0; e[i] && oi < 3; i++) {
+            char c = e[i];
+            if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+            if (is_valid_83_char(c)) {
+                ext[oi++] = c;
+            }
+        }
+        ext[oi] = '\0';
+        ext_len = oi;
+    }
+
+    /* ---- Step 4: Handle special names (DOS reserved names) ---- */
+    /* If base matches DOS reserved names, prefix with '_' to avoid conflicts */
+    {
+        const char *reserved[] = {
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
+            "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3",
+            "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", NULL
+        };
+        for (int r = 0; reserved[r]; r++) {
+            if (strcmp(base, reserved[r]) == 0) {
+                /* Try prefixing with '_' */
+                if (base_len < 8) {
+                    memmove(base + 1, base, (size_t)base_len + 1);
+                    base[0] = '_';
+                    base_len++;
+                    if (base_len > 8) base_len = 8;
+                    base[base_len] = '\0';
+                }
+                break;
+            }
+        }
+    }
+
+    /* ---- Step 5: Try base name as-is first, then with numeric tails ---- */
+    /* VFAT algorithm: base 6 chars + ~N (N = 1..999999) */
+    for (int tail = 0; tail < 1000000; tail++) {
+        char try_name[8];
+        char try_ext[3];
+
+        memset(try_name, ' ', 8);
+        memset(try_ext, ' ', 3);
+
+        if (tail == 0) {
+            /* Try the base name as-is */
+            memcpy(try_name, base, (size_t)base_len);
+        } else {
+            /* Generate name with numeric tail ~N */
+            /* Format: first 6-(digits_of_N) chars of base + ~N */
+            /* VFAT uses: first 6 chars + ~N (if base > 6, truncate to 6) */
+            char tail_str[7]; /* ~NNNNN + NUL */
+            int tn = snprintf(tail_str, sizeof(tail_str), "~%d", tail);
+            if (tn < 2 || tn > 7) continue;
+
+            int avail = 8 - tn; /* space for base chars before the tail */
+            if (avail < 0) continue;
+
+            /* Take first 'avail' chars of base, then append ~N */
+            int src_len = base_len < avail ? base_len : avail;
+            memcpy(try_name, base, (size_t)src_len);
+            memcpy(try_name + src_len, tail_str, (size_t)tn);
+        }
+
+        /* Copy extension */
+        memcpy(try_ext, ext, (size_t)(ext_len < 3 ? ext_len : 3));
+
+        /* Check for collision */
+        if (!fat32_83_name_exists(dir_cluster, try_name, try_ext)) {
+            /* Unique name found! Copy to output buffers */
+            memcpy(out_name, try_name, 8);
+            memcpy(out_ext, try_ext, 3);
+            return 0;
+        }
+
+        /* If the simple base name with no extension collides, try with ~1 */
+        if (tail == 0 && ext_len > 0) {
+            /* First try without the extension suffix (just base name) */
+        }
+    }
+
+    /* Unable to generate unique name after 1M attempts */
+    kprintf("[FAT32] Warning: could not generate unique 8.3 name for '%s'\n", long_name);
+    /* Fallback: use hashed name */
+    {
+        uint32_t hash = 0;
+        const char *p = long_name;
+        while (*p) {
+            hash = hash * 31 + (uint8_t)(*p);
+            p++;
+        }
+        memset(out_name, ' ', 8);
+        memset(out_ext, ' ', 3);
+        snprintf(out_name, 8, "~%05X", (unsigned int)(hash & 0xFFFFF));
+    }
+    return 0;
 }
 
 /* Find directory cluster and parent path for last component */
@@ -1119,7 +1330,7 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     if (!parent) return -2;
 
     char n8[8], n3[3];
-    name_to_83(leaf, n8, n3);
+    fat32_generate_short_name(leaf, parent, n8, n3);
 
     /* Build compare name for lookup */
     char cmp[13];
@@ -1244,7 +1455,7 @@ int fat32_mkdir(const char *path) {
     if (dir_find(parent, leaf, 0, 0)) return -3;
 
     char n8[8], n3[3];
-    name_to_83(leaf, n8, n3);
+    fat32_generate_short_name(leaf, parent, n8, n3);
     uint32_t dir_clus = fat_alloc_cluster();
     if (!dir_clus) return -4;
     uint32_t lba = cluster_to_lba(dir_clus);
