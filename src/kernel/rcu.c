@@ -9,22 +9,31 @@
 #include "stacktrace.h"
 #include "panic.h"
 #include "kallsyms.h"
+#include "apic.h"
+#include "export.h"
 
 /*
- * RCU — Read-Copy-Update with grace-period stall detection.
+ * RCU — Read-Copy-Update with grace-period stall detection and
+ *       asynchronous callback (call_rcu) support.
  *
  * Each CPU records a quiescent state (QS) timestamp at each context switch
  * via rcu_quiescent_state().  synchronize_rcu() waits until every online CPU
  * has passed through a QS at least once since the grace period started.
  *
+ * call_rcu() callbacks are batched per grace period.  A global callback
+ * list (rcu_cblist) collects pending callbacks.  When all CPUs have passed
+ * a QS, the list is moved to a done list and the callbacks are invoked
+ * during the next timer tick (from rcu_check_stall()).
+ *
  * Stall detection:
  *   - RCU_STALL_WARN_TICKS  (1 second):  if a CPU hasn't passed a QS,
- *     a warning is printed with per-CPU diagnostics.
+ *     a warning is printed with per-CPU diagnostics and an IPI backtrace
+ *     is sent to the stalled CPU.
  *   - RCU_STALL_PANIC_TICKS (3 seconds):  if still stalled after a
  *     warning, a full panic is triggered.
  *
- * The rcu_check_stall() function can be called from a periodic timer or
- * from the NMI watchdog context to detect stalls asynchronously.
+ * The rcu_check_stall() function is called from the system timer tick
+ * once per second.  It drives both stall detection and GP completion.
  */
 
 /* ── RCU grace-period timeout constants ──────────────────────────── */
@@ -41,18 +50,56 @@ struct rcu_cpu_state {
 /* Per-CPU array indexed by CPU index (not APIC ID) */
 static struct rcu_cpu_state rcu_state_percpu[SMP_MAX_CPUS];
 
-/* Global grace-period tracking */
+/* ── Global grace-period tracking ────────────────────────────────── */
 static volatile uint64_t rcu_gp_seq;            /* monotonically increasing GP counter */
 static volatile uint64_t rcu_gp_start_tick;     /* tick when current GP started */
 static volatile uint64_t rcu_gp_start_seq;      /* GP sequence at GP start */
 static volatile int      rcu_gp_in_progress;
 static volatile int      rcu_stall_warning_printed;  /* rate-limit stall warnings */
 
+/* ── call_rcu() callback lists ───────────────────────────────────── */
+
+/*
+ * We maintain two global callback lists protected by a simple flag:
+ *
+ *   rcu_pending_list  — callbacks awaiting a grace period.
+ *   rcu_done_list     — callbacks whose GP has completed, ready to invoke.
+ *
+ * A new GP is started whenever rcu_pending_list becomes non-empty and
+ * no GP is currently in progress.  When rcu_check_stall() detects that
+ * all CPUs have acknowledged the current GP, it moves the pending list
+ * to the done list and invokes the done callbacks.
+ */
+static struct rcu_head *rcu_pending_list;
+static struct rcu_head *rcu_pending_tail;
+static struct rcu_head *rcu_done_list;
+static volatile int      rcu_cb_lock;   /* simple spinlock for list ops */
+
+/*
+ * Counters for rcu_barrier() — total callbacks queued and total
+ * invoked so far.  rcu_barrier() polls until they match.
+ */
+static volatile uint64_t rcu_n_cbs_queued;
+static volatile uint64_t rcu_n_cbs_invoked;
+
 /* ── Per-CPU accessor ────────────────────────────────────────────── */
 static inline struct rcu_cpu_state *this_rcu_state(void) {
     uint32_t cpu_id = smp_get_cpu_id();
     if (cpu_id >= SMP_MAX_CPUS) cpu_id = 0;
     return &rcu_state_percpu[cpu_id];
+}
+
+/* ── Lock/unlock for callback list manipulation ──────────────────── */
+static inline void rcu_cb_lock_acquire(void) {
+    for (;;) {
+        if (!__atomic_test_and_set(&rcu_cb_lock, __ATOMIC_ACQUIRE))
+            break;
+        __asm__ volatile("pause");
+    }
+}
+
+static inline void rcu_cb_lock_release(void) {
+    __atomic_clear(&rcu_cb_lock, __ATOMIC_RELEASE);
 }
 
 /* ── Quiescent-state recording ───────────────────────────────────── */
@@ -73,14 +120,37 @@ void rcu_quiescent_state(void) {
      * sequential synchronize_rcu() calls that might be waiting. */
     __asm__ volatile("mfence" : : : "memory");
 }
+EXPORT_SYMBOL(rcu_quiescent_state);
 
 /* ── Stall detection helper ──────────────────────────────────────── */
 
 /*
+ * Send an IPI backtrace to a specific stalled CPU to get its stack dump.
+ * Uses the existing IPI_VECTOR_BACKTRACE mechanism.
+ */
+static void rcu_ipi_stalled_cpu(int cpu_id) {
+    if (cpu_id < 0 || cpu_id >= smp_get_cpu_count())
+        return;
+
+    uint32_t apic_id = cpu_info_array[cpu_id].apic_id;
+    kprintf("\n[RCU] Sending backtrace IPI to stalled CPU %d (APIC %u)...\n",
+            cpu_id, (unsigned int)apic_id);
+
+    /* Send IPI to the specific CPU using its APIC ID */
+    apic_send_ipi(apic_id, IPI_VECTOR_BACKTRACE);
+
+    /* Brief delay to let the IPI arrive and the handler run */
+    for (volatile int d = 0; d < 100000; d++)
+        __asm__ volatile("pause");
+}
+
+/*
  * rcu_dump_stall_info() — print detailed per-CPU state when a stall
  * is detected.  Called from synchronize_rcu() or rcu_check_stall().
+ * If @send_ipi is non-zero, IPI backtraces are sent to stalled CPUs.
  */
-static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning) {
+static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning,
+                                int send_ipi) {
     uint64_t now = timer_get_ticks();
     int ncpus = smp_get_cpu_count();
 
@@ -105,11 +175,14 @@ static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning) {
     /* Per-CPU quiescent state dump */
     kprintf("\nCPU  GP_ackd    Last_QS_tick    Elapsed_ms  Status\n");
     kprintf("---  ---------  --------------  ----------  ------\n");
+    int first_stalled = -1;
     for (int c = 0; c < ncpus; c++) {
         uint64_t cpu_elapsed = (now - rcu_state_percpu[c].last_qs_tick) * 1000ULL / TIMER_FREQ;
         const char *status;
         if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
             status = "STALLED";
+            if (first_stalled < 0)
+                first_stalled = c;
         } else if (cpu_elapsed < 100) {
             status = "active";
         } else {
@@ -142,14 +215,20 @@ static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning) {
     print_stack_trace();
 
     /* Identify the first stalled CPU and its likely culprit */
-    for (int c = 0; c < ncpus; c++) {
-        if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
-            kprintf("\nStalled CPU %d last QS at tick %llu\n",
-                    c,
-                    (unsigned long long)rcu_state_percpu[c].last_qs_tick);
-            kprintf("Consider checking CPU %d for: spinlock hold, "
-                    "interrupts-off region, or infinite loop\n", c);
-            break;
+    if (first_stalled >= 0) {
+        kprintf("\nStalled CPU %d last QS at tick %llu\n",
+                first_stalled,
+                (unsigned long long)rcu_state_percpu[first_stalled].last_qs_tick);
+        kprintf("Consider checking CPU %d for: spinlock hold, "
+                "interrupts-off region, or infinite loop\n", first_stalled);
+    }
+
+    /* Send IPI backtrace to stalled CPUs for detailed diagnostics */
+    if (send_ipi) {
+        for (int c = 0; c < ncpus; c++) {
+            if (rcu_state_percpu[c].gp_seq < rcu_gp_seq) {
+                rcu_ipi_stalled_cpu(c);
+            }
         }
     }
 
@@ -160,12 +239,127 @@ static void rcu_dump_stall_info(uint64_t elapsed_ticks, int printed_warning) {
     }
 }
 
+/* ── Invoke completed RCU callbacks ──────────────────────────────── */
+
+/*
+ * rcu_invoke_callbacks() — invoke all callbacks on the done list.
+ * Called from rcu_check_stall() once per second when a GP completes.
+ */
+static void rcu_invoke_callbacks(void) {
+    struct rcu_head *list;
+
+    /* Atomically take the entire done list */
+    rcu_cb_lock_acquire();
+    list = rcu_done_list;
+    rcu_done_list = NULL;
+    rcu_cb_lock_release();
+
+    if (!list)
+        return;
+
+    /* Invoke each callback.  We track the count for rcu_barrier(). */
+    struct rcu_head *cb = list;
+    while (cb) {
+        struct rcu_head *next = cb->next;
+        if (cb->func) {
+            cb->func(cb);
+        }
+        __atomic_add_fetch(&rcu_n_cbs_invoked, 1, __ATOMIC_RELEASE);
+        cb = next;
+    }
+}
+
+/*
+ * rcu_try_complete_gp() — check if all CPUs have acknowledged the
+ * current GP.  If yes, move pending callbacks to the done list and
+ * end the GP.  Returns 1 if a GP was completed, 0 otherwise.
+ */
+static int rcu_try_complete_gp(void) {
+    if (!rcu_gp_in_progress)
+        return 0;
+
+    int ncpus = smp_get_cpu_count();
+
+    /* Check whether every online CPU has acknowledged this GP */
+    for (int c = 0; c < ncpus; c++) {
+        if (rcu_state_percpu[c].gp_seq < rcu_gp_seq)
+            return 0;  /* at least one CPU still pending */
+    }
+
+    /* All CPUs have passed through a QS — GP complete */
+    rcu_gp_in_progress = 0;
+
+    /* Move pending callbacks to the done list */
+    rcu_cb_lock_acquire();
+    if (rcu_pending_list) {
+        /* Append the entire pending list to the done list */
+        if (rcu_done_list) {
+            /* Find the tail of the current done list */
+            struct rcu_head *tail = rcu_done_list;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = rcu_pending_list;
+        } else {
+            rcu_done_list = rcu_pending_list;
+        }
+        rcu_pending_list = NULL;
+        rcu_pending_tail = NULL;
+    }
+    rcu_cb_lock_release();
+
+    return 1;
+}
+
+/*
+ * rcu_start_gp() — begin a new grace period if there are pending
+ * callbacks and no GP is currently in progress.
+ */
+static void rcu_start_gp(void) {
+    if (rcu_gp_in_progress)
+        return;
+
+    rcu_cb_lock_acquire();
+    int has_pending = (rcu_pending_list != NULL);
+    rcu_cb_lock_release();
+
+    if (!has_pending)
+        return;
+
+    /* Start a new grace period */
+    rcu_gp_seq++;
+    rcu_gp_start_tick = timer_get_ticks();
+    rcu_gp_start_seq = rcu_gp_seq;
+    rcu_gp_in_progress = 1;
+    rcu_stall_warning_printed = 0;
+
+    /* Full memory barrier so all CPUs see updated GP sequence */
+    __asm__ volatile("mfence" : : : "memory");
+}
+
+/* ── Periodic stall check + GP advancement ───────────────────────── */
+
 /*
  * rcu_check_stall() — periodic stall check, callable from timer tick
  * or NMI context.  Returns 1 if a stall was detected (and appropriate
  * action was taken), 0 otherwise.
+ *
+ * Also drives grace-period advancement: if a GP has completed, invoke
+ * done callbacks; if there are pending callbacks and no GP, start one.
  */
 int rcu_check_stall(void) {
+    /* First: advance the GP machinery if possible */
+
+    /* Try to complete any in-progress grace period */
+    if (rcu_try_complete_gp()) {
+        /* GP completed — invoke the done callbacks */
+        rcu_invoke_callbacks();
+    }
+
+    /* If there are pending callbacks and no GP in progress, start one */
+    rcu_start_gp();
+
+    /* ── Stall detection below this point ── */
+
     if (!rcu_gp_in_progress)
         return 0;
 
@@ -192,8 +386,8 @@ int rcu_check_stall(void) {
 
     /* Stall detected */
     if (elapsed >= RCU_STALL_PANIC_TICKS) {
-        /* Prolonged stall — panic */
-        rcu_dump_stall_info(elapsed, 0);
+        /* Prolonged stall — panic with full diagnostics including IPI backtrace */
+        rcu_dump_stall_info(elapsed, 0, 1);  /* send_ipi = 1 */
         kprintf("\n=== RCU STALL PANIC: grace period blocked for %llu ms ===\n",
                 (unsigned long long)(elapsed * 1000ULL / TIMER_FREQ));
         panic("RCU stall — grace period not progressing");
@@ -202,7 +396,7 @@ int rcu_check_stall(void) {
     /* First time or warning threshold exceeded — print warning */
     if (!rcu_stall_warning_printed) {
         rcu_stall_warning_printed = 1;
-        rcu_dump_stall_info(elapsed, 1);
+        rcu_dump_stall_info(elapsed, 1, 1);  /* send_ipi = 1 */
         kprintf("\n  >> %d CPU(s) have not passed through a quiescent state\n",
                 stalled_cpus);
         kprintf("  >> Next check in %llu ms will panic if unresolved\n",
@@ -211,15 +405,76 @@ int rcu_check_stall(void) {
 
     return 1;
 }
+EXPORT_SYMBOL(rcu_check_stall);
 
-/* ── Grace-period synchronization ────────────────────────────────── */
+/* ── call_rcu() ──────────────────────────────────────────────────── */
 
+void call_rcu(struct rcu_head *head, rcu_callback_t func) {
+    if (!head)
+        return;
+
+    /* Initialise the callback entry */
+    head->next = NULL;
+    head->func = func;
+
+    /* Enqueue to the pending list */
+    rcu_cb_lock_acquire();
+    if (rcu_pending_tail) {
+        rcu_pending_tail->next = head;
+        rcu_pending_tail = head;
+    } else {
+        rcu_pending_list = head;
+        rcu_pending_tail = head;
+    }
+    rcu_n_cbs_queued++;
+    rcu_cb_lock_release();
+
+    /* If no GP is in progress, start one now */
+    rcu_start_gp();
+}
+EXPORT_SYMBOL(call_rcu);
+
+/* ── rcu_barrier() ───────────────────────────────────────────────── */
+
+void rcu_barrier(void) {
+    /*
+     * Wait until all RCU callbacks that were queued before this call
+     * have been invoked.  We snapshot the current queued count and
+     * poll until invoked count reaches or exceeds it.
+     *
+     * This is a simple polling barrier; a production kernel would use
+     * a waitqueue, but for our purposes polling is sufficient since
+     * callbacks are invoked within 1 second (next timer tick).
+     */
+    uint64_t queued_at_start = __atomic_load_n(&rcu_n_cbs_queued, __ATOMIC_ACQUIRE);
+    uint64_t deadline = timer_get_ticks() + (TIMER_FREQ * 10); /* 10 second timeout */
+
+    while (__atomic_load_n(&rcu_n_cbs_invoked, __ATOMIC_ACQUIRE) < queued_at_start) {
+        if (timer_get_ticks() >= deadline) {
+            kprintf("[RCU] rcu_barrier timeout waiting for callbacks "
+                    "(queued=%llu, invoked=%llu)\n",
+                    (unsigned long long)queued_at_start,
+                    (unsigned long long)rcu_n_cbs_invoked);
+            break;
+        }
+        /* Yield to let timer tick process callbacks */
+        scheduler_yield();
+    }
+}
+EXPORT_SYMBOL(rcu_barrier);
+
+/* ── synchronize_rcu() ────────────────────────────────────────────────
+ *
+ * Enhanced version that also processes any pending callbacks when the
+ * grace period completes, ensuring call_rcu() users also make progress.
+ */
 void synchronize_rcu(void) {
+    /*
+     * If a GP is already in progress, wait for it.
+     * Otherwise start one and wait.
+     */
     if (rcu_gp_in_progress) {
-        /* Nested GP request — caller is already in a grace period
-         * or another updater is driving one.  Wait for it. */
-        /* In production we'd increment a pending counter; for now,
-         * yield and let the current GP finish. */
+        /* Nested GP request — yield and let the current GP finish */
         uint64_t deadline = timer_get_ticks() + RCU_GP_WAIT_MAX_TICKS;
         while (rcu_gp_in_progress) {
             if (timer_get_ticks() >= deadline) {
@@ -268,7 +523,7 @@ void synchronize_rcu(void) {
         if (stall_warn_tick == 0) {
             if (now - start >= RCU_STALL_WARN_TICKS) {
                 stall_warn_tick = now;
-                rcu_dump_stall_info(now - start, 1);
+                rcu_dump_stall_info(now - start, 1, 1);  /* send_ipi = 1 */
                 kprintf("\n  >> CPU %d is blocking GP %llu (last QS at tick %llu)\n",
                         stalled_cpu,
                         (unsigned long long)rcu_gp_seq,
@@ -278,13 +533,9 @@ void synchronize_rcu(void) {
 
         /* Check for hard stall (panic threshold exceeded) */
         if (now >= deadline && (now - start >= RCU_STALL_PANIC_TICKS)) {
-            /* Extended stall — dump diagnostics and proceed (degraded mode)
-             * rather than hanging the entire system.  This is similar to
-             * Linux's RCU_CPU_STALL_TIMEOUT behavior where it prints
-             * warnings but doesn't always panic. */
             if (now - start >= RCU_STALL_PANIC_TICKS * 2) {
                 /* After 2x the panic threshold, really panic */
-                rcu_dump_stall_info(now - start, 0);
+                rcu_dump_stall_info(now - start, 0, 1);  /* send_ipi = 1 */
                 kprintf("\n=== RCU STALL PANIC: CPU %d blocking GP for %llu ms ===\n",
                         stalled_cpu,
                         (unsigned long long)((now - start) * 1000ULL / TIMER_FREQ));
@@ -306,10 +557,32 @@ void synchronize_rcu(void) {
         scheduler_yield();
     }
 
+    /* GP complete — advance callback machinery */
     rcu_gp_in_progress = 0;
+
+    /* Move pending callbacks to done list and invoke them */
+    rcu_cb_lock_acquire();
+    if (rcu_pending_list) {
+        if (rcu_done_list) {
+            struct rcu_head *tail = rcu_done_list;
+            while (tail->next)
+                tail = tail->next;
+            tail->next = rcu_pending_list;
+        } else {
+            rcu_done_list = rcu_pending_list;
+        }
+        rcu_pending_list = NULL;
+        rcu_pending_tail = NULL;
+    }
+    rcu_cb_lock_release();
+
+    /* Invoke the done callbacks now */
+    rcu_invoke_callbacks();
+
     /* Full memory barrier so all CPUs see the updated pointer */
     __asm__ volatile("mfence" : : : "memory");
 }
+EXPORT_SYMBOL(synchronize_rcu);
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
@@ -323,8 +596,14 @@ void rcu_init(void) {
     rcu_gp_start_seq = 0;
     rcu_gp_in_progress = 0;
     rcu_stall_warning_printed = 0;
+    rcu_pending_list = NULL;
+    rcu_pending_tail = NULL;
+    rcu_done_list = NULL;
+    rcu_cb_lock = 0;
+    rcu_n_cbs_queued = 0;
+    rcu_n_cbs_invoked = 0;
 
-    kprintf("[OK] RCU initialized with stall detection "
+    kprintf("[OK] RCU initialized with call_rcu + stall detection "
             "(warn=%lums, panic=%lums)\n",
             (unsigned long)(RCU_STALL_WARN_TICKS * 1000ULL / TIMER_FREQ),
             (unsigned long)(RCU_STALL_PANIC_TICKS * 1000ULL / TIMER_FREQ));
