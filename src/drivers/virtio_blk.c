@@ -13,6 +13,9 @@
 #include "printf.h"
 #include "io.h"
 #include "types.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* ── Virtio vendor/device IDs ──────────────────────────────────── */
 #define VIRTIO_VENDOR          0x1AF4
@@ -220,3 +223,25 @@ void virtio_blk_register_blockdev(void) {
     blockdev_register_legacy(BLOCKDEV_VIRTIO0, "virtio0",
                       vblk_bd_read, vblk_bd_write, vblk_bd_size);
 }
+
+/* ── Module hooks ─────────────────────────────────────────────────────── */
+#ifdef MODULE
+int init_module(void) {
+    if (virtio_blk_init() == 0) {
+        virtio_blk_register_blockdev();
+        kprintf("[OK] virtio-blk (module): %llu sectors\n", virtio_blk_sector_count());
+        return 0;
+    }
+    return -1;
+}
+
+void cleanup_module(void) {
+    vblk_present = 0;
+    kprintf("virtio-blk (module): unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("VirtIO block device driver");
+MODULE_ALIAS("pci:v00001AF4d00001001sv*sd*bc*sc*i*");
+#endif /* MODULE */

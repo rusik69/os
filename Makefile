@@ -372,6 +372,9 @@ doom-objs := doom/doom_task doom/doom_combat doom/doom_doors doom/doom_floor \
              doom/doom_map doom/doom_math doom/doom_player doom/doom_raycast \
              doom/doom_render doom/doom_sprites doom/doom_textures
 
+# Virtio block and net drivers as modules (M58)
+obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
+
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
 

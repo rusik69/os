@@ -23,6 +23,9 @@
 #include "pic.h"
 #include "apic.h"
 #include "net.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* ── Virtio PCI constants ───────────────────────────────────────── */
 #define VIRTIO_VENDOR          0x1AF4
@@ -328,3 +331,24 @@ void virtio_net_irq_rearm(void) {
         vio_inb(VIRTIO_PCI_ISR);
     }
 }
+
+/* ── Module hooks ─────────────────────────────────────────────────────── */
+#ifdef MODULE
+int init_module(void) {
+    int ret = virtio_net_init();
+    if (ret == 0) {
+        kprintf("[OK] virtio-net (module): initialized\n");
+    }
+    return ret;
+}
+
+void cleanup_module(void) {
+    vnet_present = 0;
+    kprintf("virtio-net (module): unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("VirtIO network device driver");
+MODULE_ALIAS("pci:v00001AF4d00001000sv*sd*bc*sc*i*");
+#endif /* MODULE */
