@@ -1,8 +1,212 @@
 #include "madvise_ext.h"
 #include "vmm.h"
-#include "kernel.h"
+#include "pmm.h"
+#include "process.h"
 #include "printf.h"
 #include "errno.h"
+#include "string.h"
+
+/* ── Page-table helpers ────────────────────────────────────────────────── */
+
+/* PTE constants (must match definitions in vmm.c) */
+#define PTE_PRESENT   (1ULL << 0)
+#define PTE_WRITE     (1ULL << 1)
+#define PTE_USER      (1ULL << 2)
+#define PTE_HUGE      (1ULL << 7)
+#define PTE_COW       (1ULL << 9)   /* software bit: copy-on-write */
+#define PTE_LAZY      (1ULL << 10)  /* software bit: lazy/demand allocation */
+#define PTE_EXECONLY  (1ULL << 11)  /* software bit: execute-only tracking */
+#define PTE_NX        (1ULL << 63)  /* No-Execute */
+#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define PTE_DIRTY     (1ULL << 6)   /* dirty bit */
+#define PTE_ACCESSED  (1ULL << 5)   /* accessed bit */
+
+/* TLB flush for a single page */
+static inline void local_tlb_flush(uint64_t addr) {
+    __asm__ volatile("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
+/* ── User page-table walker ───────────────────────────────────────────── */
+
+/*
+ * Walk the current process's user page table and apply an operation
+ * to each present page in the range [addr, addr + len).
+ *
+ * The operation receives the physical address, PTE flags, and a pointer
+ * to the PTE itself (so it can modify or clear it).
+ *
+ * Returns 0 on success, or -EINVAL / -EFAULT on error.
+ */
+typedef void (*page_op_t)(uint64_t phys, uint64_t *pte_ptr, uint64_t virt);
+
+static int walk_user_pages(uint64_t addr, uint64_t len, page_op_t op)
+{
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4)
+        return -EINVAL;
+
+    /* Address and length must be page-aligned / rounded */
+    if (addr & (PAGE_SIZE - 1))
+        return -EINVAL;
+    uint64_t end = addr + ((len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
+    if (end < addr || end > USER_VADDR_MAX)
+        return -EINVAL;
+
+    uint64_t *pml4 = proc->pml4;
+
+    for (uint64_t v = addr; v < end; v += PAGE_SIZE) {
+        int pml4_idx = (v >> 39) & 0x1FF;
+        int pdpt_idx = (v >> 30) & 0x1FF;
+        int pd_idx   = (v >> 21) & 0x1FF;
+        int pt_idx   = (v >> 12) & 0x1FF;
+
+        /* Walk page tables */
+        if (!(pml4[pml4_idx] & PTE_PRESENT))
+            continue; /* not mapped — skip */
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT))
+            continue;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (!(pd[pd_idx] & PTE_PRESENT))
+            continue;
+
+        /* Handle 2MB huge pages */
+        if (pd[pd_idx] & PTE_HUGE) {
+            uint64_t phys = pd[pd_idx] & PTE_ADDR_MASK;
+            uint64_t offset = v & (HUGE_PAGE_SIZE - 1ULL);
+            op(phys + offset, &pd[pd_idx], v);
+            local_tlb_flush(v);
+            /* Skip remaining 4K pages within this huge page */
+            uint64_t remaining = HUGE_PAGE_SIZE - (v & (HUGE_PAGE_SIZE - 1ULL));
+            v += remaining - PAGE_SIZE; /* loop increment adds PAGE_SIZE */
+            continue;
+        }
+
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        if (!(pt[pt_idx] & PTE_PRESENT))
+            continue;
+
+        uint64_t phys = pt[pt_idx] & PTE_ADDR_MASK;
+        op(phys, &pt[pt_idx], v);
+        local_tlb_flush(v);
+    }
+
+    return 0;
+}
+
+/* ── Operation callbacks ──────────────────────────────────────────────── */
+
+/* External reference to the shared zero page used for lazy/demand allocation */
+extern uint64_t vmm_zero_page_frame;
+
+/*
+ * MADV_DONTNEED: immediately unmap and free physical pages.
+ * The address range becomes invalid; subsequent access will fault.
+ */
+static void op_dontneed(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)virt;
+
+    /* Clear the PTE (unmap) */
+    uint64_t old_pte = *pte_ptr;
+    *pte_ptr = 0;
+
+    /* Free or unreference the physical frame */
+    if (phys && phys != vmm_zero_page_frame) {
+        /* If it was a COW page, decrement refcount (frees when it hits 0) */
+        if (old_pte & PTE_COW) {
+            pmm_unref_frame(phys);
+        } else {
+            pmm_free_frame(phys);
+        }
+    }
+    /* vmm_zero_page_frame is never freed — it is shared globally */
+}
+
+/*
+ * MADV_COLD: hint that pages are cold (unlikely to be accessed soon).
+ * Clear the accessed and dirty bits so the kernel can reclaim them first
+ * under memory pressure.  Also clear the dirty bit to reduce writeback cost.
+ * Since we have no swap, we simply unmap and free (like DONTNEED) to reclaim
+ * immediately — the hint becomes an action.
+ */
+static void op_cold(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)virt;
+    if (!phys) return;
+
+    /* If it's the shared zero page or still in use, just clear accessed/dirty */
+    if (phys == vmm_zero_page_frame) {
+        *pte_ptr &= ~(uint64_t)(PTE_ACCESSED | PTE_DIRTY);
+        return;
+    }
+
+    /* For normal pages: unmap and free immediately (conservative but simple) */
+    uint64_t old_pte = *pte_ptr;
+    *pte_ptr = 0;
+
+    if (old_pte & PTE_COW) {
+        pmm_unref_frame(phys);
+    } else {
+        pmm_free_frame(phys);
+    }
+}
+
+/*
+ * MADV_PAGEOUT: proactively swap out pages.
+ * Without swap support, we treat this like DONTNEED (unmap + free).
+ */
+static void op_pageout(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)virt;
+    if (!phys || phys == vmm_zero_page_frame) return;
+
+    uint64_t old_pte = *pte_ptr;
+    *pte_ptr = 0;
+
+    if (old_pte & PTE_COW) {
+        pmm_unref_frame(phys);
+    } else {
+        pmm_free_frame(phys);
+    }
+}
+
+/*
+ * MADV_FREE: lazy freeing — pages become freeable but are not immediately
+ * reclaimed.  On next access, if not yet reclaimed, the page is zero-filled.
+ * We implement this similarly to DONTNEED (immediate reclaim) for simplicity.
+ */
+static void op_free(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)virt;
+    if (!phys || phys == vmm_zero_page_frame) return;
+
+    uint64_t old_pte = *pte_ptr;
+    *pte_ptr = 0;
+
+    if (old_pte & PTE_COW) {
+        pmm_unref_frame(phys);
+    } else {
+        pmm_free_frame(phys);
+    }
+}
+
+/*
+ * MADV_MERGEABLE: mark pages as candidates for KSM merging.
+ * Since KSM scanning already checks for anonymous pages, we just
+ * clear accessed/dirty to hint that they can be scanned.
+ */
+static void op_mergeable(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
+{
+    (void)phys;
+    (void)virt;
+    /* Clear accessed/dirty to make them visible for KSM scanning */
+    *pte_ptr &= ~(uint64_t)(PTE_ACCESSED | PTE_DIRTY);
+    /* Ensure the pages are present and user-accessible */
+    *pte_ptr |= PTE_PRESENT | PTE_USER;
+}
+
+/* ── State ─────────────────────────────────────────────────────────────── */
 
 static int madvise_ext_initialised = 0;
 
@@ -11,127 +215,53 @@ void madvise_ext_init(void)
     if (madvise_ext_initialised)
         return;
     madvise_ext_initialised = 1;
-    kprintf("madvise_ext: initialised extended madvise operations\n");
+    kprintf("[OK] madvise_ext: extended madvise operations initialized\n");
 }
 
-/*
- * Walk the user page table for the range [addr, addr+len) and apply
- * an operation to each page.  The operation receives the physical address
- * of each present page and a pointer to the PTE flags.
- */
-typedef void (*madvise_page_op_t)(uint64_t phys, uint64_t *pte_flags);
-
-static int madvise_walk_range(uint64_t addr, uint64_t len, madvise_page_op_t op)
-{
-    if (len == 0)
-        return -EINVAL;
-    if (addr + len < addr)
-        return -EINVAL;
-
-    /* Kernel-private helper — in production this would walk the
-     * current process's page table using vmm_virt_to_phys for each
-     * page-aligned region.  For now we iterate over page-aligned
-     * chunks. */
-    uint64_t page_addr = addr & ~(PAGE_SIZE - 1);
-    uint64_t end = addr + len;
-
-    while (page_addr < end) {
-        uint64_t phys;
-        int ret = vmm_virt_to_phys(page_addr, &phys);
-        if (ret == 0 && phys != 0) {
-            uint64_t flags = VMM_FLAG_PRESENT; /* simplified */
-            op(phys, &flags);
-        }
-        page_addr += PAGE_SIZE;
-    }
-    return 0;
-}
-
-/* --- Per-operation callbacks --- */
-
-static void op_dontneed(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: unmap the page, free the physical frame,
-     * zero the PTE. */
-}
-
-static void op_willneed(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: prefetch / fault the page in. */
-}
-
-static void op_cold(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: clear accessed bit, hint to page reclaim. */
-}
-
-static void op_pageout(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: swap out the page. */
-}
-
-static void op_free(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: unmap, free, zero. */
-}
-
-static void op_mergeable(uint64_t phys, uint64_t *pte_flags)
-{
-    (void)phys;
-    (void)pte_flags;
-    /* In a full implementation: mark the page as mergeable for KSM. */
-}
-
-/* --- Public API --- */
+/* ── Public API ────────────────────────────────────────────────────────── */
 
 int madvise_dontneed(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_dontneed);
+    return walk_user_pages(addr, len, op_dontneed);
 }
 
 int madvise_willneed(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_willneed);
+    /* Pre-fault / prefetch: already mapped, nothing to do.
+     * In a full implementation we would fault pages in from swap/disk. */
+    (void)addr;
+    (void)len;
+    return 0;
 }
 
 int madvise_cold(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_cold);
+    return walk_user_pages(addr, len, op_cold);
 }
 
 int madvise_pageout(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_pageout);
+    return walk_user_pages(addr, len, op_pageout);
 }
 
 int madvise_free(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_free);
+    return walk_user_pages(addr, len, op_free);
 }
 
 int madvise_mergeable(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    return madvise_walk_range(addr, len, op_mergeable);
+    return walk_user_pages(addr, len, op_mergeable);
 }

@@ -57,6 +57,7 @@
 #include "bufcache.h"
 #include "coredump.h"
 #include "workqueue.h"
+#include "madvise_ext.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -5634,21 +5635,60 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
 }
 
 static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
-    (void)addr; (void)len;
+    struct process *p = process_get_current();
+    if (!p || !p->pml4) return (uint64_t)-1;
+
+    /* Common validation for operations that touch user pages */
+    switch (advice) {
+        case MADV_DONTNEED:
+        case MADV_FREE:
+        case MADV_MERGEABLE:
+        case MADV_UNMERGEABLE: {
+            if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
+            uint64_t length = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+            if (addr + length < addr) return (uint64_t)-EINVAL;
+            if (addr + length > USER_VADDR_MAX) return (uint64_t)-EINVAL;
+            /* Validate user address range is readable/writable */
+            if (!vmm_user_range_ok(p->pml4, addr, length, 0))
+                return (uint64_t)-EFAULT;
+            break;
+        }
+        default:
+            break;
+    }
+
     switch (advice) {
         case MADV_DONTNEED: {
-            /* Decommit pages: unmap them, freeing physical memory */
-            struct process *p = process_get_current();
-            if (!p || !p->pml4) return (uint64_t)-1;
-            if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
-            uint64_t length = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-            if (addr + length < addr) return (uint64_t)-1;
-            if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
-            vmm_unmap_user_pages(p->pml4, addr, length / PAGE_SIZE);
-            return 0;
+            /* Immediately unmap and free physical pages */
+            int ret = madvise_dontneed(addr, len);
+            return (ret < 0) ? (uint64_t)-1 : 0;
+        }
+        case MADV_FREE: {
+            /* Lazy freeing: pages become freeable (immediate in our impl) */
+            int ret = madvise_free(addr, len);
+            return (ret < 0) ? (uint64_t)-1 : 0;
         }
         case MADV_WILLNEED: {
             /* Pre-fault: ensure pages are mapped (already are in our case) */
+            return 0;
+        }
+        case MADV_COLD: {
+            /* Hint pages are cold — clear accessed/dirty, reclaim immediately */
+            int ret = madvise_cold(addr, len);
+            return (ret < 0) ? (uint64_t)-1 : 0;
+        }
+        case MADV_PAGEOUT: {
+            /* Proactively swap out pages (immediate reclaim without swap) */
+            int ret = madvise_pageout(addr, len);
+            return (ret < 0) ? (uint64_t)-1 : 0;
+        }
+        case MADV_MERGEABLE: {
+            /* Mark pages as candidates for KSM merging */
+            int ret = madvise_mergeable(addr, len);
+            return (ret < 0) ? (uint64_t)-1 : 0;
+        }
+        case MADV_UNMERGEABLE: {
+            /* Unmark as KSM mergeable — no-op since we don't track merge state */
             return 0;
         }
         case MADV_NORMAL:
@@ -5657,7 +5697,7 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
             /* No-op: we don't do I/O clustering yet */
             return 0;
         default:
-            return (uint64_t)-1; /* ENOSYS */
+            return (uint64_t)-ENOSYS;
     }
 }
 

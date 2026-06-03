@@ -412,6 +412,8 @@
 #define MADV_WILLNEED    3
 #define MADV_DONTNEED    4
 #define MADV_FREE        8
+#define MADV_COLD        20   /* proactive reclaim hint */
+#define MADV_PAGEOUT     21   /* proactive swap out */
 #define MADV_REMOVE      9
 #define MADV_MERGEABLE   12
 #define MADV_UNMERGEABLE 13
