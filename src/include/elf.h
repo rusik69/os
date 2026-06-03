@@ -38,6 +38,49 @@
 #define SHF_INFO_LINK 0x0040
 #define SHF_TLS       0x0400
 
+/* ── Dynamic section tags (DT_*) for dlopen/dlsym ────────────────── */
+#define DT_NULL        0    /* marks end of dynamic section */
+#define DT_NEEDED      1    /* string table offset of needed lib */
+#define DT_PLTRELSZ    2    /* size of PLT relocations */
+#define DT_PLTGOT      3    /* address of PLT/GOT */
+#define DT_HASH        4    /* address of symbol hash table */
+#define DT_STRTAB      5    /* address of string table */
+#define DT_SYMTAB      6    /* address of symbol table */
+#define DT_RELA        7    /* address of RelA relocations */
+#define DT_RELASZ      8    /* size of RelA table */
+#define DT_RELAENT     9    /* size of each RelA entry */
+#define DT_STRSZ       10   /* size of string table */
+#define DT_SYMENT      11   /* size of symbol table entry */
+#define DT_INIT        12   /* address of init function */
+#define DT_FINI        13   /* address of fini function */
+#define DT_SONAME      14   /* string table offset of shared obj name */
+#define DT_RPATH       15   /* library search path (deprecated) */
+#define DT_SYMBOLIC    16   /* start with local search */
+#define DT_REL         17   /* address of Rel relocations */
+#define DT_RELSZ       18   /* size of Rel table */
+#define DT_RELENT      19   /* size of each Rel entry */
+#define DT_PLTREL      20   /* type of PLT reloc (DT_RELA or DT_REL) */
+#define DT_DEBUG       21   /* debug info (reserved) */
+#define DT_TEXTREL     22   /* text relocations may exist */
+#define DT_JMPREL      23   /* address of PLT relocations */
+#define DT_BIND_NOW    24   /* bind all symbols immediately */
+#define DT_INIT_ARRAY  25   /* address of init function array */
+#define DT_FINI_ARRAY  26   /* address of fini function array */
+#define DT_INIT_ARRAYSZ 27  /* size of init array */
+#define DT_FINI_ARRAYSZ 28  /* size of fini array */
+#define DT_RUNPATH     29   /* library search path */
+#define DT_FLAGS       30   /* flags (DF_*) */
+#define DT_ENCODING    32   /* start of encoded range */
+#define DT_PREINIT_ARRAY 32 /* address of preinit array */
+#define DT_PREINIT_ARRAYSZ 33 /* size of preinit array */
+
+/* Dynamic section flags (DT_FLAGS values) */
+#define DF_ORIGIN      0x01   /* $ORIGIN substitution */
+#define DF_SYMBOLIC    0x02   /* symbolic resolution */
+#define DF_TEXTREL     0x04   /* text relocation */
+#define DF_BIND_NOW    0x08   /* immediate binding */
+#define DF_STATIC_TLS  0x10   /* static thread-local storage */
+
 /* Relocation types (R_X86_64_*) — subset needed for kernel modules */
 #define R_X86_64_NONE    0
 #define R_X86_64_64      1  /* S + A (absolute 64-bit) */
