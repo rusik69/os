@@ -817,6 +817,138 @@ static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/smaps — detailed per-VMA memory statistics */
+static int procfs_gen_pid_smaps(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+
+    /* Helper to format a memory region's status line.
+     * Per Linux smaps format: one entry per VMA with address range, perms,
+     * offset, device, inode, pathname, followed by detail lines. */
+    #define SMAPS_REGION(start, end, perms, name) do {                     \
+        proc_str(start " " end " " perms " 00000000 00:00 0",             \
+                 buf, &pos, max);                                         \
+        proc_str("         " name "\n", buf, &pos, max);                  \
+    } while(0)
+
+    #define SMAPS_DETAIL(label, fmt, val) do {                             \
+        char tmp[48];                                                      \
+        proc_str(label, buf, &pos, max);                                   \
+        snprintf(tmp, sizeof(tmp), fmt, (unsigned long long)(val));        \
+        proc_str(tmp, buf, &pos, max);                                     \
+        proc_str(" kB\n", buf, &pos, max);                                 \
+    } while(0)
+
+    if (p->is_user && p->pml4) {
+        /* ── User code region: 0x400000 - 0x800000 ─────────────── */
+        {
+            uint64_t rss, dirty, shared;
+            rss = vmm_count_user_pages_range(p->pml4,
+                        0x400000ULL, 0x800000ULL, &dirty, &shared);
+            uint64_t rss_kb  = rss * 4;
+            uint64_t dirty_kb = dirty * 4;
+            uint64_t shared_kb = shared * 4;
+            uint64_t pss_kb = shared_kb > 0 ? shared_kb / 2 : 0; /* approximate */
+            uint64_t private_kb = rss_kb > shared_kb ? rss_kb - shared_kb : 0;
+
+            SMAPS_REGION("0000000000400000", "0000000000800000",
+                         "r-xp", "/init");
+            SMAPS_DETAIL("Rss:               ", "%llu", rss_kb);
+            SMAPS_DETAIL("Pss:               ", "%llu", pss_kb);
+            SMAPS_DETAIL("Shared_Clean:      ", "%llu", shared_kb);
+            SMAPS_DETAIL("Private_Clean:     ", "%llu", private_kb);
+            SMAPS_DETAIL("Private_Dirty:     ", "%llu", dirty_kb);
+            SMAPS_DETAIL("Referenced:        ", "%llu", rss_kb);
+            proc_str("Swap:              0 kB\n", buf, &pos, max);
+        }
+
+        /* ── Heap region: 0x800000 - 0xA00000 ──────────────────── */
+        {
+            uint64_t rss, dirty, shared;
+            rss = vmm_count_user_pages_range(p->pml4,
+                        0x800000ULL, 0xA00000ULL, &dirty, &shared);
+            uint64_t rss_kb  = rss * 4;
+            uint64_t dirty_kb = dirty * 4;
+            uint64_t shared_kb = shared * 4;
+            uint64_t pss_kb = shared_kb > 0 ? shared_kb / 2 : 0;
+            uint64_t private_kb = rss_kb > shared_kb ? rss_kb - shared_kb : 0;
+
+            SMAPS_REGION("0000000000800000", "0000000000a00000",
+                         "rw-p", "[heap]");
+            SMAPS_DETAIL("Rss:               ", "%llu", rss_kb);
+            SMAPS_DETAIL("Pss:               ", "%llu", pss_kb);
+            SMAPS_DETAIL("Shared_Clean:      ", "%llu", shared_kb);
+            SMAPS_DETAIL("Private_Clean:     ", "%llu", private_kb);
+            SMAPS_DETAIL("Private_Dirty:     ", "%llu", dirty_kb);
+            SMAPS_DETAIL("Referenced:        ", "%llu", rss_kb);
+            proc_str("Swap:              0 kB\n", buf, &pos, max);
+        }
+
+        /* ── vDSO region: 0x7ffff7ff7000 - 0x7ffff7ffa000 ──────── */
+        {
+            uint64_t rss, dirty, shared;
+            rss = vmm_count_user_pages_range(p->pml4,
+                        0x7FFFF7FF7000ULL, 0x7FFFF7FFA000ULL, &dirty, &shared);
+            uint64_t rss_kb  = rss * 4;
+            uint64_t dirty_kb = dirty * 4;
+            uint64_t shared_kb = shared * 4;
+            uint64_t pss_kb = shared_kb > 0 ? shared_kb / 2 : 0;
+            uint64_t private_kb = rss_kb > shared_kb ? rss_kb - shared_kb : 0;
+
+            SMAPS_REGION("00007ffff7ff7000", "00007ffff7ffa000",
+                         "r-xp", "[vdso]");
+            SMAPS_DETAIL("Rss:               ", "%llu", rss_kb);
+            SMAPS_DETAIL("Pss:               ", "%llu", pss_kb);
+            SMAPS_DETAIL("Shared_Clean:      ", "%llu", shared_kb);
+            SMAPS_DETAIL("Private_Clean:     ", "%llu", private_kb);
+            SMAPS_DETAIL("Private_Dirty:     ", "%llu", dirty_kb);
+            SMAPS_DETAIL("Referenced:        ", "%llu", rss_kb);
+            proc_str("Swap:              0 kB\n", buf, &pos, max);
+        }
+
+        /* ── Stack region: 0x7ffffffde000 - 0x7ffffffff000 ──────── */
+        {
+            uint64_t rss, dirty, shared;
+            rss = vmm_count_user_pages_range(p->pml4,
+                        0x7FFFFFFDE000ULL, 0x7FFFFFFFF000ULL, &dirty, &shared);
+            uint64_t rss_kb  = rss * 4;
+            uint64_t dirty_kb = dirty * 4;
+            uint64_t shared_kb = shared * 4;
+            uint64_t pss_kb = shared_kb > 0 ? shared_kb / 2 : 0;
+            uint64_t private_kb = rss_kb > shared_kb ? rss_kb - shared_kb : 0;
+
+            SMAPS_REGION("00007ffffffde000", "00007ffffffff000",
+                         "rw-p", "[stack]");
+            SMAPS_DETAIL("Rss:               ", "%llu", rss_kb);
+            SMAPS_DETAIL("Pss:               ", "%llu", pss_kb);
+            SMAPS_DETAIL("Shared_Clean:      ", "%llu", shared_kb);
+            SMAPS_DETAIL("Private_Clean:     ", "%llu", private_kb);
+            SMAPS_DETAIL("Private_Dirty:     ", "%llu", dirty_kb);
+            SMAPS_DETAIL("Referenced:        ", "%llu", rss_kb);
+            proc_str("Swap:              0 kB\n", buf, &pos, max);
+        }
+    } else {
+        /* Kernel thread — show kernel mapping */
+        {
+            uint64_t rss = pmm_get_used_frames(); /* rough approximation */
+            SMAPS_REGION("ffffffff80000000", "ffffffff80a00000",
+                         "r-xp", "[kernel]");
+            SMAPS_DETAIL("Rss:               ", "%llu", rss * 4);
+            SMAPS_DETAIL("Pss:               ", "%llu", rss * 4);
+            proc_str("Shared_Clean:      0 kB\n", buf, &pos, max);
+            SMAPS_DETAIL("Private_Clean:     ", "%llu", rss * 4);
+            proc_str("Private_Dirty:     0 kB\n", buf, &pos, max);
+            SMAPS_DETAIL("Referenced:        ", "%llu", rss * 4);
+            proc_str("Swap:              0 kB\n", buf, &pos, max);
+        }
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* /proc/<pid>/limits — per-process resource limits */
 static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -1028,6 +1160,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             if (len < 0) return -1;
         } else if (got && strcmp(p, "/maps") == 0) {
             len = procfs_gen_pid_maps(pid, buf, (int)max_size);
+            if (len < 0) return -1;
+        } else if (got && strcmp(p, "/smaps") == 0) {
+            len = procfs_gen_pid_smaps(pid, buf, (int)max_size);
             if (len < 0) return -1;
         } else if (got && strcmp(p, "/limits") == 0) {
             len = procfs_gen_pid_limits(pid, buf, (int)max_size);

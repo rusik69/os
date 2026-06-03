@@ -140,6 +140,12 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, 
  * If 'shared_out' is non-NULL, receives count of COW/shared pages. */
 uint64_t vmm_count_user_pages(uint64_t *pml4, uint64_t *dirty_out, uint64_t *shared_out);
 
+/* Walk a user page table range [start_virt, end_virt) and count present pages.
+ * Same semantics as vmm_count_user_pages but restricted to a virtual address range. */
+uint64_t vmm_count_user_pages_range(uint64_t *pml4,
+                                     uint64_t start_virt, uint64_t end_virt,
+                                     uint64_t *dirty_out, uint64_t *shared_out);
+
 /* NX bit support */
 void vmm_nx_init(void);
 int vmm_check_nx(uint64_t *pml4, uint64_t virt, int write, int exec);

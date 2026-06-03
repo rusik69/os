@@ -978,6 +978,86 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
     return 0;
 }
 
+/* ── Walk user page table and count present pages in a range ────────────
+ * Count 4KB-equivalent present pages in [start_virt, end_virt).
+ * Huge pages (2MB) are counted as 512 × 4KB pages.
+ * If dirty_out is non-NULL, receives count of writable/dirty pages.
+ * If shared_out is non-NULL, receives count of COW/shared+lazy pages.
+ */
+uint64_t vmm_count_user_pages_range(uint64_t *pml4,
+                                     uint64_t start_virt, uint64_t end_virt,
+                                     uint64_t *dirty_out,
+                                     uint64_t *shared_out) {
+    uint64_t total = 0, dirty = 0, shared = 0;
+    if (!pml4 || start_virt >= end_virt || start_virt >= USER_VADDR_MAX)
+        goto done;
+
+    /* Clamp range to user space */
+    if (end_virt > USER_VADDR_MAX) end_virt = USER_VADDR_MAX;
+
+    /* Align to page boundaries */
+    uint64_t va_start = start_virt & ~(uint64_t)0xFFF;
+    uint64_t va_end   = (end_virt + 0xFFF) & ~(uint64_t)0xFFF;
+
+    int pml4_lo = (va_start >> 39) & 0x1FF;
+    int pml4_hi = (va_end   >> 39) & 0x1FF;
+    if (pml4_lo > 255) pml4_lo = 255;
+    if (pml4_hi > 255) pml4_hi = 255;
+
+    for (int i = pml4_lo; i <= pml4_hi && i < 256; i++) {
+        if (!(pml4[i] & PTE_PRESENT)) continue;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[i] & PTE_ADDR_MASK);
+
+        int pdpt_lo = (i == pml4_lo) ? ((va_start >> 30) & 0x1FF) : 0;
+        int pdpt_hi = (i == pml4_hi) ? ((va_end   >> 30) & 0x1FF) : 511;
+
+        for (int j = pdpt_lo; j <= pdpt_hi; j++) {
+            if (!(pdpt[j] & PTE_PRESENT)) continue;
+            uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[j] & PTE_ADDR_MASK);
+
+            int pd_lo = (i == pml4_lo && j == pdpt_lo) ? ((va_start >> 21) & 0x1FF) : 0;
+            int pd_hi = (i == pml4_hi && j == pdpt_hi) ? ((va_end   >> 21) & 0x1FF) : 511;
+
+            for (int k = pd_lo; k <= pd_hi; k++) {
+                if (!(pd[k] & PTE_PRESENT)) continue;
+
+                if (pd[k] & PTE_HUGE) {
+                    uint64_t page_base = (((uint64_t)i << 39) | ((uint64_t)j << 30) | ((uint64_t)k << 21));
+                    uint64_t page_end  = page_base + HUGE_PAGE_SIZE;
+                    /* Only count the overlapping part */
+                    uint64_t overlap_start = (page_base > va_start) ? page_base : va_start;
+                    uint64_t overlap_end   = (page_end < va_end) ? page_end : va_end;
+                    if (overlap_start < overlap_end) {
+                        uint64_t overlap_pages = (overlap_end - overlap_start) / PAGE_SIZE;
+                        total += overlap_pages;
+                        if (pd[k] & PTE_WRITE) dirty += overlap_pages;
+                    }
+                    continue;
+                }
+
+                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[k] & PTE_ADDR_MASK);
+
+                int pt_lo = (i == pml4_lo && j == pdpt_lo && k == pd_lo) ? ((va_start >> 12) & 0x1FF) : 0;
+                int pt_hi = (i == pml4_hi && j == pdpt_hi && k == pd_hi) ? ((va_end   >> 12) & 0x1FF) : 511;
+
+                for (int l = pt_lo; l <= pt_hi; l++) {
+                    if (!(pt[l] & PTE_PRESENT)) continue;
+                    total++;
+                    if (pt[l] & PTE_WRITE) dirty++;
+                    if (pt[l] & PTE_COW)  shared++;
+                    uint64_t phys = pt[l] & PTE_ADDR_MASK;
+                    if (phys == vmm_zero_page_frame) shared++;
+                }
+            }
+        }
+    }
+
+done:
+    if (dirty_out)  *dirty_out  = dirty;
+    if (shared_out) *shared_out = shared;
+    return total;
+}
+
 /* ── Walk user page table and count present pages (for OOM scoring) ── */
 uint64_t vmm_count_user_pages(uint64_t *pml4, uint64_t *dirty_out, uint64_t *shared_out) {
     uint64_t total = 0, dirty = 0, shared = 0;
