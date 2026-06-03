@@ -182,6 +182,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/yama.c \
          src/kernel/kptr_restrict.c \
          src/kernel/dmesg.c \
+         src/kernel/coredump_core.c \
          src/ipc/waitqueue.c \
          src/dos/dos_emu.c \
          src/dos/dos_ints.c \
@@ -365,7 +366,7 @@ MODULE_BUILDDIR = $(BUILDDIR)/modules
 # obj-m lists module .ko names to build (relative to MODULE_BUILDDIR, .ko suffix)
 # Each entry creates a build target: $(MODULE_BUILDDIR)/<name>.ko
 # Override this in a submake or set in environment to add custom modules.
-obj-m ?= drivers/e1000.ko drivers/speaker.ko
+obj-m ?= drivers/e1000.ko drivers/speaker.ko drivers/coredump.ko
 
 # DOOM as a loadable module (built-in + module dual build)
 obj-m += doom.ko

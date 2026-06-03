@@ -10,6 +10,12 @@
 #include "pmm.h"
 #include "elf.h"
 #include "heap.h"          /* kmalloc, kfree */
+#include "coredump_core.h"
+#include "workqueue.h"
+
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /*
  * Core dump generation — writes ELF core file to /tmp/core.
@@ -120,9 +126,17 @@ static void cb_pad(struct core_buf *cb, uint64_t align) {
     cb->len += pad;
 }
 
+/* ── Forward declarations ─────────────────────────────────────────── */
+
+/* Registration helper (defined in the init/exit section below) */
+static int coredump_init_handler(void);
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 void coredump_init(void) {
+    /* Register the coredump handler with the kernel core so that
+     * do_coredump() dispatches work to us (via coredump_dispatch). */
+    coredump_init_handler();
     kprintf("[OK] Core dump handler initialized\n");
 }
 
@@ -418,3 +432,53 @@ void coredump_deferred(void *arg)
 
     coredump_generate(proc);
 }
+
+/* ── Module / built-in initialisation ────────────────────────────── */
+
+static void coredump_dispatch(uint32_t pid)
+{
+    /* Defer to workqueue — do_coredump() may be called from IRQ context
+     * (via signal_check() in scheduler_tick()), where VFS writes and
+     * kmalloc are unsafe.  The workqueue runs in process context. */
+    int ret = workqueue_schedule(coredump_deferred, (void *)(uintptr_t)pid);
+    if (ret < 0) {
+        kprintf("[CORE] pid=%u: workqueue full, core dump lost\n", pid);
+    }
+}
+
+int coredump_init_handler(void)
+{
+    int ret = coredump_register_handler(coredump_dispatch);
+    if (ret < 0) {
+        kprintf("[coredump] failed to register handler\n");
+        return ret;
+    }
+    kprintf("[coredump] Core dump handler registered\n");
+    return 0;
+}
+
+void coredump_exit_handler(void)
+{
+    coredump_unregister_handler();
+    kprintf("[coredump] Core dump handler unregistered\n");
+}
+
+#ifdef MODULE
+int init_module(void)
+{
+    return coredump_init_handler();
+}
+
+void cleanup_module(void)
+{
+    coredump_exit_handler();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("ELF core dump generator — writes /tmp/core on crash");
+MODULE_VERSION("1.0");
+#else /* !MODULE — built-in case */
+#include "initcall.h"
+device_initcall(coredump_init_handler);
+#endif /* MODULE */

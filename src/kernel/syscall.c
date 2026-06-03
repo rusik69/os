@@ -4759,6 +4759,8 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
 
 /* ── Core dump support ─────────────────────────────────────────────────── */
 
+#include "coredump_core.h"
+
 void do_coredump(struct process *proc) {
     if (!proc || !proc->coredump_enabled) return;
     if (!proc->is_user || !proc->pml4) return;
@@ -4773,13 +4775,10 @@ void do_coredump(struct process *proc) {
             proc->name ? proc->name : "?",
             (unsigned long long)proc->rlim_cur[1]);
 
-    /* Defer to workqueue — do_coredump() may be called from IRQ context
-     * (via signal_check() in scheduler_tick()), where VFS writes and
-     * kmalloc are unsafe.  The workqueue runs in process context. */
-    int ret = workqueue_schedule(coredump_deferred, (void *)(uintptr_t)proc->pid);
-    if (ret < 0) {
-        kprintf("[CORE] pid=%u: workqueue full, core dump lost\n", proc->pid);
-    }
+    /* Dispatch via the registered handler (may be NULL if coredump module
+     * is not loaded).  The handler is responsible for deferring to a
+     * workqueue if called from IRQ context. */
+    coredump_trigger(proc->pid);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
