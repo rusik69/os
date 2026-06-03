@@ -1032,6 +1032,23 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         } else if (got && strcmp(p, "/limits") == 0) {
             len = procfs_gen_pid_limits(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strncmp(p, "/fd/", 4) == 0) {
+            /* /proc/<pid>/fd/<N> — read symlink target (file path) */
+            struct process *proc = process_get_by_pid(pid);
+            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            const char *fd_str = p + 4;
+            int fd_num = 0;
+            while (*fd_str >= '0' && *fd_str <= '9')
+                fd_num = fd_num * 10 + (int)(*fd_str++ - '0');
+            if (*fd_str != '\0' || fd_num < 0 || fd_num >= PROCESS_FD_MAX)
+                return -1;
+            if (!proc->fd_table[fd_num].used)
+                return -1;
+            len = (int)strlen(proc->fd_table[fd_num].path);
+            if (len > (int)max_size - 1)
+                len = (int)max_size - 1;
+            memcpy(buf, proc->fd_table[fd_num].path, (size_t)len);
+            buf[len] = '\0';
         } else {
             return -1;
         }
@@ -1111,7 +1128,21 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     if (got && strcmp(p, "/fd") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
-            st->type = 1; st->size = 512; return 0;
+            st->type = 2; st->size = 0; return 0;  /* directory */
+        }
+    }
+    /* /proc/<pid>/fd/<N> — individual fd symlink entries */
+    if (got && strncmp(p, "/fd/", 4) == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            const char *fd_str = p + 4;
+            int fd_num = 0;
+            while (*fd_str >= '0' && *fd_str <= '9')
+                fd_num = fd_num * 10 + (int)(*fd_str++ - '0');
+            if (*fd_str == '\0' && fd_num >= 0 && fd_num < PROCESS_FD_MAX &&
+                proc->fd_table[fd_num].used) {
+                st->type = 1; st->size = 64; return 0;
+            }
         }
     }
     if (got && strcmp(p, "/cmdline") == 0) {
@@ -1143,18 +1174,36 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
-    if (strcmp(path, "/proc") != 0) return -1;
-    kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\n");
-    /* Also list active PIDs */
-    struct process *table = process_get_table();
-    struct process *caller = process_get_current();
-    for (int i = 0; i < PROCESS_MAX; i++) {
-        if (table[i].state != PROCESS_UNUSED) {
-            if (!caller || process_can_see(caller, &table[i]))
-                kprintf("%lu\n", (unsigned long)table[i].pid);
+    if (strcmp(path, "/proc") == 0) {
+        kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\n");
+        /* Also list active PIDs */
+        struct process *table = process_get_table();
+        struct process *caller = process_get_current();
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED) {
+                if (!caller || process_can_see(caller, &table[i]))
+                    kprintf("%lu\n", (unsigned long)table[i].pid);
+            }
+        }
+        return 0;
+    }
+
+    /* /proc/<pid>/fd/ — list open file descriptors */
+    if (strncmp(path, "/proc/", 6) == 0) {
+        const char *p = path + 6;
+        uint32_t pid = 0; int got = 0;
+        while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
+        if (got && strcmp(p, "/fd") == 0) {
+            struct process *proc = process_get_by_pid(pid);
+            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            for (int i = 0; i < PROCESS_FD_MAX; i++) {
+                if (proc->fd_table[i].used)
+                    kprintf("%d\n", i);
+            }
+            return 0;
         }
     }
-    return 0;
+    return -1;
 }
 
 struct vfs_ops procfs_ops = {
