@@ -28,5 +28,5 @@ void cmd_du(const char *args) {
     }
 
     uint32_t blocks = (st.size + 511) / 512;
-    kprintf("%u %s\n", (unsigned long)blocks, path);
+    kprintf("%lu %s\n", (unsigned long)blocks, path);
 }

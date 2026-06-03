@@ -39,5 +39,5 @@ void cmd_cp(const char *args) {
         kprintf("Write failed: %s\n", dst);
         return;
     }
-    kprintf("Copied %u bytes: %s -> %s\n", (unsigned long)size, src, dst);
+    kprintf("Copied %lu bytes: %s -> %s\n", (unsigned long)size, src, dst);
 }

@@ -30,7 +30,7 @@ void cmd_cpuinfo(void) {
     uint8_t model     = (eax >> 4) & 0xF;
     uint8_t family    = (eax >> 8) & 0xF;
     uint8_t logical   = (ebx >> 16) & 0xFF;
-    kprintf("Family: %u  Model: %u  Stepping: %u  LogicalCPUs: %u\n",
+    kprintf("Family: %lu  Model: %lu  Stepping: %lu  LogicalCPUs: %lu\n",
             (unsigned long)family, (unsigned long)model, (unsigned long)stepping, (unsigned long)logical);
 
     kprintf("Features:");

@@ -391,6 +391,8 @@ obj-m += drivers/ahci.ko
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)
 obj-m += fs/tarfs.ko
+# debugfs: kernel debug data virtual filesystem (M54)
+obj-m += fs/debugfs.ko
 # ext2: read-only ext2 filesystem with HTree directory indexing (M51)
 obj-m += fs/ext2.ko
 # iso9660: CDROM filesystem with Rock Ridge + Joliet (M53)

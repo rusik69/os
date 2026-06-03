@@ -62,7 +62,7 @@ void cmd_cut(const char *args) {
             }
             if (cur == field) {
                 size_t flen = strcspn(fp, delim_str);
-                for (size_t k = 0; k < flen; k++) kprintf("%c", (unsigned long)(uint8_t)fp[k]);
+                for (size_t k = 0; k < flen; k++) kprintf("%c", (int)(uint8_t)fp[k]);
             }
             kprintf("\n");
             line = &buf[i + 1];

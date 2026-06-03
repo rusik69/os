@@ -3,6 +3,7 @@
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
+#include "export.h"
 
 static struct debugfs_entry debugfs_entries[DEBUGFS_MAX_ENTRIES];
 static int debugfs_mounted = 0;
@@ -179,6 +180,32 @@ struct vfs_ops debugfs_vfs_ops = {
 
 /* ── Initialisation ────────────────────────────────────────────── */
 
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    if (debugfs_mounted) return 0; /* already initialised */
+    debugfs_init(); /* calls the built-in init which mounts VFS */
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    if (debugfs_mounted) {
+        debugfs_mounted = 0;
+        for (int i = 0; i < DEBUGFS_MAX_ENTRIES; i++)
+            debugfs_entries[i].in_use = 0;
+        kprintf("[debugfs] Module unloaded\n");
+    }
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Debugfs virtual filesystem — exposes kernel debug data via /sys/kernel/debug");
+MODULE_VERSION("1.0");
+#else /* !MODULE — built-in, called directly from kernel boot path */
+
 void debugfs_init(void) {
     if (debugfs_mounted) return;
 
@@ -194,3 +221,4 @@ void debugfs_init(void) {
 
     debugfs_mounted = 1;
 }
+#endif /* MODULE */

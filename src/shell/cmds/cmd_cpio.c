@@ -37,6 +37,7 @@ static unsigned int hex_to_int(const char *s, int len) {
     return n;
 }
 
+static void write_hex(char *buf, unsigned int val, int len) __attribute__((unused));
 static void write_hex(char *buf, unsigned int val, int len) {
     for (int i = len - 1; i >= 0; i--) {
         int d = val & 0xF;

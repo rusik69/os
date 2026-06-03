@@ -16,7 +16,7 @@ void cmd_dmesg(const char *args) {
         return;
     }
 
-    int n = kprintf_dmesg(buf, 65536);
+    int n __attribute__((unused)) = kprintf_dmesg(buf, 65536);
     kprintf("%s", buf);
     kfree(buf);
 

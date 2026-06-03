@@ -47,7 +47,7 @@ void cmd_curl(const char *args) {
         path[0] = '/'; path[1] = '\0';
     }
 
-    kprintf("Connecting to %s:%u%s...%s\n", host, (unsigned long)port, path,
+    kprintf("Connecting to %s:%lu%s...%s\n", host, (unsigned long)port, path,
             follow ? " (following redirects)" : "");
 
     static char buf[4096];

@@ -52,12 +52,11 @@ static volatile int dhcpcd_running       = 0;
 /* DHCP lease state */
 static uint32_t dhcpcd_lease_time   = 0;    /* lease duration in seconds */
 static uint32_t dhcpcd_renew_time   = 0;    /* renew at this many seconds */
-static uint32_t dhcpcd_rebind_time  = 0;    /* rebind at this many seconds */
+static uint32_t dhcpcd_rebind_time __attribute__((unused)) = 0;    /* rebind at this many seconds */
 static uint64_t dhcpcd_lease_start  = 0;    /* timer tick when lease acquired */
 
 /* Renewal tracking */
-static int      dhcpcd_renew_failures = 0;
-static uint64_t dhcpcd_next_action   = 0;  /* tick to perform next action */
+static int      dhcpcd_renew_failures __attribute__((unused)) = 0;
 
 /* ── IP address formatting helper ───────────────────────────────────── */
 
@@ -191,6 +190,7 @@ static int dhcpcd_acquire_lease(void) {
 
 /* ── Lease renewal helper ───────────────────────────────────────────── */
 
+static int dhcpcd_try_renew(void) __attribute__((unused));
 static int dhcpcd_try_renew(void) {
     kprintf("[dhcpcd] Attempting lease renewal...\n");
 

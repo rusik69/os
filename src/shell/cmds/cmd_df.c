@@ -11,7 +11,7 @@ void cmd_df(void) {
     uint32_t avail = total_sectors > (data_start + used_blocks)
                      ? total_sectors - data_start - used_blocks : 0;
     kprintf("Filesystem      Blocks  Used    Avail   Inodes\n");
-    kprintf("/dev/hda        %-7u %-7u %-7u %u/%u\n",
+    kprintf("/dev/hda        %-7lu %-7lu %-7lu %lu/%llu\n",
             (unsigned long)(total_sectors - data_start),
             (unsigned long)used_blocks,
             (unsigned long)avail,

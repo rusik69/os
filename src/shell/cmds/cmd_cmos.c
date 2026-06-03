@@ -21,18 +21,18 @@ void cmd_cmos(void) {
     uint16_t ext_kb  = ((uint16_t)ext_hi  << 8) | ext_lo;
 
     kprintf("CMOS hardware configuration:\n");
-    kprintf("  Base memory:     %u KB\n", (unsigned long)base_kb);
-    kprintf("  Extended memory: %u KB (%u MB)\n",
+    kprintf("  Base memory:     %lu KB\n", (unsigned long)base_kb);
+    kprintf("  Extended memory: %lu KB (%lu MB)\n",
             (unsigned long)ext_kb, (unsigned long)(ext_kb / 1024));
-    kprintf("  Diagnostic:      0x%x\n", (unsigned long)diag);
-    kprintf("  Equipment flags: 0x%x\n", (unsigned long)equip);
-    kprintf("  Floppy type:     0x%x\n", (unsigned long)floppy);
-    kprintf("  HD type:         0x%x\n", (unsigned long)hd);
+    kprintf("  Diagnostic:      0x%lx\n", (unsigned long)diag);
+    kprintf("  Equipment flags: 0x%lx\n", (unsigned long)equip);
+    kprintf("  Floppy type:     0x%lx\n", (unsigned long)floppy);
+    kprintf("  HD type:         0x%lx\n", (unsigned long)hd);
 
     /* Decode equipment byte */
     if (equip & 0x01) {
         int nf = ((equip >> 6) & 3) + 1;
-        kprintf("  Floppy drives:   %d\n", (unsigned long)nf);
+        kprintf("  Floppy drives:   %lu\n", (unsigned long)nf);
     } else {
         kprintf("  Floppy drives:   0\n");
     }
@@ -51,5 +51,5 @@ void cmd_cmos(void) {
     uint8_t xlo = cmos_read(0x30);
     uint8_t xhi = cmos_read(0x31);
     uint32_t xkb = ((uint32_t)xhi << 8) | xlo;
-    if (xkb) kprintf("  High ext memory: %u KB\n", (unsigned long)xkb);
+    if (xkb) kprintf("  High ext memory: %lu KB\n", (unsigned long)xkb);
 }

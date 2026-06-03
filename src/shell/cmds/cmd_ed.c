@@ -14,6 +14,7 @@ static char ed_filename[128];
 static int ed_modified = 0;
 static int ed_running = 0;
 
+static void ed_append_line(int after, const char *line) __attribute__((unused));
 static void ed_append_line(int after, const char *line) {
     if (ed_num_lines >= ED_MAX_LINES) {
         kprintf("?\n");
@@ -111,7 +112,7 @@ void cmd_ed(const char *args) {
             ed_num_lines++;
             line = (*eol == '\n') ? eol + 1 : eol;
         }
-        kprintf("%d\n", (unsigned long)ed_num_lines);
+        kprintf("%d\n", ed_num_lines);
         ed_current = ed_num_lines - 1;
     } else {
         kprintf("?%s\n", ed_filename);

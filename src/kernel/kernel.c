@@ -136,6 +136,7 @@
 #include "stdio.h"
 #include "overlay.h"
 #include "sysfs.h"
+#include "debugfs.h"
 #include "fanotify.h"
 #include "fs_mount_prop.h"
 #include "net_igmp.h"
@@ -564,6 +565,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Sysfs — virtual filesystem exposing kernel objects */
     sysfs_init();
+
+    /* Debugfs — kernel debug data filesystem */
+    debugfs_init();
 
     /* File locking (advisory + mandatory) */
     file_lock_init();
