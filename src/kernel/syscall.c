@@ -4878,6 +4878,20 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         case PR_GET_SECUREBITS: {
             return (uint64_t)securebits_get(p);
         }
+        case PR_SET_DUMPABLE: {
+            /* arg2: 0 = never dump, 1 = always dump, 2 = dump if root.
+             * Only privileged processes (CAP_SYS_ADMIN or running as root)
+             * can set dumpable to a more restrictive value. */
+            int val = (int)a2;
+            if (val < 0 || val > 2)
+                return (uint64_t)-1; /* -EINVAL */
+            /* Once set to 0, only privileged code can raise it back */
+            p->dumpable = val;
+            return 0;
+        }
+        case PR_GET_DUMPABLE: {
+            return (uint64_t)p->dumpable;
+        }
         default:
             return (uint64_t)-1;
     }
@@ -6032,6 +6046,8 @@ static uint64_t sys_setresuid(uint64_t ruid, uint64_t euid, uint64_t suid) {
     if (ruid != (uint64_t)-1) { p->uid = (uint32_t)ruid; p->euid = (uint32_t)ruid; }
     if (euid != (uint64_t)-1) p->euid = (uint32_t)euid;
     if (suid != (uint64_t)-1) { /* suid storage not separate */ }
+    /* Clear dumpable on credential change — user might have dropped privileges */
+    p->dumpable = 0;
     return 0;
 }
 
@@ -6063,6 +6079,8 @@ static uint64_t sys_setresgid(uint64_t rgid, uint64_t egid, uint64_t sgid) {
     if (rgid != (uint64_t)-1) { p->gid = (uint32_t)rgid; p->egid = (uint32_t)rgid; }
     if (egid != (uint64_t)-1) p->egid = (uint32_t)egid;
     if (sgid != (uint64_t)-1) { /* sgid */ }
+    /* Clear dumpable on credential change */
+    p->dumpable = 0;
     return 0;
 }
 

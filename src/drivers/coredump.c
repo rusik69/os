@@ -367,6 +367,24 @@ static void fill_regs(elf_gregset_t *regs, struct process *proc) {
 int coredump_generate(struct process *proc, int signo) {
     if (!coredump_enabled || !proc) return -1;
 
+    /* ── Check dumpable flag (Item 183) ──────────────────────────
+     * dumpable=0: never dump (set by credential changes, SUID binaries)
+     * dumpable=1: always dump (default)
+     * dumpable=2: dump only if current user is root */
+    if (proc->dumpable == 0) {
+        kprintf("[coredump] pid=%d: core dump suppressed (dumpable=0)\n",
+                (int)proc->pid);
+        return -1;
+    }
+    if (proc->dumpable == 2) {
+        struct process *cur = process_get_current();
+        if (!cur || cur->euid != 0) {
+            kprintf("[coredump] pid=%d: core dump suppressed (dumpable=2, not root)\n",
+                    (int)proc->pid);
+            return -1;
+        }
+    }
+
     kprintf("[coredump] Generating core for PID %d (%s), signal %d\n",
             (int)proc->pid, proc->name ? proc->name : "unknown", signo);
 

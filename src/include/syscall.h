@@ -704,6 +704,8 @@ struct linux_dirent64 {
 #define PR_GET_NO_NEW_PRIVS 39
 #define PR_SET_SECUREBITS  41
 #define PR_GET_SECUREBITS  42
+#define PR_SET_DUMPABLE     4  /* set dumpable flag (0/1/2) */
+#define PR_GET_DUMPABLE     3  /* get dumpable flag */
 
 /* execveat flags */
 #define AT_EMPTY_PATH  0x1000

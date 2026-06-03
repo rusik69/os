@@ -363,7 +363,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
-    proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
+    proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
     memset(proc->proc_comm, 0, 16);
     memset(proc->exe_path, 0, sizeof(proc->exe_path));
     memset(proc->itimers, 0, sizeof(proc->itimers));
@@ -479,7 +479,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->alt_stack_flags = SS_DISABLE;
     proc->personality = 0;
     proc->coredump_enabled = 1;
-    proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
+    proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
     memset(proc->proc_comm, 0, 16);
     memset(proc->exe_path, 0, sizeof(proc->exe_path));
     rlimit_init_defaults(proc);
