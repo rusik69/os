@@ -131,6 +131,13 @@ void kprintf_dmesg_clear(void) {
     dmesg_full = 0;
 }
 
+/* Return the number of bytes currently in use in the dmesg ring buffer */
+int kprintf_dmesg_used(void) {
+    if (!dmesg_initialized) return 0;
+    if (dmesg_full) return dmesg_ring_size;
+    return dmesg_pos;
+}
+
 /* ── Ratelimited printing ────────────────────────────────────────────── */
 
 static uint64_t g_ratelimit_last_tick = 0;

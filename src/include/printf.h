@@ -32,6 +32,7 @@ void kprintf_flush(void);
 int kprintf_dmesg(char *buf, int max);
 void kprintf_dmesg_clear(void);
 void kprintf_dmesg_flush_serial(void);
+int kprintf_dmesg_used(void);       /* bytes currently in dmesg buffer */
 int kprintf_ratelimited(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* dmesg ring buffer configuration */
