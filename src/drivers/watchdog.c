@@ -16,6 +16,8 @@
 #include "io.h"
 #include "string.h"
 #include "printf.h"
+#include "smp.h"
+#include "nmi_watchdog.h"
 
 static int g_watchdog_timer_id = -1;
 static int g_pretimeout_timer_id = -1;
@@ -51,13 +53,36 @@ static void watchdog_tick(void *arg) {
     watchdog_reboot(NULL);
 }
 
-/* Pretimeout callback — fires g_pretimeout_secs before the full timeout */
+/* Pretimeout callback — fires g_pretimeout_secs before the full timeout.
+ *
+ * When a pretimeout fires:
+ *   1. Send NMI IPI backtrace requests to all other CPUs so we capture
+ *      their register state and stacks before the system resets.
+ *   2. Log the timeout warning with the remaining margin.
+ *   3. If a user-registered pretimeout function exists, call it as well
+ *      (e.g. for panic+crashdump before watchdog reset).
+ */
 static void watchdog_pretimeout_tick(void *arg) {
     (void)arg;
-    if (!g_watchdog_active || !g_pretimeout_fn) return;
+    if (!g_watchdog_active) return;
 
     g_pretimeout_fired = 1;
-    g_pretimeout_fn();
+
+    /* ── NMI backtrace: send IPI to all other CPUs ────────────── */
+    kprintf("\n*** WATCHDOG PRETIMEOUT — system will reset in ~%d seconds ***\n",
+            g_pretimeout_secs);
+    kprintf("*** Triggering CPU backtrace before timeout... ***\n");
+
+    /* Request backtrace IPI from all other CPUs to capture their state
+     * before the watchdog fires.  This mirrors the lockup-detection
+     * path in nmi_watchdog_handler / nmi_watchdog_check_soft. */
+    if (smp_get_cpu_count() > 1)
+        nmi_watchdog_request_backtrace();
+
+    /* ── User-registered pretimeout handler ────────────────────── */
+    if (g_pretimeout_fn) {
+        g_pretimeout_fn();
+    }
 }
 
 void watchdog_init(int timeout_seconds) {
