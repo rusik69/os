@@ -26,6 +26,9 @@ static const char *policy_name(int policy)
         case 0:  return "SCHED_OTHER";
         case 1:  return "SCHED_FIFO";
         case 2:  return "SCHED_RR";
+        case 3:  return "SCHED_BATCH";
+        case 4:  return "SCHED_DEADLINE";
+        case 5:  return "SCHED_IDLE";
         default: return "SCHED_UNKNOWN";
     }
 }

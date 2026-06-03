@@ -298,6 +298,10 @@ void scheduler_add(struct process *proc) {
     int lvl = (int)proc->priority;
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
 
+    /* SCHED_IDLE tasks always go to the lowest queue level */
+    if (proc->sched_policy == SCHED_IDLE)
+        lvl = SCHED_LEVELS - 1;
+
     proc->next = NULL;
     proc->on_queue = 1;
 

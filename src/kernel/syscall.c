@@ -5120,10 +5120,16 @@ static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy,
 
     if (!target || target->state == PROCESS_UNUSED) return (uint64_t)-1;
 
-    if (policy != SCHED_OTHER && policy != SCHED_FIFO && policy != SCHED_RR)
+    if (policy != SCHED_OTHER && policy != SCHED_FIFO && policy != SCHED_RR &&
+        policy != SCHED_BATCH && policy != SCHED_IDLE)
         return (uint64_t)-1;
 
     target->sched_policy = (uint8_t)policy;
+
+    /* SCHED_IDLE tasks always go to the lowest priority level */
+    if (policy == SCHED_IDLE) {
+        target->priority = SCHED_LEVELS - 1;
+    }
 
     if (param_addr) {
         if (syscall_is_user_process() && !syscall_user_read_ok(param_addr, 4))

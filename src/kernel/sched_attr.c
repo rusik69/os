@@ -49,7 +49,7 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
         return -EINVAL;
 
     /* Validate scheduling policy */
-    if (attr->sched_policy < SCHED_OTHER || attr->sched_policy > SCHED_DEADLINE)
+    if (attr->sched_policy < SCHED_OTHER || attr->sched_policy > SCHED_IDLE)
         return -EINVAL;
 
     /* Validate priority ranges */
@@ -86,6 +86,9 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
         attr->sched_policy == SCHED_OTHER || attr->sched_policy == SCHED_BATCH) {
         proc->sched_policy = (uint8_t)attr->sched_policy;
         proc->priority     = (uint8_t)(attr->sched_priority & 0xFF);
+    } else if (attr->sched_policy == SCHED_IDLE) {
+        proc->sched_policy = SCHED_IDLE;
+        proc->priority     = SCHED_LEVELS - 1; /* lowest priority level */
     } else if (attr->sched_policy == SCHED_DEADLINE) {
         /* Configure SCHED_DEADLINE parameters */
         proc->sched_policy  = SCHED_DEADLINE;

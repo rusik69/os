@@ -627,6 +627,9 @@ struct mq_attr {
 #define SCHED_OTHER        0
 #define SCHED_FIFO         1
 #define SCHED_RR           2
+#define SCHED_BATCH        3
+#define SCHED_DEADLINE     4
+#define SCHED_IDLE         5
 
 /* Priority which values for setpriority/getpriority */
 #define PRIO_PROCESS        0
