@@ -137,6 +137,7 @@
 #include "export.h"
 #include "stdio.h"
 #include "overlay.h"
+#include "splash.h"
 #include "sysfs.h"
 #include "debugfs.h"
 #include "fanotify.h"
@@ -434,12 +435,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         if (fb_ptr) {
             fbcon_init((uint32_t *)fb_ptr, fb_w, fb_h, fb_pitch);
         }
+
+        /* Boot splash screen (Item 398) — displayed on framebuffer if available */
+        if (splash_should_show()) {
+            splash_init();
+            splash_progress(1);
+        }
     } else
         kprintf("[OK] VGA text console (QEMU window or serial terminal)\n");
 
     /* Process subsystem */
     process_init();
     kprintf("[OK] Process subsystem initialized\n");
+    splash_progress(3);
 
     /* Process resource limits */
     rlimit_init();
@@ -458,6 +466,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
+    splash_progress(5);
 
     /* PM QoS — latency constraints for cpuidle C-state selection */
     pm_qos_init();
@@ -481,6 +490,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     apic_init_local();
     tsc_deadline_init();
     kprintf("[OK] Local APIC initialized\n");
+    splash_progress(7);
 
     /* Register IPI handlers for SMP coordination */
     ipi_init();
@@ -590,6 +600,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* VFS */
     vfs_init();
     kprintf("[OK] VFS initialized\n");
+    splash_progress(12);
 
     /* Auto-mount filesystems from /etc/fstab */
     {
@@ -670,6 +681,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Filesystem */
     fs_init();
     kprintf("[OK] Filesystem initialized\n");
+    splash_progress(16);
 
     /* Page cache (file data caching + readahead) — initialized after filesystem
      * so it can be used by the simple block filesystem's fs_read_file(). */
@@ -837,6 +849,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      *
      * The init path can be overridden via the `init=` kernel cmdline parameter.
      * Example: init=/mnt/bin/sh.elf  or  init=/sbin/init  */
+
+    /* Finalise boot splash: mark progress complete and fade out */
+    splash_progress(SPLASH_MAX_STAGES);
+    splash_fade_out();
+
     int init_ok = 0;
 
     /* Check for init= cmdline parameter first */

@@ -68,6 +68,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/oom.c \
          src/kernel/rcu.c \
          src/kernel/aslr.c \
+         src/kernel/splash.c \
          src/kernel/seccomp.c \
          src/kernel/sysrq.c \
          src/kernel/panic.c \

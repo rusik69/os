@@ -423,3 +423,62 @@ void fbcon_redraw(void) {
         }
     }
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/* ── Framebuffer access for splash / external modules ────────────────── */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+void fbcon_get_fb(uint32_t **fb, uint32_t *w, uint32_t *h, uint32_t *pitch)
+{
+    if (fb)    *fb    = g_fb;
+    if (w)     *w     = g_width;
+    if (h)     *h     = g_height;
+    if (pitch) *pitch = g_pitch;
+}
+
+uint32_t fbcon_palette(int index)
+{
+    return fb_palette((uint8_t)index);
+}
+
+void fbcon_fill_rect(int x, int y, int rw, int rh, uint32_t color)
+{
+    if (!g_fb) return;
+
+    /* Clip to framebuffer bounds */
+    if (x < 0)      { rw += x; x = 0; }
+    if (y < 0)      { rh += y; y = 0; }
+    if (x + rw > (int)g_width)  rw = (int)g_width  - x;
+    if (y + rh > (int)g_height) rh = (int)g_height - y;
+    if (rw <= 0 || rh <= 0) return;
+
+    for (int row = 0; row < rh; row++) {
+        uint32_t *line = &g_fb[(y + row) * (g_pitch / 4) + x];
+        for (int col = 0; col < rw; col++)
+            line[col] = color;
+    }
+}
+
+void fbcon_dim_fb(int frac)
+{
+    if (!g_fb || frac <= 0) return;
+    if (frac >= 256) {
+        /* Fast path: fill entire framebuffer with black */
+        fbcon_fill_rect(0, 0, (int)g_width, (int)g_height, 0);
+        return;
+    }
+
+    /* Linear blend each pixel toward black: pixel = pixel * (256-frac) / 256 */
+    int inv = 256 - frac;
+    uint32_t total = g_height * (g_pitch / 4);
+    for (uint32_t i = 0; i < total; i++) {
+        uint32_t p = g_fb[i];
+        uint8_t  r = (uint8_t)((p >> 16) & 0xFF);
+        uint8_t  g = (uint8_t)((p >>  8) & 0xFF);
+        uint8_t  b = (uint8_t)((p >>  0) & 0xFF);
+        r = (uint8_t)((unsigned)r * inv / 256);
+        g = (uint8_t)((unsigned)g * inv / 256);
+        b = (uint8_t)((unsigned)b * inv / 256);
+        g_fb[i] = ((uint32_t)b << 0) | ((uint32_t)g << 8) | ((uint32_t)r << 16);
+    }
+}

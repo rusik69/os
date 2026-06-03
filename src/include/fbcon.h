@@ -69,4 +69,20 @@ void fbcon_set_cursor(int col, int row);
 /* Force a full redraw of the entire console. */
 void fbcon_redraw(void);
 
+/* ── Framebuffer access for external modules (splash, etc.) ──────────── */
+
+/* Return the framebuffer info (pointer, width, height, pitch-in-bytes). */
+void fbcon_get_fb(uint32_t **fb, uint32_t *w, uint32_t *h, uint32_t *pitch);
+
+/* Get/set the internal colour palette (VGA index to BGRA32). */
+uint32_t fbcon_palette(int index);
+
+/* Fill a rectangle on the framebuffer with a solid BGRA32 colour.
+   Coordinates are in pixels.  Clipped to framebuffer bounds. */
+void fbcon_fill_rect(int x, int y, int rw, int rh, uint32_t color);
+
+/* Blend the entire framebuffer toward black by @frac/256 fraction.
+   frac=256 → fully black, frac=0 → no change.  Used for fade-out. */
+void fbcon_dim_fb(int frac);
+
 #endif /* FBCON_H */
