@@ -161,6 +161,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/tun.c \
          src/net/net_ns.c \
          src/net/ipip.c \
+         src/net/gre.c \
          src/net/wireguard.c \
          src/net/ipvs.c \
          src/net/sshd.c \
