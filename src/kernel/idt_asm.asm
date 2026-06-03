@@ -90,6 +90,7 @@ IRQ 15, 47
 IRQ 16, 240  ; IPI_VECTOR_RESCHEDULE (0xF0)
 IRQ 17, 241  ; IPI_VECTOR_TLB_SHOOT (0xF1)
 IRQ 18, 242  ; IPI_VECTOR_BACKTRACE (0xF2)
+IRQ 19, 243  ; IPI_VECTOR_MEMBARRIER (0xF3)
 
 ; Common stub: save all registers, call C handler, restore, iretq
 isr_common_stub:

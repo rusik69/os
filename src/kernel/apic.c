@@ -314,6 +314,7 @@ void ipi_init(void) {
     idt_register_handler(IPI_VECTOR_RESCHEDULE, ipi_reschedule_handler);
     idt_register_handler(IPI_VECTOR_TLB_SHOOT,   ipi_tlb_shootdown_handler);
     idt_register_handler(IPI_VECTOR_BACKTRACE,   ipi_backtrace_handler);
+    idt_register_handler(IPI_VECTOR_MEMBARRIER,  ipi_membarrier_handler);
     memset(tlb_info, 0, sizeof(tlb_info));
 }
 
@@ -336,6 +337,17 @@ void ipi_tlb_shootdown_handler(struct interrupt_frame *frame) {
         __asm__ volatile("invlpg (%0)" : : "r"(info->addrs[i]) : "memory");
     }
     info->finished = 1;
+    apic_eoi();
+}
+
+/* Memory barrier IPI: execute a full memory barrier and return.
+ * Used by the membarrier syscall to force visibility of memory
+ * operations across all CPUs. */
+void ipi_membarrier_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    /* Full memory barrier — all previous loads/stores complete
+     * before any subsequent loads/stores are visible. */
+    __asm__ volatile("mfence" ::: "memory");
     apic_eoi();
 }
 

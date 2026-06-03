@@ -50,9 +50,10 @@
 #define ICR_DEST_FIXED  0
 
 /* IPI vector numbers */
-#define IPI_VECTOR_RESCHEDULE  0xF0
-#define IPI_VECTOR_TLB_SHOOT   0xF1
-#define IPI_VECTOR_BACKTRACE   0xF2
+#define IPI_VECTOR_RESCHEDULE   0xF0
+#define IPI_VECTOR_TLB_SHOOT    0xF1
+#define IPI_VECTOR_BACKTRACE    0xF2
+#define IPI_VECTOR_MEMBARRIER   0xF3
 
 /* I/O APIC registers */
 #define IOAPIC_INDEX   0x00
@@ -92,6 +93,8 @@ void irq_ack(uint8_t irq);
 void ipi_init(void);
 void ipi_reschedule_handler(struct interrupt_frame *frame);
 void ipi_tlb_shootdown_handler(struct interrupt_frame *frame);
+void ipi_backtrace_handler(struct interrupt_frame *frame);
+void ipi_membarrier_handler(struct interrupt_frame *frame);
 
 /* APIC timer calibration (returns bus frequency in Hz) */
 uint32_t apic_timer_calibrate(void);

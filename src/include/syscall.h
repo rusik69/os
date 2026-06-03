@@ -395,6 +395,20 @@
 #define SYS_DELETE_MODULE     368  /* delete_module(name, flags) → 0 or -errno */
 #define SYS_QUERY_MODULE      369  /* query_module(name, info_buf, buf_size) → 0 or -errno */
 
+/* membarrier — memory barrier on all threads (used by JIT compilers, runtimes) */
+#define SYS_MEMBARRIER         373  /* membarrier(cmd, flags, cpu_id) → 0 or -1 */
+
+/* membarrier command codes */
+#define MEMBARRIER_CMD_QUERY                    0
+#define MEMBARRIER_CMD_GLOBAL                   1
+#define MEMBARRIER_CMD_GLOBAL_EXPEDITED         4
+#define MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED  8
+#define MEMBARRIER_CMD_PRIVATE_EXPEDITED        16
+#define MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED 32
+
+/* membarrier flags */
+#define MEMBARRIER_CMD_FLAG_CPU     (1 << 0)
+
 /* ── Constants for *at syscalls ─────────────────────────────── */
 #define AT_FDCWD            (-100)
 #define AT_SYMLINK_NOFOLLOW  0x100

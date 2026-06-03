@@ -176,6 +176,8 @@ struct process {
     uint64_t cap_inheritable[PROCESS_SYSCALL_CAP_WORDS];
     /* Parent death signal (PR_SET_PDEATHSIG) */
     int pdeath_signal;
+    /* membarrier registration flags (MEMBARRIER_PRIVATE_EXPEDITED, etc.) */
+    int membarrier_flags;
     /* VM lock flags (mlockall) */
     int vm_locked_flags;  /* bitmask: MCL_CURRENT=1, MCL_FUTURE=2 */
     /* ── CFS vruntime (nanosecond-scale) ───────────────────── */

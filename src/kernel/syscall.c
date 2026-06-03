@@ -36,6 +36,7 @@
 #include "cc.h"
 #include "heap.h"
 #include "smp.h"
+#include "apic.h"
 #include "pipe.h"
 #include "users.h"
 #include "module.h"
@@ -6675,6 +6676,9 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 
+/* Forward declarations for syscalls defined after the dispatch */
+static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
+
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     /* Seccomp check — must happen before any capability or argument validation */
@@ -7105,6 +7109,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FINIT_MODULE:    return sys_finit_module(a1, a2, a3);
         case SYS_DELETE_MODULE:   return sys_delete_module(a1, a2);
         case SYS_QUERY_MODULE:    return sys_query_module(a1, a2, a3);
+        /* ── membarrier (Item 252) ────────────────────────────────── */
+        case SYS_MEMBARRIER:      return sys_membarrier(a1, a2, a3);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);
@@ -7113,6 +7119,102 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
     }
     /* NOTREACHED */
     return (uint64_t)-1;
+}
+
+/* ── membarrier — Memory barrier on all threads (Item 252) ─────────── */
+
+/* Per-process flag for membarrier registration */
+#define MEMBARRIER_PRIVATE_EXPEDITED  (1 << 0)
+
+/*
+ * sys_membarrier(cmd, flags, cpu_id)
+ *
+ * Issue memory barriers on running threads.  Used by JIT compilers,
+ * garbage collectors, and async runtimes to order memory operations
+ * without full syscall serialisation.
+ *
+ * Supported commands:
+ *   MEMBARRIER_CMD_QUERY                     — return supported command mask
+ *   MEMBARRIER_CMD_GLOBAL                    — full barrier on all CPUs
+ *   MEMBARRIER_CMD_GLOBAL_EXPEDITED          — expedited global barrier via IPI
+ *   MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED — register for expedited global
+ *   MEMBARRIER_CMD_PRIVATE_EXPEDITED         — barrier on process threads
+ *   MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED— register for expedited private
+ */
+static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
+    (void)cpu_id;  /* CPU-id-based targeting is optional, ignored in this impl */
+
+    /* Validate flags — only MEMBARRIER_CMD_FLAG_CPU is accepted */
+    if (flags & ~MEMBARRIER_CMD_FLAG_CPU)
+        return (uint64_t)-1;
+
+    switch (cmd) {
+    case MEMBARRIER_CMD_QUERY: {
+        /* Report which commands we support */
+        uint64_t supported = MEMBARRIER_CMD_QUERY |
+                             MEMBARRIER_CMD_GLOBAL |
+                             MEMBARRIER_CMD_GLOBAL_EXPEDITED |
+                             MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED |
+                             MEMBARRIER_CMD_PRIVATE_EXPEDITED |
+                             MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED;
+        return supported;
+    }
+
+    case MEMBARRIER_CMD_GLOBAL:
+    case MEMBARRIER_CMD_GLOBAL_EXPEDITED: {
+        /* Full memory barrier on all CPUs.
+         * For MEMBARRIER_CMD_GLOBAL, a simple mfence + IPI suffices
+         * (the semantics require all prior writes to be visible to all CPUs). */
+        __asm__ volatile("mfence" ::: "memory");
+
+        /* If more than one CPU, send IPI to all others */
+        if (smp_get_cpu_count() > 1) {
+            apic_send_ipi_all_except(IPI_VECTOR_MEMBARRIER);
+        }
+        return 0;
+    }
+
+    case MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED: {
+        /* Registration: allow future MEMBARRIER_CMD_GLOBAL_EXPEDITED.
+         * On Linux this enables fast IPI delivery; we register it
+         * per-process for semantic correctness. */
+        struct process *cur = process_get_current();
+        if (!cur) return (uint64_t)-1;
+        cur->membarrier_flags |= MEMBARRIER_PRIVATE_EXPEDITED;
+        return 0;
+    }
+
+    case MEMBARRIER_CMD_PRIVATE_EXPEDITED: {
+        /* Memory barrier on all threads of the current process.
+         * Send IPI to CPUs that are running threads of this process. */
+        struct process *cur = process_get_current();
+        if (!cur) return (uint64_t)-1;
+
+        /* Check if registered */
+        if (!(cur->membarrier_flags & MEMBARRIER_PRIVATE_EXPEDITED))
+            return (uint64_t)-1;  /* -EPERM */
+
+        __asm__ volatile("mfence" ::: "memory");
+
+        /* For expedited private: in a real system we'd iterate
+         * the process's threads and IPI their CPUs.  For now,
+         * we IPI all other CPUs — a safe over-approximation. */
+        if (smp_get_cpu_count() > 1) {
+            apic_send_ipi_all_except(IPI_VECTOR_MEMBARRIER);
+        }
+        return 0;
+    }
+
+    case MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED: {
+        struct process *cur = process_get_current();
+        if (!cur) return (uint64_t)-1;
+        cur->membarrier_flags |= MEMBARRIER_PRIVATE_EXPEDITED;
+        return 0;
+    }
+
+    default:
+        return (uint64_t)-1;  /* -EINVAL */
+    }
 }
 
 /* ── Init ─────────────────────────────────────────────────────── */
