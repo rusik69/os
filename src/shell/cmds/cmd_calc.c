@@ -128,8 +128,8 @@ void cmd_calc(const char *args) {
     }
     pos = args;
     int64_t result = parse_expr();
-    kprintf("%d\n", (unsigned long)result);
+    kprintf("%lld\n", (long long)result);
     /* Also show hex if large */
     if (result > 255 || result < -255)
-        kprintf("  = 0x%x\n", (unsigned long)result);
+        kprintf("  = 0x%llx\n", (unsigned long long)result);
 }

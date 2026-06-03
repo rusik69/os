@@ -72,5 +72,5 @@ void cmd_chown(const char *args) {
     if (rc == -1) kprintf("chown: not found: %s\n", path);
     else if (rc == -2) kprintf("chown: permission denied (root only)\n");
     else kprintf("owner changed: %s -> uid=%u gid=%u\n",
-                 path, (unsigned long)uid_val, (unsigned long)gid_val);
+                 path, (unsigned int)uid_val, (unsigned int)gid_val);
 }

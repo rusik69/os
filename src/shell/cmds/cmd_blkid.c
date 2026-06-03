@@ -17,8 +17,8 @@ void cmd_blkid(const char *args) {
         uint64_t bytes = (uint64_t)sectors * 512ULL;
         kprintf("DEV: ata0\n");
         kprintf("  TYPE: ata\n");
-        kprintf("  SIZE: %u MB\n", (unsigned long)mb);
-        kprintf("  SECTORS: %u\n", (unsigned long)sectors);
+        kprintf("  SIZE: %u MB\n", (unsigned int)mb);
+        kprintf("  SECTORS: %u\n", (unsigned int)sectors);
         kprintf("  SECTOR SIZE: 512\n");
         kprintf("  BYTES: %llu\n", bytes);
         kprintf("  LABEL: (none)\n");
@@ -32,8 +32,8 @@ void cmd_blkid(const char *args) {
         uint64_t bytes = (uint64_t)sectors * 512ULL;
         kprintf("DEV: ahci0\n");
         kprintf("  TYPE: ahci\n");
-        kprintf("  SIZE: %u MB\n", (unsigned long)mb);
-        kprintf("  SECTORS: %u\n", (unsigned long)sectors);
+        kprintf("  SIZE: %u MB\n", (unsigned int)mb);
+        kprintf("  SECTORS: %u\n", (unsigned int)sectors);
         kprintf("  SECTOR SIZE: 512\n");
         kprintf("  BYTES: %llu\n", bytes);
         kprintf("  LABEL: (none)\n");

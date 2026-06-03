@@ -64,14 +64,14 @@ void cmd_capprof(const char *args) {
 
     int rc = libc_process_set_cap_profile(pid, profile);
     if (rc == 0) {
-        kprintf("capprof: pid %u -> %s\n", (unsigned long)pid, profile_str);
+        kprintf("capprof: pid %u -> %s\n", (unsigned int)pid, profile_str);
     } else if (rc == -1) {
         kprintf("capprof: permission denied\n");
     } else if (rc == -2) {
-        kprintf("capprof: pid %u not found\n", (unsigned long)pid);
+        kprintf("capprof: pid %u not found\n", (unsigned int)pid);
     } else if (rc == -3) {
-        kprintf("capprof: pid %u is not a user process\n", (unsigned long)pid);
+        kprintf("capprof: pid %u is not a user process\n", (unsigned int)pid);
     } else {
-        kprintf("capprof: failed (%d)\n", (unsigned long)(-rc));
+        kprintf("capprof: failed (%d)\n", (int)(-rc));
     }
 }

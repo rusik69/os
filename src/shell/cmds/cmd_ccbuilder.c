@@ -55,7 +55,7 @@ static int ccb_compile_one(const char *src, const char *maybe_out) {
     else if (rc == -5)
         kprintf("ccbuilder: cc failed to write %s\n", out);
     else
-        kprintf("ccbuilder: cc failed %s (%d)\n", src, (unsigned long)(-rc));
+        kprintf("ccbuilder: cc failed %s (%d)\n", src, (int)(-rc));
     return rc;
 }
 
@@ -144,7 +144,7 @@ void cmd_ccbuilder(const char *args) {
             char *src = next_token(&cursor);
             char *out = next_token(&cursor);
             if (!src || !*src) {
-                kprintf("ccbuilder:%d: cc requires <source.c> [output]\n", (unsigned long)line_no);
+                kprintf("ccbuilder:%d: cc requires <source.c> [output]\n", line_no);
                 rc = -1;
             } else {
                 rc = ccb_compile_one(src, out);
@@ -154,28 +154,28 @@ void cmd_ccbuilder(const char *args) {
         } else if (strcmp(cmd, "exec") == 0) {
             char *path = next_token(&cursor);
             if (!path || !*path) {
-                kprintf("ccbuilder:%d: exec requires <path>\n", (unsigned long)line_no);
+                kprintf("ccbuilder:%d: exec requires <path>\n", line_no);
                 rc = -1;
             } else {
                 rc = elf_exec(path);
                 if (rc == 0)
                     kprintf("ccbuilder: exec OK %s\n", path);
                 else
-                    kprintf("ccbuilder: exec failed %s (%d)\n", path, (unsigned long)(-rc));
+                    kprintf("ccbuilder: exec failed %s (%d)\n", path, (int)(-rc));
             }
             if (rc == 0) exec_ok++; else exec_fail++;
             kprintf("ccbuilder: exec(ok=%d) %s\n", rc == 0 ? 1 : 0, path ? path : "?");
         } else if (strcmp(cmd, "run") == 0) {
             char *path = next_token(&cursor);
             if (!path || !*path) {
-                kprintf("ccbuilder:%d: run requires <script>\n", (unsigned long)line_no);
+                kprintf("ccbuilder:%d: run requires <script>\n", line_no);
                 rc = -1;
             } else {
                 rc = script_exec(path);
                 if (rc == 0)
                     kprintf("ccbuilder: run OK %s\n", path);
                 else
-                    kprintf("ccbuilder: run failed %s (%d)\n", path, (unsigned long)(-rc));
+                    kprintf("ccbuilder: run failed %s (%d)\n", path, (int)(-rc));
             }
             if (rc == 0) run_ok++; else run_fail++;
             kprintf("ccbuilder: run(ok=%d) %s\n", rc == 0 ? 1 : 0, path ? path : "?");
@@ -184,7 +184,7 @@ void cmd_ccbuilder(const char *args) {
             kprintf("ccbuilder: echo(ok=1) %s\n", cursor);
             rc = 0;
         } else {
-            kprintf("ccbuilder:%d: unknown step '%s'\n", (unsigned long)line_no, cmd);
+            kprintf("ccbuilder:%d: unknown step '%s'\n", line_no, cmd);
             rc = -1;
         }
 
@@ -199,9 +199,9 @@ void cmd_ccbuilder(const char *args) {
         }
     }
 
-    kprintf("ccbuilder: steps=%d ok=%d fail=%d\n", (unsigned long)step_total, (unsigned long)step_ok, (unsigned long)step_fail);
+    kprintf("ccbuilder: steps=%d ok=%d fail=%d\n", step_total, step_ok, step_fail);
     kprintf("ccbuilder: cc(ok=%d,fail=%d) exec(ok=%d,fail=%d) run(ok=%d,fail=%d)\n",
-            (unsigned long)cc_ok, (unsigned long)cc_fail,
-            (unsigned long)exec_ok, (unsigned long)exec_fail,
-            (unsigned long)run_ok, (unsigned long)run_fail);
+            cc_ok, cc_fail,
+            exec_ok, exec_fail,
+            run_ok, run_fail);
 }

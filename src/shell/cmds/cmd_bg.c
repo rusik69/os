@@ -58,12 +58,12 @@ void cmd_bg(const char *args) {
         return;
     }
     if (pgid && libc_killpg(pgid, 18) == 0) {
-        kprintf("[%u] Continued\n", (unsigned long)pid);
+        kprintf("[%u] Continued\n", (unsigned int)pid);
         return;
     }
     if (libc_kill(pid, 18) == 0) {
-        kprintf("[%u] Continued\n", (unsigned long)pid);
+        kprintf("[%u] Continued\n", (unsigned int)pid);
         return;
     }
-    kprintf("No such job: %u\n", (unsigned long)pid);
+    kprintf("No such job: %u\n", (unsigned int)pid);
 }
