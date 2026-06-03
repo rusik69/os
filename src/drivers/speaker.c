@@ -1,6 +1,9 @@
 #include "speaker.h"
 #include "io.h"
 #include "timer.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* PIT base frequency */
 #define PIT_BASE_FREQ 1193180
@@ -12,9 +15,34 @@
 
 static uint8_t g_volume = 50;  /* default 50% */
 
+/*
+ * speaker_init — initialise PC speaker hardware.
+ *
+ * When compiled as a built-in driver (no MODULE defined), this is called
+ * directly from kernel.c at boot.  When compiled as a loadable module
+ * (MODULE defined), the ELF module loader calls init_module() below
+ * instead, which in turn calls speaker_init().
+ */
 void speaker_init(void) {
     speaker_off();
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    speaker_init();
+    return 0;  /* success */
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    speaker_off();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("PC speaker beep/tone driver");
+#endif /* MODULE */
 
 void speaker_tone(uint32_t frequency) {
     if (frequency == 0) {

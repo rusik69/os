@@ -17,6 +17,7 @@
 #include "printf.h"
 #include "syscall.h"   /* timerfd_tick, posix_timer_tick */
 #include "rcu.h"       /* rcu_check_stall */
+#include "export.h"
 
 #define PIT_CMD  0x43
 #define PIT_CH0  0x40
@@ -70,6 +71,7 @@ void timer_init(void) {
 uint64_t timer_get_ticks(void) {
     return ticks;
 }
+EXPORT_SYMBOL(timer_get_ticks);
 
 uint64_t timer_get_ns(void) {
     return ticks * NS_PER_TICK;
