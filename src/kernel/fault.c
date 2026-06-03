@@ -6,6 +6,8 @@
 #include "nx_enforce.h"
 #include "io.h"
 #include "panic.h"
+#include "kdump.h"
+#include "smp.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -224,9 +226,25 @@ static void page_fault_handler(struct interrupt_frame *frame) {
 }
 
 /* ── Double-fault handler (#DF, vector 8) ────────────────────────── */
-/* Runs on a dedicated IST stack, safe even when the regular kernel
- * stack has overflowed.  Calls panic() for full state capture and
- * post-mortem analysis via kdump. */
+/* Runs on a dedicated IST stack (IST1), safe even when the regular kernel
+ * stack has overflowed.  The IST switch happens BEFORE the CPU pushes any
+ * handler state, so we have a guaranteed-good stack regardless of what
+ * happened to the interrupted context's stack.
+ *
+ * Common causes of double faults:
+ *   1. Kernel stack overflow — a #PF occurs during a push/mov on a full
+ *      kernel stack, and the CPU's attempt to push the #PF error code
+ *      causes a second #PF → #DF.
+ *   2. Segment error recovery — a #GP/#NP/#SS/#TS handler itself causes
+ *      a fault (e.g. the handler's code segment is invalid).
+ *   3. IRET to a bad segment — IRET loads SS/CS from the stack and if
+ *      those selectors are invalid, a #GP occurs; if #GP handler faults
+ *      too, that's #DF.
+ *
+ * On x86-64 the error code pushed by the CPU for #DF is always 0
+ * (reserved), so we must infer the root cause from the saved register
+ * state.
+ */
 static void double_fault_handler(struct interrupt_frame *frame) {
     uint64_t cr0, cr2, cr3, cr4;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
@@ -234,8 +252,27 @@ static void double_fault_handler(struct interrupt_frame *frame) {
     __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
 
+    /*
+     * Capture the fault state to the kdump region BEFORE printing —
+     * the printing / serial I/O might itself fault, and we want the
+     * registers preserved regardless.
+     */
+    {
+        char msg[96];
+        struct process *proc = process_get_current();
+        int n = snprintf(msg, sizeof(msg),
+            "DOUBLE FAULT at RIP=0x%lx CR2=0x%lx cpu=%u pid=%u",
+            (unsigned long)frame->rip, (unsigned long)cr2,
+            smp_get_cpu_id(), proc ? (unsigned int)proc->pid : 0);
+        if (n < 0 || n >= (int)sizeof(msg)) {
+            /* Truncation is acceptable — msg is best-effort here */
+        }
+        msg[sizeof(msg) - 1] = '\0';
+        kdump_capture(msg, frame->rip);
+    }
+
     kprintf("\n*** DOUBLE FAULT (#DF) ***\n");
-    kprintf("Error code: %lu  (always 0 on modern x86-64)\n",
+    kprintf("Error code: %lu  (always 0 on x86-64 — cause inferred from state)\n",
             (unsigned long)frame->error_code);
     kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
             (unsigned long)frame->rip, (unsigned long)frame->rsp,
@@ -257,21 +294,101 @@ static void double_fault_handler(struct interrupt_frame *frame) {
     kprintf("CR0: 0x%lx  CR2: 0x%lx  CR3: 0x%lx  CR4: 0x%lx\n",
             (unsigned long)cr0, (unsigned long)cr2,
             (unsigned long)cr3, (unsigned long)cr4);
+
+    /* ── Cause analysis ─────────────────────────────────────────── */
+    struct process *proc = process_get_current();
+
+    /*
+     * Case 1: CR2 != 0 — the first fault was almost certainly a page
+     * fault (#PF, vector 14), and the #PF handler's attempt to push
+     * the error code / frame onto a full kernel stack caused the #DF.
+     * This is the classic "kernel stack overflow" scenario.
+     */
+    if (cr2 != 0) {
+        kprintf("*** LIKELY CAUSE: Nested page fault (kernel stack overflow?) ***\n");
+        kprintf("    Faulting address (CR2): 0x%lx\n", (unsigned long)cr2);
+        if (proc && proc->guard_page &&
+            (cr2 & ~0xFFFULL) == (proc->guard_page & ~0xFFFULL)) {
+            kprintf("    *** CONFIRMED: Guard page hit — kernel stack overflow "
+                    "for process %s (pid=%u) ***\n",
+                    proc->name ? proc->name : "?", (unsigned int)proc->pid);
+        }
+        /* Walk the original (faulting) stack if it looks reasonable */
+        uint64_t orig_rsp = frame->rsp;
+        if (orig_rsp >= 0xFFFF800000000000ULL) {
+            kprintf("    Original RSP=0x%lx (stack likely overflowed to guard)\n",
+                    (unsigned long)orig_rsp);
+        }
+    }
+
+    /*
+     * Case 2: CR2 == 0 but the CS selector in the saved frame looks
+     * suspicious — suggests a #GP recovery failure (e.g. IRET to a
+     * bad segment, or a segment-load instruction that faulted and the
+     * #GP handler itself crashed).
+     */
+    else if ((frame->cs & 0xFFFF) == 0 ||
+             (frame->ss & 0xFFFF) == 0 ||
+             (frame->cs & 0xFFFF) > 0x18) {
+        kprintf("*** LIKELY CAUSE: Segment error (#GP/#NP/#SS/#TS) — "
+                "recovery failure ***\n");
+        kprintf("    Suspicious CS=0x%lx or SS=0x%lx in saved frame\n",
+                (unsigned long)(frame->cs & 0xFFFF),
+                (unsigned long)(frame->ss & 0xFFFF));
+    }
+
+    /*
+     * Case 3: Unusual RFLAGS values — could indicate a corrupted
+     * interrupt return.
+     */
+    else if ((frame->rflags & 0x200) == 0) {
+        /* IF is cleared — means we were in an interrupt handler */
+        kprintf("*** LIKELY CAUSE: Fault within interrupt handler "
+                "(IF=0 in saved RFLAGS) ***\n");
+    }
+
+    /*
+     * Case 4: General — could be a hardware issue, corrupted stack,
+     * or a rare corner case.
+     */
+    else {
+        kprintf("*** LIKELY CAUSE: Unknown — see RIP/CR2 for context ***\n");
+    }
+
+    /* ── Stack trace ────────────────────────────────────────────── */
+    if (proc) {
+        kprintf("Process: %s (pid=%u, state=%u)\n",
+                proc->name ? proc->name : "?", (unsigned int)proc->pid,
+                (uint32_t)proc->state);
+    }
+
+    /* Print backtrace (walks the frame pointer chain on the IST stack) */
     arch_print_backtrace();
 
-    /* Check if the original fault was a page fault (stack overflow) */
-    struct process *proc = process_get_current();
-    if (proc && (cr2 != 0)) {
-        kprintf("Faulting address (CR2): 0x%lx\n", (unsigned long)cr2);
-        kprintf("Process: %s (pid=%u)\n",
-                proc->name ? proc->name : "?", (unsigned int)proc->pid);
-        if (proc->guard_page && (cr2 & ~0xFFFULL) == (proc->guard_page & ~0xFFFULL)) {
-            kprintf("*** CAUSE: Kernel stack overflow (guard page hit) ***\n");
+    /* Try to produce a secondary trace from the ORIGINAL (faulting) RSP
+     * if it looks like a valid kernel stack — helpful when the fault
+     * was a stack overflow and the frame pointers on the original stack
+     * are still intact. */
+    uint64_t orig_rsp = frame->rsp;
+    if (orig_rsp >= 0xFFFF800000000000ULL && orig_rsp < 0xFFFFFFFFFFFFFFFFULL) {
+        kprintf("Original-stack backtrace (via saved RSP=0x%lx):\n",
+                (unsigned long)orig_rsp);
+        uint64_t *stack = (uint64_t *)orig_rsp;
+        int limit = (proc && proc->stack_top)
+                    ? (int)((proc->stack_top - orig_rsp) / sizeof(uint64_t))
+                    : 64;
+        if (limit > 64) limit = 64;
+        if (limit < 1)   limit = 1;
+        for (int i = 0; i < limit; i++) {
+            uint64_t val = stack[i];
+            if (val >= 0xFFFF800000000000ULL && val < 0xFFFFFFFFFFFFFFFFULL) {
+                kprintf("  [%d] 0x%lx\n", i, (unsigned long)val);
+            }
         }
     }
 
     /* Delegate to panic() for full dump + kdump capture + timeout reset */
-    panic("DOUBLE FAULT (#DF) — irrcoverable\n"
+    panic("DOUBLE FAULT (#DF) — unrecoverable\n"
           "  RIP=0x%lx  CR2=0x%lx",
           (unsigned long)frame->rip, (unsigned long)cr2);
 }

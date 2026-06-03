@@ -10,6 +10,22 @@ static struct gdt_entry gdt[GDT_ENTRIES];
 static struct tss kernel_tss;
 static struct gdt_pointer gdt_ptr;
 
+/*
+ * Early IST1 stack for double-fault protection before PMM is online.
+ *
+ * During GDT + IDT init (before pmm_init() + ist_init()), the TSS IST1
+ * field is otherwise 0 — any #DF in that window would switch RSP to NULL
+ * and triple-fault immediately.  This BSS-resident buffer gives #DF a
+ * minimal safe stack that is replaced once the PMM-backed IST stack is
+ * allocated in ist_init().
+ *
+ * 8 KB is enough for the push-all-registers frame (~120 bytes) plus the
+ * double_fault_handler() C call chain.  ist_init() will replace ist1
+ * with the larger (16 KB) PMM-allocated stack.
+ */
+#define EARLY_IST1_STACK_SIZE  8192
+static uint8_t __attribute__((aligned(16))) early_ist1_stack[EARLY_IST1_STACK_SIZE];
+
 static void gdt_set_entry(int i, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
     gdt[i].base_low    = base & 0xFFFF;
     gdt[i].base_mid    = (base >> 16) & 0xFF;
@@ -38,6 +54,17 @@ void gdt_init(void) {
     /* TSS: index 5 (and 6 for upper base), selector 0x28 */
     memset(&kernel_tss, 0, sizeof(kernel_tss));
     kernel_tss.iopb_offset = sizeof(struct tss);
+
+    /*
+     * Install the early BSS-resident IST1 stack for double-fault
+     * protection.  This is critical — without it, any #DF during the
+     * boot window before ist_init() would see IST1 = NULL, switch RSP
+     * to address 0, and triple-fault before printing anything.
+     *
+     * ist_init() will replace this with a larger PMM-allocated stack
+     * once the physical memory manager is online.
+     */
+    kernel_tss.ist1 = (uint64_t)&early_ist1_stack[EARLY_IST1_STACK_SIZE];
 
     uint64_t tss_base = (uint64_t)&kernel_tss;
     uint32_t tss_limit = sizeof(struct tss) - 1;

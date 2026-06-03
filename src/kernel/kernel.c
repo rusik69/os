@@ -229,10 +229,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     idt_init();
     kprintf("[OK] IDT initialized\n");
 
-    /* Page fault handler */
-    fault_init();
-    kprintf("[OK] Page fault handler registered\n");
-
     /* Kernel stack guard pages */
     stack_guard_init();
 
@@ -241,9 +237,21 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
             (unsigned long long)pmm_get_total_frames() * 4, (unsigned long long)pmm_get_used_frames() * 4);
 
-    /* IST stacks for double fault, NMI, MCE protection (needs PMM) */
+    /*
+     * IST stacks for double fault, NMI, MCE protection.
+     *
+     * MUST come before fault_init() — without IST, a double fault (e.g. from
+     * a kernel stack overflow) would try to push the error code / register
+     * frame onto the already-corrupted stack, causing an instant triple-fault.
+     * The IST switch gives #DF a known-good stack independent of the faulting
+     * context.
+     */
     ist_init();
     kprintf("[OK] IST stacks initialized\n");
+
+    /* Exception handlers — registered AFTER IST stacks are live */
+    fault_init();
+    kprintf("[OK] Exception handlers registered (DF/NMI/MCE/PF)\n");
 
     /* Per-CPU IRQ stacks for safe interrupt handling (needs PMM) */
     irq_regs_init();
