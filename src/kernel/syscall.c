@@ -7321,7 +7321,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_UMASK:       return sys_umask(a1);
         case SYS_MKNOD:       return sys_mknod(a1, a2, a3);
         case SYS_PRLIMIT64:   return sys_prlimit64(a1, a2, a3, a4);
-        case SYS_FUTEX:       return sys_futex(a1, a2, a3, a4, a5, 0);
+        case SYS_FUTEX:       return sys_futex(a1, a2, a3, a4, a5, syscall_arg6);
         case SYS_ARCH_PRCTL:  return sys_arch_prctl(a1, a2);
         case SYS_POLL:        return sys_poll(a1, a2, a3);
         case SYS_PSELECT6:    return sys_pselect6(a1, a2, a3, a4, a5);
