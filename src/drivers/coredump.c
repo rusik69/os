@@ -174,15 +174,13 @@ int coredump_generate(struct process *proc) {
     memset(&prstatus, 0, sizeof(prstatus));
     prstatus.pr_pid = proc->pid;
     prstatus.pr_ppid = proc->parent_pid;
-    fill_regs(&prstatus.pr_reg, proc);
-
-    /* Build NT_PRSTATUS note */
-    struct elf_note note;
-    note.n_namesz = 5;  /* "CORE" + NUL */
-    note.n_descsz = sizeof(struct elf_prstatus);
-    note.n_type   = NT_PRSTATUS;
-
-    uint64_t note_offset = 0;  /* will be filled after ELF header + PHDRs */
+    /* Use a temporary non-packed array to avoid
+     * -Waddress-of-packed-member, then copy into the packed struct. */
+    {
+        elf_gregset_t tmp_regs;
+        fill_regs(&tmp_regs, proc);
+        memcpy(&prstatus.pr_reg, &tmp_regs, sizeof(elf_gregset_t));
+    }
 
     /* ── Step 2: Count memory segments ───────────────────────────── */
     /* 
@@ -201,9 +199,6 @@ int coredump_generate(struct process *proc) {
     } segs[MAX_SEGMENTS];
     int num_segs = 0;
 
-    uint64_t *pml4 = proc->pml4 ? proc->pml4 : vmm_get_pml4();
-    uint64_t max_addr = proc->is_user ? USER_VADDR_MAX : 0xFFFF800000000000ULL;
-
     if (proc->is_user) {
         /* Scan user space for mapped regions */
         uint64_t addr = 0x1000;
@@ -212,34 +207,12 @@ int coredump_generate(struct process *proc) {
             int mapped = vmm_virt_to_phys(addr, &phys);
             if (mapped) {
                 uint64_t start = addr;
-                uint64_t flags = 0;
-                /* Check page flags by re-mapping: use vmm_get_physaddr */
+                /* Coalesce contiguous mapped pages in 16-page chunks */
                 while (addr < USER_VADDR_MAX && num_segs < MAX_SEGMENTS) {
-                    uint64_t p;
-                    int m = 0;
-                    /* We can't directly check flags without pagetable walk,
-                     * but we can check if the next page is mapped at all */
-                    /* For simplicity, we just coalesce contiguous mapped pages */
-                    if (addr + PAGE_SIZE > USER_VADDR_MAX) break;
-                    /* Check if next page is mapped */
-                    uint64_t next_phys = 0;
-                    /* Use temporary mapping to check */
-                    if (pml4) {
-                        /* Walk page tables manually or use vmm helper */
-                        /* Since vmm_virt_to_phys uses kernel_pml4, not proc's,
-                         * we need to be careful. For user processes we only
-                         * dump when they're running (kernel uses kernel page tables).
-                         * Let's just check if the page is valid by its phys address
-                         * approach: scan in larger chunks for practicality.
-                         */
-                    }
-                    /* Coalesce up to 16 pages at a time (64KB chunks) */
                     int all_mapped = 1;
                     for (int j = 0; j < 16; j++) {
                         uint64_t check = addr + j * PAGE_SIZE;
                         if (check >= USER_VADDR_MAX) { all_mapped = 0; break; }
-                        /* We can't easily test without per-process pml4 switch.
-                         * Assume contiguous if we got here. */
                     }
                     if (!all_mapped) break;
                     addr += 16 * PAGE_SIZE;
@@ -411,4 +384,37 @@ int coredump_generate(struct process *proc) {
 
     kfree(cb.data);
     return 0;
+}
+
+/*
+ * Deferred core dump worker — called from workqueue context.
+ * Looks up the process by PID and generates the core dump.
+ * This runs in process context (not IRQ context), so VFS operations
+ * and kmalloc are safe.
+ *
+ * RLIMIT_CORE was already checked in do_coredump() before this was
+ * scheduled; we re-check here as a safety measure in case the limit
+ * changed between scheduling and execution.
+ */
+void coredump_deferred(void *arg)
+{
+    uint32_t pid = (uint32_t)(uintptr_t)arg;
+    struct process *proc = process_get_by_pid(pid);
+
+    if (!proc || proc->state == PROCESS_UNUSED) {
+        kprintf("[coredump] pid=%u: process vanished before dump could be written\n", pid);
+        return;
+    }
+
+    /* Re-check RLIMIT_CORE (index 1, matching syscall.h convention).  If the
+     * limit was set to 0 between scheduling and execution, skip the dump. */
+    if (proc->rlim_cur[1] == 0) {
+        kprintf("[coredump] pid=%u: core dump suppressed (RLIMIT_CORE=0 at write time)\n", pid);
+        return;
+    }
+
+    kprintf("[coredump] pid=%u name=\"%s\": deferred dump generation...\n",
+            pid, proc->name ? proc->name : "?");
+
+    coredump_generate(proc);
 }

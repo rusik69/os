@@ -55,6 +55,8 @@
 #include "memfd.h"
 #include "page_cache.h"
 #include "bufcache.h"
+#include "coredump.h"
+#include "workqueue.h"
 
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
@@ -4418,16 +4420,22 @@ void do_coredump(struct process *proc) {
     if (!proc->is_user || !proc->pml4) return;
 
     /* Enforce RLIMIT_CORE: if core size limit is 0, skip dump */
-    if (proc->rlim_cur[RLIMIT_CORE] == 0) {
+    if (proc->rlim_cur[1] == 0) {  /* RLIMIT_CORE = 1 (syscall.h convention) */
         kprintf("[CORE] pid=%u: core dump suppressed (RLIMIT_CORE=0)\n", proc->pid);
         return;
     }
 
-    kprintf("[CORE] pid=%u name=\"%s\": saving core dump (max %llu bytes)...\n", proc->pid,
+    kprintf("[CORE] pid=%u name=\"%s\": scheduling core dump (max %llu bytes)...\n", proc->pid,
             proc->name ? proc->name : "?",
-            (unsigned long long)proc->rlim_cur[RLIMIT_CORE]);
-    /* In a full implementation, walk the VMM address space and write an ELF
-     * core file. For now, just log the event. */
+            (unsigned long long)proc->rlim_cur[1]);
+
+    /* Defer to workqueue — do_coredump() may be called from IRQ context
+     * (via signal_check() in scheduler_tick()), where VFS writes and
+     * kmalloc are unsafe.  The workqueue runs in process context. */
+    int ret = workqueue_schedule(coredump_deferred, (void *)(uintptr_t)proc->pid);
+    if (ret < 0) {
+        kprintf("[CORE] pid=%u: workqueue full, core dump lost\n", proc->pid);
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
