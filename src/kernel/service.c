@@ -343,7 +343,7 @@ int service_start(const char *name) {
         kprintf("[svc] %s started\n", name);
     } else {
         log_line(svc, "start failed");
-        kprintf("[svc] %s failed to start (rc=%d)\n", name, (int64_t)rc);
+        kprintf("[svc] %s failed to start (rc=%lld)\n", name, (long long)rc);
     }
     return rc;
 }
@@ -641,7 +641,7 @@ static int service_restart_crashed(struct service *svc) {
         return 0;
     }
 
-    kprintf("[svc-watchdog] %s: restart FAILED (rc=%d)\n", svc->name, (int64_t)rc);
+    kprintf("[svc-watchdog] %s: restart FAILED (rc=%lld)\n", svc->name, (long long)rc);
     log_line(svc, "watchdog: auto-restart FAILED");
     return -1;
 }

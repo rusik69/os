@@ -1058,7 +1058,7 @@ int net_arp_list(void (*cb)(uint32_t ip, const uint8_t *mac)) {
 
 /* ── Loopback interface ──────────────────────────────────────────── */
 
-#define LOOPBACK_BUF_SIZE 65536
+#define LOOPBACK_BUF_SIZE 65535
 static uint8_t loopback_buffer[LOOPBACK_BUF_SIZE];
 static uint16_t loopback_len = 0;
 static int loopback_initialized = 0;
@@ -1070,7 +1070,7 @@ int net_loopback_init(void) {
     return 0;
 }
 
-int net_loopback_send(const void *data, uint16_t len) {
+int net_loopback_send(const void *data, int len) {
     if (!loopback_initialized) return -1;
     if (len > LOOPBACK_BUF_SIZE) len = LOOPBACK_BUF_SIZE;
     memcpy(loopback_buffer, data, len);

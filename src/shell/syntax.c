@@ -717,7 +717,6 @@ static int tokenize_makefile(const char *line, int len,
     int i = 0;
     int in_variable = 0;
     int paren_depth = 0;
-    int in_target = 0;
 
     /* Check if line starts with a target (no leading whitespace, ends with ':') */
     int is_target = 0;
@@ -751,7 +750,6 @@ static int tokenize_makefile(const char *line, int len,
             if (line[i + 1] == '(' || line[i + 1] == '{') {
                 tokens[i] = TOKEN_BUILTIN;
                 i++;
-                char expected_close = (line[i] == '(') ? ')' : '}';
                 tokens[i] = TOKEN_BUILTIN;
                 i++;
                 in_variable = 1;

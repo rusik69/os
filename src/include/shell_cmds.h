@@ -97,6 +97,19 @@ void cmd_time(const char *args);
 void cmd_strings(const char *args);
 void cmd_tac(const char *args);
 void cmd_base64(const char *args);
+/* Wrappers for commands with incompatible function signatures */
+void cmd_comm_wrapper(const char *args);
+void cmd_expand_wrapper(const char *args);
+void cmd_fold_wrapper(const char *args);
+void cmd_seq_wrapper(const char *args);
+void cmd_tee_wrapper(const char *args);
+void cmd_yes_wrapper(const char *args);
+void cmd_tsort_wrapper(const char *args);
+void cmd_join_wrapper(const char *args);
+void cmd_unexpand_wrapper(const char *args);
+void cmd_fmt_wrapper(const char *args);
+void cmd_pr_wrapper(const char *args);
+void cmd_base32_wrapper(const char *args);
 
 /* Hardware commands */
 void cmd_cmos(void);
@@ -311,6 +324,7 @@ void cmd_col(const char *args);
 /* Phase 12 — system utility commands */
 void cmd_moc(const char *args);
 void cmd_neofetch(void);
+void cmd_neofetch_wrapper(const char *args); /* wrapper: void → const char * */
 void cmd_pmap(const char *args);
 void cmd_pwdx(void);
 void cmd_flock(const char *args);

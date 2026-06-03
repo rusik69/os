@@ -63,7 +63,8 @@ static int find_inode_in_dir(int dir_idx, const char *name) {
 
 /* ── VFS operations ────────────────────────────────────────────── */
 
-static int tmpfs_read(const char *path, void *buf, uint32_t max, uint32_t *out) {
+static int tmpfs_read(void *priv, const char *path, void *buf, uint32_t max, uint32_t *out) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_FILE)
         return -1;
@@ -74,7 +75,8 @@ static int tmpfs_read(const char *path, void *buf, uint32_t max, uint32_t *out) 
     return 0;
 }
 
-static int tmpfs_write(const char *path, const void *buf, uint32_t size) {
+static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t size) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_FILE)
         return -1;
@@ -122,7 +124,8 @@ static int tmpfs_mkdir(const char *path) {
     return 0;
 }
 
-static int tmpfs_create(const char *path, uint8_t type) {
+static int tmpfs_create(void *priv, const char *path, uint8_t type) {
+    (void)priv;
     if (find_inode(path) >= 0) return -1;
     if (type == FS_TYPE_DIR) return tmpfs_mkdir(path);
     if (type != FS_TYPE_FILE && type != FS_TYPE_LINK) return -1;
@@ -154,14 +157,16 @@ static int tmpfs_create(const char *path, uint8_t type) {
     return 0;
 }
 
-static int tmpfs_unlink(const char *path) {
+static int tmpfs_unlink(void *priv, const char *path) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0) return -1;
     free_inode(idx);
     return 0;
 }
 
-static int tmpfs_stat(const char *path, struct vfs_stat *st) {
+static int tmpfs_stat(void *priv, const char *path, struct vfs_stat *st) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0) return -1;
     st->size = inodes[idx].size;
@@ -172,7 +177,8 @@ static int tmpfs_stat(const char *path, struct vfs_stat *st) {
     return 0;
 }
 
-static int tmpfs_readdir(const char *path) {
+static int tmpfs_readdir(void *priv, const char *path) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_DIR) return -1;
     kprintf("tmpfs: %s\n", path);
@@ -185,7 +191,8 @@ static int tmpfs_readdir(const char *path) {
     return 0;
 }
 
-static int tmpfs_readdir_names(const char *path, char names[][64], int max) {
+static int tmpfs_readdir_names(void *priv, const char *path, char names[][64], int max) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_DIR) return 0;
     int count = 0;
@@ -201,7 +208,8 @@ static int tmpfs_readdir_names(const char *path, char names[][64], int max) {
     return count;
 }
 
-static int tmpfs_truncate(const char *path, uint32_t len) {
+static int tmpfs_truncate(void *priv, const char *path, uint32_t len) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0) return -1;
     if (len == 0 && inodes[idx].data) {
@@ -216,9 +224,10 @@ static int tmpfs_truncate(const char *path, uint32_t len) {
 
 /* ── Symlink support ──────────────────────────────────────────── */
 
-static int tmpfs_symlink(const char *target, const char *linkpath) {
+static int tmpfs_symlink(void *priv, const char *target, const char *linkpath) {
+    (void)priv;
     /* Create the link inode via the generic create helper */
-    if (tmpfs_create(linkpath, FS_TYPE_LINK) < 0)
+    if (tmpfs_create(priv, linkpath, FS_TYPE_LINK) < 0)
         return -1;
 
     int idx = find_inode(linkpath);
@@ -234,7 +243,7 @@ static int tmpfs_symlink(const char *target, const char *linkpath) {
 
     inodes[idx].data = kmalloc(target_len + 1);
     if (!inodes[idx].data) {
-        tmpfs_unlink(linkpath);
+        tmpfs_unlink(priv, linkpath);
         return -1;
     }
     memcpy(inodes[idx].data, target, target_len + 1);
@@ -242,7 +251,8 @@ static int tmpfs_symlink(const char *target, const char *linkpath) {
     return 0;
 }
 
-static int tmpfs_readlink(const char *path, char *buf, int bufsize) {
+static int tmpfs_readlink(void *priv, const char *path, char *buf, int bufsize) {
+    (void)priv;
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_LINK)
         return -1;
@@ -263,7 +273,8 @@ static int tmpfs_readlink(const char *path, char *buf, int bufsize) {
 
 /* ── mknod support ────────────────────────────────────────────── */
 
-static int tmpfs_mknod(const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
+static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev_major, uint16_t dev_minor) {
+    (void)priv;
     if (find_inode(path) >= 0) return -1; /* already exists */
 
     char dir[TMPFS_MAX_NAME*2], name[TMPFS_MAX_NAME];

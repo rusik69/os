@@ -237,6 +237,7 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
 
 /* ICMP Destination Unreachable (type 3, code 3 = Port Unreachable) */
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len) {
+    (void)src;
     uint8_t buf[576];  /* ICMP error must fit in 576 bytes guaranteed */
     struct icmp_header *icmp = (struct icmp_header *)buf;
     memset(icmp, 0, sizeof(*icmp));
@@ -634,8 +635,8 @@ void net_dhcp_discover(void) {
 
     if (dhcp_state == 3)
         kprintf("[OK] DHCP: %u.%u.%u.%u\n",
-            (unsigned long)((net_our_ip >> 24) & 0xFF), (unsigned long)((net_our_ip >> 16) & 0xFF),
-            (unsigned long)((net_our_ip >> 8) & 0xFF), (unsigned long)(net_our_ip & 0xFF));
+            (unsigned int)((net_our_ip >> 24) & 0xFF), (unsigned int)((net_our_ip >> 16) & 0xFF),
+            (unsigned int)((net_our_ip >> 8) & 0xFF), (unsigned int)(net_our_ip & 0xFF));
 
     if (net_gateway_ip)
         arp_resolve_gateway();
@@ -664,8 +665,8 @@ void net_dhcp_renew_if_needed(void) {
     }
     if (dhcp_state == 3) {
         kprintf("[OK] DHCP: Renewed IP %u.%u.%u.%u\n",
-            (unsigned long)((net_our_ip >> 24) & 0xFF), (unsigned long)((net_our_ip >> 16) & 0xFF),
-            (unsigned long)((net_our_ip >> 8) & 0xFF), (unsigned long)(net_our_ip & 0xFF));
+            (unsigned int)((net_our_ip >> 24) & 0xFF), (unsigned int)((net_our_ip >> 16) & 0xFF),
+            (unsigned int)((net_our_ip >> 8) & 0xFF), (unsigned int)(net_our_ip & 0xFF));
     } else {
         kprintf("[!!] DHCP: Renew failed, will retry\n");
     }
@@ -714,13 +715,13 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
         uint32_t ip = net_dns_resolve(host);
         if (!ip) { kprintf("DNS resolution failed for %s\n", host); return -1; }
         kprintf("Resolved %s -> %u.%u.%u.%u\n", host,
-            (unsigned long)((ip>>24)&0xFF), (unsigned long)((ip>>16)&0xFF),
-            (unsigned long)((ip>>8)&0xFF),  (unsigned long)(ip&0xFF));
+            (unsigned int)((ip>>24)&0xFF), (unsigned int)((ip>>16)&0xFF),
+            (unsigned int)((ip>>8)&0xFF),  (unsigned int)(ip&0xFF));
 
         int conn = net_tcp_connect(ip, port);
         if (conn < 0) { kprintf("TCP connect to %u.%u.%u.%u:%u failed\n",
-            (unsigned long)((ip>>24)&0xFF), (unsigned long)((ip>>16)&0xFF),
-            (unsigned long)((ip>>8)&0xFF),  (unsigned long)(ip&0xFF), (unsigned long)port); return -1; }
+            (unsigned int)((ip>>24)&0xFF), (unsigned int)((ip>>16)&0xFF),
+            (unsigned int)((ip>>8)&0xFF),  (unsigned int)(ip&0xFF), (unsigned int)port); return -1; }
 
         char req[512];
         int rlen = 0;
@@ -776,7 +777,7 @@ int net_http_get_ex(const char *host_in, uint16_t port_in, const char *path_in,
             while (*loc && *loc != '\r' && *loc != '\n' && li < 255)
                 locbuf[li++] = *loc++;
             locbuf[li] = '\0';
-            kprintf("Redirect %d -> %s\n", (unsigned long)status, locbuf);
+            kprintf("Redirect %d -> %s\n", status, locbuf);
             if (locbuf[0] == '/') {
                 /* Relative path: keep host and port, update path only */
                 for (i = 0; i < 255 && i < li; i++) path[i] = locbuf[i];

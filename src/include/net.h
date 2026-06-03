@@ -215,7 +215,7 @@ void ipv6_send_rs(void);
 
 /* Loopback interface */
 int  net_loopback_init(void);
-int  net_loopback_send(const void *data, uint16_t len);
+int  net_loopback_send(const void *data, int len);
 
 /* TCP keepalive support */
 void net_tcp_set_keepalive(int conn_id, int keepalive);

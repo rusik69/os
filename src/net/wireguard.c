@@ -33,7 +33,7 @@ static const uint64_t P[4] = {0xFFFFFFFFFFFFFFEDULL, 0xFFFFFFFFFFFFFFFFULL,
                                0xFFFFFFFFFFFFFFFFULL, 0x7FFFFFFFFFFFFFFFULL};
 
 /* Reduce a 512-bit value mod 2^255-19 */
-static void fe25519_reduce(uint64_t *r, const uint64_t *a) {
+static __attribute__((unused)) void fe25519_reduce(uint64_t *r, const uint64_t *a) {
     /* a is 8 limbs (512 bits), reduce to 4 limbs */
     uint64_t t[5];
     t[0] = a[0] + a[4];
@@ -233,7 +233,7 @@ static void fe25519_sq(uint64_t *r, const uint64_t *a) {
 
 /* Invert a field element (a^(p-2) mod p) */
 static void fe25519_invert(uint64_t *r, const uint64_t *a) {
-    uint64_t t[4], u[4];
+    uint64_t t[4];
     memcpy(t, a, sizeof(t));
 
     /* a^253 (using square-and-multiply chain) */
@@ -255,6 +255,7 @@ static void curve25519_clamp(uint8_t *scalar) {
 /* Montgomery ladder step */
 static void montgomery_ladder(uint64_t *x2, uint64_t *z2, uint64_t *x3, uint64_t *z3,
                                const uint64_t *u) {
+    (void)u;
     uint64_t a[4], aa[4], b[4], bb[4], e[4], f[4], g[4], h[4];
 
     fe25519_add(a, x2, z2);    /* A = x2 + z2 */
@@ -464,7 +465,7 @@ static void poly1305_init(poly1305_state *state, const uint8_t key[32]) {
     (*state)[5] = load32_le(key + 20);
     (*state)[6] = load32_le(key + 24);
     (*state)[7] = load32_le(key + 28);
-    (*state)[8] = load32_le(key + 20) >> 32 | (uint64_t)load32_le(key + 24) << 32;
+    (*state)[8] = (uint64_t)load32_le(key + 24) << 32;
     /* Actually store s as two 64-bit values for simplicity */
     (*state)[9] = (uint64_t)(*state)[5] | ((uint64_t)(*state)[6] << 32);
     (*state)[10] = (uint64_t)(*state)[7] | ((uint64_t)(*state)[8] << 32);
@@ -605,6 +606,7 @@ void chacha20poly1305_encrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
                                const uint8_t key[32], const uint8_t nonce[12]) {
     /* Generate Poly1305 key from ChaCha20 with counter=0 */
     uint8_t poly_key[32];
+    memset(poly_key, 0, sizeof(poly_key));
     chacha20_encrypt(poly_key, poly_key, 32, key, 0, nonce);
 
     /* Encrypt plaintext with ChaCha20 starting at counter=1 */
@@ -644,6 +646,7 @@ int chacha20poly1305_decrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
 
     /* Generate Poly1305 key */
     uint8_t poly_key[32];
+    memset(poly_key, 0, sizeof(poly_key));
     chacha20_encrypt(poly_key, poly_key, 32, key, 0, nonce);
 
     /* Verify MAC */
@@ -683,6 +686,7 @@ int chacha20poly1305_decrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
  * In a real WireGuard implementation this would use BLAKE2s + AEAD. */
 static void wg_kdf(uint8_t *session_key, const uint8_t *shared_secret, 
                     const uint8_t *private_key, const uint8_t *public_key) {
+    (void)private_key;
     /* Simple KDF: mix the keys using ChaCha20 as a PRF */
     uint8_t nonce[12] = {0};
     uint8_t temp[64];
