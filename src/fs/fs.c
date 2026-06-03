@@ -8,6 +8,7 @@
 #include "fat32.h"
 #include "page_cache.h"
 #include "pmm.h"
+#include "syscall.h"   /* for FALLOC_FL_* constants */
 
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
@@ -1028,6 +1029,115 @@ int fs_truncate(const char *path, uint32_t len) {
     uint32_t new_blocks = (len + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
     fs_free_inode_blocks_from(idx, new_blocks);
     inodes[idx].size = len;
+    return save_inodes();
+}
+
+/*
+ * fs_fallocate — Pre-allocate disk blocks for a file without writing data.
+ *
+ * Allocates physical disk blocks for the byte range [offset, offset+len).
+ * Unlike fs_truncate() which extends and zero-fills, this simply reserves
+ * the blocks on disk so that subsequent writes will not fail with ENOSPC.
+ *
+ * @path   Filesystem path to the target file.
+ * @mode   Fallocate mode flags (FALLOC_FL_KEEP_SIZE, FALLOC_FL_PUNCH_HOLE).
+ * @offset Starting byte offset for allocation.
+ * @len    Number of bytes to allocate.
+ *
+ * Returns 0 on success, -1 on error (invalid path, not a file, OOM, etc.).
+ */
+int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
+{
+    int idx = find_inode(path);
+    if (idx < 0) return -1;
+    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+
+    uint32_t end = offset + len;
+
+    /* Clamp to maximum file size to avoid integer overflow */
+    uint32_t max_file_size = FS_MAX_BLOCKS * FS_BLOCK_SIZE;
+    if (end > max_file_size)
+        end = max_file_size;
+    if (end <= offset)
+        return -1; /* overflow or invalid range */
+
+    /* ── FALLOC_FL_PUNCH_HOLE: Deallocate blocks in the range ── */
+    if (mode & FALLOC_FL_PUNCH_HOLE) {
+        uint32_t start_block = offset / FS_BLOCK_SIZE;
+        uint32_t end_block   = (end + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
+        if (end_block > FS_MAX_BLOCKS)
+            end_block = FS_MAX_BLOCKS;
+
+        /* Zero-fill and free each data block in the range */
+        uint8_t zero[ATA_SECTOR_SIZE];
+        memset(zero, 0, ATA_SECTOR_SIZE);
+        for (uint32_t b = start_block; b < end_block; b++) {
+            if (inodes[idx].blocks[b] != 0) {
+                bitmap_free_sector(inodes[idx].blocks[b]);
+                ata_write_sectors(inodes[idx].blocks[b], 1, zero);
+                inodes[idx].blocks[b] = 0;
+            }
+        }
+        save_super();
+        return save_inodes();
+    }
+
+    /* ── Normal allocate mode: reserve blocks for the range ── */
+    uint32_t old_size = inodes[idx].size;
+
+    /* Determine which blocks need allocation */
+    uint32_t start_block = offset / FS_BLOCK_SIZE;
+    uint32_t needed_end_block = (end + FS_BLOCK_SIZE - 1) / FS_BLOCK_SIZE;
+    if (needed_end_block > FS_MAX_BLOCKS)
+        needed_end_block = FS_MAX_BLOCKS;
+
+    /* Count how many blocks are already allocated */
+    int blocks_to_alloc = 0;
+    int first_unalloc = -1;
+    for (uint32_t b = start_block; b < needed_end_block; b++) {
+        if (inodes[idx].blocks[b] == 0) {
+            blocks_to_alloc++;
+            if (first_unalloc < 0)
+                first_unalloc = (int)b;
+        }
+    }
+
+    if (blocks_to_alloc == 0) {
+        /* All blocks already allocated — just update size if needed */
+        if (!(mode & FALLOC_FL_KEEP_SIZE) && end > old_size) {
+            inodes[idx].size = end;
+            return save_inodes();
+        }
+        return 0;
+    }
+
+    /* Allocate missing blocks */
+    int alloc_start = first_unalloc;
+    for (uint32_t b = start_block; b < needed_end_block; b++) {
+        if (inodes[idx].blocks[b] == 0) {
+            uint32_t blk = alloc_block();
+            if (!blk) {
+                /* Allocation failed — free any blocks we allocated in this call */
+                if (alloc_start >= 0) {
+                    for (uint32_t fb = (uint32_t)alloc_start; fb < b; fb++) {
+                        if (inodes[idx].blocks[fb] != 0) {
+                            bitmap_free_sector(inodes[idx].blocks[fb]);
+                            inodes[idx].blocks[fb] = 0;
+                        }
+                    }
+                }
+                return -1;
+            }
+            inodes[idx].blocks[b] = blk;
+        }
+    }
+
+    /* Update file size if not keeping size and the range extends beyond current size */
+    if (!(mode & FALLOC_FL_KEEP_SIZE) && end > old_size) {
+        inodes[idx].size = end;
+    }
+
+    save_super();
     return save_inodes();
 }
 

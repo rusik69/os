@@ -80,6 +80,7 @@ int fs_symlink(const char *path, const char *target);
 int fs_readlink(const char *path, char *buf, int bufsize);
 int fs_lstat(const char *path, uint32_t *size, uint8_t *type); /* stat without following symlinks */
 int fs_truncate(const char *path, uint32_t len); /* truncate file to len bytes */
+int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len); /* pre-allocate disk blocks */
 
 /* Format a mode word as "rwxrwxrwx" into a 9-char buffer (+ NUL) */
 void fs_mode_str(uint16_t mode, char out[10]);

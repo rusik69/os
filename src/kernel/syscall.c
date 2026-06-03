@@ -6051,37 +6051,10 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
     /* Resolve path to mount */
     const char *path = pfd->path;
 
-    /* Preallocate blocks keeping size (FALLOC_FL_KEEP_SIZE) or punch hole */
-    if (mode & FALLOC_FL_PUNCH_HOLE) {
-        /* Punch hole: free blocks in range. For now, truncate if the hole
-         * reaches the end of file. */
-        struct vfs_stat st;
-        if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
-        if (offset == 0 && len >= (uint64_t)st.size) {
-            /* Truncate to zero */
-            return (uint64_t)vfs_truncate(path, 0);
-        }
-        /* Simple approach: if we can't punch a hole, treat as success */
-        return 0;
-    }
-
-    /* Preallocate (FALLOC_FL_KEEP_SIZE or default): ensure the file can
-     * hold offset+len bytes. We do this by updating the file size if needed. */
-    struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
-    uint64_t needed = offset + len;
-    if (needed > (uint64_t)st.size && !(mode & FALLOC_FL_KEEP_SIZE)) {
-        /* Expand file size by writing zeros at the end */
-        uint32_t expand = (uint32_t)(needed - (uint64_t)st.size);
-        uint8_t *zeros = kmalloc(expand);
-        if (!zeros) return (uint64_t)-1;
-        memset(zeros, 0, expand);
-        int r = vfs_write(path, zeros, expand);
-        kfree(zeros);
-        if (r < 0) return (uint64_t)-1;
-    }
-
-    return 0;
+    /* Delegate to the proper filesystem-level fallocate implementation
+     * which pre-allocates disk blocks without writing data. */
+    int ret = fs_fallocate(path, (int)mode, (uint32_t)offset, (uint32_t)len);
+    return ret == 0 ? 0 : (uint64_t)-1;
 }
 
 
