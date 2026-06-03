@@ -287,6 +287,10 @@ int module_deps_resolved(struct kernel_module *mod);
         (void)__module_param_cb_##name; \
     }
 
+/* Helper for token pasting with __LINE__ expansion */
+#define __MODULE_PASTE(a, b)   a##b
+#define _MODULE_PASTE(a, b)    __MODULE_PASTE(a, b)
+
 /* MODULE_ALIAS — declare a device alias for module autoloading (M38).
  *
  * Usage in a kernel module source file:
@@ -304,17 +308,17 @@ int module_deps_resolved(struct kernel_module *mod);
  *   ?  — matches any single character
  */
 #define MODULE_ALIAS(alias) \
-    static const char __mod_alias_##__LINE__[] \
+    static const char _MODULE_PASTE(__mod_alias_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "alias=" alias
 
 /* MODULE_* macros for metadata (used in .modinfo section) */
-#define MODULE_LICENSE(license)    static const char __mod_license[] \
+#define MODULE_LICENSE(license)    static const char _MODULE_PASTE(__mod_lic_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "license=" license
-#define MODULE_AUTHOR(author)      static const char __mod_author[] \
+#define MODULE_AUTHOR(author)      static const char _MODULE_PASTE(__mod_auth_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "author=" author
-#define MODULE_DESCRIPTION(desc)   static const char __mod_desc[] \
+#define MODULE_DESCRIPTION(desc)   static const char _MODULE_PASTE(__mod_desc_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "description=" desc
-#define MODULE_VERSION(ver)        static const char __mod_version[] \
+#define MODULE_VERSION(ver)        static const char _MODULE_PASTE(__mod_ver_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "version=" ver
 
 /* MODULE_DEPENDS — declare module dependencies.

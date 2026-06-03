@@ -8,6 +8,9 @@
 #include "pic.h"
 #include "apic.h"
 #include "net.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* E1000 register offsets */
 #define REG_CTRL    0x0000
@@ -408,6 +411,55 @@ int e1000_send(const void *data, uint16_t len) {
 
     return 0;
 }
+
+/* ── e1000_exit — reverse the initialization, for module unloading ── */
+void e1000_exit(void) {
+    if (!nic_present) return;
+
+    kprintf("[e1000] Shutting down NIC...\n");
+
+    /* Disable all interrupts */
+    e1000_write(REG_IMC, 0xFFFFFFFF);
+    e1000_read(REG_ICR); /* clear pending */
+
+    /* Mask IRQ in I/O APIC and PIC */
+    if (apic_is_init_complete())
+        ioapic_mask_irq(e1000_irq_line);
+    pic_mask(e1000_irq_line);
+
+    /* Disable RX and TX */
+    e1000_write(REG_RCTL, 0);
+    e1000_write(REG_TCTL, 0);
+
+    /* Reset the controller */
+    e1000_write(REG_CTRL, e1000_read(REG_CTRL) | CTRL_RST);
+    for (volatile int i = 0; i < 100000; i++);
+
+    /* Unmap MMIO region */
+    if (mmio_base) {
+        vmm_unmap_phys((void *)mmio_base, 0x20000);
+        mmio_base = NULL;
+    }
+
+    nic_present = 0;
+    kprintf("[e1000] NIC shut down\n");
+}
+
+#ifdef MODULE
+/* Module entry/exit points — the ELF loader looks for these symbols */
+int init_module(void) {
+    return e1000_init();
+}
+void cleanup_module(void) {
+    e1000_exit();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Intel PRO/1000 (E1000/E1000E) PCI Ethernet driver");
+MODULE_ALIAS("pci:v00008086d0000100Esv*sd*bc*sc*i*");
+MODULE_ALIAS("pci:v00008086d0000100Fsv*sd*bc*sc*i*");
+#endif /* MODULE */
 
 int e1000_receive(void *buf, uint16_t max_len) {
     if (!nic_present) return -1;
