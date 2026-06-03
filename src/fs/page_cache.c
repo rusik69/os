@@ -228,27 +228,175 @@ void page_cache_mark_dirty(uint64_t ino, uint64_t block) {
 }
 
 
-/* ── Flush all dirty pages ─────────────────────────────────────────── */
+/*
+ * ── Clustered writeback helper ─────────────────────────────────────
+ *
+ * Scans the page cache for dirty pages and merges contiguous runs
+ * (same inode, consecutive block numbers) into single I/O requests
+ * for better throughput.  The merged buffer is heap-allocated and
+ * freed after each write.
+ *
+ * @param filter_ino  If non-zero, only flush pages for this inode.
+ * @param max_pages   Maximum number of pages to flush (0 = all).
+ *
+ * Returns the number of pages flushed.
+ *
+ * Must be called with dirty_lock held.
+ */
+static int page_cache_flush_clustered_locked(uint64_t filter_ino, int max_pages)
+{
+    if (!writeback_fn)
+        return 0;
+
+    int flushed = 0;
+    int i = 0;
+
+    while (i < PAGE_CACHE_MAX_PAGES &&
+           (max_pages <= 0 || flushed < max_pages)) {
+        /* Skip non-dirty or wrong-inode pages */
+        if (!page_cache[i].in_use || !(page_cache[i].flags & PAGE_CACHE_DIRTY) ||
+            (filter_ino != 0 && page_cache[i].ino != filter_ino)) {
+            i++;
+            continue;
+        }
+
+        /* Start of a dirty run — find contiguous pages */
+        uint64_t run_ino  = page_cache[i].ino;
+        uint64_t start_block = page_cache[i].block;
+        int run_len = 0;
+
+        /* Scan forward for contiguous dirty pages of the same inode.
+         * The page cache is not guaranteed to be in block order, so
+         * we only merge truly sequential blocks.  Also check that
+         * the combined sector count fits in uint8_t (max 255 sectors
+         * = 31 pages at 8 sectors/page). */
+        int scan = i;
+        while (scan < PAGE_CACHE_MAX_PAGES && run_len < 31 &&
+               (max_pages <= 0 || flushed + run_len < max_pages)) {
+            if (!page_cache[scan].in_use ||
+                !(page_cache[scan].flags & PAGE_CACHE_DIRTY) ||
+                page_cache[scan].ino != run_ino) {
+                scan++;
+                continue;
+            }
+            /* Check if this page is the next sequential block */
+            if (run_len == 0) {
+                run_len = 1;
+                scan++;
+                continue;
+            }
+            uint64_t expected = start_block + (uint64_t)run_len;
+            if (page_cache[scan].block == expected) {
+                run_len++;
+            }
+            scan++;
+        }
+
+        /* ── Write the entire run as a single clustered I/O ── */
+        uint32_t start_lba  = (uint32_t)(start_block * (PAGE_SIZE / 512));
+        uint8_t  sector_cnt = (uint8_t)((uint32_t)run_len * (PAGE_SIZE / 512));
+
+        /* Allocate a merged buffer for the run */
+        size_t merge_sz = (size_t)run_len * PAGE_SIZE;
+        uint8_t *merged = (uint8_t *)kmalloc(merge_sz);
+        if (!merged) {
+            /* Allocation failure — fall back to writing pages individually */
+            for (int j = 0; j < run_len; j++) {
+                int idx = i + j;
+                if (idx >= PAGE_CACHE_MAX_PAGES) break;
+                if (!page_cache[idx].in_use ||
+                    !(page_cache[idx].flags & PAGE_CACHE_DIRTY) ||
+                    page_cache[idx].ino != run_ino)
+                    continue;
+                uint32_t lba_s = (uint32_t)(page_cache[idx].block * (PAGE_SIZE / 512));
+                if (writeback_fn(lba_s, (uint8_t)(PAGE_SIZE / 512),
+                                 page_cache[idx].data) == 0) {
+                    page_cache[idx].flags &= ~PAGE_CACHE_DIRTY;
+                    flushed++;
+                }
+            }
+            i = scan;
+            continue;
+        }
+
+        /* Copy each page's data into the merged buffer */
+        int written = 0;
+        for (int j = 0; j < run_len; j++) {
+            int idx = i + j;
+            if (idx >= PAGE_CACHE_MAX_PAGES) break;
+            if (!page_cache[idx].in_use ||
+                !(page_cache[idx].flags & PAGE_CACHE_DIRTY) ||
+                page_cache[idx].ino != run_ino ||
+                page_cache[idx].block != start_block + (uint64_t)j)
+                continue;
+            memcpy(merged + (size_t)j * PAGE_SIZE,
+                   page_cache[idx].data, PAGE_SIZE);
+            written++;
+        }
+
+        /* Skip the run if no pages were actually copied (shouldn't happen) */
+        if (written == 0) {
+            kfree(merged);
+            i = scan;
+            continue;
+        }
+
+        /* Issue the merged write */
+        int wb_ok = 0;
+        if (writeback_fn(start_lba, sector_cnt, merged) == 0) {
+            wb_ok = 1;
+        } else {
+            /* Fall back to individual writes if clustered write fails */
+            kprintf("[page_cache] clustered writeback failed for ino=%llu "
+                    "blocks %llu-%llu, falling back to single-page writes\n",
+                    (unsigned long long)run_ino,
+                    (unsigned long long)start_block,
+                    (unsigned long long)(start_block + (uint64_t)run_len - 1));
+            for (int j = 0; j < run_len; j++) {
+                int idx = i + j;
+                if (idx >= PAGE_CACHE_MAX_PAGES) break;
+                if (!page_cache[idx].in_use ||
+                    !(page_cache[idx].flags & PAGE_CACHE_DIRTY) ||
+                    page_cache[idx].ino != run_ino)
+                    continue;
+                uint32_t lba_s = (uint32_t)(page_cache[idx].block * (PAGE_SIZE / 512));
+                if (writeback_fn(lba_s, (uint8_t)(PAGE_SIZE / 512),
+                                 page_cache[idx].data) == 0) {
+                    page_cache[idx].flags &= ~PAGE_CACHE_DIRTY;
+                    flushed++;
+                }
+            }
+        }
+        kfree(merged);
+
+        if (wb_ok) {
+            /* Mark all pages in the run as clean */
+            for (int j = 0; j < run_len; j++) {
+                int idx = i + j;
+                if (idx >= PAGE_CACHE_MAX_PAGES) break;
+                if (page_cache[idx].in_use &&
+                    (page_cache[idx].flags & PAGE_CACHE_DIRTY) &&
+                    page_cache[idx].ino == run_ino) {
+                    page_cache[idx].flags &= ~PAGE_CACHE_DIRTY;
+                    flushed++;
+                }
+            }
+        }
+
+        i = scan;
+    }
+
+    return flushed;
+}
+
+
+/* ── Flush all dirty pages (with clustering) ───────────────────────── */
 void page_cache_flush(void) {
     if (!writeback_fn) return;  /* no writeback registered — can't flush */
 
-    int flushed = 0;
     spinlock_acquire(&dirty_lock);
 
-    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
-        if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
-            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
-            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
-            if (writeback_fn(lba, count, page_cache[i].data) < 0) {
-                kprintf("[page_cache] flush: writeback failed for ino=%llu block=%llu\n",
-                        (unsigned long long)page_cache[i].ino,
-                        (unsigned long long)page_cache[i].block);
-                continue;  /* retry next time */
-            }
-            page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
-            flushed++;
-        }
-    }
+    int flushed = page_cache_flush_clustered_locked(0, 0);
 
     if (flushed > 0) {
         nr_dirty_pages -= flushed;
@@ -258,34 +406,18 @@ void page_cache_flush(void) {
     spinlock_release(&dirty_lock);
 
     if (flushed > 0) {
-        kprintf("[page_cache] flush: %d dirty pages written back\n", flushed);
+        kprintf("[page_cache] flush: %d dirty pages written back (clustered)\n", flushed);
     }
 }
 
 
-/* ── Flush dirty pages for a specific inode ─────────────────────────── */
-
+/* ── Flush dirty pages for a specific inode (with clustering) ──────── */
 void page_cache_flush_inode(uint64_t ino) {
     if (!writeback_fn) return;  /* no writeback registered — can't flush */
 
-    int flushed = 0;
     spinlock_acquire(&dirty_lock);
 
-    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
-        if (page_cache[i].in_use && page_cache[i].ino == ino &&
-            (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
-            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
-            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
-            if (writeback_fn(lba, count, page_cache[i].data) < 0) {
-                kprintf("[page_cache] flush_inode: writeback failed for ino=%llu block=%llu\n",
-                        (unsigned long long)page_cache[i].ino,
-                        (unsigned long long)page_cache[i].block);
-                continue;  /* retry next time */
-            }
-            page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
-            flushed++;
-        }
-    }
+    int flushed = page_cache_flush_clustered_locked(ino, 0);
 
     if (flushed > 0) {
         nr_dirty_pages -= flushed;
@@ -295,8 +427,8 @@ void page_cache_flush_inode(uint64_t ino) {
     spinlock_release(&dirty_lock);
 
     if (flushed > 0) {
-        kprintf("[page_cache] flush_inode: %d dirty pages written back for ino=%llu\n",
-                flushed, (unsigned long long)ino);
+        kprintf("[page_cache] flush_inode: %d dirty pages written back for "
+                "ino=%llu (clustered)\n", flushed, (unsigned long long)ino);
     }
 }
 
@@ -330,20 +462,10 @@ int page_cache_writeback_background(void) {
     /* Flush up to 1/4 of the dirty pages per background scan */
     int batch_size = dirty / 4;
     if (batch_size < 1) batch_size = 1;
-    int flushed = 0;
 
     spinlock_acquire(&dirty_lock);
 
-    for (int i = 0; i < PAGE_CACHE_MAX_PAGES && flushed < batch_size; i++) {
-        if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
-            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
-            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
-            if (writeback_fn(lba, count, page_cache[i].data) == 0) {
-                page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
-                flushed++;
-            }
-        }
-    }
+    int flushed = page_cache_flush_clustered_locked(0, batch_size);
 
     if (flushed > 0) {
         nr_dirty_pages -= flushed;
@@ -382,20 +504,10 @@ int page_cache_writeback_throttle(void) {
      * This may block the caller, providing backpressure. */
     int batch = dirty / 3;
     if (batch < 1) batch = 1;
-    int flushed = 0;
 
     spinlock_acquire(&dirty_lock);
 
-    for (int i = 0; i < PAGE_CACHE_MAX_PAGES && flushed < batch; i++) {
-        if (page_cache[i].in_use && (page_cache[i].flags & PAGE_CACHE_DIRTY)) {
-            uint32_t lba = (uint32_t)(page_cache[i].block * (PAGE_SIZE / 512));
-            uint8_t count = (uint8_t)(PAGE_SIZE / 512);
-            if (writeback_fn(lba, count, page_cache[i].data) == 0) {
-                page_cache[i].flags &= ~PAGE_CACHE_DIRTY;
-                flushed++;
-            }
-        }
-    }
+    int flushed = page_cache_flush_clustered_locked(0, batch);
 
     if (flushed > 0) {
         nr_dirty_pages -= flushed;
