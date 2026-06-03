@@ -13,6 +13,9 @@
  *   Revision 1.0, March 12, 2002.
  */
 #include "usb.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 #include "pci.h"
 #include "pmm.h"
 #include "string.h"
@@ -497,3 +500,71 @@ int usb_init(void) {
     }
     return ehci_count > 0 ? 0 : -1;
 }
+
+/* ── Module support (M59: USB as loadable module) ──────────────── */
+
+#ifdef MODULE
+
+/* Reverse usb_init(): halt controllers, free periodic schedule, reset state */
+void usb_exit(void) {
+    /* Tear down periodic schedule if active */
+    if (g_periodic_on)
+        ehci_teardown_periodic();
+
+    /* Halt each EHCI controller */
+    for (int c = 0; c < ehci_count; c++) {
+        /* Disable interrupts, halt controller */
+        op_write(c, EHCI_USBINTR, 0);
+        uint32_t cmd = op_read(c, EHCI_USBCMD);
+        op_write(c, EHCI_USBCMD, cmd & ~EHCI_CMD_RUN);
+        int timeout = 50000;
+        while (!(op_read(c, EHCI_USBSTS) & EHCI_STS_HALTED) && --timeout)
+            busy_wait_n(10);
+    }
+
+    /* Reset driver state */
+    ehci_count = 0;
+    usb_device_count = 0;
+    memset(ehci_ctrl, 0, sizeof(ehci_ctrl));
+    memset(usb_devices, 0, sizeof(usb_devices));
+
+    kprintf("[USB] EHCI controller(s) shut down\n");
+}
+
+int init_module(void) {
+    int ret = usb_init();
+    if (ret != 0) {
+        kprintf("[USB] init_module: no EHCI controller found\n");
+        return 0; /* non-fatal — module loads but no hardware */
+    }
+
+    /* Initialize mass storage (block device) on the USB device */
+    extern int usb_msc_init(void);
+    int msc_ret = usb_msc_init();
+    if (msc_ret != 0) {
+        kprintf("[USB] init_module: no USB mass storage device\n");
+    }
+
+    return 0;
+}
+
+void cleanup_module(void) {
+    /* Unregister block device */
+    extern void usb_msc_exit(void);
+    usb_msc_exit();
+
+    /* Shut down EHCI controllers */
+    usb_exit();
+
+    kprintf("[USB] Module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("USB EHCI host controller + Mass Storage Class driver");
+MODULE_VERSION("1.0");
+MODULE_ALIAS("pci:v00008086d00001C2Dsv0000*"); /* Intel 7-series EHCI */
+MODULE_ALIAS("pci:v00008086d00001E2Dsv0000*"); /* Intel 8-series EHCI */
+MODULE_ALIAS("pci:v00008086d00009C2Dsv0000*"); /* Intel 9-series EHCI */
+MODULE_ALIAS("pci:v00001022d00007808sv0000*"); /* AMD Hudson EHCI */
+#endif /* MODULE */

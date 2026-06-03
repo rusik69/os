@@ -675,7 +675,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] No Intel GPU found\n");
 
-    /* USB */
+    /* USB (built-in only; module init handles its own init) */
+#ifndef MODULE
     if (usb_init() == 0) {
         kprintf("[OK] USB initialized\n");
         if (usb_msc_init() == 0)
@@ -685,6 +686,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     } else {
         kprintf("[--] No USB controllers\n");
     }
+#endif /* !MODULE */
 
     /* Multiuser */
     users_init();

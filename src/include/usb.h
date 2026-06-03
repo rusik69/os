@@ -24,6 +24,7 @@ struct usb_device {
 #define USB_MAX_DEVICES 16
 
 int  usb_init(void);              /* initialise all USB host controllers */
+void usb_exit(void);              /* shutdown all USB host controllers */
 int  usb_is_present(void);
 int  usb_get_device_count(void);
 struct usb_device *usb_get_device(int idx);

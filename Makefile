@@ -388,6 +388,10 @@ obj-m += drivers/nvme.ko
 # AHCI SATA/NCQ driver with Port Multiplier support (M57)
 obj-m += drivers/ahci.ko
 
+# USB EHCI + Mass Storage Class driver as single module (M59)
+obj-m += drivers/usb.ko
+usb-objs := drivers/usb_ehci drivers/usb_msc
+
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)
 obj-m += fs/tarfs.ko

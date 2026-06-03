@@ -414,7 +414,7 @@ uint32_t usb_msc_get_sectors(void)
     return g_max_lba + 1;
 }
 
-/* ── Public init ─────────────────────────────────────────────────────────── */
+/* ── Public init / exit ─────────────────────────────────────────── */
 
 int usb_msc_init(void)
 {
@@ -483,4 +483,14 @@ int usb_msc_init(void)
                       usb_msc_write_sectors,
                       usb_msc_get_sectors);
     return 0;
+}
+
+/* Reverse usb_msc_init(): unregister block device and clear state */
+void usb_msc_exit(void)
+{
+    blockdev_unregister(BLOCKDEV_USB0);
+    g_op_base = 0;
+    g_dev_addr = 1;
+    g_max_lba = 0;
+    kprintf("[USB] MSC device unregistered\n");
 }

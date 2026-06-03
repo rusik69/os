@@ -13,6 +13,9 @@
 /* Returns 0 on success (device found + registered), negative on error */
 int usb_msc_init(void);
 
+/* Reverse init: unregister block device and clear state */
+void usb_msc_exit(void);
+
 /* Low-level sector I/O (registered with blockdev layer) */
 int      usb_msc_read_sectors (uint32_t lba, uint8_t count, void *buf);
 int      usb_msc_write_sectors(uint32_t lba, uint8_t count, const void *buf);
