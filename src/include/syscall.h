@@ -637,6 +637,7 @@ struct sched_param {
 
 /* struct pollfd for poll() */
 #define POLLIN     0x001
+#define POLLPRI    0x002
 #define POLLOUT    0x004
 #define POLLERR    0x008
 #define POLLHUP    0x010
@@ -720,6 +721,10 @@ struct linux_dirent64 {
 #define SYS_THREAD_CREATE    550  /* thread_create(fn, arg) → thread_id */
 #define SYS_THREAD_JOIN      551  /* thread_join(thread_id, &retval) → 0 or error */
 #define SYS_THREAD_EXIT      552  /* thread_exit(retval) → never returns */
+
+/* pselect6 / ppoll — safer select/poll with atomic signal mask */
+#define SYS_PSELECT6         375  /* pselect6(nfds, rfds, wfds, efds, timeout, &data) */
+#define SYS_PPOLL            376  /* ppoll(fds, nfds, timeout, sigmask) */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the

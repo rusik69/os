@@ -36,6 +36,13 @@ global syscall_user_rflags
 syscall_user_rip: dq 0
 syscall_user_rflags: dq 0
 
+; 6th syscall argument (R9 from user) — saved here before the dispatch call.
+; pselect6() packs sigmask data in arg6; ppoll() doesn't use it.
+; Interrupts are masked (SFMASK) during the syscall handler, so a single
+; global is safe — no nested syscall can clobber it.
+global syscall_arg6
+syscall_arg6: dq 0
+
 ; execve state: when execve_pending is non-zero, the syscall return path
 ; uses these values instead of the saved stack state.
 global execve_pending
@@ -79,6 +86,10 @@ syscall_entry:
     ; Save user RIP and RFLAGS for clone()
     mov     [rel syscall_user_rip], rcx
     mov     [rel syscall_user_rflags], r11
+
+    ; Save user R9 (6th syscall argument) before clobbering it.
+    ; pselect6 packs {sigmask_ptr, sigset_size} in arg6 per Linux ABI.
+    mov     [rel syscall_arg6], r9
 
     ; Arg shuffle: syscall_dispatch(num, a1, a2, a3, a4, a5) — SysV
     ;   target: rdi=num  rsi=a1  rdx=a2  rcx=a3  r8=a4  r9=a5

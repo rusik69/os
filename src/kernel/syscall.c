@@ -60,6 +60,11 @@
 #include "workqueue.h"
 #include "madvise_ext.h"
 
+/* 6th syscall argument — saved by the asm entry before the dispatch call.
+ * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
+ * Interrupts are masked during the syscall handler so a single global is safe. */
+extern uint64_t syscall_arg6;
+
 /* ── Open file descriptor table (for lseek support) ────────────── */
 
 struct syscall_fs_stat_ex {
@@ -3984,6 +3989,323 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
     return (uint64_t)ready;
 }
 
+/* ── pselect6 — safer select with atomic signal mask (Item 251) ────── */
+
+/*
+ * On Linux x86_64, the 6th argument to pselect6 is a packed struct:
+ *   struct { const uint64_t *sigmask; size_t sigset_size; }
+ * It arrives in R9 and is saved in syscall_arg6 by the asm entry.
+ *
+ * The signal mask is stored as a uint64_t bitmask in the kernel
+ * (proc->sig_mask), so we treat sigset_t* as uint64_t* here.
+ */
+#define PSELECT6_SIGMASK_OFFSET 0
+#define PSELECT6_SSIZE_OFFSET   8
+
+static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
+                              uint64_t writefds_addr, uint64_t exceptfds_addr,
+                              uint64_t timeout_addr) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    /* Extract sigmask from the packed 6th argument */
+    const uint64_t *sigmask = NULL;
+    uint64_t packed = syscall_arg6;
+    if (packed) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(packed, sizeof(uint64_t*) + sizeof(size_t)))
+            return (uint64_t)-1;
+        sigmask = *(const uint64_t **)packed;
+    }
+
+    /* Apply the temporary signal mask if provided */
+    uint64_t old_mask = proc->sig_mask;
+    if (sigmask) {
+        if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)sigmask, sizeof(uint64_t)))
+            return (uint64_t)-1;
+        proc->sig_mask = *sigmask;
+    }
+
+    /* Delegate to the existing select implementation.
+     * We reuse the select body by calling it directly — the select
+     * implementation checks FD sets and sleeps.  After it returns,
+     * we restore the original signal mask. */
+
+    /* We can't call sys_select() directly because it returns only
+     * after the timeout.  Instead we inline a simplified select loop
+     * that checks for pending signals as well. */
+
+    if (nfds > FD_SETSIZE) nfds = FD_SETSIZE;
+
+    fd_set readfds, writefds, exceptfds;
+    fd_set orig_readfds, orig_writefds, orig_exceptfds;
+
+    /* Copy in from userspace — skip NULL sets */
+    if (readfds_addr) {
+        memcpy(&orig_readfds, (void*)readfds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_readfds);
+    }
+    if (writefds_addr) {
+        memcpy(&orig_writefds, (void*)writefds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_writefds);
+    }
+    if (exceptfds_addr) {
+        memcpy(&orig_exceptfds, (void*)exceptfds_addr, sizeof(fd_set));
+    } else {
+        FD_ZERO(&orig_exceptfds);
+    }
+
+    /* Parse timeout (timespec-based) */
+    uint64_t timeout_ticks = 0;
+    int has_timeout = 0;
+    if (timeout_addr) {
+        struct timespec ts;
+        if (syscall_is_user_process() && !syscall_user_read_ok(timeout_addr, sizeof(ts)))
+            return (uint64_t)-1;
+        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
+        /* Validate: timespec fields must be non-negative */
+        if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
+            timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
+            has_timeout = 1;
+        }
+    }
+
+    uint64_t start_tick = timer_get_ticks();
+    int loops = 0;
+    int max_loops = has_timeout ? (int)(timeout_ticks / 1 + 1) : 1;
+    if (max_loops < 1) max_loops = 1;
+
+    while (loops < max_loops) {
+        /* Check for pending signals before each iteration */
+        if (proc->pending_signals & ~proc->sig_mask) {
+            /* A signal is pending that is not masked — return ready=0
+             * but with EINTR semantics.  POSIX: pselect6 can return
+             * with errno=EINTR if a signal handler was invoked. */
+            break;
+        }
+
+        if (readfds_addr) {
+            memcpy(&readfds, &orig_readfds, sizeof(fd_set));
+            for (int i = 0; i < (int)nfds; i++) {
+                if (!FD_ISSET(i, &readfds)) continue;
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    int revents = sock_poll(i, POLLIN);
+                    if (!(revents & POLLIN)) FD_CLR(i, &readfds);
+                    continue;
+                }
+                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                    FD_CLR(i, &readfds);
+                    continue;
+                }
+                if (strncmp(proc->fd_table[i].path, "pipe_read_", 10) == 0) {
+                    int pipe_id = (int)proc->fd_table[i].offset;
+                    int revents = pipe_poll(pipe_id, 1);
+                    if (!(revents & POLLIN)) FD_CLR(i, &readfds);
+                    continue;
+                }
+            }
+        }
+        if (writefds_addr) {
+            memcpy(&writefds, &orig_writefds, sizeof(fd_set));
+            for (int i = 0; i < (int)nfds; i++) {
+                if (!FD_ISSET(i, &writefds)) continue;
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    int revents = sock_poll(i, POLLOUT);
+                    if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
+                    continue;
+                }
+                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                    FD_CLR(i, &writefds);
+                    continue;
+                }
+                if (strncmp(proc->fd_table[i].path, "pipe_write_", 11) == 0) {
+                    int pipe_id = (int)proc->fd_table[i].offset;
+                    int revents = pipe_poll(pipe_id, 0);
+                    if (!(revents & POLLOUT)) FD_CLR(i, &writefds);
+                    continue;
+                }
+            }
+        }
+        if (exceptfds_addr) {
+            memcpy(&exceptfds, &orig_exceptfds, sizeof(fd_set));
+            for (int i = 0; i < (int)nfds; i++) {
+                if (!FD_ISSET(i, &exceptfds)) continue;
+                /* For exceptfds, check for out-of-band data on sockets */
+                if (i >= 100 && i < 100 + SOCK_MAX) {
+                    int revents = sock_poll(i, POLLPRI);
+                    if (!(revents & POLLPRI)) FD_CLR(i, &exceptfds);
+                    continue;
+                }
+            }
+        }
+
+        /* Check if any FD is ready */
+        int ready = 0;
+        if (readfds_addr) {
+            for (int i = 0; i < (int)nfds; i++)
+                if (FD_ISSET(i, &readfds)) { ready++; break; }
+        }
+        if (!ready && writefds_addr) {
+            for (int i = 0; i < (int)nfds; i++)
+                if (FD_ISSET(i, &writefds)) { ready++; break; }
+        }
+        if (!ready && exceptfds_addr) {
+            for (int i = 0; i < (int)nfds; i++)
+                if (FD_ISSET(i, &exceptfds)) { ready++; break; }
+        }
+
+        if (ready) {
+            /* Copy results back to userspace */
+            if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
+            if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
+            if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+            /* Restore original signal mask */
+            if (sigmask) proc->sig_mask = old_mask;
+            return (uint64_t)ready;
+        }
+
+        if (!has_timeout) break;  /* non-blocking case */
+
+        uint64_t elapsed = timer_get_ticks() - start_tick;
+        if (elapsed >= timeout_ticks) break;
+
+        /* Yield until next tick */
+        proc->sleep_until = timer_get_ticks() + 1;
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        scheduler_yield();
+        loops++;
+    }
+
+    /* Timeout or no FDs ready */
+    if (readfds_addr) FD_ZERO(&readfds);
+    if (writefds_addr) FD_ZERO(&writefds);
+    if (exceptfds_addr) FD_ZERO(&exceptfds);
+    if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
+    if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
+    if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+
+    /* Restore original signal mask */
+    if (sigmask) proc->sig_mask = old_mask;
+    return 0;
+}
+
+/* ── ppoll — safer poll with atomic signal mask (Item 251) ─────────── */
+
+static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
+                           uint64_t timeout_addr, uint64_t sigmask_addr) {
+    if (syscall_is_user_process()) {
+        if (!syscall_user_read_ok(fds_addr, nfds * sizeof(struct pollfd)))
+            return (uint64_t)-1;
+        if (!syscall_user_write_ok(fds_addr, nfds * sizeof(struct pollfd)))
+            return (uint64_t)-1;
+    }
+
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    /* Apply the temporary signal mask if provided */
+    uint64_t old_mask = proc->sig_mask;
+    if (sigmask_addr) {
+        if (syscall_is_user_process() && !syscall_user_read_ok(sigmask_addr, sizeof(uint64_t)))
+            return (uint64_t)-1;
+        uint64_t new_mask;
+        memcpy(&new_mask, (void*)sigmask_addr, sizeof(new_mask));
+        proc->sig_mask = new_mask;
+    }
+
+    struct pollfd *fds = (struct pollfd *)fds_addr;
+    int n = (int)nfds;
+    uint64_t timeout_ticks = ~0ULL; /* infinite */
+    if (timeout_addr) {
+        struct timespec ts;
+        if (syscall_is_user_process() && !syscall_user_read_ok(timeout_addr, sizeof(ts)))
+            return (uint64_t)-1;
+        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
+        if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
+            timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
+        }
+    }
+
+    uint64_t start_tick = timer_get_ticks();
+
+    for (;;) {
+        /* Check for pending unmasked signals */
+        if (proc->pending_signals & ~proc->sig_mask) {
+            break;
+        }
+
+        int ready = 0;
+        for (int i = 0; i < n; i++) {
+            fds[i].revents = 0;
+            if (fds[i].fd < 0) {
+                fds[i].revents = POLLNVAL;
+                ready++;
+                continue;
+            }
+
+            int fd_idx = fds[i].fd;
+            int revents = 0;
+
+            /* Socket FDs */
+            if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
+                revents = sock_poll(fd_idx, fds[i].events);
+                fds[i].revents = revents;
+                if (revents) ready++;
+                continue;
+            }
+
+            /* Regular process FDs */
+            if (fd_idx >= PROCESS_FD_MAX || !proc->fd_table[fd_idx].used) {
+                fds[i].revents = POLLNVAL;
+                ready++;
+                continue;
+            }
+
+            struct process_fd *pfd = &proc->fd_table[fd_idx];
+
+            if (strncmp(pfd->path, "pipe_read_", 10) == 0) {
+                int pipe_id = (int)pfd->offset;
+                revents = pipe_poll(pipe_id, 1);
+            } else if (strncmp(pfd->path, "pipe_write_", 11) == 0) {
+                int pipe_id = (int)pfd->offset;
+                revents = pipe_poll(pipe_id, 0);
+            } else {
+                if (fds[i].events & POLLIN)  revents |= POLLIN;
+                if (fds[i].events & POLLOUT) revents |= POLLOUT;
+            }
+
+            fds[i].revents = revents & fds[i].events;
+            if (fds[i].revents) ready++;
+        }
+
+        if (ready > 0) {
+            if (sigmask_addr) proc->sig_mask = old_mask;
+            return (uint64_t)ready;
+        }
+
+        if (timeout_ticks == 0) break; /* non-blocking */
+
+        uint64_t elapsed = timer_get_ticks() - start_tick;
+        if (elapsed >= timeout_ticks) break;
+
+        /* Yield until next tick */
+        proc->sleep_until = timer_get_ticks() + 1;
+        proc->state = PROCESS_BLOCKED;
+        scheduler_remove(proc);
+        scheduler_yield();
+    }
+
+    /* Timeout — zero out all revents */
+    for (int i = 0; i < n; i++) {
+        fds[i].revents = 0;
+    }
+
+    if (sigmask_addr) proc->sig_mask = old_mask;
+    return 0;
+}
+
 /* ── eventfd ──────────────────────────────────────────────────────────── */
 
 static uint64_t sys_eventfd(uint64_t initval, uint64_t flags) {
@@ -7002,6 +7324,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FUTEX:       return sys_futex(a1, a2, a3, a4, a5, 0);
         case SYS_ARCH_PRCTL:  return sys_arch_prctl(a1, a2);
         case SYS_POLL:        return sys_poll(a1, a2, a3);
+        case SYS_PSELECT6:    return sys_pselect6(a1, a2, a3, a4, a5);
+        case SYS_PPOLL:       return sys_ppoll(a1, a2, a3, a4);
         case SYS_EVENTFD:     return sys_eventfd(a1, a2);
         case SYS_SENDFILE:    return sys_sendfile(a1, a2, a3, a4);
         case SYS_IOCTL:       return sys_ioctl(a1, a2, a3);
