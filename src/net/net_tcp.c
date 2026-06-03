@@ -585,6 +585,23 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     }
                 }
                 sc->sack_pending = 1;
+                /* ── RACK: update fwd_mark from highest SACK right edge ──
+                 * SACK informs us that the receiver has data beyond the
+                 * cumulative ACK.  Track the highest SACK-reported delivery
+                 * to improve loss detection accuracy. */
+                uint32_t max_sack = 0;
+                for (int sb = 0; sb < num_blocks; sb++) {
+                    int off = opt_offset + 2 + sb * 8;
+                    if (off + 8 <= (int)hdr_len) {
+                        uint32_t right = ntohl(*(uint32_t*)(payload + off + 4));
+                        if ((int32_t)(right - max_sack) > 0)
+                            max_sack = right;
+                    }
+                }
+                if (max_sack > 0 && (int32_t)(max_sack - sc->rack_fwd_mark) > 0) {
+                    sc->rack_fwd_mark = max_sack;
+                    sc->rack_fwd_tick = timer_get_ticks();
+                }
             } else if (kind == 19) { /* TCP MD5 Signature option */
                 struct tcp_conn *sc = &tcp_conns[conn_id];
                 sc->md5_enabled = 1;
@@ -713,6 +730,11 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->cubic_epoch_start = 0;
         c->cubic_origin_point = 0;
         c->cubic_use_cubic = 0;
+        /* RACK (Recent ACKnowledgment) loss detection initialization */
+        c->rack_fwd_mark    = 0;
+        c->rack_fwd_tick    = 0;
+        c->rack_reo_wnd     = 1;   /* default: 1 tick reordering window */
+        c->rack_min_rtt     = 0;
         /* Nagle / Delayed ACK initialization */
         c->delayed_ack_pending = 0;
         c->nagle_buf_len = 0;
@@ -785,6 +807,13 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     c->cwnd = 1;
                     c->ssthresh = 65535;
                     c->rto = 30;
+                    /* RACK (Recent ACKnowledgment) loss detection init */
+                    c->rack_fwd_mark    = 0;
+                    c->rack_fwd_tick    = 0;
+                    c->rack_reo_wnd     = 1;
+                    c->rack_min_rtt     = 0;
+                    memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
+                    c->sack_pending = 0;
 
                     struct tcp_listener *l = find_listener(dst_port);
                     if (l) {
@@ -853,12 +882,20 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             return;
         }
 
-        /* ACK processing — congestion control, RTO, SACK */
-        if ((flags & TCP_ACK)) {
+        /* ACK processing — congestion control, RTT, SACK, RACK */
+        if (flags & TCP_ACK) {
             if (c->tx_unacked_len > 0) {
                 /*** NEW ACK ***/
                 if ((int32_t)(ack - c->last_ack) > 0) {
                     int acked_some = 0;
+                    /* ── RACK: update forward-most delivered marker ──── */
+                    /* The ACK covers up to `ack`, so any data below this
+                     * is delivered.  rack_fwd_mark tracks the highest
+                     * sequence number delivered to the peer. */
+                    if ((int32_t)(ack - c->rack_fwd_mark) > 0) {
+                        c->rack_fwd_mark  = ack;
+                        c->rack_fwd_tick  = timer_get_ticks();
+                    }
                     if ((int32_t)(ack - (c->tx_unacked_seq + c->tx_unacked_len)) >= 0) {
                         /* Fully ACKed — clear unacked buffer */
                         acked_some = 1;
@@ -926,6 +963,15 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                             if (rto_ms < 100) rto_ms = 100;
                             if (rto_ms > 12000) rto_ms = 12000;
                             c->rto = (uint16_t)(rto_ms / 10 + 1);
+                            /* ── RACK: track minimum RTT and reordering window ──
+                             * rack_min_rtt is the minimum observed RTT in ticks.
+                             * rack_reo_wnd = max(min_rtt/4, 1 tick) gives the
+                             * reordering margin before declaring loss. */
+                            uint32_t rtt_ticks = (uint32_t)m / 8;
+                            if (c->rack_min_rtt == 0 || rtt_ticks < c->rack_min_rtt)
+                                c->rack_min_rtt = rtt_ticks;
+                            uint32_t reo = c->rack_min_rtt / 4;
+                            c->rack_reo_wnd = (reo < 1) ? 1 : reo;
                         }
                     }
                 }
@@ -1165,6 +1211,11 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->cubic_epoch_start = 0;
     c->cubic_origin_point = 0;
     c->cubic_use_cubic = 0;
+    /* RACK (Recent ACKnowledgment) loss detection initialization */
+    c->rack_fwd_mark    = 0;
+    c->rack_fwd_tick    = 0;
+    c->rack_reo_wnd     = 1;
+    c->rack_min_rtt     = 0;
     /* Nagle / Delayed ACK initialization */
     c->delayed_ack_pending = 0;
     c->nagle_buf_len = 0;
@@ -1521,7 +1572,78 @@ void net_tcp_check_retransmit(void) {
             c->our_seq = saved_seq + merge; /* advance past what we just sent */
         }
 
-        /* ── Retransmission ───────────────────────────────── */
+        /* ── RACK loss detection ────────────────────────────────
+         * RACK (Recent ACKnowledgment) uses time-based detection:
+         * if the forward-most delivered sequence number has advanced
+         * past our unacked data AND enough time (reo_wnd + min_rtt)
+         * has elapsed since we sent it, we declare it lost — even
+         * before the 3-duplicate-ACK or RTO threshold.
+         *
+         * This catches single-packet losses much faster than the
+         * classic dupack-count approach. */
+        if (c->tx_unacked_len > 0 && c->rack_fwd_mark > 0 &&
+            c->sack_pending &&
+            (int32_t)(c->rack_fwd_mark - (c->tx_unacked_seq + c->tx_unacked_len)) > 0)
+        {
+            uint64_t elapsed = now - c->last_send_tick;
+            uint32_t rack_thresh = c->rack_reo_wnd + c->rack_min_rtt;
+            if (rack_thresh > 0 && elapsed >= rack_thresh &&
+                elapsed < (uint64_t)c->rto) /* don't dupe RTO retransmit */
+            {
+                /* ── RACK-triggered fast retransmit ── */
+                uint32_t saved_seq = c->our_seq;
+                c->our_seq = c->tx_unacked_seq;
+                uint16_t remain = c->tx_unacked_len;
+                const uint8_t *rp = c->tx_unacked_buf;
+                while (remain > 0) {
+                    uint16_t skip = 0;
+                    for (int sb = 0; sb < TCP_MAX_SACK_BLOCKS; sb++) {
+                        if (c->sack_blocks[sb].left == 0 && c->sack_blocks[sb].right == 0)
+                            continue;
+                        uint32_t base = c->tx_unacked_seq;
+                        if ((int32_t)(base + remain - c->sack_blocks[sb].left) > 0 &&
+                            (int32_t)(base - c->sack_blocks[sb].right) < 0) {
+                            if (c->sack_blocks[sb].left > base &&
+                                c->sack_blocks[sb].left < base + remain) {
+                                uint16_t s = (uint16_t)(c->sack_blocks[sb].left - base);
+                                if (s > skip) skip = s;
+                            }
+                        }
+                    }
+                    if (skip > 0) {
+                        c->our_seq += skip;
+                        rp += skip;
+                        remain -= skip;
+                    } else {
+                        uint16_t chunk = remain > 1400 ? 1400 : remain;
+                        send_tcp(c, TCP_PSH | TCP_ACK, rp, chunk);
+                        c->our_seq += chunk;
+                        rp += chunk;
+                        remain -= chunk;
+                    }
+                }
+                c->our_seq = saved_seq;
+                /* CUBIC congestion event: record W_max and reduce cwnd */
+                c->cubic_wmax = c->cwnd;
+                if (c->cwnd > 2)
+                    c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
+                else
+                    c->ssthresh = 2;
+                c->cwnd = c->ssthresh + 3;
+                c->cubic_epoch_start = timer_get_ticks();
+                c->cubic_use_cubic = 1;
+                c->dupack_count = 0;
+                c->last_send_tick = timer_get_ticks();
+                /* Advance RACK state — we retransmitted the earliest data,
+                 * so shift fwd_mark forward by the retransmitted amount.
+                 * Prevent immediate re-triggering. */
+                c->rack_fwd_mark = c->tx_unacked_seq + c->tx_unacked_len;
+                c->rack_fwd_tick = timer_get_ticks();
+                continue;
+            }
+        }
+
+        /* ── RTO-based retransmission ────────────────────────── */
         if (c->tx_unacked_len == 0) continue;
         if (now - c->last_send_tick < c->rto) continue;
 

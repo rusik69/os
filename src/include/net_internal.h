@@ -149,6 +149,11 @@ struct tcp_conn {
     uint64_t cubic_epoch_start;     /* tick when the current epoch started */
     uint32_t cubic_origin_point;    /* origin point for cubic growth */
     int      cubic_use_cubic;       /* 1 = using CUBIC algorithm */
+    /* RACK (Recent ACKnowledgment) loss detection — Item 156 */
+    uint32_t rack_fwd_mark;         /* highest seq delivered (ACKed or SACKed) */
+    uint64_t rack_fwd_tick;         /* tick when fwd_mark was last updated */
+    uint32_t rack_reo_wnd;          /* reordering window in ticks (min RTT/4) */
+    uint32_t rack_min_rtt;          /* minimum observed RTT in ticks */
     /* Nagle / Delayed ACK */
     uint8_t  delayed_ack_pending;   /* 1 if we have a pending delayed ACK */
     uint64_t delayed_ack_tick;      /* tick when delayed ACK timer was started */
