@@ -106,6 +106,11 @@ struct module_elf_context {
     /* Dependency string from .modinfo "depends=..." (M25) */
     char depends[128];
 
+    /* Alias strings from .modinfo "alias=..." (M38).
+     * Multiple aliases are stored comma-separated.  Parsed during
+     * .modinfo processing and registered after module load succeeds. */
+    char aliases[512];
+
     /* Error message from last failed operation */
     char error_msg[256];
 };

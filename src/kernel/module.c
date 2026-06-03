@@ -108,6 +108,9 @@ void module_init(void) {
     kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX)\n",
             MODULE_MAX, (unsigned long long)MODULES_VADDR);
 
+    /* Initialise the module alias matching engine (M38) */
+    module_alias_init();
+
     /* Log the kernel's vermagic string so boot logs can be cross-checked */
     kprintf("[OK] Kernel vermagic: %s\n", module_vermagic);
 
@@ -448,6 +451,9 @@ int module_unload(int module_id) {
         mod->exit_fn();
         spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
     }
+
+    /* Unregister any aliases owned by this module (M38) */
+    module_alias_unregister(mod->name);
 
     /* Free module memory region */
     if (mod->base_addr != 0 && mod->size > 0) {

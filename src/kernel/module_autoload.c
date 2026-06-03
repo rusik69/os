@@ -41,27 +41,15 @@
 #define MODULE_PATH_MAX     128
 
 /*
- * __request_module — load a kernel module by name.
+ * __request_module_internal — load a kernel module by name (no alias fallback).
  *
- * @name:   Module name (e.g. "ext2", "e1000", "ipv6").
- *          Used to construct the path /modules/<name>.ko.
- * @param:  Optional parameter string (can be NULL).
- *          Same format as insmod params: "key=val,key2=val2".
- * @flags:  Loading flags (reserved, must be 0 for now).
+ * This is the core loader — try loading a module by its exact name.
+ * Used directly for filesystem/protocol modules (ext2, ipv6, etc.)
+ * and as the second step when alias resolution finds a match.
  *
- * Returns the module ID (> 0) on success, or a negative errno:
- *   -ENOENT    — module file not found
- *   -EEXIST    — module already loaded
- *   -ENOMEM    — out of memory
- *   -EINVAL    — invalid ELF or module
- *   -EIO       — I/O error reading module file
- *   -EPERM     — module loading disabled (e.g. module_sig_enforce)
- *
- * This function may sleep (it allocates memory and performs file I/O).
- * It must NOT be called from interrupt context or while holding a
- * spinlock (use a workqueue if you need asynchronous autoloading).
+ * See __request_module() for parameter/return documentation.
  */
-int __request_module(const char *name, const char *params, int flags)
+static int __request_module_internal(const char *name, const char *params, int flags)
 {
     (void)flags;  /* reserved for future use (e.g. synchronous vs async) */
 
@@ -163,6 +151,72 @@ int __request_module(const char *name, const char *params, int flags)
         struct kernel_module *mod = module_get_by_id(result);
         if (mod)
             module_sysfs_add_params(mod);
+    }
+
+    return result;
+}
+
+/*
+ * __request_module — load a kernel module by name or alias.
+ *
+ * First tries to load the module by @name directly (as a module name).
+ * If that fails with -ENOENT (file not found), it treats @name as a
+ * device modalias string and searches the alias table for a match.
+ *
+ * This secondary step is what makes PCI/USB/etc. autoloading work:
+ * the PCI subsystem discovers a device and calls
+ *   request_module("pci:v8086d100F...")
+ * which fails as a module name but succeeds when the alias matcher
+ * resolves "pci:v8086d100F*" → "e1000" and loads e1000.ko.
+ *
+ * See __request_module_internal() for parameter/return documentation.
+ */
+int __request_module(const char *name, const char *params, int flags)
+{
+    if (!name || !name[0])
+        return -EINVAL;
+
+    /* ── Attempt 1: Load by direct module name ───────────────────── */
+    int result = __request_module_internal(name, params, flags);
+
+    if (result >= 0 || result != -ENOENT) {
+        /* Either loaded successfully, or failed for a reason other
+         * than "file not found" — no alias fallback needed. */
+        return result;
+    }
+
+    /* ── Attempt 2: Try alias-based resolution (M38) ────────────────
+     *
+     * The module file wasn't found by name.  Treat @name as a device
+     * modalias string (e.g. "pci:v8086d100Fsv...bc...") and search
+     * the alias table for a matching module.
+     *
+     * The PCI subsystem generates these modalias strings from device
+     * config space; USB, ACPI, and other buses do similarly.  Driver
+     * modules declare alias patterns via MODULE_ALIAS() in their source.
+     */
+    const char *mod_name = module_alias_find(name);
+    if (!mod_name) {
+        kprintf("[MOD] request_module(%s): no alias match found\n", name);
+        return -ENOENT;
+    }
+
+    kprintf("[MOD] request_module(%s): alias resolved → %s\n",
+            name, mod_name);
+
+    /* Check if resolved module is already loaded */
+    if (module_find(mod_name) != NULL) {
+        kprintf("[MOD] request_module(%s): alias target %s already loaded\n",
+                name, mod_name);
+        return -EEXIST;
+    }
+
+    /* Load the resolved module by its real name */
+    result = __request_module_internal(mod_name, params, flags);
+
+    if (result < 0) {
+        kprintf("[MOD] request_module(%s): alias target %s failed to load (%d)\n",
+                name, mod_name, result);
     }
 
     return result;

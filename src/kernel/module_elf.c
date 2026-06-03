@@ -437,6 +437,23 @@ int module_elf_parse(struct module_elf_context *ctx)
                         memcpy(ctx->depends, d, (size_t)dlen);
                         ctx->depends[dlen] = '\0';
                     }
+                } else if (strncmp(modinfo_data + pos, "alias=", 6) == 0) {
+                    /* Extract module alias pattern for M38 matching */
+                    const char *a = modinfo_data + pos + 6;
+                    int alen = 0;
+                    while (pos + 6 + alen < modinfo_size &&
+                           modinfo_data[pos + 6 + alen] != '\0')
+                        alen++;
+                    if (alen > 0) {
+                        int cur_len = (int)strlen(ctx->aliases);
+                        int needed = cur_len + alen + 2; /* comma + null */
+                        if (needed <= (int)sizeof(ctx->aliases)) {
+                            if (cur_len > 0)
+                                ctx->aliases[cur_len++] = ',';
+                            memcpy(ctx->aliases + cur_len, a, (size_t)alen);
+                            ctx->aliases[cur_len + alen] = '\0';
+                        }
+                    }
                 }
                 /* Skip to next null terminator */
                 while (pos < modinfo_size && modinfo_data[pos] != '\0')
@@ -1131,6 +1148,29 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
                  "module_elf: init function for '%s' returned %d",
                  mod_name, init_ret);
         return -1;
+    }
+
+    /* Step 8: Register module aliases for autoloading (M38)
+     * Parse the comma-separated alias list and register each pattern.
+     * This is done after init succeeds so the module is fully live
+     * before it becomes discoverable via alias matching. */
+    if (ctx->aliases[0]) {
+        const char *p = ctx->aliases;
+        while (p && *p) {
+            /* Find the next comma or end of string */
+            const char *comma = strchr(p, ',');
+            int alen = comma ? (int)(comma - p) : (int)strlen(p);
+            if (alen > 0 && alen < MODULE_ALIAS_MAX_LEN) {
+                char alias_buf[MODULE_ALIAS_MAX_LEN];
+                memcpy(alias_buf, p, (size_t)alen);
+                alias_buf[alen] = '\0';
+                module_alias_register(alias_buf, mod_name);
+            }
+            if (comma)
+                p = comma + 1;
+            else
+                break;
+        }
     }
 
     kprintf("[MOD] Loaded: %s (id=%d, base=0x%llx, size=%llu)\n",

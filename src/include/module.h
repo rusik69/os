@@ -287,6 +287,26 @@ int module_deps_resolved(struct kernel_module *mod);
         (void)__module_param_cb_##name; \
     }
 
+/* MODULE_ALIAS — declare a device alias for module autoloading (M38).
+ *
+ * Usage in a kernel module source file:
+ *   MODULE_ALIAS("pci:v00008086d0000100F*");
+ *   MODULE_ALIAS("usb:v1234p5678*");
+ *
+ * This embeds "alias=<pattern>" in the .modinfo section.  When a device
+ * is discovered (e.g. PCI enumeration), the autoloader generates a
+ * modalias string and searches for a matching module by comparing it
+ * (glob-style) against all registered alias patterns.
+ *
+ * Multiple aliases can be declared per module.  The pattern supports
+ * glob-style wildcards:
+ *   *  — matches any sequence of characters
+ *   ?  — matches any single character
+ */
+#define MODULE_ALIAS(alias) \
+    static const char __mod_alias_##__LINE__[] \
+    __attribute__((section(".modinfo"), used)) = "alias=" alias
+
 /* MODULE_* macros for metadata (used in .modinfo section) */
 #define MODULE_LICENSE(license)    static const char __mod_license[] \
     __attribute__((section(".modinfo"), used)) = "license=" license
@@ -337,6 +357,32 @@ int request_module(const char *fmt, ...);
 /* request_module with explicit parameter string.
  * Like request_module(), but passes @params to the module's init. */
 int request_module_params(const char *name, const char *params);
+
+/* ── Module alias matching (M38) ──────────────────────────────────── */
+
+/* Maximum number of module aliases the system can track */
+#define MODULE_ALIAS_MAX 64
+
+/* Maximum length of an alias pattern string */
+#define MODULE_ALIAS_MAX_LEN 128
+
+/* Initialise the module alias table.  Called from module_init(). */
+void module_alias_init(void);
+
+/* Register a module alias, mapping @pattern to @module_name.
+ * Called during module loading for each alias parsed from .modinfo.
+ * Returns 0 on success, -1 if the alias table is full. */
+int module_alias_register(const char *pattern, const char *module_name);
+
+/* Unregister all aliases owned by a module (by module name).
+ * Called during module unloading. */
+void module_alias_unregister(const char *module_name);
+
+/* Find a module name that matches @modalias (device identifier string).
+ * Performs glob-style pattern matching (*, ?) against all registered
+ * alias patterns.  Returns the module name, or NULL if no match.
+ * The returned pointer is valid until the next alias operation. */
+const char *module_alias_find(const char *modalias);
 
 /* ── Module sysfs interface (M30) ──────────────────────────────── */
 
