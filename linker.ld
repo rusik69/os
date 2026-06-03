@@ -82,6 +82,23 @@ SECTIONS
         __ksymtab_end = .;
     }
 
+    /* ── Module metadata (.modinfo) section (M41) ──────────────────
+     * Collects all MODULE_LICENSE, MODULE_AUTHOR, MODULE_DESCRIPTION,
+     * MODULE_VERSION, MODULE_ALIAS, and MODULE_DEPENDS entries from
+     * both built-in code and loadable modules.  The module loader
+     * parses these key=value strings at load time for dependency
+     * resolution, alias matching, and vermagic verification.
+     *
+     * For built-in (non-modular) code with MODULE_* annotations,
+     * the data still lives here but is accessible at link time.
+     * The __modinfo_start / __modinfo_end symbols allow the kernel
+     * to enumerate all built-in modinfo entries at boot. */
+    .modinfo ALIGN(8) : AT(ADDR(.modinfo) - KERNEL_VMA_OFFSET) {
+        __modinfo_start = .;
+        KEEP(*(.modinfo))
+        __modinfo_end = .;
+    }
+
     _kernel_end = .;
 
     /DISCARD/ : {
