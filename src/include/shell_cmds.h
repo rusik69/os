@@ -365,4 +365,8 @@ void cmd_mount(const char *args);
 
 /* Device node manager (U11) */
 void cmd_mdev(const char *args);
+
+/* Nano text editor (U48) */
+void cmd_nano(const char *args);
+
 #endif

@@ -293,6 +293,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("inetd",       "Internet super-server daemon (inetd [stop|status|reload])", cmd_inetd)
     /* Filesystem table (U25) */
     CMD("mount",       "Mount filesystems (mount [-a] [-t fstype] [-o opts] [dev] [mp])", cmd_mount)
+    /* Nano text editor (U48) */
+    CMD("nano",        "Simple text editor (nano [file])", cmd_nano)
     { 0, 0, 0 }
 };
 
