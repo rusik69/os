@@ -421,20 +421,20 @@ static void ssh_pack_u32(uint8_t *buf, uint32_t v) {
 }
 
 /* Unpack uint32 */
-static uint32_t ssh_unpack_u32(const uint8_t *buf) {
+static __attribute__((unused)) uint32_t ssh_unpack_u32(const uint8_t *buf) {
     return ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
            ((uint32_t)buf[2] << 8) | buf[3];
 }
 
 /* Pack a string (uint32 length + data) into buf, returns bytes written */
-static int ssh_pack_string(uint8_t *buf, const uint8_t *data, int len) {
+static __attribute__((unused)) int ssh_pack_string(uint8_t *buf, const uint8_t *data, int len) {
     ssh_pack_u32(buf, len);
     if (len > 0) memcpy(buf + 4, data, len);
     return 4 + len;
 }
 
 /* Pack an mpint from bignum into buf, returns bytes written */
-static int ssh_pack_mpint(uint8_t *buf, const bignum *bn) {
+static __attribute__((unused)) int ssh_pack_mpint(uint8_t *buf, const bignum *bn) {
     uint8_t tmp[BN_MAX_BYTES + 1];
     int len = bn_to_bytes(bn, tmp + 1, 0);
     /* Remove leading zeros */
@@ -464,23 +464,23 @@ struct ssh_cipher {
     uint8_t dec_iv[16];
 };
 
-static void ssh_cipher_init(struct ssh_cipher *c, const uint8_t *key, const uint8_t *iv) {
+static __attribute__((unused)) void ssh_cipher_init(struct ssh_cipher *c, const uint8_t *key, const uint8_t *iv) {
     aes_init(&c->enc_ctx, key, 16);
     aes_init(&c->dec_ctx, key, 16);
     memcpy(c->enc_iv, iv, 16);
     memcpy(c->dec_iv, iv, 16);
 }
 
-static void ssh_cipher_encrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
+static __attribute__((unused)) void ssh_cipher_encrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
     aes_cbc_encrypt(&c->enc_ctx, c->enc_iv, buf, buf, len);
 }
 
-static void ssh_cipher_decrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
+static __attribute__((unused)) void ssh_cipher_decrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
     aes_cbc_decrypt(&c->dec_ctx, c->dec_iv, buf, buf, len);
 }
 
 /* ── HMAC-SHA256 for SSH ────────────────────────────────────── */
-static void ssh_mac_compute(const uint8_t *key, int key_len,
+static __attribute__((unused)) void ssh_mac_compute(const uint8_t *key, int key_len,
                             uint32_t seq_nr, const uint8_t *packet, int packet_len,
                             uint8_t mac[32]) {
     uint8_t seq_buf[4];
