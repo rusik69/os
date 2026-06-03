@@ -187,6 +187,14 @@ int64_t memfd_write(struct memfd *mfd, const void *buf, uint64_t count, uint64_t
     uint64_t needed = offset + count;
 
     if (needed > mfd->size) {
+        /* MEMFD_SEAL_FUTURE_WRITE: prevents writes that would require
+         * extending the backing store (i.e., allocate new pages).
+         * Unlike F_SEAL_GROW, ftruncate expansion can still succeed. */
+        if (mfd->seals & MEMFD_SEAL_FUTURE_WRITE) {
+            spinlock_release(&mfd->lock);
+            return -EPERM;
+        }
+
         /* MEMFD_SEAL_GROW prevents expanding the size */
         if (mfd->seals & MEMFD_SEAL_GROW) {
             spinlock_release(&mfd->lock);

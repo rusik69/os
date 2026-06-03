@@ -13,10 +13,12 @@
 #define MFD_HUGETLB       (1 << 2)
 
 /* Seal flags (Linux-compatible) */
-#define MEMFD_SEAL_SHRINK 1
-#define MEMFD_SEAL_GROW   2
-#define MEMFD_SEAL_WRITE  4
-#define MEMFD_SEAL_SEAL   8
+#define MEMFD_SEAL_SHRINK       1
+#define MEMFD_SEAL_GROW         2
+#define MEMFD_SEAL_WRITE        4
+#define MEMFD_SEAL_SEAL         8
+#define MEMFD_SEAL_FUTURE_WRITE 16 /* future writes via mmap page faults are blocked;
+                                      write() to already-committed pages still allowed */
 
 /* fcntl commands for memfd seal operations */
 #define F_ADD_SEALS  1033  /* Add seal bitmask to memfd */
