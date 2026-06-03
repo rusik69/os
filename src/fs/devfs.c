@@ -1,9 +1,13 @@
 /*
- * devfs.c — /dev virtual filesystem
+ * devfs.c — /dev virtual filesystem with dynamic device registration
  *
  * Character device nodes: /dev/null, /dev/zero, /dev/random, /dev/kmsg
- * Read-only directory listing; writes to /dev/null are silently discarded.
- * /dev/kmsg supports structured kernel log access (Linux-compatible).
+ * are built-in.  Drivers can dynamically register additional device nodes
+ * via devfs_register_device() / devfs_unregister_device().
+ *
+ * The dynamic device table supports up to DEVFS_MAX_DEVICES entries.
+ * Each device has a name, optional private data, and optional
+ * read/write callbacks that override the built-in fallback.
  */
 
 #include "vfs.h"
@@ -11,11 +15,115 @@
 #include "printf.h"
 #include "types.h"
 
+/* ── Dynamic device table ────────────────────────────────────────── */
+
+#define DEVFS_MAX_DEVICES 32
+
+/** Device entry in the dynamic device table */
+struct devfs_device {
+    char  name[48];           /* device node name (e.g. "ttyS0") */
+    void *priv;               /* private data for driver callbacks */
+    int (*read_fn)(void *priv, void *buf, uint32_t max_size, uint32_t *out_size);
+    int (*write_fn)(void *priv, const void *data, uint32_t size);
+    int   in_use;             /* 1 = slot occupied */
+};
+
+static struct devfs_device devfs_devices[DEVFS_MAX_DEVICES];
+
 /* Simple pseudo-random LCG for /dev/random */
 static uint32_t rand_state = 0xDEADBEEF;
 static uint8_t dev_rand_byte(void) {
     rand_state = rand_state * 1664525u + 1013904223u;
     return (uint8_t)(rand_state >> 16);
+}
+
+/* ── Public API for drivers ──────────────────────────────────────── */
+
+/**
+ * devfs_register_device - Register a dynamic device node in /dev/
+ * @name:      Device node name (e.g. "ttyS0" creates "/dev/ttyS0")
+ * @priv:      Private data pointer passed to callbacks
+ * @read_fn:   Optional read callback (NULL = read returns 0 bytes)
+ * @write_fn:  Optional write callback (NULL = write returns success)
+ *
+ * Returns: 0 on success, -1 on failure (table full or duplicate name)
+ *
+ * Drivers call this during their init to make a device node appear
+ * under /dev/.  The device persists until devfs_unregister_device()
+ * is called or the system reboots.
+ */
+int devfs_register_device(const char *name, void *priv,
+                          int (*read_fn)(void *priv, void *buf,
+                                         uint32_t max_size, uint32_t *out_size),
+                          int (*write_fn)(void *priv, const void *data,
+                                          uint32_t size)) {
+    if (!name || !name[0]) return -1;
+
+    /* Reject names with '/' or length > 47 */
+    size_t nlen = strlen(name);
+    if (nlen == 0 || nlen > 47) return -1;
+    for (size_t i = 0; i < nlen; i++) {
+        if (name[i] == '/') return -1;
+    }
+
+    /* Check for duplicate and find free slot */
+    int free_slot = -1;
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (devfs_devices[i].in_use) {
+            if (strcmp(devfs_devices[i].name, name) == 0)
+                return -1; /* duplicate */
+        } else if (free_slot < 0) {
+            free_slot = i;
+        }
+    }
+    if (free_slot < 0) return -1; /* table full */
+
+    struct devfs_device *d = &devfs_devices[free_slot];
+    memcpy(d->name, name, nlen + 1);
+    d->priv     = priv;
+    d->read_fn  = read_fn;
+    d->write_fn = write_fn;
+    d->in_use   = 1;
+    return 0;
+}
+
+/**
+ * devfs_unregister_device - Remove a dynamic device node from /dev/
+ * @name:  Device node name to remove
+ *
+ * Returns: 0 on success, -1 if not found.
+ * After this call, the device node disappears from the /dev/ listing
+ * and all operations on it will return -1.
+ */
+int devfs_unregister_device(const char *name) {
+    if (!name || !name[0]) return -1;
+
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (devfs_devices[i].in_use && strcmp(devfs_devices[i].name, name) == 0) {
+            devfs_devices[i].in_use = 0;
+            memset(devfs_devices[i].name, 0, sizeof(devfs_devices[i].name));
+            devfs_devices[i].priv     = NULL;
+            devfs_devices[i].read_fn  = NULL;
+            devfs_devices[i].write_fn = NULL;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/**
+ * devfs_find_device - Look up a dynamic device by name
+ * @name:  Device node name
+ *
+ * Returns: pointer to devfs_device entry, or NULL if not found.
+ * Internal helper used by the VFS operations below.
+ */
+static struct devfs_device *devfs_find_device(const char *name) {
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (devfs_devices[i].in_use && strcmp(devfs_devices[i].name, name) == 0)
+            return &devfs_devices[i];
+    }
+    return NULL;
 }
 
 /* ── /dev/kmsg helpers ──────────────────────────────────────────── */
@@ -63,8 +171,8 @@ static int devfs_read(void *priv, const char *path, void *buf_v,
     (void)priv;
     uint8_t *buf = (uint8_t *)buf_v;
 
+    /* Built-in devices */
     if (strcmp(path, "/dev/null") == 0) {
-        /* reads return 0 bytes (EOF) */
         if (out_size) *out_size = 0;
         return 0;
     }
@@ -80,20 +188,33 @@ static int devfs_read(void *priv, const char *path, void *buf_v,
         return 0;
     }
     if (strcmp(path, "/dev/kmsg") == 0) {
-        /* Return current dmesg buffer content */
         int n = kprintf_dmesg((char *)buf, (int)max_size);
         if (out_size) *out_size = (uint32_t)(n > 0 ? n : 0);
         return 0;
     }
+
+    /* Dynamic devices — strip "/dev/" prefix and look up */
+    if (strncmp(path, "/dev/", 5) == 0) {
+        const char *devname = path + 5;
+        struct devfs_device *d = devfs_find_device(devname);
+        if (d) {
+            if (d->read_fn)
+                return d->read_fn(d->priv, buf, max_size, out_size);
+            if (out_size) *out_size = 0;
+            return 0;
+        }
+    }
+
     return -1;
 }
 
 static int devfs_write(void *priv, const char *path, const void *data, uint32_t size) {
     (void)priv;
+
     /* /dev/null silently accepts all writes */
     if (strcmp(path, "/dev/null") == 0) return 0;
+
     if (strcmp(path, "/dev/kmsg") == 0) {
-        /* Parse Linux /dev/kmsg write format: "<N>message" */
         const char *msg = (const char *)data;
         int remaining = (int)size;
         int sev = kmsg_parse_priority(&msg, &remaining);
@@ -105,7 +226,6 @@ static int devfs_write(void *priv, const char *path, const void *data, uint32_t 
             remaining--;
 
         if (remaining > 0) {
-            /* Log with the parsed severity level */
             char stack_buf[256];
             int copy_len = remaining < 255 ? remaining : 255;
             memcpy(stack_buf, msg, (size_t)copy_len);
@@ -114,6 +234,18 @@ static int devfs_write(void *priv, const char *path, const void *data, uint32_t 
         }
         return (int)size;
     }
+
+    /* Dynamic devices */
+    if (strncmp(path, "/dev/", 5) == 0) {
+        const char *devname = path + 5;
+        struct devfs_device *d = devfs_find_device(devname);
+        if (d) {
+            if (d->write_fn)
+                return d->write_fn(d->priv, data, size);
+            return (int)size; /* no write_fn: silently accept */
+        }
+    }
+
     return -1;
 }
 
@@ -122,31 +254,83 @@ static int devfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     if (strcmp(path, "/dev") == 0) {
         st->type = 2; st->size = 0; return 0;
     }
+
+    /* Built-in devices */
     if (strcmp(path, "/dev/null")   == 0 ||
         strcmp(path, "/dev/zero")   == 0 ||
         strcmp(path, "/dev/random") == 0) {
         st->type = 1; st->size = 0; return 0;
     }
     if (strcmp(path, "/dev/kmsg") == 0) {
-        st->type = 1;           /* character device */
+        st->type = 1;
         st->size = (uint32_t)kprintf_dmesg_used();
         return 0;
     }
+
+    /* Dynamic devices */
+    if (strncmp(path, "/dev/", 5) == 0) {
+        const char *devname = path + 5;
+        struct devfs_device *d = devfs_find_device(devname);
+        if (d) {
+            st->type = 1; /* character device */
+            st->size = 0;
+            st->mode = 0666;
+            return 0;
+        }
+    }
+
     return -1;
 }
 
 static int devfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/dev") != 0) return -1;
+
+    /* Built-in devices */
     kprintf("null\nzero\nrandom\nkmsg\n");
+
+    /* Dynamic devices */
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (devfs_devices[i].in_use) {
+            kprintf("%s\n", devfs_devices[i].name);
+        }
+    }
     return 0;
 }
 
+static int devfs_readdir_names(void *priv, const char *path,
+                                char names[][64], int max) {
+    (void)priv;
+    if (strcmp(path, "/dev") != 0) return -1;
+
+    int count = 0;
+
+    /* Built-in devices */
+    static const char *builtins[] = {"null", "zero", "random", "kmsg"};
+    int nbuilt = (int)(sizeof(builtins) / sizeof(builtins[0]));
+
+    for (int i = 0; i < nbuilt && count < max; i++) {
+        memcpy(names[count], builtins[i], strlen(builtins[i]) + 1);
+        count++;
+    }
+
+    /* Dynamic devices */
+    for (int i = 0; i < DEVFS_MAX_DEVICES && count < max; i++) {
+        if (devfs_devices[i].in_use) {
+            memcpy(names[count], devfs_devices[i].name,
+                   strlen(devfs_devices[i].name) + 1);
+            count++;
+        }
+    }
+    return count;
+}
+
 struct vfs_ops devfs_ops = {
-    .read    = devfs_read,
-    .write   = devfs_write,
-    .stat    = devfs_stat,
-    .create  = NULL,
-    .unlink  = NULL,
-    .readdir = devfs_readdir,
+    .read         = devfs_read,
+    .write        = devfs_write,
+    .stat         = devfs_stat,
+    .create       = NULL,
+    .unlink       = NULL,
+    .readdir      = devfs_readdir,
+    .readdir_names = devfs_readdir_names,
 };
