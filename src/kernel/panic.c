@@ -14,6 +14,7 @@
 #include "kdump.h"
 #include "notifier.h"
 #include "watchdog.h"
+#include "fbcon.h"
 
 /*
  * ── Panic timeout ─────────────────────────────────────────────────
@@ -455,15 +456,31 @@ void panic(const char *fmt, ...) {
     kprintf("\n\n=== KERNEL PANIC ===\n");
     kprintf("%s\n", msg_buf);
 
+    /* Also output to framebuffer console if available — critical for
+     * scenarios where serial output is not connected or visible. */
+    fbcon_set_fg(FBCON_WHITE);
+    fbcon_set_bg(FBCON_RED);
+    fbcon_write("\n\n=== KERNEL PANIC ===\n");
+    fbcon_write(msg_buf);
+    fbcon_write("\n");
+
     /* Try to dump CPU state */
     struct process *cur = process_get_current();
     if (cur) {
-        kprintf("Process: %s (pid=%u, state=%u)\n",
+        char proc_buf[128];
+        int n = snprintf(proc_buf, sizeof(proc_buf),
+                "Process: %s (pid=%u, state=%u)\n",
                 cur->name ? cur->name : "?", cur->pid, (uint32_t)cur->state);
+        kprintf("%s", proc_buf);
+        if (n > 0) fbcon_write(proc_buf);
     }
 
     if (smp_get_cpu_count() > 1) {
-        kprintf("CPU: %d/%d\n", smp_get_cpu_id(), smp_get_cpu_count());
+        char cpu_buf[64];
+        int n = snprintf(cpu_buf, sizeof(cpu_buf),
+                "CPU: %d/%d\n", smp_get_cpu_id(), smp_get_cpu_count());
+        kprintf("%s", cpu_buf);
+        if (n > 0) fbcon_write(cpu_buf);
     }
 
     dump_regs();
@@ -472,7 +489,11 @@ void panic(const char *fmt, ...) {
     /* Notify panic notifier chain (releases spinlocks, etc.) */
     notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
 
-    kprintf("=== SYSTEM HALTED (will reset in %d seconds) ===\n", panic_timeout);
+    char halt_buf[128];
+    int halt_n = snprintf(halt_buf, sizeof(halt_buf),
+            "=== SYSTEM HALTED (will reset in %d seconds) ===\n", panic_timeout);
+    kprintf("%s", halt_buf);
+    if (halt_n > 0) fbcon_write(halt_buf);
 
     /* Enter the timeout-based halt loop (replaces old `for (;;) hlt()`) */
     panic_halt_loop();
