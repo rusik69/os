@@ -315,6 +315,7 @@ void ipi_init(void) {
     idt_register_handler(IPI_VECTOR_TLB_SHOOT,   ipi_tlb_shootdown_handler);
     idt_register_handler(IPI_VECTOR_BACKTRACE,   ipi_backtrace_handler);
     idt_register_handler(IPI_VECTOR_MEMBARRIER,  ipi_membarrier_handler);
+    idt_register_handler(IPI_VECTOR_PANIC_HALT,  ipi_panic_halt_handler);
     memset(tlb_info, 0, sizeof(tlb_info));
 }
 
@@ -349,6 +350,21 @@ void ipi_membarrier_handler(struct interrupt_frame *frame) {
      * before any subsequent loads/stores are visible. */
     __asm__ volatile("mfence" ::: "memory");
     apic_eoi();
+}
+
+/* Panic halt IPI handler: called on all non-panicking CPUs when
+ * one CPU panics.  Disables interrupts and halts forever to prevent
+ * other CPUs from continuing execution after a kernel panic. */
+void ipi_panic_halt_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    /* Disable interrupts and halt this CPU forever.  We do NOT
+     * acknowledge the IPI (no apic_eoi) because the panicking CPU
+     * is already in an unrecoverable state — we want this CPU to
+     * stop immediately and not process any further interrupts. */
+    cli();
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
 }
 
 /* Send TLB shootdown to all other CPUs.

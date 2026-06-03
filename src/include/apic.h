@@ -54,6 +54,7 @@
 #define IPI_VECTOR_TLB_SHOOT    0xF1
 #define IPI_VECTOR_BACKTRACE    0xF2
 #define IPI_VECTOR_MEMBARRIER   0xF3
+#define IPI_VECTOR_PANIC_HALT   0xF4
 
 /* I/O APIC registers */
 #define IOAPIC_INDEX   0x00
@@ -95,6 +96,7 @@ void ipi_reschedule_handler(struct interrupt_frame *frame);
 void ipi_tlb_shootdown_handler(struct interrupt_frame *frame);
 void ipi_backtrace_handler(struct interrupt_frame *frame);
 void ipi_membarrier_handler(struct interrupt_frame *frame);
+void ipi_panic_halt_handler(struct interrupt_frame *frame);
 
 /* APIC timer calibration (returns bus frequency in Hz) */
 uint32_t apic_timer_calibrate(void);

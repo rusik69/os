@@ -15,6 +15,7 @@
 #include "notifier.h"
 #include "watchdog.h"
 #include "fbcon.h"
+#include "apic.h"  /* apic_send_ipi_all_except, IPI_VECTOR_PANIC_HALT */
 
 /*
  * ── Panic timeout ─────────────────────────────────────────────────
@@ -488,6 +489,15 @@ void panic(const char *fmt, ...) {
 
     /* Notify panic notifier chain (releases spinlocks, etc.) */
     notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+
+    /* Send panic halt IPI to all other CPUs so they stop executing.
+     * We do this AFTER the notifier chain so that spinlocks are released
+     * before other CPUs receive the halt signal, preventing lock contention
+     * in the NMI/IRQ handler path. */
+    if (smp_get_cpu_count() > 1) {
+        kprintf("[PANIC] Halting other CPUs via IPI...\n");
+        apic_send_ipi_all_except(IPI_VECTOR_PANIC_HALT);
+    }
 
     char halt_buf[128];
     int halt_n = snprintf(halt_buf, sizeof(halt_buf),
