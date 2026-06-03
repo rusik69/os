@@ -23,6 +23,13 @@ typedef int (*sysfs_write_cb_t)(const char *data, uint32_t size, void *priv);
  *  @priv is the private data pointer passed at file creation. */
 typedef int (*sysfs_read_cb_t)(char *buf, uint32_t max_size, void *priv);
 
+/** Release callback — called when a sysfs entry is removed.
+ *  @priv is the private data pointer passed at file creation.
+ *  The callback should free any dynamically allocated resources
+ *  associated with the entry.  It is invoked BEFORE the entry is
+ *  marked as unused, so the callback can still access other fields. */
+typedef void (*sysfs_release_cb_t)(void *priv);
+
 struct sysfs_entry {
     char     name[SYSFS_MAX_NAME];
     uint8_t  type;        /* 1=file, 2=dir */
@@ -31,8 +38,9 @@ struct sysfs_entry {
     int      parent;      /* index of parent dir (-1 = root) */
     int      in_use;
     void    *priv;        /* private data passed to read/write callbacks */
-    sysfs_read_cb_t  read_cb;   /* dynamic read callback (overrides static content) */
-    sysfs_write_cb_t write_cb;  /* write callback for writable files (NULL = read-only) */
+    sysfs_read_cb_t    read_cb;    /* dynamic read callback (overrides static content) */
+    sysfs_write_cb_t   write_cb;   /* write callback for writable files (NULL = read-only) */
+    sysfs_release_cb_t release_cb; /* release callback (called on remove, may be NULL) */
 };
 
 /* VFS operations */
@@ -53,6 +61,12 @@ int sysfs_create_writable_file(const char *path, const char *initial_content,
 
 /* Create a directory under /sys/<path> */
 int sysfs_create_dir(const char *path);
+
+/* Set the release callback for an existing sysfs entry.
+ * The callback is invoked when the entry is removed (via sysfs_remove
+ * or sysfs_remove_recursive), allowing the owner to free any
+ * dynamically allocated resources associated with priv. */
+int sysfs_set_release_cb(const char *path, sysfs_release_cb_t release_cb);
 
 /* Remove a single sysfs entry (file or empty directory).
  * Returns 0 on success, -1 if the entry doesn't exist or cannot be removed. */

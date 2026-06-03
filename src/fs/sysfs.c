@@ -10,6 +10,9 @@
 static struct sysfs_entry sysfs_entries[SYSFS_MAX_ENTRIES];
 static int sysfs_mounted = 0;
 
+/* ── Forward declarations ──────────────────────────────────────────── */
+static void sysfs_clear_entry(int idx);
+
 /* ── helpers ───────────────────────────────────────────────────── */
 
 static int alloc_entry(void) {
@@ -62,6 +65,7 @@ static int create_entry(const char *name, uint8_t type, const char *content,
     sysfs_entries[idx].priv = priv;
     sysfs_entries[idx].read_cb = read_cb;
     sysfs_entries[idx].write_cb = write_cb;
+    sysfs_entries[idx].release_cb = NULL;
     sysfs_entries[idx].content[0] = '\0';
     if (content) {
         int clen = (int)strlen(content);
@@ -74,6 +78,15 @@ static int create_entry(const char *name, uint8_t type, const char *content,
 }
 
 /* ── Public API ────────────────────────────────────────────────── */
+
+int sysfs_set_release_cb(const char *path, sysfs_release_cb_t release_cb)
+{
+    int idx = find_entry(path);
+    if (idx < 0)
+        return -1;
+    sysfs_entries[idx].release_cb = release_cb;
+    return 0;
+}
 
 int sysfs_create_file(const char *path, const char *content) {
     /* Find parent directory */
@@ -240,7 +253,9 @@ struct vfs_ops sysfs_vfs_ops = {
 /*
  * sysfs_remove — Remove a single sysfs entry by path.
  *
- * Finds the entry, marks it as unused, and clears its callbacks.
+ * Finds the entry, calls its release callback (if set), clears the
+ * callbacks, and marks it as unused.  This constitutes the "kobject_del
+ * + kobject_put" lifecycle for sysfs entries.
  * Returns 0 on success, -1 if not found.
  */
 int sysfs_remove(const char *path)
@@ -252,13 +267,35 @@ int sysfs_remove(const char *path)
     if (idx < 0)
         return -1;
 
-    /* Mark the entry as unused */
+    /* Invoke the release callback before tearing down the entry.
+     * The callback can still access all entry fields, including priv,
+     * so it can properly release any dynamically allocated resources. */
+    sysfs_clear_entry(idx);
+    return 0;
+}
+
+/*
+ * Clear a single sysfs entry, invoking its release callback if set.
+ * This is the internal workhorse that implements kobject_del + kobject_put.
+ */
+static void sysfs_clear_entry(int idx)
+{
+    if (idx < 0 || idx >= SYSFS_MAX_ENTRIES)
+        return;
+    if (!sysfs_entries[idx].in_use)
+        return;
+
+    /* Invoke release callback before clearing */
+    if (sysfs_entries[idx].release_cb) {
+        sysfs_entries[idx].release_cb(sysfs_entries[idx].priv);
+    }
+
     sysfs_entries[idx].in_use = 0;
     sysfs_entries[idx].read_cb = NULL;
     sysfs_entries[idx].write_cb = NULL;
+    sysfs_entries[idx].release_cb = NULL;
     sysfs_entries[idx].content[0] = '\0';
     sysfs_entries[idx].size = 0;
-    return 0;
 }
 
 /*
@@ -293,25 +330,19 @@ int sysfs_remove_recursive(const char *path)
                     int sub_idx = i;
                     for (int j = 1; j < SYSFS_MAX_ENTRIES; j++) {
                         if (sysfs_entries[j].in_use && sysfs_entries[j].parent == sub_idx) {
-                            sysfs_entries[j].in_use = 0;
-                            sysfs_entries[j].read_cb = NULL;
-                            sysfs_entries[j].write_cb = NULL;
+                            sysfs_clear_entry(j);
                         }
                     }
                 }
                 /* Remove the child entry itself */
-                sysfs_entries[i].in_use = 0;
-                sysfs_entries[i].read_cb = NULL;
-                sysfs_entries[i].write_cb = NULL;
+                sysfs_clear_entry(i);
                 changed = 1;
             }
         }
     } while (changed);
 
     /* Finally remove the directory itself */
-    sysfs_entries[idx].in_use = 0;
-    sysfs_entries[idx].read_cb = NULL;
-    sysfs_entries[idx].write_cb = NULL;
+    sysfs_clear_entry(idx);
     return 0;
 }
 
