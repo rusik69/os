@@ -705,8 +705,6 @@ void pci_list(void) {
     }
 }
 
-/* ── PCIe Advanced Error Reporting (AER) ────────────────────────── */
-
 /*
  * Find the AER extended capability on a PCIe device.
  *
