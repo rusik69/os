@@ -60,6 +60,7 @@
 #include "coredump.h"
 #include "workqueue.h"
 #include "madvise_ext.h"
+#include "file_lock.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -1883,11 +1884,90 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         }
         case F_SETLK:
         case F_SETLKW: {
-            /* Advisory record locking — simplified: always succeed */
+            /* Advisory record locking via file_lock.c */
+            struct flock {
+                int16_t l_type;
+                int16_t l_whence;
+                int64_t l_start;
+                int64_t l_len;
+                int32_t l_pid;
+            } __attribute__((packed));
+
+            struct flock user_flk;
+            if (!arg) return (uint64_t)-1;
+            if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(user_flk)))
+                return (uint64_t)-1;
+            memcpy(&user_flk, (void*)(uintptr_t)arg, sizeof(user_flk));
+
+            /* Convert to kernel struct file_lock */
+            struct file_lock kflk;
+            memset(&kflk, 0, sizeof(kflk));
+            kflk.l_type   = (int)user_flk.l_type;
+            kflk.l_whence = (int)user_flk.l_whence;
+            kflk.l_start  = user_flk.l_start;
+            kflk.l_len    = user_flk.l_len;
+            kflk.l_pid    = user_flk.l_pid;
+            kflk.used     = 1;
+            kflk.mandatory = 0;
+
+            /* Get file path from fd table */
+            const char *fpath = proc->fd_table[fd].path;
+            if (!fpath || !fpath[0]) return (uint64_t)-1;
+
+            int wait_flag = (cmd == F_SETLKW) ? 1 : 0;
+            int rc = file_lock_set(fpath, &kflk, wait_flag);
+            if (rc < 0) {
+                if (rc == -EAGAIN) return (uint64_t)-EAGAIN;
+                if (rc == -ENOLCK) return (uint64_t)-ENOLCK;
+                return (uint64_t)-1;
+            }
             return 0;
         }
         case F_GETLK: {
-            /* Return no conflicting lock */
+            /* Get any conflicting lock via file_lock.c */
+            struct flock {
+                int16_t l_type;
+                int16_t l_whence;
+                int64_t l_start;
+                int64_t l_len;
+                int32_t l_pid;
+            } __attribute__((packed));
+
+            if (!arg) return (uint64_t)-1;
+            if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(struct flock)))
+                return (uint64_t)-1;
+
+            struct flock user_flk;
+            memcpy(&user_flk, (void*)(uintptr_t)arg, sizeof(user_flk));
+
+            /* Get file path */
+            const char *fpath = proc->fd_table[fd].path;
+            if (!fpath || !fpath[0]) return (uint64_t)-1;
+
+            struct file_lock kflk;
+            memset(&kflk, 0, sizeof(kflk));
+            int rc = file_lock_get(fpath, &kflk);
+            if (rc == -ENOENT) {
+                /* No lock — return F_UNLCK */
+                user_flk.l_type   = F_UNLCK;
+                user_flk.l_whence = 0;
+                user_flk.l_start  = 0;
+                user_flk.l_len    = 0;
+                user_flk.l_pid    = 0;
+            } else if (rc == 0) {
+                /* Convert kernel file_lock back to userspace flock */
+                user_flk.l_type   = (int16_t)kflk.l_type;
+                user_flk.l_whence = (int16_t)kflk.l_whence;
+                user_flk.l_start  = kflk.l_start;
+                user_flk.l_len    = kflk.l_len;
+                user_flk.l_pid    = kflk.l_pid;
+            } else {
+                return (uint64_t)-1;
+            }
+
+            if (syscall_is_user_process() && !syscall_user_write_ok(arg, sizeof(struct flock)))
+                return (uint64_t)-1;
+            memcpy((void*)(uintptr_t)arg, &user_flk, sizeof(user_flk));
             return 0;
         }
         case F_DUPFD_CLOEXEC: {

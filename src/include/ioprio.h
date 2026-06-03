@@ -38,8 +38,9 @@
 #define IOPRIO_DEFAULT          IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, IOPRIO_BE_DEF_PRIO)
 
 /* Syscall numbers (kernel-internal, not Linux-compatible on this kernel) */
-#define SYS_IOPRIO_GET         555
-#define SYS_IOPRIO_SET         556
+/* Note: values must match syscall.h */
+#define SYS_IOPRIO_GET         556
+#define SYS_IOPRIO_SET         555
 
 /* ioprio_which identifiers (who argument for ioprio_get/ioprio_set) */
 #define IOPRIO_WHO_PROCESS     1  /* by PID */

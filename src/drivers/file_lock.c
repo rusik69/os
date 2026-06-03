@@ -21,6 +21,8 @@
 #include "process.h"
 #include "spinlock.h"
 #include "errno.h"
+#include "waitqueue.h"
+#include "scheduler.h"
 
 /* ── Lock table ───────────────────────────────────────────────────── */
 
@@ -29,6 +31,7 @@
 struct lock_entry {
     char path[128];             /* canonical absolute path */
     struct file_lock flk;       /* lock descriptor (uses struct from vfs.h) */
+    struct wait_queue wq;       /* waiters for F_SETLKW blocking */
     int in_use;
 };
 
@@ -45,9 +48,11 @@ void file_lock_init(void)
 
     memset(lock_table, 0, sizeof(lock_table));
     spinlock_init(&lock_spinlock);
+    for (int i = 0; i < FILE_LOCK_MAX; i++)
+        wait_queue_init(&lock_table[i].wq);
     lock_initialized = 1;
 
-    kprintf("[OK] file_lock: advisory + mandatory file locking (%d entries)\n",
+    kprintf("[OK] file_lock: advisory + mandatory file locking (%d entries with F_SETLKW wait)\n",
             FILE_LOCK_MAX);
 }
 
@@ -120,8 +125,6 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait)
     if (flk->l_type != F_RDLCK && flk->l_type != F_WRLCK && flk->l_type != F_UNLCK)
         return -EINVAL;
 
-    (void)wait; /* non-blocking for now (F_SETLKW not yet implemented) */
-
     char ap[128];
     if (path[0] == '/') {
         strncpy(ap, path, sizeof(ap) - 1);
@@ -131,74 +134,89 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait)
         ap[sizeof(ap) - 1] = '\0';
     }
 
-    spinlock_acquire(&lock_spinlock);
+    for (;;) {
+        spinlock_acquire(&lock_spinlock);
 
-    struct lock_entry *entry = find_entry(ap);
+        struct lock_entry *entry = find_entry(ap);
 
-    /* ── Unlock ────────────────────────────────────────────────── */
-    if (flk->l_type == F_UNLCK) {
-        if (entry) {
-            struct process *cur = process_get_current();
-            uint32_t caller_pid = cur ? cur->pid : 0;
+        /* ── Unlock ────────────────────────────────────────────────── */
+        if (flk->l_type == F_UNLCK) {
+            if (entry) {
+                struct process *cur = process_get_current();
+                uint32_t caller_pid = cur ? cur->pid : 0;
 
-            /* Only the lock owner can unlock */
-            if ((uint32_t)entry->flk.l_pid == caller_pid) {
-                memset(entry, 0, sizeof(*entry));
+                /* Only the lock owner can unlock */
+                if ((uint32_t)entry->flk.l_pid == caller_pid) {
+                    /* Wake all waiters before clearing the lock */
+                    wait_queue_wake_all(&entry->wq);
+                    memset(entry, 0, sizeof(*entry));
+                    wait_queue_init(&entry->wq);
+                }
             }
-        }
-        spinlock_release(&lock_spinlock);
-        return 0;
-    }
-
-    /* ── Lock (F_RDLCK or F_WRLCK) ─────────────────────────────── */
-
-    if (entry) {
-        /* File already has a lock — check for conflicts */
-        if (lock_conflicts(&entry->flk, flk)) {
-            struct process *cur = process_get_current();
-            uint32_t caller_pid = cur ? cur->pid : 0;
-
-            if ((uint32_t)entry->flk.l_pid == caller_pid) {
-                /* Same process: upgrade/downgrade the lock */
-                memcpy(&entry->flk, flk, sizeof(struct file_lock));
-                entry->flk.l_pid = (int32_t)caller_pid;
-                entry->flk.used   = 1;
-                spinlock_release(&lock_spinlock);
-                return 0;
-            }
-
-            /* Different PID: conflict */
             spinlock_release(&lock_spinlock);
-            return -EAGAIN;
+            return 0;
         }
 
-        /* No conflict: update the existing lock */
-        memcpy(&entry->flk, flk, sizeof(struct file_lock));
+        /* ── Lock (F_RDLCK or F_WRLCK) ─────────────────────────────── */
+
+        if (entry) {
+            /* File already has a lock — check for conflicts */
+            if (lock_conflicts(&entry->flk, flk)) {
+                struct process *cur = process_get_current();
+                uint32_t caller_pid = cur ? cur->pid : 0;
+
+                if ((uint32_t)entry->flk.l_pid == caller_pid) {
+                    /* Same process: upgrade/downgrade the lock */
+                    memcpy(&entry->flk, flk, sizeof(struct file_lock));
+                    entry->flk.l_pid = (int32_t)caller_pid;
+                    entry->flk.used   = 1;
+                    spinlock_release(&lock_spinlock);
+                    return 0;
+                }
+
+                /* Different PID: conflict */
+                if (wait) {
+                    /* F_SETLKW: block until lock is released */
+                    spinlock_release(&lock_spinlock);
+                    wait_queue_sleep(&entry->wq);
+                    continue; /* retry after wake-up */
+                }
+                spinlock_release(&lock_spinlock);
+                return -EAGAIN;
+            }
+
+            /* No conflict: update the existing lock */
+            memcpy(&entry->flk, flk, sizeof(struct file_lock));
+            struct process *cur = process_get_current();
+            entry->flk.l_pid = cur ? (int32_t)cur->pid : -1;
+            entry->flk.used   = 1;
+            /* Wake any waiters in case lock type changed (read->write etc) */
+            wait_queue_wake_all(&entry->wq);
+            spinlock_release(&lock_spinlock);
+            return 0;
+        }
+
+        /* ── No existing lock — create a new entry ─────────────────── */
+        int slot = alloc_slot();
+        if (slot < 0) {
+            spinlock_release(&lock_spinlock);
+            return -ENOLCK;
+        }
+
+        struct lock_entry *new_entry = &lock_table[slot];
+        strncpy(new_entry->path, ap, sizeof(new_entry->path) - 1);
+        new_entry->path[sizeof(new_entry->path) - 1] = '\0';
+        memcpy(&new_entry->flk, flk, sizeof(struct file_lock));
         struct process *cur = process_get_current();
-        entry->flk.l_pid = cur ? (int32_t)cur->pid : -1;
-        entry->flk.used   = 1;
+        new_entry->flk.l_pid = cur ? (int32_t)cur->pid : -1;
+        new_entry->flk.used   = 1;
+        new_entry->in_use = 1;
+        /* Initialize the wait queue (was cleared by memset in alloc_slot's reset) */
+        wait_queue_init(&new_entry->wq);
+
         spinlock_release(&lock_spinlock);
         return 0;
     }
-
-    /* ── No existing lock — create a new entry ─────────────────── */
-    int slot = alloc_slot();
-    if (slot < 0) {
-        spinlock_release(&lock_spinlock);
-        return -ENOLCK;
-    }
-
-    struct lock_entry *new_entry = &lock_table[slot];
-    strncpy(new_entry->path, ap, sizeof(new_entry->path) - 1);
-    new_entry->path[sizeof(new_entry->path) - 1] = '\0';
-    memcpy(&new_entry->flk, flk, sizeof(struct file_lock));
-    struct process *cur = process_get_current();
-    new_entry->flk.l_pid = cur ? (int32_t)cur->pid : -1;
-    new_entry->flk.used   = 1;
-    new_entry->in_use = 1;
-
-    spinlock_release(&lock_spinlock);
-    return 0;
 }
 
 int file_lock_unlock(const char *path, struct file_lock *flk)
