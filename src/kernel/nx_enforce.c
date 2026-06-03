@@ -21,6 +21,8 @@
 #include "idt.h"   /* for struct interrupt_frame */
 #include "types.h" /* for PHYS_TO_VIRT */
 #include "panic.h"
+#include "signal.h"
+#include "string.h"
 
 /* ── Linker section boundaries ──────────────────────────────────────── */
 /* These are defined in linker.ld and resolved at link time.
@@ -373,6 +375,19 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
         kprintf("  R14=0x%llx  R15=0x%llx\n",
                 frame->r14, frame->r15);
         kprintf("  RSP=0x%llx  RBP=0x%llx\n", frame->rsp, frame->rbp);
+
+        /* Populate siginfo_t before terminating — provides fault address
+         * and error code for signalfd listeners or user-space handlers. */
+        if (proc) {
+            struct siginfo sinfo;
+            memset(&sinfo, 0, sizeof(sinfo));
+            sinfo.si_signo = SIGSEGV;
+            sinfo.si_code  = SEGV_ACCERR;  /* protection fault (NX) */
+            sinfo.si_addr  = (void *)(uintptr_t)cr2;
+            sinfo.si_pid   = proc->pid;
+            sinfo.si_uid   = proc->uid;
+            signal_send_info(proc->pid, SIGSEGV, &sinfo);
+        }
 
         /* process_exit_code(11) kills the process with SIGSEGV */
         process_exit_code(11);

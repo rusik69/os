@@ -9,6 +9,8 @@
 #include "kdump.h"
 #include "smp.h"
 #include "mce.h"
+#include "signal.h"
+#include "string.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -152,6 +154,15 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                         (unsigned int)proc->pid, cr2,
                                         (err & 2) ? "/write" : "",
                                         frame->rip);
+                                /* Populate siginfo before terminating */
+                                struct siginfo sinfo;
+                                memset(&sinfo, 0, sizeof(sinfo));
+                                sinfo.si_signo = SIGSEGV;
+                                sinfo.si_code = SEGV_ACCERR;
+                                sinfo.si_addr = (void *)(uintptr_t)cr2;
+                                sinfo.si_pid = proc->pid;
+                                sinfo.si_uid = proc->uid;
+                                signal_send_info(proc->pid, SIGSEGV, &sinfo);
                                 process_exit_code(11);
                                 /* Not reached */
                             }
@@ -163,6 +174,17 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                         (unsigned int)proc->pid, cr2,
                                         (err & 2) ? "/write" : "",
                                         frame->rip);
+                                /* Populate siginfo before terminating */
+                                {
+                                    struct siginfo sinfo;
+                                    memset(&sinfo, 0, sizeof(sinfo));
+                                    sinfo.si_signo = SIGSEGV;
+                                    sinfo.si_code = SEGV_ACCERR;
+                                    sinfo.si_addr = (void *)(uintptr_t)cr2;
+                                    sinfo.si_pid = proc->pid;
+                                    sinfo.si_uid = proc->uid;
+                                    signal_send_info(proc->pid, SIGSEGV, &sinfo);
+                                }
                                 process_exit_code(11);
                                 /* Not reached */
                             }
@@ -223,6 +245,21 @@ static void page_fault_handler(struct interrupt_frame *frame) {
     struct process *proc = process_get_current();
     kprintf("[fault] SIGSEGV pid=%u addr=0x%llx err=0x%llx rip=0x%llx\n",
             proc ? (unsigned int)proc->pid : 0, cr2, err, frame->rip);
+
+    /* Populate siginfo_t with fault address, trap number, and error code
+     * before terminating.  This enables signalfd listeners to receive
+     * the full fault details. */
+    if (proc) {
+        struct siginfo sinfo;
+        memset(&sinfo, 0, sizeof(sinfo));
+        sinfo.si_signo = SIGSEGV;
+        sinfo.si_code  = (err & 1) ? SEGV_ACCERR : SEGV_MAPERR;
+        sinfo.si_addr  = (void *)(uintptr_t)cr2;
+        sinfo.si_pid   = proc->pid;
+        sinfo.si_uid   = proc->uid;
+        signal_send_info(proc->pid, SIGSEGV, &sinfo);
+    }
+
     process_exit_code(11); /* SIGSEGV = 11 — does not return */
 }
 
