@@ -407,3 +407,4 @@ EXPORT_SYMBOL(blockdev_get_scheduler);
 EXPORT_SYMBOL(blk_request_alloc);
 EXPORT_SYMBOL(blk_request_free);
 EXPORT_SYMBOL(blk_request_done);
+EXPORT_SYMBOL(blk_submit_sync);

@@ -385,6 +385,8 @@ obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)
 obj-m += fs/tarfs.ko
+# ext2: read-only ext2 filesystem with HTree directory indexing (M51)
+obj-m += fs/ext2.ko
 
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))

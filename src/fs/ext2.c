@@ -18,6 +18,10 @@
 #include "heap.h"
 #include "vfs.h"
 
+#ifdef MODULE
+#include "module.h"
+#endif
+
 struct ext2_priv {
     uint8_t  dev_id;
     uint32_t block_size;
@@ -33,7 +37,7 @@ static int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *bu
     uint64_t lba = (uint64_t)block_num * (ep->block_size / 512);
     uint32_t sectors = ep->block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
-        if (blockdev_read(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
+        if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
             return -1;
     }
     return 0;
@@ -43,11 +47,11 @@ static int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *bu
 static int ext2_load_super(struct ext2_priv *ep) {
     uint8_t buf[1024];
     /* Superblock is at offset 1024 (block 0 if block_size=1024) */
-    if (blockdev_read(ep->dev_id, 2, 1, buf) != 0 &&  /* sector 2 = offset 1024 */
-        blockdev_read(ep->dev_id, 2, 1, buf) != 0) {
+    if (blockdev_read_sectors(ep->dev_id, 2, 1, buf) != 0 &&  /* sector 2 = offset 1024 */
+        blockdev_read_sectors(ep->dev_id, 2, 1, buf) != 0) {
         /* Try via first block */
         uint64_t lba = 1024 / 512;
-        if (blockdev_read(ep->dev_id, lba, 2, buf) != 0)
+        if (blockdev_read_sectors(ep->dev_id, lba, 2, buf) != 0)
             return -1;
     }
     memcpy(&ep->sb, buf, sizeof(ep->sb));
@@ -719,3 +723,19 @@ int ext2_init(void) {
     vfs_register_filesystem("ext2", &ext2_ops);
     return 0;
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    return ext2_init();
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    /* No VFS unregister yet; avoid unloading if filesystem is mounted */
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Second extended filesystem (ext2) — read-only with HTree directory indexing");
+#endif
