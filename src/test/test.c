@@ -74,6 +74,7 @@
 #include "shell_cmd_table.h"
 #include "eventfd.h"
 #include "cpuhp.h"
+#include "export.h"
 #include "oom.h"
 #include "net_internal.h"
 #include "slab.h"
@@ -2210,6 +2211,47 @@ static void test_module(void) {
     t_ok("module test");
 }
 
+/* ── Symbol export (ksym) tests (M8) ────────────────────────────── */
+static void test_ksym(void) {
+    /* Verify the export table is populated */
+    int count = ksym_count();
+    ASSERT("ksym count > 0", count > 0);
+
+    /* Verify we can find common exported symbols */
+    uint64_t addr = find_ksym("kmalloc", 1);
+    ASSERT("find_ksym kmalloc", addr != 0);
+
+    addr = find_ksym("kfree", 1);
+    ASSERT("find_ksym kfree", addr != 0);
+
+    addr = find_ksym("kprintf", 1);
+    ASSERT("find_ksym kprintf", addr != 0);
+
+    /* Verify non-existent symbol returns 0 */
+    addr = find_ksym("nonexistent_symbol_xyz123", 1);
+    ASSERT("find_ksym nonexistent returns 0", addr == 0);
+
+    /* Verify NULL name returns 0 */
+    addr = find_ksym(NULL, 1);
+    ASSERT("find_ksym NULL returns 0", addr == 0);
+
+    /* Verify find_ksym works without GPL override */
+    addr = find_ksym("kmalloc", 0);
+    ASSERT("find_ksym non-GPL kmalloc", addr != 0);
+
+    /* Verify entry enumeration */
+    const struct ksym_entry *e = ksym_get_entry(0);
+    ASSERT("ksym_get_entry(0) non-NULL", e != NULL);
+    if (e) {
+        ASSERT("ksym entry name non-empty", e->sym_name != NULL && e->sym_name[0] != '\0');
+        ASSERT("ksym entry address non-zero", e->addr != 0);
+    }
+    ASSERT("ksym_get_entry(-1) NULL", ksym_get_entry(-1) == NULL);
+    ASSERT("ksym_get_entry(count) NULL", ksym_get_entry(count) == NULL);
+
+    t_ok("ksym export tests");
+}
+
 /* 9. /proc/self */
 static void test_proc_self(void) {
     /* Read /proc/self or /proc/self/status */
@@ -4023,6 +4065,7 @@ void test_run_all(void) {
     kprintf("[TEST] fsnotify\n");     test_fsnotify();       test_progress_tick();
     kprintf("[TEST] watchdog\n");     test_watchdog();       test_progress_tick();
     kprintf("[TEST] module\n");       test_module();         test_progress_tick();
+    kprintf("[TEST] ksym\n");          test_ksym();           test_progress_tick();
     kprintf("[TEST] proc_self\n");    test_proc_self();      test_progress_tick();
     kprintf("[TEST] kallsyms\n");     test_kallsyms();       test_progress_tick();
     kprintf("[TEST] oom_kill\n");     test_oom_kill();       test_progress_tick();
