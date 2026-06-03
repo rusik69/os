@@ -7,7 +7,7 @@
 #define ISO9660_SECTOR_SIZE 2048
 #define ISO9660_MAGIC 0x0143443031 /* "CD001" in LE */
 
-/* Primary volume descriptor */
+/* Primary volume descriptor (type 1) */
 struct iso_primary_desc {
     uint8_t  type;            /* 1 = primary */
     char     id[5];           /* "CD001" */
@@ -37,6 +37,50 @@ struct iso_primary_desc {
     char     preparer_id[128];
     char     application_id[128];
 } __attribute__((packed));
+
+/* Supplementary Volume Descriptor (type 2) — used by Joliet.
+ * Same layout as the PVD but uses UCS-2BE filenames and has
+ * escape sequences in the unused fields for character set info. */
+struct iso_supplementary_desc {
+    uint8_t  type;            /* 2 = supplementary */
+    char     id[5];           /* "CD001" */
+    uint8_t  version;
+    uint8_t  flags;           /* bit 0 = Joliet (escape sequences present) */
+    char     system_id[32];
+    char     volume_id[32];
+    uint8_t  unused2[8];
+    uint32_t volume_space_size_le;
+    uint32_t volume_space_size_be;
+    uint8_t  escape_sequences[32]; /* character set escape sequences */
+    uint16_t volume_set_size_le;
+    uint16_t volume_set_size_be;
+    uint16_t volume_seq_num_le;
+    uint16_t volume_seq_num_be;
+    uint16_t logical_block_size_le;
+    uint16_t logical_block_size_be;
+    uint32_t path_table_size_le;
+    uint32_t path_table_size_be;
+    uint32_t path_table_l_loc_le;
+    uint32_t path_table_l_loc_be;
+    uint32_t path_table_opt_loc_le;
+    uint32_t path_table_opt_loc_be;
+    uint8_t  root_dir[34];    /* directory record for root (UCS-2BE names) */
+    char     volume_set_id[128];
+    char     publisher_id[128];
+    char     preparer_id[128];
+    char     application_id[128];
+} __attribute__((packed));
+
+/* Joliet escape sequences (in escape_sequences field, typically at offset 0):
+ *   %/@  = UCS-2 level 1 (no combining characters)
+ *   %/C  = UCS-2 level 2
+ *   %/E  = UCS-2 level 3 (includes combining characters)
+ */
+#define JOLIET_ESC_LEVEL1_0  0x25  /* '%' */
+#define JOLIET_ESC_LEVEL1_1  0x2F  /* '/' */
+#define JOLIET_ESC_LEVEL1_2  0x40  /* '@' */
+#define JOLIET_ESC_LEVEL2_2  0x43  /* 'C' */
+#define JOLIET_ESC_LEVEL3_2  0x45  /* 'E' */
 
 /* Directory record */
 struct iso_dir_record {

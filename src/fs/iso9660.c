@@ -21,9 +21,13 @@
 struct iso9660_priv {
     uint8_t  dev_id;
     uint16_t block_size;       /* usually 2048 */
-    uint32_t root_extent;      /* extent location of root dir */
+    uint32_t root_extent;      /* extent location of root dir (ISO9660 PVD) */
     uint32_t root_size;        /* size of root dir */
     int      has_rrip;         /* 1 = Rock Ridge present and valid */
+    /* Joliet fields */
+    int      has_joliet;       /* 1 = Joliet (UCS-2) filenames available */
+    uint32_t joliet_root_extent; /* root dir extent from Joliet SVD */
+    uint32_t joliet_root_size;   /* root dir size from Joliet SVD */
 };
 
 /* Read a logical block from the ISO image */
@@ -59,6 +63,106 @@ static int iso9660_find_pvd(struct iso9660_priv *ip)
     kprintf("[iso9660] Root dir at LBA %u, size %u\n",
             ip->root_extent, ip->root_size);
     return 0;
+}
+
+/*
+ * Find the Supplementary Volume Descriptor (type 2) that contains
+ * Joliet (UCS-2) filenames.  Returns 0 on success, -1 if not found.
+ *
+ * The SVD has the same basic structure as the PVD but with:
+ *   - type = 2 instead of 1
+ *   - escape sequences in the unused3 field (offset 88-119)
+ *   - directory record filenames encoded in UCS-2 Big Endian
+ *
+ * Joliet is identified by escape sequences starting with %/ (0x25 0x2F):
+ *   %/@ = UCS-2 level 1
+ *   %/C = UCS-2 level 2
+ *   %/E = UCS-2 level 3
+ */
+static int iso9660_find_joliet_svd(struct iso9660_priv *ip)
+{
+    uint8_t buf[2048];
+    int sector = 16;
+
+    /* Scan volume descriptors (sectors 16.. up to 256 descriptors) */
+    for (int desc = 0; desc < 256; desc++) {
+        if (iso_read_block(ip, (uint32_t)(sector + desc), buf) < 0)
+            return -1;
+
+        struct iso_supplementary_desc *svd = (struct iso_supplementary_desc *)buf;
+
+        if (svd->type == 255)  /* volume descriptor set terminator */
+            break;
+        if (svd->type == 2 && memcmp(svd->id, "CD001", 5) == 0) {
+            /* Check escape sequences for Joliet markers */
+            if (svd->escape_sequences[0] == JOLIET_ESC_LEVEL1_0 &&
+                svd->escape_sequences[1] == JOLIET_ESC_LEVEL1_1 &&
+                (svd->escape_sequences[2] == JOLIET_ESC_LEVEL1_2 ||
+                 svd->escape_sequences[2] == JOLIET_ESC_LEVEL2_2 ||
+                 svd->escape_sequences[2] == JOLIET_ESC_LEVEL3_2)) {
+
+                struct iso_dir_record *root =
+                    (struct iso_dir_record *)svd->root_dir;
+                ip->joliet_root_extent = root->extent_loc_le;
+                ip->joliet_root_size   = root->data_length_le;
+                ip->has_joliet = 1;
+
+                kprintf("[iso9660] Joliet (UCS-2) filenames available"
+                        " (root LBA %u, size %u)\n",
+                        ip->joliet_root_extent, ip->joliet_root_size);
+                return 0;
+            }
+        }
+    }
+
+    return -1;
+}
+
+/*
+ * Convert a UCS-2 Big Endian filename (as used by Joliet) to ASCII.
+ * Non-ASCII characters (above 127) are replaced by '_'.
+ *
+ * @ucs2    Pointer to UCS-2BE data (2 bytes per character)
+ * @ucs2_len_bytes  Length of the UCS-2 data IN BYTES (so characters = / 2)
+ * @out     Destination buffer for ASCII result
+ * @out_max Size of destination buffer
+ * Returns the number of characters written (excluding NUL terminator).
+ */
+static int ucs2be_to_ascii(const char *ucs2, int ucs2_len_bytes,
+                            char *out, int out_max)
+{
+    int chars = ucs2_len_bytes / 2;
+    int written = 0;
+
+    for (int i = 0; i < chars && written < out_max - 1; i++) {
+        uint16_t cp = ((uint16_t)ucs2[i * 2] << 8) | ucs2[i * 2 + 1];
+
+        /* Skip version separator (;1) in Joliet — UCS-2 ';' */
+        if (cp == 0x003B && (i + 1 < chars) && ucs2[(i + 1) * 2] == 0x00 &&
+            ucs2[(i + 1) * 2 + 1] == 0x31) {
+            /* ;1 sequence — stop here, Joliet names omit version */
+            break;
+        }
+
+        /* Skip zero bytes (padding) */
+        if (cp == 0x0000)
+            break;
+
+        /* Map UCS-2 to ASCII: pass through printable ASCII (32-126),
+         * replace everything else with underscore */
+        if (cp >= 0x20 && cp <= 0x7E) {
+            out[written++] = (char)cp;
+        } else {
+            out[written++] = '_';
+        }
+    }
+
+    /* Strip trailing semicolons that might appear from partial conversion */
+    while (written > 0 && out[written - 1] == ';')
+        written--;
+
+    out[written] = '\0';
+    return written;
 }
 
 /* ── Rock Ridge / SUSP parser ───────────────────────────────────── */
@@ -274,9 +378,16 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     de->size   = rec->data_length_le;
     de->flags  = rec->flags;
 
-    /* Extract ISO9660 name (with version suffix like ;1) */
+    /* Extract name: use Joliet UCS-2BE decoding if available, else ISO9660 */
     uint8_t nlen = rec->name_len;
-    if (nlen > 0 && nlen < 255) {
+
+    if (ip->has_joliet && nlen > 0 && nlen < 255) {
+        /* Joliet: name is encoded in UCS-2 Big Endian (2 bytes/char).
+         * Convert to ASCII, storing in iso_name for the VFS layer.
+         * Non-ASCII characters are replaced with '_'. */
+        ucs2be_to_ascii(rec->name, nlen, de->iso_name, sizeof(de->iso_name));
+    } else if (nlen > 0 && nlen < 255) {
+        /* Standard ISO9660: single-byte name (usually d-characters) */
         memcpy(de->iso_name, rec->name, nlen);
         de->iso_name[nlen] = '\0';
     } else {
@@ -333,12 +444,21 @@ static int iso_read_dir_entries(struct iso9660_priv *ip, uint32_t extent, uint32
     return count;
 }
 
-/* Resolve path to extent */
+/* Resolve path to extent.
+ * Uses Joliet root directory when Joliet (UCS-2) filenames are available,
+ * falling back to the ISO9660 PVD root otherwise. */
 static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                             uint32_t *extent, uint32_t *size)
 {
-    *extent = ip->root_extent;
-    *size   = ip->root_size;
+    /* Use Joliet root directory when available (it may have a different
+     * extent than the PVD root, with UCS-2 encoded filenames). */
+    if (ip->has_joliet) {
+        *extent = ip->joliet_root_extent;
+        *size   = ip->joliet_root_size;
+    } else {
+        *extent = ip->root_extent;
+        *size   = ip->root_size;
+    }
 
     const char *p = path;
     if (*p == '/') p++;
@@ -374,10 +494,11 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
             if (elen == 1 && ename[0] == '.') continue;
             if (elen == 2 && ename[0] == '.' && ename[1] == '.') continue;
 
-            /* ISO names often have ;1 suffix for version */
+            /* ISO names often have ;1 suffix for version.
+             * Joliet names do not have version suffixes. */
             const char *match_name = ename;
             size_t match_len = elen;
-            if (match_len > 2 && match_name[match_len - 2] == ';')
+            if (!ip->has_joliet && match_len > 2 && match_name[match_len - 2] == ';')
                 match_len -= 2;
 
             if (match_len == clen && memcmp(match_name, p, clen) == 0) {
@@ -387,8 +508,8 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                 break;
             }
 
-            /* Also try without version number */
-            if (match_len > clen && match_name[clen] == ';' &&
+            /* Also try without version number (ISO9660 fallback) */
+            if (!ip->has_joliet && match_len > clen && match_name[clen] == ';' &&
                 memcmp(match_name, p, clen) == 0) {
                 *extent = entries[i].extent;
                 *size   = entries[i].size;
@@ -664,8 +785,9 @@ static int iso9660_readdir_entries(void *priv, const char *path,
         if (elen == 1 && ename[0] == '.') continue;
         if (elen == 2 && ename[0] == '.' && ename[1] == '.') continue;
 
-        /* Strip version number from ISO names if not using RR */
-        if (!(ip->has_rrip && entries[i].rr_name[0] != '\0')) {
+        /* Strip version number from ISO names if not using RR or Joliet.
+         * Joliet names do not have version suffixes. */
+        if (!(ip->has_rrip && entries[i].rr_name[0] != '\0') && !ip->has_joliet) {
             if (elen > 2 && ename[elen - 2] == ';')
                 elen -= 2;
         }
@@ -715,9 +837,23 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
     /* Check for Rock Ridge presence by scanning the root directory */
     ip->has_rrip = check_rrip_present(ip);
 
-    kprintf("[iso9660] Mounted at %s (block_size=%u%s)\n",
-            mountpoint, ip->block_size,
-            ip->has_rrip ? ", Rock Ridge" : "");
+    /* Probe for Joliet (UCS-2) Supplementary Volume Descriptor */
+    ip->has_joliet = 0;
+    iso9660_find_joliet_svd(ip);
+
+    /* Build mount info string */
+    char mount_info[128];
+    int mi_len = snprintf(mount_info, sizeof(mount_info),
+                          "[iso9660] Mounted at %s (block_size=%u",
+                          mountpoint, ip->block_size);
+    if (ip->has_rrip)
+        mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
+                           ", Rock Ridge");
+    if (ip->has_joliet)
+        mi_len += snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len,
+                           ", Joliet (UCS-2)");
+    snprintf(mount_info + mi_len, sizeof(mount_info) - (size_t)mi_len, ")\n");
+    kprintf("%s", mount_info);
 
     /* Register readlink only if Rock Ridge symlinks are supported */
     if (ip->has_rrip) {
@@ -731,7 +867,7 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
 
 int iso9660_init(void)
 {
-    kprintf("[iso9660] ISO9660 CDROM filesystem (Rock Ridge) initialized\n");
+    kprintf("[iso9660] ISO9660 CDROM filesystem (Rock Ridge + Joliet) initialized\n");
     vfs_register_filesystem("iso9660", &iso9660_ops);
     return 0;
 }
