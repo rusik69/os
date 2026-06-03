@@ -330,6 +330,44 @@ static const char *shell_func_get(const char *name) {
     return NULL;
 }
 
+/* ── Positional parameters for function calls ($1, $2, ..., $@, $#) ── */
+#define FUNC_ARGS_MAX   32
+#define FUNC_ARG_BUF_SZ 256
+
+/* Storage for positional args during function execution */
+static char *func_argv[FUNC_ARGS_MAX];
+static int   func_argc;
+static char  func_argbuf[FUNC_ARG_BUF_SZ];
+static int   func_return_flag;   /* set to non-zero to trigger early return */
+static int   func_in_call;       /* 1 if currently inside a function body */
+
+/* Shift positional parameters left by N positions (default 1) */
+static void func_shift(int n) {
+    if (n <= 0) n = 1;
+    if (n > func_argc) n = func_argc;
+    int new_count = func_argc - n;
+    /* Move remaining args and their storage down */
+    int remaining_bytes = 0;
+    for (int i = n; i < func_argc; i++)
+        remaining_bytes += strlen(func_argv[i]) + 1;
+    if (remaining_bytes > 0) {
+        char tmp[FUNC_ARG_BUF_SZ];
+        int pos = 0;
+        for (int i = n; i < func_argc; i++) {
+            int len = strlen(func_argv[i]);
+            if (pos + len < FUNC_ARG_BUF_SZ) {
+                memcpy(tmp + pos, func_argv[i], len + 1);
+                func_argv[i - n] = tmp + pos;
+                pos += len + 1;
+            }
+        }
+        memcpy(func_argbuf, tmp, pos);
+        func_argc = new_count;
+    } else {
+        func_argc = 0;
+    }
+}
+
 /* ── Shell array table ───────────────────────────────────────────── */
 #define SHELL_ARRAY_MAX      8
 #define SHELL_ARRAY_NAME_MAX 32
@@ -521,6 +559,63 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                     if (n < 0 && di < dst_max - 1) dst[di++] = '-';
                     while (nn > 0) { tmp[ti++] = '0' + (nn % 10); nn /= 10; }
                     while (ti > 0 && di < dst_max - 1) dst[di++] = tmp[--ti];
+                }
+                continue;
+            }
+            /* $1..$9 — positional parameters (only expanded inside functions) */
+            if (*src >= '1' && *src <= '9') {
+                int idx = *src - '1';  /* 0-based index */
+                src++;
+                if (func_in_call && idx < func_argc) {
+                    const char *v = func_argv[idx];
+                    while (*v && di < dst_max - 1) dst[di++] = *v++;
+                }
+                continue;
+            }
+            /* $0 — function/script name (expand as empty for now) */
+            if (*src == '0') {
+                src++;
+                /* $0 is not stored in our positional args; leave empty */
+                continue;
+            }
+            /* $@ — all positional args as separate words (space-separated) */
+            if (*src == '@') {
+                src++;
+                if (func_in_call) {
+                    for (int i = 0; i < func_argc; i++) {
+                        if (i > 0 && di < dst_max - 1) dst[di++] = ' ';
+                        const char *v = func_argv[i];
+                        while (*v && di < dst_max - 1) dst[di++] = *v++;
+                    }
+                }
+                continue;
+            }
+            /* $* — all positional args as single string (space-separated) */
+            if (*src == '*') {
+                src++;
+                if (func_in_call) {
+                    for (int i = 0; i < func_argc; i++) {
+                        if (i > 0 && di < dst_max - 1) dst[di++] = ' ';
+                        const char *v = func_argv[i];
+                        while (*v && di < dst_max - 1) dst[di++] = *v++;
+                    }
+                }
+                continue;
+            }
+            /* $# — number of positional parameters */
+            if (*src == '#') {
+                src++;
+                if (func_in_call) {
+                    int n = func_argc;
+                    if (n == 0) {
+                        if (di < dst_max - 1) dst[di++] = '0';
+                    } else {
+                        char tmp[12]; int ti = 0;
+                        while (n > 0) { tmp[ti++] = '0' + (n % 10); n /= 10; }
+                        while (ti > 0 && di < dst_max - 1) dst[di++] = tmp[--ti];
+                    }
+                } else {
+                    if (di < dst_max - 1) dst[di++] = '0';
                 }
                 continue;
             }
@@ -858,18 +953,107 @@ static void process_cmd(void) {
         fname[fi] = '\0';
         const char *fbody = shell_func_get(fname);
         if (fbody) {
-            /* Execute each line of the function body */
+            /* Extract positional args from the rest of the command line */
+            while (*p == ' ') p++;
+            func_argc = 0;
+            int argbuf_pos = 0;
+            while (*p && func_argc < FUNC_ARGS_MAX && argbuf_pos < FUNC_ARG_BUF_SZ - 1) {
+                func_argv[func_argc] = func_argbuf + argbuf_pos;
+                /* Handle quoted arguments */
+                if (*p == '\'') {
+                    p++; /* opening single quote */
+                    while (*p && *p != '\'' && argbuf_pos < FUNC_ARG_BUF_SZ - 1)
+                        func_argbuf[argbuf_pos++] = *p++;
+                    if (*p == '\'') p++; /* closing single quote */
+                } else if (*p == '"') {
+                    p++; /* opening double quote */
+                    while (*p && *p != '"' && argbuf_pos < FUNC_ARG_BUF_SZ - 1)
+                        func_argbuf[argbuf_pos++] = *p++;
+                    if (*p == '"') p++; /* closing double quote */
+                } else {
+                    while (*p && *p != ' ' && argbuf_pos < FUNC_ARG_BUF_SZ - 1)
+                        func_argbuf[argbuf_pos++] = *p++;
+                }
+                func_argbuf[argbuf_pos++] = '\0';
+                func_argc++;
+                while (*p == ' ') p++;
+            }
+            func_argbuf[argbuf_pos] = '\0';
+
+            /* Execute each line of the function body with positional params */
+            int saved_func_in_call = func_in_call;
+            func_in_call = 1;
+            func_return_flag = 0;
+
             char body_copy[SHELL_FUNC_BODY_MAX];
             strncpy(body_copy, fbody, SHELL_FUNC_BODY_MAX - 1);
             body_copy[SHELL_FUNC_BODY_MAX - 1] = '\0';
             char *line = body_copy;
-            while (*line) {
+            while (*line && !func_return_flag) {
                 char *nl = line;
                 while (*nl && *nl != '\n' && *nl != ';') nl++;
                 char saved = *nl; *nl = '\0';
                 char *l = line;
                 while (*l == ' ' || *l == '\t') l++;
                 if (*l) {
+                    /* Handle return keyword — early exit with status */
+                    if (strncmp(l, "return", 6) == 0 && (l[6] == '\0' || l[6] == ' ')) {
+                        const char *rv = l + 6;
+                        while (*rv == ' ') rv++;
+                        int retval = 0;
+                        while (*rv >= '0' && *rv <= '9')
+                            retval = retval * 10 + (*rv++ - '0');
+                        func_return_flag = 1;
+                        last_exit_status = retval;
+                        *nl = saved;
+                        break;
+                    }
+                    /* Handle shift keyword — shift positional parameters */
+                    if (strncmp(l, "shift", 5) == 0 && (l[5] == '\0' || l[5] == ' ')) {
+                        const char *sv = l + 5;
+                        while (*sv == ' ') sv++;
+                        int sn = 0;
+                        if (*sv >= '0' && *sv <= '9') {
+                            while (*sv >= '0' && *sv <= '9')
+                                sn = sn * 10 + (*sv++ - '0');
+                        } else {
+                            sn = 1;
+                        }
+                        func_shift(sn);
+                        *nl = saved;
+                        line = (*nl) ? nl + 1 : nl;
+                        continue;
+                    }
+                    /* Handle local keyword — declare a local variable */
+                    if (strncmp(l, "local ", 6) == 0) {
+                        const char *local_rest = l + 6;
+                        while (*local_rest == ' ') local_rest++;
+                        /* Parse local NAME=value or local NAME */
+                        char local_name[MAX_VAR_NAME];
+                        int local_ni = 0;
+                        while (*local_rest && *local_rest != '=' && *local_rest != ' '
+                              && local_ni < MAX_VAR_NAME - 1)
+                            local_name[local_ni++] = *local_rest++;
+                        local_name[local_ni] = '\0';
+                        if (local_ni > 0) {
+                            char local_val[MAX_VAR_VALUE];
+                            if (*local_rest == '=') {
+                                local_rest++;
+                                int local_vi = 0;
+                                while (*local_rest && *local_rest != ' '
+                                      && local_vi < MAX_VAR_VALUE - 1)
+                                    local_val[local_vi++] = *local_rest++;
+                                local_val[local_vi] = '\0';
+                            } else {
+                                local_val[0] = '\0';
+                            }
+                            /* Set the local variable (shadowing any global) */
+                            shell_var_set(local_name, local_val);
+                        }
+                        *nl = saved;
+                        line = (*nl) ? nl + 1 : nl;
+                        continue;
+                    }
                     strncpy(cmd_buf, l, CMD_BUF_SIZE - 1);
                     cmd_buf[CMD_BUF_SIZE - 1] = '\0';
                     cmd_len = (int)strlen(cmd_buf);
@@ -878,6 +1062,11 @@ static void process_cmd(void) {
                 *nl = saved;
                 line = (*nl) ? nl + 1 : nl;
             }
+
+            /* Clean up positional args */
+            func_in_call = saved_func_in_call;
+            func_argc = 0;
+            func_return_flag = 0;
             return;
         }
     }
