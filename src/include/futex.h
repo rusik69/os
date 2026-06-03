@@ -17,8 +17,11 @@
 #define FUTEX_WAKE_BITSET    10
 #define FUTEX_CMP_REQUEUE_PI 12
 #define FUTEX_PRIVATE_FLAG   128
+#define FUTEX_CLOCK_REALTIME 256
 #define FUTEX_WAIT_PRIVATE   (FUTEX_WAIT | FUTEX_PRIVATE_FLAG)
 #define FUTEX_WAKE_PRIVATE   (FUTEX_WAKE | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAIT_BITSET_PRIVATE   (FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG)
+#define FUTEX_WAKE_BITSET_PRIVATE   (FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG)
 
 /* ── FUTEX_WAKE_OP: atomic operations on uaddr2 ─────────────────── */
 #define FUTEX_OP_SET         0  /* uaddr2 = oparg */
@@ -79,6 +82,7 @@ void futex_pi_boost_owner(uint32_t *uaddr);
 struct futex_waiter {
     uint32_t *uaddr;
     struct process *proc;
+    uint32_t bitset;         /* for FUTEX_WAIT_BITSET/FUTEX_WAKE_BITSET */
 };
 
 extern struct futex_waiter futex_waiters[FUTEX_MAX_WAITERS];

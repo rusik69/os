@@ -3755,7 +3755,7 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
 
-    switch (op & ~FUTEX_PRIVATE_FLAG) {
+    switch (op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) {
         case FUTEX_WAIT: {
             /* Check user address */
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
@@ -3783,6 +3783,55 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
 
             futex_waiters[found].uaddr = addr;
             futex_waiters[found].proc  = cur_proc;
+            futex_waiters[found].bitset = 0xFFFFFFFF; /* match any bitset */
+            if (futex_waiters[found].proc)
+                futex_num_waiters++;
+
+            /* Block the current process */
+            cur_proc->state = PROCESS_BLOCKED;
+            scheduler_remove(cur_proc);
+            __asm__ volatile("sti");
+            scheduler_yield();
+            return 0;
+        }
+
+        case FUTEX_WAIT_BITSET: {
+            /* ── FUTEX_WAIT_BITSET: like FUTEX_WAIT but with a bitset mask ──
+             *
+             * val3 holds the bitset. A waiter is only woken by FUTEX_WAKE_BITSET
+             * whose bitset has a non-empty intersection with this bitset.
+             * bitset == 0 is invalid (returns -EINVAL).
+             */
+            if (val3 == 0)
+                return (uint64_t)-1; /* EINVAL */
+
+            /* Check user address */
+            if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
+                return (uint64_t)-1;
+
+            /* Check that *uaddr == val */
+            uint32_t cur;
+            memcpy(&cur, addr, 4);
+            if (cur != (uint32_t)val)
+                return (uint64_t)-1; /* EWOULDBLOCK */
+
+            /* Register as waiter */
+            struct process *cur_proc = process_get_current();
+            if (!cur_proc) return (uint64_t)-1;
+
+            __asm__ volatile("cli");
+            int found = -1;
+            for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
+                if (!futex_waiters[i].proc) {
+                    found = i;
+                    break;
+                }
+            }
+            if (found < 0) { __asm__ volatile("sti"); return (uint64_t)-1; }
+
+            futex_waiters[found].uaddr  = addr;
+            futex_waiters[found].proc   = cur_proc;
+            futex_waiters[found].bitset = (uint32_t)val3;
             if (futex_waiters[found].proc)
                 futex_num_waiters++;
 
@@ -3803,6 +3852,38 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
                     struct process *p = futex_waiters[i].proc;
                     futex_waiters[i].proc = NULL;
                     futex_waiters[i].uaddr = NULL;
+                    futex_num_waiters--;
+                    if (p->state == PROCESS_BLOCKED) {
+                        p->state = PROCESS_READY;
+                        scheduler_add(p);
+                    }
+                    woken++;
+                }
+            }
+            __asm__ volatile("sti");
+            return (uint64_t)woken;
+        }
+
+        case FUTEX_WAKE_BITSET: {
+            /* ── FUTEX_WAKE_BITSET: like FUTEX_WAKE but with bitset matching ──
+             *
+             * val3 holds the wake bitset. Only wake waiters whose stored bitset
+             * has a non-empty intersection with the wake bitset.
+             * bitset == 0 is invalid (returns -EINVAL).
+             */
+            if (val3 == 0)
+                return (uint64_t)-1; /* EINVAL */
+
+            uint32_t wake_bitset = (uint32_t)val3;
+            int woken = 0;
+            __asm__ volatile("cli");
+            for (int i = 0; i < FUTEX_MAX_WAITERS && woken < (int)val; i++) {
+                if (futex_waiters[i].proc && futex_waiters[i].uaddr == addr &&
+                    (futex_waiters[i].bitset & wake_bitset) != 0) {
+                    struct process *p = futex_waiters[i].proc;
+                    futex_waiters[i].proc = NULL;
+                    futex_waiters[i].uaddr = NULL;
+                    futex_waiters[i].bitset = 0;
                     futex_num_waiters--;
                     if (p->state == PROCESS_BLOCKED) {
                         p->state = PROCESS_READY;
