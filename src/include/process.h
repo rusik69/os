@@ -229,6 +229,8 @@ struct process {
     char exe_path[256];
     /* ── Per-task stack canary for stack-smashing protection ────── */
     uint64_t stack_canary;   /* unique canary per process; updated in __stack_chk_guard on switch */
+    /* ── Optimistic mutex spinning ─────────────────────────────── */
+    int      on_cpu;         /* 1 = this process is currently executing on a CPU (set/cleared by scheduler) */
 };
 
 void process_init(void);

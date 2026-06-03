@@ -28,4 +28,8 @@ int mutex_is_locked(int id);
 #define MUTEX_MAX_PI_BOOST 256
 extern uint8_t mutex_boost[MUTEX_MAX_PI_BOOST];
 
+/* ── Optimistic spinning statistics ────────────────────────────── */
+void mutex_spin_stats(uint64_t *attempts, uint64_t *success,
+                       uint64_t *abandoned, uint64_t *timeout);
+
 #endif

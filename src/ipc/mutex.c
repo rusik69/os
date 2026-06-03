@@ -1,5 +1,5 @@
 /*
- * mutex.c — Priority Inheritance mutex
+ * mutex.c — Priority Inheritance mutex with optimistic spinning
  *
  * Implements the Priority Inheritance Protocol (PIP) to prevent
  * priority inversion: when a high-priority task waits on a mutex
@@ -8,6 +8,14 @@
  * when a process holds multiple mutexes and releases one, the
  * priority is recomputed from the remaining held mutexes' highest
  * waiter priorities.
+ *
+ * Optimistic spinning (Item 289): before yielding the CPU, a waiter
+ * spins for a limited number of iterations if the lock owner is
+ * currently executing on another CPU.  This avoids the expensive
+ * sleep/wakeup context switch when the lock is held for a short
+ * duration (common for well-designed mutexes).  Spinning stops
+ * early if the owner is scheduled out, preventing wasteful busy-
+ * waiting.
  *
  * Integrates with lockdep for deadlock detection and provides
  * owner-tracking debug helpers (mutex_owner(), mutex_owner_name(),
@@ -20,9 +28,21 @@
 #include "string.h"
 #include "lockdep.h"
 #include "export.h"
+#include "smp.h"
 
 #define MUTEX_MAX 32
 #define MUTEX_WAITERS_MAX 8
+
+/* ── Optimistic spinning configuration ────────────────────────────── */
+#define MUTEX_SPIN_MAX        4096   /* max iterations per spin attempt */
+#define MUTEX_SPIN_THRESHOLD  128    /* pause every N iterations to be CPU-friendly */
+#define MUTEX_OSQ_MAX         4      /* max queued spinners on one mutex */
+
+/* ── Optimistic spin statistics (exposed via sysctl/debug) ────────── */
+static uint64_t mutex_spin_attempts   = 0;  /* total spin attempts */
+static uint64_t mutex_spin_success    = 0;  /* spins that acquired the lock */
+static uint64_t mutex_spin_abandoned  = 0;  /* spins abandoned (owner off CPU) */
+static uint64_t mutex_spin_timeout    = 0;  /* spins that timed out -> yield */
 
 struct mutex_entry {
     volatile int locked;
@@ -33,6 +53,8 @@ struct mutex_entry {
     uint8_t  highest_waiter_prio;    /* highest priority among waiters (9 = none) */
     int      waiter_count;
     uint32_t waiter_pids[MUTEX_WAITERS_MAX]; /* PIDs waiting on this mutex */
+    int      owner_cpu;              /* CPU where owner was last running (for spin heuristics) */
+    int      spinner_count;          /* number of tasks currently spinning on this mutex */
 };
 
 static struct mutex_entry mutexes[MUTEX_MAX];
@@ -126,6 +148,8 @@ int mutex_init(void) {
             mutexes[i].owner_rip = 0;
             mutexes[i].highest_waiter_prio = 9; /* sentinel > any valid priority */
             mutexes[i].waiter_count = 0;
+            mutexes[i].owner_cpu = -1;  /* no owner */
+            mutexes[i].spinner_count = 0;
             __asm__ volatile("sti");
             return i;
         }
@@ -153,6 +177,7 @@ void mutex_lock(int id) {
             m->owner_pid = self->pid;
             m->owner_rip = (uint64_t)__builtin_return_address(0);
             m->owner_orig_prio = self->base_priority;
+            m->owner_cpu = smp_get_cpu_id();
 
             /* Register this mutex in the owner's held-mutex list */
             held_mutex_add(self, id);
@@ -172,9 +197,7 @@ void mutex_lock(int id) {
             /* Boost the owner if this waiter has higher priority */
             boost_owner(m, self->priority);
 
-            /* Reflect the waiter into the owner's priority immediately:
-             * the owner might hold other mutexes with different waiters,
-             * so recompute the effective priority from all mutexes held. */
+            /* Reflect the waiter into the owner's priority immediately */
             uint8_t effective = held_mutex_effective_prio(m->owner_pid);
             if (effective < owner->priority) {
                 owner->priority = effective;
@@ -187,6 +210,74 @@ void mutex_lock(int id) {
         }
 
         __asm__ volatile("sti");
+
+        /* ── Optimistic spinning ────────────────────────────────────
+         *
+         * If the mutex owner is currently executing on a CPU, there is
+         * a good chance it will release the lock very soon.  Instead of
+         * yielding the CPU immediately (which incurs the full cost of a
+         * context switch: save, reschedule, switch, later restore), we
+         * spin for a limited number of iterations checking if the lock
+         * becomes free.
+         *
+         * We stop spinning early if:
+         *   1. The owner is no longer on-CPU (scheduled out) — spinning
+         *      would be wasteful since the owner won't make progress.
+         *   2. The spin count exceeds MUTEX_SPIN_MAX — prevent
+         *      starvation of other tasks.
+         *
+         * The `pause` instruction is used in the tight loop to reduce
+         * power consumption and improve hyperthreading performance. */
+        if (m->spinner_count < MUTEX_OSQ_MAX) {
+            m->spinner_count++;
+            mutex_spin_attempts++;
+
+            int owner_on_cpu = (owner && owner->on_cpu);
+            int spin_count = 0;
+
+            while (spin_count < MUTEX_SPIN_MAX) {
+                /* Read the lock flag without cli/sti — volatile ensures
+                 * we see the latest value from other CPUs. */
+                if (!m->locked) {
+                    /* Lock became free — acquire it */
+                    __asm__ volatile("cli");
+                    if (!m->locked) {
+                        m->locked = 1;
+                        m->owner_pid = self->pid;
+                        m->owner_rip = (uint64_t)__builtin_return_address(0);
+                        m->owner_orig_prio = self->base_priority;
+                        m->owner_cpu = smp_get_cpu_id();
+                        held_mutex_add(self, id);
+                        m->spinner_count--;
+                        mutex_spin_success++;
+                        __asm__ volatile("sti");
+                        return;
+                    }
+                    __asm__ volatile("sti");
+                    break; /* someone else got it, fall through to yield */
+                }
+
+                /* Check if owner is still on-CPU; if not, stop spinning */
+                if (spin_count > 64 && owner && !owner->on_cpu) {
+                    mutex_spin_abandoned++;
+                    break;
+                }
+
+                /* Periodic pause to be CPU-friendly */
+                if ((spin_count & (MUTEX_SPIN_THRESHOLD - 1)) == 0) {
+                    __asm__ volatile("pause");
+                }
+
+                spin_count++;
+            }
+
+            m->spinner_count--;
+
+            if (spin_count >= MUTEX_SPIN_MAX) {
+                mutex_spin_timeout++;
+            }
+        }
+
         scheduler_yield();
     }
 }
@@ -210,8 +301,10 @@ void mutex_unlock(int id) {
     m->locked = 0;
     m->owner_pid = 0;
     m->owner_rip = 0;
+    m->owner_cpu = -1;
     m->waiter_count = 0;
     m->highest_waiter_prio = 9;
+    /* spinner_count is cleared because all spinners will see locked==0 */
 }
 
 void mutex_destroy(int id) {
@@ -325,6 +418,17 @@ static void restore_owner_priority(struct mutex_entry *m) {
     /* Clear boost tracking */
     if (m->owner_pid < MUTEX_MAX_PI_BOOST)
         mutex_boost[m->owner_pid] = 0;
+}
+
+/* ── Optimistic spinning statistics ──────────────────────────────── */
+
+void mutex_spin_stats(uint64_t *attempts, uint64_t *success,
+                       uint64_t *abandoned, uint64_t *timeout)
+{
+    if (attempts)  *attempts  = mutex_spin_attempts;
+    if (success)   *success   = mutex_spin_success;
+    if (abandoned) *abandoned = mutex_spin_abandoned;
+    if (timeout)   *timeout   = mutex_spin_timeout;
 }
 
 /* ── Exported symbols for loadable kernel modules ────────────────── */

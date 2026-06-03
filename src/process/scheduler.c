@@ -589,14 +589,17 @@ void schedule(void) {
     if (current && current->state == PROCESS_RUNNING) {
         current->nivcsw++;  /* preempted — involuntary context switch */
         current->state = PROCESS_READY;
+        current->on_cpu = 0; /* no longer executing on this CPU */
         spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         scheduler_add(current);
         spinlock_irqsave_release(&sched_lock, irq_flags);
     } else if (current) {
         current->nvcsw++;   /* yielded or blocked — voluntary context switch */
+        current->on_cpu = 0; /* no longer executing */
     }
 
     next->state = PROCESS_RUNNING;
+    next->on_cpu = 1;        /* about to execute on this CPU */
     next->ticks_remaining = slice_for_prio((int)next->priority);
     next->last_run_tick = timer_get_ticks();
     process_set_current(next);

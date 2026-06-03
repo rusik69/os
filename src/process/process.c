@@ -342,6 +342,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->priority    = 1; /* normal priority */
     proc->nice        = NICE_DEFAULT;
     proc->cpu_affinity = 0; /* allow any CPU */
+    proc->on_cpu      = 0; /* not yet executing */
     proc->uid = 0;
     proc->gid = 0;
     proc->euid = 0;
