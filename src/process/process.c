@@ -1341,3 +1341,7 @@ int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4) {
 
     return 0;
 }
+
+/* ── Module exports ──────────────────────────────────────────────── */
+#include "export.h"
+EXPORT_SYMBOL(process_exit);

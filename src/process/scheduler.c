@@ -1109,3 +1109,7 @@ int scheduler_migrate_tasks_from(int from_cpu)
 
     return migrated;
 }
+
+/* ── Module exports ──────────────────────────────────────────────── */
+#include "export.h"
+EXPORT_SYMBOL(scheduler_yield);

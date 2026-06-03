@@ -95,3 +95,12 @@ void speaker_set_volume(uint8_t volume) {
 uint8_t speaker_get_volume(void) {
     return g_volume;
 }
+
+#ifndef MODULE
+/* Export symbols for loadable modules that call speaker functions */
+#include "export.h"
+EXPORT_SYMBOL(speaker_beep);
+EXPORT_SYMBOL(speaker_init);
+EXPORT_SYMBOL(speaker_tone);
+EXPORT_SYMBOL(speaker_off);
+#endif /* !MODULE */

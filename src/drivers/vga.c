@@ -680,3 +680,17 @@ void vga_scrollback_reset(void) {
 int vga_scrollback_available(void) {
     return scrollback_count;
 }
+
+/* ── Module exports (for doom.ko and other loadable modules) ────── */
+#include "export.h"
+EXPORT_SYMBOL(vga_is_framebuffer);
+EXPORT_SYMBOL(vga_try_alloc_software_framebuffer);
+EXPORT_SYMBOL(vga_get_framebuffer_info);
+EXPORT_SYMBOL(vga_clear_framebuffer);
+EXPORT_SYMBOL(vga_refresh_console);
+EXPORT_SYMBOL(vga_get_framebuffer_ptr);
+EXPORT_SYMBOL(vga_put_pixel);
+EXPORT_SYMBOL(vga_putchar);
+EXPORT_SYMBOL(vga_write);
+EXPORT_SYMBOL(vga_clear);
+EXPORT_SYMBOL(vga_set_color);

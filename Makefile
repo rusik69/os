@@ -354,8 +354,8 @@ DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d
 #
 # Module compilation flags: same as CFLAGS but with -DMODULE and without
 # -nostdinc (modules include kernel headers via the same include paths).
-MODULE_CFLAGS  = $(filter-out -nostdinc -fno-builtin -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) \
-                 -DMODULE -ffreestanding -nostdlib -fno-builtin -Isrc/include
+MODULE_CFLAGS  = $(filter-out -nostdinc -fno-builtin -mno-mmx -mno-sse -mno-sse2 -fstack-protector-strong -mstack-protector-guard=global -mcmodel=large, $(CFLAGS)) \
+                 -DMODULE -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mcmodel=small -Isrc/include
 MODULE_LDFLAGS = -r -z max-page-size=0x1000
 
 # Build directory for module objects and .ko files
@@ -366,25 +366,47 @@ MODULE_BUILDDIR = $(BUILDDIR)/modules
 # Override this in a submake or set in environment to add custom modules.
 obj-m ?= drivers/e1000.ko drivers/speaker.ko
 
+# DOOM as a loadable module (built-in + module dual build)
+obj-m += doom.ko
+doom-objs := doom/doom_task doom/doom_combat doom/doom_doors doom/doom_floor \
+             doom/doom_map doom/doom_math doom/doom_player doom/doom_raycast \
+             doom/doom_render doom/doom_sprites doom/doom_textures
+
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
 
-# Module .o files: for each <name>.ko, we need at least one <name>.o
-# The source file for <name>.o is found by searching src/ for <name>.c
-# This supports flat and hierarchical source layouts.
+# Multi-file module support: <basename>-objs lists .o files to link into <basename>.ko
+# If <basename>-objs is not defined, the module is built from a single <basename>.o
+# Examples:
+#   doom-objs := doom/doom_task.o doom/doom_map.o doom/doom_raycast.o ...
+#   (relative to MODULE_BUILDDIR, .o suffix)
+#
+# Function to get the object list for a given module .ko name ($1 = full .ko path)
+# Single-file modules: return "$(basename $1).o" (e.g., build/modules/drivers/e1000.o)
+# Multi-file modules:  return "$(MODULE_BUILDDIR)/$(component1).o $(MODULE_BUILDDIR)/$(component2).o ..."
+module_objs_for = $(if $($(basename $(notdir $(1)))-objs), \
+    $(addprefix $(MODULE_BUILDDIR)/, \
+        $(addsuffix .o, \
+            $(basename $($(basename $(notdir $(1)))-objs)))), \
+    $(basename $(1)).o)
+
+# Module .o files: expand each module to its component .o files
 MODULE_OBJS = $(foreach ko,$(obj-m), \
-    $(MODULE_BUILDDIR)/$(basename $(ko)).o )
+    $(call module_objs_for,$(ko)))
 
 # Rule to compile a module source file into a module .o file
-# Source file is located under src/ relative to the .ko name
-# e.g., build/modules/drivers/e1000.ko ← src/drivers/e1000.c
+# Source file is located under src/ relative to the .o path minus MODULE_BUILDDIR/
+# e.g., build/modules/drivers/e1000.o ← src/drivers/e1000.c
+# e.g., build/modules/doom/doom_task.o ← src/doom/doom_task.c
 $(MODULE_BUILDDIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(MODULE_CFLAGS) -c $< -o $@
 
-# Rule to partially-link module .o(s) into a .ko relocatable file
-# Supports multi-source modules: <name>.ko can depend on multiple .o files
-$(MODULE_BUILDDIR)/%.ko: $(MODULE_BUILDDIR)/%.o
+# Rule to partially-link module .o(s) into a .ko relocatable file.
+# Supports multi-source modules via <basename>-objs variable.
+# Uses .SECONDEXPANSION so $$* expands to the module stem (e.g. "doom" from "doom.ko")
+.SECONDEXPANSION:
+$(MODULE_KOS): $(MODULE_BUILDDIR)/%.ko: $$(call module_objs_for,$(MODULE_BUILDDIR)/$$*.ko)
 	@mkdir -p $(dir $@)
 	$(LD) $(MODULE_LDFLAGS) -o $@ $^
 

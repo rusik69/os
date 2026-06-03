@@ -162,3 +162,10 @@ int mouse_get_wheel(void) {
     mouse_wheel_delta = 0;
     return delta;
 }
+
+/* ── Module exports (for doom.ko and other loadable modules) ────── */
+#include "export.h"
+EXPORT_SYMBOL(mouse_get_pixel_pos);
+EXPORT_SYMBOL(mouse_get_buttons);
+EXPORT_SYMBOL(mouse_get_wheel);
+EXPORT_SYMBOL(mouse_init);

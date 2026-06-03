@@ -285,3 +285,12 @@ char keyboard_getchar(void) {
         scheduler_yield();
     }
 }
+
+/* ── Module exports (for doom.ko and other loadable modules) ────── */
+#include "export.h"
+EXPORT_SYMBOL(keyboard_reset_state);
+EXPORT_SYMBOL(keyboard_escape_down);
+EXPORT_SYMBOL(keyboard_has_input);
+EXPORT_SYMBOL(keyboard_getchar);
+EXPORT_SYMBOL(keyboard_is_down);
+EXPORT_SYMBOL(keyboard_init);

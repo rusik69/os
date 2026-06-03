@@ -5,6 +5,7 @@
 #include "scheduler.h"
 #include "process.h"
 #include "printf.h"
+#include "module.h"
 
 doom_state_t g_doom;
 
@@ -90,3 +91,19 @@ void doom_task(void) {
     kprintf("[doom] Game ended. Health=%d\n", g_doom.player.health);
     process_exit();
 }
+
+#ifdef MODULE
+/* Module entry/exit points — the ELF loader looks for these symbols */
+int init_module(void) {
+    doom_init();
+    return 0;
+}
+void cleanup_module(void) {
+    doom_shutdown();
+}
+
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("DOOM game — first-person shooter running inside the kernel");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
