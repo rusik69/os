@@ -153,6 +153,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/telnetd.c \
          src/net/httpd.c \
          src/net/socket.c \
+         src/net/af_unix.c \
          src/net/netfilter.c \
          src/net/conntrack.c \
          src/net/dns_cache.c \

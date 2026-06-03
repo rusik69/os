@@ -9,12 +9,14 @@
 #include "timer.h"
 #include "export.h"
 #include "module.h"      /* request_module() for protocol autoloading */
+#include "errno.h"
 
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
 
 void socket_init(void) {
     memset(socket_table, 0, sizeof(socket_table));
+    af_unix_init();
 }
 
 /* Convert slot to fd number (fd = slot + 100 to avoid conflict with normal fds) */
@@ -49,6 +51,11 @@ int sock_alloc(void) {
 void sock_free(int fd) {
     struct socket *s = sock_get(fd);
     if (!s) return;
+    /* Destroy AF_UNIX endpoint if present */
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        unix_destroy(s->unix_ep);
+        s->unix_ep = -1;
+    }
     if (s->conn_id >= 0) net_tcp_close(s->conn_id);
     s->in_use = 0;
     s->state = SOCK_STATE_FREE;
@@ -93,12 +100,29 @@ int sys_socket_impl(int domain, int type, int protocol) {
         }
     }
 
+    /* For AF_UNIX: create a local endpoint */
+    s->unix_ep = -1;
+    if (domain == AF_UNIX) {
+        int ep = unix_create(type);
+        if (ep < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
+        s->unix_ep = ep;
+    }
+
     return sock_fd_from_slot(slot);
 }
 
 int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -1;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX) {
+        if (s->unix_ep < 0) return -1;
+        const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
+        int ret = unix_bind(s->unix_ep, un, sizeof(struct sockaddr_un));
+        if (ret == 0) s->state = SOCK_STATE_BOUND;
+        return ret;
+    }
 
     s->local_ip = addr->sin_addr.s_addr;
     s->local_port = ntohs(addr->sin_port);
@@ -118,6 +142,14 @@ int sys_listen_impl(int sockfd, int backlog) {
     if (!s || s->state != SOCK_STATE_BOUND) return -1;
     if (s->type != SOCK_STREAM) return -1;
 
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX) {
+        if (s->unix_ep < 0) return -1;
+        int ret = unix_listen(s->unix_ep, backlog);
+        if (ret == 0) s->state = SOCK_STATE_LISTENING;
+        return ret;
+    }
+
     s->backlog = backlog;
     s->state = SOCK_STATE_LISTENING;
 
@@ -129,6 +161,33 @@ int sys_listen_impl(int sockfd, int backlog) {
 int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s || s->state != SOCK_STATE_LISTENING) return -1;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX) {
+        if (s->unix_ep < 0) return -1;
+        int client_ep = unix_accept(s->unix_ep, 0);
+        if (client_ep < 0) return -1;
+
+        /* Allocate a new socket for the accepted connection */
+        int new_slot = sock_alloc();
+        if (new_slot < 0) { unix_destroy(client_ep); return -1; }
+
+        struct socket *ns = &socket_table[new_slot];
+        ns->domain = AF_UNIX;
+        ns->type = s->type;
+        ns->protocol = 0;
+        ns->state = SOCK_STATE_CONNECTED;
+        ns->unix_ep = client_ep;
+
+        /* Fill in peer address if requested — return empty AF_UNIX addr */
+        if (addr && addrlen) {
+            struct sockaddr_un *un = (struct sockaddr_un *)addr;
+            un->sun_family = AF_UNIX;
+            un->sun_path[0] = '\0';
+            *addrlen = (uint32_t)sizeof(uint16_t);
+        }
+        return sock_fd_from_slot(new_slot);
+    }
 
     /* Block until a connection arrives */
     int conn_id = net_tcp_accept(s->local_port, 10000); /* 100 second timeout */
@@ -161,6 +220,15 @@ int sys_accept_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
 int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -1;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX) {
+        if (s->unix_ep < 0) return -1;
+        const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
+        int ret = unix_connect(s->unix_ep, un, sizeof(struct sockaddr_un));
+        if (ret == 0) s->state = SOCK_STATE_CONNECTED;
+        return ret;
+    }
 
     s->remote_ip = addr->sin_addr.s_addr;
     s->remote_port = ntohs(addr->sin_port);
@@ -483,7 +551,12 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
         uint64_t len = msg->msg_iov[i].iov_len;
         if (len == 0) continue;
 
-        if (s->type == SOCK_STREAM && s->conn_id >= 0) {
+        /* AF_UNIX: dispatch to local socket handler */
+        if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+            int sent = unix_send(s->unix_ep, data, (uint32_t)(len > 65535 ? 65535 : len), 0);
+            if (sent < 0) return total > 0 ? (int)total : sent;
+            total += (uint64_t)sent;
+        } else if (s->type == SOCK_STREAM && s->conn_id >= 0) {
             int sent = net_tcp_send(s->conn_id, data, (uint16_t)(len > 65535 ? 65535 : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
             total += (uint64_t)sent;
@@ -525,6 +598,13 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     void *buf = msg->msg_iov[0].iov_base;
     uint64_t bufsize = msg->msg_iov[0].iov_len;
 
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        int n = unix_recv(s->unix_ep, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), 0);
+        if (n <= 0) return -1;
+        return n;
+    }
+
     if (s->type == SOCK_STREAM && s->conn_id >= 0) {
         int n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), 10);
         if (n < 0) return -1;
@@ -551,6 +631,13 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
 int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s) return -1;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        int ret = unix_getsockname(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
+        return (ret == 0) ? 0 : -1;
+    }
+
     if (*addrlen < sizeof(struct sockaddr_in)) return -1;
     addr->sin_family = AF_INET;
     addr->sin_port = htons(s->local_port);
@@ -562,6 +649,13 @@ int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen) {
     struct socket *s = sock_get(sockfd);
     if (!s || s->state != SOCK_STATE_CONNECTED) return -1;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        int ret = unix_getpeername(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
+        return (ret == 0) ? 0 : -1;
+    }
+
     if (*addrlen < sizeof(struct sockaddr_in)) return -1;
     addr->sin_family = AF_INET;
     addr->sin_port = htons(s->remote_port);
@@ -584,6 +678,11 @@ int sock_poll(int sockfd, int events)
     if (!s) return POLLNVAL;
 
     int revents = 0;
+
+    /* AF_UNIX: dispatch to local socket handler */
+    if (s->domain == AF_UNIX && s->unix_ep >= 0) {
+        return unix_poll(s->unix_ep, events);
+    }
 
     switch (s->type) {
         case SOCK_STREAM: {

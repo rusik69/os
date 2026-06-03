@@ -109,6 +109,13 @@ struct sockaddr_in {
     char            sin_zero[8];
 };
 
+/* UNIX domain socket address */
+#define UNIX_PATH_MAX 108
+struct sockaddr_un {
+    uint16_t sun_family;          /* AF_UNIX */
+    char     sun_path[UNIX_PATH_MAX];  /* pathname */
+};
+
 /* Socket I/O (msghdr for sendmsg/recvmsg) */
 struct msghdr {
     void         *msg_name;       /* ptr to socket address structure */
@@ -199,6 +206,9 @@ struct socket {
      * destination or on close(). */
     uint8_t       cached_dst_mac[6];
     int           cache_valid;
+
+    /* UNIX domain socket endpoint index (or -1 if not AF_UNIX) */
+    int           unix_ep;
 };
 
 /* Socket table operations */
@@ -216,5 +226,20 @@ void socket_init(void);
  * @return  Bitmask of POLLIN|POLLOUT|POLLHUP|POLLERR|POLLNVAL
  */
 int sock_poll(int sockfd, int events);
+
+/* ── AF_UNIX socket operations ──────────────────────────────────── */
+int unix_create(int type);
+void unix_destroy(int endpoint_idx);
+int unix_bind(int endpoint_idx, const struct sockaddr_un *addr, uint32_t addrlen);
+int unix_listen(int endpoint_idx, int backlog);
+int unix_accept(int endpoint_idx, int timeout_ms);
+int unix_connect(int endpoint_idx, const struct sockaddr_un *addr, uint32_t addrlen);
+int unix_send(int endpoint_idx, const void *data, uint32_t len, int nonblock);
+int unix_recv(int endpoint_idx, void *data, uint32_t len, int nonblock);
+int unix_shutdown(int endpoint_idx, int how);
+int unix_poll(int endpoint_idx, int events);
+int unix_getsockname(int endpoint_idx, struct sockaddr_un *addr, uint32_t *addrlen);
+int unix_getpeername(int endpoint_idx, struct sockaddr_un *addr, uint32_t *addrlen);
+void af_unix_init(void);
 
 #endif
