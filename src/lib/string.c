@@ -270,4 +270,9 @@ void *memccpy(void *dest, const void *src, int c, size_t n) {
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcpy);
+EXPORT_SYMBOL(memcmp);
 EXPORT_SYMBOL(strlen);
+EXPORT_SYMBOL(strcmp);
+EXPORT_SYMBOL(strncmp);
+EXPORT_SYMBOL(strchr);
+EXPORT_SYMBOL(strcpy);

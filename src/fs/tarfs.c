@@ -12,6 +12,10 @@
 #include "heap.h"
 #include "vfs.h"
 
+#ifdef MODULE
+#include "module.h"
+#endif
+
 /* Maximum entries we can track from a tar archive */
 #define TARFS_MAX_ENTRIES 128
 
@@ -284,3 +288,20 @@ int tarfs_init(void) {
     vfs_register_filesystem("tarfs", &tarfs_ops);
     return 0;
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    return tarfs_init();
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    /* No cleanup needed for read-only tarfs */
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Read-only tar archive filesystem — mounts in-memory tar archives via VFS");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
