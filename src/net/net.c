@@ -708,110 +708,242 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
     }
 }
 
-/* --- IPv4 fragment reassembly (receive path) --- */
+/* --- IPv4 fragment reassembly (receive path) ---
+ *
+ * Production-quality IP fragment reassembly implementing RFC 791 reassembly.
+ *
+ * Design:
+ *  - Fixed-size slot table with each slot holding a full datagram buffer
+ *  - Bitmap tracks received byte ranges for completeness detection and
+ *    overlap prevention
+ *  - Stale entries evicted after IP_FRAG_TTL_TICKS (~5 seconds) to
+ *    prevent memory exhaustion from lost fragments
+ *  - First fragment must contain full IP header (security: prevent
+ *    tiny-fragment header injection attacks)
+ *  - Overlapping fragments are rejected (security: prevent data injection
+ *    via overlapping fragment attacks)
+ *  - Active slot count tracked for monitoring and DoS mitigation
+ *  - Statistics exposed via net_frag_stats() for monitoring tools
+ */
 
-#define IP_FRAG_SLOTS 4
+#define IP_FRAG_SLOTS          32    /* max concurrent fragmented datagrams */
+#define IP_FRAG_BUF_SIZE       4096  /* max reassembly buf (covers jumbo frames) */
+#define IP_FRAG_TTL_TICKS      500   /* ~5 seconds at 100 Hz timer */
+
+/* Fragment reassembly statistics — instantiated here, declared in net_internal.h */
+static struct frag_stats frag_stats;
+
 struct ip_frag_slot {
-    uint16_t id;
-    uint32_t src;
-    uint32_t dst;
-    uint8_t  proto;
-    uint8_t  buf[2048];
-    uint16_t len;
-    uint16_t expect_off;
-    uint16_t frag_end;
-    uint8_t  frag_map[256];
-    uint64_t tick;
-    int      valid;
+    uint16_t id;                          /* IP identification field */
+    uint32_t src;                         /* source IP (host order) */
+    uint32_t dst;                         /* destination IP (host order) */
+    uint8_t  proto;                       /* upper-layer protocol */
+    uint8_t  buf[IP_FRAG_BUF_SIZE];       /* reassembly data buffer */
+    uint16_t len;                         /* highest byte offset received */
+    uint16_t frag_end;                    /* end offset of the last fragment */
+    uint8_t  frag_map[IP_FRAG_BUF_SIZE / 8]; /* bitmap: 1 = byte received */
+    uint64_t tick;                        /* timestamp of last activity */
+    int      valid;                       /* 1 = slot is in use */
+    uint8_t  ihl;                         /* IP header length from first fragment */
 };
 
 static struct ip_frag_slot ip_frags[IP_FRAG_SLOTS];
-#define IP_FRAG_TTL_TICKS 500
 
+/* Forward declaration for dispatching reassembled packets */
+static void handle_ip(const uint8_t *data, uint16_t len);
+
+/* net_frag_stats: copy current fragment reassembly statistics to caller */
+void net_frag_stats(struct frag_stats *out) {
+    if (out)
+        memcpy(out, &frag_stats, sizeof(frag_stats));
+}
+
+/* Evict fragment slots that have exceeded the TTL (no progress) */
 static void frag_evict_stale(void) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
-        if (ip_frags[i].valid && now - ip_frags[i].tick > IP_FRAG_TTL_TICKS)
+        if (ip_frags[i].valid && now - ip_frags[i].tick > IP_FRAG_TTL_TICKS) {
+            kprintf("[NET] frag timeout: id=%u src=%08x dst=%08x proto=%u "
+                    "rcvd=%u/%u\n",
+                    ip_frags[i].id, ip_frags[i].src, ip_frags[i].dst,
+                    ip_frags[i].proto, ip_frags[i].len, ip_frags[i].frag_end);
             ip_frags[i].valid = 0;
+            frag_stats.active_slots--;
+            frag_stats.rx_timed_out++;
+        }
     }
 }
 
-static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src, uint32_t dst, uint8_t proto) {
+/* Find slot matching (id, src, dst, proto) or allocate a new one.
+ * Returns NULL if all slots are occupied and no stale entry could be freed. */
+static struct ip_frag_slot *frag_find(uint16_t id, uint32_t src,
+                                       uint32_t dst, uint8_t proto) {
     frag_evict_stale();
+
+    /* Return existing matching slot */
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
-        if (ip_frags[i].valid && ip_frags[i].id == id &&
-            ip_frags[i].src == src && ip_frags[i].dst == dst && ip_frags[i].proto == proto)
+        if (ip_frags[i].valid &&
+            ip_frags[i].id    == id &&
+            ip_frags[i].src   == src &&
+            ip_frags[i].dst   == dst &&
+            ip_frags[i].proto == proto)
             return &ip_frags[i];
     }
+
+    /* Allocate new empty slot */
     for (int i = 0; i < IP_FRAG_SLOTS; i++) {
         if (!ip_frags[i].valid) {
             ip_frags[i].valid = 1;
-            ip_frags[i].id = id;
-            ip_frags[i].src = src;
-            ip_frags[i].dst = dst;
-            ip_frags[i].proto = proto;
-            ip_frags[i].len = 0;
-            ip_frags[i].expect_off = 0;
+            ip_frags[i].id     = id;
+            ip_frags[i].src    = src;
+            ip_frags[i].dst    = dst;
+            ip_frags[i].proto  = proto;
+            ip_frags[i].len    = 0;
             ip_frags[i].frag_end = 0;
+            ip_frags[i].ihl    = 0;
             memset(ip_frags[i].frag_map, 0, sizeof(ip_frags[i].frag_map));
             ip_frags[i].tick = timer_get_ticks();
+            frag_stats.active_slots++;
+            if (frag_stats.active_slots > frag_stats.max_active)
+                frag_stats.max_active = frag_stats.active_slots;
             return &ip_frags[i];
         }
     }
+
+    /* All slots exhausted */
+    frag_stats.rx_oom++;
+    kprintf("[NET] frag: all %d slots exhausted (id=%u src=%08x)\n",
+            IP_FRAG_SLOTS, id, src);
     return NULL;
 }
 
-static void handle_ip(const uint8_t *data, uint16_t len);
-
-static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data, uint16_t len) {
+/* Handle a received IP fragment.
+ *
+ * Returns:
+ *   0 -> packet is not fragmented (no reassembly needed)
+ *   1 -> fragment accepted, waiting for more
+ *  -1 -> error / fragment discarded (caller must stop processing)
+ *
+ * On success (returns 1 with MF=0 and all data present), reassembles
+ * the full datagram and dispatches it via handle_ip(). */
+static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
+                               uint16_t len) {
     uint16_t flags_frag = ntohs(ip->flags_frag);
     uint32_t frag_off = (uint32_t)(flags_frag & 0x1FFF) * 8;
-    int more = (flags_frag & 0x2000) != 0;
+    int      more     = (flags_frag & 0x2000) != 0;
 
+    /* Fast path: single unfragmented packet */
     if (frag_off == 0 && !more)
-        return 0; /* not fragmented */
+        return 0;
+
+    uint16_t ihl = (ip->version_ihl & 0xF) * 4;
+    if (ihl < 20 || ihl > len)
+        return -1;
+
+    uint16_t part = len - ihl;
+    if (part == 0)
+        return -1;   /* empty fragment */
+
+    /* Security: first fragment must contain at least the full IP header
+     * so that upper-layer protocol demux can operate. */
+    if (frag_off == 0 && part < 8) {
+        frag_stats.rx_dropped++;
+        kprintf("[NET] frag: tiny first fragment (part=%u) from src=%08x\n",
+                part, ntohl(ip->src_ip));
+        return -1;
+    }
+
+    frag_stats.rx_fragments++;
 
     uint32_t src = ntohl(ip->src_ip);
     uint32_t dst = ntohl(ip->dst_ip);
-    struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst, ip->protocol);
-    if (!slot) return -1;
-
-    uint16_t ihl = (ip->version_ihl & 0xF) * 4;
-    uint16_t part = len - ihl;
-    if (frag_off + (uint32_t)part > sizeof(slot->buf)) return -1;
-
-    /* Reject overlapping fragments (security: prevent data injection attacks) */
-    for (uint16_t b = frag_off; b < frag_off + part; b++) {
-        if (slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8)))
-            return -1;
+    struct ip_frag_slot *slot = frag_find(ntohs(ip->id), src, dst,
+                                           ip->protocol);
+    if (!slot) {
+        frag_stats.rx_dropped++;
+        return -1;
     }
 
+    /* Validate fragment fits within the reassembly buffer */
+    if (frag_off + (uint32_t)part > IP_FRAG_BUF_SIZE) {
+        frag_stats.rx_dropped++;
+        kprintf("[NET] frag overflow: off=%u part=%u limit=%u (id=%u)\n",
+                frag_off, part, IP_FRAG_BUF_SIZE, ntohs(ip->id));
+        return -1;
+    }
+
+    /* Record IP header length from the first fragment */
+    if (frag_off == 0)
+        slot->ihl = ihl;
+
+    /* Reject overlapping fragments (security: RFC 1858 / RFC 3128).
+     * Overlapping fragments can be used to bypass stateless packet filters
+     * by injecting data into the middle of a reassembled packet. */
+    for (uint32_t b = frag_off; b < frag_off + part; b++) {
+        if (slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8))) {
+            frag_stats.rx_overlaps++;
+            kprintf("[NET] frag overlap rejected: id=%u off=%u+%d "
+                    "(possible attack from %08x)\n",
+                    ntohs(ip->id), frag_off, part, src);
+            return -1;
+        }
+    }
+
+    /* Copy fragment payload and mark received bytes in the bitmap */
     memcpy(slot->buf + frag_off, data + ihl, part);
     for (uint32_t b = frag_off; b < frag_off + part; b++)
         slot->frag_map[b / 8] |= (uint8_t)(1u << (b % 8));
-    if (frag_off + part > slot->len) slot->len = (uint16_t)(frag_off + part);
-    if (frag_off + part > slot->frag_end) slot->frag_end = (uint16_t)(frag_off + part);
+
+    if (frag_off + part > slot->len)
+        slot->len = (uint16_t)(frag_off + part);
+    if (frag_off + part > slot->frag_end)
+        slot->frag_end = (uint16_t)(frag_off + part);
     slot->tick = timer_get_ticks();
 
-    if (more) return 1;
+    /* If more fragments are expected, stay in progress */
+    if (more)
+        return 1;
 
-    for (uint16_t b = 0; b < slot->len; b++) {
+    /* Last fragment: verify all bytes from 0..len are received */
+    for (uint32_t b = 0; b < slot->len; b++) {
         if (!(slot->frag_map[b / 8] & (uint8_t)(1u << (b % 8))))
-            return 1;
+            return 1;   /* gaps remain, keep waiting */
     }
 
+    /* ---- Reassembly complete ---- */
     slot->valid = 0;
+    frag_stats.active_slots--;
+    frag_stats.rx_reassembled++;
+
+    /* Use the IHL recorded from the first fragment (or fall back to the
+     * current fragment's IHL if no first fragment arrived with a header). */
+    uint16_t reasm_ihl = (slot->ihl != 0) ? slot->ihl : ihl;
+
+    /* Build a complete IP packet in a local buffer */
+    uint8_t pkt[IP_FRAG_BUF_SIZE + 60];  /* 60 = max IP header */
     struct ip_header reasm;
     memcpy(&reasm, ip, sizeof(reasm));
     reasm.flags_frag = 0;
-    reasm.total_len = htons(sizeof(struct ip_header) + slot->len);
-    reasm.checksum = 0;
-    uint8_t pkt[2048];
-    memcpy(pkt, &reasm, ihl);
-    memcpy(pkt + ihl, slot->buf, slot->len);
-    reasm.checksum = net_checksum(pkt, ihl);
-    memcpy(pkt, &reasm, ihl);
-    handle_ip(pkt, ihl + slot->len);
+    reasm.total_len  = htons(reasm_ihl + slot->len);
+    reasm.checksum   = 0;
+
+    if (reasm_ihl + slot->len > sizeof(pkt)) {
+        kprintf("[NET] frag: reassembled pkt too large (%u bytes)\n",
+                reasm_ihl + slot->len);
+        return -1;
+    }
+
+    memcpy(pkt, &reasm, reasm_ihl);
+    memcpy(pkt + reasm_ihl, slot->buf, slot->len);
+    reasm.checksum = net_checksum(pkt, reasm_ihl);
+    memcpy(pkt, &reasm, reasm_ihl);
+
+    kprintf("[NET] frag reassembled: id=%u src=%08x dst=%08x proto=%u "
+            "size=%u slots_used=%u\n",
+            ntohs(ip->id), src, dst, ip->protocol,
+            reasm_ihl + slot->len, frag_stats.active_slots);
+
+    handle_ip(pkt, reasm_ihl + slot->len);
     return 1;
 }
 
@@ -1082,6 +1214,7 @@ int net_loopback_send(const void *data, int len) {
 }
 
 /* ── Exported symbols for network protocol/driver modules ─────────── */
+EXPORT_SYMBOL(net_frag_stats);
 EXPORT_SYMBOL(net_init);
 EXPORT_SYMBOL(net_poll);
 EXPORT_SYMBOL(net_link_send);

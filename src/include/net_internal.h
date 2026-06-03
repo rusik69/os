@@ -242,4 +242,21 @@ void arp_announce(void);
 /* ICMP destination unreachable (net_udp.c) */
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len);
 
+/* ── IP fragment reassembly statistics ───────────────────────────── */
+
+/* Fragment reassembly statistics — populated by net.c */
+struct frag_stats {
+    uint32_t rx_fragments;     /* total fragment packets received */
+    uint32_t rx_reassembled;   /* datagrams successfully reassembled */
+    uint32_t rx_timed_out;     /* incomplete datagrams expired */
+    uint32_t rx_dropped;       /* fragments dropped due to errors */
+    uint32_t rx_overlaps;      /* overlapping fragments rejected (attack) */
+    uint32_t rx_oom;           /* fragments dropped due to no free slot */
+    uint32_t active_slots;     /* current number of active fragment slots */
+    uint32_t max_active;       /* peak active slot count since boot */
+};
+
+/* Copy current fragment statistics to caller-supplied buffer */
+void net_frag_stats(struct frag_stats *out);
+
 #endif /* NET_INTERNAL_H */
