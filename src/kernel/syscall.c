@@ -5603,18 +5603,86 @@ void posix_timer_tick(void) {
 /* ── Modern FD operations ─────────────────────────────────────────────── */
 
 static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
-    (void)flags;
-    /* Use existing dup2, then optionally set CLOEXEC */
-    int r = sys_dup2(oldfd, newfd);
-    return r < 0 ? (uint64_t)-1 : (uint64_t)r;
+    /* Validate flags — only O_CLOEXEC is valid for dup3 */
+    if (flags & ~(uint64_t)O_CLOEXEC)
+        return (uint64_t)-1;
+
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    if (oldfd >= PROCESS_FD_MAX || !proc->fd_table[oldfd].used)
+        return (uint64_t)-1;
+    if (newfd >= PROCESS_FD_MAX)
+        return (uint64_t)-1;
+
+    /* If oldfd == newfd and flags has O_CLOEXEC, just update the flag */
+    if (oldfd == newfd) {
+        if (flags & O_CLOEXEC)
+            proc->fd_table[newfd].flags |= FD_CLOEXEC;
+        else
+            proc->fd_table[newfd].flags &= ~FD_CLOEXEC;
+        return newfd;
+    }
+
+    /* Close new_fd if open */
+    if (proc->fd_table[newfd].used) {
+        memset(&proc->fd_table[newfd], 0, sizeof(struct process_fd));
+    }
+
+    /* Duplicate fd entry */
+    proc->fd_table[newfd] = proc->fd_table[oldfd];
+
+    /* Set CLOEXEC flag if requested */
+    if (flags & O_CLOEXEC)
+        proc->fd_table[newfd].flags |= FD_CLOEXEC;
+    else
+        proc->fd_table[newfd].flags &= ~FD_CLOEXEC;
+
+    return newfd;
 }
 
 static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
-    (void)flags;
-    (void)fds_addr;
-    int fds[2];
-    int r = sys_pipe((uint64_t)(uintptr_t)fds);
-    (void)r; (void)fds;
+    /* Validate flags — only O_CLOEXEC and O_NONBLOCK are valid for pipe2 */
+    if (flags & ~(uint64_t)(O_CLOEXEC | O_NONBLOCK))
+        return (uint64_t)-1;
+    if (!fds_addr)
+        return (uint64_t)-1;
+    if (syscall_is_user_process() && !syscall_user_write_ok(fds_addr, 8))
+        return (uint64_t)-1;
+
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    int id = pipe_create();
+    if (id < 0) return (uint64_t)-1;
+
+    /* Set non-blocking mode if requested */
+    if (flags & O_NONBLOCK)
+        pipe_set_nonblock(id, 1);
+
+    /* Allocate two FD slots */
+    int read_fd = -1, write_fd = -1;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!proc->fd_table[i].used) {
+            if (read_fd < 0) read_fd = i;
+            else if (write_fd < 0) { write_fd = i; break; }
+        }
+    }
+    if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
+
+    /* Store pipe index as fd entries */
+    proc->fd_table[read_fd].used = 1;
+    proc->fd_table[read_fd].offset = (uint32_t)id;
+    snprintf(proc->fd_table[read_fd].path, 64, "pipe_read_%d", id);
+    proc->fd_table[read_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
+
+    proc->fd_table[write_fd].used = 1;
+    proc->fd_table[write_fd].offset = (uint32_t)id;
+    snprintf(proc->fd_table[write_fd].path, 64, "pipe_write_%d", id);
+    proc->fd_table[write_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
+
+    /* Write fds back to userspace */
+    uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
+    memcpy((void*)(uintptr_t)fds_addr, fds, sizeof(fds));
     return 0;
 }
 
