@@ -25,6 +25,7 @@ bits 64
 global syscall_entry
 global libc_syscall
 extern syscall_dispatch
+extern zero_kernel_stack_uapi
 
 section .data
 global syscall_kernel_rsp
@@ -54,6 +55,15 @@ execve_user_rip: dq 0
 execve_user_rflags: dq 0
 execve_user_rsp: dq 0
 
+; ── Kernel stack zeroing (FINER — Item 180) ────────────────────────────
+; syscall_entry_rsp: saved RSP value after all register pushes in
+; syscall_entry.  Used by zero_kernel_stack_uapi() to determine the
+; portion of the kernel stack that was used during this syscall, so it
+; can be zeroed before returning to userspace, preventing information
+; disclosure through residual kernel stack data.
+global syscall_entry_rsp_saved
+syscall_entry_rsp_saved: dq 0
+
 ; ============================================================================
 ; syscall_entry — ring-3 path only
 ; ============================================================================
@@ -82,6 +92,10 @@ syscall_entry:
     push    r13                                ; (7)
     push    r14                                ; (8)
     push    r15                                ; (9)
+
+    ; Save the stack pointer after pushing all registers for stack zeroing.
+    ; This marks the "high-water mark" of kernel stack usage for this syscall.
+    mov     [rel syscall_entry_rsp_saved], rsp
 
     ; Save user RIP and RFLAGS for clone()
     mov     [rel syscall_user_rip], rcx
@@ -118,6 +132,14 @@ syscall_entry:
     o64 sysret
 
 .normal_return:
+    ; ── Zero kernel stack to prevent information disclosure ────────
+    ; Before restoring registers, call the stack zeroing function.
+    ; We pass rsp (current stack pointer, pointing to bottom of saved
+    ; register frame) as argument 0.  After the call, rsp is restored
+    ; by the callee's ret, so we can safely pop the saved registers.
+    mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
+    call    zero_kernel_stack_uapi
+
     pop     r15
     pop     r14
     pop     r13

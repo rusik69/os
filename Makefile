@@ -57,6 +57,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/idt.c \
          src/kernel/fault.c \
          src/kernel/syscall.c \
+         src/kernel/syscall_cleanup.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
          src/kernel/apic.c \
