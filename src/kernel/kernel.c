@@ -272,6 +272,39 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                 cmdline_init(cmdline_virt);
             }
         }
+
+        /* ── Parse kernel boot parameters ───────────────────────────
+         * Supported parameters (Item 297):
+         *   quiet     — suppress [OK] boot messages (set loglevel to KERN_WARNING)
+         *   debug     — show all debug-level messages (set loglevel to KERN_DEBUG)
+         *   console=  — select console device: "serial", "vga", or "both"
+         *   loglevel= — set console loglevel directly (0..7)
+         */
+        if (cmdline_has("quiet")) {
+            console_loglevel = 4; /* KERN_WARNING — only warnings+errors shown */
+        }
+        if (cmdline_has("debug")) {
+            console_loglevel = 7; /* KERN_DEBUG — show everything */
+        }
+        const char *loglevel_val = cmdline_get("loglevel");
+        if (loglevel_val && *loglevel_val) {
+            int ll = 0;
+            const char *lp = loglevel_val;
+            while (*lp >= '0' && *lp <= '9') {
+                ll = ll * 10 + (*lp++ - '0');
+            }
+            if (ll >= 0 && ll <= 7) {
+                console_loglevel = ll;
+            }
+        }
+        const char *console_val = cmdline_get("console");
+        if (console_val) {
+            /* console= parameter will be consumed by serial/console init later.
+             * Currently we just recognise it; the actual console switching
+             * happens in serial_init / fbcon_init / vga_init.
+             * Store indication for future use. */
+            kprintf_level(KERN_INFO, "[OK] Console parameter: %s\n", console_val);
+        }
     }
 
     /* Virtual memory manager */
@@ -790,22 +823,38 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Normal mode: try to load a userspace init binary from the filesystem.
      * If successful, the init process runs in ring 3 and can spawn shell, etc.
-     * If no init binary is found, fall back to kernel-mode shell. */
+     * If no init binary is found, fall back to kernel-mode shell.
+     *
+     * The init path can be overridden via the `init=` kernel cmdline parameter.
+     * Example: init=/mnt/bin/sh.elf  or  init=/sbin/init  */
     int init_ok = 0;
 
-    /* Try common init paths */
-    const char *init_paths[] = {
-        "/mnt/init.elf",
-        "/mnt/bin/init",
-        "/mnt/shell.elf",
-        "/mnt/bin/sh.elf",
-    };
-
-    for (size_t i = 0; i < sizeof(init_paths) / sizeof(init_paths[0]); i++) {
-        if (elf_exec(init_paths[i]) == 0) {
+    /* Check for init= cmdline parameter first */
+    const char *cmdline_init_path = cmdline_get("init");
+    if (cmdline_init_path && *cmdline_init_path) {
+        if (elf_exec(cmdline_init_path) == 0) {
             init_ok = 1;
-            kprintf("[OK] Userspace init: %s\n", init_paths[i]);
-            break;
+            kprintf("[OK] Userspace init (cmdline): %s\n", cmdline_init_path);
+        } else {
+            kprintf("[!!] Cmdline init=%s failed, trying defaults\n", cmdline_init_path);
+        }
+    }
+
+    if (!init_ok) {
+        /* Try common init paths */
+        const char *init_paths[] = {
+            "/mnt/init.elf",
+            "/mnt/bin/init",
+            "/mnt/shell.elf",
+            "/mnt/bin/sh.elf",
+        };
+
+        for (size_t i = 0; i < sizeof(init_paths) / sizeof(init_paths[0]); i++) {
+            if (elf_exec(init_paths[i]) == 0) {
+                init_ok = 1;
+                kprintf("[OK] Userspace init: %s\n", init_paths[i]);
+                break;
+            }
         }
     }
 
