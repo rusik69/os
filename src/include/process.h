@@ -221,6 +221,10 @@ struct process {
 #define PROCESS_MAX_HELD_MUTEXES 4
     int held_mutex_count;          /* number of mutexes currently held */
     int held_mutex_ids[PROCESS_MAX_HELD_MUTEXES]; /* mutex IDs held by this process */
+    /* ── Wakee flips heuristic for waker/wakee CPU affinity ───────── */
+    struct process *last_wakee;      /* the last process this task woke up */
+    int             wakee_flip_cnt;  /* count of wakee switches (decays over time) */
+    uint64_t        wakee_flip_tick; /* last tick when flip count was updated/decayed */
     /* ── Executable path (for /proc/self/exe) ────────────────────── */
     char exe_path[256];
 };

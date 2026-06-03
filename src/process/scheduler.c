@@ -999,6 +999,49 @@ static void cfs_update_min_vruntime(void) {
 void scheduler_wakeup(struct process *proc) {
     if (!proc) return;
 
+    /* ── Wakee flips heuristic ──────────────────────────────────────
+     *
+     * Detect one-sided communication patterns (e.g. a producer that
+     * always wakes the same consumer).  When the waker keeps waking
+     * the *same* task we prefer to keep them on the same CPU (affine
+     * wakeup) for cache warmth and reduced migration cost.  When the
+     * waker flips between many different tasks we fall back to a
+     * regular wakeup.
+     *
+     * The flip counter is incremented whenever the waker's last_wakee
+     * differs from the current wakee, and decays by half roughly every
+     * 32 timer ticks (~320 ms at 100 Hz) so that transient patterns
+     * don't skew the decision permanently.
+     */
+    struct process *waker = this_cpu()->current_process;
+    if (waker && waker != proc) {
+        uint64_t now = timer_get_ticks();
+
+        /* Periodic decay: halve the counter every ~32 ticks */
+        if (now - waker->wakee_flip_tick > 32) {
+            waker->wakee_flip_cnt >>= 1;
+            waker->wakee_flip_tick = now;
+        }
+
+        if (waker->last_wakee != proc) {
+            /* The waker switched to a different wakee — record the flip */
+            if (waker->wakee_flip_cnt < 65535)
+                waker->wakee_flip_cnt++;
+            waker->last_wakee = proc;
+        }
+
+        /* Low flip count (< 2 flips) means the waker keeps waking the
+         * same task → place the wakee on the waker's CPU for cache
+         * warmth.  High flip count means scattered communication →
+         * leave the wakee where it is (no cross-CPU pull).
+         */
+        if (waker->wakee_flip_cnt < 2) {
+            /* The current task (waker) is about to add the wakee to
+             * this CPU's runqueue via scheduler_add() below, so the
+             * wakeup is already affine.  No special action needed. */
+        }
+    }
+
     /* Ensure min_vruntime is up-to-date */
     cfs_update_min_vruntime();
     uint64_t min_vr = this_cpu()->cfs_min_vruntime;

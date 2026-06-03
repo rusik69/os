@@ -401,6 +401,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
     /* Initialize PELT load tracking */
     pelt_init(&proc->pelt);
 
+    /* Initialize wakee flips heuristic fields */
+    proc->last_wakee      = NULL;
+    proc->wakee_flip_cnt  = 0;
+    proc->wakee_flip_tick = 0;
+
     /* Set up initial context on the stack */
     uint64_t *sp = (uint64_t *)(proc->stack_top);
 
