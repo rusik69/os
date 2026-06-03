@@ -291,6 +291,8 @@ int elf_exec(const char *path) {
 
         kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n",
                 name ? name : "(null)", (unsigned long)p->pid, (unsigned long)entry);
+        strncpy(p->exe_path, path, 255);
+        p->exe_path[255] = '\0';
         return 0;
     }
 
@@ -304,6 +306,8 @@ int elf_exec(const char *path) {
 
     kprintf("elf: creating kernel process pid=%lu entry=0x%lx\n",
             (unsigned long)p->pid, (unsigned long)entry);
+    strncpy(p->exe_path, path, 255);
+    p->exe_path[255] = '\0';
     return 0;
 }
 
@@ -593,7 +597,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     uint64_t new_rsp = sp;
 
-    /* Update process name */
+    /* Update process name and exe path */
     size_t plen = strlen(path);
     if (plen > 255) plen = 255;
     char *kname = (char *)kmalloc(plen + 1);
@@ -602,6 +606,8 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         kname[plen] = '\0';
         cur->name = kname;
     }
+    strncpy(cur->exe_path, path, 255);
+    cur->exe_path[255] = '\0';
 
     /* Close all file descriptors with FD_CLOEXEC flag */
     for (int i = 0; i < PROCESS_FD_MAX; i++) {

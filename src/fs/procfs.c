@@ -906,6 +906,16 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             len = procfs_gen_pid_status(proc->pid, buf, (int)max_size);
         else
             return -1;
+    } else if (strcmp(path, "/proc/self/exe") == 0) {
+        /* Return path to current process's executable */
+        struct process *proc = process_get_current();
+        if (!proc || !proc->exe_path[0])
+            return -1;
+        len = (int)strlen(proc->exe_path);
+        if (len > (int)max_size - 1) len = (int)max_size - 1;
+        memcpy(buf, proc->exe_path, (size_t)len);
+        buf[len] = '\n';
+        len++;
     } else if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
         /* Sysctl read */
         len = sysctl_read(path + 17, buf, (int)max_size);
@@ -999,6 +1009,10 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     /* /proc/self is a symlink to /proc/<pid>/ — return directory type */
     if (strcmp(path, "/proc/self") == 0) {
         st->type = 2; st->size = 0; return 0;
+    }
+    /* /proc/self/exe — executable path of current process */
+    if (strcmp(path, "/proc/self/exe") == 0) {
+        st->type = 1; st->size = 256; return 0;
     }
     /* /proc/<pid>/status */
     const char *p = path + 6;

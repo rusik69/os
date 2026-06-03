@@ -363,6 +363,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->coredump_enabled = 1;
     proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
     memset(proc->proc_comm, 0, 16);
+    memset(proc->exe_path, 0, sizeof(proc->exe_path));
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
@@ -468,6 +469,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->coredump_enabled = 1;
     proc->dumpable = 1;        /* SUID_DUMP_USER: core dumps allowed by default */
     memset(proc->proc_comm, 0, 16);
+    memset(proc->exe_path, 0, sizeof(proc->exe_path));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);
     proc->landlock_ruleset_id = -1;  /* no landlock restrictions */

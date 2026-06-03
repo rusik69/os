@@ -217,6 +217,8 @@ struct process {
 #define PROCESS_MAX_HELD_MUTEXES 4
     int held_mutex_count;          /* number of mutexes currently held */
     int held_mutex_ids[PROCESS_MAX_HELD_MUTEXES]; /* mutex IDs held by this process */
+    /* ── Executable path (for /proc/self/exe) ────────────────────── */
+    char exe_path[256];
 };
 
 void process_init(void);
