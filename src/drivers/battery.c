@@ -6,13 +6,20 @@
 #include "printf.h"
 
 /*
- * ACPI battery driver.
+ * ACPI battery driver with aging-aware capacity reporting (Item 107).
  *
  * Reads battery status by searching the ACPI DSDT/SSDT for _BIF (battery info)
  * and _BST (battery status) control methods. Since we lack an AML interpreter,
  * we scan for known battery device PNP IDs and extract static info from
  * the DSDT definition blocks, then read the embedded controller (EC) ports
  * to get live battery data.
+ *
+ * Aging correction:
+ *   Design capacity   = theoretical max capacity when the battery was new
+ *   Full charge cap   = actual max capacity the battery can hold now (decreases with wear)
+ *   Wear level        = (1 - full_charge / design) * 100%
+ *   Displayed %       = min(current_capacity / design_capacity * 100, 100)
+ *                     = aging-corrected: shows charge as % of original design capacity
  *
  * EC register-based battery data (common in QEMU, real laptops):
  *   EC command port:  0x66
@@ -35,19 +42,31 @@
 #define PNP_BATTERY "PNP0C0A"
 
 /* Battery data registers (offset into EC RAM) */
-#define EC_BATTERY_PRESENT  0x00
-#define EC_BATTERY_VOLTAGE  0x04  /* mV, 16-bit */
-#define EC_BATTERY_RATE     0x08  /* mW, 16-bit */
-#define EC_BATTERY_CAPACITY 0x0C  /* % remaining */
-#define EC_BATTERY_STATUS   0x10  /* 0=discharging, 1=charging, 2=full */
+#define EC_BATTERY_PRESENT      0x00
+#define EC_BATTERY_VOLTAGE      0x04  /* mV, 16-bit */
+#define EC_BATTERY_RATE         0x08  /* mW, 16-bit */
+#define EC_BATTERY_CAPACITY     0x0C  /* % remaining (0..100) */
+#define EC_BATTERY_STATUS       0x10  /* 0=discharging, 1=charging, 2=full */
 
 /* Battery info registers */
-#define EC_BATTERY_INFO_FLAG    0x12  /* bit 0 = present */
-#define EC_BATTERY_FULL_CAP     0x14  /* mAh */
+#define EC_BATTERY_INFO_FLAG        0x12  /* bit 0 = present */
+#define EC_BATTERY_FULL_CAP_LOW     0x14  /* mAh, 16-bit low word */
+#define EC_BATTERY_FULL_CAP_HIGH    0x16  /* mAh, 16-bit high word */
+#define EC_BATTERY_DESIGN_CAP_LOW   0x18  /* mAh, 16-bit low word */
+#define EC_BATTERY_DESIGN_CAP_HIGH  0x1A  /* mAh, 16-bit high word */
+#define EC_BATTERY_CYCLE_COUNT      0x1C  /* cycles, 16-bit */
 
-static int battery_ec_found = 0;   /* 1 if EC-based battery is present */
+static int battery_ec_found = 0;      /* 1 if EC-based battery is present */
 static int battery_present = 0;
-static uint16_t battery_full_capacity = 0;  /* mAh */
+
+/* Aging-aware capacity tracking (Item 107).
+ * design_capacity:   theoretical max when new (from _BIF / EC info registers).
+ * full_charge_cap:   actual full capacity now — decreases as the battery ages.
+ * These are stored as mAh.  If only one value is available, design == full_charge
+ * (no aging data) and wear level is reported as 0. */
+static uint32_t battery_design_capacity = 0;     /* mAh */
+static uint32_t battery_full_charge_capacity = 0; /* mAh */
+static uint32_t battery_cycle_count = 0;          /* 0 = unknown */
 
 /* ── Embedded Controller access ─────────────────────────────────────── */
 
@@ -85,6 +104,13 @@ static uint16_t ec_read_word(uint8_t offset) {
     uint16_t lo = ec_read_byte(offset);
     uint16_t hi = ec_read_byte(offset + 1);
     return lo | (hi << 8);
+}
+
+/* Read a 32-bit little-endian value from EC RAM */
+static uint32_t ec_read_dword(uint8_t offset) {
+    uint32_t lo = ec_read_word(offset);
+    uint32_t hi = ec_read_word(offset + 2);
+    return lo | (hi << 16);
 }
 
 /* ── DSDT scanner ───────────────────────────────────────────────────── */
@@ -206,9 +232,37 @@ int battery_init(void) {
         uint8_t present = ec_read_byte(EC_BATTERY_PRESENT);
         if (present == 0x01) {
             battery_present = 1;
-            battery_full_capacity = ec_read_word(EC_BATTERY_FULL_CAP);
-            kprintf("[OK] Battery: EC-based battery detected (full capacity: %u mAh)\n",
-                    (uint32_t)battery_full_capacity);
+
+            /* Read full-charge capacity (now) and design capacity (when new).
+             * If both are available we can compute wear level; if only one
+             * we treat them as equal (no aging data). */
+            battery_design_capacity = ec_read_dword(EC_BATTERY_DESIGN_CAP_LOW);
+            battery_full_charge_capacity = ec_read_dword(EC_BATTERY_FULL_CAP_LOW);
+            battery_cycle_count = ec_read_word(EC_BATTERY_CYCLE_COUNT);
+
+            /* Sanity: if design capacity is 0 or less than full charge,
+             * fall back to using full-charge as design (conservative). */
+            if (battery_design_capacity == 0 ||
+                battery_design_capacity < battery_full_charge_capacity) {
+                battery_design_capacity = battery_full_charge_capacity;
+            }
+            if (battery_full_charge_capacity == 0) {
+                /* No full-charge data either — use a default */
+                battery_full_charge_capacity = battery_design_capacity;
+            }
+
+            uint32_t wear = 0;
+            if (battery_design_capacity > 0) {
+                wear = (battery_design_capacity - battery_full_charge_capacity) * 100U
+                       / battery_design_capacity;
+            }
+
+            kprintf("[OK] Battery: EC-based battery detected "
+                    "(design=%u mAh, full=%u mAh, wear=%u%%, cycles=%u)\n",
+                    (unsigned int)battery_design_capacity,
+                    (unsigned int)battery_full_charge_capacity,
+                    (unsigned int)wear,
+                    (unsigned int)battery_cycle_count);
             return 0;
         }
     }
@@ -216,9 +270,11 @@ int battery_init(void) {
     /* Fallback: scan DSDT for battery device */
     if (scan_dsdt_for_battery()) {
         battery_present = 1;
-        battery_full_capacity = 4000; /* Default fallback value */
+        battery_design_capacity = 4000;     /* Default fallback for design */
+        battery_full_charge_capacity = 4000; /* Assume no wear when unknown */
+        battery_cycle_count = 0;
         battery_ec_found = 1;
-        kprintf("[OK] Battery: ACPI battery device found in DSDT\n");
+        kprintf("[OK] Battery: ACPI battery device found in DSDT (no EC, using defaults)\n");
         return 0;
     }
 
@@ -246,15 +302,38 @@ int battery_get_status(struct battery_status *status) {
         }
 
         status->present = 1;
-        status->voltage = ec_read_word(EC_BATTERY_VOLTAGE);   /* mV */
-        status->rate    = ec_read_word(EC_BATTERY_RATE);      /* mW */
-        status->percentage = ec_read_byte(EC_BATTERY_CAPACITY); /* % */
+        status->voltage = ec_read_word(EC_BATTERY_VOLTAGE);    /* mV */
+        status->rate    = ec_read_word(EC_BATTERY_RATE);       /* mW */
+        status->percentage = ec_read_byte(EC_BATTERY_CAPACITY); /* % of current full */
 
         uint8_t charge_status = ec_read_byte(EC_BATTERY_STATUS);
         status->charging = (charge_status == 1) ? 1 : 0;
 
         if (status->percentage > 100) status->percentage = 100;
         if (status->percentage < 0)   status->percentage = 0;
+
+        /* ── Aging correction (Item 107) ────────────────────────────────
+         * The EC reports percentage relative to the CURRENT full charge
+         * capacity (which decreases with wear).  To give a more accurate
+         * picture of remaining life, we scale the percentage to represent
+         * charge as a fraction of the ORIGINAL design capacity.
+         *
+         *   corrected_pct = pct * (full_charge / design)
+         *
+         * Example: design=4000mAh, full_charge=3200mAh (20% wear),
+         *          EC reports 50% → true remaining = 50% * 3200/4000 = 40%
+         *
+         * This way 0% means truly flat, and 100% means fully charged
+         * *relative to the original battery*.  The wear level is reported
+         * separately via battery_get_health(). */
+        if (battery_design_capacity > 0 &&
+            battery_full_charge_capacity <= battery_design_capacity) {
+            uint32_t ratio_x100 = battery_full_charge_capacity * 100U
+                                  / battery_design_capacity;
+            status->percentage = (status->percentage * (int)ratio_x100) / 100;
+            if (status->percentage > 100) status->percentage = 100;
+            if (status->percentage < 0)   status->percentage = 0;
+        }
 
         return 0;
     }
@@ -265,6 +344,46 @@ int battery_get_status(struct battery_status *status) {
     status->percentage = 100;
     status->voltage = 0;
     status->rate = 0;
+
+    return 0;
+}
+
+/* ── Battery health / aging (Item 107) ────────────────────────────── */
+
+int battery_get_health(struct battery_health *health) {
+    if (!health) return -1;
+
+    memset(health, 0, sizeof(*health));
+
+    if (!battery_present) return -1;
+
+    health->present = 1;
+    health->design_capacity = battery_design_capacity;
+    health->full_charge_capacity = battery_full_charge_capacity;
+    health->cycle_count = (int)battery_cycle_count;
+
+    /* Read current remaining capacity from EC if available */
+    health->current_capacity = 0;
+    if (battery_ec_found) {
+        uint8_t present = ec_read_byte(EC_BATTERY_PRESENT);
+        if (present == 0x01) {
+            uint8_t pct = ec_read_byte(EC_BATTERY_CAPACITY);
+            if (pct > 100) pct = 100;
+            /* current_capacity = full_charge_capacity * pct / 100 */
+            health->current_capacity = (battery_full_charge_capacity * (uint32_t)pct) / 100U;
+        }
+    }
+
+    /* Wear level = (1 - full_charge / design) * 100 %.
+     * If design == 0, wear is unknown (report 0). */
+    if (battery_design_capacity > 0 && battery_full_charge_capacity > 0) {
+        uint32_t fcc = battery_full_charge_capacity;
+        uint32_t dc  = battery_design_capacity;
+        if (fcc > dc) fcc = dc;  /* clamp: full charge cannot exceed design */
+        health->wear_level_pct = (int)((dc - fcc) * 100U / dc);
+    } else {
+        health->wear_level_pct = 0;
+    }
 
     return 0;
 }
