@@ -19,6 +19,7 @@
 #include "pmm.h"
 #include "errno.h"
 #include "cmdline.h"
+#include "aslr.h"
 
 /* ── Boot-time module parameters (M33) ──────────────────────────────
  *
@@ -96,6 +97,12 @@ static int g_mod_initialized = 0;
 /* Current allocation cursor (virtual address within the region) */
 static uint64_t module_region_allocated = 0;  /* bytes consumed so far */
 
+/* KASLR offset (in bytes) for the module region base address.
+ * Set once during module_init() to randomize where modules are loaded.
+ * A non-zero offset shifts the usable region start, making module virtual
+ * addresses unpredictable across boots. */
+static uint64_t module_base_offset = 0;
+
 void module_init(void) {
     memset(g_modules, 0, sizeof(g_modules));
     for (int i = 0; i < MODULE_MAX; i++) {
@@ -104,9 +111,17 @@ void module_init(void) {
     }
     spinlock_init(&g_mod_lock);
     module_region_allocated = 0;
+
+    /* Compute a random base offset for KASLR of module addresses.
+     * This shifts the start of the 64 MB module region by a random number
+     * of pages (0..ASLR_MODULE_RANDOM_PAGES), making module virtual addresses
+     * unpredictable across boots.  The shift is applied once at init. */
+    uint64_t rand_pages = aslr_module_offset();
+    module_base_offset = rand_pages * PAGE_SIZE;
+    kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX + %llu MB KASLR offset)\n",
+            MODULE_MAX, (unsigned long long)MODULES_VADDR,
+            (unsigned long long)(module_base_offset >> 20));
     g_mod_initialized = 1;
-    kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX)\n",
-            MODULE_MAX, (unsigned long long)MODULES_VADDR);
 
     /* Initialise the module alias matching engine (M38) */
     module_alias_init();
@@ -129,7 +144,7 @@ uint64_t module_alloc_region(uint64_t size, uint64_t page_flags) {
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
 
-    uint64_t next = MODULES_VADDR + module_region_allocated;
+    uint64_t next = MODULES_VADDR + module_base_offset + module_region_allocated;
     if (next + size > MODULES_END) {
         /* Out of module virtual space */
         kprintf("[MOD] module_alloc_region: out of memory (requested %llu, used %llu / %llu)\n",
@@ -191,7 +206,10 @@ uint64_t module_alloc_region(uint64_t size, uint64_t page_flags) {
 
 void module_free_region(uint64_t vaddr, uint64_t size) {
     if (!g_mod_initialized || vaddr == 0 || size == 0) return;
-    if (vaddr < MODULES_VADDR || vaddr + size > MODULES_END) return;
+
+    /* Check that vaddr falls within the randomized module region */
+    uint64_t region_start = MODULES_VADDR + module_base_offset;
+    if (vaddr < region_start || vaddr + size > MODULES_END) return;
 
     /* Round size up to page boundary */
     size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);

@@ -69,6 +69,18 @@ void aslr_get_at_random(uint8_t buf[16]) {
 }
 
 /*
+ * Return a random number of pages (0..ASLR_MODULE_RANDOM_PAGES) for
+ * randomizing the kernel module loading base address.
+ *
+ * Called once during module_init() to compute the offset.  The random shift
+ * ensures that module virtual addresses are not easily predictable across
+ * boots, making it harder for an attacker to find module code/data.
+ */
+uint64_t aslr_module_offset(void) {
+    return prng_rand64() % (ASLR_MODULE_RANDOM_PAGES + 1);
+}
+
+/*
  * Mix additional entropy into the ASLR/PRNG pool.
  * Called from timing-sensitive contexts (timer IRQ, scheduler) to add
  * jitter-based entropy with low latency.

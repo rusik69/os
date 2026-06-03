@@ -24,6 +24,12 @@
 /* Maximum random shift for brk/data segment (in pages) */
 #define ASLR_BRK_RANDOM_PAGES    32
 
+/* Maximum random shift for kernel module base (in pages).
+ * Modules are loaded in a 64MB region (MODULES_VADDR..MODULES_VADDR+64MB).
+ * Shifting by up to 8192 pages (32 MB) randomizes the base while retaining
+ * at least 32 MB of usable space. */
+#define ASLR_MODULE_RANDOM_PAGES 8192
+
 /* Get random bytes for ASLR */
 void aslr_init(void);
 
@@ -38,6 +44,10 @@ uint64_t aslr_brk_offset(void);
 
 /* Return random bytes for userspace AT_RANDOM (stack canary seed) */
 void aslr_get_at_random(uint8_t buf[16]);
+
+/* Return a random number of pages (0..ASLR_MODULE_RANDOM_PAGES) for
+ * randomizing the kernel module loading base address. */
+uint64_t aslr_module_offset(void);
 
 /* Seed the PRNG with additional entropy from timing */
 void aslr_add_entropy(uint64_t entropy);
