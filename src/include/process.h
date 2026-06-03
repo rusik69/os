@@ -73,6 +73,15 @@ struct itimerval {
 #define CLONE_CHILD_CLEARTID 0x02000000
 #define CLONE_SETTLS        0x00080000
 
+/* Namespace clone/unshare flags */
+#define CLONE_NEWNS         0x00020000
+#define CLONE_NEWUTS        0x04000000
+#define CLONE_NEWPID        0x20000000
+#define CLONE_NEWNET        0x40000000
+#define CLONE_NEWIPC        0x08000000
+#define CLONE_NEWCGROUP     0x02000000
+#define CLONE_NEWTIME       0x00000080
+
 
 
 enum process_cap_profile {
@@ -231,6 +240,11 @@ struct process {
     uint64_t stack_canary;   /* unique canary per process; updated in __stack_chk_guard on switch */
     /* ── Optimistic mutex spinning ─────────────────────────────── */
     int      on_cpu;         /* 1 = this process is currently executing on a CPU (set/cleared by scheduler) */
+    /* ── Namespace flags (set by unshare/CLONE_NEW*) ──────────── */
+    uint32_t ns_flags;       /* bitmask of CLONE_NEW* flags that the namespace was unshared with */
+    /* ── Per-process UTS namespace (hostname/domainname isolation) ─ */
+    char     ns_hostname[64]; /* namespace-local hostname (from CLONE_NEWUTS) */
+    char     ns_domainname[64];
 };
 
 void process_init(void);

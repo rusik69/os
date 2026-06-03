@@ -723,6 +723,8 @@ struct linux_dirent64 {
 
 /* Clone / threading */
 #define SYS_CLONE           231
+#define SYS_UNSHARE         394
+#define SYS_SETNS           395
 #define SYS_GETTID          232
 /* Process Credentials & Scheduling */
 #define SYS_CAPGET            570

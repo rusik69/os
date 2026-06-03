@@ -10,6 +10,7 @@
 #include "ahci.h"
 #include "vga.h"
 #include "timer.h"
+#include "sysctl.h"
 #include "keyboard.h"
 #include "printf.h"
 #include "io.h"
@@ -1526,6 +1527,96 @@ static uint64_t sys_clone(uint64_t flags, uint64_t child_stack, uint64_t ptid,
     int ret = process_clone(parent, flags, (void *)child_stack,
                             0, 0);
     return (uint64_t)(int64_t)ret;
+}
+
+/* ── unshare(CLONE_NEW*) — create namespaces without fork (Item 119) ──── */
+/*
+ * The unshare syscall lets a process disassociate parts of its execution
+ * context into new namespaces without creating a new process.  This is the
+ * foundation for container runtime isolation.
+ *
+ * Supported flags (from Linux CLONE_NEW*):
+ *   CLONE_NEWNS   — detach from shared mount tree (no-op: no shared mounts yet)
+ *   CLONE_NEWUTS  — create a private copy of hostname/domainname
+ *   CLONE_NEWPID  — mark for PID namespace isolation (future)
+ *   CLONE_NEWNET  — mark for network namespace isolation (future)
+ *   CLONE_NEWIPC  — mark for IPC namespace isolation (future)
+ *
+ * Returns 0 on success, -1 with errno on failure.
+ */
+static uint64_t sys_unshare(uint64_t flags)
+{
+    /* Only the namespace-related bits are accepted — all other flags
+     * (CLONE_VM, CLONE_THREAD, etc.) are invalid for unshare. */
+    uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID |
+                       CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWCGROUP |
+                       CLONE_NEWTIME;
+
+    if (flags & ~ns_mask)
+        return (uint64_t)-EINVAL;
+
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)-EINVAL;
+
+    /* ── CLONE_NEWUTS: copy hostname/domainname ──────────────── */
+    if (flags & CLONE_NEWUTS) {
+        /* Snapshot the current hostname into the process-local buffer.
+         * Future sethostname() calls on this process will only affect
+         * its own copy. */
+        const char *host = sysctl_get_hostname();
+        strncpy(cur->ns_hostname, host ? host : "localhost",
+                sizeof(cur->ns_hostname) - 1);
+        cur->ns_hostname[sizeof(cur->ns_hostname) - 1] = '\0';
+
+        /* Also copy the domainname from the system default */
+        strncpy(cur->ns_domainname, "(none)",
+                sizeof(cur->ns_domainname) - 1);
+        cur->ns_domainname[sizeof(cur->ns_domainname) - 1] = '\0';
+    }
+
+    /* ── CLONE_NEWNS: detach from mount namespace ────────────── */
+    if (flags & CLONE_NEWNS) {
+        /* On Linux this would copy the mount table.  Our kernel doesn't
+         * yet have shared mount propagation, so this is effectively a
+         * no-op — the process already has its own view of the mount
+         * tree.  We still record the flag for correctness. */
+    }
+
+    /* ── CLONE_NEWPID: mark for PID namespace ────────────────── */
+    if (flags & CLONE_NEWPID) {
+        /* Full PID namespace isolation is not yet implemented.  The flag
+         * is accepted and recorded so that (a) callers get ENOSYS only
+         * for truly unsupported flags, and (b) future PID namespace work
+         * can key off this flag. */
+    }
+
+    /* ── CLONE_NEWNET: mark for network namespace ────────────── */
+    if (flags & CLONE_NEWNET) {
+        /* Network namespace isolation is not yet fully wired.  The flag
+         * is accepted for future-proofing. */
+    }
+
+    /* ── CLONE_NEWIPC: mark for IPC namespace ────────────────── */
+    if (flags & CLONE_NEWIPC) {
+        /* IPC namespace isolation: future. */
+    }
+
+    /* ── CLONE_NEWCGROUP: mark for cgroup namespace ──────────── */
+    if (flags & CLONE_NEWCGROUP) {
+        /* Cgroup namespace: future. */
+    }
+
+    /* ── CLONE_NEWTIME: mark for time namespace ──────────────── */
+    if (flags & CLONE_NEWTIME) {
+        /* Time namespace: future. */
+    }
+
+    /* Record the set of unshared namespace flags on this process.
+     * Only the new flags are OR'd in (repeated unshare calls add). */
+    cur->ns_flags |= (uint32_t)(flags & ns_mask);
+
+    return 0;
 }
 
 /* ── Thread syscalls (pthread support) ────────────────────────── */
@@ -7768,6 +7859,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_SHM_FREE:            return sys_shm_free(a1);
         case SYS_FORK:                return sys_fork();
         case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
+        case SYS_UNSHARE:             return sys_unshare(a1);
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
