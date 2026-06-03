@@ -3,6 +3,9 @@
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
+#include "panic.h"         /* for panic_timeout */
+#include "dmesg.h"         /* for dmesg_restrict */
+#include "kptr_restrict.h" /* for kptr_restrict */
 
 static struct sysfs_entry sysfs_entries[SYSFS_MAX_ENTRIES];
 static int sysfs_mounted = 0;
@@ -312,6 +315,111 @@ int sysfs_remove_recursive(const char *path)
     return 0;
 }
 
+/* ── Read/write callbacks for /sys/kernel/ parameters ───────────── */
+
+/*
+ * Read callback for panic_timeout.
+ * Returns the current panic_timeout value as an ASCII string.
+ */
+static int sysfs_read_panic_timeout(char *buf, uint32_t max_sz, void *priv)
+{
+    (void)priv;
+    int n = snprintf(buf, max_sz, "%d\n", panic_timeout);
+    if (n < 0)
+        return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for panic_timeout.
+ * Parses an integer (possibly with trailing newline) and sets panic_timeout.
+ * Clamps to [0, 3600] as a safety measure.
+ */
+static int sysfs_write_panic_timeout(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    char tmp[32];
+    uint32_t copy = size < sizeof(tmp) - 1 ? size : sizeof(tmp) - 1;
+    memcpy(tmp, data, copy);
+    tmp[copy] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    int len = (int)strlen(tmp);
+    while (len > 0 && (tmp[len - 1] == '\n' || tmp[len - 1] == ' '))
+        tmp[--len] = '\0';
+    if (len == 0)
+        return -1;
+
+    int val = 0;
+    int neg = 0;
+    const char *p = tmp;
+    if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9')
+        val = val * 10 + (*p++ - '0');
+    if (*p != '\0')
+        return -1; /* non-numeric data */
+
+    if (neg)
+        val = -val;
+
+    /* Clamp to a sane range: 0 (disable) to 3600 seconds (1 hour) */
+    if (val < 0)    val = 0;
+    if (val > 3600) val = 3600;
+
+    panic_timeout = val;
+    return 0;
+}
+
+/*
+ * Read callback for dmesg_restrict.
+ */
+static int sysfs_read_dmesg_restrict(char *buf, uint32_t max_sz, void *priv)
+{
+    (void)priv;
+    int n = snprintf(buf, max_sz, "%d\n", dmesg_restrict);
+    if (n < 0) return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for dmesg_restrict.
+ * Accepts "0" or "1". All other values are rejected.
+ */
+static int sysfs_write_dmesg_restrict(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    if (size < 1) return -1;
+    int val = data[0] - '0';
+    if (val != 0 && val != 1) return -1;
+    dmesg_restrict = val;
+    return 0;
+}
+
+/*
+ * Read callback for kptr_restrict.
+ */
+static int sysfs_read_kptr_restrict(char *buf, uint32_t max_sz, void *priv)
+{
+    (void)priv;
+    int n = snprintf(buf, max_sz, "%d\n", kptr_restrict);
+    if (n < 0) return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for kptr_restrict.
+ * Accepts 0, 1, or 2. All other values are rejected.
+ */
+static int sysfs_write_kptr_restrict(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    if (size < 1) return -1;
+    int val = data[0] - '0';
+    if (val < 0 || val > 2) return -1;
+    kptr_restrict = val;
+    return 0;
+}
+
 void sysfs_init(void) {
     if (sysfs_mounted) return;
 
@@ -340,8 +448,14 @@ void sysfs_init(void) {
     /* /sys/class/block/ - list block devices */
     sysfs_create_file("/sys/class/block", "sda\nsdb\n");
 
-    /* /sys/kernel/ files */
+    /* /sys/kernel/ files — kernel parameters with read/write callbacks */
     sysfs_create_file("/sys/kernel/version", "OS Kernel v1.0\n");
+    sysfs_create_writable_file("/sys/kernel/panic_timeout", "30\n", NULL,
+        sysfs_read_panic_timeout, sysfs_write_panic_timeout);
+    sysfs_create_writable_file("/sys/kernel/dmesg_restrict", "1\n", NULL,
+        sysfs_read_dmesg_restrict, sysfs_write_dmesg_restrict);
+    sysfs_create_writable_file("/sys/kernel/kptr_restrict", "2\n", NULL,
+        sysfs_read_kptr_restrict, sysfs_write_kptr_restrict);
 
     /* Mount under /sys */
     if (vfs_mount("/sys", &sysfs_vfs_ops, NULL) == 0) {
