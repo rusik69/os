@@ -49,6 +49,7 @@
 #define NVME_ADMIN_SET_FEATURES 0x09
 #define NVME_ADMIN_GET_FEATURES 0x0A
 #define NVME_ADMIN_ASYNC_EVENT  0x0C
+#define NVME_ADMIN_SANITIZE    0x44
 
 /* I/O commands */
 #define NVME_IO_WRITE     0x01
@@ -215,6 +216,12 @@ int  nvme_is_present(void);
 int  nvme_identify_ctrl(struct nvme_identify_ctrl *id);
 int  nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe);
 void nvme_print_info(void);
+int  nvme_sanitize(int action, int overwrite_pass_count);
+
+/* Sanitize action codes */
+#define NVME_SANITIZE_ACTION_BLOCK_ERASE    1
+#define NVME_SANITIZE_ACTION_OVERWRITE      2
+#define NVME_SANITIZE_ACTION_CRYPTO_ERASE   3
 
 /* I/O queue submit function (called from blockdev layer) */
 int nvme_submit_request(int ns_id, int is_write, uint64_t lba,

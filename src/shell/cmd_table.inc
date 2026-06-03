@@ -86,6 +86,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("netstat",     "Show network connections",                              cmd_netstat)
     CMD("nice",        "Run command at priority (nice <pri> <cmd>)",            cmd_nice)
     CMD("nl",          "Number lines",                                          cmd_nl)
+    CMD("nvme",        "NVMe device management (nvme list|sanitize)",          cmd_nvme)
     CMD("nslookup",    "DNS lookup (nslookup <host>)",                          cmd_nslookup)
     CMD("od",          "Octal dump",                                            cmd_od)
     CMD("passwd",      "Change password",                                       cmd_passwd)

@@ -193,6 +193,73 @@ static int nvme_enable_controller(void) {
     return 0;
 }
 
+/*
+ * ── Sanitize operation (Item 187) ──────────────────────────────────
+ *
+ * Submit an NVMe sanitize command to cryptographically erase or
+ * overwrite the entire NVM subsystem.
+ *
+ * @action:   NVME_SANITIZE_ACTION_BLOCK_ERASE (1), OVERWRITE (2),
+ *            or CRYPTO_ERASE (3).
+ * @overwrite_pass_count: number of overwrite passes (1..16 for
+ *            Overwrite action; ignored for Block Erase and Crypto Erase).
+ *
+ * Returns 0 on successful submission, -1 on error.
+ *
+ * NOTE: The sanitize operation runs asynchronously in the controller.
+ * This function waits for command acceptance (completion entry), not
+ * for the sanitize to finish.  Use nvme_sanitize_status() to poll for
+ * completion via Get Features.
+ */
+int nvme_sanitize(int action, int overwrite_pass_count) {
+    if (!g_nvme_ctrl.present)
+        return -1;
+
+    if (action < NVME_SANITIZE_ACTION_BLOCK_ERASE ||
+        action > NVME_SANITIZE_ACTION_CRYPTO_ERASE)
+        return -1;
+
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+    memset(&cqe, 0, sizeof(cqe));
+
+    cmd.cdw0 = NVME_ADMIN_SANITIZE;          /* opcode */
+    /* cdw10: bits [2:0] = sanitize action (SANACT) */
+    cmd.cdw10 = (uint32_t)(action & 0x7);
+    /* cdw11: overwrite pass count (only meaningful for Overwrite action) */
+    if (action == NVME_SANITIZE_ACTION_OVERWRITE) {
+        if (overwrite_pass_count < 1) overwrite_pass_count = 1;
+        if (overwrite_pass_count > 16) overwrite_pass_count = 16;
+        cmd.cdw11 = (uint32_t)(overwrite_pass_count & 0xFF);
+    }
+    /* No data transfer — no PRP needed */
+
+    kprintf("[NVMe] Submitting sanitize command (action=%d, overwrite_passes=%d)...\n",
+            action, (action == NVME_SANITIZE_ACTION_OVERWRITE) ? overwrite_pass_count : 0);
+
+    int ret = nvme_submit_admin_cmd(&cmd, &cqe);
+    if (ret != 0) {
+        kprintf("[NVMe] Sanitize command submission FAILED (timeout or error)\n");
+        return -1;
+    }
+
+    /* Check completion status */
+    uint16_t status = cqe.status;
+    if (status & 0x0001) {
+        /* Bit 0 set = error */
+        uint8_t sc  = (uint8_t)((status >> 1) & 0xFF);  /* Status Code */
+        uint8_t sct = (uint8_t)((status >> 9) & 0x7);   /* Status Code Type */
+        kprintf("[NVMe] Sanitize command rejected: SCT=%u SC=%u\n",
+                (unsigned)sct, (unsigned)sc);
+        return -1;
+    }
+
+    kprintf("[NVMe] Sanitize operation ACCEPTED by controller — running in background.\n"
+            "        Use 'nvme sanitize-status' to check progress.\n");
+    return 0;
+}
+
 /* ── Admin command submit ──────────────────────────────────────────── */
 
 int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) {
