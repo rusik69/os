@@ -140,6 +140,12 @@ struct vfs_ops {
                  uint16_t dev_major, uint16_t dev_minor);
     /* Optional: flush / sync all cached data for this filesystem to backing store */
     int (*flush)(void *priv);
+    /* Optional: set file timestamps (atime, mtime).  times[0] = atime, times[1] = mtime.
+     * Each entry uses tv_sec and tv_nsec; special values UTIME_NOW and UTIME_OMIT
+     * are handled by the caller before dispatch.  Returns 0 on success or -errno. */
+    int (*set_time)(void *priv, const char *path,
+                    uint64_t atime_sec, uint64_t atime_nsec,
+                    uint64_t mtime_sec, uint64_t mtime_nsec);
 };
 
 /* A mounted filesystem */
@@ -201,6 +207,21 @@ int vfs_listxattr(const char *path, char *buf, int size);
 /* Filesystem statistics */
 int vfs_statfs(const char *path, struct vfs_statfs *st);
 int vfs_fstatfs(int fd, struct vfs_statfs *st);
+
+/* ── Set file timestamps (utimensat / futimens) ────────────────── */
+
+/* Special tv_nsec values for utimensat/futimens */
+#define UTIME_NOW  ((1UL << 30) - 1)   /* set to current time */
+#define UTIME_OMIT ((1UL << 30) - 2)   /* leave unchanged */
+
+/* Set atime and mtime for a path (nanosecond precision).
+ * times[0] = atime, times[1] = mtime.  NULL times means set both to current time.
+ * Returns 0 on success or negative errno. */
+int vfs_set_time(const char *path, const struct timespec times[2]);
+
+/* Set atime and mtime for an open file descriptor.
+ * Same semantics as vfs_set_time but uses fd instead of path. */
+int vfs_fset_time(int fd, const struct timespec times[2]);
 
 /* Access time update */
 void vfs_update_atime(const char *path);

@@ -5576,9 +5576,8 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
     return (uint64_t)template_addr;
 }
 
-/* UTIME_NOW and UTIME_OMIT constants (from Linux) */
-#define UTIME_NOW   ((1 << 30) - 1)
-#define UTIME_OMIT  ((1 << 30) - 2)
+/* UTIME_NOW and UTIME_OMIT — now defined in vfs.h */
+/* (syscall.c includes vfs.h which provides these) */
 
 static uint64_t sys_utimensat(uint64_t dirfd, uint64_t path_addr,
                                uint64_t times_addr, uint64_t flags) {

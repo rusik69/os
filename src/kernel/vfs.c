@@ -17,6 +17,8 @@
 #include "export.h"
 #include "quota.h"
 #include "landlock.h"
+#include "timer.h"
+#include "process.h"
 
 #define EROFS_KERNEL 30
 
@@ -396,6 +398,26 @@ static int smfs_journal_abort(void *priv) {
     return 0;
 }
 
+/* ── SMFS set_time: set file access and modification times ──────── */
+
+static int smfs_set_time(void *priv, const char *path,
+                          uint64_t atime_sec, uint64_t atime_nsec,
+                          uint64_t mtime_sec, uint64_t mtime_nsec)
+{
+    (void)priv;
+    /* SMFS stores timestamps as uint32_t seconds (truncating nanoseconds).
+     * If either value is UTIME_OMIT (passed through from caller), skip it. */
+    if (atime_nsec != UTIME_OMIT) {
+        /* SMFS doesn't have a dedicated atime field; we map atime writes
+         * to mtime since the on-disk inode only has one timestamp field. */
+        fs_set_mtime(path, (uint32_t)atime_sec);
+    }
+    if (mtime_nsec != UTIME_OMIT) {
+        fs_set_mtime(path, (uint32_t)mtime_sec);
+    }
+    return 0;
+}
+
 static struct vfs_ops smfs_ops = {
     .read    = smfs_read,
     .write   = smfs_write,
@@ -411,6 +433,7 @@ static struct vfs_ops smfs_ops = {
     .journal_abort  = smfs_journal_abort,
     .symlink   = smfs_symlink,
     .readlink  = smfs_readlink,
+    .set_time  = smfs_set_time,
 };
 
 /* ------------------------------------------------------------------
@@ -1097,6 +1120,78 @@ void vfs_update_atime(const char *path) {
      * Most filesystems don't have a direct atime update call.
      * The VFS stat result now includes atime field.
      * We do nothing here right now since the underlying fs manages timestamps. */
+}
+
+/* ── Set file times (utimensat / futimens) ────────────────────── */
+
+/* Internal helper: resolve path, call filesystem's set_time, update dcache. */
+static int vfs_do_set_time(const char *abs_path, const struct timespec times[2])
+{
+    struct vfs_mount *m = resolve(abs_path);
+    if (!m) return -ENOENT;
+
+    if (!m->ops->set_time)
+        return -EOPNOTSUPP;  /* filesystem doesn't support timestamp changes */
+
+    /* Resolve times[] to actual values.
+     * NULL or UTIME_NOW → current time (boot seconds + nsec).
+     * UTIME_OMIT → leave unchanged (pass caller's value and let FS handle it).
+     */
+    uint64_t atime_sec, atime_nsec, mtime_sec, mtime_nsec;
+    uint64_t now_sec  = timer_get_ticks() / TIMER_FREQ;
+    uint64_t now_nsec = (timer_get_ticks() % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+
+    if (times == NULL) {
+        /* Both to current time */
+        atime_sec = now_sec;  atime_nsec = now_nsec;
+        mtime_sec = now_sec;  mtime_nsec = now_nsec;
+    } else {
+        /* Process times[0] (atime) */
+        if (times[0].tv_nsec == UTIME_NOW || (times[0].tv_sec == 0 && times[0].tv_nsec == UTIME_NOW)) {
+            atime_sec = now_sec;  atime_nsec = now_nsec;
+        } else if (times[0].tv_nsec == UTIME_OMIT) {
+            atime_sec = 0;  atime_nsec = UTIME_OMIT;
+        } else {
+            atime_sec = times[0].tv_sec;
+            atime_nsec = times[0].tv_nsec;
+        }
+        /* Process times[1] (mtime) */
+        if (times[1].tv_nsec == UTIME_NOW || (times[1].tv_sec == 0 && times[1].tv_nsec == UTIME_NOW)) {
+            mtime_sec = now_sec;  mtime_nsec = now_nsec;
+        } else if (times[1].tv_nsec == UTIME_OMIT) {
+            mtime_sec = 0;  mtime_nsec = UTIME_OMIT;
+        } else {
+            mtime_sec = times[1].tv_sec;
+            mtime_nsec = times[1].tv_nsec;
+        }
+    }
+
+    int ret = m->ops->set_time(m->priv, abs_path,
+                               atime_sec, atime_nsec,
+                               mtime_sec, mtime_nsec);
+    if (ret == 0) {
+        /* Invalidate dentry cache for the path so next stat re-reads metadata */
+        dcache_remove(abs_path);
+    }
+    return ret;
+}
+
+int vfs_set_time(const char *path, const struct timespec times[2])
+{
+    if (!path || !path[0]) return -EINVAL;
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+    return vfs_do_set_time(ap, times);
+}
+
+int vfs_fset_time(int fd, const struct timespec times[2])
+{
+    struct process *proc = process_get_current();
+    if (!proc) return -EPERM;
+    if (fd < 0 || fd >= PROCESS_FD_MAX) return -EBADF;
+    struct process_fd *pfd = &proc->fd_table[fd];
+    if (!pfd->used) return -EBADF;
+    return vfs_do_set_time(pfd->path, times);
 }
 
 /* ── Filesystem statistics ──────────────────────────────────────── */
