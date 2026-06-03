@@ -188,3 +188,108 @@ int serial_has_irq(int port_idx) {
     if (port_idx < 0 || port_idx >= SERIAL_PORTS_MAX) return 0;
     return g_ports[port_idx].rx_head != g_ports[port_idx].rx_tail;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Early serial console — works before full serial driver init
+ *
+ *  These functions use hardcoded COM1 (0x3F8) port I/O and require no
+ *  kernel state (no struct serial_port_state, no spinlocks, no heap).
+ *  They are safe to call from the very first instruction in kernel_main,
+ *  before VGA init, before PMM, before anything.
+ *
+ *  This is essential for debugging early boot crashes that would otherwise
+ *  be completely silent.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Wait for the transmitter holding register to be empty (THRE bit).
+ * Returns when the UART is ready to accept a new character. */
+static inline void early_tx_wait(void)
+{
+    for (volatile int timeout = 0; timeout < 100000; timeout++) {
+        if (inb(SERIAL_COM1 + UART_LSR) & UART_LSR_THRE)
+            return;
+        __asm__ volatile("pause");
+    }
+}
+
+/* Minimal UART initialisation — 115200 baud, 8N1, no FIFO.
+ * Unlike serial_port_init(), this doesn't touch any kernel data structures
+ * and can be called before BSS is cleared (as long as we use stack locals). */
+void early_serial_init(void)
+{
+    /* Set baud rate: divisor = 115200 / 115200 = 1 */
+    outb(SERIAL_COM1 + UART_LCR, UART_LCR_DLAB);  /* enable DLAB */
+    outb(SERIAL_COM1 + UART_DLL, 0x01);             /* 115200 baud lo */
+    outb(SERIAL_COM1 + UART_DLM, 0x00);             /* 115200 baud hi */
+
+    /* Line control: 8 bits, no parity, 1 stop bit */
+    outb(SERIAL_COM1 + UART_LCR, UART_LCR_8BIT);
+
+    /* FIFO: disable (keep it simple for early boot) */
+    outb(SERIAL_COM1 + UART_FCR, 0x00);
+
+    /* Modem control: set DTR/RTS (required for QEMU serial to work) */
+    outb(SERIAL_COM1 + UART_MCR, 0x03);
+
+    /* Flush any stale byte from the receiver */
+    (void)inb(SERIAL_COM1 + UART_RBR);
+}
+
+/* Write a single character to the early serial port.
+ * Translates '\n' to '\r\n' for proper line endings. */
+void early_putchar(char c)
+{
+    if (c == '\n')
+        early_putchar('\r');
+
+    early_tx_wait();
+    outb(SERIAL_COM1 + UART_THR, (uint8_t)c);
+}
+
+/* Write a null-terminated ASCII string to the early serial port. */
+void early_printascii(const char *s)
+{
+    if (!s) return;
+    while (*s)
+        early_putchar(*s++);
+}
+
+/* Write a 64-bit unsigned integer as "0x" + 16 hex digits.
+ * Example: early_printhex(0xDEAD) → prints "0x000000000000DEAD" */
+void early_printhex(uint64_t val)
+{
+    const char hex_chars[] = "0123456789ABCDEF";
+    char buf[19]; /* "0x" + 16 digits + NUL */
+    int i;
+
+    buf[0] = '0';
+    buf[1] = 'x';
+    for (i = 0; i < 16; i++) {
+        buf[2 + i] = hex_chars[(val >> ((15 - i) * 4)) & 0xF];
+    }
+    buf[18] = '\0';
+
+    early_printascii(buf);
+}
+
+/* Write a 64-bit unsigned integer as decimal digits. */
+void early_printdec(uint64_t val)
+{
+    char buf[21]; /* max 20 digits for 2^64-1 + NUL */
+    int pos = 20;
+
+    buf[20] = '\0';
+
+    if (val == 0) {
+        early_putchar('0');
+        return;
+    }
+
+    while (val > 0 && pos > 0) {
+        pos--;
+        buf[pos] = (char)('0' + (val % 10));
+        val /= 10;
+    }
+
+    early_printascii(&buf[pos]);
+}

@@ -205,6 +205,16 @@ void __attribute__((noreturn)) __stack_chk_fail(void) {
 void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Initialize stack canary from PRNG as early as possible */
     __stack_chk_guard = (uint64_t)magic ^ multiboot_info_phys ^ 0xA5A5A5A5A5A5A5A5ULL;
+
+    /* ── Early serial console (Item 400) ─────────────────────────────
+     * Initialise COM1 UART before anything else — this gives us debug
+     * output capability even if the kernel crashes during early init
+     * (before PMM, before VGA, before the normal serial_init()).
+     * The early_* functions use hardcoded port I/O with zero kernel
+     * state dependencies. */
+    early_serial_init();
+    early_printascii("\n[early] booting Hermes OS kernel...\n");
+
     /* Initialize serial first for debug output */
     serial_init();
 

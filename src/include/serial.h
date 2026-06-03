@@ -69,6 +69,25 @@ char serial_getchar(void);
 /* Read a line from COM1. */
 void serial_read_line(char *buf, int max);
 
+/* ── Early serial (before full driver init) ──────────────────────────────
+ *
+ * These functions work at the very earliest boot stage, before the normal
+ * serial_port_init() / serial_init() have been called.  They use direct
+ * port I/O with hardcoded COM1 base address and require no allocated state.
+ *
+ * early_serial_init()   — minimal COM1 UART init (115200 8N1, no FIFO)
+ * early_putchar(c)      — write one character to COM1 (busy-wait)
+ * early_printascii(s)   — write null-terminated string
+ * early_printhex(val)   — write 64-bit value as "0x" + 16 hex digits
+ * early_printdec(val)   — write 64-bit value as decimal
+ */
+
+void early_serial_init(void);
+void early_putchar(char c);
+void early_printascii(const char *s);
+void early_printhex(uint64_t val);
+void early_printdec(uint64_t val);
+
 /* ── IRQ mode ──────────────────────────────────────────────────────── */
 
 /* Enable (1) or disable (0) interrupt-driven receive on a serial port.
