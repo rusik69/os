@@ -1041,6 +1041,9 @@ void net_init(void) {
 
     /* Initialize IPv6 */
     ipv6_init();
+
+    /* Initialize DNS cache */
+    dns_cache_init();
 }
 
 /* --- ARP list --- */
@@ -1098,6 +1101,9 @@ EXPORT_SYMBOL(arp_resolve_or_queue);
 EXPORT_SYMBOL(net_dns_resolve);
 EXPORT_SYMBOL(net_dns_cache_set);
 EXPORT_SYMBOL(net_dns_cache_get);
+EXPORT_SYMBOL(net_dns_cache_stats);
+EXPORT_SYMBOL(net_dns_cache_dump);
+EXPORT_SYMBOL(net_dns_cache_init);
 EXPORT_SYMBOL(net_resolv_conf_read_first);
 EXPORT_SYMBOL(net_tcp_connect);
 EXPORT_SYMBOL(net_tcp_send);

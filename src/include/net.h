@@ -267,9 +267,7 @@ int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
 int net_tcp_accept(uint16_t port, int timeout_ticks);
 
 /* DNS caching */
-void net_dns_cache_set(const char *hostname, uint32_t ip);
-uint32_t net_dns_cache_get(const char *hostname);
-void net_dns_cache_clear(void);
+#include "dns_cache.h"
 
 /* UDP send */
 void net_udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port,

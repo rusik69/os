@@ -1,6 +1,7 @@
 /* net_udp.c — UDP, DHCP, DNS, HTTP */
 
 #include "net_internal.h"
+#include "dns_cache.h"
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
@@ -182,6 +183,7 @@ static void handle_dhcp(const uint8_t *data, uint16_t len) {
 
 /* DNS state */
 static volatile uint32_t dns_result_ip = 0;
+static volatile uint32_t dns_result_ttl = 0;
 static volatile int dns_reply_received = 0;
 static uint16_t dns_txid = 0x1234;
 
@@ -222,11 +224,16 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
         got_name:;
         if (pos + 10 > len) break;
         uint16_t rtype = ((uint16_t)data[pos] << 8) | data[pos+1];
+        uint16_t rclass __attribute__((unused)) = ((uint16_t)data[pos+2] << 8) | data[pos+3];
+        /* Extract TTL from DNS answer (4 bytes at offset 4) */
+        uint32_t ttl = ((uint32_t)data[pos+4] << 24) | ((uint32_t)data[pos+5] << 16) |
+                       ((uint32_t)data[pos+6] << 8)  | data[pos+7];
         uint16_t rdlen = ((uint16_t)data[pos+8] << 8) | data[pos+9];
         pos += 10;
         if (rtype == 1 && rdlen == 4 && pos + 4 <= len) {
             dns_result_ip = ((uint32_t)data[pos] << 24) | ((uint32_t)data[pos+1] << 16) |
                             ((uint32_t)data[pos+2] << 8) | data[pos+3];
+            dns_result_ttl = ttl;  /* save TTL for cache store */
             dns_reply_received = 1;
             return;
         }
@@ -496,50 +503,7 @@ void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip,
 }
 
 /* ── DNS cache ────────────────────────────────────────────────────── */
-#define DNS_CACHE_SIZE  16
-#define DNS_CACHE_TTL   3000   /* ticks (~30 seconds at 100 Hz) */
-
-static struct {
-    char     name[64];
-    uint32_t ip;
-    uint64_t expires;   /* timer_get_ticks() + DNS_CACHE_TTL */
-    int      valid;
-} dns_cache[DNS_CACHE_SIZE];
-
-static uint32_t dns_cache_lookup(const char *name) {
-    uint64_t now = timer_get_ticks();
-    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
-        if (dns_cache[i].valid && strcmp(dns_cache[i].name, name) == 0) {
-            if (now < dns_cache[i].expires) return dns_cache[i].ip;
-            dns_cache[i].valid = 0;
-        }
-    }
-    return 0;
-}
-
-static void dns_cache_store(const char *name, uint32_t ip) {
-    if (!ip) return;
-    /* First, look for an existing entry with the same name */
-    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
-        if (dns_cache[i].valid && strcmp(dns_cache[i].name, name) == 0) {
-            dns_cache[i].ip      = ip;
-            dns_cache[i].expires = timer_get_ticks() + DNS_CACHE_TTL;
-            return;
-        }
-    }
-    /* Find LRU or invalid slot */
-    int slot = 0;
-    uint64_t oldest = dns_cache[0].expires;
-    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
-        if (!dns_cache[i].valid) { slot = i; break; }
-        if (dns_cache[i].expires < oldest) { oldest = dns_cache[i].expires; slot = i; }
-    }
-    strncpy(dns_cache[slot].name, name, 63);
-    dns_cache[slot].name[63] = '\0';
-    dns_cache[slot].ip      = ip;
-    dns_cache[slot].expires = timer_get_ticks() + DNS_CACHE_TTL;
-    dns_cache[slot].valid   = 1;
-}
+/* DNS cache is implemented in dns_cache.c — use the public API. */
 
 uint32_t net_dns_resolve(const char *hostname) {
     int is_ip = 1;
@@ -589,6 +553,7 @@ uint32_t net_dns_resolve(const char *hostname) {
     pkt[pos++] = 0; pkt[pos++] = 1;
 
     dns_result_ip = 0;
+    dns_result_ttl = 0;
     dns_reply_received = 0;
 
     for (int attempt = 0; attempt < 3 && !dns_reply_received; attempt++) {
@@ -603,8 +568,8 @@ uint32_t net_dns_resolve(const char *hostname) {
             if (now - start > 300) break;  /* 3 second timeout per attempt */
         }
     }
-    /* Store result in cache */
-    dns_cache_store(hostname, dns_result_ip);
+    /* Store result in cache with actual TTL from DNS reply */
+    dns_cache_store(hostname, dns_result_ip, dns_result_ttl);
     return dns_result_ip;
 }
 
@@ -821,21 +786,5 @@ void net_udp_list(void (*cb)(uint16_t port)) {
     for (int i = 0; i < UDP_LISTEN_MAX; i++) {
         if (udp_slots[i].port != 0)
             cb(udp_slots[i].port);
-    }
-}
-
-/* ── DNS cache public API ────────────────────────────────────────── */
-
-void net_dns_cache_set(const char *hostname, uint32_t ip) {
-    dns_cache_store(hostname, ip);
-}
-
-uint32_t net_dns_cache_get(const char *hostname) {
-    return dns_cache_lookup(hostname);
-}
-
-void net_dns_cache_clear(void) {
-    for (int i = 0; i < DNS_CACHE_SIZE; i++) {
-        dns_cache[i].valid = 0;
     }
 }
