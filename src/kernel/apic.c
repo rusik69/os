@@ -14,6 +14,7 @@
 #include "panic.h"
 #include "process.h"
 #include "scheduler.h"
+#include "cpuhp.h"
 
 /* ── Local APIC MMIO access ────────────────────────────────────────── */
 /* Map the LAPIC at a fixed high-half virtual address */
@@ -368,12 +369,43 @@ void ipi_panic_halt_handler(struct interrupt_frame *frame) {
 }
 
 /* Send TLB shootdown to all other CPUs.
- * Queues addresses, sends IPI, spins until completion. */
+ * Queues addresses, sends IPI, spins until completion.
+ *
+ * Optimization: if only one CPU is online, or if the current process is
+ * pinned to a single CPU (via cpu_affinity), no other CPU can have stale
+ * TLB entries for this address space — skip the IPI entirely and just
+ * invalidate locally. */
 void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
     int cpu_count = smp_get_cpu_count();
 
     if (cpu_count <= 1) {
         /* Single CPU: local invalidation only */
+        for (int i = 0; i < nr; i++)
+            __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
+        return;
+    }
+
+    /* ── Fast-path: process pinned to this single CPU (Item 286) ───── */
+    struct process *current = get_current_process();
+    if (current) {
+        uint8_t affinity = current->cpu_affinity;
+        /* cpu_affinity == 0 means "all CPUs".  Non-zero with exactly one
+         * bit set means the process is pinned to that single CPU. */
+        if (affinity != 0 && (affinity & (affinity - 1)) == 0) {
+            int my_cpu = smp_get_cpu_id();
+            if ((affinity & (1U << my_cpu)) != 0) {
+                /* Process is pinned to this CPU only — no other CPU can
+                 * have this address space loaded.  Local invalidation
+                 * suffices. */
+                for (int i = 0; i < nr; i++)
+                    __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
+                return;
+            }
+        }
+    }
+
+    /* ── Fast-path: only one CPU online (hotplug scenario) ─────────── */
+    if (cpuhp_online_count() <= 1) {
         for (int i = 0; i < nr; i++)
             __asm__ volatile("invlpg (%0)" : : "r"(addrs[i]) : "memory");
         return;
