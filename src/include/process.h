@@ -167,8 +167,9 @@ struct process {
     uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
     /* no_new_privs flag */
     int no_new_privs;
-    /* Landlock ruleset ID (-1 = unrestricted) */
-    int landlock_ruleset_id;
+    /* Landlock ruleset IDs (-1 per slot = unrestricted).
+     * Supports stacking up to LANDLOCK_MAX_RULESETS_PER_PROC (4) rulesets. */
+    int landlock_ruleset_ids[4];
     /* Securebits flags */
     uint8_t securebits;
     /* Capability sets (Linux-style) */

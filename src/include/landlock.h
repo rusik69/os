@@ -22,6 +22,7 @@
 /* Maximum entries in the ruleset / path tables */
 #define LANDLOCK_MAX_RULESETS     8
 #define LANDLOCK_MAX_RULES       16
+#define LANDLOCK_MAX_RULESETS_PER_PROC 4  /* max stacked rulesets per process */
 
 /* Rule type for landlock_add_rule */
 #define LANDLOCK_RULE_PATH_BENEATH  1

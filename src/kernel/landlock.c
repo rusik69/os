@@ -11,10 +11,15 @@
  *
  * We maintain a static table of rulesets, each containing a fixed-size
  * array of path-beneath rules.  A process that has called
- * landlock_restrict_self() stores the ruleset index in its
- * landlock_ruleset_id field.  Access checks via landlock_check_path()
- * verify that the requested operation is permitted by the process's
- * own ruleset.  This enforcement is called from VFS operations.
+ * landlock_restrict_self() stores the ruleset indices in its
+ * landlock_ruleset_ids[] array.  Access checks via landlock_check_path()
+ * verify that the requested operation is permitted by ALL of the
+ * process's stacked rulesets.  This enforcement is called from VFS
+ * operations.
+ *
+ * Up to LANDLOCK_MAX_RULESETS_PER_PROC (4) rulesets can be stacked on a
+ * single process.  All stacked rulesets must grant the requested access
+ * for it to be allowed (intersection semantics).
  */
 
 /* A single path-beneath rule */
@@ -150,62 +155,14 @@ int landlock_add_rule(int ruleset_fd, int rule_type,
     return 0;
 }
 
-int landlock_restrict_self(int ruleset_fd, uint32_t flags)
-{
-    (void)flags;
-
-    if (!landlock_initialised)
-        return -ENOSYS;
-    if (ruleset_fd < 0 || ruleset_fd >= LANDLOCK_MAX_RULESETS)
-        return -EBADF;
-    if (!landlock_table[ruleset_fd].used)
-        return -EBADF;
-
-    struct process *current = process_get_current();
-    if (!current)
-        return -ESRCH;
-
-    /* If the process already has a landlock ruleset, reject (no stacking yet) */
-    if (current->landlock_ruleset_id >= 0)
-        return -EPERM;
-
-    /* Set no_new_privs as required by Landlock semantics */
-    current->no_new_privs = 1;
-
-    /* Store the ruleset index so landlock_check_path() can find it */
-    current->landlock_ruleset_id = ruleset_fd;
-
-    return 0;
-}
-
 /*
- * landlock_check_path() — verify that the given process is allowed
- * to perform the requested access_bits on the given path.
- *
- * Only the ruleset associated with this process (via landlock_ruleset_id)
- * is checked.  If the process has no landlock ruleset, all access is
- * permitted.
- *
- * Returns 0 if allowed, -EACCES if denied.
+ * Check whether a single ruleset grants the requested access on the
+ * given path.  Returns 0 if the ruleset permits access, -EACCES if
+ * denied.
  */
-int landlock_check_path(const struct process *proc, const char *path,
-                        uint64_t access_bits)
+static int landlock_check_ruleset(const struct landlock_ruleset *rs,
+                                  const char *path, uint64_t access_bits)
 {
-    if (!proc || !path)
-        return -EACCES;
-
-    /* If the process has no landlock restrictions, all access allowed */
-    if (proc->landlock_ruleset_id < 0)
-        return 0;
-
-    int rs_id = proc->landlock_ruleset_id;
-    if (rs_id >= LANDLOCK_MAX_RULESETS)
-        return -EACCES;
-
-    const struct landlock_ruleset *rs = &landlock_table[rs_id];
-    if (!rs->used)
-        return -EACCES;
-
     /* If no access bits are requested, trivially allowed */
     if (access_bits == 0)
         return 0;
@@ -237,4 +194,77 @@ int landlock_check_path(const struct process *proc, const char *path,
 
     /* If we get here, no rule granted the requested access */
     return -EACCES;
+}
+
+int landlock_restrict_self(int ruleset_fd, uint32_t flags)
+{
+    (void)flags;
+
+    if (!landlock_initialised)
+        return -ENOSYS;
+    if (ruleset_fd < 0 || ruleset_fd >= LANDLOCK_MAX_RULESETS)
+        return -EBADF;
+    if (!landlock_table[ruleset_fd].used)
+        return -EBADF;
+
+    struct process *current = process_get_current();
+    if (!current)
+        return -ESRCH;
+
+    /* Find a free slot in the process's ruleset stack */
+    int slot = -1;
+    for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++) {
+        if (current->landlock_ruleset_ids[i] < 0) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0)
+        return -EPERM;  /* too many stacked rulesets */
+
+    /* Set no_new_privs as required by Landlock semantics (on first restrict) */
+    current->no_new_privs = 1;
+
+    /* Store the ruleset index so landlock_check_path() can find it */
+    current->landlock_ruleset_ids[slot] = ruleset_fd;
+
+    return 0;
+}
+
+/*
+ * landlock_check_path() — verify that the given process is allowed
+ * to perform the requested access_bits on the given path.
+ *
+ * ALL stacked rulesets are checked.  If any ruleset denies the access,
+ * the access is denied (intersection semantics).  If the process has
+ * no landlock rulesets, all access is permitted.
+ *
+ * Returns 0 if allowed, -EACCES if denied.
+ */
+int landlock_check_path(const struct process *proc, const char *path,
+                        uint64_t access_bits)
+{
+    if (!proc || !path)
+        return -EACCES;
+
+    /* Check each stacked ruleset in order.  All must pass. */
+    for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++) {
+        int rs_id = proc->landlock_ruleset_ids[i];
+        if (rs_id < 0)
+            continue;  /* empty slot, skip */
+
+        if (rs_id >= LANDLOCK_MAX_RULESETS)
+            return -EACCES;
+
+        const struct landlock_ruleset *rs = &landlock_table[rs_id];
+        if (!rs->used)
+            return -EACCES;
+
+        int ret = landlock_check_ruleset(rs, path, access_bits);
+        if (ret != 0)
+            return ret;  /* denied by this ruleset */
+    }
+
+    /* All rulesets granted access or no rulesets at all */
+    return 0;
 }
