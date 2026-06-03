@@ -20,6 +20,7 @@
 #include "slab.h"
 #include "sysctl.h"
 #include "config_gz.h"
+#include "process_rlimit.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -735,6 +736,99 @@ static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/limits — per-process resource limits */
+static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    static const struct {
+        int         resource;
+        const char *name;
+        const char *units;
+    } rlim_info[] = {
+        { RLIMIT_CPU,     "Max cpu time",        "seconds"   },
+        { RLIMIT_FSIZE,   "Max file size",       "bytes"     },
+        { RLIMIT_DATA,    "Max data size",        "bytes"     },
+        { RLIMIT_STACK,   "Max stack size",       "bytes"     },
+        { RLIMIT_CORE,    "Max core file size",   "bytes"     },
+        { RLIMIT_RSS,     "Max resident set",     "bytes"     },
+        { RLIMIT_NPROC,   "Max processes",        "processes" },
+        { RLIMIT_NOFILE,  "Max open files",       "files"     },
+        { RLIMIT_MEMLOCK, "Max locked memory",    "bytes"     },
+        { RLIMIT_AS,      "Max address space",    "bytes"     },
+    };
+
+    int pos = 0;
+    for (size_t i = 0; i < sizeof(rlim_info) / sizeof(rlim_info[0]); i++) {
+        int r = rlim_info[i].resource;
+        if (r < 0 || r >= RLIMIT_NLIMITS) continue;
+
+        uint64_t cur = p->rlim_cur[r];
+        uint64_t max_val = p->rlim_max[r];
+
+        /* Format: "Name                 Soft Limit     Hard Limit     Units\n" */
+        proc_str(rlim_info[i].name, buf, &pos, max);
+
+        /* Pad to column 24 */
+        int pad = 24 - (int)strlen(rlim_info[i].name);
+        while (pad > 0 && pos < max - 1) { buf[pos++] = ' '; pad--; }
+
+        if (cur == RLIM_INFINITY) {
+            proc_str("unlimited", buf, &pos, max);
+        } else {
+            char tmp[24];
+            int ti = 0;
+            uint64_t v = cur;
+            if (v == 0) { tmp[ti++] = '0'; }
+            else { char rev[24]; int ri = 0;
+                   while (v) { rev[ri++] = '0' + (int)(v % 10); v /= 10; }
+                   while (ri > 0) tmp[ti++] = rev[--ri]; }
+            tmp[ti] = '\0';
+            proc_str(tmp, buf, &pos, max);
+        }
+
+        /* Pad to column 44 */
+        {
+            /* Find where we are in the line */
+            int line_start = pos;
+            while (line_start > 0 && buf[line_start - 1] != '\n') line_start--;
+            int col = pos - line_start;
+            pad = 44 - col;
+            while (pad > 0 && pos < max - 1) { buf[pos++] = ' '; pad--; }
+        }
+
+        if (max_val == RLIM_INFINITY) {
+            proc_str("unlimited", buf, &pos, max);
+        } else {
+            char tmp[24];
+            int ti = 0;
+            uint64_t v = max_val;
+            if (v == 0) { tmp[ti++] = '0'; }
+            else { char rev[24]; int ri = 0;
+                   while (v) { rev[ri++] = '0' + (int)(v % 10); v /= 10; }
+                   while (ri > 0) tmp[ti++] = rev[--ri]; }
+            tmp[ti] = '\0';
+            proc_str(tmp, buf, &pos, max);
+        }
+
+        /* Pad to column 64 then units */
+        {
+            int line_start = pos;
+            while (line_start > 0 && buf[line_start - 1] != '\n') line_start--;
+            int col = pos - line_start;
+            pad = 64 - col;
+            while (pad > 0 && pos < max - 1) { buf[pos++] = ' '; pad--; }
+        }
+
+        proc_str(rlim_info[i].units, buf, &pos, max);
+        proc_str("\n", buf, &pos, max);
+
+        if (pos >= max - 1) break;
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* ─── VFS ops ────────────────────────────────────────────────────────────────── */
 
 static int procfs_read(void *priv, const char *path, void *buf_v,
@@ -842,6 +936,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         } else if (got && strcmp(p, "/maps") == 0) {
             len = procfs_gen_pid_maps(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strcmp(p, "/limits") == 0) {
+            len = procfs_gen_pid_limits(pid, buf, (int)max_size);
+            if (len < 0) return -1;
         } else {
             return -1;
         }
@@ -932,6 +1029,12 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         }
     }
     if (got && strcmp(p, "/maps") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 512; return 0;
+        }
+    }
+    if (got && strcmp(p, "/limits") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
             st->type = 1; st->size = 512; return 0;
