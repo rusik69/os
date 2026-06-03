@@ -11,6 +11,10 @@
 #include "timer.h"
 #include "fs.h"
 
+#ifdef MODULE
+#include "module.h"
+#endif
+
 /* ================================================================
  * Desktop state (background kernel GUI task)
  * ================================================================ */
@@ -271,3 +275,22 @@ void gui_task(void) {
         scheduler_yield();
     }
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    kprintf("[gui] GUI subsystem module loaded\n");
+    return 0;
+}
+
+/* Module exit point */
+void cleanup_module(void) {
+    kprintf("[gui] GUI subsystem module unloaded\n");
+    gui_shutdown();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("GUI window system — desktop, windows, widgets, file browser");
+MODULE_VERSION("1.0");
+#endif /* MODULE */

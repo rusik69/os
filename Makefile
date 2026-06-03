@@ -385,6 +385,10 @@ obj-m += compiler.ko
 compiler-objs := compiler/cc_elf compiler/cc_lex compiler/cc_link \
                  compiler/cc_obj compiler/cc_parse
 
+# GUI window system as a loadable module (M47)
+obj-m += gui.ko
+gui-objs := gui/gui gui/gui_shell gui/gui_task gui/gui_widgets
+
 # Network protocol modules (M60) — convert protocols to loadable .ko
 # IPIP: IP-in-IP tunneling protocol (RFC 2003)
 obj-m += net/ipip.ko
