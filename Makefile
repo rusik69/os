@@ -379,7 +379,9 @@ doom-objs := doom/doom_task doom/doom_combat doom/doom_doors doom/doom_floor \
 obj-m += dos.ko
 dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
 
-# Virtio block and net drivers as modules (M58)
+# Network protocol modules (M60) — convert protocols to loadable .ko
+# IPIP: IP-in-IP tunneling protocol (RFC 2003)
+obj-m += net/ipip.ko
 obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
 
 # NVMe PCIe SSD driver as module (M56)

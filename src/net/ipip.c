@@ -1,4 +1,4 @@
-/* ipip.c — IP-in-IP tunneling */
+/* ipip.c — IP-in-IP tunneling (loadable kernel module) */
 
 #define KERNEL_INTERNAL
 #include "ipip.h"
@@ -6,14 +6,35 @@
 #include "printf.h"
 #include "string.h"
 
+#ifdef MODULE
+#include "export.h"
+#include "module.h"
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("IP-in-IP tunnel protocol (RFC 2003) - loadable kernel module");
+MODULE_ALIAS("net-ipip");
+#endif
+
 static struct ipip_tunnel g_tunnel;
 static int ipip_initialized = 0;
 
 int ipip_init(void) {
+    if (ipip_initialized)
+        return 0;
     memset(&g_tunnel, 0, sizeof(g_tunnel));
     ipip_initialized = 1;
-    kprintf("[OK] IPIP tunnel initialized\\n");
+    kprintf("[OK] IPIP tunnel initialized\n");
     return 0;
+}
+
+void ipip_exit(void) {
+    if (!ipip_initialized)
+        return;
+    /* Tear down any active tunnel */
+    g_tunnel.active = 0;
+    ipip_initialized = 0;
+    kprintf("[OK] IPIP tunnel shut down\n");
 }
 
 int ipip_create_tunnel(uint32_t remote, uint32_t local) {
@@ -71,3 +92,20 @@ int ipip_decapsulate(const uint8_t *outer_pkt, int outer_len,
     memcpy(inner_buf, outer_pkt + ihl, inner_len);
     return inner_len;
 }
+
+#ifdef MODULE
+/* Module entry points — the ELF module loader looks for these symbols */
+int init_module(void) {
+    return ipip_init();
+}
+
+void cleanup_module(void) {
+    ipip_exit();
+}
+
+/* Export symbols for other modules that may depend on IPIP tunneling */
+EXPORT_SYMBOL(ipip_create_tunnel);
+EXPORT_SYMBOL(ipip_destroy_tunnel);
+EXPORT_SYMBOL(ipip_encapsulate);
+EXPORT_SYMBOL(ipip_decapsulate);
+#endif

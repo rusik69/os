@@ -733,7 +733,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         vlan_init();
         tun_init();
         net_ns_init();
+#ifndef MODULE
         ipip_init();
+#endif
         wg_init();
         ipvs_init();
 
