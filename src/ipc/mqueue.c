@@ -5,6 +5,8 @@
 #include "process.h"
 #include "scheduler.h"
 #include "heap.h"
+#include "errno.h"
+#include "types.h"
 
 static struct mqueue mqueue_table[MQUEUE_MAX];
 static int mqueue_inited = 0;
@@ -42,17 +44,23 @@ static int alloc_queue(void) {
 }
 
 mqd_t mq_open(const char *name, int oflag, ...) {
-    (void)oflag;
     if (!mqueue_inited) return -1;
 
     int idx = find_queue(name);
-    if (idx >= 0) return idx; /* already exists */
+    if (idx >= 0) {
+        /* Queue already exists — return existing descriptor */
+        /* If O_EXCL is set and queue exists, fail */
+        if (oflag & 0x80) /* O_EXCL = 0x80 in POSIX */
+            return -1;
+        return idx;
+    }
 
     idx = alloc_queue();
     if (idx < 0) return -1;
 
     strncpy(mqueue_table[idx].name, name, 31);
     mqueue_table[idx].name[31] = '\0';
+    mqueue_table[idx].oflags = oflag;
     return idx;
 }
 
@@ -72,14 +80,19 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
 
     struct mqueue *q = &mqueue_table[mqdes];
 
-    /* Block if full */
-    while (q->msg_count >= q->msg_max) {
-        struct process *cur = process_get_current();
-        if (!cur) return -1;
-        cur->state = PROCESS_BLOCKED;
-        scheduler_remove(cur);
-        wait_queue_sleep(&q->w_wq);
-        if (!q->in_use) return -1;
+    /* Block if full — unless O_NONBLOCK is set */
+    if (q->msg_count >= q->msg_max) {
+        if (q->oflags & O_NONBLOCK) {
+            return -EAGAIN;
+        }
+        while (q->msg_count >= q->msg_max) {
+            struct process *cur = process_get_current();
+            if (!cur) return -1;
+            cur->state = PROCESS_BLOCKED;
+            scheduler_remove(cur);
+            wait_queue_sleep(&q->w_wq);
+            if (!q->in_use) return -1;
+        }
     }
 
     /* Find a free message slot */
@@ -115,14 +128,19 @@ ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg
 
     struct mqueue *q = &mqueue_table[mqdes];
 
-    /* Block if empty */
-    while (q->msg_count == 0) {
-        struct process *cur = process_get_current();
-        if (!cur) return -1;
-        cur->state = PROCESS_BLOCKED;
-        scheduler_remove(cur);
-        wait_queue_sleep(&q->r_wq);
-        if (!q->in_use) return -1;
+    /* Block if empty — unless O_NONBLOCK is set */
+    if (q->msg_count == 0) {
+        if (q->oflags & O_NONBLOCK) {
+            return -EAGAIN;
+        }
+        while (q->msg_count == 0) {
+            struct process *cur = process_get_current();
+            if (!cur) return -1;
+            cur->state = PROCESS_BLOCKED;
+            scheduler_remove(cur);
+            wait_queue_sleep(&q->r_wq);
+            if (!q->in_use) return -1;
+        }
     }
 
     /* Find highest-priority message */

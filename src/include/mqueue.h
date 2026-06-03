@@ -47,6 +47,7 @@ struct mqueue {
     int      msg_size_max;  /* max size (MQUEUE_MAX_SIZE) */
     int      read_pos;
     int      in_use;
+    int      oflags;        /* open flags (O_NONBLOCK, etc.) */
     struct wait_queue r_wq;  /* readers wait for msgs */
     struct wait_queue w_wq;  /* writers wait for space */
 
