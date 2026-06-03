@@ -6,6 +6,10 @@
  * top-level "load + init + run" entry point.
  *
  * Memory is allocated as a static buffer for this minimal emulator.
+ *
+ * When compiled as a loadable kernel module (MODULE defined), the ELF
+ * module loader calls init_module() which logs availability.  The
+ * built-in kernel path provides dos_exec() directly for cmd_dosbox.
  */
 
 #include "dos.h"
@@ -13,6 +17,9 @@
 #include "printf.h"
 #include "scheduler.h"
 #include "vfs.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Emulator functions defined in dos_emu.c                             */
@@ -184,3 +191,21 @@ int dos_exec(const char *path)
     dos_emu_run(&state);
     return 0;
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    kprintf("[dos] DOS emulator module loaded\n");
+    return 0;  /* success */
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    kprintf("[dos] DOS emulator module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("DOS emulator — loads and runs .COM and .MZ executables");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
