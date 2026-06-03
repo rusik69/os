@@ -397,6 +397,7 @@
 
 /* membarrier — memory barrier on all threads (used by JIT compilers, runtimes) */
 #define SYS_MEMBARRIER         373  /* membarrier(cmd, flags, cpu_id) → 0 or -1 */
+#define SYS_PIVOT_ROOT         374  /* pivot_root(new_root, put_old) → 0 or -1 */
 
 /* membarrier command codes */
 #define MEMBARRIER_CMD_QUERY                    0

@@ -262,6 +262,9 @@ int vfs_journal_start(const char *path);
 int vfs_journal_commit(const char *path);
 int vfs_journal_abort(const char *path);
 
+/* Pivot root — swap current root with new_root, stash old at put_old (Item 118) */
+int vfs_pivot_root(const char *new_root, const char *put_old);
+
 /* Initramfs / CPIO extraction */
 int cpio_extract_initramfs(uint32_t addr, uint32_t size);
 int cpio_init(void);

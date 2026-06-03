@@ -4288,6 +4288,26 @@ static uint64_t sys_umount(uint64_t target_addr) {
     return 0;
 }
 
+/* ── pivot_root — change root filesystem (Item 118) ─────────────────── */
+
+static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
+    char new_root[64], put_old[64];
+
+    if (syscall_is_user_process()) {
+        if (!syscall_user_cstr_ok(new_root_addr) ||
+            !syscall_user_cstr_ok(put_old_addr))
+            return (uint64_t)-1;
+    }
+
+    memcpy(new_root, (void*)new_root_addr, 63); new_root[63] = '\0';
+    memcpy(put_old, (void*)put_old_addr, 63);   put_old[63] = '\0';
+
+    int ret = vfs_pivot_root(new_root, put_old);
+    if (ret < 0)
+        return (uint64_t)-1;
+    return 0;
+}
+
 /* ── ftruncate ─────────────────────────────────────────────────────────── */
 
 static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
@@ -7010,7 +7030,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
         case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
-        case SYS_FADVISE64:    return sys_fadvise64(a1, a2, a3, a4);
+        case SYS_PIVOT_ROOT:      return sys_pivot_root(a1, a2);
+        case SYS_FADVISE64:       return sys_fadvise64(a1, a2, a3, a4);
         case SYS_TIMERFD_CREATE:  return sys_timerfd_create(a1, a2);
         case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
         case SYS_TIMERFD_GETTIME: return sys_timerfd_gettime(a1, a2);

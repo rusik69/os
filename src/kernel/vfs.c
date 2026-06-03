@@ -1355,6 +1355,95 @@ void vfs_init(void) {
     memset(xattr_table, 0, sizeof(xattr_table));
 }
 
+/* ── root mount index tracking ───────────────────────────────────── */
+
+/* Return the index of the root mount (mountpoint == "/") or -1 */
+static int root_mount_index(void) {
+    for (int i = 0; i < num_mounts; i++) {
+        if (mounts[i].mountpoint[0] == '/' && mounts[i].mountpoint[1] == '\0')
+            return i;
+    }
+    return -1;
+}
+
+/* ── pivot_root — swap root mount (Item 118) ─────────────────────────
+ *
+ * pivot_root(new_root, put_old):
+ *   Makes new_root the process's root filesystem.
+ *   Moves the current root to put_old (which must be under new_root).
+ *
+ * Both new_root and put_old must be directories.
+ * put_old must be underneath new_root.
+ * new_root must be a mount point.
+ *
+ * After pivot_root:
+ *   - The root mount entry serves new_root's filesystem at "/".
+ *   - The new_root mount entry serves the old root at "put_old".
+ */
+int vfs_pivot_root(const char *new_root, const char *put_old) {
+    if (!new_root || !put_old || !new_root[0] || !put_old[0]) return -EINVAL;
+
+    int root_idx = root_mount_index();
+    if (root_idx < 0) return -ENOENT;
+
+    /* Find the mount entry for new_root */
+    int new_idx = -1;
+    for (int i = 0; i < num_mounts; i++) {
+        if (mounts[i].mountpoint[0] && strcmp(mounts[i].mountpoint, new_root) == 0) {
+            new_idx = i;
+            break;
+        }
+    }
+    if (new_idx < 0)
+        return -EINVAL;
+
+    /* new_root must not be the root itself */
+    if (new_idx == root_idx) return -EINVAL;
+
+    /* Verify put_old is under new_root */
+    size_t nr_len = strlen(new_root);
+    if (strncmp(put_old, new_root, nr_len) != 0) return -EINVAL;
+    if (put_old[nr_len] != '/') return -EINVAL;
+
+    /* Ensure put_old exists as a directory */
+    struct vfs_stat st;
+    int ret = vfs_stat(put_old, &st);
+    if (ret < 0) {
+        /* Try to create put_old as a directory */
+        ret = vfs_create(put_old, 2); /* type 2 = directory */
+        if (ret < 0) return -ENOTDIR;
+    } else if (st.type != 2) {
+        return -ENOTDIR;
+    }
+
+    /* Swap ops/priv between root and new_root entries.
+     *
+     * After pivot_root:
+     *   - Root entry (mountpoint="/") gets new_root's filesystem → process
+     *     now sees new_root as root.
+     *   - new_root entry gets old root's filesystem at put_old → old root
+     *     is accessible there.
+     */
+    struct vfs_ops *tmp_ops   = mounts[root_idx].ops;
+    void           *tmp_priv  = mounts[root_idx].priv;
+    int             tmp_flags = mounts[root_idx].flags;
+
+    mounts[root_idx].ops   = mounts[new_idx].ops;
+    mounts[root_idx].priv  = mounts[new_idx].priv;
+    mounts[root_idx].flags = mounts[new_idx].flags;
+
+    mounts[new_idx].ops   = tmp_ops;
+    mounts[new_idx].priv  = tmp_priv;
+    mounts[new_idx].flags = tmp_flags;
+
+    /* Update the mountpoint of the old-root-turned-new-root entry to put_old */
+    strncpy(mounts[new_idx].mountpoint, put_old, 63);
+    mounts[new_idx].mountpoint[63] = '\0';
+
+    kprintf("[VFS] pivot_root: new_root='%s' -> '/', put_old='%s'\\n", new_root, put_old);
+    return 0;
+}
+
 /* ── Exported symbols for loadable kernel modules ─────────────────── */
 EXPORT_SYMBOL(vfs_register_filesystem);
 EXPORT_SYMBOL(vfs_mount);
