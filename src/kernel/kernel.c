@@ -118,6 +118,7 @@
 #include "mseal.h"
 #include "userfaultfd.h"
 #include "cpuidle.h"
+#include "pm_qos.h"
 #include "pelt.h"
 #include "madvise_ext.h"
 #include "mem_policy.h"
@@ -409,6 +410,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
+
+    /* PM QoS — latency constraints for cpuidle C-state selection */
+    pm_qos_init();
 
     /* CPU idle state management */
     cpuidle_init();

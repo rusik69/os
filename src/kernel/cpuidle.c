@@ -14,6 +14,7 @@
  */
 
 #include "cpuidle.h"
+#include "pm_qos.h"
 #include "printf.h"
 #include "cpu.h"
 #include "smp.h"
@@ -173,26 +174,38 @@ int cpuidle_c3_mwait_enter(struct cpuidle_state *self)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /*
- * Select the deepest usable idle state for the current CPU.
+ * Select the deepest usable idle state for the current CPU,
+ * respecting PM QoS latency constraints.
  *
- * Currently we prefer deepest because the scheduler has already confirmed
- * there are no runnable tasks.  In the future this should consider:
- *   - PM QoS latency constraints from drivers
- *   - Predicted idle duration (if the CPU has been idle for a while,
- *     we can go deeper)
- *   - Whether the local timer stops (C3 on some systems)
+ * Iterates from deepest (highest index) to shallowest.  Skips any
+ * state whose wakeup latency exceeds the effective PM QoS constraint.
+ * Falls back to C1 (HLT) if no state meets the constraint.
+ *
+ * PM QoS integration: drivers register latency requirements via
+ * pm_qos_add_request(); the effective constraint is the minimum of
+ * all active requests.  For example, a network driver expecting
+ * timely RX interrupts might register a 100 us constraint, which
+ * would prevent the CPU from entering deep C-states with long
+ * wakeup latencies.
  */
 static int cpuidle_select_state(struct cpuidle_cpu *cpu_data)
 {
     (void)cpu_data;
 
-    /* Go to deepest available state.  The state table is ordered
-     * from shallowest (idx 0) to deepest (idx n-1). */
-    int idx = idle_state_count - 1;
-    if (idx < 0)
-        return 0; /* Should never happen (we always have C1) */
+    uint32_t max_latency = pm_qos_read_effective_latency();
 
-    return idx;
+    /* Iterate from deepest to shallowest */
+    for (int idx = idle_state_count - 1; idx >= 0; idx--) {
+        struct cpuidle_state *s = &idle_states[idx];
+
+        /* If no PM QoS constraint, or if this state meets the constraint */
+        if (max_latency == PM_QOS_NO_CONSTRAINT || s->latency <= max_latency) {
+            return idx;
+        }
+    }
+
+    /* Fall back to C1 (HLT) which has the lowest latency */
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

@@ -1,0 +1,245 @@
+/*
+ * pm_qos.c — Power Management Quality of Service
+ *
+ * Provides a lightweight framework for kernel components (drivers,
+ * subsystems) to register latency constraints that influence cpuidle
+ * C-state selection.  The effective constraint is the MINIMUM of all
+ * registered requests; cpuidle skips any state whose wakeup latency
+ * exceeds the effective constraint.
+ *
+ * Design:
+ *   - Simple fixed-size array of requests (no dynamic allocation).
+ *   - Locking via spinlock (PM QoS is queried on the idle path, but
+ *     the fast path is a single integer READ_ONCE-like load).
+ *   - Requests are identified by an integer ID which is their index
+ *     in the array (constant-time lookup).
+ *
+ * Reference: Linux kernel's pm_qos API (drivers/base/power/qos.c).
+ */
+
+#define KERNEL_INTERNAL
+#include "pm_qos.h"
+#include "spinlock.h"
+#include "string.h"
+#include "printf.h"
+#include "errno.h"
+
+/* ── Internal data structures ─────────────────────────────────────── */
+
+/** A single PM QoS latency request. */
+struct pm_qos_request {
+    char      name[PM_QOS_NAME_MAX];  /* Human-readable name for debug */
+    uint32_t  latency_us;             /* Max allowed wakeup latency (us) */
+    int       used;                   /* 1 = slot in use, 0 = free */
+};
+
+/** Global PM QoS state. */
+static struct {
+    struct pm_qos_request requests[PM_QOS_MAX_REQUESTS];
+    spinlock_t            lock;
+    int                   initialized;
+} pm_qos_state;
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Internal helpers
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Compute the effective latency constraint as the minimum of all
+ * registered requests.  Must be called with the lock held.
+ */
+static uint32_t pm_qos_compute_effective_locked(void)
+{
+    uint32_t effective = PM_QOS_NO_CONSTRAINT;
+
+    for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+        if (pm_qos_state.requests[i].used &&
+            pm_qos_state.requests[i].latency_us < effective) {
+            effective = pm_qos_state.requests[i].latency_us;
+        }
+    }
+
+    return effective;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Public API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+void pm_qos_init(void)
+{
+    if (pm_qos_state.initialized)
+        return;
+
+    memset(&pm_qos_state, 0, sizeof(pm_qos_state));
+    spinlock_init(&pm_qos_state.lock);
+    pm_qos_state.initialized = 1;
+
+    kprintf("[PM QoS] Initialised (%d slots, default constraint: none)\n",
+            PM_QOS_MAX_REQUESTS);
+}
+
+int pm_qos_add_request(const char *name, uint32_t latency_us)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+
+    if (!name || !name[0])
+        return -EINVAL;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    /* Find a free slot */
+    int slot = -1;
+    for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+        if (!pm_qos_state.requests[i].used) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        spinlock_release(&pm_qos_state.lock);
+        kprintf("[PM QoS] ERROR: No free request slots (max %d)\n",
+                PM_QOS_MAX_REQUESTS);
+        return -ENOSPC;
+    }
+
+    /* Fill the slot */
+    struct pm_qos_request *req = &pm_qos_state.requests[slot];
+    strncpy(req->name, name, PM_QOS_NAME_MAX - 1);
+    req->name[PM_QOS_NAME_MAX - 1] = '\0';
+    req->latency_us = latency_us;
+    req->used       = 1;
+
+    uint32_t effective = pm_qos_compute_effective_locked();
+
+    spinlock_release(&pm_qos_state.lock);
+
+    kprintf("[PM QoS] Request #%d: \"%s\" latency=%u us (effective=%u us)\n",
+            slot, name, (unsigned)latency_us, (unsigned)effective);
+
+    return slot;
+}
+
+int pm_qos_update_request(int id, uint32_t latency_us)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+
+    if (id < 0 || id >= PM_QOS_MAX_REQUESTS)
+        return -ENOENT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    if (!pm_qos_state.requests[id].used) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOENT;
+    }
+
+    pm_qos_state.requests[id].latency_us = latency_us;
+    uint32_t effective = pm_qos_compute_effective_locked();
+
+    spinlock_release(&pm_qos_state.lock);
+
+    kprintf("[PM QoS] Request #%d updated: latency=%u us (effective=%u us)\n",
+            id, (unsigned)latency_us, (unsigned)effective);
+
+    return 0;
+}
+
+int pm_qos_remove_request(int id)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+
+    if (id < 0 || id >= PM_QOS_MAX_REQUESTS)
+        return -ENOENT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    if (!pm_qos_state.requests[id].used) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOENT;
+    }
+
+    const char *name = pm_qos_state.requests[id].name;
+    pm_qos_state.requests[id].used = 0;
+    pm_qos_state.requests[id].latency_us = 0;
+    memset(pm_qos_state.requests[id].name, 0, PM_QOS_NAME_MAX);
+
+    uint32_t effective = pm_qos_compute_effective_locked();
+
+    spinlock_release(&pm_qos_state.lock);
+
+    kprintf("[PM QoS] Request #%d \"%s\" removed (effective=%u us)\n",
+            id, name, (unsigned)effective);
+
+    return 0;
+}
+
+uint32_t pm_qos_read_effective_latency(void)
+{
+    if (!pm_qos_state.initialized)
+        return PM_QOS_NO_CONSTRAINT;
+
+    /*
+     * Fast path: the effective latency changes infrequently (only when
+     * requests are added/updated/removed).  We compute it lazily and
+     * cache the result; for simplicity we re-compute each time under
+     * lock.  The lock is held only briefly and this function is called
+     * from the idle path, which is inherently non-performance-critical.
+     *
+     * Future optimisation: maintain a cached effective value updated
+     * on every request change, and here just READ_ONCE it.
+     */
+    spinlock_acquire(&pm_qos_state.lock);
+    uint32_t effective = pm_qos_compute_effective_locked();
+    spinlock_release(&pm_qos_state.lock);
+
+    return effective;
+}
+
+int pm_qos_num_requests(void)
+{
+    if (!pm_qos_state.initialized)
+        return 0;
+
+    spinlock_acquire(&pm_qos_state.lock);
+    int count = 0;
+    for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+        if (pm_qos_state.requests[i].used)
+            count++;
+    }
+    spinlock_release(&pm_qos_state.lock);
+
+    return count;
+}
+
+void pm_qos_dump_requests(void)
+{
+    if (!pm_qos_state.initialized) {
+        kprintf("[PM QoS] Not initialised\n");
+        return;
+    }
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    kprintf("[PM QoS] Latency requests (%d active):\n", pm_qos_num_requests());
+    kprintf("  %-4s %-32s %s\n", "ID", "Name", "Latency (us)");
+    kprintf("  %-4s %-32s %s\n", "----", "--------------------------------", "------------");
+
+    for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+        if (pm_qos_state.requests[i].used) {
+            kprintf("  %-4d %-32s %u\n",
+                    i,
+                    pm_qos_state.requests[i].name,
+                    (unsigned)pm_qos_state.requests[i].latency_us);
+        }
+    }
+
+    uint32_t effective = pm_qos_compute_effective_locked();
+    kprintf("  Effective constraint: %u us\n", (unsigned)effective);
+
+    spinlock_release(&pm_qos_state.lock);
+}

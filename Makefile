@@ -103,6 +103,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/acpi_thermal.c \
          src/drivers/acpi_ec.c \
          src/power/suspend.c \
+         src/power/pm_qos.c \
          src/drivers/ahci.c \
          src/drivers/nvme.c \
          src/drivers/usb_ehci.c \
