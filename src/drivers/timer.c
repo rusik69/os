@@ -18,6 +18,7 @@
 #include "syscall.h"   /* timerfd_tick, posix_timer_tick */
 #include "rcu.h"       /* rcu_check_stall */
 #include "nmi_watchdog.h"
+#include "vsyscall.h"
 #include "export.h"
 
 #define PIT_CMD  0x43
@@ -44,6 +45,9 @@ static void timer_handler(struct interrupt_frame *frame) {
         nmi_watchdog_check_soft(); /* detect soft lockups */
         rcu_check_stall(); /* detect RCU grace-period stalls */
     }
+
+    /* Update vDSO clock data on every tick for userspace timekeeping */
+    vsyscall_update_clock();
 }
 
 void timer_init(void) {
