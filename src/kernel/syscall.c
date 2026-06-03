@@ -5871,10 +5871,11 @@ static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64
 struct timerfd {
     int      in_use;
     int      clockid;
-    uint64_t it_value;       /* ticks until next expiration */
-    uint64_t it_interval;    /* ticks between repeated expirations */
-    uint64_t expirations;    /* number of times expired since last read */
-    uint64_t start_tick;     /* timer_create tick */
+    int      absolute;        /* 1 = TFD_TIMER_ABSTIME was set on last settime */
+    uint64_t it_value;        /* ticks: relative value OR absolute expiration tick */
+    uint64_t it_interval;     /* ticks between repeated expirations */
+    uint64_t expirations;     /* number of times expired since last read */
+    uint64_t start_tick;      /* for relative timers: tick when timer was set */
 };
 
 static struct timerfd timerfd_table[TIMERFD_MAX];
@@ -5898,6 +5899,7 @@ static uint64_t sys_timerfd_create(uint64_t clockid, uint64_t flags) {
         if (!timerfd_table[i].in_use) {
             timerfd_table[i].in_use = 1;
             timerfd_table[i].clockid = (int)clockid;
+            timerfd_table[i].absolute = 0;
             timerfd_table[i].it_value = 0;
             timerfd_table[i].it_interval = 0;
             timerfd_table[i].expirations = 0;
@@ -5927,12 +5929,22 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
         if (syscall_is_user_process() && !syscall_user_write_ok(old_addr, sizeof(struct itimerspec)))
             return (uint64_t)-1;
         struct itimerspec old_val;
+        if (timerfd_table[slot].absolute && timerfd_table[slot].it_value > 0) {
+            /* Absolute timer: return remaining time as absolute (TFD_TIMER_ABSTIME
+             * was set when the timer was armed, so old value is also absolute). */
+            uint64_t remaining = 0;
+            uint64_t now = timer_get_ticks();
+            if (timerfd_table[slot].it_value > now)
+                remaining = timerfd_table[slot].it_value - now;
+            old_val.it_value.tv_sec = remaining / TIMER_FREQ;
+            old_val.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        } else {
+            old_val.it_value.tv_sec = timerfd_table[slot].it_value / TIMER_FREQ;
+            old_val.it_value.tv_nsec = (timerfd_table[slot].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        }
         old_val.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
         old_val.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
-        old_val.it_value.tv_sec = timerfd_table[slot].it_value / TIMER_FREQ;
-        old_val.it_value.tv_nsec = (timerfd_table[slot].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         memcpy((void*)old_addr, &old_val, sizeof(struct itimerspec));
-        (void)flags;
     }
 
     /* Set new timer */
@@ -5941,9 +5953,21 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
                              new_val.it_value.tv_nsec / (1000000000ULL / TIMER_FREQ);
         uint64_t interval_ticks = new_val.it_interval.tv_sec * TIMER_FREQ +
                                    new_val.it_interval.tv_nsec / (1000000000ULL / TIMER_FREQ);
-        timerfd_table[slot].it_value = val_ticks;
+
+        if (flags & TFD_TIMER_ABSTIME) {
+            /* Absolute time: it_value is interpreted as an absolute time in the
+             * same clock domain as timer_get_ticks() (monotonic time since boot).
+             * Store directly as the absolute expiration tick. */
+            timerfd_table[slot].absolute = 1;
+            timerfd_table[slot].it_value = val_ticks;
+            timerfd_table[slot].start_tick = 0; /* not used for absolute */
+        } else {
+            /* Relative time: it_value is a duration from now */
+            timerfd_table[slot].absolute = 0;
+            timerfd_table[slot].it_value = val_ticks;
+            timerfd_table[slot].start_tick = timer_get_ticks();
+        }
         timerfd_table[slot].it_interval = interval_ticks;
-        timerfd_table[slot].start_tick = timer_get_ticks();
         timerfd_table[slot].expirations = 0;
     }
 
@@ -5959,14 +5983,25 @@ static uint64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
         return (uint64_t)-1;
 
     struct itimerspec cur;
-    uint64_t elapsed = timer_get_ticks() - timerfd_table[slot].start_tick;
-    uint64_t remaining = timerfd_table[slot].it_value > elapsed ?
-                         timerfd_table[slot].it_value - elapsed : 0;
+
+    if (timerfd_table[slot].absolute) {
+        /* Absolute timer: remaining = it_value - now (or 0 if expired) */
+        uint64_t now = timer_get_ticks();
+        uint64_t remaining = timerfd_table[slot].it_value > now ?
+                             timerfd_table[slot].it_value - now : 0;
+        cur.it_value.tv_sec = remaining / TIMER_FREQ;
+        cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+    } else {
+        /* Relative timer: remaining = it_value - (now - start_tick) */
+        uint64_t elapsed = timer_get_ticks() - timerfd_table[slot].start_tick;
+        uint64_t remaining = timerfd_table[slot].it_value > elapsed ?
+                             timerfd_table[slot].it_value - elapsed : 0;
+        cur.it_value.tv_sec = remaining / TIMER_FREQ;
+        cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+    }
 
     cur.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
     cur.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
-    cur.it_value.tv_sec = remaining / TIMER_FREQ;
-    cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
     memcpy((void*)cur_addr, &cur, sizeof(struct itimerspec));
     return 0;
@@ -5978,13 +6013,40 @@ void timerfd_tick(void) {
     for (int i = 0; i < TIMERFD_MAX; i++) {
         if (!timerfd_table[i].in_use || timerfd_table[i].it_value == 0)
             continue;
-        uint64_t elapsed = now - timerfd_table[i].start_tick;
-        if (elapsed >= timerfd_table[i].it_value) {
+
+        int expired = 0;
+        if (timerfd_table[i].absolute) {
+            /* Absolute timer: check if now >= absolute expiration tick */
+            if (now >= timerfd_table[i].it_value)
+                expired = 1;
+        } else {
+            /* Relative timer: check if elapsed >= it_value */
+            uint64_t elapsed = now - timerfd_table[i].start_tick;
+            if (elapsed >= timerfd_table[i].it_value)
+                expired = 1;
+        }
+
+        if (expired) {
             timerfd_table[i].expirations++;
+            /* NOTE: Periodic re-arm is handled in timerfd_do_read(), not here.
+             * This avoids the drift problem where repeatedly restarting the
+             * timer in the tick path accumulates error.  However, we still
+             * need to update the absolute tick for one-shot or the periodic
+             * base so the timer doesn't re-fire immediately on the next tick. */
             if (timerfd_table[i].it_interval > 0) {
-                /* Repeating timer: restart */
-                timerfd_table[i].start_tick = now;
-                timerfd_table[i].it_value = timerfd_table[i].it_interval;
+                if (timerfd_table[i].absolute) {
+                    /* Advance absolute periodic: preserve alignment */
+                    timerfd_table[i].it_value += timerfd_table[i].it_interval;
+                    /* Catch up if we fell behind */
+                    while (timerfd_table[i].it_value <= now) {
+                        timerfd_table[i].it_value += timerfd_table[i].it_interval;
+                        timerfd_table[i].expirations++;
+                    }
+                } else {
+                    /* Relative periodic: restart from now */
+                    timerfd_table[i].start_tick = now;
+                    timerfd_table[i].it_value = timerfd_table[i].it_interval;
+                }
             } else {
                 /* One-shot: disarm */
                 timerfd_table[i].it_value = 0;
