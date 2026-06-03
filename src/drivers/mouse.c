@@ -136,7 +136,7 @@ void mouse_init(void) {
     mouse_cycle = 0;
 
     /* Register handler for IRQ12 (vector 44) */
-    idt_register_handler(44, mouse_irq_handler);
+    idt_register_handler_named(44, mouse_irq_handler, "ps2_mouse");
     if (apic_is_init_complete()) {
         ioapic_unmask_irq(12);
     }

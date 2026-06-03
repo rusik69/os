@@ -21,6 +21,7 @@
 #include "sysctl.h"
 #include "config_gz.h"
 #include "process_rlimit.h"
+#include "idt.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -55,6 +56,86 @@ static int procfs_gen_uptime(char *buf, int max) {
     uint64_t idle = scheduler_get_idle_ticks() / TIMER_FREQ;
     proc_u64_to_str(idle, buf, &p, max);
     proc_str("\n", buf, &p, max);
+    buf[p] = '\0';
+    return p;
+}
+
+/* ── /proc/interrupts: per-CPU per-vector interrupt counts ────────── */
+
+static int procfs_gen_interrupts(char *buf, int max) {
+    int p = 0;
+    int cpu_count = smp_get_cpu_count();
+    if (cpu_count < 1) cpu_count = 1;
+    int max_cpus = (cpu_count > IDT_NR_CPUS) ? IDT_NR_CPUS : cpu_count;
+
+    /* Header: right-aligned CPU columns */
+    proc_str("           ", buf, &p, max);
+    for (int cpu = 0; cpu < max_cpus; cpu++) {
+        proc_str(" CPU", buf, &p, max);
+        int cpu_d = cpu;
+        /* Format CPU number right-aligned in 6 chars */
+        char fmt[8]; int fn = 0;
+        if (cpu_d == 0) { fmt[fn++] = '0'; }
+        else { char tmp[8]; int tn = 0; while (cpu_d) { tmp[tn++] = '0' + cpu_d % 10; cpu_d /= 10; } while (tn > 0) fmt[fn++] = tmp[--tn]; }
+        fmt[fn] = '\0';
+        /* Pad to 6 chars */
+        int pad = 6 - fn;
+        while (pad-- > 0 && p < max - 1) buf[p++] = ' ';
+        for (int i = 0; i < fn && p < max - 1; i++) buf[p++] = fmt[i];
+    }
+    proc_str("       \n", buf, &p, max);
+
+    /* Walk vectors 0..255, show those with a name or non-zero count */
+    for (int vec = 0; vec < IDT_NUM_VECTORS; vec++) {
+        const char *vname = idt_get_vector_name(vec);
+        /* Skip vectors that have no name AND zero count on all CPUs */
+        int all_zero = 1;
+        for (int cpu = 0; cpu < max_cpus; cpu++) {
+            if (idt_get_irq_count(cpu, vec) != 0) { all_zero = 0; break; }
+        }
+        if (!vname && all_zero) continue;
+
+        /* Vector number: right-aligned in 4 chars */
+        char vstr[8]; int vn = 0;
+        if (vec == 0) { vstr[vn++] = '0'; }
+        else { char tmp[8]; int tn = 0; int v = vec; while (v) { tmp[tn++] = '0' + v % 10; v /= 10; } while (tn > 0) vstr[vn++] = tmp[--tn]; }
+        vstr[vn] = '\0';
+        int pad_v = 4 - vn;
+        while (pad_v-- > 0 && p < max - 1) buf[p++] = ' ';
+        for (int i = 0; i < vn && p < max - 1; i++) buf[p++] = vstr[i];
+        proc_str(": ", buf, &p, max);
+
+        /* Per-CPU counts right-aligned in 8 chars */
+        for (int cpu = 0; cpu < max_cpus; cpu++) {
+            uint64_t cnt = idt_get_irq_count(cpu, vec);
+            char cstr[24]; int cn = 0;
+            if (cnt == 0) { cstr[cn++] = '0'; }
+            else { char tmp[24]; int tn = 0; while (cnt) { tmp[tn++] = '0' + (int)(cnt % 10); cnt /= 10; } while (tn > 0) cstr[cn++] = tmp[--tn]; }
+            cstr[cn] = '\0';
+            int pad_c = 8 - cn;
+            while (pad_c-- > 0 && p < max - 1) buf[p++] = ' ';
+            for (int i = 0; i < cn && p < max - 1; i++) buf[p++] = cstr[i];
+        }
+
+        /* Controller type + name */
+        if (vec >= 32 && vec < 48) {
+            proc_str("  IO-APIC", buf, &p, max);
+        } else if (vec >= 240 && vec <= 243) {
+            proc_str("  IPI", buf, &p, max);
+        } else if (vec < 32) {
+            proc_str("  CPU-exc", buf, &p, max);
+        } else {
+            proc_str("  generic", buf, &p, max);
+        }
+        if (vname) {
+            proc_str("    ", buf, &p, max);
+            proc_str(vname, buf, &p, max);
+        }
+        proc_str("\n", buf, &p, max);
+
+        if (p >= max - 2) break; /* prevent buffer overflow */
+    }
+
     buf[p] = '\0';
     return p;
 }
@@ -863,6 +944,8 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
 
     if (strcmp(path, "/proc/uptime") == 0) {
         len = procfs_gen_uptime(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/interrupts") == 0) {
+        len = procfs_gen_interrupts(buf, (int)max_size);
     } else if (strcmp(path, "/proc/meminfo") == 0) {
         len = procfs_gen_meminfo(buf, (int)max_size);
     } else if (strcmp(path, "/proc/cpuinfo") == 0) {
@@ -979,6 +1062,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     }
     /* Known files */
     if (strcmp(path, "/proc/uptime") == 0 ||
+        strcmp(path, "/proc/interrupts") == 0 ||
         strcmp(path, "/proc/meminfo") == 0 ||
         strcmp(path, "/proc/cpuinfo") == 0 ||
         strcmp(path, "/proc/version") == 0 ||

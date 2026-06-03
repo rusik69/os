@@ -146,7 +146,7 @@ int serial_set_irq_mode(int port_idx, int enable) {
         static int irq3_registered = 0, irq4_registered = 0;
 
         if (port->irq_num == 4 && !irq4_registered) {
-            idt_register_handler(36, irq4_handler);  /* IRQ4 = vector 36 */
+            idt_register_handler_named(36, irq4_handler, "serial_com1");  /* IRQ4 = vector 36 */
             if (apic_is_init_complete()) {
                 ioapic_unmask_irq(4);
             }
@@ -154,7 +154,7 @@ int serial_set_irq_mode(int port_idx, int enable) {
             irq4_registered = 1;
         }
         if (port->irq_num == 3 && !irq3_registered) {
-            idt_register_handler(35, irq3_handler);  /* IRQ3 = vector 35 */
+            idt_register_handler_named(35, irq3_handler, "serial_com2");  /* IRQ3 = vector 35 */
             if (apic_is_init_complete()) {
                 ioapic_unmask_irq(3);
             }

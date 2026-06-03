@@ -50,7 +50,7 @@ void timer_init(void) {
     outb(PIT_CH0, (uint8_t)(divisor & 0xFF));
     outb(PIT_CH0, (uint8_t)((divisor >> 8) & 0xFF));
 
-    idt_register_handler(32, timer_handler);
+    idt_register_handler_named(32, timer_handler, "timer");
 
     /* Legacy PIC → ExtINT → I/O APIC routing.
      * On many chipsets the PIT output is only connected to the PIC,

@@ -135,7 +135,7 @@ static void rtc_irq_handler(struct interrupt_frame *frame) {
 }
 
 void rtc_init(void) {
-    idt_register_handler(40, rtc_irq_handler);
+    idt_register_handler_named(40, rtc_irq_handler, "cmos_rtc");
 
     if (apic_is_init_complete()) {
         ioapic_unmask_irq(8);

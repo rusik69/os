@@ -206,7 +206,7 @@ void keyboard_init(void) {
     /* Initialise PS/2 controller first */
     ps2_controller_init();
     
-    idt_register_handler(33, keyboard_handler);
+    idt_register_handler_named(33, keyboard_handler, "keyboard");
     if (apic_is_init_complete()) {
         ioapic_redirect_extint(1);
         ioapic_unmask_irq(1);

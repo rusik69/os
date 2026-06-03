@@ -3,10 +3,38 @@
 #include "printf.h"
 #include "string.h"
 #include "export.h"
+#include "smp.h"
 
 static struct idt_entry idt[256];
 static struct idt_pointer idt_ptr;
 static isr_handler_t handlers[256];
+
+/* ── Interrupt statistics for /proc/interrupts ───────────────────── */
+
+/* Per-CPU per-vector interrupt counts.  Indexed as [cpu][vector]. */
+static uint64_t irq_counts[IDT_NR_CPUS][IDT_NUM_VECTORS];
+
+/* Human-readable names for interrupt vectors (static strings, not copied). */
+static const char *vector_names[IDT_NUM_VECTORS];
+
+uint64_t idt_get_irq_count(int cpu, int vector)
+{
+    if (cpu < 0 || cpu >= IDT_NR_CPUS) return 0;
+    if (vector < 0 || vector >= IDT_NUM_VECTORS) return 0;
+    return irq_counts[cpu][vector];
+}
+
+const char *idt_get_vector_name(int vector)
+{
+    if (vector < 0 || vector >= IDT_NUM_VECTORS) return NULL;
+    return vector_names[vector];
+}
+
+void idt_set_vector_name(int vector, const char *name)
+{
+    if (vector < 0 || vector >= IDT_NUM_VECTORS) return;
+    vector_names[vector] = name;
+}
 
 extern void isr0(void);  extern void isr1(void);  extern void isr2(void);
 extern void isr3(void);  extern void isr4(void);  extern void isr5(void);
@@ -52,6 +80,15 @@ static void idt_set_gate(uint8_t num, uint64_t handler, uint16_t sel, uint8_t ty
 }
 
 void isr_common_handler(struct interrupt_frame *frame) {
+    /* Count the interrupt — per-CPU, per-vector */
+    {
+        int cpu = (int)get_cpu_id();
+        int vec = (int)frame->int_no;
+        if (cpu >= 0 && cpu < IDT_NR_CPUS && vec >= 0 && vec < IDT_NUM_VECTORS) {
+            irq_counts[cpu][vec]++;
+        }
+    }
+
     if (handlers[frame->int_no]) {
         handlers[frame->int_no](frame);
         return;
@@ -70,7 +107,14 @@ void isr_common_handler(struct interrupt_frame *frame) {
 }
 
 void idt_register_handler(uint8_t vector, isr_handler_t handler) {
+    idt_register_handler_named(vector, handler, NULL);
+}
+
+void idt_register_handler_named(uint8_t vector, isr_handler_t handler, const char *name) {
     handlers[vector] = handler;
+    if (name != NULL) {
+        vector_names[vector] = name;
+    }
 }
 
 void idt_set_gate_ist(int num, uint8_t ist) {
@@ -81,6 +125,54 @@ void idt_set_gate_ist(int num, uint8_t ist) {
 void idt_init(void) {
     memset(idt, 0, sizeof(idt));
     memset(handlers, 0, sizeof(handlers));
+    memset(irq_counts, 0, sizeof(irq_counts));
+    memset(vector_names, 0, sizeof(vector_names));
+
+    /* Set default names for exception vectors */
+    vector_names[0]  = "divide_error";
+    vector_names[1]  = "debug";
+    vector_names[2]  = "nmi";
+    vector_names[3]  = "breakpoint";
+    vector_names[4]  = "overflow";
+    vector_names[5]  = "bounds";
+    vector_names[6]  = "invalid_opcode";
+    vector_names[7]  = "device_not_avail";
+    vector_names[8]  = "double_fault";
+    vector_names[9]  = "coprocessor_seg";
+    vector_names[10] = "invalid_tss";
+    vector_names[11] = "segment_not_present";
+    vector_names[12] = "stack_segment";
+    vector_names[13] = "general_protection";
+    vector_names[14] = "page_fault";
+    vector_names[16] = "x87_fp_exception";
+    vector_names[17] = "alignment_check";
+    vector_names[18] = "machine_check";
+    vector_names[19] = "simd_fp_exception";
+    vector_names[20] = "virtualization_exception";
+    vector_names[30] = "security_exception";
+
+    /* Default names for timer, keyboard, etc. (overridden by drivers) */
+    vector_names[32] = "timer";
+    vector_names[33] = "keyboard";
+    vector_names[34] = "cascade";
+    vector_names[35] = "com2";
+    vector_names[36] = "com1";
+    vector_names[37] = "lpt2";
+    vector_names[38] = "floppy";
+    vector_names[39] = "lpt1";
+    vector_names[40] = "cmos_rtc";
+    vector_names[41] = "perf";
+    vector_names[42] = "acpi";
+    vector_names[43] = "free";
+    vector_names[44] = "ps2_mouse";
+    vector_names[46] = "primary_ata";
+    vector_names[47] = "secondary_ata";
+
+    /* IPI vectors */
+    vector_names[240] = "IPI-resched";
+    vector_names[241] = "IPI-tlb-shoot";
+    vector_names[242] = "IPI-backtrace";
+    vector_names[243] = "IPI-membarrier";
 
     /* 0x8E = present, ring 0, interrupt gate */
     idt_set_gate(0,  (uint64_t)isr0,  0x08, 0x8E);

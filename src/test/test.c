@@ -1939,6 +1939,13 @@ static void test_proc_extra(void) {
     ASSERT("proc version read", vfs_read("/proc/version", buf, sizeof(buf)-1, &sz) == 0);
     ASSERT("proc stat read", vfs_read("/proc/stat", buf, sizeof(buf)-1, &sz) == 0);
     ASSERT("proc loadavg read", vfs_read("/proc/loadavg", buf, sizeof(buf)-1, &sz) == 0);
+
+    /* /proc/interrupts */
+    ASSERT("proc interrupts read", vfs_read("/proc/interrupts", buf, sizeof(buf)-1, &sz) == 0);
+    buf[sz] = '\0';
+    ASSERT("proc interrupts non-empty", sz > 0);
+    ASSERT("proc interrupts has CPU header", strstr(buf, "CPU") != NULL);
+
     t_ok("procfs extra files");
 }
 
