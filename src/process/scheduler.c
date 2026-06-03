@@ -616,6 +616,15 @@ void schedule(void) {
      * is making forward progress on this CPU. */
     nmi_watchdog_pet();
 
+    /* Update per-task stack canary for stack-smashing protection.
+     * Each process has its own unique canary; load the incoming process's
+     * canary into the global guard variable so that __stack_chk_fail
+     * triggers on the actual owner's canary. */
+    {
+        extern uint64_t __stack_chk_guard;
+        __stack_chk_guard = next->stack_canary;
+    }
+
     context_switch(current ? &current->context : NULL, next->context);
     __asm__ volatile("sti");
 }

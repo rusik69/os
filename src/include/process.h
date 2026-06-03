@@ -227,6 +227,8 @@ struct process {
     uint64_t        wakee_flip_tick; /* last tick when flip count was updated/decayed */
     /* ── Executable path (for /proc/self/exe) ────────────────────── */
     char exe_path[256];
+    /* ── Per-task stack canary for stack-smashing protection ────── */
+    uint64_t stack_canary;   /* unique canary per process; updated in __stack_chk_guard on switch */
 };
 
 void process_init(void);

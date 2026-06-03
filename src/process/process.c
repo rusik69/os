@@ -384,6 +384,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->majflt = 0;
 
     /* CFS vruntime and resource tracking */
+    proc->stack_canary = prng_rand64();
     proc->vruntime = 0;
     proc->sched_weight = 1024;
     proc->sched_autogroup_id = -1;
@@ -502,6 +503,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->nivcsw = 0;
     proc->minflt = 0;
     proc->majflt = 0;
+    proc->stack_canary = prng_rand64();
 
     /* Set up initial context on kernel stack.
      * context_switch will pop r15..rbp then ret → user_entry_trampoline
@@ -846,6 +848,8 @@ int process_fork(void) {
     child->pid = alloc_pid();
     child->parent_pid = parent->pid;
     child->is_suspended = 0;
+    /* Give the child its own unique stack canary — distinct from parent */
+    child->stack_canary = prng_rand64();
 
     /* Allocate fresh kernel stack BEFORE setting state to READY */
     if (alloc_guarded_kernel_stack(child) < 0) {
