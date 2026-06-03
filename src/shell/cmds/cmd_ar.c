@@ -29,7 +29,7 @@ static unsigned int octal_to_int(const char *s, int len) {
     return n;
 }
 
-static void write_octal(char *buf, unsigned int val, int len) {
+static __attribute__((unused)) void write_octal(char *buf, unsigned int val, int len) {
     for (int i = len - 1; i >= 0; i--) {
         buf[i] = (val % 8) + '0';
         val /= 8;

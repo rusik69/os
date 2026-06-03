@@ -12,6 +12,7 @@
 
 int ___ratelimit(struct ratelimit_state *state, const char *func)
 {
+    (void)func;
     uint64_t now;
 
     if (!state)

@@ -190,7 +190,7 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
     uint32_t mask = 0;
     uint32_t dns = 0;
     uint32_t server_id = 0;
-    uint32_t lease = 0;
+    uint32_t lease __attribute__((unused)) = 0;
 
     while (opt < end && *opt != 255) {
         if (*opt == 0) { opt++; continue; }
@@ -414,7 +414,7 @@ int dhcp_discover(void) {
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
-                        if (ip_hdr_len + sizeof(struct udp_header) <= total_len &&
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
                             struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
@@ -442,7 +442,7 @@ int dhcp_discover(void) {
                     if (ip->protocol == IP_PROTO_UDP) {
                         int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
                         int total_len = ntohs(ip->total_len);
-                        if (ip_hdr_len + sizeof(struct udp_header) <= total_len &&
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
                             total_len <= n - (int)sizeof(struct eth_header)) {
                             struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
                             if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {

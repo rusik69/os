@@ -14,11 +14,11 @@ void aio_init(void) {
 }
 int aio_read(int fd, void *buf, size_t count, uint64_t offset) {
     if (!buf) return -1;
-    kprintf("[aio] read fd=%d count=%zu offset=%llu\n", fd, count, (unsigned long long)offset);
+    kprintf("[aio] read fd=%d count=%llu offset=%llu\n", fd, (unsigned long long)count, (unsigned long long)offset);
     return (int)count;
 }
 int aio_write(int fd, const void *buf, size_t count, uint64_t offset) {
     if (!buf) return -1;
-    kprintf("[aio] write fd=%d count=%zu offset=%llu\n", fd, count, (unsigned long long)offset);
+    kprintf("[aio] write fd=%d count=%llu offset=%llu\n", fd, (unsigned long long)count, (unsigned long long)offset);
     return (int)count;
 }

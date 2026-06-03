@@ -5,7 +5,6 @@
 #include "heap.h"
 
 static struct debugfs_entry debugfs_entries[DEBUGFS_MAX_ENTRIES];
-static int debugfs_num_entries = 0;
 static int debugfs_mounted = 0;
 
 /* debugfs uses a flat namespace under /sys/kernel/debug/<name> */

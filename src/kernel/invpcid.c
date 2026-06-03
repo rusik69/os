@@ -20,7 +20,7 @@ int invpcid_init(void) {
 
     if (!(rbx & CPUID_7_EBX_INVPCID)) {
         kprintf("[cpu] INVPCID not supported\n");
-        return;
+        return -1;
     }
 
     /* Enable INVPCID in CR4 (bit 10) */

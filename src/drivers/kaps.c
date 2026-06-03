@@ -3,8 +3,8 @@
 #include "printf.h"
 #include "kaps.h"
 static uint64_t caps_effective = 0xFFFFFFFFFFFFFFFFULL;
-static uint64_t caps_permitted = 0xFFFFFFFFFFFFFFFFULL;
-static uint64_t caps_inheritable = 0;
+static __attribute__((unused)) uint64_t caps_permitted = 0xFFFFFFFFFFFFFFFFULL;
+static __attribute__((unused)) uint64_t caps_inheritable = 0;
 static uint64_t caps_bounding = 0xFFFFFFFFFFFFFFFFULL;
 void caps_init(void) {
     kprintf("[OK] Capability system initialized\n");

@@ -115,7 +115,7 @@ int ac97_init(void) {
     nabm_out8(NABM_PCM_OUT_CR, 0);
 
     ac97_dev_present = 1;
-    kprintf("ac97: initialized (NAM=0x%x, NABM=0x%x)\n",
+    kprintf("ac97: initialized (NAM=0x%lx, NABM=0x%lx)\n",
             (unsigned long)ac97_nam_base, (unsigned long)ac97_nabm_base);
     return 0;
 }

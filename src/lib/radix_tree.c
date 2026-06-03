@@ -6,7 +6,8 @@ int radix_tree_insert(struct radix_tree_root *root, unsigned long key, void *ite
     if (!root->rnode) { root->rnode = item; root->height = 0; return 0; }
     if (root->height == 0) {
         struct radix_tree_node *n = kmalloc(sizeof(struct radix_tree_node));
-        if (!n) return -1; memset(n, 0, sizeof(*n));
+        if (!n) return -1;
+        memset(n, 0, sizeof(*n));
         n->slots[0] = root->rnode; n->count = 1;
         root->rnode = n; root->height = 1;
     }
@@ -17,7 +18,8 @@ int radix_tree_insert(struct radix_tree_root *root, unsigned long key, void *ite
         if (h == 1) { cur->slots[idx] = item; cur->count++; return 0; }
         if (!cur->slots[idx]) {
             struct radix_tree_node *n = kmalloc(sizeof(struct radix_tree_node));
-            if (!n) return -1; memset(n, 0, sizeof(*n));
+            if (!n) return -1;
+            memset(n, 0, sizeof(*n));
             cur->slots[idx] = n; cur->count++;
         }
         cur = cur->slots[idx];

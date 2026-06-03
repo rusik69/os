@@ -7,5 +7,5 @@ void cmd_arp(void) {
     kprintf("ARP cache:\n");
     int n = libc_net_arp_list_print();
     if (n == 0) kprintf("  (empty)\n");
-    kprintf("Entries: %u\n", (unsigned long)n);
+    kprintf("Entries: %lu\n", (unsigned long)n);
 }

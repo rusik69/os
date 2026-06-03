@@ -10,7 +10,7 @@ static int section_count = 0;
 
 void memhp_init(void) {
     memset(sections, 0, sizeof(sections));
-    kprintf("[mem] Memory hotplug framework initialized (%d max sections, %llu MB each)\n",
+    kprintf("[mem] Memory hotplug framework initialized (%d max sections, %lu MB each)\n",
             MEMHP_MAX_SECTIONS, (unsigned long)(MEMHP_SECTION_SIZE / (1024 * 1024)));
 }
 
@@ -27,7 +27,7 @@ int memhp_add_region(uint64_t base, uint64_t size) {
     sec->present = 1;
 
     section_count++;
-    kprintf("[mem] memhp: added region 0x%llx (+%llu MB)\n",
+    kprintf("[mem] memhp: added region 0x%lx (+%lu MB)\n",
             (unsigned long)base, (unsigned long)(size / (1024 * 1024)));
     return 0;
 }
@@ -36,12 +36,12 @@ int memhp_remove_region(uint64_t base) {
     for (int i = 0; i < section_count; i++) {
         if (sections[i].base_addr == base && sections[i].present) {
             if (sections[i].state == MEMHP_ONLINE) {
-                kprintf("[mem] memhp: cannot remove online region 0x%llx\n", (unsigned long)base);
+                kprintf("[mem] memhp: cannot remove online region 0x%lx\n", (unsigned long)base);
                 return -1;
             }
             sections[i].present = 0;
             sections[i].state = MEMHP_OFFLINE;
-            kprintf("[mem] memhp: removed region 0x%llx\n", (unsigned long)base);
+            kprintf("[mem] memhp: removed region 0x%lx\n", (unsigned long)base);
             return 0;
         }
     }
@@ -58,7 +58,7 @@ int memhp_online_section(int section_id) {
     /* Add pages to PMM by freeing each page in the region */
     pmm_reserve_frames(sec->base_addr, sec->size);
     sec->state = MEMHP_ONLINE;
-    kprintf("[mem] memhp: section %d online (0x%llx, %llu MB)\n",
+    kprintf("[mem] memhp: section %d online (0x%lx, %lu MB)\n",
             section_id, (unsigned long)sec->base_addr,
             (unsigned long)(sec->size / (1024 * 1024)));
     return 0;
@@ -74,7 +74,7 @@ int memhp_offline_section(int section_id) {
     sec->state = MEMHP_GOING_OFFLINE;
     /* Migrate pages out (simplified: just mark as offline) */
     sec->state = MEMHP_OFFLINE;
-    kprintf("[mem] memhp: section %d offline (0x%llx)\n",
+    kprintf("[mem] memhp: section %d offline (0x%lx)\n",
             section_id, (unsigned long)sec->base_addr);
     return 0;
 }

@@ -21,6 +21,7 @@ static void rotate_right(struct prio_tree_root *root,
                           struct prio_tree_node **parent_link,
                           struct prio_tree_node *node)
 {
+    (void)root;
     struct prio_tree_node *left = node->left;
     node->left = left->right;
     if (left->right)
@@ -36,6 +37,7 @@ static void rotate_left(struct prio_tree_root *root,
                          struct prio_tree_node **parent_link,
                          struct prio_tree_node *node)
 {
+    (void)root;
     struct prio_tree_node *right = node->right;
     node->right = right->left;
     if (right->left)

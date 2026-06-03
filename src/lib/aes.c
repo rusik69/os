@@ -51,7 +51,7 @@ static const uint32_t rcon[11] = {
     0x36000000
 };
 
-static uint32_t xtime(uint32_t x)
+static __attribute__((unused)) uint32_t xtime(uint32_t x)
 {
     return (x << 1) ^ (((x >> 7) & 1) * 0x11b);
 }

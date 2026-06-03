@@ -648,6 +648,10 @@ $(BUILDDIR_CHECK)/kernel.elf: check-app-boundary $(CHECK_OBJS)
 	@mkdir -p $(BUILDDIR_CHECK)
 	$(LD) $(LDFLAGS) -o $@ $(CHECK_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
 
+# config_gz.o depends on the auto-generated header for check build too
+$(BUILDDIR_CHECK)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
+$(BUILDDIR_CHECK)/kernel/config_gz.o: CHECK_CFLAGS += -I$(BUILDDIR_CHECK) -I$(BUILDDIR_TEST)
+
 $(BUILDDIR_CHECK)/kernel.bin: $(BUILDDIR_CHECK)/kernel.elf
 	cp $< $@
 

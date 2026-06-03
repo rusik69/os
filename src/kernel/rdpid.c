@@ -14,7 +14,7 @@ int rdpid_init(void) {
 
     if (!(rbx & CPUID_7_EBX_RDPID)) {
         kprintf("[cpu] RDPID instruction not supported\n");
-        return;
+        return -1;
     }
 
     rdpid_available = 1;

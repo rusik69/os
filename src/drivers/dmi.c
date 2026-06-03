@@ -4,9 +4,9 @@
 #include "dmi.h"
 #include "string.h"
 #include "io.h"
-static char dmi_bios_vendor[64] = "QEMU";
-static char dmi_sys_vendor[64] = "QEMU";
-static char dmi_product[64] = "Standard PC";
+static __attribute__((unused)) char dmi_bios_vendor[64] = "QEMU";
+static __attribute__((unused)) char dmi_sys_vendor[64] = "QEMU";
+static __attribute__((unused)) char dmi_product[64] = "Standard PC";
 void dmi_init(void) {
     /* Scan BIOS area for DMI table signature */
     const char *sig = "_SM_";

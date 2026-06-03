@@ -14,7 +14,7 @@ int fsgsbase_init(void) {
 
     if (!(rbx & CPUID_7_EBX_FSGSBASE)) {
         kprintf("[cpu] FSGSBASE instructions not supported\n");
-        return;
+        return -1;
     }
 
     /* Enable FSGSBASE in CR4 (bit 16) */

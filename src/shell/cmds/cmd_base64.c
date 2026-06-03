@@ -38,10 +38,10 @@ void cmd_base64(const char *args) {
         unsigned char b1 = (i + 1 < size) ? buf[i + 1] : 0;
         unsigned char b2 = (i + 2 < size) ? buf[i + 2] : 0;
 
-        kprintf("%c", (unsigned long)b64chars[b0 >> 2]);
-        kprintf("%c", (unsigned long)b64chars[((b0 & 0x03) << 4) | (b1 >> 4)]);
-        kprintf("%c", (unsigned long)(i + 1 < size ? b64chars[((b1 & 0x0F) << 2) | (b2 >> 6)] : '='));
-        kprintf("%c", (unsigned long)(i + 2 < size ? b64chars[b2 & 0x3F] : '='));
+        kprintf("%c", b64chars[b0 >> 2]);
+        kprintf("%c", b64chars[((b0 & 0x03) << 4) | (b1 >> 4)]);
+        kprintf("%c", (int)(i + 1 < size ? b64chars[((b1 & 0x0F) << 2) | (b2 >> 6)] : '='));
+        kprintf("%c", (int)(i + 2 < size ? b64chars[b2 & 0x3F] : '='));
 
         col += 4;
         if (col >= 76) {

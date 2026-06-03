@@ -1,8 +1,9 @@
 #include "notifier.h"
 #include "printf.h"
 #include "string.h"
-#define NOTIFIER_MAX 32
-static struct notifier_block *notifier_list[NOTIFIER_MAX];
+/* Local max notifiers may differ from the public NOTIFIER_MAX constant */
+#define NOTIFIER_LIST_SIZE 32
+static struct notifier_block *notifier_list[NOTIFIER_LIST_SIZE];
 static int notifier_init_done = 0;
 void notifier_init(void) {
     memset(notifier_list, 0, sizeof(notifier_list));

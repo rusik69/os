@@ -10,6 +10,6 @@ void uio_init(void) {
 }
 int uio_register(uint64_t phys_addr, size_t size) {
     if (uio_count >= MAX_UIO) return -1;
-    kprintf("[uio] register phys=0x%llx size=%zu\n", (unsigned long long)phys_addr, size);
+    kprintf("[uio] register phys=0x%llx size=%llu\n", (unsigned long long)phys_addr, (unsigned long long)size);
     return uio_count++;
 }
