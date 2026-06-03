@@ -106,6 +106,9 @@ static uint32_t     fat_sectors   = 0;
 static uint32_t     fs_info_lba   = 0;
 static uint32_t     fsinfo_next_free = 2;
 
+/* Cached volume label (11-char padded, null-terminated) */
+static char         g_volume_label[12];
+
 /* FAT-type-aware accessors */
 #define FAT_ENTRY_SIZE() (fat_type == FAT12 ? 2u : (fat_type == FAT16 ? 2u : 4u))
 #define FAT_EOC()        (fat_type == FAT12 ? 0x0FF8u : (fat_type == FAT16 ? 0xFFF8u : 0x0FFFFFF8u))
@@ -734,6 +737,8 @@ int fat32_mount(fat32_disk_t disk, uint32_t part_lba) {
                             fat_type == FAT16 ? "FAT16" : "FAT32";
     kprintf("  %s mounted: vol='%.11s' clusters=%lu\n",
             type_name, bpb->volume_label, (unsigned long)total_clusters);
+    __builtin_memcpy(g_volume_label, bpb->volume_label, 11);
+    g_volume_label[11] = '\0';
     return 0;
 }
 
@@ -1264,6 +1269,200 @@ int fat32_unlink(const char *path) {
     if (is_dir) return -4;
     if (dir_remove_entry(parent, leaf) != 0) return -5;
     fat_free_chain(clus);
+    return 0;
+}
+
+/* ── Volume label read/write (Item 149) ──────────────────────────────────────── */
+
+int fat32_get_volume_label(char *buf, int max)
+{
+    if (!mounted || !buf || max < 1)
+        return -1;
+
+    /* Strip trailing spaces from the cached label */
+    int end = 10;
+    while (end >= 0 && g_volume_label[end] == ' ')
+        end--;
+    int copy_len = (end + 1 < max) ? (end + 1) : (max - 1);
+    __builtin_memcpy(buf, g_volume_label, (unsigned int)copy_len);
+    buf[copy_len] = '\0';
+    return 0;
+}
+
+/*
+ * Set the volume label on a mounted FAT filesystem.
+ *
+ * Writes to three locations:
+ *   1. The primary boot sector (sector 0 of partition)
+ *   2. The backup boot sector (FAT32 only, sector 6 typically)
+ *   3. The root directory volume label entry (creates/updates as needed)
+ *
+ * @label: null-terminated string, 1-11 chars, uppercase recommended.
+ * Returns 0 on success, negative on error.
+ */
+int fat32_set_volume_label(const char *label)
+{
+    if (!mounted || !label)
+        return -EINVAL;
+
+    /* Validate and prepare the 11-byte volume label */
+    int len = (int)strlen(label);
+    if (len < 1 || len > 11)
+        return -EINVAL;
+
+    char new_label[11];
+    __builtin_memset(new_label, ' ', 11);
+    for (int i = 0; i < len && i < 11; i++) {
+        char c = label[i];
+        /* Reject control characters; uppercase lowercase letters */
+        if (c < 0x20 || c > 0x7E)
+            return -EINVAL;
+        if (c >= 'a' && c <= 'z')
+            c = (char)(c - 0x20); /* toupper */
+        new_label[i] = c;
+    }
+
+    /* ── Update boot sector ── */
+    uint8_t boot[SECT_SIZE];
+    if (read_sector(part_start, boot) != 0)
+        return -EIO;
+
+    /* Volume label offset in BPB: 0x2B for FAT12/16, 0x47 for FAT32 */
+    uint8_t *vol_field;
+    if (fat_type == FAT32) {
+        vol_field = boot + 0x47; /* offset of volume_label in struct fat32_bpb */
+    } else {
+        vol_field = boot + 0x2B; /* offset in FAT12/16 extended BPB */
+    }
+    __builtin_memcpy(vol_field, new_label, 11);
+
+    if (write_sector(part_start, boot) != 0)
+        return -EIO;
+
+    /* ── Update backup boot sector (FAT32 only) ── */
+    /* The backup_boot_sector field is at offset 0x32 in FAT32 BPB.
+     * Typical value is 6 (sector 6). */
+    if (fat_type == FAT32) {
+        uint16_t backup_sec;
+        __builtin_memcpy(&backup_sec, boot + 0x32, 2);
+        if (backup_sec > 0 && backup_sec != part_start) {
+            uint8_t backup[SECT_SIZE];
+            if (read_sector(backup_sec, backup) == 0) {
+                if (fat_type == FAT32) {
+                    __builtin_memcpy(backup + 0x47, new_label, 11);
+                } else {
+                    __builtin_memcpy(backup + 0x2B, new_label, 11);
+                }
+                write_sector(backup_sec, backup);
+            }
+        }
+    }
+
+    /* ── Update root directory volume label entry ── */
+    /* Scan the root directory for an existing volume label entry (ATTR_VOLUME_ID).
+     * If found, update its name field. If not found, create one.
+     * The volume label entry has cluster=0, file_size=0, ATTR_VOLUME_ID set. */
+    {
+        uint8_t dir_buf[SECT_SIZE];
+        uint32_t eoc = FAT_EOC();
+        uint32_t root_clus = root_cluster; /* for FAT32; 0 means fixed root for FAT12/16 */
+        uint32_t sec_count = root_dir_sectors;
+
+        if (fat_type == FAT32) {
+            /* Walk the cluster chain of the root directory */
+            uint32_t clus = root_clus;
+            int entry_found = 0;
+
+            while (clus < eoc && clus >= 2) {
+                uint32_t lba = cluster_to_lba(clus);
+                for (uint32_t s = 0; s < spc; s++) {
+                    if (read_sector(lba + s, dir_buf) != 0)
+                        break;
+                    struct fat32_dirent *ents = (struct fat32_dirent *)dir_buf;
+                    int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
+                    for (int i = 0; i < n_ents; i++) {
+                        uint8_t first = (uint8_t)ents[i].name[0];
+                        if (first == 0x00 || first == 0xE5)
+                            continue;
+                        if (ents[i].attr == FAT32_ATTR_VOLUME_ID) {
+                            /* Update existing volume label entry */
+                            __builtin_memcpy(ents[i].name, new_label, 11);
+                            write_sector(lba + s, dir_buf);
+                            entry_found = 1;
+                            goto vol_label_done; /* break all loops */
+                        }
+                    }
+                }
+                /* Read next cluster in chain */
+                if (fat_read_entry(clus, &clus) != 0)
+                    break;
+            }
+
+vol_label_done:
+            if (!entry_found) {
+                /* Create a new volume label entry in the first sector of root */
+                if (read_sector(cluster_to_lba(root_clus), dir_buf) == 0) {
+                    struct fat32_dirent *ents = (struct fat32_dirent *)dir_buf;
+                    int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
+                    for (int i = 0; i < n_ents; i++) {
+                        uint8_t first = (uint8_t)ents[i].name[0];
+                        if (first == 0x00 || first == 0xE5) {
+                            /* Free/deleted entry — use it */
+                            __builtin_memset(&ents[i], 0, sizeof(struct fat32_dirent));
+                            __builtin_memcpy(ents[i].name, new_label, 11);
+                            ents[i].attr = FAT32_ATTR_VOLUME_ID;
+                            write_sector(cluster_to_lba(root_clus), dir_buf);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            /* FAT12/16: fixed root directory */
+            uint32_t first_lba = fat_start + num_fats * fat_sectors;
+            int entry_found = 0;
+            for (uint32_t s = 0; s < sec_count && !entry_found; s++) {
+                if (read_sector(first_lba + s, dir_buf) != 0)
+                    break;
+                struct fat32_dirent *ents = (struct fat32_dirent *)dir_buf;
+                int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
+                for (int i = 0; i < n_ents; i++) {
+                    uint8_t first = (uint8_t)ents[i].name[0];
+                    if (first == 0x00 || first == 0xE5)
+                        continue;
+                    if (ents[i].attr == FAT32_ATTR_VOLUME_ID) {
+                        __builtin_memcpy(ents[i].name, new_label, 11);
+                        write_sector(first_lba + s, dir_buf);
+                        entry_found = 1;
+                        break;
+                    }
+                }
+            }
+            if (!entry_found) {
+                /* Create new volume label entry in first free slot */
+                if (read_sector(first_lba, dir_buf) == 0) {
+                    struct fat32_dirent *ents = (struct fat32_dirent *)dir_buf;
+                    int n_ents = SECT_SIZE / (int)sizeof(struct fat32_dirent);
+                    for (int i = 0; i < n_ents; i++) {
+                        uint8_t first = (uint8_t)ents[i].name[0];
+                        if (first == 0x00 || first == 0xE5) {
+                            __builtin_memset(&ents[i], 0, sizeof(struct fat32_dirent));
+                            __builtin_memcpy(ents[i].name, new_label, 11);
+                            ents[i].attr = FAT32_ATTR_VOLUME_ID;
+                            write_sector(first_lba, dir_buf);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /* ── Update cached label ── */
+    __builtin_memcpy(g_volume_label, new_label, 11);
+    g_volume_label[11] = '\0';
+
+    kprintf("[fat32] Volume label set to '%.11s'\n", new_label);
     return 0;
 }
 

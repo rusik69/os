@@ -4,6 +4,7 @@
 #include "ahci.h"
 #include "string.h"
 #include "printf.h"
+#include "errno.h"
 
 /*
  * fat <subcommand> [args]
@@ -12,12 +13,13 @@
  *   fat cat <path>          - dump file contents
  *   fat stat <path>         - show file size
  *   fat write <path> <text> - create/overwrite file on FAT volume
+ *   fat label [newlabel]    - show or set volume label
  *   fat sync                - flush FAT tables
  */
 void cmd_fat(const char *args) {
     if (!args || !*args) {
         kprintf("Usage: fat mount [ata|ahci|usb] | ls [path] | cat <path> | stat <path>\n");
-        kprintf("       fat write <path> <text> | mkdir <path> | unlink <path> | sync\n");
+        kprintf("       fat write <path> <text> | mkdir <path> | unlink <path> | label [newlabel] | sync\n");
         kprintf("  mounted: %s\n", fat32_is_mounted() ? "yes" : "no");
         return;
     }
@@ -38,7 +40,7 @@ void cmd_fat(const char *args) {
         if (rc == 0)
             kprintf("FAT32 mounted\n");
         else
-            kprintf("fat mount failed: %d\n", (unsigned long)(-rc));
+            kprintf("fat mount failed: %lu\n", (unsigned long)(-rc));
         return;
     }
 
@@ -88,7 +90,7 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat stat <path>\n"); return; }
         int sz = fat32_file_size(path);
         if (sz < 0) { kprintf("fat stat: not found\n"); return; }
-        kprintf("%s: %d bytes\n", path, (unsigned long)(uint32_t)sz);
+        kprintf("%s: %lu bytes\n", path, (unsigned long)(uint32_t)sz);
         return;
     }
 
@@ -110,8 +112,8 @@ void cmd_fat(const char *args) {
         while (*sp == ' ') sp++;
         if (!*sp) { kprintf("Usage: fat write <path> <text>\n"); return; }
         int n = fat32_write_file(path, sp, (uint32_t)strlen(sp));
-        if (n < 0) kprintf("fat write failed: %d\n", (unsigned long)(-n));
-        else kprintf("wrote %d bytes to %s\n", (unsigned long)(uint32_t)n, path);
+        if (n < 0) kprintf("fat write failed: %lu\n", (unsigned long)(-n));
+        else kprintf("wrote %lu bytes to %s\n", (unsigned long)(uint32_t)n, path);
         return;
     }
 
@@ -129,7 +131,7 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat mkdir <path>\n"); return; }
         int rc = fat32_mkdir(path);
         if (rc == 0) kprintf("created %s\n", path);
-        else kprintf("fat mkdir failed: %d\n", (unsigned long)(-rc));
+        else kprintf("fat mkdir failed: %lu\n", (unsigned long)(-rc));
         return;
     }
 
@@ -140,7 +142,39 @@ void cmd_fat(const char *args) {
         if (!*path) { kprintf("Usage: fat unlink <path>\n"); return; }
         int rc = fat32_unlink(path);
         if (rc == 0) kprintf("removed %s\n", path);
-        else kprintf("fat unlink failed: %d\n", (unsigned long)(-rc));
+        else kprintf("fat unlink failed: %lu\n", (unsigned long)(-rc));
+        return;
+    }
+
+    /* ── label ── */
+    if (strncmp(args, "label", 5) == 0) {
+        const char *rest = args + 5;
+        while (*rest == ' ') rest++;
+        if (*rest == '\0') {
+            /* Show current label */
+            char label[12];
+            if (fat32_get_volume_label(label, sizeof(label)) == 0) {
+                kprintf("Volume label: '%s'\n", label);
+            } else {
+                kprintf("Volume label: (none)\n");
+            }
+        } else {
+            /* Set new label */
+            int rc = fat32_set_volume_label(rest);
+            if (rc == 0) {
+                char label[12];
+                fat32_get_volume_label(label, sizeof(label));
+                kprintf("Volume label set to '%s'\n", label);
+            } else {
+                const char *msg;
+                switch (rc) {
+                    case -EINVAL: msg = "invalid (1-11 chars, printable ASCII)"; break;
+                    case -EIO:    msg = "I/O error writing to disk"; break;
+                    default:      msg = "unknown error"; break;
+                }
+                kprintf("fat label: %s (%lu)\n", msg, (unsigned long)(-rc));
+            }
+        }
         return;
     }
 

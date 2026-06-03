@@ -38,6 +38,12 @@ int  fat32_mkdir(const char *path);
 /* Remove file (not directories) */
 int  fat32_unlink(const char *path);
 
+/* Get volume label (returns 0 on success, -1 on error). */
+int  fat32_get_volume_label(char *buf, int max);
+
+/* Set volume label (1-11 chars, uppercase recommended, returns 0 on success). */
+int  fat32_set_volume_label(const char *label);
+
 extern struct vfs_ops fat32_vfs_ops;
 
 #endif
