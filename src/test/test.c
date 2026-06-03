@@ -1860,6 +1860,42 @@ static void test_tmpfs(void) {
     } else {
         t_ok("tmpfs SKIP (not mounted)");
     }
+
+    /* ── O_TMPFILE test: create unnamed temp file ─────────────── */
+    {
+        uint64_t tmp_fd = syscall_dispatch(SYS_OPEN, (uint64_t)(uintptr_t)"/tmp",
+                                           O_TMPFILE | 2, 0644, 0, 0); /* O_TMPFILE | O_RDWR */
+        if ((int64_t)tmp_fd < 0) {
+            t_ok("O_TMPFILE SKIP (open failed)");
+        } else {
+            int idx = (int)tmp_fd - 3;
+            struct process *p = process_get_current();
+            /* Verify FD_TMPFILE flag is set */
+            ASSERT("O_TMPFILE fd flag set",
+                   p && idx >= 0 && idx < PROCESS_FD_MAX &&
+                   p->fd_table[idx].used &&
+                   (p->fd_table[idx].flags & FD_TMPFILE));
+            /* Verify the hidden path exists */
+            ASSERT("O_TMPFILE path exists",
+                   vfs_stat(p->fd_table[idx].path, &st) == 0);
+            /* Write some data */
+            ASSERT("O_TMPFILE write",
+                   vfs_write(p->fd_table[idx].path, "tmpfile_data", 12) == 0);
+            /* Read it back */
+            char tmpbuf[32];
+            uint32_t tmp_sz = 0;
+            ASSERT("O_TMPFILE read",
+                   vfs_read(p->fd_table[idx].path, tmpbuf, sizeof(tmpbuf)-1, &tmp_sz) == 0);
+            tmpbuf[tmp_sz] = '\0';
+            ASSERT_STR("O_TMPFILE content", tmpbuf, "tmpfile_data");
+            /* Close the fd — should auto-unlink */
+            syscall_dispatch(SYS_CLOSE, tmp_fd, 0, 0, 0, 0);
+            /* Verify the hidden file is gone */
+            ASSERT("O_TMPFILE auto-unlinked",
+                   vfs_stat(p->fd_table[idx].path, &st) < 0);
+            t_ok("O_TMPFILE test");
+        }
+    }
 }
 
 static void test_compaction(void) {

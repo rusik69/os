@@ -41,7 +41,8 @@ struct cpu_context {
 typedef void (*signal_handler_t)(int signum);
 
 /* Per-process file descriptor table entry */
-#define FD_CLOEXEC 1
+#define FD_CLOEXEC  1
+#define FD_TMPFILE  2  /* O_TMPFILE — unlink on close */
 
 struct process_fd {
     char     path[64];

@@ -507,11 +507,70 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     return (uint64_t)-1;
 }
 
+/*
+ * Generate a unique hidden temporary file path for O_TMPFILE.
+ * The path is of the form:  <dir>/.tmp_<pid>_<counter>
+ * Returns 0 on success, -1 on failure (path too long).
+ */
+static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
+{
+    static uint64_t tmpfile_counter = 0;
+    struct process *p = process_get_current();
+    uint32_t pid = p ? p->pid : 0;
+    uint64_t seq;
+
+    /* Atomically increment the global counter */
+    __asm__ volatile("lock; addq $1, %0" : "+m"(tmpfile_counter) : : "memory");
+    seq = tmpfile_counter;
+
+    int n = snprintf(buf, (size_t)bufsize, "%s/.tmp_%u_%llu",
+                     dir ? dir : "/tmp", pid,
+                     (unsigned long long)seq);
+    if (n < 0 || n >= bufsize)
+        return -1;
+    return 0;
+}
+
 static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     const char *path = (const char *)path_addr;
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
+
+    /* Handle O_TMPFILE: create an unnamed temporary file.
+     * The `path` argument is a directory under which the temp file
+     * is created (e.g. "/tmp").  The file has no visible directory
+     * entry and will be automatically deleted when the last fd is closed. */
+    if (flags & O_TMPFILE) {
+        char tmp_path[64];
+        if (tmpfile_make_path(path, tmp_path, (int)sizeof(tmp_path)) < 0)
+            return (uint64_t)-1;
+
+        /* Create the hidden temp file */
+        if (vfs_create(tmp_path, 0) < 0)
+            return (uint64_t)-1;
+
+        /* Allocate fd slot and mark as FD_TMPFILE */
+        struct process *p = process_get_current();
+        if (!p) { vfs_unlink(tmp_path); return (uint64_t)-1; }
+        uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
+        for (int i = 0; i < PROCESS_FD_MAX; i++) {
+            if (!p->fd_table[i].used) {
+                if ((uint64_t)i >= max_fds) {
+                    vfs_unlink(tmp_path);
+                    return (uint64_t)-EMFILE;
+                }
+                strncpy(p->fd_table[i].path, tmp_path, 63);
+                p->fd_table[i].path[63] = '\0';
+                p->fd_table[i].offset = 0;
+                p->fd_table[i].used = 1;
+                p->fd_table[i].flags = FD_TMPFILE;
+                return (uint64_t)(i + 3);
+            }
+        }
+        vfs_unlink(tmp_path);
+        return (uint64_t)-1;
+    }
 
     /* Handle O_TRUNC: truncate file to zero length */
     if (exists && (flags & O_TRUNC)) {
@@ -540,7 +599,16 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 static uint64_t sys_close(uint64_t fd) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (pfd) pfd->used = 0;
+    if (!pfd) return (uint64_t)-1;
+
+    /* If this is an O_TMPFILE fd, unlink the hidden file */
+    if (pfd->flags & FD_TMPFILE && pfd->path[0]) {
+        vfs_unlink(pfd->path);
+    }
+
+    pfd->used = 0;
+    pfd->flags = 0;
+    pfd->path[0] = '\0';
     return 0;
 }
 

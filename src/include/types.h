@@ -98,5 +98,9 @@ struct iovec {
 #define O_APPEND  02000
 #define O_NONBLOCK 04000
 #define O_CLOEXEC 02000000
+/* O_TMPFILE: create an unnamed temporary file (no directory entry).
+ * Must not collide with O_CLOEXEC; we use bit 19 (0x80000).
+ * Linux uses 0x200000 (bit 21), but our O_CLOEXEC is at bit 25. */
+#define O_TMPFILE 0x80000
 
 #endif
