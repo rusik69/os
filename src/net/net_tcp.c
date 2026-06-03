@@ -38,6 +38,115 @@
 /* TCP connection table entry timeout for 2*MSL (60 seconds at ~100 Hz) */
 #define TCP_TIME_WAIT_MSL_TICKS 6000
 
+/* ── TCP Fast Open (TFO) — RFC 7413 (Item 159) ──────────────────────── */
+#define TFO_COOKIE_LEN     8   /* TFO cookie is 8 bytes */
+#define TFO_CACHE_SIZE     16  /* max cached destinations */
+#define TCP_RXBUF_SIZE     4096 /* receive buffer size */
+
+/* TFO cookie cache entry */
+struct tfo_cookie_entry {
+    uint32_t ip;                            /* destination IP */
+    uint8_t  cookie[TFO_COOKIE_LEN];        /* cached cookie */
+    uint64_t last_used;                     /* for LRU eviction */
+};
+
+/* TFO cookie cache */
+static struct tfo_cookie_entry tfo_cache[TFO_CACHE_SIZE];
+static int tfo_cache_count = 0;
+
+/* TFO secret key — generated once at boot via prng_rand64() */
+static uint64_t tfo_secret[2];
+
+/* ── Generate a TFO cookie for a client-server pair ───────────────
+ * Cookie = first 8 bytes of SHA256(client_ip | server_ip | port | secret)
+ * This matches the standard Linux-style cookie generation approach.
+ * The 16-byte secret is generated at boot, preventing forgery. */
+static void tfo_generate_cookie(uint32_t client_ip, uint32_t server_ip,
+                                 uint16_t server_port, uint8_t cookie[8])
+{
+    struct sha256_ctx ctx;
+    uint8_t digest[32];
+    uint32_t ncip = htonl(client_ip);
+    uint32_t nsip = htonl(server_ip);
+    uint16_t nsp  = htons(server_port);
+
+    sha256_init(&ctx);
+    sha256_update(&ctx, &ncip, 4);
+    sha256_update(&ctx, &nsip, 4);
+    sha256_update(&ctx, &nsp, 2);
+    sha256_update(&ctx, tfo_secret, sizeof(tfo_secret));
+    sha256_final(digest, &ctx);
+
+    memcpy(cookie, digest, 8);
+}
+
+/* Validate a received TFO cookie matches what we would generate */
+static int tfo_validate_cookie(uint32_t client_ip, uint32_t server_ip,
+                                uint16_t server_port, const uint8_t cookie[8])
+{
+    uint8_t expected[8];
+    tfo_generate_cookie(client_ip, server_ip, server_port, expected);
+    return (memcmp(expected, cookie, 8) == 0);
+}
+
+/* ── Look up a cached TFO cookie for the given destination IP.
+ * Returns 1 and copies cookie if found, 0 on miss. */
+static int tfo_cache_lookup(uint32_t ip, uint8_t cookie[8])
+{
+    for (int i = 0; i < tfo_cache_count; i++) {
+        if (tfo_cache[i].ip == ip) {
+            memcpy(cookie, tfo_cache[i].cookie, 8);
+            tfo_cache[i].last_used = timer_get_ticks();
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Store (or update) a TFO cookie for the given destination IP.
+ * Uses LRU eviction if the cache is full. */
+static void tfo_cache_store(uint32_t ip, const uint8_t cookie[8])
+{
+    /* Update if already in cache */
+    for (int i = 0; i < tfo_cache_count; i++) {
+        if (tfo_cache[i].ip == ip) {
+            memcpy(tfo_cache[i].cookie, cookie, 8);
+            tfo_cache[i].last_used = timer_get_ticks();
+            return;
+        }
+    }
+
+    /* Add new entry if space remains */
+    if (tfo_cache_count < TFO_CACHE_SIZE) {
+        tfo_cache[tfo_cache_count].ip = ip;
+        memcpy(tfo_cache[tfo_cache_count].cookie, cookie, 8);
+        tfo_cache[tfo_cache_count].last_used = timer_get_ticks();
+        tfo_cache_count++;
+        return;
+    }
+
+    /* Evict the LRU entry */
+    int lru_idx = 0;
+    uint64_t oldest = tfo_cache[0].last_used;
+    for (int i = 1; i < TFO_CACHE_SIZE; i++) {
+        if (tfo_cache[i].last_used < oldest) {
+            oldest = tfo_cache[i].last_used;
+            lru_idx = i;
+        }
+    }
+    tfo_cache[lru_idx].ip = ip;
+    memcpy(tfo_cache[lru_idx].cookie, cookie, 8);
+    tfo_cache[lru_idx].last_used = timer_get_ticks();
+}
+
+/* Initialize TFO — generate the secret key (called at boot) */
+void tcp_tfo_init(void)
+{
+    tfo_secret[0] = prng_rand64();
+    tfo_secret[1] = prng_rand64();
+    kprintf("[TFO] TCP Fast Open initialized\n");
+}
+
 /*━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  *  Fixed-point integer cube root (Newton-Raphson, rounds toward zero)
  *  Returns floor(cbrt(a)) for a > 0.  Uses at most 10 iterations.
@@ -360,11 +469,34 @@ void send_tcp(struct tcp_conn *conn, uint8_t flags, const void *data, uint16_t d
     uint16_t opt_len = 0;
     uint8_t *opts = buf + sizeof(struct tcp_header);
 
-    /* Add SACK-permitted option on SYN */
+    /* ── TCP options on SYN ──────────────────────────────────────
+     * SACK-permitted for selective ACK (RFC 2018).
+     * TFO cookie option (RFC 7413): server emits on SYN-ACK;
+     * client emits on SYN when it has a cached cookie. */
     if (flags & TCP_SYN) {
-        opts[0] = 4;  /* SACK-permitted kind */
-        opts[1] = 2;  /* length */
-        opt_len = 2;
+        /* SACK-permitted (kind 4, length 2) */
+        opts[opt_len++] = 4;
+        opts[opt_len++] = 2;
+
+        /* TCP Fast Open cookie option (kind 34) */
+        if (flags & TCP_ACK) {
+            /* Server-side SYN-ACK: always generate and attach a cookie
+             * so the client can use TFO on its next connection. */
+            uint8_t tfo_cookie[TFO_COOKIE_LEN];
+            tfo_generate_cookie(conn->remote_ip, net_our_ip,
+                                conn->local_port, tfo_cookie);
+            opts[opt_len++] = 34;      /* TFO option kind */
+            opts[opt_len++] = 10;      /* len: kind(1) + len(1) + cookie(8) */
+            memcpy(opts + opt_len, tfo_cookie, 8);
+            opt_len += 8;
+        } else if (conn->tfo_cookie_present) {
+            /* Client-side SYN: attach cached cookie so server can
+             * accept data immediately without the full handshake. */
+            opts[opt_len++] = 34;      /* TFO option kind */
+            opts[opt_len++] = 10;      /* length */
+            memcpy(opts + opt_len, conn->tfo_cookie, 8);
+            opt_len += 8;
+        }
     }
 
     uint16_t hdr_len = sizeof(struct tcp_header) + opt_len;
@@ -487,8 +619,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             return;
         }
 
-        /* Parse the MSS option from the TCP options, if present */
+        /* Parse TCP options from the SYN — extract MSS and TFO cookie */
         uint16_t client_mss = 1460; /* default MSS for Ethernet */
+        int syn_has_tfo = 0;
+        uint8_t syn_tfo_cookie[8];
         {
             int opt_off = sizeof(struct tcp_header);
             while (opt_off + 1 < (int)hdr_len) {
@@ -502,7 +636,15 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     /* MSS option: 2 bytes of MSS value */
                     client_mss = (uint16_t)payload[opt_off + 2] << 8
                                | (uint16_t)payload[opt_off + 3];
-                    break;
+                } else if (kind == 34) {
+                    /* TCP Fast Open (TFO) Cookie option (kind 34) */
+                    int cookie_len = olen - 2;
+                    if (cookie_len > 8) cookie_len = 8;
+                    if (cookie_len > 0 && opt_off + 2 + cookie_len <= (int)hdr_len) {
+                        syn_has_tfo = 1;
+                        memset(syn_tfo_cookie, 0, 8);
+                        memcpy(syn_tfo_cookie, payload + opt_off + 2, cookie_len);
+                    }
                 }
                 opt_off += olen;
             }
@@ -575,6 +717,44 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->delayed_ack_pending = 0;
         c->nagle_buf_len = 0;
 
+        /* ── TCP Fast Open: validate cookie and process data-in-SYN ────
+         * If the client provided a valid TFO cookie AND payload data,
+         * we can process the data immediately and transition to ESTABLISHED
+         * without waiting for the ACK that completes the three-way handshake.
+         * This saves one RTT on repeat connections (RFC 7413). */
+        if (syn_has_tfo && data_len > 0 &&
+            tfo_validate_cookie(remote_ip, ip_hdr->dst_ip,
+                                dst_port, syn_tfo_cookie)) {
+            /* Valid TFO cookie — accept the data in the SYN */
+            uint16_t copy_len = data_len;
+            if (copy_len > TCP_RXBUF_SIZE)
+                copy_len = TCP_RXBUF_SIZE;
+
+            memcpy(c->rxbuf, data, copy_len);
+            c->rxlen = copy_len;
+            c->their_seq = seq + 1 + copy_len; /* account for data in SYN */
+            c->state = TCP_ESTABLISHED;
+
+            kprintf("[TFO] Valid cookie from %d.%d.%d.%d:%d, "
+                    "accepted %u bytes in SYN\n",
+                    (remote_ip >> 24) & 0xFF, (remote_ip >> 16) & 0xFF,
+                    (remote_ip >> 8) & 0xFF, remote_ip & 0xFF,
+                    src_port, copy_len);
+
+            /* Notify the listener about the new connection */
+            send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
+            c->our_seq++;
+
+            if (l && l->on_connect) {
+                l->on_connect(conn_id);
+            } else if (l && l->accept_count < ACCEPT_QUEUE_SIZE) {
+                l->accept_queue[l->accept_tail] = conn_id;
+                l->accept_tail = (l->accept_tail + 1) % ACCEPT_QUEUE_SIZE;
+                l->accept_count++;
+            }
+            return;
+        }
+
         send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
         c->our_seq++;
         return;
@@ -635,6 +815,10 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             c->their_seq = seq + 1;
             c->our_seq = ack;
             c->state = TCP_ESTABLISHED;
+            /* Cache TFO cookie received in SYN-ACK for future TFO connections */
+            if (c->tfo_cookie_present) {
+                tfo_cache_store(c->remote_ip, c->tfo_cookie);
+            }
             send_tcp(c, TCP_ACK, NULL, 0);
         } else if (flags & TCP_RST) {
             c->state = TCP_CLOSED;
@@ -968,6 +1152,14 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     memset(c->tfo_cookie, 0, sizeof(c->tfo_cookie));
     memset(c->sack_blocks, 0, sizeof(c->sack_blocks));
     c->sack_pending = 0;
+
+    /* ── TCP Fast Open: use cached cookie if available ─────────────
+     * If we have a TFO cookie cached for this server, include it in
+     * the SYN so the server can accept data immediately. */
+    if (tfo_cache_lookup(ip, c->tfo_cookie)) {
+        c->tfo_cookie_present = 1;
+    }
+
     /* CUBIC congestion control initialization */
     c->cubic_wmax = 0;
     c->cubic_epoch_start = 0;

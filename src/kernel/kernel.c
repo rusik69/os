@@ -773,6 +773,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         ipvs_init();
 
         net_init();
+        tcp_tfo_init();
 #ifndef TEST_MODE
         kprintf("[..] DHCP discovering...\n");
         net_dhcp_discover();

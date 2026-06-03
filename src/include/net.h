@@ -257,8 +257,9 @@ void net_tcp_close(int conn_id);
 /* DNS resolver - returns IP in host byte order, 0 on failure */
 uint32_t net_dns_resolve(const char *hostname);
 
-/* Outgoing TCP client */
+/* TCP */
 int net_tcp_connect(uint32_t ip, uint16_t port);
+void tcp_tfo_init(void);       /* TCP Fast Open initialization */
 int net_tcp_recv(int conn_id, void *buf, uint16_t bufsize, int timeout_ticks);
 
 /* Blocking TCP server accept — waits up to timeout_ticks for a new
