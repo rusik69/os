@@ -86,6 +86,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/sysctl.c \
          src/kernel/ksym.c \
          src/kernel/caps.c \
+         src/kernel/chroot.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \

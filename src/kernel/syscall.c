@@ -4630,6 +4630,28 @@ static uint64_t sys_pivot_root(uint64_t new_root_addr, uint64_t put_old_addr) {
     return 0;
 }
 
+/* ── chroot (Item 117) ─────────────────────────────────────────── */
+
+/* Forward declaration — chroot_set() is implemented in chroot.c */
+extern int chroot_set(const char *path);
+
+static uint64_t sys_chroot(uint64_t path_addr) {
+    char path[256];
+
+    if (syscall_is_user_process()) {
+        if (!syscall_user_cstr_ok(path_addr))
+            return (uint64_t)-1;
+    }
+
+    memcpy(path, (void*)path_addr, 255);
+    path[255] = '\0';
+
+    int ret = chroot_set(path);
+    if (ret < 0)
+        return (uint64_t)-1;
+    return 0;
+}
+
 /* ── ftruncate ─────────────────────────────────────────────────────────── */
 
 static uint64_t sys_ftruncate(uint64_t fd, uint64_t length) {
@@ -7445,6 +7467,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
         case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
         case SYS_PIVOT_ROOT:      return sys_pivot_root(a1, a2);
+        case SYS_CHROOT:          return sys_chroot(a1);
         case SYS_FADVISE64:       return sys_fadvise64(a1, a2, a3, a4);
         case SYS_TIMERFD_CREATE:  return sys_timerfd_create(a1, a2);
         case SYS_TIMERFD_SETTIME: return sys_timerfd_settime(a1, a2, a3, a4);
