@@ -111,6 +111,7 @@
 #include "rseq.h"
 #include "kasan_light.h"
 #include "firmware.h"
+#include "fault_inject.h"
 #include "memfd.h"
 #include "irq_regs.h"
 #include "softirq.h"
@@ -476,6 +477,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Firmware loading API */
     firmware_init();
+
+    /* Fault injection framework — for testing error recovery paths */
+    fault_inject_init();
 
     /* Devtmpfs — dynamic device node creation */
     devtmpfs_init();

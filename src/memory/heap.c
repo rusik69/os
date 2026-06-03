@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "export.h"
+#include "fault_inject.h"
 
 /*
  * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
@@ -70,6 +71,11 @@ void heap_init(void) {
 
 void *kmalloc(size_t size) {
     if (size == 0) return NULL;
+
+    /* Fault injection: if enabled, fail this allocation to test error paths */
+    if (fault_inject_should_fail_kmalloc()) {
+        return NULL;
+    }
 
     /* Align to 16 bytes */
     size = (size + 15) & ~15ULL;
