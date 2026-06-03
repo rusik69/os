@@ -16,6 +16,7 @@
 #define BLOCKDEV_AHCI_PM_BASE  100
 
 int  ahci_init(void);
+void ahci_exit(void);
 int  ahci_is_present(void);
 uint32_t ahci_get_sectors(void);
 int  ahci_read_sectors(uint32_t lba, uint8_t count, void *buf);

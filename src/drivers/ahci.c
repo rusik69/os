@@ -27,6 +27,9 @@
 #include "idt.h"
 #include "apic.h"
 #include "pic.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* ── HBA register offsets ───────────────────────────────────────────── */
 #define HBA_GHC_OFFSET   0x04   /* Global Host Control */
@@ -868,6 +871,82 @@ int ahci_init(void) {
     return 0;
 }
 
+/* ── ahci_exit — reverse initialization, for module unloading ── */
+void ahci_exit(void) {
+    if (!ahci_present) return;
+
+    kprintf("[AHCI] Shutting down SATA controller...\n");
+
+    /* Step 1: Stop all physical ports and disable their interrupts */
+    uint32_t pi = hba_read(HBA_PI_OFFSET);
+    for (int p = 0; p < 32; p++) {
+        if (!(pi & (1u << p))) continue;
+        port_write(p, PORT_IE, 0);       /* disable port interrupts */
+        port_stop(p);                     /* stop port DMA engines */
+    }
+
+    /* Step 2: Unregister all block devices */
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *port = &ahci_ports[i];
+        if (!port->present) continue;
+        if (port->blockdev_id > 0)
+            blockdev_unregister(port->blockdev_id);
+    }
+
+    /* Step 3: Free per-port resources */
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *port = &ahci_ports[i];
+        if (!port->present) continue;
+
+        /* Free command list frame */
+        if (port->cmd_list_phys) {
+            pmm_free_frame(port->cmd_list_phys / 4096);
+            port->cmd_list_phys = 0;
+        }
+        /* Free FIS receive area */
+        if (port->recv_fis_phys) {
+            pmm_free_frame(port->recv_fis_phys / 4096);
+            port->recv_fis_phys = 0;
+        }
+        /* Free per-slot resources */
+        for (int s = 0; s < AHCI_SLOT_COUNT; s++) {
+            struct ahci_slot *slot = &port->slots[s];
+            if (slot->cmd_tbl_virt) {
+                kfree(slot->cmd_tbl_virt);
+                slot->cmd_tbl_virt = NULL;
+            }
+            if (slot->data_buf_phys) {
+                pmm_free_frame(slot->data_buf_phys / 4096);
+                slot->data_buf_phys = 0;
+                slot->data_buf_virt = NULL;
+            }
+        }
+        port->present = 0;
+    }
+
+    /* Step 4: Mask IRQ in I/O APIC and PIC */
+    if (ahci_port_count > 0) {
+        uint8_t irq_line = ahci_ports[0].irq_line;
+        if (apic_is_init_complete())
+            ioapic_mask_irq(irq_line);
+        pic_mask(irq_line);
+    }
+
+    /* Step 5: Disable HBA global interrupts and AHCI mode */
+    hba_write(HBA_GHC_OFFSET, 0);
+    hba_write(HBA_IS_OFFSET, 0xFFFFFFFF);  /* clear pending */
+
+    /* Step 6: Unmap HBA MMIO region */
+    if (hba_base) {
+        vmm_unmap_phys((void *)hba_base, 0x2000);
+        hba_base = 0;
+    }
+
+    ahci_present = 0;
+    ahci_port_count = 0;
+    kprintf("[AHCI] SATA controller shut down\n");
+}
+
 int ahci_is_present(void) { return ahci_present; }
 uint32_t ahci_get_sectors(void) {
     if (ahci_port_count > 0) return ahci_ports[0].sector_count;
@@ -886,3 +965,24 @@ int ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (count == 0 || count > AHCI_DATA_FRAME_SECTORS) return -1;
     return blk_submit_sync(ahci_ports[0].blockdev_id, lba, count, (void*)buf, BLK_REQ_WRITE);
 }
+
+#ifdef MODULE
+/* Module entry/exit points — the ELF loader looks for these symbols */
+int init_module(void) {
+    return ahci_init();
+}
+void cleanup_module(void) {
+    ahci_exit();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("AHCI SATA/NCQ driver with Port Multiplier support");
+MODULE_ALIAS("pci:v00008086d00001E02sv*sd*bc*sc*i*");  /* Intel 7-series AHCI */
+MODULE_ALIAS("pci:v00008086d00008C02sv*sd*bc*sc*i*");  /* Intel 8-series AHCI */
+MODULE_ALIAS("pci:v00008086d00009C02sv*sd*bc*sc*i*");  /* Intel 9-series AHCI */
+MODULE_ALIAS("pci:v00001022d00007801sv*sd*bc*sc*i*");  /* AMD Hudson AHCI */
+MODULE_ALIAS("pci:v00001022d00007901sv*sd*bc*sc*i*");  /* AMD K15 AHCI */
+MODULE_ALIAS("pci:v00001B21d00000612sv*sd*bc*sc*i*");  /* ASMedia 1062 AHCI */
+MODULE_VERSION("1.0");
+#endif /* MODULE */
