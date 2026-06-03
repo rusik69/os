@@ -392,6 +392,8 @@ obj-m += fs/tarfs.ko
 obj-m += fs/ext2.ko
 # iso9660: CDROM filesystem with Rock Ridge + Joliet (M53)
 obj-m += fs/iso9660.ko
+# fat32: FAT32 read/write filesystem with long filenames and volume labels (M52)
+obj-m += fs/fat32.ko
 
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))

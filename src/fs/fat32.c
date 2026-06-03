@@ -18,6 +18,12 @@
 #include "printf.h"
 #include "heap.h"
 
+#ifdef MODULE
+#include "module.h"
+#include "ahci.h"
+#include "ata.h"
+#endif
+
 /* ── FAT type detection and constants ───────────────────────────────────────── */
 enum fat_type { FAT_TYPE_UNKNOWN = 0, FAT12, FAT16, FAT32 };
 
@@ -1538,3 +1544,37 @@ struct vfs_ops fat32_vfs_ops = {
     .unlink  = fat32_vfs_unlink,
     .readdir = fat32_vfs_readdir,
 };
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    kprintf("[fat32] FAT32 filesystem module loaded\n");
+    vfs_register_filesystem("fat32", &fat32_vfs_ops);
+
+    /* Try to auto-mount on available AHCI or ATA storage */
+    if (ahci_is_present()) {
+        if (fat32_mount(FAT32_DISK_AHCI, 0) == 0) {
+            vfs_mount("/mnt", &fat32_vfs_ops, NULL);
+            kprintf("[fat32] FAT32 mounted on /mnt (AHCI)\n");
+        }
+    } else if (ata_is_present()) {
+        if (fat32_mount(FAT32_DISK_ATA, 0) == 0) {
+            vfs_mount("/mnt", &fat32_vfs_ops, NULL);
+            kprintf("[fat32] FAT32 mounted on /mnt (ATA)\n");
+        }
+    }
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    /* FAT32 state: clear mounted flag so further operations fail */
+    mounted = 0;
+    kprintf("[fat32] FAT32 filesystem module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("FAT32 read/write filesystem driver — supports FAT12/16/32 with long filenames and volume labels");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
