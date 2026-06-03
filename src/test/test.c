@@ -4208,7 +4208,7 @@ void test_run_all(void) {
     kprintf("[TEST] thp\n");           test_thp();                test_progress_tick();
 kprintf("----------------------------------------\n");
     kprintf("Results: %llu passed, %llu failed\n",
-            (unsigned long)tpass, (unsigned long)tfail);
+            (unsigned long long)tpass, (unsigned long long)tfail);
     if (tfail == 0) {
         kprintf("ALL TESTS PASSED\n");
     } else {

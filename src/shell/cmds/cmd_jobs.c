@@ -15,10 +15,10 @@ void cmd_jobs(void) {
             uint8_t st = procs[i].state;
             if (st > 4) st = 0;
             const char *state = procs[i].is_suspended ? "STOPPED" : state_names[st];
-            kprintf("%%%u  %-4u %-4u %-3u %-8s %s\n", (unsigned long)(found + 1),
-                    (unsigned long)procs[i].pid,
-                    (unsigned long)procs[i].pgid,
-                    (unsigned long)procs[i].priority,
+            kprintf("%%%u  %-4u %-4u %-3u %-8s %s\n", (unsigned int)(found + 1),
+                    (unsigned int)procs[i].pid,
+                    (unsigned int)procs[i].pgid,
+                    (unsigned int)procs[i].priority,
                     state, procs[i].name);
             found = 1;
         }

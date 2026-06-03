@@ -69,7 +69,7 @@ void cmd_file(const char *args) {
     }
 
     if (text)
-        kprintf("%s: ASCII text (%u bytes)\n", path, (unsigned long)st.size);
+        kprintf("%s: ASCII text (%u bytes)\n", path, st.size);
     else
-        kprintf("%s: binary data (%u bytes)\n", path, (unsigned long)st.size);
+        kprintf("%s: binary data (%u bytes)\n", path, st.size);
 }

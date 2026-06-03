@@ -15,7 +15,7 @@
 #define ARGV_MAX 64
 #define ARGV_BUF_SIZE 512
 
-static int args_to_argv(const char *args, int *out_argc, char **out_argv)
+static int args_to_argv(const char *args, int *out_argc, char ***out_argv)
 {
     static char buf[ARGV_BUF_SIZE];
     static char *argv[ARGV_MAX];

@@ -59,5 +59,5 @@ void cmd_wget(const char *args) {
     fpath[67] = '\0';
 
     libc_vfs_write(fpath, buf, (uint32_t)n);
-    kprintf("Saved %d bytes to %s\n", (unsigned long)n, fpath);
+    kprintf("Saved %d bytes to %s\n", n, fpath);
 }

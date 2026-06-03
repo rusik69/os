@@ -71,7 +71,7 @@ void cmd_split(const char *args) {
             uint32_t len = (uint32_t)(q - start);
             vfs_create(outname, 1);
             vfs_write(outname, start, len);
-            kprintf("  %s (%u bytes)\n", outname, (unsigned long)len);
+            kprintf("  %s (%u bytes)\n", outname, len);
             start = q;
             line = 0;
             part++;

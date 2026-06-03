@@ -47,7 +47,7 @@ void cmd_tail(const char *args) {
     uint32_t skip = (total_lines > n) ? (total_lines - n) : 0;
     uint32_t line = 0;
     for (uint32_t i = 0; i < size; i++) {
-        if (line >= skip) kprintf("%c", (unsigned long)(uint8_t)fbuf[i]);
+        if (line >= skip) kprintf("%c", (unsigned int)(unsigned char)fbuf[i]);
         if (fbuf[i] == '\n') line++;
     }
     if (size > 0 && fbuf[size - 1] != '\n') kprintf("\n");

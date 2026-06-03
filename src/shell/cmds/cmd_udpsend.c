@@ -29,10 +29,11 @@ void cmd_udpsend(const char *args) {
 
     if (!*p) { kprintf("Usage: udpsend <ip> <port> <data>\n"); return; }
 
-    libc_net_udp_send(dst_ip, 12345, port, p, (uint16_t)strlen(p));
+    uint32_t msglen = (uint32_t)strlen(p);
+    libc_net_udp_send(dst_ip, 12345, port, p, (uint16_t)msglen);
     kprintf("UDP sent %u bytes to %u.%u.%u.%u:%u\n",
-            (unsigned long)strlen(p),
-            (unsigned long)((dst_ip >> 24) & 0xFF), (unsigned long)((dst_ip >> 16) & 0xFF),
-            (uint64_t)((dst_ip >> 8) & 0xFF), (uint64_t)(dst_ip & 0xFF),
-            (uint64_t)port);
+            msglen,
+            (unsigned int)((dst_ip >> 24) & 0xFF), (unsigned int)((dst_ip >> 16) & 0xFF),
+            (unsigned int)((dst_ip >> 8) & 0xFF), (unsigned int)(dst_ip & 0xFF),
+            (unsigned int)port);
 }

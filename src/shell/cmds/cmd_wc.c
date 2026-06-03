@@ -35,6 +35,5 @@ void cmd_wc(const char *args) {
             words++;
         }
     }
-    kprintf("  %u %u %u %s\n", (unsigned long)lines, (unsigned long)words,
-            (unsigned long)size, label);
+    kprintf("  %u %u %u %s\n", lines, words, size, label);
 }

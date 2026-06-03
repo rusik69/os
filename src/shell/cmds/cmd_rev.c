@@ -40,7 +40,7 @@ void cmd_rev(const char *args) {
         if (text[i] == '\n' || i == text_len) {
             int llen = &text[i] - line;
             for (int j = llen - 1; j >= 0; j--)
-                kprintf("%c", (unsigned long)(uint8_t)line[j]);
+                kprintf("%c", (unsigned int)(unsigned char)line[j]);
             kprintf("\n");
             line = &text[i + 1];
         }

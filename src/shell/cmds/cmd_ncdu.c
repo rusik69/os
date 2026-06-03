@@ -55,7 +55,7 @@ static int scan_errors = 0;
 
 static int ncdu_scan(const char *path, int parent_idx, int depth);
 static void ncdu_display(int top_idx, int cursor_pos, int scroll_offset);
-static void ncdu_sort_children(int parent_idx);
+static void __attribute__((unused)) ncdu_sort_children(int parent_idx);
 
 /* ── Helper: ensure path ends with '/' for directory ops ──────────── */
 
@@ -152,7 +152,8 @@ static int ncdu_cmp_desc(const void *a, const void *b)
 
 /* ── Sort children of a node by size (descending) ─────────────────── */
 
-static void ncdu_sort_children(int parent_idx)
+static void __attribute__((unused))
+ncdu_sort_children(int parent_idx)
 {
     if (parent_idx < 0 || parent_idx >= entry_count)
         return;
@@ -205,7 +206,7 @@ static int ncdu_scan(const char *path, int parent_idx, int depth)
     ensure_trailing_slash(dir_path, (int)sizeof(dir_path));
 
     /* Read directory entries */
-    count = vfs_readdir_names(dir_path, names, 256);
+    count = fs_list_names(dir_path, "", names, 256);
     if (count < 0) {
         scan_errors++;
         return -1;
@@ -390,7 +391,7 @@ static const char *format_size(uint64_t bytes)
 }
 
 /* Draw a horizontal bar representing the size proportion */
-static void draw_bar(uint64_t size, uint64_t max_size, int width)
+static void __attribute__((unused)) draw_bar(uint64_t size, uint64_t max_size, int width)
 {
     if (max_size == 0 || size == 0) {
         for (int i = 0; i < width; i++)
@@ -500,7 +501,7 @@ static void ncdu_display(int top_idx, int cursor_pos, int scroll_offset)
         /* Bar graph (compact) */
         kprintf("%s ", sizestr);
         vga_set_color(VGA_GREEN, VGA_BLACK);
-        kprintf("%2d%% ", (unsigned long)pct);
+        kprintf("%2d%% ", (int)pct);
         if (i == cursor_pos)
             vga_set_color(VGA_WHITE, VGA_DARK_GREY);
         else
@@ -596,7 +597,6 @@ static void ncdu_interactive(void)
                 int parent_depth = entries[current_view_root].depth - 1;
                 if (parent_depth >= 0) {
                     /* Find parent by matching path prefix */
-                    int p_len = (int)strlen(entries[current_view_root].full_path);
                     for (int i = 0; i < entry_count; i++) {
                         if (entries[i].depth == parent_depth && entries[i].visited) {
                             if (strncmp(entries[i].full_path,

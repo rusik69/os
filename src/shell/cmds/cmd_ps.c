@@ -14,10 +14,10 @@ void cmd_ps(void) {
         if (st > 4) st = 0;
         const char *state = procs[i].is_suspended ? "STOPPED" : state_names[st];
         kprintf("%-4u %-4u %-4u %-3u %-8s %-6s %-2s %s\n",
-                (uint64_t)procs[i].pid,
-                (uint64_t)procs[i].ppid,
-                (uint64_t)procs[i].pgid,
-                (uint64_t)procs[i].priority,
+                procs[i].pid,
+                procs[i].ppid,
+                procs[i].pgid,
+                procs[i].priority,
                 state,
                 procs[i].is_user ? "user" : "kernel",
                 procs[i].is_background ? "&" : "",

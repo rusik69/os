@@ -26,12 +26,6 @@
 /* Path to the init control pipe -- must match src/init/init.c */
 #define INITPIPE_PATH "/var/run/initpipe"
 
-/* Open flags matching Linux ABI (used by init.c and here) */
-#define O_RDONLY      0
-#define O_WRONLY      1
-#define O_CREAT       64
-#define O_TRUNC       512
-
 void cmd_init(const char *args)
 {
     if (!args || !*args) {

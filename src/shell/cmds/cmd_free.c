@@ -9,9 +9,11 @@ void cmd_free(void) {
         uint64_t total = stats.total_pages;
         uint64_t used = stats.used_pages;
         uint64_t free_fr = stats.free_pages;
-    kprintf("              total      used       free\n");
-    kprintf("Mem:     %9u %9u  %9u  KB\n",
-            total * 4, used * 4, free_fr * 4);
-    kprintf("Frames:  %9u %9u  %9u\n",
-            total, used, free_fr);
+        kprintf("              total      used       free\n");
+        kprintf("Mem:     %9llu %9llu  %9llu  KB\n",
+                (unsigned long long)(total * 4), (unsigned long long)(used * 4),
+                (unsigned long long)(free_fr * 4));
+        kprintf("Frames:  %9llu %9llu  %9llu\n",
+                (unsigned long long)total, (unsigned long long)used,
+                (unsigned long long)free_fr);
 }

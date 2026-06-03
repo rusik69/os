@@ -27,11 +27,11 @@ void cmd_truncate(const char *args) {
 
     uint32_t newsize = (uint32_t)strtol(sstr, 0, 10);
 
-    if (libc_truncate(path, (uint32_t)newsize) < 0) {
-        kprintf("truncate: cannot truncate '%s' to %u bytes\n", fname, (unsigned long)newsize);
+    if (libc_truncate(path, newsize) < 0) {
+        kprintf("truncate: cannot truncate '%s' to %u bytes\n", fname, newsize);
         shell_set_exit_status(1);
         return;
     }
-    kprintf("truncate: %s truncated to %u bytes\n", fname, (unsigned long)newsize);
+    kprintf("truncate: %s truncated to %u bytes\n", fname, newsize);
     shell_set_exit_status(0);
 }

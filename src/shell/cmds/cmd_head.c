@@ -44,7 +44,7 @@ void cmd_head(const char *args) {
     fbuf[size] = '\0';
     uint32_t line = 0;
     for (uint32_t i = 0; i < size && line < n; i++) {
-        kprintf("%c", (unsigned long)(uint8_t)fbuf[i]);
+        kprintf("%c", (unsigned char)fbuf[i]);
         if (fbuf[i] == '\n') line++;
     }
     if (size > 0 && fbuf[size - 1] != '\n') kprintf("\n");

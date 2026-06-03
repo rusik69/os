@@ -13,7 +13,7 @@ void cmd_serial(const char *args) {
     }
 
     if (strcmp(args, "status") == 0) {
-        kprintf("COM1 base: 0x%x\n", (unsigned long)COM1_BASE);
+        kprintf("COM1 base: 0x%x\n", (unsigned int)COM1_BASE);
         kprintf("COM1 status: ready\n");
     } else if (strncmp(args, "write ", 6) == 0) {
         const char *msg = args + 6;
@@ -21,7 +21,7 @@ void cmd_serial(const char *args) {
         serial_write((const uint8_t *)msg, len);
         uint8_t newline = '\n';
         serial_write(&newline, 1);
-        kprintf("COM1: sent %u bytes\n", (unsigned long)len);
+        kprintf("COM1: sent %u bytes\n", len);
     } else {
         kprintf("Usage: serial status | serial write <text>\n");
     }

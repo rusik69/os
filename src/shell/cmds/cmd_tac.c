@@ -42,7 +42,7 @@ void cmd_tac(const char *args) {
         int start = starts[i];
         int end   = (i + 1 < nlines) ? starts[i + 1] : (int)size;
         for (int j = start; j < end; j++)
-            kprintf("%c", (unsigned long)(unsigned char)buf[j]);
+            kprintf("%c", (unsigned int)(unsigned char)buf[j]);
         /* Ensure newline if last line lacks one */
         if (end > start && buf[end - 1] != '\n')
             kprintf("\n");

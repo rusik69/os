@@ -41,16 +41,16 @@ void cmd_uuencode(const char *args) {
     uint32_t off = 0;
     while (off < size) {
         int chunk = (size - off < 45) ? size - off : 45;
-        kprintf("%c", (unsigned long)uu_tbl[chunk]);
+        kprintf("%c", (unsigned int)(unsigned char)uu_tbl[chunk]);
         for (int k = 0; k < chunk; k += 3) {
             unsigned char b0 = buf[off + k];
             unsigned char b1 = (k + 1 < chunk) ? buf[off + k + 1] : 0;
             unsigned char b2 = (k + 2 < chunk) ? buf[off + k + 2] : 0;
             kprintf("%c%c%c%c",
-                (uint64_t)uu_tbl[b0 >> 2],
-                (uint64_t)uu_tbl[((b0 & 0x03) << 4) | (b1 >> 4)],
-                (uint64_t)uu_tbl[((b1 & 0x0F) << 2) | (b2 >> 6)],
-                (uint64_t)uu_tbl[b2 & 0x3F]);
+                (unsigned int)(unsigned char)uu_tbl[b0 >> 2],
+                (unsigned int)(unsigned char)uu_tbl[((b0 & 0x03) << 4) | (b1 >> 4)],
+                (unsigned int)(unsigned char)uu_tbl[((b1 & 0x0F) << 2) | (b2 >> 6)],
+                (unsigned int)(unsigned char)uu_tbl[b2 & 0x3F]);
         }
         kprintf("\n");
         off += chunk;

@@ -121,5 +121,5 @@ void cmd_unlzma(const char *args) {
     }
 
     libc_vfs_write(outpath, outbuf, opos);
-    kprintf("Decompressed %u -> %u bytes (%s)\n", (unsigned long)in_size, (unsigned long)opos, outpath);
+    kprintf("Decompressed %llu -> %llu bytes (%s)\n", (unsigned long long)in_size, (unsigned long long)opos, outpath);
 }

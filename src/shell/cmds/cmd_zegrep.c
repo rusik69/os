@@ -110,7 +110,7 @@ void cmd_zegrep(const char *args) {
     while ((f = strtok((char *)0, " ")) != (char *)0) {
         char path[64];
         if (f[0] != '/') { path[0] = '/'; strncpy(path + 1, f, 62); path[63] = '\0'; }
-        else strncpy(path, f, 63); path[63] = '\0';
+        else { strncpy(path, f, 63); path[63] = '\0'; }
 
         static unsigned char buf[8192], decomp[4096];
         uint32_t size = 0, dsize = 0;

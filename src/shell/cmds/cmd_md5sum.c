@@ -45,5 +45,5 @@ void cmd_md5sum(const char *args) {
 
     uint32_t h1 = hash_djb2((uint8_t *)buf, size);
     uint32_t h2 = hash_fnv1a((uint8_t *)buf, size);
-    kprintf("%08x%08x  %s\n", (unsigned long)h1, (unsigned long)h2, path);
+    kprintf("%08x%08x  %s\n", h1, h2, path);
 }

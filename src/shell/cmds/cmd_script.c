@@ -85,7 +85,7 @@ void cmd_script(const char *args) {
 
             /* Echo input */
             for (int j = 0; j < n; j++)
-                kprintf("%c", (unsigned long)(uint8_t)input_buf[j]);
+                kprintf("%c", (unsigned int)(unsigned char)input_buf[j]);
         } else {
             /* No more input */
             break;
@@ -105,5 +105,5 @@ void cmd_script(const char *args) {
 
     /* Write recorded data to file */
     libc_vfs_write(output_file, record_buf, rpos);
-    kprintf("Script done, output file: %s (%u bytes)\n", output_file, (unsigned long)rpos);
+    kprintf("Script done, output file: %s (%u bytes)\n", output_file, (unsigned int)rpos);
 }

@@ -23,8 +23,8 @@ void cmd_hexdump(const char *args) {
     if (len > 256) len = 256;
     uint8_t *ptr = (uint8_t *)addr;
     for (uint64_t i = 0; i < len; i += 16) {
-        kprintf("%p: ", (unsigned long)(ptr + i));
-        for (int j = 0; j < 16 && i + j < len; j++) kprintf("%x ", (unsigned long)ptr[i + j]);
+        kprintf("%p: ", (void *)(ptr + i));
+        for (int j = 0; j < 16 && i + j < len; j++) kprintf("%x ", (unsigned int)ptr[i + j]);
         kprintf("\n");
     }
 }

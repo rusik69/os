@@ -70,9 +70,9 @@ void cmd_zcmp(const char *args) {
 
     char p1[64], p2[64];
     if (f1[0] != '/') { p1[0] = '/'; strncpy(p1+1, f1, 62); p1[63] = '\0'; }
-    else strncpy(p1, f1, 63); p1[63] = '\0';
+    else { strncpy(p1, f1, 63); p1[63] = '\0'; }
     if (f2[0] != '/') { p2[0] = '/'; strncpy(p2+1, f2, 62); p2[63] = '\0'; }
-    else strncpy(p2, f2, 63); p2[63] = '\0';
+    else { strncpy(p2, f2, 63); p2[63] = '\0'; }
 
     static unsigned char b1[4096], b2[4096], d1[4096], d2[4096];
     uint32_t s1, s2, ds1, ds2;
@@ -88,12 +88,12 @@ void cmd_zcmp(const char *args) {
     uint32_t min = ds1 < ds2 ? ds1 : ds2;
     for (uint32_t j = 0; j < min; j++) {
         if (d1[j] != d2[j]) {
-            kprintf("%s %s differ: byte %u\n", f1, f2, (unsigned long)(j+1));
+            kprintf("%s %s differ: byte %u\n", f1, f2, (unsigned int)(j+1));
             return;
         }
     }
     if (ds1 != ds2)
-        kprintf("%s %s differ: size %u vs %u\n", f1, f2, (unsigned long)ds1, (unsigned long)ds2);
+        kprintf("%s %s differ: size %u vs %u\n", f1, f2, ds1, ds2);
     else
         kprintf("%s %s are identical\n", f1, f2);
 }

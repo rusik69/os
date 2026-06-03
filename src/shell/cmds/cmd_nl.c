@@ -31,7 +31,7 @@ void cmd_nl(const char *args) {
     for (uint32_t i = 0; i <= size; i++) {
         if (buf[i] == '\n' || i == size) {
             buf[i] = '\0';
-            kprintf("%6d\t%s\n", (unsigned long)line_num, line);
+            kprintf("%6d\t%s\n", line_num, line);
             line_num++;
             line = &buf[i + 1];
         }

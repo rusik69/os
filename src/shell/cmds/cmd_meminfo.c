@@ -10,7 +10,7 @@ void cmd_meminfo(void) {
     uint64_t used = stats.used_pages;
     uint64_t free_fr = stats.free_pages;
     kprintf("Physical memory:\n");
-    kprintf("  Total: %u KB (%u frames)\n", total * 4, total);
-    kprintf("  Used:  %u KB (%u frames)\n", used * 4, used);
-    kprintf("  Free:  %u KB (%u frames)\n", free_fr * 4, free_fr);
+    kprintf("  Total: %llu KB (%llu frames)\n", (unsigned long long)(total * 4), (unsigned long long)total);
+    kprintf("  Used:  %llu KB (%llu frames)\n", (unsigned long long)(used * 4), (unsigned long long)used);
+    kprintf("  Free:  %llu KB (%llu frames)\n", (unsigned long long)(free_fr * 4), (unsigned long long)free_fr);
 }

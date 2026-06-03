@@ -16,10 +16,10 @@ void cmd_id(const char *args) {
 
     if (user_find(s->username, &ue) == 0)
         kprintf("uid=%u(%s) gid=%u(%s)\n",
-                (uint64_t)ue.uid, ue.username,
-                (uint64_t)ue.gid, ue.username);
+                (unsigned int)ue.uid, ue.username,
+                (unsigned int)ue.gid, ue.username);
     else
         kprintf("uid=%u(%s) gid=%u\n",
-                (unsigned long)s->uid, s->username,
-                (unsigned long)s->gid);
+                (unsigned int)s->uid, s->username,
+                (unsigned int)s->gid);
 }

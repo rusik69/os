@@ -39,16 +39,21 @@ void cmd_shred(const char *args) {
     rand_seed(libc_getpid() ^ (uint32_t)size);
 
     /* Overwrite in 512-byte chunks with random data */
-    static char buf[512];
     uint32_t remaining = size;
     int passes = 1;
     for (int pass = 0; pass < passes; pass++) {
         uint32_t pos = 0;
         while (pos < size) {
             uint32_t chunk = (remaining < 512) ? remaining : 512;
+            char buf[512];
             for (uint32_t i = 0; i < chunk; i++)
                 buf[i] = (char)(rand_next() & 0xFF);
-            /* Write directly to the file — for true shred we'd need sector-level access */
+            /* Write chunk to file */
+            if (libc_fs_write_file(path, buf, chunk) != 0) {
+                kprintf("shred: write failed\n");
+                shell_set_exit_status(1);
+                return;
+            }
             pos += chunk;
             remaining -= chunk;
         }
@@ -60,6 +65,6 @@ void cmd_shred(const char *args) {
         shell_set_exit_status(1);
         return;
     }
-    kprintf("shred: %s removed (%u bytes overwritten)\n", args, (unsigned long)size);
+    kprintf("shred: %s removed (%u bytes overwritten)\n", args, size);
     shell_set_exit_status(0);
 }

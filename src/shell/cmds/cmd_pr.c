@@ -8,7 +8,6 @@
 
 int cmd_pr(int argc, char **argv) {
     int page_size = 66;
-    int header_cols = 1;
     int optind = 1;
 
     while (optind < argc && argv[optind][0] == '-') {

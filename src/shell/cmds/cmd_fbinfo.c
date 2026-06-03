@@ -12,13 +12,13 @@ void cmd_fbinfo(void) {
 
     if (!info.is_framebuffer) {
         kprintf("Display backend: VGA text mode\n");
-        kprintf("Console grid: %ux%u\n", (unsigned long)VGA_WIDTH, (unsigned long)VGA_HEIGHT);
+        kprintf("Console grid: %ux%u\n", VGA_WIDTH, VGA_HEIGHT);
         return;
     }
 
     kprintf("Display backend: framebuffer\n");
     kprintf("Framebuffer: %ux%u, %u bpp, pitch=%u bytes\n",
-            (uint64_t)info.width, (uint64_t)info.height,
-            (uint64_t)info.bpp, (uint64_t)info.pitch);
-    kprintf("Console grid: %ux%u cells\n", (unsigned long)VGA_WIDTH, (unsigned long)VGA_HEIGHT);
+            (unsigned int)info.width, (unsigned int)info.height,
+            (unsigned int)info.bpp, (unsigned int)info.pitch);
+    kprintf("Console grid: %ux%u cells\n", VGA_WIDTH, VGA_HEIGHT);
 }

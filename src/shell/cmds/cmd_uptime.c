@@ -8,5 +8,5 @@ void cmd_uptime(void) {
     uint64_t seconds = ticks / TIMER_FREQ;
     uint64_t minutes = seconds / 60;
     seconds %= 60;
-    kprintf("Uptime: %u min %u sec (%u ticks)\n", minutes, seconds, ticks);
+    kprintf("Uptime: %llu min %llu sec (%llu ticks)\n", (unsigned long long)minutes, (unsigned long long)seconds, (unsigned long long)ticks);
 }

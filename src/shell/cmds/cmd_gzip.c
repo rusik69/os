@@ -72,5 +72,5 @@ void cmd_gzip(const char *args) {
     int plen = strlen(outpath);
     if (plen < 120) { outpath[plen] = '.'; outpath[plen+1] = 'g'; outpath[plen+2] = 'z'; outpath[plen+3] = '\0'; }
     libc_vfs_write(outpath, out, opos);
-    kprintf("Compressed %u -> %u bytes (%s)\n", (unsigned long)size, (unsigned long)opos, outpath);
+    kprintf("Compressed %llu -> %llu bytes (%s)\n", (unsigned long long)size, (unsigned long long)opos, outpath);
 }

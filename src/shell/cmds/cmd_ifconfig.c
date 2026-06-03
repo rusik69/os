@@ -18,12 +18,12 @@ void cmd_ifconfig(void) {
     mask[2] = (mask32 >> 8) & 0xFF;  mask[3] = mask32 & 0xFF;
     kprintf("eth0:\n");
     kprintf("  MAC:  %x:%x:%x:%x:%x:%x\n",
-            (unsigned long)mac[0], (unsigned long)mac[1], (unsigned long)mac[2],
-            (unsigned long)mac[3], (unsigned long)mac[4], (unsigned long)mac[5]);
+            (unsigned int)mac[0], (unsigned int)mac[1], (unsigned int)mac[2],
+            (unsigned int)mac[3], (unsigned int)mac[4], (unsigned int)mac[5]);
     kprintf("  IP:   %u.%u.%u.%u\n",
-            (unsigned long)ip[0], (unsigned long)ip[1], (unsigned long)ip[2], (unsigned long)ip[3]);
+            (unsigned int)ip[0], (unsigned int)ip[1], (unsigned int)ip[2], (unsigned int)ip[3]);
     kprintf("  Mask: %u.%u.%u.%u\n",
-            (unsigned long)mask[0], (unsigned long)mask[1], (unsigned long)mask[2], (unsigned long)mask[3]);
+            (unsigned int)mask[0], (unsigned int)mask[1], (unsigned int)mask[2], (unsigned int)mask[3]);
     kprintf("  GW:   %u.%u.%u.%u\n",
-            (unsigned long)gw[0], (unsigned long)gw[1], (unsigned long)gw[2], (unsigned long)gw[3]);
+            (unsigned int)gw[0], (unsigned int)gw[1], (unsigned int)gw[2], (unsigned int)gw[3]);
 }

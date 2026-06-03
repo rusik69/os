@@ -22,8 +22,8 @@ void cmd_stat_file(const char *args) {
     char type_char = (type == FS_TYPE_DIR) ? 'd' : '-';
     kprintf("  Path: %s\n", path);
     kprintf("  Type: %s\n", type == FS_TYPE_DIR ? "directory" : "file");
-    kprintf("  Size: %u bytes\n", (unsigned long)size);
-    kprintf("  Mode: %c%s (%u)\n", type_char, mstr, (unsigned long)mode);
-    kprintf("  UID:  %u\n", (unsigned long)uid);
-    kprintf("  GID:  %u\n", (unsigned long)gid);
+    kprintf("  Size: %u bytes\n", size);
+    kprintf("  Mode: %c%s (%u)\n", type_char, mstr, mode);
+    kprintf("  UID:  %u\n", uid);
+    kprintf("  GID:  %u\n", gid);
 }

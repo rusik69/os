@@ -21,5 +21,5 @@ void cmd_write(const char *args) {
     if (fs_write_file(path, args, strlen(args)) < 0)
         kprintf("Write failed\n");
     else
-        kprintf("Written %u bytes to %s\n", (unsigned long)strlen(args), path);
+        kprintf("Written %u bytes to %s\n", (unsigned int)strlen(args), path);
 }

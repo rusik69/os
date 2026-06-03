@@ -56,7 +56,7 @@ void cmd_trap(const char *args) {
         kprintf("%-6s  %s\n", "SIG", "COMMAND");
         for (int i = 0; i < TRAP_MAX; i++) {
             if (trap_table[i].active)
-                kprintf("%-6d  %s\n", (unsigned long)trap_table[i].signum, trap_table[i].cmd);
+                kprintf("%-6d  %s\n", (int)trap_table[i].signum, trap_table[i].cmd);
         }
         return;
     }
@@ -124,5 +124,5 @@ void cmd_trap(const char *args) {
     trap_table[slot].cmd[TRAP_CMD_MAX - 1] = '\0';
 
     libc_signal(sig, trap_handler);
-    kprintf("trap: signal %d -> '%s'\n", (unsigned long)sig, trap_table[slot].cmd);
+    kprintf("trap: signal %d -> '%s'\n", (int)sig, trap_table[slot].cmd);
 }

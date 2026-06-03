@@ -29,8 +29,8 @@ void cmd_nslookup(const char *args) {
     kprintf("Server: (default DNS)\n");
     kprintf("Name:   %s\n", host);
     kprintf("Address: %u.%u.%u.%u\n",
-        (unsigned long)((ip >> 24) & 0xFF),
-        (unsigned long)((ip >> 16) & 0xFF),
-        (unsigned long)((ip >>  8) & 0xFF),
-        (unsigned long)( ip        & 0xFF));
+        (unsigned int)((ip >> 24) & 0xFF),
+        (unsigned int)((ip >> 16) & 0xFF),
+        (unsigned int)((ip >>  8) & 0xFF),
+        (unsigned int)( ip        & 0xFF));
 }

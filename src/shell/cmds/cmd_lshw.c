@@ -44,7 +44,7 @@ void cmd_lshw(const char *args) {
     uint32_t total_mb = (stats.total_pages * 4) / 1024;
     kprintf("*-memory\n");
     kprintf("   description: System Memory\n");
-    kprintf("   size: %uMB\n", (unsigned long)total_mb);
+    kprintf("   size: %uMB\n", total_mb);
 
     /* PCI devices */
     kprintf("*-pci\n");
@@ -57,13 +57,13 @@ void cmd_lshw(const char *args) {
         uint32_t ata_sects = libc_ata_get_sectors();
         uint32_t ata_mb = ata_sects / 2048;
         kprintf("   description: ATA Disk\n");
-        kprintf("   size: %uMB (%u sectors)\n", (unsigned long)ata_mb, (unsigned long)ata_sects);
+        kprintf("   size: %uMB (%u sectors)\n", ata_mb, ata_sects);
     }
     if (libc_ahci_is_present()) {
         uint32_t ahci_sects = libc_ahci_get_sectors();
         uint32_t ahci_mb = ahci_sects / 2048;
         kprintf("   description: AHCI Disk\n");
-        kprintf("   size: %uMB (%u sectors)\n", (unsigned long)ahci_mb, (unsigned long)ahci_sects);
+        kprintf("   size: %uMB (%u sectors)\n", ahci_mb, ahci_sects);
     }
 
     /* Network */
@@ -75,9 +75,9 @@ void cmd_lshw(const char *args) {
         kprintf("   description: Ethernet interface\n");
         kprintf("   logical name: eth0\n");
         kprintf("   mac: %02x:%02x:%02x:%02x:%02x:%02x\n",
-                (unsigned long)mac[0], (unsigned long)mac[1], (unsigned long)mac[2],
-                (unsigned long)mac[3], (unsigned long)mac[4], (unsigned long)mac[5]);
+                (unsigned int)mac[0], (unsigned int)mac[1], (unsigned int)mac[2],
+                (unsigned int)mac[3], (unsigned int)mac[4], (unsigned int)mac[5]);
         kprintf("   ip: %u.%u.%u.%u\n",
-                (unsigned long)ip[0], (unsigned long)ip[1], (unsigned long)ip[2], (unsigned long)ip[3]);
+                (unsigned int)ip[0], (unsigned int)ip[1], (unsigned int)ip[2], (unsigned int)ip[3]);
     }
 }

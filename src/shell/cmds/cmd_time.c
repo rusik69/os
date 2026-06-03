@@ -35,8 +35,8 @@ void cmd_time(const char *args) {
     uint64_t ms  = elapsed_ms % 1000;
 
     /* Print with 3-digit millisecond padding (kprintf has no field-width) */
-    kprintf("\nreal\t%u.", sec);
+    kprintf("\nreal\t%llu.", (unsigned long long)sec);
     if (ms < 100) kprintf("0");
     if (ms < 10)  kprintf("0");
-    kprintf("%us\n", ms);
+    kprintf("%llus\n", (unsigned long long)ms);
 }

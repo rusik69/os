@@ -9,7 +9,7 @@
 void cmd_strings(const char *args) {
     if (!args || !*args) {
         kprintf("Usage: strings <file>\n");
-        kprintf("  Print runs of >= %d printable characters\n", (unsigned long)STRINGS_MIN_LEN);
+        kprintf("  Print runs of >= %d printable characters\n", (int)STRINGS_MIN_LEN);
         return;
     }
 

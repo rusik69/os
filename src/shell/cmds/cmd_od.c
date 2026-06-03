@@ -16,7 +16,7 @@ static void print_octal(uint32_t val, int width) {
     while (i < width) tmp[i++] = '0';
     /* Print reversed */
     for (int j = i - 1; j >= 0; j--)
-        kprintf("%c", (unsigned long)(uint8_t)tmp[j]);
+        kprintf("%c", (unsigned int)(unsigned char)tmp[j]);
 }
 
 void cmd_od(const char *args) {

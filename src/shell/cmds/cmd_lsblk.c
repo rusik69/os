@@ -10,7 +10,7 @@ void cmd_lsblk(void) {
         any = 1;
         uint32_t sects = blockdev_get_sectors(id);
         uint32_t mb = sects / 2048;
-        kprintf("%-8s %u MB   disk\n", blockdev_name(id), (unsigned long)mb);
+        kprintf("%-8s %u MB   disk\n", blockdev_name(id), mb);
     }
     if (!any)
         kprintf("(no block devices detected)\n");

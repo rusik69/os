@@ -18,12 +18,12 @@ void cmd_iostat(const char *args) {
 
     if (libc_ata_is_present()) {
         int64_t delta = (int64_t)(ata_sects - prev_ata_sectors);
-        kprintf("ata0                %-15u %lld\n", (unsigned long)ata_sects, delta);
+        kprintf("ata0                %-15u %lld\n", ata_sects, (long long)delta);
         prev_ata_sectors = ata_sects;
     }
     if (libc_ahci_is_present()) {
         int64_t delta = (int64_t)(ahci_sects - prev_ahci_sectors);
-        kprintf("ahci0               %-15u %lld\n", (unsigned long)ahci_sects, delta);
+        kprintf("ahci0               %-15u %lld\n", ahci_sects, (long long)delta);
         prev_ahci_sectors = ahci_sects;
     }
     kprintf("\nNote: readings show total sector count (monotonically increasing)\n");

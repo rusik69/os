@@ -15,8 +15,8 @@ void cmd_kill(const char *args) {
     }
     if (pid == 0) { kprintf("Cannot kill pid 0\n"); return; }
     if (libc_kill(pid, sig) < 0) {
-        kprintf("No such process: %u\n", (unsigned long)pid);
+        kprintf("No such process: %u\n", pid);
         return;
     }
-    kprintf("Signal %d sent to process %u\n", (unsigned long)sig, (unsigned long)pid);
+    kprintf("Signal %d sent to process %u\n", sig, pid);
 }

@@ -8,6 +8,6 @@ void cmd_mouse_status(void) {
     mouse_get_state(&state);
     uint8_t btn = state.buttons;
     kprintf("Mouse: x=%d y=%d buttons=0x%x (L=%d M=%d R=%d)\n",
-            (unsigned long)state.x, (unsigned long)state.y, (unsigned long)btn,
-            (unsigned long)(btn & 1), (unsigned long)((btn >> 2) & 1), (unsigned long)((btn >> 1) & 1));
+            (int)state.x, (int)state.y, (unsigned int)btn,
+            (int)(btn & 1), (int)((btn >> 2) & 1), (int)((btn >> 1) & 1));
 }

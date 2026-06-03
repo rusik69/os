@@ -23,5 +23,5 @@ void cmd_size(const char *args) {
 
     kprintf("text\tdata\tbss\tdec\thex\tfilename\n");
     kprintf("%u\t0\t0\t%u\t%x\t%s\n",
-            (unsigned long)size, (unsigned long)size, (unsigned long)size, args);
+            size, size, size, args);
 }

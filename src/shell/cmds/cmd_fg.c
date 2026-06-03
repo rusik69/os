@@ -52,8 +52,8 @@ void cmd_fg(const char *args) {
 
     int status = 0;
     if (libc_waitpid(pid, &status) != 0) {
-        kprintf("No such process: %u\n", (unsigned long)pid);
+        kprintf("No such process: %u\n", pid);
         return;
     }
-    kprintf("[%u] Done\n", (unsigned long)pid);
+    kprintf("[%u] Done\n", pid);
 }

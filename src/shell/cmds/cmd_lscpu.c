@@ -17,19 +17,18 @@ void cmd_lscpu(const char *args) {
 
     /* CPUID leaf 1: features + topology */
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
-    uint8_t stepping = eax & 0xF;
-    uint8_t model    = (eax >> 4) & 0xF;
-    uint8_t family   = (eax >> 8) & 0xF;
-    uint8_t logical  = (ebx >> 16) & 0xFF;
-    uint8_t clflush  = (ebx >> 8) & 0xFF;
-    uint8_t brand_id = (ebx) & 0xFF;
+    uint8_t stepping = (uint8_t)(eax & 0xF);
+    uint8_t model    = (uint8_t)((eax >> 4) & 0xF);
+    uint8_t family   = (uint8_t)((eax >> 8) & 0xF);
+    uint8_t logical  = (uint8_t)((ebx >> 16) & 0xFF);
+    uint8_t clflush  = (uint8_t)((ebx >> 8) & 0xFF);
 
     /* Extended family/model if needed */
-    uint8_t ext_model = (eax >> 16) & 0xF;
-    uint8_t ext_family = (eax >> 20) & 0xFF;
+    uint8_t ext_model = (uint8_t)((eax >> 16) & 0xF);
+    uint8_t ext_family = (uint8_t)((eax >> 20) & 0xFF);
     if (family == 0xF) family += ext_family;
     if (family == 0xF || (family == 0x6))
-        model = (ext_model << 4) | model;
+        model = (uint8_t)((ext_model << 4) | model);
 
     /* Max extended leaf */
     uint32_t max_ext;
@@ -49,11 +48,9 @@ void cmd_lscpu(const char *args) {
     }
 
     /* L1 cache from extended leaf */
-    uint32_t l1_assoc = 0, l1_line = 0, l1_size = 0;
+    uint32_t l1_size = 0;
     if (max_ext >= 0x80000005) {
         __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000005));
-        l1_line = ecx & 0xFF;
-        l1_assoc = (ecx >> 8) & 0xFF;
         l1_size = (ecx >> 24) & 0xFF;
     }
 
@@ -61,11 +58,11 @@ void cmd_lscpu(const char *args) {
     kprintf("CPU op-mode(s):      64-bit\n");
     kprintf("Vendor ID:           %s\n", vendor);
     if (brand[0]) kprintf("Model name:          %s\n", brand);
-    kprintf("CPU family:          %u\n", (unsigned long)family);
-    kprintf("Model:               %u\n", (unsigned long)model);
-    kprintf("Stepping:            %u\n", (unsigned long)stepping);
-    kprintf("CPU(s):              %u\n", (unsigned long)logical);
-    kprintf("Thread(s) per core:  %u\n", (unsigned long)(logical));
-    kprintf("CLFLUSH line size:   %u\n", (unsigned long)clflush);
-    kprintf("L1d cache:           %uK\n", (unsigned long)l1_size);
+    kprintf("CPU family:          %u\n", (unsigned int)family);
+    kprintf("Model:               %u\n", (unsigned int)model);
+    kprintf("Stepping:            %u\n", (unsigned int)stepping);
+    kprintf("CPU(s):              %u\n", (unsigned int)logical);
+    kprintf("Thread(s) per core:  %u\n", (unsigned int)logical);
+    kprintf("CLFLUSH line size:   %u\n", (unsigned int)clflush);
+    kprintf("L1d cache:           %uK\n", (unsigned int)l1_size);
 }
