@@ -390,6 +390,8 @@ obj-m += drivers/nvme.ko
 obj-m += fs/tarfs.ko
 # ext2: read-only ext2 filesystem with HTree directory indexing (M51)
 obj-m += fs/ext2.ko
+# iso9660: CDROM filesystem with Rock Ridge + Joliet (M53)
+obj-m += fs/iso9660.ko
 
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))

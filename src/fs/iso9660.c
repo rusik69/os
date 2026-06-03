@@ -871,3 +871,21 @@ int iso9660_init(void)
     vfs_register_filesystem("iso9660", &iso9660_ops);
     return 0;
 }
+
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    return iso9660_init();
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    /* No VFS unregister yet; avoid unloading if filesystem is mounted */
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("ISO9660 CDROM filesystem with Rock Ridge (RRIP) and Joliet (UCS-2) extension support");
+#endif
