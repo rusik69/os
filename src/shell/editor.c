@@ -22,12 +22,19 @@
 #include "serial.h"
 #include "net.h"
 #include "syntax.h"
+/* Memory allocation — declared directly to avoid pulling in libc.h
+ * which conflicts with other headers already included above. */
+void *libc_malloc(size_t size);
+void  libc_free(void *ptr);
+void *libc_realloc(void *ptr, size_t new_size);
+#define malloc(sz)     libc_malloc(sz)
+#define free(ptr)      libc_free(ptr)
+#define realloc(p,sz)  libc_realloc(p,sz)
 
 /* ── Limits ──────────────────────────────────────────────────────── */
 #define ED_MAX_BUFS     4          /* number of simultaneously open buffers */
-#define ED_MAX_LINES    1024       /* lines per buffer (dynamic array) */
 #define ED_LINE_LEN     256        /* max characters per line */
-#define ED_LINE_ALLOC   256        /* allocation quantum for line growth */
+#define ED_LINE_GROW    64         /* initial/growth quantum for line pointer array */
 #define ED_VIEW_ROWS    (VGA_HEIGHT - 2)  /* top status + bottom status bar */
 #define ED_CLIP_LEN     256        /* clipboard maximum length */
 
@@ -50,15 +57,16 @@ int editor_is_active(void) { return ed_telnet_mode; }
 
 /* ── Per-buffer state ────────────────────────────────────────────── */
 struct ed_buffer {
-    char  lines[ED_MAX_LINES][ED_LINE_LEN];
-    int   num_lines;
-    int   cx, cy;            /* cursor x (col), y (line in buffer) */
-    int   scroll;            /* first visible line index */
-    char  filename[64];
-    int   dirty;
-    int   in_use;
+    char  **lines;           /* dynamic array of line pointers */
+    int    num_lines;        /* current number of lines */
+    int    max_lines;        /* allocated capacity of lines[] */
+    int    cx, cy;           /* cursor x (col), y (line in buffer) */
+    int    scroll;           /* first visible line index */
+    char   filename[64];
+    int    dirty;
+    int    in_use;
     syntax_lang_t lang;      /* detected language for syntax highlighting */
-    int   in_multi;          /* multi-line comment/string state for syntax */
+    int    in_multi;         /* multi-line comment/string state for syntax */
 };
 
 static struct ed_buffer ed_buffers[ED_MAX_BUFS];
@@ -99,7 +107,64 @@ static struct ed_buffer *cur_buf(void) {
 
 #define BUF() cur_buf()
 
-/* ── Input abstraction ───────────────────────────────────────────── */
+/* ── Dynamic buffer management ──────────────────────────────────── */
+
+/* Ensure the line pointer array has capacity for at least `idx` lines.
+ * Grows geometrically (doubles) to amortize reallocation cost. */
+static int ed_grow_lines(struct ed_buffer *b, int idx) {
+    if (idx < b->max_lines)
+        return 0;
+    int new_max = b->max_lines > 0 ? b->max_lines * 2 : ED_LINE_GROW;
+    while (new_max <= idx)
+        new_max *= 2;
+    char **new_lines = (char **)realloc(b->lines, (size_t)new_max * sizeof(char *));
+    if (!new_lines)
+        return -1;
+    for (int i = b->max_lines; i < new_max; i++)
+        new_lines[i] = NULL;
+    b->lines = new_lines;
+    b->max_lines = new_max;
+    return 0;
+}
+
+/* Ensure a line buffer exists at index `idx`.  Allocates if needed. */
+static int ed_ensure_line(struct ed_buffer *b, int idx) {
+    if (ed_grow_lines(b, idx) < 0)
+        return -1;
+    if (!b->lines[idx]) {
+        b->lines[idx] = (char *)malloc((size_t)ED_LINE_LEN);
+        if (!b->lines[idx])
+            return -1;
+        b->lines[idx][0] = '\0';
+    }
+    return 0;
+}
+
+/* Free all dynamically allocated memory in a buffer and reset it. */
+static void ed_buffer_free(struct ed_buffer *b) {
+    if (b->lines) {
+        for (int i = 0; i < b->max_lines; i++)
+            if (b->lines[i])
+                free(b->lines[i]);
+        free(b->lines);
+    }
+    b->lines = NULL;
+    b->num_lines = 0;
+    b->max_lines = 0;
+}
+
+/* Initialise a buffer with one empty line. */
+static void ed_buffer_init(struct ed_buffer *b) {
+    memset(b, 0, sizeof(*b));
+    if (ed_grow_lines(b, 0) < 0)
+        return;
+    b->lines[0] = (char *)malloc((size_t)ED_LINE_LEN);
+    if (b->lines[0])
+        b->lines[0][0] = '\0';
+    b->num_lines = 1;
+}
+
+/* ── Line length helper ──────────────────────────────────────────── */
 static char ed_readchar(void) {
     if (!ed_telnet_mode) return keyboard_getchar();
     while (ed_input_head == ed_input_tail) net_poll();
@@ -375,6 +440,7 @@ static void ed_refresh(void) {
 
 static void ed_insert_char(char c) {
     struct ed_buffer *b = BUF();
+    if (ed_ensure_line(b, b->cy) < 0) return;
     int len = ed_line_len(b->cy);
     if (len >= ED_LINE_LEN - 1) return;
     for (int i = len; i > b->cx; i--)
@@ -387,10 +453,18 @@ static void ed_insert_char(char c) {
 
 static void ed_insert_newline(void) {
     struct ed_buffer *b = BUF();
-    if (b->num_lines >= ED_MAX_LINES) return;
-    for (int i = b->num_lines; i > b->cy + 1; i--)
-        memcpy(b->lines[i], b->lines[i - 1], ED_LINE_LEN);
+    /* Grow the line pointer array to accommodate one more line */
+    if (ed_grow_lines(b, b->num_lines) < 0) return;
+    /* Shift lines down */
+    for (int i = b->num_lines; i > b->cy + 1; i--) {
+        b->lines[i] = b->lines[i - 1];
+    }
     b->num_lines++;
+    /* Allocate the new line (at b->cy + 1) */
+    if (ed_ensure_line(b, b->cy + 1) < 0) {
+        b->num_lines--;
+        return;
+    }
     int len = ed_line_len(b->cy);
     int tail = len - b->cx;
     memcpy(b->lines[b->cy + 1], b->lines[b->cy] + b->cx, (size_t)tail);
@@ -413,11 +487,14 @@ static void ed_backspace(void) {
         int prev_len = ed_line_len(b->cy - 1);
         int cur_len  = ed_line_len(b->cy);
         if (prev_len + cur_len < ED_LINE_LEN) {
+            if (ed_ensure_line(b, b->cy - 1) < 0) return;
             memcpy(b->lines[b->cy - 1] + prev_len, b->lines[b->cy], (size_t)(cur_len + 1));
+            /* Free the absorbed line and shift remaining up */
+            if (b->lines[b->cy]) free(b->lines[b->cy]);
             for (int i = b->cy; i < b->num_lines - 1; i++)
-                memcpy(b->lines[i], b->lines[i + 1], ED_LINE_LEN);
+                b->lines[i] = b->lines[i + 1];
+            b->lines[b->num_lines - 1] = NULL;
             b->num_lines--;
-            memset(b->lines[b->num_lines], 0, ED_LINE_LEN);
             b->cy--;
             b->cx = prev_len;
             b->dirty = 1;
@@ -435,11 +512,14 @@ static void ed_delete_char(void) {
     } else if (b->cy < b->num_lines - 1) {
         int next_len = ed_line_len(b->cy + 1);
         if (len + next_len < ED_LINE_LEN) {
+            if (ed_ensure_line(b, b->cy) < 0) return;
             memcpy(b->lines[b->cy] + len, b->lines[b->cy + 1], (size_t)(next_len + 1));
+            /* Free the next line and shift remaining up */
+            if (b->lines[b->cy + 1]) free(b->lines[b->cy + 1]);
             for (int i = b->cy + 1; i < b->num_lines - 1; i++)
-                memcpy(b->lines[i], b->lines[i + 1], ED_LINE_LEN);
+                b->lines[i] = b->lines[i + 1];
+            b->lines[b->num_lines - 1] = NULL;
             b->num_lines--;
-            memset(b->lines[b->num_lines], 0, ED_LINE_LEN);
             b->dirty = 1;
         }
     }
@@ -463,15 +543,18 @@ static void ed_cut_line(void) {
     ed_yank_line();
     if (b->num_lines <= 1) {
         /* Only one line: just clear it */
+        if (ed_ensure_line(b, 0) < 0) return;
         b->lines[0][0] = '\0';
         b->cx = 0;
         b->dirty = 1;
         return;
     }
+    /* Free the current line and shift remaining up */
+    if (b->lines[b->cy]) free(b->lines[b->cy]);
     for (int i = b->cy; i < b->num_lines - 1; i++)
-        memcpy(b->lines[i], b->lines[i + 1], ED_LINE_LEN);
+        b->lines[i] = b->lines[i + 1];
+    b->lines[b->num_lines - 1] = NULL;
     b->num_lines--;
-    memset(b->lines[b->num_lines], 0, ED_LINE_LEN);
     if (b->cy >= b->num_lines) b->cy = b->num_lines - 1;
     if (b->cx > ed_line_len(b->cy)) b->cx = ed_line_len(b->cy);
     b->dirty = 1;
@@ -480,11 +563,16 @@ static void ed_cut_line(void) {
 /* Paste clipboard below current line */
 static void ed_paste_below(void) {
     struct ed_buffer *b = BUF();
-    if (ed_clip_len == 0 || b->num_lines >= ED_MAX_LINES) return;
+    if (ed_clip_len == 0) return;
+    /* Grow the line pointer array to accommodate one more line */
+    if (ed_grow_lines(b, b->num_lines) < 0) return;
     int paste_line = b->cy + 1;
     if (paste_line > b->num_lines) paste_line = b->num_lines;
+    /* Shift lines down to make room */
     for (int i = b->num_lines; i > paste_line; i--)
-        memcpy(b->lines[i], b->lines[i - 1], ED_LINE_LEN);
+        b->lines[i] = b->lines[i - 1];
+    /* Allocate the new line */
+    if (ed_ensure_line(b, paste_line) < 0) return;
     memcpy(b->lines[paste_line], ed_clipboard, (size_t)ed_clip_len);
     b->lines[paste_line][ed_clip_len] = '\0';
     b->num_lines++;
@@ -496,9 +584,14 @@ static void ed_paste_below(void) {
 /* Paste clipboard above current line */
 static void ed_paste_above(void) {
     struct ed_buffer *b = BUF();
-    if (ed_clip_len == 0 || b->num_lines >= ED_MAX_LINES) return;
+    if (ed_clip_len == 0) return;
+    /* Grow the line pointer array to accommodate one more line */
+    if (ed_grow_lines(b, b->num_lines) < 0) return;
+    /* Shift lines down to make room */
     for (int i = b->num_lines; i > b->cy; i--)
-        memcpy(b->lines[i], b->lines[i - 1], ED_LINE_LEN);
+        b->lines[i] = b->lines[i - 1];
+    /* Allocate the new line */
+    if (ed_ensure_line(b, b->cy) < 0) return;
     memcpy(b->lines[b->cy], ed_clipboard, (size_t)ed_clip_len);
     b->lines[b->cy][ed_clip_len] = '\0';
     b->num_lines++;
@@ -536,13 +629,10 @@ static void ed_handle_command(const char *input) {
         /* Save old buffer state partly (already in place), init new */
         ed_cur_buf = target;
         b = BUF();
-        memset(b->lines, 0, sizeof(b->lines));
-        b->num_lines = 1;
-        b->cx = 0; b->cy = 0; b->scroll = 0;
-        b->dirty = 0;
+        ed_buffer_free(b);        /* free any previous content */
+        ed_buffer_init(b);
         b->in_use = 1;
         b->lang = syntax_detect(fname);
-        b->in_multi = 0;
         strncpy(b->filename, fname, sizeof(b->filename) - 1);
         b->filename[sizeof(b->filename) - 1] = '\0';
 
@@ -551,27 +641,7 @@ static void ed_handle_command(const char *input) {
         if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
         else strcpy(path, b->filename);
 
-        char buf[ED_MAX_LINES * ED_LINE_LEN];
-        uint32_t size = 0;
-        if (fs_read_file(path, buf, (int)sizeof(buf) - 1, &size) == 0 && size > 0) {
-            buf[size] = '\0';
-            b->num_lines = 0;
-            int col = 0;
-            for (uint32_t i = 0; i < size && b->num_lines < ED_MAX_LINES; i++) {
-                if (buf[i] == '\n') {
-                    b->lines[b->num_lines][col] = '\0';
-                    b->num_lines++;
-                    col = 0;
-                } else if (col < ED_LINE_LEN - 1) {
-                    b->lines[b->num_lines][col++] = buf[i];
-                }
-            }
-            if (col > 0 || b->num_lines == 0) {
-                b->lines[b->num_lines][col] = '\0';
-                b->num_lines++;
-            }
-        }
-        return;
+        ed_load(b);
     }
 
     if (strcmp(input, ":bn") == 0) {
@@ -857,20 +927,32 @@ static int ed_global_replace(const char *old_str, const char *new_str)
 
 static void ed_save(void) {
     struct ed_buffer *b = BUF();
-    char buf[ED_MAX_LINES * ED_LINE_LEN];
+    /* Calculate total size needed */
+    int total = 0;
+    for (int i = 0; i < b->num_lines; i++) {
+        total += ed_line_len(i) + 1;  /* +1 for newline (or null) */
+    }
+    char *buf = (char *)malloc((size_t)(total + 1));
+    if (!buf) {
+        if (ed_telnet_mode) {
+            kprintf("\x1b[%d;1H\x1b[41m SAVE FAILED (no memory) \x1b[0m", VGA_HEIGHT);
+            kprintf_flush();
+        } else {
+            uint8_t color = VGA_WHITE | (VGA_RED << 4);
+            const char *msg = " SAVE FAILED (no memory) ";
+            for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
+                vga_put_entry_at(msg[i], color, VGA_HEIGHT - 1, i);
+        }
+        return;
+    }
     int pos = 0;
     for (int i = 0; i < b->num_lines; i++) {
         int len = ed_line_len(i);
-        if (pos + len + 1 >= (int)sizeof(buf)) {
-            /* Try to save partial file */
-            if (pos == 0) break;
-            /* Truncate by ending with newline marker */
-            break;
-        }
         memcpy(buf + pos, b->lines[i], (size_t)len);
         pos += len;
         if (i < b->num_lines - 1) buf[pos++] = '\n';
     }
+    buf[pos] = '\0';
     char path[66];
     if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
     else strcpy(path, b->filename);
@@ -888,6 +970,7 @@ static void ed_save(void) {
     } else {
         b->dirty = 0;
     }
+    free(buf);
 }
 
 static void ed_load(struct ed_buffer *b) {
@@ -895,31 +978,57 @@ static void ed_load(struct ed_buffer *b) {
     if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
     else strcpy(path, b->filename);
 
-    char buf[ED_MAX_LINES * ED_LINE_LEN];
+    /* Try reading the file with an 8KB initial buffer; grow if needed.
+     * We keep trying larger buffers up to a reasonable limit. */
+    uint32_t buf_size = 8192;
     uint32_t size = 0;
+    char *filedata = NULL;
 
-    memset(b->lines, 0, sizeof(b->lines));
-    b->num_lines = 1;
+    for (int attempt = 0; attempt < 6; attempt++) {
+        char *newbuf = (char *)realloc(filedata, (size_t)buf_size);
+        if (!newbuf) { free(filedata); return; }
+        filedata = newbuf;
+        size = 0;
+        if (fs_read_file(path, filedata, buf_size - 1, &size) == 0) {
+            if (size < buf_size - 1) {
+                /* Read completed — file fits in buffer */
+                break;
+            }
+        } else {
+            /* File doesn't exist or error — keep single empty line from init */
+            free(filedata);
+            return;
+        }
+        buf_size *= 2;
+    }
+    if (!filedata) return;  /* all attempts failed */
+    filedata[size] = '\0';
+
+    /* Free existing buffer content and rebuild */
+    ed_buffer_free(b);
+    if (ed_grow_lines(b, 0) < 0) { free(filedata); return; }
+    b->num_lines = 0;
     b->cx = 0; b->cy = 0; b->scroll = 0; b->dirty = 0;
 
-    if (fs_read_file(path, buf, (int)sizeof(buf) - 1, &size) < 0) return; /* new file */
-    buf[size] = '\0';
-
-    b->num_lines = 0;
     int col = 0;
-    for (uint32_t i = 0; i < size && b->num_lines < ED_MAX_LINES; i++) {
-        if (buf[i] == '\n') {
+    for (uint32_t i = 0; i < size; i++) {
+        if (filedata[i] == '\n') {
+            if (ed_ensure_line(b, b->num_lines) < 0) break;
             b->lines[b->num_lines][col] = '\0';
             b->num_lines++;
             col = 0;
         } else if (col < ED_LINE_LEN - 1) {
-            b->lines[b->num_lines][col++] = buf[i];
+            if (ed_ensure_line(b, b->num_lines) < 0) break;
+            b->lines[b->num_lines][col++] = filedata[i];
         }
     }
     if (col > 0 || b->num_lines == 0) {
-        b->lines[b->num_lines][col] = '\0';
-        b->num_lines++;
+        if (ed_ensure_line(b, b->num_lines) >= 0) {
+            b->lines[b->num_lines][col] = '\0';
+            b->num_lines++;
+        }
     }
+    free(filedata);
 }
 
 /* ── Main entry point ────────────────────────────────────────────── */
@@ -960,13 +1069,10 @@ void editor_open(const char *filename) {
     if (slot != ed_cur_buf || !ed_buffers[slot].in_use) {
         ed_cur_buf = slot;
         struct ed_buffer *b = BUF();
-        memset(b->lines, 0, sizeof(b->lines));
-        b->num_lines = 1;
-        b->cx = 0; b->cy = 0; b->scroll = 0;
-        b->dirty = 0;
+        ed_buffer_free(b);        /* free any previous content */
+        ed_buffer_init(b);
         b->in_use = 1;
         b->lang = syntax_detect(filename);
-        b->in_multi = 0;
         strncpy(b->filename, filename, sizeof(b->filename) - 1);
         b->filename[sizeof(b->filename) - 1] = '\0';
         ed_load(b);
