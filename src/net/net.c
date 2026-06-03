@@ -9,6 +9,7 @@
 #include "waitqueue.h"
 #include "netfilter.h"
 #include "export.h"
+#include "netdevice.h"
 
 /* Shared network state */
 uint8_t  net_our_mac[6];
@@ -71,6 +72,12 @@ static int net_link_recv(void *buf, uint16_t max_len) {
 }
 
 int net_link_send(const void *data, uint16_t len) {
+    /* Prefer the netdevice layer if interfaces are registered.
+     * Interface 0 is the primary NIC registered by e1000 or virtio_net. */
+    if (netif_count() > 0) {
+        return netif_send(0, (const uint8_t *)data, len);
+    }
+    /* Fallback: direct driver calls for legacy compatibility */
     if (virtio_net_present()) {
         if (virtio_net_send((const uint8_t *)data, len) < 0)
             return -1;

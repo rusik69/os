@@ -1,7 +1,8 @@
-/* bridge.c — Learning bridge */
+/* bridge.c — Learning bridge with netdevice-based frame forwarding */
 
 #define KERNEL_INTERNAL
 #include "bridge.h"
+#include "netdevice.h"
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
@@ -101,7 +102,8 @@ void bridge_fdb_flush(void) {
         g_bridge.fdb[i].valid = 0;
 }
 
-void bridge_handle(const uint8_t *frame, int len, int ingress_port) {
+void bridge_handle(const uint8_t *frame, int len, int ingress_port)
+{
     if (!g_bridge.initialized) return;
     if (!frame || len < 14) return;
 
@@ -124,15 +126,13 @@ void bridge_handle(const uint8_t *frame, int len, int ingress_port) {
         /* Flood to all ports except ingress */
         for (int i = 0; i < g_bridge.num_ports; i++) {
             if (g_bridge.ports[i] != ingress_port) {
-                /* Forward frame to this port */
-                /* TODO: call netdev transmit on port */
-                (void)g_bridge.ports[i];
+                /* Forward frame to this port via netdevice */
+                netif_send(g_bridge.ports[i], frame, (uint16_t)len);
             }
         }
     } else if (dst_port != ingress_port) {
         /* Forward to specific port */
-        /* TODO: call netdev transmit on dst_port */
-        (void)dst_port;
+        netif_send(dst_port, frame, (uint16_t)len);
     }
     /* Else: destination is on same port — drop */
 }

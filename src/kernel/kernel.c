@@ -27,6 +27,7 @@
 #include "bridge.h"
 #include "vlan.h"
 #include "tun.h"
+#include "netdevice.h"
 #include "net_ns.h"
 #include "ipip.h"
 #include "wireguard.h"
@@ -747,6 +748,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[OK] AC97 audio: initialized\n");
     else
         kprintf("[--] AC97 audio: not present\n");
+
+    /* Initialise the netdevice interface layer before any NIC driver
+     * so they can register themselves as net devices during init. */
+    netdevice_init();
 
     if (e1000_init() == 0) {
         uint8_t mac[6];

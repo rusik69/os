@@ -165,6 +165,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/vxlan.c \
          src/net/wireguard.c \
          src/net/ipvs.c \
+         src/net/netdevice.c \
          src/net/sshd.c \
          src/kernel/service.c \
          src/kernel/ssh_crypto.c \

@@ -8,6 +8,7 @@
 #include "pic.h"
 #include "apic.h"
 #include "net.h"
+#include "netdevice.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -319,6 +320,27 @@ static void e1000_init_tx(void) {
     e1000_write(REG_TCTL, TCTL_EN | TCTL_PSP | (15 << 4) | (64 << 12));
 }
 
+/* ── Netdevice callback wrappers ───────────────────────────────── */
+
+/* Transmit callback for the netdevice layer.
+ * Adapts the (dev, data, len) signature to e1000_send's (data, len).
+ * @dev is unused (e1000 is a single-instance driver). */
+static int e1000_netdev_transmit(struct net_device *dev,
+                                  const uint8_t *data, uint16_t len)
+{
+    (void)dev;
+    return e1000_send(data, len);
+}
+
+/* Receive callback for the netdevice layer.
+ * Adapts the (dev, buf, max_len) signature to e1000_receive's (buf, max_len). */
+static int e1000_netdev_receive(struct net_device *dev,
+                                uint8_t *buf, uint16_t max_len)
+{
+    (void)dev;
+    return e1000_receive(buf, max_len);
+}
+
 int e1000_init(void) {
     struct pci_device dev;
     if (pci_find_device(E1000_VENDOR, E1000_DEVICE, &dev) < 0)
@@ -371,6 +393,34 @@ int e1000_init(void) {
 
     nic_present = 1;
     e1000_itr_init();
+
+    /* ── Register with netdevice layer ──────────────────────────── */
+    {
+        static struct net_device ndev;
+        int reg_ok = 0;
+
+        /* Only register once (check if already registered) */
+        if (netif_name_to_index("eth0") < 0) {
+            memset(&ndev, 0, sizeof(ndev));
+            snprintf(ndev.name, sizeof(ndev.name), "eth0");
+            memcpy(ndev.mac, mac_addr, 6);
+            ndev.transmit = e1000_netdev_transmit;
+            ndev.receive  = e1000_netdev_receive;
+            ndev.mtu      = 1500;
+            ndev.flags    = 1; /* IFF_UP */
+            ndev.priv     = NULL;
+
+            int ifindex = netif_register(&ndev);
+            if (ifindex >= 0) {
+                kprintf("[e1000] registered as netdevice ifindex=%d\n", ifindex);
+                reg_ok = 1;
+            }
+        } else {
+            reg_ok = 1; /* already registered by a previous call */
+        }
+        (void)reg_ok; /* silence unused-variable warning if kprintf is compiled out */
+    }
+
     return 0;
 }
 
@@ -442,6 +492,14 @@ void e1000_exit(void) {
     }
 
     nic_present = 0;
+
+    /* Unregister from netdevice layer */
+    {
+        int idx = netif_name_to_index("eth0");
+        if (idx >= 0)
+            netif_unregister(idx);
+    }
+
     kprintf("[e1000] NIC shut down\n");
 }
 
