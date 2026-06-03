@@ -112,7 +112,7 @@
 #include "thp.h"
 
 /* do_coredump is defined in kernel/syscall.c */
-extern void do_coredump(struct process *proc);
+extern void do_coredump(struct process *proc, int signo);
 
 
 /* ── Progress tracking ────────────────────────────────────────── */
@@ -2433,11 +2433,11 @@ static void test_coredump(void) {
     ASSERT("coredump enabled", cur->coredump_enabled == 1);
 
     /* Trigger coredump check path — verify no crash */
-    do_coredump(cur);
+    do_coredump(cur, 11);  /* SIGSEGV */
 
     /* Disable and trigger again */
     cur->coredump_enabled = 0;
-    do_coredump(cur);
+    do_coredump(cur, 11);  /* SIGSEGV */
 
     cur->coredump_enabled = saved;
     t_ok("coredump test");
@@ -2917,13 +2917,13 @@ static void test_rlimit_core(void) {
     cur->rlim_max[RLIMIT_CORE] = 0;
 
     /* do_coredump should early-return (no crash) */
-    do_coredump(cur);
+    do_coredump(cur, 11);  /* SIGSEGV */
     t_ok("rlimit_core suppressed");
 
     /* Restore and test with non-zero */
     cur->rlim_cur[RLIMIT_CORE] = 1024 * 1024;
     cur->rlim_max[RLIMIT_CORE] = 1024 * 1024;
-    do_coredump(cur);
+    do_coredump(cur, 11);  /* SIGSEGV */
     t_ok("rlimit_core allowed");
 
     /* Restore */

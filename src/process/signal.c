@@ -11,7 +11,7 @@
 #include "printf.h"
 
 /* Core dump handler */
-extern void do_coredump(struct process *proc);
+extern void do_coredump(struct process *proc, int signo);
 
 int signal_send(uint32_t pid, int signum) {
     if (signum == 0) {
@@ -176,7 +176,7 @@ void signal_check(void) {
             case SIGSEGV:
             case SIGQUIT:
             case SIGABRT:
-                do_coredump(p);
+                do_coredump(p, sig);
                 /* fall through */
             case SIGKILL:
             case SIGTERM:

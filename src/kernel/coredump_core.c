@@ -17,18 +17,18 @@
 
 /* ── Registered handler (initially NULL — no coredump support) ─── */
 
-static void (*coredump_handler)(uint32_t pid) = NULL;
+static coredump_handler_fn coredump_handler = NULL;
 
 /* ── Public API ────────────────────────────────────────────────── */
 
-void coredump_trigger(uint32_t pid)
+void coredump_trigger(uint32_t pid, int signo)
 {
     if (coredump_handler)
-        coredump_handler(pid);
+        coredump_handler(pid, signo);
 }
 EXPORT_SYMBOL(coredump_trigger);
 
-int coredump_register_handler(void (*handler)(uint32_t pid))
+int coredump_register_handler(coredump_handler_fn handler)
 {
     if (!handler)
         return -1;

@@ -5159,7 +5159,7 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
 
 #include "coredump_core.h"
 
-void do_coredump(struct process *proc) {
+void do_coredump(struct process *proc, int signo) {
     if (!proc || !proc->coredump_enabled) return;
     if (!proc->is_user || !proc->pml4) return;
 
@@ -5169,14 +5169,14 @@ void do_coredump(struct process *proc) {
         return;
     }
 
-    kprintf("[CORE] pid=%u name=\"%s\": scheduling core dump (max %llu bytes)...\n", proc->pid,
+    kprintf("[CORE] pid=%u name=\"%s\": scheduling core dump (max %llu bytes, signal %d)...\n", proc->pid,
             proc->name ? proc->name : "?",
-            (unsigned long long)proc->rlim_cur[1]);
+            (unsigned long long)proc->rlim_cur[1], signo);
 
     /* Dispatch via the registered handler (may be NULL if coredump module
      * is not loaded).  The handler is responsible for deferring to a
      * workqueue if called from IRQ context. */
-    coredump_trigger(proc->pid);
+    coredump_trigger(proc->pid, signo);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

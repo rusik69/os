@@ -1,3 +1,23 @@
+/*
+ * coredump.c — ELF core dump generation with core_pattern support.
+ *
+ * Writes ELF core files according to /proc/sys/kernel/core_pattern.
+ * Supports %-substitution: %p PID, %s signal, %e executable name,
+ * %u UID, %g GID, %% literal '%'.
+ *
+ * Default pattern: "/tmp/core.%p"
+ *
+ * The core file contains:
+ *   - ELF header (ET_CORE = 4)
+ *   - Program header table:
+ *       PT_NOTE segment with NT_PRSTATUS note (register state)
+ *       PT_LOAD segments for each mapped memory region
+ *   - Note data (register dump)
+ *   - Memory segment data
+ *
+ * If core_pattern starts with '|', the core is piped to a userspace
+ * handler (pipe mode).  Otherwise, it is written to the expanded path.
+ */
 #define KERNEL_INTERNAL
 #include "types.h"
 #include "printf.h"
@@ -12,24 +32,29 @@
 #include "heap.h"          /* kmalloc, kfree */
 #include "coredump_core.h"
 #include "workqueue.h"
+#include "sysctl.h"         /* sysctl_register */
+
+/* Simple integer-to-string for formatting core paths */
+#define ULTOA_BUF 24
+static void ul_to_str(uint64_t v, char *buf, int *pos, int max)
+{
+    if (v == 0) {
+        if (*pos < max - 1) buf[(*pos)++] = '0';
+        return;
+    }
+    char tmp[ULTOA_BUF];
+    int n = 0;
+    while (v > 0 && n < ULTOA_BUF) {
+        tmp[n++] = '0' + (int)(v % 10);
+        v /= 10;
+    }
+    while (n-- > 0 && *pos < max - 1)
+        buf[(*pos)++] = tmp[n];
+}
 
 #ifdef MODULE
 #include "module.h"
 #endif
-
-/*
- * Core dump generation — writes ELF core file to /tmp/core.
- *
- * The core file contains:
- *   - ELF header (ET_CORE = 4)
- *   - Program header table:
- *       PT_NOTE segment with NT_PRSTATUS note (register state)
- *       PT_LOAD segments for each mapped memory region
- *   - Note data (register dump)
- *   - Memory segment data
- *
- * We write directly via VFS to /tmp/core.
- */
 
 #define ET_CORE     4
 #define PT_NOTE     4
@@ -81,7 +106,169 @@ enum x86_64_reg {
 
 static int coredump_enabled = 1;
 
-/* Simple extendable buffer for building the core file in memory */
+/* ── Core pattern support (Item 299) ──────────────────────────────
+ *
+ * /proc/sys/kernel/core_pattern controls where core dumps are written.
+ * The pattern supports these %-escape sequences:
+ *   %p  PID of dumped process
+ *   %s  Signal number that caused the dump
+ *   %e  Executable filename
+ *   %u  UID of dumped process
+ *   %g  GID of dumped process
+ *   %%  Literal '%'
+ *
+ * Default: "/tmp/core.%p"  — writes /tmp/core.1234 for PID 1234.
+ * Pipe mode (leading '|') is recognised but currently falls back to
+ * the default path with a warning (full pipe implementation deferred).
+ */
+#define COREDUMP_PATTERN_MAX    256
+#define COREDUMP_PATH_MAX       256
+
+static char g_core_pattern[COREDUMP_PATTERN_MAX] = "/tmp/core.%p";
+
+/* ── Sysctl handlers for core_pattern ─────────────────────────── */
+
+static int sysctl_read_core_pattern(char *buf, int max)
+{
+    int len = (int)strlen(g_core_pattern);
+    if (len >= max) len = max - 1;
+    memcpy(buf, g_core_pattern, (size_t)len);
+    if (len < max - 1)
+        buf[len++] = '\n';
+    buf[len] = '\0';
+    return len;
+}
+
+static int sysctl_write_core_pattern(const char *buf, int len)
+{
+    int clen = len < COREDUMP_PATTERN_MAX - 1 ? len : COREDUMP_PATTERN_MAX - 1;
+    memcpy(g_core_pattern, buf, (size_t)clen);
+    g_core_pattern[clen] = '\0';
+    /* Trim trailing whitespace / newlines */
+    while (clen > 0 && (g_core_pattern[clen - 1] == '\n' ||
+                        g_core_pattern[clen - 1] == '\r' ||
+                        g_core_pattern[clen - 1] == ' '))
+        g_core_pattern[--clen] = '\0';
+    return 0;
+}
+
+/* ── Core pattern expansion ─────────────────────────────────────
+ *
+ * Expands a core_pattern template into a concrete path by replacing
+ * %-escape sequences with process-specific values.
+ *
+ * @pattern:  the template string (e.g. "/tmp/core.%p")
+ * @proc:     the process being dumped
+ * @signo:    signal that triggered the dump
+ * @out:      output buffer (COREDUMP_PATH_MAX bytes)
+ * @out_size: size of output buffer
+ *
+ * Returns the number of bytes written (excluding NUL), or -1 if the
+ * expanded path exceeds the buffer.
+ */
+static int core_pattern_expand(const char *pattern, struct process *proc,
+                                int signo, char *out, int out_size)
+{
+    int o = 0;
+    const char *p = pattern;
+
+    if (!pattern || !proc || !out || out_size <= 0)
+        return -1;
+
+    while (*p && o < out_size - 1) {
+        if (*p == '%') {
+            p++; /* skip '%' */
+            switch (*p) {
+            case 'p': { /* PID */
+                char tmp[16];
+                int pos = 0;
+                ul_to_str(proc->pid, tmp, &pos, (int)sizeof(tmp));
+                tmp[pos] = '\0';
+                for (int i = 0; tmp[i] && o < out_size - 1; i++)
+                    out[o++] = tmp[i];
+                break;
+            }
+            case 's': { /* signal number */
+                char tmp[8];
+                int pos = 0;
+                ul_to_str((unsigned int)signo, tmp, &pos, (int)sizeof(tmp));
+                tmp[pos] = '\0';
+                for (int i = 0; tmp[i] && o < out_size - 1; i++)
+                    out[o++] = tmp[i];
+                break;
+            }
+            case 'e': { /* executable name (sanitised) */
+                const char *name = proc->name ? proc->name : "unknown";
+                while (*name && o < out_size - 1) {
+                    /* Replace '/' with '_' to prevent directory traversal */
+                    char c = *name;
+                    if (c == '/' || c == '\\') c = '_';
+                    out[o++] = c;
+                    name++;
+                }
+                break;
+            }
+            case 'u': { /* UID */
+                char tmp[16];
+                int pos = 0;
+                ul_to_str(proc->uid, tmp, &pos, (int)sizeof(tmp));
+                tmp[pos] = '\0';
+                for (int i = 0; tmp[i] && o < out_size - 1; i++)
+                    out[o++] = tmp[i];
+                break;
+            }
+            case 'g': { /* GID */
+                char tmp[16];
+                int pos = 0;
+                ul_to_str(proc->gid, tmp, &pos, (int)sizeof(tmp));
+                tmp[pos] = '\0';
+                for (int i = 0; tmp[i] && o < out_size - 1; i++)
+                    out[o++] = tmp[i];
+                break;
+            }
+            case '%': { /* literal '%' */
+                if (o < out_size - 1)
+                    out[o++] = '%';
+                break;
+            }
+            case '\0': /* pattern ends with '%' — just append '%' */
+                if (o < out_size - 1)
+                    out[o++] = '%';
+                goto done;
+            default:  /* unknown escape — pass through verbatim */
+                if (o < out_size - 1)
+                    out[o++] = '%';
+                if (o < out_size - 1)
+                    out[o++] = *p;
+                break;
+            }
+            if (*p) p++;
+        } else {
+            out[o++] = *p++;
+        }
+    }
+
+done:
+    out[o] = '\0';
+
+    /* Check for truncation */
+    while (*p) {
+        if (*p == '%') {
+            p++;
+            if (*p == 'p' || *p == 's' || *p == 'u' || *p == 'g' || *p == '%') {
+                /* Would have expanded further — buffer too small */
+                return -1;
+            }
+            if (*p) p++;
+        } else {
+            p++;
+        }
+    }
+
+    return o;
+}
+
+/* ── Simple extendable buffer for building the core file in memory ── */
 struct core_buf {
     uint8_t *data;
     uint64_t cap;
@@ -128,7 +315,6 @@ static void cb_pad(struct core_buf *cb, uint64_t align) {
 
 /* ── Forward declarations ─────────────────────────────────────────── */
 
-/* Registration helper (defined in the init/exit section below) */
 static int coredump_init_handler(void);
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -137,7 +323,14 @@ void coredump_init(void) {
     /* Register the coredump handler with the kernel core so that
      * do_coredump() dispatches work to us (via coredump_dispatch). */
     coredump_init_handler();
-    kprintf("[OK] Core dump handler initialized\n");
+
+    /* Register the core_pattern sysctl under /proc/sys/kernel/ */
+    sysctl_register("core_pattern",
+                    sysctl_read_core_pattern,
+                    sysctl_write_core_pattern);
+
+    kprintf("[OK] Core dump handler initialized (pattern: \"%s\")\n",
+            g_core_pattern);
 }
 
 void coredump_set_enabled(int en) {
@@ -171,11 +364,11 @@ static void fill_regs(elf_gregset_t *regs, struct process *proc) {
     /* Others remain 0 */
 }
 
-int coredump_generate(struct process *proc) {
+int coredump_generate(struct process *proc, int signo) {
     if (!coredump_enabled || !proc) return -1;
 
-    kprintf("[coredump] Generating core for PID %d (%s)\n",
-            (int)proc->pid, proc->name ? proc->name : "unknown");
+    kprintf("[coredump] Generating core for PID %d (%s), signal %d\n",
+            (int)proc->pid, proc->name ? proc->name : "unknown", signo);
 
     struct core_buf cb;
     if (cb_init(&cb, 64 * 1024) < 0) {
@@ -188,6 +381,8 @@ int coredump_generate(struct process *proc) {
     memset(&prstatus, 0, sizeof(prstatus));
     prstatus.pr_pid = proc->pid;
     prstatus.pr_ppid = proc->parent_pid;
+    prstatus.pr_info.si_signo = signo;
+    prstatus.pr_info.si_code = 0;
     /* Use a temporary non-packed array to avoid
      * -Waddress-of-packed-member, then copy into the packed struct. */
     {
@@ -383,18 +578,53 @@ int coredump_generate(struct process *proc) {
         cb_pad(&cb, PAGE_SIZE);
     }
 
-    /* ── Step 7: Write to /tmp/core ───────────────────────────────── */
-    /* Ensure /tmp exists by creating it */
-    vfs_create("/tmp", 2);   /* type 2 = directory */
-    int ret = vfs_write("/tmp/core", cb.data, cb.len);
+    /* ── Step 7: Expand core_pattern and write ──────────────────── */
+    char core_path[COREDUMP_PATH_MAX];
+    int path_len = core_pattern_expand(g_core_pattern, proc, signo,
+                                        core_path, sizeof(core_path));
+
+    if (path_len < 0) {
+        kprintf("[coredump] core_pattern expansion failed, falling back to default\n");
+        snprintf(core_path, sizeof(core_path), "/tmp/core.%u",
+                 (unsigned int)proc->pid);
+    }
+
+    /* Handle pipe mode (core_pattern starting with '|') */
+    if (core_path[0] == '|') {
+        /* Pipe mode: core would be piped to a userspace handler.
+         * For now, log a warning and fall back to writing /tmp/core.<pid> */
+        kprintf("[coredump] Pipe mode core_pattern=\"%s\" not yet fully "
+                "implemented; falling back to /tmp/core.%u\n",
+                g_core_pattern, (unsigned int)proc->pid);
+        snprintf(core_path, sizeof(core_path), "/tmp/core.%u",
+                 (unsigned int)proc->pid);
+    }
+
+    /* Ensure the directory exists */
+    {
+        /* Extract parent directory from core_path */
+        char dir[COREDUMP_PATH_MAX];
+        int last_slash = -1;
+        for (int i = 0; core_path[i]; i++) {
+            if (core_path[i] == '/') last_slash = i;
+        }
+        if (last_slash > 0) {
+            memcpy(dir, core_path, (size_t)last_slash);
+            dir[last_slash] = '\0';
+            vfs_create(dir, 2);  /* type 2 = directory */
+        }
+    }
+
+    /* Write the core file to the expanded path */
+    int ret = vfs_write(core_path, cb.data, cb.len);
     if (ret < 0) {
-        kprintf("[coredump] Failed to write /tmp/core (ret=%d)\n", ret);
+        kprintf("[coredump] Failed to write %s (ret=%d)\n", core_path, ret);
         kfree(cb.data);
         return -1;
     }
 
-    kprintf("[coredump] Core dump written to /tmp/core (%llu bytes, %d segments)\n",
-            (unsigned long long)cb.len, num_segs);
+    kprintf("[coredump] Core dump written to %s (%llu bytes, %d segments, signal %d)\n",
+            core_path, (unsigned long long)cb.len, num_segs, signo);
 
     kfree(cb.data);
     return 0;
@@ -409,10 +639,23 @@ int coredump_generate(struct process *proc) {
  * RLIMIT_CORE was already checked in do_coredump() before this was
  * scheduled; we re-check here as a safety measure in case the limit
  * changed between scheduling and execution.
+ *
+ * @arg: pointer to a struct with PID and signal number.
  */
+struct coredump_deferred_arg {
+    uint32_t pid;
+    int      signo;
+};
+
 void coredump_deferred(void *arg)
 {
-    uint32_t pid = (uint32_t)(uintptr_t)arg;
+    struct coredump_deferred_arg *da = (struct coredump_deferred_arg *)arg;
+    if (!da) return;
+
+    uint32_t pid = da->pid;
+    int signo = da->signo;
+    kfree(da);
+
     struct process *proc = process_get_by_pid(pid);
 
     if (!proc || proc->state == PROCESS_UNUSED) {
@@ -427,22 +670,33 @@ void coredump_deferred(void *arg)
         return;
     }
 
-    kprintf("[coredump] pid=%u name=\"%s\": deferred dump generation...\n",
-            pid, proc->name ? proc->name : "?");
+    kprintf("[coredump] pid=%u name=\"%s\": deferred dump generation (signal %d)...\n",
+            pid, proc->name ? proc->name : "?", signo);
 
-    coredump_generate(proc);
+    coredump_generate(proc, signo);
 }
 
 /* ── Module / built-in initialisation ────────────────────────────── */
 
-static void coredump_dispatch(uint32_t pid)
+static void coredump_dispatch(uint32_t pid, int signo)
 {
+    /* Allocate argument structure for the deferred work */
+    struct coredump_deferred_arg *da =
+        (struct coredump_deferred_arg *)kmalloc(sizeof(struct coredump_deferred_arg));
+    if (!da) {
+        kprintf("[CORE] pid=%u: out of memory scheduling core dump\n", pid);
+        return;
+    }
+    da->pid = pid;
+    da->signo = signo;
+
     /* Defer to workqueue — do_coredump() may be called from IRQ context
      * (via signal_check() in scheduler_tick()), where VFS writes and
      * kmalloc are unsafe.  The workqueue runs in process context. */
-    int ret = workqueue_schedule(coredump_deferred, (void *)(uintptr_t)pid);
+    int ret = workqueue_schedule(coredump_deferred, (void *)da);
     if (ret < 0) {
         kprintf("[CORE] pid=%u: workqueue full, core dump lost\n", pid);
+        kfree(da);
     }
 }
 
@@ -476,7 +730,7 @@ void cleanup_module(void)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
-MODULE_DESCRIPTION("ELF core dump generator — writes /tmp/core on crash");
+MODULE_DESCRIPTION("ELF core dump generator with core_pattern support");
 MODULE_VERSION("1.0");
 #else /* !MODULE — built-in case */
 #include "initcall.h"
