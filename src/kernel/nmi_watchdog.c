@@ -12,6 +12,7 @@
 #include "smp.h"
 #include "string.h"
 #include "kallsyms.h"
+#include "cpu.h"        /* read_msr, write_msr */
 
 /* ── Per-CPU watchdog data ───────────────────────────────────────── */
 static struct nmi_watchdog_cpu watchdog_per_cpu[SMP_MAX_CPUS];
@@ -19,8 +20,109 @@ static struct nmi_watchdog_cpu watchdog_per_cpu[SMP_MAX_CPUS];
 /* Global enable flag */
 static volatile int watchdog_running = 0;
 
-/* Rate-limiting: prevent flooding the console with redundant lockup
- * messages on the same CPU within the cooldown period. */
+/* ── APIC Performance Counter for periodic NMI generation ──────────
+ *
+ * We use IA32_PERFEVTSEL0 + IA32_PMC0 to count unhalted core cycles
+ * and trigger an NMI on overflow.  The LVT Performance Counter entry
+ * is configured with delivery mode = NMI (0x4).
+ *
+ * If the CPU does not support architectural performance monitoring
+ * (CPUID leaf 0x0A version == 0), we gracefully degrade: hard lockup
+ * detection via NMI is unavailable, but soft lockup detection via the
+ * timer tick still works.
+ */
+#define NMI_MSR_PERFEVTSEL0    0x186
+#define NMI_MSR_PMC0           0xC1
+#define NMI_MSR_PERF_GLOBAL_CTRL 0x38F
+
+/* EVTSEL0 bit definitions */
+#define EVTSEL_EN              (1UL << 22)  /* Enable counter */
+#define EVTSEL_INT             (1UL << 20)  /* APIC interrupt on overflow */
+#define EVTSEL_OS              (1UL << 17)  /* Count at CPL=0 (kernel) */
+#define EVTSEL_USR             (1UL << 16)  /* Count at CPL>0 (user) */
+/* Event: CPU_CLK_UNHALTED.THREAD_P (architectural, widely supported) */
+#define EVTSEL_EVENT_UNHALTED  (0x3CUL)
+
+/* NMI delivery mode for LVT entries */
+#define LVT_DELIVERY_NMI       (4UL << 8)   /* 100b = NMI */
+
+/* Default overflow period: ~2 seconds at 2 GHz = 4e9 cycles.
+ * We cap it at 48 bits (max width on many implementations) to avoid
+ * wrapping counters.  The actual period is approximate — exact
+ * frequency is not critical for lockup detection. */
+#define NMI_PMC_COUNT_INIT     (-4000000000LL & 0xFFFFFFFFFFFFULL)
+
+/* Static: non-zero if the PMC-based NMI source is available */
+static int nmi_pmc_available = 0;
+
+/*
+ * Check CPUID leaf 0x0A (Architectural Performance Monitoring).
+ * Returns non-zero if PMCs are present and we can use them for NMI.
+ */
+static int nmi_pmc_check_support(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(0x0A));
+    (void)ebx; (void)ecx; (void)edx;
+    uint8_t version = (uint8_t)(eax & 0xFF);
+    return (version > 0) ? 1 : 0;
+}
+
+/*
+ * Program the APIC performance counter LVT entry for NMI delivery
+ * and set up IA32_PERFEVTSEL0 / IA32_PMC0 to overflow periodically.
+ * Returns 0 on success, -1 if the CPU lacks support.
+ */
+static int nmi_pmc_setup(void) {
+    if (!nmi_pmc_check_support()) {
+        kprintf("[NMI] PMC not available — hard lockup detection via NMI disabled\n");
+        return -1;
+    }
+
+    /* Mask the PC LVT entry while configuring */
+    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1 << 16));
+
+    /* Write a full memory barrier so MSR writes are visible */
+    __asm__ volatile("mfence" ::: "memory");
+
+    /* Program counter 0 to overflow after ~2 seconds (approximate).
+     * Set the event select to count unhalted core cycles in both
+     * CPL=0 and CPL>0, with interrupt-on-overflow enabled. */
+    write_msr(NMI_MSR_PERFEVTSEL0, EVTSEL_EN | EVTSEL_INT |
+              EVTSEL_OS | EVTSEL_USR | EVTSEL_EVENT_UNHALTED);
+    write_msr(NMI_MSR_PMC0, (uint64_t)NMI_PMC_COUNT_INIT);
+
+    /* Enable PMC0 in the global control MSR */
+    write_msr(NMI_MSR_PERF_GLOBAL_CTRL, 1UL);
+
+    /* Unmask the PC LVT entry with NMI delivery */
+    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI);
+    __asm__ volatile("mfence" ::: "memory");
+
+    nmi_pmc_available = 1;
+    kprintf("[OK] NMI watchdog PMC configured for periodic NMI generation\n");
+    return 0;
+}
+
+static void nmi_pmc_disable(void) {
+    if (!nmi_pmc_available)
+        return;
+
+    /* Disable the counter */
+    write_msr(NMI_MSR_PERF_GLOBAL_CTRL, 0);
+    write_msr(NMI_MSR_PERFEVTSEL0, 0);
+
+    /* Mask the PC LVT entry */
+    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1 << 16));
+    __asm__ volatile("mfence" ::: "memory");
+
+    nmi_pmc_available = 0;
+}
+
+/* ── Rate-limiting ──────────────────────────────────────────────────
+ * Prevent flooding the console with redundant lockup messages on the
+ * same CPU within the cooldown period. */
 #define LOCKUP_COOLDOWN_TICKS (TIMER_FREQ * 30)  /* 30 seconds */
 
 /* Escalation: if a hard lockup repeats this many times on the same CPU
@@ -324,13 +426,24 @@ void nmi_watchdog_start(void) {
         watchdog_per_cpu[i].lockup_active = 0;
     }
 
-    kprintf("[OK] NMI watchdog started (hard=%lu ms, soft=%lu ms)\n",
+    /* If PMC-based NMI generation is available, (re)arm the counter.
+     * We re-program the counter value because the previous value may
+     * have wrapped (overflowed and generated NMI) since setup. */
+    if (nmi_pmc_available) {
+        write_msr(NMI_MSR_PMC0, (uint64_t)NMI_PMC_COUNT_INIT);
+        write_msr(NMI_MSR_PERF_GLOBAL_CTRL, 1UL);
+        __asm__ volatile("mfence" ::: "memory");
+    }
+
+    kprintf("[OK] NMI watchdog started (hard=%lu ms, soft=%lu ms)%s\n",
             (unsigned long)HARD_LOCKUP_THRESHOLD_MS,
-            (unsigned long)SOFT_LOCKUP_THRESHOLD_MS);
+            (unsigned long)SOFT_LOCKUP_THRESHOLD_MS,
+            nmi_pmc_available ? ", NMI source: PMC" : "");
 }
 
 void nmi_watchdog_stop(void) {
     watchdog_running = 0;
+    nmi_pmc_disable();
 }
 
 int nmi_watchdog_available(void) {
@@ -346,10 +459,17 @@ void nmi_watchdog_init(void) {
      * We install our C handler so it gets called from isr_common_handler. */
     idt_register_handler(2, nmi_watchdog_handler);
 
+    /* Attempt to configure the APIC performance counter for periodic
+     * NMI generation.  If the CPU doesn't support architectural PMU,
+     * we degrade gracefully — hard lockup detection will be unavailable
+     * but soft lockup detection via the timer tick still works. */
+    nmi_pmc_setup();
+
     kprintf("[OK] NMI watchdog subsystem initialized "
-            "(hard=%lu ms, soft=%lu ms)\n",
+            "(hard=%lu ms, soft=%lu ms)%s\n",
             (unsigned long)HARD_LOCKUP_THRESHOLD_MS,
-            (unsigned long)SOFT_LOCKUP_THRESHOLD_MS);
+            (unsigned long)SOFT_LOCKUP_THRESHOLD_MS,
+            nmi_pmc_available ? ", PMC NMI source" : "");
 }
 
 void nmi_watchdog_get_stats(struct nmi_watchdog_stats *stats) {

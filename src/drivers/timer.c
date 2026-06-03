@@ -17,6 +17,7 @@
 #include "printf.h"
 #include "syscall.h"   /* timerfd_tick, posix_timer_tick */
 #include "rcu.h"       /* rcu_check_stall */
+#include "nmi_watchdog.h"
 #include "export.h"
 
 #define PIT_CMD  0x43
@@ -27,6 +28,7 @@ static volatile uint64_t ticks = 0;
 static void timer_handler(struct interrupt_frame *frame) {
     ticks++;
     irq_ack(0);
+    nmi_watchdog_soft_pet();  /* mark that timer IRQs are firing */
     scheduler_wake_sleepers();
     scheduler_tick(frame->cs == 0x1b); /* was_user if CS==0x1b (ring 3) */
     int was_user = (frame->cs == 0x1b);
@@ -39,6 +41,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     }
     if (ticks % TIMER_FREQ == 0) { /* every second */
         process_reap_zombies();
+        nmi_watchdog_check_soft(); /* detect soft lockups */
         rcu_check_stall(); /* detect RCU grace-period stalls */
     }
 }
