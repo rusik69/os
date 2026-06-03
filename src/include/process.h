@@ -185,6 +185,8 @@ struct process {
     uint64_t sched_weight;       /* scheduling weight (default 1024) */
     int      nice;               /* POSIX nice value (-20..+19, default 0) */
     int      sched_autogroup_id; /* autogroup ID (-1 = none) */
+    /* I/O priority (ioprio) for block layer ordering */
+    uint16_t ioprio;             /* I/O priority value (default: IOPRIO_DEFAULT) */
     /* ── SCHED_DEADLINE parameters ─────────────────────────── */
     uint64_t dl_runtime;         /* worst-case execution time per period (ns) */
     uint64_t dl_deadline;        /* relative deadline (ns) */

@@ -1,4 +1,5 @@
 #include "process.h"
+#include "ioprio.h"
 #include "scheduler.h"
 #include "printf.h"
 #include "heap.h"
@@ -282,6 +283,7 @@ void process_init(void) {
         process_table[i].vruntime = 0;
         process_table[i].sched_weight = 1024;
         process_table[i].sched_autogroup_id = -1;
+        process_table[i].ioprio = IOPRIO_DEFAULT;
         process_table[i].cpu_user = 0;
         process_table[i].cpu_system = 0;
         process_table[i].max_rss = 0;
@@ -382,6 +384,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->vruntime = 0;
     proc->sched_weight = 1024;
     proc->sched_autogroup_id = -1;
+    proc->ioprio = IOPRIO_DEFAULT;
     /* NUMA home node — default to current CPU's NUMA node */
     proc->home_node = numa_home_node();
     proc->cpu_user = 0;

@@ -55,6 +55,7 @@ struct blk_request {
 
     /* Deadline scheduler fields */
     uint64_t      expiry;     /* deadline = submit_tick + timeout */
+    uint16_t      ioprio;     /* I/O priority class+data of submitting process */
     struct blk_request *next; /* linked list in the request queue */
 };
 

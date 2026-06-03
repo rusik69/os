@@ -1,6 +1,7 @@
 #define KERNEL_INTERNAL
 #include "syscall.h"
 #include "process.h"
+#include "ioprio.h"
 #include "scheduler.h"
 #include "signal.h"
 #include "fs.h"
@@ -1249,6 +1250,146 @@ static uint64_t sys_getpriority(uint64_t which, uint64_t who) {
      * POSIX says getpriority returns the nice value in the range -20..+19,
      * or -1 on error.  We return the raw signed value via (int64_t). */
     return (uint64_t)(int64_t)highest_nice;
+}
+
+/* ── ioprio_get / ioprio_set (Item 327) ─────────────────────────── */
+
+/*
+ * ioprio_get(which, who) → ioprio or -errno
+ *
+ * Returns the I/O priority of a process / process group / user.
+ *   which = IOPRIO_WHO_PROCESS (1): who is a PID (0 = current)
+ *   which = IOPRIO_WHO_PGRP    (2): who is a PGID (0 = current)
+ *   which = IOPRIO_WHO_USER    (3): who is a UID (0 = current)
+ *
+ * On success, returns the 16-bit ioprio value.
+ * On error, returns -ESRCH (no such process/pgrp/user) or -EINVAL.
+ */
+static uint64_t sys_ioprio_get(uint64_t which, uint64_t who)
+{
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-EINVAL;
+
+    switch (which) {
+    case IOPRIO_WHO_PROCESS: {
+        struct process *p;
+        if (who == 0) {
+            p = cur;
+        } else {
+            p = process_get_by_pid((uint32_t)who);
+            if (!p || p->state == PROCESS_UNUSED)
+                return (uint64_t)(int64_t)-ESRCH;
+        }
+        return (uint64_t)p->ioprio;
+    }
+    case IOPRIO_WHO_PGRP: {
+        uint32_t pgid = (uint32_t)(who ? who : cur->pgid);
+        struct process *table = process_get_table();
+        /* Return the highest priority (lowest value) among the group */
+        uint16_t best = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED && table[i].pgid == pgid) {
+                found = 1;
+                if (ioprio_class_order(table[i].ioprio) < ioprio_class_order(best))
+                    best = table[i].ioprio;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        return (uint64_t)best;
+    }
+    case IOPRIO_WHO_USER: {
+        uint32_t uid = (uint32_t)(who ? who : cur->uid);
+        struct process *table = process_get_table();
+        uint16_t best = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED &&
+                (table[i].uid == uid || table[i].euid == uid)) {
+                found = 1;
+                if (ioprio_class_order(table[i].ioprio) < ioprio_class_order(best))
+                    best = table[i].ioprio;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        return (uint64_t)best;
+    }
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
+}
+
+/*
+ * ioprio_set(which, who, ioprio) → 0 or -errno
+ *
+ * Sets the I/O priority of a process / process group / user.
+ * Requires CAP_SYS_NICE or appropriate permissions.
+ *   which = IOPRIO_WHO_PROCESS (1): who is a PID (0 = current)
+ *   which = IOPRIO_WHO_PGRP    (2): who is a PGID (0 = current)
+ *   which = IOPRIO_WHO_USER    (3): who is a UID (0 = current)
+ *
+ * ioprio encodes class (bits 15:13) and priority data (bits 12:0):
+ *   IOPRIO_CLASS_RT (1), IOPRIO_CLASS_BE (2), IOPRIO_CLASS_IDLE (3)
+ */
+static uint64_t sys_ioprio_set(uint64_t which, uint64_t who, uint64_t ioprio)
+{
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)(int64_t)-EINVAL;
+
+    /* Validate: class must be NONE, RT, BE, or IDLE */
+    unsigned int class = IOPRIO_PRIO_CLASS((uint16_t)(ioprio & 0xFFFF));
+    if (class > IOPRIO_CLASS_IDLE)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Only root can set RT priority class (CAP_SYS_NICE equivalent) */
+    if (class == IOPRIO_CLASS_RT && cur->uid != 0)
+        return (uint64_t)(int64_t)-EPERM;
+
+    uint16_t ioprio16 = (uint16_t)(ioprio & 0xFFFF);
+
+    switch (which) {
+    case IOPRIO_WHO_PROCESS: {
+        struct process *p;
+        if (who == 0) {
+            p = cur;
+        } else {
+            p = process_get_by_pid((uint32_t)who);
+            if (!p || p->state == PROCESS_UNUSED)
+                return (uint64_t)(int64_t)-ESRCH;
+        }
+        p->ioprio = ioprio16;
+        return 0;
+    }
+    case IOPRIO_WHO_PGRP: {
+        uint32_t pgid = (uint32_t)(who ? who : cur->pgid);
+        struct process *table = process_get_table();
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED && table[i].pgid == pgid) {
+                table[i].ioprio = ioprio16;
+                found = 1;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        return 0;
+    }
+    case IOPRIO_WHO_USER: {
+        uint32_t uid = (uint32_t)(who ? who : cur->uid);
+        struct process *table = process_get_table();
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED &&
+                (table[i].uid == uid || table[i].euid == uid)) {
+                table[i].ioprio = ioprio16;
+                found = 1;
+            }
+        }
+        if (!found) return (uint64_t)(int64_t)-ESRCH;
+        return 0;
+    }
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
 }
 
 static uint64_t sys_setpgid(uint64_t pid, uint64_t pgid) {
@@ -7448,6 +7589,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FTRUNCATE:   return sys_ftruncate(a1, a2);
         case SYS_READDIR:     return sys_readdir(a1, a2, a3);
         case SYS_EXECVEAT:    return sys_execveat(a1, a2, a3, a4, a5);
+        case SYS_IOPRIO_SET:  return sys_ioprio_set(a1, a2, a3);
+        case SYS_IOPRIO_GET:  return sys_ioprio_get(a1, a2);
         case SYS_SCHED_SETSCHEDULER: return sys_sched_setscheduler(a1, a2, a3);
         case SYS_SCHED_GETSCHEDULER: return sys_sched_getscheduler(a1);
         case SYS_OPENAT:       return sys_openat(a1, a2, a3, a4);

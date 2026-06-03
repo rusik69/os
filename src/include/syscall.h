@@ -272,6 +272,8 @@
 #define SYS_FTRUNCATE         283  /* ftruncate(fd, length) → 0 or -1 */
 #define SYS_READDIR           284  /* readdir(fd, buf, count) → bytes or 0 */
 #define SYS_EXECVEAT          285  /* execveat(dirfd, path, argv, envp, flags) → 0 or -1 */
+#define SYS_IOPRIO_SET         555  /* ioprio_set(which, who, ioprio) → 0 or -1 */
+#define SYS_IOPRIO_GET         556  /* ioprio_get(which, who) → ioprio or -1 */
 #define SYS_SCHED_SETSCHEDULER 286 /* sched_setscheduler(pid, policy, param) → 0 or -1 */
 #define SYS_SCHED_GETSCHEDULER 287 /* sched_getscheduler(pid) → policy or -1 */
 

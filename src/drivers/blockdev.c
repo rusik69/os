@@ -5,6 +5,8 @@
 #include "spinlock.h"
 #include "timer.h"
 #include "export.h"
+#include "process.h"
+#include "ioprio.h"
 
 /* Global device table */
 static struct blockdev_entry g_blockdevs[BLOCKDEV_MAX_DEVICES];
@@ -18,6 +20,10 @@ struct blk_request *blk_request_alloc(void) {
     struct blk_request *req = (struct blk_request *)kmalloc(sizeof(struct blk_request));
     if (!req) return NULL;
     memset(req, 0, sizeof(*req));
+    /* Capture the current process's I/O priority so the block layer can
+     * order requests appropriately (RT > BE > IDLE). */
+    struct process *cur = process_get_current();
+    req->ioprio = cur ? cur->ioprio : IOPRIO_DEFAULT;
     return req;
 }
 
@@ -44,14 +50,23 @@ static void queue_insert(struct blk_request_queue *q, struct blk_request *req) {
 
     if (q->sched == BLK_SCHED_DEADLINE) {
         req->expiry = timer_get_ticks() + 5;
+        uint8_t req_order = ioprio_class_order(req->ioprio);
         struct blk_request **pp = &q->head;
         while (*pp) {
             int insert_here = 0;
-            if (req->flags & BLK_REQ_READ && !((*pp)->flags & BLK_REQ_READ)) {
-                insert_here = (req->expiry <= (*pp)->expiry + 2);
-            } else {
-                insert_here = (req->expiry < (*pp)->expiry) ||
-                              (req->expiry == (*pp)->expiry && req->lba < (*pp)->lba);
+            uint8_t pp_order = ioprio_class_order((*pp)->ioprio);
+            /* Primary sort: I/O priority class (RT < BE < IDLE).
+             * Secondary sort: reads before writes within same class.
+             * Tertiary sort: by expiry, then by LBA. */
+            if (req_order < pp_order) {
+                insert_here = 1;
+            } else if (req_order == pp_order) {
+                if (req->flags & BLK_REQ_READ && !((*pp)->flags & BLK_REQ_READ)) {
+                    insert_here = (req->expiry <= (*pp)->expiry + 2);
+                } else {
+                    insert_here = (req->expiry < (*pp)->expiry) ||
+                                  (req->expiry == (*pp)->expiry && req->lba < (*pp)->lba);
+                }
             }
             if (insert_here) break;
             pp = &(*pp)->next;
