@@ -7,6 +7,10 @@
 #include "printf.h"
 #include "heap.h"
 
+#ifdef MODULE
+#include "module.h"
+#endif
+
 /*
  * Layout:
  *   File offset 0x000  : ELF header (64 bytes)
@@ -119,3 +123,21 @@ int cc_write_elf(CompilerState *cc, const char *outpath) {
     kprintf("cc: wrote %u bytes to %s\n", total_size, outpath);
     return 0;
 }
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    kprintf("[compiler] In-kernel C compiler module loaded\n");
+    return 0;
+}
+
+/* Module exit point */
+void cleanup_module(void) {
+    kprintf("[compiler] C compiler module unloaded\n");
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("In-kernel C compiler — C17 compiler, assembler, and linker");
+MODULE_VERSION("1.0");
+#endif /* MODULE */

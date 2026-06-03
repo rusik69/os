@@ -380,6 +380,11 @@ doom-objs := doom/doom_task doom/doom_combat doom/doom_doors doom/doom_floor \
 obj-m += dos.ko
 dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
 
+# In-kernel C compiler as a loadable module (M46)
+obj-m += compiler.ko
+compiler-objs := compiler/cc_elf compiler/cc_lex compiler/cc_link \
+                 compiler/cc_obj compiler/cc_parse
+
 # Network protocol modules (M60) — convert protocols to loadable .ko
 # IPIP: IP-in-IP tunneling protocol (RFC 2003)
 obj-m += net/ipip.ko
