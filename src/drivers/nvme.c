@@ -22,6 +22,9 @@
 #include "blockdev.h"
 #include "idt.h"
 #include "apic.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 static struct nvme_ctrl g_nvme_ctrl;
 static int g_nvme_init_done = 0;
@@ -766,3 +769,95 @@ void nvme_print_info(void) {
         }
     }
 }
+
+/* ── Cleanup / module exit ─────────────────────────────────────────── */
+
+/**
+ * nvme_exit — shut down NVMe controller and free resources.
+ *
+ * Disables the controller, frees all allocated DMA buffers (admin and I/O
+ * queues), and resets driver state so the module can be safely unloaded.
+ */
+void nvme_exit(void)
+{
+    if (!g_nvme_ctrl.present || !g_nvme_init_done)
+        return;
+
+    kprintf("[NVMe] Shutting down...\n");
+
+    /* Disable the controller: clear CC.EN */
+    uint32_t cc = nvme_read32(&g_nvme_ctrl, NVME_REG_CC);
+    cc &= ~NVME_CC_ENABLE;
+    nvme_write32(&g_nvme_ctrl, NVME_REG_CC, cc);
+
+    /* Wait for CSTS.RDY = 0 (controller shutdown) */
+    nvme_wait_ready(&g_nvme_ctrl, 0, 2000);
+
+    /* Free admin queue pages */
+    if (g_nvme_ctrl.admin_sq_phys) {
+        pmm_free_frame(g_nvme_ctrl.admin_sq_phys / 4096);
+        g_nvme_ctrl.admin_sq_phys = 0;
+    }
+    if (g_nvme_ctrl.admin_cq_phys) {
+        pmm_free_frame(g_nvme_ctrl.admin_cq_phys / 4096);
+        g_nvme_ctrl.admin_cq_phys = 0;
+    }
+    g_nvme_ctrl.admin_sq = NULL;
+    g_nvme_ctrl.admin_cq = NULL;
+
+    /* Free I/O queue pages */
+    for (uint32_t i = 0; i < g_nvme_ctrl.nr_io_queues; i++) {
+        struct nvme_io_queue *q = &g_nvme_ctrl.io_queues[i];
+        if (!q->valid)
+            continue;
+        if (q->sq_phys) {
+            pmm_free_frame(q->sq_phys / 4096);
+            q->sq_phys = 0;
+        }
+        if (q->cq_phys) {
+            pmm_free_frame(q->cq_phys / 4096);
+            q->cq_phys = 0;
+        }
+        q->sq_virt = NULL;
+        q->cq_virt = NULL;
+        q->valid = 0;
+    }
+    g_nvme_ctrl.nr_io_queues = 0;
+
+    /* Unregister block devices (best-effort) */
+    for (uint32_t nsid = 1; nsid <= g_nvme_ctrl.nn && nsid <= NVME_MAX_NS; nsid++) {
+        int ns_index = (int)(nsid - 1);
+        int dev_id = g_nvme_ctrl.ns_blkdev_id[ns_index];
+        if (dev_id >= 0)
+            blockdev_unregister(dev_id);
+        g_nvme_ctrl.ns_blkdev_id[ns_index] = -1;
+    }
+
+    /* Reset driver state */
+    g_nvme_ctrl.present = 0;
+    g_nvme_ctrl.nn = 0;
+    g_nvme_init_done = 0;
+
+    kprintf("[NVMe] Driver shut down\n");
+}
+
+/* ── Module entry/exit points ─────────────────────────────────────── */
+
+#ifdef MODULE
+int init_module(void) {
+    return nvme_init();
+}
+
+void cleanup_module(void) {
+    nvme_exit();
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("NVM Express (NVMe) PCIe SSD driver with per-CPU I/O queue pairs");
+MODULE_ALIAS("pci:v00008086d0000F1A5sv*sd*bc*sc*i*");
+MODULE_ALIAS("pci:v00008086d0000F1A6sv*sd*bc*sc*i*");
+MODULE_ALIAS("pci:v00001AF4d00005841sv*sd*bc*sc*i*");
+MODULE_ALIAS("pci:v00001AF4d00005842sv*sd*bc*sc*i*");
+MODULE_VERSION("1.0");
+#endif /* MODULE */

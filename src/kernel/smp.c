@@ -8,6 +8,7 @@
 #include "string.h"
 #include "io.h"
 #include "gdt.h"
+#include "export.h"
 #include "timer.h"
 #include "process.h"
 #include "scheduler.h"
@@ -354,6 +355,7 @@ int smp_boot_aps(void) {
 int smp_get_cpu_count(void) {
     return smp_cpu_count;
 }
+EXPORT_SYMBOL(smp_get_cpu_count);
 
 /* ── CPU hotplug ───────────────────────────────────────────────── */
 

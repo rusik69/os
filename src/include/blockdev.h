@@ -116,6 +116,7 @@ int            blockdev_register_legacy(int id, const char *name,
 #endif
 
 int            blockdev_is_registered(int id);
+int            blockdev_unregister(int id);
 const char    *blockdev_name(int id);
 uint64_t       blockdev_get_sectors(int id);
 struct blk_request_queue *blockdev_get_queue(int id);

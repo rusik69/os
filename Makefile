@@ -382,6 +382,9 @@ dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
 # Virtio block and net drivers as modules (M58)
 obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
 
+# NVMe PCIe SSD driver as module (M56)
+obj-m += drivers/nvme.ko
+
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)
 obj-m += fs/tarfs.ko

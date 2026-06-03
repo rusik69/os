@@ -386,6 +386,18 @@ int blockdev_is_registered(int id) {
     return g_blockdevs[id].active;
 }
 
+int blockdev_unregister(int id) {
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+    g_blockdevs[id].active = 0;
+    g_blockdevs[id].submit_fn = NULL;
+    g_blockdevs[id].idle_fn = NULL;
+    drain_queue(&g_queues[id]);
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+    return 0;
+}
+
 const char *blockdev_name(int id) {
     if (!blockdev_is_registered(id)) return "";
     return g_blockdevs[id].name;
@@ -416,6 +428,7 @@ enum blk_scheduler blockdev_get_scheduler(int id) {
 /* ── Exported symbols for driver modules ─────────────────────────── */
 EXPORT_SYMBOL(blockdev_register);
 EXPORT_SYMBOL(blockdev_register_legacy);
+EXPORT_SYMBOL(blockdev_unregister);
 EXPORT_SYMBOL(blockdev_name);
 EXPORT_SYMBOL(blockdev_is_registered);
 EXPORT_SYMBOL(blockdev_get_scheduler);
