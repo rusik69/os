@@ -2,6 +2,7 @@
 #include "pmm.h"
 #include "string.h"
 #include "printf.h"
+#include "blockdev.h"
 
 /* All pages for the ramdisk are allocated at init time.
  * Each page holds PAGE_SIZE / RAMDISK_SECTOR_SIZE sectors. */
@@ -10,6 +11,7 @@
 
 static uint8_t *ramdisk_pages[RAMDISK_PAGES];
 static int ramdisk_ready = 0;
+static int ramdisk_bdev_registered = 0;  /* tracks block-device registration */
 
 static uint8_t *sector_ptr(uint32_t lba) {
     uint32_t page_idx = lba / SECTORS_PER_PAGE;
@@ -38,6 +40,19 @@ void ramdisk_init(void) {
             (unsigned)RAMDISK_SECTORS,
             (unsigned)(RAMDISK_SECTORS * RAMDISK_SECTOR_SIZE / 1024),
             (unsigned)RAMDISK_PAGES);
+
+    /* Register as a block device so filesystems can mount it */
+    int ret = blockdev_register_legacy(BLOCKDEV_RAMDISK, "ram0",
+                                        ramdisk_read_sectors,
+                                        ramdisk_write_sectors,
+                                        ramdisk_get_sectors);
+    if (ret == 0) {
+        ramdisk_bdev_registered = 1;
+        kprintf("[OK] Ramdisk registered as block device ram0 (id=%d)\n",
+                BLOCKDEV_RAMDISK);
+    } else {
+        kprintf("[!!] ramdisk: failed to register as block device (ret=%d)\n", ret);
+    }
 }
 
 int ramdisk_read_sectors(uint32_t lba, uint8_t count, void *buf) {

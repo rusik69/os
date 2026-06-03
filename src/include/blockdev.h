@@ -10,6 +10,7 @@
 #define BLOCKDEV_AHCI   1
 #define BLOCKDEV_USB0   16
 #define BLOCKDEV_VIRTIO0 2
+#define BLOCKDEV_RAMDISK 15
 
 /* Block I/O request flags */
 #define BLK_REQ_READ      (1ULL << 0)
