@@ -15,11 +15,17 @@
  *
  * Internally uses the VFS stat structure for metadata and kmalloc'd
  * buffers for file contents.
+ *
+ * Size limits: per-mount size quotas can be set via tmpfs_mount_with_limit().
+ * When the limit is exceeded, write operations return -ENOSPC.
  */
 
 #define TMPFS_MAX_INODES 256
 #define TMPFS_MAX_NAME   64
 #define TMPFS_BLOCK_SIZE 4096
+
+/* Default size limit when none is specified (0 = unlimited). */
+#define TMPFS_SIZE_UNLIMITED 0ULL
 
 /* Inode types */
 #define TMPFS_TYPE_FILE  1
@@ -47,6 +53,11 @@ struct tmpfs_inode {
 
 /* Mount an empty tmpfs — returns 0 on success */
 int tmpfs_mount(void);
+
+/* Mount tmpfs with a per-mount size limit (in bytes).
+ * Writes that would exceed this limit return -ENOSPC.
+ * Pass TMPFS_SIZE_UNLIMITED (0) for no limit. */
+int tmpfs_mount_with_limit(uint64_t max_bytes);
 
 /* Unmount and free all data */
 int tmpfs_unmount(void);

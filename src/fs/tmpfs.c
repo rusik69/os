@@ -6,9 +6,14 @@
 #include "string.h"
 #include "heap.h"
 #include "fs.h" /* for FS_MODE_FILE, FS_MODE_DIR etc */
+#include "errno.h"
 
 static struct tmpfs_inode inodes[TMPFS_MAX_INODES];
 static int tmpfs_mounted = 0;
+
+/* ── Per-mount size accounting ──────────────────────────────────────── */
+static uint64_t tmpfs_size_limit  = TMPFS_SIZE_UNLIMITED; /* 0 = unlimited */
+static uint64_t tmpfs_used_bytes  = 0;                     /* total data bytes */
 
 /* ── helpers ───────────────────────────────────────────────────── */
 
@@ -24,6 +29,13 @@ static int alloc_inode(void) {
 
 static void free_inode(int idx) {
     if (idx < 0 || idx >= TMPFS_MAX_INODES) return;
+    /* Subtract freed data from the used-bytes counter */
+    if (inodes[idx].data && inodes[idx].size > 0) {
+        if (tmpfs_used_bytes >= inodes[idx].size)
+            tmpfs_used_bytes -= inodes[idx].size;
+        else
+            tmpfs_used_bytes = 0;
+    }
     if (inodes[idx].data) kfree(inodes[idx].data);
     inodes[idx].in_use = 0;
     inodes[idx].data = NULL;
@@ -80,6 +92,16 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
     int idx = find_inode(path);
     if (idx < 0 || inodes[idx].type != TMPFS_TYPE_FILE)
         return -1;
+
+    /* ── Size-limit enforcement ──────────────────────────────────── */
+    uint32_t old_size = inodes[idx].size;
+    if (tmpfs_size_limit != TMPFS_SIZE_UNLIMITED && size > old_size) {
+        uint64_t delta = (uint64_t)(size - old_size);
+        if (tmpfs_used_bytes + delta > tmpfs_size_limit) {
+            return -ENOSPC; /* write would exceed per-mount size limit */
+        }
+    }
+
     /* Reallocate buffer if needed */
     if (inodes[idx].size < size || !inodes[idx].data) {
         uint8_t *new = kmalloc(size < 128 ? 128 : size);
@@ -89,6 +111,13 @@ static int tmpfs_write(void *priv, const char *path, const void *buf, uint32_t s
     }
     memcpy(inodes[idx].data, buf, size);
     inodes[idx].size = size;
+
+    /* Update the total used-bytes counter */
+    if (size > old_size)
+        tmpfs_used_bytes += (uint64_t)(size - old_size);
+    else if (size < old_size)
+        tmpfs_used_bytes -= (uint64_t)(old_size - size);
+
     return 0;
 }
 
@@ -212,6 +241,9 @@ static int tmpfs_truncate(void *priv, const char *path, uint32_t len) {
     (void)priv;
     int idx = find_inode(path);
     if (idx < 0) return -1;
+
+    uint32_t old_size = inodes[idx].size;
+
     if (len == 0 && inodes[idx].data) {
         kfree(inodes[idx].data);
         inodes[idx].data = NULL;
@@ -219,6 +251,16 @@ static int tmpfs_truncate(void *priv, const char *path, uint32_t len) {
     } else if (len < inodes[idx].size) {
         inodes[idx].size = len;
     }
+
+    /* Update used-bytes counter for shrinkage */
+    if (inodes[idx].size < old_size) {
+        uint64_t freed = (uint64_t)(old_size - inodes[idx].size);
+        if (tmpfs_used_bytes >= freed)
+            tmpfs_used_bytes -= freed;
+        else
+            tmpfs_used_bytes = 0;
+    }
+
     return 0;
 }
 
@@ -328,6 +370,9 @@ int tmpfs_mount(void) {
         inodes[i].in_use = 0;
         inodes[i].data = NULL;
     }
+    /* Reset size accounting (unlimited) */
+    tmpfs_size_limit = TMPFS_SIZE_UNLIMITED;
+    tmpfs_used_bytes = 0;
     /* Create root directory */
     inodes[0].in_use = 1;
     inodes[0].type = TMPFS_TYPE_DIR;
@@ -339,6 +384,13 @@ int tmpfs_mount(void) {
     inodes[0].mode = 0755;
     tmpfs_mounted = 1;
     return 0;
+}
+
+int tmpfs_mount_with_limit(uint64_t max_bytes) {
+    int ret = tmpfs_mount();
+    if (ret == 0 && max_bytes > 0)
+        tmpfs_size_limit = max_bytes;
+    return ret;
 }
 
 int tmpfs_unmount(void) {
