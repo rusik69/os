@@ -76,6 +76,7 @@
 #include "dmesg.h"
 #include "caps.h"
 #include "sysrq.h"
+#include "mce.h"
 #include "panic.h"
 #include "nmi_watchdog.h"
 #include "lockdep.h"
@@ -252,6 +253,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Exception handlers — registered AFTER IST stacks are live */
     fault_init();
     kprintf("[OK] Exception handlers registered (DF/NMI/MCE/PF)\n");
+
+    /* Machine Check Architecture — enable MCA banks for hardware error detection */
+    mce_init();
 
     /* Per-CPU IRQ stacks for safe interrupt handling (needs PMM) */
     irq_regs_init();

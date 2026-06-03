@@ -8,6 +8,7 @@
 #include "panic.h"
 #include "kdump.h"
 #include "smp.h"
+#include "mce.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -417,50 +418,9 @@ static void nmi_handler(struct interrupt_frame *frame) {
 }
 
 /* ── Machine Check Exception handler (vector 18) ───────────────── */
-/* Runs on dedicated IST stack. Called when CPU detects hardware error. */
-static void mce_handler(struct interrupt_frame *frame) {
-    kprintf("\n*** MACHINE CHECK EXCEPTION (#MC) ***\n");
-    kprintf("RIP: 0x%lx  RSP: 0x%lx  RBP: 0x%lx\n",
-            (unsigned long)frame->rip, (unsigned long)frame->rsp,
-            (unsigned long)frame->rbp);
-
-    /* Try to read IA32_MCi_STATUS MSRs for each bank */
-    for (int bank = 0; bank < 32; bank++) {
-        uint32_t msr_addr = 0x400 + bank * 2;  /* IA32_MC0_STATUS */
-        uint32_t msr_addr_reg = 0x402 + bank * 2; /* IA32_MC0_ADDR */
-
-        uint64_t status;
-        __asm__ volatile("rdmsr" : "=A"(status) : "c"(msr_addr));
-
-        if (status & (1ULL << 63)) {  /* VALID bit */
-            uint64_t addr_val = 0;
-            if (status & (1ULL << 59)) {  /* ADDRV */
-                __asm__ volatile("rdmsr" : "=A"(addr_val) : "c"(msr_addr_reg));
-            }
-
-            uint8_t corrected = (status >> 62) & 1;  /* PCC */
-            uint8_t uc        = (status >> 61) & 1;  /* UC */
-            uint16_t mca_err  = (status >> 0) & 0xFFFF;
-
-            kprintf("  MC bank %d: MCG_STATUS=0x%llx%s%s mca_err=0x%x", bank,
-                    (unsigned long long)status,
-                    uc ? " [UC]" : "",
-                    corrected ? " [PCC]" : "",
-                    mca_err);
-            if (addr_val)
-                kprintf(" addr=0x%llx", (unsigned long long)addr_val);
-            kprintf("\n");
-
-            /* Clear the status by writing 0 to the lower bits */
-            __asm__ volatile("wrmsr" : : "c"(msr_addr), "A"(0ULL));
-        }
-    }
-
-    /* Machine checks can be fatal or recoverable. If UC (uncorrectable), panic. */
-    kprintf("*** MACHINE CHECK — system halted ***\n");
-    panic("MACHINE CHECK EXCEPTION (#MC) at RIP=0x%lx",
-          (unsigned long)frame->rip);
-}
+/* Delegates to the production-quality implementation in mce.c.
+ * The handler is registered via idt_register_handler() below. */
+/* (mce_handler lives in mce.c, declared in mce.h) */
 
 void fault_init(void) {
     idt_register_handler(14, page_fault_handler);

@@ -1,327 +1,378 @@
 /*
- * Machine Check Exception (#MC) handler.
+ * Machine Check Exception (#MC) Handler — IA32 MCA Architecture
  *
- * The #MC exception (vector 18) fires when the CPU detects a hardware
- * error (memory ECC, cache parity, bus errors, etc.).  This handler
- * scans all available error-reporting banks, classifies the severity,
- * and either logs a corrected error and returns or halts on a fatal
- * uncorrectable error.
+ * Handles CPU-detected hardware errors (memory ECC failures, cache errors,
+ * bus errors, thermal events) on x86-64.  When a machine check is signaled
+ * via vector 18, we scan all MCA banks, decode the error, log it with
+ * human-readable descriptions, and determine whether the system can safely
+ * continue or must panic.
  *
- * Reference: Intel SDM Vol. 3 15.3 "Machine-Check Architecture",
- *            AMD APM Vol. 2 13.1 "Machine Check Architecture".
+ * MCA Architecture:
+ *   - IA32_MCG_CAP[7:0]  = number of MCA banks
+ *   - IA32_MCG_STATUS    = global status (RIPV, EIPV, MCIP)
+ *   - IA32_MCi_STATUS    = per-bank error status (one per bank)
+ *   - IA32_MCi_ADDR      = faulting address (if ADDRV set)
+ *   - IA32_MCi_MISC      = additional error info   (if MISCV set)
+ *
+ * Error severity classification:
+ *   - Corrected (no UC)       → log and clear, continue
+ *   - Uncorrectable no action → kill current process if possible, continue
+ *   - Uncorrectable fatal     → panic immediately
+ *
+ * Reference: Intel SDM Vol 3A Chapter 15; AMD APM Volume 2 Section 7.5.
  */
 
 #include "mce.h"
+#include "idt.h"
 #include "cpu.h"
 #include "printf.h"
+#include "panic.h"
+#include "process.h"
+#include "smp.h"
 #include "fault.h"
-#include "idt.h"
+#include "kdump.h"
+#include "string.h"
 
-/* ── Internal helpers ────────────────────────────────────────────── */
+/* ── Error severity classification (matches mce.h enum) ───────────── */
 
-/*
- * Read the number of MCE banks from IA32_MCG_CAP.
- * If the CPU doesn't support MCE (rare), return 0.
- */
-static inline uint32_t mce_bank_count(void)
+#define MCE_MAX_BANKS 256
+
+/* ── Table of known MCA error classes ─────────────────────────────── */
+
+static const char *mca_error_class_str(uint8_t class)
 {
-    uint64_t cap = read_msr(MSR_IA32_MCG_CAP);
-    return (uint32_t)(cap & MCG_CAP_COUNT_MASK);
-}
-
-/*
- * Read the global machine-check status.
- */
-static inline uint64_t mce_read_mcg_status(void)
-{
-    return read_msr(MSR_IA32_MCG_STATUS);
-}
-
-/*
- * Check whether a bank's status register contains a valid error.
- */
-static inline int mce_bank_is_valid(uint64_t status)
-{
-    return (status & MC_STATUS_VAL) != 0;
-}
-
-/*
- * Classify a machine-check error by severity.
- */
-static enum mce_severity mce_classify(uint64_t status)
-{
-    if (!mce_bank_is_valid(status))
-        return MCE_SEV_NO_ERROR;
-
-    /* If PCC is set, the processor context is corrupted — always fatal. */
-    if (status & MC_STATUS_PCC)
-        return MCE_SEV_FATAL;
-
-    /* Uncorrectable errors with valid restart IP are "UC" (maybe recover). */
-    if (status & MC_STATUS_UC)
-        return MCE_SEV_UC;
-
-    /* Corrected (recoverable) error — hardware fixed it. */
-    return MCE_SEV_CORRECTED;
-}
-
-/*
- * Decode the MCA error code into a human-readable string.
- * This covers common x86 MCA error codes (Intel SDM Table 15-8).
- */
-static const char *mce_decode_error_code(uint16_t code)
-{
-    uint8_t comp = (code >> 4) & 0x0F;   /* component */
-    uint8_t type = code & 0x0F;           /* transaction type */
-    (void)type;
-
-    switch (comp) {
-        case 0x0: return "Generic (unspecified)";
-        case 0x1: return "Processor core / internal";
-        case 0x2: return "Memory controller";
-        case 0x3: return "Cache hierarchy (L1/L2/L3)";
-        case 0x4: return "Bus / interconnect";
-        case 0x5: return "I/O / integrated device";
-        case 0x6: return "System / platform firmware";
-        case 0x7: return "Processor bus / external";
-        case 0x8: return "Cache TLB";
-        case 0x9: return "Memory controller channel";
-        case 0xA: return "Coprocessor / external device";
-        case 0xB: return "PCIe / DMA";
-        case 0xC: return "Memory controller (extended)";
-        default:  return "Unknown component";
+    switch (class) {
+        case 0x0: return "No error";
+        case 0x1: return "Unclassified";
+        case 0x2: return "Micro-architectural (uop)";
+        case 0x3: return "External (bus/interconnect)";
+        case 0x4: return "Internal (cache/TLB)";
+        case 0x5: return "Internal (uncategorized)";
+        case 0x6: return "Internal (generic)";
+        case 0x7: return "Internal (memory)";
+        case 0x8: return "Bus/interconnect (generic)";
+        case 0x9: return "Bus/interconnect (memory)";
+        case 0xA: return "Bus/interconnect (other)";
+        case 0xB: return "Internal (firmware/hardware)";
+        case 0xC: return "Internal (publisher)";
+        case 0xD: return "Programmable error";
+        case 0xE: return "Deferred error (AMD)";
+        case 0xF: return "Intel-defined / custom";
+        default:  return "Unknown";
     }
 }
 
-/*
- * Dump a single bank's error information.
- */
-static void mce_dump_bank(struct mce_bank_info *info)
+/* ── Severity assessment ──────────────────────────────────────────── */
+
+static enum mce_severity mce_assess_severity(uint64_t status)
 {
-    uint16_t errcode = (uint16_t)(info->status & MC_STATUS_ERRCODE_MASK);
+    int valid = !!(status & MC_STATUS_VAL);
+    int uc    = !!(status & MC_STATUS_UC);
+    int pcc   = !!(status & MC_STATUS_PCC);
+    int ar    = !!(status & MC_STATUS_AR);
 
-    kprintf("  MCE[%u]: status=0x%llx", info->bank_num, info->status);
+    if (!valid)
+        return MCE_SEV_NO_ERROR;
 
-    if (info->severity == MCE_SEV_FATAL)
-        kprintf(" [FATAL]");
-    else if (info->severity == MCE_SEV_UC)
-        kprintf(" [UNCORRECTED]");
-    else if (info->severity == MCE_SEV_CORRECTED)
-        kprintf(" [CORRECTED]");
+    /* Corrected error: UC=0, log and continue */
+    if (!uc) {
+        return MCE_SEV_CORRECTED;
+    }
+
+    /* Uncorrectable error */
+    if (pcc) {
+        /* Processor context corrupted — cannot safely continue */
+        return MCE_SEV_FATAL;
+    }
+
+    /* Uncorrectable but no context corruption.
+     * If action required, we may need to kill the current process. */
+    if (ar) {
+        return MCE_SEV_UC;
+    }
+
+    /* Uncorrectable no action required (UCNA) — treat as UC */
+    return MCE_SEV_UC;
+}
+
+/* ── Log a single bank error ──────────────────────────────────────── */
+
+static void mce_log_bank(const struct mce_bank_info *info)
+{
+    int ovf  = !!(info->status & MC_STATUS_OVER);
+    int uc   = !!(info->status & MC_STATUS_UC);
+    int pcc  = !!(info->status & MC_STATUS_PCC);
+    int ar   = !!(info->status & MC_STATUS_AR);
+    int s    = !!(info->status & MC_STATUS_S);
+    uint16_t err_code = (uint16_t)(info->status & MC_STATUS_ERRCODE_MASK);
+    uint8_t err_class = (uint8_t)(err_code >> 12);
+
+    kprintf("[MCE] Bank %d: STATUS=0x%016llx%s%s%s%s%s\n",
+            info->bank_num,
+            (unsigned long long)info->status,
+            uc       ? " UC"              : "",
+            pcc      ? " PCC"             : "",
+            s        ? " SIGNALED"        : "",
+            ar       ? " AR"              : "",
+            ovf      ? " OVERFLOW"        : "");
+
+    kprintf("[MCE]   Class=%s (0x%x) Code=0x%04x",
+            mca_error_class_str(err_class), err_class, err_code);
+
+    if (info->status & MC_STATUS_ADDRV)
+        kprintf(" Addr=0x%016llx", (unsigned long long)info->addr);
+
+    if (info->status & MC_STATUS_MISCV)
+        kprintf(" Misc=0x%016llx", (unsigned long long)info->misc);
 
     kprintf("\n");
 
-    if (info->status & MC_STATUS_OVER)
-        kprintf("    OVERFLOW: previous error lost\n");
-    if (info->status & MC_STATUS_PCC)
-        kprintf("    PCC: processor context corrupted\n");
-    if (info->status & MC_STATUS_UC)
-        kprintf("    Uncorrectable error\n");
-    if (info->status & MC_STATUS_S)
-        kprintf("    Signaled\n");
-
-    kprintf("    Error code: 0x%04x (%s)\n",
-            errcode, mce_decode_error_code(errcode));
-    kprintf("    Model-specific: 0x%04x\n",
-            (uint16_t)((info->status & MC_STATUS_MODCODE_MASK) >> MC_STATUS_MODCODE_SHIFT));
-
-    if (info->status & MC_STATUS_ADDRV)
-        kprintf("    Address: 0x%llx\n", info->addr);
-    if (info->status & MC_STATUS_MISCV)
-        kprintf("    Misc: 0x%llx\n", info->misc);
+    if (info->severity == MCE_SEV_CORRECTED)
+        kprintf("[MCE]   → Corrected (no action required)\n");
+    else if (info->severity == MCE_SEV_UC)
+        kprintf("[MCE]   → Uncorrectable%s (may be recoverable)\n",
+                (info->status & MC_STATUS_AR) ? " action-required" : "");
+    else if (info->severity == MCE_SEV_FATAL)
+        kprintf("[MCE]   → FATAL (processor context corrupted)\n");
 }
 
-/*
- * Clear the MCE status for a given bank by writing back the same bits
- * (with the VAL bit set — writing 1 to VAL clears it).
- */
-static inline void mce_clear_bank(uint32_t bank)
-{
-    uint64_t status = read_msr(MCE_BANK_STATUS(MSR_IA32_MC0_STATUS, bank));
-    if (status & MC_STATUS_VAL) {
-        /* Write the value back to clear (write-1-to-clear semantics). */
-        write_msr(MCE_BANK_STATUS(MSR_IA32_MC0_STATUS, bank), status);
-    }
-}
+/* ── Main #MC handler (called from exception entry) ───────────────── */
 
-/*
- * Clear the global MCG_STATUS.MCIP bit so the CPU can take future MCEs.
- */
-static inline void mce_clear_mcg_status(void)
-{
-    uint64_t mcg = read_msr(MSR_IA32_MCG_STATUS);
-    mcg &= ~MCG_STATUS_MCIP;
-    write_msr(MSR_IA32_MCG_STATUS, mcg);
-}
-
-/* ── Public API ──────────────────────────────────────────────────── */
-
-/*
- * Scan all MCE banks and log any errors found.
- * Returns the highest severity encountered.
- */
-static enum mce_severity mce_scan_banks(struct mce_bank_info *fatal_out)
-{
-    uint32_t nbanks = mce_bank_count();
-    enum mce_severity highest = MCE_SEV_NO_ERROR;
-
-    if (nbanks == 0) {
-        kprintf("  MCE: No error-reporting banks available\n");
-        return MCE_SEV_NO_ERROR;
-    }
-
-    kprintf("  MCE: Scanning %u bank(s)...\n", nbanks);
-
-    for (uint32_t i = 0; i < nbanks; i++) {
-        uint64_t status = read_msr(MCE_BANK_STATUS(MSR_IA32_MC0_STATUS, i));
-        if (!mce_bank_is_valid(status))
-            continue;
-
-        uint64_t addr  = (status & MC_STATUS_ADDRV)
-                            ? read_msr(MCE_BANK_ADDR(MSR_IA32_MC0_ADDR, i))
-                            : 0;
-        uint64_t misc  = (status & MC_STATUS_MISCV)
-                            ? read_msr(MCE_BANK_MISC(MSR_IA32_MC0_MISC, i))
-                            : 0;
-
-        struct mce_bank_info info;
-        info.bank_num   = i;
-        info.status     = status;
-        info.addr       = addr;
-        info.misc       = misc;
-        info.mcg_status = 0;
-        info.severity   = mce_classify(status);
-
-        if (info.severity > highest) {
-            highest = info.severity;
-            if (fatal_out && info.severity >= MCE_SEV_UC)
-                *fatal_out = info;
-        }
-
-        mce_dump_bank(&info);
-        mce_clear_bank(i);
-    }
-
-    return highest;
-}
-
-/*
- * #MC handler (vector 18).
- *
- * Runs on the dedicated IST3 stack (set up in ist_init()).  Reads the
- * global MCG status, scans all banks, logs errors, and either returns
- * (corrected error) or halts (fatal/uncorrectable).
- */
 void mce_handler(struct interrupt_frame *frame)
 {
-    uint64_t mcg_status = mce_read_mcg_status();
+    uint64_t mcg_cap = read_msr(MSR_IA32_MCG_CAP);
+    int num_banks = (int)(mcg_cap & MCG_CAP_COUNT_MASK);
+    if (num_banks <= 0 || num_banks > MCE_MAX_BANKS)
+        num_banks = MCE_MAX_BANKS;
+
+    /* Step 1: Log the global status */
+    uint64_t mcg_status = read_msr(MSR_IA32_MCG_STATUS);
+    int ripv = !!(mcg_status & MCG_STATUS_RIPV);
+    int eipv = !!(mcg_status & MCG_STATUS_EIPV);
+    int mcip = !!(mcg_status & MCG_STATUS_MCIP);
 
     kprintf("\n*** MACHINE CHECK EXCEPTION (#MC) ***\n");
-    kprintf("MCG_STATUS: 0x%llx%s%s%s\n", mcg_status,
-            (mcg_status & MCG_STATUS_RIPV) ? " RIPV" : "",
-            (mcg_status & MCG_STATUS_EIPV) ? " EIPV" : "",
-            (mcg_status & MCG_STATUS_MCIP) ? " MCIP" : "");
+    kprintf("MCG_STATUS=0x%016llx (RIPV=%d EIPV=%d MCIP=%d)\n",
+            (unsigned long long)mcg_status, ripv, eipv, mcip);
 
-    /* Show the interrupted context. */
-    kprintf("RIP: 0x%llx  RSP: 0x%llx  RBP: 0x%llx\n",
-            (unsigned long long)frame->rip,
-            (unsigned long long)frame->rsp,
-            (unsigned long long)frame->rbp);
-    kprintf("CS: 0x%llx  SS: 0x%llx  RFLAGS: 0x%llx\n",
-            (unsigned long long)frame->cs,
-            (unsigned long long)frame->ss,
-            (unsigned long long)frame->rflags);
+    /* Step 2: Log exception context */
+    kprintf("RIP=0x%lx  RSP=0x%lx  RBP=0x%lx\n",
+            (unsigned long)frame->rip, (unsigned long)frame->rsp,
+            (unsigned long)frame->rbp);
+    kprintf("RAX=0x%lx  RBX=0x%lx  RCX=0x%lx  RDX=0x%lx\n",
+            (unsigned long)frame->rax, (unsigned long)frame->rbx,
+            (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+    kprintf("RSI=0x%lx  RDI=0x%lx  R8=0x%lx   R9=0x%lx\n",
+            (unsigned long)frame->rsi, (unsigned long)frame->rdi,
+            (unsigned long)frame->r8,  (unsigned long)frame->r9);
+    kprintf("R10=0x%lx  R11=0x%lx  R12=0x%lx  R13=0x%lx\n",
+            (unsigned long)frame->r10, (unsigned long)frame->r11,
+            (unsigned long)frame->r12, (unsigned long)frame->r13);
+    kprintf("R14=0x%lx  R15=0x%lx\n",
+            (unsigned long)frame->r14, (unsigned long)frame->r15);
+    kprintf("CS=0x%lx  SS=0x%lx  RFLAGS=0x%lx\n",
+            (unsigned long)frame->cs, (unsigned long)frame->ss,
+            (unsigned long)frame->rflags);
 
-    /* Scan banks to find the error(s). */
-    struct mce_bank_info fatal_info;
-    enum mce_severity sev = mce_scan_banks(&fatal_info);
+    /* Step 3: Scan all banks, log and classify */
+    int found_banks = 0;
+    enum mce_severity worst_severity = MCE_SEV_NO_ERROR;
 
-    /* Now clear the global MCIP so future MCEs can be signalled. */
-    mce_clear_mcg_status();
+    for (int i = 0; i < num_banks; i++) {
+        uint64_t status = read_msr(MSR_IA32_MC0_STATUS + 4ULL * i);
 
-    switch (sev) {
+        if (!(status & MC_STATUS_VAL))
+            continue;
+
+        struct mce_bank_info info;
+        memset(&info, 0, sizeof(info));
+        info.bank_num = (uint32_t)i;
+        info.status   = status;
+        info.mcg_status = mcg_status;
+        info.severity = mce_assess_severity(status);
+
+        if (status & MC_STATUS_ADDRV)
+            info.addr = read_msr(MSR_IA32_MC0_ADDR + 4ULL * i);
+        if (status & MC_STATUS_MISCV)
+            info.misc = read_msr(MSR_IA32_MC0_MISC + 4ULL * i);
+
+        mce_log_bank(&info);
+        found_banks++;
+
+        if ((int)info.severity > (int)worst_severity)
+            worst_severity = info.severity;
+
+        /* Clear this bank's status — must write 0 to each bank's STATUS
+         * to allow the CPU to log future errors.  The write-1-to-clear
+         * pattern only applies to certain older CPUs; writing 0 is safe
+         * across all implementations per Intel SDM. */
+        write_msr(MSR_IA32_MC0_STATUS + 4ULL * i, 0ULL);
+    }
+
+    if (!found_banks) {
+        kprintf("[MCE] No valid error banks found (spurious #MC?)\n");
+    } else {
+        kprintf("[MCE] %d bank(s) with errors, worst severity=%d\n",
+                found_banks, (int)worst_severity);
+    }
+
+    /* Step 4: Log final MCG_STATUS */
+    mcg_status = read_msr(MSR_IA32_MCG_STATUS);
+    kprintf("[MCE] MCG_STATUS after clear: 0x%016llx\n",
+            (unsigned long long)mcg_status);
+
+    /* Step 5: Take action based on worst severity */
+    switch (worst_severity) {
     case MCE_SEV_NO_ERROR:
-        /* Spurious MCE — no banks indicate a valid error. */
-        kprintf("MCE: No valid error found in any bank (spurious?)\n");
-        return;
-
     case MCE_SEV_CORRECTED:
-        kprintf("MCE: Corrected (recoverable) error — continuing.\n");
+        kprintf("[MCE] Corrected machine check — continuing\n");
+        /* Clear MCIP to indicate MCE processing is complete */
+        if (mcg_status & MCG_STATUS_MCIP) {
+            write_msr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
+        }
         return;
 
-    case MCE_SEV_DEFERRED:
     case MCE_SEV_UC:
-        kprintf("MCE: Uncorrected error detected.\n");
-        if (mcg_status & MCG_STATUS_RIPV) {
-            /* The CPU claims the instruction pointer is valid; we might
-             * be able to recover if the affected data can be discarded.
-             * For now, log and halt — production kernels can retry. */
-            kprintf("MCE: RIP is valid, but no recovery handler available.\n");
+        /*
+         * Uncorrectable — if RIPV is set we can try to kill the current
+         * process and continue.  If RIPV is not set, the point of
+         * execution is lost and we must panic.
+         */
+        if (ripv) {
+            struct process *proc = process_get_current();
+            kprintf("[MCE] Uncorrectable — killing current process"
+                    "%s%s and continuing\n",
+                    proc && proc->name ? " " : "",
+                    proc && proc->name ? proc->name : "");
+            if (mcg_status & MCG_STATUS_MCIP) {
+                write_msr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
+            }
+            if (proc) {
+                process_exit_code(7); /* SIGBUS — process lost data */
+            }
+            return;
         }
-        /* fall through */
+        /* RIPV not set — fall through to fatal */
+        kprintf("[MCE] RIPV not set — cannot safely recover\n");
+        if (mcg_status & MCG_STATUS_MCIP) {
+            write_msr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
+        }
+        panic("MACHINE CHECK (#MC) — Uncorrectable at RIP=0x%lx",
+              (unsigned long)frame->rip);
+        break;
 
     case MCE_SEV_FATAL:
-        kprintf("*** FATAL MACHINE CHECK — HALTING ***\n");
-        arch_print_backtrace();
-        kprintf("*** SYSTEM HALTED (machine check, cannot recover) ***\n");
-        __asm__ volatile("cli");
-        for (;;) __asm__ volatile("hlt");
-        __builtin_unreachable();
+    case MCE_SEV_DEFERRED:
+    default:
+        kprintf("[MCE] FATAL — processor context corrupted\n");
+        /* Capture state to kdump before panicking */
+        {
+            char msg[96];
+            int n = snprintf(msg, sizeof(msg),
+                "MCE FATAL at RIP=0x%lx banks=%d cpu=%u",
+                (unsigned long)frame->rip, found_banks,
+                smp_get_cpu_id());
+            (void)n;
+            msg[sizeof(msg) - 1] = '\0';
+            kdump_capture(msg, frame->rip);
+        }
+        if (mcg_status & MCG_STATUS_MCIP) {
+            write_msr(MSR_IA32_MCG_STATUS, mcg_status & ~MCG_STATUS_MCIP);
+        }
+        panic("MACHINE CHECK (#MC) — Fatal at RIP=0x%lx",
+              (unsigned long)frame->rip);
+        break;
     }
+
+    /* Unreachable */
+    for (;;) {}
 }
 
-/*
- * Initialize MCE support.
- *
- * Steps:
- *   1. Enable MCE globally (IA32_MCG_CTL if present, CR4.MCE).
- *   2. Enable error reporting on all banks.
- *   3. Register the #MC handler (vector 18).
- *
- * Must be called after PMM + IST init (ist_init() sets up IST3).
- */
+/* ── Initialisation ───────────────────────────────────────────────── */
+
 void mce_init(void)
 {
-    uint32_t nbanks = mce_bank_count();
+    uint64_t mcg_cap = read_msr(MSR_IA32_MCG_CAP);
+    int mcg_ctl_present = !!(mcg_cap & MCG_CAP_CTL_P);
+    int num_banks = (int)(mcg_cap & MCG_CAP_COUNT_MASK);
 
-    kprintf("[MCE] %u error-reporting bank(s) detected\n", nbanks);
-
-    if (nbanks == 0) {
-        /* CPU doesn't support MCE or has no banks — nothing to do. */
+    if (num_banks <= 0) {
+        kprintf("[MCE] No MCA banks reported — machine check support disabled\n");
         return;
     }
 
-    /* Ensure CR4.MCE is set (machine-check exceptions enabled). */
-    uint64_t cr4 = read_cr4();
-    if (!(cr4 & (1ULL << 6))) {
-        write_cr4(cr4 | (1ULL << 6));
-        kprintf("[MCE] CR4.MCE enabled\n");
+    if (num_banks > MCE_MAX_BANKS)
+        num_banks = MCE_MAX_BANKS;
+
+    /* Enable global machine check control if available */
+    if (mcg_ctl_present) {
+        write_msr(MSR_IA32_MCG_CTL, ~0ULL);
     }
 
-    /* Enable all banks: write all-ones to each MCi_CTL MSR. */
-    for (uint32_t i = 0; i < nbanks; i++) {
-        /* Some banks may be read-only; skip if writing fails silently. */
-        write_msr(MCE_BANK_CTL(MSR_IA32_MC0_CTL, i), ~0ULL);
-
-        /* Clear any stale status from boot. */
-        uint64_t st = read_msr(MCE_BANK_STATUS(MSR_IA32_MC0_STATUS, i));
-        if (st & MC_STATUS_VAL) {
-            kprintf("[MCE] Bank %u had stale error status from boot (0x%llx)\n",
-                    i, (unsigned long long)st);
-            mce_clear_bank(i);
-        }
-
-        /* Enable corrected MCE interrupt (CMCI) via CTL2 if available. */
-        uint64_t ctl2 = read_msr(MCE_BANK_CTL2(i));
-        if (ctl2 != 0) {
-            /* Set error threshold and enable CMCI. */
-            ctl2 |= MC_CTL2_CMCI_EN | MC_CTL2_CLR_CTR;
-            write_msr(MCE_BANK_CTL2(i), ctl2);
-        }
+    /* Enable all banks: set IA32_MCi_CTL to ~0ULL to enable all error types */
+    for (int i = 0; i < num_banks; i++) {
+        write_msr(MSR_IA32_MC0_CTL + 4ULL * i, ~0ULL);
     }
 
-    /* Register the #MC handler (vector 18). */
-    idt_register_handler(18, mce_handler);
+    kprintf("[MCE] Enabled machine check on CPU %u (%d banks%s)\n",
+            smp_get_cpu_id(), num_banks,
+            mcg_ctl_present ? ", MCG_CTL present" : "");
+}
 
-    kprintf("[OK] Machine Check Exception handler registered (IST3)\n");
+/* ── Diagnostic dump ──────────────────────────────────────────────── */
+
+void mce_dump_banks(void)
+{
+    uint64_t mcg_cap = read_msr(MSR_IA32_MCG_CAP);
+    int num_banks = (int)(mcg_cap & MCG_CAP_COUNT_MASK);
+    int mcg_ctl_present = !!(mcg_cap & MCG_CAP_CTL_P);
+
+    if (num_banks > MCE_MAX_BANKS)
+        num_banks = MCE_MAX_BANKS;
+
+    kprintf("[MCE] MCG_CAP=0x%llx banks=%d ctl_p=%d ext_p=%d cmci_p=%d lmce_p=%d\n",
+            (unsigned long long)mcg_cap, num_banks,
+            mcg_ctl_present,
+            !!(mcg_cap & MCG_CAP_EXT_P),
+            !!(mcg_cap & MCG_CAP_CMCI_P),
+            !!(mcg_cap & MCG_CAP_LMCE_P));
+
+    uint64_t mcg_status = read_msr(MSR_IA32_MCG_STATUS);
+    kprintf("[MCE] MCG_STATUS=0x%llx (RIPV=%d EIPV=%d MCIP=%d)\n",
+            (unsigned long long)mcg_status,
+            !!(mcg_status & MCG_STATUS_RIPV),
+            !!(mcg_status & MCG_STATUS_EIPV),
+            !!(mcg_status & MCG_STATUS_MCIP));
+
+    if (mcg_ctl_present) {
+        uint64_t mcg_ctl = read_msr(MSR_IA32_MCG_CTL);
+        kprintf("[MCE] MCG_CTL=0x%llx%s\n",
+                (unsigned long long)mcg_ctl,
+                mcg_ctl == ~0ULL ? " (all enabled)" : "");
+    }
+
+    for (int i = 0; i < num_banks; i++) {
+        uint64_t ctl   = read_msr(MSR_IA32_MC0_CTL + 4ULL * i);
+        uint64_t status = read_msr(MSR_IA32_MC0_STATUS + 4ULL * i);
+        uint64_t addr  = read_msr(MSR_IA32_MC0_ADDR + 4ULL * i);
+        uint64_t misc  = read_msr(MSR_IA32_MC0_MISC + 4ULL * i);
+
+        if (status & MC_STATUS_VAL) {
+            struct mce_bank_info info;
+            memset(&info, 0, sizeof(info));
+            info.bank_num = (uint32_t)i;
+            info.status   = status;
+            info.addr     = addr;
+            info.misc     = misc;
+            info.mcg_status = mcg_status;
+            info.severity = mce_assess_severity(status);
+            mce_log_bank(&info);
+        }
+
+        kprintf("[MCE]   Bank %d: CTL=0x%016llx STATUS=0x%016llx%s\n",
+                i,
+                (unsigned long long)ctl,
+                (unsigned long long)status,
+                (status & MC_STATUS_VAL) ? " [VALID]" : "");
+    }
 }
