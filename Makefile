@@ -462,6 +462,8 @@ obj-m += fs/tarfs.ko
 obj-m += fs/romfs.ko
 # debugfs: kernel debug data virtual filesystem (M54)
 obj-m += fs/debugfs.ko
+# sysfs: kernel object virtual filesystem (M54)
+obj-m += fs/sysfs.ko
 # ext2: read-only ext2 filesystem with HTree directory indexing (M51)
 obj-m += fs/ext2.ko
 # iso9660: CDROM filesystem with Rock Ridge + Joliet (M53)

@@ -346,6 +346,34 @@ int sysfs_remove_recursive(const char *path)
     return 0;
 }
 
+/* ── Module support (M54) ──────────────────────────────────────────── */
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    if (sysfs_mounted) return 0; /* already initialised */
+    sysfs_init(); /* calls the built-in init which mounts VFS */
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    if (sysfs_mounted) {
+        sysfs_mounted = 0;
+        for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
+            if (sysfs_entries[i].in_use)
+                sysfs_clear_entry(i);
+        }
+        kprintf("[sysfs] Module unloaded\\n");
+    }
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("sysfs — kernel object virtual filesystem");
+#endif /* MODULE */
+
 /* ── Read/write callbacks for /sys/kernel/ parameters ───────────── */
 
 /*
