@@ -47,6 +47,23 @@ int debugfs_create_file(const char *name,
     return 0;
 }
 
+int debugfs_create_rw_file(const char *name,
+                           void (*read_fn)(char *buf, int *len),
+                           int (*write_fn)(const char *buf, int len)) {
+    if (find_entry(name) >= 0) return -1;
+    int idx = alloc_entry();
+    if (idx < 0) return -1;
+    int nlen = (int)strlen(name);
+    if (nlen >= DEBUGFS_MAX_NAME) nlen = DEBUGFS_MAX_NAME - 1;
+    memcpy(debugfs_entries[idx].name, name, (size_t)nlen);
+    debugfs_entries[idx].name[nlen] = '\0';
+    debugfs_entries[idx].type = 3; /* callback rw */
+    debugfs_entries[idx].read_fn = read_fn;
+    debugfs_entries[idx].write_fn = write_fn;
+    debugfs_entries[idx].u32_val = NULL;
+    return 0;
+}
+
 int debugfs_create_u32(const char *name, uint32_t *val) {
     if (find_entry(name) >= 0) return -1;
     int idx = alloc_entry();
@@ -103,6 +120,14 @@ static int debugfs_vfs_read(void *priv, const char *path, void *buf,
         memcpy(cbuf, tmp, copy);
         *out_size = copy;
         return 0;
+    } else if (debugfs_entries[idx].type == 3 && debugfs_entries[idx].read_fn) {
+        int len = 0;
+        debugfs_entries[idx].read_fn(cbuf, &len);
+        if (len > (int)max_size) len = (int)max_size;
+        if (len < 0) len = 0;
+        cbuf[len] = '\0';
+        *out_size = (uint32_t)len;
+        return 0;
     }
     return -1;
 }
@@ -129,7 +154,11 @@ static int debugfs_vfs_write(void *priv, const char *path, const void *data, uin
                 break;
         }
         *debugfs_entries[idx].u32_val = v;
-        return 0;
+        return (int)size;
+    } else if (debugfs_entries[idx].type == 3 && debugfs_entries[idx].write_fn) {
+        int ret = debugfs_entries[idx].write_fn((const char *)data, (int)size);
+        if (ret < 0) return ret;
+        return (int)size;
     }
 
     return -1;

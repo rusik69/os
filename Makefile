@@ -328,7 +328,9 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/gpiolib.c \
          src/kernel/io_map.c \
          src/kernel/config_gz.c \
-         src/kernel/fault_inject.c
+         src/kernel/fault_inject.c \
+         src/test/kunit.c \
+         src/test/kunit_tests.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
