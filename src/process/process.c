@@ -374,6 +374,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->landlock_ruleset_ids[1] = -1;
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
+    proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
 
     /* Initialize CPU time accounting */
     proc->utime_ticks = 0;
@@ -489,6 +490,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->landlock_ruleset_ids[1] = -1;
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
+    proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
 
     /* Inherit parent's bounding set */
     if (current_process && current_process->state != PROCESS_UNUSED) {

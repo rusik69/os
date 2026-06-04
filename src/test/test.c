@@ -3716,6 +3716,26 @@ static void test_yama(void) {
     yama_ptrace_scope = YAMA_PTRACE_SCOPE_RESTRICTED;
     ASSERT_EQ("yama restricted", (uint64_t)yama_ptrace_scope, 1);
 
+    yama_ptrace_scope = YAMA_PTRACE_SCOPE_ADMIN;
+    ASSERT_EQ("yama admin", (uint64_t)yama_ptrace_scope, 2);
+
+    /* PR_SET_PTRACER / PR_GET_PTRACER via direct yama API */
+    struct process *p = process_get_current();
+    int saved_ptracer = p->ptracer_pid;
+    ASSERT_EQ("ptracer default 0", (uint64_t)p->ptracer_pid, 0);
+
+    yama_set_ptracer(p->pid, 42);
+    ASSERT_EQ("ptracer set 42", (uint64_t)yama_get_ptracer(p->pid), 42);
+
+    yama_set_ptracer(p->pid, PR_SET_PTRACER_PID_ANY);
+    ASSERT_EQ("ptracer any", (uint64_t)yama_get_ptracer(p->pid),
+              (uint64_t)(int64_t)PR_SET_PTRACER_PID_ANY);
+
+    yama_set_ptracer(p->pid, PR_SET_PTRACER_PID_NONE);
+    ASSERT_EQ("ptracer none", (uint64_t)yama_get_ptracer(p->pid),
+              (uint64_t)(int64_t)PR_SET_PTRACER_PID_NONE);
+
+    p->ptracer_pid = saved_ptracer;
     yama_ptrace_scope = saved;
     t_ok("yama test");
 }

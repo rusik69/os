@@ -245,6 +245,8 @@ struct process {
     /* ── Per-process UTS namespace (hostname/domainname isolation) ─ */
     char     ns_hostname[64]; /* namespace-local hostname (from CLONE_NEWUTS) */
     char     ns_domainname[64];
+    /* ── YAMA ptrace_scope admin-controlled tracer (PR_SET_PTRACER) ─ */
+    int      ptracer_pid;     /* 0=none, -1=any, >0=specific tracer PID (YAMA scope 2) */
 };
 
 void process_init(void);

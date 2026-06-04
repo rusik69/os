@@ -5055,6 +5055,22 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
         case PR_GET_DUMPABLE: {
             return (uint64_t)p->dumpable;
         }
+        case PR_SET_PTRACER: {
+            /* arg2 = allowed tracer PID:
+             *   0       = no tracer allowed (default)
+             *  -1       = any tracer allowed
+             *   >0      = specific PID allowed to trace
+             * Only the calling process can set its own ptracer.
+             * CAP_SYS_PTRACE can override but the target must still opt in. */
+            int tracer_pid = (int)a2;
+            yama_set_ptracer(p->pid, tracer_pid);
+            return 0;
+        }
+        case PR_GET_PTRACER: {
+            /* Return the PID this process has allowed to trace it,
+             * or 0 if none, or -1 if any. */
+            return (uint64_t)(int64_t)yama_get_ptracer(p->pid);
+        }
         default:
             return (uint64_t)-1;
     }

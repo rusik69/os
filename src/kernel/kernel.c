@@ -392,6 +392,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* YAMA ptrace security */
     yama_init();
+    yama_sysctl_register();
 
     /* Kernel pointer restrict */
     kptr_restrict_init();
