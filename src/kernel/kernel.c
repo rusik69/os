@@ -117,6 +117,7 @@
 #include "stack_guard.h"
 #include "rseq.h"
 #include "kasan_light.h"
+#include "kmemleak.h"
 #include "firmware.h"
 #include "fault_inject.h"
 #include "memfd.h"
@@ -358,6 +359,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* KASAN light — kernel address sanitizer (heap + stack redzones) */
     kasan_init();
+
+    /* kmemleak — kernel memory leak detector */
+    kmemleak_init();
 
     /* Panic/oops handler with register dump */
     panic_init();

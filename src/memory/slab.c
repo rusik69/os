@@ -8,6 +8,7 @@
 #include "io.h"
 #include "rng.h"
 #include "kasan_light.h"
+#include "kmemleak.h"
 
 /*
  * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
@@ -477,6 +478,10 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
         kasan_unpoison(obj, cache->user_size);
         kasan_poison_redzone((uint8_t *)obj + cache->user_size,
                              cache->obj_size - cache->user_size);
+
+        /* kmemleak: track this slab allocation */
+        kmemleak_alloc(obj, cache->user_size, KMEMLEAK_SLAB);
+
         return obj;
     }
 
@@ -498,6 +503,9 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
         kasan_unpoison(obj, cache->user_size);
         kasan_poison_redzone((uint8_t *)obj + cache->user_size,
                              cache->obj_size - cache->user_size);
+
+        /* kmemleak: track this slab allocation */
+        kmemleak_alloc(obj, cache->user_size, KMEMLEAK_SLAB);
     }
     return obj;
 }
@@ -511,6 +519,9 @@ void kmem_cache_free(struct kmem_cache *cache, void *obj) {
     /* KASAN: verify user area hasn't been touched and poison entire object */
     kasan_check(obj, cache->user_size, 0);
     kasan_poison(obj, cache->obj_size);
+
+    /* kmemleak: stop tracking this slab allocation */
+    kmemleak_free(obj);
 
     /* Poison the object with the free pattern (reserving first 8 bytes) */
     slab_poison_free(cache, obj);

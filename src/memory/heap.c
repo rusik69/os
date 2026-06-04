@@ -4,6 +4,7 @@
 #include "export.h"
 #include "fault_inject.h"
 #include "kasan_light.h"
+#include "kmemleak.h"
 
 /*
  * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
@@ -101,6 +102,8 @@ void *kmalloc(size_t size) {
             void *ptr = (void *)((uint8_t *)block + BLOCK_HDR_SIZE);
             /* KASAN: mark the allocated region as accessible */
             kasan_alloc(ptr, block->size);
+            /* kmemleak: track this allocation */
+            kmemleak_alloc(ptr, block->size, KMEMLEAK_HEAP);
             return ptr;
         }
         if (!block->next) break;
@@ -126,6 +129,8 @@ void *kmalloc(size_t size) {
     void *ptr = (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
     /* KASAN: mark the newly allocated region as accessible */
     kasan_alloc(ptr, new_block->size);
+    /* kmemleak: track this allocation */
+    kmemleak_alloc(ptr, new_block->size, KMEMLEAK_HEAP);
     return ptr;
 }
 
@@ -149,6 +154,9 @@ void kfree(void *ptr) {
 
     /* KASAN: mark the freed region as poisoned to catch use-after-free */
     kasan_free(ptr, block->size);
+
+    /* kmemleak: stop tracking this allocation */
+    kmemleak_free(ptr);
 
     block->free = 1;
     heap_used_bytes -= (block->size + BLOCK_HDR_SIZE);
