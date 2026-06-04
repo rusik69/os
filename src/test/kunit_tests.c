@@ -309,6 +309,8 @@ static struct kunit_suite vmm_test_suite;
 void kunit_pmm_register(void);
 /* Slab tests live in kunit_slab.c */
 void kunit_slab_register(void);
+/* Scheduler tests live in kunit_sched.c */
+void kunit_sched_register(void);
 
 void kunit_register_builtin_tests(void)
 {
@@ -334,4 +336,7 @@ void kunit_register_builtin_tests(void)
 
     /* Register the dedicated slab test suite from kunit_slab.c */
     kunit_slab_register();
+
+    /* Register the dedicated scheduler test suite from kunit_sched.c */
+    kunit_sched_register();
 }
