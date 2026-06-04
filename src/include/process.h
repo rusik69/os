@@ -5,6 +5,9 @@
 #include "signal.h"
 #include "pelt.h"
 
+/* Forward declaration for PID namespace pointers in struct process */
+struct pid_namespace;
+
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
 #define _RLIMIT_NLIMITS 14
 
@@ -250,6 +253,10 @@ struct process {
     uint64_t stack_canary;   /* unique canary per process; updated in __stack_chk_guard on switch */
     /* ── Optimistic mutex spinning ─────────────────────────────── */
     int      on_cpu;         /* 1 = this process is currently executing on a CPU (set/cleared by scheduler) */
+    /* ── PID namespace ──────────────────────────────────────────── */
+    struct pid_namespace *pid_ns;   /* PID namespace this process belongs to (Item 111) */
+    uint32_t             ns_pid;    /* PID within the namespace (same as pid for root ns) */
+
     /* ── Namespace flags (set by unshare/CLONE_NEW*) ──────────── */
     uint32_t ns_flags;       /* bitmask of CLONE_NEW* flags that the namespace was unshared with */
     /* ── Per-process UTS namespace (hostname/domainname isolation) ─ */

@@ -1,6 +1,7 @@
 #define KERNEL_INTERNAL
 #include "syscall.h"
 #include "process.h"
+#include "pid_namespace.h"
 #include "ioprio.h"
 #include "scheduler.h"
 #include "signal.h"
@@ -706,7 +707,8 @@ static uint64_t sys_exit(uint64_t code) {
 
 static uint64_t sys_getpid(void) {
     struct process *p = process_get_current();
-    return p ? (uint64_t)p->pid : 0;
+    /* Return namespace-local PID (Item 111) */
+    return p ? pid_ns_get_ns_pid(p) : 0;
 }
 
 static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
@@ -1671,10 +1673,11 @@ static uint64_t sys_unshare(uint64_t flags)
 
     /* ── CLONE_NEWPID: mark for PID namespace ────────────────── */
     if (flags & CLONE_NEWPID) {
-        /* Full PID namespace isolation is not yet implemented.  The flag
-         * is accepted and recorded so that (a) callers get ENOSYS only
-         * for truly unsupported flags, and (b) future PID namespace work
-         * can key off this flag. */
+        /* Mark the process for PID namespace isolation on next fork.
+         * When this flag is set, the next clone()/fork() will create a
+         * new PID namespace for the child.  The calling process itself
+         * remains in the original namespace. */
+        cur->ns_flags |= CLONE_NEWPID;
     }
 
     /* ── CLONE_NEWNET: mark for network namespace ────────────── */

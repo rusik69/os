@@ -14,6 +14,7 @@
 #include "cpu_topology.h"
 #include "caps.h"
 #include "sysctl.h"    /* for sysctl_get_hostname() */
+#include "pid_namespace.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -239,6 +240,9 @@ void process_init(void) {
     memset(pid_bitmap, 0, sizeof(pid_bitmap));
     pid_bitmap[0] = 1; /* PID 0 (idle) is always allocated */
 
+    /* Initialize PID namespace subsystem (root namespace) */
+    pid_ns_init();
+
     /* Create idle process (pid 0) - represents the boot thread */
     process_table[0].pid = 0;
     process_table[0].state = PROCESS_RUNNING;
@@ -278,6 +282,9 @@ void process_init(void) {
     rlimit_init_defaults(&process_table[0]);
     cap_bset_init(&process_table[0]);
     process_table[0].securebits = 0;
+    /* Assign the idle process to the root PID namespace */
+    process_table[0].pid_ns = &init_pid_ns;
+    process_table[0].ns_pid = 0;
     current_process = &process_table[0];
 
     /* ── Initialize CFS and resource tracking fields ── */
@@ -422,6 +429,23 @@ struct process *process_create(void (*entry)(void), const char *name) {
     {
         proc->timens_mono_offset = current_process ? current_process->timens_mono_offset : 0;
         proc->timens_boottime_offset = current_process ? current_process->timens_boottime_offset : 0;
+    }
+
+    /* ── PID namespace: inherit from parent (Item 111) ──────────── */
+    {
+        struct process *parent = current_process;
+        if (parent && parent->pid_ns) {
+            proc->pid_ns = parent->pid_ns;
+            /* If parent is in a different PID namespace, allocate local PID */
+            if (proc->pid_ns != &init_pid_ns) {
+                proc->ns_pid = pid_ns_alloc_pid(proc->pid_ns);
+            } else {
+                proc->ns_pid = proc->pid; /* root ns: ns_pid == global pid */
+            }
+        } else {
+            proc->pid_ns = &init_pid_ns;
+            proc->ns_pid = proc->pid;
+        }
     }
     proc->cpu_system = 0;
     proc->max_rss = 0;
@@ -950,6 +974,34 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     child->next = NULL;
     child->tgid = (flags & CLONE_THREAD) ? parent->tgid : child->pid;
 
+    /* ── Handle CLONE_NEWPID: child gets a new PID namespace (Item 111) ── */
+    if (flags & CLONE_NEWPID) {
+        struct pid_namespace *new_ns = pid_ns_create(parent->pid_ns);
+        if (!new_ns) {
+            free_guarded_kernel_stack(child);
+            child->state = PROCESS_UNUSED;
+            __asm__ volatile("sti");
+            return -1;
+        }
+        child->pid_ns = new_ns;
+        child->ns_pid = pid_ns_alloc_pid(new_ns);
+        if (child->ns_pid == 0) {
+            /* PID 0 is reserved; the first allocatable PID is 1 (init) */
+            child->ns_pid = pid_ns_alloc_pid(new_ns);
+        }
+        kprintf("[PIDNS] clone(NEWPID): child pid=%d is init (ns_pid=%d) in new namespace id=%d\n",
+                child->pid, child->ns_pid, new_ns->id);
+    } else {
+        /* Inherit parent's PID namespace */
+        child->pid_ns = parent->pid_ns;
+        if (child->pid_ns && child->pid_ns != &init_pid_ns) {
+            /* Non-root namespace: allocate a local PID */
+            child->ns_pid = pid_ns_alloc_pid(child->pid_ns);
+        } else {
+            child->ns_pid = child->pid; /* root ns: ns_pid == global pid */
+        }
+    }
+
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
         child->state = PROCESS_UNUSED;
@@ -1055,6 +1107,13 @@ struct process *process_get_table(void) {
 int process_can_see(const struct process *caller, const struct process *target) {
     if (!caller || !target) return 0;
     if (caller == target) return 1;                /* self */
+
+    /* PID namespace visibility check (Item 111):
+     * A process can only see processes in its own namespace
+     * or child namespaces (visible from parent namespace). */
+    if (!pid_ns_visible(caller, target))
+        return 0;
+
     if (caller->euid == 0) return 1;               /* root sees all */
     if (caller->euid == target->euid) return 1;    /* same uid */
     if (target->parent_pid == caller->pid) return 1; /* caller is parent */
@@ -1121,6 +1180,14 @@ void process_cleanup(struct process *proc) {
     proc->state = PROCESS_UNUSED;
     if (proc->pid) {
         free_pid(proc->pid);
+    }
+    /* Free namespace-local PID (Item 111) */
+    if (proc->pid_ns && proc->pid_ns != &init_pid_ns && proc->ns_pid > 0) {
+        pid_ns_free_pid(proc->pid_ns, proc->ns_pid);
+        /* If this was the last process in the namespace, destroy it */
+        if (proc->pid_ns->process_count <= 0) {
+            pid_ns_destroy(proc->pid_ns);
+        }
     }
     proc->pid = 0;
     proc->name = NULL;
