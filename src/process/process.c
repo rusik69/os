@@ -16,6 +16,7 @@
 #include "sysctl.h"    /* for sysctl_get_hostname() */
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
+#include "mnt_namespace.h"
 #include "kcov.h"
 
 static struct process process_table[PROCESS_MAX];
@@ -1041,6 +1042,26 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         cgroup_ns_get(child->cgroup_ns);
     }
 
+    /* ── Handle CLONE_NEWNS: child gets a new mount namespace (Item 112) ── */
+    if (flags & CLONE_NEWNS) {
+        struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns
+            ? parent->mnt_ns : NULL);
+        if (!new_ns) {
+            free_guarded_kernel_stack(child);
+            child->state = PROCESS_UNUSED;
+            __asm__ volatile("sti");
+            return -1;
+        }
+        /* Release the inherited reference (copied by *child = *parent) */
+        if (child->mnt_ns)
+            mnt_ns_put(child->mnt_ns);
+        child->mnt_ns = new_ns;
+        kprintf("[MNT_NS] clone(NEWNS): child pid=%d\n", child->pid);
+    } else if (child->mnt_ns) {
+        /* Increment refcount on inherited mount namespace */
+        mnt_ns_get(child->mnt_ns);
+    }
+
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
         child->state = PROCESS_UNUSED;
@@ -1234,6 +1255,11 @@ void process_cleanup(struct process *proc) {
     if (proc->cgroup_ns) {
         cgroup_ns_put(proc->cgroup_ns);
         proc->cgroup_ns = NULL;
+    }
+    /* Release mount namespace reference (Item 112) */
+    if (proc->mnt_ns) {
+        mnt_ns_put(proc->mnt_ns);
+        proc->mnt_ns = NULL;
     }
     proc->pid = 0;
     proc->name = NULL;

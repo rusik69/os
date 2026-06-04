@@ -8,6 +8,9 @@
 /* Forward declaration for PID namespace pointers in struct process */
 struct pid_namespace;
 
+/* Forward declaration for mount namespace (Item 112) */
+struct mnt_namespace;
+
 /* Forward declaration for cgroup namespace (Item 117) */
 struct cgroup_namespace;
 
@@ -260,6 +263,9 @@ struct process {
     /* ── PID namespace ──────────────────────────────────────────── */
     struct pid_namespace *pid_ns;   /* PID namespace this process belongs to (Item 111) */
     uint32_t             ns_pid;    /* PID within the namespace (same as pid for root ns) */
+
+    /* ── Mount namespace (Item 112) ─────────────────────────────── */
+    struct mnt_namespace *mnt_ns;   /* mount namespace (NULL = root/inherited global) */
 
     /* ── Cgroup namespace (Item 117) ────────────────────────────── */
     struct cgroup_namespace *cgroup_ns;  /* NULL = root namespace */

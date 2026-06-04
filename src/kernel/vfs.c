@@ -19,6 +19,7 @@
 #include "landlock.h"
 #include "timer.h"
 #include "process.h"
+#include "mnt_namespace.h"
 
 #define EROFS_KERNEL 30
 
@@ -539,10 +540,22 @@ int vfs_force_readonly(const char *path, const char *reason)
     return 0;
 }
 
-/* Find the best-matching mount for a path */
+/* Find the best-matching mount for a path.
+ * First checks the current process's mount namespace (if any),
+ * then falls back to the global mount table. */
 static struct vfs_mount *resolve(const char *path) {
     struct vfs_mount *best = NULL;
     size_t best_len = 0;
+
+    /* Check mount namespace first */
+    struct mnt_namespace *ns = mnt_ns_current();
+    if (ns) {
+        struct vfs_mount *ns_best = mnt_ns_resolve(ns, path);
+        if (ns_best)
+            return ns_best;
+    }
+
+    /* Fall back to global mount table */
     for (int i = 0; i < num_mounts; i++) {
         size_t mlen = strlen(mounts[i].mountpoint);
         if (mlen == 0) continue;
@@ -1014,6 +1027,13 @@ int vfs_readdir_names(const char *path, char names[][64], int max) {
 }
 
 int vfs_list_mountpoints(char mounts_out[][64], int max) {
+    /* Try process namespace first */
+    struct mnt_namespace *ns = mnt_ns_current();
+    if (ns) {
+        return mnt_ns_list_mounts(ns, mounts_out, max);
+    }
+
+    /* Fall back to global mount table */
     int n = num_mounts < max ? num_mounts : max;
     for (int i = 0; i < n; i++) {
         strncpy(mounts_out[i], mounts[i].mountpoint, 63);
@@ -1559,6 +1579,9 @@ void vfs_init(void) {
     memset(mounts, 0, sizeof(mounts));
     /* Initialize xattr */
     memset(xattr_table, 0, sizeof(xattr_table));
+
+    /* Create the root mount namespace (Item 112) */
+    mnt_ns_create_root();
 }
 
 /* ── root mount index tracking ───────────────────────────────────── */

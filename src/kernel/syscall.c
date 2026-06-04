@@ -3,6 +3,7 @@
 #include "process.h"
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
+#include "mnt_namespace.h"
 #include "ioprio.h"
 #include "scheduler.h"
 #include "signal.h"
@@ -1667,10 +1668,15 @@ static uint64_t sys_unshare(uint64_t flags)
 
     /* ── CLONE_NEWNS: detach from mount namespace ────────────── */
     if (flags & CLONE_NEWNS) {
-        /* On Linux this would copy the mount table.  Our kernel doesn't
-         * yet have shared mount propagation, so this is effectively a
-         * no-op — the process already has its own view of the mount
-         * tree.  We still record the flag for correctness. */
+        struct mnt_namespace *new_ns = mnt_ns_copy(cur->mnt_ns ? cur->mnt_ns : NULL);
+        if (!new_ns)
+            return (uint64_t)-ENOMEM;
+
+        /* Drop reference to old namespace */
+        if (cur->mnt_ns)
+            mnt_ns_put(cur->mnt_ns);
+        cur->mnt_ns = new_ns;
+        cur->ns_flags |= CLONE_NEWNS;
     }
 
     /* ── CLONE_NEWPID: mark for PID namespace ────────────────── */
@@ -5420,6 +5426,18 @@ static uint64_t sys_mount(uint64_t src_addr, uint64_t target_addr,
 
     /* For the existing fs.c (smfs), just treat as a no-op */
     kprintf("[mount] src=%s target=%s fstype=%s\n", src, target, fstype);
+
+    /* If the current process has its own mount namespace, mount there */
+    struct process *cur = process_get_current();
+    struct mnt_namespace *ns = cur ? cur->mnt_ns : NULL;
+    if (ns) {
+        /* Mount into namespace using the VFS internal API.
+         * For filesystem-backed mounts, this would resolve the filesystem
+         * type and call the appropriate mount helper.  For now, we log
+         * that the mount was namespace-specific. */
+        kprintf("[mount] (namespace=%p) %s at %s type=%s\n",
+                (void*)ns, src, target, fstype);
+    }
     return 0;
 }
 

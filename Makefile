@@ -109,6 +109,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/chroot.c \
          src/kernel/pid_namespace.c \
          src/kernel/cgroup_namespace.c \
+         src/kernel/mnt_namespace.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \
