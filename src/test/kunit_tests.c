@@ -6,7 +6,7 @@
  *   # cat /sys/kernel/debug/kunit/results
  *
  * Item 266: KUnit — kernel unit test framework
- * Item 267: KUnit — PMM allocation tests (partial)
+ * Item 267: KUnit — PMM allocation tests (full in kunit_pmm.c)
  * Item 268: KUnit — slab allocator tests (partial)
  * Item 269: KUnit — VMM map/unmap tests (partial)
  */
@@ -305,6 +305,9 @@ static struct kunit_suite vmm_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
+/* PMM tests live in kunit_pmm.c */
+void kunit_pmm_register(void);
+
 void kunit_register_builtin_tests(void)
 {
     /* Populate the fixed-size case arrays from our termination-checked lists */
@@ -323,4 +326,7 @@ void kunit_register_builtin_tests(void)
     kunit_register_suite(&slab_test_suite);
     kunit_register_suite(&string_test_suite);
     kunit_register_suite(&vmm_test_suite);
+
+    /* Register the dedicated PMM test suite from kunit_pmm.c */
+    kunit_pmm_register();
 }
