@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Analysis
     cppcheck \
     clang-format-18 \
+    # Clang compiler for Clang CI matrix builds
+    clang \
+    lld \
     dosfstools \
     mtools \
     # E2E tests
