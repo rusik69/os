@@ -288,6 +288,7 @@ void process_init(void) {
         process_table[i].cpu_user = 0;
         process_table[i].cpu_system = 0;
         process_table[i].max_rss = 0;
+        process_table[i].swap_pages = 0;
         process_table[i].page_faults = 0;
         process_table[i].signals_received = 0;
         process_table[i].context_switches = 0;
@@ -403,6 +404,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->cpu_user = 0;
     proc->cpu_system = 0;
     proc->max_rss = 0;
+    proc->swap_pages = 0;
     proc->page_faults = 0;
     proc->signals_received = 0;
     proc->context_switches = 0;

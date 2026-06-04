@@ -230,6 +230,8 @@ struct process {
     int dumpable;         /* SUID_DUMP_USER=1 (default), SUID_DUMP_DISABLE=0 */
     /* ── PELT load tracking ──────────────────────────────────── */
     struct pelt_state pelt;  /* per-entity load tracking state */
+    /* ── OOM / swap accounting ────────────────────────────── */
+    uint64_t swap_pages;       /* number of pages currently swapped out for this process */
     /* ── NUMA home node — processor affinity node for memory and scheduling ─ */
     int cpu_cgroup_id;
     /* ── NUMA home node — preferred NUMA node for scheduling this task ── */

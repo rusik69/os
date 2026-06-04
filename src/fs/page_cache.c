@@ -528,6 +528,22 @@ int page_cache_get_dirty_count(void) {
     return dirty;
 }
 
+/* ── Count clean (non-dirty) pages for a given inode ────────────── */
+uint64_t page_cache_count_clean(uint64_t ino)
+{
+    if (!page_cache_initialized || ino == 0)
+        return 0;
+
+    uint64_t count = 0;
+    for (int i = 0; i < PAGE_CACHE_MAX_PAGES; i++) {
+        if (page_cache[i].in_use && page_cache[i].ino == ino &&
+            !(page_cache[i].flags & PAGE_CACHE_DIRTY)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 
 /* ── Register writeback callback ───────────────────────────────── */
 void page_cache_set_writeback(int (*writeback)(uint32_t lba, uint8_t count, const void *buf)) {

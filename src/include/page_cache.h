@@ -160,4 +160,8 @@ int page_cache_writeback_throttle(void);
 /* Return the current number of dirty pages in the cache. */
 int page_cache_get_dirty_count(void);
 
+/* Count clean (non-dirty) cached pages for a given inode.
+ * Used by the OOM killer to estimate reclaimable memory. */
+uint64_t page_cache_count_clean(uint64_t ino);
+
 #endif /* PAGE_CACHE_H */
