@@ -54,6 +54,7 @@
 /* I/O commands */
 #define NVME_IO_WRITE     0x01
 #define NVME_IO_READ      0x02
+#define NVME_IO_DATASET_MANAGEMENT 0x09  /* Deallocate (TRIM) */
 
 /* Identify CNS values */
 #define NVME_IDENTIFY_NS   0x00
@@ -226,5 +227,9 @@ int  nvme_sanitize(int action, int overwrite_pass_count);
 /* I/O queue submit function (called from blockdev layer) */
 int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
                         uint64_t count, void *buf);
+
+/* Dataset Management — deallocate (TRIM) a range of LBAs on a namespace.
+ * Returns 0 on success, -1 on failure. */
+int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count);
 
 #endif /* NVME_H */

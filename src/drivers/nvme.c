@@ -620,6 +620,74 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
     return -1;  /* timeout */
 }
 
+/* ── NVMe deallocate (Dataset Management) ─────────────────────────── */
+
+/**
+ * nvme_deallocate — Deallocate a range of LBAs on a namespace (TRIM/DISCARD).
+ *
+ * Sends a Dataset Management command with the Deallocate bit set via the
+ * current CPU's I/O queue.  The NVMe controller will mark the specified
+ * LBA range as deallocated; subsequent reads may return zeroes or
+ * indeterminate data.
+ *
+ * @ns_id    Namespace identifier (1-based).
+ * @lba      Starting LBA.
+ * @count    Number of LBAs to deallocate.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
+    if (ns_id < 1 || (uint32_t)ns_id > g_nvme_ctrl.nn || count == 0)
+        return -1;
+
+    struct nvme_io_queue *q = nvme_get_io_queue();
+    if (!q || !q->valid)
+        return -1;
+
+    /* Allocate one physically-contiguous page for the DSM range list.
+     * The NVMe Dataset Management range is a 16-byte structure.
+     * We send a single range per command. */
+    uint64_t range_frame = pmm_alloc_frame();
+    if (!range_frame)
+        return -1;
+
+    uint64_t range_phys = range_frame * 4096;
+    uint32_t *range = (uint32_t *)PHYS_TO_VIRT(range_phys);
+
+    /* Build the DSM range entry:
+     *   bytes 0-3:  Context attributes (0 = no context)
+     *   bytes 4-7:  Length (number of LBAs - 1, 0-based)
+     *   bytes 8-15: Starting LBA */
+    range[0] = 0;                                      /* attributes */
+    range[1] = count - 1;                               /* length (0-based) */
+    *(uint64_t *)&range[2] = lba;                       /* starting LBA */
+
+    __sync_synchronize();
+
+    /* Build the submission queue entry */
+    struct nvme_sq_entry *sq = (struct nvme_sq_entry *)q->sq_virt;
+    uint16_t tail = q->sq_tail;
+
+    struct nvme_sq_entry *entry = &sq[tail];
+    memset(entry, 0, sizeof(struct nvme_sq_entry));
+    entry->cdw0 = NVME_IO_DATASET_MANAGEMENT;
+    entry->nsid = (uint32_t)ns_id;
+    entry->prp1 = range_phys;
+    entry->cdw10 = 0;         /* number of ranges - 1  (0 = 1 range) */
+    entry->cdw11 = 1;         /* bit 0 = Deallocate */
+
+    tail = (uint16_t)((tail + 1) % q->sq_size);
+    __sync_synchronize();
+    q->sq_tail = tail;
+    nvme_write32(&g_nvme_ctrl, nvme_sq_doorbell(&g_nvme_ctrl, q->qid), tail);
+
+    /* Poll for completion */
+    int ret = nvme_poll_io_cq(q, 10000000);
+
+    pmm_free_frame(range_frame);
+    return ret;
+}
+
 /* ── Block device submit_fn ────────────────────────────────────────── */
 
 /** Block device submit_fn — called by blockdev layer for I/O requests */
@@ -633,6 +701,13 @@ static int nvme_blk_submit(struct blk_request *req) {
         return -1;
 
     uint32_t nsid = (uint32_t)(ns_index + 1);  /* namespace IDs are 1-based */
+
+    /* ── Handle discard (TRIM) requests ───────────── */
+    if (req->flags & BLK_REQ_DISCARD) {
+        int ret = nvme_deallocate((int)nsid, req->lba, req->count);
+        req->result = ret;
+        return ret;
+    }
 
     /* Get the I/O queue for the current CPU */
     struct nvme_io_queue *q = nvme_get_io_queue();

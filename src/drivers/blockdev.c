@@ -215,6 +215,55 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
     return ret;
 }
 
+/**
+ * blockdev_discard — Deallocate (TRIM) a range of LBAs on a block device.
+ *
+ * Submits a discard request through the block device layer.  The underlying
+ * driver (e.g., NVMe deallocate, ATA TRIM) will mark the specified sector
+ * range as free, enabling the device to optimize future writes.
+ *
+ * @dev_id  Block device ID.
+ * @lba     Starting LBA (sector number).
+ * @count   Number of LBAs (sectors) to deallocate.
+ *
+ * Returns 0 on success, -errno on error.
+ */
+int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
+    if (!g_initialized) return -1;
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return -1;
+    if (count == 0)
+        return 0;
+
+    /* Build a discard request and submit synchronously */
+    struct blk_request *req = blk_request_alloc();
+    if (!req) return -6;
+
+    req->dev_id = (uint8_t)dev_id;
+    req->lba = lba;
+    req->count = count;
+    req->buf = NULL;
+    req->flags = BLK_REQ_DISCARD;
+
+    struct wait_queue wq;
+    wait_queue_init(&wq);
+    req->done_wq = &wq;
+
+    int ret = blk_submit_async(req);
+    if (ret < 0) {
+        blk_request_free(req);
+        return ret;
+    }
+
+    while (!req->done) {
+        wait_queue_sleep(&wq);
+    }
+
+    ret = req->result;
+    blk_request_free(req);
+    return ret;
+}
+
 void blk_request_done(struct blk_request *req) {
     if (!req) return;
 
@@ -436,3 +485,4 @@ EXPORT_SYMBOL(blk_request_alloc);
 EXPORT_SYMBOL(blk_request_free);
 EXPORT_SYMBOL(blk_request_done);
 EXPORT_SYMBOL(blk_submit_sync);
+EXPORT_SYMBOL(blockdev_discard);

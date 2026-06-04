@@ -92,6 +92,7 @@ void cmd_md5sum(const char *args);
 void cmd_od(const char *args);
 void cmd_expr(const char *args);
 void cmd_test(const char *args);
+void cmd_blkdiscard(const char *args);
 void cmd_xargs(const char *args);
 
 /* New utility commands */

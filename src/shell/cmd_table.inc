@@ -299,6 +299,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("mount",       "Mount filesystems (mount [-a] [-t fstype] [-o opts] [dev] [mp])", cmd_mount)
     /* Nano text editor (U48) */
     CMD("nano",        "Simple text editor (nano [file])", cmd_nano)
+    /* Block device TRIM/discard (Item 330) */
+    CMD("blkdiscard",  "Deallocate (TRIM) sectors on a block device (blkdiscard <dev_id> <start_lba> <count>)", cmd_blkdiscard)
     { 0, 0, 0 }
 };
 

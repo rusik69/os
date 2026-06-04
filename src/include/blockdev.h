@@ -18,6 +18,7 @@
 #define BLK_REQ_FLUSH     (1ULL << 2)
 #define BLK_REQ_FUA       (1ULL << 3)  /* Force Unit Access */
 #define BLK_REQ_PREFLUSH  (1ULL << 4)
+#define BLK_REQ_DISCARD   (1ULL << 5)  /* Deallocate/TRIM — data not written */
 
 /* Driver flags */
 #define BLK_DRIVER_ASYNC  1   /* Driver handles completion asynchronously via blk_request_done() */
@@ -136,6 +137,9 @@ struct blk_request *blk_request_deadline_peek(struct blk_request_queue *q);
 /* Synchronous I/O (returns 0 on success, -errno on error) */
 int  blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
                      void *buf, uint32_t flags);
+
+/* Discard/TRIM — deallocate a range of LBAs (returns 0 on success, -errno on error) */
+int  blockdev_discard(int dev_id, uint64_t lba, uint32_t count);
 
 /* Async I/O (returns immediately; req->done is set on completion) */
 int  blk_submit_async(struct blk_request *req);
