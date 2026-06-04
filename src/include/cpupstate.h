@@ -46,4 +46,8 @@ int  cpupstate_get_count(void);
 int  cpupstate_get_info(int state, struct cpupstate_state *info);
 int  cpupstate_is_present(void);
 
+/* Register P-states discovered by ACPI _PSS (called by acpi_cpufreq).
+ * Overrides MSR-probed defaults. Returns 0 on success. */
+int  cpufreq_register_acpi_states(const struct cpupstate_state *states, int count);
+
 #endif /* CPUPSTATE_H */

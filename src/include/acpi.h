@@ -56,4 +56,26 @@ int acpi_dock_get_state(void);
  * hotplug events when no ACPI notification mechanism is available. */
 void acpi_dock_poll(void);
 
+/* ── DSDT global information (exported for ACPI drivers) ──────────── */
+
+/* Virtual address of DSDT base (mapped via PHYS_TO_VIRT).
+ * Set during acpi_init() after the FADT is parsed. */
+extern uint8_t *g_dsdt_base;
+/* Total length of the DSDT table (including ACPI header) in bytes. */
+extern uint32_t g_dsdt_length;
+
+/* ── ACPI table header (common to all ACPI tables) ────────────────── */
+
+struct acpi_header {
+    char     signature[4];
+    uint32_t length;
+    uint8_t  revision;
+    uint8_t  checksum;
+    char     oem_id[6];
+    char     oem_table_id[8];
+    uint32_t oem_revision;
+    uint32_t creator_id;
+    uint32_t creator_revision;
+} __attribute__((packed));
+
 #endif

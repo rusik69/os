@@ -39,6 +39,7 @@
 #include "mouse.h"
 #include "speaker.h"
 #include "acpi.h"
+#include "cpupstate.h"
 #include "syscall.h"
 #include "ahci.h"
 #include "usb.h"
@@ -629,6 +630,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Sysfs — virtual filesystem exposing kernel objects */
     sysfs_init();
+
+    /* CPU frequency scaling — ACPI P-states (ACPI _PSS / MSR fallback) */
+    cpupstate_init();
 
     /* Debugfs — kernel debug data filesystem */
     debugfs_init();

@@ -30,18 +30,6 @@ struct rsdp {
     uint32_t rsdt_addr;
 } __attribute__((packed));
 
-struct acpi_header {
-    char     signature[4];
-    uint32_t length;
-    uint8_t  revision;
-    uint8_t  checksum;
-    char     oem_id[6];
-    char     oem_table_id[8];
-    uint32_t oem_revision;
-    uint32_t creator_id;
-    uint32_t creator_revision;
-} __attribute__((packed));
-
 struct rsdt {
     struct acpi_header header;
     uint32_t entries[1];  /* variable-length */
@@ -137,6 +125,13 @@ static int acpi_ready = 0;
 
 /* S3 support flag */
 static int s3_supported = 0;
+
+/* ── Exported DSDT info for ACPI drivers (acpi_cpufreq, etc.) ────── */
+
+/* Virtual address of DSDT base (mapped via PHYS_TO_VIRT) */
+uint8_t *g_dsdt_base = NULL;
+/* Total length of the DSDT table (including header) */
+uint32_t g_dsdt_length = 0;
 
 /* Power button flag */
 static volatile int g_power_button_pressed = 0;
@@ -525,6 +520,18 @@ void acpi_init(void) {
 
     /* Parse DSDT for sleep states */
     parse_dsdt_for_sleep(fadt);
+
+    /* Export DSDT base/length for ACPI drivers (acpi_cpufreq, etc.) */
+    if (fadt && fadt->dsdt) {
+        uint8_t *dsdt = (uint8_t *)PHYS_TO_VIRT((uint64_t)fadt->dsdt);
+        if (dsdt && memcmp(dsdt, "DSDT", 4) == 0) {
+            struct acpi_header *hdr = (struct acpi_header *)dsdt;
+            g_dsdt_base = dsdt;
+            g_dsdt_length = hdr->length;
+            kprintf("  ACPI: DSDT at %p, length %u\n",
+                    (void *)g_dsdt_base, g_dsdt_length);
+        }
+    }
 
     /* Parse DSDT for dock station (Item 106) */
     parse_dsdt_for_dock(fadt);
