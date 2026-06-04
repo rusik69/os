@@ -56,6 +56,7 @@ static void __attribute__((unused)) sh_pwdx(const char *a)      { (void)a; cmd_p
 static void __attribute__((unused)) sh_export(const char *a)    { cmd_export(a); }
 static void __attribute__((unused)) sh_unset(const char *a)     { cmd_unset(a); }
 static void sh_sysctl(const char *a)    { cmd_sysctl(a); }
+static void sh_bc(const char *a)        { cmd_bc(a); }
 static void sh_insmod(const char *a)    { cmd_insmod(a); }
 static void sh_rmmod(const char *a)     { cmd_rmmod(a); }
 static void sh_lsmod(const char *a)     { cmd_lsmod(a); }

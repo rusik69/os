@@ -64,6 +64,7 @@ void cmd_ld(const char *args);
 void cmd_sort(const char *args);
 void cmd_find(const char *args);
 void cmd_calc(const char *args);
+void cmd_bc(const char *args);
 void cmd_uniq(const char *args);
 void cmd_tr(const char *args);
 void cmd_tmux(const char *args);
