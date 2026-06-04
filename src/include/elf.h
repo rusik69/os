@@ -207,4 +207,9 @@ int elf_exec(const char *path);
  */
 int process_execve(const char *path, char *const argv[], char *const envp[]);
 
+/* Lightweight process creation — spawn a child running a new executable.
+ * Returns child PID on success, negative errno on failure.
+ * Item 306: posix_spawn / posix_spawnp */
+int process_spawn(const char *path, char *const argv[], char *const envp[]);
+
 #endif

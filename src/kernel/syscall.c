@@ -1941,6 +1941,88 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
     return (uint64_t)(int64_t)ret;
 }
 
+/*
+ * sys_posix_spawn — Lightweight process creation (Item 306)
+ *
+ * Creates a new child process that immediately execs the specified binary.
+ * More efficient than fork+exec because it skips copying the parent's
+ * address space and page tables.
+ *
+ * Signature (matching Linux posix_spawn ABI concept):
+ *   pid_t posix_spawn(const char *path, char *const argv[], char *const envp[]);
+ *
+ * Returns child PID on success, -errno on failure.
+ */
+static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr)
+{
+    struct process *cur = process_get_current();
+    if (!cur || !cur->is_user)
+        return (uint64_t)(int64_t)-ECHILD;
+
+    if (!path_addr || !syscall_user_cstr_ok(path_addr))
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Copy path string to kernel space */
+    char kpath[256];
+    int pi = 0;
+    const char *upath = (const char *)path_addr;
+    while (pi < 255) {
+        char c;
+        if (memcpy(&c, &upath[pi], 1) != 0) break; /* fault */
+        kpath[pi++] = c;
+        if (c == '\0') break;
+    }
+    kpath[255] = '\0';
+
+    /* Validate argv and envp pointers (can be NULL) */
+    const char *const *k_argv = NULL;
+    const char *const *k_envp = NULL;
+
+    uint64_t argv_ptr[256];
+    uint64_t envp_ptr[256];
+    int argc = 0, envc = 0;
+
+    if (argv_addr) {
+        if (!syscall_user_read_ok(argv_addr, sizeof(uint64_t))) {
+            return (uint64_t)(int64_t)-EFAULT;
+        }
+        /* Count argv */
+        while (argc < 256) {
+            uint64_t ptr = 0;
+            if (memcpy(&ptr, (void *)(argv_addr + (uint64_t)argc * sizeof(uint64_t)), sizeof(uint64_t)) != 0)
+                break;
+            if (ptr == 0) break;
+            if (!syscall_user_cstr_ok(ptr))
+                return (uint64_t)(int64_t)-EFAULT;
+            argv_ptr[argc] = ptr;
+            argc++;
+        }
+        k_argv = (const char *const *)argv_ptr;
+    }
+
+    if (envp_addr) {
+        if (!syscall_user_read_ok(envp_addr, sizeof(uint64_t))) {
+            return (uint64_t)(int64_t)-EFAULT;
+        }
+        while (envc < 256) {
+            uint64_t ptr = 0;
+            if (memcpy(&ptr, (void *)(envp_addr + (uint64_t)envc * sizeof(uint64_t)), sizeof(uint64_t)) != 0)
+                break;
+            if (ptr == 0) break;
+            if (!syscall_user_cstr_ok(ptr))
+                return (uint64_t)(int64_t)-EFAULT;
+            envp_ptr[envc] = ptr;
+            envc++;
+        }
+        k_envp = (const char *const *)envp_ptr;
+    }
+
+    int ret = process_spawn(kpath, (char *const *)k_argv, (char *const *)k_envp);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return (uint64_t)(uint64_t)ret;
+}
+
 /* ── mmap / munmap / mprotect syscalls ──────────────────────── */
 
 static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags) {
@@ -8413,6 +8495,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
+        case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
         case SYS_THREAD_CREATE:       return sys_thread_create(a1, a2);
         case SYS_THREAD_JOIN:         return sys_thread_join(a1, a2);
         case SYS_THREAD_EXIT:         sys_thread_exit((void *)a1); return 0;

@@ -640,3 +640,294 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             path, (unsigned long)entry, (unsigned long)new_rsp, (unsigned long)cur->pid, argc);
     return 0;
 }
+
+/*
+ * process_spawn — Lightweight process creation (posix_spawn)
+ *
+ * Creates a new child process that executes the specified ELF binary.
+ * Unlike fork+exec, this does NOT copy the parent's address space —
+ * the child starts with a fresh VM layout containing only the ELF
+ * segments and a minimal stack.
+ *
+ * Returns the child PID on success, or a negative errno on failure.
+ *
+ * Item 306: posix_spawn / posix_spawnp
+ */
+int process_spawn(const char *path, char *const argv[], char *const envp[])
+{
+    struct process *parent = process_get_current();
+    if (!parent || !parent->is_user)
+        return -ECHILD;
+
+    /* ── 1. Read the ELF file ───────────────────────────────────── */
+    uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
+    if (!buf) return -ENOMEM;
+
+    uint32_t size = 0;
+    if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
+        kfree(buf);
+        return -ENOENT;
+    }
+
+    /* ── 2. Validate ELF header ─────────────────────────────────── */
+    uint64_t entry = elf_load(buf, (uint64_t)size);
+    if (!entry) {
+        kfree(buf);
+        return -ENOEXEC;
+    }
+
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    if (entry >= 0x800000000000ULL) {
+        kfree(buf);
+        return -ENOEXEC;
+    }
+
+    /* ── 3. Create fresh page tables ────────────────────────────── */
+    uint64_t *new_pml4 = vmm_create_user_pml4();
+    if (!new_pml4) { kfree(buf); return -ENOMEM; }
+
+    /* ── 4. Map all PT_LOAD segments ────────────────────────────── */
+    int map_ok = 1;
+    for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
+        const struct elf64_phdr *ph =
+            (const struct elf64_phdr *)(buf + hdr->e_phoff + i * hdr->e_phentsize);
+        if (ph->p_type != PT_LOAD) continue;
+        if (ph->p_vaddr >= 0x0000800000000000ULL) { map_ok = 0; break; }
+
+        uint64_t seg_start = ph->p_vaddr & ~0xFFFULL;
+        uint64_t seg_end   = (ph->p_vaddr + ph->p_memsz + 0xFFF) & ~0xFFFULL;
+        uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+        if (ph->p_flags & 2) flags |= VMM_FLAG_WRITE;
+        if (!(ph->p_flags & 1)) flags |= VMM_FLAG_NOEXEC;
+
+        for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
+            uint64_t frame = pmm_alloc_frame();
+            if (!frame) { map_ok = 0; break; }
+            memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
+
+            uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
+            if (ph->p_filesz > page_off) {
+                uint64_t copy_sz = ph->p_filesz - page_off;
+                if (copy_sz > PAGE_SIZE) copy_sz = PAGE_SIZE;
+                memcpy(PHYS_TO_VIRT(frame), buf + ph->p_offset + page_off, copy_sz);
+            }
+
+            if (vmm_map_user_page(new_pml4, va, frame, flags) < 0) {
+                pmm_free_frame(frame);
+                map_ok = 0; break;
+            }
+        }
+        if (!map_ok) break;
+    }
+
+    kfree(buf);
+    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+
+    /* ── 5. Allocate user stack (64KB) with ASLR offset ─────────── */
+    uint64_t aslr_pages = aslr_stack_offset();
+    uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
+    uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
+        uint64_t frame = pmm_alloc_frame();
+        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+        memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
+        if (vmm_map_user_page(new_pml4, va, frame,
+                              VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
+            pmm_free_frame(frame);
+            vmm_destroy_user_pml4(new_pml4);
+            return -ENOMEM;
+        }
+    }
+
+    /* ── 6. Count argc and envc ─────────────────────────────────── */
+    int argc = 0;
+    if (argv) {
+        while (argv[argc]) {
+            uint64_t ptr = 0;
+            memcpy(&ptr, &argv[argc], sizeof(uint64_t));
+            (void)ptr;
+            argc++;
+            if (argc > 256) break;
+        }
+    }
+
+    int envc = 0;
+    if (envp) {
+        while (envp[envc]) {
+            uint64_t ptr = 0;
+            memcpy(&ptr, &envp[envc], sizeof(uint64_t));
+            (void)ptr;
+            envc++;
+            if (envc > 256) break;
+        }
+    }
+
+    /* ── 7. Copy argv/envp strings to kernel heap ───────────────── */
+    uint64_t total_str_size = 0;
+    char *tmp_buf[512];
+    int total_args = argc + envc;
+
+    if (total_args > 0) {
+        for (int i = 0; i < total_args; i++)
+            tmp_buf[i] = NULL;
+
+        for (int i = 0; i < argc; i++) {
+            const char *s = argv[i];
+            if (!s) continue;
+            int len = 0;
+            char *kstr = (char *)kmalloc(256);
+            if (!kstr) continue;
+            while (len < 255) {
+                char c;
+                memcpy(&c, &s[len], 1);
+                if (c == '\0') break;
+                kstr[len++] = c;
+            }
+            kstr[len] = '\0';
+            tmp_buf[i] = kstr;
+            total_str_size += len + 1;
+        }
+        for (int i = 0; i < envc; i++) {
+            const char *s = (const char *)envp[i];
+            if (!s) continue;
+            int len = 0;
+            char *kstr = (char *)kmalloc(256);
+            if (!kstr) continue;
+            while (len < 255) {
+                char c;
+                memcpy(&c, &s[len], 1);
+                if (c == '\0') break;
+                kstr[len++] = c;
+            }
+            kstr[len] = '\0';
+            tmp_buf[argc + i] = kstr;
+            total_str_size += len + 1;
+        }
+    }
+
+    /* ── 8. Lay out stack data (strings, envp[], argv[], argc) ──── */
+    uint64_t stack_phys_base = 0;
+    {
+        int idx4 = (user_stack_bottom >> 39) & 0x1FF;
+        int idx3 = (user_stack_bottom >> 30) & 0x1FF;
+        int idx2 = (user_stack_bottom >> 21) & 0x1FF;
+        int idx1 = (user_stack_bottom >> 12) & 0x1FF;
+        if (new_pml4[idx4] & 1) {
+            uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[idx4] & ~0xFFFULL);
+            if (pdpt[idx3] & 1) {
+                uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[idx3] & ~0xFFFULL);
+                if (pd[idx2] & 1) {
+                    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[idx2] & ~0xFFFULL);
+                    stack_phys_base = pt[idx1] & ~0xFFFULL;
+                }
+            }
+        }
+    }
+
+    uint64_t sp = user_stack_top;  /* start writing from top down */
+
+    /* Write string data first */
+    sp -= total_str_size;
+    sp &= ~0xFULL;
+    uint64_t str_pos = sp;
+
+    for (int i = 0; i < argc; i++) {
+        if (!tmp_buf[i]) continue;
+        char *s = tmp_buf[i];
+        int len = strlen(s) + 1;
+        for (int j = 0; j < len; j++) {
+            uint64_t va = str_pos + j;
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1)) break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
+            if (!(ppdpt[pi3] & 1)) break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
+            if (!(ppd[pi2] & 1)) break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
+            if (!(ppt[pi1] & 1)) break;
+            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
+        }
+        str_pos += len;
+    }
+    for (int i = 0; i < envc; i++) {
+        int idx = argc + i;
+        if (!tmp_buf[idx]) continue;
+        char *s = tmp_buf[idx];
+        int len = strlen(s) + 1;
+        for (int j = 0; j < len; j++) {
+            uint64_t va = str_pos + j;
+            int pi4 = (va >> 39) & 0x1FF;
+            int pi3 = (va >> 30) & 0x1FF;
+            int pi2 = (va >> 21) & 0x1FF;
+            int pi1 = (va >> 12) & 0x1FF;
+            if (!(new_pml4[pi4] & 1)) break;
+            uint64_t *ppdpt = (uint64_t *)PHYS_TO_VIRT(new_pml4[pi4] & ~0xFFFULL);
+            if (!(ppdpt[pi3] & 1)) break;
+            uint64_t *ppd = (uint64_t *)PHYS_TO_VIRT(ppdpt[pi3] & ~0xFFFULL);
+            if (!(ppd[pi2] & 1)) break;
+            uint64_t *ppt = (uint64_t *)PHYS_TO_VIRT(ppd[pi2] & ~0xFFFULL);
+            if (!(ppt[pi1] & 1)) break;
+            uint64_t phys = (ppt[pi1] & ~0xFFFULL) + (va & 0xFFF);
+            *(volatile char *)PHYS_TO_VIRT(phys) = s[j];
+        }
+        str_pos += len;
+    }
+
+    /* Free temporary kernel buffers */
+    for (int i = 0; i < total_args; i++) {
+        if (tmp_buf[i]) kfree(tmp_buf[i]);
+    }
+
+    /* Write envp[] array */
+    sp -= (envc + 1) * sizeof(uint64_t);
+    sp &= ~0xFULL;
+
+    /* Write argv[] array */
+    sp -= (argc + 1) * sizeof(uint64_t);
+    sp &= ~0xFULL;
+
+    /* Write argc */
+    sp -= sizeof(uint64_t);
+    uint64_t *argc_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (sp - user_stack_bottom));
+    if (argc_ptr) *argc_ptr = (uint64_t)argc;
+
+    uint64_t new_rsp = sp;
+
+    /* ── 9. Create the child process ────────────────────────────── */
+    struct process *child = process_create_user(entry, new_rsp, new_pml4, path);
+    if (!child) {
+        vmm_destroy_user_pml4(new_pml4);
+        return -ENOMEM;
+    }
+
+    /* Inherit parent's credentials, umask, rlimits, and groups */
+    child->uid  = parent->uid;
+    child->gid  = parent->gid;
+    child->euid = parent->euid;
+    child->egid = parent->egid;
+    child->umask = parent->umask;
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
+        child->cap_bset[i] = parent->cap_bset[i];
+
+    /* Inherit parent's file descriptors */
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (parent->fd_table[i].used) {
+            child->fd_table[i] = parent->fd_table[i];
+        }
+    }
+
+    /* Set child name from last component of path */
+    const char *slash = path;
+    while (*path) { if (*path == '/') slash = path + 1; path++; }
+    child->name = slash;
+
+    kprintf("spawn: %s (entry 0x%lx, rsp 0x%lx, child pid %lu)\n",
+            child->name, (unsigned long)entry, (unsigned long)new_rsp,
+            (unsigned long)child->pid);
+
+    return (int)child->pid;
+}

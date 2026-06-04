@@ -772,6 +772,9 @@ struct linux_dirent64 {
 #define SYS_SCHED_GETATTR    398  /* sched_getattr(pid, attr, size, flags) → 0 or -1 */
 #define SYS_KCOV             399  /* kcov(cmd, arg2) → 0 or -1 (Item 208) */
 
+/* Process spawning — lightweight create+exec (Item 306) */
+#define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.
