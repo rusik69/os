@@ -23,6 +23,7 @@
 #include "process_rlimit.h"
 #include "idt.h"
 #include "psi.h"
+#include "cgroup_namespace.h"
 #include "cpu_topology.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
@@ -850,7 +851,13 @@ static int procfs_gen_pid_ns(uint32_t pid, char *buf, int max) {
     /* IPC namespace */
     proc_str("ns\t4026531839\t/ipc\n", buf, &pos, max);
     /* Cgroup namespace */
-    proc_str("ns\t4026531835\t/cgroup\n", buf, &pos, max);
+    {
+        uint64_t cg_inode = p->cgroup_ns
+            ? cgroup_ns_inode(p->cgroup_ns) : 4026531835ULL;
+        proc_str("ns\t", buf, &pos, max);
+        proc_u64_to_str(cg_inode, buf, &pos, max);
+        proc_str("\t/cgroup\n", buf, &pos, max);
+    }
     /* Time namespace */
     proc_str("ns\t4026531834\t/time\n", buf, &pos, max);
 
@@ -1331,6 +1338,20 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         } else if (got && strcmp(p, "/io") == 0) {
             len = procfs_gen_pid_io(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strcmp(p, "/cgroup") == 0) {
+            /* /proc/<pid>/cgroup — show cgroup path, virtualized by namespace (Item 117) */
+            struct process *proc = process_get_by_pid(pid);
+            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            const char *full_path = "/sys/fs/cgroup";
+            char vpath[128];
+            if (proc->cgroup_ns) {
+                cgroup_ns_get_path(proc->cgroup_ns, full_path, vpath, sizeof(vpath));
+            } else {
+                strncpy(vpath, full_path, sizeof(vpath) - 1);
+                vpath[sizeof(vpath) - 1] = '\0';
+            }
+            len = snprintf(buf, (size_t)max_size, "0::%s\n", vpath);
+            if (len < 0) return -1;
         } else if (got && strcmp(p, "/ns") == 0) {
             /* /proc/<pid>/ns — list available namespace types */
             len = procfs_gen_pid_ns(pid, buf, (int)max_size);
@@ -1360,7 +1381,10 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             } else if (strcmp(ns_type, "ipc") == 0) {
                 len = snprintf(buf, (size_t)max_size, "ipc:[4026531839]\n");
             } else if (strcmp(ns_type, "cgroup") == 0) {
-                len = snprintf(buf, (size_t)max_size, "cgroup:[4026531835]\n");
+                uint64_t cg_inode = proc->cgroup_ns
+                    ? cgroup_ns_inode(proc->cgroup_ns) : 4026531835ULL;
+                len = snprintf(buf, (size_t)max_size, "cgroup:[%llu]\n",
+                               (unsigned long long)cg_inode);
             } else if (strcmp(ns_type, "time") == 0) {
                 len = snprintf(buf, (size_t)max_size, "time:[4026531834]\n");
             } else {

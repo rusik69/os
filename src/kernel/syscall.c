@@ -2,6 +2,7 @@
 #include "syscall.h"
 #include "process.h"
 #include "pid_namespace.h"
+#include "cgroup_namespace.h"
 #include "ioprio.h"
 #include "scheduler.h"
 #include "signal.h"
@@ -1691,9 +1692,20 @@ static uint64_t sys_unshare(uint64_t flags)
         /* IPC namespace isolation: future. */
     }
 
-    /* ── CLONE_NEWCGROUP: mark for cgroup namespace ──────────── */
+    /* ── CLONE_NEWCGROUP: create a new cgroup namespace (Item 117) ── */
     if (flags & CLONE_NEWCGROUP) {
-        /* Cgroup namespace: future. */
+        /* Snapshot current cgroup path as the namespace root */
+        const char *cur_path = "/sys/fs/cgroup";  /* default cgroup path */
+        struct cgroup_namespace *new_ns = cgroup_ns_create(cur_path);
+        if (!new_ns) {
+            return -1;  /* ENOMEM */
+        }
+        /* Drop the old reference and take the new one */
+        if (cur->cgroup_ns)
+            cgroup_ns_put(cur->cgroup_ns);
+        cur->cgroup_ns = new_ns;
+        kprintf("[CGROUP_NS] unshare(NEWCGROUP): PID %d, root='%s'\n",
+                cur->pid, new_ns->root_path);
     }
 
     /* ── CLONE_NEWTIME: create a fresh time namespace ─────────── */
@@ -1829,7 +1841,13 @@ static uint64_t sys_setns(uint64_t fd, uint64_t nstype)
         break;
 
     case CLONE_NEWCGROUP:
-        /* Cgroup namespace — not yet fully isolated */
+        /* Join the target's cgroup namespace */
+        if (target->cgroup_ns) {
+            cgroup_ns_get(target->cgroup_ns);
+            if (cur->cgroup_ns)
+                cgroup_ns_put(cur->cgroup_ns);
+            cur->cgroup_ns = target->cgroup_ns;
+        }
         cur->ns_flags |= CLONE_NEWCGROUP;
         break;
 

@@ -15,6 +15,7 @@
 #include "caps.h"
 #include "sysctl.h"    /* for sysctl_get_hostname() */
 #include "pid_namespace.h"
+#include "cgroup_namespace.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -243,6 +244,9 @@ void process_init(void) {
     /* Initialize PID namespace subsystem (root namespace) */
     pid_ns_init();
 
+    /* Initialize cgroup namespace subsystem (Item 117) */
+    cgroup_ns_init();
+
     /* Create idle process (pid 0) - represents the boot thread */
     process_table[0].pid = 0;
     process_table[0].state = PROCESS_RUNNING;
@@ -445,6 +449,16 @@ struct process *process_create(void (*entry)(void), const char *name) {
         } else {
             proc->pid_ns = &init_pid_ns;
             proc->ns_pid = proc->pid;
+        }
+    }
+
+    /* ── Cgroup namespace: inherit from parent (Item 117) ──────────── */
+    {
+        struct process *parent = current_process;
+        if (parent && parent->cgroup_ns) {
+            proc->cgroup_ns = cgroup_ns_get(parent->cgroup_ns);
+        } else {
+            proc->cgroup_ns = NULL;  /* root namespace */
         }
     }
     proc->cpu_system = 0;
@@ -1002,6 +1016,28 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         }
     }
 
+    /* ── Handle CLONE_NEWCGROUP: child gets a new cgroup namespace (Item 117) ── */
+    if (flags & CLONE_NEWCGROUP) {
+        /* Use the parent's cgroup path as the namespace root */
+        struct cgroup_namespace *new_ns = cgroup_ns_create(parent->cgroup_ns
+            ? parent->cgroup_ns->root_path : "/");
+        if (!new_ns) {
+            free_guarded_kernel_stack(child);
+            child->state = PROCESS_UNUSED;
+            __asm__ volatile("sti");
+            return -1;
+        }
+        /* Release the inherited reference (copied by *child = *parent) */
+        if (child->cgroup_ns)
+            cgroup_ns_put(child->cgroup_ns);
+        child->cgroup_ns = new_ns;
+        kprintf("[CGROUP_NS] clone(NEWCGROUP): child pid=%d, root='%s'\n",
+                child->pid, new_ns->root_path);
+    } else if (parent->cgroup_ns) {
+        /* Increment refcount on inherited namespace */
+        cgroup_ns_get(child->cgroup_ns);
+    }
+
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
         child->state = PROCESS_UNUSED;
@@ -1188,6 +1224,11 @@ void process_cleanup(struct process *proc) {
         if (proc->pid_ns->process_count <= 0) {
             pid_ns_destroy(proc->pid_ns);
         }
+    }
+    /* Release cgroup namespace reference (Item 117) */
+    if (proc->cgroup_ns) {
+        cgroup_ns_put(proc->cgroup_ns);
+        proc->cgroup_ns = NULL;
     }
     proc->pid = 0;
     proc->name = NULL;

@@ -11,6 +11,21 @@ ifneq ($(shell which ccache 2>/dev/null),)
   CC := ccache $(CC)
 endif
 
+# Auto-detect distcc for distributed builds (Item 257)
+# If DISTCC_HOSTS is set (e.g., DISTCC_HOSTS="localhost 10.0.0.1"), prepend distcc.
+# distcc and ccache compose naturally: CCACHE_PREFIX=distcc make
+# but we also support a bare distcc cc for non-ccache setups.
+ifneq ($(DISTCC_HOSTS),)
+  ifeq ($(origin CC), undefined)
+    CC = distcc x86_64-elf-gcc
+  else ifeq ($(origin CC), default)
+    CC = distcc x86_64-elf-gcc
+  else
+    # If CC was overridden (e.g. by ccache), wrap in distcc via CCACHE_PREFIX
+    CCACHE_PREFIX := distcc
+  endif
+endif
+
 AS = nasm
 ifeq ($(origin LD), undefined)
 LD = x86_64-elf-ld
@@ -90,6 +105,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/caps.c \
          src/kernel/chroot.c \
          src/kernel/pid_namespace.c \
+         src/kernel/cgroup_namespace.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \

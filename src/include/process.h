@@ -8,6 +8,9 @@
 /* Forward declaration for PID namespace pointers in struct process */
 struct pid_namespace;
 
+/* Forward declaration for cgroup namespace (Item 117) */
+struct cgroup_namespace;
+
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
 #define _RLIMIT_NLIMITS 14
 
@@ -257,6 +260,9 @@ struct process {
     /* ── PID namespace ──────────────────────────────────────────── */
     struct pid_namespace *pid_ns;   /* PID namespace this process belongs to (Item 111) */
     uint32_t             ns_pid;    /* PID within the namespace (same as pid for root ns) */
+
+    /* ── Cgroup namespace (Item 117) ────────────────────────────── */
+    struct cgroup_namespace *cgroup_ns;  /* NULL = root namespace */
 
     /* ── Namespace flags (set by unshare/CLONE_NEW*) ──────────── */
     uint32_t ns_flags;       /* bitmask of CLONE_NEW* flags that the namespace was unshared with */
