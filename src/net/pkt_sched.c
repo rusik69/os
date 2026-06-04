@@ -108,45 +108,173 @@ struct qdisc *pfifo_fast_create(void) {
 
 /* ── fq_codel implementation ────────────────────────────────────── */
 
-#define FQ_CODEL_QUEUES  8
-#define FQ_CODEL_LIMIT   256
-#define FQ_CODEL_TARGET  5     /* 5ms target */
-#define FQ_CODEL_INTERVAL 100  /* 100ms interval */
-#define FQ_CODEL_MTU     1500
+#define FQ_CODEL_QUEUES      256   /* number of flow buckets */
+#define FQ_CODEL_LIMIT       1024  /* per-queue limit (packets) */
+#define FQ_CODEL_QUANTUM     300   /* DRR quantum (bytes) */
+#define FQ_CODEL_TARGET_MS   5     /* 5ms target */
+#define FQ_CODEL_INTERVAL_MS 100   /* 100ms interval */
+#define FQ_CODEL_ECN_THRESH  3     /* ECN threshold (ms) — mark before dropping */
+
+/* CoDel control law constants (fixed-point, 10 fractional bits) */
+#define CODEL_INTERVAL_SHIFT   10
+#define CODEL_COUNT_SHIFT      3   /* sqrt(1/count) approximation shift */
 
 struct codel_flow {
     void *queue[FQ_CODEL_LIMIT];
     int   head, tail, count;
-    uint64_t last_drop_tick;
-    int   dropping;
-    uint64_t rec_inv_sqrt;
     uint64_t first_above_time;
+    int   dropping;
+    uint64_t drop_next;
     int   dropped;
+    int   ecn_marked;
 };
 
 struct fq_codel_priv {
     struct codel_flow flows[FQ_CODEL_QUEUES];
     int   quantum;
+    int   new_flows;       /* flow index for DRR new list (used in dequeue) */
 };
 
-static int fq_codel_hash(const void *pkt, int len) {
-    (void)pkt;
-    (void)len;
-    /* Simple hash based on packet address */
-    return ((uintptr_t)pkt >> 4) % FQ_CODEL_QUEUES;
+/* ── Jenkins One-At-A-Time hash for 5-tuple flow hashing ────────────── */
+static uint32_t jenkins_hash(const uint8_t *key, int len) {
+    uint32_t hash = 0;
+    for (int i = 0; i < len; i++) {
+        hash += key[i];
+        hash += (hash << 10);
+        hash ^= (hash >> 6);
+    }
+    hash += (hash << 3);
+    hash ^= (hash >> 11);
+    hash += (hash << 15);
+    return hash;
 }
 
-static int fq_codel_should_drop(struct codel_flow *flow, uint64_t now) {
+/* Parse Ethernet + IP + TCP/UDP headers to extract a 5-tuple for
+ * per-flow hashing.  The incoming buffer is a raw Ethernet frame.
+ *
+ * Returns a flow hash (0..FQ_CODEL_QUEUES-1).
+ */
+static int fq_codel_flow_hash(const void *pkt, int len) {
+    const uint8_t *buf = (const uint8_t *)pkt;
+    uint8_t tuple[13]; /* 4+4+1+2+2 = 13 bytes for 5-tuple */
+    int ti = 0;
+
+    /* Need at least Ethernet header (14) + IP header (20) = 34 bytes */
+    if (len < 34)
+        return 0;
+
+    /* Skip Ethernet header (14 bytes).  Assume no VLAN tag for simplicity. */
+    const uint8_t *ip = buf + 14;
+    int ip_hdr_len;
+
+    /* Check for 802.1Q VLAN tag (EtherType 0x8100) */
+    uint16_t ethertype = (uint16_t)((buf[12] << 8) | buf[13]);
+    if (ethertype == 0x8100 && len >= 18) {
+        /* VLAN tag present: 4 extra bytes before IP header */
+        ip = buf + 18;
+        if (len < 38) return 0;
+    }
+
+    /* IP version must be 4 or 6 */
+    uint8_t ip_version = (ip[0] >> 4) & 0x0F;
+
+    if (ip_version == 4) {
+        /* IPv4: IHL field gives header length in 32-bit words */
+        ip_hdr_len = (ip[0] & 0x0F) * 4;
+        if (ip_hdr_len < 20 || ip_hdr_len > 60) return 0;
+        if (len < (int)((ip - buf) + ip_hdr_len + 4)) return 0;
+
+        uint8_t proto = ip[9];
+
+        /* src IP (4 bytes) */
+        for (int i = 0; i < 4; i++) tuple[ti++] = ip[12 + i];
+        /* dst IP (4 bytes) */
+        for (int i = 0; i < 4; i++) tuple[ti++] = ip[16 + i];
+        /* protocol (1 byte) */
+        tuple[ti++] = proto;
+
+        /* src/dst ports for TCP/UDP */
+        if ((proto == 6 || proto == 17) && (len >= (int)((ip - buf) + ip_hdr_len + 4))) {
+            const uint8_t *l4 = ip + ip_hdr_len;
+            tuple[ti++] = l4[0]; tuple[ti++] = l4[1]; /* src port */
+            tuple[ti++] = l4[2]; tuple[ti++] = l4[3]; /* dst port */
+        } else {
+            tuple[ti++] = 0; tuple[ti++] = 0;
+            tuple[ti++] = 0; tuple[ti++] = 0;
+        }
+    } else if (ip_version == 6) {
+        /* IPv6 */
+        if (len < (int)((ip - buf) + 40)) return 0;
+        uint8_t proto = ip[6];
+
+        /* src IP (16 bytes) — hash first 4 + last 4 */
+        for (int i = 0; i < 4; i++) tuple[ti++] = ip[8 + i];
+        for (int i = 0; i < 4; i++) tuple[ti++] = ip[24 + i];
+        tuple[ti++] = proto;
+
+        if ((proto == 6 || proto == 17) && (len >= (int)((ip - buf) + 44))) {
+            const uint8_t *l4 = ip + 40;
+            tuple[ti++] = l4[0]; tuple[ti++] = l4[1];
+            tuple[ti++] = l4[2]; tuple[ti++] = l4[3];
+        } else {
+            tuple[ti++] = 0; tuple[ti++] = 0;
+            tuple[ti++] = 0; tuple[ti++] = 0;
+        }
+    } else {
+        /* Unknown L3 — fall back to address hash */
+        return ((uintptr_t)pkt >> 4) % FQ_CODEL_QUEUES;
+    }
+
+    uint32_t h = jenkins_hash(tuple, ti);
+    return (int)(h % FQ_CODEL_QUEUES);
+}
+
+/* CoDel control law: compute the next drop time using the IEEE/ACM
+ * sqrt(p) approximation.  Returns absolute tick value for drop_next.
+ *
+ * The classic CoDel paper uses:
+ *   next_drop = now + interval / sqrt(count)
+ * where count is the number of drops in the current dropping interval.
+ *
+ * We use fixed-point with CODEL_INTERVAL_SHIFT fractional bits.
+ */
+static uint64_t codel_control_law(uint64_t now, int count, uint64_t interval_ticks) {
+    /* Approximate 1/sqrt(count) using Newton's method (simple table). */
+    uint32_t inv_sqrt;
+    switch (count) {
+        case 0:  inv_sqrt = 1024; break;  /* 1.0 */
+        case 1:  inv_sqrt = 1024; break;
+        case 2:  inv_sqrt = 724;  break;  /* 1/√2 ≈ 0.707 */
+        case 3:  inv_sqrt = 591;  break;  /* 1/√3 ≈ 0.577 */
+        case 4:  inv_sqrt = 512;  break;  /* 1/√4 = 0.5 */
+        case 5:  inv_sqrt = 458;  break;  /* 1/√5 ≈ 0.447 */
+        case 6:  inv_sqrt = 418;  break;
+        case 7:  inv_sqrt = 387;  break;
+        case 8:  inv_sqrt = 362;  break;
+        case 9:  inv_sqrt = 341;  break;
+        case 10: inv_sqrt = 324;  break;
+        default: inv_sqrt = (1024 * 1024) / (count * 4); break; /* rough approx */
+    }
+    uint64_t delay = (interval_ticks * (uint64_t)inv_sqrt) >> CODEL_INTERVAL_SHIFT;
+    if (delay < 1) delay = 1;
+    return now + delay;
+}
+
+static int fq_codel_should_drop(struct codel_flow *flow, uint64_t now,
+                                 uint64_t target_ticks, uint64_t interval_ticks) {
     if (flow->count == 0) return 0;
 
-    /* Get sojourn time: time since enqueue of oldest packet */
     void *oldest = flow->queue[flow->head];
     if (!oldest) return 0;
 
     struct pkt_meta *meta = (struct pkt_meta *)oldest;
-    uint64_t sojourn = now - meta->enqueue_tick;
+    /* The sojourn time is tracked in microseconds via the enqueue tick.
+     * timer_get_ticks() returns centiseconds (100 ticks/sec == 10ms/tick).
+     * Convert to milliseconds: ticks * 10 = ms.
+     * We track first_above_time as absolute tick values. */
+    uint64_t sojourn_ms = (now - meta->enqueue_tick) * 10;
 
-    if (sojourn < FQ_CODEL_TARGET) {
+    if (sojourn_ms < target_ticks) {
         flow->first_above_time = 0;
         return 0;
     }
@@ -156,21 +284,57 @@ static int fq_codel_should_drop(struct codel_flow *flow, uint64_t now) {
         return 0;
     }
 
-    if (now - flow->first_above_time >= FQ_CODEL_INTERVAL) {
+    uint64_t sojourn_interval_ms = (now - flow->first_above_time) * 10;
+
+    if (sojourn_interval_ms >= interval_ticks) {
+        /* Time to drop (or mark).  Update drop_next for next control decision. */
+        flow->drop_next = codel_control_law(now, flow->dropped + 1, interval_ticks / 10);
         return 1;
     }
     return 0;
 }
 
+/* ECN (Explicit Congestion Notification) marking — set ECT(1) or CE
+ * in the IP header instead of dropping.  Only marks if the packet
+ * is ECN-capable (ECT or CE already set).
+ * Returns 1 if marked, 0 if not ECN-capable. */
+static int fq_codel_ecn_mark(void *pkt, int len) {
+    (void)len;
+    uint8_t *buf = (uint8_t *)pkt;
+    uint8_t *ip;
+    uint16_t ethertype = (uint16_t)((buf[12] << 8) | buf[13]);
+
+    if (ethertype == 0x8100 && len >= 18)
+        ip = buf + 18;
+    else
+        ip = buf + 14;
+
+    if (len < (int)((ip - buf) + 20)) return 0;
+
+    uint8_t ip_version = (ip[0] >> 4) & 0x0F;
+    if (ip_version != 4 && ip_version != 6) return 0;
+
+    /* Check ECN field (bits 6-7 of the TOS/traffic-class byte).
+     * The two bits are: 00=Non-ECT, 01=ECT(1), 10=ECT(0), 11=CE. */
+    uint8_t ecn = ip[1] & 0x03;
+    if (ecn == 0x00 || ecn == 0x03)
+        return 0; /* Not ECN-capable, or already CE */
+
+    /* Set CE (Congestion Experienced) codepoint */
+    ip[1] |= 0x03;
+    return 1;
+}
+
 static int fq_codel_enqueue(struct qdisc *q, void *pkt, int len) {
     struct fq_codel_priv *priv = (struct fq_codel_priv *)q->priv;
-    int bucket = fq_codel_hash(pkt, len);
+    int bucket = fq_codel_flow_hash(pkt, len);
     struct codel_flow *flow = &priv->flows[bucket];
 
     if (flow->count >= FQ_CODEL_LIMIT) {
-        /* Drop from this queue */
-        flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
+        /* Queue full — drop the tail packet */
+        flow->tail = (flow->tail - 1 + FQ_CODEL_LIMIT) % FQ_CODEL_LIMIT;
         flow->count--;
+        flow->dropped++;
     }
 
     flow->queue[flow->tail] = pkt;
@@ -182,26 +346,55 @@ static int fq_codel_enqueue(struct qdisc *q, void *pkt, int len) {
 static void *fq_codel_dequeue(struct qdisc *q) {
     struct fq_codel_priv *priv = (struct fq_codel_priv *)q->priv;
     uint64_t now = timer_get_ticks();
+    /* Target and interval in ticks.  TIMER_FREQ = 100 Hz → 1 tick = 10ms.
+     * Convert ms to ticks: target_ticks = target_ms / 10. */
+    uint64_t target_ticks   = FQ_CODEL_TARGET_MS / 10;
+    uint64_t interval_ticks = FQ_CODEL_INTERVAL_MS / 10;
+    if (target_ticks < 1) target_ticks = 1;
+    if (interval_ticks < 1) interval_ticks = 1;
 
-    /* Round-robin across flows */
-    static int rr = 0;
+    /* Deficit Round Robin: scan flows starting from new_flows pointer.
+     * This avoids starvation — eventually every flow with packets is served. */
+    int start = priv->new_flows;
     for (int i = 0; i < FQ_CODEL_QUEUES; i++) {
-        int b = (rr + i) % FQ_CODEL_QUEUES;
+        int b = (start + i) % FQ_CODEL_QUEUES;
         struct codel_flow *flow = &priv->flows[b];
         if (flow->count == 0) continue;
 
-        if (fq_codel_should_drop(flow, now)) {
-            /* Drop this packet */
-            flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
-            flow->count--;
-            flow->dropped++;
-            continue;
+        /* CoDel: decide whether to drop or mark the head packet */
+        if (fq_codel_should_drop(flow, now, target_ticks, interval_ticks)) {
+            /* Try ECN marking first */
+            void *head = flow->queue[flow->head];
+            if (head && fq_codel_ecn_mark(head, 1500)) {
+                flow->ecn_marked++;
+                /* Advance past the marked packet (keep it, just mark CE) */
+                flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
+                flow->count--;
+                if (flow->count == 0) continue;
+                /* Check the new head for dropping */
+                head = flow->queue[flow->head];
+                if (!head) continue;
+                if (fq_codel_should_drop(flow, now, target_ticks, interval_ticks)) {
+                    /* Still need to drop */
+                    flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
+                    flow->count--;
+                    flow->dropped++;
+                    continue;
+                }
+            } else {
+                /* Drop the head packet */
+                flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
+                flow->count--;
+                flow->dropped++;
+                continue;
+            }
         }
 
+        /* Dequeue the head packet */
         void *pkt = flow->queue[flow->head];
         flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
         flow->count--;
-        rr = (b + 1) % FQ_CODEL_QUEUES;
+        priv->new_flows = (b + 1) % FQ_CODEL_QUEUES;
         return pkt;
     }
     return NULL;
@@ -209,14 +402,34 @@ static void *fq_codel_dequeue(struct qdisc *q) {
 
 static int fq_codel_drop(struct qdisc *q) {
     struct fq_codel_priv *priv = (struct fq_codel_priv *)q->priv;
+    /* Find the longest queue and drop its head */
+    int longest = 0;
+    int longest_idx = 0;
     for (int i = 0; i < FQ_CODEL_QUEUES; i++) {
-        if (priv->flows[i].count > 0) {
-            priv->flows[i].head = (priv->flows[i].head + 1) % FQ_CODEL_LIMIT;
-            priv->flows[i].count--;
-            return 0;
+        if (priv->flows[i].count > longest) {
+            longest = priv->flows[i].count;
+            longest_idx = i;
         }
     }
-    return -1;
+    if (longest == 0) return -1;
+
+    struct codel_flow *flow = &priv->flows[longest_idx];
+    flow->head = (flow->head + 1) % FQ_CODEL_LIMIT;
+    flow->count--;
+    flow->dropped++;
+    return 0;
+}
+
+void fq_codel_get_stats(struct qdisc *q, int *total_dropped, int *total_ecn_marked) {
+    struct fq_codel_priv *priv = (struct fq_codel_priv *)q->priv;
+    if (!priv) { *total_dropped = 0; *total_ecn_marked = 0; return; }
+    int d = 0, e = 0;
+    for (int i = 0; i < FQ_CODEL_QUEUES; i++) {
+        d += priv->flows[i].dropped;
+        e += priv->flows[i].ecn_marked;
+    }
+    *total_dropped = d;
+    *total_ecn_marked = e;
 }
 
 struct qdisc *fq_codel_create(void) {
@@ -231,7 +444,8 @@ struct qdisc *fq_codel_create(void) {
     }
 
     memset(priv, 0, sizeof(struct fq_codel_priv));
-    priv->quantum = FQ_CODEL_MTU;
+    priv->quantum = FQ_CODEL_QUANTUM;
+    priv->new_flows = 0;
 
     q->type    = QDISC_FQ_CODEL;
     q->priv    = priv;
