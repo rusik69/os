@@ -5,6 +5,9 @@
 #include "pic.h"
 #include "printf.h"
 #include "string.h"
+#include "waitqueue.h"
+#include "devfs.h"
+#include "signal.h"
 
 #define CMOS_ADDR 0x70
 #define CMOS_DATA 0x71
@@ -96,10 +99,22 @@ void rtc_set_epoch(uint64_t s) {
 static volatile uint64_t g_periodic_ticks = 0;
 static volatile int g_periodic_enabled = 0;
 
+/* ── /dev/rtc userspace interface state ───────────────────────── */
+
+/* Wait queue for processes blocking on /dev/rtc read */
+static struct wait_queue g_rtc_dev_wq;
+/* If non-zero, deliver SIGALRM to this PID on each periodic tick */
+static int g_rtc_sigalrm_pid = 0;
+
 /* ── Alarm state ──────────────────────────────────────────────────── */
 
 static volatile int g_alarm_fired = 0;
 static uint64_t g_wakealarm_epoch = 0;  /* alarm set time in epoch seconds (0 = disabled) */
+
+/* ── Forward declarations ────────────────────────────────────────── */
+
+/* Initialize the /dev/rtc devfs device (defined later in this file) */
+static void rtc_devfs_init(void);
 
 /* ── RTC read helpers ─────────────────────────────────────────────── */
 
@@ -124,6 +139,14 @@ static void rtc_irq_handler(struct interrupt_frame *frame) {
     /* Periodic interrupt */
     if (g_periodic_enabled && (status_c & 0x40)) {
         g_periodic_ticks++;
+
+        /* Wake any processes blocked on /dev/rtc read */
+        wait_queue_wake_all(&g_rtc_dev_wq);
+
+        /* Deliver SIGALRM to registered process if any */
+        if (g_rtc_sigalrm_pid > 0) {
+            signal_send((uint32_t)g_rtc_sigalrm_pid, SIGALRM);
+        }
     }
 
     /* Alarm interrupt */
@@ -136,6 +159,9 @@ static void rtc_irq_handler(struct interrupt_frame *frame) {
 
 void rtc_init(void) {
     idt_register_handler_named(40, rtc_irq_handler, "cmos_rtc");
+
+    /* Initialize wait queue for /dev/rtc blocking reads */
+    wait_queue_init(&g_rtc_dev_wq);
 
     if (apic_is_init_complete()) {
         ioapic_unmask_irq(8);
@@ -153,6 +179,9 @@ void rtc_init(void) {
     struct rtc_time boot_time;
     rtc_get_time(&boot_time);
     boot_epoch_seconds = rtc_to_epoch(&boot_time);
+
+    /* Register /dev/rtc device for userspace access */
+    rtc_devfs_init();
 }
 
 /* ── Periodic interrupt API ────────────────────────────────────────── */
@@ -343,7 +372,117 @@ void rtc_get_time(struct rtc_time *t) {
     t->year   = (yr < 70) ? (2000 + yr) : (1900 + yr);
 }
 
-/* ── Sysfs interface ──────────────────────────────────────────────── */
+/* ── /dev/rtc userspace device interface ──────────────────────────── */
+
+/*
+ * rtc_dev_read — Blocking read from /dev/rtc
+ *
+ * Returns the current periodic tick count as a uint64_t (8 bytes).
+ * If periodic interrupts are not enabled, returns error.
+ * If no tick has occurred since last read, blocks until the next
+ * periodic interrupt fires.
+ */
+static int rtc_dev_read(void *priv, void *buf, uint32_t max_size,
+                         uint32_t *out_size)
+{
+    (void)priv;
+
+    if (!g_periodic_enabled)
+        return -1;
+
+    /* Wait for at least one tick to have occurred */
+    uint64_t start_ticks = g_periodic_ticks;
+    while (g_periodic_ticks == start_ticks) {
+        wait_queue_sleep(&g_rtc_dev_wq);
+        /* Re-check after wake — could be spurious or alarm interrupt */
+    }
+
+    /* Return the current tick count */
+    uint64_t ticks = g_periodic_ticks;
+    uint32_t copy = (max_size < sizeof(ticks)) ? max_size : (uint32_t)sizeof(ticks);
+    memcpy(buf, &ticks, copy);
+    if (out_size)
+        *out_size = copy;
+    return 0;
+}
+
+/*
+ * rtc_dev_write — Write to /dev/rtc to configure periodic rate
+ *
+ * Accepted formats:
+ *   "rate_hz=<n>\n"  — set periodic interrupt rate in Hz
+ *   "sigalrm_pid=<n>\n" — set PID to deliver SIGALRM to (0 to disable)
+ *   "0\n"  or "disable\n" — disable periodic interrupts
+ *
+ * Returns 0 on success, -1 on parse error.
+ */
+static int rtc_dev_write(void *priv, const void *data, uint32_t size)
+{
+    (void)priv;
+    const char *s = (const char *)data;
+    uint32_t remain = size;
+    uint32_t i = 0;
+
+    /* Skip leading whitespace */
+    while (i < remain && (s[i] == ' ' || s[i] == '\t'))
+        i++;
+    if (i >= remain) return -1;
+
+    /* Check for "disable" or "0" */
+    if (s[i] == '0' || s[i] == 'd') {
+        rtc_set_periodic(0, 0);
+        g_rtc_sigalrm_pid = 0;
+        return 0;
+    }
+
+    /* Parse "rate_hz=<number>" */
+    if (remain - i >= 8 && strncmp(&s[i], "rate_hz=", 8) == 0) {
+        i += 8;
+        int rate = 0;
+        while (i < remain && s[i] >= '0' && s[i] <= '9') {
+            rate = rate * 10 + (int)(s[i] - '0');
+            i++;
+        }
+        if (rate <= 0) return -1;
+        /* Clamp to valid range: 2 to 8192 Hz (power of 2 divisors of 32768) */
+        if (rate < 2) rate = 2;
+        if (rate > 8192) rate = 8192;
+        int ret = rtc_set_periodic(1, rate);
+        if (ret != 0) return -1;
+        return 0;
+    }
+
+    /* Parse "sigalrm_pid=<number>" */
+    if (remain - i >= 12 && strncmp(&s[i], "sigalrm_pid=", 12) == 0) {
+        i += 12;
+        int pid = 0;
+        while (i < remain && s[i] >= '0' && s[i] <= '9') {
+            pid = pid * 10 + (int)(s[i] - '0');
+            i++;
+        }
+        g_rtc_sigalrm_pid = pid;
+        return 0;
+    }
+
+    /* Unrecognized command */
+    return -1;
+}
+
+/* Initialize the /dev/rtc device node in devfs.
+ * Called during rtc_init() to make the device available. */
+static void rtc_devfs_init(void)
+{
+    wait_queue_init(&g_rtc_dev_wq);
+    g_rtc_sigalrm_pid = 0;
+
+    int ret = devfs_register_device("rtc", NULL,
+                                     rtc_dev_read, rtc_dev_write);
+    if (ret == 0) {
+        kprintf("[OK] RTC: /dev/rtc registered (periodic 1-8192 Hz, SIGALRM delivery)\n");
+    } else {
+        kprintf("[rtc] WARN: failed to register /dev/rtc\n");
+    }
+}
 
 #include "sysfs.h"
 
