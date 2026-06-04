@@ -222,3 +222,21 @@ int romfs_init(void) {
     vfs_register_filesystem("romfs", &romfs_ops);
     return 0;
 }
+
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    return romfs_init();
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    /* No VFS unregister yet; avoid unloading if filesystem is mounted */
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("ROMFS simple read-only filesystem — loadable module");
+#endif
