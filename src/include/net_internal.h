@@ -168,6 +168,14 @@ struct tcp_conn {
     /* TIME_WAIT tracking */
     uint64_t time_wait_deadline;    /* tick when TIME_WAIT expires (2*MSL) */
 
+    /* ── PRR (Proportional Rate Reduction, RFC 6937) — Item 158 ──────
+     * During fast recovery, PRR regulates the number of segments sent
+     * per ACK to be proportional to the number of bytes delivered.
+     * This reduces burstiness and avoids excess window reductions. */
+    uint32_t prr_delivered;         /* total bytes delivered (newly ACKed) during recovery */
+    uint32_t prr_out;               /* total bytes sent during recovery */
+    uint8_t  in_recovery;           /* 1 if currently in fast recovery (PRR active) */
+
     /* ── Congestion control algorithm selection ───────────────────────
      * 0 = CUBIC (default), 1 = BBR
      * Set via setsockopt(TCP_CONGESTION) or sysctl. */

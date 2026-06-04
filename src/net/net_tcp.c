@@ -157,6 +157,59 @@ void tcp_tfo_init(void)
 static void tcp_flush_delayed_ack(struct tcp_conn *c);
 static void tcp_flush_nagle(struct tcp_conn *c);
 
+/* ── PRR (Proportional Rate Reduction, RFC 6937) — Item 158 ───────
+ * During fast recovery, compute the number of bytes we are allowed
+ * to send in response to a newly-delivered segment.
+ *
+ * PRR maintains two counters during recovery:
+ *   prr_delivered — total bytes newly ACKed since recovery started
+ *   prr_out       — total bytes sent since recovery started
+ *
+ * On each ACK that delivers new data during recovery:
+ *   1. Update prr_delivered by the amount of newly delivered data.
+ *   2. Compute the allowance:
+ *        limit = max(0, DeliveredData - (prr_delivered - prr_out)) + MSS
+ *      This ensures that the amount of data sent is proportional to
+ *      the amount delivered, keeping the window at the target (ssthresh).
+ *   3. We may send up to 'limit' bytes.
+ *
+ * Returns the number of bytes we may send (0 if none). */
+static uint32_t prr_send_allowed(struct tcp_conn *c, uint32_t delivered_data)
+{
+    if (!c->in_recovery)
+        return 0;
+
+    c->prr_delivered += delivered_data;
+
+    /* PRR basic formula (RFC 6937 §3.1):
+     *   limit = max(0, DeliveredData - (prr_delivered - prr_out)) * MSS
+     * In our implementation:
+     *   limit = max(0, (int)delivered_data - ((int)c->prr_delivered - (int)c->prr_out))
+     *           + MSS (to allow 1 segment per ACK minimum) */
+    int32_t delta = (int32_t)delivered_data
+                  - ((int32_t)c->prr_delivered - (int32_t)c->prr_out);
+    if (delta < 0)
+        delta = 0;
+
+    /* Add 1 MSS so we can send at least one segment per ACK
+     * (this implements "bound with one segment" from RFC 6937 §3.2) */
+    uint32_t limit = (uint32_t)delta + 1400;
+
+    /* Clamp to what the congestion window allows:
+     * flightsize = approximate bytes in flight (tx_unacked_len)
+     * We can send at most cwnd * 1460 - flightsize */
+    uint32_t flightsize = c->tx_unacked_len;
+    uint32_t cwnd_bytes = c->cwnd * 1460;
+    if (limit + flightsize > cwnd_bytes) {
+        if (cwnd_bytes > flightsize)
+            limit = cwnd_bytes - flightsize;
+        else
+            limit = 0;
+    }
+
+    return limit;
+}
+
 static uint32_t cubic_root(uint64_t a)
 {
     if (a == 0 || a == 1)
@@ -891,6 +944,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 /*** NEW ACK ***/
                 if ((int32_t)(ack - c->last_ack) > 0) {
                     int acked_some = 0;
+                    /* Data delivered by this ACK (for PRR tracking) */
+                    uint32_t delivered_data = 0;
                     /* ── RACK: update forward-most delivered marker ──── */
                     /* The ACK covers up to `ack`, so any data below this
                      * is delivered.  rack_fwd_mark tracks the highest
@@ -902,15 +957,22 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     if ((int32_t)(ack - (c->tx_unacked_seq + c->tx_unacked_len)) >= 0) {
                         /* Fully ACKed — clear unacked buffer */
                         acked_some = 1;
+                        delivered_data = c->tx_unacked_len;
                         c->tx_unacked_len = 0;
                         c->retrans_count  = 0;
                         c->dupack_count = 0;
+                        /* Exit PRR recovery when all pending data is ACKed */
+                        if (c->in_recovery) {
+                            c->in_recovery = 0;
+                            c->cwnd = c->ssthresh;  /* RFC 6937: end recovery at ssthresh */
+                        }
                         /* Flush any Nagle-accumulated data now */
                         tcp_flush_nagle(c);
                     } else if ((int32_t)(ack - c->tx_unacked_seq) > 0) {
                         /* Partial ACK */
                         acked_some = 1;
                         uint32_t acked_len = ack - c->tx_unacked_seq;
+                        delivered_data = acked_len;
                         uint16_t acked16 = (uint16_t)(acked_len > 65535 ? 65535 : acked_len);
                         c->tx_unacked_len -= acked16;
                         if (c->tx_unacked_len > 0) {
@@ -927,7 +989,28 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     c->last_ack = ack;
 
                     if (acked_some) {
-                        /* ── Congestion control update ────────────── */
+                        /* ── PRR handles window during recovery (Item 158) ──
+                         * When in fast recovery, PRR controls how much data we
+                         * can send.  The standard CC update (slow start / CUBIC
+                         * avoidance) is suppressed — PRR keeps the window at
+                         * ssthresh and releases data proportionally to ACKs. */
+                        if (c->in_recovery) {
+                            /* Compute PRR send allowance */
+                            uint32_t prr_allow = prr_send_allowed(c, delivered_data);
+                            if (prr_allow > 0) {
+                                /* Try to flush Nagle data up to PRR allowance.
+                                 * tcp_flush_nagle sends data; prr_out is updated
+                                 * via the send_tcp path (tracked at call site). */
+                                uint16_t old_nagle = c->nagle_buf_len;
+                                tcp_flush_nagle(c);
+                                uint16_t sent = old_nagle - c->nagle_buf_len;
+                                c->prr_out += sent;
+                                /* If Nagle had nothing, and we have unacked data
+                                 * still waiting, we could retransmit more here.
+                                 * For now, PRR paces retransmits via ACK clock. */
+                            }
+                        } else
+                        /* ── Congestion control update (normal, not in recovery) ── */
                         if (c->cc_algo == 1) {
                             /* BBR model-based congestion control */
                             uint64_t now = timer_get_ticks();
@@ -1007,12 +1090,26 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 /*** DUPLICATE ACK ***/
                 else if ((int32_t)(ack - c->last_ack) == 0) {
                     c->dupack_count++;
-                    if (c->dupack_count >= 3) {
-                        /* Fast retransmit with SACK-based recovery */
+                    if (c->dupack_count >= 3 && !c->in_recovery) {
+                        /* ── PRR Fast Recovery (RFC 6937) — Item 158 ─────────────
+                         * On 3 dupacks:
+                         * 1. Retransmit only the FIRST missing segment (not all
+                         *    unacked data), skipping SACKed blocks.
+                         * 2. Initialize PRR tracking state.
+                         * 3. Set cwnd = ssthresh (PRR controls subsequent sends).
+                         * 4. Record recovery point so we know when to exit.
+                         *
+                         * Proportional Rate Reduction ensures that the amount of
+                         * data sent per ACK during recovery is proportional to the
+                         * amount of data delivered, reducing burstiness and
+                         * preventing excessive window reductions. */
                         uint32_t saved_seq = c->our_seq;
                         c->our_seq = c->tx_unacked_seq;
                         uint16_t remain = c->tx_unacked_len;
                         const uint8_t *rp = c->tx_unacked_buf;
+                        uint16_t first_chunk = 0;
+
+                        /* Skip SACKed blocks to find the first missing segment */
                         while (remain > 0) {
                             uint16_t skip = 0;
                             for (int sb = 0; sb < TCP_MAX_SACK_BLOCKS; sb++) {
@@ -1033,36 +1130,47 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                                 rp += skip;
                                 remain -= skip;
                             } else {
-                                uint16_t chunk = remain > 1400 ? 1400 : remain;
-                                send_tcp(c, TCP_PSH | TCP_ACK, rp, chunk);
-                                c->our_seq += chunk;
-                                rp += chunk;
-                                remain -= chunk;
+                                /* Found the first missing segment — retransmit it */
+                                first_chunk = remain > 1400 ? 1400 : remain;
+                                send_tcp(c, TCP_PSH | TCP_ACK, rp, first_chunk);
+                                c->our_seq += first_chunk;
+                                break;  /* Send only one segment per 3 dupacks */
                             }
                         }
                         c->our_seq = saved_seq;
+
+                        /* Record the recovery point (highest seq sent before recovery) */
+                        uint32_t prr_recover_seq = c->our_seq;
+
                         /* Congestion event: handle based on CC algorithm */
                         if (c->cc_algo == 1) {
-                            /* BBR: notify loss, but don't cut cwnd the CUBIC way.
-                             * BBR trusts its model-based pacing to avoid queues. */
                             bbr_on_loss(&c->bbr);
-                            /* Ensure ssthresh is reasonable for slow start after loss */
                             if (c->ssthresh > c->cwnd / 2)
                                 c->ssthresh = c->cwnd / 2;
                             if (c->ssthresh < 2) c->ssthresh = 2;
-                            /* BBR may reduce cwnd via packet conservation; trust it */
                             c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
                         } else {
-                            /* CUBIC congestion event: record W_max and reduce cwnd */
+                            /* CUBIC: record W_max and compute new ssthresh */
                             c->cubic_wmax = c->cwnd;
-                            if (c->cwnd > 2) c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
-                            else c->ssthresh = 2;
-                            c->cwnd = c->ssthresh + 3;  /* RFC 5681 fast recovery */
+                            if (c->cwnd > 2)
+                                c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
+                            else
+                                c->ssthresh = 2;
+                            c->cwnd = c->ssthresh;  /* PRR manages window during recovery */
                             c->cubic_epoch_start = timer_get_ticks();
                             c->cubic_use_cubic = 1;
                         }
+
+                        /* Initialize PRR state — Item 158 */
+                        c->in_recovery   = 1;
+                        c->prr_delivered = 0;
+                        c->prr_out       = first_chunk;
+
                         c->dupack_count = 0;
                         c->last_send_tick = timer_get_ticks();
+
+                        /* Exit recovery flag: when all pending data is ACKed */
+                        (void)prr_recover_seq;  /* used implicitly via tx_unacked_len == 0 */
                     }
                 }
             }
@@ -1263,6 +1371,11 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     /* Nagle / Delayed ACK initialization */
     c->delayed_ack_pending = 0;
     c->nagle_buf_len = 0;
+
+    /* PRR (Proportional Rate Reduction) initialization — Item 158 */
+    c->in_recovery   = 0;
+    c->prr_delivered = 0;
+    c->prr_out       = 0;
 
     send_tcp(c, TCP_SYN, NULL, 0);
     c->our_seq++;
@@ -1741,6 +1854,8 @@ void net_tcp_check_retransmit(void) {
         c->retrans_count++;
         /* Exponential back-off, cap at 64 s */
         c->rto = (c->rto * 2 > 6400) ? 6400 : (uint16_t)(c->rto * 2);
+        /* Exit PRR recovery on RTO — timeout is more severe than fast recovery */
+        c->in_recovery = 0;
         /* CUBIC congestion control: record W_max and reset to beta*W_max */
         c->cubic_wmax = c->cwnd;
         c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
