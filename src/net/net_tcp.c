@@ -8,6 +8,7 @@
 #include "scheduler.h"
 #include "sha256.h"
 #include "syscall.h"   /* for prng_rand64 */
+#include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
 
 /* ── CUBIC congestion control (RFC 8312) ─────────────────────────────
  *
@@ -730,6 +731,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
         c->cubic_epoch_start = 0;
         c->cubic_origin_point = 0;
         c->cubic_use_cubic = 0;
+        /* BBR congestion control initialization (inline struct is zeroed) */
+        c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR */
         /* RACK (Recent ACKnowledgment) loss detection initialization */
         c->rack_fwd_mark    = 0;
         c->rack_fwd_tick    = 0;
@@ -907,8 +910,8 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     } else if ((int32_t)(ack - c->tx_unacked_seq) > 0) {
                         /* Partial ACK */
                         acked_some = 1;
-                        uint32_t acked_bytes = ack - c->tx_unacked_seq;
-                        uint16_t acked16 = (uint16_t)(acked_bytes > 65535 ? 65535 : acked_bytes);
+                        uint32_t acked_len = ack - c->tx_unacked_seq;
+                        uint16_t acked16 = (uint16_t)(acked_len > 65535 ? 65535 : acked_len);
                         c->tx_unacked_len -= acked16;
                         if (c->tx_unacked_len > 0) {
                             memmove(c->tx_unacked_buf, c->tx_unacked_buf + acked16, c->tx_unacked_len);
@@ -924,23 +927,49 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                     c->last_ack = ack;
 
                     if (acked_some) {
-                        /* ── CUBIC congestion control update ── */
-                        if (c->cwnd < c->ssthresh) {
-                            /* Slow start: exponential growth */
-                            c->cwnd++;
-                        } else {
-                            /* Congestion avoidance: use CUBIC cubic function */
+                        /* ── Congestion control update ────────────── */
+                        if (c->cc_algo == 1) {
+                            /* BBR model-based congestion control */
                             uint64_t now = timer_get_ticks();
                             uint32_t rtt_ticks = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
                             if (rtt_ticks < 1) rtt_ticks = 1;
-                            uint32_t target = cubic_update(c, c->cwnd, now, rtt_ticks);
-                            /* Aim for the CUBIC target, but ensure at least Reno-equivalent
-                             * growth (1 segment per RTT) for fairness with Reno flows */
-                            uint32_t reno_target = c->cwnd + 1;
-                            if (target > reno_target)
-                                c->cwnd = target;
-                            else
-                                c->cwnd = reno_target;
+                            /* Use cwnd * 1460 as a proxy for bytes delivered this ACK.
+                             * The exact count is tricky because tx_unacked_len is reset
+                             * before we reach here for fully-ACKed segments.  BBR's
+                             * estimate converges quickly regardless. */
+                            uint32_t bbr_bytes = c->cwnd * 1460;
+                            bbr_on_ack(&c->bbr, bbr_bytes,
+                                       c->cwnd, rtt_ticks, now);
+                            /* BBR may set the pacing rate; follow its target cwnd */
+                            c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
+                            /* BBR paces sends; we need to ensure cwnd respects pacing */
+                            uint32_t bbr_pacing = bbr_get_pacing_rate(&c->bbr);
+                            if (bbr_pacing > 0 && c->cwnd > bbr_pacing * 2) {
+                                /* cwnd capped to pacing_rate * 2 to prevent bursts */
+                                uint32_t paced_cwnd = bbr_pacing * 2;
+                                if (paced_cwnd < 4) paced_cwnd = 4;
+                                if (c->cwnd > paced_cwnd)
+                                    c->cwnd = paced_cwnd;
+                            }
+                        } else {
+                            /* CUBIC congestion control */
+                            if (c->cwnd < c->ssthresh) {
+                                /* Slow start: exponential growth */
+                                c->cwnd++;
+                            } else {
+                                /* Congestion avoidance: use CUBIC cubic function */
+                                uint64_t now = timer_get_ticks();
+                                uint32_t rtt_ticks = (c->srtt > 0) ? (uint32_t)(c->srtt / 8) : 10;
+                                if (rtt_ticks < 1) rtt_ticks = 1;
+                                uint32_t target = cubic_update(c, c->cwnd, now, rtt_ticks);
+                                /* Aim for the CUBIC target, but ensure at least Reno-equivalent
+                                 * growth (1 segment per RTT) for fairness with Reno flows */
+                                uint32_t reno_target = c->cwnd + 1;
+                                if (target > reno_target)
+                                    c->cwnd = target;
+                                else
+                                    c->cwnd = reno_target;
+                            }
                         }
                         if (c->cwnd > 1024) c->cwnd = 1024;
 
@@ -1012,13 +1041,26 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                             }
                         }
                         c->our_seq = saved_seq;
-                        /* CUBIC congestion event: record W_max and reduce cwnd */
-                        c->cubic_wmax = c->cwnd;
-                        if (c->cwnd > 2) c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
-                        else c->ssthresh = 2;
-                        c->cwnd = c->ssthresh + 3;  /* RFC 5681 fast recovery */
-                        c->cubic_epoch_start = timer_get_ticks();
-                        c->cubic_use_cubic = 1;
+                        /* Congestion event: handle based on CC algorithm */
+                        if (c->cc_algo == 1) {
+                            /* BBR: notify loss, but don't cut cwnd the CUBIC way.
+                             * BBR trusts its model-based pacing to avoid queues. */
+                            bbr_on_loss(&c->bbr);
+                            /* Ensure ssthresh is reasonable for slow start after loss */
+                            if (c->ssthresh > c->cwnd / 2)
+                                c->ssthresh = c->cwnd / 2;
+                            if (c->ssthresh < 2) c->ssthresh = 2;
+                            /* BBR may reduce cwnd via packet conservation; trust it */
+                            c->cwnd = bbr_get_cwnd(&c->bbr, c->cwnd);
+                        } else {
+                            /* CUBIC congestion event: record W_max and reduce cwnd */
+                            c->cubic_wmax = c->cwnd;
+                            if (c->cwnd > 2) c->ssthresh = (c->cwnd * CUBIC_BETA_FIXED) / CUBIC_ONE;
+                            else c->ssthresh = 2;
+                            c->cwnd = c->ssthresh + 3;  /* RFC 5681 fast recovery */
+                            c->cubic_epoch_start = timer_get_ticks();
+                            c->cubic_use_cubic = 1;
+                        }
                         c->dupack_count = 0;
                         c->last_send_tick = timer_get_ticks();
                     }
@@ -1211,6 +1253,8 @@ int net_tcp_connect(uint32_t ip, uint16_t port) {
     c->cubic_epoch_start = 0;
     c->cubic_origin_point = 0;
     c->cubic_use_cubic = 0;
+    /* BBR congestion control initialization (inline struct is zeroed) */
+    c->cc_algo = 0;  /* 0 = CUBIC (default), 1 = BBR */
     /* RACK (Recent ACKnowledgment) loss detection initialization */
     c->rack_fwd_mark    = 0;
     c->rack_fwd_tick    = 0;

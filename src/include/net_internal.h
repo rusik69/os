@@ -3,6 +3,7 @@
 
 #include "net.h"
 #include "types.h"
+#include "tcp_bbr.h"   /* struct bbr_data for inline embedding in tcp_conn */
 
 /* Shared network state — defined in net.c */
 extern uint8_t  net_our_mac[6];
@@ -166,6 +167,15 @@ struct tcp_conn {
     uint16_t nagle_buf_len;         /* bytes accumulated in Nagle buffer */
     /* TIME_WAIT tracking */
     uint64_t time_wait_deadline;    /* tick when TIME_WAIT expires (2*MSL) */
+
+    /* ── Congestion control algorithm selection ───────────────────────
+     * 0 = CUBIC (default), 1 = BBR
+     * Set via setsockopt(TCP_CONGESTION) or sysctl. */
+    uint8_t  cc_algo;
+
+    /* ── BBR congestion control state ─────────────────────────────────
+     * Only valid when cc_algo == 1. */
+    struct bbr_data bbr;
 };
 
 extern struct tcp_conn tcp_conns[MAX_TCP_CONNS];
