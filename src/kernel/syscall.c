@@ -2601,6 +2601,11 @@ static uint64_t sys_sysconf(uint64_t name) {
     }
 }
 
+/* ── Global hostname (must be before any function that references it) ── */
+
+#define HOSTNAME_MAX 64
+static char system_hostname[HOSTNAME_MAX] = "os";
+
 /* ── uname ──────────────────────────────────────────────────── */
 
 static uint64_t sys_uname(uint64_t buf_addr) {
@@ -2611,17 +2616,20 @@ static uint64_t sys_uname(uint64_t buf_addr) {
 
     memset(buf, 0, sizeof(struct utsname));
     memcpy(buf->sysname, "OS", 3);
-    memcpy(buf->nodename, "localhost", 10);
+    {
+        struct process *proc = process_get_current();
+        const char *node = proc ? proc->ns_hostname : system_hostname;
+        if (!node || !*node) node = "localhost";
+        size_t nlen = strlen(node);
+        if (nlen > sizeof(buf->nodename) - 1)
+            nlen = sizeof(buf->nodename) - 1;
+        memcpy(buf->nodename, node, nlen);
+    }
     memcpy(buf->release, "1.0.0", 6);
     memcpy(buf->version, __DATE__, 12);
     memcpy(buf->machine, "x86_64", 7);
     return 0;
 }
-
-/* ── Global hostname ─────────────────────────────────────────── */
-
-#define HOSTNAME_MAX 64
-static char system_hostname[HOSTNAME_MAX] = "os";
 
 /* ── pipe() ──────────────────────────────────────────────────── */
 
@@ -3168,17 +3176,27 @@ static uint64_t sys_reboot(void) {
 
 static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
     if (!name_addr) return (uint64_t)-1;
-    if (len > HOSTNAME_MAX - 1) len = HOSTNAME_MAX - 1;
-    memcpy(system_hostname, (void*)name_addr, (size_t)len);
-    system_hostname[len] = '\0';
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+    size_t copylen = (size_t)len;
+    if (copylen > sizeof(proc->ns_hostname) - 1)
+        copylen = sizeof(proc->ns_hostname) - 1;
+    memcpy(proc->ns_hostname, (void*)name_addr, copylen);
+    proc->ns_hostname[copylen] = '\0';
+    /* Also update the system global so new processes inherit it */
+    if (copylen > HOSTNAME_MAX - 1) copylen = HOSTNAME_MAX - 1;
+    memcpy(system_hostname, (void*)name_addr, copylen);
+    system_hostname[copylen] = '\0';
     return 0;
 }
 
 static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
     if (!name_addr || len == 0) return (uint64_t)-1;
-    size_t slen = strlen(system_hostname);
+    struct process *proc = process_get_current();
+    const char *host = proc ? proc->ns_hostname : system_hostname;
+    size_t slen = strlen(host);
     if (slen > (size_t)len - 1) slen = (size_t)len - 1;
-    memcpy((void*)name_addr, system_hostname, slen);
+    memcpy((void*)name_addr, host, slen);
     ((char*)name_addr)[slen] = '\0';
     return 0;
 }

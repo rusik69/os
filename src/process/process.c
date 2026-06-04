@@ -13,6 +13,7 @@
 #include "syscall.h"  /* for prng_rand64(), syscall_dispatch(), etc. */
 #include "cpu_topology.h"
 #include "caps.h"
+#include "sysctl.h"    /* for sysctl_get_hostname() */
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -402,6 +403,20 @@ struct process *process_create(void (*entry)(void), const char *name) {
     /* NUMA home node — default to current CPU's NUMA node */
     proc->home_node = numa_home_node();
     proc->cpu_user = 0;
+
+    /* ── UTS namespace: inherit hostname/domainname from parent or global ── */
+    {
+        const char *src_host = current_process ? current_process->ns_hostname : sysctl_get_hostname();
+        strncpy(proc->ns_hostname, src_host ? src_host : "localhost",
+                sizeof(proc->ns_hostname) - 1);
+        proc->ns_hostname[sizeof(proc->ns_hostname) - 1] = '\0';
+
+        const char *default_domain = "(none)";
+        const char *src_domain = current_process ? current_process->ns_domainname : default_domain;
+        strncpy(proc->ns_domainname, src_domain ? src_domain : default_domain,
+                sizeof(proc->ns_domainname) - 1);
+        proc->ns_domainname[sizeof(proc->ns_domainname) - 1] = '\0';
+    }
     proc->cpu_system = 0;
     proc->max_rss = 0;
     proc->swap_pages = 0;
