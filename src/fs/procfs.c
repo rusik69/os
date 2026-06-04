@@ -22,6 +22,7 @@
 #include "config_gz.h"
 #include "process_rlimit.h"
 #include "idt.h"
+#include "cpu_topology.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -949,6 +950,82 @@ static int procfs_gen_pid_smaps(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/numa_maps — NUMA memory policy per VMA (Item 133)
+ *
+ * Shows NUMA node distribution for each memory-mapped region.
+ * Format (Linux-compatible):
+ *   <start>-<end> <policy> <mapping> N<node>=<pages> ...
+ *
+ * For the current simple VMA model we report the home NUMA node
+ * for each known region based on the process's home_node.
+ */
+static int procfs_gen_pid_numa_maps(uint32_t pid, char *buf, int max)
+{
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    (void)max;
+    int node = p->home_node;
+
+    /* If NUMA topology is not available, default to node 0 */
+    if (node < 0 || node >= 8)
+        node = 0;
+
+    /* Helper: emit one VMA line in numa_maps format */
+    #define NUMA_MAPS_VMA(start, end, perms, name, pages, node_id) do {       \
+        char pages_str[16];                                                  \
+        char node_str[16];                                                   \
+        proc_str(start "-" end " ", buf, &pos, max);                         \
+        proc_str("default ", buf, &pos, max);                                \
+        proc_str(name, buf, &pos, max);                                      \
+        proc_str(" ", buf, &pos, max);                                       \
+        proc_str(perms, buf, &pos, max);                                     \
+        snprintf(node_str, sizeof(node_str), " N%u=",                       \
+                 (unsigned int)(node_id));                                    \
+        proc_str(node_str, buf, &pos, max);                                  \
+        snprintf(pages_str, sizeof(pages_str), "%llu",                       \
+                 (unsigned long long)(pages));                                \
+        proc_str(pages_str, buf, &pos, max);                                 \
+        proc_str("\n", buf, &pos, max);                                      \
+    } while(0)
+
+    if (p->is_user && p->pml4) {
+        /* User code: 0x400000 - 0x800000 */
+        uint64_t rss, dirty, shared;
+        rss = vmm_count_user_pages_range(p->pml4,
+                    0x400000ULL, 0x800000ULL, &dirty, &shared);
+        NUMA_MAPS_VMA("0000000000400000", "0000000000800000",
+                      "r-xp", "file=/init", rss, node);
+
+        /* Heap: 0x800000 - 0xA00000 */
+        rss = vmm_count_user_pages_range(p->pml4,
+                    0x800000ULL, 0xA00000ULL, &dirty, &shared);
+        NUMA_MAPS_VMA("0000000000800000", "0000000000a00000",
+                      "rw-p", "heap", rss, node);
+
+        /* vDSO: 0x7ffff7ff7000 - 0x7ffff7ffa000 */
+        rss = vmm_count_user_pages_range(p->pml4,
+                    0x7FFFF7FF7000ULL, 0x7FFFF7FFA000ULL, &dirty, &shared);
+        NUMA_MAPS_VMA("00007ffff7ff7000", "00007ffff7ffa000",
+                      "r-xp", "map=/vdso", rss, node);
+
+        /* Stack: 0x7ffffffde000 - 0x7ffffffff000 */
+        rss = vmm_count_user_pages_range(p->pml4,
+                    0x7FFFFFFDE000ULL, 0x7FFFFFFFF000ULL, &dirty, &shared);
+        NUMA_MAPS_VMA("00007ffffffde000", "00007ffffffff000",
+                      "rw-p", "stack", rss, node);
+    } else {
+        /* Kernel thread — show kernel mapping only */
+        uint64_t kpages = pmm_get_used_frames();
+        NUMA_MAPS_VMA("ffffffff80000000", "ffffffff80a00000",
+                      "r-xp", "map=/kernel", kpages, node);
+    }
+
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* /proc/<pid>/limits — per-process resource limits */
 static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -1164,6 +1241,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         } else if (got && strcmp(p, "/smaps") == 0) {
             len = procfs_gen_pid_smaps(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strcmp(p, "/numa_maps") == 0) {
+            len = procfs_gen_pid_numa_maps(pid, buf, (int)max_size);
+            if (len < 0) return -1;
         } else if (got && strcmp(p, "/limits") == 0) {
             len = procfs_gen_pid_limits(pid, buf, (int)max_size);
             if (len < 0) return -1;
@@ -1298,7 +1378,19 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
             st->type = 1; st->size = 512; return 0;
         }
     }
+    if (got && strcmp(p, "/smaps") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 1024; return 0;
+        }
+    }
     if (got && strcmp(p, "/limits") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 512; return 0;
+        }
+    }
+    if (got && strcmp(p, "/numa_maps") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
             st->type = 1; st->size = 512; return 0;
