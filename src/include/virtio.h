@@ -32,6 +32,14 @@
 #define VIRTIO_NET_F_GUEST_CSUM     (1u << 1)  /* guest checksums */
 #define VIRTIO_NET_F_MAC            (1u << 5)  /* host provides MAC */
 #define VIRTIO_NET_F_GSO            (1u << 6)  /* generic segmentation offload */
+#define VIRTIO_NET_F_GUEST_TSO4     (1u << 7)  /* guest can receive TSOv4 (LRO) */
+#define VIRTIO_NET_F_GUEST_TSO6     (1u << 8)  /* guest can receive TSOv6 (LRO) */
+#define VIRTIO_NET_F_GUEST_ECN      (1u << 9)  /* guest can receive TSO with ECN */
+#define VIRTIO_NET_F_GUEST_UFO      (1u << 10) /* guest can receive UFO (LRO) */
+#define VIRTIO_NET_F_HOST_TSO4      (1u << 11) /* host can receive TSOv4 */
+#define VIRTIO_NET_F_HOST_TSO6      (1u << 12) /* host can receive TSOv6 */
+#define VIRTIO_NET_F_HOST_ECN       (1u << 13) /* host can receive TSO with ECN */
+#define VIRTIO_NET_F_HOST_UFO       (1u << 14) /* host can receive UFO */
 #define VIRTIO_NET_F_MRG_RXBUF      (1u << 15) /* mergeable receive buffers */
 #define VIRTIO_NET_F_STATUS         (1u << 16) /* link status */
 #define VIRTIO_NET_F_CTRL_VQ        (1u << 17) /* control channel */
@@ -73,6 +81,14 @@ static const struct virtio_feature_entry virtio_net_features[] = {
     VIRTIO_FEATURE(VIRTIO_NET_F_GUEST_CSUM),
     VIRTIO_FEATURE(VIRTIO_NET_F_MAC),
     VIRTIO_FEATURE(VIRTIO_NET_F_GSO),
+    VIRTIO_FEATURE(VIRTIO_NET_F_GUEST_TSO4),
+    VIRTIO_FEATURE(VIRTIO_NET_F_GUEST_TSO6),
+    VIRTIO_FEATURE(VIRTIO_NET_F_GUEST_ECN),
+    VIRTIO_FEATURE(VIRTIO_NET_F_GUEST_UFO),
+    VIRTIO_FEATURE(VIRTIO_NET_F_HOST_TSO4),
+    VIRTIO_FEATURE(VIRTIO_NET_F_HOST_TSO6),
+    VIRTIO_FEATURE(VIRTIO_NET_F_HOST_ECN),
+    VIRTIO_FEATURE(VIRTIO_NET_F_HOST_UFO),
     VIRTIO_FEATURE(VIRTIO_NET_F_MRG_RXBUF),
     VIRTIO_FEATURE(VIRTIO_NET_F_STATUS),
     VIRTIO_FEATURE(VIRTIO_NET_F_CTRL_VQ),
