@@ -22,15 +22,6 @@
 #include "heap.h"
 #include "vfs.h"
 
-/* Corrupt filesystem error helper: remounts read-only and returns -EFSCORRUPTED */
-static int ext2_corrupt(struct ext2_priv *ep, const char *reason)
-{
-    if (!ep)
-        return -EFSCORRUPTED;
-    vfs_force_readonly(ep->mountpoint, reason);
-    return -EFSCORRUPTED;
-}
-
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -45,6 +36,15 @@ struct ext2_priv {
     struct ext2_superblock sb;
     char     mountpoint[64];   /* for vfs_force_readonly() on corruption */
 };
+
+/* Corrupt filesystem error helper: remounts read-only and returns -EFSCORRUPTED */
+static int ext2_corrupt(struct ext2_priv *ep, const char *reason)
+{
+    if (!ep)
+        return -EFSCORRUPTED;
+    vfs_force_readonly(ep->mountpoint, reason);
+    return -EFSCORRUPTED;
+}
 
 /* Read one block from the block device */
 static int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *buf) {
