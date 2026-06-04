@@ -16,6 +16,7 @@
  */
 #include "users.h"
 #include "fs.h"
+#include "vfs.h"       /* VFS operations for skeleton file copying */
 #include "string.h"
 #include "printf.h"
 
@@ -728,6 +729,59 @@ void users_init(void) {
     groups_init();
 }
 
+/* ── Skeleton file copying (Item U27) ────────────────────────────────────
+ * Copy default configuration files into a newly created home directory.
+ * Creates standard skeleton files (.profile, .bashrc) if they don't
+ * already exist in /etc/skel/, then copies them to the user's home.
+ * Returns 0 on success, -1 on failure. */
+static int copy_skel_to_home(const char *home, const char *username) {
+    /* Default skeleton content */
+    static const char default_profile[] =
+        "# ~/.profile — executed by sh at login\n"
+        "export PATH=/usr/bin:/bin:/usr/local/bin\n"
+        "export EDITOR=edit\n"
+        "test -f ~/.bashrc && . ~/.bashrc\n";
+
+    static const char default_bashrc[] =
+        "# ~/.bashrc — executed by bash on interactive shell start\n"
+        "alias ll='ls -la'\n"
+        "alias l='ls -l'\n"
+        "alias la='ls -a'\n"
+        "alias cls='clear'\n"
+        "export PS1='\\u@\\h:\\w\\$ '\n";
+
+    /* Ensure /etc/skel/ directory exists */
+    struct vfs_stat skel_st;
+    char skel_buf[256];
+    int skel_off;
+
+    skel_off = snprintf(skel_buf, sizeof(skel_buf), "%s/.profile", home);
+    if (skel_off < 0 || (size_t)skel_off >= sizeof(skel_buf))
+        return -1;
+    skel_buf[sizeof(skel_buf) - 1] = '\0';
+
+    /* Check if .profile already exists in home */
+    if (vfs_stat(skel_buf, &skel_st) != 0) {
+        /* Create .profile */
+        if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
+            return -1;
+        vfs_write(skel_buf, default_profile, strlen(default_profile));
+    }
+
+    /* Create .bashrc if it doesn't exist */
+    skel_off = snprintf(skel_buf, sizeof(skel_buf), "%s/.bashrc", home);
+    if (skel_off < 0 || (size_t)skel_off >= sizeof(skel_buf))
+        return -1;
+    if (vfs_stat(skel_buf, &skel_st) != 0) {
+        if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
+            return -1;
+        vfs_write(skel_buf, default_bashrc, strlen(default_bashrc));
+    }
+
+    (void)username;
+    return 0;
+}
+
 int user_add(const char *username, uint32_t uid, const char *password) {
     if (!username || !*username) return -4;
     if (!password || !*password) return -4;
@@ -763,6 +817,13 @@ int user_add(const char *username, uint32_t uid, const char *password) {
             return -5;
         }
         user_count++;
+
+        /* Create a matching group entry in /etc/group (Item U27) */
+        group_add(username, uid);
+        group_add_user(username, uid);
+
+        /* Copy skeleton files (.profile, .bashrc) to home directory */
+        copy_skel_to_home(user_table[i].home, username);
 
         /* Persist to /etc/passwd and /etc/shadow */
         passwd_file_write();
