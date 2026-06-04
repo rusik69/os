@@ -1,0 +1,69 @@
+# clang-tidy static analysis configuration for Hermes OS kernel
+#
+# This file enables clang-tidy checks that catch common kernel bugs:
+#   - dead stores / unused assignments
+#   - null pointer dereferences
+#   - resource leaks (memory, locks, IRQ flags)
+#   - buffer overruns and format string mismatches
+#   - suspicious bitwise/logic operations
+#   - style and readability issues
+#
+# Usage:
+#   clang-tidy -p build/compile_commands.json src/kernel/foo.c
+#   make lint     # runs cppcheck (and clang-tidy if installed)
+#
+# Reference: https://clang.llvm.org/extra/clang-tidy/
+
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-macro-parentheses,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -bugprone-signed-char-misuse,
+  -bugprone-switch-missing-default-case,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-const-correctness,
+  -performance-no-int-to-ptr,
+  -readability-convert-member-functions-to-static,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-implicit-bool-conversion,
+  -readability-isolate-declaration,
+  -readability-magic-numbers,
+  -readability-named-parameter,
+  -readability-redundant-access-specifiers,
+  -readability-uppercase-literal-suffix,
+  -readability-use-anyofallof,
+  -bugprone-unchecked-optional-access,
+
+WarningsAsErrors: >
+  clang-analyzer-core.NullDereference,
+  clang-analyzer-core.StackAddressEscape,
+  clang-analyzer-core.UndefinedBinaryOperatorResult,
+  clang-analyzer-unix.Malloc,
+  clang-analyzer-unix.MismatchedDeallocator,
+  clang-analyzer-unix.StdCLibraryFunctions,
+
+# Analyzer configuration
+CheckOptions:
+  - key:   bugprone-assert-side-effect.AssertMacros
+    value: assert|ASSERT|_Static_assert
+  - key:   bugprone-suspicious-string-compare.WarnOnImplicitComparison
+    value: 0
+  - key:   bugprone-sizeof-expression.WarnOnSizeOfCompareToConstant
+    value: 0
+
+# Header filter: only check kernel headers (not GCC/built-in)
+HeaderFilterRegex: 'src/include/.*'

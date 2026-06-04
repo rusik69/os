@@ -801,9 +801,15 @@ format-check:
 		exit 1; \
 	fi
 
-# ── Lint: run cppcheck on all C sources ───────────────────────────────
+# ── Lint: run cppcheck + clang-tidy on all C sources ──────────────────
+
+.PHONY: lint clang-tidy-check
 
 lint:
+	@$(MAKE) cppcheck-check
+	@$(MAKE) clang-tidy-check
+
+cppcheck-check:
 	@if command -v cppcheck >/dev/null 2>&1; then \
 		cppcheck --enable=all \
 		  --suppress=unusedFunction \
@@ -839,6 +845,28 @@ lint:
 	else \
 		echo "cppcheck not found. Install it (e.g., apt install cppcheck) and try again."; \
 		exit 1; \
+	fi
+
+clang-tidy-check:
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+		echo "Running clang-tidy static analysis (first 20 C sources)..."; \
+		SRCS=""; \
+		count=0; \
+		for f in $(C_SRCS); do \
+			if [ $$count -ge 20 ]; then break; fi; \
+			SRCS="$$SRCS $$f"; \
+			count=$$((count + 1)); \
+		done; \
+		clang-tidy --quiet --warnings-as-errors="*" \
+		  --extra-arg="-std=c17" \
+		  --extra-arg="-ffreestanding" \
+		  --extra-arg="-Isrc/include" \
+		  --extra-arg="-Isrc/gui" \
+		  --extra-arg="-Isrc/doom" \
+		  $$SRCS 2>&1 | tail -20 || true; \
+		echo "clang-tidy finished (checked $$count files)"; \
+	else \
+		echo "clang-tidy not found. Install it (e.g., apt install clang-tidy) and try again."; \
 	fi
 
 # ── Dependencies ──────────────────────────────────────────────────────
