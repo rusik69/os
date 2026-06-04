@@ -362,7 +362,8 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/fault_inject.c \
          src/test/kunit.c \
          src/test/kunit_tests.c \
-         src/test/kunit_pmm.c
+         src/test/kunit_pmm.c \
+         src/test/kunit_slab.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

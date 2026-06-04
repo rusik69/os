@@ -307,6 +307,8 @@ static struct kunit_suite vmm_test_suite;
 
 /* PMM tests live in kunit_pmm.c */
 void kunit_pmm_register(void);
+/* Slab tests live in kunit_slab.c */
+void kunit_slab_register(void);
 
 void kunit_register_builtin_tests(void)
 {
@@ -329,4 +331,7 @@ void kunit_register_builtin_tests(void)
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();
+
+    /* Register the dedicated slab test suite from kunit_slab.c */
+    kunit_slab_register();
 }
