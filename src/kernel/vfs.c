@@ -713,6 +713,66 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
 }
 
 /*
+ * vfs_append — Append data to the end of a file.
+ *
+ * Reads the existing file content, concatenates the new data, and writes
+ * the combined result back.  This is used by the O_APPEND open flag.
+ *
+ * For small files this read-modify-write approach is acceptable; for
+ * production use with large files a filesystem-level append or pwrite
+ * operation would be more efficient.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int vfs_append(const char *path, const void *data, uint32_t size)
+{
+    if (!path || !data || size == 0)
+        return -EINVAL;
+
+    /* Read the existing file content if any */
+    uint32_t old_size = 0;
+    void *old_buf = NULL;
+
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) == 0 && st.size > 0) {
+        old_size = st.size;
+        old_buf = kmalloc(old_size);
+        if (!old_buf)
+            return -ENOMEM;
+
+        if (vfs_read(path, old_buf, old_size, NULL) < 0) {
+            kfree(old_buf);
+            return -EIO;
+        }
+    }
+
+    /* Allocate a combined buffer */
+    uint32_t new_total = old_size + size;
+    void *combined = kmalloc(new_total);
+    if (!combined) {
+        kfree(old_buf);
+        return -ENOMEM;
+    }
+
+    /* Copy old content followed by new data */
+    if (old_size > 0 && old_buf) {
+        __builtin_memcpy(combined, old_buf, old_size);
+    }
+    __builtin_memcpy((uint8_t *)combined + old_size, data, size);
+
+    kfree(old_buf);
+
+    /* Write the combined content back */
+    int ret = vfs_write(path, combined, new_total);
+    kfree(combined);
+
+    if (ret < 0)
+        return ret;
+
+    return 0;
+}
+
+/*
  * VFS-level readahead: hint to prefetch file data into the page cache.
  *
  * For block-device-backed filesystems (like the legacy SMFS), this maps

@@ -184,6 +184,7 @@ int vfs_list_filesystems(char names[][32], int max);
 /* VFS file operations — thin wrappers that resolve the mount */
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size);
 int vfs_write(const char *path, const void *data, uint32_t size);
+int vfs_append(const char *path, const void *data, uint32_t size);
 int vfs_stat(const char *path, struct vfs_stat *st);
 int vfs_create(const char *path, uint8_t type);
 int vfs_unlink(const char *path);

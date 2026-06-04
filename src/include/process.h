@@ -49,6 +49,7 @@ struct process_fd {
     uint32_t offset;
     int      used;
     uint8_t  flags;       /* FD_CLOEXEC etc. */
+    uint8_t  open_flags;  /* O_APPEND, O_NONBLOCK, etc. from open(2) */
     uint32_t sigio_pid;   /* PID to receive SIGIO (0 = none) */
     int      advice;      /* POSIX_FADV_* hint (-1 = unset) */
 };

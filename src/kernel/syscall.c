@@ -643,6 +643,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
                 p->fd_table[i].offset = 0;
                 p->fd_table[i].used = 1;
                 p->fd_table[i].flags = FD_TMPFILE;
+                p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF);
                 return (uint64_t)(i + 3);
             }
         }
@@ -668,6 +669,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
             p->fd_table[i].used = 1;
+            p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF); /* save O_APPEND, O_NONBLOCK etc. */
             return (uint64_t)(i + 3);
         }
     }
@@ -815,7 +817,14 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)-1;
-    int r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+    int r;
+    if (pfd->open_flags & O_APPEND) {
+        /* O_APPEND: always append to end of file, ignoring position */
+        r = vfs_append(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+    } else {
+        /* Normal write at current position */
+        r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+    }
     if (r >= 0) pfd->offset += (uint32_t)count;
     return (r >= 0) ? count : (uint64_t)-1;
 }
