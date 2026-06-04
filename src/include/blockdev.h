@@ -98,6 +98,9 @@ struct blockdev_entry {
 
     /* I/O statistics */
     struct blockdev_stats stats;
+
+    /* Transfer limits (Item 328: bio splitting for large requests) */
+    uint32_t max_transfer;   /* maximum sectors per I/O (0 = unlimited) */
 };
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -157,5 +160,9 @@ int blockdev_get_stats(int dev, struct blockdev_stats *s);
 
 /* Internal: update statistics (called by drivers when a request completes) */
 void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms);
+
+/* Transfer limit configuration (Item 328: bio splitting for large requests) */
+int  blockdev_set_max_transfer(int dev_id, uint32_t max_sectors);
+uint32_t blockdev_get_max_transfer(int dev_id);
 
 #endif /* BLOCKDEV_H */

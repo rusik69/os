@@ -209,6 +209,10 @@ struct nvme_ctrl {
     int      ns_blkdev_id[NVME_MAX_NS];
     uint64_t ns_sector_count[NVME_MAX_NS];
     uint32_t ns_sector_size[NVME_MAX_NS];
+
+    /* Controller capabilities (Item 328: bio splitting) */
+    uint8_t  mdts;           /* Maximum Data Transfer Size (log2 units of MPS) */
+    uint8_t  mpsmin;         /* Minimum Memory Page Size (exponent, base 4096 = 0) */
 };
 
 /* API */

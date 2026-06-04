@@ -120,6 +120,9 @@ static int nvme_probe_pci(void) {
     uint32_t dstrd = (uint32_t)((cap >> 32) & 0xF);
     g_nvme_ctrl.doorbell_stride = 4 << dstrd;
 
+    /* MPSMIN: minimum memory page size exponent (shift from 4096 base) */
+    g_nvme_ctrl.mpsmin = (uint8_t)((cap >> 48) & 0xF);
+
     kprintf("[NVMe] Found controller: VID=0x%04X DID=0x%04X IRQ=%d\n",
             pci.vendor_id, pci.device_id, pci.irq);
     kprintf("[NVMe] Version %d.%d.%d, max queue depth %u, doorbell stride %u\n",
@@ -824,6 +827,19 @@ static int nvme_register_blockdevs(void) {
         g_nvme_ctrl.ns_blkdev_id[ns_index] = dev_id;
         registered++;
 
+        /* Set max transfer size based on controller MDTS (Item 328).
+         * MDTS = log2(max_transfer / MPS), where MPS = 2^(mpsmin+12).
+         * If mdts == 0, maximum is 1 MPS (typically 4096 bytes).
+         * We compute max sectors = 2^mdts * 2^(mpsmin+12) / sector_size.
+         * Clamp to a reasonable minimum of 8 sectors. */
+        {
+            uint32_t mps_bytes = 1u << (g_nvme_ctrl.mpsmin + 12);
+            uint32_t max_xfer_bytes = mps_bytes * (1u << g_nvme_ctrl.mdts);
+            uint32_t max_sectors = max_xfer_bytes / sector_size;
+            if (max_sectors < 8) max_sectors = 8;
+            blockdev_set_max_transfer(dev_id, max_sectors);
+        }
+
         kprintf("[NVMe] Registered namespace %u: %s (%llu sectors of %u bytes)\n",
                 nsid, devname, (unsigned long long)nsze, sector_size);
     }
@@ -863,6 +879,8 @@ int nvme_init(void) {
     if (nvme_identify_ctrl(&id) == 0) {
         kprintf("[NVMe] Model: %.40s  SN: %.20s\n", id.mn, id.sn);
         kprintf("[NVMe] FW rev: %.8s, Namespaces: %u\n", id.fr, id.nn);
+        /* Save MDTS (Maximum Data Transfer Size) for bio splitting (Item 328) */
+        g_nvme_ctrl.mdts = id.mdts;
     }
 
     /* Register IRQ handler */

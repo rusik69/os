@@ -187,10 +187,66 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
         return -1;
 
+    uint32_t max_xfer = g_blockdevs[dev_id].max_transfer;
+
+    /* ── Splitting: if the request exceeds max_transfer, split into
+     *     multiple sub-requests (Item 328: bio splitting).  This is
+     *     transparent to callers — errors from any sub-request are
+     *     returned, and partial progress is NOT rolled back. ── */
+    if (max_xfer > 0 && count > max_xfer) {
+        uint64_t remaining = count;
+        uint64_t cur_lba = lba;
+        uint8_t *cur_buf = (uint8_t *)buf;
+        int first_error = 0;
+
+        while (remaining > 0) {
+            uint32_t chunk = (remaining > max_xfer) ? max_xfer : (uint32_t)remaining;
+
+            struct blk_request *req = blk_request_alloc();
+            if (!req) return -6;
+
+            req->dev_id = (uint8_t)dev_id;
+            req->lba = cur_lba;
+            req->count = chunk;
+            req->buf = cur_buf;
+            req->flags = flags;
+
+            struct wait_queue wq;
+            wait_queue_init(&wq);
+            req->done_wq = &wq;
+
+            int ret = blk_submit_async(req);
+            if (ret < 0) {
+                blk_request_free(req);
+                if (!first_error) first_error = ret;
+                break;
+            }
+
+            while (!req->done) {
+                wait_queue_sleep(&wq);
+            }
+
+            ret = req->result;
+            blk_request_free(req);
+
+            if (ret < 0) {
+                if (!first_error) first_error = ret;
+                break;
+            }
+
+            cur_lba += chunk;
+            cur_buf += (uint64_t)chunk * 512;
+            remaining -= chunk;
+        }
+
+        return first_error;
+    }
+
+    /* ── Fast path: single request fits within limits ── */
     struct blk_request *req = blk_request_alloc();
     if (!req) return -6;
 
-    req->dev_id = dev_id;
+    req->dev_id = (uint8_t)dev_id;
     req->lba = lba;
     req->count = count;
     req->buf = buf;
@@ -234,6 +290,56 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
         return -1;
     if (count == 0)
         return 0;
+
+    uint32_t max_xfer = g_blockdevs[dev_id].max_transfer;
+
+    /* ── Splitting: discard requests may exceed max_transfer (Item 328) ── */
+    if (max_xfer > 0 && count > max_xfer) {
+        uint64_t remaining = count;
+        uint64_t cur_lba = lba;
+        int first_error = 0;
+
+        while (remaining > 0) {
+            uint32_t chunk = (remaining > max_xfer) ? max_xfer : (uint32_t)remaining;
+
+            struct blk_request *req = blk_request_alloc();
+            if (!req) return -6;
+
+            req->dev_id = (uint8_t)dev_id;
+            req->lba = cur_lba;
+            req->count = chunk;
+            req->buf = NULL;
+            req->flags = BLK_REQ_DISCARD;
+
+            struct wait_queue wq;
+            wait_queue_init(&wq);
+            req->done_wq = &wq;
+
+            int ret = blk_submit_async(req);
+            if (ret < 0) {
+                blk_request_free(req);
+                if (!first_error) first_error = ret;
+                break;
+            }
+
+            while (!req->done) {
+                wait_queue_sleep(&wq);
+            }
+
+            ret = req->result;
+            blk_request_free(req);
+
+            if (ret < 0) {
+                if (!first_error) first_error = ret;
+                break;
+            }
+
+            cur_lba += chunk;
+            remaining -= chunk;
+        }
+
+        return first_error;
+    }
 
     /* Build a discard request and submit synchronously */
     struct blk_request *req = blk_request_alloc();
@@ -474,6 +580,27 @@ enum blk_scheduler blockdev_get_scheduler(int id) {
     return g_queues[id].sched;
 }
 
+/* ── Transfer limit configuration (Item 328) ──────────────────────── */
+
+int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors)
+{
+    if (!g_initialized) return -1;
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return -1;
+    if (max_sectors == 0) {
+        g_blockdevs[dev_id].max_transfer = 0; /* unlimited */
+    } else {
+        g_blockdevs[dev_id].max_transfer = max_sectors;
+    }
+    return 0;
+}
+
+uint32_t blockdev_get_max_transfer(int dev_id)
+{
+    if (!blockdev_is_registered(dev_id)) return 0;
+    return g_blockdevs[dev_id].max_transfer;
+}
+
 /* ── Exported symbols for driver modules ─────────────────────────── */
 EXPORT_SYMBOL(blockdev_register);
 EXPORT_SYMBOL(blockdev_register_legacy);
@@ -486,3 +613,5 @@ EXPORT_SYMBOL(blk_request_free);
 EXPORT_SYMBOL(blk_request_done);
 EXPORT_SYMBOL(blk_submit_sync);
 EXPORT_SYMBOL(blockdev_discard);
+EXPORT_SYMBOL(blockdev_set_max_transfer);
+EXPORT_SYMBOL(blockdev_get_max_transfer);
