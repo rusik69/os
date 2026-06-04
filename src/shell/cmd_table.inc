@@ -259,7 +259,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("col",         "Filter reverse line feeds (col <file>)",                        cmd_col)
     CMD("colrm",       "Remove columns from file (colrm start end <file>)",             cmd_colrm)
     CMD("column",      "Columnate file (column -t <file>)",                             cmd_column)
-    CMD("crontab",     "Schedule periodic commands (stub)",                              cmd_crontab)
+    CMD("crontab",     "Manage per-user crontab files (-l list, -e edit, -r remove)",      cmd_crontab)
     CMD("diff3",       "Compare three files line by line (diff3 f1 f2 f3)",              cmd_diff3)
     CMD("host",        "DNS lookup utility (host <name> [server])",                     cmd_host)
     CMD("init",        "Switch system runlevel (init N)",                               cmd_init)
