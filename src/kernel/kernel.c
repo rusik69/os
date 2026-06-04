@@ -58,6 +58,7 @@
 #include "virtio_net.h"
 #include "virtio_blk.h"
 #include "nvme.h"
+#include "container.h"
 #include "mdadm.h"
 #include "ac97.h"
 #include "smp.h"
@@ -878,6 +879,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         /* Start services in dependency order (telnetd first, then httpd, then sshd) */
         service_start("sshd");  /* triggers sorted start of deps */
         kprintf("[OK] Services started\n");
+
+        /* Initialize OCI container runtime */
+        container_init();
 
         /* Multicast group management (IGMP) */
         igmp_init();
