@@ -11,6 +11,11 @@
 #define BLOCKDEV_USB0   16
 #define BLOCKDEV_VIRTIO0 2
 #define BLOCKDEV_RAMDISK 15
+#define BLOCKDEV_LOOP0   3
+#define BLOCKDEV_LOOP1   4
+#define BLOCKDEV_LOOP2   5
+#define BLOCKDEV_LOOP3   6
+#define BLOCKDEV_LOOP_MAX 4
 
 /* Block I/O request flags */
 #define BLK_REQ_READ      (1ULL << 0)
