@@ -200,6 +200,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/ipvs.c \
          src/net/veth.c \
          src/net/netdevice.c \
+         src/net/rps.c \
          src/net/sshd.c \
          src/net/tcp_bbr.c \
          src/kernel/service.c \

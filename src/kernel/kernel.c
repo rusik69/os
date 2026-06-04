@@ -152,6 +152,7 @@
 #include "hugetlb.h"
 #include "net_igmp.h"
 #include "net_lldp.h"
+#include "net_rps.h"
 #include "aio_enhanced.h"
 #include "file_lock.h"
 #include "string.h"
@@ -845,6 +846,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         ipvs_init();
 
         net_init();
+        rps_rfs_init();
         tcp_tfo_init();
 #ifndef TEST_MODE
         kprintf("[..] DHCP discovering...\n");

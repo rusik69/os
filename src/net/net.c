@@ -10,6 +10,7 @@
 #include "netfilter.h"
 #include "export.h"
 #include "netdevice.h"
+#include "net_rps.h"
 
 /* Shared network state */
 uint8_t  net_our_mac[6];
@@ -1068,6 +1069,64 @@ int net_ping(uint32_t target_ip) {
 
 /* --- Poll --- */
 
+/* ── Dispatch a single received packet to protocol handlers ───────────
+ *
+ * Called from:
+ *   1. Direct receive path (net_poll) for packets processed locally
+ *   2. RPS backlog processor (rps_process_backlog) for packets steered
+ *      to this CPU
+ *
+ * This function handles Ethernet type dispatch: ARP, IPv4, IPv6,
+ * and runs netfilter hooks at PRE_ROUTING and LOCAL_IN.
+ */
+void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
+{
+    if (len < (int)sizeof(struct eth_header))
+        return;
+
+    struct eth_header *eth = (struct eth_header *)pkt_buf;
+    uint16_t type = ntohs(eth->type);
+    const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
+    uint16_t payload_len = len - sizeof(struct eth_header);
+
+    net_iface_stats.rx_packets++;
+    net_iface_stats.rx_bytes += len;
+
+    if (type == ETH_TYPE_ARP) {
+        handle_arp(payload, payload_len);
+    } else if (type == ETH_TYPE_IP) {
+        if (payload_len >= sizeof(struct ip_header)) {
+            struct ip_header *ip = (struct ip_header *)payload;
+            uint32_t src = ntohl(ip->src_ip);
+            if (src) arp_cache_add(src, eth->src);
+
+            /* Netfilter PRE_ROUTING */
+            if (nf_iterate_hooks(NF_INET_PRE_ROUTING, (void *)pkt_buf) != NF_ACCEPT)
+                return;
+        }
+        /* Netfilter LOCAL_IN for packets destined to us */
+        {
+            struct ip_header *ip = (struct ip_header *)payload;
+            uint32_t dst_ip = ntohl(ip->dst_ip);
+            if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
+                if (nf_iterate_hooks(NF_INET_LOCAL_IN, (void *)pkt_buf) != NF_ACCEPT)
+                    return;
+            }
+        }
+        handle_ip(payload, payload_len);
+    } else if (type == ETH_TYPE_IPV6) {
+        /* Update neighbor cache from source MAC for IPv6 link-local */
+        if (payload_len >= sizeof(struct ipv6_header)) {
+            struct ipv6_header *ip6 = (struct ipv6_header *)payload;
+            if (ipv6_addr_is_linklocal(&ip6->src_ip))
+                ipv6_nd_cache_add(&ip6->src_ip, eth->src);
+        }
+        handle_ipv6(payload, payload_len);
+    } else {
+        net_iface_stats.rx_drops++;
+    }
+}
+
 void net_poll(void) {
     static int poll_count = 0;
 
@@ -1084,51 +1143,85 @@ void net_poll(void) {
     net_rx_flag = 0;
 
     int drained = 0;
+    int cpu_count = smp_get_cpu_count();
     for (int drain = 0; drain < 32; drain++) {
         int len = net_link_recv(pkt_buf, sizeof(pkt_buf));
         if (len <= 0) break;
         drained++;
-        if (len >= (int)sizeof(struct eth_header)) {
-            struct eth_header *eth = (struct eth_header *)pkt_buf;
-            uint16_t type = ntohs(eth->type);
-            const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
-            uint16_t payload_len = len - sizeof(struct eth_header);
-            net_iface_stats.rx_packets++;
-            net_iface_stats.rx_bytes += len;
-            if (type == ETH_TYPE_ARP)
-                handle_arp(payload, payload_len);
-            else if (type == ETH_TYPE_IP) {
-                if (payload_len >= sizeof(struct ip_header)) {
-                    struct ip_header *ip = (struct ip_header *)payload;
-                    uint32_t src = ntohl(ip->src_ip);
-                    if (src) arp_cache_add(src, eth->src);
 
-                    /* Netfilter PRE_ROUTING */
-                    if (nf_iterate_hooks(NF_INET_PRE_ROUTING, (void *)pkt_buf) != NF_ACCEPT)
-                        continue;
-                }
-                /* Netfilter LOCAL_IN for packets destined to us */
-                {
-                    struct ip_header *ip = (struct ip_header *)payload;
-                    uint32_t dst_ip = ntohl(ip->dst_ip);
-                    if (dst_ip == net_our_ip || dst_ip == 0xFFFFFFFF) {
-                        if (nf_iterate_hooks(NF_INET_LOCAL_IN, (void *)pkt_buf) != NF_ACCEPT)
-                            continue;
+        /* RPS: Distribute packet processing across CPUs by flow hash.
+         * If RPS is enabled (cpu_count > 1) and the packet has an IP
+         * header, compute a flow hash and enqueue on the target CPU's
+         * backlog.  The target CPU will process it in its idle loop.
+         *
+         * Packets without IP headers (ARP, etc.) and packets when RPS
+         * is not active (single CPU) are processed directly. */
+        if (cpu_count > 1 && len >= (int)(sizeof(struct eth_header) + sizeof(struct ip_header))) {
+            struct eth_header *eth = (struct eth_header *)pkt_buf;
+            uint16_t eth_type = ntohs(eth->type);
+
+            if (eth_type == ETH_TYPE_IP || eth_type == ETH_TYPE_IPV6) {
+                struct rps_flow_key key;
+                memset(&key, 0, sizeof(key));
+
+                if (eth_type == ETH_TYPE_IP) {
+                    struct ip_header *ip = (struct ip_header *)(pkt_buf + sizeof(struct eth_header));
+                    key.src_ip = ip->src_ip;
+                    key.dst_ip = ip->dst_ip;
+                    key.proto = ip->protocol;
+                    /* Extract transport ports if TCP or UDP */
+                    int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+                    if ((ip->protocol == 6 || ip->protocol == 17) &&
+                        (int)(len - sizeof(struct eth_header)) >= ip_hdr_len + 4) {
+                        const uint8_t *l4 = pkt_buf + sizeof(struct eth_header) + ip_hdr_len;
+                        key.src_port = ntohs(*(const uint16_t *)l4);
+                        key.dst_port = ntohs(*(const uint16_t *)(l4 + 2));
+                    }
+                } else { /* IPv6 */
+                    struct ipv6_header *ip6 = (struct ipv6_header *)(pkt_buf + sizeof(struct eth_header));
+                    /* Simplified: use IPv6 addresses for flow key */
+                    key.proto = ip6->next_header;
+                    /* Extract IPv6 addresses (first 4 bytes each for hash) */
+                    key.src_ip = *(const uint32_t *)&ip6->src_ip;
+                    key.dst_ip = *(const uint32_t *)&ip6->dst_ip;
+                    if ((ip6->next_header == 6 || ip6->next_header == 17) &&
+                        (int)(len - sizeof(struct eth_header)) >= 40 + 4) {
+                        const uint8_t *l4 = pkt_buf + sizeof(struct eth_header) + 40;
+                        key.src_port = ntohs(*(const uint16_t *)l4);
+                        key.dst_port = ntohs(*(const uint16_t *)(l4 + 2));
                     }
                 }
-                handle_ip(payload, payload_len);
-            } else if (type == ETH_TYPE_IPV6) {
-                /* Update neighbor cache from source MAC for IPv6 link-local */
-                if (payload_len >= sizeof(struct ipv6_header)) {
-                    struct ipv6_header *ip6 = (struct ipv6_header *)payload;
-                    if (ipv6_addr_is_linklocal(&ip6->src_ip))
-                        ipv6_nd_cache_add(&ip6->src_ip, eth->src);
+
+                /* Hash to target CPU */
+                int target_cpu = rps_flow_hash(&key);
+                if (target_cpu != (int)get_cpu_id()) {
+                    /* Enqueue on target CPU's backlog */
+                    if (rps_enqueue(target_cpu, pkt_buf, (uint16_t)len) == 0) {
+                        /* Record flow for RFS */
+                        rfs_record_flow(&key, target_cpu);
+                        continue;  /* Packet queued for remote CPU */
+                    }
+                    /* Enqueue failed (backlog full) — fall through to
+                     * process locally */
                 }
-                handle_ipv6(payload, payload_len);
+                /* Update RFS for local processing */
+                rfs_record_flow(&key, (int)get_cpu_id());
             }
-        } else {
-            net_iface_stats.rx_drops++;
         }
+
+        /* Direct dispatch (single-CPU mode or non-IP packets, or
+         * RPS backlogs full) */
+        net_rx_dispatch(pkt_buf, (uint16_t)len);
+    }
+
+    /* Process any pending packets from this CPU's RPS backlog.
+     * This handles packets that were steered TO this CPU by the
+     * RPS hash on the receiving CPU (or by another CPU's net_poll).
+     * Process them here so they're batched with the local receive. */
+    while (rps_process_backlog() == 0) {
+        drained++;
+        /* Limit per-poll processing to prevent starvation */
+        if (drained >= 64) break;
     }
 
     /* Re-enable NIC interrupts (NAPI-style: mask in IRQ handler, unmask after drain) */

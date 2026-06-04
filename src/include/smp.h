@@ -7,6 +7,9 @@
 #include "gdt.h"
 #include "cpuidle.h"
 
+/* Forward declaration for RPS per-CPU backlog pointer */
+struct rps_backlog;
+
 /* Maximum CPUs supported */
 #define SMP_MAX_CPUS 16
 
@@ -41,7 +44,10 @@ struct cpu_info {
     int preempt_count;           /* > 0 = preemption disabled (nested) */
     volatile int need_resched;   /* non-zero = schedule() requested */
 
-    uint8_t _pad[48];            /* cache line padding */
+    /* ── RPS/RFS: Per-CPU packet backlog ─────────────────────────── */
+    struct rps_backlog *rps_backlog;  /* allocated separately */
+
+    uint8_t _pad[40];            /* cache line padding */
 } __attribute__((aligned(64)));
 
 /* Per-CPU accessors using GS segment */
