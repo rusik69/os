@@ -186,6 +186,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/af_packet.c \
          src/net/netfilter.c \
          src/net/conntrack.c \
+         src/net/conntrack_helpers.c \
          src/net/dns_cache.c \
          src/net/pkt_sched.c \
          src/net/bridge.c \

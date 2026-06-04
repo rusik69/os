@@ -15,6 +15,7 @@
 
 #define KERNEL_INTERNAL
 #include "netfilter.h"
+#include "conntrack_helper.h"
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
@@ -350,6 +351,13 @@ int nf_conntrack_in(uint32_t src_ip, uint32_t dst_ip,
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
         if (!conn)
             return NF_ACCEPT; /* table full — silently pass */
+
+        /* Check if this new connection matches an expected entry
+         * from a protocol helper (e.g., FTP data channel).
+         * If so, mark it as RELATED and consume the expectation. */
+        if (nf_ct_check_expected(src_ip, dst_ip, src_port, dst_port, protocol)) {
+            conn->mark = NF_CONN_RELATED;
+        }
     }
 
     uint64_t now = timer_get_ticks();
@@ -421,6 +429,11 @@ int nf_conntrack_out(uint32_t src_ip, uint32_t dst_ip,
         conn = conntrack_new(src_ip, dst_ip, src_port, dst_port, protocol);
         if (!conn)
             return NF_ACCEPT;
+
+        /* Check for expected connection (e.g., FTP data channel) */
+        if (nf_ct_check_expected(src_ip, dst_ip, src_port, dst_port, protocol)) {
+            conn->mark = NF_CONN_RELATED;
+        }
     }
 
     uint64_t now = timer_get_ticks();

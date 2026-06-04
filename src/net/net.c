@@ -8,6 +8,7 @@
 #include "timer.h"
 #include "waitqueue.h"
 #include "netfilter.h"
+#include "conntrack_helper.h"
 #include "export.h"
 #include "netdevice.h"
 #include "net_rps.h"
@@ -1247,6 +1248,7 @@ void net_poll(void) {
     if (now - last_conntrack_tick >= 100) {
         last_conntrack_tick = now;
         nf_conntrack_purge();
+        nf_ct_expect_purge();
     }
 }
 
