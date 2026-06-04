@@ -311,6 +311,8 @@ void kunit_pmm_register(void);
 void kunit_slab_register(void);
 /* Scheduler tests live in kunit_sched.c */
 void kunit_sched_register(void);
+/* VMM tests live in kunit_vmm.c */
+void kunit_vmm_register(void);
 
 void kunit_register_builtin_tests(void)
 {
@@ -339,4 +341,7 @@ void kunit_register_builtin_tests(void)
 
     /* Register the dedicated scheduler test suite from kunit_sched.c */
     kunit_sched_register();
+
+    /* Register the dedicated VMM test suite from kunit_vmm.c */
+    kunit_vmm_register();
 }
