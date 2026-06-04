@@ -2,6 +2,7 @@
 #include "string.h"
 #include "printf.h"
 #include "crc.h"
+#include "heap.h"
 #include "export.h"
 
 /* ── Known GPT partition type GUIDs (common ones) ──────────────────── */
@@ -98,6 +99,9 @@ static const struct {
 
 static const int gpt_type_count = sizeof(gpt_type_table) / sizeof(gpt_type_table[0]);
 
+/* ── GPT statistics ────────────────────────────────────────────────── */
+static struct gpt_stats gpt_last_stats;
+
 /* ── MBR Parsing ───────────────────────────────────────────────────── */
 
 int partitions_read(const uint8_t *mbr_sector, struct partition_entry *entries)
@@ -182,8 +186,11 @@ int gpt_is_valid(const uint8_t *sector_buf)
  *
  * Returns 1 if CRC is valid, 0 otherwise.
  */
-static int gpt_validate_header_crc(const struct gpt_header *hdr, const uint8_t *raw)
+int gpt_validate_header_crc(const struct gpt_header *hdr, const uint8_t *raw)
 {
+    if (!hdr || !raw)
+        return 0;
+
     uint32_t saved_crc = hdr->header_crc32;
     uint32_t size = hdr->header_size;
 
@@ -209,37 +216,31 @@ static int gpt_validate_header_crc(const struct gpt_header *hdr, const uint8_t *
 }
 
 /*
- * Parse GPT partition entries from a sector buffer.
- * Returns the number of valid entries found, or <0 on error.
+ * Try to parse GPT partition entries by reading them from disk.
+ * Called after a valid GPT header has been found (primary or backup).
+ *
+ * @hdr            Valid GPT header
+ * @disk_read      Callback to read raw sectors from disk
+ * @gpt_entries    Output array
+ * @max_entries    Size of output array
+ * @disk_sectors   Total sectors on disk (for validation)
+ *
+ * Returns number of valid partitions, or <0 on error.
  */
-int gpt_parse(const uint8_t *sector_buf, uint64_t disk_sectors,
-              struct gpt_partition *gpt_entries, int max_entries)
+static int gpt_parse_entries_from_disk(const struct gpt_header *hdr,
+                                        disk_read_callback_t disk_read,
+                                        struct gpt_partition *gpt_entries,
+                                        int max_entries,
+                                        uint64_t disk_sectors)
 {
-    if (!sector_buf || !gpt_entries || max_entries <= 0)
+    if (!hdr || !disk_read || !gpt_entries || max_entries <= 0)
         return -1;
 
-    const struct gpt_header *primary = (const struct gpt_header *)sector_buf;
+    uint32_t num_entries  = hdr->num_entries;
+    uint32_t entry_size   = hdr->entry_size;
+    uint64_t part_start   = hdr->part_start_lba;
 
-    /* Check GPT signature */
-    if (!gpt_is_valid(sector_buf))
-        return -1;
-
-    /* Validate header CRC32 */
-    if (!gpt_validate_header_crc(primary, sector_buf)) {
-        kprintf("[GPT] Primary header CRC32 invalid\n");
-        return -1;
-    }
-
-    /* Check revision (must be >= 1.0 = 0x00010000) */
-    if (primary->revision < 0x00010000U) {
-        kprintf("[GPT] Unsupported revision 0x%08x\n", primary->revision);
-        return -1;
-    }
-
-    uint32_t num_entries  = primary->num_entries;
-    uint32_t entry_size   = primary->entry_size;
-
-    /* Sanity-check partition entry parameters */
+    /* Sanity checks */
     if (num_entries == 0 || num_entries > GPT_MAX_PARTITIONS) {
         kprintf("[GPT] Invalid number of partition entries: %u\n", num_entries);
         return -1;
@@ -249,21 +250,183 @@ int gpt_parse(const uint8_t *sector_buf, uint64_t disk_sectors,
         return -1;
     }
 
-    /* We don't have the partition entries array here (it spans multiple sectors
-     * starting at part_start_lba).  This function currently parses only the
-     * header sector itself.  For a full parse, the caller must read the
-     * partition entry array using the part_start_lba and num_entries fields.
-     *
-     * For now, we validate that the header looks correct and return a count
-     * based on what the header claims.  A future enhancement could accept
-     * the full partition entry array buffer. */
+    /* Validate that the partition entry array fits on the disk */
+    uint64_t entries_total_bytes = (uint64_t)num_entries * entry_size;
+    uint64_t entries_total_sectors = (entries_total_bytes + 511) / 512;
+    if (part_start + entries_total_sectors > disk_sectors) {
+        kprintf("[GPT] Partition entries extend beyond disk end\n");
+        return -1;
+    }
 
-    /* Return the number of entries claimed by the header so the caller knows
-     * how many to read.  We can't validate individual entries without the
-     * actual entry data. */
-    (void)disk_sectors;  /* not yet used; future use for backup header */
+    /* Allocate a temporary buffer for the raw entries */
+    uint64_t buf_size = entries_total_sectors * 512;
+    uint8_t *raw_entries = (uint8_t *)kmalloc(buf_size);
+    if (!raw_entries) {
+        kprintf("[GPT] Failed to allocate %llu bytes for partition entries\n",
+                (unsigned long long)buf_size);
+        return -1;
+    }
 
-    return (int)num_entries;
+    /* Read partition entry array from disk */
+    if (disk_read(part_start, raw_entries, (int)entries_total_sectors) < 0) {
+        kprintf("[GPT] Failed to read partition entries at LBA %llu\n",
+                (unsigned long long)part_start);
+        kfree(raw_entries);
+        return -1;
+    }
+
+    /* Validate entries CRC if the header provides one */
+    if (hdr->entries_crc32 != 0) {
+        uint32_t computed = crc32(0, raw_entries, (uint32_t)(num_entries * entry_size));
+        if (computed != hdr->entries_crc32) {
+            kprintf("[GPT] Partition entries CRC mismatch (expected 0x%08x, got 0x%08x)\n",
+                    hdr->entries_crc32, computed);
+            /* Proceed anyway — CRC mismatch is logged but not fatal */
+        }
+    }
+
+    /* Decode entries */
+    int count = gpt_decode_entries(raw_entries, num_entries, entry_size,
+                                    gpt_entries, max_entries);
+
+    kfree(raw_entries);
+    return count;
+}
+
+/*
+ * Validate a full GPT header (signature, CRC, sanity checks).
+ * Returns 1 if valid, 0 otherwise.
+ */
+static int gpt_header_is_valid(const uint8_t *sector_buf, const char *location)
+{
+    if (!sector_buf || !gpt_is_valid(sector_buf)) {
+        if (location)
+            kprintf("[GPT] %s header: Invalid signature\n", location);
+        return 0;
+    }
+
+    const struct gpt_header *hdr = (const struct gpt_header *)sector_buf;
+
+    /* Check revision (must be >= 1.0 = 0x00010000) */
+    if (hdr->revision < 0x00010000U) {
+        if (location)
+            kprintf("[GPT] %s header: Unsupported revision 0x%08x\n",
+                    location, hdr->revision);
+        return 0;
+    }
+
+    /* Validate CRC */
+    if (!gpt_validate_header_crc(hdr, sector_buf)) {
+        if (location)
+            kprintf("[GPT] %s header: CRC32 invalid\n", location);
+        return 0;
+    }
+
+    return 1;
+}
+
+/*
+ * Parse GPT from a raw sector buffer, with optional backup header fallback.
+ *
+ * @sector_buf      512-byte buffer containing the primary GPT header sector.
+ * @disk_sectors    Total number of sectors on the disk (needed for backup
+ *                  header location).
+ * @disk_read       Optional callback to read raw sectors.  If NULL, backup
+ *                  header fallback is skipped.
+ * @gpt_entries     Output array for parsed partition entries.
+ * @max_entries     Size of the output array.
+ *
+ * Returns number of valid GPT partitions found, or <0 on error.
+ */
+int gpt_parse(const uint8_t *sector_buf, uint64_t disk_sectors,
+              disk_read_callback_t disk_read,
+              struct gpt_partition *gpt_entries, int max_entries)
+{
+    /* Clear stats */
+    memset(&gpt_last_stats, 0, sizeof(gpt_last_stats));
+
+    if (!sector_buf || !gpt_entries || max_entries <= 0)
+        return -1;
+
+    /* ── Try the primary GPT header (LBA 1) ─────────────────────────── */
+    int primary_valid = gpt_header_is_valid(sector_buf, "Primary");
+    gpt_last_stats.primary_valid = primary_valid;
+    gpt_last_stats.crc_ok = primary_valid;
+
+    if (primary_valid) {
+        /* Primary header is good — use it */
+        gpt_last_stats.used_backup = 0;
+
+        const struct gpt_header *hdr = (const struct gpt_header *)sector_buf;
+
+        /* If we have a disk read callback, parse the full partition entries */
+        if (disk_read != NULL && disk_sectors > 0) {
+            return gpt_parse_entries_from_disk(hdr, disk_read,
+                                                gpt_entries, max_entries,
+                                                disk_sectors);
+        }
+
+        /* Without a disk read callback, we can only validate the header.
+         * Return the number of entries claimed by the header. */
+        return (int)hdr->num_entries;
+    }
+
+    /* ── Primary header is invalid — try backup header ──────────────── */
+    if (disk_read == NULL || disk_sectors == 0) {
+        kprintf("[GPT] Primary header invalid and no disk read callback — "
+                "cannot fall back to backup header\n");
+        return -1;
+    }
+
+    /* The backup GPT header is located at the last LBA of the disk.
+     * The header's backup_lba field should also point here, but we can
+     * compute it directly from disk_sectors to handle cases where the
+     * primary header is too corrupt to read backup_lba. */
+    uint64_t backup_lba = disk_sectors - 1;
+
+    kprintf("[GPT] Primary header invalid — attempting backup header "
+            "at LBA %llu\n", (unsigned long long)backup_lba);
+
+    /* Read the backup header sector */
+    uint8_t backup_sector[512];
+    memset(backup_sector, 0, sizeof(backup_sector));
+
+    if (disk_read(backup_lba, backup_sector, 1) < 0) {
+        kprintf("[GPT] Failed to read backup header at LBA %llu\n",
+                (unsigned long long)backup_lba);
+        gpt_last_stats.backup_valid = 0;
+        return -1;
+    }
+
+    /* Validate backup header */
+    int backup_valid = gpt_header_is_valid(backup_sector, "Backup");
+    gpt_last_stats.backup_valid = backup_valid;
+
+    if (!backup_valid) {
+        kprintf("[GPT] Both primary and backup GPT headers are invalid — "
+                "cannot parse partitions\n");
+        return -1;
+    }
+
+    /* Backup header is valid — use it */
+    kprintf("[GPT] Using backup GPT header from LBA %llu\n",
+            (unsigned long long)backup_lba);
+    gpt_last_stats.used_backup = 1;
+
+    const struct gpt_header *hdr = (const struct gpt_header *)backup_sector;
+
+    /* Validate that the backup header's current_lba points to where we found it */
+    if (hdr->current_lba != backup_lba) {
+        kprintf("[GPT] Backup header current_lba mismatch: header says %llu, "
+                "but disk says %llu — continuing anyway\n",
+                (unsigned long long)hdr->current_lba,
+                (unsigned long long)backup_lba);
+    }
+
+    /* Parse partition entries using the backup header */
+    return gpt_parse_entries_from_disk(hdr, disk_read,
+                                        gpt_entries, max_entries,
+                                        disk_sectors);
 }
 
 /*
@@ -334,6 +497,14 @@ int gpt_decode_entries(const uint8_t *raw_entries, uint32_t num,
     }
 
     return count;
+}
+
+/* ── Statistics ────────────────────────────────────────────────────── */
+
+void gpt_get_stats(struct gpt_stats *stats)
+{
+    if (stats)
+        memcpy(stats, &gpt_last_stats, sizeof(gpt_last_stats));
 }
 
 /* ── Human-readable names ──────────────────────────────────────────── */
@@ -428,3 +599,5 @@ EXPORT_SYMBOL(gpt_decode_entries);
 EXPORT_SYMBOL(gpt_validate_entries_crc);
 EXPORT_SYMBOL(partition_type_name);
 EXPORT_SYMBOL(gpt_type_name);
+EXPORT_SYMBOL(gpt_validate_header_crc);
+EXPORT_SYMBOL(gpt_get_stats);
