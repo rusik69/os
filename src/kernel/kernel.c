@@ -142,6 +142,7 @@
 #include "debugfs.h"
 #include "fanotify.h"
 #include "fs_mount_prop.h"
+#include "hugetlb.h"
 #include "net_igmp.h"
 #include "net_lldp.h"
 #include "aio_enhanced.h"
@@ -416,6 +417,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     ksm_init();
     thp_init();
     khugepaged_start();
+
+    /* HugeTLB — pre-allocated pool for MAP_HUGETLB */
+    if (hugetlb_init(0) < 0)
+        kprintf("[WARN] HugeTLB pool init failed — MAP_HUGETLB unavailable\n");
 
     /* Extended memory management features */
     madvise_ext_init();

@@ -133,6 +133,11 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt);
 #define HUGE_PAGE_SIZE      (2ULL * 1024 * 1024)
 #define HUGE_PAGE_NFRAMES   512
 int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt, size_t num_4k_pages, uint64_t flags);
+/* Map a single pre-allocated 2MB huge page — used by HugeTLB (MAP_HUGETLB).
+ * The caller must provide a 2MB-aligned physical address from the HugeTLB
+ * pool.  Returns 0 on success, -1 on failure. */
+int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
+                                    uint64_t huge_phys, uint64_t flags);
 
 /* Walk a user page table and count present pages.
  * Returns: number of present 4KB pages (huge pages are counted as 512 each).

@@ -125,6 +125,7 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/heap.c \
          src/memory/slab.c \
          src/memory/compaction.c \
+         src/memory/hugetlb.c \
          src/process/process.c \
          src/process/scheduler.c \
          src/process/sched_deadline.c \

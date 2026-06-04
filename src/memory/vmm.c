@@ -736,19 +736,16 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
 
 /* ── Helper: map a single 2MB-aligned huge page in a user address space ──
  *
- * The physical memory is provided as a contiguous 2MB block allocated via
- * pmm_alloc_frames(512).  The virtual address MUST be 2MB-aligned.
+ * The caller MUST provide the physical address of a 2MB-aligned contiguous
+ * block (512 × 4KB frames).  The virtual address MUST be 2MB-aligned.
  *
- * Page-table walk:
- *   PML4[idx4]  → PDPT (created if absent)
- *   PDPT[idx3]  → PD   (created if absent)
- *   PD[idx2]    ← huge-page PDE with PTE_HUGE + base phys + flags
+ * This is exposed for use by HugeTLB (MAP_HUGETLB) which pre-allocates its
+ * own pool of huge pages.
  *
- * No page table (PT) level is created — the PDE itself references the
- * 2MB physical frame directly.
+ * Returns 0 on success, -1 on failure.
  */
-static int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
-                                           uint64_t huge_phys, uint64_t flags) {
+int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
+                                    uint64_t huge_phys, uint64_t flags) {
     /* Validate alignment constraints */
     if (virt & (HUGE_PAGE_SIZE - 1)) return -1;
     if (huge_phys & (HUGE_PAGE_SIZE - 1)) return -1;

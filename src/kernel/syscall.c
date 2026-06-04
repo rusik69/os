@@ -63,6 +63,7 @@
 #include "madvise_ext.h"
 #include "rseq.h"
 #include "file_lock.h"
+#include "hugetlb.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -1671,15 +1672,85 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
 
 /* ── mmap / munmap / mprotect syscalls ──────────────────────── */
 
-static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot) {
+static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t flags) {
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4) return (uint64_t)-1;
 
-    /* Anonymous private mapping only for now */
+    /* Anonymous private mapping only for now (MAP_SHARED is not yet
+     * implemented).  But we DO look at MAP_HUGETLB to use the pre-allocated
+     * huge page pool. */
     if (length == 0) return (uint64_t)-1;
 
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* ── MAP_HUGETLB: force huge page allocation from reserved pool ── */
+    if (flags & MAP_HUGETLB) {
+        /* HugeTLB requires 2MB-aligned length */
+        if (length < HUGETLB_PAGE_SIZE || (length & (HUGETLB_PAGE_SIZE - 1)))
+            return (uint64_t)-EINVAL;
+
+        /* If addr is not specified, find free space with 2MB alignment */
+        if (addr == 0) {
+            uint64_t mmap_base = 0x0000000001000000ULL +
+                                 (aslr_mmap_offset() * PAGE_SIZE);
+            addr = (mmap_base + HUGETLB_PAGE_SIZE - 1) & ~(HUGETLB_PAGE_SIZE - 1ULL);
+            while (addr + length < USER_VADDR_MAX) {
+                int free = 1;
+                for (uint64_t check = addr; check < addr + length; check += HUGETLB_PAGE_SIZE) {
+                    if (vmm_page_is_mapped_user(proc->pml4, check)) {
+                        free = 0;
+                        break;
+                    }
+                }
+                if (free) break;
+                addr += HUGETLB_PAGE_SIZE;
+            }
+            if (addr + length >= USER_VADDR_MAX)
+                return (uint64_t)-ENOMEM;
+        }
+
+        /* Verify 2MB alignment */
+        if (addr & (HUGETLB_PAGE_SIZE - 1))
+            return (uint64_t)-EINVAL;
+
+        /* Convert PROT flags to page-table flags */
+        uint8_t ast = vmm_prot_to_ast(prot);
+        uint64_t page_flags = vmm_ast_to_vmm_flags(ast, 1, 1);
+        page_flags &= ~(uint64_t)VMM_FLAG_LAZY;
+        page_flags |= VMM_FLAG_WRITE;
+
+        /* Allocate huge pages from HugeTLB pool and map them */
+        uint64_t cur = addr;
+        while (cur < addr + length) {
+            uint64_t huge_phys = hugetlb_alloc_frame();
+            if (huge_phys == 0) {
+                /* Pool exhausted — unmap what we already mapped and fail */
+                vmm_unmap_user_pages(proc->pml4, addr, (cur - addr) / PAGE_SIZE);
+                return (uint64_t)-ENOMEM;
+            }
+
+            memset((void *)PHYS_TO_VIRT(huge_phys), 0, HUGETLB_PAGE_SIZE);
+
+            if (vmm_map_user_hugepage_internal(proc->pml4, cur, huge_phys, page_flags) < 0) {
+                /* Mapping failed — return the huge page to the pool and clean up */
+                hugetlb_free_frame(huge_phys);
+                vmm_unmap_user_pages(proc->pml4, addr, (cur - addr) / PAGE_SIZE);
+                return (uint64_t)-EFAULT;
+            }
+            cur += HUGETLB_PAGE_SIZE;
+        }
+
+        if (proc->pml4 == vmm_get_pml4()) {
+            /* Flush TLB for the new region */
+            for (uint64_t v = addr; v < addr + length; v += PAGE_SIZE)
+                local_invlpg(v);
+        }
+
+        return addr;
+    }
+
+    /* ── Normal (non-HugeTLB) mmap path ──────────────────────────── */
 
     /* If addr is 0, find a free region starting at a randomized base.
      * Apply ASLR: shift the mmap search base by a random number of pages.
@@ -7951,7 +8022,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FREE:    return sys_free(a1);
         case SYS_REALLOC: return sys_realloc(a1, a2);
         case SYS_CALLOC:  return sys_calloc(a1, a2);
-        case SYS_MMAP:    return sys_mmap(a1, a2, a3);
+        case SYS_MMAP:    return sys_mmap(a1, a2, a3, a4);
         case SYS_MUNMAP:  return sys_munmap(a1, a2);
         case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
         case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);
