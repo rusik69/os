@@ -2,13 +2,20 @@
 # Compiles kernel libc sources with host gcc for unit testing on Linux x86_64
 
 CC = gcc
-CFLAGS = -DTEST_MODE_HOST \
-         -isystem ../../src/include \
-         -isystem ../../src \
-         -Wall -Werror \
-         -Wno-error=implicit-function-declaration \
-         -Wno-format-truncation \
-         -g -O0
+
+# Flags for kernel source files (need kernel include paths)
+KERNEL_CFLAGS = -DTEST_MODE_HOST \
+                -isystem ../../src/include \
+                -isystem ../../src \
+                -Wall -Werror \
+                -Wno-error=implicit-function-declaration \
+                -Wno-format-truncation \
+                -g -O0
+
+# Flags for test files (use system headers, NOT kernel headers)
+TEST_CFLAGS = -DTEST_MODE_HOST \
+              -Wall -Werror \
+              -g -O0
 
 # Source files — only compile the pure-logic libc implementation files.
 # libc.c is excluded because it contains only syscall wrappers (kernel-specific).
@@ -29,19 +36,19 @@ stubs.o: stubs.c
 	$(CC) -DTEST_MODE_HOST -g -O0 -c -o $@ $<
 
 string.o: $(SRCDIR)/string.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 stdlib.o: $(SRCDIR)/stdlib.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 printf.o: $(SRCDIR)/printf.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 string_ext.o: $(SRCDIR)/string_ext.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
 
 test_libc.o: test_libc.c
-	$(CC) $(CFLAGS) \
+	$(CC) $(TEST_CFLAGS) \
 	  -Wno-memset-transposed-args \
 	  -Wno-format \
 	  -Wno-stringop-truncation \
