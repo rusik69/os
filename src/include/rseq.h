@@ -40,6 +40,15 @@ int rseq_unregister(struct process *proc);
  * Clears the rseq_cs pointer so the next attempt will start fresh. */
 void rseq_abort(struct process *proc);
 
+/* Update the rseq cpu_id in userspace to reflect the current CPU.
+ * Called on every context switch to the target process. */
+void rseq_update_cpu_id(struct process *proc);
+
+/* Handle process migration to a different CPU.
+ * If the process had an rseq registered and is in a critical section
+ * on the old CPU, abort it. */
+void rseq_migrate(struct process *proc, int old_cpu, int new_cpu);
+
 /* Initialize rseq subsystem. */
 void rseq_init(void);
 

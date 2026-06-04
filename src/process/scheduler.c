@@ -28,6 +28,7 @@
 #include "cpuset.h"
 #include "cpu_topology.h"
 #include "page_cache.h"
+#include "rseq.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -626,6 +627,17 @@ void schedule(void) {
     {
         extern uint64_t __stack_chk_guard;
         __stack_chk_guard = next->stack_canary;
+    }
+
+    /* ── rseq: update cpu_id for the incoming task ────────────────── */
+    if (next->is_user) {
+        rseq_update_cpu_id(next);
+    }
+
+    /* ── rseq: detect migration and abort critical sections ────────── */
+    if (current && current->is_user && current != next) {
+        int current_cpu = smp_get_cpu_id();
+        rseq_migrate(current, current_cpu, current_cpu);
     }
 
     context_switch(current ? &current->context : NULL, next->context);

@@ -61,6 +61,7 @@
 #include "coredump.h"
 #include "workqueue.h"
 #include "madvise_ext.h"
+#include "rseq.h"
 #include "file_lock.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
@@ -7746,6 +7747,9 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
 
 /* Forward declarations for syscalls defined after the dispatch */
 static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
+static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
+                         uint64_t rseq_sig, uint64_t flags);
+
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -8187,6 +8191,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_QUERY_MODULE:    return sys_query_module(a1, a2, a3);
         /* ── membarrier (Item 252) ────────────────────────────────── */
         case SYS_MEMBARRIER:      return sys_membarrier(a1, a2, a3);
+        /* ── rseq (Item 348) ──────────────────────────────────────── */
+        case SYS_RSEQ:            return sys_rseq(a1, a2, a3, a4);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);
@@ -8195,6 +8201,53 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
     }
     /* NOTREACHED */
     return (uint64_t)-1;
+}
+
+/* ── rseq — Restartable Sequences (Item 348) ─────────────────────────── */
+
+/*
+ * sys_rseq — Register / unregister restartable sequences for the
+ *            calling process.
+ *
+ *   int rseq(struct rseq *rseq_addr, uint32_t rseq_len,
+ *            int rseq_sig, unsigned int flags);
+ *
+ * Returns 0 on success, -errno on failure.
+ * With RSEQ_FLAG_UNREGISTER in flags, unregisters the current rseq.
+ */
+static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
+                          uint64_t rseq_sig, uint64_t flags)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-ESRCH;
+
+    /* Validate rseq_addr is in userspace range */
+    if (rseq_addr >= USER_VADDR_MAX)
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* Validate rseq_len */
+    if (rseq_len < sizeof(struct rseq) || rseq_len > PAGE_SIZE)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* If UNREGISTER flag is set, unregister */
+    if (flags & RSEQ_FLAG_UNREGISTER) {
+        int ret = rseq_unregister(cur);
+        if (ret < 0)
+            return (uint64_t)(int64_t)ret;
+        return 0;
+    }
+
+    /* Validate rseq_sig must fit in uint32_t */
+    if (rseq_sig != (uint32_t)rseq_sig)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    int ret = rseq_register(cur, rseq_addr, (uint32_t)rseq_len,
+                            (uint32_t)rseq_sig);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+
+    return 0;
 }
 
 /* ── membarrier — Memory barrier on all threads (Item 252) ─────────── */

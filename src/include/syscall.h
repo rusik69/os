@@ -741,6 +741,9 @@ struct linux_dirent64 {
 #define SYS_PSELECT6         375  /* pselect6(nfds, rfds, wfds, efds, timeout, &data) */
 #define SYS_PPOLL            376  /* ppoll(fds, nfds, timeout, sigmask) */
 
+/* Restartable sequences (rseq) */
+#define SYS_RSEQ             396  /* rseq(rseq_addr, rseq_len, rseq_sig, flags) → 0 or -errno */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.
