@@ -1,3 +1,4 @@
+#define KERNEL_INTERNAL
 #include "process.h"
 #include "ioprio.h"
 #include "scheduler.h"
@@ -9,7 +10,7 @@
 #include "pmm.h"
 #include "smp.h"
 #include "signal.h"
-#include "syscall.h"
+#include "syscall.h"  /* for prng_rand64(), syscall_dispatch(), etc. */
 #include "cpu_topology.h"
 #include "caps.h"
 

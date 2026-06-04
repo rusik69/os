@@ -21,5 +21,6 @@ void yama_init(void);
 int  yama_ptrace_allowed(uint32_t caller_pid, uint32_t target_pid);
 void yama_set_ptracer(uint32_t target_pid, int tracer_pid);
 int  yama_get_ptracer(uint32_t target_pid);
+void yama_sysctl_register(void);
 
 #endif /* YAMA_H */

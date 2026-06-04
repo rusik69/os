@@ -143,8 +143,7 @@ do_mwait(volatile uint64_t *addr, uint32_t hint)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
- *  State enter functions
- /* ── State enter functions ──────────────────────────────────────────── */
+ *  State enter functions ──────────────────────────────────────────── */
 
  int cpuidle_c1_halt_enter(struct cpuidle_state *self)
 {

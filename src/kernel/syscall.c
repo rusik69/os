@@ -8575,7 +8575,7 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
     /* Read the current handle_bytes from user space */
     unsigned int handle_bytes;
     if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok(&handle->handle_bytes, sizeof(handle->handle_bytes)))
+        if (!syscall_user_read_ok((uint64_t)(uintptr_t)&handle->handle_bytes, sizeof(handle->handle_bytes)))
             return (uint64_t)(int64_t)-EFAULT;
     }
     handle_bytes = handle->handle_bytes;
@@ -8649,7 +8649,7 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     /* Read handle_bytes from userspace */
     unsigned int hb;
     if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok(&handle->handle_bytes, sizeof(handle->handle_bytes)))
+        if (!syscall_user_read_ok((uint64_t)(uintptr_t)&handle->handle_bytes, sizeof(handle->handle_bytes)))
             return (uint64_t)(int64_t)-EFAULT;
     }
     hb = handle->handle_bytes;

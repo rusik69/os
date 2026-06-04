@@ -5,6 +5,10 @@
  * Supports block groups, inodes, directory traversal (linear and
  * HTree/indexed), and reading regular files via direct/indirect blocks.
  *
+ * Sparse file support (Item 148): Files with holes (unallocated blocks
+ * indicated by zero block pointers) are handled correctly — reads return
+ * zero-filled data for sparse regions instead of failing.
+ *
  * HTree (hash tree) directory indexing provides O(log n) directory
  * lookups for large directories, as specified in the ext3/4 design.
  * The hash function used is half MD4 (the most common for ext3/4).
@@ -101,12 +105,22 @@ static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode
 }
 
 /* Read block from inode (handles indirect blocks) */
-static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
-                                  uint32_t iblock, uint8_t *buf) {
+/*
+ * ext2_get_block_num — resolve logical block index to physical block number.
+ *
+ * Returns the physical block number for the given logical block (iblock).
+ * Returns 0 if the block is a hole (unallocated).  Returns -1 on error
+ * (corrupted indirect block, or doubly/triply indirect not supported).
+ *
+ * Sparse files (files with holes) have i_block[] entries set to 0 for
+ * unallocated regions.  A physical block number of 0 is reserved (the
+ * boot block cannot be part of a file), so 0 unambiguously means hole.
+ */
+static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode,
+                                   uint32_t iblock) {
     if (iblock < 12) {
-        /* Direct block */
-        if (inode->i_block[iblock] == 0) return -1;
-        return ext2_read_block(ep, inode->i_block[iblock], buf);
+        /* Direct block pointer — 0 means hole */
+        return (int64_t)inode->i_block[iblock];
     }
 
     /* Singly indirect */
@@ -114,15 +128,30 @@ static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
     uint32_t sind = iblock - 12;
 
     if (sind < entries_per_block) {
-        if (inode->i_block[12] == 0) return -1;
+        if (inode->i_block[12] == 0)
+            return 0; /* hole — indirect block not allocated */
         uint8_t indir[4096];
-        if (ext2_read_block(ep, inode->i_block[12], indir) < 0) return -1;
+        if (ext2_read_block(ep, inode->i_block[12], indir) < 0)
+            return -1;
         uint32_t *ptrs = (uint32_t *)indir;
-        if (ptrs[sind] == 0) return -1;
-        return ext2_read_block(ep, ptrs[sind], buf);
+        return (int64_t)ptrs[sind]; /* 0 means hole here too */
     }
 
-    return -1; /* doubly/triply indirect not needed for basic support */
+    /* Doubly/triply indirect not needed for basic support */
+    return -1;
+}
+
+static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
+                                  uint32_t iblock, uint8_t *buf) {
+    int64_t phys_block = ext2_get_block_num(ep, inode, iblock);
+    if (phys_block < 0)
+        return -1;
+    if (phys_block == 0) {
+        /* Hole — sparse block; fill with zeros */
+        memset(buf, 0, ep->block_size);
+        return 0;
+    }
+    return ext2_read_block(ep, (uint32_t)phys_block, buf);
 }
 
 /* ── HTree: Half MD4 hash function ──────────────────────────────── */

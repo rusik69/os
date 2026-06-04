@@ -232,7 +232,6 @@ void mutex_lock(int id) {
             m->spinner_count++;
             mutex_spin_attempts++;
 
-            int owner_on_cpu = (owner && owner->on_cpu);
             int spin_count = 0;
 
             while (spin_count < MUTEX_SPIN_MAX) {
