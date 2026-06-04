@@ -1,10 +1,12 @@
-/* bridge.c — Learning bridge with netdevice-based frame forwarding
- * and IGMP snooping for multicast filtering (Item 163).
+/* bridge.c — Learning bridge with netdevice-based frame forwarding,
+ * IGMP snooping for multicast filtering (Item 163),
+ * and 802.1D-1998 Spanning Tree Protocol (STP, Item 164).
  *
  * Implements:
  *   - MAC learning with ageing
  *   - Unicast forwarding via FDB lookup
  *   - Broadcast flooding to all ports except ingress
+ *   - STP port state enforcement (blocking/listening/learning/forwarding)
  *   - Multicast forwarding with IGMP snooping:
  *     When an IGMP Membership Report is seen on a port, that port
  *     is added to the multicast group's port_mask.  Subsequent
@@ -14,13 +16,24 @@
 
 #define KERNEL_INTERNAL
 #include "bridge.h"
+#include "stp.h"
 #include "netdevice.h"
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
+#include "timers.h"
 #include "net_igmp.h"    /* IGMP type constants */
 
 static struct bridge g_bridge;
+
+/* ── STP timer callback ──────────────────────────────────────────── */
+
+static void stp_timer_cb(void *arg) {
+    (void)arg;
+    stp_tick();
+    /* Re-schedule for next tick */
+    timer_schedule(stp_timer_cb, NULL, 1);
+}
 
 /* ── Initialisation ──────────────────────────────────────────────── */
 
@@ -28,7 +41,15 @@ int bridge_init(void) {
     if (g_bridge.initialized) return -1;
     memset(&g_bridge, 0, sizeof(g_bridge));
     g_bridge.initialized = 1;
-    kprintf("[OK] Bridge initialized (IGMP snooping enabled)\n");
+
+    /* Initialise STP with the bridge MAC and default priority */
+    uint8_t default_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    stp_init(default_mac, 32768);
+
+    /* Schedule the STP tick timer (fires every tick, drives state machine) */
+    timer_schedule(stp_timer_cb, NULL, 1);
+
+    kprintf("[OK] Bridge initialized (STP + IGMP snooping enabled)\n");
     return 0;
 }
 
@@ -38,6 +59,8 @@ int bridge_add_port(int port_iface) {
     if (!g_bridge.initialized) return -1;
     if (g_bridge.num_ports >= BRIDGE_MAX_PORTS) return -1;
     g_bridge.ports[g_bridge.num_ports++] = port_iface;
+    /* Register with STP */
+    stp_add_port(port_iface, 128, 0);
     return 0;
 }
 
@@ -348,8 +371,28 @@ void bridge_handle(const uint8_t *frame, int len, int ingress_port)
     const uint8_t *dst_mac = frame;
     const uint8_t *src_mac = frame + 6;
 
-    /* Learn source MAC */
-    bridge_fdb_learn(src_mac, ingress_port);
+    /* ── STP BPDU handling ──────────────────────────────────────────
+     * STP uses destination MAC 01:80:C2:00:00:00 (IEEE 802.1D).
+     * These frames are intercepted and processed by the STP engine;
+     * they are never forwarded. */
+    static const uint8_t stp_mac[6] = { 0x01, 0x80, 0xC2, 0x00, 0x00, 0x00 };
+    if (memcmp(dst_mac, stp_mac, 6) == 0) {
+        stp_receive_bpdu(ingress_port, frame, len);
+        return;  /* never forward BPDUs */
+    }
+
+    /* ── STP port state check ───────────────────────────────────────
+     * Only forward traffic on ports in the Forwarding state.
+     * MAC learning is allowed on Forwarding + Learning ports.
+     * Frames received on non-forwarding ports are silently dropped. */
+    if (!stp_port_is_forwarding(ingress_port)) {
+        return;  /* drop frame — port is not forwarding */
+    }
+
+    /* Learn source MAC on learning/forwarding ports */
+    if (stp_port_is_learning(ingress_port)) {
+        bridge_fdb_learn(src_mac, ingress_port);
+    }
 
     /* ── Multicast forwarding with IGMP snooping ────────────────────
      *

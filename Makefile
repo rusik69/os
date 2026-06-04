@@ -160,6 +160,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/dns_cache.c \
          src/net/pkt_sched.c \
          src/net/bridge.c \
+         src/net/stp.c \
          src/net/vlan.c \
          src/net/tun.c \
          src/net/net_ns.c \

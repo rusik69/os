@@ -2,10 +2,11 @@
 #define BRIDGE_H
 
 #include "types.h"
+#include "stp.h"
 
 /* FDB table size */
 #define BRIDGE_FDB_SIZE 64
-#define BRIDGE_MAX_PORTS 8
+#define BRIDGE_MAX_PORTS STP_MAX_PORTS  /* must match STP port count */
 #define BRIDGE_FDB_AGE_TICKS 3000  /* 300 seconds at 10 ticks/s */
 
 /* ── IGMP snooping constants ────────────────────────────────────── */
