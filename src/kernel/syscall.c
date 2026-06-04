@@ -4,6 +4,7 @@
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
 #include "mnt_namespace.h"
+#include "user_namespace.h"
 #include "ioprio.h"
 #include "scheduler.h"
 #include "signal.h"
@@ -1641,7 +1642,7 @@ static uint64_t sys_unshare(uint64_t flags)
      * (CLONE_VM, CLONE_THREAD, etc.) are invalid for unshare. */
     uint64_t ns_mask = CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWPID |
                        CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWCGROUP |
-                       CLONE_NEWTIME;
+                       CLONE_NEWTIME | CLONE_NEWUSER;
 
     if (flags & ~ns_mask)
         return (uint64_t)-EINVAL;
@@ -1725,6 +1726,27 @@ static uint64_t sys_unshare(uint64_t flags)
         cur->timens_mono_offset = 0;
         cur->timens_boottime_offset = 0;
         kprintf("[TIMENS] PID %d created new time namespace\n", cur->pid);
+    }
+
+    /* ── CLONE_NEWUSER: create a new user namespace (Item 114) ──── */
+    if (flags & CLONE_NEWUSER) {
+        struct user_namespace *new_ns = user_ns_create(
+            cur->user_ns ? cur->user_ns : &init_user_ns,
+            cur->uid, cur->gid);
+        if (!new_ns) {
+            return (uint64_t)-ENOMEM;
+        }
+        cur->user_ns = new_ns;
+        /* Inside the new user namespace, the process gets UID 0 (root).
+         * The caller's UID/GID in the parent namespace are mapped to 0
+         * inside.  Set the process's euid to reflect root-equivalent
+         * privileges inside this namespace. */
+        cur->uid  = 0;
+        cur->gid  = 0;
+        cur->euid = 0;
+        cur->egid = 0;
+        kprintf("[USERNS] unshare(NEWUSER): PID %d is root in new namespace id=%d\n",
+                cur->pid, new_ns->id);
     }
 
     /* Record the set of unshared namespace flags on this process.

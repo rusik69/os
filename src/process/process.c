@@ -17,6 +17,7 @@
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
 #include "mnt_namespace.h"
+#include "user_namespace.h"
 #include "kcov.h"
 
 static struct process process_table[PROCESS_MAX];
@@ -249,6 +250,9 @@ void process_init(void) {
     /* Initialize cgroup namespace subsystem (Item 117) */
     cgroup_ns_init();
 
+    /* Initialize user namespace subsystem (Item 114) */
+    user_ns_init();
+
     /* Create idle process (pid 0) - represents the boot thread */
     process_table[0].pid = 0;
     process_table[0].state = PROCESS_RUNNING;
@@ -291,6 +295,8 @@ void process_init(void) {
     /* Assign the idle process to the root PID namespace */
     process_table[0].pid_ns = &init_pid_ns;
     process_table[0].ns_pid = 0;
+    /* Assign the idle process to the root user namespace */
+    process_table[0].user_ns = &init_user_ns;
     current_process = &process_table[0];
 
     /* ── Initialize CFS and resource tracking fields ── */
@@ -462,6 +468,16 @@ struct process *process_create(void (*entry)(void), const char *name) {
             proc->cgroup_ns = cgroup_ns_get(parent->cgroup_ns);
         } else {
             proc->cgroup_ns = NULL;  /* root namespace */
+        }
+    }
+
+    /* ── User namespace: inherit from parent (Item 114) ──────────── */
+    {
+        struct process *parent = current_process;
+        if (parent && parent->user_ns) {
+            proc->user_ns = parent->user_ns;
+        } else {
+            proc->user_ns = &init_user_ns;  /* root namespace */
         }
     }
     proc->cpu_system = 0;
@@ -1060,6 +1076,33 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     } else if (child->mnt_ns) {
         /* Increment refcount on inherited mount namespace */
         mnt_ns_get(child->mnt_ns);
+    }
+
+    /* ── Handle CLONE_NEWUSER: child gets a new user namespace (Item 114) ── */
+    if (flags & CLONE_NEWUSER) {
+        struct user_namespace *new_ns = user_ns_create(parent->user_ns
+            ? parent->user_ns : &init_user_ns,
+            parent->uid, parent->gid);
+        if (!new_ns) {
+            free_guarded_kernel_stack(child);
+            child->state = PROCESS_UNUSED;
+            __asm__ volatile("sti");
+            return -1;
+        }
+        child->user_ns = new_ns;
+        /* Inside the new user namespace, the child is initially mapped
+         * to UID 0 (root).  The parent's UID/GID in the parent namespace
+         * are mapped to 0 inside — set the child's euid to 0 to reflect
+         * that it has root-equivalent privileges inside this namespace. */
+        child->uid  = 0;
+        child->gid  = 0;
+        child->euid = 0;
+        child->egid = 0;
+        kprintf("[USERNS] clone(NEWUSER): child pid=%d is root in new namespace id=%d\n",
+                child->pid, new_ns->id);
+    } else {
+        /* Inherit parent's user namespace (just copy the pointer) */
+        child->user_ns = parent->user_ns;
     }
 
     /* Allocate fresh kernel stack */

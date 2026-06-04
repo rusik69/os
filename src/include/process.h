@@ -91,6 +91,7 @@ struct itimerval {
 #define CLONE_NEWIPC        0x08000000
 #define CLONE_NEWCGROUP     0x02000000
 #define CLONE_NEWTIME       0x00000080
+#define CLONE_NEWUSER       0x10000000  /* Item 114 — user namespace */
 
 
 
@@ -266,6 +267,9 @@ struct process {
 
     /* ── Mount namespace (Item 112) ─────────────────────────────── */
     struct mnt_namespace *mnt_ns;   /* mount namespace (NULL = root/inherited global) */
+
+    /* ── User namespace (Item 114) ─────────────────────────────────── */
+    struct user_namespace *user_ns; /* user namespace (NULL = root/initial) */
 
     /* ── Cgroup namespace (Item 117) ────────────────────────────── */
     struct cgroup_namespace *cgroup_ns;  /* NULL = root namespace */
