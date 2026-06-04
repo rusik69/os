@@ -993,6 +993,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] Processes created\n");
 #endif
 
+    /* ── Transition page poisoning from EARLY to LATE stage ─────────
+     * All kernel subsystems are now initialized.  Switch to LATE-stage
+     * poison patterns and verify that EARLY-stage poisoned regions
+     * have not been corrupted (use-before-init detection). */
+    page_poison_enter_late_stage();
+
     /* Enable interrupts */
     sti();
 
