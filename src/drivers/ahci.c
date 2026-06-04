@@ -87,11 +87,13 @@
 #define FIS_TYPE_SETDEV  0xA1  /* Set Device Bits (device to host) */
 
 /* ATA commands */
-#define ATA_CMD_READ_DMA_EX      0x25
-#define ATA_CMD_WRITE_DMA_EX     0x35
-#define ATA_CMD_READ_FPDMA_QUEUED  0x60
-#define ATA_CMD_WRITE_FPDMA_QUEUED 0x61
-#define ATA_CMD_IDENTIFY         0xEC
+#define ATA_CMD_READ_DMA_EX          0x25
+#define ATA_CMD_WRITE_DMA_EX         0x35
+#define ATA_CMD_READ_FPDMA_QUEUED    0x60
+#define ATA_CMD_WRITE_FPDMA_QUEUED   0x61
+#define ATA_CMD_IDENTIFY             0xEC
+#define ATA_CMD_DATA_SET_MGMT        0x06  /* DATA SET MANAGEMENT (DSM) */
+#define ATA_DSM_TRIM                 0x01  /* TRIM bit in feature register */
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 #define AHCI_SLOT_COUNT    32
@@ -405,35 +407,83 @@ static void ahci_drain_queue(struct ahci_port *port) {
 
         /* For non-NCQ (slot 0 or device doesn't support NCQ) */
         if (slot == 0 || !port->ncq_capable) {
-            ahci_build_raw_cmd(port, slot,
-                               (req->flags & BLK_REQ_READ) ? ATA_CMD_READ_DMA_EX
-                                                            : ATA_CMD_WRITE_DMA_EX,
-                               (uint32_t)req->lba, (uint8_t)req->count,
-                               port->slots[slot].data_buf_phys,
-                               (req->flags & BLK_REQ_WRITE) ? 1 : 0,
-                               sizeof(struct fis_reg_h2d) / 4);
-            /* Copy data to DMA buffer for writes */
-            if (req->flags & BLK_REQ_WRITE) {
-                memcpy(port->slots[slot].data_buf_virt, req->buf,
-                       (size_t)req->count * AHCI_SECTOR_SIZE);
+            if (req->flags & BLK_REQ_DISCARD) {
+                /* ATA DATA SET MANAGEMENT - TRIM command (non-data NCQ not supported).
+                 * Build a non-NCQ command using feature=TRIM, command=DATA_SET_MGMT.
+                 * The data buffer contains LBA range entries (8 bytes each):
+                 *   bits 47:0  = LBA
+                 *   bits 63:48 = sector count (0 means 65536)
+                 * We use slot 0 for non-NCQ TRIM. */
+                struct trim_entry {
+                    uint64_t range;
+                } __attribute__((packed));
+
+                /* Build the TRIM range entry: LBA in low 48 bits, count in high 16 bits */
+                uint64_t lba = req->lba;
+                uint32_t count = req->count;
+                if (count > 65535) count = 65535; /* clamp to max per entry */
+                struct trim_entry entry;
+                entry.range = lba | ((uint64_t)(count == 65535 ? 0 : count) << 48);
+
+                /* Copy the range entry to the slot's data buffer */
+                memcpy(port->slots[slot].data_buf_virt, &entry, sizeof(entry));
+
+                /* Build the command FIS with DSM opcode and TRIM feature */
+                ahci_build_raw_cmd(port, slot,
+                                   ATA_CMD_DATA_SET_MGMT,
+                                   0, 0,  /* lba=0, count=0 (not used for DSM) */
+                                   port->slots[slot].data_buf_phys,
+                                   1,     /* is_write=1 (device receives data) */
+                                   sizeof(struct fis_reg_h2d) / 4);
+
+                /* Set feature register to TRIM (0x01) */
+                struct ahci_cmd_table *tbl = (struct ahci_cmd_table *)
+                    port->slots[slot].cmd_tbl_virt;
+                struct fis_reg_h2d *fis = (struct fis_reg_h2d *)tbl->cfis;
+                fis->featurel = ATA_DSM_TRIM;
+
+                /* TRIM data transfer is 8 bytes (one range entry) */
+                tbl->prdt[0].dbc = sizeof(struct trim_entry) - 1;
+
+                /* Submit synchronously */
+                port->slots[slot].req = req;
+                spinlock_irqsave_release(&ahci_lock, irq_flags);
+
+                int ret = ahci_issue_non_ncq(port, slot);
+                req->result = ret;
+                port->slots[slot].req = NULL;
+                blk_request_done(req);
+            } else {
+                ahci_build_raw_cmd(port, slot,
+                                   (req->flags & BLK_REQ_READ) ? ATA_CMD_READ_DMA_EX
+                                                                : ATA_CMD_WRITE_DMA_EX,
+                                   (uint32_t)req->lba, (uint8_t)req->count,
+                                   port->slots[slot].data_buf_phys,
+                                   (req->flags & BLK_REQ_WRITE) ? 1 : 0,
+                                   sizeof(struct fis_reg_h2d) / 4);
+                /* Copy data to DMA buffer for writes */
+                if (req->flags & BLK_REQ_WRITE) {
+                    memcpy(port->slots[slot].data_buf_virt, req->buf,
+                           (size_t)req->count * AHCI_SECTOR_SIZE);
+                }
+
+                /* Submit synchronous for slot 0 (non-NCQ) */
+                port->slots[slot].req = req;
+                spinlock_irqsave_release(&ahci_lock, irq_flags);
+
+                /* Non-NCQ: issue synchronously (will poll briefly), then complete */
+                int ret = ahci_issue_non_ncq(port, slot);
+
+                /* Copy data back for reads */
+                if (ret == 0 && (req->flags & BLK_REQ_READ)) {
+                    memcpy(req->buf, port->slots[slot].data_buf_virt,
+                           (size_t)req->count * AHCI_SECTOR_SIZE);
+                }
+
+                req->result = ret;
+                port->slots[slot].req = NULL;
+                blk_request_done(req);
             }
-
-            /* Submit synchronous for slot 0 (non-NCQ) */
-            port->slots[slot].req = req;
-            spinlock_irqsave_release(&ahci_lock, irq_flags);
-
-            /* Non-NCQ: issue synchronously (will poll briefly), then complete */
-            int ret = ahci_issue_non_ncq(port, slot);
-
-            /* Copy data back for reads */
-            if (ret == 0 && (req->flags & BLK_REQ_READ)) {
-                memcpy(req->buf, port->slots[slot].data_buf_virt,
-                       (size_t)req->count * AHCI_SECTOR_SIZE);
-            }
-
-            req->result = ret;
-            port->slots[slot].req = NULL;
-            blk_request_done(req);
         } else {
             /* NCQ: build and issue asynchronously */
             ahci_build_ncq_cmd(port, slot, req);
