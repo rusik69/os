@@ -50,6 +50,15 @@ jobs:
       - name: Check binary
         run: ls -lh build/kernel.bin
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-gcc-release
+          path: |
+            build/kernel.bin
+            build/kernel.elf
+          if-no-files-found: warn
+
   # ── Build: GCC debug (no optimization, full asserts) ───────────────
   build-gcc-debug:
     name: Build (GCC debug)
@@ -93,6 +102,15 @@ jobs:
       - name: Check binary
         run: ls -lh build/kernel.bin
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-gcc-debug
+          path: |
+            build/kernel.bin
+            build/kernel.elf
+          if-no-files-found: warn
+
   # ── Build: Clang release ────────────────────────────────────────────
   build-clang-release:
     name: Build (Clang release)
@@ -130,6 +148,15 @@ jobs:
 
       - name: Check binary
         run: ls -lh build/kernel.bin
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-clang-release
+          path: |
+            build/kernel.bin
+            build/kernel.elf
+          if-no-files-found: warn
 
   # ── Build: Clang debug (no optimization, full asserts) ─────────────
   build-clang-debug:
@@ -173,6 +200,15 @@ jobs:
 
       - name: Check binary
         run: ls -lh build/kernel.bin
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-clang-debug
+          path: |
+            build/kernel.bin
+            build/kernel.elf
+          if-no-files-found: warn
 
   # ── Host-side libc unit tests ───────────────────────────────────────
   libc-test:
