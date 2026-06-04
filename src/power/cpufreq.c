@@ -30,6 +30,7 @@
 #include "string.h"
 #include "sysfs.h"
 #include "cpufreq_ondemand.h"
+#include "cpufreq_schedutil.h"
 
 /* ─── MSR definitions ──────────────────────────────────────────────── */
 
@@ -395,6 +396,9 @@ static int sysfs_read_max_freq(char *buf, uint32_t max_size, void *priv)
 static int sysfs_read_governor(char *buf, uint32_t max_size, void *priv)
 {
     (void)priv;
+    /* Check if schedutil governor is active (check first — highest priority) */
+    if (cpufreq_schedutil_is_active())
+        return snprintf(buf, max_size, "schedutil\n");
     /* Check if ondemand governor is active */
     if (cpufreq_ondemand_is_active())
         return snprintf(buf, max_size, "ondemand\n");
@@ -433,24 +437,34 @@ static int sysfs_write_governor(const char *data, uint32_t size, void *priv)
         buf[--len] = '\0';
 
     if (strcmp(buf, "performance") == 0) {
+        cpufreq_schedutil_stop();
         cpufreq_ondemand_stop();
         cpupstate_set_state(0);
         return 0;
     }
     if (strcmp(buf, "powersave") == 0) {
+        cpufreq_schedutil_stop();
         cpufreq_ondemand_stop();
         if (g_cpufreq.num_states > 0)
             cpupstate_set_state(g_cpufreq.num_states - 1);
         return 0;
     }
     if (strcmp(buf, "userspace") == 0) {
+        cpufreq_schedutil_stop();
         cpufreq_ondemand_stop();
         /* Will be set via scaling_setspeed */
         return 0;
     }
     if (strcmp(buf, "ondemand") == 0) {
         /* OnDemand governor: start periodic sampling */
+        cpufreq_schedutil_stop();
         cpufreq_ondemand_start();
+        return 0;
+    }
+    if (strcmp(buf, "schedutil") == 0) {
+        /* SchedUtil governor: stop ondemand if running, start schedutil */
+        cpufreq_ondemand_stop();
+        cpufreq_schedutil_start();
         return 0;
     }
     return -1; /* Unknown governor */
@@ -546,7 +560,7 @@ static int cpufreq_sysfs_init(void)
 
     sysfs_create_writable_file(
         "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors",
-        "performance powersave userspace ondemand\n", NULL, NULL, NULL);
+        "performance powersave userspace ondemand schedutil\n", NULL, NULL, NULL);
 
     sysfs_create_writable_file(
         "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",

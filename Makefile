@@ -111,6 +111,7 @@ C_SRCS = src/kernel/kernel.c \
          src/power/wakeup.c \
          src/power/cpufreq.c \
          src/power/cpufreq_ondemand.c \
+         src/power/cpufreq_schedutil.c \
          src/drivers/ahci.c \
          src/drivers/nvme.c \
          src/drivers/usb_ehci.c \
