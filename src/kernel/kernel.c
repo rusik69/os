@@ -538,6 +538,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Workqueue (deferred work execution via kthread) */
     workqueue_init();
 
+    /* ksoftirqd — per-CPU kernel thread for deferred softirq processing.
+     * Processes softirqs that cannot be handled in IRQ context without
+     * causing livelock.  Runs at SCHED_IDLE priority. */
+    create_ksoftirqd();
+
     /* Thread info table for pthread support */
     thread_info_init();
 

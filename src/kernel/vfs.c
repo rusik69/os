@@ -346,15 +346,16 @@ static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offse
     (void)priv;
     (void)mode;
     /* For SMTF, fallocate just ensures the file is large enough */
-    struct vfs_stat st;
-    if (fs_stat(path, &st.size, &st.type) == 0) {
+    uint32_t fs_size = 0;
+    uint8_t  fs_type = 0;
+    if (fs_stat(path, &fs_size, &fs_type) == 0) {
         uint32_t needed = offset + len;
-        if (needed > st.size) {
+        if (needed > fs_size) {
             /* Extend file with zeros */
-            uint8_t *zero_buf = (uint8_t *)kmalloc(needed - st.size);
+            uint8_t *zero_buf = (uint8_t *)kmalloc(needed - fs_size);
             if (!zero_buf) return -1;
-            memset(zero_buf, 0, needed - st.size);
-            int ret = fs_append(path, zero_buf, needed - st.size);
+            memset(zero_buf, 0, needed - fs_size);
+            int ret = fs_append(path, zero_buf, needed - fs_size);
             kfree(zero_buf);
             return ret;
         }
