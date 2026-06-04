@@ -104,6 +104,33 @@ static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode
     return 0;
 }
 
+/*
+ * Get the 64-bit file size from an ext2 inode.
+ *
+ * When EXT2_FEATURE_RO_COMPAT_LARGE_FILE is set, regular files use the
+ * i_dir_acl field (offset 108 in the inode) as the upper 32 bits of the
+ * file size.  This field is repurposed: for regular files it stores the
+ * high 32 bits of i_size; for directories it still holds the directory
+ * ACL block number (which we do not use in read-only mode).
+ *
+ * Returns the 64-bit file size.  For directories and other non-file
+ * inodes, the size is returned as-is (32-bit zero-extended).
+ */
+static uint64_t ext2_inode_get_size(struct ext2_priv *ep,
+                                     const struct ext2_inode *inode)
+{
+    uint64_t size = inode->i_size;
+
+    /* If LARGE_FILE feature is set, combine with the upper 32 bits
+     * from i_dir_acl for regular files (non-directory inodes). */
+    if ((ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_LARGE_FILE) &&
+        !(inode->i_mode & 0x4000)) {
+        size |= ((uint64_t)inode->i_dir_acl << 32);
+    }
+
+    return size;
+}
+
 /* Read block from inode (handles indirect blocks) */
 /*
  * ext2_get_block_num — resolve logical block index to physical block number.
@@ -531,13 +558,13 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
     uint32_t iblock = 0;
     uint32_t offset = 0;
 
-    while (offset < dir_inode->i_size) {
+    while (offset < ext2_inode_get_size(ep, dir_inode)) {
         uint8_t block_buf[4096];
         if (ext2_read_inode_block(ep, dir_inode, iblock, block_buf) < 0)
             break;
 
         uint32_t pos = 0;
-        while (pos < ep->block_size && offset + pos < dir_inode->i_size) {
+        while (pos < ep->block_size && offset + pos < ext2_inode_get_size(ep, dir_inode)) {
             struct {
                 uint32_t inode;
                 uint16_t rec_len;
@@ -572,13 +599,13 @@ static int ext2_read_dir(struct ext2_priv *ep, struct ext2_inode *inode,
     uint32_t offset = 0;
     int count = 0;
 
-    while (offset < inode->i_size && count < max) {
+    while (offset < ext2_inode_get_size(ep, inode) && count < max) {
         uint8_t block_buf[4096];
         if (ext2_read_inode_block(ep, inode, iblock, block_buf) < 0)
             break;
 
         uint32_t pos = 0;
-        while (pos < ep->block_size && offset + pos < inode->i_size && count < max) {
+        while (pos < ep->block_size && offset + pos < ext2_inode_get_size(ep, inode) && count < max) {
             struct {
                 uint32_t inode;
                 uint16_t rec_len;
@@ -655,7 +682,8 @@ static int ext2_read(void *priv, const char *path, void *buf,
     struct ext2_inode inode;
     if (ext2_read_inode(ep, ino, &inode) < 0) return -1;
 
-    uint32_t to_read = inode.i_size;
+    uint64_t file_size = ext2_inode_get_size(ep, &inode);
+    uint64_t to_read = file_size;
     if (to_read > max_size) to_read = max_size;
 
     uint32_t iblock = 0;
@@ -665,7 +693,7 @@ static int ext2_read(void *priv, const char *path, void *buf,
         if (ext2_read_inode_block(ep, &inode, iblock, block_buf) < 0)
             break;
 
-        uint32_t chunk = to_read - done;
+        uint32_t chunk = (uint32_t)(to_read - done);
         if (chunk > ep->block_size) chunk = ep->block_size;
         memcpy((uint8_t *)buf + done, block_buf, chunk);
 
@@ -686,7 +714,7 @@ static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
     if (ext2_read_inode(ep, ino, &inode) < 0) return -1;
 
     memset(st, 0, sizeof(*st));
-    st->size = inode.i_size;
+    st->size = ext2_inode_get_size(ep, &inode);
     st->type = (inode.i_mode & 0x4000) ? 2 : 1; /* directory vs file */
     st->uid  = inode.i_uid;
     st->gid  = inode.i_gid;

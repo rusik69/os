@@ -94,6 +94,11 @@ struct ext2_inode {
 #define EXT2_FEATURE_COMPAT_RESIZE_INO    0x0010
 #define EXT2_FEATURE_COMPAT_DIR_INDEX     0x0020  /* HTree directory indexing */
 
+/* Read-only compatible feature flags (s_feature_ro_compat) */
+#define EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER  0x0001
+#define EXT2_FEATURE_RO_COMPAT_LARGE_FILE    0x0002
+#define EXT2_FEATURE_RO_COMPAT_BTREE_DIR     0x0004
+
 /* Inode flags */
 #define EXT2_INDEX_FL   0x00001000  /* Has HTree index */
 #define EXT2_DIRSYNC_FL 0x00010000  /* Directory sync */

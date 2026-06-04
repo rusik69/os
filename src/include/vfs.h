@@ -60,7 +60,7 @@ struct posix_acl {
 
 /* VFS stat result */
 struct vfs_stat {
-    uint32_t size;
+    uint64_t size;
     uint8_t  type;   /* 1=file, 2=dir */
     uint16_t uid;
     uint16_t gid;
