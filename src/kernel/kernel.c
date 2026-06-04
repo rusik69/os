@@ -140,6 +140,7 @@
 #include "splash.h"
 #include "sysfs.h"
 #include "debugfs.h"
+#include "dyndbg.h"
 #include "kunit.h"
 #include "fanotify.h"
 #include "fs_mount_prop.h"
@@ -631,6 +632,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Debugfs — kernel debug data filesystem */
     debugfs_init();
+
+    /* Dynamic debug — module/function-level pr_debug control via debugfs */
+    dyndbg_init();
 
     /* KUnit — in-kernel unit test framework */
     kunit_init();
