@@ -86,6 +86,7 @@
 #include "tmpfs.h"
 #include "acpi_thermal.h"
 #include "acpi_ec.h"
+#include "psi.h"
 #include "compaction.h"
 #include "memhotplug.h"
 #include "page_poison.h"
@@ -486,6 +487,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
     splash_progress(5);
+
+    /* PSI — Pressure Stall Information (tracks CPU/memory/IO pressure) */
+    psi_init();
 
     /* PM QoS — latency constraints for cpuidle C-state selection */
     pm_qos_init();

@@ -22,6 +22,7 @@
 #include "config_gz.h"
 #include "process_rlimit.h"
 #include "idt.h"
+#include "psi.h"
 #include "cpu_topology.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
@@ -1250,6 +1251,18 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
     } else if (strcmp(path, "/proc/sys/kernel") == 0) {
         /* /proc/sys/kernel is a directory */
         return -1;
+    } else if (strcmp(path, "/proc/pressure") == 0) {
+        /* /proc/pressure is a directory listing */
+        return -1;
+    } else if (strcmp(path, "/proc/pressure/cpu") == 0) {
+        len = psi_gen_proc_file(PSI_RES_CPU, buf, (int)max_size);
+        if (len < 0) return -1;
+    } else if (strcmp(path, "/proc/pressure/memory") == 0) {
+        len = psi_gen_proc_file(PSI_RES_MEMORY, buf, (int)max_size);
+        if (len < 0) return -1;
+    } else if (strcmp(path, "/proc/pressure/io") == 0) {
+        len = psi_gen_proc_file(PSI_RES_IO, buf, (int)max_size);
+        if (len < 0) return -1;
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */

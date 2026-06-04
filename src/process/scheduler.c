@@ -25,6 +25,7 @@
 #include "preempt.h"
 #include "sysctl.h"
 #include "pelt.h"
+#include "psi.h"
 #include "cpuset.h"
 #include "cpu_topology.h"
 #include "page_cache.h"
@@ -695,6 +696,23 @@ void scheduler_tick(int was_user) {
     /* Update PELT load tracking: running = 1 (we are on CPU),
      * runnable = 1 (we're the current process and thus runnable). */
     pelt_update(&cur->pelt, 1, 1, timer_get_ticks());
+
+    /* Update PSI CPU pressure: if there are tasks in the runqueue
+     * waiting, the CPU is overcommitted and some tasks are stalled. */
+    {
+        struct runqueue_stats rq_stats;
+        scheduler_get_runqueue_stats(ci->cpu_id, &rq_stats);
+        /* "some": at least one task is waiting for CPU */
+        uint64_t some_ticks = (rq_stats.nr_runnable > 0) ? 1 : 0;
+        /* "full": all non-idle tasks on this CPU are waiting.
+         * Approximate: if we're running a task and others are waiting,
+         * then at least some tasks are stalled but not all.
+         * Full stall requires the runqueue to have tasks while
+         * nobody is running — that's the idle case which we handle
+         * separately via idle_ticks tracking. */
+        uint64_t full_ticks = 0;
+        psi_update(PSI_RES_CPU, 1, some_ticks, full_ticks);
+    }
 
     /* Account this tick to the process's CPU cgroup (if assigned). */
     if (cur->cpu_cgroup_id > 0)
