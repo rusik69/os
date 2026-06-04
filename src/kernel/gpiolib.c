@@ -3,12 +3,22 @@
 #include "kernel.h"
 #include "string.h"
 #include "spinlock.h"
+#include "idt.h"
+#include "export.h"
+#include "errno.h"
 
 /*
  * GPIO library — chip-based abstraction over x86-64 I/O ports.
  *
  * Chips register with gpiochip_add(); the library maps global GPIO
  * numbers to chip+offset and dispatches through the chip's ops.
+ *
+ * IRQ support: GPIO chips with interrupt capability register an
+ * irq_base and optionally an irq_parent_vector.  gpio_to_irq()
+ * maps GPIO numbers to IRQ vectors in a reserved range (96–191).
+ * Per-line interrupt handlers can be registered with gpio_request_irq();
+ * the chip driver's parent IRQ handler calls gpiochip_irq_demux() to
+ * dispatch to individual handlers.
  */
 
 #define GPIO_MAX_GPIOS (GPIO_MAX_CHIPS * GPIO_MAX_LINES)
@@ -20,6 +30,8 @@ static spinlock_t gpiolib_lock;
 /* Per-GPIO allocation tracking */
 static char gpio_labels[GPIO_MAX_GPIOS][GPIO_NAME_MAX];
 static int  gpio_allocated[GPIO_MAX_GPIOS];
+
+/* ── GPIO → chip+offset translation ────────────────────────────────── */
 
 static int gpio_to_chip_offset(unsigned int gpio,
                                struct gpio_chip **chip,
@@ -38,6 +50,8 @@ static int gpio_to_chip_offset(unsigned int gpio,
     return -1;
 }
 
+/* ── Standard GPIO operations ──────────────────────────────────────── */
+
 int gpio_request(unsigned int gpio, const char *label)
 {
     struct gpio_chip *chip;
@@ -45,18 +59,18 @@ int gpio_request(unsigned int gpio, const char *label)
     int ret;
 
     if (gpio >= GPIO_MAX_GPIOS)
-        return -1;
+        return -EINVAL;
 
     spinlock_acquire(&gpiolib_lock);
 
     if (gpio_allocated[gpio]) {
         spinlock_release(&gpiolib_lock);
-        return -1;  /* already allocated */
+        return -EBUSY;
     }
 
     if (gpio_to_chip_offset(gpio, &chip, &offset) < 0) {
         spinlock_release(&gpiolib_lock);
-        return -1;
+        return -ENODEV;
     }
 
     if (chip->ops && chip->ops->request)
@@ -110,10 +124,10 @@ int gpio_direction_input(unsigned int gpio)
     unsigned int offset;
 
     if (gpio >= GPIO_MAX_GPIOS || !gpio_allocated[gpio])
-        return -1;
+        return -EINVAL;
 
     spinlock_acquire(&gpiolib_lock);
-    int ret = -1;
+    int ret = -EINVAL;
     if (gpio_to_chip_offset(gpio, &chip, &offset) == 0) {
         if (chip->ops && chip->ops->direction_input)
             ret = chip->ops->direction_input(chip, offset);
@@ -128,10 +142,10 @@ int gpio_direction_output(unsigned int gpio, int value)
     unsigned int offset;
 
     if (gpio >= GPIO_MAX_GPIOS || !gpio_allocated[gpio])
-        return -1;
+        return -EINVAL;
 
     spinlock_acquire(&gpiolib_lock);
-    int ret = -1;
+    int ret = -EINVAL;
     if (gpio_to_chip_offset(gpio, &chip, &offset) == 0) {
         if (chip->ops && chip->ops->direction_output)
             ret = chip->ops->direction_output(chip, offset, value);
@@ -146,10 +160,10 @@ int gpio_get_value(unsigned int gpio)
     unsigned int offset;
 
     if (gpio >= GPIO_MAX_GPIOS || !gpio_allocated[gpio])
-        return -1;
+        return -EINVAL;
 
     spinlock_acquire(&gpiolib_lock);
-    int val = -1;
+    int val = -EINVAL;
     if (gpio_to_chip_offset(gpio, &chip, &offset) == 0) {
         if (chip->ops && chip->ops->get)
             val = chip->ops->get(chip, offset);
@@ -158,7 +172,7 @@ int gpio_get_value(unsigned int gpio)
     return val;
 }
 
-void gpio_set_value(unsigned int gpio, int value)
+void gpio_set_value(unsigned int gpio, unsigned int value)
 {
     struct gpio_chip *chip;
     unsigned int offset;
@@ -176,14 +190,293 @@ void gpio_set_value(unsigned int gpio, int value)
 
 int gpiochip_add(struct gpio_chip *chip)
 {
+    int ret = 0;
+
     if (!chip || gpio_chip_count >= GPIO_MAX_CHIPS)
-        return -1;
+        return -ENOMEM;
 
     spinlock_acquire(&gpiolib_lock);
+
+    /* Auto-assign IRQ base if the chip has IRQ ops and no base set */
+    if (chip->ops && (chip->ops->irq_request || chip->ops->irq_set_type)) {
+        if (chip->irq_base == 0) {
+            /* Find the next free IRQ vector range */
+            unsigned int next_irq = GPIO_IRQ_BASE_VECTOR;
+            for (int i = 0; i < gpio_chip_count; i++) {
+                if (gpio_chips[i] && gpio_chips[i]->irq_base > 0) {
+                    unsigned int end = gpio_chips[i]->irq_base +
+                                       gpio_chips[i]->ngpio;
+                    if (end > next_irq)
+                        next_irq = end;
+                }
+            }
+            /* Clamp to available range */
+            if (next_irq + chip->ngpio > GPIO_IRQ_MAX_VECTOR + 1) {
+                spinlock_release(&gpiolib_lock);
+                kprintf("[GPIO] WARNING: chip '%s' needs %u IRQ vectors "
+                        "but only %u available\n",
+                        chip->label ? chip->label : "?",
+                        chip->ngpio,
+                        GPIO_IRQ_MAX_VECTOR - next_irq + 1);
+                return -ENOSPC;
+            }
+            chip->irq_base = next_irq;
+        }
+
+        /* Register the per-line vectors as named IDT entries */
+        for (unsigned int i = 0; i < chip->ngpio && i < GPIO_IRQ_MAX_PER_CHIP; i++) {
+            int vec = chip->irq_base + i;
+            if (vec > GPIO_IRQ_MAX_VECTOR)
+                break;
+            /* Set a default name for /proc/interrupts */
+            idt_set_vector_name(vec, chip->label ? chip->label : "gpio");
+        }
+
+        /* If the chip has a parent interrupt vector, register the demux handler */
+        if (chip->irq_parent_vector >= 0) {
+            /* Wrap the chip pointer into a static wrapper for the IDT handler.
+             * Since idt_register_handler takes a simple function pointer, we need
+             * one static wrapper per chip.  For simplicity, we allocate a small
+             * array of wrapper trampolines indexed by chip position. */
+            /* NOTE: The chip driver is responsible for calling gpiochip_irq_demux()
+             * from its own registered parent IRQ handler, since idt_register_handler
+             * doesn't support a context parameter.  We just set the vector name. */
+            idt_set_vector_name(chip->irq_parent_vector, chip->label);
+        }
+    }
+
     gpio_chips[gpio_chip_count++] = chip;
     spinlock_release(&gpiolib_lock);
+
+    kprintf("[GPIO] chip '%s' registered: base=%u ngpio=%u irq_base=%u irq_parent=%d\n",
+            chip->label ? chip->label : "?",
+            chip->base, chip->ngpio,
+            chip->irq_base, chip->irq_parent_vector);
+    return ret;
+}
+
+/* ── GPIO IRQ support ──────────────────────────────────────────────── */
+
+int gpio_to_irq(unsigned int gpio)
+{
+    struct gpio_chip *chip;
+    unsigned int offset;
+
+    if (gpio >= GPIO_MAX_GPIOS)
+        return -EINVAL;
+
+    spinlock_acquire(&gpiolib_lock);
+
+    if (gpio_to_chip_offset(gpio, &chip, &offset) < 0) {
+        spinlock_release(&gpiolib_lock);
+        return -ENODEV;
+    }
+
+    /* Check chip has interrupt support */
+    if (chip->irq_base == 0 || !chip->ops ||
+        (!chip->ops->irq_request && !chip->ops->irq_set_type)) {
+        spinlock_release(&gpiolib_lock);
+        return -ENXIO;
+    }
+
+    int irq = (int)(chip->irq_base + offset);
+    spinlock_release(&gpiolib_lock);
+    return irq;
+}
+
+int gpio_request_irq(unsigned int gpio, isr_handler_t handler,
+                     const char *name, int type)
+{
+    struct gpio_chip *chip;
+    unsigned int offset;
+    int ret;
+
+    if (gpio >= GPIO_MAX_GPIOS || !handler)
+        return -EINVAL;
+
+    spinlock_acquire(&gpiolib_lock);
+
+    /* GPIO must be allocated first */
+    if (!gpio_allocated[gpio]) {
+        spinlock_release(&gpiolib_lock);
+        return -EPERM;
+    }
+
+    if (gpio_to_chip_offset(gpio, &chip, &offset) < 0) {
+        spinlock_release(&gpiolib_lock);
+        return -ENODEV;
+    }
+
+    /* Chip must support IRQs */
+    if (chip->irq_base == 0 || !chip->ops || !chip->ops->irq_request) {
+        spinlock_release(&gpiolib_lock);
+        return -ENXIO;
+    }
+
+    if (offset >= GPIO_IRQ_MAX_PER_CHIP) {
+        spinlock_release(&gpiolib_lock);
+        return -ENOSPC;
+    }
+
+    /* Check not already registered */
+    if (chip->irq_handlers[offset].flags & GPIO_IRQ_FLAG_USED) {
+        spinlock_release(&gpiolib_lock);
+        return -EBUSY;
+    }
+
+    /* Call chip-specific irq_request to configure the hardware */
+    ret = chip->ops->irq_request(chip, offset);
+    if (ret < 0) {
+        spinlock_release(&gpiolib_lock);
+        return ret;
+    }
+
+    /* Set the trigger type */
+    if (chip->ops->irq_set_type) {
+        ret = chip->ops->irq_set_type(chip, offset, type);
+        if (ret < 0) {
+            if (chip->ops->irq_free)
+                chip->ops->irq_free(chip, offset);
+            spinlock_release(&gpiolib_lock);
+            return ret;
+        }
+    }
+
+    /* Register the per-line handler descriptor */
+    chip->irq_handlers[offset].flags  = GPIO_IRQ_FLAG_USED;
+    chip->irq_handlers[offset].handler = handler;
+    chip->irq_handlers[offset].name   = name;
+
+    /* Set the vector name for /proc/interrupts */
+    int vec = chip->irq_base + offset;
+    if (vec >= 0 && vec <= 255)
+        idt_set_vector_name(vec, name ? name : "gpio_irq");
+
+    spinlock_release(&gpiolib_lock);
+
+    kprintf("[GPIO] irq registered: gpio=%u -> vec=%d type=%d name='%s'\n",
+            gpio, vec, type, name ? name : "?");
     return 0;
 }
+
+void gpio_free_irq(unsigned int gpio)
+{
+    struct gpio_chip *chip;
+    unsigned int offset;
+
+    if (gpio >= GPIO_MAX_GPIOS)
+        return;
+
+    spinlock_acquire(&gpiolib_lock);
+
+    if (!gpio_allocated[gpio]) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    if (gpio_to_chip_offset(gpio, &chip, &offset) < 0) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    if (offset >= GPIO_IRQ_MAX_PER_CHIP) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    if (!(chip->irq_handlers[offset].flags & GPIO_IRQ_FLAG_USED)) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    /* Call chip-specific irq_free */
+    if (chip->ops && chip->ops->irq_free)
+        chip->ops->irq_free(chip, offset);
+
+    /* Mask the IRQ at the chip level */
+    if (chip->ops && chip->ops->irq_mask)
+        chip->ops->irq_mask(chip, offset);
+
+    /* Clear the handler descriptor */
+    memset(&chip->irq_handlers[offset], 0, sizeof(chip->irq_handlers[offset]));
+
+    spinlock_release(&gpiolib_lock);
+}
+
+int gpio_irq_set_type(unsigned int gpio, int type)
+{
+    struct gpio_chip *chip;
+    unsigned int offset;
+    int ret;
+
+    if (gpio >= GPIO_MAX_GPIOS)
+        return -EINVAL;
+
+    spinlock_acquire(&gpiolib_lock);
+
+    if (!gpio_allocated[gpio]) {
+        spinlock_release(&gpiolib_lock);
+        return -EPERM;
+    }
+
+    if (gpio_to_chip_offset(gpio, &chip, &offset) < 0) {
+        spinlock_release(&gpiolib_lock);
+        return -ENODEV;
+    }
+
+    if (!chip->ops || !chip->ops->irq_set_type) {
+        spinlock_release(&gpiolib_lock);
+        return -ENXIO;
+    }
+
+    ret = chip->ops->irq_set_type(chip, offset, type);
+    spinlock_release(&gpiolib_lock);
+    return ret;
+}
+
+/*
+ * GPIO chip IRQ demux handler.
+ *
+ * Called from a gpiochip's parent IRQ handler.  Scans all GPIO lines
+ * on the chip, invokes irq_pending() for each, and dispatches to any
+ * registered per-line handler.
+ *
+ * NOTE: This function does NOT hold gpiolib_lock — it is called from
+ * interrupt context and should not block.  The chip driver's parent
+ * IRQ handler is responsible for calling this at the appropriate point
+ * after acknowledging the parent interrupt.
+ */
+void gpiochip_irq_demux(struct interrupt_frame *frame, struct gpio_chip *chip)
+{
+    if (!frame || !chip)
+        return;
+
+    struct gpio_chip_ops *ops = chip->ops;
+    if (!ops || !ops->irq_pending)
+        return;
+
+    /* Scan all GPIO lines on this chip for pending interrupts */
+    for (unsigned int i = 0; i < chip->ngpio && i < GPIO_IRQ_MAX_PER_CHIP; i++) {
+        if (!(chip->irq_handlers[i].flags & GPIO_IRQ_FLAG_USED))
+            continue;
+        if (!(chip->valid_mask & (1u << i)))
+            continue;
+
+        if (ops->irq_pending(chip, i)) {
+            /* Mask edge-triggered lines before calling handler to prevent
+             * re-entry.  The handler should unmask when done, or the chip
+             * driver's irq_unmask handles it. */
+            if (ops->irq_mask)
+                ops->irq_mask(chip, i);
+
+            /* Invoke the per-line handler */
+            if (chip->irq_handlers[i].handler)
+                chip->irq_handlers[i].handler(frame);
+        }
+    }
+}
+
+/* ── Initialisation ─────────────────────────────────────────────────── */
 
 void gpiolib_init(void)
 {
@@ -196,3 +489,17 @@ void gpiolib_init(void)
 
     kprintf("[OK] gpiolib: GPIO library initialised\n");
 }
+
+/* ── Exports for loadable kernel modules ────────────────────────────── */
+EXPORT_SYMBOL(gpio_request);
+EXPORT_SYMBOL(gpio_free);
+EXPORT_SYMBOL(gpio_direction_input);
+EXPORT_SYMBOL(gpio_direction_output);
+EXPORT_SYMBOL(gpio_get_value);
+EXPORT_SYMBOL(gpio_set_value);
+EXPORT_SYMBOL(gpio_to_irq);
+EXPORT_SYMBOL(gpio_request_irq);
+EXPORT_SYMBOL(gpio_free_irq);
+EXPORT_SYMBOL(gpio_irq_set_type);
+EXPORT_SYMBOL(gpiochip_add);
+EXPORT_SYMBOL(gpiochip_irq_demux);
