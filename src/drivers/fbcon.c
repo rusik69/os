@@ -2,6 +2,7 @@
 #include "string.h"
 #include "printf.h"
 #include "pmm.h"
+#include "speaker.h"      /* console bell via speaker_bell() */
 
 /* ── 8x16 font data (partial — first 128 ASCII glyphs) ────────────── */
 /* Each glyph is 16 bytes, one row per byte, bit = pixel on */
@@ -307,6 +308,9 @@ void fbcon_putchar(char c) {
         do {
             g_cursor_x++;
         } while (g_cursor_x < FBCON_COLS && g_cursor_x % 8 != 0);
+        break;
+    case '\a': /* BEL — console bell */
+        speaker_bell();
         break;
     default:
         if (c < 0x20) break; /* non-printable */
