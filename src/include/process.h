@@ -274,6 +274,10 @@ struct process {
     int64_t  timens_boottime_offset; /* offset (ns) applied to CLOCK_BOOTTIME */
     /* ── YAMA ptrace_scope admin-controlled tracer (PR_SET_PTRACER) ─ */
     int      ptracer_pid;     /* 0=none, -1=any, >0=specific tracer PID (YAMA scope 2) */
+    /* ── KCOV code coverage (Item 208) ──────────────────────────── */
+    int      kcov_mode;       /* KCOV_MODE_NONE / _INIT / _TRACE_PC */
+    uint64_t kcov_size;       /* number of uint64_t entries in buffer */
+    uint64_t *kcov_area;     /* coverage buffer (allocated via kmalloc) */
 };
 
 void process_init(void);

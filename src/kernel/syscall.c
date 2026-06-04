@@ -64,6 +64,7 @@
 #include "workqueue.h"
 #include "madvise_ext.h"
 #include "rseq.h"
+#include "kcov.h"
 #include "file_lock.h"
 #include "hugetlb.h"
 #include "sched_attr.h"
@@ -8703,6 +8704,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         /* ── File handle operations (Item 250) ────────────────────── */
         case SYS_NAME_TO_HANDLE_AT: return sys_name_to_handle_at(a1, a2, a3, a4, a5);
         case SYS_OPEN_BY_HANDLE_AT: return sys_open_by_handle_at(a1, a2, a3);
+        /* ── KCOV code coverage (Item 208) ────────────────────────── */
+        case SYS_KCOV:            return (uint64_t)sys_kcov(a1, a2);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

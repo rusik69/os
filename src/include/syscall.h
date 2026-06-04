@@ -770,6 +770,7 @@ struct linux_dirent64 {
 /* Extended scheduler attributes (sched_setattr/sched_getattr — Linux sched_getattr/sched_setattr) */
 #define SYS_SCHED_SETATTR    397  /* sched_setattr(pid, attr, flags) → 0 or -1 */
 #define SYS_SCHED_GETATTR    398  /* sched_getattr(pid, attr, size, flags) → 0 or -1 */
+#define SYS_KCOV             399  /* kcov(cmd, arg2) → 0 or -1 (Item 208) */
 
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the

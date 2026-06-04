@@ -16,6 +16,7 @@
 #include "sysctl.h"    /* for sysctl_get_hostname() */
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
+#include "kcov.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -395,6 +396,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
     proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
+    kcov_process_init(proc);
 
     /* Initialize CPU time accounting */
     proc->utime_ticks = 0;
@@ -559,6 +561,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->landlock_ruleset_ids[2] = -1;
     proc->landlock_ruleset_ids[3] = -1;
     proc->ptracer_pid = 0;        /* YAMA: no tracer allowed by default */
+    kcov_process_init(proc);
 
     /* Inherit parent's bounding set */
     if (current_process && current_process->state != PROCESS_UNUSED) {
@@ -1204,6 +1207,8 @@ void process_cleanup(struct process *proc) {
     /* Cleanup robust futex list */
     extern void futex_robust_list_cleanup(struct process *proc);
     futex_robust_list_cleanup(proc);
+    /* Cleanup KCOV coverage buffer (Item 208) */
+    kcov_process_exit(proc);
 
     if (proc->kernel_stack) {
         free_guarded_kernel_stack(proc);
