@@ -7,36 +7,48 @@
  * Dynamic debug infrastructure.
  *
  * Allows enabling/disabling of pr_debug()-style messages at run-time
- * by function name.  Each call site is represented by a
- * dynamic_debug_descriptor which holds the function name and an
+ * by function name, source file, or module name.  Each call site
+ * registers a dynamic_debug_descriptor which holds metadata and an
  * enabled/disabled flag.
+ *
+ * Control is exercised through the debugfs file at:
+ *   /sys/kernel/debug/dynamic_debug/control
+ *
+ * Command syntax:
+ *   module <name> +p|-p   — enable/disable all sites in <module>
+ *   file   <path>  +p|-p  — enable/disable all sites in <file>
+ *   func   <name>  +p|-p  — enable/disable all sites in <function>
+ *   all            +p|-p  — enable/disable all sites
  */
 
 #define DYNAMIC_DEBUG_NAME_MAX  64
 
 struct dynamic_debug_descriptor {
-    const char *function;               /* function name */
-    int         enabled;                /* 1 = enabled, 0 = disabled */
-    uint32_t    line;                   /* source line (optional metadata) */
+    const char *module;                 /* module name (NULL if built-in core) */
+    const char *file;                   /* source file name */
+    const char *function;              /* function name */
+    uint32_t    line;                  /* source line (optional metadata) */
+    int         enabled;               /* 1 = enabled, 0 = disabled */
 };
 
 /*
- * dynamic_debug_enable  - Enable all descriptors matching 'func'.
- * If func is NULL, all descriptors are enabled.
+ * dynamic_debug_enable  - Enable all descriptors matching filter.
+ * If filter is NULL, all descriptors are enabled.
+ * match_type: 0=function, 1=file, 2=module
  * Returns the number of descriptors matched.
  */
-int dynamic_debug_enable(const char *func);
+int dynamic_debug_enable(const char *filter, int match_type);
 
 /*
- * dynamic_debug_disable  - Disable all descriptors matching 'func'.
- * If func is NULL, all descriptors are disabled.
+ * dynamic_debug_disable  - Disable all descriptors matching filter.
+ * If filter is NULL, all descriptors are disabled.
+ * match_type: 0=function, 1=file, 2=module
  * Returns the number of descriptors matched.
  */
-int dynamic_debug_disable(const char *func);
+int dynamic_debug_disable(const char *filter, int match_type);
 
 /*
  * dynamic_debug_register  - Register a descriptor for run-time control.
- * Called at each pr_debug() site via a macro (not exported to users).
  */
 void dynamic_debug_register(struct dynamic_debug_descriptor *desc);
 

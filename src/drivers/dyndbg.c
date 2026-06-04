@@ -4,9 +4,45 @@
 #include "string.h"
 #include "debugfs.h"
 #include "dynamic_debug.h"
+#include "errno.h"
+
+/*
+ * dyndbg.c — Dynamic debug control file interface
+ *
+ * Provides the /sys/kernel/debug/dynamic_debug/control debugfs file
+ * that userspace can write to enable/disable pr_debug()-style messages
+ * at run time.  Supports matching by module name, source file, or
+ * function name (Item 211).
+ *
+ * Command syntax (one per line or echo'd in batch):
+ *   all +p              — enable all debug sites
+ *   all -p              — disable all debug sites
+ *   module <name> +p    — enable all sites in module <name>
+ *   module <name> -p    — disable all sites in module <name>
+ *   file <path> +p      — enable all sites in source file <path>
+ *   file <path> -p      — disable all sites in source file <path>
+ *   func <name> +p      — enable all sites in function <name>
+ *   func <name> -p      — disable all sites in function <name>
+ *
+ * Match-type constants (mirroring dynamic_debug.h):
+ *   0 = func, 1 = file, 2 = module
+ */
+
+#define MATCH_FUNC    0
+#define MATCH_FILE    1
+#define MATCH_MODULE  2
+
 #define MAX_DEBUG_SITES 64
+
+/*
+ * The dyndbg site table is a separate, additional registry used for
+ * sites that do not (yet) register through dynamic_debug_register().
+ * In the long run everything should migrate to struct
+ * dynamic_debug_descriptor, but this table preserves backward
+ * compatibility and provides a convenience API.
+ */
 static struct {
-    const char *name;
+    const char *name;       /* site identifier (function name) */
     int enabled;
 } debug_sites[MAX_DEBUG_SITES];
 static int debug_count = 0;
@@ -67,12 +103,14 @@ static void dyndbg_control_file_read(char *buf, int *len)
     pos += snprintf(buf + pos, (size_t)(max - pos),
                     "# Dynamic debug control\n"
                     "# Syntax: all <+p|-p>\n"
-                    "#         func <name> +p|-p\n"
-                    "#         file <name> +p|-p\n"
+                    "#         module <name> +p|-p\n"
+                    "#         file   <name> +p|-p\n"
+                    "#         func   <name> +p|-p\n"
                     "\n"
                     "all: %s\n",
                     (dyndbg_all_enabled || dyndbg_all_funcs) ? "+p" : "-p");
 
+    /* Report legacy dyndbg-registered sites */
     for (int i = 0; i < debug_count; i++) {
         pos += snprintf(buf + pos, (size_t)(max - pos),
                         "site:%s flags:%s (%s)\n",
@@ -92,10 +130,12 @@ static void dyndbg_control_file_read(char *buf, int *len)
  * Supported command formats:
  *   all +p             — enable all debug
  *   all -p             — disable all debug
- *   func <name> +p     — enable debug for function
- *   func <name> -p     — disable debug for function
- *   file <name> +p     — enable debug for file (delegates to func level)
- *   file <name> -p     — disable debug for file
+ *   module <name> +p   — enable debug for module (Item 211)
+ *   module <name> -p   — disable debug for module
+ *   file   <name> +p   — enable debug for file
+ *   file   <name> -p   — disable debug for file
+ *   func   <name> +p   — enable debug for function
+ *   func   <name> -p   — disable debug for function
  *
  * Returns 0 on success, -EINVAL on parse error.
  */
@@ -111,7 +151,7 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
     if (line_len == 0 || *line == '#' || *line == '\n')
         return 0;
 
-    char buf[96];
+    char buf[128];
     int blen = line_len < (int)sizeof(buf) - 1 ? line_len : (int)sizeof(buf) - 1;
     memcpy(buf, line, (size_t)blen);
     buf[blen] = '\0';
@@ -151,6 +191,7 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
             dyndbg_all_funcs = 1;
             for (int i = 0; i < debug_count; i++)
                 debug_sites[i].enabled = 1;
+            dynamic_debug_enable(NULL, 0);
             kprintf("[dyndbg] all debug enabled\n");
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
@@ -158,6 +199,7 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
             dyndbg_all_funcs = 0;
             for (int i = 0; i < debug_count; i++)
                 debug_sites[i].enabled = 0;
+            dynamic_debug_disable(NULL, 0);
             kprintf("[dyndbg] all debug disabled\n");
             return 0;
         }
@@ -166,33 +208,46 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
 
     if (name_len == 0 || op_len == 0)
         return -EINVAL;
+    name[name_len] = '\0';
+
+    /* Check: module <name> +p|-p — NEW in Item 211 */
+    if (kw_len == 6 && memcmp(keyword, "module", 6) == 0) {
+        if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
+            int n = dynamic_debug_enable(name, MATCH_MODULE);
+            kprintf("[dyndbg] module '%s' enabled (%d site(s))\n", name, n);
+            return 0;
+        } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
+            int n = dynamic_debug_disable(name, MATCH_MODULE);
+            kprintf("[dyndbg] module '%s' disabled (%d site(s))\n", name, n);
+            return 0;
+        }
+        return -EINVAL;
+    }
 
     /* Check: func <name> +p|-p */
     if (kw_len == 4 && memcmp(keyword, "func", 4) == 0) {
-        name[name_len] = '\0';
         if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
             dyndbg_enable(name);
-            int n = dynamic_debug_enable(name);
+            int n = dynamic_debug_enable(name, MATCH_FUNC);
             kprintf("[dyndbg] func '%s' enabled (%d site(s))\n", name, n);
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
             dyndbg_disable(name);
-            int n = dynamic_debug_disable(name);
+            int n = dynamic_debug_disable(name, MATCH_FUNC);
             kprintf("[dyndbg] func '%s' disabled (%d site(s))\n", name, n);
             return 0;
         }
         return -EINVAL;
     }
 
-    /* Check: file <name> +p|-p — delegate to function-level control */
+    /* Check: file <name> +p|-p */
     if (kw_len == 4 && memcmp(keyword, "file", 4) == 0) {
-        name[name_len] = '\0';
         if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
-            int n = dynamic_debug_enable(name);
+            int n = dynamic_debug_enable(name, MATCH_FILE);
             kprintf("[dyndbg] file '%s' enabled (%d site(s))\n", name, n);
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
-            int n = dynamic_debug_disable(name);
+            int n = dynamic_debug_disable(name, MATCH_FILE);
             kprintf("[dyndbg] file '%s' disabled (%d site(s))\n", name, n);
             return 0;
         }
