@@ -17,18 +17,27 @@
  *     it is throttled until the next period starts.
  *   - At the start of each period, runtime is replenished and a new
  *     absolute deadline is set.
+ *
+ * GRUB (Greedy Reclamation of Unused Bandwidth):
+ *   If a deadline task blocks or finishes before using its full budget,
+ *   the unused portion is added to a per-CPU reclaim pool.  Other
+ *   deadline tasks that have exhausted their own budget may continue
+ *   running by drawing from this reclaim pool, improving overall CPU
+ *   utilisation without missing deadlines.
  */
 
 /* Maximum number of SCHED_DEADLINE tasks per CPU */
 #define SCHED_DL_MAX_PER_CPU 8
 
 /*
- * Per-CPU deadline runqueue — tracks deadline tasks and total utilisation.
+ * Per-CPU deadline runqueue — tracks deadline tasks, total utilisation,
+ * and the GRUB reclaim pool of unused bandwidth.
  */
 struct cpu_dl_rq {
     struct process *tasks[SCHED_DL_MAX_PER_CPU];
     int nr_tasks;
     uint64_t total_bw;          /* sum(dl_runtime / dl_period) << BW_SHIFT */
+    uint64_t reclaimed_bw;      /* GRUB reclaim pool (fixed-point, same unit) */
 };
 
 /* Fixed-point bandwidth precision */
@@ -57,8 +66,12 @@ void sched_deadline_tick(struct process *proc);
 /* Replenish throttled tasks whose next period has started */
 void sched_deadline_replenish(void);
 
-/* Check if a DL task is runnable (has budget, not throttled) */
+/* Check if a DL task is runnable (has budget, not throttled, or can reclaim) */
 int sched_deadline_is_runnable(struct process *proc);
+
+/* Called when a deadline task is voluntarily descheduled (blocks / yields).
+ * Captures unused budget and adds it to the per-CPU reclaim pool (GRUB). */
+void sched_deadline_task_blocked(struct process *proc);
 
 /* Update absolute deadline for a task (called at period start) */
 void sched_deadline_update_deadline(struct process *proc);

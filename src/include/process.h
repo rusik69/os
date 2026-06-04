@@ -209,6 +209,7 @@ struct process {
     uint64_t dl_deadline_abs;    /* absolute deadline for current period (ns) */
     uint64_t dl_runtime_remaining; /* remaining budget (ns) */
     uint64_t dl_period_start;    /* start time of current period (ns) */
+    uint64_t dl_consumed;        /* actual runtime consumed this period (ns, for GRUB reclaim) */
     int      dl_throttled;       /* 1 = budget exhausted before deadline */
     int      dl_active;          /* 1 = deadline scheduling active */
     /* ── Resource tracking ──────────────────────────────────── */

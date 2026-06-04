@@ -134,6 +134,7 @@ int sched_deadline_add_task(struct process *proc)
     proc->dl_period_start = now_ns;
     proc->dl_deadline_abs = now_ns + proc->dl_deadline;
     proc->dl_runtime_remaining = proc->dl_runtime;
+    proc->dl_consumed = 0;
     proc->dl_throttled = 0;
 
     /* Add to per-CPU array */
@@ -156,6 +157,17 @@ void sched_deadline_remove_task(struct process *proc)
     for (int i = 0; i < dl_rq->nr_tasks; i++) {
         if (dl_rq->tasks[i] == proc) {
             found = 1;
+            /* Reclaim any unused budget before removing */
+            if (proc->dl_consumed < proc->dl_runtime) {
+                uint64_t unused_ns = proc->dl_runtime - proc->dl_consumed;
+                uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
+                if (unused_bw > DL_BW_UNIT) unused_bw = DL_BW_UNIT;
+                uint64_t max_reclaim = dl_rq->total_bw * 2;
+                if (dl_rq->reclaimed_bw + unused_bw > max_reclaim)
+                    dl_rq->reclaimed_bw = max_reclaim;
+                else
+                    dl_rq->reclaimed_bw += unused_bw;
+            }
             dl_rq->total_bw -= dl_bw(proc->dl_runtime, proc->dl_period);
             for (int j = i; j < dl_rq->nr_tasks - 1; j++)
                 dl_rq->tasks[j] = dl_rq->tasks[j + 1];
@@ -171,6 +183,17 @@ void sched_deadline_remove_task(struct process *proc)
             struct cpu_dl_rq *rq = &cpu_dl_rq[cpu];
             for (int i = 0; i < rq->nr_tasks; i++) {
                 if (rq->tasks[i] == proc) {
+                    /* Reclaim any unused budget before removing */
+                    if (proc->dl_consumed < proc->dl_runtime) {
+                        uint64_t unused_ns = proc->dl_runtime - proc->dl_consumed;
+                        uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
+                        if (unused_bw > DL_BW_UNIT) unused_bw = DL_BW_UNIT;
+                        uint64_t max_reclaim = rq->total_bw * 2;
+                        if (rq->reclaimed_bw + unused_bw > max_reclaim)
+                            rq->reclaimed_bw = max_reclaim;
+                        else
+                            rq->reclaimed_bw += unused_bw;
+                    }
                     rq->total_bw -= dl_bw(proc->dl_runtime, proc->dl_period);
                     for (int j = i; j < rq->nr_tasks - 1; j++)
                         rq->tasks[j] = rq->tasks[j + 1];
@@ -183,7 +206,7 @@ void sched_deadline_remove_task(struct process *proc)
     }
 }
 
-/* ── EDF scheduler — pick next deadline task ─────────────────────────── */
+/* ── EDF scheduler — pick next deadline task with GRUB reclaim ────── */
 
 struct process *sched_deadline_pick_next(void)
 {
@@ -195,19 +218,28 @@ struct process *sched_deadline_pick_next(void)
 
     struct process *best = NULL;
     uint64_t earliest_deadline = UINT64_MAX;
+    int has_reclaim = (dl_rq->reclaimed_bw > 0);
 
     for (int i = 0; i < dl_rq->nr_tasks; i++) {
         struct process *proc = dl_rq->tasks[i];
         if (!proc || !proc->dl_active)
             continue;
 
-        /* Skip throttled tasks */
-        if (proc->dl_throttled)
-            continue;
-
         /* Skip non-runnable tasks */
         if (proc->state != PROCESS_READY && proc->state != PROCESS_RUNNING)
             continue;
+
+        /* Skip throttled tasks unless reclaim bandwidth is available */
+        if (proc->dl_throttled) {
+            if (!has_reclaim)
+                continue;
+            /* Even with reclaim, only pick if there's actually reclaim bw */
+            if (dl_rq->reclaimed_bw == 0)
+                continue;
+        } else if (proc->dl_runtime_remaining == 0) {
+            /* Budget exhausted but not throttled (yet) — skip */
+            continue;
+        }
 
         /* Pick the task with the earliest absolute deadline */
         if (proc->dl_deadline_abs < earliest_deadline) {
@@ -219,33 +251,95 @@ struct process *sched_deadline_pick_next(void)
     return best;
 }
 
-/* ── Tick handler — budget accounting ────────────────────────────────── */
+/* ── Tick handler — budget accounting with GRUB reclaim ────────────── */
 
 void sched_deadline_tick(struct process *proc)
 {
     if (!proc || !proc->dl_active)
         return;
 
-    /* Each tick consumes one tick's worth of runtime budget */
+    /* Each tick consumes one tick's worth of runtime */
     uint64_t tick_ns = NS_PER_TICK;
 
-    /* Decrement remaining runtime */
+    /* Track actual consumption for GRUB reclaim accounting */
+    proc->dl_consumed += tick_ns;
+
+    /* Try to consume from own budget first */
     if (proc->dl_runtime_remaining > tick_ns) {
         proc->dl_runtime_remaining -= tick_ns;
-    } else {
-        proc->dl_runtime_remaining = 0;
+        return;
     }
 
-    /* If budget exhausted and deadline hasn't passed, throttle */
-    if (proc->dl_runtime_remaining == 0) {
-        uint64_t now_ns = timer_get_ns();
-        if (now_ns < proc->dl_deadline_abs) {
-            proc->dl_throttled = 1;
+    if (proc->dl_runtime_remaining > 0) {
+        /* Partially consume remaining own budget */
+        uint64_t remainder = tick_ns - proc->dl_runtime_remaining;
+        proc->dl_runtime_remaining = 0;
+
+        /* If remainder > 0, try reclaim pool */
+        if (remainder > 0) {
+            uint32_t cpu_id = get_cpu_id();
+            struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu_id];
+            if (dl_rq->reclaimed_bw > 0) {
+                /* Consume from reclaim pool — convert ns to fixed-point bw */
+                uint64_t consumed_bw = (remainder << DL_BW_SHIFT) / proc->dl_period;
+                if (consumed_bw > dl_rq->reclaimed_bw)
+                    consumed_bw = dl_rq->reclaimed_bw;
+                dl_rq->reclaimed_bw -= consumed_bw;
+                return;  /* still running on reclaimed bandwidth */
+            }
         }
+    } else {
+        /* Own budget already exhausted — try reclaim pool */
+        uint32_t cpu_id = get_cpu_id();
+        struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu_id];
+        if (dl_rq->reclaimed_bw > 0) {
+            uint64_t consumed_bw = (tick_ns << DL_BW_SHIFT) / proc->dl_period;
+            if (consumed_bw > dl_rq->reclaimed_bw)
+                consumed_bw = dl_rq->reclaimed_bw;
+            dl_rq->reclaimed_bw -= consumed_bw;
+            return;  /* running on reclaimed bandwidth */
+        }
+    }
+
+    /* Budget exhausted and no reclaim available — throttle */
+    uint64_t now_ns = timer_get_ns();
+    if (now_ns < proc->dl_deadline_abs) {
+        proc->dl_throttled = 1;
     }
 }
 
-/* ── Replenishment ───────────────────────────────────────────────────── */
+/* ── GRUB reclaim: task blocked before budget exhaustion ──────────── */
+
+void sched_deadline_task_blocked(struct process *proc)
+{
+    if (!proc || !proc->dl_active || proc->dl_throttled)
+        return;
+
+    /* Calculate unused budget for this period.
+     * dl_consumed is what we actually used; dl_runtime is what was allocated.
+     * If consumed < allocated, the difference is reclaimable bandwidth. */
+    if (proc->dl_consumed < proc->dl_runtime) {
+        uint64_t unused_ns = proc->dl_runtime - proc->dl_consumed;
+
+        /* Convert unused runtime (ns) to fixed-point bandwidth and add to
+         * the per-CPU reclaim pool.  Clamp to prevent arithmetic overflow. */
+        uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
+        if (unused_bw > DL_BW_UNIT)
+            unused_bw = DL_BW_UNIT;
+
+        uint32_t cpu_id = get_cpu_id();
+        struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu_id];
+
+        /* Cap reclaimed_bw to prevent unbounded accumulation (max 2x total_bw) */
+        uint64_t max_reclaim = dl_rq->total_bw * 2;
+        if (dl_rq->reclaimed_bw + unused_bw > max_reclaim)
+            dl_rq->reclaimed_bw = max_reclaim;
+        else
+            dl_rq->reclaimed_bw += unused_bw;
+    }
+}
+
+/* ── Replenishment — with GRUB unused-bandwidth harvesting ──────────── */
 
 void sched_deadline_replenish(void)
 {
@@ -262,14 +356,30 @@ void sched_deadline_replenish(void)
         if (now_ns < proc->dl_deadline_abs)
             continue;
 
+        /* Before replenishing, harvest any unused bandwidth from the
+         * just-completed period and add it to the GRUB reclaim pool. */
+        if (proc->dl_consumed < proc->dl_runtime) {
+            uint64_t unused_ns = proc->dl_runtime - proc->dl_consumed;
+            uint64_t unused_bw = (unused_ns << DL_BW_SHIFT) / proc->dl_period;
+            if (unused_bw > DL_BW_UNIT)
+                unused_bw = DL_BW_UNIT;
+
+            uint64_t max_reclaim = dl_rq->total_bw * 2;
+            if (dl_rq->reclaimed_bw + unused_bw > max_reclaim)
+                dl_rq->reclaimed_bw = max_reclaim;
+            else
+                dl_rq->reclaimed_bw += unused_bw;
+        }
+
         /* Advance one or more periods until deadline_abs is in the future */
         while (now_ns >= proc->dl_deadline_abs) {
             proc->dl_period_start = proc->dl_deadline_abs;
             proc->dl_deadline_abs += proc->dl_period;
         }
 
-        /* Replenish budget for the new period */
+        /* Replenish budget for the new period and reset consumption tracking */
         proc->dl_runtime_remaining = proc->dl_runtime;
+        proc->dl_consumed = 0;
         proc->dl_throttled = 0;
 
         /* If the task was blocked, wake it up and add to runqueue */
@@ -282,16 +392,30 @@ void sched_deadline_replenish(void)
     }
 }
 
-/* ── Runnable check ──────────────────────────────────────────────────── */
+/* ── Runnable check — includes GRUB reclaim eligibility ────────────── */
 
 int sched_deadline_is_runnable(struct process *proc)
 {
     if (!proc || !proc->dl_active)
         return 0;
 
-    return (proc->state == PROCESS_READY || proc->state == PROCESS_RUNNING) &&
-           !proc->dl_throttled &&
-           proc->dl_runtime_remaining > 0;
+    /* Must be in READY or RUNNING state */
+    if (proc->state != PROCESS_READY && proc->state != PROCESS_RUNNING)
+        return 0;
+
+    /* Not throttled — can run on own budget */
+    if (!proc->dl_throttled && proc->dl_runtime_remaining > 0)
+        return 1;
+
+    /* Throttled but reclaim bandwidth available — still runnable */
+    if (proc->dl_throttled) {
+        uint32_t cpu_id = get_cpu_id();
+        struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu_id];
+        if (dl_rq->reclaimed_bw > 0)
+            return 1;
+    }
+
+    return 0;
 }
 
 /* ── Update deadline ─────────────────────────────────────────────────── */
@@ -305,6 +429,7 @@ void sched_deadline_update_deadline(struct process *proc)
     proc->dl_period_start = now_ns;
     proc->dl_deadline_abs = now_ns + proc->dl_deadline;
     proc->dl_runtime_remaining = proc->dl_runtime;
+    proc->dl_consumed = 0;
     proc->dl_throttled = 0;
 }
 
@@ -318,22 +443,24 @@ void sched_deadline_dump(int cpu)
     }
 
     struct cpu_dl_rq *dl_rq = &cpu_dl_rq[cpu];
-    kprintf("CPU %d deadline tasks: %d (total_bw=%llu/%llu)\n",
+    kprintf("CPU %d deadline tasks: %d (total_bw=%llu/%llu, reclaimed=%llu)\n",
            cpu, dl_rq->nr_tasks,
            (unsigned long long)dl_rq->total_bw,
-           (unsigned long long)DL_BW_UNIT);
+           (unsigned long long)DL_BW_UNIT,
+           (unsigned long long)dl_rq->reclaimed_bw);
 
     for (int i = 0; i < dl_rq->nr_tasks; i++) {
         struct process *proc = dl_rq->tasks[i];
         if (!proc) continue;
         kprintf("  [%d] pid=%u name=%s runtime=%llu deadline=%llu period=%llu "
-               "dl_abs=%llu remaining=%llu throttled=%d\n",
+               "dl_abs=%llu remaining=%llu consumed=%llu throttled=%d\n",
                i, proc->pid, proc->name ? proc->name : "?",
                (unsigned long long)proc->dl_runtime,
                (unsigned long long)proc->dl_deadline,
                (unsigned long long)proc->dl_period,
                (unsigned long long)proc->dl_deadline_abs,
                (unsigned long long)proc->dl_runtime_remaining,
+               (unsigned long long)proc->dl_consumed,
                proc->dl_throttled);
     }
 }

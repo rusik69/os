@@ -598,6 +598,13 @@ void schedule(void) {
     } else if (current) {
         current->nvcsw++;   /* yielded or blocked — voluntary context switch */
         current->on_cpu = 0; /* no longer executing */
+
+        /* ── GRUB reclaim: if this is a SCHED_DEADLINE task blocking
+         *     voluntarily, capture any unused budget for other deadline
+         *     tasks to reclaim. */
+        if (current->dl_active) {
+            sched_deadline_task_blocked(current);
+        }
     }
 
     next->state = PROCESS_RUNNING;
