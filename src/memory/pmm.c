@@ -11,6 +11,7 @@
 #include "spinlock.h"
 #include "smp.h"
 #include "export.h"
+#include "pageblock.h"
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -254,6 +255,9 @@ void pmm_init(uint64_t multiboot_info_phys) {
     /* Pre-populate the boot CPU's hot cache */
     pmm_cache_refill();
 
+    /* Initialise pageblock migration type tracking */
+    pageblock_init(total_frames);
+
     kprintf("[OK] Physical Memory Manager: %llu frames (%llu MB), %llu free\n",
             (unsigned long long)total_frames,
             (unsigned long long)((total_frames * 4ULL) / 1024ULL),
@@ -345,6 +349,9 @@ void pmm_dump_stats(void) {
         total_cached += pmm_cpu_cache[c].count;
     kprintf("[PMM] per-CPU caches: %d frames cached across %d CPUs\n",
             total_cached, smp_get_cpu_count());
+
+    /* Dump pageblock migration type distribution */
+    pageblock_dump_stats();
 }
 
 /* ── Page allocator ─────────────────────────────────────────────────────── */
@@ -648,6 +655,184 @@ uint64_t pmm_get_used_frames(void)  { return used_frames; }
 
 void pmm_set_poison(int enable) {
     pmm_poison_enabled = enable;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  Pageblock Migration Types — Anti-Fragmentation (Item 121)
+ *
+ *  Physical memory is divided into 2 MB pageblocks (512 × 4 KB frames).
+ *  Each pageblock is tagged with a migration type that segregates movable
+ *  from unmovable allocations, preventing long-term fragmentation.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* Per-pageblock migration type, one byte per 2 MB block.
+ * Initialised in pageblock_init(). */
+static uint8_t pageblock_types[PAGEBLOCK_MAX];
+
+/* Fallback ordering — when the preferred migration type is exhausted,
+ * try these alternatives in the order listed.  MIGRATE_CMA is not a
+ * fallback target for non-CMA callers (it is reservation-only).
+ * MIGRATE_ISOLATE is temporary and never used for regular allocation. */
+const enum migratetype fallbacks[MIGRATE_TYPES][MIGRATE_TYPES] = {
+    /* MIGRATE_UNMOVABLE   → RECLAIMABLE → MOVABLE → CMA */
+    { MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE,     MIGRATE_CMA,     MIGRATE_ISOLATE },
+    /* MIGRATE_MOVABLE     → RECLAIMABLE → UNMOVABLE → CMA */
+    { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE,   MIGRATE_CMA,     MIGRATE_ISOLATE },
+    /* MIGRATE_RECLAIMABLE → UNMOVABLE → MOVABLE → CMA */
+    { MIGRATE_UNMOVABLE,   MIGRATE_MOVABLE,     MIGRATE_CMA,     MIGRATE_ISOLATE },
+    /* MIGRATE_CMA         → MOVABLE → RECLAIMABLE → UNMOVABLE */
+    { MIGRATE_MOVABLE,     MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_ISOLATE },
+    /* MIGRATE_ISOLATE     → no fallback (should never be allocated from) */
+    { MIGRATE_ISOLATE,     MIGRATE_ISOLATE,     MIGRATE_ISOLATE, MIGRATE_ISOLATE },
+};
+
+void pageblock_init(uint64_t frames)
+{
+    uint64_t num_blocks = (frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
+    if (num_blocks > PAGEBLOCK_MAX)
+        num_blocks = PAGEBLOCK_MAX;
+
+    /* All pageblocks start as MOVABLE by default.  The boot code and
+     * kernel subsystems should mark special regions as UNMOVABLE or
+     * RECLAIMABLE via pageblock_set_migratetype(). */
+    memset(pageblock_types, MIGRATE_MOVABLE, (size_t)num_blocks);
+
+    kprintf("[PMM] pageblocks: %llu blocks of %lu KB each (default MOVABLE)\n",
+            (unsigned long long)num_blocks,
+            (unsigned long)(PAGEBLOCK_SIZE / 1024));
+}
+
+enum migratetype pageblock_get_migratetype(uint64_t frame)
+{
+    uint64_t block = pageblock_of_frame(frame);
+    if (block >= PAGEBLOCK_MAX)
+        return MIGRATE_MOVABLE;
+    return (enum migratetype)pageblock_types[block];
+}
+
+void pageblock_set_migratetype(uint64_t frame, enum migratetype mt)
+{
+    uint64_t block = pageblock_of_frame(frame);
+    if (block >= PAGEBLOCK_MAX)
+        return;
+    if (mt >= MIGRATE_TYPES)
+        return;
+    pageblock_types[block] = (uint8_t)mt;
+}
+
+/* Internal: scan a pageblock for a free frame.  Returns phys addr or 0. */
+static uint64_t pageblock_scan_block(uint64_t block_idx)
+{
+    uint64_t base_frame = block_idx << PAGEBLOCK_ORDER;
+    uint64_t end_frame = base_frame + PAGEBLOCK_NR_PAGES;
+    if (end_frame > total_frames)
+        end_frame = total_frames;
+
+    for (uint64_t f = base_frame; f < end_frame; f++) {
+        if (!bitmap_test(f)) {
+            bitmap_set(f);
+            used_frames++;
+            frame_refcount[f] = 1;
+            pmm_hint = f + 1;
+            if (pmm_hint >= total_frames)
+                pmm_hint = 0;
+            return f * PAGE_SIZE;
+        }
+    }
+    return 0;
+}
+
+uint64_t pageblock_alloc_from_type(enum migratetype mt, uint64_t start_hint)
+{
+    if (mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
+        return 0;
+
+    uint64_t num_blocks = (total_frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
+    if (num_blocks > PAGEBLOCK_MAX)
+        num_blocks = PAGEBLOCK_MAX;
+    if (num_blocks == 0)
+        return 0;
+
+    uint64_t start_block = pageblock_of_frame(start_hint / PAGE_SIZE);
+    if (start_block >= num_blocks)
+        start_block = 0;
+
+    /* Search pageblocks of matching type */
+    for (uint64_t bi = 0; bi < num_blocks; bi++) {
+        uint64_t b = (start_block + bi) % num_blocks;
+        if ((enum migratetype)pageblock_types[b] != mt)
+            continue;
+        uint64_t addr = pageblock_scan_block(b);
+        if (addr != 0)
+            return addr;
+    }
+
+    return 0;
+}
+
+void pageblock_dump_stats(void)
+{
+    uint64_t num_blocks = (total_frames + PAGEBLOCK_NR_PAGES - 1) >> PAGEBLOCK_ORDER;
+    if (num_blocks > PAGEBLOCK_MAX)
+        num_blocks = PAGEBLOCK_MAX;
+
+    unsigned counts[MIGRATE_TYPES] = {0};
+    for (uint64_t i = 0; i < num_blocks; i++) {
+        enum migratetype mt = (enum migratetype)pageblock_types[i];
+        if (mt < MIGRATE_TYPES)
+            counts[mt]++;
+    }
+
+    kprintf("[PMM] pageblocks: UNMOVABLE=%u MOVABLE=%u RECLAIMABLE=%u CMA=%u\n",
+            counts[MIGRATE_UNMOVABLE],
+            counts[MIGRATE_MOVABLE],
+            counts[MIGRATE_RECLAIMABLE],
+            counts[MIGRATE_CMA]);
+}
+
+/* ── Migration-type aware allocation ──────────────────────────────────────
+ *
+ * pmm_alloc_frame_migrate() allocates a single frame, preferring pageblocks
+ * of the given migration type.  If none found in the preferred type, falls
+ * back through other types per the fallbacks[] table.
+ *
+ * The original pmm_alloc_frame() remains unchanged — it uses MIGRATE_MOVABLE
+ * as the default type, preserving backward compatibility for all existing
+ * callers (anonymous pages, page cache, general-purpose allocations).
+ *
+ * Callers that know their allocation will be long-lived and immovable
+ * (kernel page tables, VMM structures, boot allocator backing) should use
+ * pmm_alloc_frame_migrate(MIGRATE_UNMOVABLE) to help prevent fragmentation.
+ */
+
+uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
+{
+    if (mt >= MIGRATE_TYPES || mt == MIGRATE_ISOLATE)
+        mt = MIGRATE_MOVABLE;
+
+    /* Try the preferred type first, then fallbacks */
+    for (int attempt = 0; attempt < MIGRATE_TYPES; attempt++) {
+        enum migratetype try_mt;
+        if (attempt == 0)
+            try_mt = mt;
+        else
+            try_mt = fallbacks[mt][attempt - 1];
+
+        if (try_mt >= MIGRATE_TYPES || try_mt == MIGRATE_ISOLATE)
+            continue;
+
+        uint64_t addr = pageblock_alloc_from_type(try_mt, pmm_hint * PAGE_SIZE);
+        if (addr != 0) {
+            poison_fill(addr, 0xDEADBEEF);
+            vm_pgalloc++;
+            return addr;
+        }
+    }
+
+    /* All types exhausted — fall through to OOM recovery (same as
+     * pmm_alloc_frame's slow path).  Use the per-CPU cache path which
+     * will trigger OOM/compaction. */
+    return pmm_alloc_frame();
 }
 
 /* ── Exported symbols for module loading ──────────────────────────── */
