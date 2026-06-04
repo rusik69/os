@@ -15,6 +15,11 @@ extern uint8_t  net_gw_mac[6];
 extern int      net_gw_mac_known;
 extern uint16_t net_ip_id_counter;
 
+/* Link-layer send/receive — defined in net.c */
+int net_link_send(const void *data, uint16_t len);
+int net_link_recv(void *buf, uint16_t max_len);
+int net_rx_pending(void);
+
 /* IPv6 state — defined in ipv6.c */
 extern struct in6_addr net_our_ipv6_ll;   /* link-local address (FE80::/10) */
 extern struct in6_addr net_our_ipv6_gua;  /* global unicast (via SLAAC) */

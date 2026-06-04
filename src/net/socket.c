@@ -10,6 +10,7 @@
 #include "export.h"
 #include "module.h"      /* request_module() for protocol autoloading */
 #include "errno.h"
+#include "af_packet.h"    /* AF_PACKET raw packet sockets (Item 386) */
 
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
@@ -17,6 +18,7 @@ static struct socket socket_table[SOCK_MAX];
 void socket_init(void) {
     memset(socket_table, 0, sizeof(socket_table));
     af_unix_init();
+    af_packet_init();
 }
 
 /* Convert slot to fd number (fd = slot + 100 to avoid conflict with normal fds) */
@@ -55,6 +57,10 @@ void sock_free(int fd) {
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         unix_destroy(s->unix_ep);
         s->unix_ep = -1;
+    }
+    /* Destroy AF_PACKET socket if present */
+    if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
+        packet_close(fd);
     }
     if (s->conn_id >= 0) net_tcp_close(s->conn_id);
     s->in_use = 0;
@@ -108,6 +114,13 @@ int sys_socket_impl(int domain, int type, int protocol) {
         s->unix_ep = ep;
     }
 
+    /* For AF_PACKET: create a raw packet socket endpoint */
+    if ((domain == AF_PACKET || domain == 0) && type == SOCK_RAW) {
+        int ret = packet_create(sock_fd_from_slot(slot), type,
+                                (uint16_t)s->protocol);
+        if (ret < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
+    }
+
     return sock_fd_from_slot(slot);
 }
 
@@ -120,6 +133,16 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
         if (s->unix_ep < 0) return -1;
         const struct sockaddr_un *un = (const struct sockaddr_un *)addr;
         int ret = unix_bind(s->unix_ep, un, sizeof(struct sockaddr_un));
+        if (ret == 0) s->state = SOCK_STATE_BOUND;
+        return ret;
+    }
+
+    /* AF_PACKET: dispatch to raw packet handler */
+    if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
+        /* sockaddr_ll structure cast from addr */
+        const struct sockaddr_ll *sll = (const struct sockaddr_ll *)addr;
+        /* Bind to interface index (0 = any interface) */
+        int ret = packet_bind(sockfd, (int)sll->sll_ifindex);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
         return ret;
     }
@@ -556,6 +579,12 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
             int sent = unix_send(s->unix_ep, data, (uint32_t)(len > 65535 ? 65535 : len), 0);
             if (sent < 0) return total > 0 ? (int)total : sent;
             total += (uint64_t)sent;
+        } else if ((s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) &&
+                   packet_is_valid_fd(sockfd)) {
+            /* AF_PACKET raw packet send */
+            int sent = packet_send(sockfd, data, (int)(len > 2048 ? 2048 : len));
+            if (sent < 0) return total > 0 ? (int)total : -1;
+            total += (uint64_t)sent;
         } else if (s->type == SOCK_STREAM && s->conn_id >= 0) {
             int sent = net_tcp_send(s->conn_id, data, (uint16_t)(len > 65535 ? 65535 : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
@@ -602,6 +631,23 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         int n = unix_recv(s->unix_ep, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), 0);
         if (n <= 0) return -1;
+        return n;
+    }
+
+    /* AF_PACKET: raw packet receive */
+    if ((s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) &&
+        packet_is_valid_fd(sockfd)) {
+        uint64_t ifindex = 0;
+        int n = packet_recv(sockfd, buf, (int)(bufsize > 2048 ? 2048 : bufsize), &ifindex);
+        if (n < 0) return (n == -EAGAIN) ? -1 : -1;
+        if (msg->msg_name && n >= 0) {
+            struct sockaddr_ll *sll = (struct sockaddr_ll *)msg->msg_name;
+            memset(sll, 0, sizeof(struct sockaddr_ll));
+            sll->sll_family  = AF_PACKET;
+            sll->sll_ifindex = (int)ifindex;
+            sll->sll_halen   = 6; /* Ethernet */
+            msg->msg_namelen = sizeof(struct sockaddr_ll);
+        }
         return n;
     }
 

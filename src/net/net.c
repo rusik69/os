@@ -61,7 +61,7 @@ void net_rx_signal(void) {
 
 int  net_rx_pending(void) { return net_rx_flag; }
 
-static int net_link_recv(void *buf, uint16_t max_len) {
+int net_link_recv(void *buf, uint16_t max_len) {
     if (virtio_net_present()) {
         int n = virtio_net_receive(buf, max_len);
         if (n != 0) return n;
