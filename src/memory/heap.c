@@ -3,6 +3,7 @@
 #include "string.h"
 #include "export.h"
 #include "fault_inject.h"
+#include "kasan_light.h"
 
 /*
  * Heap lives in the high-half VMA region (boot code maps the first 1 GB via 2MB
@@ -97,7 +98,10 @@ void *kmalloc(size_t size) {
             }
             block->free = 0;
             heap_used_bytes += block->size + BLOCK_HDR_SIZE;
-            return (void *)((uint8_t *)block + BLOCK_HDR_SIZE);
+            void *ptr = (void *)((uint8_t *)block + BLOCK_HDR_SIZE);
+            /* KASAN: mark the allocated region as accessible */
+            kasan_alloc(ptr, block->size);
+            return ptr;
         }
         if (!block->next) break;
         block = block->next;
@@ -119,7 +123,10 @@ void *kmalloc(size_t size) {
     else heap_start_block = new_block;
 
     heap_used_bytes += total;
-    return (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
+    void *ptr = (void *)((uint8_t *)new_block + BLOCK_HDR_SIZE);
+    /* KASAN: mark the newly allocated region as accessible */
+    kasan_alloc(ptr, new_block->size);
+    return ptr;
 }
 
 uint64_t heap_get_total(void) {
@@ -139,6 +146,10 @@ uint64_t heap_get_free(void) {
 void kfree(void *ptr) {
     if (!ptr) return;
     struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
+
+    /* KASAN: mark the freed region as poisoned to catch use-after-free */
+    kasan_free(ptr, block->size);
+
     block->free = 1;
     heap_used_bytes -= (block->size + BLOCK_HDR_SIZE);
 

@@ -7,6 +7,7 @@
 #include "smp.h"
 #include "io.h"
 #include "rng.h"
+#include "kasan_light.h"
 
 /*
  * Slab allocator — O(1) allocate/free for fixed-size kernel objects.
@@ -471,6 +472,11 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
         /* Poison with allocation pattern and set redzone */
         slab_poison_alloc(cache, obj);
         slab_set_redzone(cache, obj);
+
+        /* KASAN: mark user area accessible, mark redzone as poisoned */
+        kasan_unpoison(obj, cache->user_size);
+        kasan_poison_redzone((uint8_t *)obj + cache->user_size,
+                             cache->obj_size - cache->user_size);
         return obj;
     }
 
@@ -487,6 +493,11 @@ void *kmem_cache_alloc(struct kmem_cache *cache) {
     if (obj) {
         slab_poison_alloc(cache, obj);
         slab_set_redzone(cache, obj);
+
+        /* KASAN: mark user area accessible, mark redzone as poisoned */
+        kasan_unpoison(obj, cache->user_size);
+        kasan_poison_redzone((uint8_t *)obj + cache->user_size,
+                             cache->obj_size - cache->user_size);
     }
     return obj;
 }
@@ -496,6 +507,10 @@ void kmem_cache_free(struct kmem_cache *cache, void *obj) {
 
     /* Check redzone before modifying the object */
     slab_check_redzone(cache, obj);
+
+    /* KASAN: verify user area hasn't been touched and poison entire object */
+    kasan_check(obj, cache->user_size, 0);
+    kasan_poison(obj, cache->obj_size);
 
     /* Poison the object with the free pattern (reserving first 8 bytes) */
     slab_poison_free(cache, obj);

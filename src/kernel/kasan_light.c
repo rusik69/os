@@ -187,6 +187,43 @@ int kasan_check(const void *addr, size_t size, int is_write)
     return 0;
 }
 
+/* ── Generic Shadow Setter ───────────────────────────────────────────── */
+
+/* Set shadow memory for a region to a specific value.
+ * This allows marking regions as accessible (0x00), freed (0xFF),
+ * or redzone (0xFE) with a single call.
+ * Automatically aligns to KASAN_GRANULE_SIZE boundaries. */
+void kasan_set_shadow(const void *addr, size_t size, uint8_t shadow_val)
+{
+    uint64_t a, end;
+    uint8_t *shadow;
+
+    if (!kasan_enabled || size == 0)
+        return;
+
+    a   = (uint64_t)(uintptr_t)addr;
+    end = a + size;
+
+    /* Align to KASAN_GRANULE_SIZE so we don't leave partial granules */
+    a   = a & ~(uint64_t)(KASAN_GRANULE_SIZE - 1);
+    end = (end + KASAN_GRANULE_SIZE - 1) & ~(uint64_t)(KASAN_GRANULE_SIZE - 1);
+
+    for (; a < end; a += KASAN_GRANULE_SIZE) {
+        shadow = kasan_addr_to_shadow((const void *)(uintptr_t)a);
+        if (!shadow)
+            continue; /* address not covered — skip silently */
+        *shadow = shadow_val;
+    }
+    mb();
+}
+
+/* Mark a region as a redzone (KASAN_SHADOW_REDZONE).
+ * Access to redzone memory triggers KASAN diagnostic via kasan_check(). */
+void kasan_poison_redzone(const void *addr, size_t size)
+{
+    kasan_set_shadow(addr, size, KASAN_SHADOW_REDZONE);
+}
+
 /* ── Allocator Hooks ─────────────────────────────────────────────────── */
 
 void kasan_alloc(const void *addr, size_t size)

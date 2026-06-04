@@ -122,6 +122,15 @@ void kasan_init(void);
  * automatically aligned to KASAN_GRANULE_SIZE boundaries. */
 void kasan_poison(const void *addr, size_t size);
 
+/* Mark a memory region as a redzone (KASAN_SHADOW_REDZONE).
+ * Access to redzone memory triggers a KASAN diagnostic. */
+void kasan_poison_redzone(const void *addr, size_t size);
+
+/* Set shadow memory for a region to an arbitrary value.
+ * This is the low-level primitive used by kasan_poison, kasan_unpoison,
+ * and kasan_poison_redzone.  addr and size are automatically aligned. */
+void kasan_set_shadow(const void *addr, size_t size, uint8_t shadow_val);
+
 /* Mark a memory region as accessible. */
 void kasan_unpoison(const void *addr, size_t size);
 
