@@ -35,6 +35,12 @@ struct ext2_priv {
     uint32_t num_block_groups;
     struct ext2_superblock sb;
     char     mountpoint[64];   /* for vfs_force_readonly() on corruption */
+
+    /* Cached block group descriptor table — loaded at mount time.
+     * This allows correct inode lookup across ALL block groups,
+     * not just group 0.  Allocated dynamically from kmalloc. */
+    struct ext2_bg_desc *bgd_cache;       /* array of num_block_groups entries */
+    uint32_t             bgd_cache_size;  /* total bytes allocated for bgd_cache */
 };
 
 /* Corrupt filesystem error helper: remounts read-only and returns -EFSCORRUPTED */
@@ -72,7 +78,8 @@ static int ext2_load_super(struct ext2_priv *ep) {
     return 0;
 }
 
-/* Read inode */
+/* Read inode — uses cached block group descriptor table for correct
+ * group lookup across multi-group filesystems (Item 331). */
 static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode *inode) {
     if (ino == 0)
         return ext2_corrupt(ep, "inode 0 is invalid");
@@ -81,14 +88,11 @@ static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode
     uint32_t group = (ino - 1) / ep->inodes_per_group;
     uint32_t index = (ino - 1) % ep->inodes_per_group;
 
-    /* Read block group descriptor */
-    uint32_t bgd_block = (ep->block_size == 1024) ? 2 : 1;
-    uint8_t bgd_buf[32];
-    if (ext2_read_block(ep, bgd_block, bgd_buf) < 0) return -1;
-
-    struct ext2_bg_desc *bgd = (struct ext2_bg_desc *)(bgd_buf + 0);
-    /* For multiple block groups, we'd need to read the correct one */
-    (void)group;
+    /* Use the cached block group descriptor table.
+     * The cache is loaded at mount time from the primary copy. */
+    if (!ep->bgd_cache || group >= ep->num_block_groups)
+        return ext2_corrupt(ep, "block group out of range or bgd cache missing");
+    struct ext2_bg_desc *bgd = &ep->bgd_cache[group];
 
     uint32_t inode_table_block = bgd->bg_inode_table;
     uint32_t byte_offset = index * ep->inode_size;
@@ -784,9 +788,66 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     uint32_t total_groups = (ep->sb.s_blocks_count + ep->blocks_per_group - 1) / ep->blocks_per_group;
     ep->num_block_groups = total_groups;
 
-    kprintf("[ext2] Mounted: %u blocks, %u inodes, %u B/block, %u groups\n",
+    /* ── Load the block group descriptor table into cache ──────────
+     *
+     * The bgd table is always read from the primary copy in group 0.
+     * Its location within group 0 depends on whether block_size == 1024
+     * (where superblock occupies 2 blocks) or larger (superblock is
+     * 1 block).  For sparse superblock filesystems the backup copies
+     * are fewer, but the primary copy (group 0) always exists.
+     *
+     * With flex_bg (EXT2_FEATURE_INCOMPAT_FLEX_BG), the metadata is
+     * packed together, but the bgd entries still point to the correct
+     * physical block locations — so reading them transparently works. */
+    uint32_t bgd_first_block = ep->block_size == 1024 ? 2 : 1;
+    uint32_t bgd_table_bytes = ep->num_block_groups * sizeof(struct ext2_bg_desc);
+    uint32_t bgd_blocks_needed = (bgd_table_bytes + ep->block_size - 1) / ep->block_size;
+
+    ep->bgd_cache = (struct ext2_bg_desc *)kmalloc(bgd_table_bytes);
+    if (!ep->bgd_cache) {
+        kprintf("[ext2] Failed to allocate bgd cache (%u bytes)\n", bgd_table_bytes);
+        kfree(ep);
+        return -1;
+    }
+    ep->bgd_cache_size = bgd_table_bytes;
+    memset(ep->bgd_cache, 0, bgd_table_bytes);
+
+    /* Read the bgd blocks one at a time into the cache */
+    uint8_t block_buf[4096];
+    uint32_t bytes_read = 0;
+    for (uint32_t i = 0; i < bgd_blocks_needed; i++) {
+        if (ext2_read_block(ep, bgd_first_block + i, block_buf) < 0) {
+            kprintf("[ext2] Failed to read bgd block %u\n", bgd_first_block + i);
+            kfree(ep->bgd_cache);
+            kfree(ep);
+            return -1;
+        }
+        uint32_t copy_size = bgd_table_bytes - bytes_read;
+        if (copy_size > ep->block_size) copy_size = ep->block_size;
+        memcpy((uint8_t *)ep->bgd_cache + bytes_read, block_buf, copy_size);
+        bytes_read += copy_size;
+    }
+
+    /* ── Detect and log feature flags ────────────────────────────── */
+    int has_sparse = (ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    int has_flexbg = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_FLEX_BG) ? 1 : 0;
+    int has_large  = (ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_LARGE_FILE) ? 1 : 0;
+    int has_htree  = (ep->sb.s_feature_compat & EXT2_FEATURE_COMPAT_DIR_INDEX) ? 1 : 0;
+    int has_journal= (ep->sb.s_feature_compat & EXT2_FEATURE_COMPAT_HAS_JOURNAL) ? 1 : 0;
+    int has_extents= (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_EXTENTS) ? 1 : 0;
+    int has_64bit  = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_64BIT) ? 1 : 0;
+
+    kprintf("[ext2] Mounted: %u blocks, %u inodes, %u B/block, %u groups",
             ep->sb.s_blocks_count, ep->sb.s_inodes_count,
             ep->block_size, total_groups);
+    if (has_sparse)  kprintf(", sparse_super");
+    if (has_flexbg)  kprintf(", flex_bg");
+    if (has_large)   kprintf(", large_file");
+    if (has_htree)   kprintf(", htree");
+    if (has_journal) kprintf(", journal");
+    if (has_extents) kprintf(", extents");
+    if (has_64bit)   kprintf(", 64bit");
+    kprintf("\n");
 
     return vfs_mount_ex(mountpoint, &ext2_ops, ep, MS_RDONLY);
 }
