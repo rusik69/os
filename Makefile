@@ -768,6 +768,80 @@ debug: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
 		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0
 
+# ── Install target (Item 264) — build a bootable ISO with GRUB ────────
+#
+# Creates a bootable ISO image at $(BUILDDIR)/hermes.iso that can be
+# written to USB or CD/DVD and booted on real hardware via GRUB.
+# Prerequisites: grub-mkrescue, xorriso.
+#
+# Usage:
+#   make install           # build kernel + disk.img + ISO
+#   make install ISO=1     # same (ISO only)
+#   make install USB=/dev/sdX   # build ISO then write to raw device
+#
+# The ISO uses the multiboot protocol (kernel already has a multiboot1
+# header in src/boot/boot.asm) so any GRUB-compatible bootloader can
+# load it.
+
+# Where to install the ISO output
+INSTALL_ISO ?= $(BUILDDIR)/hermes.iso
+
+# GRUB configuration template
+GRUB_CFG ?= scripts/grub.cfg
+
+# Staging directory for ISO contents
+ISO_STAGING ?= $(BUILDDIR)/iso_staging
+
+# ── Build ISO image ───────────────────────────────────────────────────
+# 1. Copy kernel + modules + disk image into a staging directory
+# 2. Place GRUB config in boot/grub/
+# 3. Run grub-mkrescue to produce a bootable ISO
+
+$(INSTALL_ISO): $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img modules
+	@echo "=== Building bootable ISO ==="
+	@mkdir -p $(ISO_STAGING)/boot/grub
+	@mkdir -p $(ISO_STAGING)/modules
+	@cp $(BUILDDIR)/kernel.bin $(ISO_STAGING)/boot/kernel.elf
+	@cp $(GRUB_CFG) $(ISO_STAGING)/boot/grub/grub.cfg
+	@# Copy disk image (FAT32 with init, modules, etc.)
+	@cp $(BUILDDIR)/disk.img $(ISO_STAGING)/boot/disk.img
+	@# Copy kernel modules
+	@for ko in $(MODULE_KOS); do \
+		if [ -f "$$ko" ]; then \
+			cp "$$ko" $(ISO_STAGING)/modules/; \
+		fi \
+	done
+	@# Generate grub-mkrescue config snippet to embed the disk image
+	@echo "*** Build ISO with grub-mkrescue ***"
+	@if command -v grub-mkrescue >/dev/null 2>&1; then \
+		grub-mkrescue -o $@ $(ISO_STAGING) 2>&1; \
+		echo "=== ISO created: $@ ==="; \
+		echo "    Write to USB: dd if=$@ of=/dev/sdX bs=4M status=progress"; \
+	else \
+		echo "*** grub-mkrescue not found — install xorriso + grub-common"; \
+		exit 1; \
+	fi
+	@rm -rf $(ISO_STAGING)
+
+# ── Install to USB device ────────────────────────────────────────────
+# Usage: make install USB=/dev/sdX
+# WARNING: This will OVERWRITE the target device!
+install: $(INSTALL_ISO)
+	@if [ -n "$(USB)" ]; then \
+		echo "=== Writing ISO to $(USB) ==="; \
+		echo "WARNING: This will overwrite $(USB)!"; \
+		dd if=$(INSTALL_ISO) of=$(USB) bs=4M status=progress; \
+		sync; \
+		echo "=== Done: $(USB) is now bootable ==="; \
+	else \
+		echo "=== Bootable ISO ready: $(INSTALL_ISO) ==="; \
+		echo "    Write to USB: make install USB=/dev/sdX"; \
+	fi
+
+# ── Clean ISO artifacts ──────────────────────────────────────────────
+install-clean:
+	rm -rf $(INSTALL_ISO) $(ISO_STAGING)
+
 # ── Clean targets ─────────────────────────────────────────────────────
 
 clean:
