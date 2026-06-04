@@ -822,6 +822,42 @@ static int procfs_gen_pid_io(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/ns — list namespace types and identifiers (Item 120) */
+static int procfs_gen_pid_ns(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    /* UTS namespace — dynamically compute inode from hostname + pointer */
+    {
+        uint64_t ns_inode = 0;
+        const char *h = (p->ns_hostname[0]) ? p->ns_hostname : "localhost";
+        for (int i = 0; h[i]; i++)
+            ns_inode = ns_inode * 31 + (uint8_t)h[i];
+        ns_inode ^= (uint64_t)(uintptr_t)p;
+        ns_inode &= 0x7FFFFFFFFFFFFFFFULL;
+        if (ns_inode < 1024) ns_inode += 1024;
+        proc_str("ns\t", buf, &pos, max);
+        proc_u64_to_str(ns_inode, buf, &pos, max);
+        proc_str("\t/uts\n", buf, &pos, max);
+    }
+    /* PID namespace — always the initial namespace for now */
+    proc_str("ns\t4026531836\t/pid\n", buf, &pos, max);
+    /* Mount namespace */
+    proc_str("ns\t4026531840\t/mnt\n", buf, &pos, max);
+    /* Network namespace */
+    proc_str("ns\t4026531841\t/net\n", buf, &pos, max);
+    /* IPC namespace */
+    proc_str("ns\t4026531839\t/ipc\n", buf, &pos, max);
+    /* Cgroup namespace */
+    proc_str("ns\t4026531835\t/cgroup\n", buf, &pos, max);
+    /* Time namespace */
+    proc_str("ns\t4026531834\t/time\n", buf, &pos, max);
+
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* /proc/<pid>/maps — memory mappings */
 static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -1294,6 +1330,42 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             if (len < 0) return -1;
         } else if (got && strcmp(p, "/io") == 0) {
             len = procfs_gen_pid_io(pid, buf, (int)max_size);
+            if (len < 0) return -1;
+        } else if (got && strcmp(p, "/ns") == 0) {
+            /* /proc/<pid>/ns — list available namespace types */
+            len = procfs_gen_pid_ns(pid, buf, (int)max_size);
+            if (len < 0) return -1;
+        } else if (got && strncmp(p, "/ns/", 4) == 0) {
+            /* /proc/<pid>/ns/<type> — read namespace identifier (Linux: "type:[inode]") */
+            struct process *proc = process_get_by_pid(pid);
+            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            const char *ns_type = p + 4;
+            if (strcmp(ns_type, "uts") == 0) {
+                /* Compute a namespace inode from the hostname + process pointer */
+                uint64_t ns_inode = 0;
+                const char *h = (proc->ns_hostname[0]) ? proc->ns_hostname : "localhost";
+                for (int i = 0; h[i]; i++)
+                    ns_inode = ns_inode * 31 + (uint8_t)h[i];
+                ns_inode ^= (uint64_t)(uintptr_t)proc;
+                ns_inode &= 0x7FFFFFFFFFFFFFFFULL;
+                if (ns_inode < 1024) ns_inode += 1024;
+                len = snprintf(buf, (size_t)max_size, "uts:[%llu]\n",
+                               (unsigned long long)ns_inode);
+            } else if (strcmp(ns_type, "pid") == 0) {
+                len = snprintf(buf, (size_t)max_size, "pid:[4026531836]\n");
+            } else if (strcmp(ns_type, "mnt") == 0) {
+                len = snprintf(buf, (size_t)max_size, "mnt:[4026531840]\n");
+            } else if (strcmp(ns_type, "net") == 0) {
+                len = snprintf(buf, (size_t)max_size, "net:[4026531841]\n");
+            } else if (strcmp(ns_type, "ipc") == 0) {
+                len = snprintf(buf, (size_t)max_size, "ipc:[4026531839]\n");
+            } else if (strcmp(ns_type, "cgroup") == 0) {
+                len = snprintf(buf, (size_t)max_size, "cgroup:[4026531835]\n");
+            } else if (strcmp(ns_type, "time") == 0) {
+                len = snprintf(buf, (size_t)max_size, "time:[4026531834]\n");
+            } else {
+                return -1;
+            }
             if (len < 0) return -1;
         } else if (got && strncmp(p, "/fd/", 4) == 0) {
             /* /proc/<pid>/fd/<N> — read symlink target (file path) */

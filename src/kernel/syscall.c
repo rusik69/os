@@ -1705,6 +1705,136 @@ static uint64_t sys_unshare(uint64_t flags)
     return 0;
 }
 
+/* ── setns — join an existing namespace (Item 120) ────────────────────
+ *
+ *   setns(fd, nstype)
+ *
+ * Given a file descriptor opened on a /proc/<pid>/ns/<type> file, join
+ * the namespace of the target process for the given namespace type.
+ * If nstype is 0, the type is inferred from the fd's path.
+ * If nstype is non-zero, it must match the fd's namespace type.
+ *
+ * Currently supported namespace types (nstype constants):
+ *   CLONE_NEWUTS (0x04000000) — hostname/domainname isolation
+ *
+ * Other namespace types are accepted but treated as no-ops (the
+ * infrastructure will be extended as namespace isolation is deepened).
+ */
+static uint64_t sys_setns(uint64_t fd, uint64_t nstype)
+{
+    struct process *cur = process_get_current();
+    if (!cur) return (uint64_t)-EINVAL;
+
+    /* Validate that fd is in range and in use */
+    if (fd >= PROCESS_FD_MAX) return (uint64_t)-EBADF;
+    struct process_fd *pfd = &cur->fd_table[fd];
+    if (!pfd->used) return (uint64_t)-EBADF;
+
+    /* Parse the fd's path to extract the namespace type and target PID.
+     * Expected path format: "/proc/<pid>/ns/<type>" */
+    const char *path = pfd->path;
+    if (strncmp(path, "/proc/", 6) != 0)
+        return (uint64_t)-EINVAL;
+
+    /* Extract PID from /proc/<pid>/... */
+    const char *p = path + 6;
+    uint32_t target_pid = 0;
+    int got_pid = 0;
+    while (*p >= '0' && *p <= '9') {
+        target_pid = target_pid * 10 + (uint32_t)(*p - '0');
+        p++; got_pid = 1;
+    }
+    if (!got_pid || *p != '/')
+        return (uint64_t)-EINVAL;
+
+    /* Expect /ns/<type> suffix */
+    if (strncmp(p, "/ns/", 4) != 0)
+        return (uint64_t)-EINVAL;
+    const char *ns_type = p + 4;
+
+    /* Look up the target process */
+    struct process *target = process_get_by_pid(target_pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)-ESRCH;
+
+    /* Determine namespace type from the path suffix */
+    uint64_t discovered_nstype = 0;
+    if (strcmp(ns_type, "uts") == 0) {
+        discovered_nstype = CLONE_NEWUTS;
+    } else if (strcmp(ns_type, "pid") == 0) {
+        discovered_nstype = CLONE_NEWPID;
+    } else if (strcmp(ns_type, "mnt") == 0) {
+        discovered_nstype = CLONE_NEWNS;
+    } else if (strcmp(ns_type, "net") == 0) {
+        discovered_nstype = CLONE_NEWNET;
+    } else if (strcmp(ns_type, "ipc") == 0) {
+        discovered_nstype = CLONE_NEWIPC;
+    } else if (strcmp(ns_type, "cgroup") == 0) {
+        discovered_nstype = CLONE_NEWCGROUP;
+    } else if (strcmp(ns_type, "time") == 0) {
+        discovered_nstype = CLONE_NEWTIME;
+    } else {
+        return (uint64_t)-EINVAL;
+    }
+
+    /* If nstype is non-zero, verify it matches the fd's type */
+    if (nstype != 0 && nstype != discovered_nstype)
+        return (uint64_t)-EINVAL;
+
+    /* Join the namespace based on type.
+     * For each namespace type we implement the switch by copying the
+     * target process's namespace state into the current process. */
+    switch (discovered_nstype) {
+    case CLONE_NEWUTS:
+        /* Copy hostname and domainname from target process */
+        strncpy(cur->ns_hostname, target->ns_hostname[0]
+                ? target->ns_hostname : "localhost",
+                sizeof(cur->ns_hostname) - 1);
+        cur->ns_hostname[sizeof(cur->ns_hostname) - 1] = '\0';
+        strncpy(cur->ns_domainname,
+                target->ns_domainname[0] ? target->ns_domainname : "(none)",
+                sizeof(cur->ns_domainname) - 1);
+        cur->ns_domainname[sizeof(cur->ns_domainname) - 1] = '\0';
+        cur->ns_flags |= CLONE_NEWUTS;
+        break;
+
+    case CLONE_NEWPID:
+        /* PID namespace — not yet fully isolated; record the flag */
+        cur->ns_flags |= CLONE_NEWPID;
+        break;
+
+    case CLONE_NEWNS:
+        /* Mount namespace — not yet fully isolated */
+        cur->ns_flags |= CLONE_NEWNS;
+        break;
+
+    case CLONE_NEWNET:
+        /* Network namespace — not yet fully isolated */
+        cur->ns_flags |= CLONE_NEWNET;
+        break;
+
+    case CLONE_NEWIPC:
+        /* IPC namespace — not yet fully isolated */
+        cur->ns_flags |= CLONE_NEWIPC;
+        break;
+
+    case CLONE_NEWCGROUP:
+        /* Cgroup namespace — not yet fully isolated */
+        cur->ns_flags |= CLONE_NEWCGROUP;
+        break;
+
+    case CLONE_NEWTIME:
+        /* Time namespace — not yet fully isolated */
+        cur->ns_flags |= CLONE_NEWTIME;
+        break;
+
+    default:
+        return (uint64_t)-EINVAL;
+    }
+
+    return 0;
+}
+
 /* ── Thread syscalls (pthread support) ────────────────────────── */
 
 static uint64_t sys_thread_create(uint64_t fn_addr, uint64_t arg) {
@@ -8157,6 +8287,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FORK:                return sys_fork();
         case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
         case SYS_UNSHARE:             return sys_unshare(a1);
+        case SYS_SETNS:               return sys_setns(a1, a2);
         case SYS_GETTID:              return sys_gettid();
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
