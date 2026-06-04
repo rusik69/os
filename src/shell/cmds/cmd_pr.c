@@ -6,6 +6,17 @@
 #include "stdlib.h"
 #include "types.h"
 
+static void write_header(int page_num, const char *filename, int has_time, struct libc_rtc_time *tm) {
+    if (has_time) {
+        kprintf("%04d-%02d-%02d %02d:%02d  %s  Page %d\n\n",
+                tm->year, tm->month, tm->day,
+                tm->hour, tm->minute,
+                filename, page_num);
+    } else {
+        kprintf("%s  Page %d\n\n", filename, page_num);
+    }
+}
+
 int cmd_pr(int argc, char **argv) {
     int page_size = 66;
     int optind = 1;
@@ -63,19 +74,8 @@ int cmd_pr(int argc, char **argv) {
     int line_on_page = 0;
 
     /* Write header */
-    void write_header(void) {
-        if (has_time) {
-            kprintf("%04d-%02d-%02d %02d:%02d  %s  Page %d\n\n",
-                    tm.year, tm.month, tm.day,
-                    tm.hour, tm.minute,
-                    filename, page_num);
-        } else {
-            kprintf("%s  Page %d\n\n", filename, page_num);
-        }
-        line_on_page = 2; /* header + blank line */
-    }
-
-    write_header();
+    write_header(page_num, filename, has_time, &tm);
+    line_on_page = 2; /* header + blank line */
 
     /* Output each line */
     char *p = fbuf;
@@ -94,7 +94,8 @@ int cmd_pr(int argc, char **argv) {
             /* Form feed */
             kprintf("\f");
             page_num++;
-            write_header();
+            write_header(page_num, filename, has_time, &tm);
+            line_on_page = 2;
         }
     }
     return 0;
