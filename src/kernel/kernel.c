@@ -58,6 +58,7 @@
 #include "virtio_net.h"
 #include "virtio_blk.h"
 #include "nvme.h"
+#include "mdadm.h"
 #include "ac97.h"
 #include "smp.h"
 #include "apic.h"
@@ -797,6 +798,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[OK] NVMe SSD initialized\n");
     else
         kprintf("[--] NVMe: not present\n");
+
+    /* MD/RAID subsystem — provides RAID0/RAID1 virtual block devices.
+     * Must be initialized after member block devices (ATA, AHCI, NVMe, virtio-blk)
+     * are registered so that blockdev_get_sectors() works. */
+    raid1_init();
 
     if (ac97_init() == 0)
         kprintf("[OK] AC97 audio: initialized\n");

@@ -140,6 +140,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/fbcon.c \
          src/drivers/partitions.c \
          src/drivers/mdadm.c \
+         src/drivers/mdadm_ext.c \
          src/drivers/cmos.c \
          src/drivers/floppy.c \
          src/drivers/battery.c \
