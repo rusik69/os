@@ -417,6 +417,12 @@ struct process *process_create(void (*entry)(void), const char *name) {
                 sizeof(proc->ns_domainname) - 1);
         proc->ns_domainname[sizeof(proc->ns_domainname) - 1] = '\0';
     }
+
+    /* ── Time namespace: inherit offsets from parent ──────────────────── */
+    {
+        proc->timens_mono_offset = current_process ? current_process->timens_mono_offset : 0;
+        proc->timens_boottime_offset = current_process ? current_process->timens_boottime_offset : 0;
+    }
     proc->cpu_system = 0;
     proc->max_rss = 0;
     proc->swap_pages = 0;

@@ -255,6 +255,9 @@ struct process {
     /* ── Per-process UTS namespace (hostname/domainname isolation) ─ */
     char     ns_hostname[64]; /* namespace-local hostname (from CLONE_NEWUTS) */
     char     ns_domainname[64];
+    /* ── Time namespace offsets (CLONE_NEWTIME) ──────────────────── */
+    int64_t  timens_mono_offset;     /* offset (ns) applied to CLOCK_MONOTONIC */
+    int64_t  timens_boottime_offset; /* offset (ns) applied to CLOCK_BOOTTIME */
     /* ── YAMA ptrace_scope admin-controlled tracer (PR_SET_PTRACER) ─ */
     int      ptracer_pid;     /* 0=none, -1=any, >0=specific tracer PID (YAMA scope 2) */
 };

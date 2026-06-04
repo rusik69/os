@@ -8,6 +8,7 @@
 #include "string.h"
 #include "printf.h"
 #include "types.h"
+#include "process.h"
 
 /* ─── Default watermark values ───────────────────────────────────── */
 /* Memory reclaim watermark — minimum free pages before reclaim triggers.
@@ -160,6 +161,50 @@ static int sysctl_write_reclaim_watermark(const char *buf, int len)
     return 0;
 }
 
+/* ── Time namespace offset write handlers ──────────────────────────────
+ * These allow setting the per-process time namespace offsets via sysctl:
+ *
+ *   echo +3600000000000 > /proc/sys/kernel/timens_mono_offset
+ *   echo -5000000000    > /proc/sys/kernel/timens_boottime_offset
+ *
+ * Only affects the current process (and its future children via fork
+ * inheritance).  Only effective when the process has CLONE_NEWTIME set
+ * via unshare(CLONE_NEWTIME).
+ */
+static int sysctl_write_timens_mono_offset(const char *buf, int len)
+{
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+    if (!(cur->ns_flags & CLONE_NEWTIME))
+        return -1; /* Not in a time namespace — cannot set offsets */
+
+    int64_t val = 0;
+    int sign = 1, i = 0;
+    if (i < len && buf[i] == '-') { sign = -1; i++; }
+    else if (i < len && buf[i] == '+') { i++; }
+    for (; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        val = val * 10 + (int64_t)(buf[i] - '0');
+    cur->timens_mono_offset = val * sign;
+    return 0;
+}
+
+static int sysctl_write_timens_boottime_offset(const char *buf, int len)
+{
+    struct process *cur = process_get_current();
+    if (!cur) return -1;
+    if (!(cur->ns_flags & CLONE_NEWTIME))
+        return -1; /* Not in a time namespace */
+
+    int64_t val = 0;
+    int sign = 1, i = 0;
+    if (i < len && buf[i] == '-') { sign = -1; i++; }
+    else if (i < len && buf[i] == '+') { i++; }
+    for (; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        val = val * 10 + (int64_t)(buf[i] - '0');
+    cur->timens_boottime_offset = val * sign;
+    return 0;
+}
+
 /* ─── Public API ─────────────────────────────────────────────────── */
 
 int sysctl_register(const char *name,
@@ -219,6 +264,10 @@ int sysctl_write(const char *name, const char *buf, int len) {
         return sysctl_write_rand_va(buf, len);
     if (strcmp(name, "vm.reclaim_watermark") == 0)
         return sysctl_write_reclaim_watermark(buf, len);
+    if (strcmp(name, "timens_mono_offset") == 0)
+        return sysctl_write_timens_mono_offset(buf, len);
+    if (strcmp(name, "timens_boottime_offset") == 0)
+        return sysctl_write_timens_boottime_offset(buf, len);
     return -1;
 }
 

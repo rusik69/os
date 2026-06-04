@@ -1693,9 +1693,16 @@ static uint64_t sys_unshare(uint64_t flags)
         /* Cgroup namespace: future. */
     }
 
-    /* ── CLONE_NEWTIME: mark for time namespace ──────────────── */
+    /* ── CLONE_NEWTIME: create a fresh time namespace ─────────── */
     if (flags & CLONE_NEWTIME) {
-        /* Time namespace: future. */
+        /* Create a new time namespace with zero offsets (time starts
+         * at the current global clock values).  The process can later
+         * adjust offsets via /proc/self/timens_offsets or a dedicated
+         * syscall, which is useful for container migration (where the
+         * monotonic clock should continue from a saved checkpoint). */
+        cur->timens_mono_offset = 0;
+        cur->timens_boottime_offset = 0;
+        kprintf("[TIMENS] PID %d created new time namespace\n", cur->pid);
     }
 
     /* Record the set of unshared namespace flags on this process.
@@ -5998,6 +6005,7 @@ static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
 
     struct timespec ts;
     uint64_t ticks = timer_get_ticks();
+    struct process *cur = process_get_current();
 
     switch (clockid) {
     case CLOCK_REALTIME: {
@@ -6007,6 +6015,58 @@ static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp_addr) {
         break;
     }
     case CLOCK_MONOTONIC:
+    case 4:  /* CLOCK_MONOTONIC_RAW */
+    case 6:  /* CLOCK_MONOTONIC_COARSE */
+        ts.tv_sec = ticks / TIMER_FREQ;
+        ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        /* Apply time namespace offset for CLOCK_MONOTONIC if process has NEWTIME */
+        if (cur && (cur->ns_flags & CLONE_NEWTIME) && clockid == CLOCK_MONOTONIC) {
+            int64_t off = cur->timens_mono_offset;
+            if (off != 0) {
+                int64_t new_ns = (int64_t)ts.tv_nsec + off;
+                while (new_ns >= 1000000000LL) { ts.tv_sec++; new_ns -= 1000000000LL; }
+                while (new_ns < 0) {
+                    if (ts.tv_sec > 0) { ts.tv_sec--; new_ns += 1000000000LL; }
+                    else { new_ns = 0; break; }
+                }
+                ts.tv_nsec = (uint64_t)new_ns;
+                int64_t off_sec = off / 1000000000LL;
+                if (off_sec != 0) {
+                    if (off_sec > 0 || (int64_t)ts.tv_sec >= -off_sec)
+                        ts.tv_sec = (uint64_t)((int64_t)ts.tv_sec + off_sec);
+                    else
+                        ts.tv_sec = 0;
+                }
+            }
+        }
+        break;
+
+    case 7:  /* CLOCK_BOOTTIME */
+    case 9:  /* CLOCK_BOOTTIME_ALARM */
+        ts.tv_sec = ticks / TIMER_FREQ;
+        ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
+        /* Apply time namespace offset for CLOCK_BOOTTIME */
+        if (cur && (cur->ns_flags & CLONE_NEWTIME)) {
+            int64_t off = cur->timens_boottime_offset;
+            if (off != 0) {
+                int64_t new_ns = (int64_t)ts.tv_nsec + off;
+                while (new_ns >= 1000000000LL) { ts.tv_sec++; new_ns -= 1000000000LL; }
+                while (new_ns < 0) {
+                    if (ts.tv_sec > 0) { ts.tv_sec--; new_ns += 1000000000LL; }
+                    else { new_ns = 0; break; }
+                }
+                ts.tv_nsec = (uint64_t)new_ns;
+                int64_t off_sec = off / 1000000000LL;
+                if (off_sec != 0) {
+                    if (off_sec > 0 || (int64_t)ts.tv_sec >= -off_sec)
+                        ts.tv_sec = (uint64_t)((int64_t)ts.tv_sec + off_sec);
+                    else
+                        ts.tv_sec = 0;
+                }
+            }
+        }
+        break;
+
     default:
         ts.tv_sec = ticks / TIMER_FREQ;
         ts.tv_nsec = (ticks % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
