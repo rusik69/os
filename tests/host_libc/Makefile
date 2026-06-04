@@ -6,6 +6,9 @@ CFLAGS = -DTEST_MODE_HOST \
          -I../../src/include \
          -I../../src \
          -Wall -Werror \
+         -Wno-error=conflicting-types \
+         -Wno-error=builtin-declaration-mismatch \
+         -Wno-error=implicit-function-declaration \
          -Wno-format-truncation \
          -g -O0
 

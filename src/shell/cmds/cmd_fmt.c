@@ -13,8 +13,41 @@ static int is_paragraph_sep(const char *line, int len) {
     return 1;
 }
 
+/* Formatter state for use by helper functions */
+struct fmt_state {
+    char  word[4096];
+    int   word_len;
+    char  out_line[4096];
+    int   out_col;
+    int   width;
+};
+
+static void flush_line(struct fmt_state *fs) {
+    if (fs->out_col > 0) {
+        fs->out_line[fs->out_col] = '\0';
+        kprintf("%s\n", fs->out_line);
+        fs->out_col = 0;
+    }
+}
+
+static void flush_word(struct fmt_state *fs) {
+    if (fs->word_len == 0) return;
+    fs->word[fs->word_len] = '\0';
+    int wlen = fs->word_len;
+    if (fs->out_col + (fs->out_col > 0 ? 1 : 0) + wlen > fs->width) {
+        flush_line(fs);
+    }
+    if (fs->out_col > 0) {
+        fs->out_line[fs->out_col++] = ' ';
+    }
+    for (int i = 0; i < wlen; i++)
+        fs->out_line[fs->out_col++] = fs->word[i];
+    fs->word_len = 0;
+}
+
 int cmd_fmt(int argc, char **argv) {
-    int width = 75;
+    struct fmt_state fs;
+    fs.width = 75;
     int optind = 1;
 
     while (optind < argc && argv[optind][0] == '-') {
@@ -23,8 +56,8 @@ int cmd_fmt(int argc, char **argv) {
                 kprintf("fmt: -w requires an argument\n");
                 return 1;
             }
-            width = atoi(argv[optind + 1]);
-            if (width < 10) width = 10;
+            fs.width = atoi(argv[optind + 1]);
+            if (fs.width < 10) fs.width = 10;
             optind += 2;
         } else if (strcmp(argv[optind], "--") == 0) {
             optind++; break;
@@ -70,38 +103,14 @@ int cmd_fmt(int argc, char **argv) {
     }
 
     /* Process paragraphs */
-    char word[4096];
-    int  word_len = 0;
-    char out_line[4096];
-    int  out_col = 0;
-
-    void flush_line(void) {
-        if (out_col > 0) {
-            out_line[out_col] = '\0';
-            kprintf("%s\n", out_line);
-            out_col = 0;
-        }
-    }
-    void flush_word(void) {
-        if (word_len == 0) return;
-        word[word_len] = '\0';
-        int wlen = word_len;
-        if (out_col + (out_col > 0 ? 1 : 0) + wlen > width) {
-            flush_line();
-        }
-        if (out_col > 0) {
-            out_line[out_col++] = ' ';
-        }
-        for (int i = 0; i < wlen; i++)
-            out_line[out_col++] = word[i];
-        word_len = 0;
-    }
+    fs.word_len = 0;
+    fs.out_col = 0;
 
     for (int i = 0; i < nlines; i++) {
         int len = (int)strlen(lines[i]);
         if (is_paragraph_sep(lines[i], len)) {
-            flush_word();
-            flush_line();
+            flush_word(&fs);
+            flush_line(&fs);
             kprintf("\n");
             continue;
         }
@@ -110,13 +119,13 @@ int cmd_fmt(int argc, char **argv) {
         while (*t) {
             while (*t == ' ' || *t == '\t') t++;
             if (*t == '\0') break;
-            word_len = 0;
-            while (*t && *t != ' ' && *t != '\t' && word_len < 4095)
-                word[word_len++] = *t++;
-            flush_word();
+            fs.word_len = 0;
+            while (*t && *t != ' ' && *t != '\t' && fs.word_len < 4095)
+                fs.word[fs.word_len++] = *t++;
+            flush_word(&fs);
         }
     }
-    flush_word();
-    flush_line();
+    flush_word(&fs);
+    flush_line(&fs);
     return 0;
 }
