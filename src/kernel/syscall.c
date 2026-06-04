@@ -6484,6 +6484,7 @@ struct mq {
     int num_msgs;
     uint64_t mq_maxmsg;
     uint64_t mq_msgsize;
+    int  oflags;         /* open flags (O_NONBLOCK etc.) — Item 254 */
 };
 
 static struct mq mq_table[MQ_MAX];
@@ -6511,6 +6512,7 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
         for (int i = 0; i < MQ_MAX; i++) {
             if (!mq_table[i].in_use) {
                 mq_table[i].in_use = 1;
+                mq_table[i].oflags = (int)(oflag & 0xffff);  /* store relevant flags (O_NONBLOCK, O_CREAT, O_EXCL) */
                 memcpy(mq_table[i].name, name, 63); mq_table[i].name[63] = '\0';
                 mq_table[i].num_msgs = 0;
                 mq_table[i].mq_maxmsg = MQ_MAX_MSG;
@@ -6534,7 +6536,10 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
     struct mq *mq = mq_find_by_name(name);
     if (!mq) return (uint64_t)-1;
     for (int i = 0; i < MQ_MAX; i++) {
-        if (&mq_table[i] == mq) return (uint64_t)(800 + i);
+        if (&mq_table[i] == mq) {
+            mq_table[i].oflags = (int)(oflag & 0xffff);  /* store/replace flags on open (Item 254) */
+            return (uint64_t)(800 + i);
+        }
     }
     return (uint64_t)-1;
 }
@@ -6546,10 +6551,12 @@ static uint64_t sys_mq_send(uint64_t mqd, uint64_t msg_addr,
         return (uint64_t)-1;
 
     struct mq *mq = &mq_table[slot];
-    if (msg_len > mq->mq_msgsize) return (uint64_t)-1;
+    if (msg_len > mq->mq_msgsize) return (uint64_t)-EMSGSIZE;
     if (mq->num_msgs >= (int)mq->mq_maxmsg) {
-        /* Queue full — should block, but for now fail */
-        return (uint64_t)-1;
+        if (mq->oflags & O_NONBLOCK)
+            return (uint64_t)-EAGAIN;
+        /* Queue full & blocking mode — should sleep, but for now fail */
+        return (uint64_t)-EAGAIN;
     }
 
     if (syscall_is_user_process() && !syscall_user_read_ok(msg_addr, msg_len))
@@ -6569,7 +6576,12 @@ static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
         return (uint64_t)-1;
 
     struct mq *mq = &mq_table[slot];
-    if (mq->num_msgs == 0) return (uint64_t)-1;
+    if (mq->num_msgs == 0) {
+        if (mq->oflags & O_NONBLOCK)
+            return (uint64_t)-EAGAIN;
+        /* Queue empty & blocking mode — should sleep, but for now fail */
+        return (uint64_t)-EAGAIN;
+    }
 
     if (syscall_is_user_process() && !syscall_user_write_ok(msg_addr, msg_len))
         return (uint64_t)-1;
