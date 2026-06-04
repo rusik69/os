@@ -802,7 +802,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* MD/RAID subsystem — provides RAID0/RAID1 virtual block devices.
      * Must be initialized after member block devices (ATA, AHCI, NVMe, virtio-blk)
      * are registered so that blockdev_get_sectors() works. */
-    raid1_init();
+    raid_md_init();
 
     if (ac97_init() == 0)
         kprintf("[OK] AC97 audio: initialized\n");

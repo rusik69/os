@@ -53,17 +53,19 @@ int raid_create_raid0(struct raid_super *super, uint32_t num_disks,
 #define RAID_MEMBER_ACTIVE  0
 #define RAID_MEMBER_FAILED  1
 
-struct raid1_member {
+struct raid_member {
     int      dev_id;       /* member block device id */
     int      state;        /* RAID_MEMBER_ACTIVE or RAID_MEMBER_FAILED */
     uint64_t sector_count; /* cached sector count of this member */
 };
 
+/* ── RAID1 array ──────────────────────────────────────────────────── */
+
 struct raid1_array {
     int    array_id;        /* MD block device id */
     int    state;           /* RAID_ARRAY_CLEAN / DEGRADED / FAILED */
     int    num_members;     /* number of member disks */
-    struct raid1_member members[RAID1_MAX_MEMBERS];
+    struct raid_member members[RAID1_MAX_MEMBERS];
     uint64_t array_sectors; /* total sectors (all members have at least this many) */
     uint8_t uuid[16];       /* array UUID */
 };
@@ -83,5 +85,76 @@ int  raid1_member_failed(int array_id, int dev_id);
 /* Query RAID1 array status. Returns 0 on success, -1 if not found. */
 int  raid1_status(int array_id, int *state_out, int *num_members_out,
                   uint64_t *sectors_out);
+
+/* ── RAID0 (striping) ──────────────────────────────────────────────── */
+
+#define RAID0_MAX_DISKS 16
+#define RAID0_DEFAULT_CHUNK_SECT 64  /* 32 KB default chunk */
+
+struct raid0_array {
+    int    array_id;        /* MD block device id */
+    int    state;           /* RAID_ARRAY_CLEAN / DEGRADED / FAILED */
+    int    num_disks;       /* number of member disks */
+    struct raid_member disks[RAID0_MAX_DISKS];
+    uint32_t chunk_size;    /* stripe chunk in sectors */
+    uint64_t stripe_size;   /* chunk_size * num_disks in sectors (full stripe) */
+    uint64_t disk_sectors;  /* sectors per member (min of all) */
+    uint64_t array_sectors; /* total array sectors = disk_sectors * num_disks */
+    uint8_t uuid[16];       /* array UUID */
+};
+
+/* Create a RAID0 array (striping). chunk_size in sectors (0 = default). */
+int  raid0_create(const int *member_dev_ids, int num_disks,
+                  uint32_t chunk_size, const uint8_t *uuid);
+
+/* Destroy a RAID0 array. */
+void raid0_destroy(int array_id);
+
+/* Query RAID0 array status. */
+int  raid0_status(int array_id, int *state_out, int *num_disks_out,
+                  uint64_t *sectors_out, uint32_t *chunk_out);
+
+/* ── RAID10 (stripe of mirrors, RAID1+0) ─────────────────────────── */
+
+#define RAID10_MAX_MIRRORS  8   /* max mirror pairs (16 disks total) */
+#define RAID10_MAX_DISKS    16
+
+struct raid10_mirror_pair {
+    struct raid_member primary;    /* first member of mirror */
+    struct raid_member secondary;  /* second member of mirror */
+};
+
+struct raid10_array {
+    int    array_id;        /* MD block device id */
+    int    state;           /* RAID_ARRAY_CLEAN / DEGRADED / FAILED */
+    int    num_pairs;       /* number of mirror pairs */
+    struct raid10_mirror_pair pairs[RAID10_MAX_MIRRORS];
+    uint32_t chunk_size;    /* stripe chunk in sectors */
+    uint64_t stripe_size;   /* chunk_size * num_pairs in sectors */
+    uint64_t pair_sectors;  /* sectors per pair (min of both members across all pairs) */
+    uint64_t array_sectors; /* total array sectors = pair_sectors * num_pairs */
+    uint8_t uuid[16];       /* array UUID */
+};
+
+/* Create a RAID10 array. member_dev_ids must have an even number of entries.
+ * chunk_size in sectors (0 = default). Pairs are (dev[0],dev[1]), (dev[2],dev[3]), ... */
+int  raid10_create(const int *member_dev_ids, int num_disks,
+                   uint32_t chunk_size, const uint8_t *uuid);
+
+/* Destroy a RAID10 array. */
+void raid10_destroy(int array_id);
+
+/* Query RAID10 array status. */
+int  raid10_status(int array_id, int *state_out, int *num_pairs_out,
+                   uint64_t *sectors_out, uint32_t *chunk_out);
+
+/* ── Common helpers ────────────────────────────────────────────────── */
+
+/* Mark a member device as failed in any array type.
+ * Scans all registered arrays (RAID0, RAID1, RAID10). */
+void md_member_failed(int array_id, int dev_id, int level);
+
+/* Initialize the MD subsystem (RAID0/1/10). Called once during boot. */
+void raid_md_init(void);
 
 #endif /* MDADM_H */

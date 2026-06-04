@@ -11,27 +11,35 @@
 
 /* ── Maximum number of RAID arrays ─────────────────────────────────── */
 #define MAX_RAID1_ARRAYS 4
+#define MAX_RAID0_ARRAYS 4
+#define MAX_RAID10_ARRAYS 4
 
-/* Global table of RAID1 arrays */
-static struct raid1_array g_raid1_arrays[MAX_RAID1_ARRAYS];
-static spinlock_t g_raid1_lock;
-static int g_raid1_next_id = 0; /* next MD block device id offset from MD_BLOCKDEV_BASE */
-static int g_raid1_initialized = 0;
+/* Global tables for each RAID level */
+static struct raid1_array  g_raid1_arrays[MAX_RAID1_ARRAYS];
+static struct raid0_array  g_raid0_arrays[MAX_RAID0_ARRAYS];
+static struct raid10_array g_raid10_arrays[MAX_RAID10_ARRAYS];
+static spinlock_t g_raid_lock;
+static int g_raid_next_id = 0; /* next MD block device id offset from MD_BLOCKDEV_BASE */
+static int g_raid_initialized = 0;
 
 /* ── Forward declarations ──────────────────────────────────────────── */
 static int raid1_submit_fn(struct blk_request *req);
+static int raid0_submit_fn(struct blk_request *req);
+static int raid10_submit_fn(struct blk_request *req);
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void raid1_init(void)
+void raid_md_init(void)
 {
-    if (g_raid1_initialized) return;
+    if (g_raid_initialized) return;
     memset(g_raid1_arrays, 0, sizeof(g_raid1_arrays));
-    spinlock_init(&g_raid1_lock);
-    g_raid1_next_id = 0;
-    g_raid1_initialized = 1;
-    kprintf("[mdadm] RAID1 subsystem initialized (max %d arrays)\n",
-            MAX_RAID1_ARRAYS);
+    memset(g_raid0_arrays, 0, sizeof(g_raid0_arrays));
+    memset(g_raid10_arrays, 0, sizeof(g_raid10_arrays));
+    spinlock_init(&g_raid_lock);
+    g_raid_next_id = 0;
+    g_raid_initialized = 1;
+    kprintf("[mdadm] MD subsystem initialized (RAID0/1/10, max %d+%d+%d arrays)\n",
+            MAX_RAID1_ARRAYS, MAX_RAID0_ARRAYS, MAX_RAID10_ARRAYS);
 }
 
 /* ── Synchronous I/O helper on a member device ─────────────────────── */
@@ -78,11 +86,11 @@ int raid1_create(const int *member_dev_ids, int num_members)
         return -1;
     }
 
-    if (!g_raid1_initialized)
-        raid1_init();
+    if (!g_raid_initialized)
+        raid_md_init();
 
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_raid1_lock, &irq_flags);
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
 
     /* Find a free slot */
     int slot = -1;
@@ -93,14 +101,14 @@ int raid1_create(const int *member_dev_ids, int num_members)
         }
     }
     if (slot < 0) {
-        spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
         kprintf("[mdadm] RAID1: no free array slots\n");
         return -1;
     }
 
     /* Compute the MD block device id */
-    int md_id = MD_BLOCKDEV_BASE + g_raid1_next_id;
-    g_raid1_next_id = (g_raid1_next_id + 1) % (BLOCKDEV_MAX_DEVICES - MD_BLOCKDEV_BASE);
+    int md_id = MD_BLOCKDEV_BASE + g_raid_next_id;
+    g_raid_next_id = (g_raid_next_id + 1) % (BLOCKDEV_MAX_DEVICES - MD_BLOCKDEV_BASE);
 
     /* Build the member list */
     memset(&g_raid1_arrays[slot], 0, sizeof(struct raid1_array));
@@ -118,7 +126,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
         if (g_raid1_arrays[slot].members[i].sector_count == 0) {
             kprintf("[mdadm] RAID1: member %d (dev_id=%d) has 0 sectors\n",
                     i, dev_id);
-            spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+            spinlock_irqsave_release(&g_raid_lock, irq_flags);
             memset(&g_raid1_arrays[slot], 0, sizeof(struct raid1_array));
             return -1;
         }
@@ -147,11 +155,11 @@ int raid1_create(const int *member_dev_ids, int num_members)
         kprintf("[mdadm] RAID1: failed to register block device md%d (ret=%d)\n",
                 slot, ret);
         memset(&g_raid1_arrays[slot], 0, sizeof(struct raid1_array));
-        spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
         return -1;
     }
 
-    spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
 
     kprintf("[mdadm] RAID1 array md%d created: %d members, %llu sectors, id=%d\n",
             slot, num_members,
@@ -166,7 +174,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
 void raid1_destroy(int array_id)
 {
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_raid1_lock, &irq_flags);
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
 
     for (int i = 0; i < MAX_RAID1_ARRAYS; i++) {
         if (g_raid1_arrays[i].array_id == array_id && g_raid1_arrays[i].num_members > 0) {
@@ -178,7 +186,7 @@ void raid1_destroy(int array_id)
         }
     }
 
-    spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
 }
 
 /* ── Mark a member as failed ───────────────────────────────────────── */
@@ -186,7 +194,7 @@ void raid1_destroy(int array_id)
 int raid1_member_failed(int array_id, int dev_id)
 {
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_raid1_lock, &irq_flags);
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
 
     int found = 0;
     for (int i = 0; i < MAX_RAID1_ARRAYS; i++) {
@@ -221,7 +229,7 @@ int raid1_member_failed(int array_id, int dev_id)
         }
     }
 
-    spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
     return found ? 0 : -1;
 }
 
@@ -231,7 +239,7 @@ int raid1_status(int array_id, int *state_out, int *num_members_out,
                  uint64_t *sectors_out)
 {
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_raid1_lock, &irq_flags);
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
 
     int found = 0;
     for (int i = 0; i < MAX_RAID1_ARRAYS; i++) {
@@ -244,7 +252,7 @@ int raid1_status(int array_id, int *state_out, int *num_members_out,
         }
     }
 
-    spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
     return found ? 0 : -1;
 }
 
@@ -267,7 +275,7 @@ static int raid1_submit_fn(struct blk_request *req)
     struct raid1_array *array = NULL;
 
     uint64_t irq_flags;
-    spinlock_irqsave_acquire(&g_raid1_lock, &irq_flags);
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
 
     for (int i = 0; i < MAX_RAID1_ARRAYS; i++) {
         if (g_raid1_arrays[i].array_id == dev_id && g_raid1_arrays[i].num_members > 0) {
@@ -277,13 +285,13 @@ static int raid1_submit_fn(struct blk_request *req)
     }
 
     if (!array) {
-        spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
         return -ENODEV;
     }
 
     /* Check array state */
     if (array->state == RAID_ARRAY_FAILED) {
-        spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
         req->result = -EIO;
         return -EIO;
     }
@@ -291,7 +299,7 @@ static int raid1_submit_fn(struct blk_request *req)
     /* Save a copy of the array state to work with outside the lock */
     struct raid1_array local_array;
     memcpy(&local_array, array, sizeof(struct raid1_array));
-    spinlock_irqsave_release(&g_raid1_lock, irq_flags);
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
 
     uint64_t lba       = req->lba;
     uint32_t count     = req->count;
@@ -333,7 +341,7 @@ static int raid1_submit_fn(struct blk_request *req)
          * consider the write successful. */
         if (first_write_error != 0) {
             uint64_t lock_flags;
-            spinlock_irqsave_acquire(&g_raid1_lock, &lock_flags);
+            spinlock_irqsave_acquire(&g_raid_lock, &lock_flags);
             int active_count = 0;
             for (int i = 0; i < MAX_RAID1_ARRAYS; i++) {
                 if (g_raid1_arrays[i].array_id == dev_id && g_raid1_arrays[i].num_members > 0) {
@@ -345,7 +353,7 @@ static int raid1_submit_fn(struct blk_request *req)
                     break;
                 }
             }
-            spinlock_irqsave_release(&g_raid1_lock, lock_flags);
+            spinlock_irqsave_release(&g_raid_lock, lock_flags);
             if (active_count == 0) {
                 result = -EIO;
                 req->result = result;
@@ -415,4 +423,765 @@ int raid_create_raid0(struct raid_super *super, uint32_t num_disks,
     kprintf("[mdadm] RAID0 created: %u disks, chunk=%u sectors\n",
             num_disks, chunk_size);
     return 0;
+}
+
+/* ── RAID0: Stripe Set Management ─────────────────────────────────── */
+
+/*
+ * Compute the stripe mapping for a given logical sector:
+ *   disk = (lba / chunk_size) % num_disks
+ *   disk_lba = (lba / chunk_size / num_disks) * chunk_size + (lba % chunk_size)
+ *
+ * For a multi-sector request, we iterate sector-by-sector if the
+ * request crosses a stripe boundary (simple but correct).
+ */
+
+struct raid0_stripe {
+    int      disk;       /* target disk index */
+    uint64_t disk_lba;   /* LBA on the target disk */
+};
+
+static void raid0_stripe_map(struct raid0_array *arr, uint64_t lba,
+                             struct raid0_stripe *out)
+{
+    uint32_t chunk = arr->chunk_size;
+    int ndisks = arr->num_disks;
+    
+    /* Logical chunk index */
+    uint64_t chunk_idx = lba / chunk;
+    /* Which disk owns this chunk */
+    out->disk = (int)(chunk_idx % ndisks);
+    /* LBA within that disk */
+    out->disk_lba = (chunk_idx / ndisks) * chunk + (lba % chunk);
+}
+
+/* ── Create a RAID0 array ─────────────────────────────────────────── */
+
+int raid0_create(const int *member_dev_ids, int num_disks,
+                 uint32_t chunk_size, const uint8_t *uuid)
+{
+    if (!member_dev_ids || num_disks < 2 || num_disks > RAID0_MAX_DISKS) {
+        kprintf("[mdadm] RAID0: invalid parameters (%d disks, max %d)\n",
+                num_disks, RAID0_MAX_DISKS);
+        return -1;
+    }
+
+    if (!g_raid_initialized)
+        raid_md_init();
+
+    if (chunk_size == 0)
+        chunk_size = RAID0_DEFAULT_CHUNK_SECT;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    /* Find a free slot */
+    int slot = -1;
+    for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
+        if (g_raid0_arrays[i].num_disks == 0) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        kprintf("[mdadm] RAID0: no free array slots\n");
+        return -1;
+    }
+
+    /* Compute the MD block device id */
+    int md_id = MD_BLOCKDEV_BASE + g_raid_next_id;
+    g_raid_next_id = (g_raid_next_id + 1) % (BLOCKDEV_MAX_DEVICES - MD_BLOCKDEV_BASE);
+
+    /* Build the array */
+    memset(&g_raid0_arrays[slot], 0, sizeof(struct raid0_array));
+    g_raid0_arrays[slot].array_id    = md_id;
+    g_raid0_arrays[slot].state       = RAID_ARRAY_CLEAN;
+    g_raid0_arrays[slot].num_disks   = num_disks;
+    g_raid0_arrays[slot].chunk_size  = chunk_size;
+
+    uint64_t min_sectors = (uint64_t)-1;
+    for (int i = 0; i < num_disks; i++) {
+        int dev_id = member_dev_ids[i];
+        g_raid0_arrays[slot].disks[i].dev_id = dev_id;
+        g_raid0_arrays[slot].disks[i].state  = RAID_MEMBER_ACTIVE;
+        g_raid0_arrays[slot].disks[i].sector_count = blockdev_get_sectors(dev_id);
+        if (g_raid0_arrays[slot].disks[i].sector_count < min_sectors)
+            min_sectors = g_raid0_arrays[slot].disks[i].sector_count;
+    }
+
+    if (min_sectors == (uint64_t)-1 || min_sectors == 0) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        kprintf("[mdadm] RAID0: all disks have 0 sectors\n");
+        memset(&g_raid0_arrays[slot], 0, sizeof(struct raid0_array));
+        return -1;
+    }
+
+    g_raid0_arrays[slot].disk_sectors = min_sectors;
+    g_raid0_arrays[slot].stripe_size  = (uint64_t)chunk_size * num_disks;
+    /* Total array capacity: each disk contributes min_sectors, striped */
+    g_raid0_arrays[slot].array_sectors = min_sectors * num_disks;
+
+    if (uuid) {
+        memcpy(g_raid0_arrays[slot].uuid, uuid, 16);
+    } else {
+        for (int i = 0; i < 16; i++)
+            g_raid0_arrays[slot].uuid[i] = (uint8_t)(member_dev_ids[i % num_disks] *
+                                                      0x9e3779b9 + i + 0x100);
+    }
+
+    /* Build a name like "md0" */
+    char md_name[16];
+    snprintf(md_name, sizeof(md_name), "md%d", slot + MAX_RAID1_ARRAYS);
+
+    /* Register as a block device */
+    int ret = blockdev_register(md_id, md_name,
+                                raid0_submit_fn,
+                                NULL,
+                                g_raid0_arrays[slot].array_sectors,
+                                0);
+    if (ret != 0) {
+        kprintf("[mdadm] RAID0: failed to register block device %s (ret=%d)\n",
+                md_name, ret);
+        memset(&g_raid0_arrays[slot], 0, sizeof(struct raid0_array));
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        return -1;
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+
+    kprintf("[mdadm] RAID0 array %s created: %d disks, chunk=%u sectors, "
+            "%llu total sectors, id=%d\n",
+            md_name, num_disks, chunk_size,
+            (unsigned long long)g_raid0_arrays[slot].array_sectors,
+            md_id);
+
+    return md_id;
+}
+
+/* ── Destroy a RAID0 array ────────────────────────────────────────── */
+
+void raid0_destroy(int array_id)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
+        if (g_raid0_arrays[i].array_id == array_id && g_raid0_arrays[i].num_disks > 0) {
+            blockdev_unregister(array_id);
+            kprintf("[mdadm] RAID0 array md%d (id=%d) destroyed\n",
+                    i + MAX_RAID1_ARRAYS, array_id);
+            memset(&g_raid0_arrays[i], 0, sizeof(struct raid0_array));
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+}
+
+/* ── RAID0 status query ───────────────────────────────────────────── */
+
+int raid0_status(int array_id, int *state_out, int *num_disks_out,
+                 uint64_t *sectors_out, uint32_t *chunk_out)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    int found = 0;
+    for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
+        if (g_raid0_arrays[i].array_id == array_id && g_raid0_arrays[i].num_disks > 0) {
+            if (state_out)     *state_out     = g_raid0_arrays[i].state;
+            if (num_disks_out) *num_disks_out = g_raid0_arrays[i].num_disks;
+            if (sectors_out)   *sectors_out   = g_raid0_arrays[i].array_sectors;
+            if (chunk_out)     *chunk_out     = g_raid0_arrays[i].chunk_size;
+            found = 1;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+    return found ? 0 : -1;
+}
+
+/* ── RAID0 block device submit function ───────────────────────────── */
+
+static int raid0_submit_fn(struct blk_request *req)
+{
+    if (!req) return -EINVAL;
+
+    int dev_id = req->dev_id;
+
+    /* Find the RAID0 array for this device */
+    struct raid0_array *array = NULL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
+        if (g_raid0_arrays[i].array_id == dev_id && g_raid0_arrays[i].num_disks > 0) {
+            array = &g_raid0_arrays[i];
+            break;
+        }
+    }
+
+    if (!array) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        return -ENODEV;
+    }
+
+    if (array->state == RAID_ARRAY_FAILED) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        req->result = -EIO;
+        return -EIO;
+    }
+
+    /* Save a copy to work outside the lock */
+    struct raid0_array local_array;
+    memcpy(&local_array, array, sizeof(struct raid0_array));
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+
+    uint64_t lba       = req->lba;
+    uint32_t count     = req->count;
+    uint8_t *buf       = (uint8_t *)req->buf;
+    int      is_write  = (req->flags & BLK_REQ_WRITE);
+    int      is_discard = (req->flags & BLK_REQ_DISCARD);
+
+    int result = 0;
+
+    if (is_discard) {
+        /* DISCARD: forward to the appropriate disk for each sector range */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+
+        while (remaining > 0) {
+            struct raid0_stripe stripe;
+            raid0_stripe_map(&local_array, current_lba, &stripe);
+
+            /* Determine how many contiguous sectors on this disk */
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            if (stripe.disk >= 0 && stripe.disk < local_array.num_disks &&
+                local_array.disks[stripe.disk].state == RAID_MEMBER_ACTIVE) {
+                int r = blockdev_discard(local_array.disks[stripe.disk].dev_id,
+                                         stripe.disk_lba, (uint32_t)this_count);
+                if (r != 0 && result == 0)
+                    result = r;
+            }
+
+            current_lba += this_count;
+            remaining -= this_count;
+        }
+    } else if (is_write) {
+        /* WRITE: stripe across disks */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+        uint64_t buf_offset = 0;
+
+        while (remaining > 0) {
+            struct raid0_stripe stripe;
+            raid0_stripe_map(&local_array, current_lba, &stripe);
+
+            /* Sectors remaining in this chunk */
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            if (stripe.disk >= 0 && stripe.disk < local_array.num_disks &&
+                local_array.disks[stripe.disk].state == RAID_MEMBER_ACTIVE) {
+                int r = member_io(local_array.disks[stripe.disk].dev_id,
+                                  stripe.disk_lba, (uint32_t)this_count,
+                                  buf + buf_offset, 1);
+                if (r != 0) {
+                    /* Mark member as failed */
+                    raid1_member_failed(dev_id, local_array.disks[stripe.disk].dev_id);
+                    if (result == 0) result = r;
+                }
+            }
+
+            current_lba += this_count;
+            remaining   -= this_count;
+            buf_offset  += this_count * 512;
+        }
+    } else {
+        /* READ: stripe across disks */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+        uint64_t buf_offset = 0;
+
+        while (remaining > 0) {
+            struct raid0_stripe stripe;
+            raid0_stripe_map(&local_array, current_lba, &stripe);
+
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            if (stripe.disk >= 0 && stripe.disk < local_array.num_disks &&
+                local_array.disks[stripe.disk].state == RAID_MEMBER_ACTIVE) {
+                int r = member_io(local_array.disks[stripe.disk].dev_id,
+                                  stripe.disk_lba, (uint32_t)this_count,
+                                  buf + buf_offset, 0);
+                if (r != 0) {
+                    raid1_member_failed(dev_id, local_array.disks[stripe.disk].dev_id);
+                    if (result == 0) result = r;
+                }
+            } else {
+                if (result == 0) result = -EIO;
+            }
+
+            current_lba += this_count;
+            remaining   -= this_count;
+            buf_offset  += this_count * 512;
+        }
+    }
+
+    req->result = result;
+    return result;
+}
+
+/* ── RAID10: Stripe of Mirrors (RAID1+0) ──────────────────────────── */
+
+/*
+ * RAID10 = RAID0 across N/2 mirror pairs.
+ *
+ * For a write: write to both members of the mirror pair (like RAID1).
+ * For a read: read from the primary member of the pair (or secondary if primary fails).
+ *
+ * Stripe mapping: pairs[stripe_index] where stripe_index = (LBA / chunk) % num_pairs.
+ */
+
+struct raid10_stripe {
+    int      pair;        /* mirror pair index */
+    uint64_t pair_lba;    /* LBA within the mirror pair */
+};
+
+static void raid10_stripe_map(struct raid10_array *arr, uint64_t lba,
+                              struct raid10_stripe *out)
+{
+    uint32_t chunk = arr->chunk_size;
+    int npairs = arr->num_pairs;
+
+    uint64_t chunk_idx = lba / chunk;
+    out->pair = (int)(chunk_idx % npairs);
+    out->pair_lba = (chunk_idx / npairs) * chunk + (lba % chunk);
+}
+
+/* ── Create a RAID10 array ────────────────────────────────────────── */
+
+int raid10_create(const int *member_dev_ids, int num_disks,
+                  uint32_t chunk_size, const uint8_t *uuid)
+{
+    if (!member_dev_ids || num_disks < 4 || num_disks > RAID10_MAX_DISKS ||
+        (num_disks & 1)) {
+        kprintf("[mdadm] RAID10: need even number of disks (>=4), got %d\n", num_disks);
+        return -1;
+    }
+
+    if (!g_raid_initialized)
+        raid_md_init();
+
+    if (chunk_size == 0)
+        chunk_size = RAID0_DEFAULT_CHUNK_SECT;
+
+    int num_pairs = num_disks / 2;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    /* Find a free slot */
+    int slot = -1;
+    for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
+        if (g_raid10_arrays[i].num_pairs == 0) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        kprintf("[mdadm] RAID10: no free array slots\n");
+        return -1;
+    }
+
+    int md_id = MD_BLOCKDEV_BASE + g_raid_next_id;
+    g_raid_next_id = (g_raid_next_id + 1) % (BLOCKDEV_MAX_DEVICES - MD_BLOCKDEV_BASE);
+
+    memset(&g_raid10_arrays[slot], 0, sizeof(struct raid10_array));
+    g_raid10_arrays[slot].array_id   = md_id;
+    g_raid10_arrays[slot].state      = RAID_ARRAY_CLEAN;
+    g_raid10_arrays[slot].num_pairs  = num_pairs;
+    g_raid10_arrays[slot].chunk_size = chunk_size;
+
+    uint64_t min_pair_sectors = (uint64_t)-1;
+
+    for (int p = 0; p < num_pairs; p++) {
+        int primary_id   = member_dev_ids[p * 2];
+        int secondary_id = member_dev_ids[p * 2 + 1];
+
+        g_raid10_arrays[slot].pairs[p].primary.dev_id   = primary_id;
+        g_raid10_arrays[slot].pairs[p].primary.state    = RAID_MEMBER_ACTIVE;
+        g_raid10_arrays[slot].pairs[p].primary.sector_count = blockdev_get_sectors(primary_id);
+
+        g_raid10_arrays[slot].pairs[p].secondary.dev_id   = secondary_id;
+        g_raid10_arrays[slot].pairs[p].secondary.state    = RAID_MEMBER_ACTIVE;
+        g_raid10_arrays[slot].pairs[p].secondary.sector_count = blockdev_get_sectors(secondary_id);
+
+        uint64_t pair_sectors = g_raid10_arrays[slot].pairs[p].primary.sector_count;
+        if (g_raid10_arrays[slot].pairs[p].secondary.sector_count < pair_sectors)
+            pair_sectors = g_raid10_arrays[slot].pairs[p].secondary.sector_count;
+
+        if (pair_sectors < min_pair_sectors)
+            min_pair_sectors = pair_sectors;
+    }
+
+    if (min_pair_sectors == (uint64_t)-1 || min_pair_sectors == 0) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        kprintf("[mdadm] RAID10: all members have 0 sectors\n");
+        memset(&g_raid10_arrays[slot], 0, sizeof(struct raid10_array));
+        return -1;
+    }
+
+    g_raid10_arrays[slot].pair_sectors  = min_pair_sectors;
+    g_raid10_arrays[slot].stripe_size   = (uint64_t)chunk_size * num_pairs;
+    g_raid10_arrays[slot].array_sectors = min_pair_sectors * num_pairs;
+
+    if (uuid) {
+        memcpy(g_raid10_arrays[slot].uuid, uuid, 16);
+    } else {
+        for (int i = 0; i < 16; i++)
+            g_raid10_arrays[slot].uuid[i] = (uint8_t)(member_dev_ids[i % num_disks] *
+                                                        0x9e3779b9 + i + 0x200);
+    }
+
+    char md_name[16];
+    snprintf(md_name, sizeof(md_name), "md%d", slot + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS);
+
+    int ret = blockdev_register(md_id, md_name,
+                                raid10_submit_fn,
+                                NULL,
+                                g_raid10_arrays[slot].array_sectors,
+                                0);
+    if (ret != 0) {
+        kprintf("[mdadm] RAID10: failed to register block device %s (ret=%d)\n",
+                md_name, ret);
+        memset(&g_raid10_arrays[slot], 0, sizeof(struct raid10_array));
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        return -1;
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+
+    kprintf("[mdadm] RAID10 array %s created: %d pairs (striped mirrors), "
+            "chunk=%u sectors, %llu total sectors, id=%d\n",
+            md_name, num_pairs, chunk_size,
+            (unsigned long long)g_raid10_arrays[slot].array_sectors,
+            md_id);
+
+    return md_id;
+}
+
+/* ── Destroy a RAID10 array ───────────────────────────────────────── */
+
+void raid10_destroy(int array_id)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
+        if (g_raid10_arrays[i].array_id == array_id && g_raid10_arrays[i].num_pairs > 0) {
+            blockdev_unregister(array_id);
+            kprintf("[mdadm] RAID10 array md%d (id=%d) destroyed\n",
+                    i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS, array_id);
+            memset(&g_raid10_arrays[i], 0, sizeof(struct raid10_array));
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+}
+
+/* ── RAID10 status query ──────────────────────────────────────────── */
+
+int raid10_status(int array_id, int *state_out, int *num_pairs_out,
+                  uint64_t *sectors_out, uint32_t *chunk_out)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    int found = 0;
+    for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
+        if (g_raid10_arrays[i].array_id == array_id && g_raid10_arrays[i].num_pairs > 0) {
+            if (state_out)     *state_out     = g_raid10_arrays[i].state;
+            if (num_pairs_out) *num_pairs_out = g_raid10_arrays[i].num_pairs;
+            if (sectors_out)   *sectors_out   = g_raid10_arrays[i].array_sectors;
+            if (chunk_out)     *chunk_out     = g_raid10_arrays[i].chunk_size;
+            found = 1;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+    return found ? 0 : -1;
+}
+
+/* ── RAID10 block device submit function ──────────────────────────── */
+
+/*
+ * For each stripe chunk:
+ *   - Identify which mirror pair owns it (via stripe map)
+ *   - Write: write to both primary and secondary (mirror)
+ *   - Read: try primary first, fallback to secondary
+ *   - Discard: forward to both members of the pair
+ */
+static int raid10_submit_fn(struct blk_request *req)
+{
+    if (!req) return -EINVAL;
+
+    int dev_id = req->dev_id;
+    struct raid10_array *array = NULL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+
+    for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
+        if (g_raid10_arrays[i].array_id == dev_id && g_raid10_arrays[i].num_pairs > 0) {
+            array = &g_raid10_arrays[i];
+            break;
+        }
+    }
+
+    if (!array) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        return -ENODEV;
+    }
+
+    if (array->state == RAID_ARRAY_FAILED) {
+        spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        req->result = -EIO;
+        return -EIO;
+    }
+
+    struct raid10_array local_array;
+    memcpy(&local_array, array, sizeof(struct raid10_array));
+    spinlock_irqsave_release(&g_raid_lock, irq_flags);
+
+    uint64_t lba       = req->lba;
+    uint32_t count     = req->count;
+    uint8_t *buf       = (uint8_t *)req->buf;
+    int      is_write  = (req->flags & BLK_REQ_WRITE);
+    int      is_discard = (req->flags & BLK_REQ_DISCARD);
+
+    int result = 0;
+
+    if (is_discard) {
+        /* DISCARD: forward to both members of each affected pair */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+
+        while (remaining > 0) {
+            struct raid10_stripe stripe;
+            raid10_stripe_map(&local_array, current_lba, &stripe);
+
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            if (stripe.pair >= 0 && stripe.pair < local_array.num_pairs) {
+                struct raid10_mirror_pair *pair = &local_array.pairs[stripe.pair];
+
+                if (pair->primary.state == RAID_MEMBER_ACTIVE) {
+                    int r = blockdev_discard(pair->primary.dev_id,
+                                             stripe.pair_lba, (uint32_t)this_count);
+                    if (r != 0 && result == 0) result = r;
+                }
+                if (pair->secondary.state == RAID_MEMBER_ACTIVE) {
+                    int r = blockdev_discard(pair->secondary.dev_id,
+                                             stripe.pair_lba, (uint32_t)this_count);
+                    if (r != 0 && result == 0) result = r;
+                }
+            }
+
+            current_lba += this_count;
+            remaining -= this_count;
+        }
+    } else if (is_write) {
+        /* WRITE: write to both members of each affected mirror pair */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+        uint64_t buf_offset = 0;
+
+        while (remaining > 0) {
+            struct raid10_stripe stripe;
+            raid10_stripe_map(&local_array, current_lba, &stripe);
+
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            if (stripe.pair >= 0 && stripe.pair < local_array.num_pairs) {
+                struct raid10_mirror_pair *pair = &local_array.pairs[stripe.pair];
+
+                /* Write to primary */
+                if (pair->primary.state == RAID_MEMBER_ACTIVE) {
+                    int r = member_io(pair->primary.dev_id, stripe.pair_lba,
+                                      (uint32_t)this_count, buf + buf_offset, 1);
+                    if (r != 0) {
+                        if (result == 0) result = r;
+                    }
+                }
+                /* Write to secondary (mirror) */
+                if (pair->secondary.state == RAID_MEMBER_ACTIVE) {
+                    int r = member_io(pair->secondary.dev_id, stripe.pair_lba,
+                                      (uint32_t)this_count, buf + buf_offset, 1);
+                    if (r != 0) {
+                        if (result == 0) result = r;
+                    }
+                }
+            }
+
+            current_lba += this_count;
+            remaining   -= this_count;
+            buf_offset  += this_count * 512;
+        }
+
+        /* If the entire write failed (both sides of every pair dead) */
+        if (result != 0) {
+            req->result = result;
+            return result;
+        }
+    } else {
+        /* READ: try primary, fallback to secondary for each stripe chunk */
+        uint64_t remaining = count;
+        uint64_t current_lba = lba;
+        uint64_t buf_offset = 0;
+
+        while (remaining > 0) {
+            struct raid10_stripe stripe;
+            raid10_stripe_map(&local_array, current_lba, &stripe);
+
+            uint64_t chunk_remain = local_array.chunk_size -
+                                    (current_lba % local_array.chunk_size);
+            uint64_t this_count = (remaining < chunk_remain) ? remaining : chunk_remain;
+
+            int read_ok = 0;
+
+            if (stripe.pair >= 0 && stripe.pair < local_array.num_pairs) {
+                struct raid10_mirror_pair *pair = &local_array.pairs[stripe.pair];
+
+                /* Try primary */
+                if (pair->primary.state == RAID_MEMBER_ACTIVE) {
+                    int r = member_io(pair->primary.dev_id, stripe.pair_lba,
+                                      (uint32_t)this_count, buf + buf_offset, 0);
+                    if (r == 0) {
+                        read_ok = 1;
+                    }
+                }
+
+                /* Fallback to secondary */
+                if (!read_ok && pair->secondary.state == RAID_MEMBER_ACTIVE) {
+                    int r = member_io(pair->secondary.dev_id, stripe.pair_lba,
+                                      (uint32_t)this_count, buf + buf_offset, 0);
+                    if (r == 0) {
+                        read_ok = 1;
+                    }
+                }
+            }
+
+            if (!read_ok) {
+                if (result == 0) result = -EIO;
+            }
+
+            current_lba += this_count;
+            remaining   -= this_count;
+            buf_offset  += this_count * 512;
+        }
+    }
+
+    req->result = result;
+    return result;
+}
+
+/* ── Mark a member as failed (generic, any RAID level) ────────────── */
+
+void md_member_failed(int array_id, int dev_id, int level)
+{
+    switch (level) {
+    case 0:
+        /* RAID0 has no data redundancy; mark disk failed */
+        {
+            uint64_t irq_flags;
+            spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+            for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
+                if (g_raid0_arrays[i].array_id == array_id &&
+                    g_raid0_arrays[i].num_disks > 0) {
+                    for (int j = 0; j < g_raid0_arrays[i].num_disks; j++) {
+                        if (g_raid0_arrays[i].disks[j].dev_id == dev_id &&
+                            g_raid0_arrays[i].disks[j].state == RAID_MEMBER_ACTIVE) {
+                            g_raid0_arrays[i].disks[j].state = RAID_MEMBER_FAILED;
+                            g_raid0_arrays[i].state = RAID_ARRAY_DEGRADED;
+                            kprintf("[mdadm] RAID0 md%d: disk %d (dev=%d) FAILED\n",
+                                    i + MAX_RAID1_ARRAYS, j, dev_id);
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        }
+        break;
+    case 1:
+        raid1_member_failed(array_id, dev_id);
+        break;
+    case 10:
+        {
+            uint64_t irq_flags;
+            spinlock_irqsave_acquire(&g_raid_lock, &irq_flags);
+            for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
+                if (g_raid10_arrays[i].array_id == array_id &&
+                    g_raid10_arrays[i].num_pairs > 0) {
+                    struct raid10_array *arr = &g_raid10_arrays[i];
+                    int degraded = 0;
+                    int all_failed = 1;
+                    for (int p = 0; p < arr->num_pairs; p++) {
+                        if (arr->pairs[p].primary.dev_id == dev_id &&
+                            arr->pairs[p].primary.state == RAID_MEMBER_ACTIVE) {
+                            arr->pairs[p].primary.state = RAID_MEMBER_FAILED;
+                            kprintf("[mdadm] RAID10 md%d: pair %d primary (dev=%d) FAILED\n",
+                                    i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS,
+                                    p, dev_id);
+                        }
+                        if (arr->pairs[p].secondary.dev_id == dev_id &&
+                            arr->pairs[p].secondary.state == RAID_MEMBER_ACTIVE) {
+                            arr->pairs[p].secondary.state = RAID_MEMBER_FAILED;
+                            kprintf("[mdadm] RAID10 md%d: pair %d secondary (dev=%d) FAILED\n",
+                                    i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS,
+                                    p, dev_id);
+                        }
+                        /* Check if this pair is dead */
+                        if (arr->pairs[p].primary.state == RAID_MEMBER_FAILED &&
+                            arr->pairs[p].secondary.state == RAID_MEMBER_FAILED) {
+                            kprintf("[mdadm] RAID10 md%d: pair %d BOTH members dead\n",
+                                    i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS, p);
+                        } else {
+                            all_failed = 0;
+                            if (arr->pairs[p].primary.state == RAID_MEMBER_FAILED ||
+                                arr->pairs[p].secondary.state == RAID_MEMBER_FAILED) {
+                                degraded = 1;
+                            }
+                        }
+                    }
+                    if (all_failed) {
+                        arr->state = RAID_ARRAY_FAILED;
+                    } else if (degraded) {
+                        arr->state = RAID_ARRAY_DEGRADED;
+                    }
+                    break;
+                }
+            }
+            spinlock_irqsave_release(&g_raid_lock, irq_flags);
+        }
+        break;
+    }
 }
