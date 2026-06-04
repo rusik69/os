@@ -226,6 +226,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dmi.c \
          src/drivers/bochs.c \
          src/drivers/loop.c \
+         src/drivers/spi.c \
          src/drivers/dyndbg.c \
          src/drivers/uio.c \
          src/drivers/pagecache.c \

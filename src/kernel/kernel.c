@@ -103,6 +103,7 @@
 #include "module.h"
 #include "module_signature.h"
 #include "initcall.h"
+#include "spi.h"
 #include "watchdog.h"
 #include "fbcon.h"
 #include "perf_events.h"
@@ -604,6 +605,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* PC Speaker */
     speaker_init();
     kprintf("[OK] Speaker initialized\n");
+
+    /* SPI bus controller framework */
+    spi_init();
 
     /* ACPI */
     acpi_init();
