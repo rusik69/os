@@ -510,6 +510,34 @@ int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int fl
     return 0;
 }
 
+/*
+ * vfs_force_readonly — remount a filesystem read-only on fatal error.
+ *
+ * Called by a filesystem driver when it detects unrecoverable corruption
+ * (e.g. invalid superblock, corrupted inode bitmap, disk I/O failure on
+ * a critical structure).  The VFS write path already checks the MS_RDONLY
+ * flag on the mount and returns -EROFS, preventing further data loss.
+ *
+ * @path    Any path within the filesystem to force read-only.
+ * @reason  Human-readable description of the corruption (logged once).
+ *
+ * Returns 0 on success, -1 if the path has no matching mount.
+ */
+int vfs_force_readonly(const char *path, const char *reason)
+{
+    struct vfs_mount *m = resolve(path);
+    if (!m)
+        return -1;
+
+    if (m->flags & MS_RDONLY)
+        return 0;  /* already read-only — no-op */
+
+    m->flags |= MS_RDONLY;
+    kprintf("[!!] VFS: FORCED READ-ONLY on '%s': %s\n",
+            m->mountpoint, reason ? reason : "unknown error");
+    return 0;
+}
+
 /* Find the best-matching mount for a path */
 static struct vfs_mount *resolve(const char *path) {
     struct vfs_mount *best = NULL;
@@ -575,6 +603,16 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     struct vfs_mount *m = resolve(ap);
     if (!m || !m->ops->read) return -1;
     int r = m->ops->read(m->priv, ap, buf, max, out_size);
+    /* If the read fails with an I/O or corruption error, auto-remount
+     * read-only to prevent further damage.  Reads into corrupted areas
+     * can propagate bad data; stopping writes protects data integrity. */
+    if (r < 0 && (r == -EIO || r == -EFSCORRUPTED)) {
+        if (!(m->flags & MS_RDONLY)) {
+            m->flags |= MS_RDONLY;
+            kprintf("[!!] VFS: read on '%s' failed with %d; "
+                    "auto-remounted read-only\n", m->mountpoint, r);
+        }
+    }
     if (r == 0) {
         vfs_update_atime(ap);
         fsnotify_notify(ap, FS_ACCESS);
@@ -638,6 +676,18 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
     }
 
     int r = m->ops->write(m->priv, ap, data, size);
+    /* If the filesystem returns an I/O or corruption error, automatically
+     * remount read-only to prevent further data loss.  The filesystem
+     * driver should also call vfs_force_readonly() directly when it
+     * detects the underlying corruption, but this VFS-level fallback
+     * catches cases where the error surfaces through the write path. */
+    if (r < 0 && (r == -EIO || r == -EFSCORRUPTED || r == -EROFS_KERNEL)) {
+        if (!(m->flags & MS_RDONLY)) {
+            m->flags |= MS_RDONLY;
+            kprintf("[!!] VFS: write to '%s' failed with %d; "
+                    "auto-remounted read-only\n", m->mountpoint, r);
+        }
+    }
     if (r == 0) {
         fsnotify_notify(ap, FS_MODIFY);
         /* File metadata (size, mtime) changed — invalidate cache */

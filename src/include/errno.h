@@ -103,4 +103,8 @@
 #define ERFKILL   132
 #define EHWPOISON 133
 
+/* Filesystem corruption — used by FS drivers to signal unrecoverable
+ * structural damage before forcing a read-only remount. */
+#define EFSCORRUPTED 134
+
 #endif /* ERRNIO_H */

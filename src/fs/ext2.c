@@ -18,6 +18,15 @@
 #include "heap.h"
 #include "vfs.h"
 
+/* Corrupt filesystem error helper: remounts read-only and returns -EFSCORRUPTED */
+static int ext2_corrupt(struct ext2_priv *ep, const char *reason)
+{
+    if (!ep)
+        return -EFSCORRUPTED;
+    vfs_force_readonly(ep->mountpoint, reason);
+    return -EFSCORRUPTED;
+}
+
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -30,6 +39,7 @@ struct ext2_priv {
     uint32_t inode_size;
     uint32_t num_block_groups;
     struct ext2_superblock sb;
+    char     mountpoint[64];   /* for vfs_force_readonly() on corruption */
 };
 
 /* Read one block from the block device */
@@ -38,7 +48,7 @@ static int ext2_read_block(struct ext2_priv *ep, uint32_t block_num, uint8_t *bu
     uint32_t sectors = ep->block_size / 512;
     for (uint32_t i = 0; i < sectors; i++) {
         if (blockdev_read_sectors(ep->dev_id, lba + i, 1, buf + i * 512) != 0)
-            return -1;
+            return ext2_corrupt(ep, "block I/O error");
     }
     return 0;
 }
@@ -60,7 +70,10 @@ static int ext2_load_super(struct ext2_priv *ep) {
 
 /* Read inode */
 static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode *inode) {
-    if (ino == 0) return -1;
+    if (ino == 0)
+        return ext2_corrupt(ep, "inode 0 is invalid");
+    if (ino > ep->sb.s_inodes_count)
+        return ext2_corrupt(ep, "inode number exceeds count in superblock");
     uint32_t group = (ino - 1) / ep->inodes_per_group;
     uint32_t index = (ino - 1) % ep->inodes_per_group;
 
@@ -685,6 +698,9 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
 
     memset(ep, 0, sizeof(*ep));
     ep->dev_id = dev_id;
+    /* Store mountpoint for vfs_force_readonly() on corruption detection */
+    strncpy(ep->mountpoint, mountpoint, sizeof(ep->mountpoint) - 1);
+    ep->mountpoint[sizeof(ep->mountpoint) - 1] = '\0';
 
     if (ext2_load_super(ep) < 0) {
         kfree(ep);

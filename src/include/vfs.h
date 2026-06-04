@@ -286,6 +286,21 @@ int vfs_journal_abort(const char *path);
 /* Pivot root — swap current root with new_root, stash old at put_old (Item 118) */
 int vfs_pivot_root(const char *new_root, const char *put_old);
 
+/*
+ * vfs_force_readonly — remount a filesystem read-only on fatal error.
+ *
+ * Called by a filesystem driver when it detects unrecoverable corruption
+ * (e.g. invalid superblock, corrupted inode bitmap, disk I/O failure on
+ * a critical structure).  After this call, all write operations to the
+ * affected filesystem will return -EROFS.
+ *
+ * @path    Any path within the filesystem to force read-only.
+ * @reason  Human-readable description of the corruption (logged once).
+ *
+ * Returns 0 on success, -1 if the path has no matching mount.
+ */
+int vfs_force_readonly(const char *path, const char *reason);
+
 /* Initramfs / CPIO extraction */
 int cpio_extract_initramfs(uint32_t addr, uint32_t size);
 int cpio_init(void);
