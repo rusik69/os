@@ -214,6 +214,13 @@ struct process {
     uint64_t page_faults;        /* total page faults */
     uint64_t signals_received;   /* total signals received */
     uint64_t context_switches;   /* total context switches */
+    /* ── I/O accounting (for /proc/PID/io) ───────────────────── */
+    uint64_t io_rchar;         /* bytes read via syscalls */
+    uint64_t io_wchar;         /* bytes written via syscalls */
+    uint64_t io_syscr;         /* number of read syscalls */
+    uint64_t io_syscw;         /* number of write syscalls */
+    uint64_t io_read_bytes;    /* bytes read from storage */
+    uint64_t io_write_bytes;   /* bytes written to storage */
     /* ── Stack usage tracking ───────────────────────────────── */
     uint64_t stack_watermark;    /* lowest RSP observed */
     /* ── File descriptor limits ──────────────────────────────── */

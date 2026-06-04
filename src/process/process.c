@@ -291,6 +291,12 @@ void process_init(void) {
         process_table[i].page_faults = 0;
         process_table[i].signals_received = 0;
         process_table[i].context_switches = 0;
+        process_table[i].io_rchar = 0;
+        process_table[i].io_wchar = 0;
+        process_table[i].io_syscr = 0;
+        process_table[i].io_syscw = 0;
+        process_table[i].io_read_bytes = 0;
+        process_table[i].io_write_bytes = 0;
         process_table[i].stack_watermark = 0;
     }
 }

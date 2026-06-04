@@ -789,6 +789,38 @@ static int procfs_gen_pid_environ(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* /proc/<pid>/io — I/O statistics (standard Linux proc interface) */
+static int procfs_gen_pid_io(uint32_t pid, char *buf, int max) {
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    int pos = 0;
+    /* Format matches Linux /proc/PID/io: key: value\n */
+    proc_str("rchar: ", buf, &pos, max);
+    proc_u64_to_str(p->io_rchar, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("wchar: ", buf, &pos, max);
+    proc_u64_to_str(p->io_wchar, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("syscr: ", buf, &pos, max);
+    proc_u64_to_str(p->io_syscr, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("syscw: ", buf, &pos, max);
+    proc_u64_to_str(p->io_syscw, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("read_bytes: ", buf, &pos, max);
+    proc_u64_to_str(p->io_read_bytes, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("write_bytes: ", buf, &pos, max);
+    proc_u64_to_str(p->io_write_bytes, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    proc_str("cancelled_write_bytes: ", buf, &pos, max);
+    proc_u64_to_str(p->io_write_bytes, buf, &pos, max);
+    proc_str("\n", buf, &pos, max);
+    buf[pos] = '\0';
+    return pos;
+}
+
 /* /proc/<pid>/maps — memory mappings */
 static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
@@ -1247,6 +1279,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         } else if (got && strcmp(p, "/limits") == 0) {
             len = procfs_gen_pid_limits(pid, buf, (int)max_size);
             if (len < 0) return -1;
+        } else if (got && strcmp(p, "/io") == 0) {
+            len = procfs_gen_pid_io(pid, buf, (int)max_size);
+            if (len < 0) return -1;
         } else if (got && strncmp(p, "/fd/", 4) == 0) {
             /* /proc/<pid>/fd/<N> — read symlink target (file path) */
             struct process *proc = process_get_by_pid(pid);
@@ -1385,6 +1420,12 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         }
     }
     if (got && strcmp(p, "/limits") == 0) {
+        struct process *proc = process_get_by_pid(pid);
+        if (proc && proc->state != PROCESS_UNUSED) {
+            st->type = 1; st->size = 512; return 0;
+        }
+    }
+    if (got && strcmp(p, "/io") == 0) {
         struct process *proc = process_get_by_pid(pid);
         if (proc && proc->state != PROCESS_UNUSED) {
             st->type = 1; st->size = 512; return 0;

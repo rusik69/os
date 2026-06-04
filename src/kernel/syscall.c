@@ -450,6 +450,15 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
         kfree(tmp);
         pfd->offset += to_read;
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_rchar += to_read;
+                cur->io_syscr++;
+                cur->io_read_bytes += to_read;
+            }
+        }
         return (uint64_t)to_read;
     }
     /* signalfd read */
@@ -458,6 +467,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         int ret = signalfd_do_read(slot, (void *)buf_addr, len);
         if (ret < 0) {
             /* Error or invalid slot */
+        }
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur && ret > 0) {
+                cur->io_rchar += (uint64_t)ret;
+                cur->io_syscr++;
+            }
         }
         return (uint64_t)(ret > 0 ? ret : 0);
     }
@@ -469,6 +486,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
             syscall_user_write_ok(buf_addr, 8)) {
             *(uint64_t*)(uintptr_t)buf_addr = tval;
         }
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_rchar += 8;
+                cur->io_syscr++;
+            }
+        }
         return 8;
     }
     /* eventfd read */
@@ -477,6 +502,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         uint64_t val;
         if (eventfd_read((int)fd, &val) < 0) return (uint64_t)-1;
         *(uint64_t*)(uintptr_t)buf_addr = val;
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_rchar += 8;
+                cur->io_syscr++;
+            }
+        }
         return 8;
     }
     /* memfd read */
@@ -485,6 +518,14 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!mfd) return (uint64_t)-1;
         int64_t ret = memfd_read(mfd, (void*)buf_addr, len, 0);
         memfd_put(mfd);
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur && ret > 0) {
+                cur->io_rchar += (uint64_t)ret;
+                cur->io_syscr++;
+            }
+        }
         return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
     return (uint64_t)-1;
@@ -497,6 +538,15 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
             vga_putchar(s[i]);
             serial_putchar(s[i]);
         }
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_wchar += len;
+                cur->io_syscw++;
+                cur->io_write_bytes += len;
+            }
+        }
         return len;
     }
     /* eventfd write */
@@ -504,6 +554,15 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (len < 8) return (uint64_t)-1;
         uint64_t val = *(uint64_t*)(uintptr_t)buf_addr;
         if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_wchar += 8;
+                cur->io_syscw++;
+                cur->io_write_bytes += 8;
+            }
+        }
         return 8;
     }
     /* memfd write */
@@ -512,6 +571,15 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!mfd) return (uint64_t)-1;
         int64_t ret = memfd_write(mfd, (const void*)buf_addr, len, 0);
         memfd_put(mfd);
+        /* I/O accounting */
+        {
+            struct process *cur = process_get_current();
+            if (cur && ret > 0) {
+                cur->io_wchar += (uint64_t)ret;
+                cur->io_syscw++;
+                cur->io_write_bytes += (uint64_t)ret;
+            }
+        }
         return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
     return (uint64_t)-1;
