@@ -64,6 +64,7 @@
 #include "rseq.h"
 #include "file_lock.h"
 #include "hugetlb.h"
+#include "sched_attr.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -341,6 +342,12 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return 1;
         case SYS_SCHED_GETSCHEDULER:
             return 1;
+        case SYS_SCHED_SETATTR:
+            /* Validate that the userspace attr struct is readable */
+            return a2 ? syscall_user_read_ok(a2, sizeof(struct sched_attr)) : 0;
+        case SYS_SCHED_GETATTR:
+            /* Validate that the userspace attr struct is writable */
+            return a2 ? syscall_user_write_ok(a2, a3) : 0;
         /* New production syscalls (batch 2) */
         case SYS_OPENAT:
             return syscall_user_cstr_ok(a2);
@@ -5348,6 +5355,93 @@ static uint64_t sys_sched_getscheduler(uint64_t pid) {
     return (uint64_t)target->sched_policy;
 }
 
+/* ── sched_setattr / sched_getattr — extended scheduler attributes (Item 310) ── */
+
+/*
+ * sys_sched_setattr — Set extended scheduling attributes for a process.
+ *
+ *   pid:    target PID (0 = current)
+ *   attr:   userspace pointer to struct sched_attr
+ *   flags:  SCHED_FLAG_* (SCHED_FLAG_RESET_ON_FORK, etc.)
+ *
+ * Returns 0 on success, -1 with errno set on error.
+ */
+static uint64_t sys_sched_setattr(uint64_t pid, uint64_t attr_addr, uint64_t flags)
+{
+    struct sched_attr attr;
+    int ret;
+
+    if (!attr_addr)
+        return (uint64_t)-1;
+
+    /* Copy struct sched_attr from userspace */
+    if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
+        return (uint64_t)-1;
+    memcpy(&attr, (const void *)attr_addr, sizeof(struct sched_attr));
+
+    /* Validate the size field before using it */
+    if (attr.size == 0 || attr.size > sizeof(struct sched_attr))
+        return (uint64_t)-1;
+
+    /* If caller provided a smaller struct, zero the tail */
+    size_t copy_size = attr.size < sizeof(struct sched_attr) ? attr.size : sizeof(struct sched_attr);
+    if (copy_size < sizeof(struct sched_attr))
+        memset((uint8_t *)&attr + copy_size, 0, sizeof(struct sched_attr) - copy_size);
+    attr.size = sizeof(struct sched_attr);  /* normalize */
+
+    /* Resolve PID */
+    if (pid == 0)
+        pid = process_get_current() ? process_get_current()->pid : 0;
+    if (pid == 0)
+        return (uint64_t)-1;
+
+    ret = sched_setattr((uint32_t)pid, &attr, (uint32_t)flags);
+    if (ret < 0)
+        return (uint64_t)-1;
+    return 0;
+}
+
+/*
+ * sys_sched_getattr — Get extended scheduling attributes for a process.
+ *
+ *   pid:    target PID (0 = current)
+ *   attr:   userspace pointer to struct sched_attr
+ *   size:   size of caller's struct sched_attr (for forward compat)
+ *   flags:  reserved, must be 0
+ *
+ * Returns 0 on success, -1 with errno set on error.
+ */
+static uint64_t sys_sched_getattr(uint64_t pid, uint64_t attr_addr, uint64_t size, uint64_t flags)
+{
+    struct sched_attr attr;
+    int ret;
+
+    if (!attr_addr || size == 0 || size > sizeof(struct sched_attr))
+        return (uint64_t)-1;
+
+    if (syscall_is_user_process() && !syscall_user_write_ok((uint64_t)attr_addr, sizeof(struct sched_attr)))
+        return (uint64_t)-1;
+
+    /* Resolve PID */
+    uint32_t target_pid;
+    if (pid == 0) {
+        struct process *cur = process_get_current();
+        if (!cur) return (uint64_t)-1;
+        target_pid = cur->pid;
+    } else {
+        target_pid = (uint32_t)pid;
+    }
+
+    ret = sched_getattr(target_pid, &attr, (size_t)size, (uint32_t)flags);
+    if (ret < 0)
+        return (uint64_t)-1;
+
+    /* Copy result back to userspace */
+    size_t copy_size = size < sizeof(struct sched_attr) ? (size_t)size : sizeof(struct sched_attr);
+    memcpy((void *)attr_addr, &attr, copy_size);
+    return 0;
+}
+
 /* ── Core dump support ─────────────────────────────────────────────────── */
 
 #include "coredump_core.h"
@@ -8101,6 +8195,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_IOPRIO_GET:  return sys_ioprio_get(a1, a2);
         case SYS_SCHED_SETSCHEDULER: return sys_sched_setscheduler(a1, a2, a3);
         case SYS_SCHED_GETSCHEDULER: return sys_sched_getscheduler(a1);
+        case SYS_SCHED_SETATTR:      return sys_sched_setattr(a1, a2, a3);
+        case SYS_SCHED_GETATTR:      return sys_sched_getattr(a1, a2, a3, a4);
         case SYS_OPENAT:       return sys_openat(a1, a2, a3, a4);
         case SYS_MKDIRAT:      return sys_mkdirat(a1, a2, a3);
         case SYS_FSTATAT:      return sys_fstatat(a1, a2, a3, a4);
