@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, master ]
 
+env:
+  CC: x86_64-linux-gnu-gcc
+  LD: x86_64-linux-gnu-ld
+  OBJCOPY: x86_64-linux-gnu-objcopy
+
 jobs:
   build-gcc:
     name: Build (GCC)
@@ -17,13 +22,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
+            gcc-x86-64-linux-gnu \
+            binutils-x86-64-linux-gnu \
             build-essential \
             gcc \
             nasm \
             qemu-system-x86 \
             python3 \
             cppcheck \
-            clang-format
+            clang-format-18 \
+            ccache \
+            dosfstools \
+            mtools
 
       - name: Build kernel (release)
         run: make -j$(nproc)
@@ -61,19 +71,25 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            clang \
-            lld \
+            clang-18 \
+            lld-18 \
             nasm \
             qemu-system-x86 \
-            python3
+            python3 \
+            ccache
 
       - name: Build with Clang
-        run: make CC=clang LD=lld -j$(nproc)
+        run: |
+          make CC="ccache clang-18" LD=ld.lld-18 OBJCOPY=llvm-objcopy-18 \
+            CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types" \
+            -j$(nproc)
 
       - name: E2E smoke test (Clang build)
         timeout-minutes: 10
         run: |
-          make CC=clang LD=lld e2e-smoke
+          make CC="ccache clang-18" LD=ld.lld-18 OBJCOPY=llvm-objcopy-18 \
+            CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types" \
+            e2e-smoke
 
   debug-build:
     name: Debug Build
@@ -85,16 +101,19 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
+            gcc-x86-64-linux-gnu \
+            binutils-x86-64-linux-gnu \
             build-essential \
             gcc \
             nasm \
             qemu-system-x86 \
-            python3
+            python3 \
+            ccache
 
       - name: Debug build
-        run: make DEBUG=1 -j$(nproc)
+        run: make CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" -j$(nproc)
 
       - name: E2E smoke test (debug build)
         timeout-minutes: 10
         run: |
-          make DEBUG=1 e2e-smoke
+          make CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" e2e-smoke

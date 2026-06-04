@@ -65,6 +65,9 @@ CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
 
+# Auto-detect libgcc path (supports both x86_64-elf-gcc and x86_64-linux-gnu-gcc)
+LIBGCC := $(shell $(CC) -print-libgcc-file-name 2>/dev/null || echo "/usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a")
+
 BUILDDIR = build
 
 C_SRCS = src/kernel/kernel.c \
@@ -586,7 +589,7 @@ $(BUILDDIR)/%.o: src/%.asm
 
 $(BUILDDIR)/kernel.elf: check-app-boundary $(OBJS)
 	@mkdir -p $(BUILDDIR)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBGCC)
 
 # config_gz.o depends on the auto-generated header
 $(BUILDDIR)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)
@@ -673,7 +676,7 @@ $(BUILDDIR_TEST)/%.o: src/%.asm
 
 $(BUILDDIR_TEST)/kernel.elf: check-app-boundary $(TEST_OBJS)
 	@mkdir -p $(BUILDDIR_TEST)
-	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+	$(LD) $(LDFLAGS) -o $@ $(TEST_OBJS) $(LIBGCC)
 
 # config_gz.o depends on the auto-generated header for test build too
 $(BUILDDIR_TEST)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
@@ -721,7 +724,7 @@ $(BUILDDIR_CHECK)/%.o: src/%.asm
 
 $(BUILDDIR_CHECK)/kernel.elf: check-app-boundary $(CHECK_OBJS)
 	@mkdir -p $(BUILDDIR_CHECK)
-	$(LD) $(LDFLAGS) -o $@ $(CHECK_OBJS) -L/usr/lib/gcc/x86_64-linux-gnu/13 -lgcc
+	$(LD) $(LDFLAGS) -o $@ $(CHECK_OBJS) $(LIBGCC)
 
 # config_gz.o depends on the auto-generated header for check build too
 $(BUILDDIR_CHECK)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
