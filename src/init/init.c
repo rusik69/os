@@ -31,6 +31,7 @@
 #define SYS_GETPID    212
 #define SYS_KILL      214
 #define SYS_REBOOT    88
+#define SYS_SETHOSTNAME 268
 
 #define SIGCHLD       17
 #define SIGTERM       15
@@ -119,6 +120,9 @@ static void check_initpipe(void);
 static void puts(const char *s);
 static void put_dec(int n);
 
+/* Read /etc/hostname at boot and set kernel hostname (Item U23) */
+static void init_set_hostname(void);
+
 /* ── Inline syscall (x86-64: args in RDI, RSI, RDX, R10, R8, R9) ──── */
 
 static inline long syscall(long num, long a1, long a2, long a3,
@@ -185,6 +189,12 @@ static inline int waitpid(int pid, int *status, int options)
 static inline void signal(int signum, long handler)
 {
     syscall(SYS_SIGNAL, signum, handler, 0, 0, 0);
+}
+
+static inline int sethostname(const char *name, size_t len)
+{
+    if (!name || len == 0) return -1;
+    return (int)syscall(SYS_SETHOSTNAME, (long)name, (long)len, 0, 0, 0);
 }
 
 /* ── String helpers (avoid libc dependency) ───────────────────────────── */
@@ -747,6 +757,48 @@ static void put_dec(int n)
     puts(buf + i);
 }
 
+/* ── Read /etc/hostname at boot (Item U23) ───────────────────────────── */
+
+/*
+ * Read the system hostname from /etc/hostname on boot and set it via
+ * the sethostname() syscall.  Silently continues if the file does not
+ * exist or is empty — the kernel default hostname (e.g. "(none)" or
+ * "localhost") will be used.
+ */
+static void init_set_hostname(void)
+{
+    int fd = open("/etc/hostname", O_RDONLY);
+    if (fd < 0) {
+        /* No hostname file — not an error, use kernel default */
+        return;
+    }
+
+    char buf[65]; /* HOST_NAME_MAX is typically 64 */
+    long n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+
+    if (n <= 0)
+        return; /* Empty file — nothing to set */
+
+    /* Strip trailing whitespace/newline from the hostname */
+    int end = (int)n - 1;
+    while (end >= 0 && (buf[end] == '\n' || buf[end] == '\r' ||
+                        buf[end] == ' ' || buf[end] == '\t'))
+        end--;
+
+    if (end < 0)
+        return; /* All whitespace — ignore */
+
+    buf[end + 1] = '\0';
+
+    /* Set hostname via syscall */
+    if (sethostname(buf, (size_t)(end + 1)) == 0) {
+        puts("init: set hostname from /etc/hostname: ");
+        puts(buf);
+        puts("\n");
+    }
+}
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 void _start(void)
@@ -756,7 +808,10 @@ void _start(void)
     signal(SIGCHLD, SIGIGN);
 
     /* Log startup */
-    puts("init: PID 1 starting, parsing /etc/inittab...\n");
+    puts("init: PID 1 starting\n");
+
+    /* Read /etc/hostname and set kernel hostname (Item U23) */
+    init_set_hostname();
 
     /* Parse /etc/inittab */
     init_parse_inittab();
