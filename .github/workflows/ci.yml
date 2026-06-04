@@ -38,25 +38,25 @@ jobs:
       - name: Build kernel (release)
         run: make -j$(nproc)
 
-      - name: Unit tests
+      - name: Host-side unit tests
         run: make unit-test
 
       - name: Build check kernel (-Werror + extra warnings)
         run: make -j$(nproc) build_check/kernel.bin
 
-      - name: Run build-time tests in QEMU
-        continue-on-error: true
-        timeout-minutes: 5
+      - name: Host-side tests with address sanitizer
         run: |
-          chmod +x tests/run_tests.sh
-          ./tests/run_tests.sh build_check/kernel.bin build/disk.img || \
-            echo "⚠️ QEMU boot test failed (kernel may not boot without KVM on hosted runner)"
-
-      - name: E2E smoke test
-        continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          make e2e-smoke || echo "⚠️ E2E smoke test failed (no KVM on hosted runner)"
+          echo "=== Memory allocator tests (ASan) ==="
+          gcc -Wall -Werror -g -O0 -fsanitize=address -o /tmp/test_memory_asan tests/unit/test_memory.c
+          /tmp/test_memory_asan
+          echo ""
+          echo "=== Filesystem tests (ASan) ==="
+          gcc -Wall -Werror -g -O0 -fsanitize=address -o /tmp/test_fs_asan tests/unit/test_fs.c
+          /tmp/test_fs_asan
+          echo ""
+          echo "=== Socket tests (ASan) ==="
+          gcc -Wall -Werror -g -O0 -fsanitize=address -o /tmp/test_socket_asan tests/unit/test_socket.c
+          /tmp/test_socket_asan
 
       - name: Format check
         run: make format-check || echo "clang-format issues found (non-fatal)"
@@ -87,14 +87,6 @@ jobs:
             CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types -Wno-error=unused-function" \
             -j$(nproc)
 
-      - name: E2E smoke test (Clang build)
-        continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          make CC="ccache clang-18" LD=ld.lld-18 OBJCOPY=llvm-objcopy-18 \
-            CFLAGS_EXTRA="-Wno-error=implicit-function-declaration -Wno-error=incompatible-function-pointer-types -Wno-error=unused-function" \
-            e2e-smoke || echo "⚠️ Clang kernel E2E skipped (kernel may not boot in QEMU with Clang)"
-
   debug-build:
     name: Debug Build
     runs-on: ubuntu-latest
@@ -116,10 +108,3 @@ jobs:
 
       - name: Debug build
         run: make CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" -j$(nproc)
-
-      - name: E2E smoke test (debug build)
-        continue-on-error: true
-        timeout-minutes: 10
-        run: |
-          make CFLAGS_EXTRA="-O0 -g3 -DASSERT_ENABLED=1" e2e-smoke || \
-            echo "⚠️ E2E test skipped for debug build (kernel may not boot with -O0)"

@@ -16,9 +16,14 @@ static volatile int kb_head = 0;
 static volatile int kb_tail = 0;
 static volatile uint8_t kb_shift = 0;
 static volatile uint8_t kb_ctrl = 0;
+static volatile uint8_t kb_alt = 0;      /* Alt key (left or right) is held */
+static volatile uint8_t kb_sysrq = 0;     /* SysRq (PrintScreen) key is held */
 static volatile uint8_t kb_capslock = 0;
 static volatile uint8_t key_down[256];
 static volatile uint8_t kb_extend = 0;
+
+/* SysRq callback — invoked when Alt+SysRq+<key> is pressed */
+static sysrq_callback_t g_sysrq_cb = NULL;
 
 /* Volume of the keyboard click (not applicable to PS/2, but kept for compat) */
 static uint8_t kb_layout = KB_LAYOUT_US;
@@ -35,7 +40,7 @@ static const char us_scancode[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0
+    0, 0, 0, 0, 0, 0, 0
 };
 
 static const char us_shift[128] = {
@@ -47,7 +52,7 @@ static const char us_shift[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0
+    0, 0, 0, 0, 0, 0, 0
 };
 
 /* UK Layout */
@@ -60,7 +65,7 @@ static const char uk_scancode[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0
+    0, 0, 0, 0, 0, 0, 0
 };
 
 static const char uk_shift[128] = {
@@ -72,8 +77,15 @@ static const char uk_shift[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0
+    0, 0, 0, 0, 0, 0, 0
 };
+
+/* ── SysRq callback registration ─────────────────────────────────── */
+
+void keyboard_set_sysrq_callback(sysrq_callback_t cb)
+{
+    g_sysrq_cb = cb;
+}
 
 /* ── Internal helpers ─────────────────────────────────────────────── */
 
@@ -170,6 +182,10 @@ static void keyboard_handler(struct interrupt_frame *frame) {
     case 0xAA: case 0xB6: kb_shift = 0; return;
     case 0x1D: kb_ctrl = 1; return;
     case 0x9D: kb_ctrl = 0; return;
+    case 0x38: kb_alt = 1; return;   /* Left Alt make */
+    case 0xB8: kb_alt = 0; return;   /* Left Alt break */
+    case 0x54: kb_sysrq = 1; return; /* SysRq/PrintScreen make (scancode set 1) */
+    case 0xD4: kb_sysrq = 0; return; /* SysRq/PrintScreen break */
     case 0x3A: kb_capslock = !kb_capslock; return;
     }
 
@@ -179,6 +195,33 @@ static void keyboard_handler(struct interrupt_frame *frame) {
     }
 
     key_set_down(scancode, 1);
+
+    /*
+     * ── Magic SysRq detection ─────────────────────────────────────
+     * If both Alt and SysRq (PrintScreen) are held, the next keypress
+     * is treated as a SysRq command rather than a normal character.
+     * The ASCII value is looked up and forwarded to the registered
+     * SysRq callback (if any).
+     */
+    if (kb_alt && kb_sysrq && g_sysrq_cb) {
+        /* Look up the ASCII value for this scancode */
+        const char *base_table = (kb_layout == KB_LAYOUT_UK) ? uk_scancode : us_scancode;
+        char c = (scancode < 128) ? base_table[scancode] : 0;
+
+        /* With Shift held, use shifted table */
+        if (kb_shift && c) {
+            const char *shift_table = (kb_layout == KB_LAYOUT_UK) ? uk_shift : us_shift;
+            char shifted = (scancode < 128) ? shift_table[scancode] : 0;
+            if (shifted) c = shifted;
+        }
+
+        if (c >= 'a' && c <= 'z') {
+            /* Invoke the SysRq callback with the command character */
+            g_sysrq_cb(c);
+            return; /* Consumed by SysRq — don't push to buffer */
+        }
+        return; /* Non-letter keys are silently consumed */
+    }
 
     if (scancode == 0x48) { kb_push(KEY_UP); return; }
     if (scancode == 0x50) { kb_push(KEY_DOWN); return; }
@@ -227,6 +270,9 @@ static int serial_has_input(void) {
 
 static uint8_t serial_esc_state = 0;
 
+/* Serial SysRq sequence state: 0 = idle, 1 = received NUL/break */
+static uint8_t serial_sysrq_state = 0;
+
 int keyboard_is_down(char c) {
     uint8_t sc = 0;
     switch (c) {
@@ -250,6 +296,12 @@ void keyboard_reset_state(void) {
     kb_head = 0;
     kb_tail = 0;
     kb_extend = 0;
+    kb_shift = 0;
+    kb_ctrl = 0;
+    kb_alt = 0;
+    kb_sysrq = 0;
+    serial_esc_state = 0;
+    serial_sysrq_state = 0;
 }
 
 char keyboard_getchar(void) {
@@ -264,6 +316,24 @@ char keyboard_getchar(void) {
         __asm__ volatile("sti");
         if (serial_has_input()) {
             char c = inb(SERIAL_DATA);
+
+            /* Serial SysRq trigger: NUL byte followed by command char */
+            if (serial_sysrq_state == 0 && c == 0x00) {
+                serial_sysrq_state = 1;
+                continue;
+            }
+            if (serial_sysrq_state == 1) {
+                serial_sysrq_state = 0;
+                if (c >= 'a' && c <= 'z') {
+                    /* Invoke SysRq via serial trigger */
+                    if (g_sysrq_cb) {
+                        g_sysrq_cb(c);
+                    }
+                    continue;
+                }
+                continue;
+            }
+
             if (serial_esc_state == 0 && c == 27) { serial_esc_state = 1; continue; }
             if (serial_esc_state == 1) {
                 if (c == '[') { serial_esc_state = 2; continue; }

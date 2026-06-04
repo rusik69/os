@@ -25,6 +25,7 @@
 #include "psi.h"
 #include "cgroup_namespace.h"
 #include "cpu_topology.h"
+#include "sysrq.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -1427,6 +1428,18 @@ static int procfs_write(void *priv, const char *path, const void *data, uint32_t
         return 0;
     }
 
+    /* /proc/sysrq-trigger — write a command character to trigger SysRq */
+    if (strcmp(path, "/proc/sysrq-trigger") == 0) {
+        if (size < 1) return -1;
+        char cmd = buf[0];
+        /* Accept lowercase letters */
+        if (cmd >= 'a' && cmd <= 'z') {
+            sysrq_handle(cmd);
+            return 0;
+        }
+        return -1;
+    }
+
     return -1;
 }
 
@@ -1451,7 +1464,8 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
         strcmp(path, "/proc/stat") == 0 ||
         strcmp(path, "/proc/loadavg") == 0 ||
         strcmp(path, "/proc/vmstat") == 0 ||
-        strcmp(path, "/proc/slabinfo") == 0) {
+        strcmp(path, "/proc/slabinfo") == 0 ||
+        strcmp(path, "/proc/sysrq-trigger") == 0) {
         st->type = 1; st->size = 256; return 0;
     }
     /* /proc/filesystems */

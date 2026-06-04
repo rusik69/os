@@ -9,6 +9,7 @@
 #include "printf.h"
 #include "types.h"
 #include "process.h"
+#include "sysrq.h"
 
 /* ─── Default watermark values ───────────────────────────────────── */
 /* Memory reclaim watermark — minimum free pages before reclaim triggers.
@@ -205,6 +206,35 @@ static int sysctl_write_timens_boottime_offset(const char *buf, int len)
     return 0;
 }
 
+/* ── SysRq enable mask ───────────────────────────────────────────── */
+
+static int sysctl_read_sysrq(char *buf, int max)
+{
+    int v = sysrq_get_mask();
+    int p = 0;
+    if (v < 0) {
+        if (p < max - 1) buf[p++] = '-';
+        v = -v;
+    }
+    char tmp[16]; int ti = 0;
+    if (v == 0) { tmp[ti++] = '0'; }
+    else { while (v) { tmp[ti++] = '0' + (v % 10); v /= 10; } }
+    for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
+    if (p < max - 1) buf[p++] = '\n';
+    buf[p] = '\0';
+    return p;
+}
+
+static int sysctl_write_sysrq(const char *buf, int len)
+{
+    int v = 0, sign = 1, i = 0;
+    if (i < len && buf[i] == '-') { sign = -1; i++; }
+    for (; i < len && buf[i] >= '0' && buf[i] <= '9'; i++)
+        v = v * 10 + (buf[i] - '0');
+    sysrq_set_mask(v * sign);
+    return 0;
+}
+
 /* ─── Public API ─────────────────────────────────────────────────── */
 
 int sysctl_register(const char *name,
@@ -268,6 +298,8 @@ int sysctl_write(const char *name, const char *buf, int len) {
         return sysctl_write_timens_mono_offset(buf, len);
     if (strcmp(name, "timens_boottime_offset") == 0)
         return sysctl_write_timens_boottime_offset(buf, len);
+    if (strcmp(name, "sysrq") == 0)
+        return sysctl_write_sysrq(buf, len);
     return -1;
 }
 
@@ -291,6 +323,7 @@ int sysctl_list_names(char names[][48], int max_names)
         "hostname", "osrelease", "ostype",
         "panic", "randomize_va_space",
         "vm.reclaim_watermark",
+        "sysrq",
         NULL
     };
 
@@ -325,6 +358,7 @@ void sysctl_init(void) {
     sysctl_register("panic", sysctl_read_panic, sysctl_write_panic);
     sysctl_register("randomize_va_space", sysctl_read_rand_va, sysctl_write_rand_va);
     sysctl_register("vm.reclaim_watermark", sysctl_read_reclaim_watermark, sysctl_write_reclaim_watermark);
+    sysctl_register("sysrq", sysctl_read_sysrq, sysctl_write_sysrq);
 
     kprintf("[OK] Sysctl interface initialized (%d entries)\n", g_num_entries);
 }

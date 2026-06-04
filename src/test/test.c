@@ -1817,7 +1817,20 @@ static void test_sysrq_commands(void) {
     ASSERT("sysrq valid o", sysrq_is_valid('o'));
     ASSERT("sysrq valid s", sysrq_is_valid('s'));
     ASSERT("sysrq valid f", sysrq_is_valid('f'));
+    ASSERT("sysrq valid h", sysrq_is_valid('h')); /* help */
+    ASSERT("sysrq valid k", sysrq_is_valid('k')); /* SAK */
     ASSERT("sysrq invalid z", !sysrq_is_valid('z'));
+    /* Test enable mask */
+    int old_mask = sysrq_get_mask();
+    ASSERT("sysrq mask default != 0", old_mask != 0);
+    sysrq_set_mask(SYSRQ_ENABLE_SYNC);
+    ASSERT("sysrq sync enabled", sysrq_is_enabled('s'));
+    ASSERT("sysrq dump disabled", !sysrq_is_enabled('t'));
+    sysrq_set_mask(0);
+    ASSERT("sysrq all disabled", !sysrq_is_enabled('s'));
+    ASSERT("sysrq all disabled", !sysrq_is_enabled('b'));
+    sysrq_set_mask(old_mask);
+    ASSERT("sysrq mask restored", sysrq_get_mask() == old_mask);
     /* Actually calling sysrq_handle should not crash */
     sysrq_handle('s'); /* sync */
     t_ok("sysrq test");

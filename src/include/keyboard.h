@@ -43,4 +43,12 @@ int keyboard_set_leds(uint8_t leds);
 /* Get the current keyboard LED state. */
 uint8_t keyboard_get_leds(void);
 
+/* ── SysRq (Magic System Request) support ──────────────────────────── */
+
+/* Register a callback that will be invoked when Alt+SysRq+<key> is
+ * pressed on the keyboard.  The callback receives the ASCII character
+ * of the command key.  Pass NULL to unregister. */
+typedef void (*sysrq_callback_t)(char cmd);
+void keyboard_set_sysrq_callback(sysrq_callback_t cb);
+
 #endif
