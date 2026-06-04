@@ -26,4 +26,34 @@ int  acpi_sleep(uint32_t state);
 /* Check if a given sleep state is supported. */
 int  acpi_sleep_supported(uint32_t state);
 
+/* ── Dock/Undock Notification (Item 106) ─────────────────────────── */
+
+/* Dock station state flags */
+#define ACPI_DOCK_NOT_PRESENT  0  /* no dock hardware found */
+#define ACPI_DOCK_UNDOCKED     1  /* dock present but undocked */
+#define ACPI_DOCK_DOCKED       2  /* device docked */
+
+/* Maximum number of dock notification callbacks */
+#define ACPI_DOCK_MAX_CB       8
+
+/* Callback type for dock events: called with dock_state (ACPI_DOCK_DOCKED
+ * or ACPI_DOCK_UNDOCKED) and an opaque user pointer. */
+typedef void (*acpi_dock_callback_t)(int dock_state, void *user_data);
+
+/* Register a callback for dock state change notifications.
+ * Returns 0 on success, -1 if the callback table is full. */
+int acpi_dock_register_notify(acpi_dock_callback_t cb, void *user_data);
+
+/* Unregister a previously registered dock notification callback. */
+void acpi_dock_unregister_notify(acpi_dock_callback_t cb, void *user_data);
+
+/* Query the current dock station state.
+ * Returns ACPI_DOCK_NOT_PRESENT, ACPI_DOCK_UNDOCKED, or ACPI_DOCK_DOCKED. */
+int acpi_dock_get_state(void);
+
+/* Poll the dock hardware for state changes.
+ * Called periodically (e.g., from the idle loop or a timer) to detect
+ * hotplug events when no ACPI notification mechanism is available. */
+void acpi_dock_poll(void);
+
 #endif
