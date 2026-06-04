@@ -23,6 +23,7 @@
 #include "panic.h"
 #include "signal.h"
 #include "string.h"
+#include "pmm.h"         /* pmm_alloc_frame for huge-page splitting */
 
 /* ── Linker section boundaries ──────────────────────────────────────── */
 /* These are defined in linker.ld and resolved at link time.
@@ -38,8 +39,15 @@ extern char _kernel_end[];                  /* end of all kernel sections */
 /* PTE flag */
 #define PTE_NX       (1ULL << 63)
 #define PTE_PRESENT  (1ULL << 0)
+#define PTE_WRITE    (1ULL << 1)
+#define PTE_USER     (1ULL << 2)
+#define PTE_ACCESSED (1ULL << 5)
+#define PTE_DIRTY    (1ULL << 6)
 #define PTE_HUGE     (1ULL << 7)
 #define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+
+/* 2MB huge-page size */
+#define HUGE_PAGE_SIZE (2ULL * 1024 * 1024)
 
 /* Forward declarations of kernel page-table root (from vmm.c) */
 extern uint64_t *kernel_pml4;
@@ -319,6 +327,200 @@ int nx_enforce_audit_user_range(uint64_t *pml4, uint64_t start, uint64_t end) {
     }
 
     return violations;
+}
+
+/* ── Kernel section permission protection (Item 176) ────────────────── */
+
+/*
+ * Split a 2MB huge page into 512 × 4KB pages so we can set different
+ * permissions on individual pages within a 2MB region.
+ *
+ * @pml4      Kernel PML4 (virtual address).
+ * @pd_vaddr  Virtual address of the PDE covering the huge page.
+ * @pd_phys   Physical address base of the huge page.
+ * @pd_flags  Current PDE flags (used to set consistent permissions).
+ * Returns 0 on success, -1 on failure.
+ */
+static int split_2mb_huge_page(uint64_t *pml4, uint64_t pd_vaddr,
+                                uint64_t pd_phys, uint64_t pd_flags)
+{
+    int pml4_idx = (pd_vaddr >> 39) & 0x1FF;
+    int pdpt_idx = (pd_vaddr >> 30) & 0x1FF;
+    int pd_idx   = (pd_vaddr >> 21) & 0x1FF;
+
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return -1;
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -1;
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+    if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
+    if (!(pd[pd_idx] & PTE_HUGE)) return 0; /* not a huge page — nothing to do */
+
+    /* Allocate a 4KB page table page */
+    uint64_t pt_phys = pmm_alloc_frame();
+    if (!pt_phys) {
+        kprintf("[nx] FAILED to allocate page-table page for huge-page split at 0x%llx\n",
+                pd_vaddr);
+        return -1;
+    }
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+    memset(pt, 0, PAGE_SIZE);
+
+    /* Fill the page table: map each 4KB sub-page with the huge page's flags,
+     * but strip the PTE_HUGE flag (this is a leaf PTE now) and preserve the
+     * accessed/dirty bits as zero since these will be set by hardware. */
+    uint64_t base_flags = (pd_flags & ~(PTE_HUGE | PTE_ACCESSED | PTE_DIRTY)) | PTE_PRESENT;
+    for (int i = 0; i < 512; i++) {
+        pt[i] = (pd_phys + (uint64_t)i * PAGE_SIZE) | base_flags;
+    }
+
+    /* Point the PDE to the new page table (clear the huge bit) */
+    pd[pd_idx] = pt_phys | (pd_flags & ~(PTE_HUGE | PTE_ADDR_MASK)) | PTE_PRESENT;
+
+    /* Flush the TLB for the affected 2MB region */
+    for (uint64_t v = pd_vaddr; v < pd_vaddr + HUGE_PAGE_SIZE; v += PAGE_SIZE) {
+        __asm__ volatile("invlpg (%0)" : : "r"(v) : "memory");
+    }
+
+    return 0;
+}
+
+/*
+ * Walk the kernel page tables and apply fine-grained permissions:
+ *   - .rodata:  clear write bit (read-only)
+ *   - .data:    set NX bit    (no execute)
+ *   - .bss:     set NX bit    (no execute)
+ *
+ * 2MB huge pages that span across section boundaries are split into 4KB
+ * pages first so each section gets correct per-page permissions.
+ *
+ * Must be called after all early init code that modifies kernel sections
+ * (e.g. module loader init, syscall table patching) is complete.
+ */
+int nx_enforce_protect_kernel_sections(void)
+{
+    if (!nx_self_active) {
+        kprintf("[nx] section protection: NX not active — skipping\n");
+        return -1;
+    }
+
+    uint64_t *pml4 = kernel_pml4;
+    if (!pml4) {
+        kprintf("[nx] section protection: kernel_pml4 is NULL\n");
+        return -1;
+    }
+
+    uint64_t rodata_start = (uint64_t)(uintptr_t)_rodata_start;
+    uint64_t rodata_end   = (uint64_t)(uintptr_t)_rodata_end;
+    uint64_t data_start   = (uint64_t)(uintptr_t)_data_start;
+    uint64_t data_end     = (uint64_t)(uintptr_t)_data_end;
+    uint64_t bss_start    = (uint64_t)(uintptr_t)_bss_start;
+    uint64_t bss_end      = (uint64_t)(uintptr_t)_bss_end;
+
+    int ro_modified = 0;
+    int nx_modified = 0;
+    int splits      = 0;
+
+    for (int pml4_idx = 0; pml4_idx < 512; pml4_idx++) {
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) continue;
+
+        uint64_t pml4_vbase = (uint64_t)pml4_idx << 39;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+
+        for (int pdpt_idx = 0; pdpt_idx < 512; pdpt_idx++) {
+            if (!(pdpt[pdpt_idx] & PTE_PRESENT)) continue;
+
+            uint64_t pdpt_vbase = pml4_vbase | ((uint64_t)pdpt_idx << 30);
+
+            /* 1 GB pages — skip (kernel sections are in low 2MB). */
+            if (pdpt[pdpt_idx] & PTE_HUGE) continue;
+
+            uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+
+            for (int pd_idx = 0; pd_idx < 512; pd_idx++) {
+                if (!(pd[pd_idx] & PTE_PRESENT)) continue;
+
+                uint64_t pd_vbase = pdpt_vbase | ((uint64_t)pd_idx << 21);
+                uint64_t pd_flags = pd[pd_idx];
+                int       is_2mb  = !!(pd_flags & PTE_HUGE);
+
+                /* Determine which section(s) this 2MB region overlaps */
+                uint64_t region_end = pd_vbase + HUGE_PAGE_SIZE;
+
+                int overlaps_rodata = pd_vbase < rodata_end && region_end > rodata_start;
+                int overlaps_data   = pd_vbase < data_end   && region_end > data_start;
+                int overlaps_bss    = pd_vbase < bss_end    && region_end > bss_start;
+                int overlaps_text   = pd_vbase < (uint64_t)(uintptr_t)_text_end &&
+                                      region_end > (uint64_t)(uintptr_t)_text_start;
+
+                /* If this 2MB page spans multiple sections, split it */
+                int section_count = overlaps_rodata + overlaps_data +
+                                    overlaps_bss + overlaps_text;
+                if (is_2mb && section_count > 1) {
+                    uint64_t phys = pd_flags & PTE_ADDR_MASK;
+                    if (split_2mb_huge_page(pml4, pd_vbase, phys, pd_flags) < 0) {
+                        kprintf("[nx] WARNING: failed to split 2MB page at 0x%llx\n",
+                                pd_vbase);
+                        continue;
+                    }
+                    splits++;
+                    /* Re-read the PDE (now a non-huge pointer to a page table) */
+                    pd[pd_idx] = (pd[pd_idx] & ~PTE_HUGE);
+                    pd_flags = pd[pd_idx];
+                    is_2mb = 0;
+                }
+
+                if (is_2mb) {
+                    /* Whole 2MB region belongs to one section */
+                    if (overlaps_rodata && (pd_flags & PTE_WRITE)) {
+                        pd[pd_idx] = pd_flags & ~(uint64_t)PTE_WRITE;
+                        ro_modified++;
+                        kprintf("[nx] protect: 2MB .rodata page at 0x%llx set read-only\n",
+                                pd_vbase);
+                    } else if ((overlaps_data || overlaps_bss) && !(pd_flags & PTE_NX)) {
+                        pd[pd_idx] = pd_flags | PTE_NX;
+                        nx_modified++;
+                        kprintf("[nx] protect: 2MB non-text page at 0x%llx set NX\n",
+                                pd_vbase);
+                    }
+                    continue;
+                }
+
+                /* 4KB page-level: walk the page table and apply per-page permissions */
+                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+
+                for (int pt_idx = 0; pt_idx < 512; pt_idx++) {
+                    if (!(pt[pt_idx] & PTE_PRESENT)) continue;
+
+                    uint64_t vaddr = pd_vbase | ((uint64_t)pt_idx << 12);
+                    uint64_t pte   = pt[pt_idx];
+
+                    /* .rodata → clear write bit */
+                    if (vaddr >= rodata_start && vaddr < rodata_end) {
+                        if (pte & PTE_WRITE) {
+                            pt[pt_idx] = pte & ~(uint64_t)PTE_WRITE;
+                            ro_modified++;
+                            __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
+                        }
+                    }
+                    /* .data and .bss → set NX bit */
+                    else if ((vaddr >= data_start && vaddr < data_end) ||
+                             (vaddr >= bss_start  && vaddr < bss_end)) {
+                        if (!(pte & PTE_NX)) {
+                            pt[pt_idx] = pte | PTE_NX;
+                            nx_modified++;
+                            __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    kprintf("[nx] section protection complete: %d pages set read-only, "
+            "%d pages set NX, %d huge-page split(s)\n",
+            ro_modified, nx_modified, splits);
+
+    return 0;
 }
 
 /* ── Page-fault integration ─────────────────────────────────────────── */

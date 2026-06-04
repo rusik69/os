@@ -96,4 +96,22 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
  */
 void nx_enforce_print_regions(void);
 
+/* ── Kernel section hardening (Item 176) ─────────────────────── */
+
+/**
+ * nx_enforce_protect_kernel_sections - Apply fine-grained permissions
+ * to kernel sections after init:
+ *   - .rodata → read-only (clear PTE write bit)
+ *   - .data   → non-executable (set PTE NX bit)
+ *   - .bss    → non-executable (set PTE NX bit)
+ *
+ * 2MB huge pages that span section boundaries are split into 4KB
+ * pages so each section gets correct per-page permissions.
+ *
+ * Must be called after all kernel init code that modifies
+ * kernel sections (module loader, syscall table patching, etc.)
+ * Returns 0 on success, -1 on error.
+ */
+int nx_enforce_protect_kernel_sections(void);
+
 #endif /* NX_ENFORCE_H */

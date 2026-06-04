@@ -1019,6 +1019,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * This is a safety net to catch any improperly mapped pages. */
     nx_enforce_audit_kernel();
 
+    /* ── Kernel section hardening (Item 176) ──────────────────────
+     * After all init is complete, apply fine-grained permissions:
+     *   - .rodata → read-only (clear the write bit in PTEs)
+     *   - .data   → non-executable (set the NX bit)
+     *   - .bss    → non-executable (set the NX bit)
+     * 2MB huge pages that span section boundaries are split to 4KB
+     * first so each section gets correct per-page permissions. */
+    nx_enforce_protect_kernel_sections();
+
 #ifdef TEST_MODE
     /* Yield once so the test task gets a chance to run immediately */
     scheduler_yield();

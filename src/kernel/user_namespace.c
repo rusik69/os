@@ -372,11 +372,10 @@ int user_ns_has_cap(const struct process *proc,
     if (proc->euid == 0) {
         /* But only if 0 is actually mapped in this ns.
          * A process running as UID 1000 in the parent ns, inside a child
-         * ns where that maps to 0, has euid == 0 in the child ns view. */
-        uint32_t mapped_uid = user_ns_translate_uid(ns, proc->euid);
-        /* proc->euid is already the inside-ns view if the ns was set up
-         * correctly.  In the simple case where proc->euid is already 0
-         * in this ns's terms, the caller has root-equivalent caps. */
+         * ns where that maps to 0, has euid == 0 in the child ns view.
+         * (user_ns_translate_uid is used by the uid mapping layer, but the
+         *  euid field of the process struct is already the inside-ns view
+         *  if the ns was set up correctly.) */
         if (proc->euid == 0) {
             /* Check if UID 0 is actually mapped inside this ns */
             uint32_t outside_uid;
