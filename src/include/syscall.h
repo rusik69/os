@@ -407,6 +407,27 @@
 /* Zero-copy file-to-file data transfer (Item 249) */
 #define SYS_COPY_FILE_RANGE     378 /* copy_file_range(fd_in, off_in, fd_out, off_out, len, flags) */
 
+/* File handle operations (Item 250) */
+#define SYS_NAME_TO_HANDLE_AT   379 /* name_to_handle_at(dirfd, pathname, handle, mount_id, flags) */
+#define SYS_OPEN_BY_HANDLE_AT   380 /* open_by_handle_at(mount_fd, handle, flags) */
+
+/* Maximum size of a file handle (in bytes) */
+#define MAX_HANDLE_SZ 128
+
+/* AT_ flags for name_to_handle_at */
+#define AT_EMPTY_PATH   0x1000   /* Allow empty path (fd refers to file directly) */
+
+/* struct file_handle — userspace-visible file handle (Linux-compatible)
+ * Defined in libc.h for userspace; kernel includes libc.h via syscall.h chain. */
+#ifndef __FILE_HANDLE_DEFINED
+#define __FILE_HANDLE_DEFINED
+struct file_handle {
+    unsigned int handle_bytes;   /* size of f_handle[] */
+    int          handle_type;    /* handle type identifier */
+    unsigned char f_handle[0];   /* variable-length handle data */
+};
+#endif
+
 /* membarrier command codes */
 #define MEMBARRIER_CMD_QUERY                    0
 #define MEMBARRIER_CMD_GLOBAL                   1

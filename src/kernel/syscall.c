@@ -7836,6 +7836,11 @@ static uint64_t sys_query_module(uint64_t name_addr, uint64_t info_buf_addr,
 static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id);
 static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
                          uint64_t rseq_sig, uint64_t flags);
+static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
+                                       uint64_t handle, uint64_t mount_id,
+                                       uint64_t flags);
+static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle,
+                                       uint64_t flags);
 
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
@@ -8280,6 +8285,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MEMBARRIER:      return sys_membarrier(a1, a2, a3);
         /* ── rseq (Item 348) ──────────────────────────────────────── */
         case SYS_RSEQ:            return sys_rseq(a1, a2, a3, a4);
+        /* ── File handle operations (Item 250) ────────────────────── */
+        case SYS_NAME_TO_HANDLE_AT: return sys_name_to_handle_at(a1, a2, a3, a4, a5);
+        case SYS_OPEN_BY_HANDLE_AT: return sys_open_by_handle_at(a1, a2, a3);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);
@@ -8434,6 +8442,283 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
 }
 
 /* ── Init ─────────────────────────────────────────────────────── */
+
+/* ── File handle table (Item 250) ────────────────────────────────────
+ *
+ * name_to_handle_at / open_by_handle_at allow userspace to open files
+ * by an opaque handle (used for NFS, file descriptor passing, etc.).
+ *
+ * Since our VFS is path-based, we maintain a small handle table that
+ * maps handle IDs to resolved absolute paths.  Each handle stores the
+ * inode number from vfs_stat, plus the resolved path so that
+ * open_by_handle_at can re-open the file.
+ */
+
+#define FH_MAX_HANDLES 32
+
+struct fh_entry {
+    int      in_use;
+    uint32_t ino;              /* inode number from vfs_stat */
+    uint32_t mount_id;         /* mount identifier (0 = root) */
+    int      handle_type;      /* handle type (1 = regular file) */
+    char     path[128];        /* resolved absolute path */
+    uint32_t handle_bytes;     /* size of handle data stored */
+    uint8_t  handle_data[16];  /* raw handle bytes (inode + mount_id) */
+};
+
+static struct fh_entry fh_table[FH_MAX_HANDLES];
+static int fh_initialized = 0;
+
+static void fh_init(void)
+{
+    if (fh_initialized) return;
+    memset(fh_table, 0, sizeof(fh_table));
+    fh_initialized = 1;
+}
+
+/* Allocate a free handle entry, returns index or -1 */
+static int fh_alloc(void)
+{
+    if (!fh_initialized) fh_init();
+    for (int i = 0; i < FH_MAX_HANDLES; i++) {
+        if (!fh_table[i].in_use) {
+            fh_table[i].in_use = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Free a handle entry */
+static void fh_free(int idx)
+{
+    if (idx < 0 || idx >= FH_MAX_HANDLES) return;
+    memset(&fh_table[idx], 0, sizeof(struct fh_entry));
+}
+
+/* Encode (ino, mount_id) into a handle data buffer */
+static void fh_encode(uint8_t *data, uint32_t *bytes_out,
+                       uint32_t ino, uint32_t mount_id)
+{
+    /* Format: 4 bytes ino (LE) + 4 bytes mount_id (LE) = 8 bytes */
+    data[0] = (uint8_t)(ino & 0xFF);
+    data[1] = (uint8_t)((ino >> 8) & 0xFF);
+    data[2] = (uint8_t)((ino >> 16) & 0xFF);
+    data[3] = (uint8_t)((ino >> 24) & 0xFF);
+    data[4] = (uint8_t)(mount_id & 0xFF);
+    data[5] = (uint8_t)((mount_id >> 8) & 0xFF);
+    data[6] = (uint8_t)((mount_id >> 16) & 0xFF);
+    data[7] = (uint8_t)((mount_id >> 24) & 0xFF);
+    *bytes_out = 8;
+}
+
+/* Decode handle data to extract (ino, mount_id), returns 0 on success */
+static int fh_decode(const uint8_t *data, uint32_t data_len,
+                      uint32_t *ino, uint32_t *mount_id)
+{
+    if (data_len < 8) return -1;
+    *ino = (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+    *mount_id = (uint32_t)data[4] | ((uint32_t)data[5] << 8) |
+                ((uint32_t)data[6] << 16) | ((uint32_t)data[7] << 24);
+    return 0;
+}
+
+/*
+ * sys_name_to_handle_at — Obtain a file handle for a given pathname.
+ *
+ *   int name_to_handle_at(int dirfd, const char *pathname,
+ *                          struct file_handle *handle,
+ *                          int *mount_id, int flags);
+ *
+ * Returns 0 on success, -errno on error.
+ * On success, handle->handle_bytes is set to the actual size,
+ * and *mount_id receives the mount identifier.
+ */
+static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
+                                       uint64_t handle_addr, uint64_t mount_id_addr,
+                                       uint64_t flags)
+{
+    (void)dirfd;  /* dirfd not used — we resolve from CWD */
+
+    /* Validate user pointers */
+    if (syscall_is_user_process()) {
+        if (!syscall_user_cstr_ok(pathname))
+            return (uint64_t)(int64_t)-EFAULT;
+        if (!syscall_user_read_ok(mount_id_addr, sizeof(int)))
+            return (uint64_t)(int64_t)-EFAULT;
+        if (!syscall_user_write_ok(mount_id_addr, sizeof(int)))
+            return (uint64_t)(int64_t)-EFAULT;
+        /* handle pointer — must at least read handle_bytes + handle_type */
+        if (!syscall_user_read_ok(handle_addr, sizeof(struct file_handle) - sizeof(unsigned char)))
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    const char *path = (const char *)pathname;
+    struct file_handle *handle = (struct file_handle *)handle_addr;
+    int *mount_id_out = (int *)mount_id_addr;
+
+    /* For empty path with AT_EMPTY_PATH, use the fd */
+    if (flags & AT_EMPTY_PATH) {
+        /* Not fully implemented — just use current directory root for now */
+        path = "/";
+    }
+
+    if (!path || path[0] == '\0')
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Stat the path to get inode info */
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0)
+        return (uint64_t)(int64_t)-ENOENT;
+
+    /* Read the current handle_bytes from user space */
+    unsigned int handle_bytes;
+    if (syscall_is_user_process()) {
+        if (!syscall_user_read_ok(&handle->handle_bytes, sizeof(handle->handle_bytes)))
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+    handle_bytes = handle->handle_bytes;
+
+    if (handle_bytes < 8) {
+        /* Not enough room — set to required size and return EOVERFLOW */
+        handle->handle_bytes = 8;
+        return (uint64_t)(int64_t)-EOVERFLOW;
+    }
+
+    /* Encode the handle from inode info */
+    fh_init();
+    int slot = fh_alloc();
+    if (slot < 0)
+        return (uint64_t)(int64_t)-ENOMEM;
+
+    fh_table[slot].ino = st.ino;
+    fh_table[slot].mount_id = 0;  /* single root mount */
+    fh_table[slot].handle_type = 1;  /* regular file */
+    fh_table[slot].handle_bytes = 8;
+    fh_encode(fh_table[slot].handle_data, &fh_table[slot].handle_bytes,
+              st.ino, 0);
+
+    /* Copy the resolved path */
+    size_t plen = strlen(path);
+    if (plen >= sizeof(fh_table[slot].path))
+        plen = sizeof(fh_table[slot].path) - 1;
+    memcpy(fh_table[slot].path, path, plen);
+    fh_table[slot].path[plen] = '\0';
+
+    /* Copy handle data to userspace */
+    handle->handle_type = fh_table[slot].handle_type;
+    handle->handle_bytes = fh_table[slot].handle_bytes;
+
+    if (syscall_is_user_process()) {
+        if (!syscall_user_write_ok((uint64_t)(uintptr_t)handle->f_handle, fh_table[slot].handle_bytes)) {
+            fh_free(slot);
+            return (uint64_t)(int64_t)-EFAULT;
+        }
+    }
+    memcpy(handle->f_handle, fh_table[slot].handle_data, fh_table[slot].handle_bytes);
+
+    /* Write mount_id */
+    *mount_id_out = 0;  /* single root mount */
+
+    return 0;
+}
+
+/*
+ * sys_open_by_handle_at — Open a file by handle.
+ *
+ *   int open_by_handle_at(int mount_fd, struct file_handle *handle,
+ *                          int flags);
+ *
+ * Returns a file descriptor on success, -errno on error.
+ */
+static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
+                                       uint64_t flags)
+{
+    (void)mount_fd;  /* single mount — ignored */
+    (void)flags;     /* open flags currently unused */
+
+    /* Validate user pointers */
+    if (syscall_is_user_process()) {
+        if (!syscall_user_read_ok(handle_addr, sizeof(struct file_handle) - sizeof(unsigned char)))
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+
+    struct file_handle *handle = (struct file_handle *)handle_addr;
+
+    /* Read handle_bytes from userspace */
+    unsigned int hb;
+    if (syscall_is_user_process()) {
+        if (!syscall_user_read_ok(&handle->handle_bytes, sizeof(handle->handle_bytes)))
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+    hb = handle->handle_bytes;
+
+    if (hb < 8)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Read handle data */
+    uint8_t data[16];
+    if (syscall_is_user_process()) {
+        if (!syscall_user_read_ok((uint64_t)(uintptr_t)handle->f_handle, hb > 16 ? 16 : hb))
+            return (uint64_t)(int64_t)-EFAULT;
+    }
+    memcpy(data, handle->f_handle, hb > 16 ? 16 : hb);
+
+    /* Decode handle to get inode */
+    uint32_t ino, mount_id;
+    if (fh_decode(data, hb, &ino, &mount_id) < 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* Search the handle table for a matching entry */
+    if (!fh_initialized) fh_init();
+
+    const char *open_path = NULL;
+    for (int i = 0; i < FH_MAX_HANDLES; i++) {
+        if (fh_table[i].in_use && fh_table[i].ino == ino &&
+            fh_table[i].mount_id == mount_id) {
+            open_path = fh_table[i].path;
+            break;
+        }
+    }
+
+    if (!open_path)
+        return (uint64_t)(int64_t)-ESTALE;  /* handle is stale */
+
+    /* Verify the file still exists */
+    struct vfs_stat st;
+    if (vfs_stat(open_path, &st) < 0)
+        return (uint64_t)(int64_t)-ESTALE;  /* file was deleted */
+
+    /* Allocate an fd entry for the calling process */
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)(int64_t)-EPERM;
+
+    int fd = -1;
+    uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!p->fd_table[i].used) {
+            if ((uint64_t)i >= max_fds)
+                return (uint64_t)(int64_t)-EMFILE;
+            fd = i;
+            break;
+        }
+    }
+
+    if (fd < 0)
+        return (uint64_t)(int64_t)-EMFILE;
+
+    /* Fill in the fd entry */
+    size_t plen = strlen(open_path);
+    if (plen > 63) plen = 63;
+    memcpy(p->fd_table[fd].path, open_path, plen);
+    p->fd_table[fd].path[plen] = '\0';
+    p->fd_table[fd].offset = 0;
+    p->fd_table[fd].used = 1;
+    p->fd_table[fd].flags = 0;  /* regular file */
+
+    return (uint64_t)fd;
+}
 
 void syscall_init(void) {
     /* Initialize the compiler mutex */

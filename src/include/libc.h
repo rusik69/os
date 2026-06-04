@@ -48,6 +48,19 @@ struct vfs_stat {
     uint32_t mtime;
 };
 
+/* Maximum size of a file handle (in bytes) */
+#define MAX_HANDLE_SZ 128
+
+/* struct file_handle — for name_to_handle_at / open_by_handle_at */
+#ifndef __FILE_HANDLE_DEFINED
+#define __FILE_HANDLE_DEFINED
+struct file_handle {
+    unsigned int handle_bytes;
+    int          handle_type;
+    unsigned char f_handle[0];
+};
+#endif
+
 struct libc_fs_stat_ex {
     uint32_t size;
     uint8_t  type;
@@ -338,6 +351,13 @@ int libc_raw_send(const void *buf, uint32_t len); /* send raw Ethernet frame */
 /* FD-based read/write (syscalls 217-218) */
 int libc_fd_read(int fd, void *buf, uint32_t count);
 int libc_fd_write(int fd, const void *buf, uint32_t count);
+
+/* File handle operations (Item 250) */
+int libc_name_to_handle_at(int dirfd, const char *pathname,
+                            struct file_handle *handle,
+                            int *mount_id, int flags);
+int libc_open_by_handle_at(int mount_fd, struct file_handle *handle,
+                            int flags);
 
 /* Heap syscall-backed operations (userspace malloc/free/calloc/realloc) */
 void *libc_malloc(size_t size);

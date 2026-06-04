@@ -657,3 +657,24 @@ int libc_fd_write(int fd, const void *buf, uint32_t count) {
                                       (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
 }
 
+/* ── File handle operations (Item 250) ───────────────────────────── */
+
+int libc_name_to_handle_at(int dirfd, const char *pathname,
+                            struct file_handle *handle,
+                            int *mount_id, int flags) {
+    return (int)libc_syscall(SYS_NAME_TO_HANDLE_AT,
+                             (uint64_t)dirfd,
+                             (uint64_t)(uintptr_t)pathname,
+                             (uint64_t)(uintptr_t)handle,
+                             (uint64_t)(uintptr_t)mount_id,
+                             (uint64_t)flags);
+}
+
+int libc_open_by_handle_at(int mount_fd, struct file_handle *handle,
+                            int flags) {
+    return (int)libc_syscall(SYS_OPEN_BY_HANDLE_AT,
+                             (uint64_t)mount_fd,
+                             (uint64_t)(uintptr_t)handle,
+                             (uint64_t)flags, 0, 0);
+}
+
