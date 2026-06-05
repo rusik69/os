@@ -262,6 +262,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/loop.c \
          src/drivers/spi.c \
          src/drivers/ipmi_kcs.c \
+         src/drivers/tpm_tis.c \
          src/drivers/dyndbg.c \
          src/drivers/uio.c \
          src/drivers/pagecache.c \
@@ -471,6 +472,11 @@ obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
 
 # NVMe PCIe SSD driver as module (M56)
 obj-m += drivers/nvme.ko
+
+# TPM 2.0 TIS interface driver (Item 349) — can also be built-in
+obj-m += drivers/tpm_tis.ko
+
+# Make sure the existing usb.ko entry is after
 
 # AHCI SATA/NCQ driver with Port Multiplier support (M57)
 obj-m += drivers/ahci.ko

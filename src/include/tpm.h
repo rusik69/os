@@ -1,0 +1,136 @@
+#ifndef TPM_H
+#define TPM_H
+
+/*
+ * tpm.h — TPM 2.0 register and command definitions (Item 349/350)
+ *
+ * TIS (Trusted Interface Specification) for TPM 2.0:
+ *   - MMIO at 0xFED40000 (default TIS base on x86)
+ *   - FIFO interface for command/response transport
+ *   - Locality 0 (default locality for standard operation)
+ *
+ * Reference: TCG PC Client Platform TPM Profile (PTP) Specification,
+ *            TPM 2.0 Part 1: Architecture
+ */
+
+#include "types.h"
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  TIS Register Offsets (Locality 0, base + offset)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#define TIS_ACCESS           0x0000  /* 1 byte: access/status */
+#define TIS_INT_ENABLE       0x0008  /* 4 bytes: interrupt enable */
+#define TIS_INT_VECTOR       0x000C  /* 4 bytes: interrupt vector */
+#define TIS_INT_STATUS       0x0010  /* 4 bytes: interrupt status */
+#define TIS_INTF_CAPABILITY  0x0014  /* 4 bytes: interface capability */
+#define TIS_STS              0x0018  /* 4 bytes: status (burst count + state) */
+#define TIS_DATA_FIFO        0x0024  /* 4 bytes: data FIFO (read/write) */
+#define TIS_INTERFACE_ID     0x0030  /* 4 bytes: interface ID */
+#define TIS_XDATA_FIFO       0x0040  /* 4 bytes: extended data FIFO */
+#define TIS_DID_VID          0x0F00  /* 4 bytes: device + vendor ID */
+#define TIS_RID              0x0F04  /* 1 byte:  revision ID */
+
+/* ── TIS_ACCESS bits ───────────────────────────────────────────────── */
+#define TIS_ACC_ACTIVE_LOC    (1 << 5)  /* Locality is active */
+#define TIS_ACC_SEIZE         (1 << 4)  /* Seize locality (interrupt-based) */
+#define TIS_ACC_REQ_USE       (1 << 1)  /* Request locality use */
+#define TIS_ACC_ESTABLISH     (1 << 0)  /* Locality established */
+
+/* ── TIS_STS bits ──────────────────────────────────────────────────── */
+#define TIS_STS_RESET_EST     (1 << 6)  /* Reset establishment (cancel) */
+#define TIS_STS_CMD_READY     (1 << 5)  /* Command ready (ready state) */
+#define TIS_STS_INT_VALID     (1 << 4)  /* Interrupt valid */
+#define TIS_STS_VALID         (1 << 3)  /* Status valid (write complete) */
+#define TIS_STS_DATA_AVAIL    (1 << 2)  /* Data available (response ready) */
+#define TIS_STS_EXPECT        (1 << 1)  /* Expect more data */
+#define TIS_STS_GO            (1 << 0)  /* Go (execute command) */
+
+/* Burst count mask (upper bytes of STS) */
+#define TIS_STS_BURST_COUNT_MASK  0xFFFF0000ULL
+#define TIS_STS_BURST_COUNT_SHIFT 16
+
+/* ── TPM command header structure (simplified) ─────────────────────── */
+struct tpm_cmd_hdr {
+    uint16_t tag;          /* TPM_ST_NO_SESSIONS or TPM_ST_SESSIONS */
+    uint32_t total_size;   /* total command size including header */
+    uint32_t command_code; /* TPM2_CC_* command code */
+} __attribute__((packed));
+
+struct tpm_rsp_hdr {
+    uint16_t tag;
+    uint32_t total_size;
+    uint32_t return_code;  /* TPM2_RC_* */
+} __attribute__((packed));
+
+/* ── TPM command codes ─────────────────────────────────────────────── */
+#define TPM2_CC_GET_RANDOM      0x0000017B
+#define TPM2_CC_PCR_READ        0x0000017E
+#define TPM2_CC_PCR_EXTEND     0x00000182
+#define TPM2_CC_GET_CAPABILITY  0x0000017A
+#define TPM2_CC_STARTUP        0x00000144
+#define TPM2_CC_SELF_TEST      0x00000143
+
+/* ── TPM response codes ────────────────────────────────────────────── */
+#define TPM2_RC_SUCCESS        0x00000000
+#define TPM2_RC_FAILURE        0x00000101
+
+/* ── TPM command tags ──────────────────────────────────────────────── */
+#define TPM2_ST_NO_SESSIONS    0x8001
+#define TPM2_ST_SESSIONS       0x8002
+
+/* ── TPM PCR constants ────────────────────────────────────────────── */
+#define TPM2_MAX_PCR_BANKS     5
+#define TPM2_PCR_SELECT_MAX    (3 + 1)  /* 24 bytes select + size */
+#define TPM2_PCR_DIGEST_LEN   32        /* SHA-256 digest length */
+
+/* ── TPM startup types ─────────────────────────────────────────────── */
+#define TPM2_SU_CLEAR         0x0000
+#define TPM2_SU_STATE         0x0001
+
+/* ── TPM interface constants ───────────────────────────────────────── */
+#define TPM_TIS_BASE          0xFED40000ULL
+#define TPM_TIS_SIZE          0x5000
+#define TPM_TIMEOUT_A         750000    /* 750 ms in microseconds */
+#define TPM_TIMEOUT_B         2000000   /* 2 s */
+#define TPM_TIMEOUT_C         200000    /* 200 ms */
+#define TPM_TIMEOUT_D         30000000  /* 30 s (for command execution) */
+#define TPM_NUM_RETRIES       5
+
+/* ── TIS State Machine ─────────────────────────────────────────────── */
+enum tis_state {
+    TIS_STATE_IDLE     = 0,
+    TIS_STATE_READY    = 1,
+    TIS_STATE_RECEIVE  = 2,
+    TIS_STATE_EXECUTE  = 3,
+    TIS_STATE_COMPLETE = 4,
+};
+
+/* ── TPM device descriptor ─────────────────────────────────────────── */
+struct tpm_device {
+    volatile uint8_t  *mmio_base;   /* virtual address of TIS MMIO region */
+    uint16_t           vid;          /* vendor ID */
+    uint16_t           did;          /* device ID */
+    uint8_t            revision;
+    int                initialized;
+    enum tis_state     state;
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Public API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Initialize and probe for TPM */
+int tpm_init(void);
+
+/* Send a TPM command and receive response */
+int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
+                 uint8_t *rsp, uint32_t *rsp_len);
+
+/* High-level TPM operations */
+int tpm2_get_random(uint8_t *buf, uint32_t count);
+int tpm2_pcr_read(uint32_t pcr_index, uint8_t digest[TPM2_PCR_DIGEST_LEN]);
+int tpm2_pcr_extend(uint32_t pcr_index,
+                    const uint8_t digest[TPM2_PCR_DIGEST_LEN]);
+
+#endif /* TPM_H */
