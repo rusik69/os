@@ -25,6 +25,9 @@
  */
 int panic_timeout = 30;  /* default: reset after 30 seconds */
 
+/* Non-fatal warning (WARN_ON) counter, readable via /sys/kernel/oops_count */
+uint64_t oops_count = 0;
+
 static uint64_t g_tsc_freq_hz = 0;  /* Calibrated TSC frequency in Hz */
 
 /*

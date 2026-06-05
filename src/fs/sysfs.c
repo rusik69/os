@@ -432,6 +432,68 @@ static int sysfs_write_panic_timeout(const char *data, uint32_t size, void *priv
 }
 
 /*
+ * Read callback for /sys/kernel/oops_count.
+ * Returns the number of non-fatal kernel warnings (WARN_ON hits).
+ */
+static int sysfs_read_oops_count(char *buf, uint32_t max_sz, void *priv)
+{
+    (void)priv;
+    extern uint64_t oops_count;
+    int n = snprintf(buf, max_sz, "%llu\n", (unsigned long long)oops_count);
+    if (n < 0)
+        return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Read callback for /sys/kernel/printk.
+ * Returns the console log level in Linux-compatible format:
+ *   console_loglevel default_message_loglevel minimum_console_loglevel default_console_loglevel
+ * Currently shows:  <console> <default> <min=1> <default_console=7>
+ */
+static int sysfs_read_printk(char *buf, uint32_t max_sz, void *priv)
+{
+    (void)priv;
+    extern int console_loglevel;
+    extern int default_message_loglevel;
+    int n = snprintf(buf, max_sz, "%d\t%d\t%d\t%d\n",
+                     console_loglevel,
+                     default_message_loglevel,
+                     1,          /* minimum_console_loglevel (KERN_EMERG) */
+                     7);         /* default_console_loglevel */
+    if (n < 0)
+        return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for /sys/kernel/printk.
+ * Accepts "console_loglevel" as the first field (Linux-style).
+ * We ignore additional fields.  Clamps to [0, 15] (0=no output, 15=all).
+ */
+static int sysfs_write_printk(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    extern int console_loglevel;
+    char tmp[32];
+    uint32_t copy = size < sizeof(tmp) - 1 ? size : sizeof(tmp) - 1;
+    memcpy(tmp, data, copy);
+    tmp[copy] = '\0';
+
+    /* Parse the first integer field */
+    int val = 0;
+    const char *p = tmp;
+    while (*p >= '0' && *p <= '9')
+        val = val * 10 + (*p++ - '0');
+
+    if (val < 0)  val = 0;
+    if (val > 15) val = 15;
+
+    console_loglevel = val;
+    return 0;
+}
+
+/*
  * Read callback for dmesg_restrict.
  */
 static int sysfs_read_dmesg_restrict(char *buf, uint32_t max_sz, void *priv)
@@ -605,6 +667,14 @@ void sysfs_init(void) {
         sysfs_read_dmesg_restrict, sysfs_write_dmesg_restrict);
     sysfs_create_writable_file("/sys/kernel/kptr_restrict", "2\n", NULL,
         sysfs_read_kptr_restrict, sysfs_write_kptr_restrict);
+
+    /* /sys/kernel/oops_count — read-only counter of WARN_ON hits */
+    sysfs_create_writable_file("/sys/kernel/oops_count", "0\n", NULL,
+        sysfs_read_oops_count, NULL);
+
+    /* /sys/kernel/printk — console log level (read/write) */
+    sysfs_create_writable_file("/sys/kernel/printk", "7\t4\t1\t7\n", NULL,
+        sysfs_read_printk, sysfs_write_printk);
 
     /* Mount under /sys */
     if (vfs_mount("/sys", &sysfs_vfs_ops, NULL) == 0) {

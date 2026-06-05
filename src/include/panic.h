@@ -37,6 +37,10 @@ void panic_init(void);
  */
 extern int panic_timeout;
 
+/* oops_count: running count of non-fatal kernel warnings (WARN_ON hits).
+ * Read via /sys/kernel/oops_count for monitoring. */
+extern uint64_t oops_count;
+
 /*
  * Set the panic timeout.  Pass 0 to disable timeout-based reset
  * (system will hang forever on panic as before).
@@ -61,6 +65,8 @@ uint64_t panic_get_tsc_freq(void);
 
 #define WARN_ON(cond) do { \
     if (__builtin_expect(!!(cond), 0)) { \
+        extern uint64_t oops_count; \
+        oops_count++; \
         kprintf("WARN at %s:%d: " #cond "\n", __FILE__, __LINE__); \
         dump_stack(); \
     } \
