@@ -181,3 +181,43 @@ void kfree(void *ptr) {
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(kmalloc);
 EXPORT_SYMBOL(kfree);
+
+/* ── krealloc — resize a heap allocation ─────────────────────────── */
+
+void *krealloc(void *ptr, size_t new_size) {
+    if (!ptr)
+        return kmalloc(new_size);
+    if (new_size == 0) {
+        kfree(ptr);
+        return NULL;
+    }
+
+    /* Get the original block header */
+    struct heap_block *block = (struct heap_block *)((uint8_t *)ptr - BLOCK_HDR_SIZE);
+    size_t old_size = block->size;
+
+    /* If new size fits in the existing block, return ptr as-is */
+    if (new_size <= old_size)
+        return ptr;
+
+    /* Otherwise allocate a new block, copy old data, free old block */
+    void *new_ptr = kmalloc(new_size);
+    if (!new_ptr)
+        return NULL;
+    memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
+    kfree(ptr);
+    return new_ptr;
+}
+
+/* ── kcalloc — zero-initialised array allocation ─────────────────── */
+
+void *kcalloc(size_t nmemb, size_t size) {
+    size_t total = nmemb * size;
+    /* Check for overflow */
+    if (nmemb != 0 && total / nmemb != size)
+        return NULL;
+    void *ptr = kmalloc(total);
+    if (ptr)
+        memset(ptr, 0, total);
+    return ptr;
+}
