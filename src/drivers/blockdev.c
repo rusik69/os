@@ -601,6 +601,35 @@ uint32_t blockdev_get_max_transfer(int dev_id)
     return g_blockdevs[dev_id].max_transfer;
 }
 
+/* ── Find a block device by name ──────────────────────────────────── */
+
+int blockdev_find_by_name(const char *name)
+{
+    if (!name || !name[0]) return -1;
+
+    /* Strip "/dev/" prefix if present */
+    const char *devname = name;
+    if (strncmp(name, "/dev/", 5) == 0)
+        devname = name + 5;
+
+    if (!devname[0]) return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+
+    int found = -1;
+    for (int i = 0; i < BLOCKDEV_MAX_DEVICES; i++) {
+        if (g_blockdevs[i].active && g_blockdevs[i].name[0] &&
+            strcmp(g_blockdevs[i].name, devname) == 0) {
+            found = i;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+    return found;
+}
+
 /* ── Exported symbols for driver modules ─────────────────────────── */
 EXPORT_SYMBOL(blockdev_register);
 EXPORT_SYMBOL(blockdev_register_legacy);

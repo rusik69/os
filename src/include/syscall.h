@@ -772,6 +772,10 @@ struct linux_dirent64 {
 #define SYS_SCHED_GETATTR    398  /* sched_getattr(pid, attr, size, flags) → 0 or -1 */
 #define SYS_KCOV             399  /* kcov(cmd, arg2) → 0 or -1 (Item 208) */
 
+/* Swap — block device swap (Item 223) */
+#define SYS_SWAPON           500  /* swapon(path) → 0 or -errno */
+#define SYS_SWAPOFF          501  /* swapoff(path) → 0 or -errno */
+
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 

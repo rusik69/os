@@ -163,6 +163,11 @@ static inline int blockdev_write_sectors(int id, uint32_t lba, uint8_t count, co
 /* Block device statistics */
 int blockdev_get_stats(int dev, struct blockdev_stats *s);
 
+/* Find a block device by name (e.g., "sda", "nvme0n1").
+ * Strips "/dev/" prefix if present.
+ * Returns device ID on success, -1 on not found. */
+int blockdev_find_by_name(const char *name);
+
 /* Internal: update statistics (called by drivers when a request completes) */
 void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t duration_ms);
 

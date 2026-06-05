@@ -70,6 +70,7 @@
 #include "file_lock.h"
 #include "hugetlb.h"
 #include "sched_attr.h"
+#include "swap.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -8829,6 +8830,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_OPEN_BY_HANDLE_AT: return sys_open_by_handle_at(a1, a2, a3);
         /* ── KCOV code coverage (Item 208) ────────────────────────── */
         case SYS_KCOV:            return (uint64_t)sys_kcov(a1, a2);
+        /* ── Swap — block device swap (Item 223) ──────────────────── */
+        case SYS_SWAPON:          return (uint64_t)swap_swapon((const char *)a1);
+        case SYS_SWAPOFF:         return (uint64_t)swap_swapoff((const char *)a1);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

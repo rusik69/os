@@ -55,6 +55,7 @@
 #include "pipe.h"
 #include "blockdev.h"
 #include "shm.h"
+#include "swap.h"
 #include "virtio_net.h"
 #include "virtio_blk.h"
 #include "nvme.h"
@@ -647,6 +648,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         if (nm > 0)
             kprintf("[OK] fstab: %d filesystems auto-mounted\n", nm);
     }
+
+    /* Swap subsystem — block device swap (Item 223) */
+    swap_init();
 
     /* Sysfs — virtual filesystem exposing kernel objects */
     sysfs_init();

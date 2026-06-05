@@ -111,6 +111,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cgroup_namespace.c \
          src/kernel/mnt_namespace.c \
          src/kernel/user_namespace.c \
+         src/kernel/swap.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
          src/drivers/timer.c \
