@@ -1570,8 +1570,8 @@ void vfs_init(void) {
     vfs_mount("/", &smfs_ops, NULL);
     /* Mount the /proc virtual filesystem */
     vfs_mount("/proc", &procfs_ops, NULL);
-    /* Mount the /dev device filesystem */
-    vfs_mount("/dev", &devfs_ops, NULL);
+    /* The /dev device filesystem is mounted by devfs_init()
+     * (called from kernel.c or from the devfs module init). */
     /* Mount tmpfs as /dev/shm for POSIX shared memory & semaphores */
     tmpfs_mount();
     vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);

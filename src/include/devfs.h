@@ -25,6 +25,12 @@
 extern struct vfs_ops devfs_ops;
 
 /**
+ * devfs_init - Initialise and mount the /dev device filesystem.
+ * Called once during boot (or when the devfs module is loaded).
+ */
+void devfs_init(void);
+
+/**
  * devfs_register_device - Register a dynamic device node in /dev/
  * @name:      Device node name (e.g. "ttyS0" creates "/dev/ttyS0").
  *             Must not contain '/', max 47 chars.

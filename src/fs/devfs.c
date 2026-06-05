@@ -334,3 +334,73 @@ struct vfs_ops devfs_ops = {
     .readdir      = devfs_readdir,
     .readdir_names = devfs_readdir_names,
 };
+
+/* ── Init / Module support ────────────────────────────────────────── */
+
+/** Track whether devfs has been mounted (prevents double mount) */
+static int devfs_mounted = 0;
+
+/**
+ * devfs_init - Initialise and mount the /dev device filesystem.
+ *
+ * Called from the built-in init path.  When built as a loadable module,
+ * this function is called from init_module() instead.
+ *
+ * Mounts /dev with the devfs VFS operations so that built-in device
+ * nodes (null, zero, random, kmsg) and dynamically registered device
+ * nodes are accessible to userspace.
+ */
+void devfs_init(void) {
+    if (devfs_mounted) return;
+
+    /* Clear the dynamic device table */
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        devfs_devices[i].in_use = 0;
+        devfs_devices[i].name[0] = '\0';
+        devfs_devices[i].priv = NULL;
+        devfs_devices[i].read_fn = NULL;
+        devfs_devices[i].write_fn = NULL;
+    }
+
+    /* Mount /dev with the devfs operations */
+    if (vfs_mount("/dev", &devfs_ops, NULL) == 0) {
+        kprintf("[OK] devfs mounted on /dev\n");
+    } else {
+        kprintf("[!!] devfs mount failed\n");
+    }
+
+    devfs_mounted = 1;
+}
+
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    devfs_init();
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    if (devfs_mounted) {
+        devfs_mounted = 0;
+        /* Clear all dynamic device entries */
+        for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+            if (devfs_devices[i].in_use) {
+                devfs_devices[i].in_use = 0;
+                memset(devfs_devices[i].name, 0, sizeof(devfs_devices[i].name));
+                devfs_devices[i].priv = NULL;
+                devfs_devices[i].read_fn = NULL;
+                devfs_devices[i].write_fn = NULL;
+            }
+        }
+        kprintf("[devfs] Module unloaded\n");
+    }
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("devfs — /dev device virtual filesystem with dynamic device registration");
+MODULE_ALIAS("devfs");
+#endif /* MODULE */

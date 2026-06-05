@@ -147,6 +147,7 @@
 #include "overlay.h"
 #include "splash.h"
 #include "sysfs.h"
+#include "devfs.h"
 #include "debugfs.h"
 #include "dyndbg.h"
 #include "kunit.h"
@@ -655,6 +656,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Sysfs — virtual filesystem exposing kernel objects */
     sysfs_init();
+
+    /* Devfs — /dev device virtual filesystem */
+    devfs_init();
 
     /* CPU frequency scaling — ACPI P-states (ACPI _PSS / MSR fallback) */
     cpupstate_init();
