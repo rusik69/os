@@ -37,7 +37,7 @@ struct memfd {
     int refcount;
     int used;   /* 1 if this slot is active */
     int fd;     /* file descriptor number for this memfd */
-    int flags;  /* creation flags (MFD_CLOEXEC, etc.) */
+    int flags;  /* creation flags (MFD_CLOEXEC, MFD_ALLOW_SEALING, MFD_HUGETLB) */
 };
 
 /* Create a new memfd with given name and flags. Returns fd index or -errno. */

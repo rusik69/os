@@ -26,7 +26,8 @@ void memfd_init(void)
         memset(mfd->name, 0, MEMFD_NAME_MAX);
     }
     memfd_initialised = 1;
-    kprintf("memfd: initialised with %d slots\n", MEMFD_MAX);
+    kprintf("memfd: initialised with %d slots (MFD_ALLOW_SEALING + MFD_HUGETLB support)\n",
+            MEMFD_MAX);
 }
 
 static int memfd_find_free(void)
@@ -42,6 +43,14 @@ int memfd_create(const char *name, int flags)
 {
     if (!memfd_initialised)
         return -ENOSYS;
+
+    /* Validate flags: reject unknown bits (MFD_CLOEXEC, MFD_ALLOW_SEALING,
+     * and MFD_HUGETLB are the only recognised flags).  MFD_HUGETLB is
+     * accepted for Linux compatibility but uses kmalloc backing for now;
+     * full huge-page backing can be added when needed. */
+    int known_flags = MFD_CLOEXEC | MFD_ALLOW_SEALING | MFD_HUGETLB;
+    if (flags & ~known_flags)
+        return -EINVAL;
 
     int fd = memfd_find_free();
     if (fd < 0)
@@ -147,12 +156,12 @@ int64_t memfd_read(struct memfd *mfd, void *buf, uint64_t count, uint64_t offset
 
     spinlock_acquire(&mfd->lock);
 
-    if (!mfd->used || !mfd->data) {
+    if (!mfd->used) {
         spinlock_release(&mfd->lock);
         return -EBADF;
     }
 
-    if (offset >= mfd->size) {
+    if (!mfd->data || offset >= mfd->size) {
         spinlock_release(&mfd->lock);
         return 0;
     }
@@ -161,7 +170,7 @@ int64_t memfd_read(struct memfd *mfd, void *buf, uint64_t count, uint64_t offset
     if (count > readable)
         count = readable;
 
-    memcpy(buf, mfd->data + offset, count);
+    memcpy(buf, mfd->data + offset, (size_t)count);
     spinlock_release(&mfd->lock);
     return (int64_t)count;
 }
@@ -230,6 +239,13 @@ int memfd_add_seal(struct memfd *mfd, int seal)
     if (!mfd->used) {
         spinlock_release(&mfd->lock);
         return -EBADF;
+    }
+
+    /* MFD_ALLOW_SEALING must have been set at creation time; otherwise
+     * sealing is prohibited (Linux-compatible behaviour). */
+    if (!(mfd->flags & MFD_ALLOW_SEALING)) {
+        spinlock_release(&mfd->lock);
+        return -EPERM;
     }
 
     /* MEMFD_SEAL_SEAL is irreversible — once set, no further seals can be added. */
