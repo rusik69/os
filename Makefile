@@ -292,6 +292,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/hmac.c \
          src/lib/crc64.c \
          src/lib/adler32.c \
+         src/lib/stdlib_user.c \
          src/kernel/rwsem.c \
          src/kernel/x2apic.c \
          src/kernel/tsc_deadline.c \
