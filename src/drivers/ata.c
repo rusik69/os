@@ -2,6 +2,9 @@
 #include "blockdev.h"
 #include "io.h"
 #include "printf.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* Optional redirect: if set, ata_read_sectors/write_sectors delegate
  * to these callbacks instead of real ATA PIO.  Used by the ramdisk
@@ -180,3 +183,25 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     if (ata_wait_bsy() < 0) return -1;
     return 0;
 }
+
+#ifdef MODULE
+/*
+ * Module entry/exit points — the ELF module loader looks for these symbols.
+ * When compiled as a loadable module (.ko), init_module calls ata_init();
+ * when built into the kernel, the boot code calls ata_init() directly.
+ */
+int init_module(void) {
+    ata_init();
+    return 0; /* ata_init never fails — it just sets ata_present=0 if no HW */
+}
+
+void cleanup_module(void) {
+    /* Unregister from the block device layer */
+    blockdev_unregister(BLOCKDEV_ATA);
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Legacy ATA PIO driver — primary IDE controller (master)");
+MODULE_ALIAS("ata");
+#endif /* MODULE */
