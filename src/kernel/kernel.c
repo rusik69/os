@@ -764,6 +764,34 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
 
+    /* ── Create default /etc/inittab if it doesn't exist (Item U26) ──── */
+    {
+        char inittab_buf[64];
+        uint32_t inittab_len = 0;
+        int ret = vfs_read("/etc/inittab", inittab_buf, sizeof(inittab_buf) - 1, &inittab_len);
+        if (ret != 0 || inittab_len == 0) {
+            /* No inittab — create a sensible default.
+             * Format (SysV inittab): id:runlevels:action:process
+             *   console::askfirst:/bin/sh  — spawn shell on first console
+             *   ttyS0::respawn:/bin/getty  — spawn getty on serial
+             * Runlevels: empty = all runlevels.
+             * The init process (PID 1) parses /etc/inittab and manages
+             * service lifecycle (respawn, once, sysinit, etc.). */
+            const char *default_inittab =
+                "# /etc/inittab - init configuration\n"
+                "# Format: id:runlevels:action:process\n"
+                "\n"
+                "# Serial console getty\n"
+                "ttyS0::respawn:/bin/getty\n"
+                "\n"
+                "# Primary console shell\n"
+                "console::askfirst:/bin/sh\n";
+            vfs_create("/etc/inittab", 1);
+            vfs_write("/etc/inittab", default_inittab, strlen(default_inittab));
+            kprintf("[OK] Created default /etc/inittab\n");
+        }
+    }
+
     /* PCI bus */
     pci_init();
     kprintf("[OK] PCI initialized\n");
