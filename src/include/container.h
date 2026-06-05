@@ -191,6 +191,24 @@ static inline const char *container_state_name(int state) {
 }
 
 /**
+ * container_start() — Start a container's init process (Item C4).
+ *
+ * Reads the OCI config.json from the container's data directory, parses
+ * it to find the init binary path, and spawns the init process via
+ * process_spawn().  After spawning, records the init PID, applies
+ * resource limits from the container descriptor, and transitions the
+ * container state from CREATED → RUNNING.
+ *
+ * The container must be in CREATED state (prepared via container_create()).
+ * After this function succeeds, the container is in RUNNING state and
+ * its init process is executing in the prepared rootfs environment.
+ *
+ * Returns 0 on success, negative errno on failure.
+ * On failure, the container remains in CREATED state.
+ */
+int container_start(struct container *c);
+
+/**
  * container_stop() — Stop a running container (Item C5).
  *
  * Sends SIGTERM to the container's init process.  If the process does not

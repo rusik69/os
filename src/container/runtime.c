@@ -25,6 +25,8 @@
 #include "heap.h"         /* kmalloc / kfree */
 #include "signal.h"       /* signal_send for stopping init process */
 #include "timer.h"        /* timer_get_ticks for timeout */
+#include "oci_spec.h"     /* OCI config parsing for init path */
+#include "elf.h"          /* process_spawn for init process creation */
 
 /* ── Global container table ────────────────────────────────────────── */
 
@@ -338,7 +340,7 @@ int container_set_state(struct container *c, int new_state) {
     int old_state = c->state;
     if (!is_valid_transition(old_state, new_state)) {
         spinlock_release(&c->lock);
-        kprintf("[Containers] Invalid state transition: %s → %s for %s\n",
+        kprintf("[Containers] Invalid state transition: %s \u2192 %s for %s\n",
                 container_state_name(old_state),
                 container_state_name(new_state),
                 c->id);
@@ -360,7 +362,7 @@ int container_set_state(struct container *c, int new_state) {
 
     spinlock_release(&c->lock);
 
-    kprintf("[Containers] Container %s: %s → %s\n",
+    kprintf("[Containers] Container %s: %s \u2192 %s\n",
             c->id,
             container_state_name(old_state),
             container_state_name(new_state));
@@ -563,6 +565,139 @@ int container_create(struct container *c)
 
     kprintf("[Containers] Container %s created successfully (rootfs: %s)\n",
             c->id, c->rootfs_path);
+    return 0;
+}
+
+/* ── Container start — exec init process (Item C4) ─────────────────────
+ *
+ * Starts a container's init process by reading the OCI config.json,
+ * spawning the init binary inside the prepared rootfs, and tracking
+ * the process PID.  This implements the OCI "start" lifecycle step:
+ *
+ *   1. Validate container is in CREATED state
+ *   2. Read and parse OCI config.json from the container data dir
+ *   3. Build argv array from the parsed process args
+ *   4. Spawn the init process via process_spawn()
+ *   5. Record the init PID in the container descriptor
+ *   6. Persist updated state (with init PID) to state.json
+ *   7. Transition state from CREATED → RUNNING
+ *
+ * After this function succeeds, the container is in RUNNING state and
+ * its init process is executing.  The caller should call container_stop()
+ * to stop the container gracefully.
+ *
+ * Returns 0 on success, negative errno on failure.
+ * On failure, the container remains in CREATED state. */
+int container_start(struct container *c)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* ── Step 1: Validate state ──────────────────────────────────── */
+    spinlock_acquire(&c->lock);
+    if (c->state != CONTAINER_STATE_CREATED) {
+        spinlock_release(&c->lock);
+        kprintf("[Containers] Cannot start %s: not in CREATED state (current=%s)\n",
+                c->id, container_state_name(c->state));
+        return -EBUSY;
+    }
+    spinlock_release(&c->lock);
+
+    /* ── Step 2: Build config.json path ──────────────────────────── */
+    char cfg_path[CONTAINER_STATE_PATH];
+    int n = snprintf(cfg_path, sizeof(cfg_path), "%s/%s",
+                     c->data_dir, CONTAINER_CONFIG_JSON);
+    if (n < 0 || (size_t)n >= sizeof(cfg_path))
+        return -ENAMETOOLONG;
+
+    /* ── Step 3: Read and parse config.json ──────────────────────── */
+    struct oci_config cfg;
+    memset(&cfg, 0, sizeof(cfg));
+
+    int parse_ret = oci_config_read_file(&cfg, cfg_path);
+    if (parse_ret < 0) {
+        kprintf("[Containers] Failed to parse config.json for %s: %s\n",
+                c->id, cfg.err_msg[0] ? cfg.err_msg : "unknown error");
+        return -EINVAL;
+    }
+
+    /* ── Step 4: Validate we have an init binary path ────────────── */
+    if (cfg.process.num_args < 1 || cfg.process.args[0][0] == '\0') {
+        kprintf("[Containers] config.json for %s has no process args\n", c->id);
+        oci_config_free(&cfg);
+        return -EINVAL;
+    }
+
+    /* ── Step 5: Build full init path (relative to rootfs) ──────── */
+    char init_path[OCI_PATH_LEN];
+    n = snprintf(init_path, sizeof(init_path), "%s/%s",
+                 c->rootfs_path, cfg.process.args[0]);
+    if (n < 0 || (size_t)n >= sizeof(init_path)) {
+        oci_config_free(&cfg);
+        return -ENAMETOOLONG;
+    }
+
+    /* ── Step 6: Prepare argv array ──────────────────────────────── */
+    char *argv[256];
+    memset(argv, 0, sizeof(argv));
+    argv[0] = init_path;
+
+    int max_args = (sizeof(argv) / sizeof(argv[0])) - 1;
+    int num_args_safe = cfg.process.num_args < max_args ? cfg.process.num_args : max_args;
+    for (int i = 1; i < num_args_safe; i++) {
+        argv[i] = cfg.process.args[i];
+    }
+    argv[num_args_safe] = NULL;
+
+    /* ── Step 7: Prepare envp array ──────────────────────────────── */
+    char *envp[OCI_MAX_ENV + 1];
+    memset(envp, 0, sizeof(envp));
+    int env_count = cfg.process.num_env < OCI_MAX_ENV ? cfg.process.num_env : OCI_MAX_ENV;
+    for (int i = 0; i < env_count; i++) {
+        envp[i] = cfg.process.env[i];
+    }
+    envp[env_count] = NULL;
+
+    /* ── Step 8: Spawn the init process ──────────────────────────── */
+    kprintf("[Containers] Starting container %s: %s\n", c->id, init_path);
+
+    int spawn_ret = process_spawn(init_path, argv, envp);
+
+    /* Free the parsed config — the string pointers are no longer needed */
+    oci_config_free(&cfg);
+
+    if (spawn_ret < 0) {
+        kprintf("[Containers] Failed to spawn init process for %s: err=%d\n",
+                c->id, spawn_ret);
+        return spawn_ret;
+    }
+
+    uint32_t init_pid = (uint32_t)spawn_ret;
+
+    /* ── Step 9: Record init PID in container descriptor ─────────── */
+    spinlock_acquire(&c->lock);
+    c->init_pid = init_pid;
+    spinlock_release(&c->lock);
+
+    /* ── Step 10: Persist updated state with init PID ────────────── */
+    {
+        int persist_ret = container_persist_state(c);
+        if (persist_ret < 0) {
+            kprintf("[Containers] Warning: failed to persist state after start for %s: %d\n",
+                    c->id, persist_ret);
+            /* Non-fatal: PID is tracked in-memory */
+        }
+    }
+
+    /* ── Step 11: Transition state to RUNNING ────────────────────── */
+    int ret = container_set_state(c, CONTAINER_STATE_RUNNING);
+    if (ret < 0) {
+        kprintf("[Containers] State transition to RUNNING failed for %s: %d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    kprintf("[Containers] Container %s started successfully (init PID %u)\n",
+            c->id, (unsigned)init_pid);
     return 0;
 }
 
