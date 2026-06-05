@@ -362,6 +362,11 @@
 #define SYS_GETRUSAGE         348  /* getrusage(who, usage) */
 #define SYS_SYSINFO           349  /* sysinfo(info) */
 
+/* ── Inotify file monitoring (Item 340) ──────────────────────── */
+#define SYS_INOTIFY_INIT1     381  /* inotify_init1(flags) → fd or -1 */
+#define SYS_INOTIFY_ADD_WATCH 382  /* inotify_add_watch(fd, path, mask) → wd or -1 */
+#define SYS_INOTIFY_RM_WATCH  383  /* inotify_rm_watch(fd, wd) → 0 or -1 */
+
 /* ── Process Credentials & Scheduling ───────────────────────── */
 #define SYS_GETRESUID         350  /* getresuid(ruid, euid, suid) */
 #define SYS_SETRESUID         351  /* setresuid(ruid, euid, suid) */

@@ -11,6 +11,9 @@
 #include "printf.h"
 #include "spinlock.h"
 
+/* Forward declaration — inotify delivery hook (defined in inotify.c) */
+void inotify_deliver(const char *path, uint32_t fs_mask);
+
 #define FSNOTIFY_EVENT_RING 32
 
 static struct {
@@ -90,6 +93,9 @@ void fsnotify_notify(const char *path, uint32_t event) {
     }
 
     if (matched) {
+        /* Deliver to inotify instances */
+        inotify_deliver(path, event);
+
         /* Store event in ring buffer */
         int idx = g_event_head;
         strncpy(g_event_ring[idx].path, path, 63);

@@ -213,6 +213,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/ssh_client.c \
          src/ipc/pipe.c \
          src/ipc/eventfd.c \
+         src/ipc/inotify.c \
          src/drivers/virtio_net.c \
          src/drivers/virtio_blk.c \
          src/drivers/ac97.c \

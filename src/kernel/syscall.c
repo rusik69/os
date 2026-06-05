@@ -22,6 +22,7 @@
 #include "string.h"
 #include "eventfd.h"
 #include "signalfd.h"
+#include "inotify.h"
 #include "net.h"
 #include "e1000.h"
 #include "pci.h"
@@ -535,6 +536,18 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         }
         return (uint64_t)(ret >= 0 ? (uint64_t)ret : (uint64_t)-1);
     }
+    /* inotify read (fd range 720-727) */
+    if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
+        int ret = inotify_read((int)fd, (void *)buf_addr, (size_t)len);
+        if (ret >= 0) {
+            struct process *cur = process_get_current();
+            if (cur) {
+                cur->io_rchar += (uint64_t)ret;
+                cur->io_syscr++;
+            }
+        }
+        return ret >= 0 ? (uint64_t)ret : (uint64_t)-1;
+    }
     return (uint64_t)-1;
 }
 
@@ -693,6 +706,11 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 }
 
 static uint64_t sys_close(uint64_t fd) {
+    /* inotify close (fd range 720-727) */
+    if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
+        int ret = inotify_close((int)fd);
+        return ret < 0 ? (uint64_t)-1 : 0;
+    }
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd) return (uint64_t)-1;
@@ -4849,6 +4867,24 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
             int fd_idx = fds[i].fd;
             int revents = 0;
 
+            /* ── Inotify FDs (fd 720..727) ────────────────────── */
+            if (fd_idx >= INOTIFY_FD_BASE &&
+                fd_idx < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
+                revents = inotify_poll(fd_idx);
+                if (revents < 0) {
+                    fds[i].revents = POLLNVAL;
+                    ready++;
+                    continue;
+                }
+                if (revents && (fds[i].events & POLLIN)) {
+                    fds[i].revents = POLLIN;
+                    ready++;
+                } else {
+                    fds[i].revents = 0;
+                }
+                continue;
+            }
+
             /* ── Socket FDs (fd 100..100+SOCK_MAX-1) ──────────── */
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
                 revents = sock_poll(fd_idx, fds[i].events);
@@ -6989,6 +7025,7 @@ void production_subsystems_init(void) {
     memset(epoll_table, 0, sizeof(epoll_table));
     memset(posix_timers, 0, sizeof(posix_timers));
     memset(mq_table, 0, sizeof(mq_table));
+    inotify_subsystem_init();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -8510,6 +8547,19 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
         case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
         case SYS_KEXEC_LOAD:          return sys_kexec_load(a1, a2, a3);
+        /* ── Inotify (Item 340) ─────────────────────────── */
+        case SYS_INOTIFY_INIT1: {
+            int ret = sys_inotify_init1((int)a1);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
+        case SYS_INOTIFY_ADD_WATCH: {
+            int ret = sys_inotify_add_watch((int)a1, (const char *)a2, (uint32_t)a3);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
+        case SYS_INOTIFY_RM_WATCH: {
+            int ret = sys_inotify_rm_watch((int)a1, (int)a2);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
         case SYS_THREAD_CREATE:       return sys_thread_create(a1, a2);
         case SYS_THREAD_JOIN:         return sys_thread_join(a1, a2);
         case SYS_THREAD_EXIT:         sys_thread_exit((void *)a1); return 0;
