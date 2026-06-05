@@ -14,6 +14,8 @@
 #include "scheduler.h"
 #include "signal.h"
 #include "cpuhp.h"
+#include "cpuidle.h"
+#include "perf_events.h"
 
 /* ── Per-CPU data ──────────────────────────────────────────────────── */
 struct cpu_info cpu_info_array[SMP_MAX_CPUS] __attribute__((aligned(64)));
@@ -98,6 +100,9 @@ static void ap_entry_c(void) {
 
     /* Initialize per-CPU cpuidle data */
     cpuidle_init_cpu();
+
+    /* Initialize PEBS / Debug Store for this CPU (if PMU supports it) */
+    pebs_init();
 
     /* Mark CPU as ready */
     info->ready_flag = 1;

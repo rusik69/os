@@ -459,6 +459,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Performance monitoring (PMU counters if available) */
     perf_init();
 
+    /* PEBS needs heap — happens after heap_init.  BSP only;
+     * APs get pebs_init() in their ap_entry_c() path. */
+    pebs_init();
+
     /* Ramdisk block device (needed before initrd loading) */
     ramdisk_init();
 
