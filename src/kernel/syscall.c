@@ -663,6 +663,15 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     }
 
     if (!exists) return (uint64_t)-1;
+
+    /* IMA measurement: measure the file before opening for read */
+    {
+        extern int ima_file_open(const char *path, int flags);
+        int ima_ret = ima_file_open(path, (int)flags);
+        if (ima_ret < 0)
+            return (uint64_t)(int64_t)ima_ret;
+    }
+
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-1;
@@ -1936,6 +1945,15 @@ static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp
     if (!path) return (uint64_t)-1;
     /* For now, ignore argv/envp */
     (void)argv_addr; (void)envp_addr;
+
+    /* IMA appraisal: measure executable file before execution */
+    {
+        extern int ima_file_exec(const char *path);
+        int ima_ret = ima_file_exec(path);
+        if (ima_ret < 0)
+            return (uint64_t)(int64_t)ima_ret;
+    }
+
     int ret = process_execve(path, NULL, NULL);
     /* If execve succeeds, we never return here (the process is redirected).
      * If it fails, we return -1. */

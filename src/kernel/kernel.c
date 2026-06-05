@@ -669,6 +669,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* CPU frequency scaling — ACPI P-states (ACPI _PSS / MSR fallback) */
     cpupstate_init();
 
+    /* IMA — Integrity Measurement Architecture */
+    {
+        extern void ima_init(void);
+        ima_init();
+    }
+
     /* Debugfs — kernel debug data filesystem */
     debugfs_init();
 
