@@ -217,6 +217,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/sound_oss.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
+         src/drivers/netconsole.c \
          src/ipc/mutex.c \
          src/ipc/fifo.c \
          src/ipc/mqueue.c \

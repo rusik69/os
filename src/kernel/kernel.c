@@ -930,6 +930,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
         /* Link Layer Discovery Protocol (LLDP) */
         lldp_init();
+
+        /* netconsole — kernel log over UDP (Item 391) */
+        extern void netconsole_init(void);
+        netconsole_init();
     } else {
         kprintf("[--] No network device found\n");
     }
