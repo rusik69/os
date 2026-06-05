@@ -307,6 +307,7 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/thp.c \
          src/memory/zcomp.c \
          src/memory/zcomp_fast.c \
+         src/memory/zswap.c \
          src/kernel/perf_events.c \
          src/kernel/jump_label.c \
          src/kernel/pstore.c \

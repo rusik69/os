@@ -23,6 +23,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "export.h"
+#include "zswap.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
@@ -371,6 +372,11 @@ int swap_out(uint64_t phys_addr, uint32_t *out_slot, int *out_dev)
         return ret;
     }
 
+    /* Try to store a compressed copy in zswap for faster swap-in.
+     * This is best-effort: if zswap is full or compression fails,
+     * the data is safely on disk already. */
+    zswap_store(phys_addr, dev_idx, (uint32_t)slot);
+
     /* Mark the slot as used. */
     swap_bitmap_set(dev->bitmap, slot);
     dev->used_slots++;
@@ -416,8 +422,15 @@ int swap_in(int dev_idx, uint32_t slot, uint64_t phys_addr)
     uint64_t data_start   = (SWAP_SUPERBLOCK_PAGES * SWAP_SLOT_SIZE) + bitmap_bytes;
     uint64_t slot_offset  = data_start + (uint64_t)slot * SWAP_SLOT_SIZE;
 
-    /* Read the slot data into the physical page. */
+    /* Try zswap first — if the page is in the compressed cache,
+     * decompress and skip the disk read entirely. */
     void *page_data = (void *)(phys_addr + 0xFFFF800000000000ULL);
+    if (zswap_load(dev_idx, slot, phys_addr) == 0) {
+        spinlock_release(&swap_global_lock);
+        return 0;
+    }
+
+    /* Read the slot data into the physical page from disk. */
     int ret = swap_read_slot(dev->blockdev_id, slot_offset, page_data);
     if (ret < 0) {
         kprintf("[SWAP] swap_in: read failed (dev=%d, slot=%u, err=%d)\n",
@@ -457,6 +470,9 @@ int swap_free_slot(int dev_idx, uint32_t slot)
 
     swap_bitmap_clear(dev->bitmap, slot);
     dev->used_slots--;
+
+    /* Also free the slot from zswap if it was cached there. */
+    zswap_free(dev_idx, slot);
 
     /* Update the superblock's used_slots count on disk. */
     {

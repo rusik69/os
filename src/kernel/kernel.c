@@ -95,6 +95,7 @@
 #include "page_poison.h"
 #include "cma.h"
 #include "zram.h"
+#include "zswap.h"
 #include "ksm.h"
 #include "thp.h"
 #include "cmdline.h"
@@ -699,6 +700,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* ZRAM compressed RAM block device — requires compression subsystem */
     zcomp_init();
     zram_init();
+
+    /* Zswap compressed swap cache — reduces swap I/O by keeping
+     * compressed pages in memory.  Falls back to disk if full. */
+    zswap_init();
 
     /* ATA disk */
     ata_init();
