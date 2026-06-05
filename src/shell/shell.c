@@ -2751,43 +2751,65 @@ void shell_run(void) {
                     }
                 }
 
-                /* --- Detect heredoc: cmd << WORD --- */
+                /* --- Detect heredoc: cmd << WORD, or here-string: cmd <<< word --- */
                 {
                     char *hpos = 0;
+                    int  is_here_string = 0; /* 1 = <<<word, 0 = <<WORD */
                     for (char *p = cmd_buf; *p; p++) {
-                        if (p[0] == '<' && p[1] == '<') { hpos = p; break; }
+                        if (p[0] == '<' && p[1] == '<' && p[2] == '<') {
+                            hpos = p;
+                            is_here_string = 1;
+                            break;
+                        }
+                        if (p[0] == '<' && p[1] == '<') {
+                            hpos = p;
+                            is_here_string = 0;
+                            break;
+                        }
                     }
                     if (hpos) {
-                        /* Split command from heredoc delimiter */
+                        /* Split command from redirection specifier */
                         *hpos = '\0';
-                        char *delim = hpos + 2;
+                        char *const content_start = hpos + (is_here_string ? 3 : 2);
+                        char *delim = content_start;
                         while (*delim == ' ') delim++;
-                        /* Trim trailing whitespace from delimiter */
+
+                        /* Trim trailing whitespace from delimiter/content */
                         int dl = strlen(delim);
                         while (dl > 0 && (delim[dl-1] == ' ' || delim[dl-1] == '\r' || delim[dl-1] == '\n'))
                             delim[--dl] = '\0';
 
-                        /* Collect heredoc lines into pipe buffer */
                         char here_buf[2048];
                         int here_len = 0;
-                        for (;;) {
-                            kprintf("> ");
-                            char hline[CMD_BUF_SIZE]; int hl = 0;
-                            char hc;
-                            while ((hc = keyboard_getchar()) != '\n' && hl < CMD_BUF_SIZE - 1)
-                                hline[hl++] = hc;
-                            putchar_both('\n');
-                            hline[hl] = '\0';
-                            if (strcmp(hline, delim) == 0) break;
-                            if (here_len + hl + 1 < (int)sizeof(here_buf)) {
-                                memcpy(here_buf + here_len, hline, hl);
-                                here_len += hl;
-                                here_buf[here_len++] = '\n';
-                            }
-                        }
-                        here_buf[here_len] = '\0';
 
-                        /* Write heredoc content as pipe file for the command */
+                        if (is_here_string) {
+                            /* Here-string: cmd <<< word — word is passed as stdin content */
+                            int copylen = dl < (int)sizeof(here_buf) - 2 ? dl : (int)sizeof(here_buf) - 2;
+                            memcpy(here_buf, delim, (size_t)copylen);
+                            here_len = copylen;
+                            here_buf[here_len++] = '\n';
+                            here_buf[here_len] = '\0';
+                        } else {
+                            /* Heredoc: cmd << WORD — read lines interactively until delimiter */
+                            for (;;) {
+                                kprintf("> ");
+                                char hline[CMD_BUF_SIZE]; int hl = 0;
+                                char hc;
+                                while ((hc = keyboard_getchar()) != '\n' && hl < CMD_BUF_SIZE - 1)
+                                    hline[hl++] = hc;
+                                putchar_both('\n');
+                                hline[hl] = '\0';
+                                if (strcmp(hline, delim) == 0) break;
+                                if (here_len + hl + 1 < (int)sizeof(here_buf)) {
+                                    memcpy(here_buf + here_len, hline, (size_t)hl);
+                                    here_len += hl;
+                                    here_buf[here_len++] = '\n';
+                                }
+                            }
+                            here_buf[here_len] = '\0';
+                        }
+
+                        /* Write content as pipe file for the command */
                         char hpipe[32];
                         struct process *self = process_get_current();
                         snprintf(hpipe, sizeof(hpipe), "/.heredoc_%u",
@@ -2798,7 +2820,7 @@ void shell_run(void) {
                         char *ct = cmd_buf + strlen(cmd_buf) - 1;
                         while (ct >= cmd_buf && *ct == ' ') *ct-- = '\0';
 
-                        /* Append heredoc file as argument */
+                        /* Append pipe file as argument */
                         int clen = strlen(cmd_buf);
                         if (clen + 1 + strlen(hpipe) < CMD_BUF_SIZE - 1) {
                             cmd_buf[clen] = ' ';
