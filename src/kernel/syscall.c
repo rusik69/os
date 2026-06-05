@@ -6721,7 +6721,6 @@ static uint64_t sys_fstatfs(uint64_t fd, uint64_t buf_addr) {
 }
 
 static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
-    (void)who;
     if (syscall_is_user_process() && !syscall_user_write_ok(usage_addr, sizeof(struct rusage)))
         return (uint64_t)-1;
 
@@ -6731,7 +6730,7 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
     struct rusage ru;
     memset(&ru, 0, sizeof(ru));
 
-    if (who == RUSAGE_SELF) {
+    if (who == RUSAGE_SELF || (int)who == RUSAGE_THREAD) {
         uint64_t hz = TIMER_FREQ;
         /* Convert ticks to timeval (seconds + microseconds) */
         uint64_t utime_s = proc->utime_ticks / hz;
@@ -6770,7 +6769,7 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
             ru.ru_nivcsw  += table[i].nivcsw;
         }
     } else {
-        return (uint64_t)-1; /* RUSAGE_THREAD not implemented */
+        return (uint64_t)-EINVAL;
     }
 
     memcpy((void*)usage_addr, &ru, sizeof(struct rusage));
