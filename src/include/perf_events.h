@@ -19,6 +19,54 @@
 #define IA32_DS_AREA              0x600  /* Debug Store area base address */
 #define IA32_PEBS_ENABLE          0x3F1  /* PEBS enable per counter */
 
+/* ── LBR (Last Branch Record) MSRs ──────────────────────────────────── */
+#define IA32_DEBUGCTL             0x1D9  /* Debug control (LBR, BTS, TR bits) */
+#define IA32_DEBUGCTL_LBR        (1ULL << 0)   /* Enable LBR */
+#define IA32_DEBUGCTL_TR         (1ULL << 6)   /* Enable branch trace */
+#define IA32_DEBUGCTL_BTS        (1ULL << 7)   /* Enable BTS */
+#define IA32_DEBUGCTL_BTINT      (1ULL << 8)   /* BTS interrupt on precise */
+#define IA32_DEBUGCTL_FREEZE     (1ULL << 11)  /* Freeze LBR on PMI */
+#define IA32_DEBUGCTL_FREEZE_LBRs_ON_PMI (1ULL << 11)
+
+/* LBR filtering — MSR_LBR_SELECT (if available, arch LBR >= LBRv3) */
+#define MSR_LBR_SELECT            0x1C8
+#define LBR_SELECT_CMP_EQ         (1ULL << 0)  /* Filter conditional branches */
+#define LBR_SELECT_CALL           (1ULL << 1)  /* Filter near call (incl. call) */
+#define LBR_SELECT_IND_CALL       (1ULL << 2)  /* Filter indirect near calls */
+#define LBR_SSELECT_RET           (1ULL << 3)  /* Filter near return */
+#define LBR_SELECT_IND_JMP        (1ULL << 4)  /* Filter indirect near jmps */
+#define LBR_SELECT_REL_CALL       (1ULL << 5)  /* Filter relative near calls */
+#define LBR_SELECT_IND_JMP_CALL   (1ULL << 6)  /* Filter indirect calls+jmps */
+#define LBR_SELECT_CYCLE_SHIFT    16           /* Cycle count filter shift */
+#define LBR_SELECT_CYCLE_MASK     0x3   /* bits 16-17: 0=off,1=eq,2=neq */
+
+/* Architectural LBR (since Ice Lake): MSRs 0xC00-0xC3F */
+#define MSR_ARCH_LBR_CTL          0xC00
+#define ARCH_LBR_CTL_LBR_EN       (1ULL << 0)
+#define ARCH_LBR_CTL_FILTER_SHIFT 1
+#define ARCH_LBR_CTL_DEPTH_SHIFT  8
+#define ARCH_LBR_CTL_MISPRED_EN   (1ULL << 32)
+#define ARCH_LBR_CTL_CYC_EN       1ULL  /* cycle count enable */
+
+#define MSR_ARCH_LBR_DEPTH        0xC01  /* configurable depth register */
+#define MSR_ARCH_LBR_FROM_BASE    0xC10
+#define MSR_ARCH_LBR_TO_BASE      0xC20
+#define MSR_ARCH_LBR_INFO_BASE    0xC30  /* optional LBR_INFO */
+
+/* Legacy LBR (Nehalem through Ice Lake): MSR_LBR_NHM_* */
+#define MSR_LBR_NHM_FROM( idx)    (0x680 + (idx))  /* idx 0-15 */
+#define MSR_LBR_NHM_TO(idx)       (0x6C0 + (idx))  /* idx 0-15 */
+
+/* Maximum LBR depth across CPU generations */
+#define LBR_MAX_DEPTH             32
+
+/* A single LBR entry  */
+struct lbr_entry {
+    uint64_t from;      /* source address */
+    uint64_t to;        /* target address */
+    uint64_t info;      /* optional: cycle count, branch-type flags */
+};
+
 /* PERF_GLOBAL_CTRL bits */
 #define GLOBAL_CTRL_PMC0          (1ULL << 0)
 #define GLOBAL_CTRL_PMC1          (1ULL << 1)
@@ -173,5 +221,30 @@ int pebs_total_samples(void);
 
 /* Check if PEBS is available on this CPU (CPUID, DS bit check). */
 int pebs_available(void);
+
+/* ── LBR (Last Branch Record) API ────────────────────────────────────── */
+
+/* Detect LBR capability — checks CPUID or reads MSR_LBR_SELECT.
+ * Returns the number of LBR entries supported (0 if unavailable). */
+int lbr_depth(void);
+
+/* Enable LBR recording on the current CPU.
+ * @flags: bitmask of filtering options (LBR_SELECT_* constants, 0 = all branches).
+ * If arch LBR is available, the configurable depth and filtering are set;
+ * otherwise legacy LBR (Nehalem+) is enabled via IA32_DEBUGCTL. */
+void lbr_enable(uint64_t flags);
+
+/* Disable LBR recording on the current CPU.  Clears IA32_DEBUGCTL.LBR
+ * and, for arch LBR, clears MSR_ARCH_LBR_CTL. */
+void lbr_disable(void);
+
+/* Read the current LBR stack into the caller's buffer.
+ * @entries: output array of lbr_entry structs (must be at least LBR_MAX_DEPTH).
+ * Returns the number of valid entries read (0 if LBR is disabled). */
+int lbr_read(struct lbr_entry *entries);
+
+/* Determine the LBR depth (number of MSR pairs) by probing CPUID leaf 0x1C
+ * (architectural LBR) or falling back to a safe default (16 for legacy). */
+int lbr_detect_depth(void);
 
 #endif /* PERF_EVENTS_H */

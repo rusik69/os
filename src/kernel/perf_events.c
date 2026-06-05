@@ -354,8 +354,172 @@ int pebs_total_samples(void)
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- * Initialisation
+ * LBR — Last Branch Record Stack
  * ══════════════════════════════════════════════════════════════════════════ */
+
+/* LBR state: depth detected at init, and whether we have architectural LBR */
+static int lbr_available_depth = 0;  /* 0 = not available */
+static int lbr_arch_supported = 0;   /* 1 = architectural LBR (Ice Lake+) */
+static int lbr_enabled_on_cpu[SMP_MAX_CPUS];
+
+/* Detect the LBR depth by probing CPUID leaf 0x1C (architectural LBR)
+ * or falling back to the legacy Nehalem-era default of 16. */
+int lbr_detect_depth(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+
+    /* Check for architectural LBR via CPUID leaf 0x1C */
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0x1C), "c"(0));
+
+    if (eax > 0) {
+        /* Leaf 0x1C valid — architectural LBR is supported.
+         * eax[27:25]  = LBR depth encoding (0=8, 1=16, 2=32)
+         * ebx[15:0]   = supported depth mask
+         * ebx[31:16]  = CPL filter, branch filter support etc. */
+        (void)edx;
+
+        int depth_val = (eax >> 25) & 0x7;
+        int depth = 0;
+        switch (depth_val) {
+            case 0:  depth = 8;  break;
+            case 1:  depth = 16; break;
+            case 2:  depth = 32; break;
+            default: depth = 16; /* safe fallback */
+        }
+
+        lbr_arch_supported = 1;
+        kprintf("[OK] lbr: architectural LBR depth=%d (CPUID.0x1C)\n", depth);
+        return depth;
+    }
+
+    /* Legacy LBR: probe MSR_LBR_SELECT to see if LBRv3 filtering is present.
+     * If the MSR reads back the written value, it's supported.
+     * Safe default for Nehalem+: 16 LBR entries (MSR 0x680-0x68F / 0x6C0-0x6CF). */
+    uint64_t probe_val = LBR_SELECT_CALL | LBR_SELECT_IND_CALL;
+    write_msr(MSR_LBR_SELECT, probe_val);
+    uint64_t readback = read_msr(MSR_LBR_SELECT);
+
+    if (readback == probe_val) {
+        /* MSR_LBR_SELECT works — we have at least LBRv3 with 32 entries */
+        lbr_arch_supported = 0;
+        kprintf("[OK] lbr: legacy LBRv3 depth=32 (MSR_LBR_SELECT response)\n");
+        /* Reset the filter to capture everything */
+        write_msr(MSR_LBR_SELECT, 0);
+        return 32;
+    }
+
+    /* Fallback: probe the first FROM MSR to see if LBR exists at all */
+    uint64_t from0 = read_msr(MSR_LBR_NHM_FROM(0));
+    write_msr(MSR_LBR_NHM_FROM(0), ~0ULL);
+    uint64_t from0_written = read_msr(MSR_LBR_NHM_FROM(0));
+    write_msr(MSR_LBR_NHM_FROM(0), from0); /* restore */
+
+    if (from0_written == ~0ULL) {
+        lbr_arch_supported = 0;
+        kprintf("[OK] lbr: legacy LBR depth=16 (MSR probe)\n");
+        return 16;
+    }
+
+    /* No LBR support detected */
+    kprintf("[OK] lbr: not available\n");
+    return 0;
+}
+
+/* Return the detected LBR depth (public API) */
+int lbr_depth(void)
+{
+    return lbr_available_depth;
+}
+
+/* Enable LBR recording on the current CPU. */
+void lbr_enable(uint64_t flags)
+{
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        return;
+
+    if (lbr_available_depth <= 0)
+        return;  /* LBR not available */
+
+    if (lbr_arch_supported) {
+        /* Architectural LBR: program MSR_ARCH_LBR_CTL */
+        uint64_t ctl = ARCH_LBR_CTL_LBR_EN;
+
+        /* Set depth encoding in bits 8-11 */
+        int depth_code = 0;
+        if (lbr_available_depth == 8)       depth_code = 0;
+        else if (lbr_available_depth == 16) depth_code = 1;
+        else if (lbr_available_depth == 32) depth_code = 2;
+        ctl |= (uint64_t)(depth_code & 0xF) << ARCH_LBR_CTL_DEPTH_SHIFT;
+
+        /* Apply filtering flags (branch type filter in bits 1-7) */
+        ctl |= (flags & 0x7F) << ARCH_LBR_CTL_FILTER_SHIFT;
+
+        write_msr(MSR_ARCH_LBR_CTL, ctl);
+    } else {
+        /* Legacy LBR: write IA32_DEBUGCTL with LBR bit */
+        uint64_t debugctl = read_msr(IA32_DEBUGCTL);
+        debugctl |= IA32_DEBUGCTL_LBR;
+
+        /* Apply filter via MSR_LBR_SELECT if it was detected */
+        write_msr(IA32_DEBUGCTL, debugctl);
+        write_msr(MSR_LBR_SELECT, flags);
+    }
+
+    lbr_enabled_on_cpu[cpu] = 1;
+}
+
+/* Disable LBR recording on the current CPU. */
+void lbr_disable(void)
+{
+    int cpu = smp_get_cpu_id();
+    if (cpu < 0 || cpu >= SMP_MAX_CPUS)
+        return;
+
+    if (lbr_arch_supported) {
+        write_msr(MSR_ARCH_LBR_CTL, 0);
+    } else {
+        uint64_t debugctl = read_msr(IA32_DEBUGCTL);
+        debugctl &= ~IA32_DEBUGCTL_LBR;
+        write_msr(IA32_DEBUGCTL, debugctl);
+    }
+
+    lbr_enabled_on_cpu[cpu] = 0;
+}
+
+/* Read the current LBR stack into the caller's buffer.
+ * Returns the number of valid entries (0 if LBR is disabled or empty).
+ * LBR entries are read from newest to oldest (index 0 = most recent branch). */
+int lbr_read(struct lbr_entry *entries)
+{
+    if (!entries || lbr_available_depth <= 0)
+        return 0;
+
+    int depth = lbr_available_depth;
+    if (depth > LBR_MAX_DEPTH)
+        depth = LBR_MAX_DEPTH;
+
+    if (lbr_arch_supported) {
+        /* Architectural LBR: read FROM/TO from the MSR bank */
+        for (int i = 0; i < depth; i++) {
+            entries[i].from = read_msr(MSR_ARCH_LBR_FROM_BASE + i);
+            entries[i].to   = read_msr(MSR_ARCH_LBR_TO_BASE + i);
+            /* Attempt to read optional LBR_INFO MSR */
+            entries[i].info = read_msr(MSR_ARCH_LBR_INFO_BASE + i);
+        }
+    } else {
+        /* Legacy Nehalem LBR: read FROM/TO MSR pairs */
+        for (int i = 0; i < depth; i++) {
+            entries[i].from = read_msr(MSR_LBR_NHM_FROM(i));
+            entries[i].to   = read_msr(MSR_LBR_NHM_TO(i));
+            entries[i].info = 0;  /* no architectural info on legacy LBR */
+        }
+    }
+
+    return depth;
+}
 
 void perf_init(void)
 {
@@ -398,4 +562,18 @@ void perf_init(void)
         pebs_platform_ok = 0;
         kprintf("[OK] perf_events: PEBS not available (no DS in CPUID)\n");
     }
+
+    /* ── Detect LBR capability ── */
+    lbr_available_depth = lbr_detect_depth();
+    if (lbr_available_depth > 0) {
+        kprintf("[OK] lbr: %d entries, %s mode\n",
+                lbr_available_depth,
+                lbr_arch_supported ? "architectural" : "legacy");
+    } else {
+        kprintf("[OK] lbr: not available on this CPU\n");
+    }
+
+    /* Reset per-CPU LBR enabled state */
+    for (int i = 0; i < SMP_MAX_CPUS; i++)
+        lbr_enabled_on_cpu[i] = 0;
 }
