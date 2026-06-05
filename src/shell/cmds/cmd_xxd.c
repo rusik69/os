@@ -8,8 +8,10 @@ void cmd_xxd(const char *args) {
     if (!args) { kprintf("Usage: xxd <file>\n"); return; }
     if (!ata_is_present()) { kprintf("No disk\n"); return; }
     char path[64];
-    if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
-    else strcpy(path, args);
+    if (args[0] != '/')
+        snprintf(path, sizeof(path), "/%s", args);
+    else
+        snprintf(path, sizeof(path), "%s", args);
     static char fbuf[4096];
     uint32_t size;
     if (fs_read_file(path, fbuf, sizeof(fbuf), &size) < 0) {

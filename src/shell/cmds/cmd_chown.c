@@ -20,14 +20,14 @@ void cmd_chown(const char *args) {
     /* Parse user[:group] */
     char owner[USER_MAX_NAME];
     int oi = 0;
-    while (*p && *p != ' ' && *p != ':') owner[oi++] = *p++;
+    while (*p && *p != ' ' && *p != ':' && oi < (int)(USER_MAX_NAME - 1)) owner[oi++] = *p++;
     owner[oi] = '\0';
 
     char grp[USER_MAX_NAME];
     int gi = 0;
     if (*p == ':') {
         p++;
-        while (*p && *p != ' ') grp[gi++] = *p++;
+        while (*p && *p != ' ' && gi < (int)(USER_MAX_NAME - 1)) grp[gi++] = *p++;
     }
     grp[gi] = '\0';
 
@@ -35,8 +35,10 @@ void cmd_chown(const char *args) {
     if (!*p) { kprintf("chown: missing path\n"); return; }
 
     char path[64];
-    if (*p != '/') { path[0] = '/'; strcpy(path + 1, p); }
-    else strcpy(path, p);
+    if (*p != '/')
+        snprintf(path, sizeof(path), "/%s", p);
+    else
+        snprintf(path, sizeof(path), "%s", p);
 
     /* Resolve uid: numeric or username */
     uint16_t uid_val = 0, gid_val = 0;

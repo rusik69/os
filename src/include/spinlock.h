@@ -153,7 +153,7 @@ static inline void spinlock_irqsave_release(spinlock_t *lock, uint64_t flags) {
     spinlock_release(lock);
     /* spinlock_release() already called preempt_enable() above.
      * Now restore the original interrupt state. */
-    if (!(flags & 0x200)) { /* IF bit */
+    if (flags & 0x200) { /* IF bit was set — re-enable interrupts */
         __asm__ volatile("sti");
     }
 }

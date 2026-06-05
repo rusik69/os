@@ -95,6 +95,17 @@ struct fat32_lfn {
 #define FAT32_ATTR_ARCHIVE    0x20
 #define FAT32_ATTR_LFN        0x0F   /* all of RO|HIDDEN|SYSTEM|VOLUME_ID */
 
+/* Byte offsets within a 32-byte directory entry for LFN fields.
+ * These mirror the struct fat32_lfn layout but accessed via raw bytes
+ * to avoid struct-pointer aliasing violations. */
+#define LFN_ORD_OFF     0
+#define LFN_NAME1_OFF   1   /* 5 chars, 10 bytes */
+#define LFN_ATTR_OFF    11
+#define LFN_TYPE_OFF    12
+#define LFN_CHKSUM_OFF  13
+#define LFN_NAME2_OFF   14  /* 6 chars, 12 bytes */
+#define LFN_NAME3_OFF   28  /* 2 chars, 4 bytes  */
+
 /* ── Driver state ───────────────────────────────────────────────────────────── */
 static int          mounted       = 0;
 static int          fat_type      = FAT_TYPE_UNKNOWN;
@@ -511,7 +522,8 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
-                        lfn_parts[ord - 1] = *(struct fat32_lfn *)&entries[i];
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -542,7 +554,9 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
 
     /* Normal cluster-chain directory (FAT32 or FAT12/16 subdirectory) */
     uint32_t cluster = dir_cluster;
+    uint64_t _chain_cnt = 0;
     while (cluster >= 2 && cluster < eoc) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return 0;
@@ -557,7 +571,8 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
-                        lfn_parts[ord - 1] = *(struct fat32_lfn *)&entries[i];
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -808,7 +823,8 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
-                        lfn_parts[ord - 1] = *(struct fat32_lfn *)&entries[i];
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
                     if (entries[i].name[0] & 0x40) lfn_n = ord;
                     continue;
                 }
@@ -834,8 +850,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     }
                     out[ni] = '\0';
                 }
-                if (entries[i].attr & FAT32_ATTR_DIRECTORY)
-                    strcat(out, "/");
+                if (entries[i].attr & FAT32_ATTR_DIRECTORY) {
+                    size_t _slen = strlen(out);
+                    if (_slen + 1 < FAT32_MAX_NAME) {
+                        out[_slen] = '/';
+                        out[_slen + 1] = '\0';
+                    }
+                }
                 count++;
             }
         }
@@ -845,7 +866,9 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
     /* Normal cluster-chain directory */
     uint32_t eoc = FAT_EOC();
     uint32_t clus = cluster;
+    uint64_t _chain_cnt = 0;
     while (clus >= 2 && clus < eoc && count < max) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && count < max; s++) {
             if (read_sector(lba + s, buf) != 0) return count;
@@ -860,7 +883,8 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
-                        lfn_parts[ord - 1] = *(struct fat32_lfn *)&entries[i];
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
                     continue;
@@ -888,8 +912,13 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
                     }
                     out[ni] = '\0';
                 }
-                if (entries[i].attr & FAT32_ATTR_DIRECTORY)
-                    strcat(out, "/");
+                if (entries[i].attr & FAT32_ATTR_DIRECTORY) {
+                    size_t _slen = strlen(out);
+                    if (_slen + 1 < FAT32_MAX_NAME) {
+                        out[_slen] = '/';
+                        out[_slen + 1] = '\0';
+                    }
+                }
                 count++;
             }
         }
@@ -954,7 +983,9 @@ static int fat32_83_name_exists(uint32_t dir_cluster,
 
     /* FAT32 / non-root: follow cluster chain */
     uint32_t cluster = dir_cluster;
+    uint64_t _chain_cnt = 0;
     while (cluster >= 2 && cluster < FAT_EOC()) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) continue;
@@ -1211,7 +1242,9 @@ static int dir_add_entry(uint32_t dir_cluster, const char *name83_8, const char 
 
     /* Normal cluster-chain directory */
     uint32_t cluster = dir_cluster;
+    uint64_t _chain_cnt = 0;
     while (cluster >= 2 && cluster < eoc) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) { cluster = eoc; break; }
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -1;
@@ -1290,7 +1323,9 @@ static int dir_update_size(uint32_t dir_cluster, const char *cmp_name,
     }
 
     uint32_t cluster = dir_cluster;
+    uint64_t _chain_cnt = 0;
     while (cluster >= 2 && cluster < eoc) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -1;
@@ -1399,7 +1434,9 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
 static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
     uint8_t buf[SECT_SIZE];
     uint32_t cluster = dir_cluster;
-    while (cluster < FAT_EOC()) {
+    uint64_t _chain_cnt = 0;
+    while (cluster >= 2 && cluster < FAT_EOC()) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
         uint32_t lba = cluster_to_lba(cluster);
         for (uint32_t s = 0; s < spc; s++) {
             if (read_sector(lba + s, buf) != 0) return -1;
@@ -1415,7 +1452,8 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
                 if (entries[i].attr == FAT32_ATTR_LFN) {
                     int ord = entries[i].name[0] & 0x1F;
                     if (ord > 0 && ord <= 20)
-                        lfn_parts[ord - 1] = *(struct fat32_lfn *)&entries[i];
+                        __builtin_memcpy(&lfn_parts[ord - 1], &entries[i],
+                                         sizeof(struct fat32_dirent));
                     if (lfn_start < 0) lfn_start = i;
                     if (entries[i].name[0] & 0x40)
                         lfn_n = ord;
@@ -1589,8 +1627,10 @@ int fat32_set_volume_label(const char *label)
             /* Walk the cluster chain of the root directory */
             uint32_t clus = root_clus;
             int entry_found = 0;
+            uint64_t _chain_cnt = 0;
 
             while (clus < eoc && clus >= 2) {
+                if (++_chain_cnt > FAT_MAX_CLUSTER()) break;
                 uint32_t lba = cluster_to_lba(clus);
                 for (uint32_t s = 0; s < spc; s++) {
                     if (read_sector(lba + s, dir_buf) != 0)

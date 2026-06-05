@@ -444,11 +444,11 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!pfd || !pfd->used) return (uint64_t)-1;
         struct vfs_stat st;
         if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
-        uint32_t fsize = st.size;
+        uint64_t fsize = st.size;
         if (pfd->offset >= fsize) return 0;
-        uint32_t avail = fsize - pfd->offset;
-        uint32_t to_read = (uint32_t)len < avail ? (uint32_t)len : avail;
-        uint32_t need_end = pfd->offset + to_read;
+        uint64_t avail = fsize - pfd->offset;
+        uint64_t to_read = len < avail ? len : avail;
+        uint64_t need_end = pfd->offset + to_read;
         if (need_end > fsize) need_end = fsize;
         uint8_t *tmp = kmalloc(need_end);
         if (!tmp) return (uint64_t)-1;
@@ -811,14 +811,14 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)-1;
-    uint32_t fsize = 0;
+    uint64_t fsize = 0;
     struct vfs_stat st;
     if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
     fsize = st.size;
     if (pfd->offset >= fsize) return 0;
-    uint32_t avail = fsize - pfd->offset;
-    uint32_t to_read = (uint32_t)count < avail ? (uint32_t)count : avail;
-    uint32_t need_end = pfd->offset + to_read;
+    uint64_t avail = fsize - pfd->offset;
+    uint64_t to_read = count < avail ? count : avail;
+    uint64_t need_end = pfd->offset + to_read;
     if (need_end > fsize) need_end = fsize;
     uint8_t *tmp = kmalloc(need_end);
     if (!tmp) return (uint64_t)-1;
@@ -842,7 +842,7 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
         /* Normal write at current position */
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
     }
-    if (r >= 0) pfd->offset += (uint32_t)count;
+    if (r >= 0) pfd->offset += count;
     return (r >= 0) ? count : (uint64_t)-1;
 }
 
@@ -879,10 +879,10 @@ static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
 
 static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
     const char *path = (const char *)path_addr;
-    uint32_t *out = (uint32_t *)out_addr;
-    uint32_t size; uint8_t type;
-    if (fs_stat(path, &size, &type) < 0) return (uint64_t)-1;
-    if (out) { out[0] = size; out[1] = type; }
+    uint64_t *out = (uint64_t *)out_addr;
+    struct vfs_stat st;
+    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
+    if (out) { out[0] = st.size; out[1] = st.type; }
     return 0;
 }
 
@@ -2056,6 +2056,10 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
 
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* Check for wraparound: addr + length must not overflow */
+    if (length > 0 && addr + length < addr)
+        return (uint64_t)-EINVAL;
 
     /* ── MAP_HUGETLB: force huge page allocation from reserved pool ── */
     if (flags & MAP_HUGETLB) {

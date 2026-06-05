@@ -39,18 +39,14 @@ int wait_queue_sleep(struct wait_queue *wq) {
 
     /* Mark process BLOCKED and remove from scheduler */
     cur->state = PROCESS_BLOCKED;
-    spinlock_release(&wq->lock);  /* release lock — IRQs still disabled */
+    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
     scheduler_remove(cur);
-
-    uint64_t iflags;
-    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
-    if (iflags & 0x200) __asm__ volatile("sti");
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
 
     /* Woken up: re-acquire lock to clean up */
-    spinlock_irqsave_acquire(&wq->lock, &iflags);
+    spinlock_irqsave_acquire(&wq->lock, &flags);
 
     /* Find and remove our PID from the queue (in case of wake_all) */
     for (int i = 0; i < wq->count; i++) {
@@ -169,18 +165,14 @@ int wait_queue_sleep_interruptible(struct wait_queue *wq) {
 
     /* Mark process BLOCKED and remove from scheduler */
     cur->state = PROCESS_BLOCKED;
-    spinlock_release(&wq->lock);  /* release lock — IRQs still disabled */
+    spinlock_irqsave_release(&wq->lock, flags);  /* properly restores IRQ state */
     scheduler_remove(cur);
-
-    uint64_t iflags;
-    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
-    if (iflags & 0x200) __asm__ volatile("sti");
 
     /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
 
     /* Woken up: re-acquire lock to clean up */
-    spinlock_irqsave_acquire(&wq->lock, &iflags);
+    spinlock_irqsave_acquire(&wq->lock, &flags);
 
     /* Find and remove our PID from the queue (in case of wake_all) */
     for (int i = 0; i < wq->count; i++) {
@@ -229,17 +221,14 @@ int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks) {
     /* Set timeout so scheduler_wake_sleepers can wake us */
     cur->sleep_until = deadline;
     cur->state = PROCESS_BLOCKED;
-    spinlock_release(&wq->lock);
+    spinlock_irqsave_release(&wq->lock, flags);
     scheduler_remove(cur);
 
-    uint64_t iflags;
-    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
-    if (iflags & 0x200) __asm__ volatile("sti");
-
+    /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
 
     /* Woken: re-acquire lock and clean up */
-    spinlock_irqsave_acquire(&wq->lock, &iflags);
+    spinlock_irqsave_acquire(&wq->lock, &flags);
     int found = 0;
     for (int i = 0; i < wq->count; i++) {
         int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;
@@ -287,16 +276,13 @@ int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks
 
     cur->sleep_until = deadline;
     cur->state = PROCESS_BLOCKED;
-    spinlock_release(&wq->lock);
+    spinlock_irqsave_release(&wq->lock, flags);
     scheduler_remove(cur);
 
-    uint64_t iflags;
-    __asm__ volatile("pushfq; pop %0" : "=r"(iflags));
-    if (iflags & 0x200) __asm__ volatile("sti");
-
+    /* Yield the CPU — scheduler will pick another process */
     scheduler_yield();
 
-    spinlock_irqsave_acquire(&wq->lock, &iflags);
+    spinlock_irqsave_acquire(&wq->lock, &flags);
     int found = 0;
     for (int i = 0; i < wq->count; i++) {
         int idx = (wq->head + i) % WAITQUEUE_MAX_WAITERS;

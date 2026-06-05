@@ -240,6 +240,7 @@ int unix_shutdown(int endpoint_idx, int how);
 int unix_poll(int endpoint_idx, int events);
 int unix_getsockname(int endpoint_idx, struct sockaddr_un *addr, uint32_t *addrlen);
 int unix_getpeername(int endpoint_idx, struct sockaddr_un *addr, uint32_t *addrlen);
+int unix_socketpair(int *ep0, int *ep1);
 void af_unix_init(void);
 
 #endif

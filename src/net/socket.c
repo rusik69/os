@@ -751,9 +751,47 @@ int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 }
 
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
-    (void)domain; (void)type; (void)protocol; (void)sv;
-    /* Socketpair not yet implemented */
-    return -1;
+    /* Only AF_UNIX SOCK_STREAM socket pairs are supported */
+    if (domain != AF_UNIX) return -EOPNOTSUPP;
+    if (type != SOCK_STREAM) return -EOPNOTSUPP;
+    (void)protocol;
+
+    /* Allocate two socket slots */
+    int slot0 = sock_alloc();
+    if (slot0 < 0) return -ENOMEM;
+
+    int slot1 = sock_alloc();
+    if (slot1 < 0) {
+        sock_free(sock_fd_from_slot(slot0));
+        return -ENOMEM;
+    }
+
+    /* Create a connected AF_UNIX pair */
+    int ep0, ep1;
+    int ret = unix_socketpair(&ep0, &ep1);
+    if (ret < 0) {
+        sock_free(sock_fd_from_slot(slot0));
+        sock_free(sock_fd_from_slot(slot1));
+        return ret;
+    }
+
+    /* Set up socket 0 */
+    struct socket *s0 = &socket_table[slot0];
+    s0->domain  = AF_UNIX;
+    s0->type    = SOCK_STREAM;
+    s0->state   = SOCK_STATE_CONNECTED;
+    s0->unix_ep = ep0;
+
+    /* Set up socket 1 */
+    struct socket *s1 = &socket_table[slot1];
+    s1->domain  = AF_UNIX;
+    s1->type    = SOCK_STREAM;
+    s1->state   = SOCK_STATE_CONNECTED;
+    s1->unix_ep = ep1;
+
+    sv[0] = sock_fd_from_slot(slot0);
+    sv[1] = sock_fd_from_slot(slot1);
+    return 0;
 }
 
 /* ── Socket poll support ─────────────────────────────────────── */

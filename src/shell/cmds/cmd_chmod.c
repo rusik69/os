@@ -28,8 +28,10 @@ void cmd_chmod(const char *args) {
 
     /* path */
     char path[64];
-    if (*p != '/') { path[0] = '/'; strcpy(path + 1, p); }
-    else strcpy(path, p);
+    if (*p != '/')
+        snprintf(path, sizeof(path), "/%s", p);
+    else
+        snprintf(path, sizeof(path), "%s", p);
 
     int rc = fs_chmod(path, mode);
     if (rc == -1) kprintf("chmod: not found: %s\n", path);

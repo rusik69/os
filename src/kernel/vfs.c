@@ -208,12 +208,12 @@ extern struct vfs_ops devfs_ops;
  * If path already starts with '/', copies it verbatim.
  * Normalises "." and ".." components.
  */
-static void vfs_abs_path(const char *path, char *out, int out_max) {
+static int vfs_abs_path(const char *path, char *out, int out_max) {
     char tmp[128];
     int wpos = 0;
     int i;
 
-    if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return; }
+    if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return 0; }
 
     /* Start with cwd for relative paths, empty for absolute */
     if (path[0] == '/') {
@@ -249,7 +249,9 @@ static void vfs_abs_path(const char *path, char *out, int out_max) {
             continue;
         }
         if (comp_len == 2 && path[comp_start] == '.' && path[comp_start + 1] == '.') {
-            /* ".." — go up one level */
+            /* ".." — go up one level, but stay at root if already there */
+            if (wpos == 0)
+                continue;
             while (wpos > 0 && tmp[wpos - 1] != '/') wpos--;
             if (wpos > 0) wpos--; /* remove the slash too */
             if (wpos < 0) wpos = 0;
@@ -263,9 +265,8 @@ static void vfs_abs_path(const char *path, char *out, int out_max) {
             if (wpos >= (int)sizeof(tmp) - 1) break;
             tmp[wpos++] = '/';
         }
-        if (wpos >= (int)sizeof(tmp) - 1) break;
         if (wpos + comp_len >= (int)sizeof(tmp) - 1)
-            comp_len = (int)sizeof(tmp) - 1 - wpos;
+            return -ENAMETOOLONG;
         memcpy(tmp + wpos, path + comp_start, comp_len);
         wpos += comp_len;
     }
@@ -277,6 +278,7 @@ static void vfs_abs_path(const char *path, char *out, int out_max) {
     /* Copy to output with size limit */
     strncpy(out, tmp, out_max - 1);
     out[out_max - 1] = '\0';
+    return 0;
 }
 
 /* ------------------------------------------------------------------
@@ -444,6 +446,9 @@ static struct vfs_ops smfs_ops = {
 
 struct vfs_mount mounts[VFS_MAX_MOUNTS];
 int num_mounts = 0;
+
+/* Lock protecting mount table modifications and iteration */
+static spinlock_t mount_lock = SPINLOCK_INIT;
 
 /* Registered filesystem types (for /proc/filesystems) */
 static struct vfs_filesystem_type fs_types[VFS_MAX_FS_TYPES];
@@ -1525,8 +1530,14 @@ int vfs_flush(const char *path) {
     if (!path) return -EINVAL;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
-    struct vfs_mount *m = resolve(ap);
-    if (!m) return -ENOENT;
+    struct vfs_mount *m;
+
+    spinlock_acquire(&mount_lock);
+    m = resolve(ap);
+    if (!m) {
+        spinlock_release(&mount_lock);
+        return -ENOENT;
+    }
 
     int ret = 0;
 
@@ -1534,6 +1545,8 @@ int vfs_flush(const char *path) {
     if (m->ops->flush) {
         ret = m->ops->flush(m->priv);
     }
+
+    spinlock_release(&mount_lock);
 
     /* Flush the buffer cache (block device cache) to backing store */
     bufcache_flush();
@@ -1548,12 +1561,14 @@ int vfs_flush(const char *path) {
 
 int vfs_sync_all(void) {
     int ret = 0;
+    spinlock_acquire(&mount_lock);
     for (int i = 0; i < num_mounts; i++) {
         if (mounts[i].ops->flush) {
             int r = mounts[i].ops->flush(mounts[i].priv);
             if (r < 0) ret = r;
         }
     }
+    spinlock_release(&mount_lock);
     /* Flush the global buffer cache */
     bufcache_flush();
 

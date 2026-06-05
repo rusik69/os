@@ -95,15 +95,17 @@ uint64_t vm_hugepages = 0;   /* number of 2MB huge pages allocated */
 /* Memory overcommit accounting */
 uint64_t vmm_committed_bytes = 0;
 
-int vmm_get_committed(void) { return (int)(vmm_committed_bytes / PAGE_SIZE); }
+int vmm_get_committed(void) { return (int)(__sync_fetch_and_add(&vmm_committed_bytes, 0) / PAGE_SIZE); }
 int vmm_commit(uint64_t bytes) {
-    if (vmm_committed_bytes + bytes > VMM_OVERCOMMIT_LIMIT) return -1;
-    vmm_committed_bytes += bytes;
+    uint64_t old = __sync_fetch_and_add(&vmm_committed_bytes, bytes);
+    if (old + bytes > VMM_OVERCOMMIT_LIMIT) {
+        __sync_fetch_and_sub(&vmm_committed_bytes, bytes);  /* rollback */
+        return -1;
+    }
     return 0;
 }
 void vmm_uncommit(uint64_t bytes) {
-    if (bytes > vmm_committed_bytes) vmm_committed_bytes = 0;
-    else vmm_committed_bytes -= bytes;
+    __sync_fetch_and_sub(&vmm_committed_bytes, bytes);
 }
 
 /* Page invalidation */

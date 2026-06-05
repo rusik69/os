@@ -80,22 +80,32 @@ static void recompute_time_slices(void) {
     uint64_t total_weight = 0;
     for (int i = 0; i < SCHED_LEVELS; i++) total_weight += weight[i];
 
+    uint64_t flags;
+    spinlock_irqsave_acquire(&sched_lock, &flags);
+
     for (int i = 0; i < SCHED_LEVELS; i++) {
         uint64_t slice = (lat_ticks * weight[i]) / total_weight;
         if (slice < min_ticks) slice = min_ticks;
         if (slice > 0xFFFF)    slice = 0xFFFF;
         computed_slices[i] = (uint16_t)slice;
     }
+
+    spinlock_irqsave_release(&sched_lock, flags);
 }
 
 /* Accessor used throughout the scheduler; replaces direct use of the
  * old static time_slices[] array.  Falls back to a reasonable default
  * if the computed table hasn't been initialised yet. */
 static inline uint16_t slice_for_prio(int lvl) {
+    uint64_t flags;
+    uint16_t val;
+
+    spinlock_irqsave_acquire(&sched_lock, &flags);
     if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-    if (computed_slices[lvl] == 0)
-        recompute_time_slices();
-    return computed_slices[lvl];
+    val = computed_slices[lvl];
+    spinlock_irqsave_release(&sched_lock, flags);
+
+    return val;
 }
 
 /* ── Sysctl handlers for scheduler latency/granularity ──────────── */

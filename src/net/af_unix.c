@@ -497,6 +497,57 @@ int unix_getpeername(int idx, struct sockaddr_un *addr, uint32_t *addrlen)
     return 0;
 }
 
+/* ── Socketpair — create a pair of connected AF_UNIX sockets ──────────
+ *
+ * Returns two endpoint indices that are connected to each other via a
+ * shared connection buffer.  The first endpoint behaves as the "server"
+ * side, the second as the "client" side — both can send and receive.
+ *
+ * Returns 0 on success with *ep0 and *ep1 filled, or -1 on error.
+ */
+int unix_socketpair(int *ep0, int *ep1)
+{
+    if (!ep0 || !ep1) return -EINVAL;
+
+    spinlock_acquire(&unix_lock);
+
+    int idx0 = ep_alloc();
+    if (idx0 < 0) { spinlock_release(&unix_lock); return -ENOMEM; }
+
+    int idx1 = ep_alloc();
+    if (idx1 < 0) {
+        ep_free(idx0);
+        spinlock_release(&unix_lock);
+        return -ENOMEM;
+    }
+
+    struct unix_conn *c = conn_alloc();
+    if (!c) {
+        ep_free(idx0);
+        ep_free(idx1);
+        spinlock_release(&unix_lock);
+        return -ENOMEM;
+    }
+
+    /* Set up endpoint 0 as the "server" side */
+    eps[idx0].type      = SOCK_STREAM;
+    eps[idx0].state     = UNIX_CONNECTED;
+    eps[idx0].conn      = c;
+    eps[idx0].is_server = 1;
+
+    /* Set up endpoint 1 as the "client" side */
+    eps[idx1].type      = SOCK_STREAM;
+    eps[idx1].state     = UNIX_CONNECTED;
+    eps[idx1].conn      = c;
+    eps[idx1].is_server = 0;
+
+    spinlock_release(&unix_lock);
+
+    *ep0 = idx0;
+    *ep1 = idx1;
+    return 0;
+}
+
 /* ── Initialisation ───────────────────────────────────────────────── */
 
 void af_unix_init(void)

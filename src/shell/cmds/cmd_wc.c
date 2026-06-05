@@ -15,8 +15,10 @@ void cmd_wc(const char *args) {
     } else {
         if (!ata_is_present()) { kprintf("No disk\n"); return; }
         char path[64];
-        if (args[0] != '/') { path[0] = '/'; strcpy(path + 1, args); }
-        else strcpy(path, args);
+        if (args[0] != '/')
+            snprintf(path, sizeof(path), "/%s", args);
+        else
+            snprintf(path, sizeof(path), "%s", args);
         if (fs_read_file(path, fbuf, sizeof(fbuf) - 1, &size) < 0) {
             kprintf("Cannot read: %s\n", args);
             return;

@@ -32,8 +32,10 @@ void cmd_tail(const char *args) {
         while (*p == ' ') p++;
         if (*p >= '0' && *p <= '9') n = parse_uint2(&p);
         char path[64];
-        if (name[0] != '/') { path[0] = '/'; strcpy(path + 1, name); }
-        else strcpy(path, name);
+        if (name[0] != '/')
+            snprintf(path, sizeof(path), "/%s", name);
+        else
+            snprintf(path, sizeof(path), "%s", name);
         if (!ata_is_present()) { kprintf("No disk\n"); return; }
         if (fs_read_file(path, fbuf, sizeof(fbuf) - 1, &size) < 0) {
             kprintf("Cannot read: %s\n", name);
