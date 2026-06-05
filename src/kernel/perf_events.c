@@ -521,6 +521,164 @@ int lbr_read(struct lbr_entry *entries)
     return depth;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * Topdown Metrics — Pipeline Slot Breakdown (Ice Lake+)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Topdown Metrics categorises each CPU pipeline slot into one of four
+ * classes: Frontend Bound, Bad Speculation, Backend Bound, and Retiring.
+ * The IA32_PERF_METRICS MSR (0x329) provides this breakdown as U2.16
+ * fixed-point fractions of total pipeline slots.  Fixed counter 2 must
+ * be configured to count TOPDOWN.SLOTS and the metrics MSR must be
+ * enabled in IA32_PERF_GLOBAL_CTRL[12].
+ *
+ * Reference: Intel® 64 and IA-32 Architectures SDM Vol. 3B, Ch. 20.5.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Per-CPU topdown state ──────────────────────────────────────────── */
+static int g_topdown_available = 0;   /* CPUID check result */
+static int g_topdown_configured = 0;  /* per-CPU: has topdown been enabled */
+
+/* Check Topdown Metrics availability via CPUID leaf 0x0A, ECX bit 15.
+ * This bit is set on Ice Lake and later processors (both client and server)
+ * that support the Topdown Metrics infrastructure. */
+int topdown_available(void)
+{
+    return g_topdown_available;
+}
+
+/* ── Topdown Metrics enable ──────────────────────────────────────────── */
+
+int topdown_enable(void)
+{
+    if (!g_topdown_available)
+        return -ENODEV;
+
+    /* IA32_PERF_GLOBAL_CTRL must be saved/restored carefully to avoid
+     * interfering with other counters.  We just OR in the new bits. */
+    uint64_t gctrl = read_msr(IA32_PERF_GLOBAL_CTRL);
+
+    /* Step 1: Enable the IA32_PERF_METRICS MSR (bit 12) so the hardware
+     * populates it on each cycle. */
+    gctrl |= (1ULL << 12);
+    write_msr(IA32_PERF_GLOBAL_CTRL, gctrl);
+
+    /* Step 2: Configure fixed counter 2 control register.
+     * IA32_FIXED_CTR_CTRL is at MSR 0x38D; FC2 control lives in bits 16-23.
+     *
+     * We program FC2 to count TOPDOWN.SLOTS (the architected event for
+     * fixed counter 2).  The event encoding is implicit for fixed counters:
+     *   - FC0 counts INST_RETIRED.ANY
+     *   - FC1 counts CPU_CLK_UNHALTED.THREAD
+     *   - FC2 counts TOPDOWN.SLOTS (when bit 16 is set)
+     *
+     * We count at all privilege levels (OS + USR) but NOT on any thread
+     * (we want per-core, not per-thread, for the metrics to be meaningful). */
+    uint64_t fc_ctrl = read_msr(IA32_FIXED_CTR_CTRL);
+
+    /* Mask off old FC2 control bits (16-23) */
+    fc_ctrl &= ~(0xFFULL << 16);
+    /* Set new FC2 control: enable + kernel + user, no PMI */
+    fc_ctrl |= FIXED_CTR2_CTRL_EN     |
+               FIXED_CTR2_CTRL_KERNEL |
+               FIXED_CTR2_CTRL_USER;
+    write_msr(IA32_FIXED_CTR_CTRL, fc_ctrl);
+
+    /* Step 3: Clear the fixed counter and ensure it is running.
+     * If IA32_PERF_GLOBAL_CTRL bit 34 is 0, set it to enable FC2. */
+    gctrl |= (1ULL << 34);             /* Enable FC2 */
+    write_msr(IA32_PERF_GLOBAL_CTRL, gctrl);
+
+    /* Clear fixed counter 2 so we start from zero */
+    write_msr(IA32_FIXED_CTR2, 0);  /* FC2 at MSR 0x30B */
+
+    g_topdown_configured = 1;
+
+    kprintf("[OK] topdown: enabled on CPU%d (PERF_METRICS MSR + FC2)\\n",
+            smp_get_cpu_id());
+
+    return 0;
+}
+
+/* ── Read Topdown Metrics ───────────────────────────────────────────── */
+
+int topdown_read(struct topdown_metrics *metrics)
+{
+    if (!metrics)
+        return -EINVAL;
+
+    if (!g_topdown_available || !g_topdown_configured)
+        return -ENODEV;
+
+    /* Read the IA32_PERF_METRICS MSR (0x329) which contains the four
+     * slot fractions in U2.16 fixed-point format.
+     *
+     * MSR layout (Ice Lake+):
+     *   Bits 15:0   = FRONTEND_BOUND  (U2.16 fraction of total slots)
+     *   Bits 31:16  = BAD_SPECULATION (U2.16)
+     *   Bits 47:32  = BACKEND_BOUND   (U2.16)
+     *   Bits 63:48  = RETIRING        (U2.16)
+     *
+     * The sum of all four should be approximately 1.0 (since each cycle
+     * provides a fixed number of pipeline slots; on modern Intel cores
+     * this is typically 4-6 slots per cycle).  A value of 0x10000 = 1.0
+     * in U2.16. */
+    uint64_t raw = read_msr(IA32_PERF_METRICS);
+
+    metrics->frontend_bound  = (uint32_t)(raw & 0xFFFF);
+    metrics->bad_speculation = (uint32_t)((raw >> 16) & 0xFFFF);
+    metrics->backend_bound   = (uint32_t)((raw >> 32) & 0xFFFF);
+    metrics->retiring        = (uint32_t)((raw >> 48) & 0xFFFF);
+
+    return 0;
+}
+
+/* ── Disable Topdown ────────────────────────────────────────────────── */
+
+void topdown_disable(void)
+{
+    if (!g_topdown_configured)
+        return;
+
+    /* Disable fixed counter 2 */
+    uint64_t fc_ctrl = read_msr(IA32_FIXED_CTR_CTRL);
+    fc_ctrl &= ~(FIXED_CTR2_CTRL_EN << 16);
+    write_msr(IA32_FIXED_CTR_CTRL, fc_ctrl);
+
+    /* Clear the metrics enable bit */
+    uint64_t gctrl = read_msr(IA32_PERF_GLOBAL_CTRL);
+    gctrl &= ~(1ULL << 34);   /* Disable FC2 */
+    gctrl &= ~(1ULL << 12);   /* Disable PERF_METRICS */
+    write_msr(IA32_PERF_GLOBAL_CTRL, gctrl);
+
+    g_topdown_configured = 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Topdown-level Initialisation (called from perf_init)
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+static void topdown_init(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+
+    /* Check Topdown support: CPUID leaf 0x0A, sub-leaf 0, ECX bit 15.
+     * This is the "Topdown Metrics" availability bit. */
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(0x0a), "c"(0));
+
+    if (ecx & (1 << 15)) {
+        g_topdown_available = 1;
+        kprintf("[OK] topdown: IA32_PERF_METRICS supported (Ice Lake+)\\n");
+    } else {
+        g_topdown_available = 0;
+        kprintf("[OK] topdown: not supported by this CPU\\n");
+    }
+
+    g_topdown_configured = 0;
+}
+
 void perf_init(void)
 {
     uint32_t eax, ebx, ecx, edx;
@@ -576,4 +734,7 @@ void perf_init(void)
     /* Reset per-CPU LBR enabled state */
     for (int i = 0; i < SMP_MAX_CPUS; i++)
         lbr_enabled_on_cpu[i] = 0;
+
+    /* ── Initialise Topdown Metrics (Item 207) ── */
+    topdown_init();
 }

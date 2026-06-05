@@ -19,6 +19,27 @@
 #define IA32_DS_AREA              0x600  /* Debug Store area base address */
 #define IA32_PEBS_ENABLE          0x3F1  /* PEBS enable per counter */
 
+/* ── Topdown Metrics MSRs (Ice Lake+) ──────────────────────────────── */
+#define IA32_PERF_METRICS           0x329  /* Topdown metric breakdown */
+#define IA32_FIXED_CTR_CTRL         0x38D  /* Fixed counter control (FC0/FC1/FC2) */
+#define IA32_FIXED_CTR2             0x30B  /* Fixed counter 2 value (TOPDOWN.SLOTS) */
+#define FIXED_CTR2_CTRL_SHIFT       16     /* FC2 control in IA32_FIXED_CTR_CTRL bits 16-23 */
+#define FIXED_CTR2_CTRL_EN          (1ULL << 16)  /* Enable FC2 */
+#define FIXED_CTR2_CTRL_ANYTHREAD   (1ULL << 17)  /* Count on any thread */
+#define FIXED_CTR2_CTRL_KERNEL      (1ULL << 18)  /* OS mode */
+#define FIXED_CTR2_CTRL_USER        (1ULL << 19)  /* User mode */
+#define FIXED_CTR2_CTRL_PMI         (1ULL << 20)  /* PMI on overflow */
+
+/* Topdown metric slot fractions stored in U2.16 fixed-point format.
+ * Each value represents a fraction of total pipeline slots (0.0 to ~4.0).
+ * Sum of all four categories equals total pipeline slots (normally 1.0 per cycle). */
+struct topdown_metrics {
+    uint32_t frontend_bound;        /* Frontend stalls (I-cache, decode) × 2^16 */
+    uint32_t bad_speculation;       /* Misprediction waste × 2^16 */
+    uint32_t backend_bound;         /* Backend stalls (cache, exec) × 2^16 */
+    uint32_t retiring;              /* Useful work done × 2^16 */
+};
+
 /* ── LBR (Last Branch Record) MSRs ──────────────────────────────────── */
 #define IA32_DEBUGCTL             0x1D9  /* Debug control (LBR, BTS, TR bits) */
 #define IA32_DEBUGCTL_LBR        (1ULL << 0)   /* Enable LBR */
@@ -246,5 +267,24 @@ int lbr_read(struct lbr_entry *entries);
 /* Determine the LBR depth (number of MSR pairs) by probing CPUID leaf 0x1C
  * (architectural LBR) or falling back to a safe default (16 for legacy). */
 int lbr_detect_depth(void);
+
+/* ── Topdown Metrics API (Item 207) ───────────────────────────────────── */
+
+/* Check if the CPU supports Topdown Metrics (CPUID leaf 0x0A, ECX bit 15).
+ * Returns 1 if topdown is available, 0 otherwise. */
+int topdown_available(void);
+
+/* Configure fixed counter 2 to count TOPDOWN.SLOTS and enable the
+ * IA32_PERF_METRICS MSR.  Must be called on each CPU after perf_init().
+ * Returns 0 on success, -ENODEV if topdown is not supported. */
+int topdown_enable(void);
+
+/* Read the current Topdown Metrics from IA32_PERF_METRICS.
+ * @metrics: output structure receiving the four slot fractions.
+ * Returns 0 on success, -ENODEV if topdown is not enabled. */
+int topdown_read(struct topdown_metrics *metrics);
+
+/* Disable topdown counters on the current CPU. */
+void topdown_disable(void);
 
 #endif /* PERF_EVENTS_H */
