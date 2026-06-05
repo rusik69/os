@@ -393,7 +393,8 @@ ASM_SRCS = src/boot/boot.asm \
            src/kernel/idt_asm.asm \
            src/kernel/syscall_asm.asm \
            src/process/switch.asm \
-           src/kernel/ap_trampoline.asm
+           src/kernel/ap_trampoline.asm \
+           src/kernel/kretprobe_trampoline.asm
 
 C_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(C_SRCS))
 ASM_OBJS = $(patsubst src/%.asm,$(BUILDDIR)/%.o,$(ASM_SRCS))

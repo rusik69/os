@@ -23,6 +23,15 @@
  *   the target instruction.  A small scratch region (TEXT_POKE_BASE) is
  *   reserved for this purpose.  This avoids modifying the read-only
  *   kernel text mapping directly.
+ *
+ * Kretprobes (Items 204/373):
+ *   Builds on kprobes to intercept function returns.  A kretprobe
+ *   registers a kprobe at the function entry.  The pre_handler replaces
+ *   the return address on the stack with a pointer to a trampoline stub.
+ *   When the function returns, the trampoline calls the user's handler
+ *   with the return value, then jumps to the original return address.
+ *   64 pre-allocated trampoline stubs handle up to 64 simultaneous
+ *   outstanding function calls (nested/recursive).
  */
 
 #define KERNEL_INTERNAL
@@ -316,6 +325,9 @@ void kprobes_init(void) {
                 (unsigned long long)p);
     }
 
+    /* Init kretprobe subsystem (Items 204/373) */
+    kretprobe_init();
+
     kprintf("[OK] Kprobes initialized (%d max probes, scratch at 0x%llX)\n",
             KPROBES_MAX, (unsigned long long)TEXT_POKE_BASE);
 
@@ -491,4 +503,254 @@ void kprobe_debug_handler(struct interrupt_frame *frame) {
      * restored before single-stepping and the instruction executed.
      * Re-insert INT3 for future hits. */
     text_poke_write(kp->addr, 0xCC);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * ── Kretprobes — function return probes (Items 204/373) ─────────────
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Implementation strategy:
+ *   1. register_kretprobe() allocates a trampoline slot and registers a
+ *      kprobe at the function entry with a custom pre_handler.
+ *   2. When the function is called, the kprobe pre_handler fires:
+ *      a. Reads the original return address from the stack
+ *      b. Allocates a kretprobe_instance
+ *      c. Replaces the stack's return address with the trampoline address
+ *   3. The function executes normally and eventually executes RET.
+ *   4. RET pops the trampoline address → execution jumps to trampoline.
+ *   5. The trampoline saves RAX (return value), calls the C handler,
+ *      which looks up the instance, calls the user's handler, and
+ *      returns the original return address.
+ *   6. The trampoline restores RAX and jumps to the original caller.
+ */
+
+/* The trampoline stubs are defined in kretprobe_trampoline.asm.
+ * There are KRETPROBE_MAX_INSTANCES stubs, each 32 bytes apart.
+ * The base address is the first stub; we compute the ith stub as
+ * (base + i * 32).  The base is resolved at link time. */
+extern void kretprobe_trampoline_0(void);
+static const uint64_t kretprobe_trampoline_base = (uint64_t)&kretprobe_trampoline_0;
+static const uint64_t kretprobe_trampoline_stride = 32;
+
+/* Global instance table — indexed by trampoline slot (0..63).
+ * Each slot tracks the original return address and the owning kretprobe. */
+static struct kretprobe_instance g_kretprobe_instances[KRETPROBE_MAX_INSTANCES];
+
+/* ── Kretprobe internals ────────────────────────────────────────── */
+
+/* Find a free instance slot.  Returns -1 if all are in use. */
+static int kretprobe_alloc_instance(struct kretprobe *rp) {
+    /* First, check if this rp has any slots allocated to it */
+    for (int i = 0; i < KRETPROBE_MAX_INSTANCES; i++) {
+        if (!g_kretprobe_instances[i].in_use) {
+            g_kretprobe_instances[i].in_use = 1;
+            g_kretprobe_instances[i].rp = rp;
+            g_kretprobe_instances[i].ret_addr = 0;
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Free an instance slot by index. */
+static void kretprobe_free_instance(int idx) {
+    if (idx >= 0 && idx < KRETPROBE_MAX_INSTANCES) {
+        g_kretprobe_instances[idx].in_use = 0;
+        g_kretprobe_instances[idx].rp = NULL;
+        g_kretprobe_instances[idx].ret_addr = 0;
+    }
+}
+
+/* Pre-handler for the underlying kprobe at a kretprobe'd function entry.
+ *
+ * This is called via kprobe_int3_handler when the function is entered.
+ * We intercept the return address on the stack and redirect it to our
+ * trampoline.
+ *
+ * The stack layout at this point (ring 0, no stack switch):
+ *   [original stack, before INT3]
+ *     ret_addr       ← original RSP when CALL executed
+ *     ...
+ *   [INT3 push]
+ *     RIP (= func+1)
+ *     CS
+ *     RFLAGS
+ *   [ISR stub push]
+ *     error_code=0, int_no=3
+ *     rax, rbx, ..., r15
+ *
+ * The original return address is at the memory location that
+ * frame->rsp would occupy (offset +20 in struct interrupt_frame).
+ * Even though the CPU does NOT push RSP/SS for ring-0 interrupts,
+ * the struct field overlaps with the data at that stack position,
+ * which IS the original return address (pushed by CALL before INT3).
+ */
+static int kretprobe_entry_handler(struct kprobe *kp, struct interrupt_frame *frame) {
+    struct kretprobe *rp = (struct kretprobe *)kp->private_data;
+    if (!rp) return KPROBE_ACTION_CONTINUE;
+
+    /* Check maxactive limit */
+    if (rp->active_count >= rp->maxactive) {
+        /* Too many outstanding calls — let this one proceed without
+         * interception (the function will return normally). */
+        return KPROBE_ACTION_CONTINUE;
+    }
+
+    /* Read the original return address from the stack.
+     * The return address was pushed by the CALL instruction before INT3
+     * and is stored at the memory location that would hold the CPU-pushed
+     * RSP if this had been a ring-transition interrupt.  On the x86-64
+     * interrupt frame, this is at offset 160 from 'frame'
+     * (15 GPRs + 2 stub-pushed words + 3 CPU-pushed words = 20 quadwords
+     *  from frame base, i.e. where frame->rsp would be in the struct).
+     * We use raw offset arithmetic to avoid -Waddress-of-packed-member. */
+    uint64_t *ret_addr_ptr = (uint64_t *)((uint8_t *)frame + 20 * 8);
+    uint64_t orig_ret_addr = *ret_addr_ptr;
+    if (!orig_ret_addr || orig_ret_addr == 0xFFFFFFFFFFFFFFFFULL) {
+        /* Sanity check failed — don't modify */
+        return KPROBE_ACTION_CONTINUE;
+    }
+
+    /* Allocate an instance slot */
+    int slot = kretprobe_alloc_instance(rp);
+    if (slot < 0) {
+        /* No free trampoline slots — let this call proceed normally */
+        kprintf("[KPROBES] kretprobe: no free instance slot for %s (addr 0x%llX)\n",
+                "function", (unsigned long long)rp->addr);
+        rp->active_count++;
+        return KPROBE_ACTION_CONTINUE;
+    }
+
+    /* Compute the trampoline address for this slot */
+    uint64_t tramp_addr = kretprobe_trampoline_base + (uint64_t)slot * kretprobe_trampoline_stride;
+
+    /* Store instance data */
+    g_kretprobe_instances[slot].ret_addr = orig_ret_addr;
+    g_kretprobe_instances[slot].rp = rp;
+    g_kretprobe_instances[slot].in_use = 1;
+
+    /* Replace the return address on the stack with the trampoline */
+    *ret_addr_ptr = tramp_addr;
+
+    rp->active_count++;
+
+    /* Return CONTINUE so the kprobe core single-steps the original
+     * instruction (the function entry) and execution proceeds normally. */
+    return KPROBE_ACTION_CONTINUE;
+}
+
+/* ── Public API ──────────────────────────────────────────────────── */
+
+void kretprobe_init(void) {
+    /* Clear the instance table */
+    for (int i = 0; i < KRETPROBE_MAX_INSTANCES; i++) {
+        g_kretprobe_instances[i].in_use = 0;
+        g_kretprobe_instances[i].ret_addr = 0;
+        g_kretprobe_instances[i].rp = NULL;
+    }
+
+    kprintf("[OK] Kretprobes initialized (%d trampoline slots, base=0x%llX)\n",
+            KRETPROBE_MAX_INSTANCES,
+            (unsigned long long)kretprobe_trampoline_base);
+}
+
+int register_kretprobe(struct kretprobe *rp) {
+    if (!rp || !rp->addr) {
+        kprintf("[KPROBES] register_kretprobe: NULL or no addr\n");
+        return -1;
+    }
+
+    if (!rp->handler) {
+        kprintf("[KPROBES] register_kretprobe: no handler set\n");
+        return -1;
+    }
+
+    if (rp->maxactive <= 0)
+        rp->maxactive = 1;
+    if (rp->maxactive > KRETPROBE_MAX_INSTANCES)
+        rp->maxactive = KRETPROBE_MAX_INSTANCES;
+
+    rp->active_count = 0;
+
+    /* Set up the underlying kprobe at the function entry.
+     * We use private_data to link back to the kretprobe. */
+    memset(&rp->kp, 0, sizeof(rp->kp));
+    rp->kp.addr = rp->addr;
+    rp->kp.pre_handler = kretprobe_entry_handler;
+    rp->kp.post_handler = NULL;
+    rp->kp.private_data = (void *)rp;
+
+    int ret = register_kprobe(&rp->kp);
+    if (ret < 0) {
+        kprintf("[KPROBES] register_kretprobe: kprobe registration failed at 0x%llX\n",
+                (unsigned long long)rp->addr);
+        return ret;
+    }
+
+    kprintf("[KPROBES] Registered kretprobe at 0x%llX (maxactive=%d)\n",
+            (unsigned long long)rp->addr, rp->maxactive);
+
+    return 0;
+}
+
+int unregister_kretprobe(struct kretprobe *rp) {
+    if (!rp) return -1;
+
+    /* Unregister the underlying kprobe */
+    int ret = unregister_kprobe(&rp->kp);
+    if (ret < 0) return ret;
+
+    /* Free any still-active instances */
+    for (int i = 0; i < KRETPROBE_MAX_INSTANCES; i++) {
+        if (g_kretprobe_instances[i].in_use &&
+            g_kretprobe_instances[i].rp == rp) {
+            kretprobe_free_instance(i);
+        }
+    }
+
+    rp->active_count = 0;
+
+    kprintf("[KPROBES] Unregistered kretprobe at 0x%llX\n",
+            (unsigned long long)rp->addr);
+
+    return 0;
+}
+
+/* C handler called by the assembly trampoline on function return.
+ *
+ * The trampoline stubs push RAX (return value) and call this function
+ * with (instance_id, &saved_rax).  We look up the original return
+ * address and the kretprobe, call the user's handler, then return
+ * the original return address so the trampoline can jump back. */
+uint64_t kretprobe_trampoline_handler(int instance_id, uint64_t *saved_rax) {
+    if (instance_id < 0 || instance_id >= KRETPROBE_MAX_INSTANCES) {
+        /* Invalid instance — this should never happen */
+        kprintf("[KPROBES] kretprobe: invalid instance_id %d\n", instance_id);
+        return 0; /* returning 0 will likely crash, but safer than nothing */
+    }
+
+    struct kretprobe_instance *inst = &g_kretprobe_instances[instance_id];
+    if (!inst->in_use || !inst->rp) {
+        /* Instance was already freed or invalid */
+        kprintf("[KPROBES] kretprobe: stale instance %d (in_use=%d)\n",
+                instance_id, inst->in_use);
+        return inst->ret_addr ? inst->ret_addr : 0;
+    }
+
+    struct kretprobe *rp = inst->rp;
+    uint64_t orig_ret_addr = inst->ret_addr;
+    uint64_t return_value = saved_rax ? *saved_rax : 0;
+
+    /* Call the user's return handler */
+    if (rp->handler) {
+        rp->handler(rp, return_value);
+    }
+
+    /* Clean up the instance */
+    rp->active_count--;
+    inst->in_use = 0;
+    inst->rp = NULL;
+    inst->ret_addr = 0;
+
+    return orig_ret_addr;
 }
