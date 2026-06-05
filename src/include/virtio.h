@@ -58,6 +58,7 @@
 #define VIRTIO_BLK_F_CONFIG_WCE     (1u << 11) /* write cache enable in config */
 #define VIRTIO_BLK_F_DISCARD        (1u << 12) /* discard command */
 #define VIRTIO_BLK_F_WRITE_ZEROES   (1u << 13) /* write zeroes command */
+#define VIRTIO_BLK_F_MQ             (1u << 14) /* multi-queue (virtio 1.1+) */
 
 /* ── Feature bits / name table for human-readable diagnostics ── */
 #define VIRTIO_FEATURE_NAME(f)  (f & 1u) /* sentinel: caller must mask bit */
@@ -109,6 +110,7 @@ static const struct virtio_feature_entry virtio_blk_features[] = {
     VIRTIO_FEATURE(VIRTIO_BLK_F_CONFIG_WCE),
     VIRTIO_FEATURE(VIRTIO_BLK_F_DISCARD),
     VIRTIO_FEATURE(VIRTIO_BLK_F_WRITE_ZEROES),
+    VIRTIO_FEATURE(VIRTIO_BLK_F_MQ),
     { .bit = 0, .name = NULL }
 };
 
