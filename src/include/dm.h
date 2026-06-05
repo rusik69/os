@@ -131,6 +131,12 @@ void dm_init(void);
 /* Register the dm-linear target type. */
 void dm_linear_init(void);
 
+/* Register the dm-zero test target (reads as zeros, discards writes). */
+void dm_zero_init(void);
+
+/* Register the dm-error test target (all I/O fails with -EIO). */
+void dm_error_init(void);
+
 /* Register a target type (called by target modules). */
 int dm_register_target(const struct dm_target_ops *ops);
 

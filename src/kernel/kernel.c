@@ -732,6 +732,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Device mapper framework — virtual block device layer */
     dm_init();
     dm_linear_init();
+    dm_zero_init();
+    dm_error_init();
 
     /* ZRAM compressed RAM block device — requires compression subsystem */
     zcomp_init();
