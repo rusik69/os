@@ -425,6 +425,47 @@ uint64_t pmm_free_block_count(void) {
     return runs;
 }
 
+/* ── Free-region scanner (for memory compaction) ──────────────────────── */
+
+/* Scan the bitmap for the first free region starting at or after start_frame.
+ * Returns the starting frame number, or ~0ULL if no free region remains.
+ * On success, *out_count is set to the number of contiguous free frames. */
+uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (start_frame >= total_frames)
+        return ~0ULL;
+
+    uint64_t f;
+    uint64_t run_start = 0;
+    int in_run = 0;
+
+    for (f = start_frame; f < total_frames; f++) {
+        if (!bitmap_test(f)) {
+            if (!in_run) {
+                run_start = f;
+                in_run = 1;
+            }
+        } else {
+            if (in_run) {
+                if (out_count)
+                    *out_count = f - run_start;
+                return run_start;
+            }
+        }
+    }
+
+    /* If we finish in a run, report it */
+    if (in_run) {
+        if (out_count)
+            *out_count = f - run_start;
+        return run_start;
+    }
+
+    return ~0ULL;
+}
+
 /* Print detailed physical memory state: usage, largest free block, fragmentation */
 void pmm_dump_stats(void) {
     uint64_t total = total_frames;

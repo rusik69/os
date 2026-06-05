@@ -34,6 +34,11 @@ uint64_t pmm_largest_free_block(void);
 /* Return the number of distinct free page runs (higher = more fragmented) */
 uint64_t pmm_free_block_count(void);
 
+/* Scan the bitmap for the first free region starting at or after start_frame.
+ * Returns the starting frame number, or ~0ULL if no free region remains.
+ * On success, *out_count is set to the number of contiguous free frames. */
+uint64_t pmm_find_free_region(uint64_t start_frame, uint64_t *out_count);
+
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
 extern int pmm_poison_enabled;
 void pmm_set_poison(int enable);
