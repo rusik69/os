@@ -94,4 +94,11 @@ void mce_handler(struct interrupt_frame *frame);
 /* Dump all available MCE bank info (for diagnostics) */
 void mce_dump_banks(void);
 
+/* ── MCE injection (Item 396) ────────────────────────────────────── */
+
+/* Initialise the MCE inject debugfs interface.
+ * Creates files under /sys/kernel/debug/mce-inject/ for injecting
+ * synthetic machine check errors to test the MCE handler. */
+void mce_inject_init(void);
+
 #endif /* MCE_H */

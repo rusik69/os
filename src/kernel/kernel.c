@@ -693,6 +693,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Dynamic debug — module/function-level pr_debug control via debugfs */
     dyndbg_init();
 
+    /* MCE injection — debug interface for testing machine check handling (Item 396) */
+    mce_inject_init();
+
     /* KUnit — in-kernel unit test framework */
     kunit_init();
 

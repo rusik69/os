@@ -329,6 +329,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/kcov.c \
          src/kernel/kprobes.c \
          src/kernel/mce.c \
+         src/kernel/mce_inject.c \
          src/kernel/kasan_light.c \
          src/kernel/kmemleak.c \
          src/kernel/ima.c \
