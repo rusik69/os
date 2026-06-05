@@ -59,7 +59,7 @@ static void sh_sysctl(const char *a)    { cmd_sysctl(a); }
 static void sh_bc(const char *a)        { cmd_bc(a); }
 static void sh_insmod(const char *a)    { cmd_insmod(a); }
 static void sh_rmmod(const char *a)     { cmd_rmmod(a); }
-static void sh_lsmod(const char *a)     { cmd_lsmod(a); }
+static void sh_lsmod(const char *a)     { (void)a; cmd_lsmod(); }
 static void sh_modinfo(const char *a)   { cmd_modinfo(a); }
 static void sh_modprobe(const char *a)  { cmd_modprobe(a); }
 static void sh_mdev(const char *a)      { cmd_mdev(a); }
