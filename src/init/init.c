@@ -61,6 +61,12 @@
 #define DEFAULT_RUNLEVEL    2   /* multi-user default */
 #define INITPIPE_PATH       "/var/run/initpipe"
 
+/* Service dependency metadata (Item U3) */
+#define MAX_DEPS            8   /* max Required-Start / Required-Stop per service */
+#define MAX_DEP_NAME        32  /* max length of a dependency name */
+#define INITD_DIR           "/etc/init.d/"  /* init script directory */
+#define INITD_LINE_MAX      256 /* max line length when parsing init.d scripts */
+
 /* Avoid requiring <stddef.h> */
 #define NULL          ((void *)0)
 typedef unsigned long size_t;
@@ -96,6 +102,13 @@ struct service {
     int             respawn_count;
     int             respawn_limit;         /* max respawns before giving up */
     unsigned int    runlevels;             /* bitmask of allowed runlevels (Item U4) */
+
+    /* Service dependency metadata (Item U3) — populated from /etc/init.d/<id>
+     * scripts via # Required-Start: and # Required-Stop: comments. */
+    char            deps_start[MAX_DEPS][MAX_DEP_NAME];  /* Required-Start deps */
+    int             num_deps_start;
+    char            deps_stop[MAX_DEPS][MAX_DEP_NAME];   /* Required-Stop deps */
+    int             num_deps_stop;
 };
 
 static struct service services[MAX_SERVICES];
@@ -108,6 +121,10 @@ static int current_runlevel = DEFAULT_RUNLEVEL;
 /* ── Forward declarations ─────────────────────────────────────────────── */
 
 static void init_parse_inittab(void);
+static void init_load_dependencies(void);
+static int  find_service_by_id(const char *id);
+static void topological_sort(int *order, int *count);
+static int  service_in_order(const int *order, int count, int idx);
 static void service_start(struct service *svc);
 static void service_stop(struct service *svc);
 static void reap_children(void);
@@ -229,6 +246,18 @@ static char *strchr(const char *s, int c)
         s++;
     }
     return (c == '\0') ? (char *)s : 0;
+}
+
+/* String comparison with length limit (avoids libc dependency) */
+static int strncmp(const char *a, const char *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (a[i] != b[i])
+            return (unsigned char)a[i] - (unsigned char)b[i];
+        if (a[i] == '\0')
+            return 0;
+    }
+    return 0;
 }
 
 /* ── Runlevel helper ─────────────────────────────────────────────────── */
@@ -421,6 +450,281 @@ static void init_parse_inittab(void)
     close(fd);
 }
 
+/* ── Service dependency loading (Item U3) ────────────────────────────── */
+
+/*
+ * Find the index of a service by its identifier.
+ * Returns the index, or -1 if not found.
+ */
+static int find_service_by_id(const char *id)
+{
+    if (!id || !id[0])
+        return -1;
+    for (int i = 0; i < service_count; i++) {
+        if (strcmp(services[i].id, id) == 0)
+            return i;
+    }
+    return -1;
+}
+
+/*
+ * Parse a single line from an /etc/init.d/<id> script looking for
+ * dependency metadata comments.  Lines starting with '# Required-Start:'
+ * or '# Required-Stop:' are parsed, and the space-separated dependency
+ * names are added to the service's deps_start or deps_stop array.
+ *
+ * Format:
+ *   # Required-Start: networking sshd
+ *   # Required-Stop:
+ */
+static void parse_dep_line(const char *line, struct service *svc)
+{
+    /* Check for # Required-Start: */
+    const char *prefix_start = "# Required-Start:";
+    size_t prefix_len = strlen(prefix_start);
+
+    if (strncmp(line, prefix_start, prefix_len) == 0) {
+        const char *deps = line + prefix_len;
+        /* Skip leading spaces */
+        while (*deps == ' ') deps++;
+        /* Parse space-separated dependency names */
+        while (*deps && svc->num_deps_start < MAX_DEPS) {
+            char name[MAX_DEP_NAME];
+            int n = 0;
+            while (*deps && *deps != ' ' && n < MAX_DEP_NAME - 1)
+                name[n++] = *deps++;
+            name[n] = '\0';
+            if (n > 0) {
+                strncpy(svc->deps_start[svc->num_deps_start], name,
+                        MAX_DEP_NAME - 1);
+                svc->deps_start[svc->num_deps_start][MAX_DEP_NAME - 1] = '\0';
+                svc->num_deps_start++;
+            }
+            /* Skip spaces between names */
+            while (*deps == ' ') deps++;
+        }
+        return;
+    }
+
+    /* Check for # Required-Stop: */
+    const char *prefix_stop = "# Required-Stop:";
+    prefix_len = strlen(prefix_stop);
+
+    if (strncmp(line, prefix_stop, prefix_len) == 0) {
+        const char *deps = line + prefix_len;
+        while (*deps == ' ') deps++;
+        while (*deps && svc->num_deps_stop < MAX_DEPS) {
+            char name[MAX_DEP_NAME];
+            int n = 0;
+            while (*deps && *deps != ' ' && n < MAX_DEP_NAME - 1)
+                name[n++] = *deps++;
+            name[n] = '\0';
+            if (n > 0) {
+                strncpy(svc->deps_stop[svc->num_deps_stop], name,
+                        MAX_DEP_NAME - 1);
+                svc->deps_stop[svc->num_deps_stop][MAX_DEP_NAME - 1] = '\0';
+                svc->num_deps_stop++;
+            }
+            while (*deps == ' ') deps++;
+        }
+    }
+}
+
+/*
+ * Scan /etc/init.d/<id> for each configured service to extract
+ * dependency metadata (# Required-Start: and # Required-Stop: comments).
+ *
+ * The init script is opened and read line-by-line, looking for comment
+ * lines with the dependency markers.  Non-comment lines are ignored.
+ * Only the first matching line of each type is used (subsequent lines
+ * with the same marker are ignored).
+ */
+static void load_service_deps(struct service *svc)
+{
+    /* Build path: /etc/init.d/<id> */
+    char script_path[MAX_PATH];
+    size_t dirlen = strlen(INITD_DIR);
+    size_t idlen  = strlen(svc->id);
+
+    if (dirlen + idlen >= MAX_PATH)
+        return;
+
+    /* Copy directory */
+    for (size_t i = 0; i < dirlen; i++)
+        script_path[i] = INITD_DIR[i];
+    /* Append service id */
+    for (size_t i = 0; i < idlen; i++)
+        script_path[dirlen + i] = svc->id[i];
+    script_path[dirlen + idlen] = '\0';
+
+    int fd = open(script_path, O_RDONLY);
+    if (fd < 0)
+        return;  /* No init script for this service — no dependencies */
+
+    /* Read the file line by line */
+    char buf[INITD_LINE_MAX];
+    size_t pos = 0;
+    long n;
+    int found_start = 0, found_stop = 0;
+
+    while ((n = read(fd, buf + pos, INITD_LINE_MAX - pos - 1)) > 0) {
+        pos += (size_t)n;
+        buf[pos] = '\0';
+
+        char *line_start = buf;
+        for (size_t i = 0; i < pos; i++) {
+            if (buf[i] == '\n') {
+                buf[i] = '\0';
+
+                /* Only parse comment lines starting with '# Required-' */
+                if (line_start[0] == '#') {
+                    if (!found_start)
+                        parse_dep_line(line_start, svc);
+                    /* Re-check for Required-Stop — parse_dep_line handles both */
+                    if (!found_stop && strncmp(line_start, "# Required-Stop:", 16) == 0) {
+                        /* parse_dep_line already called above; track state */
+                        found_stop = 1;
+                    }
+                }
+
+                line_start = buf + i + 1;
+            }
+        }
+
+        /* Check if we've seen both markers — can stop early */
+        /* (We track start/stop properly inside parse_dep_line) */
+
+        /* Move remaining partial line */
+        size_t remaining = pos - (size_t)(line_start - buf);
+        if (remaining > 0 && line_start != buf) {
+            for (size_t i = 0; i < remaining; i++)
+                buf[i] = line_start[i];
+            pos = remaining;
+        } else {
+            pos = 0;
+        }
+    }
+
+    close(fd);
+}
+
+/*
+ * Load dependency metadata for all configured services.
+ * Called once after init_parse_inittab().
+ */
+static void init_load_dependencies(void)
+{
+    int loaded = 0;
+    for (int i = 0; i < service_count; i++) {
+        load_service_deps(&services[i]);
+        if (services[i].num_deps_start > 0 || services[i].num_deps_stop > 0)
+            loaded++;
+    }
+    if (loaded > 0) {
+        puts("init: loaded dependencies for ");
+        put_dec(loaded);
+        puts(" services\n");
+    }
+}
+
+/* ── Topological sort (Kahn's algorithm) ────────────────────────────── */
+
+/*
+ * Check whether service at index @idx appears in the ordered list @order
+ * (of @count entries).  Returns 1 if found, 0 otherwise.
+ */
+static int service_in_order(const int *order, int count, int idx)
+{
+    for (int i = 0; i < count; i++) {
+        if (order[i] == idx)
+            return 1;
+    }
+    return 0;
+}
+
+/*
+ * Topological sort of services using Kahn's algorithm.
+ *
+ * For each service, we consider its Required-Start dependencies: if
+ * service A depends on B (B is in A's deps_start), then B must start
+ * before A.  We build edges B → A (B must precede A).
+ *
+ * The algorithm:
+ *   1. Compute in-degree (number of unscheduled predecessors) for each node
+ *   2. Start with all nodes that have in-degree == 0
+ *   3. Remove a node, decrement in-degree of its successors
+ *   4. Repeat until all nodes are ordered (or cycle detected)
+ *
+ * On output:
+ *   order[] is filled with service indices in topological order (start order)
+ *   *count is set to the number of ordered services
+ *
+ * If a cycle is detected, we emit a warning and stop; the partial order
+ * (all cycle-free services) is still returned so boot can proceed.
+ */
+static void topological_sort(int *order, int *count)
+{
+    /* in_degree[i] = number of deps that must be started before service i */
+    int in_degree[MAX_SERVICES];
+    int queue[MAX_SERVICES];
+    int qhead = 0, qtail = 0;
+
+    *count = 0;
+    for (int i = 0; i < service_count; i++)
+        in_degree[i] = 0;
+
+    /* Build the dependency graph:
+     * For each service i, for each dependency d in deps_start[i],
+     * find the service j that provides d, then add edge j → i
+     * (j must start before i), so in_degree[i]++. */
+    for (int i = 0; i < service_count; i++) {
+        for (int d = 0; d < services[i].num_deps_start; d++) {
+            int j = find_service_by_id(services[i].deps_start[d]);
+            if (j >= 0 && j != i) {
+                /* j must start before i */
+                in_degree[i]++;
+            }
+        }
+    }
+
+    /* Find all nodes with in-degree 0 to start the queue */
+    for (int i = 0; i < service_count; i++) {
+        if (in_degree[i] == 0)
+            queue[qtail++] = i;
+    }
+
+    /* Process the queue */
+    while (qhead < qtail && *count < service_count) {
+        int node = queue[qhead++];
+        order[(*count)++] = node;
+
+        /* For any service that depends on node, decrement its in-degree */
+        for (int i = 0; i < service_count; i++) {
+            for (int d = 0; d < services[i].num_deps_start; d++) {
+                int j = find_service_by_id(services[i].deps_start[d]);
+                if (j == node && i != node) {
+                    in_degree[i]--;
+                    if (in_degree[i] == 0)
+                        queue[qtail++] = i;
+                }
+            }
+        }
+    }
+
+    /* Check for cycle: if we didn't order all services, there's a cycle */
+    if (*count < service_count) {
+        puts("init: WARNING dependency cycle detected (");
+        put_dec(service_count - *count);
+        puts(" services excluded from ordering)\n");
+
+        /* Append remaining (unreachable) services to the end of the order */
+        for (int i = 0; i < service_count; i++) {
+            if (!service_in_order(order, *count, i))
+                order[(*count)++] = i;
+        }
+    }
+}
+
 /* ── Service lifecycle ────────────────────────────────────────────────── */
 
 static void service_start(struct service *svc)
@@ -542,8 +846,16 @@ static void boot_services(void)
 {
     unsigned int rlmask = runlevel_bitmask(current_runlevel);
 
-    /* Phase 1: sysinit — run and wait for each */
-    for (int i = 0; i < service_count; i++) {
+    /* Compute dependency-based boot order (Item U3).
+     * Services are topologically sorted so that Required-Start dependencies
+     * are started before the services that depend on them. */
+    int boot_order[MAX_SERVICES];
+    int boot_count = 0;
+    topological_sort(boot_order, &boot_count);
+
+    /* Phase 1: sysinit — run and wait for each (in dependency order) */
+    for (int oi = 0; oi < boot_count; oi++) {
+        int i = boot_order[oi];
         if (!(services[i].runlevels & rlmask))
             continue;
         if (services[i].action == ACT_SYSINIT && services[i].state == ST_DEAD) {
@@ -561,8 +873,9 @@ static void boot_services(void)
         }
     }
 
-    /* Phase 2: boot and bootwait */
-    for (int i = 0; i < service_count; i++) {
+    /* Phase 2: boot and bootwait (in dependency order) */
+    for (int oi = 0; oi < boot_count; oi++) {
+        int i = boot_order[oi];
         if (!(services[i].runlevels & rlmask))
             continue;
         if (services[i].action == ACT_BOOT && services[i].state == ST_DEAD) {
@@ -582,8 +895,9 @@ static void boot_services(void)
         }
     }
 
-    /* Phase 3: respawn services */
-    for (int i = 0; i < service_count; i++) {
+    /* Phase 3: respawn services (in dependency order) */
+    for (int oi = 0; oi < boot_count; oi++) {
+        int i = boot_order[oi];
         if (!(services[i].runlevels & rlmask))
             continue;
         if (services[i].action == ACT_RESPAWN && services[i].state == ST_DEAD) {
@@ -591,8 +905,9 @@ static void boot_services(void)
         }
     }
 
-    /* Phase 4: once services (fire-and-forget) */
-    for (int i = 0; i < service_count; i++) {
+    /* Phase 4: once services (fire-and-forget, in dependency order) */
+    for (int oi = 0; oi < boot_count; oi++) {
+        int i = boot_order[oi];
         if (!(services[i].runlevels & rlmask))
             continue;
         if (services[i].action == ACT_ONCE && services[i].state == ST_DEAD) {
@@ -645,14 +960,36 @@ static void set_runlevel(int new_rl)
     int old_rl = current_runlevel;
     current_runlevel = new_rl;
 
-    /* Phase 1: Stop services not allowed in the new runlevel */
-    for (int i = 0; i < service_count; i++) {
-        if (services[i].state == ST_RUNNING) {
-            if (!(services[i].runlevels & new_mask)) {
-                puts("init: stopping '");
-                puts(services[i].id);
-                puts("' for runlevel change\n");
-                service_stop(&services[i]);
+    /* Compute dependency order for controlled stop/start (Item U3) */
+    int dep_order[MAX_SERVICES];
+    int dep_count = 0;
+    topological_sort(dep_order, &dep_count);
+
+    /* Phase 1: Stop services not allowed in the new runlevel.
+     * Stop in REVERSE dependency order so that services are stopped
+     * before their dependents. */
+    {
+        /* First pass: collect services to stop, then stop in reverse order */
+        int to_stop = 0;
+        int stop_list[MAX_SERVICES];
+        for (int i = 0; i < service_count; i++) {
+            if (services[i].state == ST_RUNNING) {
+                if (!(services[i].runlevels & new_mask)) {
+                    stop_list[to_stop++] = i;
+                }
+            }
+        }
+        /* Stop in reverse dependency order */
+        for (int oi = dep_count - 1; oi >= 0; oi--) {
+            int i = dep_order[oi];
+            for (int s = 0; s < to_stop; s++) {
+                if (stop_list[s] == i) {
+                    puts("init: stopping '");
+                    puts(services[i].id);
+                    puts("' for runlevel change\n");
+                    service_stop(&services[i]);
+                    break;
+                }
             }
         }
     }
@@ -660,8 +997,10 @@ static void set_runlevel(int new_rl)
     /* Reap any children that stopped */
     reap_children();
 
-    /* Phase 2: Start services that are now allowed but not running */
-    for (int i = 0; i < service_count; i++) {
+    /* Phase 2: Start services that are now allowed but not running.
+     * Start in dependency order. */
+    for (int oi = 0; oi < dep_count; oi++) {
+        int i = dep_order[oi];
         if (services[i].state == ST_DEAD &&
             (services[i].runlevels & new_mask) &&
             (services[i].action == ACT_RESPAWN ||
@@ -818,6 +1157,9 @@ void _start(void)
     put_dec(service_count);
     puts(" services configured\n");
 
+    /* Load service dependency metadata from /etc/init.d/ (Item U3) */
+    init_load_dependencies();
+
     /* Boot services */
     boot_services();
     puts("init: boot sequence complete, entering service loop\n");
@@ -832,11 +1174,18 @@ void _start(void)
             __asm__ volatile("pause");
     }
 
-    /* Shutdown: stop all services */
+    /* Shutdown: stop all services in reverse dependency order (Item U3) */
     puts("init: shutting down services...\n");
-    for (int i = 0; i < service_count; i++) {
-        if (services[i].pid > 0)
-            service_stop(&services[i]);
+    {
+        int shutdown_order[MAX_SERVICES];
+        int shutdown_count = 0;
+        topological_sort(shutdown_order, &shutdown_count);
+        /* Stop in reverse order: dependencies last */
+        for (int oi = shutdown_count - 1; oi >= 0; oi--) {
+            int i = shutdown_order[oi];
+            if (services[i].pid > 0)
+                service_stop(&services[i]);
+        }
     }
 
     /* Wait for all children to exit */
