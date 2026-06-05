@@ -405,45 +405,58 @@ static void acpi_parse_lpit(struct acpi_header *hdr) {
                 entry_desc);
 
         /* If the state is not disabled, attempt to register it with
-         * the cpuidle subsystem so it can be selected by the governor. */
+         * the cpuidle subsystem so it can be selected by the governor.
+         * Convert the LPIT descriptor to the acpi_cstate_desc format
+         * expected by cpuidle_acpi_register_states. */
         if (!disabled && d->latency > 0 && d->residency > 0) {
-            /* Map LPI state to cpuidle C-state index:
-             *   uid 0 → C1 (already handled by HLT)
-             *   uid ≥1 → C2/C3/etc. registered via ACPI _CST interface
-             *
-             * We register the latency/residency info so the idle
-             * governor can factor it into its decision.
-             *
-             * The entry_trigger GAS describes how to enter this state:
-             *   - If space_id == 0x7F (FFH), the address encodes a
-             *     MWAIT hint or HLT-based entry.
-             *   - If space_id == 0x01 (SystemIO), use IO port entry.
-             */
-            kprintf("  LPIT: State %u (uid=%u, lat=%u us, res=%u us) "
-                    "registered with cpuidle\n",
-                    (unsigned int)i,
-                    (unsigned int)d->uid,
-                    (unsigned int)d->latency,
-                    (unsigned int)d->residency);
+            /* Collect eligible states into an array for batch registration */
+            struct acpi_cstate_desc cdesc;
+            memset(&cdesc, 0, sizeof(cdesc));
+            cdesc.latency   = d->latency;
+            cdesc.residency = d->residency;
 
-            /* For now we log the entry method details for debugging.
-             * The cpuidle subsystem can use this info when the
-             * platform-specific idle states are loaded via _CST. */
+            /* Map entry method from LPIT entry_trigger GAS.
+             * space_id 0x7F = FFH (Functional Fixed Hardware — MWAIT)
+             * space_id 0x01 = SystemIO (port-based entry) */
             if (d->entry_trigger.space_id == 0x7F) {
-                /* FFH — Functional Fixed Hardware. The address field
-                 * contains the MWAIT hint (eax value for MWAIT). */
-                kprintf("  LPIT: State %u entry via FFH (MWAIT hint "
-                        "0x%llx)\n",
+                cdesc.entry_method = ACPI_CSTATE_ENTRY_FFH;
+                /* The address field contains the MWAIT hint (eax value).
+                 * Format: bits [7:4] = C-state, bits [3:0] = sub-state. */
+                cdesc.entry_param = d->entry_trigger.address;
+                kprintf("  LPIT: State %u (uid=%u, lat=%u us, res=%u us) "
+                        "entry via FFH (MWAIT hint 0x%llx)\n",
                         (unsigned int)i,
+                        (unsigned int)d->uid,
+                        (unsigned int)d->latency,
+                        (unsigned int)d->residency,
                         (unsigned long long)d->entry_trigger.address);
             } else if (d->entry_trigger.space_id == 0x01) {
-                /* SystemIO — entry via IO port */
-                kprintf("  LPIT: State %u entry via IO port 0x%llx "
-                        "(width=%u)\n",
+                cdesc.entry_method = ACPI_CSTATE_ENTRY_IO;
+                /* The address field contains the IO port number.
+                 * bit_width is the access size. */
+                cdesc.entry_param  = d->entry_trigger.address;
+                cdesc.entry_param2 = d->entry_trigger.bit_width;
+                kprintf("  LPIT: State %u (uid=%u, lat=%u us, res=%u us) "
+                        "entry via IO port 0x%llx (width=%u)\n",
                         (unsigned int)i,
+                        (unsigned int)d->uid,
+                        (unsigned int)d->latency,
+                        (unsigned int)d->residency,
                         (unsigned long long)d->entry_trigger.address,
                         (unsigned int)d->entry_trigger.bit_width);
+            } else {
+                kprintf("  LPIT: State %u (uid=%u) has unknown entry "
+                        "space_id %u, skipping\n",
+                        (unsigned int)i,
+                        (unsigned int)d->uid,
+                        (unsigned int)d->entry_trigger.space_id);
+                continue;
             }
+
+            /* Register this single state with cpuidle.
+             * In a batch scenario we could collect all first, but for
+             * boot simplicity we register one at a time. */
+            cpuidle_acpi_register_states(&cdesc, 1);
         }
     }
 

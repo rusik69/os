@@ -303,6 +303,8 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("nano",        "Simple text editor (nano [file])", cmd_nano)
     /* Block device TRIM/discard (Item 330) */
     CMD("blkdiscard",  "Deallocate (TRIM) sectors on a block device (blkdiscard <dev_id> <start_lba> <count>)", cmd_blkdiscard)
+    /* Online filesystem integrity check (Item 277) */
+    CMD("fsck",        "Check filesystem integrity (fsck [-v] [-q] [-f] [<mountpoint>])", cmd_fsck)
     { 0, 0, 0 }
 };
 

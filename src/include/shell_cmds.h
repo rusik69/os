@@ -389,4 +389,7 @@ void cmd_mdev(const char *args);
 /* Nano text editor (U48) */
 void cmd_nano(const char *args);
 
+/* Online filesystem integrity check (Item 277) */
+void cmd_fsck(const char *args);
+
 #endif

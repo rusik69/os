@@ -13,9 +13,10 @@ struct cpuidle_cpu;
 
 #define CPUIDLE_FLAG_NONE       0x00
 #define CPUIDLE_FLAG_TIMER_STOP 0x01  /* C-state stops the local APIC timer */
+#define CPUIDLE_FLAG_POLL       0x02  /* Polling (busy-wait) idle — no power saving */
 
 /* Maximum number of idle states supported */
-#define CPUIDLE_MAX_STATES      8
+#define CPUIDLE_MAX_STATES      12    /* Increased from 8 to accommodate POLL + ACPI states */
 
 /* Scheduler hint: disable timer tick during deep idle */
 #define CPUIDLE_TICK_DISABLE    1
@@ -24,12 +25,29 @@ struct cpuidle_cpu;
 /* ── Idle state descriptor ────────────────────────────────────────── */
 
 struct cpuidle_state {
-    uint8_t  id;               /* Logical C-state index (1=C1, 2=C2, ...) */
+    uint8_t  id;               /* Logical C-state index (0=POLL, 1=C1, 2=C2, ...) */
     const char *name;          /* Human-readable name */
     uint32_t latency;          /* Wakeup latency in microseconds */
     uint32_t power;            /* Relative power (lower = less power) */
     uint32_t flags;            /* CPUIDLE_FLAG_* bitmask */
     int      (*enter)(struct cpuidle_state *self);  /* Enter this state */
+    /* Optional platform-specific data */
+    void    *driver_data;      /* Opaque pointer for platform/hardware drivers */
+};
+
+/* ── ACPI C-state descriptor (for _CST / LPIT integration) ───────── */
+
+/* Entry method types for ACPI-defined idle states */
+#define ACPI_CSTATE_ENTRY_FFH        0   /* Functional Fixed Hardware (MWAIT) */
+#define ACPI_CSTATE_ENTRY_IO         1   /* SystemIO port-based entry */
+
+struct acpi_cstate_desc {
+    uint8_t  entry_method;     /* ACPI_CSTATE_ENTRY_FFH or ACPI_CSTATE_ENTRY_IO */
+    uint8_t  reserved[3];
+    uint32_t latency;          /* Worst-case exit latency in microseconds */
+    uint32_t residency;        /* Minimum residency for power benefit (us) */
+    uint64_t entry_param;      /* For FFH: MWAIT hint (eax value); for IO: port address */
+    uint32_t entry_param2;     /* For IO: bit width/access size */
 };
 
 /* ── Governor interface ──────────────────────────────────────────── */
@@ -103,6 +121,9 @@ int cpuidle_select_governor(const char *name);
 
 /* ── Architecture-specific state enter functions ──────────────────── */
 
+/* POLL — busy-wait spinning on need_resched (zero power saving) */
+int cpuidle_poll_enter(struct cpuidle_state *self);
+
 /* C1 — basic HLT-based idle (always available) */
 int cpuidle_c1_halt_enter(struct cpuidle_state *self);
 
@@ -115,7 +136,26 @@ int cpuidle_c2_mwait_enter(struct cpuidle_state *self);
 /* C3 — MWAIT-based deepest idle, may stop timers (requires MWAIT support) */
 int cpuidle_c3_mwait_enter(struct cpuidle_state *self);
 
-/* ── ACPI _CST integration (optional, called by acpi_init) ────────── */
-int cpuidle_acpi_register_states(uint8_t *cst_data, uint32_t length);
+/* ── ACPI _CST / LPIT integration ─────────────────────────────────── */
+
+/* Register platform-specific C-states from ACPI _CST or LPIT data.
+ *
+ * @param descs   Array of acpi_cstate_desc entries describing the states.
+ * @param count   Number of entries in the array.
+ *
+ * For each descriptor, if the entry method is FFH (MWAIT), the function
+ * creates an MWAIT-based C-state with the hint from @entry_param.  For
+ * IO-based entry, it creates an IO-port write entry.  States are
+ * registered with the cpuidle subsystem for governor selection.
+ *
+ * Returns the number of states successfully registered, or -1 on error.
+ */
+int cpuidle_acpi_register_states(const struct acpi_cstate_desc *descs, int count);
+
+/* Register a custom state with cpuidle (for platform drivers).
+ * Returns the index of the registered state, or -1 on failure. */
+int cpuidle_register_custom_state(const char *name, uint32_t latency,
+                                   uint32_t power, uint32_t flags,
+                                   int (*enter)(struct cpuidle_state *));
 
 #endif /* CPUIDLE_H */
