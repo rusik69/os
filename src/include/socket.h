@@ -26,6 +26,7 @@
 #define AF_INET         2
 #define AF_INET6       10
 #define AF_UNIX         1
+#define AF_CAN         29      /* Controller Area Network (SocketCAN) */
 
 #define SOCK_STREAM     1
 #define SOCK_DGRAM      2
@@ -34,6 +35,8 @@
 #define SOCK_CLOEXEC    02000000
 
 #define SOL_SOCKET      1
+#define SOL_CAN_BASE    100     /* CAN protocol base level */
+#define SOL_CAN_RAW     (SOL_CAN_BASE + CAN_RAW)   /* = 101 */
 #define SO_REUSEADDR    2
 #define SO_KEEPALIVE    9
 #define SO_BROADCAST    6

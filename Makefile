@@ -187,6 +187,7 @@ C_SRCS = src/kernel/kernel.c \
          src/net/socket.c \
          src/net/af_unix.c \
          src/net/af_packet.c \
+         src/net/can.c \
          src/net/netlink.c \
          src/net/netfilter.c \
          src/net/conntrack.c \

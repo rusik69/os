@@ -12,6 +12,7 @@
 #include "errno.h"
 #include "af_packet.h"    /* AF_PACKET raw packet sockets (Item 386) */
 #include "netlink.h"       /* AF_NETLINK kernel-userspace sockets (Item 384) */
+#include "can.h"           /* AF_CAN SocketCAN protocol (Item 352) */
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
 
@@ -20,6 +21,7 @@ void socket_init(void) {
     af_unix_init();
     af_packet_init();
     af_netlink_init();
+    can_init();
 }
 
 /* Convert slot to fd number (fd = slot + 100 to avoid conflict with normal fds) */
@@ -67,6 +69,10 @@ void sock_free(int fd) {
     if (s->domain == AF_NETLINK) {
         netlink_close(fd);
     }
+    /* Destroy AF_CAN socket if present */
+    if (s->domain == AF_CAN) {
+        can_close(fd);
+    }
     if (s->conn_id >= 0) net_tcp_close(s->conn_id);
     s->in_use = 0;
     s->state = SOCK_STATE_FREE;
@@ -89,7 +95,7 @@ int sys_socket_impl(int domain, int type, int protocol) {
 
     if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX) {
         /* Allow AF_PACKET / AF_UNSPEC for raw packet sockets */
-        if (domain != 0 && domain != 17 && domain != AF_NETLINK) return -1;
+        if (domain != 0 && domain != 17 && domain != AF_NETLINK && domain != AF_CAN) return -1;
     }
     int slot = sock_alloc();
     if (slot < 0) return -1;
@@ -134,6 +140,14 @@ int sys_socket_impl(int domain, int type, int protocol) {
         if (ret < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
     }
 
+    /* For AF_CAN: create a CAN bus socket endpoint (Item 352) */
+    if (domain == AF_CAN) {
+        int can_proto = (int)protocol;
+        if (can_proto <= 0) can_proto = CAN_RAW; /* Default to RAW */
+        int ret = can_create(can_proto);
+        if (ret < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
+    }
+
     return sock_fd_from_slot(slot);
 }
 
@@ -164,6 +178,14 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
     if (s->domain == AF_NETLINK) {
         const struct sockaddr_nl *nl_addr = (const struct sockaddr_nl *)addr;
         int ret = netlink_bind(sockfd, nl_addr);
+        if (ret == 0) s->state = SOCK_STATE_BOUND;
+        return ret;
+    }
+
+    /* AF_CAN: dispatch to CAN bus handler */
+    if (s->domain == AF_CAN) {
+        const struct sockaddr_can *can_addr = (const struct sockaddr_can *)addr;
+        int ret = can_bind(sockfd, can_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
         return ret;
     }
@@ -412,6 +434,11 @@ int sys_setsockopt_impl(int sockfd, int level, int optname,
                 return 0;
             }
         }
+    } else if (level == SOL_CAN_RAW || level == SOL_CAN_BASE) {
+        /* AF_CAN: socket options */
+        if (s->domain == AF_CAN) {
+            return can_setsockopt(sockfd, level, optname, optval, optlen);
+        }
     }
     return 0;
 }
@@ -611,6 +638,12 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
             int sent = netlink_send(sockfd, data, (int)(len > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
             total += (uint64_t)sent;
+        } else if (s->domain == AF_CAN) {
+            /* AF_CAN: send CAN frame */
+            if (len < sizeof(struct can_frame)) return -EINVAL;
+            int sent = can_send(sockfd, (const struct can_frame *)data);
+            if (sent < 0) return total > 0 ? (int)total : -1;
+            total += (uint64_t)sent;
         } else if (s->type == SOCK_STREAM && s->conn_id >= 0) {
             int sent = net_tcp_send(s->conn_id, data, (uint16_t)(len > 65535 ? 65535 : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
@@ -691,6 +724,20 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
         return n;
     }
 
+    /* AF_CAN: CAN frame receive */
+    if (s->domain == AF_CAN) {
+        if (bufsize < sizeof(struct can_frame)) return -EINVAL;
+        int n = can_recv(sockfd, (struct can_frame *)buf);
+        if (n < 0) return -1;
+        if (msg->msg_name && n >= 0) {
+            struct sockaddr_can *scan = (struct sockaddr_can *)msg->msg_name;
+            memset(scan, 0, sizeof(struct sockaddr_can));
+            scan->can_family = AF_CAN;
+            msg->msg_namelen = sizeof(struct sockaddr_can);
+        }
+        return n;
+    }
+
     if (s->type == SOCK_STREAM && s->conn_id >= 0) {
         int n = net_tcp_recv(s->conn_id, buf, (uint16_t)(bufsize > 65535 ? 65535 : bufsize), 10);
         if (n < 0) return -1;
@@ -721,6 +768,15 @@ int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         int ret = unix_getsockname(s->unix_ep, (struct sockaddr_un *)addr, addrlen);
+        return (ret == 0) ? 0 : -1;
+    }
+
+    /* AF_CAN: dispatch to CAN getsockname */
+    if (s->domain == AF_CAN) {
+        if (*addrlen < sizeof(struct sockaddr_can)) return -1;
+        struct sockaddr_can *can_addr = (struct sockaddr_can *)addr;
+        int ret = can_getsockname(sockfd, can_addr);
+        if (ret == 0) *addrlen = sizeof(struct sockaddr_can);
         return (ret == 0) ? 0 : -1;
     }
 
@@ -806,6 +862,12 @@ int sock_poll(int sockfd, int events)
     /* AF_UNIX: dispatch to local socket handler */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
         return unix_poll(s->unix_ep, events);
+    }
+
+    /* AF_CAN: dispatch to CAN poll handler */
+    if (s->domain == AF_CAN) {
+        int revents = can_poll(sockfd);
+        return revents & events;
     }
 
     switch (s->type) {
