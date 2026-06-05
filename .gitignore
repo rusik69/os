@@ -14,3 +14,4 @@ tests/host_libc/test_bitops_crc_sha
 tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket
+build_config.txt

@@ -1,69 +1,157 @@
-# clang-tidy static analysis configuration for Hermes OS kernel
+# Hermes OS kernel static analysis configuration (Item 259)
+# Run via: make lint  or  make clang-tidy-check
 #
-# This file enables clang-tidy checks that catch common kernel bugs:
-#   - dead stores / unused assignments
-#   - null pointer dereferences
-#   - resource leaks (memory, locks, IRQ flags)
-#   - buffer overruns and format string mismatches
-#   - suspicious bitwise/logic operations
-#   - style and readability issues
+# This config is tailored for a freestanding x86-64 kernel.
+# Some checks that are too noisy for kernel code (e.g. POSIX-incompatible
+# naming, style preferences) are explicitly disabled.
 #
-# Usage:
-#   clang-tidy -p build/compile_commands.json src/kernel/foo.c
-#   make lint     # runs cppcheck (and clang-tidy if installed)
-#
-# Reference: https://clang.llvm.org/extra/clang-tidy/
-
 Checks: >
   -*,
+  clang-analyzer-core.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-optin.*,
   bugprone-*,
-  clang-analyzer-*,
-  misc-*,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-reserved-identifier,
+  -bugprone-branch-clone,
+  -bugprone-signed-char-misuse,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
   performance-*,
+  -performance-no-int-to-ptr,
+  -performance-inefficient-string-concatenation,
   portability-*,
   readability-*,
-  -bugprone-assignment-in-if-condition,
-  -bugprone-branch-clone,
-  -bugprone-easily-swappable-parameters,
-  -bugprone-macro-parentheses,
-  -bugprone-narrowing-conversions,
-  -bugprone-reserved-identifier,
-  -bugprone-signed-char-misuse,
-  -bugprone-switch-missing-default-case,
-  -misc-include-cleaner,
-  -misc-no-recursion,
-  -misc-non-private-member-variables-in-classes,
-  -misc-const-correctness,
-  -performance-no-int-to-ptr,
-  -readability-convert-member-functions-to-static,
-  -readability-else-after-return,
-  -readability-function-cognitive-complexity,
   -readability-identifier-length,
-  -readability-implicit-bool-conversion,
-  -readability-isolate-declaration,
   -readability-magic-numbers,
   -readability-named-parameter,
-  -readability-redundant-access-specifiers,
+  -readability-redundant-control-flow,
+  -readability-else-after-return,
+  -readability-isolate-declaration,
+  -readability-convert-member-functions-to-static,
+  -readability-function-size,
+  -readability-avoid-const-params-in-decls,
+  -readability-non-const-parameter,
   -readability-uppercase-literal-suffix,
-  -readability-use-anyofallof,
-  -bugprone-unchecked-optional-access,
+  -readability-redundant-preprocessor,
+  -readability-suspicious-call-argument,
+  -readability-simplify-boolean-expr,
+  -readability-inconsistent-declaration-parameter-name,
+  -readability-make-member-function-const,
+  -readability-const-return-type,
+  -readability-qualified-auto,
+  -portability-restrict-system-includes,
+  -portability-simd-intrinsics,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nullptr,
+  -modernize-use-auto,
+  -modernize-macro-to-enum,
+  -modernize-return-braced-init-list,
+  -modernize-concat-nested-namespaces,
+  -modernize-use-default-member-init,
+  -modernize-deprecated-headers,
+  -modernize-use-override,
+  -modernize-loop-convert,
+  -modernize-pass-by-value,
+  -modernize-redundant-void-arg,
+  -modernize-use-emplace,
+  -modernize-use-equals-default,
+  -modernize-use-equals-delete,
+  -modernize-type-traits,
+  cert-*,
+  -cert-dcl03-c,
+  -cert-err58-cpp,
+  -cert-msc30-c,
+  -cert-msc50-cpp,
+  -cert-dcl21-cpp,
+  -cert-oop54-cpp,
+  -cert-err34-c,
+  -cert-con36-c,
+  mpi-*,
+  hicpp-*,
+  -hicpp-signed-bitwise,
+  -hicpp-no-array-decay,
+  -hicpp-vararg,
+  -hicpp-uppercase-literal-suffix,
+  -hicpp-braces-around-statements,
+  -hicpp-multiway-paths-covered,
+  -hicpp-named-parameter,
+  -hicpp-special-member-functions,
+  -hicpp-explicit-conversions,
+  -hicpp-use-nullptr,
+  -hicpp-avoid-c-arrays,
+  -hicpp-use-override,
+  google-*,
+  -google-readability-todo,
+  -google-readability-casting,
+  -google-runtime-references,
+  -google-build-using-namespace,
+  -google-build-explicit-make-pair,
+  -google-readability-braces-around-statements,
+  -google-readability-function-size,
+  -google-runtime-int,
+  llvm-*,
+  -llvm-header-guard,
+  -llvm-else-after-return,
+  -llvm-include-order,
+  -llvm-qualified-auto,
+  -llvm-namespace-comment,
+  -llvm-prefer-isa-or-dyn-cast-in-conditionals,
+  -llvm-prefer-isa-or-dyn-cast-in-placeholders,
+  -llvm-twine-local,
+  fuchsia-*,
+  linuxkernel-*,
+  -linuxkernel-must-use-errs,
 
-WarningsAsErrors: >
-  clang-analyzer-core.NullDereference,
-  clang-analyzer-core.StackAddressEscape,
-  clang-analyzer-core.UndefinedBinaryOperatorResult,
-  clang-analyzer-unix.Malloc,
-  clang-analyzer-unix.MismatchedDeallocator,
-  clang-analyzer-unix.StdCLibraryFunctions,
+# Do not warn about system headers (cross-compiler internals)
+HeaderFilterRegex: ''
 
-# Analyzer configuration
+# Treat all warnings as errors in CI (matched by Makefile)
+WarningsAsErrors: '*'
+
+# Analysis options for a freestanding kernel environment
+AnalyzeTemporaryDtors: false
 CheckOptions:
-  - key:   bugprone-assert-side-effect.AssertMacros
-    value: assert|ASSERT|_Static_assert
-  - key:   bugprone-suspicious-string-compare.WarnOnImplicitComparison
-    value: 0
-  - key:   bugprone-sizeof-expression.WarnOnSizeOfCompareToConstant
-    value: 0
-
-# Header filter: only check kernel headers (not GCC/built-in)
-HeaderFilterRegex: 'src/include/.*'
+  - key:             bugprone-suspicious-missing-comma.MaxThreshold
+    value:           '10'
+  - key:             bugprone-sizeof-expression.WarnOnSizeOfConstant
+    value:           '0'
+  - key:             bugprone-argument-comment.CommentStringSuffix
+    value:           ''
+  - key:             bugprone-argument-comment.StrictMode
+    value:           '0'
+  - key:             readability-identifier-naming.ClassCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.StructCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.UnionCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.FunctionCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.VariableCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.MacroDefinitionCase
+    value:           'UPPER_CASE'
+  - key:             readability-identifier-naming.EnumCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.EnumeratorCase
+    value:           'UPPER_CASE'
+  - key:             readability-identifier-naming.TypedefCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.ParameterCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.GlobalConstantCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.MemberCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.ConstantMemberCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.StaticConstantCase
+    value:           'lower_case'
+  - key:             readability-identifier-naming.StaticVariableCase
+    value:           'lower_case'
