@@ -230,6 +230,48 @@ jobs:
           make format-check FORMAT_BASE_REF="origin/main" || \
             make format-check FORMAT_BASE_REF="origin/master"
 
+  # ── GCC -fanalyzer static analysis (Item 261) ──────────────────────
+  analyze:
+    name: Static analysis (GCC -fanalyzer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-x86-64-linux-gnu \
+            binutils-x86-64-linux-gnu \
+            build-essential \
+            gcc \
+            nasm \
+            ccache \
+            make 2>&1 | tail -5
+
+      - name: ccache cache
+        continue-on-error: true
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-analyze-${{ github.sha }}
+          restore-keys: ccache-analyze-
+
+      - name: Run GCC -fanalyzer analysis
+        continue-on-error: true
+        run: |
+          make analyze \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc) 2>&1
+
+      - name: Summarize -fanalyzer findings
+        run: |
+          echo "=== GCC -fanalyzer static analysis complete ==="
+          echo "Note: Some findings may be false positives in freestanding kernel code."
+          echo "Review warnings manually for real issues."
+
   # ── Host-side libc unit tests ───────────────────────────────────────
   libc-test:
     name: libc unit tests

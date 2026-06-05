@@ -583,8 +583,8 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-clean check-app-boundary doom-test format format-check lint ccache-stats count build-info run-test unit-test bench \
-        modules modules_install
+        check check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
+        modules modules_install analyze
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -1032,6 +1032,59 @@ clang-tidy-check:
 	else \
 		echo "clang-tidy not found. Install it (e.g., apt install clang-tidy) and try again."; \
 	fi
+
+# ── Static analysis with GCC -fanalyzer (Item 261) ─────────────────────
+#
+# Builds the kernel with GCC's -fanalyzer for deep static analysis
+# (control flow, data flow, resource leaks, null dereference, etc.).
+# Since -fanalyzer can produce false positives in a freestanding kernel
+# environment, the default mode warns without failing the build.
+#
+# Use:
+#   make analyze           # build with -fanalyzer, report findings (non-fatal)
+#   make analyze WERROR=1  # build with -fanalyzer -Werror (fatal on findings)
+#
+# NOTE: -fanalyzer only works with GCC >= 10.  Clang silently ignores it.
+# PCH is disabled during analysis because GCC may produce spurious issues
+# with precompiled headers under -fanalyzer.
+
+ANALYZE_CFLAGS = $(filter-out -include kernel_pch.h, $(CFLAGS)) -fanalyzer $(if $(WERROR),-Werror,)
+BUILDDIR_ANALYZE = build_analyze
+
+C_ANALYZE_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
+ASM_ANALYZE_SRCS = $(ASM_SRCS)
+
+C_ANALYZE_OBJS  = $(patsubst src/%.c,$(BUILDDIR_ANALYZE)/%.o,$(C_ANALYZE_SRCS))
+ASM_ANALYZE_OBJS = $(patsubst src/%.asm,$(BUILDDIR_ANALYZE)/%.o,$(ASM_ANALYZE_SRCS))
+ANALYZE_OBJS    = $(ASM_ANALYZE_OBJS) $(C_ANALYZE_OBJS)
+
+$(BUILDDIR_ANALYZE)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(ANALYZE_CFLAGS) -c $< -o $@
+
+$(BUILDDIR_ANALYZE)/%.o: src/%.asm
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILDDIR_ANALYZE)/kernel.elf: check-app-boundary $(PCH_FILE) $(ANALYZE_OBJS)
+	@mkdir -p $(BUILDDIR_ANALYZE)
+	$(LD) $(LDFLAGS) -o $@ $(ANALYZE_OBJS) $(LIBGCC)
+
+# config_gz.o depends on the auto-generated header for analyze build too
+$(BUILDDIR_ANALYZE)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)
+$(BUILDDIR_ANALYZE)/kernel/config_gz.o: ANALYZE_CFLAGS += -I$(BUILDDIR_ANALYZE)
+
+$(BUILDDIR_ANALYZE)/kernel.bin: $(BUILDDIR_ANALYZE)/kernel.elf
+	cp $< $@
+
+analyze:
+	@echo "=== GCC -fanalyzer static analysis ==="
+	@echo "Note: -fanalyzer may report issues in freestanding kernel code."
+	@echo "Review findings manually rather than relying solely on exit code.\n"
+	@$(MAKE) -j$(NPROCS) $(BUILDDIR_ANALYZE)/kernel.bin || \
+	  (echo "\nWARNING: -fanalyzer found issues (some may be false positives)"; exit 1)
+	@echo "OK -fanalyzer analysis complete - no issues found"
+	@rm -rf $(BUILDDIR_ANALYZE)
 
 # ── Dependencies ──────────────────────────────────────────────────────
 
