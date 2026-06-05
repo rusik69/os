@@ -77,10 +77,12 @@ struct ipmi_device {
 /* API */
 int  ipmi_init(void);
 int  ipmi_is_present(void);
+int  ipmi_is_initialised(void);
 int  ipmi_send_cmd(struct ipmi_msg *msg);
 int  ipmi_get_device_id(uint8_t *dev_id, uint8_t *rev);
 int  ipmi_chassis_status(uint8_t *power_state);
 int  ipmi_chassis_control(int power_action);
+const struct ipmi_device *ipmi_get_device(void);
 
 /* Power actions */
 #define IPMI_POWER_OFF   0
