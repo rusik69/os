@@ -119,47 +119,84 @@ static int iso9660_find_joliet_svd(struct iso9660_priv *ip)
 }
 
 /*
- * Convert a UCS-2 Big Endian filename (as used by Joliet) to ASCII.
- * Non-ASCII characters (above 127) are replaced by '_'.
+ * Convert a UCS-2 Big Endian codepoint to UTF-8 encoding.
+ * Writes 1-3 bytes to @out (must have at least 4 bytes of space).
+ * Returns the number of bytes written.
+ */
+static int ucs2_cp_to_utf8(uint16_t cp, char *out)
+{
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    } else {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+}
+
+/*
+ * Convert a UCS-2 Big Endian filename (as used by Joliet) to UTF-8.
+ *
+ * Joliet filenames are encoded in UCS-2 Big Endian (2 bytes per character)
+ * and do NOT include the ;1 version suffix that plain ISO9660 uses.
  *
  * @ucs2    Pointer to UCS-2BE data (2 bytes per character)
  * @ucs2_len_bytes  Length of the UCS-2 data IN BYTES (so characters = / 2)
- * @out     Destination buffer for ASCII result
- * @out_max Size of destination buffer
- * Returns the number of characters written (excluding NUL terminator).
+ * @out     Destination buffer for UTF-8 result
+ * @out_max Size of destination buffer (including NUL terminator)
+ * Returns the number of characters written (excluding NUL terminator), or 0.
  */
-static int ucs2be_to_ascii(const char *ucs2, int ucs2_len_bytes,
-                            char *out, int out_max)
+static int ucs2be_to_utf8(const char *ucs2, int ucs2_len_bytes,
+                           char *out, int out_max)
 {
     int chars = ucs2_len_bytes / 2;
     int written = 0;
 
-    for (int i = 0; i < chars && written < out_max - 1; i++) {
-        uint16_t cp = ((uint16_t)ucs2[i * 2] << 8) | ucs2[i * 2 + 1];
+    for (int i = 0; i < chars; i++) {
+        uint16_t cp = ((uint16_t)(uint8_t)ucs2[i * 2] << 8) |
+                       (uint8_t)ucs2[i * 2 + 1];
 
-        /* Skip version separator (;1) in Joliet — UCS-2 ';' */
-        if (cp == 0x003B && (i + 1 < chars) && ucs2[(i + 1) * 2] == 0x00 &&
-            ucs2[(i + 1) * 2 + 1] == 0x31) {
-            /* ;1 sequence — stop here, Joliet names omit version */
-            break;
-        }
-
-        /* Skip zero bytes (padding) */
+        /* Skip zero bytes (padding or end of string) */
         if (cp == 0x0000)
             break;
 
-        /* Map UCS-2 to ASCII: pass through printable ASCII (32-126),
-         * replace everything else with underscore */
-        if (cp >= 0x20 && cp <= 0x7E) {
-            out[written++] = (char)cp;
-        } else {
-            out[written++] = '_';
+        /* Skip the ;1 version separator that some Joliet implementations
+         * erroneously include (Joliet spec says no version, but some discs
+         * include it anyway).  Check if this is ';' followed by '1'. */
+        if (cp == 0x003B && (i + 1 < chars)) {
+            uint16_t next_cp = ((uint16_t)(uint8_t)ucs2[(i + 1) * 2] << 8) |
+                                (uint8_t)ucs2[(i + 1) * 2 + 1];
+            if (next_cp == 0x0031) {
+                /* ;1 found — skip it.  Joliet names should not have version,
+                 * but we handle it gracefully. */
+                break;
+            }
+        }
+
+        /* Encode this UCS-2 codepoint to UTF-8 */
+        int nbytes = ucs2_cp_to_utf8(cp, out + written);
+        written += nbytes;
+        if (written >= out_max - 1) {
+            /* Truncate gracefully */
+            written = out_max - 1;
+            break;
         }
     }
 
-    /* Strip trailing semicolons that might appear from partial conversion */
-    while (written > 0 && out[written - 1] == ';')
-        written--;
+    /* Strip any trailing spaces and dots (Joliet pads with ';' and spaces) */
+    while (written > 0) {
+        char c = out[written - 1];
+        if (c == ';' || c == ' ' || c == '.' || c == '\0')
+            written--;
+        else
+            break;
+    }
 
     out[written] = '\0';
     return written;
@@ -383,9 +420,9 @@ static int parse_one_dirent(struct iso9660_priv *ip,
 
     if (ip->has_joliet && nlen > 0 && nlen < 255) {
         /* Joliet: name is encoded in UCS-2 Big Endian (2 bytes/char).
-         * Convert to ASCII, storing in iso_name for the VFS layer.
-         * Non-ASCII characters are replaced with '_'. */
-        ucs2be_to_ascii(rec->name, nlen, de->iso_name, sizeof(de->iso_name));
+         * Convert to UTF-8, preserving all Unicode characters.
+         * This enables proper display of international filenames. */
+        ucs2be_to_utf8(rec->name, nlen, de->iso_name, sizeof(de->iso_name));
     } else if (nlen > 0 && nlen < 255) {
         /* Standard ISO9660: single-byte name (usually d-characters) */
         memcpy(de->iso_name, rec->name, nlen);
