@@ -25,6 +25,9 @@
 #include "vfs.h"
 #include "spinlock.h"
 
+/* Forward declaration for container_state_query() */
+struct oci_state;
+
 /* ── Constants ──────────────────────────────────────────────────────── */
 
 #define CONTAINER_ID_MAX       64      /* Max length of container ID string */
@@ -215,5 +218,70 @@ int container_stop(struct container *c, int timeout_ms);
  * Returns 0 on success, negative errno on failure.
  */
 int container_delete(struct container *c);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Container State Query API (Item C7)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * container_write_state_json() — Persist container state to state.json.
+ *
+ * Writes the current container state and metadata to
+ * /run/containers/<id>/state.json in OCI runtime-spec format.
+ *
+ * This is called automatically from container_set_state() on every
+ * state transition, but may also be called explicitly to update
+ * the file after changing non-state fields (e.g., init_pid).
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_write_state_json(struct container *c);
+
+/**
+ * container_read_state_json() — Read container state from state.json.
+ *
+ * Parses the state.json file and extracts the state and init PID.
+ * This is a lightweight field extractor, not a full JSON parser.
+ *
+ * @c:          Container descriptor (used for path lookup).
+ * @state_out:  If non-NULL, receives the numeric state value.
+ * @pid_out:    If non-NULL, receives the init PID.
+ *
+ * Returns 0 on success, negative errno if the file doesn't exist
+ * or cannot be parsed.  Output parameters are unchanged on error.
+ */
+int container_read_state_json(const struct container *c,
+                               int *state_out,
+                               uint32_t *pid_out);
+
+/**
+ * container_get_state_name() — Return human-readable state name.
+ *
+ * Thread-safe wrapper around container_state_name() that acquires
+ * the container lock.
+ */
+const char *container_get_state_name(struct container *c);
+
+/**
+ * container_state_query() — Query container state in structured form.
+ *
+ * Fills an oci_state struct with the current container state and
+ * resource parameters.  This is the programmatic equivalent of
+ * reading state.json.
+ *
+ * Returns 0 on success, negative errno on error.
+ */
+int container_state_query(struct container *c, struct oci_state *out);
+
+/**
+ * container_persist_state() — Persist state to state.json.
+ *
+ * Called automatically from container_set_state() after every valid
+ * state transition.  Failures are logged but do not block the
+ * transition (in-memory state is authoritative).
+ *
+ * Returns 0 on success, negative errno on write failure.
+ */
+int container_persist_state(struct container *c);
 
 #endif /* CONTAINER_H */

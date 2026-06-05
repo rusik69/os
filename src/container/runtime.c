@@ -347,6 +347,17 @@ int container_set_state(struct container *c, int new_state) {
 
     c->state = new_state;
 
+    /* Persist the state to the JSON file for external tooling.
+     * This is best-effort: failures are logged but do not block the
+     * state transition, since the in-memory state is authoritative. */
+    {
+        int persist_ret = container_persist_state(c);
+        if (persist_ret < 0) {
+            kprintf("[Containers] Warning: failed to persist state.json for %s: %d\n",
+                    c->id, persist_ret);
+        }
+    }
+
     spinlock_release(&c->lock);
 
     kprintf("[Containers] Container %s: %s → %s\n",
