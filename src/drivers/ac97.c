@@ -21,17 +21,44 @@
 
 /* ── Register offsets ───────────────────────────────────────────── */
 /* NAM (Native Audio Mixer) — mapped to BAR0 (I/O) */
-#define NAM_RESET       0x00
-#define NAM_MASTER_VOL  0x02
-#define NAM_PCM_VOL     0x18
-#define NAM_SAMPLE_RATE 0x2C   /* PCM front DAC rate */
+#define NAM_RESET          0x00
+#define NAM_MASTER_VOL     0x02
+#define NAM_PCM_VOL        0x18
+#define NAM_REC_GAIN       0x1C   /* Recording gain (0-15 each channel) */
+#define NAM_REC_SELECT     0x1E   /* Record source select */
+#define NAM_EXTENDED_AUDIO 0x28   /* Extended audio status/control */
+#define NAM_SAMPLE_RATE    0x2C   /* PCM front DAC rate */
+#define NAM_PCM_IN_RATE    0x32   /* PCM ADC sample rate (if VRA enabled) */
+
+/* Record source select values (AC97 spec 5.7.2) */
+#define REC_SEL_MIC     0x0000
+#define REC_SEL_CD      0x0101
+#define REC_SEL_VIDEO   0x0202
+#define REC_SEL_AUX     0x0303
+#define REC_SEL_LINE_IN 0x0404
+#define REC_SEL_STEREO  0x0505
+#define REC_SEL_MONO    0x0606
+#define REC_SEL_PHONE   0x0707
+
+/* Extended audio register bits */
+#define EA_VRA    (1 << 0)   /* Variable Rate Audio enable */
 
 /* NABM (Native Audio Bus Master) — mapped to BAR1 (I/O) */
+/* PCM-out (playback) registers */
 #define NABM_PCM_OUT_BDBAR  0x10  /* Buffer Descriptor Base Address Register */
 #define NABM_PCM_OUT_CIV    0x14  /* Current Index Value */
 #define NABM_PCM_OUT_LVI    0x15  /* Last Valid Index */
 #define NABM_PCM_OUT_SR     0x16  /* Status Register */
 #define NABM_PCM_OUT_CR     0x1B  /* Control Register */
+
+/* PCM-in (capture) registers */
+#define NABM_PCM_IN_BDBAR   0x20  /* Buffer Descriptor Base Address Register */
+#define NABM_PCM_IN_CIV     0x24  /* Current Index Value */
+#define NABM_PCM_IN_LVI     0x25  /* Last Valid Index */
+#define NABM_PCM_IN_SR      0x26  /* Status Register */
+#define NABM_PCM_IN_CR      0x2B  /* Control Register */
+#define NABM_PCM_IN_PICB    0x28  /* Position In Current Buffer */
+
 #define NABM_GLOB_CNT       0x2C  /* Global Control */
 #define NABM_GLOB_STS       0x30  /* Global Status */
 
@@ -61,6 +88,10 @@ static uint16_t ac97_nabm_base   = 0;
 /* BDL and audio buffers — statically allocated (4KB aligned for DMA) */
 static struct ac97_bdl_entry __attribute__((aligned(4096))) bdl[BDL_ENTRIES];
 static int16_t __attribute__((aligned(4096))) audio_buf[BDL_ENTRIES][4096];
+
+/* Capture BDL and audio buffers */
+static struct ac97_bdl_entry __attribute__((aligned(4096))) cap_bdl[BDL_ENTRIES];
+static int16_t __attribute__((aligned(4096))) cap_audio_buf[BDL_ENTRIES][4096];
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 static inline void nam_out16(uint16_t reg, uint16_t v) { outw(ac97_nam_base  + reg, v); }
@@ -108,6 +139,17 @@ int ac97_init(void) {
 
     /* Set default sample rate to 44100 Hz */
     nam_out16(NAM_SAMPLE_RATE, 44100);
+
+    /* Enable Variable Rate Audio (VRA) for independent capture rate control */
+    uint16_t ext_audio = nam_in16(NAM_EXTENDED_AUDIO);
+    if (!(ext_audio & EA_VRA)) {
+        nam_out16(NAM_EXTENDED_AUDIO, ext_audio | EA_VRA);
+    }
+    /* Set capture sample rate default */
+    nam_out16(NAM_PCM_IN_RATE, 44100);
+
+    /* Select microphone as default record source */
+    nam_out16(NAM_REC_SELECT, REC_SEL_MIC);
 
     /* Reset PCM-out DMA engine */
     nabm_out8(NABM_PCM_OUT_CR, CR_RR);
@@ -209,3 +251,141 @@ void ac97_get_volume(uint16_t channel, uint8_t *left, uint8_t *right, int *mute)
 }
 
 int ac97_present(void) { return ac97_dev_present; }
+
+/* ── Capture (Recording) ─────────────────────────────────────────── */
+
+/**
+ * ac97_capture_read — Capture audio samples from the selected input source.
+ *
+ * Reads audio data using a single-shot BDL-based DMA capture into the
+ * provided buffer.  The capture engine records from the source previously
+ * selected via ac97_set_record_source().
+ *
+ * @buf:   Buffer to receive 16-bit signed PCM samples (must be large enough
+ *         for @bytes bytes).
+ * @bytes: Number of bytes to capture (must be a multiple of 2 for 16-bit).
+ * @rate:  Sample rate in Hz (8000–48000).
+ *
+ * Returns the number of bytes actually captured, or -1 on error.
+ */
+int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate)
+{
+    if (!ac97_dev_present || !buf || bytes == 0)
+        return -1;
+
+    /* Round to even number of bytes (16-bit samples) */
+    if (bytes & 1) bytes = (bytes + 1) & ~1u;
+    if (bytes > sizeof(cap_audio_buf)) bytes = sizeof(cap_audio_buf);
+
+    /* Set capture sample rate if different from current */
+    if (rate != 44100) {
+        uint16_t ext_audio = nam_in16(NAM_EXTENDED_AUDIO);
+        if (ext_audio & EA_VRA) {
+            nam_out16(NAM_PCM_IN_RATE, (uint16_t)rate);
+        }
+    }
+
+    /* Reset PCM-in DMA engine */
+    nabm_out8(NABM_PCM_IN_CR, CR_RR);
+    for (volatile uint32_t i = 0; i < 10000; i++);
+    nabm_out8(NABM_PCM_IN_CR, 0);
+
+    /* Fill capture BDL */
+    uint32_t remaining = bytes;
+    uint32_t offset    = 0;
+    int      n_entries = 0;
+
+    while (remaining > 0 && n_entries < BDL_ENTRIES) {
+        uint32_t chunk = remaining;
+        if (chunk > sizeof(cap_audio_buf[0])) chunk = sizeof(cap_audio_buf[0]);
+
+        cap_bdl[n_entries].addr    = (uint32_t)(uintptr_t)cap_audio_buf[n_entries];
+        cap_bdl[n_entries].samples = (uint16_t)(chunk / 2); /* 16-bit samples */
+        cap_bdl[n_entries].ctrl    = (n_entries == (BDL_ENTRIES - 1) || remaining - chunk == 0)
+                                     ? AC97_IOC : 0;
+        offset    += chunk;
+        remaining -= chunk;
+        n_entries++;
+    }
+
+    /* Program BDL address and LVI for capture */
+    nabm_out32(NABM_PCM_IN_BDBAR, (uint32_t)(uintptr_t)cap_bdl);
+    nabm_out8 (NABM_PCM_IN_LVI,   (uint8_t)(n_entries - 1));
+
+    /* Start capture DMA */
+    nabm_out8(NABM_PCM_IN_CR, CR_RPBM | CR_IOCE);
+
+    /* Wait until capture DMA completes (busy-wait; max ~30s timeout) */
+    uint32_t timeout = 0xFFFFFFF;
+    uint32_t captured = 0;
+    while (timeout--) {
+        uint16_t sr = nabm_in16(NABM_PCM_IN_SR);
+        if (sr & 0x0010) { /* IOC: interrupt on completion */
+            captured = bytes;
+            break;
+        }
+        __asm__ volatile("pause");
+    }
+
+    /* Stop capture DMA and clear status */
+    nabm_out8 (NABM_PCM_IN_CR, 0);
+    nabm_out16(NABM_PCM_IN_SR, 0x001E);  /* clear all status bits */
+
+    /* Copy captured data from audio buffers into caller's buffer */
+    if (captured > 0) {
+        uint32_t to_copy = bytes;
+        uint32_t src_off = 0;
+        for (int i = 0; i < n_entries && to_copy > 0; i++) {
+            uint32_t chunk = to_copy;
+            if (chunk > sizeof(cap_audio_buf[0])) chunk = sizeof(cap_audio_buf[0]);
+            memcpy((uint8_t *)buf + src_off, cap_audio_buf[i], chunk);
+            src_off  += chunk;
+            to_copy  -= chunk;
+        }
+    }
+
+    /* Restore playback sample rate if it was changed */
+    if (rate != 44100) {
+        nam_out16(NAM_PCM_IN_RATE, 44100);
+    }
+
+    return (int)captured;
+}
+
+/**
+ * ac97_set_record_source — Select the recording input source.
+ *
+ * @source: One of REC_SEL_MIC, REC_SEL_CD, REC_SEL_LINE_IN, etc.
+ *
+ * Selects which physical input (microphone, line-in, CD, etc.) is
+ * routed to the capture ADC path.  The setting takes effect immediately
+ * for subsequent capture_read() calls.
+ */
+void ac97_set_record_source(uint16_t source)
+{
+    if (!ac97_dev_present) return;
+    nam_out16(NAM_REC_SELECT, source);
+}
+
+/**
+ * ac97_set_record_gain — Set recording gain level.
+ *
+ * @left:   Left channel gain (0–15, where 0 = 0dB, 15 = +22.5dB).
+ * @right:  Right channel gain (0–15).
+ * @mute:   1 to mute recording, 0 to unmute.
+ *
+ * Recording gain is independent from playback volume.  The gain range
+ * follows the AC97 spec: steps of 1.5dB, 0 = 0dB, 15 = +22.5dB.
+ */
+void ac97_set_record_gain(uint8_t left, uint8_t right, int mute)
+{
+    if (!ac97_dev_present) return;
+
+    if (left  > 15) left  = 15;
+    if (right > 15) right = 15;
+
+    uint16_t val = (uint16_t)((uint16_t)left | ((uint16_t)right << 8));
+    if (mute) val |= AC97_MUTE_BIT;
+
+    nam_out16(NAM_REC_GAIN, val);
+}

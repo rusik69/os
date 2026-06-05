@@ -29,6 +29,28 @@
 #define SNDCTL_DSP_CHANNELS   0x00500006
 #define SNDCTL_DSP_GETBLKSIZE 0x00500004
 #define SNDCTL_DSP_SYNC       0x00500001
+#define SNDCTL_DSP_SETTRIGGER 0x00500010
+#define SNDCTL_DSP_GETTRIGGER 0x00500011
+#define SNDCTL_DSP_GETISPACE  0x00500012
+#define SNDCTL_DSP_GETOSPACE  0x00500013
+
+/* PCM trigger bits */
+#define PCM_ENABLE_INPUT  0x00000001
+#define PCM_ENABLE_OUTPUT 0x00000002
+
+/* OSS audio buffer info (for GETISPACE/GETOSPACE) */
+struct audio_buf_info {
+    int fragments;
+    int fragstotal;
+    int fragsize;
+    int bytes;
+};
+
+/* Recording source selectors for SNDCTL_DSP_SETRECORD_SOURCE */
+#define SNDCTL_DSP_SETRECORD_SOURCE 0x00500050
+#define SNDCTL_DSP_GETRECORD_SOURCE 0x00500051
+#define SNDCTL_DSP_SETRECORD_GAIN   0x00500052
+#define SNDCTL_DSP_GETRECORD_GAIN   0x00500053
 
 /* Audio format codes */
 #define AFMT_U8        8
@@ -41,6 +63,13 @@ static int g_sample_rate    = 44100;
 static int g_channels       = 2;   /* 1 = mono, 2 = stereo */
 static int g_sample_format  = AFMT_S16_LE;  /* 16-bit signed LE */
 static int g_sample_width   = 2;   /* bytes per sample (per channel) */
+
+/* Capture state */
+static int g_capture_rate    = 44100;
+static int g_record_source   = REC_SEL_MIC;
+static uint8_t g_record_gain_left  = 10; /* default ~15dB */
+static uint8_t g_record_gain_right = 10;
+static int g_record_mute    = 0;
 
 /* Simple DMA output buffer (single-frame) for synchronous playback.
  * For a production implementation this would be a proper ring buffer
@@ -123,10 +152,68 @@ static int dsp_write(void *priv, const void *data, uint32_t size)
 static int dsp_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_size)
 {
     (void)priv;
-    (void)buf;
-    (void)max_size;
-    /* Recording not supported yet */
-    if (out_size) *out_size = 0;
+    if (!buf || max_size == 0) {
+        if (out_size) *out_size = 0;
+        return 0;
+    }
+
+    /* If AC97 hardware is not present, return silence */
+    if (!ac97_present()) {
+        if (out_size) *out_size = 0;
+        return 0;
+    }
+
+    /* Apply recording gain/mute settings */
+    ac97_set_record_source((uint16_t)g_record_source);
+    ac97_set_record_gain(g_record_gain_left, g_record_gain_right, g_record_mute);
+
+    /* Capture audio samples from the selected input source.
+     * Use the configured sample format: for U8 we capture S16_LE then
+     * convert down; for S16_LE we capture directly. */
+    uint32_t capture_rate = (uint32_t)g_capture_rate;
+    uint32_t bytes_to_capture = max_size;
+
+    /* Clamp to a reasonable single-shot capture (128 KB max) */
+    if (bytes_to_capture > 128 * 1024)
+        bytes_to_capture = 128 * 1024;
+
+    /* Perform the hardware capture */
+    int captured = ac97_capture_read((int16_t *)buf, bytes_to_capture, capture_rate);
+
+    if (captured < 0) {
+        /* Capture failed — return silence */
+        memset(buf, 0, max_size > 4096 ? 4096 : max_size);
+        captured = (int)(max_size > 4096 ? 4096 : max_size);
+    }
+
+    /* Downmix stereo capture to mono if requested */
+    if (g_channels == 1 && captured > 0 && g_sample_format == AFMT_S16_LE) {
+        int16_t *samples = (int16_t *)buf;
+        int num_samples = captured / 2; /* total 16-bit samples (both channels) */
+        int stereo_pairs = num_samples / 2;
+        for (int i = 0; i < stereo_pairs; i++) {
+            int32_t sum = (int32_t)samples[i * 2] + (int32_t)samples[i * 2 + 1];
+            samples[i] = (int16_t)(sum / 2);
+        }
+        captured = stereo_pairs * 2; /* now 16-bit mono = 2 bytes per sample */
+    }
+
+    /* Convert S16_LE to U8 if requested */
+    if (g_sample_format == AFMT_U8 && captured > 0) {
+        int16_t *s16 = (int16_t *)buf;
+        uint8_t *u8  = (uint8_t *)buf;
+        int num_samples = captured / 2; /* number of 16-bit samples */
+        for (int i = 0; i < num_samples; i++) {
+            /* S16_LE range -32768..32767 -> U8 range 0..255 */
+            int32_t val = ((int32_t)s16[i] + 32768) >> 8;
+            if (val < 0) val = 0;
+            if (val > 255) val = 255;
+            u8[i] = (uint8_t)val;
+        }
+        captured = num_samples; /* now 1 byte per sample */
+    }
+
+    if (out_size) *out_size = (uint32_t)captured;
     return 0;
 }
 

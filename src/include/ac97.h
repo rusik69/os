@@ -15,6 +15,47 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate);
 /* Returns 1 if AC'97 device is present. */
 int ac97_present(void);
 
+/* ── Capture (Recording) API ─────────────────────────────────────── */
+
+/**
+ * ac97_capture_read — Capture audio samples from the selected input source.
+ *
+ * Performs a single-shot DMA capture, reading samples from the currently
+ * selected record source (microphone, line-in, etc.) into the provided buffer.
+ *
+ * @buf:   16-bit signed PCM output buffer (must hold at least @bytes).
+ * @bytes: Number of bytes to capture (should be even for 16-bit samples).
+ * @rate:  Sample rate in Hz (8000–48000, default 44100).
+ *
+ * Returns the number of bytes captured on success, or -1 on error.
+ * On timeout (no audio source connected), returns 0.
+ */
+int ac97_capture_read(int16_t *buf, uint32_t bytes, uint32_t rate);
+
+/**
+ * ac97_set_record_source — Select recording input source.
+ * @source: One of REC_SEL_MIC, REC_SEL_CD, REC_SEL_LINE_IN, etc.
+ */
+void ac97_set_record_source(uint16_t source);
+
+/**
+ * ac97_set_record_gain — Set recording gain level.
+ * @left:   Left channel gain (0–15, 0 = 0dB, 15 = +22.5dB).
+ * @right:  Right channel gain (0–15).
+ * @mute:   1 to mute recording, 0 to unmute.
+ */
+void ac97_set_record_gain(uint8_t left, uint8_t right, int mute);
+
+/* Record source select constants (for ac97_set_record_source) */
+#define REC_SEL_MIC     0x0000
+#define REC_SEL_CD      0x0101
+#define REC_SEL_VIDEO   0x0202
+#define REC_SEL_AUX     0x0303
+#define REC_SEL_LINE_IN 0x0404
+#define REC_SEL_STEREO  0x0505
+#define REC_SEL_MONO    0x0606
+#define REC_SEL_PHONE   0x0707
+
 /* ── Mixer control ───────────────────────────────────────────────── */
 
 /** AC'97 mixer channels (NAM register indices) */
