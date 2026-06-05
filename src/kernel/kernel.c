@@ -104,6 +104,7 @@
 #include "workqueue.h"
 #include "rng.h"
 #include "fsnotify.h"
+#include "kprobes.h"
 #include "module.h"
 #include "module_signature.h"
 #include "initcall.h"
@@ -280,7 +281,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Exception handlers — registered AFTER IST stacks are live */
     fault_init();
-    kprintf("[OK] Exception handlers registered (DF/NMI/MCE/PF)\n");
+    kprintf("[OK] Exception handlers registered (DF/NMI/MCE/PF/BP/DB)\n");
+
+    /* Kprobes dynamic breakpoint system (Item 203) */
+    kprobes_init();
 
     /* Machine Check Architecture — enable MCA banks for hardware error detection */
     mce_init();

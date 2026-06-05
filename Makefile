@@ -325,6 +325,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/stack_guard.c \
          src/kernel/rseq.c \
          src/kernel/kcov.c \
+         src/kernel/kprobes.c \
          src/kernel/mce.c \
          src/kernel/kasan_light.c \
          src/kernel/kmemleak.c \

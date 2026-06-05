@@ -10,6 +10,7 @@
 #include "smp.h"
 #include "mce.h"
 #include "signal.h"
+#include "kprobes.h"
 #include "string.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
@@ -464,6 +465,9 @@ void fault_init(void) {
     idt_register_handler(8, double_fault_handler);
     idt_register_handler(2, nmi_handler);
     idt_register_handler(18, mce_handler);
+    /* Kprobes: INT3 (#BP, vector 3) and single-step (#DB, vector 1) */
+    idt_register_handler(3, kprobe_int3_handler);
+    idt_register_handler(1, kprobe_debug_handler);
 }
 
 /* ── Frame-pointer-based backtrace ──────────────────────────── */
