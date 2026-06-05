@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ '**' ]
 
 env:
   CCACHE_DIR: /tmp/ccache
@@ -209,6 +209,26 @@ jobs:
             build/kernel.bin
             build/kernel.elf
           if-no-files-found: warn
+
+  # ── Code formatting check ───────────────────────────────────────────
+  format-check:
+    name: Code formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-format-18 2>&1 | tail -3
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
+
+      - name: Check code formatting
+        run: |
+          git fetch origin --depth=1
+          make format-check FORMAT_BASE_REF="origin/main" || \
+            make format-check FORMAT_BASE_REF="origin/master"
 
   # ── Host-side libc unit tests ───────────────────────────────────────
   libc-test:
