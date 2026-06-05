@@ -11,7 +11,7 @@
 #include "module.h"      /* request_module() for protocol autoloading */
 #include "errno.h"
 #include "af_packet.h"    /* AF_PACKET raw packet sockets (Item 386) */
-
+#include "netlink.h"       /* AF_NETLINK kernel-userspace sockets (Item 384) */
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
 
@@ -19,6 +19,7 @@ void socket_init(void) {
     memset(socket_table, 0, sizeof(socket_table));
     af_unix_init();
     af_packet_init();
+    af_netlink_init();
 }
 
 /* Convert slot to fd number (fd = slot + 100 to avoid conflict with normal fds) */
@@ -62,6 +63,10 @@ void sock_free(int fd) {
     if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
         packet_close(fd);
     }
+    /* Destroy AF_NETLINK socket if present */
+    if (s->domain == AF_NETLINK) {
+        netlink_close(fd);
+    }
     if (s->conn_id >= 0) net_tcp_close(s->conn_id);
     s->in_use = 0;
     s->state = SOCK_STATE_FREE;
@@ -84,7 +89,7 @@ int sys_socket_impl(int domain, int type, int protocol) {
 
     if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX) {
         /* Allow AF_PACKET / AF_UNSPEC for raw packet sockets */
-        if (domain != 0 && domain != 17) return -1;
+        if (domain != 0 && domain != 17 && domain != AF_NETLINK) return -1;
     }
     int slot = sock_alloc();
     if (slot < 0) return -1;
@@ -121,6 +126,14 @@ int sys_socket_impl(int domain, int type, int protocol) {
         if (ret < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
     }
 
+    /* For AF_NETLINK: create a netlink socket endpoint */
+    if (domain == AF_NETLINK) {
+        int proto = (int)protocol;
+        if (proto < 0) proto = NETLINK_GENERIC; /* Default protocol */
+        int ret = netlink_create(sock_fd_from_slot(slot), proto);
+        if (ret < 0) { sock_free(sock_fd_from_slot(slot)); return -1; }
+    }
+
     return sock_fd_from_slot(slot);
 }
 
@@ -143,6 +156,14 @@ int sys_bind_impl(int sockfd, const struct sockaddr_in *addr) {
         const struct sockaddr_ll *sll = (const struct sockaddr_ll *)addr;
         /* Bind to interface index (0 = any interface) */
         int ret = packet_bind(sockfd, (int)sll->sll_ifindex);
+        if (ret == 0) s->state = SOCK_STATE_BOUND;
+        return ret;
+    }
+
+    /* AF_NETLINK: dispatch to netlink handler */
+    if (s->domain == AF_NETLINK) {
+        const struct sockaddr_nl *nl_addr = (const struct sockaddr_nl *)addr;
+        int ret = netlink_bind(sockfd, nl_addr);
         if (ret == 0) s->state = SOCK_STATE_BOUND;
         return ret;
     }
@@ -585,6 +606,11 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
             int sent = packet_send(sockfd, data, (int)(len > 2048 ? 2048 : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
             total += (uint64_t)sent;
+        } else if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
+            /* AF_NETLINK send */
+            int sent = netlink_send(sockfd, data, (int)(len > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : len));
+            if (sent < 0) return total > 0 ? (int)total : -1;
+            total += (uint64_t)sent;
         } else if (s->type == SOCK_STREAM && s->conn_id >= 0) {
             int sent = net_tcp_send(s->conn_id, data, (uint16_t)(len > 65535 ? 65535 : len));
             if (sent < 0) return total > 0 ? (int)total : -1;
@@ -647,6 +673,20 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
             sll->sll_ifindex = (int)ifindex;
             sll->sll_halen   = 6; /* Ethernet */
             msg->msg_namelen = sizeof(struct sockaddr_ll);
+        }
+        return n;
+    }
+
+    /* AF_NETLINK: netlink message receive */
+    if (s->domain == AF_NETLINK && netlink_is_valid_fd(sockfd)) {
+        int n = netlink_recv(sockfd, buf, (int)(bufsize > NETLINK_MAX_PAYLOAD ? NETLINK_MAX_PAYLOAD : bufsize));
+        if (n < 0) return -1;
+        if (msg->msg_name && n >= 0) {
+            struct sockaddr_nl *snl = (struct sockaddr_nl *)msg->msg_name;
+            memset(snl, 0, sizeof(struct sockaddr_nl));
+            snl->nl_family = AF_NETLINK;
+            snl->nl_pid = 0; /* Kernel */
+            msg->msg_namelen = sizeof(struct sockaddr_nl);
         }
         return n;
     }
