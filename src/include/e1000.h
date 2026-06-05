@@ -3,8 +3,20 @@
 
 #include "types.h"
 
-#define E1000_VENDOR  0x8086
-#define E1000_DEVICE  0x100E  /* 82540EM - QEMU default */
+#define E1000_VENDOR    0x8086
+#define E1000_DEVICE    0x100E  /* 82540EM - QEMU default */
+#define E1000_DEV_82574 0x10D3  /* 82574L - supports multi-queue RSS */
+
+/* Maximum number of RX/TX queues supported (82574: up to 2) */
+#define E1000_MAX_QUEUES 2
+
+/* RSS hash types */
+#define E1000_RSS_HASH_TCP_IPV4  (1 << 1)
+#define E1000_RSS_HASH_IPV4      (1 << 2)
+#define E1000_RSS_HASH_TCP_IPV6  (1 << 3)
+#define E1000_RSS_HASH_IPV6      (1 << 4)
+#define E1000_RSS_HASH_IPV6_EX   (1 << 5)
+#define E1000_RSS_HASH_TCP_IPV6_EX (1 << 6)
 
 int e1000_init(void);
 int e1000_send(const void *data, uint16_t len);
@@ -13,5 +25,8 @@ void e1000_get_mac(uint8_t *mac);
 int e1000_is_present(void);
 void e1000_irq_rearm(void);
 void e1000_exit(void);
+
+/* Return the number of RX queues active */
+int e1000_rx_queue_count(void);
 
 #endif
