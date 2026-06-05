@@ -13,6 +13,9 @@
 #include "page_cache.h"
 #include "process_rlimit.h"
 #include "vfs.h"
+#include "workqueue.h"
+#include "string.h"
+#include "spinlock.h"
 
 /* OOM score adjustment table (by PID) */
 #define OOM_ADJ_MIN  (-16)
@@ -238,6 +241,18 @@ static int is_oom_safe(struct process *p) {
     return 0;
 }
 
+/* ── OOM Reaper forward declarations ────────────────────────────────── */
+#define OOM_VICTIM_MAX 16
+static struct {
+    uint32_t pid;
+    int      in_use;
+} oom_victim_table[OOM_VICTIM_MAX];
+static spinlock_t oom_victim_lock;
+
+static void oom_victim_add(uint32_t pid);
+static void oom_victim_remove(uint32_t pid);
+static void oom_reap_process(void *arg);
+
 static uint32_t select_victim(void) {
     struct process *table = process_get_table();
     uint32_t victim_pid = 0;
@@ -301,6 +316,14 @@ int oom_kill(uint64_t needed_pages) {
 
     oom_kill_count++;
 
+    /* Register the victim for async reaping and queue workqueue item.
+     * The reaper will walk the victim's page tables and free pages
+     * immediately, without waiting for the victim process to run and
+     * exit naturally.  This allows the OOM-triggering allocation to
+     * retry sooner. */
+    oom_victim_add(victim_pid);
+    workqueue_schedule(oom_reap_process, (void *)(uintptr_t)victim_pid);
+
     /* Brief yield so the killed process can exit and free memory */
     scheduler_yield();
     return 1;
@@ -337,6 +360,11 @@ int oom_kill_victim(void) {
 
     signal_send(victim_pid, SIGKILL);
     oom_kill_count++;
+
+    /* Queue async reaper to reclaim victim's memory immediately */
+    oom_victim_add(victim_pid);
+    workqueue_schedule(oom_reap_process, (void *)(uintptr_t)victim_pid);
+
     scheduler_yield();
     return 1;
 }
@@ -405,7 +433,125 @@ void oom_print_status(void) {
     }
 }
 
-/* ── OOM Reaper kthread ─────────────────────────────────────────────── */
+/* ── OOM Reaper — Async victim memory reclamation ───────────────────── */
+
+/*
+ * Track which PIDs have been marked as OOM victims so the asynchronous
+ * reaper work item can safely reclaim their memory.  A PID is inserted
+ * when oom_kill sends SIGKILL and removed after reaping completes.
+ *
+ * Variables (oom_victim_table, oom_victim_lock) and function forward
+ * declarations are above select_victim().  Only the implementations
+ * live here to avoid "defined but not used" warnings.
+ */
+
+/* Add a PID to the victim table (for async reaping) */
+static void oom_victim_add(uint32_t pid) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&oom_victim_lock, &irq_flags);
+    for (int i = 0; i < OOM_VICTIM_MAX; i++) {
+        if (!oom_victim_table[i].in_use) {
+            oom_victim_table[i].pid = pid;
+            oom_victim_table[i].in_use = 1;
+            break;
+        }
+    }
+    spinlock_irqsave_release(&oom_victim_lock, irq_flags);
+}
+
+/* Remove a PID from the victim table after reaping completes */
+static void oom_victim_remove(uint32_t pid) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&oom_victim_lock, &irq_flags);
+    for (int i = 0; i < OOM_VICTIM_MAX; i++) {
+        if (oom_victim_table[i].in_use && oom_victim_table[i].pid == pid) {
+            oom_victim_table[i].in_use = 0;
+            break;
+        }
+    }
+    spinlock_irqsave_release(&oom_victim_lock, irq_flags);
+}
+
+/*
+ * oom_reap_process — Asynchronously reclaim a killed process's memory.
+ *
+ * Called from a workqueue context after OOM sends SIGKILL.  Actively
+ * walks the victim's user page tables and frees all physical pages,
+ * bypassing the normal process-exit path so that memory becomes available
+ * immediately — even if the victim process is stuck (e.g. in D state
+ * waiting for I/O) and hasn't had a chance to run yet.
+ *
+ * Safety:
+ *   - The victim's pml4 pointer is atomically set to NULL so no other
+ *     kernel code will try to walk it concurrently.
+ *   - If the victim is currently running on another CPU, the worst case
+ *     is that it continues executing for a few instructions, then faults
+ *     when it touches userspace — the fault handler sends SIGKILL.
+ *   - After freeing, the dentry cache is also shrunk.
+ */
+static void oom_reap_process(void *arg)
+{
+    uint32_t victim_pid = (uint32_t)(uintptr_t)arg;
+
+    struct process *victim = process_get_by_pid(victim_pid);
+    if (!victim || victim->state == PROCESS_UNUSED) {
+        oom_victim_remove(victim_pid);
+        return;
+    }
+
+    /* Atomically steal the pml4 pointer so no one else walks it */
+    uint64_t *pml4_to_free = NULL;
+    if (victim->is_user && victim->pml4) {
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&oom_victim_lock, &irq_flags);
+        if (victim->pml4) {
+            pml4_to_free = victim->pml4;
+            victim->pml4 = NULL;   /* prevent concurrent access */
+        }
+        spinlock_irqsave_release(&oom_victim_lock, irq_flags);
+    }
+
+    uint64_t freed_pages = 0;
+
+    if (pml4_to_free) {
+        /* Walk and free all user pages via PMM refcount.
+         * vmm_destroy_user_pml4 handles 4KB, 2MB huge pages, and
+         * skips the shared zero page. */
+        /* Count pages first for the log message */
+        uint64_t rss = vmm_count_user_pages(pml4_to_free, NULL, NULL);
+        freed_pages = rss;
+
+        /* Free all page-table pages and leaf frames */
+        vmm_destroy_user_pml4(pml4_to_free);
+
+        kprintf("[OOM] Reaper: reclaimed %llu pages from pid=%u \"%s\"\n",
+                (unsigned long long)freed_pages,
+                victim_pid,
+                victim->name ? victim->name : "?");
+    }
+
+    /* If the victim is already a zombie, clean it up completely.
+     * Otherwise mark it as reaped; process_exit_code will finish
+     * the job when the victim finally runs. */
+    if (victim->state == PROCESS_ZOMBIE && !victim->pml4) {
+        /* process_cleanup has already been called for zombies,
+         * but if we freed the pml4 above we're done. */
+    } else if (victim->state != PROCESS_UNUSED) {
+        /* The victim hasn't exited yet.  Setting pml4 = NULL ensures
+         * that when it eventually runs, any userspace access will
+         * page-fault immediately, which signals SIGKILL again.
+         * The process_exit path will skip vmm_destroy_user_pml4
+         * because pml4 is already NULL. */
+    }
+
+    /* Also shrink dentry cache to reclaim additional memory */
+    int evicted = dcache_shrink(DCACHE_SIZE / 2);
+    if (evicted > 0) {
+        kprintf("[OOM] Reaper: also freed %d dentry cache entries\n", evicted);
+    }
+
+    oom_victim_remove(victim_pid);
+}
 
 int oom_reaper_running = 0;
 
@@ -439,6 +585,10 @@ static void oom_reaper_task(void *arg) {
 
 int oom_reaper_init(void) {
     if (oom_reaper_running) return -1;
+
+    /* Initialise victim table */
+    memset(oom_victim_table, 0, sizeof(oom_victim_table));
+    spinlock_init(&oom_victim_lock);
 
     struct process *reaper = kthread_create(oom_reaper_task, NULL, "oom_reaper");
     if (!reaper) {
