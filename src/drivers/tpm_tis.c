@@ -23,6 +23,7 @@
 #include "timer.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "rng.h"        /* rng_add_entropy — seed kernel RNG with TPM entropy */
 #include "export.h"
 #include "spinlock.h"
 #include "module.h"
@@ -596,6 +597,28 @@ int tpm_init(void) {
 
     kprintf("[TPM] TPM 2.0 device ready (DID=0x%04x VID=0x%04x rev=0x%02x)\n",
             dev->did, dev->vid, dev->revision);
+
+    /* ── Seed kernel RNG with TPM hardware entropy (Item 351) ────
+     *
+     * The TPM contains a hardware random number generator that provides
+     * true entropy.  We request up to 32 bytes of randomness and feed
+     * them into the kernel's PRNG via rng_add_entropy().  This
+     * substantially improves the quality of the RNG seed compared to
+     * the boot-time timer-based seed alone.
+     *
+     * If TPM2_GetRandom fails (e.g. TPM not yet fully initialized or
+     * unowned), we just log the event — the RNG already has a basic
+     * seed from timer jitter and will still function correctly. */
+    uint8_t tpm_entropy[32];
+    int ent_ret = tpm2_get_random(tpm_entropy, sizeof(tpm_entropy));
+    if (ent_ret > 0) {
+        rng_add_entropy(tpm_entropy, (uint32_t)ent_ret);
+        kprintf("[TPM] seeded kernel RNG with %d bytes of hardware entropy\n",
+                ent_ret);
+    } else {
+        kprintf("[TPM] TPM2_GetRandom failed (%d) — RNG seed from timer only\n",
+                ent_ret);
+    }
 
     return 0;
 }
