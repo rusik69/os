@@ -172,4 +172,40 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate) {
     if (rate != 44100) nam_out16(NAM_SAMPLE_RATE, 44100);
 }
 
+/* ── Mixer control ────────────────────────────────────────────────── */
+
+/* AC97 NAM volume register bits */
+#define AC97_VOL_MASK   0x001F   /* bits 0-4: left vol, bits 8-12: right vol */
+#define AC97_MUTE_BIT   0x8000   /* bit 15: mute */
+
+void ac97_set_volume(uint16_t channel, uint8_t left, uint8_t right, int mute) {
+    if (!ac97_dev_present)
+        return;
+
+    /* Clamp to valid range (0–31 per AC97 spec) */
+    if (left  > 31) left  = 31;
+    if (right > 31) right = 31;
+
+    uint16_t val = (uint16_t)((uint16_t)left | ((uint16_t)right << 8));
+    if (mute)
+        val |= AC97_MUTE_BIT;
+
+    nam_out16(channel, val);
+}
+
+void ac97_get_volume(uint16_t channel, uint8_t *left, uint8_t *right, int *mute) {
+    if (!ac97_dev_present) {
+        if (left)  *left  = 0;
+        if (right) *right = 0;
+        if (mute)  *mute  = 1;
+        return;
+    }
+
+    uint16_t val = nam_in16(channel);
+
+    if (left)  *left  = (uint8_t)(val & AC97_VOL_MASK);
+    if (right) *right = (uint8_t)((val >> 8) & AC97_VOL_MASK);
+    if (mute)  *mute  = (val & AC97_MUTE_BIT) ? 1 : 0;
+}
+
 int ac97_present(void) { return ac97_dev_present; }

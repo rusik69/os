@@ -15,4 +15,34 @@ void ac97_play_pcm(const int16_t *samples, uint32_t len, uint32_t rate);
 /* Returns 1 if AC'97 device is present. */
 int ac97_present(void);
 
+/* ── Mixer control ───────────────────────────────────────────────── */
+
+/** AC'97 mixer channels (NAM register indices) */
+#define AC97_MIXER_MASTER   0x02   /* Master volume */
+#define AC97_MIXER_PCM      0x18   /* PCM output volume */
+#define AC97_MIXER_MIC      0x0E   /* Microphone volume */
+#define AC97_MIXER_LINE_IN  0x10   /* Line input volume */
+#define AC97_MIXER_CD       0x12   /* CD audio volume */
+
+/**
+ * ac97_set_volume — Set playback volume for a given mixer channel.
+ * @channel:  NAM register offset (e.g. AC97_MIXER_MASTER, AC97_MIXER_PCM).
+ * @left:     Left channel volume (0 = max, 31 = min, per AC97 spec).
+ * @right:    Right channel volume (0 = max, 31 = min).
+ * @mute:     1 to mute the channel, 0 to unmute.
+ *
+ * Writes the combined volume+mute value to the NAM register.
+ * If mute is 1, the mute bit (bit 15) is OR'd into the written value.
+ */
+void ac97_set_volume(uint16_t channel, uint8_t left, uint8_t right, int mute);
+
+/**
+ * ac97_get_volume — Read current playback volume for a mixer channel.
+ * @channel:  NAM register offset.
+ * @left:     Receives left channel volume (0 = max, 31 = min).
+ * @right:    Receives right channel volume (0 = max, 31 = min).
+ * @mute:     Receives 1 if muted, 0 otherwise.
+ */
+void ac97_get_volume(uint16_t channel, uint8_t *left, uint8_t *right, int *mute);
+
 #endif

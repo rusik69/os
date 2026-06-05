@@ -877,6 +877,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     extern void sound_oss_init(void);
     sound_oss_init();
 
+    /* Sound core mixer interface — exposes per-channel volume/mute
+     * controls under /sys/class/sound/controlC0/.  Must be initialised
+     * after AC97 so it can sync initial mixer state from hardware. */
+    extern void sound_core_init(void);
+    sound_core_init();
+
     /* Initialise the netdevice interface layer before any NIC driver
      * so they can register themselves as net devices during init. */
     netdevice_init();
