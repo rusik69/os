@@ -35,7 +35,7 @@ void *memmem(const void *haystack, size_t haystacklen,
              const void *needle, size_t needlelen);
 
 /* Return error string for errno value (POSIX strerror) */
-const char *strerror(int errnum);
+char *strerror(int errnum);
 
 /* Return human-readable signal name string */
 const char *strsignal(int signum);
