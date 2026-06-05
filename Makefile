@@ -445,6 +445,12 @@ gui-objs := gui/gui gui/gui_shell gui/gui_task gui/gui_widgets
 # Network protocol modules (M60) — convert protocols to loadable .ko
 # IPIP: IP-in-IP tunneling protocol (RFC 2003)
 obj-m += net/ipip.ko
+# GRE: Generic Routing Encapsulation tunnel (RFC 2784)
+obj-m += net/gre.ko
+# VXLAN: Virtual eXtensible LAN tunnel (RFC 7348)
+obj-m += net/vxlan.ko
+# Bridge: Learning bridge with STP (802.1D) and IGMP snooping
+obj-m += net/bridge.ko
 obj-m += drivers/virtio_blk.ko drivers/virtio_net.ko
 
 # NVMe PCIe SSD driver as module (M56)

@@ -43,6 +43,7 @@ struct bridge {
 /* ── API ────────────────────────────────────────────────────────── */
 
 int  bridge_init(void);
+void bridge_exit(void);
 int  bridge_add_port(int port_iface);
 int  bridge_remove_port(int port_iface);
 void bridge_handle(const uint8_t *frame, int len, int ingress_port);

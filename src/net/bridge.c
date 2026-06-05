@@ -25,17 +25,18 @@
 #include "net_igmp.h"    /* IGMP type constants */
 
 static struct bridge g_bridge;
+static int g_stp_timer_id = -1;  /* timer handle for STP tick, used for cleanup */
 
 /* ── STP timer callback ──────────────────────────────────────────── */
 
 static void stp_timer_cb(void *arg) {
     (void)arg;
     stp_tick();
-    /* Re-schedule for next tick */
-    timer_schedule(stp_timer_cb, NULL, 1);
+    /* Re-schedule for next tick; save new timer ID for cleanup */
+    g_stp_timer_id = timer_schedule(stp_timer_cb, NULL, 1);
 }
 
-/* ── Initialisation ──────────────────────────────────────────────── */
+/* ── Initialisation / Cleanup ────────────────────────────────────── */
 
 int bridge_init(void) {
     if (g_bridge.initialized) return -1;
@@ -47,10 +48,28 @@ int bridge_init(void) {
     stp_init(default_mac, 32768);
 
     /* Schedule the STP tick timer (fires every tick, drives state machine) */
-    timer_schedule(stp_timer_cb, NULL, 1);
+    g_stp_timer_id = timer_schedule(stp_timer_cb, NULL, 1);
 
     kprintf("[OK] Bridge initialized (STP + IGMP snooping enabled)\n");
     return 0;
+}
+
+void bridge_exit(void) {
+    if (!g_bridge.initialized) return;
+
+    /* Cancel the STP tick timer */
+    if (g_stp_timer_id >= 0) {
+        timer_cancel(g_stp_timer_id);
+        g_stp_timer_id = -1;
+    }
+
+    /* Flush forwarding database */
+    bridge_fdb_flush();
+
+    /* Clear state */
+    g_bridge.initialized = 0;
+    g_bridge.num_ports = 0;
+    kprintf("[OK] Bridge shut down\n");
 }
 
 /* ── Port management ─────────────────────────────────────────────── */
@@ -447,3 +466,32 @@ void bridge_handle(const uint8_t *frame, int len, int ingress_port)
     }
     /* Else: destination is on same port — drop */
 }
+
+/* ── Loadable module support (M60) ───────────────────────────────── */
+#ifdef MODULE
+#include "export.h"
+#include "module.h"
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Learning network bridge with STP (802.1D) and IGMP snooping — loadable kernel module");
+MODULE_ALIAS("net-bridge");
+
+int init_module(void)
+{
+    return bridge_init();
+}
+
+void cleanup_module(void)
+{
+    bridge_exit();
+}
+
+EXPORT_SYMBOL(bridge_init);
+EXPORT_SYMBOL(bridge_exit);
+EXPORT_SYMBOL(bridge_add_port);
+EXPORT_SYMBOL(bridge_remove_port);
+EXPORT_SYMBOL(bridge_handle);
+EXPORT_SYMBOL(bridge_fdb_lookup);
+EXPORT_SYMBOL(bridge_fdb_learn);
+#endif /* MODULE */
