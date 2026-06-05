@@ -3515,16 +3515,49 @@ static uint64_t sys_umask(uint64_t mask) {
 
 static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
     const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
+    if (!path) return (uint64_t)-ENOENT;
 
-    /* Simple: just create an empty file (FIFOs/devices not supported yet) */
-    /* For named FIFOs we could create a pipe-backed file */
-    if (vfs_create(path, FS_TYPE_FILE) < 0)
-        return (uint64_t)-1;
+    /* Extract the file type from the POSIX mode bits */
+    uint32_t file_type = (mode & S_IFMT);
 
-    (void)mode;
-    (void)dev;
-    return 0;
+    switch (file_type) {
+        case S_IFCHR: {
+            /* Character device node */
+            uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
+            uint16_t minor = (uint16_t)(dev & 0xFF);
+            if (vfs_mknod(path, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+                return (uint64_t)-1;
+            return 0;
+        }
+        case S_IFBLK: {
+            /* Block device node */
+            uint16_t major = (uint16_t)((dev >> 8) & 0xFF);
+            uint16_t minor = (uint16_t)(dev & 0xFF);
+            if (vfs_mknod(path, (uint16_t)(mode & 0x0FFF), major, minor) < 0)
+                return (uint64_t)-1;
+            return 0;
+        }
+        case S_IFREG:
+        case 0: {
+            /* Regular file (default when no type bits set) */
+            if (vfs_create(path, FS_TYPE_FILE) < 0)
+                return (uint64_t)-1;
+            return 0;
+        }
+        case S_IFDIR:
+            /* Directory — use vfs_create with FS_TYPE_DIR */
+            if (vfs_create(path, FS_TYPE_DIR) < 0)
+                return (uint64_t)-1;
+            return 0;
+        case S_IFIFO:
+            /* Named FIFO — not yet supported, could use pipe infrastructure */
+            return (uint64_t)-EOPNOTSUPP;
+        case S_IFSOCK:
+            /* Socket — not supported via mknod */
+            return (uint64_t)-EOPNOTSUPP;
+        default:
+            return (uint64_t)-EINVAL;
+    }
 }
 
 static void netstat_tcp_cb(uint16_t lport, uint32_t rip, uint16_t rport, int state) {

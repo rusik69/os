@@ -71,7 +71,7 @@ void dcache_add(const char *path, void *mount,
                 uint8_t type, uint32_t size,
                 uint16_t uid, uint16_t gid, uint16_t mode,
                 uint32_t mtime, uint32_t atime, uint32_t nlink,
-                uint32_t ino)
+                uint32_t ino, uint16_t dev_major, uint16_t dev_minor)
 {
     if (!path || !path[0])
         return;
@@ -114,6 +114,8 @@ void dcache_add(const char *path, void *mount,
     e->atime   = atime;
     e->nlink   = nlink;
     e->ino     = ino;
+    e->dev_major = dev_major;
+    e->dev_minor = dev_minor;
     e->last_tick = dcache_global_tick++;
     e->in_use  = 1;
 
@@ -857,6 +859,8 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
         st->atime = de->atime;
         st->nlink = de->nlink;
         st->ino   = de->ino;
+        st->dev_major = de->dev_major;
+        st->dev_minor = de->dev_minor;
         return 0;
     }
 
@@ -869,7 +873,7 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
         dcache_add(ap, (void *)m, st->type, st->size,
                    st->uid, st->gid, st->mode,
                    st->mtime, st->atime, st->nlink,
-                   st->ino);
+                   st->ino, st->dev_major, st->dev_minor);
     }
     return r;
 }

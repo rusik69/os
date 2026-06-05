@@ -31,6 +31,8 @@
 #define TMPFS_TYPE_FILE  1
 #define TMPFS_TYPE_DIR   2
 #define TMPFS_TYPE_LINK  3
+#define TMPFS_TYPE_CHR   4  /* character device node */
+#define TMPFS_TYPE_BLK   5  /* block device node */
 
 /* Device number for mknod */
 struct tmpfs_devno {

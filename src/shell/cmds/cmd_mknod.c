@@ -4,9 +4,16 @@
 #include "string.h"
 #include "libc.h"
 
+/* Device node type constants (from vfs.h S_IFCHR/S_IFBLK) */
+#define MKNOD_S_IFCHR 0020000
+#define MKNOD_S_IFBLK 0060000
+
+/* Declared in kernel/vfs.c */
+extern int vfs_mknod(const char *path, uint16_t mode,
+                     uint16_t dev_major, uint16_t dev_minor);
+
 void cmd_mknod(const char *args) {
     if (!args || !*args) { kprintf("Usage: mknod <path> [b|c] <major> <minor>\n"); return; }
-    if (!ata_is_present()) { kprintf("No disk\n"); return; }
 
     char path[64], type_c;
     int major = 0, minor = 0;
@@ -37,12 +44,19 @@ void cmd_mknod(const char *args) {
     else strncpy(fpath, path, 63);
     fpath[63] = '\0';
 
-    /* Just create a regular file as a placeholder; real device nodes need devfs */
-    if (fs_create(fpath, FS_TYPE_FILE) < 0) {
-        kprintf("mknod: cannot create '%s'\n", fpath);
+    /* Build mode: S_IFCHR|0666 or S_IFBLK|0666 with the given major/minor */
+    uint16_t sif_type = (type_c == 'b') ? MKNOD_S_IFBLK : MKNOD_S_IFCHR;
+    uint16_t mode = (uint16_t)(sif_type | 0666);
+    uint16_t dev_major = (uint16_t)(major & 0xFF);
+    uint16_t dev_minor = (uint16_t)(minor & 0xFF);
+
+    if (vfs_mknod(fpath, mode, dev_major, dev_minor) < 0) {
+        kprintf("mknod: cannot create '%s' (type %c, major %d, minor %d)\n",
+                fpath, type_c, major, minor);
         shell_set_exit_status(1);
         return;
     }
-    kprintf("mknod: created '%s' (type %c, major %d, minor %d)\n", fpath, type_c, major, minor);
+    kprintf("mknod: created '%s' (type %c, major %d, minor %d)\n",
+            fpath, type_c, major, minor);
     shell_set_exit_status(0);
 }

@@ -199,10 +199,20 @@ static int tmpfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     int idx = find_inode(path);
     if (idx < 0) return -1;
     st->size = inodes[idx].size;
-    st->type = (inodes[idx].type == TMPFS_TYPE_DIR) ? 2 : 1;
+    switch (inodes[idx].type) {
+        case TMPFS_TYPE_DIR:  st->type = VFS_TYPE_DIR;  break;
+        case TMPFS_TYPE_LINK: st->type = VFS_TYPE_LINK; break;
+        case TMPFS_TYPE_CHR:  st->type = VFS_TYPE_CHR;  break;
+        case TMPFS_TYPE_BLK:  st->type = VFS_TYPE_BLK;  break;
+        default:              st->type = VFS_TYPE_FILE;  break;
+    }
     st->uid = inodes[idx].uid;
     st->gid = inodes[idx].gid;
     st->mode = inodes[idx].mode;
+    st->dev_major = inodes[idx].dev.major;
+    st->dev_minor = inodes[idx].dev.minor;
+    st->ino = (uint32_t)idx;
+    st->nlink = 1;
     return 0;
 }
 
@@ -214,8 +224,20 @@ static int tmpfs_readdir(void *priv, const char *path) {
     for (int i = 0; i < TMPFS_MAX_INODES; i++) {
         if (!inodes[i].in_use) continue;
         if (inodes[i].parent != (uint32_t)idx) continue;
-        const char *t = (inodes[i].type == TMPFS_TYPE_DIR) ? "D" : "F";
-        kprintf("  [%s] %s (%u bytes)\n", t, inodes[i].name, inodes[i].size);
+        const char *t;
+        switch (inodes[i].type) {
+            case TMPFS_TYPE_DIR:  t = "D"; break;
+            case TMPFS_TYPE_LINK: t = "L"; break;
+            case TMPFS_TYPE_CHR:  t = "C"; break;
+            case TMPFS_TYPE_BLK:  t = "B"; break;
+            default:              t = "F"; break;
+        }
+        if (inodes[i].type == TMPFS_TYPE_CHR || inodes[i].type == TMPFS_TYPE_BLK) {
+            kprintf("  [%s] %s (%d,%d)\n", t, inodes[i].name,
+                    inodes[i].dev.major, inodes[i].dev.minor);
+        } else {
+            kprintf("  [%s] %s (%u bytes)\n", t, inodes[i].name, inodes[i].size);
+        }
     }
     return 0;
 }
@@ -337,7 +359,13 @@ static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev
 
     int idx = alloc_inode();
     if (idx < 0) return -1;
-    inodes[idx].type = TMPFS_TYPE_FILE;  /* non-file, non-dir: treated as special */
+    /* Determine device node type from mode bits */
+    if (mode & S_IFCHR)
+        inodes[idx].type = TMPFS_TYPE_CHR;
+    else if (mode & S_IFBLK)
+        inodes[idx].type = TMPFS_TYPE_BLK;
+    else
+        inodes[idx].type = TMPFS_TYPE_FILE;
     inodes[idx].parent = (uint32_t)parent;
     memcpy(inodes[idx].name, name, (size_t)len + 1);
     inodes[idx].size = 0;

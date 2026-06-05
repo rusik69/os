@@ -21,6 +21,16 @@ struct fs_quota;
 #define MS_RDONLY 1
 #define MS_BIND   0x40
 
+/* POSIX file type encoding (top bits of mode for mknod) */
+#define S_IFMT   0170000  /* type bit mask */
+#define S_IFSOCK 0140000  /* socket */
+#define S_IFLNK  0120000  /* symbolic link */
+#define S_IFREG  0100000  /* regular file */
+#define S_IFBLK  0060000  /* block device */
+#define S_IFDIR  0040000  /* directory */
+#define S_IFCHR  0020000  /* character device */
+#define S_IFIFO  0010000  /* FIFO */
+
 /* POSIX ACL tags */
 #define ACL_USER_OBJ  1
 #define ACL_USER      2
@@ -61,17 +71,26 @@ struct posix_acl {
 /* VFS stat result */
 struct vfs_stat {
     uint64_t size;
-    uint8_t  type;   /* 1=file, 2=dir */
+    uint8_t  type;   /* VFS_TYPE_* */
     uint16_t uid;
     uint16_t gid;
     uint16_t mode;
-    uint32_t mtime;
     uint32_t atime;
+    uint32_t mtime;
     uint32_t nlink;  /* link count */
     uint32_t ino;    /* inode number (0 = unknown/not applicable) */
+    /* Device info for device nodes (major/minor) */
+    uint16_t dev_major;
+    uint16_t dev_minor;
 };
 
-/* POSIX advisory file lock */
+/* VFS stat type constants */
+#define VFS_TYPE_FILE   1
+#define VFS_TYPE_DIR    2
+#define VFS_TYPE_LINK   3
+#define VFS_TYPE_CHR    4  /* character device */
+#define VFS_TYPE_BLK    5  /* block device */
+#define VFS_TYPE_FIFO   6  /* named pipe/FIFO */
 struct file_lock {
     int      l_type;    /* F_RDLCK, F_WRLCK, F_UNLCK */
     int      l_whence;  /* SEEK_SET, SEEK_CUR, SEEK_END */
