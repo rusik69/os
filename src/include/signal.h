@@ -11,6 +11,9 @@
 #define SEGV_MAPERR 1
 #define SEGV_ACCERR 2
 
+/* SIGBUS si_code values */
+#define BUS_ADRERR   3  /* non-existent physical address */
+
 /* Signal info structure (subset of siginfo_t) */
 struct siginfo {
     int      si_signo;    /* signal number */
