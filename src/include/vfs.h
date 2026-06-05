@@ -146,6 +146,11 @@ struct vfs_ops {
     int (*set_time)(void *priv, const char *path,
                     uint64_t atime_sec, uint64_t atime_nsec,
                     uint64_t mtime_sec, uint64_t mtime_nsec);
+    /* Optional: rename/move a file or directory from old_path to new_path.
+     * Both paths are on the same filesystem (the caller resolves mounts).
+     * Returns 0 on success or negative errno on error.
+     * If not provided, vfs_rename falls back to create+copy+delete. */
+    int (*rename)(void *priv, const char *old_path, const char *new_path);
 };
 
 /* A mounted filesystem */
@@ -189,6 +194,11 @@ int vfs_stat(const char *path, struct vfs_stat *st);
 int vfs_create(const char *path, uint8_t type);
 int vfs_unlink(const char *path);
 int vfs_readdir(const char *path);
+
+/* Rename/move a file or directory from old_path to new_path.
+ * Both paths must be on the same filesystem (cross-fs rename returns -EXDEV).
+ * Returns 0 on success or negative errno. */
+int vfs_rename(const char *old_path, const char *new_path);
 
 /* Fill names[] with up to max directory entries; returns count or <0 */
 int vfs_readdir_names(const char *path, char names[][64], int max);

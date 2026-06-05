@@ -975,6 +975,162 @@ int vfs_unlink(const char *path) {
     return r;
 }
 
+/*
+ * vfs_rename — Move/rename a file or directory.
+ *
+ * Uses the filesystem's native rename operation if available.  Otherwise
+ * falls back to create+copy+delete for regular files, or a recursive
+ * copy+delete for directories.
+ *
+ * Both paths must resolve to the same mounted filesystem.
+ * Returns 0 on success or negative errno on error.
+ */
+int vfs_rename(const char *old_path, const char *new_path)
+{
+    char old_ap[128], new_ap[128];
+    vfs_abs_path(old_path, old_ap, sizeof(old_ap));
+    vfs_abs_path(new_path, new_ap, sizeof(new_ap));
+
+    /* Resolve mounts for both paths */
+    struct vfs_mount *m_old = resolve(old_ap);
+    struct vfs_mount *m_new = resolve(new_ap);
+    if (!m_old || !m_new) return -ENOENT;
+
+    /* Both paths must be on the same filesystem */
+    if (m_old != m_new) return -EXDEV;
+
+    /* Check Landlock write permission (renaming modifies parent directories) */
+    {
+        struct process *proc = process_get_current();
+        if (proc) {
+            if (landlock_check_path(proc, old_ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+                return -EACCES;
+            if (landlock_check_path(proc, new_ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+                return -EACCES;
+        }
+    }
+
+    /* Check read-only mount */
+    if (m_old->flags & MS_RDONLY) return -EROFS_KERNEL;
+
+    /* Stat the old path first */
+    struct vfs_stat st;
+    int stat_ret = vfs_stat(old_ap, &st);
+    if (stat_ret < 0) return stat_ret;
+
+    /* If the new path already exists, return -EEXIST */
+    {
+        struct vfs_stat new_st;
+        if (vfs_stat(new_ap, &new_st) == 0)
+            return -EEXIST;
+    }
+
+    /* Use filesystem-native rename if available */
+    if (m_old->ops->rename) {
+        int r = m_old->ops->rename(m_old->priv, old_ap, new_ap);
+        if (r == 0) {
+            fsnotify_notify(old_ap, FS_DELETE);
+            fsnotify_notify(new_ap, FS_CREATE);
+            dcache_remove(old_ap);
+            dcache_remove(new_ap);
+            /* Also invalidate parent directories */
+            char parent[128];
+            strncpy(parent, old_ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            char *slash = strrchr(parent, '/');
+            if (slash) { *slash = '\0'; dcache_remove(parent); }
+            strncpy(parent, new_ap, sizeof(parent) - 1);
+            parent[sizeof(parent) - 1] = '\0';
+            slash = strrchr(parent, '/');
+            if (slash) { *slash = '\0'; dcache_remove(parent); }
+        }
+        return r;
+    }
+
+    /* ── Fallback: no native rename ── */
+
+    /* For directories, recursively copy all contents */
+    if (st.type == 2) {
+        /* Create the destination directory */
+        int cres = m_old->ops->create(m_old->priv, new_ap, 2);
+        if (cres < 0) return cres;
+
+        /* Copy all entries recursively */
+        char entries[64][64];
+        int n = vfs_readdir_names(old_ap, entries, 64);
+        for (int i = 0; i < n; i++) {
+            char old_child[256], new_child[256];
+            int slen = snprintf(old_child, sizeof(old_child), "%s/%s",
+                                old_ap, entries[i]);
+            if (slen < 0 || (size_t)slen >= sizeof(old_child)) continue;
+            snprintf(new_child, sizeof(new_child), "%s/%s", new_ap, entries[i]);
+
+            /* Recurse for each child */
+            int ret = vfs_rename(old_child, new_child);
+            if (ret < 0 && ret != -ENOENT) {
+                kprintf("vfs_rename: warning: failed to move '%s' (%d)\n",
+                        old_child, -ret);
+            }
+        }
+
+        /* Remove the now-empty old directory */
+        vfs_unlink(old_ap);
+        fsnotify_notify(old_ap, FS_DELETE);
+        fsnotify_notify(new_ap, FS_CREATE);
+        dcache_remove(old_ap);
+        dcache_remove(new_ap);
+        return 0;
+    }
+
+    /* For regular files and symlinks, use create+copy+delete fallback */
+    void *buf = kmalloc(st.size + 1);
+    if (!buf) return -ENOMEM;
+    uint32_t sz = 0;
+    int r = m_old->ops->read(m_old->priv, old_ap, buf, st.size, &sz);
+    if (r < 0) { kfree(buf); return r; }
+
+    int wret = m_old->ops->create(m_old->priv, new_ap, st.type);
+    if (wret < 0) { kfree(buf); return wret; }
+
+    if (st.size > 0) {
+        wret = m_old->ops->write(m_old->priv, new_ap, buf, st.size);
+        if (wret < 0) {
+            kfree(buf);
+            m_old->ops->unlink(m_old->priv, new_ap);
+            return wret;
+        }
+    }
+    kfree(buf);
+
+    /* Delete old path */
+    m_old->ops->unlink(m_old->priv, old_ap);
+
+    /* Copy mtime to new file if we have one */
+    if (st.mtime != 0 && m_old->ops->set_time) {
+        m_old->ops->set_time(m_old->priv, new_ap, 0, 0, st.mtime, 0);
+    }
+
+    fsnotify_notify(old_ap, FS_DELETE);
+    fsnotify_notify(new_ap, FS_CREATE);
+    dcache_remove(old_ap);
+    dcache_remove(new_ap);
+
+    /* Invalidate parent directory caches */
+    {
+        char parent[128];
+        strncpy(parent, old_ap, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        char *slash = strrchr(parent, '/');
+        if (slash) { *slash = '\0'; dcache_remove(parent); }
+        strncpy(parent, new_ap, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        slash = strrchr(parent, '/');
+        if (slash) { *slash = '\0'; dcache_remove(parent); }
+    }
+
+    return 0;
+}
+
 int vfs_readdir(const char *path) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 

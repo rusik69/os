@@ -349,6 +349,57 @@ static int tmpfs_mknod(void *priv, const char *path, uint16_t mode, uint16_t dev
     return 0;
 }
 
+/*
+ * tmpfs_rename — Rename/move a file or directory in tmpfs.
+ *
+ * Finds the inode by old_path, then updates its name and parent
+ * index to match new_path.  This is an O(n) flat-table operation.
+ */
+static int tmpfs_rename(void *priv, const char *old_path, const char *new_path)
+{
+    (void)priv;
+
+    /* Find the old inode */
+    int old_idx = find_inode(old_path);
+    if (old_idx < 0) return -ENOENT;
+
+    /* Ensure the new path doesn't already exist */
+    if (find_inode(new_path) >= 0) return -EEXIST;
+
+    /* Extract the new leaf name (last component after '/') */
+    const char *new_name = new_path;
+    const char *last_slash = strrchr(new_path, '/');
+    if (last_slash) new_name = last_slash + 1;
+
+    int name_len = (int)strlen(new_name);
+    if (name_len == 0) return -EINVAL;
+    if (name_len >= TMPFS_MAX_NAME) return -ENAMETOOLONG;
+
+    /* Determine the new parent directory */
+    char parent_path[128];
+    int new_parent = old_idx; /* default: keep same parent */
+
+    if (last_slash && last_slash > new_path) {
+        /* Extract the directory portion of new_path */
+        size_t dir_len = (size_t)(last_slash - new_path);
+        if (dir_len >= sizeof(parent_path)) return -ENAMETOOLONG;
+        memcpy(parent_path, new_path, dir_len);
+        parent_path[dir_len] = '\0';
+        new_parent = find_inode(parent_path);
+        if (new_parent < 0) return -ENOENT;
+    } else if (last_slash == new_path) {
+        /* New path is in root directory */
+        new_parent = 0;
+    }
+
+    /* Update the inode */
+    memcpy(inodes[old_idx].name, new_name, (size_t)name_len);
+    inodes[old_idx].name[name_len] = '\0';
+    inodes[old_idx].parent = (uint32_t)new_parent;
+
+    return 0;
+}
+
 struct vfs_ops tmpfs_vfs_ops = {
     .read        = tmpfs_read,
     .write       = tmpfs_write,
@@ -361,6 +412,7 @@ struct vfs_ops tmpfs_vfs_ops = {
     .symlink     = tmpfs_symlink,
     .readlink    = tmpfs_readlink,
     .mknod       = tmpfs_mknod,
+    .rename      = tmpfs_rename,
 };
 
 int tmpfs_mount(void) {

@@ -3062,38 +3062,13 @@ static uint64_t sys_rmdir(uint64_t path_addr) {
 static uint64_t sys_rename(uint64_t old_addr, uint64_t new_addr) {
     const char *old_path = (const char *)old_addr;
     const char *new_path = (const char *)new_addr;
-    if (!old_path || !new_path) return (uint64_t)-1;
+    if (!old_path || !new_path) return (uint64_t)-EINVAL;
 
-    /* Simple rename: create new, copy data, delete old.
-     * For files only; directories not supported yet. */
-    struct vfs_stat st;
-    if (vfs_stat(old_path, &st) < 0) return (uint64_t)-1;
-
-    /* Read old file */
-    uint8_t *buf = (uint8_t *)kmalloc(st.size + 1);
-    if (!buf) return (uint64_t)-1;
-    uint32_t sz = 0;
-    if (vfs_read(old_path, buf, st.size, &sz) < 0) {
-        kfree(buf);
-        return (uint64_t)-1;
-    }
-
-    /* Create new file */
-    if (vfs_create(new_path, st.type) < 0) {
-        kfree(buf);
-        return (uint64_t)-1;
-    }
-
-    /* Write data */
-    if (st.size > 0 && vfs_write(new_path, buf, st.size) < 0) {
-        kfree(buf);
-        vfs_unlink(new_path);
-        return (uint64_t)-1;
-    }
-    kfree(buf);
-
-    /* Delete old */
-    vfs_unlink(old_path);
+    /* Use the VFS rename operation — supports both files and directories,
+     * handles cross-filesystem moves (returns -EXDEV), enforces Landlock
+     * permissions and read-only mounts. */
+    int ret = vfs_rename(old_path, new_path);
+    if (ret < 0) return (uint64_t)-1;
     return 0;
 }
 
