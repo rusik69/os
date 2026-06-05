@@ -2,8 +2,8 @@
 #include "export.h"
 
 void *memset(void *s, int c, size_t n) {
-    uint8_t *p = (uint8_t *)s;
-    while (n--) *p++ = (uint8_t)c;
+    unsigned char *p = (unsigned char *)s;
+    while (n--) *p++ = (unsigned char)c;
     return s;
 }
 
@@ -60,9 +60,9 @@ char *strcpy(char *dest, const char *src) {
 }
 
 char *strncpy(char *dest, const char *src, size_t n) {
-    char *d = dest;
-    while (n && (*d++ = *src++)) n--;
-    while (n--) *d++ = '\0';
+    size_t i;
+    for (i = 0; i < n && src[i]; i++) dest[i] = src[i];
+    for (; i < n; i++) dest[i] = '\0';
     return dest;
 }
 
@@ -276,3 +276,4 @@ EXPORT_SYMBOL(strcmp);
 EXPORT_SYMBOL(strncmp);
 EXPORT_SYMBOL(strchr);
 EXPORT_SYMBOL(strcpy);
+EXPORT_SYMBOL(strncpy);

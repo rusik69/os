@@ -539,6 +539,7 @@ int vfs_force_readonly(const char *path, const char *reason)
             m->mountpoint, reason ? reason : "unknown error");
     return 0;
 }
+EXPORT_SYMBOL(vfs_force_readonly);
 
 /* Find the best-matching mount for a path.
  * First checks the current process's mount namespace (if any),
@@ -787,9 +788,9 @@ int vfs_append(const char *path, const void *data, uint32_t size)
 }
 
 /*
- * VFS-level readahead: hint to prefetch file data into the page cache.
- *
- * For block-device-backed filesystems (like the legacy SMFS), this maps
+ * vfs_create — create a new file or directory.
+ * @path:  absolute path for the new entry.
+ * @type:  1 = file, 2 = directory.
  * the byte range to page cache blocks and prefetches them from the
  * backing store.  For memory-backed filesystems (tmpfs, procfs, etc.)
  * this is a no-op since there is no backing store to prefetch from.
