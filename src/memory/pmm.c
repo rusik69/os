@@ -12,6 +12,7 @@
 #include "smp.h"
 #include "export.h"
 #include "pageblock.h"
+#include "timer.h"    /* timer_get_ticks() for failure timestamps */
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -63,6 +64,96 @@ static struct pmm_cpu_cache pmm_cpu_cache[SMP_MAX_CPUS];
 /* Global spinlock protecting the bitmap and shared counters during
  * cache refill/drain operations.  The fast per-CPU path avoids this. */
 static spinlock_t pmm_global_lock;
+
+/* ── Allocation failure tracking ────────────────────────────────────────
+ * Records recent page allocation failures with caller context for
+ * post-mortem analysis and diagnostics.  Each record captures the
+ * caller's return address, requested size/order, and timestamp.
+ */
+#define PMM_FAIL_HISTORY_MAX 32
+
+struct pmm_fail_record {
+    uint64_t caller_ip;       /* return address of failing allocator call */
+    uint64_t requested;       /* number of pages requested */
+    uint64_t free_at_fail;    /* free frames at time of failure */
+    uint64_t timestamp_tick;  /* kernel tick when failure occurred */
+};
+
+/* Ring buffer of recent allocation failures (for diagnostics / post-mortem) */
+static struct pmm_fail_record pmm_fail_history[PMM_FAIL_HISTORY_MAX];
+static uint64_t pmm_fail_count_total = 0;   /* total failures since boot */
+static uint64_t pmm_fail_history_idx = 0;   /* next slot in ring buffer */
+static spinlock_t pmm_fail_lock;
+
+/* Record an allocation failure in the ring buffer.  Safe to call from
+ * any context (interrupts or not).  Uses trylock to avoid deadlock
+ * if called from deep inside the OOM path where another lock may be held. */
+static void pmm_record_fail(uint64_t caller_ip, uint64_t requested) {
+    uint64_t irq_flags;
+    /* Manual trylock: save flags, cli, then try to acquire */
+    __asm__ volatile(
+        "pushfq\n\t"
+        "pop %0\n\t"
+        "cli\n\t"
+        : "=r"(irq_flags)
+        :
+        : "memory"
+    );
+    if (!spinlock_try_acquire(&pmm_fail_lock)) {
+        /* Couldn't get lock — restore interrupts and skip recording */
+        if (irq_flags & 0x200)
+            __asm__ volatile("sti" : : : "memory");
+        return;
+    }
+
+    struct pmm_fail_record *rec = &pmm_fail_history[pmm_fail_history_idx];
+    rec->caller_ip      = caller_ip;
+    rec->requested      = requested;
+    rec->free_at_fail   = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
+    rec->timestamp_tick = timer_get_ticks();
+
+    pmm_fail_history_idx = (pmm_fail_history_idx + 1) % PMM_FAIL_HISTORY_MAX;
+    pmm_fail_count_total++;
+
+    /* Release with matching IRQ restore */
+    spinlock_irqsave_release(&pmm_fail_lock, irq_flags);
+}
+
+/* Dump the recorded allocation failure history for diagnostics. */
+static void pmm_dump_fail_history(void) {
+    uint64_t total = pmm_fail_count_total;
+    uint64_t shown = (total < PMM_FAIL_HISTORY_MAX) ? total : PMM_FAIL_HISTORY_MAX;
+
+    kprintf("[PMM] Allocation failures: %llu total (showing last %llu):\n",
+            (unsigned long long)total, (unsigned long long)shown);
+
+    if (shown == 0) {
+        kprintf("[PMM]   (none)\n");
+        return;
+    }
+
+    /* Walk the ring buffer oldest-first */
+    uint64_t start_idx;
+    if (total < PMM_FAIL_HISTORY_MAX)
+        start_idx = 0;
+    else
+        start_idx = pmm_fail_history_idx;  /* points to oldest */
+
+    for (uint64_t i = 0; i < shown; i++) {
+        uint64_t idx = (start_idx + i) % PMM_FAIL_HISTORY_MAX;
+        const struct pmm_fail_record *rec = &pmm_fail_history[idx];
+        if (rec->caller_ip == 0 && rec->requested == 0)
+            continue;  /* empty slot */
+
+        /* Print caller address (symbol resolution would need ksymtab) */
+        kprintf("[PMM]   [%llu] caller=0x%llx requested=%llu pages free=%llu ticks=%llu\n",
+                (unsigned long long)i,
+                (unsigned long long)rec->caller_ip,
+                (unsigned long long)rec->requested,
+                (unsigned long long)rec->free_at_fail,
+                (unsigned long long)rec->timestamp_tick);
+    }
+}
 
 /* ── Poison helpers ──────────────────────────────────────────────────── */
 static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
@@ -249,8 +340,9 @@ void pmm_init(uint64_t multiboot_info_phys) {
         if (bitmap_test(f)) used_frames++;
     }
 
-    /* Initialize the global spinlock for SMP-safe bitmap access */
+    /* Initialize spinlocks for SMP-safe access */
     spinlock_init(&pmm_global_lock);
+    spinlock_init(&pmm_fail_lock);
 
     /* Pre-populate the boot CPU's hot cache */
     pmm_cache_refill();
@@ -280,6 +372,26 @@ void pmm_advance_hint(uint64_t phys_addr) {
     uint64_t frame = phys_addr / PAGE_SIZE;
     if (frame + 1 > pmm_hint)
         pmm_hint = frame + 1;
+}
+
+/* ── Memory reclaim watermark ───────────────────────────────────────────
+ * When free pages fall below watermark, kswapd-like reclaim is triggered.
+ * Configurable via sysctl (see pmm_extras.c) or pmm_set_reclaim_watermark().
+ */
+static uint64_t pmm_reclaim_watermark = 64; /* default: 64 pages = 256 KB */
+
+uint64_t pmm_get_reclaim_watermark(void) {
+    return pmm_reclaim_watermark;
+}
+
+void pmm_set_reclaim_watermark(uint64_t pages) {
+    pmm_reclaim_watermark = pages;
+    kprintf("[pmm] reclaim watermark set to %llu pages\n", (unsigned long long)pages);
+}
+
+int pmm_below_watermark(void) {
+    uint64_t free_pages = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
+    return free_pages < pmm_reclaim_watermark;
 }
 
 /* ── Memory statistics dumping ──────────────────────────────────────────── */
@@ -343,6 +455,9 @@ void pmm_dump_stats(void) {
             (unsigned long long)vm_pgfree,
             (unsigned long long)vm_pgfault);
 
+    /* Allocation failure history */
+    pmm_dump_fail_history();
+
     /* Per-CPU hot cache occupancy */
     int total_cached = 0;
     for (int c = 0; c < smp_get_cpu_count(); c++)
@@ -354,87 +469,189 @@ void pmm_dump_stats(void) {
     pageblock_dump_stats();
 }
 
-/* ── Page allocator ─────────────────────────────────────────────────────── */
+/* ── Cache pop with IRQ save/restore ────────────────────────────────────
+ * Attempt to pop one frame from the current CPU's hot cache.
+ * If successful, writes the phys address to *addr_out and returns 1.
+ * If the cache is empty, returns 0.
+ * In both cases, *irq_save_out holds the saved RFLAGS (caller must restore).
+ * Saves/restores asm to avoid duplication across the allocator paths. */
+static inline int pmm_cache_pop_irqsafe(uint64_t *addr_out, uint64_t *irq_save_out) {
+    __asm__ volatile("pushfq; pop %0; cli" : "=r"(*irq_save_out) : : "memory");
 
-uint64_t pmm_alloc_frame(void) {
     int cpu = smp_get_cpu_id();
     struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
 
-    /* ── Fast path: pop from per-CPU hot cache ── */
-    /* Disable local IRQs to prevent reentrancy from interrupt handlers */
-    uint64_t irq_save;
-    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
-
     if (cache->count > 0) {
         cache->count--;
-        uint64_t addr = cache->frames[cache->count];
+        *addr_out = cache->frames[cache->count];
+        return 1;  /* caller must restore IRQs via pmm_irq_restore() */
+    }
+    return 0;
+}
 
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+/* Restore interrupt state from a prior pmm_cache_pop_irqsave(). */
+static inline void pmm_irq_restore(uint64_t irq_save) {
+    if (irq_save & 0x200)
+        __asm__ volatile("sti" : : : "memory");
+}
+
+/* ── Proactive low-memory reclaim ───────────────────────────────────────
+ * Check if free memory is below the critical watermark and try to reclaim
+ * some pages before we hit the full OOM path.  Returns 1 if reclaim freed
+ * any pages (caller should retry allocation), 0 otherwise.
+ *
+ * The watermark is a configurable threshold (default: 64 pages = 256 KB).
+ * It can be adjusted via sysctl or the pmm_set_reclaim_watermark() API
+ * declared in pmm.h / pmm_extras.c.
+ */
+static int pmm_proactive_reclaim(uint64_t needed_pages) {
+    uint64_t total = total_frames;
+    uint64_t used  = used_frames;
+    uint64_t free_pages = (total > used) ? (total - used) : 0;
+
+    /* Get the current reclaim watermark */
+    uint64_t watermark = pmm_reclaim_watermark;
+
+    /* If free pages are still above watermark, no reclaim needed yet */
+    if (free_pages >= watermark + needed_pages)
+        return 0;
+
+    kprintf("[PMM] Low memory: %llu free pages (watermark=%llu), attempting proactive reclaim...\n",
+            (unsigned long long)free_pages, (unsigned long long)watermark);
+
+    uint64_t before_free = free_pages;
+
+    /* Stage 1: Shrink dentry cache — no-IPI, cheap */
+    extern int dcache_shrink(uint64_t target);
+    dcache_shrink(256);
+
+    /* Stage 2: Reap empty slab pages */
+    extern void kmem_cache_reap(void);
+    kmem_cache_reap();
+
+    /* Check if reclaim made progress */
+    uint64_t after_used = used_frames;
+    uint64_t after_free = (total > after_used) ? (total - after_used) : 0;
+
+    if (after_free > before_free) {
+        kprintf("[PMM] Proactive reclaim freed %llu pages\n",
+                (unsigned long long)(after_free - before_free));
+        return 1;
+    }
+
+    return 0;
+}
+
+/* ── OOM recovery helper ───────────────────────────────────────────────
+ * Attempts multi-level recovery when the page allocator cannot satisfy
+ * a request.  Runs progressively stronger recovery steps, retrying the
+ * per-CPU cache after each step.
+ *
+ * Returns 1 if a page was successfully allocated (via the cache after
+ * recovery), or 0 if all recovery levels failed.
+ *
+ * 'needed_pages' is passed to oom_kill() so the OOM killer knows how
+ * much memory needs to be freed.
+ *
+ * The caller_ip is recorded in the allocation failure history on panic. */
+static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
+    /*
+     * Recovery levels:
+     *   Level 1: Dentry cache shrink + slab reaping + OOM kill + yield
+     *   Level 2: Compaction + OOM kill + yield
+     *   Level 3: panic() with full diagnostics
+     */
+    static const char *level_names[] = {
+        "slab reaping + OOM",
+        "compaction + OOM"
+    };
+
+    for (int level = 0; level < 2; level++) {
+        kprintf("[PMM] OOM recovery level %d/%d: %s...\n",
+                level + 1, 2, level_names[level]);
+
+        if (level == 0) {
+            /* Level 1: Try quick reclaims first — no OOM kill yet */
+            extern int dcache_shrink(uint64_t target);
+            dcache_shrink(512);
+
+            extern void kmem_cache_reap(void);
+            kmem_cache_reap();
+
+            /* If still tight, call OOM killer */
+            oom_kill(needed_pages > 0 ? needed_pages : 1);
+        } else {
+            /* Level 2: Run compaction to defragment, then more aggressive OOM */
+            compaction_run();
+            oom_kill(needed_pages > 0 ? needed_pages : 1);
+        }
+
+        /* Yield to let the killed process exit and free memory */
+        scheduler_yield();
+
+        /* Refill the per-CPU cache with newly freed pages */
+        pmm_cache_refill();
+
+        /* Try the cache */
+        uint64_t addr = 0;
+        uint64_t irq_save;
+        if (pmm_cache_pop_irqsafe(&addr, &irq_save)) {
+            /* Success — frame allocated after recovery */
+            pmm_irq_restore(irq_save);
+            poison_fill(addr, 0xDEADBEEF);
+            vm_pgalloc++;
+            return 1;
+        }
+        pmm_irq_restore(irq_save);
+    }
+
+    /* ── All recovery levels exhausted — panic with full diagnostics ── */
+    pmm_record_fail(caller_ip, needed_pages);
+    pmm_dump_stats();
+    panic("[PMM] Out of memory — OOM killer and compaction failed to reclaim any frames");
+    /* unreachable */
+    return 0;
+}
+
+/* ── Page allocator ─────────────────────────────────────────────────────── */
+
+uint64_t pmm_alloc_frame(void) {
+    uint64_t addr = 0;
+    uint64_t irq_save;
+
+    /* ── Fast path: pop from per-CPU hot cache ── */
+    if (pmm_cache_pop_irqsafe(&addr, &irq_save)) {
+        pmm_irq_restore(irq_save);
         poison_fill(addr, 0xDEADBEEF);
         vm_pgalloc++;
         return addr;
     }
+    pmm_irq_restore(irq_save);
 
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+    /* ── Proactive reclaim check ──
+     * Before going to the global bitmap, check if we're near the
+     * reclaim watermark and try to free some pages preemptively.
+     * This reduces the probability of hitting the full OOM path. */
+    pmm_proactive_reclaim(1);
 
     /* ── Slow path: refill cache from global bitmap ── */
     pmm_cache_refill();
 
-    /* Now try the cache again */
-    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
-    if (cache->count > 0) {
-        cache->count--;
-        uint64_t addr = cache->frames[cache->count];
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+    if (pmm_cache_pop_irqsafe(&addr, &irq_save)) {
+        pmm_irq_restore(irq_save);
         poison_fill(addr, 0xDEADBEEF);
         vm_pgalloc++;
         return addr;
     }
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
+    pmm_irq_restore(irq_save);
 
-    /* ── Out of memory: recovery level 1 — slab reaping + OOM killer ── */
-    kprintf("[PMM] Out of memory! Attempting OOM recovery (slab reaping + OOM kill)...\n");
+    /* ── Out of memory — run full OOM recovery ── */
+    uint64_t caller_ip = (uint64_t)__builtin_return_address(0);
+    pmm_record_fail(caller_ip, 1);
 
-    kmem_cache_reap();
-    oom_kill(1);
-    scheduler_yield();
+    if (pmm_oom_recover(1, caller_ip))
+        return pmm_alloc_frame();  /* recursive retry after recovery freed pages */
 
-    pmm_cache_refill();
-
-    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
-    if (cache->count > 0) {
-        cache->count--;
-        uint64_t addr = cache->frames[cache->count];
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
-        poison_fill(addr, 0xDEADBEEF);
-        vm_pgalloc++;
-        return addr;
-    }
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
-
-    /* ── Recovery level 2 — compaction + aggressive OOM ── */
-    kprintf("[PMM] OOM recovery level 1 failed! Running compaction + aggressive OOM...\n");
-
-    compaction_run();
-    oom_kill(1);
-    scheduler_yield();
-
-    pmm_cache_refill();
-
-    __asm__ volatile("pushfq; pop %0; cli" : "=r"(irq_save) : : "memory");
-    if (cache->count > 0) {
-        cache->count--;
-        uint64_t addr = cache->frames[cache->count];
-        if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
-        poison_fill(addr, 0xDEADBEEF);
-        vm_pgalloc++;
-        return addr;
-    }
-    if (irq_save & 0x200) __asm__ volatile("sti" : : : "memory");
-
-    /* ── Final: panic with full memory diagnostics ── */
-    pmm_dump_stats();
-    panic("[PMM] Out of memory — OOM killer and compaction failed to reclaim any frames");
     /* unreachable */
     return 0;
 }
@@ -442,10 +659,28 @@ uint64_t pmm_alloc_frame(void) {
 /* Allocate count contiguous frames. Returns first frame physical addr, or 0 on failure. */
 uint64_t *pmm_alloc_frames(size_t count) {
     if (count == 0) return NULL;
-    if (count == 1) return (uint64_t *)pmm_alloc_frame();
+
+    /* Single-frame allocations go through the fast per-CPU cache path */
+    if (count == 1)
+        return (uint64_t *)pmm_alloc_frame();
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+
+    /* ── Proactive reclaim check ──
+     * Before scanning the bitmap for contiguous space, check if we're
+     * near the watermark and try early reclaim.  This is especially
+     * important for multi-page allocations which are harder to satisfy. */
+    uint64_t total = total_frames;
+    uint64_t used  = used_frames;
+    uint64_t free_pages = (total > used) ? (total - used) : 0;
+    uint64_t watermark = pmm_reclaim_watermark;
+
+    if (free_pages < watermark + count) {
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+        pmm_proactive_reclaim(count);
+        spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+    }
 
     /* Scan for 'count' contiguous free frames */
     uint64_t start = pmm_hint;
@@ -478,79 +713,56 @@ uint64_t *pmm_alloc_frames(size_t count) {
 
     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 
-    /* ── First recovery: slab reaping + OOM killer ── */
-    kprintf("[PMM] Out of memory for %llu contiguous frames! Attempting OOM recovery...\n",
-            (unsigned long long)count);
+    /* ── Out of memory ── */
+    uint64_t caller_ip = (uint64_t)__builtin_return_address(0);
+    pmm_record_fail(caller_ip, count);
 
-    kmem_cache_reap();
-    oom_kill(1);
-    scheduler_yield();
+    /* Run OOM recovery and retry */
+    for (int level = 0; level < 2; level++) {
+        kprintf("[PMM] OOM recovery level %d for %llu contiguous frames: ",
+                level + 1, (unsigned long long)count);
 
-    /* Second attempt */
-    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
-    start = pmm_hint;
-    found = 0;
-    i = pmm_hint;
-    do {
-        if (!bitmap_test(i)) {
-            if (found == 0) start = i;
-            found++;
-            if (found == count) {
-                for (uint64_t j = start; j < start + count; j++) {
-                    bitmap_set(j);
-                    used_frames++;
-                    frame_refcount[j] = 1;
-                    poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
-                }
-                pmm_hint = start + count;
-                if (pmm_hint >= total_frames) pmm_hint = 0;
-                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
-                return (uint64_t *)(start * PAGE_SIZE);
-            }
+        if (level == 0) {
+            kprintf("slab reaping + OOM...\n");
+            kmem_cache_reap();
+            oom_kill(count);
         } else {
-            found = 0;
+            kprintf("compaction + OOM...\n");
+            compaction_run();
+            oom_kill(count);
         }
-        i++;
-        if (i >= total_frames) i = 0;
-    } while (i != pmm_hint);
-    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
 
-    /* ── Second recovery: compaction ── */
-    kprintf("[PMM] OOM recovery for %llu contiguous frames failed! Running compaction...\n",
-            (unsigned long long)count);
+        scheduler_yield();
 
-    compaction_run();
-    oom_kill(1);
-    scheduler_yield();
-
-    /* Third attempt */
-    spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
-    start = pmm_hint;
-    found = 0;
-    i = pmm_hint;
-    do {
-        if (!bitmap_test(i)) {
-            if (found == 0) start = i;
-            found++;
-            if (found == count) {
-                for (uint64_t j = start; j < start + count; j++) {
-                    bitmap_set(j);
-                    used_frames++;
-                    frame_refcount[j] = 1;
-                    poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
+        /* Retry the allocation */
+        spinlock_irqsave_acquire(&pmm_global_lock, &irq_flags);
+        start = pmm_hint;
+        found = 0;
+        i = pmm_hint;
+        do {
+            if (!bitmap_test(i)) {
+                if (found == 0) start = i;
+                found++;
+                if (found == count) {
+                    for (uint64_t j = start; j < start + count; j++) {
+                        bitmap_set(j);
+                        used_frames++;
+                        frame_refcount[j] = 1;
+                        poison_fill(j * PAGE_SIZE, 0xDEADBEEF);
+                    }
+                    pmm_hint = start + count;
+                    if (pmm_hint >= total_frames) pmm_hint = 0;
+                    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+                    return (uint64_t *)(start * PAGE_SIZE);
                 }
-                pmm_hint = start + count;
-                if (pmm_hint >= total_frames) pmm_hint = 0;
-                spinlock_irqsave_release(&pmm_global_lock, irq_flags);
-                return (uint64_t *)(start * PAGE_SIZE);
+            } else {
+                found = 0;
             }
-        } else {
-            found = 0;
-        }
-        i++;
-        if (i >= total_frames) i = 0;
-    } while (i != pmm_hint);
-    spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+            i++;
+            if (i >= total_frames) i = 0;
+        } while (i != pmm_hint);
+        spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+    }
 
     /* ── Final: panic with full diagnostics ── */
     pmm_dump_stats();
