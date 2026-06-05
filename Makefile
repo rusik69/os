@@ -265,6 +265,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dm-linear.c \
          src/drivers/dm-zero.c \
          src/drivers/dm-error.c \
+         src/drivers/dm-crypt.c \
          src/drivers/ipmi_kcs.c \
          src/drivers/tpm_tis.c \
          src/drivers/dyndbg.c \
@@ -299,6 +300,7 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/assert.c \
          src/lib/base64.c \
          src/lib/aes.c \
+         src/lib/aes_xts.c \
          src/lib/sha256.c \
          src/lib/sha512.c \
          src/lib/md5.c \

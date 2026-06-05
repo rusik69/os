@@ -137,6 +137,9 @@ void dm_zero_init(void);
 /* Register the dm-error test target (all I/O fails with -EIO). */
 void dm_error_init(void);
 
+/* Register the dm-crypt transparent encryption target. */
+void dm_crypt_init(void);
+
 /* Register a target type (called by target modules). */
 int dm_register_target(const struct dm_target_ops *ops);
 
