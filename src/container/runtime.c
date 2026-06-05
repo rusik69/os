@@ -20,8 +20,18 @@
 #include "timer.h"
 #include "process.h"
 #include "errno.h"
+#include "vfs.h"
+#include "scheduler.h"   /* scheduler_yield for process lifecycles */
+#include "heap.h"         /* kmalloc / kfree */
 
 /* ── Global container table ────────────────────────────────────────── */
+
+/* VFS operations for virtual filesystems mounted inside container rootfs.
+ * These are defined in their respective source files. */
+extern struct vfs_ops procfs_ops;
+extern struct vfs_ops sysfs_vfs_ops;
+extern struct vfs_ops devfs_ops;
+extern struct vfs_ops tmpfs_vfs_ops;
 
 static struct container container_table[CONTAINER_MAX];
 
@@ -341,5 +351,204 @@ int container_set_state(struct container *c, int new_state) {
             c->id,
             container_state_name(old_state),
             container_state_name(new_state));
+    return 0;
+}
+
+/* ── Container rootfs subdirectory structure ─────────────────────────
+ * Standard Linux container rootfs directories: /proc, /sys, /dev, /etc,
+ * /tmp, /var/run.  These are created inside the container rootfs so that
+ * virtual filesystems can be mounted at the standard locations.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int container_create_rootfs_dirs(struct container *c)
+{
+    if (!c || !c->rootfs_path[0]) return -EINVAL;
+
+    static const char *const subdirs[] = {
+        "proc", "sys", "dev", "etc", "tmp",
+        "var", "var/run", "var/log", "dev/shm",
+        "sys/kernel", "sys/kernel/security",
+        "proc/sys", "proc/sys/net",
+    };
+    char path[CONTAINER_ROOTFS_PATH];
+
+    for (size_t i = 0; i < sizeof(subdirs) / sizeof(subdirs[0]); i++) {
+        int n = snprintf(path, sizeof(path), "%s/%s",
+                         c->rootfs_path, subdirs[i]);
+        if (n < 0 || (size_t)n >= sizeof(path))
+            return -ENAMETOOLONG;
+
+        int ret = fs_create(path, FS_TYPE_DIR);
+        if (ret < 0 && ret != -EEXIST) {
+            kprintf("[Containers] Failed to create %s: err=%d\n", path, ret);
+            return ret;
+        }
+    }
+
+    kprintf("[Containers] Created rootfs subdirectories for %s\n", c->id);
+    return 0;
+}
+
+/* ── Mount virtual filesystems inside container rootfs ────────────────
+ * Mounts proc, sysfs, devtmpfs, and tmpfs at standard locations within
+ * the container's rootfs directory.  These mounts happen in the current
+ * mount namespace.  When a container is forked with CLONE_NEWNS, they
+ * become visible only inside the container's mount namespace.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+static int container_mount_vfs(struct container *c)
+{
+    if (!c || !c->rootfs_path[0]) return -EINVAL;
+
+    char mount_path[CONTAINER_ROOTFS_PATH];
+
+    /* Mount procfs at /proc */
+    {
+        int n = snprintf(mount_path, sizeof(mount_path),
+                         "%s/proc", c->rootfs_path);
+        if (n < 0 || (size_t)n >= sizeof(mount_path))
+            return -ENAMETOOLONG;
+        int ret = vfs_mount_ex(mount_path, &procfs_ops, NULL, 0);
+        if (ret < 0) {
+            kprintf("[Containers] Failed to mount procfs at %s: err=%d\n",
+                    mount_path, ret);
+            return ret;
+        }
+    }
+
+    /* Mount sysfs at /sys */
+    {
+        int n = snprintf(mount_path, sizeof(mount_path),
+                         "%s/sys", c->rootfs_path);
+        if (n < 0 || (size_t)n >= sizeof(mount_path))
+            return -ENAMETOOLONG;
+        int ret = vfs_mount_ex(mount_path, &sysfs_vfs_ops, NULL, 0);
+        if (ret < 0) {
+            kprintf("[Containers] Failed to mount sysfs at %s: err=%d\n",
+                    mount_path, ret);
+            return ret;
+        }
+    }
+
+    /* Mount devtmpfs at /dev */
+    {
+        int n = snprintf(mount_path, sizeof(mount_path),
+                         "%s/dev", c->rootfs_path);
+        if (n < 0 || (size_t)n >= sizeof(mount_path))
+            return -ENAMETOOLONG;
+        int ret = vfs_mount_ex(mount_path, &devfs_ops, NULL, 0);
+        if (ret < 0) {
+            kprintf("[Containers] Failed to mount devfs at %s: err=%d\n",
+                    mount_path, ret);
+            return ret;
+        }
+    }
+
+    /* Mount tmpfs at /tmp */
+    {
+        int n = snprintf(mount_path, sizeof(mount_path),
+                         "%s/tmp", c->rootfs_path);
+        if (n < 0 || (size_t)n >= sizeof(mount_path))
+            return -ENAMETOOLONG;
+        int ret = vfs_mount_ex(mount_path, &tmpfs_vfs_ops, NULL, 0);
+        if (ret < 0) {
+            kprintf("[Containers] Failed to mount tmpfs at %s: err=%d\n",
+                    mount_path, ret);
+            return ret;
+        }
+    }
+
+    /* Mount tmpfs at /var/run (ephemeral runtime state) */
+    {
+        int n = snprintf(mount_path, sizeof(mount_path),
+                         "%s/var/run", c->rootfs_path);
+        if (n < 0 || (size_t)n >= sizeof(mount_path))
+            return -ENAMETOOLONG;
+        int ret = vfs_mount_ex(mount_path, &tmpfs_vfs_ops, NULL, 0);
+        if (ret < 0) {
+            kprintf("[Containers] Failed to mount tmpfs at %s: err=%d\n",
+                    mount_path, ret);
+            return ret;
+        }
+    }
+
+    kprintf("[Containers] Virtual filesystems mounted for %s\n", c->id);
+    return 0;
+}
+
+/* ── Container create — rootfs setup (Item C3) ────────────────────────
+ *
+ * Prepares a container for running its init process.  This implements
+ * the OCI "create" lifecycle step:
+ *   1. Assign a unique container ID
+ *   2. Create container directory hierarchy (data + run + rootfs)
+ *   3. Create standard rootfs subdirectories (proc, sys, dev, etc.)
+ *   4. Mount virtual filesystems (proc, sysfs, devtmpfs, tmpfs)
+ *   5. Write initial state.json for external tooling
+ *   6. Transition state from CREATING → CREATED
+ *
+ * After this function succeeds, the container is ready for the "start"
+ * step (Item C4) which forks the init process and executes it inside
+ * the prepared environment.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_create(struct container *c)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    spinlock_acquire(&c->lock);
+    if (c->state != CONTAINER_STATE_CREATING) {
+        spinlock_release(&c->lock);
+        return -EBUSY;
+    }
+
+    /* Step 1: Assign a unique container ID */
+    int ret = container_set_id(c);
+    if (ret < 0) {
+        spinlock_release(&c->lock);
+        kprintf("[Containers] Failed to assign ID: err=%d\n", ret);
+        return ret;
+    }
+
+    /* Release the lock during I/O-heavy operations; re-acquire for state change */
+    spinlock_release(&c->lock);
+
+    /* Step 2: Create container data + run directories */
+    ret = container_create_dirs(c);
+    if (ret < 0) {
+        kprintf("[Containers] Failed to create directories for %s: err=%d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    /* Step 3: Create standard rootfs subdirectories */
+    ret = container_create_rootfs_dirs(c);
+    if (ret < 0) {
+        kprintf("[Containers] Failed to create rootfs subdirs for %s: err=%d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    /* Step 4: Mount virtual filesystems inside the container rootfs */
+    ret = container_mount_vfs(c);
+    if (ret < 0) {
+        kprintf("[Containers] Failed to mount VFS for %s: err=%d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    /* Step 5: Transition state to CREATED */
+    ret = container_set_state(c, CONTAINER_STATE_CREATED);
+    if (ret < 0) {
+        kprintf("[Containers] State transition failed for %s: err=%d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    kprintf("[Containers] Container %s created successfully (rootfs: %s)\n",
+            c->id, c->rootfs_path);
     return 0;
 }

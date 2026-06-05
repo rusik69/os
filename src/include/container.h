@@ -159,6 +159,26 @@ int container_remove_dirs(struct container *c);
 int container_set_state(struct container *c, int new_state);
 
 /**
+ * container_create() — Create a container (Item C3).
+ *
+ * Performs the OCI "create" lifecycle step:
+ *   1. Assign a unique container ID (hex string)
+ *   2. Create container directory hierarchy under /var/lib/containers/<id>/
+ *   3. Create standard rootfs subdirectories (proc, sys, dev, etc., tmp)
+ *   4. Mount virtual filesystems (procfs, sysfs, devtmpfs, tmpfs)
+ *      at their standard locations within the container rootfs
+ *   5. Transition container state from CREATING → CREATED
+ *
+ * After this call succeeds, the container is ready for container_start()
+ * (Item C4), which forks the init process into the prepared environment.
+ *
+ * The container must be in CREATING state (freshly allocated via
+ * container_alloc()).  Returns 0 on success, negative errno on failure.
+ * On error the container state is unchanged and the caller should free it.
+ */
+int container_create(struct container *c);
+
+/**
  * container_state_name() — Return human-readable state name.
  */
 static inline const char *container_state_name(int state) {
