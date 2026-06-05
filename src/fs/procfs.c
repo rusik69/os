@@ -26,6 +26,7 @@
 #include "cgroup_namespace.h"
 #include "cpu_topology.h"
 #include "sysrq.h"
+#include "module.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -489,6 +490,70 @@ static int procfs_gen_filesystems(char *buf, int max) {
         proc_str(names[i], buf, &p, max);
         proc_str("\n", buf, &p, max);
     }
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/modules — loaded kernel modules (Linux-compatible format) */
+static int procfs_gen_modules(char *buf, int max) {
+    int p = 0;
+
+    /* Linux /proc/modules format:
+     *   name size used_by [state]
+     * e.g.:
+     *   e1000 16384 - Live
+     *   ext2 53248 - Live
+     *   fat32 24576 vfat Live
+     */
+    for (int i = 0; i < MODULE_MAX && p < max - 128; i++) {
+        struct kernel_module *mod = module_get_by_id(i);
+        if (!mod)
+            continue;
+
+        /* Module name */
+        proc_str(mod->name, buf, &p, max);
+        proc_str(" ", buf, &p, max);
+
+        /* Size — approximate from section sizes, fallback to total size */
+        uint64_t total_size = mod->size;
+        if (total_size == 0) {
+            for (int s = 0; s < mod->num_sections && s < 16; s++) {
+                if (mod->sections[s].size > 0)
+                    total_size += mod->sections[s].size;
+            }
+        }
+        /* Print size in bytes (Linux uses decimal) */
+        char size_str[24];
+        int sl = sprintf(size_str, "%llu", (unsigned long long)total_size);
+        if (sl > 0 && sl < (int)sizeof(size_str))
+            proc_str(size_str, buf, &p, max);
+
+        /* Used-by list — iterate dependencies */
+        proc_str(" ", buf, &p, max);
+        int dep_count = 0;
+        for (int d = 0; d < mod->num_deps && d < MODULE_MAX_DEPS; d++) {
+            if (mod->deps[d].name[0] && mod->deps[d].loaded) {
+                if (dep_count > 0)
+                    proc_str(",", buf, &p, max);
+                proc_str(mod->deps[d].name, buf, &p, max);
+                dep_count++;
+            }
+        }
+        if (dep_count == 0)
+            proc_str("-", buf, &p, max);
+
+        /* State */
+        proc_str(" Live", buf, &p, max);
+
+        /* Module refcount (Linux shows this on newer kernels) */
+        char ref_str[16];
+        int rl = sprintf(ref_str, " %d", mod->refcount);
+        if (rl > 0 && rl < (int)sizeof(ref_str))
+            proc_str(ref_str, buf, &p, max);
+
+        proc_str("\n", buf, &p, max);
+    }
+
     buf[p] = '\0';
     return p;
 }
@@ -1268,6 +1333,8 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_slabinfo(buf, (int)max_size);
     } else if (strcmp(path, "/proc/filesystems") == 0) {
         len = procfs_gen_filesystems(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/modules") == 0) {
+        len = procfs_gen_modules(buf, (int)max_size);
     } else if (strcmp(path, "/proc/self") == 0) {
         /* Redirect to status of current process */
         struct process *proc = process_get_current();
