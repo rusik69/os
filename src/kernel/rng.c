@@ -1,7 +1,8 @@
 /*
  * rng.c — Random Number Generator
  *
- * Uses xorshift64 PRNG seeded from timer_get_ticks().
+ * Uses xorshift64 PRNG seeded from timer_get_ticks() and, if available,
+ * hardware RNG instructions (RDRAND / RDSEED).
  * Simple, fast, non-cryptographic random number generation.
  */
 
@@ -10,6 +11,73 @@
 #include "printf.h"
 
 static uint64_t g_rng_state = 0;
+
+/* ── RDRAND / RDSEED support ───────────────────────────────────────────
+ *
+ * RDRAND (Intel Ivy Bridge+, AMD Jaguar+) returns random numbers from
+ * a DRBG (Deterministic Random Bit Generator) seeded by an on-chip
+ * hardware entropy source.
+ *
+ * RDSEED (Intel Broadwell+, AMD Zen+) returns raw entropy directly
+ * from the hardware entropy source, making it more suitable for
+ * seeding cryptographic PRNGs.
+ *
+ * Both instructions set the carry flag (CF) to indicate success;
+ * if CF=0 the value returned is not valid.
+ *
+ * CPUID detection:
+ *   RDRAND: leaf 1, ECX bit 30
+ *   RDSEED: leaf 7 (sub-leaf 0), EBX bit 18
+ */
+
+/* Execute the RDRAND instruction (64-bit variant).
+ * Returns 1 on success (CF=1), 0 if the value is invalid. */
+static inline int rdrand_u64(uint64_t *val) {
+    unsigned char ok;
+    __asm__ volatile("rdrand %0; setc %1"
+                     : "=r" (*val), "=qm" (ok));
+    return (int)ok;
+}
+
+/* Execute the RDSEED instruction (64-bit variant).
+ * Returns 1 on success (CF=1), 0 if the value is invalid. */
+static inline int rdseed_u64(uint64_t *val) {
+    unsigned char ok;
+    __asm__ volatile("rdseed %0; setc %1"
+                     : "=r" (*val), "=qm" (ok));
+    return (int)ok;
+}
+
+/* Cache for CPUID feature flags (initialised lazily). */
+static int g_rdrand_detected = -1;  /* -1 = not yet checked */
+static int g_rdseed_detected = -1;  /* -1 = not yet checked */
+
+/* Check whether RDRAND is supported via CPUID leaf 1, ECX bit 30. */
+static int detect_rdrand(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(1));
+    return (ecx >> 30) & 1;
+}
+
+/* Check whether RDSEED is supported via CPUID leaf 7 (sub-leaf 0),
+ * EBX bit 18. */
+static int detect_rdseed(void) {
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid"
+                     : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                     : "a"(7), "c"(0));
+    return (ebx >> 18) & 1;
+}
+
+int rng_hw_rdrand_available(void) {
+    if (g_rdrand_detected < 0)
+        g_rdrand_detected = detect_rdrand();
+    return g_rdrand_detected;
+}
+
+/* ── Public API ──────────────────────────────────────────────────────── */
 
 void rng_init(void) {
     /* Seed from timer ticks — captures boot-time jitter */
@@ -20,12 +88,19 @@ void rng_init(void) {
     uint64_t stack_var;
     g_rng_state ^= (uint64_t)&stack_var;
 
-    /* Initialize with a few warm-up rounds */
+    /* Attempt to seed from hardware RNG (RDRAND / RDSEED) */
+    int hw_words = rng_seed_from_hw(4, RNG_HW_PREFER_RDSEED);
+    if (hw_words > 0) {
+        kprintf("[OK] RNG initialized (hw-seeded with %d words from %s)\n",
+                hw_words, (g_rdseed_detected > 0) ? "RDSEED" : "RDRAND");
+    } else {
+        kprintf("[OK] RNG initialized (software seed, no hwrng)\n");
+    }
+
+    /* Initialize with a few warm-up rounds to diffuse the seed */
     for (int i = 0; i < 10; i++) {
         (void)rng_get_u64();
     }
-
-    kprintf("[OK] RNG initialized\n");
 }
 
 static uint64_t xorshift64(uint64_t *state) {
@@ -76,4 +151,55 @@ void rng_add_entropy(const void *data, uint32_t len) {
     /* Extra diffusion: mix in the length as well */
     g_rng_state ^= (uint64_t)len;
     (void)xorshift64(&g_rng_state);
+}
+
+/* ── Seed from hardware RNG (RDRAND / RDSEED) ────────────────────────── */
+
+int rng_seed_from_hw(int words, int flags) {
+    if (words <= 0)
+        return 0;
+
+    /* Cap to a reasonable maximum to avoid hogging the CPU */
+    if (words > 16)
+        words = 16;
+
+    /* Check availability lazily */
+    if (g_rdrand_detected < 0)
+        g_rdrand_detected = detect_rdrand();
+    if (g_rdseed_detected < 0)
+        g_rdseed_detected = detect_rdseed();
+
+    int use_rdseed = (flags & RNG_HW_PREFER_RDSEED) && g_rdseed_detected;
+    int obtained   = 0;
+    int retries    = 0;
+    const int MAX_RETRIES = 10;
+
+    while (obtained < words && retries < MAX_RETRIES) {
+        uint64_t val;
+        int ok;
+
+        if (use_rdseed) {
+            ok = rdseed_u64(&val);
+            /* If RDSEED fails transiently (rare), fall back to RDRAND */
+            if (!ok && g_rdrand_detected) {
+                ok = rdrand_u64(&val);
+                use_rdseed = 0;  /* don't try RDSEED again this call */
+            }
+        } else if (g_rdrand_detected) {
+            ok = rdrand_u64(&val);
+        } else {
+            break;  /* no hardware RNG available */
+        }
+
+        if (ok) {
+            /* Mix the hardware random word into the RNG state */
+            rng_add_entropy(&val, sizeof(val));
+            obtained++;
+            retries = 0;  /* reset retry count on success */
+        } else {
+            retries++;
+        }
+    }
+
+    return obtained;
 }
