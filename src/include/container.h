@@ -187,4 +187,33 @@ static inline const char *container_state_name(int state) {
     return "unknown";
 }
 
+/**
+ * container_stop() — Stop a running container (Item C5).
+ *
+ * Sends SIGTERM to the container's init process.  If the process does not
+ * exit within @timeout_ms milliseconds, sends SIGKILL.  Transitions state
+ * from RUNNING → STOPPED.
+ *
+ * If @timeout_ms <= 0, defaults to 3000 ms (3 seconds).  After stopping,
+ * the container can be deleted via container_delete() or inspected via
+ * container_get_state().
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_stop(struct container *c, int timeout_ms);
+
+/**
+ * container_delete() — Delete a stopped container (Item C6).
+ *
+ * Performs the OCI "delete" lifecycle step for a stopped container:
+ *   1. Validates container is in STOPPED state
+ *   2. Transitions state to DELETING
+ *   3. Removes all container directories (data + run)
+ *   4. Frees the container descriptor slot
+ *
+ * After this call, the container struct is invalid and must not be used.
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_delete(struct container *c);
+
 #endif /* CONTAINER_H */

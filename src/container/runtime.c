@@ -23,6 +23,8 @@
 #include "vfs.h"
 #include "scheduler.h"   /* scheduler_yield for process lifecycles */
 #include "heap.h"         /* kmalloc / kfree */
+#include "signal.h"       /* signal_send for stopping init process */
+#include "timer.h"        /* timer_get_ticks for timeout */
 
 /* ── Global container table ────────────────────────────────────────── */
 
@@ -550,5 +552,153 @@ int container_create(struct container *c)
 
     kprintf("[Containers] Container %s created successfully (rootfs: %s)\n",
             c->id, c->rootfs_path);
+    return 0;
+}
+
+/* ── Container stop (Item C5) ─────────────────────────────────────────
+ *
+ * Stops a running container by sending SIGTERM to its init process.
+ * If the process does not exit within @timeout_ms milliseconds, sends
+ * SIGKILL.  After stopping, the container is in STOPPED state and may
+ * be deleted or inspected.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_stop(struct container *c, int timeout_ms)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* Must be in RUNNING state to stop */
+    spinlock_acquire(&c->lock);
+    if (c->state != CONTAINER_STATE_RUNNING) {
+        spinlock_release(&c->lock);
+        return -EBUSY;
+    }
+    spinlock_release(&c->lock);
+
+    /* Default timeout: 3 seconds */
+    if (timeout_ms <= 0) timeout_ms = 3000;
+
+    /* Convert milliseconds to ticks (TIMER_FREQ = 100 ticks/sec) */
+    int timeout_ticks = (timeout_ms * TIMER_FREQ + 999) / 1000;
+    if (timeout_ticks < 1) timeout_ticks = 1;
+
+    uint32_t target_pid = c->init_pid;
+    kprintf("[Containers] Stopping container %s (PID %u, timeout=%d ms)...\n",
+            c->id, (unsigned)target_pid, timeout_ms);
+
+    /* Step 1: Send SIGTERM to init process */
+    if (target_pid != 0) {
+        int ret = signal_send(target_pid, SIGTERM);
+        if (ret < 0) {
+            kprintf("[Containers] Warning: signal_send(SIGTERM) to PID %u returned %d\n",
+                    (unsigned)target_pid, ret);
+            /* Continue anyway — process may already be dead */
+        }
+    }
+
+    /* Step 2: Wait for process to exit (poll process table) */
+    uint64_t start_tick = timer_get_ticks();
+    int waited = 0;
+
+    while (waited < timeout_ticks) {
+        /* Check if the process still exists */
+        struct process *proc = process_get_by_pid(target_pid);
+        if (!proc) {
+            /* Process has exited */
+            kprintf("[Containers] Container %s init process (PID %u) exited gracefully\n",
+                    c->id, (unsigned)target_pid);
+            break;
+        }
+
+        /* Yield to let the target process run and handle the signal */
+        scheduler_yield();
+
+        /* Update elapsed time */
+        uint64_t now = timer_get_ticks();
+        waited = (int)(now - start_tick);
+    }
+
+    /* Step 3: If still alive after timeout, send SIGKILL */
+    if (target_pid != 0) {
+        struct process *proc = process_get_by_pid(target_pid);
+        if (proc) {
+            kprintf("[Containers] Container %s PID %u did not exit in %d ms — sending SIGKILL\n",
+                    c->id, (unsigned)target_pid, timeout_ms);
+            signal_send(target_pid, SIGKILL);
+
+            /* Brief wait for SIGKILL to take effect */
+            start_tick = timer_get_ticks();
+            waited = 0;
+            while (waited < TIMER_FREQ * 2) { /* up to 2 more seconds */
+                if (!process_get_by_pid(target_pid))
+                    break;
+                scheduler_yield();
+                waited = (int)(timer_get_ticks() - start_tick);
+            }
+        }
+    }
+
+    /* Step 4: Transition state to STOPPED */
+    int ret = container_set_state(c, CONTAINER_STATE_STOPPED);
+    if (ret < 0) {
+        kprintf("[Containers] Warning: state transition to STOPPED failed for %s: %d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    kprintf("[Containers] Container %s stopped successfully\n", c->id);
+    return 0;
+}
+
+/* ── Container delete (Item C6) ───────────────────────────────────────
+ *
+ * Deletes a stopped container:
+ *   1. Validates the container is in STOPPED state
+ *   2. Transitions state to DELETING
+ *   3. Removes all container directories (data + run + rootfs)
+ *   4. Frees the container descriptor slot
+ *
+ * After this call, the container struct is invalidated and must not
+ * be accessed again.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int container_delete(struct container *c)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* Must be in STOPPED state to delete */
+    spinlock_acquire(&c->lock);
+    if (c->state != CONTAINER_STATE_STOPPED) {
+        spinlock_release(&c->lock);
+        kprintf("[Containers] Cannot delete container %s: not in STOPPED state (current=%s)\n",
+                c->id, container_state_name(c->state));
+        return -EBUSY;
+    }
+    spinlock_release(&c->lock);
+
+    kprintf("[Containers] Deleting container %s...\n", c->id);
+
+    /* Step 1: Transition to DELETING state */
+    int ret = container_set_state(c, CONTAINER_STATE_DELETING);
+    if (ret < 0) {
+        kprintf("[Containers] State transition to DELETING failed for %s: %d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    /* Step 2: Remove all container directories (best-effort) */
+    ret = container_remove_dirs(c);
+    if (ret < 0) {
+        /* Non-fatal — directories may already have been cleaned up */
+        kprintf("[Containers] Warning: directory removal for %s returned %d\n",
+                c->id, ret);
+    }
+
+    /* Step 3: Free the container descriptor slot */
+    container_free(c);
+
+    kprintf("[Containers] Container %s deleted successfully\n", c->id);
     return 0;
 }
