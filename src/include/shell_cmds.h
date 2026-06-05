@@ -27,6 +27,7 @@ void cmd_history_show(void);
 void cmd_ifconfig(void);
 void cmd_ping(const char *args);
 void cmd_dns(const char *args);
+void cmd_dmsetup(const char *args);
 void cmd_curl(const char *args);
 void cmd_beep(const char *args);
 void cmd_play(const char *args);

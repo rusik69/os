@@ -28,6 +28,7 @@ static void sh_route(const char *a)      { (void)a; cmd_route(); }
 static void sh_uname(const char *a)      { (void)a; cmd_uname(); }
 static void sh_lspci(const char *a)      { (void)a; cmd_lspci(); }
 static void sh_dmesg(const char *a)      { cmd_dmesg(a); }
+static void sh_dmsetup(const char *a)    { cmd_dmsetup(a); }
 static void sh_jobs(const char *a)       { (void)a; cmd_jobs(); }
 static void sh_cmos(const char *a)       { (void)a; cmd_cmos(); }
 static void sh_hwinfo(const char *a)     { (void)a; cmd_hwinfo(); }

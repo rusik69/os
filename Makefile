@@ -261,6 +261,8 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/bochs.c \
          src/drivers/loop.c \
          src/drivers/spi.c \
+         src/drivers/dm.c \
+         src/drivers/dm-linear.c \
          src/drivers/ipmi_kcs.c \
          src/drivers/tpm_tis.c \
          src/drivers/dyndbg.c \
@@ -615,12 +617,12 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
 	    echo "  string.h, stdlib.h, types.h, keyboard.h, blockdev.h, fat32.h, ata.h,"; \
-	    echo "  ahci.h, service.h, fault.h, heap.h, devtmpfs.h, nvme.h"; \
+	    echo "  ahci.h, service.h, fault.h, heap.h, devtmpfs.h, nvme.h, dm.h"; \
 	    echo "Offending files:"; \
 	    echo "$$bad"; \
 	    exit 1; \

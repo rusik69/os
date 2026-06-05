@@ -54,6 +54,7 @@
 #include "fstab.h"
 #include "pipe.h"
 #include "blockdev.h"
+#include "dm.h"
 #include "shm.h"
 #include "swap.h"
 #include "virtio_net.h"
@@ -727,6 +728,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Block device registry */
     blockdev_init();
+
+    /* Device mapper framework — virtual block device layer */
+    dm_init();
+    dm_linear_init();
 
     /* ZRAM compressed RAM block device — requires compression subsystem */
     zcomp_init();
