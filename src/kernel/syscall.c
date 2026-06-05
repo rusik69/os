@@ -71,6 +71,7 @@
 #include "hugetlb.h"
 #include "sched_attr.h"
 #include "swap.h"
+#include "kexec.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -3450,9 +3451,23 @@ static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
     return count;
 }
 
+/* ── kexec_load — register a kernel image for kexec reboot (Item 362) ── */
+
+static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags)
+{
+    int ret = kexec_load(phys_addr, entry, (uint32_t)flags);
+    return (uint64_t)(int64_t)ret;
+}
+
 /* ── reboot() ────────────────────────────────────────────────── */
 
 static uint64_t sys_reboot(void) {
+    /* If a kexec image is loaded, kexec-reboot instead of ACPI shutdown */
+    if (kexec_is_loaded()) {
+        kprintf("[syscall] reboot: kexec image loaded — jumping to new kernel\n");
+        kexec_reboot();
+        /* Never reaches here */
+    }
     /* Call ACPI shutdown */
     acpi_shutdown();
     /* Should not reach here */
@@ -8515,6 +8530,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_TKILL:               return sys_tkill(a1, a2);
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
         case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
+        case SYS_KEXEC_LOAD:          return sys_kexec_load(a1, a2, a3);
         case SYS_THREAD_CREATE:       return sys_thread_create(a1, a2);
         case SYS_THREAD_JOIN:         return sys_thread_join(a1, a2);
         case SYS_THREAD_EXIT:         sys_thread_exit((void *)a1); return 0;

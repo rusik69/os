@@ -317,6 +317,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/jump_label.c \
          src/kernel/pstore.c \
          src/kernel/kdump.c \
+         src/kernel/kexec.c \
          src/kernel/stack_guard.c \
          src/kernel/rseq.c \
          src/kernel/kcov.c \

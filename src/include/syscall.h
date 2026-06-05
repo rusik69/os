@@ -779,6 +779,9 @@ struct linux_dirent64 {
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 
+/* ── kexec (Item 362) ─────────────────────────────────────────── */
+#define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.

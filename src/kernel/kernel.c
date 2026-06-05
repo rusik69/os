@@ -114,6 +114,7 @@
 #include "jump_label.h"
 #include "pstore.h"
 #include "kdump.h"
+#include "kexec.h"
 #include "mce.h"
 #include "config_gz.h"
 #include "nx_enforce.h"
@@ -376,6 +377,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Kdump — kernel crash dump capture region (post-mortem analysis) */
     kdump_init();
+
+    /* Kexec — reserve memory region for loading new kernel images (Item 362) */
+    kexec_init();
 
     /* Machine Check Exception (MCE) handler — hardware error detection */
     mce_init();
