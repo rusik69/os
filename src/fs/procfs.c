@@ -1605,3 +1605,43 @@ struct vfs_ops procfs_ops = {
     .unlink  = NULL,
     .readdir = procfs_readdir,
 };
+
+/* ── procfs_init — Initialise and mount /proc ──────────────────────────
+ *
+ * Called from the built-in init path (vfs_init in kernel.c).
+ * When built as a loadable module, this function is called from
+ * init_module() instead.
+ *
+ * Mounts /proc with the procfs VFS operations so that /proc/cpuinfo,
+ * /proc/meminfo, /proc/uptime, /proc/PID/, and other virtual files
+ * become accessible to userspace.
+ */
+void procfs_init(void)
+{
+    if (vfs_mount("/proc", &procfs_ops, NULL) == 0) {
+        kprintf("[OK] procfs mounted on /proc\n");
+    } else {
+        kprintf("[!!] procfs mount failed\n");
+    }
+}
+
+#ifdef MODULE
+#include "module.h"
+
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void)
+{
+    procfs_init();
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void)
+{
+    kprintf("[procfs] Module unloaded\n");
+}
+
+MODULE_LICENSE("GPL v2");
+MODULE_AUTHOR("Hermes OS");
+MODULE_DESCRIPTION("procfs — /proc virtual filesystem (loadable module)");
+#endif /* MODULE */

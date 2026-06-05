@@ -1568,8 +1568,8 @@ void vfs_init(void) {
     dcache_init();
     /* Mount the SMFS filesystem as root */
     vfs_mount("/", &smfs_ops, NULL);
-    /* Mount the /proc virtual filesystem */
-    vfs_mount("/proc", &procfs_ops, NULL);
+    /* Mount the /proc virtual filesystem — now handled by procfs_init()
+     * so that it can work as both a built-in and a loadable module. */
     /* The /dev device filesystem is mounted by devfs_init()
      * (called from kernel.c or from the devfs module init). */
     /* Mount tmpfs as /dev/shm for POSIX shared memory & semaphores */

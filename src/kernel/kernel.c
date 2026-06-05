@@ -644,6 +644,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] VFS initialized\n");
     splash_progress(12);
 
+    /* procfs — /proc virtual filesystem (supports built-in + loadable module) */
+    {
+        extern void procfs_init(void);
+        procfs_init();
+    }
+
     /* Auto-mount filesystems from /etc/fstab */
     {
         int nm = fstab_mount_all();
