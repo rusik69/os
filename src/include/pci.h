@@ -200,4 +200,116 @@ int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func);
 /* Check AER errors for all PCI devices.  Called periodically. */
 void pci_aer_check_all(void);
 
+/* ── Generic extended capability finder ──────────────────────────── */
+
+/* Walk the PCIe extended config space (offsets 0x100..0xFFF) looking for
+ * the given extended capability ID.  Returns offset (>= 0x100) on success,
+ * or < 0 if not found.  Requires ECAM access. */
+int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id);
+
+/* ── Access Control Services (ACS, ext cap ID 0x000D) ──────────────
+ *
+ * ACS provides fine-grained control over peer-to-peer transactions
+ * between PCIe functions for security and IOMMU grouping.
+ * Defined in PCIe Base Spec r4.0, Section 6.12.
+ */
+
+/* ACS capability register offsets (relative to capability base) */
+#define PCI_ACS_CAP           0x04  /* ACS Capability Register */
+#define PCI_ACS_CTRL          0x06  /* ACS Control Register */
+#define PCI_ACS_EGRESS_CTRL   0x08  /* Egress Control Vector (if cap[2]=1) */
+
+/* ACS Capability bits */
+#define PCI_ACS_CAP_SV        (1 << 0)  /* Source Validation */
+#define PCI_ACS_CAP_TB        (1 << 1)  /* Translation Blocking */
+#define PCI_ACS_CAP_RR        (1 << 2)  /* P2P Request Redirect */
+#define PCI_ACS_CAP_CR        (1 << 3)  /* P2P Completion Redirect */
+#define PCI_ACS_CAP_UF        (1 << 4)  /* Upstream Forwarding */
+#define PCI_ACS_CAP_EC        (1 << 5)  /* P2P Egress Control */
+#define PCI_ACS_CAP_DT        (1 << 6)  /* Direct Translated P2P */
+
+/* ACS Control bits (same bit positions, writable) */
+#define PCI_ACS_CTRL_SV       PCI_ACS_CAP_SV
+#define PCI_ACS_CTRL_TB       PCI_ACS_CAP_TB
+#define PCI_ACS_CTRL_RR       PCI_ACS_CAP_RR
+#define PCI_ACS_CTRL_CR       PCI_ACS_CAP_CR
+#define PCI_ACS_CTRL_UF       PCI_ACS_CAP_UF
+#define PCI_ACS_CTRL_EC       PCI_ACS_CAP_EC
+#define PCI_ACS_CTRL_DT       PCI_ACS_CAP_DT
+
+/* Find the ACS extended capability.
+ * Returns offset (>= 0x100) on success, or < 0 if not found. */
+int pci_find_acs_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* Log ACS capability details for a device. */
+void pci_log_acs_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* ── Latency Tolerance Reporting (LTR, ext cap ID 0x0018) ──────────
+ *
+ * LTR allows endpoints to report their latency tolerance so the
+ * platform can optimise power states.  Defined in PCIe Base Spec r3.0.
+ */
+
+/* LTR capability register offsets */
+#define PCI_LTR_MAX_SNOOP       0x04  /* Max Snoop Latency Register */
+#define PCI_LTR_MAX_NOSNOOP     0x06  /* Max No-Snoop Latency Register */
+
+/* LTR max latency encoding:
+ *   [11:0] = value (in ns = value * scale_factor)
+ *   [14:12] = scale
+ *   [15]    = Require LTR (read-only)
+ * scale: 0=1ns, 1=32ns, 2=1024ns, 3=32768ns, 4=1048576ns, 5=33554432ns
+ *        6-7 reserved
+ */
+#define PCI_LTR_VALUE_MASK      0x0FFF
+#define PCI_LTR_SCALE_SHIFT      12
+#define PCI_LTR_SCALE_MASK      (7 << 12)
+#define PCI_LTR_REQUIRE         (1 << 15)
+
+/* Convert LTR encoded latency to nanoseconds (returns 0 on invalid scale) */
+uint64_t pci_ltr_to_ns(uint16_t ltr_reg);
+
+/* Find the LTR extended capability.
+ * Returns offset (>= 0x100) on success, or < 0 if not found. */
+int pci_find_ltr_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* Log LTR capability details for a device. */
+void pci_log_ltr_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* ── L1 PM Substates (ext cap ID 0x001E) ──────────────────────────
+ *
+ * Defines L1.1 and L1.2 low-power substates for PCIe links,
+ * reducing power further than baseline L1.
+ * Defined in PCIe Base Spec r4.0, Section 6.11.1.
+ */
+
+/* L1 PM Substates capability register offsets */
+#define PCI_L1PM_CAP            0x04  /* L1 PM Substates Capabilities */
+#define PCI_L1PM_CTRL1          0x08  /* L1 PM Substates Control 1 */
+#define PCI_L1PM_CTRL2          0x0C  /* L1 PM Substates Control 2 */
+
+/* L1 PM Substates Capability bits */
+#define PCI_L1PM_CAP_PCIPM_L12  (1 << 0)  /* PCI-PM L1.2 Supported */
+#define PCI_L1PM_CAP_PCIPM_L11  (1 << 1)  /* PCI-PM L1.1 Supported */
+#define PCI_L1PM_CAP_ASPM_L12   (1 << 2)  /* ASPM L1.2 Supported */
+#define PCI_L1PM_CAP_ASPM_L11   (1 << 3)  /* ASPM L1.1 Supported */
+#define PCI_L1PM_CAP_L1SS       (1 << 4)  /* L1 SubState Supported */
+#define PCI_L1PM_CAP_CM_REST    (1 << 5)  /* CommonMode Restore Time Supported */
+#define PCI_L1PM_CAP_PWR_ON     (1 << 6)  /* Power On Time Supported */
+#define PCI_L1PM_CAP_LTR_BLOCK  (1 << 7)  /* LTR Blocking Supported */
+
+/* L1 PM Substates Control 1 bits */
+#define PCI_L1PM_CTRL1_CM_REST_TIME_MASK  0xFF  /* CommonModeRestoreTime (bits 7:0) */
+#define PCI_L1PM_CTRL1_PWR_ON_TIME_MASK   0xFF00 /* PowerOnTime (bits 15:8) */
+#define PCI_L1PM_CTRL1_PWR_ON_SHIFT       8
+#define PCI_L1PM_CTRL1_LTR_BLOCK_OVR      (1 << 30) /* LTR Block Override */
+#define PCI_L1PM_CTRL1_L12_EN             (1U << 31) /* L1.2 Enable (both PCI-PM & ASPM) */
+
+/* Find the L1 PM Substates extended capability.
+ * Returns offset (>= 0x100) on success, or < 0 if not found. */
+int pci_find_l1pm_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
+/* Log L1 PM Substates capability details for a device. */
+void pci_log_l1pm_cap(uint8_t bus, uint8_t slot, uint8_t func);
+
 #endif

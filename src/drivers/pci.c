@@ -706,25 +706,26 @@ void pci_list(void) {
 }
 
 /*
- * Find the AER extended capability on a PCIe device.
+ * Find a PCIe extended capability by ID.
  *
  * PCIe extended capabilities live in the extended config space
  * (offsets 0x100 - 0xFFF).  Each extended capability header is
  * 4 bytes: [15:0] = capability ID, [19:16] = version, [31:20] = next.
  *
- * AER has extended capability ID = 0x0001.
+ * Returns the capability offset (>= 0x100) on success, or -1 if
+ * not found or ECAM is unavailable.
  */
-int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func) {
-    if (!ecam_base) return -1;  /* AER requires ECAM access */
+int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id) {
+    if (!ecam_base) return -1;  /* Extended caps require ECAM access */
 
     uint16_t offset = 0x100;  /* Start of extended config space */
     while (offset < 0x1000) {
         uint32_t header = pcie_read(bus, slot, func, offset);
-        uint16_t cap_id = header & 0xFFFF;
-        if (cap_id == 0xFFFF)
-            break;  /* No more capabilities */
-        if (cap_id == 0x0001)
-            return (int)offset;  /* Found AER capability */
+        uint16_t id = header & 0xFFFF;
+        if (id == 0xFFFF)
+            break;  /* End of capabilities list */
+        if (id == cap_id)
+            return (int)offset;  /* Found it */
 
         uint16_t next = (uint16_t)((header >> 20) & 0xFFF);
         if (next == 0)
@@ -732,6 +733,15 @@ int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func) {
         offset = next;
     }
     return -1;
+}
+
+/*
+ * Find the AER extended capability on a PCIe device.
+ *
+ * AER has extended capability ID = 0x0001.
+ */
+int pci_find_aer_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    return pci_find_ext_cap(bus, slot, func, 0x0001);
 }
 
 /* Human-readable name for an uncorrectable AER error bit */
@@ -867,10 +877,147 @@ void pci_aer_check_all(void) {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  PCIe Extended Capabilities: ACS, LTR, L1 PM Substates (Item 186)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Access Control Services (ACS, ext cap ID 0x000D) ─────────────── */
+
+int pci_find_acs_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    return pci_find_ext_cap(bus, slot, func, 0x000D);
+}
+
+void pci_log_acs_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    int off = pci_find_acs_cap(bus, slot, func);
+    if (off < 0)
+        return;
+
+    uint16_t cap  = (uint16_t)pcie_read(bus, slot, func, (uint16_t)off + PCI_ACS_CAP);
+    uint16_t ctrl = (uint16_t)pcie_read(bus, slot, func, (uint16_t)off + PCI_ACS_CTRL);
+
+    kprintf("    ACS: cap=0x%04x ctrl=0x%04x",
+            (unsigned int)cap, (unsigned int)ctrl);
+
+    /* Log which capabilities are supported */
+    if (cap & PCI_ACS_CAP_SV)  kprintf(" SV");
+    if (cap & PCI_ACS_CAP_TB)  kprintf(" TB");
+    if (cap & PCI_ACS_CAP_RR)  kprintf(" RR");
+    if (cap & PCI_ACS_CAP_CR)  kprintf(" CR");
+    if (cap & PCI_ACS_CAP_UF)  kprintf(" UF");
+    if (cap & PCI_ACS_CAP_EC)  kprintf(" EC");
+    if (cap & PCI_ACS_CAP_DT)  kprintf(" DT");
+
+    /* Log which are enabled */
+    if (ctrl) {
+        kprintf(" (en:");
+        if (ctrl & PCI_ACS_CTRL_SV) kprintf(" SV");
+        if (ctrl & PCI_ACS_CTRL_TB) kprintf(" TB");
+        if (ctrl & PCI_ACS_CTRL_RR) kprintf(" RR");
+        if (ctrl & PCI_ACS_CTRL_CR) kprintf(" CR");
+        if (ctrl & PCI_ACS_CTRL_UF) kprintf(" UF");
+        if (ctrl & PCI_ACS_CTRL_EC) kprintf(" EC");
+        if (ctrl & PCI_ACS_CTRL_DT) kprintf(" DT");
+        kprintf(")");
+    }
+
+    /* Log Egress Control Vector if P2P Egress Control is supported */
+    if ((cap & PCI_ACS_CAP_EC) && (ctrl & PCI_ACS_CTRL_EC)) {
+        uint16_t egress = (uint16_t)pcie_read(bus, slot, func,
+                            (uint16_t)off + PCI_ACS_EGRESS_CTRL);
+        kprintf(" egress=0x%04x", (unsigned int)egress);
+    }
+
+    kprintf("\n");
+}
+
+/* ── Latency Tolerance Reporting (LTR, ext cap ID 0x0018) ─────────── */
+
+int pci_find_ltr_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    return pci_find_ext_cap(bus, slot, func, 0x0018);
+}
+
+uint64_t pci_ltr_to_ns(uint16_t ltr_reg) {
+    uint16_t raw_val = ltr_reg & PCI_LTR_VALUE_MASK;
+    unsigned int scale = (ltr_reg >> PCI_LTR_SCALE_SHIFT) & 0x7;
+
+    /* Scale factors from PCIe spec: 0=1ns, 1=32ns, 2=1024ns, 3=32768ns,
+     * 4=1048576ns, 5=33554432ns */
+    static const uint64_t ltr_scales[] = {
+        1ULL, 32ULL, 1024ULL, 32768ULL, 1048576ULL, 33554432ULL
+    };
+
+    if (scale >= sizeof(ltr_scales) / sizeof(ltr_scales[0]))
+        return 0;  /* Invalid scale */
+
+    return (uint64_t)raw_val * ltr_scales[scale];
+}
+
+void pci_log_ltr_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    int off = pci_find_ltr_cap(bus, slot, func);
+    if (off < 0)
+        return;
+
+    uint16_t max_snoop   = (uint16_t)pcie_read(bus, slot, func, (uint16_t)off + PCI_LTR_MAX_SNOOP);
+    uint16_t max_nosnoop = (uint16_t)pcie_read(bus, slot, func, (uint16_t)off + PCI_LTR_MAX_NOSNOOP);
+
+    uint64_t snoop_ns   = pci_ltr_to_ns(max_snoop);
+    uint64_t nosnoop_ns = pci_ltr_to_ns(max_nosnoop);
+
+    kprintf("    LTR: max_snoop=%u(%lluns) max_nosnoop=%u(%lluns)%s\n",
+            (unsigned int)(max_snoop & PCI_LTR_VALUE_MASK),
+            (unsigned long long)snoop_ns,
+            (unsigned int)(max_nosnoop & PCI_LTR_VALUE_MASK),
+            (unsigned long long)nosnoop_ns,
+            (max_snoop & PCI_LTR_REQUIRE) ? " [REQUIRED]" : "");
+}
+
+/* ── L1 PM Substates (ext cap ID 0x001E) ─────────────────────────── */
+
+int pci_find_l1pm_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    return pci_find_ext_cap(bus, slot, func, 0x001E);
+}
+
+void pci_log_l1pm_cap(uint8_t bus, uint8_t slot, uint8_t func) {
+    int off = pci_find_l1pm_cap(bus, slot, func);
+    if (off < 0)
+        return;
+
+    uint32_t l1pm_cap  = pcie_read(bus, slot, func, (uint16_t)off + PCI_L1PM_CAP);
+    uint32_t l1pm_ctrl1 = pcie_read(bus, slot, func, (uint16_t)off + PCI_L1PM_CTRL1);
+
+    kprintf("    L1PM: cap=0x%08x ctrl1=0x%08x",
+            (unsigned int)l1pm_cap, (unsigned int)l1pm_ctrl1);
+
+    /* Supported substates */
+    if (l1pm_cap & PCI_L1PM_CAP_PCIPM_L12) kprintf(" PCI-PM_L1.2");
+    if (l1pm_cap & PCI_L1PM_CAP_PCIPM_L11) kprintf(" PCI-PM_L1.1");
+    if (l1pm_cap & PCI_L1PM_CAP_ASPM_L12)  kprintf(" ASPM_L1.2");
+    if (l1pm_cap & PCI_L1PM_CAP_ASPM_L11)  kprintf(" ASPM_L1.1");
+    if (l1pm_cap & PCI_L1PM_CAP_LTR_BLOCK) kprintf(" LTR_Block");
+
+    /* L1.2 enable status */
+    if (l1pm_ctrl1 & PCI_L1PM_CTRL1_L12_EN)
+        kprintf(" [L1.2_EN]");
+
+    /* CommonModeRestoreTime and PowerOnTime */
+    uint8_t cm_rest = (uint8_t)(l1pm_ctrl1 & PCI_L1PM_CTRL1_CM_REST_TIME_MASK);
+    uint8_t pwr_on  = (uint8_t)((l1pm_ctrl1 & PCI_L1PM_CTRL1_PWR_ON_TIME_MASK)
+                                >> PCI_L1PM_CTRL1_PWR_ON_SHIFT);
+    if (cm_rest || pwr_on) {
+        kprintf(" cm_rest=%u pwr_on=%u",
+                (unsigned int)cm_rest, (unsigned int)pwr_on);
+    }
+
+    kprintf("\n");
+}
+
 void pci_init(void) {
     int count = 0;
     int msi_count = 0;
     int msix_count = 0;
+    int acs_count = 0;
+    int ltr_count = 0;
+    int l1pm_count = 0;
 
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
@@ -910,11 +1057,36 @@ void pci_init(void) {
                 struct msix_info msix;
                 if (pci_find_msix_cap(bus, slot, 0, &msix) == 0)
                     msix_count++;
+
+                /* ── Probe PCIe extended capabilities (Item 186) ─────
+                 * Detect and log ACS, LTR, and L1 PM Substates on
+                 * PCIe devices for improved isolation diagnostics,
+                 * power management tuning, and ASPM configuration.
+                 */
+                if (ecam_base) {
+                    if (pci_find_acs_cap((uint8_t)bus, (uint8_t)slot, 0) >= 0) {
+                        acs_count++;
+                        pci_log_acs_cap((uint8_t)bus, (uint8_t)slot, 0);
+                    }
+                    if (pci_find_ltr_cap((uint8_t)bus, (uint8_t)slot, 0) >= 0) {
+                        ltr_count++;
+                        pci_log_ltr_cap((uint8_t)bus, (uint8_t)slot, 0);
+                    }
+                    if (pci_find_l1pm_cap((uint8_t)bus, (uint8_t)slot, 0) >= 0) {
+                        l1pm_count++;
+                        pci_log_l1pm_cap((uint8_t)bus, (uint8_t)slot, 0);
+                    }
+                }
             }
         }
     }
-    kprintf("  %lu PCI devices found (%d MSI, %d MSI-X capable)\n",
+    kprintf("  %lu PCI devices found (%d MSI, %d MSI-X capable",
             (unsigned long)count, msi_count, msix_count);
+    if (ecam_base) {
+        kprintf("; %d ACS, %d LTR, %d L1PM",
+                acs_count, ltr_count, l1pm_count);
+    }
+    kprintf(")\n");
 }
 
 /* ── Exported symbols for driver modules ─────────────────────────── */
@@ -928,3 +1100,8 @@ EXPORT_SYMBOL(pci_disable_msi);
 EXPORT_SYMBOL(pci_disable_msix);
 EXPORT_SYMBOL(pci_setup_interrupts);
 EXPORT_SYMBOL(pci_enable_bus_master);
+EXPORT_SYMBOL(pci_find_ext_cap);
+EXPORT_SYMBOL(pci_find_acs_cap);
+EXPORT_SYMBOL(pci_find_ltr_cap);
+EXPORT_SYMBOL(pci_find_l1pm_cap);
+EXPORT_SYMBOL(pci_ltr_to_ns);
