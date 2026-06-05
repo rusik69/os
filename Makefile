@@ -484,6 +484,8 @@ obj-m += fs/ext2.ko
 obj-m += fs/iso9660.ko
 # fat32: FAT32 read/write filesystem with long filenames and volume labels (M52)
 obj-m += fs/fat32.ko
+# overlay: union/overlay mount filesystem with copy-up-on-write (M55)
+obj-m += kernel/overlay.ko
 
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))

@@ -7,6 +7,10 @@
 #include "vfs.h"
 #include "errno.h"
 #include "heap.h"
+#include "export.h"
+#ifdef MODULE
+#include "module.h"
+#endif
 
 /* Static overlay mount table */
 static struct overlay_mount overlay_table[OVERLAY_MAX_MOUNTS];
@@ -22,6 +26,7 @@ void overlay_init(void)
     kprintf("[OK] overlay: overlay filesystem initialised (%d max layers, %d max mounts)\n",
             OVERLAY_MAX_LAYERS, OVERLAY_MAX_MOUNTS);
 }
+EXPORT_SYMBOL(overlay_init);
 
 /* Find a free overlay mount slot */
 static int overlay_find_free(void)
@@ -192,6 +197,7 @@ int overlay_mount(const char *lower[], int num_lower,
             mntpt, num_lower, upper);
     return 0;
 }
+EXPORT_SYMBOL(overlay_mount);
 
 int overlay_read(const char *path, void *buf, uint32_t max_size, uint32_t *out_size)
 {
@@ -221,6 +227,7 @@ int overlay_read(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
 
     return -ENOENT;
 }
+EXPORT_SYMBOL(overlay_read);
 
 int overlay_write(const char *path, const void *data, uint32_t size)
 {
@@ -251,3 +258,22 @@ int overlay_write(const char *path, const void *data, uint32_t size)
     /* Write to upper layer */
     return vfs_write(upper_path, data, size);
 }
+EXPORT_SYMBOL(overlay_write);
+
+#ifdef MODULE
+/* Module entry point — called by the module ELF loader on insmod */
+int init_module(void) {
+    overlay_init();
+    return 0;
+}
+
+/* Module exit point — called by the module ELF loader on rmmod */
+void cleanup_module(void) {
+    overlay_initialised = 0;
+}
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("Overlay/union mount filesystem — merges multiple lower (read-only) directories with an upper (writable) layer via copy-up-on-write");
+MODULE_VERSION("1.0");
+#endif /* MODULE */
