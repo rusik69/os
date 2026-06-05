@@ -852,6 +852,11 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     else
         kprintf("[--] AC97 audio: not present\n");
 
+    /* OSS /dev/dsp audio interface — registers a /dev/dsp character
+     * device for PCM playback via the AC97 hardware. */
+    extern void sound_oss_init(void);
+    sound_oss_init();
+
     /* Initialise the netdevice interface layer before any NIC driver
      * so they can register themselves as net devices during init. */
     netdevice_init();
