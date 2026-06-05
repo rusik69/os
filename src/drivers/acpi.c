@@ -471,6 +471,232 @@ static void acpi_parse_lpit(struct acpi_header *hdr) {
             (unsigned int)num_states, disabled_count);
 }
 
+/* ── NFIT: NVDIMM Firmware Interface Table parsing (Item 193) ──────── */
+
+/* Known NFIT SPA Range type GUIDs for memory classification.
+ * ACPI NFIT defines standard GUIDs for different memory types:
+ *   - Volatile memory:   7305944F-FDDA-44E3-B16C-3F22D252E5D0
+ *   - Persistent memory: 66F0D379-B4C3-4BD4-9B16-0F1F19D9E1A8
+ *   - Persistent memory (legacy): 1EFABE8B-CB57-4D1D-9B65-0B4C1C9B99B4
+ *   - Persistent memory (2MB-aligned): B6E7C8F1-4A9A-4F2B-9F3C-7E1B5D2A3C4D
+ *   - Block mode window: 8F0E3B2A-1C4D-4E6F-9A8B-7C5D3E1F2A4B
+ *
+ * We use a string representation because these are 16-byte values and
+ * comparing as raw bytes is simpler than struct comparisons.
+ */
+#define NFIT_GUID_VOLATILE      "\x4F\x94\x05\x73\xDA\xFD\xE3\x44\xB1\x6C\x3F\x22\xD2\x52\xE5\xD0"
+#define NFIT_GUID_PMEM          "\x79\xD3\xF0\x66\xC3\xB4\xD4\x4B\x9B\x16\x0F\x1F\x19\xD9\xE1\xA8"
+#define NFIT_GUID_PMEM_LEGACY   "\x8B\xBE\xFA\x1E\x57\xCB\x1D\x4D\x9B\x65\x0B\x4C\x1C\x9B\x99\xB4"
+#define NFIT_GUID_PMEM_2MB     "\xF1\xC8\xE7\xB6\x9A\x4A\x2B\x4F\x9F\x3C\x7E\x1B\x5D\x2A\x3C\x4D"
+
+/* Parsed SPA range storage (accessed by pmem driver) */
+static struct nfit_spa_range_info g_nfit_spa_ranges[NFIT_MAX_SPA_RANGES];
+static int g_nfit_spa_count = 0;
+
+int acpi_nfit_get_count(void) {
+    return g_nfit_spa_count;
+}
+
+int acpi_nfit_get_spa(int index, struct nfit_spa_range_info *info) {
+    if (index < 0 || index >= g_nfit_spa_count || !info)
+        return -1;
+    *info = g_nfit_spa_ranges[index];
+    return 0;
+}
+
+/* Compare a GUID against a known pattern (both are 16-byte arrays) */
+static int guid_match(const uint8_t *guid, const char *pattern) {
+    return (memcmp(guid, pattern, 16) == 0);
+}
+
+/* Return a human-readable name for a NFIT SPA range type GUID */
+static const char *nfit_spa_type_name(const uint8_t *guid) {
+    if (guid_match(guid, NFIT_GUID_VOLATILE))
+        return "Volatile memory";
+    if (guid_match(guid, NFIT_GUID_PMEM))
+        return "Persistent memory (PMEM)";
+    if (guid_match(guid, NFIT_GUID_PMEM_LEGACY))
+        return "Persistent memory (legacy)";
+    if (guid_match(guid, NFIT_GUID_PMEM_2MB))
+        return "Persistent memory (2MB-aligned)";
+    return "Unknown";
+}
+
+/* Determine if a GUID indicates persistent memory (for pmem device) */
+static int guid_is_pmem(const uint8_t *guid) {
+    return guid_match(guid, NFIT_GUID_PMEM) ||
+           guid_match(guid, NFIT_GUID_PMEM_LEGACY) ||
+           guid_match(guid, NFIT_GUID_PMEM_2MB);
+}
+
+/*
+ * Parse the ACPI NFIT table to discover NVDIMM presence.
+ *
+ * The NFIT contains an array of sub-tables of various types. We iterate
+ * through all sub-tables looking for:
+ *   - Type 0 (SPA Range): identifies persistent memory regions
+ *   - Type 1 (NVDIMM Region Mapping): maps NVDIMMs to SPA ranges
+ *   - Type 4 (Control Region): identifies NVDIMM controller registers
+ *
+ * The parsed SPA ranges are exported via acpi_nfit_get_count/get_spa
+ * so the pmem driver can register block devices for persistent memory.
+ */
+static void acpi_parse_nfit(struct acpi_header *hdr) {
+    uint32_t table_len = hdr->length;
+    uint8_t *table_end = (uint8_t *)hdr + table_len;
+
+    if (table_len <= sizeof(struct acpi_header)) {
+        kprintf("[NFIT] Table too short (%u bytes), ignoring\n",
+                (unsigned int)table_len);
+        return;
+    }
+
+    /* Reset parsed SPA range count */
+    g_nfit_spa_count = 0;
+
+    /* The NFIT sub-tables start right after the ACPI table header */
+    uint8_t *pos = (uint8_t *)hdr + sizeof(struct acpi_header);
+
+    kprintf("[NFIT] NVDIMM Firmware Interface Table found (%u bytes):\n",
+            (unsigned int)table_len);
+
+    int spa_count = 0;
+    int region_count = 0;
+    int ctrl_count = 0;
+
+    while ((uintptr_t)(pos + sizeof(struct nfit_subtable_header)) <= (uintptr_t)table_end) {
+        struct nfit_subtable_header *sub = (struct nfit_subtable_header *)pos;
+
+        /* Validate length: must be at least header size and not exceed table bounds */
+        if (sub->length < sizeof(struct nfit_subtable_header)) {
+            kprintf("[NFIT] Invalid sub-table at offset %u: length=%u < header=%zu\n",
+                    (unsigned int)(pos - (uint8_t *)hdr),
+                    (unsigned int)sub->length,
+                    sizeof(struct nfit_subtable_header));
+            break;
+        }
+
+        uint16_t stype = sub->type;
+        uint16_t slen  = sub->length;
+
+        /* Ensure we don't read past the table end */
+        if ((uintptr_t)(pos + slen) > (uintptr_t)table_end) {
+            kprintf("[NFIT] Sub-table at offset %u exceeds table bounds "
+                    "(length=%u, table_end_offset=%llu)\n",
+                    (unsigned int)(pos - (uint8_t *)hdr),
+                    (unsigned int)slen,
+                    (unsigned long long)(table_end - (uint8_t *)hdr));
+            break;
+        }
+
+        switch (stype) {
+        case NFIT_SPA_RANGE: {
+            /* System Physical Address Range (type 0) */
+            if (slen < sizeof(struct nfit_spa_range)) {
+                kprintf("[NFIT] SPA range too short: %u < %zu\n",
+                        (unsigned int)slen, sizeof(struct nfit_spa_range));
+                break;
+            }
+            struct nfit_spa_range *spa = (struct nfit_spa_range *)pos;
+            const char *type_name = nfit_spa_type_name(spa->addr_range_type_guid);
+            int is_pmem = guid_is_pmem(spa->addr_range_type_guid);
+
+            kprintf("  SPA[%u] index=%u flags=0x%x prox=%u base=0x%llx "
+                    "len=0x%llx (%llu MB) type=%s%s\n",
+                    (unsigned int)spa_count,
+                    (unsigned int)spa->spa_index,
+                    (unsigned int)spa->flags,
+                    (unsigned int)spa->proximity_domain,
+                    (unsigned long long)spa->spa_base,
+                    (unsigned long long)spa->spa_length,
+                    (unsigned long long)(spa->spa_length / (1024ULL * 1024ULL)),
+                    type_name,
+                    (spa->flags & NFIT_SPA_READ_ONLY) ? " [RO]" : "");
+
+            /* Store SPA range for pmem driver if it's persistent memory */
+            if (is_pmem && g_nfit_spa_count < NFIT_MAX_SPA_RANGES) {
+                struct nfit_spa_range_info *info = &g_nfit_spa_ranges[g_nfit_spa_count];
+                info->spa_base = spa->spa_base;
+                info->spa_length = spa->spa_length;
+                info->spa_index = spa->spa_index;
+                info->flags = spa->flags;
+                info->proximity_domain = spa->proximity_domain;
+                g_nfit_spa_count++;
+            }
+            spa_count++;
+            break;
+        }
+
+        case NFIT_NVDIMM_REGION: {
+            /* NVDIMM Region Mapping (type 1) */
+            if (slen < sizeof(struct nfit_region_mapping)) {
+                kprintf("[NFIT] Region mapping too short: %u < %zu\n",
+                        (unsigned int)slen, sizeof(struct nfit_region_mapping));
+                break;
+            }
+            struct nfit_region_mapping *reg = (struct nfit_region_mapping *)pos;
+            kprintf("  REGION[%u] handle=0x%x spa_idx=%u offset=0x%llx "
+                    "len=0x%llx interleave=%u ways=%u\n",
+                    (unsigned int)region_count,
+                    (unsigned int)reg->nfit_handle,
+                    (unsigned int)reg->spa_index,
+                    (unsigned long long)reg->region_offset,
+                    (unsigned long long)reg->region_length,
+                    (unsigned int)reg->interleave_index,
+                    (unsigned int)reg->interleave_ways);
+            region_count++;
+            break;
+        }
+
+        case NFIT_CONTROL_REGION: {
+            /* NVDIMM Control Region (type 4) */
+            if (slen < sizeof(struct nfit_ctrl_region)) {
+                kprintf("[NFIT] Control region too short: %u < %zu\n",
+                        (unsigned int)slen, sizeof(struct nfit_ctrl_region));
+                break;
+            }
+            struct nfit_ctrl_region *ctrl = (struct nfit_ctrl_region *)pos;
+            kprintf("  CTRL[%u] handle=0x%x vendor=0x%04x device=0x%04x "
+                    "serial=0x%x region_size=0x%llx\n",
+                    (unsigned int)ctrl_count,
+                    (unsigned int)ctrl->nfit_handle,
+                    (unsigned int)ctrl->vendor_id,
+                    (unsigned int)ctrl->device_id,
+                    (unsigned int)ctrl->serial_number,
+                    (unsigned long long)ctrl->control_region_size);
+            ctrl_count++;
+            break;
+        }
+
+        case NFIT_INTERLEAVE:
+            kprintf("  INTERLEAVE: skipping (type=%u length=%u)\n",
+                    (unsigned int)stype, (unsigned int)slen);
+            break;
+
+        case NFIT_SMBIOS_HANDLE:
+            kprintf("  SMBIOS: skipping (type=%u length=%u)\n",
+                    (unsigned int)stype, (unsigned int)slen);
+            break;
+
+        default:
+            kprintf("  SUBTABLE[type=%u length=%u]: unknown, skipping\n",
+                    (unsigned int)stype, (unsigned int)slen);
+            break;
+        }
+
+        /* Advance to the next sub-table (must be 4-byte aligned) */
+        pos += slen;
+        /* Align to 4 bytes per ACPI spec */
+        uintptr_t align_offset = (uintptr_t)pos & 3;
+        if (align_offset)
+            pos += 4 - align_offset;
+    }
+
+    kprintf("[NFIT] Summary: %u SPA ranges, %u region mappings, "
+            "%u control regions, %u PMEM regions exported\n",
+            spa_count, region_count, ctrl_count, g_nfit_spa_count);
+}
+
 void acpi_init(void) {
     struct rsdp *rsdp = find_rsdp(0x80000, 0x9FFFF);
     if (!rsdp) rsdp = find_rsdp(0xE0000, 0xFFFFF);
@@ -506,6 +732,10 @@ void acpi_init(void) {
         if (memcmp(hdr->signature, LPIT_SIG, 4) == 0) {
             kprintf("[OK] ACPI: LPIT (Low Power Idle Table) found\n");
             acpi_parse_lpit(hdr);
+        }
+        /* NFIT table — NVDIMM Firmware Interface Table */
+        if (memcmp(hdr->signature, NFIT_SIG, 4) == 0) {
+            acpi_parse_nfit(hdr);
         }
         /* FACP / FADT table */
     }

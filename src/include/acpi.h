@@ -78,4 +78,108 @@ struct acpi_header {
     uint32_t creator_revision;
 } __attribute__((packed));
 
+/* ── NFIT: NVDIMM Firmware Interface Table (Item 193) ─────────────── */
+
+/* NFIT table signature */
+#define NFIT_SIG "NFIT"
+
+/* NFIT sub-table type values */
+#define NFIT_SPA_RANGE       0  /* System Physical Address Range */
+#define NFIT_NVDIMM_REGION   1  /* NVDIMM Region Mapping */
+#define NFIT_INTERLEAVE      2  /* Interleave Structure */
+#define NFIT_SMBIOS_HANDLE   3  /* SMBIOS Management Information */
+#define NFIT_CONTROL_REGION  4  /* NVDIMM Control Region */
+#define NFIT_DATA_ADDR       5  /* NVDIMM Block Data Window Region */
+#define NFIT_FLUSH_HINT      6  /* Flush Hint Address Structure */
+#define NFIT_CAPABILITIES    7  /* NVDIMM Capabilities Structure */
+#define NFIT_PHYS_DEVICE     8  /* NVDIMM Physical Device ID */
+
+/* NFIT System Physical Address Range flags */
+#define NFIT_SPA_READ_ONLY   (1ULL << 0)
+#define NFIT_SPA_ONLINE      (1ULL << 1)
+
+/* NFIT System Physical Address Range type GUIDs (16 bytes each) */
+/* Volatile memory range */
+#define NFIT_SPA_TYPE_VOLATILE   0x01234567  /* placeholder — real GUIDs are 16 bytes */
+
+/* NFIT sub-table header (all sub-tables share this) */
+struct nfit_subtable_header {
+    uint16_t type;
+    uint16_t length;
+} __attribute__((packed));
+
+/* NFIT System Physical Address Range structure (type 0) */
+struct nfit_spa_range {
+    struct nfit_subtable_header hdr;
+    uint16_t     spa_index;
+    uint16_t     flags;
+    uint32_t     reserved;
+    uint32_t     proximity_domain;
+    uint8_t      addr_range_type_guid[16];
+    uint64_t     spa_base;
+    uint64_t     spa_length;
+    uint64_t     memory_mapping_offset;
+    uint64_t     spa_range_attribute;
+} __attribute__((packed));
+
+/* NFIT NVDIMM Region Mapping structure (type 1) */
+struct nfit_region_mapping {
+    struct nfit_subtable_header hdr;
+    uint32_t     nfit_handle;
+    uint16_t     nvdimm_phys_id;
+    uint16_t     region_id;
+    uint16_t     spa_index;
+    uint16_t     reserved;
+    uint64_t     region_offset;
+    uint64_t     region_length;
+    uint64_t     region_blk_addr_offset;
+    uint64_t     region_blk_data_len;
+    uint8_t      interleave_index;
+    uint8_t      interleave_ways;
+    uint16_t     reserved2;
+    uint32_t     flags;
+} __attribute__((packed));
+
+/* NFIT Control Region structure (type 4) */
+struct nfit_ctrl_region {
+    struct nfit_subtable_header hdr;
+    uint32_t     nfit_handle;
+    uint16_t     vendor_id;
+    uint16_t     device_id;
+    uint16_t     revision_id;
+    uint16_t     subsystem_vendor_id;
+    uint16_t     subsystem_device_id;
+    uint16_t     subsystem_revision_id;
+    uint8_t      reserved[6];
+    uint32_t     serial_number;
+    uint16_t     region_format_interface_code;
+    uint16_t     num_control_regions;
+    uint64_t     control_region_size;
+    uint64_t     control_region_offset;
+    uint8_t      control_region_bus_addr[8];
+    uint8_t      region_format_interface_code2;
+    uint8_t      reserved2[3];
+    uint64_t     data_size;
+    uint64_t     data_offset;
+} __attribute__((packed));
+
+/* ── Exported NFIT info for pmem driver ──────────────────────────── */
+
+/* Maximum number of SPA ranges we can track */
+#define NFIT_MAX_SPA_RANGES 8
+
+/* Parsed SPA range summary */
+struct nfit_spa_range_info {
+    uint64_t  spa_base;
+    uint64_t  spa_length;
+    uint16_t  spa_index;
+    uint16_t  flags;
+    uint32_t  proximity_domain;
+};
+
+/* Returns number of SPA ranges found (0 if no NFIT). */
+int acpi_nfit_get_count(void);
+/* Copy a specific SPA range entry. Returns 0 on success. */
+int acpi_nfit_get_spa(int index, struct nfit_spa_range_info *info);
+
 #endif

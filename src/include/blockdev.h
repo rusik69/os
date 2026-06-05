@@ -16,6 +16,7 @@
 #define BLOCKDEV_LOOP2   5
 #define BLOCKDEV_LOOP3   6
 #define BLOCKDEV_LOOP_MAX 4
+#define BLOCKDEV_PMEM0   7  /* First PMEM (NVDIMM) device */
 
 /* Block I/O request flags */
 #define BLK_REQ_READ      (1ULL << 0)

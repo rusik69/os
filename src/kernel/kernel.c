@@ -886,6 +886,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * are registered so that blockdev_get_sectors() works. */
     raid_md_init();
 
+    /* PMEM (NVDIMM) persistent memory block devices — discovered via
+     * ACPI NFIT table parsing during acpi_init().  NFIT scanning
+     * happens before this point and caches SPA range data. */
+    extern void pmem_init(void);
+    pmem_init();
+
     if (ac97_init() == 0)
         kprintf("[OK] AC97 audio: initialized\n");
     else

@@ -266,6 +266,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dm-zero.c \
          src/drivers/dm-error.c \
          src/drivers/dm-crypt.c \
+         src/drivers/pmem.c \
          src/drivers/ipmi_kcs.c \
          src/drivers/tpm_tis.c \
          src/drivers/dyndbg.c \
