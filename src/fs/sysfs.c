@@ -6,6 +6,8 @@
 #include "panic.h"         /* for panic_timeout */
 #include "dmesg.h"         /* for dmesg_restrict */
 #include "kptr_restrict.h" /* for kptr_restrict */
+#include "smp.h"           /* smp_get_cpu_count() */
+#include "cpuhp.h"         /* cpuhp_is_online(), cpuhp_online_count() */
 
 static struct sysfs_entry sysfs_entries[SYSFS_MAX_ENTRIES];
 static int sysfs_mounted = 0;
@@ -479,6 +481,91 @@ static int sysfs_write_kptr_restrict(const char *data, uint32_t size, void *priv
     return 0;
 }
 
+/* ── CPU hotplug sysfs interface (Item 14) ────────────────────────── */
+
+/*
+ * Read callback for /sys/devices/system/cpu/cpuN/online.
+ * Returns "1\n" if the CPU is online, "0\n" if offline.
+ * @priv points to an int holding the CPU ID.
+ */
+static int sysfs_read_cpu_online(char *buf, uint32_t max_sz, void *priv)
+{
+    int cpu_id = (int)(uintptr_t)priv;
+    int online = cpuhp_is_online(cpu_id);
+    int n = snprintf(buf, max_sz, "%d\n", online ? 1 : 0);
+    if (n < 0) return -1;
+    return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
+}
+
+/*
+ * Write callback for /sys/devices/system/cpu/cpuN/online.
+ * Accepts "0" to take the CPU offline, "1" to bring it online.
+ * CPU 0 (BSP) cannot be taken offline.
+ */
+static int sysfs_write_cpu_online(const char *data, uint32_t size, void *priv)
+{
+    int cpu_id = (int)(uintptr_t)priv;
+    if (size < 1) return -1;
+
+    int val = data[0] - '0';
+    if (val == 0) {
+        /* Request to take CPU offline */
+        int ret = smp_cpu_disable(cpu_id);
+        if (ret != 0) {
+            kprintf("[sysfs] cpu%d disable failed: error %d\n", cpu_id, ret);
+            return -1;
+        }
+        return (int)size;
+    } else if (val == 1) {
+        /* Request to bring CPU online */
+        int ret = smp_cpu_enable(cpu_id);
+        if (ret != 0) {
+            kprintf("[sysfs] cpu%d enable failed: error %d\n", cpu_id, ret);
+            return -1;
+        }
+        return (int)size;
+    }
+
+    return -1; /* invalid value */
+}
+
+/*
+ * Create /sys/devices/system/cpu/ entries for CPU hotplug control.
+ * Called from sysfs_init().
+ */
+static void sysfs_create_cpu_hotplug_files(void)
+{
+    int ncpus = smp_get_cpu_count();
+    if (ncpus < 1) ncpus = 1;
+
+    /* Create /sys/devices/system/ and /sys/devices/system/cpu/ directories.
+     * Note: /sys/devices is already created by sysfs_init(). */
+    sysfs_create_dir("/sys/devices/system");
+    sysfs_create_dir("/sys/devices/system/cpu");
+
+    /* Create an online file for each CPU */
+    for (int i = 0; i < ncpus; i++) {
+        char path[64];
+        int n = snprintf(path, sizeof(path),
+                         "/sys/devices/system/cpu/cpu%d/online", i);
+        if (n < 0 || (uint32_t)n >= sizeof(path))
+            continue;
+
+        /* Create the per-CPU directory */
+        char dirpath[64];
+        snprintf(dirpath, sizeof(dirpath),
+                 "/sys/devices/system/cpu/cpu%d", i);
+        sysfs_create_dir(dirpath);
+
+        /* Create the writable online file with the CPU ID as private data */
+        const char *initial = cpuhp_is_online(i) ? "1\n" : "0\n";
+        sysfs_create_writable_file(path, initial,
+                                   (void *)(uintptr_t)i,
+                                   sysfs_read_cpu_online,
+                                   sysfs_write_cpu_online);
+    }
+}
+
 void sysfs_init(void) {
     if (sysfs_mounted) return;
 
@@ -503,6 +590,9 @@ void sysfs_init(void) {
     sysfs_create_dir("/sys/block");
     sysfs_create_dir("/sys/devices");
     sysfs_create_dir("/sys/kernel");
+
+    /* /sys/devices/system/cpu/ — CPU hotplug online/offline interface */
+    sysfs_create_cpu_hotplug_files();
 
     /* /sys/class/block/ - list block devices */
     sysfs_create_file("/sys/class/block", "sda\nsdb\n");
