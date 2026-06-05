@@ -577,7 +577,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     fsnotify_init();
 
     /* Kernel module API */
-    module_init();
+    modules_init();
     kprintf("[OK] Kernel module API initialized (%d slots)\n", MODULE_MAX);
 
     /* Module signature verification */

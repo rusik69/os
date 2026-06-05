@@ -103,7 +103,7 @@ static uint64_t module_region_allocated = 0;  /* bytes consumed so far */
  * addresses unpredictable across boots. */
 static uint64_t module_base_offset = 0;
 
-void module_init(void) {
+void modules_init(void) {
     memset(g_modules, 0, sizeof(g_modules));
     for (int i = 0; i < MODULE_MAX; i++) {
         INIT_LIST_HEAD(&g_modules[i].params);

@@ -25,6 +25,7 @@
 #include "vmm.h"
 #include "export.h"
 #include "spinlock.h"
+#include "module.h"
 #include "vmm.h"   /* vmm_map_phys, vmm_unmap_phys */
 
 /* ── Global TPM device singleton ──────────────────────────────────── */

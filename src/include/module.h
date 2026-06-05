@@ -107,7 +107,7 @@ struct kernel_module {
 const char *module_get_vermagic(void);
 
 /* Initialize the kernel module subsystem. */
-void module_init(void);
+void modules_init(void);
 
 /* Load a kernel module with the given name and entry function.
  * Returns module_id (>= 0) on success, or -1 on failure. */
@@ -321,6 +321,42 @@ int module_deps_resolved(struct kernel_module *mod);
 #define MODULE_VERSION(ver)        static const char _MODULE_PASTE(__mod_ver_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "version=" ver
 
+/* ── module_init / module_exit — entry / exit point declarations ───────
+ *
+ * For built-in compilation (MODULE not defined):
+ *   module_init(fn) registers fn as a device_initcall so it runs at boot.
+ *   module_exit(fn) is a no-op (built-in code never unloads).
+ *
+ * For loadable module compilation (MODULE defined):
+ *   module_init(fn) creates an 'init_module' alias so the ELF loader
+ *   can find the entry point by name.
+ *   module_exit(fn) creates a 'cleanup_module' alias for the exit path.
+ *
+ * Usage in any source file that can be built either way:
+ *   static int my_init(void) { ... }
+ *   static void my_exit(void) { ... }
+ *   module_init(my_init);
+ *   module_exit(my_exit);
+ */
+#ifdef MODULE
+/* When building a loadable .ko, the module ELF loader looks for the
+ * standard "init_module" and "cleanup_module" symbols.  We provide
+ * wrapper functions that delegate to the user-defined init/exit.
+ * We use wrappers instead of GCC __attribute__((alias)) because the
+ * target function may be declared static. */
+#define module_init(fn) \
+    int init_module(void) { return fn(); }
+#define module_exit(fn) \
+    void cleanup_module(void) { fn(); }
+#else
+/* Built-in: register via the initcall system so the function is called
+ * automatically during kernel boot.  module_exit is a no-op since
+ * built-in code cannot be unloaded at runtime. */
+#include "initcall.h"
+#define module_init(fn)    device_initcall(fn)
+#define module_exit(fn)
+#endif /* MODULE */
+
 /* MODULE_DEPENDS — declare module dependencies.
  *
  * Usage in a kernel module source file:
@@ -370,7 +406,7 @@ int request_module_params(const char *name, const char *params);
 /* Maximum length of an alias pattern string */
 #define MODULE_ALIAS_MAX_LEN 128
 
-/* Initialise the module alias table.  Called from module_init(). */
+/* Initialise the module alias table.  Called from modules_init(). */
 void module_alias_init(void);
 
 /* Register a module alias, mapping @pattern to @module_name.
