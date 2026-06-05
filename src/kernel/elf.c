@@ -387,6 +387,9 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     /* Close all FD_CLOEXEC file descriptors before exec */
     process_exec_close_cloexec();
+    /* Close signalfd fds marked with SFD_CLOEXEC */
+    extern void signalfd_exec_close(void);
+    signalfd_exec_close();
 
     /* Apply exec credential security:
      *  - Capability bounding set AND with permitted set

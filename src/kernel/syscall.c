@@ -7621,9 +7621,15 @@ void timerfd_tick(void) {
 #define SIGNALFD_MAX 16
 #define SIGNALFD_BUF 8  /* ring buffer size per fd */
 
+/* Internal signalfd flags for tracking (not the same as SFD_ syscall values) */
+#define SIGNALFD_FLAG_CLOEXEC  0x0001
+#define SIGNALFD_FLAG_NONBLOCK 0x0002
+
 struct signalfd_info {
     int      in_use;
     uint32_t sigmask;               /* signals to catch */
+    int      flags;                 /* SIGNALFD_FLAG_CLOEXEC, SIGNALFD_FLAG_NONBLOCK */
+    uint32_t pid;                   /* owning process PID (for CLOEXEC cleanup) */
     /* Ring buffer of siginfo entries */
     struct siginfo ring[SIGNALFD_BUF];
     int      head;                  /* next write position */
@@ -7634,12 +7640,15 @@ struct signalfd_info {
 struct signalfd_info signalfd_table[SIGNALFD_MAX];
 
 /* Read from signalfd: copies next signalfd_siginfo entry to user buffer.
- * Returns bytes read (sizeof(signalfd_siginfo)) or 0 if none pending. */
+ * Returns bytes read (sizeof(signalfd_siginfo)) on success, 0 if EAGAIN
+ * (no signals pending, non-blocking), or -1 on error. */
 static int signalfd_do_read(int slot, void *buf, uint64_t count) {
     if (slot < 0 || slot >= SIGNALFD_MAX || !signalfd_table[slot].in_use)
         return -1;
-    if (signalfd_table[slot].count == 0)
-        return 0; /* EAGAIN — no signals pending */
+    if (signalfd_table[slot].count == 0) {
+        /* Non-blocking: return 0 (caller interprets as EAGAIN) */
+        return 0;
+    }
 
     struct signalfd_info *sf = &signalfd_table[slot];
 
@@ -7672,7 +7681,13 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count) {
 
 static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     uint32_t sigmask = 0;
-    (void)flags;  /* SFD_CLOEXEC, SFD_NONBLOCK accepted but not yet implemented */
+    int sfd_flags = 0;
+
+    /* Extract SFD flags passed by userspace (Linux SFD_CLOEXEC = 02000000,
+     * SFD_NONBLOCK = 04000).  We accept and store these for cleanup on
+     * exec (SFD_CLOEXEC) and future non-blocking read semantics. */
+    if (flags & 02000000) sfd_flags |= SIGNALFD_FLAG_CLOEXEC;
+    if (flags & 04000)    sfd_flags |= SIGNALFD_FLAG_NONBLOCK;
 
     if (mask_addr) {
         if (syscall_is_user_process() && !syscall_user_read_ok(mask_addr, 8))
@@ -7693,8 +7708,11 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     /* Create new signalfd */
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (!signalfd_table[i].in_use) {
+            struct process *cur = process_get_current();
             signalfd_table[i].in_use = 1;
             signalfd_table[i].sigmask = sigmask;
+            signalfd_table[i].flags = sfd_flags;
+            signalfd_table[i].pid = cur ? cur->pid : 0;
             signalfd_table[i].head = 0;
             signalfd_table[i].tail = 0;
             signalfd_table[i].count = 0;
@@ -7745,6 +7763,31 @@ void signalfd_notify_ext(int signum, int si_code,
                 sf->head = (sf->head + 1) % SIGNALFD_BUF;
                 sf->count++;
             }
+        }
+    }
+}
+
+/*
+ * signalfd_exec_close — Close all signalfd fds with SIGNALFD_FLAG_CLOEXEC for the
+ * current process.  Called during execve() to ensure exec'd processes
+ * don't inherit signalfd fds that were marked CLOEXEC.
+ *
+ * This mirrors the fd_table cloexec cleanup in process_exec_close_cloexec()
+ * for virtual signalfd file descriptors.
+ */
+void signalfd_exec_close(void) {
+    struct process *cur = process_get_current();
+    if (!cur) return;
+    uint32_t cur_pid = cur->pid;
+    for (int i = 0; i < SIGNALFD_MAX; i++) {
+        if (signalfd_table[i].in_use &&
+            signalfd_table[i].pid == cur_pid &&
+            (signalfd_table[i].flags & SIGNALFD_FLAG_CLOEXEC)) {
+            signalfd_table[i].in_use = 0;
+            signalfd_table[i].sigmask = 0;
+            signalfd_table[i].flags = 0;
+            signalfd_table[i].pid = 0;
+            signalfd_table[i].count = 0;
         }
     }
 }
