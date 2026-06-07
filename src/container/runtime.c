@@ -79,8 +79,7 @@ static void generate_container_id(char *out, int max_len) {
  * Returns 0 on success, negative errno on failure. */
 static int ensure_dir(const char *path) {
     int ret = fs_create(path, FS_TYPE_DIR);
-    if (ret == 0) return 0;  /* fs_create returns 0 on success for directories */
-    /* fs_create returns negative on error; if path already exists as dir, that's OK */
+    if (ret >= 0) return 0;
     if (ret == -EEXIST) return 0;
     kprintf("[Containers] Failed to create directory '%s': err=%d\n", path, ret);
     return ret;

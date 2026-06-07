@@ -39,7 +39,7 @@ OBJCOPY = x86_64-elf-objcopy
 endif
 
 # Number of parallel jobs (all available CPU cores)
-NPROCS := $(shell nproc)
+NPROCS := $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)
 
 # Kernel version string — used in module vermagic checking
 KVERSION ?= 6.1.0-osdev
@@ -714,10 +714,10 @@ $(BUILDDIR)/disk.img: $(USERSPACE_BINS)
 # ── Run targets ───────────────────────────────────────────────────────
 
 run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
-	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+	qemu-system-x86_64 -cpu max,-x2apic -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-display cocoa -k en-us \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
-		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0 ; \
+		-netdev user,id=net0 -device e1000,netdev=net0 ; \
 	stty sane
 
 run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
@@ -872,9 +872,9 @@ e2e-port-%: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 # ── Debug target ──────────────────────────────────────────────────────
 
 debug: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
-	sudo qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std -s -S \
+	qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std -s -S \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
-		-netdev vmnet-shared,id=net0 -device e1000,netdev=net0
+		-netdev user,id=net0 -device e1000,netdev=net0
 
 # ── Install target (Item 264) — build a bootable ISO with GRUB ────────
 #

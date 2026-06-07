@@ -394,13 +394,17 @@ int dhcp_discover(void) {
     uint64_t start = timer_get_ticks();
     int resends = 0;
     const int max_resends = 4;
+    volatile uint32_t spin_count = 0;
 
     while (dhcp_state != 3 && resends < max_resends) {
         uint64_t now = timer_get_ticks();
         uint64_t elapsed = now - start;
+        spin_count++;
 
-        /* Check for timeout (5 seconds) */
+        /* Timeout: 5 seconds of timer ticks */
         if (elapsed > 500) break;
+        /* Spin-count fallback if timer isn't advancing */
+        if (now == start && spin_count > 50000000) break;
 
         /* Poll the network interface for incoming packets */
         if (e1000_is_present()) {
@@ -468,15 +472,25 @@ int dhcp_discover(void) {
     }
 
     if (dhcp_state != 3) {
-        kprintf("[dhcp] DHCP transaction failed (timeout)\n");
+        kprintf("[dhcp] DHCP transaction failed (timeout), using QEMU defaults\n");
+        net_our_ip      = (10U << 24) | (0U << 16) | (2U << 8) | 15U;
+        net_gateway_ip  = (10U << 24) | (0U << 16) | (2U << 8) | 2U;
+        net_subnet_mask = (255U << 24) | (255U << 16) | (255U << 8) | 0U;
+        net_dns_server  = (10U << 24) | (0U << 16) | (2U << 8) | 3U;
+        arp_resolve_gateway();
         return -1;
     }
 
     /* Update networking state with our new configuration */
     net_set_ip(dhcp_result_ip, dhcp_result_gateway, dhcp_result_netmask);
+    net_dns_server = dhcp_result_dns;
+    net_gw_mac_known = 0;
 
     /* Write DNS server to /etc/resolv.conf for userspace tools */
     resolv_conf_write_nameserver(dhcp_result_dns);
+
+    /* Resolve gateway MAC */
+    arp_resolve_gateway();
 
     kprintf("[OK] DHCP: assigned %u.%u.%u.%u, GW %u.%u.%u.%u, MASK %u.%u.%u.%u\n",
             (uint32_t)((dhcp_result_ip >> 24) & 0xFF),

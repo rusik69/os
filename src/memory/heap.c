@@ -73,6 +73,7 @@ void heap_init(void) {
 
 void *kmalloc(size_t size) {
     if (size == 0) return NULL;
+    if (heap_base == 0) return NULL;
 
     /* Fault injection: if enabled, fail this allocation to test error paths */
     if (fault_inject_should_fail_kmalloc()) {

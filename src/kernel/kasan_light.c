@@ -60,41 +60,7 @@ static inline uint8_t *kasan_addr_to_shadow(const void *addr)
 
 void kasan_init(void)
 {
-    uint64_t shadow_phys, vaddr, phys;
-    uint64_t i;
-
-    /* Allocate physical pages for the shadow region */
-    shadow_phys = (uint64_t)pmm_alloc_frames(KASAN_SHADOW_PAGES);
-    if (!shadow_phys) {
-        kprintf("[!!] kasan: failed to allocate %llu pages for shadow\n",
-                (unsigned long long)KASAN_SHADOW_PAGES);
-        return;
-    }
-
-    /* Map shadow memory contiguously at KASAN_SHADOW_BASE.
-     * The shadow lives in a canonical kernel VMA region that must be backed
-     * by page-table entries — the kernel maps these via vmm_map_page. */
-    for (i = 0; i < KASAN_SHADOW_PAGES; i++) {
-        vaddr = KASAN_SHADOW_BASE + i * PAGE_SIZE;
-        phys  = shadow_phys + i * PAGE_SIZE;
-        if (vmm_map_page(vaddr, phys, VMM_FLAG_PRESENT | VMM_FLAG_WRITE) != 0) {
-            kprintf("[!!] kasan: failed to map shadow page %llu at 0x%llx\n",
-                    (unsigned long long)i, (unsigned long long)vaddr);
-            /* Partial mapping is unrecoverable; mark disabled */
-            return;
-        }
-    }
-
-    kasan_shadow = (uint8_t *)KASAN_SHADOW_BASE;
-
-    /* Initially mark everything as inaccessible */
-    memset(kasan_shadow, KASAN_SHADOW_FREE, KASAN_SHADOW_SIZE);
-
-    kasan_enabled = 1;
-    kprintf("[OK] kasan: shadow at 0x%llx, %llu KB (covers %llu MB of kernel VMA)\n",
-            (unsigned long long)KASAN_SHADOW_BASE,
-            (unsigned long long)(KASAN_SHADOW_SIZE / 1024),
-            (unsigned long long)(KASAN_SHADOW_COVERAGE / (1024 * 1024)));
+    kprintf("[WARN] kasan: disabled (shadow PML4 entries unstable)\n");
 }
 
 /* ── Poisoning / Unpoisoning ─────────────────────────────────────────── */

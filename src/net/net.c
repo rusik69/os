@@ -75,9 +75,15 @@ int net_link_recv(void *buf, uint16_t max_len) {
 
 int net_link_send(const void *data, uint16_t len) {
     /* Prefer the netdevice layer if interfaces are registered.
-     * Interface 0 is the primary NIC registered by e1000 or virtio_net. */
+     * Find the interface whose MAC matches our MAC (the primary NIC). */
     if (netif_count() > 0) {
-        return netif_send(0, (const uint8_t *)data, len);
+        for (int i = 0; i < NETDEV_MAX; i++) {
+            struct net_device *dev = netif_get(i);
+            if (dev && dev->transmit &&
+                memcmp(dev->mac, net_our_mac, 6) == 0) {
+                return dev->transmit(dev, (const uint8_t *)data, len);
+            }
+        }
     }
     /* Fallback: direct driver calls for legacy compatibility */
     if (virtio_net_present()) {

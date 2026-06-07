@@ -369,6 +369,34 @@ void fs_init(void) {
     /* If FAT32 is already mounted, skip formatting — don't clobber it */
     if (fat32_is_mounted()) {
         kprintf("  FAT32 present, skipping native FS format\n");
+        /* Root / uses SMFS — always need at least the root inode */
+        if (inodes[0].type != FS_TYPE_DIR) {
+            memset(inodes, 0, sizeof(inodes));
+            inodes[0].type   = FS_TYPE_DIR;
+            inodes[0].parent = 0;
+            inodes[0].uid    = 0;
+            inodes[0].gid    = 0;
+            inodes[0].mode   = FS_MODE_DIR;
+            strncpy(inodes[0].name, "/", FS_MAX_NAME);
+            inodes[1].type   = FS_TYPE_DIR;
+            inodes[1].parent = 0;
+            inodes[1].uid    = 0;
+            inodes[1].gid    = 0;
+            inodes[1].mode   = FS_MODE_DIR;
+            strncpy(inodes[1].name, "home", FS_MAX_NAME - 1);
+            inodes[2].type   = FS_TYPE_DIR;
+            inodes[2].parent = 0;
+            inodes[2].uid    = 0;
+            inodes[2].gid    = 0;
+            inodes[2].mode   = FS_MODE_DIR;
+            strncpy(inodes[2].name, "root", FS_MAX_NAME - 1);
+            inodes[3].type   = FS_TYPE_DIR;
+            inodes[3].parent = 0;
+            inodes[3].uid    = 0;
+            inodes[3].gid    = 0;
+            inodes[3].mode   = 01777;
+            strncpy(inodes[3].name, "tmp", FS_MAX_NAME - 1);
+        }
         return;
     }
 

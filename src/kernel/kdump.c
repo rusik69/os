@@ -151,6 +151,12 @@ static int capture_stack_frames(uint64_t *frames, int max_frames)
     __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
 
     while (rbp && count < max_frames && count < KDUMP_MAX_FRAMES) {
+        /* Validate frame pointer is in reasonable kernel range */
+        if ((uint64_t)rbp < 0xFFFF800000000000ULL)
+            break;
+        /* Check alignment */
+        if ((uint64_t)rbp & 0xFULL)
+            break;
         uint64_t ret_addr = rbp[1];
         if (ret_addr == 0)
             break;

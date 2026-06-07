@@ -239,9 +239,9 @@ static __attribute__((unused)) int cpu_nr_runnable(struct cpu_info *ci) {
 /* ── Initialization ─────────────────────────────────────────────────── */
 void scheduler_init(void) {
     /* Per-CPU queues are zero-initialized by smp_init_bsp.
-     * This function ensures the BSP's scheduler is marked enabled. */
+     * scheduler_enabled is kept 0 until the boot sequence finishes —
+     * kernel_main enables it just before entering the idle loop. */
     struct cpu_info *ci = this_cpu();
-    ci->scheduler_enabled = 1;
 
     /* Initialize the per-CPU deadline runqueue */
     sched_deadline_init_cpu(get_cpu_id());
@@ -589,22 +589,16 @@ void schedule(void) {
 
         if (!next) {
             ci->idle_ticks++;
-            /* Use cpuidle to enter an appropriate C-state.
-             * cpuidle_idle() handles watchdog petting internally. */
-            cpuidle_idle();
             __asm__ volatile("sti");
             return;
         }
     }
-
     /* Put current back on queue if still runnable */
     if (current && current->state == PROCESS_RUNNING) {
         current->nivcsw++;  /* preempted — involuntary context switch */
         current->state = PROCESS_READY;
         current->on_cpu = 0; /* no longer executing on this CPU */
-        spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         scheduler_add(current);
-        spinlock_irqsave_release(&sched_lock, irq_flags);
     } else if (current) {
         current->nvcsw++;   /* yielded or blocked — voluntary context switch */
         current->on_cpu = 0; /* no longer executing */
@@ -638,15 +632,6 @@ void schedule(void) {
      * is making forward progress on this CPU. */
     nmi_watchdog_pet();
 
-    /* Update per-task stack canary for stack-smashing protection.
-     * Each process has its own unique canary; load the incoming process's
-     * canary into the global guard variable so that __stack_chk_fail
-     * triggers on the actual owner's canary. */
-    {
-        extern uint64_t __stack_chk_guard;
-        __stack_chk_guard = next->stack_canary;
-    }
-
     /* ── rseq: update cpu_id for the incoming task ────────────────── */
     if (next->is_user) {
         rseq_update_cpu_id(next);
@@ -658,8 +643,20 @@ void schedule(void) {
         rseq_migrate(current, current_cpu, current_cpu);
     }
 
-    context_switch(current ? &current->context : NULL, next->context);
-    __asm__ volatile("sti");
+    /* Per-task stack canary: save the current guard, load the incoming
+     * process's canary so its functions check correctly, and restore the
+     * saved canary after the context switch so that this schedule()'s own
+     * stack frames (and its callers) verify against the process's canary. */
+    {
+        extern uint64_t __stack_chk_guard;
+        volatile uint64_t saved_canary = __stack_chk_guard;
+        __stack_chk_guard = next->stack_canary;
+
+        context_switch(current ? &current->context : NULL, next->context);
+        __asm__ volatile("sti");
+
+        __stack_chk_guard = saved_canary;
+    }
 }
 
 void scheduler_yield(void) {

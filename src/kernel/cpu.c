@@ -84,7 +84,8 @@ int cpu_security_init(void)
     write_cr4(cr4);
 
     /* Enable NXE in EFER if supported */
-    if (rdx & (1 << 20)) { /* CPUID.1:EDX bit 20 = NX (XD) support */
+    __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(0x80000001));
+    if (rdx & (1 << 20)) { /* CPUID.80000001h:EDX bit 20 = NX (XD) support */
         efer |= EFER_NXE;
         write_msr(0xC0000080, efer);
         kprintf("[cpu] NXE enabled\n");

@@ -910,8 +910,10 @@ static uint64_t sys_mkdir(uint64_t path_addr) {
 }
 
 static uint64_t sys_unlink(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    return (uint64_t)fs_delete(path);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_delete(rp);
 }
 
 static uint64_t sys_time(void) {
@@ -932,30 +934,48 @@ static uint64_t sys_fs_format(void) {
 }
 
 static uint64_t sys_fs_create(uint64_t path_addr, uint64_t type) {
-    return (uint64_t)fs_create((const char *)path_addr, (uint8_t)type);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_create(rp, (uint8_t)type);
 }
 
 static uint64_t sys_fs_write(uint64_t path_addr, uint64_t data_addr, uint64_t size) {
-    return (uint64_t)fs_write_file((const char *)path_addr, (const void *)data_addr, (uint32_t)size);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_write_file(rp, (const void *)data_addr, (uint32_t)size);
 }
 
 static uint64_t sys_fs_read(uint64_t path_addr, uint64_t buf_addr, uint64_t max_size, uint64_t out_addr) {
-    return (uint64_t)fs_read_file((const char *)path_addr, (void *)buf_addr,
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_read_file(rp, (void *)buf_addr,
                                   (uint32_t)max_size, (uint32_t *)out_addr);
 }
 
 static uint64_t sys_fs_delete(uint64_t path_addr) {
-    return (uint64_t)fs_delete((const char *)path_addr);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_delete(rp);
 }
 
 static uint64_t sys_fs_list(uint64_t path_addr) {
-    return (uint64_t)fs_list((const char *)path_addr);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_list(rp);
 }
 
 static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
     uint32_t size = 0;
     uint8_t type = 0;
-    int rc = fs_stat((const char *)path_addr, &size, &type);
+    int rc = fs_stat(rp, &size, &type);
     if (rc < 0) return (uint64_t)rc;
     if (out_addr) {
         uint32_t *out = (uint32_t *)out_addr;
@@ -966,11 +986,14 @@ static uint64_t sys_fs_stat(uint64_t path_addr, uint64_t out_addr) {
 }
 
 static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
     struct syscall_fs_stat_ex *out = (struct syscall_fs_stat_ex *)out_addr;
     uint32_t size = 0;
     uint8_t type = 0;
     uint16_t uid = 0, gid = 0, mode = 0;
-    int rc = fs_stat_ex((const char *)path_addr, &size, &type, &uid, &gid, &mode);
+    int rc = fs_stat_ex(rp, &size, &type, &uid, &gid, &mode);
     if (rc < 0) return (uint64_t)rc;
     if (out) {
         out->size = size;
@@ -983,11 +1006,17 @@ static uint64_t sys_fs_stat_ex(uint64_t path_addr, uint64_t out_addr) {
 }
 
 static uint64_t sys_fs_chmod(uint64_t path_addr, uint64_t mode) {
-    return (uint64_t)fs_chmod((const char *)path_addr, (uint16_t)mode);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_chmod(rp, (uint16_t)mode);
 }
 
 static uint64_t sys_fs_chown(uint64_t path_addr, uint64_t uid, uint64_t gid) {
-    return (uint64_t)fs_chown((const char *)path_addr, (uint16_t)uid, (uint16_t)gid);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)fs_chown(rp, (uint16_t)uid, (uint16_t)gid);
 }
 
 static uint64_t sys_fs_get_usage(uint64_t out_addr) {
@@ -1202,16 +1231,22 @@ static uint64_t sys_net_udp_unlisten(uint64_t port) {
 
 /* ── FS extended syscalls ────────────────────────────────────────────────── */
 static uint64_t sys_fs_symlink(uint64_t path_addr, uint64_t target_addr) {
-    return (uint64_t)(int64_t)fs_symlink((const char *)path_addr,
-                                         (const char *)target_addr);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)(int64_t)fs_symlink(rp, (const char *)target_addr);
 }
 static uint64_t sys_fs_readlink(uint64_t path_addr, uint64_t buf_addr, uint64_t bufsz) {
-    return (uint64_t)(int64_t)fs_readlink((const char *)path_addr,
-                                          (char *)buf_addr, (int)bufsz);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)(int64_t)fs_readlink(rp, (char *)buf_addr, (int)bufsz);
 }
 static uint64_t sys_fs_lstat(uint64_t path_addr, uint64_t size_addr, uint64_t type_addr) {
-    return (uint64_t)(int64_t)fs_lstat((const char *)path_addr,
-                                       (uint32_t *)size_addr, (uint8_t *)type_addr);
+    char ap[128];
+    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
+                     ? (const char *)path_addr : ap;
+    return (uint64_t)(int64_t)fs_lstat(rp, (uint32_t *)size_addr, (uint8_t *)type_addr);
 }
 
 static uint64_t sys_chdir(uint64_t path_addr) {
@@ -1221,19 +1256,21 @@ static uint64_t sys_chdir(uint64_t path_addr) {
     char *ses_cwd = telnet_get_cwd_ctx();
     /* Resolve to absolute path via VFS */
     char ap[128];
-    if (path[0] != '/') {
-        const char *base = ses_cwd ? (ses_cwd[0] ? ses_cwd : "/")
-                                   : (process_get_current() && process_get_current()->cwd[0]
-                                      ? process_get_current()->cwd : "/");
-        int cl = (int)strlen(base);
+    if (vfs_abs_path(path, ap, sizeof(ap)) < 0)
+        return (uint64_t)(int64_t)-1;
+    /* For telnet sessions, re-resolve using session CWD as base
+     * since vfs_abs_path uses per-process CWD which may differ. */
+    if (ses_cwd && path[0] != '/') {
+        char tmp[128];
+        int cl = (int)strlen(ses_cwd);
         int pl = (int)strlen(path);
-        if (cl + 1 + pl < (int)sizeof(ap)) {
-            memcpy(ap, base, cl);
-            if (ap[cl-1] != '/') ap[cl++] = '/';
-            memcpy(ap + cl, path, pl + 1);
-        } else { ap[0] = '/'; ap[1] = '\0'; }
-    } else {
-        strncpy(ap, path, sizeof(ap)-1); ap[sizeof(ap)-1] = '\0';
+        if (cl + 1 + pl < (int)sizeof(tmp)) {
+            memcpy(tmp, ses_cwd, cl);
+            if (tmp[cl-1] != '/') tmp[cl++] = '/';
+            memcpy(tmp + cl, path, pl + 1);
+            /* Normalize .. and . components */
+            vfs_abs_path(tmp, ap, sizeof(ap));
+        }
     }
     /* Special case: root always exists */
     if (ap[0] == '/' && ap[1] == '\0') {

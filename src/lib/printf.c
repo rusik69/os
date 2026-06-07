@@ -32,12 +32,13 @@ void kprintf_flush(void) {
     if (flush_hook) flush_hook(flush_hook_ctx);
 }
 
-/* dmesg ring buffer: dynamically allocated, default 64 KB */
+/* dmesg ring buffer: static 64 KB */
 static int dmesg_ring_size = 65536;
-static char *dmesg_buf = NULL;
+static char dmesg_ring_buffer[65536];
+static char *dmesg_buf = dmesg_ring_buffer;
 static int dmesg_pos = 0;          /* next write position (wraps) */
 static int dmesg_full = 0;         /* 1 once the buffer has wrapped */
-static int dmesg_initialized = 0;
+static int dmesg_initialized = 1;
 
 /* Initialize dmesg buffer on first use */
 static void dmesg_init(void) {
@@ -87,7 +88,7 @@ void dmesg_resize(int new_size) {
         }
     }
 
-    if (dmesg_buf) kfree(dmesg_buf);
+    if (dmesg_buf && dmesg_buf != dmesg_ring_buffer) kfree(dmesg_buf);
     dmesg_buf = new_buf;
     dmesg_ring_size = new_size;
     dmesg_pos = 0;

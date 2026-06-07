@@ -110,8 +110,7 @@ extern int smp_cpu_count;
 
 /* Get current CPU ID (inline for speed) */
 static inline int smp_get_cpu_id(void) {
-    struct cpu_info *info;
-    __asm__ volatile("mov %%gs:0, %0" : "=r"(info));
+    struct cpu_info *info = get_cpu_info();
     return info ? info->cpu_id : 0;
 }
 

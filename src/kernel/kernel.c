@@ -22,6 +22,7 @@
 #include "pci.h"
 #include "e1000.h"
 #include "net.h"
+#include "dhcp.h"
 #include "netfilter.h"
 #include "pkt_sched.h"
 #include "bridge.h"
@@ -263,6 +264,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel stack guard pages */
     stack_guard_init();
 
+    /* Per-CPU data for SMP — must be before any spinlock is acquired */
+    smp_init_bsp();
+    kprintf("[OK] SMP per-CPU data initialized\n");
+
     /* Physical memory manager */
     pmm_init(multiboot_info_phys);
     kprintf("[OK] PMM initialized: %llu KB total, %llu KB used\n",
@@ -441,8 +446,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     cma_init();
     ksm_init();
     thp_init();
-    khugepaged_start();
-
     /* HugeTLB — pre-allocated pool for MAP_HUGETLB */
     if (hugetlb_init(0) < 0)
         kprintf("[WARN] HugeTLB pool init failed — MAP_HUGETLB unavailable\n");
@@ -490,6 +493,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Process subsystem */
     process_init();
+    khugepaged_start();
     kprintf("[OK] Process subsystem initialized\n");
     splash_progress(3);
 
@@ -498,10 +502,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* PID file descriptors */
     pidfd_init();
-
-    /* Per-CPU data for SMP — must be before scheduler_init (needs GS_BASE) */
-    smp_init_bsp();
-    kprintf("[OK] SMP per-CPU data initialized\n");
 
     /* CPU topology and NUMA detection */
     cpu_topology_init();
@@ -643,7 +643,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Syscall interface */
     syscall_init();
-    kprintf("[OK] Syscall interface initialized\n");
 
     /* Production subsystems (socket, epoll, timers, mq) */
     production_subsystems_init();
@@ -925,6 +924,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         kprintf("[--] e1000 NIC not found\n");
     }
 
+    /* Enable interrupts — needed for timer_get_ticks() in DHCP timeout */
+    sti();
+
     if (virtio_net_present() || e1000_is_present()) {
         /* Networking subsystem inits */
         nf_init();
@@ -944,7 +946,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         tcp_tfo_init();
 #ifndef TEST_MODE
         kprintf("[..] DHCP discovering...\n");
-        net_dhcp_discover();
+        dhcp_init();
+        dhcp_discover();
 #else
         /* Test mode: set QEMU user-mode defaults, skip slow DHCP */
         extern uint32_t net_our_ip, net_gateway_ip, net_subnet_mask, net_dns_server;
@@ -1004,9 +1007,8 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * The init path can be overridden via the `init=` kernel cmdline parameter.
      * Example: init=/mnt/bin/sh.elf  or  init=/sbin/init  */
 
-    /* Finalise boot splash: mark progress complete and fade out */
+    /* Finalise boot splash: mark progress complete */
     splash_progress(SPLASH_MAX_STAGES);
-    splash_fade_out();
 
     int init_ok = 0;
 
@@ -1102,8 +1104,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * have not been corrupted (use-before-init detection). */
     page_poison_enter_late_stage();
 
-    /* Enable interrupts */
-    sti();
+    /* Fade out the boot splash — interrupts already enabled above, so
+     * mdelay (which calls timer_get_ticks) will work correctly. */
+    splash_fade_out();
 
     /* Start the NMI watchdog now that the scheduler is running and we
      * can pet it from the tick handler and context-switch paths. */
@@ -1130,8 +1133,15 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     scheduler_yield();
 #endif
 
+    /* Enable scheduler — timer ticks are now safe to run the
+     * full scheduler_tick() accounting on the idle process. */
+    get_cpu_info()->scheduler_enabled = 1;
+    schedule();
+
     /* Idle loop - the boot thread becomes the idle process */
     for (;;) {
+        if (need_resched())
+            schedule();
         cpuidle_idle();
     }
 }

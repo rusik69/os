@@ -334,6 +334,20 @@ void pmm_init(uint64_t multiboot_info_phys) {
         }
     }
 
+    /* Advance the allocation hint past the kernel binary + heap so
+     * that page-table pages allocated later (via get_or_create_table)
+     * never land within a 2 MB huge-page range that overlaps with
+     * kernel data/heap.  If a page-table frame falls inside an active
+     * huge page, subsequent writes through that huge page would corrupt
+     * the page table (self-referential PTE corruption).  We skip the
+     * first 64 MB to keep things simple. */
+    {
+        uint64_t safety_phys = 64ULL * 1024 * 1024; /* 64 MB */
+        uint64_t safety_hint = safety_phys / PAGE_SIZE;
+        if (safety_hint > pmm_hint)
+            pmm_hint = safety_hint;
+    }
+
     /* Recount used frames based on actual total */
     used_frames = 0;
     for (uint64_t f = 0; f < total_frames; f++) {
@@ -360,6 +374,25 @@ void pmm_reserve_frames(uint64_t phys_start, uint64_t byte_size) {
     uint64_t start_frame = phys_start / PAGE_SIZE;
     uint64_t end_frame   = (phys_start + byte_size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (end_frame > MAX_FRAMES) end_frame = MAX_FRAMES;
+
+    /* Drain per-CPU caches so no cached frame overlaps with this range.
+     * We iterate all possible CPUs (at boot, only BSP cache is populated). */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
+        if (cache->count == 0) continue;
+        for (int j = 0; j < (int)cache->count; j++) {
+            uint64_t f = cache->frames[j] / PAGE_SIZE;
+            if (f >= start_frame && f < end_frame) {
+                /* Remove this frame from the cache — pmm_reserve_frames
+                 * will set the bit in the bitmap below, and the cached
+                 * copy would let pmm_alloc_frame bypass the bitmap check. */
+                cache->frames[j] = cache->frames[cache->count - 1];
+                cache->count--;
+                j--; /* re-check the swapped-in entry */
+            }
+        }
+    }
+
     for (uint64_t f = start_frame; f < end_frame; f++) {
         if (!bitmap_test(f)) {
             bitmap_set(f);

@@ -29,25 +29,8 @@ static volatile uint64_t ticks = 0;
 static void timer_handler(struct interrupt_frame *frame) {
     ticks++;
     irq_ack(0);
-    nmi_watchdog_soft_pet();  /* mark that timer IRQs are firing */
-    scheduler_wake_sleepers();
-    scheduler_tick(frame->cs == 0x1b); /* was_user if CS==0x1b (ring 3) */
     int was_user = (frame->cs == 0x1b);
-    process_timer_tick(was_user);
-    timerfd_tick();
-    posix_timer_tick();
-    timer_handler_soft(); /* drive dynamic kernel timers */
-    if (ticks % 200 == 0) { /* every 2 seconds: boost starved processes */
-        scheduler_age();
-    }
-    if (ticks % TIMER_FREQ == 0) { /* every second */
-        process_reap_zombies();
-        nmi_watchdog_check_soft(); /* detect soft lockups */
-        rcu_check_stall(); /* detect RCU grace-period stalls */
-    }
-
-    /* Update vDSO clock data on every tick for userspace timekeeping */
-    vsyscall_update_clock();
+    scheduler_tick(was_user);
 }
 
 void timer_init(void) {

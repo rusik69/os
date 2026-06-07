@@ -1048,7 +1048,12 @@ void pci_init(void) {
                              (unsigned int)vendor, (unsigned int)device,
                              (unsigned int)subsys_v, (unsigned int)subsys_d,
                              (unsigned int)base_cl, (unsigned int)sub_cl);
-                    request_module("%s", modalias);
+                    /* Skip request_module during early boot — the
+                     * PCI init runs with interrupts disabled, and the
+                     * module loader expects a preemptible context with
+                     * a full process stack.  Modules can be loaded later
+                     * via modprobe. */
+                    //request_module("%s", modalias);
                 }
 
                 struct msi_info msi;

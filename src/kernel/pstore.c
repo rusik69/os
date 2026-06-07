@@ -4,8 +4,7 @@
 #include "string.h"
 #include "spinlock.h"
 #include "pstore.h"
-#include "pmm.h"
-#include "vmm.h"
+#include "heap.h"
 #include "timer.h"
 #include "errno.h"
 #include "compress.h"
@@ -20,45 +19,16 @@ static spinlock_t pstore_lock = SPINLOCK_INIT;
 
 void pstore_init(void)
 {
-    /* Try to reserve the fixed physical address range */
-    pmm_reserve_frames(PSTORE_RESERVE_PHYS, PSTORE_REGION_SIZE);
-
-    /* Map the region into kernel virtual address space */
-    uint64_t virt = (uint64_t)PHYS_TO_VIRT(PSTORE_RESERVE_PHYS);
-
-    /* Page-map the 64KB region (16 pages at 4K each) */
-    for (uint64_t offset = 0; offset < PSTORE_REGION_SIZE; offset += PAGE_SIZE) {
-        uint64_t phys = PSTORE_RESERVE_PHYS + offset;
-        uint64_t vaddr = virt + offset;
-        int ret = vmm_map_page(vaddr, phys, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-        if (ret != 0) {
-            kprintf("[!!] pstore: failed to map page at 0x%llx\n", (unsigned long long)vaddr);
-            return;
-        }
+    /* Allocate pstore buffer from heap */
+    pstore_region = (volatile struct pstore_record *)kcalloc(1, PSTORE_REGION_SIZE);
+    if (!pstore_region) {
+        kprintf("[!!] pstore: failed to allocate %d bytes\n", PSTORE_REGION_SIZE);
+        return;
     }
-
-    pstore_region = (volatile struct pstore_record *)virt;
-    memset((void *)pstore_region, 0, PSTORE_REGION_SIZE);
-
-    /* Scan for existing records by checking sequence numbers */
-    int count = 0;
-    int max_seq = -1;
-    int max_idx = 0;
-    for (int i = 0; i < PSTORE_MAX_RECORDS; i++) {
-        if (pstore_region[i].type != 0 && pstore_region[i].sequence != 0) {
-            count++;
-            if ((int)pstore_region[i].sequence > max_seq) {
-                max_seq = pstore_region[i].sequence;
-                max_idx = i;
-            }
-        }
-    }
-    pstore_record_count = count;
-    pstore_write_idx = (max_idx + 1) % PSTORE_MAX_RECORDS;
 
     pstore_initialized = 1;
-    kprintf("[OK] pstore: 64KB persistent storage at phys 0x%llx (%d existing records)\n",
-            (unsigned long long)PSTORE_RESERVE_PHYS, count);
+    kprintf("[OK] pstore: 64KB storage allocated at 0x%llx\n",
+            (unsigned long long)(uintptr_t)pstore_region);
 }
 
 /*

@@ -297,7 +297,24 @@ void process_init(void) {
     process_table[0].ns_pid = 0;
     /* Assign the idle process to the root user namespace */
     process_table[0].user_ns = &init_user_ns;
+    process_table[0].landlock_ruleset_ids[0] = -1;  /* no landlock restrictions */
+    process_table[0].landlock_ruleset_ids[1] = -1;
+    process_table[0].landlock_ruleset_ids[2] = -1;
+    process_table[0].landlock_ruleset_ids[3] = -1;
     current_process = &process_table[0];
+
+    /* Allocate a guarded kernel stack for the idle process so that
+     * stack_top, kernel_stack are valid (not 0) for tss_set_rsp0,
+     * syscall stack entries, and stack boundary checks in schedule().
+     * The context field will be set naturally on the first context switch. */
+    if (alloc_guarded_kernel_stack(&process_table[0]) < 0) {
+        kprintf("[!!] Failed to allocate kernel stack for idle process\n");
+    }
+
+    /* Give idle a unique stack canary so the global guard is never 0
+     * when we context-switch back to idle.  prng_rand64() is safe to
+     * call here — rng_init() runs before process_init() in kernel_main. */
+    process_table[0].stack_canary = prng_rand64();
 
     /* ── Initialize CFS and resource tracking fields ── */
     for (int i = 0; i < PROCESS_MAX; i++) {
@@ -350,7 +367,6 @@ struct process *process_create(void (*entry)(void), const char *name) {
 
     proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
-    proc->name = name;
     proc->next = NULL;
     proc->pending_signals = 0;
     proc->sig_mask = 0;
@@ -393,7 +409,10 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->personality = 0;
     proc->coredump_enabled = 1;
     proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
-    memset(proc->proc_comm, 0, 16);
+    memset(proc->proc_comm, 0, sizeof(proc->proc_comm));
+    strncpy(proc->proc_comm, name, sizeof(proc->proc_comm) - 1);
+    proc->proc_comm[sizeof(proc->proc_comm) - 1] = '\0';
+    proc->name = proc->proc_comm;
     memset(proc->exe_path, 0, sizeof(proc->exe_path));
     memset(proc->itimers, 0, sizeof(proc->itimers));
     rlimit_init_defaults(proc);
@@ -535,7 +554,6 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
 
     proc->pid = alloc_pid();
     proc->state = PROCESS_READY;
-    proc->name = name;
     proc->next = NULL;
     proc->pending_signals = 0;
     proc->sig_mask = 0;
@@ -569,7 +587,10 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->personality = 0;
     proc->coredump_enabled = 1;
     proc->dumpable = 1;       /* default: dumpable (SUID_DUMP_USER) */
-    memset(proc->proc_comm, 0, 16);
+    memset(proc->proc_comm, 0, sizeof(proc->proc_comm));
+    strncpy(proc->proc_comm, name, sizeof(proc->proc_comm) - 1);
+    proc->proc_comm[sizeof(proc->proc_comm) - 1] = '\0';
+    proc->name = proc->proc_comm;
     memset(proc->exe_path, 0, sizeof(proc->exe_path));
     rlimit_init_defaults(proc);
     cap_bset_init(proc);

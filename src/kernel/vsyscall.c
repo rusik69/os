@@ -278,8 +278,9 @@ static void write_gettimeofday_vdso(uint8_t *page)
         page[offset + pos++] = (uint8_t)(delta & 0xFF);
     }
 
-    /* rdtscp */
-    page[offset + pos++] = 0x0F; page[offset + pos++] = 0x01; page[offset + pos++] = 0xF9;
+    /* lfence; rdtsc (safe on CPUs without rdtscp) */
+    page[offset + pos++] = 0x0F; page[offset + pos++] = 0xAE; page[offset + pos++] = 0xE8;  /* lfence */
+    page[offset + pos++] = 0x0F; page[offset + pos++] = 0x31;  /* rdtsc */
 
     /* Save TSC low in R9 = RAX */
     /* mov r9, rax */
@@ -518,9 +519,9 @@ int vsyscall_init(void)
     if (tsc_freq == 0)
         tsc_freq = 2000000000ULL;  /* fallback: assume 2 GHz */
 
-    /* Read initial TSC */
+    /* Read initial TSC (serialized; safe on CPUs without rdtscp) */
     uint32_t tsc_lo, tsc_hi;
-    __asm__ volatile("rdtscp" : "=a"(tsc_lo), "=d"(tsc_hi) :: "ecx");
+    __asm__ volatile("cpuid\n" "rdtsc\n" : "=a"(tsc_lo), "=d"(tsc_hi) : "a"(0) : "rbx", "rcx");
     uint64_t tsc_now = ((uint64_t)tsc_hi << 32) | tsc_lo;
 
     uint64_t epoch = rtc_get_epoch();
@@ -603,9 +604,9 @@ void vsyscall_update_clock(void)
     /* Memory barrier: ensure seq is written before data */
     __asm__ volatile("mfence" ::: "memory");
 
-    /* Read current TSC */
+    /* Read current TSC (serialized; safe on CPUs without rdtscp) */
     uint32_t tsc_lo, tsc_hi;
-    __asm__ volatile("rdtscp" : "=a"(tsc_lo), "=d"(tsc_hi) :: "ecx");
+    __asm__ volatile("cpuid\n" "rdtsc\n" : "=a"(tsc_lo), "=d"(tsc_hi) : "a"(0) : "rbx", "rcx");
     uint64_t tsc_now = ((uint64_t)tsc_hi << 32) | tsc_lo;
 
     /* Update wall clock */

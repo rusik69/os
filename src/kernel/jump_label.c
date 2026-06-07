@@ -86,9 +86,7 @@ void static_key_disable(struct static_key *key)
 /* Initialize jump label subsystem */
 void jump_label_init(void)
 {
-    /* Verify that the NOP pattern is correct:
-     * Assemble and execute a NOP5 to ensure it doesn't fault. */
-    volatile uint8_t test_area[5] __attribute__((aligned(1)));
+    /* Test that we can patch a jmp and back */
     uint64_t flags;
 
     __asm__ volatile(
@@ -99,16 +97,6 @@ void jump_label_init(void)
         :
         : "memory"
     );
-
-    /* Write NOP into test area */
-    __builtin_memcpy((void *)test_area, nop5, 5);
-    __asm__ volatile("mfence" : : : "memory");
-
-    /* Execute the NOP to verify it works */
-    void (*nop_func)(void) = (void (*)(void))(uintptr_t)test_area;
-    nop_func();
-
-    /* Test that we can patch a jmp and back */
     volatile uint8_t patch_test[5] __attribute__((aligned(1)));
     __builtin_memset((void *)patch_test, 0x90, 5);
 

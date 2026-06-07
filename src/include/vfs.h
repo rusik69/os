@@ -361,6 +361,7 @@ int vfs_get_quota(uint16_t uid, struct fs_quota *quota);
 int vfs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed);
 int vfs_check_quota_inodes(uint16_t uid);
 
+int vfs_abs_path(const char *path, char *out, int out_max);
 void vfs_init(void);
 
 /* Mount table (extern for enhanced features) */

@@ -47,7 +47,7 @@ boot_pd2:
 ; Bootstrap stack
 align 16
 boot_stack_bottom:
-    times 32768 db 0
+    times 131072 db 0
 boot_stack_top:
 
 ; GDT for 64-bit mode

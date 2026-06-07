@@ -181,18 +181,27 @@ static const char *region_name(uint64_t vaddr) {
 }
 
 /* Check whether a single PTE has the correct NX attribute.
- * Returns 0 on success (correct), 1 on violation (logged). */
-static int check_pte(uint64_t vaddr, uint64_t pte, int level) {
+ * Returns 0 on success (correct), 1 on violation (logged).
+ * When *suppress is non-zero, individual violation messages are skipped
+ * (only the count is accumulated) so boot-time serial floods are avoided. */
+static int check_pte(uint64_t vaddr, uint64_t pte, int level, int *suppress) {
     if (!(pte & PTE_PRESENT)) return 0;
+    /* Skip user-accessible pages — they belong to user processes and
+     * are audited separately (e.g. vDSO/vsyscall is intentionally
+     * executable and not part of the kernel .text region). */
+    if (pte & PTE_USER) return 0;
 
     int has_nx  = (pte & PTE_NX) ? 1 : 0;
     int is_exec = !has_nx;
     int should_exec = nx_enforce_is_executable(vaddr);
 
     if (is_exec && !should_exec) {
-        kprintf("[nx] AUDIT: %s page 0x%llx (L%d) is EXECUTABLE but is in %s"
-                " — missing NX!\n",
-                region_name(vaddr), vaddr, level, region_name(vaddr));
+        if (!suppress || *suppress > 0) {
+            kprintf("[nx] AUDIT: %s page 0x%llx (L%d) is EXECUTABLE but is in %s"
+                    " — missing NX!\n",
+                    region_name(vaddr), vaddr, level, region_name(vaddr));
+            if (suppress && *suppress > 0) (*suppress)--;
+        }
         return 1;
     }
 
@@ -217,6 +226,10 @@ int nx_enforce_audit_kernel(void) {
     if (!nx_self_active) return 0;
 
     int violations = 0;
+    /* Suppress individual violation messages after the first few to avoid
+     * flooding the serial console at boot (the protection pass immediately
+     * after the audit will fix them all). */
+    int suppress = 20;
     uint64_t *pml4 = kernel_pml4;
     if (!pml4) {
         kprintf("[nx] audit: kernel_pml4 is NULL — cannot audit\n");
@@ -227,7 +240,12 @@ int nx_enforce_audit_kernel(void) {
         if (!(pml4[pml4_idx] & PTE_PRESENT))
             continue;
 
+        /* Sign-extend the 48-bit virtual address to 64-bit canonical form.
+         * PML4 indices 0-255 are user-space (bit 47 = 0 → upper bits 0),
+         * indices 256-511 are kernel-space (bit 47 = 1 → upper bits 1). */
         uint64_t pml4_vbase = (uint64_t)pml4_idx << 39;
+        if (pml4_idx >= 256)
+            pml4_vbase |= 0xFFFF000000000000ULL;
         uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
 
         for (int pdpt_idx = 0; pdpt_idx < 512; pdpt_idx++) {
@@ -238,7 +256,7 @@ int nx_enforce_audit_kernel(void) {
 
             /* 1 GB huge page? */
             if (pdpt[pdpt_idx] & PTE_HUGE) {
-                violations += check_pte(pdpt_vbase, pdpt[pdpt_idx], 2);
+                violations += check_pte(pdpt_vbase, pdpt[pdpt_idx], 2, &suppress);
                 continue;
             }
 
@@ -252,7 +270,7 @@ int nx_enforce_audit_kernel(void) {
 
                 /* 2 MB huge page? */
                 if (pd[pd_idx] & PTE_HUGE) {
-                    violations += check_pte(pd_vbase, pd[pd_idx], 1);
+                    violations += check_pte(pd_vbase, pd[pd_idx], 1, &suppress);
                     continue;
                 }
 
@@ -263,7 +281,7 @@ int nx_enforce_audit_kernel(void) {
                         continue;
 
                     uint64_t pt_vbase = pd_vbase | ((uint64_t)pt_idx << 12);
-                    violations += check_pte(pt_vbase, pt[pt_idx], 0);
+                    violations += check_pte(pt_vbase, pt[pt_idx], 0, &suppress);
                 }
             }
         }
@@ -272,8 +290,9 @@ int nx_enforce_audit_kernel(void) {
     if (violations == 0) {
         kprintf("[nx] audit: OK — all kernel pages have correct NX settings\n");
     } else {
-        kprintf("[nx] audit: %d NX violation(s) found in kernel page tables!\n",
-                violations);
+        kprintf("[nx] audit: %d NX violation(s) found in kernel page tables!"
+                " (showing first %d)\n",
+                violations, 1);
     }
 
     return violations;
@@ -423,7 +442,10 @@ int nx_enforce_protect_kernel_sections(void)
     for (int pml4_idx = 0; pml4_idx < 512; pml4_idx++) {
         if (!(pml4[pml4_idx] & PTE_PRESENT)) continue;
 
+        /* Sign-extend the 48-bit virtual address to 64-bit canonical form. */
         uint64_t pml4_vbase = (uint64_t)pml4_idx << 39;
+        if (pml4_idx >= 256)
+            pml4_vbase |= 0xFFFF000000000000ULL;
         uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
 
         for (int pdpt_idx = 0; pdpt_idx < 512; pdpt_idx++) {
@@ -474,13 +496,12 @@ int nx_enforce_protect_kernel_sections(void)
                     if (overlaps_rodata && (pd_flags & PTE_WRITE)) {
                         pd[pd_idx] = pd_flags & ~(uint64_t)PTE_WRITE;
                         ro_modified++;
-                        kprintf("[nx] protect: 2MB .rodata page at 0x%llx set read-only\n",
-                                pd_vbase);
                     } else if ((overlaps_data || overlaps_bss) && !(pd_flags & PTE_NX)) {
                         pd[pd_idx] = pd_flags | PTE_NX;
                         nx_modified++;
-                        kprintf("[nx] protect: 2MB non-text page at 0x%llx set NX\n",
-                                pd_vbase);
+                    } else if (!overlaps_text && pd_vbase >= 0xFFFF800000000000ULL && !(pd_flags & PTE_NX)) {
+                        pd[pd_idx] = pd_flags | PTE_NX;
+                        nx_modified++;
                     }
                     continue;
                 }
@@ -510,6 +531,17 @@ int nx_enforce_protect_kernel_sections(void)
                             nx_modified++;
                             __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
                         }
+                    }
+                    /* .text → skip (keep executable) */
+                    else if (vaddr >= (uint64_t)(uintptr_t)_text_start &&
+                             vaddr <  (uint64_t)(uintptr_t)_text_end) {
+                        /* leave executable */
+                    }
+                    /* All other kernel pages (heap, MMIO, .ksymtab, .modinfo, etc.) → set NX */
+                    else if (vaddr >= 0xFFFF800000000000ULL && !(pte & PTE_NX)) {
+                        pt[pt_idx] = pte | PTE_NX;
+                        nx_modified++;
+                        __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
                     }
                 }
             }

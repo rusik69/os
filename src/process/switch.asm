@@ -38,11 +38,15 @@ context_switch:
 
 ; Trampoline for newly created processes.
 ; context_switch returns here; the real entry point is in r15.
-; Re-enables interrupts then jumps to the entry function.
+; Re-enables interrupts then CALLs the entry function so that a proper
+; return address is on the stack for lockdep/frame-pointer tracking.
+; If the entry function ever returns (it shouldn't), spin forever.
 global process_entry_trampoline
 process_entry_trampoline:
     sti
-    jmp r15
+    call r15
+    cli
+    hlt
 
 ; ──────────────────────────────────────────────────────────────────
 ; User-mode entry trampoline for ring 3 processes.
@@ -93,7 +97,9 @@ global fork_child_trampoline
 fork_child_trampoline:
     xor rax, rax           ; fork return value = 0
     sti
-    jmp r15                ; jump to fork child entry
+    call r15
+    cli
+    hlt
 
 ; ──────────────────────────────────────────────────────────────────
 ; Clone child trampoline.

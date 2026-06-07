@@ -154,6 +154,7 @@ static void ksoftirqd_task(void *arg)
  * is initialized and SMP is online. */
 void create_ksoftirqd(void)
 {
+    static char ksoftirqd_name[SMP_MAX_CPUS][24];
     int cpu_count = smp_get_cpu_count();
     if (cpu_count < 1) cpu_count = 1;
     if (cpu_count > SMP_MAX_CPUS) cpu_count = SMP_MAX_CPUS;
@@ -162,19 +163,25 @@ void create_ksoftirqd(void)
         if (ksoftirqd_proc[cpu])
             continue;  /* already created */
 
-        /* Create on the target CPU via the on-CPU creation helper if
-         * available; otherwise create on the current CPU and set affinity. */
-        char name[24];
-        snprintf(name, sizeof(name), "ksoftirqd/%d", cpu);
+        /* Build a static name buffer that outlives this function.
+         * process_create stores the name pointer directly, so we cannot
+         * use a stack-local buffer (it would dangle after we return). */
+        snprintf(ksoftirqd_name[cpu], sizeof(ksoftirqd_name[cpu]),
+                 "ksoftirqd/%d", cpu);
 
-        struct process *p = kthread_create_on_cpu(ksoftirqd_task, NULL, name, cpu);
+        struct process *p = kthread_create_on_cpu(ksoftirqd_task, NULL,
+                                                   ksoftirqd_name[cpu], cpu);
         if (!p) {
-            /* Fall back: create on current CPU and set affinity manually */
-            p = kthread_create(ksoftirqd_task, NULL, name);
+            p = kthread_create(ksoftirqd_task, NULL, ksoftirqd_name[cpu]);
         }
 
         if (p) {
+            /* Move to the SCHED_IDLE queue level.  scheduler_add inside
+             * process_create already put us on level 1 (SCHED_OTHER).
+             * Remove, set policy, and re-add so we land on level 3. */
+            scheduler_remove(p);
             p->sched_policy = SCHED_IDLE;
+            scheduler_add(p);
             ksoftirqd_proc[cpu] = p;
             kprintf("[OK] ksoftirqd/%d created (PID %lu, SCHED_IDLE)\n",
                     cpu, (unsigned long)p->pid);

@@ -38,6 +38,8 @@ void service_init(void) {
         "/var",
         "/var/log",
         "/var/run",
+        "/var/lib",
+        "/run",
         "/tmp",
         "/tmp/www",
     };

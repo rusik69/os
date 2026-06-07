@@ -455,6 +455,30 @@ static void nmi_handler(struct interrupt_frame *frame) {
     /* NMI is often recoverable; return and continue execution */
 }
 
+/* ── General Protection Fault handler (vector 13) ──────────────── */
+static void gp_fault_handler(struct interrupt_frame *frame) {
+    kprintf("\n*** GENERAL PROTECTION FAULT (#13) ***\n");
+    kprintf("Error code: 0x%lx\n", (unsigned long)frame->error_code);
+    kprintf("RIP: 0x%lx  RSP: 0x%lx\n",
+            (unsigned long)frame->rip, (unsigned long)frame->rsp);
+    kprintf("RAX: 0x%lx  RBX: 0x%lx  RCX: 0x%lx  RDX: 0x%lx\n",
+            (unsigned long)frame->rax, (unsigned long)frame->rbx,
+            (unsigned long)frame->rcx, (unsigned long)frame->rdx);
+    kprintf("RSI: 0x%lx  RDI: 0x%lx  R8:  0x%lx  R9:  0x%lx\n",
+            (unsigned long)frame->rsi, (unsigned long)frame->rdi,
+            (unsigned long)frame->r8, (unsigned long)frame->r9);
+    kprintf("R10: 0x%lx  R11: 0x%lx  R12: 0x%lx  R13: 0x%lx\n",
+            (unsigned long)frame->r10, (unsigned long)frame->r11,
+            (unsigned long)frame->r12, (unsigned long)frame->r13);
+    kprintf("R14: 0x%lx  R15: 0x%lx\n",
+            (unsigned long)frame->r14, (unsigned long)frame->r15);
+    kprintf("CS: 0x%lx  SS: 0x%lx  RFLAGS: 0x%lx\n",
+            (unsigned long)frame->cs, (unsigned long)frame->ss,
+            (unsigned long)frame->rflags);
+    cli();
+    for (;;) hlt();
+}
+
 /* ── Machine Check Exception handler (vector 18) ───────────────── */
 /* Delegates to the production-quality implementation in mce.c.
  * The handler is registered via idt_register_handler() below. */
@@ -463,6 +487,7 @@ static void nmi_handler(struct interrupt_frame *frame) {
 void fault_init(void) {
     idt_register_handler(14, page_fault_handler);
     idt_register_handler(8, double_fault_handler);
+    idt_register_handler(13, gp_fault_handler);
     idt_register_handler(2, nmi_handler);
     idt_register_handler(18, mce_handler);
     /* Kprobes: INT3 (#BP, vector 3) and single-step (#DB, vector 1) */

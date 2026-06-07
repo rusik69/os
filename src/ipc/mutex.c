@@ -140,7 +140,10 @@ static uint8_t held_mutex_effective_prio(uint32_t pid) {
 
 int mutex_init(void) {
     for (int i = 0; i < MUTEX_MAX; i++) {
-        __asm__ volatile("cli");
+        /* Save IF state; don't enable interrupts if they were disabled
+         * (early boot: PIT interrupt would fire before scheduler is ready). */
+        uint64_t __iflags;
+        __asm__ volatile("pushfq; popq %0; cli" : "=r"(__iflags) :: "memory");
         if (!mutexes[i].in_use) {
             mutexes[i].in_use  = 1;
             mutexes[i].locked  = 0;
@@ -150,10 +153,12 @@ int mutex_init(void) {
             mutexes[i].waiter_count = 0;
             mutexes[i].owner_cpu = -1;  /* no owner */
             mutexes[i].spinner_count = 0;
-            __asm__ volatile("sti");
+            if (__iflags & 0x200)
+                __asm__ volatile("sti");
             return i;
         }
-        __asm__ volatile("sti");
+        if (__iflags & 0x200)
+            __asm__ volatile("sti");
     }
     return -1;
 }

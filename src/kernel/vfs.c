@@ -210,7 +210,7 @@ extern struct vfs_ops devfs_ops;
  * If path already starts with '/', copies it verbatim.
  * Normalises "." and ".." components.
  */
-static int vfs_abs_path(const char *path, char *out, int out_max) {
+int vfs_abs_path(const char *path, char *out, int out_max) {
     char tmp[128];
     int wpos = 0;
     int i;
@@ -1752,7 +1752,6 @@ void vfs_init(void) {
     vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);
     /* Initialize nlink tracking */
     memset(nlink_table, 0, sizeof(nlink_table));
-    memset(mounts, 0, sizeof(mounts));
     /* Initialize xattr */
     memset(xattr_table, 0, sizeof(xattr_table));
 
