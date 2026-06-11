@@ -81,16 +81,22 @@ int net_link_send(const void *data, uint16_t len) {
             struct net_device *dev = netif_get(i);
             if (dev && dev->transmit &&
                 memcmp(dev->mac, net_our_mac, 6) == 0) {
-                return dev->transmit(dev, (const uint8_t *)data, len);
+                kprintf("[dbg] net_link_send: mac match at %d, calling transmit\n", i);
+                int ret = dev->transmit(dev, (const uint8_t *)data, len);
+                kprintf("[dbg] net_link_send: transmit returned %d\n", ret);
+                return ret;
             }
         }
+        kprintf("[dbg] net_link_send: no mac match (netif_count=%d)\n", netif_count());
     }
     /* Fallback: direct driver calls for legacy compatibility */
     if (virtio_net_present()) {
+        kprintf("[dbg] net_link_send: fallback virtio\n");
         if (virtio_net_send((const uint8_t *)data, len) < 0)
             return -1;
         return 0;
     }
+    kprintf("[dbg] net_link_send: fallback e1000_send\n");
     return e1000_send(data, len);
 }
 

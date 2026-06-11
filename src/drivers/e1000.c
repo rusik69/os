@@ -532,6 +532,8 @@ static int e1000_netdev_transmit(struct net_device *dev,
 {
     (void)dev;
 
+    kprintf("[dbg] e1000_netdev_transmit: len=%u\n", len);
+
     /* Choose a TX queue: hash src+dst IP from ethernet/IP header if possible */
     int tx_q = 0;
     if (num_queues > 1 && len > 14) {
@@ -549,8 +551,10 @@ static int e1000_netdev_transmit(struct net_device *dev,
     int tx_timeout = 10000000;
     while (!(qp->tx_descs[idx].status & TDESC_STA_DD) && --tx_timeout > 0)
         __asm__ volatile("pause");
-    if (tx_timeout <= 0)
+    if (tx_timeout <= 0) {
+        kprintf("[dbg] e1000_netdev_transmit: TIMEOUT waiting for desc %d\n", idx);
         return -1;
+    }
 
     memcpy(qp->tx_buffers[idx], data, len);
     qp->tx_descs[idx].length = len;
@@ -560,6 +564,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
     qp->tx_cur = (qp->tx_cur + 1) % NUM_TX_DESC;
     e1000_q_write_tx(tx_q, 4, qp->tx_cur); /* TDT */
 
+    kprintf("[dbg] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
     return 0;
 }
 
