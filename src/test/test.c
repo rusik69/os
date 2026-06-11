@@ -610,7 +610,7 @@ static void test_fork(void) {
 }
 
 static void test_shm_mutex(void) {
-    int sid = shm_get(42);
+    int sid = shm_get(42, SHM_RW);
     ASSERT("shm_get >= 0", sid >= 0);
     if (sid >= 0) {
         uint64_t addr = shm_at(sid);
@@ -1064,7 +1064,7 @@ static void test_semaphore(void) {
 
 /* ── Enhanced SHM tests ───────────────────────────────────────── */
 static void test_shm_ext(void) {
-    int id = shm_get(42);
+    int id = shm_get(42, SHM_RW);
     ASSERT("shm ext get", id >= 0);
     uint64_t addr = shm_at(id);
     ASSERT("shm ext at", addr != 0);
@@ -1086,9 +1086,9 @@ static void test_ipc(void) {
     /* ── Shared memory ──────────────────────────────────────────── */
     {
         /* Create two segments with different keys */
-        int sid1 = shm_get(100);
+        int sid1 = shm_get(100, SHM_RW);
         ASSERT("ipc shm get 100", sid1 >= 0);
-        int sid2 = shm_get(200);
+        int sid2 = shm_get(200, SHM_RW);
         ASSERT("ipc shm get 200", sid2 >= 0);
 
         /* Attach both */

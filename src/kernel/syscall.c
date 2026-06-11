@@ -1705,8 +1705,8 @@ static uint64_t sys_killpg(uint64_t pgid, uint64_t sig) {
     return (uint64_t)(int64_t)signal_send_group((uint32_t)pgid, (int)sig);
 }
 
-static uint64_t sys_shm_get(uint64_t key) {
-    return (uint64_t)(int64_t)shm_get((int)key);
+static uint64_t sys_shm_get(uint64_t key, uint64_t mode) {
+    return (uint64_t)(int64_t)shm_get((int)key, (uint16_t)mode);
 }
 
 static uint64_t sys_shm_at(uint64_t id) {
@@ -1719,6 +1719,34 @@ static uint64_t sys_shm_dt(uint64_t id) {
 
 static uint64_t sys_shm_free(uint64_t id) {
     return (uint64_t)(int64_t)shm_free((int)id);
+}
+
+/* shmctl(id, cmd, arg) — control shared memory segment permissions */
+static uint64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
+    int cid = (int)id;
+    int ccmd = (int)cmd;
+
+    /* SHMCTL_IPC_RMID (3) */
+    if (ccmd == 3)
+        return (uint64_t)(int64_t)shm_free(cid);
+
+    /* SHMCTL_IPC_SET (2): arg is pointer to struct shm_perm in user space */
+    if (ccmd == 2) {
+        struct shm_perm sp;
+        copy_from_user(&sp, (uint64_t)(uintptr_t)arg, sizeof(sp));
+        return (uint64_t)(int64_t)shm_perm_set(cid, sp.uid, sp.gid, sp.mode);
+    }
+
+    /* SHMCTL_IPC_STAT (1): copy metadata to user space */
+    if (ccmd == 1) {
+        struct shm_perm sp;
+        int ret = shm_perm_get(cid, &sp);
+        if (ret < 0) return (uint64_t)(int64_t)ret;
+        copy_to_user((uint64_t)(uintptr_t)arg, &sp, sizeof(sp));
+        return 0;
+    }
+
+    return (uint64_t)(int64_t)-1; /* unknown command */
 }
 
 static uint64_t sys_fork(void) {
@@ -8770,10 +8798,11 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CHDIR:               return sys_chdir(a1);
         case SYS_GETCWD:              return sys_getcwd(a1, a2);
         case SYS_SETPRIORITY:         return sys_setpriority(a1, a2, a3);
-        case SYS_SHM_GET:             return sys_shm_get(a1);
+        case SYS_SHM_GET:             return sys_shm_get(a1, a2);
         case SYS_SHM_AT:              return sys_shm_at(a1);
         case SYS_SHM_DT:              return sys_shm_dt(a1);
         case SYS_SHM_FREE:            return sys_shm_free(a1);
+        case SYS_SHMCTL:              return sys_shmctl(a1, a2, a3);
         case SYS_FORK:                return sys_fork();
         case SYS_CLONE:               return sys_clone(a1, a2, a3, a4, a5);
         case SYS_UNSHARE:             return sys_unshare(a1);

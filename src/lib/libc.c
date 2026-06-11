@@ -608,8 +608,8 @@ int libc_killpg(uint32_t pgid, int sig) {
         (uint64_t)pgid, (uint64_t)sig, 0, 0, 0);
 }
 
-int libc_shm_get(int key) {
-    return (int)(int64_t)libc_syscall(SYS_SHM_GET, (uint64_t)key, 0, 0, 0, 0);
+int libc_shm_get(int key, uint16_t mode) {
+    return (int)(int64_t)libc_syscall(SYS_SHM_GET, (uint64_t)key, (uint64_t)mode, 0, 0, 0);
 }
 uint64_t libc_shm_at(int id) {
     return libc_syscall(SYS_SHM_AT, (uint64_t)id, 0, 0, 0, 0);
@@ -619,6 +619,10 @@ int libc_shm_dt(int id) {
 }
 int libc_shm_free(int id) {
     return (int)(int64_t)libc_syscall(SYS_SHM_FREE, (uint64_t)id, 0, 0, 0, 0);
+}
+int libc_shmctl(int id, int cmd, void *arg) {
+    return (int)(int64_t)libc_syscall(SYS_SHMCTL, (uint64_t)id, (uint64_t)cmd,
+                                      (uint64_t)(uintptr_t)arg, 0, 0);
 }
 int libc_fork(void) {
     return (int)(int64_t)libc_syscall(SYS_FORK, 0, 0, 0, 0, 0);

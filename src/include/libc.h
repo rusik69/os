@@ -326,11 +326,12 @@ int libc_setpgid(uint32_t pid, uint32_t pgid);
 int libc_getpgid(uint32_t pid);
 int libc_killpg(uint32_t pgid, int sig);
 
-/* Shared memory (syscalls 207-210) */
-int      libc_shm_get(int key);  /* get/create segment by key, returns id or -1 */
-uint64_t libc_shm_at(int id);    /* map segment into caller, returns virt addr or 0 */
-int      libc_shm_dt(int id);    /* decrement ref count */
-int      libc_shm_free(int id);  /* free segment */
+/* Shared memory (syscalls 207-210 + shmctl 575) */
+int      libc_shm_get(int key, uint16_t mode);  /* get/create segment, returns id or -1 */
+uint64_t libc_shm_at(int id);                    /* map segment into caller, returns virt addr or 0 */
+int      libc_shm_dt(int id);                    /* decrement ref count */
+int      libc_shm_free(int id);                  /* free segment */
+int      libc_shmctl(int id, int cmd, void *arg); /* control segment permissions */
 
 /* Process fork (syscall 211) */
 int libc_fork(void); /* fork current process; returns child PID or 0 in child */
