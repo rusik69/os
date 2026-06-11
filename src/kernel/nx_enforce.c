@@ -36,15 +36,8 @@ extern char _bss_start[], _bss_end[];       /* zero-initialised data */
 extern char _lbss_start[], _lbss_end[];     /* large BSS (if present) */
 extern char _kernel_end[];                  /* end of all kernel sections */
 
-/* PTE flag */
-#define PTE_NX       (1ULL << 63)
-#define PTE_PRESENT  (1ULL << 0)
-#define PTE_WRITE    (1ULL << 1)
-#define PTE_USER     (1ULL << 2)
-#define PTE_ACCESSED (1ULL << 5)
-#define PTE_DIRTY    (1ULL << 6)
-#define PTE_HUGE     (1ULL << 7)
-#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+/* Software-defined PTE bits (not in vmm.h) */
+/* (none needed — hardware PTE bits now come from vmm.h) */
 
 /* 2MB huge-page size */
 #define HUGE_PAGE_SIZE (2ULL * 1024 * 1024)

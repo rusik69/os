@@ -28,6 +28,7 @@
 #include "psi.h"
 #include "cpuset.h"
 #include "cpu_topology.h"
+#include "kpti.h"
 #include "page_cache.h"
 #include "rseq.h"
 
@@ -626,6 +627,11 @@ void schedule(void) {
         vmm_switch_pml4(next->pml4);
     } else {
         vmm_switch_pml4(vmm_get_pml4());
+    }
+
+    /* Update KPTI trampoline CR3 values for this process */
+    if (kpti_is_active() && next->is_user && next->kpti_state.user_cr3) {
+        kpti_trampoline_patch_cr3(0, next->kpti_state.kernel_cr3, next->kpti_state.user_cr3);
     }
 
     /* Pet the watchdog: we just context-switched, proving the scheduler

@@ -6,20 +6,11 @@
 #include "errno.h"
 #include "string.h"
 
-/* ── Page-table helpers ────────────────────────────────────────────────── */
-
-/* PTE constants (must match definitions in vmm.c) */
-#define PTE_PRESENT   (1ULL << 0)
-#define PTE_WRITE     (1ULL << 1)
-#define PTE_USER      (1ULL << 2)
-#define PTE_HUGE      (1ULL << 7)
-#define PTE_COW       (1ULL << 9)   /* software bit: copy-on-write */
-#define PTE_LAZY      (1ULL << 10)  /* software bit: lazy/demand allocation */
-#define PTE_EXECONLY  (1ULL << 11)  /* software bit: execute-only tracking */
-#define PTE_NX        (1ULL << 63)  /* No-Execute */
-#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
-#define PTE_DIRTY     (1ULL << 6)   /* dirty bit */
-#define PTE_ACCESSED  (1ULL << 5)   /* accessed bit */
+/* ── Software-defined PTE bits (not in vmm.h) ────────────────────────── */
+#define PTE_COW      (1ULL << 9)   /* copy-on-write */
+#define PTE_LAZY     (1ULL << 10)  /* lazy/demand allocation */
+#define PTE_EXECONLY (1ULL << 11)  /* execute-only tracking */
+#define PTE_PCD      (1ULL << 4)   /* page cache disable */
 
 /* TLB flush for a single page */
 static inline void local_tlb_flush(uint64_t addr) {

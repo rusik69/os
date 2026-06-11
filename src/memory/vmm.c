@@ -15,16 +15,15 @@ static inline void tlb_flush(uint64_t addr) {
     smp_tlb_shootdown(&addr, 1);
 }
 
-#define PTE_PRESENT  (1ULL << 0)
-#define PTE_WRITE    (1ULL << 1)
-#define PTE_USER     (1ULL << 2)
-#define PTE_PCD      (1ULL << 4)
-#define PTE_HUGE     (1ULL << 7)
+/* ── x86-64 Page Table Entry (PTE) constants ──────────────────────────
+ * These correspond to the hardware page-table entry bit layout.
+ * Now defined in vmm.h to share with KPTI and other subsystems.
+ *
+ * Software-defined bits (available to OS in bits 9, 10, 11): */
 #define PTE_COW      (1ULL << 9)   /* software bit: copy-on-write */
 #define PTE_LAZY     (1ULL << 10)  /* software bit: lazy/demand allocation */
 #define PTE_EXECONLY (1ULL << 11)  /* software bit: execute-only tracking */
-#define PTE_NX       (1ULL << 63)  /* No-Execute (only active when EFER.NXE=1) */
-#define PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+#define PTE_PCD      (1ULL << 4)   /* page cache disable */
 
 #ifndef FEATURE_NX_SUPPORTED
 #define FEATURE_NX_SUPPORTED 1

@@ -266,6 +266,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dm-zero.c \
          src/drivers/dm-error.c \
          src/drivers/dm-crypt.c \
+         src/drivers/dm-verity.c \
          src/drivers/pmem.c \
          src/drivers/ipmi_kcs.c \
          src/drivers/tpm_tis.c \
@@ -388,6 +389,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/io_map.c \
          src/kernel/config_gz.c \
          src/kernel/fault_inject.c \
+         src/kernel/kpti.c \
          src/test/kunit.c \
          src/test/kunit_tests.c \
          src/test/kunit_pmm.c \
@@ -601,6 +603,30 @@ $(BUILD_CONFIG_GZ): $(BUILD_CONFIG_TXT)
 $(BUILD_CONFIG_TXT): scripts/gen_config.sh
 	@mkdir -p $(dir $@)
 	scripts/gen_config.sh $@
+
+# ── KPTI trampoline — flat binary embedded in kernel ─────────────
+# Pipeline: kpti_trampoline.asm → nasm -f bin → xxd -i → header
+#
+KPTI_TRAMP_SRC = src/kernel/kpti_trampoline.asm
+KPTI_TRAMP_BIN = $(BUILDDIR)/kpti_trampoline.bin
+KPTI_TRAMP_H   = $(BUILDDIR)/kpti_trampoline_bin.h
+
+$(KPTI_TRAMP_BIN): $(KPTI_TRAMP_SRC) | $(BUILDDIR)
+	nasm -f bin -o $@ $<
+
+$(KPTI_TRAMP_H): $(KPTI_TRAMP_BIN)
+	@mkdir -p $(dir $@)
+	@{ \
+	    echo '/* Auto-generated — do not edit. */'; \
+	    echo '#ifndef KPTI_TRAMPOLINE_BIN_H'; \
+	    echo '#define KPTI_TRAMPOLINE_BIN_H'; \
+	    xxd -i -n kpti_trampoline_bin < $<; \
+	    echo '#endif /* KPTI_TRAMPOLINE_BIN_H */'; \
+	} > $@.tmp && mv $@.tmp $@
+
+# kpti.c needs the generated header
+$(BUILDDIR)/kernel/kpti.o: CFLAGS += -I$(BUILDDIR)
+$(BUILDDIR)/kernel/kpti.o: $(KPTI_TRAMP_H)
 
 # ── Default target: build kernel in parallel ──────────────────────────
 # NOTE: -include must stay BELOW the default target so that dependency

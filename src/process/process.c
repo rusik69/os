@@ -19,6 +19,7 @@
 #include "mnt_namespace.h"
 #include "user_namespace.h"
 #include "kcov.h"
+#include "kpti.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -563,6 +564,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->user_entry = entry;
     proc->user_rsp = user_rsp;
     proc->pml4 = pml4;
+    kpti_setup_process(proc);
     proc->parent_pid = current_process ? current_process->pid : 0;
     proc->pgid = current_process ? current_process->pgid : proc->pid;
     proc->sid = current_process ? current_process->sid : proc->pid;

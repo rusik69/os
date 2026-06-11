@@ -4,6 +4,7 @@
 #include "types.h"
 #include "signal.h"
 #include "pelt.h"
+#include "kpti.h"
 
 /* Forward declaration for PID namespace pointers in struct process */
 struct pid_namespace;
@@ -120,6 +121,8 @@ struct process {
     uint64_t user_entry;      /* ring 3 entry point (ELF e_entry) */
     uint64_t user_rsp;        /* ring 3 stack pointer */
     uint64_t *pml4;           /* per-process page table (NULL = use kernel_pml4) */
+    /* KPTI (Kernel Page-Table Isolation) state */
+    struct kpti_state kpti_state;
     /* Multitasking */
     uint32_t parent_pid;      /* parent process PID */
     uint32_t pgid;            /* process group ID */

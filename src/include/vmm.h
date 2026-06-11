@@ -8,6 +8,34 @@
 #define VMM_FLAG_USER     (1ULL << 2)
 /* Software bit 9 (available to OS) used for Copy-on-Write */
 #define VMM_FLAG_COW      (1ULL << 9)
+
+/* ── x86-64 Page Table Entry (PTE) constants ──────────────────────────
+ * These correspond to the hardware page-table entry bit layout.
+ * Used by the VMM, KPTI, and other low-level page-table code. */
+#define PTE_PRESENT    (1ULL << 0)
+#define PTE_WRITE      (1ULL << 1)
+#define PTE_USER       (1ULL << 2)
+#define PTE_WRTHROUGH  (1ULL << 3)  /* write-through cache */
+#define PTE_CACHE_DIS  (1ULL << 4)  /* cache disable */
+#define PTE_ACCESSED   (1ULL << 5)
+#define PTE_DIRTY      (1ULL << 6)
+#define PTE_HUGE       (1ULL << 7)  /* 2MB / 1GB page */
+#define PTE_GLOBAL     (1ULL << 8)  /* global page (not flushed on CR3 reload) */
+#define PTE_NX         (1ULL << 63) /* No-Execute (active when EFER.NXE=1) */
+
+/* Physical address mask: lower 12 bits are flags, bits 12..51 are address */
+#define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
+
+/* Aliases used by legacy code */
+#define PAGE_PRESENT   PTE_PRESENT
+#define PAGE_WRITE     PTE_WRITE
+#define PAGE_USER      PTE_USER
+#define PAGE_GLOBAL    PTE_GLOBAL
+#define PAGE_ACCESSED  PTE_ACCESSED
+#define PAGE_DIRTY     PTE_DIRTY
+#define PAGE_NX        PTE_NX
+
+/* Software-defined bits (available to OS in bits 9, 10, 11) */
 /* Software bit 10 (available to OS) used for lazy/demand allocation.
  * Pages mapped with this flag share the global zero page; on first write
  * the COW handler allocates a real physical page. */

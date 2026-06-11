@@ -23,9 +23,20 @@ bits 64
 ;   bit 63 clear → user  (low-half)  address → syscall instruction → gate
 
 global syscall_entry
+global syscall_entry_full
 global libc_syscall
 extern syscall_dispatch
 extern zero_kernel_stack_uapi
+
+; KPTI trampoline constants (must match kpti.h)
+%define KPTI_TRAMP_VADDR   0x00007FFFFFFE0000
+%define KPTI_OFF_CR3_KERN  0x100
+%define KPTI_OFF_CR3_USER  0x108
+%define KPTI_OFF_SAVE_RSP  0x110
+%define KPTI_OFF_SAVE_RIP  0x118
+%define KPTI_OFF_SAVE_RFL  0x120
+%define KPTI_OFF_EXIT_RIP  0x128
+%define KPTI_OFF_EXIT      0x080
 
 section .data
 global syscall_kernel_rsp
@@ -38,9 +49,6 @@ syscall_user_rip: dq 0
 syscall_user_rflags: dq 0
 
 ; 6th syscall argument (R9 from user) — saved here before the dispatch call.
-; pselect6() packs sigmask data in arg6; ppoll() doesn't use it.
-; Interrupts are masked (SFMASK) during the syscall handler, so a single
-; global is safe — no nested syscall can clobber it.
 global syscall_arg6
 syscall_arg6: dq 0
 
@@ -55,17 +63,19 @@ execve_user_rip: dq 0
 execve_user_rflags: dq 0
 execve_user_rsp: dq 0
 
-; ── Kernel stack zeroing (FINER — Item 180) ────────────────────────────
-; syscall_entry_rsp: saved RSP value after all register pushes in
-; syscall_entry.  Used by zero_kernel_stack_uapi() to determine the
-; portion of the kernel stack that was used during this syscall, so it
-; can be zeroed before returning to userspace, preventing information
-; disclosure through residual kernel stack data.
+; ── Kernel stack zeroing ────────────────────────────────────────────
 global syscall_entry_rsp_saved
 syscall_entry_rsp_saved: dq 0
 
+; ── KPTI mode selector: 0 = disabled, 1 = active ────────────────────
+; Set by kpti_init().  When active, the original syscall_entry is not used
+; from userspace (LSTAR points to the trampoline), but syscall_entry_full
+; is the handler called by the trampoline.
+global kpti_active_flag
+kpti_active_flag: dq 0
+
 ; ============================================================================
-; syscall_entry — ring-3 path only
+; syscall_entry — ring-3 path only (used when KPTI is DISABLED)
 ; ============================================================================
 ;
 ; On entry (CPU has done):
@@ -94,7 +104,6 @@ syscall_entry:
     push    r15                                ; (9)
 
     ; Save the stack pointer after pushing all registers for stack zeroing.
-    ; This marks the "high-water mark" of kernel stack usage for this syscall.
     mov     [rel syscall_entry_rsp_saved], rsp
 
     ; Save user RIP and RFLAGS for clone()
@@ -102,11 +111,9 @@ syscall_entry:
     mov     [rel syscall_user_rflags], r11
 
     ; Save user R9 (6th syscall argument) before clobbering it.
-    ; pselect6 packs {sigmask_ptr, sigset_size} in arg6 per Linux ABI.
     mov     [rel syscall_arg6], r9
 
     ; Arg shuffle: syscall_dispatch(num, a1, a2, a3, a4, a5) — SysV
-    ;   target: rdi=num  rsi=a1  rdx=a2  rcx=a3  r8=a4  r9=a5
     mov     r9,  r8         ; a5  (save before r8 is overwritten)
     mov     r8,  r10        ; a4  (r10 holds arg4 per Linux syscall ABI)
     mov     rcx, rdx        ; a3
@@ -116,27 +123,20 @@ syscall_entry:
 
     call    syscall_dispatch ; result in rax
 
-    ; Check if execve() was called — if so, use the execve state instead
-    ; of the saved stack values for the return to user mode.
+    ; Check if execve() was called
     cmp     qword [rel execve_pending], 0
     je      .normal_return
 
-    ; Force execve return: use the preset RIP/RFLAGS/RSP
+    ; Force execve return
     xor     eax, eax               ; execve returns 0
     mov     rcx, [rel execve_user_rip]
     mov     r11, [rel execve_user_rflags]
     mov     rsp, [rel execve_user_rsp]
-
-    ; Zero the pending flag so subsequent syscalls use normal return
     mov     qword [rel execve_pending], 0
     o64 sysret
 
 .normal_return:
-    ; ── Zero kernel stack to prevent information disclosure ────────
-    ; Before restoring registers, call the stack zeroing function.
-    ; We pass rsp (current stack pointer, pointing to bottom of saved
-    ; register frame) as argument 0.  After the call, rsp is restored
-    ; by the callee's ret, so we can safely pop the saved registers.
+    ; ── Zero kernel stack ────────────────────────────────────────────
     mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
     call    zero_kernel_stack_uapi
 
@@ -153,6 +153,95 @@ syscall_entry:
     o64 sysret              ; return to ring-3 user mode
 
 ; ============================================================================
+; syscall_entry_full — KPTI handler (called from the trampoline)
+; ============================================================================
+;
+; The KPTI trampoline has already:
+;   1. Saved user RSP, RCX (RIP), R11 (RFLAGS) to the trampoline page
+;   2. Switched CR3 to kernel page table
+;   3. Jumped here (at kernel VMA)
+;
+; We need to read the saved user state from the trampoline page and
+; proceed with normal syscall handling.  At the end, instead of sysret,
+; we jump back to the exit trampoline (which switches CR3 to user PML4).
+
+syscall_entry_full:
+    ; Read saved user state from trampoline page
+    mov     rcx, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP]   ; user RIP
+    mov     r11, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL]    ; user RFLAGS
+    mov     rax, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP]    ; user RSP
+    mov     [rel syscall_user_rsp], rax
+
+    ; Switch to kernel stack
+    mov     rsp, [rel syscall_kernel_rsp]
+
+    ; Push saved state (same frame as syscall_entry)
+    push    qword [rel syscall_user_rsp]       ; saved user RSP
+    push    rcx                                ; saved user RIP
+    push    r11                                ; saved user RFLAGS
+    push    rbp
+    push    rbx
+    push    r12
+    push    r13
+    push    r14
+    push    r15
+
+    mov     [rel syscall_entry_rsp_saved], rsp
+
+    ; Save RIP/RFLAGS for clone() — read back from trampoline
+    mov     rcx, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP]
+    mov     r11, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL]
+    mov     [rel syscall_user_rip], rcx
+    mov     [rel syscall_user_rflags], r11
+
+    ; Save arg6
+    mov     [rel syscall_arg6], r9
+
+    ; Arg shuffle (same as syscall_entry)
+    mov     r9,  r8
+    mov     r8,  r10
+    mov     rcx, rdx
+    mov     rdx, rsi
+    mov     rsi, rdi
+    mov     rdi, rax
+
+    call    syscall_dispatch
+
+    ; Check execve
+    cmp     qword [rel execve_pending], 0
+    je      .full_normal_return
+
+    ; Execve path: jump to exit trampoline
+    xor     eax, eax
+    mov     rcx, [rel execve_user_rip]
+    mov     r11, [rel execve_user_rflags]
+    mov     rsp, [rel execve_user_rsp]
+    mov     qword [rel execve_pending], 0
+
+    ; Jump to exit trampoline
+    mov     r15, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     r15
+
+.full_normal_return:
+    ; Zero kernel stack
+    mov     rdi, [rel syscall_entry_rsp_saved]
+    call    zero_kernel_stack_uapi
+
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     rbx
+    pop     rbp
+    pop     r11             ; user RFLAGS
+    pop     rcx             ; user RIP
+    pop     rsp             ; user RSP
+
+    ; Instead of sysret, jump to exit trampoline which switches CR3 and sysrets
+    mov     r15, KPTI_TRAMP_VADDR + KPTI_OFF_EXIT
+    jmp     r15
+
+; ============================================================================
 ; libc_syscall — C library syscall gateway
 ; ============================================================================
 ;
@@ -165,36 +254,24 @@ syscall_entry:
 ;
 ; Dispatch:
 ;   RSP bit 63 set   → kernel-mode caller → tail-call syscall_dispatch directly
-;                       (args already in the right SysV registers)
 ;   RSP bit 63 clear → user-mode caller   → syscall instruction → syscall_entry
-;                       (remap SysV args to Linux syscall register convention)
 
 libc_syscall:
     test    rsp, rsp
     js      .kernel_direct   ; sign bit set → high-half → kernel caller
 
-    ; ----------------------------------------------------------------
-    ; User-mode path (ring 3): issue the syscall instruction.
-    ; Remap: SysV (rdi,rsi,rdx,rcx,r8,r9) → syscall (rax,rdi,rsi,rdx,r10,r8)
-    ; ----------------------------------------------------------------
+    ; User-mode path: syscall instruction
     mov     rax, rdi        ; num
     mov     rdi, rsi        ; a1
     mov     rsi, rdx        ; a2
-    mov     rdx, rcx        ; a3  (rcx is later clobbered by `syscall` itself,
-                            ;       but we've already moved the value to rdx here)
-    mov     r10, r8         ; a4  (syscall uses r10 for arg4, not rcx)
+    mov     rdx, rcx        ; a3
+    mov     r10, r8         ; a4
     mov     r8,  r9         ; a5
-    syscall                 ; → syscall_entry; result in rax
+    syscall                 ; → LSTAR; result in rax
     ret
 
 .kernel_direct:
-    ; ----------------------------------------------------------------
-    ; Kernel-mode path (ring 0): tail-call syscall_dispatch directly.
-    ; syscall_dispatch has the SAME SysV prototype as libc_syscall:
-    ;   (uint64_t num, a1, a2, a3, a4, a5) → rdi, rsi, rdx, rcx, r8, r9
-    ; All args are already in exactly the right registers — no shuffle needed.
-    ; Tail call: syscall_dispatch returns directly to our caller.
-    ; ----------------------------------------------------------------
+    ; Kernel-mode path: tail-call syscall_dispatch directly
     jmp     syscall_dispatch
 
 section .bss

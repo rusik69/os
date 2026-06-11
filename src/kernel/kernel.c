@@ -360,6 +360,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     x2apic_init();
     nx_enforce_init();
 
+    /* KPTI — Kernel Page-Table Isolation (Meltdown mitigation) */
+    extern void kpti_init(void);
+    kpti_init();
+
     /* Kernel heap (framebuffer may allocate from heap) */
     heap_init();
     kprintf("[OK] Heap initialized\n");
@@ -734,6 +738,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     dm_zero_init();
     dm_error_init();
     dm_crypt_init();
+    dm_verity_init();
 
     /* ZRAM compressed RAM block device — requires compression subsystem */
     zcomp_init();
