@@ -16,6 +16,7 @@
 #include "cpuhp.h"
 #include "cpuidle.h"
 #include "perf_events.h"
+#include "aslr.h"
 
 /* ── Per-CPU data ──────────────────────────────────────────────────── */
 struct cpu_info cpu_info_array[SMP_MAX_CPUS] __attribute__((aligned(64)));
@@ -301,8 +302,10 @@ int smp_boot_aps(void) {
             kprintf("[!!] SMP: cannot allocate stack for AP %d\n", (int)i);
             continue;
         }
-        /* Map the stack at a known virtual address */
-        uint64_t stack_virt = 0xFFFF8000FFF00000ULL - (unsigned long)i * 0x100000ULL;
+        /* KASLR: randomize the virtual address of each AP stack */
+        uint64_t kaslr_shift = aslr_kernel_stack_offset() * PAGE_SIZE;
+        /* Map the stack at a known virtual address with KASLR shift */
+        uint64_t stack_virt = 0xFFFF8000FFF00000ULL - (unsigned long)i * 0x100000ULL - kaslr_shift;
         for (uint64_t off = 0; off < 128 * 1024; off += 4096) {
             vmm_map_page(stack_virt + off, (uint64_t)(stack + off),
                          VMM_FLAG_PRESENT | VMM_FLAG_WRITE);

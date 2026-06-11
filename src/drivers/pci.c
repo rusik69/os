@@ -11,8 +11,60 @@
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
 
+/* ── Helper: map ECAM physical region into kernel page table ────────────
+ * The ECAM region (256MB) at the physical address from MCFG is mapped
+ * using 2MB huge pages so pcie_read/pcie_write can dereference directly.
+ *
+ * Returns 0 on success, -1 on failure. */
+static int map_ecam_region(uint64_t phys_base) {
+    /* Align to 2MB boundary */
+    uint64_t base = phys_base & ~(HUGE_PAGE_SIZE - 1);
+    uint64_t end  = base + 0x10000000ULL;  /* 256 MB */
+
+    /* Map each 2MB chunk as a huge page using the kernel page table */
+    for (uint64_t addr = base; addr < end; addr += HUGE_PAGE_SIZE) {
+        int pml4_idx = (addr >> 39) & 0x1FF;
+        int pdpt_idx = (addr >> 30) & 0x1FF;
+        int pd_idx   = (addr >> 21) & 0x1FF;
+
+        uint64_t *pml4 = vmm_get_pml4();
+        if (!pml4) return -1;
+
+        /* Ensure PML4 entry exists */
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) {
+            uint64_t frame = pmm_alloc_frame();
+            if (!frame) return -1;
+            memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
+            pml4[pml4_idx] = frame | PTE_PRESENT | PTE_WRITE;
+        }
+
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+
+        /* Ensure PDPT entry exists */
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) {
+            uint64_t frame = pmm_alloc_frame();
+            if (!frame) return -1;
+            memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
+            pdpt[pdpt_idx] = frame | PTE_PRESENT | PTE_WRITE;
+        }
+
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+
+        /* Set 2MB huge page entry */
+        pd[pd_idx] = (addr & 0x000FFFFFFFE00000ULL) | PTE_PRESENT | PTE_WRITE | PTE_HUGE | PTE_GLOBAL;
+    }
+
+    return 0;
+}
+
 void pcie_ecam_set_base(uint64_t base) {
     ecam_base = base;
+    if (base) {
+        if (map_ecam_region(base) == 0)
+            kprintf("[OK] PCIe ECAM mapped: phys 0x%llx (256 MB via 2MB pages)\n", (unsigned long long)base);
+        else
+            kprintf("[--] PCIe ECAM: failed to map region at phys 0x%llx\n", (unsigned long long)base);
+    }
 }
 
 int pcie_is_available(void) {

@@ -131,11 +131,10 @@ int kpti_setup_process(struct process *proc) {
         return 0;
     }
 
-    uint64_t *kernel_pml4 = proc->pml4;
-    if (!kernel_pml4) kernel_pml4 = vmm_get_pml4();
+    uint64_t *kernel_pml4 = vmm_get_pml4();      /* global kernel table (all kernel + user entries) */
     uint64_t kernel_pml4_phys = VIRT_TO_PHYS((uint64_t)kernel_pml4);
 
-    /* 1. Allocate user PML4 */
+    /* 1. Allocate user PML4 — copy user half (0..255) from the process's table */
     uint64_t user_frame = pmm_alloc_frame();
     if (!user_frame) {
         kprintf("[KPTI] FAIL: cannot allocate user PML4 for PID %u\n", proc->pid);

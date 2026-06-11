@@ -73,6 +73,8 @@
 #include "sched_attr.h"
 #include "swap.h"
 #include "kexec.h"
+#include "uaccess.h"
+#include "mseal.h"
 
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
@@ -438,7 +440,7 @@ static struct process_fd *sys_get_fd(int i) {
 }
 
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    if (fd == 0) return 0; /* stdin EOF until telnet fd wiring */
+    if (fd == 0 && !syscall_is_user_process()) return 0; /* stdin EOF until telnet fd wiring */
     if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
@@ -455,7 +457,10 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (!tmp) return (uint64_t)-1;
         uint32_t nread = 0;
         vfs_read(pfd->path, tmp, need_end, &nread);
-        memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
+        if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
+            kfree(tmp);
+            return (uint64_t)-1;
+        }
         kfree(tmp);
         pfd->offset += to_read;
         /* I/O accounting */
@@ -472,10 +477,16 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* signalfd read */
     if (fd >= 600 && fd < 616) {
         int slot = (int)fd - 600;
-        int ret = signalfd_do_read(slot, (void *)buf_addr, len);
-        if (ret < 0) {
-            /* Error or invalid slot */
+        uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
+        if (!kbuf) return (uint64_t)-1;
+        int ret = signalfd_do_read(slot, kbuf, len);
+        if (ret > 0) {
+            if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
+                kfree(kbuf);
+                return (uint64_t)-1;
+            }
         }
+        kfree(kbuf);
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -492,7 +503,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         uint64_t tval = 0;
         if (timerfd_do_read(slot, &tval) == 0 &&
             syscall_user_write_ok(buf_addr, 8)) {
-            *(uint64_t*)(uintptr_t)buf_addr = tval;
+            if (copy_to_user(buf_addr, &tval, 8) < 0)
+                return (uint64_t)-1;
         }
         /* I/O accounting */
         {
@@ -509,7 +521,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (len < 8) return (uint64_t)-1;
         uint64_t val;
         if (eventfd_read((int)fd, &val) < 0) return (uint64_t)-1;
-        *(uint64_t*)(uintptr_t)buf_addr = val;
+        if (copy_to_user(buf_addr, &val, 8) < 0) return (uint64_t)-1;
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -524,7 +536,17 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (memfd_is_fd((int)fd)) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
         if (!mfd) return (uint64_t)-1;
-        int64_t ret = memfd_read(mfd, (void*)buf_addr, len, 0);
+        uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : len);
+        if (!kbuf) { memfd_put(mfd); return (uint64_t)-1; }
+        int64_t ret = memfd_read(mfd, kbuf, len, 0);
+        if (ret > 0) {
+            if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
+                kfree(kbuf);
+                memfd_put(mfd);
+                return (uint64_t)-1;
+            }
+        }
+        kfree(kbuf);
         memfd_put(mfd);
         /* I/O accounting */
         {
@@ -538,14 +560,21 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     }
     /* inotify read (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
-        int ret = inotify_read((int)fd, (void *)buf_addr, (size_t)len);
+        uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : len);
+        if (!kbuf) return (uint64_t)-1;
+        int ret = inotify_read((int)fd, kbuf, (size_t)(len > 4096 ? 4096 : len));
         if (ret >= 0) {
+            if (copy_to_user(buf_addr, kbuf, (size_t)ret) < 0) {
+                kfree(kbuf);
+                return (uint64_t)-1;
+            }
             struct process *cur = process_get_current();
             if (cur) {
                 cur->io_rchar += (uint64_t)ret;
                 cur->io_syscr++;
             }
         }
+        kfree(kbuf);
         return ret >= 0 ? (uint64_t)ret : (uint64_t)-1;
     }
     return (uint64_t)-1;
@@ -553,11 +582,21 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
 
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (fd == 1 || fd == 2) {
-        const char *s = (const char *)buf_addr;
-        for (uint64_t i = 0; i < len; i++) {
-            vga_putchar(s[i]);
-            serial_putchar(s[i]);
+        /* Copy from user-space to avoid SMAP fault */
+        uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
+        if (!kbuf) return (uint64_t)-1;
+        size_t to_copy = len > 4096 ? 4096 : len;
+        if (to_copy > 0) {
+            if (copy_from_user(kbuf, buf_addr, to_copy) < 0) {
+                kfree(kbuf);
+                return (uint64_t)-1;
+            }
+            for (uint64_t i = 0; i < to_copy; i++) {
+                vga_putchar(kbuf[i]);
+                serial_putchar(kbuf[i]);
+            }
         }
+        kfree(kbuf);
         /* I/O accounting */
         {
             struct process *cur = process_get_current();
@@ -572,7 +611,8 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     /* eventfd write */
     if (fd >= 700 && fd < 716) {
         if (len < 8) return (uint64_t)-1;
-        uint64_t val = *(uint64_t*)(uintptr_t)buf_addr;
+        uint64_t val;
+        if (copy_from_user(&val, buf_addr, 8) < 0) return (uint64_t)-1;
         if (eventfd_write((int)fd, val) < 0) return (uint64_t)-1;
         /* I/O accounting */
         {
@@ -589,7 +629,16 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     if (memfd_is_fd((int)fd)) {
         struct memfd *mfd = memfd_get_by_fd((int)fd);
         if (!mfd) return (uint64_t)-1;
-        int64_t ret = memfd_write(mfd, (const void*)buf_addr, len, 0);
+        uint8_t *kbuf = kmalloc(len > 65536 ? 65536 : (len > 0 ? len : 1));
+        if (!kbuf) { memfd_put(mfd); return (uint64_t)-1; }
+        size_t wlen = len > 65536 ? 65536 : len;
+        if (copy_from_user(kbuf, buf_addr, wlen) < 0) {
+            kfree(kbuf);
+            memfd_put(mfd);
+            return (uint64_t)-1;
+        }
+        int64_t ret = memfd_write(mfd, kbuf, wlen, 0);
+        kfree(kbuf);
         memfd_put(mfd);
         /* I/O accounting */
         {
@@ -631,7 +680,10 @@ static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
 
 static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
-    const char *path = (const char *)path_addr;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
+    const char *path = kpath;
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
 
@@ -896,23 +948,34 @@ static uint64_t sys_calloc(uint64_t nmemb, uint64_t size) {
 }
 
 static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
-    const char *path = (const char *)path_addr;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
     uint64_t *out = (uint64_t *)out_addr;
     struct vfs_stat st;
-    if (vfs_stat(path, &st) < 0) return (uint64_t)-1;
-    if (out) { out[0] = st.size; out[1] = st.type; }
+    if (vfs_stat(kpath, &st) < 0) return (uint64_t)-1;
+    if (out) { 
+        uint64_t stbuf[2] = { st.size, st.type };
+        if (copy_to_user(out_addr, stbuf, sizeof(stbuf)) < 0)
+            return (uint64_t)-1;
+    }
     return 0;
 }
 
 static uint64_t sys_mkdir(uint64_t path_addr) {
-    const char *path = (const char *)path_addr;
-    return (uint64_t)fs_create(path, 2 /* FS_TYPE_DIR */);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
+    return (uint64_t)fs_create(kpath, 2 /* FS_TYPE_DIR */);
 }
 
 static uint64_t sys_unlink(uint64_t path_addr) {
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
     char ap[128];
-    const char *rp = vfs_abs_path((const char *)path_addr, ap, sizeof(ap)) < 0
-                     ? (const char *)path_addr : ap;
+    const char *rp = vfs_abs_path(kpath, ap, sizeof(ap)) < 0
+                     ? kpath : ap;
     return (uint64_t)fs_delete(rp);
 }
 
@@ -1997,8 +2060,10 @@ static uint64_t sys_tkill(uint64_t pid, uint64_t sig) {
 }
 
 static uint64_t sys_execve(uint64_t path_addr, uint64_t argv_addr, uint64_t envp_addr) {
-    const char *path = (const char *)path_addr;
-    if (!path) return (uint64_t)-1;
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
+    const char *path = kpath;
     /* For now, ignore argv/envp */
     (void)argv_addr; (void)envp_addr;
 
@@ -2039,15 +2104,8 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
 
     /* Copy path string to kernel space */
     char kpath[256];
-    int pi = 0;
-    const char *upath = (const char *)path_addr;
-    while (pi < 255) {
-        char c;
-        if (memcpy(&c, &upath[pi], 1) != 0) break; /* fault */
-        kpath[pi++] = c;
-        if (c == '\0') break;
-    }
-    kpath[255] = '\0';
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Validate argv and envp pointers (can be NULL) */
     const char *const *k_argv = NULL;
@@ -2064,7 +2122,7 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
         /* Count argv */
         while (argc < 256) {
             uint64_t ptr = 0;
-            if (memcpy(&ptr, (void *)(argv_addr + (uint64_t)argc * sizeof(uint64_t)), sizeof(uint64_t)) != 0)
+            if (copy_from_user(&ptr, argv_addr + (uint64_t)argc * 8, 8) < 0)
                 break;
             if (ptr == 0) break;
             if (!syscall_user_cstr_ok(ptr))
@@ -2081,7 +2139,7 @@ static uint64_t sys_posix_spawn(uint64_t path_addr, uint64_t argv_addr, uint64_t
         }
         while (envc < 256) {
             uint64_t ptr = 0;
-            if (memcpy(&ptr, (void *)(envp_addr + (uint64_t)envc * sizeof(uint64_t)), sizeof(uint64_t)) != 0)
+            if (copy_from_user(&ptr, envp_addr + (uint64_t)envc * 8, 8) < 0)
                 break;
             if (ptr == 0) break;
             if (!syscall_user_cstr_ok(ptr))
@@ -2115,6 +2173,12 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
     /* Check for wraparound: addr + length must not overflow */
     if (length > 0 && addr + length < addr)
         return (uint64_t)-EINVAL;
+
+    /* W^X enforcement: reject writable + executable mappings.
+     * A writable && executable page enables shellcode injection.
+     * JIT compilers must use separate rw (data) and rx (code) regions. */
+    if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+        return (uint64_t)(int64_t)-EACCES;
 
     /* ── MAP_HUGETLB: force huge page allocation from reserved pool ── */
     if (flags & MAP_HUGETLB) {
@@ -2270,6 +2334,10 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
     if (addr + length < addr) return (uint64_t)-1;
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
 
+    /* Check if the range is sealed (mseal) — sealed ranges are immutable */
+    if (mseal_check(addr, length) < 0)
+        return (uint64_t)(int64_t)-EPERM;
+
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
         return (uint64_t)-1;
     return 0;
@@ -2284,12 +2352,24 @@ static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     if (prot & ~(uint64_t)(PROT_READ | PROT_WRITE | PROT_EXEC))
         return (uint64_t)-1;
 
+    /* W^X enforcement: reject writable + executable mappings.
+     * A writable + executable page is a security hole (allows injecting
+     * shellcode directly into executable memory).  Most modern systems
+     * enforce this strictly.  Processes that need JIT must use mmap()
+     * with a separate rw data area and an rx code area. */
+    if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+        return (uint64_t)(int64_t)-EACCES;
+
     /* Address must be page-aligned */
     if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
 
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
     if (addr + length < addr) return (uint64_t)-1;
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+
+    /* Check if the range is sealed (mseal) — sealed ranges are immutable */
+    if (mseal_check(addr, length) < 0)
+        return (uint64_t)(int64_t)-EPERM;
 
     /*
      * Convert POSIX PROT_* to VMM page-table flags via the AST layer.
@@ -2306,6 +2386,40 @@ static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     if (vmm_set_user_pages_flags(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
         return (uint64_t)-1;
     return 0;
+}
+
+/* ── mseal — seal virtual memory ranges against further changes ── */
+
+static uint64_t sys_mseal(uint64_t addr, uint64_t length, uint64_t flags) {
+    struct process *proc = process_get_current();
+    if (!proc) return (uint64_t)-1;
+
+    /* Address must be page-aligned */
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+
+    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    if (addr + length < addr) return (uint64_t)-1;
+    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
+
+    int ret = mseal(addr, length, (int)flags);
+    return ret < 0 ? (uint64_t)(int64_t)ret : 0;
+}
+
+/* ── seccomp(2) — standalone BPF-based syscall sandboxing ──── */
+
+static uint64_t sys_seccomp(uint64_t operation, uint64_t flags, uint64_t args) {
+    (void)args;
+
+    switch (operation) {
+    case 1: /* SECCOMP_SET_MODE_STRICT */
+        return (uint64_t)(int64_t)seccomp_set_mode(SECCOMP_MODE_STRICT, (unsigned int)flags);
+
+    case 2: /* SECCOMP_SET_MODE_FILTER */
+        return (uint64_t)(int64_t)seccomp_set_mode(SECCOMP_MODE_FILTER, (unsigned int)flags);
+
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
 }
 
 /* ── mremap ───────────────────────────────────────────────────── */
@@ -2678,17 +2792,20 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
 
     /* Copy in from userspace — skip NULL sets */
     if (readfds_addr) {
-        memcpy(&orig_readfds, (void*)readfds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_readfds, readfds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_readfds);
     }
     if (writefds_addr) {
-        memcpy(&orig_writefds, (void*)writefds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_writefds, writefds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_writefds);
     }
     if (exceptfds_addr) {
-        memcpy(&orig_exceptfds, (void*)exceptfds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_exceptfds, exceptfds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_exceptfds);
     }
@@ -2696,7 +2813,8 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
     uint64_t timeout = 0;
     if (timeout_addr) {
         struct timespec ts;
-        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
+        if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
+            return (uint64_t)-1;
         /* Convert to ticks */
         timeout = ts.tv_sec * 100 + ts.tv_nsec / 10000000;
     }
@@ -2792,9 +2910,12 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
 
         if (total > 0) {
             /* Copy results back */
-            if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
-            if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
-            if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+            if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
+            if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
+            if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
             return (uint64_t)total;
         }
 
@@ -2806,9 +2927,12 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
     }
 
     /* Timeout — return 0 */
-    if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
-    if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
-    if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+    if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
+    if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
+    if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -3012,7 +3136,7 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
 
     /* Write fds back to userspace */
     uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
-    memcpy((void*)fds_addr, fds, sizeof(fds));
+    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0) return (uint64_t)-1;
     return 0;
 }
 
@@ -8759,6 +8883,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MMAP:    return sys_mmap(a1, a2, a3, a4);
         case SYS_MUNMAP:  return sys_munmap(a1, a2);
         case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
+        case SYS_MSEAL:    return sys_mseal(a1, a2, a3);
+        case SYS_SECCOMP:  return sys_seccomp(a1, a2, a3);
         case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);
         case SYS_SCHED_SETAFFINITY: return sys_sched_setaffinity(a1, a2);
         case SYS_SCHED_GETAFFINITY: return sys_sched_getaffinity(a1);

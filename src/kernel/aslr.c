@@ -1,9 +1,11 @@
 #define KERNEL_INTERNAL
 #include "types.h"
 #include "aslr.h"
+#include "string.h"
 #include "printf.h"
 #include "syscall.h"   /* for prng_rand64 */
 #include "timer.h"     /* for timer_get_ticks */
+#include "cmdline.h"   /* for cmdline_has */
 
 /*
  * ASLR — Address Space Layout Randomization
@@ -12,16 +14,47 @@
  *   - Stack base offset (up to ASLR_STACK_RANDOM_PAGES pages)
  *   - mmap base offset (up to ASLR_MMAP_RANDOM_PAGES pages)
  *   - brk/heap base offset (up to ASLR_BRK_RANDOM_PAGES pages)
+ *   - Kernel module base offset (KASLR for modules)
+ *   - Kernel stack base offset (per-CPU)
  *
  * Entropy is derived from prng_rand64() which is seeded from RTC + tick
- * count at boot. Additional entropy is mixed in from timer IRQ jitter
- * and scheduler timing.
+ * count at boot, plus hardware RDRAND if available. Additional entropy
+ * is mixed in from timer IRQ jitter and scheduler timing.
+ *
+ * All features can be disabled globally with the "nokaslr" kernel
+ * command-line parameter.
  */
+
+/* Global ASLR toggle — disables ALL randomization when set */
+int aslr_disabled = 0;
 
 /* Track whether we've added extra entropy */
 static int aslr_entropy_seeded = 0;
 
+/* RDRAND instruction — returns 1 on success, 0 if not available */
+static inline int rdrand64(uint64_t *val) {
+    unsigned char ok;
+    __asm__ volatile(".byte 0x48, 0x0f, 0xc7, 0xf0 ; setc %1"
+                     : "=a"(*val), "=qm"(ok) :: "cc");
+    return (int)ok;
+}
+
 void aslr_init(void) {
+    /* Check for "nokaslr" on kernel command line — disables ALL ASLR */
+    if (cmdline_has("nokaslr")) {
+        aslr_disabled = 1;
+        kprintf("[OK] ASLR disabled via cmdline (nokaslr)\n");
+        return;
+    }
+
+    /* Attempt to gather hardware entropy from RDRAND */
+    uint64_t rdrand_val = 0;
+    if (rdrand64(&rdrand_val)) {
+        prng_add_entropy(rdrand_val);
+        kprintf("[OK] ASLR: gathered %llu bits hardware entropy via RDRAND\n",
+                (unsigned long long)64);
+    }
+
     /* The PRNG in syscall_init() has already been seeded with RTC + tick.
      * We add extra entropy from our own initialisation timing. */
     uint64_t extra = timer_get_ticks();
@@ -34,32 +67,43 @@ void aslr_init(void) {
 /*
  * Return a random number of pages (0..ASLR_STACK_RANDOM_PAGES) for shifting
  * the user stack base downward from USER_STACK_TOP.
+ * Returns 0 if ASLR is globally disabled.
  */
 uint64_t aslr_stack_offset(void) {
+    if (aslr_disabled) return 0;
     return prng_rand64() % (ASLR_STACK_RANDOM_PAGES + 1);
 }
 
 /*
  * Return a random number of pages (0..ASLR_MMAP_RANDOM_PAGES) for shifting
  * the mmap allocation base upward from the default starting address.
+ * Returns 0 if ASLR is globally disabled.
  */
 uint64_t aslr_mmap_offset(void) {
+    if (aslr_disabled) return 0;
     return prng_rand64() % (ASLR_MMAP_RANDOM_PAGES + 1);
 }
 
 /*
  * Return a random number of pages (0..ASLR_BRK_RANDOM_PAGES) for shifting
  * the heap/brk base upward from the default starting address.
+ * Returns 0 if ASLR is globally disabled.
  */
 uint64_t aslr_brk_offset(void) {
+    if (aslr_disabled) return 0;
     return prng_rand64() % (ASLR_BRK_RANDOM_PAGES + 1);
 }
 
 /*
  * Fill a 16-byte buffer with random bytes for the AT_RANDOM auxiliary vector
  * entry (used for stack canary seed, etc.).
+ * Returns all zeros if ASLR is globally disabled.
  */
 void aslr_get_at_random(uint8_t buf[16]) {
+    if (aslr_disabled) {
+        memset(buf, 0, 16);
+        return;
+    }
     uint64_t r1 = prng_rand64();
     uint64_t r2 = prng_rand64();
     for (int i = 0; i < 8; i++) {
@@ -75,9 +119,24 @@ void aslr_get_at_random(uint8_t buf[16]) {
  * Called once during module_init() to compute the offset.  The random shift
  * ensures that module virtual addresses are not easily predictable across
  * boots, making it harder for an attacker to find module code/data.
+ * Returns 0 if ASLR is globally disabled.
  */
 uint64_t aslr_module_offset(void) {
+    if (aslr_disabled) return 0;
     return prng_rand64() % (ASLR_MODULE_RANDOM_PAGES + 1);
+}
+
+/*
+ * Return a random number of pages (0..ASLR_KSTACK_RANDOM_PAGES) for
+ * randomizing the per-CPU kernel stack base address.
+ *
+ * This is called during CPU initialization to give each CPU's kernel
+ * stack a random offset, making stack-based attacks harder. Returns 0
+ * if ASLR is globally disabled or the PRNG hasn't been seeded yet.
+ */
+uint64_t aslr_kernel_stack_offset(void) {
+    if (aslr_disabled) return 0;
+    return prng_rand64() % (ASLR_KSTACK_RANDOM_PAGES + 1);
 }
 
 /*

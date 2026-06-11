@@ -280,6 +280,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/irq_affinity.c \
          src/kernel/trace.c \
          src/kernel/smap_smep_umip.c \
+         src/kernel/uaccess.c \
          src/kernel/notifier.c \
          src/kernel/softirq.c \
          src/kernel/tasklet.c \

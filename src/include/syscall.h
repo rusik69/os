@@ -782,6 +782,15 @@ struct linux_dirent64 {
 #define SYS_SWAPON           500  /* swapon(path) → 0 or -errno */
 #define SYS_SWAPOFF          501  /* swapoff(path) → 0 or -errno */
 
+/* Memory sealing — mseal() is a Linux 6.10+ syscall that makes VA ranges
+ * immutable against further mprotect, munmap, or mmap changes */
+#define SYS_MSEAL            502  /* mseal(addr, len, flags) → 0 or -errno */
+
+/* seccomp(2) — standalone syscall for BPF-based syscall filtering.
+ *    operation: SECCOMP_SET_MODE_STRICT=1, SECCOMP_SET_MODE_FILTER=2
+ *    flags:     SECCOMP_FILTER_FLAG_TSYNC=1 */
+#define SYS_SECCOMP          503  /* seccomp(operation, flags, args) → 0 or -errno */
+
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 

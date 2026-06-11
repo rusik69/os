@@ -118,9 +118,9 @@ void modules_init(void) {
      * unpredictable across boots.  The shift is applied once at init. */
     uint64_t rand_pages = aslr_module_offset();
     module_base_offset = rand_pages * PAGE_SIZE;
-    kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%llX + %llu MB KASLR offset)\n",
-            MODULE_MAX, (unsigned long long)MODULES_VADDR,
-            (unsigned long long)(module_base_offset >> 20));
+    kprintf("[OK] Kernel module API initialized (%d slots, 64 MB region at 0x%lx + %lu MB KASLR offset)\n",
+            MODULE_MAX, (unsigned long)MODULES_VADDR,
+            (unsigned long)(module_base_offset >> 20));
     g_mod_initialized = 1;
 
     /* Initialise the module alias matching engine (M38) */
