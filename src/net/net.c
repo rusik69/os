@@ -13,6 +13,9 @@
 #include "netdevice.h"
 #include "net_rps.h"
 
+/* Network state lock — protects all of the following globals */
+static spinlock_t net_lock = SPINLOCK_INIT;
+
 /* Shared network state */
 uint8_t  net_our_mac[6];
 uint32_t net_our_ip;
@@ -106,7 +109,11 @@ static volatile int ping_reply_received = 0;
 /* ── IP routing table ───────────────────────────────────────────── */
 
 int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
-    if (rt_num_entries >= RT_MAX_ENTRIES) return -1;
+    spinlock_acquire(&net_lock);
+    if (rt_num_entries >= RT_MAX_ENTRIES) {
+        spinlock_release(&net_lock);
+        return -1;
+    }
     /* Check for duplicate */
     for (int i = 0; i < rt_num_entries; i++) {
         if (rt_table[i].dst == dst && rt_table[i].mask == mask)
@@ -117,24 +124,29 @@ int rt_add(uint32_t dst, uint32_t mask, uint32_t gw, int iface) {
     rt_table[rt_num_entries].gw    = gw;
     rt_table[rt_num_entries].iface = iface;
     rt_num_entries++;
+    spinlock_release(&net_lock);
     return 0;
 }
 
 int rt_del(uint32_t dst, uint32_t mask) {
+    spinlock_acquire(&net_lock);
     for (int i = 0; i < rt_num_entries; i++) {
         if (rt_table[i].dst == dst && rt_table[i].mask == mask) {
             for (int j = i; j < rt_num_entries - 1; j++)
                 rt_table[j] = rt_table[j + 1];
             rt_num_entries--;
+            spinlock_release(&net_lock);
             return 0;
         }
     }
+    spinlock_release(&net_lock);
     return -1;
 }
 
 int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
     int best = -1;
     uint32_t best_mask = 0;
+    spinlock_acquire(&net_lock);
     for (int i = 0; i < rt_num_entries; i++) {
         if ((ip & rt_table[i].mask) == (rt_table[i].dst & rt_table[i].mask)) {
             if (rt_table[i].mask > best_mask) {
@@ -143,14 +155,17 @@ int rt_lookup(uint32_t ip, uint32_t *gw_out, int *iface_out) {
             }
         }
     }
-    if (best < 0) return -1;
+    if (best < 0) { spinlock_release(&net_lock); return -1; }
     if (gw_out)   *gw_out   = rt_table[best].gw;
     if (iface_out) *iface_out = rt_table[best].iface;
+    spinlock_release(&net_lock);
     return 0;
 }
 
-void rt_flush(void) {
+void rt_clear(void) {
+    spinlock_acquire(&net_lock);
     rt_num_entries = 0;
+    spinlock_release(&net_lock);
 }
 
 /* ── Gratuitous ARP ────────────────────────────────────────────── */

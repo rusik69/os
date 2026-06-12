@@ -10,6 +10,9 @@
 #include "syscall.h"   /* for prng_rand64 */
 #include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
 
+/* TCP connection table lock — protects tcp_conns[] */
+static spinlock_t tcp_lock = SPINLOCK_INIT;
+
 /* ── CUBIC congestion control (RFC 8312) ─────────────────────────────
  *
  * Replaces the legacy Reno AIMD with a cubic function for cwnd growth.
