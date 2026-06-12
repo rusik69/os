@@ -681,7 +681,17 @@ static void handle_arp(const uint8_t *data, uint16_t len) {
     uint32_t sender = ntohl(arp->sender_ip);
 
     if (sender) {
-        arp_cache_add(sender, arp->sender_mac);
+        /* ARP cache poisoning prevention: only accept entries for IPs
+         * in our subnet (sender & netmask == net_our_ip & netmask),
+         * or the gateway IP. This prevents man-in-the-middle via
+         * gratuitous ARP for IPs outside the local network. */
+        uint32_t masked_sender = sender & net_subnet_mask;
+        uint32_t masked_our    = net_our_ip & net_subnet_mask;
+        if (net_subnet_mask == 0 ||
+            sender == net_gateway_ip ||
+            masked_sender == masked_our) {
+            arp_cache_add(sender, arp->sender_mac);
+        }
     }
 
     if (sender == net_gateway_ip) {

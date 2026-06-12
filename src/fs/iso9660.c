@@ -556,6 +556,69 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
                 break;
             }
 
+            /* If Rock Ridge symlink is available and name matches,
+             * follow the symlink target. */
+            if (ip->has_rrip && (entries[i].rr_flags & RRIP_HAS_SL) &&
+                match_len == clen && memcmp(match_name, p, clen) == 0) {
+                /* Read symlink target and resolve from that path */
+                char link_target[256];
+                strncpy(link_target, entries[i].rr_symlink, sizeof(link_target) - 1);
+                link_target[sizeof(link_target) - 1] = '\0';
+
+                /* Prepend parent path if the symlink is relative */
+                if (link_target[0] != '/') {
+                    /* We'd need the full path prefix — for now, absolute only */
+                    kprintf("iso9660: relative symlinks not yet supported\n");
+                    return -1;
+                }
+
+                /* Resolve the symlink target recursively with depth limit.
+                 * Linux allows max 40 symlink follows (SYMLOOP_MAX). */
+                int depth = 0;
+                const char *sp = link_target;
+                while (*sp) {
+                    if (depth++ > 40) {
+                        kprintf("iso9660: symlink depth limit exceeded\n");
+                        return -ELOOP;
+                    }
+                    const char *send = sp;
+                    while (*send && *send != '/') send++;
+                    size_t slen = (size_t)(send - sp);
+
+                    int sfound = 0;
+                    for (int j = 0; j < n; j++) {
+                        const char *sname;
+                        if (ip->has_rrip && entries[j].rr_name[0] != '\0')
+                            sname = entries[j].rr_name;
+                        else
+                            sname = entries[j].iso_name;
+                        size_t snlen = strlen(sname);
+                        if (snlen == 0) continue;
+                        if (snlen == 1 && sname[0] == 0) continue;
+                        if (snlen == 1 && sname[0] == '.') continue;
+                        if (snlen == 2 && sname[0] == '.' && sname[1] == '.') continue;
+                        const char *smatch = sname;
+                        size_t smlen = snlen;
+                        if (smlen == slen && memcmp(smatch, sp, slen) == 0) {
+                            *extent = entries[j].extent;
+                            *size   = entries[j].size;
+                            sfound = 1;
+                            break;
+                        }
+                    }
+                    if (!sfound) return -1;
+                    sp = send;
+                    while (*sp == '/') sp++;
+                    if (*sp) {
+                        /* Read next directory level */
+                        n = iso_read_dir_entries(ip, *extent, *size, entries, 128);
+                        if (n <= 0) return -1;
+                    }
+                }
+                found = 1;
+                break;
+            }
+
             /* Also try without version number (ISO9660 fallback) */
             if (!ip->has_joliet && match_len > clen && match_name[clen] == ';' &&
                 memcmp(match_name, p, clen) == 0) {

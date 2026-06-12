@@ -11,7 +11,7 @@
 #include "aslr.h"
 
 /* Max ELF binary we'll try to load from disk */
-#define ELF_MAX_SIZE 65536
+#define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
 
 /* Validate ELF headers and return entry point, WITHOUT copying segments.
  * The caller is responsible for mapping/loading segments afterward. */
@@ -528,6 +528,26 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
     uint64_t stack_top_virt = user_stack_top;
     uint64_t sp = stack_top_virt;  /* start writing from top down */
+
+    /* Check argv+envp total size against user stack capacity.
+     * If total_str_size + pointer arrays + argc exceed the stack,
+     * return -E2BIG to prevent stack pointer underflow (which would
+     * corrupt kernel memory by writing into unmapped/guard region). */
+    uint64_t stack_overhead = total_str_size
+        + (uint64_t)(argc + 1) * sizeof(uint64_t)   /* argv[] + NULL */
+        + (uint64_t)(envc + 1) * sizeof(uint64_t)   /* envp[] + NULL */
+        + sizeof(uint64_t);                           /* argc */
+    if (stack_overhead > USER_STACK_SIZE - PAGE_SIZE) {
+        kprintf("execve: argv+envp too large (%llu bytes > %llu)\n",
+                (unsigned long long)stack_overhead,
+                (unsigned long long)(USER_STACK_SIZE - PAGE_SIZE));
+        /* Clean up tmp_buf allocations before returning */
+        for (int i = 0; i < total_args; i++)
+            if (tmp_buf[i]) kfree(tmp_buf[i]);
+        kfree(buf);
+        vmm_destroy_user_pml4(new_pml4);
+        return -E2BIG;
+    }
 
     /* Write string data first (at the top of the stack area) */
     sp -= total_str_size;

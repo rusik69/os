@@ -1200,6 +1200,14 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 send_tcp(c, TCP_ACK, NULL, 0);
                 return;
             }
+            /* Validate that received data is within our advertised window.
+             * We advertise a window of 8192 bytes starting at c->their_seq.
+             * Data outside this window should be silently dropped (RFC 793). */
+            if (seq + data_len > c->their_seq + 8192) {
+                kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=8192\n",
+                        seq, data_len, c->their_seq);
+                return;
+            }
             uint32_t skip = 0;
             if ((int32_t)(seq - expected) < 0) {
                 skip = (uint32_t)(expected - seq);

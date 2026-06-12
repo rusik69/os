@@ -76,6 +76,10 @@
 #include "uaccess.h"
 #include "mseal.h"
 
+/* Process table lock — protects concurrent iteration of process_table[]
+ * from syscalls (ps, kill, etc.) and timer interrupts (process_timer_tick). */
+static spinlock_t proc_table_lock = SPINLOCK_INIT;
+
 /* 6th syscall argument — saved by the asm entry before the dispatch call.
  * pselect6 packs {sigmask_ptr, sigset_size} in arg6 per the Linux x86_64 ABI.
  * Interrupts are masked during the syscall handler so a single global is safe. */
@@ -3033,6 +3037,11 @@ void process_timer_tick(int was_user) {
     struct process *table = process_get_table();
     struct process *current = process_get_current();
 
+    /* Lock process table during itimer walk — the same itimers[]
+     * can be written by sys_setitimer() on another CPU. */
+    uint64_t __it_flags;
+    spinlock_irqsave_acquire(&proc_table_lock, &__it_flags);
+
     /* ITIMER_REAL: wall-clock — tick for every process */
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *p = &table[i];
@@ -3046,6 +3055,8 @@ void process_timer_tick(int was_user) {
             }
         }
     }
+
+    spinlock_irqsave_release(&proc_table_lock, __it_flags);
 
     /* ITIMER_VIRTUAL: counts only user-mode CPU time */
     if (current && current->state == PROCESS_RUNNING && was_user && current->is_user) {
@@ -3874,6 +3885,12 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
     int written = 0;
     int lim = (int)max;
     if (lim < 0) lim = 0;
+
+    /* Acquire process table lock for consistent snapshot — otherwise
+     * a process exiting concurrently can produce corrupted output. */
+    uint64_t __pl_flags;
+    spinlock_irqsave_acquire(&proc_table_lock, &__pl_flags);
+
     for (int i = 0; i < PROCESS_MAX && written < lim; i++) {
         if (table[i].state == PROCESS_UNUSED) continue;
         out[written].pid = table[i].pid;
@@ -3901,6 +3918,7 @@ static uint64_t sys_proc_list(uint64_t out_addr, uint64_t max) {
         }
         written++;
     }
+    spinlock_irqsave_release(&proc_table_lock, __pl_flags);
     return (uint64_t)written;
 }
 

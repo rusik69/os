@@ -300,13 +300,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Kernel command line from multiboot info (offset 0x10 = cmdline phys addr) */
     {
-        uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
-        uint32_t flags = mbi[0];
-        if (flags & (1 << 2)) { /* cmdline flag */
-            uint32_t cmdline_phys = mbi[4];
-            if (cmdline_phys) {
-                const char *cmdline_virt = (const char *)PHYS_TO_VIRT((uint64_t)cmdline_phys);
-                cmdline_init(cmdline_virt);
+        /* Validate that multiboot_info_phys points to sane physical memory */
+        if (multiboot_info_phys == 0 || multiboot_info_phys > 0x100000) {
+            kprintf("[boot] WARNING: multiboot_info at 0x%lx looks invalid\n",
+                    (unsigned long)multiboot_info_phys);
+        } else {
+            uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
+            uint32_t flags = mbi[0];
+            if (flags & (1 << 2)) { /* cmdline flag */
+                uint32_t cmdline_phys = mbi[4];
+                if (cmdline_phys) {
+                    const char *cmdline_virt = (const char *)PHYS_TO_VIRT((uint64_t)cmdline_phys);
+                    cmdline_init(cmdline_virt);
+                }
             }
         }
 

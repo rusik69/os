@@ -703,6 +703,12 @@ void scheduler_tick(int was_user) {
     struct process *cur = ci->current_process;
     if (!cur || cur->state != PROCESS_RUNNING) return;
 
+    /* Acquire sched_lock to protect process accounting fields that
+     * may be read concurrently by other CPUs via schedule(),
+     * sys_times(), /proc/self/stat, or the scheduler itself. */
+    uint64_t __sched_flags;
+    spinlock_irqsave_acquire(&sched_lock, &__sched_flags);
+
     /* Account CPU time: user time if we interrupted user code,
      * system time if we interrupted kernel code. */
     if (was_user && cur->is_user) {
@@ -717,10 +723,7 @@ void scheduler_tick(int was_user) {
      * runnable = 1 (we're the current process and thus runnable). */
     pelt_update(&cur->pelt, 1, 1, timer_get_ticks());
 
-    /* ── RLIMIT_CPU enforcement ────────────────────────────────
-     * If the process has accumulated more CPU time than rlim_cur,
-     * send SIGXCPU on first violation and SIGKILL after a 1-second
-     * grace period (matching Linux behaviour). */
+    /* ── RLIMIT_CPU enforcement ──────────────────────────────── */
     {
         uint64_t cpu_sec = cur->rlim_cur[RLIMIT_CPU];
         if (cpu_sec != RLIM_INFINITY && cpu_sec > 0) {
@@ -738,6 +741,8 @@ void scheduler_tick(int was_user) {
             }
         }
     }
+
+    spinlock_irqsave_release(&sched_lock, __sched_flags);
 
     /* Update PSI CPU pressure: if there are tasks in the runqueue
      * waiting, the CPU is overcommitted and some tasks are stalled. */

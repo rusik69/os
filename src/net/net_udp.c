@@ -243,8 +243,31 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
 }
 
 /* ICMP Destination Unreachable (type 3, code 3 = Port Unreachable) */
+/* ICMP rate limiting: simple token bucket — max 100 ICMP error
+ * messages per second to prevent reflection/amplification attacks. */
+static uint64_t icmp_last_tick = 0;
+static int icmp_error_budget = 0;
+#define ICMP_RATELIMIT_MAX    100   /* max ICMP errors per second */
+#define ICMP_RATELIMIT_INTERVAL TIMER_FREQ
+
+static int icmp_ratelimit(void) {
+    uint64_t now = timer_get_ticks();
+    if (now - icmp_last_tick >= ICMP_RATELIMIT_INTERVAL) {
+        /* Refill token bucket */
+        icmp_error_budget = ICMP_RATELIMIT_MAX;
+        icmp_last_tick = now;
+    }
+    if (icmp_error_budget <= 0)
+        return 0;  /* rate limited — drop this ICMP */
+    icmp_error_budget--;
+    return 1;  /* allowed */
+}
+
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len) {
     (void)src;
+    /* Apply rate limit before generating ICMP error */
+    if (!icmp_ratelimit()) return;
+
     uint8_t buf[576];  /* ICMP error must fit in 576 bytes guaranteed */
     struct icmp_header *icmp = (struct icmp_header *)buf;
     memset(icmp, 0, sizeof(*icmp));
