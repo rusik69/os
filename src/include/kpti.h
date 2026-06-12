@@ -38,6 +38,14 @@
 #define KPTI_TRAMP_OFF_SAVE_RFL   0x120
 #define KPTI_TRAMP_OFF_EXIT_RIP   0x128
 
+/* ── PCID assignment for TLB tagging ──────────────────────────────── */
+#define KPTI_PCID_KERNEL  0ULL   /* Kernel page tables — PCID 0, never flushed on syscall */
+#define KPTI_PCID_USER    1ULL   /* User page tables — PCID 1, flushed on context switch */
+
+/* Helpers: embed PCID bits into a CR3 value */
+#define kpti_cr3_kernel(phys)  ((phys) | KPTI_PCID_KERNEL)
+#define kpti_cr3_user(phys)    ((phys) | KPTI_PCID_USER)
+
 /* ── Per-process KPTI state ──────────────────────────────────────── */
 struct kpti_state {
     uint64_t *kernel_pml4;   /* Full (kernel + user) PML4 — used in kernel mode */

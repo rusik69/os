@@ -6,6 +6,7 @@
 /* CR4 bits (extended) */
 #define CR4_FSGSBASE    (1ULL << 16)  /* FSGSBASE instructions enable */
 #define CR4_INVPCID     (1ULL << 10)  /* INVPCID instruction enable */
+#define CR4_PCIDE       (1ULL << 17)  /* Process-Context ID enable */
 #define CR4_SMEP        (1ULL << 20)  /* Supervisor Mode Execution Prevention */
 #define CR4_SMAP        (1ULL << 21)  /* Supervisor Mode Access Prevention */
 #define CR4_UMIP        (1ULL << 11)  /* User-Mode Instruction Prevention */
@@ -48,6 +49,7 @@ int nx_enforce_init(void);
 /* INVPCID wrappers */
 void invpcid_flush_all(void);
 void invpcid_flush_single(uint64_t addr);
+void invpcid_flush_pcid(uint64_t pcid);
 
 /* FSGSBASE wrappers */
 static inline uint64_t rdfsbase(void) {

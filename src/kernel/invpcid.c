@@ -26,10 +26,12 @@ int invpcid_init(void) {
     /* Enable INVPCID in CR4 (bit 10) */
     uint64_t cr4 = read_cr4();
     cr4 |= CR4_INVPCID;
+    /* Enable PCID in CR4 (bit 17) — tags TLB entries per-process */
+    cr4 |= CR4_PCIDE;
     write_cr4(cr4);
 
     invpcid_available = 1;
-    kprintf("[cpu] INVPCID enabled (CR4 bit 10)\n");
+    kprintf("[cpu] INVPCID + PCID enabled (CR4 bits 10, 17)\n");
     return 0;
 }
 
@@ -71,4 +73,19 @@ void invpcid_flush_single(uint64_t addr) {
 
 int invpcid_is_available(void) {
     return invpcid_available;
+}
+
+void invpcid_flush_pcid(uint64_t pcid) {
+    if (!invpcid_available) {
+        /* Fallback: full TLB flush via CR3 reload */
+        uint64_t cr3 = read_cr3();
+        write_cr3(cr3);
+        return;
+    }
+    struct invpcid_desc desc = {0, pcid & 0xFFF};
+    /* Type 1: flush all entries for the given PCID */
+    __asm__ volatile("invpcid %0, %1"
+                     :
+                     : "m"(desc), "r"(1ULL)
+                     : "memory");
 }
