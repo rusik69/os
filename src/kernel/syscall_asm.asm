@@ -38,9 +38,10 @@ extern zero_kernel_stack_uapi
 %define KPTI_OFF_EXIT_RIP  0x128
 %define KPTI_OFF_EXIT      0x080
 
-section .data
-global syscall_kernel_rsp
-syscall_kernel_rsp: dq 0   ; Set by scheduler when switching to a user process
+; Per-CPU kernel stack pointer offset within cpu_info struct (smp.h)
+;   cpu_info.current_kernel_rsp is at offset 24 (0x18)
+; Accessed via GS.base which points to the current CPU's cpu_info.
+%define CPU_INFO_KERNEL_RSP_OFF  0x18
 
 ; Save user RIP/RFLAGS at syscall entry so clone() can read them
 global syscall_user_rip
@@ -91,7 +92,7 @@ kpti_active_flag: dq 0
 section .text
 syscall_entry:
     mov     [rel syscall_user_rsp], rsp        ; save user RSP
-    mov     rsp, [rel syscall_kernel_rsp]      ; switch to kernel stack
+    mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]  ; switch to per-CPU process kernel stack
 
     push    qword [rel syscall_user_rsp]       ; saved user RSP   (frame 1)
     push    rcx                                ; saved user RIP   (frame 2)
@@ -172,8 +173,8 @@ syscall_entry_full:
     mov     rax, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP]    ; user RSP
     mov     [rel syscall_user_rsp], rax
 
-    ; Switch to kernel stack
-    mov     rsp, [rel syscall_kernel_rsp]
+    ; Switch to per-CPU process kernel stack
+    mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]
 
     ; Push saved state (same frame as syscall_entry)
     push    qword [rel syscall_user_rsp]       ; saved user RSP

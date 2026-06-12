@@ -19,6 +19,7 @@ struct cpu_info {
     uint32_t apic_id;
     uint64_t stack_top;          /* top of per-CPU kernel stack */
     uint64_t kernel_stack;       /* bottom of per-CPU kernel stack */
+    uint64_t current_kernel_rsp; /* kernel stack pointer for current user process (used by syscall entry) */
     struct process *current_process;
     struct process *idle_process;
 

@@ -144,7 +144,6 @@ static inline void local_invlpg(uint64_t addr) {
 #define EFER_SCE (1 << 0)  /* Syscall Enable */
 
 extern void syscall_entry(void);
-extern uint64_t syscall_kernel_rsp;
 extern uint64_t syscall_user_rip;
 extern uint64_t syscall_user_rflags;
 

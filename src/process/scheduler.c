@@ -37,8 +37,6 @@
 /* Global lock for cross-CPU operations (load balancing, process table walks) */
 static spinlock_t sched_lock = SPINLOCK_INIT;
 
-extern uint64_t syscall_kernel_rsp;
-
 /* ── Scheduler latency and granularity tunables ────────────────────────
  *
  * These values serve a function analogous to Linux's
@@ -620,7 +618,8 @@ void schedule(void) {
 
     /* Set kernel stack for syscall/interrupt returns */
     tss_set_rsp0(next->stack_top);
-    syscall_kernel_rsp = next->stack_top;
+    struct cpu_info *info = get_cpu_info();
+    if (info) info->current_kernel_rsp = next->stack_top;
 
     /* Switch page tables if user process */
     if (next->is_user && next->pml4) {
