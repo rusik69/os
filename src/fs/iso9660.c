@@ -250,6 +250,7 @@ static uint8_t parse_rrip_entries(struct iso9660_priv *ip,
     uint32_t ce_offset = 0;
     uint32_t ce_len = 0;
     int in_continuation = 0;
+    int ce_hops = 0;          /* limit CE chain depth to prevent infinite loops */
 
     /* We'll use a simple iterative approach: if we encounter a CE entry,
      * we switch to reading from the continuation area, then resume. */
@@ -394,6 +395,13 @@ walk_susp:
 
     /* If we had a CE entry, process the continuation area */
     if (ce_len > 0) {
+        ce_hops++;
+        if (ce_hops > 16) {
+            kprintf("iso9660: CE continuation depth exceeded (>16 hops), "
+                    "possible crafted ISO\\n");
+            return rr_found;
+        }
+        ce_len = 0;  /* reset so we don't loop if continuation has no CE */
         in_continuation = 1;
         goto walk_susp;
     }
