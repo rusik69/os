@@ -187,8 +187,23 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
     if (memcmp(hdr->signature, "DSDT", 4) != 0) return;
 
     uint32_t dsdt_len = hdr->length;
+
+    /* Validate header length to prevent underflow */
+    if (dsdt_len < sizeof(struct acpi_header)) {
+        kprintf("  ACPI: DSDT too short (%u bytes, need %zu)\\n",
+                (unsigned int)dsdt_len, sizeof(struct acpi_header));
+        return;
+    }
+
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
     uint32_t aml_len = dsdt_len - sizeof(struct acpi_header);
+
+    /* Need at least 8 bytes of AML to search for sleep state markers */
+    if (aml_len < 8) {
+        kprintf("  ACPI: DSDT AML too short (%u bytes, need 8)\\n",
+                (unsigned int)aml_len);
+        return;
+    }
 
     /* Very simplified search for sleep states.
        Look for "_S3_" and "_S5_" and extract the package values. */
