@@ -187,6 +187,9 @@ struct process {
     /* Heap tracking for brk */
     uint64_t heap_start;      /* start of data segment (set once by brk() init) */
     uint64_t heap_end;        /* current end of data segment for brk() */
+    /* User stack tracking for RLIMIT_STACK auto-grow */
+    uint64_t user_stack_bottom; /* lowest mapped user stack page (grows down on expand) */
+    uint64_t user_stack_top;    /* highest user stack address (fixed after exec) */
     /* Capability bounding set */
     uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
     /* no_new_privs flag */

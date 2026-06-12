@@ -289,6 +289,8 @@ int elf_exec(const char *path) {
             return -1;
         }
 
+        p->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
+        p->user_stack_top    = user_stack_top;
         kprintf("elf: launched '%s' (pid %lu, ring 3, entry 0x%lx)\n",
                 name ? name : "(null)", (unsigned long)p->pid, (unsigned long)entry);
         strncpy(p->exe_path, path, 255);
@@ -416,6 +418,8 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     }
     /* Guard page at user_stack_guard is left unmapped — a stack underflow
      * (past the bottom) will fault on this page, caught as a SIGSEGV. */
+    cur->user_stack_bottom = user_stack_bottom; /* lowest mapped stack page */
+    cur->user_stack_top    = user_stack_top;
 
     /* ── Set up user stack with argv/envp ───────────────────── */
     /* We're still running on the old page tables. Read argv/envp
@@ -916,6 +920,8 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     child->euid = parent->euid;
     child->egid = parent->egid;
     child->umask = parent->umask;
+    child->user_stack_bottom = user_stack_bottom; /* lowest mapped stack page */
+    child->user_stack_top    = user_stack_top;
     for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++)
         child->cap_bset[i] = parent->cap_bset[i];
 

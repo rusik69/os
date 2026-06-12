@@ -188,3 +188,63 @@ int pipe_get_capacity(int pipe_id) {
         return -1;
     return pipe_table[pipe_id].capacity;
 }
+
+/* ── poll/select support ─────────────────────────────────────────── */
+int pipe_poll(int pipe_id, int is_read_end) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return 0;
+    struct pipe *p = &pipe_table[pipe_id];
+    if (is_read_end)
+        return p->count > 0 ? (POLLIN) : 0;
+    else
+        return p->count < p->capacity ? (POLLOUT) : 0;
+}
+
+/* ── fcntl F_SETFL — O_NONBLOCK ──────────────────────────────────── */
+int pipe_set_nonblock(int pipe_id, int nonblock) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -1;
+    struct pipe *p = &pipe_table[pipe_id];
+    if (nonblock)
+        p->flags |= PIPE_FLAG_NONBLOCK;
+    else
+        p->flags &= ~PIPE_FLAG_NONBLOCK;
+    return 0;
+}
+
+/* ── fcntl F_SETOWN / F_SETSIG — SIGIO owner ─────────────────────── */
+int pipe_set_sigio(int pipe_id, uint32_t pid) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -1;
+    pipe_table[pipe_id].sigio_pid = pid;
+    return 0;
+}
+
+/* ── FIFO unlink — close one end ─────────────────────────────────── */
+void pipe_close_read(int pipe_id) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
+    struct pipe *p = &pipe_table[pipe_id];
+    if (!p->in_use) return;
+    p->readers--;
+    if (p->readers <= 0 || p->writers <= 0) {
+        if (p->readers == 0) wait_queue_wake(&p->write_wq);
+        if (p->writers == 0) wait_queue_wake(&p->read_wq);
+    }
+}
+
+void pipe_close_write(int pipe_id) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
+    struct pipe *p = &pipe_table[pipe_id];
+    if (!p->in_use) return;
+    p->writers--;
+    if (p->readers <= 0 || p->writers <= 0) {
+        if (p->readers == 0) wait_queue_wake(&p->write_wq);
+        if (p->writers == 0) wait_queue_wake(&p->read_wq);
+    }
+}
+
+/* ── Wait queue lazy init ────────────────────────────────────────── */
+/* Called from pipe tight loops as a safety measure; lock init is cheap. */
+void wait_queue_ensure(struct wait_queue *wq) {
+    if (wq) spinlock_init(&wq->lock);
+}

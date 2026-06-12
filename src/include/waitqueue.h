@@ -86,6 +86,10 @@ int wait_queue_sleep_interruptible(struct wait_queue *wq);
  */
 int wait_queue_sleep_timeout(struct wait_queue *wq, uint64_t ticks);
 
+/* Lazy init: ensure wait queue lock is initialized (safe to call on
+ * already-initialized queues).  Called from pipe/fifo tight loops. */
+void wait_queue_ensure(struct wait_queue *wq);
+
 /*
  * Interruptible sleep with timeout.
  * Returns 0 if woken normally, -4 (-EINTR) if signal, -62 (-ETIME) on timeout.

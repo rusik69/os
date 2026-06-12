@@ -49,4 +49,19 @@ int pipe_get_capacity(int pipe_id);
 /* Initialize pipe subsystem */
 void pipe_init(void);
 
+/* ── poll/select support ─────────────────────────────────────────── */
+int pipe_poll(int pipe_id, int is_read_end);
+
+/* ── fcntl helpers ───────────────────────────────────────────────── */
+int pipe_set_nonblock(int pipe_id, int nonblock);
+int pipe_set_sigio(int pipe_id, uint32_t pid);
+
+/* ── FIFO close helpers ──────────────────────────────────────────── */
+void pipe_close_read(int pipe_id);
+void pipe_close_write(int pipe_id);
+
+/* ── Wait queue lazy init ────────────────────────────────────────── */
+struct wait_queue;
+void wait_queue_ensure(struct wait_queue *wq);
+
 #endif /* PIPE_H */
