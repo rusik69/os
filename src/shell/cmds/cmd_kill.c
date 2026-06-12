@@ -13,6 +13,11 @@ void cmd_kill(const char *args) {
         sig = 0;
         while (*args >= '0' && *args <= '9') { sig = sig * 10 + (*args - '0'); args++; }
     }
+    /* Validate signal number range: must be 0..NSIG-1 (0 = null signal for existence check) */
+    if (sig < 0 || sig >= 32) {
+        kprintf("Invalid signal number: %d (must be 0-31)\n", sig);
+        return;
+    }
     if (pid == 0) { kprintf("Cannot kill pid 0\n"); return; }
     if (libc_kill(pid, sig) < 0) {
         kprintf("No such process: %u\n", pid);

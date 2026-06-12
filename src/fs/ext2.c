@@ -541,6 +541,8 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
                     } *dirent = (void *)(block_buf + pos);
 
                     if (dirent->rec_len == 0) break;
+                    if (dirent->rec_len < 8 + dirent->name_len) break;
+                    if (dirent->rec_len % 4 != 0) break;
                     if (dirent->inode != 0 &&
                         (size_t)dirent->name_len == nlen &&
                         memcmp(dirent->name, name, nlen) == 0) {
@@ -800,12 +802,12 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
      * packed together, but the bgd entries still point to the correct
      * physical block locations — so reading them transparently works. */
     uint32_t bgd_first_block = ep->block_size == 1024 ? 2 : 1;
-    uint32_t bgd_table_bytes = ep->num_block_groups * sizeof(struct ext2_bg_desc);
-    uint32_t bgd_blocks_needed = (bgd_table_bytes + ep->block_size - 1) / ep->block_size;
+    uint64_t bgd_table_bytes = (uint64_t)ep->num_block_groups * sizeof(struct ext2_bg_desc);
+    uint64_t bgd_blocks_needed = (bgd_table_bytes + ep->block_size - 1) / ep->block_size;
 
     ep->bgd_cache = (struct ext2_bg_desc *)kmalloc(bgd_table_bytes);
     if (!ep->bgd_cache) {
-        kprintf("[ext2] Failed to allocate bgd cache (%u bytes)\n", bgd_table_bytes);
+        kprintf("[ext2] Failed to allocate bgd cache (%llu bytes)\n", (unsigned long long)bgd_table_bytes);
         kfree(ep);
         return -1;
     }
@@ -836,6 +838,20 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     int has_journal= (ep->sb.s_feature_compat & EXT2_FEATURE_COMPAT_HAS_JOURNAL) ? 1 : 0;
     int has_extents= (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_EXTENTS) ? 1 : 0;
     int has_64bit  = (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_64BIT) ? 1 : 0;
+
+    /* ── Reject unsupported features that would cause data corruption ── */
+    if (has_extents) {
+        kprintf("[ext2] EXTENTS feature not supported, refusing mount\n");
+        kfree(ep->bgd_cache);
+        kfree(ep);
+        return -1;
+    }
+    if (has_64bit) {
+        kprintf("[ext2] 64BIT feature not supported, refusing mount\n");
+        kfree(ep->bgd_cache);
+        kfree(ep);
+        return -1;
+    }
 
     kprintf("[ext2] Mounted: %u blocks, %u inodes, %u B/block, %u groups",
             ep->sb.s_blocks_count, ep->sb.s_inodes_count,

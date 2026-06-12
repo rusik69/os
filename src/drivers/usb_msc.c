@@ -449,7 +449,24 @@ int usb_msc_init(void)
         pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
         return rc;
     }
-    /* desc[4]=bDeviceClass, [14]=bNumConfigurations */
+    /* Validate device descriptor contents */
+    if (desc[0] != 18) {
+        kprintf("  USB MSC: invalid descriptor length (%u)\n", (unsigned)desc[0]);
+        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
+        return -5;
+    }
+    if (desc[1] != 0x01) {
+        kprintf("  USB MSC: not a device descriptor (type 0x%02x)\n", desc[1]);
+        pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
+        return -5;
+    }
+    uint8_t dev_class = desc[4] & 0xEF;
+    if (dev_class != 0x00 && dev_class != 0x08) {
+        kprintf("  USB MSC: unexpected device class 0x%02x\n", desc[4]);
+        /* Non-fatal: some MSC devices report class 0 in the device descriptor
+         * and set the interface descriptor class instead. Continue anyway. */
+    }
+    /* desc[14]=bNumConfigurations */
     pmm_free_frame(VIRT_TO_PHYS((unsigned long)desc));
 
     /* SET_CONFIGURATION 1 */

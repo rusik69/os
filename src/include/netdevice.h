@@ -24,6 +24,9 @@
 /* Maximum interface name length (including NUL) */
 #define NETDEV_NAME_MAX 16
 
+/* Return code from transmit callback: try again later (ring full) */
+#define NETDEV_TX_BUSY 1
+
 /* Forward declaration */
 struct net_device;
 

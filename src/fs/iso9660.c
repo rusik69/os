@@ -263,7 +263,7 @@ walk_susp:
 
         if (in_continuation) {
             /* Read from continuation block */
-            static uint8_t ce_buf[2048];
+            uint8_t ce_buf[2048];
             memset(ce_buf, 0, sizeof(ce_buf));
             if (iso_read_block(ip, ce_block, ce_buf) < 0)
                 return rr_found;
@@ -341,6 +341,9 @@ walk_susp:
                         (const struct rrip_sl_component *)(sl->link_data + sl_pos);
                     uint8_t comp_flags = comp->flags;
                     uint8_t comp_len = comp->len;
+
+                    /* Validate component length doesn't exceed remaining data */
+                    if (sl_pos + 2 + comp_len > sl_data_len) break;
 
                     if (comp_flags == 1) {
                         /* "." component */

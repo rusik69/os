@@ -655,20 +655,30 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
             uint16_t vid = reg0 & 0xFFFF;
             uint16_t did = (reg0 >> 16) & 0xFFFF;
             if (vid == 0xFFFF) continue;
-            if (vid == vendor && did == device) {
-                out->bus = bus;
-                out->slot = slot;
-                out->func = 0;
-                out->vendor_id = vid;
-                out->device_id = did;
-                uint32_t reg2 = pci_read(bus, slot, 0, 0x08);
-                out->class_code = (reg2 >> 24) & 0xFF;
-                out->subclass = (reg2 >> 16) & 0xFF;
-                uint32_t reg3c = pci_read(bus, slot, 0, 0x3C);
-                out->irq = reg3c & 0xFF;
-                for (int i = 0; i < 6; i++)
-                    out->bar[i] = pci_read(bus, slot, 0, 0x10 + i * 4);
-                return 0;
+            /* Check header type for multi-function (bit 7 at reg 0x0C byte 2) */
+            uint32_t reg_hdr = pci_read(bus, slot, 0, 0x0C);
+            int is_multi = (reg_hdr & (1U << 23)) ? 1 : 0;
+            int max_func = is_multi ? 8 : 1;
+            for (int func = 0; func < max_func; func++) {
+                reg0 = pci_read(bus, slot, func, 0);
+                vid = reg0 & 0xFFFF;
+                did = (reg0 >> 16) & 0xFFFF;
+                if (vid == 0xFFFF) continue;
+                if (vid == vendor && did == device) {
+                    out->bus = bus;
+                    out->slot = slot;
+                    out->func = func;
+                    out->vendor_id = vid;
+                    out->device_id = did;
+                    uint32_t reg2 = pci_read(bus, slot, func, 0x08);
+                    out->class_code = (reg2 >> 24) & 0xFF;
+                    out->subclass = (reg2 >> 16) & 0xFF;
+                    uint32_t reg3c = pci_read(bus, slot, func, 0x3C);
+                    out->irq = reg3c & 0xFF;
+                    for (int i = 0; i < 6; i++)
+                        out->bar[i] = pci_read(bus, slot, func, 0x10 + i * 4);
+                    return 0;
+                }
             }
         }
     }
@@ -680,20 +690,28 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
         for (int slot = 0; slot < 32; slot++) {
             uint32_t reg0 = pci_read(bus, slot, 0, 0);
             if ((reg0 & 0xFFFF) == 0xFFFF) continue;
-            uint32_t reg2 = pci_read(bus, slot, 0, 0x08);
-            if (((reg2 >> 24) & 0xFF) == cls && ((reg2 >> 16) & 0xFF) == sub) {
-                out->bus        = (uint8_t)bus;
-                out->slot       = (uint8_t)slot;
-                out->func       = 0;
-                out->vendor_id  = reg0 & 0xFFFF;
-                out->device_id  = (reg0 >> 16) & 0xFFFF;
-                out->class_code = cls;
-                out->subclass   = sub;
-                uint32_t r3c = pci_read(bus, slot, 0, 0x3C);
-                out->irq = r3c & 0xFF;
-                for (int i = 0; i < 6; i++)
-                    out->bar[i] = pci_read(bus, slot, 0, 0x10 + i * 4);
-                return 0;
+            /* Check header type for multi-function */
+            uint32_t reg_hdr = pci_read(bus, slot, 0, 0x0C);
+            int is_multi = (reg_hdr & (1U << 23)) ? 1 : 0;
+            int max_func = is_multi ? 8 : 1;
+            for (int func = 0; func < max_func; func++) {
+                reg0 = pci_read(bus, slot, func, 0);
+                if ((reg0 & 0xFFFF) == 0xFFFF) continue;
+                uint32_t reg2 = pci_read(bus, slot, func, 0x08);
+                if (((reg2 >> 24) & 0xFF) == cls && ((reg2 >> 16) & 0xFF) == sub) {
+                    out->bus        = (uint8_t)bus;
+                    out->slot       = (uint8_t)slot;
+                    out->func       = (uint8_t)func;
+                    out->vendor_id  = reg0 & 0xFFFF;
+                    out->device_id  = (reg0 >> 16) & 0xFFFF;
+                    out->class_code = cls;
+                    out->subclass   = sub;
+                    uint32_t r3c = pci_read(bus, slot, func, 0x3C);
+                    out->irq = r3c & 0xFF;
+                    for (int i = 0; i < 6; i++)
+                        out->bar[i] = pci_read(bus, slot, func, 0x10 + i * 4);
+                    return 0;
+                }
             }
         }
     }

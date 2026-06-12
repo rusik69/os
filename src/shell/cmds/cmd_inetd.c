@@ -432,6 +432,11 @@ static int inetd_parse_line(const char *line) {
 
     /* Determine port */
     svc.port = inetd_default_port(svc.name);
+    if (svc.port == 0) {
+        kprintf("[inetd] Invalid port %u for service %s\n",
+                (unsigned)svc.port, svc.name);
+        return 0;
+    }
 
     /* Field 7+: arguments (optional, for external services) */
     if (ntokens >= 7) {

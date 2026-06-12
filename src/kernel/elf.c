@@ -421,6 +421,14 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     cur->user_stack_bottom = user_stack_bottom; /* lowest mapped stack page */
     cur->user_stack_top    = user_stack_top;
 
+    /* ── Verify no PT_LOAD segment overlaps with the user stack ────── */
+    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
+        if (vmm_page_is_mapped_user(new_pml4, va)) {
+            kprintf("elf: segment overlaps user stack region\n");
+            goto fail_cleanup;
+        }
+    }
+
     /* ── Set up user stack with argv/envp ───────────────────── */
     /* We're still running on the old page tables. Read argv/envp
      * string pointers from old userspace, copy strings to kernel heap,
@@ -649,6 +657,11 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     kprintf("execve: %s (entry 0x%lx, rsp 0x%lx, pid %lu, argc %d)\n",
             path, (unsigned long)entry, (unsigned long)new_rsp, (unsigned long)cur->pid, argc);
     return 0;
+
+fail_cleanup:
+    vmm_destroy_user_pml4(new_pml4);
+    kfree(buf);
+    return -1;
 }
 
 /*

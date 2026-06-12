@@ -56,7 +56,7 @@ typedef void (*signal_handler_t)(int signum);
 
 struct process_fd {
     char     path[64];
-    uint32_t offset;
+    uint64_t offset;
     int      used;
     uint8_t  flags;       /* FD_CLOEXEC etc. */
     uint8_t  open_flags;  /* O_APPEND, O_NONBLOCK, etc. from open(2) */

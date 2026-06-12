@@ -547,7 +547,16 @@ static int e1000_netdev_transmit(struct net_device *dev,
     struct e1000_queue *qp = &queues[tx_q];
     int idx = qp->tx_cur;
 
-    /* Wait for descriptor to be available */
+    /* Quick check: if the next descriptor in the ring is still in-flight,
+     * the TX queue is full. Return BUSY so the upper layer can retry
+     * instead of busy-waiting or silently dropping. */
+    int next_idx = (idx + 1) % NUM_TX_DESC;
+    if (!(qp->tx_descs[next_idx].status & TDESC_STA_DD)) {
+        /* Ring full — upper layer should try again later */
+        return NETDEV_TX_BUSY;
+    }
+
+    /* Wait for current descriptor to be available */
     int tx_timeout = 10000000;
     while (!(qp->tx_descs[idx].status & TDESC_STA_DD) && --tx_timeout > 0)
         __asm__ volatile("pause");

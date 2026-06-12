@@ -36,7 +36,7 @@ struct tar_header {
 #define TAR_TYPE_DIR      '5'
 
 /* Mount a tar archive as a read-only filesystem from a memory buffer */
-int tarfs_mount(const char *mountpoint, uint32_t addr, uint32_t size);
+int tarfs_mount(const char *mountpoint, uint64_t addr, uint64_t size);
 int tarfs_init(void);
 
 #endif /* TARFS_H */

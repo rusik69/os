@@ -638,8 +638,12 @@ static void ed_handle_command(const char *input) {
 
         /* Load the file into this buffer */
         char path[66];
-        if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
-        else strcpy(path, b->filename);
+        if (b->filename[0] != '/') {
+            snprintf(path, sizeof(path), "/%s", b->filename);
+        } else {
+            strncpy(path, b->filename, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
 
         ed_load(b);
     }

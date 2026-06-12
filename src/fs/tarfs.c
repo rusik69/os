@@ -21,24 +21,24 @@
 
 struct tarfs_entry {
     char   name[256];
-    uint32_t offset;   /* byte offset in archive where file data starts */
-    uint32_t size;
+    uint64_t offset;   /* byte offset in archive where file data starts */
+    uint64_t size;
     uint8_t  type;     /* 1=file, 2=dir */
 };
 
 struct tarfs_priv {
-    uint32_t base_addr;        /* start of tar archive in memory */
-    uint32_t total_size;       /* size of tar archive */
+    uint64_t base_addr;        /* start of tar archive in memory */
+    uint64_t total_size;       /* size of tar archive */
     struct tarfs_entry entries[TARFS_MAX_ENTRIES];
     int num_entries;
 };
 
 /* Parse octal number from field */
-static uint32_t parse_octal(const char *s, int len) {
-    uint32_t v = 0;
+static uint64_t parse_octal(const char *s, int len) {
+    uint64_t v = 0;
     for (int i = 0; i < len && s[i]; i++) {
         if (s[i] >= '0' && s[i] <= '7')
-            v = (v << 3) + (uint32_t)(s[i] - '0');
+            v = (v << 3) + (uint64_t)(s[i] - '0');
         else
             break;
     }
@@ -48,7 +48,7 @@ static uint32_t parse_octal(const char *s, int len) {
 /* Parse the tar archive and populate entry table */
 static int tarfs_parse(struct tarfs_priv *priv) {
     uint8_t *base = (uint8_t *)(uint64_t)priv->base_addr;
-    uint32_t offset = 0;
+    uint64_t offset = 0;
     int count = 0;
 
     while (offset + TAR_BLOCK_SIZE <= priv->total_size && count < TARFS_MAX_ENTRIES) {
@@ -63,8 +63,8 @@ static int tarfs_parse(struct tarfs_priv *priv) {
             memcmp(hdr->magic, TAR_MAGIC_OLD, 7) != 0)
             break;
 
-        uint32_t file_size = parse_octal(hdr->size, 12);
-        uint32_t data_off  = offset + TAR_BLOCK_SIZE;
+        uint64_t file_size = parse_octal(hdr->size, 12);
+        uint64_t data_off  = offset + TAR_BLOCK_SIZE;
 
         /* Store entry */
         struct tarfs_entry *e = &priv->entries[count];
@@ -98,7 +98,7 @@ static int tarfs_parse(struct tarfs_priv *priv) {
         count++;
 
         /* Advance to next header (rounded to block size) */
-        uint32_t data_blocks = (file_size + TAR_BLOCK_SIZE - 1) / TAR_BLOCK_SIZE;
+        uint64_t data_blocks = (file_size + TAR_BLOCK_SIZE - 1) / TAR_BLOCK_SIZE;
         offset = data_off + data_blocks * TAR_BLOCK_SIZE;
     }
 
@@ -137,7 +137,7 @@ static int tarfs_read(void *priv, const char *path, void *buf,
     struct tarfs_entry *e = tarfs_find(tp, path);
     if (!e || e->type != 1) return -1;
 
-    uint32_t to_read = e->size;
+    uint64_t to_read = e->size;
     if (to_read > max_size) to_read = max_size;
 
     uint8_t *base = (uint8_t *)(uint64_t)tp->base_addr;
@@ -265,7 +265,7 @@ static struct vfs_ops tarfs_ops = {
     .readdir = tarfs_readdir_legacy,
 };
 
-int tarfs_mount(const char *mountpoint, uint32_t addr, uint32_t size) {
+int tarfs_mount(const char *mountpoint, uint64_t addr, uint64_t size) {
     struct tarfs_priv *priv = (struct tarfs_priv *)kmalloc(sizeof(struct tarfs_priv));
     if (!priv) return -1;
 

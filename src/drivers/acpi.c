@@ -119,8 +119,8 @@ struct lpi_state_desc {
 
 static uint16_t pm1a_cnt = 0;    /* PM1a control port */
 static uint16_t pm1a_evt = 0;    /* PM1a event port */
-static uint16_t slp_typa_s5 = 0; /* SLP_TYP_a for S5 */
-static uint16_t slp_typa_s3 = 0; /* SLP_TYP_a for S3 */
+static uint16_t slp_typa_s5 = 0xFF; /* SLP_TYP_a for S5 (0xFF = uninitialized) */
+static uint16_t slp_typa_s3 = 0xFF; /* SLP_TYP_a for S3 (0xFF = uninitialized) */
 static int acpi_ready = 0;
 
 /* S3 support flag */
@@ -164,6 +164,14 @@ static uint64_t reset_reg_address = 0;
 static uint8_t reset_value = 0;
 
 static struct rsdp *find_rsdp(uint64_t start, uint64_t end) {
+    /* Constrain scan to known-good physical memory ranges to avoid
+     * dereferencing non-existent or MMIO regions.  The standard ACPI
+     * spec defines two valid scan areas: EBDA (0x80000-0x9FFFF) and
+     * main BIOS area (0xE0000-0xFFFFF). */
+    if (start < 0x80000) start = 0x80000;
+    if (end > 0xFFFFF)   end = 0xFFFFF;
+    if (start >= end) return NULL;
+
     for (uint64_t addr = start; addr < end; addr += 16) {
         if (memcmp(PHYS_TO_VIRT(addr), RSDP_SIG, 8) == 0) {
             uint8_t *p = (uint8_t *)PHYS_TO_VIRT(addr);
@@ -210,18 +218,55 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
     for (uint32_t i = 0; i < aml_len - 8; i++) {
         /* Look for _S5_ (0x5f 0x53 0x35 0x5f) */
         if (aml[i] == 0x5f && aml[i+1] == 0x53 && aml[i+2] == 0x35 && aml[i+3] == 0x5f) {
-            /* Found _S5_ — the next few bytes encode the package */
-            /* In QEMU, default SLP_TYPa for S5 is 7 */
-            slp_typa_s5 = 0x07;
-            kprintf("  ACPI: Found _S5_ in DSDT\n");
+            /* Found _S5_ — parse the following Package() to extract SLP_TYPa.
+             * AML encoding after NameSeg: PackageOp (0x12) PkgLength NumElements data...
+             * SLP_TYPa is the first integer in the package. */
+            uint32_t j = i + 4;
+            if (j + 4 < aml_len && aml[j] == 0x12) {
+                /* PackageOp found — skip PkgLength (at least 2 bytes for short form) */
+                uint32_t pkg_len = aml[j + 1];
+                if (pkg_len >= 4 && j + 2 + pkg_len < aml_len) {
+                    uint32_t k = j + 2;
+                    if (k < aml_len && aml[k] >= 2) {
+                        k++;
+                        if (k + 1 < aml_len) {
+                            if (aml[k] == 0x0A && k + 2 < aml_len) {
+                                slp_typa_s5 = aml[k + 1];
+                            } else if (aml[k] == 0x0B && k + 3 < aml_len) {
+                                slp_typa_s5 = aml[k + 1];
+                            } else if (aml[k] == 0x00) {
+                                slp_typa_s5 = 0;
+                            }
+                        }
+                    }
+                }
+            }
+            kprintf("  ACPI: _S5_ SLP_TYPa = 0x%02x\n", slp_typa_s5);
         }
         /* Look for _S3_ (0x5f 0x53 0x33 0x5f) */
         if (aml[i] == 0x5f && aml[i+1] == 0x53 && aml[i+2] == 0x33 && aml[i+3] == 0x5f) {
-            /* Found _S3_ — S3 is supported */
+            /* Found _S3_ — parse the following Package() for SLP_TYPa */
             s3_supported = 1;
-            /* In QEMU, default SLP_TYPa for S3 is 5 */
-            slp_typa_s3 = 0x05;
-            kprintf("  ACPI: Found _S3_ in DSDT (S3 supported)\n");
+            uint32_t j = i + 4;
+            if (j + 4 < aml_len && aml[j] == 0x12) {
+                uint32_t pkg_len = aml[j + 1];
+                if (pkg_len >= 4 && j + 2 + pkg_len < aml_len) {
+                    uint32_t k = j + 2;
+                    if (k < aml_len && aml[k] >= 2) {
+                        k++;
+                        if (k + 1 < aml_len) {
+                            if (aml[k] == 0x0A && k + 2 < aml_len) {
+                                slp_typa_s3 = aml[k + 1];
+                            } else if (aml[k] == 0x0B && k + 3 < aml_len) {
+                                slp_typa_s3 = aml[k + 1];
+                            } else if (aml[k] == 0x00) {
+                                slp_typa_s3 = 0;
+                            }
+                        }
+                    }
+                }
+            }
+            kprintf("  ACPI: _S3_ SLP_TYPa = 0x%02x (S3 supported)\n", slp_typa_s3);
         }
     }
 }
@@ -798,7 +843,7 @@ void acpi_init(void) {
     check_power_button(fadt);
 
     /* Default S5 value if DSDT parsing didn't find it */
-    if (slp_typa_s5 == 0) slp_typa_s5 = 0x07;
+    if (slp_typa_s5 == 0xFF) slp_typa_s5 = 0x07;
 
     kprintf("[OK] ACPI: PM1a control port 0x%lx\n", (unsigned long)pm1a_cnt);
     if (s3_supported) {

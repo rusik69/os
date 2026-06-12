@@ -873,17 +873,17 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)-1;
-    struct vfs_stat st; uint32_t fsz = 0;
+    struct vfs_stat st; uint64_t fsz = 0;
     if (vfs_stat(pfd->path, &st) == 0) fsz = st.size;
-    uint32_t new_off;
+    uint64_t new_off;
     switch (whence) {
-        case 0: new_off = (uint32_t)offset; break;
-        case 1: new_off = pfd->offset + (uint32_t)offset; break;
-        case 2: new_off = fsz + (uint32_t)offset; break;
+        case 0: new_off = offset; break;
+        case 1: new_off = pfd->offset + offset; break;
+        case 2: new_off = fsz + offset; break;
         default: return (uint64_t)-1;
     }
     pfd->offset = new_off;
-    return (uint64_t)new_off;
+    return new_off;
 }
 
 static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {

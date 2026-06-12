@@ -314,6 +314,35 @@ static int name_match_ci(const char *a, const char *b) {
 
 static int lfn_build_name(const struct fat32_lfn *entries, int count, char *out, int out_max) {
     int pos = 0;
+
+    /* Validate LFN ordering: entries[count-1] must have the LAST_LFN bit (0x40).
+     * This protects against crafted filesystems with missing or corrupted LFN
+     * ordering that could produce garbage names. */
+    if (count < 1 || count > 20) {
+        if (out_max > 0) out[0] = '\0';
+        return 0;
+    }
+    if (!(entries[count - 1].order & 0x40)) {
+        if (out_max > 0) out[0] = '\0';
+        return 0;
+    }
+
+    /* Verify contiguity: ord values should be 1..count without gaps.
+     * ord field is 6 bits (0x3F), with bit 7 (0x40) being the LAST_LFN marker. */
+    for (int i = 0; i < count; i++) {
+        int expected_ord = count - i; /* highest ord first in physical order */
+        int actual_ord = entries[i].order & 0x1F;
+        if (actual_ord != expected_ord) {
+            if (out_max > 0) out[0] = '\0';
+            return 0;
+        }
+        /* Only the highest ord (entries[count-1]) should have the 0x40 bit */
+        if ((entries[i].order & 0x40) && i != count - 1) {
+            if (out_max > 0) out[0] = '\0';
+            return 0;
+        }
+    }
+
     for (int seq = count; seq >= 1; seq--) {
         const struct fat32_lfn *e = &entries[seq - 1];
         for (int i = 0; i < 5 && pos < out_max - 1; i++) {
@@ -514,6 +543,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
             int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
@@ -563,6 +593,7 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
             int lfn_n = 0;
             for (int i = 0; i < n_entries; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
@@ -815,6 +846,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
             int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
@@ -875,6 +907,7 @@ int fat32_list_dir(const char *path, char names[][FAT32_MAX_NAME], int max) {
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
             int lfn_n = 0;
             for (int i = 0; i < n_entries && count < max; i++) {
                 uint8_t first = (uint8_t)entries[i].name[0];
@@ -1443,6 +1476,7 @@ static int dir_remove_entry(uint32_t dir_cluster, const char *name) {
             struct fat32_dirent *entries = (struct fat32_dirent *)buf;
             int n_entries = (int)(SECT_SIZE / sizeof(struct fat32_dirent));
             struct fat32_lfn lfn_parts[20];
+            memset(lfn_parts, 0, sizeof(lfn_parts));
             int lfn_n = 0;
             int lfn_start = -1;
             for (int i = 0; i < n_entries; i++) {
