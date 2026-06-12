@@ -6873,12 +6873,11 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
     if (len < 6) return (uint64_t)-1;
     if (strcmp(tmpl + len - 6, "XXXXXX") != 0) return (uint64_t)-1;
 
-    /* Simple: use incrementing number in place of XXXXXX */
-    static int mkdtemp_counter = 0;
-    mkdtemp_counter++;
+    /* Replace XXXXXX with random chars from the kernel RNG */
     for (int i = 0; i < 6; i++) {
-        int idx = (mkdtemp_counter >> (i * 5)) & 0x1F;
-        tmpl[len - 6 + i] = "abcdefghijklmnopqrstuvwxyz0123456789"[idx % 36];
+        uint64_t r = prng_rand64();
+        int idx = (int)(r % 36);
+        tmpl[len - 6 + i] = "abcdefghijklmnopqrstuvwxyz0123456789"[idx];
     }
 
     if (vfs_create(tmpl, 2) < 0) return (uint64_t)-1;
