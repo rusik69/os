@@ -45,6 +45,7 @@ jobs:
             CC="ccache x86_64-linux-gnu-gcc" \
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy \
+            CFLAGS_EXTRA="-Werror" \
             -j$(nproc)
 
       - name: Check binary

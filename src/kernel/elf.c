@@ -398,10 +398,11 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
      *  - NO_NEW_PRIVS enforcement */
     process_exec_cred_security();
 
-    /* Allocate user stack (64KB) with ASLR offset */
+    /* Allocate user stack (64KB) with ASLR offset and guard page */
     uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
+    uint64_t user_stack_guard = user_stack_bottom - PAGE_SIZE;  /* unmapped guard page */
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
@@ -413,6 +414,8 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             return -1;
         }
     }
+    /* Guard page at user_stack_guard is left unmapped — a stack underflow
+     * (past the bottom) will fault on this page, caught as a SIGSEGV. */
 
     /* ── Set up user stack with argv/envp ───────────────────── */
     /* We're still running on the old page tables. Read argv/envp

@@ -1223,6 +1223,18 @@ struct process *process_get_by_pid(uint32_t pid) {
     return fallback;
 }
 
+/* Get a process by PID with Ring 3 visibility check.
+ * Returns NULL if the caller process cannot see the target (permission denied).
+ * Kernel-internal callers should use process_get_by_pid() directly. */
+struct process *process_get_by_pid_visible(uint32_t pid) {
+    struct process *target = process_get_by_pid(pid);
+    if (!target) return NULL;
+    struct process *cur = process_get_current();
+    if (!cur) return target;  /* kernel context, allow */
+    if (!process_can_see(cur, target)) return NULL;
+    return target;
+}
+
 /* For shell `ps` command */
 struct process *process_get_table(void) {
     return process_table;

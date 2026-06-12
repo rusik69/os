@@ -797,6 +797,13 @@ static uint64_t sys_getpid(void) {
 }
 
 static uint64_t sys_kill(uint64_t pid, uint64_t sig) {
+    struct process *cur = process_get_current();
+    struct process *target = process_get_by_pid((uint32_t)pid);
+    if (!target || target->state == PROCESS_UNUSED)
+        return (uint64_t)-1;
+    /* Permission check: root (euid 0) or same uid can signal */
+    if (cur->euid != 0 && cur->euid != target->euid)
+        return (uint64_t)-1;  /* EPERM */
     return (uint64_t)signal_send((uint32_t)pid, (int)sig);
 }
 
