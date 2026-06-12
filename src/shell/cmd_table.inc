@@ -135,6 +135,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("tr",          "Translate characters",                                  cmd_tr)
     CMD("true",        "Return success exit status",                            sh_true)
     CMD("udpsend",     "Send UDP packet",                                       cmd_udpsend)
+    CMD("ulimit",      "View/set resource limits",                              cmd_ulimit)
     CMD("uname",       "Show system info",                                      sh_uname)
     CMD("uniq",        "Remove duplicate adjacent lines",                       cmd_uniq)
     CMD("unalias",     "Remove alias (unalias <name>)",                         cmd_unalias)

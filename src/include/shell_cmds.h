@@ -62,6 +62,7 @@ void cmd_route(void);
 void cmd_uname(void);
 void cmd_lspci(void);
 void cmd_dmesg(const char *args);
+void cmd_ulimit(const char *args);
 void cmd_cc(const char *args);
 void cmd_ccbuilder(const char *args);
 void cmd_ld(const char *args);
