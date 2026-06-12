@@ -32,6 +32,7 @@
 #define SYS_KILL      214
 #define SYS_REBOOT    88
 #define SYS_SETHOSTNAME 268
+#define SYS_DUP2      241
 
 #define SIGCHLD       17
 #define SIGTERM       15
@@ -42,6 +43,7 @@
 
 #define O_RDONLY      0
 #define O_WRONLY      1
+#define O_RDWR        2
 #define O_CREAT       64
 #define O_TRUNC       512
 
@@ -157,6 +159,12 @@ static inline long syscall(long num, long a1, long a2, long a3,
     return ret;
 }
 
+/* dup2: duplicate a file descriptor onto another */
+static inline int dup2(int oldfd, int newfd) {
+    return (int)syscall(SYS_DUP2, oldfd, newfd, 0, 0, 0);
+}
+
+/* write: write count bytes from buf to fd */
 static inline long write(int fd, const void *buf, unsigned long count)
 {
     return syscall(SYS_WRITE, fd, (long)buf, count, 0, 0);
@@ -741,10 +749,14 @@ static void service_start(struct service *svc)
     if (pid == 0) {
         /* Child: exec the service */
         /* Set up stdin/stdout/stderr */
-        int fd = open("/dev/null", O_RDONLY);
-        if (fd >= 0) {
-            /* We'd need dup2 but we don't have it. Just close and hope for the best. */
-            close(fd);
+        int null_fd = open("/dev/null", O_RDWR);
+        if (null_fd >= 0) {
+            /* Redirect stdin/stdout/stderr to /dev/null */
+            dup2(null_fd, STDIN_FILENO);
+            dup2(null_fd, STDOUT_FILENO);
+            dup2(null_fd, STDERR_FILENO);
+            if (null_fd > STDERR_FILENO)
+                close(null_fd);
         }
 
         /* Build argv array on stack for exec */
