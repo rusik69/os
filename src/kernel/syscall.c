@@ -836,6 +836,12 @@ static uint64_t sys_brk(uint64_t addr) {
         uint64_t data_limit = p->rlim_cur[RLIMIT_DATA];
         if (data_limit != RLIM_INFINITY && (addr - p->heap_start) > data_limit)
             return (uint64_t)-1;
+
+        /* Also enforce RLIMIT_AS: new heap end relative to
+         * heap_start must not exceed rlim_cur[RLIMIT_AS]. */
+        uint64_t as_limit = p->rlim_cur[RLIMIT_AS];
+        if (as_limit != RLIM_INFINITY && (addr - p->heap_start) > as_limit)
+            return (uint64_t)-1;
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)
@@ -2222,6 +2228,12 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
     if (length > 0 && addr + length < addr)
         return (uint64_t)-EINVAL;
 
+    /* RLIMIT_AS: reject mappings that exceed the per-process
+     * address-space limit (when set). */
+    uint64_t as_limit = proc->rlim_cur[RLIMIT_AS];
+    if (as_limit != RLIM_INFINITY && length > as_limit)
+        return (uint64_t)-ENOMEM;
+
     /* W^X enforcement: reject writable + executable mappings.
      * A writable && executable page enables shellcode injection.
      * JIT compilers must use separate rw (data) and rx (code) regions. */
@@ -2495,6 +2507,11 @@ static uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size,
                              (old_size - new_size) / PAGE_SIZE);
         return old_addr;
     }
+
+    /* RLIMIT_AS: reject growth beyond the address-space limit */
+    uint64_t as_limit = proc->rlim_cur[RLIMIT_AS];
+    if (as_limit != RLIM_INFINITY && new_size > as_limit)
+        return (uint64_t)-ENOMEM;
 
     /* Growing: try to extend in-place */
     uint64_t extend = new_size - old_size;
