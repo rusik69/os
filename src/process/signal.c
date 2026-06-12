@@ -9,6 +9,8 @@
 #include "process.h"
 #include "scheduler.h"
 #include "printf.h"
+#include "syscall.h"
+#include "errno.h"
 
 /* Core dump handler */
 extern void do_coredump(struct process *proc, int signo);
@@ -21,6 +23,22 @@ int signal_send(uint32_t pid, int signum) {
     if (signum <= 0 || signum >= SIG_MAX) return -1;
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
+
+    /* RLIMIT_SIGPENDING: enforce pending signal queue limit.
+     * Exclude SIGKILL (always deliverable) and SIGSTOP (cannot be blocked). */
+    if (signum != SIGKILL && signum != SIGSTOP) {
+        uint64_t sig_limit = p->rlim_cur[RLIMIT_SIGPENDING];
+        if (sig_limit != ~0ULL) {
+            /* Count currently pending (non-masked) signals */
+            uint64_t pending = p->pending_signals;
+            /* Also count masked signals (they just hang out) */
+            int count = 0;
+            while (pending) { pending &= pending - 1; count++; }
+            /* If at or over limit, reject the signal */
+            if ((uint64_t)count >= sig_limit)
+                return -EAGAIN;
+        }
+    }
 
     /* Track resource usage */
     p->signals_received++;

@@ -547,7 +547,7 @@ void send_eth(const uint8_t *dst_mac, uint16_t type, const void *payload, uint16
 
 static void send_ip_fragmented(uint32_t dst_ip, uint8_t protocol,
                                const void *payload, uint16_t len) {
-    uint16_t ip_id = net_ip_id_counter++;
+    uint16_t ip_id = __sync_fetch_and_add(&net_ip_id_counter, 1);
     uint16_t max_payload = 1500 - (uint16_t)sizeof(struct ip_header);
     uint16_t off = 0;
     while (off < len) {

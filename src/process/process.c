@@ -20,6 +20,7 @@
 #include "user_namespace.h"
 #include "kcov.h"
 #include "kpti.h"
+#include "errno.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -950,6 +951,22 @@ static void fork_child_entry(void) {
 int process_fork(void) {
     struct process *parent = current_process;
     struct process *child = NULL;
+
+    /* RLIMIT_NPROC: count processes owned by the same UID */
+    uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
+    if (nproc_limit != ~0ULL && nproc_limit > 0) {
+        uint64_t same_user_count = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (process_table[i].state != PROCESS_UNUSED &&
+                process_table[i].state != PROCESS_ZOMBIE &&
+                process_table[i].uid == parent->uid) {
+                same_user_count++;
+            }
+        }
+        if (same_user_count >= nproc_limit) {
+            return -EAGAIN;
+        }
+    }
 
     __asm__ volatile("cli");
 
