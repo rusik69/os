@@ -1208,6 +1208,13 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                         seq, data_len, c->their_seq);
                 return;
             }
+            /* Handle TCP urgent pointer (URG flag) — RFC 961 §3.3
+             * Record the urgent sequence number so the connection does not
+             * desync. Since we do not implement OOB data delivery, we simply
+             * note the urgent pointer and allow normal sequence advancement. */
+            if (flags & 0x20) {
+                c->urg_seq = seq + tcp->urgent;
+            }
             uint32_t skip = 0;
             if ((int32_t)(seq - expected) < 0) {
                 skip = (uint32_t)(expected - seq);
@@ -1639,6 +1646,7 @@ void net_tcp_close(int conn_id) {
             break;
         case TCP_FIN_WAIT:
         case TCP_FIN_WAIT_2:
+        case TCP_CLOSING:
         case TCP_LAST_ACK:
         case TCP_CLOSED:
         default:

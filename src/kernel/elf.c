@@ -9,6 +9,7 @@
 #include "vfs.h"
 #include "scheduler.h"
 #include "aslr.h"
+#include "auxv.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
@@ -393,12 +394,39 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     extern void signalfd_exec_close(void);
     signalfd_exec_close();
 
+    /* ── Check for setuid/setgid on the binary file ──────────────── */
+    struct vfs_stat bin_stat;
+    int has_setuid = 0;
+    if (vfs_stat(path, &bin_stat) == 0) {
+        if (bin_stat.mode & S_ISUID) {
+            kprintf("execve: setuid (euid %u -> %u)\n", cur->euid, bin_stat.uid);
+            cur->euid = bin_stat.uid;
+            has_setuid = 1;
+        }
+        if (bin_stat.mode & S_ISGID) {
+            cur->egid = bin_stat.gid;
+        }
+    }
+
     /* Apply exec credential security:
      *  - Capability bounding set AND with permitted set
      *  - Securebits processing
      *  - Dumpable flag based on credential changes
-     *  - NO_NEW_PRIVS enforcement */
+     *  - NO_NEW_PRIVS enforcement
+     *  - AT_SECURE calculation */
     process_exec_cred_security();
+
+    /* Cancel setuid if no_new_privs was set (NO_NEW_PRIVS blocks elevation) */
+    if (cur->no_new_privs && has_setuid) {
+        /* process_exec_cred_security already cleared caps;
+         * restore euid to the original real uid */
+        cur->euid = cur->uid;
+        has_setuid = 0;
+    }
+
+    /* AT_SECURE flag: set if real != effective uid/gid, or setuid binary */
+    int at_secure = (cur->uid != cur->euid || cur->gid != cur->egid || has_setuid);
+    (void)at_secure;  /* used later in auxv setup */
 
     /* Allocate user stack (64KB) with ASLR offset and guard page */
     uint64_t aslr_pages = aslr_stack_offset();
@@ -623,6 +651,31 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         if (envp_virt_ptr) envp_virt_ptr[i] = envp_array + i * sizeof(uint64_t); /* dummy */
     }
     /* For now, set envp[envc] = NULL */
+
+    /* ── Write auxiliary vector (auxv) entries ───────────────── */
+    /* auxv comes after envp[]: envp[] NULL auxv[] AT_NULL argv[] argc */
+    sp -= 2 * sizeof(uint64_t);  /* AT_SECURE + value */
+    sp &= ~0xFULL;
+    {
+        uint64_t *aux_secure = (uint64_t *)PHYS_TO_VIRT(
+            stack_phys_base + (sp - user_stack_bottom));
+        if (aux_secure) {
+            aux_secure[0] = AT_SECURE;
+            aux_secure[1] = (uint64_t)(uintptr_t)(at_secure ? 1UL : 0UL);
+        }
+    }
+
+    /* AT_NULL terminator */
+    sp -= 2 * sizeof(uint64_t);
+    sp &= ~0xFULL;
+    {
+        uint64_t *aux_null = (uint64_t *)PHYS_TO_VIRT(
+            stack_phys_base + (sp - user_stack_bottom));
+        if (aux_null) {
+            aux_null[0] = AT_NULL;
+            aux_null[1] = 0;
+        }
+    }
 
     /* Write argv[] array (argv pointers, then NULL) */
     sp -= (argc + 1) * sizeof(uint64_t);

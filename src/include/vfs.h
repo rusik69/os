@@ -23,6 +23,21 @@ struct fs_quota;
 
 /* POSIX file type encoding (top bits of mode for mknod) */
 #define S_IFMT   0170000  /* type bit mask */
+#define S_ISUID  0004000  /* set user ID on execution */
+#define S_ISGID  0002000  /* set group ID on execution */
+#define S_ISVTX  0001000  /* sticky bit */
+#define S_IRWXU  00700    /* owner read/write/execute */
+#define S_IRUSR  00400    /* owner read */
+#define S_IWUSR  00200    /* owner write */
+#define S_IXUSR  00100    /* owner execute */
+#define S_IRWXG  00070    /* group read/write/execute */
+#define S_IRGRP  00040    /* group read */
+#define S_IWGRP  00020    /* group write */
+#define S_IXGRP  00010    /* group execute */
+#define S_IRWXO  00007    /* other read/write/execute */
+#define S_IROTH  00004    /* other read */
+#define S_IWOTH  00002    /* other write */
+#define S_IXOTH  00001    /* other execute */
 #define S_IFSOCK 0140000  /* socket */
 #define S_IFLNK  0120000  /* symbolic link */
 #define S_IFREG  0100000  /* regular file */
@@ -151,6 +166,8 @@ struct vfs_ops {
     int (*journal_start)(void *priv);
     int (*journal_commit)(void *priv);
     int (*journal_abort)(void *priv);
+    /* Optional: create hard link (increment link count, add directory entry) */
+    int (*link)(void *priv, const char *oldpath, const char *newpath);
     /* Symlink operations */
     int (*symlink)(void *priv, const char *target, const char *linkpath);
     int (*readlink)(void *priv, const char *path, char *buf, int bufsize);

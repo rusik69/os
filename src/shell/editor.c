@@ -958,8 +958,10 @@ static void ed_save(void) {
     }
     buf[pos] = '\0';
     char path[66];
-    if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
-    else strcpy(path, b->filename);
+    if (b->filename[0] != '/')
+        snprintf(path, sizeof(path), "/%s", b->filename);
+    else
+        snprintf(path, sizeof(path), "%s", b->filename);
 
     if (fs_write_file(path, buf, pos) < 0) {
         if (ed_telnet_mode) {
@@ -979,8 +981,10 @@ static void ed_save(void) {
 
 static void ed_load(struct ed_buffer *b) {
     char path[66];
-    if (b->filename[0] != '/') { path[0] = '/'; strcpy(path + 1, b->filename); }
-    else strcpy(path, b->filename);
+    if (b->filename[0] != '/')
+        snprintf(path, sizeof(path), "/%s", b->filename);
+    else
+        snprintf(path, sizeof(path), "%s", b->filename);
 
     /* Try reading the file with an 8KB initial buffer; grow if needed.
      * We keep trying larger buffers up to a reasonable limit. */

@@ -1589,11 +1589,29 @@ int vfs_link(const char *oldpath, const char *newpath) {
     vfs_abs_path(oldpath, ap_old, sizeof(ap_old));
     vfs_abs_path(newpath, ap_new, sizeof(ap_new));
     
-    /* Read old file data and create new entry */
+    /* Check that old path exists and new path does not */
     struct vfs_stat st;
     if (vfs_stat(ap_old, &st) < 0) return -ENOENT;
     if (vfs_stat(ap_new, &st) == 0) return -EEXIST;
     
+    struct vfs_mount *m_old = resolve(ap_old);
+    if (!m_old) return -ENOENT;
+    struct vfs_mount *m_new = resolve(ap_new);
+    if (!m_new) return -ENOENT;
+    
+    /* Hard links must be on the same filesystem */
+    if (m_old != m_new) return -EXDEV;
+    
+    /* If the filesystem supports native link, use it */
+    if (m_old->ops && m_old->ops->link) {
+        int ret = m_old->ops->link(m_old->priv, ap_old, ap_new);
+        if (ret == 0) {
+            vfs_inc_nlink(ap_old);
+        }
+        return ret;
+    }
+    
+    /* Fallback: data copy for filesystems that don't support hard links */
     uint8_t *buf = kmalloc(st.size + 1);
     if (!buf) return -ENOMEM;
     

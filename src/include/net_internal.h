@@ -97,6 +97,7 @@ enum tcp_state {
     TCP_CLOSE_WAIT,
     TCP_LAST_ACK,
     TCP_TIME_WAIT,
+    TCP_CLOSING,  /* simultaneous close — both sides FIN */
 };
 
 struct tcp_sack_block {
@@ -117,6 +118,7 @@ struct tcp_conn {
     uint8_t  rxbuf[4096];
     int      rxlen;
     volatile int rx_fin;
+    uint32_t urg_seq;            /* last urgent sequence number (TCP URG handling) */
     /* Congestion control (Reno: slow start / AIMD / fast recovery) */
     uint32_t cwnd;              /* congestion window in segments */
     uint32_t ssthresh;          /* slow-start threshold */

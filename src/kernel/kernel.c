@@ -1058,18 +1058,21 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
         if (mbi[0] & (1 << 3)) { /* mods flag */
             uint32_t mods_count = mbi[5];
-            uint32_t mods_addr = mbi[6];
-            if (mods_count > 0 && mods_addr) {
-                uint32_t *mod = (uint32_t *)PHYS_TO_VIRT((uint64_t)mods_addr);
-                uint32_t mod_start = mod[0];
-                uint32_t mod_end = mod[1];
-                uint32_t mod_size = mod_end - mod_start;
-                if (mod_size > 0 && mod_size < 4*1024*1024) {
-                    kprintf("[OK] Initrd module: %u bytes at 0x%x\n", mod_size, mod_start);
+            /* For multiboot2, mods_addr can be above 4GB (64-bit phys addr).
+             * Multiboot1 uses uint32_t; we cast through uint64_t for safety. */
+            uint64_t mods_addr = (uint64_t)mbi[6];
+            if (mods_count > 0 && mods_addr > 0) {
+                uint32_t *mod = (uint32_t *)PHYS_TO_VIRT(mods_addr);
+                uint64_t mod_start = (uint64_t)mod[0];
+                uint64_t mod_end   = (uint64_t)mod[1];
+                uint64_t mod_size = mod_end - mod_start;
+                if (mod_size > 0 && mod_size < 16*1024*1024) {
+                    kprintf("[OK] Initrd module: %llu bytes at 0x%llx\n",
+                            (unsigned long long)mod_size, (unsigned long long)mod_start);
                     /* Copy the initrd data into ramdisk */
-                    void *mod_data = PHYS_TO_VIRT((unsigned long)mod_start);
+                    void *mod_data = PHYS_TO_VIRT(mod_start);
                     if (ramdisk_is_present()) {
-                        uint32_t num_sectors = (mod_size + 511) / 512;
+                        uint32_t num_sectors = (uint32_t)((mod_size + 511) / 512);
                         if (num_sectors <= ramdisk_get_sectors()) {
                             for (uint32_t s = 0; s < num_sectors; s++) {
                                 ramdisk_write_sectors(s, 1, (const uint8_t*)mod_data + s * 512);

@@ -524,7 +524,7 @@ static int procfs_gen_modules(char *buf, int max) {
         }
         /* Print size in bytes (Linux uses decimal) */
         char size_str[24];
-        int sl = sprintf(size_str, "%llu", (unsigned long long)total_size);
+        int sl = snprintf(size_str, sizeof(size_str), "%llu", (unsigned long long)total_size);
         if (sl > 0 && sl < (int)sizeof(size_str))
             proc_str(size_str, buf, &p, max);
 
@@ -547,7 +547,7 @@ static int procfs_gen_modules(char *buf, int max) {
 
         /* Module refcount (Linux shows this on newer kernels) */
         char ref_str[16];
-        int rl = sprintf(ref_str, " %d", mod->refcount);
+        int rl = snprintf(ref_str, sizeof(ref_str), " %d", mod->refcount);
         if (rl > 0 && rl < (int)sizeof(ref_str))
             proc_str(ref_str, buf, &p, max);
 
