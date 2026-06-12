@@ -7519,10 +7519,22 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
     if (addr + len < addr) return (uint64_t)-1;
     if (addr + len > USER_VADDR_MAX) return (uint64_t)-1;
 
-    /* Verify pages are mapped, then mark as wired */
-    for (uint64_t v = addr; v < addr + len; v += PAGE_SIZE) {
-        if (!vmm_page_is_mapped_user(p->pml4, v)) return (uint64_t)-1;
+    uint64_t npages = len / PAGE_SIZE;
+
+    /* RLIMIT_MEMLOCK check (index 8) */
+    uint64_t limit = p->rlim_cur[8];
+    if (limit != (uint64_t)-1) {
+        uint64_t limit_pages = limit / PAGE_SIZE;
+        if (p->locked_pages + npages > limit_pages)
+            return (uint64_t)-ENOMEM;
     }
+
+    /* Verify pages are mapped */
+    for (uint64_t v = addr; v < addr + len; v += PAGE_SIZE) {
+        if (!vmm_page_is_mapped_user(p->pml4, v)) return (uint64_t)-ENOMEM;
+    }
+
+    p->locked_pages += npages;
     return 0;
 }
 
@@ -7532,34 +7544,57 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
     if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
     if (addr + len < addr) return (uint64_t)-1;
     if (addr + len > USER_VADDR_MAX) return (uint64_t)-1;
-    /* Verify pages are mapped */
-    for (uint64_t v = addr; v < addr + len; v += PAGE_SIZE) {
-        if (!vmm_page_is_mapped_user(p->pml4, v)) return (uint64_t)-1;
-    }
-    /* Clear locked flag (software bit) - we track via vm_locked_flags for now */
+
+    uint64_t npages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (npages > p->locked_pages)
+        p->locked_pages = 0;
+    else
+        p->locked_pages -= npages;
     return 0;
 }
 
 static uint64_t sys_mlockall(uint64_t flags) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
-    if (flags & ~3) return (uint64_t)-1; /* MCL_CURRENT=1, MCL_FUTURE=2 */
+    if (!p) return (uint64_t)-ENOMEM;
+    if (flags & ~3) return (uint64_t)-EINVAL; /* MCL_CURRENT=1, MCL_FUTURE=2 */
     p->vm_locked_flags = (int)(flags & 3);
-    /* Check RLIMIT_MEMLOCK if any pages are already mapped */
-    uint64_t locked_pages = 0;
-    /* Count mapped user pages (approximate) */
-    if (p->pml4) {
-        /* Simple: iterate known regions */
-        /* For now, just enforce the limit if available */
+
+    /* MCL_CURRENT: count currently mapped pages and check limit */
+    if (flags & 1) {
+        uint64_t total = 0;
+        if (p->pml4) {
+            for (int i4 = 0; i4 < 512; i4++) {
+                if (!(p->pml4[i4] & 1)) continue;
+                uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(p->pml4[i4] & ~0xFFFULL);
+                for (int i3 = 0; i3 < 512; i3++) {
+                    if (!(pdpt[i3] & 1)) continue;
+                    if (pdpt[i3] & PTE_HUGE) { total += 512; continue; }
+                    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[i3] & ~0xFFFULL);
+                    for (int i2 = 0; i2 < 512; i2++) {
+                        if (!(pd[i2] & 1)) continue;
+                        if (pd[i2] & PTE_HUGE) { total += 512; continue; }
+                        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[i2] & ~0xFFFULL);
+                        for (int i1 = 0; i1 < 512; i1++) {
+                            if (pt[i1] & 1) total++;
+                        }
+                    }
+                }
+            }
+        }
+        /* RLIMIT_MEMLOCK check (index 8) */
+        uint64_t limit = p->rlim_cur[8];
+        if (limit != (uint64_t)-1 && (total * PAGE_SIZE) > limit)
+            return (uint64_t)-ENOMEM;
+        p->locked_pages = total;
     }
-    (void)locked_pages;
     return 0;
 }
 
 static uint64_t sys_munlockall(void) {
     struct process *p = process_get_current();
-    if (!p) return (uint64_t)-1;
+    if (!p) return (uint64_t)-ENOMEM;
     p->vm_locked_flags = 0;
+    p->locked_pages = 0;
     return 0;
 }
 

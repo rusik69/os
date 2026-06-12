@@ -238,6 +238,8 @@ static void rlimit_init_defaults(struct process *proc) {
     proc->rlim_max[1] = 1024ULL * 1024;
     proc->rlim_cur[6] = 1024ULL * 64;            /* RLIMIT_STACK = 64KB */
     proc->rlim_max[6] = 1024ULL * 64;
+    proc->rlim_cur[8] = 1024ULL * 64;            /* RLIMIT_MEMLOCK = 64KB */
+    proc->rlim_max[8] = 1024ULL * 64;
 }
 
 void process_init(void) {

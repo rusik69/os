@@ -295,6 +295,8 @@ struct process {
     int      kcov_mode;       /* KCOV_MODE_NONE / _INIT / _TRACE_PC */
     uint64_t kcov_size;       /* number of uint64_t entries in buffer */
     uint64_t *kcov_area;     /* coverage buffer (allocated via kmalloc) */
+    /* ── RLIMIT_MEMLOCK tracking ─────────────────────────────── */
+    uint64_t locked_pages;   /* total pages locked via mlock/mlockall */
 };
 
 void process_init(void);
