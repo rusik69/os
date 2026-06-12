@@ -307,6 +307,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     /* Online filesystem integrity check (Item 277) */
     CMD("fsck",        "Check filesystem integrity (fsck [-v] [-q] [-f] [<mountpoint>])", cmd_fsck)
     CMD("minesweeper", "Play Minesweeper (9x9, 10 mines)",             cmd_minesweeper)
+    CMD("snake",       "Play Snake (arrow/WASD to move)",            cmd_snake)
     { 0, 0, 0 }
 };
 
