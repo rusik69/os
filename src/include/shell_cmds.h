@@ -20,6 +20,7 @@ void cmd_write(const char *args);
 void cmd_touch(const char *args);
 void cmd_rm(const char *args);
 void cmd_rmmod(const char *args);
+void cmd_minesweeper(const char *args);
 void cmd_mkdir(const char *args);
 void cmd_stat_file(const char *args);
 void cmd_format_disk(void);
