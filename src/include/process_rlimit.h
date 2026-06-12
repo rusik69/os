@@ -2,50 +2,28 @@
 #define PROCESS_RLIMIT_H
 
 #include "types.h"
+#include "syscall.h"  /* For Linux ABI RLIMIT_* resource identifiers */
 
 /*
  * Resource limits (rlimit) — per-process resource consumption limits.
  * Mirrors the Linux getrlimit/setrlimit/prlimit64 syscall interface.
+ *
+ * All RLIMIT_* values match the Linux ABI (from syscall.h) so that
+ * enforcement code and userspace values use the same array indices.
  */
 
-/* Resource identifiers */
-#ifndef RLIMIT_CPU
-#define RLIMIT_CPU      0   /* CPU time (seconds) */
-#endif
-#ifndef RLIMIT_FSIZE
-#define RLIMIT_FSIZE    1   /* max file size (bytes) */
-#endif
-#ifndef RLIMIT_DATA
-#define RLIMIT_DATA     2   /* max data segment size (bytes) */
-#endif
-#ifndef RLIMIT_STACK
-#define RLIMIT_STACK    3   /* max stack size (bytes) */
-#endif
-#ifndef RLIMIT_CORE
-#define RLIMIT_CORE     4   /* max core file size (bytes) */
-#endif
+/* Extra internal resource limit(s) not in the Linux ABI */
 #ifndef RLIMIT_RSS
-#define RLIMIT_RSS      5   /* max resident set size (bytes) */
+#define RLIMIT_RSS      14  /* max resident set size (bytes) — kernel-internal, outside ABI range */
 #endif
-#ifndef RLIMIT_NPROC
-#define RLIMIT_NPROC    6   /* max number of processes */
-#endif
-#ifndef RLIMIT_NOFILE
-#define RLIMIT_NOFILE   7   /* max number of open files */
-#endif
-#ifndef RLIMIT_MEMLOCK
-#define RLIMIT_MEMLOCK  8   /* max locked-in-memory size (bytes) */
-#endif
-#ifndef RLIMIT_AS
-#define RLIMIT_AS       9   /* address space limit (bytes) */
-#endif
+
 #ifndef RLIMIT_NLIMITS
-#define RLIMIT_NLIMITS  10  /* number of resource types */
+#define RLIMIT_NLIMITS  15  /* number of resource types (must match _RLIMIT_NLIMITS in process.h) */
 #endif
 
 /* "Infinity" value for resources (max representable) */
 #ifndef RLIM_INFINITY
-#define RLIM_INFINITY  ((uint64_t)-1)
+#define RLIM_INFINITY   ((uint64_t)-1)
 #endif
 
 /* rlimit structure used by getrlimit/setrlimit */

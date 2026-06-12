@@ -816,7 +816,8 @@ static uint64_t sys_brk(uint64_t addr) {
     /* Track heap start/end — initialized lazily with ASLR offset */
     if (p->heap_end == 0) {
         uint64_t brk_aslr = aslr_brk_offset() * PAGE_SIZE;
-        p->heap_end = 0x0000000002000000ULL + brk_aslr;
+        p->heap_start = 0x0000000002000000ULL + brk_aslr;
+        p->heap_end = p->heap_start;
     }
 
     if (addr == 0) return p->heap_end; /* brk(0) — get current */
@@ -829,6 +830,12 @@ static uint64_t sys_brk(uint64_t addr) {
     if (addr > old_end) {
         /* Grow heap — map new pages */
         uint64_t grow = addr - old_end;
+
+        /* Enforce RLIMIT_DATA: new heap end must not exceed
+         * heap_start + rlim_cur[RLIMIT_DATA]. */
+        uint64_t data_limit = p->rlim_cur[RLIMIT_DATA];
+        if (data_limit != RLIM_INFINITY && (addr - p->heap_start) > data_limit)
+            return (uint64_t)-1;
         uint64_t pages = (grow + PAGE_SIZE - 1) / PAGE_SIZE;
         uint64_t page_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_LAZY;
         if (vmm_map_user_pages(p->pml4, old_end, pages, page_flags) < 0)

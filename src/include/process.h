@@ -16,7 +16,7 @@ struct mnt_namespace;
 struct cgroup_namespace;
 
 /* Resource limits (local defines since we can't rely on syscall.h include order) */
-#define _RLIMIT_NLIMITS 14
+#define _RLIMIT_NLIMITS 15
 
 #define PROCESS_MAX 256
 #define KERNEL_STACK_SIZE (128 * 1024) /* 128 KB — cc parser + network call chains */
@@ -185,6 +185,7 @@ struct process {
     uint64_t minflt;          /* minor page faults (no disk I/O) */
     uint64_t majflt;          /* major page faults (disk I/O required) */
     /* Heap tracking for brk */
+    uint64_t heap_start;      /* start of data segment (set once by brk() init) */
     uint64_t heap_end;        /* current end of data segment for brk() */
     /* Capability bounding set */
     uint64_t cap_bset[PROCESS_SYSCALL_CAP_WORDS];
