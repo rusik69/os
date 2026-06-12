@@ -5,6 +5,7 @@
 #include "process.h"
 #include "timer.h"
 #include "syscall.h"
+#include "heap.h"
 
 static struct pipe pipe_table[PIPE_MAX];
 
@@ -15,13 +16,18 @@ void pipe_init(void) {
 int pipe_create(void) {
     for (int i = 0; i < PIPE_MAX; i++) {
         if (!pipe_table[i].in_use) {
+            /* Allocate default-size buffer */
+            pipe_table[i].buf = (uint8_t *)kmalloc(PIPE_DEFAULT_SIZE);
+            if (!pipe_table[i].buf)
+                return -1;
+            pipe_table[i].capacity  = PIPE_DEFAULT_SIZE;
             pipe_table[i].read_pos  = 0;
             pipe_table[i].write_pos = 0;
             pipe_table[i].count     = 0;
             pipe_table[i].readers   = 1;
             pipe_table[i].writers   = 1;
             pipe_table[i].in_use    = 1;
-            pipe_table[i].flags    = 0;
+            pipe_table[i].flags     = 0;
             pipe_table[i].sigio_pid = 0;
             wait_queue_init(&pipe_table[i].read_wq);
             wait_queue_init(&pipe_table[i].write_wq);
@@ -47,41 +53,33 @@ int pipe_write(int pipe_id, const void *buf, int len) {
     int written = 0;
 
     while (written < len) {
-        while (p->count == PIPE_BUF_SIZE) {
-            if (p->readers == 0) return written ? written : -1;
-            /* Non-blocking mode: return immediately */
-            if (p->flags & PIPE_FLAG_NONBLOCK) return written ? written : -1;
-            struct process *cur = process_get_current();
-
-            /* Prevent self-deadlock: same process writing and reading */
-            if (cur && wait_queue_wake_pid(&p->read_wq, cur->pid))
-                return written ? written : -1;
-
-            /* Block until space is available */
-            cur->state = PROCESS_BLOCKED;
-            scheduler_remove(cur);
-            wait_queue_sleep(&p->write_wq);
+        while (p->count == p->capacity) {
+            wait_queue_ensure(&p->write_wq);
+            scheduler_yield();
+            if (p->readers == 0) {
+                struct process *cur = process_get_current();
+                if (cur) signal_send(cur->pid, SIGPIPE);
+                return written > 0 ? written : -1;
+            }
         }
 
-        int space = PIPE_BUF_SIZE - p->count;
-        int to_write = len - written;
-        if (to_write > space) to_write = space;
+        int space = p->capacity - p->count;
+        int chunk = (len - written) < space ? (len - written) : space;
 
-        for (int i = 0; i < to_write; i++) {
-            p->buf[p->write_pos] = src[written + i];
-            p->write_pos = (p->write_pos + 1) % PIPE_BUF_SIZE;
+        for (int i = 0; i < chunk; i++) {
+            int pos = (p->write_pos + i) % p->capacity;
+            p->buf[pos] = src[written + i];
         }
-        p->count  += to_write;
-        written   += to_write;
 
-        /* Wake any readers waiting for data */
-        wait_queue_wake_all(&p->read_wq);
+        p->write_pos = (p->write_pos + chunk) % p->capacity;
+        p->count += chunk;
+        written += chunk;
 
-        /* SIGIO: send to owner when data becomes available */
-        if (p->sigio_pid && p->count > 0) {
-            signal_send(p->sigio_pid, SIGIO);
+        if (p->count > 0) {
+            wait_queue_wake(&p->read_wq);
         }
     }
+
     return written;
 }
 
@@ -91,105 +89,102 @@ int pipe_read(int pipe_id, void *buf, int len) {
     if (len <= 0) return -1;
 
     struct pipe *p = &pipe_table[pipe_id];
-
-    while (p->count == 0) {
-        if (p->writers == 0) return 0;  /* EOF */
-        /* Non-blocking mode: return immediately */
-        if (p->flags & PIPE_FLAG_NONBLOCK) return -1;
-        struct process *cur = process_get_current();
-
-        /* Block until data is available */
-        cur->state = PROCESS_BLOCKED;
-        scheduler_remove(cur);
-        wait_queue_sleep(&p->read_wq);
-    }
-
     uint8_t *dst = (uint8_t *)buf;
-    int to_read = (p->count < len) ? p->count : len;
+    int total = 0;
 
-    for (int i = 0; i < to_read; i++) {
-        dst[i] = p->buf[p->read_pos];
-        p->read_pos = (p->read_pos + 1) % PIPE_BUF_SIZE;
+    while (total < len) {
+        while (p->count == 0) {
+            if (p->writers == 0) {
+                return total;  /* EOF */
+            }
+            wait_queue_ensure(&p->read_wq);
+            scheduler_yield();
+            if (p->writers == 0) {
+                return total;
+            }
+        }
+
+        int avail = p->count;
+        int chunk = (len - total) < avail ? (len - total) : avail;
+
+        for (int i = 0; i < chunk; i++) {
+            int pos = (p->read_pos + i) % p->capacity;
+            dst[total + i] = p->buf[pos];
+        }
+
+        p->read_pos = (p->read_pos + chunk) % p->capacity;
+        p->count -= chunk;
+        total += chunk;
+
+        if (p->count < p->capacity) {
+            wait_queue_wake(&p->write_wq);
+        }
     }
-    p->count -= to_read;
 
-    /* Wake any writers waiting for space */
-    wait_queue_wake_all(&p->write_wq);
-
-    /* SIGIO: send to owner when space becomes available */
-    if (p->sigio_pid && p->count < PIPE_BUF_SIZE) {
-        signal_send(p->sigio_pid, SIGIO);
-    }
-    return to_read;
+    return total;
 }
 
-void pipe_close_read(int pipe_id) {
-    if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
-    struct pipe *p = &pipe_table[pipe_id];
-    if (p->readers > 0) p->readers--;
-    /* Wake blocked writers so they can detect EOF */
-    wait_queue_wake_all(&p->write_wq);
-    if (p->readers == 0 && p->writers == 0) p->in_use = 0;
-}
-
-void pipe_close_write(int pipe_id) {
-    if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;
-    struct pipe *p = &pipe_table[pipe_id];
-    if (p->writers > 0) p->writers--;
-    /* Wake blocked readers so they can detect EOF */
-    wait_queue_wake_all(&p->read_wq);
-    if (p->readers == 0 && p->writers == 0) p->in_use = 0;
-}
-
-int pipe_available(int pipe_id) {
+int pipe_close(int pipe_id, int is_write_end) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return 0;
-    return pipe_table[pipe_id].count;
-}
-
-void pipe_set_nonblock(int pipe_id, int nonblock) {
-    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return;
-    if (nonblock)
-        pipe_table[pipe_id].flags |= PIPE_FLAG_NONBLOCK;
-    else
-        pipe_table[pipe_id].flags &= ~PIPE_FLAG_NONBLOCK;
-}
-
-void pipe_set_sigio(int pipe_id, uint32_t pid) {
-    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return;
-    pipe_table[pipe_id].sigio_pid = pid;
-}
-
-/* ── pipe_poll: check pipe readiness for poll()/select() ─────────── */
-
-int pipe_poll(int pipe_id, int is_read_end) {
-    if (pipe_id < 0 || pipe_id >= PIPE_MAX)
-        return POLLNVAL;
+        return -1;
 
     struct pipe *p = &pipe_table[pipe_id];
-    if (!p->in_use)
-        return POLLNVAL;
 
-    int revents = 0;
-
-    if (is_read_end) {
-        /* Read end: readable if data available or write side closed (EOF) */
-        if (p->count > 0) {
-            revents |= POLLIN;
-        } else if (p->writers == 0) {
-            revents |= POLLIN;   /* EOF — read returns 0 */
-            revents |= POLLHUP;  /* hung up */
+    if (is_write_end) {
+        p->writers--;
+        if (p->writers == 0) {
+            wait_queue_wake(&p->read_wq);  /* wake blocking readers */
         }
     } else {
-        /* Write end: writable if space available */
-        if (p->count < PIPE_BUF_SIZE) {
-            revents |= POLLOUT;
-        } else if (p->readers == 0) {
-            revents |= POLLERR;  /* broken pipe — no readers */
+        p->readers--;
+        if (p->readers == 0) {
+            wait_queue_wake(&p->write_wq);  /* wake blocking writers */
         }
     }
 
-    return revents;
+    /* Free pipe when both ends closed */
+    if (p->readers == 0 && p->writers == 0) {
+        if (p->buf) {
+            kfree(p->buf);
+            p->buf = NULL;
+        }
+        memset(p, 0, sizeof(*p));
+    }
+
+    return 0;
+}
+
+int pipe_set_capacity(int pipe_id, int new_capacity) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -1;
+
+    struct pipe *p = &pipe_table[pipe_id];
+
+    /* Must be at least PIPE_BUF_SIZE and at most PIPE_MAX_SIZE */
+    if (new_capacity < PIPE_BUF_SIZE || new_capacity > PIPE_MAX_SIZE)
+        return -1;
+
+    /* Only allowed when pipe is empty */
+    if (p->count != 0)
+        return -1;
+
+    /* Allocate new buffer */
+    uint8_t *new_buf = (uint8_t *)kmalloc(new_capacity);
+    if (!new_buf)
+        return -1;
+
+    /* Free old buffer, swap in new one */
+    kfree(p->buf);
+    p->buf = new_buf;
+    p->capacity = new_capacity;
+    p->read_pos = 0;
+    p->write_pos = 0;
+
+    return new_capacity;
+}
+
+int pipe_get_capacity(int pipe_id) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -1;
+    return pipe_table[pipe_id].capacity;
 }

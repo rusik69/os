@@ -2670,6 +2670,8 @@ static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
 #define F_OFD_SETLK  37
 #define F_OFD_SETLKW 38
 #define F_OFD_GETLK  39
+#define F_SETPIPE_SZ 1031
+#define F_GETPIPE_SZ 1032
 #define O_ASYNC   0x2000
 /* O_NONBLOCK is defined in types.h (04000) */
 
@@ -2723,6 +2725,21 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         case F_GETOWN: {
             /* Get the owner PID for SIGIO */
             return (uint64_t)proc->fd_table[fd].sigio_pid;
+        }
+        case F_SETPIPE_SZ: {
+            /* Set pipe buffer capacity (must be a pipe FD) */
+            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
+                return (uint64_t)-EINVAL;
+            int pipe_id = (int)proc->fd_table[fd].offset;
+            int ret = pipe_set_capacity(pipe_id, (int)arg);
+            return ret < 0 ? (uint64_t)-EINVAL : (uint64_t)ret;
+        }
+        case F_GETPIPE_SZ: {
+            /* Get pipe buffer capacity */
+            if (strncmp(proc->fd_table[fd].path, "pipe_", 5) != 0)
+                return (uint64_t)-EINVAL;
+            int pipe_id = (int)proc->fd_table[fd].offset;
+            return (uint64_t)pipe_get_capacity(pipe_id);
         }
         case F_SETLK:
         case F_SETLKW: {
