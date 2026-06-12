@@ -459,7 +459,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         uint8_t *tmp = kmalloc(need_end);
         if (!tmp) return (uint64_t)-1;
         uint32_t nread = 0;
-        vfs_read(pfd->path, tmp, need_end, &nread);
+        vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
         if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
             kfree(tmp);
             return (uint64_t)-1;
@@ -897,7 +897,7 @@ static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
 static uint64_t sys_raw_send(uint64_t buf_addr, uint64_t len) {
     if (len == 0 || len > 1514) return (uint64_t)-1;
-    int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint32_t)len);
+    int r = net_link_send((const uint8_t *)(uintptr_t)buf_addr, (uint16_t)len);
     return r < 0 ? (uint64_t)-1 : len;
 }
 
@@ -918,7 +918,7 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     uint8_t *tmp = kmalloc(need_end);
     if (!tmp) return (uint64_t)-1;
     uint32_t nread = 0;
-    vfs_read(pfd->path, tmp, need_end, &nread);
+    vfs_read(pfd->path, tmp, (uint32_t)need_end, &nread);
     if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
         kfree(tmp);
         return (uint64_t)-1;
@@ -5215,7 +5215,7 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
             /* ── Socket FDs (fd 100..100+SOCK_MAX-1) ──────────── */
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
                 revents = sock_poll(fd_idx, fds[i].events);
-                fds[i].revents = revents;
+                fds[i].revents = (int16_t)revents;
                 if (revents) ready++;
                 continue;
             }
@@ -5245,7 +5245,7 @@ static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) 
             }
 
             /* Mask with requested events — only report what was asked for */
-            fds[i].revents = revents & fds[i].events;
+            fds[i].revents = (int16_t)(revents & fds[i].events);
 
             if (fds[i].revents) ready++;
         }
@@ -5544,7 +5544,7 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
             /* Socket FDs */
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
                 revents = sock_poll(fd_idx, fds_buf[i].events);
-                fds_buf[i].revents = revents;
+                fds_buf[i].revents = (int16_t)revents;
                 if (revents) ready++;
                 continue;
             }
@@ -5569,7 +5569,7 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
                 if (fds_buf[i].events & POLLOUT) revents |= POLLOUT;
             }
 
-            fds_buf[i].revents = revents & fds_buf[i].events;
+            fds_buf[i].revents = (int16_t)(revents & fds_buf[i].events);
             if (fds_buf[i].revents) ready++;
         }
 
@@ -7497,7 +7497,6 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
     int start = (int)p->fd_table[fd].offset;
     if (start >= n) return 0;
 
-    uint8_t *dirp = (uint8_t *)dirp_addr;
     int total = 0;
 
     for (int i = start; i < n; i++) {
@@ -8289,7 +8288,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
             chunk = sizeof(buf);
 
         /* ── Determine source offset ── */
-        uint32_t saved_in_off = pfd_in->offset;
+        uint64_t saved_in_off = pfd_in->offset;
         if (off_in_addr != 0) {
             /* User provided absolute source offset: read loff_t from user space */
             int64_t abs_off;
@@ -8324,7 +8323,7 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
             break;  /* EOF */
 
         /* ── Determine destination offset ── */
-        uint32_t saved_out_off = pfd_out->offset;
+        uint64_t saved_out_off = pfd_out->offset;
         if (off_out_addr != 0) {
             int64_t abs_off;
             if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0)

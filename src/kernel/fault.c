@@ -255,8 +255,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
             /* Fault must be below current bottom (growth downward) */
             if (fault_page < proc->user_stack_bottom &&
                 fault_page + PAGE_SIZE >= proc->user_stack_bottom) {
-                uint64_t current_sz = proc->user_stack_top - proc->user_stack_bottom;
-                uint64_t new_sz     = proc->user_stack_top - fault_page;
+                uint64_t new_sz  = proc->user_stack_top - fault_page;
                 /* Check RLIMIT_STACK (index 6) — RLIM_INFINITY means unlimited */
                 uint64_t stack_limit = proc->rlim_cur[6]; /* RLIMIT_STACK */
                 if (stack_limit == (uint64_t)-1 || new_sz <= stack_limit) {
@@ -269,11 +268,12 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                               VMM_FLAG_USER | VMM_FLAG_NOEXEC) == 0) {
                             proc->user_stack_bottom = fault_page;
                             proc->minflt++;
-                            kprintf("[stack-grow] pid=%u stack 0x%lx → 0x%lx (used=%lu limit=%lu)\n",
+                            kprintf("[stack-grow] pid=%u stack 0x%llx -> 0x%llx (used=%llu limit=%llu)\n",
                                     (unsigned int)proc->pid,
-                                    proc->user_stack_top, fault_page,
-                                    (unsigned long)new_sz,
-                                    (unsigned long)stack_limit);
+                                    (unsigned long long)proc->user_stack_top,
+                                    (unsigned long long)fault_page,
+                                    (unsigned long long)new_sz,
+                                    (unsigned long long)stack_limit);
                             return; /* retry faulting instruction */
                         }
                         pmm_free_frame(frame);

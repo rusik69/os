@@ -814,7 +814,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             /* Create it with the default hostname for future boots */
             const char *def = "os\n";
             vfs_create("/etc/hostname", 1);
-            vfs_write("/etc/hostname", def, strlen(def));
+            vfs_write("/etc/hostname", def, (uint32_t)strlen(def));
         }
     }
 
@@ -841,7 +841,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                 "# Primary console shell\n"
                 "console::askfirst:/bin/sh\n";
             vfs_create("/etc/inittab", 1);
-            vfs_write("/etc/inittab", default_inittab, strlen(default_inittab));
+            vfs_write("/etc/inittab", default_inittab, (uint32_t)strlen(default_inittab));
             kprintf("[OK] Created default /etc/inittab\n");
         }
     }

@@ -29,7 +29,7 @@ static uint8_t __attribute__((aligned(16))) early_ist1_stack[EARLY_IST1_STACK_SI
 static void gdt_set_entry(int i, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran) {
     gdt[i].base_low    = base & 0xFFFF;
     gdt[i].base_mid    = (base >> 16) & 0xFF;
-    gdt[i].base_high   = (base >> 24) & 0xFF;
+    gdt[i].base_high   = (uint8_t)((base >> 24) & 0xFF);
     gdt[i].limit_low   = limit & 0xFFFF;
     gdt[i].granularity  = ((limit >> 16) & 0x0F) | (gran & 0xF0);
     gdt[i].access      = access;
