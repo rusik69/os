@@ -702,7 +702,8 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
         /* Allocate fd slot and mark as FD_TMPFILE */
         struct process *p = process_get_current();
         if (!p) { vfs_unlink(tmp_path); return (uint64_t)-1; }
-        uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
+        uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
+                           p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
         for (int i = 0; i < PROCESS_FD_MAX; i++) {
             if (!p->fd_table[i].used) {
                 if ((uint64_t)i >= max_fds) {
@@ -740,8 +741,9 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     /* Allocate fd slot in current process's table */
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-1;
-    /* Enforce per-process fd limit */
-    uint64_t max_fds = p->file_max > 0 ? p->file_max : PROCESS_FD_MAX;
+    /* Enforce RLIMIT_NOFILE */
+    uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
+                       p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
         if (!p->fd_table[i].used) {
             if ((uint64_t)i >= max_fds) return (uint64_t)-EMFILE;
@@ -3155,6 +3157,14 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
     if (!fds_addr) return (uint64_t)-1;
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
+
+    /* Count open FDs and check against RLIMIT_NOFILE */
+    int open_count = 0;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (proc->fd_table[i].used) open_count++;
+    }
+    if ((uint64_t)open_count + 1 >= proc->rlim_cur[RLIMIT_NOFILE])
+        return (uint64_t)-EMFILE;
 
     int id = pipe_create();
     if (id < 0) return (uint64_t)-1;
