@@ -900,7 +900,10 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     if (!tmp) return (uint64_t)-1;
     uint32_t nread = 0;
     vfs_read(pfd->path, tmp, need_end, &nread);
-    memcpy((void *)(uintptr_t)buf_addr, tmp + pfd->offset, to_read);
+    if (copy_to_user(buf_addr, tmp + pfd->offset, to_read) < 0) {
+        kfree(tmp);
+        return (uint64_t)-1;
+    }
     kfree(tmp);
     pfd->offset += to_read;
     return (uint64_t)to_read;
@@ -2710,7 +2713,8 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             if (!arg) return (uint64_t)-1;
             if (syscall_is_user_process() && !syscall_user_read_ok(arg, sizeof(user_flk)))
                 return (uint64_t)-1;
-            memcpy(&user_flk, (void*)(uintptr_t)arg, sizeof(user_flk));
+            if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
+                return (uint64_t)-1;
 
             /* Convert to kernel struct file_lock */
             struct file_lock kflk;
@@ -2751,7 +2755,8 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 return (uint64_t)-1;
 
             struct flock user_flk;
-            memcpy(&user_flk, (void*)(uintptr_t)arg, sizeof(user_flk));
+            if (copy_from_user(&user_flk, arg, sizeof(user_flk)) < 0)
+                return (uint64_t)-1;
 
             /* Get file path */
             const char *fpath = proc->fd_table[fd].path;
@@ -2780,7 +2785,8 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 
             if (syscall_is_user_process() && !syscall_user_write_ok(arg, sizeof(struct flock)))
                 return (uint64_t)-1;
-            memcpy((void*)(uintptr_t)arg, &user_flk, sizeof(user_flk));
+            if (copy_to_user(arg, &user_flk, sizeof(user_flk)) < 0)
+                return (uint64_t)-1;
             return 0;
         }
         case F_DUPFD_CLOEXEC: {
@@ -3064,7 +3070,8 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
     if (!req_addr) return (uint64_t)-1;
 
     struct timespec req;
-    memcpy(&req, (void*)req_addr, sizeof(req));
+    if (copy_from_user(&req, req_addr, sizeof(req)) < 0)
+        return (uint64_t)-1;
 
     /* Convert to ticks */
     uint64_t ticks = req.tv_sec * 100 + req.tv_nsec / 10000000;
@@ -3084,7 +3091,8 @@ static uint64_t sys_nanosleep(uint64_t req_addr, uint64_t rem_addr) {
         uint64_t remaining = proc->sleep_until - timer_get_ticks();
         rem.tv_sec = remaining / 100;
         rem.tv_nsec = (remaining % 100) * 10000000;
-        memcpy((void*)rem_addr, &rem, sizeof(rem));
+        if (copy_to_user(rem_addr, &rem, sizeof(rem)) < 0)
+            return (uint64_t)-1;
     }
 
     return 0;
@@ -3438,7 +3446,8 @@ static uint64_t sys_sigpending(uint64_t set_addr) {
     if (!set_addr) return (uint64_t)-1;
 
     uint64_t pending = proc->pending_signals;
-    memcpy((void*)set_addr, &pending, sizeof(uint64_t));
+    if (copy_to_user(set_addr, &pending, sizeof(uint64_t)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -3507,7 +3516,8 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     if (!set_addr) return (uint64_t)-1;
 
     uint64_t sigmask;
-    memcpy(&sigmask, (void*)set_addr, sizeof(uint64_t));
+    if (copy_from_user(&sigmask, set_addr, sizeof(uint64_t)) < 0)
+        return (uint64_t)-1;
 
     /* Mask out signals that can't be waited on (SIGKILL, SIGSTOP) */
     sigmask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
@@ -3527,8 +3537,9 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     if (sig < 0) return (uint64_t)-1;
 
     /* Copy siginfo back to userspace if requested */
-    if (info_addr && syscall_user_write_ok(info_addr, sizeof(struct siginfo))) {
-        memcpy((void*)info_addr, &info_buf, sizeof(struct siginfo));
+    if (info_addr) {
+        if (copy_to_user(info_addr, &info_buf, sizeof(struct siginfo)) < 0)
+            return (uint64_t)-1;
     }
 
     return (uint64_t)(unsigned int)sig;
@@ -3539,12 +3550,14 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
     if (!set_addr || !timeout_addr) return (uint64_t)-1;
 
     uint64_t sigmask;
-    memcpy(&sigmask, (void*)set_addr, sizeof(uint64_t));
+    if (copy_from_user(&sigmask, set_addr, sizeof(uint64_t)) < 0)
+        return (uint64_t)-1;
     sigmask &= ~((1ULL << SIGKILL) | (1ULL << SIGSTOP));
 
     /* Read timeout as timespec and convert to ticks */
     struct timespec ts;
-    memcpy(&ts, (void*)timeout_addr, sizeof(struct timespec));
+    if (copy_from_user(&ts, timeout_addr, sizeof(struct timespec)) < 0)
+        return (uint64_t)-1;
     int timeout_ticks = (int)(ts.tv_sec * TIMER_FREQ + ts.tv_nsec * TIMER_FREQ / 1000000000ULL);
     if (timeout_ticks < 0) timeout_ticks = 0;
 
@@ -3560,8 +3573,9 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 
     if (sig < 0) return (uint64_t)-1;
 
-    if (info_addr && syscall_user_write_ok(info_addr, sizeof(struct siginfo))) {
-        memcpy((void*)info_addr, &info_buf, sizeof(struct siginfo));
+    if (info_addr) {
+        if (copy_to_user(info_addr, &info_buf, sizeof(struct siginfo)) < 0)
+            return (uint64_t)-1;
     }
 
     return (uint64_t)(unsigned int)sig;
@@ -3574,7 +3588,8 @@ static uint64_t sys_readv(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     if (iovcnt > 16) iovcnt = 16; /* sanity */
 
     struct iovec iov[16];
-    memcpy(iov, (void*)iov_addr, sizeof(struct iovec) * iovcnt);
+    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0)
+        return (uint64_t)-1;
 
     uint64_t total = 0;
     for (uint64_t i = 0; i < iovcnt; i++) {
@@ -3594,7 +3609,8 @@ static uint64_t sys_writev(uint64_t fd, uint64_t iov_addr, uint64_t iovcnt) {
     if (iovcnt > 16) iovcnt = 16;
 
     struct iovec iov[16];
-    memcpy(iov, (void*)iov_addr, sizeof(struct iovec) * iovcnt);
+    if (copy_from_user(iov, iov_addr, sizeof(struct iovec) * iovcnt) < 0)
+        return (uint64_t)-1;
 
     uint64_t total = 0;
     for (uint64_t i = 0; i < iovcnt; i++) {
@@ -3682,12 +3698,13 @@ static uint64_t sys_sethostname(uint64_t name_addr, uint64_t len) {
     size_t copylen = (size_t)len;
     if (copylen > sizeof(proc->ns_hostname) - 1)
         copylen = sizeof(proc->ns_hostname) - 1;
-    memcpy(proc->ns_hostname, (void*)name_addr, copylen);
+    /* Copy name from userspace via uaccess */
+    if (copy_from_user(proc->ns_hostname, name_addr, copylen) < 0)
+        return (uint64_t)-1;
     proc->ns_hostname[copylen] = '\0';
     /* Also update the system global so new processes inherit it */
     if (copylen > HOSTNAME_MAX - 1) copylen = HOSTNAME_MAX - 1;
-    memcpy(system_hostname, (void*)name_addr, copylen);
-    system_hostname[copylen] = '\0';
+    memcpy(system_hostname, proc->ns_hostname, copylen + 1);
     return 0;
 }
 
@@ -3697,8 +3714,13 @@ static uint64_t sys_gethostname(uint64_t name_addr, uint64_t len) {
     const char *host = proc ? proc->ns_hostname : system_hostname;
     size_t slen = strlen(host);
     if (slen > (size_t)len - 1) slen = (size_t)len - 1;
-    memcpy((void*)name_addr, host, slen);
-    ((char*)name_addr)[slen] = '\0';
+    /* Copy hostname to user via uaccess */
+    char kbuf[256];
+    if (slen >= sizeof(kbuf)) slen = sizeof(kbuf) - 1;
+    memcpy(kbuf, host, slen);
+    kbuf[slen] = '\0';
+    if (copy_to_user(name_addr, kbuf, slen + 1) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -4440,7 +4462,8 @@ static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
         struct rlimit64 old_rlim;
         old_rlim.rlim_cur = target->rlim_cur[resource];
         old_rlim.rlim_max = target->rlim_max[resource];
-        memcpy((void*)old_rlim_addr, &old_rlim, 16);
+        if (copy_to_user(old_rlim_addr, &old_rlim, 16) < 0)
+            return (uint64_t)-1;
     }
 
     /* Set new limits if requested */
@@ -4448,7 +4471,8 @@ static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
         if (syscall_is_user_process() && !syscall_user_read_ok(new_rlim_addr, 16))
             return (uint64_t)-1;
         struct rlimit64 new_rlim;
-        memcpy(&new_rlim, (void*)new_rlim_addr, 16);
+        if (copy_from_user(&new_rlim, new_rlim_addr, 16) < 0)
+            return (uint64_t)-1;
         /* Can't raise hard limit without CAP_SYS_RESOURCE */
         if (new_rlim.rlim_max > target->rlim_max[resource])
             return (uint64_t)-1;
@@ -5228,17 +5252,20 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
 
     /* Copy in from userspace — skip NULL sets */
     if (readfds_addr) {
-        memcpy(&orig_readfds, (void*)readfds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_readfds, readfds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_readfds);
     }
     if (writefds_addr) {
-        memcpy(&orig_writefds, (void*)writefds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_writefds, writefds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_writefds);
     }
     if (exceptfds_addr) {
-        memcpy(&orig_exceptfds, (void*)exceptfds_addr, sizeof(fd_set));
+        if (copy_from_user(&orig_exceptfds, exceptfds_addr, sizeof(fd_set)) < 0)
+            return (uint64_t)-1;
     } else {
         FD_ZERO(&orig_exceptfds);
     }
@@ -5248,9 +5275,8 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     int has_timeout = 0;
     if (timeout_addr) {
         struct timespec ts;
-        if (syscall_is_user_process() && !syscall_user_read_ok(timeout_addr, sizeof(ts)))
+        if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
             return (uint64_t)-1;
-        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
         /* Validate: timespec fields must be non-negative */
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
             timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
@@ -5344,9 +5370,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
 
         if (ready) {
             /* Copy results back to userspace */
-            if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
-            if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
-            if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+            if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
+            if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
+            if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
+                return (uint64_t)-1;
             /* Restore original signal mask */
             if (sigmask) proc->sig_mask = old_mask;
             return (uint64_t)ready;
@@ -5369,9 +5398,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     if (readfds_addr) FD_ZERO(&readfds);
     if (writefds_addr) FD_ZERO(&writefds);
     if (exceptfds_addr) FD_ZERO(&exceptfds);
-    if (readfds_addr) memcpy((void*)readfds_addr, &readfds, sizeof(fd_set));
-    if (writefds_addr) memcpy((void*)writefds_addr, &writefds, sizeof(fd_set));
-    if (exceptfds_addr) memcpy((void*)exceptfds_addr, &exceptfds, sizeof(fd_set));
+    if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
+    if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
+    if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
+        return (uint64_t)-1;
 
     /* Restore original signal mask */
     if (sigmask) proc->sig_mask = old_mask;
@@ -5395,21 +5427,26 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
     /* Apply the temporary signal mask if provided */
     uint64_t old_mask = proc->sig_mask;
     if (sigmask_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(sigmask_addr, sizeof(uint64_t)))
-            return (uint64_t)-1;
         uint64_t new_mask;
-        memcpy(&new_mask, (void*)sigmask_addr, sizeof(new_mask));
+        if (copy_from_user(&new_mask, sigmask_addr, sizeof(new_mask)) < 0)
+            return (uint64_t)-1;
         proc->sig_mask = new_mask;
     }
 
-    struct pollfd *fds = (struct pollfd *)fds_addr;
+    struct pollfd fds_buf[256];
     int n = (int)nfds;
+    if (n > 256) n = 256;
+    if (fds_addr) {
+        if (copy_from_user(fds_buf, fds_addr, sizeof(struct pollfd) * (size_t)n) < 0)
+            return (uint64_t)-1;
+    } else {
+        return (uint64_t)-1;
+    }
     uint64_t timeout_ticks = ~0ULL; /* infinite */
     if (timeout_addr) {
         struct timespec ts;
-        if (syscall_is_user_process() && !syscall_user_read_ok(timeout_addr, sizeof(ts)))
+        if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
             return (uint64_t)-1;
-        memcpy(&ts, (void*)timeout_addr, sizeof(ts));
         if ((int64_t)ts.tv_sec >= 0 && (int64_t)ts.tv_nsec >= 0) {
             timeout_ticks = (uint64_t)(int64_t)ts.tv_sec * 100 + (uint64_t)(int64_t)ts.tv_nsec / 10000000;
         }
@@ -5425,27 +5462,27 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
         int ready = 0;
         for (int i = 0; i < n; i++) {
-            fds[i].revents = 0;
-            if (fds[i].fd < 0) {
-                fds[i].revents = POLLNVAL;
+            fds_buf[i].revents = 0;
+            if (fds_buf[i].fd < 0) {
+                fds_buf[i].revents = POLLNVAL;
                 ready++;
                 continue;
             }
 
-            int fd_idx = fds[i].fd;
+            int fd_idx = fds_buf[i].fd;
             int revents = 0;
 
             /* Socket FDs */
             if (fd_idx >= 100 && fd_idx < 100 + SOCK_MAX) {
-                revents = sock_poll(fd_idx, fds[i].events);
-                fds[i].revents = revents;
+                revents = sock_poll(fd_idx, fds_buf[i].events);
+                fds_buf[i].revents = revents;
                 if (revents) ready++;
                 continue;
             }
 
             /* Regular process FDs */
             if (fd_idx >= PROCESS_FD_MAX || !proc->fd_table[fd_idx].used) {
-                fds[i].revents = POLLNVAL;
+                fds_buf[i].revents = POLLNVAL;
                 ready++;
                 continue;
             }
@@ -5459,13 +5496,17 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
                 int pipe_id = (int)pfd->offset;
                 revents = pipe_poll(pipe_id, 0);
             } else {
-                if (fds[i].events & POLLIN)  revents |= POLLIN;
-                if (fds[i].events & POLLOUT) revents |= POLLOUT;
+                if (fds_buf[i].events & POLLIN)  revents |= POLLIN;
+                if (fds_buf[i].events & POLLOUT) revents |= POLLOUT;
             }
 
-            fds[i].revents = revents & fds[i].events;
-            if (fds[i].revents) ready++;
+            fds_buf[i].revents = revents & fds_buf[i].events;
+            if (fds_buf[i].revents) ready++;
         }
+
+        /* Write results back to userspace */
+        if (copy_to_user(fds_addr, fds_buf, sizeof(struct pollfd) * (size_t)n) < 0)
+            return (uint64_t)-1;
 
         if (ready > 0) {
             if (sigmask_addr) proc->sig_mask = old_mask;
@@ -5486,8 +5527,10 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
     /* Timeout — zero out all revents */
     for (int i = 0; i < n; i++) {
-        fds[i].revents = 0;
+        fds_buf[i].revents = 0;
     }
+    if (copy_to_user(fds_addr, fds_buf, sizeof(struct pollfd) * (size_t)n) < 0)
+        return (uint64_t)-1;
 
     if (sigmask_addr) proc->sig_mask = old_mask;
     return 0;
@@ -5516,9 +5559,8 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
     uint64_t off = 0;
     int use_offset = 0;
     if (offset_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(offset_addr, 8))
+        if (copy_from_user(&off, offset_addr, 8) < 0)
             return (uint64_t)-1;
-        memcpy(&off, (void*)offset_addr, 8);
         use_offset = 1;
     }
 
@@ -5559,11 +5601,11 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
 
     /* Update offset if requested */
     if (use_offset && offset_addr) {
-        if (syscall_user_write_ok(offset_addr, 8))
-            memcpy((void*)offset_addr, &off, 8);
+        if (copy_to_user(offset_addr, &off, 8) < 0)
+            return (uint64_t)-1;
     }
 
-    return total > 0 ? (uint64_t)total : (uint64_t)-1;
+    return (uint64_t)total;
 }
 
 /* ── ioctl ─────────────────────────────────────────────────────────────── */
@@ -5991,10 +6033,9 @@ static uint64_t sys_sched_setscheduler(uint64_t pid, uint64_t policy,
     }
 
     if (param_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(param_addr, 4))
-            return (uint64_t)-1;
         struct sched_param param;
-        memcpy(&param, (void*)param_addr, 4);
+        if (copy_from_user(&param, param_addr, sizeof(param)) < 0)
+            return (uint64_t)-1;
         /* SCHED_FIFO/RR priority: only privileged processes can set > 0 */
         if (param.sched_priority > 0)
             target->priority = (uint8_t)(param.sched_priority > 3 ? 3 : param.sched_priority);
@@ -6314,9 +6355,8 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t 
     switch (op) {
         case EPOLL_CTL_ADD: {
             struct epoll_event ev;
-            if (syscall_is_user_process() && !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
+            if (copy_from_user(&ev, event_addr, sizeof(struct epoll_event)) < 0)
                 return (uint64_t)-1;
-            memcpy(&ev, (void*)event_addr, sizeof(struct epoll_event));
             if (ep->num_entries >= EPOLL_MAX_EVENTS) return (uint64_t)-1;
             struct epoll_fd_entry *e = &ep->entries[ep->num_entries++];
             e->fd = (int)fd;
@@ -6336,9 +6376,8 @@ static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t 
         }
         case EPOLL_CTL_MOD: {
             struct epoll_event ev;
-            if (syscall_is_user_process() && !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
+            if (copy_from_user(&ev, event_addr, sizeof(struct epoll_event)) < 0)
                 return (uint64_t)-1;
-            memcpy(&ev, (void*)event_addr, sizeof(struct epoll_event));
             for (int i = 0; i < ep->num_entries; i++) {
                 if (ep->entries[i].fd == (int)fd) {
                     ep->entries[i].events = ev.events;
@@ -6528,12 +6567,11 @@ static uint64_t sys_clock_settime(uint64_t clockid, uint64_t tp_addr) {
 static uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr) {
     (void)clockid;
     if (res_addr) {
-        if (syscall_is_user_process() && !syscall_user_write_ok(res_addr, sizeof(struct timespec)))
-            return (uint64_t)-1;
         struct timespec ts;
         ts.tv_sec = 0;
         ts.tv_nsec = 1000000000ULL / TIMER_FREQ; /* 10ms resolution */
-        memcpy((void*)res_addr, &ts, sizeof(struct timespec));
+        if (copy_to_user(res_addr, &ts, sizeof(struct timespec)) < 0)
+            return (uint64_t)-1;
     }
     return 0;
 }
@@ -6561,9 +6599,8 @@ static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t 
     struct sigevent sev;
     int sig = SIGALRM; /* default */
     if (sevp_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(sevp_addr, sizeof(struct sigevent)))
+        if (copy_from_user(&sev, sevp_addr, sizeof(struct sigevent)) < 0)
             return (uint64_t)-1;
-        memcpy(&sev, (void*)sevp_addr, sizeof(struct sigevent));
         sig = sev.sigev_signo;
     }
 
@@ -6579,7 +6616,8 @@ static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t 
             posix_timers[i].pid = process_get_current() ? process_get_current()->pid : 0;
             /* Return timer ID */
             timer_t tid = (timer_t)(i + 1);
-            memcpy((void*)timerid_addr, &tid, sizeof(timer_t));
+            if (copy_to_user(timerid_addr, &tid, sizeof(timer_t)) < 0)
+                return (uint64_t)-1;
             return 0;
         }
     }
@@ -6596,20 +6634,18 @@ static uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
     struct itimerspec new_val;
     memset(&new_val, 0, sizeof(new_val));
     if (new_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(new_addr, sizeof(struct itimerspec)))
+        if (copy_from_user(&new_val, new_addr, sizeof(struct itimerspec)) < 0)
             return (uint64_t)-1;
-        memcpy(&new_val, (void*)new_addr, sizeof(struct itimerspec));
     }
 
     if (old_addr) {
-        if (syscall_is_user_process() && !syscall_user_write_ok(old_addr, sizeof(struct itimerspec)))
-            return (uint64_t)-1;
         struct itimerspec old;
         old.it_interval.tv_sec = posix_timers[idx].it_interval / TIMER_FREQ;
         old.it_interval.tv_nsec = (posix_timers[idx].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
         old.it_value.tv_sec = posix_timers[idx].it_value / TIMER_FREQ;
         old.it_value.tv_nsec = (posix_timers[idx].it_value % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
-        memcpy((void*)old_addr, &old, sizeof(struct itimerspec));
+        if (copy_to_user(old_addr, &old, sizeof(struct itimerspec)) < 0)
+            return (uint64_t)-1;
     }
 
     if (new_addr) {
@@ -6626,12 +6662,11 @@ static uint64_t sys_timer_settime(uint64_t timerid, uint64_t flags,
     return 0;
 }
 
+/* ── timer_gettime ──────────────────────────────────────────── */
+
 static uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr) {
     int idx = (int)timerid - 1;
     if (idx < 0 || idx >= POSIX_TIMER_MAX || !posix_timers[idx].in_use)
-        return (uint64_t)-1;
-
-    if (syscall_is_user_process() && !syscall_user_write_ok(cur_addr, sizeof(struct itimerspec)))
         return (uint64_t)-1;
 
     struct itimerspec cur;
@@ -6644,7 +6679,8 @@ static uint64_t sys_timer_gettime(uint64_t timerid, uint64_t cur_addr) {
     cur.it_value.tv_sec = remaining / TIMER_FREQ;
     cur.it_value.tv_nsec = (remaining % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
-    memcpy((void*)cur_addr, &cur, sizeof(struct itimerspec));
+    if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -6771,7 +6807,8 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
 
     /* Write fds back to userspace */
     uint32_t fds[2] = { (uint32_t)read_fd, (uint32_t)write_fd };
-    memcpy((void*)(uintptr_t)fds_addr, fds, sizeof(fds));
+    if (copy_to_user(fds_addr, fds, sizeof(fds)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -6977,7 +7014,8 @@ static uint64_t sys_getrusage(uint64_t who, uint64_t usage_addr) {
         return (uint64_t)-EINVAL;
     }
 
-    memcpy((void*)usage_addr, &ru, sizeof(struct rusage));
+    if (copy_to_user(usage_addr, &ru, sizeof(struct rusage)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -6998,7 +7036,8 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
         if (table[i].state != PROCESS_UNUSED) info.procs++;
     }
 
-    memcpy((void*)info_addr, &info, sizeof(struct sysinfo));
+    if (copy_to_user(info_addr, &info, sizeof(struct sysinfo)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -7009,16 +7048,19 @@ static uint64_t sys_getresuid(uint64_t ruid_addr, uint64_t euid_addr, uint64_t s
     if (!p) return (uint64_t)-1;
 
     if (ruid_addr) {
-        if (syscall_user_write_ok(ruid_addr, 4))
-            *(uint32_t*)ruid_addr = p->uid;
+        uint32_t val = p->uid;
+        if (copy_to_user(ruid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     if (euid_addr) {
-        if (syscall_user_write_ok(euid_addr, 4))
-            *(uint32_t*)euid_addr = p->euid;
+        uint32_t val = p->euid;
+        if (copy_to_user(euid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     if (suid_addr) {
-        if (syscall_user_write_ok(suid_addr, 4))
-            *(uint32_t*)suid_addr = p->euid;
+        uint32_t val = p->euid;
+        if (copy_to_user(suid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     return 0;
 }
@@ -7044,16 +7086,19 @@ static uint64_t sys_getresgid(uint64_t rgid_addr, uint64_t egid_addr, uint64_t s
     if (!p) return (uint64_t)-1;
 
     if (rgid_addr) {
-        if (syscall_user_write_ok(rgid_addr, 4))
-            *(uint32_t*)rgid_addr = p->gid;
+        uint32_t val = p->gid;
+        if (copy_to_user(rgid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     if (egid_addr) {
-        if (syscall_user_write_ok(egid_addr, 4))
-            *(uint32_t*)egid_addr = p->egid;
+        uint32_t val = p->egid;
+        if (copy_to_user(egid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     if (sgid_addr) {
-        if (syscall_user_write_ok(sgid_addr, 4))
-            *(uint32_t*)sgid_addr = p->egid;
+        uint32_t val = p->egid;
+        if (copy_to_user(sgid_addr, &val, sizeof(val)) < 0)
+            return (uint64_t)-1;
     }
     return 0;
 }
@@ -7083,7 +7128,8 @@ static uint64_t sys_sched_getparam(uint64_t pid, uint64_t param_addr) {
 
     struct sched_param param;
     param.sched_priority = (int)target->priority;
-    memcpy((void*)param_addr, &param, sizeof(struct sched_param));
+    if (copy_to_user(param_addr, &param, sizeof(struct sched_param)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -7097,7 +7143,8 @@ static uint64_t sys_sched_setparam(uint64_t pid, uint64_t param_addr) {
         return (uint64_t)-1;
 
     struct sched_param param;
-    memcpy(&param, (void*)param_addr, sizeof(struct sched_param));
+    if (copy_from_user(&param, param_addr, sizeof(struct sched_param)) < 0)
+        return (uint64_t)-1;
     if (param.sched_priority >= 0 && param.sched_priority < 4)
         target->priority = (uint8_t)param.sched_priority;
     return 0;
@@ -7156,13 +7203,12 @@ static uint64_t sys_mq_open(uint64_t name_addr, uint64_t oflag,
                 mq_table[i].mq_maxmsg = MQ_MAX_MSG;
                 mq_table[i].mq_msgsize = MQ_MSG_SIZE;
                 if (attr_addr) {
-                    if (syscall_user_read_ok(attr_addr, sizeof(struct mq_attr))) {
-                        struct mq_attr attr;
-                        memcpy(&attr, (void*)attr_addr, sizeof(struct mq_attr));
-                        if (attr.mq_maxmsg > 0) mq_table[i].mq_maxmsg = attr.mq_maxmsg;
-                        if (attr.mq_msgsize > 0 && attr.mq_msgsize <= MQ_MSG_SIZE)
-                            mq_table[i].mq_msgsize = attr.mq_msgsize;
-                    }
+                    struct mq_attr attr;
+                    if (copy_from_user(&attr, attr_addr, sizeof(struct mq_attr)) < 0)
+                        return (uint64_t)-1;
+                    if (attr.mq_maxmsg > 0) mq_table[i].mq_maxmsg = attr.mq_maxmsg;
+                    if (attr.mq_msgsize > 0 && attr.mq_msgsize <= MQ_MSG_SIZE)
+                        mq_table[i].mq_msgsize = attr.mq_msgsize;
                 }
                 return (uint64_t)(800 + i); /* mqd range */
             }
@@ -7232,11 +7278,13 @@ static uint64_t sys_mq_receive(uint64_t mqd, uint64_t msg_addr,
 
     struct mq_msg *m = &mq->msgs[best];
     uint64_t copy_len = msg_len < mq->mq_msgsize ? msg_len : mq->mq_msgsize;
-    memcpy((void*)msg_addr, m->data, (unsigned long)copy_len);
+    if (copy_to_user(msg_addr, m->data, (unsigned long)copy_len) < 0)
+        return (uint64_t)-1;
 
     if (prio_addr) {
-        if (syscall_user_write_ok(prio_addr, 4))
-            *(unsigned int*)prio_addr = m->prio;
+        unsigned int p = m->prio;
+        if (copy_to_user(prio_addr, &p, sizeof(p)) < 0)
+            return (uint64_t)-1;
     }
 
     /* Remove message by swapping with last */
@@ -7391,12 +7439,17 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
 
         if (total + reclen > (int)count) break;
 
-        struct linux_dirent64 *entry = (struct linux_dirent64 *)(dirp + total);
-        entry->d_ino = 1;
-        entry->d_off = (int64_t)(i + 1 < n ? reclen : 0);
-        entry->d_reclen = (unsigned short)reclen;
-        entry->d_type = DT_UNKNOWN;
-        memcpy(entry->d_name, names[i], (unsigned long)namelen + 1);
+        /* Build entry in kernel buffer, then copy out */
+        uint8_t kentry[512];
+        struct linux_dirent64 *k_ent = (struct linux_dirent64 *)kentry;
+        k_ent->d_ino = 1;
+        k_ent->d_off = (int64_t)(i + 1 < n ? reclen : 0);
+        k_ent->d_reclen = (unsigned short)reclen;
+        k_ent->d_type = DT_UNKNOWN;
+        memcpy(k_ent->d_name, names[i], (unsigned long)namelen + 1);
+
+        if (copy_to_user(dirp_addr + total, kentry, (size_t)reclen) < 0)
+            return (uint64_t)-1;
         total += reclen;
         p->fd_table[fd].offset = (uint32_t)(i + 1);
     }
@@ -7465,13 +7518,21 @@ static uint64_t sys_mincore(uint64_t addr, uint64_t len, uint64_t vec_addr) {
     if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
 
     uint64_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (syscall_is_user_process() && !syscall_user_write_ok(vec_addr, pages))
-        return (uint64_t)-1;
-
-    uint8_t *vec = (uint8_t *)vec_addr;
+    uint8_t *vec = NULL;
+    if (vec_addr) {
+        vec = (uint8_t *)kmalloc(pages);
+        if (!vec) return (uint64_t)-1;
+    }
     for (uint64_t i = 0; i < pages; i++) {
         uint64_t vaddr = addr + i * PAGE_SIZE;
-        vec[i] = vmm_page_is_mapped_user(p->pml4, vaddr) ? 1 : 0;
+        if (vec) vec[i] = vmm_page_is_mapped_user(p->pml4, vaddr) ? 1 : 0;
+    }
+    if (vec) {
+        if (copy_to_user(vec_addr, vec, pages) < 0) {
+            kfree(vec);
+            return (uint64_t)-1;
+        }
+        kfree(vec);
     }
     return 0;
 }
@@ -7733,15 +7794,12 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
 
     struct itimerspec new_val;
     if (new_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(new_addr, sizeof(struct itimerspec)))
+        if (copy_from_user(&new_val, new_addr, sizeof(struct itimerspec)) < 0)
             return (uint64_t)-1;
-        memcpy(&new_val, (void*)new_addr, sizeof(struct itimerspec));
     }
 
     /* Return old value if requested */
     if (old_addr) {
-        if (syscall_is_user_process() && !syscall_user_write_ok(old_addr, sizeof(struct itimerspec)))
-            return (uint64_t)-1;
         struct itimerspec old_val;
         if (timerfd_table[slot].absolute && timerfd_table[slot].it_value > 0) {
             /* Absolute timer: return remaining time as absolute (TFD_TIMER_ABSTIME
@@ -7758,7 +7816,8 @@ static uint64_t sys_timerfd_settime(uint64_t fd, uint64_t flags,
         }
         old_val.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
         old_val.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
-        memcpy((void*)old_addr, &old_val, sizeof(struct itimerspec));
+        if (copy_to_user(old_addr, &old_val, sizeof(struct itimerspec)) < 0)
+            return (uint64_t)-1;
     }
 
     /* Set new timer */
@@ -7793,9 +7852,6 @@ static uint64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
     if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use)
         return (uint64_t)-1;
 
-    if (syscall_is_user_process() && !syscall_user_write_ok(cur_addr, sizeof(struct itimerspec)))
-        return (uint64_t)-1;
-
     struct itimerspec cur;
 
     if (timerfd_table[slot].absolute) {
@@ -7817,7 +7873,8 @@ static uint64_t sys_timerfd_gettime(uint64_t fd, uint64_t cur_addr) {
     cur.it_interval.tv_sec = timerfd_table[slot].it_interval / TIMER_FREQ;
     cur.it_interval.tv_nsec = (timerfd_table[slot].it_interval % TIMER_FREQ) * (1000000000ULL / TIMER_FREQ);
 
-    memcpy((void*)cur_addr, &cur, sizeof(struct itimerspec));
+    if (copy_to_user(cur_addr, &cur, sizeof(struct itimerspec)) < 0)
+        return (uint64_t)-1;
     return 0;
 }
 
@@ -7943,9 +8000,10 @@ static uint64_t sys_signalfd(uint64_t fd, uint64_t mask_addr, uint64_t flags) {
     if (flags & 04000)    sfd_flags |= SIGNALFD_FLAG_NONBLOCK;
 
     if (mask_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(mask_addr, 8))
+        uint32_t val;
+        if (copy_from_user(&val, mask_addr, sizeof(val)) < 0)
             return (uint64_t)-1;
-        sigmask = *(uint32_t*)mask_addr;
+        sigmask = val;
     }
 
     /* If fd is non-zero, update existing signalfd mask */
@@ -8132,9 +8190,8 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         if (off_in_addr != 0) {
             /* User provided absolute source offset: read loff_t from user space */
             int64_t abs_off;
-            if (!syscall_user_read_ok(off_in_addr, sizeof(abs_off)))
+            if (copy_from_user(&abs_off, off_in_addr, sizeof(abs_off)) < 0)
                 return (uint64_t)-1;
-            __builtin_memcpy(&abs_off, (const void *)off_in_addr, sizeof(abs_off));
             if (abs_off < 0)
                 return (uint64_t)-1;
             /* Temporarily seek fd_in to the requested offset */
@@ -8155,7 +8212,8 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         /* Update user-provided source offset if applicable */
         if (off_in_addr != 0) {
             int64_t new_off = (int64_t)pfd_in->offset;
-            __builtin_memcpy((void *)off_in_addr, &new_off, sizeof(new_off));
+            if (copy_to_user(off_in_addr, &new_off, sizeof(new_off)) < 0)
+                return (uint64_t)-1;
         }
         /* else: fd_in offset was already updated by vfs_read */
 
@@ -8166,9 +8224,8 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         uint32_t saved_out_off = pfd_out->offset;
         if (off_out_addr != 0) {
             int64_t abs_off;
-            if (!syscall_user_read_ok(off_out_addr, sizeof(abs_off)))
+            if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0)
                 return (uint64_t)-1;
-            __builtin_memcpy(&abs_off, (const void *)off_out_addr, sizeof(abs_off));
             if (abs_off < 0)
                 return (uint64_t)-1;
             pfd_out->offset = (uint32_t)abs_off;
@@ -8187,7 +8244,8 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         /* Update user-provided destination offset */
         if (off_out_addr != 0) {
             int64_t new_off = (int64_t)pfd_out->offset;
-            __builtin_memcpy((void *)off_out_addr, &new_off, sizeof(new_off));
+            if (copy_to_user(off_out_addr, &new_off, sizeof(new_off)) < 0)
+                return (uint64_t)-1;
         }
 
         total += nread;
@@ -8284,21 +8342,19 @@ static uint64_t sys_sigaltstack(uint64_t ss_addr, uint64_t old_ss_addr) {
 
     /* Return old stack if requested */
     if (old_ss_addr) {
-        if (syscall_is_user_process() && !syscall_user_write_ok(old_ss_addr, sizeof(stack_t)))
-            return (uint64_t)-1;
         stack_t old;
         old.ss_sp = p->alt_stack_sp;
         old.ss_flags = p->alt_stack_flags;
         old.ss_size = p->alt_stack_size;
-        memcpy((void*)old_ss_addr, &old, sizeof(stack_t));
+        if (copy_to_user(old_ss_addr, &old, sizeof(stack_t)) < 0)
+            return (uint64_t)-1;
     }
 
     /* Set new stack if requested */
     if (ss_addr) {
-        if (syscall_is_user_process() && !syscall_user_read_ok(ss_addr, sizeof(stack_t)))
-            return (uint64_t)-1;
         stack_t new;
-        memcpy(&new, (void*)ss_addr, sizeof(stack_t));
+        if (copy_from_user(&new, ss_addr, sizeof(stack_t)) < 0)
+            return (uint64_t)-1;
         p->alt_stack_sp = new.ss_sp;
         p->alt_stack_flags = new.ss_flags;
         p->alt_stack_size = (uint64_t)new.ss_size;
@@ -9094,14 +9150,16 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                     return (uint64_t)-1;
             }
             struct __user_cap_header_struct hdr;
-            memcpy(&hdr, (void*)a1, sizeof(hdr));
+            if (copy_from_user(&hdr, a1, sizeof(hdr)) < 0)
+                return (uint64_t)-1;
             (void)hdr;
             struct __user_cap_data_struct data;
             /* Return the effective, permitted, inheritable masks (first word only) */
             data.effective   = (uint32_t)(p->cap_effective[0] & 0xFFFFFFFFULL);
             data.permitted   = (uint32_t)(p->cap_permitted[0] & 0xFFFFFFFFULL);
             data.inheritable = (uint32_t)(p->cap_inheritable[0] & 0xFFFFFFFFULL);
-            memcpy((void*)a2, &data, sizeof(data));
+            if (copy_to_user(a2, &data, sizeof(data)) < 0)
+                return (uint64_t)-1;
             return 0;
         }
         case SYS_CAPSET: {
@@ -9125,7 +9183,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                     return (uint64_t)-1;
             }
             struct __user_cap_data_struct data;
-            memcpy(&data, (void*)a2, sizeof(data));
+            if (copy_from_user(&data, a2, sizeof(data)) < 0)
+                return (uint64_t)-1;
             p->cap_effective[0]   = (p->cap_effective[0] & ~0xFFFFFFFFULL) | data.effective;
             p->cap_permitted[0]   = (p->cap_permitted[0] & ~0xFFFFFFFFULL) | data.permitted;
             p->cap_inheritable[0] = (p->cap_inheritable[0] & ~0xFFFFFFFFULL) | data.inheritable;
@@ -9143,8 +9202,9 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MQ_UNLINK:       return sys_mq_unlink(a1);
         case SYS_GETCPU: {
             int cpu = smp_get_cpu_id();
-            if (a1) { int *cpup = (int *)a1; *cpup = cpu; }
-            if (a2) { int *nodep = (int *)a2; *nodep = 0; }
+            if (a1) { if (copy_to_user(a1, &cpu, sizeof(cpu)) < 0) return (uint64_t)-1; }
+            int zero = 0;
+            if (a2) { if (copy_to_user(a2, &zero, sizeof(zero)) < 0) return (uint64_t)-1; }
             return 0;
         }
         case SYS_PREADV: {
@@ -9448,30 +9508,34 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
 {
     (void)dirfd;  /* dirfd not used — we resolve from CWD */
 
-    /* Validate user pointers */
-    if (syscall_is_user_process()) {
-        if (!syscall_user_cstr_ok(pathname))
-            return (uint64_t)(int64_t)-EFAULT;
-        if (!syscall_user_read_ok(mount_id_addr, sizeof(int)))
-            return (uint64_t)(int64_t)-EFAULT;
-        if (!syscall_user_write_ok(mount_id_addr, sizeof(int)))
-            return (uint64_t)(int64_t)-EFAULT;
-        /* handle pointer — must at least read handle_bytes + handle_type */
-        if (!syscall_user_read_ok(handle_addr, sizeof(struct file_handle) - sizeof(unsigned char)))
-            return (uint64_t)(int64_t)-EFAULT;
+    /* Copy path string from user (up to 255 chars) */
+    char path[256];
+    if (pathname) {
+        if (syscall_is_user_process()) {
+            if (!syscall_user_cstr_ok(pathname))
+                return (uint64_t)(int64_t)-EFAULT;
+        }
+        /* For empty path with AT_EMPTY_PATH, use the fd */
+        if (flags & AT_EMPTY_PATH) {
+            /* Not fully implemented — just use current directory root for now */
+            path[0] = '/';
+            path[1] = '\0';
+        } else {
+            /* Copy string a byte at a time using copy_from_user */
+            for (int i = 0; i < 255; i++) {
+                char c;
+                if (copy_from_user(&c, pathname + i, 1) < 0)
+                    return (uint64_t)(int64_t)-EFAULT;
+                path[i] = c;
+                if (c == '\0') break;
+                if (i == 254) path[255] = '\0';
+            }
+        }
+    } else {
+        return (uint64_t)(int64_t)-EFAULT;
     }
 
-    const char *path = (const char *)pathname;
-    struct file_handle *handle = (struct file_handle *)handle_addr;
-    int *mount_id_out = (int *)mount_id_addr;
-
-    /* For empty path with AT_EMPTY_PATH, use the fd */
-    if (flags & AT_EMPTY_PATH) {
-        /* Not fully implemented — just use current directory root for now */
-        path = "/";
-    }
-
-    if (!path || path[0] == '\0')
+    if (path[0] == '\0')
         return (uint64_t)(int64_t)-EINVAL;
 
     /* Stat the path to get inode info */
@@ -9479,17 +9543,18 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
     if (vfs_stat(path, &st) < 0)
         return (uint64_t)(int64_t)-ENOENT;
 
-    /* Read the current handle_bytes from user space */
+    /* Read handle_bytes from user space */
     unsigned int handle_bytes;
-    if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok((uint64_t)(uintptr_t)&handle->handle_bytes, sizeof(handle->handle_bytes)))
-            return (uint64_t)(int64_t)-EFAULT;
-    }
-    handle_bytes = handle->handle_bytes;
+    unsigned int hb_off = 0;  /* handle_bytes is first field in file_handle */
+    if (copy_from_user(&handle_bytes, handle_addr + hb_off,
+                       sizeof(handle_bytes)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     if (handle_bytes < 8) {
         /* Not enough room — set to required size and return EOVERFLOW */
-        handle->handle_bytes = 8;
+        unsigned int new_hb = 8;
+        if (copy_to_user(handle_addr + hb_off, &new_hb, sizeof(new_hb)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
         return (uint64_t)(int64_t)-EOVERFLOW;
     }
 
@@ -9513,20 +9578,23 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
     memcpy(fh_table[slot].path, path, plen);
     fh_table[slot].path[plen] = '\0';
 
-    /* Copy handle data to userspace */
-    handle->handle_type = fh_table[slot].handle_type;
-    handle->handle_bytes = fh_table[slot].handle_bytes;
-
-    if (syscall_is_user_process()) {
-        if (!syscall_user_write_ok((uint64_t)(uintptr_t)handle->f_handle, fh_table[slot].handle_bytes)) {
-            fh_free(slot);
-            return (uint64_t)(int64_t)-EFAULT;
-        }
+    /* Write handle fields back to user */
+    uint8_t handle_buf[32]; /* enough for file_handle + 16 bytes data */
+    struct file_handle *k_handle = (struct file_handle *)handle_buf;
+    k_handle->handle_type = fh_table[slot].handle_type;
+    k_handle->handle_bytes = fh_table[slot].handle_bytes;
+    memcpy(k_handle->f_handle, fh_table[slot].handle_data, fh_table[slot].handle_bytes);
+    if (copy_to_user(handle_addr, handle_buf,
+                     sizeof(struct file_handle) - sizeof(unsigned char) + fh_table[slot].handle_bytes) < 0) {
+        fh_free(slot);
+        return (uint64_t)(int64_t)-EFAULT;
     }
-    memcpy(handle->f_handle, fh_table[slot].handle_data, fh_table[slot].handle_bytes);
 
     /* Write mount_id */
-    *mount_id_out = 0;  /* single root mount */
+    if (copy_to_user(mount_id_addr, &(int){0}, sizeof(int)) < 0) {
+        fh_free(slot);
+        return (uint64_t)(int64_t)-EFAULT;
+    }
 
     return 0;
 }
@@ -9545,32 +9613,21 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     (void)mount_fd;  /* single mount — ignored */
     (void)flags;     /* open flags currently unused */
 
-    /* Validate user pointers */
-    if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok(handle_addr, sizeof(struct file_handle) - sizeof(unsigned char)))
-            return (uint64_t)(int64_t)-EFAULT;
-    }
-
-    struct file_handle *handle = (struct file_handle *)handle_addr;
-
     /* Read handle_bytes from userspace */
     unsigned int hb;
-    if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok((uint64_t)(uintptr_t)&handle->handle_bytes, sizeof(handle->handle_bytes)))
-            return (uint64_t)(int64_t)-EFAULT;
-    }
-    hb = handle->handle_bytes;
+    if (copy_from_user(&hb, handle_addr, /* handle_bytes is first field at offset 0 */
+                       sizeof(hb)) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     if (hb < 8)
         return (uint64_t)(int64_t)-EINVAL;
 
-    /* Read handle data */
+    /* Read handle data (up to 16 bytes) — f_handle starts at offset 8 */
+    uint64_t f_handle_addr = handle_addr + 8;
     uint8_t data[16];
-    if (syscall_is_user_process()) {
-        if (!syscall_user_read_ok((uint64_t)(uintptr_t)handle->f_handle, hb > 16 ? 16 : hb))
-            return (uint64_t)(int64_t)-EFAULT;
-    }
-    memcpy(data, handle->f_handle, hb > 16 ? 16 : hb);
+    unsigned int copy_sz = hb > 16 ? 16 : hb;
+    if (copy_from_user(data, f_handle_addr, copy_sz) < 0)
+        return (uint64_t)(int64_t)-EFAULT;
 
     /* Decode handle to get inode */
     uint32_t ino, mount_id;
