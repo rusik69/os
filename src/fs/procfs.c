@@ -952,8 +952,12 @@ static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
         proc_str("00007ffff7ff7000-00007ffff7ffa000 r-xp 00000000 00:00 0", buf, &pos, max);
         proc_str("         [vdso]\n", buf, &pos, max);
     } else {
-        /* Kernel thread */
-        proc_str("ffffffff80000000-ffffffff80a00000 r-xp 00000000 00:00 0", buf, &pos, max);
+        /* Kernel thread — hide if kptr_restrict restricts it */
+        if (kptr_restrict_check()) {
+            proc_str("0000000000000000-0000000000000000 r-xp 00000000 00:00 0", buf, &pos, max);
+        } else {
+            proc_str("ffffffff80000000-ffffffff80a00000 r-xp 00000000 00:00 0", buf, &pos, max);
+        }
         proc_str("         [kernel]\n", buf, &pos, max);
     }
     buf[pos] = '\0';
