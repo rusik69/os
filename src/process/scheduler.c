@@ -31,6 +31,7 @@
 #include "kpti.h"
 #include "page_cache.h"
 #include "rseq.h"
+#include "process_rlimit.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -715,6 +716,28 @@ void scheduler_tick(int was_user) {
     /* Update PELT load tracking: running = 1 (we are on CPU),
      * runnable = 1 (we're the current process and thus runnable). */
     pelt_update(&cur->pelt, 1, 1, timer_get_ticks());
+
+    /* ── RLIMIT_CPU enforcement ────────────────────────────────
+     * If the process has accumulated more CPU time than rlim_cur,
+     * send SIGXCPU on first violation and SIGKILL after a 1-second
+     * grace period (matching Linux behaviour). */
+    {
+        uint64_t cpu_sec = cur->rlim_cur[RLIMIT_CPU];
+        if (cpu_sec != RLIM_INFINITY && cpu_sec > 0) {
+            uint64_t total_ticks = cur->utime_ticks + cur->stime_ticks;
+            uint64_t total_sec  = total_ticks / (uint64_t)TIMER_FREQ;
+            if (total_sec > cpu_sec) {
+                if (cur->cpu_limit_warned_tick == 0) {
+                    cur->cpu_limit_warned_tick = timer_get_ticks();
+                    signal_send(cur->pid, SIGXCPU);
+                } else if (timer_get_ticks() - cur->cpu_limit_warned_tick >=
+                           (uint64_t)TIMER_FREQ) {
+                    /* Grace period expired — hard kill */
+                    signal_send(cur->pid, SIGKILL);
+                }
+            }
+        }
+    }
 
     /* Update PSI CPU pressure: if there are tasks in the runqueue
      * waiting, the CPU is overcommitted and some tasks are stalled. */

@@ -431,6 +431,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->utime_ticks = 0;
     proc->stime_ticks = 0;
     proc->start_time_tick = timer_get_ticks();
+    proc->cpu_limit_warned_tick = 0;
     proc->nvcsw = 0;
     proc->nivcsw = 0;
     proc->minflt = 0;
@@ -615,6 +616,7 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
     proc->utime_ticks = 0;
     proc->stime_ticks = 0;
     proc->start_time_tick = timer_get_ticks();
+    proc->cpu_limit_warned_tick = 0;
     proc->nvcsw = 0;
     proc->nivcsw = 0;
     proc->minflt = 0;

@@ -180,6 +180,7 @@ struct process {
     uint64_t utime_ticks;    /* ticks spent in user mode */
     uint64_t stime_ticks;    /* ticks spent in kernel mode (syscalls + IRQs) */
     uint64_t start_time_tick; /* tick when process was created */
+    uint64_t cpu_limit_warned_tick; /* tick when SIGXCPU was sent (0 = not yet) */
     uint64_t nvcsw;           /* voluntary context switches (yield, sleep) */
     uint64_t nivcsw;          /* involuntary context switches (preemption) */
     uint64_t minflt;          /* minor page faults (no disk I/O) */
