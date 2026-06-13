@@ -7,14 +7,21 @@
  * registered requests; cpuidle skips any state whose wakeup latency
  * exceeds the effective constraint.
  *
+ * Supports two types of constraints:
+ *   1. Global latency constraints (original API)
+ *   2. Per-device latency constraints with resume latency and throughput
+ *
  * Design:
  *   - Simple fixed-size array of requests (no dynamic allocation).
  *   - Locking via spinlock (PM QoS is queried on the idle path, but
  *     the fast path is a single integer READ_ONCE-like load).
  *   - Requests are identified by an integer ID which is their index
  *     in the array (constant-time lookup).
+ *   - Per-device constraints use a separate table with device tracking.
  *
  * Reference: Linux kernel's pm_qos API (drivers/base/power/qos.c).
+ *
+ * Item 123 — PM QoS with per-device latency constraints
  */
 
 #define KERNEL_INTERNAL
@@ -33,9 +40,25 @@ struct pm_qos_request {
     int       used;                   /* 1 = slot in use, 0 = free */
 };
 
+/* ── Per-device PM QoS constraint ─────────────────────────────────── */
+
+#define PM_QOS_MAX_DEVICE_REQUESTS 16
+
+/* Types of per-device constraints */
+#define PM_QOS_DEV_RESUME_LATENCY  0   /* Resume latency in us */
+#define PM_QOS_DEV_THROUGHPUT      1   /* Throughput requirement (MB/s) */
+
+struct pm_qos_device_request {
+    char      dev_name[PM_QOS_NAME_MAX];  /* Device name */
+    int       type;                        /* PM_QOS_DEV_RESUME_LATENCY or PM_QOS_DEV_THROUGHPUT */
+    uint32_t  value;                       /* Constraint value */
+    int       used;                        /* 1 = slot in use */
+};
+
 /** Global PM QoS state. */
 static struct {
-    struct pm_qos_request requests[PM_QOS_MAX_REQUESTS];
+    struct pm_qos_request        requests[PM_QOS_MAX_REQUESTS];
+    struct pm_qos_device_request device_requests[PM_QOS_MAX_DEVICE_REQUESTS];
     spinlock_t            lock;
     int                   initialized;
 } pm_qos_state;
@@ -241,5 +264,153 @@ void pm_qos_dump_requests(void)
     uint32_t effective = pm_qos_compute_effective_locked();
     kprintf("  Effective constraint: %u us\n", (unsigned)effective);
 
+    /* Dump per-device requests */
+    kprintf("  Per-device constraints (%d):\n", pm_qos_num_device_requests());
+    kprintf("  %-4s %-32s %-16s %s\n", "ID", "Device", "Type", "Value");
+    for (int i = 0; i < PM_QOS_MAX_DEVICE_REQUESTS; i++) {
+        if (!pm_qos_state.device_requests[i].used) continue;
+        const char *type_str = "?";
+        if (pm_qos_state.device_requests[i].type == PM_QOS_DEV_RESUME_LATENCY)
+            type_str = "resume_lat";
+        else if (pm_qos_state.device_requests[i].type == PM_QOS_DEV_THROUGHPUT)
+            type_str = "throughput";
+        kprintf("  %-4d %-32s %-16s %u\n",
+                i,
+                pm_qos_state.device_requests[i].dev_name,
+                type_str,
+                (unsigned)pm_qos_state.device_requests[i].value);
+    }
+
     spinlock_release(&pm_qos_state.lock);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Per-Device PM QoS API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int pm_qos_device_add_request(const char *dev_name, int type, uint32_t value)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+    if (!dev_name || !dev_name[0])
+        return -EINVAL;
+    if (type != PM_QOS_DEV_RESUME_LATENCY && type != PM_QOS_DEV_THROUGHPUT)
+        return -EINVAL;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    int slot = -1;
+    for (int i = 0; i < PM_QOS_MAX_DEVICE_REQUESTS; i++) {
+        if (!pm_qos_state.device_requests[i].used) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOSPC;
+    }
+
+    struct pm_qos_device_request *req = &pm_qos_state.device_requests[slot];
+    strncpy(req->dev_name, dev_name, PM_QOS_NAME_MAX - 1);
+    req->dev_name[PM_QOS_NAME_MAX - 1] = '\0';
+    req->type = type;
+    req->value = value;
+    req->used = 1;
+
+    spinlock_release(&pm_qos_state.lock);
+
+    kprintf("[PM QoS] Device request #%d: '%s' type=%d value=%u\n",
+            slot, dev_name, type, (unsigned)value);
+    return slot;
+}
+
+int pm_qos_device_update_request(int id, uint32_t value)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+    if (id < 0 || id >= PM_QOS_MAX_DEVICE_REQUESTS)
+        return -ENOENT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    if (!pm_qos_state.device_requests[id].used) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOENT;
+    }
+
+    pm_qos_state.device_requests[id].value = value;
+
+    spinlock_release(&pm_qos_state.lock);
+    return 0;
+}
+
+int pm_qos_device_remove_request(int id)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+    if (id < 0 || id >= PM_QOS_MAX_DEVICE_REQUESTS)
+        return -ENOENT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    if (!pm_qos_state.device_requests[id].used) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOENT;
+    }
+
+    memset(&pm_qos_state.device_requests[id], 0,
+           sizeof(pm_qos_state.device_requests[id]));
+
+    spinlock_release(&pm_qos_state.lock);
+    return 0;
+}
+
+uint32_t pm_qos_device_read_effective(const char *dev_name, int type)
+{
+    if (!pm_qos_state.initialized || !dev_name)
+        return PM_QOS_NO_CONSTRAINT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    uint32_t effective = PM_QOS_NO_CONSTRAINT;
+
+    for (int i = 0; i < PM_QOS_MAX_DEVICE_REQUESTS; i++) {
+        if (pm_qos_state.device_requests[i].used &&
+            strcmp(pm_qos_state.device_requests[i].dev_name, dev_name) == 0 &&
+            pm_qos_state.device_requests[i].type == type) {
+            if (type == PM_QOS_DEV_RESUME_LATENCY) {
+                /* Resume latency: minimum value (tightest constraint) */
+                if (pm_qos_state.device_requests[i].value < effective)
+                    effective = pm_qos_state.device_requests[i].value;
+            } else {
+                /* Throughput: maximum value (highest requirement) */
+                if (pm_qos_state.device_requests[i].value > effective &&
+                    effective == PM_QOS_NO_CONSTRAINT)
+                    effective = pm_qos_state.device_requests[i].value;
+                else if (pm_qos_state.device_requests[i].value > effective &&
+                         effective != PM_QOS_NO_CONSTRAINT)
+                    effective = pm_qos_state.device_requests[i].value;
+            }
+        }
+    }
+
+    spinlock_release(&pm_qos_state.lock);
+    return effective;
+}
+
+int pm_qos_num_device_requests(void)
+{
+    if (!pm_qos_state.initialized)
+        return 0;
+
+    spinlock_acquire(&pm_qos_state.lock);
+    int count = 0;
+    for (int i = 0; i < PM_QOS_MAX_DEVICE_REQUESTS; i++) {
+        if (pm_qos_state.device_requests[i].used)
+            count++;
+    }
+    spinlock_release(&pm_qos_state.lock);
+    return count;
 }

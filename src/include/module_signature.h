@@ -80,4 +80,15 @@ void module_sig_set_enforce(int enforce);
 /* Get current enforce mode. */
 int module_sig_get_enforce(void);
 
+/* ── PKCS#7 chain verification (S109) ────────────────────────────────── */
+
+/* Add a trusted key (SHA-256 hash of the DER-encoded public key). */
+int module_sig_add_trusted_key(const uint8_t key_hash[32]);
+
+/* Clear all trusted keys. */
+void module_sig_clear_trusted_keys(void);
+
+/* Get the number of trusted keys. */
+int module_sig_get_trusted_key_count(void);
+
 #endif /* MODULE_SIGNATURE_H */

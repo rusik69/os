@@ -70,6 +70,17 @@ struct tpm_rsp_hdr {
 #define TPM2_CC_GET_CAPABILITY  0x0000017A
 #define TPM2_CC_STARTUP        0x00000144
 #define TPM2_CC_SELF_TEST      0x00000143
+#define TPM2_CC_NV_DEFINE_SPACE 0x0000012A
+#define TPM2_CC_NV_WRITE       0x00000137
+#define TPM2_CC_NV_READ        0x0000014E
+#define TPM2_CC_QUOTE          0x00000158
+#define TPM2_CC_CREATE         0x00000156
+#define TPM2_CC_CREATE_LOADED   0x0000015F  /* CreateLoaded */
+#define TPM2_CC_LOAD           0x00000157
+#define TPM2_CC_UNSEAL         0x0000015E
+#define TPM2_CC_CONTEXT_LOAD   0x00000161
+#define TPM2_CC_CONTEXT_SAVE   0x00000162
+#define TPM2_CC_FLUSH_CONTEXT  0x00000165
 
 /* ── TPM response codes ────────────────────────────────────────────── */
 #define TPM2_RC_SUCCESS        0x00000000
@@ -84,7 +95,37 @@ struct tpm_rsp_hdr {
 #define TPM2_PCR_SELECT_MAX    (3 + 1)  /* 24 bytes select + size */
 #define TPM2_PCR_DIGEST_LEN   32        /* SHA-256 digest length */
 
-/* ── TPM startup types ─────────────────────────────────────────────── */
+/* ── TPM handle types ────────────────────────────────────────────── */
+#define TPM2_RH_NULL            0x40000007
+#define TPM2_RH_OWNER           0x40000001
+#define TPM2_RH_PLATFORM        0x4000000C
+#define TPM2_RH_ENDORSEMENT     0x4000000B
+
+/* ── TPM NV index attributes (simplified) ────────────────────────── */
+#define TPM2_NT_ORDINARY        0x0
+#define TPM2_NT_COUNTER         0x1
+#define TPM2_NT_BITS            0x2
+#define TPM2_NT_PIN_FAIL        0x4
+#define TPM2_NT_PIN_PASS        0x8
+
+#define TPMA_NV_AUTHWRITE       (1u << 0)
+#define TPMA_NV_AUTHREAD        (1u << 1)
+#define TPMA_NV_PPWRITE         (1u << 2)
+#define TPMA_NV_PPREAD          (1u << 3)
+#define TPMA_NV_PLATFORMCREATE  (1u << 10)
+#define TPMA_NV_WRITTEN         (1u << 11)
+#define TPMA_NV_OWNERWRITE      (1u << 12)
+#define TPMA_NV_OWNERREAD       (1u << 13)
+
+/* ── TPM algorithm identifiers ───────────────────────────────────── */
+#define TPM2_ALG_SHA256         0x000B
+#define TPM2_ALG_RSA            0x0001
+#define TPM2_ALG_NULL           0x0010
+#define TPM2_ALG_ECDSA          0x0018
+#define TPM2_ALG_CFB            0x0042
+
+/* ── Session / authorization constants ────────────────────────────── */
+#define TPM2_RS_PW              0x40000009   /* Password auth session handle */
 #define TPM2_SU_CLEAR         0x0000
 #define TPM2_SU_STATE         0x0001
 
@@ -132,5 +173,33 @@ int tpm2_get_random(uint8_t *buf, uint32_t count);
 int tpm2_pcr_read(uint32_t pcr_index, uint8_t digest[TPM2_PCR_DIGEST_LEN]);
 int tpm2_pcr_extend(uint32_t pcr_index,
                     const uint8_t digest[TPM2_PCR_DIGEST_LEN]);
+
+/* S96 — TPM resource manager (context save/load) */
+int tpm2_context_save(void *object_handle, uint8_t *out_buf, uint32_t *out_len);
+int tpm2_context_load(const uint8_t *ctx_buf, uint32_t ctx_len,
+                       uint32_t *loaded_handle);
+int tpm2_flush_context(uint32_t handle);
+
+/* S97 — TPM NV index operations */
+int tpm2_nv_define_space(uint32_t nv_index, uint32_t data_size,
+                          uint32_t nv_attributes);
+int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len);
+int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len);
+
+/* S98 — TPM attestation (Quote) */
+int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
+               uint8_t *attest_buf, uint32_t *attest_len);
+
+/* S99 — TPM sealing (Create/Unseal) */
+int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
+                uint32_t sealed_len, const uint8_t *auth, uint32_t auth_len,
+                uint8_t *priv_buf, uint32_t *priv_len,
+                uint8_t *pub_buf, uint32_t *pub_len);
+int tpm2_load(uint32_t parent_handle,
+              const uint8_t *priv_buf, uint32_t priv_len,
+              const uint8_t *pub_buf, uint32_t pub_len,
+              uint32_t *loaded_handle);
+int tpm2_unseal(uint32_t item_handle,
+                uint8_t *data_buf, uint32_t *data_len);
 
 #endif /* TPM_H */

@@ -144,6 +144,10 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/nvme_pmr.c \
          src/drivers/usb_ehci.c \
          src/drivers/usb_msc.c \
+         src/drivers/usb_hid_joy.c \
+         src/drivers/usb_printer.c \
+         src/drivers/usb_typec.c \
+         src/drivers/usb_debug.c \
          src/drivers/ps2.c \
          src/drivers/fbcon.c \
          src/drivers/partitions.c \
@@ -239,6 +243,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ac97.c \
          src/drivers/sound_oss.c \
          src/drivers/sound_core.c \
+         src/drivers/sound_midi.c \
          src/drivers/ramdisk.c \
          src/drivers/watchdog.c \
          src/drivers/netconsole.c \
@@ -362,6 +367,11 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/kasan_light.c \
          src/kernel/kmemleak.c \
          src/kernel/ima.c \
+         src/kernel/ima_policy.c \
+         src/kernel/ima_appraise.c \
+         src/kernel/evm.c \
+         src/kernel/ipe.c \
+         src/kernel/keyring.c \
          src/kernel/compress.c \
          src/kernel/psi.c \
          src/kernel/firmware.c \
@@ -479,7 +489,11 @@ C_SRCS = src/kernel/kernel.c \
          src/net/dns_server.c \
          src/drivers/usb_hid.c \
          src/drivers/usb_cdc_acm.c \
-         src/drivers/usb_hub.c
+         src/drivers/usb_hub.c \
+         src/boot/uefi_gop.c \
+         src/boot/uefi_runtime.c \
+         src/drivers/simplefb.c \
+         src/kernel/live_patch.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
@@ -729,7 +743,7 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \

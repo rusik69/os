@@ -4,6 +4,12 @@
  *   1) Via NETLINK_AUDIT multicast netlink messages (primary, real-time)
  *   2) Via in-kernel ring buffer (secondary, for local readers)
  *
+ * Enhanced with structured audit event formatting (S105):
+ *   - Syscall records: SYSCALL fields (arch, syscall, args, pid, uid, etc.)
+ *   - Path records:   PATH fields (pathname, inode, mode)
+ *   - AVC records:    SELinux access vector decisions
+ *   - Cred records:   Subject/object security contexts
+ *
  * Userspace: open AF_NETLINK socket with protocol NETLINK_AUDIT (9),
  * bind with nl_groups |= AUDIT_NL_GROUP, then read() to receive events.
  */
@@ -26,6 +32,74 @@ static int  audit_pos = 0;
 /* ── Netlink state ───────────────────────────────────────────────── */
 static int  audit_nl_initialized = 0;  /* Netlink family registered? */
 static int  audit_sequence = 0;        /* Monotonic event sequence */
+
+/* ── Audit event formatting helpers (S105) ──────────────────────── */
+
+/*
+ * Build a structured audit record in a buffer.  Format is similar to
+ * Linux audit record format: "type=<ET> msg=audit(<seq>.<time>: ... )\n"
+ *
+ * Returns the number of bytes written (not including NUL).
+ */
+static int audit_format_syscall(char *buf, int buf_size,
+                                 uint64_t syscall_num,
+                                 uint64_t arg1, uint64_t arg2,
+                                 uint64_t arg3, uint64_t arg4,
+                                 uint64_t ret_val)
+{
+    struct process *p = process_get_current();
+    uint32_t pid = p ? p->pid : 0;
+    uint32_t uid = p ? p->uid : 0;
+    uint32_t gid = p ? p->gid : 0;
+    uint64_t now = timer_get_ticks();
+
+    return snprintf(buf, (size_t)buf_size,
+        "type=SYSCALL msg=audit(%llu.%03u:%u): "
+        "arch=c000003f syscall=%llu success=%s exit=%llu "
+        "pid=%u uid=%u gid=%u "
+        "a1=%llx a2=%llx a3=%llx a4=%llx",
+        (unsigned long long)(now / 1000),
+        (unsigned int)(now % 1000),
+        audit_sequence + 1,
+        (unsigned long long)syscall_num,
+        (long long)ret_val >= 0 ? "yes" : "no",
+        (unsigned long long)ret_val,
+        pid, uid, gid,
+        (unsigned long long)arg1,
+        (unsigned long long)arg2,
+        (unsigned long long)arg3,
+        (unsigned long long)arg4);
+}
+
+static int audit_format_path(char *buf, int buf_size,
+                               const char *pathname, uint32_t inode,
+                               uint32_t mode)
+{
+    return snprintf(buf, (size_t)buf_size,
+        "type=PATH msg=audit(%u): "
+        "name=%s inode=%u mode=%o nametype=NORMAL",
+        audit_sequence + 1,
+        pathname ? pathname : "?",
+        inode, mode);
+}
+
+static int audit_format_denial(char *buf, int buf_size,
+                                 const char *subj, const char *obj,
+                                 const char *requested)
+{
+    struct process *p = process_get_current();
+    uint32_t pid = p ? p->pid : 0;
+
+    return snprintf(buf, (size_t)buf_size,
+        "type=AVC msg=audit(%u): "
+        "avc:  denied  { %s } for pid=%u "
+        "subj=%s obj=%s",
+        audit_sequence + 1,
+        requested ? requested : "unknown",
+        pid,
+        subj ? subj : "kernel",
+        obj ? obj : "unknown");
+}
 
 /* Internal helper: build and send a netlink audit message.
  * Allocates a temporary buffer, formats the netlink header + audit header
@@ -104,19 +178,23 @@ void audit_init(void) {
             NETLINK_AUDIT, AUDIT_NL_GROUP);
 }
 
-/* ── Event logging ───────────────────────────────────────────────── */
+/* ── Event logging (S105 enhanced) ───────────────────────────────── */
 
-void audit_log_event(const char *msg) {
-    if (!audit_enabled || !msg) return;
+/*
+ * audit_log_formatted — Send a formatted audit event.
+ * Takes a format string and arguments, builds the record, and sends it
+ * via both ring buffer and netlink multicast.
+ */
+static void audit_log_formatted(int event_type, const char *fmt, ...)
+{
+    if (!audit_enabled || !fmt) return;
 
-    uint64_t now = timer_get_ticks();
-    struct process *p = process_get_current();
-    uint32_t pid = p ? p->pid : 0;
+    char tmp[512];
+    __builtin_va_list args;
+    __builtin_va_start(args, fmt);
+    int n = vsnprintf(tmp, sizeof(tmp), fmt, args);
+    __builtin_va_end(args);
 
-    /* Format: "[ticks] pid: msg\n" */
-    char tmp[256];
-    int n = snprintf(tmp, sizeof(tmp), "[%llu] %u: %s\n",
-                     (unsigned long long)now, pid, msg);
     if (n <= 0) return;
 
     /* 1) Write to ring buffer */
@@ -128,53 +206,63 @@ void audit_log_event(const char *msg) {
 
     /* 2) Send via netlink multicast */
     audit_sequence++;
-    audit_netlink_send(AUDIT_EVENT_LOG, tmp, n);
+    audit_netlink_send(event_type, tmp, n);
+}
+
+void audit_log_event(const char *msg) {
+    if (!audit_enabled || !msg) return;
+
+    audit_log_formatted(AUDIT_EVENT_LOG, "%s", msg);
 }
 
 void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
     if (!audit_enabled) return;
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    (void)a5;
 
-    struct process *p = process_get_current();
-    uint32_t pid = p ? p->pid : 0;
-
-    char msg[256];
-    int n = snprintf(msg, sizeof(msg), "syscall(%llu) pid=%u\n",
-                     (unsigned long long)num, pid);
-    if (n > 0) {
-        /* Write to ring buffer */
-        int i;
-        for (i = 0; i < n && audit_pos < AUDIT_BUF_SIZE - 1; i++)
-            audit_buf[audit_pos++] = msg[i];
-        if (audit_pos >= AUDIT_BUF_SIZE) audit_pos = 0;
-
-        /* Send via netlink multicast */
-        audit_sequence++;
-        audit_netlink_send(AUDIT_EVENT_SYSCALL, msg, n);
-    }
+    char buf[512];
+    audit_format_syscall(buf, sizeof(buf), num, a1, a2, a3, a4, 0);
+    audit_log_formatted(AUDIT_EVENT_SYSCALL, "%s", buf);
 }
 
 void audit_syscall_exit(uint64_t ret) {
     if (!audit_enabled) return;
 
+    /* The syscall number is not preserved here — in a full implementation
+     * we'd store it per-thread.  Use a generic exit record. */
     struct process *p = process_get_current();
     uint32_t pid = p ? p->pid : 0;
 
-    char msg[256];
-    int n = snprintf(msg, sizeof(msg), "syscall_exit=%llu pid=%u\n",
-                     (unsigned long long)ret, pid);
+    char buf[256];
+    int n = snprintf(buf, sizeof(buf),
+        "type=SYSCALL_EXIT msg=audit(%u): exit=%lld pid=%u",
+        audit_sequence + 1, (long long)ret, pid);
     if (n > 0) {
-        /* Write to ring buffer */
-        int i;
-        for (i = 0; i < n && audit_pos < AUDIT_BUF_SIZE - 1; i++)
-            audit_buf[audit_pos++] = msg[i];
-        if (audit_pos >= AUDIT_BUF_SIZE) audit_pos = 0;
-
-        /* Send via netlink multicast */
-        audit_sequence++;
-        audit_netlink_send(AUDIT_EVENT_SYSCALL, msg, n);
+        audit_log_formatted(AUDIT_EVENT_SYSCALL, "%s", buf);
     }
+}
+
+/* ── Structured audit events (S105) ─────────────────────────────── */
+
+/*
+ * audit_log_path — Log a PATH record.
+ */
+void audit_log_path(const char *pathname, uint32_t inode, uint32_t mode)
+{
+    char buf[256];
+    audit_format_path(buf, sizeof(buf), pathname, inode, mode);
+    audit_log_formatted(AUDIT_EVENT_LOG, "%s", buf);
+}
+
+/*
+ * audit_log_denial — Log an AVC denial record.
+ */
+void audit_log_denial(const char *subj, const char *obj,
+                       const char *requested)
+{
+    char buf[256];
+    audit_format_denial(buf, sizeof(buf), subj, obj, requested);
+    audit_log_formatted(AUDIT_EVENT_DENIAL, "%s", buf);
 }
 
 int audit_read_log(char *buf, int max) {

@@ -19,6 +19,12 @@
 #include "printf.h"
 #include "heap.h"
 
+/* Extern declarations for dedicated test suite registrations */
+extern void kunit_pmm_register(void);
+extern void kunit_slab_register(void);
+extern void kunit_sched_register(void);
+extern void kunit_vmm_register(void);
+
 /* ====================================================================
  *  1. PMM — Physical Memory Manager tests
  * ==================================================================== */

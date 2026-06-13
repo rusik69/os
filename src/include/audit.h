@@ -62,4 +62,13 @@ int  audit_read_log(char *buf, int max);
  * Returns 0 on success, -1 on error. */
 int  audit_netlink_send(int event_type, const char *payload, int payload_len);
 
+/* ── Structured audit events (S105) ─────────────────────────────── */
+
+/* Log a PATH record with file metadata */
+void audit_log_path(const char *pathname, uint32_t inode, uint32_t mode);
+
+/* Log an AVC denial record (access denied) */
+void audit_log_denial(const char *subj, const char *obj,
+                       const char *requested);
+
 #endif /* AUDIT_H */

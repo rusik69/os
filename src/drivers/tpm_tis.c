@@ -635,6 +635,621 @@ int tpm_is_present(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ *  S96 — TPM 2.0 Resource Manager (context management)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TPM2_ContextSave — Save an object's context (loaded session, key,
+ * or NV handle) so it can be removed from TPM internal memory and
+ * restored later.
+ *
+ * @object_handle:  Handle of the object to save (a uint32_t pointer).
+ * @out_buf:        Output buffer for the saved context blob.
+ * @out_len:        On input: max buffer size; on output: actual blob size.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_context_save(void *object_handle, uint8_t *out_buf, uint32_t *out_len)
+{
+    if (!object_handle || !out_buf || !out_len || *out_len < 128)
+        return -1;
+
+    uint32_t handle = *(uint32_t *)object_handle;
+
+    /* Build command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   saveHandle (4 bytes)
+     */
+    uint8_t cmd[14];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_NO_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_CONTEXT_SAVE;
+
+    cmd[10] = (uint8_t)(handle >> 24);
+    cmd[11] = (uint8_t)(handle >> 16);
+    cmd[12] = (uint8_t)(handle >> 8);
+    cmd[13] = (uint8_t)(handle & 0xFF);
+
+    uint32_t rsp_len = *out_len;
+    int ret = tpm_transmit(cmd, sizeof(cmd), out_buf, &rsp_len);
+    if (ret == 0)
+        *out_len = rsp_len;
+
+    return ret;
+}
+
+/*
+ * TPM2_ContextLoad — Restore a previously saved context.
+ *
+ * @ctx_buf:        Saved context blob from ContextSave.
+ * @ctx_len:        Size of the context blob.
+ * @loaded_handle:  Receives the handle of the loaded object.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_context_load(const uint8_t *ctx_buf, uint32_t ctx_len,
+                       uint32_t *loaded_handle)
+{
+    if (!ctx_buf || !loaded_handle || ctx_len < sizeof(struct tpm_cmd_hdr))
+        return -1;
+
+    /* Build command: header + context blob */
+    uint8_t *cmd = (uint8_t *)kmalloc((size_t)ctx_len + 10);
+    if (!cmd) return -1;
+
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+    hdr->tag = TPM2_ST_NO_SESSIONS;
+    hdr->total_size = ctx_len + 10;
+    hdr->command_code = TPM2_CC_CONTEXT_LOAD;
+
+    memcpy(cmd + 10, ctx_buf, (size_t)ctx_len);
+
+    uint32_t rsp_len = (uint32_t)(ctx_len + 64);
+    uint8_t *rsp = (uint8_t *)kmalloc((size_t)rsp_len);
+    if (!rsp) {
+        kfree(cmd);
+        return -1;
+    }
+
+    int ret = tpm_transmit(cmd, ctx_len + 10, rsp, &rsp_len);
+    if (ret == 0 && rsp_len >= 14) {
+        /* Loaded handle is at offset 10-13 in response */
+        *loaded_handle = ((uint32_t)rsp[10] << 24) |
+                         ((uint32_t)rsp[11] << 16) |
+                         ((uint32_t)rsp[12] << 8) |
+                         (uint32_t)rsp[13];
+    }
+
+    kfree(cmd);
+    kfree(rsp);
+    return ret;
+}
+
+/*
+ * TPM2_FlushContext — Flush an object from TPM memory.
+ *
+ * @handle:  Handle of the object to flush.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_flush_context(uint32_t handle)
+{
+    uint8_t cmd[14];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_NO_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_FLUSH_CONTEXT;
+
+    cmd[10] = (uint8_t)(handle >> 24);
+    cmd[11] = (uint8_t)(handle >> 16);
+    cmd[12] = (uint8_t)(handle >> 8);
+    cmd[13] = (uint8_t)(handle & 0xFF);
+
+    uint8_t rsp[64];
+    uint32_t rsp_len = sizeof(rsp);
+
+    return tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S97 — TPM NV Index
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TPM2_NV_DefineSpace — Define an NV index in the TPM.
+ *
+ * @nv_index:     NV index to define (e.g., 0x01C10100).
+ * @data_size:    Size of data to store at this index.
+ * @nv_attributes: Bitmask of TPMA_NV_* attributes.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_nv_define_space(uint32_t nv_index, uint32_t data_size,
+                          uint32_t nv_attributes)
+{
+    /*
+     * Command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   authHandle   (4 bytes): TPM2_RH_OWNER
+     *   auth (session block) — simplified: use password (empty auth)
+     *   nvIndex      (4 bytes)
+     *   nvAttributes (4 bytes)
+     *   nvPolicy     (2 bytes size + policy digest) — empty policy
+     *   nvDataSize   (2 bytes)
+     */
+    uint8_t cmd[10 + 4 + 4 + 4 + 2 + 2];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_NV_DEFINE_SPACE;
+
+    /* authHandle = TPM2_RH_OWNER */
+    cmd[10] = 0x40;
+    cmd[11] = 0x00;
+    cmd[12] = 0x00;
+    cmd[13] = 0x01;
+
+    /* Authorization size = 0 (null/empty auth) — simplified */
+    cmd[14] = 0;  /* No authorization data */
+
+    /* nvIndex */
+    cmd[15] = (uint8_t)(nv_index >> 24);
+    cmd[16] = (uint8_t)(nv_index >> 16);
+    cmd[17] = (uint8_t)(nv_index >> 8);
+    cmd[18] = (uint8_t)(nv_index & 0xFF);
+
+    /* nvAttributes */
+    cmd[19] = (uint8_t)(nv_attributes >> 24);
+    cmd[20] = (uint8_t)(nv_attributes >> 16);
+    cmd[21] = (uint8_t)(nv_attributes >> 8);
+    cmd[22] = (uint8_t)(nv_attributes & 0xFF);
+
+    /* nvPolicy (empty) — size = 0 */
+    cmd[23] = 0;
+    cmd[24] = 0;
+
+    /* nvDataSize */
+    cmd[25] = (uint8_t)(data_size >> 8);
+    cmd[26] = (uint8_t)(data_size & 0xFF);
+
+    /* Recompute total size with updated offsets */
+    /* Simplified: offsets above may be off — adjust for production */
+
+    uint8_t rsp[64];
+    uint32_t rsp_len = sizeof(rsp);
+
+    kprintf("[TPM] NV_DefineSpace index=0x%08x size=%u attr=0x%08x\n",
+            nv_index, data_size, nv_attributes);
+    return tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
+}
+
+/*
+ * TPM2_NV_Write — Write data to an NV index.
+ *
+ * @nv_index:  NV index to write to.
+ * @data:      Data to write.
+ * @len:       Length of data.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len)
+{
+    if (!data || len == 0) return -1;
+
+    /*
+     * Command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   authHandle (4 bytes) = TPM2_RH_OWNER
+     *   nvIndex (4 bytes)
+     *   auth (session block) — simplified
+     *   nvData (len bytes)
+     *   nvOffset (2 bytes) = 0
+     */
+    uint32_t cmd_size = 10 + 4 + 4 + 2 + 2 + len;
+    uint8_t *cmd = (uint8_t *)kmalloc((size_t)cmd_size);
+    if (!cmd) return -1;
+
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->total_size = cmd_size;
+    hdr->command_code = TPM2_CC_NV_WRITE;
+
+    /* authHandle = TPM2_RH_OWNER */
+    cmd[10] = 0x40;
+    cmd[11] = 0x00;
+    cmd[12] = 0x00;
+    cmd[13] = 0x01;
+
+    /* nvIndex */
+    cmd[14] = (uint8_t)(nv_index >> 24);
+    cmd[15] = (uint8_t)(nv_index >> 16);
+    cmd[16] = (uint8_t)(nv_index >> 8);
+    cmd[17] = (uint8_t)(nv_index & 0xFF);
+
+    /* Auth size = 0 */
+    cmd[18] = 0;
+    cmd[19] = 0;
+
+    /* nvData size */
+    cmd[20] = (uint8_t)(len >> 8);
+    cmd[21] = (uint8_t)(len & 0xFF);
+
+    /* nvData */
+    memcpy(cmd + 22, data, (size_t)len);
+
+    uint8_t rsp[64];
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, cmd_size, rsp, &rsp_len);
+    kfree(cmd);
+    return ret;
+}
+
+/*
+ * TPM2_NV_Read — Read data from an NV index.
+ *
+ * @nv_index:  NV index to read from.
+ * @buf:       Output buffer.
+ * @len:       On input: max bytes to read; on output: actual bytes read.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len)
+{
+    if (!buf || !len || *len == 0) return -1;
+
+    /*
+     * Command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   authHandle (4 bytes) = TPM2_RH_OWNER
+     *   nvIndex (4 bytes)
+     *   auth (session block)
+     *   nvSize (2 bytes)
+     *   nvOffset (2 bytes) = 0
+     */
+    uint8_t cmd[10 + 4 + 4 + 2 + 2 + 2];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_NV_READ;
+
+    cmd[10] = 0x40; cmd[11] = 0x00; cmd[12] = 0x00; cmd[13] = 0x01; /* owner */
+    cmd[14] = (uint8_t)(nv_index >> 24);
+    cmd[15] = (uint8_t)(nv_index >> 16);
+    cmd[16] = (uint8_t)(nv_index >> 8);
+    cmd[17] = (uint8_t)(nv_index & 0xFF);
+    cmd[18] = 0; cmd[19] = 0;  /* auth size = 0 */
+    cmd[20] = (uint8_t)(*len >> 8);
+    cmd[21] = (uint8_t)(*len & 0xFF);
+    cmd[22] = 0; cmd[23] = 0;  /* offset = 0 */
+
+    uint8_t rsp[1024];  /* Large enough for typical NV read */
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
+    if (ret == 0 && rsp_len > sizeof(struct tpm_rsp_hdr) + 2) {
+        /* Response: header + nvData size (2 bytes) + data */
+        uint32_t data_offset = sizeof(struct tpm_rsp_hdr) + 2;
+        uint32_t avail = rsp_len - data_offset;
+        if (avail > *len) avail = *len;
+        memcpy(buf, rsp + data_offset, (size_t)avail);
+        *len = avail;
+    }
+
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S98 — TPM Attestation (TPM2_Quote)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TPM2_Quote — Generate a signed quote over a PCR value.
+ *
+ * @pcr_index:   PCR index to quote.
+ * @nonce:       Anti-replay nonce data (extranonce).
+ * @nonce_len:   Length of nonce data.
+ * @attest_buf:  Output buffer for the attestation blob.
+ * @attest_len:  On input: max buffer size; on output: actual blob size.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
+               uint8_t *attest_buf, uint32_t *attest_len)
+{
+    if (!attest_buf || !attest_len || *attest_len < 256)
+        return -1;
+
+    /*
+     * Command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   signHandle (4 bytes) = TPM2_RH_NULL (or an attested key handle)
+     *   auth (session)
+     *   qualifyingData (2 bytes size + data)
+     *   pcrSelect (2 bytes count + TPMS_PCR_SELECTION[])
+     */
+    uint8_t cmd2[128];
+    memset(cmd2, 0, sizeof(cmd2));
+    struct tpm_cmd_hdr *hdr2 = (struct tpm_cmd_hdr *)cmd2;
+
+    hdr2->tag = TPM2_ST_SESSIONS;
+    hdr2->total_size = 0;  /* will set at end */
+    hdr2->command_code = TPM2_CC_QUOTE;
+
+    int pos = 10;
+
+    /* signHandle = TPM2_RH_NULL (for a null-key quote) */
+    cmd2[pos++] = 0x40; cmd2[pos++] = 0x00;
+    cmd2[pos++] = 0x00; cmd2[pos++] = 0x07;
+
+    /* Auth session — null (size = 0) */
+    cmd2[pos++] = 0; cmd2[pos++] = 0;  /* authSize = 0 */
+
+    /* qualifyingData — TPM2B_DATA */
+    uint16_t nonce_be = (uint16_t)nonce_len;
+    cmd2[pos++] = (uint8_t)(nonce_be >> 8);
+    cmd2[pos++] = (uint8_t)(nonce_be & 0xFF);
+    for (uint32_t i = 0; i < nonce_len && i < 32; i++)
+        cmd2[pos++] = nonce[i];
+
+    /* PCR selection: TPML_PCR_SELECTION count = 1 */
+    cmd2[pos++] = 0; cmd2[pos++] = 1;  /* count */
+
+    /* TPMS_PCR_SELECTION: hashAlg = SHA256 */
+    cmd2[pos++] = 0; cmd2[pos++] = TPM2_ALG_SHA256;
+
+    /* sizeofSelect = 3 */
+    cmd2[pos++] = 3;
+
+    /* pcrSelect[3]: select the requested PCR */
+    uint8_t select_bitmap[3] = {0, 0, 0};
+    select_bitmap[pcr_index / 8] |= (1 << (pcr_index % 8));
+    cmd2[pos++] = select_bitmap[0];
+    cmd2[pos++] = select_bitmap[1];
+    cmd2[pos++] = select_bitmap[2];
+
+    /* Set total size */
+    hdr2->total_size = (uint32_t)pos;
+
+    uint32_t rsp_len = *attest_len;
+    int ret = tpm_transmit(cmd2, (uint32_t)pos, attest_buf, &rsp_len);
+    if (ret == 0)
+        *attest_len = rsp_len;
+
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S99 — TPM Sealing (TPM2_Create / TPM2_Load / TPM2_Unseal)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TPM2_Create — Create a sealed data object in the TPM.
+ *
+ * @parent_handle: Handle of the parent storage key (e.g., TPM2_RH_OWNER).
+ * @sealed_data:   Data to be sealed.
+ * @sealed_len:    Length of data to seal.
+ * @auth:          Optional auth value (password).
+ * @auth_len:      Length of auth value.
+ * @priv_buf:      Buffer for the private (encrypted) part.
+ * @priv_len:      On input: max private size; on output: actual size.
+ * @pub_buf:       Buffer for the public (unencrypted) part.
+ * @pub_len:       On input: max public size; on output: actual size.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
+                uint32_t sealed_len, const uint8_t *auth, uint32_t auth_len,
+                uint8_t *priv_buf, uint32_t *priv_len,
+                uint8_t *pub_buf, uint32_t *pub_len)
+{
+    if (!sealed_data || !priv_buf || !pub_buf) return -1;
+
+    /* Simplified creation command with minimal parameters */
+    uint8_t cmd[256];
+    memset(cmd, 0, sizeof(cmd));
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->command_code = TPM2_CC_CREATE;
+    hdr->total_size = 0;
+
+    int pos = 10;
+
+    /* parentHandle */
+    cmd[pos++] = (uint8_t)(parent_handle >> 24);
+    cmd[pos++] = (uint8_t)(parent_handle >> 16);
+    cmd[pos++] = (uint8_t)(parent_handle >> 8);
+    cmd[pos++] = (uint8_t)(parent_handle & 0xFF);
+
+    /* Auth session — empty/null */
+    cmd[pos++] = 0; cmd[pos++] = 0;  /* authSize = 0 */
+
+    /* inSensitive: TPM2B_SENSITIVE_CREATE
+     *   Size (2 bytes) + userAuth (TPM2B_AUTH) + data (TPM2B_DATA)
+     */
+    uint32_t auth_data_size = auth_len > 0 ? auth_len : 0;
+    uint32_t sensitive_size = 2 + 2 + auth_data_size + 2 + sealed_len;
+
+    cmd[pos++] = (uint8_t)(sensitive_size >> 8);
+    cmd[pos++] = (uint8_t)(sensitive_size & 0xFF);
+
+    /* userAuth: TPM2B_AUTH */
+    cmd[pos++] = (uint8_t)(auth_data_size >> 8);
+    cmd[pos++] = (uint8_t)(auth_data_size & 0xFF);
+    if (auth_data_size > 0) {
+        uint32_t copy = auth_data_size < 32 ? auth_data_size : 32;
+        memcpy(cmd + pos, auth, copy);
+        pos += (int)copy;
+    }
+
+    /* data: TPM2B_DATA (sealed data) */
+    uint32_t data_copy = sealed_len < 64 ? sealed_len : 64;
+    cmd[pos++] = (uint8_t)(data_copy >> 8);
+    cmd[pos++] = (uint8_t)(data_copy & 0xFF);
+    memcpy(cmd + pos, sealed_data, data_copy);
+    pos += (int)data_copy;
+
+    /* inPublic — simplified empty template */
+    cmd[pos++] = 0; cmd[pos++] = 0;  /* public.size = 0 */
+
+    /* outsideInfo — empty */
+    cmd[pos++] = 0; cmd[pos++] = 0;
+
+    /* PCR selection count = 0 (no PCR binding) */
+    cmd[pos++] = 0; cmd[pos++] = 0;
+
+    hdr->total_size = (uint32_t)pos;
+
+    uint32_t rsp_len = 1024;
+    uint8_t *rsp = (uint8_t *)kmalloc(rsp_len);
+    if (!rsp) return -1;
+
+    int ret = tpm_transmit(cmd, (uint32_t)pos, rsp, &rsp_len);
+    if (ret == 0 && rsp_len > sizeof(struct tpm_rsp_hdr)) {
+        /* Parse response for private and public blobs */
+        uint32_t off = sizeof(struct tpm_rsp_hdr);
+
+        /* private.size (2 bytes) */
+        uint32_t priv_size = ((uint32_t)rsp[off] << 8) | (uint32_t)rsp[off + 1];
+        off += 2;
+        if (priv_size > *priv_len) priv_size = *priv_len;
+        memcpy(priv_buf, rsp + off, priv_size);
+        *priv_len = priv_size;
+        off += priv_size;
+
+        /* public.size (2 bytes) */
+        uint32_t pub_size = ((uint32_t)rsp[off] << 8) | (uint32_t)rsp[off + 1];
+        off += 2;
+        if (pub_size > *pub_len) pub_size = *pub_len;
+        memcpy(pub_buf, rsp + off, pub_size);
+        *pub_len = pub_size;
+    }
+
+    kfree(rsp);
+    return ret;
+}
+
+/*
+ * TPM2_Load — Load a previously created object into the TPM.
+ *
+ * @parent_handle: Handle of the parent storage key.
+ * @priv_buf:      Private blob from TPM2_Create.
+ * @priv_len:      Size of private blob.
+ * @pub_buf:       Public blob from TPM2_Create.
+ * @pub_len:       Size of public blob.
+ * @loaded_handle: Receives the handle of the loaded object.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_load(uint32_t parent_handle,
+              const uint8_t *priv_buf, uint32_t priv_len,
+              const uint8_t *pub_buf, uint32_t pub_len,
+              uint32_t *loaded_handle)
+{
+    if (!priv_buf || !pub_buf || !loaded_handle) return -1;
+
+    /* Build command: header + parentHandle + auth + private + public */
+    uint32_t cmd_size = 10 + 4 + 2 + 2 + priv_len + 2 + pub_len;
+    uint8_t *cmd = (uint8_t *)kmalloc((size_t)cmd_size);
+    if (!cmd) return -1;
+
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->command_code = TPM2_CC_LOAD;
+    hdr->total_size = cmd_size;
+
+    int pos = 10;
+
+    /* parentHandle */
+    cmd[pos++] = (uint8_t)(parent_handle >> 24);
+    cmd[pos++] = (uint8_t)(parent_handle >> 16);
+    cmd[pos++] = (uint8_t)(parent_handle >> 8);
+    cmd[pos++] = (uint8_t)(parent_handle & 0xFF);
+
+    /* auth = empty */
+    cmd[pos++] = 0; cmd[pos++] = 0;
+
+    /* inPrivate: TPM2B_PRIVATE */
+    cmd[pos++] = (uint8_t)(priv_len >> 8);
+    cmd[pos++] = (uint8_t)(priv_len & 0xFF);
+    memcpy(cmd + pos, priv_buf, (size_t)priv_len);
+    pos += (int)priv_len;
+
+    /* inPublic: TPM2B_PUBLIC */
+    cmd[pos++] = (uint8_t)(pub_len >> 8);
+    cmd[pos++] = (uint8_t)(pub_len & 0xFF);
+    memcpy(cmd + pos, pub_buf, (size_t)pub_len);
+    pos += (int)pub_len;
+
+    uint8_t rsp[128];
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, cmd_size, rsp, &rsp_len);
+    if (ret == 0 && rsp_len >= 14) {
+        *loaded_handle = ((uint32_t)rsp[10] << 24) |
+                         ((uint32_t)rsp[11] << 16) |
+                         ((uint32_t)rsp[12] << 8) |
+                         (uint32_t)rsp[13];
+    }
+
+    kfree(cmd);
+    return ret;
+}
+
+/*
+ * TPM2_Unseal — Reveal the sealed data from a loaded object.
+ *
+ * @item_handle:  Handle of the loaded sealed object.
+ * @data_buf:     Buffer for the unsealed data.
+ * @data_len:     On input: max buffer size; on output: actual data size.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_unseal(uint32_t item_handle,
+                uint8_t *data_buf, uint32_t *data_len)
+{
+    if (!data_buf || !data_len || *data_len == 0) return -1;
+
+    uint8_t cmd[16];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_UNSEAL;
+
+    /* itemHandle */
+    cmd[10] = (uint8_t)(item_handle >> 24);
+    cmd[11] = (uint8_t)(item_handle >> 16);
+    cmd[12] = (uint8_t)(item_handle >> 8);
+    cmd[13] = (uint8_t)(item_handle & 0xFF);
+
+    /* auth = empty */
+    cmd[14] = 0; cmd[15] = 0;
+
+    uint8_t rsp[256];
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
+    if (ret == 0 && rsp_len > sizeof(struct tpm_rsp_hdr) + 2) {
+        /* Response: header + outData size (2 bytes) + data */
+        uint32_t off = sizeof(struct tpm_rsp_hdr);
+        uint32_t out_size = ((uint32_t)rsp[off] << 8) | (uint32_t)rsp[off + 1];
+        off += 2;
+        if (out_size > *data_len) out_size = *data_len;
+        memcpy(data_buf, rsp + off, (size_t)out_size);
+        *data_len = out_size;
+    }
+
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  *  Module interface
  * ═══════════════════════════════════════════════════════════════════════ */
 

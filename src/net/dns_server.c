@@ -12,6 +12,7 @@
 #include "net_internal.h"
 #include "string.h"
 #include "string_ext.h"
+#include "stdlib.h"
 #include "printf.h"
 #include "timer.h"
 #include "vfs.h"
@@ -86,8 +87,27 @@ static int dns_decode_name(const uint8_t *data, int data_len, int offset,
 
 /* sscanf replacement for kernel */
 static int parse_ip(const char *s, uint32_t *ip) {
-    unsigned int a, b, c, d;
-    if (sscanf(s, "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+    unsigned int a = 0, b = 0, c = 0, d = 0;
+    char buf[32];
+    strncpy(buf, s, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char *tok = buf;
+    int parts = 0;
+    char *dot;
+    while ((dot = strchr(tok, '.')) != NULL && parts < 4) {
+        *dot = '\0';
+        unsigned long v = strtoul(tok, NULL, 10);
+        if (parts == 0) a = (unsigned int)v;
+        else if (parts == 1) b = (unsigned int)v;
+        else if (parts == 2) c = (unsigned int)v;
+        tok = dot + 1;
+        parts++;
+    }
+    if (parts == 3 && *tok) {
+        d = (unsigned int)strtoul(tok, NULL, 10);
+        parts++;
+    }
+    if (parts == 4) {
         *ip = htonl((a << 24) | (b << 16) | (c << 8) | d);
         return 1;
     }

@@ -21,7 +21,7 @@
 #include "spinlock.h"
 #include "export.h"
 
-/* ── Internal state ───────────────────────────────────────────────── */
+/* Internal state */
 
 /* Registered test suites */
 static struct kunit_suite *g_suites[KUNIT_MAX_SUITES];
@@ -35,9 +35,14 @@ static int g_total_tests_failed = 0;
 static int g_total_assertions = 0;
 static int g_total_assertion_fails = 0;
 
+/* Filter pattern */
+static char g_filter[KUNIT_MAX_NAME];
+static int g_filter_active = 0;
+
 /* ── Forward declarations ─────────────────────────────────────────── */
 static int  count_cases(struct kunit_suite *suite);
 static void kunit_run_all(void);
+static int  kunit_filter_write(const char *buf, int len);
 
 /* ── Registration ─────────────────────────────────────────────────── */
 
@@ -96,6 +101,16 @@ void kunit_do_fail(struct kunit *test, const char *file, int line,
 
 /* ── Test execution ───────────────────────────────────────────────── */
 
+/* Check if a name matches the current filter (simple substring match) */
+static int kunit_name_matches_filter(const char *name)
+{
+    if (!g_filter_active || !g_filter[0])
+        return 1; /* no filter = match all */
+    if (!name)
+        return 0;
+    return (strstr(name, g_filter) != NULL);
+}
+
 /* Run a single test case within a suite */
 static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
 {
@@ -106,15 +121,31 @@ static void kunit_run_case(struct kunit_suite *suite, struct kunit_case *kc)
     test_ctx.failures = 0;
     test_ctx.priv = NULL;
 
+    /* Check filter */
+    if (!kunit_name_matches_filter(test_ctx.name) &&
+        !kunit_name_matches_filter(suite->name)) {
+        return; /* skip */
+    }
+
     g_total_tests_run++;
 
     /* Run suite-level setup */
     if (suite->setup)
         suite->setup(&test_ctx);
 
-    /* Run the test */
-    kprintf("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
-    kc->run(&test_ctx);
+    if (kc->params) {
+        /* Parameterized test: run once per parameter */
+        for (int p = 0; kc->params[p].name != NULL; p++) {
+            test_ctx.priv = kc->params[p].value;
+            kprintf("[KUNIT] RUN:   %s.%s[%s]\n", suite->name,
+                    test_ctx.name, kc->params[p].name);
+            kc->run(&test_ctx);
+        }
+    } else {
+        /* Normal test */
+        kprintf("[KUNIT] RUN:   %s.%s\n", suite->name, test_ctx.name);
+        kc->run(&test_ctx);
+    }
 
     /* Run suite-level teardown */
     if (suite->teardown)
@@ -277,6 +308,8 @@ void kunit_init(void)
 {
     spinlock_init(&g_kunit_lock);
     kunit_reset();
+    g_filter_active = 0;
+    g_filter[0] = '\0';
 
     /* Register the built-in test suites */
     kunit_register_builtin_tests();
@@ -287,7 +320,64 @@ void kunit_init(void)
                            NULL,
                            kunit_run_all_write);
     debugfs_create_file("kunit/status", kunit_status_read);
+    debugfs_create_rw_file("kunit/filter",
+                           NULL,
+                           kunit_filter_write);
 
     kprintf("[OK] KUnit: Kernel unit test framework initialized "
-            "(%d suite slots)\n", KUNIT_MAX_SUITES);
+            "(%d suite slots, filter=%s)\n", KUNIT_MAX_SUITES,
+            g_filter_active ? g_filter : "none");
+}
+
+/* ── Filter API ───────────────────────────────────────────────────── */
+
+void kunit_set_filter(const char *pattern)
+{
+    spinlock_acquire(&g_kunit_lock);
+    if (!pattern || !pattern[0]) {
+        g_filter_active = 0;
+        g_filter[0] = '\0';
+    } else {
+        strncpy(g_filter, pattern, sizeof(g_filter) - 1);
+        g_filter[sizeof(g_filter) - 1] = '\0';
+        g_filter_active = 1;
+    }
+    spinlock_release(&g_kunit_lock);
+}
+
+const char *kunit_get_filter(void)
+{
+    if (!g_filter_active)
+        return NULL;
+    return g_filter;
+}
+
+/* Write callback for /sys/kernel/debug/kunit/filter */
+static int kunit_filter_write(const char *buf, int len)
+{
+    if (!buf || len <= 0) {
+        kunit_set_filter(NULL);
+        return 0;
+    }
+
+    /* Copy and null-terminate */
+    char pattern[KUNIT_MAX_NAME];
+    int copy_len = len < (int)sizeof(pattern) - 1 ? len : (int)sizeof(pattern) - 1;
+    memcpy(pattern, buf, copy_len);
+    pattern[copy_len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (copy_len > 0 && (pattern[copy_len - 1] == '\n' ||
+           pattern[copy_len - 1] == '\r' || pattern[copy_len - 1] == ' '))
+        pattern[--copy_len] = '\0';
+
+    if (copy_len == 0) {
+        kunit_set_filter(NULL);
+        kprintf("[KUNIT] Filter cleared\n");
+    } else {
+        kunit_set_filter(pattern);
+        kprintf("[KUNIT] Filter set to: '%s'\n", pattern);
+    }
+
+    return 0;
 }

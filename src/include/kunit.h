@@ -65,6 +65,7 @@ struct kunit {
 struct kunit_case {
     const char *name;                       /* test name (NULL-terminated) */
     void      (*run)(struct kunit *test);   /* test function */
+    struct kunit_param *params;             /* optional: parameter array (NULL-terminated) */
 };
 
 /* A test suite — group of related tests with optional setup/teardown */
@@ -86,6 +87,34 @@ void kunit_init(void);
 /* Register the built-in test suites (defined in kunit_tests.c).
  * Called from kunit_init(). */
 void kunit_register_builtin_tests(void);
+
+/* ── Filtering API ─────────────────────────────────────────────────── */
+
+/* Set a test filter pattern (simple substring match on suite.case name).
+ * Only suites/cases whose name contains 'pattern' will run.
+ * Pass "" or NULL to clear the filter (run all). */
+void kunit_set_filter(const char *pattern);
+
+/* Get the current filter pattern, or NULL if none. */
+const char *kunit_get_filter(void);
+
+/* ── Parameterized test support ────────────────────────────────────── */
+
+/* A parameter generator provides an array of values to run a test with.
+ * The test function receives 'test->priv' pointing to one parameter. */
+struct kunit_param {
+    const char *name;       /* parameter name (for display) */
+    void       *value;      /* parameter value */
+};
+
+/* Parameter array terminator */
+#define KUNIT_PARAM_END()  { .name = NULL, .value = NULL }
+
+/* Declare a parameterized test case.
+ * The test function will be called once per parameter.
+ * 'params' must be a NULL-terminated array of struct kunit_param. */
+#define KUNIT_CASE_PARAM(test_fn, params) \
+    { .name = #test_fn, .run = test_fn, .params = params }
 
 /* ── Test result tracking ──────────────────────────────────────────── */
 

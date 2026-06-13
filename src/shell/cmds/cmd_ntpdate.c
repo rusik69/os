@@ -98,8 +98,27 @@ void cmd_ntpdate(const char *args) {
     uint32_t ip = net_dns_resolve(host);
     if (!ip) {
         /* Try parsing as dotted decimal */
-        unsigned int a, b, c, d;
-        if (sscanf(host, "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+        unsigned int a = 0, b = 0, c = 0, d = 0;
+        char buf[64];
+        strncpy(buf, host, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        char *tok = buf;
+        char *dot;
+        int parts = 0;
+        while ((dot = strchr(tok, '.')) != NULL && parts < 4) {
+            *dot = '\0';
+            unsigned long v = strtoul(tok, NULL, 10);
+            if (parts == 0) a = (unsigned int)v;
+            else if (parts == 1) b = (unsigned int)v;
+            else if (parts == 2) c = (unsigned int)v;
+            tok = dot + 1;
+            parts++;
+        }
+        if (parts == 3 && *tok) {
+            d = (unsigned int)strtoul(tok, NULL, 10);
+            parts++;
+        }
+        if (parts == 4) {
             ip = (a << 24) | (b << 16) | (c << 8) | d;
         }
     }
