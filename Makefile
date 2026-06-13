@@ -115,6 +115,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cgroup_namespace.c \
          src/kernel/mnt_namespace.c \
          src/kernel/user_namespace.c \
+         src/kernel/uid16.c \
          src/kernel/swap.c \
          src/drivers/vga.c \
          src/drivers/pic.c \
@@ -139,7 +140,13 @@ C_SRCS = src/kernel/kernel.c \
          src/power/wakeup.c \
          src/power/cpufreq.c \
          src/power/cpufreq_ondemand.c \
+         src/power/cpufreq_conservative.c \
+         src/power/cpufreq_userspace.c \
          src/power/cpufreq_schedutil.c \
+         src/power/cpuidle_ladder.c \
+         src/power/cpuidle_teo.c \
+         src/power/devfreq.c \
+         src/power/energy_model.c \
          src/drivers/ahci.c \
          src/drivers/nvme.c \
          src/drivers/nvme_pmr.c \
@@ -179,12 +186,15 @@ C_SRCS = src/kernel/kernel.c \
          src/shell/editor.c \
          src/shell/syntax.c \
          src/shell/script.c \
+         src/shell/history_persist.c \
+         src/shell/job_control.c \
          src/fs/fs.c \
          src/fs/procfs.c \
          src/fs/devfs.c \
          src/fs/tmpfs.c \
          src/ipc/shm.c \
          src/fs/fat32.c \
+         src/fs/vfat_shortname.c \
          src/fs/iso9660.c \
          src/fs/bufcache.c \
          src/fs/page_cache.c \
@@ -367,6 +377,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/vsyscall.c \
          src/memory/memhotplug.c \
          src/memory/page_poison.c \
+         src/memory/page_owner.c \
          src/memory/cma.c \
          src/memory/zram.c \
          src/memory/ksm.c \
@@ -388,6 +399,8 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/mce.c \
          src/kernel/mce_inject.c \
          src/kernel/kasan_light.c \
+         src/kernel/kcsan.c \
+         src/kernel/kfence.c \
          src/kernel/kmemleak.c \
          src/kernel/ima.c \
          src/kernel/ima_policy.c \
@@ -495,6 +508,7 @@ C_SRCS = src/kernel/kernel.c \
          src/cluster/runtime_security.c \
          src/cluster/upgrade.c \
          src/cluster/node_problem.c \
+         src/drivers/xhci.c \
          src/drivers/xhci_streams.c \
          src/drivers/gpio_irq.c \
          src/drivers/iommu.c \

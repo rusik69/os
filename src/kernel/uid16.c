@@ -83,7 +83,6 @@ int sys_setuid16(uint16_t uid16)
 
     p->uid  = new_uid;
     p->euid = new_uid;
-    p->suid = new_uid;
     return 0;
 }
 
@@ -99,7 +98,6 @@ int sys_setgid16(uint16_t gid16)
 
     p->gid  = new_gid;
     p->egid = new_gid;
-    p->sgid = new_gid;
     return 0;
 }
 
@@ -115,7 +113,7 @@ int sys_setreuid16(uint16_t ruid16, uint16_t euid16)
     if (!is_priv) {
         if ((uint16_t)new_ruid != (uint16_t)-1 && new_ruid != p->uid && new_ruid != p->euid)
             return -EPERM;
-        if ((uint16_t)new_euid != (uint16_t)-1 && new_euid != p->uid && new_euid != p->euid && new_euid != p->suid)
+        if ((uint16_t)new_euid != (uint16_t)-1 && new_euid != p->uid && new_euid != p->euid)
             return -EPERM;
     }
 
@@ -124,7 +122,6 @@ int sys_setreuid16(uint16_t ruid16, uint16_t euid16)
     }
     if ((uint16_t)euid16 != (uint16_t)-1) {
         p->euid = new_euid;
-        if (is_priv) p->suid = new_euid;
     }
 
     return 0;
@@ -142,7 +139,7 @@ int sys_setregid16(uint16_t rgid16, uint16_t egid16)
     if (!is_priv) {
         if ((uint16_t)new_rgid != (uint16_t)-1 && new_rgid != p->gid && new_rgid != p->egid)
             return -EPERM;
-        if ((uint16_t)new_egid != (uint16_t)-1 && new_egid != p->gid && new_egid != p->egid && new_egid != p->sgid)
+        if ((uint16_t)new_egid != (uint16_t)-1 && new_egid != p->gid && new_egid != p->egid)
             return -EPERM;
     }
 
@@ -151,7 +148,6 @@ int sys_setregid16(uint16_t rgid16, uint16_t egid16)
     }
     if ((uint16_t)egid16 != (uint16_t)-1) {
         p->egid = new_egid;
-        if (is_priv) p->sgid = new_egid;
     }
 
     return 0;
@@ -164,7 +160,7 @@ int sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
 
     uint16_t r = uid_to_16(p->uid);
     uint16_t e = uid_to_16(p->euid);
-    uint16_t s = uid_to_16(p->suid);
+    uint16_t s = uid_to_16(p->euid);  /* saved uid not stored separately */
 
     copy_to_user((uint64_t)ruid, &r, 2);
     copy_to_user((uint64_t)euid, &e, 2);
@@ -180,7 +176,7 @@ int sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
 
     uint16_t r = uid_to_16(p->gid);
     uint16_t e = uid_to_16(p->egid);
-    uint16_t s = uid_to_16(p->sgid);
+    uint16_t s = uid_to_16(p->egid);  /* saved gid not stored separately */
 
     copy_to_user((uint64_t)rgid, &r, 2);
     copy_to_user((uint64_t)egid, &e, 2);
@@ -198,19 +194,19 @@ int sys_setresuid16(uint16_t ruid16, uint16_t euid16, uint16_t suid16)
 
     if (!is_priv) {
         if ((uint16_t)ruid16 != (uint16_t)-1 && uid_from_16(ruid16) != p->uid &&
-            uid_from_16(ruid16) != p->euid && uid_from_16(ruid16) != p->suid)
+            uid_from_16(ruid16) != p->euid)
             return -EPERM;
         if ((uint16_t)euid16 != (uint16_t)-1 && uid_from_16(euid16) != p->uid &&
-            uid_from_16(euid16) != p->euid && uid_from_16(euid16) != p->suid)
+            uid_from_16(euid16) != p->euid)
             return -EPERM;
         if ((uint16_t)suid16 != (uint16_t)-1 && uid_from_16(suid16) != p->uid &&
-            uid_from_16(suid16) != p->euid && uid_from_16(suid16) != p->suid)
+            uid_from_16(suid16) != p->euid)
             return -EPERM;
     }
 
     if ((uint16_t)ruid16 != (uint16_t)-1) p->uid = uid_from_16(ruid16);
     if ((uint16_t)euid16 != (uint16_t)-1) p->euid = uid_from_16(euid16);
-    if ((uint16_t)suid16 != (uint16_t)-1) p->suid = uid_from_16(suid16);
+    if ((uint16_t)suid16 != (uint16_t)-1) p->euid = uid_from_16(suid16);
 
     return 0;
 }
@@ -224,19 +220,19 @@ int sys_setresgid16(uint16_t rgid16, uint16_t egid16, uint16_t sgid16)
 
     if (!is_priv) {
         if ((uint16_t)rgid16 != (uint16_t)-1 && uid_from_16(rgid16) != p->gid &&
-            uid_from_16(rgid16) != p->egid && uid_from_16(rgid16) != p->sgid)
+            uid_from_16(rgid16) != p->egid)
             return -EPERM;
         if ((uint16_t)egid16 != (uint16_t)-1 && uid_from_16(egid16) != p->gid &&
-            uid_from_16(egid16) != p->egid && uid_from_16(egid16) != p->sgid)
+            uid_from_16(egid16) != p->egid)
             return -EPERM;
         if ((uint16_t)sgid16 != (uint16_t)-1 && uid_from_16(sgid16) != p->gid &&
-            uid_from_16(sgid16) != p->egid && uid_from_16(sgid16) != p->sgid)
+            uid_from_16(sgid16) != p->egid)
             return -EPERM;
     }
 
     if ((uint16_t)rgid16 != (uint16_t)-1) p->gid = uid_from_16(rgid16);
     if ((uint16_t)egid16 != (uint16_t)-1) p->egid = uid_from_16(egid16);
-    if ((uint16_t)sgid16 != (uint16_t)-1) p->sgid = uid_from_16(sgid16);
+    if ((uint16_t)sgid16 != (uint16_t)-1) p->egid = uid_from_16(sgid16);
 
     return 0;
 }
@@ -247,14 +243,12 @@ int sys_setfsuid16(uint16_t uid16)
     if (!p) return -EINVAL;
 
     uint32_t new_fsuid = uid_from_16(uid16);
-    int old_fsuid = uid_to_16(p->fsuid);
+    int old_fsuid = uid_to_16(p->euid);  /* no separate fsuid */
 
     if (p->euid == 0 ||
         new_fsuid == p->uid ||
-        new_fsuid == p->euid ||
-        new_fsuid == p->suid ||
-        new_fsuid == p->fsuid) {
-        p->fsuid = new_fsuid;
+        new_fsuid == p->euid) {
+        p->euid = new_fsuid;
     }
 
     return old_fsuid;
@@ -266,14 +260,12 @@ int sys_setfsgid16(uint16_t gid16)
     if (!p) return -EINVAL;
 
     uint32_t new_fsgid = uid_from_16(gid16);
-    int old_fsgid = uid_to_16(p->fsgid);
+    int old_fsgid = uid_to_16(p->egid);  /* no separate fsgid */
 
     if (p->egid == 0 ||
         new_fsgid == p->gid ||
-        new_fsgid == p->egid ||
-        new_fsgid == p->sgid ||
-        new_fsgid == p->fsgid) {
-        p->fsgid = new_fsgid;
+        new_fsgid == p->egid) {
+        p->egid = new_fsgid;
     }
 
     return old_fsgid;

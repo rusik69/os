@@ -41,7 +41,7 @@
 #define KFENCE_SAMPLE_INTERVAL 100
 
 /* Total pool size = objects * (object_size + 2 * page_size for guards) */
-#define KFENCE_POOL_SIZE  (KFENCE_NUM_OBJECTS * (KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE_4K))
+#define KFENCE_POOL_SIZE  (KFENCE_NUM_OBJECTS * (KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE))
 
 /* Error types reported by KFENCE */
 #define KFENCE_ERROR_NONE       0
@@ -104,16 +104,16 @@ static int kfence_addr_to_obj_idx(uint64_t addr)
         return -1;
 
     uint64_t offset = addr - kfence_pool_start;
-    uint64_t slot_size = KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE_4K;
+    uint64_t slot_size = KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE;
     uint64_t slot_idx = offset / slot_size;
     uint64_t slot_offset = offset % slot_size;
 
     /* Check if in guard page */
-    if (slot_offset < PAGE_SIZE_4K) {
+    if (slot_offset < PAGE_SIZE) {
         /* Left guard page — OOB access */
         return -2;
     }
-    if (slot_offset >= PAGE_SIZE_4K + KFENCE_OBJECT_SIZE) {
+    if (slot_offset >= PAGE_SIZE + KFENCE_OBJECT_SIZE) {
         /* Right guard page — OOB access */
         return -2;
     }
@@ -151,7 +151,7 @@ void kfence_init(void)
 
     /* Allocate the KFENCE pool from physical memory */
     kfence_pool_size = KFENCE_POOL_SIZE;
-    kfence_pool_start = pmm_alloc_frames(kfence_pool_size / PAGE_SIZE_4K);
+    kfence_pool_start = pmm_alloc_frames(kfence_pool_size / PAGE_SIZE);
     if (!kfence_pool_start) {
         kprintf("[KFENCE] Failed to allocate pool (%llu bytes)\n",
                 (unsigned long long)kfence_pool_size);
@@ -165,10 +165,10 @@ void kfence_init(void)
     /* Map the pool as non-present/guard pages so access triggers a fault */
     for (uint64_t i = 0; i < KFENCE_NUM_OBJECTS; i++) {
         struct kfence_object *obj = &kfence_objects[i];
-        uint64_t slot_start = kfence_pool_start + i * (KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE_4K);
+        uint64_t slot_start = kfence_pool_start + i * (KFENCE_OBJECT_SIZE + 2 * PAGE_SIZE);
 
         obj->guard_left = slot_start;
-        obj->addr = slot_start + PAGE_SIZE_4K;
+        obj->addr = slot_start + PAGE_SIZE;
         obj->guard_right = obj->addr + KFENCE_OBJECT_SIZE;
         obj->size = 0;
         obj->in_use = 0;
