@@ -96,7 +96,7 @@ jobs:
             CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
                     -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
                     -Wall -Wextra \
-                    -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g -O0 \
+                    -Isrc/include -Isrc/gui -Isrc/doom -Ibuild -mcmodel=large -g -O0 \
                     -Wa,--noexecstack -MMD -MP" \
             -j$(nproc)
 
@@ -195,7 +195,7 @@ jobs:
             CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
                     -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
                     -Wall -Wextra \
-                    -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g -O0 \
+                    -Isrc/include -Isrc/gui -Isrc/doom -Ibuild -mcmodel=large -g -O0 \
                     -Wa,--noexecstack -MMD -MP" \
             -j$(nproc)
 

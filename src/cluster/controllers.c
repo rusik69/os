@@ -16,6 +16,7 @@
 #include "printf.h"
 #include "string.h"
 #include "heap.h"
+#include "stdlib.h"
 #include "errno.h"
 #include "spinlock.h"
 #include "timer.h"

@@ -27,7 +27,7 @@ static void ul_to_str(uint64_t v, char *buf, int *pos, int max)
     char tmp[24];
     int n = 0;
     while (v > 0) {
-        tmp[n++] = '0' + (int)(v % 10);
+        tmp[n++] = (char)('0' + (int)(v % 10));
         v /= 10;
     }
     while (n-- > 0 && *pos < max - 1)
@@ -111,7 +111,7 @@ static int sysctl_read_panic(char *buf, int max) {
     char tmp[16]; int ti = 0;
     int v = g_panic_timeout;
     if (v == 0) { tmp[ti++] = '0'; }
-    else { while (v) { tmp[ti++] = '0' + (v % 10); v /= 10; } }
+    else { while (v) { tmp[ti++] = (char)('0' + (int)(v % 10)); v /= 10; } }
     for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
     if (p < max - 1) buf[p++] = '\n';
     buf[p] = '\0';
@@ -218,7 +218,7 @@ static int sysctl_read_sysrq(char *buf, int max)
     }
     char tmp[16]; int ti = 0;
     if (v == 0) { tmp[ti++] = '0'; }
-    else { while (v) { tmp[ti++] = '0' + (v % 10); v /= 10; } }
+    else { while (v) { tmp[ti++] = (char)('0' + (int)(v % 10)); v /= 10; } }
     for (int i = ti - 1; i >= 0 && p < max - 1; i--) buf[p++] = tmp[i];
     if (p < max - 1) buf[p++] = '\n';
     buf[p] = '\0';
