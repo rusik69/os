@@ -13,10 +13,12 @@
  * In kernel mode (syscalls, interrupts), the full page table is used.
  *
  * SYSCALL entry trampoline (at KPTI_TRAMPOLINE_VADDR) handles the
- * CR3 switch.  It's mapped supervisor-only in both page tables.
+ * kernel-mode page-table switch.
  */
 
-/* ── Trampoline virtual address ────────────────────────────────────
+struct process;  /* forward declaration */
+
+#define KPTI_TRAMPOLINE_VADDR
  * Chosen just below USER_VADDR_MAX (0x0000800000000000).
  * This is in the canonical user half, so it can be managed with
  * vmm_map_user_page() after clearing the USER bit for supervisor-only.

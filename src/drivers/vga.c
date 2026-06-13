@@ -288,7 +288,7 @@ static const uint8_t *font5x7(char ch) {
 
 static void vga_update_cursor(void) {
     if (fb_active) return;
-    uint16_t pos = vga_row * VGA_WIDTH + vga_col;
+    uint16_t pos = (uint16_t)(vga_row * VGA_WIDTH + vga_col);
     outb(0x3D4, 0x0F);
     outb(0x3D5, (uint8_t)(pos & 0xFF));
     outb(0x3D4, 0x0E);
@@ -310,7 +310,7 @@ static void fb_put_pixel(uint32_t x, uint32_t y, uint32_t rgb) {
 static void render_cell(uint16_t row, uint16_t col) {
     uint16_t entry = vga_cells[row * VGA_WIDTH + col];
     char ch = (char)(entry & 0xFF);
-    uint8_t color = (entry >> 8) & 0xFF;
+    uint8_t color = (uint8_t)((entry >> 8) & 0xFF);
 
     if (!fb_active) {
         VGA_MEMORY[row * VGA_WIDTH + col] = entry;
