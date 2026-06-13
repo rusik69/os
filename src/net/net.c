@@ -168,6 +168,11 @@ void rt_clear(void) {
     spinlock_release(&net_lock);
 }
 
+/* ── rt_flush — flush routing table (alias for tests) ────────────── */
+void rt_flush(void) {
+    rt_clear();
+}
+
 /* ── Gratuitous ARP ────────────────────────────────────────────── */
 
 void arp_announce(void) {

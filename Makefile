@@ -1196,7 +1196,12 @@ $(BUILDDIR_ANALYZE)/kernel.elf: check-app-boundary $(PCH_FILE) $(ANALYZE_OBJS)
 
 # config_gz.o depends on the auto-generated header for analyze build too
 $(BUILDDIR_ANALYZE)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H)
+$(BUILDDIR_ANALYZE)/kernel/config_gz.o: ANALYZE_CFLAGS += -I$(BUILDDIR)
 $(BUILDDIR_ANALYZE)/kernel/config_gz.o: ANALYZE_CFLAGS += -I$(BUILDDIR_ANALYZE)
+
+# kpti.o needs the trampoline header for analyze build
+$(BUILDDIR_ANALYZE)/kernel/kpti.o: ANALYZE_CFLAGS += -I$(BUILDDIR)
+$(BUILDDIR_ANALYZE)/kernel/kpti.o: $(KPTI_TRAMP_H)
 
 $(BUILDDIR_ANALYZE)/kernel.bin: $(BUILDDIR_ANALYZE)/kernel.elf
 	cp $< $@

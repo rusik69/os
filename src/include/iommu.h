@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "pmm.h"
+#include "heap.h"
 #include "string.h"
 
 /*

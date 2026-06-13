@@ -216,10 +216,17 @@ int pipe_set_nonblock(int pipe_id, int nonblock) {
 int pipe_set_sigio(int pipe_id, uint32_t pid) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return -1;
+
     pipe_table[pipe_id].sigio_pid = pid;
     return 0;
 }
 
+/* ── pipe_available — bytes available for reading ─────────────────── */
+int pipe_available(int pipe_id) {
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -1;
+    return pipe_table[pipe_id].count;
+}
 /* ── FIFO unlink — close one end ─────────────────────────────────── */
 void pipe_close_read(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX) return;

@@ -1,5 +1,6 @@
 #define KERNEL_INTERNAL
 #include "types.h"
+#include "errno.h"
 #include "net_internal.h"
 #include "string.h"
 #include "printf.h"
