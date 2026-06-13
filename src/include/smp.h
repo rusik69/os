@@ -112,7 +112,7 @@ extern int smp_cpu_count;
 /* Get current CPU ID (inline for speed) */
 static inline int smp_get_cpu_id(void) {
     struct cpu_info *info = get_cpu_info();
-    return info ? info->cpu_id : 0;
+    return info ? (int)info->cpu_id : 0;
 }
 
 /* SMP TLB shootdown: invalidate addresses on all CPUs */

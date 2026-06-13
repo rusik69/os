@@ -9626,7 +9626,7 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
             /* Copy string a byte at a time using copy_from_user */
             for (int i = 0; i < 255; i++) {
                 char c;
-                if (copy_from_user(&c, pathname + i, 1) < 0)
+                if (copy_from_user(&c, pathname + i, 1UL) < 0)
                     return (uint64_t)(int64_t)-EFAULT;
                 path[i] = c;
                 if (c == '\0') break;

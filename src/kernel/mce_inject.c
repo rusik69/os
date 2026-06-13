@@ -174,33 +174,30 @@ static void build_synthetic_frame(struct interrupt_frame *frame)
     memset(frame, 0, sizeof(*frame));
 
     /* Capture current register state via inline assembly.
+     * Use a single base pointer (r15) to address all frame fields,
+     * avoiding register pressure from 16 independent memory operands.
      * The __volatile__ and memory clobber prevent the compiler from
      * reordering or optimising these reads relative to the MSR writes. */
+    register uintptr_t base __asm__("r15") = (uintptr_t)frame;
     __asm__ volatile(
-        "mov %%rax, %0  \n\t"
-        "mov %%rbx, %1  \n\t"
-        "mov %%rcx, %2  \n\t"
-        "mov %%rdx, %3  \n\t"
-        "mov %%rsi, %4  \n\t"
-        "mov %%rdi, %5  \n\t"
-        "mov %%rbp, %6  \n\t"
-        "mov %%rsp, %7  \n\t"
-        "mov %%r8,  %8  \n\t"
-        "mov %%r9,  %9  \n\t"
-        "mov %%r10, %10 \n\t"
-        "mov %%r11, %11 \n\t"
-        "mov %%r12, %12 \n\t"
-        "mov %%r13, %13 \n\t"
-        "mov %%r14, %14 \n\t"
-        "mov %%r15, %15 \n\t"
-        : "=m"(frame->rax), "=m"(frame->rbx), "=m"(frame->rcx),
-          "=m"(frame->rdx), "=m"(frame->rsi), "=m"(frame->rdi),
-          "=m"(frame->rbp), "=m"(frame->rsp),
-          "=m"(frame->r8),  "=m"(frame->r9),
-          "=m"(frame->r10), "=m"(frame->r11),
-          "=m"(frame->r12), "=m"(frame->r13),
-          "=m"(frame->r14), "=m"(frame->r15)
+        "mov %%rax, 0x00(%0)  \n\t"
+        "mov %%rbx, 0x08(%0)  \n\t"
+        "mov %%rcx, 0x10(%0)  \n\t"
+        "mov %%rdx, 0x18(%0)  \n\t"
+        "mov %%rsi, 0x20(%0)  \n\t"
+        "mov %%rdi, 0x28(%0)  \n\t"
+        "mov %%rbp, 0x30(%0)  \n\t"
+        "mov %%rsp, 0x38(%0)  \n\t"
+        "mov %%r8,  0x40(%0)  \n\t"
+        "mov %%r9,  0x48(%0)  \n\t"
+        "mov %%r10, 0x50(%0)  \n\t"
+        "mov %%r11, 0x58(%0)  \n\t"
+        "mov %%r12, 0x60(%0)  \n\t"
+        "mov %%r13, 0x68(%0)  \n\t"
+        "mov %%r14, 0x70(%0)  \n\t"
+        "mov %%r15, 0x78(%0)  \n\t"
         :
+        : "r"(base)
         : "memory"
     );
 

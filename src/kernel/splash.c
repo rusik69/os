@@ -190,7 +190,7 @@ static void init_progress_bar(void)
     bar_w = fb_width * bar_width_frac / 4;
     bar_h = PROGRESS_BAR_H;
     bar_x = (fb_width - bar_w) / 2;
-    bar_y = fb_height * PROGRESS_BAR_Y_FRAC;
+    bar_y = (int)(fb_height * PROGRESS_BAR_Y_FRAC);
 }
 
 static void draw_progress_bar(void)

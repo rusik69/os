@@ -2,6 +2,7 @@
 #define OCI_SPEC_H
 
 #include "types.h"
+#include "string.h"
 #include "vfs.h"  /* struct vfs_mount_data */
 
 /*
