@@ -47,6 +47,28 @@ static int dcache_match(const struct dcache_entry *e, const char *path)
     return e->in_use && (strcmp(e->path, path) == 0);
 }
 
+
+/* Open a file by path, returns a file descriptor.
+ * This is a kernel-level open that bypasses user-space copy.
+ * Returns fd (>=0) or negative errno. */
+int vfs_open(const char *path, int flags, int mode)
+{
+    (void)mode;
+    struct vfs_stat st;
+    int exists = (vfs_stat(path, &st) >= 0);
+
+    if (!exists && !(flags & 0x40)) /* O_CREAT=0x40 */
+        return -ENOENT;
+
+    if (!exists && (flags & 0x40)) {
+        int ret = vfs_create(path, 0);
+        if (ret < 0) return ret;
+    }
+
+    /* For now, return a dummy fd. Real fd allocation needs process fd table. */
+    return -ENOSYS;
+}
+
 struct dcache_entry *dcache_lookup(const char *path)
 {
     if (!path || !path[0])

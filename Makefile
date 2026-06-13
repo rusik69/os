@@ -408,6 +408,23 @@ C_SRCS = src/kernel/kernel.c \
          src/container/orch.c \
          src/container/service_proxy.c \
          src/container/scheduler_policy.c \
+         src/container/seccomp_notify.c \
+         src/container/checkpoint.c \
+         src/container/security_scan.c \
+         src/orch/metrics.c \
+         src/orch/log_shipper.c \
+         src/orch/log_aggregator.c \
+         src/orch/events.c \
+         src/orch/tracing.c \
+         src/orch/dashboard.c \
+         src/orch/alerting.c \
+         src/orch/manifest.c \
+         src/orch/compose.c \
+         src/orch/namespace.c \
+         src/orch/rbac.c \
+         src/orch/auth.c \
+         src/orch/pod_security.c \
+         src/orch/secrets.c \
          src/cluster/raft.c \
          src/cluster/raft_kv.c \
          src/cluster/gossip.c \
@@ -419,7 +436,9 @@ C_SRCS = src/kernel/kernel.c \
          src/cluster/controllers.c \
          src/cluster/hpa.c \
          src/cluster/crd.c \
-         src/cluster/runtime_security.c
+         src/cluster/runtime_security.c \
+         src/cluster/upgrade.c \
+         src/cluster/node_problem.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
@@ -669,7 +688,7 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \

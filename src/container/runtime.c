@@ -37,7 +37,7 @@ extern struct vfs_ops sysfs_vfs_ops;
 extern struct vfs_ops devfs_ops;
 extern struct vfs_ops tmpfs_vfs_ops;
 
-static struct container container_table[CONTAINER_MAX];
+struct container container_table[CONTAINER_MAX];
 
 /* Lock protecting the container table */
 static spinlock_t container_global_lock = SPINLOCK_INIT;

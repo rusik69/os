@@ -397,6 +397,58 @@ int endpoint_get_for_service(const char *service_name,
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* C115: Reconciliation loop — ensure assigned pods are running */
+
+/* ── Upgrade lifecycle operations ────────────────────────────────────── */
+
+int node_set_schedulable(int node_id, int schedulable)
+{
+    spinlock_acquire(&node_lock);
+    if (node_id < 0 || node_id >= NODE_MAX || !nodes[node_id].in_use) {
+        spinlock_release(&node_lock);
+        return -EINVAL;
+    }
+    if (schedulable) {
+        nodes[node_id].status = NODE_STATUS_READY;
+        kprintf("[Node] Node %s set SCHEDULABLE\n", nodes[node_id].id);
+    } else {
+        nodes[node_id].status = NODE_STATUS_NOT_READY;
+        kprintf("[Node] Node %s set UNSCHEDULABLE (cordoned)\n", nodes[node_id].id);
+    }
+    spinlock_release(&node_lock);
+    return 0;
+}
+
+int pod_evict_on_node(int node_id)
+{
+    spinlock_acquire(&node_lock);
+    if (node_id < 0 || node_id >= NODE_MAX || !nodes[node_id].in_use) {
+        spinlock_release(&node_lock);
+        return -EINVAL;
+    }
+    int count = (int)nodes[node_id].container_count;
+    kprintf("[Node] Evacuating %d pod(s) from node %s\n",
+            count, nodes[node_id].id);
+    /* In production this would signal the scheduler to relocate pods.
+     * Simplified: just report the eviction. */
+    nodes[node_id].container_count = 0;
+    spinlock_release(&node_lock);
+    return count;
+}
+
+int node_signal_upgrade(int node_id, const char *version)
+{
+    if (!version) return -EINVAL;
+    spinlock_acquire(&node_lock);
+    if (node_id < 0 || node_id >= NODE_MAX || !nodes[node_id].in_use) {
+        spinlock_release(&node_lock);
+        return -EINVAL;
+    }
+    kprintf("[Node] Node %s upgrade signalled to version %s\n",
+            nodes[node_id].id, version);
+    spinlock_release(&node_lock);
+    return 0;
+}
+
 int reconciler_tick(void)
 {
     if (!node_initialised || local_node_idx < 0) return 0;
