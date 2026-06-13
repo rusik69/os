@@ -405,7 +405,21 @@ C_SRCS = src/kernel/kernel.c \
          src/container/storage.c \
          src/container/network.c \
          src/container/image.c \
-         src/container/orch.c
+         src/container/orch.c \
+         src/container/service_proxy.c \
+         src/container/scheduler_policy.c \
+         src/cluster/raft.c \
+         src/cluster/raft_kv.c \
+         src/cluster/gossip.c \
+         src/cluster/node.c \
+         src/cluster/cluster.c \
+         src/cluster/overlay.c \
+         src/cluster/network_policy.c \
+         src/cluster/mesh.c \
+         src/cluster/controllers.c \
+         src/cluster/hpa.c \
+         src/cluster/crd.c \
+         src/cluster/runtime_security.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

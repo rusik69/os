@@ -66,3 +66,7 @@ EXPORT_SYMBOL(timer_get_ticks);
 uint64_t timer_get_ns(void) {
     return ticks * NS_PER_TICK;
 }
+
+uint64_t timer_get_ms(void) {
+    return (ticks * NS_PER_TICK) / 1000000ULL;
+}

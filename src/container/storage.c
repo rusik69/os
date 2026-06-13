@@ -9,7 +9,6 @@
 #define KERNEL_INTERNAL
 #include "container.h"
 #include "overlay.h"
-#include "fs.h"
 #include "printf.h"
 #include "string.h"
 #include "heap.h"
@@ -46,7 +45,7 @@ int storage_init(void)
 
     memset(layer_table, 0, sizeof(layer_table));
 
-    int ret = fs_create(LAYER_DATA_DIR, FS_TYPE_DIR);
+    int ret = vfs_create(LAYER_DATA_DIR, VFS_TYPE_DIR);
     if (ret < 0 && ret != -EEXIST) {
         kprintf("[Storage] Failed to create %s: err=%d\n", LAYER_DATA_DIR, ret);
         return ret;
@@ -96,20 +95,15 @@ int storage_create_layer(const char *source_dir, const char *hash,
     if (n < 0 || (size_t)n >= sizeof(layer_path)) return -ENAMETOOLONG;
 
     /* Create layer directory */
-    n = fs_create(layer_path, FS_TYPE_DIR);
+    n = vfs_create(layer_path, VFS_TYPE_DIR);
     if (n < 0 && n != -EEXIST) return n;
 
     /* Copy via read/write loop using VFS */
-    struct vfs_node *src_node = vfs_lookup(source_dir);
-    struct vfs_node *dst_node = vfs_lookup(layer_path);
-    if (src_node && dst_node) {
-        /* Recursive directory copy — simplified: create skeleton */
-        vfs_put(src_node);
-        vfs_put(dst_node);
-    } else {
-        if (src_node) vfs_put(src_node);
-        if (dst_node) vfs_put(dst_node);
-    }
+    /*
+     * In production: iterate source_dir entries via vfs_readdir_names() and
+     * copy each file/dir. Simplified: just mark the layer as created.
+     */
+    kprintf("[Storage] Created layer %s at %s\n", hash, layer_path);
 
     l->in_use = 1;
     strncpy(l->hash, hash, sizeof(l->hash) - 1);
@@ -134,10 +128,10 @@ int storage_import_layer(const char *layer_dir, const char *hash,
 {
     if (!layer_dir || !hash) return -EINVAL;
 
-    /* Verify the layer directory exists */
-    struct vfs_node *node = vfs_lookup(layer_dir);
-    if (!node) return -ENOENT;
-    vfs_put(node);
+    /* Verify the layer directory exists via stat */
+    struct vfs_stat st;
+    int ret = vfs_stat(layer_dir, &st);
+    if (ret < 0) return -ENOENT;
 
     return storage_create_layer(layer_dir, hash, parent_hash);
 }
@@ -167,10 +161,10 @@ int storage_mount_rootfs(struct container *c, const char **layer_hashes,
         return -EINVAL;
 
     /* Resolve layer paths into lowerdir array */
-    const char *lower[OVERLAY_MAX_LAYERS];
+    const char *lower[MAX_LAYERS];
     int num_lower = 0;
 
-    for (int i = num_layers - 1; i >= 0 && num_lower < OVERLAY_MAX_LAYERS; i--) {
+    for (int i = num_layers - 1; i >= 0 && num_lower < MAX_LAYERS; i--) {
         int idx = layer_find_by_hash(layer_hashes[i]);
         if (idx < 0) {
             kprintf("[Storage] Layer %s not found\n", layer_hashes[i]);
@@ -184,7 +178,7 @@ int storage_mount_rootfs(struct container *c, const char **layer_hashes,
     int n = snprintf(upper, sizeof(upper), "%s/upper", c->data_dir);
     if (n < 0 || (size_t)n >= sizeof(upper)) return -ENAMETOOLONG;
 
-    n = fs_create(upper, FS_TYPE_DIR);
+    n = vfs_create(upper, VFS_TYPE_DIR);
     if (n < 0 && n != -EEXIST) return n;
 
     /* Work dir for overlay */
@@ -192,7 +186,7 @@ int storage_mount_rootfs(struct container *c, const char **layer_hashes,
     n = snprintf(work, sizeof(work), "%s/work", c->data_dir);
     if (n < 0 || (size_t)n >= sizeof(work)) return -ENAMETOOLONG;
 
-    n = fs_create(work, FS_TYPE_DIR);
+    n = vfs_create(work, VFS_TYPE_DIR);
     if (n < 0 && n != -EEXIST) return n;
 
     /* Mount the overlay */
@@ -219,9 +213,9 @@ int storage_commit_layer(struct container *c, const char *new_hash)
     if (n < 0 || (size_t)n >= sizeof(upperdir)) return -ENAMETOOLONG;
 
     /* Verify upperdir exists */
-    struct vfs_node *node = vfs_lookup(upperdir);
-    if (!node) return -ENOENT;
-    vfs_put(node);
+    struct vfs_stat st;
+    int ret_chk = vfs_stat(upperdir, &st);
+    if (ret_chk < 0) return -ENOENT;
 
     return storage_create_layer(upperdir, new_hash, NULL);
 }

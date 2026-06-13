@@ -12,6 +12,14 @@ static inline uint32_t htonl(uint32_t v) {
 }
 static inline uint32_t ntohl(uint32_t v) { return htonl(v); }
 
+/* IP address printing macros (Linux kernel-compatible) */
+#define NIPQUAD_FMT "%d.%d.%d.%d"
+#define NIPQUAD(addr) \
+    (uint8_t)(((uint32_t)(addr)) >> 24),  \
+    (uint8_t)(((uint32_t)(addr)) >> 16),  \
+    (uint8_t)(((uint32_t)(addr)) >> 8),   \
+    (uint8_t)((uint32_t)(addr))
+
 /* Default network config (QEMU user-mode networking) */
 #define NET_IP       0x0A000F02  /* 10.0.2.15 (big-endian built at runtime) */
 #define NET_GATEWAY  0x0A000202  /* 10.0.2.2 */
