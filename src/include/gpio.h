@@ -29,6 +29,9 @@ int  gpio_get_value(int pin);
 void gpio_free(int pin);
 int  gpio_is_initialized(void);
 
+/* GPIO IRQ mode configuration (used by gpio_irq.c) */
+void gpio_set_irq_mode(unsigned int pin, int mode);
+
 /* Simple GPIO using port 0xE (PCH GPIO on some Intel chipsets) */
 #define GPIO_BASE_PORT 0xE
 

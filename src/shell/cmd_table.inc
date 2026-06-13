@@ -275,6 +275,9 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("ipcrm",       "Remove IPC resources (ipcrm -m|-s|-q <id>)",                    cmd_ipcrm)
     CMD("ipcs",        "Show IPC resources (ipcs -m|-s|-q)",                            cmd_ipcs)
     CMD("isosize",     "Show ISO filesystem size (isosize <device>)",                   cmd_isosize)
+    CMD("iommu",       "Show IOMMU status and DMAR mappings",                           sh_iommu)
+    CMD("cet",         "Show Intel CET shadow stack status",                            sh_cet)
+    CMD("nft",         "nftables rule management (nft list|add rule|flush)",            sh_nft)
     /* Phase 12 — new system utility commands */
     CMD("moc",         "Show memory object cache (slabinfo)",                            cmd_moc)
     CMD("pmap",        "Show process memory map (pmap <pid>)",                           cmd_pmap)

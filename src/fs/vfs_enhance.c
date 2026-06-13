@@ -23,6 +23,7 @@
 #include "heap.h"
 #include "errno.h"
 #include "quota.h"
+#include "process.h"
 
 /* ====================================================================
  * 7. POSIX ACL Enforcement in VFS operations

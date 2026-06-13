@@ -3,6 +3,11 @@
 
 #include "types.h"
 
+/* ACPI table signatures */
+#define RSDP_SIG "RSD PTR "
+#define FADT_SIG "FACP"
+#define LPIT_SIG "LPIT"
+
 void acpi_init(void);
 void acpi_shutdown(void);
 void acpi_reboot(void);
@@ -76,6 +81,20 @@ struct acpi_header {
     uint32_t oem_revision;
     uint32_t creator_id;
     uint32_t creator_revision;
+} __attribute__((packed));
+
+/* RSDT / RSDP root system description pointers */
+struct rsdp {
+    char     signature[8];
+    uint8_t  checksum;
+    char     oem_id[6];
+    uint8_t  revision;
+    uint32_t rsdt_addr;
+} __attribute__((packed));
+
+struct rsdt {
+    struct acpi_header header;
+    uint32_t entries[1];  /* variable-length */
 } __attribute__((packed));
 
 /* ── NFIT: NVDIMM Firmware Interface Table (Item 193) ─────────────── */
@@ -181,5 +200,61 @@ struct nfit_spa_range_info {
 int acpi_nfit_get_count(void);
 /* Copy a specific SPA range entry. Returns 0 on success. */
 int acpi_nfit_get_spa(int index, struct nfit_spa_range_info *info);
+
+/* ── DMAR: DMA Remapping Reporting (VT-d) ─────────────────────────── */
+
+#define DMAR_SIG "DMAR"
+
+/* DMAR table header (extends acpi_header with flags) */
+struct dmar_table {
+    struct acpi_header header;
+    uint8_t  host_addr_width;  /* DMA address width, minus 1 (e.g. 47 = 48-bit) */
+    uint8_t  flags;
+    uint8_t  reserved[10];
+} __attribute__((packed));
+
+/* DMAR sub-table types */
+#define DMAR_TYPE_DRHD   0  /* DMA Remapping Hardware Unit Definition */
+#define DMAR_TYPE_RMRR   1  /* Reserved Memory Region Reporting */
+#define DMAR_TYPE_ATSR   2  /* Root Port ATS Capability */
+#define DMAR_TYPE_RHSA   3  /* Remapping Hardware Status Affinity */
+
+/* DMAR sub-table header */
+struct dmar_sub_header {
+    uint16_t type;
+    uint16_t length;
+} __attribute__((packed));
+
+/* DRHD — DMA Remapping Hardware Unit Definition */
+#define DMAR_DRHD_FLAG_INCLUDE_PCI_ALL (1 << 0)
+
+struct dmar_drhd {
+    struct dmar_sub_header hdr;
+    uint8_t  flags;
+    uint8_t  reserved;
+    uint16_t segment;
+    uint64_t base_addr;  /* Register base of remapping hardware */
+    /* Followed by variable-length array of device scope entries */
+} __attribute__((packed));
+
+/* RMRR — Reserved Memory Region Reporting */
+struct dmar_rmrr {
+    struct dmar_sub_header hdr;
+    uint16_t segment;
+    uint8_t  reserved[2];
+    uint64_t base_addr;   /* Region base (must be 4K aligned) */
+    uint64_t end_addr;    /* Region end (inclusive) */
+    /* Followed by variable-length array of device scope entries */
+} __attribute__((packed));
+
+/* Device scope entry structure */
+struct dmar_device_scope {
+    uint8_t  type;
+    uint8_t  length;
+    uint16_t reserved;
+    uint8_t  enumeration_id;
+    uint8_t  start_bus_number;
+    /* Followed by variable-length array of path entries (dev, func pairs) */
+} __attribute__((packed));
 
 #endif

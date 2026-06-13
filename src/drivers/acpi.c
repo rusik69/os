@@ -17,24 +17,6 @@
 #define AML_PACKAGE_OP 0x12  /* Package */
 #define AML_STRING_OP  0x0d  /* String prefix */
 
-/* ACPI table signatures */
-#define RSDP_SIG "RSD PTR "
-#define FADT_SIG "FACP"
-#define LPIT_SIG "LPIT"
-
-struct rsdp {
-    char     signature[8];
-    uint8_t  checksum;
-    char     oem_id[6];
-    uint8_t  revision;
-    uint32_t rsdt_addr;
-} __attribute__((packed));
-
-struct rsdt {
-    struct acpi_header header;
-    uint32_t entries[1];  /* variable-length */
-} __attribute__((packed));
-
 struct fadt {
     struct acpi_header header;
     uint32_t firmware_ctrl;
@@ -796,6 +778,11 @@ void acpi_init(void) {
         /* NFIT table — NVDIMM Firmware Interface Table */
         if (memcmp(hdr->signature, NFIT_SIG, 4) == 0) {
             acpi_parse_nfit(hdr);
+        }
+        /* DMAR table — DMA Remapping (VT-d) */
+        if (memcmp(hdr->signature, DMAR_SIG, 4) == 0) {
+            kprintf("[OK] ACPI: DMAR (DMA Remapping) table found\n");
+            /* IOMMU driver will parse this on iommu_init() */
         }
         /* FACP / FADT table */
     }

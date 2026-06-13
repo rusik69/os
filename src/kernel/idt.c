@@ -238,4 +238,52 @@ void idt_init(void) {
 }
 
 /* ── Exported symbols for driver modules ─────────────────────────── */
+
+/* ── IRQ allocator using bitmap ────────────────────────────────────── */
+/* IRQ vectors 48–239 are available for dynamic allocation */
+#define IRQ_ALLOC_BASE  48
+#define IRQ_ALLOC_END   239
+#define IRQ_ALLOC_COUNT (IRQ_ALLOC_END - IRQ_ALLOC_BASE + 1)
+
+static uint64_t irq_bitmap[(IRQ_ALLOC_COUNT + 63) / 64];
+
+int irq_alloc_range(int count)
+{
+    if (count <= 0 || count > IRQ_ALLOC_COUNT)
+        return -1;
+
+    /* Simple first-fit scan */
+    for (int start = 0; start <= IRQ_ALLOC_COUNT - count; start++) {
+        int free = 1;
+        for (int j = 0; j < count; j++) {
+            int bit = start + j;
+            if (irq_bitmap[bit / 64] & (1ULL << (bit % 64))) {
+                free = 0;
+                break;
+            }
+        }
+        if (free) {
+            /* Mark as used */
+            for (int j = 0; j < count; j++) {
+                int bit = start + j;
+                irq_bitmap[bit / 64] |= (1ULL << (bit % 64));
+            }
+            return IRQ_ALLOC_BASE + start;
+        }
+    }
+    return -1;
+}
+
+void irq_free_range(int base, int count)
+{
+    if (base < IRQ_ALLOC_BASE || count <= 0)
+        return;
+    int start = base - IRQ_ALLOC_BASE;
+    if (start + count > IRQ_ALLOC_COUNT)
+        count = IRQ_ALLOC_COUNT - start;
+    for (int j = 0; j < count; j++) {
+        int bit = start + j;
+        irq_bitmap[bit / 64] &= ~(1ULL << (bit % 64));
+    }
+}
 EXPORT_SYMBOL(idt_register_handler);

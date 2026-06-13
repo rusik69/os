@@ -50,14 +50,14 @@ struct notifier_head {
  * notifier_chain_register  - Insert @nb into chain @nh in priority order.
  * Returns 0 on success, -1 if @nb is already registered.
  */
-int notifier_chain_register(struct notifier_head *nh,
+int notifier_ext_chain_register(struct notifier_head *nh,
                             struct notifier_block *nb);
 
 /*
  * notifier_chain_unregister  - Remove @nb from chain @nh.
  * Returns 0 on success, -1 if not found.
  */
-int notifier_chain_unregister(struct notifier_head *nh,
+int notifier_ext_chain_unregister(struct notifier_head *nh,
                               struct notifier_block *nb);
 
 /*
@@ -65,7 +65,7 @@ int notifier_chain_unregister(struct notifier_head *nh,
  * Stops if a callback returns NOTIFY_BAD | NOTIFY_STOP_MASK.
  * Returns the last return code (NOTIFY_DONE if chain is empty).
  */
-int notifier_call_chain(struct notifier_head *nh,
+int notifier_ext_call_chain(struct notifier_head *nh,
                         unsigned long action, void *data);
 
 /*

@@ -113,6 +113,27 @@ void nf_flush_rules(void) {
     nf_num_rules = 0;
 }
 
+/* Print all netfilter rules (for nft list ruleset) */
+void nf_print_rules(void) {
+    for (int i = 0; i < nf_num_rules; i++) {
+        struct nf_rule *r = &nf_rules[i];
+        kprintf("    chain forward {\n");
+        kprintf("      rule %d: src=%08x/%08x dst=%08x/%08x ",
+                i, r->src_ip, r->src_mask, r->dst_ip, r->dst_mask);
+        if (r->protocol)
+            kprintf("proto=%d ", r->protocol);
+        if (r->src_port)
+            kprintf("sport=%d ", r->src_port);
+        if (r->dst_port)
+            kprintf("dport=%d ", r->dst_port);
+        kprintf("action=%s\n", r->action == NF_DROP ? "drop" : "accept");
+        kprintf("    }\n");
+    }
+    if (nf_num_rules == 0) {
+        kprintf("    (no rules defined)\n");
+    }
+}
+
 int nf_check_rules(void *skb, uint32_t src_ip, uint32_t dst_ip,
                    uint16_t src_port, uint16_t dst_port, uint8_t protocol) {
     (void)skb;

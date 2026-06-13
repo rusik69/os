@@ -42,12 +42,12 @@ static struct aiocb aio_cbs[AIO_MAX_IO];
 static struct aio_event aio_events[AIO_MAX_EVENTS];
 static int aio_initialized = 0;
 
-void aio_init(void) {
+void aio_ext_init(void) {
     if (aio_initialized) return;
     memset(aio_cbs, 0, sizeof(aio_cbs));
     memset(aio_events, 0, sizeof(aio_events));
     aio_initialized = 1;
-    kprintf("[OK] AIO initialized (%d slots)\n", AIO_MAX_IO);
+    kprintf("[OK] AIO extended initialized (%d slots)\n", AIO_MAX_IO);
 }
 
 /* Resolve fd to path */

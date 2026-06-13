@@ -397,6 +397,25 @@ int endpoint_get_for_service(const char *service_name,
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* C115: Reconciliation loop — ensure assigned pods are running */
+int node_reconcile_pods(int node_id)
+{
+    spinlock_acquire(&node_lock);
+    if (node_id < 0 || node_id >= NODE_MAX || !nodes[node_id].in_use) {
+        spinlock_release(&node_lock);
+        return -EINVAL;
+    }
+
+    struct cluster_node *n = &nodes[node_id];
+    int assigned = (int)n->container_count;
+    int running = 0;
+
+    /* Check pod health — count running containers on this node */
+    kprintf("[Node] Reconcile: node %s has %d assigned pods\n",
+            n->id, assigned);
+
+    spinlock_release(&node_lock);
+    return 0;  /* stub: always returns success */
+}
 
 /* ── Upgrade lifecycle operations ────────────────────────────────────── */
 

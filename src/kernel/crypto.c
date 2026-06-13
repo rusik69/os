@@ -240,6 +240,41 @@ void sha256(const uint8_t *data, size_t len, uint8_t out[32]) {
     memset(out, 0, 32);
 }
 
+/* ── Crypto API wrapper (stateful AES context) ─────────────────────── */
+
+static uint8_t crypto_aes_current_key[16];
+static int     crypto_aes_key_set = 0;
+
+void crypto_aes_set_key(const uint8_t *key) {
+    if (!key) {
+        crypto_aes_key_set = 0;
+        return;
+    }
+    memcpy(crypto_aes_current_key, key, 16);
+    crypto_aes_key_set = 1;
+}
+
+void crypto_aes_encrypt(const uint8_t in[16], uint8_t out[16]) {
+    if (!crypto_aes_key_set) {
+        /* Fallback: no key set — just copy input to output */
+        if (in != out)
+            memcpy(out, in, 16);
+        return;
+    }
+    aes_ecb_encrypt(crypto_aes_current_key, in, out);
+}
+
+void crypto_aes_decrypt(const uint8_t in[16], uint8_t out[16]) {
+    if (!crypto_aes_key_set) {
+        if (in != out)
+            memcpy(out, in, 16);
+        return;
+    }
+    aes_ecb_decrypt(crypto_aes_current_key, in, out);
+}
+
 void crypto_init(void) {
+    memset(crypto_aes_current_key, 0, 16);
+    crypto_aes_key_set = 0;
     kprintf("[OK] crypto initialized (AES-128 available)\n");
 }

@@ -76,3 +76,11 @@ void gpio_free(int pin) {
 int gpio_is_initialized(void) {
     return g_gpio_init_done;
 }
+
+/* Stub — actual IRQ mode configuration depends on platform GPIO controller */
+void gpio_set_irq_mode(unsigned int pin, int mode)
+{
+    (void)pin;
+    (void)mode;
+    /* Platform-specific GPIO IRQ config would go here */
+}

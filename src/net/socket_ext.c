@@ -14,8 +14,6 @@
  * This is useful for transparent proxy, load balancers, etc.
  */
 
-#define IP_FREEBIND 15
-
 /* Add IP_FREEBIND support to socket structure.
  * The freebind flag is stored in the socket struct.
  * Already exposed via the socket struct's existing fields,

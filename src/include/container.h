@@ -107,6 +107,9 @@ struct container {
 
 /* ── Public API ────────────────────────────────────────────────────── */
 
+/** The global container table — defined in runtime.c */
+extern struct container container_table[CONTAINER_MAX];
+
 /**
  * container_init() — Initialise the container subsystem.
  * Creates /var/lib/containers/ and /run/containers/ directories.

@@ -13,6 +13,17 @@
 #include "heap.h"
 #include "vfs.h"
 
+/* Parse the typical S_ISDIR/DIR/LNK macros if not already defined */
+#ifndef S_ISDIR
+#define S_ISDIR(m)  (((m) & 0170000) == 0040000)
+#endif
+#ifndef S_ISREG
+#define S_ISREG(m)  (((m) & 0170000) == 0100000)
+#endif
+#ifndef S_ISLNK
+#define S_ISLNK(m)  (((m) & 0170000) == 0120000)
+#endif
+
 /* Convert 8 hex characters to uint32_t */
 static uint32_t hex8(const char *s) {
     uint32_t v = 0;
@@ -113,17 +124,6 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
     kprintf("[cpio] Extracted %d files from initramfs\n", count);
     return count;
 }
-
-/* Parse the typical S_ISREG/DIR/LNK macros if not already defined */
-#ifndef S_ISDIR
-#define S_ISDIR(m)  (((m) & 0170000) == 0040000)
-#endif
-#ifndef S_ISREG
-#define S_ISREG(m)  (((m) & 0170000) == 0100000)
-#endif
-#ifndef S_ISLNK
-#define S_ISLNK(m)  (((m) & 0170000) == 0120000)
-#endif
 
 int cpio_init(void) {
     kprintf("[cpio] CPIO/initramfs module initialized\n");

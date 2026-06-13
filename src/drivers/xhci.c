@@ -14,18 +14,6 @@
 static struct xhci_controller g_xhci;
 static int g_xhci_init_done = 0;
 
-static inline uint32_t xhci_read32(struct xhci_controller *xhci, uint64_t base, uint64_t reg) {
-    return *(volatile uint32_t *)(uintptr_t)(base + reg);
-}
-
-static inline void xhci_write32(struct xhci_controller *xhci, uint64_t base, uint64_t reg, uint32_t val) {
-    *(volatile uint32_t *)(uintptr_t)(base + reg) = val;
-}
-
-static inline uint8_t xhci_read8(struct xhci_controller *xhci, uint64_t base, uint64_t reg) {
-    return *(volatile uint8_t *)(uintptr_t)(base + reg);
-}
-
 /* Probe for xHCI controller via PCI */
 static int xhci_probe_pci(void) {
     struct pci_device pci;

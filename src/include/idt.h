@@ -37,6 +37,13 @@ void idt_register_handler_named(uint8_t vector, isr_handler_t handler, const cha
 /* Update the IST field of an already-registered IDT entry */
 void idt_set_gate_ist(int num, uint8_t ist);
 
+/* ── IRQ allocator ────────────────────────────────────────────────── */
+/* Allocate a contiguous range of IRQ vectors. Returns base vector or < 0. */
+int irq_alloc_range(int count);
+
+/* Free a previously allocated IRQ range. */
+void irq_free_range(int base, int count);
+
 /* ── Interrupt statistics (for /proc/interrupts) ──────────────────── */
 
 /* Maximum number of CPU cores we track interrupt statistics for */

@@ -503,3 +503,16 @@ EXPORT_SYMBOL(gpio_free_irq);
 EXPORT_SYMBOL(gpio_irq_set_type);
 EXPORT_SYMBOL(gpiochip_add);
 EXPORT_SYMBOL(gpiochip_irq_demux);
+
+/*
+ * gpio_set_irq_mode — configure GPIO IRQ trigger mode (stub)
+ *
+ * Used by gpio_irq.c. Actual implementation depends on platform
+ * GPIO controller hardware.
+ */
+void gpio_set_irq_mode(unsigned int pin, int mode)
+{
+    (void)pin;
+    (void)mode;
+    /* Platform-specific GPIO IRQ config would go here */
+}

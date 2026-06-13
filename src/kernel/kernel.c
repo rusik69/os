@@ -141,6 +141,8 @@
 #include "page_allocator_ext.h"
 #include "sched_attr.h"
 #include "cpuset.h"
+#include "core_sched.h"
+#include "nohz.h"
 #include "pidfd.h"
 #include "landlock.h"
 #include "seccomp_bpf.h"
@@ -149,6 +151,7 @@
 #include "export.h"
 #include "stdio.h"
 #include "overlay.h"
+#include "overlay_enhance.h"
 #include "splash.h"
 #include "sysfs.h"
 #include "devfs.h"
@@ -517,6 +520,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     cpu_topology_init();
     numa_init();
 
+    /* Core scheduling for SMT isolation */
+    sched_core_init();
+
     /* Scheduler */
     scheduler_init();
     kprintf("[OK] Scheduler initialized\n");
@@ -530,6 +536,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* CPU idle state management */
     cpuidle_init();
+
+    /* Adaptive tick (NO_HZ_FULL) for isolated CPUs */
+    nohz_init();
 
     /* PELT load tracking */
     pelt_subsys_init();
@@ -610,6 +619,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Overlay/union filesystem */
     overlay_init();
+
+    /* Overlay enhancements: whiteout + opaque directory support */
+    overlay_enhance_init();
 
     /* Keyboard */
     keyboard_init();

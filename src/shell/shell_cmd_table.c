@@ -44,6 +44,9 @@ static void sh_pwd(const char *a)        { (void)a; cmd_pwd(); }
 static void sh_mouse(const char *a)      { (void)a; cmd_mouse_status(); }
 static void sh_sync(const char *a)       { (void)a; cmd_sync(); }
 static void sh_bt(const char *a)         { (void)a; cmd_bt(); }
+static void sh_iommu(const char *a)      { (void)a; cmd_iommu(); }
+static void sh_cet(const char *a)        { (void)a; cmd_cet(); }
+static void sh_nft(const char *a)        { cmd_nft(a); }
 static void sh_true(const char *a)      { (void)a; cmd_true(); }
 static void sh_false(const char *a)     { (void)a; cmd_false(); }
 static void __attribute__((unused)) sh_logname(const char *a)   { (void)a; cmd_logname(); }

@@ -13,7 +13,7 @@
 
 static spinlock_t notifier_lock;
 
-int notifier_chain_register(struct notifier_head *nh,
+int notifier_ext_chain_register(struct notifier_head *nh,
                             struct notifier_block *nb)
 {
     struct notifier_block **pp;
@@ -43,7 +43,7 @@ int notifier_chain_register(struct notifier_head *nh,
     return 0;
 }
 
-int notifier_chain_unregister(struct notifier_head *nh,
+int notifier_ext_chain_unregister(struct notifier_head *nh,
                               struct notifier_block *nb)
 {
     struct notifier_block **pp;
@@ -68,7 +68,7 @@ int notifier_chain_unregister(struct notifier_head *nh,
     return -1;
 }
 
-int notifier_call_chain(struct notifier_head *nh,
+int notifier_ext_call_chain(struct notifier_head *nh,
                         unsigned long action, void *data)
 {
     struct notifier_block *nb;

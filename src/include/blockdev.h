@@ -33,6 +33,7 @@
 enum blk_scheduler {
     BLK_SCHED_NOOP = 0,      /* FIFO */
     BLK_SCHED_DEADLINE,      /* deadline with read-bias sorting */
+    BLK_SCHED_CFQ,           /* Complete Fair Queueing */
     BLK_SCHED_COUNT
 };
 

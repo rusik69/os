@@ -291,6 +291,37 @@ static int handle_container_list(char *resp, int resp_size)
     return json_respond(resp, resp_size, 200, body);
 }
 
+/* C69: Handle GET /containers/<id>/json */
+static int handle_container_inspect(const char *id, char *resp, int resp_size)
+{
+    if (!id || !resp) return -EINVAL;
+
+    /* Find container by ID prefix */
+    struct container *c = NULL;
+    for (int i = 0; i < CONTAINER_MAX; i++) {
+        if (container_table[i].in_use &&
+            strncmp(container_table[i].id, id, strlen(id)) == 0) {
+            c = &container_table[i];
+            break;
+        }
+    }
+    if (!c) {
+        return json_respond(resp, resp_size, 404,
+                           "{\"error\":\"container not found\"}");
+    }
+
+    /* Use the container_inspect function from ext.c */
+    extern int container_inspect(struct container *c, char *buf, int buf_size);
+    char inspect_buf[1024];
+    int ret = container_inspect(c, inspect_buf, sizeof(inspect_buf));
+    if (ret < 0) {
+        return json_respond(resp, resp_size, 500,
+                           "{\"error\":\"inspect failed\"}");
+    }
+
+    return json_respond(resp, resp_size, 200, inspect_buf);
+}
+
 /* C66: Main API dispatcher */
 void orch_api_handle_request(const char *method, const char *path,
                               const char *body,
@@ -307,6 +338,22 @@ void orch_api_handle_request(const char *method, const char *path,
                strstr(path, "/start")) {
         /* Extract container ID and call start */
         handle_container_start(path + 12, response, resp_size);
+    } else if (strcmp(method, "GET") == 0 &&
+               strncmp(path, "/containers/", 12) == 0 &&
+               strstr(path, "/json")) {
+        /* Extract container ID for inspect */
+        char id_buf[64];
+        const char *id_start = path + 12;
+        const char *slash = strchr(id_start, '/');
+        if (slash) {
+            size_t id_len = (size_t)(slash - id_start);
+            if (id_len >= sizeof(id_buf)) id_len = sizeof(id_buf) - 1;
+            memcpy(id_buf, id_start, id_len);
+            id_buf[id_len] = '\0';
+            handle_container_inspect(id_buf, response, resp_size);
+        } else {
+            json_respond(response, resp_size, 400, "{\"error\":\"invalid path\"}");
+        }
     } else {
         json_respond(response, resp_size, 404, "{\"error\":\"not found\"}");
     }

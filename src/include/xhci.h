@@ -79,6 +79,22 @@ struct xhci_controller {
     int      irq;
 };
 
+/* MMIO access helpers */
+static inline uint32_t xhci_read32(struct xhci_controller *xhci, uint64_t base, uint64_t reg) {
+    (void)xhci;
+    return *(volatile uint32_t *)(uintptr_t)(base + reg);
+}
+
+static inline void xhci_write32(struct xhci_controller *xhci, uint64_t base, uint64_t reg, uint32_t val) {
+    (void)xhci;
+    *(volatile uint32_t *)(uintptr_t)(base + reg) = val;
+}
+
+static inline uint8_t xhci_read8(struct xhci_controller *xhci, uint64_t base, uint64_t reg) {
+    (void)xhci;
+    return *(volatile uint8_t *)(uintptr_t)(base + reg);
+}
+
 /* API */
 int  xhci_init(void);
 int  xhci_is_present(void);

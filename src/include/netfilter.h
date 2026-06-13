@@ -145,6 +145,7 @@ int  nf_iterate_hooks(int hook, void *skb);
 int  nf_add_rule(const struct nf_rule *rule);
 int  nf_del_rule(const struct nf_rule *rule);
 void nf_flush_rules(void);
+void nf_print_rules(void);
 int  nf_check_rules(void *skb, uint32_t src_ip, uint32_t dst_ip,
                     uint16_t src_port, uint16_t dst_port, uint8_t protocol);
 

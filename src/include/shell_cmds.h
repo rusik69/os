@@ -358,6 +358,11 @@ int cmd_dos2unix(int argc, char **argv);
 int cmd_eject(int argc, char **argv);
 int cmd_fgconsole(int argc, char **argv);
 
+/* IOMMU, nftables, and CET commands */
+void cmd_iommu(void);
+void cmd_nft(const char *args);
+void cmd_cet(void);
+
 /* SSH commands */
 void cmd_ssh(const char *args);
 void cmd_sshd(const char *args);

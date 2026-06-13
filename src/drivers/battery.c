@@ -138,19 +138,6 @@ struct fadt {
     /* ... rest is unused here */
 } __attribute__((packed));
 
-struct rsdp {
-    char     signature[8];
-    uint8_t  checksum;
-    char     oem_id[6];
-    uint8_t  revision;
-    uint32_t rsdt_addr;
-} __attribute__((packed));
-
-struct rsdt {
-    struct acpi_header header;
-    uint32_t entries[1];
-} __attribute__((packed));
-
 static int scan_dsdt_for_battery(void) {
     /* Find RSDP (same as acpi.c does) */
     struct rsdp *rsdp = NULL;

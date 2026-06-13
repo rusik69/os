@@ -138,6 +138,39 @@ Dependencies: `x86_64-elf-gcc`, `nasm`, `qemu-system-x86_64`, `make`.
 - DOOM: full game engine, raycast renderer, framebuffer output
 - GUI: window manager, widgets, mouse cursor, compositing
 
+### Container Platform
+- OCI-compatible container runtime: create, start, stop, delete
+- Container exec, attach, logs, pause/unpause, wait
+- Container stats: CPU, memory, PIDs via cgroup interfaces
+- Container inspect: full JSON metadata dump
+- Container top: list processes inside a container
+- OCI image management: pull, push, tag, list, remove, prune
+- Image save/load: archive to/from tar files
+- OverlayFS storage: layer management, whiteout, opaque directories
+- Container networking: bridge, NAT, port mapping
+- Orchestration API server on port 8375 (Docker-compatible REST)
+- Pod abstraction: create, start, stop, add containers
+- Service abstraction: stable endpoints with round-robin load balancing
+- Container checkpoint/restore
+- Security scanning, seccomp notify, scheduler policies
+
+### Cluster Management
+- Raft consensus: leader election, log replication, KV store
+- Gossip protocol: membership, failure detection, state sync
+- Node management: registration, health reporting, heartbeats
+- Cluster networking: overlay, VXLAN, WireGuard mesh
+- Network policies: ingress/egress rules, pod selectors
+- Ingress controller: NodePort, LoadBalancer, HTTP routing
+- Multi-tenant network isolation: per-namespace VXLAN/VLAN
+- Horizontal Pod Autoscaler (HPA): CPU/memory-based scaling
+- Vertical Pod Autoscaler (VPA): resource recommendation
+- Cluster autoscaler: add/remove nodes on demand
+- Descheduler: evict pods for better packing
+- Custom Resource Definitions (CRDs)
+- Cluster upgrades: cordon, drain, upgrade, uncordon, rollback
+- Node problem detection and remediation
+- Runtime security policies
+
 ### Security
 - Seccomp-BPF: syscall filtering with SECCOMP_RET_KILL/TRAP/ALLOW/LOG
 - Landlock: path-based mandatory access control

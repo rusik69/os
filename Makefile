@@ -83,6 +83,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cmdline.c \
          src/kernel/smp.c \
          src/kernel/cpu.c \
+         src/kernel/cet.c \
          src/kernel/cpuidle.c \
          src/kernel/oom.c \
          src/kernel/rcu.c \
@@ -98,6 +99,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/idr.c \
          src/kernel/rng.c \
          src/kernel/fsnotify.c \
+         src/kernel/crypto.c \
          src/kernel/module.c \
          src/kernel/module_elf.c \
          src/kernel/module_signature.c \
@@ -130,6 +132,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/acpi_thermal.c \
          src/drivers/acpi_ec.c \
          src/drivers/acpi_cpufreq.c \
+         src/drivers/acpi_power_button.c \
          src/power/suspend.c \
          src/power/pm_qos.c \
          src/power/wakeup.c \
@@ -138,6 +141,7 @@ C_SRCS = src/kernel/kernel.c \
          src/power/cpufreq_schedutil.c \
          src/drivers/ahci.c \
          src/drivers/nvme.c \
+         src/drivers/nvme_pmr.c \
          src/drivers/usb_ehci.c \
          src/drivers/usb_msc.c \
          src/drivers/ps2.c \
@@ -149,6 +153,8 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/floppy.c \
          src/drivers/battery.c \
          src/drivers/i2c.c \
+         src/drivers/edid.c \
+         src/drivers/smbus.c \
          src/memory/pmm.c \
          src/memory/vmm.c \
          src/memory/heap.c \
@@ -178,6 +184,13 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/page_cache.c \
          src/fs/fstab.c \
          src/fs/fsck.c \
+         src/fs/iosched.c \
+         src/fs/luks.c \
+         src/fs/ext2.c \
+         src/fs/cpio.c \
+         src/fs/romfs.c \
+         src/fs/tarfs.c \
+         src/fs/vfs_enhance.c \
          src/net/net.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \
@@ -185,17 +198,20 @@ C_SRCS = src/kernel/kernel.c \
          src/net/telnetd.c \
          src/net/httpd.c \
          src/net/socket.c \
+         src/net/socket_ext.c \
          src/net/af_unix.c \
          src/net/af_packet.c \
          src/net/can.c \
          src/net/netlink.c \
          src/net/netfilter.c \
+         src/net/nf_tables.c \
          src/net/conntrack.c \
          src/net/conntrack_helpers.c \
          src/net/dns_cache.c \
          src/net/pkt_sched.c \
          src/net/bridge.c \
          src/net/stp.c \
+         src/net/net_ext.c \
          src/net/vlan.c \
          src/net/tun.c \
          src/net/net_ns.c \
@@ -275,13 +291,13 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/pagecache.c \
          src/fs/freeze.c \
          src/fs/quota.c \
-         src/fs/crypto.c \
          src/net/dhcp.c \
          src/kernel/irq_affinity.c \
          src/kernel/trace.c \
          src/kernel/smap_smep_umip.c \
          src/kernel/uaccess.c \
          src/kernel/notifier.c \
+         src/kernel/notifier_ext.c \
          src/kernel/softirq.c \
          src/kernel/tasklet.c \
          src/kernel/stacktrace.c \
@@ -365,6 +381,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/net_igmp.c \
          src/kernel/net_lldp.c \
          src/kernel/aio_enhanced.c \
+         src/kernel/aio.c \
          src/kernel/range.c \
          src/kernel/hashtable.c \
          src/kernel/interval_tree.c \
@@ -424,6 +441,8 @@ C_SRCS = src/kernel/kernel.c \
          src/orch/auth.c \
          src/orch/pod_security.c \
          src/orch/secrets.c \
+         src/orch/pod_health.c \
+         src/orch/hooks.c \
          src/cluster/raft.c \
          src/cluster/raft_kv.c \
          src/cluster/gossip.c \
@@ -437,7 +456,14 @@ C_SRCS = src/kernel/kernel.c \
          src/cluster/crd.c \
          src/cluster/runtime_security.c \
          src/cluster/upgrade.c \
-         src/cluster/node_problem.c
+         src/cluster/node_problem.c \
+         src/drivers/xhci_streams.c \
+         src/drivers/gpio_irq.c \
+         src/drivers/iommu.c \
+         src/kernel/sched_idle.c \
+         src/kernel/core_sched.c \
+         src/kernel/nohz.c \
+         src/fs/overlay_enhance.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
