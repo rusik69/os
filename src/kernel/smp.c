@@ -25,11 +25,13 @@ int smp_cpu_count = 1;  /* BSP is always CPU 0 */
 /* CPU hotplug state table (defined in cpuhp.h header, storage here) */
 enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
 
+#include "errno.h"
+
 /* ── GS.base accessor ──────────────────────────────────────────────── */
 void smp_set_gs_base(struct cpu_info *info) {
     uint64_t base = (uint64_t)info;
-    uint32_t lo = base & 0xFFFFFFFF;
-    uint32_t hi = (base >> 32) & 0xFFFFFFFF;
+    uint32_t lo = (uint32_t)(base & 0xFFFFFFFF);
+    uint32_t hi = (uint32_t)((base >> 32) & 0xFFFFFFFF);
     __asm__ volatile("wrmsr" :: "c"(0xC0000101), "a"(lo), "d"(hi)); /* MSR_GS_BASE */
 }
 
@@ -193,7 +195,7 @@ static int detect_cpus_from_madt(void) {
 
     if (memcmp(rsdt_hdr->sig, "RSDT", 4) != 0) return 1;
 
-    uint32_t entry_count = (rsdt_hdr->len - sizeof(struct acpi_hdr)) / 4;
+    uint32_t entry_count = (uint32_t)((rsdt_hdr->len - sizeof(struct acpi_hdr)) / 4);
     uint32_t *entries = (uint32_t *)((uint8_t *)rsdt_hdr + sizeof(struct acpi_hdr));
 
     struct acpi_hdr *madt = NULL;

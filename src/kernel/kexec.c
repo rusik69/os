@@ -27,6 +27,7 @@
  */
 
 #include "kexec.h"
+#include "errno.h"
 #include "pmm.h"
 #include "vmm.h"
 #include "printf.h"

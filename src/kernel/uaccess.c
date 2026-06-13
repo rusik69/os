@@ -18,6 +18,7 @@
 #include "uaccess.h"
 #include "cpu.h"
 #include "process.h"
+#include "string.h"
 #include "vmm.h"
 #include "errno.h"
 

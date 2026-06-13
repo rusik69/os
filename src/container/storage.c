@@ -13,6 +13,7 @@
 #include "string.h"
 #include "heap.h"
 #include "errno.h"
+#include "fs.h"
 #include "vfs.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
