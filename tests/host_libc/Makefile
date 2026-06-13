@@ -26,15 +26,28 @@ OBJS = stubs.o string.o stdlib.o printf.o string_ext.o test_libc.o
 CRYPTODIR = ../../src/lib
 CRYPTO_OBJS = bitmap.o crc32.o crc64.o sha256.o test_bitops_crc_sha.o
 
+# Extended crypto tests (SHA-512, MD5, HMAC, Adler-32, Base64)
+CRYPTO_EXT_OBJS = sha512.o md5.o hmac.o adler32.o base64.o test_crypto_ext.o
+
+# Library structure tests (hexdump, radix tree)
+KSRCDIR = ../../src/kernel
+LIB_STRUCTS_OBJS = hexdump.o radix_tree.o test_lib_structs.o
+
 .PHONY: all clean
 
-all: test_libc test_bitops_crc_sha
+all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs
 	@echo ""
 	@echo "Running host_libc unit tests..."
 	./test_libc
 	@echo ""
 	@echo "Running host-side crypto/bitmap tests..."
 	./test_bitops_crc_sha
+	@echo ""
+	@echo "Running host-side crypto extension tests..."
+	./test_crypto_ext
+	@echo ""
+	@echo "Running host-side library structure tests..."
+	./test_lib_structs
 
 test_libc: $(OBJS)
 	$(CC) -o $@ $^
@@ -83,5 +96,46 @@ sha256.o: $(CRYPTODIR)/sha256.c
 test_bitops_crc_sha.o: test_bitops_crc_sha.c
 	$(CC) $(TEST_CFLAGS) -DTEST_CRC64 -c -o $@ $<
 
+# ── Host-side crypto extension tests ───────────────────────────
+
+test_crypto_ext: $(CRYPTO_EXT_OBJS) sha256.o printf.o stubs.o
+	$(CC) -o $@ $^
+
+sha512.o: $(CRYPTODIR)/sha512.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+md5.o: $(CRYPTODIR)/md5.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+hmac.o: $(CRYPTODIR)/hmac.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+adler32.o: $(CRYPTODIR)/adler32.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+base64.o: $(CRYPTODIR)/base64.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_crypto_ext.o: test_crypto_ext.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Host-side library structure tests ──────────────────────────
+
+test_lib_structs: $(LIB_STRUCTS_OBJS) printf.o stubs.o
+	$(CC) -o $@ $^
+
+uuid.o: $(CRYPTODIR)/uuid.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+hexdump.o: $(CRYPTODIR)/hexdump.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+radix_tree.o: $(CRYPTODIR)/radix_tree.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_lib_structs.o: test_lib_structs.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f $(OBJS) $(CRYPTO_OBJS) test_libc test_bitops_crc_sha
+	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) \
+	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs
