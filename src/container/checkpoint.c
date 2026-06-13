@@ -121,7 +121,7 @@ static spinlock_t checkpoint_global_lock = SPINLOCK_INIT;
  * process's VMA (virtual memory area) list rather than a proc
  * filesystem entry.
  */
-static int build_proc_maps_path(uint32_t pid, char *buf, int buf_size)
+static int __attribute__((unused)) build_proc_maps_path(uint32_t pid, char *buf, int buf_size)
 {
     if (!buf || buf_size <= 0)
         return -EINVAL;

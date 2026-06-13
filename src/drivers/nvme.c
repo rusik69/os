@@ -86,7 +86,7 @@ static int nvme_probe_pci(void) {
         struct pci_device pci2;
         /* Combine subclass and prog_if into a single filter value */
         uint32_t sub_prog = ((uint32_t)NVME_PCI_PROG_IF << 16) | NVME_PCI_SUBCLASS;
-        int ret2 = pci_find_class(NVME_PCI_CLASS, (int)sub_prog, &pci2);
+        int ret2 = pci_find_class(NVME_PCI_CLASS, (uint8_t)sub_prog, &pci2);
         if (ret2 < 0)
             return -1;
         pci = pci2;
@@ -275,7 +275,7 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
 
     /* Copy command to submission queue */
     memcpy(&sq[tail], cmd, sizeof(struct nvme_sq_entry));
-    tail = (tail + 1) % 64;
+    tail = (uint16_t)((tail + 1) % 64);
     g_nvme_ctrl.admin_sq_tail = tail;
 
     /* Ring the admin SQ doorbell (qid=0) */
@@ -293,7 +293,7 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
                 memcpy(cqe, &cq[head], sizeof(struct nvme_cq_entry));
             /* Mark as consumed */
             cq[head].status = 0xFFFF;
-            head = (head + 1) % 64;
+            head = (uint16_t)((head + 1) % 64);
             g_nvme_ctrl.admin_cq_head = head;
 
             /* Ring the admin CQ doorbell to re-arm */
@@ -925,7 +925,7 @@ int nvme_init(void) {
     }
 
     /* Register IRQ handler */
-    idt_register_handler(32 + g_nvme_ctrl.irq, nvme_irq_handler);
+    idt_register_handler((uint8_t)(32 + g_nvme_ctrl.irq), nvme_irq_handler);
 
     /* Set up per-CPU I/O queue pairs */
     if (nvme_setup_io_queues() < 0) {

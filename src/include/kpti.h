@@ -18,11 +18,6 @@
 
 struct process;  /* forward declaration */
 
-#define KPTI_TRAMPOLINE_VADDR
- * Chosen just below USER_VADDR_MAX (0x0000800000000000).
- * This is in the canonical user half, so it can be managed with
- * vmm_map_user_page() after clearing the USER bit for supervisor-only.
- */
 #define KPTI_TRAMPOLINE_VADDR  0x00007FFFFFFE0000ULL
 #define KPTI_TRAMPOLINE_SIZE   0x1000ULL  /* one 4K page */
 

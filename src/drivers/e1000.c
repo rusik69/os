@@ -321,12 +321,12 @@ static void e1000_itr_adaptive(void) {
 static void e1000_read_mac(void) {
     uint32_t ral = e1000_read(REG_RAL);
     uint32_t rah = e1000_read(REG_RAH);
-    mac_addr[0] = ral & 0xFF;
-    mac_addr[1] = (ral >> 8) & 0xFF;
-    mac_addr[2] = (ral >> 16) & 0xFF;
-    mac_addr[3] = (ral >> 24) & 0xFF;
-    mac_addr[4] = rah & 0xFF;
-    mac_addr[5] = (rah >> 8) & 0xFF;
+    mac_addr[0] = (uint8_t)(ral & 0xFF);
+    mac_addr[1] = (uint8_t)((ral >> 8) & 0xFF);
+    mac_addr[2] = (uint8_t)((ral >> 16) & 0xFF);
+    mac_addr[3] = (uint8_t)((ral >> 24) & 0xFF);
+    mac_addr[4] = (uint8_t)(rah & 0xFF);
+    mac_addr[5] = (uint8_t)((rah >> 8) & 0xFF);
 }
 
 /* ── Per-queue RX/TX initialization ────────────────────────────────── */

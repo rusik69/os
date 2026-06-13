@@ -277,14 +277,14 @@ static int mce_inject_trigger(const char *buf, int len)
 
     /* Step 3b: Write ADDR and MISC (only if their valid bits are set) */
     if (g_inject_status & MC_STATUS_ADDRV) {
-        write_msr(MSR_IA32_MC0_ADDR + 4ULL * g_inject_bank, g_inject_addr);
+        write_msr((uint32_t)(MSR_IA32_MC0_ADDR + 4ULL * g_inject_bank), g_inject_addr);
     }
     if (g_inject_status & MC_STATUS_MISCV) {
-        write_msr(MSR_IA32_MC0_MISC + 4ULL * g_inject_bank, g_inject_misc);
+        write_msr((uint32_t)(MSR_IA32_MC0_MISC + 4ULL * g_inject_bank), g_inject_misc);
     }
 
     /* Step 3c: Write STATUS last (this is what the CPU checks for VAL) */
-    write_msr(MSR_IA32_MC0_STATUS + 4ULL * g_inject_bank, g_inject_status);
+    write_msr((uint32_t)(MSR_IA32_MC0_STATUS + 4ULL * g_inject_bank), g_inject_status);
 
     /* Step 4: Build and call the MCE handler with a synthetic frame */
     struct interrupt_frame frame;
@@ -302,9 +302,9 @@ static int mce_inject_trigger(const char *buf, int len)
      * determined the error was recoverable).  However, in some cases
      * (e.g. fatal injection), the handler might panic — in which case
      * we never reach here.  For non-fatal injections, we clean up. */
-    write_msr(MSR_IA32_MC0_STATUS + 4ULL * g_inject_bank, 0ULL);
-    write_msr(MSR_IA32_MC0_ADDR  + 4ULL * g_inject_bank, 0ULL);
-    write_msr(MSR_IA32_MC0_MISC  + 4ULL * g_inject_bank, 0ULL);
+    write_msr((uint32_t)(MSR_IA32_MC0_STATUS + 4ULL * g_inject_bank), 0ULL);
+    write_msr((uint32_t)(MSR_IA32_MC0_ADDR  + 4ULL * g_inject_bank), 0ULL);
+    write_msr((uint32_t)(MSR_IA32_MC0_MISC  + 4ULL * g_inject_bank), 0ULL);
 
     /* Restore MCG_STATUS — clear MCIP if the handler didn't already */
     uint64_t cur_mcg_status = read_msr(MSR_IA32_MCG_STATUS);

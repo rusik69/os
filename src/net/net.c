@@ -520,10 +520,10 @@ uint16_t net_checksum(const void *data, int len) {
 /* --- IP getters/setters --- */
 
 void net_get_ip(uint8_t *ip) {
-    ip[0] = (net_our_ip >> 24) & 0xFF;
-    ip[1] = (net_our_ip >> 16) & 0xFF;
-    ip[2] = (net_our_ip >> 8) & 0xFF;
-    ip[3] = net_our_ip & 0xFF;
+    ip[0] = (uint8_t)((net_our_ip >> 24) & 0xFF);
+    ip[1] = (uint8_t)((net_our_ip >> 16) & 0xFF);
+    ip[2] = (uint8_t)((net_our_ip >> 8) & 0xFF);
+    ip[3] = (uint8_t)(net_our_ip & 0xFF);
 }
 
 uint32_t net_get_gateway(void) { return net_gateway_ip; }
@@ -920,7 +920,7 @@ static int handle_ip_fragment(struct ip_header *ip, const uint8_t *data,
 
     /* Record IP header length from the first fragment */
     if (frag_off == 0)
-        slot->ihl = ihl;
+        slot->ihl = (uint8_t)ihl;
 
     /* Reject overlapping fragments (security: RFC 1858 / RFC 3128).
      * Overlapping fragments can be used to bypass stateless packet filters
@@ -1125,7 +1125,7 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
     struct eth_header *eth = (struct eth_header *)pkt_buf;
     uint16_t type = ntohs(eth->type);
     const uint8_t *payload = pkt_buf + sizeof(struct eth_header);
-    uint16_t payload_len = len - sizeof(struct eth_header);
+    uint16_t payload_len = (uint16_t)(len - sizeof(struct eth_header));
 
     net_iface_stats.rx_packets++;
     net_iface_stats.rx_bytes += len;
@@ -1348,7 +1348,7 @@ int net_loopback_send(const void *data, int len) {
     if (!loopback_initialized) return -1;
     if (len > LOOPBACK_BUF_SIZE) len = LOOPBACK_BUF_SIZE;
     memcpy(loopback_buffer, data, len);
-    loopback_len = len;
+    loopback_len = (uint16_t)len;
     return len;
 }
 

@@ -119,18 +119,18 @@ static struct vblk_queue vblk_queues[VBLK_MAX_QUEUES];
 static inline void vb_outb(uint8_t off, uint8_t v)  { outb(vblk_iobase + off, v); }
 static inline void vb_outw(uint8_t off, uint16_t v) { outw(vblk_iobase + off, v); }
 static inline void vb_outl(uint8_t off, uint32_t v) {
-    outb(vblk_iobase + off,     (uint8_t)v);
-    outb(vblk_iobase + off + 1, (uint8_t)(v >> 8));
-    outb(vblk_iobase + off + 2, (uint8_t)(v >> 16));
-    outb(vblk_iobase + off + 3, (uint8_t)(v >> 24));
+    outb((uint16_t)(vblk_iobase + off),     (uint8_t)v);
+    outb((uint16_t)(vblk_iobase + off + 1), (uint8_t)(v >> 8));
+    outb((uint16_t)(vblk_iobase + off + 2), (uint8_t)(v >> 16));
+    outb((uint16_t)(vblk_iobase + off + 3), (uint8_t)(v >> 24));
 }
 static inline uint8_t  vb_inb(uint8_t off)  { return inb(vblk_iobase + off); }
 static inline uint16_t vb_inw(uint8_t off)  { return inw(vblk_iobase + off); }
 static inline uint32_t vb_inl(uint8_t off) {
-    return (uint32_t)inb(vblk_iobase + off) |
-           ((uint32_t)inb(vblk_iobase + off + 1) << 8)  |
-           ((uint32_t)inb(vblk_iobase + off + 2) << 16) |
-           ((uint32_t)inb(vblk_iobase + off + 3) << 24);
+    return (uint32_t)inb((uint16_t)(vblk_iobase + off)) |
+           ((uint32_t)inb((uint16_t)(vblk_iobase + off + 1)) << 8)  |
+           ((uint32_t)inb((uint16_t)(vblk_iobase + off + 2)) << 16) |
+           ((uint32_t)inb((uint16_t)(vblk_iobase + off + 3)) << 24);
 }
 
 /* ── Queue helper: set the active queue index in the device ────── */

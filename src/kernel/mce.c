@@ -179,7 +179,7 @@ void mce_handler(struct interrupt_frame *frame)
     enum mce_severity worst_severity = MCE_SEV_NO_ERROR;
 
     for (int i = 0; i < num_banks; i++) {
-        uint64_t status = read_msr(MSR_IA32_MC0_STATUS + 4ULL * i);
+        uint64_t status = read_msr((uint32_t)(MSR_IA32_MC0_STATUS + 4ULL * i));
 
         if (!(status & MC_STATUS_VAL))
             continue;
@@ -192,9 +192,9 @@ void mce_handler(struct interrupt_frame *frame)
         info.severity = mce_assess_severity(status);
 
         if (status & MC_STATUS_ADDRV)
-            info.addr = read_msr(MSR_IA32_MC0_ADDR + 4ULL * i);
+            info.addr = read_msr((uint32_t)(MSR_IA32_MC0_ADDR + 4ULL * i));
         if (status & MC_STATUS_MISCV)
-            info.misc = read_msr(MSR_IA32_MC0_MISC + 4ULL * i);
+            info.misc = read_msr((uint32_t)(MSR_IA32_MC0_MISC + 4ULL * i));
 
         mce_log_bank(&info);
         found_banks++;
@@ -206,7 +206,7 @@ void mce_handler(struct interrupt_frame *frame)
          * to allow the CPU to log future errors.  The write-1-to-clear
          * pattern only applies to certain older CPUs; writing 0 is safe
          * across all implementations per Intel SDM. */
-        write_msr(MSR_IA32_MC0_STATUS + 4ULL * i, 0ULL);
+        write_msr((uint32_t)(MSR_IA32_MC0_STATUS + 4ULL * i), 0ULL);
     }
 
     if (!found_banks) {
@@ -311,7 +311,7 @@ void mce_init(void)
 
     /* Enable all banks: set IA32_MCi_CTL to ~0ULL to enable all error types */
     for (int i = 0; i < num_banks; i++) {
-        write_msr(MSR_IA32_MC0_CTL + 4ULL * i, ~0ULL);
+        write_msr((uint32_t)(MSR_IA32_MC0_CTL + 4ULL * i), ~0ULL);
     }
 
     kprintf("[MCE] Enabled machine check on CPU %u (%d banks%s)\n",
@@ -352,10 +352,10 @@ void mce_dump_banks(void)
     }
 
     for (int i = 0; i < num_banks; i++) {
-        uint64_t ctl   = read_msr(MSR_IA32_MC0_CTL + 4ULL * i);
-        uint64_t status = read_msr(MSR_IA32_MC0_STATUS + 4ULL * i);
-        uint64_t addr  = read_msr(MSR_IA32_MC0_ADDR + 4ULL * i);
-        uint64_t misc  = read_msr(MSR_IA32_MC0_MISC + 4ULL * i);
+        uint64_t ctl   = read_msr((uint32_t)(MSR_IA32_MC0_CTL + 4ULL * i));
+        uint64_t status = read_msr((uint32_t)(MSR_IA32_MC0_STATUS + 4ULL * i));
+        uint64_t addr  = read_msr((uint32_t)(MSR_IA32_MC0_ADDR + 4ULL * i));
+        uint64_t misc  = read_msr((uint32_t)(MSR_IA32_MC0_MISC + 4ULL * i));
 
         if (status & MC_STATUS_VAL) {
             struct mce_bank_info info;

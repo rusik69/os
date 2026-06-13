@@ -37,7 +37,7 @@ static void proc_u64_to_str(uint64_t v, char *buf, int *pos, int max) {
         return;
     }
     char tmp[24]; int n = 0;
-    while (v > 0) { tmp[n++] = '0' + (int)(v % 10); v /= 10; }
+    while (v > 0) { tmp[n++] = (char)('0' + (int)(v % 10)); v /= 10; }
     while (n-- > 0 && *pos < max - 1) buf[(*pos)++] = tmp[n];
 }
 
@@ -82,7 +82,7 @@ static int procfs_gen_interrupts(char *buf, int max) {
         /* Format CPU number right-aligned in 6 chars */
         char fmt[8]; int fn = 0;
         if (cpu_d == 0) { fmt[fn++] = '0'; }
-        else { char tmp[8]; int tn = 0; while (cpu_d) { tmp[tn++] = '0' + cpu_d % 10; cpu_d /= 10; } while (tn > 0) fmt[fn++] = tmp[--tn]; }
+        else { char tmp[8]; int tn = 0; while (cpu_d) { tmp[tn++] = (char)('0' + cpu_d % 10); cpu_d /= 10; } while (tn > 0) fmt[fn++] = tmp[--tn]; }
         fmt[fn] = '\0';
         /* Pad to 6 chars */
         int pad = 6 - fn;
@@ -104,7 +104,7 @@ static int procfs_gen_interrupts(char *buf, int max) {
         /* Vector number: right-aligned in 4 chars */
         char vstr[8]; int vn = 0;
         if (vec == 0) { vstr[vn++] = '0'; }
-        else { char tmp[8]; int tn = 0; int v = vec; while (v) { tmp[tn++] = '0' + v % 10; v /= 10; } while (tn > 0) vstr[vn++] = tmp[--tn]; }
+        else { char tmp[8]; int tn = 0; int v = vec; while (v) { tmp[tn++] = (char)('0' + v % 10); v /= 10; } while (tn > 0) vstr[vn++] = tmp[--tn]; }
         vstr[vn] = '\0';
         int pad_v = 4 - vn;
         while (pad_v-- > 0 && p < max - 1) buf[p++] = ' ';
@@ -116,7 +116,7 @@ static int procfs_gen_interrupts(char *buf, int max) {
             uint64_t cnt = idt_get_irq_count(cpu, vec);
             char cstr[24]; int cn = 0;
             if (cnt == 0) { cstr[cn++] = '0'; }
-            else { char tmp[24]; int tn = 0; while (cnt) { tmp[tn++] = '0' + (int)(cnt % 10); cnt /= 10; } while (tn > 0) cstr[cn++] = tmp[--tn]; }
+            else { char tmp[24]; int tn = 0; while (cnt) { tmp[tn++] = (char)('0' + (int)(cnt % 10)); cnt /= 10; } while (tn > 0) cstr[cn++] = tmp[--tn]; }
             cstr[cn] = '\0';
             int pad_c = 8 - cn;
             while (pad_c-- > 0 && p < max - 1) buf[p++] = ' ';
@@ -385,41 +385,41 @@ static void proc_tcp_entry_cb(uint16_t lport, uint32_t rip, uint16_t rport, int 
     for (int i = 0; i < 4; i++) {
         uint8_t hi = (ip_bytes[i] >> 4) & 0xF;
         uint8_t lo = ip_bytes[i] & 0xF;
-        proc_tcp_buf[proc_tcp_pos++] = hi < 10 ? '0' + hi : 'a' + hi - 10;
-        proc_tcp_buf[proc_tcp_pos++] = lo < 10 ? '0' + lo : 'a' + lo - 10;
+        proc_tcp_buf[proc_tcp_pos++] = (char)(hi < 10 ? '0' + hi : 'a' + hi - 10);
+        proc_tcp_buf[proc_tcp_pos++] = (char)(lo < 10 ? '0' + lo : 'a' + lo - 10);
         if (proc_tcp_pos >= proc_tcp_max - 1) return;
     }
     proc_tcp_buf[proc_tcp_pos++] = ':';
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
-    uint8_t ph = (lport >> 8) & 0xFF;
-    uint8_t pl = lport & 0xFF;
-    proc_tcp_buf[proc_tcp_pos++] = ph < 10 ? '0' + ph : 'a' + ph - 10;
+    uint8_t ph = (uint8_t)((lport >> 8) & 0xFF);
+    uint8_t pl = (uint8_t)(lport & 0xFF);
+    proc_tcp_buf[proc_tcp_pos++] = (char)(ph < 10 ? '0' + ph : 'a' + ph - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
-    proc_tcp_buf[proc_tcp_pos++] = pl < 10 ? '0' + pl : 'a' + pl - 10;
+    proc_tcp_buf[proc_tcp_pos++] = (char)(pl < 10 ? '0' + pl : 'a' + pl - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
     proc_tcp_buf[proc_tcp_pos++] = ' ';
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
 
     /* Remote addr:port */
     uint8_t rip_bytes[4];
-    rip_bytes[0] = (rip >> 24) & 0xFF;
-    rip_bytes[1] = (rip >> 16) & 0xFF;
-    rip_bytes[2] = (rip >> 8) & 0xFF;
-    rip_bytes[3] = rip & 0xFF;
+    rip_bytes[0] = (uint8_t)((rip >> 24) & 0xFF);
+    rip_bytes[1] = (uint8_t)((rip >> 16) & 0xFF);
+    rip_bytes[2] = (uint8_t)((rip >> 8) & 0xFF);
+    rip_bytes[3] = (uint8_t)(rip & 0xFF);
     for (int i = 0; i < 4; i++) {
         uint8_t hi = (rip_bytes[i] >> 4) & 0xF;
         uint8_t lo = rip_bytes[i] & 0xF;
-        proc_tcp_buf[proc_tcp_pos++] = hi < 10 ? '0' + hi : 'a' + hi - 10;
-        proc_tcp_buf[proc_tcp_pos++] = lo < 10 ? '0' + lo : 'a' + lo - 10;
+        proc_tcp_buf[proc_tcp_pos++] = (char)(hi < 10 ? '0' + hi : 'a' + hi - 10);
+        proc_tcp_buf[proc_tcp_pos++] = (char)(lo < 10 ? '0' + lo : 'a' + lo - 10);
         if (proc_tcp_pos >= proc_tcp_max - 1) return;
     }
     proc_tcp_buf[proc_tcp_pos++] = ':';
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
-    ph = (rport >> 8) & 0xFF;
-    pl = rport & 0xFF;
-    proc_tcp_buf[proc_tcp_pos++] = ph < 10 ? '0' + ph : 'a' + ph - 10;
+    ph = (uint8_t)((rport >> 8) & 0xFF);
+    pl = (uint8_t)(rport & 0xFF);
+    proc_tcp_buf[proc_tcp_pos++] = (char)(ph < 10 ? '0' + ph : 'a' + ph - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
-    proc_tcp_buf[proc_tcp_pos++] = pl < 10 ? '0' + pl : 'a' + pl - 10;
+    proc_tcp_buf[proc_tcp_pos++] = (char)(pl < 10 ? '0' + pl : 'a' + pl - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
     proc_tcp_buf[proc_tcp_pos++] = ' ';
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
@@ -427,9 +427,9 @@ static void proc_tcp_entry_cb(uint16_t lport, uint32_t rip, uint16_t rport, int 
     /* State in hex */
     uint8_t sh = (state >> 4) & 0xF;
     uint8_t sl2 = state & 0xF;
-    proc_tcp_buf[proc_tcp_pos++] = sh < 10 ? '0' + sh : 'a' + sh - 10;
+    proc_tcp_buf[proc_tcp_pos++] = (char)(sh < 10 ? '0' + sh : 'a' + sh - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
-    proc_tcp_buf[proc_tcp_pos++] = sl2 < 10 ? '0' + sl2 : 'a' + sl2 - 10;
+    proc_tcp_buf[proc_tcp_pos++] = (char)(sl2 < 10 ? '0' + sl2 : 'a' + sl2 - 10);
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
     proc_tcp_buf[proc_tcp_pos++] = ' ';
     if (proc_tcp_pos >= proc_tcp_max - 1) return;
@@ -675,7 +675,7 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
         for (int nib = 15; nib >= 0; nib--) {
             uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
-            buf[pos++] = nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
+            buf[pos++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
             if (pos >= max - 1) break;
         }
     }
@@ -686,7 +686,7 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     for (int w = PROCESS_SYSCALL_CAP_WORDS - 1; w >= 0; w--) {
         for (int nib = 15; nib >= 0; nib--) {
             uint8_t nibble = (p->syscall_caps[w] >> (nib * 4)) & 0xF;
-            buf[pos++] = nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
+            buf[pos++] = (char)(nibble < 10 ? '0' + nibble : 'a' + nibble - 10);
             if (pos >= max - 1) break;
         }
     }
@@ -1218,7 +1218,7 @@ static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
             uint64_t v = cur;
             if (v == 0) { tmp[ti++] = '0'; }
             else { char rev[24]; int ri = 0;
-                   while (v) { rev[ri++] = '0' + (int)(v % 10); v /= 10; }
+                   while (v) { rev[ri++] = (char)('0' + (int)(v % 10)); v /= 10; }
                    while (ri > 0) tmp[ti++] = rev[--ri]; }
             tmp[ti] = '\0';
             proc_str(tmp, buf, &pos, max);
@@ -1242,7 +1242,7 @@ static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
             uint64_t v = max_val;
             if (v == 0) { tmp[ti++] = '0'; }
             else { char rev[24]; int ri = 0;
-                   while (v) { rev[ri++] = '0' + (int)(v % 10); v /= 10; }
+                   while (v) { rev[ri++] = (char)('0' + (int)(v % 10)); v /= 10; }
                    while (ri > 0) tmp[ti++] = rev[--ri]; }
             tmp[ti] = '\0';
             proc_str(tmp, buf, &pos, max);
@@ -1288,7 +1288,7 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         char pid_str[12];
         int pi = 0;
         if (pid == 0) { pid_str[pi++] = '0'; }
-        else { char tmp[12]; int ti = 0; while (pid) { tmp[ti++] = '0' + (int)(pid % 10); pid /= 10; } while (ti > 0) pid_str[pi++] = tmp[--ti]; }
+        else { char tmp[12]; int ti = 0; while (pid) { tmp[ti++] = (char)('0' + (int)(pid % 10)); pid /= 10; } while (ti > 0) pid_str[pi++] = tmp[--ti]; }
         for (int i = 0; i < pi; i++) resolved[pos++] = pid_str[i];
         /* Append the rest of the path after /proc/self */
         const char *rest = path + 10;

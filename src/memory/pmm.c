@@ -171,12 +171,12 @@ static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
 
 static void bitmap_set(uint64_t frame) {
     if (frame >= MAX_FRAMES) return;
-    frame_bitmap[frame / 8] |= (1 << (frame % 8));
+    frame_bitmap[frame / 8] |= (uint8_t)(1 << (frame % 8));
 }
 
 static void bitmap_clear(uint64_t frame) {
     if (frame >= MAX_FRAMES) return;
-    frame_bitmap[frame / 8] &= ~(1 << (frame % 8));
+    frame_bitmap[frame / 8] &= (uint8_t)~(1 << (frame % 8));
 }
 
 static int bitmap_test(uint64_t frame) {

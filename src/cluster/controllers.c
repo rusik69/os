@@ -426,7 +426,7 @@ int job_record_completion(const char *name, int success)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Simple cron field parser (minutes field only for brevity) */
-static int cron_match_minute(const char *expr, int minute)
+static int __attribute__((unused)) cron_match_minute(const char *expr, int minute)
 {
     /* Supports: *, N-M, N/step */
     if (strcmp(expr, "*") == 0) return 1;
