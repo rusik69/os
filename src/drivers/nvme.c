@@ -559,10 +559,12 @@ static int nvme_setup_io_queues(void) {
 /* ── I/O submission (called from blockdev submit_fn) ───────────────── */
 
 /** Submit an I/O read/write command on a specific I/O queue */
-static int nvme_io_submit_on_queue(struct nvme_io_queue *q,
-                                   uint32_t nsid, int is_write,
-                                   uint64_t lba, uint32_t count,
-                                   uint64_t data_phys) {
+static int nvme_io_submit_on_queue(struct nvme_io_queue *q, uint32_t nsid,
+                                       int is_write, uint64_t lba,
+                                       uint32_t count,
+                                       uint64_t prp1, uint64_t prp2,
+                                       uint32_t nr_pages) {
+    (void)nr_pages;
     if (!q || !q->valid || !q->sq_virt)
         return -1;
 
@@ -574,7 +576,8 @@ static int nvme_io_submit_on_queue(struct nvme_io_queue *q,
     memset(entry, 0, sizeof(struct nvme_sq_entry));
     entry->cdw0 = (uint32_t)(is_write ? NVME_IO_WRITE : NVME_IO_READ);
     entry->nsid = nsid;
-    entry->prp1 = data_phys;
+    entry->prp1 = prp1;
+    if (prp2) entry->prp2 = prp2;
     entry->cdw10 = (uint32_t)(lba & 0xFFFFFFFF);
     entry->cdw11 = (uint32_t)((lba >> 32) & 0xFFFFFFFF);
     /* cdw12: [15:0] number of logical blocks (0-based: 0 = 1 block) */
@@ -717,22 +720,29 @@ static int nvme_blk_submit(struct blk_request *req) {
     if (!q || !q->valid)
         return -1;
 
-    /* Allocate a physically contiguous page for DMA */
+    /* Allocate physically-contiguous pages for DMA */
     uint32_t nr_sectors = req->count;
     uint32_t nr_pages = (nr_sectors * 512 + 4095) / 4096;
     if (nr_pages == 0) nr_pages = 1;
 
-    /* For simplicity, use a single page (max 8 sectors = 4KB) */
-    if (nr_pages > 1) {
-        nr_pages = 1;
-        nr_sectors = 8;
-    }
-
-    uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame)
+    /* Allocate pages as an array of physically-contiguous frames.
+     * For small transfers (1 page), use PRP1 directly.
+     * For multi-page transfers, build a PRP list. */
+    uint64_t *frames = (uint64_t *)kmalloc((size_t)nr_pages * sizeof(uint64_t));
+    if (!frames)
         return -1;
 
-    uint64_t data_phys = data_frame * 4096;
+    for (uint32_t i = 0; i < nr_pages; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (!frames[i]) {
+            for (uint32_t j = 0; j < i; j++)
+                pmm_free_frame(frames[j]);
+            kfree(frames);
+            return -1;
+        }
+    }
+
+    uint64_t data_phys = frames[0] * 4096;
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
 
     if (req->flags & BLK_REQ_WRITE) {
@@ -740,23 +750,53 @@ static int nvme_blk_submit(struct blk_request *req) {
         memcpy(data_virt, req->buf, (size_t)nr_sectors * 512);
     }
 
-    /* Submit the I/O command */
+    /* Build PRP list if multi-page (NVMe PRP entries cannot cross page boundaries) */
+    uint64_t prp1 = data_phys;
+    uint64_t prp2 = 0;
+    uint64_t *prp_list = NULL;
+
+    if (nr_pages > 1) {
+        /* Single page boundary: if the transfer crosses 4KB within the first
+         * page, the remaining data goes in PRP2 or a PRP list.  For simplicity,
+         * use a PRP list when nr_pages > 1. */
+        prp_list = (uint64_t *)PHYS_TO_VIRT(frames[1] * 4096); /* allocate PRP list in 2nd page */
+        if (prp_list) {
+            for (uint32_t i = 1; i < nr_pages; i++)
+                prp_list[i - 1] = frames[i] * 4096;
+            prp2 = frames[1] * 4096; /* PRP list physical address */
+        }
+    }
+
+    /* Submit the I/O command with PRP1 and optional PRP list */
     int ret = nvme_io_submit_on_queue(q, nsid,
                                       !!(req->flags & BLK_REQ_WRITE),
-                                      req->lba, nr_sectors, data_phys);
+                                      req->lba, nr_sectors, prp1, prp2, nr_pages);
     if (ret < 0) {
-        pmm_free_frame(data_frame);
+        for (uint32_t i = 0; i < nr_pages; i++)
+            pmm_free_frame(frames[i]);
+        kfree(frames);
         return -1;
     }
 
     /* Poll for completion (synchronous for now) */
     ret = nvme_poll_io_cq(q, 10000000);
     if (ret == 0 && (req->flags & BLK_REQ_READ)) {
-        /* For reads: copy data from DMA buffer to request buffer */
-        memcpy(req->buf, data_virt, (size_t)nr_sectors * 512);
+        /* For reads: copy data from DMA buffer to request buffer.
+         * Data may span multiple pages, copy page by page. */
+        uint64_t remaining = (uint64_t)nr_sectors * 512;
+        uint64_t offset = 0;
+        for (uint32_t i = 0; i < nr_pages && remaining > 0; i++) {
+            void *page_virt = PHYS_TO_VIRT(frames[i] * 4096);
+            uint64_t copy = remaining < 4096 ? remaining : 4096;
+            memcpy((uint8_t *)req->buf + offset, page_virt, (size_t)copy);
+            offset += copy;
+            remaining -= copy;
+        }
     }
 
-    pmm_free_frame(data_frame);
+    for (uint32_t i = 0; i < nr_pages; i++)
+        pmm_free_frame(frames[i]);
+    kfree(frames);
     return ret;
 }
 
