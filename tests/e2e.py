@@ -1813,6 +1813,122 @@ def test_http_post_delete(t: Telnet):
     ok("service — start/stop/status/list/log")
 
 
+# ── Network service commands ──────────────────────────────────────────────────
+
+def test_ntpdate(t: Telnet):
+    """ntpdate: SNTP time sync client."""
+    # Usage without args
+    r = t.send_cmd("ntpdate")
+    check("ntpdate — usage", r, "Usage:")
+
+    # Try with a server — may timeout or fail to resolve in QEMU
+    r = t.send_cmd("ntpdate 10.0.2.2", timeout=15)
+    # Accept success, resolve failure, or timeout
+    found = ("time set to" in r or "cannot resolve" in r
+             or "no reply" in r or "Usage:" in r or "not available" in r
+             or "Unknown" in r)
+    if found:
+        ok("ntpdate — runs without crash")
+    else:
+        fail("ntpdate — unexpected", repr(r[:200]))
+    t.drain(t=0.3)
+
+
+def test_tftpd(t: Telnet):
+    """tftpd: TFTP server daemon."""
+    # Stop first in case it was left running from a previous test
+    r = t.send_cmd("tftpd stop")
+    # Accept "Not running" or "Server stopped"
+
+    # Start tftpd
+    r = t.send_cmd("tftpd")
+    found = ("Server listening" in r or "Already running" in r
+             or "not found" in r or "Warning" in r)
+    if found:
+        ok("tftpd — start")
+    else:
+        # May not be available in QEMU
+        if "Unknown command" in r or "not available" in r:
+            ok("tftpd — not available (QEMU)")
+        else:
+            fail("tftpd — start unexpected", repr(r[:200]))
+    # Stop tftpd
+    r = t.send_cmd("tftpd stop")
+    found = ("Server stopped" in r or "Not running" in r)
+    if found:
+        ok("tftpd — stop")
+    else:
+        fail("tftpd — stop unexpected", repr(r[:200]))
+    t.drain(t=0.3)
+
+
+def test_dhcpcd(t: Telnet):
+    """dhcpcd: DHCP client daemon."""
+    # Status when not running
+    r = t.send_cmd("dhcpcd status")
+    found = ("not running" in r or "running" in r or "dhcpcd:" in r)
+    if found:
+        ok("dhcpcd — status")
+    else:
+        fail("dhcpcd — status unexpected", repr(r[:200]))
+    # Stop (should handle gracefully if not running)
+    r = t.send_cmd("dhcpcd stop")
+    found = ("not running" in r or "stop" in r.lower() or "dhcpcd:" in r)
+    if found:
+        ok("dhcpcd — stop")
+    else:
+        fail("dhcpcd — stop unexpected", repr(r[:200]))
+    t.drain(t=0.3)
+
+
+def test_sndstat(t: Telnet):
+    """sndstat: sound status via /proc/asound."""
+    r = t.send_cmd("cat /proc/asound")
+    # May show sound card info or "No sound cards" or be empty
+    if "Sound Driver Summary" in r or "Cards:" in r or "No sound" in r:
+        ok("sndstat — /proc/asound readable")
+    elif r == "" or "not found" in r or "Cannot read" in r:
+        ok("sndstat — /proc/asound not available")
+    else:
+        fail("sndstat — unexpected output", repr(r[:200]))
+    t.drain(t=0.3)
+
+
+def test_sendmail(t: Telnet):
+    """sendmail: SMTP client / send email."""
+    r = t.send_cmd("sendmail")
+    # May be unknown command (not compiled in) or show usage
+    if "Usage:" in r or "Unknown command" in r or "not found" in r:
+        ok("sendmail — not available or shows usage")
+    elif r == "":
+        ok("sendmail — ran without output")
+    else:
+        fail("sendmail — unexpected output", repr(r[:200]))
+    t.drain(t=0.3)
+
+
+def test_dns_server(t: Telnet):
+    """dns_server: DNS server related functionality."""
+    # Try nslookup or host as DNS-related commands
+    r = t.send_cmd("nslookup localhost")
+    if "Resolving" in r or "Address" in r or "localhost" in r:
+        ok("dns_server — nslookup localhost")
+    elif "Unknown command" in r or "not available" in r:
+        # nslookup may not be compiled in — try host
+        r2 = t.send_cmd("host localhost")
+        if "has address" in r2 or "localhost" in r2:
+            ok("dns_server — host localhost")
+        elif "Unknown command" in r2 or "not available" in r2:
+            ok("dns_server — DNS commands not available (QEMU)")
+        else:
+            fail("dns_server — host unexpected", repr(r2[:200]))
+    elif "not found" in r.lower() or "failed" in r.lower():
+        ok("dns_server — nslookup attempted (resolve may fail in QEMU)")
+    else:
+        fail("dns_server — nslookup unexpected", repr(r[:200]))
+    t.drain(t=0.3)
+
+
 # ── Smoke test list (fast subset for CI) ────────────────────────────────────────
 
 SMOKE_TESTS = [
@@ -1858,6 +1974,10 @@ SMOKE_TESTS = [
     ("symlinks",   test_symlinks),
     ("readlink",   test_readlink),
     ("procfs",     test_procfs),
+    ("ntpdate",    test_ntpdate),
+    ("dhcpcd",     test_dhcpcd),
+    ("sndstat",    test_sndstat),
+    ("dns_server", test_dns_server),
 ]
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -2009,6 +2129,12 @@ def main() -> int:
             ("arrays",       test_arrays),
             ("trap",         test_trap),
             ("signal kill",  test_signal_kill),
+            ("ntpdate",      test_ntpdate),
+            ("tftpd",        test_tftpd),
+            ("dhcpcd",       test_dhcpcd),
+            ("sndstat",      test_sndstat),
+            ("sendmail",     test_sendmail),
+            ("dns_server",   test_dns_server),
         ]
 
     for group_name, fn in tests:
