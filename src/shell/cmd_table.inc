@@ -323,6 +323,14 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("journalctl",  "Query structured journal logs (journalctl [-f] [-u NAME] [-n N])", cmd_journalctl)
     CMD("systemctl",   "Service control (systemctl start|stop|restart|status|enable|disable|list-units)", cmd_systemctl)
     CMD("udevd",       "Device event manager (udevd [--daemon])", cmd_udevd)
+    /* New performance and tracing commands */
+    CMD("losetup",     "Associate loop device with file (losetup <dev> <file> [-d])", cmd_losetup_wrapper)
+    CMD("lvcreate",    "Create LVM logical volume (lvcreate -l extents -n name vg)", cmd_lvcreate)
+    CMD("pvs",         "Report physical volume information (LVM)", cmd_pvs)
+    CMD("perf",        "Performance monitoring (perf stat|list|cswitch|flamegraph)", cmd_perf)
+    CMD("trace",       "Trace control (trace enable|disable|show|clear|status)", cmd_trace)
+    CMD("bpftrace",    "BPF tracing interface (bpftrace trace|count|list|status)", cmd_bpftrace)
+    CMD("fstrim",      "Trim unused blocks on filesystems (fstrim [-v] [-m minlen] [mountpoint])", cmd_fstrim_wrapper)
     { 0, 0, 0 }
 };
 

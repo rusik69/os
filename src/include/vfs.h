@@ -187,6 +187,11 @@ struct vfs_ops {
      * Returns 0 on success or negative errno on error.
      * If not provided, vfs_rename falls back to create+copy+delete. */
     int (*rename)(void *priv, const char *old_path, const char *new_path);
+    /* Optional: create an unnamed temporary file (O_TMPFILE).
+     * Returns file inode number (>= 0) on success, negative errno on failure.
+     * The created file is not linked into any directory and is automatically
+     * deleted when the last file descriptor is closed. */
+    int (*tmpfile)(void *priv, uint32_t mode);
 };
 
 /* A mounted filesystem */

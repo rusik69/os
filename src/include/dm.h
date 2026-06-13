@@ -143,6 +143,9 @@ void dm_crypt_init(void);
 /* Register the dm-verity integrity target (Merkle hash tree verification). */
 void dm_verity_init(void);
 
+/* Register the dm-raid target (RAID0/1/10). */
+void dm_raid_init(void);
+
 /* Register a target type (called by target modules). */
 int dm_register_target(const struct dm_target_ops *ops);
 

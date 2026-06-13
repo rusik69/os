@@ -21,6 +21,7 @@
 #include "printf.h"
 #include "heap.h"
 #include "vfs.h"
+#include "timer.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -866,6 +867,317 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     kprintf("\n");
 
     return vfs_mount_ex(mountpoint, &ext2_ops, ep, MS_RDONLY);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  ext2 online resize — add block groups while mounted
+ *
+ *  Enables growing an ext2 filesystem by adding new block groups
+ *  while the filesystem is mounted and in use.  The resize operation:
+ *    1. Validates the new size is larger than current
+ *    2. Allocates new block groups with proper metadata
+ *    3. Updates the superblock (s_blocks_count, s_free_blocks_count)
+ *    4. Expands the BGD cache to cover the new groups
+ *    5. Syncs the updated superblock and BGD table to disk
+ *
+ *  Item 452: ext2 online resize
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Reallocate the BGD cache to accommodate more block groups.
+ * Returns 0 on success, -ENOMEM on allocation failure. */
+static int ext2_resize_bgd_cache(struct ext2_priv *ep, uint32_t new_num_groups)
+{
+    uint64_t new_size = (uint64_t)new_num_groups * sizeof(struct ext2_bg_desc);
+    struct ext2_bg_desc *new_cache = (struct ext2_bg_desc *)kmalloc(new_size);
+    if (!new_cache)
+        return -ENOMEM;
+
+    memset(new_cache, 0, new_size);
+    if (ep->bgd_cache && ep->bgd_cache_size > 0)
+        memcpy(new_cache, ep->bgd_cache, ep->bgd_cache_size);
+
+    if (ep->bgd_cache)
+        kfree(ep->bgd_cache);
+
+    ep->bgd_cache = new_cache;
+    ep->bgd_cache_size = new_size;
+    return 0;
+}
+
+/* Write the updated superblock to disk (all backup copies). */
+static int ext2_sync_super(struct ext2_priv *ep)
+{
+    int sparse = (ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    uint8_t buf[1024];
+
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, &ep->sb, sizeof(ep->sb));
+
+    /* Write primary superblock (offset 1024 = sector 2) */
+    if (blockdev_write_sectors(ep->dev_id, 2, 2, buf) != 0)
+        return -1;
+
+    /* Write backup superblocks where they exist */
+    for (uint32_t g = 0; g < ep->num_block_groups; g++) {
+        if (g == 0) continue; /* already wrote primary */
+        if (!ext2_group_has_super(sparse, g)) continue;
+        uint64_t sb_sector = (uint64_t)ext2_group_start(g, ep->blocks_per_group)
+                             * (ep->block_size / 512) + 2;
+        if (blockdev_write_sectors(ep->dev_id, sb_sector, 2, buf) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Write the current BGD cache to disk. */
+static int ext2_sync_bgd(struct ext2_priv *ep)
+{
+    int sparse = (ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    uint32_t bgd_first_block = (ep->block_size == 1024) ? 2 : 1;
+    uint64_t bgd_bytes = (uint64_t)ep->num_block_groups * sizeof(struct ext2_bg_desc);
+    uint32_t bgd_blocks = (uint32_t)((bgd_bytes + ep->block_size - 1) / ep->block_size);
+    uint8_t *block_buf = (uint8_t *)kmalloc(ep->block_size);
+    if (!block_buf) return -ENOMEM;
+
+    /* Write primary BGD table */
+    uint32_t offset = 0;
+    for (uint32_t i = 0; i < bgd_blocks; i++) {
+        memset(block_buf, 0, ep->block_size);
+        uint32_t copy = bgd_bytes - offset;
+        if (copy > ep->block_size) copy = ep->block_size;
+        memcpy(block_buf, (uint8_t *)ep->bgd_cache + offset, copy);
+
+        uint64_t block_num = bgd_first_block + i;
+        uint64_t lba = block_num * (ep->block_size / 512);
+        for (uint32_t s = 0; s < ep->block_size / 512; s++) {
+            if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
+                                       block_buf + s * 512) != 0) {
+                kfree(block_buf);
+                return -1;
+            }
+        }
+        offset += copy;
+    }
+
+    /* Write backup BGD tables in groups that have superblock backups */
+    for (uint32_t g = 1; g < ep->num_block_groups; g++) {
+        if (!ext2_group_has_super(sparse, g)) continue;
+        uint32_t bgd_block_in_group = (ep->block_size == 1024) ? 2 : 1;
+        uint32_t bgd_start = ext2_group_start(g, ep->blocks_per_group) + bgd_block_in_group;
+
+        offset = 0;
+        for (uint32_t i = 0; i < bgd_blocks; i++) {
+            memset(block_buf, 0, ep->block_size);
+            uint32_t copy = bgd_bytes - offset;
+            if (copy > ep->block_size) copy = ep->block_size;
+            memcpy(block_buf, (uint8_t *)ep->bgd_cache + offset, copy);
+
+            uint64_t lba = (uint64_t)(bgd_start + i) * (ep->block_size / 512);
+            for (uint32_t s = 0; s < ep->block_size / 512; s++) {
+                if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
+                                           block_buf + s * 512) != 0) {
+                    kfree(block_buf);
+                    return -1;
+                }
+            }
+            offset += copy;
+        }
+    }
+
+    kfree(block_buf);
+    return 0;
+}
+
+/* Initialize a new block group's metadata (bitmaps + inode table).
+ * @ep: ext2 private data
+ * @group: new group number to initialise
+ * Returns 0 on success, negative on error. */
+static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
+{
+    uint32_t blocks_per_group = ep->blocks_per_group;
+    uint32_t inodes_per_group = ep->inodes_per_group;
+    uint32_t inode_size = ep->inode_size;
+    uint32_t block_size = ep->block_size;
+    int sparse = (ep->sb.s_feature_ro_compat & EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER) ? 1 : 0;
+    uint32_t group_start = group * blocks_per_group;
+
+    /* Calculate group metadata layout */
+    uint32_t sb_blocks = 0;
+    uint32_t bgd_blocks = 0;
+    if (ext2_group_has_super(sparse, group)) {
+        sb_blocks = (block_size == 1024) ? 2 : 1;
+        uint32_t num_groups = group + 1; /* BGD table covers all groups up to this one */
+        bgd_blocks = (uint32_t)(((uint64_t)num_groups * sizeof(struct ext2_bg_desc)
+                                 + block_size - 1) / block_size);
+    }
+
+    uint32_t block_bitmap_block = group_start + sb_blocks + bgd_blocks;
+    uint32_t inode_bitmap_block = block_bitmap_block + 1;
+    uint32_t inode_table_blocks = (inodes_per_group * inode_size + block_size - 1)
+                                   / block_size;
+    uint32_t inode_table_block = inode_bitmap_block + 1;
+
+    /* Allocate a zero-filled block buffer */
+    uint8_t *zero_buf = (uint8_t *)kmalloc(block_size);
+    if (!zero_buf) return -ENOMEM;
+    memset(zero_buf, 0, block_size);
+
+    /* Write block bitmap: all blocks in the group are free (except metadata) */
+    {
+        uint8_t *bitmap = (uint8_t *)kmalloc(block_size);
+        if (!bitmap) { kfree(zero_buf); return -ENOMEM; }
+        memset(bitmap, 0xFF, block_size); /* start all free */
+
+        uint32_t total_blocks_in_group = blocks_per_group;
+
+        /* Mark used: superblock, BGD, bitmaps, inode table */
+        uint32_t used_start = 0;
+        uint32_t used_end = inode_table_block + inode_table_blocks;
+        if (used_end > total_blocks_in_group)
+            used_end = total_blocks_in_group;
+
+        for (uint32_t b = used_start; b < used_end && b < total_blocks_in_group; b++) {
+            bitmap[b / 8] &= ~(1 << (b % 8)); /* mark as used */
+        }
+
+        /* Write the block bitmap */
+        uint64_t lba = (uint64_t)block_bitmap_block * (block_size / 512);
+        for (uint32_t s = 0; s < block_size / 512; s++) {
+            if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
+                                       bitmap + s * 512) != 0) {
+                kfree(bitmap); kfree(zero_buf); return -1;
+            }
+        }
+        kfree(bitmap);
+    }
+
+    /* Write inode bitmap: all inodes are free */
+    {
+        uint8_t *bitmap = (uint8_t *)kmalloc(block_size);
+        if (!bitmap) { kfree(zero_buf); return -ENOMEM; }
+        memset(bitmap, 0xFF, block_size); /* all free */
+
+        uint64_t lba = (uint64_t)inode_bitmap_block * (block_size / 512);
+        for (uint32_t s = 0; s < block_size / 512; s++) {
+            if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
+                                       bitmap + s * 512) != 0) {
+                kfree(bitmap); kfree(zero_buf); return -1;
+            }
+        }
+        kfree(bitmap);
+    }
+
+    /* Write inode table: zero-filled */
+    for (uint32_t i = 0; i < inode_table_blocks; i++) {
+        uint64_t lba = (uint64_t)(inode_table_block + i) * (block_size / 512);
+        for (uint32_t s = 0; s < block_size / 512; s++) {
+            if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
+                                       zero_buf) != 0) {
+                kfree(zero_buf); return -1;
+            }
+        }
+    }
+
+    /* Zero out the superblock and BGD backup area if present */
+    if (sb_blocks > 0) {
+        uint64_t sb_lba = (uint64_t)group_start * (block_size / 512);
+        for (uint32_t s = 0; s < sb_blocks * block_size / 512; s++) {
+            if (blockdev_write_sectors(ep->dev_id, sb_lba + s, 1,
+                                       zero_buf) != 0) {
+                kfree(zero_buf); return -1;
+            }
+        }
+    }
+
+    kfree(zero_buf);
+
+    /* Update BGD cache entry */
+    uint32_t num_inodes = inodes_per_group;
+    uint32_t num_blocks = blocks_per_group - (inode_table_block + inode_table_blocks);
+    if (sb_blocks > 0) num_blocks -= sb_blocks;
+
+    ep->bgd_cache[group].bg_block_bitmap     = block_bitmap_block;
+    ep->bgd_cache[group].bg_inode_bitmap     = inode_bitmap_block;
+    ep->bgd_cache[group].bg_inode_table      = inode_table_block;
+    ep->bgd_cache[group].bg_free_blocks_count = (uint16_t)num_blocks;
+    ep->bgd_cache[group].bg_free_inodes_count = (uint16_t)num_inodes;
+    ep->bgd_cache[group].bg_used_dirs_count  = 0;
+
+    return 0;
+}
+
+/* Grow the ext2 filesystem by adding new block groups.
+ * @ep: ext2 private data (from mount)
+ * @new_total_blocks: desired total blocks after resize
+ *
+ * The function adds enough complete block groups to reach the requested
+ * size.  Partial block groups are not supported — the actual new size
+ * may be larger than requested (rounded up to complete groups).
+ *
+ * Returns the new total number of blocks on success, negative on error.
+ */
+int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks)
+{
+    if (!ep) return -EINVAL;
+
+    uint32_t current_groups = ep->num_block_groups;
+    uint32_t blocks_per_group = ep->blocks_per_group;
+    uint32_t new_groups_needed = (uint32_t)
+        ((new_total_blocks + blocks_per_group - 1) / blocks_per_group);
+
+    if (new_groups_needed <= current_groups) {
+        kprintf("[ext2] resize: new size %llu <= current size, nothing to do\n",
+                (unsigned long long)new_total_blocks);
+        return (int64_t)ep->sb.s_blocks_count;
+    }
+
+    kprintf("[ext2] resize: growing from %u groups (%u blocks) to %u groups (%llu blocks)\n",
+            current_groups, ep->sb.s_blocks_count,
+            new_groups_needed, (unsigned long long)new_groups_needed * blocks_per_group);
+
+    /* Expand the BGD cache */
+    int ret = ext2_resize_bgd_cache(ep, new_groups_needed);
+    if (ret != 0) return ret;
+
+    /* Initialize each new group */
+    for (uint32_t g = current_groups; g < new_groups_needed; g++) {
+        ret = ext2_init_new_group(ep, g);
+        if (ret != 0) {
+            kprintf("[ext2] resize: failed to init group %u: %d\n", g, ret);
+            ep->num_block_groups = g; /* partially completed */
+            return ret;
+        }
+        kprintf("[ext2] resize: group %u initialized\n", g);
+    }
+
+    /* Update superblock */
+    uint32_t added_blocks = (new_groups_needed - current_groups) * blocks_per_group;
+    ep->sb.s_blocks_count += added_blocks;
+    ep->sb.s_free_blocks_count += added_blocks; /* approximate — all new blocks are free */
+
+    /* Add free inodes for the new groups */
+    uint32_t added_inodes = (new_groups_needed - current_groups) * ep->inodes_per_group;
+    ep->sb.s_free_inodes_count += added_inodes;
+
+    ep->num_block_groups = new_groups_needed;
+
+    /* Update modification time */
+    ep->sb.s_wtime = (uint32_t)(timer_get_ticks() / TIMER_FREQ);
+
+    /* Sync to disk */
+    if (ext2_sync_super(ep) != 0) {
+        kprintf("[ext2] resize: failed to sync superblock\n");
+        return -1;
+    }
+    if (ext2_sync_bgd(ep) != 0) {
+        kprintf("[ext2] resize: failed to sync BGD\n");
+        return -1;
+    }
+
+    kprintf("[ext2] resize: complete — %u groups, %u blocks total\n",
+            ep->num_block_groups, ep->sb.s_blocks_count);
+
+    return (int64_t)ep->sb.s_blocks_count;
 }
 
 int ext2_init(void) {

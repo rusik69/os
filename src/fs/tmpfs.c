@@ -428,6 +428,35 @@ static int tmpfs_rename(void *priv, const char *old_path, const char *new_path)
     return 0;
 }
 
+/* ── O_TMPFILE: create an unnamed temporary file ────────────────────
+ *
+ * Creates an inode that is not linked into any directory.  The file
+ * exists only as long as a file descriptor references it.  When the
+ * last fd is closed, the inode and its data are freed.
+ *
+ * Item 455: TMPFS O_TMPFILE
+ */
+static int tmpfs_tmpfile(void *priv, uint32_t mode)
+{
+    (void)priv; (void)mode;
+
+    int idx = alloc_inode();
+    if (idx < 0)
+        return -ENOSPC;
+
+    inodes[idx].type = TMPFS_TYPE_FILE;
+    inodes[idx].name[0] = '\0';       /* no name — unnamed */
+    inodes[idx].parent = (uint32_t)-1; /* no parent — not in any directory */
+    inodes[idx].size = 0;
+    inodes[idx].data = NULL;
+    inodes[idx].uid = 0;
+    inodes[idx].gid = 0;
+    inodes[idx].mode = (uint16_t)(mode & 0777);
+
+    kprintf("[tmpfs] O_TMPFILE: created unnamed inode %d\n", idx);
+    return idx; /* return inode index as file handle */
+}
+
 struct vfs_ops tmpfs_vfs_ops = {
     .read        = tmpfs_read,
     .write       = tmpfs_write,
@@ -441,6 +470,7 @@ struct vfs_ops tmpfs_vfs_ops = {
     .readlink    = tmpfs_readlink,
     .mknod       = tmpfs_mknod,
     .rename      = tmpfs_rename,
+    .tmpfile     = tmpfs_tmpfile,
 };
 
 int tmpfs_mount(void) {

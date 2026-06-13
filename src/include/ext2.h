@@ -246,4 +246,10 @@ struct ext2_priv;
 int ext2_mount(const char *mountpoint, uint8_t dev_id);
 int ext2_init(void);
 
+/* Online resize: add block groups while mounted.
+ * @ep: ext2 private data (from mount)
+ * @new_total_blocks: desired total blocks after resize
+ * Returns new total blocks on success, negative errno on failure. */
+int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks);
+
 #endif /* EXT2_H */

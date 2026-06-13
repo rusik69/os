@@ -24,6 +24,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "export.h"
+#include "pmm.h"        /* for page frame allocation */
 
 /* ── Packet socket table ──────────────────────────────────────────── */
 static struct packet_sock packet_socks[PACKET_MAX_SOCKETS];
@@ -311,6 +312,24 @@ int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
         /* Multicast group membership — not yet implemented */
         return 0;
 
+    case PACKET_RX_RING: {
+        /* Set up receive ring (PACKET_MMAP) */
+        if (!optval || optlen < (int)sizeof(struct tpacket_req))
+            return -EINVAL;
+        struct tpacket_req req;
+        memcpy(&req, optval, sizeof(req));
+        return packet_mmap_setup(fd, &req, 0);
+    }
+
+    case PACKET_TX_RING: {
+        /* Set up transmit ring (PACKET_MMAP) */
+        if (!optval || optlen < (int)sizeof(struct tpacket_req))
+            return -EINVAL;
+        struct tpacket_req req;
+        memcpy(&req, optval, sizeof(req));
+        return packet_mmap_setup(fd, &req, 1);
+    }
+
     case PACKET_AUXDATA:
         /* Ancillary data — not yet implemented */
         return 0;
@@ -356,6 +375,181 @@ uint16_t packet_get_protocol(int fd)
     return ps->protocol;
 }
 
+/* ── PACKET_MMAP ring ─────────────────────────────────────────────── */
+
+int packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring)
+{
+    (void)tx_ring;
+    spinlock_acquire(&packet_lock);
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Validate requirements */
+    if (req->tp_block_size == 0 || req->tp_block_nr == 0 ||
+        req->tp_frame_size == 0 || req->tp_frame_nr == 0) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Block size must be a multiple of page size */
+    if (req->tp_block_size % 4096 != 0) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Frame size must not exceed block size */
+    if (req->tp_frame_size > req->tp_block_size) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Calculate frames per block */
+    uint32_t frames_per_block = req->tp_block_size / req->tp_frame_size;
+    if (frames_per_block == 0) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Must have exactly tp_block_nr * frames_per_block == tp_frame_nr */
+    if (req->tp_block_nr * frames_per_block != req->tp_frame_nr) {
+        spinlock_release(&packet_lock);
+        return -EINVAL;
+    }
+
+    /* Free any existing ring */
+    if (ps->mmap_ring.active) {
+        packet_mmap_teardown(fd);
+    }
+
+    /* Allocate page vector for the ring */
+    uint32_t total_pages = (req->tp_block_size * req->tp_block_nr + 4095) / 4096;
+    uint64_t *pg_vec = NULL;
+    if (total_pages > 0) {
+        pg_vec = (uint64_t *)pmm_alloc_frames(total_pages);
+        if (!pg_vec) {
+            spinlock_release(&packet_lock);
+            return -ENOMEM;
+        }
+    }
+
+    /* Set up the ring structure */
+    struct packet_mmap_ring *ring = &ps->mmap_ring;
+    ring->active = 1;
+    ring->base = (uint8_t *)(uint64_t)pg_vec;  /* Simplified — would map to userspace */
+    ring->block_size = req->tp_block_size;
+    ring->block_nr = req->tp_block_nr;
+    ring->frame_size = req->tp_frame_size;
+    ring->frame_nr = req->tp_frame_nr;
+    ring->frames_per_block = frames_per_block;
+    ring->frame_count = req->tp_frame_nr;
+    ring->last_frame = 0;
+    ring->pg_vec_addr = (uint64_t)pg_vec;
+    ring->pg_vec_len = total_pages;
+
+    /* Build frame pointer array */
+    ring->frames = (volatile struct tpacket_hdr **)
+        kmalloc(sizeof(void *) * ring->frame_count);
+    if (!ring->frames) {
+        pmm_free_frames_contiguous((uint64_t)pg_vec, total_pages);
+        ring->active = 0;
+        spinlock_release(&packet_lock);
+        return -ENOMEM;
+    }
+
+    for (uint32_t i = 0; i < ring->frame_count; i++) {
+        uint32_t block_idx = i / frames_per_block;
+        uint32_t frame_in_block = i % frames_per_block;
+        uint64_t frame_offset = block_idx * ring->block_size
+                              + frame_in_block * ring->frame_size;
+        ring->frames[i] = (volatile struct tpacket_hdr *)(ring->base + frame_offset);
+        ring->frames[i]->tp_status = TP_STATUS_KERNEL;
+    }
+
+    ps->mmap_enabled = 1;
+    kprintf("[AF_PACKET] fd=%d %s ring: %u frames, %u blocks of %u bytes\n",
+            fd, tx_ring ? "TX" : "RX",
+            ring->frame_count, ring->block_nr, ring->block_size);
+
+    spinlock_release(&packet_lock);
+    return 0;
+}
+
+int packet_mmap_poll(int fd, int rx)
+{
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps || !ps->mmap_enabled || !ps->mmap_ring.active)
+        return -EINVAL;
+
+    struct packet_mmap_ring *ring = &ps->mmap_ring;
+    uint32_t start = (rx) ? 0 : ring->last_frame;
+
+    for (uint32_t i = 0; i < ring->frame_count; i++) {
+        uint32_t idx = (start + i) % ring->frame_count;
+        if (ring->frames[idx]->tp_status == TP_STATUS_USER)
+            return 1;  /* Frame available */
+    }
+    return 0;
+}
+
+int packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id)
+{
+    if (!frame_id) return -EINVAL;
+
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps || !ps->mmap_enabled || !ps->mmap_ring.active)
+        return -EINVAL;
+
+    struct packet_mmap_ring *ring = &ps->mmap_ring;
+    uint32_t start = (rx) ? ring->last_frame : 0;
+
+    for (uint32_t i = 0; i < ring->frame_count; i++) {
+        uint32_t idx = (start + i) % ring->frame_count;
+        if (ring->frames[idx]->tp_status == TP_STATUS_USER) {
+            *frame_id = idx;
+            return 0;
+        }
+    }
+    return -EAGAIN;
+}
+
+int packet_mmap_release_frame(int fd, int rx, uint32_t frame_id)
+{
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps || !ps->mmap_enabled || !ps->mmap_ring.active)
+        return -EINVAL;
+
+    struct packet_mmap_ring *ring = &ps->mmap_ring;
+    if (frame_id >= ring->frame_count)
+        return -EINVAL;
+
+    ring->frames[frame_id]->tp_status = TP_STATUS_KERNEL;
+    if (rx)
+        ring->last_frame = (frame_id + 1) % ring->frame_count;
+    return 0;
+}
+
+void packet_mmap_teardown(int fd)
+{
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps || !ps->mmap_enabled)
+        return;
+
+    struct packet_mmap_ring *ring = &ps->mmap_ring;
+    if (ring->frames) {
+        kfree((void *)ring->frames);
+        ring->frames = NULL;
+    }
+    if (ring->base) {
+        pmm_free_frames_contiguous((uint64_t)ring->base, ring->pg_vec_len);
+        ring->base = NULL;
+    }
+    memset(ring, 0, sizeof(*ring));
+    ps->mmap_enabled = 0;
+}
+
 /* ── Exports ───────────────────────────────────────────────────────── */
 
 EXPORT_SYMBOL(af_packet_init);
@@ -365,3 +559,8 @@ EXPORT_SYMBOL(packet_send);
 EXPORT_SYMBOL(packet_recv);
 EXPORT_SYMBOL(packet_close);
 EXPORT_SYMBOL(packet_deliver);
+EXPORT_SYMBOL(packet_mmap_setup);
+EXPORT_SYMBOL(packet_mmap_poll);
+EXPORT_SYMBOL(packet_mmap_get_frame);
+EXPORT_SYMBOL(packet_mmap_release_frame);
+EXPORT_SYMBOL(packet_mmap_teardown);

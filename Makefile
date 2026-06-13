@@ -77,6 +77,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/fault.c \
          src/kernel/syscall.c \
          src/kernel/syscall_cleanup.c \
+         src/kernel/syscall_new.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
          src/kernel/apic.c \
@@ -234,6 +235,12 @@ C_SRCS = src/kernel/kernel.c \
          src/net/rps.c \
          src/net/sshd.c \
          src/net/tcp_bbr.c \
+         src/net/sctp.c \
+         src/net/dccp.c \
+         src/net/mptcp.c \
+         src/net/macsec.c \
+         src/net/6lowpan.c \
+         src/net/ipoib.c \
          src/kernel/service.c \
          src/kernel/ssh_crypto.c \
          src/kernel/ssh_client.c \
@@ -298,11 +305,13 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dyndbg.c \
          src/drivers/uio.c \
          src/drivers/pagecache.c \
+         src/drivers/firmware_class.c \
          src/fs/freeze.c \
          src/fs/quota.c \
          src/net/dhcp.c \
          src/kernel/irq_affinity.c \
          src/kernel/trace.c \
+         src/kernel/trace_events.c \
          src/kernel/smap_smep_umip.c \
          src/kernel/uaccess.c \
          src/kernel/notifier.c \
@@ -353,6 +362,7 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/zcomp.c \
          src/memory/zcomp_fast.c \
          src/memory/zswap.c \
+         src/memory/mglru.c \
          src/kernel/perf_events.c \
          src/kernel/jump_label.c \
          src/kernel/pstore.c \
@@ -505,7 +515,15 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/drm/drm_gem.c \
          src/drivers/drm/drm_dumb.c \
          src/drivers/drm/bochs_drm.c \
-         src/kernel/live_patch.c
+         src/kernel/live_patch.c \
+         src/kernel/cgroup.c \
+         src/drivers/dm-raid.c \
+         src/drivers/mpath.c \
+         src/drivers/edac.c \
+         src/drivers/ghes.c \
+         src/drivers/i3c.c \
+         src/fs/verity.c \
+         src/fs/readdir.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
@@ -755,7 +773,7 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h|loop\.h|ftrace\.h|kprobes\.h|trace\.h|perf_events\.h|firmware\.h|watchdog\.h|timers\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
@@ -883,6 +901,8 @@ TEST_OBJS    = $(ASM_TEST_OBJS) $(C_TEST_OBJS)
 # Test build variant config
 BUILD_CONFIG_GZ_H_TEST = $(BUILDDIR_TEST)/build_config_gz.h
 $(BUILDDIR_TEST)/kernel/config_gz.o: CFLAGS += -I$(BUILDDIR_TEST)
+$(BUILDDIR_TEST)/kernel/kpti.o: CFLAGS += -I$(BUILDDIR)
+$(BUILDDIR_TEST)/kernel/kpti.o: $(KPTI_TRAMP_H)
 $(BUILD_CONFIG_GZ_H_TEST): $(BUILD_CONFIG_GZ)
 	@mkdir -p $(dir $@)
 	@echo '/* Auto-generated — do not edit. */' > $@

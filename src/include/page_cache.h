@@ -90,6 +90,19 @@ int page_cache_read(uint64_t ino, uint64_t block, void *buf,
 int page_cache_readahead(uint64_t ino, uint64_t start_block, int count,
                          int (*backing_store)(uint32_t lba, uint8_t count, void *buf));
 
+/* Multi-page readahead: aggressively prefetch a range of pages using
+ * adaptive window sizing.  Called when sequential access is detected.
+ * Returns the number of pages prefetched. */
+int page_cache_readahead_multipage(uint64_t ino, uint64_t trigger_block,
+                                    int (*backing_store)(uint32_t lba, uint8_t count, void *buf));
+
+/* Batch readahead: submit a multi-block I/O for consecutive pages.
+ * Groups consecutive blocks into a single driver call.
+ * Returns the number of blocks prefetched. */
+int page_cache_batch_readahead(uint64_t ino, uint64_t start_block,
+                                int num_blocks,
+                                int (*backing_store)(uint32_t lba, uint8_t count, void *buf));
+
 /* Reset readahead state for a given inode (e.g., on seek to non-adjacent offset). */
 void page_cache_readahead_reset(uint64_t ino);
 

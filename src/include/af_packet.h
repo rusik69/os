@@ -50,6 +50,55 @@
 /* Maximum packet socket instances */
 #define PACKET_MAX_SOCKETS      16
 
+/* ── PACKET_MMAP ring (tpacket) ─────────────────────────────────── */
+
+/* tpacket ring block size (must be page-aligned, default 4096) */
+#define TPACKET_ALIGNMENT       16
+#define TPACKET_ALIGN(x)       (((x) + TPACKET_ALIGNMENT - 1) & ~(TPACKET_ALIGNMENT - 1))
+
+/* tpacket block descriptor for PACKET_MMAP */
+struct tpacket_hdr {
+    uint64_t tp_status;         /* Status: TP_STATUS_KERNEL / TP_STATUS_USER */
+    uint32_t tp_len;            /* Frame length */
+    uint32_t tp_snaplen;        /* Captured length */
+    uint16_t tp_mac;            /* Offset to MAC header */
+    uint16_t tp_net;            /* Offset to network header */
+    uint32_t tp_sec;            /* Seconds (timestamp) */
+    uint32_t tp_nsec;           /* Nanoseconds (timestamp) */
+    uint16_t tp_vlan_tci;
+    uint16_t tp_vlan_tpid;
+} __attribute__((packed));
+
+#define TP_STATUS_KERNEL        0       /* Kernel owns the frame */
+#define TP_STATUS_USER          1       /* User owns the frame */
+#define TP_STATUS_COPY          2
+#define TP_STATUS_VLAN_VALID    4
+#define TP_STATUS_BLK_TMO       8
+
+/* PACKET_MMAP ring configuration */
+struct tpacket_req {
+    uint32_t tp_block_size;     /* Size of each block */
+    uint32_t tp_block_nr;       /* Number of blocks */
+    uint32_t tp_frame_size;     /* Size of each frame */
+    uint32_t tp_frame_nr;       /* Number of frames */
+};
+
+/* Per-socket PACKET_MMAP ring state */
+struct packet_mmap_ring {
+    int              active;            /* 1 = ring is set up */
+    uint8_t         *base;              /* Virtual base address */
+    uint32_t         block_size;
+    uint32_t         block_nr;
+    uint32_t         frame_size;
+    uint32_t         frame_nr;
+    uint32_t         frames_per_block;
+    volatile struct tpacket_hdr **frames; /* Array of frame pointers */
+    uint32_t         frame_count;       /* Total frames in ring */
+    uint32_t         last_frame;        /* Last frame processed */
+    uint64_t         pg_vec_addr;       /* Physical page vector address */
+    uint32_t         pg_vec_len;        /* Number of pages in vector */
+};
+
 /* ── Data structures ────────────────────────────────────────────── */
 
 /* AF_PACKET socket address (struct sockaddr_ll) */
@@ -86,6 +135,10 @@ struct packet_sock {
     uint64_t    frames_recv;
     uint64_t    frames_sent;
     uint64_t    frames_dropped;
+
+    /* PACKET_MMAP ring */
+    struct packet_mmap_ring mmap_ring;
+    int mmap_enabled;           /* 1 = mmap ring active */
 };
 
 /* ── API ────────────────────────────────────────────────────────── */
@@ -123,5 +176,12 @@ int  packet_is_valid_fd(int fd);
 
 /* Get the bound protocol for an fd (ETH_P_ALL or specific). */
 uint16_t packet_get_protocol(int fd);
+
+/* PACKET_MMAP ring operations */
+int  packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring);
+int  packet_mmap_poll(int fd, int rx);
+int  packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id);
+int  packet_mmap_release_frame(int fd, int rx, uint32_t frame_id);
+void packet_mmap_teardown(int fd);
 
 #endif /* AF_PACKET_H */

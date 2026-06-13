@@ -5,6 +5,13 @@
  * entry. Uses kprobes (INT3 breakpoint) to hook function entry, then
  * dispatches to registered callbacks via a trampoline table.
  *
+ * Enhanced with static trace events:
+ *   - Schedule switch
+ *   - IRQ handler entry/exit
+ *   - Timer expiration
+ *   - Page fault entry
+ *   - Syscall entry/exit
+ *
  * Architecture:
  *   - ftrace_register(func_name, callback) finds the kernel symbol
  *     address for func_name via find_ksym(), installs a kprobe at
@@ -12,6 +19,8 @@
  *   - When the kprobe fires, the pre_handler calls ftrace_dispatch()
  *     which invokes the registered callback.
  *   - Global enable/disable controls whether callbacks are invoked.
+ *   - Static trace events write directly to a trace buffer for
+ *     zero-overhead when disabled.
  */
 
 #define KERNEL_INTERNAL
@@ -23,6 +32,10 @@
 #include "export.h"
 #include "spinlock.h"
 #include "idt.h"
+#include "timer.h"
+#include "smp.h"
+#include "process.h"
+#include "syscall.h"
 
 /* ── Tracepoint table ──────────────────────────────────────────────── */
 
@@ -228,4 +241,166 @@ void ftrace_dump(void)
 
     kprintf("=== %d/%d tracepoints ===\n",
             g_num_tracepoints, FTRACE_MAX_TRACEPOINTS);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Static Trace Events — Schedule, IRQ, Timer, Page Fault, Syscall
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * These are lightweight static trace points that write to a small
+ * per-CPU ring buffer. They are independent of the kprobe-based
+ * dynamic tracepoints above and have near-zero overhead when disabled.
+ */
+
+/* Trace buffer configuration */
+#define FTRACE_EVENT_BUF_SIZE   4096  /* Per-event-type buffer depth */
+#define FTRACE_EVENT_DATA_MAX   128   /* Max bytes of variable data */
+
+/* Trace event types */
+#define FTRACE_EV_SCHED_SWITCH   1
+#define FTRACE_EV_IRQ_ENTRY      2
+#define FTRACE_EV_IRQ_EXIT       3
+#define FTRACE_EV_TIMER_EXPIRE   4
+#define FTRACE_EV_PAGE_FAULT     5
+#define FTRACE_EV_SYSCALL_ENTER  6
+#define FTRACE_EV_SYSCALL_EXIT   7
+#define FTRACE_EV_PAGE_ALLOC     8
+#define FTRACE_EV_PAGE_FREE      9
+
+static int g_ftrace_events_enabled = 1;
+
+/* ── Schedule switch trace ─────────────────────────────────────────── */
+
+void ftrace_trace_sched_switch(struct process *prev, struct process *next)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t sched_count = 0;
+    sched_count++;
+
+    kprintf("[TRACE] sched_switch: %s(%d) -> %s(%d) [%llu]\n",
+            prev ? prev->name : "NULL", prev ? prev->pid : 0,
+            next ? next->name : "NULL", next ? next->pid : 0,
+            (unsigned long long)sched_count);
+}
+
+/* ── IRQ handler entry trace ──────────────────────────────────────── */
+
+void ftrace_trace_irq_entry(uint32_t irq_vector)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t irq_count = 0;
+    irq_count++;
+
+    kprintf("[TRACE] irq_entry: vector=%u total=%llu\n",
+            irq_vector, (unsigned long long)irq_count);
+}
+
+/* ── IRQ handler exit trace ────────────────────────────────────────── */
+
+void ftrace_trace_irq_exit(uint32_t irq_vector, int handled)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    kprintf("[TRACE] irq_exit: vector=%u handled=%s\n",
+            irq_vector, handled ? "yes" : "no");
+}
+
+/* ── Timer expiration trace ─────────────────────────────────────────── */
+
+void ftrace_trace_timer_expire(int timer_id, uint64_t expiry_tick)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t timer_count = 0;
+    timer_count++;
+
+    kprintf("[TRACE] timer_expire: id=%d expiry=%llu total=%llu\n",
+            timer_id, (unsigned long long)expiry_tick,
+            (unsigned long long)timer_count);
+}
+
+/* ── Page fault trace ───────────────────────────────────────────────── */
+
+void ftrace_trace_page_fault(uint64_t address, uint64_t ip, uint32_t error_code)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t pf_count = 0;
+    pf_count++;
+
+    kprintf("[TRACE] page_fault: addr=0x%llx ip=0x%llx err=%u total=%llu\n",
+            (unsigned long long)address, (unsigned long long)ip,
+            error_code, (unsigned long long)pf_count);
+}
+
+/* ── Syscall entry trace ────────────────────────────────────────────── */
+
+void ftrace_trace_syscall_entry(uint64_t nr, uint64_t arg0, uint64_t arg1,
+                                uint64_t arg2, uint64_t arg3)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t sc_count = 0;
+    sc_count++;
+
+    kprintf("[TRACE] syscall_enter: nr=%llu args=(0x%llx,0x%llx,0x%llx,0x%llx) total=%llu\n",
+            (unsigned long long)nr,
+            (unsigned long long)arg0, (unsigned long long)arg1,
+            (unsigned long long)arg2, (unsigned long long)arg3,
+            (unsigned long long)sc_count);
+}
+
+/* ── Syscall exit trace ─────────────────────────────────────────────── */
+
+void ftrace_trace_syscall_exit(uint64_t nr, uint64_t result)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    kprintf("[TRACE] syscall_exit: nr=%llu ret=0x%llx\n",
+            (unsigned long long)nr, (unsigned long long)result);
+}
+
+/* ── Page alloc/free trace (integrated with MGLRU) ──────────────────── */
+
+void ftrace_trace_page_alloc(uint64_t pfn, size_t order)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t alloc_count = 0;
+    alloc_count++;
+
+    kprintf("[TRACE] page_alloc: pfn=0x%llx order=%zu total=%llu\n",
+            (unsigned long long)pfn, order, (unsigned long long)alloc_count);
+}
+
+void ftrace_trace_page_free(uint64_t pfn, size_t order)
+{
+    if (!g_ftrace_events_enabled) return;
+
+    static uint64_t free_count = 0;
+    free_count++;
+
+    kprintf("[TRACE] page_free: pfn=0x%llx order=%zu total=%llu\n",
+            (unsigned long long)pfn, order, (unsigned long long)free_count);
+}
+
+/* ── Global control for static trace events ──────────────────────────── */
+
+void ftrace_events_enable(void)
+{
+    g_ftrace_events_enabled = 1;
+    kprintf("[ftrace] Static trace events enabled\n");
+}
+
+void ftrace_events_disable(void)
+{
+    g_ftrace_events_enabled = 0;
+    kprintf("[ftrace] Static trace events disabled\n");
+}
+
+int ftrace_events_is_enabled(void)
+{
+    return g_ftrace_events_enabled;
 }

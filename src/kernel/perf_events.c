@@ -7,6 +7,7 @@
 #include "string.h"
 #include "smp.h"
 #include "errno.h"
+#include "kallsyms.h"
 
 /* Software event counters */
 static struct perf_sw_counters sw_counters;
@@ -953,4 +954,380 @@ void perf_mux_tick(void)
     perf_enable();
 
     spinlock_irqsave_release(&g_mux_lock, irq_flags);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Perf Context-Switch Tracing (Item 4)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Tracks context switches with per-process PID, TID, and timestamp
+ * for later analysis.  Maintains a ring buffer of switch events.
+ */
+
+#define PERF_CSWITCH_BUF_SIZE 1024
+
+struct perf_cswitch_event {
+    uint64_t timestamp;      /* TSC or timer ticks */
+    uint32_t prev_pid;       /* Previous process PID */
+    uint32_t next_pid;       /* Next process PID */
+    char     prev_comm[16];  /* Previous process name */
+    char     next_comm[16];  /* Next process name */
+    uint8_t  prev_state;     /* Previous task state */
+};
+
+static struct {
+    struct perf_cswitch_event events[PERF_CSWITCH_BUF_SIZE];
+    volatile uint32_t write_idx;
+    int enabled;
+    int initialized;
+} perf_cswitch_state;
+
+void perf_cswitch_init(void)
+{
+    if (perf_cswitch_state.initialized) return;
+    memset(&perf_cswitch_state, 0, sizeof(perf_cswitch_state));
+    perf_cswitch_state.enabled = 1;
+    perf_cswitch_state.initialized = 1;
+}
+
+void perf_cswitch_enable(void)
+{
+    perf_cswitch_state.enabled = 1;
+}
+
+void perf_cswitch_disable(void)
+{
+    perf_cswitch_state.enabled = 0;
+}
+
+void perf_cswitch_trace(uint32_t prev_pid, uint32_t next_pid,
+                        const char *prev_comm, const char *next_comm,
+                        uint8_t prev_state)
+{
+    if (!perf_cswitch_state.initialized || !perf_cswitch_state.enabled)
+        return;
+
+    uint32_t idx = __sync_fetch_and_add(&perf_cswitch_state.write_idx, 1)
+                   % PERF_CSWITCH_BUF_SIZE;
+
+    struct perf_cswitch_event *ev = &perf_cswitch_state.events[idx];
+    ev->timestamp = timer_get_ticks();
+    ev->prev_pid = prev_pid;
+    ev->next_pid = next_pid;
+    ev->prev_state = prev_state;
+
+    if (prev_comm) {
+        strncpy(ev->prev_comm, prev_comm, 15);
+        ev->prev_comm[15] = '\0';
+    } else {
+        ev->prev_comm[0] = '\0';
+    }
+    if (next_comm) {
+        strncpy(ev->next_comm, next_comm, 15);
+        ev->next_comm[15] = '\0';
+    } else {
+        ev->next_comm[0] = '\0';
+    }
+}
+
+int perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
+{
+    if (!buf || max_count <= 0)
+        return 0;
+
+    uint32_t count = perf_cswitch_state.write_idx;
+    if (count > PERF_CSWITCH_BUF_SIZE)
+        count = PERF_CSWITCH_BUF_SIZE;
+    if ((int)count > max_count)
+        count = (uint32_t)max_count;
+
+    for (uint32_t i = 0; i < count; i++) {
+        buf[i] = perf_cswitch_state.events[i];
+    }
+    return (int)count;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Perf Page Fault Sampling (Item 5)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Samples page faults with full context: faulting address, instruction
+ * pointer, process PID, and a partial stack trace.  Stores to a ring
+ * buffer for later analysis (perf report, flame graphs).
+ */
+
+#define PERF_PF_BUF_SIZE 512
+#define PERF_PF_STACK_DEPTH 16  /* Max stack frames to capture */
+
+struct perf_pf_sample {
+    uint64_t timestamp;       /* Timer ticks at time of fault */
+    uint64_t fault_addr;      /* Address that caused the fault */
+    uint64_t ip;              /* Instruction pointer at fault */
+    uint64_t stack[PERF_PF_STACK_DEPTH]; /* Partial stack trace */
+    uint32_t pid;             /* Process PID */
+    uint32_t error_code;      /* Page fault error code */
+    int      stack_depth;     /* Number of valid stack frames */
+};
+
+static struct {
+    struct perf_pf_sample samples[PERF_PF_BUF_SIZE];
+    volatile uint32_t write_idx;
+    int enabled;
+    int initialized;
+    int sample_rate;          /* 1/N sampling rate (1 = every fault) */
+} perf_pf_state;
+
+void perf_pf_init(void)
+{
+    if (perf_pf_state.initialized) return;
+    memset(&perf_pf_state, 0, sizeof(perf_pf_state));
+    perf_pf_state.enabled = 1;
+    perf_pf_state.sample_rate = 1; /* sample every fault */
+    perf_pf_state.initialized = 1;
+}
+
+void perf_pf_enable(void)  { perf_pf_state.enabled = 1; }
+void perf_pf_disable(void) { perf_pf_state.enabled = 0; }
+
+void perf_pf_set_sample_rate(int rate)
+{
+    if (rate < 1) rate = 1;
+    if (rate > 1000) rate = 1000;
+    perf_pf_state.sample_rate = rate;
+}
+
+/*
+ * Capture a partial stack trace by walking RBP-linked frames.
+ * Returns the number of frames captured.
+ */
+static int perf_capture_stack(uint64_t *frames, int max_frames)
+{
+    int count = 0;
+    uint64_t rbp;
+
+    __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
+
+    while (rbp && count < max_frames) {
+        /* Read the return address (rbp + 8) */
+        uint64_t ret_addr;
+        if (rbp < 0xFFFFFF8000000000ULL || rbp >= 0xFFFFFFFFFFFFFFFFULL)
+            break; /* Sanity check */
+        if (__builtin_memcpy(&ret_addr, (void*)(rbp + 8), sizeof(ret_addr)))
+            break;
+        frames[count++] = ret_addr;
+
+        /* Follow frame pointer to the previous frame */
+        uint64_t next_rbp;
+        if (__builtin_memcpy(&next_rbp, (void*)rbp, sizeof(next_rbp)))
+            break;
+        rbp = next_rbp;
+    }
+
+    return count;
+}
+
+void perf_pf_sample(uint64_t fault_addr, uint64_t ip, uint32_t error_code,
+                    uint32_t pid)
+{
+    if (!perf_pf_state.initialized || !perf_pf_state.enabled)
+        return;
+
+    /* Apply sampling rate */
+    static uint32_t sample_counter = 0;
+    sample_counter++;
+    if (sample_counter % perf_pf_state.sample_rate != 0)
+        return;
+
+    uint32_t idx = __sync_fetch_and_add(&perf_pf_state.write_idx, 1)
+                   % PERF_PF_BUF_SIZE;
+
+    struct perf_pf_sample *s = &perf_pf_state.samples[idx];
+    memset(s, 0, sizeof(*s));
+
+    s->timestamp = timer_get_ticks();
+    s->fault_addr = fault_addr;
+    s->ip = ip;
+    s->pid = pid;
+    s->error_code = error_code;
+    s->stack_depth = perf_capture_stack(s->stack, PERF_PF_STACK_DEPTH);
+}
+
+int perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
+{
+    if (!buf || max_count <= 0)
+        return 0;
+
+    uint32_t count = perf_pf_state.write_idx;
+    if (count > PERF_PF_BUF_SIZE)
+        count = PERF_PF_BUF_SIZE;
+    if ((int)count > max_count)
+        count = (uint32_t)max_count;
+
+    for (uint32_t i = 0; i < count; i++) {
+        buf[i] = perf_pf_state.samples[i];
+    }
+    return (int)count;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Perf Flame Graph Support — Folded Stack Output (Item 6)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Produces "folded stack" format consumed by Brendan Gregg's flamegraph.pl.
+ *
+ * Format:
+ *   func_a;func_b;func_c <count>
+ *
+ * Each line is a semicolon-separated call chain followed by a space and
+ * the sample count.  Multiple identical stacks are aggregated.
+ *
+ * Uses the kernel's symbol resolution (ksym/kallsyms) to translate
+ * addresses to function names.
+ */
+
+/* Maximum unique stack traces we can track */
+#define FLAME_MAX_STACKS 2048
+#define FLAME_MAX_FRAMES 32
+#define FLAME_SYM_LEN    64
+
+struct flame_stack {
+    uint64_t frames[FLAME_MAX_FRAMES];
+    int      depth;
+    uint64_t count;
+};
+
+static struct {
+    struct flame_stack stacks[FLAME_MAX_STACKS];
+    int num_stacks;
+    int enabled;
+    int initialized;
+} flame_state;
+
+void perf_flame_init(void)
+{
+    if (flame_state.initialized) return;
+    memset(&flame_state, 0, sizeof(flame_state));
+    flame_state.enabled = 1;
+    flame_state.initialized = 1;
+}
+
+void perf_flame_enable(void)  { flame_state.enabled = 1; }
+void perf_flame_disable(void) { flame_state.enabled = 0; }
+
+/* Compare two stack frames for equality */
+static int flame_stack_equal(const uint64_t *a, int depth_a,
+                              const uint64_t *b, int depth_b)
+{
+    if (depth_a != depth_b) return 0;
+    for (int i = 0; i < depth_a; i++) {
+        if (a[i] != b[i]) return 0;
+    }
+    return 1;
+}
+
+/* Add a sample (stack trace) to the flame graph aggregator. */
+void perf_flame_add_sample(const uint64_t *frames, int depth)
+{
+    if (!flame_state.initialized || !flame_state.enabled || !frames)
+        return;
+
+    if (depth <= 0) return;
+    if (depth > FLAME_MAX_FRAMES) depth = FLAME_MAX_FRAMES;
+
+    /* Look for an existing matching stack */
+    for (int i = 0; i < flame_state.num_stacks; i++) {
+        if (flame_stack_equal(flame_state.stacks[i].frames,
+                               flame_state.stacks[i].depth,
+                               frames, depth)) {
+            flame_state.stacks[i].count++;
+            return;
+        }
+    }
+
+    /* Add a new stack entry */
+    if (flame_state.num_stacks >= FLAME_MAX_STACKS)
+        return;
+
+    struct flame_stack *fs = &flame_state.stacks[flame_state.num_stacks++];
+    memcpy(fs->frames, frames, depth * sizeof(uint64_t));
+    fs->depth = depth;
+    fs->count = 1;
+}
+
+/* Helper: resolve a kernel address to a symbol name.
+ * Returns the symbol name or "0x<addr>" if unresolved. */
+static const char *flame_resolve_symbol(uint64_t addr)
+{
+    /* Use kallsyms / ksym lookup if available */
+    static char sym_buf[FLAME_SYM_LEN];
+
+    const char *name = kallsyms_lookup(addr);
+    if (name)
+        return name;
+
+    /* Fallback: format as hex */
+    snprintf(sym_buf, sizeof(sym_buf), "0x%llx", (unsigned long long)addr);
+    return sym_buf;
+}
+
+/* Write the folded stack output into a caller-provided buffer.
+ * Uses the format: func_a;func_b;func_c <count>\n
+ * Returns the number of bytes written. */
+int perf_flame_generate(char *buf, int buf_size)
+{
+    if (!buf || buf_size <= 0)
+        return 0;
+
+    int total = 0;
+
+    for (int i = 0; i < flame_state.num_stacks; i++) {
+        struct flame_stack *fs = &flame_state.stacks[i];
+
+        /* Build the semicolon-separated call chain */
+        int pos = 0;
+        for (int f = 0; f < fs->depth; f++) {
+            const char *sym = flame_resolve_symbol(fs->frames[f]);
+            int remaining = buf_size - total - pos - 1;
+            if (remaining <= 0) break;
+
+            if (f > 0) {
+                buf[total + pos++] = ';';
+            }
+
+            /* Copy symbol name */
+            while (*sym && pos < buf_size - total - 1) {
+                buf[total + pos++] = *sym++;
+            }
+        }
+
+        if (pos >= buf_size - total) break;
+
+        /* Append count */
+        int n = snprintf(buf + total + pos, buf_size - total - pos,
+                        " %llu\n", (unsigned long long)fs->count);
+        if (n > 0) pos += n;
+
+        total += pos;
+        if (total >= buf_size - 1) break;
+    }
+
+    if (total < buf_size)
+        buf[total] = '\0';
+    else
+        buf[buf_size - 1] = '\0';
+
+    return total;
+}
+
+/* Clear the flame graph aggregator. */
+void perf_flame_clear(void)
+{
+    memset(flame_state.stacks, 0, sizeof(flame_state.stacks));
+    flame_state.num_stacks = 0;
+}
+
+/* Return the number of unique stacks tracked. */
+int perf_flame_num_stacks(void)
+{
+    return flame_state.num_stacks;
 }

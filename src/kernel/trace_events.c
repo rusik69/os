@@ -18,7 +18,8 @@
 #include "printf.h"
 #include "string.h"
 #include "smp.h"
-#include "process.h"  /* for struct task */
+#include "process.h"  /* for struct process */
+#include "timer.h"    /* for timer_get_ticks */
 
 /* ── Trace buffer ────────────────────────────────────────────────────── */
 
@@ -91,7 +92,7 @@ struct sched_switch_data {
     int      prev_state;
 };
 
-void trace_sched_switch(struct task *prev, struct task *next)
+void trace_sched_switch(struct process *prev, struct process *next)
 {
     struct sched_switch_data d;
     memset(&d, 0, sizeof(d));

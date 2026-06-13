@@ -1,0 +1,236 @@
+/* dccp.c — Datagram Congestion Control Protocol (RFC 4340) */
+
+#include "dccp.h"
+#include "net.h"
+#include "net_internal.h"
+#include "string.h"
+#include "printf.h"
+#include "spinlock.h"
+#include "errno.h"
+#include "export.h"
+
+#define DCCP_MAX_SOCKS 8
+
+static struct dccp_sock dccp_socks[DCCP_MAX_SOCKS];
+static spinlock_t dccp_lock;
+static int dccp_initialized = 0;
+
+void dccp_init(void)
+{
+    if (dccp_initialized) return;
+    spinlock_init(&dccp_lock);
+    memset(dccp_socks, 0, sizeof(dccp_socks));
+    dccp_initialized = 1;
+    kprintf("[OK] DCCP: Datagram Congestion Control Protocol initialized\n");
+}
+
+static int dccp_find_free(void)
+{
+    for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
+        if (!dccp_socks[i].used)
+            return i;
+    }
+    return -1;
+}
+
+static struct dccp_sock *dccp_find_by_fd(int fd)
+{
+    for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
+        if (dccp_socks[i].used && dccp_socks[i].fd == fd)
+            return &dccp_socks[i];
+    }
+    return NULL;
+}
+
+int dccp_create(int fd, int type)
+{
+    (void)type;
+    if (!dccp_initialized) return -ENOSYS;
+
+    spinlock_acquire(&dccp_lock);
+    int slot = dccp_find_free();
+    if (slot < 0) {
+        spinlock_release(&dccp_lock);
+        return -ENOMEM;
+    }
+
+    struct dccp_sock *ds = &dccp_socks[slot];
+    memset(ds, 0, sizeof(*ds));
+    ds->used = 1;
+    ds->fd = fd;
+    ds->ccid = DCCP_CCID_3;  /* Default: TFRC */
+    ds->cwnd = 2;
+    ds->ssthresh = 16;
+    ds->rtt = 100;  /* Initial RTT estimate: 100ms */
+
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
+int dccp_bind(int fd, uint16_t port)
+{
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+    ds->local_port = port;
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
+int dccp_connect(int fd, uint32_t ip, uint16_t port)
+{
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    ds->peer_ip = ip;
+    ds->peer_port = port;
+    ds->seq = 1;
+
+    /* Send DCCP-Request */
+    uint8_t pkt[sizeof(struct dccp_header)];
+    struct dccp_header *dh = (struct dccp_header *)pkt;
+    memset(dh, 0, sizeof(*dh));
+    dh->src_port = htons(ds->local_port);
+    dh->dst_port = htons(port);
+    dh->data_offset = (sizeof(*dh) / 4) << 4;  /* Header length in 32-bit words */
+    dh->type_reset = (DCCP_PKT_REQUEST << 4);
+    dh->seq_low = htonl(ds->seq);
+
+    send_ip(ip, IPPROTO_DCCP, pkt, sizeof(*dh));
+    ds->connected = 1;
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
+int dccp_send(int fd, const void *data, uint16_t len)
+{
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds || !ds->connected) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    /* Build DCCP-Data packet */
+    uint8_t pkt[sizeof(struct dccp_header) + 2048];
+    struct dccp_header *dh = (struct dccp_header *)pkt;
+    memset(dh, 0, sizeof(*dh));
+    dh->src_port = htons(ds->local_port);
+    dh->dst_port = htons(ds->peer_port);
+    dh->data_offset = (sizeof(*dh) / 4) << 4;
+    dh->type_reset = (DCCP_PKT_DATA << 4);
+    dh->seq_low = htonl(++ds->seq);
+
+    uint16_t data_len = len > 2048 ? 2048 : len;
+    memcpy(pkt + sizeof(*dh), data, data_len);
+
+    send_ip(ds->peer_ip, IPPROTO_DCCP, pkt, sizeof(*dh) + data_len);
+    spinlock_release(&dccp_lock);
+    return data_len;
+}
+
+int dccp_recv(int fd, void *buf, uint16_t maxlen)
+{
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+    if (ds->rcvlen == 0) {
+        spinlock_release(&dccp_lock);
+        return -EAGAIN;
+    }
+
+    int copy_len = (ds->rcvlen < maxlen) ? ds->rcvlen : maxlen;
+    memcpy(buf, ds->rcvbuf, copy_len);
+    ds->rcvlen = 0;
+    spinlock_release(&dccp_lock);
+    return copy_len;
+}
+
+void dccp_close(int fd)
+{
+    spinlock_acquire(&dccp_lock);
+    for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
+        if (dccp_socks[i].used && dccp_socks[i].fd == fd) {
+            memset(&dccp_socks[i], 0, sizeof(struct dccp_sock));
+            break;
+        }
+    }
+    spinlock_release(&dccp_lock);
+}
+
+int dccp_is_valid_fd(int fd)
+{
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    spinlock_release(&dccp_lock);
+    return ds != NULL;
+}
+
+void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
+                 const uint8_t *payload, uint16_t len)
+{
+    (void)dst_ip;
+    if (len < sizeof(struct dccp_header)) return;
+
+    const struct dccp_header *dh = (const struct dccp_header *)payload;
+    uint16_t dst_port = ntohs(dh->dst_port);
+    uint8_t pkt_type = (dh->type_reset >> 4) & 0x0F;
+
+    spinlock_acquire(&dccp_lock);
+
+    struct dccp_sock *ds = NULL;
+    for (int i = 0; i < DCCP_MAX_SOCKS; i++) {
+        if (dccp_socks[i].used && dccp_socks[i].local_port == dst_port) {
+            ds = &dccp_socks[i];
+            break;
+        }
+    }
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return;
+    }
+
+    switch (pkt_type) {
+    case DCCP_PKT_DATA:
+    case DCCP_PKT_DATAACK: {
+        uint8_t data_offset = (dh->data_offset >> 4) * 4;
+        if (data_offset < sizeof(*dh)) data_offset = sizeof(*dh);
+        uint16_t data_len = len - data_offset;
+        if (data_len > sizeof(ds->rcvbuf)) data_len = sizeof(ds->rcvbuf);
+        memcpy(ds->rcvbuf, payload + data_offset, data_len);
+        ds->rcvlen = data_len;
+        ds->ack_seq = ntohl(dh->seq_low);
+        break;
+    }
+    case DCCP_PKT_RESPONSE:
+        ds->peer_ip = src_ip;
+        ds->peer_port = ntohs(dh->src_port);
+        ds->connected = 1;
+        break;
+    case DCCP_PKT_CLOSE:
+    case DCCP_PKT_RESET:
+        ds->connected = 0;
+        break;
+    }
+
+    spinlock_release(&dccp_lock);
+}
+
+EXPORT_SYMBOL(dccp_init);
+EXPORT_SYMBOL(dccp_create);
+EXPORT_SYMBOL(dccp_bind);
+EXPORT_SYMBOL(dccp_connect);
+EXPORT_SYMBOL(dccp_send);
+EXPORT_SYMBOL(dccp_recv);
+EXPORT_SYMBOL(dccp_close);
+EXPORT_SYMBOL(handle_dccp);

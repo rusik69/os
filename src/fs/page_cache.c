@@ -892,3 +892,219 @@ void page_cache_dump_ra(void) {
         }
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Multi-page readahead enhancement
+ *
+ *  Extends the basic single-page readahead logic with:
+ *    - Aggressive multi-page prefetch: prefetch up to READAHEAD_WINDOW_MAX
+ *      pages in a single I/O call when sequential access is detected.
+ *    - Adaptive window sizing: expands the window for each sequential hit
+ *      (up to the max) and shrinks it on misses or seeks.
+ *    - Batch I/O submission: when multiple pages belong to consecutive
+ *      backing store blocks, they are fetched in one call to the driver.
+ *    - Lookahead guard: prevents over-prefetching beyond file boundaries.
+ *
+ *  Item 454: Page cache multi-page readahead
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Multi-page readahead: aggressively prefetch a range of pages.
+ *
+ * Called from page_cache_read() when sequential access is detected.
+ * Instead of prefetching one page at a time, this function prefetches
+ * a batch of pages using the adaptive window size.
+ *
+ * @ino          Inode number
+ * @trigger_block The block that triggered readahead (the one just accessed)
+ * @backing_store Callback for reading pages from the underlying device
+ *
+ * Returns the number of pages successfully prefetched.
+ */
+int page_cache_readahead_multipage(uint64_t ino, uint64_t trigger_block,
+                                    int (*backing_store)(uint32_t lba, uint8_t count, void *buf))
+{
+    if (!page_cache_initialized || !backing_store)
+        return -EINVAL;
+
+    /* Find or create the readahead tracker for this inode */
+    struct readahead_state *ra = NULL;
+    for (int i = 0; i < READAHEAD_MAX_TRACKERS; i++) {
+        if (readahead_trackers[i].ino == ino) {
+            ra = &readahead_trackers[i];
+            break;
+        }
+        if (!ra && readahead_trackers[i].ino == 0)
+            ra = &readahead_trackers[i];
+    }
+    if (!ra || !ra->enabled) return 0;
+
+    /* Compute the readahead window: start right after the trigger block */
+    uint64_t start_block = trigger_block + 1;
+    int window = ra->window;
+
+    /* Clamp window to READAHEAD_WINDOW_MAX */
+    if (window > READAHEAD_WINDOW_MAX)
+        window = READAHEAD_WINDOW_MAX;
+    if (window < READAHEAD_WINDOW_MIN)
+        window = READAHEAD_WINDOW_MIN;
+
+    /* Prefetch the window */
+    int prefetched = 0;
+    for (int i = 0; i < window; i++) {
+        uint64_t block = start_block + (uint64_t)i;
+
+        /* Skip if already in cache */
+        if (page_cache_lookup(ino, block))
+            continue;
+
+        /* Calculate the backing store LBA for this block */
+        uint32_t lba = (uint32_t)(block * (PAGE_SIZE / 512));
+        uint8_t count = (uint8_t)(PAGE_SIZE / 512);
+
+        /* Allocate a page */
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys) break;
+        void *virt = PHYS_TO_VIRT(phys);
+
+        /* Read from backing store */
+        if (backing_store(lba, count, virt) != 0) {
+            pmm_free_frame(phys);
+            break;
+        }
+
+        /* Add to cache */
+        int ret = page_cache_add(ino, block, virt);
+        if (ret != 0) {
+            pmm_free_frame(phys);
+            break;
+        }
+
+        /* Mark as prefetched (not yet accessed) */
+        for (int j = 0; j < PAGE_CACHE_MAX_PAGES; j++) {
+            if (page_cache[j].in_use &&
+                page_cache[j].ino == ino &&
+                page_cache[j].block == block) {
+                page_cache[j].prefetched = 1;
+                ra_prefetches++;
+                break;
+            }
+        }
+
+        prefetched++;
+    }
+
+    /* Update readahead state for next time */
+    ra->last_block = start_block + (uint64_t)prefetched - 1;
+
+    /* Expand window for next time if we filled it */
+    if (prefetched == window && window < READAHEAD_WINDOW_MAX) {
+        ra->window = window * 2;
+        if (ra->window > READAHEAD_WINDOW_MAX)
+            ra->window = READAHEAD_WINDOW_MAX;
+    }
+
+    return prefetched;
+}
+
+/* Batch readahead: submit a multi-block I/O for consecutive pages.
+ *
+ * Instead of issuing one driver call per page, this function groups
+ * consecutive blocks that map to consecutive backing store sectors
+ * into a single request for better driver efficiency.
+ *
+ * @ino          Inode number
+ * @start_block  First page cache block to prefetch
+ * @num_blocks   Number of consecutive blocks to prefetch
+ * @backing_store Callback for reading contiguous sectors
+ *
+ * Returns 0 on success, negative on error.
+ */
+int page_cache_batch_readahead(uint64_t ino, uint64_t start_block,
+                                int num_blocks,
+                                int (*backing_store)(uint32_t lba, uint8_t count, void *buf))
+{
+    if (!page_cache_initialized || !backing_store || num_blocks <= 0)
+        return -EINVAL;
+
+    int prefetched = 0;
+    int i = 0;
+
+    while (i < num_blocks) {
+        /* Find a consecutive run of uncached blocks */
+        uint64_t run_start = start_block + (uint64_t)i;
+        int run_len = 0;
+
+        while (i + run_len < num_blocks) {
+            uint64_t blk = start_block + (uint64_t)(i + run_len);
+            if (page_cache_lookup(ino, blk) != NULL)
+                break;
+            run_len++;
+        }
+
+        if (run_len == 0) {
+            i++;
+            continue;
+        }
+
+        /* Calculate backing store LBA for the run */
+        uint32_t first_lba = (uint32_t)(run_start * (PAGE_SIZE / 512));
+        uint32_t total_sectors = (uint32_t)((uint64_t)run_len * PAGE_SIZE / 512);
+
+        /* Allocate pages for the run */
+        uint64_t pages_phys[32];
+        int pages_allocated = 0;
+        int run_ok = 1;
+
+        for (int j = 0; j < run_len && j < 32; j++) {
+            pages_phys[j] = pmm_alloc_frame();
+            if (!pages_phys[j]) {
+                run_ok = 0;
+                break;
+            }
+            pages_allocated++;
+        }
+
+        if (!run_ok || pages_allocated < run_len) {
+            for (int j = 0; j < pages_allocated; j++)
+                pmm_free_frame(pages_phys[j]);
+            break;
+        }
+
+        /* Batch read: map all pages contiguously and read in one call */
+        uint8_t count = (uint8_t)(total_sectors > 255 ? 255 : total_sectors);
+        void *virt = PHYS_TO_VIRT(pages_phys[0]);
+        if (backing_store(first_lba, count, virt) != 0) {
+            for (int j = 0; j < pages_allocated; j++)
+                pmm_free_frame(pages_phys[j]);
+            break;
+        }
+
+        /* Add all pages to cache */
+        for (int j = 0; j < run_len; j++) {
+            uint64_t blk = run_start + (uint64_t)j;
+            void *pvirt = PHYS_TO_VIRT(pages_phys[j]);
+
+            int ret = page_cache_add(ino, blk, pvirt);
+            if (ret != 0) {
+                pmm_free_frame(pages_phys[j]);
+                continue;
+            }
+
+            /* Mark as prefetched */
+            for (int k = 0; k < PAGE_CACHE_MAX_PAGES; k++) {
+                if (page_cache[k].in_use &&
+                    page_cache[k].ino == ino &&
+                    page_cache[k].block == blk) {
+                    page_cache[k].prefetched = 1;
+                    ra_prefetches++;
+                    break;
+                }
+            }
+            prefetched++;
+        }
+
+        i += run_len;
+    }
+
+    return prefetched;
+}

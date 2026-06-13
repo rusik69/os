@@ -48,6 +48,8 @@
 #define SYS_NET_GET_MAC   125
 #define SYS_NET_GET_IP    126
 #define SYS_NET_GET_GW    127
+/* getdents64 syscall (Item 453) */
+#define SYS_GETDENTS64    78
 #define SYS_NET_GET_MASK  128
 #define SYS_NET_DNS       129
 #define SYS_NET_PING      130
@@ -291,7 +293,6 @@
 #define SYS_FDATASYNC         572  /* fdatasync(fd) → 0 or -1 */
 
 /* ── Memory management ──────────────────────────────────────── */
-#define SYS_GETDENTS64        295  /* getdents64(fd, dirp, count) → bytes */
 #define SYS_MLOCK             296  /* mlock(addr, len) → 0 or -1 */
 #define SYS_MLOCKALL          297  /* mlockall(flags) → 0 or -1 */
 #define SYS_MUNLOCK           298  /* munlock(addr, len) → 0 or -1 */

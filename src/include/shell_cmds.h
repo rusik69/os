@@ -423,4 +423,13 @@ void cmd_udevd(const char *args);
 /* S-plan Sound server */
 void cmd_pulse(const char *args);
 
+/* New performance and tracing commands */
+void cmd_perf(const char *args);
+void cmd_trace(const char *args);
+void cmd_bpftrace(const char *args);
+void cmd_losetup_wrapper(const char *args);
+void cmd_lvcreate(const char *args);
+void cmd_pvs(const char *args);
+void cmd_fstrim_wrapper(const char *args);
+
 #endif

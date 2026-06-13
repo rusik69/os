@@ -69,6 +69,12 @@ extern int usb_hub_init(void);
 #include "mdadm.h"
 #include "ac97.h"
 #include "smp.h"
+#include "cgroup.h"
+#include "mpath.h"
+#include "edac.h"
+#include "ghes.h"
+#include "i3c.h"
+#include "verity.h"
 #include "apic.h"
 #include "elf.h"
 #include "cpu.h"
@@ -761,6 +767,25 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     dm_error_init();
     dm_crypt_init();
     dm_verity_init();
+    dm_raid_init();
+
+    /* Multipath I/O */
+    mpath_init();
+
+    /* Cgroup v2 unified hierarchy */
+    cgroup_init();
+
+    /* EDAC: DRAM ECC error detection */
+    edac_init();
+
+    /* ACPI GHES: hardware error source handler */
+    ghes_init();
+
+    /* I3C serial bus */
+    i3c_init();
+
+    /* fs-verity: Merkle tree per-file verification */
+    fsverity_init();
 
     /* ZRAM compressed RAM block device — requires compression subsystem */
     zcomp_init();
