@@ -177,7 +177,7 @@ static int scan_dsdt_for_battery(void) {
     struct rsdt *rsdt = (struct rsdt *)PHYS_TO_VIRT((uint64_t)rsdp->rsdt_addr);
     if (!rsdt || memcmp(rsdt->header.signature, "RSDT", 4) != 0) return 0;
 
-    uint32_t num_entries = (rsdt->header.length - sizeof(struct acpi_header)) / 4;
+    uint32_t num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
     uint32_t dsdt_addr = 0;
 
     for (uint32_t i = 0; i < num_entries; i++) {
@@ -197,7 +197,7 @@ static int scan_dsdt_for_battery(void) {
 
     uint32_t dsdt_len = hdr->length;
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
-    uint32_t aml_len = dsdt_len - sizeof(struct acpi_header);
+    uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 
     /* Scan AML for "PNP0C0A" string (battery device) */
     const char *pnp = "PNP0C0A";

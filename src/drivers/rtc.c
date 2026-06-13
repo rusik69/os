@@ -123,7 +123,7 @@ static int is_updating(void) {
 }
 
 static uint8_t bcd_to_bin(uint8_t bcd) {
-    return (bcd & 0x0F) + ((bcd >> 4) * 10);
+    return (uint8_t)((bcd & 0x0F) + ((bcd >> 4) * 10));
 }
 
 static uint8_t bin_to_bcd(uint8_t bin) {
@@ -361,7 +361,7 @@ void rtc_get_time(struct rtc_time *t) {
     }
 
     if (!(regb & 0x02) && (hr & 0x80)) {
-        hr = ((hr & 0x7F) + 12) % 24;
+        hr = (uint8_t)(((hr & 0x7F) + 12) % 24);
     }
 
     t->second = sec;

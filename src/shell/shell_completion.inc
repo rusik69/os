@@ -35,13 +35,13 @@ static void shell_tab_complete(char *buf, int *len) {
         if (nmatch == 0) return;
         if (nmatch == 1) {
             erase_line(*len);
-            int clen = strlen(matches[0]);
+            int clen = (int)strlen(matches[0]);
             memcpy(buf, matches[0], clen);
             buf[clen] = ' ';
             *len = clen + 1;
             kprintf("%s ", matches[0]);
         } else {
-            int common = strlen(matches[0]);
+            int common = (int)strlen(matches[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
                 while (j < common && matches[0][j] == matches[i][j]) j++;
@@ -76,7 +76,7 @@ static void shell_tab_complete(char *buf, int *len) {
         if (nmatch == 0) return;
         if (nmatch == 1) {
             erase_line(*len);
-            int clen = strlen(fnames[0]);
+            int clen = (int)strlen(fnames[0]);
             int newlen = wstart + clen;
             memcpy(buf + wstart, fnames[0], clen);
             buf[newlen] = ' ';
@@ -84,7 +84,7 @@ static void shell_tab_complete(char *buf, int *len) {
             buf[*len] = '\0';
             kprintf("%s", buf);
         } else {
-            int common = strlen(fnames[0]);
+            int common = (int)strlen(fnames[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
                 while (j < common && fnames[0][j] == fnames[i][j]) j++;
@@ -236,14 +236,14 @@ void shell_tab_complete_telnet(char *buf, int *len, void *session) {
         if (nmatch == 0) return;
         if (nmatch == 1) {
             for (int k = 0; k < *len; k++) kprintf("\b \b");
-            int clen = strlen(matches[0]);
+            int clen = (int)strlen(matches[0]);
             memcpy(buf, matches[0], clen);
             buf[clen] = ' ';
             *len = clen + 1;
             buf[*len] = '\0';
             kprintf("%s", buf);
         } else {
-            int common = strlen(matches[0]);
+            int common = (int)strlen(matches[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
                 while (j < common && matches[0][j] == matches[i][j]) j++;
@@ -274,7 +274,7 @@ void shell_tab_complete_telnet(char *buf, int *len, void *session) {
         if (nmatch == 0) return;
         if (nmatch == 1) {
             for (int k = 0; k < *len; k++) kprintf("\b \b");
-            int clen = strlen(fnames[0]);
+            int clen = (int)strlen(fnames[0]);
             int newlen = wstart + clen;
             memcpy(buf + wstart, fnames[0], clen);
             buf[newlen] = ' ';
@@ -282,7 +282,7 @@ void shell_tab_complete_telnet(char *buf, int *len, void *session) {
             buf[*len] = '\0';
             kprintf("%s", buf);
         } else {
-            int common = strlen(fnames[0]);
+            int common = (int)strlen(fnames[0]);
             for (int i = 1; i < nmatch; i++) {
                 int j = 0;
                 while (j < common && fnames[0][j] == fnames[i][j]) j++;

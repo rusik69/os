@@ -37,9 +37,9 @@ static void intel_gpu_read_state(struct intel_gpu_info *gpu) {
     uint32_t dspcntr = intel_gpu_read32(INTEL_DSPACNTR);
     uint32_t pipesrc = intel_gpu_read32(INTEL_PIPEASRC);
 
-    gpu->vga_disabled = (vga >> 31) & 1;
-    gpu->pipe_a_active = (pipeconf >> 31) & 1;
-    gpu->plane_a_active = (dspcntr >> 31) & 1;
+    gpu->vga_disabled = (uint8_t)((vga >> 31) & 1);
+    gpu->pipe_a_active = (uint8_t)((pipeconf >> 31) & 1);
+    gpu->plane_a_active = (uint8_t)((dspcntr >> 31) & 1);
 
     if (pipesrc) {
         gpu->mode_width = (uint16_t)((pipesrc & 0x0FFFu) + 1);

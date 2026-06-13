@@ -159,7 +159,7 @@ int proxy_userspace_forward(struct service *svc, int client_fd)
 }
 
 /* C88: Least-connections load balancing */
-static int proxy_least_connections(struct service *svc)
+static int __attribute__((unused)) proxy_least_connections(struct service *svc)
 {
     if (!svc || svc->num_endpoints <= 0) return -1;
     int best = 0;
@@ -176,10 +176,10 @@ static int proxy_least_connections(struct service *svc)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 #define DNS_MAX_RECORDS    128
-#define DNS_NAME_MAX       256
+#define SP_DNS_NAME_MAX       256
 
 struct dns_record {
-    char   name[DNS_NAME_MAX];
+    char   name[SP_DNS_NAME_MAX];
     uint32_t ip;
     uint16_t port;
     int    type;          /* 0 = service, 1 = pod */
@@ -363,8 +363,8 @@ int volume_create(const char *name, int driver, uint64_t size_limit)
 
     /* For tmpfs, nothing to create on disk */
     if (driver == VOLUME_DRIVER_TMPFS) {
-        kprintf("[Volume] Created tmpfs volume '%s' (limit %lu)\n",
-                name, size_limit);
+        kprintf("[Volume] Created tmpfs volume '%s' (limit %llu)\n",
+                name, (unsigned long long)size_limit);
     } else {
         kprintf("[Volume] Created %s volume '%s' at %s\n",
                 driver == VOLUME_DRIVER_BIND ? "bind" : "local",

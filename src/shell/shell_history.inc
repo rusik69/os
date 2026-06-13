@@ -3,7 +3,7 @@ static void history_save(void) {
     int start = history_count > HISTORY_SIZE ? history_count - HISTORY_SIZE : 0;
     for (int i = start; i < history_count && pos < HISTORY_FILE_MAX - CMD_BUF_SIZE; i++) {
         const char *e = history[i % HISTORY_SIZE];
-        int n = strlen(e);
+        int n = (int)strlen(e);
         if (pos + n + 1 >= HISTORY_FILE_MAX) break;
         memcpy(history_filebuf + pos, e, n);
         pos += n;

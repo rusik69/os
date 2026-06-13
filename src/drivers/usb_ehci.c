@@ -185,12 +185,12 @@ static int ehci_init_controller(uint8_t bus, uint8_t slot, uint32_t bar0) {
     uint32_t eecp = (cap_read(c, EHCI_HCCPARAMS) >> 8) & 0xFF;
     if (eecp >= 0x40) {
         /* Clear BIOS ownership (OS semaphore handoff) */
-        uint32_t legsup = pci_read(bus, slot, 0, eecp);
+        uint32_t legsup = pci_read((uint8_t)bus, (uint8_t)slot, 0, (uint8_t)eecp);
         if (legsup & (1u << 16)) {
             /* Set OS owned semaphore */
-            pci_write(bus, slot, 0, eecp, legsup | (1u << 24));
+            pci_write((uint8_t)bus, (uint8_t)slot, 0, (uint8_t)eecp, legsup | (1u << 24));
             int timeout = 100000;
-            while ((pci_read(bus, slot, 0, eecp) & (1u << 16)) && --timeout)
+            while ((pci_read((uint8_t)bus, (uint8_t)slot, 0, (uint8_t)eecp) & (1u << 16)) && --timeout)
                 busy_wait_n(10);
         }
     }
@@ -486,14 +486,14 @@ int usb_init(void) {
     /* Scan PCI for EHCI controllers (class 0x0C, subclass 0x03, prog-if 0x20) */
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t r0 = pci_read(bus, slot, 0, 0);
+            uint32_t r0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             if ((r0 & 0xFFFF) == 0xFFFF) continue;
-            uint32_t r2  = pci_read(bus, slot, 0, 0x08);
-            uint8_t  cls = (r2 >> 24) & 0xFF;
-            uint8_t  sub = (r2 >> 16) & 0xFF;
-            uint8_t  prg = (r2 >> 8)  & 0xFF;
+            uint32_t r2  = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x08);
+            uint8_t  cls = (uint8_t)((r2 >> 24) & 0xFF);
+            uint8_t  sub = (uint8_t)((r2 >> 16) & 0xFF);
+            uint8_t  prg = (uint8_t)((r2 >> 8)  & 0xFF);
             if (cls == 0x0C && sub == 0x03 && prg == 0x20) {
-                uint32_t bar0 = pci_read(bus, slot, 0, 0x10);
+                uint32_t bar0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x10);
                 ehci_init_controller((uint8_t)bus, (uint8_t)slot, bar0);
             }
         }

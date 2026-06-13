@@ -65,19 +65,19 @@ static inline void i2c_delay(void) {
 /* ── Low-level GPIO helpers ─────────────────────────────────────────── */
 
 static inline void gpio_scl_high(void) {
-    outb(g_scl_port, inb(g_scl_port) | SCL_MASK);
+    outb(g_scl_port, (uint8_t)(inb(g_scl_port) | SCL_MASK));
 }
 
 static inline void gpio_scl_low(void) {
-    outb(g_scl_port, inb(g_scl_port) & ~SCL_MASK);
+    outb(g_scl_port, (uint8_t)(inb(g_scl_port) & ~SCL_MASK));
 }
 
 static inline void gpio_sda_high(void) {
-    outb(g_sda_port, inb(g_sda_port) | SDA_MASK);
+    outb(g_sda_port, (uint8_t)(inb(g_sda_port) | SDA_MASK));
 }
 
 static inline void gpio_sda_low(void) {
-    outb(g_sda_port, inb(g_sda_port) & ~SDA_MASK);
+    outb(g_sda_port, (uint8_t)(inb(g_sda_port) & ~SDA_MASK));
 }
 
 static inline void gpio_sda_release(void) {

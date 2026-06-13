@@ -80,8 +80,10 @@ int quota_set(const char *namespace, uint64_t max_pods, uint64_t max_containers,
             q->used_memory_bytes = 0;
             q->used_volumes = 0;
             q->in_use = 1;
-            kprintf("[Quota] Set quota for namespace '%s': pods=%lu, cpu=%lu, mem=%lu\n",
-                    namespace, max_pods, max_cpu_millicores, max_memory_bytes);
+            kprintf("[Quota] Set quota for namespace '%s': pods=%llu, cpu=%llu, mem=%llu\n",
+                    namespace, (unsigned long long)max_pods,
+                    (unsigned long long)max_cpu_millicores,
+                    (unsigned long long)max_memory_bytes);
             return 0;
         }
     }
@@ -140,12 +142,12 @@ int quota_account(const char *namespace, uint64_t cpu_millicores,
 
         struct resource_quota *q = &quota_table[i];
         spinlock_acquire(&q->lock);
-        int64_t delta = add ? 1 : -1;
+        // int64_t delta = add ? 1 : -1;
         q->used_containers += (uint64_t)(add ? 1 : 0);
         if (is_pod) q->used_pods += (uint64_t)(add ? 1 : 0);
         if (is_volume) q->used_volumes += (uint64_t)(add ? 1 : 0);
-        q->used_cpu_millicores += add ? cpu_millicores : -(int64_t)cpu_millicores;
-        q->used_memory_bytes += add ? memory_bytes : -(int64_t)memory_bytes;
+        q->used_cpu_millicores += add ? (int64_t)cpu_millicores : -(int64_t)cpu_millicores;
+        q->used_memory_bytes += add ? (int64_t)memory_bytes : -(int64_t)memory_bytes;
         spinlock_release(&q->lock);
         return 0;
     }

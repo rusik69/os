@@ -257,14 +257,14 @@ static int usb_control(uint8_t bm_req_type, uint8_t b_req,
 
     /* DATA phase (toggle=1) */
     if (w_len && data) {
-        uint8_t pid = (bm_req_type & 0x80) ? QTD_PID_IN : QTD_PID_OUT;
+        uint32_t pid = (uint32_t)((bm_req_type & 0x80) ? QTD_PID_IN : QTD_PID_OUT);
         rc = ehci_do_transfer(pid, 0, data, w_len, 1);
         if (rc < 0) return rc;
     }
 
     /* STATUS phase — opposite direction, DATA1 */
     {
-        uint8_t pid = (bm_req_type & 0x80) ? QTD_PID_OUT : QTD_PID_IN;
+        uint32_t pid = (uint32_t)((bm_req_type & 0x80) ? QTD_PID_OUT : QTD_PID_IN);
         uint8_t *dummy = (uint8_t *)alloc_dma(4);
         if (!dummy) return -1;
         rc = ehci_do_transfer(pid, 0, dummy, 0, 1);

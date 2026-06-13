@@ -219,14 +219,14 @@ static int ed_line_len(int line) {
 static void vga_ed_clear(void) {
     for (int r = 0; r < VGA_HEIGHT; r++)
         for (int c = 0; c < VGA_WIDTH; c++)
-            vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4), r, c);
+            vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4), (uint16_t)r, (uint16_t)c);
 }
 
 static void vga_ed_status_top(void) {
     struct ed_buffer *b = BUF();
     uint8_t color = VGA_BLACK | (VGA_LIGHT_GREY << 4);
     for (int c = 0; c < VGA_WIDTH; c++)
-        vga_put_entry_at(' ', color, 0, c);
+        vga_put_entry_at(' ', color, (uint16_t)0, (uint16_t)c);
     char title[VGA_WIDTH + 1];
     int pos = 0;
     pos += snprintf(title + pos, sizeof(title) - (size_t)pos,
@@ -235,7 +235,7 @@ static void vga_ed_status_top(void) {
                     ed_cur_buf + 1, ED_MAX_BUFS);
     int col = 0;
     while (title[col] && col < VGA_WIDTH) {
-        vga_put_entry_at(title[col], color, 0, col);
+        vga_put_entry_at(title[col], color, (uint16_t)0, (uint16_t)col);
         col++;
     }
 }
@@ -245,26 +245,26 @@ static void vga_ed_status_bottom(void) {
     uint8_t color = VGA_BLACK | (VGA_LIGHT_GREY << 4);
     int row = VGA_HEIGHT - 1;
     for (int c = 0; c < VGA_WIDTH; c++)
-        vga_put_entry_at(' ', color, row, c);
+        vga_put_entry_at(' ', color, (uint16_t)row, (uint16_t)c);
     const char *help = "^S:Save ^Q:Quit ^X:Cut ^C:Copy ^V:Paste ^N:NextBuf ^P:PrevBuf";
     int col = 0;
     while (*help && col < VGA_WIDTH)
-        vga_put_entry_at(*help++, color, row, col++);
+        vga_put_entry_at(*help++, color, (uint16_t)row, (uint16_t)col++);
 
     char pos[20]; int n = 0;
     char tmp[10]; int t = 0;
     int v = b->cy + 1;
-    if (!v) { tmp[t++] = '0'; } else { while (v) { tmp[t++] = '0' + v%10; v /= 10; } }
+    if (!v) { tmp[t++] = '0'; } else { while (v) { tmp[t++] = (char)('0' + v%10); v /= 10; } }
     for (int i = t-1; i >= 0; i--) pos[n++] = tmp[i];
     pos[n++] = ':'; t = 0;
     v = b->cx + 1;
-    if (!v) { tmp[t++] = '0'; } else { while (v) { tmp[t++] = '0' + v%10; v /= 10; } }
+    if (!v) { tmp[t++] = '0'; } else { while (v) { tmp[t++] = (char)('0' + v%10); v /= 10; } }
     for (int i = t-1; i >= 0; i--) pos[n++] = tmp[i];
     pos[n] = '\0';
     col = VGA_WIDTH - n - 1;
     if (col < 0) col = 0;
     for (int i = 0; i < n; i++)
-        vga_put_entry_at(pos[i], color, row, col + i);
+        vga_put_entry_at(pos[i], color, (uint16_t)row, (uint16_t)col + i);
 }
 
 static void vga_ed_lines(void) {
@@ -309,22 +309,22 @@ static void vga_ed_lines(void) {
                 for (c = 0; c < len; c++) {
                     uint8_t color = syntax_token_to_vga(
                         (syntax_token_t)(c < SYN_LINE_MAX ? stokens[c] : TOKEN_DEFAULT));
-                    vga_put_entry_at(b->lines[line][c], color, scr_row, c);
+                    vga_put_entry_at(b->lines[line][c], color, (uint16_t)scr_row, (uint16_t)c);
                 }
                 for (; c < VGA_WIDTH; c++)
-                    vga_put_entry_at(' ', default_color, scr_row, c);
+                    vga_put_entry_at(' ', default_color, (uint16_t)scr_row, (uint16_t)c);
             } else {
                 /* No syntax highlighting — plain text */
                 int c;
                 for (c = 0; c < len; c++)
-                    vga_put_entry_at(b->lines[line][c], default_color, scr_row, c);
+                    vga_put_entry_at(b->lines[line][c], default_color, (uint16_t)scr_row, (uint16_t)c);
                 for (; c < VGA_WIDTH; c++)
-                    vga_put_entry_at(' ', default_color, scr_row, c);
+                    vga_put_entry_at(' ', default_color, (uint16_t)scr_row, (uint16_t)c);
             }
         } else {
-            vga_put_entry_at('~', VGA_DARK_GREY | (VGA_BLACK << 4), scr_row, 0);
+            vga_put_entry_at('~', VGA_DARK_GREY | (VGA_BLACK << 4), (uint16_t)scr_row, (uint16_t)0);
             for (int c = 1; c < VGA_WIDTH; c++)
-                vga_put_entry_at(' ', default_color, scr_row, c);
+                vga_put_entry_at(' ', default_color, (uint16_t)scr_row, (uint16_t)c);
         }
     }
 }
@@ -703,7 +703,7 @@ static void ed_handle_command(const char *input) {
                     char msg[48];
                     int n = snprintf(msg, sizeof(msg), " Replaced %d occurrence(s) ", count);
                     for (int i = 0; i < n && i < VGA_WIDTH; i++)
-                        vga_put_entry_at(msg[i], c, VGA_HEIGHT - 1, i);
+                        vga_put_entry_at(msg[i], c, (uint16_t)VGA_HEIGHT - 1, (uint16_t)i);
                 }
                 return;
             }
@@ -945,7 +945,7 @@ static void ed_save(void) {
             uint8_t color = VGA_WHITE | (VGA_RED << 4);
             const char *msg = " SAVE FAILED (no memory) ";
             for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
-                vga_put_entry_at(msg[i], color, VGA_HEIGHT - 1, i);
+                vga_put_entry_at(msg[i], color, (uint16_t)VGA_HEIGHT - 1, (uint16_t)i);
         }
         return;
     }
@@ -971,7 +971,7 @@ static void ed_save(void) {
             uint8_t color = VGA_WHITE | (VGA_RED << 4);
             const char *msg = " SAVE FAILED ";
             for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
-                vga_put_entry_at(msg[i], color, VGA_HEIGHT - 1, i);
+                vga_put_entry_at(msg[i], color, (uint16_t)VGA_HEIGHT - 1, (uint16_t)i);
         }
     } else {
         b->dirty = 0;
@@ -1190,9 +1190,9 @@ void editor_open(const char *filename) {
                 } else {
                     uint8_t color = VGA_BLACK | (VGA_LIGHT_GREY << 4);
                     for (int c = 0; c < VGA_WIDTH; c++)
-                        vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4), VGA_HEIGHT - 1, c);
-                    vga_put_entry_at(':', color, VGA_HEIGHT - 1, 0);
-                    vga_put_entry_at(' ', color, VGA_HEIGHT - 1, 1);
+                        vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4), (uint16_t)VGA_HEIGHT - 1, (uint16_t)c);
+                    vga_put_entry_at(':', color, (uint16_t)VGA_HEIGHT - 1, (uint16_t)0);
+                    vga_put_entry_at(' ', color, (uint16_t)VGA_HEIGHT - 1, (uint16_t)1);
                     vga_set_cursor(VGA_HEIGHT - 1, 2);
                 }
                 char cmd[64];
@@ -1225,10 +1225,8 @@ void editor_open(const char *filename) {
                 } else {
                     uint8_t color = VGA_BLACK | (VGA_LIGHT_GREY << 4);
                     for (int c = 0; c < VGA_WIDTH; c++)
-                        vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4),
-                                         VGA_HEIGHT - 1, c);
-                    vga_put_entry_at(backward ? '?' : '/', color,
-                                     VGA_HEIGHT - 1, 1);
+                        vga_put_entry_at(' ', VGA_LIGHT_GREY | (VGA_BLACK << 4), (uint16_t)VGA_HEIGHT - 1, (uint16_t)c);
+                    vga_put_entry_at(backward ? '?' : '/', color, (uint16_t)VGA_HEIGHT - 1, (uint16_t)1);
                     vga_set_cursor(VGA_HEIGHT - 1, 2);
                 }
 
@@ -1248,7 +1246,7 @@ void editor_open(const char *filename) {
                             snprintf(msg, sizeof(msg),
                                      " Pattern not found: %s ", pattern);
                             for (int i = 0; msg[i] && i < VGA_WIDTH; i++)
-                                vga_put_entry_at(msg[i], c, VGA_HEIGHT - 1, i);
+                                vga_put_entry_at(msg[i], c, (uint16_t)VGA_HEIGHT - 1, (uint16_t)i);
                         }
                     }
                 }

@@ -911,10 +911,10 @@ int ahci_init(void) {
 
     /* Register IRQ handler for the first AHCI port's IRQ line */
     int irq_line = dev.irq;
-    idt_register_handler(32 + irq_line, ahci_irq_handler);
+    idt_register_handler((uint8_t)(32 + irq_line), ahci_irq_handler);
     if (apic_is_init_complete())
-        ioapic_unmask_irq(irq_line);
-    pic_unmask(irq_line);
+        ioapic_unmask_irq((uint8_t)irq_line);
+    pic_unmask((uint8_t)irq_line);
 
     kprintf("  AHCI: %d device(s) active, NCQ depth %ld\n",
             ahci_port_count, (long)AHCI_NCQ_SLOTS);

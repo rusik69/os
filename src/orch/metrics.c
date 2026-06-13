@@ -279,7 +279,6 @@ int metrics_trends_report(char *buf, size_t len)
 {
     if (!buf || !metrics_initialised) return -EINVAL;
 
-    uint64_t now = timer_get_ms();
     int pos = snprintf(buf, len,
         "=== Node Trends ===\n"
         "Window        AvgCPU(m)  MemUsed    DiskUsed   NetRX     NetTX     Containers\n"

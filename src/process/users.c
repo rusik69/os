@@ -765,7 +765,7 @@ static int copy_skel_to_home(const char *home, const char *username) {
         /* Create .profile */
         if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
             return -1;
-        vfs_write(skel_buf, default_profile, strlen(default_profile));
+        vfs_write(skel_buf, default_profile, (uint32_t)strlen(default_profile));
     }
 
     /* Create .bashrc if it doesn't exist */
@@ -775,7 +775,7 @@ static int copy_skel_to_home(const char *home, const char *username) {
     if (vfs_stat(skel_buf, &skel_st) != 0) {
         if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
             return -1;
-        vfs_write(skel_buf, default_bashrc, strlen(default_bashrc));
+        vfs_write(skel_buf, default_bashrc, (uint32_t)strlen(default_bashrc));
     }
 
     (void)username;

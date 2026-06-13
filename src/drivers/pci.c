@@ -145,15 +145,15 @@ int pcie_is_present(void) {
         for (int slot = 0; slot < 32; slot++) {
             uint32_t reg0;
             if (ecam_base) {
-                reg0 = pcie_read(bus, slot, 0, 0);
+                reg0 = pcie_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             } else {
-                reg0 = pci_read(bus, slot, 0, 0);
+                reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             }
-            uint16_t vid = reg0 & 0xFFFF;
+            uint16_t vid = (uint16_t)(reg0 & 0xFFFF);
             if (vid == 0xFFFF) continue;
 
             uint8_t cap_off;
-            if (pci_find_pcie_cap(bus, slot, 0, &cap_off) == 0) {
+            if (pci_find_pcie_cap((uint8_t)bus, (uint8_t)slot, 0, &cap_off) == 0) {
                 return 1;
             }
         }
@@ -227,7 +227,7 @@ int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
     while (cap_ptr != 0) {
         uint16_t cap_id_next = pci_read16(bus, slot, func, cap_ptr);
-        uint8_t cap_id = cap_id_next & 0xFF;
+        uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
 
         if (cap_id == 0x05) {
             /* Found MSI capability */
@@ -236,12 +236,12 @@ int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
             info->cap_offset = cap_ptr;
             info->is_64bit = (msg_ctrl & PCI_MSI_CTRL_64BIT) ? 1 : 0;
             info->has_per_vector = (msg_ctrl & PCI_MSI_CTRL_PERVEC) ? 1 : 0;
-            info->mmc = (msg_ctrl & PCI_MSI_CTRL_MMC_MASK) >> PCI_MSI_CTRL_MMC_SHIFT;
+            info->mmc = (uint16_t)((msg_ctrl & PCI_MSI_CTRL_MMC_MASK) >> PCI_MSI_CTRL_MMC_SHIFT);
 
             return 0;
         }
 
-        cap_ptr = (cap_id_next >> 8) & 0xFF;
+        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
     }
 
     return -1;
@@ -261,7 +261,7 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
 
     while (cap_ptr != 0) {
         uint16_t cap_id_next = pci_read16(bus, slot, func, cap_ptr);
-        uint8_t cap_id = cap_id_next & 0xFF;
+        uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
 
         if (cap_id == 0x11) {
             /* Found MSI-X capability */
@@ -278,7 +278,7 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
             } else {
                 tbl_reg = pci_read(bus, slot, func, cap_ptr + 4);
             }
-            info->table_bir = tbl_reg & PCI_MSIX_TBL_BIR;
+            info->table_bir = (uint8_t)(tbl_reg & PCI_MSIX_TBL_BIR);
             info->table_offset = tbl_reg & PCI_MSIX_TBL_OFFSET;
 
             /* PBA BAR/offset at cap_ptr + 8 */
@@ -288,13 +288,13 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
             } else {
                 pba_reg = pci_read(bus, slot, func, cap_ptr + 8);
             }
-            info->pba_bir = pba_reg & PCI_MSIX_TBL_BIR;
+            info->pba_bir = (uint8_t)(pba_reg & PCI_MSIX_TBL_BIR);
             info->pba_offset = pba_reg & PCI_MSIX_TBL_OFFSET;
 
             return 0;
         }
 
-        cap_ptr = (cap_id_next >> 8) & 0xFF;
+        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
     }
 
     return -1;
@@ -420,7 +420,7 @@ int pci_enable_msix(struct pci_device *dev, struct msix_info *info,
 
     /* Disable MSI-X and mask all entries while configuring */
     uint16_t msg_ctrl = pci_read16(bus, slot, func, cap + 2);
-    pci_write16(bus, slot, func, cap + 2, msg_ctrl & ~(1u << 15));  /* clear enable */
+    pci_write16(bus, slot, func, cap + 2, msg_ctrl & (uint16_t)~(1u << 15));  /* clear enable */
 
     /* Mask all entries first */
     for (int i = 0; i < n; i++) {
@@ -460,7 +460,7 @@ void pci_disable_msix(struct pci_device *dev) {
         return;
 
     uint16_t msg_ctrl = pci_read16(dev->bus, dev->slot, dev->func, info.cap_offset + 2);
-    msg_ctrl &= ~(1u << 15);   /* clear MSI-X enable */
+    msg_ctrl &= (uint16_t)~(1u << 15);   /* clear MSI-X enable */
     pci_write16(dev->bus, dev->slot, dev->func, info.cap_offset + 2, msg_ctrl);
 }
 
@@ -651,32 +651,32 @@ void pci_write(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t
 int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t reg0 = pci_read(bus, slot, 0, 0);
-            uint16_t vid = reg0 & 0xFFFF;
-            uint16_t did = (reg0 >> 16) & 0xFFFF;
+            uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
+            uint16_t vid = (uint16_t)(reg0 & 0xFFFF);
+            uint16_t did = (uint16_t)((reg0 >> 16) & 0xFFFF);
             if (vid == 0xFFFF) continue;
             /* Check header type for multi-function (bit 7 at reg 0x0C byte 2) */
-            uint32_t reg_hdr = pci_read(bus, slot, 0, 0x0C);
+            uint32_t reg_hdr = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
             int is_multi = (reg_hdr & (1U << 23)) ? 1 : 0;
             int max_func = is_multi ? 8 : 1;
             for (int func = 0; func < max_func; func++) {
-                reg0 = pci_read(bus, slot, func, 0);
-                vid = reg0 & 0xFFFF;
-                did = (reg0 >> 16) & 0xFFFF;
+                reg0 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0);
+                vid = (uint16_t)(reg0 & 0xFFFF);
+                did = (uint16_t)((reg0 >> 16) & 0xFFFF);
                 if (vid == 0xFFFF) continue;
                 if (vid == vendor && did == device) {
-                    out->bus = bus;
-                    out->slot = slot;
-                    out->func = func;
+                    out->bus = (uint8_t)bus;
+                    out->slot = (uint8_t)slot;
+                    out->func = (uint8_t)func;
                     out->vendor_id = vid;
                     out->device_id = did;
-                    uint32_t reg2 = pci_read(bus, slot, func, 0x08);
-                    out->class_code = (reg2 >> 24) & 0xFF;
-                    out->subclass = (reg2 >> 16) & 0xFF;
-                    uint32_t reg3c = pci_read(bus, slot, func, 0x3C);
-                    out->irq = reg3c & 0xFF;
+                    uint32_t reg2 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x08);
+                    out->class_code = (uint8_t)((reg2 >> 24) & 0xFF);
+                    out->subclass = (uint8_t)((reg2 >> 16) & 0xFF);
+                    uint32_t reg3c = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x3C);
+                    out->irq = (uint8_t)(reg3c & 0xFF);
                     for (int i = 0; i < 6; i++)
-                        out->bar[i] = pci_read(bus, slot, func, 0x10 + i * 4);
+                        out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
                     return 0;
                 }
             }
@@ -688,28 +688,28 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t reg0 = pci_read(bus, slot, 0, 0);
+            uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             if ((reg0 & 0xFFFF) == 0xFFFF) continue;
             /* Check header type for multi-function */
-            uint32_t reg_hdr = pci_read(bus, slot, 0, 0x0C);
+            uint32_t reg_hdr = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
             int is_multi = (reg_hdr & (1U << 23)) ? 1 : 0;
             int max_func = is_multi ? 8 : 1;
             for (int func = 0; func < max_func; func++) {
-                reg0 = pci_read(bus, slot, func, 0);
+                reg0 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0);
                 if ((reg0 & 0xFFFF) == 0xFFFF) continue;
-                uint32_t reg2 = pci_read(bus, slot, func, 0x08);
+                uint32_t reg2 = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x08);
                 if (((reg2 >> 24) & 0xFF) == cls && ((reg2 >> 16) & 0xFF) == sub) {
                     out->bus        = (uint8_t)bus;
                     out->slot       = (uint8_t)slot;
                     out->func       = (uint8_t)func;
-                    out->vendor_id  = reg0 & 0xFFFF;
-                    out->device_id  = (reg0 >> 16) & 0xFFFF;
+                    out->vendor_id  = (uint16_t)(reg0 & 0xFFFF);
+                    out->device_id  = (uint16_t)((reg0 >> 16) & 0xFFFF);
                     out->class_code = cls;
                     out->subclass   = sub;
-                    uint32_t r3c = pci_read(bus, slot, func, 0x3C);
-                    out->irq = r3c & 0xFF;
+                    uint32_t r3c = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x3C);
+                    out->irq = (uint8_t)(r3c & 0xFF);
                     for (int i = 0; i < 6; i++)
-                        out->bar[i] = pci_read(bus, slot, func, 0x10 + i * 4);
+                        out->bar[i] = pci_read((uint8_t)bus, (uint8_t)slot, (uint8_t)func, (uint8_t)(0x10 + i * 4));
                     return 0;
                 }
             }
@@ -728,19 +728,19 @@ void pci_list(void) {
     kprintf("BUS SLOT VID:DID   CLS DESCRIPTION\n");
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t reg0 = pci_read(bus, slot, 0, 0);
-            uint16_t vid = reg0 & 0xFFFF;
+            uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
+            uint16_t vid = (uint16_t)(reg0 & 0xFFFF);
             if (vid == 0xFFFF) continue;
-            uint16_t did = (reg0 >> 16) & 0xFFFF;
-            uint32_t reg2 = pci_read(bus, slot, 0, 0x08);
-            uint8_t cls = (reg2 >> 24) & 0xFF;
-            uint8_t sub = (reg2 >> 16) & 0xFF;
+            uint16_t did = (uint16_t)((reg0 >> 16) & 0xFFFF);
+            uint32_t reg2 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x08);
+            uint8_t cls = (uint8_t)((reg2 >> 24) & 0xFF);
+            uint8_t sub = (uint8_t)((reg2 >> 16) & 0xFF);
 
             /* Check for PCIe capability */
             uint8_t cap_off;
             const char *extra = "";
-            if (pci_find_pcie_cap(bus, slot, 0, &cap_off) == 0) {
-                uint8_t dtype = pcie_device_type(bus, slot, 0);
+            if (pci_find_pcie_cap((uint8_t)bus, (uint8_t)slot, 0, &cap_off) == 0) {
+                uint8_t dtype = pcie_device_type((uint8_t)bus, (uint8_t)slot, 0);
                 switch (dtype) {
                 case PCIE_DEV_TYPE_ENDPOINT:   extra = " [PCIe Endpoint]"; break;
                 case PCIE_DEV_TYPE_ROOT_PORT:  extra = " [PCIe Root Port]"; break;
@@ -754,12 +754,12 @@ void pci_list(void) {
             struct msi_info msi;
             struct msix_info msix;
             char msi_buf[32] = "";
-            if (pci_find_msi_cap(bus, slot, 0, &msi) == 0) {
+            if (pci_find_msi_cap((uint8_t)bus, (uint8_t)slot, 0, &msi) == 0) {
                 snprintf(msi_buf, sizeof(msi_buf), " [MSI%s%s]",
                          msi.is_64bit ? "-64" : "",
                          msi.has_per_vector ? "+VM" : "");
             }
-            if (pci_find_msix_cap(bus, slot, 0, &msix) == 0) {
+            if (pci_find_msix_cap((uint8_t)bus, (uint8_t)slot, 0, &msix) == 0) {
                 if (msi_buf[0] == 0) {
                     snprintf(msi_buf, sizeof(msi_buf), " [MSI-X(%u)]",
                              (unsigned int)msix.table_size);
@@ -872,7 +872,7 @@ int pci_aer_check_device(uint8_t bus, uint8_t slot, uint8_t func) {
             /* Read header log for diagnostics */
             uint32_t hdr_log[4];
             for (int i = 0; i < 4; i++)
-                hdr_log[i] = pcie_read(bus, slot, func, (uint16_t)aer_off + PCI_AER_HEADER_LOG + (uint16_t)(i * 4));
+                hdr_log[i] = pcie_read(bus, slot, func, (uint16_t)((uint16_t)aer_off + PCI_AER_HEADER_LOG + (uint16_t)(i * 4)));
 
             kprintf("[PCI AER] Bus %02x:%02x.%x Uncorrectable Error:\n",
                     (unsigned int)bus, (unsigned int)slot, (unsigned int)func);
@@ -1091,7 +1091,7 @@ void pci_init(void) {
 
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
-            uint32_t reg0 = pci_read(bus, slot, 0, 0);
+            uint32_t reg0 = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0);
             if ((reg0 & 0xFFFF) != 0xFFFF) {
                 count++;
 
@@ -1105,10 +1105,10 @@ void pci_init(void) {
                 {
                     uint16_t vendor  = (uint16_t)(reg0 & 0xFFFF);
                     uint16_t device  = (uint16_t)(reg0 >> 16);
-                    uint32_t reg2c   = pci_read(bus, slot, 0, 0x2C);
+                    uint32_t reg2c   = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x2C);
                     uint16_t subsys_v = (uint16_t)(reg2c & 0xFFFF);
                     uint16_t subsys_d = (uint16_t)(reg2c >> 16);
-                    uint32_t reg08   = pci_read(bus, slot, 0, 0x08);
+                    uint32_t reg08   = pci_read((uint8_t)bus, (uint8_t)slot, 0, 0x08);
                     uint8_t  base_cl = (uint8_t)(reg08 >> 24);
                     uint8_t  sub_cl  = (uint8_t)((reg08 >> 16) & 0xFF);
 
@@ -1127,10 +1127,10 @@ void pci_init(void) {
                 }
 
                 struct msi_info msi;
-                if (pci_find_msi_cap(bus, slot, 0, &msi) == 0)
+                if (pci_find_msi_cap((uint8_t)bus, (uint8_t)slot, 0, &msi) == 0)
                     msi_count++;
                 struct msix_info msix;
-                if (pci_find_msix_cap(bus, slot, 0, &msix) == 0)
+                if (pci_find_msix_cap((uint8_t)bus, (uint8_t)slot, 0, &msix) == 0)
                     msix_count++;
 
                 /* ── Probe PCIe extended capabilities (Item 186) ─────

@@ -204,7 +204,7 @@ static void parse_dsdt_for_sleep(struct fadt *fadt) {
     }
 
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
-    uint32_t aml_len = dsdt_len - sizeof(struct acpi_header);
+    uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 
     /* Need at least 8 bytes of AML to search for sleep state markers */
     if (aml_len < 8) {
@@ -371,7 +371,7 @@ static void parse_dsdt_for_dock(struct fadt *fadt) {
 
     uint32_t dsdt_len = hdr->length;
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
-    uint32_t aml_len = dsdt_len - sizeof(struct acpi_header);
+    uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 
     acpi_find_dock_device(aml, aml_len);
 }
@@ -401,7 +401,7 @@ static void acpi_parse_lpit(struct acpi_header *hdr) {
 
     /* The LPI state descriptors follow immediately after the header.
      * Number of descriptors = (table_len - header_size) / desc_size. */
-    uint32_t data_len = table_len - sizeof(struct acpi_header);
+    uint32_t data_len = (uint32_t)(table_len - sizeof(struct acpi_header));
     uint32_t num_states = data_len / LPIT_DESC_SIZE;
 
     if (num_states == 0) {
@@ -770,7 +770,7 @@ void acpi_init(void) {
 
     if (memcmp(rsdt->header.signature, "RSDT", 4) != 0) return;
 
-    uint32_t num_entries = (rsdt->header.length - sizeof(struct acpi_header)) / 4;
+    uint32_t num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
     struct fadt *fadt = NULL;
 
     for (uint32_t i = 0; i < num_entries; i++) {

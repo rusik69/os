@@ -58,11 +58,10 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
+         -Wall -Wextra -Wno-format -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
-        -Wconversion -Wno-sign-conversion \
          $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack

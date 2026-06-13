@@ -383,6 +383,10 @@ int quorum_get_health(char *buf, size_t bufsz)
      *   - Election count, log size, append RTT
      * Simplified version for now. */
 
+    /* Protect against uninitialized local_node_idx */
+    const char *local_id = (local_node_idx >= 0 && local_node_idx < NODE_MAX)
+                           ? nodes[local_node_idx].id : "unknown";
+
     int pos = snprintf(buf, bufsz,
         "Quorum Health:\n"
         "  Leader:          %s\n"
@@ -391,7 +395,7 @@ int quorum_get_health(char *buf, size_t bufsz)
         "  Config entries:  %d\n"
         "  Locks held:      %d\n"
         "  Barriers active: %d\n",
-        leader_id, nodes[local_node_idx].id,
+        leader_id, local_id,
         node_count, config_count, lock_count, barrier_count);
 
     return pos;
