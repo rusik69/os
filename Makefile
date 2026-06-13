@@ -400,7 +400,12 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_vmm.c \
          src/container/runtime.c \
          src/container/config.c \
-         src/container/state.c
+         src/container/state.c \
+         src/container/ext.c \
+         src/container/storage.c \
+         src/container/network.c \
+         src/container/image.c \
+         src/container/orch.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

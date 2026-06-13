@@ -302,4 +302,50 @@ int container_state_query(struct container *c, struct oci_state *out);
  */
 int container_persist_state(struct container *c);
 
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Extended Lifecycle API (Items C8–C15)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** C8: Container exec — run new process in existing container */
+int container_exec(struct container *c, const char *binary,
+                   char *const argv[], char *const envp[]);
+
+/** C9: Container attach — stream I/O to container console */
+int container_attach(struct container *c,
+                     int *stdin_fd, int *stdout_fd, int *stderr_fd);
+
+/** C10: Container logs — write log entry with timestamp */
+int container_write_log(struct container *c,
+                        const char *stream, const char *msg);
+
+/** C11a: Container pause — freeze all processes in container */
+int container_pause(struct container *c);
+
+/** C11b: Container unpause — thaw a paused container */
+int container_unpause(struct container *c);
+
+/** C12: Container wait — block until container exits */
+int container_wait(struct container *c, int timeout_ms, int *exit_code);
+
+/** C13 stats structure */
+struct container_stats {
+    uint64_t cpu_usage_us;
+    uint64_t memory_usage_bytes;
+    uint64_t memory_limit_bytes;
+    uint64_t memory_max_bytes;
+    uint64_t pids_current;
+    uint64_t pids_limit;
+    uint64_t io_read_bytes;
+    uint64_t io_write_bytes;
+};
+
+/** C13: Container stats — read cgroup resource usage */
+int container_stats(struct container *c, struct container_stats *stats);
+
+/** C14: Container top — list PIDs in container */
+int container_top(struct container *c, uint32_t *pids, int max_pids);
+
+/** C15: Container inspect — dump full metadata as JSON */
+int container_inspect(struct container *c, char *buf, int buf_size);
+
 #endif /* CONTAINER_H */
