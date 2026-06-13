@@ -189,6 +189,8 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/page_cache.c \
          src/fs/fstab.c \
          src/fs/fsck.c \
+         src/fs/xattr.c \
+         src/fs/posix_acl.c \
          src/fs/iosched.c \
          src/fs/luks.c \
          src/fs/ext2.c \
@@ -272,7 +274,6 @@ C_SRCS = src/kernel/kernel.c \
          src/lib/signal_libc.c \
          src/lib/pthread.c \
          src/lib/dlfcn.c \
-         src/drivers/xattr.c \
          src/drivers/file_lock.c \
          src/drivers/kaps.c \
          src/drivers/pgrp.c \
@@ -495,6 +496,15 @@ C_SRCS = src/kernel/kernel.c \
          src/boot/uefi_gop.c \
          src/boot/uefi_runtime.c \
          src/drivers/simplefb.c \
+         src/drivers/usb_core.c \
+         src/drivers/usb_eth.c \
+         src/drivers/gadget/udc_core.c \
+         src/drivers/gadget/f_mass_storage.c \
+         src/kernel/tpm_key.c \
+         src/drivers/drm/drm_core.c \
+         src/drivers/drm/drm_gem.c \
+         src/drivers/drm/drm_dumb.c \
+         src/drivers/drm/bochs_drm.c \
          src/kernel/live_patch.c
 
 ASM_SRCS = src/boot/boot.asm \
@@ -745,7 +755,7 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
@@ -818,6 +828,10 @@ INIT_CFLAGS = -std=gnu17 -ffreestanding -nostdlib -nostdinc -fno-builtin \
               -Wall -Wextra -Isrc/include -g
 
 $(BUILDDIR)/init.o: src/init/init.c
+	@mkdir -p $(dir $@)
+	$(CC) $(INIT_CFLAGS) -c $< -o $@
+
+$(BUILDDIR)/init/initramfs.o: src/init/initramfs.c
 	@mkdir -p $(dir $@)
 	$(CC) $(INIT_CFLAGS) -c $< -o $@
 

@@ -81,6 +81,7 @@ struct tpm_rsp_hdr {
 #define TPM2_CC_CONTEXT_LOAD   0x00000161
 #define TPM2_CC_CONTEXT_SAVE   0x00000162
 #define TPM2_CC_FLUSH_CONTEXT  0x00000165
+#define TPM2_CC_SIGN           0x0000015D
 
 /* ── TPM response codes ────────────────────────────────────────────── */
 #define TPM2_RC_SUCCESS        0x00000000
@@ -201,5 +202,17 @@ int tpm2_load(uint32_t parent_handle,
               uint32_t *loaded_handle);
 int tpm2_unseal(uint32_t item_handle,
                 uint8_t *data_buf, uint32_t *data_len);
+
+/* S96 — TPM2_Sign */
+int tpm2_sign(uint32_t key_handle, const uint8_t *digest, uint32_t digest_len,
+              uint8_t *sig_buf, uint32_t *sig_len);
+
+/* S96 — TPM NV key storage */
+int tpm_nv_store_key(uint32_t nv_index, const uint8_t *key_data, uint32_t key_len);
+int tpm_nv_load_key(uint32_t nv_index, uint8_t *key_data, uint32_t *key_len);
+
+/* S96 — /dev/tpm0 device */
+int tpm_dev_init(void);
+void tpm_dev_exit(void);
 
 #endif /* TPM_H */

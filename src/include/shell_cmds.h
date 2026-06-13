@@ -404,10 +404,23 @@ void cmd_nano(const char *args);
 /* Online filesystem integrity check (Item 277) */
 void cmd_fsck(const char *args);
 
+/* S-plan new commands */
+void cmd_mkdosfs(const char *args);
+void mkdosfs_init(void);
+
 /* New S-plan commands */
 void cmd_ntpdate(const char *args);
 void cmd_tftpd(const char *args);
 void ntpdate_init(void);
 void tftpd_init(void);
+
+/* S-plan Boot/Init commands */
+void cmd_journald(const char *args);
+void cmd_journalctl(const char *args);
+void cmd_systemctl(const char *args);
+void cmd_udevd(const char *args);
+
+/* S-plan Sound server */
+void cmd_pulse(const char *args);
 
 #endif

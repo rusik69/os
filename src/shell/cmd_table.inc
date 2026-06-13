@@ -82,6 +82,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("mdev",        "Device node manager (mdev [-s])",                        sh_mdev)
     CMD("meminfo",     "Show memory info",                                      sh_meminfo)
     CMD("mkdir",       "Create directory",                                      cmd_mkdir)
+    CMD("mkdosfs",     "Create FAT filesystem (mkdosfs [-F 12|16|32] [-n label] [-i volid] <device> [blocks])", cmd_mkdosfs)
     CMD("more",        "Page through a file",                                   cmd_more)
     CMD("mouse",       "Show mouse position and buttons",                       sh_mouse)
     CMD("mv",          "Move/rename file",                                      cmd_mv)
@@ -199,7 +200,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("tset",        "Set terminal settings",                                    cmd_tset)
     CMD("reset",       "Reset terminal (clear screen, reset colors)",              cmd_reset)
     /* Phase 10 — new compression/network/system commands */
-    CMD("blkid",       "Show block device attributes",                              cmd_blkid)
+    CMD("blkid",       "Identify block device filesystems (blkid [-o value] [-s TAG] <device>)", cmd_blkid)
     CMD("bunzip2",     "Decompress bzip2 file (stub)",                              cmd_bunzip2)
     CMD("bzcat",       "Decompress bzip2 to stdout (stub)",                         cmd_bzcat)
     CMD("chroot",      "Change root directory",                                     cmd_chroot)
@@ -224,6 +225,7 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("zcat",        "Decompress gzip file to stdout (RLE)",                       cmd_zcat)
     /* Phase 11 — new shell commands */
     CMD("404",         "Find files by permission bits",                                 cmd_404)
+    CMD("pulse",       "PulseAudio-light sound server (pulse --daemon)",                 cmd_pulse)
     CMD("zcmp",        "Compare compressed files (stub)",                               cmd_zcmp)
     CMD("zdiff",       "Diff compressed files (stub)",                                  cmd_zdiff)
     CMD("zegrep",      "Extended grep for compressed files (stub)",                      cmd_zegrep)
@@ -311,11 +313,16 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     /* Block device TRIM/discard (Item 330) */
     CMD("blkdiscard",  "Deallocate (TRIM) sectors on a block device (blkdiscard <dev_id> <start_lba> <count>)", cmd_blkdiscard)
     /* Online filesystem integrity check (Item 277) */
-    CMD("fsck",        "Check filesystem integrity (fsck [-v] [-q] [-f] [<mountpoint>])", cmd_fsck)
+    CMD("fsck",        "Check filesystem integrity (fsck [-acfvyq] [<mountpoint>])", cmd_fsck)
     CMD("minesweeper", "Play Minesweeper (9x9, 10 mines)",             cmd_minesweeper)
     CMD("snake",       "Play Snake (arrow/WASD to move)",            cmd_snake)
     CMD("ntpdate",     "Query NTP server and set system time (ntpdate <server>)", sh_ntpdate)
     CMD("tftpd",       "TFTP server daemon (tftpd [stop])",          sh_tftpd)
+    /* S-plan Boot/Init commands */
+    CMD("journald",    "Structured journal logging daemon (journald start|stop|status)", cmd_journald)
+    CMD("journalctl",  "Query structured journal logs (journalctl [-f] [-u NAME] [-n N])", cmd_journalctl)
+    CMD("systemctl",   "Service control (systemctl start|stop|restart|status|enable|disable|list-units)", cmd_systemctl)
+    CMD("udevd",       "Device event manager (udevd [--daemon])", cmd_udevd)
     { 0, 0, 0 }
 };
 

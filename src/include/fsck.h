@@ -21,6 +21,10 @@
 #define FSCK_FLAG_VERBOSE   (1 << 0)  /* log each check step */
 #define FSCK_FLAG_QUIET     (1 << 1)  /* only report errors */
 #define FSCK_FLAG_FIX       (1 << 2)  /* attempt to fix simple errors */
+#define FSCK_FLAG_AUTO_REPAIR (1 << 3) /* -a: auto-repair (fix+salvage orphans) */
+#define FSCK_FLAG_CHECK_BLOCKS (1 << 4) /* -c: check all blocks */
+#define FSCK_FLAG_FORCE     (1 << 5)  /* -f: force check even if clean */
+#define FSCK_FLAG_ASSUME_YES (1 << 6) /* -y: assume yes to all prompts */
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 

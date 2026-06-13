@@ -481,22 +481,6 @@ static int num_fs_types = 0;
 /* File locking: static array of 16 locks */
 /* no more internal file_locks array — delegated to file_lock.c */
 
-/* Extended attribute storage: keyed by path hash, up to 4 per path, 16 entries total */
-#define XATTR_PATH_TABLE 16
-static struct {
-    char path[64];
-    struct xattr_entry xattrs[VFS_XATTR_PER_INODE];
-    int  count;
-} xattr_table[XATTR_PATH_TABLE];
-
-/* ── ACL storage ──────────────────────────────────────────────── */
-#define VFS_ACL_TABLE 16
-static struct {
-    char path[64];
-    struct posix_acl acl;
-    int in_use;
-} acl_table[VFS_ACL_TABLE];
-
 /* ── Bind mount storage ───────────────────────────────────────── */
 #define VFS_MAX_BIND_MOUNTS 4
 static struct {
@@ -1244,120 +1228,6 @@ int vfs_getlk(const char *path, struct file_lock *flk)
 
 /* ── Extended attributes ───────────────────────────────────────── */
 
-/* Simple hash from path */
-static int xattr_path_hash(const char *path) {
-    int h = 0;
-    while (*path) {
-        h = (h * 31 + (unsigned char)*path) % XATTR_PATH_TABLE;
-        path++;
-    }
-    return h;
-}
-
-int vfs_setxattr(const char *path, const char *name, const void *value, int size) {
-    if (!path || !name || !value || size > VFS_XATTR_VALUE_MAX) return -EINVAL;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-    int idx = xattr_path_hash(ap);
-
-    /* Find or create entry for this path */
-    int found = -1;
-    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
-        int ti = (idx + i) % XATTR_PATH_TABLE;
-        if (xattr_table[ti].count == 0 || strcmp(xattr_table[ti].path, ap) == 0) {
-            found = ti;
-            break;
-        }
-    }
-    if (found < 0) return -ENOSPC;
-
-    if (xattr_table[found].count == 0) {
-        strncpy(xattr_table[found].path, ap, 63);
-        xattr_table[found].path[63] = '\0';
-    }
-
-    /* Find existing attr with same name or free slot */
-    for (int i = 0; i < VFS_XATTR_PER_INODE; i++) {
-        if (!xattr_table[found].xattrs[i].in_use) continue;
-        if (strcmp(xattr_table[found].xattrs[i].name, name) == 0) {
-            /* Update existing */
-            memcpy(xattr_table[found].xattrs[i].value, value, (size_t)size);
-            xattr_table[found].xattrs[i].size = size;
-            return 0;
-        }
-    }
-
-    /* Find free slot */
-    for (int i = 0; i < VFS_XATTR_PER_INODE; i++) {
-        if (!xattr_table[found].xattrs[i].in_use) {
-            strncpy(xattr_table[found].xattrs[i].name, name, VFS_XATTR_NAME_MAX - 1);
-            xattr_table[found].xattrs[i].name[VFS_XATTR_NAME_MAX - 1] = '\0';
-            memcpy(xattr_table[found].xattrs[i].value, value, (size_t)size);
-            xattr_table[found].xattrs[i].size = size;
-            xattr_table[found].xattrs[i].in_use = 1;
-            xattr_table[found].count++;
-            return 0;
-        }
-    }
-    return -ENOSPC;
-}
-
-int vfs_getxattr(const char *path, const char *name, void *value, int size) {
-    if (!path || !name) return -EINVAL;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-    int idx = xattr_path_hash(ap);
-
-    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
-        int ti = (idx + i) % XATTR_PATH_TABLE;
-        if (xattr_table[ti].count == 0) continue;
-        if (strcmp(xattr_table[ti].path, ap) != 0) continue;
-
-        for (int j = 0; j < VFS_XATTR_PER_INODE; j++) {
-            if (!xattr_table[ti].xattrs[j].in_use) continue;
-            if (strcmp(xattr_table[ti].xattrs[j].name, name) == 0) {
-                int copy_size = (size < xattr_table[ti].xattrs[j].size) ?
-                                 size : xattr_table[ti].xattrs[j].size;
-                if (value && copy_size > 0) {
-                    memcpy(value, xattr_table[ti].xattrs[j].value, (size_t)copy_size);
-                }
-                return xattr_table[ti].xattrs[j].size;
-            }
-        }
-        return -ENODATA;
-    }
-    return -ENODATA;
-}
-
-int vfs_listxattr(const char *path, char *buf, int size) {
-    if (!path) return -EINVAL;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-    int idx = xattr_path_hash(ap);
-
-    for (int i = 0; i < XATTR_PATH_TABLE; i++) {
-        int ti = (idx + i) % XATTR_PATH_TABLE;
-        if (xattr_table[ti].count == 0) continue;
-        if (strcmp(xattr_table[ti].path, ap) != 0) continue;
-
-        int pos = 0;
-        for (int j = 0; j < VFS_XATTR_PER_INODE; j++) {
-            if (!xattr_table[ti].xattrs[j].in_use) continue;
-            int nlen = (int)strlen(xattr_table[ti].xattrs[j].name);
-            if (pos + nlen + 1 <= size) {
-                if (buf) {
-                    memcpy(buf + pos, xattr_table[ti].xattrs[j].name, (size_t)nlen);
-                    buf[pos + nlen] = '\0';
-                }
-                pos += nlen + 1;
-            } else {
-                return -ERANGE;
-            }
-        }
-        return pos;
-    }
-    return 0; /* no xattrs */
-}
-
-/* ── Bind mount support ────────────────────────────────────────── */
-
 int vfs_bind_mount(const char *src, const char *target) {
     if (!src || !target) return -1;
     char ap_src[128]; vfs_abs_path(src, ap_src, sizeof(ap_src));
@@ -1393,42 +1263,6 @@ const char *vfs_bind_source(const char *path) {
             return bind_mounts[i].source;
     }
     return NULL;
-}
-
-/* ── POSIX ACL ─────────────────────────────────────────────────── */
-
-int vfs_set_acl(const char *path, struct posix_acl *acl) {
-    if (!path || !acl) return -EINVAL;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-
-    /* Find existing or free slot */
-    int found = -1;
-    for (int i = 0; i < VFS_ACL_TABLE; i++) {
-        if (!acl_table[i].in_use) { found = i; break; }
-        if (strcmp(acl_table[i].path, ap) == 0) { found = i; break; }
-    }
-    if (found < 0) return -ENOSPC;
-
-    if (!acl_table[found].in_use) {
-        strncpy(acl_table[found].path, ap, 63);
-        acl_table[found].path[63] = '\0';
-    }
-    acl_table[found].acl = *acl;
-    acl_table[found].in_use = 1;
-    return 0;
-}
-
-int vfs_get_acl(const char *path, struct posix_acl *acl) {
-    if (!path || !acl) return -EINVAL;
-    char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-
-    for (int i = 0; i < VFS_ACL_TABLE; i++) {
-        if (acl_table[i].in_use && strcmp(acl_table[i].path, ap) == 0) {
-            *acl = acl_table[i].acl;
-            return 0;
-        }
-    }
-    return -ENODATA;
 }
 
 /* ── Access time update ─────────────────────────────────────────── */
@@ -1792,8 +1626,6 @@ void vfs_init(void) {
     vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);
     /* Initialize nlink tracking */
     memset(nlink_table, 0, sizeof(nlink_table));
-    /* Initialize xattr */
-    memset(xattr_table, 0, sizeof(xattr_table));
 
     /* Create the root mount namespace (Item 112) */
     mnt_ns_create_root();

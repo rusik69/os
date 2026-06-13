@@ -298,6 +298,21 @@ int vfs_list_bind_mounts(char srcs[][64], char targets[][64], int max);
 /* POSIX ACL */
 int vfs_set_acl(const char *path, struct posix_acl *acl);
 int vfs_get_acl(const char *path, struct posix_acl *acl);
+int vfs_removexattr(const char *path, const char *name);
+
+/* Generic permission check — checks ACL first, falls back to mode bits.
+ * Returns 0 on success (permission granted) or -EACCES.
+ * @path:      absolute path to the inode
+ * @uid:       requesting user's UID
+ * @gid:       requesting user's GID
+ * @mode:      file's mode bits
+ * @file_uid:  file owner's UID
+ * @file_gid:  file owner's GID
+ * @op:        required permission (4=read, 2=write, 1=execute)
+ */
+int generic_permission(const char *path, uint16_t uid, uint16_t gid,
+                        uint16_t mode, uint16_t file_uid, uint16_t file_gid,
+                        uint16_t op);
 
 /* Fallocate: pre-allocate disk space */
 int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len);

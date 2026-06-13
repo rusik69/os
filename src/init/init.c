@@ -24,12 +24,15 @@
 #define SYS_OPEN      2
 #define SYS_CLOSE     3
 #define SYS_EXIT      4
+#define SYS_MKDIR     83
+#define SYS_RMDIR     84
 #define SYS_FORK      211
 #define SYS_SIGNAL    213
 #define SYS_EXECVE    234
 #define SYS_WAITPID   119
 #define SYS_GETPID    212
 #define SYS_KILL      214
+#define SYS_MOUNT     281
 #define SYS_REBOOT    88
 #define SYS_SETHOSTNAME 268
 #define SYS_DUP2      241
@@ -37,7 +40,9 @@
 #define SIGCHLD       17
 #define SIGTERM       15
 #define SIGINT        2
+#define SIGPWR        18
 #define SIGHUP        1
+#define SIGKILL       9
 #define SIGIGN        1L
 #define SIGDFL        0L
 
@@ -58,6 +63,12 @@
 #define MAX_LINE      256
 #define MAX_ARGS      16
 #define MAX_PATH      128
+
+/* Rescue/emergency mode constants (Item S175) */
+#define RESCUE_MODE_NONE     0
+#define RESCUE_MODE_SINGLE   1
+#define RESCUE_MODE_EMERGENCY 2
+#define RESCUE_MODE_RESCUE   3
 
 /* Runlevel constants (Item U4) */
 #define DEFAULT_RUNLEVEL    2   /* multi-user default */
@@ -117,6 +128,14 @@ static struct service services[MAX_SERVICES];
 static int service_count = 0;
 static volatile int shutdown_requested = 0;
 
+/* Rescue mode state (Item S175) */
+static int rescue_mode = RESCUE_MODE_NONE;
+static int kernel_cmdline_parsed = 0;
+
+/* Shutdown sequence state (Item S172) */
+static volatile int shutdown_signal_received = 0;
+static volatile int sigterm_sent = 0;
+
 /* Current system runlevel (0=halt, 1=single, 2=multi-user, 5=graphical) */
 static int current_runlevel = DEFAULT_RUNLEVEL;
 
@@ -134,6 +153,10 @@ static void boot_services(void);
 static unsigned int runlevel_bitmask(int rl);
 static void set_runlevel(int new_rl);
 static void check_initpipe(void);
+static void parse_kernel_cmdline(const char *cmdline);  /* Item S175 */
+static int  count_running_children(void);                /* Item S172 */
+static void shutdown_kill_all(int sig);                  /* Item S172 */
+static void start_services_parallel(int *order, int count, unsigned int rlmask, int action_mask); /* Item S173 */
 
 /* Console output forward declarations (used by runlevel functions before they are defined) */
 static void puts(const char *s);
@@ -852,7 +875,183 @@ static void reap_children(void)
     }
 }
 
-/* ── Boot sequence ────────────────────────────────────────────────────── */
+/* ── Signal handlers (Item S172) ─────────────────────────────────────── */
+
+/* SIGCHLD handler: reap terminated children immediately */
+static void sigchld_handler(void)
+{
+    reap_children();
+}
+
+/* SIGTERM/SIGINT/SIGPWR handler: initiate orderly shutdown */
+static void sigterm_handler(void)
+{
+    shutdown_signal_received = 1;
+    shutdown_requested = 1;
+}
+
+/* ── Count running children (Item S172) ─────────────────────────────── */
+
+/*
+ * Return the number of child processes currently tracked as running.
+ */
+static int count_running_children(void)
+{
+    int count = 0;
+    for (int i = 0; i < service_count; i++) {
+        if (services[i].pid > 0)
+            count++;
+    }
+    return count;
+}
+
+/*
+ * Send a signal to all tracked child processes.
+ */
+static void shutdown_kill_all(int sig)
+{
+    for (int i = 0; i < service_count; i++) {
+        if (services[i].pid > 0)
+            kill(services[i].pid, sig);
+    }
+}
+
+/* ── Rescue mode (Item S175) ────────────────────────────────────────── */
+
+/*
+ * Parse kernel command-line for rescue/single/emergency flags.
+ *
+ * Supported flags:
+ *   single       — Single-user mode (runlevel 1, mount root ro)
+ *   emergency    — Emergency mode (only rootfs, no services, minimal shell)
+ *   rescue       — Rescue mode (mount root ro, basic services, root shell)
+ *   -b           — Pass to init as "emergency" from bootloader
+ *   <digit>      — Numeric runlevel (e.g. "1" for single-user)
+ */
+static void parse_kernel_cmdline(const char *cmdline)
+{
+    if (!cmdline || kernel_cmdline_parsed)
+        return;
+
+    kernel_cmdline_parsed = 1;
+    const char *p = cmdline;
+
+    puts("init: parsing kernel cmdline: ");
+    puts(cmdline);
+    puts("\n");
+
+    while (p && *p) {
+        /* Skip leading spaces */
+        while (*p == ' ') p++;
+        if (!*p) break;
+
+        /* Extract next token (delimited by space) */
+        char token[64];
+        int ti = 0;
+        while (*p && *p != ' ' && ti < 63)
+            token[ti++] = *p++;
+        token[ti] = '\0';
+
+        if (strcmp(token, "single") == 0) {
+            rescue_mode = RESCUE_MODE_SINGLE;
+            puts("init: single-user mode requested\n");
+        } else if (strcmp(token, "emergency") == 0 || strcmp(token, "-b") == 0) {
+            rescue_mode = RESCUE_MODE_EMERGENCY;
+            puts("init: emergency mode requested\n");
+        } else if (strcmp(token, "rescue") == 0) {
+            rescue_mode = RESCUE_MODE_RESCUE;
+            puts("init: rescue mode requested\n");
+        } else if (ti == 1 && token[0] >= '0' && token[0] <= '9') {
+            /* Numeric runlevel override */
+            int rl = token[0] - '0';
+            if (rl >= 0 && rl <= 9) {
+                current_runlevel = rl;
+                puts("init: runlevel ");
+                put_dec(rl);
+                puts(" from cmdline\n");
+            }
+        }
+        /* Other parameters are ignored */
+    }
+
+    /* Translate rescue/single to runlevel 1 */
+    if (rescue_mode == RESCUE_MODE_SINGLE || rescue_mode == RESCUE_MODE_RESCUE)
+        current_runlevel = 1;
+}
+
+/* ── Parallel service startup (Item S173) ───────────────────────────── */
+
+/*
+ * Start services with specific action types in dependency order,
+ * running independent services concurrently.
+ *
+ * For each batch in the topological order, services that have no
+ * dependencies among themselves are started at the same time.
+ *
+ * @order       Array of service indices in topological start order
+ * @count       Number of entries in order
+ * @rlmask      Runlevel bitmask to filter eligible services
+ * @action_mask Bitmask of service_action values to include
+ *              (e.g., ACT_SYSINIT | ACT_BOOT | ACT_BOOTWAIT | ACT_RESPAWN | ACT_ONCE)
+ */
+static void start_services_parallel(int *order, int count,
+                                     unsigned int rlmask,
+                                     int action_mask)
+{
+    /* For each service in dependency order: */
+    for (int oi = 0; oi < count; oi++) {
+        int i = order[oi];
+        if (!(services[i].runlevels & rlmask))
+            continue;
+        if (services[i].state != ST_DEAD)
+            continue;
+
+        /* Check if the action matches the mask */
+        int action_type = 0;
+        switch (services[i].action) {
+        case ACT_SYSINIT:   action_type = 1; break;
+        case ACT_BOOT:      action_type = 2; break;
+        case ACT_BOOTWAIT:  action_type = 3; break;
+        case ACT_RESPAWN:   action_type = 4; break;
+        case ACT_ONCE:      action_type = 5; break;
+        default:            break;
+        }
+        if (!(action_mask & (1 << action_type)))
+            continue;
+
+        /* Determine if we need to wait for this service */
+        int needs_wait = (services[i].action == ACT_SYSINIT ||
+                          services[i].action == ACT_BOOTWAIT ||
+                          services[i].action == ACT_WAIT);
+
+        if (needs_wait) {
+            /* Sequential: start and wait */
+            services[i].state = ST_WAITING;
+            service_start(&services[i]);
+            int status;
+            while (services[i].pid > 0) {
+                int wpid = waitpid(services[i].pid, &status, 0);
+                if (wpid == services[i].pid) {
+                    handle_child_exit(&services[i], status);
+                    break;
+                }
+            }
+        } else {
+            /* Concurrent: start without waiting */
+            service_start(&services[i]);
+        }
+    }
+
+    /* For concurrent services that don't need waiting,
+     * poll periodically until they settle.
+     * This allows boot actions to run in parallel. */
+    if (action_mask & ((1 << 2) | (1 << 4) | (1 << 5))) {
+        /* Brief pause to let concurrent services initialize */
+        for (volatile int i = 0; i < 500000; i++)
+            __asm__ volatile("pause");
+        reap_children();
+    }
+}
 
 static void boot_services(void)
 {
@@ -866,66 +1065,16 @@ static void boot_services(void)
     topological_sort(boot_order, &boot_count);
 
     /* Phase 1: sysinit — run and wait for each (in dependency order) */
-    for (int oi = 0; oi < boot_count; oi++) {
-        int i = boot_order[oi];
-        if (!(services[i].runlevels & rlmask))
-            continue;
-        if (services[i].action == ACT_SYSINIT && services[i].state == ST_DEAD) {
-            services[i].state = ST_WAITING;
-            service_start(&services[i]);
-            /* Wait for this service to complete */
-            int status;
-            while (services[i].pid > 0) {
-                int wpid = waitpid(services[i].pid, &status, 0);
-                if (wpid == services[i].pid) {
-                    handle_child_exit(&services[i], status);
-                    break;
-                }
-            }
-        }
-    }
+    start_services_parallel(boot_order, boot_count, rlmask, 1 << 1);
 
     /* Phase 2: boot and bootwait (in dependency order) */
-    for (int oi = 0; oi < boot_count; oi++) {
-        int i = boot_order[oi];
-        if (!(services[i].runlevels & rlmask))
-            continue;
-        if (services[i].action == ACT_BOOT && services[i].state == ST_DEAD) {
-            service_start(&services[i]);
-        }
-        if (services[i].action == ACT_BOOTWAIT && services[i].state == ST_DEAD) {
-            services[i].state = ST_WAITING;
-            service_start(&services[i]);
-            int status;
-            while (services[i].pid > 0) {
-                int wpid = waitpid(services[i].pid, &status, 0);
-                if (wpid == services[i].pid) {
-                    handle_child_exit(&services[i], status);
-                    break;
-                }
-            }
-        }
-    }
+    start_services_parallel(boot_order, boot_count, rlmask, (1 << 2) | (1 << 3));
 
-    /* Phase 3: respawn services (in dependency order) */
-    for (int oi = 0; oi < boot_count; oi++) {
-        int i = boot_order[oi];
-        if (!(services[i].runlevels & rlmask))
-            continue;
-        if (services[i].action == ACT_RESPAWN && services[i].state == ST_DEAD) {
-            service_start(&services[i]);
-        }
-    }
+    /* Phase 3: respawn services (in dependency order, concurrent) */
+    start_services_parallel(boot_order, boot_count, rlmask, 1 << 4);
 
-    /* Phase 4: once services (fire-and-forget, in dependency order) */
-    for (int oi = 0; oi < boot_count; oi++) {
-        int i = boot_order[oi];
-        if (!(services[i].runlevels & rlmask))
-            continue;
-        if (services[i].action == ACT_ONCE && services[i].state == ST_DEAD) {
-            service_start(&services[i]);
-        }
-    }
+    /* Phase 4: once services (fire-and-forget, in dependency order, concurrent) */
+    start_services_parallel(boot_order, boot_count, rlmask, 1 << 5);
 }
 
 /* ── Runlevel switching (Item U4) ────────────────────────────────────── */
@@ -1154,12 +1303,63 @@ static void init_set_hostname(void)
 
 void _start(void)
 {
-    /* Ignore SIGCHLD so terminated children don't become zombies.
-     * We reap them explicitly via waitpid() in the main loop. */
-    signal(SIGCHLD, SIGIGN);
+    /* Install SIGCHLD handler to reap orphaned children immediately.
+     * We must NOT use SIG_IGN because we need to track service state
+     * and potentially respawn crashed services. */
+    signal(SIGCHLD, (long)sigchld_handler);
+
+    /* Install SIGTERM/SIGINT/SIGPWR handlers for orderly shutdown */
+    signal(SIGTERM, (long)sigterm_handler);
+    signal(SIGINT, (long)sigterm_handler);
+    signal(SIGPWR, (long)sigterm_handler);
 
     /* Log startup */
     puts("init: PID 1 starting\n");
+
+    /* Read kernel command line from /proc/cmdline (Item S175).
+     * If /proc is not yet available, read from /dev/cmdline or
+     * the kernel's built-in cmdline. */
+    {
+        char cmdline[1024];
+        int found = 0;
+        int fd = open("/proc/cmdline", O_RDONLY);
+        if (fd < 0)
+            fd = open("/dev/cmdline", O_RDONLY);
+        if (fd >= 0) {
+            long n = read(fd, cmdline, sizeof(cmdline) - 1);
+            close(fd);
+            if (n > 0) {
+                cmdline[n] = '\0';
+                while (n > 0 && (cmdline[n-1] == '\n' || cmdline[n-1] == '\r'))
+                    cmdline[--n] = '\0';
+                parse_kernel_cmdline(cmdline);
+                found = 1;
+            }
+        }
+        if (!found) {
+            puts("init: no cmdline available, using defaults\n");
+        }
+    }
+
+    /* Handle rescue/emergency modes (Item S175) */
+    if (rescue_mode == RESCUE_MODE_EMERGENCY) {
+        puts("init: EMERGENCY mode — minimal shell only\n");
+        puts("init: Root filesystem is mounted read-only.\n");
+        puts("init: No services will be started.\n");
+        puts("init: Type 'exit' to reboot.\n");
+        /* Emergency shell: just run /bin/sh directly */
+        char *argv[] = { "/bin/sh", NULL };
+        char *envp[] = { "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+                         "PS1=(emergency) # ", NULL };
+        /* Mount /dev, /proc, /sys if possible */
+        syscall(SYS_MOUNT, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
+        syscall(SYS_MOUNT, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
+        syscall(SYS_MOUNT, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
+        syscall(SYS_EXECVE, (long)"/bin/sh", (long)argv, (long)envp, 0, 0);
+        /* If sh fails, loop forever */
+        puts("init: Cannot start emergency shell — halting\n");
+        for (;;) __asm__ volatile("hlt");
+    }
 
     /* Read /etc/hostname and set kernel hostname (Item U23) */
     init_set_hostname();
@@ -1171,6 +1371,42 @@ void _start(void)
 
     /* Load service dependency metadata from /etc/init.d/ (Item U3) */
     init_load_dependencies();
+
+    /* For single-user/rescue mode, start only basic services */
+    if (rescue_mode == RESCUE_MODE_SINGLE || rescue_mode == RESCUE_MODE_RESCUE) {
+        puts("init: SINGLE/RESCUE mode — starting only basic services\n");
+        /* Mount virtual filesystems if available */
+        {
+            int fd = open("/dev", 0);
+            if (fd < 0) {
+                syscall(SYS_MOUNT, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
+                syscall(SYS_MOUNT, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
+            } else close(fd);
+        }
+
+        /* Boot only sysinit and basic services */
+        boot_services();
+
+        puts("init: Single-user mode — starting root shell\n");
+        puts("init: Type 'exit' to continue boot or 'init 2' for multi-user\n");
+
+        /* Start a root shell on the console */
+        int pid = fork();
+        if (pid == 0) {
+            char *argv[] = { "/bin/sh", NULL };
+            char *envp[] = { "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
+                             "PS1=(single) # ", NULL };
+            syscall(SYS_EXECVE, (long)"/bin/sh", (long)argv, (long)envp, 0, 0);
+            exit(1);
+        }
+        /* Wait for the shell to exit (user types exit) */
+        if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+            puts("init: Single-user shell exited, continuing boot...\n");
+        }
+        /* Fall through to normal boot sequence */
+    }
 
     /* Boot services */
     boot_services();
@@ -1186,35 +1422,74 @@ void _start(void)
             __asm__ volatile("pause");
     }
 
-    /* Shutdown: stop all services in reverse dependency order (Item U3) */
+    /* Shutdown: stop all services in reverse dependency order (Item U3)
+     *
+     * Phase 1: Broadcast SIGTERM to all children (Item S172)
+     * Phase 2: Wait for children to exit gracefully
+     * Phase 3: SIGKILL remaining processes
+     */
     puts("init: shutting down services...\n");
+
+    /* Phase 1: Broadcast SIGTERM to all tracked services */
     {
         int shutdown_order[MAX_SERVICES];
         int shutdown_count = 0;
         topological_sort(shutdown_order, &shutdown_count);
+
         /* Stop in reverse order: dependencies last */
         for (int oi = shutdown_count - 1; oi >= 0; oi--) {
             int i = shutdown_order[oi];
-            if (services[i].pid > 0)
-                service_stop(&services[i]);
+            if (services[i].pid > 0) {
+                puts("init: stopping '");
+                puts(services[i].id);
+                puts("'\n");
+                kill(services[i].pid, SIGTERM);
+            }
+        }
+
+        /* Phase 2: Wait for all children to exit (with timeout) */
+        puts("init: waiting for services to stop...\n");
+        for (int i = 0; i < 50; i++) {  /* ~5 second timeout */
+            reap_children();
+            int any_running = 0;
+            for (int j = 0; j < service_count; j++) {
+                if (services[j].pid > 0) {
+                    any_running = 1;
+                    break;
+                }
+            }
+            if (!any_running) {
+                puts("init: all services stopped\n");
+                break;
+            }
+            /* Wait ~100ms */
+            for (volatile int j = 0; j < 1000000; j++)
+                __asm__ volatile("pause");
+        }
+
+        /* Phase 3: SIGKILL any remaining stubborn processes */
+        {
+            int remaining = 0;
+            for (int j = 0; j < service_count; j++) {
+                if (services[j].pid > 0) {
+                    puts("init: force-killing '");
+                    puts(services[j].id);
+                    puts("'\n");
+                    kill(services[j].pid, SIGKILL);
+                    services[j].state = ST_DEAD;
+                    services[j].pid = 0;
+                    remaining++;
+                }
+            }
+            if (remaining > 0) {
+                put_dec(remaining);
+                puts(" processes force-killed\n");
+            }
         }
     }
 
-    /* Wait for all children to exit */
-    for (int i = 0; i < 100; i++) {
-        reap_children();
-        int any_running = 0;
-        for (int j = 0; j < service_count; j++) {
-            if (services[j].pid > 0) {
-                any_running = 1;
-                break;
-            }
-        }
-        if (!any_running)
-            break;
-        for (volatile int j = 0; j < 1000000; j++)
-            __asm__ volatile("pause");
-    }
+    /* Reap any remaining children */
+    reap_children();
 
     puts("init: goodbye\n");
     exit(0);

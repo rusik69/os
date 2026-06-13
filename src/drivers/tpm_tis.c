@@ -1282,6 +1282,272 @@ MODULE_DESCRIPTION("TPM 2.0 TIS (FIFO) interface driver");
 #endif /* MODULE */
 
 /* ── Exported symbols for other modules/kernel code ───────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S96 — TPM2_Sign (asymmetric signing)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TPM2_Sign — Sign a hash with a loaded TPM key.
+ *
+ * @key_handle:  Handle of the loaded signing key.
+ * @digest:      Hash digest to sign (e.g., SHA-256, 32 bytes).
+ * @digest_len:  Length of the digest.
+ * @sig_buf:     Output buffer for the signature.
+ * @sig_len:     On input: max buffer size; on output: actual signature size.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_sign(uint32_t key_handle, const uint8_t *digest, uint32_t digest_len,
+              uint8_t *sig_buf, uint32_t *sig_len)
+{
+    if (!digest || !sig_buf || !sig_len || *sig_len < 256)
+        return -1;
+
+    /* Build command:
+     *   tpm_cmd_hdr (10 bytes)
+     *   keyHandle (4 bytes)
+     *   auth (session) — empty
+     *   digest (TPM2B_DIGEST: 2 bytes size + data)
+     *   signature scheme (TPMT_SIG_SCHEME: 2 bytes scheme + 2 bytes hashAlg)
+     *   validation (TPMT_TK_HASHCHECK: 2 bytes tag + 4 bytes hierarchy + 2 bytes digest size)
+     */
+    uint8_t cmd[128];
+    memset(cmd, 0, sizeof(cmd));
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_SESSIONS;
+    hdr->command_code = TPM2_CC_SIGN;  /* = 0x0000015D — may need define */
+    hdr->total_size = 0;
+
+    int pos = 10;
+
+    /* keyHandle */
+    cmd[pos++] = (uint8_t)(key_handle >> 24);
+    cmd[pos++] = (uint8_t)(key_handle >> 16);
+    cmd[pos++] = (uint8_t)(key_handle >> 8);
+    cmd[pos++] = (uint8_t)(key_handle & 0xFF);
+
+    /* Auth — empty */
+    cmd[pos++] = 0;
+    cmd[pos++] = 0;
+
+    /* digest: TPM2B_DIGEST */
+    uint32_t dcopy = (digest_len < 64) ? digest_len : 64;
+    cmd[pos++] = (uint8_t)(dcopy >> 8);
+    cmd[pos++] = (uint8_t)(dcopy & 0xFF);
+    memcpy(cmd + pos, digest, dcopy);
+    pos += (int)dcopy;
+
+    /* signature scheme: TPMT_SIG_SCHEME */
+    /* scheme = TPM2_ALG_NULL (0x0010) means TPM chooses */
+    cmd[pos++] = 0;
+    cmd[pos++] = 0x10;  /* TPM2_ALG_NULL */
+
+    /* validation: TPMT_TK_HASHCHECK — empty */
+    cmd[pos++] = 0;
+    cmd[pos++] = 0;   /* tag = 0 (no validation) */
+    /* hierarchy + digest size = 0 */
+    cmd[pos++] = 0; cmd[pos++] = 0; cmd[pos++] = 0; cmd[pos++] = 0;
+    cmd[pos++] = 0; cmd[pos++] = 0;
+
+    hdr->total_size = (uint32_t)pos;
+
+    uint32_t rsp_len = *sig_len;
+    int ret = tpm_transmit(cmd, (uint32_t)pos, sig_buf, &rsp_len);
+    if (ret == 0)
+        *sig_len = rsp_len;
+
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S96 — /dev/tpm0 character device with ioctl() interface
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#include "devfs.h"
+
+/* ioctl commands */
+#define TPMIO_GET_RANDOM      _IOWR(0xA2, 1, struct tpm_ioctl_get_random)
+#define TPMIO_PCR_READ        _IOWR(0xA2, 2, struct tpm_ioctl_pcr_op)
+#define TPMIO_PCR_EXTEND      _IOWR(0xA2, 3, struct tpm_ioctl_pcr_op)
+#define TPMIO_NV_READ         _IOWR(0xA2, 4, struct tpm_ioctl_nv_op)
+#define TPMIO_NV_WRITE        _IOWR(0xA2, 5, struct tpm_ioctl_nv_op)
+#define TPMIO_SIGN            _IOWR(0xA2, 6, struct tpm_ioctl_sign)
+#define TPMIO_GET_CAP         _IOR(0xA2, 7, struct tpm_ioctl_cap)
+
+/* ioctl argument structures */
+struct tpm_ioctl_get_random {
+    uint32_t count;
+    uint8_t  data[128];
+};
+
+struct tpm_ioctl_pcr_op {
+    uint32_t pcr_index;
+    uint8_t  digest[32];  /* SHA-256 */
+};
+
+struct tpm_ioctl_nv_op {
+    uint32_t nv_index;
+    uint32_t offset;
+    uint32_t len;
+    uint8_t  data[256];
+};
+
+struct tpm_ioctl_sign {
+    uint32_t key_handle;
+    uint16_t digest_len;
+    uint8_t  digest[64];
+    uint16_t sig_len;
+    uint8_t  signature[512];
+};
+
+struct tpm_ioctl_cap {
+    uint32_t capability;
+    uint32_t property;
+    uint8_t  data[128];
+};
+
+/* ioctl macro helpers for kernel that doesn't have them */
+#ifndef _IOC_NONE
+#define _IOC_NONE       0U
+#define _IOC_WRITE      1U
+#define _IOC_READ       2U
+#define _IOC(dir, type, nr, size) \
+    (((dir)  << 30) | ((type) << 8) | ((nr) << 0) | ((size) << 16))
+#define _IO(type, nr)       _IOC(_IOC_NONE, (type), (nr), 0)
+#define _IOR(type, nr, size) _IOC(_IOC_READ, (type), (nr), sizeof(size))
+#define _IOW(type, nr, size) _IOC(_IOC_WRITE, (type), (nr), sizeof(size))
+#define _IOWR(type, nr, size) _IOC(_IOC_READ|_IOC_WRITE, (type), (nr), sizeof(size))
+#endif
+
+static int tpm_dev_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_size)
+{
+    (void)priv;
+    if (!buf || !out_size || max_size == 0)
+        return -1;
+
+    /* Read random bytes from TPM */
+    uint32_t count = (max_size > 128) ? 128 : max_size;
+    int ret = tpm2_get_random((uint8_t *)buf, count);
+    if (ret > 0) {
+        *out_size = (uint32_t)ret;
+        return 0;
+    }
+    return -1;
+}
+
+static int tpm_dev_write(void *priv, const void *data, uint32_t size)
+{
+    (void)priv;
+    (void)data;
+    (void)size;
+    /* Writes to /dev/tpm0 are not supported directly */
+    return -1;
+}
+
+/* ioctl dispatch (simplified — in a real kernel, this hooks into
+ * the file_operations.ioctl callback) */
+static int tpm_dev_ioctl(void *priv, uint32_t cmd, void *arg)
+{
+    (void)priv;
+    if (!arg) return -1;
+
+    switch (cmd) {
+        case TPMIO_GET_RANDOM: {
+            struct tpm_ioctl_get_random *p = (struct tpm_ioctl_get_random *)arg;
+            uint32_t count = (p->count > 128) ? 128 : p->count;
+            int ret = tpm2_get_random(p->data, count);
+            if (ret > 0) return 0;
+            return -1;
+        }
+        case TPMIO_PCR_READ: {
+            struct tpm_ioctl_pcr_op *p = (struct tpm_ioctl_pcr_op *)arg;
+            return tpm2_pcr_read(p->pcr_index, p->digest);
+        }
+        case TPMIO_PCR_EXTEND: {
+            struct tpm_ioctl_pcr_op *p = (struct tpm_ioctl_pcr_op *)arg;
+            return tpm2_pcr_extend(p->pcr_index, p->digest);
+        }
+        case TPMIO_NV_READ: {
+            struct tpm_ioctl_nv_op *p = (struct tpm_ioctl_nv_op *)arg;
+            return tpm2_nv_read(p->nv_index, p->data, &p->len);
+        }
+        case TPMIO_NV_WRITE: {
+            struct tpm_ioctl_nv_op *p = (struct tpm_ioctl_nv_op *)arg;
+            return tpm2_nv_write(p->nv_index, p->data, p->len);
+        }
+        case TPMIO_SIGN: {
+            struct tpm_ioctl_sign *p = (struct tpm_ioctl_sign *)arg;
+            uint32_t sig_len = sizeof(p->signature);
+            int ret = tpm2_sign(p->key_handle, p->digest,
+                                p->digest_len, p->signature, &sig_len);
+            if (ret == 0) p->sig_len = (uint16_t)sig_len;
+            return ret;
+        }
+        default:
+            return -1;
+    }
+}
+
+/* Register /dev/tpm0 */
+int tpm_dev_init(void)
+{
+    int ret = devfs_register_device("tpm0", NULL,
+                                     tpm_dev_read, tpm_dev_write);
+    if (ret < 0) {
+        kprintf("[TPM] failed to register /dev/tpm0\n");
+        return -1;
+    }
+    kprintf("[TPM] /dev/tpm0 registered (ioctl interface)\n");
+    return 0;
+}
+
+void tpm_dev_exit(void)
+{
+    devfs_unregister_device("tpm0");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  S96 — TPM NV key storage helpers
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * tpm_nv_store_key — Store a key blob in TPM NV storage.
+ *
+ * @nv_index:  NV index to use (e.g., 0x01C10101).
+ * @key_data:  Key data to store (sealed blob or raw key).
+ * @key_len:   Length of key data.
+ *
+ * Returns 0 on success.
+ */
+int tpm_nv_store_key(uint32_t nv_index, const uint8_t *key_data, uint32_t key_len)
+{
+    /* First, define the NV space if not already defined */
+    int ret = tpm2_nv_define_space(nv_index, (key_len + 16) & ~15,
+                                    TPMA_NV_AUTHWRITE | TPMA_NV_AUTHREAD |
+                                    TPMA_NV_OWNERWRITE | TPMA_NV_OWNERREAD);
+    if (ret < 0) {
+        /* Space may already exist — try writing anyway */
+    }
+
+    /* Write the key data */
+    return tpm2_nv_write(nv_index, key_data, key_len);
+}
+
+/*
+ * tpm_nv_load_key — Load a key blob from TPM NV storage.
+ *
+ * @nv_index:  NV index to read from.
+ * @key_data:  Buffer for key data.
+ * @key_len:   On input: max size; on output: actual size.
+ *
+ * Returns 0 on success.
+ */
+int tpm_nv_load_key(uint32_t nv_index, uint8_t *key_data, uint32_t *key_len)
+{
+    return tpm2_nv_read(nv_index, key_data, key_len);
+}
+
 EXPORT_SYMBOL(tpm_init);
 EXPORT_SYMBOL(tpm_transmit);
 EXPORT_SYMBOL(tpm2_get_random);
@@ -1289,3 +1555,6 @@ EXPORT_SYMBOL(tpm2_pcr_read);
 EXPORT_SYMBOL(tpm2_pcr_extend);
 EXPORT_SYMBOL(tpm2_startup);
 EXPORT_SYMBOL(tpm_is_present);
+EXPORT_SYMBOL(tpm2_sign);
+EXPORT_SYMBOL(tpm_nv_store_key);
+EXPORT_SYMBOL(tpm_nv_load_key);
