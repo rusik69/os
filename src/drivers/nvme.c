@@ -20,6 +20,7 @@
 #include "pmm.h"
 #include "smp.h"
 #include "blockdev.h"
+#include "heap.h"      /* kmalloc, kfree */
 #include "idt.h"
 #include "apic.h"
 #ifdef MODULE

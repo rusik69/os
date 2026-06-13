@@ -75,7 +75,7 @@ static void idt_set_gate(uint8_t num, uint64_t handler, uint16_t sel, uint8_t ty
     idt[num].ist         = 0;
     idt[num].type_attr   = type_attr;
     idt[num].offset_mid  = (handler >> 16) & 0xFFFF;
-    idt[num].offset_high = (handler >> 32) & 0xFFFFFFFF;
+    idt[num].offset_high = (uint32_t)((handler >> 32) & 0xFFFFFFFF);
     idt[num].reserved    = 0;
 }
 

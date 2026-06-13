@@ -9,6 +9,7 @@
 #include "sha256.h"
 #include "syscall.h"   /* for prng_rand64 */
 #include "tcp_bbr.h"   /* BBR congestion control (Item 157) */
+#include "spinlock.h"  /* spinlock_t, SPINLOCK_INIT */
 
 /* TCP connection table lock — protects tcp_conns[] */
 static spinlock_t tcp_lock = SPINLOCK_INIT;

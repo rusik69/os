@@ -27,6 +27,7 @@
 #include "cpu_topology.h"
 #include "sysrq.h"
 #include "module.h"
+#include "kptr_restrict.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 

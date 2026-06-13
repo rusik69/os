@@ -694,7 +694,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
         /* Get the existing file size (if any) and check the new total */
         struct vfs_stat st;
         if (vfs_stat(ap, &st) == 0) {
-            existing_size = st.size;
+            existing_size = (uint32_t)st.size;
         }
         uint64_t new_total = (uint64_t)existing_size + size;
         if (new_total > proc->rlim_cur[RLIMIT_FSIZE]) {
@@ -743,7 +743,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
             uint32_t new_size;
             struct vfs_stat st2;
             if (vfs_stat(ap, &st2) == 0)
-                new_size = st2.size;
+                new_size = (uint32_t)st2.size;
             else
                 new_size = existing_size + size;
             uint32_t new_blocks = bytes_to_blocks(new_size);
@@ -779,7 +779,7 @@ int vfs_append(const char *path, const void *data, uint32_t size)
 
     struct vfs_stat st;
     if (vfs_stat(path, &st) == 0 && st.size > 0) {
-        old_size = st.size;
+        old_size = (uint32_t)st.size;
         old_buf = kmalloc(old_size);
         if (!old_buf)
             return -ENOMEM;
@@ -892,7 +892,7 @@ int vfs_stat(const char *path, struct vfs_stat *st) {
     int r = m->ops->stat(m->priv, ap, st);
     if (r == 0) {
         /* Cache the result for future lookups */
-        dcache_add(ap, (void *)m, st->type, st->size,
+        dcache_add(ap, (void *)m, st->type, (uint32_t)st->size,
                    st->uid, st->gid, st->mode,
                    st->mtime, st->atime, st->nlink,
                    st->ino, st->dev_major, st->dev_minor);
@@ -991,7 +991,7 @@ int vfs_unlink(const char *path) {
         if (proc) {
             vfs_update_quota_inodes((uint16_t)proc->uid, -1);
             if (have_pre_stat) {
-                uint32_t blocks_freed = bytes_to_blocks(pre_st.size);
+                uint32_t blocks_freed = bytes_to_blocks((uint32_t)pre_st.size);
                 if (blocks_freed > 0)
                     vfs_update_quota_blocks((uint16_t)proc->uid,
                                             -(int32_t)blocks_freed);
@@ -1112,14 +1112,14 @@ int vfs_rename(const char *old_path, const char *new_path)
     void *buf = kmalloc(st.size + 1);
     if (!buf) return -ENOMEM;
     uint32_t sz = 0;
-    int r = m_old->ops->read(m_old->priv, old_ap, buf, st.size, &sz);
+    int r = m_old->ops->read(m_old->priv, old_ap, buf, (uint32_t)st.size, &sz);
     if (r < 0) { kfree(buf); return r; }
 
     int wret = m_old->ops->create(m_old->priv, new_ap, st.type);
     if (wret < 0) { kfree(buf); return wret; }
 
     if (st.size > 0) {
-        wret = m_old->ops->write(m_old->priv, new_ap, buf, st.size);
+        wret = m_old->ops->write(m_old->priv, new_ap, buf, (uint32_t)st.size);
         if (wret < 0) {
             kfree(buf);
             m_old->ops->unlink(m_old->priv, new_ap);
@@ -1564,7 +1564,7 @@ int vfs_truncate(const char *path, uint32_t len) {
             /* Update block quota after truncate */
             struct process *proc = process_get_current();
             if (proc && have_old) {
-                uint32_t old_blocks = bytes_to_blocks(old_st.size);
+                uint32_t old_blocks = bytes_to_blocks((uint32_t)old_st.size);
                 uint32_t new_blocks = bytes_to_blocks(len);
                 int32_t delta = (int32_t)new_blocks - (int32_t)old_blocks;
                 if (delta != 0)
@@ -1638,7 +1638,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
     if (!buf) return -ENOMEM;
     
     uint32_t out_size = 0;
-    int ret = vfs_read(ap_old, buf, st.size, &out_size);
+    int ret = vfs_read(ap_old, buf, (uint32_t)st.size, &out_size);
     if (ret < 0) { kfree(buf); return ret; }
     
     ret = vfs_create(ap_new, st.type);

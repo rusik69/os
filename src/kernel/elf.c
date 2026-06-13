@@ -432,7 +432,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
-    uint64_t user_stack_guard = user_stack_bottom - PAGE_SIZE;  /* unmapped guard page */
+    // uint64_t user_stack_guard = user_stack_bottom - PAGE_SIZE;  /* unmapped guard page */
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
@@ -585,7 +585,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     for (int i = 0; i < argc; i++) {
         if (!tmp_buf[i]) continue;
         char *s = tmp_buf[i];
-        int len = strlen(s) + 1;
+        int len = (int)strlen(s) + 1;
         /* Copy string to new stack physical page */
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
@@ -610,7 +610,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         int idx = argc + i;
         if (!tmp_buf[idx]) continue;
         char *s = tmp_buf[idx];
-        int len = strlen(s) + 1;
+        int len = (int)strlen(s) + 1;
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
             int pi4 = (va >> 39) & 0x1FF;
@@ -930,7 +930,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < argc; i++) {
         if (!tmp_buf[i]) continue;
         char *s = tmp_buf[i];
-        int len = strlen(s) + 1;
+        int len = (int)strlen(s) + 1;
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
             int pi4 = (va >> 39) & 0x1FF;
@@ -953,7 +953,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
         int idx = argc + i;
         if (!tmp_buf[idx]) continue;
         char *s = tmp_buf[idx];
-        int len = strlen(s) + 1;
+        int len = (int)strlen(s) + 1;
         for (int j = 0; j < len; j++) {
             uint64_t va = str_pos + j;
             int pi4 = (va >> 39) & 0x1FF;
