@@ -212,6 +212,13 @@ static void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset
     }
 }
 
+static uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t offset) {
+    if (ecam_base) {
+        return pcie_read(bus, slot, func, offset);
+    }
+    return pci_read(bus, slot, func, (uint8_t)(offset & 0xFF));
+}
+
 /* ── MSI capability parsing ───────────────────────────────────────── */
 
 int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
@@ -785,6 +792,193 @@ void pci_list(void) {
  * Returns the capability offset (>= 0x100) on success, or -1 if
  * not found or ECAM is unavailable.
  */
+
+/* ── VPD (Vital Product Data) ────────────────────────────────────── */
+
+int pci_vpd_find_cap(struct pci_device *dev)
+{
+    /* Check capabilities list bit */
+    uint16_t status = pci_read16(dev->bus, dev->slot, dev->func, 0x06);
+    if (!(status & (1 << 4)))
+        return -1;
+
+    uint8_t cap_ptr = (uint8_t)(pci_read16(dev->bus, dev->slot, dev->func, 0x34) & 0xFF);
+
+    while (cap_ptr != 0) {
+        uint16_t cap_id_next = pci_read16(dev->bus, dev->slot, dev->func, cap_ptr);
+        uint8_t cap_id = (uint8_t)(cap_id_next & 0xFF);
+
+        if (cap_id == PCI_CAP_ID_VPD) {
+            return (int)cap_ptr;
+        }
+
+        cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
+    }
+
+    return -1;
+}
+
+int pci_vpd_capable(struct pci_device *dev)
+{
+    return pci_vpd_find_cap(dev) >= 0 ? 1 : 0;
+}
+
+int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val)
+{
+    if (!dev || !val)
+        return -1;
+
+    int cap = pci_vpd_find_cap(dev);
+    if (cap < 0)
+        return -1;
+
+    uint8_t bus = dev->bus;
+    uint8_t slot = dev->slot;
+    uint8_t func = dev->func;
+
+    /* Write address to VPD address register (with flag=0 for read) */
+    pci_write32(bus, slot, func, (uint16_t)(cap + PCI_VPD_ADDR), addr & ~PCI_VPD_ADDR_F);
+
+    /* Poll until flag bit is set (read complete) */
+    int timeout = 10000;
+    while (timeout--) {
+        uint32_t reg = pci_read32(bus, slot, func, (uint16_t)(cap + PCI_VPD_ADDR));
+        if (reg & PCI_VPD_ADDR_F) {
+            /* Read complete — read the data */
+            *val = pci_read32(bus, slot, func, (uint16_t)(cap + PCI_VPD_DATA));
+            return 0;
+        }
+        /* Small delay — in a real kernel we'd use udelay */
+        for (volatile int i = 0; i < 100; i++);
+    }
+
+    return -1;  /* Timeout */
+}
+
+int pci_vpd_write(struct pci_device *dev, uint32_t addr, uint32_t val)
+{
+    if (!dev)
+        return -1;
+
+    int cap = pci_vpd_find_cap(dev);
+    if (cap < 0)
+        return -1;
+
+    uint8_t bus = dev->bus;
+    uint8_t slot = dev->slot;
+    uint8_t func = dev->func;
+
+    /* Write the data first */
+    pci_write32(bus, slot, func, (uint16_t)(cap + PCI_VPD_DATA), val);
+
+    /* Write address with flag=1 to trigger write */
+    pci_write32(bus, slot, func, (uint16_t)(cap + PCI_VPD_ADDR), addr | PCI_VPD_ADDR_F);
+
+    /* Poll until flag bit is cleared (write complete) */
+    int timeout = 10000;
+    while (timeout--) {
+        uint32_t reg = pci_read32(bus, slot, func, (uint16_t)(cap + PCI_VPD_ADDR));
+        if (!(reg & PCI_VPD_ADDR_F)) {
+            return 0;  /* Write complete */
+        }
+        for (volatile int i = 0; i < 100; i++);
+    }
+
+    return -1;  /* Timeout */
+}
+
+int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
+                        char *buf, size_t len)
+{
+    if (!dev || !buf || len == 0)
+        return -1;
+
+    if (!pci_vpd_capable(dev))
+        return -1;
+
+    /* Scan VPD memory for the requested field tag */
+    uint32_t offset = 0;
+    int found = 0;
+    int data_len = 0;
+    uint8_t tag_data[256];  /* Max VPD field data size */
+
+    while (offset < 32768) {  /* VPD is at most 32KB */
+        uint32_t word;
+        if (pci_vpd_read(dev, offset, &word) < 0)
+            break;
+
+        uint8_t tag = (uint8_t)(word & 0xFF);
+        uint8_t len_byte = (uint8_t)((word >> 8) & 0xFF);
+
+        /* Check for large resource descriptor (bit 7 and 6 of tag) */
+        if ((tag & 0xC0) == 0x80) {
+            /* Large resource: tag byte = tag, next 2 bytes = length */
+            int large_len = len_byte | ((word >> 16) & 0xFF) << 8;
+            if (tag == field_tag) {
+                found = 1;
+                data_len = large_len;
+                /* Read the data bytes */
+                int max_read = (data_len < (int)sizeof(tag_data)) ? data_len : (int)sizeof(tag_data);
+                for (int i = 0; i < max_read; i += 4) {
+                    uint32_t w;
+                    if (pci_vpd_read(dev, offset + 3 + i, &w) < 0)
+                        break;
+                    int bytes_this_word = (max_read - i >= 4) ? 4 : (max_read - i);
+                    for (int j = 0; j < bytes_this_word; j++)
+                        tag_data[i + j] = (uint8_t)((w >> (j * 8)) & 0xFF);
+                }
+                break;
+            }
+            offset += 3 + large_len;  /* Skip tag + length bytes + data */
+            /* Align to 4 bytes */
+            offset = (offset + 3) & ~3;
+        } else if (tag != 0xFF && tag != 0x00) {
+            /* Small resource */
+            int small_len = (len_byte & 0x07);
+            if (tag == field_tag) {
+                found = 1;
+                data_len = small_len;
+                /* Read remaining bytes from this word + subsequent words */
+                int bytes_in_word = 2;  /* tag + len already consumed? */
+                /* The word layout: byte0=tag, byte1=len, bytes 2-3 = first 2 data bytes */
+                tag_data[0] = (uint8_t)((word >> 16) & 0xFF);
+                tag_data[1] = (uint8_t)((word >> 24) & 0xFF);
+                int remaining = small_len - 2;
+                int pos = 2;
+                while (remaining > 0) {
+                    offset += 4;
+                    if (pci_vpd_read(dev, offset, &word) < 0)
+                        break;
+                    int n = (remaining >= 4) ? 4 : remaining;
+                    for (int j = 0; j < n && pos < (int)sizeof(tag_data); j++) {
+                        tag_data[pos++] = (uint8_t)((word >> (j * 8)) & 0xFF);
+                    }
+                    remaining -= n;
+                }
+                break;
+            }
+            offset += 2 + small_len;
+            /* Align to 4 bytes */
+            offset = (offset + 3) & ~3;
+        } else {
+            /* End tag or invalid */
+            if (tag == 0x78)
+                break;  /* End tag */
+            offset += 4;
+        }
+    }
+
+    if (!found)
+        return -1;
+
+    /* Copy to output buffer (null-terminate) */
+    int copy_len = (data_len < (int)len - 1) ? data_len : (int)len - 1;
+    memcpy(buf, tag_data, (size_t)copy_len);
+    buf[copy_len] = '\0';
+
+    return copy_len;
+}
+
 int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id) {
     if (!ecam_base) return -1;  /* Extended caps require ECAM access */
 

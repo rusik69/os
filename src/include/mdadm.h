@@ -148,13 +148,62 @@ void raid10_destroy(int array_id);
 int  raid10_status(int array_id, int *state_out, int *num_pairs_out,
                    uint64_t *sectors_out, uint32_t *chunk_out);
 
+/* ── RAID5 (rotating parity) ───────────────────────────────────────── */
+
+#define RAID5_MAX_DISKS 16
+#define RAID5_DEFAULT_CHUNK_SECT 64
+
+struct raid5_array {
+    int    array_id;
+    int    state;           /* RAID_ARRAY_CLEAN / DEGRADED / FAILED */
+    int    num_disks;
+    struct raid_member disks[RAID5_MAX_DISKS];
+    uint32_t chunk_size;    /* stripe chunk in sectors */
+    uint64_t stripe_size;   /* chunk_size * (num_disks - 1) in sectors (data per stripe) */
+    uint64_t disk_sectors;  /* sectors per member (min of all) */
+    uint64_t array_sectors; /* total array sectors = disk_sectors * (num_disks - 1) */
+    uint8_t uuid[16];
+};
+
+int  raid5_create(const int *member_dev_ids, int num_disks,
+                  uint32_t chunk_size, const uint8_t *uuid);
+void raid5_destroy(int array_id);
+int  raid5_status(int array_id, int *state_out, int *num_disks_out,
+                  uint64_t *sectors_out, uint32_t *chunk_out);
+
+/* ── RAID6 (double parity P+Q) ─────────────────────────────────────── */
+
+#define RAID6_MAX_DISKS 16
+#define RAID6_DEFAULT_CHUNK_SECT 64
+
+struct raid6_array {
+    int    array_id;
+    int    state;
+    int    num_disks;
+    struct raid_member disks[RAID6_MAX_DISKS];
+    uint32_t chunk_size;
+    uint64_t stripe_size;   /* chunk_size * (num_disks - 2) in sectors */
+    uint64_t disk_sectors;
+    uint64_t array_sectors; /* total = disk_sectors * (num_disks - 2) */
+    uint8_t uuid[16];
+};
+
+int  raid6_create(const int *member_dev_ids, int num_disks,
+                  uint32_t chunk_size, const uint8_t *uuid);
+void raid6_destroy(int array_id);
+int  raid6_status(int array_id, int *state_out, int *num_disks_out,
+                  uint64_t *sectors_out, uint32_t *chunk_out);
+
 /* ── Common helpers ────────────────────────────────────────────────── */
 
 /* Mark a member device as failed in any array type.
- * Scans all registered arrays (RAID0, RAID1, RAID10). */
+ * Scans all registered arrays (RAID0, RAID1, RAID10, RAID5, RAID6). */
 void md_member_failed(int array_id, int dev_id, int level);
 
-/* Initialize the MD subsystem (RAID0/1/10). Called once during boot. */
+/* Look up RAID level name string */
+const char *md_level_name(int level);
+
+/* Initialize the MD subsystem (RAID0/1/10/5/6). Called once during boot. */
 void raid_md_init(void);
 
 #endif /* MDADM_H */

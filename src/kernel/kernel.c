@@ -45,6 +45,10 @@
 #include "ahci.h"
 #include "usb.h"
 #include "usb_msc.h"
+#include "uhid.h"
+/* Externs for USB drivers without dedicated kernel includes */
+extern int usb_cdc_acm_init(void);
+extern int usb_hub_init(void);
 #include "service.h"
 #include "httpd.h"
 #include "gui.h"
@@ -876,6 +880,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
             kprintf("[OK] USB MSC device registered\n");
         else
             kprintf("[--] No USB MSC device\n");
+        if (usb_hid_init() == 0)
+            kprintf("[OK] USB HID initialized\n");
+        else
+            kprintf("[--] No USB HID devices\n");
+        if (usb_cdc_acm_init() == 0)
+            kprintf("[OK] USB CDC ACM initialized\n");
+        else
+            kprintf("[--] No USB CDC ACM devices\n");
+        if (usb_hub_init() == 0)
+            kprintf("[OK] USB hub initialized\n");
+        else
+            kprintf("[--] No USB hub devices\n");
     } else {
         kprintf("[--] No USB controllers\n");
     }

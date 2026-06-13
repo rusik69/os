@@ -149,6 +149,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/partitions.c \
          src/drivers/mdadm.c \
          src/drivers/mdadm_ext.c \
+         src/drivers/nbd.c \
          src/drivers/cmos.c \
          src/drivers/floppy.c \
          src/drivers/battery.c \
@@ -191,6 +192,8 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/romfs.c \
          src/fs/tarfs.c \
          src/fs/vfs_enhance.c \
+         src/fs/squashfs.c \
+         src/fs/fuse.c \
          src/net/net.c \
          src/net/net_tcp.c \
          src/net/net_udp.c \
@@ -353,6 +356,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/rseq.c \
          src/kernel/kcov.c \
          src/kernel/kprobes.c \
+         src/kernel/ftrace.c \
          src/kernel/mce.c \
          src/kernel/mce_inject.c \
          src/kernel/kasan_light.c \
@@ -463,7 +467,19 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/sched_idle.c \
          src/kernel/core_sched.c \
          src/kernel/nohz.c \
-         src/fs/overlay_enhance.c
+         src/kernel/lockdown.c \
+         src/kernel/pkey.c \
+         src/kernel/pm_runtime.c \
+         src/power/rapl.c \
+         src/drivers/sndstat.c \
+         src/drivers/acpi_platform_profile.c \
+         src/fs/overlay_enhance.c \
+         src/net/ntp.c \
+         src/net/smtp.c \
+         src/net/dns_server.c \
+         src/drivers/usb_hid.c \
+         src/drivers/usb_cdc_acm.c \
+         src/drivers/usb_hub.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
@@ -558,7 +574,7 @@ obj-m += drivers/ahci.ko
 
 # USB EHCI + Mass Storage Class driver as single module (M59)
 obj-m += drivers/usb.ko
-usb-objs := drivers/usb_ehci drivers/usb_msc
+usb-objs := drivers/usb_ehci drivers/usb_msc drivers/usb_hid drivers/usb_cdc_acm drivers/usb_hub
 
 # Filesystem modules — convert small read-only FS into loadable .ko
 # tarfs: read-only tar archive filesystem (M55)

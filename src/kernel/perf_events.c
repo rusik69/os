@@ -534,10 +534,13 @@ int lbr_read(struct lbr_entry *entries)
  *
  * Reference: Intel® 64 and IA-32 Architectures SDM Vol. 3B, Ch. 20.5.
  * ══════════════════════════════════════════════════════════════════════════ */
+/* ── Topdown Metrics (Item 207) ──────────────────────────────────────── */
 
-/* ── Per-CPU topdown state ──────────────────────────────────────────── */
-static int g_topdown_available = 0;   /* CPUID check result */
+static int g_topdown_available = 0;
 static int g_topdown_configured = 0;  /* per-CPU: has topdown been enabled */
+
+/* ── Forward declarations for multiplexing ─────────────────────────── */
+void perf_mux_init(void);
 
 /* Check Topdown Metrics availability via CPUID leaf 0x0A, ECX bit 15.
  * This bit is set on Ice Lake and later processors (both client and server)
@@ -737,4 +740,217 @@ void perf_init(void)
 
     /* ── Initialise Topdown Metrics (Item 207) ── */
     topdown_init();
+
+    /* ── Initialise hardware counter multiplexing ── */
+    perf_mux_init();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * Hardware PMC Multiplexing (S131)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * When there are more active events than available PMCs, we time-share
+ * the physical counters among the events.  On each timer tick, we rotate
+ * which events are currently assigned to PMCs.  The accumulated counts
+ * for each event are scaled proportionally to account for the rotated-out
+ * time.
+ *
+ * State:
+ *   - mux_events[]: array of all active events (max MUX_MAX_EVENTS)
+ *   - mux_num_events: number of registered events
+ *   - mux_tick_count: counter of ticks since the last reset
+ *   - mux_enabled_flag: 1 = muxing is active, 0 = pass-through
+ *   - mux_interval: number of ticks each event group stays on the PMCs
+ *
+ * Each event stores:
+ *   - raw_count: value last read from the hardware counter
+ *   - scaled_count: accumulated count scaled by (total_events / num_pmcs)
+ *   - event_config: IA32_PERFEVTSEL value for this event
+ *
+ * On each rotation:
+ *   1. Read current PMC values and accumulate scaled counts for rotated-out events
+ *   2. Write new event configs for the next group of events
+ *   3. Clear the new PMCs
+ */
+
+#define MUX_MAX_EVENTS    16
+#define MUX_NUM_PMCS      4   /* PMC0-PMC3 */
+#define MUX_DEFAULT_INTERVAL 10  /* ticks before rotating */
+
+struct mux_event {
+    uint64_t event_config;   /* PERFEVTSEL value (without enable bit stored here) */
+    uint64_t raw_count;      /* last raw PMU value read */
+    uint64_t scaled_count;   /* accumulated (scaled) count */
+    int      active;
+};
+
+static struct mux_event g_mux_events[MUX_MAX_EVENTS];
+static int    g_mux_num_events = 0;
+static int    g_mux_next_event = 0;     /* index of next event to assign to PMC0 */
+static int    g_mux_interval = MUX_DEFAULT_INTERVAL;
+static int    g_mux_tick = 0;           /* counts ticks since last rotation */
+static int    g_mux_enabled_flag = 0;
+static int    g_mux_initialized = 0;
+static spinlock_t g_mux_lock;
+
+void perf_mux_init(void)
+{
+    if (g_mux_initialized) return;
+    memset(g_mux_events, 0, sizeof(g_mux_events));
+    g_mux_num_events = 0;
+    g_mux_next_event = 0;
+    g_mux_tick = 0;
+    g_mux_enabled_flag = 0;
+    g_mux_interval = MUX_DEFAULT_INTERVAL;
+    spinlock_init(&g_mux_lock);
+    g_mux_initialized = 1;
+    kprintf("[perf] PMC multiplexing initialized (max %d events, interval=%d ticks)\n",
+            MUX_MAX_EVENTS, g_mux_interval);
+}
+
+int perf_mux_enabled(void)
+{
+    return g_mux_enabled_flag;
+}
+
+void perf_mux_enable(void)
+{
+    g_mux_enabled_flag = 1;
+    g_mux_tick = 0;
+    g_mux_next_event = 0;
+    kprintf("[perf] MUX enabled\n");
+}
+
+void perf_mux_disable(void)
+{
+    g_mux_enabled_flag = 0;
+    kprintf("[perf] MUX disabled\n");
+}
+
+/* Set the rotation interval (in timer ticks). */
+void perf_mux_set_interval(int ticks)
+{
+    if (ticks < 1) ticks = 1;
+    if (ticks > 1000) ticks = 1000;
+    g_mux_interval = ticks;
+}
+
+/* Register an event for multiplexing.
+ * Returns the event index on success, -1 on error. */
+int perf_mux_register_event(uint64_t event_config)
+{
+    if (!g_mux_initialized) perf_mux_init();
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mux_lock, &irq_flags);
+
+    if (g_mux_num_events >= MUX_MAX_EVENTS) {
+        spinlock_irqsave_release(&g_mux_lock, irq_flags);
+        return -1;
+    }
+
+    int idx = g_mux_num_events;
+    g_mux_events[idx].event_config = event_config;
+    g_mux_events[idx].raw_count = 0;
+    g_mux_events[idx].scaled_count = 0;
+    g_mux_events[idx].active = 1;
+    g_mux_num_events++;
+
+    spinlock_irqsave_release(&g_mux_lock, irq_flags);
+    return idx;
+}
+
+/* Unregister an event (by index returned from perf_mux_register_event). */
+void perf_mux_unregister_event(int idx)
+{
+    if (idx < 0 || idx >= MUX_MAX_EVENTS) return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mux_lock, &irq_flags);
+    g_mux_events[idx].active = 0;
+    g_mux_events[idx].event_config = 0;
+    spinlock_irqsave_release(&g_mux_lock, irq_flags);
+}
+
+/* Read the scaled count of an event. */
+uint64_t perf_mux_read_event(int idx)
+{
+    if (idx < 0 || idx >= MUX_MAX_EVENTS || !g_mux_events[idx].active)
+        return 0;
+    return g_mux_events[idx].scaled_count;
+}
+
+/*
+ * Called on each timer tick.  If multiplexing is enabled and the interval
+ * has elapsed, rotate which events are assigned to the physical PMCs.
+ */
+void perf_mux_tick(void)
+{
+    if (!g_mux_enabled_flag || g_mux_num_events == 0)
+        return;
+
+    g_mux_tick++;
+
+    if (g_mux_tick < g_mux_interval)
+        return;
+
+    /* Time to rotate */
+    g_mux_tick = 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mux_lock, &irq_flags);
+
+    int num_events = g_mux_num_events;
+    int active_count = 0;
+    for (int i = 0; i < num_events; i++) {
+        if (g_mux_events[i].active) active_count++;
+    }
+    if (active_count == 0) {
+        spinlock_irqsave_release(&g_mux_lock, irq_flags);
+        return;
+    }
+
+    /* Determine the scale factor: if we have more events than PMCs,
+     * each event gets (num_events / NUM_PMCS) times its raw count. */
+    float scale = (float)active_count / (float)MUX_NUM_PMCS;
+    if (scale < 1.0f) scale = 1.0f;
+
+    /* Read current PMC values and accumulate scaled counts */
+    for (int i = 0; i < MUX_NUM_PMCS; i++) {
+        uint64_t cur_val = perf_read_pmc(i);
+        int event_idx = (g_mux_next_event + i) % num_events;
+
+        if (g_mux_events[event_idx].active) {
+            uint64_t delta = cur_val - g_mux_events[event_idx].raw_count;
+            g_mux_events[event_idx].scaled_count += (uint64_t)((float)delta * scale);
+        }
+        g_mux_events[event_idx].raw_count = 0;
+    }
+
+    /* Advance to the next group of events */
+    g_mux_next_event = (g_mux_next_event + MUX_NUM_PMCS) % num_events;
+
+    /* Disable PMCs during reconfiguration */
+    perf_disable();
+
+    /* Clear counters */
+    for (int i = 0; i < MUX_NUM_PMCS; i++) {
+        write_msr(IA32_PMC0 + i, 0);
+    }
+
+    /* Program new events into PMCs */
+    for (int i = 0; i < MUX_NUM_PMCS; i++) {
+        int event_idx = (g_mux_next_event + i) % num_events;
+        if (g_mux_events[event_idx].active) {
+            write_msr(IA32_PERFEVTSEL0 + i,
+                      g_mux_events[event_idx].event_config | PERFEVTSEL_ENABLE);
+        } else {
+            write_msr(IA32_PERFEVTSEL0 + i, 0);
+        }
+    }
+
+    /* Re-enable PMCs */
+    perf_enable();
+
+    spinlock_irqsave_release(&g_mux_lock, irq_flags);
 }

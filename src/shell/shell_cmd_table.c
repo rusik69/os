@@ -68,6 +68,9 @@ static void sh_modinfo(const char *a)   { cmd_modinfo(a); }
 static void sh_modprobe(const char *a)  { cmd_modprobe(a); }
 static void sh_mdev(const char *a)      { cmd_mdev(a); }
 
+static void sh_ntpdate(const char *a)   { cmd_ntpdate(a); }
+static void sh_tftpd(const char *a)     { cmd_tftpd(a); }
+
 #include "cmd_table.inc"
 
 int shell_cmd_count(void) {

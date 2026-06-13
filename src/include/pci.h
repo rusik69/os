@@ -43,6 +43,48 @@ int pcie_is_present(void);
 
 uint8_t pcie_device_type(uint8_t bus, uint8_t slot, uint8_t func);
 
+/* ── VPD (Vital Product Data) ───────────────────────────────────── */
+
+/* VPD capability ID = 0x03 */
+#define PCI_CAP_ID_VPD         0x03
+#define PCI_VPD_ADDR           2   /* VPD address register (at cap+2) */
+#define PCI_VPD_DATA           4   /* VPD data register  (at cap+4) */
+#define PCI_VPD_ADDR_F         0x80000000U  /* Flag bit: 1 = write in progress */
+
+/* VPD field tags (PCI 2.2+ specification) */
+#define PCI_VPD_TAG_PN         0x81  /* Part number */
+#define PCI_VPD_TAG_SN         0x82  /* Serial number */
+#define PCI_VPD_TAG_MN         0x83  /* Manufacturer ID */
+#define PCI_VPD_TAG_EC         0x84  /* Engineering change level */
+#define PCI_VPD_TAG_MC         0x85  /* Manufacturing location */
+#define PCI_VPD_TAG_YA         0x86  /* Asset tag */
+#define PCI_VPD_TAG_NA         0x87  /* NIC MAC address list */
+#define PCI_VPD_TAG_RV         0x90  /* Read-only VPD end tag */
+#define PCI_VPD_TAG_CP         0x91  /* Read/write VPD end tag */
+#define PCI_VPD_TAG_END        0x78  /* End tag (0x78) */
+
+/* Find VPD capability on a device. Returns capability offset or -1. */
+int pci_vpd_find_cap(struct pci_device *dev);
+
+/* Check if a device has VPD capability. Returns 1 if capable, 0 otherwise. */
+int pci_vpd_capable(struct pci_device *dev);
+
+/* Read a 32-bit word from VPD at the given offset.
+ * Returns 0 on success, -1 on error. */
+int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val);
+
+/* Write a 32-bit word to VPD at the given offset.
+ * Returns 0 on success, -1 on error. */
+int pci_vpd_write(struct pci_device *dev, uint32_t addr, uint32_t val);
+
+/* Read a specific VPD field (e.g., part number, serial number).
+ * field_tag: PCI_VPD_TAG_PN, PCI_VPD_TAG_SN, PCI_VPD_TAG_MN, etc.
+ * buf:       Output buffer for field data.
+ * len:       Size of output buffer.
+ * Returns the number of bytes written to buf, or -1 on error/not found. */
+int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
+                        char *buf, size_t len);
+
 /* ── MSI (Message Signalled Interrupts) ──────────────────────────── */
 
 /* MSI capability ID = 0x05 */

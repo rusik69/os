@@ -404,4 +404,10 @@ void cmd_nano(const char *args);
 /* Online filesystem integrity check (Item 277) */
 void cmd_fsck(const char *args);
 
+/* New S-plan commands */
+void cmd_ntpdate(const char *args);
+void cmd_tftpd(const char *args);
+void ntpdate_init(void);
+void tftpd_init(void);
+
 #endif

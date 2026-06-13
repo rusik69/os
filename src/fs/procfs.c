@@ -28,6 +28,7 @@
 #include "sysrq.h"
 #include "module.h"
 #include "kptr_restrict.h"
+#include "sndstat.h"
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -1338,6 +1339,9 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_slabinfo(buf, (int)max_size);
     } else if (strcmp(path, "/proc/filesystems") == 0) {
         len = procfs_gen_filesystems(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/asound") == 0) {
+        len = sndstat_generate(buf, (int)max_size);
+        if (len < 0) return -1;
     } else if (strcmp(path, "/proc/modules") == 0) {
         len = procfs_gen_modules(buf, (int)max_size);
     } else if (strcmp(path, "/proc/self") == 0) {
@@ -1543,6 +1547,10 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     /* /proc/filesystems */
     if (strcmp(path, "/proc/filesystems") == 0) {
         st->type = 1; st->size = 512; return 0;
+    }
+    /* /proc/asound */
+    if (strcmp(path, "/proc/asound") == 0) {
+        st->type = 1; st->size = 1024; return 0;
     }
     /* /proc/sys/kernel/ files */
     if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
