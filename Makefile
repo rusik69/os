@@ -241,6 +241,18 @@ C_SRCS = src/kernel/kernel.c \
          src/net/macsec.c \
          src/net/6lowpan.c \
          src/net/ipoib.c \
+         src/net/ipsec.c \
+         src/net/pfkey.c \
+         src/net/igmp.c \
+         src/net/garp.c \
+         src/net/lacp.c \
+         src/net/mrp.c \
+         src/net/lldp.c \
+         src/net/tcp_bic.c \
+         src/net/tcp_vegas.c \
+         src/net/tcp_westwood.c \
+         src/net/tcp_illinois.c \
+         src/net/tcp_hybla.c \
          src/kernel/service.c \
          src/kernel/ssh_crypto.c \
          src/kernel/ssh_client.c \
@@ -388,6 +400,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/firmware.c \
          src/kernel/memfd.c \
          src/kernel/mseal.c \
+         src/kernel/stackleak.c \
          src/kernel/userfaultfd.c \
          src/kernel/madvise_ext.c \
          src/kernel/mem_policy.c \
@@ -403,8 +416,6 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/overlay.c \
          src/kernel/fanotify.c \
          src/kernel/fs_mount_prop.c \
-         src/kernel/net_igmp.c \
-         src/kernel/net_lldp.c \
          src/kernel/aio_enhanced.c \
          src/kernel/aio.c \
          src/kernel/range.c \
@@ -523,7 +534,24 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ghes.c \
          src/drivers/i3c.c \
          src/fs/verity.c \
-         src/fs/readdir.c
+         src/fs/readdir.c \
+         src/fs/hfs.c \
+         src/fs/cramfs.c \
+         src/fs/minix.c \
+         src/fs/ufs.c \
+         src/fs/sysv.c \
+         src/fs/adfs.c \
+         src/fs/bfs.c \
+         src/drivers/virtio_gpu.c \
+         src/drivers/virtio_input.c \
+         src/drivers/virtio_rng.c \
+         src/drivers/virtio_scsi.c \
+         src/drivers/virtio_console.c \
+         src/drivers/pvpanic.c \
+         src/drivers/ivshmem.c \
+         src/drivers/9pnet_virtio.c \
+         src/drivers/vmw_balloon.c \
+         src/drivers/vmw_pvscsi.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

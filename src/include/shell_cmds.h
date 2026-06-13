@@ -432,4 +432,16 @@ void cmd_lvcreate(const char *args);
 void cmd_pvs(const char *args);
 void cmd_fstrim_wrapper(const char *args);
 
+/* Network management commands */
+void cmd_arptables(const char *args);
+void cmd_ebtables(const char *args);
+void cmd_conntrack(const char *args);
+
+/* Phase 14 — network & system management commands */
+void cmd_nstat(const char *args);
+void cmd_ipsec(const char *args);
+void cmd_tc(const char *args);
+void cmd_ethtool(const char *args);
+void cmd_bpftrace_probes(const char *args);
+
 #endif

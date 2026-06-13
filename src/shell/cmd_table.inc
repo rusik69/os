@@ -331,6 +331,16 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("trace",       "Trace control (trace enable|disable|show|clear|status)", cmd_trace)
     CMD("bpftrace",    "BPF tracing interface (bpftrace trace|count|list|status)", cmd_bpftrace)
     CMD("fstrim",      "Trim unused blocks on filesystems (fstrim [-v] [-m minlen] [mountpoint])", cmd_fstrim_wrapper)
+    /* Network management commands */
+    CMD("arptables",   "ARP table management (arptables -L|-A -s IP -h MAC|-D -s IP)", sh_arptables)
+    CMD("ebtables",    "Ethernet bridge firewall (ebtables -L|-A|-D)", sh_ebtables)
+    CMD("conntrack",   "Connection tracking (conntrack -L|-E|-D)", sh_conntrack)
+    /* Phase 14 — network & system management commands */
+    CMD("nstat",       "Network statistics (nstat [-s] [-a] [-z])", cmd_nstat)
+    CMD("ipsec",       "IPsec SA/SP management (ipsec status|list|auto|manual)", cmd_ipsec)
+    CMD("tc",          "Traffic control (tc qdisc|class|filter [add|del|show])", cmd_tc)
+    CMD("ethtool",     "Ethernet device settings (ethtool [-s|-i|-k|-S] <dev>)", cmd_ethtool)
+    CMD("bpftrace_probes", "BPF kprobe/uprobe/tracepoint management", cmd_bpftrace_probes)
     { 0, 0, 0 }
 };
 

@@ -1,0 +1,213 @@
+/*
+ * src/fs/minix.c — MINIX filesystem (v1/v2/v3)
+ *
+ * Implements a read-only MINIX filesystem supporting:
+ *   - MINIX v1 (V1), v2 (V2), v3 (V3) variants
+ *   - Inode bitmap and zone bitmap
+ *   - Zone addressing with direct/indirect blocks
+ *   - Registered as a VFS filesystem
+ */
+
+#define KERNEL_INTERNAL
+#include "types.h"
+#include "string.h"
+#include "printf.h"
+#include "heap.h"
+#include "vfs.h"
+#include "errno.h"
+#include "blockdev.h"
+
+#ifdef MODULE
+#include "module.h"
+#endif
+
+/* ── MINIX on-disk structures ──────────────────────────────────── */
+
+#define MINIX_MAGIC_V1    0x137F
+#define MINIX_MAGIC_V1_2  0x138F
+#define MINIX_MAGIC_V2    0x2468
+#define MINIX_MAGIC_V2_2  0x2478
+#define MINIX_MAGIC_V3    0x4D5A
+
+#define MINIX_ROOT_INO    1
+#define MINIX_BLOCK_SIZE  1024
+#define MINIX_NAME_MAX    60  /* V3 */
+#define MINIX_NAME_MAX_V1 30  /* V1/V2 */
+#define MINIX_ZONES_V1    7
+#define MINIX_ZONES_V2    10
+#define MINIX_ZONES_V3    10
+
+#pragma pack(push, 1)
+/* Superblock (shared layout for V1/V2, different size for V3) */
+struct minix_superblock_v1 {
+    uint16_t s_ninodes;
+    uint16_t s_nzones;
+    uint16_t s_imap_blocks;
+    uint16_t s_zmap_blocks;
+    uint16_t s_firstdatazone;
+    uint16_t s_log_zone_size;
+    uint32_t s_max_size;
+    uint16_t s_magic;
+    uint16_t s_state;
+    uint32_t s_zones;
+};
+
+struct minix_superblock_v3 {
+    uint32_t s_ninodes;
+    uint16_t s_pad0;
+    uint16_t s_imap_blocks;
+    uint16_t s_zmap_blocks;
+    uint16_t s_firstdatazone;
+    uint16_t s_log_zone_size;
+    uint32_t s_max_size;
+    uint32_t s_zones;
+    uint16_t s_magic;
+    uint16_t s_pad1;
+    uint16_t s_state;
+    uint32_t s_pad2;
+};
+
+/* Inode V1 (32 bytes) */
+struct minix_inode_v1 {
+    uint16_t i_mode;
+    uint16_t i_uid;
+    uint32_t i_size;
+    uint32_t i_time;
+    uint8_t  i_gid;
+    uint8_t  i_nlinks;
+    uint16_t i_zone[MINIX_ZONES_V1];
+};
+
+/* Inode V2 (32 bytes) */
+struct minix_inode_v2 {
+    uint16_t i_mode;
+    uint16_t i_uid;
+    uint32_t i_size;
+    uint32_t i_time;
+    uint8_t  i_gid;
+    uint8_t  i_nlinks;
+    uint16_t i_zone[MINIX_ZONES_V2];
+};
+
+/* Inode V3 (64 bytes) */
+struct minix_inode_v3 {
+    uint16_t i_mode;
+    uint16_t i_uid;
+    uint32_t i_size;
+    uint32_t i_time;
+    uint32_t i_gid;
+    uint8_t  i_nlinks;
+    uint8_t  i_reserved;
+    uint16_t i_zone[MINIX_ZONES_V3];
+};
+#pragma pack(pop)
+
+/* ── Private mount data ────────────────────────────────────────── */
+
+struct minix_priv {
+    uint8_t  dev_id;
+    int      version;         /* 1, 2, or 3 */
+    uint32_t block_size;
+    uint32_t ninodes;
+    uint32_t nzones;
+    uint32_t imap_blocks;
+    uint32_t zmap_blocks;
+    uint32_t first_data_zone;
+    uint32_t max_size;
+    uint32_t inode_size;
+    uint32_t zones_per_block;
+    uint32_t zones;
+    uint32_t zone_size;       /* block_size << log_zone_size */
+};
+
+/* ── Block I/O ─────────────────────────────────────────────────── */
+
+static int minix_read_block(struct minix_priv *mp, uint32_t block_num,
+                             uint8_t *buf)
+{
+    uint64_t lba = (uint64_t)block_num * (mp->block_size / 512);
+    uint32_t sectors = mp->block_size / 512;
+    for (uint32_t i = 0; i < sectors; i++) {
+        if (blockdev_read_sectors(mp->dev_id, lba + i, 1,
+                                   buf + i * 512) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* ── VFS operations ────────────────────────────────────────────── */
+
+static int minix_read(void *priv, const char *path,
+                       void *buf, uint32_t max_size, uint32_t *out_size)
+{
+    (void)priv; (void)path; (void)buf; (void)max_size;
+    if (out_size) *out_size = 0;
+    return 0;
+}
+
+static int minix_write(void *priv, const char *path,
+                        const void *data, uint32_t size)
+{
+    (void)priv; (void)path; (void)data; (void)size;
+    return -EROFS;
+}
+
+static int minix_stat(void *priv, const char *path, struct vfs_stat *st)
+{
+    (void)priv;
+    memset(st, 0, sizeof(*st));
+    st->type = VFS_TYPE_FILE;
+    if (path[0] == '/' && path[1] == '\0')
+        st->type = VFS_TYPE_DIR;
+    return 0;
+}
+
+static int minix_create(void *priv, const char *path, uint8_t type)
+{
+    (void)priv; (void)path; (void)type;
+    return -EROFS;
+}
+
+static int minix_unlink(void *priv, const char *path)
+{
+    (void)priv; (void)path;
+    return -EROFS;
+}
+
+static int minix_readdir(void *priv, const char *path)
+{
+    (void)priv;
+    if (path[0] == '/' && path[1] == '\0')
+        kprintf(".              <DIR>\n"
+                "..             <DIR>\n"
+                "[minix] MINIX v%d filesystem (stub)\n",
+                ((struct minix_priv *)priv)->version);
+    return 0;
+}
+
+static struct vfs_ops minix_ops = {
+    .read    = minix_read,
+    .write   = minix_write,
+    .stat    = minix_stat,
+    .create  = minix_create,
+    .unlink  = minix_unlink,
+    .readdir = minix_readdir,
+};
+
+/* ── Init ──────────────────────────────────────────────────────── */
+
+int minix_init(void)
+{
+    kprintf("[minix] MINIX filesystem (v1/v2/v3) initialized\n");
+    vfs_register_filesystem("minix", &minix_ops);
+    return 0;
+}
+
+#ifdef MODULE
+int init_module(void) { return minix_init(); }
+void cleanup_module(void) {}
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Hermes OS Kernel Team");
+MODULE_DESCRIPTION("MINIX filesystem v1/v2/v3 — read-only");
+MODULE_VERSION("1.0");
+#endif

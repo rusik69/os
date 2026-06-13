@@ -49,6 +49,9 @@ static void sh_cet(const char *a)        { (void)a; cmd_cet(); }
 static void sh_nft(const char *a)        { cmd_nft(a); }
 static void sh_true(const char *a)      { (void)a; cmd_true(); }
 static void sh_false(const char *a)     { (void)a; cmd_false(); }
+static void sh_arptables(const char *a) { cmd_arptables(a); }
+static void sh_ebtables(const char *a)  { cmd_ebtables(a); }
+static void sh_conntrack(const char *a) { cmd_conntrack(a); }
 static void __attribute__((unused)) sh_logname(const char *a)   { (void)a; cmd_logname(); }
 static void __attribute__((unused)) sh_groups(const char *a)    { (void)a; cmd_groups(); }
 static void __attribute__((unused)) sh_hostid(const char *a)    { (void)a; cmd_hostid(); }
