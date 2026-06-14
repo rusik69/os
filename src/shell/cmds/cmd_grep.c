@@ -5,10 +5,84 @@
 #include "libc.h"
 #include "stdlib.h"    /* fnmatch */
 
-void cmd_grep(const char *args) {
-    if (!args) { kprintf("Usage: grep [-g] [-i] [-v] <pattern> [file]\n"); return; }
+/* Forward declaration */
+static void grep_file(const char *path, const char *pattern, const char *lpat,
+                      int pi, int glob_mode, int invert, int ignore_case,
+                      int print_filename);
 
-    int glob_mode = 0, invert = 0, ignore_case = 0;
+static void grep_recursive(const char *dir, const char *pattern, const char *lpat,
+                            int pi, int glob_mode, int invert, int ignore_case)
+{
+    static char names[128][FS_MAX_NAME];
+    int n = fs_list_names(dir, "", names, 128);
+    if (n < 0) return;
+
+    for (int i = 0; i < n; i++) {
+        /* Build full path */
+        char path[64];
+        int plen = strlen(dir);
+        if (plen > 0 && dir[plen - 1] == '/')
+            snprintf(path, sizeof(path), "%s%s", dir, names[i]);
+        else
+            snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+
+        /* Stat to check type */
+        struct vfs_stat st;
+        if (vfs_stat(path, &st) != 0)
+            continue;
+
+        if (st.type == FS_TYPE_DIR) {
+            /* Skip . and .. */
+            if (strcmp(names[i], ".") == 0 || strcmp(names[i], "..") == 0)
+                continue;
+            grep_recursive(path, pattern, lpat, pi, glob_mode, invert, ignore_case);
+        } else if (st.type == FS_TYPE_FILE) {
+            grep_file(path, pattern, lpat, pi, glob_mode, invert, ignore_case, 1);
+        }
+    }
+}
+
+static void grep_file(const char *path, const char *pattern, const char *lpat,
+                      int pi, int glob_mode, int invert, int ignore_case,
+                      int print_filename)
+{
+    static char fbuf[4096];
+    uint32_t size = 0;
+
+    if (vfs_read(path, fbuf, sizeof(fbuf) - 1, &size) != 0)
+        return;
+    fbuf[size] = '\0';
+
+    char *line = fbuf;
+    for (uint32_t i = 0; i <= size; i++) {
+        if (fbuf[i] == '\n' || i == size) {
+            fbuf[i] = '\0';
+            int matched;
+            if (glob_mode) {
+                matched = (fnmatch(pattern, line, 0) == 0);
+            } else if (ignore_case) {
+                char lline[256];
+                int li = 0;
+                while (line[li] && li < 255) { lline[li] = (char)tolower((unsigned char)line[li]); li++; }
+                lline[li] = '\0';
+                matched = (strstr(lline, lpat) != (char *)0);
+            } else {
+                matched = (strstr(line, pattern) != (char *)0);
+            }
+            if (matched != invert) {
+                if (print_filename)
+                    kprintf("%s:", path);
+                kprintf("%s\n", line);
+            }
+            line = &fbuf[i + 1];
+        }
+    }
+}
+
+void cmd_grep(const char *args) {
+    if (!args) { kprintf("Usage: grep [-g] [-i] [-v] [-r] <pattern> [file]\n"); return; }
+
+    int glob_mode = 0, invert = 0, ignore_case = 0, recursive = 0;
     const char *p = args;
 
     while (*p == '-') {
@@ -17,6 +91,7 @@ void cmd_grep(const char *args) {
             if (*p == 'g') glob_mode = 1;
             else if (*p == 'v') invert = 1;
             else if (*p == 'i') ignore_case = 1;
+            else if (*p == 'r') recursive = 1;
             p++;
         }
         while (*p == ' ') p++;
@@ -28,13 +103,36 @@ void cmd_grep(const char *args) {
     pattern[pi] = '\0';
     while (*p == ' ') p++;
 
+    /* Build lowercase pattern for -i */
+    char lpat[128];
+    if (ignore_case) {
+        for (int k = 0; k <= pi; k++) lpat[k] = (char)tolower((unsigned char)pattern[k]);
+    }
+
+    if (recursive) {
+        /* Search recursively from given directory or root */
+        const char *search_dir = *p ? p : "/";
+        char dirbuf[64];
+        if (*search_dir != '/') {
+            dirbuf[0] = '/';
+            strncpy(dirbuf + 1, search_dir, 62);
+            dirbuf[63] = '\0';
+            /* Strip trailing spaces */
+            int dl = strlen(dirbuf);
+            while (dl > 0 && dirbuf[dl - 1] == ' ') dirbuf[--dl] = '\0';
+            search_dir = dirbuf;
+        }
+        grep_recursive(search_dir, pattern, lpat, pi, glob_mode, invert, ignore_case);
+        return;
+    }
+
     static char fbuf[4096];
     uint32_t size = 0;
 
     if (!*p) {
         /* No file argument: try piped stdin */
         if (!shell_has_stdin()) {
-            kprintf("Usage: grep [-g] [-i] [-v] <pattern> [file]\n");
+            kprintf("Usage: grep [-g] [-i] [-v] [-r] <pattern> [file]\n");
             return;
         }
         size = (uint32_t)shell_stdin_read(fbuf, (int)sizeof(fbuf) - 1);
@@ -51,12 +149,6 @@ void cmd_grep(const char *args) {
         }
     }
     fbuf[size] = '\0';
-
-    /* Build lowercase pattern for -i */
-    char lpat[128];
-    if (ignore_case) {
-        for (int k = 0; k <= pi; k++) lpat[k] = (char)tolower((unsigned char)pattern[k]);
-    }
 
     char *line = fbuf;
     int count = 0;

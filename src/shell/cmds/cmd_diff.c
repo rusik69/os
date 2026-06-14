@@ -47,6 +47,50 @@ static int parse_lines(const char *path, char lines[][DIFF_LINE_LEN], int max_li
 
 /* ── Unified diff output ────────────────────────────────────────── */
 
+static void emit_hunk(int s1, int e1, int s2, int e2,
+                       char l1[][DIFF_LINE_LEN], int n1,
+                       char l2[][DIFF_LINE_LEN], int n2)
+{
+    (void)n1; (void)n2;
+    /* Print @@ header (1-based line numbers) */
+    kprintf("@@ -%d,%d +%d,%d @@\n",
+            s1 + 1, e1 - s1,
+            s2 + 1, e2 - s2);
+
+    /* Walk hunk region printing context, removals and additions */
+    int i = s1, j = s2;
+    while (i < e1 || j < e2) {
+        if (i < e1 && j < e2 && strcmp(l1[i], l2[j]) == 0) {
+            kprintf(" %s\n", l1[i]);
+            i++; j++;
+        } else {
+            /* Look ahead for next matching line (up to 3 lines) */
+            int found = 0;
+            for (int off = 1; off <= 3 && !found; off++) {
+                if (i + off < e1 && j + off < e2 &&
+                    strcmp(l1[i + off], l2[j + off]) == 0) {
+                    for (int k = 0; k < off; k++)
+                        kprintf("-%s\n", l1[i + k]);
+                    for (int k = 0; k < off; k++)
+                        kprintf("+%s\n", l2[j + k]);
+                    i += off; j += off;
+                    found = 1;
+                }
+            }
+            if (!found) {
+                if (i < e1 && j < e2) {
+                    kprintf("-%s\n", l1[i]); i++;
+                    kprintf("+%s\n", l2[j]); j++;
+                } else if (i < e1) {
+                    kprintf("-%s\n", l1[i]); i++;
+                } else {
+                    kprintf("+%s\n", l2[j]); j++;
+                }
+            }
+        }
+    }
+}
+
 static void print_unified_diff(const char *name1, const char *name2,
                                 char l1[][DIFF_LINE_LEN], int n1,
                                 char l2[][DIFF_LINE_LEN], int n2)
@@ -57,42 +101,51 @@ static void print_unified_diff(const char *name1, const char *name2,
 
     int i = 0, j = 0;
     while (i < n1 || j < n2) {
-        if (i < n1 && j < n2 && strcmp(l1[i], l2[j]) == 0) {
-            /* Lines match */
-            kprintf(" %s\n", l1[i]);
+        /* Skip matching lines to find next change */
+        while (i < n1 && j < n2 && strcmp(l1[i], l2[j]) == 0) {
             i++; j++;
-        } else {
-            /* Find next matching line (simple LCS-based hunk detection) */
-            /* Look ahead up to 3 lines for a match */
-            int found = 0;
-            for (int off = 1; off <= 3 && !found; off++) {
-                if (i + off < n1 && j + off < n2 &&
-                    strcmp(l1[i + off], l2[j + off]) == 0) {
-                    /* Print removals, then additions */
-                    for (int k = 0; k < off; k++)
-                        kprintf("-%s\n", l1[i + k]);
-                    for (int k = 0; k < off; k++)
-                        kprintf("+%s\n", l2[j + k]);
-                    i += off; j += off;
-                    found = 1;
-                }
-            }
+        }
+        if (i >= n1 && j >= n2) break;
 
-            if (!found) {
-                /* No nearby match — print as removal/addition pair */
-                if (i < n1 && j < n2) {
-                    kprintf("-%s\n", l1[i]);
-                    kprintf("+%s\n", l2[j]);
-                    i++; j++;
-                } else if (i < n1) {
-                    kprintf("-%s\n", l1[i]);
-                    i++;
-                } else {
-                    kprintf("+%s\n", l2[j]);
-                    j++;
+        /* We found a change — determine hunk boundaries */
+        int hunk_s1 = i, hunk_s2 = j;
+
+        /* Scan forward to find end of this change region.
+         * A change region ends when we find a run of matching lines
+         * that is at least as long as our lookahead window. */
+        while (i < n1 || j < n2) {
+            if (i < n1 && j < n2 && strcmp(l1[i], l2[j]) == 0) {
+                /* Found a match — look ahead to see if it's stable */
+                int stable = 1;
+                for (int off = 1; off <= 3 && stable; off++) {
+                    if (i + off < n1 && j + off < n2 &&
+                        strcmp(l1[i + off], l2[j + off]) == 0) {
+                        /* Stable match ahead — end hunk */
+                        stable = 0;
+                    }
                 }
+                if (!stable) {
+                    i++; j++;
+                    break;
+                }
+                /* Single isolated matching line — keep going */
+                i++; j++;
+            } else {
+                /* Still in changed region */
+                if (i < n1) i++;
+                if (j < n2) j++;
             }
         }
+
+        /* Include 3 lines of context before the change (if available) */
+        int ctx_before = 3;
+        while (ctx_before > 0 && hunk_s1 > 0 && hunk_s2 > 0) {
+            hunk_s1--; hunk_s2--;
+            ctx_before--;
+        }
+
+        /* Emit the hunk */
+        emit_hunk(hunk_s1, i, hunk_s2, j, l1, n1, l2, n2);
     }
 }
 
