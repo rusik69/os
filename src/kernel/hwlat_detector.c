@@ -11,6 +11,7 @@
 #include "printf.h"
 #include "timer.h"
 #include "smp.h"
+#include "errno.h"
 
 #define HW_LATENCY_THRESHOLD  10000  /* 10ms threshold in microseconds */
 #define HW_LATENCY_SAMPLE_MS  10     /* Sample for 10ms */

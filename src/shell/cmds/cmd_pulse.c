@@ -32,7 +32,19 @@
 
 /* Forward declarations for VFS functions */
 int vfs_open(const char *path, int flags, int mode);
-void vfs_close(int fd);
+
+/* Close a file descriptor using the kernel close syscall.
+ * Cannot call sys_close() directly as it's static. */
+static inline void vfs_close(int fd)
+{
+    __asm__ volatile(
+        "mov $3, %%rax\n\t"  /* SYS_CLOSE */
+        "syscall"
+        :
+        : "D"(fd)
+        : "rax", "rcx", "r11", "memory"
+    );
+}
 
 /* ── Configuration ─────────────────────────────────────────────── */
 

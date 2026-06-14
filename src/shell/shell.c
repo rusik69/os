@@ -13,6 +13,7 @@
 #include "fs.h"
 #include "process.h"
 #include "scheduler.h"
+#include "vermagic.h"
 
 /* Forward declaration for fnmatch (defined in lib/stdlib.c) */
 int fnmatch(const char *pattern, const char *string, int flags);

@@ -2,16 +2,24 @@
 #define SMP_H
 
 #include "types.h"
-#include "process.h"
-#include "scheduler.h"
 #include "gdt.h"
 #include "cpuidle.h"
 
-/* Forward declaration for RPS per-CPU backlog pointer */
-struct rps_backlog;
-
 /* Maximum CPUs supported */
 #define SMP_MAX_CPUS 16
+
+/* Scheduler priority levels (needed by cpu_info queue arrays).
+ * SCHED_LEVELS is normally defined in scheduler.h, but we define it
+ * locally here to break a circular include chain:
+ *   smp.h -> process.h -> spinlock.h -> preempt.h -> smp.h
+ * The definition must match scheduler.h. */
+#ifndef SCHED_LEVELS
+#define SCHED_LEVELS 4
+#endif
+
+/* Forward declarations for types used as pointers inside struct cpu_info */
+struct process;
+struct rps_backlog;
 
 /* Per-CPU information structure; accessed via GS.base */
 struct cpu_info {
@@ -121,5 +129,9 @@ void smp_tlb_shootdown(const uint64_t *addrs, int nr);
 /* AP trampoline entry point (defined in ap_trampoline.asm) */
 extern void ap_trampoline(void);
 extern void ap_entry_64(void);
+
+/* ── Include full type definitions for callers' convenience ───────── */
+#include "process.h"
+#include "scheduler.h"
 
 #endif

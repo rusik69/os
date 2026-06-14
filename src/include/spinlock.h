@@ -3,6 +3,13 @@
 
 #include "types.h"
 #include "io.h"  /* for pause/rep nop */
+
+/*
+ * Spinlock — busy-wait lock with exponential backoff.
+ * ...
+ */
+typedef volatile int spinlock_t;
+
 #include "preempt.h"  /* preempt_disable / preempt_enable */
 
 /*
@@ -15,8 +22,6 @@
  *   - Owner tracking via spinlock_debug subsystem for diagnostics
  *   - Panic-time release of held spinlocks (via panic notifier)
  */
-
-typedef volatile int spinlock_t;
 
 #define SPINLOCK_INIT 0
 

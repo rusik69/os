@@ -28,6 +28,7 @@
 #include "spinlock.h"
 #include "module.h"
 #include "vmm.h"   /* vmm_map_phys, vmm_unmap_phys */
+#include "errno.h"
 
 /* ── Global TPM device singleton ──────────────────────────────────── */
 static struct tpm_device g_tpm;
