@@ -95,6 +95,65 @@ static void page_fault_handler(struct interrupt_frame *frame) {
         /* We don't have a way to differentiate yet; count as minor for now */
     }
 
+#ifdef CONFIG_DEBUG_PAGEALLOC
+    /* ── Paranoid runtime debug checks ──────────────────────────── */
+    {
+        struct process *dbg_proc = process_get_current();
+
+        /* Recursive fault detection: check if we're already handling */
+        static int pf_recursion_depth = 0;
+        if (pf_recursion_depth > 0) {
+            kprintf("*** RECURSIVE PAGE FAULT DETECTED *** "
+                    "depth=%d addr=0x%llx err=0x%llx\n",
+                    pf_recursion_depth, cr2, err);
+            if (pf_recursion_depth > 2) {
+                panic("RECURSIVE PAGE FAULT (likely double-fault imminent)");
+            }
+        }
+        pf_recursion_depth++;
+
+        /* Verify kernel pointers are within valid range */
+        if (!(err & (1ULL << 2))) {
+            /* Kernel-mode fault: validate RIP and RSP */
+            if (frame->rip < 0xFFFF800000000000ULL ||
+                frame->rip >= 0xFFFFFFFFFFFFFFFFULL) {
+                kprintf("*** WARNING: kernel fault with invalid RIP=0x%llx ***\n",
+                        (unsigned long long)frame->rip);
+            }
+            if (frame->rsp < 0xFFFF800000000000ULL ||
+                frame->rsp >= 0xFFFFFFFFFFFFFFFFULL) {
+                kprintf("*** WARNING: kernel fault with invalid RSP=0x%llx ***\n",
+                        (unsigned long long)frame->rsp);
+            }
+        }
+
+        /* Check if this looks like a stack guard page access */
+        if (dbg_proc && !(err & (1ULL << 2))) {
+            uint64_t guard_page = dbg_proc->guard_page;
+            if (guard_page && (cr2 & ~(uint64_t)0xFFF) == (guard_page & ~(uint64_t)0xFFF)) {
+                kprintf("*** STACK GUARD PAGE ACCESS *** process=%s pid=%u "
+                        "addr=0x%llx rip=0x%llx\n",
+                        dbg_proc->name ? dbg_proc->name : "?",
+                        (unsigned int)dbg_proc->pid,
+                        (unsigned long long)cr2,
+                        (unsigned long long)frame->rip);
+                /* Deeper check: if RSP is at or below the guard page,
+                 * this is a confirmed stack overflow */
+                uint64_t rsp;
+                __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+                if (rsp < dbg_proc->kernel_stack) {
+                    kprintf("*** CONFIRMED KERNEL STACK OVERFLOW *** "
+                            "RSP=0x%llx below stack base=0x%llx\n",
+                            (unsigned long long)rsp,
+                            (unsigned long long)dbg_proc->kernel_stack);
+                }
+            }
+        }
+
+        pf_recursion_depth--;
+    }
+#endif /* CONFIG_DEBUG_PAGEALLOC */
+
     /* Page fault tracing */
     if (page_fault_trace) {
         struct process *proc = process_get_current();

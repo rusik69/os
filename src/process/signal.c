@@ -131,33 +131,69 @@ int signal_send(uint32_t pid, int signum) {
  * Stores siginfo for delivery by signal_check (or signal fd read).
  * For real-time signals (SIGRTMIN-SIGRTMAX) the info is queued.
  * For standard signals, keeps the most recent info only.
- * Validates siginfo fields before storing (security). */
+ * Validates siginfo fields before storing (security).
+ *
+ * Note: This function acquires the process's sig_lock internally
+ * so it is SMP-safe.  It does NOT call signal_send() separately
+ * to avoid a TOCTOU race between setting the pending bit and
+ * storing the siginfo.
+ */
 int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
-    int ret = signal_send(pid, signum);
-    if (ret == 0 && info) {
-        struct process *p = process_get_by_pid(pid);
-        if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
-            /* ── siginfo validation ──────────────────────────────── */
-            struct siginfo validated = *info;
-            struct process *caller = process_get_current();
-            int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
-            signal_validate_siginfo(&validated, is_from_userspace);
+    if (signum <= 0 || signum >= SIG_MAX) return -1;
 
-            uint64_t __sig_flags2;
-            spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags2);
-            if (p->pending_signals & (1ULL << signum)) {
-                p->sig_info[signum] = validated;
-            }
-            spinlock_irqsave_release(&p->sig_lock, __sig_flags2);
+    struct process *p = process_get_by_pid(pid);
+    if (!p || p->state == PROCESS_UNUSED || p->state == PROCESS_ZOMBIE)
+        return -1;
+
+    /* Hold the lock for the entire operation */
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+
+    /* Permission check */
+    struct process *caller = process_get_current();
+    if (caller && caller->pid != p->pid) {
+        if (!process_can_see(caller, p)) {
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return -1;
         }
-        /* Notify signalfd listeners with full siginfo */
+    }
+
+    if (signum == SIGKILL) {
+        p->state = PROCESS_ZOMBIE;
+        p->exit_code = 128 + signum;
+        p->is_suspended = 0;
+        p->sleep_until = 0;
+        scheduler_remove(p);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        if (p == process_get_current()) scheduler_yield();
+        return 0;
+    }
+
+    /* Set the pending signal bit */
+    p->pending_signals |= (1ULL << signum);
+
+    /* Store siginfo if provided */
+    if (info) {
+        struct siginfo validated = *info;
+        int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
+        signal_validate_siginfo(&validated, is_from_userspace);
+        p->sig_info[signum] = validated;
+    }
+
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+    /* Notify signalfd listeners */
+    extern void signalfd_notify(int signum);
+    signalfd_notify(signum);
+    if (info) {
         extern void signalfd_notify_ext(int signum, int si_code,
                                         uint32_t si_pid, uint32_t si_uid,
                                         uint64_t si_addr, int si_status);
         signalfd_notify_ext(signum, info->si_code, info->si_pid, info->si_uid,
                            (uint64_t)(uintptr_t)info->si_addr, info->si_status);
     }
-    return ret;
+
+    return 0;
 }
 
 int signal_send_group(uint32_t pgid, int signum) {

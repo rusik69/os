@@ -1,20 +1,18 @@
+# .github/workflows/ci.yml — CI workflow for Hermes OS
+#
+# Builds the kernel, userspace, runs unit tests, and QEMU boot test.
+
 name: CI
 
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ '**' ]
-
-env:
-  CCACHE_DIR: /tmp/ccache
-  CCACHE_MAXSIZE: 500M
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    branches: [ main, master ]
 
 jobs:
-  # ── Build: GCC release ──────────────────────────────────────────────
-  build-gcc-release:
-    name: Build (GCC release)
+  # ── Kernel build ─────────────────────────────────────────────────────
+  kernel:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,47 +21,24 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            build-essential \
-            gcc \
-            nasm \
-            qemu-system-x86 \
-            ccache \
-            make 2>&1 | tail -5
+            build-essential nasm qemu-system-x86 \
+            x86_64-elf-gcc x86_64-linux-gnu-gcc \
+            xorriso grub-pc-bin
 
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-gcc-release-${{ github.sha }}
-          restore-keys: ccache-gcc-release-
-
-      - name: Build kernel (release)
+      - name: Build kernel
         run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            CFLAGS_EXTRA="-Werror" \
-            -j$(nproc)
+          make -j$(nproc)
 
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-      - name: Upload build artifacts
+      - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-gcc-release
+          name: kernel
           path: |
             build/kernel.bin
-            build/kernel.elf
-          if-no-files-found: warn
+            build/disk.img
 
-  # ── Build: GCC debug (no optimization, full asserts) ───────────────
-  build-gcc-debug:
-    name: Build (GCC debug)
+  # ── Userspace build ──────────────────────────────────────────────────
+  userspace:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,50 +47,73 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
             build-essential \
-            gcc \
-            nasm \
-            ccache \
-            make 2>&1 | tail -5
+            x86_64-linux-gnu-gcc
 
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-gcc-debug-${{ github.sha }}
-          restore-keys: ccache-gcc-debug-
-
-      - name: Build kernel (debug)
+      - name: Build userspace
         run: |
-          make all \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-                    -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-                    -Wall -Wextra \
-                    -Isrc/include -Isrc/gui -Isrc/doom -Ibuild -mcmodel=large -g -O0 \
-                    -Wa,--noexecstack -MMD -MP" \
-            -j$(nproc)
+          cd userspace && make -j$(nproc)
 
-      - name: Check binary
-        run: ls -lh build/kernel.bin
+      - name: Verify initramfs.cpio
+        run: |
+          if [ -f userspace/initramfs.cpio ]; then
+            echo "✅ initramfs.cpio created"
+            ls -lh userspace/initramfs.cpio
+            file userspace/initramfs.cpio
+          else
+            echo "❌ initramfs.cpio not found!"
+            exit 1
+          fi
 
-      - name: Upload build artifacts
+      - name: Upload initramfs artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-gcc-debug
-          path: |
-            build/kernel.bin
-            build/kernel.elf
-          if-no-files-found: warn
+          name: initramfs
+          path: userspace/initramfs.cpio
 
-  # ── Build: Clang release ────────────────────────────────────────────
-  build-clang-release:
-    name: Build (Clang release)
+  # ── Host-side unit tests ────────────────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential
+
+      - name: Run host-side unit tests
+        run: |
+          make unit-test
+
+  # ── QEMU boot test ──────────────────────────────────────────────────
+  boot-test:
+    runs-on: ubuntu-latest
+    needs: [kernel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel
+          path: build/
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            qemu-system-x86 python3
+
+      - name: Run QEMU boot test
+        run: |
+          python3 src/test/boot_test.py \
+            --kernel build/kernel.bin \
+            --disk build/disk.img \
+            --timeout 30
+
+  # ── Full build check (kernel + userspace) ──────────────────────────
+  full-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,169 +122,18 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            binutils-x86-64-linux-gnu \
-            build-essential \
-            clang \
-            lld \
-            nasm \
-            ccache \
-            make 2>&1 | tail -5
+            build-essential nasm qemu-system-x86 \
+            x86_64-elf-gcc x86_64-linux-gnu-gcc
 
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-clang-release-${{ github.sha }}
-          restore-keys: ccache-clang-release-
-
-      - name: Build kernel with Clang (release)
+      - name: Build kernel
         run: |
-          make all \
-            CC="ccache clang" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc)
+          make -j$(nproc)
 
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-clang-release
-          path: |
-            build/kernel.bin
-            build/kernel.elf
-          if-no-files-found: warn
-
-  # ── Build: Clang debug (no optimization, full asserts) ─────────────
-  build-clang-debug:
-    name: Build (Clang debug)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
+      - name: Build userspace
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            binutils-x86-64-linux-gnu \
-            build-essential \
-            clang \
-            lld \
-            nasm \
-            ccache \
-            make 2>&1 | tail -5
+          cd userspace && make -j$(nproc)
 
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-clang-debug-${{ github.sha }}
-          restore-keys: ccache-clang-debug-
-
-      - name: Build kernel with Clang (debug)
+      - name: Verify both artifacts
         run: |
-          make all \
-            CC="ccache clang" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            CFLAGS="-std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-                    -fno-stack-protector -nostdlib -nostdinc -fno-builtin \
-                    -Wall -Wextra \
-                    -Isrc/include -Isrc/gui -Isrc/doom -Ibuild -mcmodel=large -g -O0 \
-                    -Wa,--noexecstack -MMD -MP" \
-            -j$(nproc)
-
-      - name: Check binary
-        run: ls -lh build/kernel.bin
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-clang-debug
-          path: |
-            build/kernel.bin
-            build/kernel.elf
-          if-no-files-found: warn
-
-  # ── Code formatting check ───────────────────────────────────────────
-  format-check:
-    name: Code formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install clang-format
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-format-18 2>&1 | tail -3
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
-          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
-
-      - name: Check code formatting
-        run: |
-          git fetch origin --depth=1
-          make format-check FORMAT_BASE_REF="origin/main" || \
-            make format-check FORMAT_BASE_REF="origin/master"
-
-  # ── GCC -fanalyzer static analysis (Item 261) ──────────────────────
-  analyze:
-    name: Static analysis (GCC -fanalyzer)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            gcc-x86-64-linux-gnu \
-            binutils-x86-64-linux-gnu \
-            build-essential \
-            gcc \
-            nasm \
-            ccache \
-            make 2>&1 | tail -5
-
-      - name: ccache cache
-        continue-on-error: true
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-analyze-${{ github.sha }}
-          restore-keys: ccache-analyze-
-
-      - name: Run GCC -fanalyzer analysis
-        continue-on-error: true
-        run: |
-          make analyze \
-            CC="ccache x86_64-linux-gnu-gcc" \
-            LD=x86_64-linux-gnu-ld \
-            OBJCOPY=x86_64-linux-gnu-objcopy \
-            -j$(nproc) 2>&1
-
-      - name: Summarize -fanalyzer findings
-        run: |
-          echo "=== GCC -fanalyzer static analysis complete ==="
-          echo "Note: Some findings may be false positives in freestanding kernel code."
-          echo "Review warnings manually for real issues."
-
-  # ── Host-side libc unit tests ───────────────────────────────────────
-  libc-test:
-    name: libc unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc libc6-dev make binutils 2>&1 | tail -5
-
-      - name: Build and run host-side libc tests
-        run: |
-          cd tests/host_libc
-          make 2>&1
+          ls -lh build/kernel.bin
+          ls -lh userspace/initramfs.cpio

@@ -27,3 +27,6 @@ _start:
     # Should never reach here
     hlt
 .size _start, . - _start
+
+# Mark stack as non-executable
+.section .note.GNU-stack, "", @note

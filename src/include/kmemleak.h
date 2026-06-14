@@ -60,6 +60,12 @@ int kmemleak_leak_count(void);
 /* Print all current scan results (leaks found so far). */
 void kmemleak_print_leaks(void);
 
+/* Register debugfs interface for manual scan trigger. */
+void kmemleak_register_debugfs(void);
+
+/* Return number of unreferenced objects (for KUnit test helper). */
+int kmemleak_unreferenced_count(void);
+
 /* ── Allocation flags ────────────────────────────────────────────── */
 
 #define KMEMLEAK_HEAP    0  /* allocated via kmalloc / heap.c */

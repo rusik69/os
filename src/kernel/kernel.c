@@ -225,7 +225,62 @@ void do_initcalls(void) {
     kprintf("[OK] Initcalls completed\n");
 }
 
-/* Stack-smashing protector (SSP) canary */
+/* ── Boot timing ───────────────────────────────────────────────── */
+/* Captured at earliest possible point after entry (TSC timestamp) */
+static uint64_t boot_start_tsc = 0;
+uint64_t boot_time_ms = 0;
+
+/* Read the x86 Time-Stamp Counter */
+static inline uint64_t rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/* Rough TSC frequency calibration using PIT/generic estimate.
+ * On modern x86_64, the TSC frequency is usually the max core frequency.
+ * We approximate ms by dividing TSC delta by (TSC_FREQ / 1000).
+ * A more precise calibration could come from CPUID leaf 0x15 or MSR 0xCE. */
+#define TSC_FREQ_ESTIMATE 2000000000ULL  /* 2 GHz default estimate */
+
+static uint32_t tsc_khz_estimate = 0;
+
+/* Calibrate TSC frequency using CPUID leaf 0x15 (TSC/clock ratio).
+ * Returns 0 on success, -1 if not available (uses default). */
+static int calibrate_tsc(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(0x15));
+    if (ecx != 0 && ebx != 0) {
+        /* TSC frequency = (ecx * ebx / eax) */
+        uint64_t freq = (uint64_t)ecx * (uint64_t)ebx / (uint64_t)eax;
+        if (freq > 1000000 && freq < 10000000000ULL) {
+            tsc_khz_estimate = (uint32_t)(freq / 1000);
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static uint64_t tsc_to_ms(uint64_t tsc_delta)
+{
+    uint64_t khz = (tsc_khz_estimate > 0) ? (uint64_t)tsc_khz_estimate
+                                          : (TSC_FREQ_ESTIMATE / 1000);
+    return tsc_delta / khz;
+}
+
+static void boot_timing_report(void)
+{
+    uint64_t now = rdtsc();
+    uint64_t delta = now - boot_start_tsc;
+    boot_time_ms = tsc_to_ms(delta);
+    kprintf("\n[Boot] Took %llu ms (TSC delta = %llu cycles, %u KHz)\n",
+            (unsigned long long)boot_time_ms,
+            (unsigned long long)delta, tsc_khz_estimate);
+}
 uint64_t __stack_chk_guard = 0xDEADBEEFCAFEBABEULL;
 
 void __attribute__((noreturn)) __stack_chk_fail(void) {
@@ -235,6 +290,9 @@ void __attribute__((noreturn)) __stack_chk_fail(void) {
 }
 
 void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
+    /* Capture TSC boot timestamp as early as possible */
+    boot_start_tsc = rdtsc();
+
     /* Initialize stack canary from PRNG as early as possible */
     __stack_chk_guard = (uint64_t)magic ^ multiboot_info_phys ^ 0xA5A5A5A5A5A5A5A5ULL;
 
@@ -1171,6 +1229,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
     kprintf("[OK] Processes created\n");
+
+    /* Calibrate TSC frequency for boot timing */
+    calibrate_tsc();
+
+    /* Print boot timing report */
+    boot_timing_report();
 #endif
 
     /* ── Boot version string ────────────────────────────────────────

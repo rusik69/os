@@ -566,6 +566,23 @@ void schedule(void) {
     struct cpu_info *ci = this_cpu();
     if (!ci->scheduler_enabled) return;
 
+    /* ── Preempt count sanity check ──────────────────────────────────
+     * schedule() should never be called while preemption is disabled
+     * (preempt_count > 0).  This indicates a missing preempt_enable()
+     * or a bug where schedule() was called from an atomic context. */
+    if (ci->preempt_count > 0) {
+        kprintf("*** BUG: schedule() called with preempt_count=%d ***\n",
+                ci->preempt_count);
+        kprintf("    CPU=%d, current_process=%s (pid=%u)\n",
+                ci->cpu_id,
+                ci->current_process && ci->current_process->name
+                    ? ci->current_process->name : "?",
+                ci->current_process ? (unsigned int)ci->current_process->pid : 0);
+        arch_print_backtrace();
+        /* Do not panic — this is a recoverable warning in debug mode */
+        ci->preempt_count = 0;  /* Reset so we can continue */
+    }
+
     __asm__ volatile("cli");
 
     /* Clear the reschedule request — we're handling it now. */

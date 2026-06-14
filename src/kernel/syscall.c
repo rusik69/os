@@ -7663,12 +7663,17 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
 
 static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-1;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
+    if (!p || !p->pml4) return (uint64_t)-EINVAL;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
 
     len = (len + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + len < addr) return (uint64_t)-1;
-    if (addr + len > USER_VADDR_MAX) return (uint64_t)-1;
+    if (addr + len < addr) return (uint64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX) return (uint64_t)-EINVAL;
+
+    /* If MCL_FUTURE is set, pages are globally locked via mlockall;
+     * individual mlock is not permitted. */
+    if (p->vm_locked_flags & 2)
+        return (uint64_t)-EPERM;
 
     uint64_t npages = len / PAGE_SIZE;
 
@@ -7691,10 +7696,15 @@ static uint64_t sys_mlock(uint64_t addr, uint64_t len) {
 
 static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
     struct process *p = process_get_current();
-    if (!p || !p->pml4) return (uint64_t)-1;
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
-    if (addr + len < addr) return (uint64_t)-1;
-    if (addr + len > USER_VADDR_MAX) return (uint64_t)-1;
+    if (!p || !p->pml4) return (uint64_t)-EINVAL;
+    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-EINVAL;
+    if (addr + len < addr) return (uint64_t)-EINVAL;
+    if (addr + len > USER_VADDR_MAX) return (uint64_t)-EINVAL;
+
+    /* If MCL_CURRENT is set, pages are globally locked and cannot be
+     * individually unlocked. */
+    if (p->vm_locked_flags & 1)
+        return (uint64_t)-EPERM;
 
     uint64_t npages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     if (npages > p->locked_pages)

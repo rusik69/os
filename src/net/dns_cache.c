@@ -22,6 +22,8 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "vfs.h"
+#include "net_internal.h"
 
 /* ── Cache state ────────────────────────────────────────────────────── */
 
@@ -201,6 +203,193 @@ void dns_cache_foreach(int (*callback)(const struct dns_cache_entry *e, void *ar
 }
 
 /* ── Compatibility wrappers ────────────────────────────────────────── */
+
+/* ── DNS resolver layer with /etc/resolv.conf support ────────────── */
+
+#ifndef DNS_SERVER_MAX
+#define DNS_SERVER_MAX    4
+#endif
+#define DNS_SEARCH_MAX   4
+#define DNS_SEARCH_LEN   64
+
+/* Resolver state */
+static uint32_t dns_resolv_servers[DNS_SERVER_MAX];
+static int      dns_resolv_server_count = 0;
+static char     dns_search_domains[DNS_SEARCH_MAX][DNS_SEARCH_LEN];
+static int      dns_search_count = 0;
+
+/* ── Parse /etc/resolv.conf ────────────────────────────────────────
+ * Reads nameserver lines and search domains from /etc/resolv.conf.
+ * Called once during initialization and whenever resolv.conf changes.
+ */
+void dns_resolver_parse_resolv_conf(void)
+{
+    char buf[512];
+    uint32_t out_size = 0;
+
+    /* Reset state */
+    dns_resolv_server_count = 0;
+    dns_search_count = 0;
+
+    int ret = vfs_read("/etc/resolv.conf", buf, sizeof(buf) - 1, &out_size);
+    if (ret < 0 || out_size == 0) {
+        /* No resolv.conf — use defaults */
+        if (net_dns_server != 0) {
+            dns_resolv_servers[0] = net_dns_server;
+            dns_resolv_server_count = 1;
+        }
+        return;
+    }
+
+    buf[out_size] = '\0';
+
+    const char *p = buf;
+    while (p && *p && (dns_resolv_server_count < DNS_SERVER_MAX ||
+                       dns_search_count < DNS_SEARCH_MAX)) {
+        /* Skip whitespace */
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+
+        if (strncmp(p, "nameserver", 10) == 0 && dns_resolv_server_count < DNS_SERVER_MAX) {
+            p += 10;
+            while (*p == ' ' || *p == '\t') p++;
+
+            /* Parse A.B.C.D */
+            uint32_t parts[4] = {0};
+            int pi = 0;
+            const char *start = p;
+            while (*p && *p != '\n' && *p != '\r' && *p != ' ' && *p != '\t' && pi < 4) {
+                if (*p >= '0' && *p <= '9')
+                    parts[pi] = parts[pi] * 10 + (uint32_t)(*p - '0');
+                else if (*p == '.')
+                    pi++;
+                else
+                    break;
+                p++;
+            }
+            if (pi == 3 && p > start) {
+                uint32_t ip = (parts[0] << 24) | (parts[1] << 16) |
+                              (parts[2] << 8)  | parts[3];
+                dns_resolv_servers[dns_resolv_server_count++] = ip;
+            }
+            /* Skip to end of line */
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+            continue;
+        }
+
+        if (strncmp(p, "search", 6) == 0 && dns_search_count < DNS_SEARCH_MAX) {
+            p += 6;
+            while (*p == ' ' || *p == '\t') p++;
+
+            /* Parse search domains (space-separated) */
+            while (*p && *p != '\n' && dns_search_count < DNS_SEARCH_MAX) {
+                while (*p == ' ' || *p == '\t') p++;
+                if (!*p || *p == '\n') break;
+
+                int di = 0;
+                while (*p && *p != ' ' && *p != '\t' && *p != '\n' && di < DNS_SEARCH_LEN - 1)
+                    dns_search_domains[dns_search_count][di++] = *p++;
+                dns_search_domains[dns_search_count][di] = '\0';
+                if (di > 0) dns_search_count++;
+            }
+
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+            continue;
+        }
+
+        /* Skip to end of line */
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+
+    /* Fallback: if no nameservers found, use global net_dns_server */
+    if (dns_resolv_server_count == 0 && net_dns_server != 0) {
+        dns_resolv_servers[0] = net_dns_server;
+        dns_resolv_server_count = 1;
+    }
+}
+
+/* ── dns_resolver_server_count ─────────────────────────────────────
+ * Returns the number of configured nameservers.
+ */
+int dns_resolver_server_count(void)
+{
+    return dns_resolv_server_count;
+}
+
+/* ── dns_resolver_server_get ───────────────────────────────────────
+ * Returns the IP of the i-th nameserver (0-indexed).
+ */
+uint32_t dns_resolver_server_get(int i)
+{
+    if (i < 0 || i >= dns_resolv_server_count) return 0;
+    return dns_resolv_servers[i];
+}
+
+/* ── dns_resolver_search_count ─────────────────────────────────────
+ * Returns the number of search domains.
+ */
+int dns_resolver_search_count(void)
+{
+    return dns_search_count;
+}
+
+/* ── dns_resolver_search_get ───────────────────────────────────────
+ * Returns the i-th search domain string.
+ */
+const char *dns_resolver_search_get(int i)
+{
+    if (i < 0 || i >= dns_search_count) return NULL;
+    return dns_search_domains[i];
+}
+
+/* ── dns_resolver_resolve ──────────────────────────────────────────
+ * Try to resolve a hostname.  If the name contains a dot, try as-is first.
+ * Otherwise, try appending each search domain.
+ * Returns IP in host byte order, or 0 on failure.
+ */
+uint32_t dns_resolver_resolve(const char *hostname)
+{
+    uint32_t ip;
+
+    if (!hostname || !*hostname) return 0;
+
+    /* Check cache first with full name */
+    ip = dns_cache_lookup(hostname);
+    if (ip) return ip;
+
+    /* If name has a dot, try as-is via DNS query (simulated lookup for now) */
+    int has_dot = 0;
+    for (const char *c = hostname; *c; c++) {
+        if (*c == '.') { has_dot = 1; break; }
+    }
+
+    if (has_dot) {
+        /* In a full implementation, we'd send a DNS query here.
+         * For now, return 0 to indicate uncached. */
+        return 0;
+    }
+
+    /* Try with search domains appended */
+    for (int i = 0; i < dns_search_count; i++) {
+        char full_name[265]; /* DNS_NAME_MAX + "." + DNS_SEARCH_LEN */
+        size_t nlen = strlen(hostname);
+        size_t slen = strlen(dns_search_domains[i]);
+        if (nlen + 1 + slen >= sizeof(full_name)) continue;
+
+        memcpy(full_name, hostname, nlen);
+        full_name[nlen] = '.';
+        memcpy(full_name + nlen + 1, dns_search_domains[i], slen);
+        full_name[nlen + 1 + slen] = '\0';
+
+        ip = dns_cache_lookup(full_name);
+        if (ip) return ip;
+    }
+
+    return 0;
+}
 
 void net_dns_cache_set(const char *hostname, uint32_t ip) {
     dns_cache_store(hostname, ip, DNS_CACHE_TTL);

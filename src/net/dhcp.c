@@ -208,6 +208,11 @@ static void dhcp_build_request(void) {
 
 /* ── DHCP response handler ──────────────────────────────────────────── */
 
+/* Store lease time for renewal tracking */
+static uint32_t dhcp_lease_time = 0;
+static uint64_t dhcp_acquired_tick = 0;
+static int dhcp_has_lease = 0;
+
 static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
     if (len < sizeof(struct dhcp_packet)) return;
     struct dhcp_packet *dhcp = (struct dhcp_packet *)data;
@@ -293,6 +298,9 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
 
         dhcp_state = 3;
         dhcp_done = 1;
+        dhcp_has_lease = 1;
+        dhcp_acquired_tick = timer_get_ticks();
+        dhcp_lease_time = lease ? lease : 3600; /* default 1 hour */
     }
 }
 
@@ -404,7 +412,167 @@ void dhcp_init(void) {
     dhcp_result_gateway = 0;
     dhcp_result_netmask = 0;
     dhcp_result_dns = 0;
+    dhcp_lease_time = 0;
+    dhcp_acquired_tick = 0;
+    dhcp_has_lease = 0;
     kprintf("[OK] DHCP client initialized\n");
+}
+
+/* ── dhcp_renew ─────────────────────────────────────────────────────
+ * Renew the DHCP lease by sending a REQUEST to the server that
+ * granted the current lease.  Returns 0 on success, -1 on failure.
+ */
+int dhcp_renew(void)
+{
+    if (!dhcp_has_lease || dhcp_server_id == 0) {
+        /* No existing lease — fall back to full discover */
+        return dhcp_discover();
+    }
+
+    dhcp_xid = (uint32_t)(timer_get_ticks() ^ 0xA5A5A5A5u ^
+                          ((uint64_t)net_our_mac[2] << 24) ^
+                          ((uint64_t)net_our_mac[3] << 16) ^
+                          ((uint64_t)net_our_mac[4] << 8) ^
+                          net_our_mac[5]);
+    dhcp_state = 0;
+    dhcp_done = 0;
+
+    /* Send a unicast DHCPREQUEST to renew the current lease */
+    kprintf("[dhcp] Renewing lease for %u.%u.%u.%u\n",
+            (uint32_t)((dhcp_result_ip >> 24) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 16) & 0xFF),
+            (uint32_t)((dhcp_result_ip >> 8) & 0xFF),
+            (uint32_t)(dhcp_result_ip & 0xFF));
+
+    /* Build and send unicast DHCPREQUEST */
+    uint8_t buf[300];
+    memset(buf, 0, sizeof(buf));
+    struct dhcp_packet *dhcp = (struct dhcp_packet *)buf;
+
+    dhcp->op = 1;
+    dhcp->htype = 1;
+    dhcp->hlen = 6;
+    dhcp->xid = htonl(dhcp_xid);
+    dhcp->flags = htons(0x8000);
+    dhcp->magic_cookie = htonl(DHCP_MAGIC);
+    memcpy(dhcp->chaddr, net_our_mac, 6);
+
+    uint8_t *opt = buf + sizeof(struct dhcp_packet);
+    *opt++ = 53; *opt++ = 1; *opt++ = DHCP_REQUEST;
+    /* Requested IP option (50) */
+    *opt++ = 50; *opt++ = 4;
+    *opt++ = (uint8_t)(dhcp_result_ip >> 24);
+    *opt++ = (uint8_t)(dhcp_result_ip >> 16);
+    *opt++ = (uint8_t)(dhcp_result_ip >> 8);
+    *opt++ = (uint8_t)(dhcp_result_ip);
+    /* Server identifier option (54) */
+    *opt++ = 54; *opt++ = 4;
+    *opt++ = (uint8_t)(dhcp_server_id >> 24);
+    *opt++ = (uint8_t)(dhcp_server_id >> 16);
+    *opt++ = (uint8_t)(dhcp_server_id >> 8);
+    *opt++ = (uint8_t)(dhcp_server_id);
+    *opt++ = 255;
+
+    uint16_t pkt_len = (uint16_t)(opt - buf);
+    send_udp_unicast(dhcp_server_id, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
+    dhcp_state = 2;
+
+    /* Wait for ACK with timeout */
+    uint64_t start = timer_get_ticks();
+    int resends = 0;
+    const int max_resends = 3;
+
+    while (dhcp_state != 3 && resends < max_resends) {
+        uint64_t now = timer_get_ticks();
+        uint64_t elapsed = now - start;
+
+        if (elapsed > 300) break; /* 3 second timeout */
+
+        /* Poll network */
+        if (e1000_is_present()) {
+            uint8_t pkt[2048];
+            int n = e1000_receive(pkt, sizeof(pkt));
+            if (n > 0) {
+                struct eth_header *eth = (struct eth_header *)pkt;
+                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                    struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
+                    if (ip->protocol == IP_PROTO_UDP) {
+                        int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+                        int total_len = ntohs(ip->total_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
+                            total_len <= n - (int)sizeof(struct eth_header)) {
+                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
+                                uint16_t udp_len_val = ntohs(udp->length);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                if (data_off + data_len <= n) {
+                                    handle_dhcp_response(pkt + data_off, data_len);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (virtio_net_present()) {
+            uint8_t pkt[2048];
+            int n = virtio_net_receive(pkt, sizeof(pkt));
+            if (n > 0) {
+                struct eth_header *eth = (struct eth_header *)pkt;
+                if (ntohs(eth->type) == ETH_TYPE_IP && n >= (int)sizeof(struct eth_header) + (int)sizeof(struct ip_header)) {
+                    struct ip_header *ip = (struct ip_header *)(pkt + sizeof(struct eth_header));
+                    if (ip->protocol == IP_PROTO_UDP) {
+                        int ip_hdr_len = (ip->version_ihl & 0x0F) * 4;
+                        int total_len = ntohs(ip->total_len);
+                        if (ip_hdr_len + (int)sizeof(struct udp_header) <= total_len &&
+                            total_len <= n - (int)sizeof(struct eth_header)) {
+                            struct udp_header *udp = (struct udp_header *)(pkt + sizeof(struct eth_header) + ip_hdr_len);
+                            if (ntohs(udp->dst_port) == DHCP_CLIENT_PORT) {
+                                uint16_t udp_len_val = ntohs(udp->length);
+                                int data_off = sizeof(struct eth_header) + ip_hdr_len + sizeof(struct udp_header);
+                                int data_len = udp_len_val - sizeof(struct udp_header);
+                                if (data_off + data_len <= n) {
+                                    handle_dhcp_response(pkt + data_off, data_len);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (dhcp_state == 1 && elapsed > (uint64_t)(resends + 1) * 100) {
+            resends++;
+            kprintf("[dhcp] Resending RENEW (attempt %d/%d)\n", resends, max_resends);
+            send_udp_unicast(dhcp_server_id, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, buf, pkt_len);
+        }
+    }
+
+    if (dhcp_state == 3) {
+        kprintf("[dhcp] Lease renewed successfully\n");
+        dhcp_acquired_tick = timer_get_ticks();
+        resolv_conf_write_nameserver(dhcp_result_dns);
+        return 0;
+    }
+
+    kprintf("[dhcp] Lease renewal failed, falling back to full discover\n");
+    return dhcp_discover();
+}
+
+/* ── dhcp_has_lease ──────────────────────────────────────────────
+ * Returns 1 if a DHCP lease is currently held, 0 otherwise.
+ */
+int dhcp_has_lease_func(void) {
+    return dhcp_has_lease;
+}
+
+/* ── dhcp_get_lease_time ─────────────────────────────────────────
+ * Returns the lease time in seconds, or 0 if no lease.
+ */
+uint32_t dhcp_get_lease_time(void) {
+    return dhcp_lease_time;
 }
 
 int dhcp_discover(void) {

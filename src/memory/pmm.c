@@ -197,6 +197,41 @@ static uint64_t bitmap_alloc_one_locked(void) {
             frame_refcount[i] = 1;
             pmm_hint = i + 1;
             if (pmm_hint >= total_frames) pmm_hint = 0;
+
+#ifdef CONFIG_DEBUG_PAGEALLOC
+            /* ── Use-after-free detection ──────────────────────────────
+             * Check if the page still contains the freed poison pattern
+             * (0xDC).  If it does, it's a clean reuse.  If it doesn't,
+             * someone may have written to it while it was freed, indicating
+             * a use-after-free or buffer overflow that corrupted the page
+             * while it was in the free pool. */
+            if (pmm_poison_enabled) {
+                uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(i * PAGE_SIZE);
+                int found_non_poison = 0;
+                uint64_t poison64 = 0xDCDCDCDCDCDCDCULL;
+                for (int w = 0; w < (int)(PAGE_SIZE / 8); w++) {
+                    if (virt[w] != poison64) {
+                        /* Skip first few bytes — they may have been
+                         * overwritten by bitmap/free-list metadata.
+                         * If the corruption is widespread, it's a UAF. */
+                        if (w > 4) {
+                            found_non_poison = 1;
+                            break;
+                        }
+                    }
+                }
+                if (found_non_poison) {
+                    kprintf("[PMM] WARNING: page 0x%llx (frame %llu) "
+                            "does NOT contain poison pattern — "
+                            "possible use-after-free!\n",
+                            (unsigned long long)(i * PAGE_SIZE),
+                            (unsigned long long)i);
+                    /* Re-poison to be safe */
+                    poison_fill(i * PAGE_SIZE, 0xDC);
+                }
+            }
+#endif /* CONFIG_DEBUG_PAGEALLOC */
+
             return i * PAGE_SIZE;
         }
         i++;

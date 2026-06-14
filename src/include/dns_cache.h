@@ -87,4 +87,12 @@ struct dns_cache_stats net_dns_cache_stats(void);
 void          net_dns_cache_dump(void);
 void          net_dns_cache_init(void);
 
+/* ── DNS resolver layer ──────────────────────────────────────────── */
+void     dns_resolver_parse_resolv_conf(void);
+int      dns_resolver_server_count(void);
+uint32_t dns_resolver_server_get(int i);
+int      dns_resolver_search_count(void);
+const char *dns_resolver_search_get(int i);
+uint32_t dns_resolver_resolve(const char *hostname);
+
 #endif /* DNS_CACHE_H */

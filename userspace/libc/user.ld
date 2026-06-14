@@ -6,8 +6,9 @@ ENTRY(_start)
 
 PHDRS
 {
-    text PT_LOAD FLAGS(5);  /* PF_R | PF_X */
-    data PT_LOAD FLAGS(7);  /* PF_R | PF_W | PF_X */
+    text   PT_LOAD FLAGS(5);  /* PF_R | PF_X */
+    rodata PT_LOAD FLAGS(4);  /* PF_R */
+    data   PT_LOAD FLAGS(6);  /* PF_R | PF_W */
 }
 
 SECTIONS
@@ -23,7 +24,7 @@ SECTIONS
     .rodata : {
         *(.rodata*)
         *(.gnu.linkonce.r*)
-    } :data
+    } :rodata
 
     .data : {
         *(.data*)
@@ -38,12 +39,16 @@ SECTIONS
         __bss_end = .;
     } :data
 
+    /* Mark stack as non-executable */
+    .note.GNU-stack : {
+        *(.note.GNU-stack)
+    } :rodata
+
     /* End of image */
     __end = .;
 
     /DISCARD/ : {
         *(.comment*)
-        *(.note*)
         *(.eh_frame*)
         *(.debug*)
     }

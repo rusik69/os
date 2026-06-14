@@ -293,6 +293,14 @@ static const char *lock_type_name(int type) {
     }
 }
 
+/* Lock class tracking with unique IDs for cycle reporting */
+static int g_next_class_id = 1;  /* 0 = invalid */
+
+static int assign_class_id(void)
+{
+    return g_next_class_id++;
+}
+
 static struct lock_class *find_or_create_class(uint64_t addr,
                                                 const char *name,
                                                 int type) {
@@ -313,6 +321,7 @@ static struct lock_class *find_or_create_class(uint64_t addr,
     lc->type = type;
     lc->dep_count = 0;
     lc->child_count = 0;
+    lc->class_id = assign_class_id();
     return lc;
 }
 
@@ -629,22 +638,32 @@ void lockdep_dump(void)
     kprintf("  Classes: %d\n", class_count);
     for (int i = 0; i < class_count; i++) {
         if (!lock_classes[i].in_use) continue;
-        kprintf("  [%d] %s (%016llx) [%s] deps=%d children=%d\n",
+        kprintf("  [%d] class_id=%d %s (%016llx) [%s] deps=%d children=%d\n",
                 i,
+                lock_classes[i].class_id,
                 lock_classes[i].name ? lock_classes[i].name : "?",
                 (unsigned long long)lock_classes[i].addr,
                 lock_type_name(lock_classes[i].type),
                 lock_classes[i].dep_count,
                 lock_classes[i].child_count);
-        for (int d = 0; d < lock_classes[i].dep_count; d++) {
-            kprintf("       depends on -> %016llx\n",
-                    (unsigned long long)lock_classes[i].deps[d]);
-        }
-        for (int c = 0; c < lock_classes[i].child_count; c++) {
-            kprintf("       is held before -> %016llx\n",
-                    (unsigned long long)lock_classes[i].children[c]);
+
+        /* Print dependencies */
+        if (lock_classes[i].dep_count > 0) {
+            kprintf("      deps:");
+            for (int d = 0; d < lock_classes[i].dep_count; d++) {
+                /* Find class for this dep */
+                for (int j = 0; j < class_count; j++) {
+                    if (lock_classes[j].in_use &&
+                        lock_classes[j].addr == lock_classes[i].deps[d]) {
+                        kprintf(" [%s]", lock_classes[j].name ? lock_classes[j].name : "?");
+                        break;
+                    }
+                }
+            }
+            kprintf("\n");
         }
     }
+
     kprintf("  Held by current CPU: %d\n", held_count);
     for (int i = 0; i < held_count; i++) {
         kprintf("    [%d] %s (%016llx) [%s] seq=%d\n",

@@ -32,6 +32,8 @@
 #include "pmm.h"
 #include "timer.h"
 #include "workqueue.h"
+#include "debugfs.h"
+#include "sysfs.h"
 
 /* ── Internal data structures ────────────────────────────────────── */
 
@@ -313,6 +315,8 @@ static int match_pointer(uint64_t val)
         uint64_t start = g_entries[i].ptr;
         uint64_t end   = start + g_entries[i].size;
 
+        /* Also check if the value points into the middle of an allocation
+         * (not just the start). This catches interior pointers. */
         if (val >= start && val < end) {
             return i;  /* matched! */
         }
@@ -534,4 +538,121 @@ void kmemleak_print_leaks(void)
             kmemleak_allocation_count(), leak_count);
 
     spinlock_irqsave_release(&g_lock, irq_flags);
+}
+
+/* ── Debugfs/sysfs scan trigger interface ───────────────────────── */
+
+/* Read handler for scan trigger — returns last scan result summary */
+static int kmemleak_debugfs_read(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    int n = snprintf(buf, (int)max_size,
+        "kmemleak: %d tracked, %d leaks\n"
+        "Write 'scan' to trigger a scan\n"
+        "Write 'clear' to clear leak counters\n"
+        "Write 'disable' to disable tracking\n"
+        "Write 'enable' to enable tracking\n",
+        kmemleak_allocation_count(),
+        kmemleak_leak_count());
+    if (n < 0) return 0;
+    if ((uint32_t)n >= max_size) return (int)max_size - 1;
+    return n;
+}
+
+/* Write handler for scan trigger */
+static int kmemleak_debugfs_write(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    const char *p = data;
+    uint32_t pos = 0;
+
+    while (pos < size && *p && (*p == ' ' || *p == '\t')) { p++; pos++; }
+
+    /* Check for "scan" command */
+    if (size - pos >= 4 && p[0] == 's' && p[1] == 'c' &&
+        p[2] == 'a' && p[3] == 'n') {
+        kprintf("[kmemleak] manual scan triggered via debugfs\n");
+        kmemleak_scan();
+        return 0;
+    }
+
+    /* Check for "clear" command */
+    if (size - pos >= 5 && p[0] == 'c' && p[1] == 'l' &&
+        p[2] == 'e' && p[3] == 'a' && p[4] == 'r') {
+        spinlock_acquire(&g_lock);
+        g_leak_count = 0;
+        for (int i = 0; i < KMEMLEAK_MAX_TRACKED; i++) {
+            if (g_entries[i].in_use)
+                g_entries[i].leaks_reported = 0;
+        }
+        spinlock_release(&g_lock);
+        kprintf("[kmemleak] leak counters cleared\n");
+        return 0;
+    }
+
+    /* Check for "enable" command */
+    if (size - pos >= 6 && p[0] == 'e' && p[1] == 'n' &&
+        p[2] == 'a' && p[3] == 'b' && p[4] == 'l' && p[5] == 'e') {
+        kmemleak_enable();
+        return 0;
+    }
+
+    /* Check for "disable" command */
+    if (size - pos >= 7 && p[0] == 'd' && p[1] == 'i' &&
+        p[2] == 's' && p[3] == 'a' && p[4] == 'b' && p[5] == 'l' &&
+        p[6] == 'e') {
+        kmemleak_disable();
+        return 0;
+    }
+
+    /* Also check for "print" to dump all leaks */
+    if (size - pos >= 5 && p[0] == 'p' && p[1] == 'r' &&
+        p[2] == 'i' && p[3] == 'n' && p[4] == 't') {
+        kmemleak_print_leaks();
+        return 0;
+    }
+
+    kprintf("[kmemleak] unknown command '%.*s'\n", (int)(size - pos), p);
+    return 0;
+}
+
+/* Register debugfs/sysfs interface for kmemleak */
+void kmemleak_register_debugfs(void)
+{
+    if (!g_initialised)
+        return;
+
+    /* Create /sys/kernel/debug/kmemleak file */
+    if (sysfs_create_dir("/sys/kernel/debug") < 0) {
+        /* may already exist */
+    }
+
+    if (sysfs_create_writable_file(
+            "/sys/kernel/debug/kmemleak",
+            "kmemleak: write 'scan' to trigger scan\n",
+            NULL, kmemleak_debugfs_read, kmemleak_debugfs_write) < 0) {
+        kprintf("[kmemleak] failed to create debugfs scan trigger\n");
+        return;
+    }
+
+    /* Also register a debugfs u32 entry for the leak count */
+    debugfs_create_u32("kmemleak_leak_count", (uint32_t*)&g_leak_count);
+
+    kprintf("[OK] kmemleak: debugfs interface at /sys/kernel/debug/kmemleak\n");
+}
+
+/* KUnit-compatible test helper: return number of unreferenced objects */
+int kmemleak_unreferenced_count(void)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_lock, &irq_flags);
+
+    int count = 0;
+    for (int i = 0; i < KMEMLEAK_MAX_TRACKED; i++) {
+        if (g_entries[i].in_use && !g_entries[i].scanned)
+            count++;
+    }
+
+    spinlock_irqsave_release(&g_lock, irq_flags);
+    return count;
 }

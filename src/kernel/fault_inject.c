@@ -61,6 +61,26 @@ static volatile uint64_t g_kmalloc_call_count = 0;
 /* Total number of injected failures. */
 static volatile uint64_t g_fail_count = 0;
 
+/* Per-callsite probability tracking: fail probability = N / RATE */
+#define FI_MAX_CALLSITES 64
+struct fi_callsite {
+    uint64_t caller_ip;  /* return address of the allocation call */
+    int      fail_n;     /* numerator: fail N out of RATE attempts */
+    int      fail_rate;  /* denominator */
+    int      count;      /* total attempts at this callsite */
+    int      fail_count; /* failures injected at this callsite */
+    int      in_use;
+};
+static struct fi_callsite g_callsites[FI_MAX_CALLSITES];
+static int g_callsite_count = 0;
+static spinlock_t g_cs_lock;
+
+/* ── alloc_pages and vmalloc failure injection ──────────────────── */
+static volatile int g_fail_alloc_pages_interval = 0;
+static volatile int g_fail_vmalloc_interval = 0;
+static volatile uint64_t g_alloc_pages_call_count = 0;
+static volatile uint64_t g_vmalloc_call_count = 0;
+
 /* Random seed for probability mode */
 static int g_random_seeded = 0;
 
@@ -247,6 +267,18 @@ static void fault_inject_sysfs_init(void) {
     }
 
     kprintf("[OK] Fault injection: /sys/kernel/debug/fault_inject/\n");
+
+    /* Create sysfs entries for alloc_pages and vmalloc */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/debug/fault_inject/fail_alloc_pages",
+            "0\n", NULL, NULL, NULL) < 0) {
+        kprintf("[FI] failed to create fail_alloc_pages sysfs entry\n");
+    }
+    if (sysfs_create_writable_file(
+            "/sys/kernel/debug/fault_inject/fail_vmalloc",
+            "0\n", NULL, NULL, NULL) < 0) {
+        kprintf("[FI] failed to create fail_vmalloc sysfs entry\n");
+    }
 }
 
 /* Register debugfs entries for fault injection */
@@ -256,6 +288,8 @@ static void fault_inject_debugfs_init(void) {
     /* Create debugfs entries under /sys/kernel/debug/ */
     debugfs_create_u32("fault_inject_interval", (uint32_t*)&g_fail_kmalloc_interval);
     debugfs_create_u32("fault_inject_probability", (uint32_t*)&g_fail_kmalloc_probability);
+    debugfs_create_u32("fault_inject_alloc_pages_interval", (uint32_t*)&g_fail_alloc_pages_interval);
+    debugfs_create_u32("fault_inject_vmalloc_interval", (uint32_t*)&g_fail_vmalloc_interval);
 
     kprintf("[FI] Debugfs interface registered\n");
 }
@@ -287,6 +321,139 @@ void fault_inject_enable(int interval) {
     }
     spinlock_release(&g_fi_lock);
 }
+
+/* ── Per-callsite probability API ────────────────────────────────── */
+
+/* Configure a callsite with failure probability N/RATE.
+ * @caller_ip — use __builtin_return_address(0) from the allocation site.
+ * Returns 0 on success, -1 if the callsite table is full. */
+int fault_inject_callsite_config(uint64_t caller_ip, int fail_n, int fail_rate)
+{
+    if (fail_rate <= 0) return -1;
+    if (fail_n < 0) fail_n = 0;
+    if (fail_n > fail_rate) fail_n = fail_rate;
+
+    spinlock_acquire(&g_cs_lock);
+
+    /* Check if this callsite already has an entry */
+    for (int i = 0; i < g_callsite_count; i++) {
+        if (g_callsites[i].in_use && g_callsites[i].caller_ip == caller_ip) {
+            g_callsites[i].fail_n = fail_n;
+            g_callsites[i].fail_rate = fail_rate;
+            spinlock_release(&g_cs_lock);
+            return 0;
+        }
+    }
+
+    /* Create new entry */
+    if (g_callsite_count >= FI_MAX_CALLSITES) {
+        spinlock_release(&g_cs_lock);
+        return -1;
+    }
+
+    int idx = g_callsite_count++;
+    g_callsites[idx].caller_ip = caller_ip;
+    g_callsites[idx].fail_n = fail_n;
+    g_callsites[idx].fail_rate = fail_rate;
+    g_callsites[idx].count = 0;
+    g_callsites[idx].fail_count = 0;
+    g_callsites[idx].in_use = 1;
+
+    spinlock_release(&g_cs_lock);
+    return 0;
+}
+
+/* Check if a specific callsite should fail. Call from allocation sites. */
+int fault_inject_callsite_should_fail(uint64_t caller_ip)
+{
+    spinlock_acquire(&g_cs_lock);
+
+    for (int i = 0; i < g_callsite_count; i++) {
+        if (!g_callsites[i].in_use || g_callsites[i].caller_ip != caller_ip)
+            continue;
+
+        g_callsites[i].count++;
+        struct fi_callsite *cs = &g_callsites[i];
+
+        if (cs->fail_n <= 0) {
+            spinlock_release(&g_cs_lock);
+            return 0;
+        }
+
+        /* Fail when count % rate < n */
+        int should_fail = (cs->count % cs->fail_rate) < cs->fail_n;
+        if (should_fail) {
+            cs->fail_count++;
+            spinlock_release(&g_cs_lock);
+            spinlock_acquire(&g_fi_lock);
+            g_fail_count++;
+            spinlock_release(&g_fi_lock);
+            return 1;
+        }
+        break;
+    }
+
+    spinlock_release(&g_cs_lock);
+    return 0;
+}
+
+/* ── alloc_pages failure injection ──────────────────────────────── */
+
+void fault_inject_alloc_pages_enable(int interval)
+{
+    spinlock_acquire(&g_fi_lock);
+    g_fail_alloc_pages_interval = (interval > 0) ? interval : 0;
+    g_alloc_pages_call_count = 0;
+    if (interval <= 0)
+        kprintf("[FI] alloc_pages fault injection disabled\n");
+    else
+        kprintf("[FI] alloc_pages fault injection: fail every %d calls\n", interval);
+    spinlock_release(&g_fi_lock);
+}
+
+int fault_inject_should_fail_alloc_pages(void)
+{
+    spinlock_acquire(&g_fi_lock);
+    g_alloc_pages_call_count++;
+    int should = 0;
+    if (g_fail_alloc_pages_interval > 0 &&
+        g_alloc_pages_call_count % (uint64_t)g_fail_alloc_pages_interval == 0) {
+        g_fail_count++;
+        should = 1;
+    }
+    spinlock_release(&g_fi_lock);
+    return should;
+}
+
+/* ── vmalloc failure injection ──────────────────────────────────── */
+
+void fault_inject_vmalloc_enable(int interval)
+{
+    spinlock_acquire(&g_fi_lock);
+    g_fail_vmalloc_interval = (interval > 0) ? interval : 0;
+    g_vmalloc_call_count = 0;
+    if (interval <= 0)
+        kprintf("[FI] vmalloc fault injection disabled\n");
+    else
+        kprintf("[FI] vmalloc fault injection: fail every %d calls\n", interval);
+    spinlock_release(&g_fi_lock);
+}
+
+int fault_inject_should_fail_vmalloc(void)
+{
+    spinlock_acquire(&g_fi_lock);
+    g_vmalloc_call_count++;
+    int should = 0;
+    if (g_fail_vmalloc_interval > 0 &&
+        g_vmalloc_call_count % (uint64_t)g_fail_vmalloc_interval == 0) {
+        g_fail_count++;
+        should = 1;
+    }
+    spinlock_release(&g_fi_lock);
+    return should;
+}
+
+/* ── Generic should-fail (kmalloc) ───────────────────────────────── */
 
 int fault_inject_should_fail_kmalloc(void) {
     int should_fail = 0;

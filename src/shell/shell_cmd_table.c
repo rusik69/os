@@ -15,7 +15,34 @@ static void sh_reboot(const char *a)     { (void)a; cmd_reboot(); }
 static void sh_shutdown(const char *a)   { cmd_shutdown(a); }
 static void sh_date(const char *a)       { (void)a; cmd_date(); }
 static void sh_cpuinfo(const char *a)    { (void)a; cmd_cpuinfo(); }
-static void sh_history(const char *a)  { (void)a; cmd_history_show(); }
+static void sh_history(const char *a)  {
+    /* Parse args and call cmd_history with argc/argv */
+    const char *args[4];
+    int argc = 0;
+    args[argc++] = "history";
+    if (a) {
+        /* Simple space-separated tokenizer */
+        while (*a && argc < 4) {
+            while (*a == ' ') a++;
+            if (!*a) break;
+            const char *start = a;
+            while (*a && *a != ' ') a++;
+            /* Copy token via comma-operator trick for string literal */
+            static char token_buf[4][16];
+            int ti = argc - 1;
+            if (ti < 4) {
+                int len = (int)(a - start);
+                if (len > 15) len = 15;
+                memcpy(token_buf[ti], start, (size_t)len);
+                token_buf[ti][len] = '\0';
+                args[argc] = token_buf[ti];
+            }
+            argc++;
+        }
+    }
+    extern void cmd_history(int argc, char **argv);
+    cmd_history(argc, (char **)args);
+}
 static void sh_format(const char *a)     { (void)a; cmd_format_disk(); }
 static void sh_ifconfig(const char *a)   { (void)a; cmd_ifconfig(); }
 static void sh_df(const char *a)         { cmd_df(a); }

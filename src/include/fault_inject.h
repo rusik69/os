@@ -45,4 +45,28 @@ uint64_t fault_inject_get_fail_count(void);
 /* Return number of kmalloc calls counted by the fault injector. */
 uint64_t fault_inject_get_call_count(void);
 
+/* ── Per-callsite probability (FAIL Probability = N / RATE) ──────── */
+
+/* Configure a callsite with failure probability N/RATE.
+ * @caller_ip — use __builtin_return_address(0) from the allocation site.
+ * Returns 0 on success, -1 if table full. */
+int fault_inject_callsite_config(uint64_t caller_ip, int fail_n, int fail_rate);
+
+/* Check if a specific callsite should fail. Call from allocation sites. */
+int fault_inject_callsite_should_fail(uint64_t caller_ip);
+
+/* ── alloc_pages / vmalloc failure injection ───────────────────── */
+
+/* Enable/disable alloc_pages fault injection (interval-based). */
+void fault_inject_alloc_pages_enable(int interval);
+
+/* Return non-zero if the current alloc_pages should fail. */
+int fault_inject_should_fail_alloc_pages(void);
+
+/* Enable/disable vmalloc fault injection (interval-based). */
+void fault_inject_vmalloc_enable(int interval);
+
+/* Return non-zero if the current vmalloc should fail. */
+int fault_inject_should_fail_vmalloc(void);
+
 #endif /* FAULT_INJECT_H */

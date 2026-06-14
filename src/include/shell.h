@@ -22,6 +22,7 @@ const char *shell_var_get(const char *name);
 int         shell_var_count(void);
 const char *shell_var_name(int i);
 const char *shell_var_value(int i);
+int         shell_var_expand(const char *src, char *dst, int dst_size);
 
 /* Shell alias API */
 void        shell_alias_set(const char *name, const char *value);

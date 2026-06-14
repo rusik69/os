@@ -173,3 +173,11 @@ CONFIG_HARDLOCKUP_DETECTOR := y
 CONFIG_STACKTRACE         := y
 CONFIG_PSTORE             := y
 CONFIG_KDUMP              := y
+
+# ── Kernel hardening / debug options (Item 277) ────────────────────
+CONFIG_DEBUG_STACK_USAGE  := y
+CONFIG_DEBUG_PAGEALLOC    := y
+CONFIG_DEBUG_SPINLOCK     := y
+CONFIG_DEBUG_ATOMIC_SLEEP := y
+CONFIG_DEBUG_KMEMLEAK     := y
+CONFIG_DEBUG_FAULT_INJECT := y

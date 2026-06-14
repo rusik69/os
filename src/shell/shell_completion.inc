@@ -71,8 +71,26 @@ static void shell_tab_complete(char *buf, int *len) {
         if (plen > 63) plen = 63;
         memcpy(prefix, buf + wstart, plen); prefix[plen] = '\0';
 
+        /* Determine directory to list from (cwd for relative, root for absolute) */
+        const char *list_dir = (prefix[0] == '/') ? "/" : NULL;
+        char cwd_buf[FS_MAX_NAME];
+
+        if (!list_dir) {
+            struct process *cur = process_get_current();
+            if (cur && cur->cwd[0]) {
+                int cwd_len = (int)strlen(cur->cwd);
+                int max_cp = (int)sizeof(cwd_buf) - 1;
+                if (cwd_len > max_cp) cwd_len = max_cp;
+                memcpy(cwd_buf, cur->cwd, (size_t)cwd_len);
+                cwd_buf[cwd_len] = '\0';
+                list_dir = cwd_buf;
+            } else {
+                list_dir = "/";
+            }
+        }
+
         char fnames[16][FS_MAX_NAME];
-        int nmatch = fs_list_names("/", prefix, fnames, 16);
+        int nmatch = fs_list_names(list_dir, prefix, fnames, 16);
         if (nmatch == 0) return;
         if (nmatch == 1) {
             erase_line(*len);
@@ -269,8 +287,25 @@ void shell_tab_complete_telnet(char *buf, int *len, void *session) {
         if (plen > 63) plen = 63;
         memcpy(prefix, buf + wstart, plen); prefix[plen] = '\0';
 
+        const char *list_dir = (prefix[0] == '/') ? "/" : NULL;
+        char cwd_buf[FS_MAX_NAME];
+
+        if (!list_dir) {
+            struct process *cur = process_get_current();
+            if (cur && cur->cwd[0]) {
+                int cwd_len = (int)strlen(cur->cwd);
+                int max_cp = (int)sizeof(cwd_buf) - 1;
+                if (cwd_len > max_cp) cwd_len = max_cp;
+                memcpy(cwd_buf, cur->cwd, (size_t)cwd_len);
+                cwd_buf[cwd_len] = '\0';
+                list_dir = cwd_buf;
+            } else {
+                list_dir = "/";
+            }
+        }
+
         char fnames[16][FS_MAX_NAME];
-        int nmatch = fs_list_names("/", prefix, fnames, 16);
+        int nmatch = fs_list_names(list_dir, prefix, fnames, 16);
         if (nmatch == 0) return;
         if (nmatch == 1) {
             for (int k = 0; k < *len; k++) kprintf("\b \b");

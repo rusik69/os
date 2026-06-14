@@ -3,6 +3,9 @@
 #include "types.h"
 void dhcp_init(void);
 int dhcp_discover(void);
+int dhcp_renew(void);
+int dhcp_has_lease_func(void);
+uint32_t dhcp_get_lease_time(void);
 void dhcp_set_server(uint32_t ip);
 uint32_t dhcp_get_server(void);
 

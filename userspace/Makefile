@@ -7,6 +7,7 @@ CC := $(CROSS_COMPILE)gcc
 LD := $(CROSS_COMPILE)ld
 AS := $(CROSS_COMPILE)as
 AR := $(CROSS_COMPILE)ar
+STRIP_CMD := $(CROSS_COMPILE)strip
 
 LIBC_DIR = libc
 LIBC_A = $(LIBC_DIR)/libc.a
@@ -79,6 +80,13 @@ initramfs.cpio: $(BIN_ELFS) $(CMD_ELFS)
 		name=$${f%.elf}; \
 		cp $$f initramfs_root/bin/$$name; \
 	done
+	@# Strip ELF binaries to reduce initramfs size
+	@if command -v $(STRIP_CMD) >/dev/null 2>&1; then \
+		echo "[userspace] Stripping ELF binaries..."; \
+		$(STRIP_CMD) initramfs_root/init initramfs_root/bin/* 2>/dev/null || true; \
+	else \
+		echo "[userspace] $(STRIP_CMD) not found, skipping strip"; \
+	fi
 	cd initramfs_root && \
 		find . | cpio -o -H newc --quiet > ../initramfs.cpio
 	@rm -rf initramfs_root

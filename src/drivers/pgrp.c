@@ -17,3 +17,16 @@ int pgrp_join(struct process *proc, uint32_t pgid) {
     proc->pgid = pgid;
     return 0;
 }
+
+/* ── Terminal foreground process group ──────────────────────────── */
+static uint64_t fg_pgid = 0;
+
+void pgrp_set_foreground(uint64_t pgid)
+{
+    fg_pgid = pgid;
+}
+
+uint64_t pgrp_get_foreground(void)
+{
+    return fg_pgid;
+}

@@ -4,7 +4,7 @@
 #include "types.h"
 #include "waitqueue.h"
 
-#define PIPE_BUF_SIZE      4096    /* POSIX minimum buffer size */
+#define PIPE_BUF_SIZE      65536   /* pipe buffer size (64KB, was 4096) */
 #define PIPE_DEFAULT_SIZE   65536  /* default pipe capacity (64KB, Linux default) */
 #define PIPE_MAX_SIZE      1048576 /* maximum pipe capacity (1MB) */
 #define PIPE_MAX            16
@@ -13,7 +13,8 @@
 #define PIPE_FLAG_PACKET    2
 
 struct pipe {
-    uint8_t  *buf;          /* heap-allocated buffer */
+    uint8_t  *buf;          /* heap-allocated buffer (primary) */
+    uint8_t  *buf2;         /* secondary buffer for double-buffering */
     int      capacity;      /* current buffer capacity */
     int      read_pos;
     int      write_pos;
@@ -32,6 +33,9 @@ int pipe_create(void);
 
 /* Write len bytes into pipe. Blocks (yields) if full. Returns bytes written or -1. */
 int pipe_write(int pipe_id, const void *buf, int len);
+
+/* Splice data from src_pipe to dst_pipe without userspace buffering. */
+int pipe_splice(int src_pipe_id, int dst_pipe_id, int len);
 
 /* Read at most len bytes from pipe. Blocks (yields) if empty. Returns bytes read or -1. */
 int pipe_read(int pipe_id, void *buf, int len);

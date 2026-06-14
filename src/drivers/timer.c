@@ -69,9 +69,18 @@ uint64_t timer_get_ticks(void) {
 EXPORT_SYMBOL(timer_get_ticks);
 
 uint64_t timer_get_ns(void) {
-    return ticks * NS_PER_TICK;
+    /* Use inline multiply with overflow check: ticks * 10,000,000 ns/tick */
+    uint64_t t = ticks;
+    /* NS_PER_TICK = 10,000,000; check for overflow */
+    if (t > (uint64_t)(-1ULL) / NS_PER_TICK)
+        return (uint64_t)(-1ULL); /* saturate on overflow */
+    return t * NS_PER_TICK;
 }
 
 uint64_t timer_get_ms(void) {
-    return (ticks * NS_PER_TICK) / 1000000ULL;
+    /* ticks * 10  (since NS_PER_TICK / 1,000,000 = 10) */
+    uint64_t t = ticks;
+    if (t > (uint64_t)(-1ULL) / 10ULL)
+        return (uint64_t)(-1ULL); /* saturate on overflow */
+    return t * 10ULL;
 }

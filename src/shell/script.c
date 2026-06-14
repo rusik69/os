@@ -259,6 +259,11 @@ int script_exec(const char *path) {
             continue;
         }
 
+        /* then — optional keyword, just skip it */
+        if (strcmp(cmd, "then") == 0) {
+            continue;
+        }
+
         /* else */
         if (strcmp(cmd, "else") == 0) {
             if (cf_depth > 0 && cf_stack[cf_depth-1].type == CF_IF
@@ -270,10 +275,15 @@ int script_exec(const char *path) {
             continue;
         }
 
-        /* endif */
-        if (strcmp(cmd, "endif") == 0) {
+        /* endif / fi */
+        if (strcmp(cmd, "endif") == 0 || strcmp(cmd, "fi") == 0) {
             if (cf_depth > 0 && cf_stack[cf_depth-1].type == CF_IF)
                 cf_depth--;
+            continue;
+        }
+
+        /* do — optional keyword for while/for (just skip it) */
+        if (strcmp(cmd, "do") == 0) {
             continue;
         }
 
@@ -310,8 +320,8 @@ int script_exec(const char *path) {
             continue;
         }
 
-        /* endwhile */
-        if (strcmp(cmd, "endwhile") == 0) {
+        /* endwhile / done */
+        if (strcmp(cmd, "endwhile") == 0 || strcmp(cmd, "done") == 0) {
             if (cf_depth > 0 && cf_stack[cf_depth-1].type == CF_WHILE
                     && cf_stack[cf_depth-1].exec) {
                 /* Re-evaluate condition */
@@ -387,8 +397,8 @@ int script_exec(const char *path) {
             continue;
         }
 
-        /* endfor */
-        if (strcmp(cmd, "endfor") == 0) {
+        /* endfor / done */
+        if (strcmp(cmd, "endfor") == 0 || strcmp(cmd, "done") == 0) {
             if (cf_depth > 0 && cf_stack[cf_depth-1].type == CF_FOR
                     && cf_stack[cf_depth-1].exec) {
                 struct cf_frame *ff = &cf_stack[cf_depth-1];

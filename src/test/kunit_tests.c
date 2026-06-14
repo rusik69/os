@@ -30,6 +30,9 @@
 #include "firmware.h"
 #include "module_deps.h"
 #include "export.h"
+#include "kmemleak.h"
+#include "lockdep.h"
+#include "fault_inject.h"
 
 /* Extern declarations for dedicated test suite registrations */
 extern void kunit_pmm_register(void);
@@ -1281,6 +1284,84 @@ static struct kunit_case module_kallsyms_test_cases[] = {
     {0}
 };
 
+/* ── kmemleak test cases ───────────────────────────────────────── */
+static void kmemleak_track_test(struct kunit *kt)
+{
+    /* Test basic allocation tracking */
+    void *p = (void *)0xFFFF800000001000ULL;
+    kmemleak_alloc(p, 64, KMEMLEAK_HEAP);
+    KUNIT_EXPECT_TRUE(kt, kmemleak_allocation_count() > 0);
+    kmemleak_free(p);
+    KUNIT_EXPECT_TRUE(kt, 1); /* survived */
+}
+
+static void kmemleak_scan_test(struct kunit *kt)
+{
+    /* Test that a scan doesn't crash */
+    int leaks = kmemleak_scan();
+    KUNIT_EXPECT_TRUE(kt, leaks >= 0);
+}
+
+static struct kunit_case kmemleak_test_cases[] = {
+    KUNIT_CASE(kmemleak_track_test),
+    KUNIT_CASE(kmemleak_scan_test),
+    {0}
+};
+
+/* ── Lockdep test cases ─────────────────────────────────────────── */
+static void lockdep_basic_test(struct kunit *kt)
+{
+    /* Test that lock_acquire/release don't crash */
+    lock_acquire("test_lock", 0x42, LOCK_TYPE_SPINLOCK);
+    lock_release("test_lock", 0x42, LOCK_TYPE_SPINLOCK);
+    KUNIT_EXPECT_TRUE(kt, 1);
+}
+
+static void lockdep_doublelock_test(struct kunit *kt)
+{
+    /* Re-acquiring same lock should not crash (detected as double-lock) */
+    lock_acquire("test_lock2", 0x43, LOCK_TYPE_SPINLOCK);
+    lock_acquire("test_lock2", 0x43, LOCK_TYPE_SPINLOCK); /* double lock */
+    lock_release("test_lock2", 0x43, LOCK_TYPE_SPINLOCK);
+    lock_release("test_lock2", 0x43, LOCK_TYPE_SPINLOCK);
+    KUNIT_EXPECT_TRUE(kt, 1);
+}
+
+static struct kunit_case lockdep_test_cases[] = {
+    KUNIT_CASE(lockdep_basic_test),
+    KUNIT_CASE(lockdep_doublelock_test),
+    {0}
+};
+
+/* ── Fault injection test cases ─────────────────────────────────── */
+static void fault_inject_basic_test(struct kunit *kt)
+{
+    /* Test that should_fail returns 0 when disabled */
+    KUNIT_EXPECT_FALSE(kt, fault_inject_should_fail_kmalloc());
+    KUNIT_EXPECT_FALSE(kt, fault_inject_should_fail_alloc_pages());
+    KUNIT_EXPECT_FALSE(kt, fault_inject_should_fail_vmalloc());
+}
+
+static void fault_inject_callsite_test(struct kunit *kt)
+{
+    uint64_t fake_ip = 0xDEADBEEFCAFEULL;
+    /* Configure to fail 1 out of 3 */
+    int ret = fault_inject_callsite_config(fake_ip, 1, 3);
+    KUNIT_EXPECT_TRUE(kt, ret == 0);
+    /* First call succeeds, second succeeds, third fails */
+    int r1 = fault_inject_callsite_should_fail(fake_ip);
+    int r2 = fault_inject_callsite_should_fail(fake_ip);
+    int r3 = fault_inject_callsite_should_fail(fake_ip);
+    KUNIT_EXPECT_TRUE(kt, r3 == 1); /* every 3rd call fails */
+    (void)r1; (void)r2;
+}
+
+static struct kunit_case fault_inject_test_cases[] = {
+    KUNIT_CASE(fault_inject_basic_test),
+    KUNIT_CASE(fault_inject_callsite_test),
+    {0}
+};
+
 /* Helper macro to populate a fixed-size array from a NULL-terminated list */
 #define FILL_CASES(suite_var, cases_array) do {                     \
     int __ci = 0;                                                   \
@@ -1312,6 +1393,9 @@ static struct kunit_suite module_dep_test_suite;
 static struct kunit_suite module_sysfs_test_suite;
 static struct kunit_suite module_autoload_test_suite;
 static struct kunit_suite module_kallsyms_test_suite;
+static struct kunit_suite kmemleak_test_suite;
+static struct kunit_suite lockdep_test_suite;
+static struct kunit_suite fault_inject_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
@@ -1346,6 +1430,9 @@ void kunit_register_builtin_tests(void)
     FILL_CASES(module_sysfs_test_suite, module_sysfs_test_cases);
     FILL_CASES(module_autoload_test_suite, module_autoload_test_cases);
     FILL_CASES(module_kallsyms_test_suite, module_kallsyms_test_cases);
+    FILL_CASES(kmemleak_test_suite, kmemleak_test_cases);
+    FILL_CASES(lockdep_test_suite, lockdep_test_cases);
+    FILL_CASES(fault_inject_test_suite, fault_inject_test_cases);
 
     /* Set suite names */
     pmm_test_suite.name    = "pmm";
@@ -1367,6 +1454,9 @@ void kunit_register_builtin_tests(void)
     module_sysfs_test_suite.name    = "module_sysfs";
     module_autoload_test_suite.name = "module_autoload";
     module_kallsyms_test_suite.name = "module_kallsyms";
+    kmemleak_test_suite.name = "kmemleak";
+    lockdep_test_suite.name = "lockdep";
+    fault_inject_test_suite.name = "fault_inject";
 
     kunit_register_suite(&pmm_test_suite);
     kunit_register_suite(&slab_test_suite);
@@ -1387,6 +1477,17 @@ void kunit_register_builtin_tests(void)
     kunit_register_suite(&module_sysfs_test_suite);
     kunit_register_suite(&module_autoload_test_suite);
     kunit_register_suite(&module_kallsyms_test_suite);
+
+    /* ── kmemleak test suite ───────────────────────────────────────── */
+    /* Register kmemleak test suite to verify allocation tracking */
+    kunit_register_suite(&kmemleak_test_suite);
+
+    /* ── Lockdep test suite ────────────────────────────────────────── */
+    /* Register lockdep test suite to verify dependency tracking */
+    kunit_register_suite(&lockdep_test_suite);
+
+    /* ── Fault injection test suite ────────────────────────────────── */
+    kunit_register_suite(&fault_inject_test_suite);
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();

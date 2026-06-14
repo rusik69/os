@@ -153,6 +153,9 @@ void job_control_list(void)
  *
  * Bring a job to the foreground: continue it if stopped, then
  * wait for it to complete or stop again.
+ *
+ * Proper terminal handling: sets the foreground process group
+ * of the terminal before continuing the job.
  */
 int job_control_fg(int job_id)
 {
@@ -162,20 +165,36 @@ int job_control_fg(int job_id)
         return -1;
     }
 
+    /* Set terminal foreground process group */
+    extern void pgrp_set_foreground(uint64_t pgid);
+    pgrp_set_foreground(job->pgid);
+
     if (job->state == JOB_STOPPED) {
         /* Send SIGCONT to the process group */
         signal_send_pgid((uint32_t)job->pgid, SIGCONT);
         job->state = JOB_RUNNING;
+        kprintf("[%d] continued %s\n", job->job_id, job->command);
     }
 
     /* Wait for the job to complete */
     int status;
     while (1) {
-        uint64_t ret = process_waitpid((int)job->pgid, &status);
-        if (ret == (uint64_t)-1)
+        uint64_t waited = process_waitpid((uint32_t)job->pgid, &status);
+        if (waited == (uint64_t)-1)
             break;
-        if ((int)ret == (int)job->pgid || ret == 0)
+        if (waited == (uint64_t)job->pgid || waited == 0)
             break;
+    }
+
+    /* Restore shell as foreground process group */
+    struct process *cur = process_get_current();
+    if (cur) pgrp_set_foreground(cur->pgid);
+
+    /* Notify job termination status */
+    if (status != 0) {
+        kprintf("[%d]+ done %s (status %d)\n", job->job_id, job->command, status);
+    } else {
+        kprintf("[%d]+ done %s\n", job->job_id, job->command);
     }
 
     job_control_remove(job_id);
@@ -207,12 +226,22 @@ int job_control_bg(int job_id)
  *
  * Called when a foreground process receives SIGTSTP (Ctrl+Z).
  * Marks the job as stopped so the shell can manage it.
+ * Restores terminal foreground process group to the shell.
  */
 void job_control_handle_suspend(uint64_t pgid)
 {
     struct job_entry *job = job_control_find_by_pgid(pgid);
-    if (job)
+    if (job) {
         job->state = JOB_STOPPED;
+        kprintf("\n[%d]+ suspended %s\n", job->job_id, job->command);
+
+        /* Restore shell as foreground process group */
+        struct process *cur = process_get_current();
+        if (cur) {
+            extern void pgrp_set_foreground(uint64_t pgid);
+            pgrp_set_foreground(cur->pgid);
+        }
+    }
 }
 
 /* ── job_control_cleanup ───────────────────────────────────────────

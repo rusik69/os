@@ -579,6 +579,36 @@ static void cfq_free(struct iosched_queue *iq)
     cfq->current_q = NULL;
 }
 
+/* ── iosched_try_merge ────────────────────────────────────────────
+ * Try to merge a request with the last request in the queue.
+ * Returns 1 if merged (req was consumed), 0 otherwise.
+ * Adjacent conditions:
+ *   Back merge:  existing.lba + existing.count == req.lba
+ *   Front merge: req.lba + req.count == existing.lba
+ */
+int iosched_try_merge(struct iosched_queue *iq, struct blk_request *req)
+{
+    if (!iq || !req) return 0;
+
+    /* Back merge with tail */
+    if (iq->tail && same_dir(iq->tail, req) &&
+        iq->tail->lba + iq->tail->count == req->lba) {
+        iq->tail->count += req->count;
+        return 1;
+    }
+
+    /* Front merge with head */
+    if (iq->head && same_dir(iq->head, req) &&
+        req->lba + req->count == iq->head->lba) {
+        req->count += iq->head->count;
+        iq->head->lba = req->lba;
+        /* Replace head with merged request — requires care */
+        return 0; /* cannot easily replace; caller does it */
+    }
+
+    return 0;
+}
+
 /* ── Exported symbols ────────────────────────────────────────────── */
 EXPORT_SYMBOL(iosched_init);
 EXPORT_SYMBOL(iosched_submit_request);

@@ -1684,7 +1684,14 @@ int net_tcp_accept(uint16_t port, int timeout_ticks) {
                 return -1;
         }
     }
+    /* Guard against accept_count being out of sync (should never happen) */
+    if (l->accept_count <= 0)
+        return -1;
     int conn_id = l->accept_queue[l->accept_head];
+    /* Validate conn_id — must be a valid established connection */
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS ||
+        tcp_conns[conn_id].state == TCP_CLOSED)
+        return -1;
     l->accept_head = (l->accept_head + 1) % ACCEPT_QUEUE_SIZE;
     l->accept_count--;
     return conn_id;
@@ -1896,7 +1903,89 @@ void net_tcp_check_retransmit(void) {
     }
 }
 
-/* ── Keepalive check ──────────────────────────────────────────── */
+/* ── TCP auto-tuning ────────────────────────────────────────────── */
+
+/* Auto-size the receive window based on a simple BDP estimate.
+ * Called periodically (from net_tcp_check_retransmit) for established
+ * connections.  Starts at 64KB, rises to 256KB on good connection,
+ * decreases on loss (retransmission or dupack).
+ */
+#define TCP_MIN_RCV_WND  65536   /* start at 64KB */
+#define TCP_MAX_RCV_WND  262144  /* max 256KB */
+
+void net_tcp_auto_tune_rcv_wnd(struct tcp_conn *c)
+{
+    if (c->state != TCP_ESTABLISHED) return;
+
+    /* Estimate RTT in ticks — use min_rtt or a fallback of 10 ticks (~100ms) */
+    uint32_t rtt = c->rack_min_rtt > 0 ? c->rack_min_rtt : 10;
+    if (rtt < 1) rtt = 1;
+
+    /* Base window on cwnd: start at 64KB, scale with cwnd growth.
+     * On good connection (no loss, high cwnd), window grows toward 256KB.
+     * On loss (retrans_count > 0 or dupack_count > 0), shrink. */
+    uint32_t target;
+    if (c->retrans_count > 0 || c->dupack_count > 0) {
+        /* Loss detected — shrink window */
+        target = c->their_window / 2;
+        if (target < TCP_MIN_RCV_WND / 2)
+            target = TCP_MIN_RCV_WND / 2;
+    } else {
+        /* Normal operation — scale with cwnd */
+        target = c->cwnd * 1460;  /* cwnd in segments × MSS */
+        if (target > TCP_MAX_RCV_WND)
+            target = TCP_MAX_RCV_WND;
+    }
+
+    /* Ensure minimum */
+    if (target < TCP_MIN_RCV_WND)
+        target = TCP_MIN_RCV_WND;
+
+    /* Clamp to uint16_t for TCP header */
+    if (target > 65535)
+        target = 65535;
+    c->their_window = (uint16_t)target;
+}
+
+/* Slow start after idle: if a connection has been idle for more than
+ * one retransmission timeout, reduce cwnd back to the initial window
+ * (typically 10 segments per RFC 6928) to avoid bursting.
+ * This is called before sending data on an idle connection.
+ */
+void net_tcp_slow_start_after_idle(struct tcp_conn *c)
+{
+    if (!c || c->state != TCP_ESTABLISHED) return;
+
+    uint64_t now = timer_get_ticks();
+    uint64_t idle_ticks = now - c->last_send_tick;
+
+    /* If idle for more than 1 RTO, reset cwnd */
+    if (idle_ticks > (uint64_t)c->rto && c->rto > 0) {
+        if (c->cwnd > 10) {
+            /* Record W_max for CUBIC before reducing */
+            if (c->cubic_use_cubic) {
+                c->cubic_wmax = c->cwnd;
+            }
+            c->ssthresh = c->cwnd / 2;
+            if (c->ssthresh < 2) c->ssthresh = 2;
+            c->cwnd = 10; /* initial window per RFC 6928 */
+            c->dupack_count = 0;
+        }
+    }
+}
+
+/* ── Call the auto-tuning for all established connections ───────── */
+void net_tcp_auto_tune_all(void)
+{
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        struct tcp_conn *c = &tcp_conns[i];
+        if (c->state != TCP_ESTABLISHED) continue;
+        net_tcp_auto_tune_rcv_wnd(c);
+        net_tcp_slow_start_after_idle(c);
+    }
+}
+
+/* Keepalive check ──────────────────────────────────────────── */
 
 #define KEEPALIVE_INTERVAL_DEFAULT 500
 #define KEEPALIVE_PROBES_MAX_DEFAULT 3

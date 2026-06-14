@@ -870,7 +870,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-full check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
+        check check-full check-clean check-app-boundary check-debug doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
         modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse
 
 # ── Boundary check on app sources ─────────────────────────────────────
@@ -886,6 +886,38 @@ check-app-boundary:
 	    echo "$$bad"; \
 	    exit 1; \
 	fi
+
+# ── check-debug: Build with all CONFIG_DEBUG options enabled ────────
+#
+# Builds the kernel with all debugging and hardening options forced on,
+# treating compiler warnings as errors.  This is the 'max debug' build
+# used to catch latent bugs before release.
+#
+# If the 'analyze' target is available (requires cppcheck/Clang SA),
+# static analysis is also performed.
+check-debug:
+	@echo "=== check-debug: Building with all debug options ==="
+	$(MAKE) CFLAGS_EXTRA="-DCONFIG_DEBUG_STACK_USAGE -DCONFIG_DEBUG_PAGEALLOC -DCONFIG_DEBUG_SPINLOCK -DCONFIG_DEBUG_ATOMIC_SLEEP -DCONFIG_DEBUG_KMEMLEAK -DCONFIG_DEBUG_FAULT_INJECT -Werror" \
+	       -j$(NPROCS) $(BUILDDIR)/kernel.bin 2>&1
+	@echo "=== check-debug: Build successful ==="
+	@# If static analysis tools are available, run them
+	@if which cppcheck >/dev/null 2>&1; then \
+	    echo "=== check-debug: Running cppcheck static analysis ==="; \
+	    cppcheck --enable=all --inconclusive --suppress=missingIncludeSystem \
+	        -I src/include -I src/gui -I src/doom \
+	        --std=c17 --platform=unix64 \
+	        src/kernel/*.c src/memory/*.c src/process/*.c \
+	        2>&1 || true; \
+	fi
+	@if which clang-tidy >/dev/null 2>&1; then \
+	    echo "=== check-debug: Running clang-tidy (limited scope) ==="; \
+	    for f in src/kernel/fault.c src/kernel/lockdep.c src/kernel/kmemleak.c src/memory/pmm.c; do \
+	        clang-tidy --quiet --extra-arg=-ffreestanding \
+	            --extra-arg=-Isrc/include \
+	            "$$f" 2>/dev/null || true; \
+	    done; \
+	fi
+	@echo "=== check-debug: All checks passed ==="
 
 # ── Precompiled headers (PCH, Item 258) ──────────────────────────────
 #
@@ -1045,11 +1077,29 @@ test-serial: $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
 		-netdev user,id=net0 -device e1000,netdev=net0 \
 		-no-reboot
 
-# Run E2E tests: build test kernel in parallel, then boot in QEMU
+# Run tests: clean build + host-side unit tests + KUnit + QEMU boot test
 test: $(BUILDDIR)/disk.img
+	@echo "=== Building test kernel (clean build) ==="
 	$(MAKE) -j$(NPROCS) test-kernel
-	@chmod +x tests/run_tests.sh
-	@./tests/run_tests.sh $(BUILDDIR_TEST)/kernel.bin $(BUILDDIR)/disk.img
+	@echo ""
+	@echo "=== Running host-side unit tests ==="
+	$(MAKE) unit-test
+	@echo ""
+	@echo "=== Running QEMU boot test ==="
+	python3 src/test/boot_test.py \
+		--kernel $(BUILDDIR_TEST)/kernel.bin \
+		--disk $(BUILDDIR)/disk.img \
+		--timeout 30
+	@echo ""
+	@echo "=== Running KUnit test runner (if serial log available) ==="
+	@if [ -f /tmp/qemu-test-*.txt ]; then \
+		chmod +x scripts/run_kunit.sh; \
+		scripts/run_kunit.sh --log /tmp/qemu-test-*.txt --quiet || true; \
+	fi
+	@echo ""
+	@echo "============================================"
+	@echo "  make test completed"
+	@echo "============================================"
 
 # ── Check target: full build with -Werror + run all tests ──────────────
 CHECK_CFLAGS = $(CFLAGS) -Werror

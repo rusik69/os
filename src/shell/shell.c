@@ -18,6 +18,10 @@
 /* Forward declaration for fnmatch (defined in lib/stdlib.c) */
 int fnmatch(const char *pattern, const char *string, int flags);
 
+/* Persistent history API (from history_persist.c) */
+extern void history_persist_save(void);
+extern void history_persist_load(void);
+
 #define MAX_VAR_NAME 32
 #define MAX_VAR_VALUE 128
 
@@ -491,28 +495,43 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                 for (int xi = 0; xi < sub_len && di < dst_max - 1; xi++) dst[di++] = sub_out[xi];
                 continue;
             }
-            /* ${name[N]} — array element OR ${#name[@]} — array count */
+            /* ${...} — brace expansion group */
             if (*src == '{') {
                 src++;
-                /* ${#name[@]} count */
+                /* ${#name} — length of variable value OR array count */
                 if (*src == '#') {
                     src++;
                     char aname[SHELL_ARRAY_NAME_MAX]; int ani = 0;
-                    while (*src && *src != '[' && *src != '}' && ani < SHELL_ARRAY_NAME_MAX - 1)
+                    while (*src && *src != ':' && *src != '}' && ani < SHELL_ARRAY_NAME_MAX - 1)
                         aname[ani++] = *src++;
                     aname[ani] = '\0';
                     while (*src && *src != '}') src++;
                     if (*src == '}') src++;
+                    /* Check if it's an array first */
                     struct shell_array *arr = shell_array_get(aname);
-                    int cnt = arr ? arr->count : 0;
-                    char numstr[12]; int ni = 0;
-                    if (cnt == 0) { if (di < dst_max - 1) dst[di++] = '0'; }
-                    else { while (cnt > 0 && ni < 10) { numstr[ni++] = '0' + cnt % 10; cnt /= 10; }
-                           while (ni > 0 && di < dst_max - 1) dst[di++] = numstr[--ni]; }
+                    if (arr) {
+                        int cnt = arr->count;
+                        char numstr[12]; int ni = 0;
+                        if (cnt == 0) { if (di < dst_max - 1) dst[di++] = '0'; }
+                        else { while (cnt > 0 && ni < 10) { numstr[ni++] = '0' + cnt % 10; cnt /= 10; }
+                               while (ni > 0 && di < dst_max - 1) dst[di++] = numstr[--ni]; }
+                    } else {
+                        /* String length */
+                        const char *val = shell_var_get(aname);
+                        int slen = val ? (int)strlen(val) : 0;
+                        char numstr[12]; int ni = 0;
+                        if (slen == 0) { if (di < dst_max - 1) dst[di++] = '0'; }
+                        else { while (slen > 0 && ni < 10) { numstr[ni++] = '0' + slen % 10; slen /= 10; }
+                               while (ni > 0 && di < dst_max - 1) dst[di++] = numstr[--ni]; }
+                    }
                     continue;
                 }
+                /* ${name[expr]} — array element */
+                if (*src == '#' && src[1] == '[') {
+                    /* already handled above, skip past */
+                }
                 char aname[SHELL_ARRAY_NAME_MAX]; int ani = 0;
-                while (*src && *src != '[' && *src != '}' && ani < SHELL_ARRAY_NAME_MAX - 1)
+                while (*src && *src != '[' && *src != ':' && *src != '}' && ani < SHELL_ARRAY_NAME_MAX - 1)
                     aname[ani++] = *src++;
                 aname[ani] = '\0';
                 if (*src == '[') {
@@ -531,6 +550,34 @@ static void var_expand(const char *src, char *dst, int dst_max) {
                         if (idx < a->count) {
                             const char *ev = a->elems[idx];
                             while (*ev && di < dst_max - 1) dst[di++] = *ev++;
+                        }
+                    }
+                    continue;
+                }
+                /* ${name:-default} — use default if unset or empty */
+                if (*src == ':') {
+                    src++;
+                    char op = *src;  /* - or + */
+                    src++;
+                    char defval[128]; int dvi = 0;
+                    while (*src && *src != '}' && dvi < (int)sizeof(defval) - 1)
+                        defval[dvi++] = *src++;
+                    defval[dvi] = '\0';
+                    if (*src == '}') src++;
+                    const char *val = shell_var_get(aname);
+                    if (op == '-') {
+                        /* Use default if unset or empty */
+                        if (!val || !*val) {
+                            char *dp = defval;
+                            while (*dp && di < dst_max - 1) dst[di++] = *dp++;
+                        } else {
+                            while (*val && di < dst_max - 1) dst[di++] = *val++;
+                        }
+                    } else if (op == '+') {
+                        /* Use alternate if set and non-empty */
+                        if (val && *val) {
+                            char *dp = defval;
+                            while (*dp && di < dst_max - 1) dst[di++] = *dp++;
                         }
                     }
                     continue;
@@ -2433,6 +2480,7 @@ void shell_exec_cmd(const char *cmd, const char *args) {
 
 void shell_run(void) {
     history_load();
+    history_persist_load();  /* load persistent history from /home/user/.history */
     kprintf("\nWelcome to the OS shell. Type 'help' for commands.\n\n");
 
     /* Function definition state */

@@ -16,10 +16,16 @@ void pipe_init(void) {
 int pipe_create(void) {
     for (int i = 0; i < PIPE_MAX; i++) {
         if (!pipe_table[i].in_use) {
-            /* Allocate default-size buffer */
+            /* Allocate default-size buffers (primary + secondary for double-buffering) */
             pipe_table[i].buf = (uint8_t *)kmalloc(PIPE_DEFAULT_SIZE);
             if (!pipe_table[i].buf)
                 return -1;
+            pipe_table[i].buf2 = (uint8_t *)kmalloc(PIPE_DEFAULT_SIZE);
+            if (!pipe_table[i].buf2) {
+                kfree(pipe_table[i].buf);
+                pipe_table[i].buf = NULL;
+                return -1;
+            }
             pipe_table[i].capacity  = PIPE_DEFAULT_SIZE;
             pipe_table[i].read_pos  = 0;
             pipe_table[i].write_pos = 0;
@@ -81,6 +87,94 @@ int pipe_write(int pipe_id, const void *buf, int len) {
     }
 
     return written;
+}
+
+/* ── pipe_splice ────────────────────────────────────────────────────────
+ * Splice data from src_pipe directly into dst_pipe without userspace
+ * buffering.  Uses double-buffering for zero-copy transfers when possible.
+ * Returns number of bytes moved, or -1 on error.
+ */
+int pipe_splice(int src_pipe_id, int dst_pipe_id, int len)
+{
+    if (src_pipe_id < 0 || src_pipe_id >= PIPE_MAX || !pipe_table[src_pipe_id].in_use)
+        return -1;
+    if (dst_pipe_id < 0 || dst_pipe_id >= PIPE_MAX || !pipe_table[dst_pipe_id].in_use)
+        return -1;
+
+    struct pipe *src = &pipe_table[src_pipe_id];
+    struct pipe *dst = &pipe_table[dst_pipe_id];
+    int total = 0;
+
+    while (total < len) {
+        /* Wait for source data */
+        while (src->count == 0) {
+            if (src->writers == 0) return total; /* EOF */
+            wait_queue_ensure(&src->read_wq);
+            scheduler_yield();
+            if (src->readers == 0) return total > 0 ? total : -1;
+        }
+
+        /* Wait for destination space */
+        while (dst->count == dst->capacity) {
+            if (dst->readers == 0) {
+                struct process *cur = process_get_current();
+                if (cur) signal_send(cur->pid, SIGPIPE);
+                return total > 0 ? total : -1;
+            }
+            wait_queue_ensure(&dst->write_wq);
+            scheduler_yield();
+        }
+
+        /* Calculate how much we can move in one shot */
+        int src_avail = src->count;
+        int dst_space = dst->capacity - dst->count;
+        int chunk = len - total;
+        if (chunk > src_avail) chunk = src_avail;
+        if (chunk > dst_space) chunk = dst_space;
+        if (chunk <= 0) break;
+
+        /* Double-buffering splice: swap source buffer with secondary
+         * buffer for zero-copy transfer when the source has enough data
+         * to fill a whole chunk and the destination has enough space. */
+        if ((size_t)chunk >= (size_t)(src->capacity / 2) &&
+            dst->count == 0 && dst->buf2) {
+            /* Swap src's primary buffer into dst, and give src dst's
+             * secondary buffer so the writer can keep going. */
+            uint8_t *tmp = dst->buf;
+            dst->buf = src->buf;
+            src->buf = tmp;
+
+            dst->write_pos = chunk;
+            dst->count     = chunk;
+            src->read_pos  = chunk;
+            src->count    -= chunk;
+
+            total   += chunk;
+            /* Wake up waiters on both pipes */
+            wait_queue_wake(&src->write_wq);
+            wait_queue_wake(&dst->read_wq);
+            continue;
+        }
+
+        /* Move data directly between pipe buffers */
+        for (int i = 0; i < chunk; i++) {
+            int src_pos = (src->read_pos + i) % src->capacity;
+            int dst_pos = (dst->write_pos + i) % dst->capacity;
+            dst->buf[dst_pos] = src->buf[src_pos];
+        }
+
+        src->read_pos = (src->read_pos + chunk) % src->capacity;
+        src->count -= chunk;
+        dst->write_pos = (dst->write_pos + chunk) % dst->capacity;
+        dst->count += chunk;
+        total += chunk;
+
+        /* Wake up waiters on both pipes */
+        wait_queue_wake(&src->write_wq);
+        wait_queue_wake(&dst->read_wq);
+    }
+
+    return total;
 }
 
 int pipe_read(int pipe_id, void *buf, int len) {
@@ -148,6 +242,10 @@ int pipe_close(int pipe_id, int is_write_end) {
             kfree(p->buf);
             p->buf = NULL;
         }
+        if (p->buf2) {
+            kfree(p->buf2);
+            p->buf2 = NULL;
+        }
         memset(p, 0, sizeof(*p));
     }
 
@@ -168,14 +266,22 @@ int pipe_set_capacity(int pipe_id, int new_capacity) {
     if (p->count != 0)
         return -1;
 
-    /* Allocate new buffer */
+    /* Allocate new buffers */
     uint8_t *new_buf = (uint8_t *)kmalloc(new_capacity);
     if (!new_buf)
         return -1;
+    uint8_t *new_buf2 = (uint8_t *)kmalloc(new_capacity);
+    if (!new_buf2) {
+        kfree(new_buf);
+        return -1;
+    }
 
-    /* Free old buffer, swap in new one */
+    /* Free old buffers, swap in new ones */
     kfree(p->buf);
+    if (p->buf2)
+        kfree(p->buf2);
     p->buf = new_buf;
+    p->buf2 = new_buf2;
     p->capacity = new_capacity;
     p->read_pos = 0;
     p->write_pos = 0;

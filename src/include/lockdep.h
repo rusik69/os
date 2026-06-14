@@ -37,6 +37,7 @@ struct lock_class {
     uint64_t    addr;
     int         in_use;
     int         type;              /* LOCK_TYPE_* */
+    int         class_id;         /* unique id for cycle chain reporting */
     /* Dependency edges: addr of locks held when this one is acquired */
     uint64_t    deps[LOCKDEP_MAX_LOCKS];
     int         dep_count;
