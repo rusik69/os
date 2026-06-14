@@ -1,0 +1,9 @@
+/* true.c — exit with success status */
+
+#include "unistd.h"
+
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+    return 0;
+}

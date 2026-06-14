@@ -7,6 +7,7 @@
 
 /* Minimal printf */
 int printf(const char *fmt, ...);
+int snprintf(char *buf, unsigned long size, const char *fmt, ...);
 int putchar(int c);
 int puts(const char *s);
 

@@ -25,7 +25,7 @@ static void print_dec(long long val, int width) {
         }
     }
     int pad = width > pos ? width - pos : 0;
-    if (neg) pad--; /* sign takes one space */
+    if (neg) pad--;
     while (pad > 0) {
         buf[pos++] = ' ';
         pad--;
@@ -94,7 +94,6 @@ int printf(const char *fmt, ...) {
                 unsigned long long val = va_arg(ap, unsigned long long);
                 print_hex(val);
             } else {
-                /* Unknown, emit raw */
                 write(STDOUT_FILENO, "%l", 2);
                 write(STDOUT_FILENO, fmt, 1);
             }
@@ -122,6 +121,82 @@ int printf(const char *fmt, ...) {
 
     va_end(ap);
     return count;
+}
+
+/* Minimal snprintf — writes to a buffer instead of stdout */
+int snprintf(char *buf, unsigned long size, const char *fmt, ...) {
+    if (!buf || size == 0) return 0;
+    va_list ap;
+    va_start(ap, fmt);
+    unsigned long pos = 0;
+
+    while (*fmt && pos < size - 1) {
+        if (*fmt != '%') {
+            buf[pos++] = *fmt;
+            fmt++;
+            continue;
+        }
+        fmt++;
+        if (*fmt == 's') {
+            const char *s = va_arg(ap, const char *);
+            if (!s) s = "(null)";
+            while (*s && pos < size - 1) buf[pos++] = *s++;
+        } else if (*fmt == 'd' || *fmt == 'i') {
+            int val = va_arg(ap, int);
+            char tmp[24];
+            int neg = 0, tpos = 0;
+            if (val < 0) { neg = 1; val = -val; }
+            if (val == 0) tmp[tpos++] = '0';
+            else {
+                while (val > 0 && tpos < 23) {
+                    tmp[tpos++] = '0' + (val % 10);
+                    val /= 10;
+                }
+            }
+            if (neg) tmp[tpos++] = '-';
+            for (int i = tpos - 1; i >= 0 && pos < size - 1; i--)
+                buf[pos++] = tmp[i];
+        } else if (*fmt == 'u') {
+            unsigned int val = va_arg(ap, unsigned int);
+            char tmp[24];
+            int tpos = 0;
+            if (val == 0) tmp[tpos++] = '0';
+            else {
+                while (val > 0 && tpos < 23) {
+                    tmp[tpos++] = '0' + (val % 10);
+                    val /= 10;
+                }
+            }
+            for (int i = tpos - 1; i >= 0 && pos < size - 1; i--)
+                buf[pos++] = tmp[i];
+        } else if (*fmt == 'x' || *fmt == 'X') {
+            unsigned int val = va_arg(ap, unsigned int);
+            char tmp[16];
+            int tpos = 0;
+            if (val == 0) { tmp[tpos++] = '0'; }
+            else {
+                while (val > 0 && tpos < 15) {
+                    int nib = val & 0xF;
+                    tmp[tpos++] = nib < 10 ? '0' + nib : 'a' + nib - 10;
+                    val >>= 4;
+                }
+            }
+            for (int i = tpos - 1; i >= 0 && pos < size - 1; i--)
+                buf[pos++] = tmp[i];
+        } else if (*fmt == 'c') {
+            char c = (char)va_arg(ap, int);
+            buf[pos++] = c;
+        } else if (*fmt == '%') {
+            buf[pos++] = '%';
+        } else {
+            buf[pos++] = '%';
+            if (pos < size - 1) buf[pos++] = *fmt;
+        }
+        fmt++;
+    }
+    va_end(ap);
+    buf[pos] = '\0';
+    return pos;
 }
 
 int putchar(int c) {

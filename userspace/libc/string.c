@@ -53,6 +53,19 @@ char *strcpy(char *dest, const char *src) {
     return dest;
 }
 
+char *strncpy(char *dest, const char *src, unsigned long n) {
+    char *d = dest;
+    while (n > 0 && *src) {
+        *d++ = *src++;
+        n--;
+    }
+    while (n > 0) {
+        *d++ = '\0';
+        n--;
+    }
+    return dest;
+}
+
 char *strcat(char *dest, const char *src) {
     char *d = dest + strlen(dest);
     while ((*d++ = *src++))
@@ -67,4 +80,16 @@ char *strchr(const char *s, int c) {
         s++;
     }
     return (c == '\0') ? (char *)s : 0;
+}
+
+char *strrchr(const char *s, int c) {
+    const char *last = 0;
+    while (*s) {
+        if (*s == (char)c)
+            last = s;
+        s++;
+    }
+    if (c == '\0')
+        return (char *)s;
+    return (char *)last;
 }

@@ -1,5 +1,6 @@
 # ── Userspace build ──────────────────────────────────────────────
-# Builds init.elf with static libc, then packages as initramfs.cpio
+# Builds libc.a, init.elf, sh.elf, and all command ELFs,
+# then packages as initramfs.cpio
 # Uses x86_64-linux-gnu toolchain (not the kernel's cross compiler)
 CROSS_COMPILE ?= x86_64-linux-gnu-
 CC := $(CROSS_COMPILE)gcc
@@ -17,9 +18,19 @@ LDFLAGS = -T $(LIBC_DIR)/user.ld -nostdlib -z max-page-size=0x1000 -z noexecstac
 LIBC_OBJS = \
 	$(LIBC_DIR)/crt0.o \
 	$(LIBC_DIR)/syscall.o \
+	$(LIBC_DIR)/sys.o \
 	$(LIBC_DIR)/stdio.o \
 	$(LIBC_DIR)/string.o \
 	$(LIBC_DIR)/stdlib.o
+
+# All binaries to build
+BIN_ELFS = init.elf sh.elf
+
+# Command ELFs
+CMD_SRCS = $(wildcard bin/cmds/*.c)
+CMD_ELFS = $(patsubst bin/cmds/%.c, %.elf, $(CMD_SRCS))
+
+.PHONY: all clean
 
 all: initramfs.cpio
 
@@ -27,33 +38,7 @@ all: initramfs.cpio
 $(LIBC_A): $(LIBC_OBJS)
 	$(AR) rcs $@ $^
 
-# init program
-init/init.o: init/init.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-init.elf: init/init.o $(LIBC_A)
-	$(LD) $(LDFLAGS) init/init.o $(LIBC_A) -o $@
-
-# CPIO archive containing /bin/sh (our init.elf)
-initramfs.cpio: init.elf
-	@rm -rf initramfs_root
-	@mkdir -p initramfs_root/bin
-	cp init.elf initramfs_root/bin/sh
-	cd initramfs_root && \
-		find . | cpio -o -H newc --quiet > ../initramfs.cpio
-	@rm -rf initramfs_root
-	@echo "[userspace] Created initramfs.cpio"
-
-clean:
-	rm -f $(LIBC_OBJS) $(LIBC_A) init/init.o init.elf initramfs.cpio
-
--include init/init.d
-
-.PHONY: all clean
-
-.SUFFIXES:
-.SUFFIXES: .c .o .S .elf .cpio
-
+# Pattern rules for building .o files
 $(LIBC_DIR)/%.o: $(LIBC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -62,3 +47,59 @@ $(LIBC_DIR)/%.o: $(LIBC_DIR)/%.s
 
 $(LIBC_DIR)/%.o: $(LIBC_DIR)/%.S
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# init program
+init/init.o: init/init.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+init.elf: init/init.o $(LIBC_A)
+	$(LD) $(LDFLAGS) init/init.o $(LIBC_A) -o $@
+
+# Shell
+bin/sh.o: bin/sh.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+sh.elf: bin/sh.o $(LIBC_A)
+	$(LD) $(LDFLAGS) bin/sh.o $(LIBC_A) -o $@
+
+# Command ELFs — each is a standalone userspace binary
+bin/cmds/%.o: bin/cmds/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+%.elf: bin/cmds/%.o $(LIBC_A)
+	$(LD) $(LDFLAGS) $< $(LIBC_A) -o $@
+
+# Initramfs packaging
+initramfs.cpio: $(BIN_ELFS) $(CMD_ELFS)
+	@rm -rf initramfs_root
+	@mkdir -p initramfs_root/bin
+	cp init.elf initramfs_root/init
+	cp sh.elf initramfs_root/bin/sh
+	@for f in $(CMD_ELFS); do \
+		name=$${f%.elf}; \
+		cp $$f initramfs_root/bin/$$name; \
+	done
+	cd initramfs_root && \
+		find . | cpio -o -H newc --quiet > ../initramfs.cpio
+	@rm -rf initramfs_root
+	@echo "[userspace] Created initramfs.cpio"
+
+clean:
+	rm -f $(LIBC_OBJS) $(LIBC_A)
+	rm -f init/init.o init.elf
+	rm -f bin/sh.o
+	rm -f $(patsubst %.elf,bin/cmds/%.o,$(CMD_ELFS))
+	rm -f $(BIN_ELFS) $(CMD_ELFS)
+	rm -f initramfs.cpio
+
+-include init/init.d
+-include $(LIBC_DIR)/stdio.d
+-include $(LIBC_DIR)/string.d
+-include $(LIBC_DIR)/stdlib.d
+-include $(LIBC_DIR)/syscall.d
+
+.SUFFIXES:
+.SUFFIXES: .c .o .S .elf .cpio
+
+# vpath for command sources
+vpath %.c bin/cmds

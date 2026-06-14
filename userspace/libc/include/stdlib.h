@@ -14,5 +14,7 @@ int atoi(const char *s);
 
 /* Process control */
 void abort(void);
+void srand(unsigned int seed);
+int rand(void);
 
 #endif /* _STDLIB_H */

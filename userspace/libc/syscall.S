@@ -59,6 +59,15 @@ getpid:
     ret
 .size getpid, . - getpid
 
+# kill(pid, sig)
+.globl kill
+.type kill, @function
+kill:
+    movl    $6, %eax
+    syscall
+    ret
+.size kill, . - kill
+
 # brk(addr)
 .globl brk
 .type brk, @function
@@ -68,6 +77,51 @@ brk:
     ret
 .size brk, . - brk
 
+# stat(path, buf)
+.globl stat
+.type stat, @function
+stat:
+    movl    $8, %eax
+    syscall
+    ret
+.size stat, . - stat
+
+# mkdir(path, mode)
+.globl mkdir
+.type mkdir, @function
+mkdir:
+    movl    $9, %eax
+    syscall
+    ret
+.size mkdir, . - mkdir
+
+# unlink(path)
+.globl unlink
+.type unlink, @function
+unlink:
+    movl    $10, %eax
+    syscall
+    ret
+.size unlink, . - unlink
+
+# yield() — sched_yield
+.globl yield
+.type yield, @function
+yield:
+    movl    $12, %eax
+    syscall
+    ret
+.size yield, . - yield
+
+# getdents64(fd, buf, count)
+.globl getdents64
+.type getdents64, @function
+getdents64:
+    movl    $78, %eax
+    syscall
+    ret
+.size getdents64, . - getdents64
+
 # waitpid(pid, status, options)
 .globl waitpid
 .type waitpid, @function
@@ -76,15 +130,6 @@ waitpid:
     syscall
     ret
 .size waitpid, . - waitpid
-
-# fork()
-.globl fork
-.type fork, @function
-fork:
-    movl    $211, %eax
-    syscall
-    ret
-.size fork, . - fork
 
 # chdir(path)
 .globl chdir
@@ -104,14 +149,59 @@ getcwd:
     ret
 .size getcwd, . - getcwd
 
-# nanosleep(req, rem)
-.globl nanosleep
-.type nanosleep, @function
-nanosleep:
-    movl    $246, %eax
+# fork()
+.globl fork
+.type fork, @function
+fork:
+    movl    $211, %eax
     syscall
     ret
-.size nanosleep, . - nanosleep
+.size fork, . - fork
+
+# signal(signum, handler)
+.globl signal
+.type signal, @function
+signal:
+    movl    $213, %eax
+    syscall
+    ret
+.size signal, . - signal
+
+# lseek(fd, offset, whence)
+.globl lseek
+.type lseek, @function
+lseek:
+    movl    $214, %eax
+    syscall
+    ret
+.size lseek, . - lseek
+
+# setpgid(pid, pgid)
+.globl setpgid
+.type setpgid, @function
+setpgid:
+    movl    $221, %eax
+    syscall
+    ret
+.size setpgid, . - setpgid
+
+# getpgid(pid)
+.globl getpgid
+.type getpgid, @function
+getpgid:
+    movl    $222, %eax
+    syscall
+    ret
+.size getpgid, . - getpgid
+
+# execve(path, argv, envp) - kernel's ELF exec
+.globl execve
+.type execve, @function
+execve:
+    movl    $234, %eax
+    syscall
+    ret
+.size execve, . - execve
 
 # dup(oldfd)
 .globl dup
@@ -131,20 +221,137 @@ dup2:
     ret
 .size dup2, . - dup2
 
-# execve(path, argv, envp) - kernel's ELF exec
-.globl execve
-.type execve, @function
-execve:
-    movl    $155, %eax
+# nanosleep(req, rem)
+.globl nanosleep
+.type nanosleep, @function
+nanosleep:
+    movl    $246, %eax
     syscall
     ret
-.size execve, . - execve
+.size nanosleep, . - nanosleep
+
+# uname(buf)
+.globl uname
+.type uname, @function
+uname:
+    movl    $248, %eax
+    syscall
+    ret
+.size uname, . - uname
+
+# pipe(fds)
+.globl pipe
+.type pipe, @function
+pipe:
+    movl    $249, %eax
+    syscall
+    ret
+.size pipe, . - pipe
+
+# getppid()
+.globl getppid
+.type getppid, @function
+getppid:
+    movl    $250, %eax
+    syscall
+    ret
+.size getppid, . - getppid
+
+# alarm(seconds)
+.globl alarm
+.type alarm, @function
+alarm:
+    movl    $251, %eax
+    syscall
+    ret
+.size alarm, . - alarm
+
+# getuid()
+.globl getuid
+.type getuid, @function
+getuid:
+    movl    $254, %eax
+    syscall
+    ret
+.size getuid, . - getuid
+
+# geteuid()
+.globl geteuid
+.type geteuid, @function
+geteuid:
+    movl    $255, %eax
+    syscall
+    ret
+.size geteuid, . - geteuid
+
+# getgid()
+.globl getgid
+.type getgid, @function
+getgid:
+    movl    $256, %eax
+    syscall
+    ret
+.size getgid, . - getgid
+
+# getegid()
+.globl getegid
+.type getegid, @function
+getegid:
+    movl    $257, %eax
+    syscall
+    ret
+.size getegid, . - getegid
+
+# rmdir(path)
+.globl rmdir
+.type rmdir, @function
+rmdir:
+    movl    $258, %eax
+    syscall
+    ret
+.size rmdir, . - rmdir
+
+# umask(mask)
+.globl umask
+.type umask, @function
+umask:
+    movl    $270, %eax
+    syscall
+    ret
+.size umask, . - umask
+
+# ioctl(fd, cmd, arg)
+.globl ioctl
+.type ioctl, @function
+ioctl:
+    movl    $278, %eax
+    syscall
+    ret
+.size ioctl, . - ioctl
+
+# fstatat(dirfd, path, buf, flags)
+.globl fstatat
+.type fstatat, @function
+fstatat:
+    movl    $290, %eax
+    syscall
+    ret
+.size fstatat, . - fstatat
+
+# readlinkat(dirfd, path, buf, bufsize)
+.globl readlinkat
+.type readlinkat, @function
+readlinkat:
+    movl    $294, %eax
+    syscall
+    ret
+.size readlinkat, . - readlinkat
 
 # posix_spawn(path, argv, envp)
 .globl posix_spawn
 .type posix_spawn, @function
 posix_spawn:
-    movl    $211, %eax
+    movl    $777, %eax
     syscall
     ret
 .size posix_spawn, . - posix_spawn
