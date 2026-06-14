@@ -228,7 +228,7 @@ static void journal_collect_kmsg(void)
 /*
  * Accept a log message via the FIFO socket.
  */
-static void journal_handle_socket_msg(const char *data, int len)
+static __attribute__((unused)) void journal_handle_socket_msg(const char *data, int len)
 {
     char unit[64] = "unknown";
     int priority = 6;

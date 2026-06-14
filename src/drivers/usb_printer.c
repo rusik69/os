@@ -64,7 +64,7 @@ static int g_printer_count = 0;
 /* ── Device ID string parsing ────────────────────────────────────── */
 
 /* Parse IEEE 1284 Device ID (MFG:xxx;MDL:xxx;CMD:xxx;...) */
-static void parse_device_id(struct usb_printer *p, const uint8_t *data, int len)
+static __attribute__((unused)) void parse_device_id(struct usb_printer *p, const uint8_t *data, int len)
 {
     if (!data || len <= 0) return;
 

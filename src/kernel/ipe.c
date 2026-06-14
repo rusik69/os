@@ -92,12 +92,12 @@ int ipe_verify_file(const char *path)
     uint8_t ima_hash[SHA256_DIGEST_SIZE];
     uint32_t ima_len = sizeof(ima_hash);
 
-    int has_ima = (vfs_getxattr(path, "security.ima", ima_hash, &ima_len) == 0);
+    int has_ima = (vfs_getxattr(path, "security.ima", ima_hash, sizeof(ima_hash)) == 0);
 
     /* ── Step 3: Check for digital signature ───────────────────── */
     uint8_t sig_buf[512];
     uint32_t sig_len = sizeof(sig_buf);
-    int has_sig = (vfs_getxattr(path, "security.ipe", sig_buf, &sig_len) == 0);
+    int has_sig = (vfs_getxattr(path, "security.ipe", sig_buf, sizeof(sig_buf)) == 0);
 
     /* ── Decision ───────────────────────────────────────────────── */
     if (has_ima || has_sig) {

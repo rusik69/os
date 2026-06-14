@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "export.h"
+#include "timer.h"
 
 #define LOWPAN6_MAX_IFACES 4
 
@@ -98,7 +99,7 @@ int lowpan6_decompress(const uint8_t *in, uint16_t in_len,
 
     uint8_t dispatch = in[0];
 
-    if ((dispatch & 0xC0) == LOWPAN_DISPATCH_IPHC) {
+    if ((dispatch & 0xE0) == LOWPAN_DISPATCH_IPHC) {
         /* IPHC compressed — simplified: reconstruct from context */
         (void)ip6;
         return -ENOSYS;  /* Full IPHC decompression not yet implemented */

@@ -200,7 +200,7 @@ static int entry_matches_unit(const struct journal_entry *entry,
  * Check if an entry matches a time-based filter.
  * Returns 1 if it matches (or no filter), 0 otherwise.
  */
-static int entry_matches_since(const struct journal_entry *entry,
+static __attribute__((unused)) int entry_matches_since(const struct journal_entry *entry,
                                const char *since_filter,
                                uint64_t current_time)
 {

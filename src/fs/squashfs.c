@@ -102,14 +102,14 @@ static uint32_t squashfs_read32(const uint8_t *p)
 }
 
 /* Read a LE 64-bit value from the image */
-static uint64_t squashfs_read64(const uint8_t *p)
+static __attribute__((unused)) uint64_t squashfs_read64(const uint8_t *p)
 {
     return (uint64_t)squashfs_read32(p) | ((uint64_t)squashfs_read32(p + 4) << 32);
 }
 
 /* ── Parse the filesystem ──────────────────────────────────────────── */
 
-static int squashfs_parse_inode(struct squashfs_priv *rp,
+static __attribute__((unused)) int squashfs_parse_inode(struct squashfs_priv *rp,
                                  uint64_t inode_ref, struct squashfs_entry *entry)
 {
     /* inode_ref is byte offset from the start of the filesystem */

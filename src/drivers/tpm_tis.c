@@ -644,7 +644,7 @@ int tpm2_nv_define_space(uint32_t nv_index, uint32_t data_size,
      *   nvPolicy     (2 bytes size + policy digest) — empty policy
      *   nvDataSize   (2 bytes)
      */
-    uint8_t cmd[10 + 4 + 4 + 4 + 2 + 2];
+    uint8_t cmd[10 + 4 + 4 + 4 + 2 + 2 + 1]; /* +1 for nvDataSize 2nd byte */
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
 
     hdr->tag = TPM2_ST_SESSIONS;
@@ -1311,7 +1311,7 @@ static int tpm_dev_write(void *priv, const void *data, uint32_t size)
 
 /* ioctl dispatch (simplified — in a real kernel, this hooks into
  * the file_operations.ioctl callback) */
-static int tpm_dev_ioctl(void *priv, uint32_t cmd, void *arg)
+static __attribute__((unused)) int tpm_dev_ioctl(void *priv, uint32_t cmd, void *arg)
 {
     (void)priv;
     if (!arg) return -1;

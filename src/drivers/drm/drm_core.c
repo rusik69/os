@@ -222,7 +222,7 @@ static int drm_ioctl_rmfb(struct drm_device *dev, struct drm_file *fp,
 
 /* ── Main ioctl dispatcher ────────────────────────────────────── */
 
-static int drm_ioctl_dispatch(struct drm_device *dev, struct drm_file *fp,
+static __attribute__((unused)) int drm_ioctl_dispatch(struct drm_device *dev, struct drm_file *fp,
                                uint32_t cmd, void *arg)
 {
     /* If the driver has its own dispatch, try it first */
@@ -289,7 +289,7 @@ static int drm_dev_open(void *priv, void *buf, uint32_t max_size,
     return 0;
 }
 
-static int drm_dev_release(void *priv)
+static __attribute__((unused)) int drm_dev_release(void *priv)
 {
     struct drm_devfs_priv *dp = (struct drm_devfs_priv *)priv;
     struct drm_device *dev = dp->dev;

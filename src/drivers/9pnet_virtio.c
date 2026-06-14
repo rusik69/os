@@ -82,7 +82,7 @@ static inline uint32_t v9p_inl(uint8_t off) {
 
 /* ── 9P message send/receive (stub) ────────────────────────────── */
 
-static int v9p_send_recv(const void *tx, uint32_t txlen,
+static __attribute__((unused)) int v9p_send_recv(const void *tx, uint32_t txlen,
                           void *rx, uint32_t rxmax, uint32_t *rxlen)
 {
     (void)tx; (void)txlen; (void)rx; (void)rxmax;

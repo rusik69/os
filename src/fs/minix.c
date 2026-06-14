@@ -122,7 +122,7 @@ struct minix_priv {
 
 /* ── Block I/O ─────────────────────────────────────────────────── */
 
-static int minix_read_block(struct minix_priv *mp, uint32_t block_num,
+static __attribute__((unused)) int minix_read_block(struct minix_priv *mp, uint32_t block_num,
                              uint8_t *buf)
 {
     uint64_t lba = (uint64_t)block_num * (mp->block_size / 512);

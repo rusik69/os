@@ -68,6 +68,7 @@ static int g_ima_policy_initialized = 0;
  *   Rule 5: Measure all exec'd files
  *   Rule 6: Fallback: measure everything
  */
+static int ima_policy_add_rule(const char *rule);
 static void ima_default_policy(void)
 {
     /* 1. Measure binaries */

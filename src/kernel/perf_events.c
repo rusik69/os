@@ -8,6 +8,7 @@
 #include "smp.h"
 #include "errno.h"
 #include "kallsyms.h"
+#include "timer.h"
 
 /* Software event counters */
 static struct perf_sw_counters sw_counters;

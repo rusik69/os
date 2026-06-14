@@ -119,7 +119,7 @@ static int pkcs7_parse_der_length(const uint8_t *der, uint32_t *len)
  *
  * Returns the offset past the TLV, or -1 on error.
  */
-static int pkcs7_skip_der_tlv(const uint8_t *der, int size)
+static __attribute__((unused)) int pkcs7_skip_der_tlv(const uint8_t *der, int size)
 {
     if (size < 2) return -1;
 

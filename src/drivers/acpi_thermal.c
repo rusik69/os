@@ -28,6 +28,7 @@
 
 #include "acpi_thermal.h"
 #include "acpi.h"
+#include "timers.h"
 #include "io.h"
 #include "printf.h"
 #include "string.h"

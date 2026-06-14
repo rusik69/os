@@ -55,7 +55,7 @@
 #define DT_BLK      4
 #define DT_FIFO     5
 #define DT_SOCK     6
-#define DT_LNK      7
+/* DT_LNK is defined in syscall.h */
 
 /* ── VFS type mapping helper ───────────────────────────────────────── */
 

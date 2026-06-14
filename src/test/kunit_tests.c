@@ -862,7 +862,7 @@ static struct kunit_case pmm_test_cases[] = {
     KUNIT_CASE(pmm_refcount_test),
     KUNIT_CASE(pmm_zero_test),
     KUNIT_CASE(pmm_contig_alloc_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case slab_test_cases[] = {
@@ -871,7 +871,7 @@ static struct kunit_case slab_test_cases[] = {
     KUNIT_CASE(slab_realloc_test),
     KUNIT_CASE(slab_boundary_test),
     KUNIT_CASE(slab_large_alloc_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case string_test_cases[] = {
@@ -879,18 +879,18 @@ static struct kunit_case string_test_cases[] = {
     KUNIT_CASE(string_strcmp_test),
     KUNIT_CASE(string_memset_test),
     KUNIT_CASE(string_memcpy_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case vmm_test_cases[] = {
     KUNIT_CASE(vmm_map_unmap_test),
     KUNIT_CASE(vmm_multipage_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_process_count_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case slab_stress_test_cases[] = {
@@ -898,27 +898,27 @@ static struct kunit_case slab_stress_test_cases[] = {
     KUNIT_CASE(slab_stress_zero_size_test),
     KUNIT_CASE(slab_stress_edge_sizes_test),
     KUNIT_CASE(slab_stress_many_small_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case vmm_hugepage_test_cases[] = {
     KUNIT_CASE(vmm_unmap_remap_test),
     KUNIT_CASE(vmm_huge_page_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case tcp_state_test_cases[] = {
     KUNIT_CASE(tcp_active_open_test),
     KUNIT_CASE(tcp_passive_open_test),
     KUNIT_CASE(tcp_invalid_transition_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case fat32_corrupt_test_cases[] = {
     KUNIT_CASE(fat32_umount_remount_test),
     KUNIT_CASE(fat32_root_list_test),
     KUNIT_CASE(fat32_nonexistent_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case elf_edge_test_cases[] = {
@@ -927,7 +927,7 @@ static struct kunit_case elf_edge_test_cases[] = {
     KUNIT_CASE(elf_wrap_test),
     KUNIT_CASE(elf_null_page_test),
     KUNIT_CASE(elf_out_of_bounds_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_case signal_delivery_test_cases[] = {
@@ -935,7 +935,7 @@ static struct kunit_case signal_delivery_test_cases[] = {
     KUNIT_CASE(signal_invalid_pid_test),
     KUNIT_CASE(signal_mask_test),
     KUNIT_CASE(signal_nested_test),
-    {NULL, NULL}
+    {0}
 };
 
 /* Helper macro to populate a fixed-size array from a NULL-terminated list */

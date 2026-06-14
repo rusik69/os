@@ -895,7 +895,7 @@ static void sigterm_handler(void)
 /*
  * Return the number of child processes currently tracked as running.
  */
-static int count_running_children(void)
+static __attribute__((unused)) int count_running_children(void)
 {
     int count = 0;
     for (int i = 0; i < service_count; i++) {
@@ -908,7 +908,7 @@ static int count_running_children(void)
 /*
  * Send a signal to all tracked child processes.
  */
-static void shutdown_kill_all(int sig)
+static __attribute__((unused)) void shutdown_kill_all(int sig)
 {
     for (int i = 0; i < service_count; i++) {
         if (services[i].pid > 0)

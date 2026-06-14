@@ -187,7 +187,7 @@ int ima_measure_file(const char *path, int for_exec)
     if (ima_mode >= 2) {
         char stored_hex[IMA_HASH_STR];
         size_t stored_size = sizeof(stored_hex);
-        int xret = xattr_get(path, "security.ima", stored_hex, &stored_size);
+        int xret = xattr_get(path, "security.ima", stored_hex, stored_size);
         if (xret == 0 && stored_size > 0 && stored_size <= sizeof(stored_hex)) {
             /* Null-terminate the stored value (xattr stores raw bytes) */
             if (stored_size < sizeof(stored_hex))

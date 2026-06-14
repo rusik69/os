@@ -238,8 +238,10 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             break;
 
         case SCTP_DATA: {
-            uint16_t data_len = chunk_len - sizeof(*chunk);
-            if (data_len > sizeof(a->rcvbuf)) data_len = sizeof(a->rcvbuf);
+            uint16_t chunk_data_len = chunk_len - sizeof(*chunk);
+            size_t data_len = chunk_data_len;
+            size_t rcvbuf_size = sizeof(a->rcvbuf);
+            if (data_len > rcvbuf_size) data_len = rcvbuf_size;
             memcpy(a->rcvbuf, (uint8_t *)(chunk + 1), data_len);
             a->rcvlen = data_len;
             break;

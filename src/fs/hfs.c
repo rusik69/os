@@ -179,7 +179,7 @@ static int hfs_read_block(struct hfs_priv *hp, uint32_t lba, uint8_t *buf)
 
 /* ── Load MDB ──────────────────────────────────────────────────── */
 
-static int hfs_load_mdb(struct hfs_priv *hp)
+static __attribute__((unused)) int hfs_load_mdb(struct hfs_priv *hp)
 {
     uint8_t buf[512];
     if (hfs_read_block(hp, HFS_MDB_BLOCK, buf) != 0)
@@ -212,7 +212,7 @@ static int hfs_load_mdb(struct hfs_priv *hp)
 
 /* ── Catalog B-tree reader ─────────────────────────────────────── */
 
-static int hfs_read_btree_node(struct hfs_priv *hp,
+static __attribute__((unused)) int hfs_read_btree_node(struct hfs_priv *hp,
                                 uint32_t node_num,
                                 uint8_t *buf)
 {

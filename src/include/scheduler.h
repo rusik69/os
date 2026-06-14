@@ -49,6 +49,9 @@ struct runqueue_stats {
 };
 void scheduler_get_runqueue_stats(int cpu, struct runqueue_stats *s);
 
+/* Forward declaration — defined in process.h */
+struct cpu_context;
+
 extern void context_switch(struct cpu_context **old, struct cpu_context *new_ctx);
 
 /* ── Autogroup support ──────────────────────────────────────── */

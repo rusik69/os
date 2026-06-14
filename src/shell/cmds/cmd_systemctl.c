@@ -43,7 +43,7 @@
  *
  * Returns 0 on success with name populated, -1 on failure.
  */
-static int parse_unit_file(const char *path, char *name, int maxlen)
+static __attribute__((unused)) int parse_unit_file(const char *path, char *name, int maxlen)
 {
     uint32_t sz;
     uint8_t type;

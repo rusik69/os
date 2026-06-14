@@ -66,7 +66,7 @@ static int em_initialized = 0;
  * For simplicity, we use a linear scaling from the provided maximum
  * power value.
  */
-static uint32_t em_compute_dynamic_power(uint32_t freq_khz, uint32_t voltage_mv,
+static __attribute__((unused)) uint32_t em_compute_dynamic_power(uint32_t freq_khz, uint32_t voltage_mv,
                                           uint32_t max_freq_khz, uint32_t max_voltage_mv,
                                           uint32_t max_dynamic_mw)
 {

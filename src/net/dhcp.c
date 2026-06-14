@@ -657,7 +657,7 @@ static int dhcp_relay_insert_option82(uint8_t *buf, int len, int max_len)
  * Strip Relay Agent Information option (82) from a DHCP packet.
  * Returns the new packet length.
  */
-static int dhcp_relay_strip_option82(uint8_t *buf, int len)
+static __attribute__((unused)) int dhcp_relay_strip_option82(uint8_t *buf, int len)
 {
     if (!buf || len <= 0)
         return len;

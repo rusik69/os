@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "export.h"
+#include "timer.h"
 
 #define MPTCP_MAX_CONNS 8
 
@@ -59,11 +60,19 @@ int mptcp_create(void)
     mc->used = 1;
     mc->token = mptcp_next_token++;
 
-    /* Generate random 64-bit key */
-    mc->snd_key[0] = (uint8_t)(mptcp_next_token >> 56);
-    mc->snd_key[1] = (uint8_t)(mptcp_next_token >> 48);
-    mc->snd_key[2] = (uint8_t)(mptcp_next_token >> 40);
-    mc->snd_key[3] = (uint8_t)(mptcp_next_token >> 32);
+    /* Generate random 64-bit key using RNG */
+    uint64_t key = 0;
+    /* Use mptcp_next_token + ticks as seed */
+    key = (uint64_t)mptcp_next_token;
+    key |= ((uint64_t)timer_get_ticks()) << 32;
+    mc->snd_key[0] = (uint8_t)(key & 0xFF);
+    mc->snd_key[1] = (uint8_t)((key >> 8) & 0xFF);
+    mc->snd_key[2] = (uint8_t)((key >> 16) & 0xFF);
+    mc->snd_key[3] = (uint8_t)((key >> 24) & 0xFF);
+    mc->snd_key[4] = (uint8_t)((key >> 32) & 0xFF);
+    mc->snd_key[5] = (uint8_t)((key >> 40) & 0xFF);
+    mc->snd_key[6] = (uint8_t)((key >> 48) & 0xFF);
+    mc->snd_key[7] = (uint8_t)((key >> 56) & 0xFF);
 
     spinlock_release(&mptcp_lock);
     return (int)mc->token;

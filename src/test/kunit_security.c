@@ -568,7 +568,7 @@ static struct kunit_case lockdown_test_cases[] = {
     KUNIT_CASE(lockdown_irreversible),
     KUNIT_CASE(lockdown_invalid_level),
     KUNIT_CASE(lockdown_is_locked_down_invalid),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite lockdown_test_suite;
@@ -583,7 +583,7 @@ static struct kunit_case pkey_test_cases[] = {
     KUNIT_CASE(pkey_key0_reserved),
     KUNIT_CASE(pkey_get_rights_invalid),
     KUNIT_CASE(pkey_set_rights_invalid_flags),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite pkey_test_suite;
@@ -593,7 +593,7 @@ static struct kunit_case audit_test_cases[] = {
     KUNIT_CASE(audit_init_and_log),
     KUNIT_CASE(audit_syscall_events),
     KUNIT_CASE(audit_netlink_send_smoke),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite audit_test_suite;
@@ -607,7 +607,7 @@ static struct kunit_case keyring_test_cases[] = {
     KUNIT_CASE(keyring_has_key_null),
     KUNIT_CASE(keyring_multiple_keys),
     KUNIT_CASE(keyring_request_nonexistent),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite keyring_test_suite;
@@ -618,7 +618,7 @@ static struct kunit_case fault_inject_test_cases[] = {
     KUNIT_CASE(fault_inject_interval_mode),
     KUNIT_CASE(fault_inject_fail_every),
     KUNIT_CASE(fault_inject_disable_api),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite fault_inject_test_suite;

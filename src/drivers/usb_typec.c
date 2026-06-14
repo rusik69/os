@@ -187,7 +187,7 @@ static int pd_send_message(struct typec_port *port, const uint8_t *msg, int len)
 /*
  * Receive a PD message.
  */
-static int pd_receive_message(struct typec_port *port, uint8_t *buf, int max_len)
+static __attribute__((unused)) int pd_receive_message(struct typec_port *port, uint8_t *buf, int max_len)
 {
     (void)port;
     (void)buf;

@@ -335,7 +335,7 @@ static struct kunit_case pmm_test_cases[] = {
     KUNIT_CASE(pmm_dump_stats_smoke),
     KUNIT_CASE(pmm_interleaved_alloc_free),
     KUNIT_CASE(pmm_frame_alignment),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite pmm_test_suite;

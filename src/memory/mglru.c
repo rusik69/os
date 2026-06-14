@@ -69,7 +69,7 @@ struct mglru_evict_entry {
 
 static struct {
     /* Per-generation doubly-linked lists of PFNs */
-    struct {
+    struct mglru_gen {
         uint64_t *pfns;           /* Dynamic array of PFNs in this gen */
         int       count;          /* Number of PFNs in this gen */
         int       capacity;       /* Allocated capacity */
@@ -120,7 +120,7 @@ static void mglru_evict_record(uint64_t pfn, uint64_t gen)
 
 /* Check if a PFN was recently evicted and return its eviction generation.
  * Returns -1 if not found in the hash. */
-static int mglru_evict_lookup(uint64_t pfn)
+static __attribute__((unused)) int mglru_evict_lookup(uint64_t pfn)
 {
     uint32_t idx = mglru_hash_pfn(pfn);
     if (mglru_state.evict_hash[idx].pfn == pfn)
@@ -136,11 +136,7 @@ static int mglru_ensure_capacity(int gen)
     if (gen < 0 || gen >= MGLRU_MAX_GENS)
         return -1;
 
-    struct {
-        uint64_t *pfns;
-        int count;
-        int capacity;
-    } *g = &mglru_state.gens[gen];
+    struct mglru_gen *g = &mglru_state.gens[gen];
 
     if (g->count < g->capacity)
         return 0;
@@ -181,11 +177,7 @@ static int mglru_remove_from_gen(uint64_t pfn, int gen)
     if (gen < 0 || gen >= MGLRU_MAX_GENS)
         return -1;
 
-    struct {
-        uint64_t *pfns;
-        int count;
-        int capacity;
-    } *g = &mglru_state.gens[gen];
+    struct mglru_gen *g = &mglru_state.gens[gen];
 
     for (int i = 0; i < g->count; i++) {
         if (g->pfns[i] == pfn) {
@@ -296,16 +288,8 @@ static void mglru_age_generations(void)
      * We iterate in reverse to avoid moving pages twice. */
     for (int src_gen = MGLRU_MAX_GENS - 2; src_gen >= 0; src_gen--) {
         int dst_gen = src_gen + 1;
-        struct {
-            uint64_t *pfns;
-            int count;
-            int capacity;
-        } *src = &mglru_state.gens[src_gen];
-        struct {
-            uint64_t *pfns;
-            int count;
-            int capacity;
-        } *dst = &mglru_state.gens[dst_gen];
+        struct mglru_gen *src = &mglru_state.gens[src_gen];
+        struct mglru_gen *dst = &mglru_state.gens[dst_gen];
 
         /* Move all PFNs from src to dst */
         for (int i = 0; i < src->count; i++) {
@@ -328,11 +312,7 @@ static void mglru_age_generations(void)
 static int mglru_evict_from_gen(int gen, int nr_pages)
 {
     int reclaimed = 0;
-    struct {
-        uint64_t *pfns;
-        int count;
-        int capacity;
-    } *g = &mglru_state.gens[gen];
+    struct mglru_gen *g = &mglru_state.gens[gen];
 
     int start = mglru_state.scan_pos[gen];
     int scanned = 0;

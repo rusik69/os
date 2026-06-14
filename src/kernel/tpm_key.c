@@ -20,6 +20,9 @@
 #include "sha256.h"
 #include "errno.h"
 
+/* TPM driver functions */
+int tpm_is_present(void);
+
 /* ── Default NV index for LUKS key storage ────────────────────── */
 
 #define TPM_LUKS_NV_INDEX    0x01C10101  /* NV index for LUKS master key */

@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "spinlock.h"
 #include "errno.h"
+#include "timer.h"
 #include "process.h"
 #include "scheduler.h"
 #include "signal.h"
@@ -142,7 +143,7 @@ static int cgroup_alloc_id(void)
     return -ENOSPC;
 }
 
-static void cgroup_free_id(int idx)
+static __attribute__((unused)) void cgroup_free_id(int idx)
 {
     if (!cgroup_valid(idx)) return;
     spinlock_acquire(&g_cgroup_lock);

@@ -779,7 +779,7 @@ KPTI_TRAMP_BIN = $(BUILDDIR)/kpti_trampoline.bin
 KPTI_TRAMP_H   = $(BUILDDIR)/kpti_trampoline_bin.h
 
 $(KPTI_TRAMP_BIN): $(KPTI_TRAMP_SRC) | $(BUILDDIR)
-	nasm -f bin -o $@ $<
+	nasm -f bin -Wno-number-overflow -o $@ $<
 
 $(KPTI_TRAMP_H): $(KPTI_TRAMP_BIN)
 	@mkdir -p $(dir $@)

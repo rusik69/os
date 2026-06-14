@@ -1122,7 +1122,7 @@ static int raid5_parity_disk(struct raid5_array *arr, uint64_t stripe_idx)
 
 /* Map logical sector to (disk, disk_lba). Stripe index = lba / chunk_size.
  * Data disk = (stripe_idx % (num_disks-1)) adjusted for parity position. */
-static int raid5_stripe_map(struct raid5_array *arr, uint64_t lba,
+static __attribute__((unused)) int raid5_stripe_map(struct raid5_array *arr, uint64_t lba,
                             int *disk_out, uint64_t *disk_lba_out)
 {
     uint32_t chunk = arr->chunk_size;
@@ -1404,7 +1404,7 @@ static void raid6_q_syndrome(uint8_t *q, const uint8_t *data, int len, int index
 }
 
 /* Compute P and Q for a stripe */
-static void raid6_compute_pq(uint8_t *p, uint8_t *q, const uint8_t *chunks,
+static __attribute__((unused)) void raid6_compute_pq(uint8_t *p, uint8_t *q, const uint8_t *chunks,
                              int chunk_bytes, int num_data_disks)
 {
     memset(p, 0, chunk_bytes);

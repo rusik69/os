@@ -30,6 +30,10 @@
 #include "pmm.h"
 #include "ac97.h"
 
+/* Forward declarations for VFS functions */
+int vfs_open(const char *path, int flags, int mode);
+void vfs_close(int fd);
+
 /* ── Configuration ─────────────────────────────────────────────── */
 
 #define PULSE_SOCK_PATH   "/tmp/pulse.sock"
@@ -64,13 +68,13 @@ static struct {
 
 /* ── Socket helpers (using AF_UNIX kernel API) ─────────────────── */
 
-static int create_unix_socket(const char *path)
+static __attribute__((unused)) int create_unix_socket(const char *path)
 {
     /* Use the kernel AF_UNIX socket API to create a listener */
     /* Since shell commands run in kernel context, we interact with
      * the socket layer directly */
 
-    int fd = vfs_open(path, VFS_O_CREAT | VFS_O_RDWR);
+    int fd = vfs_open(path, VFS_O_CREAT | VFS_O_RDWR, 0644);
     if (fd < 0) {
         /* Fallback: try to use socket() syscall via libc */
         kprintf("[pulse] could not create socket at %s\n", path);
@@ -88,7 +92,7 @@ static int create_unix_socket(const char *path)
 
 /* ── Stream management ─────────────────────────────────────────── */
 
-static struct pulse_stream *stream_alloc(void)
+static __attribute__((unused)) struct pulse_stream *stream_alloc(void)
 {
     for (int i = 0; i < PULSE_MAX_CLIENTS; i++) {
         if (!g_pulse.streams[i].active) {
@@ -110,7 +114,7 @@ static struct pulse_stream *stream_alloc(void)
     return NULL;
 }
 
-static void stream_free(struct pulse_stream *s)
+static __attribute__((unused)) void stream_free(struct pulse_stream *s)
 {
     if (!s || !s->active) return;
     s->active = 0;
@@ -172,8 +176,8 @@ static void mix_streams(void)
 
 /* ── Client data ingestion ─────────────────────────────────────── */
 
-static int stream_write_pcm(struct pulse_stream *s,
-                            const int16_t *data, uint32_t samples)
+static __attribute__((unused)) int stream_write_pcm(struct pulse_stream *s,
+                          const int16_t *data, uint32_t samples)
 {
     if (!s || !s->active || !data || samples == 0)
         return -1;

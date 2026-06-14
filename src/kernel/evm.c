@@ -66,7 +66,7 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
         uint8_t xattr_val[256];
         uint32_t xattr_len = sizeof(xattr_val);
 
-        if (vfs_getxattr(path, g_evm_protected_xattrs[i], xattr_val, &xattr_len) < 0)
+        if (vfs_getxattr(path, g_evm_protected_xattrs[i], xattr_val, sizeof(xattr_val)) < 0)
             continue;  /* xattr doesn't exist — skip */
 
         /* Append name + value to buffer */
@@ -141,7 +141,7 @@ int evm_verify_xattr(const char *path)
     uint8_t stored_hmac[SHA256_DIGEST_SIZE];
     uint32_t stored_len = sizeof(stored_hmac);
 
-    if (vfs_getxattr(path, "security.evm", stored_hmac, &stored_len) < 0) {
+    if (vfs_getxattr(path, "security.evm", stored_hmac, sizeof(stored_hmac)) < 0) {
         /* No EVM xattr — maybe not protected, or not yet initialized */
         return 0;  /* Treat as failure */
     }

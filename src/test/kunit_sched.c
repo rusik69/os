@@ -170,7 +170,7 @@ static void sched_priority_bounds_test(struct kunit *test)
 }
 
 /* ====================================================================
- *  Test case list (terminated by {NULL, NULL})
+ *  Test case list (terminated by {0})
  * ==================================================================== */
 
 static struct kunit_case sched_test_cases[] = {
@@ -181,7 +181,7 @@ static struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_wakeup_sleepers_test),
     KUNIT_CASE(sched_autogroup_test),
     KUNIT_CASE(sched_priority_bounds_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite sched_test_suite;

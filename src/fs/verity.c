@@ -58,7 +58,7 @@ static int g_verity_initialized = 0;
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Compute the number of levels in a Merkle tree given data blocks. */
-static uint32_t verity_calc_levels(uint64_t num_data_blocks)
+static __attribute__((unused)) uint32_t verity_calc_levels(uint64_t num_data_blocks)
 {
     uint32_t levels = 0;
     uint64_t blocks_at_level = num_data_blocks;

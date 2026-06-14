@@ -46,7 +46,7 @@ int ima_appraise_file(const char *path)
     /* Get the security.ima xattr */
     uint8_t xattr_hash[SHA256_DIGEST_SIZE];
     uint32_t xattr_len = sizeof(xattr_hash);
-    int ret = vfs_getxattr(path, "security.ima", xattr_hash, &xattr_len);
+    int ret = vfs_getxattr(path, "security.ima", xattr_hash, sizeof(xattr_hash));
 
     if (ret < 0) {
         /* No extended attribute — cannot appraise */

@@ -151,7 +151,7 @@ void kfence_init(void)
 
     /* Allocate the KFENCE pool from physical memory */
     kfence_pool_size = KFENCE_POOL_SIZE;
-    kfence_pool_start = pmm_alloc_frames(kfence_pool_size / PAGE_SIZE);
+    kfence_pool_start = (uint64_t)pmm_alloc_frames(kfence_pool_size / PAGE_SIZE);
     if (!kfence_pool_start) {
         kprintf("[KFENCE] Failed to allocate pool (%llu bytes)\n",
                 (unsigned long long)kfence_pool_size);

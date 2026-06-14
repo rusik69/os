@@ -16,6 +16,7 @@
 #include "net.h"
 #include "vfs.h"
 #include "heap.h"
+#include "timer.h"
 
 /* TFTP opcodes */
 #define TFTP_RRQ    1
@@ -260,7 +261,7 @@ static void handle_tftp_packet(uint32_t src_ip, uint16_t src_port,
 
 /* ── Periodic polling (retransmit timeouts) ─────────────────────────── */
 
-static void tftp_poll(void) {
+static __attribute__((unused)) void tftp_poll(void) {
     uint64_t now = timer_get_ticks();
 
     for (int i = 0; i < TFTP_MAX_TRANSFERS; i++) {

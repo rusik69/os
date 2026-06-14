@@ -487,7 +487,7 @@ static struct kunit_case vmm_test_cases[] = {
     KUNIT_CASE(vmm_permission_flags),
     KUNIT_CASE(vmm_stress_map_unmap),
     KUNIT_CASE(vmm_address_translation),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite vmm_test_suite;

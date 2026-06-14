@@ -80,7 +80,7 @@ struct cramfs_priv {
 /* For now we use a stub that returns uncompressed data.
  * In a full implementation this would link against miniz or a
  * lightweight zlib inflate. */
-static int cramfs_decompress(const uint8_t *in, uint32_t in_len,
+static __attribute__((unused)) int cramfs_decompress(const uint8_t *in, uint32_t in_len,
                               uint8_t *out, uint32_t *out_len)
 {
     if (!in || !out || !out_len)
@@ -106,7 +106,7 @@ static inline uint8_t *cramfs_addr(struct cramfs_priv *cp, uint32_t offset)
     return (uint8_t *)(uint64_t)cp->base_addr + offset;
 }
 
-static struct cramfs_inode *cramfs_get_inode(struct cramfs_priv *cp,
+static __attribute__((unused)) struct cramfs_inode *cramfs_get_inode(struct cramfs_priv *cp,
                                                uint32_t offset)
 {
     if (!cp->inode_table) return NULL;

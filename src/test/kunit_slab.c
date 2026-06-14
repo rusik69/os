@@ -424,7 +424,7 @@ static struct kunit_case slab_full_test_cases[] = {
     KUNIT_CASE(slab_stress_rapid_test),
     KUNIT_CASE(slab_cache_ctor_test),
     KUNIT_CASE(slab_aligned_cache_test),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite slab_full_test_suite;

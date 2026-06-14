@@ -408,7 +408,7 @@ static struct kunit_case pm_runtime_test_cases[] = {
     KUNIT_CASE(pm_runtime_null_ops),
     KUNIT_CASE(pm_runtime_callback_counts),
     KUNIT_CASE(pm_runtime_multiple_devices),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite pm_runtime_test_suite;
@@ -421,7 +421,7 @@ static struct kunit_case rapl_test_cases[] = {
     KUNIT_CASE(rapl_read_energy_dram_test),
     KUNIT_CASE(rapl_read_energy_pp0_test),
     KUNIT_CASE(rapl_null_output),
-    {NULL, NULL}
+    {0}
 };
 
 static struct kunit_suite rapl_test_suite;

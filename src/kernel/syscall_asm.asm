@@ -167,10 +167,12 @@ syscall_entry:
 ; we jump back to the exit trampoline (which switches CR3 to user PML4).
 
 syscall_entry_full:
+    ; Load KPTI base address once
+    mov     r15, KPTI_TRAMP_VADDR
     ; Read saved user state from trampoline page
-    mov     rcx, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP]   ; user RIP
-    mov     r11, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL]    ; user RFLAGS
-    mov     rax, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RSP]    ; user RSP
+    mov     rcx, [r15 + KPTI_OFF_SAVE_RIP]   ; user RIP
+    mov     r11, [r15 + KPTI_OFF_SAVE_RFL]    ; user RFLAGS
+    mov     rax, [r15 + KPTI_OFF_SAVE_RSP]    ; user RSP
     mov     [rel syscall_user_rsp], rax
 
     ; Switch to per-CPU process kernel stack
@@ -190,8 +192,8 @@ syscall_entry_full:
     mov     [rel syscall_entry_rsp_saved], rsp
 
     ; Save RIP/RFLAGS for clone() — read back from trampoline
-    mov     rcx, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RIP]
-    mov     r11, [KPTI_TRAMP_VADDR + KPTI_OFF_SAVE_RFL]
+    mov     rcx, [r15 + KPTI_OFF_SAVE_RIP]
+    mov     r11, [r15 + KPTI_OFF_SAVE_RFL]
     mov     [rel syscall_user_rip], rcx
     mov     [rel syscall_user_rflags], r11
 

@@ -81,7 +81,7 @@ static uint32_t vmw_balloon_get_target(void)
     return target;
 }
 
-static void vmw_balloon_inflate(uint32_t pages)
+static __attribute__((unused)) void vmw_balloon_inflate(uint32_t pages)
 {
     for (uint32_t i = 0; i < pages; i += BALLOON_PAGES_PER_CHUNK) {
         uint32_t chunk = (pages - i > BALLOON_PAGES_PER_CHUNK)
@@ -92,7 +92,7 @@ static void vmw_balloon_inflate(uint32_t pages)
     }
 }
 
-static void vmw_balloon_deflate(uint32_t pages)
+static __attribute__((unused)) void vmw_balloon_deflate(uint32_t pages)
 {
     for (uint32_t i = 0; i < pages; i += BALLOON_PAGES_PER_CHUNK) {
         uint32_t chunk = (pages - i > BALLOON_PAGES_PER_CHUNK)
