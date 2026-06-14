@@ -93,3 +93,15 @@ char *strrchr(const char *s, int c) {
         return (char *)s;
     return (char *)last;
 }
+
+char *strstr(const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+    while (*haystack) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && *h == *n) { h++; n++; }
+        if (!*n) return (char *)haystack;
+        haystack++;
+    }
+    return 0;
+}
