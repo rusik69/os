@@ -31,6 +31,11 @@ CONFIG_SCHED_IDLE=y
 CONFIG_NUMA=y
 CONFIG_CORE_SCHED=y
 CONFIG_NOHZ=y
+CONFIG_MODULE_SIG=y
+CONFIG_MODULE_COMPRESS=y
+CONFIG_FW_LOADER=y
+CONFIG_CONTAINER_EXEC=y
+CONFIG_DMA_API=y
 
 # ── Memory Management ────────────────────────────────────────────
 CONFIG_PMM_PAGE_POISON=y
@@ -84,6 +89,11 @@ CONFIG_VETH=y
 CONFIG_TUN=y
 CONFIG_IPIP=y
 
+# ── Cluster / Orchestration ──────────────────────────────────────
+CONFIG_CLUSTER_AUTOSCALER=y
+CONFIG_CLUSTER_DESCHEDULER=y
+CONFIG_CLUSTER_INGRESS=y
+
 # ── Security ──────────────────────────────────────────────────────
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
@@ -100,6 +110,8 @@ CONFIG_ASLR=y
 CONFIG_EXECUTABLE_ONLY=y
 CONFIG_STACK_GUARD=y
 CONFIG_LOCKDOWN=y
+CONFIG_SIGNAL_VALIDATE=y
+CONFIG_PERF_PARANOID=2
 
 # ── Device Drivers ───────────────────────────────────────────────
 CONFIG_E1000=y

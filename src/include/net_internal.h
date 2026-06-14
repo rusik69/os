@@ -272,6 +272,12 @@ void arp_announce(void);
 /* ICMP destination unreachable (net_udp.c) */
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len);
 
+/* ICMP Time Exceeded (net_udp.c) — TTL expired in transit */
+void icmp_send_timeexceeded(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len);
+
+/* Initialize ICMP rate limit sysctls (net_udp.c) */
+void icmp_ratelimit_sysctl_init(void);
+
 /* ── IP fragment reassembly statistics ───────────────────────────── */
 
 /* Fragment reassembly statistics — populated by net.c */

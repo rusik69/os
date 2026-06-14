@@ -192,6 +192,13 @@ struct pebs_cpu_state {
 /* ── Public API ───────────────────────────────────────────────────── */
 
 
+/* Check if the current process is allowed to access perf events.
+ * Returns 0 if allowed, -EPERM if denied. */
+int perf_paranoid_check(void);
+
+/* Initialize the perf_event_paranoid sysctl */
+void perf_paranoid_sysctl_init(void);
+
 /* Read a hardware performance counter (PMC0-PMC3) */
 uint64_t perf_read_pmc(int counter);
 

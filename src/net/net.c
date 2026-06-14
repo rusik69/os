@@ -1323,6 +1323,9 @@ void net_init(void) {
 
     /* Initialize DNS cache */
     dns_cache_init();
+
+    /* Initialize ICMP rate limit sysctls */
+    icmp_ratelimit_sysctl_init();
 }
 
 /* --- ARP list --- */

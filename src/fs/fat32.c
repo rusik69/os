@@ -365,6 +365,20 @@ static int lfn_build_name(const struct fat32_lfn *entries, int count, char *out,
     return pos;
 }
 
+/* Compute the 13-char checksum over an 8.3 name (11 bytes: 8 name + 3 ext) */
+static uint8_t lfn_checksum(const char *name83_8, const char *name83_3);
+
+/* Validate that the LFN entries' checksum matches the 8.3 entry.
+ * Returns 1 if checksums match (or if no LFN entries), 0 on mismatch. */
+static int lfn_validate_checksum(const struct fat32_lfn *entries, int count,
+                                  const char *name83_8, const char *name83_3) {
+    if (count <= 0) return 1;
+    /* All LFN entries for the same file have the same checksum; use the first */
+    uint8_t stored_cksum = entries[0].checksum;
+    uint8_t computed_cksum = lfn_checksum(name83_8, name83_3);
+    return (stored_cksum == computed_cksum);
+}
+
 static int dir_grow_cluster(uint32_t *cluster) {
     uint32_t newc = fat_alloc_cluster();
     if (!newc) return -1;
@@ -563,6 +577,12 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
                     lfn_build_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    /* Validate LFN checksum against the 8.3 entry */
+                    if (!lfn_validate_checksum(lfn_parts, lfn_n,
+                                               entries[i].name, entries[i].ext)) {
+                        lfn_n = 0;
+                        continue; /* checksum mismatch — skip this entry */
+                    }
                     matched = name_match_ci(lname, name);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, name);
@@ -613,6 +633,12 @@ static uint32_t dir_find(uint32_t dir_cluster, const char *name,
                 if (lfn_n > 0) {
                     char lname[FAT32_MAX_NAME];
                     lfn_build_name(lfn_parts, lfn_n, lname, FAT32_MAX_NAME);
+                    /* Validate LFN checksum against the 8.3 entry */
+                    if (!lfn_validate_checksum(lfn_parts, lfn_n,
+                                               entries[i].name, entries[i].ext)) {
+                        lfn_n = 0;
+                        continue; /* checksum mismatch — skip this entry */
+                    }
                     matched = name_match_ci(lname, name);
                 } else {
                     matched = name83_match(entries[i].name, entries[i].ext, name);

@@ -62,8 +62,10 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
             (const struct elf64_phdr *)(data + hdr->e_phoff + i * hdr->e_phentsize);
 
         if (ph->p_type != PT_LOAD) continue;
-        if (ph->p_offset + ph->p_filesz > size) {
-            kprintf("elf: segment out of bounds\n");
+        /* Check for integer overflow before using p_offset + p_filesz */
+        if (ph->p_offset > size || ph->p_filesz > size ||
+            ph->p_offset + ph->p_filesz > size) {
+            kprintf("elf: segment out of bounds (overflow check)\n");
             return 0;
         }
         if (ph->p_filesz > 0 && ph->p_vaddr + ph->p_filesz < ph->p_vaddr) {

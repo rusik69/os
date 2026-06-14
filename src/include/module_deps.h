@@ -28,4 +28,22 @@ int module_dep_resolve_list(const char *dep_names,
 int module_dep_check_resolved(struct kernel_module *mod,
                                char *err_buf, int err_len);
 
+/*
+ * Check whether any loaded module depends on @mod_name.
+ * Returns 0 if safe to unload, -1 if dependents exist.
+ */
+int module_can_unload(const char *mod_name, char *err_buf, int err_len);
+
+/*
+ * Print the dependency tree for @mod_name (recursive, for lsmod).
+ * @depth controls indentation (0 = no indent).
+ */
+void module_dep_print_tree(const char *mod_name, int depth);
+
+/*
+ * Topologically sort all loaded modules so dependencies come first.
+ * Fills @sorted (up to @max entries) and returns the count.
+ */
+int module_dep_topological_sort(struct kernel_module **sorted, int max);
+
 #endif /* MODULE_DEPS_H */

@@ -634,6 +634,14 @@ int module_elf_resolve(struct module_elf_context *ctx, int gpl_ok)
             continue;
         }
 
+        /* Fall back to comprehensive kallsyms table (all globals) */
+        addr = find_ksym_all(sym->name);
+        if (addr != 0) {
+            sym->value = addr;
+            sym->resolved = 1;
+            continue;
+        }
+
         /* Weak symbols: unresolved is OK — treat as 0 */
         if (sym->bind == STB_WEAK) {
             sym->value = 0;

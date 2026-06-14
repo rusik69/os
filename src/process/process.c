@@ -241,18 +241,18 @@ static void rlimit_init_defaults(struct process *proc) {
         proc->rlim_max[i] = ~0ULL;
     }
     /* Set sensible defaults */
-    proc->rlim_cur[5] = 256;   /* RLIMIT_NOFILE = 256 */
-    proc->rlim_max[5] = 256;
-    proc->rlim_cur[7] = 64;    /* RLIMIT_NPROC = 64 */
-    proc->rlim_max[7] = 64;
-    proc->rlim_cur[0] = 1024ULL * 1024 * 1024;  /* RLIMIT_AS = 1GB */
-    proc->rlim_max[0] = 1024ULL * 1024 * 1024;
-    proc->rlim_cur[1] = 1024ULL * 1024;          /* RLIMIT_CORE = 1MB */
-    proc->rlim_max[1] = 1024ULL * 1024;
-    proc->rlim_cur[6] = 1024ULL * 64;            /* RLIMIT_STACK = 64KB */
-    proc->rlim_max[6] = 1024ULL * 64;
-    proc->rlim_cur[8] = 1024ULL * 64;            /* RLIMIT_MEMLOCK = 64KB */
-    proc->rlim_max[8] = 1024ULL * 64;
+    proc->rlim_cur[RLIMIT_NOFILE] = 1024;                    /* RLIMIT_NOFILE soft = 1024 */
+    proc->rlim_max[RLIMIT_NOFILE] = 4096;                    /* RLIMIT_NOFILE hard = 4096 */
+    proc->rlim_cur[RLIMIT_NPROC]  = 4096;                    /* RLIMIT_NPROC  soft = 4096 */
+    proc->rlim_max[RLIMIT_NPROC]  = 4096;                    /* RLIMIT_NPROC  hard = 4096 */
+    proc->rlim_cur[RLIMIT_AS]     = 1024ULL * 1024 * 1024;   /* RLIMIT_AS = 1GB */
+    proc->rlim_max[RLIMIT_AS]     = 1024ULL * 1024 * 1024;
+    proc->rlim_cur[RLIMIT_CORE]   = 1024ULL * 1024;          /* RLIMIT_CORE = 1MB */
+    proc->rlim_max[RLIMIT_CORE]   = 1024ULL * 1024;
+    proc->rlim_cur[RLIMIT_STACK]  = 8ULL * 1024 * 1024;       /* RLIMIT_STACK = 8MB */
+    proc->rlim_max[RLIMIT_STACK]  = 8ULL * 1024 * 1024;
+    proc->rlim_cur[RLIMIT_MEMLOCK] = 1024ULL * 64;           /* RLIMIT_MEMLOCK = 64KB */
+    proc->rlim_max[RLIMIT_MEMLOCK] = 1024ULL * 64;
 }
 
 void process_init(void) {
@@ -298,6 +298,7 @@ void process_init(void) {
     process_table[0].cap_profile = PROCESS_CAP_PROFILE_USER_TRUSTED;
     process_caps_allow_all(&process_table[0]);
     memset(process_table[0].sig_handlers, 0, sizeof(process_table[0].sig_handlers));
+    memset(process_table[0].sig_flags, 0, sizeof(process_table[0].sig_flags));
     process_table[0].sched_policy = SCHED_OTHER;
     process_table[0].alt_stack_sp = NULL;
     process_table[0].alt_stack_size = 0;
@@ -388,6 +389,7 @@ struct process *process_create(void (*entry)(void), const char *name) {
     proc->pending_signals = 0;
     proc->sig_mask = 0;
     memset(proc->sig_handlers, 0, sizeof(proc->sig_handlers));
+    memset(proc->sig_flags, 0, sizeof(proc->sig_flags));
     memset(proc->fd_table, 0, sizeof(proc->fd_table));
     proc->is_user = 0;
     proc->user_entry = 0;
@@ -1043,6 +1045,22 @@ extern void clone_child_trampoline(void);
 int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                   uint64_t user_rip, uint64_t user_rflags) {
     struct process *child = NULL;
+
+    /* RLIMIT_NPROC: count processes owned by the same UID */
+    uint64_t nproc_limit = parent->rlim_cur[RLIMIT_NPROC];
+    if (nproc_limit != ~0ULL && nproc_limit > 0) {
+        uint64_t same_user_count = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (process_table[i].state != PROCESS_UNUSED &&
+                process_table[i].state != PROCESS_ZOMBIE &&
+                process_table[i].uid == parent->uid) {
+                same_user_count++;
+            }
+        }
+        if (same_user_count >= nproc_limit) {
+            return -EAGAIN;
+        }
+    }
 
     __asm__ volatile("cli");
 

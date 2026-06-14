@@ -320,6 +320,62 @@ void release_firmware(const struct firmware *fw)
     kfree((void *)fw);
 }
 
+/* ── Async firmware loading ─────────────────────────────────────────── */
+
+struct async_fw_work {
+    const struct firmware **fw_ptr;
+    char   name[64];
+    firmware_cont_t cont;
+    void  *context;
+};
+
+static void async_fw_work_handler(void *arg)
+{
+    struct async_fw_work *aw = (struct async_fw_work *)arg;
+    if (!aw) return;
+
+    const struct firmware *fw = NULL;
+    int ret = request_firmware(&fw, aw->name);
+
+    (void)ret;
+
+    if (aw->fw_ptr)
+        *aw->fw_ptr = fw;
+
+    if (aw->cont)
+        aw->cont(fw, aw->context);
+    else if (fw)
+        release_firmware(fw);
+
+    kfree(aw);
+}
+
+int request_firmware_nowait(const struct firmware **fw_ptr, const char *name,
+                             firmware_cont_t cont, void *context)
+{
+    if (!name || !name[0])
+        return -EINVAL;
+
+    struct async_fw_work *aw = (struct async_fw_work *)kmalloc(sizeof(*aw));
+    if (!aw)
+        return -ENOMEM;
+
+    aw->fw_ptr = fw_ptr;
+    strncpy(aw->name, name, sizeof(aw->name) - 1);
+    aw->name[sizeof(aw->name) - 1] = '\0';
+    aw->cont = cont;
+    aw->context = context;
+
+    int ret = workqueue_schedule(async_fw_work_handler, aw);
+    if (ret < 0) {
+        kfree(aw);
+        return -EAGAIN;
+    }
+
+    kprintf("[FW] Async firmware request initiated for '%s'\\n", name);
+    return 0;
+}
+
 int firmware_load(const char *name, struct firmware *fw)
 {
     if (!fw)

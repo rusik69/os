@@ -10,6 +10,8 @@ extern _kernel_end
 
 ; Constants
 KERNEL_VMA_OFFSET equ 0xFFFF800000000000
+KASLR_ALIGN       equ 0x200000       ; 2MB alignment for KASLR
+KASLR_MAX_OFFSET  equ 0x20000000     ; 512MB max offset
 
 section .multiboot
 align 4
@@ -49,6 +51,12 @@ align 16
 boot_stack_bottom:
     times 131072 db 0
 boot_stack_top:
+
+; KASLR offset storage (filled in 64-bit mode before kernel_main)
+align 8
+global kaslr_boot_offset
+kaslr_boot_offset:
+    dq 0
 
 ; GDT for 64-bit mode
 align 16
@@ -171,6 +179,14 @@ long_mode_entry:
     ; Prepare arguments for kernel_main
     mov edi, r12d
     mov esi, r13d
+
+    ; ── KASLR: Store initial offset (will be set by kaslr_init in C) ─
+    ; The C function kaslr_init() called from kernel_main() will set
+    ; the actual randomized offset.  We store 0 here initially.
+    ; When full PIE support is added, boot.asm will call kaslr_get_offset
+    ; directly and adjust the page tables before jumping to kernel_main.
+    xor rax, rax
+    mov [kaslr_boot_offset], rax
 
     ; Switch to high-half stack so all C code uses high-half VMA addresses,
     ; preventing local-variable references from producing low identity-mapped

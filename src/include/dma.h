@@ -4,22 +4,30 @@
 #include "types.h"
 #include "pmm.h"
 #include "vmm.h"
-#include "cma.h"
 #include "heap.h"
 #include "string.h"
 
 /*
- * DMA API with real contiguous memory allocation from CMA region.
+ * DMA API with IOMMU-backed DMA mapping.
  *
- * Uses the existing CMA (Contiguous Memory Allocator) to allocate
- * physically-contiguous DMA buffers. The buffers are mapped into
- * the kernel's virtual address space for CPU access.
+ * Provides coherent and streaming DMA operations that use the IOMMU
+ * for device-address translation.  When the IOMMU is not enabled,
+ * fall back to identity-mapped (physical = bus address) DMA.
  *
- * CMA region is set up by cma_reserve_default() during boot,
- * typically at the end of physical memory.
+ * Coherent allocations:
+ *   dma_alloc_coherent() — allocate physically-contiguous pages,
+ *     IOMMU-map them, and return both CPU virtual address and a
+ *     DMA bus address (dma_handle) for the device.
+ *
+ * Streaming mappings:
+ *   dma_map_single() — IOMMU-map an existing buffer for device DMA.
+ *   dma_unmap_single() — tear down an IOMMU mapping.
  */
 
-/* Direction for dma_map_single */
+/* Forward declaration for PCI device (included from pci.h) */
+struct pci_device;
+
+/* Direction for dma_map_single / dma_unmap_single */
 enum dma_data_direction {
     DMA_TO_DEVICE       = 0,
     DMA_FROM_DEVICE     = 1,
@@ -27,95 +35,65 @@ enum dma_data_direction {
 };
 
 /*
- * Allocate a coherent (non-cacheable) DMA buffer from CMA.
+ * dma_alloc_coherent — Allocate a coherent DMA buffer.
  *
- * Allocates physically-contiguous pages from the default CMA area,
- * then maps them into the kernel high-half VMA space uncacheable.
+ * Allocates physically-contiguous pages, maps them into the
+ * kernel virtual address space (uncacheable for coherency),
+ * and optionally establishes an IOMMU mapping for the device.
  *
- * Returns kernel virtual address, writes physical address to *phys.
- * Returns NULL on failure.
+ * @dev:         PCI device (may be NULL; if NULL, identity-map only)
+ * @size:        Desired buffer size (rounded up to page boundary)
+ * @dma_handle:  Output: DMA bus address (IOVA) for the device to use
+ * @flags:       Reserved for future use (0 for now)
+ *
+ * Returns kernel virtual address on success, NULL on failure.
  */
-static inline void *dma_alloc_coherent(size_t size, uint64_t *phys) {
-    size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (num_pages == 0) return NULL;
-
-    /* Allocate contiguous physical pages from CMA */
-    uint64_t pfn = cma_alloc("default", num_pages, 1);
-    if (!pfn) {
-        /* Fallback: allocate individual pages and hope they're contiguous */
-        /* For now, just fail */
-        return NULL;
-    }
-
-    uint64_t phys_addr = pfn * PAGE_SIZE;
-
-    /* Map the physical pages into kernel address space uncacheable */
-    void *virt = vmm_map_phys(phys_addr, num_pages * PAGE_SIZE,
-                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
-    if (!virt) {
-        cma_free(pfn, num_pages);
-        return NULL;
-    }
-
-    /* Zero the buffer */
-    memset(virt, 0, num_pages * PAGE_SIZE);
-
-    if (phys) *phys = phys_addr;
-
-    return virt;
-}
+void *dma_alloc_coherent(struct pci_device *dev, size_t size,
+                         uint64_t *dma_handle, uint64_t flags);
 
 /*
- * Free a coherent DMA buffer allocated with dma_alloc_coherent.
+ * dma_free_coherent — Free a coherent DMA buffer.
+ *
+ * Unmaps the buffer from the kernel virtual address space,
+ * tears down the IOMMU mapping (if any), and returns the
+ * physical pages to the system.
+ *
+ * @dev:         PCI device (may be NULL)
+ * @size:        Original buffer size (must match allocation)
+ * @cpu_addr:    Kernel virtual address returned by dma_alloc_coherent
+ * @dma_handle:  DMA bus address returned by dma_alloc_coherent
  */
-static inline void dma_free_coherent(void *virt, size_t size) {
-    if (!virt) return;
-
-    size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-
-    /* Unmap from kernel address space */
-    vmm_unmap_phys(virt, num_pages * PAGE_SIZE);
-
-    /* Free back to CMA */
-    uint64_t phys_addr = (uint64_t)virt - 0xFFFF800000000000ULL;
-    uint64_t pfn = phys_addr / PAGE_SIZE;
-    cma_free(pfn, num_pages);
-}
+void dma_free_coherent(struct pci_device *dev, size_t size,
+                       void *cpu_addr, uint64_t dma_handle);
 
 /*
- * Map a physical address for DMA.
+ * dma_map_single — Map a buffer for DMA.
  *
- * Since we use identity-mapped DMA (no IOMMU translation),
- * the bus address is the same as the physical address.
- * In future with IOMMU support, this would establish an
- * IOMMU mapping.
+ * Establishes an IOMMU mapping for an existing kernel buffer
+ * so the device can access it via DMA.
  *
- * Returns the bus address (same as phys_addr in identity mode).
+ * @dev:         PCI device (may be NULL; identity-map if NULL)
+ * @cpu_addr:    Kernel virtual address of the buffer
+ * @size:        Size of the buffer in bytes
+ * @dir:         DMA direction (TO/FROM/BIDIRECTIONAL)
+ *
+ * Returns the DMA bus address (IOVA) for the device, or ~0 on error.
  */
-static inline uint64_t dma_map_single(uint64_t phys_addr, size_t size,
-                                       enum dma_data_direction dir) {
-    (void)size;
-    (void)dir;
-
-    /* Flush CPU caches for the buffer to ensure coherency.
-     * In a real kernel this would use CLFLUSH or WBINVD.
-     * Since we allocate uncacheable, this is a no-op. */
-    __asm__ volatile("mfence" ::: "memory");
-
-    return phys_addr;  /* identity mapping (phys = bus address) */
-}
+uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
+                        size_t size, enum dma_data_direction dir);
 
 /*
- * Unmap a DMA mapping.
+ * dma_unmap_single — Unmap a DMA buffer.
+ *
+ * Tears down the IOMMU mapping previously established by
+ * dma_map_single().
+ *
+ * @dev:         PCI device (may be NULL)
+ * @dma_handle:  DMA bus address returned by dma_map_single
+ * @size:        Size of the buffer in bytes
+ * @dir:         DMA direction (must match map call)
  */
-static inline void dma_unmap_single(uint64_t bus_addr, size_t size,
-                                     enum dma_data_direction dir) {
-    (void)bus_addr;
-    (void)size;
-    (void)dir;
-
-    /* For uncacheable DMA buffers, no cache maintenance needed */
-    __asm__ volatile("mfence" ::: "memory");
-}
+void dma_unmap_single(struct pci_device *dev, uint64_t dma_handle,
+                      size_t size, enum dma_data_direction dir);
 
 #endif /* DMA_H */

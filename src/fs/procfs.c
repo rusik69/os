@@ -29,6 +29,12 @@
 #include "module.h"
 #include "kptr_restrict.h"
 #include "sndstat.h"
+#include "export.h"
+
+/* ── kallsyms support ──────────────────────────────────────────────── */
+/* Comprehensive kallsyms section (all global symbols), sorted at boot. */
+extern struct ksym_entry __kallsyms_start[];
+extern struct ksym_entry __kallsyms_end[];
 
 /* ─── Tiny snprintf-like helper ────────────────────────────────────────────── */
 
@@ -644,6 +650,35 @@ static int procfs_gen_modules(char *buf, int max) {
         if (rl > 0 && rl < (int)sizeof(ref_str))
             proc_str(ref_str, buf, &p, max);
 
+        proc_str("\n", buf, &p, max);
+    }
+
+    buf[p] = '\0';
+    return p;
+}
+
+/* /proc/kallsyms — kernel symbol listing, respects kptr_restrict */
+static int procfs_gen_kallsyms(char *buf, int max) {
+    int p = 0;
+    int hide = kptr_restrict_check();  /* 1 = hide addresses when kptr_restrict >= 1 */
+
+    int count = (int)(__kallsyms_end - __kallsyms_start);
+    if (count < 0) count = 0;
+
+    for (int i = 0; i < count && p < max - 80; i++) {
+        if (hide) {
+            proc_str("0000000000000000", buf, &p, max);
+        } else {
+            char addr[20];
+            int al = snprintf(addr, sizeof(addr), "%016llx",
+                              (unsigned long long)__kallsyms_start[i].addr);
+            if (al < 0) al = 0;
+            if (al > (int)sizeof(addr) - 1) al = (int)sizeof(addr) - 1;
+            addr[al] = '\0';
+            proc_str(addr, buf, &p, max);
+        }
+        proc_str(" T ", buf, &p, max);
+        proc_str(__kallsyms_start[i].sym_name, buf, &p, max);
         proc_str("\n", buf, &p, max);
     }
 
@@ -1451,6 +1486,8 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         if (len < 0) return -1;
     } else if (strcmp(path, "/proc/modules") == 0) {
         len = procfs_gen_modules(buf, (int)max_size);
+    } else if (strcmp(path, "/proc/kallsyms") == 0) {
+        len = procfs_gen_kallsyms(buf, (int)max_size);
     } else if (strcmp(path, "/proc/self") == 0) {
         /* Redirect to status of current process */
         struct process *proc = process_get_current();

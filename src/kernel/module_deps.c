@@ -14,6 +14,20 @@
  *      c. If load fails, abort with a descriptive error
  *   3. Detect cycles using a depth-limited DFS with a visited set
  *      before attempting to load any module.
+ *
+ * Topological sort:
+ *   Modules are loaded in dependency order using a DFS-based
+ *   topological ordering.  When module A depends on B, B is loaded
+ *   first (if not already loaded), then A.
+ *
+ * rmmod dependency check:
+ *   A module cannot be unloaded while other loaded modules depend
+ *   on it (i.e., list it as a dependency).  module_can_unload()
+ *   checks this condition.
+ *
+ * lsmod dependency trees:
+ *   module_dep_print_tree() displays the dependency hierarchy
+ *   for diagnostic purposes.
  */
 
 #include "module.h"
@@ -257,4 +271,158 @@ int module_dep_check_resolved(struct kernel_module *mod,
     }
 
     return 0; /* no deps means "resolved" */
+}
+
+/* ── rmmod dependency checking ─────────────────────────────────────────
+ *
+ * Check whether any loaded module lists @mod_name as a dependency.
+ * If so, the named module cannot be safely unloaded.
+ *
+ * Returns 0 if the module can be unloaded (no dependents),
+ * -1 if dependents exist with a message in @err_buf.
+ */
+int module_can_unload(const char *mod_name, char *err_buf, int err_len)
+{
+    if (!mod_name)
+        return 0;
+
+    for (int i = 0; i < MODULE_MAX; i++) {
+        struct kernel_module *mod = module_get_by_id(i);
+        if (!mod || mod->state != MODULE_LIVE)
+            continue;
+
+        for (int j = 0; j < mod->num_deps; j++) {
+            if (strcmp(mod->deps[j].name, mod_name) == 0) {
+                snprintf(err_buf, (size_t)err_len,
+                         "cannot unload '%s': '%s' depends on it",
+                         mod_name, mod->name);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+/* ── Dependency tree printing (for lsmod) ───────────────────────────────
+ *
+ * Print the dependency tree starting from @mod_name, with indentation
+ * showing the hierarchy.  Recursively prints each dependency's own
+ * dependencies.
+ */
+void module_dep_print_tree(const char *mod_name, int depth)
+{
+    if (!mod_name)
+        return;
+
+    struct kernel_module *mod = module_find(mod_name);
+    if (!mod)
+        return;
+
+    /* Print indentation */
+    for (int i = 0; i < depth; i++)
+        kprintf("  ");
+
+    kprintf("%s", mod_name);
+
+    if (mod->num_deps > 0) {
+        kprintf(" [");
+
+        for (int i = 0; i < mod->num_deps; i++) {
+            if (i > 0) kprintf(", ");
+            kprintf("%s%s", mod->deps[i].name,
+                    mod->deps[i].loaded ? "" : " (missing)");
+        }
+        kprintf("]");
+    }
+    kprintf("\n");
+
+    /* Recursively print each dependency */
+    for (int i = 0; i < mod->num_deps; i++) {
+        if (mod->deps[i].loaded) {
+            module_dep_print_tree(mod->deps[i].name, depth + 1);
+        }
+    }
+}
+
+/*
+ * Topologically sort the loaded module list.
+ * Uses DFS-based topological ordering in reverse postorder.
+ * The output array @sorted is filled with module pointers in load order
+ * (dependencies first).  Returns the number of sorted modules.
+ */
+int module_dep_topological_sort(struct kernel_module **sorted, int max)
+{
+    if (!sorted)
+        return 0;
+
+    /* Build a list of loaded modules */
+    struct kernel_module *loaded[MODULE_MAX];
+    int num_loaded = 0;
+
+    for (int i = 0; i < MODULE_MAX; i++) {
+        struct kernel_module *mod = module_get_by_id(i);
+        if (mod && mod->state == MODULE_LIVE)
+            loaded[num_loaded++] = mod;
+    }
+
+    /* DFS-based topological sort using simple arrays */
+    int visited[MODULE_MAX];
+    memset(visited, 0, sizeof(visited));
+
+    int sorted_count = 0;
+
+    /* We run DFS from each unvisited module */
+    int stack[MODULE_MAX * 4]; /* (module_idx, dep_idx, state) */
+    int stack_pos = 0;
+
+    for (int i = 0; i < num_loaded; i++) {
+        if (visited[i])
+            continue;
+
+        /* Push initial state: start processing module i */
+        /* Use negative values to indicate "postorder" processing */
+        stack[stack_pos++] = i;   /* module index */
+        stack[stack_pos++] = -1;  /* start: no dependency being processed */
+
+        while (stack_pos > 0) {
+            int dep_idx = stack[--stack_pos];
+            int mod_idx = stack[--stack_pos];
+
+            if (dep_idx == -2) {
+                /* Postorder marker: add this module to sorted list */
+                if (sorted_count < max)
+                    sorted[sorted_count++] = loaded[mod_idx];
+                continue;
+            }
+
+            if (visited[mod_idx])
+                continue;
+
+            if (dep_idx == -1) {
+                /* First visit: start processing dependencies */
+                visited[mod_idx] = 1;
+
+                /* Push postorder marker */
+                stack[stack_pos++] = mod_idx;
+                stack[stack_pos++] = -2;
+
+                /* Push dependencies in reverse order */
+                struct kernel_module *mod = loaded[mod_idx];
+                for (int j = mod->num_deps - 1; j >= 0; j--) {
+                    /* Find the dep module in loaded[] */
+                    for (int k = 0; k < num_loaded; k++) {
+                        if (strcmp(loaded[k]->name, mod->deps[j].name) == 0 &&
+                            !visited[k]) {
+                            stack[stack_pos++] = k;
+                            stack[stack_pos++] = -1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return sorted_count;
 }

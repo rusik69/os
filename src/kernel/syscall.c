@@ -15,6 +15,7 @@
 #include "vga.h"
 #include "timer.h"
 #include "sysctl.h"
+#include "caps.h"
 #include "keyboard.h"
 #include "printf.h"
 #include "io.h"
@@ -60,6 +61,8 @@
 #include "kptr_restrict.h"
 #include "dmesg.h"
 #include "aslr.h"
+#include "wx_enforce.h"
+#include "mprotect.h"
 #include "memfd.h"
 #include "page_cache.h"
 #include "bufcache.h"
@@ -2261,9 +2264,8 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
         return (uint64_t)-ENOMEM;
 
     /* W^X enforcement: reject writable + executable mappings.
-     * A writable && executable page enables shellcode injection.
-     * JIT compilers must use separate rw (data) and rx (code) regions. */
-    if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
+     * Delegates to wx_enforce.c which consults the sysctl. */
+    if (wx_enforce_check_prot(prot) < 0)
         return (uint64_t)(int64_t)-EACCES;
 
     /* MAP_FIXED / specific address: check if the target range is sealed (mseal) */
@@ -2431,51 +2433,6 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
         return (uint64_t)(int64_t)-EPERM;
 
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
-        return (uint64_t)-1;
-    return 0;
-}
-
-static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
-    struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return (uint64_t)-1;
-
-    /* Validate prot: only PROT_READ (1), PROT_WRITE (2), PROT_EXEC (4),
-     * combinations thereof, or PROT_NONE (0) are valid.  Bits 3-63 must be 0. */
-    if (prot & ~(uint64_t)(PROT_READ | PROT_WRITE | PROT_EXEC))
-        return (uint64_t)-1;
-
-    /* W^X enforcement: reject writable + executable mappings.
-     * A writable + executable page is a security hole (allows injecting
-     * shellcode directly into executable memory).  Most modern systems
-     * enforce this strictly.  Processes that need JIT must use mmap()
-     * with a separate rw data area and an rx code area. */
-    if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
-        return (uint64_t)(int64_t)-EACCES;
-
-    /* Address must be page-aligned */
-    if (addr & (PAGE_SIZE - 1)) return (uint64_t)-1;
-
-    length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr + length < addr) return (uint64_t)-1;
-    if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
-
-    /* Check if the range is sealed (mseal) — sealed ranges are immutable */
-    if (mseal_check(addr, length) == 0)
-        return (uint64_t)(int64_t)-EPERM;
-
-    /*
-     * Convert POSIX PROT_* to VMM page-table flags via the AST layer.
-     * This automatically handles:
-     *   - PROT_NONE    → guard page (no PRESENT, sets NX)
-     *   - PROT_READ    → readable (PRESENT|USER, NX)
-     *   - PROT_EXEC    → executable (PRESENT|USER, no NX)
-     *   - PROT_EXEC without PROT_READ → execute-only tag (EXECONLY bit)
-     *     for software-level enforcement in the page-fault handler.
-     */
-    uint8_t ast = vmm_prot_to_ast(prot);
-    uint64_t page_flags = vmm_ast_to_vmm_flags(ast, 1, 1);
-
-    if (vmm_set_user_pages_flags(proc->pml4, addr, length / PAGE_SIZE, page_flags) < 0)
         return (uint64_t)-1;
     return 0;
 }
@@ -3808,6 +3765,11 @@ static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flag
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
 
+    /* CAP_SYS_BOOT check — only privileged processes can load a kexec image */
+    int cap_ret = cap_sys_boot_check();
+    if (cap_ret < 0)
+        return (uint64_t)(int64_t)cap_ret;
+
     int ret = kexec_load(phys_addr, entry, (uint32_t)flags);
     return (uint64_t)(int64_t)ret;
 }
@@ -4587,7 +4549,7 @@ static uint64_t sys_doom_run(void) {
  * Production-ready OS improvements — Tier 1-5 syscall implementations
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── rlimit/prlimit64 ────────────────────────────────────────────────── */
+/* ── rlimit/prlimit64/getrlimit/setrlimit ──────────────────────────── */
 
 static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
                                uint64_t new_rlim_addr, uint64_t old_rlim_addr) {
@@ -4626,6 +4588,10 @@ static uint64_t sys_prlimit64(uint64_t pid, uint64_t resource,
             return (uint64_t)-1;
         target->rlim_cur[resource] = new_rlim.rlim_cur;
         target->rlim_max[resource] = new_rlim.rlim_max;
+
+        /* Update fd limit shorthand if NOFILE changed */
+        if (resource == RLIMIT_NOFILE)
+            target->file_max = new_rlim.rlim_cur;
     }
 
     return 0;
@@ -5851,11 +5817,19 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
         }
     }
 
-    /* Check dmesg_restrict: only root can read dmesg when set */
+    /* Check dmesg_restrict: only users with CAP_SYSLOG can read dmesg when set */
     if (dmesg_restrict) {
         struct process *p = process_get_current();
-        if (p && p->euid != 0 && p->uid != 0)
-            return (uint64_t)-1;  /* EPERM */
+        if (p && p->is_user) {
+            /* Check for CAP_SYSLOG in effective set */
+            int cap_word = CAP_SYSLOG / 64;
+            int cap_bit  = CAP_SYSLOG % 64;
+            if (cap_word < PROCESS_SYSCALL_CAP_WORDS) {
+                if (!(p->syscall_caps[cap_word] & (1ULL << cap_bit))) {
+                    return (uint64_t)-1;  /* EPERM */
+                }
+            }
+        }
     }
 
     switch (type) {
@@ -8662,6 +8636,13 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
 
+    /* CAP_SYS_MODULE check — required to load kernel modules */
+    {
+        int cap_ret = cap_sys_module_check();
+        if (cap_ret < 0)
+            return (uint64_t)(int64_t)cap_ret;
+    }
+
     /* Only root (or kernel context) can load modules */
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
@@ -8801,6 +8782,13 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
     /* Lockdown: reject module loading at INTEGRITY level or above */
     if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
         return (uint64_t)-EPERM;
+
+    /* CAP_SYS_MODULE check — required to load kernel modules */
+    {
+        int cap_ret = cap_sys_module_check();
+        if (cap_ret < 0)
+            return (uint64_t)(int64_t)cap_ret;
+    }
 
     /* Only root can load modules */
     if (syscall_is_user_process()) {
@@ -9294,7 +9282,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_CALLOC:  return sys_calloc(a1, a2);
         case SYS_MMAP:    return sys_mmap(a1, a2, a3, a4);
         case SYS_MUNMAP:  return sys_munmap(a1, a2);
-        case SYS_MPROTECT: return sys_mprotect(a1, a2, a3);
+        case SYS_MPROTECT: return (uint64_t)sys_mprotect(a1, a2, a3);
         case SYS_MSEAL:    return sys_mseal(a1, a2, a3);
         case SYS_SECCOMP:  return sys_seccomp(a1, a2, a3);
         case SYS_MREMAP:   return sys_mremap(a1, a2, a3, a4, a5);

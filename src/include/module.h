@@ -94,6 +94,9 @@ struct kernel_module {
     struct module_dep deps[MODULE_MAX_DEPS];
     int   num_deps;
 
+    /* Flags (MODULE_FLAG_ASYNC_PROBE, etc.) */
+    uint32_t flags;
+
     /* Parameter list (linked list of kernel_param) */
     struct list_head params;
     int   param_count;
@@ -311,6 +314,30 @@ int module_deps_resolved(struct kernel_module *mod);
     static const char _MODULE_PASTE(__mod_alias_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "alias=" alias
 
+/*
+ * MODULE_DEVICE_TABLE — declare a device ID table for module autoloading.
+ *
+ * This macro creates modalias patterns from a device ID table (struct
+ * pci_device_id, struct usb_device_id, etc.) and embeds them into the
+ * .modinfo section so the autoloader can match new devices to the module.
+ *
+ * Usage:
+ *   static const struct pci_device_id my_pci_ids[] = {
+ *       { PCI_DEVICE(0x8086, 0x100F), ... },
+ *       { }
+ *   };
+ *   MODULE_DEVICE_TABLE(pci, my_pci_ids);
+ *
+ * The table must be terminated by an all-zero sentinel entry.
+ * Supported bus types: pci, usb, virtio, i2c, platform.
+ *
+ * Under the hood this registers alias patterns equivalent to
+ * MODULE_ALIAS("pci:v*d*sv*sd*bc*sc*i*") for each table entry.
+ */
+#define MODULE_DEVICE_TABLE(bus, table) \
+    static const char _MODULE_PASTE(__mod_devtable_, __LINE__)[] \
+    __attribute__((section(".modinfo"), used)) = "devtable=" #bus ":" #table
+
 /* MODULE_* macros for metadata (used in .modinfo section) */
 #define MODULE_LICENSE(license)    static const char _MODULE_PASTE(__mod_lic_, __LINE__)[] \
     __attribute__((section(".modinfo"), used)) = "license=" license
@@ -398,6 +425,41 @@ int request_module(const char *fmt, ...);
  * Like request_module(), but passes @params to the module's init. */
 int request_module_params(const char *name, const char *params);
 
+/* ── PCI/USB hotplug modalias generation (M38) ────────────────────── */
+
+/*
+ * Build a PCI modalias string from vendor/device/class info.
+ * Returns the length written, or negative on error.
+ */
+int pci_modalias(uint16_t vid, uint16_t did,
+                 uint16_t svid, uint16_t sdid,
+                 uint8_t class, uint8_t subclass, uint8_t progif,
+                 char *buf, int max_len);
+
+/*
+ * Build a USB modalias string from vendor/product/class info.
+ * Returns the length written, or negative on error.
+ */
+int usb_modalias(uint16_t vid, uint16_t pid, uint16_t bcdDevice,
+                 uint8_t bDeviceClass, uint8_t bDeviceSubClass,
+                 uint8_t bDeviceProtocol,
+                 char *buf, int max_len);
+
+/*
+ * Autoload a driver for a PCI device (hotplug path).
+ * Generates modalias and calls request_module().
+ */
+int request_module_pci(uint16_t vid, uint16_t did,
+                        uint16_t svid, uint16_t sdid,
+                        uint8_t class, uint8_t subclass, uint8_t progif);
+
+/*
+ * Autoload a driver for a USB device (hotplug path).
+ */
+int request_module_usb(uint16_t vid, uint16_t pid, uint16_t bcdDevice,
+                        uint8_t bDeviceClass, uint8_t bDeviceSubClass,
+                        uint8_t bDeviceProtocol);
+
 /* ── Module alias matching (M38) ──────────────────────────────────── */
 
 /* Maximum number of module aliases the system can track */
@@ -434,5 +496,8 @@ int module_sysfs_add_params(struct kernel_module *mod);
 /* Remove all sysfs entries for a module's parameters.
  * Called before module_unload(). */
 int module_sysfs_remove_params(struct kernel_module *mod);
+
+/* Build a /sys/module/<name> path string.  Exposed for testing. */
+int build_mod_dir(char *buf, int max, const char *mod_name);
 
 #endif /* MODULE_H */

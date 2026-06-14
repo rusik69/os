@@ -28,6 +28,15 @@ SECTIONS
         *(.boot)
     }
 
+    /* ── KASLR info ────────────────────────────────────────────────
+     * Small data section for boot-time KASLR offset storage.
+     * This is at a known physical address so boot.asm can find it. */
+    .kaslr_info ALIGN(8) : {
+        _kaslr_info_start = .;
+        *(.kaslr_info)
+        _kaslr_info_end = .;
+    }
+
     /* High-half kernel sections: high VMA, low physical LMA */
     . = KERNEL_TEXT_LMA + KERNEL_VMA_OFFSET;
 
@@ -80,6 +89,23 @@ SECTIONS
         __ksymtab_start = .;
         KEEP(*(.ksymtab))
         __ksymtab_end = .;
+    }
+
+    /* ── Comprehensive kallsyms table (all global symbols) ─────────
+     * In addition to EXPORT_SYMBOL entries, this section collects
+     * ALL global kernel symbols (functions and variables) for use
+     * as a fallback resolution source by the module loader.
+     *
+     * Entries use the same struct ksym_entry format as .ksymtab
+     * but all have gpl_only = 0.
+     *
+     * Source files can add their symbols here via the __KALLSYMS()
+     * macro, and the linker collects them between __kallsyms_start
+     * and __kallsyms_end. */
+    .kallsyms ALIGN(16) : AT(ADDR(.kallsyms) - KERNEL_VMA_OFFSET) {
+        __kallsyms_start = .;
+        KEEP(*(.kallsyms))
+        __kallsyms_end = .;
     }
 
     /* ── Module metadata (.modinfo) section (M41) ──────────────────

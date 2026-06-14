@@ -325,9 +325,12 @@ int sys_connect_impl(int sockfd, const struct sockaddr_in *addr) {
 
 int sys_setsockopt_impl(int sockfd, int level, int optname,
                          const void *optval, uint32_t optlen) {
-    (void)optlen;
     struct socket *s = sock_get(sockfd);
     if (!s) return -1;
+
+    /* Validate optlen — must be at least sizeof(int) for integer options */
+    if (!optval || optlen < sizeof(int))
+        return -EINVAL;
 
     if (level == SOL_SOCKET) {
         switch (optname) {

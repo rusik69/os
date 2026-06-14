@@ -26,6 +26,7 @@ struct bc_entry {
     uint8_t       lru_node;      /* index of this entry in LRU list */
     int16_t       hash_next;     /* next entry in hash bucket chain (-1 = end) */
     uint16_t      access_count;  /* access frequency counter (for working-set est.) */
+    int           refcount;      /* number of outstanding references to data[] */
     uint8_t       data[SECT_SIZE]; /* cached sector data (512 bytes) */
 };
 
@@ -173,10 +174,10 @@ static void hash_insert(int16_t idx) {
 
 /* ── Eviction ───────────────────────────────────────────────────────── */
 static int16_t evict_one(void) {
-    /* Start from tail (LRU) and work backwards until we find a clean entry */
+    /* Start from tail (LRU) and work backwards until we find a clean, unreferenced entry */
     int16_t idx = g_lru_tail;
     while (idx >= 0) {
-        if (!g_entries[idx].dirty) {
+        if (!g_entries[idx].dirty && g_entries[idx].refcount == 0) {
             /* Evict this clean entry */
             hash_remove(idx);
             g_entries[idx].valid = 0;
@@ -185,23 +186,30 @@ static int16_t evict_one(void) {
         idx = g_lru[idx].prev;
     }
 
-    /* All entries are dirty — force-write the LRU entry */
+    /* All entries are dirty or referenced — force-write the LRU unreferenced entry */
     idx = g_lru_tail;
-    if (idx < 0) return -1; /* empty cache */
+    while (idx >= 0) {
+        if (g_entries[idx].refcount == 0) {
+            struct bc_entry *e = &g_entries[idx];
+            hash_remove(idx);
 
-    struct bc_entry *e = &g_entries[idx];
-    hash_remove(idx);
+            /* Write dirty data back */
+            if (e->dirty) {
+                blockdev_write_sectors(e->dev_id, (uint32_t)e->lba, 1, e->data);
+                g_writes++;
+                g_dirty_forced_writes++;
+            }
 
-    /* Write dirty data back */
-    blockdev_write_sectors(e->dev_id, (uint32_t)e->lba, 1, e->data);
-    g_writes++;
-    g_dirty_forced_writes++;
+            e->valid = 0;
+            e->dirty = 0;
+            e->access_count = 0;  /* reset on eviction */
+            g_evictions++;
+            return idx;
+        }
+        idx = g_lru[idx].prev;
+    }
 
-    e->valid = 0;
-    e->dirty = 0;
-    e->access_count = 0;  /* reset on eviction */
-    g_evictions++;
-    return idx;
+    return -1; /* all entries are pinned */
 }
 
 /* ── Core cache operations ──────────────────────────────────────────── */
@@ -214,6 +222,7 @@ static int cache_fill(int16_t idx, uint64_t lba, uint8_t dev_id) {
     e->valid = 1;
     e->dirty = 0;
     e->access_count = 1;  /* first access */
+    e->refcount = 0;      /* no outstanding references yet */
 
     /* Read from disk */
     if (blockdev_read_sectors(dev_id, (uint32_t)lba, 1, e->data) != 0) {
@@ -246,6 +255,7 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
         g_hits++;
         g_total_accesses++;
         g_entries[idx].access_count++;
+        g_entries[idx].refcount++;  /* pin buffer for caller */
         /* Update working set estimate */
         if (g_entries[idx].access_count > g_ws_est)
             g_ws_est = (g_ws_est + 1) * 2;
@@ -282,6 +292,22 @@ void *bufcache_read(uint64_t lba, uint8_t dev_id) {
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
     return g_entries[victim].data;
+}
+
+/* Release a previously acquired buffer cache entry.
+ * Decrements the refcount, allowing the entry to be evicted later. */
+void bufcache_release(uint64_t lba, uint8_t dev_id) {
+    if (!g_active || !g_initialized) return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+
+    int16_t idx = hash_lookup(lba, dev_id);
+    if (idx >= 0 && g_entries[idx].refcount > 0) {
+        g_entries[idx].refcount--;
+    }
+
+    spinlock_irqsave_release(&g_bc_lock, irq_flags);
 }
 
 int bufcache_mark_dirty(uint64_t lba, uint8_t dev_id) {

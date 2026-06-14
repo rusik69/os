@@ -20,6 +20,7 @@ void bufcache_disable(void);
  * bufcache_write copies data into cache and marks it dirty.
  */
 void *bufcache_read(uint64_t lba, uint8_t dev_id);
+void  bufcache_release(uint64_t lba, uint8_t dev_id);  /* release a pinned buffer */
 int   bufcache_mark_dirty(uint64_t lba, uint8_t dev_id);
 int   bufcache_write(uint64_t lba, uint8_t dev_id, const void *data);
 

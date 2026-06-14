@@ -63,4 +63,18 @@ void sys_cap_bset_apply(struct process *proc);
 
 #define CAP_BSET_SIZE       2  /* 64-bit words for up to 64 caps */
 
+/* ── Capability audit enforcement ──────────────────────────────── */
+
+/* Generic capable-with-audit check. Returns 0 if granted, -EPERM if denied. */
+int cap_capable_audit(uint32_t cap, const char *audit_msg);
+
+/* Convenience: CAP_SYS_RAWIO check for raw I/O operations */
+int cap_sys_rawio_check(void);
+
+/* Convenience: CAP_SYS_BOOT check for kexec_load */
+int cap_sys_boot_check(void);
+
+/* Convenience: CAP_SYS_MODULE check for init_module/finit_module */
+int cap_sys_module_check(void);
+
 #endif /* CAPS_H */

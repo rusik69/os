@@ -22,6 +22,9 @@
  * context/root entry formats.
  */
 
+/* Forward declaration for PCI device (included from pci.h) */
+struct pci_device;
+
 /* ── Page table constants ──────────────────────────────────────────── */
 
 #define IOMMU_PAGE_SIZE      4096
@@ -225,5 +228,34 @@ static inline void iommu_domain_free(struct iommu_domain *domain) {
     iommu_free_ptable(domain->pgd);
     kfree(domain);
 }
+
+/*
+ * ── IOMMU driver-level API (implemented in drivers/iommu.c) ────────
+ */
+
+/**
+ * iommu_map_page - Map a physical page into a device's IOVA space.
+ * @dev:       PCI device to map for
+ * @phys_addr: Physical address of the page to map
+ * @iova:      I/O virtual address (IOVA) to assign
+ * @flags:     Access flags (IOMMU_READ, IOMMU_WRITE, etc.)
+ * Returns 0 on success, <0 on error.
+ */
+int iommu_map_page(struct pci_device *dev, uint64_t phys_addr,
+                   uint64_t iova, uint64_t flags);
+
+/**
+ * iommu_unmap_page - Unmap a page from a device's IOVA space.
+ * @dev:  PCI device
+ * @iova: I/O virtual address to unmap
+ * Returns 0 on success, <0 on error.
+ */
+int iommu_unmap_page(struct pci_device *dev, uint64_t iova);
+
+/**
+ * iommu_is_enabled - Check if IOMMU hardware is active.
+ * Returns 1 if IOMMU DMA remapping is enabled, 0 otherwise.
+ */
+int iommu_is_enabled(void);
 
 #endif /* IOMMU_H */

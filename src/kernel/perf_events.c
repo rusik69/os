@@ -9,9 +9,110 @@
 #include "errno.h"
 #include "kallsyms.h"
 #include "timer.h"
+#include "sysctl.h"
+#include "audit.h"
+#include "process.h"
+#include "caps.h"
 
 /* Software event counters */
 static struct perf_sw_counters sw_counters;
+
+/*
+ * perf_event_paranoid — sysctl kernel.perf_event_paranoid
+ *
+ * Controls access to performance monitoring hardware:
+ *   -1: unrestricted (allow all userspace perf)
+ *    0: allow CPU-level monitoring only
+ *    1: disallow kernel tracepoints (default)
+ *    2: disallow all userspace perf
+ */
+static int perf_event_paranoid = 1;
+
+/* Sysctl read handler for perf_event_paranoid */
+static int sysctl_read_perf_paranoid(char *buf, int max)
+{
+    char tmp[16];
+    int n = 0;
+    int v = perf_event_paranoid;
+    if (v < 0) { if (n < max - 1) buf[n++] = '-'; v = -v; }
+    if (v == 0) { if (n < max - 1) buf[n++] = '0'; }
+    else {
+        char rev[8];
+        int rn = 0;
+        while (v > 0) { rev[rn++] = (char)('0' + v % 10); v /= 10; }
+        while (rn > 0 && n < max - 1) buf[n++] = rev[--rn];
+    }
+    if (n < max - 1) buf[n++] = '\n';
+    return n;
+}
+
+/* Sysctl write handler for perf_event_paranoid */
+static int sysctl_write_perf_paranoid(const char *buf, int len)
+{
+    int val = 0;
+    int sign = 1;
+    int i = 0;
+    if (i < len && buf[i] == '-') { sign = -1; i++; }
+    while (i < len && buf[i] >= '0' && buf[i] <= '9') {
+        val = val * 10 + (buf[i] - '0');
+        i++;
+    }
+    val *= sign;
+    if (val < -1 || val > 2)
+        return -EINVAL;
+    perf_event_paranoid = val;
+    return 0;
+}
+
+/* Check if the current process is allowed to access perf events.
+ * Returns 0 if allowed, -EPERM if denied.
+ *
+ * Levels:
+ *   2: block all userspace perf
+ *   1: block kernel tracepoints (not yet implemented separately)
+ *   0: allow CPU-level monitoring (counting), block privileged
+ *  -1: allow everything
+ */
+int perf_paranoid_check(void)
+{
+    struct process *p = process_get_current();
+
+    /* Kernel context always allowed */
+    if (!p || !p->is_user)
+        return 0;
+
+    if (perf_event_paranoid >= 2) {
+        /* Level 2: everything blocked for userspace */
+        audit_log_denial("perf_events", "perf_event_open", "level2_block");
+        return -EPERM;
+    }
+
+    if (perf_event_paranoid == 1) {
+        /* Level 1: userspace can do CPU-level monitoring but not
+         * kernel tracepoints. Since we only have counters (no tracepoints
+         * implemented yet), allow through. */
+        /* TODO: when tracepoints are implemented, check the event type here */
+    }
+
+    if (perf_event_paranoid == 0) {
+        /* Level 0: allow CPU-level monitoring if process has
+         * CAP_SYS_ADMIN or CAP_SYS_PTRACE, otherwise still allow
+         * but log a warning */
+        /* For now, allow everything at level 0 */
+    }
+
+    /* Level -1: unrestricted */
+    return 0;
+}
+
+/* Initialize perf_event_paranoid sysctl */
+void perf_paranoid_sysctl_init(void)
+{
+    sysctl_register("perf_event_paranoid",
+                    sysctl_read_perf_paranoid,
+                    sysctl_write_perf_paranoid);
+    kprintf("[OK] perf_event_paranoid=%d sysctl registered\n", perf_event_paranoid);
+}
 
 /* Check if the CPU supports architectural PMU */
 static int perf_available = 0;
@@ -745,6 +846,9 @@ void perf_init(void)
 
     /* ── Initialise hardware counter multiplexing ── */
     perf_mux_init();
+
+    /* ── Initialise perf_event_paranoid sysctl ── */
+    perf_paranoid_sysctl_init();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

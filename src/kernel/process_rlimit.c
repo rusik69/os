@@ -35,10 +35,10 @@ void rlimit_init(void)
                 table[i].rlim_max[r] = RLIM_INFINITY;
             }
             /* Set sensible defaults for a few resources */
-            table[i].rlim_cur[RLIMIT_NOFILE] = PROCESS_FD_MAX;
-            table[i].rlim_max[RLIMIT_NOFILE] = PROCESS_FD_MAX;
-            table[i].rlim_cur[RLIMIT_NPROC]  = 256;
-            table[i].rlim_max[RLIMIT_NPROC]  = 512;
+            table[i].rlim_cur[RLIMIT_NOFILE] = 1024;
+            table[i].rlim_max[RLIMIT_NOFILE] = 4096;
+            table[i].rlim_cur[RLIMIT_NPROC]  = 4096;
+            table[i].rlim_max[RLIMIT_NPROC]  = 4096;
         }
     }
 

@@ -11,6 +11,7 @@
 #include "printf.h"
 #include "syscall.h"
 #include "errno.h"
+#include "signal_validate.h"
 
 /* Core dump handler */
 extern void do_coredump(struct process *proc, int signo);
@@ -129,16 +130,23 @@ int signal_send(uint32_t pid, int signum) {
 /* Extended signal send with siginfo_t support.
  * Stores siginfo for delivery by signal_check (or signal fd read).
  * For real-time signals (SIGRTMIN-SIGRTMAX) the info is queued.
- * For standard signals, keeps the most recent info only. */
+ * For standard signals, keeps the most recent info only.
+ * Validates siginfo fields before storing (security). */
 int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
     int ret = signal_send(pid, signum);
     if (ret == 0 && info) {
         struct process *p = process_get_by_pid(pid);
         if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
+            /* ── siginfo validation ──────────────────────────────── */
+            struct siginfo validated = *info;
+            struct process *caller = process_get_current();
+            int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
+            signal_validate_siginfo(&validated, is_from_userspace);
+
             uint64_t __sig_flags2;
             spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags2);
             if (p->pending_signals & (1ULL << signum)) {
-                p->sig_info[signum] = *info;
+                p->sig_info[signum] = validated;
             }
             spinlock_irqsave_release(&p->sig_lock, __sig_flags2);
         }
@@ -268,6 +276,18 @@ void signal_register(int signum, signal_handler_t handler) {
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
     p->sig_handlers[signum] = handler;
+    p->sig_flags[signum] = 0;  /* No SA flags when using signal() */
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+}
+
+void signal_register_flags(int signum, signal_handler_t handler, uint32_t flags) {
+    if (signum <= 0 || signum >= SIG_MAX) return;
+    struct process *p = process_get_current();
+    if (!p) return;
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+    p->sig_handlers[signum] = handler;
+    p->sig_flags[signum] = flags;
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
 

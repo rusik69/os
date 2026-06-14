@@ -7,6 +7,7 @@
  *   - I/O Scheduler deadline elevator
  *   - RTC periodic interrupt
  *   - madvise DONTNEED/WILLNEED/COLD
+ *   - RLIMIT resource limits
  */
 
 #include "kunit.h"
@@ -20,6 +21,9 @@
 #include "heap.h"
 #include "blockdev.h"
 #include "timer.h"
+#include "process.h"
+#include "syscall.h"
+#include "process_rlimit.h"
 
 /* ====================================================================
  *  1. IPVS — Connection tracking + NAT tests
@@ -381,6 +385,91 @@ static void madvise_init_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  6. RLIMIT — Resource limit tests
+ * ==================================================================== */
+
+static void rlimit_nofile_default_test(struct kunit *test)
+{
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_NOT_NULL(test, cur);
+    if (!cur) return;
+
+    KUNIT_EXPECT_EQ(test, cur->rlim_cur[RLIMIT_NOFILE], (uint64_t)1024);
+    KUNIT_EXPECT_EQ(test, cur->rlim_max[RLIMIT_NOFILE], (uint64_t)4096);
+}
+
+static void rlimit_stack_default_test(struct kunit *test)
+{
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_NOT_NULL(test, cur);
+    if (!cur) return;
+
+    KUNIT_EXPECT_EQ(test, cur->rlim_cur[RLIMIT_STACK], (uint64_t)8ULL * 1024 * 1024);
+    KUNIT_EXPECT_EQ(test, cur->rlim_max[RLIMIT_STACK], (uint64_t)8ULL * 1024 * 1024);
+}
+
+static void rlimit_nproc_default_test(struct kunit *test)
+{
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_NOT_NULL(test, cur);
+    if (!cur) return;
+
+    KUNIT_EXPECT_EQ(test, cur->rlim_cur[RLIMIT_NPROC], (uint64_t)4096);
+    KUNIT_EXPECT_EQ(test, cur->rlim_max[RLIMIT_NPROC], (uint64_t)4096);
+}
+
+static void rlimit_get_set_test(struct kunit *test)
+{
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_NOT_NULL(test, cur);
+    if (!cur) return;
+
+    /* Save original values */
+    uint64_t saved_cur = cur->rlim_cur[RLIMIT_NOFILE];
+    uint64_t saved_max = cur->rlim_max[RLIMIT_NOFILE];
+
+    /* Set RLIMIT_NOFILE to a new value using rlimit_set */
+    struct rlimit new_rlim;
+    new_rlim.rlim_cur = 512;
+    new_rlim.rlim_max = 2048;
+    int ret = rlimit_set(cur->pid, RLIMIT_NOFILE, &new_rlim);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+
+    /* Verify via rlimit_get */
+    struct rlimit got_rlim;
+    ret = rlimit_get(cur->pid, RLIMIT_NOFILE, &got_rlim);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+    KUNIT_EXPECT_EQ(test, got_rlim.rlim_cur, (uint64_t)512);
+    KUNIT_EXPECT_EQ(test, got_rlim.rlim_max, (uint64_t)2048);
+
+    /* Restore */
+    cur->rlim_cur[RLIMIT_NOFILE] = saved_cur;
+    cur->rlim_max[RLIMIT_NOFILE] = saved_max;
+}
+
+static void rlimit_nofile_enforce_test(struct kunit *test)
+{
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_NOT_NULL(test, cur);
+    if (!cur) return;
+
+    /* Save original values */
+    uint64_t saved_cur = cur->rlim_cur[RLIMIT_NOFILE];
+    uint64_t saved_max = cur->rlim_max[RLIMIT_NOFILE];
+
+    /* rlimit_check should allow a value below the limit */
+    int ret = rlimit_check(cur->pid, RLIMIT_NOFILE, saved_cur - 1);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+
+    /* rlimit_check should reject a value at or above the limit */
+    ret = rlimit_check(cur->pid, RLIMIT_NOFILE, saved_cur);
+    KUNIT_EXPECT_NE(test, ret, 0);
+
+    ret = rlimit_check(cur->pid, RLIMIT_NOFILE, saved_cur + 1);
+    KUNIT_EXPECT_NE(test, ret, 0);
+}
+
+/* ====================================================================
  *  Test case lists
  * ==================================================================== */
 
@@ -421,6 +510,16 @@ static struct kunit_case madvise_test_cases[] = {
     {0}
 };
 
+/* RLIMIT test cases */
+static struct kunit_case rlimit_test_cases[] = {
+    KUNIT_CASE(rlimit_nofile_default_test),
+    KUNIT_CASE(rlimit_stack_default_test),
+    KUNIT_CASE(rlimit_nproc_default_test),
+    KUNIT_CASE(rlimit_get_set_test),
+    KUNIT_CASE(rlimit_nofile_enforce_test),
+    {0}
+};
+
 /* ── Suite definitions ────────────────────────────────────────────── */
 
 static struct kunit_suite ipvs_test_suite;
@@ -428,6 +527,7 @@ static struct kunit_suite nvme_pmr_test_suite;
 static struct kunit_suite iosched_test_suite;
 static struct kunit_suite rtc_test_suite;
 static struct kunit_suite madvise_test_suite;
+static struct kunit_suite rlimit_test_suite;
 
 /* ====================================================================
  *  Suite Registration — called from kunit_register_builtin_tests()
@@ -515,5 +615,21 @@ void kunit_ext_register(void)
         kunit_register_suite(&madvise_test_suite);
     }
 
-    kprintf("[KUnit] Extended feature tests registered (ipvs, nvme_pmr, iosched, rtc, madvise_ext)\n");
+    /* ── RLIMIT ── */
+    {
+        int ci = 0;
+        for (int i = 0; rlimit_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+            rlimit_test_suite.cases[ci].name = rlimit_test_cases[i].name;
+            rlimit_test_suite.cases[ci].run  = rlimit_test_cases[i].run;
+            ci++;
+        }
+        rlimit_test_suite.cases[ci].name = NULL;
+        rlimit_test_suite.cases[ci].run  = NULL;
+        rlimit_test_suite.name     = "rlimit";
+        rlimit_test_suite.setup    = NULL;
+        rlimit_test_suite.teardown = NULL;
+        kunit_register_suite(&rlimit_test_suite);
+    }
+
+    kprintf("[KUnit] Extended feature tests registered (ipvs, nvme_pmr, iosched, rtc, madvise_ext, rlimit)\n");
 }

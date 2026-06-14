@@ -1111,7 +1111,7 @@ static int build_mod_param_path(char *buf, int max, const char *mod_name,
 
 /* Build /sys/module/<name> path.
  * Returns the length written, or 0 on truncation. */
-static int build_mod_dir(char *buf, int max, const char *mod_name)
+int build_mod_dir(char *buf, int max, const char *mod_name)
 {
     return snprintf(buf, (size_t)max, "/sys/module/%s", mod_name);
 }
@@ -1120,6 +1120,10 @@ static int build_mod_dir(char *buf, int max, const char *mod_name)
  * Create sysfs entries for all parameters of a loaded module.
  * This creates:
  *   /sys/module/<name>/
+ *   /sys/module/<name>/initstate
+ *   /sys/module/<name>/refcnt
+ *   /sys/module/<name>/version
+ *   /sys/module/<name>/holders
  *   /sys/module/<name>/parameters/
  *   /sys/module/<name>/parameters/<param>  (one per parameter)
  *
@@ -1140,10 +1144,6 @@ int module_sysfs_add_params(struct kernel_module *mod)
         sysfs_module_dir_created = 1;
     }
 
-    /* Check if the module has any parameters */
-    if (list_empty(&mod->params))
-        return 0; /* No params — nothing to do */
-
     /* Create /sys/module/<name>/ directory */
     char mod_dir[128];
     if (build_mod_dir(mod_dir, (int)sizeof(mod_dir), mod->name) <= 0)
@@ -1156,21 +1156,87 @@ int module_sysfs_add_params(struct kernel_module *mod)
         return -1;
     sysfs_create_dir(param_dir);
 
-    /* Create one file per parameter */
-    struct kernel_param *kp;
-    list_for_each_entry(kp, &mod->params, list) {
-        if (kp->name[0] == '\0')
-            continue;
+    /* ── Create metadata files ───────────────────────────────────── */
 
-        char param_path[160];
-        if (build_mod_param_path(param_path, (int)sizeof(param_path),
-                                  mod->name, kp->name) <= 0)
-            continue;
+    /* initstate — current module state */
+    {
+        char initstate_path[160];
+        snprintf(initstate_path, sizeof(initstate_path),
+                 "/sys/module/%s/initstate", mod->name);
+        const char *state_str = "live";
+        switch (mod->state) {
+        case MODULE_LOADING:  state_str = "loading"; break;
+        case MODULE_LIVE:     state_str = "live"; break;
+        case MODULE_UNLOADING: state_str = "unloading"; break;
+        case MODULE_DEAD:     state_str = "dead"; break;
+        case MODULE_ERROR:    state_str = "error"; break;
+        default:              state_str = "unknown"; break;
+        }
+        sysfs_create_file(initstate_path, state_str);
+    }
 
-        /* Create a writable sysfs file with read/write callbacks.
-         * The priv (void*) is the kernel_param pointer. */
-        sysfs_create_writable_file(param_path, NULL, (void *)kp,
-            module_param_read_cb, module_param_write_cb);
+    /* refcnt — reference count */
+    {
+        char refcnt_path[160];
+        snprintf(refcnt_path, sizeof(refcnt_path),
+                 "/sys/module/%s/refcnt", mod->name);
+        char refcnt_str[16];
+        snprintf(refcnt_str, sizeof(refcnt_str), "%d", mod->refcount);
+        sysfs_create_file(refcnt_path, refcnt_str);
+    }
+
+    /* version — module version from .modinfo */
+    {
+        char version_path[160];
+        snprintf(version_path, sizeof(version_path),
+                 "/sys/module/%s/version", mod->name);
+        sysfs_create_file(version_path, "1.0");
+    }
+
+    /* holders — list of modules that depend on this one */
+    {
+        char holders_path[160];
+        snprintf(holders_path, sizeof(holders_path),
+                 "/sys/module/%s/holders", mod->name);
+        char holders_buf[256];
+        int pos = 0;
+        for (int i = 0; i < MODULE_MAX; i++) {
+            struct kernel_module *other = module_get_by_id(i);
+            if (!other || other == mod || other->state != MODULE_LIVE)
+                continue;
+            for (int j = 0; j < other->num_deps; j++) {
+                if (strcmp(other->deps[j].name, mod->name) == 0) {
+                    int n = snprintf(holders_buf + pos,
+                                     sizeof(holders_buf) - (size_t)pos,
+                                     "%s\n", other->name);
+                    if (n > 0) pos += n;
+                    break;
+                }
+            }
+        }
+        if (pos == 0) {
+            snprintf(holders_buf, sizeof(holders_buf), "(none)\n");
+        }
+        sysfs_create_file(holders_path, holders_buf);
+    }
+
+    /* ── Create one file per parameter ───────────────────────────── */
+    if (!list_empty(&mod->params)) {
+        struct kernel_param *kp;
+        list_for_each_entry(kp, &mod->params, list) {
+            if (kp->name[0] == '\0')
+                continue;
+
+            char param_path[160];
+            if (build_mod_param_path(param_path, (int)sizeof(param_path),
+                                      mod->name, kp->name) <= 0)
+                continue;
+
+            /* Create a writable sysfs file with read/write callbacks.
+             * The priv (void*) is the kernel_param pointer. */
+            sysfs_create_writable_file(param_path, NULL, (void *)kp,
+                module_param_read_cb, module_param_write_cb);
+        }
     }
 
     return 0;

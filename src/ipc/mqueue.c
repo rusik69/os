@@ -8,6 +8,10 @@
 #include "errno.h"
 #include "types.h"
 
+#ifndef UINT32_MAX
+#define UINT32_MAX 4294967295U
+#endif
+
 static struct mqueue mqueue_table[MQUEUE_MAX];
 static int mqueue_inited = 0;
 
@@ -75,7 +79,10 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
     (void)msg_prio;
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
         return -1;
+    /* Reject messages larger than max size or longer than uint32_t (for len field) */
     if (msg_len > (size_t)mqueue_table[mqdes].msg_size_max)
+        return -1;
+    if (msg_len > UINT32_MAX)
         return -1;
 
     struct mqueue *q = &mqueue_table[mqdes];
@@ -124,6 +131,8 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
 
 ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg_prio) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
+        return -1;
+    if (msg_len > UINT32_MAX)
         return -1;
 
     struct mqueue *q = &mqueue_table[mqdes];

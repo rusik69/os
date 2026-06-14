@@ -24,6 +24,12 @@
 #include "spinlock.h"
 #include "pipe.h"
 #include "timers.h"
+#include "module_compress.h"
+#include "module.h"
+#include "module_signature.h"
+#include "firmware.h"
+#include "module_deps.h"
+#include "export.h"
 
 /* Extern declarations for dedicated test suite registrations */
 extern void kunit_pmm_register(void);
@@ -32,8 +38,11 @@ extern void kunit_slab_register(void);
 extern void kunit_sched_register(void);
 extern void kunit_vmm_register(void);
 extern void kunit_security_register(void);
+extern void kunit_security_new_register(void);
 extern void kunit_power_register(void);
 extern void kunit_ext_register(void);
+extern void kunit_cluster_register(void);
+extern void kunit_container_ext_register(void);
 
 /* ====================================================================
  *  1. PMM — Physical Memory Manager tests
@@ -1113,6 +1122,165 @@ static struct kunit_case core_test_cases[] = {
     {0}
 };
 
+/* ── Module compression tests ───────────────────────────────────────── */
+
+static void module_compress_detect_gzip_test(struct kunit *test)
+{
+    uint8_t gzip_data[] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00};
+    KUNIT_EXPECT_EQ(test, module_is_gzip(gzip_data, sizeof(gzip_data)), 1);
+    KUNIT_EXPECT_EQ(test, module_is_xz(gzip_data, sizeof(gzip_data)), 0);
+}
+
+static void module_compress_detect_xz_test(struct kunit *test)
+{
+    uint8_t xz_data[] = {0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x00};
+    KUNIT_EXPECT_EQ(test, module_is_xz(xz_data, sizeof(xz_data)), 1);
+    KUNIT_EXPECT_EQ(test, module_is_gzip(xz_data, sizeof(xz_data)), 0);
+}
+
+static void module_compress_detect_type_test(struct kunit *test)
+{
+    enum module_compress_type ctype;
+    uint8_t gzip_data[] = {0x1f, 0x8b, 0x08, 0x00};
+    KUNIT_EXPECT_EQ(test, module_is_compressed(gzip_data, sizeof(gzip_data), &ctype), 1);
+    KUNIT_EXPECT_EQ(test, (int)ctype, (int)MODULE_COMPRESS_GZIP);
+
+    uint8_t xz_data[] = {0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00};
+    KUNIT_EXPECT_EQ(test, module_is_compressed(xz_data, sizeof(xz_data), &ctype), 1);
+    KUNIT_EXPECT_EQ(test, (int)ctype, (int)MODULE_COMPRESS_XZ);
+
+    uint8_t not_compressed[] = {0x7f, 0x45, 0x4c, 0x46};
+    KUNIT_EXPECT_EQ(test, module_is_compressed(not_compressed, sizeof(not_compressed), &ctype), 0);
+}
+
+static void module_gzip_roundtrip_test(struct kunit *test)
+{
+    uint8_t tiny_gz[] = {
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff,
+        0x01, 0x05, 0x00, 0xfa, 0xff, 0x48, 0x65, 0x6c, 0x6c, 0x6f,
+        0xe3, 0x81, 0xff, 0xf7, 0x05, 0x00, 0x00, 0x00
+    };
+    uint8_t output[64];
+    uint64_t decomp_size = 0;
+    int ret = gzip_inflate(tiny_gz, sizeof(tiny_gz), output, sizeof(output), &decomp_size);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+    KUNIT_EXPECT_EQ(test, (int)decomp_size, 5);
+}
+
+static void module_sig_enforce_test(struct kunit *test)
+{
+    int old = module_sig_get_enforce();
+    module_sig_set_enforce(1);
+    KUNIT_EXPECT_EQ(test, module_sig_get_enforce(), 1);
+    module_sig_set_enforce(0);
+    KUNIT_EXPECT_EQ(test, module_sig_get_enforce(), 0);
+    module_sig_set_enforce(old);
+}
+
+static void module_sig_trusted_keys_test(struct kunit *test)
+{
+    uint8_t key_hash[32];
+    memset(key_hash, 0xAA, sizeof(key_hash));
+    int ret = module_sig_add_trusted_key(key_hash);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+    module_sig_clear_trusted_keys();
+    KUNIT_EXPECT_EQ(test, module_sig_get_trusted_key_count(), 0);
+}
+
+static void firmware_request_release_test(struct kunit *test)
+{
+    const struct firmware *fw = NULL;
+    int ret = request_firmware(&fw, "nonexistent_fw_test.bin");
+    KUNIT_EXPECT_EQ(test, ret, -ENOENT);
+    KUNIT_EXPECT_NULL(test, fw);
+}
+
+static void firmware_nowait_test(struct kunit *test)
+{
+    const struct firmware *fw = NULL;
+    int ret = request_firmware_nowait(&fw, "test_fw.bin", NULL, NULL);
+    KUNIT_EXPECT_EQ(test, ret, -ENOENT);
+}
+
+static void module_can_unload_test(struct kunit *test)
+{
+    int ret = module_can_unload(NULL, NULL, 0);
+    KUNIT_EXPECT_EQ(test, ret, 0);
+}
+
+static void module_sysfs_path_test(struct kunit *test)
+{
+    char buf[128];
+    int len = build_mod_dir(buf, sizeof(buf), "testmod");
+    KUNIT_EXPECT_TRUE(test, len > 0);
+    KUNIT_EXPECT_EQ(test, strcmp(buf, "/sys/module/testmod"), 0);
+}
+
+static void pci_modalias_test(struct kunit *test)
+{
+    char buf[128];
+    int len = pci_modalias(0x8086, 0x100F, 0, 0, 0x02, 0x00, 0x00, buf, sizeof(buf));
+    KUNIT_EXPECT_TRUE(test, len > 0);
+    KUNIT_EXPECT_TRUE(test, strstr(buf, "v00008086") != NULL);
+}
+
+static void usb_modalias_test(struct kunit *test)
+{
+    char buf[128];
+    int len = usb_modalias(0x1234, 0x5678, 0x0100, 0x00, 0x00, 0x00, buf, sizeof(buf));
+    KUNIT_EXPECT_TRUE(test, len > 0);
+    KUNIT_EXPECT_TRUE(test, strstr(buf, "v1234") != NULL);
+}
+
+static void kallsyms_find_test(struct kunit *test)
+{
+    uint64_t addr = find_ksym("kprintf", 1);
+    KUNIT_EXPECT_NE(test, addr, (uint64_t)0);
+    addr = find_ksym_all("kprintf");
+    KUNIT_EXPECT_NE(test, addr, (uint64_t)0);
+}
+
+static struct kunit_case module_compress_test_cases[] = {
+    KUNIT_CASE(module_compress_detect_gzip_test),
+    KUNIT_CASE(module_compress_detect_xz_test),
+    KUNIT_CASE(module_compress_detect_type_test),
+    KUNIT_CASE(module_gzip_roundtrip_test),
+    {0}
+};
+
+static struct kunit_case module_sig_test_cases[] = {
+    KUNIT_CASE(module_sig_enforce_test),
+    KUNIT_CASE(module_sig_trusted_keys_test),
+    {0}
+};
+
+static struct kunit_case firmware_test_cases[] = {
+    KUNIT_CASE(firmware_request_release_test),
+    KUNIT_CASE(firmware_nowait_test),
+    {0}
+};
+
+static struct kunit_case module_dep_test_cases[] = {
+    KUNIT_CASE(module_can_unload_test),
+    {0}
+};
+
+static struct kunit_case module_sysfs_test_cases[] = {
+    KUNIT_CASE(module_sysfs_path_test),
+    {0}
+};
+
+static struct kunit_case module_autoload_test_cases[] = {
+    KUNIT_CASE(pci_modalias_test),
+    KUNIT_CASE(usb_modalias_test),
+    {0}
+};
+
+static struct kunit_case module_kallsyms_test_cases[] = {
+    KUNIT_CASE(kallsyms_find_test),
+    {0}
+};
+
 /* Helper macro to populate a fixed-size array from a NULL-terminated list */
 #define FILL_CASES(suite_var, cases_array) do {                     \
     int __ci = 0;                                                   \
@@ -1137,6 +1305,13 @@ static struct kunit_suite fat32_corrupt_test_suite;
 static struct kunit_suite elf_edge_test_suite;
 static struct kunit_suite signal_delivery_test_suite;
 static struct kunit_suite core_test_suite;
+static struct kunit_suite module_compress_test_suite;
+static struct kunit_suite module_sig_test_suite;
+static struct kunit_suite firmware_test_suite;
+static struct kunit_suite module_dep_test_suite;
+static struct kunit_suite module_sysfs_test_suite;
+static struct kunit_suite module_autoload_test_suite;
+static struct kunit_suite module_kallsyms_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
@@ -1164,6 +1339,13 @@ void kunit_register_builtin_tests(void)
     FILL_CASES(elf_edge_test_suite, elf_edge_test_cases);
     FILL_CASES(signal_delivery_test_suite, signal_delivery_test_cases);
     FILL_CASES(core_test_suite, core_test_cases);
+    FILL_CASES(module_compress_test_suite, module_compress_test_cases);
+    FILL_CASES(module_sig_test_suite, module_sig_test_cases);
+    FILL_CASES(firmware_test_suite, firmware_test_cases);
+    FILL_CASES(module_dep_test_suite, module_dep_test_cases);
+    FILL_CASES(module_sysfs_test_suite, module_sysfs_test_cases);
+    FILL_CASES(module_autoload_test_suite, module_autoload_test_cases);
+    FILL_CASES(module_kallsyms_test_suite, module_kallsyms_test_cases);
 
     /* Set suite names */
     pmm_test_suite.name    = "pmm";
@@ -1178,6 +1360,13 @@ void kunit_register_builtin_tests(void)
     elf_edge_test_suite.name       = "elf_edge";
     signal_delivery_test_suite.name = "signal_delivery";
     core_test_suite.name            = "core";
+    module_compress_test_suite.name = "module_compress";
+    module_sig_test_suite.name      = "module_sig";
+    firmware_test_suite.name        = "firmware";
+    module_dep_test_suite.name      = "module_deps";
+    module_sysfs_test_suite.name    = "module_sysfs";
+    module_autoload_test_suite.name = "module_autoload";
+    module_kallsyms_test_suite.name = "module_kallsyms";
 
     kunit_register_suite(&pmm_test_suite);
     kunit_register_suite(&slab_test_suite);
@@ -1191,6 +1380,13 @@ void kunit_register_builtin_tests(void)
     kunit_register_suite(&elf_edge_test_suite);
     kunit_register_suite(&signal_delivery_test_suite);
     kunit_register_suite(&core_test_suite);
+    kunit_register_suite(&module_compress_test_suite);
+    kunit_register_suite(&module_sig_test_suite);
+    kunit_register_suite(&firmware_test_suite);
+    kunit_register_suite(&module_dep_test_suite);
+    kunit_register_suite(&module_sysfs_test_suite);
+    kunit_register_suite(&module_autoload_test_suite);
+    kunit_register_suite(&module_kallsyms_test_suite);
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();
@@ -1210,9 +1406,18 @@ void kunit_register_builtin_tests(void)
     /* Register the security subsystem test suite from kunit_security.c */
     kunit_security_register();
 
+    /* Register the new security test suite from kunit_security_new.c */
+    kunit_security_new_register();
+
     /* Register the power management test suite from kunit_power.c */
     kunit_power_register();
 
     /* Register the extended feature test suites from kunit_ext.c */
     kunit_ext_register();
+
+    /* Register the cluster subsystem test suites from kunit_cluster.c */
+    kunit_cluster_register();
+
+    /* Register the container exec enhanced test suites from kunit_container_ext.c */
+    kunit_container_ext_register();
 }

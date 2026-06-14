@@ -5,6 +5,8 @@
 #include "string.h"
 #include "printf.h"
 #include "timer.h"
+#include "spinlock.h"
+#include "sysctl.h"
 
 /* DHCP packet structure */
 struct dhcp_packet {
@@ -243,36 +245,224 @@ static void handle_dns_reply(const uint8_t *data, uint16_t len) {
 }
 
 /* ICMP Destination Unreachable (type 3, code 3 = Port Unreachable) */
-/* ICMP rate limiting: simple token bucket — max 100 ICMP error
- * messages per second to prevent reflection/amplification attacks. */
-static uint64_t icmp_last_tick = 0;
-static int icmp_error_budget = 0;
-#define ICMP_RATELIMIT_MAX    100   /* max ICMP errors per second */
-#define ICMP_RATELIMIT_INTERVAL TIMER_FREQ
+/* ICMP rate limiting: per-destination token bucket to prevent
+ * reflection/amplification attacks.
+ *
+ * sysctl tunables:
+ *   icmp_ratelimit  — minimum interval (ms) between ICMP error sends (default 1000)
+ *   icmp_ratemask   — bitmask of ICMP types to rate-limit (bit N = type N)
+ *                     default bit 12 (ICMP_PARAMPROB)
+ */
 
-static int icmp_ratelimit(void) {
-    uint64_t now = timer_get_ticks();
-    if (now - icmp_last_tick >= ICMP_RATELIMIT_INTERVAL) {
-        /* Refill token bucket */
-        icmp_error_budget = ICMP_RATELIMIT_MAX;
-        icmp_last_tick = now;
+/* ICMP type constants */
+#define ICMP_UNREACH    3   /* Destination Unreachable */
+#define ICMP_TIMXCEED   11  /* Time Exceeded */
+#define ICMP_PARAMPROB  12  /* Parameter Problem */
+
+/* Per-destination rate limit tracking */
+#define ICMP_RATELIMIT_DEST_MAX 16
+
+struct icmp_rate_entry {
+    uint32_t dst_ip;
+    uint64_t last_send_tick;  /* timer tick of last ICMP error to this dst */
+    uint16_t in_use;
+};
+
+static struct icmp_rate_entry icmp_rate_table[ICMP_RATELIMIT_DEST_MAX];
+static spinlock_t icmp_rate_lock = SPINLOCK_INIT;
+
+/* Sysctl tunables */
+static int icmp_ratelimit_ms = 1000;   /* default: 1000ms between ICMP errors */
+static uint32_t icmp_ratemask = 0;     /* bitmask, default = ratelimit all ICMP errors */
+                                        /* Setting bit N means rate-limit ICMP type N */
+
+/* Sysctl read handler for icmp_ratelimit (milliseconds) */
+static int sysctl_read_icmp_ratelimit(char *buf, int max)
+{
+    char tmp[16];
+    int n = 0;
+    int v = icmp_ratelimit_ms;
+    if (v == 0) { if (n < max - 1) buf[n++] = '0'; }
+    else {
+        char rev[8];
+        int rn = 0;
+        while (v > 0) { rev[rn++] = (char)('0' + v % 10); v /= 10; }
+        while (rn > 0 && n < max - 1) buf[n++] = rev[--rn];
     }
-    if (icmp_error_budget <= 0)
-        return 0;  /* rate limited — drop this ICMP */
-    icmp_error_budget--;
-    return 1;  /* allowed */
+    if (n < max - 1) buf[n++] = '\n';
+    return n;
+}
+
+/* Sysctl write handler for icmp_ratelimit */
+static int sysctl_write_icmp_ratelimit(const char *buf, int len)
+{
+    int val = 0;
+    int i = 0;
+    while (i < len && buf[i] >= '0' && buf[i] <= '9') {
+        val = val * 10 + (buf[i] - '0');
+        i++;
+    }
+    if (val < 0 || val > 60000)
+        return -EINVAL;
+    icmp_ratelimit_ms = val;
+    return 0;
+}
+
+/* Sysctl read handler for icmp_ratemask (hexadecimal bitmask) */
+static int sysctl_read_icmp_ratemask(char *buf, int max)
+{
+    char tmp[16];
+    int n = 0;
+    uint32_t v = icmp_ratemask;
+    /* Write as 0x%x */
+    if (n < max - 1) { buf[n++] = '0'; }
+    if (n < max - 1) { buf[n++] = 'x'; }
+    int started = 0;
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        int digit = (int)((v >> shift) & 0xF);
+        if (digit || started || shift == 0) {
+            started = 1;
+            if (n < max - 1)
+                buf[n++] = (char)(digit < 10 ? '0' + digit : 'a' + digit - 10);
+        }
+    }
+    if (n < max - 1) buf[n++] = '\n';
+    return n;
+}
+
+/* Sysctl write handler for icmp_ratemask */
+static int sysctl_write_icmp_ratemask(const char *buf, int len)
+{
+    uint32_t val = 0;
+    int i = 0;
+    /* Skip optional 0x/0X prefix */
+    if (i + 1 < len && buf[i] == '0' && (buf[i+1] == 'x' || buf[i+1] == 'X'))
+        i += 2;
+    while (i < len) {
+        char c = buf[i];
+        uint32_t digit;
+        if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
+        else break;
+        val = (val << 4) | digit;
+        i++;
+    }
+    icmp_ratemask = val;
+    return 0;
+}
+
+/* Initialize icmp rate limit sysctls */
+void icmp_ratelimit_sysctl_init(void)
+{
+    sysctl_register("icmp_ratelimit",
+                    sysctl_read_icmp_ratelimit,
+                    sysctl_write_icmp_ratelimit);
+    sysctl_register("icmp_ratemask",
+                    sysctl_read_icmp_ratemask,
+                    sysctl_write_icmp_ratemask);
+}
+
+/* Per-destination ICMP rate limiting check.
+ * Returns 1 if the ICMP should be sent, 0 if rate-limited.
+ *
+ * Uses a token bucket per destination: only one ICMP error per
+ * icmp_ratelimit_ms to each destination. */
+static int icmp_ratelimit_per_dst(uint32_t dst_ip, uint8_t icmp_type)
+{
+    /* If ratelimit is 0, no limiting */
+    if (icmp_ratelimit_ms == 0)
+        return 1;
+
+    /* Check ratemask: if the bit for this ICMP type is NOT set, don't rate-limit it */
+    if (icmp_ratemask != 0 && !(icmp_ratemask & (1U << icmp_type)))
+        return 1;
+
+    uint64_t now = timer_get_ticks();
+    uint64_t min_interval_ticks = (uint64_t)icmp_ratelimit_ms * TIMER_FREQ / 1000;
+    if (min_interval_ticks < 1) min_interval_ticks = 1;
+
+    spinlock_acquire(&icmp_rate_lock);
+
+    /* Look for existing entry for this destination */
+    int slot = -1;
+    int empty_slot = -1;
+    for (int i = 0; i < ICMP_RATELIMIT_DEST_MAX; i++) {
+        if (icmp_rate_table[i].in_use) {
+            if (icmp_rate_table[i].dst_ip == dst_ip) {
+                slot = i;
+                break;
+            }
+        } else if (empty_slot < 0) {
+            empty_slot = i;
+        }
+    }
+
+    if (slot >= 0) {
+        /* Existing entry — check rate limit */
+        uint64_t elapsed = now - icmp_rate_table[slot].last_send_tick;
+        if (elapsed < min_interval_ticks) {
+            /* Still within rate window — drop */
+            spinlock_release(&icmp_rate_lock);
+            return 0;
+        }
+        /* Update timestamp */
+        icmp_rate_table[slot].last_send_tick = now;
+        spinlock_release(&icmp_rate_lock);
+        return 1;
+    }
+
+    /* No existing entry — create one if slot available */
+    if (empty_slot >= 0) {
+        icmp_rate_table[empty_slot].dst_ip = dst_ip;
+        icmp_rate_table[empty_slot].last_send_tick = now;
+        icmp_rate_table[empty_slot].in_use = 1;
+        spinlock_release(&icmp_rate_lock);
+        return 1;
+    }
+
+    /* No slots available — allow the send (DoS protection would have
+     * to wait, but better to send than to silently drop everything) */
+    spinlock_release(&icmp_rate_lock);
+    return 1;
 }
 
 void icmp_send_unreachable(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len) {
     (void)src;
-    /* Apply rate limit before generating ICMP error */
-    if (!icmp_ratelimit()) return;
+    /* Apply per-destination rate limit before generating ICMP error */
+    if (!icmp_ratelimit_per_dst(dst, ICMP_UNREACH)) return;
 
     uint8_t buf[576];  /* ICMP error must fit in 576 bytes guaranteed */
     struct icmp_header *icmp = (struct icmp_header *)buf;
     memset(icmp, 0, sizeof(*icmp));
-    icmp->type = 3;
+    icmp->type = ICMP_UNREACH;
     icmp->code = 3;  /* Port Unreachable */
+
+    /* ICMP error payload: IP header of original packet + 8 bytes of original payload */
+    uint16_t payload_len = sizeof(struct ip_header) + 8;
+    if (payload_len > orig_len) payload_len = orig_len;
+    if (sizeof(*icmp) + payload_len > sizeof(buf))
+        payload_len = sizeof(buf) - sizeof(*icmp);
+
+    memcpy(buf + sizeof(struct icmp_header), orig_pkt, payload_len);
+    uint16_t icmp_len = sizeof(struct icmp_header) + payload_len;
+    icmp->checksum = net_checksum(buf, icmp_len);
+
+    send_ip(dst, IP_PROTO_ICMP, buf, icmp_len);
+}
+
+/* Send ICMP Time Exceeded (type 11, code 0 = TTL expired) */
+void icmp_send_timeexceeded(uint32_t dst, uint32_t src, uint8_t *orig_pkt, uint16_t orig_len)
+{
+    (void)src;
+    /* Apply per-destination rate limit before generating ICMP error */
+    if (!icmp_ratelimit_per_dst(dst, ICMP_TIMXCEED)) return;
+
+    uint8_t buf[576];
+    struct icmp_header *icmp = (struct icmp_header *)buf;
+    memset(icmp, 0, sizeof(*icmp));
+    icmp->type = ICMP_TIMXCEED;
+    icmp->code = 0;  /* TTL expired in transit */
 
     /* ICMP error payload: IP header of original packet + 8 bytes of original payload */
     uint16_t payload_len = sizeof(struct ip_header) + 8;

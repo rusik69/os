@@ -17,6 +17,26 @@ struct builtin_fw {
 };
 
 /*
+ * request_firmware_nowait — Asynchronously load firmware.
+ *
+ * This is the non-blocking variant of request_firmware().  The callback
+ * function @cont is called when the firmware is ready (or if the load
+ * fails).  The callback runs in workqueue context.
+ *
+ * @fw_ptr:   Output: firmware descriptor (valid in callback)
+ * @name:     Firmware name
+ * @cont:     Continuation callback (called with the result)
+ * @context:  Opaque pointer passed to the continuation callback
+ *
+ * Returns 0 if the load was initiated (callback will fire), negative
+ * errno on failure.  The callback is guaranteed to fire exactly once.
+ */
+typedef void (*firmware_cont_t)(const struct firmware *fw, void *context);
+
+int request_firmware_nowait(const struct firmware **fw_ptr, const char *name,
+                             firmware_cont_t cont, void *context);
+
+/*
  * request_firmware — Load firmware by name (Linux-compatible API).
  *
  * Looks up the cache first, then the built-in table, then

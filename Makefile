@@ -106,11 +106,14 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/module_elf.c \
          src/kernel/module_signature.c \
          src/kernel/module_autoload.c \
+         src/kernel/module_compress.c \
          src/kernel/module_deps.c \
          src/kernel/module_alias.c \
+         src/kernel/module_async.c \
          src/kernel/sysctl.c \
          src/kernel/ksym.c \
          src/kernel/caps.c \
+         src/kernel/signal_validate.c \
          src/kernel/chroot.c \
          src/kernel/pid_namespace.c \
          src/kernel/cgroup_namespace.c \
@@ -466,12 +469,16 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_sched.c \
          src/test/kunit_vmm.c \
          src/test/kunit_security.c \
+         src/test/kunit_security_new.c \
          src/test/kunit_power.c \
          src/test/kunit_ext.c \
+         src/test/kunit_cluster.c \
+         src/test/kunit_container_ext.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
          src/container/ext.c \
+         src/container/container_exec_enhanced.c \
          src/container/storage.c \
          src/container/network.c \
          src/container/image.c \
@@ -511,6 +518,9 @@ C_SRCS = src/kernel/kernel.c \
          src/cluster/runtime_security.c \
          src/cluster/upgrade.c \
          src/cluster/node_problem.c \
+         src/cluster/cluster_autoscaler.c \
+         src/cluster/cluster_descheduler.c \
+         src/cluster/cluster_ingress.c \
          src/drivers/xhci.c \
          src/drivers/xhci_streams.c \
          src/drivers/gpio_irq.c \
@@ -545,6 +555,10 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/drm/bochs_drm.c \
          src/kernel/live_patch.c \
          src/kernel/cgroup.c \
+         src/kernel/kaslr.c \
+         src/kernel/mprotect.c \
+         src/kernel/wx_enforce.c \
+         src/kernel/dma_api.c \
          src/drivers/dm-raid.c \
          src/drivers/mpath.c \
          src/drivers/edac.c \
@@ -599,6 +613,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/sriov.c \
          src/drivers/bcache.c \
          src/drivers/dm_snapshot.c \
+         src/drivers/dma-api.c \
          src/drivers/usb_uas.c \
          src/drivers/usb_serial.c \
          src/drivers/usb_cdc_ether.c \
@@ -856,7 +871,7 @@ all: $(BUILDDIR)/disk.img
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-full check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
-        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck
+        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -1516,6 +1531,51 @@ cppcheck:
 .PHONY: analyze
 analyze:
 	$(CC) --analyze -Xanalyzer -analyzer-output=text $(CFLAGS) $(C_SRCS) 2>&1 | tee build/analyzer-report.txt
+
+# ── Sparse semantic parser ───────────────────────────────────────────────
+#
+# Sparse is a semantic parser for C that checks for common kernel coding
+# errors: incorrect address-space annotations, endianness mismatches,
+# missing __user/__iomem/__force casts, NULL pointer dereferences, and
+# other static analysis warnings.
+#
+# Usage:
+#   make sparse            # Run sparse on all C source files
+#   make sparse C=1        # Check currently-unsolved problems
+#   make sparse C=2        # Even more checks
+#
+# Install sparse from your distribution package manager:
+#   apt install sparse          # Debian/Ubuntu
+#   dnf install sparse          # Fedora
+#   pacman -S sparse            # Arch
+#
+
+SPARSE_FLAGS ?= -Wsparse-all -Wno-bitwise-pointer -Wno-ptr-subtraction-blows \
+                -DCONFIG_64BIT -D__x86_64__ -D__linux__ -D__CHECKER__ \
+                -nostdinc -Isrc/include
+
+.PHONY: sparse
+sparse:
+	@if ! command -v sparse >/dev/null 2>&1; then \
+	    echo "⚠️  sparse is not installed."; \
+	    echo "   Install it with: sudo apt install sparse"; \
+	    echo "   (or equivalent for your package manager)"; \
+	    exit 1; \
+	fi
+	@echo "=== Running sparse semantic parser on all C sources ==="
+	@errors=0; \
+	for src in $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS); do \
+	    result=0; \
+	    sparse $(SPARSE_FLAGS) $(CFLAGS_EXTRA) $$src 2>&1 || result=1; \
+	    if [ $$result -ne 0 ]; then \
+	        errors=$$((errors + 1)); \
+	    fi; \
+	done; \
+	if [ $$errors -eq 0 ]; then \
+	    echo "✅ sparse: no warnings."; \
+	else \
+	    echo "⚠️  sparse: $$errors file(s) produced warnings (see above)."; \
+	fi
 
 # ── ctags (source tags) ─────────────────────────────────────────────────
 

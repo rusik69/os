@@ -432,10 +432,11 @@ int usb_hid_init(void) {
     /* Parse configuration descriptor for HID interfaces */
     int cfg_len = cfg[0];
     int pos = 0;
-    while (pos < cfg_len) {
+    while (pos + 1 < cfg_len) {
         uint8_t dlen = cfg[pos];
         uint8_t dtype = cfg[pos + 1];
-        if (dlen == 0) break;
+        if (dlen < 2) break;                /* minimum descriptor size */
+        if (pos + dlen > cfg_len) break;    /* descriptor extends past buffer */
 
         if (dtype == 4 && pos + 8 <= cfg_len) {
             /* Interface descriptor */

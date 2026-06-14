@@ -25,6 +25,11 @@
 #include "process.h"
 #include "pstore.h"
 #include "userfaultfd.h"
+#include "mprotect.h"
+#include "wx_enforce.h"
+#include "kaslr.h"
+#include "dma.h"
+#include "dma_api_drv.h"
 
 /* ── Forward declarations for keyring API (no dedicated header) ───── */
 extern void keyring_init(void);
@@ -1201,6 +1206,16 @@ static struct kunit_suite pstore_test_suite;
 static struct kunit_case uffd_test_cases[];
 static struct kunit_suite uffd_test_suite;
 
+/* Forward declarations for KASLR, W^X, mprotect test suites */
+static struct kunit_case kaslr_test_cases[];
+static struct kunit_suite kaslr_test_suite;
+static struct kunit_case wx_enforce_test_cases[];
+static struct kunit_suite wx_enforce_test_suite;
+static struct kunit_case mprotect_test_cases[];
+static struct kunit_suite mprotect_test_suite;
+static struct kunit_case dma_test_cases[];
+static struct kunit_suite dma_test_suite;
+
 /* ====================================================================
  *  Registration
  * ==================================================================== */
@@ -1218,8 +1233,153 @@ static struct kunit_suite uffd_test_suite;
     suite_var.setup    = NULL;                                          \
     suite_var.teardown = NULL;                                          \
     kunit_register_suite(&suite_var);                                   \
-    kprintf("[KUnit] %s tests registered (%d cases)\\n", suite_name, __ci); \
+    kprintf("[KUnit] %s tests registered (%d cases)\n", suite_name, __ci); \
 } while(0)
+
+/* ====================================================================
+ *  KASLR — Kernel ASLR tests
+ * ==================================================================== */
+
+static void kaslr_get_offset_test(struct kunit *test)
+{
+    /* KASLR offset should be 2MB-aligned */
+    uint64_t off = kaslr_get_offset();
+    KUNIT_EXPECT_EQ(test, (int64_t)(off & (KASLR_ALIGN - 1)), (int64_t)0);
+
+    /* Offset must not exceed KASLR_MAX_OFFSET */
+    KUNIT_EXPECT_TRUE(test, off <= KASLR_MAX_OFFSET);
+
+    /* Multiple calls should return the same value (cached) */
+    uint64_t off2 = kaslr_get_offset();
+    KUNIT_EXPECT_EQ(test, (int64_t)off, (int64_t)off2);
+}
+
+/* ====================================================================
+ *  W^X — W^X enforcement tests
+ * ==================================================================== */
+
+static void wx_enforce_check_test(struct kunit *test)
+{
+    /* Save current wx_enabled state */
+    int saved = wx_enabled;
+
+    /* Test with W^X active (default: 0 = deny W+X) */
+    wx_enabled = 0;
+
+    /* RW page: NOEXEC set, WRITE set → OK */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC | VMM_FLAG_USER), (int64_t)0);
+
+    /* RX page: NOEXEC not set, WRITE not set → OK */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_USER), (int64_t)0);
+
+    /* W+X page: WRITE set, NOEXEC not set → DENIED */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER), (int64_t)-EPERM);
+
+    /* PROT-based check: writable + executable → DENIED */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check_prot(PROT_READ | PROT_WRITE | PROT_EXEC), (int64_t)-EPERM);
+
+    /* PROT-based check: read-only + exec → OK */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check_prot(PROT_READ | PROT_EXEC), (int64_t)0);
+
+    /* PROT-based check: read + write → OK */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check_prot(PROT_READ | PROT_WRITE), (int64_t)0);
+
+    /* Test with W^X relaxed (wx_enabled = 1) */
+    wx_enabled = 1;
+
+    /* W+X should be allowed now */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check_prot(PROT_WRITE | PROT_EXEC), (int64_t)0);
+
+    /* Restore */
+    wx_enabled = saved;
+}
+
+static void wx_enforce_prot_none_test(struct kunit *test)
+{
+    /* PROT_NONE should always be allowed */
+    KUNIT_EXPECT_EQ(test, (int64_t)wx_enforce_check_prot(PROT_NONE), (int64_t)0);
+}
+
+/* ====================================================================
+ *  mprotect — mprotect syscall tests
+ * ==================================================================== */
+
+static void mprotect_basic_test(struct kunit *test)
+{
+    /* Test basic mprotect */
+    int64_t ret;
+
+    /* Invalid flags should return -EINVAL */
+    ret = sys_mprotect(0x100000, PAGE_SIZE, 0xFF);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)-EINVAL);
+
+    /* Non-page-aligned address should return -EINVAL */
+    ret = sys_mprotect(0x100001, PAGE_SIZE, PROT_READ);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)-EINVAL);
+
+    /* Zero length is fine - should succeed (no-op) */
+    ret = sys_mprotect(0x100000, 0, PROT_READ);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)0);
+}
+
+static void mprotect_wx_denied_test(struct kunit *test)
+{
+    int saved = wx_enabled;
+    wx_enabled = 0;  /* Enforce W^X */
+
+    /* Requesting W+X should be denied */
+    int64_t ret = sys_mprotect(0x100000, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)-EPERM);
+
+    wx_enabled = saved;
+}
+
+static void mprotect_wx_allowed_test(struct kunit *test)
+{
+    int saved = wx_enabled;
+    wx_enabled = 1;  /* Relax W^X */
+
+    /* Requesting W+X should be allowed when W^X is relaxed */
+    int64_t ret = sys_mprotect(0x100000, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC);
+    /* May return -EFAULT (not mapped) or 0 if mapped - depends on test env */
+    KUNIT_EXPECT_TRUE(test, ret == 0 || ret == -EFAULT);
+
+    wx_enabled = saved;
+}
+
+static void mprotect_invalid_range_test(struct kunit *test)
+{
+    /* Address beyond user space should return -ENOMEM */
+    int64_t ret = sys_mprotect(USER_VADDR_MAX, PAGE_SIZE, PROT_READ);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)-ENOMEM);
+
+    /* Overflow should return -EINVAL */
+    ret = sys_mprotect(0xFFFFFFFFFFFFFFF0ULL, 0x1000, PROT_READ);
+    KUNIT_EXPECT_EQ(test, ret, (int64_t)-EINVAL);
+}
+
+/* ── Test case arrays ────────────────────────────────────────────── */
+
+static struct kunit_case kaslr_test_cases[] = {
+    KUNIT_CASE(kaslr_get_offset_test),
+    {}
+};
+
+static struct kunit_case wx_enforce_test_cases[] = {
+    KUNIT_CASE(wx_enforce_check_test),
+    KUNIT_CASE(wx_enforce_prot_none_test),
+    {}
+};
+
+static struct kunit_case mprotect_test_cases[] = {
+    KUNIT_CASE(mprotect_basic_test),
+    KUNIT_CASE(mprotect_wx_denied_test),
+    KUNIT_CASE(mprotect_wx_allowed_test),
+    KUNIT_CASE(mprotect_invalid_range_test),
+    {}
+};
+
+/* ── Registration ────────────────────────────────────────────────── */
 
 void kunit_security_register(void)
 {
@@ -1233,7 +1393,115 @@ void kunit_security_register(void)
     REGISTER_SUITE(mseal_test_suite,          mseal_test_cases,          "mseal");
     REGISTER_SUITE(pstore_test_suite,        pstore_test_cases,         "pstore");
     REGISTER_SUITE(uffd_test_suite,          uffd_test_cases,           "uffd");
+    REGISTER_SUITE(kaslr_test_suite,         kaslr_test_cases,          "kaslr");
+    REGISTER_SUITE(wx_enforce_test_suite,    wx_enforce_test_cases,     "wx_enforce");
+    REGISTER_SUITE(mprotect_test_suite,      mprotect_test_cases,       "mprotect");
+    REGISTER_SUITE(dma_test_suite,           dma_test_cases,            "dma_api");
 }
+
+/* ====================================================================
+ *  DMA API — dma_alloc_coherent / dma_map_single tests
+ * ==================================================================== */
+
+static void dma_alloc_free_test(struct kunit *test)
+{
+    uint64_t dma_handle;
+    void *buf = dma_alloc_coherent(NULL, 4096, &dma_handle, 0);
+
+    KUNIT_EXPECT_NOT_NULL(test, buf);
+    KUNIT_EXPECT_NE(test, (int64_t)dma_handle, (int64_t)0);
+
+    if (buf) {
+        /* Verify the buffer is zeroed and writable */
+        KUNIT_EXPECT_EQ(test, ((volatile uint8_t *)buf)[0], (uint8_t)0);
+        ((volatile uint8_t *)buf)[0] = 0xAB;
+        KUNIT_EXPECT_EQ(test, ((volatile uint8_t *)buf)[0], (uint8_t)0xAB);
+        ((volatile uint8_t *)buf)[4095] = 0xCD;
+        KUNIT_EXPECT_EQ(test, ((volatile uint8_t *)buf)[4095], (uint8_t)0xCD);
+
+        dma_free_coherent(NULL, 4096, buf, dma_handle);
+    }
+}
+
+static void dma_alloc_zero_size(struct kunit *test)
+{
+    uint64_t dma_handle;
+    void *buf = dma_alloc_coherent(NULL, 0, &dma_handle, 0);
+
+    KUNIT_EXPECT_NULL(test, buf);
+    KUNIT_EXPECT_EQ(test, (int64_t)dma_handle, (int64_t)0);
+}
+
+static void dma_map_unmap_single_test(struct kunit *test)
+{
+    /* Allocate a small buffer from the heap */
+    void *buf = kmalloc(256);
+    KUNIT_EXPECT_NOT_NULL(test, buf);
+    if (!buf) return;
+
+    /* Fill with test pattern */
+    memset(buf, 0x42, 256);
+
+    uint64_t dma_handle = dma_map_single(NULL, buf, 256, DMA_BIDIRECTIONAL);
+    KUNIT_EXPECT_NE(test, (int64_t)dma_handle, (int64_t)~0ULL);
+
+    if (dma_handle != ~0ULL)
+        dma_unmap_single(NULL, dma_handle, 256, DMA_BIDIRECTIONAL);
+
+    kfree(buf);
+}
+
+static void dma_map_null_buffer(struct kunit *test)
+{
+    uint64_t dma_handle = dma_map_single(NULL, NULL, 256, DMA_TO_DEVICE);
+    KUNIT_EXPECT_EQ(test, (int64_t)dma_handle, (int64_t)~0ULL);
+}
+
+static void dma_sync_cpu_test(struct kunit *test)
+{
+    /* Sync for CPU should not crash with any direction */
+    dma_sync_single_for_cpu(0x1000, 256, DMA_FROM_DEVICE);
+    dma_sync_single_for_cpu(0x2000, 512, DMA_BIDIRECTIONAL);
+    KUNIT_EXPECT_TRUE(test, 1);
+}
+
+static void dma_sync_device_test(struct kunit *test)
+{
+    /* Sync for device should not crash */
+    dma_sync_single_for_device(0x1000, 256, DMA_TO_DEVICE);
+    dma_sync_single_for_device(0x2000, 512, DMA_BIDIRECTIONAL);
+    KUNIT_EXPECT_TRUE(test, 1);
+}
+
+static void dma_alloc_aligned_test(struct kunit *test)
+{
+    uint64_t dma_handle;
+    void *buf = dma_alloc_coherent_aligned(NULL, 64, &dma_handle, 0, 4096);
+
+    KUNIT_EXPECT_NOT_NULL(test, buf);
+    if (buf) {
+        /* Check alignment */
+        KUNIT_EXPECT_EQ(test, (uintptr_t)buf & 0xFFF, (uintptr_t)0);
+
+        /* Buffer should be writable */
+        memset(buf, 0xAA, 64);
+        KUNIT_EXPECT_EQ(test, ((volatile uint8_t *)buf)[0], (uint8_t)0xAA);
+        KUNIT_EXPECT_EQ(test, ((volatile uint8_t *)buf)[63], (uint8_t)0xAA);
+
+        dma_free_coherent(NULL, 64 + 4096, buf, dma_handle);
+    }
+}
+
+static struct kunit_case dma_test_cases[] = {
+    KUNIT_CASE(dma_alloc_free_test),
+    KUNIT_CASE(dma_alloc_zero_size),
+    KUNIT_CASE(dma_map_unmap_single_test),
+    KUNIT_CASE(dma_map_null_buffer),
+    KUNIT_CASE(dma_sync_cpu_test),
+    KUNIT_CASE(dma_sync_device_test),
+    KUNIT_CASE(dma_alloc_aligned_test),
+    {}
+};
 
 /* ====================================================================
  *  userfaultfd — Userfaultfd subsystem tests

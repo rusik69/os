@@ -115,6 +115,7 @@ extern int usb_hub_init(void);
 #include "timers.h"
 #include "workqueue.h"
 #include "rng.h"
+#include "kaslr.h"
 #include "fsnotify.h"
 #include "kprobes.h"
 #include "module.h"
@@ -131,6 +132,7 @@ extern int usb_hub_init(void);
 #include "mce.h"
 #include "config_gz.h"
 #include "nx_enforce.h"
+#include "wx_enforce.h"
 #include "stack_guard.h"
 #include "rseq.h"
 #include "kasan_light.h"
@@ -379,6 +381,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     x2apic_init();
     nx_enforce_init();
 
+    /* W^X enforcement — reject writable+executable mappings */
+    wx_enforce_init();
+
     /* KPTI — Kernel Page-Table Isolation (Meltdown mitigation) */
     extern void kpti_init(void);
     kpti_init();
@@ -428,6 +433,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* ASLR (Address Space Layout Randomization) */
     aslr_init();
+
+    /* KASLR — Kernel base address randomization */
+    kaslr_init();
 
     /* Seccomp syscall sandboxing */
     seccomp_init();

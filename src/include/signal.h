@@ -106,6 +106,7 @@ void signal_check(void);
 
 /* Register a signal handler for the current process */
 void signal_register(int signum, signal_handler_t handler);
+void signal_register_flags(int signum, signal_handler_t handler, uint32_t flags);
 
 /* Mask/unmask signals for the current process (1-bit per signal number) */
 void signal_mask(uint64_t sigmask);

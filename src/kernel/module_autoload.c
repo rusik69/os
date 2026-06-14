@@ -14,6 +14,12 @@
  *
  * request_module() can sleep (it may block on I/O and memory allocation)
  * and must not be called from atomic context.
+ *
+ * MODULE_DEVICE_TABLE support:
+ *   - PCI modalias: "pci:v%08Xd%08Xsv%08Xsd%08Xbc%02Xsc%02Xi%02X"
+ *   - USB modalias: "usb:v%04Xp%04Xd%04Xdc%02Xdsc%02X...")
+ *   - Drivers declare MODULE_DEVICE_TABLE(pci, table) which embeds
+ *     alias patterns in .modinfo
  */
 
 #define KERNEL_INTERNAL
@@ -39,6 +45,131 @@
 #define MODULE_PATH_PREFIX  "/modules/"
 #define MODULE_PATH_SUFFIX  ".ko"
 #define MODULE_PATH_MAX     128
+
+/*
+ * ── PCI modalias generation ──────────────────────────────────────────
+ *
+ * Generate a PCI modalias string from vendor/device/subvendor/subdevice
+ * and class info.  Format (Linux-compatible):
+ *
+ *   pci:v0000VVVVd0000DDDDsv0000SSSSsd0000SSSSbc00CCsc00SSii00PP
+ *
+ * Wildcards (*) are used for fields that are zero (unspecified).
+ */
+
+#define MODALIAS_PCI_MAX    128
+#define MODALIAS_USB_MAX    128
+
+/*
+ * Build a PCI modalias string.
+ * @vid:      PCI vendor ID
+ * @did:      PCI device ID
+ * @svid:     PCI subsystem vendor ID (0 = any)
+ * @sdid:     PCI subsystem device ID (0 = any)
+ * @class:    PCI class code
+ * @subclass: PCI subclass
+ * @progif:   PCI programming interface
+ * @buf:      Output buffer (must be >= MODALIAS_PCI_MAX)
+ * Returns the length of the string written.
+ */
+int pci_modalias(uint16_t vid, uint16_t did,
+                 uint16_t svid, uint16_t sdid,
+                 uint8_t class, uint8_t subclass, uint8_t progif,
+                 char *buf, int max_len)
+{
+    if (!buf || max_len < 32)
+        return -EINVAL;
+
+    return snprintf(buf, (size_t)max_len,
+                    "pci:v%08Xd%08Xsv%08Xsd%08Xbc%02Xsc%02Xi%02X",
+                    (unsigned int)vid,
+                    (unsigned int)did,
+                    (unsigned int)svid,
+                    (unsigned int)sdid,
+                    (unsigned int)class,
+                    (unsigned int)subclass,
+                    (unsigned int)progif);
+}
+
+/*
+ * Build a USB modalias string.
+ * @vid:      USB vendor ID
+ * @pid:      USB product ID
+ * @bcdDevice: Device release number
+ * @bDeviceClass: Device class
+ * @bDeviceSubClass: Device subclass
+ * @bDeviceProtocol: Device protocol
+ * @buf:      Output buffer (must be >= MODALIAS_USB_MAX)
+ */
+int usb_modalias(uint16_t vid, uint16_t pid, uint16_t bcdDevice,
+                 uint8_t bDeviceClass, uint8_t bDeviceSubClass,
+                 uint8_t bDeviceProtocol,
+                 char *buf, int max_len)
+{
+    if (!buf || max_len < 32)
+        return -EINVAL;
+
+    return snprintf(buf, (size_t)max_len,
+                    "usb:v%04Xp%04Xd%04Xdc%02Xdsc%02Xdp%02X",
+                    (unsigned int)vid,
+                    (unsigned int)pid,
+                    (unsigned int)bcdDevice,
+                    (unsigned int)bDeviceClass,
+                    (unsigned int)bDeviceSubClass,
+                    (unsigned int)bDeviceProtocol);
+}
+
+/*
+ * ── Hotplug autoloading entry points ─────────────────────────────────
+ *
+ * These are called by the PCI/USB subsystem when a new device is
+ * discovered and no driver is currently bound.  They generate the
+ * appropriate modalias string and call request_module().
+ */
+
+/*
+ * request_module_pci — Autoload a driver for a newly discovered PCI device.
+ *
+ * Called by the PCI enumeration code when a device has no driver yet.
+ * Generates a modalias and calls request_module() to find and load a
+ * matching module.
+ */
+int request_module_pci(uint16_t vid, uint16_t did,
+                        uint16_t svid, uint16_t sdid,
+                        uint8_t class, uint8_t subclass, uint8_t progif)
+{
+    char modalias[MODALIAS_PCI_MAX];
+    int ret = pci_modalias(vid, did, svid, sdid,
+                            class, subclass, progif,
+                            modalias, sizeof(modalias));
+    if (ret < 0)
+        return ret;
+
+    kprintf("[MOD_AUTOLOAD] PCI hotplug: attempting autoload for %s\\n",
+            modalias);
+    return request_module("%s", modalias);
+}
+
+/*
+ * request_module_usb — Autoload a driver for a newly discovered USB device.
+ *
+ * Called by the USB enumeration code when a device has no driver yet.
+ */
+int request_module_usb(uint16_t vid, uint16_t pid, uint16_t bcdDevice,
+                        uint8_t bDeviceClass, uint8_t bDeviceSubClass,
+                        uint8_t bDeviceProtocol)
+{
+    char modalias[MODALIAS_USB_MAX];
+    int ret = usb_modalias(vid, pid, bcdDevice,
+                            bDeviceClass, bDeviceSubClass, bDeviceProtocol,
+                            modalias, sizeof(modalias));
+    if (ret < 0)
+        return ret;
+
+    kprintf("[MOD_AUTOLOAD] USB hotplug: attempting autoload for %s\\n",
+            modalias);
+    return request_module("%s", modalias);
+}
 
 /*
  * __request_module_internal — load a kernel module by name (no alias fallback).

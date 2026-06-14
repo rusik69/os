@@ -3,6 +3,8 @@
 #include "process.h"
 #include "string.h"
 #include "printf.h"
+#include "audit.h"
+#include "errno.h"
 
 /*
  * System-wide capability bounding set — limits what capabilities
@@ -58,4 +60,60 @@ void sys_cap_bset_apply(struct process *proc) {
         proc->syscall_caps[i] &= sys_cap_bset[i];
         proc->cap_bset[i]     &= sys_cap_bset[i];
     }
+}
+
+/*
+ * ══════════════════════════════════════════════════════════════════════════
+ * Capability-aware audit enforcement
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * These functions check the current process's effective capability set
+ * and log audit events on denial. The caps_capable() from kaps.c is the
+ * low-level bit check; these wrappers add audit trail and errno returns.
+ */
+
+/* Check if the current process has a specific capability.
+ * Returns 0 if granted, -EPERM if denied (logs audit event).
+ * @cap:   The capability number (CAP_* constant)
+ * @audit_msg:  Descriptive string for the audit log (e.g. "ioperm")
+ */
+int cap_capable_audit(uint32_t cap, const char *audit_msg)
+{
+    struct process *p = process_get_current();
+
+    /* Kernel context always has capabilities */
+    if (!p || !p->is_user)
+        return 0;
+
+    /* Check per-process syscall caps (effective set) */
+    int word = cap / 64;
+    int bit  = cap % 64;
+    if (word >= PROCESS_SYSCALL_CAP_WORDS)
+        return -EPERM;
+
+    if (p->syscall_caps[word] & (1ULL << bit))
+        return 0;  /* granted */
+
+    /* Denied — log audit event */
+    audit_log_denial(audit_msg ? audit_msg : "unknown",
+                     "capability", "want_cap");
+    return -EPERM;
+}
+
+/* Convenience wrapper for CAP_SYS_RAWIO checks (ioperm, iopl, port I/O, /dev/mem) */
+int cap_sys_rawio_check(void)
+{
+    return cap_capable_audit(CAP_SYS_RAWIO, "cap_sys_rawio");
+}
+
+/* Convenience wrapper for CAP_SYS_BOOT checks (kexec_load) */
+int cap_sys_boot_check(void)
+{
+    return cap_capable_audit(CAP_SYS_BOOT, "cap_sys_boot");
+}
+
+/* Convenience wrapper for CAP_SYS_MODULE checks (init_module, finit_module) */
+int cap_sys_module_check(void)
+{
+    return cap_capable_audit(CAP_SYS_MODULE, "cap_sys_module");
 }

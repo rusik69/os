@@ -55,6 +55,27 @@ extern struct ksym_entry __ksymtab_end[];
 /* GPL-only export — only available to modules with a GPL-compatible license */
 #define EXPORT_SYMBOL_GPL(name) __EXPORT_SYMBOL(name, 1)
 
+/*
+ * __KALLSYMS — Add a symbol to the comprehensive symbol table.
+ *
+ * This is used to register ALL global kernel symbols (not just exported
+ * ones) so that the module loader can resolve them as a fallback.
+ *
+ * Usage: __KALLSYMS(my_function);
+ *
+ * This creates an entry in the .kallsyms section equivalent to a
+ * non-GPL export, allowing any module to reference the symbol even
+ * if not explicitly exported via EXPORT_SYMBOL().
+ */
+#define __KALLSYMS(name)                                                \
+    static const struct ksym_entry                                      \
+    __attribute__((section(".kallsyms"), used, aligned(16)))             \
+    __kallsym_##name = {                                                \
+        .addr     = (uint64_t)(uintptr_t)(name),                        \
+        .sym_name = #name,                                              \
+        .gpl_only = 0,                                                  \
+    }
+
 /* ── Symbol lookup API ─────────────────────────────────────────────── */
 
 /* Initialise the kernel symbol export table (sort entries by name). */
@@ -65,6 +86,15 @@ void ksym_init(void);
  * If gpl_ok is 0, GPL-only symbols are skipped.
  */
 uint64_t find_ksym(const char *name, int gpl_ok);
+
+/*
+ * find_ksym_all — Search all kernel symbols (exported + comprehensive).
+ * This is the fallback resolution source for modules.
+ * Returns the address (value) if found, or 0 if not found.
+ * Unlike find_ksym(), this searches ALL global kernel symbols,
+ * not just those explicitly exported via EXPORT_SYMBOL().
+ */
+uint64_t find_ksym_all(const char *name);
 
 /* Return the total number of exported symbols. */
 int ksym_count(void);
