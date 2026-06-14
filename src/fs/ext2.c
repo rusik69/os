@@ -853,6 +853,23 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
         kfree(ep);
         return -1;
     }
+    /* Reject any other incompatible features we don't understand */
+    {
+        /* Define the mask of incompatible features we support.
+         * FILETYPE: file type in directory entries — basic ext2 feature.
+         * RECOVER: needs recovery (journal replay) — OK for read-only mount.
+         * FLEX_BG: flex block groups — handled transparently. */
+        uint32_t supp_incompat = EXT2_FEATURE_INCOMPAT_FILETYPE
+                               | EXT2_FEATURE_INCOMPAT_RECOVER
+                               | EXT2_FEATURE_INCOMPAT_FLEX_BG;
+        uint32_t unsup = ep->sb.s_feature_incompat & ~supp_incompat;
+        if (unsup) {
+            kprintf("[ext2] Unsupported incompatible features: 0x%x, refusing mount\n", unsup);
+            kfree(ep->bgd_cache);
+            kfree(ep);
+            return -1;
+        }
+    }
 
     kprintf("[ext2] Mounted: %u blocks, %u inodes, %u B/block, %u groups",
             ep->sb.s_blocks_count, ep->sb.s_inodes_count,

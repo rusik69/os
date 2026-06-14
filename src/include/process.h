@@ -5,6 +5,7 @@
 #include "signal.h"
 #include "pelt.h"
 #include "kpti.h"
+#include "spinlock.h"
 
 /* Forward declaration for PID namespace pointers in struct process */
 struct pid_namespace;
@@ -298,6 +299,8 @@ struct process {
     uint64_t *kcov_area;     /* coverage buffer (allocated via kmalloc) */
     /* ── RLIMIT_MEMLOCK tracking ─────────────────────────────── */
     uint64_t locked_pages;   /* total pages locked via mlock/mlockall */
+    /* ── Signal lock for SMP safety (T3) ──────────────────────── */
+    spinlock_t sig_lock;     /* guards pending_signals/state/exit_code */
 };
 
 void process_init(void);

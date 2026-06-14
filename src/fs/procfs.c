@@ -57,11 +57,21 @@ static void proc_kb_line(const char *label, uint64_t bytes, char *buf, int *p, i
 
 static int procfs_gen_uptime(char *buf, int max) {
     int p = 0;
-    uint64_t secs = timer_get_ticks() / TIMER_FREQ;
+    uint64_t ticks = timer_get_ticks();
+    uint64_t secs = ticks / TIMER_FREQ;
+    uint64_t frac = ((ticks % TIMER_FREQ) * 100) / TIMER_FREQ;
     proc_u64_to_str(secs, buf, &p, max);
+    proc_str(".", buf, &p, max);
+    if (frac < 10) proc_str("0", buf, &p, max);
+    proc_u64_to_str(frac, buf, &p, max);
     proc_str(" ", buf, &p, max);
-    uint64_t idle = scheduler_get_idle_ticks() / TIMER_FREQ;
-    proc_u64_to_str(idle, buf, &p, max);
+    uint64_t idle_ticks = scheduler_get_idle_ticks();
+    uint64_t idle_secs = idle_ticks / TIMER_FREQ;
+    uint64_t idle_frac = ((idle_ticks % TIMER_FREQ) * 100) / TIMER_FREQ;
+    proc_u64_to_str(idle_secs, buf, &p, max);
+    proc_str(".", buf, &p, max);
+    if (idle_frac < 10) proc_str("0", buf, &p, max);
+    proc_u64_to_str(idle_frac, buf, &p, max);
     proc_str("\n", buf, &p, max);
     buf[p] = '\0';
     return p;
@@ -174,9 +184,11 @@ static int procfs_gen_cpuinfo(char *buf, int max) {
     int p = 0;
     uint32_t eax, ebx, ecx, edx;
     char vendor[13];
+    uint32_t max_leaf;
 
     /* Leaf 0: vendor string */
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    max_leaf = eax;
     *(uint32_t*)&vendor[0] = ebx;
     *(uint32_t*)&vendor[4] = edx;
     *(uint32_t*)&vendor[8] = ecx;
@@ -271,9 +283,88 @@ static int procfs_gen_cpuinfo(char *buf, int max) {
         }
         proc_str("\n", buf, &p, max);
 
-        /* Caches from leaf 2 or 4 could be added here */
-        /* CPU MHz from leaf 0x16 (if available) or TSC calibration */
-        proc_str("cpu MHz\t\t: 0.000\n", buf, &p, max);
+        /* CPU frequency from leaf 0x16 (if available) */
+        {
+            uint32_t mhz_eax, mhz_ebx, mhz_ecx, mhz_edx;
+            __asm__ volatile("cpuid" : "=a"(max_leaf), "=b"(mhz_ebx), "=c"(mhz_ecx), "=d"(mhz_edx) : "a"(0));
+            (void)mhz_ebx; (void)mhz_ecx; (void)mhz_edx;
+            if (max_leaf >= 0x16) {
+                __asm__ volatile("cpuid" : "=a"(mhz_eax), "=b"(mhz_ebx), "=c"(mhz_ecx), "=d"(mhz_edx) : "a"(0x16));
+                (void)mhz_ecx; (void)mhz_edx;
+                if (mhz_eax) {
+                    proc_str("cpu MHz\t\t: ", buf, &p, max);
+                    proc_u64_to_str(mhz_eax, buf, &p, max);
+                    proc_str(".", buf, &p, max);
+                    uint32_t frac_mhz = (mhz_ebx * 100) / (mhz_eax ? mhz_eax : 1);
+                    if (frac_mhz < 10) proc_str("0", buf, &p, max);
+                    proc_u64_to_str(frac_mhz, buf, &p, max);
+                    proc_str("\n", buf, &p, max);
+                } else {
+                    proc_str("cpu MHz\t\t: 0.000\n", buf, &p, max);
+                }
+            } else {
+                proc_str("cpu MHz\t\t: 0.000\n", buf, &p, max);
+            }
+        }
+
+        /* Cache info from leaf 4 (deterministic cache params) */
+        if (max_leaf >= 4) {
+            for (int cache_type = 0; cache_type < 10; cache_type++) {
+                uint32_t ceax, cebx, cecx, cedx;
+                __asm__ volatile("cpuid" : "=a"(ceax), "=b"(cebx), "=c"(cecx), "=d"(cedx) : "a"(4), "c"(cache_type));
+                int type = ceax & 0x1F;
+                if (type == 0) break; /* no more caches */
+                int level = (ceax >> 5) & 0x7;
+                int ways = ((cebx >> 22) & 0x3FF) + 1;
+                int partitions = ((cebx >> 12) & 0x3FF) + 1;
+                int line_size = (cebx & 0xFFF) + 1;
+                int sets = cecx + 1;
+                uint64_t size = (uint64_t)ways * partitions * line_size * sets;
+                const char *type_str = "Unknown";
+                if (type == 1) type_str = "Data";
+                else if (type == 2) type_str = "Instruction";
+                else if (type == 3) type_str = "Unified";
+                proc_str("cache\t\t: L", buf, &p, max);
+                proc_u64_to_str(level, buf, &p, max);
+                proc_str(" ", buf, &p, max);
+                proc_str(type_str, buf, &p, max);
+                proc_str(" ", buf, &p, max);
+                proc_u64_to_str(size / 1024, buf, &p, max);
+                proc_str(" KB\n", buf, &p, max);
+            }
+        }
+
+        /* Physical id / core id (simplified: use APIC ID from leaf 1) */
+        uint32_t apic_ebx;
+        __asm__ volatile("cpuid" : "=a"(eax), "=b"(apic_ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+        (void)eax; (void)ecx; (void)edx;
+        uint32_t apic_id = (apic_ebx >> 24) & 0xFF;
+        proc_str("physical id\t: 0\n", buf, &p, max);
+        proc_str("siblings\t: ", buf, &p, max);
+        proc_u64_to_str((uint64_t)cpu_count, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+        proc_str("core id\t\t: ", buf, &p, max);
+        proc_u64_to_str(apic_id, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+        proc_str("cpu cores\t: ", buf, &p, max);
+        proc_u64_to_str((uint64_t)cpu_count, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+        proc_str("apicid\t\t: ", buf, &p, max);
+        proc_u64_to_str(apic_id, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+
+        /* Initial APIC ID */
+        uint32_t ieax, iebx, iecx, iedx;
+        __asm__ volatile("cpuid" : "=a"(ieax), "=b"(iebx), "=c"(iecx), "=d"(iedx) : "a"(1));
+        (void)ieax; (void)iecx; (void)iedx;
+        uint32_t init_apic_id = (iebx >> 24) & 0xFF;
+        proc_str("initial apicid\t: ", buf, &p, max);
+        proc_u64_to_str(init_apic_id, buf, &p, max);
+        proc_str("\n", buf, &p, max);
+
+        /* TLB info from leaf 2 could be added */
+        proc_str("address sizes\t: 39 bits physical, 48 bits virtual\n", buf, &p, max);
+
         proc_str("\n", buf, &p, max);
     }
 
@@ -765,6 +856,22 @@ static int procfs_gen_stat(char *buf, int max) {
 
     proc_str("btime ", buf, &p, max);
     proc_u64_to_str(0, buf, &p, max); /* boot time (0 = not tracked) */
+    proc_str("\n", buf, &p, max);
+
+    /* Context switches */
+    struct sched_stats sched_st;
+    scheduler_get_stats(&sched_st);
+    proc_str("ctxt ", buf, &p, max);
+    proc_u64_to_str(sched_st.context_switches, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* Processes created (approximate: count total processes) */
+    proc_str("processes ", buf, &p, max);
+    int total_procs = 0;
+    for (int i = 0; i < PROCESS_MAX; i++)
+        if (table[i].state != PROCESS_UNUSED)
+            total_procs++;
+    proc_u64_to_str(total_procs, buf, &p, max);
     proc_str("\n", buf, &p, max);
 
     buf[p] = '\0';

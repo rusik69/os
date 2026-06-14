@@ -7,10 +7,10 @@
 #include "string.h"
 
 static void sh_help(const char *a)       { (void)a; cmd_help(); }
-static void __attribute__((unused)) sh_clear(const char *a)      { (void)a; vga_clear(); }
+static void sh_clear(const char *a)      { (void)a; vga_clear(); }
 static void sh_meminfo(const char *a)    { (void)a; cmd_meminfo(); }
-static void sh_ps(const char *a)         { (void)a; cmd_ps(); }
-static void sh_uptime(const char *a)     { (void)a; cmd_uptime(); }
+static void sh_ps(const char *a)         { cmd_ps(a); }
+static void sh_uptime(const char *a)     { cmd_uptime(a); }
 static void sh_reboot(const char *a)     { (void)a; cmd_reboot(); }
 static void sh_shutdown(const char *a)   { cmd_shutdown(a); }
 static void sh_date(const char *a)       { (void)a; cmd_date(); }
@@ -18,13 +18,13 @@ static void sh_cpuinfo(const char *a)    { (void)a; cmd_cpuinfo(); }
 static void sh_history(const char *a)  { (void)a; cmd_history_show(); }
 static void sh_format(const char *a)     { (void)a; cmd_format_disk(); }
 static void sh_ifconfig(const char *a)   { (void)a; cmd_ifconfig(); }
-static void sh_df(const char *a)         { (void)a; cmd_df(); }
-static void sh_free(const char *a)       { (void)a; cmd_free(); }
+static void sh_df(const char *a)         { cmd_df(a); }
+static void sh_free(const char *a)       { cmd_free(a); }
 static void sh_whoami(const char *a)     { (void)a; cmd_whoami(); }
 static void sh_hostname(const char *a)   { cmd_hostname(a); }
 static void sh_env(const char *a)        { (void)a; cmd_env(); }
 static void sh_arp(const char *a)        { (void)a; cmd_arp(); }
-static void sh_route(const char *a)      { (void)a; cmd_route(); }
+static void sh_route(const char *a)      { cmd_route(a); }
 static void sh_uname(const char *a)      { (void)a; cmd_uname(); }
 static void sh_lspci(const char *a)      { (void)a; cmd_lspci(); }
 static void sh_dmesg(const char *a)      { cmd_dmesg(a); }

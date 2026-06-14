@@ -76,6 +76,10 @@
 #include "uaccess.h"
 #include "mseal.h"
 
+#ifndef UINT32_MAX
+#define UINT32_MAX 4294967295U
+#endif
+
 /* Process table lock — protects concurrent iteration of process_table[]
  * from syscalls (ps, kill, etc.) and timer interrupts (process_timer_tick). */
 static spinlock_t proc_table_lock = SPINLOCK_INIT;
@@ -454,6 +458,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (pfd->offset >= fsize) return 0;
         uint64_t avail = fsize - pfd->offset;
         uint64_t to_read = len < avail ? len : avail;
+        /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
+        if (to_read > UINT32_MAX) to_read = UINT32_MAX;
         uint64_t need_end = pfd->offset + to_read;
         if (need_end > fsize) need_end = fsize;
         uint8_t *tmp = kmalloc(need_end);
@@ -6886,19 +6892,20 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
     if (strncpy_from_user(tmpl, template_addr, sizeof(tmpl)) < 0)
         return (uint64_t)-1;
 
-    /* Replace XXXXXX with random chars */
     int len = (int)strlen(tmpl);
-    if (len < 6) return (uint64_t)-1;
-    if (strcmp(tmpl + len - 6, "XXXXXX") != 0) return (uint64_t)-1;
 
-    /* Replace XXXXXX with random chars from the kernel RNG */
-    for (int i = 0; i < 6; i++) {
-        uint64_t r = prng_rand64();
-        int idx = (int)(r % 36);
-        tmpl[len - 6 + i] = "abcdefghijklmnopqrstuvwxyz0123456789"[idx];
-    }
+    /* Validate template: must end with "XXXXXX" and be long enough */
+    if (len < 6)
+        return (uint64_t)-1;
+    if (strcmp(tmpl + len - 6, "XXXXXX") != 0)
+        return (uint64_t)-1;
 
-    if (vfs_create(tmpl, 2) < 0) return (uint64_t)-1;
+    /* Replace XXXXXX with 6 random hex chars from the kernel RNG */
+    uint64_t random = prng_rand64();
+    snprintf(tmpl + len - 6, 7, "%06x", (unsigned int)(random & 0xFFFFFF));
+
+    if (vfs_create(tmpl, 2) < 0)
+        return (uint64_t)-1;
 
     if (copy_to_user(template_addr, tmpl, (unsigned long)len) < 0)
         return (uint64_t)-1;
@@ -7096,12 +7103,25 @@ static uint64_t sys_sysinfo(uint64_t info_addr) {
     info.uptime = timer_get_ticks() / TIMER_FREQ;
     info.totalram = pmm_get_total_frames() * PAGE_SIZE;
     info.freeram = (pmm_get_total_frames() - pmm_get_used_frames()) * PAGE_SIZE;
-    info.procs = 0; /* approximate */
+    info.procs = 0;
     info.mem_unit = 1;
 
     for (int i = 0; i < PROCESS_MAX; i++) {
         struct process *table = process_get_table();
         if (table[i].state != PROCESS_UNUSED) info.procs++;
+    }
+
+    /* Load averages */
+    {
+        struct process *table = process_get_table();
+        int run = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
+                run++;
+        }
+        info.loads[0] = (uint64_t)run * 1024ULL;
+        info.loads[1] = (uint64_t)run * 1024ULL;
+        info.loads[2] = (uint64_t)run * 1024ULL;
     }
 
     if (copy_to_user(info_addr, &info, sizeof(struct sysinfo)) < 0)

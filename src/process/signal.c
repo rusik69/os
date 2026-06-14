@@ -24,6 +24,10 @@ int signal_send(uint32_t pid, int signum) {
     struct process *p = process_get_by_pid(pid);
     if (!p || p->state == PROCESS_UNUSED) return -1;
 
+    /* Acquire sig_lock to protect pending_signals/state/exit_code */
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+
     /* RLIMIT_SIGPENDING: enforce pending signal queue limit.
      * Exclude SIGKILL (always deliverable) and SIGSTOP (cannot be blocked). */
     if (signum != SIGKILL && signum != SIGSTOP) {
@@ -35,8 +39,10 @@ int signal_send(uint32_t pid, int signum) {
             int count = 0;
             while (pending) { pending &= pending - 1; count++; }
             /* If at or over limit, reject the signal */
-            if ((uint64_t)count >= sig_limit)
+            if ((uint64_t)count >= sig_limit) {
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 return -EAGAIN;
+            }
         }
     }
 
@@ -46,10 +52,16 @@ int signal_send(uint32_t pid, int signum) {
     /* Permission check */
     struct process *caller = process_get_current();
     if (caller && caller->pid != p->pid) {
-        if (!process_can_see(caller, p)) return -1;
+        if (!process_can_see(caller, p)) {
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return -1;
+        }
     }
 
-    if (p->state == PROCESS_ZOMBIE) return 0;
+    if (p->state == PROCESS_ZOMBIE) {
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+        return 0;
+    }
 
     /* SIGKILL — immediate terminate */
     if (signum == SIGKILL) {
@@ -58,6 +70,7 @@ int signal_send(uint32_t pid, int signum) {
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -71,12 +84,14 @@ int signal_send(uint32_t pid, int signum) {
             p->state = PROCESS_READY;
             scheduler_add(p);
         }
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         return 0;
     }
 
     /* If masked, just set pending */
     if (p->sig_mask & (1ULL << signum)) {
         p->pending_signals |= (1ULL << signum);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         return 0;
     }
 
@@ -86,6 +101,7 @@ int signal_send(uint32_t pid, int signum) {
         p->is_suspended = 0;
         p->sleep_until = 0;
         scheduler_remove(p);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -95,6 +111,7 @@ int signal_send(uint32_t pid, int signum) {
         p->sleep_until = 0;
         p->state = PROCESS_BLOCKED;
         scheduler_remove(p);
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
         if (p == process_get_current()) scheduler_yield();
         return 0;
     }
@@ -105,6 +122,7 @@ int signal_send(uint32_t pid, int signum) {
     extern void signalfd_notify(int signum);
     signalfd_notify(signum);
 
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
     return 0;
 }
 
@@ -162,6 +180,9 @@ struct siginfo *signal_get_info(struct process *p, int signum) {
 void signal_check(void) {
     struct process *p = process_get_current();
     if (!p || !p->pending_signals) return;
+
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
 
     __asm__ volatile("cli");
 
@@ -234,6 +255,7 @@ void signal_check(void) {
         }
     }
 
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
     __asm__ volatile("sti");
 }
 

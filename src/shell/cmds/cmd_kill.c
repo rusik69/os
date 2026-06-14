@@ -2,6 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "libc.h"
+#include "signal.h"
 
 void cmd_kill(const char *args) {
     if (!args) { kprintf("Usage: kill <pid> [signal]\n"); return; }
@@ -19,6 +20,13 @@ void cmd_kill(const char *args) {
         return;
     }
     if (pid == 0) { kprintf("Cannot kill pid 0\n"); return; }
+
+    /* Protect init (PID 1) from SIGKILL and SIGSTOP */
+    if (pid == 1 && (sig == SIGKILL || sig == SIGSTOP)) {
+        kprintf("Cannot kill init\n");
+        return;
+    }
+
     if (libc_kill(pid, sig) < 0) {
         kprintf("No such process: %u\n", pid);
         return;

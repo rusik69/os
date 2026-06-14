@@ -147,29 +147,74 @@ static int dump_memory_regions(struct process *proc,
     if (!proc || !state)
         return -EINVAL;
 
-    /* In a full implementation, proc->mm->vma_list would be iterated.
-     * For now, we provide a stub that reports the code/data/stack
-     * regions that the kernel tracks. */
     int num_regions = 0;
 
-    /*
-     * TODO: Replace this stub with actual VMA iteration from the
-     * process's memory descriptor once the mm/VMA subsystem is
-     * available.
-     *
-     * For now, we record a single anonymous mapping covering the
-     * user-space region as a placeholder.  This allows the checkpoint
-     * infrastructure to be tested end-to-end.
-     */
-    if (num_regions < CHECKPOINT_MMAP_MAX) {
-        struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
-        e->start  = 0x0000000000400000ULL;  /* USER_CODE_BASE */
-        e->end    = 0x00007FFFFFFFE000ULL;  /* USER_STACK_TOP */
-        e->offset = 0;
-        e->flags  = 0;   /* MAP_SHARED (placeholder) */
-        e->prot   = 3;   /* PROT_READ | PROT_WRITE */
-        e->path[0] = '\0';  /* anonymous */
-        num_regions++;
+    /* Iterate the process's memory-tracking fields to build VMA entries.
+     * This kernel tracks per-process user memory via heap_start/heap_end,
+     * user_stack_bottom/user_stack_top, code entry point, and guard_page. */
+    if (proc->is_user) {
+        /* ── Code/text region ────────────────────────────────── */
+        if (proc->user_entry > 0 && num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->user_entry & ~0xFFFULL;  /* page-align start */
+            e->end    = e->start + 0x200000;            /* assume 2 MiB text */
+            if (e->end > proc->heap_start && proc->heap_start > 0)
+                e->end = proc->heap_start;
+            e->offset = 0;
+            e->flags  = 0;  /* MAP_PRIVATE */
+            e->prot   = 5;  /* PROT_READ | PROT_EXEC */
+            e->path[0] = '\0';
+            num_regions++;
+        }
+
+        /* ── Heap / data region ──────────────────────────────── */
+        if (proc->heap_end > proc->heap_start && num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->heap_start & ~0xFFFULL;
+            e->end    = (proc->heap_end + 0xFFF) & ~0xFFFULL;
+            e->offset = 0;
+            e->flags  = 0;  /* MAP_PRIVATE | MAP_ANONYMOUS */
+            e->prot   = 3;  /* PROT_READ | PROT_WRITE */
+            e->path[0] = '\0';
+            num_regions++;
+        }
+
+        /* ── User stack region ────────────────────────────────── */
+        if (proc->user_stack_top > proc->user_stack_bottom &&
+            num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->user_stack_bottom & ~0xFFFULL;
+            e->end    = (proc->user_stack_top + 0xFFF) & ~0xFFFULL;
+            e->offset = 0;
+            e->flags  = 0;  /* MAP_PRIVATE | MAP_ANONYMOUS */
+            e->prot   = 3;  /* PROT_READ | PROT_WRITE */
+            e->path[0] = '\0';
+            num_regions++;
+        }
+
+        /* ── Guard page (if present) ──────────────────────────── */
+        if (proc->guard_page > 0 && num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->guard_page;
+            e->end    = proc->guard_page + 0x1000;
+            e->offset = 0;
+            e->flags  = 0;
+            e->prot   = 0;  /* PROT_NONE */
+            e->path[0] = '\0';
+            num_regions++;
+        }
+    } else {
+        /* Kernel thread — record a single placeholder region */
+        if (num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->kernel_stack;
+            e->end    = proc->stack_top;
+            e->offset = 0;
+            e->flags  = 0;
+            e->prot   = 3;
+            e->path[0] = '\0';
+            num_regions++;
+        }
     }
 
     kprintf("[Checkpoint] Dumped %d memory region(s) for PID %u\n",
@@ -276,40 +321,26 @@ static int restore_fd_table(struct process *proc,
 /* ── Container lookup helper ────────────────────────────────────────── */
 
 /*
- * NOTE: The global container_table and container_global_lock are
- * declared static in runtime.c.  In a full build, these would need
- * to either:
- *   (a) be made non-static, or
- *   (b) be accessed via a new container_lookup_by_id() API function.
- *
- * For now we provide an internal helper that containers can use once
- * the table is exported.  See the TODO below.
- *
- * TODO: Replace this stub with a proper container_lookup_by_id() call
- * once the container API is extended to support lookup.
+ * NOTE: The global container_table is declared extern in container.h
+ * (defined in runtime.c).  The container_global_lock is static in
+ * runtime.c, but we access the table directly for lookup since this
+ * file already holds the checkpoint_global_lock during operations.
  */
 
 /*
  * Find a container by ID.
  * Returns a pointer to the container, or NULL if not found.
- *
- * NOTE: This function currently returns NULL because the container
- * table is not yet exported.  Once container.h exports a lookup
- * function, replace this implementation.
  */
 static struct container *checkpoint_find_container(const char *container_id)
 {
-    (void)container_id;
+    if (!container_id)
+        return NULL;
 
-    /* TODO: Iterate container_table once it's accessible.
-     *
-     * The intended implementation is:
-     *   for (int i = 0; i < CONTAINER_MAX; i++) {
-     *       if (container_table[i].in_use &&
-     *           strcmp(container_table[i].id, container_id) == 0)
-     *           return &container_table[i];
-     *   }
-     */
+    for (int i = 0; i < CONTAINER_MAX; i++) {
+        if (container_table[i].in_use &&
+            strcmp(container_table[i].id, container_id) == 0)
+            return &container_table[i];
+    }
 
     return NULL;
 }
@@ -541,6 +572,7 @@ int container_checkpoint_save(const struct checkpoint_state *state,
         return -EINVAL;
 
     char path[CONTAINER_STATE_PATH];
+    int ret;
 
     if (save_path) {
         strncpy(path, save_path, sizeof(path) - 1);
@@ -559,11 +591,37 @@ int container_checkpoint_save(const struct checkpoint_state *state,
             (unsigned long long)state->memory_size,
             CHECKPOINT_MMAP_MAX);
 
-    /* TODO: Write the binary checkpoint state to the file.
-     * This would use the VFS write API once file I/O is available
-     * in the container subsystem context.  For now we just log. */
+    /*
+     * Write the binary checkpoint state to the file.
+     * Format: header (magic + version + state_size) + state data.
+     */
+    struct checkpoint_file_hdr {
+        uint32_t magic;
+        uint32_t version;
+        uint32_t state_size;
+    } hdr;
 
-    kprintf("[Checkpoint] Checkpoint state saved to %s (stub)\n", path);
+    hdr.magic      = 0x43504B42;  /* "CPKB" */
+    hdr.version    = 1;
+    hdr.state_size = sizeof(*state);
+
+    ret = vfs_write(path, &hdr, sizeof(hdr));
+    if (ret < 0) {
+        kprintf("[Checkpoint] Failed to write header to %s: err=%d\n",
+                path, ret);
+        return ret;
+    }
+
+    ret = vfs_write(path, state, sizeof(*state));
+    if (ret < 0) {
+        kprintf("[Checkpoint] Failed to write state to %s: err=%d\n",
+                path, ret);
+        return ret;
+    }
+
+    kprintf("[Checkpoint] Checkpoint state saved to %s "
+            "(%zu bytes header + %zu bytes state)\n",
+            path, sizeof(hdr), sizeof(*state));
     return 0;
 }
 
@@ -586,10 +644,60 @@ int container_checkpoint_load(const char *save_path,
     kprintf("[Checkpoint] Loading checkpoint state from %s...\n",
             save_path);
 
-    /* TODO: Read the binary checkpoint file and deserialise it.
-     * For now we return a stub indicating the file doesn't exist. */
+    /*
+     * Read the binary checkpoint file and deserialise it.
+     * Format: header (magic + version + state_size) + state data.
+     */
+    struct checkpoint_file_hdr {
+        uint32_t magic;
+        uint32_t version;
+        uint32_t state_size;
+    } hdr;
 
-    return -ENOENT;
+    uint32_t bytes_read = 0;
+
+    /* Read header */
+    int ret = vfs_read(save_path, &hdr, sizeof(hdr), &bytes_read);
+    if (ret < 0 || bytes_read != sizeof(hdr)) {
+        kprintf("[Checkpoint] Failed to read header from %s: err=%d\n",
+                save_path, ret < 0 ? ret : -EIO);
+        return ret < 0 ? ret : -EIO;
+    }
+
+    /* Validate magic */
+    if (hdr.magic != 0x43504B42) {
+        kprintf("[Checkpoint] Invalid magic in %s (got 0x%08x)\n",
+                save_path, hdr.magic);
+        return -EINVAL;
+    }
+
+    /* Validate version */
+    if (hdr.version != 1) {
+        kprintf("[Checkpoint] Unsupported version %u in %s\n",
+                hdr.version, save_path);
+        return -EINVAL;
+    }
+
+    /* Validate state size */
+    if (hdr.state_size != sizeof(*state_out)) {
+        kprintf("[Checkpoint] Size mismatch in %s: hdr=%u, expected=%zu\n",
+                save_path, hdr.state_size, sizeof(*state_out));
+        return -EINVAL;
+    }
+
+    /* Read state data */
+    bytes_read = 0;
+    ret = vfs_read(save_path, state_out, sizeof(*state_out), &bytes_read);
+    if (ret < 0 || bytes_read != sizeof(*state_out)) {
+        kprintf("[Checkpoint] Failed to read state from %s: err=%d\n",
+                save_path, ret < 0 ? ret : -EIO);
+        return ret < 0 ? ret : -EIO;
+    }
+
+    kprintf("[Checkpoint] Checkpoint state loaded from %s "
+            "(%u bytes header + %zu bytes state)\n",
+            save_path, sizeof(hdr), sizeof(*state_out));
+    return 0;
 }
 
 /**

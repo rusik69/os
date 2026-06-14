@@ -133,6 +133,9 @@ static uint8_t mac_addr[6];
 static int nic_present = 0;
 static uint8_t e1000_irq_line = 0;
 
+/* Per-queue lock for SMP safety (T5) */
+static spinlock_t e1000_lock = SPINLOCK_INIT;
+
 /* Device variant */
 static int is_82574 = 0;  /* set to 1 if we detect 82574L */
 
@@ -234,6 +237,9 @@ static void e1000_irq_handler(struct interrupt_frame *frame) {
     uint32_t icr = e1000_read(REG_ICR); /* read to clear */
     (void)icr;
 
+    uint64_t __e1k_flags;
+    spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
+
     /* Mask RX interrupt — NAPI-style: re-enable after draining in net_poll */
     e1000_write(REG_IMC, 0x80); /* mask RXT0 */
 
@@ -253,6 +259,8 @@ static void e1000_irq_handler(struct interrupt_frame *frame) {
         }
         itr_pkt_count += (total_avail > 0) ? total_avail : 1;
     }
+
+    spinlock_irqsave_release(&e1000_lock, __e1k_flags);
 
     irq_ack(e1000_irq_line);
     net_rx_signal();
@@ -565,6 +573,9 @@ static int e1000_netdev_transmit(struct net_device *dev,
         return -1;
     }
 
+    uint64_t __e1k_flags;
+    spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
+
     memcpy(qp->tx_buffers[idx], data, len);
     qp->tx_descs[idx].length = len;
     qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS | TDESC_CMD_RS;
@@ -572,6 +583,8 @@ static int e1000_netdev_transmit(struct net_device *dev,
 
     qp->tx_cur = (qp->tx_cur + 1) % NUM_TX_DESC;
     e1000_q_write_tx(tx_q, 4, qp->tx_cur); /* TDT */
+
+    spinlock_irqsave_release(&e1000_lock, __e1k_flags);
 
     kprintf("[dbg] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
     return 0;
@@ -584,6 +597,9 @@ static int e1000_netdev_receive(struct net_device *dev,
                                 uint8_t *buf, uint16_t max_len)
 {
     (void)dev;
+
+    uint64_t __e1k_flags;
+    spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
 
     for (int q = 0; q < num_queues; q++) {
         struct e1000_queue *qp = &queues[q];
@@ -619,9 +635,11 @@ static int e1000_netdev_receive(struct net_device *dev,
         qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
         e1000_q_write_rx(q, 4, old_cur);
 
+        spinlock_irqsave_release(&e1000_lock, __e1k_flags);
         return (int)len;
     }
 
+    spinlock_irqsave_release(&e1000_lock, __e1k_flags);
     return 0; /* nothing on any queue */
 }
 

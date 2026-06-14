@@ -1422,6 +1422,27 @@ int tpm_nv_load_key(uint32_t nv_index, uint8_t *key_data, uint32_t *key_len)
  *  Item 350: TPM PCR read/extend operations
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/* Active PCR hash algorithms supported by this TPM.
+ * Add new algorithms here when support is extended beyond SHA-256.
+ * A non-zero algorithm ID indicates an active PCR bank. */
+static const uint16_t pcr_active_hashes[] = {
+    TPM2_ALG_SHA256,
+    /* Future: TPM2_ALG_SHA1, TPM2_ALG_SHA384, TPM2_ALG_SHA512 */
+};
+#define PCR_ACTIVE_HASHES_COUNT \
+    (sizeof(pcr_active_hashes) / sizeof(pcr_active_hashes[0]))
+
+/* Return the number of active PCR hash algorithm banks. */
+static int pcr_active_bank_count(void)
+{
+    int count = 0;
+    for (size_t i = 0; i < PCR_ACTIVE_HASHES_COUNT; i++) {
+        if (pcr_active_hashes[i] != 0)
+            count++;
+    }
+    return count;
+}
+
 /* Build a TPM2_PCR_Read command buffer.
  * Format:
  *   tag (2) = TPM2_ST_NO_SESSIONS
@@ -1460,7 +1481,7 @@ static int build_pcr_read_cmd(uint8_t *buf, uint32_t *buf_len,
     /* Add algorithm and digestsCount fields */
     *p++ = (TPM2_ALG_SHA256 >> 8) & 0xFF;  /* algorithm (big-endian) */
     *p++ = TPM2_ALG_SHA256 & 0xFF;
-    *p++ = 1;   /* digestsCount = 1 (FIXME proper count) */
+    *p++ = (uint8_t)pcr_active_bank_count();  /* digestsCount from active PCR banks */
     *p++ = 0;   /* padding */
 
     total = (uint32_t)(p - buf);

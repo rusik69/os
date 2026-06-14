@@ -808,6 +808,15 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
             tfo_validate_cookie(remote_ip, ip_hdr->dst_ip,
                                 dst_port, syn_tfo_cookie)) {
             /* Valid TFO cookie — accept the data in the SYN */
+            /* Validate that data fits within our advertised window (RFC 7413 §4.2) */
+            uint32_t their_win = c->their_window ? c->their_window : 65535;
+            if (data_len > their_win) {
+                kprintf("[TCP] TFO data exceeds window: data_len=%u, window=%u\n",
+                        data_len, their_win);
+                send_tcp(c, TCP_SYN | TCP_ACK, NULL, 0);
+                c->our_seq++;
+                return;
+            }
             uint16_t copy_len = data_len;
             if (copy_len > TCP_RXBUF_SIZE)
                 copy_len = TCP_RXBUF_SIZE;
@@ -1205,11 +1214,12 @@ void handle_tcp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len) 
                 return;
             }
             /* Validate that received data is within our advertised window.
-             * We advertise a window of 8192 bytes starting at c->their_seq.
+             * We advertise a window of c->their_window bytes starting at c->their_seq.
              * Data outside this window should be silently dropped (RFC 793). */
-            if (seq + data_len > c->their_seq + 8192) {
-                kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=8192\n",
-                        seq, data_len, c->their_seq);
+            uint32_t their_win = c->their_window ? c->their_window : 8192;
+            if (seq + data_len > c->their_seq + their_win) {
+                kprintf("[TCP] window violation: seq=%u, len=%u, their_seq=%u, window=%u\n",
+                        seq, data_len, c->their_seq, their_win);
                 return;
             }
             /* Handle TCP urgent pointer (URG flag) — RFC 961 §3.3

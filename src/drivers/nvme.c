@@ -752,20 +752,38 @@ static int nvme_blk_submit(struct blk_request *req) {
     }
 
     /* Build PRP list if multi-page (NVMe PRP entries cannot cross page boundaries) */
+    /* Max number of PRP entries that fit in one 4KB page (each entry is 8 bytes) */
+    #define NVME_PRP_MAX_PER_PAGE 512
+
     uint64_t prp1 = data_phys;
     uint64_t prp2 = 0;
     uint64_t *prp_list = NULL;
 
     if (nr_pages > 1) {
-        /* Single page boundary: if the transfer crosses 4KB within the first
-         * page, the remaining data goes in PRP2 or a PRP list.  For simplicity,
-         * use a PRP list when nr_pages > 1. */
-        prp_list = (uint64_t *)PHYS_TO_VIRT(frames[1] * 4096); /* allocate PRP list in 2nd page */
-        if (prp_list) {
-            for (uint32_t i = 1; i < nr_pages; i++)
-                prp_list[i - 1] = frames[i] * 4096;
-            prp2 = frames[1] * 4096; /* PRP list physical address */
+        /* Guard against PRP list overflow (more pages than fit in one PRP page) */
+        if ((nr_pages - 1) > NVME_PRP_MAX_PER_PAGE) {
+            kprintf("[NVMe] PRP list overflow: %u pages requested, max %u\n",
+                    nr_pages, NVME_PRP_MAX_PER_PAGE + 1);
+            for (uint32_t i = 0; i < nr_pages; i++)
+                pmm_free_frame(frames[i]);
+            kfree(frames);
+            return -1;
         }
+
+        /* Allocate a dedicated page for the PRP list (do NOT reuse a data page) */
+        uint64_t prp_list_frame = pmm_alloc_frame();
+        if (!prp_list_frame) {
+            for (uint32_t i = 0; i < nr_pages; i++)
+                pmm_free_frame(frames[i]);
+            kfree(frames);
+            return -1;
+        }
+        prp_list = (uint64_t *)PHYS_TO_VIRT(prp_list_frame * 4096);
+        prp2 = prp_list_frame * 4096; /* PRP list physical address */
+
+        /* Fill PRP list: entries point to each data page after the first */
+        for (uint32_t i = 1; i < nr_pages; i++)
+            prp_list[i - 1] = frames[i] * 4096;
     }
 
     /* Submit the I/O command with PRP1 and optional PRP list */
@@ -773,6 +791,8 @@ static int nvme_blk_submit(struct blk_request *req) {
                                       !!(req->flags & BLK_REQ_WRITE),
                                       req->lba, nr_sectors, prp1, prp2, nr_pages);
     if (ret < 0) {
+        if (prp_list)
+            pmm_free_frame(VIRT_TO_PHYS(prp_list) / 4096);
         for (uint32_t i = 0; i < nr_pages; i++)
             pmm_free_frame(frames[i]);
         kfree(frames);
@@ -795,6 +815,8 @@ static int nvme_blk_submit(struct blk_request *req) {
         }
     }
 
+    if (prp_list)
+        pmm_free_frame(VIRT_TO_PHYS(prp_list) / 4096);
     for (uint32_t i = 0; i < nr_pages; i++)
         pmm_free_frame(frames[i]);
     kfree(frames);

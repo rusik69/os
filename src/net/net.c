@@ -202,6 +202,9 @@ void arp_cache_add(uint32_t ip, const uint8_t *mac) {
     uint64_t now = timer_get_ticks();
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
         if (net_arp_cache[i].valid && net_arp_cache[i].ip == ip) {
+            /* Rate-limit ARP updates to 10/sec to prevent cache poisoning */
+            if (now - net_arp_cache[i].last_seen_tick < (TIMER_FREQ / 10))
+                return;
             memcpy(net_arp_cache[i].mac, mac, 6);
             net_arp_cache[i].last_seen_tick = now;
             net_arp_cache[i].retry_count = 0;
@@ -623,7 +626,7 @@ void send_ip(uint32_t dst_ip, uint8_t protocol, const void *payload, uint16_t le
     ip->src_ip = htonl(net_our_ip);
     ip->dst_ip = htonl(dst_ip);
     ip->total_len = htons(sizeof(struct ip_header) + len);
-    ip->id = htons(net_ip_id_counter++);
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
     ip->checksum = 0;
     memcpy(buf + sizeof(struct ip_header), payload, len);
     ip->checksum = net_checksum(ip, sizeof(struct ip_header));
@@ -779,7 +782,7 @@ static void handle_icmp(struct ip_header *ip, const uint8_t *payload, uint16_t l
 
 #define IP_FRAG_SLOTS          32    /* max concurrent fragmented datagrams */
 #define IP_FRAG_BUF_SIZE       4096  /* max reassembly buf (covers jumbo frames) */
-#define IP_FRAG_TTL_TICKS      500   /* ~5 seconds at 100 Hz timer */
+#define IP_FRAG_TTL_TICKS      3000  /* ~30 seconds at 100 Hz timer (RFC 791 recommends 30s) */
 
 /* Fragment reassembly statistics — instantiated here, declared in net_internal.h */
 static struct frag_stats frag_stats;

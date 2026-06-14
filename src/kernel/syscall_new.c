@@ -216,6 +216,17 @@ int do_sysinfo(struct sysinfo *info)
             info->procs++;
     }
 
+    /* Load averages: count running/ready processes as a simple load metric */
+    int run = 0;
+    for (int i = 0; i < PROCESS_MAX; i++) {
+        if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
+            run++;
+    }
+    /* Scale by 1024 (SI_LOAD_SHIFT convention) */
+    info->loads[0] = (uint64_t)run * 1024ULL;
+    info->loads[1] = (uint64_t)run * 1024ULL;
+    info->loads[2] = (uint64_t)run * 1024ULL;
+
     return 0;
 }
 

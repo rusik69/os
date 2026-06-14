@@ -153,18 +153,57 @@ static int lexer_string(struct json_lexer *lex, struct json_token *tok)
             case 'r':  c = '\r'; break;
             case 't':  c = '\t'; break;
             case 'u': {
-                /* \uXXXX — simplified: skip 4 hex digits, emit '?' */
+                /* \uXXXX — parse hex code point and emit UTF-8 */
+                /* First advance past the 'u' */
                 lexer_advance(lex);
                 if (lex->pos + 3 >= lex->end) {
                     lexer_error(lex, "truncated \\uXXXX escape");
                     token_error(tok, lex->err_msg);
                     return 0;
                 }
-                /* Skip 4 hex chars */
-                for (int i = 0; i < 4; i++) lexer_advance(lex);
-                c = '?';
+                /* Parse 4 hex digits */
+                uint32_t cp = 0;
+                int valid_hex = 1;
+                for (int i = 0; i < 4; i++) {
+                    char h = *lex->pos;
+                    cp <<= 4;
+                    if (h >= '0' && h <= '9')
+                        cp |= (uint32_t)(h - '0');
+                    else if (h >= 'a' && h <= 'f')
+                        cp |= (uint32_t)(h - 'a' + 10);
+                    else if (h >= 'A' && h <= 'F')
+                        cp |= (uint32_t)(h - 'A' + 10);
+                    else
+                        valid_hex = 0;
+                    lexer_advance(lex);
+                }
+                if (!valid_hex) {
+                    lexer_error(lex, "invalid hex digit in \\uXXXX escape");
+                    token_error(tok, lex->err_msg);
+                    return 0;
+                }
+                /* Convert code point to UTF-8 (1-3 bytes) */
+                if (cp <= 0x007F) {
+                    if (out < max_len) tok->str[out++] = (char)(uint8_t)cp;
+                } else if (cp <= 0x07FF) {
+                    if (out < max_len)
+                        tok->str[out++] = (char)(uint8_t)(0xC0 | (cp >> 6));
+                    if (out < max_len)
+                        tok->str[out++] = (char)(uint8_t)(0x80 | (cp & 0x3F));
+                } else if (cp <= 0xFFFF) {
+                    if (out < max_len)
+                        tok->str[out++] = (char)(uint8_t)(0xE0 | (cp >> 12));
+                    if (out < max_len)
+                        tok->str[out++] = (char)(uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+                    if (out < max_len)
+                        tok->str[out++] = (char)(uint8_t)(0x80 | (cp & 0x3F));
+                } else {
+                    /* Code point out of range for \uXXXX (max U+FFFF) */
+                    lexer_error(lex, "code point out of range in \\uXXXX");
+                    token_error(tok, lex->err_msg);
+                    return 0;
+                }
                 /* Don't advance again below — we already moved past 4 hex digits */
-                if (out < max_len) tok->str[out++] = c;
                 continue;
             }
             default:

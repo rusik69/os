@@ -2,5 +2,5 @@
 #include "shell_cmds.h"
 #include "printf.h"
 void cmd_uname(void) {
-    kprintf("OS x86_64 GNU/OS\n");
+    kprintf("OS x86_64 GNU/OS (%s %s)\n", __DATE__, __TIME__);
 }

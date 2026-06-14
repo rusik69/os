@@ -88,7 +88,7 @@ static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
 
     uint16_t udp_len = sizeof(struct udp_header) + data_len;
     ip->total_len = htons(sizeof(struct ip_header) + udp_len);
-    ip->id = htons(net_ip_id_counter++);
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
     ip->checksum = 0;
 
     udp->src_port = htons(src_port);
@@ -119,7 +119,7 @@ static void send_udp_unicast(uint32_t dst_ip, uint16_t src_port, uint16_t dst_po
 
     uint16_t udp_len = sizeof(struct udp_header) + data_len;
     ip->total_len = htons(sizeof(struct ip_header) + udp_len);
-    ip->id = htons(net_ip_id_counter++);
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
     ip->checksum = 0;
 
     udp->src_port = htons(src_port);
@@ -939,8 +939,29 @@ int dhcpv6_pd_solicit(void)
     kprintf("[dhcpv6] Sending SOLICIT for prefix delegation\n");
 
     /* Send to DHCPv6 All_Servers multicast address (FF02::1:2) */
-    /* For now, send as UDP to [FF02::1:2]:547 */
-    /* TODO: implement IPv6 UDP send */
+    /* Send as UDP to [FF02::1:2]:547 */
+    {
+        uint8_t udp_buf[1500];
+        struct udp_header *udp = (struct udp_header *)udp_buf;
+        uint16_t udp_len = sizeof(struct udp_header) + (uint16_t)pos;
+
+        udp->src_port = htons(546);   /* DHCPv6 client port */
+        udp->dst_port = htons(547);   /* DHCPv6 server port */
+        udp->length   = htons(udp_len);
+        udp->checksum = 0;
+
+        /* Copy DHCPv6 payload after UDP header */
+        memcpy(udp_buf + sizeof(struct udp_header), buf, (size_t)pos);
+
+        /* Compute UDP checksum over IPv6 pseudo-header */
+        struct in6_addr all_servers = { { 0xFF,0x02,0,0,0,0,0,0,0,0,0,0,0,0,0,2 } };
+        udp->checksum = ipv6_checksum(&net_our_ipv6_ll, &all_servers,
+                                       IP_PROTO_UDP, udp_buf, udp_len);
+
+        send_ipv6(&all_servers, IP_PROTO_UDP, udp_buf, udp_len);
+    }
+
+    kprintf("[dhcpv6] Sent SOLICIT for prefix delegation via IPv6 UDP\n");
 
     return 0;
 }

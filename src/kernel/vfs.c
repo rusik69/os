@@ -283,10 +283,12 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
         }
         /* Regular component: append */
         if (wpos > 0 && tmp[wpos - 1] != '/') {
-            if (wpos >= (int)sizeof(tmp) - 1) break;
+            if (wpos >= (int)sizeof(tmp) - 1)
+                return -ENAMETOOLONG;
             tmp[wpos++] = '/';
         } else if (wpos == 0) {
-            if (wpos >= (int)sizeof(tmp) - 1) break;
+            if (wpos >= (int)sizeof(tmp) - 1)
+                return -ENAMETOOLONG;
             tmp[wpos++] = '/';
         }
         if (wpos + comp_len >= (int)sizeof(tmp) - 1)

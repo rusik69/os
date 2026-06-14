@@ -54,7 +54,7 @@ static void send_udp_broadcast(uint16_t src_port, uint16_t dst_port,
     ip->dst_ip = htonl(dst_ip);
     uint16_t udp_len = sizeof(struct udp_header) + data_len;
     ip->total_len = htons(sizeof(struct ip_header) + udp_len);
-    ip->id = htons(net_ip_id_counter++);
+    ip->id = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
     ip->checksum = 0;
 
     udp->src_port = htons(src_port);
@@ -515,7 +515,7 @@ void net_udp_send_cached(const uint8_t *dst_mac, uint32_t dst_ip,
     ip->src_ip      = htonl(net_our_ip);
     ip->dst_ip      = htonl(dst_ip);
     ip->total_len   = htons(ip_total_len);
-    ip->id          = htons(net_ip_id_counter++);
+    ip->id          = htons((uint16_t)__sync_fetch_and_add(&net_ip_id_counter, 1));
     ip->checksum    = 0;
 
     /* Compute IP header checksum */

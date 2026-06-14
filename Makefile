@@ -810,7 +810,7 @@ all: $(BUILDDIR)/disk.img
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
-        modules modules_install analyze
+        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -1418,3 +1418,31 @@ ccache-stats:
 	else \
 		echo "ccache not installed."; \
 	fi
+
+# ── Static analysis (cppcheck) ──────────────────────────────────────────
+
+build-strict: cppcheck
+
+.PHONY: cppcheck
+cppcheck:
+	cppcheck --enable=all --suppress=missingIncludeSystem -Isrc/include --std=c17 --platform=unix64 src/ 2>&1 | tee build/cppcheck-report.txt
+
+# ── clang --analyze ─────────────────────────────────────────────────────
+
+.PHONY: analyze
+analyze:
+	$(CC) --analyze -Xanalyzer -analyzer-output=text $(CFLAGS) $(C_SRCS) 2>&1 | tee build/analyzer-report.txt
+
+# ── ctags (source tags) ─────────────────────────────────────────────────
+
+.PHONY: ctags etags
+ctags:
+	ctags -R src/
+etags:
+	ctags -R --output-format=etags src/
+
+# ── TODO/FIXME/HACK/XXX/BUG finder ──────────────────────────────────────
+
+.PHONY: todo
+todo:
+	@grep -rn 'TODO\|FIXME\|HACK\|XXX\|BUG' src/ --include='*.c' --include='*.h' 2>/dev/null || true

@@ -502,6 +502,10 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
     uint32_t is = hba_read(HBA_IS_OFFSET);
     if (!is) return;
 
+    /* Protect slot management in IRQ context */
+    uint64_t __ahci_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &__ahci_flags);
+
     for (int p = 0; p < 32; p++) {
         if (!(is & (1u << p))) continue;
 
@@ -577,6 +581,8 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
     /* Ack IRQ to IOAPIC/PIC */
     if (ahci_port_count > 0)
         irq_ack(ahci_ports[0].irq_line);
+
+    spinlock_irqsave_release(&ahci_lock, __ahci_flags);
 }
 
 /* ── submit_fn called from block I/O layer (async) ──────────────────── */

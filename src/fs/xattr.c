@@ -25,6 +25,8 @@
 /* Extended attributes stored in a simple global table (path-indexed) */
 #define XATTR_MAX_FILES 64
 #define XATTR_MAX_ENTRIES_PER_FILE 8
+#define XATTR_BUCKET_SIZE 4
+#define XATTR_NUM_BUCKETS (XATTR_MAX_FILES / XATTR_BUCKET_SIZE)
 
 struct xattr_file {
     char path[128];
@@ -35,6 +37,16 @@ struct xattr_file {
 
 static struct xattr_file xattr_table[XATTR_MAX_FILES];
 static int xattr_initialized = 0;
+
+/* Simple string hash for path-based lookup */
+static uint32_t xattr_path_hash(const char *path)
+{
+    uint32_t h = 5381;
+    int c;
+    while ((c = (unsigned char)*path++))
+        h = ((h << 5) + h) + c;
+    return h;
+}
 
 /* ── Namespace validation (S149) ──────────────────────────────────── */
 
@@ -84,9 +96,13 @@ void xattr_init(void) {
 }
 
 static struct xattr_file *xattr_find_file(const char *path) {
-    for (int i = 0; i < XATTR_MAX_FILES; i++) {
-        if (xattr_table[i].in_use && strcmp(xattr_table[i].path, path) == 0)
-            return &xattr_table[i];
+    uint32_t h = xattr_path_hash(path);
+    uint32_t base = (h % XATTR_NUM_BUCKETS) * XATTR_BUCKET_SIZE;
+    for (uint32_t i = 0; i < XATTR_BUCKET_SIZE; i++) {
+        uint32_t idx = base + i;
+        if (idx >= XATTR_MAX_FILES) break;
+        if (xattr_table[idx].in_use && strcmp(xattr_table[idx].path, path) == 0)
+            return &xattr_table[idx];
     }
     return NULL;
 }
@@ -94,17 +110,22 @@ static struct xattr_file *xattr_find_file(const char *path) {
 static struct xattr_file *xattr_get_or_create(const char *path) {
     struct xattr_file *xf = xattr_find_file(path);
     if (xf) return xf;
-    for (int i = 0; i < XATTR_MAX_FILES; i++) {
-        if (!xattr_table[i].in_use) {
-            strncpy(xattr_table[i].path, path, sizeof(xattr_table[i].path) - 1);
-            xattr_table[i].path[sizeof(xattr_table[i].path) - 1] = '\0';
-            xattr_table[i].count = 0;
-            memset(xattr_table[i].entries, 0, sizeof(xattr_table[i].entries));
-            xattr_table[i].in_use = 1;
-            return &xattr_table[i];
+
+    uint32_t h = xattr_path_hash(path);
+    uint32_t base = (h % XATTR_NUM_BUCKETS) * XATTR_BUCKET_SIZE;
+    for (uint32_t i = 0; i < XATTR_BUCKET_SIZE; i++) {
+        uint32_t idx = base + i;
+        if (idx >= XATTR_MAX_FILES) break;
+        if (!xattr_table[idx].in_use) {
+            strncpy(xattr_table[idx].path, path, sizeof(xattr_table[idx].path) - 1);
+            xattr_table[idx].path[sizeof(xattr_table[idx].path) - 1] = '\0';
+            xattr_table[idx].count = 0;
+            memset(xattr_table[idx].entries, 0, sizeof(xattr_table[idx].entries));
+            xattr_table[idx].in_use = 1;
+            return &xattr_table[idx];
         }
     }
-    return NULL;
+    return NULL; /* Bucket full — no space */
 }
 
 /* ── setxattr (S149) ──────────────────────────────────────────────── */
