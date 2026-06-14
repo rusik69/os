@@ -341,6 +341,14 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("tc",          "Traffic control (tc qdisc|class|filter [add|del|show])", cmd_tc)
     CMD("ethtool",     "Ethernet device settings (ethtool [-s|-i|-k|-S] <dev>)", cmd_ethtool)
     CMD("bpftrace_probes", "BPF kprobe/uprobe/tracepoint management", cmd_bpftrace_probes)
+    /* S-plan batch 10 — new commands */
+    CMD("f2fs",        "F2FS filesystem tool (f2fs stat|check|show)", cmd_f2fs)
+    CMD("damon",       "DAMON access monitoring (damon start|stop|show)", cmd_damon)
+    CMD("nfsstat",     "NFS mount statistics (nfsstat [-v])", cmd_nfsstat)
+    CMD("cpufreq_info","Show CPU frequency info (cpufreq_info [-a])", cmd_cpufreq_info)
+    CMD("loadpin",     "Loadpin enforcement status (loadpin [-v])", cmd_loadpin)
+    CMD("powercap",    "Powercap/RAPL domain info (powercap list|show)", cmd_powercap)
+    CMD("devmem2",     "Physical memory R/W (devmem2 <addr> [<len>] [--bus])", cmd_devmem2)
     { 0, 0, 0 }
 };
 

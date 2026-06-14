@@ -443,5 +443,12 @@ void cmd_ipsec(const char *args);
 void cmd_tc(const char *args);
 void cmd_ethtool(const char *args);
 void cmd_bpftrace_probes(const char *args);
+void cmd_f2fs(const char *args);
+void cmd_damon(const char *args);
+void cmd_nfsstat(const char *args);
+void cmd_cpufreq_info(const char *args);
+void cmd_loadpin(const char *args);
+void cmd_powercap(const char *args);
+void cmd_devmem2(const char *args);
 
 #endif

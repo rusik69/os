@@ -565,7 +565,50 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/ivshmem.c \
          src/drivers/9pnet_virtio.c \
          src/drivers/vmw_balloon.c \
-         src/drivers/vmw_pvscsi.c
+         src/drivers/vmw_pvscsi.c \
+         src/lib/chacha20.c \
+         src/lib/poly1305.c \
+         src/lib/chacha20poly1305.c \
+         src/lib/ecc.c \
+         src/lib/rsa.c \
+         src/kernel/execshield.c \
+         src/kernel/usercopy.c \
+         src/kernel/randstruct.c \
+         src/kernel/cfi.c \
+         src/kernel/scs.c \
+         src/kernel/blk_mq.c \
+         src/kernel/ftrace_stack.c \
+         src/kernel/hwlat_detector.c \
+         src/kernel/perf_branch.c \
+         src/kernel/kgdb_stub.c \
+         src/memory/damon.c \
+         src/memory/zbud.c \
+         src/memory/zsmalloc.c \
+         src/net/rds.c \
+         src/net/vsock.c \
+         src/net/openvswitch.c \
+         src/net/fq_codel.c \
+         src/net/cake.c \
+         src/net/tcp_bbr2.c \
+         src/drivers/pcie_aer.c \
+         src/drivers/pcie_dpc.c \
+         src/drivers/pcie_ptm.c \
+         src/drivers/sriov.c \
+         src/drivers/bcache.c \
+         src/drivers/dm_snapshot.c \
+         src/drivers/usb_uas.c \
+         src/drivers/usb_serial.c \
+         src/drivers/usb_cdc_ether.c \
+         src/drivers/usb_wifi.c \
+         src/drivers/acpi_cppc.c \
+         src/drivers/powercap.c \
+         src/drivers/i6300esb.c \
+         src/power/suspend_s2idle.c \
+         src/fs/nfs.c \
+         src/fs/erofs.c \
+         src/fs/f2fs.c \
+         src/fs/jffs2.c \
+         src/fs/nilfs2.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \
