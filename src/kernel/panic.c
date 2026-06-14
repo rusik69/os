@@ -28,6 +28,24 @@ int panic_timeout = 30;  /* default: reset after 30 seconds */
 /* Non-fatal warning (WARN_ON) counter, readable via /sys/kernel/oops_count */
 uint64_t oops_count = 0;
 
+/* ── Canonical panic cause strings ────────────────────────────────── */
+const char *panic_cause_str(int cause)
+{
+    switch (cause) {
+    case 0:  return "Kernel NULL pointer dereference";
+    case 1:  return "Out of memory (allocation failure)";
+    case 2:  return "Kernel BUG at %s:%d";
+    case 3:  return "Unexpected kernel mode trap";
+    case 4:  return "Kernel stack overflow detected";
+    case 5:  return "Scheduler integrity check failed";
+    case 6:  return "Filesystem critical error";
+    case 7:  return "Page fault in kernel mode (oops)";
+    case 8:  return "Spinlock lockup / deadlock detected";
+    case 9:  return "RCU stall detected";
+    default: return "Unknown kernel panic cause";
+    }
+}
+
 static uint64_t g_tsc_freq_hz = 0;  /* Calibrated TSC frequency in Hz */
 
 /*

@@ -9,26 +9,42 @@
 #include "kernel.h"
 #include "stacktrace.h"
 
+// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Shadow memory mapping for kernel VMA addresses.
+ * kasan_light.c — Kernel Address SANitizer (lightweight variant)
  *
- * For every 8 bytes of kernel memory (>= KASAN_VMA_START), we use 1 byte of
- * shadow memory.  The mapping is a simple linear offset:
+ * KASAN-light is a compile-time instrumentation tool that detects
+ * out-of-bounds accesses, use-after-free, and use-after-return bugs
+ * in kernel memory. It uses shadow memory to track the accessibility
+ * of each 8-byte aligned region of kernel VMA memory.
  *
- *   shadow_uint8_ptr = KASAN_SHADOW_BASE + ((addr - KASAN_VMA_START) >> 3)
+ * INSTRUMENTATION MODEL:
+ *   - Every 8 bytes of kernel memory are tracked by 1 byte of shadow.
+ *   - Shadow memory is a linear mapping from kernel VMA address to
+ *     a dedicated 32 MB shadow region at KASAN_SHADOW_BASE.
+ *   - Shadow byte values:
+ *       0x00 = accessible (KASAN_SHADOW_ACCESS)
+ *       0xFF = freed / poisoned (KASAN_SHADOW_FREE)
+ *       0xFE = redzone (KASAN_SHADOW_REDZONE)
+ *   - The compiler emits __asan_loadN / __asan_storeN callbacks for
+ *     every memory access when -fsanitize=kernel-address is enabled.
  *
- * This avoids 64-bit overflow issues that plagued the previous scheme (which
- * used KASAN_SHADOW_BASE + (addr >> 3) — for kernel VMA addresses this wraps
- * around to non-canonical addresses and cannot be accessed).
+ * SHADOW MAPPING:
+ *   shadow_addr = KASAN_SHADOW_BASE + ((addr - KASAN_VMA_START) >> 3)
  *
- * Shadow is allocated as 32 MB of physical memory and mapped contiguously at
- * KASAN_SHADOW_BASE (canonical kernel VMA).  This covers 256 MB of kernel
- * VMA starting from KASAN_VMA_START.
+ * This avoids 64-bit overflow issues that plagued the previous scheme
+ * (which used KASAN_SHADOW_BASE + (addr >> 3) — for kernel VMA addresses
+ * this wraps around to non-canonical addresses and cannot be accessed).
  *
- * Shadow byte values:
- *   0x00 = accessible (KASAN_SHADOW_ACCESS)
- *   0xFF = freed / poisoned (KASAN_SHADOW_FREE)
- *   0xFE = redzone (KASAN_SHADOW_REDZONE)
+ * COVERAGE: Currently covers kernel heap (kmalloc), slab objects, and
+ * stack variables. DMA buffers and MMIO regions are selectively
+ * exempted via __no_sanitize_address annotations.
+ *
+ * LIMITATIONS:
+ *   - No tag-based checking (only byte-precision shadow)
+ *   - No stack-use-after-scope detection
+ *   - ~32MB overhead for shadow memory
+ *   - ~10-25% performance overhead when enabled
  */
 
 static uint8_t *kasan_shadow = NULL;

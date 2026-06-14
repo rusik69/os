@@ -18,6 +18,7 @@
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
+#include "process.h"
 
 /* Extern declarations for dedicated test suite registrations */
 extern void kunit_pmm_register(void);
@@ -263,6 +264,93 @@ static void vmm_map_unmap_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  5. PMM — Contiguous allocation test (extra)
+ * ==================================================================== */
+
+static void pmm_contig_alloc_test(struct kunit *test)
+{
+    /* Test allocating 2 consecutive frames */
+    uint64_t f1 = pmm_alloc_frame();
+    KUNIT_EXPECT_NE(test, f1, (uint64_t)0);
+    uint64_t f2 = pmm_alloc_frame();
+    KUNIT_EXPECT_NE(test, f2, (uint64_t)0);
+    if (f1 && f2) {
+        KUNIT_EXPECT_NE(test, (int64_t)f1, (int64_t)f2);
+    }
+    if (f1) pmm_free_frame(f1);
+    if (f2) pmm_free_frame(f2);
+}
+
+/* ====================================================================
+ *  6. Slab — Large allocation stress test
+ * ==================================================================== */
+
+static void slab_large_alloc_test(struct kunit *test)
+{
+    void *p = kmalloc(4096);
+    KUNIT_EXPECT_NOT_NULL(test, p);
+    if (p) {
+        memset(p, 0xCC, 4096);
+        /* Verify pattern */
+        uint8_t *bytes = (uint8_t *)p;
+        int ok = 1;
+        for (int i = 0; i < 4096; i++) {
+            if (bytes[i] != 0xCC) { ok = 0; break; }
+        }
+        KUNIT_EXPECT_EQ(test, ok, 1);
+        kfree(p);
+    }
+}
+
+/* ====================================================================
+ *  7. Scheduler — Process stat sanity test
+ * ==================================================================== */
+
+static void sched_process_count_test(struct kunit *test)
+{
+    int count = process_get_count();
+    KUNIT_EXPECT_TRUE(test, count > 0);
+    /* At minimum idle and init processes should exist */
+    KUNIT_EXPECT_TRUE(test, count >= 2);
+}
+
+/* ====================================================================
+ *  8. VMM — Multi-page map/unmap test
+ * ==================================================================== */
+
+static void vmm_multipage_test(struct kunit *test)
+{
+    /* Allocate two frames and map them consecutively */
+    uint64_t phys_a = pmm_alloc_frame();
+    uint64_t phys_b = pmm_alloc_frame();
+    KUNIT_EXPECT_NE(test, phys_a, (uint64_t)0);
+    KUNIT_EXPECT_NE(test, phys_b, (uint64_t)0);
+    if (!phys_a || !phys_b) {
+        if (phys_a) pmm_free_frame(phys_a);
+        if (phys_b) pmm_free_frame(phys_b);
+        return;
+    }
+
+    uint64_t test_vaddr = 0xFFFFC0FFE0001000ULL;
+    int ret_a = vmm_map_page(test_vaddr, phys_a, VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+    int ret_b = vmm_map_page(test_vaddr + 4096, phys_b, VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret_a, (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret_b, (int64_t)0);
+
+    /* Verify mappings */
+    uint64_t mapped_a = vmm_get_physaddr(test_vaddr);
+    uint64_t mapped_b = vmm_get_physaddr(test_vaddr + 4096);
+    KUNIT_EXPECT_EQ(test, (int64_t)mapped_a, (int64_t)phys_a);
+    KUNIT_EXPECT_EQ(test, (int64_t)mapped_b, (int64_t)phys_b);
+
+    /* Cleanup */
+    vmm_unmap_page(test_vaddr);
+    vmm_unmap_page(test_vaddr + 4096);
+    pmm_free_frame(phys_a);
+    pmm_free_frame(phys_b);
+}
+
+/* ====================================================================
  *  Suite definitions
  * ==================================================================== */
 
@@ -270,6 +358,7 @@ static struct kunit_case pmm_test_cases[] = {
     KUNIT_CASE(pmm_alloc_free_test),
     KUNIT_CASE(pmm_refcount_test),
     KUNIT_CASE(pmm_zero_test),
+    KUNIT_CASE(pmm_contig_alloc_test),
     {NULL, NULL}
 };
 
@@ -278,6 +367,7 @@ static struct kunit_case slab_test_cases[] = {
     KUNIT_CASE(slab_varied_sizes_test),
     KUNIT_CASE(slab_realloc_test),
     KUNIT_CASE(slab_boundary_test),
+    KUNIT_CASE(slab_large_alloc_test),
     {NULL, NULL}
 };
 
@@ -291,6 +381,12 @@ static struct kunit_case string_test_cases[] = {
 
 static struct kunit_case vmm_test_cases[] = {
     KUNIT_CASE(vmm_map_unmap_test),
+    KUNIT_CASE(vmm_multipage_test),
+    {NULL, NULL}
+};
+
+static struct kunit_case sched_test_cases[] = {
+    KUNIT_CASE(sched_process_count_test),
     {NULL, NULL}
 };
 
@@ -310,6 +406,7 @@ static struct kunit_suite pmm_test_suite;
 static struct kunit_suite slab_test_suite;
 static struct kunit_suite string_test_suite;
 static struct kunit_suite vmm_test_suite;
+static struct kunit_suite sched_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
@@ -329,17 +426,20 @@ void kunit_register_builtin_tests(void)
     FILL_CASES(slab_test_suite, slab_test_cases);
     FILL_CASES(string_test_suite, string_test_cases);
     FILL_CASES(vmm_test_suite, vmm_test_cases);
+    FILL_CASES(sched_test_suite, sched_test_cases);
 
     /* Set suite names */
     pmm_test_suite.name    = "pmm";
     slab_test_suite.name   = "slab";
     string_test_suite.name = "string";
     vmm_test_suite.name    = "vmm";
+    sched_test_suite.name  = "sched";
 
     kunit_register_suite(&pmm_test_suite);
     kunit_register_suite(&slab_test_suite);
     kunit_register_suite(&string_test_suite);
     kunit_register_suite(&vmm_test_suite);
+    kunit_register_suite(&sched_test_suite);
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();

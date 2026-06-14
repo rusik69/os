@@ -54,6 +54,23 @@ void panic_set_timeout(int seconds);
  */
 uint64_t panic_get_tsc_freq(void);
 
+/*
+ * Return a canonical panic cause string given a numeric cause code.
+ * Use this to standardise panic messages across the kernel.
+ * Cause codes:
+ *   0 = NULL pointer dereference
+ *   1 = Out of memory
+ *   2 = Kernel BUG
+ *   3 = Unexpected trap
+ *   4 = Stack overflow
+ *   5 = Scheduler failure
+ *   6 = Filesystem error
+ *   7 = Kernel page fault
+ *   8 = Lockup / deadlock
+ *   9 = RCU stall
+ */
+const char *panic_cause_str(int cause);
+
 /* Helper macros */
 #define BUG_ON(cond) do { \
     if (__builtin_expect(!!(cond), 0)) { \

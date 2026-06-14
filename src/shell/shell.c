@@ -2411,6 +2411,12 @@ void shell_exec_cmd(const char *cmd, const char *args) {
         return;
     }
 
+    /* --version: show kernel version for any command */
+    if (args && strcmp(args, "--version") == 0) {
+        kprintf("Hermes OS Kernel version " KVERSION " (%s %s)\n", __DATE__, __TIME__);
+        return;
+    }
+
     shell_cmd_fn fn = shell_cmd_lookup_fn(cmd);
     if (fn) {
         fn(args);

@@ -808,7 +808,7 @@ all: $(BUILDDIR)/disk.img
 
 # ── Phony targets ─────────────────────────────────────────────────────
 
-.PHONY: all run debug clean deps test test-kernel test-serial test-clean clean-all \
+.PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
         modules modules_install analyze
 
@@ -1148,6 +1148,70 @@ install: $(INSTALL_ISO)
 # ── Clean ISO artifacts ──────────────────────────────────────────────
 install-clean:
 	rm -rf $(INSTALL_ISO) $(ISO_STAGING)
+
+# ── New run targets (SMP, GDB, UEFI) ──────────────────────────────────
+
+run-smp: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	qemu-system-x86_64 -cpu max -smp 4 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+		-display cocoa -k en-us \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device e1000,netdev=net0 ; \
+	stty sane
+
+run-gdb: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std -s -S \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device e1000,netdev=net0
+
+run-uefi: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+		-display cocoa -k en-us \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device e1000,netdev=net0 ; \
+	stty sane
+
+# ── Help target: list all major targets ──────────────────────────────
+
+help:
+	@echo "=== Hermes OS Build System ==="
+	@echo ""
+	@echo "Build targets:"
+	@echo "  all              Build kernel + disk image (default)"
+	@echo "  clean            Remove build artifacts"
+	@echo "  clean-all        Remove build artifacts + clear ccache"
+	@echo "  modules          Build loadable kernel modules"
+	@echo "  modules_install  Stage modules for installation"
+	@echo ""
+	@echo "Run targets:"
+	@echo "  run              Boot in QEMU (serial stdio, e1000 NIC)"
+	@echo "  run-smp          Boot QEMU with SMP (4 CPUs, -cpu max)"
+	@echo "  run-gdb          Boot QEMU with GDB stub (-s -S)"
+	@echo "  run-uefi         Boot QEMU with UEFI firmware (OVMF)"
+	@echo "  run-virtio       Boot QEMU with virtio-net"
+	@echo "  debug            Boot QEMU with GDB stub (alias for run-gdb)"
+	@echo ""
+	@echo "Test targets:"
+	@echo "  test             Build test kernel + run all tests in QEMU"
+	@echo "  test-kernel      Build test kernel only"
+	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
+	@echo "  unit-test        Run host-side unit tests"
+	@echo "  e2e              Run E2E QEMU smoke tests"
+	@echo "  e2e-smoke        Fast CI E2E subset"
+	@echo "  doom-test        Verify DOOM framebuffer renders"
+	@echo ""
+	@echo "Analysis targets:"
+	@echo "  analyze          Static analysis with GCC -fanalyzer"
+	@echo "  lint             Run cppcheck + clang-tidy"
+	@echo "  format           Format all C sources with clang-format"
+	@echo "  format-check     Check format compliance"
+	@echo ""
+	@echo "Info targets:"
+	@echo "  build-info       Show kernel size, object count, LOC"
+	@echo "  count            Show source code statistics"
+	@echo "  ccache-stats     Show ccache hit rate"
+	@echo ""
+	@echo "Install target:"
+	@echo "  install          Build bootable ISO (or write to USB)"
 
 # ── Clean targets ─────────────────────────────────────────────────────
 

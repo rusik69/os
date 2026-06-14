@@ -9,6 +9,7 @@ __pycache__/
 build/
 build_check/
 build_test/
+build_analyze/
 tests/host_libc/test_libc
 tests/host_libc/test_bitops_crc_sha
 tests/unit/test_memory

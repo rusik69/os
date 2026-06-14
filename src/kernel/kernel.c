@@ -1165,6 +1165,34 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("[OK] Processes created\n");
 #endif
 
+    /* ── Boot version string ────────────────────────────────────────
+     * Display the kernel version and build date after all subsystems
+     * are initialised, just before the final hardening steps. */
+    kprintf("\n============================================\n");
+    kprintf("  Hermes OS Kernel — Version " KVERSION "\n");
+    kprintf("  Built: " __DATE__ " " __TIME__ "\n");
+    kprintf("  SMP: %s, Preempt: %s\n",
+#ifdef CONFIG_SMP
+            "enabled",
+#else
+            "disabled",
+#endif
+#ifdef CONFIG_PREEMPT
+            "full"
+#elif defined(CONFIG_PREEMPT_VOLUNTARY)
+            "voluntary"
+#else
+            "none (cooperative)"
+#endif
+           );
+    {
+        uint64_t total_mb = (uint64_t)pmm_get_total_frames() * 4096ULL / (1024ULL * 1024ULL);
+        uint64_t free_mb = (uint64_t)(pmm_get_total_frames() - pmm_get_used_frames()) * 4096ULL / (1024ULL * 1024ULL);
+        kprintf("  Memory: %llu MB total, %llu MB free\n",
+                (unsigned long long)total_mb, (unsigned long long)free_mb);
+    }
+    kprintf("============================================\n\n");
+
     /* ── Transition page poisoning from EARLY to LATE stage ─────────
      * All kernel subsystems are now initialized.  Switch to LATE-stage
      * poison patterns and verify that EARLY-stage poisoned regions

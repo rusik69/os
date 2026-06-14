@@ -1,4 +1,5 @@
 #include "assert.h"
+#include "printf.h"
 
 /*
  * __assert_fail — called by the assert() macro when the expression is false.

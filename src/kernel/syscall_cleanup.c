@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * syscall_cleanup.c — Kernel stack zeroing on return to userspace
  *
@@ -19,6 +20,12 @@
  * saved register frame, leaving enough headroom for this function's
  * own stack frame so we don't accidentally clobber our own return
  * path.
+ *
+ * ERROR HANDLING: All pointer dereferences are validated before use.
+ * Null process pointers, out-of-bounds stack ranges, and invalid
+ * entry_rsp values are silently ignored to avoid recursive panics
+ * during syscall exit (the stack zeroing is best-effort; failing
+ * to zero is acceptable over crashing the kernel).
  */
 
 #define KERNEL_INTERNAL
@@ -31,19 +38,37 @@
 void zero_kernel_stack_uapi(uint64_t entry_rsp)
 {
     struct process *proc = process_get_current();
+
+    /* Error: null process pointer — cannot proceed safely */
     if (!proc)
+        return;
+
+    /* Error: uninitialized kernel stack pointers */
+    if (proc->kernel_stack == 0 || proc->stack_top == 0)
+        return;
+
+    /* Error: invalid stack pointer value (wrapped or zero) */
+    if (entry_rsp == 0)
         return;
 
     uint64_t stack_base = proc->kernel_stack;
     uint64_t stack_top  = proc->stack_top;
 
+    /* Error: corrupted stack boundaries (base above top, or inverted) */
+    if (stack_base >= stack_top)
+        return;
+
     /* Sanity checks: entry_rsp must be within the kernel stack bounds
      * and above (higher address than) the stack base. */
-    if (entry_rsp == 0 ||
-        entry_rsp <= stack_base ||
+    if (entry_rsp <= stack_base ||
         entry_rsp >= stack_top + 4096) {
         return;
     }
+
+    /* Validate that stack base is in a reasonable range (>= 1MB phys)
+     * to catch obviously corrupted pointers */
+    if (stack_base < 0x100000ULL || stack_top > 0xFFFF900000000000ULL)
+        return;
 
     /*
      * Zero everything from the stack base up to entry_rsp, minus a
@@ -65,7 +90,7 @@ void zero_kernel_stack_uapi(uint64_t entry_rsp)
     zero_end -= STACK_ZERO_SAFE_MARGIN;
 
     size_t count = (size_t)(zero_end - stack_base);
-    if (count > 0) {
+    if (count > 0 && count <= 8192) {  /* sanity cap: max 8KB per zeroing */
         /* Use volatile store to prevent the compiler from optimising
          * away the zeroing as "dead store". */
         volatile char *p = (volatile char *)stack_base;

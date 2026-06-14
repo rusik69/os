@@ -1,4 +1,5 @@
 #include "errno_ext.h"
+#include "printf.h"
 
 /* Global errno storage */
 int __errno_value = 0;

@@ -240,27 +240,68 @@ int do_getrandom(void *buf, size_t count, unsigned int flags)
  * prctl
  * ==================================================================== */
 
+/* ── prctl operations ──────────────────────────────────────────────── */
+#ifndef PR_SET_NAME
 #define PR_SET_NAME            15
+#endif
+#ifndef PR_GET_NAME
 #define PR_GET_NAME            16
+#endif
+#ifndef PR_SET_PDEATHSIG
 #define PR_SET_PDEATHSIG       1
+#endif
+#ifndef PR_GET_PDEATHSIG
 #define PR_GET_PDEATHSIG       2
+#endif
+#ifndef PR_SET_NO_NEW_PRIVS
 #define PR_SET_NO_NEW_PRIVS    38
+#endif
+#ifndef PR_GET_NO_NEW_PRIVS
 #define PR_GET_NO_NEW_PRIVS    39
+#endif
+#ifndef PR_SET_SECCOMP
 #define PR_SET_SECCOMP         22
+#endif
+#ifndef PR_GET_SECCOMP
 #define PR_GET_SECCOMP         21
+#endif
+#ifndef PR_SET_SECUREBITS
 #define PR_SET_SECUREBITS      28
+#endif
+#ifndef PR_GET_SECUREBITS
 #define PR_GET_SECUREBITS      27
+#endif
+#ifndef PR_SET_DUMPABLE
 #define PR_SET_DUMPABLE        4
+#endif
+#ifndef PR_GET_DUMPABLE
 #define PR_GET_DUMPABLE        3
+#endif
 
+#ifndef SECBIT_KEEP_CAPS
 #define SECBIT_KEEP_CAPS           1
+#endif
+#ifndef SECBIT_KEEP_CAPS_LOCKED
 #define SECBIT_KEEP_CAPS_LOCKED    2
+#endif
+#ifndef SECBIT_NO_SETUID_FIXUP
 #define SECBIT_NO_SETUID_FIXUP     4
+#endif
+#ifndef SECBIT_NO_SETUID_FIXUP_LOCKED
 #define SECBIT_NO_SETUID_FIXUP_LOCKED 8
+#endif
+#ifndef SECBIT_NOROOT
 #define SECBIT_NOROOT             16
+#endif
+#ifndef SECBIT_NOROOT_LOCKED
 #define SECBIT_NOROOT_LOCKED      32
+#endif
+#ifndef SECBIT_ALLOWED_MASK
 #define SECBIT_ALLOWED_MASK       (SECBIT_KEEP_CAPS | SECBIT_NO_SETUID_FIXUP | SECBIT_NOROOT)
+#endif
+#ifndef SECBIT_LOCKED_MASK
 #define SECBIT_LOCKED_MASK        (SECBIT_KEEP_CAPS_LOCKED | SECBIT_NO_SETUID_FIXUP_LOCKED | SECBIT_NOROOT_LOCKED)
+#endif
 
 int do_prctl(int option, unsigned long arg2, unsigned long arg3,
              unsigned long arg4, unsigned long arg5)
@@ -329,8 +370,12 @@ int do_prctl(int option, unsigned long arg2, unsigned long arg3,
  * utimensat / futimens
  * ==================================================================== */
 
+#ifndef UTIME_NOW
 #define UTIME_NOW   ((1L << 30) - 1)
+#endif
+#ifndef UTIME_OMIT
 #define UTIME_OMIT  ((1L << 30) - 2)
+#endif
 
 int do_utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags)
 {
