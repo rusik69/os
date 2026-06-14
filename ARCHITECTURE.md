@@ -385,3 +385,420 @@ make clean        — remove build artifacts
 ```
 
 The linker script (`linker.ld`) defines the memory layout with proper section ordering, alignment, and high-half VMA assignment.
+
+## Network Stack Architecture
+
+The network stack is a layered in-kernel TCP/IP implementation with a BSD socket API, netfilter packet filtering, and support for multiple NIC drivers. It spans `src/net/`, `src/drivers/` (NIC drivers), and `src/include/` (net headers).
+
+```
+Application Layer
+     ↕  sys_socket/sys_send/sys_recv/etc.
+┌─────────────────────────────────────────────┐
+│  Socket Layer  (src/net/socket.c)           │
+│  File descriptor integration, protocol      │
+│  dispatch (AF_INET, AF_UNIX, AF_PACKET,     │
+│  AF_NETLINK, AF_CAN)                        │
+├─────────────────────────────────────────────┤
+│  Transport Layer                            │
+│  ┌───────────────────────────────────────┐  │
+│  │ TCP (src/net/net_tcp.c)               │  │
+│  │   Full state machine, congestion      │  │
+│  │   control (Reno, CUBIC, BBR), RACK    │  │
+│  │   loss detection, TFO, SYN cookies    │  │
+│  └───────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────┐  │
+│  │ UDP (src/net/net_udp.c)               │  │
+│  │   Connected sockets, multicast,       │  │
+│  │   broadcast, checksums                │  │
+│  └───────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────┐  │
+│  │ SCTP / DCCP / MPTCP                  │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Network Layer (src/net/net.c)              │
+│  ┌───────────────────────────────────────┐  │
+│  │ IPv4: routing table, fragmentation,   │  │
+│  │       reassembly, ICMP, IGMP          │  │
+│  │ IPv6: SLAAC, NDP, ICMPv6              │  │
+│  │ ARP:  cache with timeout/retry,       │  │
+│  │       pending resolution queue        │  │
+│  │ Tunnels: IPIP, GRE, VXLAN             │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Netfilter (src/net/netfilter.c)            │
+│  ┌───────────────────────────────────────┐  │
+│  │ Five hook points (PREROUTING, LOCAL_IN,│  │
+│  │ FORWARD, LOCAL_OUT, POSTROUTING)      │  │
+│  │ Packet filtering rules (ip_tables)    │  │
+│  │ Connection tracking (conntrack)       │  │
+│  │ NAT (MASQUERADE, DNAT, SNAT)         │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Driver Layer (src/net/netdevice.c,         │
+│               src/drivers/e1000.c, ...)     │
+│  ┌───────────────────────────────────────┐  │
+│  │ NIC drivers → netdevice registration  │  │
+│  │ e1000, virtio-net, loopback, TUN/TAP  │  │
+│  │ Multi-queue RSS, interrupt moderation │  │
+│  │ RPS/RFS: receive steering by flow hash│  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Link Layer                                 │
+│  Ethernet framing, VLAN 802.1Q, bridging    │
+│  (STP, IGMP snooping), LACP, LLDP, MACsec  │
+└─────────────────────────────────────────────┘
+```
+
+### Driver Layer
+
+**Files:** `src/net/netdevice.c`, `src/drivers/e1000.c`, `src/drivers/virtio_net.c`, `src/include/netdevice.h`
+
+The netdevice layer provides a registration-based abstraction over physical and virtual NICs. Each NIC driver fills in a `struct net_device` with a name, MAC address, and transmit/receive callbacks, then calls `netif_register()` to make the interface available.
+
+```c
+struct net_device {
+    char          name[NETDEV_NAME_MAX];  /* e.g. "eth0", "virtio0" */
+    uint8_t       mac[6];                /* MAC address */
+    int           ifindex;               /* assigned by netif_register */
+    netdev_tx_fn  transmit;              /* send an Ethernet frame */
+    netdev_rx_fn  receive;               /* poll for received frame */
+    int           mtu;                   /* maximum transmission unit */
+    int           flags;                 /* IFF_UP, etc. */
+    void         *priv;                  /* driver-private data */
+};
+```
+
+Key operations: `netif_register`, `netif_unregister`, `netif_send`, `netif_recv`, `netif_get`. The core networking code (`net_link_send`/`net_link_recv` in `net.c`) prefers the netdevice layer if interfaces are registered, falling back to direct driver calls for legacy compatibility.
+
+Supported NICs:
+- **e1000** — Intel PRO/1000, QEMU `-device e1000` (MSI-X, multi-queue RSS, interrupt moderation)
+- **virtio-net** — Paravirtualized virtio network device
+- **loopback** — Internal loopback interface
+- **TUN/TAP** — Userspace packet injection (`src/net/tun.c`)
+- **veth** — Virtual Ethernet pair for network namespaces (`src/net/veth.c`)
+
+Receive-side scaling: RPS (Receive Packet Steering) distributes packets across CPUs by flow hash (`src/net/rps.c`). The bridge (`src/net/bridge.c`) supports STP (Spanning Tree Protocol) and IGMP snooping for multicast filtering.
+
+### Network Layer
+
+**Files:** `src/net/net.c`, `src/net/ipv6.c`, `src/include/net_internal.h`
+
+The IP layer is the heart of `net.c`, handling:
+
+- **IPv4 routing** — A static routing table (`struct rt_entry rt_table[]`) with up to `RT_MAX_ENTRIES` entries. Each entry specifies destination network, gateway, netmask, and interface index. Forwarding is controlled by `net_ip_forwarding` (`/proc/sys/net/ipv4/ip_forward`).
+- **IP fragmentation/reassembly** — Outgoing large packets are fragmented; incoming fragments are reassembled in a timeout-limited buffer.
+- **ICMP** — Echo request/reply, destination unreachable, time exceeded, parameter problem.
+- **IGMP** — Multicast group membership for IP multicast (`src/net/igmp.c`).
+- **IPv6** — Separate source (`src/net/ipv6.c`) with SLAAC (Stateless Address Autoconfiguration) via Router Advertisements, NDP (Neighbor Discovery Protocol), and ICMPv6.
+
+**ARP** (`src/include/net_internal.h`):
+- Cache with 16 entries, 300-second timeout, automatic probe retry (3 attempts at 1-second intervals).
+- Pending resolution queue: up to 8 Ethernet frames buffered while waiting for MAC resolution.
+- ARP announcement on link up, gratuitous ARP for address changes.
+
+**Tunnels:**
+- IPIP (`src/net/ipip.c`) — IP-in-IP encapsulation (RFC 2003)
+- GRE (`src/net/gre.c`) — Generic Routing Encapsulation (RFC 2784)
+- VXLAN (`src/net/vxlan.c`) — Virtual eXtensible LAN (RFC 7348)
+
+### Transport Layer
+
+**TCP** (`src/net/net_tcp.c`):
+
+Full state machine with 11 states:
+
+```
+CLOSED → LISTEN → SYN_SENT → SYN_RECEIVED → ESTABLISHED
+                                                ↓
+                    FIN_WAIT → FIN_WAIT_2 → CLOSING → TIME_WAIT → CLOSED
+                    CLOSE_WAIT → LAST_ACK
+```
+
+- **Connection table:** `struct tcp_conn tcp_conns[MAX_TCP_CONNS]` (16 entries), protected by `tcp_lock`.
+- **Congestion control:** Reno (AIMD), CUBIC (RFC 8312), BBR (BBRv1/v2, `src/net/tcp_bbr.c` + `src/net/tcp_bbr2.c`), and legacy variants (BIC, Vegas, Westwood, Hybla, Illinois).
+- **Loss detection:** RACK (Recent ACKnowledgment) for faster loss recovery, plus classic dupACK-based fast retransmit. Proportional Rate Reduction (PRR, RFC 6937) controls data sending during recovery.
+- **Features:** TCP Fast Open (TFO, RFC 7413), SYN cookies for SYN flood defense, selective ACK (SACK), Nagle's algorithm, delayed ACK, keepalive probes, TCP MD5 signatures, window scaling.
+- **Listeners:** `struct tcp_listener net_listeners[]` supports callback-based and accept-queue-based models.
+
+**UDP** (`src/net/net_udp.c`):
+- Connection table: `struct udp_binding net_udp_bindings[]` with up to `MAX_UDP_BINDINGS`.
+- Connected sockets (`connect()` on UDP) track remote address for `send()`/`recv()`.
+- Broadcast and multicast delivery.
+- UDP checksum verification on receive, optional checksum generation on transmit.
+
+**Other transport protocols:**
+- SCTP (`src/net/sctp.c`), DCCP (`src/net/dccp.c`), MPTCP — multi-path TCP (`src/net/mptcp.c`)
+
+### Socket Layer
+
+**Files:** `src/net/socket.c`, `src/net/socket_ext.c`, `src/include/socket.h`
+
+The socket layer implements the BSD socket API and integrates with the file descriptor system:
+
+```
+Socket table: struct socket socket_table[SOCK_MAX] (max 32)
+
+Socket → fd mapping: fd = slot + 100 (offset from regular file descriptors)
+```
+
+Supported domain/protocol families:
+- **AF_INET** — IPv4 TCP/UDP (dispatches to `net_tcp.c`/`net_udp.c`)
+- **AF_INET6** — IPv6 (autoloads ipv6 module via `request_module`)
+- **AF_UNIX** — Unix domain sockets (`src/net/af_unix.c`)
+- **AF_PACKET** — Raw packet sockets (`src/net/af_packet.c`)
+- **AF_NETLINK** — Kernel-userspace communication (`src/net/netlink.c`)
+- **AF_CAN** — SocketCAN protocol (`src/net/can.c`)
+
+Socket operations: `socket()`, `bind()`, `connect()`, `listen()`, `accept()`, `send()`, `recv()`, `sendto()`, `recvfrom()`, `poll()`/`select()`, `getsockopt()`/`setsockopt()`, `close()`. Socket states: CREATED, BOUND, LISTENING, CONNECTING, CONNECTED, CLOSING, CLOSED.
+
+The socket layer also supports `/proc/net/tcp`, `/proc/net/udp`, and `/proc/net/sockstat` via procfs integration.
+
+### Netfilter
+
+**Files:** `src/net/netfilter.c`, `src/net/nf_tables.c`, `src/net/conntrack.c`, `src/include/netfilter.h`
+
+A Linux-compatible packet filtering framework with five hook points:
+
+| Hook | Point | Direction |
+|------|-------|-----------|
+| `NF_INET_PRE_ROUTING` | Right after packet reception | Incoming |
+| `NF_INET_LOCAL_IN` | Before delivery to local sockets | Incoming |
+| `NF_INET_FORWARD` | Before forwarding to another interface | Forwarded |
+| `NF_INET_LOCAL_OUT` | After local socket output | Outgoing |
+| `NF_INET_POST_ROUTING` | Just before transmitting on the wire | Outgoing |
+
+Each hook point maintains a priority-sorted linked list of registered handler functions. Handlers return `NF_ACCEPT`, `NF_DROP`, or `NF_REJECT`.
+
+**Packet filtering:** Up to 64 static rules matching on src/dst IP, src/dst port, and protocol. Rules can be added/removed via sysctl and the nf_tables interface (`src/net/nf_tables.c`).
+
+**Connection tracking** (`src/net/conntrack.c`):
+- Tracks up to 256 concurrent connections (`NF_CONNTRACK_MAX`).
+- Per-entry state machine: TCP (SYN_SENT → ESTABLISHED → FIN_WAIT → ...), UDP (UNREPLIED → ASSURED), ICMP (REQUEST → REPLY).
+- Tuple-based lookup (src_ip, dst_ip, src_port, dst_port, protocol).
+- Timeout management with protocol-specific default timeouts.
+- Helper modules for FTP, SIP, etc. (`src/net/conntrack_helpers.c`).
+
+**NAT:** Up to 16 NAT rules supporting SNAT (source NAT for MASQUERADE) and DNAT (destination NAT for port forwarding). Works in conjunction with conntrack for connection tracking.
+
+## Filesystem Stack Architecture
+
+The filesystem stack implements a Linux-compatible VFS layer with multiple on-disk, in-memory, and pseudo-filesystems. It spans `src/fs/`, `src/kernel/vfs.c`, and `src/include/` (VFS, page cache, bufcache headers).
+
+```
+System Calls (open/read/write/close/stat/mount/umount)
+     ↕
+┌─────────────────────────────────────────────┐
+│  VFS Layer                                  │
+│  ┌───────────────────────────────────────┐  │
+│  │ vnode operations (vfs_ops)            │  │
+│  │   → open, read, write, close, seek    │  │
+│  │   → stat, readdir, ioctl, truncate    │  │
+│  │ Path resolution (dcache + walk)       │  │
+│  │ Dentry cache (LRU, shrink under OOM)  │  │
+│  │ File locks (POSIX advisory)           │  │
+│  │ Inotify/fanotify, xattr, POSIX ACLs   │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Mount System                               │
+│  ┌───────────────────────────────────────┐  │
+│  │ Mount table (global + per-namespace)  │  │
+│  │ Propagation types: SHARED/SLAVE/PRIVATE│  │
+│  │ Bind mounts, recursive bind mounts    │  │
+│  │ Mount namespace (CLONE_NEWNS)         │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Supported Filesystems                      │
+│  ┌───────────────────────────────────────┐  │
+│  │ Disk-backed: FAT32, ext2, iso9660,    │  │
+│  │              squashfs, cramfs, minix,  │  │
+│  │              ufs, sysv, adfs, bfs,     │  │
+│  │              hfs, erofs, f2fs, jffs2,  │  │
+│  │              nilfs2, nfs               │  │
+│  │ In-memory:   tmpfs, ramfs, tarfs,     │  │
+│  │              cpio, romfs               │  │
+│  │ Pseudo:      procfs, sysfs, devfs,    │  │
+│  │              debugfs, overlay, FUSE    │  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Block Cache & Buffer Cache                 │
+│  ┌───────────────────────────────────────┐  │
+│  │ Page cache (src/fs/page_cache.c)      │  │
+│  │   LRU eviction, dirty writeback,      │  │
+│  │   readahead, working-set estimation   │  │
+│  │ Buffer cache (src/fs/bufcache.c)      │  │
+│  │   64-entry LRU sector cache per dev   │  │
+│  │   Dirty tracking, write-back on evict │  │
+│  │ Block I/O scheduler (src/fs/iosched.c)│  │
+│  └───────────────────────────────────────┘  │
+├─────────────────────────────────────────────┤
+│  Block Device Layer                         │
+│  ATA, AHCI, NVMe, virtio-blk, loop, nbd,   │
+│  ramdisk, MD RAID, device-mapper, bcache    │
+└─────────────────────────────────────────────┘
+```
+
+### VFS Layer
+
+**Files:** `src/kernel/vfs.c`, `src/include/vfs.h`, `src/fs/vfs_enhance.c`
+
+The VFS (Virtual Filesystem) layer provides a uniform interface over all filesystem implementations. Key abstractions:
+
+- **vnode** (`struct fs_inode`) — per-file metadata: inode number, size, type, permissions, link count, timestamps, block pointers.
+- **superblock** (`struct fs_super`) — per-filesystem metadata: total blocks, file and block limits, bitmap, root inode.
+- **mount entry** (`struct vfs_mount`) — per-mount binding: mountpoint path, filesystem ops table (`struct vfs_ops`), private data, flags (read-only, bind mount, encryption).
+
+Operation dispatching:
+
+```
+open(path)   → vfs_open()   → resolve dentry → mount lookup → mount->ops->open()
+read(fd)     → vfs_read()   → file → mount → mount->ops->read()
+write(fd)    → vfs_write()  → file → mount → mount->ops->write()
+close(fd)    → vfs_close()  → file → mount → mount->ops->close()
+stat(path)   → vfs_stat()   → resolve dentry → mount->ops->stat()
+mount(dev,   → vfs_mount()  → lookup fs type → create superblock →
+  mp, type)                    install in mount table
+```
+
+**Path resolution** (`dcache_lookup`/`dcache_add` in `src/kernel/vfs.c`):
+- Fixed-size dentry cache (`DCACHE_SIZE` entries) keyed by absolute path.
+- LRU eviction on insert; `dcache_shrink()` called from OOM path.
+- `mnt_ns_resolve()` matches the longest prefix against the mount table to find the target filesystem.
+
+**Additional VFS features:**
+- **File locks** (`src/drivers/file_lock.c`) — POSIX advisory locks (F_RDLCK, F_WRLCK, F_UNLCK).
+- **Inotify/fanotify** (`src/kernel/fsnotify.c`) — filesystem event notification.
+- **xattr** (`src/fs/xattr.c`) — extended attributes for security labels and user metadata.
+- **POSIX ACLs** (`src/fs/posix_acl.c`) — fine-grained access control with ACL_USER, ACL_GROUP, ACL_MASK, ACL_OTHER.
+- **Quotas** (`src/fs/quota.c`) — per-user block/inode limits.
+
+### Supported Filesystems
+
+| FS | Type | Read/Write | Key Features |
+|----|------|-----------|--------------|
+| **tmpfs** | In-memory | R/W | Dynamic sizing, symlinks, device nodes, O_TMPFILE |
+| **ramfs** | In-memory | R/W | Simple RAM-backed FS without size limit |
+| **fat32** | Disk | R/W | FAT12/16/32, LFN read+write, volume labels |
+| **ext2** | Disk | R/W | Sparse files, large files, symlinks, fast symlinks, HTree |
+| **iso9660** | Disk | RO | Rock Ridge (POSIX), Joliet (Unicode), multi-session |
+| **squashfs** | Disk | RO | Compressed read-only filesystem |
+| **cramfs** | Disk | RO | Compressed ROM filesystem |
+| **tarfs** | Archive | RO | Embedded initramfs, TAR archive mount |
+| **cpio** | Archive | RO | cpio archive mount |
+| **romfs** | Archive | RO | Simple read-only filesystem |
+| **procfs** | Pseudo | RO | `/proc/{uptime,meminfo,cpuinfo,stat,self,interrupts,...}` |
+| **sysfs** | Pseudo | RO | kobject tree, kernel parameters, device hierarchy |
+| **devfs** | Pseudo | R/W | Dynamic device node creation, hotplug |
+| **debugfs** | Pseudo | R/W | Kernel debug data, register dumps |
+| **overlay** | Union | R/W | Union mount (upper + lower dirs, whiteouts, copy-up) |
+| **FUSE** | User | R/W | Userspace filesystem via FUSE protocol |
+| **minix** | Disk | R/W | Minix filesystem (v1/v2/v3) |
+| **ufs** | Disk | R/W | Unix File System (FFS) |
+| **sysv** | Disk | R/W | System V filesystem |
+| **hfs** | Disk | R/W | Hierarchical File System (Mac) |
+| **nfs** | Network | R/W | Network Filesystem (client) |
+| **erofs** | Disk | RO | Enhanced Read-Only Filesystem |
+| **f2fs** | Disk | R/W | Flash-Friendly Filesystem |
+| **jffs2** | Flash | R/W | Journaling Flash File System v2 |
+| **nilfs2** | Disk | R/W | Log-structured filesystem |
+
+**On-disk filesystem source files:**
+
+| FS | Source | Notes |
+|----|--------|-------|
+| FAT32 | `src/fs/fat32.c`, `src/fs/vfat_shortname.c` | VFAT long filename support |
+| ext2 | `src/fs/ext2.c` | HTree directory indexing |
+| iso9660 | `src/fs/iso9660.c` | Rock Ridge + Joliet |
+| tmpfs | `src/fs/tmpfs.c` | Dynamic memory-backed |
+| procfs | `src/fs/procfs.c` | Process info, system stats |
+| sysfs | `src/fs/sysfs.c` | Kernel object tree |
+| devfs | `src/fs/devfs.c` | Device node management |
+| tarfs | `src/fs/tarfs.c` | TAR archive support |
+| cpio | `src/fs/cpio.c`, `src/fs/initramfs.c` | Initramfs support |
+| romfs | `src/fs/romfs.c` | Minimal ROM FS |
+| squashfs | `src/fs/squashfs.c` | Compressed FS |
+| overlay | `src/kernel/overlay.c`, `src/fs/overlay_enhance.c` | Union mounts |
+| FUSE | `src/fs/fuse.c` | Userspace filesystem |
+
+### Block Cache and Buffer Cache
+
+The kernel uses a two-tier caching strategy for block-level I/O:
+
+**Page Cache** (`src/fs/page_cache.c`, `src/include/page_cache.h`):
+
+Generic file data cache that caches whole pages (4 KB) keyed by `(inode, block_index)`. 1024 entries managed with LRU eviction.
+
+```
+page_cache_entry {
+    uint64_t  ino;          /* inode number */
+    uint64_t  block;        /* block index within file */
+    uint64_t  phys_addr;    /* physical address of cached page */
+    void     *data;         /* kernel virtual address */
+    int       flags;        /* PAGE_CACHE_DIRTY, etc. */
+    uint64_t  last_access;  /* LRU timestamp */
+    int       prefetched;   /* loaded by readahead, not yet accessed */
+}
+```
+
+Key features:
+- **Dirty writeback** — configurable background ratio (default 10%) and throttle ratio (50%). Pages are flushed to disk when thresholds are crossed, or on explicit `sync()`/`fsync()`.
+- **Readahead** — window-based prefetching (`READAHEAD_WINDOW_MIN`/`MAX`, configurable). Adaptive window sizing based on access pattern. Per-file readahead trackers (`src/fs/page_cache.c`).
+- **Working-set estimation** — tracks active cache entries via exponential decay on access counters.
+- **Cache statistics** — hits, misses, evictions, dirty forced writes exposed via `/proc/cachestat`.
+
+**Buffer Cache** (`src/fs/bufcache.c`):
+
+Lower-level sector cache (512 bytes per entry) used primarily by FAT32 and other block-level users. 64 entries with LRU eviction, hash-bucket lookup, and dirty tracking.
+
+```
+bc_entry {
+    uint64_t  lba;          /* sector address */
+    uint8_t   dev_id;       /* block device id */
+    uint8_t   valid;        /* data valid */
+    uint8_t   dirty;        /* modified, needs write-back */
+    uint8_t   data[512];    /* cached sector data */
+}
+```
+
+- **LRU eviction** with a doubly-linked list. Access frequency counter for working-set estimation.
+- **Dirty write-back** on eviction — guaranteed before a dirty entry is reused.
+- **Stats:** hits, misses, writes exposed for diagnostics.
+
+**Block I/O Scheduler** (`src/fs/iosched.c`):
+Implements standard I/O scheduling policies (deadline, CFQ-like) for merging and reordering block requests.
+
+**Initramfs** (`src/fs/initramfs.c`):
+Embedded initramfs on disk image, built from cpio/tar archives. Mounted early at boot before the root filesystem is available.
+
+### Mount Table and Namespace Support
+
+**Global mount table:** Defined as `struct vfs_mount mounts[VFS_MAX_MOUNTS]` (16 entries). Each mount entry records:
+- Mountpoint path (e.g., `/mnt/usb`)
+- `struct vfs_ops *ops` — filesystem-specific operation table
+- `void *priv` — per-filesystem private data (e.g., FAT32 device state)
+- Flags (`MS_RDONLY`, `MS_BIND`, encryption state)
+- Bind mount source path (for bind mounts)
+- Journaling state, encryption key
+
+**Mount namespace** (`src/kernel/mnt_namespace.c`, `src/include/mnt_namespace.h`):
+
+Per-process mount namespace with copy-on-clone semantics:
+
+```
+struct mnt_namespace {
+    int              refcount;
+    struct vfs_mount mounts[VFS_MAX_MOUNTS]; /* per-ns mount table */
+    int              num_mounts;
+};
+```
+
+- **Root namespace** — wraps the global mount table. Created once during VFS init.
+- **CLONE_NEWNS** — creates a new namespace with a deep copy of the parent's mount table. Subsequent `mount()`/`umount()` operations affect only that namespace.
+- **Reference counted** — freed when the last process using it exits or calls `unshare()`.
+- **Propagation types** — mounts can be SHARED (events propagate to peers), SLAVE (receive events from master), or PRIVATE (fully isolated). Implemented in `src/kernel/fs_mount_prop.c`.
+
+**Mount API:**
+- `vfs_mount(mountpoint, ops, priv, flags)` — install a new mount in the current namespace.
+- `vfs_umount(mountpoint)` — remove a mount.
+- `mnt_ns_resolve(ns, path)` — find the best-matching mount for a given path (longest prefix match).
+- `mnt_ns_list_mounts(ns, buffer)` — enumerate mounts (for `/proc/mounts`).
+- `mnt_ns_sync(ns)` — flush all dirty buffers on mounted filesystems.

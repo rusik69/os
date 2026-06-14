@@ -854,7 +854,7 @@ all: $(BUILDDIR)/disk.img
 # ── Phony targets ─────────────────────────────────────────────────────
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
-        check check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
+        check check-full check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
         modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags
 
 # ── Boundary check on app sources ─────────────────────────────────────
@@ -1073,9 +1073,46 @@ check: $(BUILDDIR)/disk.img unit-test
 	@echo "=== Build-time tests passed, running E2E smoke test ==="
 	$(MAKE) e2e-smoke
 
-# Clean the check build artifacts
+# ── check-full: build with ALL strict warning flags ───────────────
+CHECK_FULL_CFLAGS = $(CFLAGS) -Werror -Wpedantic -Wconversion -Wshadow \
+                    -Wformat=2 -Wundef -Wcast-align -Wstrict-prototypes \
+                    -Wold-style-definition
+BUILDDIR_CHECK_FULL = build_check_full
+
+C_CHECK_FULL_SRCS  = $(C_SRCS) $(CMD_SRCS) $(COMPILER_SRCS) $(GUI_SRCS) $(DOOM_SRCS) src/test/test.c
+ASM_CHECK_FULL_SRCS = $(ASM_SRCS)
+
+C_CHECK_FULL_OBJS  = $(patsubst src/%.c,$(BUILDDIR_CHECK_FULL)/%.o,$(C_CHECK_FULL_SRCS))
+ASM_CHECK_FULL_OBJS = $(patsubst src/%.asm,$(BUILDDIR_CHECK_FULL)/%.o,$(ASM_CHECK_FULL_SRCS))
+CHECK_FULL_OBJS    = $(ASM_CHECK_FULL_OBJS) $(C_CHECK_FULL_OBJS)
+
+$(BUILDDIR_CHECK_FULL)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CHECK_FULL_CFLAGS) -c $< -o $@
+
+$(BUILDDIR_CHECK_FULL)/%.o: src/%.asm
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILDDIR_CHECK_FULL)/kernel.elf: check-app-boundary $(CHECK_FULL_OBJS)
+	@mkdir -p $(BUILDDIR_CHECK_FULL)
+	$(LD) $(LDFLAGS) -o $@ $(CHECK_FULL_OBJS) $(LIBGCC)
+
+$(BUILDDIR_CHECK_FULL)/kernel/config_gz.o: $(BUILD_CONFIG_GZ_H_TEST)
+$(BUILDDIR_CHECK_FULL)/kernel/config_gz.o: CHECK_FULL_CFLAGS += -I$(BUILDDIR_CHECK_FULL) -I$(BUILDDIR_TEST)
+
+$(BUILDDIR_CHECK_FULL)/kernel.bin: $(BUILDDIR_CHECK_FULL)/kernel.elf
+	cp $< $@
+
+check-full: $(BUILDDIR)/disk.img
+	@echo "=== check-full: building with ALL strict warning flags ==="
+	$(MAKE) -j$(NPROCS) $(BUILDDIR_CHECK_FULL)/kernel.bin
+	@echo "=== check-full build complete (kernel.bin at $(BUILDDIR_CHECK_FULL)/kernel.bin) ==="
+	@rm -rf $(BUILDDIR_CHECK_FULL)
+
+# Clean check and check-full build artifacts
 check-clean:
-	rm -rf $(BUILDDIR_CHECK)
+	rm -rf $(BUILDDIR_CHECK) $(BUILDDIR_CHECK_FULL)
 
 # ── Host-side unit tests (compiled with host gcc, no kernel deps) ───
 unit-test:
@@ -1239,6 +1276,7 @@ help:
 	@echo "  test             Build test kernel + run all tests in QEMU"
 	@echo "  test-kernel      Build test kernel only"
 	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
+	@echo "  check-full       Ultra-strict build (-Werror + all warnings) + tests"
 	@echo "  unit-test        Run host-side unit tests"
 	@echo "  e2e              Run E2E QEMU smoke tests"
 	@echo "  e2e-smoke        Fast CI E2E subset"
