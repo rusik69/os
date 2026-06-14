@@ -36,6 +36,17 @@
 #define SYS_GETGID    256
 #define SYS_GETEGID   257
 #define SYS_RMDIR     258
+#define SYS_RENAME    259
+#define SYS_CHMOD     260
+#define SYS_ACCESS    253
+#define SYS_STATFS    346
+#define SYS_FTRUNCATE 283
+#define SYS_CLOCK_GETTIME 333
+#define SYS_SYSINFO   349
+#define SYS_UTIMENSAT 344
+#define SYS_SYNC      311
+#define SYS_REBOOT    267
+#define SYS_GETHOSTNAME 269
 #define SYS_UMASK     270
 #define SYS_IOCTL     278
 #define SYS_FSTATAT   290
@@ -128,6 +139,38 @@ struct timespec {
     unsigned long long tv_nsec;
 };
 
+/* struct statfs — returned by statfs() */
+struct statfs {
+    unsigned long long f_type;
+    unsigned long long f_bsize;
+    unsigned long long f_blocks;
+    unsigned long long f_bfree;
+    unsigned long long f_bavail;
+    unsigned long long f_files;
+    unsigned long long f_ffree;
+    unsigned long long f_fsid;
+    unsigned long long f_namelen;
+    unsigned long long f_frsize;
+    unsigned long long f_flags;
+    unsigned long long f_spare[4];
+};
+
+/* struct sysinfo — returned by sysinfo() */
+struct sysinfo {
+    unsigned long long uptime;
+    unsigned long long loads[3];
+    unsigned long long totalram;
+    unsigned long long freeram;
+    unsigned long long sharedram;
+    unsigned long long bufferram;
+    unsigned long long totalswap;
+    unsigned long long freeswap;
+    unsigned short      procs;
+    unsigned short      totalhigh;
+    unsigned short      freehigh;
+    unsigned int        mem_unit;
+};
+
 /* struct utsname — for uname */
 struct utsname {
     char sysname[65];
@@ -179,6 +222,19 @@ extern int geteuid(void);
 extern int getgid(void);
 extern int getegid(void);
 extern unsigned int umask(unsigned int mask);
+
+/* New syscall wrappers */
+extern int rename(const char *old, const char *new);
+extern int chmod(const char *path, unsigned int mode);
+extern int access(const char *path, int mode);
+extern int statfs(const char *path, struct statfs *buf);
+extern int ftruncate(int fd, unsigned long length);
+extern int clock_gettime(int clockid, struct timespec *tp);
+extern int sysinfo(struct sysinfo *info);
+extern int utimensat(int dirfd, const char *path, const struct timespec *times, int flags);
+extern int sync(void);
+extern int reboot(void);
+extern int gethostname(char *name, unsigned long len);
 
 /* Process groups */
 extern int setpgrp(void);

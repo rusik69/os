@@ -355,3 +355,104 @@ posix_spawn:
     syscall
     ret
 .size posix_spawn, . - posix_spawn
+
+# rename(old, new)
+.globl rename
+.type rename, @function
+rename:
+    movl    $259, %eax
+    syscall
+    ret
+.size rename, . - rename
+
+# chmod(path, mode)
+.globl chmod
+.type chmod, @function
+chmod:
+    movl    $260, %eax
+    syscall
+    ret
+.size chmod, . - chmod
+
+# access(path, mode)
+.globl access
+.type access, @function
+access:
+    movl    $253, %eax
+    syscall
+    ret
+.size access, . - access
+
+# statfs(path, buf)
+.globl statfs
+.type statfs, @function
+statfs:
+    movl    $346, %eax
+    syscall
+    ret
+.size statfs, . - statfs
+
+# ftruncate(fd, length)
+.globl ftruncate
+.type ftruncate, @function
+ftruncate:
+    movl    $283, %eax
+    syscall
+    ret
+.size ftruncate, . - ftruncate
+
+# clock_gettime(clockid, tp)
+.globl clock_gettime
+.type clock_gettime, @function
+clock_gettime:
+    movl    $333, %eax
+    syscall
+    ret
+.size clock_gettime, . - clock_gettime
+
+# sysinfo(info)
+.globl sysinfo
+.type sysinfo, @function
+sysinfo:
+    movl    $349, %eax
+    syscall
+    ret
+.size sysinfo, . - sysinfo
+
+# utimensat(dirfd, path, times, flags)
+# 4th arg (flags) comes in rcx, but kernel expects it in r10
+.globl utimensat
+.type utimensat, @function
+utimensat:
+    mov     %rcx, %r10
+    movl    $344, %eax
+    syscall
+    ret
+.size utimensat, . - utimensat
+
+# sync()
+.globl sync
+.type sync, @function
+sync:
+    movl    $311, %eax
+    syscall
+    ret
+.size sync, . - sync
+
+# reboot()
+.globl reboot
+.type reboot, @function
+reboot:
+    movl    $267, %eax
+    syscall
+    ret
+.size reboot, . - reboot
+
+# gethostname(name, len)
+.globl gethostname
+.type gethostname, @function
+gethostname:
+    movl    $269, %eax
+    syscall
+    ret
+.size gethostname, . - gethostname
