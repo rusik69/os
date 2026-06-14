@@ -1,4 +1,4 @@
-/* free.c — show free memory from /proc/meminfo */
+/* ifconfig.c — interface config: read /proc/net/dev */
 
 #include "unistd.h"
 #include "stdio.h"
@@ -7,9 +7,9 @@
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
-    int fd = open("/proc/meminfo", O_RDONLY, 0);
+    int fd = open("/proc/net/dev", O_RDONLY, 0);
     if (fd < 0) {
-        printf("free: cannot open /proc/meminfo\n");
+        printf("ifconfig: cannot open /proc/net/dev\n");
         return 1;
     }
     char buf[2048];
