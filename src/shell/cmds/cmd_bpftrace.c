@@ -25,6 +25,7 @@
 #include "string.h"
 #include "stdlib.h"
 #include "types.h"
+#include "heap.h"
 
 /* ── Forward declarations of kernel APIs ───────────────────────────── */
 

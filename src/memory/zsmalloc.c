@@ -12,6 +12,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "pmm.h"
+#include "heap.h"
 
 #define ZSMALLOC_MAX_POOLS    4
 #define ZSMALLOC_PAGE_ORDER   0  /* 4KB pages */

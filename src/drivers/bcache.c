@@ -10,6 +10,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "spinlock.h"
+#include "heap.h"
 
 #define BCACHE_MAX_CACHES    8
 #define BCACHE_BUCKET_SIZE   512000  /* 500KB buckets */

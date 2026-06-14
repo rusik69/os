@@ -29,6 +29,7 @@
 #include "timer.h"
 #include "pmm.h"
 #include "ac97.h"
+#include "heap.h"
 
 /* Forward declarations for VFS functions */
 int vfs_open(const char *path, int flags, int mode);

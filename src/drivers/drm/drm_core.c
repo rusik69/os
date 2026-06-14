@@ -23,6 +23,7 @@
 #include "spinlock.h"
 #include "pmm.h"
 #include "errno.h"
+#include "heap.h"
 
 /* ── Global state ──────────────────────────────────────────────── */
 

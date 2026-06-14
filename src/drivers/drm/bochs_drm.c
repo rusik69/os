@@ -28,6 +28,7 @@
 #include "spinlock.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "heap.h"
 
 /* ── VBE register indices ───────────────────────────────────────── */
 

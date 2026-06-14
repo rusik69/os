@@ -30,6 +30,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "pmm.h"
+#include "heap.h"
 
 /* ── UDC Controller interface ──────────────────────────────────── */
 

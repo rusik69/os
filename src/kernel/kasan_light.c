@@ -8,6 +8,7 @@
 #include "errno.h"
 #include "kernel.h"
 #include "stacktrace.h"
+#include "heap.h"
 
 // SPDX-License-Identifier: GPL-2.0-only
 /*

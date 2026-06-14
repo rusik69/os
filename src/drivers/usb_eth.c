@@ -26,6 +26,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "timer.h"
+#include "heap.h"
 
 /* ── CDC ECM constants ─────────────────────────────────────────── */
 

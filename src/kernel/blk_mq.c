@@ -11,6 +11,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "smp.h"
+#include "heap.h"
 
 #define BLK_MQ_MAX_HW_QUEUES   16
 #define BLK_MQ_MAX_SW_QUEUES   64

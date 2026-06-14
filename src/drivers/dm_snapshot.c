@@ -10,6 +10,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "spinlock.h"
+#include "heap.h"
 
 #define DM_SNAP_MAX_SNAPSHOTS  16
 #define DM_SNAP_CHUNK_SIZE     4096  /* 4KB chunks */

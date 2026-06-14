@@ -19,6 +19,7 @@
 #include "pmm.h"
 #include "sha256.h"
 #include "errno.h"
+#include "heap.h"
 
 /* TPM driver functions */
 int tpm_is_present(void);

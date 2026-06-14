@@ -25,6 +25,7 @@
 #include "errno.h"
 #include "export.h"
 #include "pmm.h"        /* for page frame allocation */
+#include "heap.h"        /* for kmalloc/kfree */
 
 /* ── Packet socket table ──────────────────────────────────────────── */
 static struct packet_sock packet_socks[PACKET_MAX_SOCKETS];

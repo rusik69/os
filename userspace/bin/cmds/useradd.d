@@ -1,0 +1,5 @@
+bin/cmds/useradd.o: bin/cmds/useradd.c libc/include/unistd.h \
+ libc/include/string.h libc/include/unistd.h
+libc/include/unistd.h:
+libc/include/string.h:
+libc/include/unistd.h:

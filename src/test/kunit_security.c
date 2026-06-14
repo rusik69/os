@@ -19,6 +19,7 @@
 #include "errno.h"
 #include "string.h"
 #include "printf.h"
+#include "heap.h"
 
 /* ── Forward declarations for keyring API (no dedicated header) ───── */
 extern void keyring_init(void);

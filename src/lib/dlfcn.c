@@ -21,6 +21,7 @@
 #include "string.h"
 #include "types.h"
 #include "printf.h"
+#include "heap.h"
 
 /* ── Internal constants ─────────────────────────────────────────────── */
 

@@ -37,6 +37,7 @@
 #include "debugfs.h"
 #include "timer.h"      /* for timer_get_ticks (random seed) */
 #include "stdlib.h"     /* for rand() */
+#include "heap.h"
 
 /* ── Tunable parameters ─────────────────────────────────────────────── */
 
