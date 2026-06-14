@@ -135,9 +135,12 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
     if (ret == 0 && info) {
         struct process *p = process_get_by_pid(pid);
         if (p && p->state != PROCESS_UNUSED && p->state != PROCESS_ZOMBIE) {
+            uint64_t __sig_flags2;
+            spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags2);
             if (p->pending_signals & (1ULL << signum)) {
                 p->sig_info[signum] = *info;
             }
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags2);
         }
         /* Notify signalfd listeners with full siginfo */
         extern void signalfd_notify_ext(int signum, int si_code,
@@ -184,8 +187,6 @@ void signal_check(void) {
     uint64_t __sig_flags;
     spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
 
-    __asm__ volatile("cli");
-
     for (int sig = 1; sig < SIG_MAX; sig++) {
         if (!(p->pending_signals & (1ULL << sig))) continue;
 
@@ -201,11 +202,11 @@ void signal_check(void) {
         }
 
         if (handler != SIG_DFL) {
-            /* User handler installed */
+            /* User handler installed — release lock while handler runs */
             if (!p->is_user) {
-                __asm__ volatile("sti");
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 handler(sig);
-                __asm__ volatile("cli");
+                spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
             }
             continue;
         }
@@ -223,9 +224,9 @@ void signal_check(void) {
                 p->state = PROCESS_ZOMBIE;
                 p->exit_code = 128 + sig;
                 scheduler_remove(p);
-                __asm__ volatile("sti");
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 scheduler_yield();
-                break;
+                return; /* zombie — never resumes */
             case SIGCHLD:
                 /* Default for SIGCHLD is to ignore */
                 break;
@@ -236,9 +237,11 @@ void signal_check(void) {
                 p->is_suspended = 1;
                 p->state = PROCESS_BLOCKED;
                 scheduler_remove(p);
-                __asm__ volatile("sti");
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 scheduler_yield();
-                break;
+                /* Resumed by SIGCONT — re-acquire and check more signals */
+                spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+                continue;
             case SIGCONT:
                 break;
             default:
@@ -249,31 +252,39 @@ void signal_check(void) {
                 p->state = PROCESS_ZOMBIE;
                 p->exit_code = 128 + sig;
                 scheduler_remove(p);
-                __asm__ volatile("sti");
+                spinlock_irqsave_release(&p->sig_lock, __sig_flags);
                 scheduler_yield();
-                break;
+                return; /* zombie — never resumes */
         }
     }
 
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
-    __asm__ volatile("sti");
 }
 
 void signal_register(int signum, signal_handler_t handler) {
     if (signum <= 0 || signum >= SIG_MAX) return;
     struct process *p = process_get_current();
     if (!p) return;
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
     p->sig_handlers[signum] = handler;
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
 
 void signal_mask(uint64_t sigmask) {
     struct process *p = process_get_current();
     if (!p) return;
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
     p->sig_mask |= sigmask;
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
 
 void signal_unmask(uint64_t sigmask) {
     struct process *p = process_get_current();
     if (!p) return;
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
     p->sig_mask &= ~sigmask;
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }

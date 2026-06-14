@@ -520,7 +520,10 @@ void e1000_get_mac(uint8_t *mac) {
 /* Re-enable RX interrupts after NAPI-style polling drain */
 void e1000_irq_rearm(void) {
     if (nic_present) {
+        uint64_t __e1k_flags;
+        spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
         e1000_itr_adaptive();
+        spinlock_irqsave_release(&e1000_lock, __e1k_flags);
         e1000_write(REG_IMS, 0x80); /* unmask RXT0 */
     }
 }
@@ -657,6 +660,9 @@ int e1000_send(const void *data, uint16_t len) {
         __asm__ volatile("pause");
     if (tx_timeout <= 0) return -1;
 
+    uint64_t __e1k_flags;
+    spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
+
     memcpy(qp->tx_buffers[idx], data, len);
     qp->tx_descs[idx].length = len;
     qp->tx_descs[idx].cmd = TDESC_CMD_EOP | TDESC_CMD_IFCS | TDESC_CMD_RS;
@@ -665,10 +671,15 @@ int e1000_send(const void *data, uint16_t len) {
     qp->tx_cur = (qp->tx_cur + 1) % NUM_TX_DESC;
     e1000_q_write_tx(0, 4, qp->tx_cur);
 
+    spinlock_irqsave_release(&e1000_lock, __e1k_flags);
+
     return 0;
 }
 
 int e1000_receive(void *buf, uint16_t max_len) {
+    uint64_t __e1k_flags;
+    spinlock_irqsave_acquire(&e1000_lock, &__e1k_flags);
+
     /* Check all queues, starting with queue 0 */
     for (int q = 0; q < num_queues; q++) {
         struct e1000_queue *qp = &queues[q];
@@ -682,6 +693,7 @@ int e1000_receive(void *buf, uint16_t max_len) {
             int old_cur = qp->rx_cur;
             qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
             e1000_q_write_rx(q, 4, old_cur);
+            spinlock_irqsave_release(&e1000_lock, __e1k_flags);
             return -2;
         }
 
@@ -690,6 +702,7 @@ int e1000_receive(void *buf, uint16_t max_len) {
             int old_cur = qp->rx_cur;
             qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
             e1000_q_write_rx(q, 4, old_cur);
+            spinlock_irqsave_release(&e1000_lock, __e1k_flags);
             return -3;
         }
 
@@ -702,9 +715,11 @@ int e1000_receive(void *buf, uint16_t max_len) {
         qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
         e1000_q_write_rx(q, 4, old_cur);
 
+        spinlock_irqsave_release(&e1000_lock, __e1k_flags);
         return len;
     }
 
+    spinlock_irqsave_release(&e1000_lock, __e1k_flags);
     return 0;
 }
 

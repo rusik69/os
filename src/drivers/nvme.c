@@ -779,7 +779,8 @@ static int nvme_blk_submit(struct blk_request *req) {
             return -1;
         }
         prp_list = (uint64_t *)PHYS_TO_VIRT(prp_list_frame * 4096);
-        prp2 = prp_list_frame * 4096; /* PRP list physical address */
+        prp1 = prp_list_frame * 4096; /* PRP1 points to the PRP list */
+        prp2 = data_phys;             /* PRP2 points to the first data page */
 
         /* Fill PRP list: entries point to each data page after the first */
         for (uint32_t i = 1; i < nr_pages; i++)

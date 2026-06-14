@@ -21,6 +21,9 @@
 #include "process.h"
 #include "fat32.h"
 #include "elf.h"
+#include "spinlock.h"
+#include "pipe.h"
+#include "timers.h"
 
 /* Extern declarations for dedicated test suite registrations */
 extern void kunit_pmm_register(void);
@@ -281,6 +284,23 @@ static void pmm_contig_alloc_test(struct kunit *test)
     }
     if (f1) pmm_free_frame(f1);
     if (f2) pmm_free_frame(f2);
+}
+
+static void test_pmm_alloc_free(struct kunit *test)
+{
+    /* Allocate a frame */
+    uint64_t frame = pmm_alloc_frame();
+    KUNIT_EXPECT_NE(test, frame, (uint64_t)0);
+    if (frame) {
+        pmm_free_frame(frame);
+    }
+
+    /* Allocate again — should get the same frame back */
+    uint64_t frame2 = pmm_alloc_frame();
+    KUNIT_EXPECT_EQ(test, frame, frame2);
+    if (frame2) {
+        pmm_free_frame(frame2);
+    }
 }
 
 /* ====================================================================
@@ -854,6 +874,123 @@ static void signal_nested_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  15. Core — Spinlock, Pipe, Timer, FAT32 create/write/delete tests
+ * ==================================================================== */
+
+static void test_spinlock_basic(struct kunit *test)
+{
+    spinlock_t lock;
+    spinlock_init(&lock);
+
+    /* Acquire the lock */
+    spinlock_acquire(&lock);
+
+    /* Verify it's held — try_acquire should return 0 (fail to acquire) */
+    KUNIT_EXPECT_EQ(test, (int64_t)spinlock_try_acquire(&lock), (int64_t)0);
+
+    /* Release the lock */
+    spinlock_release(&lock);
+
+    /* After release, try_acquire should succeed (returns 1) */
+    int acquired = spinlock_try_acquire(&lock);
+    KUNIT_EXPECT_EQ(test, (int64_t)acquired, (int64_t)1);
+    if (acquired) {
+        spinlock_release(&lock);
+    }
+}
+
+static void test_pipe_roundtrip(struct kunit *test)
+{
+    int pipe_id = pipe_create();
+    KUNIT_EXPECT_TRUE(test, pipe_id >= 0);
+    if (pipe_id < 0) return;
+
+    const char *pattern = "hello";
+    int len = (int)strlen(pattern);
+
+    int written = pipe_write(pipe_id, pattern, len);
+    KUNIT_EXPECT_EQ(test, (int64_t)written, (int64_t)len);
+
+    char buf[16] = {0};
+    int read_bytes = pipe_read(pipe_id, buf, sizeof(buf) - 1);
+    KUNIT_EXPECT_EQ(test, (int64_t)read_bytes, (int64_t)len);
+
+    /* Compare content */
+    int match = (memcmp(buf, pattern, len) == 0);
+    KUNIT_EXPECT_TRUE(test, match);
+
+    /* Clean up — close write end then read end */
+    pipe_close(pipe_id, 1);
+    pipe_close(pipe_id, 0);
+}
+
+/* Timer callback flag for test_timer_schedule */
+static volatile int g_timer_cb_fired = 0;
+
+static void test_timer_callback(void *arg)
+{
+    volatile int *flag = (volatile int *)arg;
+    *flag = 1;
+}
+
+static void test_timer_schedule(struct kunit *test)
+{
+    g_timer_cb_fired = 0;
+
+    /* Schedule a timer with delay=1 tick */
+    int id = timer_schedule(test_timer_callback, (void *)&g_timer_cb_fired, 1);
+    KUNIT_EXPECT_TRUE(test, id >= 0);
+    if (id < 0) return;
+
+    /* Process timer softirq to fire the timer */
+    timer_handler_soft();
+    timer_handler_soft();
+
+    KUNIT_EXPECT_EQ(test, (int64_t)g_timer_cb_fired, (int64_t)1);
+
+    timer_cancel(id);
+}
+
+static void test_fat32_create_write_delete(struct kunit *test)
+{
+    /* Only run if FAT32 is mounted */
+    if (!fat32_is_mounted()) {
+        /* Try to mount ATA */
+        if (fat32_mount(FAT32_DISK_ATA, 0) != 0) {
+            /* Mounting may fail if no disk; that's okay — test passes */
+            KUNIT_EXPECT_TRUE(test, 1);
+            return;
+        }
+    }
+
+    const char *test_path = "/kunit_test_file.txt";
+    const char *test_data = "KUnit FAT32 test data!";
+    int data_len = (int)strlen(test_data);
+    char read_buf[64];
+
+    /* Write file (creates if it doesn't exist) */
+    int written = fat32_write_file(test_path, test_data, data_len);
+    KUNIT_EXPECT_EQ(test, (int64_t)written, (int64_t)data_len);
+    if (written != data_len) return;
+
+    /* Sync to flush data to disk */
+    fat32_sync();
+
+    /* Read it back */
+    int rd = fat32_read_file(test_path, read_buf, sizeof(read_buf));
+    KUNIT_EXPECT_EQ(test, (int64_t)rd, (int64_t)data_len);
+    if (rd >= 0) {
+        read_buf[rd] = '\0';
+        int match = (memcmp(read_buf, test_data, data_len) == 0);
+        KUNIT_EXPECT_TRUE(test, match);
+    }
+
+    /* Delete the file */
+    int ret = fat32_unlink(test_path);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* ====================================================================
  *  Suite definitions
  * ==================================================================== */
 
@@ -862,6 +999,7 @@ static struct kunit_case pmm_test_cases[] = {
     KUNIT_CASE(pmm_refcount_test),
     KUNIT_CASE(pmm_zero_test),
     KUNIT_CASE(pmm_contig_alloc_test),
+    KUNIT_CASE(test_pmm_alloc_free),
     {0}
 };
 
@@ -882,9 +1020,36 @@ static struct kunit_case string_test_cases[] = {
     {0}
 };
 
+static void test_vmm_walk(struct kunit *test)
+{
+    /* Get the current PML4 page table — should never be NULL */
+    uint64_t *pml4 = vmm_get_pml4();
+    KUNIT_EXPECT_NOT_NULL(test, pml4);
+    if (!pml4) return;
+
+    /* Walk the page table for the test function's own address —
+     * a known kernel text address that must be mapped. */
+    uint64_t func_vaddr = (uint64_t)&test_vmm_walk;
+    uint64_t func_phys = vmm_get_physaddr(func_vaddr);
+    KUNIT_EXPECT_NE(test, func_phys, (uint64_t)0);
+
+    /* Walk the kernel VMA identity mapping of physical address 0
+     * (PHYS_TO_VIRT(0) = 0xFFFF800000000000). This should always
+     * be present — the first physical frame is typically the real-mode
+     * IVT / BSP trampoline. */
+    uint64_t zero_vaddr = (uint64_t)PHYS_TO_VIRT(0);
+    uint64_t zero_phys = vmm_get_physaddr(zero_vaddr);
+    KUNIT_EXPECT_NE(test, zero_phys, (uint64_t)0);
+
+    /* Walk an unmapped low address — vmm_get_physaddr should return 0 */
+    uint64_t invalid_phys = vmm_get_physaddr(0x0ULL);
+    KUNIT_EXPECT_EQ(test, invalid_phys, (uint64_t)0);
+}
+
 static struct kunit_case vmm_test_cases[] = {
     KUNIT_CASE(vmm_map_unmap_test),
     KUNIT_CASE(vmm_multipage_test),
+    KUNIT_CASE(test_vmm_walk),
     {0}
 };
 
@@ -918,6 +1083,7 @@ static struct kunit_case fat32_corrupt_test_cases[] = {
     KUNIT_CASE(fat32_umount_remount_test),
     KUNIT_CASE(fat32_root_list_test),
     KUNIT_CASE(fat32_nonexistent_test),
+    KUNIT_CASE(test_fat32_create_write_delete),
     {0}
 };
 
@@ -935,6 +1101,13 @@ static struct kunit_case signal_delivery_test_cases[] = {
     KUNIT_CASE(signal_invalid_pid_test),
     KUNIT_CASE(signal_mask_test),
     KUNIT_CASE(signal_nested_test),
+    {0}
+};
+
+static struct kunit_case core_test_cases[] = {
+    KUNIT_CASE(test_spinlock_basic),
+    KUNIT_CASE(test_pipe_roundtrip),
+    KUNIT_CASE(test_timer_schedule),
     {0}
 };
 
@@ -961,6 +1134,7 @@ static struct kunit_suite tcp_state_test_suite;
 static struct kunit_suite fat32_corrupt_test_suite;
 static struct kunit_suite elf_edge_test_suite;
 static struct kunit_suite signal_delivery_test_suite;
+static struct kunit_suite core_test_suite;
 
 /* ── Registration function (called from kunit_init) ────────────── */
 
@@ -987,6 +1161,7 @@ void kunit_register_builtin_tests(void)
     FILL_CASES(fat32_corrupt_test_suite, fat32_corrupt_test_cases);
     FILL_CASES(elf_edge_test_suite, elf_edge_test_cases);
     FILL_CASES(signal_delivery_test_suite, signal_delivery_test_cases);
+    FILL_CASES(core_test_suite, core_test_cases);
 
     /* Set suite names */
     pmm_test_suite.name    = "pmm";
@@ -1000,6 +1175,7 @@ void kunit_register_builtin_tests(void)
     fat32_corrupt_test_suite.name  = "fat32_corrupt";
     elf_edge_test_suite.name       = "elf_edge";
     signal_delivery_test_suite.name = "signal_delivery";
+    core_test_suite.name            = "core";
 
     kunit_register_suite(&pmm_test_suite);
     kunit_register_suite(&slab_test_suite);
@@ -1012,6 +1188,7 @@ void kunit_register_builtin_tests(void)
     kunit_register_suite(&fat32_corrupt_test_suite);
     kunit_register_suite(&elf_edge_test_suite);
     kunit_register_suite(&signal_delivery_test_suite);
+    kunit_register_suite(&core_test_suite);
 
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();

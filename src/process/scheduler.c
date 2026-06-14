@@ -269,8 +269,8 @@ void scheduler_init(void) {
                     sysctl_write_sched_min_granularity);
 }
 
-/* ── Add process to its CPU's runqueue ──────────────────────────────── */
-void scheduler_add(struct process *proc) {
+/* ── Add process to its CPU's runqueue (caller must hold sched_lock) ── */
+static void scheduler_add_locked(struct process *proc) {
     if (proc->on_queue) return;
 
     /* SCHED_DEADLINE tasks are managed by the deadline runqueue, not the
@@ -317,10 +317,6 @@ void scheduler_add(struct process *proc) {
     proc->next = NULL;
     proc->on_queue = 1;
 
-    /* Lock the per-CPU queue */
-    uint64_t irq_flags;
-    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
-
     if (!ci->queue_tail[lvl]) {
         ci->queue_head[lvl] = proc;
         ci->queue_tail[lvl] = proc;
@@ -328,7 +324,13 @@ void scheduler_add(struct process *proc) {
         ci->queue_tail[lvl]->next = proc;
         ci->queue_tail[lvl] = proc;
     }
+}
 
+/* ── Add process to its CPU's runqueue (public API, acquires lock) ─── */
+void scheduler_add(struct process *proc) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+    scheduler_add_locked(proc);
     spinlock_irqsave_release(&sched_lock, irq_flags);
 }
 
@@ -546,7 +548,9 @@ static int load_balance(void) {
     return 0;
 }
 
-/* Forward declaration — defined below (line ~552), called from scheduler_tick */
+/* Forward declaration — defined below (line ~1108), called from scheduler_wake_sleepers */
+static void scheduler_wakeup_locked(struct process *proc);
+/* Forward declaration — defined below (line ~1174), called from scheduler_tick */
 static void update_vruntime(struct process *p, int ticks);
 
 /* ── Main scheduler entry: pick next process, context-switch ────────── */
@@ -742,6 +746,9 @@ void scheduler_tick(int was_user) {
         }
     }
 
+    /* Update CFS vruntime (still under sched_lock) */
+    update_vruntime(cur, 1);
+
     spinlock_irqsave_release(&sched_lock, __sched_flags);
 
     /* Update PSI CPU pressure: if there are tasks in the runqueue
@@ -764,9 +771,6 @@ void scheduler_tick(int was_user) {
     /* Account this tick to the process's CPU cgroup (if assigned). */
     if (cur->cpu_cgroup_id > 0)
         cpu_cgroup_account(cur->cpu_cgroup_id, 1);
-
-    /* Update CFS vruntime */
-    update_vruntime(cur, 1);
 
     /* Handle SCHED_DEADLINE budget accounting */
     if (cur->sched_policy == SCHED_DEADLINE && cur->dl_active) {
@@ -796,60 +800,76 @@ void scheduler_tick(int was_user) {
         }
     }
 
-    /* First tick: assign quantum without preempting */
-    if (cur->ticks_remaining == 0) {
-        if (cur->sched_policy == SCHED_OTHER || cur->sched_policy == SCHED_IDLE) {
-            int lvl = (int)cur->priority;
-            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = slice_for_prio(lvl);
-        } else if (cur->sched_policy == SCHED_BATCH) {
-            /* SCHED_BATCH: longer timeslices, lower priority (level 3) */
-            cur->ticks_remaining = slice_for_prio(3) * 3;
-        } else if (cur->sched_policy == SCHED_DEADLINE) {
-            /* SCHED_DEADLINE: managed by CBS budget, not time-slice ticks */
-            cur->ticks_remaining = 1; /* don't trigger reschedule on expiry */
-        } else {
-            /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
-            int lvl = (int)cur->priority;
-            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = slice_for_prio(lvl) * 2;
+    /* First tick: assign quantum without preempting (protected by sched_lock) */
+    {
+        uint64_t __schf;
+        spinlock_irqsave_acquire(&sched_lock, &__schf);
+        if (cur->ticks_remaining == 0) {
+            if (cur->sched_policy == SCHED_OTHER || cur->sched_policy == SCHED_IDLE) {
+                int lvl = (int)cur->priority;
+                if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+                cur->ticks_remaining = slice_for_prio(lvl);
+            } else if (cur->sched_policy == SCHED_BATCH) {
+                /* SCHED_BATCH: longer timeslices, lower priority (level 3) */
+                cur->ticks_remaining = slice_for_prio(3) * 3;
+            } else if (cur->sched_policy == SCHED_DEADLINE) {
+                /* SCHED_DEADLINE: managed by CBS budget, not time-slice ticks */
+                cur->ticks_remaining = 1; /* don't trigger reschedule on expiry */
+            } else {
+                /* SCHED_FIFO / SCHED_RR: use maximum quantum for priority level */
+                int lvl = (int)cur->priority;
+                if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+                cur->ticks_remaining = slice_for_prio(lvl) * 2;
+            }
+            spinlock_irqsave_release(&sched_lock, __schf);
+            return;
         }
-        return;
+        spinlock_irqsave_release(&sched_lock, __schf);
     }
 
-    cur->ticks_remaining--;
+    {
+        uint64_t __schg;
+        spinlock_irqsave_acquire(&sched_lock, &__schg);
+        cur->ticks_remaining--;
 
-    if (cur->ticks_remaining == 0) {
-        if (cur->sched_policy == SCHED_FIFO) {
-            /* SCHED_FIFO: replenish quantum, don't preempt */
-            int lvl = (int)cur->priority;
-            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = slice_for_prio(lvl);
-        } else if (cur->sched_policy == SCHED_RR) {
-            /* SCHED_RR: rotate to end of queue on slice expiry */
-            int lvl = (int)cur->priority;
-            if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
-            cur->ticks_remaining = slice_for_prio(lvl);
-            if (preemptible()) {
-                schedule();
+        if (cur->ticks_remaining == 0) {
+            if (cur->sched_policy == SCHED_FIFO) {
+                /* SCHED_FIFO: replenish quantum, don't preempt */
+                int lvl = (int)cur->priority;
+                if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+                cur->ticks_remaining = slice_for_prio(lvl);
+                spinlock_irqsave_release(&sched_lock, __schg);
+            } else if (cur->sched_policy == SCHED_RR) {
+                /* SCHED_RR: rotate to end of queue on slice expiry */
+                int lvl = (int)cur->priority;
+                if (lvl < 0 || lvl >= SCHED_LEVELS) lvl = 1;
+                cur->ticks_remaining = slice_for_prio(lvl);
+                spinlock_irqsave_release(&sched_lock, __schg);
+                if (preemptible()) {
+                    schedule();
+                } else {
+                    set_need_resched();
+                }
+            } else if (cur->sched_policy == SCHED_DEADLINE) {
+                /* SCHED_DEADLINE: never preempt based on time-slice expiry;
+                 * budget is managed by sched_deadline_tick() above. */
+                cur->ticks_remaining = 1; /* keep running unless throttled */
+                spinlock_irqsave_release(&sched_lock, __schg);
             } else {
-                set_need_resched();
+                /* SCHED_OTHER / SCHED_BATCH / SCHED_IDLE: preempt on quantum expiry.
+                 * If the kernel is not preemptible right now (e.g., in a
+                 * spinlock critical section), defer the reschedule by
+                 * setting need_resched.  The actual context switch will
+                 * happen at the next preempt_enable() or preemption point. */
+                spinlock_irqsave_release(&sched_lock, __schg);
+                if (preemptible()) {
+                    schedule();
+                } else {
+                    set_need_resched();
+                }
             }
-        } else if (cur->sched_policy == SCHED_DEADLINE) {
-            /* SCHED_DEADLINE: never preempt based on time-slice expiry;
-             * budget is managed by sched_deadline_tick() above. */
-            cur->ticks_remaining = 1; /* keep running unless throttled */
         } else {
-            /* SCHED_OTHER / SCHED_BATCH / SCHED_IDLE: preempt on quantum expiry.
-             * If the kernel is not preemptible right now (e.g., in a
-             * spinlock critical section), defer the reschedule by
-             * setting need_resched.  The actual context switch will
-             * happen at the next preempt_enable() or preemption point. */
-            if (preemptible()) {
-                schedule();
-            } else {
-                set_need_resched();
-            }
+            spinlock_irqsave_release(&sched_lock, __schg);
         }
     }
 
@@ -907,7 +927,7 @@ void scheduler_wake_sleepers(void) {
             table[i].state = PROCESS_READY;
 
             /* Apply CFS sleeper fairness before adding to runqueue */
-            scheduler_wakeup(&table[i]);
+            scheduler_wakeup_locked(&table[i]);
         }
     }
 
@@ -1084,8 +1104,10 @@ static void cfs_update_min_vruntime(void) {
  *     of advantage.  This prevents CPU-bound bursts after prolonged
  *     sleeps while still providing a modest scheduling incentive for
  *     I/O-bound interactive tasks.
+ *
+ * NOTE: Caller must hold sched_lock (IRQs disabled).
  */
-void scheduler_wakeup(struct process *proc) {
+static void scheduler_wakeup_locked(struct process *proc) {
     if (!proc) return;
 
     /* ── Wakee flips heuristic ──────────────────────────────────────
@@ -1131,7 +1153,7 @@ void scheduler_wakeup(struct process *proc) {
         }
     }
 
-    /* Ensure min_vruntime is up-to-date */
+    /* Ensure min_vruntime is up-to-date (sched_lock held by caller) */
     cfs_update_min_vruntime();
     uint64_t min_vr = this_cpu()->cfs_min_vruntime;
 
@@ -1140,8 +1162,16 @@ void scheduler_wakeup(struct process *proc) {
         proc->vruntime = min_vr - CFS_MIN_VRUNTIME_OFFSET;
     }
 
-    /* Add to the runqueue */
-    scheduler_add(proc);
+    /* Add to the runqueue (caller holds sched_lock, use locked variant) */
+    scheduler_add_locked(proc);
+}
+
+/* Public API: acquires sched_lock, applies CFS sleeper fairness, adds to runqueue. */
+void scheduler_wakeup(struct process *proc) {
+    uint64_t flags;
+    spinlock_irqsave_acquire(&sched_lock, &flags);
+    scheduler_wakeup_locked(proc);
+    spinlock_irqsave_release(&sched_lock, flags);
 }
 void update_vruntime(struct process *p, int ticks) {
     if (!p) return;

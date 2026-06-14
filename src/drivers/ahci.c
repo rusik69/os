@@ -502,7 +502,9 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
     uint32_t is = hba_read(HBA_IS_OFFSET);
     if (!is) return;
 
-    /* Protect slot management in IRQ context */
+    /* Protect slot management in IRQ context.
+     * This is a top-half handler (registered via idt_register_handler),
+     * so we must use the IRQ-safe spinlock variant. */
     uint64_t __ahci_flags;
     spinlock_irqsave_acquire(&ahci_lock, &__ahci_flags);
 
@@ -569,8 +571,17 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
         if (port_is & PORT_IS_D2H) {
             /* Non-NCQ D2H completion — handled inline in ahci_issue_non_ncq */
         }
+    }
 
-        /* Drain all PM sub-ports associated with this physical port */
+    /* Release lock before draining — ahci_drain_queue acquires the
+     * lock internally and calling it while already holding it would
+     * cause a self-deadlock. */
+    spinlock_irqsave_release(&ahci_lock, __ahci_flags);
+
+    /* Drain all PM sub-ports associated with each physical port.
+     * ahci_drain_queue handles its own IRQ-safe locking. */
+    for (int p = 0; p < 32; p++) {
+        if (!(is & (1u << p))) continue;
         for (int i = 0; i < ahci_port_count; i++) {
             if (ahci_ports[i].present && ahci_ports[i].port_num == p) {
                 ahci_drain_queue(&ahci_ports[i]);
@@ -581,8 +592,6 @@ static void ahci_irq_handler(struct interrupt_frame *frame) {
     /* Ack IRQ to IOAPIC/PIC */
     if (ahci_port_count > 0)
         irq_ack(ahci_ports[0].irq_line);
-
-    spinlock_irqsave_release(&ahci_lock, __ahci_flags);
 }
 
 /* ── submit_fn called from block I/O layer (async) ──────────────────── */

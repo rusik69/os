@@ -462,6 +462,8 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
         if (to_read > UINT32_MAX) to_read = UINT32_MAX;
         uint64_t need_end = pfd->offset + to_read;
         if (need_end > fsize) need_end = fsize;
+        /* Clamp need_end to UINT32_MAX for vfs_read */
+        if (need_end > UINT32_MAX) need_end = UINT32_MAX;
         uint8_t *tmp = kmalloc(need_end);
         if (!tmp) return (uint64_t)-1;
         uint32_t nread = 0;
@@ -919,8 +921,12 @@ static uint64_t sys_fd_read(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     if (pfd->offset >= fsize) return 0;
     uint64_t avail = fsize - pfd->offset;
     uint64_t to_read = count < avail ? count : avail;
+    /* Clamp to UINT32_MAX to avoid uint32_t truncation in vfs_read */
+    if (to_read > UINT32_MAX) to_read = UINT32_MAX;
     uint64_t need_end = pfd->offset + to_read;
     if (need_end > fsize) need_end = fsize;
+    /* Clamp need_end to UINT32_MAX for vfs_read */
+    if (need_end > UINT32_MAX) need_end = UINT32_MAX;
     uint8_t *tmp = kmalloc(need_end);
     if (!tmp) return (uint64_t)-1;
     uint32_t nread = 0;
@@ -938,6 +944,8 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
     if (!pfd || !pfd->used) return (uint64_t)-1;
+    /* Clamp count to UINT32_MAX to avoid uint32_t truncation in vfs_write/vfs_append */
+    if (count > UINT32_MAX) count = UINT32_MAX;
     int r;
     if (pfd->open_flags & O_APPEND) {
         /* O_APPEND: always append to end of file, ignoring position */
@@ -2234,6 +2242,12 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
     /* Round up to page size */
     length = (length + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
 
+    /* Check that addr + length does not overflow or exceed USER_VADDR_MAX.
+     * Compute safely: the comparison addr > USER_VADDR_MAX - length avoids
+     * wrapping past UINT64_MAX and bypassing the USER_VADDR_MAX guard. */
+    if (length > USER_VADDR_MAX || addr > USER_VADDR_MAX - length)
+        return (uint64_t)-EINVAL;
+
     /* Check for wraparound: addr + length must not overflow */
     if (length > 0 && addr + length < addr)
         return (uint64_t)-EINVAL;
@@ -3062,8 +3076,6 @@ void process_timer_tick(int was_user) {
         }
     }
 
-    spinlock_irqsave_release(&proc_table_lock, __it_flags);
-
     /* ITIMER_VIRTUAL: counts only user-mode CPU time */
     if (current && current->state == PROCESS_RUNNING && was_user && current->is_user) {
         if (current->itimers[ITIMER_VIRTUAL].it_value > 0) {
@@ -3085,6 +3097,8 @@ void process_timer_tick(int was_user) {
             }
         }
     }
+
+    spinlock_irqsave_release(&proc_table_lock, __it_flags);
 }
 
 static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
@@ -3100,14 +3114,20 @@ static uint64_t sys_setitimer(uint64_t which, uint64_t new_val_addr,
             return (uint64_t)-1;
     }
 
+    uint64_t __sit_flags;
+    spinlock_irqsave_acquire(&proc_table_lock, &__sit_flags);
+
     /* Return old value if requested */
     if (old_val_addr) {
-        if (copy_to_user(old_val_addr, &proc->itimers[which], sizeof(struct itimerval)) < 0)
+        if (copy_to_user(old_val_addr, &proc->itimers[which], sizeof(struct itimerval)) < 0) {
+            spinlock_irqsave_release(&proc_table_lock, __sit_flags);
             return (uint64_t)-1;
+        }
     }
 
     /* Set new value */
     proc->itimers[which] = new_val;
+    spinlock_irqsave_release(&proc_table_lock, __sit_flags);
     return 0;
 }
 
@@ -3477,18 +3497,25 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
 
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+
     /* Return old mask */
     if (oldset_addr) {
         uint64_t old = proc->sig_mask;
-        if (copy_to_user(oldset_addr, &old, sizeof(old)) < 0)
+        if (copy_to_user(oldset_addr, &old, sizeof(old)) < 0) {
+            spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
             return (uint64_t)-1;
+        }
     }
 
     /* Apply new mask */
     if (set_addr) {
         uint64_t new_mask = 0;
-        if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0)
+        if (copy_from_user(&new_mask, set_addr, sizeof(new_mask)) < 0) {
+            spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
             return (uint64_t)-1;
+        }
 
         switch (how) {
             case SIG_BLOCK:
@@ -3501,10 +3528,12 @@ static uint64_t sys_sigprocmask(uint64_t how, uint64_t set_addr, uint64_t oldset
                 proc->sig_mask = new_mask;
                 break;
             default:
+                spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
                 return (uint64_t)-1;
         }
     }
 
+    spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
     return 0;
 }
 
@@ -3513,7 +3542,11 @@ static uint64_t sys_sigpending(uint64_t set_addr) {
     if (!proc) return (uint64_t)-1;
     if (!set_addr) return (uint64_t)-1;
 
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
     uint64_t pending = proc->pending_signals;
+    spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+
     if (copy_to_user(set_addr, &pending, sizeof(uint64_t)) < 0)
         return (uint64_t)-1;
     return 0;
@@ -3533,6 +3566,10 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
     uint64_t start = timer_get_ticks();
 
     for (;;) {
+        /* Lock around pending_signals access and siginfo extraction */
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+
         /* Mask away signals we don't care about */
         uint64_t relevant = proc->pending_signals & set_mask;
 
@@ -3555,9 +3592,11 @@ static int do_sigwait(uint64_t set_mask, int timeout_ticks,
                         out_info->si_code = SI_USER;
                     }
                 }
+                spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
                 return sig;
             }
         }
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
 
         /* Check timeout */
         if (timeout_ticks > 0) {
@@ -3593,14 +3632,24 @@ static uint64_t sys_sigwaitinfo(uint64_t set_addr, uint64_t info_addr) {
     /* Temporarily unmask the waited signals so signal_check can deliver them */
     struct process *proc = process_get_current();
     uint64_t saved_mask = proc ? proc->sig_mask : 0;
-    if (proc) proc->sig_mask &= ~sigmask;
+    if (proc) {
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+        proc->sig_mask &= ~sigmask;
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+    }
 
     struct siginfo info_buf;
     int errno_val = 0;
     int sig = do_sigwait(sigmask, 0, &info_buf, &errno_val);
 
     /* Restore signal mask */
-    if (proc) proc->sig_mask = saved_mask;
+    if (proc) {
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+        proc->sig_mask = saved_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+    }
 
     if (sig < 0) return (uint64_t)-1;
 
@@ -3631,13 +3680,23 @@ static uint64_t sys_sigtimedwait(uint64_t set_addr, uint64_t info_addr,
 
     struct process *proc = process_get_current();
     uint64_t saved_mask = proc ? proc->sig_mask : 0;
-    if (proc) proc->sig_mask &= ~sigmask;
+    if (proc) {
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+        proc->sig_mask &= ~sigmask;
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+    }
 
     struct siginfo info_buf;
     int errno_val = 0;
     int sig = do_sigwait(sigmask, timeout_ticks, &info_buf, &errno_val);
 
-    if (proc) proc->sig_mask = saved_mask;
+    if (proc) {
+        uint64_t __sig_flags;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__sig_flags);
+        proc->sig_mask = saved_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __sig_flags);
+    }
 
     if (sig < 0) return (uint64_t)-1;
 
@@ -5304,12 +5363,18 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
     }
 
     /* Apply the temporary signal mask if provided */
-    uint64_t old_mask = proc->sig_mask;
+    uint64_t old_mask;
+    uint64_t __ps_flags;
+    spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags);
+    old_mask = proc->sig_mask;
     if (sigmask) {
-        if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)sigmask, sizeof(uint64_t)))
+        if (syscall_is_user_process() && !syscall_user_read_ok((uint64_t)sigmask, sizeof(uint64_t))) {
+            spinlock_irqsave_release(&proc->sig_lock, __ps_flags);
             return (uint64_t)-1;
+        }
         proc->sig_mask = *sigmask;
     }
+    spinlock_irqsave_release(&proc->sig_lock, __ps_flags);
 
     /* Delegate to the existing select implementation.
      * We reuse the select body by calling it directly — the select
@@ -5366,11 +5431,17 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
 
     while (loops < max_loops) {
         /* Check for pending signals before each iteration */
-        if (proc->pending_signals & ~proc->sig_mask) {
-            /* A signal is pending that is not masked — return ready=0
-             * but with EINTR semantics.  POSIX: pselect6 can return
-             * with errno=EINTR if a signal handler was invoked. */
-            break;
+        {
+            uint64_t __ps_flags2;
+            spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags2);
+            int sig_pending = (proc->pending_signals & ~proc->sig_mask) != 0;
+            spinlock_irqsave_release(&proc->sig_lock, __ps_flags2);
+            if (sig_pending) {
+                /* A signal is pending that is not masked — return ready=0
+                 * but with EINTR semantics.  POSIX: pselect6 can return
+                 * with errno=EINTR if a signal handler was invoked. */
+                break;
+            }
         }
 
         if (readfds_addr) {
@@ -5452,7 +5523,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
             if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
                 return (uint64_t)-1;
             /* Restore original signal mask */
-            if (sigmask) proc->sig_mask = old_mask;
+            if (sigmask) {
+                uint64_t __ps_flags3;
+                spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags3);
+                proc->sig_mask = old_mask;
+                spinlock_irqsave_release(&proc->sig_lock, __ps_flags3);
+            }
             return (uint64_t)ready;
         }
 
@@ -5481,7 +5557,12 @@ static uint64_t sys_pselect6(uint64_t nfds, uint64_t readfds_addr,
         return (uint64_t)-1;
 
     /* Restore original signal mask */
-    if (sigmask) proc->sig_mask = old_mask;
+    if (sigmask) {
+        uint64_t __ps_flags4;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__ps_flags4);
+        proc->sig_mask = old_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __ps_flags4);
+    }
     return 0;
 }
 
@@ -5500,13 +5581,19 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
     if (!proc) return (uint64_t)-1;
 
     /* Apply the temporary signal mask if provided */
-    uint64_t old_mask = proc->sig_mask;
+    uint64_t old_mask;
+    uint64_t __pp_flags;
+    spinlock_irqsave_acquire(&proc->sig_lock, &__pp_flags);
+    old_mask = proc->sig_mask;
     if (sigmask_addr) {
         uint64_t new_mask;
-        if (copy_from_user(&new_mask, sigmask_addr, sizeof(new_mask)) < 0)
+        if (copy_from_user(&new_mask, sigmask_addr, sizeof(new_mask)) < 0) {
+            spinlock_irqsave_release(&proc->sig_lock, __pp_flags);
             return (uint64_t)-1;
+        }
         proc->sig_mask = new_mask;
     }
+    spinlock_irqsave_release(&proc->sig_lock, __pp_flags);
 
     struct pollfd fds_buf[256];
     int n = (int)nfds;
@@ -5531,8 +5618,14 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
 
     for (;;) {
         /* Check for pending unmasked signals */
-        if (proc->pending_signals & ~proc->sig_mask) {
-            break;
+        {
+            uint64_t __pp_flags2;
+            spinlock_irqsave_acquire(&proc->sig_lock, &__pp_flags2);
+            int sig_pending = (proc->pending_signals & ~proc->sig_mask) != 0;
+            spinlock_irqsave_release(&proc->sig_lock, __pp_flags2);
+            if (sig_pending) {
+                break;
+            }
         }
 
         int ready = 0;
@@ -5584,7 +5677,12 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
             return (uint64_t)-1;
 
         if (ready > 0) {
-            if (sigmask_addr) proc->sig_mask = old_mask;
+            if (sigmask_addr) {
+                uint64_t __pp_flags3;
+                spinlock_irqsave_acquire(&proc->sig_lock, &__pp_flags3);
+                proc->sig_mask = old_mask;
+                spinlock_irqsave_release(&proc->sig_lock, __pp_flags3);
+            }
             return (uint64_t)ready;
         }
 
@@ -5607,7 +5705,12 @@ static uint64_t sys_ppoll(uint64_t fds_addr, uint64_t nfds,
     if (copy_to_user(fds_addr, fds_buf, sizeof(struct pollfd) * (size_t)n) < 0)
         return (uint64_t)-1;
 
-    if (sigmask_addr) proc->sig_mask = old_mask;
+    if (sigmask_addr) {
+        uint64_t __pp_flags4;
+        spinlock_irqsave_acquire(&proc->sig_lock, &__pp_flags4);
+        proc->sig_mask = old_mask;
+        spinlock_irqsave_release(&proc->sig_lock, __pp_flags4);
+    }
     return 0;
 }
 

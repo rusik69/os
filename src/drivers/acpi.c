@@ -352,6 +352,14 @@ static void parse_dsdt_for_dock(struct fadt *fadt) {
     if (memcmp(hdr->signature, "DSDT", 4) != 0) return;
 
     uint32_t dsdt_len = hdr->length;
+
+    /* Validate header length to prevent underflow */
+    if (dsdt_len < sizeof(struct acpi_header)) {
+        kprintf("  ACPI: DSDT too short (%u bytes, need %zu)\n",
+                (unsigned int)dsdt_len, sizeof(struct acpi_header));
+        return;
+    }
+
     uint8_t *aml = dsdt + sizeof(struct acpi_header);
     uint32_t aml_len = (uint32_t)(dsdt_len - sizeof(struct acpi_header));
 

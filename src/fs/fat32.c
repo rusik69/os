@@ -814,8 +814,10 @@ int fat32_read_file(const char *path, void *buf, uint32_t max_size) {
     uint32_t done    = 0;
     uint8_t  sect_buf[SECT_SIZE];
     uint32_t clus = cluster;
+    uint64_t _chain_cnt = 0;
 
     while (clus < FAT_EOC() && done < to_read) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) return -EIO;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < to_read; s++) {
             if (read_sector(lba + s, sect_buf) != 0) return (int)done;
@@ -1440,7 +1442,9 @@ int fat32_write_file(const char *path, const void *data, uint32_t size) {
     uint32_t done = 0;
     uint32_t clus = first;
     uint8_t sect_buf[SECT_SIZE];
+    uint64_t _chain_cnt = 0;
     while (clus < FAT_EOC() && done < size) {
+        if (++_chain_cnt > FAT_MAX_CLUSTER()) return -EIO;
         uint32_t lba = cluster_to_lba(clus);
         for (uint32_t s = 0; s < spc && done < size; s++) {
             memset(sect_buf, 0, SECT_SIZE);
