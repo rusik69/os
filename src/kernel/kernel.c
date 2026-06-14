@@ -842,6 +842,16 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     service_init();
     kprintf("[OK] Service manager initialized\n");
 
+    /* ── Extract embedded initramfs (CPIO archive) ──────────────── */
+    {
+        extern int initramfs_extract(void);
+        int n = initramfs_extract();
+        if (n > 0)
+            kprintf("[OK] Initramfs: %d files extracted\n", n);
+        else
+            kprintf("[--] Initramfs: none found\n");
+    }
+
     /* ── Read /etc/hostname and set kernel hostname ─────────────── */
     {
         char hostbuf[128];
@@ -1064,12 +1074,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* NOTREACHED */
 #else
 
-    /* Normal mode: try to load a userspace init binary from the filesystem.
-     * If successful, the init process runs in ring 3 and can spawn shell, etc.
-     * If no init binary is found, fall back to kernel-mode shell.
-     *
-     * The init path can be overridden via the `init=` kernel cmdline parameter.
-     * Example: init=/mnt/bin/sh.elf  or  init=/sbin/init  */
+    /* Normal mode: try to load the userspace init binary.
+     * If successful, the init process runs in ring 3 and manages
+     * spawning shells, services, etc.
+     * Falls back to kernel-mode shell if spawn fails. */
 
     /* Finalise boot splash: mark progress complete */
     splash_progress(SPLASH_MAX_STAGES);
@@ -1078,30 +1086,22 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Check for init= cmdline parameter first */
     const char *cmdline_init_path = cmdline_get("init");
+    const char *init_path = "/init";
+
     if (cmdline_init_path && *cmdline_init_path) {
-        if (elf_exec(cmdline_init_path) == 0) {
-            init_ok = 1;
-            kprintf("[OK] Userspace init (cmdline): %s\n", cmdline_init_path);
-        } else {
-            kprintf("[!!] Cmdline init=%s failed, trying defaults\n", cmdline_init_path);
-        }
+        init_path = cmdline_init_path;
     }
 
-    if (!init_ok) {
-        /* Try common init paths */
-        const char *init_paths[] = {
-            "/mnt/init.elf",
-            "/mnt/bin/init",
-            "/mnt/shell.elf",
-            "/mnt/bin/sh.elf",
-        };
-
-        for (size_t i = 0; i < sizeof(init_paths) / sizeof(init_paths[0]); i++) {
-            if (elf_exec(init_paths[i]) == 0) {
-                init_ok = 1;
-                kprintf("[OK] Userspace init: %s\n", init_paths[i]);
-                break;
-            }
+    /* Spawn userspace init via kernel-mode spawner */
+    {
+        extern int process_spawn_kernel(const char *path);
+        int pid = process_spawn_kernel(init_path);
+        if (pid > 0) {
+            init_ok = 1;
+            kprintf("[OK] Userspace init: %s (PID %d)\n", init_path, pid);
+        } else {
+            kprintf("[!!] process_spawn_kernel(%s) failed with %d\n",
+                    init_path, pid);
         }
     }
 

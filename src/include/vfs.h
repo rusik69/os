@@ -371,6 +371,7 @@ int vfs_force_readonly(const char *path, const char *reason);
 /* Initramfs / CPIO extraction */
 int cpio_extract_initramfs(uint32_t addr, uint32_t size);
 int cpio_init(void);
+int initramfs_extract(void);
 
 /* tarfs init */
 int tarfs_init(void);

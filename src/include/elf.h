@@ -212,4 +212,9 @@ int process_execve(const char *path, char *const argv[], char *const envp[]);
  * Item 306: posix_spawn / posix_spawnp */
 int process_spawn(const char *path, char *const argv[], char *const envp[]);
 
+/* Kernel-mode spawn — create a userspace process from kernel context.
+ * Bypasses the is_user check in process_spawn.  Returns PID on success,
+ * negative errno on failure. */
+int process_spawn_kernel(const char *path);
+
 #endif

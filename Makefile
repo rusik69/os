@@ -80,6 +80,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/syscall_new.c \
          src/kernel/vfs.c \
          src/kernel/elf.c \
+         src/kernel/spawn_kernel.c \
          src/kernel/apic.c \
          src/kernel/cmdline.c \
          src/kernel/smp.c \
@@ -206,6 +207,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/luks.c \
          src/fs/ext2.c \
          src/fs/cpio.c \
+         src/fs/initramfs.c \
          src/fs/romfs.c \
          src/fs/tarfs.c \
          src/fs/vfs_enhance.c \
