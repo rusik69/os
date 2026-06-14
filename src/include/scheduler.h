@@ -1,7 +1,10 @@
 #ifndef SCHEDULER_H
 #define SCHEDULER_H
 
-#include "process.h"
+/* Forward declaration — struct process is fully defined in process.h */
+struct process;
+
+#include "types.h"
 
 /* Scheduling policies */
 #define SCHED_OTHER  0
@@ -70,5 +73,8 @@ void sched_autogroup_assign(struct process *proc, int group_id);
 
 /* Find highest vruntime among group members */
 uint64_t sched_autogroup_max_vruntime(int group_id);
+
+/* ── Include full struct process definition for callers ───────────── */
+#include "process.h"
 
 #endif
