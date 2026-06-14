@@ -268,6 +268,8 @@ struct process {
     char exe_path[256];
     /* ── Per-task stack canary for stack-smashing protection ────── */
     uint64_t stack_canary;   /* unique canary per process; updated in __stack_chk_guard on switch */
+    /* ── Core scheduling cookie (for SMT/HyperThread isolation) ─ */
+    uint64_t core_sched_cookie; /* 0 = no restriction; non-zero = must only share core with same cookie */
     /* ── Optimistic mutex spinning ─────────────────────────────── */
     int      on_cpu;         /* 1 = this process is currently executing on a CPU (set/cleared by scheduler) */
     /* ── PID namespace ──────────────────────────────────────────── */

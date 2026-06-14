@@ -580,9 +580,292 @@ Each hook point maintains a priority-sorted linked list of registered handler fu
 
 **NAT:** Up to 16 NAT rules supporting SNAT (source NAT for MASQUERADE) and DNAT (destination NAT for port forwarding). Works in conjunction with conntrack for connection tracking.
 
+## Cluster Architecture
+
+The cluster subsystem implements a Kubernetes-inspired container orchestration platform built directly into the kernel. It spans `src/cluster/`, `src/container/`, `src/orch/`, and `src/include/` (cluster, container, orch headers).
+
+``` 
+┌──────────────────────────────────────────────────────────────┐
+│                    Cluster Management                          │
+├──────────────────────────────────────────────────────────────┤
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
+│  │   Raft   │  │  Gossip  │  │   Node   │  ┌──────────────┐ │
+│  │ Consensus│◄─┤ Protocol │◄─┤  Manager │  │  Controllers │ │
+│  └────┬─────┘  └──────────┘  └────┬─────┘  └──────┬───────┘ │
+│       │                            │               │         │
+│  ┌────▼─────┐  ┌──────────┐  ┌────▼─────┐  ┌──────▼───────┐ │
+│  │  Raft KV │  │   Mesh   │  │ Network  │  │  HPA/VPA/    │ │
+│  │  Store   │  │ Overlay  │  │ Policies │  │ Autoscaler   │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────┘ │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
+│  │   CRD    │  │ Upgrade  │  │  Node    │  │  Runtime     │ │
+│  │  Engine  │  │ Manager  │  │ Problem  │  │  Security    │ │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+         │                      │
+         ▼                      ▼
+┌─────────────────┐   ┌──────────────────┐
+│ Container       │   │ Orchestration    │
+│ Runtime (OCI)   │   │ API Server       │
+└─────────────────┘   └──────────────────┘
+```
+
+### Cluster Topology
+
+**Files:** `src/cluster/raft.c`, `src/cluster/gossip.c`, `src/cluster/node.c`, `src/cluster/cluster.c`
+
+The cluster uses Raft consensus for consistent distributed state and a gossip protocol for membership and failure detection.
+
+**Raft Consensus (`src/cluster/raft.c`, `src/cluster/raft_kv.c`):**
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Leader    │◄────┤  Follower   │◄────┤  Follower   │
+│             │     │             │     │             │
+│ Term N      │     │ Term N      │     │ Term N      │
+│ Log Index M │     │ Log Index M │     │ Log Index M │
+└──────┬──────┘     └─────────────┘     └─────────────┘
+       │
+       │ AppendEntries (heartbeat + log replication)
+       └───────────────────────────────────────────────►
+```
+
+- **Leader election** — randomized election timeouts (150-300ms) prevent split votes. Candidates request votes via `RequestVote` RPC. A node becomes leader when it receives votes from a majority.
+- **Log replication** — the leader appends entries to its local log, then replicates them to followers via `AppendEntries` RPC. Entries are committed once a majority acknowledge.
+- **Raft KV store** (`raft_kv.c`) — a linearizable key-value store backed by Raft consensus. Operations: `put(key, value)`, `get(key)`, `delete(key)`. Used for distributed coordination, service discovery, and configuration storage.
+- **Snapshot & compaction** — the log is periodically snapshotted to bound growth. Snapshot installation via `InstallSnapshot` RPC for slow/fresh followers.
+
+**Gossip Protocol (`src/cluster/gossip.c`):**
+
+- **SWIM-style membership** — each node maintains a partial view of the cluster and periodically gossips a subset of members to random peers.
+- **Suspicion-based failure detection** — nodes are marked `Suspicious` after missed heartbeats, then `Dead` after a configurable suspicion timeout. This prevents false positives from transient network issues.
+- **State sync** — cluster membership, node health, and metadata are disseminated via gossip messages. Each message contains a generation counter for conflict resolution.
+- **Infection-style dissemination** — new information spreads exponentially: each node that learns of a change includes it in its next gossip round, achieving O(log N) convergence.
+
+**Node Manager (`src/cluster/node.c`):**
+
+```c
+struct cluster_node {
+    uint32_t    id;              /* unique node identifier */
+    char        hostname[64];    /* node hostname */
+    uint32_t    ip;              /* management IP address */
+    uint16_t    port;            /* cluster communication port */
+    uint32_t    state;           /* HEALTHY, UNHEALTHY, UNREACHABLE */
+    uint64_t    last_heartbeat;  /* timestamp of last ping */
+    uint32_t    cpu_capacity;    /* millicores */
+    uint64_t    mem_capacity;    /* bytes */
+    uint32_t    pod_capacity;    /* max pods */
+    uint32_t    pod_count;       /* current pod count */
+};
+```
+
+- **Registration** — nodes join by contacting any existing cluster member. Registration data propagates via gossip.
+- **Health reporting** — periodic heartbeats with resource utilization (CPU, memory, disk, network).
+- **Leader election** — orchestration controller leader elected from among healthy nodes.
+- **Pod assignment** — scheduler places pods on nodes based on resource availability, affinity rules, and taints/tolerations.
+- **Service endpoint sync** — when pod endpoints change, the node manager updates the service proxy table and propagates via gossip.
+
+### Pod Abstraction
+
+**Files:** `src/container/runtime.c`, `src/container/state.c`, `src/container/orch.c`, `src/orch/pod_health.c`, `src/orch/pod_security.c`
+
+Pods are the smallest deployable unit — one or more containers with shared network namespace, storage volumes, and lifecycle.
+
+```c
+struct pod {
+    uint32_t        id;            /* pod UID */
+    char            name[128];     /* pod name */
+    uint32_t        namespace_id;  /* namespace */
+    struct pod_spec spec;          /* desired state */
+    struct pod_status status;      /* current state */
+    container_t    *containers;    /* member containers */
+    int             num_containers;
+    struct pod_net  net;           /* network namespace, IP, ports */
+    struct pod_vol  volumes[8];    /* mounted volumes */
+    int             num_volumes;
+    uint32_t        node_id;       /* assigned node */
+    uint64_t        created_at;    /* creation timestamp */
+    uint32_t        restart_count; /* restart policy counter */
+};
+```
+
+**Pause Container (infrastructure container):**
+- Every pod runs a `pause` container first, which holds the pod's network namespace and cgroup parent.
+- All application containers in the pod share the pause container's network stack (IP address, port space).
+- The pause container is a minimal process that sleeps indefinitely (`pause()` syscall).
+- On pod teardown, the pause container is the last to be stopped, ensuring network namespace cleanup.
+
+**Lifecycle:**
+```
+Pending → Running → Succeeded
+              ↓
+           Failed     → (restart policy: Always/OnFailure/Never)
+              ↓
+         Evicted (OOM, node failure, preemption)
+```
+
+**Health Checking** (`src/orch/pod_health.c`):
+- **Readiness probe** — determines if the pod is ready to serve traffic. Probes: TCP socket check, HTTP GET, command execution, gRPC health check.
+- **Liveness probe** — determines if the pod is still running correctly. Same probe types as readiness. Failed liveness → pod restart.
+- **Startup probe** — delays liveness checks until the pod has had time to initialize.
+- **Probe parameters:** `initial_delay_seconds`, `period_seconds`, `timeout_seconds`, `success_threshold`, `failure_threshold`.
+- **Health aggregation:** per-container health is aggregated to pod-level health. A pod is Ready only when all its containers pass readiness checks.
+
+### Service Abstraction
+
+**Files:** `src/container/service_proxy.c`, `src/orch/namespace.c`, `src/cluster/mesh.c`
+
+Services provide stable network endpoints for a set of pods, decoupling clients from individual pod IPs.
+
+```c
+struct service {
+    uint32_t        id;            /* service UID */
+    char            name[128];     /* service name */
+    uint32_t        namespace_id;  /* namespace */
+    char            cluster_ip[16];/* virtual IP address */
+    uint16_t        port;          /* service port */
+    uint16_t        target_port;   /* container port */
+    const char     *protocol;      /* TCP, UDP, SCTP */
+    uint32_t        selector_key;  /* label key for pod selection */
+    uint32_t        selector_val;  /* label value for pod selection */
+    struct pod_endpoint endpoints[32]; /* backing pod endpoints */
+    int             num_endpoints;
+    lb_strategy_t   lb;            /* load-balancing strategy */
+};
+```
+
+**Virtual IP (ClusterIP):**
+- Each service gets a stable virtual IP from the cluster CIDR range.
+- The service proxy intercepts traffic to the VIP via IPVS or iptables rules and load-balances across healthy pod endpoints.
+- VIPs survive pod restarts and scaling events — only the endpoint set changes.
+
+**DNS Discovery:**
+- Built-in DNS server resolves `<service>.<namespace>.svc.cluster` to the service VIP.
+- Pods discover services via the cluster DNS resolver (configured via `/etc/resolv.conf` in each container).
+- DNS records are updated automatically when services or endpoints change.
+
+**Proxy Mechanisms:**
+- **IPVS** — kernel-level Layer 4 load balancing with scheduling algorithms: round-robin, least connections, source hashing, destination hashing.
+- **iptables** — DNAT-based proxy using netfilter rules for per-service port mapping.
+- **Userspace proxy** — fallback mode where a proxy process accepts connections and forwards to pods.
+- **Session affinity** — optional sticky sessions based on client IP (via IPVS persistence templates).
+
+**Service Types:**
+| Type | Description | Accessible |
+|------|-------------|-----------|
+| ClusterIP | Internal virtual IP | Within cluster only |
+| NodePort | Static port on every node | External via `<nodeIP>:<nodePort>` |
+| LoadBalancer | External load balancer integration | External via LB address |
+| ExternalName | DNS CNAME alias | Via DNS |
+
+### Controllers
+
+**Files:** `src/cluster/controllers.c`, `src/cluster/hpa.c`, `src/cluster/crd.c`, `src/orch/events.c`
+
+Controllers implement the control loop pattern: observe current state, compare to desired state, and take action to reconcile.
+
+**Horizontal Pod Autoscaler (HPA) (`src/cluster/hpa.c`):**
+
+```
+Metrics Collector ──► HPA Controller ──► Scale Target
+     │                      │
+     ▼                      ▼
+  CPU/memory            Compute desired   Update replica count
+  utilization             replicas        on the target (e.g.,
+  (from cgroup stats)    desired = ceil(    Deployment, StatefulSet)
+                          current * (current_utilization
+                                     / target_utilization))
+```
+
+- **Metrics sources:** CPU utilization (from cgroup CPU accounting), memory utilization (from cgroup memory stats), custom metrics (via external metrics API).
+- **Target utilization:** configurable per-HPA (e.g., `targetCPUUtilizationPercentage: 80`).
+- **Scaling behavior:** configurable stabilization window, scale-up/down policies, cooldown periods.
+- **Supported targets:** Deployments, StatefulSets, ReplicaSets, ReplicationControllers.
+
+**StatefulSet Controller:**
+- Manages stateful applications with stable network identities and persistent storage.
+- Pods are created in order (0 to N-1) and deleted in reverse order.
+- Each pod gets a unique network identity (`<name>-<ordinal>`) and a dedicated PVC.
+- Supports rolling updates with ordered pod replacement.
+- On failure, the controller recreates the pod with the same identity and storage.
+
+**CronJob Controller:**
+- Runs jobs on a time-based schedule (standard cron syntax with second precision).
+- Supports concurrency policies: Allow, Forbid, Replace.
+- Job history limits (successful/failed jobs retained).
+- Timezone support for timezone-aware scheduling.
+
+**Custom Resource Definition (CRD) Engine (`src/cluster/crd.c`):**
+- Define new resource types at runtime via CRD objects.
+- CRDs support arbitrary schema validation (field types, required fields, nested structures).
+- Custom resources are stored in the Raft KV store and watched by controllers.
+- CRD lifecycle: register → validate → store → watch → reconcile.
+- Controllers can watch custom resources and reconcile to external systems.
+
+**Operator Framework:**
+- Built-in operator pattern: a controller watches a custom resource and reconciles the cluster state.
+- Operators can manage complex applications with domain-specific logic.
+- Operator lifecycle: install operator → register CRD → create custom resource → operator reconciles.
+- Cluster event system (`src/orch/events.c`) feeds operator event loops.
+
+### Network Overlay
+
+**Files:** `src/cluster/overlay.c`, `src/cluster/mesh.c`, `src/cluster/network_policy.c`
+
+The cluster implements VXLAN-based overlay networking for inter-node pod communication, with optional WireGuard encryption.
+
+``` 
+┌───────────────────┐       VXLAN Tunnel       ┌───────────────────┐
+│   Node A          │◄─────────────────────────►│   Node B          │
+│                   │                           │                   │
+│  ┌─────┐  ┌─────┐│     ┌──────────────┐      │┌─────┐  ┌─────┐  │
+│  │Pod1 │  │Pod2 ││     │   Overlay    │      ││Pod3 │  │Pod4 │  │
+│  │10.0.1.2│10.0.1.3│     │   Network    │      ││10.0.2.2│10.0.2.3│
+│  └──┬──┘  └──┬──┘│     │ 10.0.0.0/16  │      │└──┬──┘  └──┬──┘  │
+│     │        │    │     └──────────────┘      │   │        │      │
+│  ┌──▼────────▼──┐ │                           │ ┌─▼────────▼──┐  │
+│  │  veth pair   │ │                           │ │  veth pair   │  │
+│  │  → cbr0      │ │                           │ │  → cbr0      │  │
+│  └───────┬──────┘ │                           │ └──────┬───────┘  │
+│          │         │                           │        │          │
+│  ┌───────▼──────┐  │                           │ ┌──────▼───────┐  │
+│  │  VXLAN VTEP  │  │                           │ │  VXLAN VTEP  │  │
+│  │  (vxlan0)    │  │                           │ │  (vxlan0)    │  │
+│  │  192.168.1.1 │  │                           │ │  192.168.1.2 │  │
+│  └───────┬──────┘  │                           │ └──────┬───────┘  │
+│          │         │                           │        │          │
+│   Underlay: eth0   │                           │   Underlay: eth0  │
+└───────────────────┘                           └───────────────────┘
+```
+
+**VXLAN Overlay (`src/cluster/overlay.c`):**
+- VXLAN encapsulation (RFC 7348) with 24-bit VNI for network isolation.
+- Each namespace gets a unique VNI, providing Layer 2 isolation between tenants.
+- UDP encapsulation over the physical underlay network (port 8472).
+- ARP suppression and MAC learning via the built-in forwarding database (FDB).
+- Broadcast, unknown-unicast, and multicast (BUM) traffic replicated via IP multicast or head-end replication.
+
+**Network Policy (`src/cluster/network_policy.c`):**
+- **Ingress rules:** allow traffic from pods matching label selectors, IP CIDR blocks, or namespaces.
+- **Egress rules:** allow outbound traffic to pods, CIDR blocks, or DNS names.
+- **Policy types:** Allow (whitelist) and Deny (blacklist), with Deny taking precedence.
+- **Namespace isolation:** per-namespace default policies (Deny All, Allow All, or custom).
+- **Rule evaluation:** policies are compiled into nftables rulesets on each node for efficient packet filtering.
+
+**Ingress Controller:**
+- **NodePort:** each service port is exposed on a static port (30000-32767) on all cluster nodes.
+- **LoadBalancer:** integrates with external load balancers (or uses IPVS/TUN for direct routing).
+- **HTTP routing:** path-based and host-based routing to backend services, with TLS termination and session affinity.
+- The ingress controller runs as a DaemonSet, listening on host ports and proxying to service endpoints.
+
+**WireGuard Mesh (`src/cluster/mesh.c`):**
+- Full-mesh WireGuard VPN between cluster nodes for encrypted overlay traffic.
+- Automatic peer discovery and key rotation via the Raft KV store.
+- Supports split-tunnel mode: cluster traffic via WireGuard, external traffic via the physical interface.
+
 ## Filesystem Stack Architecture
 
-The filesystem stack implements a Linux-compatible VFS layer with multiple on-disk, in-memory, and pseudo-filesystems. It spans `src/fs/`, `src/kernel/vfs.c`, and `src/include/` (VFS, page cache, bufcache headers).
+The filesystem stack implements a Linux-compatible VFS layer with multiple on-disk, in-memory, and pseudo-filesystems.
 
 ```
 System Calls (open/read/write/close/stat/mount/umount)

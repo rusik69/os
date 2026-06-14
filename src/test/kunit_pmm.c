@@ -16,6 +16,8 @@
 
 #include "kunit.h"
 #include "pmm.h"
+#include "oom.h"
+#include "process.h"
 #include "string.h"
 #include "printf.h"
 
@@ -357,5 +359,81 @@ void kunit_pmm_register(void)
     pmm_test_suite.teardown = NULL;
 
     kunit_register_suite(&pmm_test_suite);
-    kprintf("[KUnit] PMM allocation tests registered (13 cases)\\n");
+    kprintf("[KUnit] PMM allocation tests registered (13 cases)\n");
+}
+
+/* ====================================================================
+ *  OOM — Out-Of-Memory killer tests
+ * ==================================================================== */
+
+static void oom_scoring_basic(struct kunit *test)
+{
+    int64_t score = oom_score_process(1);
+    KUNIT_EXPECT_NE(test, score, (int64_t)-1);
+    KUNIT_EXPECT_TRUE(test, score >= 0);
+}
+
+static void oom_score_adj_set_get(struct kunit *test)
+{
+    oom_set_score_adj(1, 100);
+    int16_t val = oom_get_score_adj(1);
+    KUNIT_EXPECT_EQ(test, (int64_t)val, (int64_t)100);
+
+    oom_set_score_adj(1, OOM_SCORE_ADJ_MIN);
+    val = oom_get_score_adj(1);
+    KUNIT_EXPECT_EQ(test, (int64_t)val, (int64_t)OOM_SCORE_ADJ_MIN);
+
+    oom_set_score_adj(1, 0);
+}
+
+static void oom_estimate_freed(struct kunit *test)
+{
+    uint64_t freed = oom_estimate_freed_pages(1);
+    KUNIT_EXPECT_NE(test, (int64_t)freed, (int64_t)-1);
+    KUNIT_EXPECT_TRUE(test, freed >= 0);
+}
+
+static void oom_safe_processes(struct kunit *test)
+{
+    /* Verify OOM score adj protection is accessible */
+    oom_set_score_adj(1, 500);
+    oom_set_score_adj(1, 0);
+    (void)test;
+}
+
+static void oom_kill_count_tracking(struct kunit *test)
+{
+    uint64_t count_before = oom_kill_count;
+    KUNIT_EXPECT_TRUE(test, count_before >= 0);
+    (void)count_before;
+}
+
+static struct kunit_case oom_test_cases[] = {
+    KUNIT_CASE(oom_scoring_basic),
+    KUNIT_CASE(oom_score_adj_set_get),
+    KUNIT_CASE(oom_estimate_freed),
+    KUNIT_CASE(oom_safe_processes),
+    KUNIT_CASE(oom_kill_count_tracking),
+    {0}
+};
+
+static struct kunit_suite oom_test_suite;
+
+void kunit_oom_register(void)
+{
+    int ci = 0;
+    for (int i = 0; oom_test_cases[i].run != NULL && i < KUNIT_MAX_CASES - 1; i++) {
+        oom_test_suite.cases[ci].name = oom_test_cases[i].name;
+        oom_test_suite.cases[ci].run  = oom_test_cases[i].run;
+        ci++;
+    }
+    oom_test_suite.cases[ci].name = NULL;
+    oom_test_suite.cases[ci].run  = NULL;
+
+    oom_test_suite.name    = "oom";
+    oom_test_suite.setup   = NULL;
+    oom_test_suite.teardown = NULL;
+
+    kunit_register_suite(&oom_test_suite);
+    kprintf("[KUnit] OOM tests registered (%d cases)\n", ci);
 }

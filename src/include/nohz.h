@@ -18,6 +18,9 @@ int nohz_tick_restart(int cpu);
 /* Check whether the tick is stopped on a given CPU */
 int nohz_tick_is_stopped(int cpu);
 
+/* Check whether a given CPU is marked for NO_HZ adaptive tick */
+int nohz_cpu_is_isolated(int cpu);
+
 /* Return milliseconds since tick was stopped */
 uint64_t nohz_tick_stopped_ms(int cpu);
 

@@ -153,6 +153,16 @@ int blk_submit_async(struct blk_request *req) {
         q->inflight_count++;
         spinlock_irqsave_release(&q->lock, irq_flags);
 
+        if (!g_blockdevs[dev_id].submit_fn) {
+            req->inflight = 0;
+            q->inflight_count--;
+            req->result = -1;
+            req->done = 1;
+            if (req->done_wq) {
+                wait_queue_wake(req->done_wq);
+            }
+            return -1;
+        }
         int ret = g_blockdevs[dev_id].submit_fn(req);
 
         /* Track statistics for synchronous completion */
@@ -372,6 +382,12 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
 
 void blk_request_done(struct blk_request *req) {
     if (!req) return;
+
+    if (req->dev_id >= BLOCKDEV_MAX_DEVICES) {
+        req->done = 1;
+        req->inflight = 0;
+        return;
+    }
 
     req->done = 1;
     req->inflight = 0;

@@ -467,6 +467,7 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_vmm.c \
          src/test/kunit_security.c \
          src/test/kunit_power.c \
+         src/test/kunit_ext.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
@@ -855,12 +856,12 @@ all: $(BUILDDIR)/disk.img
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-full check-clean check-app-boundary doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
-        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags
+        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h|loop\.h|ftrace\.h|kprobes\.h|trace\.h|perf_events\.h|firmware\.h|watchdog\.h|timers\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h|loop\.h|ftrace\.h|kprobes\.h|trace\.h|perf_events\.h|firmware\.h|watchdog\.h|timers\.h|lockdown\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
@@ -1529,3 +1530,50 @@ etags:
 .PHONY: todo
 todo:
 	@grep -rn 'TODO\|FIXME\|HACK\|XXX\|BUG' src/ --include='*.c' --include='*.h' 2>/dev/null || true
+
+# ── Documentation check ──────────────────────────────────────────────────
+
+.PHONY: doccheck
+doccheck:
+	@echo "=== Documentation Check ==="
+	@errors=0; \
+	missing=; \
+	for f in ARCHITECTURE.md README.md docs/DRIVER_API.md; do \
+	    if [ ! -f "$$f" ]; then \
+	        missing="$$missing $$f"; \
+	        errors=$$((errors + 1)); \
+	    fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	    echo "❌ Missing required documentation:$$missing"; \
+	else \
+	    echo "✅ All required documentation files present."; \
+	fi; \
+	md_files=$$(find . -maxdepth 2 -name '*.md' -not -path './.git/*' 2>/dev/null); \
+	markdown_bad=0; \
+	for f in $$md_files; do \
+	    if ! grep -q '^#\|^##\|^###\|^####\|^#####\|^######' "$$f" 2>/dev/null; then \
+	        echo "⚠️  $$f: no headers found (may not be valid markdown)"; \
+	        markdown_bad=$$((markdown_bad + 1)); \
+	    fi; \
+	done; \
+	if [ "$$markdown_bad" -gt 0 ]; then \
+	    echo "⚠️  $$markdown_bad file(s) may have markdown issues"; \
+	fi; \
+	todo_docs=0; \
+	for f in $$md_files; do \
+	    if grep -n 'TODO\|FIXME\|HACK\|XXX\|BUG' "$$f" 2>/dev/null | grep -v -i 'syscall.*num\|signature\|\.todo' > /dev/null 2>&1; then \
+	        count=$$(grep -c 'TODO\|FIXME\|HACK\|XXX\|BUG' "$$f" 2>/dev/null); \
+	        echo "⚠️  $$f: $$count TODO/FIXME/HACK markers found"; \
+	        todo_docs=$$((todo_docs + 1)); \
+	    fi; \
+	done; \
+	if [ "$$todo_docs" -gt 0 ]; then \
+	    echo "⚠️  $$todo_docs documentation file(s) contain TODO/FIXME markers (these should be resolved)"; \
+	fi; \
+	if [ "$$errors" -gt 0 ]; then \
+	    echo "❌ doccheck FAILED — $$errors error(s)"; \
+	    exit 1; \
+	else \
+	    echo "✅ doccheck PASSED"; \
+	fi

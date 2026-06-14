@@ -26,6 +26,10 @@
 #include "pmm.h"
 #include "heap.h"
 #include "errno.h"
+#include "blockdev.h"
+
+/* ── Forward declarations ─────────────────────────────────────────── */
+static int nvme_pmr_register_bdev(void);
 
 /* ── PMR Register Offsets ────────────────────────────────────────── */
 #define NVME_REG_PMRCAP   0xE00
@@ -296,6 +300,9 @@ int nvme_pmr_init(void) {
             (unsigned)(g_pmr.elasticity_buf_size * 4),
             (unsigned)g_pmr.write_throughput);
 
+    /* Register as block device */
+    nvme_pmr_register_bdev();
+
     return 0;
 }
 
@@ -343,6 +350,11 @@ void nvme_pmr_exit(void) {
     if (!g_pmr.present)
         return;
 
+    /* Unregister block device if registered */
+    int dev_id = BLOCKDEV_PMEM0; /* Use PMEM0 slot for PMR */
+    if (blockdev_is_registered(dev_id))
+        blockdev_unregister(dev_id);
+
     /* Disable PMR */
     uint32_t pmrctl = pmr_read32(NVME_REG_PMRCTL);
     pmrctl &= ~PMRCTL_PMR_EN;
@@ -354,4 +366,76 @@ void nvme_pmr_exit(void) {
     g_pmr_init_done = 0;
 
     kprintf("[NVMe PMR] Shut down\n");
+}
+
+/* ── Block device driver ──────────────────────────────────────────── */
+
+/*
+ * nvme_pmr_submit — Block device submit callback for PMR.
+ * Translates block I/O requests into direct memcpy to/from PMR memory.
+ */
+static int nvme_pmr_submit(struct blk_request *req)
+{
+    if (!req || !g_pmr.enabled || !g_pmr.pmr_virt)
+        return -1;
+
+    uint64_t lba = req->lba;
+    uint32_t count = req->count;
+    uint64_t offset = lba * 512ULL;
+    uint64_t length = (uint64_t)count * 512ULL;
+
+    if (offset + length > g_pmr.pmr_size) {
+        req->result = -1;
+        return -1;
+    }
+
+    void *pmr_addr = (uint8_t *)g_pmr.pmr_virt + offset;
+    void *buf = req->buf;
+
+    if (!buf) {
+        req->result = -1;
+        return -1;
+    }
+
+    if (req->flags & BLK_REQ_READ) {
+        memcpy(buf, pmr_addr, (size_t)length);
+    } else if (req->flags & BLK_REQ_WRITE) {
+        memcpy(pmr_addr, buf, (size_t)length);
+        __sync_synchronize();
+    } else {
+        req->result = -1;
+        return -1;
+    }
+
+    req->result = 0;
+    return 0;
+}
+
+/* ── Block device registration ────────────────────────────────────── */
+
+static int g_pmr_bdev_registered = 0;
+
+static int nvme_pmr_register_bdev(void)
+{
+    if (g_pmr_bdev_registered)
+        return 0;
+    if (!g_pmr.enabled || !g_pmr.pmr_virt)
+        return -EIO;
+
+    uint64_t sector_count = g_pmr.pmr_size / 512ULL;
+    int dev_id = BLOCKDEV_PMEM0;
+
+    int ret = blockdev_register(dev_id, "nvme_pmr",
+                                 nvme_pmr_submit, NULL,
+                                 sector_count, 0);
+    if (ret != 0) {
+        kprintf("[NVMe PMR] blockdev_register failed: %d\n", ret);
+        return ret;
+    }
+
+    g_pmr_bdev_registered = 1;
+    kprintf("[NVMe PMR] Registered as block device pmem%d (%llu sectors)\n",
+            dev_id - BLOCKDEV_PMEM0,
+            (unsigned long long)sector_count);
+    return 0;
 }

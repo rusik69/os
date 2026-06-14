@@ -24,6 +24,10 @@ static int sysctl_read_kptr_restrict(char *buf, int max) {
 }
 
 static int sysctl_write_kptr_restrict(const char *buf, int len) {
+    /* Only root (uid 0) may change kptr_restrict */
+    struct process *p = process_get_current();
+    if (p && p->euid != 0 && p->uid != 0)
+        return -1;
     if (len > 0 && buf[0] >= '0' && buf[0] <= '2')
         kptr_restrict = buf[0] - '0';
     return 0;

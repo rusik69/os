@@ -760,11 +760,30 @@ void acpi_init(void) {
 
     if (memcmp(rsdt->header.signature, "RSDT", 4) != 0) return;
 
+    /* Validate RSDT header length to prevent underflow when computing
+     * num_entries.  Each entry is 4 bytes (a 32-bit physical address). */
+    if (rsdt->header.length < sizeof(struct acpi_header)) {
+        kprintf("[--] ACPI: RSDT too short (%u bytes, need %zu)\n",
+                (unsigned int)rsdt->header.length, sizeof(struct acpi_header));
+        return;
+    }
+
     uint32_t num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
     struct fadt *fadt = NULL;
 
+    /* Validate the mapped region bounds for ACPI tables */
+    uint64_t acpi_region_start = 0x80000;
+    uint64_t acpi_region_end = 0xFFFFF;
+
     for (uint32_t i = 0; i < num_entries; i++) {
-        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT((uint64_t)rsdt->entries[i]);
+        uint64_t entry_phys = (uint64_t)rsdt->entries[i];
+        /* Reject entries outside the standard ACPI memory region */
+        if (entry_phys < acpi_region_start || entry_phys > acpi_region_end) {
+            kprintf("[--] ACPI: RSDT entry %u physical address 0x%llx outside valid range, skipping\n",
+                    (unsigned int)i, (unsigned long long)entry_phys);
+            continue;
+        }
+        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT(entry_phys);
         if (memcmp(hdr->signature, FADT_SIG, 4) == 0) {
             fadt = (struct fadt *)hdr;
         }

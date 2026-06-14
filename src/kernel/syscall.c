@@ -75,6 +75,8 @@
 #include "kexec.h"
 #include "uaccess.h"
 #include "mseal.h"
+#include "lockdown.h"
+#include "userfaultfd.h"
 
 #ifndef UINT32_MAX
 #define UINT32_MAX 4294967295U
@@ -2264,6 +2266,12 @@ static uint64_t sys_mmap(uint64_t addr, uint64_t length, uint64_t prot, uint64_t
     if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
         return (uint64_t)(int64_t)-EACCES;
 
+    /* MAP_FIXED / specific address: check if the target range is sealed (mseal) */
+    if (addr != 0) {
+        if (mseal_check(addr, length) == 0)
+            return (uint64_t)(int64_t)-EPERM;
+    }
+
     /* ── MAP_HUGETLB: force huge page allocation from reserved pool ── */
     if (flags & MAP_HUGETLB) {
         /* HugeTLB requires 2MB-aligned length */
@@ -2419,7 +2427,7 @@ static uint64_t sys_munmap(uint64_t addr, uint64_t length) {
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
 
     /* Check if the range is sealed (mseal) — sealed ranges are immutable */
-    if (mseal_check(addr, length) < 0)
+    if (mseal_check(addr, length) == 0)
         return (uint64_t)(int64_t)-EPERM;
 
     if (vmm_unmap_user_pages(proc->pml4, addr, length / PAGE_SIZE) < 0)
@@ -2452,7 +2460,7 @@ static uint64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
     if (addr + length > USER_VADDR_MAX) return (uint64_t)-1;
 
     /* Check if the range is sealed (mseal) — sealed ranges are immutable */
-    if (mseal_check(addr, length) < 0)
+    if (mseal_check(addr, length) == 0)
         return (uint64_t)(int64_t)-EPERM;
 
     /*
@@ -3796,6 +3804,10 @@ static uint64_t sys_getrandom(uint64_t buf_addr, uint64_t count,
 
 static uint64_t sys_kexec_load(uint64_t phys_addr, uint64_t entry, uint64_t flags)
 {
+    /* Lockdown: reject kexec_load at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return (uint64_t)-EPERM;
+
     int ret = kexec_load(phys_addr, entry, (uint32_t)flags);
     return (uint64_t)(int64_t)ret;
 }
@@ -5224,9 +5236,22 @@ static uint64_t sys_arch_prctl(uint64_t code, uint64_t addr) {
 /* ── poll ──────────────────────────────────────────────────────────────── */
 
 static uint64_t sys_poll(uint64_t fds_addr, uint64_t nfds, uint64_t timeout_ms) {
-    if (syscall_is_user_process() && !syscall_user_read_ok(fds_addr, nfds * sizeof(struct pollfd)))
+    /* Prevent integer overflow in nfds * sizeof(struct pollfd).
+     * Clamp to PROCESS_FD_MAX (the maximum number of FDs in the fd_table)
+     * to bound the iteration and prevent out-of-bounds access. */
+    if (nfds > PROCESS_FD_MAX)
+        nfds = PROCESS_FD_MAX;
+    if (nfds == 0)
+        return 0;
+
+    uint64_t fds_size = nfds * sizeof(struct pollfd);
+    /* Check for overflow */
+    if (fds_size / sizeof(struct pollfd) != nfds)
+        return (uint64_t)-1; /* EINVAL */
+
+    if (syscall_is_user_process() && !syscall_user_read_ok(fds_addr, fds_size))
         return (uint64_t)-1;
-    if (syscall_is_user_process() && !syscall_user_write_ok(fds_addr, nfds * sizeof(struct pollfd)))
+    if (syscall_is_user_process() && !syscall_user_write_ok(fds_addr, fds_size))
         return (uint64_t)-1;
 
     struct pollfd *fds = (struct pollfd *)fds_addr;
@@ -5813,6 +5838,19 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 /* ── syslog/kmsg ───────────────────────────────────────────────────────── */
 
 static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
+    /* Lockdown CONFIDENTIALITY: block reading dmesg from userspace */
+    if (lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY)) {
+        switch (type) {
+            case SYSLOG_ACTION_READ_ALL:
+            case SYSLOG_ACTION_READ_CLEAR:
+            case SYSLOG_ACTION_SIZE_UNREAD:
+            case SYSLOG_ACTION_SIZE_BUFFER:
+                return (uint64_t)-EPERM;
+            default:
+                break;  /* Allow clear, console ops, etc. */
+        }
+    }
+
     /* Check dmesg_restrict: only root can read dmesg when set */
     if (dmesg_restrict) {
         struct process *p = process_get_current();
@@ -8620,6 +8658,10 @@ static uint64_t sys_init_module(uint64_t path_addr, uint64_t params_addr)
     const char *path = (const char *)path_addr;
     const char *params = (params_addr) ? (const char *)params_addr : NULL;
 
+    /* Lockdown: reject module loading at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return (uint64_t)-EPERM;
+
     /* Only root (or kernel context) can load modules */
     if (syscall_is_user_process()) {
         struct process *p = process_get_current();
@@ -8755,6 +8797,10 @@ static uint64_t sys_finit_module(uint64_t fd, uint64_t params_addr, uint64_t fla
 {
     const char *params = (params_addr) ? (const char *)params_addr : NULL;
     (void)flags;
+
+    /* Lockdown: reject module loading at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return (uint64_t)-EPERM;
 
     /* Only root can load modules */
     if (syscall_is_user_process()) {
@@ -9023,6 +9069,30 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
             /* seccomp_evaluate_syscall already logged audit — kill process */
             process_exit_code(SIGSYS);
             return (uint64_t)-1;
+        }
+    }
+
+    /* BPF seccomp check — runs when the process has a BPF-based filter
+     * (SECCOMP_MODE_FILTER_BPF, mode 3). Uses the BPF virtual machine to
+     * evaluate the filter program. Handles KILL/TRAP/LOG/ALLOW actions. */
+    {
+        struct process *p = process_get_current();
+        if (p && p->seccomp_mode == SECCOMP_MODE_FILTER_BPF && p->seccomp_filter) {
+            uint32_t bpf_action = seccomp_filter_evaluate((int)num, AUDIT_ARCH_X86_64);
+            switch (bpf_action & SECCOMP_RET_ACTION_FULL) {
+            case SECCOMP_BPF_RET_ALLOW:
+                break;
+            case SECCOMP_BPF_RET_LOG:
+                /* Logged via audit inside evaluate — allow to proceed */
+                break;
+            case SECCOMP_BPF_RET_TRAP:
+                seccomp_send_sigsys(num, 0);
+                return (uint64_t)-1;
+            case SECCOMP_BPF_RET_KILL:
+            default:
+                process_exit_code(SIGSYS);
+                return (uint64_t)-1;
+            }
         }
     }
 
@@ -9477,6 +9547,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_OPEN_BY_HANDLE_AT: return sys_open_by_handle_at(a1, a2, a3);
         /* ── KCOV code coverage (Item 208) ────────────────────────── */
         case SYS_KCOV:            return (uint64_t)sys_kcov(a1, a2);
+        /* ── userfaultfd (a1=fd, a2=cmd, a3=arg) ─────────────── */
+        case SYS_USERFAULTFD:     return (uint64_t)sys_userfaultfd2(a1, a2, a3);
         /* ── Swap — block device swap (Item 223) ──────────────────── */
         case SYS_SWAPON:          return (uint64_t)swap_swapon((const char *)a1);
         case SYS_SWAPOFF:         return (uint64_t)swap_swapoff((const char *)a1);

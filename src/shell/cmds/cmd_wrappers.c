@@ -127,6 +127,140 @@ void cmd_base32_wrapper(const char *args) {
     cmd_base32(argc, argv);
 }
 
+/* ── Batch B51-B100 orphan command wrappers ─────────────────────── */
+void cmd_ctr_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_ctr(argc, argv);
+}
+void cmd_crictl_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_crictl(argc, argv);
+}
+void cmd_orchctl_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_orchctl(argc, argv);
+}
+void cmd_compose_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_compose(argc, argv);
+}
+void cmd_depmod_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_depmod(argc, argv);
+}
+void cmd_adjtimex_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_adjtimex(argc, argv);
+}
+void cmd_capsh_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_capsh(argc, argv);
+}
+void cmd_dumpleases_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_dumpleases(argc, argv);
+}
+void cmd_envdir_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_envdir(argc, argv);
+}
+void cmd_fatattr_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_fatattr(argc, argv);
+}
+void cmd_fbset_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_fbset(argc, argv);
+}
+void cmd_fsfreeze_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_fsfreeze(argc, argv);
+}
+void cmd_ftpget_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_ftpget(argc, argv);
+}
+void cmd_ftpput_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_ftpput(argc, argv);
+}
+void cmd_getopt_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_getopt(argc, argv);
+}
+void cmd_ifplugd_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_ifplugd(argc, argv);
+}
+void cmd_ionice_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_ionice(argc, argv);
+}
+void cmd_mkfs_ext2_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_mkfs_ext2(argc, argv);
+}
+void cmd_mkswap_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_mkswap(argc, argv);
+}
+
+/* ── Additional orphan wrappers for int (int, char**) cmds ──────── */
+void cmd_chvt_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_chvt(argc, argv);
+}
+void cmd_eject_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_eject(argc, argv);
+}
+void cmd_dc_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_dc(argc, argv);
+}
+void cmd_dnsdomainname_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_dnsdomainname(argc, argv);
+}
+void cmd_dos2unix_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_dos2unix(argc, argv);
+}
+void cmd_fgconsole_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_fgconsole(argc, argv);
+}
+void cmd_cpio_wrapper(const char *args) {
+    int argc; char **argv;
+    args_to_argv(args, &argc, &argv);
+    cmd_cpio(argc, argv);
+}
+
 /* ── Wrappers for void (*)(void) commands ─────────────────────────── */
 
 void cmd_neofetch_wrapper(const char *args) {

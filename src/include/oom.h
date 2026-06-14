@@ -71,6 +71,10 @@ void oom_print_status(void);
 void oom_set_score_adj(int pid, int16_t adjustment);
 int16_t oom_get_score_adj(int pid);
 
+/* OOM score adjustment constants: -1000 makes a process immune to OOM killing */
+#define OOM_SCORE_ADJ_MIN  (-1000)
+#define OOM_SCORE_ADJ_MAX  1000
+
 /* OOM reaper kthread control */
 int oom_reaper_init(void);
 extern int oom_reaper_running;

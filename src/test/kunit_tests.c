@@ -27,11 +27,13 @@
 
 /* Extern declarations for dedicated test suite registrations */
 extern void kunit_pmm_register(void);
+extern void kunit_oom_register(void);
 extern void kunit_slab_register(void);
 extern void kunit_sched_register(void);
 extern void kunit_vmm_register(void);
 extern void kunit_security_register(void);
 extern void kunit_power_register(void);
+extern void kunit_ext_register(void);
 
 /* ====================================================================
  *  1. PMM — Physical Memory Manager tests
@@ -1193,6 +1195,9 @@ void kunit_register_builtin_tests(void)
     /* Register the dedicated PMM test suite from kunit_pmm.c */
     kunit_pmm_register();
 
+    /* Register the OOM killer test suite from kunit_pmm.c */
+    kunit_oom_register();
+
     /* Register the dedicated slab test suite from kunit_slab.c */
     kunit_slab_register();
 
@@ -1207,4 +1212,7 @@ void kunit_register_builtin_tests(void)
 
     /* Register the power management test suite from kunit_power.c */
     kunit_power_register();
+
+    /* Register the extended feature test suites from kunit_ext.c */
+    kunit_ext_register();
 }

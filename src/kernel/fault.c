@@ -13,6 +13,7 @@
 #include "kprobes.h"
 #include "string.h"
 #include "pmm.h"
+#include "userfaultfd.h"
 
 /* Add vmm.h inclusion for vm_pgfault counter - already present via vmm.h */
 
@@ -282,6 +283,26 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                 /* If we reach here, expansion was denied (exceeded limit or OOM).
                  * Fall through to SIGSEGV — the fault is effectively a stack overflow. */
             }
+        }
+    }
+
+    /* ── Userfaultfd: check if this fault address is registered ────── */
+    /* For user-mode faults, check if any userfaultfd context has a
+     * registered range covering the fault address.  If so, queue a
+     * page fault event (or send SIGBUS) instead of mapping the page. */
+    if ((err & (1ULL << 2))) {  /* user-mode fault */
+        int write_flag = (err & (1ULL << 1)) ? 1 : 0;
+        int uffd_fd = userfaultfd_find_for_addr(cr2, NULL);
+        if (uffd_fd >= 0) {
+            int is_minor = 0;
+            int uffd_ret = userfaultfd_handle_fault(uffd_fd, cr2, write_flag, is_minor);
+            if (uffd_ret == 0) {
+                /* Handled — event queued or SIGBUS sent.  Don't map a page;
+                 * userspace will handle it via the uffd reader or SIGBUS. */
+                return;
+            }
+            /* uffd_ret == 1 means not handled by uffd (e.g. SIGBUS not set
+             * and event queue full) — fall through to SIGSEGV. */
         }
     }
 

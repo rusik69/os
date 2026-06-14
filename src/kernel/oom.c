@@ -17,9 +17,9 @@
 #include "string.h"
 #include "spinlock.h"
 
-/* OOM score adjustment table (by PID) */
-#define OOM_ADJ_MIN  (-16)
-#define OOM_ADJ_MAX  15
+/* OOM score adjustment table (by PID) — extended range for OOM_SCORE_ADJ_MIN = -1000 */
+#define OOM_ADJ_MIN  (-1000)
+#define OOM_ADJ_MAX  1000
 
 static int16_t oom_score_adj_table[PROCESS_MAX];
 
@@ -125,6 +125,16 @@ int64_t oom_score_process(uint32_t pid) {
 
     /* ── Raw memory footprint (RSS + swap) ──────────────────────── */
     uint64_t total_pages = rss_pages + swap_pages;
+
+    /* ── Total virtual address space (including non-resident mappings) ── */
+    /* Add total_vm * 0.3: count every mapped (even if not resident) page
+     * at 30% weight. A process with large mmap'd files or sparse mappings
+     * gets a proportional score bump. */
+    uint64_t total_vm_pages = 0;
+    if (p->is_user && p->pml4) {
+        total_vm_pages = vmm_count_user_pages_range(p->pml4, 0, USER_VADDR_MAX, NULL, NULL);
+    }
+    score += (int64_t)(total_vm_pages * 30 / 100);  /* total_vm * 0.3 */
 
     /* Base score: raw footprint */
     score += (int64_t)(total_pages) * 10;
@@ -238,6 +248,10 @@ static int is_oom_safe(struct process *p) {
     if (p->pid == 1 || p->pid == 0) return 1;
     struct process *cur = process_get_current();
     if (cur && p->pid == cur->pid) return 1;
+    /* Protect kernel threads — they have no user memory to free */
+    if (!p->is_user) return 1;
+    /* Protect processes with OOM_SCORE_ADJ_MIN = -1000 (immune) */
+    if (oom_get_score_adj((int)p->pid) <= OOM_SCORE_ADJ_MIN + 1) return 1;
     return 0;
 }
 

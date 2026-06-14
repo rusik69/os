@@ -236,4 +236,27 @@ int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
  * Returns 0 on success, -1 on failure. */
 int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count);
 
+/* ── NVMe PMR (Persistent Memory Region) API ─────────────────────── */
+
+/* Initialise PMR subsystem.  Returns 0 on success, negative errno. */
+int nvme_pmr_init(void);
+
+/* Read from PMR at byte offset into buf. */
+int nvme_pmr_read(uint64_t offset, void *buf, uint64_t len);
+
+/* Write to PMR at byte offset from buf. */
+int nvme_pmr_write(uint64_t offset, const void *buf, uint64_t len);
+
+/* Returns non-zero if PMR is present and enabled. */
+int nvme_pmr_is_present(void);
+
+/* Returns PMR size in bytes, or 0 if not present. */
+uint64_t nvme_pmr_get_size(void);
+
+/* Returns kernel virtual address of PMR mapping, or NULL. */
+void *nvme_pmr_get_virt(void);
+
+/* Shut down PMR and unmap resources. */
+void nvme_pmr_exit(void);
+
 #endif /* NVME_H */

@@ -29,27 +29,39 @@ static struct process *current_process = NULL;
 
 /* PID bitmap allocator: 256 processes → 4 × uint64_t.
  * Bit N ≡ PID N allocated.  Bit 0 always set (idle process).
- * O(1) alloc via __builtin_ctzll on inverted word. */
+ * O(1) alloc via __builtin_ctzll on inverted word.
+ * Protected by pid_lock to prevent race conditions. */
 static uint64_t pid_bitmap[4];
+static spinlock_t pid_lock;
 #define PID_BITMAP_WORDS 4
 
 static uint32_t alloc_pid(void) {
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pid_lock, &irq_flags);
+    uint32_t pid = (uint32_t)-1;
     for (int w = 0; w < PID_BITMAP_WORDS; w++) {
         if (pid_bitmap[w] == ~0ULL) continue;
         int bit = __builtin_ctzll(~pid_bitmap[w]);
-        uint32_t pid = (uint32_t)(w * 64 + bit);
-        if (pid >= PROCESS_MAX) break;
+        pid = (uint32_t)(w * 64 + bit);
+        if (pid >= PROCESS_MAX) {
+            pid = (uint32_t)-1;
+            break;
+        }
         pid_bitmap[w] |= (1ULL << bit);
-        return pid;
+        break;
     }
-    return (uint32_t)-1; /* no free PIDs */
+    spinlock_irqsave_release(&pid_lock, irq_flags);
+    return pid;
 }
 
 static void free_pid(uint32_t pid) {
     if (pid >= PROCESS_MAX) return;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&pid_lock, &irq_flags);
     int w = pid / 64;
     int bit = pid % 64;
     pid_bitmap[w] &= ~(1ULL << bit);
+    spinlock_irqsave_release(&pid_lock, irq_flags);
 }
 
 /* ── Kernel stack with guard page ───────────────────────────────────── */
@@ -246,6 +258,7 @@ static void rlimit_init_defaults(struct process *proc) {
 void process_init(void) {
     memset(process_table, 0, sizeof(process_table));
     memset(pid_bitmap, 0, sizeof(pid_bitmap));
+    spinlock_init(&pid_lock);
     pid_bitmap[0] = 1; /* PID 0 (idle) is always allocated */
 
     /* Initialize PID namespace subsystem (root namespace) */

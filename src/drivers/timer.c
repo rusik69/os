@@ -19,6 +19,7 @@
 #include "rcu.h"       /* rcu_check_stall */
 #include "nmi_watchdog.h"
 #include "vsyscall.h"
+#include "nohz.h"
 #include "export.h"
 
 #define PIT_CMD  0x43
@@ -30,6 +31,10 @@ static void timer_handler(struct interrupt_frame *frame) {
     ticks++;
     irq_ack(0);
     int was_user = (frame->cs == 0x1b);
+
+    /* Account this tick to the NO_HZ subsystem */
+    nohz_tick_account(0);  /* CPU 0 handles the timer; tick state tracked globally */
+
     scheduler_tick(was_user);
 }
 

@@ -37,6 +37,7 @@
 #include "cpu.h"
 #include "smp.h"
 #include "io.h"
+#include "lockdown.h"
 
 /* ── State ─────────────────────────────────────────────────────────── */
 
@@ -75,6 +76,10 @@ int kexec_init(void)
 
 int kexec_load(uint64_t phys_addr, uint64_t entry, uint32_t flags)
 {
+    /* Reject kexec_load under lockdown INTEGRITY or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY))
+        return -EPERM;
+
     if (!kexec_region_reserved) {
         kprintf("[!!] kexec_load: kexec not initialized\n");
         return -ENODEV;

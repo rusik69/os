@@ -29,6 +29,8 @@ CONFIG_SCHED_DEADLINE=y
 CONFIG_SCHED_RT=y
 CONFIG_SCHED_IDLE=y
 CONFIG_NUMA=y
+CONFIG_CORE_SCHED=y
+CONFIG_NOHZ=y
 
 # ── Memory Management ────────────────────────────────────────────
 CONFIG_PMM_PAGE_POISON=y
@@ -85,6 +87,7 @@ CONFIG_IPIP=y
 # ── Security ──────────────────────────────────────────────────────
 CONFIG_SECCOMP=y
 CONFIG_SECCOMP_FILTER=y
+CONFIG_SECCOMP_BPF=y
 CONFIG_LANDLOCK=y
 CONFIG_IMA=y
 CONFIG_YAMA=y
@@ -96,6 +99,7 @@ CONFIG_UMIP=y
 CONFIG_ASLR=y
 CONFIG_EXECUTABLE_ONLY=y
 CONFIG_STACK_GUARD=y
+CONFIG_LOCKDOWN=y
 
 # ── Device Drivers ───────────────────────────────────────────────
 CONFIG_E1000=y
@@ -133,6 +137,7 @@ CONFIG_KPROBES=y
 CONFIG_PSI=y
 CONFIG_SYSCTL=y
 CONFIG_DYNAMIC_DEBUG=y
+CONFIG_PSTORE=y
 
 CONFIG_EOF
 

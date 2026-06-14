@@ -20,6 +20,11 @@
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
+#include "seccomp_bpf.h"
+#include "syscall.h"
+#include "process.h"
+#include "pstore.h"
+#include "userfaultfd.h"
 
 /* ── Forward declarations for keyring API (no dedicated header) ───── */
 extern void keyring_init(void);
@@ -92,6 +97,61 @@ static void lockdown_is_locked_down_invalid(struct kunit *test)
 
     r = lockdown_is_locked_down(-1);
     KUNIT_EXPECT_EQ(test, (int64_t)r, (int64_t)0);
+}
+
+/* Verify enforcement: at LOCKDOWN_INTEGRITY, INTEGRITY check returns 1. */
+static void lockdown_enforcement_integrity(struct kunit *test)
+{
+    lock_down(LOCKDOWN_NONE);
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_get_level(), (int64_t)LOCKDOWN_NONE);
+
+    /* At NONE, INTEGRITY is NOT locked down */
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_is_locked_down(LOCKDOWN_INTEGRITY), (int64_t)0);
+
+    /* Raise to INTEGRITY */
+    lock_down(LOCKDOWN_INTEGRITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_get_level(), (int64_t)LOCKDOWN_INTEGRITY);
+
+    /* At INTEGRITY, INTEGRITY check returns 1, CONFIDENTIALITY still 0 */
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_is_locked_down(LOCKDOWN_INTEGRITY), (int64_t)1);
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY), (int64_t)0);
+}
+
+/* Verify enforcement: at LOCKDOWN_CONFIDENTIALITY, both levels return 1. */
+static void lockdown_enforcement_confidentiality(struct kunit *test)
+{
+    lock_down(LOCKDOWN_NONE);
+
+    /* Raise directly to CONFIDENTIALITY */
+    lock_down(LOCKDOWN_CONFIDENTIALITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_get_level(), (int64_t)LOCKDOWN_CONFIDENTIALITY);
+
+    /* Both INTEGRITY and CONFIDENTIALITY checks return 1 */
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_is_locked_down(LOCKDOWN_INTEGRITY), (int64_t)1);
+    KUNIT_EXPECT_EQ(test, (int64_t)lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY), (int64_t)1);
+}
+
+/* Simulate enforcement check: lockdown_at_least should reflect the pattern used
+ * at enforcement points (return -EPERM if lockdown >= INTEGRITY). */
+static void lockdown_enforcement_pattern(struct kunit *test)
+{
+    lock_down(LOCKDOWN_NONE);
+
+    /* Simulate an enforcement check like the ones in kexec, module, suspend */
+    int should_block = lockdown_is_locked_down(LOCKDOWN_INTEGRITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)should_block, (int64_t)0);
+
+    lock_down(LOCKDOWN_INTEGRITY);
+    should_block = lockdown_is_locked_down(LOCKDOWN_INTEGRITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)should_block, (int64_t)1);
+
+    /* At INTEGRITY, dmesg read (CONFIDENTIALITY) should still be allowed */
+    should_block = lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)should_block, (int64_t)0);
+
+    lock_down(LOCKDOWN_CONFIDENTIALITY);
+    should_block = lockdown_is_locked_down(LOCKDOWN_CONFIDENTIALITY);
+    KUNIT_EXPECT_EQ(test, (int64_t)should_block, (int64_t)1);
 }
 
 /* ====================================================================
@@ -559,6 +619,467 @@ static void fault_inject_disable_api(struct kunit *test)
 }
 
 /* ====================================================================
+ *  6. SECCOMP BPF — filter installation and evaluation
+ * ==================================================================== */
+
+/* Test: install a BPF filter that allows getpid but kills write,
+ * then verify the BPF evaluator returns the correct actions. */
+static void seccomp_bpf_allow_getpid_kill_write(struct kunit *test)
+{
+    struct process *current = process_get_current();
+    if (!current) {
+        kprintf("[KUnit] seccomp_bpf: no current process, skipping test\n");
+        return;
+    }
+
+    /* Build a BPF filter program:
+     *   [0] LD W ABS 0         ; A = syscall_nr
+     *   [1] JEQ 5, jt=3, jf=2  ; if A==SYS_GETPID: pc→[5]ALLOW, else pc→[4]
+     *   [2] (unused filler)
+     *   [3] (unused filler)
+     *   [4] JEQ 1, jt=2, jf=1  ; if A==SYS_WRITE: pc→[7]KILL, else pc→[6]ALLOW
+     *   [5] RET ALLOW            ; getpid allowed
+     *   [6] RET ALLOW            ; default allow
+     *   [7] RET KILL             ; write killed
+     */
+    struct sock_filter insns[] = {
+        { BPF_LD | BPF_W | BPF_ABS, 0, 0, 0 },
+        { BPF_JMP | BPF_JEQ, 3, 2, SYS_GETPID },
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_ALLOW },   /* unused filler */
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_ALLOW },   /* unused filler */
+        { BPF_JMP | BPF_JEQ, 2, 1, SYS_WRITE },
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_ALLOW },
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_ALLOW },
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_KILL },
+    };
+
+    struct sock_fprog prog;
+    prog.len   = 8;
+    prog.filter = insns;
+
+    /* Install requires no_new_privs — set it first */
+    int saved_no_new_privs = current->no_new_privs;
+    current->no_new_privs = 1;
+
+    int ret = seccomp_filter_install(&prog);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    if (ret != 0) {
+        current->no_new_privs = saved_no_new_privs;
+        kprintf("[KUnit] seccomp_bpf: install failed (%d), skipping evaluation\n", ret);
+        return;
+    }
+
+    /* Verify seccomp_mode was set */
+    KUNIT_EXPECT_EQ(test, (int64_t)current->seccomp_mode, (int64_t)SECCOMP_MODE_FILTER_BPF);
+    KUNIT_EXPECT_NOT_NULL(test, current->seccomp_filter);
+
+    /* Evaluate getpid — should ALLOW */
+    uint32_t result = seccomp_filter_evaluate(SYS_GETPID, AUDIT_ARCH_X86_64);
+    KUNIT_EXPECT_EQ(test, (int64_t)(result & SECCOMP_RET_ACTION_FULL),
+                    (int64_t)SECCOMP_BPF_RET_ALLOW);
+
+    /* Evaluate write — should KILL */
+    result = seccomp_filter_evaluate(SYS_WRITE, AUDIT_ARCH_X86_64);
+    KUNIT_EXPECT_EQ(test, (int64_t)(result & SECCOMP_RET_ACTION_FULL),
+                    (int64_t)SECCOMP_BPF_RET_KILL);
+
+    /* Evaluate read — default should ALLOW */
+    result = seccomp_filter_evaluate(SYS_READ, AUDIT_ARCH_X86_64);
+    KUNIT_EXPECT_EQ(test, (int64_t)(result & SECCOMP_RET_ACTION_FULL),
+                    (int64_t)SECCOMP_BPF_RET_ALLOW);
+
+    /* Clean up */
+    seccomp_bpf_release();
+    KUNIT_EXPECT_NULL(test, current->seccomp_filter);
+    current->no_new_privs = saved_no_new_privs;
+}
+
+/* Test: filter install must fail if no_new_privs is not set. */
+static void seccomp_bpf_requires_no_new_privs(struct kunit *test)
+{
+    struct process *current = process_get_current();
+    if (!current) {
+        kprintf("[KUnit] seccomp_bpf: no current process, skipping test\n");
+        return;
+    }
+
+    /* Ensure no_new_privs is 0 */
+    int saved = current->no_new_privs;
+    current->no_new_privs = 0;
+
+    struct sock_filter one_insn[] = {
+        { BPF_RET, 0, 0, SECCOMP_BPF_RET_ALLOW },
+    };
+    struct sock_fprog prog;
+    prog.len   = 1;
+    prog.filter = one_insn;
+
+    int ret = seccomp_filter_install(&prog);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EPERM);
+
+    current->no_new_privs = saved;
+}
+
+/* ====================================================================
+ *  7. LANDLOCK — path-based access control enforcement
+ * ==================================================================== */
+
+#include "landlock.h"
+#include "mseal.h"
+
+/* Create a ruleset, verify it returns a valid id. */
+static void landlock_create_ruleset_basic(struct kunit *test)
+{
+    struct landlock_ruleset_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE |
+                             LANDLOCK_ACCESS_FS_WRITE_FILE |
+                             LANDLOCK_ACCESS_FS_READ_DIR;
+
+    int fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    KUNIT_EXPECT_TRUE(test, fd < LANDLOCK_MAX_RULESETS);
+}
+
+/* Create a ruleset with NULL attr must return -EFAULT. */
+static void landlock_create_ruleset_null_attr(struct kunit *test)
+{
+    int fd = landlock_create_ruleset(NULL, sizeof(struct landlock_ruleset_attr), 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)fd, (int64_t)-EFAULT);
+}
+
+/* Add a path-beneath rule to a ruleset. */
+static void landlock_add_rule_basic(struct kunit *test)
+{
+    struct landlock_ruleset_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE;
+
+    int rs_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+    if (rs_fd < 0) return;
+
+    struct landlock_path_beneath_attr rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.allowed_access = LANDLOCK_ACCESS_FS_READ_FILE;
+    rule.parent_fd = -1;  /* root */
+
+    int ret = landlock_add_rule(rs_fd, LANDLOCK_RULE_PATH_BENEATH, &rule, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* Add a rule with unhandled access bits must return -EINVAL. */
+static void landlock_add_rule_unhandled_access(struct kunit *test)
+{
+    struct landlock_ruleset_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE;
+
+    int rs_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+    if (rs_fd < 0) return;
+
+    struct landlock_path_beneath_attr rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.allowed_access = LANDLOCK_ACCESS_FS_WRITE_FILE;  /* not in handled_access_fs */
+    rule.parent_fd = -1;
+
+    int ret = landlock_add_rule(rs_fd, LANDLOCK_RULE_PATH_BENEATH, &rule, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+}
+
+/* Restrict self with a ruleset that has no rules — should always allow. */
+static void landlock_restrict_self_empty(struct kunit *test)
+{
+    struct landlock_ruleset_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE;
+
+    int rs_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+    if (rs_fd < 0) return;
+
+    int ret = landlock_restrict_self(rs_fd, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* Invalid ruleset fd for restrict_self must return -EBADF. */
+static void landlock_restrict_self_invalid_fd(struct kunit *test)
+{
+    int ret = landlock_restrict_self(999, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EBADF);
+}
+
+/* landlock_check_path: verify that an empty ruleset allows everything. */
+static void landlock_check_path_empty_allows(struct kunit *test)
+{
+    struct process *proc = process_get_current();
+    if (!proc) return;
+
+    /* With no rulesets installed, all access should be granted */
+    int ret = landlock_check_path(proc, "/", LANDLOCK_ACCESS_FS_READ_FILE);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    ret = landlock_check_path(proc, "/test", LANDLOCK_ACCESS_FS_WRITE_FILE);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* landlock_check_path: verify deny when path not covered by rules. */
+static void landlock_check_path_denies(struct kunit *test)
+{
+    struct landlock_ruleset_attr attr;
+    memset(&attr, 0, sizeof(attr));
+    attr.handled_access_fs = LANDLOCK_ACCESS_FS_READ_FILE;
+
+    int rs_fd = landlock_create_ruleset(&attr, sizeof(attr), 0);
+    if (rs_fd < 0) return;
+
+    /* Add a rule that only allows /safe path */
+    struct landlock_path_beneath_attr rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.allowed_access = LANDLOCK_ACCESS_FS_READ_FILE;
+    rule.parent_fd = -1;  /* root */
+
+    int ret = landlock_add_rule(rs_fd, LANDLOCK_RULE_PATH_BENEATH, &rule, 0);
+    if (ret < 0) return;
+
+    /* Save current ruleset slots, install test ruleset, verify, restore */
+    struct process *proc = process_get_current();
+    if (!proc) return;
+
+    int saved[LANDLOCK_MAX_RULESETS_PER_PROC];
+    for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++) {
+        saved[i] = proc->landlock_ruleset_ids[i];
+        proc->landlock_ruleset_ids[i] = -1;
+    }
+    proc->landlock_ruleset_ids[0] = rs_fd;
+
+    /* /etc/passwd is under root (/) so the root rule covers it → allowed */
+    ret = landlock_check_path(proc, "/etc/passwd", LANDLOCK_ACCESS_FS_READ_FILE);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* /etc/passwd with WRITE_FILE — not in allowed_access → denied */
+    ret = landlock_check_path(proc, "/etc/passwd", LANDLOCK_ACCESS_FS_WRITE_FILE);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EACCES);
+
+    /* Restore saved slots */
+    for (int i = 0; i < LANDLOCK_MAX_RULESETS_PER_PROC; i++)
+        proc->landlock_ruleset_ids[i] = saved[i];
+}
+
+/* ====================================================================
+ *  8. MSEAL — memory seal enforcement
+ * ==================================================================== */
+
+/* Seal a range and verify that mseal_check detects it. */
+static void mseal_seal_and_check(struct kunit *test)
+{
+    uint64_t addr = 0x70000000;
+    uint64_t len  = 0x10000;
+
+    int ret = mseal(addr, len, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* mseal_check should return 0 (sealed) for this range */
+    ret = mseal_check(addr, len);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* mseal_check should return -EACCES for a different range */
+    ret = mseal_check(0x80000000, 0x1000);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EACCES);
+}
+
+/* Seal a range and verify that mseal_is_sealed works. */
+static void mseal_is_sealed_basic(struct kunit *test)
+{
+    uint64_t addr = 0x70010000;
+    uint64_t len  = 0x2000;
+
+    int ret = mseal(addr, len, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    int sealed = mseal_is_sealed(addr);
+    KUNIT_EXPECT_NE(test, (int64_t)sealed, (int64_t)0);
+
+    sealed = mseal_is_sealed(addr + 1);
+    KUNIT_EXPECT_NE(test, (int64_t)sealed, (int64_t)0);
+
+    sealed = mseal_is_sealed(addr + len);
+    KUNIT_EXPECT_EQ(test, (int64_t)sealed, (int64_t)0);  /* just past end */
+
+    /* A completely different address should NOT be sealed */
+    sealed = mseal_is_sealed(0xDEAD0000);
+    KUNIT_EXPECT_EQ(test, (int64_t)sealed, (int64_t)0);
+}
+
+/* Seal a range and verify that overlapping seal is rejected. */
+static void mseal_overlap_rejected(struct kunit *test)
+{
+    uint64_t addr = 0x70020000;
+    uint64_t len  = 0x10000;
+
+    int ret = mseal(addr, len, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* Overlapping range must be rejected */
+    ret = mseal(addr + 0x1000, 0x1000, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+
+    /* Adjacent ranges should be allowed (coalescing) */
+    ret = mseal(addr + len, 0x1000, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* mseal with len=0 must return -EINVAL. */
+static void mseal_zero_len(struct kunit *test)
+{
+    int ret = mseal(0x70030000, 0, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+}
+
+/* mseal_check verifies that a range partially within a sealed region
+ * is not considered sealed (must be fully contained). */
+static void mseal_check_requires_full_containment(struct kunit *test)
+{
+    uint64_t addr = 0x70040000;
+    uint64_t len  = 0x10000;
+
+    int ret = mseal(addr, len, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* Range larger than sealed region — not fully contained → -EACCES */
+    ret = mseal_check(addr - 0x1000, len + 0x2000);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EACCES);
+
+    /* Range entirely inside sealed region → sealed */
+    ret = mseal_check(addr + 0x1000, 0x1000);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+/* ====================================================================
+ *  9. PSTORE — persistent storage write/read/recover
+ * ==================================================================== */
+
+/* Write a few records, read them back, verify content. */
+static void pstore_write_read_basic(struct kunit *test)
+{
+    /* pstore_init() already called during boot — just verify it's live */
+    int count_before = pstore_get_count();
+    KUNIT_EXPECT_TRUE(test, count_before >= 0);
+
+    /* Write a test record */
+    const char *msg = "KUnit pstore test message";
+    int ret = pstore_write(PSTORE_TYPE_DMESG,
+                           (const uint8_t *)msg, (int)strlen(msg));
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* Verify count incremented */
+    int count_after = pstore_get_count();
+    KUNIT_EXPECT_EQ(test, (int64_t)count_after, (int64_t)(count_before + 1));
+
+    /* Read back the record we just wrote (index 0 = newest) */
+    uint8_t buf[512];
+    int n = pstore_read(0, buf, (int)sizeof(buf));
+    KUNIT_EXPECT_TRUE(test, n > 0);
+
+    /* First byte should be PSTORE_TYPE_DMESG (the type byte) */
+    KUNIT_EXPECT_EQ(test, (int64_t)buf[0], (int64_t)PSTORE_TYPE_DMESG);
+
+    /* Rest should match the original message */
+    int match = 1;
+    for (int i = 0; i < n - 1 && i < (int)strlen(msg); i++) {
+        if (buf[i + 1] != (uint8_t)msg[i]) {
+            match = 0;
+            break;
+        }
+    }
+    KUNIT_EXPECT_TRUE(test, match);
+}
+
+/* Write a panic-type record and verify recovery. */
+static void pstore_write_panic_record(struct kunit *test)
+{
+    const char *panic_msg = "Test kernel panic for KUnit";
+    int ret = pstore_write(PSTORE_TYPE_PANIC,
+                           (const uint8_t *)panic_msg,
+                           (int)strlen(panic_msg));
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    /* Read it back and verify type */
+    uint8_t buf[512];
+    int n = pstore_read(0, buf, (int)sizeof(buf));
+    KUNIT_EXPECT_TRUE(test, n > 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)buf[0], (int64_t)PSTORE_TYPE_PANIC);
+}
+
+/* Write multiple records, read them in order. */
+static void pstore_multiple_records(struct kunit *test)
+{
+    const char *records[] = {
+        "First record",
+        "Second record — a bit longer",
+        "Third!",
+    };
+    int n_records = (int)(sizeof(records) / sizeof(records[0]));
+
+    for (int i = 0; i < n_records; i++) {
+        int ret = pstore_write(PSTORE_TYPE_DMESG,
+                               (const uint8_t *)records[i],
+                               (int)strlen(records[i]));
+        KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+    }
+
+    /* Read back the records (index 0 = newest = last written) */
+    for (int i = 0; i < n_records; i++) {
+        uint8_t buf[128];
+        int n = pstore_read(i, buf, (int)sizeof(buf));
+        KUNIT_EXPECT_TRUE(test, n > 0);
+
+        /* The newest record should be the last one we wrote */
+        int expected_idx = n_records - 1 - i;
+        int match = 1;
+        size_t expected_len = strlen(records[expected_idx]);
+        for (size_t j = 0; j < expected_len && j < (size_t)(n - 1); j++) {
+            if (buf[j + 1] != (uint8_t)records[expected_idx][j]) {
+                match = 0;
+                break;
+            }
+        }
+        KUNIT_EXPECT_TRUE(test, match);
+    }
+}
+
+/* Read beyond the available records returns -ENOENT. */
+static void pstore_read_out_of_bounds(struct kunit *test)
+{
+    int count = pstore_get_count();
+    uint8_t buf[64];
+    int ret = pstore_read(count + 10, buf, (int)sizeof(buf));
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-ENOENT);
+}
+
+/* Write with zero-length data (just a type marker). */
+static void pstore_write_zero_length(struct kunit *test)
+{
+    int ret = pstore_write(PSTORE_TYPE_EMERG, NULL, 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    uint8_t buf[16];
+    int n = pstore_read(0, buf, (int)sizeof(buf));
+    KUNIT_EXPECT_TRUE(test, n > 0);
+    KUNIT_EXPECT_EQ(test, (int64_t)buf[0], (int64_t)PSTORE_TYPE_EMERG);
+}
+
+/* Write a record with data exceeding max length — must be rejected. */
+static void pstore_write_overflow(struct kunit *test)
+{
+    /* PSTORE_MAX_DATA_LEN includes the type byte, so max payload
+     * is PSTORE_MAX_DATA_LEN - 1 = 4083 bytes */
+    uint8_t big_data[PSTORE_MAX_DATA_LEN];  /* 4084 bytes — too big */
+    memset(big_data, 0xAB, sizeof(big_data));
+    int ret = pstore_write(PSTORE_TYPE_DMESG, big_data, PSTORE_MAX_DATA_LEN);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+}
+
+/* ====================================================================
  *  Suite definitions
  * ==================================================================== */
 
@@ -569,6 +1090,9 @@ static struct kunit_case lockdown_test_cases[] = {
     KUNIT_CASE(lockdown_irreversible),
     KUNIT_CASE(lockdown_invalid_level),
     KUNIT_CASE(lockdown_is_locked_down_invalid),
+    KUNIT_CASE(lockdown_enforcement_integrity),
+    KUNIT_CASE(lockdown_enforcement_confidentiality),
+    KUNIT_CASE(lockdown_enforcement_pattern),
     {0}
 };
 
@@ -624,6 +1148,59 @@ static struct kunit_case fault_inject_test_cases[] = {
 
 static struct kunit_suite fault_inject_test_suite;
 
+/* ── Seccomp BPF suite ─────────────────────────────────────────── */
+static struct kunit_case seccomp_bpf_test_cases[] = {
+    KUNIT_CASE(seccomp_bpf_requires_no_new_privs),
+    KUNIT_CASE(seccomp_bpf_allow_getpid_kill_write),
+    {0}
+};
+
+static struct kunit_suite seccomp_bpf_test_suite;
+
+/* ── Landlock suite ────────────────────────────────────────────── */
+static struct kunit_case landlock_test_cases[] = {
+    KUNIT_CASE(landlock_create_ruleset_basic),
+    KUNIT_CASE(landlock_create_ruleset_null_attr),
+    KUNIT_CASE(landlock_add_rule_basic),
+    KUNIT_CASE(landlock_add_rule_unhandled_access),
+    KUNIT_CASE(landlock_restrict_self_empty),
+    KUNIT_CASE(landlock_restrict_self_invalid_fd),
+    KUNIT_CASE(landlock_check_path_empty_allows),
+    KUNIT_CASE(landlock_check_path_denies),
+    {0}
+};
+
+static struct kunit_suite landlock_test_suite;
+
+/* ── MSEAL suite ───────────────────────────────────────────────── */
+static struct kunit_case mseal_test_cases[] = {
+    KUNIT_CASE(mseal_seal_and_check),
+    KUNIT_CASE(mseal_is_sealed_basic),
+    KUNIT_CASE(mseal_overlap_rejected),
+    KUNIT_CASE(mseal_zero_len),
+    KUNIT_CASE(mseal_check_requires_full_containment),
+    {0}
+};
+
+static struct kunit_suite mseal_test_suite;
+
+/* ── Pstore suite ────────────────────────────────────────────────── */
+static struct kunit_case pstore_test_cases[] = {
+    KUNIT_CASE(pstore_write_read_basic),
+    KUNIT_CASE(pstore_write_panic_record),
+    KUNIT_CASE(pstore_multiple_records),
+    KUNIT_CASE(pstore_read_out_of_bounds),
+    KUNIT_CASE(pstore_write_zero_length),
+    KUNIT_CASE(pstore_write_overflow),
+    {0}
+};
+
+static struct kunit_suite pstore_test_suite;
+
+/* Forward declarations for uffd test suite (defined below) */
+static struct kunit_case uffd_test_cases[];
+static struct kunit_suite uffd_test_suite;
+
 /* ====================================================================
  *  Registration
  * ==================================================================== */
@@ -651,4 +1228,109 @@ void kunit_security_register(void)
     REGISTER_SUITE(audit_test_suite,         audit_test_cases,         "audit");
     REGISTER_SUITE(keyring_test_suite,       keyring_test_cases,       "keyring");
     REGISTER_SUITE(fault_inject_test_suite,  fault_inject_test_cases,  "fault_inject");
+    REGISTER_SUITE(seccomp_bpf_test_suite,   seccomp_bpf_test_cases,   "seccomp_bpf");
+    REGISTER_SUITE(landlock_test_suite,       landlock_test_cases,       "landlock");
+    REGISTER_SUITE(mseal_test_suite,          mseal_test_cases,          "mseal");
+    REGISTER_SUITE(pstore_test_suite,        pstore_test_cases,         "pstore");
+    REGISTER_SUITE(uffd_test_suite,          uffd_test_cases,           "uffd");
 }
+
+/* ====================================================================
+ *  userfaultfd — Userfaultfd subsystem tests
+ * ==================================================================== */
+
+static void uffd_create_close(struct kunit *test)
+{
+    int fd = userfaultfd_create(0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    KUNIT_EXPECT_TRUE(test, fd < UFFD_MAX_CONTEXTS);
+
+    if (fd >= 0) {
+        int fd2 = userfaultfd_create(0);
+        KUNIT_EXPECT_NE(test, (int64_t)fd2, (int64_t)fd);
+        (void)fd2;
+    }
+}
+
+static void uffd_register_unregister(struct kunit *test)
+{
+    int fd = userfaultfd_create(0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    if (fd < 0) return;
+
+    uint64_t addr = 0x00007f0000000000ULL;
+    uint64_t len = PAGE_SIZE;
+    int ret = userfaultfd_register(fd, addr, len, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    ret = userfaultfd_register(fd, addr + PAGE_SIZE, PAGE_SIZE, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    ret = userfaultfd_unregister(fd, addr, len);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    ret = userfaultfd_unregister(fd, addr, len);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-ENOENT);
+}
+
+static void uffd_invalid_fd(struct kunit *test)
+{
+    int ret = userfaultfd_register(-1, 0x1000, PAGE_SIZE, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EBADF);
+
+    ret = userfaultfd_unregister(999, 0x1000, PAGE_SIZE);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EBADF);
+}
+
+static void uffd_unaligned_register(struct kunit *test)
+{
+    int fd = userfaultfd_create(0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    if (fd < 0) return;
+
+    int ret = userfaultfd_register(fd, 0x1001, PAGE_SIZE, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+
+    ret = userfaultfd_register(fd, 0x1000, 1234, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
+}
+
+static void uffd_find_for_addr(struct kunit *test)
+{
+    int fd = userfaultfd_create(0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    if (fd < 0) return;
+
+    uint64_t addr = 0x00007f0000000000ULL;
+    uint64_t len = PAGE_SIZE * 4;
+    int ret = userfaultfd_register(fd, addr, len, UFFD_FLAG_MISSING);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+
+    int found_fd = userfaultfd_find_for_addr(addr + PAGE_SIZE, NULL);
+    KUNIT_EXPECT_EQ(test, (int64_t)found_fd, (int64_t)fd);
+
+    found_fd = userfaultfd_find_for_addr(addr - PAGE_SIZE, NULL);
+    KUNIT_EXPECT_EQ(test, (int64_t)found_fd, (int64_t)-1);
+}
+
+static void uffd_set_features(struct kunit *test)
+{
+    int fd = userfaultfd_create(0);
+    KUNIT_EXPECT_TRUE(test, fd >= 0);
+    if (fd < 0) return;
+
+    int ret = userfaultfd_set_features(fd, UFFD_FEATURE_SIGBUS);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)0);
+}
+
+static struct kunit_case uffd_test_cases[] = {
+    KUNIT_CASE(uffd_create_close),
+    KUNIT_CASE(uffd_register_unregister),
+    KUNIT_CASE(uffd_invalid_fd),
+    KUNIT_CASE(uffd_unaligned_register),
+    KUNIT_CASE(uffd_find_for_addr),
+    KUNIT_CASE(uffd_set_features),
+    {0}
+};
+
+static struct kunit_suite uffd_test_suite;

@@ -111,6 +111,14 @@ int nohz_tick_is_stopped(int cpu)
     return nohz_cpus[cpu].tick_stopped;
 }
 
+/* Check whether a given CPU is marked for NO_HZ adaptive tick. */
+int nohz_cpu_is_isolated(int cpu)
+{
+    if (!nohz_initialised || cpu < 0 || cpu >= NOHZ_MAX_CPUS)
+        return 0;
+    return nohz_cpus[cpu].isolated;
+}
+
 /* Return the number of milliseconds since the tick was stopped. */
 uint64_t nohz_tick_stopped_ms(int cpu)
 {

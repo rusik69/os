@@ -4,156 +4,291 @@
 #include "string.h"
 #include "spinlock.h"
 #include "pstore.h"
-#include "heap.h"
+#include "pmm.h"
+#include "vmm.h"
 #include "timer.h"
+#include "notifier.h"
 #include "errno.h"
-#include "compress.h"
 
-/* Pointer to the persistent storage region */
-static volatile struct pstore_record *pstore_region = NULL;
+/* ── Virtual-memory access to the persistent region ────────────────────
+ * The boot page tables identity-map the first 1 GB of physical memory
+ * at both low addresses (0x0 – 0x3FFFFFFF) and at KERNEL_VMA_OFFSET.
+ * So PHYS_TO_VIRT(PSTORE_REGION_PADDR) is always accessible without
+ * additional page-table manipulation. */
+
+static volatile struct pstore_region_header *pstore_hdr = NULL;
+static volatile uint8_t *pstore_region_base = NULL;  /* virtual base */
 static int pstore_initialized = 0;
-static int pstore_write_idx = 0;     /* next write index (wraps around) */
-static int pstore_record_count = 0;  /* max(PSTORE_MAX_RECORDS, actual writes) */
 
+/* Forward declarations */
+static void pstore_init_notifier(void);
+
+/* Spinlock for concurrent write access (SMP-safe) */
 static spinlock_t pstore_lock = SPINLOCK_INIT;
+
+/* ── Helpers ─────────────────────────────────────────────────────────── */
+
+/* Return the virtual address of the n-th record slot */
+static inline volatile struct pstore_record *
+pstore_slot(unsigned int idx)
+{
+    uint64_t base = (uint64_t)(uintptr_t)pstore_region_base;
+    uint64_t rec_off = sizeof(struct pstore_region_header)
+                       + (uint64_t)idx * PSTORE_RECORD_SIZE;
+    return (volatile struct pstore_record *)(base + rec_off);
+}
+
+/* Check whether a slot appears to contain a valid record */
+static inline int slot_valid(const volatile struct pstore_record *rec)
+{
+    return (rec->magic == PSTORE_RECORD_MAGIC && rec->length > 0
+            && rec->length <= PSTORE_MAX_DATA_LEN);
+}
+
+/* ── Initialisation ──────────────────────────────────────────────────── */
 
 void pstore_init(void)
 {
-    /* Allocate pstore buffer from heap */
-    pstore_region = (volatile struct pstore_record *)kcalloc(1, PSTORE_REGION_SIZE);
-    if (!pstore_region) {
-        kprintf("[!!] pstore: failed to allocate %d bytes\n", PSTORE_REGION_SIZE);
-        return;
-    }
+    uint64_t phys = PSTORE_REGION_PADDR;
+    uint64_t virt = (uint64_t)PHYS_TO_VIRT(phys);
 
-    pstore_initialized = 1;
-    kprintf("[OK] pstore: 64KB storage allocated at 0x%llx\n",
-            (unsigned long long)(uintptr_t)pstore_region);
-}
+    /* Ensure the physical region is reserved in PMM so nothing else
+     * allocates over it.  (It's below 1 MB so PMM ignores it by default,
+     * but this is an explicit safety net.) */
+    pmm_reserve_frames(phys, PSTORE_REGION_SIZE);
 
-/*
- * Map an uncompressed type to its compressed counterpart.
- * Returns 0 if no compressed variant exists for the type.
- */
-static inline uint8_t pstore_compressed_type(uint8_t type)
-{
-    switch (type) {
-    case PSTORE_TYPE_DMESG: return PSTORE_TYPE_DMESG_COMPRESSED;
-    case PSTORE_TYPE_PANIC: return PSTORE_TYPE_PANIC_COMPRESSED;
-    case PSTORE_TYPE_OOPS:  return PSTORE_TYPE_OOPS_COMPRESSED;
-    default:                return 0;
-    }
-}
-
-/*
- * Map a compressed type back to the original uncompressed type.
- */
-static inline uint8_t pstore_uncompressed_type(uint8_t type)
-{
-    switch (type) {
-    case PSTORE_TYPE_DMESG_COMPRESSED: return PSTORE_TYPE_DMESG;
-    case PSTORE_TYPE_PANIC_COMPRESSED: return PSTORE_TYPE_PANIC;
-    case PSTORE_TYPE_OOPS_COMPRESSED:  return PSTORE_TYPE_OOPS;
-    default:                           return type;
-    }
-}
-
-int pstore_write(uint8_t type, const uint8_t *data, int len)
-{
-    if (!pstore_initialized || !pstore_region)
-        return -ENODEV;
-    if (len < 0 || len > PSTORE_MAX_DATA_LEN)
-        return -EINVAL;
-
-    /* Attempt compression for records above the threshold that have a
-     * compressed variant.  If compression succeeds and saves space, store
-     * the compressed version instead. */
-    if (len > PSTORE_COMPRESS_THRESH) {
-        uint8_t comp_type = pstore_compressed_type(type);
-        if (comp_type != 0) {
-            uint8_t comp_buf[LZSS_WORST_CASE(PSTORE_MAX_DATA_LEN)];
-            int comp_len = lzss_compress(data, len, comp_buf, sizeof(comp_buf));
-            if (comp_len > 0 && comp_len < len) {
-                /* Compression saved space — store the compressed record */
-                spinlock_acquire(&pstore_lock);
-
-                volatile struct pstore_record *rec = &pstore_region[pstore_write_idx];
-                rec->type = comp_type;
-                rec->len = (uint8_t)(comp_len < 255 ? comp_len : 255);
-                rec->sequence = (uint16_t)(pstore_write_idx + 1);
-                rec->timestamp = timer_get_ticks();
-                memcpy((void *)rec->data, comp_buf, comp_len);
-
-                pstore_write_idx = (pstore_write_idx + 1) % PSTORE_MAX_RECORDS;
-                if (pstore_record_count < PSTORE_MAX_RECORDS)
-                    pstore_record_count++;
-
-                spinlock_release(&pstore_lock);
-                return 0;
-            }
+    /* Map each page of the region into the virtual address space.
+     * This is redundant for the identity-mapped first 1 MB but ensures
+     * the mapping exists even on systems that later tear down the
+     * low identity map. */
+    for (uint64_t off = 0; off < PSTORE_REGION_SIZE; off += PAGE_SIZE) {
+        int ret = vmm_map_page(virt + off, phys + off,
+                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+        if (ret != 0) {
+            kprintf("[!!] pstore: failed to map page at phys 0x%llx\n",
+                    (unsigned long long)(phys + off));
+            return;
         }
     }
 
-    /* Fall back to uncompressed write */
+    pstore_region_base = (volatile uint8_t *)virt;
+    pstore_hdr = (volatile struct pstore_region_header *)virt;
+
+    /* ── Check for existing data from a previous boot ── */
+    if (pstore_hdr->region_magic == PSTORE_REGION_MAGIC &&
+        pstore_hdr->version == 1 &&
+        pstore_hdr->record_count > 0) {
+
+        kprintf("[..] pstore: recovering %u records from previous boot\n",
+                (unsigned int)pstore_hdr->record_count);
+
+        /* Print recovered records */
+        pstore_recover();
+
+        /* Mark that we recovered */
+        pstore_hdr->recovered = 1;
+    } else {
+        kprintf("[..] pstore: fresh region (no previous data)\n");
+    }
+
+    /* ── Format a fresh region header for this boot cycle ── */
+    /* We keep the old records physically in memory (for post-mortem
+     * analysis tools) but start writing new records at slot 0. */
+    memset((void *)pstore_hdr, 0, sizeof(*pstore_hdr));
+    pstore_hdr->region_magic  = PSTORE_REGION_MAGIC;
+    pstore_hdr->version       = 1;
+    pstore_hdr->write_slot    = 0;
+    pstore_hdr->record_count  = 0;
+    pstore_hdr->boot_timestamp = timer_get_ticks();
+    pstore_hdr->recovered     = 0;
+
+    pstore_initialized = 1;
+
+    kprintf("[OK] pstore: 64 KB persistent region at phys 0x%llx virt 0x%llx\n",
+            (unsigned long long)phys, (unsigned long long)virt);
+
+    /* Ensure the notifier subsystem is initialised before we register.
+     * (The existing boot sequence never calls notifier_init() explicitly,
+     * so we do it here to guarantee the panic chain works.) */
+    notifier_init();
+
+    /* Register the panic notifier so pstore captures a final marker
+     * on kernel panic / oops. */
+    pstore_init_notifier();
+}
+
+/* ── Write a record ──────────────────────────────────────────────────── */
+
+int pstore_write(uint8_t type, const uint8_t *data, int len)
+{
+    if (!pstore_initialized || !pstore_hdr)
+        return -ENODEV;
+    if (len < 0 || len > PSTORE_MAX_DATA_LEN - 1)  /* -1 for type byte */
+        return -EINVAL;
+    if (!data && len > 0)
+        return -EINVAL;
+
     spinlock_acquire(&pstore_lock);
 
-    volatile struct pstore_record *rec = &pstore_region[pstore_write_idx];
-    rec->type = type;
-    rec->len = (uint8_t)(len < 255 ? len : 255);
-    rec->sequence = (uint16_t)(pstore_write_idx + 1);
-    rec->timestamp = timer_get_ticks();
-    memcpy((void *)rec->data, data, len);
+    unsigned int slot = pstore_hdr->write_slot;
+    volatile struct pstore_record *rec = pstore_slot(slot);
 
-    pstore_write_idx = (pstore_write_idx + 1) % PSTORE_MAX_RECORDS;
-    if (pstore_record_count < PSTORE_MAX_RECORDS)
-        pstore_record_count++;
+    /* Fill the record */
+    rec->magic     = PSTORE_RECORD_MAGIC;
+    rec->length    = (uint32_t)(len + 1);   /* type byte + payload */
+    rec->timestamp = timer_get_ticks();
+    rec->data[0]   = type;                   /* type as first byte */
+    if (len > 0 && data)
+        memcpy((void *)rec->data + 1, data, (size_t)len);
+
+    /* Advance the write slot (ring buffer) */
+    pstore_hdr->write_slot = (slot + 1) % PSTORE_MAX_RECORDS;
+    if (pstore_hdr->record_count < PSTORE_MAX_RECORDS)
+        pstore_hdr->record_count++;
 
     spinlock_release(&pstore_lock);
     return 0;
 }
 
+/* ── Read a record ───────────────────────────────────────────────────── */
+
 int pstore_read(int index, uint8_t *buf, int len)
 {
-    if (!pstore_initialized || !pstore_region)
+    if (!pstore_initialized || !pstore_hdr)
         return -ENODEV;
-    if (index < 0 || index >= PSTORE_MAX_RECORDS)
+    if (index < 0 || buf == NULL || len <= 0)
         return -EINVAL;
 
     spinlock_acquire(&pstore_lock);
 
-    volatile struct pstore_record *rec = &pstore_region[index];
-    if (rec->type == 0 || rec->len == 0) {
+    unsigned int count = pstore_hdr->record_count;
+    if ((unsigned int)index >= count) {
         spinlock_release(&pstore_lock);
         return -ENOENT;
     }
 
-    uint8_t data_type = rec->type;
-    uint8_t data_len  = rec->len;
+    /* Records are stored newest-first in the ring buffer.
+     * The newest record is at slot (write_slot - 1) mod N.
+     * Index 0 = newest, index count-1 = oldest. */
+    unsigned int slot;
+    if (pstore_hdr->write_slot == 0)
+        slot = PSTORE_MAX_RECORDS - 1;
+    else
+        slot = pstore_hdr->write_slot - 1;
 
-    spinlock_release(&pstore_lock);
+    /* Walk back `index` steps through the ring */
+    slot = (slot - (unsigned int)index + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS;
 
-    /* If the record is compressed, decompress it first */
-    if (data_type == PSTORE_TYPE_DMESG_COMPRESSED ||
-        data_type == PSTORE_TYPE_PANIC_COMPRESSED ||
-        data_type == PSTORE_TYPE_OOPS_COMPRESSED) {
-        uint8_t decomp_buf[PSTORE_MAX_DATA_LEN];
-        int decomp_len = lzss_decompress(
-            (const uint8_t *)rec->data, data_len,
-            decomp_buf, sizeof(decomp_buf));
-        if (decomp_len < 0)
-            return decomp_len;
-        uint8_t copy_len = (len < decomp_len) ? len : decomp_len;
-        memcpy(buf, decomp_buf, copy_len);
-        return (int)copy_len;
+    volatile struct pstore_record *rec = pstore_slot(slot);
+    if (!slot_valid(rec)) {
+        spinlock_release(&pstore_lock);
+        return -ENOENT;
     }
 
-    /* Uncompressed — direct copy */
-    uint8_t copy_len = (len < data_len) ? len : data_len;
-    memcpy(buf, (void *)rec->data, copy_len);
-    return (int)copy_len;
+    uint32_t data_len = rec->length;
+    if (data_len > (uint32_t)len)
+        data_len = (uint32_t)len;
+
+    memcpy(buf, (void *)rec->data, data_len);
+    spinlock_release(&pstore_lock);
+    return (int)data_len;
 }
+
+/* ── Get record count ────────────────────────────────────────────────── */
 
 int pstore_get_count(void)
 {
-    return pstore_record_count;
+    if (!pstore_initialized || !pstore_hdr)
+        return 0;
+    return (int)pstore_hdr->record_count;
+}
+
+/* ── Boot-time recovery ──────────────────────────────────────────────── */
+
+void pstore_recover(void)
+{
+    if (!pstore_hdr)
+        return;
+
+    unsigned int count = pstore_hdr->record_count;
+    if (count == 0)
+        return;
+
+    kprintf("\n========== PSTORE RECOVERY (%u records from previous boot) ==========\n",
+            count);
+
+    for (unsigned int i = 0; i < count; i++) {
+        /* Walk backwards from write_slot-1, same as pstore_read */
+        unsigned int slot;
+        if (pstore_hdr->write_slot == 0)
+            slot = PSTORE_MAX_RECORDS - 1;
+        else
+            slot = pstore_hdr->write_slot - 1;
+
+        slot = (slot - i + PSTORE_MAX_RECORDS) % PSTORE_MAX_RECORDS;
+
+        volatile struct pstore_record *rec = pstore_slot(slot);
+        if (!slot_valid(rec))
+            continue;
+
+        uint8_t type = rec->data[0];
+        uint32_t dlen = rec->length - 1;  /* skip type byte */
+        if (dlen > 256)
+            dlen = 256;  /* cap display length */
+
+        /* Print record header */
+        kprintf("  [%02u] type=%u len=%u ts=%llu\n",
+                i, type, (unsigned int)dlen,
+                (unsigned long long)rec->timestamp);
+
+        /* Print the payload as text (assuming ASCII / printable) */
+        if (dlen > 0) {
+            /* Null-terminate for safe printing */
+            char print_buf[512];
+            uint32_t copy = dlen < sizeof(print_buf) - 1 ? dlen : sizeof(print_buf) - 1;
+            memcpy(print_buf, (void *)rec->data + 1, copy);
+            print_buf[copy] = '\0';
+            kprintf("       %s\n", print_buf);
+        }
+    }
+
+    kprintf("================================================================\n");
+}
+
+/* ── Panic / oops notifier ───────────────────────────────────────────── */
+
+static struct notifier_block pstore_nb = {
+    .notifier_call = NULL,  /* set in pstore_init_notifier */
+    .next          = NULL,
+};
+
+/* Called on kernel panic (via NOTIFIER_PANIC chain).
+ * Writes a final "panic occurred" marker and dmesg snapshot. */
+int pstore_panic_notifier(struct notifier_block *nb,
+                          unsigned long action, void *data)
+{
+    (void)nb;
+    (void)data;
+
+    if (action == 0) {
+        /* Write a panic marker record */
+        const char *msg = "KERNEL PANIC — system halted";
+        pstore_write(PSTORE_TYPE_PANIC,
+                     (const uint8_t *)msg, (int)strlen(msg));
+    }
+
+    return 0;
+}
+
+/* Register the panic notifier.  Called from kernel boot after
+ * notifier_init() and pstore_init() have completed. */
+void pstore_init_notifier(void)
+{
+    pstore_nb.notifier_call = pstore_panic_notifier;
+    int ret = notifier_chain_register(NOTIFIER_PANIC, &pstore_nb);
+    if (ret == 0) {
+        kprintf("[OK] pstore: panic notifier registered\n");
+    } else {
+        kprintf("[!!] pstore: failed to register panic notifier (%d)\n", ret);
+    }
 }

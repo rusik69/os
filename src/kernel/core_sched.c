@@ -7,14 +7,17 @@
  * Core scheduling ensures that tasks from different security domains
  * are not co-scheduled on the same core (HT-aware isolation).
  *
- * This is a basic stub providing:
- *   - sched_core_init() — initialise core tracking
- *   - sched_core_siblings(cpu) — return sibling mask for a given CPU
- *   - sched_core_share(cpu1, cpu2) — check if two CPUs share a core
+ * Each task can have a core scheduling cookie (uint64_t).  Tasks with
+ * the same non-zero cookie may be co-scheduled on sibling CPUs (same
+ * physical core).  Tasks with different non-zero cookies must be placed
+ * on separate physical cores to prevent HT side-channel attacks.
+ * A cookie of 0 (default) means no restriction — the task may share
+ * a core with any other task.
  */
 
 #include "core_sched.h"
 #include "smp.h"
+#include "process.h"
 #include "printf.h"
 #include "string.h"
 #include "errno.h"
@@ -110,10 +113,57 @@ int sched_core_cpus_per_core(void)
 }
 
 /* Check whether a task may run on a given CPU based on core scheduling.
- * For now, always returns 1 (allow). */
-int sched_core_allow(int task_cpu, int target_cpu)
+ *
+ * Returns 1 (allow) if:
+ *   - The task has no cookie (0), OR
+ *   - All CPUs sharing the target core are either idle or running a
+ *     task with the same cookie.
+ *
+ * Returns 0 (deny) if any sibling CPU is running a task with a
+ * different (non-zero) cookie.
+ */
+int sched_core_allow(struct process *task, int target_cpu)
 {
-    (void)task_cpu;
-    (void)target_cpu;
+    if (!core_sched_initialised)
+        return 1;
+    if (!task || target_cpu < 0 || target_cpu >= SMP_MAX_CPUS)
+        return 0;
+
+    uint64_t cookie = task->core_sched_cookie;
+    /* Cookie 0 means no core-scheduling restriction */
+    if (cookie == 0)
+        return 1;
+
+    /* Get the sibling mask for the target CPU */
+    uint64_t siblings = core_sibling_maps[target_cpu];
+
+    /* Check each sibling CPU (excluding the target itself) */
+    for (int cpu = 0; cpu < SMP_MAX_CPUS; cpu++) {
+        if (!(siblings & ((uint64_t)1 << cpu)))
+            continue;
+        if (cpu == target_cpu)
+            continue;
+
+        /* What task is currently running on the sibling? */
+        struct process *sibling = cpu_info_array[cpu].current_process;
+        if (sibling && sibling->core_sched_cookie != 0 &&
+            sibling->core_sched_cookie != cookie) {
+            return 0; /* Incompatible cookie on sibling CPU */
+        }
+    }
+
     return 1;
+}
+
+/* Set a task's core scheduling cookie (0 = no restriction). */
+void sched_core_set_cookie(struct process *task, uint64_t cookie)
+{
+    if (task)
+        task->core_sched_cookie = cookie;
+}
+
+/* Get a task's core scheduling cookie. */
+uint64_t sched_core_get_cookie(struct process *task)
+{
+    return task ? task->core_sched_cookie : 0;
 }

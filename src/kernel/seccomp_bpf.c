@@ -157,6 +157,11 @@ int seccomp_filter_install(const struct sock_fprog *prog)
     if (!current)
         return -ESRCH;
 
+    /* SECCOMP in Linux requires PR_SET_NO_NEW_PRIVS before installing
+     * a BPF filter, preventing privilege escalation via seccomp. */
+    if (!current->no_new_privs)
+        return -EPERM;
+
     /* If the process already has a seccomp filter, reject */
     if (current->seccomp_mode != 0 && current->seccomp_filter != NULL)
         return -EEXIST;
@@ -181,7 +186,7 @@ int seccomp_filter_install(const struct sock_fprog *prog)
     filter->refcount = 1;
 
     current->seccomp_filter = filter;
-    current->seccomp_mode   = 2;   /* SECCOMP_MODE_FILTER */
+    current->seccomp_mode   = SECCOMP_MODE_FILTER_BPF;   /* SECCOMP_MODE_FILTER_BPF */
 
     return 0;
 }
@@ -192,7 +197,7 @@ uint32_t seccomp_filter_evaluate(int syscall_nr, uint32_t arch)
     if (!current)
         return SECCOMP_RET_ALLOW;
 
-    if (current->seccomp_mode != 2 || !current->seccomp_filter)
+    if (current->seccomp_mode != SECCOMP_MODE_FILTER_BPF || !current->seccomp_filter)
         return SECCOMP_RET_ALLOW;
 
     /* Build the seccomp_data structure */
@@ -204,4 +209,21 @@ uint32_t seccomp_filter_evaluate(int syscall_nr, uint32_t arch)
     struct seccomp_filter *filter = (struct seccomp_filter *)current->seccomp_filter;
 
     return seccomp_run_filter(&sd, filter->insns, filter->len);
+}
+
+/* Release the seccomp filter for the current process.
+ * Frees the instruction array and the filter wrapper,
+ * then resets seccomp_mode to disabled. */
+void seccomp_bpf_release(void)
+{
+    struct process *current = process_get_current();
+    if (!current || !current->seccomp_filter)
+        return;
+
+    struct seccomp_filter *filter = (struct seccomp_filter *)current->seccomp_filter;
+    if (filter->insns)
+        kfree(filter->insns);
+    kfree(filter);
+    current->seccomp_filter = NULL;
+    current->seccomp_mode   = SECCOMP_MODE_DISABLED;
 }

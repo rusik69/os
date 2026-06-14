@@ -320,6 +320,92 @@ Dependencies: `x86_64-elf-gcc`, `nasm`, `qemu-system-x86_64`, `make`.
 - Node problem detection and remediation
 - Runtime security policies, RBAC, secrets management
 
+## Container Platform
+
+The kernel includes a complete container platform with an OCI-compatible runtime, Kubernetes-inspired orchestration, cluster management, and CLI tooling — all running in-kernel.
+
+### Container Runtime
+
+**Files:** `src/container/runtime.c`, `src/container/config.c`, `src/container/state.c`, `src/container/storage.c`, `src/container/image.c`, `src/container/network.c`
+
+The container runtime provides OCI-compatible lifecycle management:
+
+- **Lifecycle operations:** create, start, stop, delete, exec, attach, logs, pause/unpause, wait, top, stats
+- **cgroup integration:** per-container CPU, memory, and PID cgroup controllers. CPU shares, quota/throttle, memory limits with OOM kill, PID limits.
+- **Namespace isolation:** PID, mount, network, user, cgroup, UTS namespaces for each container.
+- **Image management:** pull from OCI-compatible registries, push, tag, list, remove, prune, save/load. Supports layer caching and manifest v2.
+- **Storage drivers:** OverlayFS with layer management (whiteout files, opaque directories). Copy-on-write with per-layer reference counting.
+- **Container inspect:** full JSON metadata dump including mounts, network settings, environment, and resource limits.
+- **Checkpoint/restore:** full container state checkpoint to disk and restore with CRIU-like kernel-level support.
+- **Security scanning:** in-kernel vulnerability scanning of container images against known CVEs.
+- **Seccomp notify:** per-container seccomp profiles with notify-on-violation.
+
+### Orchestration Features
+
+**Files:** `src/container/orch.c`, `src/orch/`, `src/cluster/`
+
+The orchestration subsystem implements pod, service, and controller abstractions:
+
+- **Pods:** groups of containers sharing network namespace, volumes, and lifecycle. Pause container for network namespace ownership. Readiness, liveness, and startup probes.
+- **Services:** stable virtual IP endpoints backed by label-selected pods. Load balancing via IPVS (round-robin, least connections, hash) or iptables DNAT. DNS discovery via built-in cluster DNS.
+- **Controllers:** Deployment (replica management with rolling updates), StatefulSet (ordered pods with stable identities), DaemonSet (one pod per node), Job/CronJob (batch workloads), ReplicaSet.
+- **Horizontal Pod Autoscaler (HPA):** CPU/memory-based scaling with configurable targets, stabilization windows, and scale-up/down policies.
+- **Vertical Pod Autoscaler (VPA):** resource recommendations based on historical usage.
+- **Cluster Autoscaler:** add/remove nodes based on pending pod demand.
+- **Custom Resource Definitions (CRDs):** define custom resource types at runtime with schema validation.
+- **Operator framework:** controllers that watch custom resources and reconcile cluster state.
+- **Scheduler policies:** spread, binpack, random with node affinity, taints/tolerations, and resource-based filtering.
+- **RBAC:** role-based access control for namespaced and cluster-scoped resources.
+- **Secrets management:** encrypted secret storage with automatic injection into pods.
+- **Events system:** cluster-wide event bus with filtering and aggregation.
+
+### CLI Tools
+
+Built-in shell commands for managing the container platform:
+
+| Command | Description |
+|---------|-------------|
+| `ctr` | Container runtime CLI — create, start, stop, exec, logs, pull, push images |
+| `crictl` | CRI-compatible debug tool — inspect containers, pods, and images |
+| `orchctl` | Orchestration CLI — manage pods, services, deployments, controllers |
+| `compose` | Compose file runner — `compose up/down/ps/logs` from docker-compose YAML |
+
+Key operations:
+```bash
+# Container runtime
+ctr pull docker.io/library/nginx:latest
+ctr create --name my-web nginx:latest
+ctr start my-web
+ctr exec my-web /bin/ls
+
+# Orchestration
+orchctl run nginx --image nginx:latest --replicas 3
+orchctl expose deployment nginx --port 80 --type NodePort
+orchctl scale deployment nginx --replicas 5
+orchctl get pods -o wide
+
+# Compose
+compose up -f docker-compose.yml
+compose ps
+compose logs -f
+```
+
+### Cluster Features
+
+**Files:** `src/cluster/`
+
+The cluster subsystem provides multi-node orchestration with consensus, overlay networking, and ingress:
+
+- **Multi-node clustering:** nodes join via Raft consensus (leader election, log replication, KV store). Gossip-based membership and failure detection (SWIM protocol).
+- **Overlay networking:** VXLAN encapsulation with 24-bit VNI per namespace. ARP suppression, MAC learning, BUM traffic replication. WireGuard encrypted mesh option.
+- **Network policies:** ingress/egress rules with pod label selectors, CIDR blocks, and namespace selectors. Compiled to nftables for efficient filtering.
+- **Ingress controller:** NodePort (static port 30000-32767 per node), LoadBalancer (external LB integration), HTTP routing (path/host-based with TLS termination).
+- **Multi-tenant isolation:** per-namespace VXLAN/VLAN, default deny policies, network isolation between tenants.
+- **Cluster upgrades:** cordon, drain, upgrade, uncordon, rollback with phase-based state machine.
+- **Node problem detection:** health monitoring, anomaly detection, automated remediation.
+- **Runtime security policies:** pod security standards (restricted/baseline/privileged), container integrity verification.
+- **Cluster API server:** REST API on port 8375 (Docker-compatible) for external management.
+
 ## Building
 
 ```bash

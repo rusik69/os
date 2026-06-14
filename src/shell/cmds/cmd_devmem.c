@@ -5,8 +5,15 @@
 #include "string.h"
 #include "stdlib.h"
 #include "types.h"
+#include "lockdown.h"
 
 int cmd_devmem(int argc, char **argv) {
+    /* Lockdown: block physical memory access at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY)) {
+        kprintf("devmem: blocked by kernel lockdown (integrity level)\n");
+        return 1;
+    }
+
     int write_mode = 0;
     uint64_t addr = 0;
     uint64_t val = 0;

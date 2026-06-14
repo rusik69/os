@@ -24,6 +24,7 @@
 #include "smp.h"
 #include "cpuidle.h"       /* MWAIT C-state support */
 #include "timer.h"          /* timer_get_ticks */
+#include "lockdown.h"
 
 /* ── MSR definitions for S0ix ──────────────────────────────────────── */
 #define MSR_PKG_CST_CONFIG_CONTROL  0x000000E2
@@ -138,6 +139,12 @@ static void suspend_restore_cpu_state(void) {
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 int suspend_s3(void) {
+    /* Lockdown: block system suspend at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY)) {
+        kprintf("suspend: blocked by kernel lockdown\n");
+        return -1;
+    }
+
     if (!acpi_sleep_supported(ACPI_S3)) {
         kprintf("suspend: ACPI S3 not supported by platform\n");
         return -1;

@@ -222,11 +222,74 @@ int madvise_willneed(uint64_t addr, uint64_t len)
 {
     if (!madvise_ext_initialised)
         return -ENOSYS;
-    /* Pre-fault / prefetch: already mapped, nothing to do.
-     * In a full implementation we would fault pages in from swap/disk. */
-    (void)addr;
-    (void)len;
-    return 0;
+
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4)
+        return -EINVAL;
+
+    /* Align address down, round length up */
+    uint64_t aligned_addr = addr & ~(PAGE_SIZE - 1ULL);
+    uint64_t end = addr + len;
+    uint64_t aligned_end = (end + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    if (aligned_end < aligned_addr || aligned_end > USER_VADDR_MAX)
+        return -EINVAL;
+
+    uint64_t *pml4 = proc->pml4;
+    int prefaulted = 0;
+
+    for (uint64_t v = aligned_addr; v < aligned_end; v += PAGE_SIZE) {
+        int pml4_idx = (v >> 39) & 0x1FF;
+        int pdpt_idx = (v >> 30) & 0x1FF;
+        int pd_idx   = (v >> 21) & 0x1FF;
+        int pt_idx   = (v >> 12) & 0x1FF;
+
+        /* Walk page tables */
+        if (!(pml4[pml4_idx] & PTE_PRESENT))
+            continue;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT))
+            continue;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (!(pd[pd_idx] & PTE_PRESENT))
+            continue;
+
+        /* Handle 2MB huge pages */
+        if (pd[pd_idx] & PTE_HUGE) {
+            uint64_t offset = v & (HUGE_PAGE_SIZE - 1ULL);
+            uint64_t phys = (pd[pd_idx] & PTE_ADDR_MASK) + offset;
+            /* Software prefetch */
+            __builtin_prefetch((void *)(uintptr_t)PHYS_TO_VIRT(phys), 0, 3);
+            prefaulted++;
+            /* Skip remaining 4K pages within this huge page */
+            uint64_t remaining = HUGE_PAGE_SIZE - (v & (HUGE_PAGE_SIZE - 1ULL));
+            v += remaining - PAGE_SIZE;
+            continue;
+        }
+
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        if (!(pt[pt_idx] & PTE_PRESENT)) {
+            /* Page not yet mapped — allocate and map zero page */
+            uint64_t new_phys = pmm_alloc_frame();
+            if (new_phys) {
+                /* Zero the frame */
+                memset(PHYS_TO_VIRT(new_phys), 0, PAGE_SIZE);
+                /* Map it with the same flags as the surrounding pages */
+                uint64_t flags = PTE_PRESENT | PTE_USER | PTE_ACCESSED;
+                if (pd[pd_idx] & PTE_WRITE)
+                    flags |= PTE_WRITE;
+                pt[pt_idx] = new_phys | flags;
+                local_tlb_flush(v);
+                prefaulted++;
+            }
+        } else {
+            /* Page already present — prefetch */
+            uint64_t phys = pt[pt_idx] & PTE_ADDR_MASK;
+            __builtin_prefetch((void *)(uintptr_t)PHYS_TO_VIRT(phys), 0, 3);
+            prefaulted++;
+        }
+    }
+
+    return prefaulted > 0 ? 0 : 0; /* Success even if nothing to prefault */
 }
 
 int madvise_cold(uint64_t addr, uint64_t len)

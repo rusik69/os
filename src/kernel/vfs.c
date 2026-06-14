@@ -54,6 +54,16 @@ static int dcache_match(const struct dcache_entry *e, const char *path)
 int vfs_open(const char *path, int flags, int mode)
 {
     (void)mode;
+    char ap[128];
+    vfs_abs_path(path, ap, sizeof(ap));
+
+    /* Check Landlock read-file permission */
+    {
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+            return -EACCES;
+    }
+
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
 
@@ -61,6 +71,10 @@ int vfs_open(const char *path, int flags, int mode)
         return -ENOENT;
 
     if (!exists && (flags & 0x40)) {
+        /* Check Landlock write-file permission for creation */
+        struct process *proc = process_get_current();
+        if (proc && landlock_check_path(proc, ap, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+            return -EACCES;
         int ret = vfs_create(path, 0);
         if (ret < 0) return ret;
     }
@@ -1446,7 +1460,18 @@ int vfs_link(const char *oldpath, const char *newpath) {
     char ap_old[128], ap_new[128];
     vfs_abs_path(oldpath, ap_old, sizeof(ap_old));
     vfs_abs_path(newpath, ap_new, sizeof(ap_new));
-    
+
+    /* Check Landlock permissions: read on old path, write on new path */
+    {
+        struct process *proc = process_get_current();
+        if (proc) {
+            if (landlock_check_path(proc, ap_old, LANDLOCK_ACCESS_FS_READ_FILE) < 0)
+                return -EACCES;
+            if (landlock_check_path(proc, ap_new, LANDLOCK_ACCESS_FS_WRITE_FILE) < 0)
+                return -EACCES;
+        }
+    }
+
     /* Check that old path exists and new path does not */
     struct vfs_stat st;
     if (vfs_stat(ap_old, &st) < 0) return -ENOENT;

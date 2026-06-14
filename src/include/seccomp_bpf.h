@@ -33,6 +33,27 @@
 #define SECCOMP_RET_ERRNO     0x00050000   /* OR with errno value */
 #endif
 
+/* Mode constant for BPF-based filters (distinct from legacy SECCOMP_MODE_FILTER=2) */
+#define SECCOMP_MODE_FILTER_BPF  3
+
+#ifndef SECCOMP_MODE_DISABLED
+#define SECCOMP_MODE_DISABLED    0
+#endif
+
+/* BPF-specific return value constants (Linux-compatible).
+ * Always defined, regardless of whether seccomp.h is also included. */
+#define SECCOMP_BPF_RET_KILL      0x00000000U
+#define SECCOMP_BPF_RET_ALLOW     0x7FFF0000U
+#define SECCOMP_BPF_RET_TRAP      0x00030000U
+#define SECCOMP_BPF_RET_LOG       0x7FFC0000U
+#define SECCOMP_BPF_RET_ERRNO     0x00050000U
+
+/* Mask to extract action from full 32-bit seccomp return value */
+#define SECCOMP_RET_ACTION_FULL   0xFFFF0000U
+
+/* x86_64 audit architecture constant (EM_X86_64 | AUDIT_ARCH_LE) */
+#define AUDIT_ARCH_X86_64         0xC000003EU
+
 /* Size of seccomp_data structure (simplified — just syscall nr and arch) */
 #define SECCOMP_DATA_SIZE  16
 
@@ -66,6 +87,9 @@ int seccomp_filter_install(const struct sock_fprog *prog);
 /* Evaluate a seccomp filter for a given syscall number and architecture.
  * Returns the SECCOMP_RET_* action. */
 uint32_t seccomp_filter_evaluate(int syscall_nr, uint32_t arch);
+
+/* Release the seccomp filter for the current process (frees instructions + filter struct). */
+void seccomp_bpf_release(void);
 
 /* Init called during kernel boot */
 void seccomp_bpf_init(void);

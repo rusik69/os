@@ -13,6 +13,8 @@
 #include "process.h"
 #include "string.h"
 #include "printf.h"
+#include "core_sched.h"
+#include "nohz.h"
 
 /* ====================================================================
  *  1. Scheduler Statistics Tests
@@ -170,6 +172,85 @@ static void sched_priority_bounds_test(struct kunit *test)
 }
 
 /* ====================================================================
+ *  8. Core Scheduling tests
+ * ==================================================================== */
+
+static void core_sched_basic_test(struct kunit *test)
+{
+    /* sched_core_init() is called at boot, so core scheduling is active.
+     * Test basic API consistency. */
+
+    /* CPU 0 should always be its own sibling */
+    uint64_t siblings = sched_core_siblings(0);
+    KUNIT_EXPECT_TRUE(test, (siblings & 1) != 0);
+
+    /* A CPU always shares a core with itself */
+    KUNIT_EXPECT_TRUE(test, sched_core_share(0, 0) == 1);
+
+    /* CPUs per core is at least 1 */
+    KUNIT_EXPECT_TRUE(test, sched_core_cpus_per_core() >= 1);
+
+    /* Cookie set/get on the current process */
+    struct process *cur = process_get_current();
+    KUNIT_EXPECT_TRUE(test, cur != NULL);
+
+    if (cur) {
+        uint64_t old_cookie = sched_core_get_cookie(cur);
+        sched_core_set_cookie(cur, 42);
+        KUNIT_EXPECT_EQ(test, sched_core_get_cookie(cur), (uint64_t)42);
+        /* Restore */
+        sched_core_set_cookie(cur, old_cookie);
+        KUNIT_EXPECT_EQ(test, sched_core_get_cookie(cur), old_cookie);
+    }
+
+    /* sched_core_allow with no cookie (0) should always return 1 */
+    struct process *proc = process_get_current();
+    if (proc) {
+        uint64_t saved = proc->core_sched_cookie;
+        proc->core_sched_cookie = 0;
+        KUNIT_EXPECT_TRUE(test, sched_core_allow(proc, 0) == 1);
+        proc->core_sched_cookie = saved;
+    }
+
+    /* Invalid CPU should return 0 */
+    KUNIT_EXPECT_TRUE(test, sched_core_allow(NULL, 0) == 0);
+}
+
+/* ====================================================================
+ *  9. NO_HZ Adaptive Tick tests (safe subset)
+ * ==================================================================== */
+
+static void nohz_basic_test(struct kunit *test)
+{
+    /* nohz_init() is called at boot.  CPU 0 is not isolated by default. */
+
+    /* CPU 0 should not be isolated by default */
+    KUNIT_EXPECT_TRUE(test, nohz_cpu_is_isolated(0) == 0);
+
+    /* Tick should not be stopped on a non-isolated CPU */
+    KUNIT_EXPECT_TRUE(test, nohz_tick_is_stopped(0) == 0);
+
+    /* nohz_tick_account should be safe to call on any CPU */
+    nohz_tick_account(0);
+
+    /* Stopping tick on a non-isolated CPU should return -EINVAL */
+    KUNIT_EXPECT_TRUE(test, nohz_tick_stop(0) != 0);
+
+    /* Restart on a running CPU should return 0 (already running) */
+    KUNIT_EXPECT_TRUE(test, nohz_tick_restart(0) == 0);
+
+    /* Stopped ms should be 0 if tick is not stopped */
+    KUNIT_EXPECT_EQ(test, nohz_tick_stopped_ms(0), (uint64_t)0);
+
+    /* Invalid CPU should not crash */
+    nohz_tick_account(-1);
+    nohz_tick_stop(-1);
+    nohz_tick_restart(-1);
+    KUNIT_EXPECT_TRUE(test, nohz_cpu_is_isolated(-1) == 0);
+    KUNIT_EXPECT_TRUE(test, nohz_tick_is_stopped(-1) == 0);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -181,6 +262,8 @@ static struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_wakeup_sleepers_test),
     KUNIT_CASE(sched_autogroup_test),
     KUNIT_CASE(sched_priority_bounds_test),
+    KUNIT_CASE(core_sched_basic_test),
+    KUNIT_CASE(nohz_basic_test),
     {0}
 };
 

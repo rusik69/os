@@ -30,6 +30,7 @@
 #include "timer.h"
 #include "string.h"
 #include "preempt.h"   /* for need_resched() */
+#include "nohz.h"      /* for nohz_tick_stop/nohz_tick_restart */
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  Constants
@@ -761,6 +762,13 @@ void cpuidle_idle(void)
 
     struct cpuidle_state *state = &idle_states[state_idx];
 
+    /* ── NO_HZ: stop the periodic tick before entering deep idle ── */
+    int tick_stopped = 0;
+    if (nohz_cpu_is_isolated((int)ci->cpu_id) && state_idx > 0) {
+        if (nohz_tick_stop((int)ci->cpu_id) == 0)
+            tick_stopped = 1;
+    }
+
     /* Record entry — note start tick for the governor's record callback */
     uint64_t start = timer_get_ticks();
     c->state_entries[state_idx]++;
@@ -771,6 +779,11 @@ void cpuidle_idle(void)
 
     /* Compute time spent in ticks */
     uint64_t elapsed = timer_get_ticks() - start;
+
+    /* ── NO_HZ: restart the tick after waking ──────────────────── */
+    if (tick_stopped) {
+        nohz_tick_restart((int)ci->cpu_id);
+    }
 
     /* Record the actual idle duration so the governor can learn */
     if (active_governor && active_governor->record_idle) {

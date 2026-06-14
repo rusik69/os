@@ -32,6 +32,8 @@
 #include "page_cache.h"
 #include "rseq.h"
 #include "process_rlimit.h"
+#include "core_sched.h"
+#include "nohz.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -317,6 +319,12 @@ static void scheduler_add_locked(struct process *proc) {
     proc->next = NULL;
     proc->on_queue = 1;
 
+    /* ── NO_HZ: if the tick was stopped and we're adding a task,
+     * restart the tick so this new task gets properly accounted. */
+    if (nohz_tick_is_stopped((int)cpu_id)) {
+        nohz_tick_restart((int)cpu_id);
+    }
+
     if (!ci->queue_tail[lvl]) {
         ci->queue_head[lvl] = proc;
         ci->queue_tail[lvl] = proc;
@@ -573,9 +581,20 @@ void schedule(void) {
 
     if (!next) {
         /* No deadline task available — fall back to class-aware picker.
-         * Selection order: RT (SCHED_FIFO/RR) > CFS (SCHED_OTHER/BATCH) > SCHED_IDLE */
+         * Selection order: RT (SCHED_FIFO/RR) > CFS (SCHED_OTHER/BATCH) > SCHED_IDLE
+         * Core scheduling: verify the picked task is compatible with the
+         * current CPU's sibling state (same-core cookie check). */
         spinlock_irqsave_acquire(&sched_lock, &irq_flags);
         next = dequeue_next();
+        /* ── Core scheduling compatibility check ────────────────
+         * If the picked task has a core scheduling cookie and a sibling
+         * CPU is running a task with a different cookie, skip this task
+         * and put it back.  Try the next task in the queue. */
+        if (next && !sched_core_allow(next, (int)ci->cpu_id)) {
+            scheduler_add_locked(next);
+            next = dequeue_next();
+            /* Try one more time with a fallback to load balancing */
+        }
         spinlock_irqsave_release(&sched_lock, irq_flags);
     }
 
@@ -588,6 +607,11 @@ void schedule(void) {
         if (stole) {
             spinlock_irqsave_acquire(&sched_lock, &irq_flags);
             next = dequeue_next();
+            /* ── Core scheduling check for stolen tasks ───── */
+            if (next && !sched_core_allow(next, (int)ci->cpu_id)) {
+                scheduler_add_locked(next);
+                next = NULL;
+            }
             spinlock_irqsave_release(&sched_lock, irq_flags);
         }
 

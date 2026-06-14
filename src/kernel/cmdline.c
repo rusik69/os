@@ -4,6 +4,7 @@
 #include "string.h"
 #include "printf.h"
 #include "cmos.h"
+#include "lockdown.h"
 
 #define CMDLINE_MAX_PARAMS 64
 #define CMDLINE_MAX_KEY    64
@@ -61,6 +62,18 @@ void cmdline_init(const char *cmdline) {
 
     if (num_params > 0) {
         kprintf("[OK] Kernel cmdline: %s\n", raw_cmdline);
+    }
+
+    /* Parse lockdown= boot parameter */
+    const char *lockdown_val = cmdline_get("lockdown");
+    if (lockdown_val) {
+        if (strcmp(lockdown_val, "integrity") == 0) {
+            lock_down(LOCKDOWN_INTEGRITY);
+        } else if (strcmp(lockdown_val, "confidentiality") == 0) {
+            lock_down(LOCKDOWN_CONFIDENTIALITY);
+        } else {
+            kprintf("[cmdline] lockdown: unknown value '%s' (expected 'integrity' or 'confidentiality')\n", lockdown_val);
+        }
     }
 }
 

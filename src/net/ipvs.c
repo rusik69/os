@@ -1,9 +1,11 @@
-/* ipvs.c — IP Virtual Server */
+/* ipvs.c — IP Virtual Server with connection tracking + NAT */
 
 #define KERNEL_INTERNAL
 #include "ipvs.h"
 #include "printf.h"
 #include "string.h"
+#include "heap.h"
+#include "timer.h"
 
 static struct ipvs_virtual g_virtuals[IPVS_MAX_VIRTUALS];
 static int g_num_virtuals = 0;
@@ -13,13 +15,179 @@ static int ipvs_initialized = 0;
 static struct ipvs_real g_reals[IPVS_MAX_VIRTUALS * IPVS_MAX_REALS];
 static int g_num_reals = 0;
 
+/* ══════════════════════════════════════════════════════════════════════
+ * Connection tracking hash table
+ * ══════════════════════════════════════════════════════════════════════ */
+
+static struct ip_vs_conn *g_conn_hash[IPVS_CONN_HASH_SIZE];
+static int g_conn_count = 0;
+
+/* Simple hash from IP:port tuple */
+static uint32_t conn_hash_4tuple(uint32_t c_ip, uint16_t c_port,
+                                  uint32_t v_ip, uint16_t v_port)
+{
+    uint32_t h = c_ip ^ v_ip;
+    h = h * 31 + c_port;
+    h = h * 31 + v_port;
+    return h & (IPVS_CONN_HASH_SIZE - 1);
+}
+
+struct ip_vs_conn *ip_vs_conn_new(uint32_t c_ip, uint16_t c_port,
+                                    uint32_t v_ip, uint16_t v_port,
+                                    uint32_t d_ip, uint16_t d_port,
+                                    uint8_t protocol)
+{
+    if (!ipvs_initialized) return NULL;
+
+    /* Check for existing connection (avoid duplicates) */
+    struct ip_vs_conn *existing = ip_vs_conn_lookup(c_ip, c_port, v_ip, v_port, protocol);
+    if (existing)
+        return existing;
+
+    struct ip_vs_conn *conn = (struct ip_vs_conn *)kmalloc(sizeof(struct ip_vs_conn));
+    if (!conn) return NULL;
+
+    conn->c_ip = c_ip;
+    conn->c_port = c_port;
+    conn->v_ip = v_ip;
+    conn->v_port = v_port;
+    conn->d_ip = d_ip;
+    conn->d_port = d_port;
+    conn->protocol = protocol;
+    conn->state = IP_VS_CONN_ESTAB;
+    conn->nat_mode = IPVS_NAT_MASQ;
+    conn->orig_src_ip = c_ip;
+    conn->orig_src_port = c_port;
+    conn->orig_dst_ip = v_ip;
+    conn->orig_dst_port = v_port;
+    conn->expiry = timer_get_ms() + IPVS_CONN_TIMEOUT_MS;
+    conn->next = NULL;
+
+    uint32_t idx = conn_hash_4tuple(c_ip, c_port, v_ip, v_port);
+    conn->next = g_conn_hash[idx];
+    g_conn_hash[idx] = conn;
+    g_conn_count++;
+
+    return conn;
+}
+
+struct ip_vs_conn *ip_vs_conn_lookup(uint32_t c_ip, uint16_t c_port,
+                                      uint32_t v_ip, uint16_t v_port,
+                                      uint8_t protocol)
+{
+    if (!ipvs_initialized) return NULL;
+
+    uint32_t idx = conn_hash_4tuple(c_ip, c_port, v_ip, v_port);
+    struct ip_vs_conn *conn = g_conn_hash[idx];
+
+    while (conn) {
+        if (conn->c_ip == c_ip &&
+            conn->c_port == c_port &&
+            conn->v_ip == v_ip &&
+            conn->v_port == v_port &&
+            conn->protocol == protocol) {
+            /* Refresh expiry on active lookup */
+            conn->expiry = timer_get_ms() + IPVS_CONN_TIMEOUT_MS;
+            return conn;
+        }
+        conn = conn->next;
+    }
+    return NULL;
+}
+
+void ip_vs_conn_expire(struct ip_vs_conn *conn)
+{
+    if (!conn) return;
+
+    uint32_t idx = conn_hash_4tuple(conn->c_ip, conn->c_port,
+                                     conn->v_ip, conn->v_port);
+    struct ip_vs_conn **pp = &g_conn_hash[idx];
+    while (*pp) {
+        if (*pp == conn) {
+            *pp = conn->next;
+            g_conn_count--;
+            conn->state = IP_VS_CONN_CLOSE;
+            kfree(conn);
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
+
+void ip_vs_conn_cleanup(void)
+{
+    if (!ipvs_initialized) return;
+
+    uint64_t now = timer_get_ms();
+    for (int i = 0; i < IPVS_CONN_HASH_SIZE; i++) {
+        struct ip_vs_conn **pp = &g_conn_hash[i];
+        while (*pp) {
+            if ((*pp)->expiry <= now) {
+                struct ip_vs_conn *expired = *pp;
+                *pp = expired->next;
+                g_conn_count--;
+                kfree(expired);
+            } else {
+                pp = &(*pp)->next;
+            }
+        }
+    }
+}
+
+int ip_vs_conn_count(void)
+{
+    return g_conn_count;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * NAT translation
+ * ══════════════════════════════════════════════════════════════════════ */
+
+int ipvs_nat_in(struct ip_vs_conn *conn, uint32_t *ip, uint16_t *port)
+{
+    if (!conn || !ip || !port)
+        return -1;
+
+    /* Save original destination for reverse translation */
+    conn->orig_dst_ip = *ip;
+    conn->orig_dst_port = *port;
+
+    /* Rewrite destination to real server */
+    *ip = conn->d_ip;
+    *port = conn->d_port;
+
+    /* Save original source for SNAT return */
+    conn->orig_src_ip = conn->c_ip;
+    conn->orig_src_port = conn->c_port;
+
+    return 0;
+}
+
+int ipvs_nat_out(struct ip_vs_conn *conn, uint32_t *ip, uint16_t *port)
+{
+    if (!conn || !ip || !port)
+        return -1;
+
+    /* Reverse DNAT: restore virtual service IP as source */
+    *ip = conn->v_ip;
+    *port = conn->v_port;
+
+    return 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Existing virtual/real server management (unchanged from original)
+ * ══════════════════════════════════════════════════════════════════════ */
+
 int ipvs_init(void) {
     memset(g_virtuals, 0, sizeof(g_virtuals));
     memset(g_reals, 0, sizeof(g_reals));
+    memset(g_conn_hash, 0, sizeof(g_conn_hash));
     g_num_virtuals = 0;
     g_num_reals = 0;
+    g_conn_count = 0;
     ipvs_initialized = 1;
-    kprintf("[OK] IPVS initialized\\n");
+    kprintf("[OK] IPVS initialized (connection tracking + NAT)\n");
     return 0;
 }
 

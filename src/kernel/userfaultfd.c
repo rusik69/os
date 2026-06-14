@@ -17,6 +17,8 @@
 #include "process.h"
 #include "signal.h"
 #include "vmm.h"
+#include "pmm.h"
+#include "uaccess.h"
 
 static struct uffd_context uffd_table[UFFD_MAX_CONTEXTS];
 static int uffd_initialised = 0;
@@ -407,4 +409,411 @@ int userfaultfd_set_features(int fd, uint64_t features)
 
     spinlock_release(&ctx->lock);
     return 0;
+}
+
+/* ── UFFDIO operations ───────────────────────────────────────────── */
+
+static int uffd_validate_ctx(int fd, struct uffd_context **out_ctx)
+{
+    if (!uffd_initialised)
+        return -ENOSYS;
+    if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
+        return -EBADF;
+    struct uffd_context *ctx = &uffd_table[fd];
+    if (!ctx->used)
+        return -EBADF;
+    if (out_ctx)
+        *out_ctx = ctx;
+    return 0;
+}
+
+/*
+ * Find which userfaultfd context (if any) handles a given fault address
+ * for the current process.  Scans all uffd contexts for ranges covering
+ * 'fault_addr'.  Returns the fd on success, -1 if not found.
+ * Sets *write_flag to 1 if the matching range has UFFD_FLAG_WP set.
+ */
+int userfaultfd_find_for_addr(uint64_t fault_addr, int *write_flag)
+{
+    if (!uffd_initialised)
+        return -1;
+
+    for (int fd = 0; fd < UFFD_MAX_CONTEXTS; fd++) {
+        struct uffd_context *ctx = &uffd_table[fd];
+        if (!ctx->used)
+            continue;
+
+        spinlock_acquire(&ctx->lock);
+        for (int i = 0; i < ctx->num_ranges; i++) {
+            struct uffd_range *r = &ctx->ranges[i];
+            if (!r->in_use)
+                continue;
+            if (fault_addr >= r->start && fault_addr < r->end) {
+                if (write_flag)
+                    *write_flag = (r->mode & UFFD_FLAG_WP) ? 1 : 0;
+                spinlock_release(&ctx->lock);
+                return fd;
+            }
+        }
+        spinlock_release(&ctx->lock);
+    }
+
+    return -1; /* not found */
+}
+
+/*
+ * UFFDIO_API — Create or negotiate API version and features.
+ * When 'api' field matches UFFD_API, creates a new context and
+ * returns its fd.  Always fills in features and ioctls.
+ */
+int userfaultfd_api(int fd, struct uffdio_api *api_arg)
+{
+    if (!api_arg)
+        return -EFAULT;
+
+    /* Report supported features and ioctls */
+    api_arg->features = UFFD_FEATURE_SIGBUS;
+    /* Use ioctl command numbers directly in the bitmask (lowest 6 bits) */
+    api_arg->ioctls = (1ULL << (UFFDIO_API & 0x3F)) |
+                      (1ULL << (UFFDIO_REGISTER & 0x3F)) |
+                      (1ULL << (UFFDIO_UNREGISTER & 0x3F)) |
+                      (1ULL << (UFFDIO_COPY & 0x3F)) |
+                      (1ULL << (UFFDIO_ZEROPAGE & 0x3F)) |
+                      (1ULL << (UFFDIO_WAKE & 0x3F));
+
+    if (api_arg->api != UFFD_API)
+        return -EINVAL;
+
+    /* Create a new context if the caller is requesting via UFFDIO_API
+     * on fd == -1 (initial creation path).  Otherwise it's a query on an
+     * existing fd (which just returns the above). */
+    if (fd < 0) {
+        int new_fd = userfaultfd_create(0);
+        if (new_fd < 0)
+            return new_fd;
+        return new_fd; /* positive fd on success */
+    }
+
+    return 0; /* query on existing fd succeeded */
+}
+
+/*
+ * UFFDIO_REGISTER — Register a virtual memory range with the uffd context.
+ * Arg comes from userspace; we trust the caller already validated it.
+ */
+int userfaultfd_register_ioctl(int fd, struct uffdio_register *reg_arg)
+{
+    if (!reg_arg)
+        return -EFAULT;
+
+    int ret = userfaultfd_register(fd, reg_arg->range_start,
+                                    reg_arg->range_len,
+                                    (int)reg_arg->mode);
+    if (ret == 0) {
+        /* Report which ioctls are available for this range */
+        reg_arg->ioctls = (1ULL << (UFFDIO_WAKE & 0x3F)) |
+                          (1ULL << (UFFDIO_COPY & 0x3F)) |
+                          (1ULL << (UFFDIO_ZEROPAGE & 0x3F));
+    }
+    return ret;
+}
+
+/*
+ * UFFDIO_UNREGISTER — Unregister a virtual memory range.
+ */
+int userfaultfd_unregister_ioctl(int fd, struct uffdio_register *unreg_arg)
+{
+    if (!unreg_arg)
+        return -EFAULT;
+    return userfaultfd_unregister(fd, unreg_arg->range_start,
+                                   unreg_arg->range_len);
+}
+
+/*
+ * UFFDIO_COPY — Copy a page from userspace into the tracked address range.
+ * This resolves the pending page fault by mapping a physical page at 'dst'
+ * and copying the contents from 'src'.
+ *
+ * The operation:
+ *   1. Allocate a physical frame
+ *   2. Copy data from src (user virtual) into the frame
+ *   3. Map the frame at dst with appropriate permissions
+ *   4. Optionally wake the waiting thread (unless DONTWAKE flag set)
+ */
+int userfaultfd_copy(int fd, struct uffdio_copy *copy_arg)
+{
+    struct uffd_context *ctx = NULL;
+    int ret = uffd_validate_ctx(fd, &ctx);
+    if (ret < 0)
+        return ret;
+
+    if (!copy_arg)
+        return -EFAULT;
+
+    /* Validate alignment and length */
+    if (copy_arg->dst & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (copy_arg->src & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (copy_arg->len != PAGE_SIZE)  /* currently we only handle 1 page at a time */
+        return -EINVAL;
+    if (copy_arg->mode & ~UFFDIO_COPY_MODE_DONTWAKE)
+        return -EINVAL;
+
+    /* Validate dst is within a registered range */
+    uint64_t end_addr = copy_arg->dst + copy_arg->len;
+    int covered = 0;
+    spinlock_acquire(&ctx->lock);
+    for (int i = 0; i < ctx->num_ranges; i++) {
+        struct uffd_range *r = &ctx->ranges[i];
+        if (!r->in_use) continue;
+        if (copy_arg->dst >= r->start && end_addr <= r->end) {
+            covered = 1;
+            break;
+        }
+    }
+    spinlock_release(&ctx->lock);
+
+    if (!covered)
+        return -ENOENT;
+
+    /* Allocate a physical frame */
+    struct process *cur = process_get_current();
+    if (!cur || !cur->pml4)
+        return -ESRCH;
+
+    uint64_t frame = pmm_alloc_frame();
+    if (!frame)
+        return -ENOMEM;
+
+    /* Copy data from userspace source */
+    uint8_t *kbuf = (uint8_t *)PHYS_TO_VIRT(frame);
+    if (copy_from_user(kbuf, copy_arg->src, PAGE_SIZE) < 0) {
+        pmm_free_frame(frame);
+        return -EFAULT;
+    }
+
+    /* Map the page at dst in the current process's page table */
+    uint64_t vmm_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC;
+    ret = vmm_map_user_page(cur->pml4, copy_arg->dst, frame, vmm_flags);
+    if (ret < 0) {
+        pmm_free_frame(frame);
+        return -ENOMEM;
+    }
+
+    /* Copy succeeded — report bytes copied */
+    copy_arg->copy = PAGE_SIZE;
+
+    /* TODO: If not DONTWAKE, wake any thread waiting on this page.
+     * Currently we use a simple synchronous model — the fault handler
+     * is not blocking because we queue events and return to userspace.
+     * When the user calls UFFDIO_COPY, the page is mapped and the
+     * next access to that address will succeed normally.
+     * A full implementation would maintain a waitqueue per range. */
+    kprintf("[uffd] copy pid=%u dst=0x%llx src=0x%llx len=%llu\n",
+            (unsigned)cur->pid, copy_arg->dst, copy_arg->src, copy_arg->len);
+
+    return 0;
+}
+
+/*
+ * UFFDIO_ZEROPAGE — Map a zero-filled page at the given address range.
+ * Uses the shared zero page to avoid allocating a new frame.
+ */
+int userfaultfd_zeropage(int fd, struct uffdio_zeropage *zp_arg)
+{
+    struct uffd_context *ctx = NULL;
+    int ret = uffd_validate_ctx(fd, &ctx);
+    if (ret < 0)
+        return ret;
+
+    if (!zp_arg)
+        return -EFAULT;
+
+    if (zp_arg->range_start & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (zp_arg->range_len != PAGE_SIZE)
+        return -EINVAL;
+    if (zp_arg->mode & ~UFFDIO_ZEROPAGE_MODE_DONTWAKE)
+        return -EINVAL;
+
+    /* Validate range is within a registered region */
+    uint64_t end_addr = zp_arg->range_start + zp_arg->range_len;
+    int covered = 0;
+    spinlock_acquire(&ctx->lock);
+    for (int i = 0; i < ctx->num_ranges; i++) {
+        struct uffd_range *r = &ctx->ranges[i];
+        if (!r->in_use) continue;
+        if (zp_arg->range_start >= r->start && end_addr <= r->end) {
+            covered = 1;
+            break;
+        }
+    }
+    spinlock_release(&ctx->lock);
+
+    if (!covered)
+        return -ENOENT;
+
+    struct process *cur = process_get_current();
+    if (!cur || !cur->pml4)
+        return -ESRCH;
+
+    /* Map the shared zero page at the fault address */
+    uint64_t zpage_frame = vmm_zero_page_frame;
+    if (!zpage_frame) {
+        /* Fallback: allocate a zeroed page */
+        zpage_frame = pmm_alloc_frame();
+        if (!zpage_frame)
+            return -ENOMEM;
+        memset(PHYS_TO_VIRT(zpage_frame), 0, PAGE_SIZE);
+        vmm_zero_page_frame = zpage_frame;
+    }
+
+    uint64_t vmm_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE |
+                         VMM_FLAG_NOEXEC | VMM_FLAG_COW; /* COW so writes get a private copy */
+    ret = vmm_map_user_page(cur->pml4, zp_arg->range_start, zpage_frame, vmm_flags);
+    if (ret < 0)
+        return -ENOMEM;
+
+    zp_arg->zeropage = PAGE_SIZE;
+
+    kprintf("[uffd] zeropage pid=%u addr=0x%llx\n",
+            (unsigned)cur->pid, zp_arg->range_start);
+
+    return 0;
+}
+
+/*
+ * UFFDIO_WAKE — Wake any threads blocked waiting on a page range.
+ * Currently a no-op since our fault handler doesn't block.
+ * Present for API compatibility.
+ */
+int userfaultfd_wake(int fd, struct uffdio_wake *wake_arg)
+{
+    struct uffd_context *ctx = NULL;
+    int ret = uffd_validate_ctx(fd, &ctx);
+    if (ret < 0)
+        return ret;
+
+    if (!wake_arg)
+        return -EFAULT;
+
+    if (wake_arg->range_start & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (wake_arg->range_len & (PAGE_SIZE - 1))
+        return -EINVAL;
+
+    (void)ctx; /* wake is a no-op in our synchronous model */
+
+    return 0;
+}
+
+/* ── Syscall entry point ─────────────────────────────────────────── */
+
+/*
+ * sys_userfaultfd2 — Unified userfaultfd syscall entry point.
+ *
+ * Called from syscall dispatch with:
+ *   a1=fd (userfaultfd context fd)
+ *   a2=cmd (UFFDIO_* command)
+ *   a3=arg_ptr (userspace pointer to command-specific struct)
+ *
+ * Returns fd (for UFFDIO_API create), 0 on success, or negative errno.
+ */
+int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
+{
+    struct process *cur = process_get_current();
+    if (!cur || !cur->is_user || !cur->pml4)
+        return (int64_t)-ENOSYS;
+
+    switch (cmd) {
+    case UFFDIO_API: {
+        /* Create new context or query */
+        struct uffdio_api api;
+        if (!arg) {
+            /* If arg is NULL, just create without negotiate */
+            int new_fd = userfaultfd_create(0);
+            return (int64_t)new_fd;
+        }
+        if (copy_from_user(&api, arg, sizeof(api)) < 0)
+            return (int64_t)-EFAULT;
+
+        if (fd == (uint64_t)-1) {
+            /* Create new context */
+            int ret = userfaultfd_api(-1, &api);
+            if (ret < 0)
+                return (int64_t)ret;
+            if (copy_to_user(arg, &api, sizeof(api)) < 0)
+                return (int64_t)-EFAULT;
+            return (int64_t)ret;
+        } else {
+            /* Query existing fd */
+            int ret = userfaultfd_api((int)fd, &api);
+            if (ret < 0)
+                return (int64_t)ret;
+            if (copy_to_user(arg, &api, sizeof(api)) < 0)
+                return (int64_t)-EFAULT;
+            return 0;
+        }
+    }
+
+    case UFFDIO_REGISTER: {
+        struct uffdio_register reg;
+        if (copy_from_user(&reg, arg, sizeof(reg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_register_ioctl((int)fd, &reg);
+        if (ret < 0)
+            return (int64_t)ret;
+        if (copy_to_user(arg, &reg, sizeof(reg)) < 0)
+            return (int64_t)-EFAULT;
+        return 0;
+    }
+
+    case UFFDIO_UNREGISTER: {
+        struct uffdio_register unreg;
+        if (copy_from_user(&unreg, arg, sizeof(unreg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_unregister_ioctl((int)fd, &unreg);
+        if (ret < 0)
+            return (int64_t)ret;
+        return 0;
+    }
+
+    case UFFDIO_COPY: {
+        struct uffdio_copy copy_arg;
+        if (copy_from_user(&copy_arg, arg, sizeof(copy_arg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_copy((int)fd, &copy_arg);
+        if (ret < 0)
+            return (int64_t)ret;
+        if (copy_to_user(arg, &copy_arg, sizeof(copy_arg)) < 0)
+            return (int64_t)-EFAULT;
+        return 0;
+    }
+
+    case UFFDIO_ZEROPAGE: {
+        struct uffdio_zeropage zp;
+        if (copy_from_user(&zp, arg, sizeof(zp)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_zeropage((int)fd, &zp);
+        if (ret < 0)
+            return (int64_t)ret;
+        if (copy_to_user(arg, &zp, sizeof(zp)) < 0)
+            return (int64_t)-EFAULT;
+        return 0;
+    }
+
+    case UFFDIO_WAKE: {
+        struct uffdio_wake wake_arg;
+        if (copy_from_user(&wake_arg, arg, sizeof(wake_arg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_wake((int)fd, &wake_arg);
+        if (ret < 0)
+            return (int64_t)ret;
+        return 0;
+    }
+
+    default:
+        return (int64_t)-ENOSYS;
+    }
 }

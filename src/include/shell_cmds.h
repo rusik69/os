@@ -451,4 +451,53 @@ void cmd_loadpin(const char *args);
 void cmd_powercap(const char *args);
 void cmd_devmem2(const char *args);
 
+/* Batch B51-B100 orphan command wrappers */
+void cmd_ctr_wrapper(const char *args);
+void cmd_crictl_wrapper(const char *args);
+void cmd_orchctl_wrapper(const char *args);
+void cmd_compose_wrapper(const char *args);
+void cmd_depmod_wrapper(const char *args);
+void cmd_adjtimex_wrapper(const char *args);
+void cmd_capsh_wrapper(const char *args);
+void cmd_dumpleases_wrapper(const char *args);
+void cmd_envdir_wrapper(const char *args);
+void cmd_fatattr_wrapper(const char *args);
+void cmd_fbset_wrapper(const char *args);
+void cmd_fsfreeze_wrapper(const char *args);
+void cmd_ftpget_wrapper(const char *args);
+void cmd_ftpput_wrapper(const char *args);
+void cmd_getopt_wrapper(const char *args);
+void cmd_ifplugd_wrapper(const char *args);
+void cmd_ionice_wrapper(const char *args);
+void cmd_mkfs_ext2_wrapper(const char *args);
+void cmd_mkswap_wrapper(const char *args);
+void cmd_chvt_wrapper(const char *args);
+void cmd_eject_wrapper(const char *args);
+void cmd_dc_wrapper(const char *args);
+void cmd_dnsdomainname_wrapper(const char *args);
+void cmd_dos2unix_wrapper(const char *args);
+void cmd_fgconsole_wrapper(const char *args);
+void cmd_cpio_wrapper(const char *args);
+
+/* Underlying int (int, char**) commands for the wrappers */
+int cmd_ctr(int argc, char **argv);
+int cmd_crictl(int argc, char **argv);
+int cmd_orchctl(int argc, char **argv);
+int cmd_compose(int argc, char **argv);
+int cmd_depmod(int argc, char **argv);
+int cmd_adjtimex(int argc, char **argv);
+int cmd_capsh(int argc, char **argv);
+int cmd_dumpleases(int argc, char **argv);
+int cmd_envdir(int argc, char **argv);
+int cmd_fatattr(int argc, char **argv);
+int cmd_fbset(int argc, char **argv);
+int cmd_fsfreeze(int argc, char **argv);
+int cmd_ftpget(int argc, char **argv);
+int cmd_ftpput(int argc, char **argv);
+int cmd_getopt(int argc, char **argv);
+int cmd_ifplugd(int argc, char **argv);
+int cmd_ionice(int argc, char **argv);
+int cmd_mkfs_ext2(int argc, char **argv);
+int cmd_mkswap(int argc, char **argv);
+
 #endif

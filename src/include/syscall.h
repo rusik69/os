@@ -418,6 +418,9 @@
 #define SYS_NAME_TO_HANDLE_AT   379 /* name_to_handle_at(dirfd, pathname, handle, mount_id, flags) */
 #define SYS_OPEN_BY_HANDLE_AT   380 /* open_by_handle_at(mount_fd, handle, flags) */
 
+/* userfaultfd — Linux-compatible syscall number 323, using 384 in this kernel */
+#define SYS_USERFAULTFD         384 /* userfaultfd(cmd, arg) */
+
 /* Maximum size of a file handle (in bytes) */
 #define MAX_HANDLE_SZ 128
 
