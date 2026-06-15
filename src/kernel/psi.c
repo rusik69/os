@@ -23,6 +23,7 @@
 #include "printf.h"
 #include "string.h"
 #include "timer.h"      /* timer_get_ticks(), TIMER_FREQ */
+#include "timers.h"     /* timer_schedule() for periodic update */
 #include "spinlock.h"
 #include "export.h"
 
@@ -74,6 +75,17 @@ struct psi_resource {
     /* Last-update tick for delta calculation */
     uint64_t  last_ticks;
     int       initialized;
+
+    /* ── Concurrency tracking ──────────────────────────────────────────
+     * Number of tasks currently stalled on this resource.
+     * Incremented by psi_*_enter(), decremented by psi_*_leave().
+     * psi_update() uses these to derive some / full ratios.
+     *
+     * "some"  = (count > 0)            — at least one task stalled
+     * "full"  = (count == nr_tasks)    — every non-idle task stalled
+     * "none"  = (count == 0)           — no task stalled
+     */
+    int       stall_count;      /* current number of stalled tasks */
 };
 
 /* ── Static state ──────────────────────────────────────────────────── */
@@ -279,6 +291,162 @@ int psi_gen_proc_file(int resource, char *buf, int max)
     return pos;
 }
 
-EXPORT_SYMBOL(psi_init);
-EXPORT_SYMBOL(psi_update);
-EXPORT_SYMBOL(psi_gen_proc_file);
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Enter / leave stall-state markers
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Each resource has a `stall_count` that is incremented on stall entry
+ * and decremented on stall exit.  The scheduler tick (or a periodic
+ * updater) reads these counts to determine "some" vs "full" pressure.
+ *
+ *  some  = (stall_count > 0)
+ *  full  = (stall_count >= num_active_tasks)
+ *  none  = (stall_count == 0)
+ */
+
+/*
+ * Helper: increment the stall counter for a resource.
+ * Returns the new count (caller can use for inlined some/full check).
+ */
+static inline int psi_inc(int res)
+{
+    unsigned long flags;
+    spinlock_irqsave_acquire(&psi_resources[res].lock, &flags);
+    int new = ++psi_resources[res].stall_count;
+    spinlock_irqsave_release(&psi_resources[res].lock, flags);
+    return new;
+}
+
+/*
+ * Helper: decrement the stall counter for a resource.
+ * Returns the new count.
+ */
+static inline int psi_dec(int res)
+{
+    unsigned long flags;
+    spinlock_irqsave_acquire(&psi_resources[res].lock, &flags);
+    int new = --psi_resources[res].stall_count;
+    if (new < 0)
+        new = psi_resources[res].stall_count = 0;   /* safety clamp */
+    spinlock_irqsave_release(&psi_resources[res].lock, flags);
+    return new;
+}
+
+/* ── CPU ──────────────────────────────────────────────────────────── */
+
+void psi_cpu_enter(void)
+{
+    psi_inc(PSI_RES_CPU);
+}
+
+void psi_cpu_leave(void)
+{
+    psi_dec(PSI_RES_CPU);
+}
+
+EXPORT_SYMBOL(psi_cpu_enter);
+EXPORT_SYMBOL(psi_cpu_leave);
+
+/* ── Memory ───────────────────────────────────────────────────────── */
+
+void psi_memstall_enter(void)
+{
+    psi_inc(PSI_RES_MEMORY);
+}
+
+void psi_memstall_leave(void)
+{
+    psi_dec(PSI_RES_MEMORY);
+}
+
+EXPORT_SYMBOL(psi_memstall_enter);
+EXPORT_SYMBOL(psi_memstall_leave);
+
+/* ── IO ───────────────────────────────────────────────────────────── */
+
+void psi_io_enter(void)
+{
+    psi_inc(PSI_RES_IO);
+}
+
+void psi_io_leave(void)
+{
+    psi_dec(PSI_RES_IO);
+}
+
+EXPORT_SYMBOL(psi_io_enter);
+EXPORT_SYMBOL(psi_io_leave);
+
+/* ── Stall count query (for diagnostics / procfs / scheduler) ───── */
+
+int psi_stall_count(int resource)
+{
+    if ((unsigned)resource >= PSI_NUM_RESOURCES)
+        return -1;
+    unsigned long flags;
+    spinlock_irqsave_acquire(&psi_resources[resource].lock, &flags);
+    int cnt = psi_resources[resource].stall_count;
+    spinlock_irqsave_release(&psi_resources[resource].lock, flags);
+    return cnt;
+}
+
+EXPORT_SYMBOL(psi_stall_count);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Periodic update timer
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Called every 2 seconds (200 ticks at 100 Hz) to update the PSI moving
+ * averages.  Uses the current stall counts to determine whether the
+ * resource was in "some" or "full" stall during the window.
+ */
+
+/* Timer interval: 2 seconds expressed in timer ticks (TIMER_FREQ = 100 Hz) */
+#define PSI_UPDATE_INTERVAL_TICKS  (2 * TIMER_FREQ)   /* 200 ticks */
+
+static int psi_timer_id = -1;
+
+static void psi_timer_cb(void *arg)
+{
+    (void)arg;
+    uint64_t now = timer_get_ticks();
+
+    for (int r = 0; r < PSI_NUM_RESOURCES; r++) {
+        struct psi_resource *pr = &psi_resources[r];
+        if (!pr->initialized)
+            continue;
+
+        uint64_t elapsed = now - pr->last_ticks;
+        if (elapsed == 0)
+            continue;
+
+        /* Determine stall state from current count.
+         * "some" = at least one task stalled on this resource.
+         * "full" = all non-idle tasks stalled (simplified: same as some). */
+        int stalled = 0;
+        uint64_t flags;
+        spinlock_irqsave_acquire(&pr->lock, &flags);
+        stalled = pr->stall_count;
+        spinlock_irqsave_release(&pr->lock, flags);
+
+        uint64_t some_ticks = (stalled > 0) ? elapsed : 0;
+        uint64_t full_ticks = 0;
+        if (r == PSI_RES_MEMORY || r == PSI_RES_IO)
+            full_ticks = (stalled > 0) ? elapsed : 0;
+
+        psi_update(r, elapsed, some_ticks, full_ticks);
+    }
+
+    /* Re-schedule for the next 2-second interval */
+    psi_timer_id = timer_schedule(psi_timer_cb, NULL, PSI_UPDATE_INTERVAL_TICKS);
+}
+
+void psi_timer_init(void)
+{
+    psi_timer_id = timer_schedule(psi_timer_cb, NULL, PSI_UPDATE_INTERVAL_TICKS);
+    if (psi_timer_id < 0)
+        kprintf("[!!] PSI: failed to register update timer\n");
+    else
+        kprintf("[OK] PSI: update timer registered (every %d ticks = 2s)\n",
+                PSI_UPDATE_INTERVAL_TICKS);
+}

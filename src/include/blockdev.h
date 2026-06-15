@@ -108,6 +108,9 @@ struct blockdev_entry {
 
     /* Transfer limits (Item 328: bio splitting for large requests) */
     uint32_t max_transfer;   /* maximum sectors per I/O (0 = unlimited) */
+
+    /* SCSI pass-through command callback (NULL if not SCSI-capable) */
+    scsi_submit_cmd_fn scsi_cmd_fn;
 };
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -176,5 +179,72 @@ void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t 
 /* Transfer limit configuration (Item 328: bio splitting for large requests) */
 int  blockdev_set_max_transfer(int dev_id, uint32_t max_sectors);
 uint32_t blockdev_get_max_transfer(int dev_id);
+
+/* ── SCSI generic passthrough (SG_IO) ───────────────────────────── */
+
+/* Maximum CDB (SCSI command descriptor block) size */
+#define SG_MAX_CDB_SIZE   32
+#define SG_MAX_SENSE_SIZE 96
+
+/* SG_IO ioctl command code (Linux-compatible) */
+#define SG_IO  0x2285
+
+/* Data transfer direction for SG_IO */
+#define SG_DXFER_NONE      (-1)
+#define SG_DXFER_TO_DEV    (-2)   /* data FROM CPU TO device (write) */
+#define SG_DXFER_FROM_DEV  (-3)   /* data FROM device TO CPU (read) */
+#define SG_DXFER_TO_FROM_DEV (-4) /* bidirectional */
+
+/* sg_io_hdr — SCSI generic I/O header (Linux-compatible subset).
+ * Userspace submits a SCSI CDB and receives sense/status through this struct. */
+struct sg_io_hdr {
+    int             interface_id;    /* must be 'S' (0x53) */
+    int             dxfer_direction; /* SG_DXFER_* */
+    unsigned char   cmd_len;         /* length of CDB */
+    unsigned char   mx_sb_len;       /* max sense buffer length */
+    unsigned short  iovec_count;     /* must be 0 for simple implementation */
+    unsigned int    dxfer_len;       /* data transfer length */
+    void           *dxferp;          /* pointer to data buffer (user) */
+    unsigned char   *cmdp;           /* pointer to CDB (user) */
+    unsigned char   *sbp;            /* pointer to sense buffer (user) */
+    unsigned int    timeout;         /* timeout in ms */
+    unsigned int    flags;
+    unsigned char   pack_id;
+    void           *usr_ptr;
+    unsigned char   status;          /* SCSI status filled by kernel */
+    unsigned char   masked_status;
+    unsigned char   msg_status;
+    unsigned char   sb_len_wr;       /* sense data length written */
+    unsigned short  host_status;
+    unsigned short  driver_status;
+    int             resid;           /* residual count */
+    unsigned int    duration;
+    unsigned int    info;
+};
+
+/* SCSI command callback for pass-through drivers.
+ * Returns 0 on success, negative errno on failure. */
+typedef int (*scsi_submit_cmd_fn)(int dev_id,
+                                   const uint8_t *cdb, int cdb_len,
+                                   void *data, int data_len,
+                                   int dir,
+                                   uint8_t *sense, int *sense_len,
+                                   int timeout_ms);
+
+/* Register a SCSI command callback for a block device.
+ * @dev_id: block device ID
+ * @fn: callback function (NULL to unregister)
+ * Returns 0 on success, -1 if device not found. */
+int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn);
+
+/* Submit a SCSI command via passthrough.
+ * Used internally by the SG_IO ioctl handler.
+ * Returns 0 on success, negative errno on failure. */
+int blockdev_scsi_submit(int dev_id,
+                          const uint8_t *cdb, int cdb_len,
+                          void *data, int data_len,
+                          int dir,
+                          uint8_t *sense, int *sense_len,
+                          int timeout_ms);
 
 #endif /* BLOCKDEV_H */

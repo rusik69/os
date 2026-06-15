@@ -13,6 +13,8 @@
 #include "export.h"
 #include "pageblock.h"
 #include "timer.h"    /* timer_get_ticks() for failure timestamps */
+#include "psi.h"      /* psi_memstall_enter/leave for memory stall tracking */
+#include "mglru.h"    /* Multi-Generational LRU page reclaim */
 
 /* Multiboot1 info structure (relevant fields) */
 struct multiboot_info {
@@ -638,6 +640,14 @@ static int pmm_proactive_reclaim(uint64_t needed_pages) {
     extern void kmem_cache_reap(void);
     kmem_cache_reap();
 
+    /* Stage 3: MGLRU page reclaim — evict pages from oldest generation */
+    {
+        int reclaimed = mglru_reclaim_pages(64, 0);
+        if (reclaimed > 0) {
+            kprintf("[PMM] MGLRU reclaim freed %d pages\n", reclaimed);
+        }
+    }
+
     /* Check if reclaim made progress */
     uint64_t after_used = used_frames;
     uint64_t after_free = (total > after_used) ? (total - after_used) : 0;
@@ -722,6 +732,24 @@ static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
     return 0;
 }
 
+/* ── Page reclaim entry point ────────────────────────────────────────────
+ * Called when the kernel needs to free pages to avoid OOM.
+ * If MGLRU is enabled, uses multi-generational LRU reclaim.
+ * Otherwise, returns 0 (no fallback yet).
+ *
+ * @nr_pages   Number of pages to try to reclaim
+ * @gfp_mask   Allocation context flags (reserved for future use)
+ *
+ * Returns the number of pages actually freed, or negative on error.
+ */
+int page_reclaim(int nr_pages, unsigned int gfp_mask)
+{
+    if (nr_pages <= 0)
+        return 0;
+
+    return mglru_reclaim_pages(nr_pages, gfp_mask);
+}
+
 /* ── Page allocator ─────────────────────────────────────────────────────── */
 
 uint64_t pmm_alloc_frame(void) {
@@ -733,6 +761,7 @@ uint64_t pmm_alloc_frame(void) {
         pmm_irq_restore(irq_save);
         poison_fill(addr, 0xDEADBEEF);
         vm_pgalloc++;
+        mglru_add_page(addr);
         return addr;
     }
     pmm_irq_restore(irq_save);
@@ -750,6 +779,7 @@ uint64_t pmm_alloc_frame(void) {
         pmm_irq_restore(irq_save);
         poison_fill(addr, 0xDEADBEEF);
         vm_pgalloc++;
+        mglru_add_page(addr);
         return addr;
     }
     pmm_irq_restore(irq_save);
@@ -758,7 +788,11 @@ uint64_t pmm_alloc_frame(void) {
     uint64_t caller_ip = (uint64_t)__builtin_return_address(0);
     pmm_record_fail(caller_ip, 1);
 
-    if (pmm_oom_recover(1, caller_ip))
+    psi_memstall_enter();
+    int recovered = pmm_oom_recover(1, caller_ip);
+    psi_memstall_leave();
+
+    if (recovered)
         return pmm_alloc_frame();  /* recursive retry after recovery freed pages */
 
     /* unreachable */
@@ -811,6 +845,9 @@ uint64_t *pmm_alloc_frames(size_t count) {
                 pmm_hint = start + count;
                 if (pmm_hint >= total_frames) pmm_hint = 0;
                 spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+                /* Track each allocated frame in MGLRU */
+                for (uint64_t j = start; j < start + count; j++)
+                    mglru_add_page(j * PAGE_SIZE);
                 return (uint64_t *)(start * PAGE_SIZE);
             }
         } else {
@@ -825,6 +862,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
     /* ── Out of memory ── */
     uint64_t caller_ip = (uint64_t)__builtin_return_address(0);
     pmm_record_fail(caller_ip, count);
+
+    psi_memstall_enter();
 
     /* Run OOM recovery and retry */
     for (int level = 0; level < 2; level++) {
@@ -862,6 +901,10 @@ uint64_t *pmm_alloc_frames(size_t count) {
                     pmm_hint = start + count;
                     if (pmm_hint >= total_frames) pmm_hint = 0;
                     spinlock_irqsave_release(&pmm_global_lock, irq_flags);
+                    psi_memstall_leave();
+                    /* Track each allocated frame in MGLRU */
+                    for (uint64_t j = start; j < start + count; j++)
+                        mglru_add_page(j * PAGE_SIZE);
                     return (uint64_t *)(start * PAGE_SIZE);
                 }
             } else {
@@ -873,6 +916,8 @@ uint64_t *pmm_alloc_frames(size_t count) {
         spinlock_irqsave_release(&pmm_global_lock, irq_flags);
     }
 
+    psi_memstall_leave();
+
     /* ── Final: panic with full diagnostics ── */
     pmm_dump_stats();
     panic("[PMM] Out of memory — cannot allocate %llu contiguous frames",
@@ -883,6 +928,9 @@ uint64_t *pmm_alloc_frames(size_t count) {
 
 void pmm_free_frame(uint64_t addr) {
     if (addr & (PAGE_SIZE - 1)) return;
+
+    /* Remove from MGLRU tracking before recycling */
+    mglru_remove_page(addr);
 
     int cpu = smp_get_cpu_id();
     struct pmm_cpu_cache *cache = &pmm_cpu_cache[cpu];
@@ -937,6 +985,7 @@ void pmm_free_frames_contiguous(uint64_t phys, size_t count) {
         if (!bitmap_test(frame)) continue;
         if (frame_refcount[frame] > 1) continue;
 
+        mglru_remove_page(addr);
         poison_fill(addr, 0xDC);
         vm_pgfree++;
         bitmap_clear(frame);
@@ -1146,6 +1195,7 @@ uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
         if (addr != 0) {
             poison_fill(addr, 0xDEADBEEF);
             vm_pgalloc++;
+            mglru_add_page(addr);
             return addr;
         }
     }

@@ -36,6 +36,36 @@
 #define KEXEC_FLAG_PRESERVE_CONTEXT 0x0001  /* preserve hardware state (not yet) */
 #define KEXEC_FLAG_DEBUG     0x0002  /* print debug info before jumping */
 
+/* ── Multi-segment support ────────────────────────────────────────── */
+
+/* Maximum number of memory segments that can be loaded via kexec_load.
+ * This matches the Linux KEXEC_SEGMENT_MAX (16). */
+#define KEXEC_SEGMENT_MAX    16
+
+/* A single memory segment descriptor.
+ * Used by kexec_load to describe one contiguous region to load. */
+struct kexec_segment {
+    uint64_t buf;       /* Virtual address of source buffer in caller space */
+    uint64_t bufsz;     /* Size of source buffer */
+    uint64_t mem;       /* Physical address to load the segment to */
+    uint64_t memsz;     /* Size in memory (may be larger than bufsz, zero-filled) */
+};
+
+/* ── Crash kernel parameters ───────────────────────────────────────── */
+
+/* Physical address and size of the crash kernel region, parsed from
+ * the crashkernel= kernel command-line parameter.
+ * Format: crashkernel=size[@offset]
+ * Example: crashkernel=64M@256M  → 64 MB at physical 0x10000000
+ *          crashkernel=128M       → 128 MB, auto-placement
+ */
+#define CRASH_KERNEL_DEFAULT_SIZE  (64ULL * 1024 * 1024)   /* 64 MB */
+#define CRASH_KERNEL_DEFAULT_BASE  0x10000000ULL            /* 256 MB */
+
+extern uint64_t crash_kernel_base;
+extern uint64_t crash_kernel_size;
+extern int      crash_kernel_reserved;
+
 /* ── Public API ────────────────────────────────────────────────────── */
 
 /*
@@ -58,6 +88,27 @@ int kexec_init(void);
 int kexec_load(uint64_t phys_addr, uint64_t entry, uint32_t flags);
 
 /*
+ * kexec_load_segments — Load a new kernel via segment descriptors.
+ *
+ * Accepts an array of up to KEXEC_SEGMENT_MAX segment descriptors.
+ * Validates segments for:
+ *   - No overlap between segments
+ *   - Reasonable sizes (each ≤ 16 MB)
+ *   - Physical addresses within the reserved kexec region
+ *
+ * @segments:  Array of segment descriptors.
+ * @nr_segments: Number of segments (1..KEXEC_SEGMENT_MAX).
+ * @entry:     Entry point physical address.
+ * @flags:     KEXEC_FLAG_* flags.
+ *
+ * Returns 0 on success, negative errno on error.
+ */
+int kexec_load_segments(const struct kexec_segment *segments,
+                        unsigned long nr_segments,
+                        unsigned long entry,
+                        unsigned long flags);
+
+/*
  * kexec_reboot — Jump to the loaded kernel image.
  *
  * Disables interrupts, masks all APIC LVT entries, flushes TLBs,
@@ -67,9 +118,41 @@ int kexec_load(uint64_t phys_addr, uint64_t entry, uint32_t flags);
  */
 void kexec_reboot(void) __attribute__((noreturn));
 
+/* ── Crash kexec ───────────────────────────────────────────────────── */
+
+/*
+ * kexec_crash_load — Load a crash kernel into the reserved crash region.
+ *
+ * Analogous to kexec_load but for the crash kernel used by kdump.
+ * The crash kernel image is loaded into the crash_kernel_base region.
+ *
+ * Returns 0 on success, negative errno on error.
+ */
+int kexec_crash_load(uint64_t phys_addr, uint64_t entry, uint32_t flags);
+
+/*
+ * kexec_crash_reboot — Jump to the loaded crash kernel.
+ *
+ * Called from panic() to boot into the crash kernel for memory dump.
+ * Same transition as kexec_reboot but uses the crash kernel entry.
+ */
+void kexec_crash_reboot(void) __attribute__((noreturn));
+
 /* ── Debug / status ─────────────────────────────────────────────────── */
 int kexec_is_loaded(void);
 uint64_t kexec_get_entry(void);
 uint64_t kexec_get_phys_addr(void);
+
+/* Sysfs toggle: if non-zero, kexec_load is disabled system-wide.
+ * Default: 0 (enabled).  Writable via /sys/kernel/kexec_load_disabled. */
+extern int kexec_load_disabled;
+
+/* Sysfs toggle: if non-zero, crash kexec is invoked AFTER panic notifiers.
+ * Default: 0 (immediate crash kexec, before notifiers).
+ * Writable via /sys/kernel/crash_kexec_post_notifiers. */
+extern int crash_kexec_post_notifiers;
+
+/* Check if a crash kernel has been loaded via kexec_crash_load(). */
+int kexec_crash_is_loaded(void);
 
 #endif /* KEXEC_H */

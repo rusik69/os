@@ -10,10 +10,15 @@
  * splash.c — Boot splash screen
  *
  * Displays a centred "Hermes OS" logo on the framebuffer during boot,
- * along with a progress bar and status labels.
+ * along with a progress bar, spinner animation, and kernel version string.
  *
  * Item 398: Boot splash — framebuffer logo on boot
  */
+
+/* Kernel version string (passed via -DKVERSION) */
+#ifndef KVERSION
+#define KVERSION "6.1.0-osdev"
+#endif
 
 /* ── Geometry constants (relative to 1024x768 reference; scaled to actual) -- */
 
@@ -36,6 +41,71 @@ static volatile int splash_active = 0;
 static int splash_shown = 0;  /* has initial draw been done? */
 static int fb_width  = 0;
 static int fb_height = 0;
+
+/* ── Progress spinner state ──────────────────────────────────────────── */
+/* Spinner animates at bottom-right corner during boot init. */
+static const char spinner_chars[] = "|/-\\";
+static int spinner_index = 0;
+static int spinner_x = 0;
+static int spinner_y = 0;
+
+/* ── Spinner ──────────────────────────────────────────────────────── */
+
+static void draw_spinner(void)
+{
+    if (!splash_active || fb_width <= 0 || fb_height <= 0)
+        return;
+
+    /* Position: bottom-right corner, ~6 character widths from right edge */
+    int char_w = 8;
+    int char_h = 16;
+    spinner_x = fb_width - 8 * char_w;
+    spinner_y = fb_height - char_h - 4;
+
+    /* Clear previous spinner area */
+    fbcon_fill_rect(spinner_x - 4, spinner_y - 2,
+                    8 * char_w, char_h + 4, COL_BG);
+
+    /* Draw the spinner character as a large pixel glyph */
+    int cx = spinner_x;
+    int cy = spinner_y;
+    int sz = char_h;
+
+    /* Draw a box around the spinner char */
+    fbcon_fill_rect(cx - 2, cy - 2, sz + 4, sz + 4, COL_BAR_BORDER);
+    fbcon_fill_rect(cx - 1, cy - 1, sz + 2, sz + 2, COL_BG);
+
+    /* Draw the spinner character as a simple geometric shape:
+     * '|' = vertical bar, '/' = diagonal, '-' = horizontal, '\' = diagonal */
+    int bar_w = sz / 4;
+    if (bar_w < 2) bar_w = 2;
+    int mid = sz / 2;
+
+    switch (spinner_index % 4) {
+    case 0: /* '|' — vertical bar */
+        fbcon_fill_rect(cx + mid - bar_w/2, cy, bar_w, sz, COL_LOGO_PRI);
+        break;
+    case 1: /* '/' — diagonal */
+        for (int i = 0; i < sz; i += 2) {
+            int px = cx + sz - 1 - i;
+            int py = cy + i;
+            if (px >= cx && py < cy + sz)
+                fbcon_fill_rect(px, py, bar_w, bar_w, COL_LOGO_PRI);
+        }
+        break;
+    case 2: /* '-' — horizontal bar */
+        fbcon_fill_rect(cx, cy + mid - bar_w/2, sz, bar_w, COL_LOGO_PRI);
+        break;
+    case 3: /* '\' — diagonal */
+        for (int i = 0; i < sz; i += 2) {
+            int px = cx + i;
+            int py = cy + i;
+            if (px < cx + sz && py < cy + sz)
+                fbcon_fill_rect(px, py, bar_w, bar_w, COL_LOGO_PRI);
+        }
+        break;
+    }
+}
 
 /* ── Hermes logo pixel data (16 x 8 pixel-style, but we draw it at
  *    large scale for visibility).  We'll draw it as a geometric
@@ -299,6 +369,23 @@ void splash_init(void)
     init_progress_bar();
     draw_progress_bar();
 
+    /* Draw kernel version string at bottom-left */
+    {
+        /* Background strip for version text area */
+        fbcon_fill_rect(0, fb_height - 20, fb_width, 20, 0x002A2A4E);
+
+        /* Draw text using 8x16 font via fbcon's console output */
+        fbcon_set_cursor(1, (fb_height - 20) / 16); /* row near bottom */
+        fbcon_set_fg(FBCON_LIGHT_CYAN);
+        fbcon_set_bg(FBCON_BLACK);
+        fbcon_write("Hermes OS Kernel v");
+        fbcon_write(KVERSION);
+    }
+
+    /* Draw initial spinner */
+    spinner_index = 0;
+    draw_spinner();
+
     splash_shown = 1;
     splash_active = 1;
 
@@ -354,6 +441,40 @@ void splash_fade_out(void)
 
     /* Redraw the fbcon console on top (now that we've cleared the splash) */
     fbcon_redraw();
+}
+
+/* ── Spinner tick ─────────────────────────────────────────────────── */
+
+/*
+ * splash_spinner_tick — Advance the progress spinner by one frame.
+ *
+ * Called periodically during boot initialisation to animate the
+ * spinner at the bottom-right of the screen.  Safe to call even
+ * when the splash screen is not active (no-op).
+ */
+void splash_spinner_tick(void)
+{
+    if (!splash_active)
+        return;
+
+    spinner_index++;
+    draw_spinner();
+}
+
+/* ── splash_done — finish splash and hand off to userspace ────────── */
+
+/*
+ * splash_done — Finalise the boot splash and transition to userspace.
+ *
+ * This is an alias for splash_fade_out() with a semantics hint that
+ * the kernel has finished initialising and is about to start userspace.
+ * Called from kernel_main just before the init process is spawned.
+ *
+ * If the splash screen is not active, this is a no-op.
+ */
+void splash_done(void)
+{
+    splash_fade_out();
 }
 
 int splash_is_active(void)

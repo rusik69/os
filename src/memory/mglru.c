@@ -1,426 +1,712 @@
-/*
- * src/memory/mglru.c — Multi-Generational LRU Page Reclaim
- *
- * Implements a multi-generational LRU (MGLRU) algorithm inspired by the
- * Linux kernel's MGLRU (Multi-Gen LRU) for page reclaim decisions.
- *
- * Instead of a single active/inactive list pair, MGLRU maintains multiple
- * generations (age groups) of pages. Each generation represents pages
- * that have been accessed within a similar time window. As pages age,
- * they move through generations. Old generations are eligible for
- * reclaim; younger generations are not.
- *
- * Architecture:
- *   - MAX_GENS (4) generations, labelled 0 (youngest) through 3 (oldest).
- *   - Each generation is a linked list of page frame numbers (PFNs).
- *   - Pages start in gen 0 on allocation.  On each activation (access),
- *     they move up to gen 0.  On each scan tick, they age one generation.
- *   - A background task periodically scans the oldest generation and
- *     reclaims pages whose refault distance exceeds the threshold.
- *   - The refault distance is tracked via a small hash table of recently
- *     evicted pages (minix-style second-chance approximation).
- *
- * Integration with the existing page reclaim path (oom.c, vmm.c):
- *   - mglru_alloc_page() is called on page allocation to insert into gen 0.
- *   - mglru_activate() is called on page access (e.g., page table walk hit).
- *   - mglru_reclaim() is called when the system needs to free pages.
- *     It selects victims from the oldest generation(s).
- *   - mglru_tick() is called periodically (e.g., every timer tick) to age
- *     generations and trigger background reclaim when memory is low.
- */
-
 #define KERNEL_INTERNAL
-#include "types.h"
+
+#include "mglru.h"
+#include "pmm.h"
 #include "printf.h"
 #include "string.h"
-#include "spinlock.h"
-#include "pmm.h"
-#include "vmm.h"
-#include "heap.h"
 #include "timer.h"
+#include "hrtimer.h"
+#include "sysfs.h"
+#include "errno.h"
+#include "smp.h"
 
-/* ── Configuration ──────────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════════
+ *  Multi-Generational LRU (MGLRU) Page Reclaim — Implementation
+ *
+ *  Manages pages across 4 generations (0 = oldest, 3 = youngest).
+ *  Generation advancement (aging) is driven by a periodic hrtimer.
+ *  Pages are added to the youngest gen; on access they are promoted;
+ *  reclaim isolates pages from the oldest non-empty gen and frees them.
+ * ════════════════════════════════════════════════════════════════════════ */
 
-#define MGLRU_MAX_GENS      4   /* Number of generations (0 = youngest) */
-#define MGLRU_GEN_MASK      3   /* Bitmask for gen index wrap */
-#define MGLRU_SCAN_BATCH    64  /* Pages to scan per tick */
-#define MGLRU_EVICT_HASH_SZ 256 /* Size of refault tracking hash */
+/* ── Constants ──────────────────────────────────────────────────────── */
 
-/* Reclaim watermarks (fraction of total pages) */
-#define MGLRU_WMARK_LOW     20   /* Start background reclaim below this (%) */
-#define MGLRU_WMARK_HIGH    30   /* Stop reclaim above this (%) */
+/* Default aging threshold in jiffies (~100 ms at 100 Hz timer, 1 ms
+ * at 1000 Hz, but this kernel uses TIMER_FREQ which may vary).
+ * Default is 1000 jiffies (~10 seconds at 100 Hz). */
+#define MGLRU_DEFAULT_THRESHOLD    1000UL
 
-/* ── Per-page flags ─────────────────────────────────────────────────── */
+/* Default min TTL in milliseconds */
+#define MGLRU_DEFAULT_MIN_TTL_MS   1000UL
 
-/* These would normally be stored in a page struct. For simplicity we
- * store them in a parallel array keyed by PFN index. */
-#define MGLRU_PG_ACTIVE     (1 << 0)  /* Recently accessed */
-#define MGLRU_PG_REFERENCED (1 << 1)  /* Referenced bit (accessed since last scan) */
+/* Periodic timer interval in nanoseconds (1000 ms) */
+#define MGLRU_AGING_INTERVAL_NS    1000000000ULL   /* 1 second */
 
-/* ── Refault tracking ───────────────────────────────────────────────── */
+/* ── Static data ────────────────────────────────────────────────────── */
 
-struct mglru_evict_entry {
-    uint64_t pfn;
-    uint64_t evict_gen;   /* Generation# at eviction time */
-    uint64_t last_access; /* Ticks since last access */
-};
+/* Per-node MGLRU state — we use the first node only (single-node system). */
+static struct mglru_state mglru_state[MGLRU_NR_NODES];
 
-/* ── Global state ───────────────────────────────────────────────────── */
+/* Page tracking pool: fixed-size array, no heap allocation. */
+static struct mglru_page_entry mglru_page_pool[MGLRU_MAX_PAGES];
+static int                     mglru_pool_next;   /* hint for allocation */
 
-static struct {
-    /* Per-generation doubly-linked lists of PFNs */
-    struct mglru_gen {
-        uint64_t *pfns;           /* Dynamic array of PFNs in this gen */
-        int       count;          /* Number of PFNs in this gen */
-        int       capacity;       /* Allocated capacity */
-    } gens[MGLRU_MAX_GENS];
+/* Per-frame lookup: frame number → pool index (or -1 if not tracked).
+ * This avoids scanning the LRU lists for remove/find operations. */
+static int mglru_frame_map[262144];  /* MAX_FRAMES */
 
-    /* Total PFNs tracked */
-    uint64_t total_pages;
-
-    /* Eviction hash for refault distance tracking */
-    struct mglru_evict_entry evict_hash[MGLRU_EVICT_HASH_SZ];
-
-    /* Scan position per generation (for round-robin scanning) */
-    int scan_pos[MGLRU_MAX_GENS];
-
-    /* Ticks since last age advancement */
-    uint64_t age_ticks;
-
-    /* Watermark-based reclaim control */
-    int       reclaim_active;
-
-    /* Lock for all MGLRU state */
-    spinlock_t lock;
-
-    /* Initialized flag */
-    int initialized;
-} mglru_state;
+/* Periodic aging timer */
+static struct hrtimer mglru_timer;
+static int            mglru_timer_active;
 
 /* ── Forward declarations ───────────────────────────────────────────── */
+static int  mglru_alloc_entry(void);
+static void mglru_free_entry(int idx);
+static int  mglru_find_entry(uint64_t phys_addr);
+static void mglru_sysfs_init(void);
+static void mglru_aging_callback(void *data);
 
-static void mglru_age_generations(void);
-static int  mglru_evict_from_gen(int gen, int nr_pages);
+/* ════════════════════════════════════════════════════════════════════════
+ *  Initialisation
+ * ════════════════════════════════════════════════════════════════════════ */
 
-/* ── Hash helpers ───────────────────────────────────────────────────── */
-
-static uint32_t mglru_hash_pfn(uint64_t pfn)
-{
-    /* Simple hash: mix and mod */
-    return (uint32_t)((pfn ^ (pfn >> 16) ^ (pfn >> 32)) & (MGLRU_EVICT_HASH_SZ - 1));
-}
-
-static void mglru_evict_record(uint64_t pfn, uint64_t gen)
-{
-    uint32_t idx = mglru_hash_pfn(pfn);
-    mglru_state.evict_hash[idx].pfn = pfn;
-    mglru_state.evict_hash[idx].evict_gen = gen;
-    mglru_state.evict_hash[idx].last_access = timer_get_ticks();
-}
-
-/* Check if a PFN was recently evicted and return its eviction generation.
- * Returns -1 if not found in the hash. */
-static __attribute__((unused)) int mglru_evict_lookup(uint64_t pfn)
-{
-    uint32_t idx = mglru_hash_pfn(pfn);
-    if (mglru_state.evict_hash[idx].pfn == pfn)
-        return (int)mglru_state.evict_hash[idx].evict_gen;
-    return -1;
-}
-
-/* ── Generation management ──────────────────────────────────────────── */
-
-/* Ensure generation array has capacity for one more PFN */
-static int mglru_ensure_capacity(int gen)
-{
-    if (gen < 0 || gen >= MGLRU_MAX_GENS)
-        return -1;
-
-    struct mglru_gen *g = &mglru_state.gens[gen];
-
-    if (g->count < g->capacity)
-        return 0;
-
-    int new_cap = g->capacity ? g->capacity * 2 : 64;
-    uint64_t *new_pfns = (uint64_t *)kmalloc(new_cap * sizeof(uint64_t));
-    if (!new_pfns)
-        return -1;
-
-    if (g->pfns && g->count > 0)
-        memcpy(new_pfns, g->pfns, g->count * sizeof(uint64_t));
-
-    if (g->pfns)
-        kfree(g->pfns);
-
-    g->pfns = new_pfns;
-    g->capacity = new_cap;
-    return 0;
-}
-
-/* Add a PFN to a generation */
-static int mglru_add_to_gen(uint64_t pfn, int gen)
-{
-    if (gen < 0 || gen >= MGLRU_MAX_GENS)
-        return -1;
-
-    if (mglru_ensure_capacity(gen) < 0)
-        return -1;
-
-    mglru_state.gens[gen].pfns[mglru_state.gens[gen].count++] = pfn;
-    mglru_state.total_pages++;
-    return 0;
-}
-
-/* Remove a PFN from a generation (linear search — acceptable for small sets) */
-static int mglru_remove_from_gen(uint64_t pfn, int gen)
-{
-    if (gen < 0 || gen >= MGLRU_MAX_GENS)
-        return -1;
-
-    struct mglru_gen *g = &mglru_state.gens[gen];
-
-    for (int i = 0; i < g->count; i++) {
-        if (g->pfns[i] == pfn) {
-            /* Move last element to this position */
-            g->pfns[i] = g->pfns[g->count - 1];
-            g->count--;
-            mglru_state.total_pages--;
-            return 0;
-        }
-    }
-    return -1; /* Not found */
-}
-
-/* Move a PFN from one generation to another (typically gen->0 for activation) */
-static int mglru_move_to_gen(uint64_t pfn, int from_gen, int to_gen)
-{
-    if (mglru_remove_from_gen(pfn, from_gen) < 0)
-        return -1;
-    return mglru_add_to_gen(pfn, to_gen);
-}
-
-/* ── Public API ─────────────────────────────────────────────────────── */
-
-/* Initialize MGLRU state. Called once during boot. */
 void mglru_init(void)
 {
-    if (mglru_state.initialized)
-        return;
+    int node, gen;
 
-    memset(&mglru_state, 0, sizeof(mglru_state));
-    spinlock_init(&mglru_state.lock);
+    /* Initialise per-node state */
+    for (node = 0; node < MGLRU_NR_NODES; node++) {
+        struct mglru_state *st = &mglru_state[node];
 
-    for (int i = 0; i < MGLRU_MAX_GENS; i++) {
-        mglru_state.gens[i].pfns = NULL;
-        mglru_state.gens[i].count = 0;
-        mglru_state.gens[i].capacity = 0;
-        mglru_state.scan_pos[i] = 0;
+        for (gen = 0; gen < MGLRU_NR_GENS; gen++) {
+            INIT_LIST_HEAD(&st->gens[gen].list);
+            st->gens[gen].nr_active   = 0;
+            st->gens[gen].nr_inactive = 0;
+            st->gens[gen].nr_pages    = 0;
+        }
+
+        st->last_accessed_gen = MGLRU_NR_GENS - 1;  /* youngest */
+        st->last_evicted_gen  = 0;                   /* oldest */
+        spinlock_init(&st->lock);
+        st->aging_threshold = MGLRU_DEFAULT_THRESHOLD;
+        st->min_ttl_ms      = MGLRU_DEFAULT_MIN_TTL_MS;
+        st->enabled         = 1;
     }
 
-    mglru_state.age_ticks = 0;
-    mglru_state.reclaim_active = 0;
-    mglru_state.initialized = 1;
+    /* Clear the page tracking pool */
+    memset(mglru_page_pool, 0, sizeof(mglru_page_pool));
+    mglru_pool_next = 0;
 
-    kprintf("[OK] MGLRU: Multi-Generational LRU initialized (%d gens, %d evict hash slots)\n",
-            MGLRU_MAX_GENS, MGLRU_EVICT_HASH_SZ);
+    /* Clear frame map: all -1 (not tracked) */
+    memset(mglru_frame_map, 0xFF, sizeof(mglru_frame_map));
+
+    /* Create sysfs interface */
+    mglru_sysfs_init();
+
+    /* Start the periodic aging timer */
+    hrtimer_init(&mglru_timer, mglru_aging_callback, NULL);
+    if (hrtimer_start(&mglru_timer, MGLRU_AGING_INTERVAL_NS) == 0) {
+        mglru_timer_active = 1;
+    } else {
+        kprintf("[MGLRU] WARNING: failed to start aging timer\n");
+        mglru_timer_active = 0;
+    }
+
+    kprintf("[OK] MGLRU: Multi-Generational LRU page reclaim initialised "
+            "(threshold=%lu jiffies, min_ttl=%lu ms)\n",
+            MGLRU_DEFAULT_THRESHOLD, MGLRU_DEFAULT_MIN_TTL_MS);
 }
 
-/* Called when a page is first allocated. The page starts in the youngest
- * generation (gen 0). */
-void mglru_alloc_page(uint64_t pfn)
-{
-    if (!mglru_state.initialized)
-        return;
+/* ════════════════════════════════════════════════════════════════════════
+ *  Page tracking pool management
+ * ════════════════════════════════════════════════════════════════════════ */
 
-    spinlock_acquire(&mglru_state.lock);
-    mglru_add_to_gen(pfn, 0);
-    spinlock_release(&mglru_state.lock);
+/* Allocate a slot in the page tracking pool.  Returns pool index or -1. */
+static int mglru_alloc_entry(void)
+{
+    /* Linear scan from hint — simple and adequate for the pool size. */
+    for (int i = 0; i < MGLRU_MAX_PAGES; i++) {
+        int idx = (mglru_pool_next + i) % MGLRU_MAX_PAGES;
+        if (!mglru_page_pool[idx].in_use) {
+            mglru_page_pool[idx].in_use = 1;
+            mglru_page_pool[idx].phys_addr = 0;
+            mglru_page_pool[idx].gen = 0;
+            mglru_page_pool[idx].accessed = 0;
+            INIT_LIST_HEAD(&mglru_page_pool[idx].list);
+            mglru_pool_next = (idx + 1) % MGLRU_MAX_PAGES;
+            return idx;
+        }
+    }
+    return -1;  /* pool exhausted */
 }
 
-/* Called when a page is accessed (e.g., on a page table walk hit).
- * This promotes the page to the youngest generation (gen 0). */
-void mglru_activate(uint64_t pfn)
+/* Release a tracking entry back to the pool. */
+static void mglru_free_entry(int idx)
 {
-    if (!mglru_state.initialized)
+    if (idx < 0 || idx >= MGLRU_MAX_PAGES)
+        return;
+    if (!mglru_page_pool[idx].in_use)
         return;
 
-    spinlock_acquire(&mglru_state.lock);
+    /* Remove from LRU list if still linked */
+    list_del(&mglru_page_pool[idx].list);
 
-    /* Find the page's current generation and move it to gen 0 */
-    for (int gen = 0; gen < MGLRU_MAX_GENS; gen++) {
-        for (int i = 0; i < mglru_state.gens[gen].count; i++) {
-            if (mglru_state.gens[gen].pfns[i] == pfn) {
-                if (gen != 0) {
-                    mglru_move_to_gen(pfn, gen, 0);
-                }
-                spinlock_release(&mglru_state.lock);
-                return;
-            }
+    memset(&mglru_page_pool[idx], 0, sizeof(mglru_page_pool[idx]));
+}
+
+/* Find the pool entry for a given physical address by consulting
+ * the frame map.  Returns pool index, or -1 if not tracked. */
+static int mglru_find_entry(uint64_t phys_addr)
+{
+    uint64_t frame = phys_addr / PAGE_SIZE;
+    if (frame >= 262144)  /* MAX_FRAMES */
+        return -1;
+    int idx = mglru_frame_map[frame];
+    if (idx < 0 || idx >= MGLRU_MAX_PAGES)
+        return -1;
+    if (!mglru_page_pool[idx].in_use ||
+        mglru_page_pool[idx].phys_addr != phys_addr)
+        return -1;
+    return idx;
+}
+
+/* Update the frame map for a given phys_addr to point to pool entry idx,
+ * or -1 to clear the mapping. */
+static void mglru_frame_map_set(uint64_t phys_addr, int idx)
+{
+    uint64_t frame = phys_addr / PAGE_SIZE;
+    if (frame < 262144)  /* MAX_FRAMES */
+        mglru_frame_map[frame] = idx;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ *  Core API
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/* ── mglru_add_page ────────────────────────────────────────────────────
+ * Add a newly allocated page to the youngest generation.
+ * Must be called once per page after allocation. */
+void mglru_add_page(uint64_t phys_addr)
+{
+    if (phys_addr == 0)
+        return;
+
+    /* Use node 0 for single-node system */
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return;
+
+    /* Check if already tracked */
+    int existing = mglru_find_entry(phys_addr);
+    if (existing >= 0)
+        return;   /* already tracked — don't duplicate */
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    int idx = mglru_alloc_entry();
+    if (idx < 0) {
+        /* Pool exhausted — warn occasionally, skip tracking */
+        static unsigned long warn_count;
+        if (warn_count++ % 64 == 0)
+            kprintf("[MGLRU] WARNING: page tracking pool exhausted "
+                    "(phys=0x%llx)\n", (unsigned long long)phys_addr);
+        spinlock_irqsave_release(&st->lock, irq_flags);
+        return;
+    }
+
+    struct mglru_page_entry *entry = &mglru_page_pool[idx];
+    int target_gen = st->last_accessed_gen;
+
+    entry->phys_addr = phys_addr;
+    entry->gen       = target_gen;
+    entry->accessed  = 0;
+    entry->in_use    = 1;
+
+    /* Add to the youngest generation's LRU list (tail = most recent). */
+    list_add_tail(&entry->list, &st->gens[target_gen].list);
+    st->gens[target_gen].nr_pages++;
+    st->gens[target_gen].nr_inactive++;
+
+    /* Update the frame map */
+    mglru_frame_map_set(phys_addr, idx);
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+}
+
+/* ── mglru_remove_page ─────────────────────────────────────────────────
+ * Remove a page from MGLRU tracking when it is freed.
+ * Safe to call even if the page was not tracked. */
+void mglru_remove_page(uint64_t phys_addr)
+{
+    if (phys_addr == 0)
+        return;
+
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    int idx = mglru_find_entry(phys_addr);
+    if (idx < 0) {
+        spinlock_irqsave_release(&st->lock, irq_flags);
+        return;
+    }
+
+    struct mglru_page_entry *entry = &mglru_page_pool[idx];
+    int gen = entry->gen;
+
+    if (gen >= 0 && gen < MGLRU_NR_GENS) {
+        /* Decrement the generation's counters */
+        struct mglru_gen *g = &st->gens[gen];
+        if (g->nr_pages > 0) g->nr_pages--;
+        if (entry->accessed) {
+            if (g->nr_active > 0) g->nr_active--;
+        } else {
+            if (g->nr_inactive > 0) g->nr_inactive--;
         }
     }
 
-    spinlock_release(&mglru_state.lock);
+    /* Clear frame map and free the entry */
+    mglru_frame_map_set(phys_addr, -1);
+    mglru_free_entry(idx);
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
 }
 
-/* Called when a page is freed (e.g., by the page allocator).
- * Remove it from MGLRU tracking entirely. */
-void mglru_free_page(uint64_t pfn)
+/* ── mglru_page_accessed ───────────────────────────────────────────────
+ * Mark a page as recently accessed.  On the next aging scan or isolate
+ * pass, this flag causes the page to be promoted to a younger generation.
+ * This is the lightweight access notification path (called from
+ * page cache lookup, page fault, etc.). */
+void mglru_page_accessed(uint64_t phys_addr)
 {
-    if (!mglru_state.initialized)
+    if (phys_addr == 0)
         return;
 
-    spinlock_acquire(&mglru_state.lock);
-
-    for (int gen = 0; gen < MGLRU_MAX_GENS; gen++) {
-        if (mglru_remove_from_gen(pfn, gen) == 0)
-            break;
-    }
-
-    spinlock_release(&mglru_state.lock);
-}
-
-/* Age all generations: shift PFNs from younger to older generations.
- * Generation 0 stays as newly accessed pages. Pages in gen 3 that
- * are not re-activated become reclaim candidates. */
-static void mglru_age_generations(void)
-{
-    /* Move PFNs from gen 2→3, 1→2, 0→1.
-     * We iterate in reverse to avoid moving pages twice. */
-    for (int src_gen = MGLRU_MAX_GENS - 2; src_gen >= 0; src_gen--) {
-        int dst_gen = src_gen + 1;
-        struct mglru_gen *src = &mglru_state.gens[src_gen];
-        struct mglru_gen *dst = &mglru_state.gens[dst_gen];
-
-        /* Move all PFNs from src to dst */
-        for (int i = 0; i < src->count; i++) {
-            uint64_t pfn = src->pfns[i];
-            if (mglru_ensure_capacity(dst_gen) == 0) {
-                dst->pfns[dst->count++] = pfn;
-            }
-        }
-
-        /* Clear the source generation */
-        src->count = 0;
-    }
-
-    /* Reset scan position for the oldest generation (newly populated) */
-    mglru_state.scan_pos[MGLRU_MAX_GENS - 1] = 0;
-}
-
-/* Try to reclaim pages from the oldest generation(s).
- * Returns the number of pages successfully reclaimed. */
-static int mglru_evict_from_gen(int gen, int nr_pages)
-{
-    int reclaimed = 0;
-    struct mglru_gen *g = &mglru_state.gens[gen];
-
-    int start = mglru_state.scan_pos[gen];
-    int scanned = 0;
-
-    for (int i = start; i < g->count && reclaimed < nr_pages && scanned < MGLRU_SCAN_BATCH; i++) {
-        uint64_t pfn = g->pfns[i];
-        scanned++;
-
-        /* Record eviction for refault tracking */
-        mglru_evict_record(pfn, gen);
-
-        /* Attempt to free the page frame.
-         * pmm_free_page(pfn) is called by the page reclaim path.
-         * For now, we just remove it from our tracking. */
-        if (mglru_remove_from_gen(pfn, gen) == 0) {
-            reclaimed++;
-        }
-    }
-
-    /* Update scan position (wrap around) */
-    mglru_state.scan_pos[gen] = (start + scanned) % (g->count > 0 ? g->count : 1);
-
-    return reclaimed;
-}
-
-/* Periodic tick: called on each timer tick (or every few ticks).
- * Ages generations and triggers background reclaim if memory is low. */
-void mglru_tick(void)
-{
-    if (!mglru_state.initialized)
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
         return;
 
-    spinlock_acquire(&mglru_state.lock);
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
 
-    mglru_state.age_ticks++;
-
-    /* Age generations every 10 ticks (~100ms) */
-    if (mglru_state.age_ticks >= 10) {
-        mglru_state.age_ticks = 0;
-        mglru_age_generations();
+    int idx = mglru_find_entry(phys_addr);
+    if (idx < 0) {
+        spinlock_irqsave_release(&st->lock, irq_flags);
+        return;
     }
 
-    /* Check watermark — if free memory is below low watermark,
-     * reclaim from the oldest generation. */
-    uint64_t total_pages = mglru_state.total_pages;
-    if (total_pages > 0) {
-        /* Estimate free memory ratio from PMM info (simplified).
-         * We use a heuristic based on total tracked pages. */
-        (void)total_pages;
-        /* In a real implementation, query pmm_free_pages() / total_pages. */
-    }
+    mglru_page_pool[idx].accessed = 1;
 
-    spinlock_release(&mglru_state.lock);
+    spinlock_irqsave_release(&st->lock, irq_flags);
 }
 
-/* Reclaim up to @nr_pages pages using MGLRU page selection.
- * Returns the number of pages actually reclaimed.
- * Called by the OOM/page reclaim path when memory is needed. */
-int mglru_reclaim(int nr_pages)
+/* ── mglru_rotate ─────────────────────────────────────────────────────
+ * Promote an accessed page to the youngest generation.
+ * Called when the access flag is being consumed (during aging scan or
+ * on explicit rotation).  Moves the page from its current gen to
+ * last_accessed_gen, updating counters accordingly. */
+void mglru_rotate(uint64_t phys_addr)
 {
-    if (!mglru_state.initialized || nr_pages <= 0)
+    if (phys_addr == 0)
+        return;
+
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    int idx = mglru_find_entry(phys_addr);
+    if (idx < 0) {
+        spinlock_irqsave_release(&st->lock, irq_flags);
+        return;
+    }
+
+    struct mglru_page_entry *entry = &mglru_page_pool[idx];
+    int old_gen = entry->gen;
+    int new_gen = st->last_accessed_gen;
+
+    if (old_gen == new_gen) {
+        /* Already in the youngest gen — just mark not accessed */
+        entry->accessed = 0;
+        spinlock_irqsave_release(&st->lock, irq_flags);
+        return;
+    }
+
+    /* Remove from old generation list */
+    list_del(&entry->list);
+
+    /* Update old gen counters */
+    if (old_gen >= 0 && old_gen < MGLRU_NR_GENS) {
+        struct mglru_gen *og = &st->gens[old_gen];
+        if (og->nr_pages > 0) og->nr_pages--;
+        if (entry->accessed) {
+            if (og->nr_active > 0) og->nr_active--;
+        } else {
+            if (og->nr_inactive > 0) og->nr_inactive--;
+        }
+    }
+
+    /* Move to new generation */
+    entry->gen = new_gen;
+    entry->accessed = 0;
+    list_add_tail(&entry->list, &st->gens[new_gen].list);
+
+    /* Update new gen counters */
+    st->gens[new_gen].nr_pages++;
+    st->gens[new_gen].nr_active++;  /* promoted pages are considered active */
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+}
+
+/* ── mglru_age ─────────────────────────────────────────────────────────
+ * Advance the current generation.  Wrapping at MGLRU_NR_GENS (4).
+ * This effectively "ages" all pages by one generation:
+ *   - last_accessed_gen moves forward (wrapping)
+ *   - last_evicted_gen also moves forward so that reclaim targets the
+ *     new oldest generation.
+ *
+ * Called periodically from the aging timer, and can also be called
+ * explicitly after reclaim to keep things moving. */
+void mglru_age(void)
+{
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    /* Advance the accessed generation (wrap at MGLRU_NR_GENS). */
+    st->last_accessed_gen = (st->last_accessed_gen + 1) % MGLRU_NR_GENS;
+
+    /* Advance the evicted generation so we always target the oldest. */
+    st->last_evicted_gen = (st->last_evicted_gen + 1) % MGLRU_NR_GENS;
+
+    /* Optional: Demote active → inactive for the generation we just left,
+     * making those pages more reclaimable next time. */
+    int prev_gen = (st->last_accessed_gen - 1 + MGLRU_NR_GENS) % MGLRU_NR_GENS;
+    struct mglru_gen *pg = &st->gens[prev_gen];
+    pg->nr_inactive += pg->nr_active;
+    pg->nr_active = 0;
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+}
+
+/* ── mglru_isolate ─────────────────────────────────────────────────────
+ * Isolate up to nr_to_isolate pages from the oldest non-empty generation.
+ * Removes them from the LRU lists and adds them to the caller's list.
+ * The caller is responsible for freeing or re-adding the pages.
+ *
+ * Returns the number of pages isolated. */
+int mglru_isolate(int nr_to_isolate, struct list_head *list)
+{
+    if (nr_to_isolate <= 0 || list == NULL)
         return 0;
 
-    int reclaimed = 0;
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return 0;
 
-    spinlock_acquire(&mglru_state.lock);
+    int isolated = 0;
 
-    /* Try to reclaim from oldest generation first */
-    for (int gen = MGLRU_MAX_GENS - 1; gen >= 0 && reclaimed < nr_pages; gen--) {
-        int r = mglru_evict_from_gen(gen, nr_pages - reclaimed);
-        reclaimed += r;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    /* Scan generations from oldest (last_evicted_gen) to youngest.
+     * Skip the current youngest generation (last_accessed_gen). */
+    for (int i = 0; i < MGLRU_NR_GENS && isolated < nr_to_isolate; i++) {
+        int gen = (st->last_evicted_gen + i) % MGLRU_NR_GENS;
+
+        /* Skip the youngest generation — don't evict fresh pages */
+        if (gen == st->last_accessed_gen)
+            continue;
+
+        struct mglru_gen *g = &st->gens[gen];
+
+        /* Process pages from the head (oldest) of this gen's list. */
+        while (isolated < nr_to_isolate && !list_empty(&g->list)) {
+            struct list_head *lh = g->list.next;
+            struct mglru_page_entry *entry;
+
+            /* Get the containing entry */
+            entry = list_entry(lh, struct mglru_page_entry, list);
+
+            /* Check accessed flag — promote instead of isolate if young */
+            if (entry->accessed) {
+                /* Promote to the youngest generation.
+                 * Remove from this gen, add to last_accessed_gen. */
+                int old_gen = entry->gen;
+                int new_gen = st->last_accessed_gen;
+
+                list_del(&entry->list);
+                entry->gen = new_gen;
+                entry->accessed = 0;
+                list_add_tail(&entry->list, &st->gens[new_gen].list);
+
+                /* Update counters */
+                if (old_gen >= 0 && old_gen < MGLRU_NR_GENS) {
+                    if (st->gens[old_gen].nr_pages > 0)
+                        st->gens[old_gen].nr_pages--;
+                    if (st->gens[old_gen].nr_active > 0)
+                        st->gens[old_gen].nr_active--;
+                    else if (st->gens[old_gen].nr_inactive > 0)
+                        st->gens[old_gen].nr_inactive--;
+                }
+                st->gens[new_gen].nr_pages++;
+                st->gens[new_gen].nr_active++;
+
+                continue;  /* skip this entry — it's now young */
+            }
+
+            /* Isolate this page: remove from gen list, add to output list */
+            list_del(&entry->list);
+
+            /* Update counters */
+            if (g->nr_pages > 0) g->nr_pages--;
+            if (entry->accessed) {
+                /* Shouldn't happen since we checked above, but be safe */
+                if (g->nr_active > 0) g->nr_active--;
+            } else {
+                if (g->nr_inactive > 0) g->nr_inactive--;
+            }
+
+            /* Clear the frame map (no longer tracked) */
+            mglru_frame_map_set(entry->phys_addr, -1);
+
+            /* Add to output list */
+            list_add_tail(&entry->list, list);
+
+            /* Mark as still in-use but detached from generation.
+             * We keep in_use = 1 so the entry isn't reused yet. */
+            entry->gen = -1;
+
+            isolated++;
+        }
     }
 
-    spinlock_release(&mglru_state.lock);
-
-    if (reclaimed > 0) {
-        kprintf("[MGLRU] Reclaimed %d/%d pages\n", reclaimed, nr_pages);
-    }
-
-    return reclaimed;
+    spinlock_irqsave_release(&st->lock, irq_flags);
+    return isolated;
 }
 
-/* Get the total number of pages tracked by MGLRU. */
-uint64_t mglru_total_pages(void)
+/* ── mglru_reclaim_pages ──────────────────────────────────────────────
+ * Reclaim up to nr_pages from the oldest generations.
+ * Each reclaimed page is freed via pmm_free_frame().
+ *
+ * This is the main reclaim entry point called from the page allocator
+ * when free memory is low.  Returns the number of pages freed. */
+int mglru_reclaim_pages(int nr_pages, unsigned int gfp_mask)
 {
-    return mglru_state.total_pages;
+    if (nr_pages <= 0)
+        return 0;
+
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled) {
+        /* MGLRU disabled — could fall back to simple LRU eviction here */
+        return 0;
+    }
+
+    LIST_HEAD(isolated_list);
+    int freed = 0;
+
+    /* Isolate pages in chunks to balance lock hold time */
+    while (freed < nr_pages) {
+        int batch = (nr_pages - freed) < 32 ? (nr_pages - freed) : 32;
+        int iso = mglru_isolate(batch, &isolated_list);
+        if (iso <= 0)
+            break;  /* nothing more to reclaim */
+
+        /* Free each isolated page */
+        while (!list_empty(&isolated_list)) {
+            struct list_head *lh = isolated_list.next;
+            struct mglru_page_entry *entry;
+            entry = list_entry(lh, struct mglru_page_entry, list);
+
+            uint64_t phys = entry->phys_addr;
+
+            /* Remove from our temp list and free the pool entry */
+            list_del(&entry->list);
+            entry->in_use = 0;  /* release back to pool */
+
+            /* Free the physical frame */
+            if (phys != 0) {
+                pmm_free_frame(phys);
+                freed++;
+            }
+        }
+    }
+
+    return freed;
 }
 
-/* Dump MGLRU generation statistics for debugging. */
-void mglru_dump(void)
+/* ── Query helpers ───────────────────────────────────────────────────── */
+
+void mglru_get_gen_counts(unsigned long counts[MGLRU_NR_GENS])
 {
-    if (!mglru_state.initialized) {
-        kprintf("MGLRU: not initialized\n");
-        return;
+    struct mglru_state *st = &mglru_state[0];
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    for (int i = 0; i < MGLRU_NR_GENS; i++)
+        counts[i] = st->gens[i].nr_pages;
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+}
+
+unsigned long mglru_total_pages(void)
+{
+    struct mglru_state *st = &mglru_state[0];
+    unsigned long total = 0;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    for (int i = 0; i < MGLRU_NR_GENS; i++)
+        total += st->gens[i].nr_pages;
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+    return total;
+}
+
+int mglru_is_enabled(void)
+{
+    return mglru_state[0].enabled;
+}
+
+void mglru_set_enabled(int val)
+{
+    mglru_state[0].enabled = val ? 1 : 0;
+}
+
+unsigned long mglru_get_min_ttl_ms(void)
+{
+    return mglru_state[0].min_ttl_ms;
+}
+
+void mglru_set_min_ttl_ms(unsigned long ms)
+{
+    mglru_state[0].min_ttl_ms = ms;
+    /* Convert ms to jiffies (assuming TIMER_FREQ Hz) */
+    mglru_state[0].aging_threshold = (ms * 1000ULL) / 10000000ULL;  /* NS_PER_TICK = 10ms */
+    if (mglru_state[0].aging_threshold < 1)
+        mglru_state[0].aging_threshold = 1;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ *  Periodic aging timer
+ * ════════════════════════════════════════════════════════════════════════ */
+
+static void mglru_aging_callback(void *data)
+{
+    (void)data;
+
+    struct mglru_state *st = &mglru_state[0];
+    if (st->enabled) {
+        mglru_age();
     }
 
-    spinlock_acquire(&mglru_state.lock);
-
-    kprintf("=== MGLRU State ===\n");
-    kprintf("Total pages: %llu\n", (unsigned long long)mglru_state.total_pages);
-    for (int i = 0; i < MGLRU_MAX_GENS; i++) {
-        kprintf("  Gen %d: %d pages (capacity %d)\n", i,
-                mglru_state.gens[i].count,
-                mglru_state.gens[i].capacity);
+    /* Re-arm the timer if still active */
+    if (mglru_timer_active) {
+        hrtimer_start(&mglru_timer, MGLRU_AGING_INTERVAL_NS);
     }
-    kprintf("Age ticks: %llu\n", (unsigned long long)mglru_state.age_ticks);
-    kprintf("Reclaim active: %d\n", mglru_state.reclaim_active);
-    kprintf("===================\n");
+}
 
-    spinlock_release(&mglru_state.lock);
+/* ════════════════════════════════════════════════════════════════════════
+ *  Sysfs interface
+ * ════════════════════════════════════════════════════════════════════════ */
+
+/* Read /sys/kernel/mm/mglru/enabled */
+static int mglru_sysfs_enabled_read(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    return snprintf(buf, max_size, "%d\n", mglru_is_enabled());
+}
+
+/* Write /sys/kernel/mm/mglru/enabled */
+static int mglru_sysfs_enabled_write(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    if (size == 0) return -1;
+
+    int val = 0;
+    if (data[0] == '1' || data[0] == 'y' || data[0] == 'Y' ||
+        data[0] == 't' || data[0] == 'T')
+        val = 1;
+
+    mglru_set_enabled(val);
+    return 0;
+}
+
+/* Read /sys/kernel/mm/mglru/min_ttl_ms */
+static int mglru_sysfs_min_ttl_read(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    return snprintf(buf, max_size, "%lu\n", mglru_get_min_ttl_ms());
+}
+
+/* Write /sys/kernel/mm/mglru/min_ttl_ms */
+static int mglru_sysfs_min_ttl_write(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    if (size == 0) return -1;
+
+    unsigned long val = 0;
+    for (uint32_t i = 0; i < size; i++) {
+        if (data[i] >= '0' && data[i] <= '9')
+            val = val * 10 + (unsigned long)(data[i] - '0');
+        else if (data[i] == '\n' || data[i] == '\0')
+            break;
+        else
+            return -1;  /* invalid character */
+    }
+
+    if (val < 1) val = 1;
+    if (val > 60000) val = 60000;  /* max 60 seconds */
+
+    mglru_set_min_ttl_ms(val);
+    return 0;
+}
+
+/* Read /sys/kernel/mm/mglru/generations */
+static int mglru_sysfs_generations_read(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    unsigned long counts[MGLRU_NR_GENS];
+    mglru_get_gen_counts(counts);
+
+    return snprintf(buf, max_size,
+                    "gen0: %lu\n"
+                    "gen1: %lu\n"
+                    "gen2: %lu\n"
+                    "gen3: %lu\n",
+                    counts[0], counts[1], counts[2], counts[3]);
+}
+
+/* Create the sysfs entries under /sys/kernel/mm/mglru/ */
+static void mglru_sysfs_init(void)
+{
+    /* Create directory tree: /sys/kernel/mm/mglru/ */
+    sysfs_create_dir("/sys/kernel");
+    sysfs_create_dir("/sys/kernel/mm");
+    sysfs_create_dir("/sys/kernel/mm/mglru");
+
+    /* /sys/kernel/mm/mglru/enabled (read/write) */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/mm/mglru/enabled",
+            "1\n", NULL,
+            mglru_sysfs_enabled_read, mglru_sysfs_enabled_write) < 0) {
+        kprintf("[MGLRU] sysfs: failed to create enabled\n");
+    }
+
+    /* /sys/kernel/mm/mglru/min_ttl_ms (read/write) */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/mm/mglru/min_ttl_ms",
+            "1000\n", NULL,
+            mglru_sysfs_min_ttl_read, mglru_sysfs_min_ttl_write) < 0) {
+        kprintf("[MGLRU] sysfs: failed to create min_ttl_ms\n");
+    }
+
+    /* /sys/kernel/mm/mglru/generations (read-only) */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/mm/mglru/generations",
+            NULL, NULL,
+            mglru_sysfs_generations_read, NULL) < 0) {
+        kprintf("[MGLRU] sysfs: failed to create generations\n");
+    }
 }

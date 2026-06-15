@@ -5,10 +5,11 @@
 
 #define E1000_VENDOR    0x8086
 #define E1000_DEVICE    0x100E  /* 82540EM - QEMU default */
-#define E1000_DEV_82574 0x10D3  /* 82574L - supports multi-queue RSS */
+#define E1000_DEV_82574 0x10D3  /* 82574L - supports multi-queue RSS (2 queues) */
+#define E1000_DEV_82576 0x10C9  /* 82576 - supports up to 4 queues */
 
 /* Maximum number of RX/TX queues supported (82574: up to 2) */
-#define E1000_MAX_QUEUES 2
+#define E1000_MAX_QUEUES 4
 
 /* RSS hash types */
 #define E1000_RSS_HASH_TCP_IPV4  (1 << 1)

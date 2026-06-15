@@ -1,5 +1,5 @@
 /*
- * trace_events.c — Static trace event infrastructure
+ * trace_events.c — Static trace event infrastructure (v2)
  *
  * Implements a lightweight static tracepoint framework using
  * DECLARE_EVENT_CLASS / DEFINE_EVENT macros (modeled after the
@@ -9,8 +9,13 @@
  *   - sched_switch: Task switch events
  *   - timer_expire: Timer callback execution
  *   - irq_handler: Interrupt handler entry/exit
+ *   - page_fault: Page fault events
+ *   - syscall_entry/exit: System call tracing
  *
- * Item 130 — Trace events with DECLARE_EVENT_CLASS
+ * Each event stores: timestamp_ns, event_id, payload (up to 24 bytes).
+ * Events are stored in a common ring buffer (8192 entries) with
+ * per-event enable/disable control.
+ * When the buffer is full, newest overwrites oldest.
  */
 
 #define KERNEL_INTERNAL
@@ -19,254 +24,225 @@
 #include "string.h"
 #include "smp.h"
 #include "process.h"  /* for struct process */
-#include "timer.h"    /* for timer_get_ticks */
+#include "timer.h"    /* for timer_get_ns */
+#include "ftrace.h"   /* for TRACE_EV_V2_* constants and structs */
+#include "spinlock.h"
 
-/* ── Trace buffer ────────────────────────────────────────────────────── */
-
-#define TRACE_EVENT_BUF_SIZE  (64 * 1024)  /* 64 KB circular buffer */
-#define TRACE_EVENT_MAX_RECORDS 4096
-
-struct trace_event_record {
-    uint64_t timestamp;       /* TSC or timer ticks */
-    uint32_t cpu_id;          /* CPU where event occurred */
-    uint16_t event_id;        /* Event type ID */
-    uint16_t data_len;        /* Length of variable data */
-    char     data[128];       /* Variable data (up to 128 bytes) */
-} __attribute__((packed));
-
-/* Event IDs */
-#define TRACE_EVENT_SCHED_SWITCH   1
-#define TRACE_EVENT_TIMER_EXPIRE   2
-#define TRACE_EVENT_IRQ_HANDLER    3
-#define TRACE_EVENT_IRQ_RETURN     4
-#define TRACE_EVENT_SCHED_WAKEUP   5
-
-/* ── State ──────────────────────────────────────────────────────────── */
+/* ── Ring buffer ───────────────────────────────────────────────────── */
 
 static struct {
-    struct trace_event_record records[TRACE_EVENT_MAX_RECORDS];
-    volatile uint32_t write_idx;   /* Next slot to write (atomically incremented) */
+    struct trace_event_v2_record entries[TRACE_EV_V2_BUF_SIZE];
+    volatile uint32_t write_idx;      /* Next slot to write (atomically incremented) */
     int initialized;
-    int enabled;                   /* 1 = tracing active, 0 = disabled */
-} trace_events_state;
+    int enabled;                      /* Global enable/disable */
+    uint32_t enabled_mask;            /* Bitmask: bit N = 1 if event ID N is enabled */
+} trace_ev_v2_state;
 
-/* Internal event counter */
-static uint64_t g_sched_switch_count = 0;
-static uint64_t g_timer_expire_count = 0;
-static uint64_t g_irq_count = 0;
+static spinlock_t g_trace_ev_v2_lock;
+
+/* Event-specific counters */
+static uint64_t g_ev_counters[8];     /* Event ID -> count */
 
 /* ── Core trace write ──────────────────────────────────────────────── */
 
-static void trace_event_write(uint16_t event_id, const void *data, uint16_t data_len)
+static void trace_ev_v2_write_locked(uint16_t event_id, const void *payload)
 {
-    if (!trace_events_state.initialized || !trace_events_state.enabled)
+    if (!trace_ev_v2_state.initialized || !trace_ev_v2_state.enabled)
         return;
 
-    uint32_t idx = __sync_fetch_and_add(&trace_events_state.write_idx, 1) % TRACE_EVENT_MAX_RECORDS;
+    /* Check per-event enable */
+    if (event_id >= 64)
+        return;
+    if (!(trace_ev_v2_state.enabled_mask & (1U << event_id)))
+        return;
 
-    struct trace_event_record *rec = &trace_events_state.records[idx];
-    rec->timestamp = timer_get_ticks();  /* Use timer ticks as timestamp */
-    rec->cpu_id = smp_get_cpu_id();
+    uint32_t idx = __sync_fetch_and_add(&trace_ev_v2_state.write_idx, 1) % TRACE_EV_V2_BUF_SIZE;
+
+    struct trace_event_v2_record *rec = &trace_ev_v2_state.entries[idx];
+    rec->timestamp_ns = timer_get_ns();
     rec->event_id = event_id;
-    rec->data_len = (data_len > 128) ? 128 : data_len;
-    if (data && rec->data_len > 0) {
-        memcpy(rec->data, data, rec->data_len);
-    }
-}
 
-/* ── Event class helpers ────────────────────────────────────────────── */
-
-/*
- * DECLARE_EVENT_CLASS / DEFINE_EVENT equivalent:
- * Each trace point type has a 'probe' function that formats the data
- * and calls trace_event_write.
- */
-
-/* ── sched_switch: trace task switch events ────────────────────────── */
-
-struct sched_switch_data {
-    uint32_t prev_pid;
-    uint32_t next_pid;
-    char     prev_comm[16];
-    char     next_comm[16];
-    int      prev_state;
-};
-
-void trace_sched_switch(struct process *prev, struct process *next)
-{
-    struct sched_switch_data d;
-    memset(&d, 0, sizeof(d));
-
-    if (prev) {
-        d.prev_pid = prev->pid;
-        strncpy(d.prev_comm, prev->name, 15);
-        d.prev_comm[15] = '\0';
-        d.prev_state = prev->state;
-    }
-    if (next) {
-        d.next_pid = next->pid;
-        strncpy(d.next_comm, next->name, 15);
-        d.next_comm[15] = '\0';
+    if (payload) {
+        memcpy(rec->payload, payload, TRACE_EV_V2_PAYLOAD_MAX);
+    } else {
+        memset(rec->payload, 0, TRACE_EV_V2_PAYLOAD_MAX);
     }
 
-    trace_event_write(TRACE_EVENT_SCHED_SWITCH, &d, sizeof(d));
-    g_sched_switch_count++;
+    if (event_id < 8)
+        g_ev_counters[event_id]++;
 }
 
-/* ── timer_expire: trace timer callback execution ──────────────────── */
+/* ── Public API ────────────────────────────────────────────────────── */
 
-struct timer_expire_data {
-    int      timer_id;
-    uint64_t expiry_tick;
-};
-
-void trace_timer_expire(int timer_id, uint64_t expiry_tick)
+void trace_events_v2_init(void)
 {
-    struct timer_expire_data d;
-    d.timer_id = timer_id;
-    d.expiry_tick = expiry_tick;
-
-    trace_event_write(TRACE_EVENT_TIMER_EXPIRE, &d, sizeof(d));
-    g_timer_expire_count++;
-}
-
-/* ── irq_handler: trace interrupt handler entry/exit ───────────────── */
-
-struct irq_handler_data {
-    uint32_t irq_vector;
-    uint8_t  is_entry;    /* 1 = entry, 0 = exit */
-    uint8_t  handled;     /* 1 = handled, 0 = not handled */
-};
-
-void trace_irq_handler_entry(uint32_t irq_vector)
-{
-    struct irq_handler_data d;
-    d.irq_vector = irq_vector;
-    d.is_entry = 1;
-    d.handled = 0;
-
-    trace_event_write(TRACE_EVENT_IRQ_HANDLER, &d, sizeof(d));
-    g_irq_count++;
-}
-
-void trace_irq_handler_exit(uint32_t irq_vector, int handled)
-{
-    struct irq_handler_data d;
-    d.irq_vector = irq_vector;
-    d.is_entry = 0;
-    d.handled = (handled ? 1 : 0);
-
-    trace_event_write(TRACE_EVENT_IRQ_RETURN, &d, sizeof(d));
-}
-
-/* ── Public API ─────────────────────────────────────────────────────── */
-
-void trace_events_init(void)
-{
-    if (trace_events_state.initialized)
+    if (trace_ev_v2_state.initialized)
         return;
 
-    memset(&trace_events_state, 0, sizeof(trace_events_state));
-    trace_events_state.initialized = 1;
-    trace_events_state.enabled = 1;  /* Enabled by default */
+    memset(&trace_ev_v2_state, 0, sizeof(trace_ev_v2_state));
+    trace_ev_v2_state.initialized = 1;
+    trace_ev_v2_state.enabled = 1;
 
-    kprintf("[trace_events] Static tracepoint infrastructure initialized\n");
-    kprintf("[trace_events] Buffer: %d records (%u bytes)\n",
-            TRACE_EVENT_MAX_RECORDS,
-            (unsigned int)sizeof(trace_events_state.records));
+    /* Enable all event types by default */
+    trace_ev_v2_state.enabled_mask = 0xFE;  /* bits 1-7 enabled (skip bit 0) */
+
+    spinlock_init(&g_trace_ev_v2_lock);
+
+    kprintf("[trace_events] v2 buffer initialized (%d records, %d bytes payload each)\n",
+            TRACE_EV_V2_BUF_SIZE, TRACE_EV_V2_PAYLOAD_MAX);
 }
 
-void trace_events_enable(void)
+void trace_events_v2_enable(void)
 {
-    if (trace_events_state.initialized)
-        trace_events_state.enabled = 1;
+    if (trace_ev_v2_state.initialized)
+        trace_ev_v2_state.enabled = 1;
 }
 
-void trace_events_disable(void)
+void trace_events_v2_disable(void)
 {
-    if (trace_events_state.initialized)
-        trace_events_state.enabled = 0;
+    if (trace_ev_v2_state.initialized)
+        trace_ev_v2_state.enabled = 0;
 }
 
-int trace_events_is_enabled(void)
+int trace_events_v2_is_enabled(void)
 {
-    return trace_events_state.initialized && trace_events_state.enabled;
+    return trace_ev_v2_state.initialized && trace_ev_v2_state.enabled;
 }
 
-/*
- * Dump trace events to the console.
- * @limit: Maximum number of records to dump (0 = all).
- */
-void trace_events_dump(int limit)
+int trace_events_v2_set_event_enabled(uint16_t event_id, int enabled)
 {
-    if (!trace_events_state.initialized) {
-        kprintf("[trace_events] Not initialized\n");
-        return;
-    }
+    if (event_id >= 64)
+        return -EINVAL;
+    if (!trace_ev_v2_state.initialized)
+        return -ENXIO;
 
-    uint32_t count = trace_events_state.write_idx;
-    if (count > TRACE_EVENT_MAX_RECORDS)
-        count = TRACE_EVENT_MAX_RECORDS;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_trace_ev_v2_lock, &irq_flags);
 
-    if (limit > 0 && (int)count > limit)
-        count = (uint32_t)limit;
+    if (enabled)
+        trace_ev_v2_state.enabled_mask |= (1U << event_id);
+    else
+        trace_ev_v2_state.enabled_mask &= ~(1U << event_id);
 
-    kprintf("=== Trace Events Dump (%u records) ===\n", count);
-    kprintf("  Events: sched_switch=%llu timer=%llu irq=%llu\n",
-            (unsigned long long)g_sched_switch_count,
-            (unsigned long long)g_timer_expire_count,
-            (unsigned long long)g_irq_count);
+    spinlock_irqsave_release(&g_trace_ev_v2_lock, irq_flags);
+    return 0;
+}
 
-    /* Walk backwards from the last written record */
-    uint32_t start = (trace_events_state.write_idx > 0)
-                      ? (trace_events_state.write_idx - 1) % TRACE_EVENT_MAX_RECORDS
-                      : 0;
+int trace_events_v2_get_event_enabled(uint16_t event_id)
+{
+    if (event_id >= 64 || !trace_ev_v2_state.initialized)
+        return 0;
+    return (trace_ev_v2_state.enabled_mask >> event_id) & 1;
+}
 
-    for (uint32_t i = 0; i < count; i++) {
-        uint32_t idx = (start + TRACE_EVENT_MAX_RECORDS - i) % TRACE_EVENT_MAX_RECORDS;
-        struct trace_event_record *rec = &trace_events_state.records[idx];
+void trace_events_v2_write(uint16_t event_id, const void *payload)
+{
+    trace_ev_v2_write_locked(event_id, payload);
+}
 
-        const char *event_name = "?";
-        switch (rec->event_id) {
-            case TRACE_EVENT_SCHED_SWITCH: event_name = "sched_switch"; break;
-            case TRACE_EVENT_TIMER_EXPIRE: event_name = "timer_expire"; break;
-            case TRACE_EVENT_IRQ_HANDLER:  event_name = "irq_handler";  break;
-            case TRACE_EVENT_IRQ_RETURN:   event_name = "irq_return";   break;
-            case TRACE_EVENT_SCHED_WAKEUP: event_name = "sched_wakeup"; break;
+int trace_events_v2_read(struct trace_event_v2_record *buf, int max_count,
+                          uint16_t event_filter)
+{
+    if (!buf || max_count <= 0 || !trace_ev_v2_state.initialized)
+        return 0;
+
+    uint32_t count = trace_ev_v2_state.write_idx;
+    uint32_t n = (count < TRACE_EV_V2_BUF_SIZE) ? count : TRACE_EV_V2_BUF_SIZE;
+
+    if (n == 0)
+        return 0;
+
+    int out_idx = 0;
+
+    /* Walk backwards (most recent first) for filtering */
+    uint32_t start = (count > 0) ? (count - 1) % TRACE_EV_V2_BUF_SIZE : 0;
+
+    for (uint32_t i = 0; i < n && out_idx < max_count; i++) {
+        uint32_t idx = (start + TRACE_EV_V2_BUF_SIZE - i) % TRACE_EV_V2_BUF_SIZE;
+        struct trace_event_v2_record *rec = &trace_ev_v2_state.entries[idx];
+
+        if (event_filter == 0 || rec->event_id == event_filter) {
+            buf[out_idx++] = *rec;
         }
-
-        kprintf("  [%u] CPU%u tick=%llu %s\n",
-                idx, rec->cpu_id,
-                (unsigned long long)rec->timestamp,
-                event_name);
     }
 
-    kprintf("=== End Trace Dump ===\n");
+    return out_idx;
 }
 
-/*
- * Clear all trace events.
- */
-void trace_events_clear(void)
+void trace_events_v2_clear(void)
 {
-    if (!trace_events_state.initialized)
+    if (!trace_ev_v2_state.initialized)
         return;
 
-    memset(trace_events_state.records, 0, sizeof(trace_events_state.records));
-    trace_events_state.write_idx = 0;
-    g_sched_switch_count = 0;
-    g_timer_expire_count = 0;
-    g_irq_count = 0;
-
-    kprintf("[trace_events] Buffer cleared\n");
+    memset(trace_ev_v2_state.entries, 0, sizeof(trace_ev_v2_state.entries));
+    trace_ev_v2_state.write_idx = 0;
+    memset(g_ev_counters, 0, sizeof(g_ev_counters));
 }
 
-/*
- * Get event statistics.
- */
-void trace_events_stats(uint64_t *sched_count, uint64_t *timer_count, uint64_t *irq_count)
+/* ══════════════════════════════════════════════════════════════════════
+ * Convenience trace event functions
+ * ══════════════════════════════════════════════════════════════════════ */
+
+void trace_v2_sched_switch(uint32_t prev_pid, uint32_t next_pid,
+                            int32_t prev_state)
 {
-    if (sched_count) *sched_count = g_sched_switch_count;
-    if (timer_count) *timer_count = g_timer_expire_count;
-    if (irq_count)   *irq_count   = g_irq_count;
+    struct trace_ev_payload_sched_switch pld;
+    pld.prev_pid = prev_pid;
+    pld.next_pid = next_pid;
+    pld.prev_state = prev_state;
+    trace_ev_v2_write_locked(TRACE_EV_V2_SCHED_SWITCH, &pld);
+}
+
+void trace_v2_irq_entry(uint32_t irq_num, const char *handler_name)
+{
+    struct trace_ev_payload_irq_entry pld;
+    memset(&pld, 0, sizeof(pld));
+    pld.irq_num = irq_num;
+    if (handler_name) {
+        strncpy(pld.handler_name, handler_name, sizeof(pld.handler_name) - 1);
+        pld.handler_name[sizeof(pld.handler_name) - 1] = '\0';
+    }
+    trace_ev_v2_write_locked(TRACE_EV_V2_IRQ_ENTRY, &pld);
+}
+
+void trace_v2_irq_exit(uint32_t irq_num, uint64_t duration_ns)
+{
+    struct trace_ev_payload_irq_exit pld;
+    pld.irq_num = irq_num;
+    pld.duration_ns = duration_ns;
+    trace_ev_v2_write_locked(TRACE_EV_V2_IRQ_EXIT, &pld);
+}
+
+void trace_v2_timer_expire(uint64_t timer_fn, uint64_t expires_jiffies)
+{
+    struct trace_ev_payload_timer_expire pld;
+    pld.timer_fn = timer_fn;
+    pld.expires_jiffies = expires_jiffies;
+    trace_ev_v2_write_locked(TRACE_EV_V2_TIMER_EXPIRE, &pld);
+}
+
+void trace_v2_page_fault(uint64_t addr, uint32_t flags, uint32_t pid)
+{
+    struct trace_ev_payload_page_fault pld;
+    pld.addr = addr;
+    pld.flags = flags;
+    pld.pid = pid;
+    trace_ev_v2_write_locked(TRACE_EV_V2_PAGE_FAULT, &pld);
+}
+
+void trace_v2_syscall_entry(uint32_t nr, uint64_t arg0, uint64_t arg1)
+{
+    struct trace_ev_payload_syscall_entry pld;
+    pld.nr = nr;
+    pld.arg0 = arg0;
+    pld.arg1 = arg1;
+    trace_ev_v2_write_locked(TRACE_EV_V2_SYSCALL_ENTRY, &pld);
+}
+
+void trace_v2_syscall_exit(uint32_t nr, uint64_t retval)
+{
+    struct trace_ev_payload_syscall_exit pld;
+    pld.nr = nr;
+    pld.retval = retval;
+    trace_ev_v2_write_locked(TRACE_EV_V2_SYSCALL_EXIT, &pld);
 }

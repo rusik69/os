@@ -46,6 +46,23 @@ void splash_status(const char *text);
  * this. */
 void splash_fade_out(void);
 
+/*
+ * splash_done — Finalise boot splash and transition to userspace.
+ *
+ * Alias for splash_fade_out().  Called when kernel init is complete
+ * and userspace is about to start.  If splash is not active, no-op.
+ */
+void splash_done(void);
+
+/*
+ * splash_spinner_tick — Advance the progress spinner by one frame.
+ *
+ * Called periodically during init to animate the spinner at the
+ * bottom-right of the screen.  Safe to call when splash is not
+ * active (no-op).
+ */
+void splash_spinner_tick(void);
+
 /* Check whether the splash screen is active.  Returns 1 if splash
  * was initialised and is still displayed, 0 otherwise. */
 int splash_is_active(void);

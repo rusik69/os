@@ -136,5 +136,19 @@ int kdump_check(void);
  */
 const struct kdump_header *kdump_get_header(void);
 
+/*
+ * Sysfs initialisation for /sys/kernel/kexec_load_disabled and
+ * /sys/kernel/crash_kexec_post_notifiers.
+ * Called from kernel_main() after sysfs_init().
+ */
+void kdump_sysfs_init(void);
+
+/*
+ * On panic, attempt to boot into a pre-loaded crash kernel to dump memory.
+ * Returns 1 if crash kexec was triggered, 0 otherwise.
+ * Called from panic() when crash_kernel_reserved is set.
+ */
+int kdump_crash_kexec_on_panic(void);
+
 #endif /* __ASSEMBLER__ */
 #endif /* KDUMP_H */

@@ -34,6 +34,7 @@
 #include "process_rlimit.h"
 #include "core_sched.h"
 #include "nohz.h"
+#include "mglru.h"
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
@@ -703,6 +704,21 @@ void schedule(void) {
         volatile uint64_t saved_canary = __stack_chk_guard;
         __stack_chk_guard = next->stack_canary;
 
+        /* ── PSI CPU pressure tracking ──────────────────────────────
+         * A task is "stalled on CPU" when it is runnable but not
+         * running (i.e., waiting in the runqueue).
+         *
+         * When we schedule IN a task (next), it was in the runqueue
+         * and is now running → it ceases to be stalled → leave().
+         * When we schedule OUT a task (current) that is still runnable
+         * (preempted), it was running and is now going back to the
+         * runqueue → it becomes stalled → enter(). */
+        if (current != next) {
+            if (current && current->state == PROCESS_RUNNING)
+                psi_cpu_enter();
+            psi_cpu_leave();
+        }
+
         context_switch(current ? &current->context : NULL, next->context);
         __asm__ volatile("sti");
 
@@ -808,6 +824,9 @@ void scheduler_tick(int was_user) {
         uint64_t full_ticks = 0;
         psi_update(PSI_RES_CPU, 1, some_ticks, full_ticks);
     }
+
+    /* Age MGLRU generations on each timer tick */
+    mglru_tick();
 
     /* Account this tick to the process's CPU cgroup (if assigned). */
     if (cur->cpu_cgroup_id > 0)

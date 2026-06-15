@@ -12,6 +12,7 @@
 #include "kallsyms.h"
 #include "pstore.h"
 #include "kdump.h"
+#include "kexec.h"
 #include "notifier.h"
 #include "watchdog.h"
 #include "fbcon.h"
@@ -474,6 +475,22 @@ void panic(const char *fmt, ...) {
     /* Save to the dedicated kdump memory region (if available) */
     kdump_capture(msg_buf, panic_rip);
 
+    /* ── Crash kexec ───────────────────────────────────────────────────
+     *
+     * If a crash kernel has been loaded, we can boot into it to perform
+     * a full memory dump.  The crash_kexec_post_notifiers sysfs toggle
+     * controls whether this happens before or after the panic notifier
+     * chain:
+     *
+     *   0 (default) — crash kexec immediately (before notifiers)
+     *   1            — crash kexec after notifier chain
+     */
+    if (crash_kernel_reserved && !crash_kexec_post_notifiers) {
+        if (kdump_crash_kexec_on_panic()) {
+            /* If we get here, crash kexec was not triggered — continue */
+        }
+    }
+
     vga_set_color(VGA_WHITE, VGA_RED);
     kprintf("\n\n=== KERNEL PANIC ===\n");
     kprintf("%s\n", msg_buf);
@@ -510,6 +527,14 @@ void panic(const char *fmt, ...) {
 
     /* Notify panic notifier chain (releases spinlocks, etc.) */
     notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+
+    /* If crash_kexec_post_notifiers is set, attempt crash kexec now
+     * (after notifiers have had a chance to run). */
+    if (crash_kernel_reserved && crash_kexec_post_notifiers) {
+        if (kdump_crash_kexec_on_panic()) {
+            /* If we get here, crash kexec was not triggered — continue */
+        }
+    }
 
     /* Send panic halt IPI to all other CPUs so they stop executing.
      * We do this AFTER the notifier chain so that spinlocks are released

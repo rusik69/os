@@ -50,4 +50,9 @@ void pmm_set_reclaim_watermark(uint64_t pages);
 /* Check if memory is below reclaim watermark */
 int pmm_below_watermark(void);
 
+/* Page reclaim entry point — called when the kernel needs to free pages.
+ * If MGLRU is enabled, uses multi-generational LRU reclaim.
+ * Returns the number of pages actually freed. */
+int page_reclaim(int nr_pages, unsigned int gfp_mask);
+
 #endif

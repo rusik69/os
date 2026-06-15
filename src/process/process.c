@@ -207,6 +207,11 @@ static void process_caps_apply_user_default(struct process *proc) {
     process_caps_allow(proc, SYS_ELF_EXEC);
     process_caps_allow(proc, SYS_SCRIPT_EXEC);
     process_caps_allow(proc, SYS_MEMFD_CREATE);
+
+    /* io_uring async I/O syscalls */
+    process_caps_allow(proc, SYS_IO_URING_SETUP);
+    process_caps_allow(proc, SYS_IO_URING_ENTER);
+    process_caps_allow(proc, SYS_IO_URING_REGISTER);
 }
 
 static void process_caps_apply_user_trusted(struct process *proc) {

@@ -23,6 +23,7 @@
 #include "verity.h"
 #include "sha256.h"
 #include "vfs.h"
+#include "xattr.h"
 #include "string.h"
 #include "printf.h"
 #include "heap.h"
@@ -243,6 +244,101 @@ int fsverity_enable(uint64_t ino, const uint8_t *data, uint64_t size,
     return 0;
 }
 EXPORT_SYMBOL(fsverity_enable);
+
+/* Enable fs-verity on a file given its path.
+ * Reads the file data, builds the Merkle tree, stores the root hash
+ * in the security.verity extended attribute, and registers the file
+ * for verification. */
+int fsverity_enable_path(const char *path)
+{
+    if (!path)
+        return -EINVAL;
+
+    /* Check if already enabled */
+    if (fsverity_is_enabled(path))
+        return -EEXIST;
+
+    /* Get file info via stat */
+    struct vfs_stat st;
+    int ret = vfs_stat(path, &st);
+    if (ret < 0)
+        return ret;
+
+    uint64_t file_size = st.size;
+    if (file_size == 0 || file_size > FS_VERITY_MAX_FILE_SIZE)
+        return -EFBIG;
+
+    /* Allocate buffer for file data */
+    uint8_t *data = (uint8_t *)kmalloc((uint32_t)file_size);
+    if (!data) return -ENOMEM;
+
+    uint32_t actual_size = (uint32_t)file_size;
+    ret = vfs_read(path, data, actual_size, &actual_size);
+    if (ret < 0) {
+        kfree(data);
+        return ret;
+    }
+
+    /* Enable verity on the file data */
+    uint8_t root_hash[FS_VERITY_HASH_SIZE];
+    ret = fsverity_enable(st.ino, data, (uint64_t)actual_size, root_hash);
+    kfree(data);
+
+    if (ret < 0)
+        return ret;
+
+    /* Store root hash in security.verity xattr */
+    ret = vfs_setxattr(path, FS_VERITY_XATTR_NAME,
+                       root_hash, FS_VERITY_HASH_SIZE);
+    if (ret < 0) {
+        kprintf("[fs-verity] WARNING: failed to store xattr on %s (%d)\n",
+                path, ret);
+        /* Continue even if xattr fails — the in-memory table still works */
+    }
+
+    return 0;
+}
+EXPORT_SYMBOL(fsverity_enable_path);
+
+/* Check if a file has fs-verity enabled by checking the security.verity xattr.
+ * Returns 1 if enabled, 0 if not. */
+int fsverity_is_enabled(const char *path)
+{
+    uint8_t buf[FS_VERITY_HASH_SIZE];
+    int ret = vfs_getxattr(path, FS_VERITY_XATTR_NAME, buf, sizeof(buf));
+    return (ret == FS_VERITY_HASH_SIZE) ? 1 : 0;
+}
+EXPORT_SYMBOL(fsverity_is_enabled);
+
+/* Handle FS_IOC_ENABLE_VERITY ioctl.
+ *
+ * arg points to a struct fsverity_enable_arg from userspace.
+ * We verify the parameters and call fsverity_enable_path().
+ */
+int fsverity_ioctl_enable(const char *path, void *arg)
+{
+    struct fsverity_enable_arg *fea = (struct fsverity_enable_arg *)arg;
+
+    if (!path || !arg)
+        return -EINVAL;
+
+    /* Validate parameters */
+    if (fea->version != 1)
+        return -EINVAL;
+    if (fea->hash_algorithm != 0) /* 0 = SHA-256 */
+        return -EOPNOTSUPP;
+    if (fea->block_size != 4096)
+        return -EINVAL;
+    if (fea->flags != 0)
+        return -EINVAL;
+
+    /* We don't support salt for now */
+    if (fea->salt_size > 0)
+        return -EOPNOTSUPP;
+
+    return fsverity_enable_path(path);
+}
+EXPORT_SYMBOL(fsverity_ioctl_enable);
 
 /* Verify a single data block against the Merkle tree.
  *

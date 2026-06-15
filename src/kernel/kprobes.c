@@ -42,6 +42,7 @@
 #include "printf.h"
 #include "string.h"
 #include "panic.h"
+#include "uprobes.h"
 
 /* ── Scratch area for text_poke ──────────────────────────────────────
  *
@@ -424,6 +425,12 @@ int kprobe_is_probed(uint64_t addr) {
 
 void kprobe_int3_handler(struct interrupt_frame *frame) {
     uint64_t rip = frame->rip;
+
+    /* Check uprobes first — user-space breakpoints take priority */
+    if (uprobe_handle_breakpoint(frame)) {
+        return; /* handled by uprobe */
+    }
+
     g_kprobe_hits++;
 
     /* The CPU pushes RIP pointing to the NEXT instruction after INT3.

@@ -239,6 +239,8 @@ int unix_accept(int endpoint_idx, int timeout_ms);
 int unix_connect(int endpoint_idx, const struct sockaddr_un *addr, uint32_t addrlen);
 int unix_send(int endpoint_idx, const void *data, uint32_t len, int nonblock);
 int unix_recv(int endpoint_idx, void *data, uint32_t len, int nonblock);
+int unix_sendmsg(int endpoint_idx, const struct msghdr *msg, int flags);
+int unix_recvmsg(int endpoint_idx, struct msghdr *msg, int flags);
 int unix_shutdown(int endpoint_idx, int how);
 int unix_poll(int endpoint_idx, int events);
 int unix_getsockname(int endpoint_idx, struct sockaddr_un *addr, uint32_t *addrlen);

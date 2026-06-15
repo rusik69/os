@@ -80,6 +80,8 @@
 #include "mseal.h"
 #include "lockdown.h"
 #include "userfaultfd.h"
+#include "blockdev.h"   /* for SG_IO ioctl */
+#include "io_uring.h"   /* for io_uring syscalls */
 
 #ifndef UINT32_MAX
 #define UINT32_MAX 4294967295U
@@ -5796,6 +5798,124 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 return (uint64_t)-1;
             return 0;
         }
+        case SG_IO: {
+            /* SCSI generic passthrough — submit CDB and return sense data */
+            struct sg_io_hdr hdr;
+            if (copy_from_user(&hdr, arg, sizeof(hdr)) < 0)
+                return (uint64_t)-1;
+
+            /* Validate interface ID */
+            if (hdr.interface_id != 'S')
+                return (uint64_t)-1;  /* -ENOTTY */
+
+            /* iovec not supported in this simple implementation */
+            if (hdr.iovec_count != 0)
+                return (uint64_t)-1;
+
+            /* Validate CDB length */
+            if (hdr.cmd_len > SG_MAX_CDB_SIZE || hdr.cmd_len == 0)
+                return (uint64_t)-1;
+
+            /* Resolve block device ID from the fd's path.
+             * The fd path should be /dev/sda, /dev/nvme0n1, etc. */
+            const char *path = p->fd_table[fd].path;
+            if (!path || path[0] == '\0')
+                return (uint64_t)-1;
+
+            int dev_id = blockdev_find_by_name(path);
+            if (dev_id < 0)
+                return (uint64_t)-1;  /* -ENODEV */
+
+            /* Copy CDB from user space */
+            uint8_t cdb[SG_MAX_CDB_SIZE];
+            memset(cdb, 0, sizeof(cdb));
+            if (copy_from_user(cdb, hdr.cmdp, hdr.cmd_len) < 0)
+                return (uint64_t)-1;
+
+            /* Allocate data buffer (up to 64KB for safety) */
+            uint32_t data_len = hdr.dxfer_len;
+            if (data_len > 65536)
+                return (uint64_t)-1;  /* -EINVAL */
+
+            void *data_buf = NULL;
+            if (data_len > 0 && hdr.dxferp) {
+                data_buf = (void *)kmalloc(data_len);
+                if (!data_buf)
+                    return (uint64_t)-12;  /* -ENOMEM */
+
+                if (hdr.dxfer_direction == SG_DXFER_TO_DEV ||
+                    hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV) {
+                    /* Copy data FROM user for writes */
+                    if (copy_from_user(data_buf, hdr.dxferp, data_len) < 0) {
+                        kfree(data_buf);
+                        return (uint64_t)-1;
+                    }
+                }
+            }
+
+            /* Sense buffer */
+            uint8_t sense[SG_MAX_SENSE_SIZE];
+            int sense_len = 0;
+            memset(sense, 0, sizeof(sense));
+
+            /* Submit the SCSI command */
+            uint64_t start_tick = 0;
+            if (timer_available())
+                start_tick = timer_get_ticks();
+
+            int ret = blockdev_scsi_submit(dev_id, cdb, hdr.cmd_len,
+                                            data_buf, (int)data_len,
+                                            hdr.dxfer_direction,
+                                            sense, &sense_len,
+                                            (int)hdr.timeout);
+
+            /* Calculate duration in ms */
+            uint32_t duration_ms = 0;
+            if (timer_available()) {
+                uint64_t elapsed = timer_get_ticks() - start_tick;
+                duration_ms = (uint32_t)(elapsed * 1000 / TIMER_FREQ);
+            }
+
+            /* Fill in the hdr result fields */
+            if (ret < 0) {
+                hdr.status = 0xFF;  /* SCSI status = host error */
+                hdr.host_status = (unsigned short)(-ret);
+                hdr.resid = (int)data_len;  /* all data residual */
+            } else {
+                hdr.status = 0;  /* GOOD status */
+                hdr.host_status = 0;
+                hdr.resid = 0;
+            }
+            hdr.duration = duration_ms;
+            hdr.sb_len_wr = (unsigned char)sense_len;
+            if (sense_len > 0 && hdr.sbp) {
+                unsigned char mx_sb = hdr.mx_sb_len;
+                if ((int)mx_sb > sense_len) mx_sb = (unsigned char)sense_len;
+                if (copy_to_user(hdr.sbp, sense, mx_sb) < 0) {
+                    if (data_buf) kfree(data_buf);
+                    return (uint64_t)-1;
+                }
+            }
+
+            /* Copy data back to user for reads */
+            if (data_buf && data_len > 0 && hdr.dxferp &&
+                (hdr.dxfer_direction == SG_DXFER_FROM_DEV ||
+                 hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV)) {
+                if (copy_to_user(hdr.dxferp, data_buf, data_len) < 0) {
+                    kfree(data_buf);
+                    return (uint64_t)-1;
+                }
+            }
+
+            if (data_buf)
+                kfree(data_buf);
+
+            /* Copy the updated hdr back to user */
+            if (copy_to_user(arg, &hdr, sizeof(hdr)) < 0)
+                return (uint64_t)-1;
+
+            return 0;
+        }
         default:
             return (uint64_t)-1; /* ENOTTY */
     }
@@ -7514,6 +7634,7 @@ void production_subsystems_init(void) {
     memset(posix_timers, 0, sizeof(posix_timers));
     memset(mq_table, 0, sizeof(mq_table));
     inotify_subsystem_init();
+    io_uring_init();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -9193,6 +9314,19 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_EXECVE:              return sys_execve(a1, a2, a3);
         case SYS_POSIX_SPAWN:         return sys_posix_spawn(a1, a2, a3);
         case SYS_KEXEC_LOAD:          return sys_kexec_load(a1, a2, a3);
+        /* ── io_uring ───────────────────────────────────── */
+        case SYS_IO_URING_SETUP: {
+            /* io_uring_setup(entries, params) */
+            struct io_uring_params *params = (struct io_uring_params *)a2;
+            int64_t ret = sys_io_uring_setup((uint32_t)a1, params);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
+        case SYS_IO_URING_ENTER:
+            return (uint64_t)sys_io_uring_enter((int)a1, (uint32_t)a2,
+                                                 (uint32_t)a3, (uint32_t)a4);
+        case SYS_IO_URING_REGISTER:
+            return (uint64_t)sys_io_uring_register((int)a1, (uint32_t)a2,
+                                                    (void *)a3, (uint32_t)a4);
         /* ── Inotify (Item 340) ─────────────────────────── */
         case SYS_INOTIFY_INIT1: {
             int ret = sys_inotify_init1((int)a1);

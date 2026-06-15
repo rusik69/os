@@ -15,6 +15,10 @@
  *
  * The seqlock (sequence counter) in the data page prevents torn reads —
  * userspace retries if it detects an in-progress update.
+ *
+ * Exported functions: vdso_gettimeofday(), vdso_clock_gettime(), vdso_get_khz()
+ * These are callable from both kernel code and (via the vDSO page) from
+ * userspace without a syscall.
  */
 
 #define KERNEL_INTERNAL
@@ -26,6 +30,17 @@
 #include "panic.h"    /* panic_get_tsc_freq() */
 #include "rtc.h"      /* rtc_get_epoch() */
 #include "timer.h"
+
+/* clockid_t for kernel use */
+typedef uint64_t clockid_t;
+
+/* CLOCK_* definitions needed internally */
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME  0
+#endif
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
 
 /* ── Static pages ─────────────────────────────────────────────────────── */
 
@@ -533,6 +548,8 @@ int vsyscall_init(void)
     vdso_data->wall_nsec = 0;
     vdso_data->mono_sec = now_ns / 1000000000ULL;
     vdso_data->mono_nsec = now_ns % 1000000000ULL;
+    vdso_data->tsc_khz = tsc_freq / 1000;
+    vdso_data->wall_clock_offset = epoch - (now_ns / 1000000000ULL);
 
     /* Compute TSC conversion factors */
     {
@@ -619,6 +636,7 @@ void vsyscall_update_clock(void)
     vdso_data->wall_nsec = 0;
     vdso_data->mono_sec = now_ns / 1000000000ULL;
     vdso_data->mono_nsec = now_ns % 1000000000ULL;
+    vdso_data->wall_clock_offset = epoch - (now_ns / 1000000000ULL);
 
     /* Memory barrier: ensure data is written before seq update */
     __asm__ volatile("mfence" ::: "memory");
@@ -637,4 +655,128 @@ void *vsyscall_get_page(void)
 uint64_t vsyscall_get_data_phys(void)
 {
     return vdso_data_phys;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Exported vDSO functions (callable from kernel or userspace via vDSO)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Helper: Read TSC with serialization (cpuid; rdtsc) */
+static inline uint64_t vdso_read_tsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("cpuid\n"
+                     "rdtsc\n"
+                     : "=a"(lo), "=d"(hi)
+                     : "a"(0)
+                     : "rbx", "rcx");
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Helper: compute timeval or timespec from vDSO data page + TSC */
+static void vdso_calc_realtime(struct vdso_clock_data *d,
+                                uint64_t tsc_now,
+                                uint64_t *out_sec,
+                                uint64_t *out_nsec)
+{
+    /* Compute delta since last update */
+    uint64_t delta_tsc = tsc_now - d->tsc_timestamp;
+    if (delta_tsc > d->tsc_max_delta)
+        delta_tsc = d->tsc_max_delta;
+
+    /* delta_ns = (delta_tsc * mult) >> shift */
+    uint64_t delta_ns = (delta_tsc * d->tsc_to_ns_mult) >> d->tsc_shift;
+
+    /* wall = wall_base + delta_ns */
+    uint64_t total_ns = d->wall_nsec + delta_ns;
+    *out_sec = d->wall_sec + (total_ns / 1000000000ULL);
+    *out_nsec = total_ns % 1000000000ULL;
+}
+
+static void vdso_calc_monotonic(struct vdso_clock_data *d,
+                                 uint64_t tsc_now,
+                                 uint64_t *out_sec,
+                                 uint64_t *out_nsec)
+{
+    uint64_t delta_tsc = tsc_now - d->tsc_timestamp;
+    if (delta_tsc > d->tsc_max_delta)
+        delta_tsc = d->tsc_max_delta;
+
+    uint64_t delta_ns = (delta_tsc * d->tsc_to_ns_mult) >> d->tsc_shift;
+
+    uint64_t total_ns = d->mono_nsec + delta_ns;
+    *out_sec = d->mono_sec + (total_ns / 1000000000ULL);
+    *out_nsec = total_ns % 1000000000ULL;
+}
+
+int vdso_gettimeofday(struct vdso_timeval *tv, struct vdso_timezone *tz)
+{
+    if (!vdso_data)
+        return -1;
+
+    struct vdso_clock_data *d = vdso_data;
+    uint64_t sec, nsec;
+    uint64_t seq;
+
+    /* Seqlock retry loop */
+    do {
+        seq = d->seq;
+        if (seq & 1) continue; /* writer active, spin */
+
+        /* Memory barrier: read seq before data */
+        __asm__ volatile("mfence" ::: "memory");
+
+        uint64_t tsc_now = vdso_read_tsc();
+        vdso_calc_realtime(d, tsc_now, &sec, &nsec);
+
+        /* Memory barrier: read data before re-reading seq */
+        __asm__ volatile("mfence" ::: "memory");
+    } while (d->seq != seq);
+
+    if (tv) {
+        tv->tv_sec = sec;
+        tv->tv_usec = nsec / 1000;
+    }
+    if (tz) {
+        tz->tz_minuteswest = 0;
+        tz->tz_dsttime = 0;
+    }
+    return 0;
+}
+
+int vdso_clock_gettime(uint64_t clk_id, struct timespec *tp)
+{
+    if (!vdso_data || !tp)
+        return -1;
+
+    struct vdso_clock_data *d = vdso_data;
+    uint64_t sec, nsec;
+    uint64_t seq;
+
+    do {
+        seq = d->seq;
+        if (seq & 1) continue;
+
+        __asm__ volatile("mfence" ::: "memory");
+
+        uint64_t tsc_now = vdso_read_tsc();
+
+        if (clk_id == 0)  /* CLOCK_REALTIME */
+            vdso_calc_realtime(d, tsc_now, &sec, &nsec);
+        else
+            vdso_calc_monotonic(d, tsc_now, &sec, &nsec);
+
+        __asm__ volatile("mfence" ::: "memory");
+    } while (d->seq != seq);
+
+    tp->tv_sec = sec;
+    tp->tv_nsec = nsec;
+    return 0;
+}
+
+uint64_t vdso_get_khz(void)
+{
+    if (!vdso_data)
+        return 0;
+    return vdso_data->tsc_khz;
 }

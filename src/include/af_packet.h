@@ -113,10 +113,22 @@ struct sockaddr_ll {
 } __attribute__((packed));
 
 /* Packet socket filter (BPF) instruction */
-struct sock_fprog {
-    uint16_t len;       /* Number of filter blocks */
-    void    *filter;    /* struct sock_filter[] */
+struct sock_filter {
+    uint16_t code;      /* Filter opcode */
+    uint8_t  jt;        /* Jump true offset */
+    uint8_t  jf;        /* Jump false offset */
+    uint32_t k;         /* Generic multi-use field */
 };
+
+/* Packet socket filter program */
+struct sock_fprog {
+    uint16_t           len;       /* Number of filter blocks */
+    struct sock_filter *filter;  /* Pointer to struct sock_filter[] */
+};
+
+/* BPF return values */
+#define BPF_KILL          0
+#define BPF_PASS          1
 
 /* Packet socket state */
 struct packet_sock {
@@ -170,6 +182,13 @@ int  packet_deliver(uint16_t eth_type, int ifindex,
 /* Set/Get socket options on a packet socket. */
 int  packet_setsockopt(int fd, int optname, const void *optval, int optlen);
 int  packet_getsockopt(int fd, int optname, void *optval, int *optlen);
+
+/* Get socket name (for getsockname).  Returns 0 or -errno. */
+int  packet_getsockname(int fd, struct sockaddr_ll *addr);
+
+/* Simple BPF filter support.  Returns 0 on success, -errno on error. */
+int  packet_set_filter(int fd, const struct sock_fprog *fprog);
+int  packet_apply_filter(int fd, const uint8_t *frame, int len);
 
 /* Check if an fd is a packet socket. */
 int  packet_is_valid_fd(int fd);

@@ -337,6 +337,7 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/quota.c \
          src/net/dhcp.c \
          src/kernel/irq_affinity.c \
+         src/kernel/tpm_rng.c \
          src/kernel/trace.c \
          src/kernel/trace_events.c \
          src/kernel/smap_smep_umip.c \
@@ -459,6 +460,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/div64.c \
          src/kernel/gpiolib.c \
          src/kernel/io_map.c \
+         src/kernel/io_uring.c \
          src/kernel/config_gz.c \
          src/kernel/fault_inject.c \
          src/kernel/kpti.c \
@@ -626,7 +628,23 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/erofs.c \
          src/fs/f2fs.c \
          src/fs/jffs2.c \
-         src/fs/nilfs2.c
+         src/fs/nilfs2.c \
+         src/kernel/tpm_rng.c \
+         src/kernel/numa_balancing.c \
+         src/kernel/uprobes.c \
+         src/kernel/early_serial.c \
+         src/kernel/efi_runtime.c \
+         src/kernel/io_uring.c \
+         src/memory/mglru.c \
+         src/memory/page_pool.c \
+         src/net/af_unix.c \
+         src/net/af_packet.c \
+         src/net/6lowpan.c \
+         src/drivers/dm-era.c \
+         src/drivers/dma_buf.c \
+         src/drivers/bonding.c \
+         src/kernel/ras_netlink.c \
+         src/net/xdp.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

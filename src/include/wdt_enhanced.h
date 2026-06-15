@@ -3,57 +3,74 @@
 
 #include "types.h"
 
-/* Enhanced watchdog states */
-#define WDT_STATE_STOPPED   0
-#define WDT_STATE_RUNNING   1
-#define WDT_STATE_TIMEOUT   2
+/*
+ * wdt_enhanced.h — Enhanced watchdog pretimeout NMI and governor support
+ *
+ * Extends the basic software watchdog with:
+ *   - Pretimeout NMI delivery via APIC (lapic_send_ipi with NMI delivery mode)
+ *   - Configurable governors: panic, dump, none
+ *   - /sys/class/watchdog/watchdog0/ sysfs interface
+ *
+ * Architecture: x86-64
+ */
 
-/* Watchdog pretimeout action */
-#define WDT_ACT_NONE        0
-#define WDT_ACT_INT         1
-#define WDT_ACT_RESET       2
-#define WDT_ACT_NMI         3
+/* ── Pretimeout governors ──────────────────────────────────────────── */
+#define WDT_GOVERNOR_PANIC  0   /* Call panic() on pretimeout */
+#define WDT_GOVERNOR_DUMP   1   /* Dump register state of all CPUs, don't reset */
+#define WDT_GOVERNOR_NONE   2   /* No action on pretimeout */
 
-/* Hardware watchdog I/O ports (Intel TCO) */
-#define TCO_BASE           0x60   /* TCOBASE typically at 0x60 on ICH/PCH */
-#define TCO_RLD            (TCO_BASE + 0x00)  /* TCO Reload */
-#define TCO_DAT_IN         (TCO_BASE + 0x02)  /* TCO Data In */
-#define TCO_DAT_OUT        (TCO_BASE + 0x04)  /* TCO Data Out */
-#define TCO1_STS           (TCO_BASE + 0x04)  /* TCO1 Status */
-#define TCO2_STS           (TCO_BASE + 0x06)  /* TCO2 Status */
-#define TCO1_CNT           (TCO_BASE + 0x08)  /* TCO1 Control */
-#define TCO2_CNT           (TCO_BASE + 0x0A)  /* TCO2 Control */
+/* ── Public API ────────────────────────────────────────────────────── */
 
-/* TCO1_CNT bits */
-#define TCO_CNT_TMR_HALT   (1 << 11)
-#define TCO_CNT_TMR_PERIOD (1 << 13)
+/* Set the pretimeout governor (WDT_GOVERNOR_PANIC, _DUMP, or _NONE). */
+void wdt_set_pretimeout_governor(int gov);
 
-/* Software watchdog + hardware hybrid state */
-struct wdt_enhanced_state {
-    int      active;
-    int      timeout_secs;
-    int      pretimeout_secs;
-    int      pretimeout_action;
-    uint64_t last_pet;
-    uint64_t timeout_ticks;
-    int      timer_id;
-    int      pretimer_id;
-    int      hw_watchdog;     /* Whether HW TCO watchdog is available */
-};
+/* Get the current pretimeout governor. */
+int wdt_get_pretimeout_governor(void);
 
-/* Callback type for pretimeout */
-typedef void (*wdt_pretimeout_fn_t)(void);
+/*
+ * Send an NMI to all CPUs (including self) via APIC.
+ * Uses the local APIC ICR with delivery mode = NMI (100b).
+ * Safe to call with interrupts disabled.
+ */
+void wdt_send_nmi_all_cpus(void);
 
-/* Enhanced API */
-int  wdt_enhanced_init(int timeout_secs);
-void wdt_enhanced_pet(void);
-void wdt_enhanced_stop(void);
-int  wdt_enhanced_set_pretimeout(int secs, int action);
-void wdt_enhanced_set_pretimeout_fn(wdt_pretimeout_fn_t fn);
-int  wdt_enhanced_get_state(void);
-int  wdt_enhanced_get_timeout(void);
-int  wdt_enhanced_get_remaining(void);
-int  wdt_enhanced_hw_probe(void);
-void wdt_enhanced_hw_pet(void);
+/*
+ * Dump register state of all CPUs.
+ * In SMP mode, sends NMI backtrace IPIs to other CPUs to capture
+ * their register state, then dumps the local CPU's registers.
+ * In UP mode, just dumps the local CPU.
+ */
+void wdt_dump_all_cpu_regs(void);
+
+/*
+ * Initialize the watchdog sysfs interface.
+ * Creates /sys/class/watchdog/ and /sys/class/watchdog/watchdog0/
+ * with pretimeout, pretimeout_governor, and timeout attributes.
+ * Called once during boot after sysfs_init().
+ */
+void watchdog_sysfs_init(void);
+
+/*
+ * Watchdog pretimeout action — called from the pretimeout timer tick.
+ * Evaluates the current governor and takes the configured action:
+ *   PANIC → call panic()
+ *   DUMP  → print register dumps, do NOT reset
+ *   NONE  → print warning, do nothing else
+ */
+void wdt_pretimeout_action(void);
+
+/* ── Convenience: NMI delivery via APIC ICR ───────────────────────────
+ *
+ * The APIC ICR delivery mode for NMI is 4 (binary 100).
+ * Defined here so both watchdog and other subsystems can use it.
+ */
+#define ICR_DELIVERY_NMI    (4UL << 8)   /* NMI delivery mode for ICR */
+
+/* NMI vector number used for IPI-based NMI delivery.
+ * When the LAPIC ICR delivery mode is NMI, the vector field in
+ * bits [7:0] is ignored (NMI has no vector number), but we still
+ * need to write a valid-looking value for the hardware.  Using
+ * vector 0x02 (the legacy NMI pin vector) is conventional. */
+#define IPI_VECTOR_NMI       0x02   /* Legacy NMI vector number */
 
 #endif /* WDT_ENHANCED_H */

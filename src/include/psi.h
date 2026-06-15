@@ -32,10 +32,18 @@
 #define PSI_WINDOW_300S  300
 #define PSI_NUM_WINDOWS  3
 
+/* ── Stall-state flags (per task) ──────────────────────────────────── */
+#define PSI_FLAG_CPU_STALL     (1 << 0)
+#define PSI_FLAG_MEM_STALL    (1 << 1)
+#define PSI_FLAG_IO_STALL     (1 << 2)
+
 /* ── Exported API ──────────────────────────────────────────────────── */
 
 /* Initialise PSI tracking.  Called once during boot. */
 void psi_init(void);
+
+/* Initialise the periodic PSI update timer.  Called after timers_init(). */
+void psi_timer_init(void);
 
 /*
  * Update stall tracking for a given resource.
@@ -56,5 +64,38 @@ void psi_update(int resource, uint64_t wall_ticks,
  * or negative on error.
  */
 int psi_gen_proc_file(int resource, char *buf, int max);
+
+/*
+ * ── Per-resource stall begin / end markers ───────────────────────────
+ *
+ * These track concurrency: the number of tasks currently stalled on a
+ * resource.  psi_update() uses these counts to determine "some" (≥1)
+ * vs "full" (all non-idle tasks stalled) pressure state.
+ *
+ * psi_cpu_enter / leave:
+ *   Called from the scheduler on context switch.
+ *   psi_cpu_enter() when a task becomes runnable but not running
+ *     (preempted / yields while still runnable).
+ *   psi_cpu_leave() when a task acquires the CPU (is scheduled in).
+ *
+ * psi_memstall_enter / leave:
+ *   Wrap page-fault handling and any other synchronous memory wait.
+ *   psi_memstall_enter() at fault entry, psi_memstall_leave() at exit.
+ *
+ * psi_io_enter / leave:
+ *   Wrap IO submission / completion in the block layer.
+ */
+void psi_cpu_enter(void);
+void psi_cpu_leave(void);
+void psi_memstall_enter(void);
+void psi_memstall_leave(void);
+void psi_io_enter(void);
+void psi_io_leave(void);
+
+/*
+ * Read the current number of tasks stalled on a given resource.
+ * Used internally and for diagnostics (e.g. /proc/pressure).
+ */
+int psi_stall_count(int resource);
 
 #endif /* PSI_H */

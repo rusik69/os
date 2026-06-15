@@ -802,6 +802,11 @@ struct linux_dirent64 {
 /* ── kexec (Item 362) ─────────────────────────────────────────── */
 #define SYS_KEXEC_LOAD       778  /* kexec_load(phys_addr, entry, flags) → 0 or -1 */
 
+/* ── io_uring syscalls ───────────────────────────────────────────── */
+#define SYS_IO_URING_SETUP    425  /* io_uring_setup(entries, params) → fd */
+#define SYS_IO_URING_ENTER    426  /* io_uring_enter(fd, to_submit, min_complete, flags) */
+#define SYS_IO_URING_REGISTER 427  /* io_uring_register(fd, opcode, arg, nr_args) */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.

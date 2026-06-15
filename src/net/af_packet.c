@@ -376,6 +376,82 @@ uint16_t packet_get_protocol(int fd)
     return ps->protocol;
 }
 
+/* ── getsockname ───────────────────────────────────────────────────── */
+
+int packet_getsockname(int fd, struct sockaddr_ll *addr)
+{
+    if (!addr)
+        return -EFAULT;
+
+    spinlock_acquire(&packet_lock);
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps) {
+        spinlock_release(&packet_lock);
+        return -EBADF;
+    }
+
+    memset(addr, 0, sizeof(struct sockaddr_ll));
+    addr->sll_family   = AF_PACKET;
+    addr->sll_protocol = ps->protocol;
+    addr->sll_ifindex  = ps->ifindex;
+    addr->sll_hatype   = 1;  /* ARPHRD_ETHER */
+    addr->sll_pkttype  = PACKET_HOST;
+    addr->sll_halen    = 6;  /* Ethernet */
+
+    /* If bound to an interface, copy its MAC address */
+    if (ps->ifindex >= 0 && netif_count() > 0 && ps->ifindex < netif_count()) {
+        struct net_device *ndev = netif_get(ps->ifindex);
+        if (ndev)
+            memcpy(addr->sll_addr, ndev->mac, 6);
+    }
+
+    spinlock_release(&packet_lock);
+    return 0;
+}
+
+/* ── Simple BPF filter support ───────────────────────────────────────
+ * Stores a copy of the filter program and applies it to incoming frames.
+ * For now, this is a stub that accepts all packets (BPF_PASS).
+ * A full implementation would execute the BPF instruction set. */
+
+int packet_set_filter(int fd, const struct sock_fprog *fprog)
+{
+    (void)fprog;
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps)
+        return -EINVAL;
+
+    spinlock_acquire(&packet_lock);
+    /* Stub: accept all. In a full implementation, we would copy the
+     * filter program and set ps->filter to the copied program. */
+    if (fprog && fprog->len > 0) {
+        /* Validate filter length */
+        if (fprog->len > 256) { /* reasonable max */
+            spinlock_release(&packet_lock);
+            return -EINVAL;
+        }
+        /* For now just accept all — store that a filter was set */
+        ps->bound = 1; /* mark as having a filter */
+        /* We would normally do:
+         *   ps->filter_len = fprog->len;
+         *   ps->filter_prog = kmemdup(fprog->filter, ...);
+         * and set ps->filter_active = 1;
+         */
+    }
+    spinlock_release(&packet_lock);
+    return 0;
+}
+
+/* Apply BPF filter to a frame.  Returns BPF_PASS (1) or BPF_KILL (0).
+ * Stub: always passes all frames. */
+int packet_apply_filter(int fd, const uint8_t *frame, int len)
+{
+    (void)fd;
+    (void)frame;
+    (void)len;
+    return BPF_PASS; /* Accept all for now */
+}
+
 /* ── PACKET_MMAP ring ─────────────────────────────────────────────── */
 
 int packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring)

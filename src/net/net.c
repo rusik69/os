@@ -12,6 +12,7 @@
 #include "export.h"
 #include "netdevice.h"
 #include "net_rps.h"
+#include "xdp.h"           /* XDP hook for early packet processing */
 
 /* Network state lock — protects all of the following globals */
 static spinlock_t net_lock = SPINLOCK_INIT;
@@ -1129,6 +1130,18 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
 {
     if (len < (int)sizeof(struct eth_header))
         return;
+
+    /* ── XDP hook: run XDP program before protocol dispatch ──────
+     * If the XDP program returns XDP_DROP, the packet is discarded.
+     * XDP_TX would bounce it back (not implemented here).
+     * XDP_PASS (default) continues normal processing. */
+    int xdp_act = xdp_run(pkt_buf, len, -1);
+    if (xdp_act == XDP_DROP || xdp_act == XDP_ABORTED) {
+        net_iface_stats.rx_drops++;
+        return;
+    }
+    /* XDP_TX would be implemented by calling netif_send with a
+     * swapped MAC and returning.  Omitted for simplicity. */
 
     struct eth_header *eth = (struct eth_header *)pkt_buf;
     uint16_t type = ntohs(eth->type);

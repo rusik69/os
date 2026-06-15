@@ -486,6 +486,41 @@ void module_alias_unregister(const char *module_name);
  * The returned pointer is valid until the next alias operation. */
 const char *module_alias_find(const char *modalias);
 
+/* ── Module signing (appended signature support) ──────────────── */
+
+/** Signature format appended to module binary (like Linux MODULE_SIG_STRING).
+ *  The magic string "~Module signature appended~\n" is placed after the sig. */
+#define MODULE_SIG_MAGIC      "~Module signature appended~\n"
+#define MODULE_SIG_MAGIC_LEN  28  /* strlen of above */
+#define MODULE_SIG_STRING_LEN (MODULE_SIG_MAGIC_LEN + MODULE_SIG_LEN + 4)
+
+/* Module verification modes for /sys/kernel/module_verify */
+#define MODULE_VERIFY_OFF      0   /* no verification */
+#define MODULE_VERIFY_WARN     1   /* log warning, allow loading */
+#define MODULE_VERIFY_ENFORCE  2   /* reject unsigned/invalid modules */
+
+/** Extract an appended RSA+SHA256 signature from the end of module data.
+ *  Scans for the magic string and extracts the 256-byte signature.
+ *  @data      Pointer to module ELF data
+ *  @data_len  Length of module data
+ *  @sig_out   Output buffer for 256-byte RSA signature (or NULL to just check)
+ *  @hash_out  Output buffer for SHA-256 hash (or NULL)
+ *  Returns 0 on success (signature found), -ENOENT if no signature present. */
+int modsig_extract(const uint8_t *data, size_t data_len,
+                   uint8_t sig_out[MODULE_SIG_LEN],
+                   uint8_t hash_out[SHA256_DIGEST_SIZE]);
+
+/** Verify an appended RSA+SHA256 signature against the built-in public key.
+ *  Computes SHA-256 of the module data (excluding signature), then verifies
+ *  the RSA-2048 PKCS#1 v1.5 signature.
+ *  @data      Pointer to module ELF data (WITH appended signature)
+ *  @data_len  Length of module data including appended signature
+ *  Returns 0 on success, -EKEYREJECTED on mismatch, -ENOENT if no signature. */
+int modsig_verify(const uint8_t *data, size_t data_len);
+
+/* Get the current module verification mode (0=off, 1=warn, 2=enforce). */
+int module_verify_get_mode(void);
+
 /* ── Module sysfs interface (M30) ──────────────────────────────── */
 
 /* Create sysfs entries for all parameters of a loaded module.

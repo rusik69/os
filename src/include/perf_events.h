@@ -294,4 +294,79 @@ int topdown_read(struct topdown_metrics *metrics);
 /* Disable topdown counters on the current CPU. */
 void topdown_disable(void);
 
+/* ══════════════════════════════════════════════════════════════════════
+ * Perf Event Sampling — Context Switch, Page Fault, MMAP Tracking
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Ring-buffer-based sampling of OS events for perf-like analysis.
+ * Each event type has its own 4096-entry static ring buffer.
+ * Readable via /sys/kernel/debug/perf/<type>.
+ */
+
+/* Maximum entries per event type ring buffer */
+#define PERF_SAMPLE_BUF_SIZE      4096
+
+/* Context switch reasons */
+#define PERF_CSWITCH_YIELD        0
+#define PERF_CSWITCH_PREEMPT      1
+#define PERF_CSWITCH_SLEEP        2
+#define PERF_CSWITCH_WAKE         3
+
+/* Context switch event record */
+struct perf_cswitch_sample {
+    uint64_t timestamp_ns;
+    uint32_t prev_pid;
+    uint32_t next_pid;
+    uint32_t reason;            /* PERF_CSWITCH_* */
+} __attribute__((packed));
+
+/* Page fault event record */
+struct perf_pf_sample_v2 {
+    uint64_t timestamp_ns;
+    uint64_t addr;
+    uint32_t flags;             /* PF flags (major=bit 0) */
+    uint32_t pid;
+} __attribute__((packed));
+
+/* MMAP event record */
+struct perf_mmap_sample {
+    uint64_t timestamp_ns;
+    uint64_t addr;
+    uint64_t len;
+    uint32_t pid;
+    uint32_t flags;             /* 1=mmap, 0=munmap */
+} __attribute__((packed));
+
+/* ── Perf Sample API ───────────────────────────────────────────────── */
+
+/* Initialize perf sample ring buffers */
+void perf_sample_init(void);
+
+/* Context switch event */
+void perf_context_switch_event(uint32_t prev_pid, uint32_t next_pid, uint32_t reason);
+
+/* Page fault event */
+void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid);
+
+/* MMAP/Munmap event */
+void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len, uint32_t flags);
+
+/* Read samples from ring buffers (0 on success, negative on error) */
+int perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count);
+int perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count);
+int perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count);
+
+/* Clear sample ring buffers */
+void perf_clear_cswitch(void);
+void perf_clear_pf(void);
+void perf_clear_mmap(void);
+
+/* Enable/disable individual event sampling */
+void perf_cswitch_enable_sampling(void);
+void perf_cswitch_disable_sampling(void);
+void perf_pf_enable_sampling(void);
+void perf_pf_disable_sampling(void);
+void perf_mmap_enable_sampling(void);
+void perf_mmap_disable_sampling(void);
+
 #endif /* PERF_EVENTS_H */

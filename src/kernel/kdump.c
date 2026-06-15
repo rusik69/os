@@ -7,6 +7,9 @@
 #include "vmm.h"
 #include "smp.h"
 #include "process.h"
+#include "kexec.h"
+#include "cmdline.h"
+#include "sysfs.h"
 
 /* ── External symbols from the linker script ── */
 extern uint8_t _text_start[];
@@ -29,11 +32,160 @@ static int kdump_initialized = 0;
  * This is just below the pstore region at 0x7FE00000.
  */
 
+/* ── Crash kernel parameter parsing ────────────────────────────────────
+ *
+ * Parse crashkernel=size[@offset] from the kernel command line.
+ * Examples: crashkernel=64M@256M, crashkernel=128M
+ */
+
+/* Parse a size string like "64M", "256M", "1G" into bytes.
+ * Returns 0 on success, -1 on error. */
+static int parse_size_str(const char *str, uint64_t *out)
+{
+    if (!str || !*str) return -1;
+
+    uint64_t val = 0;
+    const char *p = str;
+    while (*p >= '0' && *p <= '9') {
+        val = val * 10 + (uint64_t)(*p - '0');
+        p++;
+    }
+    if (p == str) return -1;  /* no digits */
+
+    /* Check suffix */
+    if (*p == 'K' || *p == 'k') {
+        val *= 1024ULL;
+        p++;
+    } else if (*p == 'M' || *p == 'm') {
+        val *= 1024ULL * 1024ULL;
+        p++;
+    } else if (*p == 'G' || *p == 'g') {
+        val *= 1024ULL * 1024ULL * 1024ULL;
+        p++;
+    }
+
+    /* Ignore trailing whitespace */
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+        p++;
+
+    if (*p != '\0') return -1;  /* trailing garbage */
+
+    *out = val;
+    return 0;
+}
+
+/*
+ * kdump_parse_crashkernel — Parse crashkernel= kernel parameter.
+ *
+ * Format: crashkernel=size[@offset]
+ *   size:   Size of the crash kernel region (e.g., 64M, 128M, 1G)
+ *   offset: Physical address offset (e.g., 256M). Optional.
+ *
+ * If offset is not specified, uses CRASH_KERNEL_DEFAULT_BASE (256 MB).
+ *
+ * Returns 0 on success (or no parameter found), -1 on parse error.
+ */
+static int kdump_parse_crashkernel(void)
+{
+    const char *param = cmdline_get("crashkernel");
+    if (!param || !*param) {
+        /* No crashkernel= parameter — use defaults if not yet set */
+        if (crash_kernel_size == 0) {
+            crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
+            crash_kernel_base = CRASH_KERNEL_DEFAULT_BASE;
+            kprintf("[kdump] crashkernel: using defaults: %llu MB at 0x%llx\n",
+                    (unsigned long long)(crash_kernel_size / (1024 * 1024)),
+                    (unsigned long long)crash_kernel_base);
+        }
+        return 0;
+    }
+
+    kprintf("[kdump] crashkernel= parameter: \"%s\"\n", param);
+
+    /* Make a mutable copy */
+    char buf[64];
+    size_t plen = strlen(param);
+    if (plen >= sizeof(buf))
+        plen = sizeof(buf) - 1;
+    memcpy(buf, param, plen);
+    buf[plen] = '\0';
+
+    /* Look for '@' separator */
+    char *at = strchr(buf, '@');
+    if (at) {
+        *at = '\0';
+        /* Parse size (before @) */
+        if (parse_size_str(buf, &crash_kernel_size) != 0) {
+            kprintf("[!!] kdump: invalid crashkernel size: \"%s\"\n", buf);
+            crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
+            return -1;
+        }
+        /* Parse offset (after @) */
+        if (parse_size_str(at + 1, &crash_kernel_base) != 0) {
+            kprintf("[!!] kdump: invalid crashkernel offset: \"%s\"\n", at + 1);
+            crash_kernel_base = CRASH_KERNEL_DEFAULT_BASE;
+            return -1;
+        }
+    } else {
+        /* No '@' — just size, use default offset */
+        if (parse_size_str(buf, &crash_kernel_size) != 0) {
+            kprintf("[!!] kdump: invalid crashkernel size: \"%s\"\n", buf);
+            crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
+            return -1;
+        }
+        crash_kernel_base = CRASH_KERNEL_DEFAULT_BASE;
+    }
+
+    /* Validate: minimum 4 MB, align to 4 KB page boundary */
+    if (crash_kernel_size < (4ULL * 1024 * 1024)) {
+        kprintf("[!!] kdump: crashkernel size too small (%llu bytes), "
+                "using 64 MB\n",
+                (unsigned long long)crash_kernel_size);
+        crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
+    }
+    if (crash_kernel_base & 0xFFFULL) {
+        kprintf("[!!] kdump: crashkernel base 0x%llx not page-aligned\n",
+                (unsigned long long)crash_kernel_base);
+        crash_kernel_base &= ~0xFFFULL;
+    }
+
+    kprintf("[OK] kdump: crashkernel region: %llu MB at phys 0x%llx\n",
+            (unsigned long long)(crash_kernel_size / (1024 * 1024)),
+            (unsigned long long)crash_kernel_base);
+    return 0;
+}
+
+/* ── Crash kernel region reservation ─────────────────────────────────── */
+
+static void kdump_reserve_crash_kernel(void)
+{
+    if (crash_kernel_reserved) {
+        kprintf("[kdump] crash kernel region already reserved\n");
+        return;
+    }
+
+    /* Parse crashkernel= parameter first */
+    kdump_parse_crashkernel();
+
+    if (crash_kernel_size == 0) {
+        kprintf("[kdump] no crash kernel region configured\n");
+        return;
+    }
+
+    /* Reserve the physical region */
+    pmm_reserve_frames(crash_kernel_base, crash_kernel_size);
+    crash_kernel_reserved = 1;
+
+    kprintf("[OK] kdump: reserved %llu MB crash kernel region at phys 0x%llx\n",
+            (unsigned long long)(crash_kernel_size / (1024 * 1024)),
+            (unsigned long long)crash_kernel_base);
+}
+
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
 void kdump_init(void)
 {
-    /* Reserve the physical region */
+    /* Reserve the physical region for local crash dump */
     pmm_reserve_frames(KDUMP_PHYS_BASE, KDUMP_REGION_SIZE);
 
     /* Map the region into kernel virtual address space */
@@ -54,8 +206,140 @@ void kdump_init(void)
     memset((void *)kdump_virt, 0, KDUMP_REGION_SIZE);
     kdump_initialized = 1;
 
+    /* Reserve the crash kernel region (if crashkernel= parameter present) */
+    kdump_reserve_crash_kernel();
+
     kprintf("[OK] kdump: 1 MB crash dump region at phys 0x%llx\n",
             (unsigned long long)KDUMP_PHYS_BASE);
+}
+
+/* ── Sysfs entries for /sys/kernel/ ────────────────────────────────────
+ *
+ * Expose:
+ *   /sys/kernel/kexec_load_disabled     — writable, default 0
+ *   /sys/kernel/crash_kexec_post_notifiers — writable, default 0
+ */
+
+/* Read callback for /sys/kernel/kexec_load_disabled */
+static int sysfs_kexec_disabled_read(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    return snprintf(buf, max_size, "%d\n", kexec_load_disabled);
+}
+
+/* Write callback for /sys/kernel/kexec_load_disabled */
+static int sysfs_kexec_disabled_write(const char *data, uint32_t size,
+                                       void *priv)
+{
+    (void)priv;
+    if (size == 0) return -1;
+
+    /* Accept: "0", "1", "true", "false", "on", "off" */
+    if ((data[0] == '1') ||
+        (size >= 4 && (data[0] == 't' || data[0] == 'T')) ||
+        (size >= 2 && (data[0] == 'o' || data[0] == 'O'))) {
+        kexec_load_disabled = 1;
+    } else {
+        kexec_load_disabled = 0;
+    }
+    return 0;
+}
+
+/* Read callback for /sys/kernel/crash_kexec_post_notifiers */
+static int sysfs_crash_kexec_post_notifiers_read(char *buf, uint32_t max_size,
+                                                   void *priv)
+{
+    (void)priv;
+    return snprintf(buf, max_size, "%d\n", crash_kexec_post_notifiers);
+}
+
+/* Write callback for /sys/kernel/crash_kexec_post_notifiers */
+static int sysfs_crash_kexec_post_notifiers_write(const char *data,
+                                                    uint32_t size,
+                                                    void *priv)
+{
+    (void)priv;
+    if (size == 0) return -1;
+
+    if ((data[0] == '1') ||
+        (size >= 4 && (data[0] == 't' || data[0] == 'T')) ||
+        (size >= 2 && (data[0] == 'o' || data[0] == 'O'))) {
+        crash_kexec_post_notifiers = 1;
+    } else {
+        crash_kexec_post_notifiers = 0;
+    }
+    return 0;
+}
+
+/*
+ * kdump_sysfs_init — Create /sys/kernel/ sysfs entries for kexec/kdump.
+ *
+ * Called once from kernel_main() after sysfs_init().
+ */
+void kdump_sysfs_init(void)
+{
+    /* Ensure /sys/kernel/ directory exists */
+    if (sysfs_create_dir("/sys/kernel") < 0) {
+        /* Might already exist — ignore */
+    }
+
+    /* /sys/kernel/kexec_load_disabled (writable) */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/kexec_load_disabled",
+            "0\n", NULL,
+            sysfs_kexec_disabled_read, sysfs_kexec_disabled_write) < 0) {
+        kprintf("[kdump] sysfs: failed to create kexec_load_disabled\n");
+    }
+
+    /* /sys/kernel/crash_kexec_post_notifiers (writable) */
+    if (sysfs_create_writable_file(
+            "/sys/kernel/crash_kexec_post_notifiers",
+            "0\n", NULL,
+            sysfs_crash_kexec_post_notifiers_read,
+            sysfs_crash_kexec_post_notifiers_write) < 0) {
+        kprintf("[kdump] sysfs: failed to create crash_kexec_post_notifiers\n");
+    }
+
+    kprintf("[OK] kdump: /sys/kernel sysfs entries created\n");
+}
+
+/* ── Panic-time crash kexec ────────────────────────────────────────────
+ *
+ * On panic(), if a crash kernel has been loaded via kexec_crash_load(),
+ * and crash_kexec_post_notifiers is respected, we can transition into
+ * the crash kernel to perform a full memory dump.
+ *
+ * This function is called from panic().  Returns 1 if crash kexec was
+ * triggered, 0 if no crash kernel was loaded.
+ */
+int kdump_crash_kexec_on_panic(void)
+{
+    if (!crash_kernel_reserved) {
+        /* No crash kernel region reserved — nothing to do */
+        return 0;
+    }
+
+    /* Check if a crash kernel has been loaded */
+    if (!kexec_crash_is_loaded()) {
+        kprintf("[kdump] No crash kernel loaded — skipping crash kexec\n");
+        return 0;
+    }
+
+    kprintf("[kdump] Booting crash kernel for memory dump...\n");
+
+    /* Write panic marker to pstore before jumping */
+    {
+        extern int pstore_write(uint8_t type, const uint8_t *data, int len);
+        const char *msg = "CRASH KEXEC TRIGGERED";
+        pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)msg,
+                     (int)strlen(msg));
+    }
+
+    /* Jump to the crash kernel — does not return */
+    kexec_crash_reboot();
+
+    /* Unreachable */
+    return 1;
 }
 
 /* ── Read CPU registers into entries array ───────────────────────────── */

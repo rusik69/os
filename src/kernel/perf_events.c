@@ -1436,3 +1436,227 @@ int perf_flame_num_stacks(void)
 {
     return flame_state.num_stacks;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Perf Event Sampling — Context Switch, Page Fault, MMAP tracking
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * Ring-buffer-based sampling of OS events.  Each event type has its own
+ * 4096-entry static ring buffer.  Events are timestamped with nanosecond
+ * resolution and readable via /sys/kernel/debug/perf/<type>.
+ */
+
+/* ── Context Switch Sampling ───────────────────────────────────────── */
+
+static struct {
+    struct perf_cswitch_sample events[PERF_SAMPLE_BUF_SIZE];
+    volatile uint32_t write_idx;
+    int enabled;
+    int initialized;
+} g_perf_cswitch;
+
+static spinlock_t g_perf_cswitch_lock;
+
+void perf_cswitch_enable_sampling(void)
+{
+    g_perf_cswitch.enabled = 1;
+}
+
+void perf_cswitch_disable_sampling(void)
+{
+    g_perf_cswitch.enabled = 0;
+}
+
+void perf_context_switch_event(uint32_t prev_pid, uint32_t next_pid,
+                                uint32_t reason)
+{
+    if (!g_perf_cswitch.initialized || !g_perf_cswitch.enabled)
+        return;
+
+    uint32_t idx = __sync_fetch_and_add(&g_perf_cswitch.write_idx, 1)
+                   % PERF_SAMPLE_BUF_SIZE;
+
+    struct perf_cswitch_sample *s = &g_perf_cswitch.events[idx];
+    s->timestamp_ns = timer_get_ns();
+    s->prev_pid = prev_pid;
+    s->next_pid = next_pid;
+    s->reason = reason;
+}
+
+int perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count)
+{
+    if (!buf || max_count <= 0 || !g_perf_cswitch.initialized)
+        return 0;
+
+    uint32_t count = g_perf_cswitch.write_idx;
+    uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
+    if ((int)n > max_count)
+        n = (uint32_t)max_count;
+
+    for (uint32_t i = 0; i < n; i++)
+        buf[i] = g_perf_cswitch.events[i];
+
+    return (int)n;
+}
+
+void perf_clear_cswitch(void)
+{
+    if (!g_perf_cswitch.initialized)
+        return;
+    memset(g_perf_cswitch.events, 0, sizeof(g_perf_cswitch.events));
+    g_perf_cswitch.write_idx = 0;
+}
+
+/* ── Page Fault Sampling ───────────────────────────────────────────── */
+
+static struct {
+    struct perf_pf_sample_v2 events[PERF_SAMPLE_BUF_SIZE];
+    volatile uint32_t write_idx;
+    int enabled;
+    int initialized;
+} g_perf_pf_v2;
+
+static spinlock_t g_perf_pf_v2_lock;
+
+void perf_pf_enable_sampling(void)
+{
+    g_perf_pf_v2.enabled = 1;
+}
+
+void perf_pf_disable_sampling(void)
+{
+    g_perf_pf_v2.enabled = 0;
+}
+
+void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid)
+{
+    if (!g_perf_pf_v2.initialized || !g_perf_pf_v2.enabled)
+        return;
+
+    uint32_t idx = __sync_fetch_and_add(&g_perf_pf_v2.write_idx, 1)
+                   % PERF_SAMPLE_BUF_SIZE;
+
+    struct perf_pf_sample_v2 *s = &g_perf_pf_v2.events[idx];
+    s->timestamp_ns = timer_get_ns();
+    s->addr = addr;
+    s->flags = flags;
+    s->pid = pid;
+}
+
+int perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
+{
+    if (!buf || max_count <= 0 || !g_perf_pf_v2.initialized)
+        return 0;
+
+    uint32_t count = g_perf_pf_v2.write_idx;
+    uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
+    if ((int)n > max_count)
+        n = (uint32_t)max_count;
+
+    for (uint32_t i = 0; i < n; i++)
+        buf[i] = g_perf_pf_v2.events[i];
+
+    return (int)n;
+}
+
+void perf_clear_pf(void)
+{
+    if (!g_perf_pf_v2.initialized)
+        return;
+    memset(g_perf_pf_v2.events, 0, sizeof(g_perf_pf_v2.events));
+    g_perf_pf_v2.write_idx = 0;
+}
+
+/* ── MMAP/Munmap Tracking ──────────────────────────────────────────── */
+
+static struct {
+    struct perf_mmap_sample events[PERF_SAMPLE_BUF_SIZE];
+    volatile uint32_t write_idx;
+    int enabled;
+    int initialized;
+} g_perf_mmap;
+
+static spinlock_t g_perf_mmap_lock;
+
+void perf_mmap_enable_sampling(void)
+{
+    g_perf_mmap.enabled = 1;
+}
+
+void perf_mmap_disable_sampling(void)
+{
+    g_perf_mmap.enabled = 0;
+}
+
+void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len,
+                      uint32_t flags)
+{
+    if (!g_perf_mmap.initialized || !g_perf_mmap.enabled)
+        return;
+
+    uint32_t idx = __sync_fetch_and_add(&g_perf_mmap.write_idx, 1)
+                   % PERF_SAMPLE_BUF_SIZE;
+
+    struct perf_mmap_sample *s = &g_perf_mmap.events[idx];
+    s->timestamp_ns = timer_get_ns();
+    s->addr = addr;
+    s->len = len;
+    s->pid = pid;
+    s->flags = flags;
+}
+
+int perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
+{
+    if (!buf || max_count <= 0 || !g_perf_mmap.initialized)
+        return 0;
+
+    uint32_t count = g_perf_mmap.write_idx;
+    uint32_t n = (count < PERF_SAMPLE_BUF_SIZE) ? count : PERF_SAMPLE_BUF_SIZE;
+    if ((int)n > max_count)
+        n = (uint32_t)max_count;
+
+    for (uint32_t i = 0; i < n; i++)
+        buf[i] = g_perf_mmap.events[i];
+
+    return (int)n;
+}
+
+void perf_clear_mmap(void)
+{
+    if (!g_perf_mmap.initialized)
+        return;
+    memset(g_perf_mmap.events, 0, sizeof(g_perf_mmap.events));
+    g_perf_mmap.write_idx = 0;
+}
+
+/* ── Initialization ─────────────────────────────────────────────────── */
+
+void perf_sample_init(void)
+{
+    /* Context switch buffer */
+    if (!g_perf_cswitch.initialized) {
+        memset(&g_perf_cswitch, 0, sizeof(g_perf_cswitch));
+        g_perf_cswitch.initialized = 1;
+        g_perf_cswitch.enabled = 1;
+        spinlock_init(&g_perf_cswitch_lock);
+    }
+
+    /* Page fault buffer */
+    if (!g_perf_pf_v2.initialized) {
+        memset(&g_perf_pf_v2, 0, sizeof(g_perf_pf_v2));
+        g_perf_pf_v2.initialized = 1;
+        g_perf_pf_v2.enabled = 1;
+        spinlock_init(&g_perf_pf_v2_lock);
+    }
+
+    /* MMAP buffer */
+    if (!g_perf_mmap.initialized) {
+        memset(&g_perf_mmap, 0, sizeof(g_perf_mmap));
+        g_perf_mmap.initialized = 1;
+        g_perf_mmap.enabled = 1;
+        spinlock_init(&g_perf_mmap_lock);
+    }
+
+    kprintf("[perf] Sample ring buffers initialized (%d entries each)\n",
+            PERF_SAMPLE_BUF_SIZE);
+}

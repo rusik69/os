@@ -4,6 +4,27 @@
 #include "types.h"
 
 /*
+ * Simple timeval/timezone structures for the vDSO API.
+ * These are layout-compatible with the POSIX struct timeval/timezone
+ * but defined here to avoid pulling in extraneous headers.
+ */
+struct vdso_timeval {
+    uint64_t tv_sec;
+    uint64_t tv_usec;
+};
+struct vdso_timezone {
+    int tz_minuteswest;
+    int tz_dsttime;
+};
+
+/*
+ * vDSO clock identifiers (matching CLOCK_* constants in time.h)
+ */
+#define VDSO_CLOCK_REALTIME       0
+#define VDSO_CLOCK_MONOTONIC      1
+#define VDSO_CLOCK_BOOTTIME       7
+
+/*
  * vsyscall.h — vDSO (virtual dynamic shared object) for userspace
  *
  * Maps a read-only data page + code page into every user process so
@@ -56,8 +77,14 @@ struct vdso_clock_data {
     uint64_t mono_sec;                /* Monotonic seconds */
     uint64_t mono_nsec;               /* Monotonic nanoseconds [0, 1e9) */
 
+    /* TSC frequency in kHz (for userspace use) */
+    uint64_t tsc_khz;                 /* TSC frequency in kHz */
+
+    /* Wall clock offset (seconds from epoch to monotonic base) */
+    uint64_t wall_clock_offset;       /* wall_sec - mono_sec at last update */
+
     /* Padding to fill a full page (4K) */
-    uint8_t  __pad[4031];
+    uint8_t  __pad[4015];
 } __attribute__((packed));
 
 /* Ensure the structure fits in one page */
@@ -75,5 +102,42 @@ void *vsyscall_get_page(void);
 
 /* Get the vDSO data page physical address */
 uint64_t vsyscall_get_data_phys(void);
+
+/*
+ * Exported vDSO functions that userspace can call via the vDSO page.
+ * These are also callable from kernel code for testing.
+ */
+
+/**
+ * vdso_gettimeofday — Read current time via TSC (no syscall).
+ *
+ * @tv:  output timeval (may be NULL) — struct vdso_timeval with tv_sec, tv_usec
+ * @tz:  output timezone (may be NULL) — struct vdso_timezone
+ * @return: 0 on success
+ *
+ * Uses the vDSO data page and direct TSC read to compute the current
+ * time without any ring transition.
+ */
+int vdso_gettimeofday(struct vdso_timeval *tv, struct vdso_timezone *tz);
+
+/**
+ * vdso_clock_gettime — Read current clock time via TSC (no syscall).
+ *
+ * @clk_id: clock identifier (VDSO_CLOCK_REALTIME or VDSO_CLOCK_MONOTONIC)
+ * @tp:     output timespec
+ * @return: 0 on success
+ *
+ * Uses the vDSO data page and direct TSC read to compute the current
+ * time without any ring transition.
+ */
+int vdso_clock_gettime(uint64_t clk_id, struct timespec *tp);
+
+/**
+ * vdso_get_khz — Return the TSC frequency in kHz.
+ *
+ * Can be called from userspace or kernel to get the calibrated
+ * TSC frequency without any syscall.
+ */
+uint64_t vdso_get_khz(void);
 
 #endif /* VSYSCALL_H */

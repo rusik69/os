@@ -20,6 +20,15 @@
 #include "errno.h"
 #include "cmdline.h"
 #include "aslr.h"
+#include "sha256.h"
+#include "rsa_key.h"
+
+/* RSA signature verification from lib/rsa.c */
+extern int rsa_pkcs1_v15_verify(const uint8_t *sig, size_t sig_len,
+                                const uint8_t *hash, size_t hash_len,
+                                const uint8_t *n, size_t n_len,
+                                uint32_t e,
+                                const uint8_t *digest_info, size_t di_len);
 
 /* ── Boot-time module parameters (M33) ──────────────────────────────
  *
@@ -131,6 +140,9 @@ void modules_init(void) {
 
     /* Scan the kernel cmdline for module.param=value entries */
     module_scan_cmdline_params();
+
+    /* Create /sys/kernel/module_verify sysfs file */
+    module_verify_sysfs_init();
 }
 
 /* ── Module memory allocator (M10) ──────────────────────────────── */
@@ -1089,6 +1101,149 @@ static int module_param_read_cb(char *buf, uint32_t max_size, void *priv)
     if (!kp || !buf || max_size == 0)
         return 0;
     return module_param_format_value(kp, buf, (int)max_size);
+}
+
+/* ── Module signing — appended RSA+SHA256 signature support ──────── */
+
+/** modsig_extract — Find and extract an appended RSA+SHA256 signature.
+ *
+ *  The appended signature format is:
+ *    [module ELF data] [4-byte sig_len] [256-byte RSA sig] [magic string]
+ *
+ *  The magic string is "~Module signature appended~\n" (28 bytes).
+ *  This is the same format used by Linux kernel module signing.
+ *
+ *  Returns 0 if signature found, -ENOENT if not present.
+ */
+int modsig_extract(const uint8_t *data, size_t data_len,
+                   uint8_t sig_out[MODULE_SIG_LEN],
+                   uint8_t hash_out[SHA256_DIGEST_SIZE])
+{
+    if (!data || data_len < MODULE_SIG_STRING_LEN)
+        return -ENOENT;
+
+    /* Search for the magic string at the end of the data */
+    const uint8_t *magic_pos = data + data_len - MODULE_SIG_MAGIC_LEN;
+    if (memcmp(magic_pos, MODULE_SIG_MAGIC, MODULE_SIG_MAGIC_LEN) != 0)
+        return -ENOENT;  /* no appended signature */
+
+    /* Magic found — the 4 bytes before magic contain the sig_len,
+     * and the sig_len bytes before that contain the RSA signature. */
+    const uint8_t *sig_len_bytes = magic_pos - 4;
+    uint32_t sig_len = (uint32_t)sig_len_bytes[0] |
+                      ((uint32_t)sig_len_bytes[1] << 8) |
+                      ((uint32_t)sig_len_bytes[2] << 16) |
+                      ((uint32_t)sig_len_bytes[3] << 24);
+
+    if (sig_len != MODULE_SIG_LEN)
+        return -EKEYREJECTED;
+
+    const uint8_t *sig_bytes = sig_len_bytes - MODULE_SIG_LEN;
+    if (sig_bytes < data)
+        return -EKEYREJECTED;
+
+    /* Copy the RSA signature if requested */
+    if (sig_out)
+        memcpy(sig_out, sig_bytes, MODULE_SIG_LEN);
+
+    /* Compute SHA-256 hash of the module data (everything before the signature) */
+    if (hash_out) {
+        size_t hash_len = (size_t)(sig_bytes - data);
+        sha256_hash(hash_out, data, hash_len);
+    }
+
+    return 0;
+}
+
+/** modsig_verify — Verify an appended RSA+SHA256 signature on module data.
+ *
+ *  Extracts the appended signature, computes SHA-256 of the module body,
+ *  then verifies the RSA-2048 PKCS#1 v1.5 signature using the built-in
+ *  public key from rsa_key.h.
+ *
+ *  Returns 0 on success, -ENOENT if no signature, -EKEYREJECTED if invalid.
+ */
+int modsig_verify(const uint8_t *data, size_t data_len)
+{
+    uint8_t sig[MODULE_SIG_LEN];
+    uint8_t hash[SHA256_DIGEST_SIZE];
+
+    int ret = modsig_extract(data, data_len, sig, hash);
+    if (ret < 0)
+        return ret;  /* -ENOENT or -EKEYREJECTED */
+
+    /* PKCS#1 v1.5 DigestInfo for SHA-256 (DER encoding) */
+    static const uint8_t sha256_digest_info[] = {
+        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
+        0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+        0x00, 0x04, 0x20
+    };
+#define SHA256_DI_LEN 19
+
+    /* Verify RSA signature: decrypt sig with public key, compare hash */
+    int rsa_ret = rsa_pkcs1_v15_verify(
+        sig, MODULE_SIG_LEN,
+        hash, SHA256_DIGEST_SIZE,
+        rsa_host_n, sizeof(rsa_host_n),
+        (uint32_t)(rsa_host_e[0] | (rsa_host_e[1] << 8) | (rsa_host_e[2] << 16)),
+        sha256_digest_info, SHA256_DI_LEN);
+
+    if (rsa_ret != 0) {
+        kprintf("[MOD_SIG] Appended RSA signature verification FAILED\n");
+        return -EKEYREJECTED;
+    }
+
+    kprintf("[MOD_SIG] Appended RSA signature valid (SHA-256 + RSA-2048)\n");
+    return 0;
+}
+
+/* ── /sys/kernel/module_verify sysfs file ────────────────────────── */
+
+static int g_module_verify_mode = MODULE_VERIFY_ENFORCE;
+
+/* Read callback for /sys/kernel/module_verify */
+static int module_verify_read_cb(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    return snprintf(buf, (size_t)max_size, "%d\n", g_module_verify_mode);
+}
+
+/* Write callback for /sys/kernel/module_verify */
+static int module_verify_write_cb(const char *data, uint32_t size, void *priv)
+{
+    (void)priv;
+    if (!data || size == 0) return -1;
+
+    /* Parse a single digit (0, 1, or 2) */
+    int val = data[0] - '0';
+    if (val >= MODULE_VERIFY_OFF && val <= MODULE_VERIFY_ENFORCE) {
+        g_module_verify_mode = val;
+        kprintf("[MOD] module_verify set to %d (%s)\n", val,
+                val == 0 ? "off" : (val == 1 ? "warn" : "enforce"));
+        return 0;
+    }
+    return -1;
+}
+
+/* Get the current module verification mode */
+int module_verify_get_mode(void)
+{
+    return g_module_verify_mode;
+}
+
+/* Initialize the /sys/kernel/module_verify sysfs file.
+ * Called from modules_init(). */
+static void module_verify_sysfs_init(void)
+{
+    sysfs_create_dir("/sys/kernel");
+    sysfs_create_writable_file(
+        "/sys/kernel/module_verify",
+        "2\n",
+        NULL,
+        module_verify_read_cb,
+        module_verify_write_cb);
+    kprintf("[OK] /sys/kernel/module_verify created (mode=%d)\n",
+            g_module_verify_mode);
 }
 
 /* ── Module sysfs path construction helpers ────────────────────── */

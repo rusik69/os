@@ -850,10 +850,24 @@ static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     return pos;
 }
 
+/* Helper: sum interrupt counts across all CPUs */
+static uint64_t proc_sum_interrupts(void)
+{
+    uint64_t total = 0;
+    int ncpu = smp_get_cpu_count();
+    if (ncpu < 1) ncpu = 1;
+    for (int cpu = 0; cpu < ncpu; cpu++)
+        for (int vec = 0; vec < IDT_NUM_VECTORS; vec++)
+            total += idt_get_irq_count(cpu, vec);
+    return total;
+}
+
 /* /proc/stat — CPU and system statistics */
 static int procfs_gen_stat(char *buf, int max) {
     int p = 0;
     uint64_t idle_ticks = scheduler_get_idle_ticks();
+    int ncpu = smp_get_cpu_count();
+    if (ncpu < 1) ncpu = 1;
 
     /* Aggregate per-process CPU time into system-wide counters */
     uint64_t user_ticks = 0, system_ticks = 0;
@@ -864,7 +878,7 @@ static int procfs_gen_stat(char *buf, int max) {
         system_ticks += table[i].stime_ticks;
     }
 
-    /* Linux /proc/stat format: cpu user nice system idle iowait irq softirq steal */
+    /* Aggregate line: cpu  user nice system idle iowait irq softirq steal */
     proc_str("cpu  ", buf, &p, max);
     proc_u64_to_str(user_ticks, buf, &p, max);      /* user */
     proc_str(" 0 ", buf, &p, max);                   /* nice */
@@ -873,40 +887,71 @@ static int procfs_gen_stat(char *buf, int max) {
     proc_u64_to_str(idle_ticks, buf, &p, max);      /* idle */
     proc_str(" 0 0 0 0\n", buf, &p, max);            /* iowait irq softirq steal */
 
-    proc_str("procs_running ", buf, &p, max);
-    int running = 0;
-    for (int i = 0; i < PROCESS_MAX; i++)
-        if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
-            running++;
-    proc_u64_to_str(running, buf, &p, max);
+    /* Per-CPU lines: cpu0, cpu1, ... */
+    /* We don't have per-CPU idle ticks per CPU, so distribute evenly */
+    uint64_t per_cpu_idle = idle_ticks / (uint64_t)ncpu;
+    uint64_t per_cpu_user = user_ticks / (uint64_t)ncpu;
+    uint64_t per_cpu_sys  = system_ticks / (uint64_t)ncpu;
+    for (int cpu = 0; cpu < ncpu && cpu < 64; cpu++) {
+        proc_str("cpu", buf, &p, max);
+        proc_u64_to_str((uint64_t)cpu, buf, &p, max);
+        proc_str(" ", buf, &p, max);
+        proc_u64_to_str(per_cpu_user, buf, &p, max); /* user */
+        proc_str(" 0 ", buf, &p, max);                /* nice */
+        proc_u64_to_str(per_cpu_sys, buf, &p, max);  /* system */
+        proc_str(" ", buf, &p, max);
+        proc_u64_to_str(per_cpu_idle, buf, &p, max); /* idle */
+        proc_str(" 0 0 0 0\n", buf, &p, max);         /* iowait irq softirq steal */
+    }
+
+    /* intr — total interrupts */
+    proc_str("intr ", buf, &p, max);
+    proc_u64_to_str(proc_sum_interrupts(), buf, &p, max);
     proc_str("\n", buf, &p, max);
 
-    proc_str("procs_blocked ", buf, &p, max);
-    int blocked = 0;
-    for (int i = 0; i < PROCESS_MAX; i++)
-        if (table[i].state == PROCESS_BLOCKED)
-            blocked++;
-    proc_u64_to_str(blocked, buf, &p, max);
-    proc_str("\n", buf, &p, max);
-
-    proc_str("btime ", buf, &p, max);
-    proc_u64_to_str(0, buf, &p, max); /* boot time (0 = not tracked) */
-    proc_str("\n", buf, &p, max);
-
-    /* Context switches */
+    /* ctxt — context switches */
     struct sched_stats sched_st;
     scheduler_get_stats(&sched_st);
     proc_str("ctxt ", buf, &p, max);
     proc_u64_to_str(sched_st.context_switches, buf, &p, max);
     proc_str("\n", buf, &p, max);
 
-    /* Processes created (approximate: count total processes) */
+    /* btime — boot time (0 = unknown) */
+    proc_str("btime ", buf, &p, max);
+    proc_u64_to_str(0, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* processes — number of process creations (approximate: current total) */
     proc_str("processes ", buf, &p, max);
     int total_procs = 0;
     for (int i = 0; i < PROCESS_MAX; i++)
         if (table[i].state != PROCESS_UNUSED)
             total_procs++;
-    proc_u64_to_str(total_procs, buf, &p, max);
+    proc_u64_to_str((uint64_t)total_procs, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* procs_running */
+    proc_str("procs_running ", buf, &p, max);
+    int running = 0;
+    for (int i = 0; i < PROCESS_MAX; i++)
+        if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
+            running++;
+    proc_u64_to_str((uint64_t)running, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* procs_blocked */
+    proc_str("procs_blocked ", buf, &p, max);
+    int blocked = 0;
+    for (int i = 0; i < PROCESS_MAX; i++)
+        if (table[i].state == PROCESS_BLOCKED)
+            blocked++;
+    proc_u64_to_str((uint64_t)blocked, buf, &p, max);
+    proc_str("\n", buf, &p, max);
+
+    /* softirq — total softirq count (simplified: sum of all IRQs as proxy) */
+    proc_str("softirq ", buf, &p, max);
+    uint64_t softirq_total = proc_sum_interrupts();
+    proc_u64_to_str(softirq_total, buf, &p, max);
     proc_str("\n", buf, &p, max);
 
     buf[p] = '\0';
@@ -918,12 +963,15 @@ static int procfs_gen_loadavg(char *buf, int max) {
     int p = 0;
     /* Simple: count running/ready processes as load */
     int run = 0, total = 0;
+    int last_pid = 0;
     struct process *table = process_get_table();
     for (int i = 0; i < PROCESS_MAX; i++) {
         if (table[i].state != PROCESS_UNUSED) {
             total++;
             if (table[i].state == PROCESS_RUNNING || table[i].state == PROCESS_READY)
                 run++;
+            if ((int)table[i].pid > last_pid)
+                last_pid = (int)table[i].pid;
         }
     }
 
@@ -938,7 +986,7 @@ static int procfs_gen_loadavg(char *buf, int max) {
     proc_str("/", buf, &p, max);
     proc_u64_to_str(total, buf, &p, max);
     proc_str(" ", buf, &p, max);
-    proc_u64_to_str(run, buf, &p, max);
+    proc_u64_to_str(last_pid, buf, &p, max);
     proc_str("\n", buf, &p, max);
 
     buf[p] = '\0';
@@ -1704,6 +1752,16 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     if (strcmp(path, "/proc/sys") == 0 || strcmp(path, "/proc/sys/kernel") == 0) {
         st->type = 2; st->size = 0; return 0;
     }
+    /* /proc/pressure directory */
+    if (strcmp(path, "/proc/pressure") == 0) {
+        st->type = 2; st->size = 0; return 0;
+    }
+    /* /proc/pressure/{cpu,memory,io} files */
+    if (strcmp(path, "/proc/pressure/cpu") == 0 ||
+        strcmp(path, "/proc/pressure/memory") == 0 ||
+        strcmp(path, "/proc/pressure/io") == 0) {
+        st->type = 1; st->size = 128; return 0;
+    }
     /* /proc/self is a symlink to /proc/<pid>/ — return directory type */
     if (strcmp(path, "/proc/self") == 0) {
         st->type = 2; st->size = 0; return 0;
@@ -1790,7 +1848,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int procfs_readdir(void *priv, const char *path) {
     (void)priv;
     if (strcmp(path, "/proc") == 0) {
-        kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\n");
+        kprintf("uptime\nmeminfo\ncpuinfo\nversion\nconfig.gz\nself\nstat\nloadavg\nnet\nmounts\npressure\n");
         /* Also list active PIDs */
         struct process *table = process_get_table();
         struct process *caller = process_get_current();
@@ -1817,6 +1875,12 @@ static int procfs_readdir(void *priv, const char *path) {
             }
             return 0;
         }
+    }
+
+    /* /proc/pressure/ — list pressure files */
+    if (strcmp(path, "/proc/pressure") == 0) {
+        kprintf("cpu\nmemory\nio\n");
+        return 0;
     }
     return -1;
 }

@@ -33,16 +33,21 @@
 #define REG_RSSRK(n)   (0x5C80 + (n) * 4)  /* RSS Random Key (4 dwords) */
 #define REG_RETA(i)    (0x5C00 + (i) * 4)  /* RSS Redirection Table (32 dwords, 4 entries per dword) */
 
-/* Per-queue RX register base offsets (queue 0 and 1) */
+/* Per-queue RX register base offsets (queue 0, 1, 2, 3) */
+/* Registers: RDBAL, RDBAH, RDLEN, RDH, RDT */
 static const uint32_t RX_Q_REGS[E1000_MAX_QUEUES][5] = {
-    {0x2800, 0x2804, 0x2808, 0x2810, 0x2818},  /* queue 0: RDBAL, RDBAH, RDLEN, RDH, RDT */
-    {0x2C00, 0x2C04, 0x2C08, 0x2C10, 0x2C18},  /* queue 1: RDBAL1, RDBAH1, RDLEN1, RDH1, RDT1 */
+    {0x2800, 0x2804, 0x2808, 0x2810, 0x2818},  /* queue 0 */
+    {0x2C00, 0x2C04, 0x2C08, 0x2C10, 0x2C18},  /* queue 1 */
+    {0x3000, 0x3004, 0x3008, 0x3010, 0x3018},  /* queue 2 (82576) */
+    {0x3400, 0x3404, 0x3408, 0x3410, 0x3418},  /* queue 3 (82576) */
 };
 
 /* Per-queue TX register base offsets */
 static const uint32_t TX_Q_REGS[E1000_MAX_QUEUES][5] = {
     {0x3800, 0x3804, 0x3808, 0x3810, 0x3818},  /* queue 0 */
     {0x3C00, 0x3C04, 0x3C08, 0x3C10, 0x3C18},  /* queue 1 */
+    {0x4000, 0x4004, 0x4008, 0x4010, 0x4018},  /* queue 2 (82576) */
+    {0x4400, 0x4404, 0x4408, 0x4410, 0x4418},  /* queue 3 (82576) */
 };
 
 /* ITR rates (value written is interval in 256 ns units).
@@ -55,6 +60,18 @@ static const uint32_t TX_Q_REGS[E1000_MAX_QUEUES][5] = {
  *   1953 – ~500 us interval (~2,000 int/s, low CPU)
  *   8000 – ~2 ms interval   (~500 int/s, very low CPU)
  */
+/* MSI-X related registers (82576 specific) */
+#define REG_MXUTA      0x0580C  /* MSI-X Unmask Table Array */
+#define REG_PBACLR     0x01668  /* PBA Clear */
+#define REG_IVAR       0x01700  /* Interrupt Vector Allocation Register */
+#define REG_IVAR0      REG_IVAR        /* Queue 0 -> vector mapping */
+#define REG_IVAR1      (REG_IVAR + 4)  /* Queue 1 -> vector mapping */
+#define REG_IVAR2      (REG_IVAR + 8)  /* Queue 2 -> vector mapping */
+#define REG_IVAR3      (REG_IVAR + 12) /* Queue 3 -> vector mapping */
+
+/* IVAR entry format (per queue): bits[7:0] = vector, bit[15] = valid */
+#define IVAR_ENTRY(vec)  ((vec) | 0x80)  /* lower byte: vector | valid bit */
+
 #define ITR_OFF        0
 #define ITR_HIGH       122     /* high throughput (~32K int/s) */
 #define ITR_BALANCED   488     /* balanced (~8K int/s) */
@@ -118,6 +135,17 @@ struct e1000_tx_desc {
 } __attribute__((packed));
 
 /* ── Per-queue state ───────────────────────────────────────────────── */
+struct e1000_queue_stats {
+    uint64_t rx_packets;       /* total packets received */
+    uint64_t tx_packets;       /* total packets transmitted */
+    uint64_t rx_bytes;         /* total bytes received */
+    uint64_t tx_bytes;         /* total bytes transmitted */
+    uint64_t rx_errors;        /* receive errors */
+    uint64_t tx_errors;        /* transmit errors */
+    uint64_t rx_dropped;       /* packets dropped */
+    uint64_t tx_busy;          /* transmit busy (ring full) count */
+};
+
 struct e1000_queue {
     struct e1000_rx_desc rx_descs[NUM_RX_DESC] __attribute__((aligned(16)));
     struct e1000_tx_desc tx_descs[NUM_TX_DESC] __attribute__((aligned(16)));
@@ -125,6 +153,8 @@ struct e1000_queue {
     uint8_t tx_buffers[NUM_TX_DESC][RX_BUF_SIZE] __attribute__((aligned(16)));
     int rx_cur;
     int tx_cur;
+    struct e1000_queue_stats stats;   /* per-queue statistics */
+    int irq_vector;                    /* MSI-X vector (-1 if legacy) */
 };
 
 /* ── Global state ──────────────────────────────────────────────────── */
@@ -138,6 +168,7 @@ static spinlock_t e1000_lock = SPINLOCK_INIT;
 
 /* Device variant */
 static int is_82574 = 0;  /* set to 1 if we detect 82574L */
+static int is_82576 = 0;  /* set to 1 if we detect 82576 (supports 4 queues) */
 
 /* Number of active queues (1 for 82540EM, 2 for 82574) */
 static int num_queues = 1;
@@ -383,13 +414,19 @@ static int e1000_netdev_receive(struct net_device *dev,
 int e1000_init(void) {
     struct pci_device dev;
 
-    /* Try 82540EM first, then 82574 */
+    /* Try 82540EM first, then 82574, then 82576 */
     if (pci_find_device(E1000_VENDOR, E1000_DEVICE, &dev) >= 0) {
         is_82574 = 0;
+        is_82576 = 0;
         num_queues = 1;
     } else if (pci_find_device(E1000_VENDOR, E1000_DEV_82574, &dev) >= 0) {
         is_82574 = 1;
-        num_queues = E1000_MAX_QUEUES;
+        is_82576 = 0;
+        num_queues = E1000_MAX_QUEUES < 2 ? E1000_MAX_QUEUES : 2;
+    } else if (pci_find_device(E1000_VENDOR, E1000_DEV_82576, &dev) >= 0) {
+        is_82574 = 0;
+        is_82576 = 1;
+        num_queues = E1000_MAX_QUEUES;  /* up to 4 */
     } else {
         return -1;
     }
@@ -397,7 +434,7 @@ int e1000_init(void) {
     /* Get MMIO base from BAR0 (memory-mapped, mask lower 4 bits) */
     uint64_t bar0 = dev.bar[0] & ~0xFULL;
     kprintf("  e1000: %s BAR0=0x%llx IRQ=%lu queues=%d\n",
-            is_82574 ? "82574L" : "82540EM",
+            is_82576 ? "82576" : (is_82574 ? "82574L" : "82540EM"),
             (unsigned long long)bar0, (unsigned long)dev.irq, num_queues);
 
     /* Map MMIO region (128KB) into high-half VMA space */
@@ -432,6 +469,32 @@ int e1000_init(void) {
     if (apic_is_init_complete())
         ioapic_unmask_irq(dev.irq);
     pic_unmask(dev.irq);
+
+    /* Initialize per-queue state */
+    for (int q = 0; q < E1000_MAX_QUEUES; q++) {
+        queues[q].irq_vector = -1;
+        memset(&queues[q].stats, 0, sizeof(queues[q].stats));
+    }
+
+    /* Configure per-queue interrupt vectors via IVAR (82574/82576).
+     * Each queue gets a separate MSI-X-style vector if MSI-X is available,
+     * otherwise they share the legacy IRQ. */
+    if (is_82574 || is_82576) {
+        /* For now, use a single legacy IRQ for all queues.
+         * On real hardware with MSI-X, each queue would get its own vector. */
+        for (int q = 0; q < num_queues; q++) {
+            uint32_t ivar_reg;
+            uint32_t ivar_val;
+            int reg_idx = q / 2;  /* two entries per IVAR register */
+            int byte_shift = (q % 2) * 8;
+            /* Each queue entry in IVAR: bits[7:0] = vector, bit[7] = valid */
+            ivar_val = IVAR_ENTRY(e1000_irq_line);
+            ivar_reg = e1000_read(REG_IVAR + reg_idx * 4);
+            ivar_reg &= ~(0xFFu << byte_shift);
+            ivar_reg |= (ivar_val << byte_shift);
+            e1000_write(REG_IVAR + reg_idx * 4, ivar_reg);
+        }
+    }
 
     /* Clear multicast table */
     for (int i = 0; i < 128; i++)
@@ -501,7 +564,7 @@ int e1000_init(void) {
     }
 
     kprintf("[OK] e1000: %s up (MAC %02x:%02x:%02x:%02x:%02x:%02x, %d RX/TX queues)\n",
-            is_82574 ? "82574L" : "82540EM",
+            is_82576 ? "82576" : (is_82574 ? "82574L" : "82540EM"),
             mac_addr[0], mac_addr[1], mac_addr[2],
             mac_addr[3], mac_addr[4], mac_addr[5],
             num_queues);
@@ -564,6 +627,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
     int next_idx = (idx + 1) % NUM_TX_DESC;
     if (!(qp->tx_descs[next_idx].status & TDESC_STA_DD)) {
         /* Ring full — upper layer should try again later */
+        qp->stats.tx_busy++;
         return NETDEV_TX_BUSY;
     }
 
@@ -573,6 +637,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
         __asm__ volatile("pause");
     if (tx_timeout <= 0) {
         kprintf("[dbg] e1000_netdev_transmit: TIMEOUT waiting for desc %d\n", idx);
+        qp->stats.tx_errors++;
         return -1;
     }
 
@@ -588,6 +653,10 @@ static int e1000_netdev_transmit(struct net_device *dev,
     e1000_q_write_tx(tx_q, 4, qp->tx_cur); /* TDT */
 
     spinlock_irqsave_release(&e1000_lock, __e1k_flags);
+
+    /* Update per-queue transmit stats */
+    qp->stats.tx_packets++;
+    qp->stats.tx_bytes += len;
 
     kprintf("[dbg] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
     return 0;
@@ -617,6 +686,7 @@ static int e1000_netdev_receive(struct net_device *dev,
             int old_cur = qp->rx_cur;
             qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
             e1000_q_write_rx(q, 4, old_cur); /* RDT */
+            qp->stats.rx_errors++;
             continue;
         }
 
@@ -626,6 +696,7 @@ static int e1000_netdev_receive(struct net_device *dev,
             int old_cur = qp->rx_cur;
             qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
             e1000_q_write_rx(q, 4, old_cur);
+            qp->stats.rx_dropped++;
             continue;
         }
 
@@ -637,6 +708,10 @@ static int e1000_netdev_receive(struct net_device *dev,
         int old_cur = qp->rx_cur;
         qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
         e1000_q_write_rx(q, 4, old_cur);
+
+        /* Update per-queue receive stats */
+        qp->stats.rx_packets++;
+        qp->stats.rx_bytes += len;
 
         spinlock_irqsave_release(&e1000_lock, __e1k_flags);
         return (int)len;
@@ -714,6 +789,9 @@ int e1000_receive(void *buf, uint16_t max_len) {
         int old_cur = qp->rx_cur;
         qp->rx_cur = (qp->rx_cur + 1) % NUM_RX_DESC;
         e1000_q_write_rx(q, 4, old_cur);
+
+        qp->stats.rx_packets++;
+        qp->stats.rx_bytes += len;
 
         spinlock_irqsave_release(&e1000_lock, __e1k_flags);
         return len;

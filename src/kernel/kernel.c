@@ -654,6 +654,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Dynamic kernel timers (driven by timer IRQ) */
     timers_init();
 
+    /* PSI periodic update timer (every 2 seconds) */
+    psi_timer_init();
+
     /* Workqueue (deferred work execution via kthread) */
     workqueue_init();
 
@@ -683,6 +686,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Initcall system — run all registered initcalls in order */
     do_initcalls();
+
+    /* TPM RNG seeding — feed TPM hardware entropy into kernel RNG */
+    {
+        extern int tpm_rng_init(void);
+        tpm_rng_init();
+    }
 
     /* Firmware loading API */
     firmware_init();
@@ -775,6 +784,13 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Devfs — /dev device virtual filesystem */
     devfs_init();
+
+    /* Kdump sysfs entries (/sys/kernel/kexec_load_disabled,
+     * /sys/kernel/crash_kexec_post_notifiers) */
+    kdump_sysfs_init();
+
+    /* Watchdog sysfs interface (/sys/class/watchdog/watchdog0/) */
+    watchdog_sysfs_init();
 
     /* CPU frequency scaling — ACPI P-states (ACPI _PSS / MSR fallback) */
     cpupstate_init();
@@ -903,6 +919,10 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Register the filesystem writeback callback so dirty pages in the
      * page cache are actually flushed to disk on eviction and sync. */
     fs_register_page_cache_writeback();
+
+    /* Multi-Generational LRU page reclaim — initialise after page cache */
+    extern void mglru_init(void);
+    mglru_init();
 
     /* Service infrastructure + FS directory tree */
     service_init();

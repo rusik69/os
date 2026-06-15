@@ -625,11 +625,11 @@ int sys_sendmsg_impl(int sockfd, const struct msghdr *msg, int flags) {
         uint64_t len = msg->msg_iov[i].iov_len;
         if (len == 0) continue;
 
-        /* AF_UNIX: dispatch to local socket handler */
+        /* AF_UNIX: dispatch to local socket handler using sendmsg */
         if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-            int sent = unix_send(s->unix_ep, data, (uint32_t)(len > 65535 ? 65535 : len), 0);
-            if (sent < 0) return total > 0 ? (int)total : sent;
-            total += (uint64_t)sent;
+            int sent = unix_sendmsg(s->unix_ep, msg, flags);
+            if (sent < 0) return sent;
+            return sent;
         } else if ((s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) &&
                    packet_is_valid_fd(sockfd)) {
             /* AF_PACKET raw packet send */
@@ -689,9 +689,9 @@ int sys_recvmsg_impl(int sockfd, struct msghdr *msg, int flags) {
     void *buf = msg->msg_iov[0].iov_base;
     uint64_t bufsize = msg->msg_iov[0].iov_len;
 
-    /* AF_UNIX: dispatch to local socket handler */
+    /* AF_UNIX: dispatch to local socket handler using recvmsg */
     if (s->domain == AF_UNIX && s->unix_ep >= 0) {
-        int n = unix_recv(s->unix_ep, buf, (uint32_t)(bufsize > 65535 ? 65535 : bufsize), 0);
+        int n = unix_recvmsg(s->unix_ep, msg, flags);
         if (n <= 0) return -1;
         return n;
     }
@@ -780,6 +780,15 @@ int sys_getsockname_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
         struct sockaddr_can *can_addr = (struct sockaddr_can *)addr;
         int ret = can_getsockname(sockfd, can_addr);
         if (ret == 0) *addrlen = sizeof(struct sockaddr_can);
+        return (ret == 0) ? 0 : -1;
+    }
+
+    /* AF_PACKET: dispatch to raw packet getsockname */
+    if (s->domain == AF_PACKET || (s->domain == 0 && s->type == SOCK_RAW)) {
+        if (*addrlen < sizeof(struct sockaddr_ll)) return -1;
+        struct sockaddr_ll *sll = (struct sockaddr_ll *)addr;
+        int ret = packet_getsockname(sockfd, sll);
+        if (ret == 0) *addrlen = sizeof(struct sockaddr_ll);
         return (ret == 0) ? 0 : -1;
     }
 

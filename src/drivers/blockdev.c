@@ -7,6 +7,7 @@
 #include "export.h"
 #include "process.h"
 #include "ioprio.h"
+#include "psi.h"      /* psi_io_enter/leave for IO stall tracking */
 
 /* Global device table */
 static struct blockdev_entry g_blockdevs[BLOCKDEV_MAX_DEVICES];
@@ -232,9 +233,11 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
                 break;
             }
 
+            psi_io_enter();
             while (!req->done) {
                 wait_queue_sleep(&wq);
             }
+            psi_io_leave();
 
             ret = req->result;
             blk_request_free(req);
@@ -272,9 +275,11 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
         return ret;
     }
 
+    psi_io_enter();
     while (!req->done) {
         wait_queue_sleep(&wq);
     }
+    psi_io_leave();
 
     ret = req->result;
     blk_request_free(req);
@@ -332,9 +337,11 @@ int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
                 break;
             }
 
+            psi_io_enter();
             while (!req->done) {
                 wait_queue_sleep(&wq);
             }
+            psi_io_leave();
 
             ret = req->result;
             blk_request_free(req);
@@ -615,6 +622,38 @@ uint32_t blockdev_get_max_transfer(int dev_id)
 {
     if (!blockdev_is_registered(dev_id)) return 0;
     return g_blockdevs[dev_id].max_transfer;
+}
+
+/* ── SCSI generic passthrough (SG_IO) ───────────────────────────── */
+
+int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
+    g_blockdevs[dev_id].scsi_cmd_fn = fn;
+    spinlock_irqsave_release(&g_dev_lock, irq_flags);
+    return 0;
+}
+
+int blockdev_scsi_submit(int dev_id,
+                          const uint8_t *cdb, int cdb_len,
+                          void *data, int data_len,
+                          int dir,
+                          uint8_t *sense, int *sense_len,
+                          int timeout_ms)
+{
+    if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
+        return -1;
+
+    scsi_submit_cmd_fn fn = g_blockdevs[dev_id].scsi_cmd_fn;
+    if (!fn)
+        return -ENOTTY;  /* not a SCSI device */
+
+    return fn(dev_id, cdb, cdb_len, data, data_len, dir,
+              sense, sense_len, timeout_ms);
 }
 
 /* ── Find a block device by name ──────────────────────────────────── */

@@ -43,4 +43,11 @@ void watchdog_set_pretimeout_fn(watchdog_pretimeout_fn_t fn);
 __attribute__((noreturn))
 void watchdog_system_reset(void);
 
+/* ── Sysfs interface ────────────────────────────────────────────────── */
+
+/* Create /sys/class/watchdog/watchdog0/ with pretimeout,
+ * pretimeout_governor, and timeout attributes.  Called once
+ * from kernel_main() after sysfs_init(). */
+void watchdog_sysfs_init(void);
+
 #endif /* WATCHDOG_H */
