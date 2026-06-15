@@ -499,6 +499,8 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_ext.c \
          src/test/kunit_vfs.c \
          src/test/kunit_container_ext.c \
+         src/test/kunit_net.c \
+         src/test/kunit_cluster.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
@@ -1124,6 +1126,7 @@ all: $(BUILDDIR)/disk.img
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-full check-clean check-app-boundary check-debug doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
+        stress stress-help \
         modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse \
         release dist
 
@@ -1394,6 +1397,64 @@ test: $(BUILDDIR)/disk.img
 	@echo "============================================"
 	@echo "  make test completed"
 	@echo "============================================"
+
+# ── Stress test target ─────────────────────────────────────────
+# Builds the stress test ELFs, injects them into the disk image,
+# replaces /etc/inittab to auto-run stress tests at boot,
+# and boots QEMU to execute them.
+# Override STRESS_DURATION to change per-test duration (default: 20s).
+# Example: make stress STRESS_DURATION=60
+STRESS_DURATION ?= 20
+
+stress: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	@echo "=== Building stress test ELFs ==="
+	$(MAKE) -C src/test/stress all 2>&1 | tail -5
+	@echo ""
+	@echo "=== Injecting stress test ELFs into disk image ==="
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_cpu.elf ::/bin/stress_cpu 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_cpu.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_memory.elf ::/bin/stress_memory 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_memory.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_disk.elf ::/bin/stress_disk 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_disk.elf failed"
+	mcopy -i $(BUILDDIR)/disk.img -o src/test/stress/stress_runner.elf ::/stress_runner 2>/dev/null || \
+	    echo "[stress] Warning: mcopy stress_runner.elf failed"
+	@echo ""
+	@echo "=== Creating stress boot inittab ==="
+	@# Create inittab that runs stress tests via the runner, then spawns shell
+	@echo '::sysinit:/stress_runner' > /tmp/stress_inittab
+	@echo 'ttyS0::respawn:/bin/sh' >> /tmp/stress_inittab
+	@echo 'console::askfirst:/bin/sh' >> /tmp/stress_inittab
+	mcopy -i $(BUILDDIR)/disk.img -o /tmp/stress_inittab ::/etc/inittab 2>/dev/null || true
+	@echo ""
+	@echo "=== Running stress tests in QEMU ==="
+	@echo "  Per-test duration: $(STRESS_DURATION)s"
+	@echo "  Kernel: $(BUILDDIR)/kernel.bin"
+	@echo "  Disk:   $(BUILDDIR)/disk.img"
+	@echo ""
+	@# Run QEMU headless.  The isa-debug-exit device enables clean shutdown.
+	@# The kernel boots normally, init runs /etc/inittab which starts
+	@# /stress_runner as a sysinit task.
+	qemu-system-x86_64 -cpu max,-x2apic \
+		-kernel $(BUILDDIR)/kernel.bin \
+		-m 256M \
+		-serial stdio \
+		-vga none -display none \
+		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
+		-netdev user,id=net0 -device e1000,netdev=net0 \
+		-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+		-no-reboot 2>&1 || true
+	@echo ""
+	@echo "=== Stress tests completed ==="
+
+# Show help for stress target
+stress-help:
+	@echo "Stress test targets:"
+	@echo "  make stress             Run all stress tests in QEMU (default: 20s each)"
+	@echo "  make stress STRESS_DURATION=60  Run with 60s per test"
+	@echo ""
+	@echo "The stress target builds stress ELFs, injects them into the disk image,"
+	@echo "creates a boot inittab that runs the stress runner, and boots QEMU."
 
 # ── E2E test: boot + interactive command tests ─────────────────────
 e2e-test: $(BUILDDIR)/kernel.bin
@@ -1707,6 +1768,8 @@ help:
 	@echo "  test-serial      Run test kernel with serial TCP output"
 	@echo "  test-clean       Clean + rebuild + run tests"
 	@echo "  run-test         Alias for 'make test'"
+	@echo "  stress           Run all stress tests in QEMU"
+	@echo "  stress-help      Show help for stress target"
 	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
 	@echo "  check-full       Ultra-strict build (-Werror + all warnings)"
 	@echo "  check-debug      Build with all debug options enabled"
