@@ -1,7 +1,7 @@
 # CI Builder Image for rusik69/os
 # Contains all cross-compilation, QEMU, and analysis tools
 # for running CI jobs in isolated Docker containers.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Cross-compilation toolchain

@@ -5,7 +5,7 @@
 # Usage: sudo docker build -f docker/Dockerfile.runner -t ghcr.io/rusik69/os-runner:latest .
 
 # ── Stage 1: Download and extract the runner ──────────────────────────
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:26.04 AS builder
 
 ARG RUNNER_VERSION=2.334.0
 
@@ -20,7 +20,7 @@ RUN curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERS
     rm actions-runner.tar.gz
 
 # ── Stage 2: Runtime image ───────────────────────────────────────────
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 # Runtime dependencies only (no curl/tar/build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
