@@ -4,5 +4,5 @@
 #include "string.h"
 void cmd_dircolors(const char *args) {
     (void)args;
-    kprintf("dircolors: reading '%s'\n", args ? args : "(stdin)");
+    kprintf("LS_COLORS='di=01;34:ln=01;36:ex=01;32:'\n");
 }

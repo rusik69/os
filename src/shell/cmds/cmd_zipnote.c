@@ -2,11 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
-
 void cmd_zipnote(const char *args) {
-    if (!args || strlen(args) == 0) {
-        kprintf("Usage: zipnote <args>\n");
-        return;
-    }
-    kprintf("zipnote: %s\n", args);
+    if (!args) { kprintf("Usage: zipnote <file>\n"); return; }
+    kprintf("zipnote: editing comment of '%s'\n", args);
 }

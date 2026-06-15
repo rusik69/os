@@ -9,7 +9,6 @@
 int cmd_fgconsole(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    /* Always report console 1 as the foreground */
     kprintf("1\n");
     return 0;
 }

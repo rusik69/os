@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_chcon(const char *args) {
-    (void)args;
-    kprintf("chcon: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: chcon <context> <file>\n"); return; }
+    kprintf("chcon: not supported on this system\n");
 }

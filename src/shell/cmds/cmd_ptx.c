@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_ptx(const char *args) {
-    (void)args;
-    kprintf("ptx: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: ptx <file>\n"); return; }
+    kprintf("ptx: reading '%s'\n", args);
 }

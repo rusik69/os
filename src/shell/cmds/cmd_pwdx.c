@@ -1,8 +1,7 @@
-/* cmd_pwdx.c — print working directory of process */
+#include "shell.h"
 #include "shell_cmds.h"
 #include "printf.h"
-#include "libc.h"
-
+#include "string.h"
 void cmd_pwdx(void) {
-    kprintf("/\n");
+    kprintf("pwdx: use kernel shell 'pwdx <pid>'\n");
 }

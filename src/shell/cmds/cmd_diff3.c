@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_diff3(const char *args) {
-    (void)args;
-    kprintf("diff3: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: diff3 <file1> <file2> <file3>\n"); return; }
+    kprintf("diff3: comparing '%s'\n", args);
 }

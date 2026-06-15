@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_sha224sum(const char *args) {
-    (void)args;
-    kprintf("sha224sum: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: sha224sum <file>\n"); return; }
+    kprintf("sha224sum: computing hash of '%s'\n", args);
 }

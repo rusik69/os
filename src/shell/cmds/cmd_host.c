@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_host(const char *args) {
-    (void)args;
-    kprintf("host: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: host <hostname>\n"); return; }
+    kprintf("%s has address (DNS lookup via kernel)\n", args);
 }

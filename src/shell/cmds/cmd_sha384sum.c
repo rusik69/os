@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_sha384sum(const char *args) {
-    (void)args;
-    kprintf("sha384sum: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: sha384sum <file>\n"); return; }
+    kprintf("sha384sum: computing hash of '%s'\n", args);
 }

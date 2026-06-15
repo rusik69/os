@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_lessecho(const char *args) {
-    (void)args;
-    kprintf("lessecho: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("\n"); return; }
+    kprintf("%s\n", args);
 }

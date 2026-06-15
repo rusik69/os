@@ -4,5 +4,5 @@
 #include "string.h"
 void cmd_column(const char *args) {
     (void)args;
-    kprintf("column: reading '%s'\n", args ? args : "(stdin)");
+    kprintf("column: reading stdin\n");
 }

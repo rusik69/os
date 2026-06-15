@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_numfmt(const char *args) {
-    (void)args;
-    kprintf("numfmt: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: numfmt <number>\n"); return; }
+    kprintf("%s\n", args);
 }

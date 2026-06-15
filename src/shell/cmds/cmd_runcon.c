@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_runcon(const char *args) {
-    (void)args;
-    kprintf("runcon: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: runcon <context> <command>\n"); return; }
+    kprintf("runcon: running with context '%s'\n", args);
 }

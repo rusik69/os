@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_b2sum(const char *args) {
-    (void)args;
-    kprintf("b2sum: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: b2sum <file>\n"); return; }
+    kprintf("b2sum: reading '%s'\n", args);
 }

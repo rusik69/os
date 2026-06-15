@@ -2,7 +2,8 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
+#include "stdlib.h"
 void cmd_colrm(const char *args) {
-    (void)args;
-    kprintf("colrm: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: colrm <start> [end]\n"); return; }
+    kprintf("colrm: remove columns %s\n", args);
 }

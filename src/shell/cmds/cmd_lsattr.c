@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_lsattr(const char *args) {
-    (void)args;
-    kprintf("lsattr: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: lsattr <file>\n"); return; }
+    kprintf("---------- %s\n", args);
 }

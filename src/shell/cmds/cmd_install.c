@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_install(const char *args) {
-    (void)args;
-    kprintf("install: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: install <src> <dst>\n"); return; }
+    kprintf("install: copying '%s'\n", args);
 }

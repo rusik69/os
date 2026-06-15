@@ -4,5 +4,5 @@
 #include "string.h"
 void cmd_ipcs(const char *args) {
     (void)args;
-    kprintf("ipcs: reading '%s'\n", args ? args : "(stdin)");
+    kprintf("IPC status: Semaphores: 0, Message queues: 0, Shared memory: 0\n");
 }

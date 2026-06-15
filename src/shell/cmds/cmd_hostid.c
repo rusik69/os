@@ -1,9 +1,11 @@
-/* cmd_hostid.c — print numeric host identifier */
+#include "shell.h"
 #include "shell_cmds.h"
-#include "libc.h"
 #include "printf.h"
-
+#include "string.h"
 void cmd_hostid(void) {
-    uint64_t id = libc_uptime_ticks() ^ (uint64_t)libc_getpid();
-    kprintf("%llx\n", (unsigned long long)id);
+    const char *hn = shell_var_get("HOSTNAME");
+    if (!hn) hn = "localhost";
+    unsigned long id = 0;
+    for (int i = 0; hn[i]; i++) id = id * 31 + hn[i];
+    kprintf("%08lx\n", id);
 }

@@ -3,6 +3,6 @@
 #include "printf.h"
 #include "string.h"
 void cmd_lesskey(const char *args) {
-    (void)args;
-    kprintf("lesskey: reading '%s'\n", args ? args : "(stdin)");
+    if (!args) { kprintf("Usage: lesskey <file>\n"); return; }
+    kprintf("lesskey: reading key bindings from '%s'\n", args);
 }
