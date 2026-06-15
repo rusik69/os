@@ -38,14 +38,12 @@ jobs:
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
-    environment:
-      name: ci-approval
-      url: ${{ github.event.pull_request.html_url }}
+    environment: ci-approval
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-${{ github.event.pull_request.head.sha }}
@@ -66,14 +64,12 @@ jobs:
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
-    environment:
-      name: ci-approval
-      url: ${{ github.event.pull_request.html_url }}
+    environment: ci-approval
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-strict-${{ github.event.pull_request.head.sha }}
@@ -97,11 +93,9 @@ jobs:
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 10
     needs: [security-check]
-    environment:
-      name: ci-approval
-      url: ${{ github.event.pull_request.html_url }}
+    environment: ci-approval
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: Run cppcheck
         run: |
           cppcheck --enable=all \
@@ -143,16 +137,14 @@ jobs:
     timeout-minutes: 5
     needs: [security-check]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: Check code formatting
         run: |
           if ! command -v git-clang-format >/dev/null 2>&1; then
-            # Install clang-format if not present in container
             apt-get update -qq && apt-get install -y -qq clang-format-18
             ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
             ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
           fi
-          # For PRs, check against the merge-base
           BASE_REF="origin/${{ github.base_ref }}"
           git fetch origin "${{ github.base_ref }}" --depth=1
           make format-check FORMAT_BASE_REF="$BASE_REF"
@@ -163,18 +155,23 @@ jobs:
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
     needs: [security-check]
-    environment:
-      name: ci-approval
-      url: ${{ github.event.pull_request.html_url }}
+    environment: ci-approval
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-test-${{ github.event.pull_request.head.sha }}
           restore-keys: ccache-test-
+      - name: Build kernel + disk image
+        run: |
+          make all \
+            CC="ccache x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            -j$(nproc)
       - name: Build test kernel
         run: |
           make test-kernel \
@@ -182,11 +179,7 @@ jobs:
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy \
             -j$(nproc)
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
-      - name: Run unit tests
+      - name: Run QEMU boot test
         run: |
           chmod +x tests/run_tests.sh
           ./tests/run_tests.sh build_test/kernel.bin build/disk.img
@@ -199,29 +192,23 @@ jobs:
     container: ghcr.io/rusik69/os-ci:latest
     timeout-minutes: 15
     needs: [security-check]
-    environment:
-      name: ci-approval
-      url: ${{ github.event.pull_request.html_url }}
+    environment: ci-approval
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-${{ github.event.pull_request.head.sha }}
           restore-keys: ccache-
-      - name: Build kernel
+      - name: Build kernel + disk image
         run: |
           make all \
             CC="ccache x86_64-linux-gnu-gcc" \
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy \
             -j$(nproc)
-      - name: Create disk image
-        run: |
-          mkdir -p build
-          dd if=/dev/zero of=build/disk.img bs=1M count=16 2>/dev/null
       - name: Run E2E tests
         run: |
           chmod +x tests/e2e.sh tests/e2e.py
@@ -237,7 +224,7 @@ jobs:
     timeout-minutes: 5
     needs: [security-check]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           sudo apt-get update

@@ -22,12 +22,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
-            x86_64-elf-gcc x86_64-linux-gnu-gcc \
-            xorriso grub-pc-bin
+            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools
 
-      - name: Build kernel
+      - name: Build kernel + disk image
         run: |
-          make -j$(nproc)
+          make -j$(nproc) \
+            CC=x86_64-linux-gnu-gcc \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
@@ -48,11 +50,13 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential \
-            x86_64-linux-gnu-gcc
+            gcc-x86-64-linux-gnu
 
       - name: Build userspace
         run: |
-          cd userspace && make -j$(nproc)
+          cd userspace && make -j$(nproc) \
+            CC=x86_64-linux-gnu-gcc \
+            LD=x86_64-linux-gnu-ld
 
       - name: Verify initramfs.cpio
         run: |
@@ -94,7 +98,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download kernel artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: kernel
           path: build/
@@ -123,15 +127,20 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
-            x86_64-elf-gcc x86_64-linux-gnu-gcc
+            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools
 
       - name: Build kernel
         run: |
-          make -j$(nproc)
+          make -j$(nproc) \
+            CC=x86_64-linux-gnu-gcc \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy
 
       - name: Build userspace
         run: |
-          cd userspace && make -j$(nproc)
+          cd userspace && make -j$(nproc) \
+            CC=x86_64-linux-gnu-gcc \
+            LD=x86_64-linux-gnu-ld
 
       - name: Verify both artifacts
         run: |
