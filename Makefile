@@ -1101,6 +1101,15 @@ test: $(BUILDDIR)/disk.img
 	@echo "  make test completed"
 	@echo "============================================"
 
+# ── E2E test: boot + interactive command tests ─────────────────────
+e2e-test: $(BUILDDIR)/kernel.bin
+	python3 src/test/e2e_test.py --kernel $(BUILDDIR)/kernel.bin
+
+e2e-list:
+	python3 src/test/e2e_test.py --list
+
+.PHONY: e2e-test e2e-list
+
 # ── Check target: full build with -Werror + run all tests ──────────────
 CHECK_CFLAGS = $(CFLAGS) -Werror
 BUILDDIR_CHECK = build_check

@@ -31,8 +31,13 @@ int aslr_disabled = 0;
 /* Track whether we've added extra entropy */
 static int aslr_entropy_seeded = 0;
 
-/* RDRAND instruction — returns 1 on success, 0 if not available */
+/* RDRAND instruction — returns 1 on success, 0 if not available.
+ * CPUID.1.ECX[30] = RDRAND support. Check before executing. */
 static inline int rdrand64(uint64_t *val) {
+    uint32_t eax = 1, ebx, ecx = 0, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax), "c"(ecx));
+    if (!((ecx >> 30) & 1))
+        return 0;  /* ponytail: CPU lacks RDRAND, caller falls back to PRNG */
     unsigned char ok;
     __asm__ volatile(".byte 0x48, 0x0f, 0xc7, 0xf0 ; setc %1"
                      : "=a"(*val), "=qm"(ok) :: "cc");

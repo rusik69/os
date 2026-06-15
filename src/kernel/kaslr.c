@@ -29,8 +29,12 @@ static int kaslr_seeded = 0;
 /* ── RDRAND instruction helper ──────────────────────────────────────
  * Returns 1 on success (valid random value in *val), 0 if RDRAND
  * is not available or the instruction failed.
- */
+ * CPUID.1.ECX[30] = RDRAND support. Check before executing. */
 static inline int rdrand64(uint64_t *val) {
+    uint32_t eax = 1, ebx, ecx = 0, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax), "c"(ecx));
+    if (!((ecx >> 30) & 1))
+        return 0;  /* ponytail: CPU lacks RDRAND, caller falls back to TSC+stack */
     unsigned char ok;
     /* RDRAND is encoded as: 0x48 0x0f 0xc7 0xf0 (REX.W + opcode + ModRM)
      * Sets CF=1 on success, CF=0 if no random data available. */
