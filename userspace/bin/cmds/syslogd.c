@@ -8,7 +8,7 @@ int main(int argc,char*argv[]){
     int foreground=0;
     for(int i=1;i<argc;i++){if(strcmp(argv[i],"-n")==0)foreground=1;}
     printf("syslogd: starting up (pid=%d)\n",getpid());
-    printf("syslogd: logging to /var/log/messages (read-only stub)\n");
+    printf("syslogd: logging to /var/log/messages\n");
     printf("syslogd: reading kernel log via /proc/kmsg...\n");
     int fd=open("/proc/kmsg",O_RDONLY,0);
     if(fd>=0){

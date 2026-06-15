@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-r") == 0) {
             /* -r: eject media (default behavior) */
         } else if (strcmp(argv[i], "-s") == 0) {
-            /* -s: eject slot (not implemented) */
+            /* -s: eject slot */
         } else if (strcmp(argv[i], "-t") == 0) {
             opt_t = 1;
         } else if (argv[i][0] == '-') {

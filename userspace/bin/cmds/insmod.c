@@ -1,25 +1,9 @@
-/* insmod.c — insert kernel module from .ko file */
+/* insmod.c — load kernel module */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
-
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printf("Usage: insmod MODULE.ko [PARAMS]\n");
-        return 1;
-    }
-
-    const char *path = argv[1];
-    const char *params = (argc > 2) ? argv[2] : NULL;
-
-    int ret = init_module(path, params);
-    if (ret < 0) {
-        printf("insmod: failed to insert '%s'", path);
-        if (params) printf(" (params: %s)", params);
-        printf("\n");
-        return 1;
-    }
-
-    printf("insmod: inserted '%s' (module_id=%d)\n", path, ret);
+int main(int argc,char*argv[]){
+    if(argc<2){printf("Usage: insmod <module.ko>\n");return 1;}
+    if(init_module(argv[1],"")<0){printf("insmod: cannot load %s\n",argv[1]);return 1;}
     return 0;
 }

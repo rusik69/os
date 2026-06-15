@@ -3,7 +3,6 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
-
 int main(int argc,char*argv[]){
     int interval=argc>1?atoi(argv[1]):2;
     printf("I/O monitor (every %ds):\n",interval);

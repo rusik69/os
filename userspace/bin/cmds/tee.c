@@ -1,33 +1,19 @@
-/* tee.c — read from stdin and write to stdout and files */
-
+/* tee.c — read and write to files and stdout */
 #include "unistd.h"
+#include "string.h"
 #include "stdio.h"
-
-#define MAX_FILES 16
-#define BUF_SIZE 4096
-
-int main(int argc, char *argv[]) {
-    int files[MAX_FILES];
-    int nfiles = 0;
-
-    for (int i = 1; i < argc && nfiles < MAX_FILES; i++) {
-        files[nfiles] = open(argv[i], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (files[nfiles] < 0) {
-            printf("tee: cannot open '%s'\n", argv[i]);
-        } else {
-            nfiles++;
-        }
+int main(int argc,char*argv[]){
+    int append=0,i=1,outfds[16],nout=0;
+    if(argc>1&&strcmp(argv[1],"-a")==0){append=1;i=2;}
+    for(;i<argc&&nout<16;i++){
+        outfds[nout]=open(argv[i],O_WRONLY|O_CREAT|(append?O_APPEND:O_TRUNC),0666);
+        if(outfds[nout]>=0)nout++;
     }
-
-    char buf[BUF_SIZE];
-    int nread;
-    while ((nread = read(0, buf, BUF_SIZE)) > 0) {
-        write(1, buf, nread);
-        for (int i = 0; i < nfiles; i++) {
-            write(files[i], buf, nread);
-        }
+    char buf[4096];long n;
+    while((n=read(0,buf,sizeof(buf)))>0){
+        write(1,buf,n);
+        for(int j=0;j<nout;j++)write(outfds[j],buf,n);
     }
-
-    for (int i = 0; i < nfiles; i++) close(files[i]);
+    for(int j=0;j<nout;j++)close(outfds[j]);
     return 0;
 }

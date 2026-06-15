@@ -1,21 +1,9 @@
-/* rmmod.c — remove kernel module */
+/* rmmod.c — unload kernel module */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
-
-int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        printf("Usage: rmmod MODULE\n");
-        return 1;
-    }
-
-    const char *module = argv[1];
-
-    if (delete_module(module, 0) < 0) {
-        printf("rmmod: failed to remove module '%s'\n", module);
-        return 1;
-    }
-
-    printf("rmmod: removed '%s'\n", module);
+int main(int argc,char*argv[]){
+    if(argc<2){printf("Usage: rmmod <module>\n");return 1;}
+    if(delete_module(argv[1],0)<0){printf("rmmod: cannot remove %s\n",argv[1]);return 1;}
     return 0;
 }

@@ -1,18 +1,14 @@
-/* readlink.c — read symlink target */
+/* readlink.c — print resolved symbolic link */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
-#include "stdlib.h"
-
-int main(int argc, char *argv[]) {
-    if (argc < 2) { printf("Usage: readlink <path>\n"); return 1; }
-    char buf[1024];
-    int n = readlink(argv[1], buf, sizeof(buf) - 1);
-    if (n < 0) {
-        printf("readlink: %s: No such file or not a symlink\n", argv[1]);
-        return 1;
+int main(int argc,char*argv[]){
+    if(argc<2){printf("Usage: readlink <file>...\n");return 1;}
+    for(int i=1;i<argc;i++){
+        char buf[4096];
+        int n=readlink(argv[i],buf,sizeof(buf)-1);
+        if(n<0){printf("readlink: %s: not a symlink\n",argv[i]);return 1;}
+        buf[n]=0;write(1,buf,n);write(1,"\n",1);
     }
-    buf[n] = '\0';
-    printf("%s\n", buf);
     return 0;
 }

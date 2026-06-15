@@ -1,19 +1,16 @@
-/* ln.c — make links between files */
+/* ln.c — create links */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
-#include "stdlib.h"
-
 int main(int argc,char*argv[]){
-    int symbolic=0;
-    const char*target=0,*linkname=0;
-    for(int i=1;i<argc;i++){
-        if(strcmp(argv[i],"-s")==0)symbolic=1;
-        else if(!target)target=argv[i];
-        else linkname=argv[i];
+    int sflag=0;
+    int i=1;
+    if(argc>1&&strcmp(argv[1],"-s")==0){sflag=1;i=2;}
+    if(argc-i<2){printf("Usage: ln [-s] <target> <link>\n");return 1;}
+    if(sflag){
+        if(symlink(argv[i],argv[i+1])<0){printf("ln: symlink failed\n");return 1;}
+    } else {
+        if(link(argv[i],argv[i+1])<0){printf("ln: link failed\n");return 1;}
     }
-    if(!target){printf("Usage: ln [-s] <target> [link_name]\n");return 1;}
-    if(!linkname){const char*cp=strrchr(target,'/');linkname=cp?cp+1:target;}
-    printf("ln: creating %slink %s -> %s\n",symbolic?"symbolic ":"",linkname,target);
     return 0;
 }

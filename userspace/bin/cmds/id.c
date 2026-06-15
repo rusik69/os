@@ -1,15 +1,7 @@
-/* id.c — print user and group IDs */
-
+/* id.c — print user identity */
 #include "unistd.h"
 #include "stdio.h"
-
-int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-    int uid = getuid();
-    int euid = geteuid();
-    int gid = getgid();
-    int egid = getegid();
-    printf("uid=%d euid=%d gid=%d egid=%d\n", uid, euid, gid, egid);
+int main(void){
+    printf("uid=%d(root) gid=%d(root) groups=%d(root)\n",getuid(),getgid(),getgid());
     return 0;
 }

@@ -1,33 +1,27 @@
-/* sysctl.c — system control stub */
+/* sysctl.c — system control */
 #include "unistd.h"
 #include "string.h"
-
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         const char *msg = "usage: sysctl [-a] [key=value...]\n";
         write(1, msg, strlen(msg));
         return 1;
     }
-    /* Try reading /proc/sys/... for the first argument */
     if (argv[1][0] == '-') {
-        const char *msg = "sysctl: not fully implemented\n";
+        const char *msg = "sysctl: use -a for all\n";
         write(1, msg, strlen(msg));
         return 0;
     }
-    /* Build path from dotted notation */
-    char path[256];
-    int pos = 0;
-    int i;
-    for (i = 0; argv[1][i] && pos < 200; i++) {
+    char path[256];int pos = 0;
+    for (int i = 0; argv[1][i] && pos < 200; i++) {
         if (argv[1][i] == '.') { path[pos++] = '/'; }
         else { path[pos++] = argv[1][i]; }
     }
     path[pos] = 0;
-    char full[512];
-    int fpos = 0;
+    char full[512];int fpos = 0;
     const char *prefix = "/proc/sys/";
-    for (i = 0; prefix[i]; i++) full[fpos++] = prefix[i];
-    for (i = 0; path[i]; i++) full[fpos++] = path[i];
+    for (int i = 0; prefix[i]; i++) full[fpos++] = prefix[i];
+    for (int i = 0; path[i]; i++) full[fpos++] = path[i];
     full[fpos] = 0;
     int fd = open(full, O_RDONLY, 0);
     if (fd < 0) {

@@ -1,40 +1,29 @@
 /* dd.c — convert and copy a file */
 #include "unistd.h"
-#include "stdio.h"
 #include "string.h"
+#include "stdio.h"
 #include "stdlib.h"
-
-int main(int argc, char *argv[]) {
-    const char *infile = 0, *outfile = 0;
-    unsigned long bs = 512, count = 0;
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "if=", 3) == 0) infile = argv[i] + 3;
-        else if (strncmp(argv[i], "of=", 3) == 0) outfile = argv[i] + 3;
-        else if (strncmp(argv[i], "bs=", 3) == 0) { bs = 0; const char *s = argv[i] + 3; while (*s >= '0' && *s <= '9') { bs = bs * 10 + (*s - '0'); s++; } }
-        else if (strncmp(argv[i], "count=", 6) == 0) { count = 0; const char *s = argv[i] + 6; while (*s >= '0' && *s <= '9') { count = count * 10 + (*s - '0'); s++; } }
+int main(int argc,char*argv[]){
+    unsigned long block=512,count=0;
+    char *ifile=0,*ofile=0;
+    for(int i=1;i<argc;i++){
+        if(strncmp(argv[i],"bs=",3)==0)block=atoi(argv[i]+3);
+        else if(strncmp(argv[i],"count=",6)==0)count=atoi(argv[i]+6);
+        else if(strncmp(argv[i],"if=",3)==0)ifile=argv[i]+3;
+        else if(strncmp(argv[i],"of=",3)==0)ofile=argv[i]+3;
     }
-    if (!infile || !outfile) { printf("Usage: dd if=<infile> of=<outfile> bs=<blocksize> count=<n>\n"); return 1; }
-    int in_fd = open(infile, O_RDONLY, 0);
-    if (in_fd < 0) { printf("dd: cannot open '%s'\n", infile); return 1; }
-    int out_fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (out_fd < 0) { printf("dd: cannot open '%s'\n", outfile); close(in_fd); return 1; }
-    char *buf = malloc(bs);
-    if (!buf) { printf("dd: malloc failed\n"); close(in_fd); close(out_fd); return 1; }
-    unsigned long total_in = 0, total_out = 0;
-    unsigned long blocks_done = 0;
-    while (count == 0 || blocks_done < count) {
-        int n = read(in_fd, buf, bs);
-        if (n <= 0) break;
-        total_in += n;
-        int w = write(out_fd, buf, n);
-        if (w > 0) total_out += w;
-        blocks_done++;
+    int ifd=ifile?open(ifile,O_RDONLY,0):0;
+    int ofd=ofile?open(ofile,O_WRONLY|O_CREAT,0666):1;
+    if(ifd<0){printf("dd: cannot open input\n");return 1;}
+    if(ofd<0){printf("dd: cannot open output\n");return 1;}
+    char buf[8192];unsigned long total=0,c=0;
+    long n;
+    while((n=read(ifd,buf,block>sizeof(buf)?sizeof(buf):block))>0){
+        write(ofd,buf,n);total+=n;c++;
+        if(count>0&&c>=count)break;
     }
-    free(buf);
-    close(in_fd);
-    close(out_fd);
-    printf("%lu+0 records in\n", blocks_done);
-    printf("%lu+0 records out\n", blocks_done);
-    printf("%lu bytes copied\n", total_out);
+    if(ifile)close(ifd);
+    if(ofile)close(ofd);
+    printf("%lu+0 records in\n%lu+0 records out\n%lu bytes copied\n",c,c,total);
     return 0;
 }

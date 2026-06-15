@@ -52,9 +52,24 @@ static void encode32(const unsigned char*in,unsigned long len){
 static void encode16(const unsigned char*in,unsigned long len){
     for(unsigned long i=0;i<len;i++)printf("%02x",in[i]);
 }
+static void decode32(const char*in,unsigned long len){
+    unsigned char out[1024];unsigned long oi=0;
+    for(unsigned long i=0;i<len;i+=8){
+        unsigned long val=0;int bits=0;
+        for(int j=0;j<8&&i+j<len;j++){
+            char ch=in[i+j];if(ch=='=')break;
+            const char*p=strchr(b32,ch);
+            if(ch>='a'&&ch<='z')ch=ch-'a'+'A';
+            p=strchr(b32,ch);
+            if(p){val=(val<<5)|(int)(p-b32);bits+=5;}
+        }
+        while(bits>=8){bits-=8;out[oi++]=(val>>bits)&0xFF;if(oi+1>sizeof(out))break;}
+    }
+    write(1,out,oi);
+}
 
 int main(int argc,char*argv[]){
-    const char*fn=0;int decode=0,mode=0;/*0=base64,1=base32,2=base16,3=base64url*/
+    const char*fn=0;int decode=0,mode=0;
     for(int i=1;i<argc;i++){
         if(strcmp(argv[i],"--decode")==0)decode=1;
         else if(strcmp(argv[i],"--base64")==0)mode=0;
@@ -64,13 +79,13 @@ int main(int argc,char*argv[]){
         else fn=argv[i];
     }
     unsigned char buf[8192];unsigned long total=0;
-    if(fn){int fd=open(fn,O_RDONLY,0);if(fd<0){printf("basenc: %s: No such file\n",fn);return 1;}
+    if(fn){int fd=open(fn,O_RDONLY,0);if(fd<0){printf("basenc: %s: No such file\\n",fn);return 1;}
         int n;while((n=read(fd,buf+total,sizeof(buf)-total))>0)total+=n;close(fd);
     }else{int n;while((n=read(0,buf+total,sizeof(buf)-total))>0)total+=n;}
     if(decode){
         buf[total]=0;
         if(mode==0||mode==3)decode64((const char*)buf,total,mode==3);
-        else if(mode==1){/* base32 decode not implemented */write(1,buf,total);}
+        else if(mode==1)decode32((const char*)buf,total);
         else write(1,buf,total);
     }else{
         if(mode==0||mode==3)encode64(buf,total,mode==3);

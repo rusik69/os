@@ -1,9 +1,7 @@
 /* ctr.c — containerd control */
 #include "unistd.h"
-#include "string.h"
-
-int main(void) {
-    const char *msg = "containerd operations available via kernel shell 'ctr' command.\n";
-    write(1, msg, strlen(msg));
+#include "stdio.h"
+int main(void){
+    printf("containerd operations: kernel shell 'ctr' command.\n");
     return 0;
 }

@@ -1,5 +1,6 @@
-bin/cmds/tee.o: bin/cmds/tee.c libc/include/unistd.h libc/include/stdio.h \
- libc/include/unistd.h
+bin/cmds/tee.o: bin/cmds/tee.c libc/include/unistd.h \
+ libc/include/string.h libc/include/unistd.h libc/include/stdio.h
+libc/include/unistd.h:
+libc/include/string.h:
 libc/include/unistd.h:
 libc/include/stdio.h:
-libc/include/unistd.h:

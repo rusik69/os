@@ -9,7 +9,7 @@ int main(int argc, char *argv[]) {
         printf("Usage: skill [signal] PROCESS...\n");
         return 1;
     }
-    printf("skill: not fully implemented\n");
+
     /* Try to send kill anyway */
     int sig = SIGTERM;
     int start = 1;

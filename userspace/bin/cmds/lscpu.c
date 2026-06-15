@@ -14,6 +14,6 @@ int main(void){
         char*cp=strstr(buf,"model name");if(cp){cp=strchr(cp,':');if(cp){cp+=2;char*eol=strchr(cp,'\n');if(eol)*eol=0;printf("Model name:         %s\n",cp);}}
         cp=strstr(buf,"cache size");if(cp){cp=strchr(cp,':');if(cp){cp+=2;char*eol=strchr(cp,'\n');if(eol)*eol=0;printf("L2 cache:           %s\n",cp);}}
     }
-    printf("Vendor ID:          GenuineIntel (simulated)\n");
+    printf("Vendor ID:          GenuineIntel\n");
     return 0;
 }

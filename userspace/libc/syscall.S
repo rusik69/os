@@ -176,6 +176,24 @@ lseek:
     ret
 .size lseek, . - lseek
 
+# link(oldpath, newpath)
+.globl link
+.type link, @function
+link:
+    movl    $86, %eax
+    syscall
+    ret
+.size link, . - link
+
+# symlink(target, linkpath)
+.globl symlink
+.type symlink, @function
+symlink:
+    movl    $88, %eax
+    syscall
+    ret
+.size symlink, . - symlink
+
 # setpgid(pid, pgid)
 .globl setpgid
 .type setpgid, @function

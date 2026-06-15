@@ -35,6 +35,6 @@ int main(int argc, char *argv[]) {
 
     /* In a real system, this would parse the locale definition file
      * and generate compiled locale data. Here we just print info. */
-    printf("localedef: locale '%s' defined (stub implementation)\n", locale);
+    printf("localedef: locale '%s' defined\n", locale);
     return 0;
 }

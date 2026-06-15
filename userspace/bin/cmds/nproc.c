@@ -1,32 +1,19 @@
-/* nproc.c — print number of processors */
+/* nproc.c — print number of processing units */
 #include "unistd.h"
 #include "stdio.h"
 #include "string.h"
-
-int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-    /* Try to read /proc/cpuinfo and count processors */
-    int fd = open("/proc/cpuinfo", O_RDONLY, 0);
-    if (fd >= 0) {
-        char buf[4096];
-        int n = read(fd, buf, 4095);
-        close(fd);
-        if (n > 0) {
-            buf[n] = '\0';
-            int count = 0;
-            char *p = buf;
-            while ((p = strstr(p, "processor")) != NULL) {
-                count++;
-                p++;
-            }
-            if (count > 0) {
-                printf("%d\n", count);
-                return 0;
-            }
+int main(void){
+    int fd=open("/sys/devices/system/cpu/online",O_RDONLY,0);
+    if(fd>=0){char buf[64];int n=read(fd,buf,sizeof(buf)-1);close(fd);buf[n>=0?n:0]=0;
+        /* Parse: "0-3" -> 4, "0-1,4-5" -> 4, "0" -> 1 */
+        int total=0;char*cp=buf;int a=0,b=0;
+        while((*cp>='0'&&*cp<='9')||*cp=='-'||*cp==','||*cp=='\n'){
+            if(*cp>='0'&&*cp<='9'){a=0;while(*cp>='0'&&*cp<='9'){a=a*10+(*cp-'0');cp++;}}
+            else if(*cp=='-'){cp++;b=0;while(*cp>='0'&&*cp<='9'){b=b*10+(*cp-'0');cp++;}
+                total+=b-a+1;a=b;}
+            else if(*cp==','){total+=1;cp++;}else cp++;
         }
-    }
-    /* Fallback: just print 4 */
-    printf("4\n");
+        if(total>0)printf("%d\n",total);else printf("1\n");
+    } else printf("1\n");
     return 0;
 }

@@ -1,8 +1,9 @@
 /* logname.c — print login name */
 #include "unistd.h"
 #include "stdio.h"
-
 int main(void){
-    printf("root\n");
+    int uid=getuid();
+    if(uid==0)printf("root\n");
+    else printf("user%d\n",uid);
     return 0;
 }

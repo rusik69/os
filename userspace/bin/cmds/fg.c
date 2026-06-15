@@ -3,7 +3,6 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
-
 int main(int argc,char*argv[]){
     int job_id=-1;
     if(argc>1&&argv[1][0]=='%')job_id=atoi(argv[1]+1);

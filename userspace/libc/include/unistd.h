@@ -36,6 +36,8 @@
 #define SYS_GETGID    256
 #define SYS_GETEGID   257
 #define SYS_RMDIR     258
+#define SYS_LINK      86
+#define SYS_SYMLINK   88
 #define SYS_RENAME    259
 #define SYS_CHMOD     260
 #define SYS_ACCESS    253
@@ -260,6 +262,8 @@ extern unsigned int umask(unsigned int mask);
 
 /* New syscall wrappers */
 extern int rename(const char *old, const char *new);
+extern int link(const char *old, const char *new);
+extern int symlink(const char *target, const char *linkpath);
 extern int chmod(const char *path, unsigned int mode);
 extern int access(const char *path, int mode);
 extern int statfs(const char *path, struct statfs *buf);

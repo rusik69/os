@@ -1,10 +1,7 @@
-/* nsenter.c — Namespace enter: use kernel shell command */
+/* nsenter.c — namespace enter */
 #include "unistd.h"
 #include "stdio.h"
-#include "string.h"
-#include "stdlib.h"
-
-int main(void) {
-    printf("nsenter: Use the kernel shell's nsenter command instead\n");
+int main(void){
+    printf("nsenter: Use kernel shell's nsenter command instead.\n");
     return 0;
 }

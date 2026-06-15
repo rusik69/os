@@ -1,9 +1,7 @@
 /* orchctl.c — orchestration control */
 #include "unistd.h"
-#include "string.h"
-
-int main(void) {
-    const char *msg = "Orchestration managed by kernel orchestration subsystem.\n";
-    write(1, msg, strlen(msg));
+#include "stdio.h"
+int main(void){
+    printf("Orchestration: kernel orchestration subsystem.\n");
     return 0;
 }
