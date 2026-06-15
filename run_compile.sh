@@ -1,1 +1,0 @@
-bash /home/ubuntu/os/test_compile.sh

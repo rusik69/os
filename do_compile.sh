@@ -1,1 +1,0 @@
-chmod +x /home/ubuntu/os/compile_test.sh && bash /home/ubuntu/os/compile_test.sh
