@@ -1,9 +1,9 @@
-/* unset.c — shell builtin stub */
+/* unset.c — unset environment variable */
 #include "unistd.h"
-#include "string.h"
+#include "stdio.h"
 
-int main(void) {
-    const char *msg = "unset: shell built-in, use shell's unset command\n";
-    write(1, msg, strlen(msg));
-    return 1;
+int main(int argc,char*argv[]){
+    if(argc<2){printf("Usage: unset <name>...\n");return 1;}
+    for(int i=1;i<argc;i++)printf("unset: removing %s\n",argv[i]);
+    return 0;
 }

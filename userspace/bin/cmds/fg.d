@@ -1,5 +1,7 @@
-bin/cmds/fg.o: bin/cmds/fg.c libc/include/unistd.h libc/include/string.h \
- libc/include/unistd.h
+bin/cmds/fg.o: bin/cmds/fg.c libc/include/unistd.h libc/include/stdio.h \
+ libc/include/unistd.h libc/include/string.h libc/include/stdlib.h
+libc/include/unistd.h:
+libc/include/stdio.h:
 libc/include/unistd.h:
 libc/include/string.h:
-libc/include/unistd.h:
+libc/include/stdlib.h:

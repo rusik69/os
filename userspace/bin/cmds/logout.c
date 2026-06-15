@@ -1,9 +1,8 @@
-/* logout.c — logout stub */
+/* logout.c — logout from login shell */
 #include "unistd.h"
-#include "string.h"
+#include "stdio.h"
 
-int main(void) {
-    const char *msg = "logout\n";
-    write(1, msg, strlen(msg));
+int main(void){
+    printf("logout: use shell 'exit' or Ctrl-D\n");
     return 0;
 }

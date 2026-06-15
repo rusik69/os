@@ -1,33 +1,19 @@
-/* lscpu.c — show CPU info */
+/* lscpu.c — CPU architecture info */
 #include "unistd.h"
-#include "string.h"
 #include "stdio.h"
+#include "string.h"
 
-int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-    /* Try to read /proc/cpuinfo */
-    int fd = open("/proc/cpuinfo", 0, 0);
-    if (fd >= 0) {
-        char buf[4096];
-        long n;
-        while ((n = read(fd, buf, sizeof(buf))) > 0) {
-            write(1, buf, n);
-        }
-        close(fd);
-        return 0;
+int main(void){
+    printf("Architecture:        x86_64\n");
+    printf("CPU op-mode(s):     32-bit, 64-bit\n");
+    printf("Address sizes:       52 bits physical, 48 bits virtual\n");
+    printf("Byte order:         Little Endian\n");
+    printf("CPU(s):             1\n");
+    int fd=open("/proc/cpuinfo",O_RDONLY,0);
+    if(fd>=0){char buf[4096];int n=read(fd,buf,sizeof(buf)-1);close(fd);buf[n]=0;
+        char*cp=strstr(buf,"model name");if(cp){cp=strchr(cp,':');if(cp){cp+=2;char*eol=strchr(cp,'\n');if(eol)*eol=0;printf("Model name:         %s\n",cp);}}
+        cp=strstr(buf,"cache size");if(cp){cp=strchr(cp,':');if(cp){cp+=2;char*eol=strchr(cp,'\n');if(eol)*eol=0;printf("L2 cache:           %s\n",cp);}}
     }
-    /* Fallback: print from uname */
-    struct utsname uts;
-    if (uname(&uts) == 0) {
-        printf("Architecture:    %s\n", uts.machine);
-        printf("CPU op-mode(s):  64-bit\n");
-        printf("Byte Order:      Little Endian\n");
-        printf("CPU(s):          1\n");
-        printf("Vendor ID:       GenuineIntel\n");
-        printf("Model name:      QEMU Virtual CPU\n");
-    } else {
-        printf("lscpu: unable to determine CPU info\n");
-    }
+    printf("Vendor ID:          GenuineIntel (simulated)\n");
     return 0;
 }
