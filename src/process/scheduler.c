@@ -38,6 +38,227 @@
 
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
+/* ── EEVDF scheduler (Earliest Eligible Virtual Deadline First) ────
+ *
+ * When CONFIG_EEVDF is enabled (via /sys/kernel/sched_eevdf), the
+ * scheduler switches from the multilevel queue to EEVDF for all
+ * SCHED_OTHER / SCHED_BATCH tasks.
+ *
+ * EEVDF maintains a red-black tree of tasks ordered by
+ *   key = deadline - lag
+ * where deadline is the virtual deadline and lag tracks fairness.
+ *
+ * On each tick, lag is updated: lag += (1 - weight/weight_sum) * elapsed
+ * When a task is dequeued and re-enqueued, its deadline is recalculated:
+ *   deadline = now + slice * weight_sum / weight
+ *   lag = elapsed * (1 - weight / weight_sum)
+ */
+
+/* Global EEVDF enable flag (0 = CFS/multilevel queue, 1 = EEVDF) */
+static int sched_eevdf_enabled;
+
+/* Sysctl read/write for /sys/kernel/sched_eevdf */
+static int sysctl_read_sched_eevdf(char *buf, int max) {
+    int p = 0;
+    buf[p++] = sched_eevdf_enabled ? '1' : '0';
+    if (p < max - 1) buf[p++] = '\n';
+    buf[p] = '\0';
+    return p;
+}
+static int sysctl_write_sched_eevdf(const char *buf, int len) {
+    if (len > 0 && buf[0] == '1') sched_eevdf_enabled = 1;
+    else sched_eevdf_enabled = 0;
+    kprintf("[sched] EEVDF %s\n", sched_eevdf_enabled ? "enabled" : "disabled");
+    return 0;
+}
+
+/* EEVDF weight-to-slice mapping.
+ * slice = base_slice * weight / NICE_0_WEIGHT */
+#define EEVDF_BASE_SLICE_NS  3000000ULL  /* 3 ms base slice */
+#define EEVDF_LAG_MAX_NS     10000000ULL /* 10 ms max lag */
+
+/* Initialize EEVDF fields for a process */
+static void eevdf_init_process(struct process *p)
+{
+    if (!p) return;
+    p->eevdf_deadline = 0;
+    p->eevdf_lag = 0;
+    p->eevdf_slice = EEVDF_BASE_SLICE_NS;
+    p->eevdf_weight = p->sched_weight ? p->sched_weight : CFS_NICE_0_WEIGHT;
+}
+
+/* Compute the eligible deadline for an EEVDF task */
+static inline uint64_t eevdf_eligible_deadline(struct process *p)
+{
+    if (p->eevdf_lag >= 0) {
+        /* Eligible deadline = deadline - lag */
+        if ((uint64_t)p->eevdf_lag >= p->eevdf_deadline)
+            return 0;
+        return p->eevdf_deadline - (uint64_t)p->eevdf_lag;
+    } else {
+        /* Negative lag: eligible deadline = deadline + |lag| */
+        return p->eevdf_deadline + (uint64_t)(-p->eevdf_lag);
+    }
+}
+
+/* Pick the task with the smallest eligible deadline from the runqueue.
+ * In a full implementation, this would use an rb_tree keyed by eevdf_eligible_deadline.
+ * For now, we do a linear scan of the multilevel queue as a simple approach. */
+static struct process *eevdf_pick_next(void)
+{
+    struct cpu_info *ci = this_cpu();
+    struct process *best = NULL;
+    uint64_t best_key = ~0ULL;
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *p = ci->queue_head[lvl];
+        while (p) {
+            uint64_t key = eevdf_eligible_deadline(p);
+            if (key < best_key) {
+                best_key = key;
+                best = p;
+            }
+            p = p->next;
+        }
+    }
+
+    if (!best)
+        return NULL;
+
+    /* Dequeue the best task */
+    return dequeue_next_specific(best);
+}
+
+/* Helper: dequeue a specific process from the runqueue */
+static struct process *dequeue_next_specific(struct process *target)
+{
+    struct cpu_info *ci = this_cpu();
+
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *prev = NULL;
+        struct process *cur = ci->queue_head[lvl];
+
+        while (cur) {
+            if (cur == target) {
+                if (prev)
+                    prev->next = cur->next;
+                else
+                    ci->queue_head[lvl] = cur->next;
+
+                if (cur == ci->queue_tail[lvl])
+                    ci->queue_tail[lvl] = prev;
+
+                cur->next = NULL;
+                cur->on_queue = 0;
+                return cur;
+            }
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+    return NULL;
+}
+
+/* Update EEVDF lag for a task after it has run for @elapsed_ns */
+static void eevdf_update_lag(struct process *p, uint64_t elapsed_ns)
+{
+    if (!p || p->eevdf_weight == 0) return;
+
+    /* Calculate the weight sum (sum of all task weights on this CPU) */
+    struct cpu_info *ci = this_cpu();
+    uint64_t weight_sum = CFS_NICE_0_WEIGHT;
+
+    /* Simple weight sum calculation */
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *t = ci->queue_head[lvl];
+        while (t) {
+            weight_sum += (t->eevdf_weight ? t->eevdf_weight : CFS_NICE_0_WEIGHT);
+            t = t->next;
+        }
+    }
+    /* Add current process if it's still on the runqueue */
+    if (p->on_queue)
+        weight_sum += p->eevdf_weight;
+
+    if (weight_sum == 0) return;
+
+    /* lag += (1 - weight / weight_sum) * elapsed */
+    int64_t delta = (int64_t)elapsed_ns;
+    int64_t frac = (int64_t)((p->eevdf_weight * elapsed_ns) / weight_sum);
+    p->eevdf_lag += delta - frac;
+
+    /* Clamp lag */
+    if (p->eevdf_lag > (int64_t)EEVDF_LAG_MAX_NS)
+        p->eevdf_lag = EEVDF_LAG_MAX_NS;
+    else if (p->eevdf_lag < -(int64_t)EEVDF_LAG_MAX_NS)
+        p->eevdf_lag = -(int64_t)EEVDF_LAG_MAX_NS;
+}
+
+/* Recalculate EEVDF deadline when a task is enqueued/dequeued */
+static void eevdf_recalc_deadline(struct process *p)
+{
+    if (!p) return;
+
+    uint64_t now = timer_get_ticks() * 10000000ULL; /* ticks → ns (100 Hz → 10 ms/tick) */
+    uint64_t weight_sum = CFS_NICE_0_WEIGHT;
+
+    /* Compute weight sum (approximate — uses current CPU's runqueue) */
+    struct cpu_info *ci = this_cpu();
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *t = ci->queue_head[lvl];
+        while (t) {
+            if (t != p)
+                weight_sum += (t->eevdf_weight ? t->eevdf_weight : CFS_NICE_0_WEIGHT);
+            t = t->next;
+        }
+    }
+
+    uint64_t w = p->eevdf_weight ? p->eevdf_weight : CFS_NICE_0_WEIGHT;
+    if (w == 0) w = 1;
+
+    /* Calculate slice proportional to weight */
+    p->eevdf_slice = (EEVDF_BASE_SLICE_NS * w) / CFS_NICE_0_WEIGHT;
+    if (p->eevdf_slice < 100000ULL)     /* floor: 100 µs */
+        p->eevdf_slice = 100000ULL;
+    if (p->eevdf_slice > 50000000ULL)   /* ceil: 50 ms */
+        p->eevdf_slice = 50000000ULL;
+
+    /* New deadline = now + slice */
+    p->eevdf_deadline = now + p->eevdf_slice;
+}
+
+/* EEVDF tick — called each scheduler tick to update lag */
+static void eevdf_tick(struct process *current)
+{
+    if (!sched_eevdf_enabled || !current)
+        return;
+
+    /* Update lag: assume 1 tick = 10 ms = 10,000,000 ns */
+    eevdf_update_lag(current, 10000000ULL);
+}
+
+/* EEVDF enqueue hook — recalculate deadline when adding to runqueue */
+static void eevdf_enqueue(struct process *p)
+{
+    if (!sched_eevdf_enabled || !p)
+        return;
+
+    eevdf_init_process(p);
+    eevdf_recalc_deadline(p);
+}
+
+/* EEVDF dequeue hook — update lag when removing from runqueue */
+static void eevdf_dequeue(struct process *p)
+{
+    if (!sched_eevdf_enabled || !p)
+        return;
+
+    /* Update lag as if the task ran for its slice */
+    eevdf_update_lag(p, p->eevdf_slice);
+}
+
+/* ── End EEVDF section ─────────────────────────────────────────────── */
+
 /* Global lock for cross-CPU operations (load balancing, process table walks) */
 static spinlock_t sched_lock = SPINLOCK_INIT;
 
@@ -270,6 +491,10 @@ void scheduler_init(void) {
     sysctl_register("sched_min_granularity_ns",
                     sysctl_read_sched_min_granularity,
                     sysctl_write_sched_min_granularity);
+    /* Register EEVDF enable/disable switch (exposed as /sys/kernel/sched_eevdf) */
+    sysctl_register("sched_eevdf",
+                    sysctl_read_sched_eevdf,
+                    sysctl_write_sched_eevdf);
 }
 
 /* ── Add process to its CPU's runqueue (caller must hold sched_lock) ── */
@@ -280,6 +505,9 @@ static void scheduler_add_locked(struct process *proc) {
      * general priority queues. */
     if (proc->sched_policy == SCHED_DEADLINE)
         return;
+
+    /* EEVDF hook: recalculate deadline when enqueuing */
+    eevdf_enqueue(proc);
 
     /* ── NUMA-aware target CPU selection ─────────────────────────────
      *
@@ -367,6 +595,8 @@ void scheduler_remove(struct process *proc) {
                     ci->queue_tail[lvl] = prev;
                 cur->next = NULL;
                 proc->on_queue = 0;
+                /* EEVDF hook: update lag when dequeuing */
+                eevdf_dequeue(proc);
                 spinlock_irqsave_release(&sched_lock, irq_flags);
                 return;
             }
@@ -596,6 +826,13 @@ void schedule(void) {
 
     /* First, try to pick a SCHED_DEADLINE task (EDF) */
     next = sched_deadline_pick_next();
+
+    if (!next && sched_eevdf_enabled) {
+        /* EEVDF scheduler: pick task with smallest eligible deadline */
+        spinlock_irqsave_acquire(&sched_lock, &irq_flags);
+        next = eevdf_pick_next();
+        spinlock_irqsave_release(&sched_lock, irq_flags);
+    }
 
     if (!next) {
         /* No deadline task available — fall back to class-aware picker.
@@ -845,6 +1082,9 @@ void scheduler_tick(int was_user) {
             return;
         }
     }
+
+    /* EEVDF tick: update lag for the current process */
+    eevdf_tick(cur);
 
     /* Check pending signals */
     if (cur->pending_signals) {

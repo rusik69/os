@@ -129,3 +129,69 @@ void pidfd_put(int pidfd)
         entry->refcount = 0;
     }
 }
+
+/*
+ * pidfd_getfd — obtain a duplicate of another process's file descriptor.
+ *
+ * Given a pidfd referring to a target process, and a target_fd number
+ * within that process, returns a new file descriptor in the calling
+ * process that refers to the same open file description.
+ *
+ * This is used by debuggers and container managers to access file
+ * descriptors in other processes (/proc/PID/fd equivalent via pidfd).
+ */
+int pidfd_getfd(int pidfd, int target_fd, uint32_t flags)
+{
+    if (!pidfd_initialised)
+        return -ENOSYS;
+
+    if (flags != 0)
+        return -EINVAL;
+
+    /* Validate the pidfd */
+    if (pidfd < 0 || pidfd >= PIDFD_MAX)
+        return -EBADF;
+
+    struct pidfd_entry *entry = &pidfd_table[pidfd];
+    if (entry->pid == 0)
+        return -EBADF;
+
+    /* Find the target process */
+    struct process *target = process_get_by_pid(entry->pid);
+    if (!target) {
+        entry->pid = 0; /* process exited */
+        return -ESRCH;
+    }
+
+    /* Validate target_fd */
+    if (target_fd < 0 || target_fd >= PROCESS_FD_MAX)
+        return -EBADF;
+
+    /* Check that the target fd is actually in use */
+    if (!target->fd_table[target_fd].used)
+        return -EBADF;
+
+    /* Find a free fd in the calling process */
+    struct process *current = process_get_current();
+    if (!current)
+        return -EPERM;
+
+    uint64_t max_fds = current->file_max > 0 ? current->file_max : PROCESS_FD_MAX;
+    int new_fd = -1;
+    for (int i = 0; i < PROCESS_FD_MAX; i++) {
+        if (!current->fd_table[i].used) {
+            if ((uint64_t)i >= max_fds)
+                return -EMFILE;
+            new_fd = i;
+            break;
+        }
+    }
+
+    if (new_fd < 0)
+        return -EMFILE;
+
+    /* Copy the fd entry from target to current process */
+    current->fd_table[new_fd] = target->fd_table[target_fd];
+
+    return new_fd; /* Note: returned directly, not fd-3 offset */
+}

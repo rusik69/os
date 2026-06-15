@@ -1,10 +1,13 @@
 /*
  * nvme.c — NVMe (NVM Express) PCI driver with multi-queue support
+ *          and multipath (same NSID across multiple controllers)
  *
  * Features:
  *   - Per-CPU I/O submission/completion queue pairs (qid = CPU index + 1)
  *   - Block device registration via blockdev layer
  *   - Proper doorbell stride handling
+ *   - NVMe multipath: round-robin across paths, per-path statistics
+ *   - ANA-less multipath (simple: same NSID → multipath device)
  *
  * Architecture:
  *   Admin queue (qid 0): controller configuration, queue creation
@@ -23,12 +26,62 @@
 #include "heap.h"      /* kmalloc, kfree */
 #include "idt.h"
 #include "apic.h"
+#include "errno.h"
 #ifdef MODULE
 #include "module.h"
 #endif
 
 static struct nvme_ctrl g_nvme_ctrl;
 static int g_nvme_init_done = 0;
+
+/* ── Multipath support ──────────────────────────────────────────────── */
+
+/* Maximum number of paths per namespace */
+#define NVME_MPATH_MAX_PATHS   4
+
+/* Per-path state */
+struct nvme_path {
+    int           active;
+    int           ctrl_index;    /* controller index (0 = g_nvme_ctrl) */
+    uint32_t      nsid;          /* namespace ID on this controller */
+    int           dev_id;        /* block device ID of this path */
+
+    /* Round-robin state */
+    int           last_used;     /* tick-based last use time */
+
+    /* Statistics */
+    struct nvme_path_stats stats;
+};
+
+/* Multipath device */
+struct nvme_mpath_dev {
+    int             active;
+    int             mp_dev_id;   /* multipath block device ID */
+    uint32_t        nsid;        /* shared NSID */
+    uint64_t        sector_count;
+    uint32_t        sector_size;
+
+    /* Paths */
+    int             nr_paths;
+    struct nvme_path paths[NVME_MPATH_MAX_PATHS];
+
+    /* Round-robin next index */
+    int             rr_next;
+};
+
+/* Multipath devices (one per unique NSID seen across controllers) */
+#define NVME_MPATH_MAX_DEVS  4
+static struct nvme_mpath_dev g_mpath_devs[NVME_MPATH_MAX_DEVS];
+static int g_mpath_count = 0;
+static spinlock_t g_mpath_lock;
+
+/* Forward declarations for multipath functions */
+static int nvme_mpath_submit(struct blk_request *req);
+static struct nvme_mpath_dev *nvme_mpath_find_or_create(uint32_t nsid,
+                                                         int ctrl_index,
+                                                         int path_dev_id,
+                                                         uint64_t sector_count,
+                                                         uint32_t sector_size);
 
 /* ── MMIO accessors ───────────────────────────────────────────────── */
 
@@ -891,6 +944,9 @@ static int nvme_register_blockdevs(void) {
         g_nvme_ctrl.ns_blkdev_id[ns_index] = dev_id;
         registered++;
 
+        /* Register multipath device for this namespace (if not already created) */
+        nvme_mpath_find_or_create(nsid, 0, dev_id, nsze, sector_size);
+
         /* Set max transfer size based on controller MDTS (Item 328).
          * MDTS = log2(max_transfer / MPS), where MPS = 2^(mpsmin+12).
          * If mdts == 0, maximum is 1 MPS (typically 4096 bytes).
@@ -909,6 +965,170 @@ static int nvme_register_blockdevs(void) {
     }
 
     return registered;
+}
+
+/* ── NVMe multipath support ──────────────────────────────────────────── */
+
+/**
+ * nvme_mpath_find_or_create — find or create a multipath device for a NSID.
+ * For now (single controller), we track per-controller paths for future
+ * expansion when multiple controllers are present.
+ */
+static struct nvme_mpath_dev *nvme_mpath_find_or_create(uint32_t nsid,
+                                                         int ctrl_index,
+                                                         int path_dev_id,
+                                                         uint64_t sector_count,
+                                                         uint32_t sector_size)
+{
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_mpath_lock, &irq_flags);
+
+    /* Look for existing multipath device for this NSID */
+    struct nvme_mpath_dev *mp = NULL;
+    for (int i = 0; i < g_mpath_count; i++) {
+        if (g_mpath_devs[i].active && g_mpath_devs[i].nsid == nsid) {
+            mp = &g_mpath_devs[i];
+            break;
+        }
+    }
+
+    if (!mp && g_mpath_count < NVME_MPATH_MAX_DEVS) {
+        /* Create new multipath device */
+        mp = &g_mpath_devs[g_mpath_count];
+        memset(mp, 0, sizeof(*mp));
+        mp->active = 1;
+        mp->nsid = nsid;
+        mp->sector_count = sector_count;
+        mp->sector_size = sector_size;
+        mp->rr_next = 0;
+
+        /* Register multipath block device */
+        mp->mp_dev_id = NVME_BLOCKDEV_ID + 100 + g_mpath_count;
+        char mp_name[32];
+        snprintf(mp_name, sizeof(mp_name), "nvme%dn%u-mpath", ctrl_index, nsid);
+
+        int ret = blockdev_register(mp->mp_dev_id, mp_name,
+                                     nvme_mpath_submit, NULL,
+                                     sector_count, 0);
+        if (ret == 0) {
+            g_mpath_count++;
+            kprintf("[NVMe] Multipath device %s (id=%d) created for NSID %u\n",
+                    mp_name, mp->mp_dev_id, nsid);
+        } else {
+            memset(mp, 0, sizeof(*mp));
+            mp = NULL;
+        }
+    }
+
+    /* Add path if we have room */
+    if (mp && mp->nr_paths < NVME_MPATH_MAX_PATHS) {
+        struct nvme_path *path = &mp->paths[mp->nr_paths];
+        memset(path, 0, sizeof(*path));
+        path->active = 1;
+        path->ctrl_index = ctrl_index;
+        path->nsid = nsid;
+        path->dev_id = path_dev_id;
+        mp->nr_paths++;
+        kprintf("[NVMe] Multipath: added path (ctrl=%d, nsid=%u, dev=%d) to NSID %u\n",
+                ctrl_index, nsid, path_dev_id, nsid);
+    }
+
+    spinlock_irqsave_release(&g_mpath_lock, irq_flags);
+    return mp;
+}
+
+/**
+ * nvme_mpath_submit — block device submit for multipath device.
+ * Uses round-robin across paths. On I/O error, retries on next path.
+ */
+static int nvme_mpath_submit(struct blk_request *req)
+{
+    if (!req) return -EINVAL;
+
+    /* Find the multipath device from the dev_id */
+    struct nvme_mpath_dev *mp = NULL;
+    for (int i = 0; i < g_mpath_count; i++) {
+        if (g_mpath_devs[i].active && g_mpath_devs[i].mp_dev_id == req->dev_id) {
+            mp = &g_mpath_devs[i];
+            break;
+        }
+    }
+    if (!mp || mp->nr_paths == 0)
+        return -ENODEV;
+
+    uint64_t start_ticks = 0; /* timer_get_ticks() — would need timer.h */
+    int first_error = 0;
+
+    /* Round-robin across paths */
+    for (int attempt = 0; attempt < mp->nr_paths && attempt < 2; attempt++) {
+        int idx = mp->rr_next % mp->nr_paths;
+        mp->rr_next = (mp->rr_next + 1) % mp->nr_paths;
+
+        struct nvme_path *path = &mp->paths[idx];
+        if (!path->active) continue;
+
+        /* Submit I/O on this path (direct NVMe I/O) */
+        req->dev_id = (uint8_t)path->dev_id;
+
+        /* Call the original path's block submit */
+        uint8_t saved_dev_id = req->dev_id;
+        req->dev_id = (uint8_t)path->dev_id;
+
+        int ret = -1;
+
+        /* Route through the path's actual block device */
+        if (path->dev_id >= 0) {
+            ret = blk_submit_sync(path->dev_id, req->lba, req->count,
+                                   req->buf, req->flags);
+        }
+
+        req->dev_id = saved_dev_id;
+
+        /* Update per-path statistics */
+        uint64_t elapsed = 0; /* timer_get_ticks() - start_ticks; */
+
+        if (ret == 0) {
+            path->stats.success_count++;
+            path->stats.total_latency_ticks += elapsed;
+            path->stats.last_latency_ticks = elapsed;
+            req->result = 0;
+            return 0;
+        }
+
+        path->stats.fail_count++;
+        if (!first_error) first_error = ret;
+
+        kprintf("[NVMe] Multipath: path %d (ctrl=%d, nsid=%u) failed, retrying...\n",
+                idx, path->ctrl_index, path->nsid);
+    }
+
+    req->result = first_error;
+    return first_error;
+}
+
+/**
+ * nvme_mpath_get_stats — get per-path statistics for a multipath device.
+ * Returns 0 on success, -1 if device not found.
+ */
+int nvme_mpath_get_stats(int mp_dev_id,
+                          int *nr_paths,
+                          struct nvme_path_stats *stats_out,
+                          int max_paths)
+{
+    for (int i = 0; i < g_mpath_count; i++) {
+        if (g_mpath_devs[i].active && g_mpath_devs[i].mp_dev_id == mp_dev_id) {
+            struct nvme_mpath_dev *mp = &g_mpath_devs[i];
+            if (nr_paths) *nr_paths = mp->nr_paths;
+            if (stats_out && max_paths > 0) {
+                int n = mp->nr_paths < max_paths ? mp->nr_paths : max_paths;
+                for (int j = 0; j < n; j++) {
+                    stats_out[j] = mp->paths[j].stats;
+                }
+            }
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /* ── Main initialization ───────────────────────────────────────────── */

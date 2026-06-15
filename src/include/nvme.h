@@ -236,6 +236,23 @@ int nvme_submit_request(int ns_id, int is_write, uint64_t lba,
  * Returns 0 on success, -1 on failure. */
 int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count);
 
+/* ── NVMe Multipath API ────────────────────────────────────────────── */
+
+/* Per-path statistics (exported for sysfs/debugfs) */
+struct nvme_path_stats {
+    uint64_t success_count;
+    uint64_t fail_count;
+    uint64_t total_latency_ticks;
+    uint64_t last_latency_ticks;
+};
+
+/* Get per-path statistics for a multipath device.
+ * Returns 0 on success, -1 if device not found. */
+int nvme_mpath_get_stats(int mp_dev_id,
+                          int *nr_paths,
+                          struct nvme_path_stats *stats_out,
+                          int max_paths);
+
 /* ── NVMe PMR (Persistent Memory Region) API ─────────────────────── */
 
 /* Initialise PMR subsystem.  Returns 0 on success, negative errno. */

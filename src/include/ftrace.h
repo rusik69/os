@@ -132,6 +132,16 @@ void ftrace_graph_clear(void);
 #define TRACE_EV_V2_SYSCALL_ENTRY  6
 #define TRACE_EV_V2_SYSCALL_EXIT   7
 
+/* New trace event types (Items 29-30) */
+#define TRACE_EV_V2_NET_RX         8
+#define TRACE_EV_V2_NET_TX         9
+#define TRACE_EV_V2_BLOCK_READ     10
+#define TRACE_EV_V2_BLOCK_WRITE    11
+#define TRACE_EV_V2_BLOCK_COMPLETE 12
+
+/* ── trace_printk ──────────────────────────────────────────────────── */
+#define TRACE_PRINTK_BUF_SIZE 8192
+
 /* A single trace event record */
 struct trace_event_v2_record {
     uint64_t timestamp_ns;                      /* Nanosecond timestamp */
@@ -211,5 +221,49 @@ void trace_v2_timer_expire(uint64_t timer_fn, uint64_t expires_jiffies);
 void trace_v2_page_fault(uint64_t addr, uint32_t flags, uint32_t pid);
 void trace_v2_syscall_entry(uint32_t nr, uint64_t arg0, uint64_t arg1);
 void trace_v2_syscall_exit(uint32_t nr, uint64_t retval);
+
+/* Network trace events (Item 29) */
+struct trace_ev_payload_net_rx {
+    uint32_t ifindex;
+    uint16_t eth_proto;
+    uint16_t len;
+} __attribute__((packed));
+
+struct trace_ev_payload_net_tx {
+    uint32_t ifindex;
+    uint16_t eth_proto;
+    uint16_t len;
+} __attribute__((packed));
+
+void trace_v2_net_rx(uint32_t ifindex, uint16_t eth_proto, uint16_t len);
+void trace_v2_net_tx(uint32_t ifindex, uint16_t eth_proto, uint16_t len);
+
+/* Block trace events (Item 30) */
+struct trace_ev_payload_block_read {
+    uint32_t dev_id;
+    uint64_t sector;
+    uint32_t nr_sectors;
+} __attribute__((packed));
+
+struct trace_ev_payload_block_write {
+    uint32_t dev_id;
+    uint64_t sector;
+    uint32_t nr_sectors;
+} __attribute__((packed));
+
+struct trace_ev_payload_block_complete {
+    uint32_t dev_id;
+    uint64_t sector;
+    uint32_t nr_sectors;
+    uint32_t error;
+} __attribute__((packed));
+
+void trace_v2_block_read(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors);
+void trace_v2_block_write(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors);
+void trace_v2_block_complete(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors, uint32_t error);
+
+/* trace_printk (Item 31) — Write a formatted message to the trace buffer */
+void trace_printk(const char *fmt, ...);
+void trace_printk_init(void);
 
 #endif /* FTRACE_H */

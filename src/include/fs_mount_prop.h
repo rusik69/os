@@ -12,6 +12,13 @@
 /* Maximum mounts we track propagation for */
 #define MOUNT_PROP_MAX 16
 
+/* MOUNT_ATTR flags (Linux-compatible) */
+#define MOUNT_ATTR_RDONLY        0x00000001
+#define MOUNT_ATTR_NOSUID        0x00000002
+#define MOUNT_ATTR_NODEV         0x00000004
+#define MOUNT_ATTR_NOEXEC        0x00000008
+#define MOUNT_ATTR_RELATIME      0x00000010
+
 /* Propagation attribute structure (simplified version of mount_attr) */
 struct mount_attr {
     uint64_t attr_set;     /* propagation flags to set */

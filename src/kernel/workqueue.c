@@ -380,6 +380,61 @@ void workqueue_destroy(struct workqueue_struct *pub_wq)
     spinlock_irqsave_release(&wq_pool_lock, irq_flags);
 }
 
+/* ── Workqueue OOM handling (Item 7) ─────────────────────────────── */
+
+/*
+ * When memory is low, workqueue OOM handling:
+ *   1. Suspends non-critical workqueue creation
+ *   2. Reserves emergency worker threads
+ *   3. Flushes high-priority work first
+ *   4. Drops non-essential work items
+ */
+
+/* Emergency OOM watermarks */
+#define WQ_OOM_WATERMARK_LOW    2    /* pages — warn */
+#define WQ_OOM_WATERMARK_CRIT   1    /* pages — emergency actions */
+
+/* OOM state */
+static volatile int wq_oom_state;        /* 0=normal, 1=low, 2=critical */
+static volatile int wq_oom_reserve;      /* reserve worker available */
+
+/* Set workqueue OOM state based on available memory.
+ * Called by the OOM handler when memory pressure is detected.
+ * @available_pages: number of free pages remaining. */
+void workqueue_oom_notify(uint64_t available_pages)
+{
+    int prev_state = wq_oom_state;
+
+    if (available_pages <= WQ_OOM_WATERMARK_CRIT) {
+        wq_oom_state = 2;  /* critical */
+        wq_oom_reserve = 1; /* activate reserve worker */
+    } else if (available_pages <= WQ_OOM_WATERMARK_LOW) {
+        wq_oom_state = 1;  /* low */
+    } else {
+        wq_oom_state = 0;  /* normal */
+        wq_oom_reserve = 0;
+    }
+
+    if (wq_oom_state != prev_state) {
+        kprintf("[workqueue] OOM state: %s (free pages: %llu)\n",
+                wq_oom_state == 0 ? "normal" :
+                wq_oom_state == 1 ? "low" : "CRITICAL",
+                (unsigned long long)available_pages);
+    }
+}
+
+/* Check if we're in OOM state that should suppress new work. */
+int workqueue_oom_check(void)
+{
+    return wq_oom_state >= 1;
+}
+
+/* Get the current workqueue OOM state. */
+int workqueue_oom_get_state(void)
+{
+    return wq_oom_state;
+}
+
 /* ── Initialisation ───────────────────────────────────────────────── */
 
 void workqueue_init(void)

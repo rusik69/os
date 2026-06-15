@@ -119,6 +119,10 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cgroup_namespace.c \
          src/kernel/mnt_namespace.c \
          src/kernel/user_namespace.c \
+         src/kernel/smack.c \
+         src/kernel/tpm_attest.c \
+         src/kernel/efi_secureboot.c \
+         src/kernel/ipc_namespace.c \
          src/kernel/uid16.c \
          src/kernel/swap.c \
          src/drivers/vga.c \
@@ -166,6 +170,11 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/mdadm.c \
          src/drivers/mdadm_ext.c \
          src/drivers/nbd.c \
+         src/drivers/iscsi.c \
+         src/drivers/nvmf.c \
+         src/drivers/fcoe.c \
+         src/drivers/drbd.c \
+         src/drivers/rbd.c \
          src/drivers/cmos.c \
          src/drivers/floppy.c \
          src/drivers/battery.c \
@@ -209,6 +218,10 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/iosched.c \
          src/fs/luks.c \
          src/fs/ext2.c \
+         src/fs/ext4.c \
+         src/fs/cifs.c \
+         src/fs/nfsd.c \
+         src/fs/reiserfs.c \
          src/fs/cpio.c \
          src/fs/initramfs.c \
          src/fs/romfs.c \
@@ -386,8 +399,10 @@ C_SRCS = src/kernel/kernel.c \
          src/memory/page_owner.c \
          src/memory/cma.c \
          src/memory/zram.c \
+         src/memory/zram_writeback.c \
          src/memory/ksm.c \
          src/memory/thp.c \
+         src/memory/hugepage_migration.c \
          src/memory/zcomp.c \
          src/memory/zcomp_fast.c \
          src/memory/zswap.c \
@@ -528,6 +543,7 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/gpio_irq.c \
          src/drivers/iommu.c \
          src/kernel/sched_idle.c \
+         src/kernel/idle_inject.c \
          src/kernel/core_sched.c \
          src/kernel/nohz.c \
          src/kernel/lockdown.c \
@@ -575,6 +591,10 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/sysv.c \
          src/fs/adfs.c \
          src/fs/bfs.c \
+         src/fs/btrfs.c \
+         src/fs/ntfs.c \
+         src/fs/exfat.c \
+         src/fs/hfsplus.c \
          src/drivers/virtio_gpu.c \
          src/drivers/virtio_input.c \
          src/drivers/virtio_rng.c \
@@ -629,6 +649,14 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/f2fs.c \
          src/fs/jffs2.c \
          src/fs/nilfs2.c \
+         src/fs/btrfs.c \
+         src/fs/ntfs.c \
+         src/fs/exfat.c \
+         src/fs/hfsplus.c \
+         src/fs/ext4.c \
+         src/fs/cifs.c \
+         src/fs/nfsd.c \
+         src/fs/reiserfs.c \
          src/kernel/tpm_rng.c \
          src/kernel/numa_balancing.c \
          src/kernel/uprobes.c \
@@ -644,7 +672,15 @@ C_SRCS = src/kernel/kernel.c \
          src/drivers/dma_buf.c \
          src/drivers/bonding.c \
          src/kernel/ras_netlink.c \
-         src/net/xdp.c
+         src/net/xdp.c \
+         src/kernel/kvm.c \
+         src/drivers/vhost_scsi.c \
+         src/drivers/vhost_blk.c \
+         src/drivers/vfio.c \
+         src/drivers/virtio_fs.c \
+         src/drivers/virtio_iommu.c \
+         src/drivers/vdpa.c \
+         src/drivers/balloon.c
 
 ASM_SRCS = src/boot/boot.asm \
            src/kernel/gdt_asm.asm \

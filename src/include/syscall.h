@@ -796,6 +796,27 @@ struct linux_dirent64 {
  *    flags:     SECCOMP_FILTER_FLAG_TSYNC=1 */
 #define SYS_SECCOMP          503  /* seccomp(operation, flags, args) → 0 or -errno */
 
+/* pidfd operations (Linux-compatible) */
+#define SYS_PIDFD_OPEN           434  /* pidfd_open(pid, flags) → fd or -errno */
+#define SYS_PIDFD_SEND_SIGNAL    424  /* pidfd_send_signal(pidfd, sig, info, flags) → 0 or -errno */
+#define SYS_PIDFD_GETFD          438  /* pidfd_getfd(pidfd, target_fd, flags) → new fd or -errno */
+
+/* close_range(2) — batch close file descriptors */
+#define SYS_CLOSE_RANGE          436  /* close_range(first, last, flags) → 0 or -errno */
+
+/* CLOSE_RANGE flags */
+#define CLOSE_RANGE_CLOEXEC      2    /* Set close-on-exec on fds in range instead of closing */
+
+/* mount_setattr(2) — set mount attributes */
+#define SYS_MOUNT_SETATTR        442  /* mount_setattr(fd, path, flags, attr, size) → 0 or -errno */
+
+/* mount_attr flags (Linux-compatible) */
+#define MOUNT_ATTR_RDONLY        0x00000001  /* Mount read-only */
+#define MOUNT_ATTR_NOSUID        0x00000002  /* Ignore suid and sgid bits */
+#define MOUNT_ATTR_NODEV         0x00000004  /* Disallow access to device files */
+#define MOUNT_ATTR_NOEXEC        0x00000008  /* Disallow program execution */
+#define MOUNT_ATTR_RELATIME      0x00000010  /* Update atime relative to mtime/ctime */
+
 /* Process spawning — lightweight create+exec (Item 306) */
 #define SYS_POSIX_SPAWN      777  /* posix_spawn(path, argv, envp, flags) → pid or -errno */
 

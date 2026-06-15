@@ -89,6 +89,15 @@ typedef int (*blockdev_read_fn)(uint32_t lba, uint8_t count, void *buf);
 typedef int (*blockdev_write_fn)(uint32_t lba, uint8_t count, const void *buf);
 typedef uint32_t (*blockdev_size_fn)(void);
 
+/* SCSI command callback type for pass-through drivers.
+ * Forward declaration — used before the typedef in struct blockdev_entry. */
+typedef int (*scsi_submit_cmd_fn)(int dev_id,
+                                   const uint8_t *cdb, int cdb_len,
+                                   void *data, int data_len,
+                                   int dir,
+                                   uint8_t *sense, int *sense_len,
+                                   int timeout_ms);
+
 /* Block device entry */
 struct blockdev_entry {
     int     active;
@@ -223,13 +232,8 @@ struct sg_io_hdr {
 };
 
 /* SCSI command callback for pass-through drivers.
- * Returns 0 on success, negative errno on failure. */
-typedef int (*scsi_submit_cmd_fn)(int dev_id,
-                                   const uint8_t *cdb, int cdb_len,
-                                   void *data, int data_len,
-                                   int dir,
-                                   uint8_t *sense, int *sense_len,
-                                   int timeout_ms);
+ * Returns 0 on success, negative errno on failure.
+ * (typedef is at the top of this file, before struct blockdev_entry) */
 
 /* Register a SCSI command callback for a block device.
  * @dev_id: block device ID

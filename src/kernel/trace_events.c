@@ -246,3 +246,58 @@ void trace_v2_syscall_exit(uint32_t nr, uint64_t retval)
     pld.retval = retval;
     trace_ev_v2_write_locked(TRACE_EV_V2_SYSCALL_EXIT, &pld);
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Network trace events (Item 29)
+ * ══════════════════════════════════════════════════════════════════════ */
+
+void trace_v2_net_rx(uint32_t ifindex, uint16_t eth_proto, uint16_t len)
+{
+    struct trace_ev_payload_net_rx pld;
+    pld.ifindex = ifindex;
+    pld.eth_proto = eth_proto;
+    pld.len = len;
+    trace_ev_v2_write_locked(TRACE_EV_V2_NET_RX, &pld);
+}
+
+void trace_v2_net_tx(uint32_t ifindex, uint16_t eth_proto, uint16_t len)
+{
+    struct trace_ev_payload_net_tx pld;
+    pld.ifindex = ifindex;
+    pld.eth_proto = eth_proto;
+    pld.len = len;
+    trace_ev_v2_write_locked(TRACE_EV_V2_NET_TX, &pld);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Block trace events (Item 30)
+ * ══════════════════════════════════════════════════════════════════════ */
+
+void trace_v2_block_read(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors)
+{
+    struct trace_ev_payload_block_read pld;
+    pld.dev_id = dev_id;
+    pld.sector = sector;
+    pld.nr_sectors = nr_sectors;
+    trace_ev_v2_write_locked(TRACE_EV_V2_BLOCK_READ, &pld);
+}
+
+void trace_v2_block_write(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors)
+{
+    struct trace_ev_payload_block_write pld;
+    pld.dev_id = dev_id;
+    pld.sector = sector;
+    pld.nr_sectors = nr_sectors;
+    trace_ev_v2_write_locked(TRACE_EV_V2_BLOCK_WRITE, &pld);
+}
+
+void trace_v2_block_complete(uint32_t dev_id, uint64_t sector,
+                             uint32_t nr_sectors, uint32_t error)
+{
+    struct trace_ev_payload_block_complete pld;
+    pld.dev_id = dev_id;
+    pld.sector = sector;
+    pld.nr_sectors = nr_sectors;
+    pld.error = error;
+    trace_ev_v2_write_locked(TRACE_EV_V2_BLOCK_COMPLETE, &pld);
+}

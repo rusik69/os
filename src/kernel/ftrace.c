@@ -864,3 +864,84 @@ void __attribute__((used)) ftrace_late_init(void)
 {
     ftrace_graph_init();
 }
+
+/* ── trace_printk (Item 31) ──────────────────────────────────────────
+ *
+ * trace_printk() writes formatted messages to a dedicated ring buffer
+ * that can be read via /sys/kernel/debug/tracing/trace.
+ * This provides a lightweight way to emit debug messages from any
+ * context without going through the full kernel log buffer.
+ */
+
+/* Simple ring buffer for trace_printk output */
+static char trace_printk_buf[TRACE_PRINTK_BUF_SIZE];
+static volatile int trace_printk_head;
+static volatile int trace_printk_enabled;
+
+void trace_printk_init(void)
+{
+    trace_printk_head = 0;
+    trace_printk_enabled = 1;
+    kprintf("[OK] trace_printk initialized (%d bytes)\n", TRACE_PRINTK_BUF_SIZE);
+}
+
+void trace_printk(const char *fmt, ...)
+{
+    if (!trace_printk_enabled || !fmt)
+        return;
+
+    /* Format the message into a temporary buffer */
+    char msg[256];
+    va_list args;
+    va_start(args, fmt);
+    int len = vsnprintf(msg, sizeof(msg), fmt, args);
+    va_end(args);
+
+    if (len < 0) len = 0;
+    if (len >= (int)sizeof(msg)) len = (int)sizeof(msg) - 1;
+
+    /* Write to the ring buffer with a timestamp prefix */
+    uint64_t now_ns = timer_get_ns();
+
+    /* Format: [timestamp] message\n */
+    char entry[320];
+    int entry_len = snprintf(entry, sizeof(entry), "[%llu] %s\n",
+                             (unsigned long long)now_ns, msg);
+    if (entry_len < 0) return;
+    if (entry_len >= (int)sizeof(entry)) entry_len = (int)sizeof(entry) - 1;
+
+    /* Copy into ring buffer */
+    for (int i = 0; i < entry_len; i++) {
+        int idx = trace_printk_head;
+        trace_printk_buf[idx] = entry[i];
+        trace_printk_head = (idx + 1) % TRACE_PRINTK_BUF_SIZE;
+    }
+
+    /* NUL-terminate (best effort) */
+    trace_printk_buf[trace_printk_head] = '\0';
+}
+
+/* Read trace_printk buffer — copies to user buffer.
+ * Returns number of bytes read. */
+int trace_printk_read(char *buf, int buf_size)
+{
+    if (!buf || buf_size <= 0) return 0;
+
+    int head = trace_printk_head;
+    int count = 0;
+
+    /* Simple linear scan: find the oldest entry and return from there */
+    int start = head;
+    for (int i = 0; i < TRACE_PRINTK_BUF_SIZE && count < buf_size - 1; i++) {
+        int idx = (start + i) % TRACE_PRINTK_BUF_SIZE;
+        char c = trace_printk_buf[idx];
+        if (c == '\0') continue;  /* skip holes */
+        buf[count++] = c;
+    }
+    buf[count] = '\0';
+    return count;
+}
+
+void trace_printk_enable(void) { trace_printk_enabled = 1; }
+void trace_printk_disable(void) { trace_printk_enabled = 0; }
+int  trace_printk_is_enabled(void) { return trace_printk_enabled; }

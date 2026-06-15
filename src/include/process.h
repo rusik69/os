@@ -229,6 +229,12 @@ struct process {
     uint64_t dl_consumed;        /* actual runtime consumed this period (ns, for GRUB reclaim) */
     int      dl_throttled;       /* 1 = budget exhausted before deadline */
     int      dl_active;          /* 1 = deadline scheduling active */
+
+    /* ── EEVDF scheduling parameters (when CONFIG_EEVDF is enabled) ── */
+    uint64_t eevdf_deadline;     /* virtual deadline (ns) */
+    int64_t  eevdf_lag;          /* virtual lag (ns) — can be negative */
+    uint64_t eevdf_slice;        /* time slice length (ns) */
+    uint64_t eevdf_weight;       /* scheduling weight (same as sched_weight) */
     /* ── Resource tracking ──────────────────────────────────── */
     uint64_t cpu_user;           /* user CPU time (ticks) */
     uint64_t cpu_system;         /* system CPU time (ticks) */
@@ -285,6 +291,9 @@ struct process {
 
     /* ── Cgroup namespace (Item 117) ────────────────────────────── */
     struct cgroup_namespace *cgroup_ns;  /* NULL = root namespace */
+
+    /* ── IPC namespace (Item 5 — enhanced) ─────────────────────────── */
+    struct ipc_namespace *ipc_ns;        /* NULL = root/initial namespace */
 
     /* ── Namespace flags (set by unshare/CLONE_NEW*) ──────────── */
     uint32_t ns_flags;       /* bitmask of CLONE_NEW* flags that the namespace was unshared with */

@@ -64,6 +64,8 @@
 #include "wx_enforce.h"
 #include "mprotect.h"
 #include "memfd.h"
+#include "pidfd.h"
+#include "fs_mount_prop.h"
 #include "page_cache.h"
 #include "bufcache.h"
 #include "coredump.h"
@@ -795,6 +797,53 @@ static uint64_t sys_close(uint64_t fd) {
     pfd->used = 0;
     pfd->flags = 0;
     pfd->path[0] = '\0';
+    return 0;
+}
+
+/* ── close_range — close all file descriptors in [first, last] ────── */
+static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
+{
+    /* Validate range */
+    if (first > last)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    /* We don't support CLOSE_RANGE_UNSHARE yet */
+    uint64_t known_flags = CLOSE_RANGE_CLOEXEC;
+    if (flags & ~known_flags)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    struct process *p = process_get_current();
+    if (!p) return (uint64_t)(int64_t)-EPERM;
+
+    /* Clamp to PROCESS_FD_MAX */
+    if (first >= PROCESS_FD_MAX)
+        return 0;  /* nothing to do */
+    if (last >= PROCESS_FD_MAX)
+        last = PROCESS_FD_MAX - 1;
+
+    uint64_t closed = 0;
+    for (uint64_t fd = first; fd <= last; fd++) {
+        int i = (int)fd - 3;
+        if (i < 0) continue;
+
+        struct process_fd *pfd = &p->fd_table[i];
+        if (!pfd->used)
+            continue;
+
+        if (flags & CLOSE_RANGE_CLOEXEC) {
+            /* Set close-on-exec flag instead of closing */
+            pfd->flags |= FD_CLOEXEC;
+        } else {
+            /* Close the fd */
+            if (pfd->flags & FD_TMPFILE && pfd->path[0])
+                vfs_unlink(pfd->path);
+            pfd->used = 0;
+            pfd->flags = 0;
+            pfd->path[0] = '\0';
+            closed++;
+        }
+    }
+
     return 0;
 }
 
@@ -9232,6 +9281,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_WRITE:  return sys_write(a1, a2, a3);
         case SYS_OPEN:   return sys_open(a1, a2, a3);
         case SYS_CLOSE:  return sys_close(a1);
+        case SYS_CLOSE_RANGE: return sys_close_range(a1, a2, a3);
         case SYS_EXIT:   return sys_exit(a1);
         case SYS_GETPID: return sys_getpid();
         case SYS_KILL:   return sys_kill(a1, a2);
@@ -9684,6 +9734,26 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         /* ── Swap — block device swap (Item 223) ──────────────────── */
         case SYS_SWAPON:          return (uint64_t)swap_swapon((const char *)a1);
         case SYS_SWAPOFF:         return (uint64_t)swap_swapoff((const char *)a1);
+        /* ── pidfd operations ─────────────────────────────────────── */
+        case SYS_PIDFD_OPEN: {
+            int ret = pidfd_open((uint32_t)a1, (uint32_t)a2);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
+        case SYS_PIDFD_SEND_SIGNAL: {
+            int ret = pidfd_send_signal((int)a1, (int)a2,
+                                        (struct siginfo *)a3, (uint32_t)a4);
+            return ret < 0 ? (uint64_t)-1 : 0;
+        }
+        case SYS_PIDFD_GETFD: {
+            int ret = pidfd_getfd((int)a1, (int)a2, (uint32_t)a3);
+            return ret < 0 ? (uint64_t)-1 : (uint64_t)ret;
+        }
+        /* ── mount_setattr ────────────────────────────────────────── */
+        case SYS_MOUNT_SETATTR:
+            return (uint64_t)mount_setattr((int)a1, (const char *)a2,
+                                           (uint32_t)a3,
+                                           (const struct mount_attr *)a4,
+                                           (size_t)a5);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

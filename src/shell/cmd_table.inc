@@ -378,6 +378,13 @@ static const shell_cmd_entry_t shell_cmd_table[] = {
     CMD("mkfs_ext2",   "Create ext2 filesystem (mkfs_ext2 [-b size] <device>)", cmd_mkfs_ext2_wrapper)
     CMD("mkswap",      "Set up swap area (mkswap <device>)", cmd_mkswap_wrapper)
     CMD("cpio",        "Copy in/out archive (cpio -i|-o|-t [file])", cmd_cpio_wrapper)
+    /* New shell builtins */
+    CMD("read",        "Read a line from stdin into variables",         cmd_read)
+    CMD("eval",        "Execute arguments as shell command",            cmd_eval)
+    CMD("type",        "Describe how a command would be interpreted",   cmd_type)
+    CMD("dirs",        "Display directory stack",                      cmd_dirs)
+    CMD("pushd",       "Push directory onto stack and change to it",   cmd_pushd)
+    CMD("popd",        "Pop directory from stack and change to it",    cmd_popd)
     { 0, 0, 0 }
 };
 

@@ -32,12 +32,17 @@
 #endif
 
 /* ── HBA register offsets ───────────────────────────────────────────── */
+#define HBA_CAP_OFFSET   0x00   /* Host Capabilities */
 #define HBA_GHC_OFFSET   0x04   /* Global Host Control */
 #define HBA_IS_OFFSET    0x08   /* Interrupt Status */
 #define HBA_PI_OFFSET    0x0C   /* Ports Implemented */
 #define HBA_VS_OFFSET    0x10   /* Version */
+#define HBA_CAP2_OFFSET  0x2C   /* Host Capabilities Extended */
 #define HBA_PORT_BASE    0x100  /* First port register block */
 #define HBA_PORT_SIZE    0x80   /* Per-port register stride */
+
+/* CAP2 bits */
+#define CAP2_SNCQ       (1u << 1)   /* Supports NCQ (controller-wide) */
 
 /* Port register offsets */
 #define PORT_CLB    0x00   /* Command List Base Address (low) */
@@ -616,6 +621,223 @@ static int ahci_idle_fn(struct blk_request_queue *q, int force_flush) {
     return -1;
 }
 
+/* ── AHCI NCQ API ───────────────────────────────────────────────────── */
+
+/* CAP2.SNCQ — check if controller supports NCQ at all */
+int ahci_has_ncq_cap(void)
+{
+    uint32_t cap2 = hba_read(HBA_CAP2_OFFSET);
+    return (cap2 & CAP2_SNCQ) ? 1 : 0;
+}
+
+/**
+ * ahci_ncq_read — submit an NCQ READ FPDMA QUEUED command to a port.
+ * Returns 0 on success, -1 on error.
+ */
+int ahci_ncq_read(int port_num, int pm_port, uint32_t lba, uint8_t count,
+                   void *buf)
+{
+    /* Find the port by physical port number and PM port */
+    struct ahci_port *port = NULL;
+    for (int i = 0; i < ahci_port_count; i++) {
+        if (ahci_ports[i].present &&
+            ahci_ports[i].port_num == port_num &&
+            ahci_ports[i].pm_port == pm_port) {
+            port = &ahci_ports[i];
+            break;
+        }
+    }
+    if (!port || !port->ncq_capable)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    /* Find a free NCQ slot (1-31) */
+    uint32_t ci   = port_read(port->port_num, PORT_CI);
+    uint32_t sact = port_read(port->port_num, PORT_SACT);
+    uint32_t busy = ci | sact;
+
+    int slot = -1;
+    for (int i = 1; i < AHCI_SLOT_COUNT; i++) {
+        if (!(busy & (1u << i))) { slot = i; break; }
+    }
+    if (slot < 0) {
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    /* Build a single blk_request to use the existing NCQ path */
+    struct blk_request *req = blk_request_alloc();
+    if (!req) {
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    req->lba = lba;
+    req->count = count;
+    req->buf = buf;
+    req->flags = BLK_REQ_READ;
+
+    /* Copy data buffer into the slot's DMA buffer (direction: device→host) */
+    /* For reads, the slot data buf will be written by the device */
+
+    ahci_build_ncq_cmd(port, slot, req);
+    port->inflight_mask |= (1u << slot);
+    port->slots[slot].req = req;
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+
+    ahci_issue_ncq(port, slot);
+
+    /* Wait for completion */
+    int timeout = 10000000;
+    while (timeout--) {
+        if (port->slots[slot].req == NULL) {
+            /* Completed — data is already copied by IRQ handler */
+            blk_request_free(req);
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+
+    /* Timeout */
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+    port->slots[slot].req = NULL;
+    port->inflight_mask &= ~(1u << slot);
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    blk_request_free(req);
+    return -1;
+}
+
+/**
+ * ahci_ncq_write — submit an NCQ WRITE FPDMA QUEUED command.
+ * Returns 0 on success, -1 on error.
+ */
+int ahci_ncq_write(int port_num, int pm_port, uint32_t lba, uint8_t count,
+                    const void *buf)
+{
+    /* Find the port */
+    struct ahci_port *port = NULL;
+    for (int i = 0; i < ahci_port_count; i++) {
+        if (ahci_ports[i].present &&
+            ahci_ports[i].port_num == port_num &&
+            ahci_ports[i].pm_port == pm_port) {
+            port = &ahci_ports[i];
+            break;
+        }
+    }
+    if (!port || !port->ncq_capable)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+
+    uint32_t ci   = port_read(port->port_num, PORT_CI);
+    uint32_t sact = port_read(port->port_num, PORT_SACT);
+    uint32_t busy = ci | sact;
+
+    int slot = -1;
+    for (int i = 1; i < AHCI_SLOT_COUNT; i++) {
+        if (!(busy & (1u << i))) { slot = i; break; }
+    }
+    if (slot < 0) {
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    struct blk_request *req = blk_request_alloc();
+    if (!req) {
+        spinlock_irqsave_release(&ahci_lock, irq_flags);
+        return -1;
+    }
+
+    req->lba = lba;
+    req->count = count;
+    req->buf = (void *)buf;
+    req->flags = BLK_REQ_WRITE;
+
+    ahci_build_ncq_cmd(port, slot, req);
+    port->inflight_mask |= (1u << slot);
+    port->slots[slot].req = req;
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+
+    ahci_issue_ncq(port, slot);
+
+    /* Wait for completion */
+    int timeout = 10000000;
+    while (timeout--) {
+        if (port->slots[slot].req == NULL) {
+            blk_request_free(req);
+            return 0;
+        }
+        __asm__ volatile("pause");
+    }
+
+    spinlock_irqsave_acquire(&ahci_lock, &irq_flags);
+    port->slots[slot].req = NULL;
+    port->inflight_mask &= ~(1u << slot);
+    spinlock_irqsave_release(&ahci_lock, irq_flags);
+    blk_request_free(req);
+    return -1;
+}
+
+/**
+ * ahci_ncq_completion_poll — poll for NCQ completions on a physical port.
+ * Checks the SDB FIS and completes any finished NCQ commands.
+ * This can be called from a timer or idle loop instead of waiting for IRQs.
+ * Returns the number of commands completed, or 0 if none.
+ */
+int ahci_ncq_completion_poll(int port_num)
+{
+    uint32_t port_is = port_read(port_num, PORT_IS);
+    if (!(port_is & PORT_IS_SDBS))
+        return 0;
+
+    /* Clear the SDBS interrupt status bit */
+    port_write(port_num, PORT_IS, port_is);
+
+    uint32_t ci   = port_read(port_num, PORT_CI);
+    uint32_t sact = port_read(port_num, PORT_SACT);
+    uint32_t all_done = ~(ci | sact);
+    int completed = 0;
+
+    for (int i = 0; i < ahci_port_count; i++) {
+        struct ahci_port *p = &ahci_ports[i];
+        if (!p->present || p->port_num != port_num)
+            continue;
+
+        uint32_t done = p->inflight_mask & all_done;
+        if (!done) continue;
+
+        for (int slot = 1; slot < AHCI_SLOT_COUNT; slot++) {
+            if (done & (1u << slot)) {
+                struct ahci_slot *s = &p->slots[slot];
+                struct blk_request *req = s->req;
+                if (req) {
+                    s->req = NULL;
+                    p->inflight_mask &= ~(1u << slot);
+
+                    uint32_t tfd = port_read(port_num, PORT_TFD);
+                    if (tfd & PORT_TFD_ERR) {
+                        req->result = -1;
+                    } else {
+                        req->result = 0;
+                        /* Copy data back for reads */
+                        if (req->flags & BLK_REQ_READ) {
+                            memcpy(req->buf, s->data_buf_virt,
+                                   (size_t)req->count * AHCI_SECTOR_SIZE);
+                        }
+                    }
+                    blk_request_done(req);
+                    completed++;
+                }
+            }
+        }
+    }
+
+    return completed;
+}
+
 /* ── Physical port initialization (direct-attached or PM host) ──────── */
 
 /**
@@ -794,6 +1016,14 @@ int ahci_init(void) {
     hba_base = (uint64_t)vmm_map_phys(hba_base, 0x2000,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
     if (!hba_base) return -2;
+
+    /* Check CAP2.SNCQ for controller-wide NCQ support */
+    uint32_t cap2 = hba_read(HBA_CAP2_OFFSET);
+    if (cap2 & CAP2_SNCQ) {
+        kprintf("  AHCI: Controller supports NCQ (CAP2.SNCQ=1)\n");
+    } else {
+        kprintf("  AHCI: Controller does NOT support NCQ\n");
+    }
 
     /* Enable PCI bus mastering */
     pci_enable_bus_master(&dev);

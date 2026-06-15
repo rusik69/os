@@ -13,20 +13,14 @@
  * a range of UIDs/GIDs in the parent namespace (or the initial user
  * namespace).
  *
- * When a user namespace is created, the creating process's UID and
- * GID outside become the mapped UID/GID inside the namespace.
- * This allows an unprivileged user (UID N outside) to be treated as
- * root (UID 0) inside their own namespace, with certain restrictions:
- *
- *   - Capabilities are scoped to the user namespace: having CAP_SYS_ADMIN
- *     inside a user namespace does NOT grant privileges outside it.
- *   - A process in a user namespace may not see or affect processes
- *     outside that namespace unless permitted by the parent's mappings.
- *   - All user-namespace-based capability checks walk the namespace
- *     hierarchy to determine if the capability is effective.
- *
- * Resource limits (RLIMIT_NPROC, etc.) are checked against the
- * parent namespace's user, not the mapped user inside the ns.
+ * Enhanced with:
+ *   - Full uid_map/gid_map support (single-entry, double-entry)
+ *   - chown inside namespace to mapped UIDs
+ *   - mknod (only for mapped devices)
+ *   - mount inside user namespace
+ *   - Capability checks against owning namespace
+ *   - Setgroups control based on gid_map write privilege
+ *   - /proc/<pid>/uid_map, /proc/<pid>/gid_map
  */
 
 #define USERNS_MAX_NS      64   /* maximum number of user namespaces */
@@ -71,6 +65,10 @@ struct user_namespace {
 
     /* Number of processes currently in this namespace */
     int      process_count;
+
+    /* Setgroups control: 0 = allow setgroups, 1 = deny setgroups.
+     * Set to 1 when a non-single-entry GID mapping is written. */
+    int      setgroups_denied;
 };
 
 /* ── Root (initial) user namespace ──────────────────────────────── */
@@ -131,31 +129,66 @@ int user_ns_add_gid_map(struct user_namespace *ns,
                         uint32_t first_outside,
                         uint32_t count);
 
+/* ── Enhanced map operations ──────────────────────────────────────
+ *
+ * Write full uid_map or gid_map from a formatted string
+ * (e.g., "0 1000 1\n500 2000 1\n").
+ * The string may contain one or two entries (single-entry or
+ * double-entry mapping).
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int user_ns_write_uid_map(struct user_namespace *ns, const char *data, uint32_t size);
+int user_ns_write_gid_map(struct user_namespace *ns, const char *data, uint32_t size);
+
+/* Read uid_map/gid_map as formatted string (for /proc/PID/uid_map).
+ * Returns number of bytes written to buf. */
+int user_ns_read_uid_map(const struct user_namespace *ns, char *buf, int buf_size);
+int user_ns_read_gid_map(const struct user_namespace *ns, char *buf, int buf_size);
+
+/* ── Setgroups control ────────────────────────────────────────────
+ *
+ * Allow or deny setgroups syscall inside the user namespace.
+ * Denying setgroups is required before writing a non-single-entry
+ * GID mapping.
+ */
+int user_ns_setgroups_allowed(const struct user_namespace *ns);
+int user_ns_setgroups_deny(struct user_namespace *ns);
+
 /* ── Capability helpers ───────────────────────────────────────────
  *
  * Check whether `cap` is effective in the given user namespace.
  * Returns 1 if the caller's process has the capability in `ns`.
- * (Does NOT check that ns is the caller's current user_ns — the
- *  caller should pass ns = cur->user_ns for "am I privileged in
- *  my own namespace?" checks.)
  */
 int user_ns_has_cap(const struct process *proc,
                     struct user_namespace *ns, uint32_t cap);
 
-/* Check whether `cap` is effective in the process's current user
- * namespace.  Convenience wrapper. */
+/* Convenience wrapper — check cap in process's current user ns */
 static inline int user_ns_current_has_cap(const struct process *proc,
                                           uint32_t cap)
 {
     return user_ns_has_cap(proc, proc ? proc->user_ns : NULL, cap);
 }
 
-/* ── File-system helpers ──────────────────────────────────────────
+/* ── Privilege checks for namespace-aware operations ──────────────
  *
- * Translate the caller's UID/GID for an inode operation that is
- * performed inside a given user namespace (used by filesystem
- * permission checks crossing namespace boundaries).
+ * Check if the current process can chown to a given UID/GID inside
+ * its user namespace.  The target UID/GID must be mapped in the
+ * namespace's uid_map/gid_map.
  */
+int user_ns_can_chown(struct user_namespace *ns, uint32_t target_uid, uint32_t target_gid);
+
+/* Check if the current process can create a device node (mknod)
+ * with the given major/minor inside its user namespace.
+ * Only mapped devices are allowed. */
+int user_ns_can_mknod(struct user_namespace *ns, uint32_t dev_major, uint32_t dev_minor);
+
+/* Check if the current process can mount filesystems inside its
+ * user namespace.  Requires CAP_SYS_ADMIN in the owning namespace
+ * and certain filesystem types. */
+int user_ns_can_mount(struct user_namespace *ns, const char *fstype);
+
+/* ── Filesystem helpers ─────────────────────────────────────────── */
 uint32_t user_ns_sb_uid(const struct user_namespace *ns, uint32_t uid);
 uint32_t user_ns_sb_gid(const struct user_namespace *ns, uint32_t gid);
 
