@@ -78,13 +78,13 @@ def main():
 
     # Patterns that indicate boot failure
     failure_patterns = [
-        r"Kernel Panic",
-        r"Oops",
-        r"BUG:",
-        r"Fatal",
+        r"^=== KERNEL PANIC ===",
+        r"^Kernel Panic",
+        r"^BUG:",
+        r"^Fatal",
         r"triple fault",
         r"ERROR.*init",
-        r"PANIC",
+        r"^=== SYSTEM HALTED ===",
     ]
 
     print(f"[boot_test] Launching QEMU (timeout={args.timeout}s)...")

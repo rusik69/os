@@ -25,6 +25,7 @@ struct ksym_entry {
     uint64_t    addr;       /* Address of the symbol (value) */
     const char *sym_name;   /* Pointer to symbol name string */
     int         gpl_only;   /* 1 = GPL-only export, 0 = unrestricted */
+    uint32_t    __pad[3];   /* Padding to 32 bytes (aligned(16) compat) */
 };
 
 /* The linker collects all exported symbols into contiguous arrays.
