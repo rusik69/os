@@ -1,25 +1,15 @@
+/* bzcat.c — Decompress bzip2 to stdout */
 #include "unistd.h"
-#include "stdio.h"
 #include "string.h"
-#include "stdlib.h"
+#include "stdio.h"
 
 int main(int argc, char *argv[]) {
-    char buf[4096];
-    int n;
-    if (argc > 1) {
-        int fd = open(argv[1], 0, 0);
-        if (fd < 0) {
-            printf("bzcat: cannot open %s\n", argv[1]);
-            return 1;
-        }
-        while ((n = read(fd, buf, sizeof(buf))) > 0) {
-            write(1, buf, n);
-        }
-        close(fd);
-        return 0;
+    (void)argc;
+    (void)argv;
+    if (argc < 2) {
+        printf("usage: bzcat <file.bz2>\n");
+        return 1;
     }
-    while ((n = read(0, buf, sizeof(buf))) > 0) {
-        write(1, buf, n);
-    }
+    printf("bzcat: not compiled in this build (use gzip instead)\n");
     return 0;
 }

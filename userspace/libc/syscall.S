@@ -645,3 +645,94 @@ net_connlist:
     syscall
     ret
 .size net_connlist, . - net_connlist
+
+# fs_chown(path, uid, gid) — syscall 109
+.globl fs_chown
+.type fs_chown, @function
+fs_chown:
+    movl    $109, %eax
+    syscall
+    ret
+.size fs_chown, . - fs_chown
+
+# mknod(path, mode, dev) — syscall 271
+.globl mknod
+.type mknod, @function
+mknod:
+    movl    $271, %eax
+    syscall
+    ret
+.size mknod, . - mknod
+
+# mount(src, target, fstype, flags, data) — syscall 281
+.globl mount
+.type mount, @function
+mount:
+    mov     %rcx, %r10
+    movl    $281, %eax
+    syscall
+    ret
+.size mount, . - mount
+
+# umount(target) — syscall 282
+.globl umount
+.type umount, @function
+umount:
+    movl    $282, %eax
+    syscall
+    ret
+.size umount, . - umount
+
+# init_module(path, params) — syscall 366
+.globl init_module
+.type init_module, @function
+init_module:
+    movl    $366, %eax
+    syscall
+    ret
+.size init_module, . - init_module
+
+# delete_module(name, flags) — syscall 368
+.globl delete_module
+.type delete_module, @function
+delete_module:
+    movl    $368, %eax
+    syscall
+    ret
+.size delete_module, . - delete_module
+
+# query_module(name, info_buf, buf_size) — syscall 369
+.globl query_module
+.type query_module, @function
+query_module:
+    movl    $369, %eax
+    syscall
+    ret
+.size query_module, . - query_module
+
+# chroot(path) — syscall 377
+.globl chroot
+.type chroot, @function
+chroot:
+    movl    $377, %eax
+    syscall
+    ret
+.size chroot, . - chroot
+
+# swapon(path) — syscall 500
+.globl swapon
+.type swapon, @function
+swapon:
+    movl    $500, %eax
+    syscall
+    ret
+.size swapon, . - swapon
+
+# swapoff(path) — syscall 501
+.globl swapoff
+.type swapoff, @function
+swapoff:
+    movl    $501, %eax
+    syscall
+    ret
+.size swapoff, . - swapoff

@@ -203,6 +203,18 @@ struct utsname {
     char machine[65];
 };
 
+/* Additional syscall numbers (not yet in unistd.h but needed by commands) */
+#define SYS_FS_CHOWN      109  /* fs_chown(path, uid, gid) */
+#define SYS_MKNOD         271  /* mknod(path, mode, dev) */
+#define SYS_MOUNT         281  /* mount(src, target, fstype, flags, data) */
+#define SYS_UMOUNT        282  /* umount(target) */
+#define SYS_INIT_MODULE   366  /* init_module(path, params) */
+#define SYS_DELETE_MODULE 368  /* delete_module(name, flags) */
+#define SYS_QUERY_MODULE  369  /* query_module(name, info_buf, buf_size) */
+#define SYS_CHROOT        377  /* chroot(path) */
+#define SYS_SWAPON        500  /* swapon(path) */
+#define SYS_SWAPOFF       501  /* swapoff(path) */
+
 /* Function prototypes */
 extern int write(int fd, const void *buf, unsigned long count);
 extern int read(int fd, void *buf, unsigned long count);
@@ -258,6 +270,18 @@ extern int utimensat(int dirfd, const char *path, const struct timespec *times, 
 extern int sync(void);
 extern int reboot(void);
 extern int gethostname(char *name, unsigned long len);
+
+/* Additional syscall wrappers */
+extern int fs_chown(const char *path, unsigned int uid, unsigned int gid);
+extern int mknod(const char *path, unsigned int mode, unsigned long dev);
+extern int mount(const char *src, const char *target, const char *fstype, unsigned long flags, const void *data);
+extern int umount(const char *target);
+extern int init_module(const char *path, const char *params);
+extern int delete_module(const char *name, unsigned long flags);
+extern int query_module(const char *name, void *info_buf, unsigned long buf_size);
+extern int chroot(const char *path);
+extern int swapon(const char *path);
+extern int swapoff(const char *path);
 
 /* Process groups */
 extern int setpgrp(void);
