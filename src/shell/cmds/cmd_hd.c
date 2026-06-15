@@ -6,6 +6,8 @@
 #include "stdlib.h"
 #include "types.h"
 
+#define HD_BUF_SIZE 4096
+
 static void dump_line(const uint8_t *data, uint64_t offset, size_t len)
 {
     kprintf("%016llx  ", offset);
@@ -33,15 +35,32 @@ int cmd_hd(int argc, char **argv)
     }
 
     const char *fname = argv[1];
-    /* Stub: print a dummy dump */
-    (void)fname;
-    kprintf("hd: hex dump of '%s' (stub)\n", fname);
 
-    uint8_t dummy[16];
-    for (int i = 0; i < 16; i++)
-        dummy[i] = (uint8_t)(i * 0x11);
+    /* Read the file using vfs_read */
+    static uint8_t buf[HD_BUF_SIZE];
+    uint32_t size = 0;
 
-    dump_line(dummy, 0, 16);
+    if (vfs_read(fname, buf, HD_BUF_SIZE, &size) != 0) {
+        kprintf("hd: cannot read '%s'\n", fname);
+        return 1;
+    }
+
+    if (size == 0) {
+        kprintf("hd: '%s' is empty\n", fname);
+        return 0;
+    }
+
+    /* Hex dump the data in 16-byte lines */
+    uint64_t offset = 0;
+    uint32_t pos = 0;
+    while (pos < size) {
+        size_t chunk = (size - pos < 16) ? (size - pos) : 16;
+        dump_line(buf + pos, offset, chunk);
+        pos += 16;
+        offset += 16;
+    }
+
+    kprintf("%016llx\n", (unsigned long long)size);
     return 0;
 }
 

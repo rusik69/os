@@ -6,21 +6,34 @@
 #include "stdlib.h"
 #include "types.h"
 
+/* I/O priority constants (from ioprio.h) */
+#define IOPRIO_CLASS_SHIFT      13
+#define IOPRIO_PRIO_MASK        ((1UL << IOPRIO_CLASS_SHIFT) - 1)
+#define IOPRIO_PRIO_VALUE(class, data)  (((class) << IOPRIO_CLASS_SHIFT) | (data))
+
+#define IOPRIO_CLASS_NONE       0
+#define IOPRIO_CLASS_RT         1
+#define IOPRIO_CLASS_BE         2
+#define IOPRIO_CLASS_IDLE       3
+#define IOPRIO_BE_DEF_PRIO      4
+
+#define IOPRIO_WHO_PROCESS      1
+
 static const char *class_name(int cls)
 {
     switch (cls) {
-        case 0: return "none";
-        case 1: return "realtime";
-        case 2: return "best-effort";
-        case 3: return "idle";
-        default: return "unknown";
+        case IOPRIO_CLASS_NONE: return "none";
+        case IOPRIO_CLASS_RT:   return "realtime";
+        case IOPRIO_CLASS_BE:   return "best-effort";
+        case IOPRIO_CLASS_IDLE: return "idle";
+        default:                return "unknown";
     }
 }
 
 int cmd_ionice(int argc, char **argv)
 {
-    int cls = 2;  /* best-effort */
-    int prio = 4;
+    int cls = IOPRIO_CLASS_BE;
+    int prio = IOPRIO_BE_DEF_PRIO;
     int pid = 0;
     int i;
 
@@ -35,8 +48,28 @@ int cmd_ionice(int argc, char **argv)
             break;
     }
 
-    kprintf("ionice: pid %d -> class %s prio %d (stub)\n",
-            pid, class_name(cls), prio);
+    if (cls < IOPRIO_CLASS_NONE || cls > IOPRIO_CLASS_IDLE) {
+        kprintf("ionice: invalid class %d (use 0-3)\n", cls);
+        return 1;
+    }
+    if (prio < 0 || prio > 7) {
+        kprintf("ionice: invalid priority %d (use 0-7)\n", prio);
+        return 1;
+    }
+
+    uint16_t ioprio_val = IOPRIO_PRIO_VALUE((unsigned int)cls, (unsigned int)prio);
+
+    /* Use the ioprio_set syscall (SYS_IOPRIO_SET = 555) */
+    int ret = (int)libc_syscall(555,
+        (uint64_t)IOPRIO_WHO_PROCESS, (uint64_t)(uint32_t)pid,
+        (uint64_t)ioprio_val, 0, 0);
+
+    if (ret < 0) {
+        kprintf("ionice: failed to set I/O priority for pid %d\n", pid);
+        return 1;
+    }
+
+    kprintf("ionice: pid %d -> class %s prio %d\n", pid, class_name(cls), prio);
     return 0;
 }
 

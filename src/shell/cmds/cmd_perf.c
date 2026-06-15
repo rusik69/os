@@ -55,7 +55,7 @@ static void cmd_perf_usage(void)
     kprintf("Usage:\n");
     kprintf("  perf list              — list available events\n");
     kprintf("  perf stat              — show performance counters\n");
-    kprintf("  perf record            — start recording (stub)\n");
+    kprintf("  perf record            — start recording\n");
     kprintf("  perf report            — show recorded samples\n");
     kprintf("  perf flamegraph        — output folded stack flame graph\n");
     kprintf("  perf cswitch           — dump context switch trace\n");
@@ -142,8 +142,35 @@ static void cmd_perf_cswitch(void)
 static void cmd_perf_pfstat(void)
 {
     kprintf("=== Page Fault Samples ===\n");
-    kprintf("(interface: read from perf_pf ring buffer)\n");
-    kprintf("  No page fault samples available yet\n");
+
+    /* Read page fault samples using the legacy API */
+    struct perf_pf_sample {
+        uint64_t timestamp;
+        uint64_t fault_addr;
+        uint64_t ip;
+        uint64_t stack[16];
+        uint32_t pid;
+        uint32_t error_code;
+        int      stack_depth;
+    } buf[32];
+
+    int count = perf_pf_read_samples(buf, 32);
+    if (count <= 0) {
+        kprintf("  No page fault samples recorded\n");
+        kprintf("============================\n");
+        return;
+    }
+
+    kprintf("  Timestamp     PID     FaultAddr         IP               Flags\n");
+    for (int i = 0; i < count && i < 16; i++) {
+        kprintf("  %llu  %5u  0x%016llx  0x%016llx  %c%c\n",
+                (unsigned long long)buf[i].timestamp,
+                (unsigned int)buf[i].pid,
+                (unsigned long long)buf[i].fault_addr,
+                (unsigned long long)buf[i].ip,
+                (buf[i].error_code & 1) ? 'M' : 'm',  /* M=Major, m=minor */
+                (buf[i].error_code & 2) ? 'W' : 'R'); /* W=Write, R=Read */
+    }
     kprintf("============================\n");
 }
 
@@ -188,10 +215,16 @@ void cmd_perf(const char *args)
     } else if (strcmp(p, "flamegraph") == 0 || strcmp(p, "flame") == 0) {
         cmd_perf_flamegraph();
     } else if (strcmp(p, "record") == 0) {
-        kprintf("perf record: recording started (stub)\n");
+        /* Enable context switch and page fault sampling */
+        perf_cswitch_init();
+        perf_pf_init();
+        perf_flame_init();
+        kprintf("perf record: recording started (cswitch + pf + flame)\n");
     } else if (strcmp(p, "report") == 0) {
-        kprintf("perf report: recording data (stub)\n");
+        kprintf("perf report: === Recorded Performance Data ===\n");
         cmd_perf_stat();
+        cmd_perf_cswitch();
+        cmd_perf_pfstat();
     } else if (strcmp(p, "help") == 0 || strcmp(p, "--help") == 0) {
         cmd_perf_usage();
     } else {

@@ -10,13 +10,12 @@ static const char *attr_str(uint8_t attr)
 {
     static char buf[16];
     int pos = 0;
-
-    if (attr & 0x01) buf[pos++] = 'R'; /* read-only */
-    if (attr & 0x02) buf[pos++] = 'H'; /* hidden */
-    if (attr & 0x04) buf[pos++] = 'S'; /* system */
-    if (attr & 0x08) buf[pos++] = 'V'; /* volume label */
-    if (attr & 0x10) buf[pos++] = 'D'; /* directory */
-    if (attr & 0x20) buf[pos++] = 'A'; /* archive */
+    if (attr & 0x01) buf[pos++] = 'R';
+    if (attr & 0x02) buf[pos++] = 'H';
+    if (attr & 0x04) buf[pos++] = 'S';
+    if (attr & 0x08) buf[pos++] = 'V';
+    if (attr & 0x10) buf[pos++] = 'D';
+    if (attr & 0x20) buf[pos++] = 'A';
     buf[pos] = '\0';
     return buf;
 }
@@ -29,8 +28,17 @@ int cmd_fatattr(int argc, char **argv)
     }
 
     for (int i = 1; i < argc; i++) {
-        kprintf("fatattr: %s attributes = %s (stub)\n",
-                argv[i], attr_str(0x20));
+        struct vfs_stat st;
+        if (vfs_stat(argv[i], &st) >= 0) {
+            uint8_t attr = 0;
+            if (st.type == FS_TYPE_DIR)  attr |= 0x10; /* directory */
+            if (st.type == FS_TYPE_FILE) attr |= 0x20; /* archive */
+            if (!(st.mode & 0200))        attr |= 0x01; /* read-only */
+            kprintf("fatattr: %s attributes = %s (0x%02x)\n",
+                    argv[i], attr_str(attr), (unsigned int)attr);
+        } else {
+            kprintf("fatattr: cannot access '%s'\n", argv[i]);
+        }
     }
     return 0;
 }

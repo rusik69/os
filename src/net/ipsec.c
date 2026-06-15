@@ -211,5 +211,16 @@ void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t
     if (!ipsec_initialised) return;
     ipsec_input_esp(ip_hdr, payload);
 }
+/* List all Security Associations — fills @buf with up to @max entries.
+ * Returns the number of active SAs. */
+int ipsec_sa_list(struct security_assoc *buf, int max)
+{
+    int count = 0;
+    for (int i = 0; i < SADB_MAX_SAS && count < max; i++) {
+        if (sadb[i].in_use)
+            buf[count++] = sadb[i];
+    }
+    return count;
+}
 #include "module.h"
 module_init(ipsec_init);
