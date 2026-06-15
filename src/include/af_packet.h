@@ -130,6 +130,36 @@ struct sock_fprog {
 #define BPF_KILL          0
 #define BPF_PASS          1
 
+/* Multicast group membership request (for PACKET_ADD_MEMBERSHIP) */
+struct packet_mreq {
+    int            mr_ifindex;
+    uint16_t       mr_type;
+    uint16_t       mr_alen;
+    uint8_t        mr_address[8];
+};
+
+/* Packet ancillary data header (tpkt_auxdata) */
+struct tpacket_auxdata {
+    uint32_t tp_status;
+    uint32_t tp_len;
+    uint32_t tp_snaplen;
+    uint16_t tp_mac;
+    uint16_t tp_net;
+    uint32_t tp_sec;
+    uint32_t tp_nsec;
+    uint16_t tp_vlan_tci;
+    uint16_t tp_vlan_tpid;
+};
+
+/* Multicast group membership entry */
+struct packet_mc_entry {
+    struct packet_mc_entry *next;
+    int         mr_ifindex;
+    uint16_t    mr_type;        /* PACKET_MR_MULTICAST, etc */
+    uint8_t     mr_alen;
+    uint8_t     mr_address[8];
+};
+
 /* Packet socket state */
 struct packet_sock {
     int         used;           /* 1 = slot in use */
@@ -142,6 +172,12 @@ struct packet_sock {
 
     /* Packet type filter mask */
     uint32_t    pkttype_mask;   /* Bitmask of PACKET_* types to accept */
+
+    /* Ancillary data (PACKET_AUXDATA) */
+    int         auxdata_enabled; /* 1 = deliver tpkt_auxdata on recvmsg */
+
+    /* Multicast group membership list */
+    struct packet_mc_entry *mc_list;  /* linked list of mc addresses */
 
     /* Statistics */
     uint64_t    frames_recv;

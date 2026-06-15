@@ -1,0 +1,8 @@
+# .github/CODEOWNERS — Code ownership for Hermes OS
+#
+# Each line is a file pattern followed by one or more owners.
+# These owners are automatically requested for review when someone
+# opens a pull request that modifies the matched files.
+
+# The @rusik69 user owns the entire repository
+* @rusik69

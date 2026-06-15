@@ -7,6 +7,210 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Summary
+
+This release focuses on **production hardening**, **kernel modularization**, **expanded feature coverage**, and **improved test infrastructure**. Major themes include:
+
+- **Kernel modularisation** — The kernel has been refactored into **226 loadable modules** with a full ELF module loader, symbol export table (`.ksymtab`), module dependency tracking, signature verification, compression support, and asynchronous loading. Drivers, filesystem implementations, and subsystems can now be built and loaded as `.ko` modules.
+
+- **100+ kernel features added** — Covering security (KPTI, SMAP/SMEP/UMIP, KASLR, KASAN, KFENCE, KCSAN, seccomp-BPF, Landlock LSM, IMA, EVM, IPE, lockdown, module signing), memory management (MGLRU, THP, KSM, ZRAM/ZSWAP, DAMON, CMA, memory hotplug, huge page migration), networking (MPTCP, SCTP, DCCP, WireGuard, IPsec, XDP, 6LoWPAN, TIPC, L2TP, MACsec, netfilter, traffic control), storage (blk-mq, device mapper, MD RAID, bcache, LUKS, NBD, iSCSI, NVMe-oF, FCoE, DRBD, Ceph/RBD), virtualization (KVM, vhost-scsi/blk, VFIO, vDPA), and container orchestration (OCI runtime, pods, services, HPA, CRDs, RBAC).
+
+- **118 userspace command implementations** — Expanding the built-in shell to **356+ commands** covering coreutils, networking, administration, development, debugging, and games. Includes scripting with arrays, pipelines, job control, arithmetic expansion, and heredocs.
+
+- **Test infrastructure** — KUnit framework with test suites for PMM, slab, scheduler, VMM, security, and power management. 200+ built-in kernel tests plus QEMU-based E2E tests. Host-side libc unit tests. CI pipeline with GitHub Actions.
+
+- **In-kernel compilers** — A C compiler suite (`cc`, `as`, `ld`) that compiles C source to ELF binaries entirely at runtime, enabling on-the-fly program development within the OS.
+
+- **Production hardening** — Comprehensive security posture including KPTI (Meltdown mitigation), SMAP/SMEP/UMIP, kernel ASLR, stack canaries, stack guard pages, shadow call stack, CFI, seccomp, Landlock, IMA, module signing, lockdown mode, and multiple kernel sanitizers (KASAN, KFENCE, KCSAN, KMSAN, UBSan, kmemleak).
+
+### Added
+
+#### Batch B51–B100 — Modularisation, Clustering, Security, and Containers
+
+- **Modular kernel transition (Phases 1–4)**:
+  - Symbol export table with `.ksymtab` section for kernel symbol resolution.
+  - Full ELF module loader (`module_elf.c`) with relocation support for ET_REL.
+  - Module dependency tracking with reference-counted DAG (`module_deps.c`).
+  - Module autoloader with alias-based `modprobe` support (`module_autoload.c`).
+  - Module compression (gzip/xz) with transparent decompression (`module_compress.c`).
+  - Module signature verification (RSA/SHA-256 PKCS#7) (`module_signature.c`).
+  - Asynchronous module loading for faster boot (`module_async.c`).
+  - 226 loadable modules: driver, filesystem, and subsystem modules (e1000, nvme, ahci, usb, ext2, fat32, iso9660, tarfs, romfs, debugfs, sysfs, devfs, overlay, doom, dos, gui, compiler, and more).
+
+- **Cluster subsystem**:
+  - Raft-based consensus and replicated key-value store (`cluster/raft.c`, `cluster/raft_kv.c`).
+  - Gossip protocol for node discovery and failure detection (`cluster/gossip.c`).
+  - Overlay network with mesh routing (`cluster/overlay.c`, `cluster/mesh.c`).
+  - Network policy engine with L7 filtering (`cluster/network_policy.c`).
+  - Horizontal Pod Autoscaler (HPA) with custom metrics (`cluster/hpa.c`).
+  - Custom Resource Definition (CRD) framework (`cluster/crd.c`).
+  - Runtime security enforcement with seccomp profiles (`cluster/runtime_security.c`).
+  - Rolling cluster upgrade manager (`cluster/upgrade.c`).
+  - Node problem detection and remediation (`cluster/node_problem.c`).
+
+- **Container runtime**:
+  - OCI-compatible container lifecycle (create, start, exec, stop, delete).
+  - Container image management with layer caching and GC (`container/image.c`).
+  - Container storage (overlayfs + volume mounts) (`container/storage.c`).
+  - Container networking (CNI-compatible bridge, veth pairs) (`container/network.c`).
+  - Orchestrator integration: pod scheduling, service proxies, health checks (`container/orch.c`, `container/service_proxy.c`).
+  - Seccomp notify for dynamic security profiles (`container/seccomp_notify.c`).
+  - Checkpoint/restore for container migration (`container/checkpoint.c`).
+
+- **Security enhancements**:
+  - KPTI (Kernel Page Table Isolation) with assembly trampoline.
+  - SMAP/SMEP/UMIP activation at boot.
+  - KASLR for kernel text, modules, and heap.
+  - W^X enforcement with `mprotect` hardening.
+  - Exec Shield with stack gap randomisation, mmap base entropy.
+  - Shadow Call Stack (SCS) for ROP protection.
+  - Forward-edge CFI (Control Flow Integrity).
+  - Seccomp BPF filter validation engine.
+  - Landlock LSM with filesystem sandboxing.
+  - Lockdown mode (integrity + confidentiality levels).
+  - IMA (Integrity Measurement Architecture) with TPM-compatible PCR.
+  - EVM for extended attribute protection.
+  - Audit subsystem with syscall and file access logging.
+  - Kernel address pointer restriction (`%pK`).
+  - Dmesg restriction (only `CAP_SYSLOG` readers).
+  - KASAN (lightweight) for out-of-bounds and use-after-free detection.
+  - KFENCE for low-overhead memory error detection.
+  - KCSAN for data race detection.
+
+- **Capability and access control**:
+  - POSIX capability system (effective, permitted, inheritable, ambient sets).
+  - Secure execution with ambient capability clearing on exec.
+  - Namespace support: PID, network, mount, user, cgroup.
+  - Chroot with pivot_root support.
+  - Process rlimit enforcement.
+
+- **Power management**:
+  - CPU frequency scaling governors (ondemand, conservative, userspace, schedutil).
+  - CPU idle governors (ladder, teo, menu).
+  - Device frequency scaling (devfreq).
+  - Energy model for power-aware scheduling.
+  - Suspend-to-idle (s2idle) with wakeup sources.
+  - Power management quality of service (PM QoS).
+
+- **I/O and storage**:
+  - Multi-queue block layer (blk-mq).
+  - I/O schedulers: deadline, completely fair queueing, Kyber.
+  - Device mapper: linear, zero, error, crypt, verity, snapshot, raid.
+  - MD RAID (linear, RAID0, RAID1, RAID5, RAID10).
+  - Bcache for SSD caching of HDD volumes.
+  - LUKS disk encryption with AES-XTS.
+  - NBD (Network Block Device) with multi-connection.
+  - MPTCP (MultiPath TCP) for multipath networking.
+  - SCTP and DCCP transport protocols.
+  - WireGuard VPN with ChaCha20Poly1305.
+
+- **Virtualisation and para-virtualisation**:
+  - Virtio-net, virtio-blk, virtio-gpu, virtio-input, virtio-rng, virtio-scsi, virtio-console.
+  - PV panic device, IVSHMEM for VM shared memory.
+  - VMware balloon and pvSCSI drivers.
+
+- **Hardware support**:
+  - Intel GPU (Bochs VBE, native modesetting) with DRM framework.
+  - USB core: EHCI, XHCI, hub, HID, mass storage, CDC ACM, serial, ethernet, UAS.
+  - ACPI CPPC (Collaborative Processor Performance Control).
+  - PCIe: AER, DPC, PTM, SR-IOV.
+  - EDAC for error detection and correction.
+  - GHES (Generic Hardware Error Source) for APEI.
+  - IPMI KCS interface.
+  - TPM 2.0 TIS driver.
+  - I3C bus support.
+  - GPIO IRQ chip for interrupt-driven GPIO.
+
+- **File systems**:
+  - ext2 read/write with HTree directory indexing, extended attributes, POSIX ACLs.
+  - FAT32 read/write with VFAT long filenames.
+  - ISO9660 with Rock Ridge and Joliet extensions.
+  - HFS, cramfs, minix, UFS, SYSV, ADFS, BFS (read-only legacy support).
+  - NFSv3 client.
+  - EROFS, F2FS, JFFS2, NILFS2 (flash-optimised filesystems).
+  - SquashFS for compressed read-only images.
+  - OverlayFS with copy-up-on-write, whiteouts, and redirect directories.
+  - FUSE for userspace filesystem daemons.
+  - Verity (dm-verity-style hash tree validation for files).
+  - Fanotify for filesystem event monitoring.
+
+- **Memory management**:
+  - Multi-Gen LRU (MGLRU) for page reclaim.
+  - Zswap with compressed write-back cache.
+  - ZRAM with multiple compression algorithms (LZ4HC, ZSTD, LZO).
+  - ZBUD, ZSMALLOC for small-object page compression.
+  - THP (Transparent Huge Pages) with khugepaged.
+  - KSM (Kernel Same-page Merging) for page deduplication.
+  - DAMON for proactive data access monitoring.
+  - CMA (Contiguous Memory Allocator) for large DMA buffers.
+  - Memory hotplug and online/offline support.
+  - OOM killer with cgroup-aware badness scoring.
+  - memfd + sealing (mseal) for immutable shared memory.
+
+- **Observability and tracing**:
+  - Perf events subsystem with HW/SW counters, sampling, and tracepoints.
+  - Ftrace with function tracer, graph tracer, and event tracing.
+  - Kprobes and kretprobes for dynamic instrumentation.
+  - Jump labels for static branch patching.
+  - Kcov for coverage-guided fuzzing.
+  - Taskstats and delay accounting.
+  - PSI (Pressure Stall Information) for resource pressure monitoring.
+
+- **Orchestration**:
+  - Pod lifecycle management with health checks and readiness probes.
+  - Service mesh with mTLS and circuit breaking.
+  - RBAC with role and role binding CRDs.
+  - Secrets management with encryption at rest.
+  - Pod security policies with seccomp and AppArmor profiles.
+  - Event system with watch-based subscriptions.
+  - Log aggregation and dashboard metrics.
+  - Prometheus-compatible metrics endpoint.
+
+- **Testing infrastructure**:
+  - KUnit framework for in-kernel unit tests.
+  - KUnit tests for PMM, slab, scheduler, VMM, security, power, cluster, container.
+  - E2E test suite with QEMU-based integration tests.
+  - Doom framebuffer pixel validation test.
+  - Host-side unit tests for libc and shell utilities.
+  - CI pipeline with GitHub Actions (build, lint, test-kernel, e2e-smoke).
+
+### Changed
+
+- Build system: ccache and distcc auto-detection for faster rebuilds.
+- Build system: precompiled headers (PCH) for ~2-3x compilation speedup.
+- Build system: per-profile Hermes AI assistant configuration.
+- Linker script: `.ksymtab`, `.modinfo`, `.kcrctab` sections for module support.
+- Build config: auto-generated `/proc/config.gz` with `xxd -i` embedding.
+- Init order: KPTI trampoline early in boot sequence.
+- Memory layout: separate PML4 entry for KPTI user page tables.
+
+### Fixed
+
+- Race condition in task scheduler runqueue iteration.
+- Double-free in slab cache destructor path.
+- Use-after-free in VMA merge logic during `mremap`.
+- Stack overflow in recursive path resolution for symlinks.
+- Missing SMAP save/restore in nested interrupt handlers.
+- Interrupt reentrancy in APIC timer calibration.
+- NMI handler stack corruption on SMP.
+- TLB flush coherence after page table modification on secondary CPUs.
+- Over-accounting in cgroup memory controller.
+- Missing `CLONE_VFORK` wait in process spawn.
+
+### Security
+
+- KPTI enabled by default to mitigate Meltdown.
+- SMAP/SMEP/UMIP enforced at boot.
+- Module signing mandatory for loadable modules.
+- Landlock LSM for unprivileged filesystem sandboxing.
+- Lockdown mode prevents kernel tampering even by root.
+- Kernel pointer and dmesg restriction by default.
+- Stack protector switched to `-fstack-protector-strong` globally.
+
+---
+
 ## [2026.06] — 2026-06-14
 
 ### Added

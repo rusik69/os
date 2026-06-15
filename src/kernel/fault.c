@@ -425,7 +425,7 @@ static void double_fault_handler(struct interrupt_frame *frame) {
         int n = snprintf(msg, sizeof(msg),
             "DOUBLE FAULT at RIP=0x%lx CR2=0x%lx cpu=%u pid=%u",
             (unsigned long)frame->rip, (unsigned long)cr2,
-            smp_get_cpu_id(), proc ? (unsigned int)proc->pid : 0);
+            (unsigned int)smp_get_cpu_id(), proc ? (unsigned int)proc->pid : 0);
         if (n < 0 || n >= (int)sizeof(msg)) {
             /* Truncation is acceptable — msg is best-effort here */
         }

@@ -289,6 +289,13 @@ void packet_close(int fd)
 
     for (int i = 0; i < PACKET_MAX_SOCKETS; i++) {
         if (packet_socks[i].used && packet_socks[i].fd == fd) {
+            /* Free multicast list */
+            struct packet_mc_entry *mc = packet_socks[i].mc_list;
+            while (mc) {
+                struct packet_mc_entry *next = mc->next;
+                kfree(mc);
+                mc = next;
+            }
             memset(&packet_socks[i], 0, sizeof(struct packet_sock));
             break;
         }
@@ -308,10 +315,71 @@ int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
     (void)optlen;
 
     switch (optname) {
-    case PACKET_ADD_MEMBERSHIP:
-    case PACKET_DROP_MEMBERSHIP:
-        /* Multicast group membership — not yet implemented */
+    case PACKET_ADD_MEMBERSHIP: {
+        /* Add multicast group membership */
+        if (optlen < (int)sizeof(struct packet_mreq))
+            return -EINVAL;
+        struct packet_mreq mreq;
+        memcpy(&mreq, optval, sizeof(mreq));
+
+        /* Validate address length */
+        if (mreq.mr_alen > 8)
+            return -EINVAL;
+
+        /* Allocate and add entry to list */
+        struct packet_mc_entry *mc = (struct packet_mc_entry *)
+            kmalloc(sizeof(struct packet_mc_entry));
+        if (!mc)
+            return -ENOMEM;
+
+        memset(mc, 0, sizeof(*mc));
+        mc->mr_ifindex = mreq.mr_ifindex;
+        mc->mr_type    = mreq.mr_type;
+        mc->mr_alen    = mreq.mr_alen;
+        memcpy(mc->mr_address, mreq.mr_address, mreq.mr_alen);
+
+        spinlock_acquire(&packet_lock);
+        mc->next = ps->mc_list;
+        ps->mc_list = mc;
+        if (mreq.mr_type == PACKET_MR_ALLMULTI)
+            ps->allmulti = 1;
+        spinlock_release(&packet_lock);
         return 0;
+    }
+
+    case PACKET_DROP_MEMBERSHIP: {
+        /* Drop multicast group membership */
+        if (optlen < (int)sizeof(struct packet_mreq))
+            return -EINVAL;
+        struct packet_mreq mreq;
+        memcpy(&mreq, optval, sizeof(mreq));
+
+        spinlock_acquire(&packet_lock);
+        struct packet_mc_entry **pp = &ps->mc_list;
+        while (*pp) {
+            struct packet_mc_entry *mc = *pp;
+            if (mc->mr_ifindex == mreq.mr_ifindex &&
+                mc->mr_type == mreq.mr_type &&
+                mc->mr_alen == mreq.mr_alen &&
+                memcmp(mc->mr_address, mreq.mr_address, mreq.mr_alen) == 0) {
+                *pp = mc->next;
+                kfree(mc);
+                /* Re-check allmulti flag */
+                ps->allmulti = 0;
+                for (mc = ps->mc_list; mc; mc = mc->next) {
+                    if (mc->mr_type == PACKET_MR_ALLMULTI) {
+                        ps->allmulti = 1;
+                        break;
+                    }
+                }
+                spinlock_release(&packet_lock);
+                return 0;
+            }
+            pp = &mc->next;
+        }
+        spinlock_release(&packet_lock);
+        return 0;
+    }
 
     case PACKET_RX_RING: {
         /* Set up receive ring (PACKET_MMAP) */
@@ -331,9 +399,14 @@ int packet_setsockopt(int fd, int optname, const void *optval, int optlen)
         return packet_mmap_setup(fd, &req, 1);
     }
 
-    case PACKET_AUXDATA:
-        /* Ancillary data — not yet implemented */
+    case PACKET_AUXDATA: {
+        /* Ancillary data on/off */
+        int val = 0;
+        if (optlen >= (int)sizeof(int))
+            val = *(const int *)optval;
+        ps->auxdata_enabled = (val != 0) ? 1 : 0;
         return 0;
+    }
 
     default:
         return -ENOPROTOOPT;

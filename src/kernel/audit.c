@@ -31,7 +31,7 @@ static int  audit_pos = 0;
 
 /* ── Netlink state ───────────────────────────────────────────────── */
 static int  audit_nl_initialized = 0;  /* Netlink family registered? */
-static int  audit_sequence = 0;        /* Monotonic event sequence */
+static unsigned int  audit_sequence = 0;        /* Monotonic event sequence */
 
 /* ── Audit event formatting helpers (S105) ──────────────────────── */
 

@@ -1,0 +1,49 @@
+# .github/stale.yml — Stale bot configuration for Hermes OS
+#
+# Issues and pull requests with no activity in 90 days are marked as stale.
+# After 14 additional days with no activity, they are automatically closed.
+# Items with the 'pinned' label are exempt from this process.
+
+# Number of days of inactivity before an issue/PR is marked as stale
+daysUntilStale: 90
+
+# Number of days of inactivity after stale label is applied before closing
+daysUntilClose: 14
+
+# Label to mark stale issues/PRs
+staleLabel: stale
+
+# Labels that exempt an issue/PR from the stale process
+exemptLabels:
+  - pinned
+
+# Comment to post when marking as stale
+markComment: >
+  This issue has been automatically marked as stale because it has not had
+  recent activity. It will be closed if no further activity occurs within
+  14 days. Thank you for your contributions.
+
+# Comment to post when closing a stale issue/PR
+closeComment: >
+  This issue has been automatically closed due to inactivity. Feel free to
+  reopen if the issue persists or if you have additional information to share.
+
+# Apply to both issues and pull requests (default behavior)
+# By default, the stale bot processes both issues and PRs.
+# Setting onlyPrs: false ensures PRs are also processed.
+
+# Whether to ignore issues/PRs in a milestone
+exemptMilestones: false
+
+# Whether to ignore issues with an assigned assignee
+exemptAssignees: false
+
+# Whether to remove the stale label when an issue/PR is updated
+removeStaleWhenUpdated: true
+
+# Label to apply when a stale issue/PR is closed as stale
+staleLabelOnClose: true
+
+# Label that prevents closing (beyond stale) — issues with this label
+# won't be closed even if they are stale
+exemptAllMilestones: false

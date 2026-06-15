@@ -100,9 +100,144 @@ int lowpan6_decompress(const uint8_t *in, uint16_t in_len,
     uint8_t dispatch = in[0];
 
     if ((dispatch & 0xE0) == LOWPAN_DISPATCH_IPHC) {
-        /* IPHC compressed — simplified: reconstruct from context */
-        (void)ip6;
-        return -ENOSYS;  /* Full IPHC decompression not yet implemented */
+        /* IPHC compressed header — RFC 6282 decompression */
+        if (in_len < 2) return -EINVAL;
+
+        uint8_t iphc0 = in[0];
+        uint8_t iphc1 = in[1];
+        uint16_t offset = 2;
+
+        /* IPHC encoding: byte 0 = 011(TF:2)(NH:1)(HLIM:2) */
+        int   tf   = (iphc0 >> 3) & 0x03;
+        int   nh   = (iphc0 >> 2) & 0x01;
+        int   hlim = iphc0 & 0x03;
+
+        /* byte 1 = CID(1) SAC(1) SAM(2) reserved(1?) DAC(1) DAM(2) */
+        int   cid  = (iphc1 >> 7) & 0x01;
+        int   sac  = (iphc1 >> 6) & 0x01;
+        int   sam  = (iphc1 >> 4) & 0x03;
+        int   dac  = (iphc1 >> 3) & 0x01;
+        int   dam  = (iphc1 >> 1) & 0x03;
+
+        /* Context Identifier Extension */
+        if (cid) {
+            if (offset >= in_len) return -EINVAL;
+            offset++; /* skip context ID byte; we ignore contexts for now */
+        }
+
+        memset(ip6, 0, sizeof(*ip6));
+
+        /* --- Version + Traffic Class + Flow Label --- */
+        uint32_t vcl = (uint32_t)6 << 28;
+        if (tf == 0) {
+            /* 4 bytes inline (DSCP/ECN + 3 bytes flow label) */
+            if (offset + 4 > in_len) return -EINVAL;
+            uint32_t raw;
+            memcpy(&raw, in + offset, 4);
+            vcl |= ntohl(raw) & 0x0FFFFFFF;
+            offset += 4;
+        } else if (tf == 1) {
+            /* 3 bytes inline (1 byte DSCP/ECN + 2 bytes flow label) */
+            if (offset + 3 > in_len) return -EINVAL;
+            vcl |= ((uint32_t)in[offset] << 20);
+            vcl |= ((uint32_t)in[offset+1] << 8) | (uint32_t)in[offset+2];
+            offset += 3;
+        } else if (tf == 2) {
+            /* 1 byte inline (DSCP/ECN only, flow label = 0) */
+            if (offset >= in_len) return -EINVAL;
+            vcl |= ((uint32_t)in[offset++] << 20);
+        }
+        /* tf == 3: all elided, use 0 for DSCP/ECN/Flow */
+        ip6->vcl_flow = htonl(vcl);
+
+        /* --- Next Header --- */
+        if (nh == 0) {
+            if (offset >= in_len) return -EINVAL;
+            ip6->next_header = in[offset++];
+        } else {
+            ip6->next_header = 17; /* UDP assumed when elided */
+        }
+
+        /* --- Hop Limit --- */
+        static const uint8_t hlim_tab[] = {0, 1, 64, 255};
+        if (hlim == 0) {
+            if (offset >= in_len) return -EINVAL;
+            ip6->hop_limit = in[offset++];
+        } else {
+            ip6->hop_limit = hlim_tab[hlim & 3];
+        }
+
+        /* --- Source Address --- */
+        if (sac == 0) {
+            /* Stateless source address compression */
+            if (sam == 0) {
+                if (offset + 16 > in_len) return -EINVAL;
+                memcpy(&ip6->src_ip, in + offset, 16);
+                offset += 16;
+            } else if (sam == 1) {
+                /* 64 bits derived: fe80::/64 + 64 inline */
+                if (offset + 8 > in_len) return -EINVAL;
+                ip6->src_ip.s6_addr[0] = 0xfe;
+                ip6->src_ip.s6_addr[1] = 0x80;
+                memcpy(ip6->src_ip.s6_addr + 8, in + offset, 8);
+                offset += 8;
+            } else if (sam == 2) {
+                /* 16 bits: fe80::ff:fe00:XXXX */
+                if (offset + 2 > in_len) return -EINVAL;
+                ip6->src_ip.s6_addr[0] = 0xfe;
+                ip6->src_ip.s6_addr[1] = 0x80;
+                ip6->src_ip.s6_addr[11] = 0xff;
+                ip6->src_ip.s6_addr[12] = 0xfe;
+                memcpy(ip6->src_ip.s6_addr + 14, in + offset, 2);
+                offset += 2;
+            } else { /* sam == 3 */
+                /* unspecified / all-zero */
+                memset(&ip6->src_ip, 0, 16);
+            }
+        } else {
+            /* Context-based compression — not implemented, use unspecified */
+            memset(&ip6->src_ip, 0, 16);
+            /* Skip consumed inline bytes */
+            if (sam == 0) { if (offset + 16 > in_len) return -EINVAL; offset += 16; }
+            else if (sam == 1) { if (offset + 8 > in_len) return -EINVAL; offset += 8; }
+            else if (sam == 2) { if (offset + 2 > in_len) return -EINVAL; offset += 2; }
+        }
+
+        /* --- Destination Address --- */
+        if (dac == 0) {
+            if (dam == 0) {
+                if (offset + 16 > in_len) return -EINVAL;
+                memcpy(&ip6->dst_ip, in + offset, 16);
+                offset += 16;
+            } else if (dam == 1) {
+                if (offset + 8 > in_len) return -EINVAL;
+                ip6->dst_ip.s6_addr[0] = 0xfe;
+                ip6->dst_ip.s6_addr[1] = 0x80;
+                memcpy(ip6->dst_ip.s6_addr + 8, in + offset, 8);
+                offset += 8;
+            } else if (dam == 2) {
+                if (offset + 2 > in_len) return -EINVAL;
+                ip6->dst_ip.s6_addr[0] = 0xfe;
+                ip6->dst_ip.s6_addr[1] = 0x80;
+                ip6->dst_ip.s6_addr[11] = 0xff;
+                ip6->dst_ip.s6_addr[12] = 0xfe;
+                memcpy(ip6->dst_ip.s6_addr + 14, in + offset, 2);
+                offset += 2;
+            } else { /* dam == 3 */
+                memset(&ip6->dst_ip, 0, 16);
+            }
+        } else {
+            memset(&ip6->dst_ip, 0, 16);
+            if (dam == 0) { if (offset + 16 > in_len) return -EINVAL; offset += 16; }
+            else if (dam == 1) { if (offset + 8 > in_len) return -EINVAL; offset += 8; }
+            else if (dam == 2) { if (offset + 2 > in_len) return -EINVAL; offset += 2; }
+        }
+
+        ip6->payload_length = htons(0);
+        if (next_len)
+            *next_len = 0;
+
+        return 0;
     }
 
     if (dispatch == LOWPAN_DISPATCH_IPV6) {

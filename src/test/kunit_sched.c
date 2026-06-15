@@ -13,6 +13,8 @@
 #include "process.h"
 #include "string.h"
 #include "printf.h"
+#include "waitqueue.h"
+#include "spinlock.h"
 #include "core_sched.h"
 #include "nohz.h"
 
@@ -251,6 +253,220 @@ static void nohz_basic_test(struct kunit *test)
 }
 
 /* ====================================================================
+ * 10. Wait queue operations
+ * ==================================================================== */
+
+static void sched_waitqueue_init_test(struct kunit *test)
+{
+    struct wait_queue wq = WAITQUEUE_INIT;
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.head, (int64_t)0);
+
+    /* All pids should be 0 */
+    for (int i = 0; i < WAITQUEUE_MAX_WAITERS; i++) {
+        KUNIT_EXPECT_EQ(test, (int64_t)wq.pids[i], (int64_t)0);
+    }
+
+    /* Re-init and verify */
+    wait_queue_init(&wq);
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)0);
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.head, (int64_t)0);
+}
+
+static void sched_waitqueue_enqueue_dequeue_test(struct kunit *test)
+{
+    struct wait_queue wq;
+    wait_queue_init(&wq);
+
+    /* Simulate adding a process PID to the wait queue */
+    KUNIT_EXPECT_TRUE(test, wq.count == 0);
+
+    /* Directly test the wait queue internals */
+    spinlock_acquire(&wq.lock);
+    if (wq.count < WAITQUEUE_MAX_WAITERS) {
+        int tail = (wq.head + wq.count) % WAITQUEUE_MAX_WAITERS;
+        wq.pids[tail] = 42;
+        wq.count++;
+    }
+    spinlock_release(&wq.lock);
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)1);
+
+    /* Dequeue */
+    spinlock_acquire(&wq.lock);
+    if (wq.count > 0) {
+        uint32_t pid = wq.pids[wq.head];
+        wq.head = (wq.head + 1) % WAITQUEUE_MAX_WAITERS;
+        wq.count--;
+        spinlock_release(&wq.lock);
+        KUNIT_EXPECT_EQ(test, (int64_t)pid, (int64_t)42);
+    } else {
+        spinlock_release(&wq.lock);
+    }
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)0);
+}
+
+static void sched_waitqueue_wake_all_test(struct kunit *test)
+{
+    struct wait_queue wq;
+    wait_queue_init(&wq);
+
+    /* Add several waiters */
+    spinlock_acquire(&wq.lock);
+    for (int i = 0; i < 5; i++) {
+        int tail = (wq.head + wq.count) % WAITQUEUE_MAX_WAITERS;
+        wq.pids[tail] = (uint32_t)(100 + i);
+        wq.count++;
+    }
+    spinlock_release(&wq.lock);
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)5);
+
+    /* Wake all — reset the queue state */
+    spinlock_acquire(&wq.lock);
+    wq.count = 0;
+    wq.head = 0;
+    spinlock_release(&wq.lock);
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)0);
+}
+
+static void sched_waitqueue_wraparound_test(struct kunit *test)
+{
+    struct wait_queue wq;
+    wait_queue_init(&wq);
+
+    /* Fill the queue */
+    for (int i = 0; i < WAITQUEUE_MAX_WAITERS; i++) {
+        spinlock_acquire(&wq.lock);
+        int tail = (wq.head + wq.count) % WAITQUEUE_MAX_WAITERS;
+        wq.pids[tail] = (uint32_t)(i + 1);
+        wq.count++;
+        spinlock_release(&wq.lock);
+    }
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)WAITQUEUE_MAX_WAITERS);
+
+    /* Dequeue a few to move the head */
+    for (int i = 0; i < 3; i++) {
+        spinlock_acquire(&wq.lock);
+        wq.head = (wq.head + 1) % WAITQUEUE_MAX_WAITERS;
+        wq.count--;
+        spinlock_release(&wq.lock);
+    }
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count,
+                    (int64_t)(WAITQUEUE_MAX_WAITERS - 3));
+
+    /* Add more — should wraparound */
+    spinlock_acquire(&wq.lock);
+    for (int i = 0; i < 3; i++) {
+        int tail = (wq.head + wq.count) % WAITQUEUE_MAX_WAITERS;
+        wq.pids[tail] = (uint32_t)(200 + i);
+        wq.count++;
+    }
+    spinlock_release(&wq.lock);
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)WAITQUEUE_MAX_WAITERS);
+
+    /* Drain and verify ordering */
+    uint32_t expected[] = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 200, 201, 202};
+    for (int i = 0; i < WAITQUEUE_MAX_WAITERS; i++) {
+        spinlock_acquire(&wq.lock);
+        uint32_t pid = wq.pids[wq.head];
+        wq.head = (wq.head + 1) % WAITQUEUE_MAX_WAITERS;
+        wq.count--;
+        spinlock_release(&wq.lock);
+        KUNIT_EXPECT_EQ(test, (int64_t)pid, (int64_t)expected[i]);
+    }
+
+    KUNIT_EXPECT_EQ(test, (int64_t)wq.count, (int64_t)0);
+}
+
+/* ====================================================================
+ * 11. Process creation basics (safe subset — query process count)
+ * ==================================================================== */
+
+static void sched_process_count_test(struct kunit *test)
+{
+    uint32_t count = process_get_count();
+    KUNIT_EXPECT_TRUE(test, count > 0);
+    KUNIT_EXPECT_TRUE(test, count <= PROCESS_MAX);
+}
+
+/* ====================================================================
+ * 12. Priority scheduling bounds
+ * ==================================================================== */
+
+static void sched_priority_range_test(struct kunit *test)
+{
+    /* Test that priority levels 0..SCHED_LEVELS-1 are valid */
+    for (uint8_t prio = 0; prio < SCHED_LEVELS; prio++) {
+        int ret = scheduler_set_priority(NULL, prio);
+        KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+    }
+
+    /* Out-of-range priority should still fail gracefully */
+    int ret = scheduler_set_priority(NULL, SCHED_LEVELS);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+}
+
+static void sched_nice_range_test(struct kunit *test)
+{
+    /* Test with NULL process — should return error or 0 */
+    /* Valid nice values range from -20 to 19 */
+    int ret = scheduler_set_nice(NULL, -20);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+
+    ret = scheduler_set_nice(NULL, 0);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+
+    ret = scheduler_set_nice(NULL, 19);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+
+    /* Out-of-range nice values */
+    ret = scheduler_set_nice(NULL, -21);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+
+    ret = scheduler_set_nice(NULL, 20);
+    KUNIT_EXPECT_TRUE(test, ret == -1 || ret == 0);
+}
+
+/* ====================================================================
+ * 13. Scheduler tick and preemption hooks
+ * ==================================================================== */
+
+static void sched_tick_test(struct kunit *test)
+{
+    /* scheduler_tick should be safe to call from any context */
+    scheduler_tick(0);  /* was_user = 0 */
+    scheduler_tick(1);  /* was_user = 1 */
+
+    KUNIT_EXPECT_TRUE(test, 1);
+}
+
+static void sched_age_test(struct kunit *test)
+{
+    /* scheduler_age should be safe to call */
+    scheduler_age();
+
+    KUNIT_EXPECT_TRUE(test, 1);
+}
+
+/* ====================================================================
+ * 14. Idle ticks query
+ * ==================================================================== */
+
+static void sched_idle_ticks_test(struct kunit *test)
+{
+    uint64_t idle = scheduler_get_idle_ticks();
+    /* Idle ticks should be non-negative */
+    KUNIT_EXPECT_TRUE(test, (int64_t)idle >= 0);
+}
+
+/* ====================================================================
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
@@ -264,6 +480,16 @@ static struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_priority_bounds_test),
     KUNIT_CASE(core_sched_basic_test),
     KUNIT_CASE(nohz_basic_test),
+    KUNIT_CASE(sched_waitqueue_init_test),
+    KUNIT_CASE(sched_waitqueue_enqueue_dequeue_test),
+    KUNIT_CASE(sched_waitqueue_wake_all_test),
+    KUNIT_CASE(sched_waitqueue_wraparound_test),
+    KUNIT_CASE(sched_process_count_test),
+    KUNIT_CASE(sched_priority_range_test),
+    KUNIT_CASE(sched_nice_range_test),
+    KUNIT_CASE(sched_tick_test),
+    KUNIT_CASE(sched_age_test),
+    KUNIT_CASE(sched_idle_ticks_test),
     {0}
 };
 

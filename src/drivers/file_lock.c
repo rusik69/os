@@ -176,9 +176,18 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait)
 
                 /* Different PID: conflict */
                 if (wait) {
-                    /* F_SETLKW: block until lock is released */
+                    /* F_SETLKW: block until lock is released.
+                     * Use a 30-second timeout to prevent indefinite hangs. */
                     spinlock_release(&lock_spinlock);
-                    wait_queue_sleep(&entry->wq);
+                    int wret = wait_queue_sleep_timeout(&entry->wq, 30 * 100);
+                    if (wret == -ETIME) {
+                        /* Timed out — return EAGAIN so caller can retry */
+                        return -EAGAIN;
+                    }
+                    if (wret == -EINTR) {
+                        /* Interrupted by signal */
+                        return -EINTR;
+                    }
                     continue; /* retry after wake-up */
                 }
                 spinlock_release(&lock_spinlock);

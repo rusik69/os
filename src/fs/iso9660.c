@@ -568,8 +568,46 @@ static int iso9660_resolve(struct iso9660_priv *ip, const char *path,
 
                 /* Prepend parent path if the symlink is relative */
                 if (link_target[0] != '/') {
-                    /* We'd need the full path prefix — for now, absolute only */
-                    kprintf("iso9660: relative symlinks not yet supported\n");
+                    /* Relative symlink: build full path by prepending
+                     * the parent directory of the symlink. */
+                    char full_path[512];
+                    size_t parent_len = (size_t)(p - path);
+
+                    /* Copy parent directory path (strip trailing slash) */
+                    size_t fp_len = 0;
+                    if (parent_len > 0) {
+                        memcpy(full_path, path, parent_len);
+                        fp_len = parent_len;
+                        while (fp_len > 0 && full_path[fp_len - 1] == '/')
+                            fp_len--;
+                    }
+
+                    /* Append '/' separator */
+                    if (fp_len > 0)
+                        full_path[fp_len++] = '/';
+
+                    /* Append link target */
+                    size_t tlen = strlen(link_target);
+                    if (fp_len + tlen + 1 > sizeof(full_path)) {
+                        kprintf("iso9660: symlink target path too long\n");
+                        return -ENAMETOOLONG;
+                    }
+                    memcpy(full_path + fp_len, link_target, tlen);
+                    fp_len += tlen;
+                    full_path[fp_len] = '\0';
+
+                    /* Resolve the combined absolute path recursively.
+                     * Recursive depth is bounded by nesting of symlinks
+                     * (max 40 per the caller's absolute path depth guard). */
+                    uint32_t resolved_extent, resolved_size;
+                    if (iso9660_resolve(ip, full_path,
+                                        &resolved_extent,
+                                        &resolved_size) == 0) {
+                        *extent = resolved_extent;
+                        *size   = resolved_size;
+                        found = 1;
+                        break;
+                    }
                     return -1;
                 }
 

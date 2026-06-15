@@ -28,10 +28,12 @@ void file_lock_init(void);
  *   - If flk->mandatory is set, the kernel enforces it — conflicting
  *     access from any process returns -EAGAIN.
  *   - If wait is 1 (F_SETLKW), the call blocks until the lock is
- *     available (not yet implemented — currently non-blocking only).
+ *     available (with a 30-second timeout to prevent indefinite hangs).
+ *     On timeout, -EAGAIN is returned so the caller may retry.
  *
- * Returns 0 on success, -EAGAIN on conflict, -EINVAL on bad args,
- * -ENOLCK if the lock table is full.
+ * Returns 0 on success, -EAGAIN on conflict or timeout, -EINTR if
+ * interrupted by signal, -EINVAL on bad args, -ENOLCK if the lock
+ * table is full.
  */
 int file_lock_set(const char *path, struct file_lock *flk, int wait);
 

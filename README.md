@@ -1,6 +1,11 @@
 # OS — x86-64 Hobby Kernel
 
 [![CI](https://github.com/rusik69/os/actions/workflows/ci.yml/badge.svg)](https://github.com/rusik69/os/actions/workflows/ci.yml)
+[![LOC](https://img.shields.io/badge/LOC-317K-blue)](https://github.com/rusik69/os)
+[![C Files](https://img.shields.io/badge/C%20files-1453-blue)](https://github.com/rusik69/os)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Arch](https://img.shields.io/badge/arch-x86__64-blue)](https://github.com/rusik69/os)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
 
 A production-oriented x86-64 hobby operating system kernel written in C17 and NASM assembly. **~317K lines of C across 999 source files, 453 headers, 80+ subsystems** — boot, memory management, process/scheduler, VFS + 30+ filesystems, full TCP/IP networking with 10+ congestion control algorithms, SMP, drivers (PCI, ACPI, NVMe, AHCI, USB, virtio, e1000), in-kernel C compiler, DOS emulator, GUI, DOOM port, and 356+ shell commands.
 

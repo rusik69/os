@@ -497,6 +497,8 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_security_new.c \
          src/test/kunit_power.c \
          src/test/kunit_ext.c \
+         src/test/kunit_vfs.c \
+         src/test/kunit_container_ext.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
@@ -1122,7 +1124,8 @@ all: $(BUILDDIR)/disk.img
 
 .PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
         check check-full check-clean check-app-boundary check-debug doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
-        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse
+        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse \
+        release dist
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -1597,6 +1600,63 @@ install: $(INSTALL_ISO)
 install-clean:
 	rm -rf $(INSTALL_ISO) $(ISO_STAGING)
 
+# ── Release target: build kernel + disk img + source tarball ─────────
+#
+# Creates a release-ready archive:
+#   build/release-<version>/kernel.bin
+#   build/release-<version>/disk.img
+#   build/release-<version>/hermes-<version>-src.tar.gz
+#
+RELEASE_VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo "snapshot-$(shell date +%Y%m%d)")
+RELEASE_DIR = $(BUILDDIR)/release-$(RELEASE_VERSION)
+RELEASE_TAR = $(BUILDDIR)/hermes-$(RELEASE_VERSION)-src.tar.gz
+
+release: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
+	@echo "=== Creating release $(RELEASE_VERSION) ==="
+	@mkdir -p $(RELEASE_DIR)
+	@cp $(BUILDDIR)/kernel.bin $(RELEASE_DIR)/
+	@cp $(BUILDDIR)/disk.img $(RELEASE_DIR)/
+	@# Create source tarball
+	@if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then \
+		git archive --format=tar.gz --prefix=hermes-$(RELEASE_VERSION)/ -o $(RELEASE_TAR) HEAD 2>/dev/null || \
+		tar czf $(RELEASE_TAR) --exclude=.git --exclude='build/*' --exclude='build_test/*' \
+			--exclude='build_check*' --exclude='build_analyze' \
+			-C .. $(notdir $(CURDIR)) 2>/dev/null; \
+	else \
+		tar czf $(RELEASE_TAR) --exclude=.git --exclude='build/*' --exclude='build_test/*' \
+			--exclude='build_check*' --exclude='build_analyze' \
+			-C .. $(notdir $(CURDIR)); \
+	fi
+	@cp $(RELEASE_TAR) $(RELEASE_DIR)/
+	@echo "=== Release $(RELEASE_VERSION) created in $(RELEASE_DIR)/ ==="
+	@ls -lh $(RELEASE_DIR)/
+
+# ── Dist target: create a distribution tarball with source + binaries ──
+#
+# Creates a single tarball containing source code and pre-built binaries
+# suitable for distribution to end users.
+#
+DIST_DIR = $(BUILDDIR)/dist-$(RELEASE_VERSION)
+DIST_TAR = $(BUILDDIR)/hermes-$(RELEASE_VERSION)-dist.tar.gz
+
+dist: release
+	@echo "=== Creating distribution tarball ==="
+	@mkdir -p $(DIST_DIR)
+	@cp $(RELEASE_DIR)/kernel.bin $(DIST_DIR)/
+	@cp $(RELEASE_DIR)/disk.img $(DIST_DIR)/
+	@cp $(RELEASE_TAR) $(DIST_DIR)/
+	@# Add a README.dist
+	@echo "Hermes OS $(RELEASE_VERSION)" > $(DIST_DIR)/VERSION
+	@echo "---" >> $(DIST_DIR)/VERSION
+	@echo "Built: $$(date)" >> $(DIST_DIR)/VERSION
+	@echo "Kernel: $$(ls -lh $(DIST_DIR)/kernel.bin | awk '{print $$5}')" >> $(DIST_DIR)/VERSION
+	@echo "Disk:   $$(ls -lh $(DIST_DIR)/disk.img | awk '{print $$5}')" >> $(DIST_DIR)/VERSION
+	@cd $(BUILDDIR) && \
+		tar czf $(DIST_TAR) -C $(BUILDDIR) dist-$(RELEASE_VERSION) && \
+		echo "=== Distribution tarball: $(DIST_TAR) ===" && \
+		ls -lh $(DIST_TAR)
+	@rm -rf $(DIST_DIR)
+
 # ── New run targets (SMP, GDB, UEFI) ──────────────────────────────────
 
 run-smp: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
@@ -1629,6 +1689,9 @@ help:
 	@echo "  clean-all        Remove build artifacts + clear ccache"
 	@echo "  modules          Build loadable kernel modules"
 	@echo "  modules_install  Stage modules for installation"
+	@echo "  userspace-build  Build userspace commands into ELF binaries"
+	@echo "  release          Build kernel.bin + disk.img + source tarball"
+	@echo "  dist             Create release tarball with source + binaries"
 	@echo ""
 	@echo "Run targets:"
 	@echo "  run              Boot in QEMU (serial stdio, e1000 NIC)"
@@ -1640,27 +1703,52 @@ help:
 	@echo ""
 	@echo "Test targets:"
 	@echo "  test             Build test kernel + run all tests in QEMU"
-	@echo "  test-kernel      Build test kernel only"
+	@echo "  test-kernel      Build test kernel (separate output dir)"
+	@echo "  test-serial      Run test kernel with serial TCP output"
+	@echo "  test-clean       Clean + rebuild + run tests"
+	@echo "  run-test         Alias for 'make test'"
 	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
-	@echo "  check-full       Ultra-strict build (-Werror + all warnings) + tests"
+	@echo "  check-full       Ultra-strict build (-Werror + all warnings)"
+	@echo "  check-debug      Build with all debug options enabled"
+	@echo "  check-clean      Remove check build artifacts"
+	@echo "  check-app-boundary  Verify app source includes only allowed headers"
 	@echo "  unit-test        Run host-side unit tests"
 	@echo "  e2e              Run E2E QEMU smoke tests"
 	@echo "  e2e-smoke        Fast CI E2E subset"
+	@echo "  e2e-test         Run E2E boot + interactive tests"
+	@echo "  e2e-list         List E2E test cases"
 	@echo "  doom-test        Verify DOOM framebuffer renders"
 	@echo ""
 	@echo "Analysis targets:"
-	@echo "  analyze          Static analysis with GCC -fanalyzer"
+	@echo "  analyze          GCC -fanalyzer static analysis"
 	@echo "  lint             Run cppcheck + clang-tidy"
+	@echo "  cppcheck         Run cppcheck static analysis"
+	@echo "  cppcheck-check   Run cppcheck with suppressions (called by lint)"
+	@echo "  clang-tidy-check Run clang-tidy on first 20 C sources"
+	@echo "  build-strict     Alias for cppcheck"
+	@echo "  sparse           Run sparse semantic parser"
 	@echo "  format           Format all C sources with clang-format"
-	@echo "  format-check     Check format compliance"
+	@echo "  format-check     Check format compliance (via git-clang-format)"
 	@echo ""
 	@echo "Info targets:"
 	@echo "  build-info       Show kernel size, object count, LOC"
 	@echo "  count            Show source code statistics"
 	@echo "  ccache-stats     Show ccache hit rate"
+	@echo "  todo             Show TODO/FIXME/HACK/XXX/BUG markers"
+	@echo "  deps             Print build dependency install command (brew)"
+	@echo "  doccheck         Verify documentation files exist and are valid"
 	@echo ""
-	@echo "Install target:"
+	@echo "Developer targets:"
 	@echo "  install          Build bootable ISO (or write to USB)"
+	@echo "  install-clean    Remove ISO and staging artifacts"
+	@echo "  ctags            Generate ctags for src/"
+	@echo "  etags            Generate Emacs TAGS for src/"
+	@echo ""
+	@echo "Clean targets:"
+	@echo "  clean            Remove build/ and build_test/"
+	@echo "  clean-all        clean + clear ccache stats"
+	@echo "  check-clean      Remove build_check/ and build_check_full/"
+	@echo "  install-clean    Remove ISO artifacts"
 
 # ── Clean targets ─────────────────────────────────────────────────────
 
@@ -1933,7 +2021,80 @@ etags:
 
 .PHONY: todo
 todo:
-	@grep -rn 'TODO\|FIXME\|HACK\|XXX\|BUG' src/ --include='*.c' --include='*.h' 2>/dev/null || true
+	@echo "=== TODO/FIXME/HACK/XXX/BUG Report for src/ ==="
+	@echo ""
+	@echo "--- BUG (critical) ---"
+	@BUG_COUNT=0; \
+	results=$$(grep -rn 'BUG' src/ --include='*.c' --include='*.h' 2>/dev/null | grep -v 'FIXME\|DEBUG\|BUG_ON\|TTRBUG\|KERN_DEBUG\|usb_debug\|debugfs\|pr_debug\|dbg_\|\.bug\|bug_table\|oops_\|spelling' || true); \
+	if [ -n "$$results" ]; then \
+		echo "$$results" | head -40; \
+		BUG_COUNT=$$(echo "$$results" | wc -l); \
+		echo "  [$$BUG_COUNT BUG markers found]"; \
+	else \
+		echo "  (none)"; \
+	fi
+	@echo ""
+	@echo "--- FIXME (high) ---"
+	@FIXME_COUNT=0; \
+	results=$$(grep -rn 'FIXME' src/ --include='*.c' --include='*.h' 2>/dev/null | grep -v 'FIXME_INODE\|FIXME_MEMMAP\|spelling' || true); \
+	if [ -n "$$results" ]; then \
+		echo "$$results" | head -40; \
+		FIXME_COUNT=$$(echo "$$results" | wc -l); \
+		echo "  [$$FIXME_COUNT FIXME markers found]"; \
+	else \
+		echo "  (none)"; \
+	fi
+	@echo ""
+	@echo "--- HACK (medium) ---"
+	@HACK_COUNT=0; \
+	results=$$(grep -rn 'HACK' src/ --include='*.c' --include='*.h' 2>/dev/null | grep -v 'HACK_\|SHACK\|HACKING\|spelling\|HACKERS' || true); \
+	if [ -n "$$results" ]; then \
+		echo "$$results" | head -40; \
+		HACK_COUNT=$$(echo "$$results" | wc -l); \
+		echo "  [$$HACK_COUNT HACK markers found]"; \
+	else \
+		echo "  (none)"; \
+	fi
+	@echo ""
+	@echo "--- TODO (low) ---"
+	@TODO_COUNT=0; \
+	results=$$(grep -rn 'TODO' src/ --include='*.c' --include='*.h' 2>/dev/null | grep -v 'TODOLIST\|todolist\|TODO:.*context\|\.todo\|TODO_FILE\|spelling\|TODOs\|todolist\|SYSCALL_DEFINE.*TODO\|TODO!\|todo_kick\|todo_list\|TODOLIST' || true); \
+	if [ -n "$$results" ]; then \
+		echo "$$results" | head -40; \
+		TODO_COUNT=$$(echo "$$results" | wc -l); \
+		echo "  [$$TODO_COUNT TODO markers found]"; \
+	else \
+		echo "  (none)"; \
+	fi
+	@echo ""
+	@echo "--- XXX (low) ---"
+	@XXX_COUNT=0; \
+	results=$$(grep -rn 'XXX' src/ --include='*.c' --include='*.h' 2>/dev/null | grep -v 'XXX_\|TXXX\|spelling' || true); \
+	if [ -n "$$results" ]; then \
+		echo "$$results" | head -40; \
+		XXX_COUNT=$$(echo "$$results" | wc -l); \
+		echo "  [$$XXX_COUNT XXX markers found]"; \
+	else \
+		echo "  (none)"; \
+	fi
+	@echo ""
+	@echo "=== Summary ==="
+	@grep -rn 'BUG\|FIXME\|HACK\|TODO\|XXX' src/ --include='*.c' --include='*.h' 2>/dev/null | \
+		grep -v 'FIXME_INODE\|FIXME_MEMMAP\|BUG_ON\|DEBUG\|TTRBUG\|KERN_DEBUG\|SHACK\|HACK_\|HACKING\|HACKERS\|TODOLIST\|\.todo\|TODO_FILE\|TODOs\|todolist\|XXX_\|TXXX\|spelling\|todo_kick\|todo_list\|SYSCALL_DEFINE.*TODO\|dbg_\|debugfs\|pr_debug\|usb_debug\|oops_\|bug_table\|\.bug' | \
+		awk '{ \
+			if ($$0 ~ / BUG/) bugs++; \
+			else if ($$0 ~ /FIXME/) fixmes++; \
+			else if ($$0 ~ /HACK/) hacks++; \
+			else if ($$0 ~ /TODO/) todos++; \
+			else if ($$0 ~ /XXX/) xxxs++; \
+		} END { \
+			printf "  BUG:   %d  (critical)\\n", bugs; \
+			printf "  FIXME: %d  (high)\\n", fixmes; \
+			printf "  HACK:  %d  (medium)\\n", hacks; \
+			printf "  TODO:  %d  (low)\\n", todos; \
+			printf "  XXX:   %d  (low)\\n", xxxs; \
+			printf "  Total: %d\\n", bugs+fixmes+hacks+todos+xxxs; \
+		}'
 
 # ── Documentation check ──────────────────────────────────────────────────
 
