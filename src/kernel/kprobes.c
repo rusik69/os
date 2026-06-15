@@ -780,7 +780,7 @@ int kprobe_register_bpf(const char *symbol, int bpf_prog_fd)
         return -EINVAL;
 
     /* Look up the symbol address */
-    uint64_t addr = find_ksym(symbol);
+    uint64_t addr = find_ksym(symbol, 1);
     if (!addr) {
         kprintf("[KPROBES] BPF: symbol '%s' not found\n", symbol);
         return -ENOENT;

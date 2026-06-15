@@ -500,4 +500,12 @@ int cmd_ionice(int argc, char **argv);
 int cmd_mkfs_ext2(int argc, char **argv);
 int cmd_mkswap(int argc, char **argv);
 
+/* Shell builtins */
+void cmd_read(const char *args);
+void cmd_eval(const char *args);
+void cmd_type(const char *args);
+void cmd_dirs(const char *args);
+void cmd_pushd(const char *args);
+void cmd_popd(const char *args);
+
 #endif

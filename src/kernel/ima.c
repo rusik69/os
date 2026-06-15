@@ -395,6 +395,18 @@ static void ima_measure_kernel(void)
     ima_measure("/kernel.bin", IMA_FILE_EXEC);
 }
 
+/* ── Syscall hook wrappers ────────────────────────────────────────── */
+
+int ima_file_open(const char *path, int flags)
+{
+    return ima_measure(path, IMA_FILE_READ);
+}
+
+int ima_file_exec(const char *path)
+{
+    return ima_measure(path, IMA_FILE_EXEC);
+}
+
 /* ── Public API: ima_init ────────────────────────────────────────── */
 
 void ima_init(void)

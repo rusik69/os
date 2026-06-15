@@ -36,6 +36,13 @@
 #include "nohz.h"
 #include "mglru.h"
 
+/* EEVDF scheduling constants */
+#define CFS_NICE_0_WEIGHT 1024
+#define EEVDF_BASE_SLICE_NS 3000000UL  /* 3 ms base slice */
+
+/* Forward declarations */
+static inline struct cpu_info *this_cpu(void);
+
 /* 4-level multilevel priority queue: 0 = highest, 3 = lowest */
 
 /* ── EEVDF scheduler (Earliest Eligible Virtual Deadline First) ────
@@ -100,6 +107,9 @@ static inline uint64_t eevdf_eligible_deadline(struct process *p)
         return p->eevdf_deadline + (uint64_t)(-p->eevdf_lag);
     }
 }
+
+/* Forward declaration */
+static struct process *dequeue_next_specific(struct process *target);
 
 /* Pick the task with the smallest eligible deadline from the runqueue.
  * In a full implementation, this would use an rb_tree keyed by eevdf_eligible_deadline.
@@ -381,7 +391,6 @@ static int sysctl_write_sched_min_granularity(const char *buf, int len) {
 }
 
 /* CFS constants */
-#define CFS_NICE_0_WEIGHT 1024
 #define CFS_WEIGHT_SHIFT 10  /* 1024 = 1<<10 */
 #define CFS_VRUNTIME_MAX_DIFF 100000000ULL /* 100ms */
 

@@ -10,6 +10,7 @@
 #include "kexec.h"
 #include "cmdline.h"
 #include "sysfs.h"
+#include "pstore.h"
 
 /* ── External symbols from the linker script ── */
 extern uint8_t _text_start[];

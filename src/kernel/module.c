@@ -1233,7 +1233,7 @@ int module_verify_get_mode(void)
 
 /* Initialize the /sys/kernel/module_verify sysfs file.
  * Called from modules_init(). */
-static void module_verify_sysfs_init(void)
+void module_verify_sysfs_init(void)
 {
     sysfs_create_dir("/sys/kernel");
     sysfs_create_writable_file(

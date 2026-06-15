@@ -143,17 +143,17 @@ static int hfsplus_read_btree_header(struct hfsplus_priv *hp,
     /* Re-read with correct node size */
     if (*node_size > sizeof(buf)) {
         /* Allocate larger buffer */
-        uint8_t *big_buf = (uint8_t *)heap_alloc(*node_size);
+        uint8_t *big_buf = (uint8_t *)kmalloc(*node_size);
         if (!big_buf) return -1;
         if (hfsplus_read_btree_node(hp, 0, big_buf, *node_size, start_offset) < 0) {
-            heap_free(big_buf);
+            kfree(big_buf);
             return -1;
         }
         desc = (struct hfsplus_btnode_descriptor *)big_buf;
         hdr = (struct hfsplus_btree_header *)(big_buf + sizeof(struct hfsplus_btnode_descriptor));
         *root_node = hdr->root_node;
         hp->cat_key_compare = hdr->key_compare;
-        heap_free(big_buf);
+        kfree(big_buf);
     } else {
         hp->cat_key_compare = hdr->key_compare;
     }
@@ -298,7 +298,7 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
 
     /* Start from root node and descend */
     uint32_t node_size = hp->cat_node_size;
-    uint8_t *node_buf = (uint8_t *)heap_alloc(node_size);
+    uint8_t *node_buf = (uint8_t *)kmalloc(node_size);
     if (!node_buf) return -1;
 
     uint32_t current_node = hp->cat_root_node;
@@ -361,7 +361,7 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
         }
     }
 
-    heap_free(node_buf);
+    kfree(node_buf);
     return result;
 }
 

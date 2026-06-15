@@ -892,10 +892,10 @@ void trace_printk(const char *fmt, ...)
 
     /* Format the message into a temporary buffer */
     char msg[256];
-    va_list args;
-    va_start(args, fmt);
+    __builtin_va_list args;
+    __builtin_va_start(args, fmt);
     int len = vsnprintf(msg, sizeof(msg), fmt, args);
-    va_end(args);
+    __builtin_va_end(args);
 
     if (len < 0) len = 0;
     if (len >= (int)sizeof(msg)) len = (int)sizeof(msg) - 1;

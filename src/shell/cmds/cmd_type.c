@@ -26,7 +26,8 @@ void cmd_type(const char *args) {
         /* Check if it's a shell builtin */
         int ncmds = shell_cmd_count();
         for (int i = 0; i < ncmds; i++) {
-            if (strcmp(shell_cmd_names[i], name) == 0) {
+            const shell_cmd_entry_t *e = shell_cmd_entry(i);
+            if (e && strcmp(e->name, name) == 0) {
                 kprintf("%s is a shell builtin\n", name);
                 found = 1;
                 break;

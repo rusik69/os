@@ -499,7 +499,7 @@ int64_t sys_io_uring_register(int fd, uint32_t opcode, void *arg,
     case IORING_REGISTER_EVENTFD:
         return 0;
 
-    case IORING_ENABLE_RINGS:
+    case IORING_REGISTER_ENABLE_RINGS:
         /* Enable the ring (if created with R_DISABLED) */
         return 0;
 

@@ -25,7 +25,7 @@
 #define IORING_SETUP_TASKRUN_FLAG  (1U << 9)
 #define IORING_SETUP_SQE128        (1U << 10)
 #define IORING_SETUP_CQE32         (1U << 11)
-
+#define IORING_REGISTER_FILES      0x02
 /* io_uring_enter flags */
 #define IORING_ENTER_GETEVENTS     (1U << 0)
 #define IORING_ENTER_SQ_WAKEUP     (1U << 1)
@@ -103,11 +103,7 @@
 
 /* ── Data structures ─────────────────────────────────────────────── */
 
-/* I/O vector for readv/writev */
-struct iovec {
-    void *iov_base;
-    size_t iov_len;
-};
+/* I/O vector for readv/writev — defined in types.h */
 
 /* Submission Queue Entry (SQE) — 64 bytes */
 struct io_uring_sqe {

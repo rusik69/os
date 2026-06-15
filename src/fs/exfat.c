@@ -118,7 +118,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
     uint8_t *cluster_buf;
 
     if (cluster_size > sizeof(buf)) {
-        cluster_buf = (uint8_t *)heap_alloc(cluster_size);
+        cluster_buf = (uint8_t *)kmalloc(cluster_size);
         if (!cluster_buf) return -1;
     } else {
         cluster_buf = buf;
@@ -129,7 +129,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
 
     while (cluster < EXFAT_CLUSTER_END && cluster >= 2) {
         if (exfat_read_cluster(ep, cluster, cluster_buf) < 0) {
-            if (cluster_buf != buf) heap_free(cluster_buf);
+            if (cluster_buf != buf) kfree(cluster_buf);
             return -1;
         }
 
@@ -139,7 +139,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
             uint8_t type = entry[0];
 
             if (type == EXFAT_ENTRY_EOD) {
-                if (cluster_buf != buf) heap_free(cluster_buf);
+                if (cluster_buf != buf) kfree(cluster_buf);
                 return entry_count;
             }
 
@@ -196,7 +196,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
 
                     if (callback) {
                         if (callback(ep, &ctx, cb_arg) < 0) {
-                            if (cluster_buf != buf) heap_free(cluster_buf);
+                            if (cluster_buf != buf) kfree(cluster_buf);
                             return entry_count;
                         }
                     }
@@ -214,7 +214,7 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
         if (max_entries > 0 && entry_count >= max_entries) break;
     }
 
-    if (cluster_buf != buf) heap_free(cluster_buf);
+    if (cluster_buf != buf) kfree(cluster_buf);
     return entry_count;
 }
 

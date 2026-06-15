@@ -15,7 +15,8 @@
  * usable from interrupt-disabled contexts (e.g., panic).  
  */  
 
-#include "watchdog.h"  
+#include "watchdog.h"
+#include "pstore.h"  
 #include "wdt_enhanced.h"  
 #include "timers.h"  
 #include "timer.h"  

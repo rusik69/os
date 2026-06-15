@@ -4,6 +4,8 @@
 #include "types.h"
 #include "process.h"
 
+struct interrupt_frame;
+
 /* ── Uprobe constants ──────────────────────────────────────────────── */
 
 #define UPROBES_MAX_PROBES    64   /* maximum number of registered probes */

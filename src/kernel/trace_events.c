@@ -179,6 +179,13 @@ void trace_events_v2_clear(void)
     memset(g_ev_counters, 0, sizeof(g_ev_counters));
 }
 
+void trace_events_stats(uint64_t *sched, uint64_t *timer, uint64_t *irq)
+{
+    if (sched) *sched = trace_ev_v2_state.write_idx;
+    if (timer) *timer = 0;
+    if (irq) *irq = 0;
+}
+
 /* ══════════════════════════════════════════════════════════════════════
  * Convenience trace event functions
  * ══════════════════════════════════════════════════════════════════════ */

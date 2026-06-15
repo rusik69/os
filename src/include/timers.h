@@ -20,4 +20,7 @@ void timer_handler_soft(void);
 /* Initialize the dynamic timer subsystem */
 void timers_init(void);
 
+/* Returns 1 if timers are available, 0 before timers_init() */
+int timer_available(void);
+
 #endif /* TIMERS_H */

@@ -531,24 +531,7 @@ static inline int cc_link_files(int nobj, const char **obj_paths, const char *ou
 static inline char keyboard_getchar(void) {
     return libc_keyboard_getchar();
 }
-static inline void shell_history_add(const char *cmd_line) {
-    libc_shell_history_add(cmd_line);
-}
-static inline int shell_history_count(void) {
-    return libc_shell_history_count();
-}
-static inline const char *shell_history_entry(int idx) {
-    return libc_shell_history_entry(idx);
-}
-static inline void shell_tab_complete_telnet(char *buf, int *len, void *session) {
-    libc_shell_tab_complete_telnet(buf, len, session);
-}
-static inline void vga_put_entry_at(char c, uint8_t color, uint16_t row, uint16_t col) {
-    libc_vga_put_entry_at(c, color, row, col);
-}
-static inline void vga_set_cursor(uint16_t row, uint16_t col) {
-    libc_vga_set_cursor(row, col);
-}
+
 static inline void vga_clear(void) {
     libc_vga_clear();
 }

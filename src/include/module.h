@@ -4,8 +4,10 @@
 #include "types.h"
 #include "list.h"
 #include "vermagic.h"
+#include "sha256.h"
 
 #define MODULE_MAX 16
+#define MODULE_SIG_LEN 256
 
 /* Module states for the state machine */
 enum module_state {

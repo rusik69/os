@@ -172,6 +172,7 @@ int  trace_events_v2_read(struct trace_event_v2_record *buf, int max_count, uint
 
 /* Clear all events from the ring buffer */
 void trace_events_v2_clear(void);
+void trace_events_stats(uint64_t *sched, uint64_t *timer, uint64_t *irq);
 
 /* ── Convenience helpers for common trace events ───────────────────── */
 

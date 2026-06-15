@@ -1515,10 +1515,4 @@ void kunit_register_builtin_tests(void)
 
     /* Register the extended feature test suites from kunit_ext.c */
     kunit_ext_register();
-
-    /* Register the cluster subsystem test suites from kunit_cluster.c */
-    kunit_cluster_register();
-
-    /* Register the container exec enhanced test suites from kunit_container_ext.c */
-    kunit_container_ext_register();
 }

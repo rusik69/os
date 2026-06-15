@@ -14,6 +14,7 @@
 #include "ahci.h"
 #include "vga.h"
 #include "timer.h"
+#include "timers.h"
 #include "sysctl.h"
 #include "caps.h"
 #include "keyboard.h"
@@ -5878,7 +5879,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             /* Copy CDB from user space */
             uint8_t cdb[SG_MAX_CDB_SIZE];
             memset(cdb, 0, sizeof(cdb));
-            if (copy_from_user(cdb, hdr.cmdp, hdr.cmd_len) < 0)
+            if (copy_from_user(cdb, (uint64_t)hdr.cmdp, hdr.cmd_len) < 0)
                 return (uint64_t)-1;
 
             /* Allocate data buffer (up to 64KB for safety) */
@@ -5895,7 +5896,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
                 if (hdr.dxfer_direction == SG_DXFER_TO_DEV ||
                     hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV) {
                     /* Copy data FROM user for writes */
-                    if (copy_from_user(data_buf, hdr.dxferp, data_len) < 0) {
+                    if (copy_from_user(data_buf, (uint64_t)hdr.dxferp, data_len) < 0) {
                         kfree(data_buf);
                         return (uint64_t)-1;
                     }
@@ -5940,7 +5941,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             if (sense_len > 0 && hdr.sbp) {
                 unsigned char mx_sb = hdr.mx_sb_len;
                 if ((int)mx_sb > sense_len) mx_sb = (unsigned char)sense_len;
-                if (copy_to_user(hdr.sbp, sense, mx_sb) < 0) {
+                if (copy_to_user((uint64_t)hdr.sbp, sense, mx_sb) < 0) {
                     if (data_buf) kfree(data_buf);
                     return (uint64_t)-1;
                 }
@@ -5950,7 +5951,7 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             if (data_buf && data_len > 0 && hdr.dxferp &&
                 (hdr.dxfer_direction == SG_DXFER_FROM_DEV ||
                  hdr.dxfer_direction == SG_DXFER_TO_FROM_DEV)) {
-                if (copy_to_user(hdr.dxferp, data_buf, data_len) < 0) {
+                if (copy_to_user((uint64_t)hdr.dxferp, data_buf, data_len) < 0) {
                     kfree(data_buf);
                     return (uint64_t)-1;
                 }

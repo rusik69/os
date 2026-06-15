@@ -115,12 +115,12 @@ static uint8_t *ntfs_read_mft_rec(struct ntfs_priv *np, uint64_t mft_index)
     uint32_t within_cluster = (uint32_t)(byte_offset % np->cluster_size);
 
     /* Allocate buffer for one MFT record */
-    uint8_t *buf = (uint8_t *)heap_alloc(mft_rec_size);
+    uint8_t *buf = (uint8_t *)kmalloc(mft_rec_size);
     if (!buf) return NULL;
 
     /* Read the cluster containing this MFT record */
     if (ntfs_read_cluster(np, mft_lcn + cluster_offset, buf) < 0) {
-        heap_free(buf);
+        kfree(buf);
         return NULL;
     }
 
@@ -133,21 +133,21 @@ static uint8_t *ntfs_read_mft_rec(struct ntfs_priv *np, uint64_t mft_index)
         for (uint32_t i = 1; i < clusters_needed; i++) {
             if (ntfs_read_cluster(np, mft_lcn + cluster_offset + i,
                                    buf + i * np->cluster_size) < 0) {
-                heap_free(buf);
+                kfree(buf);
                 return NULL;
             }
         }
     }
 
     /* Shift to get the record-aligned data */
-    uint8_t *rec_buf = (uint8_t *)heap_alloc(mft_rec_size);
-    if (!rec_buf) { heap_free(buf); return NULL; }
+    uint8_t *rec_buf = (uint8_t *)kmalloc(mft_rec_size);
+    if (!rec_buf) { kfree(buf); return NULL; }
     memcpy(rec_buf, buf + within_cluster, mft_rec_size);
-    heap_free(buf);
+    kfree(buf);
 
     /* Apply fixups */
     if (ntfs_apply_fixups(np, rec_buf, mft_rec_size) < 0) {
-        heap_free(rec_buf);
+        kfree(rec_buf);
         return NULL;
     }
 

@@ -607,6 +607,18 @@ static void mglru_aging_callback(void *data)
     }
 }
 
+/* Called from scheduler tick — update MGLRU aging on each tick */
+void mglru_tick(void)
+{
+    if (!mglru_is_enabled()) return;
+    /* Mark current process pages for each node */
+    for (int n = 0; n < MGLRU_NR_NODES; n++) {
+        if (mglru_state[n].enabled) {
+            mglru_page_accessed(NULL);
+        }
+    }
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  *  Sysfs interface
  * ════════════════════════════════════════════════════════════════════════ */

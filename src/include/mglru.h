@@ -50,6 +50,7 @@ struct mglru_page_entry {
 
 /* Initialise MGLRU subsystem (generations, default threshold, sysfs) */
 void mglru_init(void);
+void mglru_tick(void);
 
 /* Advance the current generation, wrapping at MGLRU_NR_GENS (4) */
 void mglru_age(void);

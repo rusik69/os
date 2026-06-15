@@ -28,6 +28,11 @@ void timers_init(void) {
     kprintf("[OK] Dynamic timers initialized (%d slots)\n", TIMER_MAX);
 }
 
+int timer_available(void)
+{
+    return g_timers_initialized;
+}
+
 int timer_schedule(timer_callback_t fn, void *arg, uint64_t delay_ticks) {
     if (!fn || !g_timers_initialized) return -1;
     if (delay_ticks == 0) delay_ticks = 1;

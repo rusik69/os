@@ -489,8 +489,6 @@ C_SRCS = src/kernel/kernel.c \
          src/test/kunit_security_new.c \
          src/test/kunit_power.c \
          src/test/kunit_ext.c \
-         src/test/kunit_cluster.c \
-         src/test/kunit_container_ext.c \
          src/container/runtime.c \
          src/container/config.c \
          src/container/state.c \
@@ -521,28 +519,12 @@ C_SRCS = src/kernel/kernel.c \
          src/orch/secrets.c \
          src/orch/pod_health.c \
          src/orch/hooks.c \
-         src/cluster/raft.c \
-         src/cluster/raft_kv.c \
-         src/cluster/gossip.c \
-         src/cluster/node.c \
-         src/cluster/cluster.c \
-         src/cluster/overlay.c \
-         src/cluster/network_policy.c \
-         src/cluster/mesh.c \
-         src/cluster/controllers.c \
-         src/cluster/hpa.c \
-         src/cluster/crd.c \
-         src/cluster/runtime_security.c \
-         src/cluster/upgrade.c \
-         src/cluster/node_problem.c \
-         src/cluster/cluster_autoscaler.c \
-         src/cluster/cluster_descheduler.c \
-         src/cluster/cluster_ingress.c \
          src/drivers/xhci.c \
          src/drivers/xhci_streams.c \
          src/drivers/gpio_irq.c \
          src/drivers/iommu.c \
          src/kernel/sched_idle.c \
+         src/kernel/hrtimer.c \
          src/kernel/idle_inject.c \
          src/kernel/core_sched.c \
          src/kernel/nohz.c \
@@ -649,25 +631,11 @@ C_SRCS = src/kernel/kernel.c \
          src/fs/f2fs.c \
          src/fs/jffs2.c \
          src/fs/nilfs2.c \
-         src/fs/btrfs.c \
-         src/fs/ntfs.c \
-         src/fs/exfat.c \
-         src/fs/hfsplus.c \
-         src/fs/ext4.c \
-         src/fs/cifs.c \
-         src/fs/nfsd.c \
-         src/fs/reiserfs.c \
-         src/kernel/tpm_rng.c \
          src/kernel/numa_balancing.c \
          src/kernel/uprobes.c \
          src/kernel/early_serial.c \
          src/kernel/efi_runtime.c \
-         src/kernel/io_uring.c \
-         src/memory/mglru.c \
          src/memory/page_pool.c \
-         src/net/af_unix.c \
-         src/net/af_packet.c \
-         src/net/6lowpan.c \
          src/drivers/dm-era.c \
          src/drivers/dma_buf.c \
          src/drivers/bonding.c \
