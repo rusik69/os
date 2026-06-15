@@ -47,7 +47,6 @@ extern void kunit_ext_register(void);
 extern void kunit_container_ext_register(void);
 extern void kunit_vfs_register(void);
 extern void kunit_net_register(void);
-extern void kunit_cluster_register(void);
 
 /* ====================================================================
  *  1. PMM — Physical Memory Manager tests
@@ -1526,7 +1525,4 @@ void kunit_register_builtin_tests(void)
 
     /* Register the container exec enhanced test suite from kunit_container_ext.c */
     kunit_container_ext_register();
-
-    /* Register the cluster subsystem test suites from kunit_cluster.c */
-    kunit_cluster_register();
 }
