@@ -219,7 +219,7 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
 
 /* ── INQUIRY via FCoE ───────────────────────────────────────────────── */
 
-static int fcoe_inquiry(struct fcoe_device *dev, uint8_t *data, int max_len)
+static int __attribute__((unused)) fcoe_inquiry(struct fcoe_device *dev, uint8_t *data, int max_len)
 {
     uint8_t cdb[6];
     memset(cdb, 0, sizeof(cdb));

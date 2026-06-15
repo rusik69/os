@@ -88,3 +88,5 @@ struct memhp_section *memhp_get_section(int section_id) {
         return NULL;
     return &sections[section_id];
 }
+#include "module.h"
+module_init(memhp_init);

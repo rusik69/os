@@ -24,10 +24,12 @@
  */
 
 #include "shell_cmds.h"
+#include "vga.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
 #include "stdlib.h"     /* for qsort */
+#include "vga.h"
 
 /* ── Display layout ──────────────────────────────────────────────────── */
 
@@ -309,7 +311,8 @@ static void fm_parent_dir(struct fm_pane *pane) {
         /* At root already — go to / */
         pane->path[1] = '\0';
     } else {
-        strcpy(pane->path, "/");
+        strncpy(pane->path, "/", sizeof(pane->path) - 1);
+        pane->path[sizeof(pane->path) - 1] = '\0';
     }
     pane->cursor = 0;
     pane->scroll = 0;

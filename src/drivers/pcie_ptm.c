@@ -102,3 +102,5 @@ void ptm_init(void)
     memset(&ptm, 0, sizeof(ptm));
     kprintf("[OK] PCIe PTM — Precision Time Measurement\n");
 }
+#include "module.h"
+module_init(ptm_init);

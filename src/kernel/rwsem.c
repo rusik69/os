@@ -48,9 +48,6 @@ void rwsem_init(struct rw_semaphore *sem) {
 void down_read(struct rw_semaphore *sem) {
     if (!sem) return;
 
-    /* Lockdep: track reader lock acquisition */
-    lock_acquire("rwsem-read", (uint64_t)sem, LOCK_TYPE_RWSEM);
-
     for (;;) {
         /* Fast path: try to acquire read lock directly.
          * Must be done with interrupts disabled to prevent
@@ -61,6 +58,8 @@ void down_read(struct rw_semaphore *sem) {
             if (__sync_bool_compare_and_swap(&sem->count, old, old + 1)) {
                 sem->reader_count++;
                 __asm__ volatile("sti");
+                /* Lockdep: track reader lock acquisition after successful CAS */
+                lock_acquire("rwsem-read", (uint64_t)sem, LOCK_TYPE_RWSEM);
                 return;
             }
         }
@@ -132,9 +131,6 @@ void up_read(struct rw_semaphore *sem) {
 void down_write(struct rw_semaphore *sem) {
     if (!sem) return;
 
-    /* Lockdep: track writer lock acquisition */
-    lock_acquire("rwsem-write", (uint64_t)sem, LOCK_TYPE_RWSEM);
-
     for (;;) {
         /* Fast path: try to acquire write lock (count == 0) */
         __asm__ volatile("cli");
@@ -145,6 +141,8 @@ void down_write(struct rw_semaphore *sem) {
                 sem->owner_pid   = self ? self->pid : 0;
                 sem->owner_cpu   = smp_get_cpu_id();
                 __asm__ volatile("sti");
+                /* Lockdep: track writer lock acquisition after successful CAS */
+                lock_acquire("rwsem-write", (uint64_t)sem, LOCK_TYPE_RWSEM);
                 return;
             }
         }

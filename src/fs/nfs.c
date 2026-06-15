@@ -669,3 +669,5 @@ void nfs_init(void)
     nfs_mount_count = 0;
     kprintf("[OK] NFSv3 — Client (RPC/XDR + mount protocol)\n");
 }
+#include "module.h"
+module_init(nfs_init);

@@ -377,3 +377,5 @@ int ksm_get_scan_batch(void)
 {
     return ksm_compute_batch();
 }
+#include "module.h"
+module_init(ksm_init);

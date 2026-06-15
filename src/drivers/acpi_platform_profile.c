@@ -207,3 +207,5 @@ void acpi_platform_profile_init(void)
             (unsigned int)g_supported_profiles,
             profile_names[g_current_profile]);
 }
+#include "module.h"
+module_init(acpi_platform_profile_init);

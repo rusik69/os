@@ -140,3 +140,5 @@ void cake_init(void)
 
     kprintf("[OK] CAKE — Common Applications Kept Enhanced (comprehensive AQM)\n");
 }
+#include "module.h"
+module_init(cake_init);

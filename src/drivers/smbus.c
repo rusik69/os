@@ -144,3 +144,5 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
 
     return count;
 }
+#include "module.h"
+module_init(smbus_init);

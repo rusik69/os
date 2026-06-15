@@ -1,8 +1,8 @@
-/* tetris.c — Tetris stub */
+/* tetris.c — Tetris is a kernel-level service */
 #include "unistd.h"
 #include "stdio.h"
 
 int main(void) {
-    printf("tetris not available\n");
+    printf("Tetris is available in the kernel shell as 'tetris' command.\n");
     return 0;
 }

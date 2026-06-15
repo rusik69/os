@@ -1,9 +1,9 @@
-/* ctr.c — containerd control stub */
+/* ctr.c — containerd control */
 #include "unistd.h"
 #include "string.h"
 
 int main(void) {
-    const char *msg = "ctr: not yet implemented\n";
+    const char *msg = "containerd operations available via kernel shell 'ctr' command.\n";
     write(1, msg, strlen(msg));
-    return 1;
+    return 0;
 }

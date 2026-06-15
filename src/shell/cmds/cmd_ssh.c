@@ -48,7 +48,8 @@ void cmd_ssh(const char *args) {
     /* Use keyboard read - for simplicity, use fixed password for now */
     /* In real use, the kernel would provide getchar() */
     kprintf("(using default)\n");
-    strcpy(pass, "os");
+    strncpy(pass, "os", sizeof(pass) - 1);
+    pass[sizeof(pass) - 1] = '\0';
 
     struct ssh_client *cl = ssh_client_connect(host, port, user, pass,
                                                 NULL, NULL, NULL);

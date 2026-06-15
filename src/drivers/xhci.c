@@ -191,3 +191,5 @@ void xhci_print_info(void) {
     kprintf("xHCI: present, %d ports, %d slots\n",
             g_xhci.max_ports, g_xhci.max_slots);
 }
+#include "module.h"
+module_init(xhci_init);

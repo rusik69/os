@@ -12,12 +12,12 @@
  * The linker.ld must include the .initcall section.
  */
 
-typedef int (*initcall_t)(void);
+typedef void (*initcall_t)(void);
 
 /* Section names: each level gets its own section for ordering */
 #define __define_initcall(fn, id) \
     static initcall_t __initcall_##fn##id \
-    __attribute__((__used__, __section__(".initcall." #id))) = fn
+    __attribute__((__used__, __section__(".initcall." #id))) = (initcall_t)fn
 
 #define pure_initcall(fn)       __define_initcall(fn, 0)
 #define core_initcall(fn)       __define_initcall(fn, 1)

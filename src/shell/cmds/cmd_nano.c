@@ -16,8 +16,10 @@
  */
 
 #include "shell_cmds.h"
+#include "vga.h"
 #include "libc.h"
 #include "keyboard.h"  /* KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT */
+#include "vga.h"
 #include "printf.h"
 #include "string.h"
 #include "stdlib.h"

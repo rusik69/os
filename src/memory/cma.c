@@ -30,7 +30,8 @@ int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
     if (!area->bitmap) return -1;
 
     memset(area->bitmap, 0, area->bitmap_size);
-    strcpy(area->name, name);
+    strncpy(area->name, name, sizeof(area->name) - 1);
+    area->name[sizeof(area->name) - 1] = '\0';
     area->initialized = 1;
 
     cma_area_count++;

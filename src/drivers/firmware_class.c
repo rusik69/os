@@ -237,3 +237,5 @@ void firmware_class_dump(void)
 
     spinlock_release(&fw_class_lock);
 }
+#include "module.h"
+module_init(firmware_class_init);

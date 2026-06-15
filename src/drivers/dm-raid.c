@@ -377,3 +377,5 @@ void dm_raid_init(void)
         kprintf("[FAIL] dm-raid: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_raid_init);

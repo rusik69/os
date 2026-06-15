@@ -133,3 +133,5 @@ void ima_appraise_init(void)
     kprintf("[OK] IMA appraisal initialized (%s enforcement)\n",
             ima_appraise_enforce ? "with" : "without");
 }
+#include "module.h"
+module_init(ima_appraise_init);

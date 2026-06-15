@@ -124,3 +124,5 @@ void erofs_init(void)
     memset(&erofs_sb, 0, sizeof(erofs_sb));
     kprintf("[OK] EROFS — Enhanced Read-Only File System\n");
 }
+#include "module.h"
+module_init(erofs_init);

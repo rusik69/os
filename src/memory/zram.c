@@ -307,3 +307,5 @@ uint32_t zram_get_algorithm(void)
 {
     return zram_dev.algo_id;
 }
+#include "module.h"
+module_init(zram_init);

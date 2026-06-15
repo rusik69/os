@@ -432,3 +432,5 @@ void dm_verity_init(void)
         kprintf("[FAIL] dm-verity: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_verity_init);

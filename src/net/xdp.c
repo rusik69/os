@@ -172,3 +172,5 @@ int xdp_run(const uint8_t *data, uint16_t len, int ifindex)
 
     return program(data, len, ifindex);
 }
+#include "module.h"
+module_init(xdp_init);

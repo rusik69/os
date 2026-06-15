@@ -393,3 +393,5 @@ void zswap_dump(void)
     }
     spinlock_release(&zswap_lock);
 }
+#include "module.h"
+module_init(zswap_init);

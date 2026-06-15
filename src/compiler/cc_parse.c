@@ -79,6 +79,96 @@ static void expect(CompilerState *cc, TokenType t, const char *msg) {
 /* ------------------------------------------------------------------ */
 static int emit_rel32_2_local(CompilerState *cc, uint8_t op0, uint8_t op1);
 
+/* Forward declarations needed by GNU extension helpers */
+static void parse_expr(CompilerState *cc);
+static int starts_type(CompilerState *cc);
+static void parse_type(CompilerState *cc, TypeDesc *td);
+
+/* ------------------------------------------------------------------ */
+/*  GNU extension helpers — __attribute__, asm, typeof                 */
+/* ------------------------------------------------------------------ */
+
+/* Skip __attribute__((...)) and __extension__ — return 1 if attribute was skipped */
+static int skip_gnu_attrs(CompilerState *cc) {
+    int skipped = 0;
+    while (cur(cc)->type == TK_IDENT) {
+        if (strcmp(cur(cc)->sval, "__attribute__") == 0 ||
+            strcmp(cur(cc)->sval, "__attribute") == 0) {
+            advance(cc);
+            skipped = 1;
+            if (cur(cc)->type == TK_LPAREN) {
+                advance(cc); /* skip first ( */
+                if (cur(cc)->type == TK_LPAREN) {
+                    advance(cc); /* skip second ( */
+                    int depth = 1;
+                    while (cur(cc)->type != TK_EOF && depth > 0) {
+                        if (cur(cc)->type == TK_LPAREN) depth++;
+                        else if (cur(cc)->type == TK_RPAREN) depth--;
+                        if (depth > 0) advance(cc);
+                    }
+                }
+                if (cur(cc)->type == TK_RPAREN) advance(cc);
+            }
+        } else if (strcmp(cur(cc)->sval, "__extension__") == 0) {
+            advance(cc);
+            skipped = 1;
+        } else {
+            break;
+        }
+    }
+    return skipped;
+}
+
+/* Skip an asm() expression: asm [volatile] [goto] ( "str" : ... ) */
+static int skip_asm_stmt(CompilerState *cc) {
+    if (cur(cc)->type != TK_IDENT) return 0;
+    const char *nm = cur(cc)->sval;
+    if (strcmp(nm, "asm") != 0 && strcmp(nm, "__asm__") != 0 && strcmp(nm, "__asm") != 0)
+        return 0;
+    advance(cc); /* skip asm/__asm__ */
+    /* Skip optional volatile/goto/inline qualifiers (including GNU-style __volatile__) */
+    while (cur(cc)->type == TK_IDENT &&
+           (strcmp(cur(cc)->sval, "volatile") == 0 ||
+            strcmp(cur(cc)->sval, "goto") == 0))
+        advance(cc);
+    /* Also accept volatile/inline/const as actual keyword tokens (GNU __volatile__ → TK_VOLATILE etc.) */
+    if (cur(cc)->type == TK_VOLATILE) advance(cc);
+    if (cur(cc)->type == TK_LPAREN) {
+        int depth = 1;
+        advance(cc);
+        while (cur(cc)->type != TK_EOF && depth > 0) {
+            if (cur(cc)->type == TK_LPAREN) depth++;
+            else if (cur(cc)->type == TK_RPAREN) depth--;
+            if (depth > 0) advance(cc);
+        }
+    }
+    return 1;
+}
+
+/* Parse a typeof(...) expression and fill td. Returns after closing paren. */
+static void parse_typeof(CompilerState *cc, TypeDesc *td) {
+    advance(cc); /* skip typeof/__typeof__/__typeof */
+    if (cur(cc)->type == TK_LPAREN) {
+        advance(cc);
+        if (starts_type(cc)) {
+            /* typeof(type) */
+            parse_type(cc, td);
+        } else {
+            /* typeof(expr) — evaluate expression to get its type */
+            parse_expr(cc);
+            /* Expression result is just int (simplified) */
+            td->kind = TY_INT;
+            td->ptr_depth = 0;
+            td->struct_idx = -1;
+            td->is_unsigned = 0;
+        }
+        while (cur(cc)->type == TK_STAR) { td->ptr_depth++; advance(cc); }
+        expect(cc, TK_RPAREN, "expected ')' after typeof");
+    } else {
+        td->kind = TY_INT;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Code emission helpers                                              */
 /* ------------------------------------------------------------------ */
@@ -395,6 +485,9 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
            cur(cc)->type == TK__THREAD_LOCAL)
         advance(cc);
 
+    /* __attribute__ before type */
+    skip_gnu_attrs(cc);
+
     int is_unsigned = 0;
     if (cur(cc)->type == TK_UNSIGNED) { is_unsigned = 1; advance(cc); }
 
@@ -421,7 +514,14 @@ static void parse_type(CompilerState *cc, TypeDesc *td) {
             advance(cc);
         }
     } else if (cur(cc)->type == TK_IDENT) {
-        /* Could be a typedef name */
+        /* Could be a typedef name or typeof */
+        /* typeof/__typeof__/__typeof — parse the type from expression */
+        if (strcmp(cur(cc)->sval, "typeof") == 0 ||
+            strcmp(cur(cc)->sval, "__typeof__") == 0 ||
+            strcmp(cur(cc)->sval, "__typeof") == 0) {
+            parse_typeof(cc, td);
+            goto done_base;
+        }
         for (int i = 0; i < cc->ntypedefs; i++) {
             if (strcmp(cc->typedefs[i].name, cur(cc)->sval) == 0) {
                 *td = cc->typedefs[i].type;
@@ -517,10 +617,92 @@ static void parse_expr_prec(CompilerState *cc, int prec);
 static void parse_stmt(CompilerState *cc,
                        int *break_p, int *nbr,
                        int *cont_p,  int *nco);
+static void parse_block(CompilerState *cc,
+                        int *break_p, int *nbr,
+                        int *cont_p,  int *nco);
 
 static void parse_primary(CompilerState *cc) {
     Token *t = cur(cc);
     if (cc->error) return;
+
+    /* __extension__ before expression — GNU extension marker, skip it */
+    if (t->type == TK_IDENT && strcmp(t->sval, "__extension__") == 0) {
+        advance(cc);
+        parse_primary(cc);
+        return;
+    }
+
+    /* __builtin_expect, __builtin_constant_p, etc. — function-like builtins.
+       Evaluate the first argument (the only one that matters at compile time). */
+    if (t->type == TK_IDENT && strncmp(t->sval, "__builtin_", 10) == 0) {
+        advance(cc);
+        if (cur(cc)->type == TK_LPAREN) {
+            advance(cc);
+            parse_expr(cc); /* first arg */
+            while (cur(cc)->type == TK_COMMA) {
+                advance(cc);
+                parse_expr(cc);
+            }
+            expect(cc, TK_RPAREN, "expected ')' after __builtin");
+        }
+        return;
+    }
+
+    /* Statement expression: ({ stmts; expr; }) — evaluate block, last value is result */
+    if (t->type == TK_LPAREN && peek1(cc)->type == TK_LBRACE) {
+        advance(cc); advance(cc); /* skip ( { */
+        int sv = cc->nlocals;
+        parse_block(cc, NULL, NULL, NULL, NULL);
+        cc->nlocals = sv;
+        expect(cc, TK_RBRACE, "expected '}'");
+        expect(cc, TK_RPAREN, "expected ')' after statement expression");
+        return;
+    }
+
+    /* Compound literal: (type){init1, init2, ...} — allocate and return address */
+    if (t->type == TK_LPAREN && starts_type(cc)) {
+        int saved = cc->tok_pos;
+        advance(cc); /* skip ( */
+        TypeDesc cl_td; parse_type(cc, &cl_td);
+        if (cur(cc)->type == TK_RPAREN && peek1(cc)->type == TK_LBRACE) {
+            /* It's a compound literal — allocate space, write init values */
+            advance(cc); /* skip ) */
+            advance(cc); /* skip { */
+            int esz = type_sizeof(cc, &cl_td);
+            int doff = cc->data_len;
+            if (cc->data_len + esz > CC_DATA_MAX) { cc_error(cc, "data full"); return; }
+            cc->data_len += esz;
+            int init_idx = 0;
+            while (cur(cc)->type != TK_RBRACE && cur(cc)->type != TK_EOF) {
+                if (cur(cc)->type == TK_INTLIT || cur(cc)->type == TK_CHARLIT) {
+                    if (init_idx * 8 < esz) {
+                        int64_t v = cur(cc)->ival;
+                        for (int bi = 0; bi < 8 && init_idx * 8 + bi < esz; bi++)
+                            cc->data[doff + init_idx * 8 + bi] = (uint8_t)(v >> (bi * 8));
+                    }
+                    init_idx++;
+                    advance(cc);
+                } else if (cur(cc)->type == TK_STRLIT) {
+                    /* String literal initializer — copy bytes */
+                    const char *str = cur(cc)->sval;
+                    int slen = (int)strlen(str) + 1;
+                    if (slen > esz - init_idx) slen = esz - init_idx;
+                    if (slen > 0) memcpy(cc->data + doff + init_idx, str, (uint32_t)slen);
+                    init_idx += slen;
+                    advance(cc);
+                } else {
+                    advance(cc);
+                }
+                if (cur(cc)->type == TK_COMMA) advance(cc);
+            }
+            expect(cc, TK_RBRACE, "expected '}'");
+            emit_mov_rax_imm64(cc, data_vaddr(doff));
+            return;
+        }
+        /* Not a compound literal — restore position and fall through */
+        cc->tok_pos = saved;
+        t = cur(cc);
+    }
 
     /* integer / char literal */
     if (t->type == TK_INTLIT || t->type == TK_CHARLIT) {
@@ -1759,6 +1941,12 @@ static void parse_stmt(CompilerState *cc,
         return;
     }
 
+    /* asm statement — skip it */
+    if (skip_asm_stmt(cc)) {
+        expect(cc, TK_SEMI, "expected ';' after asm");
+        return;
+    }
+
     /* variable declaration */
     if (starts_type(cc)) {
         TypeDesc td; parse_type(cc, &td);
@@ -1795,9 +1983,13 @@ static void parse_block(CompilerState *cc,
 /* ------------------------------------------------------------------ */
 
 static void parse_struct_def(CompilerState *cc, int is_union) {
+    /* __attribute__ before struct name */
+    skip_gnu_attrs(cc);
     /* struct/union Name { ... }; */
     if (cur(cc)->type != TK_IDENT) { cc_error(cc, "expected struct/union name"); return; }
     char sname[32]; strncpy(sname, cur(cc)->sval, 31); advance(cc);
+    /* __attribute__ between name and body */
+    skip_gnu_attrs(cc);
     if (cur(cc)->type != TK_LBRACE) { return; } /* forward decl */
     advance(cc);
     if (cc->nstructs >= CC_MAX_STRUCTS) { cc_error(cc, "too many structs"); return; }
@@ -1833,6 +2025,8 @@ static void parse_struct_def(CompilerState *cc, int is_union) {
     }
     if (is_union) sd->total_size = (sd->total_size + 7) & ~7; /* align union size */
     expect(cc, TK_RBRACE, "expected '}' to close struct/union");
+    /* __attribute__ after struct body (usually packed, aligned) */
+    skip_gnu_attrs(cc);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1889,6 +2083,9 @@ static void parse_function(CompilerState *cc, const char *fname, TypeDesc *ret_t
     }
     expect(cc, TK_RPAREN, "expected ')'");
     finfo->nparams = nparam;
+
+    /* __attribute__ between params and body */
+    skip_gnu_attrs(cc);
 
     /* Set up __func__ predefined identifier string in data section */
     cc->current_func_name[0] = '\0';
@@ -2039,6 +2236,17 @@ void cc_parse(CompilerState *cc) {
 
     while (cur(cc)->type != TK_EOF && !cc->error) {
         Token *t = cur(cc);
+
+        /* __attribute__ / __extension__ before declarations */
+        if (skip_gnu_attrs(cc)) {
+            t = cur(cc);
+        }
+
+        /* asm at top level (e.g., asm(".globl _start")) */
+        if (skip_asm_stmt(cc)) {
+            if (cur(cc)->type == TK_SEMI) advance(cc);
+            continue;
+        }
 
         /* typedef */
         if (t->type == TK_TYPEDEF) {

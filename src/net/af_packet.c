@@ -528,7 +528,7 @@ int packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring)
 
     /* Build frame pointer array */
     ring->frames = (volatile struct tpacket_hdr **)
-        kmalloc(sizeof(void *) * ring->frame_count);
+        kmalloc_array(ring->frame_count, sizeof(void *));
     if (!ring->frames) {
         pmm_free_frames_contiguous((uint64_t)pg_vec, total_pages);
         ring->active = 0;
@@ -641,3 +641,5 @@ EXPORT_SYMBOL(packet_mmap_poll);
 EXPORT_SYMBOL(packet_mmap_get_frame);
 EXPORT_SYMBOL(packet_mmap_release_frame);
 EXPORT_SYMBOL(packet_mmap_teardown);
+#include "module.h"
+module_init(af_packet_init);

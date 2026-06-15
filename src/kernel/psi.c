@@ -310,7 +310,7 @@ int psi_gen_proc_file(int resource, char *buf, int max)
  */
 static inline int psi_inc(int res)
 {
-    unsigned long flags;
+    uint64_t flags;
     spinlock_irqsave_acquire(&psi_resources[res].lock, &flags);
     int new = ++psi_resources[res].stall_count;
     spinlock_irqsave_release(&psi_resources[res].lock, flags);
@@ -323,7 +323,7 @@ static inline int psi_inc(int res)
  */
 static inline int psi_dec(int res)
 {
-    unsigned long flags;
+    uint64_t flags;
     spinlock_irqsave_acquire(&psi_resources[res].lock, &flags);
     int new = --psi_resources[res].stall_count;
     if (new < 0)
@@ -383,7 +383,7 @@ int psi_stall_count(int resource)
 {
     if ((unsigned)resource >= PSI_NUM_RESOURCES)
         return -1;
-    unsigned long flags;
+    uint64_t flags;
     spinlock_irqsave_acquire(&psi_resources[resource].lock, &flags);
     int cnt = psi_resources[resource].stall_count;
     spinlock_irqsave_release(&psi_resources[resource].lock, flags);

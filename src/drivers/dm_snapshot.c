@@ -182,3 +182,5 @@ void dm_snapshot_init(void)
     next_snap_id = 1;
     kprintf("[OK] DM-Snapshot — Device mapper snapshot target\n");
 }
+#include "module.h"
+module_init(dm_snapshot_init);

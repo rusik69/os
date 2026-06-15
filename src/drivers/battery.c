@@ -366,3 +366,5 @@ int battery_get_health(struct battery_health *health) {
 
     return 0;
 }
+#include "module.h"
+module_init(battery_init);

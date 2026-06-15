@@ -360,3 +360,5 @@ void keyring_init(void)
     kprintf("[OK] Kernel keyring initialized (AES-128-CBC, max %d keys)\n",
             KEYRING_MAX_KEYS);
 }
+#include "module.h"
+module_init(keyring_init);

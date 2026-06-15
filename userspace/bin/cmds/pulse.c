@@ -1,9 +1,9 @@
+/* pulse.c — sound/pulseaudio stub */
 #include "unistd.h"
-#include "stdio.h"
 #include "string.h"
-#include "stdlib.h"
 
 int main(void) {
-    printf("pulse: not implemented\n");
-    return 1;
+    const char *msg = "Sound managed by kernel AC97 driver. Use 'mixer' or 'beep' kernel shell commands.\n";
+    write(1, msg, strlen(msg));
+    return 0;
 }

@@ -2,6 +2,7 @@
 #include "shell_cmds.h"
 #include "printf.h"
 #include "string.h"
+#include "vga.h"
 #include "libc.h"
 
 void cmd_reset(const char *args) {

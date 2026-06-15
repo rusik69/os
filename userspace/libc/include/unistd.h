@@ -53,6 +53,29 @@
 #define SYS_READLINKAT 294
 #define SYS_POSIX_SPAWN 777
 
+/* Network syscalls */
+#define SYS_NET_PRESENT   124
+#define SYS_NET_GET_MAC   125
+#define SYS_NET_GET_IP    126
+#define SYS_NET_GET_GW    127
+#define SYS_NET_GET_MASK  128
+#define SYS_NET_DNS       129
+#define SYS_NET_PING      130
+#define SYS_NET_UDP_SEND  131
+#define SYS_NET_HTTP_GET  132
+#define SYS_NET_ARP_LIST  133
+#define SYS_NET_TCP_LISTEN      183
+#define SYS_NET_TCP_ACCEPT      184
+#define SYS_NET_TCP_SEND_CONN   185
+#define SYS_NET_TCP_RECV_CONN   186
+#define SYS_NET_TCP_CLOSE_CONN  187
+#define SYS_NET_TCP_UNLISTEN    188
+#define SYS_NET_TCP_CONNECT     189
+#define SYS_NET_UDP_LISTEN      198
+#define SYS_NET_UDP_RECV        199
+#define SYS_NET_UDP_UNLISTEN    200
+#define SYS_NET_CONNLIST        212
+
 /* Standard file descriptors */
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
@@ -239,5 +262,28 @@ extern int gethostname(char *name, unsigned long len);
 /* Process groups */
 extern int setpgrp(void);
 extern int getpgrp(void);
+
+/* Network syscall wrappers */
+extern int net_present(void);
+extern int net_get_mac(unsigned char *mac);
+extern int net_get_ip(unsigned char *ip);
+extern unsigned int net_get_gw(void);
+extern unsigned int net_get_mask(void);
+extern int net_dns(const char *host);
+extern int net_ping(unsigned int ip);
+extern int net_udp_send(unsigned int dst_ip, unsigned short src_port, unsigned short dst_port, const void *data, unsigned int len);
+extern int net_http_get(const char *host, unsigned short port, const char *path, char *buf, unsigned int bufsz);
+extern int net_tcp_listen(unsigned short port);
+extern int net_tcp_accept(unsigned short port, unsigned int timeout_ticks);
+extern int net_tcp_send_conn(int conn_id, const void *buf, unsigned int len);
+extern int net_tcp_recv_conn(int conn_id, void *buf, unsigned int bufsz);
+extern int net_tcp_close_conn(int conn_id);
+extern int net_tcp_unlisten(unsigned short port);
+extern int net_tcp_connect(unsigned int ip, unsigned short port);
+extern int net_udp_listen(unsigned short port);
+extern int net_udp_recv(unsigned short port, void *buf, unsigned int bufsz, unsigned int *src_ip, unsigned short *src_port);
+extern int net_udp_unlisten(unsigned short port);
+extern int net_connlist(void);
+extern int net_arp_list(void);
 
 #endif /* _UNISTD_H */

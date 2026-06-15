@@ -52,8 +52,8 @@ static inline void rwlock_rdlock(rwlock_t *rw) {
     spinlock_irqsave_acquire(&rw->lock, &flags);
 
     while (rw->writer_active || rw->writers_waiting > 0) {
-        /* Must sleep — release spinlock, block on readers_wq */
-        spinlock_release(&rw->lock);
+        /* Must sleep — release spinlock with IRQ restore, block on readers_wq */
+        spinlock_irqsave_release(&rw->lock, flags);
         wait_queue_sleep(&rw->readers_wq);
         spinlock_irqsave_acquire(&rw->lock, &flags);
     }
@@ -73,7 +73,8 @@ static inline void rwlock_wrlock(rwlock_t *rw) {
     rw->writers_waiting++;
 
     while (rw->readers > 0 || rw->writer_active) {
-        spinlock_release(&rw->lock);
+        /* Release spinlock with IRQ restore before sleeping */
+        spinlock_irqsave_release(&rw->lock, flags);
         wait_queue_sleep(&rw->writers_wq);
         spinlock_irqsave_acquire(&rw->lock, &flags);
     }

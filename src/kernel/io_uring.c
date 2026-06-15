@@ -139,12 +139,18 @@ static void io_ring_process_sqe(struct io_ring *ring, struct io_uring_sqe *sqe)
         uint32_t iov_count = sqe->len;
         if (iov_count == 0) { cqe.res = 0; break; }
 
+        /* Cap iov_count to prevent integer overflow in allocation */
+        if (iov_count > 1024) { cqe.res = -EINVAL; break; }
+
+        size_t iov_size = (size_t)iov_count * sizeof(struct iovec);
+        if (iov_size / sizeof(struct iovec) != iov_count) { cqe.res = -ENOMEM; break; }
+
         /* Copy iovec array from user space */
-        struct iovec *iov = (struct iovec *)kmalloc(iov_count * sizeof(struct iovec));
+        struct iovec *iov = (struct iovec *)kmalloc(iov_size);
         if (!iov) { cqe.res = -ENOMEM; break; }
 
         /* For this simple implementation, we assume kernel addresses */
-        memcpy(iov, (void *)(uintptr_t)sqe->addr, iov_count * sizeof(struct iovec));
+        memcpy(iov, (void *)(uintptr_t)sqe->addr, iov_size);
 
         /* Read into each buffer and accumulate total */
         int64_t total = 0;
@@ -187,10 +193,16 @@ static void io_ring_process_sqe(struct io_ring *ring, struct io_uring_sqe *sqe)
         uint32_t iov_count = sqe->len;
         if (iov_count == 0) { cqe.res = 0; break; }
 
-        struct iovec *iov = (struct iovec *)kmalloc(iov_count * sizeof(struct iovec));
+        /* Cap iov_count to prevent integer overflow in allocation */
+        if (iov_count > 1024) { cqe.res = -EINVAL; break; }
+
+        size_t iov_size = (size_t)iov_count * sizeof(struct iovec);
+        if (iov_size / sizeof(struct iovec) != iov_count) { cqe.res = -ENOMEM; break; }
+
+        struct iovec *iov = (struct iovec *)kmalloc(iov_size);
         if (!iov) { cqe.res = -ENOMEM; break; }
 
-        memcpy(iov, (void *)(uintptr_t)sqe->addr, iov_count * sizeof(struct iovec));
+        memcpy(iov, (void *)(uintptr_t)sqe->addr, iov_size);
 
         int64_t total = 0;
         for (uint32_t i = 0; i < iov_count; i++) {
@@ -316,7 +328,7 @@ int64_t sys_io_uring_setup(uint32_t entries, struct io_uring_params *params)
 
     /* Copy params from user */
     struct io_uring_params kparams;
-    if (copy_from_user(&kparams, params, sizeof(kparams)) < 0)
+    if (copy_from_user(&kparams, (uint64_t)params, sizeof(kparams)) < 0)
         return -EFAULT;
 
     /* Allocate a ring */
@@ -419,7 +431,7 @@ int64_t sys_io_uring_setup(uint32_t entries, struct io_uring_params *params)
     }
 
     /* Copy updated params back to userspace */
-    if (copy_to_user(params, &kparams, sizeof(kparams)) < 0) {
+    if (copy_to_user((uint64_t)params, &kparams, sizeof(kparams)) < 0) {
         io_ring_free(ring);
         if (cur) cur->fd_table[fd].used = 0;
         return -EFAULT;

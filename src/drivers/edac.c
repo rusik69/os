@@ -355,3 +355,5 @@ void edac_dump_status(void)
     spinlock_release(&g_edac_lock);
 }
 EXPORT_SYMBOL(edac_dump_status);
+#include "module.h"
+module_init(edac_init);

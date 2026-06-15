@@ -115,7 +115,8 @@ int vfat_generate_short_name(const char *long_name, char *short_out,
     /* Ensure we have at least something */
     if (name_len == 0 && ext_len == 0) {
         /* Generate a fallback name */
-        strcpy(name_part, "DUMMY");
+        strncpy(name_part, "DUMMY", sizeof(name_part) - 1);
+        name_part[sizeof(name_part) - 1] = '\0';
         name_len = 5;
     }
     if (name_len == 0) {

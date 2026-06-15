@@ -1,10 +1,10 @@
 /* cmd_chvt.c — change virtual terminal */
+#include "vga.h"
 #include "shell_cmds.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
 #include "stdlib.h"
-#include "types.h"
 
 int cmd_chvt(int argc, char **argv) {
     if (argc < 2) {
@@ -12,12 +12,10 @@ int cmd_chvt(int argc, char **argv) {
         return 1;
     }
     int vt = atoi(argv[1]);
-    if (vt < 1 || vt > 12) {
-        kprintf("chvt: invalid terminal number %d (1-12)\n", vt);
+    if (vt < 0 || vt > 15) {
+        kprintf("chvt: invalid terminal number %d (0-15)\n", vt);
         return 1;
     }
-    /* libc_vga_clear is used as a proxy for switching */
-    libc_vga_clear();
-    kprintf("Switched to virtual terminal %d\n", vt);
+    vga_set_cursor(0, (uint16_t)vt);
     return 0;
 }

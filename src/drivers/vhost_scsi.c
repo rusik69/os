@@ -316,3 +316,5 @@ int vhost_scsi_init(void)
             "%d LUN(s)\n", vhost_scsi_num_luns);
     return 0;
 }
+#include "module.h"
+module_init(vhost_scsi_init);

@@ -222,3 +222,5 @@ int vhost_blk_init(void)
             bak.serial);
     return 0;
 }
+#include "module.h"
+module_init(vhost_blk_init);

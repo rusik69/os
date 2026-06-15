@@ -234,3 +234,5 @@ EXPORT_SYMBOL(dccp_send);
 EXPORT_SYMBOL(dccp_recv);
 EXPORT_SYMBOL(dccp_close);
 EXPORT_SYMBOL(handle_dccp);
+#include "module.h"
+module_init(dccp_init);

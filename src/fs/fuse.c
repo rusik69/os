@@ -400,3 +400,5 @@ int fuse_unmount(const char *mountpoint)
 
     return -1;
 }
+#include "module.h"
+module_init(fuse_init);

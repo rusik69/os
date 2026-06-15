@@ -106,3 +106,5 @@ void nilfs2_init(void)
     memset(&nilfs2_sb, 0, sizeof(nilfs2_sb));
     kprintf("[OK] NILFS2 — Continuous snapshotting FS skeleton\n");
 }
+#include "module.h"
+module_init(nilfs2_init);

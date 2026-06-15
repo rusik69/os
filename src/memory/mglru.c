@@ -614,7 +614,7 @@ void mglru_tick(void)
     /* Mark current process pages for each node */
     for (int n = 0; n < MGLRU_NR_NODES; n++) {
         if (mglru_state[n].enabled) {
-            mglru_page_accessed(NULL);
+            mglru_page_accessed(0ULL);
         }
     }
 }
@@ -722,3 +722,5 @@ static void mglru_sysfs_init(void)
         kprintf("[MGLRU] sysfs: failed to create generations\n");
     }
 }
+#include "module.h"
+module_init(mglru_init);

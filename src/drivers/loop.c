@@ -107,9 +107,7 @@ static int loop_init(void) {
     return 0;
 }
 
-/* Register via initcall system — runs after blockdev_init */
-device_initcall(loop_init);
-
+/* module_init handles both built-in (via device_initcall) and module load */
 /* ── Create / Destroy ────────────────────────────────────────────────── */
 
 int loop_create(int backing_dev_id, uint64_t backing_offset, uint64_t sectors) {
@@ -215,3 +213,5 @@ int loop_get_backing(int loop_dev_id, int *out_backing_dev_id,
     spinlock_irqsave_release(&g_loop_lock, irq_flags);
     return 0;
 }
+#include "module.h"
+module_init(loop_init);

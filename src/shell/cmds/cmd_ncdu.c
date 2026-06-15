@@ -12,10 +12,12 @@
  */
 
 #include "shell_cmds.h"
+#include "vga.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
 #include "stdlib.h"     /* qsort */
+#include "vga.h"
 
 /* ── Limits ─────────────────────────────────────────────────────────── */
 

@@ -1002,3 +1002,5 @@ void wg_poll(void) {
         }
     }
 }
+#include "module.h"
+module_init(wg_init);

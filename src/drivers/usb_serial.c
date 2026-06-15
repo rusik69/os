@@ -107,3 +107,5 @@ void usb_serial_init(void)
     usb_ser_count = 0;
     kprintf("[OK] USB Serial — FTDI, PL2303, CP2102 driver\n");
 }
+#include "module.h"
+module_init(usb_serial_init);

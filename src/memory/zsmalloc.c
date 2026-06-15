@@ -202,3 +202,5 @@ void zsmalloc_init(void)
     zsmalloc_pool_count = 0;
     kprintf("[OK] Zsmalloc — Compact compressed page allocator (for zram)\n");
 }
+#include "module.h"
+module_init(zsmalloc_init);

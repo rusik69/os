@@ -85,3 +85,5 @@ void dm_error_init(void)
         kprintf("[FAIL] dm-error: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_error_init);

@@ -921,3 +921,5 @@ void pkt_sched_init(void) {
     qdisc_count = 0;
     kprintf("[OK] Packet scheduler initialized\n");
 }
+#include "module.h"
+module_init(pkt_sched_init);

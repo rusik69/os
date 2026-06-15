@@ -275,3 +275,5 @@ uint64_t compaction_run(void)
     return moved;
 }
 EXPORT_SYMBOL(compaction_run);
+#include "module.h"
+module_init(compaction_init);

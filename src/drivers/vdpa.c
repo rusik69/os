@@ -294,3 +294,5 @@ int vdpa_init(void)
 
     return 0;
 }
+#include "module.h"
+module_init(vdpa_init);

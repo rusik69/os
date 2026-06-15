@@ -263,3 +263,5 @@ int vfs_listxattr(const char *path, char *buf, int size) {
 int vfs_removexattr(const char *path, const char *name) {
     return xattr_remove(path, name);
 }
+#include "module.h"
+module_init(xattr_init);

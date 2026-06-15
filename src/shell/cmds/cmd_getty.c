@@ -173,7 +173,8 @@ static void spawn_shell(const char *username)
 {
     /* ── Set up environment ─────────────────────────────────────── */
     char home[64];
-    strcpy(home, "/home/");
+    strncpy(home, "/home/", sizeof(home) - 1);
+    home[sizeof(home) - 1] = '\0';
     strncat(home, username, sizeof(home) - strlen(home) - 1);
 
     char shell_env[12][64];

@@ -455,3 +455,5 @@ int sound_mixer_write(enum sound_mixer_channel ch, uint16_t val)
     sync_to_hardware(ch);
     return 0;
 }
+#include "module.h"
+module_init(sound_core_init);

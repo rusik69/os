@@ -195,3 +195,5 @@ EXPORT_SYMBOL(ipoib_send);
 EXPORT_SYMBOL(ipoib_recv);
 EXPORT_SYMBOL(ipoib_is_present);
 EXPORT_SYMBOL(ipoib_poll);
+#include "module.h"
+module_init(ipoib_init);

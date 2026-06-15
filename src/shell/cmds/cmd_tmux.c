@@ -15,10 +15,13 @@
  * Status bar at row 24 shows: [0:sh] [1:sh]* ...
  */
 
+#include "vga.h"
 #include "libc.h"
 #include "printf.h"
 #include "string.h"
 #include "shell_cmds.h"
+#include "shell.h"
+#include "vga.h"
 
 #define TMUX_MAX_PANES  4
 #define TMUX_COLS       80

@@ -374,7 +374,7 @@ int module_deps_resolved(struct kernel_module *mod);
  * We use wrappers instead of GCC __attribute__((alias)) because the
  * target function may be declared static. */
 #define module_init(fn) \
-    int init_module(void) { return fn(); }
+    int init_module(void) { fn(); return 0; }
 #define module_exit(fn) \
     void cleanup_module(void) { fn(); }
 #else

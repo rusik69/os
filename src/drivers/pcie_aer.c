@@ -106,3 +106,5 @@ void aer_init(void)
     aer_error_count = 0;
     kprintf("[OK] PCIe AER — Advanced Error Reporting handler\n");
 }
+#include "module.h"
+module_init(aer_init);

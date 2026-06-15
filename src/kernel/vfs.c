@@ -263,7 +263,7 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
         if (p && p->cwd[0]) cwd = p->cwd;
         int cwdl = (int)strlen(cwd);
         if (cwdl >= (int)sizeof(tmp)) cwdl = (int)sizeof(tmp) - 1;
-        memcpy(tmp, cwd, cwdl);
+        memcpy(tmp, cwd, (size_t)cwdl);
         wpos = cwdl;
         i = 0;
     }
@@ -307,7 +307,7 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
         }
         if (wpos + comp_len >= (int)sizeof(tmp) - 1)
             return -ENAMETOOLONG;
-        memcpy(tmp + wpos, path + comp_start, comp_len);
+        memcpy(tmp + wpos, path + comp_start, (size_t)comp_len);
         wpos += comp_len;
     }
 
@@ -316,7 +316,7 @@ int vfs_abs_path(const char *path, char *out, int out_max) {
     tmp[wpos] = '\0';
 
     /* Copy to output with size limit */
-    strncpy(out, tmp, out_max - 1);
+    strncpy(out, tmp, (size_t)(out_max - 1));
     out[out_max - 1] = '\0';
     return 0;
 }

@@ -161,3 +161,5 @@ void bcache_init(void)
             BCACHE_MAX_CACHES,
             (unsigned long long)(BCACHE_CACHE_SIZE / (1024 * 1024)));
 }
+#include "module.h"
+module_init(bcache_init);

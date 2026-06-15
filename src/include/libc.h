@@ -16,22 +16,22 @@
 
 /* VGA colors mirrored from vga.h for command-side compatibility. */
 enum libc_vga_color {
-    VGA_BLACK = 0,
-    VGA_BLUE = 1,
-    VGA_GREEN = 2,
-    VGA_CYAN = 3,
-    VGA_RED = 4,
-    VGA_MAGENTA = 5,
-    VGA_BROWN = 6,
-    VGA_LIGHT_GREY = 7,
-    VGA_DARK_GREY = 8,
-    VGA_LIGHT_BLUE = 9,
-    VGA_LIGHT_GREEN = 10,
-    VGA_LIGHT_CYAN = 11,
-    VGA_LIGHT_RED = 12,
-    VGA_LIGHT_MAGENTA = 13,
-    VGA_YELLOW = 14,
-    VGA_WHITE = 15,
+    LIBC_VGA_BLACK = 0,
+    LIBC_VGA_BLUE = 1,
+    LIBC_VGA_GREEN = 2,
+    LIBC_VGA_CYAN = 3,
+    LIBC_VGA_RED = 4,
+    LIBC_VGA_MAGENTA = 5,
+    LIBC_VGA_BROWN = 6,
+    LIBC_VGA_LIGHT_GREY = 7,
+    LIBC_VGA_DARK_GREY = 8,
+    LIBC_VGA_LIGHT_BLUE = 9,
+    LIBC_VGA_LIGHT_GREEN = 10,
+    LIBC_VGA_LIGHT_CYAN = 11,
+    LIBC_VGA_LIGHT_RED = 12,
+    LIBC_VGA_LIGHT_MAGENTA = 13,
+    LIBC_VGA_YELLOW = 14,
+    LIBC_VGA_WHITE = 15,
 };
 
 #define KEY_UP    ((char)0x80)
@@ -513,9 +513,7 @@ static inline int fat32_write_file(const char *path, const void *data, uint32_t 
 static inline int fat32_sync(void) {
     return libc_fat32_sync();
 }
-static inline void vga_set_color(uint8_t fg, uint8_t bg) {
-    libc_vga_set_color(fg, bg);
-}
+/* vga_get_fb_info is declared in vga.h but not in libc.h's syscall block */
 static inline int vga_get_fb_info(struct libc_fb_info *out) {
     return libc_vga_get_fb_info(out);
 }
@@ -532,9 +530,6 @@ static inline char keyboard_getchar(void) {
     return libc_keyboard_getchar();
 }
 
-static inline void vga_clear(void) {
-    libc_vga_clear();
-}
 static inline int gui_shell_run(void) {
     return libc_gui_shell_run();
 }

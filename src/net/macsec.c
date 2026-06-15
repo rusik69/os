@@ -233,3 +233,5 @@ EXPORT_SYMBOL(macsec_activate_sa);
 EXPORT_SYMBOL(macsec_encrypt);
 EXPORT_SYMBOL(macsec_decrypt);
 EXPORT_SYMBOL(macsec_handle_frame);
+#include "module.h"
+module_init(macsec_init);

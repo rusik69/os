@@ -354,3 +354,5 @@ int virtio_fs_init(void)
             virtio_fs_dev.iobase, virtio_fs_dev.tag);
     return 0;
 }
+#include "module.h"
+module_init(virtio_fs_init);

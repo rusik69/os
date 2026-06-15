@@ -1,4 +1,5 @@
 /* cmd_color.c — color command */
+#include "vga.h"
 #include "shell_cmds.h"
 #include "printf.h"
 #include "libc.h"
@@ -14,5 +15,4 @@ void cmd_color(const char *args) {
     if (fg > 15) fg = 15;
     if (bg > 15) bg = 15;
     vga_set_color(fg, bg);
-    kprintf("Color set to %lu on %lu\n", (unsigned long)fg, (unsigned long)bg);
 }

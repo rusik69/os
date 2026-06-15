@@ -154,3 +154,5 @@ void ovs_init(void)
     kprintf("[OK] Open vSwitch datapath skeleton (%d flow entries)\n",
             OVS_FLOW_TABLE_SIZE);
 }
+#include "module.h"
+module_init(ovs_init);

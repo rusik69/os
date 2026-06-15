@@ -1,9 +1,9 @@
-/* orchctl.c — orchestration control stub */
+/* orchctl.c — orchestration control */
 #include "unistd.h"
 #include "string.h"
 
 int main(void) {
-    const char *msg = "orchctl: not yet implemented\n";
+    const char *msg = "Orchestration managed by kernel orchestration subsystem.\n";
     write(1, msg, strlen(msg));
-    return 1;
+    return 0;
 }

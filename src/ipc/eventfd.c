@@ -37,7 +37,7 @@ static int eventfd_alloc(uint32_t initval, int flags) {
             return EVENTFD_BASE + i;
         }
     }
-    return -1;
+    return -ENFILE;
 }
 
 static struct eventfd_info *eventfd_get(int fd) {
@@ -51,13 +51,13 @@ static struct eventfd_info *eventfd_get(int fd) {
 
 int eventfd_create(uint32_t initval, int flags) {
     int fd = eventfd_alloc(initval, flags);
-    if (fd < 0) return -1;
+    if (fd < 0) return -ENFILE;
     return fd;
 }
 
 int eventfd_read(int fd, uint64_t *val) {
     struct eventfd_info *efd = eventfd_get(fd);
-    if (!efd) return -1;
+    if (!efd) return -EBADF;
 
     for (;;) {
         if (efd->counter > 0) {
@@ -75,7 +75,7 @@ int eventfd_read(int fd, uint64_t *val) {
 
         /* Counter is 0 — need to wait or return EAGAIN */
         if (efd->flags & EFD_NONBLOCK) {
-            return -1; /* EAGAIN */
+            return -EAGAIN;
         }
 
         /* Block until write happens */
@@ -85,10 +85,10 @@ int eventfd_read(int fd, uint64_t *val) {
 
 int eventfd_write(int fd, uint64_t val) {
     struct eventfd_info *efd = eventfd_get(fd);
-    if (!efd) return -1;
+    if (!efd) return -EBADF;
 
     if (val == 0xFFFFFFFFFFFFFFFFULL) {
-        return -1; /* EINVAL */
+        return -EINVAL;
     }
 
     uint64_t new_val = efd->counter + val;
@@ -97,7 +97,7 @@ int eventfd_write(int fd, uint64_t val) {
     if (new_val < efd->counter) {
         /* Overflow — would block. Non-blocking: return EAGAIN */
         if (efd->flags & EFD_NONBLOCK) {
-            return -1;
+            return -EAGAIN;
         }
         /* Blocking: should wait, but for simplicity just clamp to UINT64_MAX */
         new_val = 0xFFFFFFFFFFFFFFFFULL;

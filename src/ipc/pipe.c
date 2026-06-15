@@ -19,12 +19,12 @@ int pipe_create(void) {
             /* Allocate default-size buffers (primary + secondary for double-buffering) */
             pipe_table[i].buf = (uint8_t *)kmalloc(PIPE_DEFAULT_SIZE);
             if (!pipe_table[i].buf)
-                return -1;
+                return -ENOMEM;
             pipe_table[i].buf2 = (uint8_t *)kmalloc(PIPE_DEFAULT_SIZE);
             if (!pipe_table[i].buf2) {
                 kfree(pipe_table[i].buf);
                 pipe_table[i].buf = NULL;
-                return -1;
+                return -ENOMEM;
             }
             pipe_table[i].capacity  = PIPE_DEFAULT_SIZE;
             pipe_table[i].read_pos  = 0;
@@ -40,19 +40,19 @@ int pipe_create(void) {
             return i;
         }
     }
-    return -1;
+    return -ENFILE;
 }
 
 int pipe_write(int pipe_id, const void *buf, int len) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
-    if (len <= 0) return -1;
+        return -EBADF;
+    if (len <= 0) return -EINVAL;
 
     struct pipe *p = &pipe_table[pipe_id];
     if (p->readers == 0) {
         struct process *cur = process_get_current();
         if (cur) signal_send(cur->pid, SIGPIPE);
-        return -1;
+        return -EPIPE;
     }
 
     const uint8_t *src = (const uint8_t *)buf;
@@ -65,7 +65,7 @@ int pipe_write(int pipe_id, const void *buf, int len) {
             if (p->readers == 0) {
                 struct process *cur = process_get_current();
                 if (cur) signal_send(cur->pid, SIGPIPE);
-                return written > 0 ? written : -1;
+                return written > 0 ? written : -EPIPE;
             }
         }
 
@@ -97,9 +97,9 @@ int pipe_write(int pipe_id, const void *buf, int len) {
 int pipe_splice(int src_pipe_id, int dst_pipe_id, int len)
 {
     if (src_pipe_id < 0 || src_pipe_id >= PIPE_MAX || !pipe_table[src_pipe_id].in_use)
-        return -1;
+        return -EBADF;
     if (dst_pipe_id < 0 || dst_pipe_id >= PIPE_MAX || !pipe_table[dst_pipe_id].in_use)
-        return -1;
+        return -EBADF;
 
     struct pipe *src = &pipe_table[src_pipe_id];
     struct pipe *dst = &pipe_table[dst_pipe_id];
@@ -111,7 +111,7 @@ int pipe_splice(int src_pipe_id, int dst_pipe_id, int len)
             if (src->writers == 0) return total; /* EOF */
             wait_queue_ensure(&src->read_wq);
             scheduler_yield();
-            if (src->readers == 0) return total > 0 ? total : -1;
+            if (src->readers == 0) return total > 0 ? total : -EPIPE;
         }
 
         /* Wait for destination space */
@@ -119,7 +119,7 @@ int pipe_splice(int src_pipe_id, int dst_pipe_id, int len)
             if (dst->readers == 0) {
                 struct process *cur = process_get_current();
                 if (cur) signal_send(cur->pid, SIGPIPE);
-                return total > 0 ? total : -1;
+                return total > 0 ? total : -EPIPE;
             }
             wait_queue_ensure(&dst->write_wq);
             scheduler_yield();
@@ -179,8 +179,8 @@ int pipe_splice(int src_pipe_id, int dst_pipe_id, int len)
 
 int pipe_read(int pipe_id, void *buf, int len) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
-    if (len <= 0) return -1;
+        return -EBADF;
+    if (len <= 0) return -EINVAL;
 
     struct pipe *p = &pipe_table[pipe_id];
     uint8_t *dst = (uint8_t *)buf;
@@ -220,7 +220,7 @@ int pipe_read(int pipe_id, void *buf, int len) {
 
 int pipe_close(int pipe_id, int is_write_end) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
 
     struct pipe *p = &pipe_table[pipe_id];
 
@@ -254,26 +254,26 @@ int pipe_close(int pipe_id, int is_write_end) {
 
 int pipe_set_capacity(int pipe_id, int new_capacity) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
 
     struct pipe *p = &pipe_table[pipe_id];
 
     /* Must be at least PIPE_BUF_SIZE and at most PIPE_MAX_SIZE */
     if (new_capacity < PIPE_BUF_SIZE || new_capacity > PIPE_MAX_SIZE)
-        return -1;
+        return -EINVAL;
 
     /* Only allowed when pipe is empty */
     if (p->count != 0)
-        return -1;
+        return -EBUSY;
 
     /* Allocate new buffers */
     uint8_t *new_buf = (uint8_t *)kmalloc(new_capacity);
     if (!new_buf)
-        return -1;
+        return -ENOMEM;
     uint8_t *new_buf2 = (uint8_t *)kmalloc(new_capacity);
     if (!new_buf2) {
         kfree(new_buf);
-        return -1;
+        return -ENOMEM;
     }
 
     /* Free old buffers, swap in new ones */
@@ -291,7 +291,7 @@ int pipe_set_capacity(int pipe_id, int new_capacity) {
 
 int pipe_get_capacity(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
     return pipe_table[pipe_id].capacity;
 }
 
@@ -309,7 +309,7 @@ int pipe_poll(int pipe_id, int is_read_end) {
 /* ── fcntl F_SETFL — O_NONBLOCK ──────────────────────────────────── */
 int pipe_set_nonblock(int pipe_id, int nonblock) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
     struct pipe *p = &pipe_table[pipe_id];
     if (nonblock)
         p->flags |= PIPE_FLAG_NONBLOCK;
@@ -321,7 +321,7 @@ int pipe_set_nonblock(int pipe_id, int nonblock) {
 /* ── fcntl F_SETOWN / F_SETSIG — SIGIO owner ─────────────────────── */
 int pipe_set_sigio(int pipe_id, uint32_t pid) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
 
     pipe_table[pipe_id].sigio_pid = pid;
     return 0;
@@ -330,7 +330,7 @@ int pipe_set_sigio(int pipe_id, uint32_t pid) {
 /* ── pipe_available — bytes available for reading ─────────────────── */
 int pipe_available(int pipe_id) {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
-        return -1;
+        return -EBADF;
     return pipe_table[pipe_id].count;
 }
 /* ── FIFO unlink — close one end ─────────────────────────────────── */

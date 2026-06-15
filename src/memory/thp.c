@@ -496,3 +496,5 @@ void khugepaged_start(void)
         kprintf("[!!] khugepaged: failed to create daemon thread\n");
     }
 }
+#include "module.h"
+module_init(thp_init);

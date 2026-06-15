@@ -390,3 +390,5 @@ int ghes_source_status(int source_id, int *enabled, int *notify_type,
     return 0;
 }
 EXPORT_SYMBOL(ghes_source_status);
+#include "module.h"
+module_init(ghes_init);

@@ -221,3 +221,5 @@ void page_pool_return_rx_page(uint64_t page)
 {
     page_pool_return_page(PAGE_POOL_RX_IDX, page);
 }
+#include "module.h"
+module_init(page_pool_subsys_init);

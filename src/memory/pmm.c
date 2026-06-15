@@ -724,11 +724,10 @@ static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
         pmm_irq_restore(irq_save);
     }
 
-    /* ── All recovery levels exhausted — panic with full diagnostics ── */
+    /* ── All recovery levels exhausted — return error ── */
     pmm_record_fail(caller_ip, needed_pages);
     pmm_dump_stats();
-    panic("[PMM] Out of memory — OOM killer and compaction failed to reclaim any frames");
-    /* unreachable */
+    kprintf("[PMM] Out of memory — OOM killer and compaction failed to reclaim any frames\n");
     return 0;
 }
 
@@ -918,11 +917,10 @@ uint64_t *pmm_alloc_frames(size_t count) {
 
     psi_memstall_leave();
 
-    /* ── Final: panic with full diagnostics ── */
+    /* ── Final: return error — callers must handle ENOMEM ── */
     pmm_dump_stats();
-    panic("[PMM] Out of memory — cannot allocate %llu contiguous frames",
+    kprintf("[PMM] Out of memory — cannot allocate %llu contiguous frames\n",
           (unsigned long long)count);
-    /* unreachable */
     return NULL;
 }
 

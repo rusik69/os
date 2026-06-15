@@ -213,3 +213,5 @@ void nf_init(void) {
     nf_helper_init();
     kprintf("[OK] Netfilter initialized\n");
 }
+#include "module.h"
+module_init(nf_init);

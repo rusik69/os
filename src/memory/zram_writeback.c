@@ -348,3 +348,5 @@ void zram_writeback_init(void)
 
     kprintf("[zram-wb] Writeback subsystem initialised\n");
 }
+#include "module.h"
+module_init(zram_writeback_init);

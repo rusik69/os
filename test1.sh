@@ -1,0 +1,1 @@
+gcc -Wall -Wextra -Werror -O2 -g -I/home/ubuntu/os/userspace/libc/include -c /home/ubuntu/os/userspace/bin/cmds/pvs.c -o /tmp/t_pvs.o 2>&1

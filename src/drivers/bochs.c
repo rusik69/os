@@ -47,3 +47,5 @@ void bochs_set_mode(int w, int h, int bpp) {
     outw(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_IOPORT_INDEX);
     outw((uint16_t)(VBE_DISPI_LFB_ENABLED | 1), VBE_DISPI_IOPORT_DATA);
 }
+#include "module.h"
+module_init(bochs_init);

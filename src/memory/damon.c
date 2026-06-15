@@ -167,3 +167,5 @@ void damon_init(void)
     damon_ctx.sample_interval = DAMON_SAMPLE_INTERVAL;
     kprintf("[OK] DAMON — Data Access Monitor skeleton\n");
 }
+#include "module.h"
+module_init(damon_init);

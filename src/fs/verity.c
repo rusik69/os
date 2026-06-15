@@ -491,3 +491,5 @@ int fsverity_disable(uint64_t ino)
     return 0;
 }
 EXPORT_SYMBOL(fsverity_disable);
+#include "module.h"
+module_init(fsverity_init);

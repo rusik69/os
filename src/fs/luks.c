@@ -209,7 +209,7 @@ int luks_open_keyslot(int dev_id, struct luks_header *hdr, int slot,
 
     /* Allocate buffers */
     derived_key = (uint8_t *)kmalloc(key_bytes);
-    key_material = (uint8_t *)kmalloc(key_bytes * stripes);
+    key_material = (uint8_t *)kmalloc_array(key_bytes, stripes);
     if (!derived_key || !key_material) {
         ret = -ENOMEM;
         goto out;

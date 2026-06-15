@@ -166,3 +166,5 @@ void sriov_init(void)
     sriov_pf_count = 0;
     kprintf("[OK] SR-IOV — Single Root I/O Virtualization\n");
 }
+#include "module.h"
+module_init(sriov_init);

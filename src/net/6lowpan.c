@@ -210,3 +210,5 @@ EXPORT_SYMBOL(lowpan6_decompress);
 EXPORT_SYMBOL(lowpan6_send);
 EXPORT_SYMBOL(lowpan6_recv);
 EXPORT_SYMBOL(lowpan6_poll);
+#include "module.h"
+module_init(lowpan6_init);

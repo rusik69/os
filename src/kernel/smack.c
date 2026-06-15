@@ -536,3 +536,5 @@ void smack_sysfs_init(void)
 
     kprintf("[SMACK] /sys/fs/smackfs/load created\n");
 }
+#include "module.h"
+module_init(smack_init);

@@ -271,3 +271,5 @@ EXPORT_SYMBOL(sctp_send);
 EXPORT_SYMBOL(sctp_recv);
 EXPORT_SYMBOL(sctp_close);
 EXPORT_SYMBOL(handle_sctp);
+#include "module.h"
+module_init(sctp_init);

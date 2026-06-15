@@ -219,3 +219,5 @@ EXPORT_SYMBOL(pfkey_create);
 EXPORT_SYMBOL(pfkey_close);
 EXPORT_SYMBOL(pfkey_send_msg);
 EXPORT_SYMBOL(pfkey_recv_msg);
+#include "module.h"
+module_init(pfkey_init);

@@ -168,3 +168,5 @@ uint64_t bbr2_get_cwnd(void)
 {
     return bbr2.cwnd;
 }
+#include "module.h"
+module_init(bbr2_init);

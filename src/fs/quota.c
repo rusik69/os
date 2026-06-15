@@ -313,3 +313,5 @@ void vfs_quota_dump(void)
     if (count == 0)
         kprintf("  (no quota entries)\n");
 }
+#include "module.h"
+module_init(vfs_quota_init);

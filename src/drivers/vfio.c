@@ -325,3 +325,5 @@ int vfio_init(void)
             vfio_container_count, vfio_group_count);
     return 0;
 }
+#include "module.h"
+module_init(vfio_init);

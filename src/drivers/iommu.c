@@ -553,3 +553,5 @@ int iommu_is_enabled(void)
 {
     return g_iommu_initialized && (g_num_iommu_units > 0);
 }
+#include "module.h"
+module_init(iommu_init);

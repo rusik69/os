@@ -249,7 +249,7 @@ static int iscsi_submit_scsi_cmd(struct iscsi_session *sess,
 
 /* ── INQUIRY ─────────────────────────────────────────────────────────── */
 
-static int iscsi_inquiry(struct iscsi_session *sess, uint8_t *data, int max_len)
+static int __attribute__((unused)) iscsi_inquiry(struct iscsi_session *sess, uint8_t *data, int max_len)
 {
     uint8_t cdb[6];
     memset(cdb, 0, sizeof(cdb));

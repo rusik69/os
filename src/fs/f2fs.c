@@ -107,3 +107,5 @@ void f2fs_init(void)
     memset(&f2fs_sb, 0, sizeof(f2fs_sb));
     kprintf("[OK] F2FS — Flash-Friendly File System skeleton\n");
 }
+#include "module.h"
+module_init(f2fs_init);

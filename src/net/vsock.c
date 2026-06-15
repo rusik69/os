@@ -71,3 +71,5 @@ void vsock_init(void)
     memset(vsock_ports, 0, sizeof(vsock_ports));
     kprintf("[OK] VSOCK — VM Sockets for host-guest communication\n");
 }
+#include "module.h"
+module_init(vsock_init);

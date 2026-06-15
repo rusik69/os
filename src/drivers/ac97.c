@@ -389,3 +389,5 @@ void ac97_set_record_gain(uint8_t left, uint8_t right, int mute)
 
     nam_out16(NAM_REC_GAIN, val);
 }
+#include "module.h"
+module_init(ac97_init);

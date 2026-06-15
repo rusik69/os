@@ -19,3 +19,5 @@ int thaw_fs(void) {
     return 0;
 }
 int is_frozen(void) { return fs_frozen; }
+#include "module.h"
+module_init(freeze_init);

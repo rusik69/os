@@ -1103,3 +1103,5 @@ void af_unix_init(void)
     spinlock_init(&unix_lock);
     kprintf("[OK] AF_UNIX local domain sockets initialized\n");
 }
+#include "module.h"
+module_init(af_unix_init);

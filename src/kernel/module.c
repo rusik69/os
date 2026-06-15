@@ -30,6 +30,9 @@ extern int rsa_pkcs1_v15_verify(const uint8_t *sig, size_t sig_len,
                                 uint32_t e,
                                 const uint8_t *digest_info, size_t di_len);
 
+/* Forward declaration for module_verify sysfs init */
+void module_verify_sysfs_init(void);
+
 /* ── Boot-time module parameters (M33) ──────────────────────────────
  *
  * The kernel cmdline may include module parameters in the form:

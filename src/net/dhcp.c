@@ -1155,3 +1155,5 @@ int dhcpv6_pd_get_prefix(uint8_t *prefix_out, uint8_t *length_out)
         *length_out = dhcpv6_prefix_length;
     return 0;
 }
+#include "module.h"
+module_init(dhcp_init);

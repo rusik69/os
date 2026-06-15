@@ -5,6 +5,7 @@
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
+#include "timers.h"
 #include "errno.h"
 #include "sysfs.h"
 #include "spinlock.h"

@@ -220,3 +220,5 @@ EXPORT_SYMBOL(mptcp_send);
 EXPORT_SYMBOL(mptcp_recv);
 EXPORT_SYMBOL(mptcp_close);
 EXPORT_SYMBOL(mptcp_get_token);
+#include "module.h"
+module_init(mptcp_init);

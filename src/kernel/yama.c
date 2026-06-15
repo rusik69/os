@@ -106,3 +106,5 @@ void yama_sysctl_register(void) {
                     sysctl_read_ptrace_scope,
                     sysctl_write_ptrace_scope);
 }
+#include "module.h"
+module_init(yama_init);

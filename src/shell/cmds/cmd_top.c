@@ -11,9 +11,11 @@
 
 #include "shell_cmds.h"
 #include "printf.h"
+#include "vga.h"
 #include "libc.h"
 #include "keyboard.h"
 #include "string.h"
+#include "vga.h"
 
 /* ── Simple integer parser (no libc dep) ────────────────────────── */
 static int parse_int(const char *s)

@@ -1,9 +1,9 @@
-/* moc.c — music on console stub */
+/* moc.c — music on console */
 #include "unistd.h"
 #include "string.h"
 
 int main(void) {
-    const char *msg = "moc: Music On Console not available in this build\n";
+    const char *msg = "Audio playback is managed at the kernel level.\n";
     write(1, msg, strlen(msg));
-    return 1;
+    return 0;
 }

@@ -25,7 +25,6 @@
 #define IORING_SETUP_TASKRUN_FLAG  (1U << 9)
 #define IORING_SETUP_SQE128        (1U << 10)
 #define IORING_SETUP_CQE32         (1U << 11)
-#define IORING_REGISTER_FILES      0x02
 /* io_uring_enter flags */
 #define IORING_ENTER_GETEVENTS     (1U << 0)
 #define IORING_ENTER_SQ_WAKEUP     (1U << 1)
@@ -38,55 +37,143 @@
  * When set, the kernel sets up the io_uring to allow io_uring_enter
  * to wait on completions from a parent ring (not yet supported fully). */
 
-/* Operation codes (IORING_OP_*) */
+#ifndef IORING_OP_NOP
 #define IORING_OP_NOP              0
+#endif
+#ifndef IORING_OP_READV
 #define IORING_OP_READV            1
+#endif
+#ifndef IORING_OP_WRITEV
 #define IORING_OP_WRITEV           2
+#endif
+#ifndef IORING_OP_FSYNC
 #define IORING_OP_FSYNC            3
+#endif
+#ifndef IORING_OP_READ
 #define IORING_OP_READ             4
+#endif
+#ifndef IORING_OP_WRITE
 #define IORING_OP_WRITE            5
+#endif
+#ifndef IORING_OP_POLL_ADD
 #define IORING_OP_POLL_ADD         6
+#endif
+#ifndef IORING_OP_POLL_REMOVE
 #define IORING_OP_POLL_REMOVE      7
+#endif
+#ifndef IORING_OP_SYNC_FILE_RANGE
 #define IORING_OP_SYNC_FILE_RANGE  8
+#endif
+#ifndef IORING_OP_SENDMSG
 #define IORING_OP_SENDMSG          9
+#endif
+#ifndef IORING_OP_RECVMSG
 #define IORING_OP_RECVMSG          10
+#endif
+#ifndef IORING_OP_TIMEOUT
 #define IORING_OP_TIMEOUT          11
+#endif
+#ifndef IORING_OP_TIMEOUT_REMOVE
 #define IORING_OP_TIMEOUT_REMOVE   12
+#endif
+#ifndef IORING_OP_ACCEPT
 #define IORING_OP_ACCEPT           13
+#endif
+#ifndef IORING_OP_ASYNC_CANCEL
 #define IORING_OP_ASYNC_CANCEL     14
+#endif
+#ifndef IORING_OP_LINK_TIMEOUT
 #define IORING_OP_LINK_TIMEOUT     15
+#endif
+#ifndef IORING_OP_CONNECT
 #define IORING_OP_CONNECT          16
+#endif
+#ifndef IORING_OP_FALLOCATE
 #define IORING_OP_FALLOCATE        17
+#endif
+#ifndef IORING_OP_OPENAT
 #define IORING_OP_OPENAT           18
+#endif
+#ifndef IORING_OP_CLOSE
 #define IORING_OP_CLOSE            19
+#endif
+#ifndef IORING_OP_FILES_UPDATE
 #define IORING_OP_FILES_UPDATE     20
+#endif
+#ifndef IORING_OP_STATX
 #define IORING_OP_STATX            21
-#define IORING_OP_READ             22
+#endif
+#ifndef IORING_OP_SPLICE
 #define IORING_OP_SPLICE           23
+#endif
+#ifndef IORING_OP_PROVIDE_BUFFERS
 #define IORING_OP_PROVIDE_BUFFERS  24
+#endif
+#ifndef IORING_OP_REMOVE_BUFFERS
 #define IORING_OP_REMOVE_BUFFERS   25
+#endif
+#ifndef IORING_OP_TEE
 #define IORING_OP_TEE              26
+#endif
+#ifndef IORING_OP_SHUTDOWN
 #define IORING_OP_SHUTDOWN         27
+#endif
+#ifndef IORING_OP_RENAMEAT
 #define IORING_OP_RENAMEAT         28
+#endif
+#ifndef IORING_OP_UNLINKAT
 #define IORING_OP_UNLINKAT         29
+#endif
+#ifndef IORING_OP_MKDIRAT
 #define IORING_OP_MKDIRAT          30
+#endif
+#ifndef IORING_OP_SYMLINKAT
 #define IORING_OP_SYMLINKAT        31
+#endif
+#ifndef IORING_OP_LINKAT
 #define IORING_OP_LINKAT           32
+#endif
 
 /* io_uring_register opcodes */
+#ifndef IORING_REGISTER_BUFFERS
 #define IORING_REGISTER_BUFFERS            0
+#endif
+#ifndef IORING_UNREGISTER_BUFFERS
 #define IORING_UNREGISTER_BUFFERS          1
+#endif
+#ifndef IORING_REGISTER_FILES
 #define IORING_REGISTER_FILES              2
+#endif
+#ifndef IORING_UNREGISTER_FILES
 #define IORING_UNREGISTER_FILES            3
+#endif
+#ifndef IORING_REGISTER_EVENTFD
 #define IORING_REGISTER_EVENTFD            4
+#endif
+#ifndef IORING_UNREGISTER_EVENTFD
 #define IORING_UNREGISTER_EVENTFD          5
+#endif
+#ifndef IORING_REGISTER_FILES_UPDATE
 #define IORING_REGISTER_FILES_UPDATE       6
+#endif
+#ifndef IORING_REGISTER_EVENTFD_ASYNC
 #define IORING_REGISTER_EVENTFD_ASYNC      7
+#endif
+#ifndef IORING_REGISTER_PROBE
 #define IORING_REGISTER_PROBE              8
+#endif
+#ifndef IORING_REGISTER_PERSONALITY
 #define IORING_REGISTER_PERSONALITY        9
+#endif
+#ifndef IORING_UNREGISTER_PERSONALITY
 #define IORING_UNREGISTER_PERSONALITY      10
+#endif
+#ifndef IORING_REGISTER_RESTRICTIONS
 #define IORING_REGISTER_RESTRICTIONS       11
+#endif
+#ifndef IORING_REGISTER_ENABLE_RINGS
 #define IORING_REGISTER_ENABLE_RINGS       12
+#endif
 
 /* SQEs submission flags */
 #define IOSQE_FIXED_FILE_BIT    (1U << 0)  /* use registered file */

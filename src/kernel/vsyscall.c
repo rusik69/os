@@ -715,7 +715,7 @@ int vdso_gettimeofday(struct vdso_timeval *tv, struct vdso_timezone *tz)
         return -1;
 
     struct vdso_clock_data *d = vdso_data;
-    uint64_t sec, nsec;
+    uint64_t sec = 0, nsec = 0;
     uint64_t seq;
 
     /* Seqlock retry loop */
@@ -750,7 +750,7 @@ int vdso_clock_gettime(uint64_t clk_id, struct timespec *tp)
         return -1;
 
     struct vdso_clock_data *d = vdso_data;
-    uint64_t sec, nsec;
+    uint64_t sec = 0, nsec = 0;
     uint64_t seq;
 
     do {

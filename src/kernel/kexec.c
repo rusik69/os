@@ -395,7 +395,7 @@ static void kexec_mask_apic_lvts(void)
  * Disables interrupts, masks APIC, disables PIC, flushes TLB,
  * and jumps to the entry point.
  */
-static void kexec_do_reboot(uint64_t entry, uint64_t phys_base)
+static void __attribute__((noreturn)) kexec_do_reboot(uint64_t entry, uint64_t phys_base)
 {
     /* ── Step 1: Disable interrupts ─────────────────────────────────── */
     cli();

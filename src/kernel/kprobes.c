@@ -790,7 +790,7 @@ int kprobe_register_bpf(const char *symbol, int bpf_prog_fd)
      * The pre_handler will be a trampoline that executes the BPF program. */
     struct kprobe kp;
     memset(&kp, 0, sizeof(kp));
-    kp.addr = (void *)(uintptr_t)addr;
+    kp.addr = (uint64_t)(uintptr_t)addr;
     kp.pre_handler = NULL;  /* BPF programs are invoked from the handler directly */
 
     int ret = register_kprobe(&kp);

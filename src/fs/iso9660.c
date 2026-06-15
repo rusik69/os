@@ -441,12 +441,13 @@ static int parse_one_dirent(struct iso9660_priv *ip,
     } else {
         /* Current directory or parent reference */
         if (nlen == 1 && rec->name[0] == 0)
-            strcpy(de->iso_name, ".");
+            strncpy(de->iso_name, ".", sizeof(de->iso_name) - 1);
         else if (nlen == 1 && rec->name[0] == 1)
-            strcpy(de->iso_name, "..");
+            strncpy(de->iso_name, "..", sizeof(de->iso_name) - 1);
         else
             de->iso_name[0] = '\0';
     }
+    de->iso_name[sizeof(de->iso_name) - 1] = '\0';
 
     /* Parse Rock Ridge entries */
     uint8_t rr_parsed = parse_rrip_entries(ip, rec_buf, rec_len, de);

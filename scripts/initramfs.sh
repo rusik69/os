@@ -130,6 +130,37 @@ fi
 
 echo "[initramfs] Busybox skeleton created"
 
+# ── Copy kernel modules into initramfs ────────────────────────────────────
+if [ -d /tmp/modules_staging ]; then
+    KO_COUNT=$(find /tmp/modules_staging -maxdepth 1 -name '*.ko' 2>/dev/null | wc -l)
+    if [ "$KO_COUNT" -gt 0 ]; then
+        echo "[initramfs] Copying $KO_COUNT kernel modules into initramfs..."
+        mkdir -p "$STAGING_DIR/modules"
+        for ko in /tmp/modules_staging/*.ko; do
+            name=$(basename "$ko")
+            cp "$ko" "$STAGING_DIR/modules/$name"
+            echo "  COPY  modules/$name"
+        done
+    else
+        echo "[initramfs] No .ko files found in /tmp/modules_staging — skipping modules"
+    fi
+
+    # Copy etc/modules (auto-load list) if present
+    if [ -f /tmp/modules_staging/etc/modules ]; then
+        echo "[initramfs] Copying /etc/modules (auto-load list)..."
+        mkdir -p "$STAGING_DIR/etc"
+        cp /tmp/modules_staging/etc/modules "$STAGING_DIR/etc/modules"
+    fi
+
+    # Copy modules.dep (dependency metadata) if present
+    if [ -f /tmp/modules_staging/modules.dep ]; then
+        echo "[initramfs] Copying modules.dep..."
+        cp /tmp/modules_staging/modules.dep "$STAGING_DIR/modules/modules.dep"
+    fi
+else
+    echo "[initramfs] /tmp/modules_staging not found — skipping kernel modules"
+fi
+
 # ── Create /etc/fstab stub ────────────────────────────────────────────────
 cat > "$STAGING_DIR/etc/fstab" << 'FSTAB'
 # /etc/fstab — static filesystem table for initramfs
@@ -176,6 +207,26 @@ mount -t devtmpfs dev /dev
 [ -e /dev/null ]    || mknod /dev/null    c 1 3
 [ -e /dev/console ] || mknod /dev/console c 5 1
 [ -e /dev/ttyS0 ]   || mknod /dev/ttyS0   c 4 64
+
+# Load essential kernel modules
+echo "[initramfs] Loading kernel modules..."
+if [ -d /modules ]; then
+    for m in /modules/*.ko; do
+        [ -f "$m" ] || continue
+        name=$(basename "$m" .ko)
+        echo "[initramfs] Loading module: $name"
+        insmod "$m" 2>/dev/null || echo "[initramfs] Warning: failed to load $name"
+    done
+fi
+
+# Load modules listed in /etc/modules (auto-load list)
+if [ -f /etc/modules ]; then
+    while read -r modname; do
+        [ -z "$modname" ] || [ "${modname#\(comment}" != "$modname" ] && continue
+        echo "[initramfs] Loading module: $modname"
+        modprobe "$modname" 2>/dev/null || echo "[initramfs] Warning: failed to load $modname"
+    done < /etc/modules
+fi
 
 # Parse kernel command line from /proc/cmdline
 CMDLINE=$(cat /proc/cmdline 2>/dev/null || echo "")

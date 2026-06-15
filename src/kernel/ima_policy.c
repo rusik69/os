@@ -311,3 +311,5 @@ void ima_policy_clear(void)
     memset(g_ima_rules, 0, sizeof(g_ima_rules));
     g_ima_rule_count = 0;
 }
+#include "module.h"
+module_init(ima_policy_init);

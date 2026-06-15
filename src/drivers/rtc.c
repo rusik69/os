@@ -569,3 +569,5 @@ void rtc_sysfs_init(void) {
 
     kprintf("[OK] RTC sysfs: /sys/class/rtc/rtc0/wakealarm\n");
 }
+#include "module.h"
+module_init(rtc_init);

@@ -159,3 +159,5 @@ int gpio_irq_unregister(int irq_num)
     }
     return -ENOENT;
 }
+#include "module.h"
+module_init(gpio_irq_init);

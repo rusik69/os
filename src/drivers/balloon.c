@@ -349,3 +349,5 @@ void balloon_init(void)
             balloon.num_pages, balloon.target_pages,
             balloon.compaction_enabled ? "enabled" : "disabled");
 }
+#include "module.h"
+module_init(balloon_init);

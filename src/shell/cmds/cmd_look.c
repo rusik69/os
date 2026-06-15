@@ -23,7 +23,8 @@ void cmd_look(const char *args) {
     char fpath[64];
     if (!filename || !filename[0]) {
         /* Default: read from /etc/passwd if exists */
-        strcpy(fpath, "/etc/passwd");
+        strncpy(fpath, "/etc/passwd", sizeof(fpath) - 1);
+        fpath[sizeof(fpath) - 1] = '\0';
     } else {
         if (filename[0] != '/') { fpath[0] = '/'; strncpy(fpath+1, filename, 62); }
         else strncpy(fpath, filename, 63);

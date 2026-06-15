@@ -243,3 +243,5 @@ void sound_oss_init(void)
         kprintf("[OSS] WARN: failed to register /dev/dsp\n");
     }
 }
+#include "module.h"
+module_init(sound_oss_init);

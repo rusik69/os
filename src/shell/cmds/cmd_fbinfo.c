@@ -1,4 +1,5 @@
 /* cmd_fbinfo.c — display backend and framebuffer details */
+#include "vga.h"
 #include "shell_cmds.h"
 #include "printf.h"
 #include "libc.h"

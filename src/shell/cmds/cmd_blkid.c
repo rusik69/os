@@ -93,7 +93,8 @@ static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba)
         return;
 
     info->detected = 1;
-    strcpy(info->type, "ext2");
+    strncpy(info->type, "ext2", sizeof(info->type) - 1);
+    info->type[sizeof(info->type) - 1] = '\0';
 
     /* Format UUID */
     snprintf(info->uuid, sizeof(info->uuid),
@@ -108,7 +109,7 @@ static void scan_ext2(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     for (i = 0; i < 16 && sb.volume_name[i] && sb.volume_name[i] != ' '; i++)
         info->label[i] = sb.volume_name[i];
     info->label[i] = '\0';
-    if (i == 0) strcpy(info->label, "(none)");
+    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
 }
 
 /* Scan FAT12/16/32 boot sector (at LBA 0) */
@@ -155,11 +156,12 @@ static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     uint32_t total_clusters = data_sectors / sectors_per_cluster;
 
     if (total_clusters < 4085)
-        strcpy(info->type, "vfat");  /* FAT12 detected but report as vfat */
+        strncpy(info->type, "vfat", sizeof(info->type) - 1);
     else if (total_clusters < 65525)
-        strcpy(info->type, "vfat");  /* FAT16 */
+        strncpy(info->type, "vfat", sizeof(info->type) - 1);
     else
-        strcpy(info->type, "vfat");  /* FAT32 */
+        strncpy(info->type, "vfat", sizeof(info->type) - 1);
+    info->type[sizeof(info->type) - 1] = '\0';
 
     info->detected = 1;
 
@@ -173,7 +175,7 @@ static void scan_fat(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     for (i = 0; i < 11 && buf[43 + i] && buf[43 + i] != ' '; i++)
         info->label[i] = buf[43 + i];
     info->label[i] = '\0';
-    if (i == 0) strcpy(info->label, "(none)");
+    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
 }
 
 /* Scan swap signature */
@@ -192,9 +194,12 @@ static void scan_swap(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     if (memcmp(buf + byte_off, SWAP_SIG1, 10) == 0 ||
         memcmp(buf + byte_off, SWAP_SIG2, 10) == 0) {
         info->detected = 1;
-        strcpy(info->type, "swap");
-        strcpy(info->label, "(none)");
-        strcpy(info->uuid, "(none)");
+        strncpy(info->type, "swap", sizeof(info->type) - 1);
+        info->type[sizeof(info->type) - 1] = '\0';
+        strncpy(info->label, "(none)", sizeof(info->label) - 1);
+        info->label[sizeof(info->label) - 1] = '\0';
+        strncpy(info->uuid, "(none)", sizeof(info->uuid) - 1);
+        info->uuid[sizeof(info->uuid) - 1] = '\0';
     }
 }
 
@@ -210,7 +215,8 @@ static void scan_xfs(int dev_id, struct blkid_fs_info *info, uint64_t lba)
         return;
 
     info->detected = 1;
-    strcpy(info->type, "xfs");
+    strncpy(info->type, "xfs", sizeof(info->type) - 1);
+    info->type[sizeof(info->type) - 1] = '\0';
 
     /* UUID at offset 32 (16 bytes) */
     uint8_t *uuid = buf + 32;
@@ -226,7 +232,7 @@ static void scan_xfs(int dev_id, struct blkid_fs_info *info, uint64_t lba)
     for (i = 0; i < 12 && buf[108 + i] && buf[108 + i] != ' '; i++)
         info->label[i] = buf[108 + i];
     info->label[i] = '\0';
-    if (i == 0) strcpy(info->label, "(none)");
+    if (i == 0) { strncpy(info->label, "(none)", sizeof(info->label) - 1); info->label[sizeof(info->label) - 1] = '\0'; }
 }
 
 /* ── Main command ──────────────────────────────────────────────────── */

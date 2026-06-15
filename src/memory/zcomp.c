@@ -172,3 +172,5 @@ void zcomp_init(void)
     kprintf("[zcomp] Compression subsystem initialized: %d algorithms\n",
             zcomp_num_algorithms);
 }
+#include "module.h"
+module_init(zcomp_init);

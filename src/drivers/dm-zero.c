@@ -93,3 +93,5 @@ void dm_zero_init(void)
         kprintf("[FAIL] dm-zero: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_zero_init);

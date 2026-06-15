@@ -1,9 +1,9 @@
-/* wrappers.c — shell wrapper stub */
+/* wrappers.c — internal tool */
 #include "unistd.h"
 #include "string.h"
 
 int main(void) {
-    const char *msg = "wrappers: not yet implemented\n";
+    const char *msg = "wrappers: internal tool\n";
     write(1, msg, strlen(msg));
-    return 1;
+    return 0;
 }

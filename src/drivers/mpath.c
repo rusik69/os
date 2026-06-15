@@ -418,3 +418,5 @@ int mpath_status(int mpath_id, char *buf, int max)
     spinlock_release(&mp->lock);
     return pos;
 }
+#include "module.h"
+module_init(mpath_init);

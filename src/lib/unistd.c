@@ -54,8 +54,8 @@ int execvp(const char *file, char *const argv[]) {
                 break;
             memcpy(full_path, p, seg_len);
             full_path[seg_len] = '/';
-            strcpy(full_path + seg_len + 1, file);
-            full_path[seg_len + 1 + strlen(file)] = '\0';
+            strncpy(full_path + seg_len + 1, file, sizeof(full_path) - seg_len - 2);
+            full_path[sizeof(full_path) - 1] = '\0';
             int ret = execve(full_path, argv, NULL);
             if (ret == 0) return 0;  /* should not reach here */
             p = next ? next + 1 : NULL;

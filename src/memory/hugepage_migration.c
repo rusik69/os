@@ -51,12 +51,12 @@ void hugepage_dec_isolated(int anon, int nr_pages)
     uint64_t flags;
     spinlock_irqsave_acquire(&isolated_lock, &flags);
     if (anon) {
-        if (nr_pages > nr_isolated_anon)
+        if ((uint64_t)nr_pages > nr_isolated_anon)
             nr_isolated_anon = 0;
         else
             nr_isolated_anon -= nr_pages;
     } else {
-        if (nr_pages > nr_isolated_file)
+        if ((uint64_t)nr_pages > nr_isolated_file)
             nr_isolated_file = 0;
         else
             nr_isolated_file -= nr_pages;
@@ -110,7 +110,7 @@ int split_huge_page_for_migration(uint64_t phys_addr)
         return -EINVAL;
 
     /* Use the THP subsystem to perform the page table split. */
-    uint64_t virt_addr = PHYS_TO_VIRT(phys_addr);
+    uint64_t virt_addr = (uint64_t)PHYS_TO_VIRT(phys_addr);
 
     int ret = thp_split_hugepage(virt_addr);
     if (ret < 0) {
@@ -256,10 +256,10 @@ int migrate_huge_page(uint64_t phys_addr, int target_node)
     pmm_free_frames_contiguous(phys_addr, HPAGE_NR_PAGES);
 
     /* Step 7: Update THP tracking — untrack old, track new */
-    uint64_t old_virt = PHYS_TO_VIRT(phys_addr);
+    uint64_t old_virt = (uint64_t)PHYS_TO_VIRT(phys_addr);
     thp_untrack_hugepage(old_virt);
 
-    uint64_t new_virt = PHYS_TO_VIRT(new_phys);
+    uint64_t new_virt = (uint64_t)PHYS_TO_VIRT(new_phys);
     thp_track_hugepage(new_virt, new_phys);
 
     kprintf("[hugepage-mig] Migrated huge page 0x%llx → 0x%llx (node %d)\n",

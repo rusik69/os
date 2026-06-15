@@ -123,7 +123,7 @@ int fsck_check_superblock(const char *mountpoint)
     if (sb.s_magic != EXT2_SUPER_MAGIC) {
         kprintf("[FSCK] Bad ext2 magic: 0x%04x (expected 0xEF53)\n",
                 (unsigned int)sb.s_magic);
-        return -1;
+        return -EFSCORRUPTED;
     }
 
     if (sb.s_inodes_count == 0 || sb.s_blocks_count == 0 ||
@@ -135,7 +135,7 @@ int fsck_check_superblock(const char *mountpoint)
                 (unsigned int)sb.s_blocks_count,
                 (unsigned int)sb.s_blocks_per_group,
                 (unsigned int)sb.s_log_block_size);
-        return -1;
+        return -EFSCORRUPTED;
     }
 
     kprintf("[FSCK] Superblock OK: %u inodes, %u blocks, "
@@ -205,7 +205,7 @@ static int get_ext2_dev_id(struct vfs_mount *mnt, uint8_t *dev_id_out,
                             uint32_t *block_size_out)
 {
     if (!mnt || !mnt->priv)
-        return -1;
+        return -EINVAL;
 
     uint8_t *p = (uint8_t *)mnt->priv;
     *dev_id_out = p[0];
@@ -300,7 +300,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
                            + block_size - 1) / block_size;
     if (bgd_blocks == 0) bgd_blocks = 1;
 
-    uint8_t *bgd_buf = (uint8_t *)kmalloc(bgd_blocks * block_size);
+    uint8_t *bgd_buf = (uint8_t *)kmalloc_array(bgd_blocks, block_size);
     if (!bgd_buf) {
         kprintf("[FSCK] Out of memory for BGD cache (%u blocks)\n",
                 (unsigned int)bgd_blocks);

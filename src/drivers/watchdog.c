@@ -445,3 +445,5 @@ void watchdog_system_reset(void)
     /* Last resort */
     for (;;) hlt();
 }
+#include "module.h"
+module_init(watchdog_sysfs_init);

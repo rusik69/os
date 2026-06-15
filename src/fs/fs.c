@@ -510,7 +510,9 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
         for (uint32_t i = 0; i < FS_MAX_BLOCKS; i++) {
             if (old_blocks[i] != 0) {
                 bitmap_free_sector(old_blocks[i]);
-                (void)ata_write_sectors(old_blocks[i], 1, zs);
+                int wret = ata_write_sectors(old_blocks[i], 1, zs);
+                if (wret < 0)
+                    kprintf("fs: failed to zero block %u: %d\n", old_blocks[i], wret);
                 old_blocks[i] = 0;
             }
         }

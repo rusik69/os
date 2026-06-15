@@ -32,7 +32,7 @@ void cmd_split(const char *args) {
     i = 0;
     while (*p && *p != ' ' && i < 31) prefix[i++] = *p++;
     prefix[i] = '\0';
-    if (!prefix[0]) strcpy(prefix, "x");
+    if (!prefix[0]) { strncpy(prefix, "x", sizeof(prefix) - 1); prefix[sizeof(prefix) - 1] = '\0'; }
 
     char path[64];
     if (inpath[0] != '/') { path[0] = '/'; strncpy(path+1, inpath, 62); }

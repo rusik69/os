@@ -158,7 +158,7 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
 
 int elf_exec(const char *path) {
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -1;
+    if (!buf) return -ENOMEM;
 
     /* Copy path to kernel heap so proc->name is a stable kernel-space pointer,
      * regardless of whether path came from user space or a caller's stack. */
@@ -176,13 +176,13 @@ int elf_exec(const char *path) {
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
         kprintf("elf: cannot read %s\n", path);
         kfree(buf);
-        return -1;
+        return -ENOENT;
     }
     uint64_t entry = elf_load(buf, (unsigned long)size);
     if (!entry) {
         kprintf("elf: load failed\n");
         kfree(buf);
-        return -1;
+        return -ENOEXEC;
     }
 
     /* Check if this ELF is targeted at user-space addresses (< 0x800000000000) */
@@ -195,7 +195,7 @@ int elf_exec(const char *path) {
         if (!user_pml4) {
             kprintf("elf: cannot create page tables\n");
             kfree(buf); kfree(name);
-            return -1;
+            return -ENOMEM;
         }
 
         /* Map each PT_LOAD segment into user address space */
@@ -247,7 +247,7 @@ int elf_exec(const char *path) {
         if (!map_ok) {
             vmm_destroy_user_pml4(user_pml4);
             kfree(buf); kfree(name);
-            return -1;
+            return -ENOMEM;
         }
 
         /* Allocate user stack (16 pages = 64KB) with guard page at bottom.
@@ -264,7 +264,7 @@ int elf_exec(const char *path) {
                 kprintf("elf: OOM for user stack\n");
                 vmm_destroy_user_pml4(user_pml4);
                 kfree(buf); kfree(name);
-                return -1;
+                return -ENOMEM;
             }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             if (vmm_map_user_page(user_pml4, va, frame,
@@ -273,7 +273,7 @@ int elf_exec(const char *path) {
                 pmm_free_frame(frame);
                 vmm_destroy_user_pml4(user_pml4);
                 kfree(buf); kfree(name);
-                return -1;
+                return -ENOMEM;
             }
         }
 
@@ -289,7 +289,7 @@ int elf_exec(const char *path) {
             kprintf("elf: cannot create user process\n");
             vmm_destroy_user_pml4(user_pml4);
             kfree(name);
-            return -1;
+            return -ENOMEM;
         }
 
         p->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* skip unmapped guard page */
@@ -306,7 +306,7 @@ int elf_exec(const char *path) {
     struct process *p = process_create((void (*)(void))(uintptr_t)entry, name);
     if (!p) {
         kprintf("elf: cannot create process\n");
-        return -1;
+        return -ENOMEM;
     }
 
     kprintf("elf: creating kernel process pid=%lu entry=0x%lx\n",
@@ -326,32 +326,32 @@ extern volatile uint64_t execve_user_rsp;
 
 int process_execve(const char *path, char *const argv[], char *const envp[]) {
     struct process *cur = process_get_current();
-    if (!cur) return -1;
-    if (!cur->is_user) return -1;
+    if (!cur) return -EINVAL;
+    if (!cur->is_user) return -EACCES;
 
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -1;
+    if (!buf) return -ENOMEM;
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
         kfree(buf);
-        return -1;
+        return -ENOENT;
     }
 
     uint64_t entry = elf_load(buf, (uint64_t)size);
     if (!entry) {
         kfree(buf);
-        return -1;
+        return -ENOEXEC;
     }
 
     const struct elf64_header *hdr = (const struct elf64_header *)buf;
     if (entry >= 0x800000000000ULL) {
         kfree(buf);
-        return -1;
+        return -ENOEXEC;
     }
 
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (!new_pml4) { kfree(buf); return -1; }
+    if (!new_pml4) { kfree(buf); return -ENOMEM; }
 
     int map_ok = 1;
     for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
@@ -388,7 +388,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     }
 
     kfree(buf);
-    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -1; }
+    if (!map_ok) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
 
     /* Close all FD_CLOEXEC file descriptors before exec */
     process_exec_close_cloexec();
@@ -437,13 +437,13 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     // uint64_t user_stack_guard = user_stack_bottom - PAGE_SIZE;  /* unmapped guard page */
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -1; }
+        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
             pmm_free_frame(frame);
             vmm_destroy_user_pml4(new_pml4);
-            return -1;
+            return -ENOMEM;
         }
     }
     /* Guard page at user_stack_guard is left unmapped — a stack underflow
@@ -736,7 +736,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 fail_cleanup:
     vmm_destroy_user_pml4(new_pml4);
     kfree(buf);
-    return -1;
+    return -ENOMEM;
 }
 
 /*

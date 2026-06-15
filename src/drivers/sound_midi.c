@@ -548,3 +548,5 @@ void sound_midi_init(void)
     kprintf("[OK] MIDI sequencer initialized (%d voices, %d queue slots)\n",
             MIDI_SEQ_MAX_VOICES, MIDI_SEQ_MAX_QUEUE);
 }
+#include "module.h"
+module_init(sound_midi_init);

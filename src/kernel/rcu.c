@@ -11,6 +11,7 @@
 #include "kallsyms.h"
 #include "apic.h"
 #include "export.h"
+#include "spinlock.h"
 
 /*
  * RCU — Read-Copy-Update with grace-period stall detection and
@@ -56,6 +57,9 @@ static volatile uint64_t rcu_gp_start_tick;     /* tick when current GP started 
 static volatile uint64_t rcu_gp_start_seq;      /* GP sequence at GP start */
 static volatile int      rcu_gp_in_progress;
 static volatile int      rcu_stall_warning_printed;  /* rate-limit stall warnings */
+
+/* Lock protecting grace-period state (rcu_gp_seq, rcu_gp_in_progress, etc.) */
+static spinlock_t rcu_gp_lock;
 
 /* ── call_rcu() callback lists ───────────────────────────────────── */
 
@@ -473,6 +477,7 @@ void synchronize_rcu(void) {
      * If a GP is already in progress, wait for it.
      * Otherwise start one and wait.
      */
+    spinlock_acquire(&rcu_gp_lock);
     if (rcu_gp_in_progress) {
         /* Nested GP request — yield and let the current GP finish */
         uint64_t deadline = timer_get_ticks() + RCU_GP_WAIT_MAX_TICKS;
@@ -481,8 +486,11 @@ void synchronize_rcu(void) {
                 /* Avoid infinite loop if something wedged */
                 break;
             }
+            spinlock_release(&rcu_gp_lock);
             scheduler_yield();
+            spinlock_acquire(&rcu_gp_lock);
         }
+        spinlock_release(&rcu_gp_lock);
         return;
     }
 
@@ -495,6 +503,7 @@ void synchronize_rcu(void) {
     rcu_gp_start_seq = rcu_gp_seq;
     rcu_gp_in_progress = 1;
     rcu_stall_warning_printed = 0;
+    spinlock_release(&rcu_gp_lock);
 
     /* Force a context switch on the current CPU to record a QS */
     scheduler_yield();
@@ -558,7 +567,9 @@ void synchronize_rcu(void) {
     }
 
     /* GP complete — advance callback machinery */
+    spinlock_acquire(&rcu_gp_lock);
     rcu_gp_in_progress = 0;
+    spinlock_release(&rcu_gp_lock);
 
     /* Move pending callbacks to done list and invoke them */
     rcu_cb_lock_acquire();

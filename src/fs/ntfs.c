@@ -80,8 +80,8 @@ static int ntfs_apply_fixups(struct ntfs_priv *np, uint8_t *mft_rec,
     uint16_t usa_ofs = rec->usa_ofs;
     uint16_t usa_count = rec->usa_count;
 
-    if (usa_ofs < sizeof(struct ntfs_mft_rec) ||
-        usa_ofs + usa_count * 2 > record_size)
+    if ((uint32_t)usa_ofs < sizeof(struct ntfs_mft_rec) ||
+        (uint32_t)(usa_ofs + usa_count * 2) > record_size)
         return -1;
 
     /* First word of USA = update sequence number */

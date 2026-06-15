@@ -261,3 +261,5 @@ void dm_crypt_init(void)
         kprintf("[FAIL] dm-crypt: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_crypt_init);

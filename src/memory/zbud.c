@@ -160,3 +160,5 @@ void zbud_init(void)
     zbud_pool_count = 0;
     kprintf("[OK] Zbud — Compressed page allocator (for zswap)\n");
 }
+#include "module.h"
+module_init(zbud_init);

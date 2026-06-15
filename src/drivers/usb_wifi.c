@@ -114,3 +114,5 @@ void usb_wifi_init(void)
     usb_wifi_count = 0;
     kprintf("[OK] USB Wi-Fi driver skeleton\n");
 }
+#include "module.h"
+module_init(usb_wifi_init);

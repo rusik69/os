@@ -440,3 +440,5 @@ void ima_init(void)
         "[OK] IMA initialized (mode=%d, PCR=%d, log=%d slots)\n",
         ima_mode, IMA_PCR_INDEX, IMA_LOG_MAX);
 }
+#include "module.h"
+module_init(ima_init);

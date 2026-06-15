@@ -1,8 +1,9 @@
-/* udevd.c — Device manager stub */
+/* udevd.c — device event daemon */
 #include "unistd.h"
-#include "stdio.h"
+#include "string.h"
 
 int main(void) {
-    printf("udevd: not available\n");
+    const char *msg = "udevd is handled by the kernel's devfs/sysfs subsystem.\n";
+    write(1, msg, strlen(msg));
     return 0;
 }

@@ -301,3 +301,5 @@ void dm_era_init(void)
         kprintf("[dm-era] failed to register target type: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_era_init);

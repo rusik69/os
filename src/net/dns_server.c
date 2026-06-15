@@ -492,3 +492,5 @@ void dns_server_stop(void) {
     server_running = 0;
     kprintf("[dns_server] Stopped\n");
 }
+#include "module.h"
+module_init(dns_server_init);

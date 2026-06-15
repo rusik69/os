@@ -28,6 +28,7 @@
 #include "psi.h"
 #include "cpuset.h"
 #include "cpu_topology.h"
+#include "fault.h"
 #include "kpti.h"
 #include "page_cache.h"
 #include "rseq.h"
@@ -38,7 +39,7 @@
 
 /* EEVDF scheduling constants */
 #define CFS_NICE_0_WEIGHT 1024
-#define EEVDF_BASE_SLICE_NS 3000000UL  /* 3 ms base slice */
+#define EEVDF_BASE_SLICE_NS 3000000ULL  /* 3 ms base slice */
 
 /* Forward declarations */
 static inline struct cpu_info *this_cpu(void);
@@ -81,7 +82,6 @@ static int sysctl_write_sched_eevdf(const char *buf, int len) {
 
 /* EEVDF weight-to-slice mapping.
  * slice = base_slice * weight / NICE_0_WEIGHT */
-#define EEVDF_BASE_SLICE_NS  3000000ULL  /* 3 ms base slice */
 #define EEVDF_LAG_MAX_NS     10000000ULL /* 10 ms max lag */
 
 /* Initialize EEVDF fields for a process */

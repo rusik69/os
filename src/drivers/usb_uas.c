@@ -133,3 +133,5 @@ void usb_uas_init(void)
     uas_dev_count = 0;
     kprintf("[OK] USB UAS — USB Attached SCSI driver\n");
 }
+#include "module.h"
+module_init(usb_uas_init);

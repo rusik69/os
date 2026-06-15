@@ -403,3 +403,6 @@ void nft_exit(void) {
 
     kprintf("[nftables] Shutdown (B5)\n");
 }
+#include "module.h"
+module_init(nft_init);
+module_exit(nft_exit);

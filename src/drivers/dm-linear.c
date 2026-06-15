@@ -151,3 +151,5 @@ void dm_linear_init(void)
         kprintf("[FAIL] dm-linear: registration failed: %d\n", ret);
     }
 }
+#include "module.h"
+module_init(dm_linear_init);

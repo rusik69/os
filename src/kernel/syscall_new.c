@@ -134,7 +134,7 @@ int do_dup3(int old_fd, int new_fd, int flags)
         if (flags & O_CLOEXEC)
             proc->fd_table[new_fd].flags |= FD_CLOEXEC;
         else
-            proc->fd_table[new_fd].flags &= ~FD_CLOEXEC;
+            proc->fd_table[new_fd].flags = (uint8_t)(proc->fd_table[new_fd].flags & ~(unsigned)FD_CLOEXEC);
         return new_fd;
     }
 
@@ -146,7 +146,7 @@ int do_dup3(int old_fd, int new_fd, int flags)
     if (flags & O_CLOEXEC)
         proc->fd_table[new_fd].flags |= FD_CLOEXEC;
     else
-        proc->fd_table[new_fd].flags &= ~FD_CLOEXEC;
+        proc->fd_table[new_fd].flags = (uint8_t)(proc->fd_table[new_fd].flags & ~(unsigned)FD_CLOEXEC);
 
     return new_fd;
 }

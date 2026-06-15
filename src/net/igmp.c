@@ -249,3 +249,5 @@ struct igmp_group *igmp_get_groups(int *count)
     }
     return igmp_groups;
 }
+#include "module.h"
+module_init(igmp_init);

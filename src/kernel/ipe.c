@@ -210,3 +210,5 @@ void ipe_init(void)
             g_ipe_mode == IPE_MODE_PERMISSIVE ? "permissive" : "off",
             g_ipe_trusted_count);
 }
+#include "module.h"
+module_init(ipe_init);

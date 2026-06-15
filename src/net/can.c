@@ -376,3 +376,5 @@ int can_getsockname(int sock_fd, struct sockaddr_can *addr)
 
     return 0;
 }
+#include "module.h"
+module_init(can_init);

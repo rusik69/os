@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "errno.h"
 #include "timer.h"
+#include "workqueue.h"
 
 /* ── Built-in firmware table ─────────────────────────────────────────── */
 

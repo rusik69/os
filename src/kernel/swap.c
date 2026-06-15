@@ -219,7 +219,7 @@ int swap_swapon(const char *name)
 
     /* Allocate and read the slot bitmap. */
     uint32_t n_words = SWAP_BITMAP_SIZE(sb.total_slots);
-    uint64_t *bitmap = (uint64_t *)kmalloc(n_words * sizeof(uint64_t));
+    uint64_t *bitmap = (uint64_t *)kmalloc_array(n_words, sizeof(uint64_t));
     if (!bitmap) {
         spinlock_release(&swap_global_lock);
         return -ENOMEM;

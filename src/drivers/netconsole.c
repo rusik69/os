@@ -277,7 +277,8 @@ static void nc_output_hook(char c, void *ctx)
 
     nc_in_hook = 1;
 
-    spinlock_acquire(&nc_lock);
+    uint64_t nc_flags;
+    spinlock_irqsave_acquire(&nc_lock, &nc_flags);
 
     if (c == '\n') {
         /* ── Complete line received ── */
@@ -322,7 +323,7 @@ static void nc_output_hook(char c, void *ctx)
          * the kernel doesn't often emit lines > 511 chars. */
     }
 
-    spinlock_release(&nc_lock);
+    spinlock_irqsave_release(&nc_lock, nc_flags);
     nc_in_hook = 0;
 }
 

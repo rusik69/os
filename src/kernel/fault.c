@@ -320,10 +320,10 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                 uint64_t stack_limit = proc->rlim_cur[6]; /* RLIMIT_STACK */
                 if (stack_limit == (uint64_t)-1 || new_sz <= stack_limit) {
                     /* Stack expansion is allowed — map one page */
-                    uint64_t frame = pmm_alloc_frame();
-                    if (frame) {
-                        memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
-                        if (vmm_map_user_page(proc->pml4, fault_page, frame,
+                    uint64_t paddr = pmm_alloc_frame();
+                    if (paddr) {
+                        memset(PHYS_TO_VIRT(paddr), 0, PAGE_SIZE);
+                        if (vmm_map_user_page(proc->pml4, fault_page, paddr,
                                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
                                               VMM_FLAG_USER | VMM_FLAG_NOEXEC) == 0) {
                             proc->user_stack_bottom = fault_page;
@@ -336,7 +336,7 @@ static void page_fault_handler(struct interrupt_frame *frame) {
                                     (unsigned long long)stack_limit);
                             return; /* retry faulting instruction */
                         }
-                        pmm_free_frame(frame);
+                        pmm_free_frame(paddr);
                     }
                 }
                 /* If we reach here, expansion was denied (exceeded limit or OOM).

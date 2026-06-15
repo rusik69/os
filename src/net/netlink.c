@@ -640,3 +640,5 @@ int netlink_get_protocol(int fd) {
     if (!netlink_table[slot].used) return -1;
     return netlink_table[slot].protocol;
 }
+#include "module.h"
+module_init(af_netlink_init);

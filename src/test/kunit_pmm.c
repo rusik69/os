@@ -390,7 +390,7 @@ static void oom_estimate_freed(struct kunit *test)
 {
     uint64_t freed = oom_estimate_freed_pages(1);
     KUNIT_EXPECT_NE(test, (int64_t)freed, (int64_t)-1);
-    KUNIT_EXPECT_TRUE(test, freed >= 0);
+    KUNIT_EXPECT_TRUE(test, (int64_t)freed >= 0);
 }
 
 static void oom_safe_processes(struct kunit *test)
@@ -404,7 +404,7 @@ static void oom_safe_processes(struct kunit *test)
 static void oom_kill_count_tracking(struct kunit *test)
 {
     uint64_t count_before = oom_kill_count;
-    KUNIT_EXPECT_TRUE(test, count_before >= 0);
+    KUNIT_EXPECT_TRUE(test, (int64_t)count_before >= 0);
     (void)count_before;
 }
 

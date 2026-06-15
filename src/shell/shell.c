@@ -2892,7 +2892,8 @@ void shell_run(void) {
                 if (history_pos > 0 && history_pos > history_count - HISTORY_SIZE) {
                     history_pos--;
                     erase_line(cmd_len);
-                    strcpy(cmd_buf, history[history_pos % HISTORY_SIZE]);
+                    strncpy(cmd_buf, history[history_pos % HISTORY_SIZE], CMD_BUF_SIZE - 1);
+                    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
                     cmd_len = strlen(cmd_buf);
                     kprintf("%s", cmd_buf);
                 }
@@ -2900,7 +2901,8 @@ void shell_run(void) {
                 erase_line(cmd_len);
                 if (history_pos < history_count - 1) {
                     history_pos++;
-                    strcpy(cmd_buf, history[history_pos % HISTORY_SIZE]);
+                    strncpy(cmd_buf, history[history_pos % HISTORY_SIZE], CMD_BUF_SIZE - 1);
+                    cmd_buf[CMD_BUF_SIZE - 1] = '\0';
                     cmd_len = strlen(cmd_buf);
                     kprintf("%s", cmd_buf);
                 } else {

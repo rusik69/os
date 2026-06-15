@@ -134,3 +134,5 @@ int intel_gpu_is_present(void) {
 const struct intel_gpu_info *intel_gpu_get_info(void) {
     return &g_gpu;
 }
+#include "module.h"
+module_init(intel_gpu_init);

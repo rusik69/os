@@ -218,13 +218,10 @@ void do_initcalls(void) {
     initcall_t *fn;
     for (fn = __initcall_start; fn < __initcall_end; fn++) {
         if (*fn) {
-            int ret = (*fn)();
-            (void)ret;
+            (*fn)();
         }
     }
-    kprintf("[OK] Initcalls completed\n");
 }
-
 /* ── Boot timing ───────────────────────────────────────────────── */
 /* Captured at earliest possible point after entry (TSC timestamp) */
 static uint64_t boot_start_tsc = 0;

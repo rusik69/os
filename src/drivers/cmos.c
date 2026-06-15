@@ -29,3 +29,5 @@ void cmos_nvram_write(uint8_t offset, uint8_t val) {
 void cmos_init(void) {
     /* no-op: CMOS is always accessible */
 }
+#include "module.h"
+module_init(cmos_init);

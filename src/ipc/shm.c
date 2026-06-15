@@ -88,7 +88,7 @@ int shm_get(int key, uint16_t mode)
              * SHM_R permission on the segment (POSIX semantics). */
             if (!shm_check_perm(&shm_table[i], SHM_R >> 6)) {
                 kprintf("shm: permission denied for key %d (id %d)\n", key, i);
-                return -1;
+                return -EACCES;
             }
             return i;
         }
@@ -98,7 +98,7 @@ int shm_get(int key, uint16_t mode)
     for (int i = 0; i < SHM_MAX; i++) {
         if (!shm_table[i].used) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) return -1;
+            if (!frame) return -ENOMEM;
 
             /* Pin the shared page */
             pmm_ref_frame(frame);
@@ -125,7 +125,7 @@ int shm_get(int key, uint16_t mode)
             return i;
         }
     }
-    return -1; /* no slots */
+    return -ENOSPC; /* no slots */
 }
 
 uint64_t shm_at(int id)
@@ -154,7 +154,7 @@ uint64_t shm_at(int id)
 
 int shm_dt(int id)
 {
-    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
+    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -EINVAL;
     if (shm_table[id].refs > 0) {
         shm_table[id].refs--;
         struct process *cur = process_get_current();
@@ -169,17 +169,17 @@ int shm_dt(int id)
 
 int shm_free(int id)
 {
-    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
+    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -EINVAL;
 
     /* Permission check: only owner or root can free */
     struct process *cur = process_get_current();
     uint32_t caller_uid = cur ? cur->uid : 0;
     if (caller_uid != 0 && caller_uid != shm_table[id].uid) {
         kprintf("shm: free denied for segment %d (not owner)\n", id);
-        return -1;
+        return -EACCES;
     }
 
-    if (shm_table[id].refs > 0) return -1; /* still mapped */
+    if (shm_table[id].refs > 0) return -EBUSY; /* still mapped */
 
     pmm_unref_frame(shm_table[id].phys);
     shm_table[id].used = 0;
@@ -193,7 +193,7 @@ int shm_free(int id)
 
 int shm_perm_set(int id, uint32_t uid, uint32_t gid, uint16_t mode)
 {
-    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -1;
+    if (id < 0 || id >= SHM_MAX || !shm_table[id].used) return -EINVAL;
 
     struct process *cur = process_get_current();
     uint32_t caller_uid = cur ? cur->uid : 0;
@@ -201,14 +201,14 @@ int shm_perm_set(int id, uint32_t uid, uint32_t gid, uint16_t mode)
     /* Only owner or root can change permissions */
     if (caller_uid != 0 && caller_uid != shm_table[id].uid) {
         kprintf("shm: perm_set denied for segment %d (not owner)\n", id);
-        return -1;
+        return -EACCES;
     }
 
     /* Only root can change ownership */
     if (uid != (uint32_t)-1 && caller_uid != 0) {
         if (uid != shm_table[id].uid) {
             kprintf("shm: only root can change ownership\n");
-            return -1;
+            return -EACCES;
         }
     }
 
@@ -221,8 +221,8 @@ int shm_perm_set(int id, uint32_t uid, uint32_t gid, uint16_t mode)
 
 int shm_perm_get(int id, struct shm_perm *out)
 {
-    if (id < 0 || id >= SHM_MAX) return -1;
-    if (!out) return -1;
+    if (id < 0 || id >= SHM_MAX) return -EINVAL;
+    if (!out) return -EINVAL;
 
     out->id   = id;
     out->key  = shm_table[id].used ? shm_table[id].key : 0;

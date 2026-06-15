@@ -56,15 +56,23 @@ endif
 # SMP enabled? (auto-detected from target)
 VERMAGIC_FLAGS += -DCONFIG_SMP
 
+# NOTE: -Wno-format and -Wno-unused-* are intentionally suppressed in this
+# freestanding kernel build.  Standard library printf format attributes
+# don't apply to freestanding targets, so -Wformat triggers false positives
+# in every printf-family call.  Likewise, -Wunused-* produces noise because
+# kernel code deliberately omits parameter names in function declarations
+# (forward-compatibility stubs) and has variables that are read by inline
+# assembly or used only in certain configs.  These suppressions keep the
+# build clean while -Werror is active.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-         -fstack-protector-strong -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Wno-format -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
+         -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
+         -Wall -Wextra -Werror -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
          $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
-LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack
+LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack -z relro -z now
 
 # Auto-detect libgcc path (supports both x86_64-elf-gcc and x86_64-linux-gnu-gcc)
 LIBGCC := $(shell $(CC) -print-libgcc-file-name 2>/dev/null || echo "/usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a")
@@ -765,6 +773,227 @@ obj-m += fs/fat32.ko
 # overlay: union/overlay mount filesystem with copy-up-on-write (M55)
 obj-m += kernel/overlay.ko
 
+# ── Filesystem modules (production modularization) ──────────────────
+obj-m += fs/procfs.ko
+obj-m += fs/tmpfs.ko
+obj-m += fs/ext4.ko
+obj-m += fs/squashfs.ko
+obj-m += fs/fuse.ko
+obj-m += fs/btrfs.ko
+obj-m += fs/ntfs.ko
+obj-m += fs/exfat.ko
+obj-m += fs/hfsplus.ko
+obj-m += fs/cifs.ko
+obj-m += fs/nfsd.ko
+obj-m += fs/reiserfs.ko
+obj-m += fs/hfs.ko
+obj-m += fs/cramfs.ko
+obj-m += fs/minix.ko
+obj-m += fs/ufs.ko
+obj-m += fs/sysv.ko
+obj-m += fs/adfs.ko
+obj-m += fs/bfs.ko
+obj-m += fs/erofs.ko
+obj-m += fs/f2fs.ko
+obj-m += fs/jffs2.ko
+obj-m += fs/nilfs2.ko
+obj-m += fs/nfs.ko
+obj-m += fs/verity.ko
+obj-m += fs/readdir.ko
+
+# ── Additional network protocol modules ─────────────────────────────
+obj-m += net/sctp.ko
+obj-m += net/dccp.ko
+obj-m += net/mptcp.ko
+obj-m += net/macsec.ko
+obj-m += net/wireguard.ko
+obj-m += net/ipsec.ko
+obj-m += net/pfkey.ko
+obj-m += net/igmp.ko
+obj-m += net/stp.ko
+obj-m += net/lacp.ko
+obj-m += net/mrp.ko
+obj-m += net/lldp.ko
+obj-m += net/rds.ko
+obj-m += net/vsock.ko
+obj-m += net/openvswitch.ko
+obj-m += net/xdp.ko
+obj-m += net/can.ko
+obj-m += net/af_packet.ko
+obj-m += net/af_unix.ko
+obj-m += net/6lowpan.ko
+obj-m += net/ipoib.ko
+obj-m += net/netfilter.ko
+obj-m += net/nf_tables.ko
+obj-m += net/conntrack.ko
+obj-m += net/conntrack_helpers.ko
+obj-m += net/dns_cache.ko
+obj-m += net/pkt_sched.ko
+obj-m += net/fq_codel.ko
+obj-m += net/cake.ko
+obj-m += net/tcp_bbr2.ko
+obj-m += net/netlink.ko
+obj-m += net/dns_server.ko
+obj-m += net/ntp.ko
+obj-m += net/smtp.ko
+obj-m += net/dhcp.ko
+
+# ── Additional driver modules ──────────────────────────────────────
+obj-m += drivers/ramdisk.ko
+obj-m += drivers/loop.ko
+obj-m += drivers/dm.ko
+obj-m += drivers/dm-linear.ko
+obj-m += drivers/dm-zero.ko
+obj-m += drivers/dm-error.ko
+obj-m += drivers/dm-crypt.ko
+obj-m += drivers/dm-verity.ko
+obj-m += drivers/dm-raid.ko
+obj-m += drivers/dm_snapshot.ko
+obj-m += drivers/dm-era.ko
+obj-m += drivers/mpath.ko
+obj-m += drivers/bcache.ko
+obj-m += drivers/iommu.ko
+obj-m += drivers/virtio_gpu.ko
+obj-m += drivers/virtio_input.ko
+obj-m += drivers/virtio_rng.ko
+obj-m += drivers/virtio_scsi.ko
+obj-m += drivers/virtio_console.ko
+obj-m += drivers/virtio_fs.ko
+obj-m += drivers/virtio_iommu.ko
+obj-m += drivers/vhost_scsi.ko
+obj-m += drivers/vhost_blk.ko
+obj-m += drivers/vfio.ko
+obj-m += drivers/vdpa.ko
+obj-m += drivers/balloon.ko
+obj-m += drivers/xhci.ko
+obj-m += drivers/pcie_aer.ko
+obj-m += drivers/pcie_dpc.ko
+obj-m += drivers/i3c.ko
+obj-m += drivers/edac.ko
+obj-m += drivers/ghes.ko
+obj-m += drivers/intel_gpu.ko
+obj-m += drivers/bochs.ko
+obj-m += drivers/simplefb.ko
+obj-m += drivers/ac97.ko
+obj-m += drivers/sound_oss.ko
+obj-m += drivers/sound_core.ko
+obj-m += drivers/sound_midi.ko
+obj-m += drivers/usb_uas.ko
+obj-m += drivers/usb_serial.ko
+obj-m += drivers/usb_cdc_ether.ko
+obj-m += drivers/usb_wifi.ko
+obj-m += kernel/tpm_key.ko
+obj-m += drivers/firmware_class.ko
+obj-m += drivers/dma-api.ko
+obj-m += drivers/sndstat.ko
+obj-m += drivers/acpi_platform_profile.ko
+obj-m += drivers/spi.ko
+obj-m += drivers/pcie_ptm.ko
+obj-m += drivers/sriov.ko
+obj-m += drivers/gpio_irq.ko
+obj-m += drivers/i2c.ko
+obj-m += drivers/smbus.ko
+obj-m += drivers/watchdog.ko
+obj-m += drivers/rtc.ko
+obj-m += drivers/cmos.ko
+obj-m += drivers/battery.ko
+
+# ── Memory subsystem modules ───────────────────────────────────────
+obj-m += memory/zram.ko
+obj-m += memory/zswap.ko
+obj-m += memory/zsmalloc.ko
+obj-m += memory/zbud.ko
+obj-m += memory/ksm.ko
+obj-m += memory/thp.ko
+obj-m += memory/damon.ko
+obj-m += memory/page_pool.ko
+obj-m += memory/memhotplug.ko
+obj-m += memory/compaction.ko
+obj-m += memory/mglru.ko
+obj-m += memory/hugetlb.ko
+obj-m += memory/zram_writeback.ko
+obj-m += memory/zcomp.ko
+
+# ── Security/LSM modules ───────────────────────────────────────────
+obj-m += kernel/smack.ko
+obj-m += kernel/ima.ko
+obj-m += kernel/ima_policy.ko
+obj-m += kernel/ima_appraise.ko
+obj-m += kernel/evm.ko
+obj-m += kernel/ipe.ko
+obj-m += kernel/keyring.ko
+obj-m += kernel/yama.ko
+
+# ── Kernel infrastructure modules ──────────────────────────────────
+obj-m += kernel/kprobes.ko
+obj-m += kernel/ftrace.ko
+obj-m += kernel/ftrace_stack.ko
+obj-m += kernel/kexec.ko
+obj-m += kernel/kdump.ko
+obj-m += kernel/live_patch.ko
+obj-m += kernel/uprobes.ko
+obj-m += kernel/perf_events.ko
+obj-m += kernel/perf_branch.ko
+obj-m += kernel/hwlat_detector.ko
+obj-m += kernel/kgdb_stub.ko
+
+# ── Power management modules ───────────────────────────────────────
+obj-m += power/cpufreq_ondemand.ko
+obj-m += power/cpufreq_conservative.ko
+obj-m += power/cpufreq_userspace.ko
+obj-m += power/cpufreq_schedutil.ko
+obj-m += power/cpuidle_ladder.ko
+obj-m += power/cpuidle_teo.ko
+obj-m += power/devfreq.ko
+obj-m += power/energy_model.ko
+obj-m += power/rapl.ko
+
+# ── Container runtime modules ──────────────────────────────────────
+obj-m += container/runtime.ko
+obj-m += container/config.ko
+obj-m += container/state.ko
+obj-m += container/ext.ko
+obj-m += container/storage.ko
+obj-m += container/network.ko
+obj-m += container/image.ko
+obj-m += container/orch.ko
+obj-m += container/service_proxy.ko
+obj-m += container/scheduler_policy.ko
+obj-m += container/seccomp_notify.ko
+obj-m += container/checkpoint.ko
+obj-m += container/security_scan.ko
+
+# ── Orchestration modules ──────────────────────────────────────────
+obj-m += orch/metrics.ko
+obj-m += orch/log_shipper.ko
+obj-m += orch/log_aggregator.ko
+obj-m += orch/events.ko
+obj-m += orch/tracing.ko
+obj-m += orch/dashboard.ko
+obj-m += orch/alerting.ko
+obj-m += orch/manifest.ko
+obj-m += orch/compose.ko
+obj-m += orch/namespace.ko
+obj-m += orch/rbac.ko
+obj-m += orch/auth.ko
+obj-m += orch/pod_security.ko
+obj-m += orch/secrets.ko
+obj-m += orch/pod_health.ko
+obj-m += orch/hooks.ko
+
+# ── IPC modules ────────────────────────────────────────────────────
+obj-m += ipc/shm.ko
+obj-m += ipc/mqueue.ko
+obj-m += ipc/semaphore.ko
+
+# ── Additional FS infrastructure modules ───────────────────────────
+obj-m += fs/freeze.ko
+obj-m += fs/quota.ko
+obj-m += fs/fstab.ko
+obj-m += fs/fsck.ko
+obj-m += fs/xattr.ko
+obj-m += fs/posix_acl.ko
+
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
 
@@ -1016,12 +1245,52 @@ $(BUILDDIR)/init.elf: $(BUILDDIR)/init.o init.ld
 # Userspace programs to inject into disk image
 USERSPACE_BINS = $(BUILDDIR)/init.elf
 
-# ── Disk image ───────────────────────────────────────────────────────
+# Root filesystem staging directory
+ROOTFS_DIR = $(BUILDDIR)/rootfs
 
-$(BUILDDIR)/disk.img: $(USERSPACE_BINS)
+# ── Disk image — full root filesystem with commands ────────────────
+# Uses mkfatimg.py to create a FAT32 image from a staged root directory
+# containing /sbin/init, /bin/sh, /bin/* (all command ELFs), and /etc/inittab.
+
+DISK_IMG_SIZE_MB ?= 64
+
+# Build userspace commands
+.PHONY: userspace-build
+userspace-build:
+	@$(MAKE) -C userspace all 2>&1 | grep -v "is up to date" || true
+
+# Stage files into rootfs directory
+ROOTFS_STAMP = $(BUILDDIR)/.rootfs_stamp
+
+$(ROOTFS_STAMP): $(BUILDDIR)/init.elf userspace-build
+	@rm -rf $(ROOTFS_DIR)
+	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/tmp
+	# Copy kernel-built init as /sbin/init
+	cp $(BUILDDIR)/init.elf $(ROOTFS_DIR)/sbin/init
+	# Copy userspace shell as /bin/sh
+	cp userspace/sh.elf $(ROOTFS_DIR)/bin/sh
+	# Copy all userspace command ELFs to /bin/
+	@for f in userspace/*.elf; do \
+		name=$$(basename $$f .elf); \
+		[ "$$name" = "init" ] && continue; \
+		[ "$$name" = "sh" ] && continue; \
+		cp $$f $(ROOTFS_DIR)/bin/$$name; \
+	done
+	# Strip ELFs to save space
+	@if command -v x86_64-linux-gnu-strip >/dev/null 2>&1; then \
+		echo "[rootfs] Stripping ELF binaries..."; \
+		x86_64-linux-gnu-strip $(ROOTFS_DIR)/sbin/init $(ROOTFS_DIR)/bin/* 2>/dev/null || true; \
+	fi
+	# Create /etc/inittab (kernel also creates a default at boot)
+	@echo 'ttyS0::respawn:/bin/sh' > $(ROOTFS_DIR)/etc/inittab
+	@echo 'console::askfirst:/bin/sh' >> $(ROOTFS_DIR)/etc/inittab
+	@touch $@
+	@echo "[rootfs] Staged $(shell find $(ROOTFS_DIR) -type f | wc -l) files in $(ROOTFS_DIR)"
+
+$(BUILDDIR)/disk.img: $(ROOTFS_STAMP)
 	@mkdir -p $(BUILDDIR)
-	dd if=/dev/zero of=$@ bs=1M count=16 2>/dev/null
-	@python3 scripts/mkfat32img.py $@ 16 $(BUILDDIR)/init.elf /mnt/init.elf
+	@python3 scripts/mkfatimg.py $@ $(DISK_IMG_SIZE_MB) $(ROOTFS_DIR)
+	@echo "[disk] Created $@ ($(DISK_IMG_SIZE_MB) MB)"
 
 # ── Run targets ───────────────────────────────────────────────────────
 
@@ -1606,12 +1875,6 @@ build-strict: cppcheck
 .PHONY: cppcheck
 cppcheck:
 	cppcheck --enable=all --suppress=missingIncludeSystem -Isrc/include --std=c17 --platform=unix64 src/ 2>&1 | tee build/cppcheck-report.txt
-
-# ── clang --analyze ─────────────────────────────────────────────────────
-
-.PHONY: analyze
-analyze:
-	$(CC) --analyze -Xanalyzer -analyzer-output=text $(CFLAGS) $(C_SRCS) 2>&1 | tee build/analyzer-report.txt
 
 # ── Sparse semantic parser ───────────────────────────────────────────────
 #

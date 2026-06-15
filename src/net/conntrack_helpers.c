@@ -522,3 +522,5 @@ void nf_helper_init(void)
     kprintf("[OK] Conntrack helpers initialized (expected=%d, helpers=%d)\n",
             NF_CT_EXPECT_MAX, NF_HELPER_MAX);
 }
+#include "module.h"
+module_init(nf_helper_init);

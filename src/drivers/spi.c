@@ -595,3 +595,5 @@ EXPORT_SYMBOL(spi_device_unregister);
 EXPORT_SYMBOL(spi_transfer);
 EXPORT_SYMBOL(spi_write_then_read);
 EXPORT_SYMBOL(spi_bitbang_register);
+#include "module.h"
+module_init(spi_init);

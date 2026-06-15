@@ -456,3 +456,192 @@ gethostname:
     syscall
     ret
 .size gethostname, . - gethostname
+
+# net_present() — return 1 if net available, else 0
+.globl net_present
+.type net_present, @function
+net_present:
+    movl    $124, %eax
+    syscall
+    ret
+.size net_present, . - net_present
+
+# net_get_mac(mac) — fill 6-byte MAC buffer
+.globl net_get_mac
+.type net_get_mac, @function
+net_get_mac:
+    movl    $125, %eax
+    syscall
+    ret
+.size net_get_mac, . - net_get_mac
+
+# net_get_ip(ip) — fill 4-byte IP buffer
+.globl net_get_ip
+.type net_get_ip, @function
+net_get_ip:
+    movl    $126, %eax
+    syscall
+    ret
+.size net_get_ip, . - net_get_ip
+
+# net_get_gw() — returns gateway IP as uint32
+.globl net_get_gw
+.type net_get_gw, @function
+net_get_gw:
+    movl    $127, %eax
+    syscall
+    ret
+.size net_get_gw, . - net_get_gw
+
+# net_get_mask() — returns netmask as uint32
+.globl net_get_mask
+.type net_get_mask, @function
+net_get_mask:
+    movl    $128, %eax
+    syscall
+    ret
+.size net_get_mask, . - net_get_mask
+
+# net_dns(host) — resolve hostname, returns IP or -1
+.globl net_dns
+.type net_dns, @function
+net_dns:
+    movl    $129, %eax
+    syscall
+    ret
+.size net_dns, . - net_dns
+
+# net_ping(ip) — ping an IP address
+.globl net_ping
+.type net_ping, @function
+net_ping:
+    movl    $130, %eax
+    syscall
+    ret
+.size net_ping, . - net_ping
+
+# net_udp_send(dst_ip, src_port, dst_port, data, len)
+.globl net_udp_send
+.type net_udp_send, @function
+net_udp_send:
+    movl    $131, %eax
+    syscall
+    ret
+.size net_udp_send, . - net_udp_send
+
+# net_http_get(host, port, path, buf, bufsz)
+.globl net_http_get
+.type net_http_get, @function
+net_http_get:
+    movl    $132, %eax
+    syscall
+    ret
+.size net_http_get, . - net_http_get
+
+# net_arp_list()
+.globl net_arp_list
+.type net_arp_list, @function
+net_arp_list:
+    movl    $133, %eax
+    syscall
+    ret
+.size net_arp_list, . - net_arp_list
+
+# net_tcp_listen(port)
+.globl net_tcp_listen
+.type net_tcp_listen, @function
+net_tcp_listen:
+    movl    $183, %eax
+    syscall
+    ret
+.size net_tcp_listen, . - net_tcp_listen
+
+# net_tcp_accept(port, timeout_ticks)
+.globl net_tcp_accept
+.type net_tcp_accept, @function
+net_tcp_accept:
+    movl    $184, %eax
+    syscall
+    ret
+.size net_tcp_accept, . - net_tcp_accept
+
+# net_tcp_send_conn(conn_id, buf, len)
+.globl net_tcp_send_conn
+.type net_tcp_send_conn, @function
+net_tcp_send_conn:
+    movl    $185, %eax
+    syscall
+    ret
+.size net_tcp_send_conn, . - net_tcp_send_conn
+
+# net_tcp_recv_conn(conn_id, buf, bufsz)
+.globl net_tcp_recv_conn
+.type net_tcp_recv_conn, @function
+net_tcp_recv_conn:
+    movl    $186, %eax
+    syscall
+    ret
+.size net_tcp_recv_conn, . - net_tcp_recv_conn
+
+# net_tcp_close_conn(conn_id)
+.globl net_tcp_close_conn
+.type net_tcp_close_conn, @function
+net_tcp_close_conn:
+    movl    $187, %eax
+    syscall
+    ret
+.size net_tcp_close_conn, . - net_tcp_close_conn
+
+# net_tcp_unlisten(port)
+.globl net_tcp_unlisten
+.type net_tcp_unlisten, @function
+net_tcp_unlisten:
+    movl    $188, %eax
+    syscall
+    ret
+.size net_tcp_unlisten, . - net_tcp_unlisten
+
+# net_tcp_connect(ip, port)
+.globl net_tcp_connect
+.type net_tcp_connect, @function
+net_tcp_connect:
+    movl    $189, %eax
+    syscall
+    ret
+.size net_tcp_connect, . - net_tcp_connect
+
+# net_udp_listen(port)
+.globl net_udp_listen
+.type net_udp_listen, @function
+net_udp_listen:
+    movl    $198, %eax
+    syscall
+    ret
+.size net_udp_listen, . - net_udp_listen
+
+# net_udp_recv(port, buf, bufsz, src_ip, src_port)
+.globl net_udp_recv
+.type net_udp_recv, @function
+net_udp_recv:
+    movl    $199, %eax
+    syscall
+    ret
+.size net_udp_recv, . - net_udp_recv
+
+# net_udp_unlisten(port)
+.globl net_udp_unlisten
+.type net_udp_unlisten, @function
+net_udp_unlisten:
+    movl    $200, %eax
+    syscall
+    ret
+.size net_udp_unlisten, . - net_udp_unlisten
+
+# net_connlist()
+.globl net_connlist
+.type net_connlist, @function
+net_connlist:
+    movl    $212, %eax
+    syscall
+    ret
+.size net_connlist, . - net_connlist

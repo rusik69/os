@@ -161,3 +161,5 @@ void fq_codel_init(void)
     fq_codel.limit = FQ_CODEL_DEFAULT_LIMIT;
     kprintf("[OK] FQ-CoDel — Fair Queuing with Controlled Delay\n");
 }
+#include "module.h"
+module_init(fq_codel_init);

@@ -58,8 +58,10 @@ void cmd_realpath(const char *args) {
     char full[128];
     if (path[0] != '/') {
         char cwd[64];
-        if (libc_getcwd(cwd, sizeof(cwd)) < 0)
-            strcpy(cwd, "/");
+        if (libc_getcwd(cwd, sizeof(cwd)) < 0) {
+            strncpy(cwd, "/", sizeof(cwd) - 1);
+            cwd[sizeof(cwd) - 1] = '\0';
+        }
         int cl = strlen(cwd);
         if (cwd[cl-1] == '/') cl--;
         strncpy(full, cwd, cl);

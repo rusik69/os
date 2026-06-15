@@ -106,3 +106,5 @@ void usb_cdc_ether_init(void)
     cdc_ether_count = 0;
     kprintf("[OK] USB CDC Ethernet / RNDIS driver\n");
 }
+#include "module.h"
+module_init(usb_cdc_ether_init);

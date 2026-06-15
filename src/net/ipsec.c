@@ -211,3 +211,5 @@ void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t
     if (!ipsec_initialised) return;
     ipsec_input_esp(ip_hdr, payload);
 }
+#include "module.h"
+module_init(ipsec_init);

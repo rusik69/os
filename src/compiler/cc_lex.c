@@ -85,6 +85,19 @@ static const KW kwtab[] = {
     {"restrict", TK_RESTRICT},
     {"_Bool",    TK_CHAR},    /* treat _Bool as char (1 byte) */
     {"auto",     TK_STATIC},  /* treat auto as static (ignored) */
+    /* GNU extension keyword aliases */
+    {"__const__",   TK_CONST},
+    {"__const",     TK_CONST},
+    {"__volatile__", TK_VOLATILE},
+    {"__volatile",  TK_VOLATILE},
+    {"__restrict__", TK_RESTRICT},
+    {"__restrict",  TK_RESTRICT},
+    {"__inline__",  TK_INLINE},
+    {"__inline",    TK_INLINE},
+    {"__signed__",  TK_INT},
+    {"__signed",    TK_INT},
+    {"__typeof__",  TK_IDENT},  /* handled by parser via typeof detection */
+    {"__typeof",    TK_IDENT},
     {0, TK_EOF}
 };
 
@@ -98,6 +111,14 @@ void cc_lex(CompilerState *cc) {
 
     while (i < len && !cc->error) {
         char c = s[i];
+
+        /* line continuation: backslash followed by newline — skip both */
+        if (c == '\\' && i+1 < len && s[i+1] == '\n') {
+            i += 2; line++; continue;
+        }
+        if (c == '\\' && i+1 < len && s[i+1] == '\r' && i+2 < len && s[i+2] == '\n') {
+            i += 3; line++; continue;
+        }
 
         /* whitespace */
         if (c == '\n') { line++; i++; continue; }
@@ -463,6 +484,13 @@ void cc_lex(CompilerState *cc) {
                 t->type = TK_INTLIT;
                 t->ival = 1;
             }
+            /* __COUNTER__ predefined macro (incrementing per usage through the source) */
+            if (t->type == TK_IDENT && strcmp(t->sval, "__COUNTER__") == 0) {
+                static int counter = 0;
+                t->type = TK_INTLIT;
+                t->ival = counter++;
+            }
+            /* __func__ — set in the parser during function definition */
             /* macro expansion */
             if (t->type == TK_IDENT) {
                 for (int mi = 0; mi < cc->nmacros; mi++) {

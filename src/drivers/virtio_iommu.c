@@ -278,3 +278,5 @@ int virtio_iommu_init(void)
             virtio_iommu_iobase, virtio_iommu_num_mappings);
     return 0;
 }
+#include "module.h"
+module_init(virtio_iommu_init);

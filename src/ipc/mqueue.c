@@ -48,19 +48,19 @@ static int alloc_queue(void) {
 }
 
 mqd_t mq_open(const char *name, int oflag, ...) {
-    if (!mqueue_inited) return -1;
+    if (!mqueue_inited) return -ENOSYS;
 
     int idx = find_queue(name);
     if (idx >= 0) {
         /* Queue already exists — return existing descriptor */
         /* If O_EXCL is set and queue exists, fail */
         if (oflag & 0x80) /* O_EXCL = 0x80 in POSIX */
-            return -1;
+            return -EEXIST;
         return idx;
     }
 
     idx = alloc_queue();
-    if (idx < 0) return -1;
+    if (idx < 0) return -ENFILE;
 
     strncpy(mqueue_table[idx].name, name, 31);
     mqueue_table[idx].name[31] = '\0';
@@ -70,7 +70,7 @@ mqd_t mq_open(const char *name, int oflag, ...) {
 
 int mq_close(mqd_t mqdes) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
-        return -1;
+        return -EBADF;
     mqueue_table[mqdes].in_use = 0;
     return 0;
 }
@@ -78,12 +78,12 @@ int mq_close(mqd_t mqdes) {
 int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_prio) {
     (void)msg_prio;
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
-        return -1;
+        return -EBADF;
     /* Reject messages larger than max size or longer than uint32_t (for len field) */
     if (msg_len > (size_t)mqueue_table[mqdes].msg_size_max)
-        return -1;
+        return -EMSGSIZE;
     if (msg_len > UINT32_MAX)
-        return -1;
+        return -EINVAL;
 
     struct mqueue *q = &mqueue_table[mqdes];
 
@@ -94,11 +94,11 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
         }
         while (q->msg_count >= q->msg_max) {
             struct process *cur = process_get_current();
-            if (!cur) return -1;
+            if (!cur) return -EINTR;
             cur->state = PROCESS_BLOCKED;
             scheduler_remove(cur);
             wait_queue_sleep(&q->w_wq);
-            if (!q->in_use) return -1;
+            if (!q->in_use) return -EBADF;
         }
     }
 
@@ -107,7 +107,7 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
     for (int i = 0; i < q->msg_max; i++) {
         if (!q->msgs[i].in_use) { slot = i; break; }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) return -EAGAIN;
 
     memcpy(q->msgs[slot].data, msg_ptr, msg_len);
     q->msgs[slot].len = (uint32_t)msg_len;
@@ -131,9 +131,9 @@ int mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned int msg_p
 
 ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg_prio) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
-        return -1;
+        return -EBADF;
     if (msg_len > UINT32_MAX)
-        return -1;
+        return -EINVAL;
 
     struct mqueue *q = &mqueue_table[mqdes];
 
@@ -144,11 +144,11 @@ ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg
         }
         while (q->msg_count == 0) {
             struct process *cur = process_get_current();
-            if (!cur) return -1;
+            if (!cur) return -EINTR;
             cur->state = PROCESS_BLOCKED;
             scheduler_remove(cur);
             wait_queue_sleep(&q->r_wq);
-            if (!q->in_use) return -1;
+            if (!q->in_use) return -EBADF;
         }
     }
 
@@ -161,7 +161,7 @@ ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg
             best_prio = q->msgs[i].priority;
         }
     }
-    if (best < 0) return -1;
+    if (best < 0) return -EAGAIN;
 
     size_t copy = q->msgs[best].len < msg_len ? q->msgs[best].len : msg_len;
     memcpy(msg_ptr, q->msgs[best].data, copy);
@@ -177,7 +177,7 @@ ssize_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned int *msg
 
 int mq_notify(mqd_t mqdes, const struct sigevent *notification) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
-        return -1;
+        return -EBADF;
 
     struct mqueue *q = &mqueue_table[mqdes];
 
@@ -189,7 +189,7 @@ int mq_notify(mqd_t mqdes, const struct sigevent *notification) {
     }
 
     struct process *cur = process_get_current();
-    if (!cur) return -1;
+    if (!cur) return -EINTR;
 
     q->notify_pid = cur->pid;
     q->notify_signo = notification->sigev_signo;
@@ -200,8 +200,8 @@ int mq_notify(mqd_t mqdes, const struct sigevent *notification) {
 
 int mq_getattr(mqd_t mqdes, struct mq_attr *attr) {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
-        return -1;
-    if (!attr) return -1;
+        return -EBADF;
+    if (!attr) return -EINVAL;
 
     struct mqueue *q = &mqueue_table[mqdes];
     attr->mq_flags = 0;

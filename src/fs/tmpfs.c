@@ -517,3 +517,5 @@ void tmpfs_init(void) {
     tmpfs_mount();
     kprintf("[OK] tmpfs initialized\n");
 }
+#include "module.h"
+module_init(tmpfs_init);

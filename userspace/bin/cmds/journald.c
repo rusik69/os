@@ -1,8 +1,9 @@
-/* journald.c — Journal daemon stub */
+/* journald.c — kernel journal service */
 #include "unistd.h"
-#include "stdio.h"
+#include "string.h"
 
 int main(void) {
-    printf("journald: not available\n");
+    const char *msg = "journald is a kernel service. Use 'journalctl' to query the journal.\n";
+    write(1, msg, strlen(msg));
     return 0;
 }

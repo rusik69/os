@@ -91,3 +91,5 @@ void dpc_init(void)
     dpc_triggered_count = 0;
     kprintf("[OK] PCIe DPC — Downstream Port Containment\n");
 }
+#include "module.h"
+module_init(dpc_init);

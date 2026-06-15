@@ -723,3 +723,5 @@ void dm_init(void)
             DM_MAX_DEVICES, DM_MAX_TARGET_TYPES);
 }
 EXPORT_SYMBOL(dm_init);
+#include "module.h"
+module_init(dm_init);

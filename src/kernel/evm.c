@@ -252,3 +252,5 @@ void evm_init(void)
     kprintf("[OK] EVM initialized (HMAC-SHA256, %s enforcement)\n",
             g_evm_enforce ? "with" : "without");
 }
+#include "module.h"
+module_init(evm_init);

@@ -414,3 +414,5 @@ void net_dns_cache_dump(void) {
 void net_dns_cache_init(void) {
     dns_cache_init();
 }
+#include "module.h"
+module_init(net_dns_cache_init);

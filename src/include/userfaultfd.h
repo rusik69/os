@@ -140,6 +140,9 @@ int userfaultfd_api(int fd, struct uffdio_api *api_arg);
  * Returns fd for UFFDIO_API (create case), or 0 on success, or -errno. */
 int64_t sys_userfaultfd(uint64_t cmd, uint64_t arg);
 
+/* Unified userfaultfd syscall: fd, cmd, arg. */
+int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg);
+
 /* Initialise the userfaultfd subsystem. */
 void uffd_init(void);
 

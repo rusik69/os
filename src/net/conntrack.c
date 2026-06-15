@@ -589,3 +589,5 @@ void nf_conntrack_init(void)
     memset(&nf_stats, 0, sizeof(nf_stats));
     kprintf("[OK] Conntrack initialized (%d slots)\n", NF_CONNTRACK_MAX);
 }
+#include "module.h"
+module_init(nf_conntrack_init);

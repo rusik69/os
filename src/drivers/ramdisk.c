@@ -84,3 +84,5 @@ int ramdisk_is_present(void) {
 uint32_t ramdisk_get_sectors(void) {
     return RAMDISK_SECTORS;
 }
+#include "module.h"
+module_init(ramdisk_init);

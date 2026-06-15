@@ -613,8 +613,8 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
                 return (uint64_t)-1;
             }
             for (uint64_t i = 0; i < to_copy; i++) {
-                vga_putchar(kbuf[i]);
-                serial_putchar(kbuf[i]);
+                vga_putchar((char)kbuf[i]);
+                serial_putchar((char)kbuf[i]);
             }
         }
         kfree(kbuf);
@@ -1424,9 +1424,9 @@ static uint64_t sys_chdir(uint64_t path_addr) {
      * since vfs_abs_path uses per-process CWD which may differ. */
     if (ses_cwd && path[0] != '/') {
         char tmp[128];
-        int cl = (int)strlen(ses_cwd);
-        int pl = (int)strlen(path);
-        if (cl + 1 + pl < (int)sizeof(tmp)) {
+        size_t cl = (size_t)strlen(ses_cwd);
+        size_t pl = (size_t)strlen(path);
+        if (cl + 1 + pl < sizeof(tmp)) {
             memcpy(tmp, ses_cwd, cl);
             if (tmp[cl-1] != '/') tmp[cl++] = '/';
             memcpy(tmp + cl, path, pl + 1);
@@ -1467,7 +1467,7 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
     }
     char *buf = (char *)buf_addr;
     if (buf_size == 0) return (uint64_t)-1;
-    int max = (int)buf_size;
+    size_t max = buf_size;
     strncpy(buf, cwd, max - 1); buf[max-1] = '\0';
     return 0;
 }
@@ -1964,7 +1964,7 @@ static uint64_t sys_unshare(uint64_t flags)
         const char *cur_path = "/sys/fs/cgroup";  /* default cgroup path */
         struct cgroup_namespace *new_ns = cgroup_ns_create(cur_path);
         if (!new_ns) {
-            return -1;  /* ENOMEM */
+            return (uint64_t)-1;  /* ENOMEM */
         }
         /* Drop the old reference and take the new one */
         if (cur->cgroup_ns)
@@ -4031,7 +4031,7 @@ static uint64_t sys_usb_list(void) {
                 spd, (unsigned long)dev->class_code);
     }
     if (n == 0) kprintf("  (no devices connected)\n");
-    return (unsigned long)n;
+    return (uint64_t)n;
 }
 
 static uint64_t sys_hwinfo_print(void) {
@@ -4184,7 +4184,7 @@ static uint64_t sys_serial_read(uint64_t buf_addr, uint64_t max) {
     if (!buf || max <= 0) return (uint64_t)-1;
     int n_read = 0;
     while (n_read < (int)max && serial_readable()) {
-        buf[n_read++] = serial_getchar();
+        buf[n_read++] = (uint8_t)serial_getchar();
     }
     return (uint64_t)n_read;
 }
@@ -4474,7 +4474,7 @@ static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
         ret = -5;
 
     if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-    return ret;
+    return (uint64_t)ret;
 }
 
 static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) {
@@ -4514,7 +4514,7 @@ static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) 
         ret = -5;
 
     if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-    return ret;
+    return (uint64_t)ret;
 }
 
 static uint64_t sys_cc_link(uint64_t obj_paths_addr, uint64_t nobj, uint64_t outpath_addr) {
@@ -4742,7 +4742,7 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
     uint32_t *addr = (uint32_t *)uaddr;
     uint32_t *addr2 = (uint32_t *)uaddr2;
 
-    switch (op & ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) {
+    switch (op & ~(uint64_t)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME)) {
         case FUTEX_WAIT: {
             /* Check user address */
             if (syscall_is_user_process() && !syscall_user_read_ok(uaddr, 4))
@@ -5048,20 +5048,20 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             }
 
             /* Decode val3 */
-            unsigned op   = (unsigned)((val3 >> 28) & 0xf);
+            unsigned futex_op = (unsigned)((val3 >> 28) & 0xf);
             unsigned cmp  = (unsigned)((val3 >> 24) & 0xf);
             /* Sign-extend 12-bit oparg */
             int32_t oparg = (int32_t)((val3 >> 12) & 0xfff);
-            if (oparg & 0x800) oparg |= 0xfffff000;
+            if (oparg & 0x800) oparg = (int32_t)((uint32_t)oparg | 0xfffff000);
             /* Sign-extend 12-bit cmparg */
             int32_t cmparg = (int32_t)(val3 & 0xfff);
-            if (cmparg & 0x800) cmparg |= 0xfffff000;
+            if (cmparg & 0x800) cmparg = (int32_t)((uint32_t)cmparg | 0xfffff000);
 
             /* If OPARG_SHIFT is set, shift oparg left by 8 */
-            if (op & FUTEX_OP_OPARG_SHIFT)
+            if (futex_op & FUTEX_OP_OPARG_SHIFT)
                 oparg <<= 8;
 
-            op &= 7; /* mask to just the operation bits */
+            futex_op &= 7; /* mask to just the operation bits */
 
             /* Read old value from uaddr2 */
             uint32_t oldval;
@@ -6011,7 +6011,7 @@ static uint64_t sys_syslog(uint64_t type, uint64_t buf_addr, uint64_t len) {
             int copied = kprintf_dmesg(dst, (int)len);
             if (type == SYSLOG_ACTION_READ_CLEAR)
                 kprintf_dmesg_clear();
-            return (unsigned long)copied;
+            return (uint64_t)copied;
         }
         case SYSLOG_ACTION_SIZE_BUFFER:
             return (uint64_t)(65536); /* DMESG_BUF_SIZE */
@@ -6312,15 +6312,15 @@ static uint64_t sys_readdir(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     if (start >= n) return 0; /* end of directory */
 
     uint8_t *buf = (uint8_t *)buf_addr;
-    int total = 0;
+    size_t total = 0;
 
     for (int i = start; i < n; i++) {
         int namelen = (int)strlen(names[i]);
-        int reclen = sizeof(struct linux_dirent64) + namelen + 1;
+        size_t reclen = sizeof(struct linux_dirent64) + (size_t)namelen + 1;
         /* Align to 8 bytes */
-        reclen = (reclen + 7) & ~7;
+        reclen = (reclen + 7) & ~(size_t)7;
 
-        if (total + reclen > (int)count) break;
+        if (total + reclen > (size_t)count) break;
 
         struct linux_dirent64 *entry = (struct linux_dirent64 *)(buf + total);
         entry->d_ino = 1; /* fake inode */
@@ -7104,7 +7104,7 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
         if (flags & O_CLOEXEC)
             proc->fd_table[newfd].flags |= FD_CLOEXEC;
         else
-            proc->fd_table[newfd].flags &= ~FD_CLOEXEC;
+            proc->fd_table[newfd].flags = (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
         return newfd;
     }
 
@@ -7120,7 +7120,7 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     if (flags & O_CLOEXEC)
         proc->fd_table[newfd].flags |= FD_CLOEXEC;
     else
-        proc->fd_table[newfd].flags &= ~FD_CLOEXEC;
+        proc->fd_table[newfd].flags = (uint8_t)(proc->fd_table[newfd].flags & ~(unsigned)FD_CLOEXEC);
 
     return newfd;
 }
@@ -7192,7 +7192,7 @@ static uint64_t sys_mkdtemp(uint64_t template_addr) {
     if (vfs_create(tmpl, 2) < 0)
         return (uint64_t)-1;
 
-    if (copy_to_user(template_addr, tmpl, (unsigned long)len) < 0)
+    if (copy_to_user(template_addr, tmpl, (size_t)len) < 0)
         return (uint64_t)-1;
     return (uint64_t)template_addr;
 }
@@ -7803,14 +7803,14 @@ static uint64_t sys_getdents64(uint64_t fd, uint64_t dirp_addr, uint64_t count) 
     int start = (int)p->fd_table[fd].offset;
     if (start >= n) return 0;
 
-    int total = 0;
+    size_t total = 0;
 
     for (int i = start; i < n; i++) {
         int namelen = (int)strlen(names[i]);
-        int reclen = sizeof(struct linux_dirent64) + namelen + 1;
-        reclen = (reclen + 7) & ~7; /* align to 8 */
+        size_t reclen = sizeof(struct linux_dirent64) + (size_t)namelen + 1;
+        reclen = (reclen + 7) & ~(size_t)7; /* align to 8 */
 
-        if (total + reclen > (int)count) break;
+        if (total + reclen > (size_t)count) break;
 
         /* Build entry in kernel buffer, then copy out */
         uint8_t kentry[512];
@@ -7888,7 +7888,7 @@ static uint64_t sys_munlock(uint64_t addr, uint64_t len) {
 static uint64_t sys_mlockall(uint64_t flags) {
     struct process *p = process_get_current();
     if (!p) return (uint64_t)-ENOMEM;
-    if (flags & ~3) return (uint64_t)-EINVAL; /* MCL_CURRENT=1, MCL_FUTURE=2 */
+    if (flags & ~(uint64_t)3) return (uint64_t)-EINVAL; /* MCL_CURRENT=1, MCL_FUTURE=2 */
     p->vm_locked_flags = (int)(flags & 3);
 
     /* MCL_CURRENT: count currently mapped pages and check limit */
@@ -9836,7 +9836,7 @@ static uint64_t sys_membarrier(uint64_t cmd, uint64_t flags, uint64_t cpu_id) {
     (void)cpu_id;  /* CPU-id-based targeting is optional, ignored in this impl */
 
     /* Validate flags — only MEMBARRIER_CMD_FLAG_CPU is accepted */
-    if (flags & ~MEMBARRIER_CMD_FLAG_CPU)
+    if (flags & ~(uint64_t)MEMBARRIER_CMD_FLAG_CPU)
         return (uint64_t)-1;
 
     switch (cmd) {
@@ -10024,7 +10024,7 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
             /* Copy string a byte at a time using copy_from_user */
             for (int i = 0; i < 255; i++) {
                 char c;
-                if (copy_from_user(&c, pathname + i, 1UL) < 0)
+                if (copy_from_user(&c, pathname + (uint64_t)i, 1UL) < 0)
                     return (uint64_t)(int64_t)-EFAULT;
                 path[i] = c;
                 if (c == '\0') break;

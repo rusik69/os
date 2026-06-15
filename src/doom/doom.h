@@ -24,21 +24,21 @@
 #define DOOM_KEY_RED  1
 #define DOOM_KEY_BLUE 2
 
-#define DOOM_COLOR(r, g, b) (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
+#define DOOM_COLOR(r, g, b) (((uint32_t)(unsigned)(r) << 16) | ((uint32_t)(unsigned)(g) << 8) | (uint32_t)(unsigned)(b))
 #define DOOM_R(c) (((c) >> 16) & 0xFF)
 #define DOOM_G(c) (((c) >> 8) & 0xFF)
 #define DOOM_B(c) ((c) & 0xFF)
 
-static inline uint32_t doom_scale_rgb(uint32_t c, int num, int den) {
+static inline uint32_t doom_scale_rgb(uint32_t c, unsigned num, unsigned den) {
     if (den <= 0) den = 1;
     return DOOM_COLOR((DOOM_R(c) * num) / den,
                       (DOOM_G(c) * num) / den,
                       (DOOM_B(c) * num) / den);
 }
 
-static inline uint32_t doom_lerp_rgb(uint32_t a, uint32_t b, int num, int den) {
+static inline uint32_t doom_lerp_rgb(uint32_t a, uint32_t b, unsigned num, unsigned den) {
     if (den <= 0) den = 1;
-    int inv = den - num;
+    unsigned inv = den - num;
     return DOOM_COLOR((DOOM_R(a) * inv + DOOM_R(b) * num) / den,
                       (DOOM_G(a) * inv + DOOM_G(b) * num) / den,
                       (DOOM_B(a) * inv + DOOM_B(b) * num) / den);

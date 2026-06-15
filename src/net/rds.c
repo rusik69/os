@@ -87,3 +87,5 @@ void rds_init(void)
     memset(rds_conns, 0, sizeof(rds_conns));
     kprintf("[OK] RDS — Reliable Datagram Sockets protocol skeleton\n");
 }
+#include "module.h"
+module_init(rds_init);

@@ -59,7 +59,8 @@ static void fb_refresh_list(gui_filebrowser_t *fb) {
     int count = 0;
 
     if (strcmp(fb->current_path, "/") != 0 && count < MAX_FILES) {
-        strcpy(fb->files[count].name, "..");
+        strncpy(fb->files[count].name, "..", sizeof(fb->files[count].name) - 1);
+        fb->files[count].name[sizeof(fb->files[count].name) - 1] = '\0';
         fb->files[count].is_dir = 1;
         count++;
     }
@@ -87,7 +88,8 @@ static void fb_refresh_list(gui_filebrowser_t *fb) {
             int fl = (int)strlen(full);
             if (fl + 1 + (int)strlen(names[i]) < (int)sizeof(full)) {
                 full[fl++] = '/';
-                strcpy(full + fl, names[i]);
+                strncpy(full + fl, names[i], sizeof(full) - fl - 1);
+                full[sizeof(full) - 1] = '\0';
             }
         }
         uint32_t sz = 0;
@@ -169,7 +171,8 @@ static void fb_event(gui_widget_t *w, gui_event_t *evt) {
             int idx = line + fb->scroll_offset;
             if (idx < fb->file_count) {
                 fb->selected_index = idx;
-                strcpy(fb->selected, fb->files[idx].name);
+                strncpy(fb->selected, fb->files[idx].name, sizeof(fb->selected) - 1);
+                fb->selected[sizeof(fb->selected) - 1] = '\0';
                 
                 if (fb->on_select) {
                     fb->on_select(fb, fb->selected);
@@ -200,8 +203,10 @@ gui_filebrowser_t* gui_filebrowser_create(gui_rect_t rect, const char *path) {
     
     if (path) {
         strncpy(fb->current_path, path, sizeof(fb->current_path) - 1);
+        fb->current_path[sizeof(fb->current_path) - 1] = '\0';
     } else {
-        strcpy(fb->current_path, "/");
+        strncpy(fb->current_path, "/", sizeof(fb->current_path) - 1);
+        fb->current_path[sizeof(fb->current_path) - 1] = '\0';
     }
     
     fb_refresh_list(fb);
@@ -324,7 +329,8 @@ void gui_taskbar_add_button(gui_taskbar_t *tb, const char *label,
     if (btn) {
         gui_button_set_on_click(btn, on_click);
         tb->buttons[tb->button_count].btn = btn;
-        strcpy(tb->buttons[tb->button_count].label, label);
+        strncpy(tb->buttons[tb->button_count].label, label, sizeof(tb->buttons[tb->button_count].label) - 1);
+        tb->buttons[tb->button_count].label[sizeof(tb->buttons[tb->button_count].label) - 1] = '\0';
         tb->button_count++;
     }
 }
