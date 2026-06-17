@@ -33,7 +33,7 @@ static const char *detect_fs(int fd) {
     /* btrfs: "_BHRfS_M" at offset 0x10040 (or at offset 64 in superblock at 0x10000) */
     /* Actually btrfs superblock is at 0x10000, magic at offset 0x10040 */
     {
-        char btrfs_magic[8] = "_BHRfS_M";
+        char btrfs_magic[8] = {'_','B','H','R','f','S','_','M'};
         char tmp[8];
         if (lseek(fd, 0x10040, SEEK_SET) >= 0 && read(fd, tmp, 8) == 8) {
             if (memcmp(tmp, btrfs_magic, 8) == 0)
@@ -44,7 +44,7 @@ static const char *detect_fs(int fd) {
 
     /* ReiserFS: "ReIsErFs" or "ReIsEr2Fs" at offset 0x10000 + 0x34 */
     {
-        char reiser_magic[8] = "ReIsErFs";
+        char reiser_magic[8] = {'R','e','I','s','E','r','F','s'};
         char tmp[8];
         if (lseek(fd, 0x10034, SEEK_SET) >= 0 && read(fd, tmp, 8) == 8) {
             if (memcmp(tmp, reiser_magic, 8) == 0)

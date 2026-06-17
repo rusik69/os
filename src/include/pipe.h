@@ -50,6 +50,9 @@ int pipe_set_capacity(int pipe_id, int new_capacity);
 /* Get current pipe buffer capacity. */
 int pipe_get_capacity(int pipe_id);
 
+/* Get bytes available for reading. */
+int pipe_available(int pipe_id);
+
 /* Initialize pipe subsystem */
 void pipe_init(void);
 

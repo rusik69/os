@@ -39,7 +39,6 @@ static void append(void) {
 static void insert(void) {
     /* Insert before current line */
     char buf[MAXLINE];
-    int inserted = 0;
     while (1) {
         int n = read(0, buf, sizeof(buf) - 1);
         if (n <= 0 || (n == 1 && buf[0] == '\n')) break;
@@ -54,7 +53,6 @@ static void insert(void) {
             strcpy(lines[cur], buf);
             nlines++;
             cur++;
-            inserted++;
         }
     }
 }

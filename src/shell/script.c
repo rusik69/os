@@ -190,6 +190,8 @@ static void handle_set(const char *args) {
 }
 
 /* ── Main execution entry point ───────────────────────────────────────────── */
+int script_run(const char *text);
+
 int script_exec(const char *path) {
     static char buf[SCRIPT_MAX_SIZE];
     uint32_t size = 0;
@@ -198,10 +200,14 @@ int script_exec(const char *path) {
         return -1;
     }
     buf[size] = '\0';
+    return script_run(buf);
+}
+
+int script_run(const char *text) {
     vars_reset();
     cf_depth = 0;
 
-    const char *p = buf;
+    const char *p = text;
     char line[SCRIPT_MAX_LINE];
     char expanded[SCRIPT_MAX_LINE];
 

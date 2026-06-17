@@ -2479,6 +2479,7 @@ void shell_exec_cmd(const char *cmd, const char *args) {
 }
 
 void shell_run(void) {
+    shell_init();
     history_load();
     history_persist_load();  /* load persistent history from /home/user/.history */
     kprintf("\nWelcome to the OS shell. Type 'help' for commands.\n\n");
@@ -2927,6 +2928,8 @@ void shell_run(void) {
 }
 
 void shell_init(void) {
+    extern void cli_test_run(void);
+    cli_test_run();
 }
 
 /* Read a line from keyboard into buf (up to max-1 chars) */

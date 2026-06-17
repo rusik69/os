@@ -37,7 +37,6 @@ static unsigned long long parse_iec(const char *s) {
     unsigned long long val = 0;
     int has_dot = 0;
     unsigned long long frac = 0;
-    int frac_digits = 0;
     int frac_mult = 1;
 
     while (*s >= '0' && *s <= '9') {
@@ -50,7 +49,6 @@ static unsigned long long parse_iec(const char *s) {
         has_dot = 1;
         while (*s >= '0' && *s <= '9') {
             frac = frac * 10 + (*s - '0');
-            frac_digits++;
             frac_mult *= 10;
             s++;
         }

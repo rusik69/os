@@ -209,6 +209,7 @@ C_SRCS = src/kernel/kernel.c \
          src/shell/script.c \
          src/shell/history_persist.c \
          src/shell/job_control.c \
+         src/shell/cli_test.c \
          src/fs/fs.c \
          src/fs/procfs.c \
          src/fs/devfs.c \
@@ -1123,7 +1124,7 @@ all: $(BUILDDIR)/disk.img
 
 # ── Phony targets ─────────────────────────────────────────────────────
 
-.PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-clean clean-all \
+.PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-cli test-clean clean-all \
         check check-full check-clean check-app-boundary check-debug doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
         stress stress-help \
         modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse \
@@ -1300,14 +1301,14 @@ $(BUILDDIR)/disk.img: $(ROOTFS_STAMP)
 # ── Run targets ───────────────────────────────────────────────────────
 
 run: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
-	qemu-system-x86_64 -cpu max,-x2apic -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+	qemu-system-x86_64 -cpu max,-x2apic -smp 2 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-display cocoa -k en-us \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
 		-netdev user,id=net0 -device e1000,netdev=net0 ; \
 	stty sane
 
 run-virtio: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
-	qemu-system-x86_64 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
+	qemu-system-x86_64 -cpu max,-x2apic -smp 2 -kernel $(BUILDDIR)/kernel.bin -m 256M -serial stdio -vga std \
 		-drive file=$(BUILDDIR)/disk.img,format=raw,if=ide \
 		-netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
 		-no-reboot
@@ -1396,6 +1397,12 @@ test: $(BUILDDIR)/disk.img
 	@echo "============================================"
 	@echo "  make test completed"
 	@echo "============================================"
+
+# ── Test CLI utilities ────────────────────────────────────────
+# Builds everything, injects test script into rootfs, boots QEMU with
+# SMP and runs every compiled command in the VM, reporting PASS/FAIL.
+test-cli:
+	@python3 src/test/test_cli.py --timeout 60 --smp 2
 
 # ── Stress test target ─────────────────────────────────────────
 # Builds the stress test ELFs, injects them into the disk image,
