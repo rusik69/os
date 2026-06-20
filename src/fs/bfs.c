@@ -130,6 +130,21 @@ static struct vfs_ops bfs_ops = {
     .readdir = bfs_readdir,
 };
 
+/* ── Probe ──────────────────────────────────────────────────────── */
+
+int bfs_probe(uint8_t dev_id)
+{
+    uint8_t buf[512];
+    if (blockdev_read_sectors(dev_id, 0, 1, buf) != 0)
+        return -1;
+    struct bfs_superblock *sb = (struct bfs_superblock *)buf;
+    if (sb->s_magic == BFS_MAGIC) {
+        kprintf("[bfs] SCO BFS detected on dev %u\n", dev_id);
+        return 0;
+    }
+    return -1;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 int bfs_init(void)

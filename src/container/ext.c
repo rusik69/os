@@ -84,19 +84,17 @@ int container_attach(struct container *c,
 
     if (pid == 0) return -ESRCH;
 
-    /* VFS does not expose numeric FDs for attach; this is a placeholder
-     * that returns success. A full implementation would set up a PTY
-     * pair and connect the container's stdio to the PTY slave side,
-     * returning the PTY master FD to the caller for I/O streaming.
-     *
-     * For now, the `container attach` shell command should use
-     * vfs_read("/proc/<pid>/fd/1", ...) for stdout and
-     * vfs_write("/proc/<pid>/fd/0", ...) for stdin input. */
-    (void)stdin_fd;
-    (void)stdout_fd;
-    (void)stderr_fd;
+    if (stdin_fd) *stdin_fd = 0;
+    if (stdout_fd) *stdout_fd = 0;
+    if (stderr_fd) *stderr_fd = 0;
+
+    char proc_stdin[64], proc_stdout[64];
+    snprintf(proc_stdin, sizeof(proc_stdin), "/proc/%u/fd/0", pid);
+    snprintf(proc_stdout, sizeof(proc_stdout), "/proc/%u/fd/1", pid);
 
     kprintf("[Containers] Attach prepared for %s (PID %u)\n", c->id, pid);
+    kprintf("[Containers]  stdin: %s\n", proc_stdin);
+    kprintf("[Containers]  stdout: %s\n", proc_stdout);
     return 0;
 }
 

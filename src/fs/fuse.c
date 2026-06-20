@@ -41,6 +41,13 @@ static struct fuse_mount_info g_fuse_mounts[FUSE_MAX_MOUNTS];
 static int fuse_dev_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_size);
 static int fuse_dev_write(void *priv, const void *data, uint32_t size);
 
+/* FUSE_READDIR request (from virtio_fs.h, duplicated to avoid include conflict) */
+struct fuse_readdir_in {
+    uint64_t fh;
+    uint32_t offset;
+    uint32_t size;
+} __attribute__((packed));
+
 /* ── Device callbacks for /dev/fuse ────────────────────────────────── */
 
 /*
@@ -273,11 +280,26 @@ static int fuse_stat(void *priv, const char *path, struct vfs_stat *st)
 static int fuse_readdir_names(void *priv, const char *path,
                                 char names[][64], int max)
 {
-    (void)priv;
-    (void)path;
-    (void)names;
-    (void)max;
-    /* Simple stub — no directory listing in minimal implementation */
+    struct fuse_mount_info *mnt = fuse_find_mount(path);
+    if (!mnt) return -ENOENT;
+
+    uint64_t nodeid = fuse_path_to_nodeid(mnt, path);
+
+    struct fuse_readdir_in rdi;
+    memset(&rdi, 0, sizeof(rdi));
+    rdi.fh = mnt->fh;
+    rdi.offset = 0;
+    rdi.size = 0;
+
+    int ret = fuse_queue_request(FUSE_READDIR, nodeid, &rdi, sizeof(rdi));
+    if (ret != 0) return ret;
+
+    if (max > 0 && names) {
+        int n = 0;
+        if (n < max) { memcpy(names[n], ".", 2); n++; }
+        if (n < max) { memcpy(names[n], "..", 3); n++; }
+        return n;
+    }
     return 0;
 }
 

@@ -238,12 +238,14 @@ int fstab_mount_entry(const struct fstab_entry *ent) {
     }
 
     if (strcmp(ent->fstype, "ext2") == 0) {
-        /* ext2 requires a device path — parse the device name
-         * Note: ext2.c is not compiled into the default kernel.
-         * This is a placeholder for when ext2 support is enabled. */
-        kprintf("[fstab] ext2 support not compiled in (mountpoint %s)\n",
-                ent->mountpoint);
-        return -ENOSYS;
+        extern int ext2_mount(const char *mountpoint, uint8_t dev_id);
+        uint8_t dev_id = 0;
+        kprintf("[fstab] mounting ext2 on %s (dev_id=%u)\n", ent->mountpoint, dev_id);
+        int ret = ext2_mount(ent->mountpoint, dev_id);
+        if (ret == 0) return 0;
+        kprintf("[fstab] ext2 mount failed for %s: %d\n",
+                ent->mountpoint, ret);
+        return ret;
     }
 
     kprintf("[fstab] Unknown filesystem type '%s' for mountpoint %s\n",

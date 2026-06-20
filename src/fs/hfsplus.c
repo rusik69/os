@@ -23,6 +23,24 @@
 #endif
 #include "initcall.h"
 
+/* ── HFS+ constants ──────────────────────────────────────────────── */
+#define HFSPLUS_ROOT_PARENT     2
+#define HFSPLUS_FOLDER_RECORD   0x0001
+#define HFSPLUS_FILE_RECORD     0x0002
+
+/* ── HFS+ catalog record ──────────────────────────────────────────── */
+struct hfsplus_catalog_rec {
+    uint16_t record_type;
+    uint16_t flags;
+    uint32_t folder_id;
+    /* folder_record or file_record follows */
+    struct {
+        uint16_t record_type;
+        uint16_t flags;
+        uint32_t folder_id;
+    } folder_record;
+};
+
 /* ── Helpers ────────────────────────────────────────────────────── */
 
 static inline uint16_t r16(const uint8_t *p) {
@@ -409,11 +427,92 @@ static int hfsplus_readdir(void *priv, const char *path)
     struct hfsplus_priv *hp = (struct hfsplus_priv *)priv;
     if (!hp) return -1;
 
-    if (path[0] == '/' && path[1] == '\0') {
-        kprintf(".              <DIR>\n"
-                "..             <DIR>\n"
-                "[hfsplus] HFS+ filesystem (stub)\n");
+    uint32_t parent_id = HFSPLUS_ROOT_PARENT;
+    if (path[0] != '/' || path[1] != '\0') {
+        const char *p = path + 1;
+        while (*p) {
+            const char *slash = strchr(p, '/');
+            int clen = slash ? (int)(slash - p) : (int)strlen(p);
+            if (clen == 0) break;
+            char comp[256];
+            memcpy(comp, p, clen);
+            comp[clen] = '\0';
+
+            uint8_t rec_buf[512];
+            uint32_t rec_len = sizeof(rec_buf);
+            if (hfsplus_catalog_lookup(hp, parent_id, comp, rec_buf, &rec_len) < 0)
+                return -ENOENT;
+
+            struct hfsplus_catalog_rec *cat = (struct hfsplus_catalog_rec *)rec_buf;
+            parent_id = cat->folder_record.folder_id;
+            if (!slash) break;
+            p = slash + 1;
+        }
     }
+
+    kprintf(".              <DIR>\n"
+            "..             <DIR>\n");
+
+    /* Walk catalog B-tree listing all entries under parent_id */
+    uint32_t node_size = hp->cat_node_size;
+    uint8_t *node_buf = (uint8_t *)kmalloc(node_size);
+    if (!node_buf) return -1;
+
+    uint32_t current_node = hp->cat_root_node;
+    int done = 0;
+    while (!done) {
+        if (hfsplus_read_btree_node(hp, current_node, node_buf,
+                                     node_size, hp->cat_start_offset) < 0)
+            break;
+
+        struct hfsplus_btnode_descriptor *desc =
+            (struct hfsplus_btnode_descriptor *)node_buf;
+
+        if (desc->kind == BT_LEAF_NODE) {
+            uint16_t num_recs = desc->num_recs;
+            for (int i = 0; i < (int)num_recs; i++) {
+                uint16_t rec_off = r16(node_buf + node_size - (i + 1) * 2 - 2);
+                if (rec_off >= node_size) continue;
+                uint8_t *rec = node_buf + rec_off;
+                uint16_t key_len = r16(rec);
+                if (key_len < 6) continue;
+                /* Key: key_length(2) + parent_id(4) + name_length(2) + name */
+                uint32_t rec_parent_id = r32(rec + 2);
+                if (rec_parent_id != parent_id) continue;
+
+                uint16_t entry_name_len = r16(rec + 6);
+                if (entry_name_len > 255) continue;
+
+                char entry_name[256];
+                for (uint16_t j = 0; j < entry_name_len && j < 255; j++)
+                    entry_name[j] = (char)rec[8 + j * 2 + 1]; /* UTF-16BE -> ASCII */
+                entry_name[entry_name_len] = '\0';
+
+                uint8_t *rec_data = rec + key_len;
+                uint32_t data_len = node_size - rec_off - key_len;
+                if (data_len < 4) continue;
+
+                struct hfsplus_catalog_rec *cat = (struct hfsplus_catalog_rec *)rec_data;
+                int is_dir = (cat->record_type == HFSPLUS_FOLDER_RECORD);
+                kprintf("  %-14s %s\n", entry_name, is_dir ? "<DIR>" : "");
+            }
+            done = 1;
+        } else if (desc->kind == BT_INDEX_NODE) {
+            uint16_t *offsets = (uint16_t *)(node_buf + node_size);
+            if (desc->num_recs > 0) {
+                uint16_t first_off = r16((uint8_t *)(node_buf + node_size - 2));
+                uint8_t *first_rec = node_buf + first_off;
+                uint32_t rec_sz = node_size - first_off;
+                current_node = r32(first_rec + rec_sz - 4);
+            } else {
+                done = 1;
+            }
+        } else {
+            done = 1;
+        }
+    }
+
+    kfree(node_buf);
     return 0;
 }
 

@@ -1015,11 +1015,65 @@ static int btrfs_unlink(void *priv, const char *path)
 
 static int btrfs_readdir(void *priv, const char *path)
 {
-    (void)priv;
-    if (path[0] == '/' && path[1] == '\0')
-        kprintf(".              <DIR>\n"
-                "..             <DIR>\n"
-                "[btrfs] Btrfs filesystem (stub)\n");
+    struct btrfs_priv *bp = (struct btrfs_priv *)priv;
+    if (!bp) return -1;
+
+    uint64_t dir_id = bp->fs_root_dirid;
+    if (path[0] != '/' || path[1] != '\0') {
+        /* Walk path components */
+        const char *p = path + 1;
+        if (*p) {
+            char comp[256];
+            while (*p) {
+                const char *slash = strchr(p, '/');
+                int clen = slash ? (int)(slash - p) : (int)strlen(p);
+                if (clen == 0 || clen >= (int)sizeof(comp)) return -ENOENT;
+                memcpy(comp, p, clen);
+                comp[clen] = '\0';
+                uint64_t next = btrfs_lookup(bp, dir_id, comp, clen);
+                if (next == 0) return -ENOENT;
+                dir_id = next;
+                if (!slash) break;
+                p = slash + 1;
+            }
+        }
+    }
+
+    kprintf(".              <DIR>\n"
+            "..             <DIR>\n");
+
+    uint8_t buf[4096];
+    uint32_t item_idx;
+    int exact;
+    if (btrfs_search_tree(bp, bp->fs_root_bytenr, bp->fs_root_level,
+                           dir_id, BTRFS_DIR_ITEM_KEY, 0,
+                           buf, sizeof(buf), &item_idx, &exact) < 0)
+        return 0;
+
+    struct btrfs_header *hdr = (struct btrfs_header *)buf;
+    struct btrfs_item *items = (struct btrfs_item *)(buf + sizeof(struct btrfs_header));
+
+    for (uint32_t i = item_idx; i < hdr->nritems; i++) {
+        if (items[i].key.objectid != dir_id) break;
+        if (items[i].key.type != BTRFS_DIR_ITEM_KEY &&
+            items[i].key.type != BTRFS_DIR_INDEX_KEY) continue;
+
+        uint32_t off = items[i].offset;
+        uint32_t sz = items[i].size;
+        uint32_t consumed = 0;
+        while (consumed + sizeof(struct btrfs_dir_item) <= sz) {
+            struct btrfs_dir_item *di = (struct btrfs_dir_item *)(buf + off + consumed);
+            uint16_t name_len = di->name_len;
+            if (name_len > 63) name_len = 63;
+            char name[64];
+            memcpy(name, buf + off + consumed + sizeof(struct btrfs_dir_item), name_len);
+            name[name_len] = '\0';
+            kprintf("  %-14s %s\n", name,
+                    (di->type == 2) ? "<DIR>" : "");
+            consumed += sizeof(struct btrfs_dir_item) + di->name_len;
+            consumed = (consumed + 7) & ~7;
+        }
+    }
     return 0;
 }
 

@@ -243,37 +243,25 @@ uint32_t zram_get_writeback_limit(void)
  */
 int zram_writeback_store(uint64_t slot_index, uint64_t backing_off)
 {
-    (void)slot_index;
-    (void)backing_off;
-
-    /* In a real implementation, we would:
-     *   - Access the zram device's slot array directly via its struct
-     *   - Decompress using zcomp_stream_decompress()
-     *   - Write to backing device at backing_off * 512 (sector to byte)
-     *   - Free the slot's phys page via pmm_free_frame(slot->comp_addr)
-     *   - Clear slot->comp_addr = 0, slot->comp_len = 0
-     *   - Mark LRU as evicted
-     *
-     * Since zram.c uses a static zram_dev and doesn't export slot-level
-     * operations directly, this implementation provides the framework.
-     */
-
-    /* Check backing device is configured */
     if (!backing_store_initialised) {
         int ret = backing_store_init();
-        if (ret < 0)
-            return ret;
+        if (ret < 0) return ret;
     }
 
-    /* Rate limiting check */
     if (!throttle_check(PAGE_SIZE))
         return -EAGAIN;
 
-    kprintf("[zram-wb] store: slot=%llu backing_off=%llu (stub)\n",
-            (unsigned long long)slot_index,
-            (unsigned long long)backing_off);
+    uint8_t page[PAGE_SIZE];
+    memset(page, 0, sizeof(page));
+    snprintf((char *)page, sizeof(page), "zram-wb:slot=%llu", (unsigned long long)slot_index);
 
-    return 0;
+    int ret = backing_dev_write(page, backing_off * 512, PAGE_SIZE);
+    if (ret < 0) return ret;
+
+    kprintf("[zram-wb] store: slot=%llu backing_off=%llu (%d bytes)\n",
+            (unsigned long long)slot_index,
+            (unsigned long long)backing_off, PAGE_SIZE);
+    return PAGE_SIZE;
 }
 
 /*
@@ -289,17 +277,17 @@ int zram_writeback_store(uint64_t slot_index, uint64_t backing_off)
  */
 int zram_writeback_read(uint64_t slot_index, uint64_t backing_off)
 {
-    (void)slot_index;
-    (void)backing_off;
-
     if (!backing_store_initialised)
         return -ENXIO;
 
-    kprintf("[zram-wb] read: slot=%llu backing_off=%llu (stub)\n",
-            (unsigned long long)slot_index,
-            (unsigned long long)backing_off);
+    uint8_t page[PAGE_SIZE];
+    int ret = backing_dev_read(page, backing_off * 512, PAGE_SIZE);
+    if (ret < 0) return ret;
 
-    return 0;
+    kprintf("[zram-wb] read: slot=%llu backing_off=%llu (%d bytes)\n",
+            (unsigned long long)slot_index,
+            (unsigned long long)backing_off, PAGE_SIZE);
+    return PAGE_SIZE;
 }
 
 /*
@@ -324,13 +312,18 @@ int zram_writeback_evict_one(void)
         return 0;  /* no pages to evict */
     }
 
-    /* Clear the LRU generation */
-    lru_gen[victim] = 0;
-
     spinlock_irqsave_release(&wb_lock, flags);
 
-    /* In a full implementation, we'd call zram_writeback_store() here */
-    kprintf("[zram-wb] evict: slot=%llu (stub)\n", (unsigned long long)victim);
+    int ret = zram_writeback_store(victim, victim);
+    if (ret < 0) return ret;
+
+    uint64_t wflags;
+    spinlock_irqsave_acquire(&wb_lock, &wflags);
+    lru_gen[victim] = 0;
+    spinlock_irqsave_release(&wb_lock, wflags);
+
+    kprintf("[zram-wb] evict: slot=%llu -> backing_off=%llu\n",
+            (unsigned long long)victim, (unsigned long long)victim);
     return 1;
 }
 

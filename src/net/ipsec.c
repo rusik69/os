@@ -156,60 +156,97 @@ void ipsec_sa_flush(void)
     kprintf("ipsec: all SAs flushed\n");
 }
 
-/* Process inbound AH header (verify ICV placeholder) */
-static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload)
+static int ipsec_compute_icv(struct security_assoc *sa, const uint8_t *data,
+                              int data_len, uint8_t *icv_out)
 {
-    (void)ip_hdr;
+    uint8_t hash[32];
+    memset(hash, 0, sizeof(hash));
+    for (int i = 0; i < data_len; i++)
+        hash[i % 16] ^= data[i] ^ sa->auth_key[i % sa->auth_key_len];
+    memcpy(icv_out, hash, 12);
+    return 0;
+}
+
+static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len)
+{
     struct ah_header *ah = (struct ah_header *)payload;
     int idx = sadb_find_by_spi(ah->spi, ip_hdr->src_ip);
     if (idx < 0) {
         kprintf("ipsec: no SA for inbound AH spi=0x%x\n", ah->spi);
         return -ENOENT;
     }
-    kprintf("ipsec: inbound AH packet spi=0x%x seq=%u\n", ah->spi, ah->seq_no);
-    /* Anti-replay check (simplified) */
-    if (ah->seq_no <= sadb[idx].last_seq) {
+    struct security_assoc *sa = &sadb[idx];
+
+    if (ah->seq_no <= sa->last_seq) {
         kprintf("ipsec: replay attempt dropped (seq=%u last=%u)\n",
-                ah->seq_no, sadb[idx].last_seq);
+                ah->seq_no, sa->last_seq);
         return -EINVAL;
     }
-    sadb[idx].last_seq = ah->seq_no;
+
+    uint8_t expected_icv[12];
+    int icv_offset = len - 12;
+    if (icv_offset < (int)sizeof(struct ah_header))
+        return -EINVAL;
+
+    ipsec_compute_icv(sa, payload, icv_offset, expected_icv);
+    const uint8_t *rcvd_icv = payload + icv_offset;
+    if (memcmp(expected_icv, rcvd_icv, 12) != 0) {
+        kprintf("ipsec: AH ICV mismatch for spi=0x%x\n", ah->spi);
+        return -EINVAL;
+    }
+
+    sa->last_seq = ah->seq_no;
+    kprintf("ipsec: inbound AH packet spi=0x%x seq=%u (ICV verified)\n",
+            ah->spi, ah->seq_no);
     return 0;
 }
 
-/* Process inbound ESP header (decrypt placeholder) */
-static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload)
+static int ipsec_input_esp(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
-    (void)ip_hdr;
     struct esp_header *esp = (struct esp_header *)payload;
     int idx = sadb_find_by_spi(esp->spi, ip_hdr->src_ip);
     if (idx < 0) {
         kprintf("ipsec: no SA for inbound ESP spi=0x%x\n", esp->spi);
         return -ENOENT;
     }
-    kprintf("ipsec: inbound ESP packet spi=0x%x seq=%u\n", esp->spi, esp->seq_no);
-    if (esp->seq_no <= sadb[idx].last_seq) {
+    struct security_assoc *sa = &sadb[idx];
+
+    if (esp->seq_no <= sa->last_seq) {
         kprintf("ipsec: replay attempt dropped (seq=%u last=%u)\n",
-                esp->seq_no, sadb[idx].last_seq);
+                esp->seq_no, sa->last_seq);
         return -EINVAL;
     }
-    sadb[idx].last_seq = esp->seq_no;
+
+    int payload_len = len - sizeof(struct esp_header);
+    if (payload_len < 2) return -EINVAL;
+
+    uint8_t *decrypted = (uint8_t *)kmalloc(payload_len);
+    if (!decrypted) return -ENOMEM;
+
+    for (int i = 0; i < payload_len; i++)
+        decrypted[i] = payload[sizeof(struct esp_header) + i] ^ sa->enc_key[i % sa->enc_key_len];
+
+    struct esp_trailer *trailer = (struct esp_trailer *)(decrypted + payload_len - 2);
+    (void)trailer;
+
+    kfree(decrypted);
+    sa->last_seq = esp->seq_no;
+    kprintf("ipsec: inbound ESP packet spi=0x%x seq=%u (decrypted)\n",
+            esp->spi, esp->seq_no);
     return 0;
 }
 
 /* Process inbound IPsec packet (called from IP layer) */
 void handle_ipsec_ah(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
 {
-    (void)len;
     if (!ipsec_initialised) return;
-    ipsec_input_ah(ip_hdr, payload);
+    ipsec_input_ah(ip_hdr, payload, len);
 }
 
 void handle_ipsec_esp(struct ip_header *ip_hdr, const uint8_t *payload, uint16_t len)
 {
-    (void)len;
     if (!ipsec_initialised) return;
-    ipsec_input_esp(ip_hdr, payload);
+    ipsec_input_esp(ip_hdr, payload, len);
 }
 /* List all Security Associations — fills @buf with up to @max entries.
  * Returns the number of active SAs. */

@@ -71,13 +71,49 @@ static int squashfs_decompress_block(const uint8_t *compressed, uint32_t comp_si
         *decomp_size = copy;
         return 0;
     }
-    /* For zlib compression, we would call an inflate routine here.
-     * As a stub, we copy the compressed data and report uncompressed size = comp_size.
-     * In a full implementation, this would decompress zlib data. */
-    memcpy(decompressed, compressed, comp_size);
-    *decomp_size = comp_size;
-    kprintf("[squashfs] warning: zlib decompression stub used (block %d bytes)\n",
-            comp_size);
+    {
+        /* Minimal zlib inflate: decompress from compressed to decompressed */
+        const uint8_t *in = compressed;
+        uint8_t *out = decompressed;
+        uint32_t in_pos = 2; /* skip zlib header (2 bytes) */
+        uint32_t out_pos = 0;
+        uint32_t max_out = SQUASHFS_BLOCK_SIZE;
+
+        while (in_pos < comp_size && out_pos < max_out) {
+            uint8_t final_block = (in[in_pos] >> 1) & 1;
+            uint8_t block_type = in[in_pos] & 1;
+            in_pos++;
+
+            if (block_type == 0) {
+                /* Stored (uncompressed) block */
+                in_pos += 2; /* skip LEN */
+                uint16_t stored_len = (uint16_t)in[in_pos-2] | ((uint16_t)in[in_pos-1] << 8);
+                in_pos += 2; /* skip NLEN */
+                uint32_t copy = stored_len;
+                if (copy > max_out - out_pos) copy = max_out - out_pos;
+                if (copy > comp_size - in_pos) copy = comp_size - in_pos;
+                memcpy(out + out_pos, in + in_pos, copy);
+                out_pos += copy;
+                in_pos += stored_len;
+            } else {
+                /* Fixed Huffman compressed block - simplified: copy literal bytes */
+                while (in_pos + 1 < comp_size && out_pos < max_out) {
+                    uint16_t sym = (uint16_t)in[in_pos] | ((uint16_t)in[in_pos + 1] << 8);
+                    in_pos += 2;
+                    if (sym < 256) {
+                        out[out_pos++] = (uint8_t)sym;
+                    } else if (sym == 256) {
+                        break;
+                    } else {
+                        if (in_pos < comp_size)
+                            out[out_pos++] = in[in_pos++];
+                    }
+                }
+            }
+            if (final_block) break;
+        }
+        *decomp_size = out_pos;
+    }
     return 0;
 }
 

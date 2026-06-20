@@ -249,11 +249,11 @@ int usleep(unsigned long usec) {
 /* ── I/O control ────────────────────────────────────────────────── */
 
 int ioctl(int fd, unsigned long request, ...) {
-    /* For now, stub: no ioctl support beyond standard operations.
-     * The kernel's SYS_IOCTL can be called here. */
-    (void)fd;
-    (void)request;
-    return -1;  /* ENOTTY */
+    __builtin_va_list ap;
+    __builtin_va_start(ap, request);
+    void *arg = __builtin_va_arg(ap, void *);
+    __builtin_va_end(ap);
+    return (int)do_syscall6(SYS_IOCTL, (uint64_t)(int64_t)fd, request, (uint64_t)(uintptr_t)arg, 0, 0);
 }
 
 /* ── Truncation ─────────────────────────────────────────────────── */

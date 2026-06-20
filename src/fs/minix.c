@@ -194,6 +194,32 @@ static struct vfs_ops minix_ops = {
     .readdir = minix_readdir,
 };
 
+/* ── Probe ──────────────────────────────────────────────────────── */
+
+int minix_probe(uint8_t dev_id)
+{
+    uint8_t buf[1024];
+    if (blockdev_read_sectors(dev_id, 0, 2, buf) != 0)
+        return -1;
+    struct minix_superblock_v1 *sb = (struct minix_superblock_v1 *)buf;
+    uint16_t magic = sb->s_magic;
+    if (magic == MINIX_MAGIC_V1 || magic == MINIX_MAGIC_V1_2) {
+        kprintf("[minix] MINIX v1 detected on dev %u\n", dev_id);
+        return 0;
+    }
+    if (magic == MINIX_MAGIC_V2 || magic == MINIX_MAGIC_V2_2) {
+        kprintf("[minix] MINIX v2 detected on dev %u\n", dev_id);
+        return 0;
+    }
+    /* V3 superblock has magic at a different offset */
+    struct minix_superblock_v3 *sb3 = (struct minix_superblock_v3 *)buf;
+    if (sb3->s_magic == MINIX_MAGIC_V3) {
+        kprintf("[minix] MINIX v3 detected on dev %u\n", dev_id);
+        return 0;
+    }
+    return -1;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 int minix_init(void)

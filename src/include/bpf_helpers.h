@@ -15,6 +15,13 @@ uint32_t bpf_get_smp_processor_id(void);
 uint64_t bpf_dispatch_helper(int helper_id, uint64_t r1, uint64_t r2,
                               uint64_t r3, uint64_t r4, uint64_t r5);
 
+/* Context for bpf_perf_event_output helper */
+struct bpf_perf_event_output_ctx {
+    uint64_t data;
+    uint32_t size;
+    uint32_t flags;
+};
+
 /* Initialize BPF helpers subsystem */
 void bpf_helpers_init(void);
 

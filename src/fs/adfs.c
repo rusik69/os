@@ -167,6 +167,23 @@ static struct vfs_ops adfs_ops = {
     .readdir = adfs_readdir,
 };
 
+/* ── Probe ──────────────────────────────────────────────────────── */
+
+int adfs_probe(uint8_t dev_id)
+{
+    uint8_t buf[512];
+    if (blockdev_read_sectors(dev_id, 0, 1, buf) != 0)
+        return -1;
+    struct adfs_discrec *dr = (struct adfs_discrec *)buf;
+    if (dr->log2secsize >= 8 && dr->log2secsize <= 10 &&
+        dr->secspertrack > 0 && dr->heads > 0) {
+        kprintf("[adfs] ADFS detected on dev %u (secsize=%d, sec/track=%d)\n",
+                dev_id, 1 << dr->log2secsize, dr->secspertrack);
+        return 0;
+    }
+    return -1;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 int adfs_init(void)

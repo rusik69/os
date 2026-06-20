@@ -89,7 +89,22 @@ int cmd_compose(int argc, char **argv) {
             return 0;
         }
         kprintf("--- Logs for compose app '%s' ---\n", argv[2]);
-        kprintf("(compose log viewer — not yet fully implemented)\n");
+        char logpath[128];
+        snprintf(logpath, sizeof(logpath), "/var/log/compose/%s.log", argv[2]);
+        struct vfs_stat st;
+        if (vfs_stat(logpath, &st) == 0 && st.size > 0) {
+            char *buf = (char *)kmalloc(st.size + 1);
+            if (buf) {
+                uint32_t out_size;
+                if (vfs_read(logpath, buf, st.size, &out_size) == 0) {
+                    buf[out_size] = '\0';
+                    kprintf("%s", buf);
+                }
+                kfree(buf);
+            }
+        } else {
+            kprintf("(no logs found for '%s')\n", argv[2]);
+        }
         return 0;
     }
 

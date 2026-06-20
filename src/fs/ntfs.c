@@ -23,6 +23,9 @@
 #endif
 #include "initcall.h"
 
+/* ── MFT root directory index ──────────────────────────────────────── */
+#define MFT_ROOT_INDEX 5
+
 /* ── Helpers ────────────────────────────────────────────────────── */
 
 static inline uint16_t r16(const uint8_t *p) {
@@ -378,14 +381,89 @@ static int ntfs_is_directory(struct ntfs_priv *np, uint8_t *mft_rec)
     return (rec->flags & MFT_RECORD_DIR) ? 1 : 0;
 }
 
+/* ── Lookup path in MFT ──────────────────────────────────────────── */
+
+static uint64_t ntfs_lookup_path(struct ntfs_priv *np, const char *path)
+{
+    if (!path || path[0] != '/') return 0;
+    if (path[1] == '\0') return MFT_ROOT_INDEX;
+
+    uint64_t current_dir = MFT_ROOT_INDEX;
+    char component[256];
+    const char *p = path + 1;
+
+    while (*p) {
+        const char *slash = strchr(p, '/');
+        int clen;
+        if (slash) {
+            clen = (int)(slash - p);
+        } else {
+            clen = (int)strlen(p);
+        }
+        if (clen == 0 || clen >= (int)sizeof(component)) return 0;
+        memcpy(component, p, clen);
+        component[clen] = '\0';
+
+        /* Read MFT record for current_dir to find child */
+        uint8_t *mft_rec = ntfs_read_mft_rec(np, current_dir);
+        if (!mft_rec) return 0;
+
+        /* Find INDEX_ROOT or INDEX_ALLOCATION attribute for directory listing */
+        int attr_len;
+        uint8_t *index_attr = ntfs_find_attr(np, mft_rec, AT_INDEX_ROOT, &attr_len);
+        if (!index_attr) {
+            kfree(mft_rec);
+            return 0;
+        }
+
+        /* For simplicity, search for matching name in directory */
+        uint64_t found_ino = 0;
+        for (uint64_t ino = MFT_ROOT_INDEX; ino < 256; ino++) {
+            uint8_t *child_rec = ntfs_read_mft_rec(np, ino);
+            if (!child_rec) continue;
+            struct ntfs_mft_rec *cr = (struct ntfs_mft_rec *)child_rec;
+            if (cr->magic != 0x454C4946) { kfree(child_rec); continue; }
+            char child_name[256];
+            if (ntfs_get_filename(np, child_rec, child_name, sizeof(child_name)) == 0) {
+                if (strcmp(child_name, component) == 0) {
+                    found_ino = ino;
+                    kfree(child_rec);
+                    break;
+                }
+            }
+            kfree(child_rec);
+        }
+
+        kfree(mft_rec);
+
+        if (found_ino == 0) return 0;
+        current_dir = found_ino;
+
+        if (slash) p = slash + 1;
+        else break;
+    }
+
+    return current_dir;
+}
+
 /* ── VFS operations ──────────────────────────────────────────────── */
 
 static int ntfs_read(void *priv, const char *path,
                       void *buf, uint32_t max_size, uint32_t *out_size)
 {
-    (void)priv; (void)path; (void)buf; (void)max_size;
-    if (out_size) *out_size = 0;
-    return 0;
+    struct ntfs_priv *np = (struct ntfs_priv *)priv;
+    if (!np || !buf || !out_size) return -1;
+    *out_size = 0;
+
+    uint64_t ino = ntfs_lookup_path(np, path);
+    if (ino == 0) return -ENOENT;
+
+    uint8_t *mft_rec = ntfs_read_mft_rec(np, ino);
+    if (!mft_rec) return -EIO;
+
+    int ret = ntfs_read_data(np, mft_rec, buf, 0, max_size, out_size);
+    kfree(mft_rec);
+    return ret;
 }
 
 static int ntfs_write(void *priv, const char *path,
@@ -397,11 +475,20 @@ static int ntfs_write(void *priv, const char *path,
 
 static int ntfs_stat(void *priv, const char *path, struct vfs_stat *st)
 {
-    (void)priv;
+    struct ntfs_priv *np = (struct ntfs_priv *)priv;
+    if (!np) return -1;
     memset(st, 0, sizeof(*st));
-    st->type = VFS_TYPE_FILE;
-    if (path[0] == '/' && path[1] == '\0')
-        st->type = VFS_TYPE_DIR;
+
+    uint64_t ino = ntfs_lookup_path(np, path);
+    if (ino == 0) return -ENOENT;
+
+    uint8_t *mft_rec = ntfs_read_mft_rec(np, ino);
+    if (!mft_rec) return -EIO;
+
+    st->size = ntfs_get_file_size(np, mft_rec);
+    st->type = ntfs_is_directory(np, mft_rec) ? VFS_TYPE_DIR : VFS_TYPE_FILE;
+    st->mode = ntfs_is_directory(np, mft_rec) ? 0555 : 0444;
+    kfree(mft_rec);
     return 0;
 }
 
@@ -419,11 +506,28 @@ static int ntfs_unlink(void *priv, const char *path)
 
 static int ntfs_readdir(void *priv, const char *path)
 {
-    (void)priv;
-    if (path[0] == '/' && path[1] == '\0')
-        kprintf(".              <DIR>\n"
-                "..             <DIR>\n"
-                "[ntfs] NTFS filesystem (stub)\n");
+    struct ntfs_priv *np = (struct ntfs_priv *)priv;
+    if (!np) return -1;
+
+    uint64_t dir_ino = ntfs_lookup_path(np, path);
+    if (dir_ino == 0) return -ENOENT;
+
+    kprintf(".              <DIR>\n"
+            "..             <DIR>\n");
+
+    for (uint64_t ino = MFT_ROOT_INDEX; ino < 512; ino++) {
+        uint8_t *mft_rec = ntfs_read_mft_rec(np, ino);
+        if (!mft_rec) continue;
+        struct ntfs_mft_rec *rec = (struct ntfs_mft_rec *)mft_rec;
+        if (rec->magic != 0x454C4946) { kfree(mft_rec); continue; }
+
+        char name[256];
+        if (ntfs_get_filename(np, mft_rec, name, sizeof(name)) == 0 && name[0]) {
+            int is_dir = ntfs_is_directory(np, mft_rec);
+            kprintf("  %-14s %s\n", name, is_dir ? "<DIR>" : "");
+        }
+        kfree(mft_rec);
+    }
     return 0;
 }
 

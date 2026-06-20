@@ -132,8 +132,13 @@ uint64_t bpf_dispatch_helper(int helper_id, uint64_t r1, uint64_t r2,
         return bpf_ktime_get_ns();
     case BPF_FUNC_get_smp_processor_id:
         return bpf_get_smp_processor_id();
-    case BPF_FUNC_perf_event_output:
-        return 0; /* stub */
+    case BPF_FUNC_perf_event_output: {
+        struct bpf_perf_event_output_ctx *ctx = (struct bpf_perf_event_output_ctx *)(uintptr_t)r1;
+        if (!ctx) return 1;
+        kprintf("[BPF-perf] ctx=%p data=%llx size=%u\n",
+                (void *)ctx, (unsigned long long)ctx->data, (unsigned int)ctx->size);
+        return 0;
+    }
     default:
         kprintf("[BPF] Unknown helper ID %d\n", helper_id);
         return 1;

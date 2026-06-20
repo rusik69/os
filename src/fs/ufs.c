@@ -203,6 +203,23 @@ static struct vfs_ops ufs_ops = {
     .readdir = ufs_readdir,
 };
 
+/* ── Probe ──────────────────────────────────────────────────────── */
+
+int ufs_probe(uint8_t dev_id)
+{
+    uint8_t buf[512];
+    /* UFS superblock at sector 2 (byte offset 1024) */
+    if (blockdev_read_sectors(dev_id, UFS_SBLOCK, 1, buf) != 0)
+        return -1;
+    /* Magic at offset 0x55C within superblock = byte 0x55C in sector 2 */
+    uint32_t *magic = (uint32_t *)(buf + 0x5C);
+    if (*magic == UFS_MAGIC || *magic == UFS_MAGIC_FLIP || *magic == UFS2_MAGIC) {
+        kprintf("[ufs] UFS/FFS detected on dev %u\n", dev_id);
+        return 0;
+    }
+    return -1;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 int ufs_init(void)

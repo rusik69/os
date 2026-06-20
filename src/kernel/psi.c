@@ -69,8 +69,9 @@ struct psi_resource {
     uint64_t  some_total;      /* total ticks with at least one task stalled */
     uint64_t  full_total;      /* total ticks with all tasks stalled */
 
-    /* Per-window averages */
+    /* Per-window averages (some and full) */
     struct psi_window windows[PSI_NUM_WINDOWS];
+    struct psi_window full_windows[PSI_NUM_WINDOWS];
 
     /* Last-update tick for delta calculation */
     uint64_t  last_ticks;
@@ -165,6 +166,9 @@ void psi_init(void)
             pr->windows[w].window_ns = (uint64_t)psi_window_sizes[w] * 1000000000ULL;
             pr->windows[w].window_fp = psi_window_sizes[w] * PSI_FRAC_ONE;
             pr->windows[w].avg_fp = 0;
+            pr->full_windows[w].window_ns = (uint64_t)psi_window_sizes[w] * 1000000000ULL;
+            pr->full_windows[w].window_fp = psi_window_sizes[w] * PSI_FRAC_ONE;
+            pr->full_windows[w].avg_fp = 0;
         }
     }
 
@@ -200,8 +204,12 @@ void psi_update(int resource, uint64_t wall_ticks,
     } else {
         some_ratio_fp = (int)((some_ticks << PSI_FRAC_BITS) / wall_ticks);
     }
-    /* full_ratio_fp not yet used for separate full-averages tracking;
-     * currently "full" mirrors "some" for the same resource. */
+    int full_ratio_fp;
+    if (full_ticks >= wall_ticks) {
+        full_ratio_fp = PSI_FRAC_ONE;
+    } else {
+        full_ratio_fp = (int)((full_ticks << PSI_FRAC_BITS) / wall_ticks);
+    }
 
     /* Compute elapsed time since last update (in microseconds) */
     uint64_t now_ticks = timer_get_ticks();
@@ -217,6 +225,8 @@ void psi_update(int resource, uint64_t wall_ticks,
     for (int w = 0; w < PSI_NUM_WINDOWS; w++) {
         /* Some average */
         psi_update_window(&pr->windows[w], elapsed_us, some_ratio_fp);
+        /* Full average */
+        psi_update_window(&pr->full_windows[w], elapsed_us, full_ratio_fp);
     }
 
     spinlock_irqsave_release(&pr->lock, flags);
@@ -259,17 +269,10 @@ int psi_gen_proc_file(int resource, char *buf, int max)
     psi_format_pct(some_60, avg60_fp);
     psi_format_pct(some_300, avg300_fp);
 
-    /* For "full", we only track on memory and IO (CPU full is meaningless) */
-    int full_avg10_fp = 0, full_avg60_fp = 0, full_avg300_fp = 0;
-    if (resource == PSI_RES_MEMORY || resource == PSI_RES_IO) {
-        /* For simplicity, use the same averages for "full"
-         * (a full implementation would track separate some/full averages).
-         * In practice, full stall is conservatively estimated as
-         * min(some, wall - idle) but we approximate with some. */
-        full_avg10_fp  = avg10_fp;
-        full_avg60_fp  = avg60_fp;
-        full_avg300_fp = avg300_fp;
-    }
+    /* Use separate full_windows tracking */
+    int full_avg10_fp = pr->full_windows[0].avg_fp;
+    int full_avg60_fp = pr->full_windows[1].avg_fp;
+    int full_avg300_fp = pr->full_windows[2].avg_fp;
 
     psi_format_pct(full_10, full_avg10_fp);
     psi_format_pct(full_60, full_avg60_fp);

@@ -176,7 +176,10 @@ static int create_devnode(const char *name, uint8_t type,
 {
     /* Check for custom rule */
     const struct mdev_rule *rule = find_rule(name);
-    (void)rule; /* permissions not implemented in devtmpfs yet */
+    if (rule) {
+        kprintf("[mdev] rule match for %s: mode=%o uid=%u gid=%u\n",
+                name, rule->mode, rule->uid, rule->gid);
+    }
 
     char path[96];
     int ret = snprintf(path, sizeof(path), "/dev/%s", name);

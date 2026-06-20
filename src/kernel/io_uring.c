@@ -492,20 +492,43 @@ int64_t sys_io_uring_register(int fd, uint32_t opcode, void *arg,
     (void)arg;
 
     switch (opcode) {
-    case IORING_REGISTER_BUFFERS:
-        /* Register buffers for I/O (stub — not yet implemented) */
-        kprintf("[io_uring] register buffers: nr_args=%u (stub)\n", nr_args);
+    case IORING_REGISTER_BUFFERS: {
+        struct io_uring_sqe *iov = (struct io_uring_sqe *)arg;
+        if (!iov || nr_args > 64) return -EINVAL;
+        for (uint32_t i = 0; i < nr_args && i < 64; i++) {
+            ring->reg_bufs[i].addr = iov[i].addr;
+            ring->reg_bufs[i].len = iov[i].len;
+        }
+        ring->nr_reg_bufs = nr_args;
+        kprintf("[io_uring] register buffers: nr_args=%u\n", nr_args);
         return 0;
+    }
 
     case IORING_UNREGISTER_BUFFERS:
+        memset(ring->reg_bufs, 0, sizeof(ring->reg_bufs));
+        ring->nr_reg_bufs = 0;
         return 0;
 
-    case IORING_REGISTER_FILES:
-        /* Register file descriptors (stub) */
-        kprintf("[io_uring] register files: nr_args=%u (stub)\n", nr_args);
+    case IORING_REGISTER_FILES: {
+        int32_t *fds = (int32_t *)arg;
+        if (!fds || nr_args > 64) return -EINVAL;
+        struct process *cur = process_get_current();
+        if (!cur) return -ESRCH;
+        for (uint32_t i = 0; i < nr_args && i < 64; i++) {
+            int fd_idx = fds[i] - 3;
+            if (fd_idx >= 0 && fd_idx < PROCESS_FD_MAX && cur->fd_table[fd_idx].used)
+                ring->reg_files[i] = fds[i];
+            else
+                ring->reg_files[i] = -1;
+        }
+        ring->nr_reg_files = nr_args;
+        kprintf("[io_uring] register files: nr_args=%u\n", nr_args);
         return 0;
+    }
 
     case IORING_UNREGISTER_FILES:
+        memset(ring->reg_files, 0, sizeof(ring->reg_files));
+        ring->nr_reg_files = 0;
         return 0;
 
     case IORING_REGISTER_EVENTFD:

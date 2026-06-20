@@ -285,6 +285,17 @@ struct io_ring {
     /* PID of owner process */
     uint32_t     owner_pid;
 
+    /* Registered buffers for IORING_OP_READ/WRITE with fixed buffer */
+    struct {
+        uint64_t addr;
+        uint32_t len;
+    } reg_bufs[64];
+    uint32_t nr_reg_bufs;
+
+    /* Registered file descriptors */
+    int32_t reg_files[64];
+    uint32_t nr_reg_files;
+
     /* Ring pending completion queue (kernel-side) */
     uint32_t     cq_pending_head;
     uint32_t     cq_pending_tail;

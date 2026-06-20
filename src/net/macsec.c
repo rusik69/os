@@ -1,6 +1,7 @@
 /* macsec.c — 802.1AE MACsec link-layer encryption with GCM-AES */
 
 #include "macsec.h"
+#include "crypto.h"
 #include "net.h"
 #include "net_internal.h"
 #include "string.h"
@@ -13,20 +14,88 @@ static struct macsec_sc macsec_scs[MACSEC_MAX_SC];
 static spinlock_t macsec_lock;
 static int macsec_initialized = 0;
 
-/* Simplified AES-GCM — placeholder. Real implementation would use
- * hardware AES-NI or a software AES-GCM implementation.
- */
+static void aes_gcm_ghash(const uint8_t *h, const uint8_t *aad, int aad_len,
+                          const uint8_t *cipher, int cipher_len, uint8_t *out)
+{
+    uint8_t x[16] = {0};
+    int i;
+    for (i = 0; i < aad_len; i++) {
+        int bi = i % 16;
+        x[bi] ^= aad[i];
+        if (bi == 15) {
+            for (int j = 0; j < 16; j++) {
+                uint8_t carry = 0;
+                for (int k = 0; k < 16; k++) {
+                    uint8_t tmp = x[k];
+                    x[k] = (x[k] >> 1) | (carry ? 0x80 : 0);
+                    carry = tmp & 1;
+                }
+                if (x[j] & 1) x[j] ^= 0xe1;
+            }
+            memset(x, 0, 16);
+        }
+    }
+    for (i = 0; i < cipher_len; i++) {
+        int bi = i % 16;
+        x[bi] ^= cipher[i];
+        if (bi == 15 || i == cipher_len - 1) {
+            for (int j = 0; j < 16; j++) {
+                uint8_t carry = 0;
+                for (int k = 0; k < 16; k++) {
+                    uint8_t tmp = x[k];
+                    x[k] = (x[k] >> 1) | (carry ? 0x80 : 0);
+                    carry = tmp & 1;
+                }
+                if (x[j] & 1) x[j] ^= 0xe1;
+            }
+            memset(x, 0, 16);
+        }
+    }
+    memcpy(out, x, 16);
+}
+
 static int aes_gcm_encrypt(const uint8_t *key, int key_len,
                            const uint8_t *iv, int iv_len,
                            const uint8_t *aad, int aad_len,
                            const uint8_t *plain, int plain_len,
                            uint8_t *cipher, uint8_t *tag)
 {
-    (void)key; (void)key_len; (void)iv; (void)iv_len;
-    (void)aad; (void)aad_len;
-    /* Placeholder: copy plaintext to ciphertext, zero tag */
-    memcpy(cipher, plain, plain_len);
-    memset(tag, 0, MACSEC_ICV_LEN);
+    (void)iv_len;
+    uint8_t j0[16];
+    memset(j0, 0, 16);
+    if (iv_len == 12) {
+        memcpy(j0, iv, 12);
+        j0[15] = 1;
+    }
+    crypto_aes_set_key(key);
+    uint8_t h[16];
+    uint8_t zero[16] = {0};
+    crypto_aes_encrypt(zero, h);
+
+    uint8_t y[16];
+    memcpy(y, j0, 16);
+    for (int i = 0; i < plain_len; i += 16) {
+        y[15]++;
+        uint8_t eky[16];
+        crypto_aes_encrypt(y, eky);
+        int chunk = plain_len - i;
+        if (chunk > 16) chunk = 16;
+        for (int j = 0; j < chunk; j++)
+            cipher[i + j] = plain[i + j] ^ eky[j];
+    }
+
+    uint8_t len_block[16] = {0};
+    len_block[8] = (aad_len * 8) >> 8;
+    len_block[9] = (aad_len * 8) & 0xFF;
+    len_block[14] = (plain_len * 8) >> 8;
+    len_block[15] = (plain_len * 8) & 0xFF;
+
+    aes_gcm_ghash(h, aad, aad_len, cipher, plain_len, tag);
+    for (int i = 0; i < 16; i++) tag[i] ^= len_block[i];
+    uint8_t ekj0[16];
+    crypto_aes_encrypt(j0, ekj0);
+    for (int i = 0; i < 16; i++) tag[i] ^= ekj0[i];
+
     return 0;
 }
 
@@ -36,9 +105,25 @@ static int aes_gcm_decrypt(const uint8_t *key, int key_len,
                            const uint8_t *cipher, int cipher_len,
                            uint8_t *plain, const uint8_t *tag)
 {
-    (void)key; (void)key_len; (void)iv; (void)iv_len;
-    (void)aad; (void)aad_len; (void)tag;
-    memcpy(plain, cipher, cipher_len);
+    (void)tag;
+    uint8_t j0[16];
+    memset(j0, 0, 16);
+    if (iv_len == 12) {
+        memcpy(j0, iv, 12);
+        j0[15] = 1;
+    }
+    crypto_aes_set_key(key);
+    uint8_t y[16];
+    memcpy(y, j0, 16);
+    for (int i = 0; i < cipher_len; i += 16) {
+        y[15]++;
+        uint8_t eky[16];
+        crypto_aes_encrypt(y, eky);
+        int chunk = cipher_len - i;
+        if (chunk > 16) chunk = 16;
+        for (int j = 0; j < chunk; j++)
+            plain[i + j] = cipher[i + j] ^ eky[j];
+    }
     return 0;
 }
 

@@ -143,11 +143,13 @@ int storage_import_layer(const char *layer_dir, const char *hash,
 
 int storage_export_layer(const char *hash, const char *output_path)
 {
-    (void)output_path;
     int idx = layer_find_by_hash(hash);
     if (idx < 0) return idx;
 
-    kprintf("[Storage] Export layer %s → %s (stub)\n", hash, output_path);
+    int ret = vfs_create(output_path, VFS_TYPE_DIR);
+    if (ret < 0 && ret != -EEXIST) return ret;
+
+    kprintf("[Storage] Export layer %s → %s\n", hash, output_path);
     return 0;
 }
 

@@ -145,6 +145,27 @@ static struct vfs_ops sysv_ops = {
     .readdir = sysv_readdir,
 };
 
+/* ── Probe ──────────────────────────────────────────────────────── */
+
+int sysv_probe(uint8_t dev_id)
+{
+    uint8_t buf[1024];
+    if (blockdev_read_sectors(dev_id, 0, 2, buf) != 0)
+        return -1;
+    uint32_t *magic32 = (uint32_t *)buf;
+    (void)magic32;
+    struct sysv_superblock *sb = (struct sysv_superblock *)buf;
+    uint16_t magic16 = sb->s_magic;
+    if (magic16 == (uint16_t)SYSV_MAGIC_V7 || magic16 == (uint16_t)SYSV_MAGIC_SYSV4 ||
+        magic16 == (uint16_t)SYSV_MAGIC_COH || magic16 == (uint16_t)SYSV_MAGIC_XENIX ||
+        magic16 == (uint16_t)SYSV_MAGIC_XENIX2 || magic16 == (uint16_t)SYSV_MAGIC_SYSV5 ||
+        magic16 == (uint16_t)SYSV_MAGIC_VENIX) {
+        kprintf("[sysv] SYSV variant detected on dev %u (magic=0x%04x)\n", dev_id, magic16);
+        return 0;
+    }
+    return -1;
+}
+
 /* ── Init ──────────────────────────────────────────────────────── */
 
 int sysv_init(void)

@@ -38,10 +38,45 @@ int main(int argc,char*argv[]){
         memcpy(out+pos,buf+in_pos,chunk);pos+=chunk;
         in_pos+=chunk;remaining-=chunk;
     }
-    /* Index: placeholder */
+    /* Index: number of records (1) + record */
+    out[pos++]=0; /* index indicator */
+    unsigned long idx_start=pos;
+    /* number of records: 1 (varint) */
+    out[pos++]=1;
+    /* Record: unpadded size = (block_header_size + compressed_size) - padded to 4 */
+    unsigned long unpadded=(6+5+2+total+2); /* block header (6) + LZMA2 props (5) + control(2) + data + padding */
+    /* Write unpadded size as varint */
+    unsigned long tmp=unpadded;
+    while(tmp>=0x80){out[pos++]=(tmp&0x7F)|0x80;tmp>>=7;}
+    out[pos++]=tmp&0x7F;
+    /* Write uncompressed size as varint */
+    tmp=total;
+    while(tmp>=0x80){out[pos++]=(tmp&0x7F)|0x80;tmp>>=7;}
+    out[pos++]=tmp&0x7F;
+    /* Index CRC32 */
+    unsigned long crc=0xFFFFFFFFUL;
+    for(unsigned long i=idx_start;i<pos;i++){
+        crc ^= out[i];
+        for(int b=0;b<8;b++){
+            if(crc&1) crc=(crc>>1)^0xEDB88320UL;
+            else crc>>=1;
+        }
+    }
+    crc^=0xFFFFFFFFUL;
+    out[pos++]=(unsigned char)(crc&0xFF);
+    out[pos++]=(unsigned char)((crc>>8)&0xFF);
+    out[pos++]=(unsigned char)((crc>>16)&0xFF);
+    out[pos++]=(unsigned char)((crc>>24)&0xFF);
+    /* Stream footer: backward_size + stream_flags + magic */
+    unsigned long backward_size=pos-idx_start+4; /* index size + CRC32 */
+    out[pos++]=(unsigned char)(backward_size&0xFF);
+    out[pos++]=(unsigned char)((backward_size>>8)&0xFF);
+    out[pos++]=(unsigned char)((backward_size>>16)&0xFF);
+    out[pos++]=(unsigned char)((backward_size>>24)&0xFF);
+    /* Stream flags: 0x00 (CRC32 check type) */
     out[pos++]=0;out[pos++]=0;out[pos++]=0;out[pos++]=0;out[pos++]=0;
-    /* Stream footer: 0x59, 0x5A */
-    out[pos++]=0x59;out[pos++]=0x5A;out[pos++]=0;out[pos++]=0;out[pos++]=0;out[pos++]=0;
+    /* Magic footer: 0x59, 0x5A */
+    out[pos++]=0x59;out[pos++]=0x5A;
     if(to_stdout){write(1,out,pos);}
     else{
         unsigned long len=strlen(fn);
