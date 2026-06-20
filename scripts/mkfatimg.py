@@ -85,11 +85,24 @@ def build_image(src_dir, size_mb, output):
         allocs.append((dst, next_cluster, ncl, data))
         next_cluster += ncl
 
-    # Allocate clusters for directories
+    # Allocate clusters for directories (enough for all entries)
     dir_clusters = {'': 2}
+    dir_num_clusters = {'': 1}
     for d in sorted(dir_set, key=lambda x: len(x.split('/'))):
+        # Count entries in this dir
+        prefix = d + '/' if d else ''
+        nentries = 2  # . and ..
+        for alloc in allocs:
+            dst = alloc[0]
+            if dst.startswith(prefix) and '/' not in dst[len(prefix):]:
+                nentries += 1
+        for sd in dir_set:
+            if sd != d and sd.startswith(prefix) and '/' not in sd[len(prefix):]:
+                nentries += 1
+        ncl = max(1, math.ceil(nentries * 32 / cluster_bytes))
         dir_clusters[d] = next_cluster
-        next_cluster += 1
+        dir_num_clusters[d] = ncl
+        next_cluster += ncl
 
     fat_entries = next_cluster
     fat_sz_bytes = math.ceil(fat_entries * 4 / 512) * 512
@@ -105,24 +118,30 @@ def build_image(src_dir, size_mb, output):
             val = 0x0FFFFFFF if i == nc - 1 else cl + 1
             struct.pack_into('<I', fat, cl * 4, val)
     for d, dc in dir_clusters.items():
-        if dc != 2:  # root already set
-            if dc * 4 + 4 > len(fat):
+        nc = dir_num_clusters[d]
+        for i in range(nc):
+            cl = dc + i
+            if cl == 2: continue  # root already set
+            if cl * 4 + 4 > len(fat):
                 fat.extend(b'\x00' * 512)
-            struct.pack_into('<I', fat, dc * 4, 0x0FFFFFFF)
+            val = 0x0FFFFFFF if i == nc - 1 else cl + 1
+            struct.pack_into('<I', fat, cl * 4, val)
 
     # Helper: cluster for file path
     def cl_for(path):
-        for d, sc, nc, _ in allocs:
-            if d == path:
-                return sc
+        for alloc in allocs:
+            if alloc[0] == path:
+                return alloc[1]
         return 0
 
     data_start_off = data_start_lba * SECTOR_SIZE
 
     # Write directory entries
     for dpath, dc in dir_clusters.items():
+        nc = dir_num_clusters[dpath]
+        total_bytes = nc * cluster_bytes
         off = data_start_off + (dc - 2) * cluster_bytes
-        entries = bytearray(cluster_bytes)
+        entries = bytearray(total_bytes)
         pos = 0
 
         # . and ..
@@ -147,7 +166,8 @@ def build_image(src_dir, size_mb, output):
         # Files in this dir
         dir_children = []
         prefix = dpath + '/' if dpath else ''
-        for dst, sc, nc, data in allocs:
+        for alloc in allocs:
+            dst, sc, nc, data = alloc
             if dst.startswith(prefix) and '/' not in dst[len(prefix):]:
                 dir_children.append(('f', dst[len(prefix):], sc, len(data)))
         # Subdirs in this dir
@@ -202,7 +222,7 @@ def build_image(src_dir, size_mb, output):
                     for j in range(2):
                         if 11 + j < len(chunk):
                             struct.pack_into('<H', le, 28 + j*2, ord(chunk[11 + j]))
-                    if pos + 32 <= cluster_bytes:
+                    if pos + 32 <= total_bytes:
                         entries[pos:pos+32] = le
                         pos += 32
 
@@ -213,11 +233,11 @@ def build_image(src_dir, size_mb, output):
             struct.pack_into('<H', e, 20, (ccl >> 16) & 0xFFFF)
             struct.pack_into('<H', e, 26, ccl & 0xFFFF)
             struct.pack_into('<I', e, 28, csz)
-            if pos + 32 <= cluster_bytes:
+            if pos + 32 <= total_bytes:
                 entries[pos:pos+32] = e
                 pos += 32
 
-        img[off:off+cluster_bytes] = entries
+        img[off:off+total_bytes] = entries
 
     # Write file data
     for dst, sc, nc, data in allocs:

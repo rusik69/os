@@ -124,9 +124,6 @@ initramfs.cpio: $(BIN_ELFS) $(CMD_ELFS)
 	cp init2.elf initramfs_root/sbin/init2
 	cp initramfs.elf initramfs_root/initramfs
 	cp sh.elf initramfs_root/bin/sh
-	cp doom.elf initramfs_root/bin/doom
-	cp dos.elf initramfs_root/bin/dos
-	cp gui.elf initramfs_root/bin/gui
 	@for f in $(CMD_ELFS); do \
 		name=$${f%.elf}; \
 		cp $$f initramfs_root/bin/$$name; \

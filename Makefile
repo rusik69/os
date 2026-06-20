@@ -969,14 +969,9 @@ obj-m += fs/posix_acl.ko
 obj-m += shell.ko
 shell-objs := shell/shell shell/shell_vars shell/shell_cmd_table shell/editor shell/history_persist shell/job_control shell/script shell/syntax
 
-obj-m += doom.ko
-doom-objs := doom/doom_task doom/doom_map doom/doom_raycast doom/doom_render doom/doom_combat doom/doom_doors doom/doom_floor doom/doom_player doom/doom_math doom/doom_sprites doom/doom_textures
-
-obj-m += dos.ko
-dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
-
-obj-m += gui.ko
-gui-objs := gui/gui gui/gui_task gui/gui_widgets gui/gui_shell
+# doom.ko, dos.ko, gui.ko are no longer built as kernel modules.
+# They are now standalone userspace ELFs built from userspace/doom/,
+# userspace/dos/, userspace/gui/ and placed on the disk image.
 
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
@@ -1257,8 +1252,8 @@ $(ROOTFS_STAMP): userspace-build modules
 		[ "$$name" = "initramfs" ] && continue; \
 		cp $$f $(ROOTFS_DIR)/bin/$$name; \
 	done
-	# Copy kernel modules (.ko) from userspace/kmods/ to /modules/
-	@for ko in shell.ko doom.ko dos.ko gui.ko; do \
+	# Copy kernel modules (.ko) to /modules/
+	@for ko in shell.ko; do \
 		if [ -f $(MODULE_BUILDDIR)/$$ko ]; then \
 			cp $(MODULE_BUILDDIR)/$$ko $(ROOTFS_DIR)/modules/$$ko; \
 			echo "[rootfs] Copied module $$ko"; \
