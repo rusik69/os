@@ -141,7 +141,7 @@ static size_t strlen(const char *s)
     return n;
 }
 
-static int strcmp(const char *a, const char *b)
+static __attribute__((unused)) int strcmp(const char *a, const char *b)
 {
     while (*a && *a == *b) { a++; b++; }
     return (unsigned char)*a - (unsigned char)*b;
@@ -184,7 +184,7 @@ static void puts(const char *s)
     write(STDOUT_FILENO, s, strlen(s));
 }
 
-static void put_dec(int n)
+static __attribute__((unused)) void put_dec(int n)
 {
     char buf[12];
     int i = 11;
@@ -254,7 +254,7 @@ static const char *find_cmdline_param(const char *cmdline, const char *param)
  * Advances *pp to after the token.
  * Returns 1 if a token was found, 0 at end of string.
  */
-static int next_token(const char **pp, char *buf, size_t maxlen)
+static __attribute__((unused)) int next_token(const char **pp, char *buf, size_t maxlen)
 {
     const char *p = *pp;
 
@@ -362,10 +362,14 @@ static const char *strstr(const char *haystack, const char *needle)
 
 void _start(void)
 {
-    char root_spec[MAX_PATH] = {0};
-    char root_device[MAX_PATH] = {0};
-    char cmdline[MAX_CMDLINE] = {0};
+    char root_spec[MAX_PATH];
+    char root_device[MAX_PATH];
+    char cmdline[MAX_CMDLINE];
     int root_rw = 0;
+    int i;
+    for (i = 0; i < MAX_PATH; i++) root_spec[i] = 0;
+    for (i = 0; i < MAX_PATH; i++) root_device[i] = 0;
+    for (i = 0; i < MAX_CMDLINE; i++) cmdline[i] = 0;
 
     puts("[initramfs] Starting initramfs init...\n");
 
@@ -503,17 +507,4 @@ emergency_shell:
     puts("[initramfs] Cannot start shell — halting\n");
     for (;;)
         __asm__ volatile("hlt");
-}
-
-/* Simple strstr implementation for cmdline parsing */
-static const char *strstr(const char *haystack, const char *needle)
-{
-    if (!*needle) return haystack;
-    for (; *haystack; haystack++) {
-        const char *h = haystack;
-        const char *n = needle;
-        while (*h && *n && *h == *n) { h++; n++; }
-        if (!*n) return haystack;
-    }
-    return NULL;
 }

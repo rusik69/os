@@ -13,7 +13,7 @@
 #include "heap.h"
 #include "process.h"
 #include "scheduler.h"
-#include "shell.h"
+
 #include "serial.h"
 #include "printf.h"
 #include "io.h"
@@ -51,7 +51,7 @@ extern int usb_cdc_acm_init(void);
 extern int usb_hub_init(void);
 #include "service.h"
 #include "httpd.h"
-#include "gui.h"
+
 #include "intel_gpu.h"
 #include "fat32.h"
 #include "users.h"
@@ -199,10 +199,6 @@ static void __attribute__((unused)) test_task_b(void) {
         /* Background task B: just yields */
         scheduler_yield();
     }
-}
-
-static void __attribute__((unused)) shell_task(void) {
-    shell_run();
 }
 
 static void __attribute__((unused)) net_task(void) {
@@ -1221,28 +1217,18 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         }
     }
 
-    /* Always create a kernel-mode shell alongside init for debugging */
-    if (!process_create(shell_task, "shell"))
-        kprintf("[!!] Failed to create shell\n");
-
     if (!init_ok) {
         /* Fall back to kernel threads */
-        kprintf("[--] No userspace init binary found, using kernel-mode shell\n");
+        kprintf("[--] No userspace init binary found\n");
         if (!process_create(test_task_a, "task_a"))
             kprintf("[!!] Failed to create task_a\n");
         if (!process_create(test_task_b, "task_b"))
             kprintf("[!!] Failed to create task_b\n");
-        if (!process_create(shell_task, "shell"))
-            kprintf("[!!] Failed to create shell\n");
         if (virtio_net_present() || e1000_is_present()) {
             if (!process_create(net_task, "netd"))
                 kprintf("[!!] Failed to create netd\n");
             if (!process_create(httpd_task, "httpd"))
                 kprintf("[!!] Failed to create httpd\n");
-        }
-        if (vga_is_framebuffer()) {
-            if (!process_create(gui_task, "gui"))
-                kprintf("[!!] Failed to create gui\n");
         }
     }
     kprintf("[OK] Processes created\n");

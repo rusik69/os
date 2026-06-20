@@ -217,6 +217,15 @@ struct utsname {
 #define SYS_SWAPON        500  /* swapon(path) */
 #define SYS_SWAPOFF       501  /* swapoff(path) */
 
+/* VGA framebuffer syscalls for userspace apps */
+#define SYS_VGA_PUT_PIXEL        504
+#define SYS_VGA_BLIT             505
+#define SYS_VGA_CLEAR_FRAMEBUFFER 506
+#define SYS_VGA_REFRESH_CONSOLE   507
+#define SYS_KEYBOARD_HAS_INPUT    508
+#define SYS_KEYBOARD_IS_DOWN      509
+#define SYS_KEYBOARD_RESET_STATE  510
+
 /* Function prototypes */
 extern int write(int fd, const void *buf, unsigned long count);
 extern int read(int fd, void *buf, unsigned long count);
@@ -313,5 +322,17 @@ extern int net_udp_recv(unsigned short port, void *buf, unsigned int bufsz, unsi
 extern int net_udp_unlisten(unsigned short port);
 extern int net_connlist(void);
 extern int net_arp_list(void);
+
+/* VGA framebuffer syscall wrappers */
+extern int vga_put_pixel(int x, int y, unsigned int color);
+extern int vga_blit(const void *buf, int x, int y, unsigned int w, unsigned int h);
+extern int vga_clear_framebuffer(unsigned int color);
+extern int vga_refresh_console(void);
+extern int keyboard_has_input(void);
+extern int keyboard_is_down(int key);
+extern int keyboard_reset_state(void);
+extern int keyboard_getchar(void);
+extern int vga_get_fb_info(void *buf);
+extern int mouse_get_state(void *buf);
 
 #endif /* _UNISTD_H */

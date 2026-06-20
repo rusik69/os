@@ -14,6 +14,7 @@
 #include "process.h"
 #include "scheduler.h"
 #include "vermagic.h"
+#include "script.h"
 
 /* Forward declaration for fnmatch (defined in lib/stdlib.c) */
 int fnmatch(const char *pattern, const char *string, int flags);
@@ -2928,6 +2929,8 @@ void shell_run(void) {
 }
 
 void shell_init(void) {
+    shell_register_hooks(shell_process_line, shell_history_add);
+    shell_register_script_exec(script_exec);
     extern void cli_test_run(void);
     cli_test_run();
 }

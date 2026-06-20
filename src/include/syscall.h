@@ -404,6 +404,17 @@
 #define SYS_DELETE_MODULE     368  /* delete_module(name, flags) → 0 or -errno */
 #define SYS_QUERY_MODULE      369  /* query_module(name, info_buf, buf_size) → 0 or -errno */
 
+/* Userspace framebuffer graphics syscalls */
+#define SYS_VGA_PUT_PIXEL          504  /* put_pixel(x, y, color) */
+#define SYS_VGA_BLIT               505  /* blit(buf, x, y, w, h) — blit buffer to screen */
+#define SYS_VGA_CLEAR_FRAMEBUFFER  506  /* clear_framebuffer(color) */
+#define SYS_VGA_REFRESH_CONSOLE    507  /* refresh_console() — restore text console */
+
+/* Keyboard state syscalls for userspace apps */
+#define SYS_KEYBOARD_HAS_INPUT     508  /* has_input() → 1 if key pending */
+#define SYS_KEYBOARD_IS_DOWN       509  /* is_down(key) → 1 if key held */
+#define SYS_KEYBOARD_RESET_STATE   510  /* reset_state() */
+
 /* membarrier — memory barrier on all threads (used by JIT compilers, runtimes) */
 #define SYS_MEMBARRIER         373  /* membarrier(cmd, flags, cpu_id) → 0 or -1 */
 #define SYS_PIVOT_ROOT         374  /* pivot_root(new_root, put_old) → 0 or -1 */

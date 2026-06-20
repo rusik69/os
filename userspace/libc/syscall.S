@@ -754,3 +754,93 @@ swapoff:
     syscall
     ret
 .size swapoff, . - swapoff
+
+# vga_put_pixel(x, y, color) — syscall 504
+.globl vga_put_pixel
+.type vga_put_pixel, @function
+vga_put_pixel:
+    movl    $504, %eax
+    syscall
+    ret
+.size vga_put_pixel, . - vga_put_pixel
+
+# vga_blit(buf, x, y, w, h) — syscall 505
+.globl vga_blit
+.type vga_blit, @function
+vga_blit:
+    movl    $505, %eax
+    syscall
+    ret
+.size vga_blit, . - vga_blit
+
+# vga_clear_framebuffer(color) — syscall 506
+.globl vga_clear_framebuffer
+.type vga_clear_framebuffer, @function
+vga_clear_framebuffer:
+    movl    $506, %eax
+    syscall
+    ret
+.size vga_clear_framebuffer, . - vga_clear_framebuffer
+
+# vga_refresh_console() — syscall 507
+.globl vga_refresh_console
+.type vga_refresh_console, @function
+vga_refresh_console:
+    movl    $507, %eax
+    syscall
+    ret
+.size vga_refresh_console, . - vga_refresh_console
+
+# keyboard_has_input() — syscall 508
+.globl keyboard_has_input
+.type keyboard_has_input, @function
+keyboard_has_input:
+    movl    $508, %eax
+    syscall
+    ret
+.size keyboard_has_input, . - keyboard_has_input
+
+# keyboard_is_down(key) — syscall 509
+.globl keyboard_is_down
+.type keyboard_is_down, @function
+keyboard_is_down:
+    movl    $509, %eax
+    syscall
+    ret
+.size keyboard_is_down, . - keyboard_is_down
+
+# keyboard_reset_state() — syscall 510
+.globl keyboard_reset_state
+.type keyboard_reset_state, @function
+keyboard_reset_state:
+    movl    $510, %eax
+    syscall
+    ret
+.size keyboard_reset_state, . - keyboard_reset_state
+
+# keyboard_getchar() — syscall 169
+.globl keyboard_getchar
+.type keyboard_getchar, @function
+keyboard_getchar:
+    movl    $169, %eax
+    syscall
+    ret
+.size keyboard_getchar, . - keyboard_getchar
+
+# vga_get_fb_info(buf) — syscall 167
+.globl vga_get_fb_info
+.type vga_get_fb_info, @function
+vga_get_fb_info:
+    movl    $167, %eax
+    syscall
+    ret
+.size vga_get_fb_info, . - vga_get_fb_info
+
+# mouse_get_state(buf) — syscall 150
+.globl mouse_get_state
+.type mouse_get_state, @function
+mouse_get_state:
+    movl    $150, %eax
+    syscall
+    ret
+.size mouse_get_state, . - mouse_get_state

@@ -8,4 +8,7 @@
  * Returns 0 on success, -1 on error. */
 int script_exec(const char *path);
 
+extern int (*script_exec_ptr)(const char *path);
+void shell_register_script_exec(int (*fn)(const char *));
+
 #endif

@@ -40,4 +40,9 @@ void        shell_clear_stdin(void);
 int         shell_has_stdin(void);
 int         shell_stdin_read(char *buf, int max); /* returns bytes copied */
 
+/* Function pointers for kernel-side hook registration (shell module sets these) */
+extern void (*shell_process_line_ptr)(const char *line);
+extern void (*shell_history_add_ptr)(const char *cmd_line);
+void shell_register_hooks(void (*process_line)(const char *), void (*history_add)(const char *));
+
 #endif

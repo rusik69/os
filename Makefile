@@ -66,7 +66,7 @@ VERMAGIC_FLAGS += -DCONFIG_SMP
 # build clean while -Werror is active.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
+         -Wall -Wextra -Werror -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
@@ -101,6 +101,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/splash.c \
          src/kernel/seccomp.c \
          src/kernel/sysrq.c \
+         src/kernel/shell_hooks.c \
          src/kernel/panic.c \
          src/kernel/nmi_watchdog.c \
          src/kernel/lockdep.c \
@@ -201,15 +202,6 @@ C_SRCS = src/kernel/kernel.c \
          src/process/pelt.c \
          src/process/signal.c \
          src/process/users.c \
-         src/shell/shell.c \
-         src/shell/shell_cmd_table.c \
-         src/shell/shell_vars.c \
-         src/shell/editor.c \
-         src/shell/syntax.c \
-         src/shell/script.c \
-         src/shell/history_persist.c \
-         src/shell/job_control.c \
-         src/shell/cli_test.c \
          src/fs/fs.c \
          src/fs/procfs.c \
          src/fs/devfs.c \
@@ -317,10 +309,6 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/dmesg.c \
          src/kernel/coredump_core.c \
          src/ipc/waitqueue.c \
-         src/dos/dos_emu.c \
-         src/dos/dos_ints.c \
-         src/dos/dos_int21.c \
-         src/dos/dos_load.c \
          src/lib/string.c \
          src/lib/printf.c \
          src/lib/stdlib.c \
@@ -672,18 +660,10 @@ ASM_SRCS = src/boot/boot.asm \
 
 C_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(C_SRCS))
 ASM_OBJS = $(patsubst src/%.asm,$(BUILDDIR)/%.o,$(ASM_SRCS))
-CMD_SRCS = $(wildcard src/shell/cmds/*.c)
-CMD_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(CMD_SRCS))
-APP_SRCS = $(CMD_SRCS) $(wildcard src/apps/*.c)
-COMPILER_SRCS = $(wildcard src/compiler/*.c)
-COMPILER_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(COMPILER_SRCS))
-GUI_SRCS = $(wildcard src/gui/*.c)
-GUI_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(GUI_SRCS))
-DOOM_SRCS = $(wildcard src/doom/*.c)
-DOOM_OBJS = $(patsubst src/%.c,$(BUILDDIR)/%.o,$(DOOM_SRCS))
-OBJS = $(ASM_OBJS) $(C_OBJS) $(CMD_OBJS) $(COMPILER_OBJS) $(GUI_OBJS) $(DOOM_OBJS)
+APP_SRCS = $(wildcard src/apps/*.c)
+OBJS = $(ASM_OBJS) $(C_OBJS)
 # Header dependency tracking: include .d files when they exist
-DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(DOOM_OBJS:.o=.d)
+DEPS = $(C_OBJS:.o=.d)
 
 # ── Kernel module build rules (M39) ──────────────────────────────────
 # Loadable kernel modules (.ko) are compiled with -DMODULE and partially
@@ -701,7 +681,8 @@ DEPS = $(C_OBJS:.o=.d) $(CMD_OBJS:.o=.d) $(COMPILER_OBJS:.o=.d) $(GUI_OBJS:.o=.d
 # Module compilation flags: same as CFLAGS but with -DMODULE and without
 # -nostdinc (modules include kernel headers via the same include paths).
 MODULE_CFLAGS  = $(filter-out -nostdinc -fno-builtin -mno-mmx -mno-sse -mno-sse2 -fstack-protector-strong -mstack-protector-guard=global -mcmodel=large, $(CFLAGS)) \
-                 -DMODULE -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mcmodel=small -Isrc/include
+                 -DMODULE -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mcmodel=small -Isrc/include \
+                 -Iuserspace/kmods/shell -Iuserspace/kmods/doom -Iuserspace/kmods/dos -Iuserspace/kmods/gui
 MODULE_LDFLAGS = -r -z max-page-size=0x1000
 
 # Build directory for module objects and .ko files
@@ -712,24 +693,7 @@ MODULE_BUILDDIR = $(BUILDDIR)/modules
 # Override this in a submake or set in environment to add custom modules.
 obj-m ?= drivers/e1000.ko drivers/speaker.ko drivers/coredump.ko drivers/floppy.ko
 
-# DOOM as a loadable module (built-in + module dual build)
-obj-m += doom.ko
-doom-objs := doom/doom_task doom/doom_combat doom/doom_doors doom/doom_floor \
-             doom/doom_map doom/doom_math doom/doom_player doom/doom_raycast \
-             doom/doom_render doom/doom_sprites doom/doom_textures
 
-# DOS emulator as a loadable module (M45)
-obj-m += dos.ko
-dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
-
-# In-kernel C compiler as a loadable module (M46)
-obj-m += compiler.ko
-compiler-objs := compiler/cc_elf compiler/cc_lex compiler/cc_link \
-                 compiler/cc_obj compiler/cc_parse
-
-# GUI window system as a loadable module (M47)
-obj-m += gui.ko
-gui-objs := gui/gui gui/gui_shell gui/gui_task gui/gui_widgets
 
 # Network protocol modules (M60) — convert protocols to loadable .ko
 # IPIP: IP-in-IP tunneling protocol (RFC 2003)
@@ -998,6 +962,22 @@ obj-m += fs/fsck.ko
 obj-m += fs/xattr.ko
 obj-m += fs/posix_acl.ko
 
+# ── Userspace-sourced kernel modules (moved out of src/ into userspace/kmods/) ──
+# These are kernel modules that use kernel APIs but live in the userspace tree,
+# keeping the kernel source tree (src/) clean of userspace-origin code.
+# The .ko files are placed on the filesystem disk image, not baked into the kernel.
+obj-m += shell.ko
+shell-objs := shell/shell shell/shell_vars shell/shell_cmd_table shell/editor shell/history_persist shell/job_control shell/script shell/syntax
+
+obj-m += doom.ko
+doom-objs := doom/doom_task doom/doom_map doom/doom_raycast doom/doom_render doom/doom_combat doom/doom_doors doom/doom_floor doom/doom_player doom/doom_math doom/doom_sprites doom/doom_textures
+
+obj-m += dos.ko
+dos-objs := dos/dos_emu dos/dos_int21 dos/dos_ints dos/dos_load
+
+obj-m += gui.ko
+gui-objs := gui/gui gui/gui_task gui/gui_widgets gui/gui_shell
+
 # Derive module .ko paths from obj-m list
 MODULE_KOS = $(addprefix $(MODULE_BUILDDIR)/, $(obj-m))
 
@@ -1025,6 +1005,13 @@ MODULE_OBJS = $(foreach ko,$(obj-m), \
 # e.g., build/modules/drivers/e1000.o ← src/drivers/e1000.c
 # e.g., build/modules/doom/doom_task.o ← src/doom/doom_task.c
 $(MODULE_BUILDDIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(MODULE_CFLAGS) -c $< -o $@
+
+# Module sources can also live under userspace/kmods/ for programs that are
+# separate from the kernel source tree but run as kernel modules.
+# e.g., build/modules/shell/shell.o ← userspace/kmods/shell/shell.c
+$(MODULE_BUILDDIR)/%.o: userspace/kmods/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(MODULE_CFLAGS) -c $< -o $@
 
@@ -1133,7 +1120,8 @@ all: $(BUILDDIR)/disk.img
 # ── Boundary check on app sources ─────────────────────────────────────
 
 check-app-boundary:
-	@bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h|loop\.h|ftrace\.h|kprobes\.h|trace\.h|perf_events\.h|firmware\.h|watchdog\.h|timers\.h|lockdown\.h|ioprio\.h|netdevice\.h|freeze\.h|fbcon\.h|string_ext\.h|dhcp\.h|caps\.h)' $(APP_SRCS) 2>/dev/null || true); \
+	@if [ -z "$(APP_SRCS)" ]; then exit 0; fi; \
+	bad=$$(rg --pcre2 -n '^#include "(?!libc\.h|shell_cmds\.h|shell_cmd_table\.h|shell\.h|printf\.h|string\.h|stdlib\.h|types\.h|keyboard\.h|blockdev\.h|fat32\.h|ata\.h|ahci\.h|service\.h|fault\.h|syscall\.h|vfs\.h|module\.h|module_elf\.h|heap\.h|ssh\.h|ssh_client\.h|vfs\.h|sysctl\.h|users\.h|net\.h|fstab\.h|devtmpfs\.h|nvme\.h|vga\.h|errno\.h|fsck\.h|dm\.h|container\.h|spinlock\.h|process\.h|timer\.h|scheduler\.h|elf\.h|orch_api\.h|oci_spec\.h|seccomp\.h|crypto\.h|json\.h|signal\.h|ext2\.h|socket\.h|pmm\.h|ac97\.h|loop\.h|ftrace\.h|kprobes\.h|trace\.h|perf_events\.h|firmware\.h|watchdog\.h|timers\.h|lockdown\.h|ioprio\.h|netdevice\.h|freeze\.h|fbcon\.h|string_ext\.h|dhcp\.h|caps\.h)' $(APP_SRCS) 2>/dev/null || true); \
 	if [ -n "$$bad" ]; then \
 	    echo "ERROR: App source includes an unexpected header."; \
 	    echo "Allowed headers: libc.h, shell_cmds.h, shell_cmd_table.h, shell.h, printf.h,"; \
@@ -1230,26 +1218,8 @@ $(BUILDDIR)/kernel.bin: $(BUILDDIR)/kernel.elf
 
 # ── Userspace init binary (standalone ELF for kernel loader) ─────────
 
-# Userspace programs need different flags: PIE, no kernel restrictions,
-# but still freestanding (no libc).  The init.ld linker script produces
-# a raw ELF with proper phdrs for the kernel's ELF loader.
-INIT_CFLAGS = -std=gnu17 -ffreestanding -nostdlib -nostdinc -fno-builtin \
-              -fno-stack-protector -mcmodel=large -O2 \
-              -Wall -Wextra -Isrc/include -g
-
-$(BUILDDIR)/init.o: src/init/init.c
-	@mkdir -p $(dir $@)
-	$(CC) $(INIT_CFLAGS) -c $< -o $@
-
-$(BUILDDIR)/init/initramfs.o: src/init/initramfs.c
-	@mkdir -p $(dir $@)
-	$(CC) $(INIT_CFLAGS) -c $< -o $@
-
-$(BUILDDIR)/init.elf: $(BUILDDIR)/init.o init.ld
-	$(LD) -T init.ld -nostdlib -o $@ $<
-
-# Userspace programs to inject into disk image
-USERSPACE_BINS = $(BUILDDIR)/init.elf
+# Userspace init is now built from userspace/init/
+USERSPACE_BINS = userspace/init.elf
 
 # Root filesystem staging directory
 ROOTFS_DIR = $(BUILDDIR)/rootfs
@@ -1268,11 +1238,14 @@ userspace-build:
 # Stage files into rootfs directory
 ROOTFS_STAMP = $(BUILDDIR)/.rootfs_stamp
 
-$(ROOTFS_STAMP): $(BUILDDIR)/init.elf userspace-build
+$(ROOTFS_STAMP): userspace-build modules
 	@rm -rf $(ROOTFS_DIR)
-	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/tmp
-	# Copy kernel-built init as /sbin/init
-	cp $(BUILDDIR)/init.elf $(ROOTFS_DIR)/sbin/init
+	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/tmp $(ROOTFS_DIR)/modules
+	# Copy userspace-built init as /sbin/init
+	cp userspace/init.elf $(ROOTFS_DIR)/sbin/init
+	# Copy init2 and initramfs as /sbin/
+	cp userspace/init2.elf $(ROOTFS_DIR)/sbin/init2
+	cp userspace/initramfs.elf $(ROOTFS_DIR)/sbin/initramfs
 	# Copy userspace shell as /bin/sh
 	cp userspace/sh.elf $(ROOTFS_DIR)/bin/sh
 	# Copy all userspace command ELFs to /bin/
@@ -1280,12 +1253,21 @@ $(ROOTFS_STAMP): $(BUILDDIR)/init.elf userspace-build
 		name=$$(basename $$f .elf); \
 		[ "$$name" = "init" ] && continue; \
 		[ "$$name" = "sh" ] && continue; \
+		[ "$$name" = "init2" ] && continue; \
+		[ "$$name" = "initramfs" ] && continue; \
 		cp $$f $(ROOTFS_DIR)/bin/$$name; \
+	done
+	# Copy kernel modules (.ko) from userspace/kmods/ to /modules/
+	@for ko in shell.ko doom.ko dos.ko gui.ko; do \
+		if [ -f $(MODULE_BUILDDIR)/$$ko ]; then \
+			cp $(MODULE_BUILDDIR)/$$ko $(ROOTFS_DIR)/modules/$$ko; \
+			echo "[rootfs] Copied module $$ko"; \
+		fi; \
 	done
 	# Strip ELFs to save space
 	@if command -v x86_64-linux-gnu-strip >/dev/null 2>&1; then \
 		echo "[rootfs] Stripping ELF binaries..."; \
-		x86_64-linux-gnu-strip $(ROOTFS_DIR)/sbin/init $(ROOTFS_DIR)/bin/* 2>/dev/null || true; \
+		x86_64-linux-gnu-strip $(ROOTFS_DIR)/sbin/init $(ROOTFS_DIR)/sbin/init2 $(ROOTFS_DIR)/sbin/initramfs $(ROOTFS_DIR)/bin/* 2>/dev/null || true; \
 	fi
 	# Create /etc/inittab (kernel also creates a default at boot)
 	@echo 'ttyS0::respawn:/bin/sh' > $(ROOTFS_DIR)/etc/inittab
@@ -1838,7 +1820,8 @@ clean-all: clean
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \
 		find src/ -type f \( -name '*.c' -o -name '*.h' \) -exec clang-format -i -style=file {} +; \
-		echo "Formatted all .c and .h files in src/."; \
+		find userspace/ -type f \( -name '*.c' -o -name '*.h' \) -exec clang-format -i -style=file {} +; \
+		echo "Formatted all .c and .h files in src/ and userspace/."; \
 	else \
 		echo "clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
 		exit 1; \
@@ -1904,7 +1887,7 @@ cppcheck-check:
 		  --suppress=checkersReport \
 		  --suppress=checkLevelNormal \
 		  --std=c17 \
-		  -Isrc/include -Isrc/gui -Isrc/doom \
+		  -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom \
 		  --inline-suppr \
 		  --error-exitcode=1 \
 		  src/; \
@@ -1927,9 +1910,9 @@ clang-tidy-check:
 		  --extra-arg="-std=c17" \
 		  --extra-arg="-ffreestanding" \
 		  --extra-arg="-Isrc/include" \
-		  --extra-arg="-Isrc/gui" \
-		  --extra-arg="-Isrc/doom" \
-		  $$SRCS 2>&1 | tail -20 || true; \
+		  --extra-arg="-Iuserspace/kmods/gui" \
+		  --extra-arg="-Iuserspace/kmods/doom" \
+		  $$SRCS 2>/dev/null | tail -20 || true; \
 		echo "clang-tidy finished (checked $$count files)"; \
 	else \
 		echo "clang-tidy not found. Install it (e.g., apt install clang-tidy) and try again."; \

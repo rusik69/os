@@ -41,8 +41,7 @@
 #include "script.h"
 #include "telnetd.h"
 #include "fat32.h"
-#include "shell.h"
-#include "cc.h"
+
 #include "heap.h"
 #include "smp.h"
 #include "apic.h"
@@ -50,10 +49,8 @@
 #include "users.h"
 #include "module.h"
 #include "module_elf.h"
-#include "gui_shell.h"
 #include "shm.h"
 #include "ac97.h"
-#include "doom.h"
 #include "socket.h"
 #include "seccomp.h"
 #include "futex.h"
@@ -216,8 +213,7 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_ELF_EXEC:
         case SYS_SCRIPT_EXEC:
         case SYS_FAT_FILE_SIZE:
-        case SYS_SHELL_HISTORY_ADD:
-            return syscall_user_cstr_ok(a1);
+
         case SYS_STAT:
             return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, sizeof(uint32_t) * 2);
         case SYS_FS_CREATE:
@@ -295,16 +291,7 @@ static int syscall_validate_user_args(uint64_t num, uint64_t a1, uint64_t a2,
             return syscall_user_cstr_ok(a1) && syscall_user_write_ok(a2, a3);
         case SYS_FAT_WRITE_FILE:
             return syscall_user_cstr_ok(a1) && syscall_user_read_ok(a2, a3);
-        case SYS_SHELL_READ_LINE:
-            return syscall_user_write_ok(a1, a2);
-        case SYS_SHELL_VAR_SET:
-        case SYS_CC_COMPILE:
-            return syscall_user_cstr_ok(a1) && syscall_user_cstr_ok(a2);
-        case SYS_SHELL_EXEC_CMD:
-            if (!syscall_user_cstr_ok(a1)) return 0;
-            return a2 ? syscall_user_cstr_ok(a2) : 1;
-        case SYS_SHELL_TAB_COMPLETE:
-            return syscall_user_write_ok(a1, 1) && syscall_user_write_ok(a2, sizeof(int));
+
         case SYS_FREE:
             /* Pointer could be any previously-allocated address; no range check needed */
             return 1;
@@ -4224,7 +4211,8 @@ static uint64_t sys_elf_exec(uint64_t path_addr) {
 static uint64_t sys_script_exec(uint64_t path_addr) {
     const char *path = (const char *)path_addr;
     if (!path) return (uint64_t)-1;
-    return (uint64_t)script_exec(path);
+    if (!script_exec_ptr) return (uint64_t)-1;
+    return (uint64_t)script_exec_ptr(path);
 }
 
 static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
@@ -4257,33 +4245,6 @@ static uint64_t sys_fat_sync(void) {
     return (uint64_t)fat32_sync();
 }
 
-static uint64_t sys_shell_history_show(void) {
-    shell_history_show_entries();
-    return 0;
-}
-
-static uint64_t sys_shell_read_line(uint64_t buf_addr, uint64_t max) {
-    if (!buf_addr || max == 0) return (uint64_t)-1;
-    shell_read_line((char *)buf_addr, (int)max);
-    return 0;
-}
-
-static uint64_t sys_shell_var_set(uint64_t name_addr, uint64_t value_addr) {
-    const char *name = (const char *)name_addr;
-    const char *value = (const char *)value_addr;
-    if (!name || !value) return (uint64_t)-1;
-    shell_var_set(name, value);
-    return 0;
-}
-
-static uint64_t sys_shell_exec_cmd(uint64_t cmd_addr, uint64_t args_addr) {
-    const char *cmd = (const char *)cmd_addr;
-    const char *args = (const char *)args_addr;
-    if (!cmd) return (uint64_t)-1;
-    shell_exec_cmd(cmd, args);
-    return 0;
-}
-
 static uint64_t sys_vga_set_color(uint64_t fg, uint64_t bg) {
     vga_set_color((uint8_t)fg, (uint8_t)bg);
     return 0;
@@ -4304,255 +4265,8 @@ static uint64_t sys_vga_get_fb_info(uint64_t out_addr) {
     return 0;
 }
 
-/* Single static workspace avoids ~7MB heap alloc/free churn per cc invocation.
- * Protected by a mutex to prevent concurrent access. */
-static CompilerState cc_workspace;
-static int cc_mutex = -1;
-
-#define CC_INCLUDE_MAX_DEPTH 16
-#define CC_PATH_MAX_LEN 256
-
-static int cc_append_src(CompilerState *st, const char *buf, uint32_t n) {
-    if (st->src_len + n >= CC_SRC_MAX) return -1;
-    memcpy(st->src + st->src_len, buf, n);
-    st->src_len += n;
-    st->src[st->src_len] = '\0';
-    return 0;
-}
-
-static void cc_path_dirname(const char *path, char out[CC_PATH_MAX_LEN]) {
-    int last_slash = -1;
-    int i = 0;
-    while (path[i] && i < CC_PATH_MAX_LEN - 1) {
-        if (path[i] == '/') last_slash = i;
-        i++;
-    }
-    if (last_slash <= 0) {
-        out[0] = '/';
-        out[1] = '\0';
-        return;
-    }
-    memcpy(out, path, (uint32_t)last_slash);
-    out[last_slash] = '\0';
-}
-
-static int cc_path_join(const char *dir, const char *name, char out[CC_PATH_MAX_LEN]) {
-    int di = 0;
-    if (name[0] == '/') {
-        while (name[di] && di < CC_PATH_MAX_LEN - 1) {
-            out[di] = name[di];
-            di++;
-        }
-        out[di] = '\0';
-        return 0;
-    }
-
-    while (dir[di] && di < CC_PATH_MAX_LEN - 1) {
-        out[di] = dir[di];
-        di++;
-    }
-    if (di == 0 || out[di - 1] != '/') {
-        if (di >= CC_PATH_MAX_LEN - 1) return -1;
-        out[di++] = '/';
-    }
-    int ni = 0;
-    while (name[ni] && di < CC_PATH_MAX_LEN - 1) {
-        out[di++] = name[ni++];
-    }
-    out[di] = '\0';
-    return name[ni] ? -1 : 0;
-}
-
-static int cc_load_with_includes(CompilerState *st, const char *path, int depth);
-
-static int cc_load_with_includes(CompilerState *st, const char *path, int depth) {
-    if (depth > CC_INCLUDE_MAX_DEPTH) return -1;
-
-    char *fbuf = (char *)kmalloc(CC_SRC_MAX);
-    if (!fbuf) return -1;
-    uint32_t sz = 0;
-    int rr = vfs_read(path, fbuf, CC_SRC_MAX - 1, &sz);
-    if (rr < 0 || sz == 0) {
-        kfree(fbuf);
-        return -1;
-    }
-    fbuf[sz] = '\0';
-
-    char base[CC_PATH_MAX_LEN];
-    cc_path_dirname(path, base);
-
-    uint32_t i = 0;
-    while (i < sz) {
-        uint32_t line_start = i;
-        while (i < sz && fbuf[i] != '\n') i++;
-        uint32_t line_end = i;
-        if (i < sz && fbuf[i] == '\n') i++;
-
-        uint32_t p = line_start;
-        while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-
-        if (p < line_end && fbuf[p] == '#') {
-            p++;
-            while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-
-            char dirkw[16] = {0};
-            int dk = 0;
-            while (p < line_end && ((fbuf[p] >= 'a' && fbuf[p] <= 'z') ||
-                   (fbuf[p] >= 'A' && fbuf[p] <= 'Z')) && dk < 15) {
-                dirkw[dk++] = fbuf[p++];
-            }
-            dirkw[dk] = '\0';
-
-            if (strcmp(dirkw, "include") == 0) {
-                while (p < line_end && (fbuf[p] == ' ' || fbuf[p] == '\t')) p++;
-                if (p < line_end && fbuf[p] == '"') {
-                    p++;
-                    char inc[CC_PATH_MAX_LEN] = {0};
-                    int ii = 0;
-                    while (p < line_end && fbuf[p] != '"' && ii < CC_PATH_MAX_LEN - 1)
-                        inc[ii++] = fbuf[p++];
-                    inc[ii] = '\0';
-
-                    char full[CC_PATH_MAX_LEN] = {0};
-                    if (cc_path_join(base, inc, full) < 0) {
-                        kfree(fbuf);
-                        return -1;
-                    }
-                    if (cc_load_with_includes(st, full, depth + 1) < 0) {
-                        kfree(fbuf);
-                        return -1;
-                    }
-                    continue;
-                }
-            }
-        }
-
-        if (cc_append_src(st, fbuf + line_start, line_end - line_start) < 0 ||
-            cc_append_src(st, "\n", 1) < 0) {
-            kfree(fbuf);
-            return -1;
-        }
-    }
-
-    kfree(fbuf);
-    return 0;
-}
-
-static uint64_t sys_cc_compile(uint64_t inpath_addr, uint64_t outpath_addr) {
-    const char *inpath = (const char *)inpath_addr;
-    const char *outpath = (const char *)outpath_addr;
-    if (!inpath || !outpath) return (uint64_t)-1;
-
-    if (cc_mutex >= 0) mutex_lock(cc_mutex);
-    CompilerState *cc = &cc_workspace;
-    memset(cc, 0, sizeof(CompilerState));
-    cc->src_len = 0;
-    cc->src[0] = '\0';
-    strncpy(cc->filename, inpath, sizeof(cc->filename) - 1);
-
-    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-2;
-    }
-
-    cc_lex(cc);
-    if (cc->error) {
-        kprintf("cc: lex error: %s\n", cc->errmsg);
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (unsigned long)-3;
-    }
-
-    cc_parse(cc);
-    if (cc->error) {
-        kprintf("cc: error: %s\n", cc->errmsg);
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (unsigned long)-4;
-    }
-
-    int ret = 0;
-    if (cc_write_elf(cc, outpath) < 0)
-        ret = -5;
-
-    if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-    return (uint64_t)ret;
-}
-
-static uint64_t sys_cc_compile_obj(uint64_t inpath_addr, uint64_t outpath_addr) {
-    const char *inpath = (const char *)inpath_addr;
-    const char *outpath = (const char *)outpath_addr;
-    if (!inpath || !outpath) return (uint64_t)-1;
-
-    if (cc_mutex >= 0) mutex_lock(cc_mutex);
-    CompilerState *cc = &cc_workspace;
-    memset(cc, 0, sizeof(CompilerState));
-    cc->src_len = 0;
-    cc->src[0] = '\0';
-    strncpy(cc->filename, inpath, sizeof(cc->filename) - 1);
-    cc->obj_mode = 1;
-
-    if (cc_load_with_includes(cc, inpath, 0) < 0 || cc->src_len == 0) {
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (uint64_t)-2;
-    }
-
-    cc_lex(cc);
-    if (cc->error) {
-        kprintf("cc: lex error: %s\n", cc->errmsg);
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (unsigned long)-3;
-    }
-
-    cc_parse(cc);
-    if (cc->error) {
-        kprintf("cc: error: %s\n", cc->errmsg);
-        if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-        return (unsigned long)-4;
-    }
-
-    int ret = 0;
-    if (cc_write_obj(cc, outpath) < 0)
-        ret = -5;
-
-    if (cc_mutex >= 0) mutex_unlock(cc_mutex);
-    return (uint64_t)ret;
-}
-
-static uint64_t sys_cc_link(uint64_t obj_paths_addr, uint64_t nobj, uint64_t outpath_addr) {
-    const char **obj_paths = (const char **)obj_paths_addr;
-    const char *outpath = (const char *)outpath_addr;
-    if (!obj_paths || !outpath || nobj == 0 || nobj > 256) return (uint64_t)-1;
-
-    int ret = cc_link(obj_paths, (int)nobj, outpath, CC_LOAD_BASE);
-    return (uint64_t)(int64_t)ret;
-}
-
 static uint64_t sys_keyboard_getchar(void) {
     return (uint64_t)(uint8_t)keyboard_getchar();
-}
-
-static uint64_t sys_shell_history_add(uint64_t cmd_addr) {
-    const char *cmd_line = (const char *)cmd_addr;
-    if (!cmd_line) return (uint64_t)-1;
-    shell_history_add(cmd_line);
-    return 0;
-}
-
-static uint64_t sys_shell_history_count(void) {
-    return (uint64_t)shell_history_count();
-}
-
-static uint64_t sys_shell_history_entry(uint64_t idx) {
-    if (syscall_is_user_process()) return (uint64_t)-1;
-    return (uint64_t)(uintptr_t)shell_history_entry((int)idx);
-}
-
-static uint64_t sys_shell_tab_complete(uint64_t buf_addr, uint64_t len_addr, uint64_t session_addr) {
-    char *buf = (char *)buf_addr;
-    int *len = (int *)len_addr;
-    void *session = (void *)session_addr;
-    if (!buf || !len) return (uint64_t)-1;
-    shell_tab_complete_telnet(buf, len, session);
-    return 0;
 }
 
 static uint64_t sys_vga_put_entry_at(uint64_t ch, uint64_t color, uint64_t row, uint64_t col) {
@@ -4567,33 +4281,6 @@ static uint64_t sys_vga_set_cursor(uint64_t row, uint64_t col) {
 
 static uint64_t sys_vga_clear(void) {
     vga_clear();
-    return 0;
-}
-
-static uint64_t sys_gui_shell_run(void) {
-    gui_shell_run();
-    return 0;
-}
-
-static struct process *g_doom_proc = NULL;
-
-static uint64_t sys_doom_run(void) {
-    if (g_doom_proc && g_doom_proc->state != PROCESS_ZOMBIE &&
-        g_doom_proc->state != PROCESS_UNUSED) {
-        return (uint64_t)-2;
-    }
-    if (!vga_is_framebuffer()) {
-        if (vga_try_alloc_software_framebuffer() != 0)
-            return (uint64_t)-1;
-    }
-    g_doom_proc = process_create(doom_task, "doom");
-    if (!g_doom_proc)
-        return (uint64_t)-1;
-    int status = 0;
-    process_waitpid(g_doom_proc->pid, &status);
-    g_doom_proc = NULL;
-    keyboard_reset_state();
-    vga_refresh_console();
     return 0;
 }
 
@@ -9437,25 +9124,12 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_FAT_FILE_SIZE: return sys_fat_file_size(a1);
         case SYS_FAT_WRITE_FILE: return sys_fat_write_file(a1, a2, a3);
         case SYS_FAT_SYNC: return sys_fat_sync();
-        case SYS_SHELL_HISTORY_SHOW: return sys_shell_history_show();
-        case SYS_SHELL_READ_LINE: return sys_shell_read_line(a1, a2);
-        case SYS_SHELL_VAR_SET: return sys_shell_var_set(a1, a2);
-        case SYS_SHELL_EXEC_CMD: return sys_shell_exec_cmd(a1, a2);
         case SYS_VGA_SET_COLOR: return sys_vga_set_color(a1, a2);
         case SYS_VGA_GET_FB_INFO: return sys_vga_get_fb_info(a1);
-        case SYS_CC_COMPILE: return sys_cc_compile(a1, a2);
-        case SYS_CC_COMPILE_OBJ: return sys_cc_compile_obj(a1, a2);
-        case SYS_CC_LINK: return sys_cc_link(a1, a2, a3);
         case SYS_KEYBOARD_GETCHAR: return sys_keyboard_getchar();
-        case SYS_SHELL_HISTORY_ADD: return sys_shell_history_add(a1);
-        case SYS_SHELL_HISTORY_COUNT: return sys_shell_history_count();
-        case SYS_SHELL_HISTORY_ENTRY: return sys_shell_history_entry(a1);
-        case SYS_SHELL_TAB_COMPLETE: return sys_shell_tab_complete(a1, a2, a3);
         case SYS_VGA_PUT_ENTRY_AT: return sys_vga_put_entry_at(a1, a2, a3, a4);
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
-        case SYS_GUI_SHELL_RUN: return sys_gui_shell_run();
-        case SYS_DOOM_RUN: return sys_doom_run();
         case SYS_AC97_PRESENT: return ac97_present() ? 1 : 0;
         case SYS_AC97_BEEP: {
             if (!ac97_present()) return (uint64_t)-1;
@@ -9755,6 +9429,37 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                                            (uint32_t)a3,
                                            (const struct mount_attr *)a4,
                                            (size_t)a5);
+        /* ── Userspace framebuffer / keyboard syscalls (504-510) ── */
+        case SYS_VGA_PUT_PIXEL:
+            vga_put_pixel((int32_t)a1, (int32_t)a2, (uint32_t)a3);
+            return 0;
+        case SYS_VGA_BLIT: {
+            uint64_t buf = a1;
+            int32_t x = (int32_t)a2, y = (int32_t)a3;
+            uint32_t w = (uint32_t)a4, h = (uint32_t)a5;
+            for (uint32_t row = 0; row < h; row++) {
+                for (uint32_t col = 0; col < w; col++) {
+                    uint32_t color;
+                    if (copy_from_user(&color, buf + (row * w + col) * 4, 4) < 0)
+                        return (uint64_t)-1;
+                    vga_put_pixel(x + (int32_t)col, y + (int32_t)row, color);
+                }
+            }
+            return 0;
+        }
+        case SYS_VGA_CLEAR_FRAMEBUFFER:
+            vga_clear_framebuffer((uint32_t)a1);
+            return 0;
+        case SYS_VGA_REFRESH_CONSOLE:
+            vga_refresh_console();
+            return 0;
+        case SYS_KEYBOARD_HAS_INPUT:
+            return (uint64_t)keyboard_has_input();
+        case SYS_KEYBOARD_IS_DOWN:
+            return (uint64_t)keyboard_is_down((char)(uint8_t)a1);
+        case SYS_KEYBOARD_RESET_STATE:
+            keyboard_reset_state();
+            return 0;
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);
@@ -10185,9 +9890,6 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
 }
 
 void syscall_init(void) {
-    /* Initialize the compiler mutex */
-    cc_mutex = mutex_init();
-
     /* Enable SCE bit in EFER */
     wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_SCE);
 

@@ -9,10 +9,9 @@
 #include "string.h"
 #include "printf.h"
 #include "service.h"
-#include "shell.h"
 #include "users.h"
-#include "editor.h"
 #include "scheduler.h"
+#include "shell.h"
 
 /* ── Forward declarations from ssh_crypto.c ─────────────────── */
 extern void bn_from_bytes(bignum *r, const uint8_t *bytes, int len);
@@ -483,12 +482,12 @@ static void process_command(struct ssh_session *s) {
         return;
     }
     
-    shell_history_add(s->cmd_buf);
+    if (shell_history_add_ptr) shell_history_add_ptr(s->cmd_buf);
     s->processing = 1;
     
     kprintf_set_hook(ssh_output_hook, s);
     kprintf_set_flush(ssh_flush_hook, s);
-    shell_process_line(cmd);
+    if (shell_process_line_ptr) shell_process_line_ptr(cmd);
     kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
     
