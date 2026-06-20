@@ -131,25 +131,15 @@ void doom_raycast_column(const doom_state_t *st, int col, int32_t fov,
         if (draw_end > DOOM_VIEW_H) draw_end = DOOM_VIEW_H;
     }
 
-    /* Sky gradient above wall top */
-    for (int y = 0; y < draw_start; y++) {
-        int t = y * 256 / (draw_start + 1);
-        uint32_t c = doom_lerp_rgb(DOOM_COLOR(20, 16, 48), DOOM_COLOR(48, 40, 80), t, 256);
-        fb[y * DOOM_SCREEN_W + col] = c;
-    }
-
-    /* Floor placeholder below wall (replaced by floor casting) */
-    for (int y = draw_end; y < DOOM_VIEW_H; y++) {
-        int t = (y - draw_end) * 256 / (DOOM_VIEW_H - draw_end + 1);
-        uint32_t c = doom_lerp_rgb(DOOM_COLOR(72, 52, 40), DOOM_COLOR(40, 28, 20), t, 256);
-        fb[y * DOOM_SCREEN_W + col] = doom_apply_fog(c, hit.dist + (y - draw_end) / 4);
-    }
-
+    /* Floor/ceiling casting replaces sky gradient and floor placeholder */
+    /* Cast floor and ceiling via doom_floor_column, which handles both */
     if (!hit.hit) {
-        doom_floor_column(st, col, fov, draw_start, draw_end, fb);
+        /* No wall hit: cast full floor and ceiling */
+        doom_floor_column(st, col, fov, 0, DOOM_VIEW_H, fb);
         return;
     }
 
+    /* Wall was hit: draw wall texture */
     int tex_u = (hit.wall_x * DOOM_TEX_SIZE) / DOOM_FRAC;
     if (hit.side == 0 && doom_sin(angle) > 0) tex_u = DOOM_TEX_SIZE - tex_u - 1;
     if (hit.side == 1 && doom_cos(angle) < 0) tex_u = DOOM_TEX_SIZE - tex_u - 1;
@@ -172,6 +162,7 @@ void doom_raycast_column(const doom_state_t *st, int col, int32_t fov,
         fb[y * DOOM_SCREEN_W + col] = doom_apply_fog(color, hit.dist);
     }
 
+    /* Cast floor and ceiling using proper texture mapping */
     doom_floor_column(st, col, fov, draw_start, draw_end, fb);
 }
 

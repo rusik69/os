@@ -4,6 +4,10 @@
 #include "string.h"
 #include "stdlib.h"
 
+/* VT ioctl commands */
+#define VT_ACTIVATE   0x5606
+#define VT_WAITACTIVE 0x5607
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("Usage: chvt N\n");
@@ -26,23 +30,25 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    /* Try /dev/tty<N> ioctl with VT_ACTIVATE (0x5606) */
-    char devpath[32];
-    snprintf(devpath, sizeof(devpath), "/dev/tty%d", vt);
-    fd = open(devpath, O_RDONLY, 0);
+    /* Try /dev/tty0 with VT_ACTIVATE + VT_WAITACTIVE */
+    fd = open("/dev/tty0", O_RDONLY, 0);
     if (fd >= 0) {
-        /* Use ioctl VT_ACTIVATE = 0x5606 */
-        if (ioctl(fd, 0x5606, (void *)(unsigned long)vt) == 0) {
+        if (ioctl(fd, VT_ACTIVATE, (void *)(unsigned long)vt) == 0) {
+            /* Wait for the switch to complete */
+            ioctl(fd, VT_WAITACTIVE, (void *)(unsigned long)vt);
             close(fd);
             return 0;
         }
         close(fd);
     }
 
-    /* Fallback: write VT number to /dev/tty0 via ioctl */
-    fd = open("/dev/tty0", O_RDONLY, 0);
+    /* Try /dev/tty<N> directly */
+    char devpath[32];
+    snprintf(devpath, sizeof(devpath), "/dev/tty%d", vt);
+    fd = open(devpath, O_RDONLY, 0);
     if (fd >= 0) {
-        if (ioctl(fd, 0x5606, (void *)(unsigned long)vt) == 0) {
+        if (ioctl(fd, VT_ACTIVATE, (void *)(unsigned long)vt) == 0) {
+            ioctl(fd, VT_WAITACTIVE, (void *)(unsigned long)vt);
             close(fd);
             return 0;
         }

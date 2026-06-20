@@ -35,6 +35,16 @@ struct orch_resource {
     char namespace[MANIFEST_NS_MAX];
     char spec[MANIFEST_SPEC_MAX];
     int  in_use;
+
+    /* OCI image manifest fields */
+    char media_type[64];           /* e.g. "application/vnd.docker.distribution.manifest.v2+json" */
+    int  schema_version;           /* OCI schema version (typically 2) */
+    char config_digest[128];       /* "sha256:..." of config blob */
+    uint64_t config_size;          /* Size of config blob in bytes */
+    int  num_layers;               /* Number of layer descriptors */
+    char layer_digests[64][128];   /* "sha256:..." of each layer blob */
+    uint64_t layer_sizes[64];      /* Size of each layer blob */
+    char layer_media_types[64][64];/* Media type of each layer */
 };
 
 /* ── Resource table ────────────────────────────────────────────────── */
@@ -214,6 +224,30 @@ int manifest_parse(const char *json_string, struct orch_resource *out) {
                     strncpy(out->name, tok.value, MANIFEST_NAME_MAX - 1);
                 } else if (strcmp(last_key, "namespace") == 0) {
                     strncpy(out->namespace, tok.value, MANIFEST_NS_MAX - 1);
+                } else if (strcmp(last_key, "mediaType") == 0) {
+                    strncpy(out->media_type, tok.value, sizeof(out->media_type) - 1);
+                } else if (strcmp(last_key, "schemaVersion") == 0) {
+                    /* Manual string-to-int conversion */
+                    int val = 0;
+                    const char *s = tok.value;
+                    while (*s >= '0' && *s <= '9') {
+                        val = val * 10 + (*s - '0');
+                        s++;
+                    }
+                    out->schema_version = val;
+                } else if (strcmp(last_key, "digest") == 0) {
+                    /* Could be config digest or layer digest depending on context */
+                    /* Store in config_digest as default */
+                    strncpy(out->config_digest, tok.value, sizeof(out->config_digest) - 1);
+                } else if (strcmp(last_key, "size") == 0) {
+                    /* Manual string-to-uint64 conversion */
+                    uint64_t val = 0;
+                    const char *s = tok.value;
+                    while (*s >= '0' && *s <= '9') {
+                        val = val * 10 + (uint64_t)(*s - '0');
+                        s++;
+                    }
+                    out->config_size = val;
                 }
                 last_key[0] = '\0'; /* consumed */
             }
@@ -242,46 +276,104 @@ int manifest_validate(const struct orch_resource *res) {
         return -EINVAL;
 
     if (res->name[0] == '\0') {
-        kprintf("manifest: resource missing 'name'\n");
+        kprintf("manifest: RESOURCE VALIDATION ERROR — missing required field 'name'. "
+                "Every resource must have a metadata.name field.\n");
         return -EINVAL;
     }
 
     if (res->kind[0] == '\0') {
-        kprintf("manifest: resource missing 'kind'\n");
+        kprintf("manifest: RESOURCE VALIDATION ERROR — missing required field 'kind'. "
+                "Every resource must have a 'kind' field (e.g. 'Pod', 'Service', "
+                "'Namespace', 'ConfigMap', 'Secret', 'Deployment').\n");
         return -EINVAL;
     }
 
     /* Validate per-kind */
     if (strcmp(res->kind, "Pod") == 0) {
         if (res->spec[0] == '\0') {
-            kprintf("manifest: Pod '%s' requires spec.containers\n", res->name);
+            kprintf("manifest: VALIDATION ERROR — Pod '%s' requires a 'spec' section "
+                    "with at least one container definition.\n", res->name);
             return -EINVAL;
         }
+        kprintf("manifest: Pod '%s' validated OK (spec present)\n", res->name);
+
     } else if (strcmp(res->kind, "Service") == 0) {
-        /* Acceptable with just a name */
+        if (res->spec[0] == '\0') {
+            kprintf("manifest: WARNING — Service '%s' has no spec. "
+                    "It will be created but have no ports defined.\n", res->name);
+        } else {
+            kprintf("manifest: Service '%s' validated OK\n", res->name);
+        }
+
     } else if (strcmp(res->kind, "Namespace") == 0) {
-        /* Acceptable with just a name */
+        kprintf("manifest: Namespace '%s' validated OK\n", res->name);
+
     } else if (strcmp(res->kind, "ReplicaSet") == 0) {
         if (res->spec[0] == '\0') {
-            kprintf("manifest: ReplicaSet '%s' requires spec\n", res->name);
+            kprintf("manifest: VALIDATION ERROR — ReplicaSet '%s' requires a 'spec' "
+                    "section with template and replicas fields.\n", res->name);
             return -EINVAL;
         }
+        kprintf("manifest: ReplicaSet '%s' validated OK\n", res->name);
+
     } else if (strcmp(res->kind, "Deployment") == 0) {
         if (res->spec[0] == '\0') {
-            kprintf("manifest: Deployment '%s' requires spec\n", res->name);
+            kprintf("manifest: VALIDATION ERROR — Deployment '%s' requires a 'spec' "
+                    "section with template, replicas, and selector fields.\n", res->name);
             return -EINVAL;
         }
+        kprintf("manifest: Deployment '%s' validated OK\n", res->name);
+
     } else if (strcmp(res->kind, "DaemonSet") == 0) {
         if (res->spec[0] == '\0') {
-            kprintf("manifest: DaemonSet '%s' requires spec\n", res->name);
+            kprintf("manifest: VALIDATION ERROR — DaemonSet '%s' requires a 'spec' "
+                    "section with template and selector fields.\n", res->name);
             return -EINVAL;
         }
+        kprintf("manifest: DaemonSet '%s' validated OK\n", res->name);
+
     } else if (strcmp(res->kind, "ConfigMap") == 0) {
-        /* ConfigMap just needs name */
+        kprintf("manifest: ConfigMap '%s' validated OK (name present)\n", res->name);
+
     } else if (strcmp(res->kind, "Secret") == 0) {
-        /* Secret just needs name */
+        kprintf("manifest: Secret '%s' validated OK (name present)\n", res->name);
+
+    } else if (strcmp(res->kind, "ImageManifest") == 0 ||
+               strcmp(res->kind, "Manifest") == 0) {
+        /* OCI/Docker image manifest validation */
+        if (res->schema_version != 2) {
+            kprintf("manifest: OCI MANIFEST VALIDATION ERROR — image manifest '%s' "
+                    "has unsupported schemaVersion %d (expected 2)\n",
+                    res->name, res->schema_version);
+            return -EINVAL;
+        }
+        if (res->media_type[0] == '\0') {
+            kprintf("manifest: OCI MANIFEST VALIDATION ERROR — image manifest '%s' "
+                    "missing 'mediaType' field (e.g. "
+                    "'application/vnd.docker.distribution.manifest.v2+json')\n",
+                    res->name);
+            return -EINVAL;
+        }
+        if (res->config_digest[0] == '\0') {
+            kprintf("manifest: OCI MANIFEST VALIDATION ERROR — image manifest '%s' "
+                    "missing config digest. Every image must have a config blob.\n",
+                    res->name);
+            return -EINVAL;
+        }
+        if (res->num_layers == 0) {
+            kprintf("manifest: OCI MANIFEST WARNING — image manifest '%s' "
+                    "has no layers. This may be an empty image or a manifest list.\n",
+                    res->name);
+        }
+        kprintf("manifest: OCI image manifest '%s' validated OK "
+                "(mediaType=%s, config=%s, %d layers)\n",
+                res->name, res->media_type, res->config_digest, res->num_layers);
+
     } else {
-        kprintf("manifest: unknown kind '%s'\n", res->kind);
+        kprintf("manifest: VALIDATION ERROR — unknown kind '%s'. "
+                "Supported kinds: Pod, Service, Namespace, ReplicaSet, Deployment, "
+                "DaemonSet, ConfigMap, Secret, ImageManifest\n",
+                res->kind);
         return -EINVAL;
     }
 

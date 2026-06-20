@@ -5,6 +5,13 @@
 #include "stdlib.h"
 #include "sys/stat.h"
 
+/* Loop ioctl numbers */
+#define LOOP_SET_FD      0x4C00
+#define LOOP_CLR_FD      0x4C01
+#define LOOP_CTL_GET_FREE 0x4C82
+#define LOOP_CTL_ADD     0x4C83
+#define LOOP_CTL_REMOVE  0x4C84
+
 /* Simple unsigned long long parse */
 static unsigned long long parse_ull(const char *s) {
     unsigned long long v = 0;
@@ -38,17 +45,57 @@ static void chomp(char *s) {
 
 /* Set up a loop device to back a file */
 static int setup_loop(const char *file, int show_device) {
-    /* First, find a free loop device by scanning /dev/loop* */
-    for (int num = 0; num < 256; num++) {
+    int num = -1;
+
+    /* Method 1: Use LOOP_CTL_GET_FREE on /dev/loop-control */
+    int ctl_fd = open("/dev/loop-control", O_RDWR, 0);
+    if (ctl_fd >= 0) {
+        num = ioctl(ctl_fd, LOOP_CTL_GET_FREE, 0);
+        close(ctl_fd);
+        if (num >= 0) {
+            char devpath[32];
+            snprintf(devpath, sizeof(devpath), "/dev/loop%d", num);
+
+            int file_fd = open(file, O_RDWR, 0);
+            if (file_fd < 0) file_fd = open(file, O_RDONLY, 0);
+            if (file_fd < 0) {
+                printf("losetup: cannot open '%s'\n", file);
+                return -1;
+            }
+
+            int loop_fd = open(devpath, O_RDWR, 0);
+            if (loop_fd < 0) {
+                close(file_fd);
+                printf("losetup: cannot open '%s'\n", devpath);
+                return -1;
+            }
+
+            int ret = ioctl(loop_fd, LOOP_SET_FD, (void *)(unsigned long)file_fd);
+            close(file_fd);
+            close(loop_fd);
+
+            if (ret == 0) {
+                if (show_device)
+                    printf("%s\n", devpath);
+                else
+                    printf("losetup: %s -> %s\n", devpath, file);
+                return 0;
+            }
+        } else {
+            /* LOOP_CTL_GET_FREE may not be supported; fall through */
+        }
+    }
+
+    /* Method 2: Scan /dev/loop* for free device */
+    for (num = 0; num < 256; num++) {
         char devpath[32];
         snprintf(devpath, sizeof(devpath), "/dev/loop%d", num);
 
         struct stat st;
-        if (stat(devpath, &st) < 0) {
+        if (stat(devpath, &st) < 0)
             continue;
-        }
 
-        /* Check if this loop device is already in use */
+        /* Check if already in use via /sys/block */
         char syspath[64];
         snprintf(syspath, sizeof(syspath), "/sys/block/loop%d/loop/backing_file", num);
         int backing_fd = open(syspath, O_RDONLY, 0);
@@ -57,56 +104,47 @@ static int setup_loop(const char *file, int show_device) {
             continue;
         }
 
-        /* Try to set up the loop device */
-        /* Method 1: Write to loop-control */
-        int ctl_fd = open("/dev/loop-control", O_RDWR, 0);
-        if (ctl_fd >= 0) {
-            ioctl(ctl_fd, 0x4C01, (void *)(unsigned long)num);
-            close(ctl_fd);
+        /* Try to set up this loop device */
+        int file_fd = open(file, O_RDWR, 0);
+        if (file_fd < 0) file_fd = open(file, O_RDONLY, 0);
+        if (file_fd < 0) {
+            printf("losetup: cannot open '%s'\n", file);
+            return -1;
         }
 
-        /* Method 2: Direct loop device setup via ioctl */
         int loop_fd = open(devpath, O_RDWR, 0);
-        if (loop_fd >= 0) {
-            int file_fd = open(file, O_RDWR, 0);
-            if (file_fd < 0) {
-                file_fd = open(file, O_RDONLY, 0);
-            }
-            if (file_fd < 0) {
-                close(loop_fd);
-                printf("losetup: cannot open '%s'\n", file);
-                return -1;
-            }
-
-            /* LOOP_SET_FD: associate the loop device with the file descriptor */
-            int ret = ioctl(loop_fd, 0x4C00, (void *)(unsigned long)file_fd);
-            if (ret < 0) {
-                printf("losetup: cannot associate '%s' with %s (not supported)\n", file, devpath);
-                close(file_fd);
-                close(loop_fd);
-            } else {
-                close(file_fd);
-                close(loop_fd);
-                if (show_device) {
-                    printf("%s\n", devpath);
-                } else {
-                    printf("losetup: %s -> %s\n", devpath, file);
-                }
-                return 0;
-            }
+        if (loop_fd < 0) {
+            close(file_fd);
+            continue;
         }
 
-        /* Method 3: Write backing file path to sysfs */
+        int ret = ioctl(loop_fd, LOOP_SET_FD, (void *)(unsigned long)file_fd);
+        close(file_fd);
+        close(loop_fd);
+
+        if (ret == 0) {
+            if (show_device)
+                printf("%s\n", devpath);
+            else
+                printf("losetup: %s -> %s\n", devpath, file);
+            return 0;
+        }
+    }
+
+    /* Method 3: Write backing file path to sysfs */
+    for (num = 0; num < 256; num++) {
+        char syspath[64];
         snprintf(syspath, sizeof(syspath), "/sys/block/loop%d/loop/backing_file", num);
         int sys_fd = open(syspath, O_WRONLY, 0);
         if (sys_fd >= 0) {
             write(sys_fd, file, strlen(file));
             close(sys_fd);
-            if (show_device) {
+            char devpath[32];
+            snprintf(devpath, sizeof(devpath), "/dev/loop%d", num);
+            if (show_device)
                 printf("%s\n", devpath);
-            } else {
+            else
                 printf("losetup: %s -> %s\n", devpath, file);
-            }
             return 0;
         }
     }
@@ -202,14 +240,24 @@ int main(int argc, char *argv[]) {
             pos += de->d_reclen;
         }
 
-        if (!found) {
+        if (!found)
             printf("losetup: no loop devices\n");
-        }
         return 0;
     }
 
     if (opt_find_free && !file_arg) {
         /* Find first free loop device */
+        int ctl_fd = open("/dev/loop-control", O_RDWR, 0);
+        if (ctl_fd >= 0) {
+            int num = ioctl(ctl_fd, LOOP_CTL_GET_FREE, 0);
+            close(ctl_fd);
+            if (num >= 0) {
+                printf("/dev/loop%d\n", num);
+                return 0;
+            }
+        }
+
+        /* Fallback: scan /sys/block */
         int sys_fd = open("/sys/block", O_RDONLY, 0);
         if (sys_fd < 0) {
             printf("losetup: cannot access /sys/block\n");
@@ -227,16 +275,14 @@ int main(int argc, char *argv[]) {
             char devpath[32];
             snprintf(devpath, sizeof(devpath), "/dev/%s", name);
             struct stat st;
-            if (stat(devpath, &st) < 0) {
+            if (stat(devpath, &st) < 0)
                 continue;
-            }
 
             char back_path[64];
             snprintf(back_path, sizeof(back_path), "/sys/block/%s/loop/backing_file", name);
             char dummy[4];
-            if (read_file(back_path, dummy, sizeof(dummy)) >= 0) {
+            if (read_file(back_path, dummy, sizeof(dummy)) >= 0)
                 continue;
-            }
 
             printf("/dev/%s\n", name);
             return 0;
@@ -263,8 +309,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        /* LOOP_CLR_FD = 0x4C01 */
-        int ret = ioctl(fd, 0x4C01, NULL);
+        int ret = ioctl(fd, LOOP_CLR_FD, NULL);
         if (ret < 0) {
             printf("losetup: cannot detach '%s'\n", devpath);
             close(fd);
@@ -277,13 +322,11 @@ int main(int argc, char *argv[]) {
 
     /* Set up loop device */
     if (file_arg) {
-        if (opt_find_free || opt_show) {
+        if (opt_find_free || opt_show)
             return setup_loop(file_arg, opt_show) == 0 ? 0 : 1;
-        }
         return setup_loop(file_arg, 0) == 0 ? 0 : 1;
     }
 
-    /* No arguments */
     printf("losetup: missing file argument\n");
     printf("Usage: losetup [options] <file>\n");
     printf("       losetup -l\n");

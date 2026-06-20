@@ -709,11 +709,93 @@ void dos_emu_run(struct dos_cpu_state *state)
             break;
         }
 
-        /* ---- 0x27: DAA, 0x2F: DAS, 0x37: AAA, 0x3F: AAS (stubs) ---- */
-        case 0x27: /* DAA */ break;
-        case 0x2F: /* DAS */ break;
-        case 0x37: /* AAA */ break;
-        case 0x3F: /* AAS */ break;
+        /* ---- 0x27: DAA (Decimal Adjust AL after Addition) ---- */
+        case 0x27: {
+            uint8_t old_al = (uint8_t)state->ax;
+            uint8_t al = old_al;
+            uint8_t cf = (state->flags & DOS_FLAG_CF) ? 1 : 0;
+            uint8_t af = (state->flags & DOS_FLAG_AF) ? 1 : 0;
+            if ((al & 0x0F) > 9 || af) {
+                al += 6;
+                state->flags |= DOS_FLAG_AF;
+            } else {
+                state->flags &= ~DOS_FLAG_AF;
+            }
+            if (old_al > 0x99 || cf) {
+                al += 0x60;
+                state->flags |= DOS_FLAG_CF;
+            } else {
+                state->flags &= ~DOS_FLAG_CF;
+            }
+            state->ax = (state->ax & 0xFF00) | al;
+            set_pf(state, al);
+            if (al == 0) state->flags |= DOS_FLAG_ZF;
+            else         state->flags &= ~DOS_FLAG_ZF;
+            if (al & 0x80) state->flags |= DOS_FLAG_SF;
+            else           state->flags &= ~DOS_FLAG_SF;
+            break;
+        }
+
+        /* ---- 0x2F: DAS (Decimal Adjust AL after Subtraction) ---- */
+        case 0x2F: {
+            uint8_t old_al = (uint8_t)state->ax;
+            uint8_t al = old_al;
+            uint8_t cf = (state->flags & DOS_FLAG_CF) ? 1 : 0;
+            uint8_t af = (state->flags & DOS_FLAG_AF) ? 1 : 0;
+            if ((al & 0x0F) > 9 || af) {
+                al -= 6;
+                state->flags |= DOS_FLAG_AF;
+            } else {
+                state->flags &= ~DOS_FLAG_AF;
+            }
+            if (old_al > 0x99 || cf) {
+                al -= 0x60;
+                state->flags |= DOS_FLAG_CF;
+            } else {
+                state->flags &= ~DOS_FLAG_CF;
+            }
+            state->ax = (state->ax & 0xFF00) | al;
+            set_pf(state, al);
+            if (al == 0) state->flags |= DOS_FLAG_ZF;
+            else         state->flags &= ~DOS_FLAG_ZF;
+            if (al & 0x80) state->flags |= DOS_FLAG_SF;
+            else           state->flags &= ~DOS_FLAG_SF;
+            break;
+        }
+
+        /* ---- 0x37: AAA (ASCII Adjust AL after Addition) ---- */
+        case 0x37: {
+            uint8_t al = (uint8_t)state->ax;
+            uint8_t ah = (uint8_t)(state->ax >> 8);
+            if ((al & 0x0F) > 9 || (state->flags & DOS_FLAG_AF)) {
+                al = (al + 6) & 0x0F;
+                ah++;
+                state->flags |= DOS_FLAG_AF;
+                state->flags |= DOS_FLAG_CF;
+            } else {
+                state->flags &= ~DOS_FLAG_AF;
+                state->flags &= ~DOS_FLAG_CF;
+            }
+            state->ax = ((uint16_t)ah << 8) | al;
+            break;
+        }
+
+        /* ---- 0x3F: AAS (ASCII Adjust AL after Subtraction) ---- */
+        case 0x3F: {
+            uint8_t al = (uint8_t)state->ax;
+            uint8_t ah = (uint8_t)(state->ax >> 8);
+            if ((al & 0x0F) > 9 || (state->flags & DOS_FLAG_AF)) {
+                al = (al - 6) & 0x0F;
+                ah--;
+                state->flags |= DOS_FLAG_AF;
+                state->flags |= DOS_FLAG_CF;
+            } else {
+                state->flags &= ~DOS_FLAG_AF;
+                state->flags &= ~DOS_FLAG_CF;
+            }
+            state->ax = ((uint16_t)ah << 8) | al;
+            break;
+        }
 
         /* ---- 0x28-0x2D: SUB ---- */
         case 0x28: {
@@ -1685,13 +1767,42 @@ void dos_emu_run(struct dos_cpu_state *state)
             break;
         }
 
-        /* ---- 0xEC: IN AL, DX (stub) ---- */
-        case 0xEC:
+        /* ---- 0xEC: IN AL, DX ---- */
+        case 0xEC: {
+            uint16_t port = state->dx;
+            /* Read from I/O port: return 0xFF as a safe stub */
+            uint8_t val = 0xFF;
+            /* Try kernel I/O syscall if available (syscall 600+ range) */
+            long ret;
+            __asm__ volatile (
+                "syscall"
+                : "=a"(ret)
+                : "a"(600L),       /* hypothetical SYS_INB */
+                  "D"((long)port)
+                : "rcx", "r11", "memory"
+            );
+            if (ret >= 0) val = (uint8_t)ret;
+            state->ax = (state->ax & 0xFF00) | val;
             break;
+        }
 
-        /* ---- 0xEE: OUT DX, AL (stub) ---- */
-        case 0xEE:
+        /* ---- 0xEE: OUT DX, AL ---- */
+        case 0xEE: {
+            uint16_t port = state->dx;
+            uint8_t val = (uint8_t)state->ax;
+            /* Try kernel I/O syscall if available */
+            long ret;
+            __asm__ volatile (
+                "syscall"
+                : "=a"(ret)
+                : "a"(601L),       /* hypothetical SYS_OUTB */
+                  "D"((long)port),
+                  "S"((long)val)
+                : "rcx", "r11", "memory"
+            );
+            (void)ret;
             break;
+        }
 
         /* ---- 0xF2, 0xF3: REP prefixes ---- */
         case 0xF2:

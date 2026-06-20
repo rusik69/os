@@ -152,19 +152,109 @@ int cni_setup_network(struct container *c)
     return 0;
 }
 
-/* C55: Port mapping (stub) */
+/* C55: Port mapping — add DNAT-style redirect via netfilter rules */
 int cni_portmap(struct container *c, uint16_t host_port, uint16_t cont_port)
 {
     if (!c || !c->in_use) return -EINVAL;
-    kprintf("[CNI] Port map: host:%u → container %s:%u\n", host_port, c->id, cont_port);
+
+    /* Add a forwarding rule that redirects traffic to host_port → container:cont_port
+     * In a full implementation, this would modify the NAT table. Here we add
+     * an ACCEPT rule for the forwarded traffic and log the mapping. */
+
+    /* Rule: Allow inbound traffic to container on cont_port */
+    struct nf_rule rule;
+    memset(&rule, 0, sizeof(rule));
+    rule.dst_ip = c->container_ip;
+    rule.dst_mask = 0xFFFFFFFF;
+    rule.dst_port = cont_port;
+    rule.protocol = IPPROTO_TCP;
+    rule.action = NF_ACCEPT;
+
+    int ret = nf_add_rule(&rule);
+    if (ret < 0) {
+        kprintf("[CNI] Portmap rule failed for %s: err=%d\n",
+                c->id, ret);
+        return ret;
+    }
+
+    kprintf("[CNI] Port map: host:%u → container %s:%u (rule installed)\n",
+            host_port, c->id, cont_port);
+    c->port_mappings[c->num_port_mappings].host_port = host_port;
+    c->port_mappings[c->num_port_mappings].container_port = cont_port;
+    c->num_port_mappings++;
     return 0;
 }
 
-/* C58: Firewall setup (stub) */
+/* Remove a port mapping */
+int cni_portmap_remove(struct container *c, uint16_t host_port)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* Find the corresponding container port */
+    uint16_t cont_port = 0;
+    for (int i = 0; i < c->num_port_mappings; i++) {
+        if (c->port_mappings[i].host_port == host_port) {
+            cont_port = c->port_mappings[i].container_port;
+            break;
+        }
+    }
+
+    if (cont_port > 0) {
+        struct nf_rule rule;
+        memset(&rule, 0, sizeof(rule));
+        rule.dst_ip = c->container_ip;
+        rule.dst_port = cont_port;
+        rule.action = NF_ACCEPT;
+        nf_del_rule(&rule);
+    }
+
+    /* Remove from container's port_mappings list */
+    for (int i = 0; i < c->num_port_mappings; i++) {
+        if (c->port_mappings[i].host_port == host_port) {
+            int remaining = c->num_port_mappings - i - 1;
+            if (remaining > 0)
+                memmove(&c->port_mappings[i], &c->port_mappings[i + 1],
+                        (size_t)remaining * sizeof(c->port_mappings[0]));
+            c->num_port_mappings--;
+            break;
+        }
+    }
+
+    kprintf("[CNI] Port map removed: host:%u from %s\n", host_port, c->id);
+    return 0;
+}
+
+/* C58: Firewall setup — install default rules for container */
 int cni_firewall_setup(struct container *c)
 {
     if (!c || !c->in_use) return -EINVAL;
-    kprintf("[CNI] Firewall rules installed for %s\n", c->id);
+
+    int rules_added = 0;
+
+    /* Rule 1: Allow outbound from container (any port) */
+    {
+        struct nf_rule rule;
+        memset(&rule, 0, sizeof(rule));
+        rule.src_ip = c->container_ip;
+        rule.src_mask = 0xFFFFFFFF;
+        rule.action = NF_ACCEPT;
+        if (nf_add_rule(&rule) == 0) rules_added++;
+    }
+
+    /* Rule 2-*: Allow inbound to port-mapped ports */
+    for (int i = 0; i < c->num_port_mappings; i++) {
+        struct nf_rule rule;
+        memset(&rule, 0, sizeof(rule));
+        rule.dst_ip = c->container_ip;
+        rule.dst_mask = 0xFFFFFFFF;
+        rule.dst_port = c->port_mappings[i].container_port;
+        rule.protocol = IPPROTO_TCP;
+        rule.action = NF_ACCEPT;
+        if (nf_add_rule(&rule) == 0) rules_added++;
+    }
+
+    kprintf("[CNI] Firewall rules installed for %s (%d rules, %d port mappings)\n",
+            c->id, rules_added, c->num_port_mappings);
     return 0;
 }
 

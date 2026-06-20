@@ -204,15 +204,31 @@ static int dump_memory_regions(struct process *proc,
             num_regions++;
         }
     } else {
-        /* Kernel thread — record a single placeholder region */
+        /* Kernel thread — record actual memory regions from process struct.
+         * Kernel threads have a kernel stack, optional heap, and text area. */
         if (num_regions < CHECKPOINT_MMAP_MAX) {
             struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
-            e->start  = proc->kernel_stack;
-            e->end    = proc->stack_top;
+            e->start  = proc->kernel_stack & ~0xFFFULL;
+            e->end    = (proc->stack_top + 0xFFF) & ~0xFFFULL;
             e->offset = 0;
             e->flags  = 0;
-            e->prot   = 3;
+            e->prot   = 3;  /* PROT_READ | PROT_WRITE */
             e->path[0] = '\0';
+            snprintf(e->path, sizeof(e->path), "[kernel-stack]");
+            num_regions++;
+        }
+
+        /* Kernel text/code region — use kernel_stack as reference */
+        if (proc->kernel_stack > 0 && num_regions < CHECKPOINT_MMAP_MAX) {
+            struct checkpoint_mmap_entry *e = &state->mmap_entries[num_regions];
+            e->start  = proc->kernel_stack & ~0xFFFULL;  /* page-aligned */
+            e->end    = e->start + 0x200000;              /* assume 2 MiB text */
+            if (e->end > proc->stack_top)
+                e->end = proc->stack_top;
+            e->offset = 0;
+            e->flags  = 0;
+            e->prot   = 5;  /* PROT_READ | PROT_EXEC */
+            snprintf(e->path, sizeof(e->path), "[kernel-text]");
             num_regions++;
         }
     }
@@ -443,6 +459,15 @@ int container_checkpoint(const char *container_id,
             "memory=%llu bytes, fd_count=%d\n",
             c->id, (unsigned long long)state_out->memory_size,
             state_out->fd_count);
+
+    /* Auto-save checkpoint state to disk */
+    ret = container_checkpoint_save(state_out, NULL);
+    if (ret < 0) {
+        kprintf("[Checkpoint] Warning: failed to auto-save checkpoint "
+                "for %s: err=%d\n", c->id, ret);
+        /* Non-fatal: the state is still returned in state_out */
+    }
+
     return 0;
 }
 

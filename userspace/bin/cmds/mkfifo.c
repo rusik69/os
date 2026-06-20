@@ -5,24 +5,40 @@
 #include "stdlib.h"
 #include "sys/stat.h"
 
+/* Syscall number */
+#define SYS_MKNOD 271
+
+/* Inline syscall for mknod(path, mode, dev) */
+static int mknod_call(const char *path, unsigned int mode, unsigned long dev) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_MKNOD),
+          "D"((long)path),
+          "S"((long)mode),
+          "d"((long)dev)
+        : "rcx", "r11", "memory"
+    );
+    return (int)ret;
+}
+
 /* Mode parsing helper */
 static unsigned long parse_mode(const char *s) {
     unsigned long mode = 0;
     if (s[0] >= '0' && s[0] <= '7') {
-        /* Octal string */
         while (*s >= '0' && *s <= '7') {
             mode = (mode << 3) | (*s - '0');
             s++;
         }
     } else {
-        /* Default 0644 if not specified properly */
         mode = 0644;
     }
     return mode;
 }
 
 int main(int argc, char *argv[]) {
-    unsigned long mode = 0666;  /* default, subject to umask */
+    unsigned long mode = 0666;
     const char *name = NULL;
     int i;
 
@@ -43,10 +59,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int ret = mknod(name, S_IFIFO | mode, 0);
+    /* Use inline mknod syscall with S_IFIFO */
+    int ret = mknod_call(name, S_IFIFO | mode, 0);
     if (ret < 0) {
-        printf("mkfifo: cannot create fifo '%s': syscall returned %d\n", name, ret);
-        printf("mkfifo: mknod syscall may not be supported in this kernel\n");
+        printf("mkfifo: cannot create fifo '%s'\n", name);
         return 1;
     }
 

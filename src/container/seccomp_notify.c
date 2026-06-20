@@ -36,6 +36,7 @@
 #include "spinlock.h"
 #include "process.h"
 #include "timer.h"
+#include "waitqueue.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
@@ -113,6 +114,12 @@ static uint64_t notify_next_id = 1;
 
 /* Lock protecting the notification queues and rule table */
 static spinlock_t seccomp_notify_lock = SPINLOCK_INIT;
+
+/* Waitqueue for policy daemon to block on when no requests are pending */
+static struct wait_queue seccomp_notify_wq = WAITQUEUE_INIT;
+
+/* Waitqueue for syscall callers to block on while awaiting a response */
+static struct wait_queue seccomp_response_wq = WAITQUEUE_INIT;
 
 /* Flag: is the notification subsystem initialised? */
 static int seccomp_notify_initialised = 0;
@@ -366,8 +373,27 @@ int seccomp_notify_recv(struct seccomp_notify_request *req,
                 return -EAGAIN;
         }
 
-        /* Yield to let other processes run */
-        scheduler_yield();
+        /* Block on the waitqueue until a new request arrives.
+         * Use interruptible sleep so signals can unblock us. */
+        int wret;
+        if (timeout_ms > 0) {
+            uint64_t remaining = (uint64_t)timeout_ticks - (timer_get_ticks() - start_tick);
+            if ((int)remaining <= 0)
+                return -EAGAIN;
+            wret = wait_queue_sleep_interruptible_timeout(
+                       &seccomp_notify_wq, remaining);
+        } else {
+            /* Wait indefinitely (timeout_ms < 0) */
+            wret = wait_queue_sleep_interruptible(&seccomp_notify_wq);
+        }
+
+        if (wret == -EINTR) {
+            return -EINTR;  /* Interrupted by signal */
+        }
+        if (wret == -ETIME) {
+            return -EAGAIN;  /* Timeout expired */
+        }
+        /* Woken normally — loop and try to dequeue */
     }
 }
 
@@ -399,6 +425,9 @@ int seccomp_notify_respond(const struct seccomp_notify_response *resp)
            sizeof(*resp));
 
     spinlock_release(&seccomp_notify_lock);
+
+    /* Wake the waiting syscall caller that a response is available */
+    wait_queue_wake(&seccomp_response_wq);
 
     kprintf("[SeccompNotify] Responded to request %llu: "
             "error=%d val=%lld\n",
@@ -486,38 +515,57 @@ int seccomp_notify_check_syscall(int syscall_nr, uint64_t *args,
 
     spinlock_release(&seccomp_notify_lock);
 
-    /* Wait for the response (spin with yield) */
-    /* In a real implementation this would use a waitqueue; for now
-     * we busy-wait yielding to let the daemon run. */
+    /* Wake the policy daemon that a new request is available */
+    wait_queue_wake(&seccomp_notify_wq);
+
+    /* Wait for the response using waitqueue (interruptible with timeout) */
+    /* Use wait_event_timeout macro: loop checking for response, sleeping otherwise */
     uint64_t deadline = timer_get_ticks() + (TIMER_FREQ * 10); /* 10s max */
 
-    while (timer_get_ticks() < deadline) {
-        spinlock_acquire(&seccomp_notify_lock);
+    {
+        int resp_found = 0;
+        while (timer_get_ticks() < deadline && !resp_found) {
+            spinlock_acquire(&seccomp_notify_lock);
+            struct seccomp_notify_response *resp =
+                notify_lookup_response(req_id);
+            if (resp) {
+                int resp_error = resp->error;
+                int64_t resp_val = resp->val;
 
-        struct seccomp_notify_response *resp =
-            notify_lookup_response(req_id);
-        if (resp) {
-            int resp_error = resp->error;
-            int64_t resp_val = resp->val;
+                notify_clear_response(req_id);
+                spinlock_release(&seccomp_notify_lock);
 
-            notify_clear_response(req_id);
+                kprintf("[SeccompNotify] Request %llu resolved: "
+                        "error=%d val=%lld\n",
+                        (unsigned long long)req_id,
+                        resp_error, (long long)resp_val);
 
+                if (resp_error != 0)
+                    return -resp_error;  /* deny with errno */
+                return 0;  /* allow */
+            }
             spinlock_release(&seccomp_notify_lock);
 
-            kprintf("[SeccompNotify] Request %llu resolved: "
-                    "error=%d val=%lld\n",
-                    (unsigned long long)req_id,
-                    resp_error, (long long)resp_val);
+            /* Block on the response waitqueue until the daemon responds.
+             * Use a short timeout so we can re-check the deadline. */
+            uint64_t remaining = deadline > timer_get_ticks()
+                ? deadline - timer_get_ticks() : 0;
+            if (remaining == 0) break;
 
-            if (resp_error != 0)
-                return -resp_error;  /* deny with errno */
-            return 0;  /* allow */
+            /* Cap the wait to at most 100 ticks to re-check deadline */
+            uint64_t wait_for = remaining < (TIMER_FREQ / 10)
+                ? remaining : (TIMER_FREQ / 10);
+
+            int wret = wait_queue_sleep_interruptible_timeout(
+                           &seccomp_response_wq, wait_for);
+            if (wret == -EINTR) {
+                /* Interrupted by signal — deny */
+                kprintf("[SeccompNotify] Request %llu interrupted by signal\n",
+                        (unsigned long long)req_id);
+                return -EINTR;
+            }
+            /* On timeout or normal wake, loop and check response */
         }
-
-        spinlock_release(&seccomp_notify_lock);
-
-        /* Yield to let the policy daemon run */
-        scheduler_yield();
     }
 
     /* Timeout — deny with ETIMEDOUT */

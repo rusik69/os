@@ -89,6 +89,20 @@ struct container {
     /* Reference count for concurrent access */
     int refcount;
 
+    /* Restart tracking for health checking */
+    int restart_count;                    /* Number of restart attempts */
+
+    /* Network configuration */
+    uint32_t container_ip;                /* Assigned container IP (network byte order) */
+
+    /* Port mappings */
+#define MAX_PORT_MAPPINGS 32
+    struct port_mapping {
+        uint16_t host_port;
+        uint16_t container_port;
+    } port_mappings[MAX_PORT_MAPPINGS];
+    int num_port_mappings;
+
     /* Synchronisation */
     spinlock_t lock;
 

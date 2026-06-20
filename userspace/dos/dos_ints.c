@@ -32,7 +32,8 @@ void dos_handle_int(struct dos_cpu_state *state, uint8_t int_num)
 
     /* INT 00h -- divide error */
     case 0x00:
-        state->running = 0;
+        kprintf("DIVIDE ERROR at CS:IP=%04X:%04X  AX=%04X BX=%04X CX=%04X DX=%04X\n",
+                state->cs, state->ip, state->ax, state->bx, state->cx, state->dx);
         break;
 
     /* INT 10h -- video services */

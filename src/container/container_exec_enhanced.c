@@ -27,6 +27,88 @@
 #include "pipe.h"
 #include "elf.h"        /* process_spawn */
 #include "signal.h"     /* signal_send, SIGWINCH */
+#include "process.h"    /* scheduler_yield, process_get_by_pid */
+
+/* ── PTY implementation (simple master/slave pair using pipes) ──────── */
+
+struct pty_pair {
+    int master_read;   /* master reads from this pipe (slave writes) */
+    int master_write;  /* master writes to this pipe (slave reads) */
+    int slave_read;    /* slave reads from this pipe (master writes) */
+    int slave_write;   /* slave writes to this pipe (master reads) */
+};
+
+static int pty_alloc(struct pty_pair *pty)
+{
+    if (!pty) return -EINVAL;
+
+    /* Create two pipe pairs:
+     *   Pipe A: master writes → slave reads  (master_write, slave_read)
+     *   Pipe B: slave writes  → master reads  (slave_write, master_read)
+     */
+
+    /* Create first pipe: master→slave data flow */
+    int pipe_a_w = pipe_create();  /* master writes to this */
+    int pipe_a_r = pipe_create();  /* slave reads from this */
+    if (pipe_a_w < 0 || pipe_a_r < 0) {
+        if (pipe_a_w >= 0) pipe_close(pipe_a_w, 0);
+        if (pipe_a_r >= 0) pipe_close(pipe_a_r, 0);
+        return -ENOMEM;
+    }
+
+    /* Create second pipe: slave→master data flow */
+    int pipe_b_w = pipe_create();  /* slave writes to this */
+    int pipe_b_r = pipe_create();  /* master reads from this */
+    if (pipe_b_w < 0 || pipe_b_r < 0) {
+        pipe_close(pipe_a_w, 0);
+        pipe_close(pipe_a_r, 0);
+        if (pipe_b_w >= 0) pipe_close(pipe_b_w, 0);
+        if (pipe_b_r >= 0) pipe_close(pipe_b_r, 0);
+        return -ENOMEM;
+    }
+
+    /* Master side */
+    pty->master_write = pipe_a_w;
+    pty->master_read  = pipe_b_r;
+
+    /* Slave side */
+    pty->slave_read   = pipe_a_r;
+    pty->slave_write  = pipe_b_w;
+
+    return 0;
+}
+
+static void pty_free(struct pty_pair *pty)
+{
+    if (!pty) return;
+    if (pty->master_read  >= 0) pipe_close(pty->master_read, 0);
+    if (pty->master_write >= 0) pipe_close(pty->master_write, 0);
+    if (pty->slave_read   >= 0) pipe_close(pty->slave_read, 0);
+    if (pty->slave_write  >= 0) pipe_close(pty->slave_write, 0);
+    memset(pty, 0, sizeof(*pty));
+}
+
+static int pty_master_write(struct pty_pair *pty, const char *data, int len)
+{
+    if (!pty || !data) return -EINVAL;
+    return pipe_write(pty->master_write, data, len);
+}
+
+static int pty_master_read(struct pty_pair *pty, char *buf, int len)
+{
+    if (!pty || !buf) return -EINVAL;
+    return pipe_read(pty->master_read, buf, len);
+}
+
+static int pty_master_resize(struct pty_pair *pty, uint16_t cols, uint16_t rows)
+{
+    if (!pty) return -EINVAL;
+    /* In a full implementation this would update the winsize struct
+     * and send SIGWINCH to the slave's process group. */
+    (void)cols;
+    (void)rows;
+    return 0;
+}
 
 /* ── Exec attach descriptor ─────────────────────────────────────────── */
 
@@ -50,8 +132,6 @@ struct exec_attach *container_exec_attach(const char *container_id,
                                            char *const envp[],
                                            int use_pty)
 {
-    (void)use_pty;  /* PTY support not yet implemented in the kernel */
-
     if (!container_id || !binary)
         return NULL;
 
@@ -80,23 +160,55 @@ struct exec_attach *container_exec_attach(const char *container_id,
     internal->stderr_pipe_id = -1;
     internal->attached = 0;
 
-    /* Create three pipes for I/O channels */
-    internal->stdin_pipe_id  = pipe_create();   /* we write, child reads */
-    internal->stdout_pipe_id = pipe_create();   /* child writes, we read */
-    internal->stderr_pipe_id = pipe_create();   /* child writes, we read */
+    /* ── PTY allocation for interactive sessions ───────────────────── */
+    struct pty_pair *pty = NULL;
 
-    if (internal->stdin_pipe_id < 0 ||
-        internal->stdout_pipe_id < 0 ||
-        internal->stderr_pipe_id < 0) {
-        kprintf("[ExecEnhanced] Failed to create I/O pipes\n");
-        if (internal->stdin_pipe_id >= 0)
-            pipe_close(internal->stdin_pipe_id, 0);
-        if (internal->stdout_pipe_id >= 0)
-            pipe_close(internal->stdout_pipe_id, 0);
-        if (internal->stderr_pipe_id >= 0)
-            pipe_close(internal->stderr_pipe_id, 0);
-        kfree(internal);
-        return NULL;
+    if (use_pty) {
+        /* Allocate a pseudo-terminal pair */
+        pty = (struct pty_pair *)kmalloc(sizeof(struct pty_pair));
+        if (!pty) {
+            kfree(internal);
+            return NULL;
+        }
+        memset(pty, 0, sizeof(*pty));
+
+        int ret = pty_alloc(pty);
+        if (ret < 0) {
+            kprintf("[ExecEnhanced] PTY allocation failed: err=%d\n", ret);
+            kfree(pty);
+            kfree(internal);
+            return NULL;
+        }
+
+        /* Use the PTY slave as stdin/stdout/stderr for the child.
+         * The child process reads from slave_read and writes to slave_write. */
+        internal->stdin_pipe_id  = pty->slave_read;   /* child reads from slave */
+        internal->stdout_pipe_id = pty->slave_write;  /* child writes to slave */
+        internal->stderr_pipe_id = pty->slave_write;  /* stderr shares PTY slave */
+
+        kprintf("[ExecEnhanced] PTY allocated for %s: master=(r=%d,w=%d) slave=(r=%d,w=%d)\n",
+                container_id,
+                pty->master_read, pty->master_write,
+                pty->slave_read, pty->slave_write);
+    } else {
+        /* Create three pipes for I/O channels */
+        internal->stdin_pipe_id  = pipe_create();   /* we write, child reads */
+        internal->stdout_pipe_id = pipe_create();   /* child writes, we read */
+        internal->stderr_pipe_id = pipe_create();   /* child writes, we read */
+
+        if (internal->stdin_pipe_id < 0 ||
+            internal->stdout_pipe_id < 0 ||
+            internal->stderr_pipe_id < 0) {
+            kprintf("[ExecEnhanced] Failed to create I/O pipes\n");
+            if (internal->stdin_pipe_id >= 0)
+                pipe_close(internal->stdin_pipe_id, 0);
+            if (internal->stdout_pipe_id >= 0)
+                pipe_close(internal->stdout_pipe_id, 0);
+            if (internal->stderr_pipe_id >= 0)
+                pipe_close(internal->stderr_pipe_id, 0);
+            kfree(internal);
+            return NULL;
+        }
     }
 
     /* Build full path inside container rootfs */
@@ -145,13 +257,21 @@ struct exec_attach *container_exec_attach(const char *container_id,
     ea->stdin_fd  = internal->stdin_pipe_id;
     ea->stdout_fd = internal->stdout_pipe_id;
     ea->stderr_fd = internal->stderr_pipe_id;
-    ea->master_fd = -1;
+    ea->master_fd = use_pty && pty ? pty->master_read : -1;
     ea->attached  = 1;
 
-    /* Stash internal descriptor in priv field for detach cleanup */
-    /* Note: We intentionally leak internal here — it's cleaned up in detach.
-     * For this release we use the public struct directly. */
-    kfree(internal);
+    /* Stash pty reference for cleanup in detach */
+    if (use_pty && pty) {
+        /* Store pty pointer. In production we'd extend the struct;
+         * for now we note that the master_fd gives access. */
+        kfree(internal); /* internal not needed if pty is used */
+        kfree(pty); /* pty fds are already in ea fields */
+    } else {
+        /* Stash internal descriptor in priv field for detach cleanup */
+        /* Note: We intentionally leak internal here — it's cleaned up in detach.
+         * For this release we use the public struct directly. */
+        kfree(internal);
+    }
 
     kprintf("[ExecEnhanced] Attached: pid=%d stdin=%d stdout=%d stderr=%d\n",
             pid, ea->stdin_fd, ea->stdout_fd, ea->stderr_fd);

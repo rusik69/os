@@ -43,6 +43,42 @@ static void tail_file(const char *path, int n) {
     close(fd);
 }
 
+/* Read from stdin, printing last n lines */
+static void tail_stdin(int n) {
+    char buf[4096];
+    int nread;
+    int total = 0;
+    long pos[4096]; /* track newline positions */
+    int npos = 0;
+
+    pos[npos++] = 0; /* start of data */
+
+    while ((nread = read(0, buf, sizeof(buf))) > 0) {
+        for (int i = 0; i < nread; i++) {
+            if (buf[i] == '\n') {
+                if (npos < 4096)
+                    pos[npos++] = total + i + 1;
+            }
+        }
+        total += nread;
+    }
+
+    /* Determine start position for last n lines */
+    int skip = npos - n;
+    if (skip < 0) skip = 0;
+    long start = pos[skip];
+
+    /* Re-read from stdin from the start */
+    lseek(0, start, SEEK_SET);
+
+    /* Read and print remaining */
+    char out[4096];
+    int nout;
+    while ((nout = read(0, out, sizeof(out))) > 0) {
+        write(1, out, nout);
+    }
+}
+
 int main(int argc, char *argv[]) {
     int n = DEFAULT_LINES;
     int arg_start = 1;
@@ -53,8 +89,9 @@ int main(int argc, char *argv[]) {
         arg_start = 2;
     }
     if (argc <= arg_start) {
-        printf("tail: stdin not supported\n");
-        return 1;
+        /* Stdin mode */
+        tail_stdin(n);
+        return 0;
     }
     for (int i = arg_start; i < argc; i++) {
         tail_file(argv[i], n);

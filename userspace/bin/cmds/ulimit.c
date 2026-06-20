@@ -6,12 +6,20 @@
 
 /* Syscall numbers not in libc header */
 #define SYS_PRLIMIT64 272
+#define SYS_GETRLIMIT 127
+#define SYS_SETRLIMIT 128
 #define RLIM_INFINITY (~0ULL)
 
 /* Resource limit struct matching kernel's rlimit64 */
 struct rlimit64 {
     unsigned long long cur;
     unsigned long long max;
+};
+
+/* Old-style rlimit (32-bit fields) for getrlimit/setrlimit fallback */
+struct rlimit {
+    unsigned long cur;
+    unsigned long max;
 };
 
 /* Resource names */
@@ -55,6 +63,60 @@ static long prlimit64_call(int pid, int resource,
     return ret;
 }
 
+/* Fallback: getrlimit syscall (old interface with 32-bit fields) */
+static long getrlimit_call(int resource, struct rlimit *rlim) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_GETRLIMIT),
+          "D"((long)resource),
+          "S"((long)rlim)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+/* Fallback: setrlimit syscall */
+static long setrlimit_call(int resource, const struct rlimit *rlim) {
+    long ret;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"((long)SYS_SETRLIMIT),
+          "D"((long)resource),
+          "S"((long)rlim)
+        : "rcx", "r11", "memory"
+    );
+    return ret;
+}
+
+/* Get a resource limit, trying prlimit64 first, then getrlimit */
+static int get_rlimit(int resource, struct rlimit64 *rlim) {
+    if (prlimit64_call(0, resource, NULL, rlim) == 0)
+        return 0;
+    /* Fallback to getrlimit */
+    struct rlimit old;
+    if (getrlimit_call(resource, &old) == 0) {
+        rlim->cur = old.cur;
+        rlim->max = old.max;
+        return 0;
+    }
+    return -1;
+}
+
+/* Set a resource limit, trying prlimit64 first, then setrlimit */
+static int set_rlimit(int resource, const struct rlimit64 *rlim) {
+    struct rlimit64 old;
+    if (prlimit64_call(0, resource, rlim, &old) == 0)
+        return 0;
+    /* Fallback to setrlimit (old struct may truncate large values) */
+    struct rlimit nr;
+    nr.cur = (unsigned long)rlim->cur;
+    nr.max = (unsigned long)rlim->max;
+    return setrlimit_call(resource, &nr);
+}
+
 static const char *unit_str(int i) {
     if (i == 0 || i == 1 || i == 3 || i == 4 || i == 6 || i == 8 || i == 11)
         return " bytes";
@@ -67,7 +129,7 @@ static void show_all(void) {
     int shown = 0;
     for (int i = 0; i < NUM_RLIM; i++) {
         struct rlimit64 rlim;
-        if (prlimit64_call(0, i, NULL, &rlim) != 0)
+        if (get_rlimit(i, &rlim) != 0)
             continue;
         shown = 1;
         const char *unit = unit_str(i);
@@ -78,7 +140,7 @@ static void show_all(void) {
                    (unsigned long long)rlim.cur, unit);
     }
     if (!shown)
-        printf("ulimit: no resource limits available (kernel may not support prlimit64)\n");
+        printf("ulimit: no resource limits available\n");
 }
 
 static void show_one(int resource) {
@@ -87,8 +149,8 @@ static void show_one(int resource) {
         return;
     }
     struct rlimit64 rlim;
-    if (prlimit64_call(0, resource, NULL, &rlim) != 0) {
-        printf("ulimit: prlimit64 failed\n");
+    if (get_rlimit(resource, &rlim) != 0) {
+        printf("ulimit: getrlimit failed\n");
         return;
     }
     if (rlim.cur == RLIM_INFINITY)
@@ -103,14 +165,14 @@ static int set_one(int resource, unsigned long long val) {
         return 1;
     }
     struct rlimit64 old, new;
-    if (prlimit64_call(0, resource, NULL, &old) != 0) {
-        printf("ulimit: prlimit64 get failed\n");
+    if (get_rlimit(resource, &old) != 0) {
+        printf("ulimit: get failed\n");
         return 1;
     }
     new.cur = val;
     new.max = old.max;
-    if (prlimit64_call(0, resource, &new, &old) != 0) {
-        printf("ulimit: prlimit64 set failed\n");
+    if (set_rlimit(resource, &new) != 0) {
+        printf("ulimit: set failed\n");
         return 1;
     }
     return 0;
@@ -128,7 +190,6 @@ int main(int argc, char *argv[]) {
     }
 
     if (argc == 2) {
-        /* Display specific resource */
         int res = atoi(argv[1]);
         if (res == 0 && argv[1][0] != '0') {
             printf("ulimit: invalid resource '%s'\n", argv[1]);

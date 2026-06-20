@@ -531,8 +531,68 @@ void gui_render_frame(void) {
 }
 
 void gui_run_loop(void) {
-    /* Placeholder for main GUI loop */
-    gui_render_frame();
+    /* Event-driven GUI loop */
+    int running = 1;
+    uint64_t last_render = timer_get_ticks();
+    const int render_interval = 33; /* ~30 fps in ms */
+
+    while (running) {
+        uint64_t now = timer_get_ticks();
+        int redraw = 0;
+
+        /* Poll keyboard */
+        if (keyboard_has_input()) {
+            int c = keyboard_getchar();
+            if (c == 27) { /* ESC to quit */
+                running = 0;
+                break;
+            }
+            /* Forward character event to focused widget */
+            gui_event_t evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = GUI_EVENT_CHAR;
+            evt.ch = (char)c;
+            gui_handle_event(&evt);
+            redraw = 1;
+        }
+
+        /* Check for ESC key via keyboard_is_down */
+        if (keyboard_is_down(1)) { /* ESC */
+            running = 0;
+            break;
+        }
+
+        /* Poll mouse */
+        int mx, my;
+        uint8_t mbuttons;
+        mouse_get_pixel_pos(&mx, &my);
+        mbuttons = mouse_get_buttons();
+        gui_update_mouse(mx, my, mbuttons);
+
+        /* Check for mouse clicks */
+        gui_window_t *focused = gui_get_focused_window();
+        if (focused && mbuttons) {
+            gui_event_t evt;
+            memset(&evt, 0, sizeof(evt));
+            if (mbuttons & 1) {
+                evt.type = GUI_EVENT_MOUSE_DOWN;
+                evt.x = mx;
+                evt.y = my;
+                evt.button = 1;
+                gui_handle_event(&evt);
+                redraw = 1;
+            }
+        }
+
+        /* Redraw periodically */
+        if (redraw || (now - last_render) >= (uint64_t)render_interval) {
+            gui_render_frame();
+            vga_refresh_console();
+            last_render = now;
+        }
+
+        scheduler_yield();
+    }
 }
 
 gui_window_t* gui_get_window_list(void) {

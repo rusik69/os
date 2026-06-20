@@ -223,8 +223,98 @@ int storage_commit_layer(struct container *c, const char *new_hash)
     return storage_create_layer(upperdir, new_hash, NULL);
 }
 
+/* ── Diff ID / chain ID tracking ───────────────────────────────────── */
+
+/* Each layer stores a diff ID (SHA-256 of the tar archive that produced it)
+ * and a chain ID (SHA-256 of parent chain ID + diff ID). */
+#define MAX_DIFF_ID     64
+#define MAX_CHAIN_ID    64
+
+struct layer_metadata {
+    char diff_id[MAX_DIFF_ID];    /* e.g. "sha256:abc..." */
+    char chain_id[MAX_CHAIN_ID];  /* e.g. "sha256:xyz..." */
+};
+
+/* Per-layer metadata table parallel to layer_table */
+static struct layer_metadata layer_meta[MAX_LAYERS];
+
+/* Simple SHA-256 inspired hash mixing for chain ID calculation.
+ * In production this would use the actual SHA-256 of "parent_chain_id + diff_id". */
+static void compute_chain_id(const char *parent_chain_id,
+                              const char *diff_id,
+                              char *out, size_t out_sz)
+{
+    /* Concatenate parent_chain_id + ":" + diff_id, then hash.
+     * For our stub we produce a deterministic hex string. */
+    char buf[256];
+    int n;
+    if (parent_chain_id && parent_chain_id[0]) {
+        n = snprintf(buf, sizeof(buf), "%s:%s", parent_chain_id, diff_id);
+    } else {
+        n = snprintf(buf, sizeof(buf), "%s", diff_id);
+    }
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+        snprintf(out, out_sz, "sha256:0000000000000000");
+        return;
+    }
+
+    /* Simple hash (not real SHA-256; just a deterministic stub) */
+    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+    for (size_t i = 0; i < (size_t)n; i++) {
+        h[i % 8] = (h[i % 8] << 5) + h[i % 8] + (uint8_t)buf[i];
+        h[(i + 1) % 8] ^= h[i % 8];
+    }
+    char hex[65];
+    for (int i = 0; i < 8; i++)
+        snprintf(hex + (size_t)i * 8, 9, "%08x", h[i]);
+    hex[64] = '\0';
+    snprintf(out, out_sz, "sha256:%s", hex);
+}
+
+/* Store diff ID and compute chain ID for a layer */
+int storage_set_diff_id(const char *hash, const char *diff_id)
+{
+    if (!hash || !diff_id) return -EINVAL;
+    int idx = layer_find_by_hash(hash);
+    if (idx < 0) return idx;
+
+    struct layer_metadata *m = &layer_meta[idx];
+    strncpy(m->diff_id, diff_id, sizeof(m->diff_id) - 1);
+    m->diff_id[sizeof(m->diff_id) - 1] = '\0';
+
+    /* Compute chain ID from parent's chain ID + this diff ID */
+    const char *parent_chain = NULL;
+    if (layer_table[idx].parent_idx >= 0 &&
+        layer_table[idx].parent_idx < MAX_LAYERS &&
+        layer_meta[layer_table[idx].parent_idx].chain_id[0]) {
+        parent_chain = layer_meta[layer_table[idx].parent_idx].chain_id;
+    }
+    compute_chain_id(parent_chain, diff_id, m->chain_id, sizeof(m->chain_id));
+
+    kprintf("[Storage] Layer %s: diff_id=%s, chain_id=%s\n",
+            hash, m->diff_id, m->chain_id);
+    return 0;
+}
+
+/* Retrieve chain ID for a layer */
+const char *storage_get_chain_id(const char *hash)
+{
+    int idx = layer_find_by_hash(hash);
+    if (idx < 0) return NULL;
+    return layer_meta[idx].chain_id[0] ? layer_meta[idx].chain_id : NULL;
+}
+
+/* Retrieve diff ID for a layer */
+const char *storage_get_diff_id(const char *hash)
+{
+    int idx = layer_find_by_hash(hash);
+    if (idx < 0) return NULL;
+    return layer_meta[idx].diff_id[0] ? layer_meta[idx].diff_id : NULL;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
- *  C28: Layer deduplication (stub — basic tracking)
+ *  C28: Layer deduplication — check if diff ID already exists
  * ═══════════════════════════════════════════════════════════════════════ */
 
 int storage_deduplicate_layer(const char *hash)
@@ -235,8 +325,40 @@ int storage_deduplicate_layer(const char *hash)
     struct layer *l = &layer_table[idx];
     if (l->parent_idx < 0) return 0;
 
-    kprintf("[Storage] Dedup requested for %s (parent=%d)\n",
-            hash, l->parent_idx);
+    /* Check if any existing layer has the same diff ID (content-based dedup) */
+    if (layer_meta[idx].diff_id[0]) {
+        for (int i = 0; i < MAX_LAYERS; i++) {
+            if (i == idx || !layer_table[i].in_use) continue;
+            if (strcmp(layer_meta[i].diff_id, layer_meta[idx].diff_id) == 0) {
+                /* Content match — share storage with existing layer.
+                 * Increment refcount on existing, return its index. */
+                layer_table[i].refcount++;
+                kprintf("[Storage] Dedup: layer %s shares diff_id with %s "
+                        "(refcount now %d)\n",
+                        l->hash, layer_table[i].hash, layer_table[i].refcount);
+                return i;
+            }
+        }
+    }
+
+    /* Also check chain ID for full overlay dedup */
+    if (layer_meta[idx].chain_id[0]) {
+        for (int i = 0; i < MAX_LAYERS; i++) {
+            if (i == idx || !layer_table[i].in_use) continue;
+            if (strcmp(layer_meta[i].chain_id, layer_meta[idx].chain_id) == 0) {
+                layer_table[i].refcount++;
+                kprintf("[Storage] Dedup (chain): layer %s == %s "
+                        "(refcount now %d)\n",
+                        l->hash, layer_table[i].hash, layer_table[i].refcount);
+                return i;
+            }
+        }
+    }
+
+    kprintf("[Storage] No dedup candidate for %s (diff=%s, chain=%s)\n",
+            hash,
+            layer_meta[idx].diff_id[0] ? layer_meta[idx].diff_id : "(none)",
+            layer_meta[idx].chain_id[0] ? layer_meta[idx].chain_id : "(none)");
     return 0;
 }
 

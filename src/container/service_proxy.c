@@ -145,16 +145,125 @@ int proxy_userspace_forward(struct service *svc, int client_fd)
     if (!ep->healthy) return -EHOSTUNREACH;
 
     /* Open connection to backend pod */
-    /* Forward via net_tcp — simplified stub */
-    int conn = net_tcp_connect(ep->pod_ip, ep->port);
-    if (conn < 0) return conn;
+    int backend_fd = net_tcp_connect(ep->pod_ip, ep->port);
+    if (backend_fd < 0) {
+        /* Mark endpoint unhealthy if we can't connect */
+        ep->healthy = 0;
+        kprintf("[Proxy] Backend %s (%d.%d.%d.%d:%d) unreachable, "
+                "marked unhealthy\n",
+                ep->pod_name,
+                (ep->pod_ip >> 24) & 0xFF, (ep->pod_ip >> 16) & 0xFF,
+                (ep->pod_ip >> 8) & 0xFF, ep->pod_ip & 0xFF,
+                ep->port);
+        return backend_fd;
+    }
 
-    kprintf("[Proxy] Forwarded connection to %d.%d.%d.%d:%d (conn=%d)\n",
+    kprintf("[Proxy] Forwarded connection to %d.%d.%d.%d:%d (backend=%d, client=%d)\n",
             (ep->pod_ip >> 24) & 0xFF, (ep->pod_ip >> 16) & 0xFF,
             (ep->pod_ip >> 8) & 0xFF, ep->pod_ip & 0xFF,
-            ep->port, conn);
+            ep->port, backend_fd, client_fd);
 
-    net_tcp_close(conn);
+    /* ── Bidirectional splice: client ↔ backend ────────────────────── */
+    /* In production we'd use splice(2) or a poll/epoll loop for
+     * zero-copy forwarding. Here we do a small-buffer read/write loop
+     * in each direction. */
+    char buf[4096];
+    int client_closed = 0, backend_closed = 0;
+    int total_sent = 0, total_recv = 0;
+
+    /* Use a simple poll-style approach: alternate reads from both sides.
+     * In a full implementation this would use non-blocking sockets +
+     * event loop. We use a timeout-based approach for simplicity. */
+    uint64_t start = timer_get_ticks();
+    uint64_t timeout = TIMER_FREQ * 30; /* 30 second timeout */
+
+    while (timer_get_ticks() - start < timeout) {
+        int activity = 0;
+
+        /* Read from client, write to backend */
+        if (!client_closed) {
+            int rlen = net_tcp_recv(client_fd, buf, sizeof(buf), 10);
+            if (rlen > 0) {
+                net_tcp_send(backend_fd, buf, (uint16_t)rlen);
+                total_sent += rlen;
+                activity = 1;
+                start = timer_get_ticks(); /* reset idle timeout */
+            } else if (rlen < 0) {
+                client_closed = 1;
+                activity = 1;
+            }
+        }
+
+        /* Read from backend, write to client */
+        if (!backend_closed) {
+            int rlen = net_tcp_recv(backend_fd, buf, sizeof(buf), 10);
+            if (rlen > 0) {
+                net_tcp_send(client_fd, buf, (uint16_t)rlen);
+                total_recv += rlen;
+                activity = 1;
+                start = timer_get_ticks(); /* reset idle timeout */
+            } else if (rlen < 0) {
+                backend_closed = 1;
+                activity = 1;
+            }
+        }
+
+        /* If both sides closed, we're done */
+        if (client_closed && backend_closed)
+            break;
+
+        /* If no activity, yield briefly */
+        if (!activity)
+            scheduler_yield();
+    }
+
+    kprintf("[Proxy] Connection completed: sent=%d bytes, recv=%d bytes\n",
+            total_sent, total_recv);
+
+    /* Clean up */
+    net_tcp_close(backend_fd);
+    net_tcp_close(client_fd);
+    return 0;
+}
+
+/* C88: Start a userspace proxy listener on a given address:port */
+int proxy_userspace_listen(uint32_t bind_ip, uint16_t port,
+                            struct service *svc)
+{
+    if (!svc) return -EINVAL;
+    (void)bind_ip; /* Binding to specific IP not supported yet; listen on all */
+
+    /* Register a TCP listener on the given port with stub handlers.
+     * In a full implementation, this would set up a proper accept loop. */
+
+    /* Use net_tcp_listen with NULL handlers — we'll accept connections
+     * manually via net_tcp_accept. */
+    void *null_handler = NULL;
+    net_tcp_listen(port, null_handler, null_handler, null_handler);
+
+    kprintf("[Proxy] Userspace proxy listening on port %d "
+            "for service '%s'\n", port, svc->name);
+
+    /* Accept loop — handle one connection at a time */
+    for (;;) {
+        int client_fd = net_tcp_accept(port, 1000); /* 1 second timeout */
+        if (client_fd < 0) {
+            if (client_fd == -EINTR || client_fd == -EAGAIN)
+                continue;  /* Interrupted or timeout — retry */
+            kprintf("[Proxy] Accept failed: err=%d\n", client_fd);
+            break;
+        }
+
+        kprintf("[Proxy] Accepted connection (fd=%d)\n", client_fd);
+
+        /* Forward the connection */
+        int ret = proxy_userspace_forward(svc, client_fd);
+        if (ret < 0) {
+            kprintf("[Proxy] Forward failed: err=%d\n", ret);
+            net_tcp_close(client_fd);
+        }
+    }
+
     return 0;
 }
 

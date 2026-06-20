@@ -273,19 +273,34 @@ static int handle_container_start(const char *id,
 /* C69: Handle GET /containers/json */
 static int handle_container_list(char *resp, int resp_size)
 {
-    int n;
     char body[2048];
-    n = snprintf(body, sizeof(body), "[");
-    (void)n;
+    int n = snprintf(body, sizeof(body), "[");
 
+    int count = 0;
     for (int i = 0; i < CONTAINER_MAX; i++) {
-        /* Would iterate container table — placeholder */
+        if (container_table[i].in_use) {
+            char entry[256];
+            int m = snprintf(entry, sizeof(entry),
+                             "%s{\"Id\":\"%s\",\"Name\":\"%s\","
+                             "\"State\":\"%s\",\"PID\":%d}",
+                             count > 0 ? "," : "",
+                             container_table[i].id,
+                             container_table[i].name[0]
+                                 ? container_table[i].name
+                                 : container_table[i].id,
+                             container_state_str(container_table[i].state),
+                             container_table[i].init_pid);
+            if (m > 0 && (size_t)(n + m) < sizeof(body)) {
+                memcpy(body + n, entry, (size_t)m);
+                n += m;
+            }
+            count++;
+        }
     }
 
-    int end = (int)strlen(body);
-    if (end + 2 < (int)sizeof(body)) {
-        body[end] = ']';
-        body[end + 1] = '\0';
+    if (n + 2 < (int)sizeof(body)) {
+        body[n] = ']';
+        body[n + 1] = '\0';
     }
 
     return json_respond(resp, resp_size, 200, body);
@@ -382,6 +397,148 @@ int orch_system_info(char *buf, int buf_size)
         0, 0);
     if (n < 0 || (size_t)n >= (size_t)buf_size) return -ENOSPC;
     return n;
+}
+
+/* ── Container health checking and restart ──────────────────────────── */
+
+/* Convert container state enum to string */
+static const char *container_state_str(int state)
+{
+    if (state >= 0 && state < CONTAINER_STATE_MAX)
+        return container_state_names[state];
+    return "unknown";
+}
+
+/* Maximum restart attempts before giving up */
+#define MAX_RESTART_ATTEMPTS 5
+
+/* Restart delay in ticks (exponential backoff base) */
+#define RESTART_BASE_DELAY (TIMER_FREQ * 2)  /* 2 seconds */
+
+/**
+ * container_health_check — Check if a container's init process is alive.
+ *
+ * Returns 1 if the container is healthy (process running), 0 if unhealthy,
+ * negative errno on error.
+ */
+int container_health_check(struct container *c)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* If the container isn't supposed to be running, skip check */
+    if (c->state != CONTAINER_STATE_RUNNING)
+        return 0;
+
+    /* Check if the init process is still alive */
+    if (c->init_pid <= 0) {
+        kprintf("[Orch] Health check: %s has no init PID (state=%d)\n",
+                c->id, c->state);
+        return 0;
+    }
+
+    struct process *proc = process_get_by_pid(c->init_pid);
+    if (!proc) {
+        kprintf("[Orch] Health check: %s init PID %d no longer exists\n",
+                c->id, c->init_pid);
+        return 0;
+    }
+
+    /* Check if process is zombie */
+    if (proc->state == PROCESS_ZOMBIE) {
+        kprintf("[Orch] Health check: %s init PID %d is zombie\n",
+                c->id, c->init_pid);
+        return 0;
+    }
+
+    return 1;  /* Healthy */
+}
+
+/**
+ * container_restart — Restart a container that has failed or stopped.
+ *
+ * Implements exponential backoff: each restart attempt doubles the
+ * delay, up to MAX_RESTART_ATTEMPTS.
+ *
+ * Returns 0 on successful restart, negative errno on failure.
+ */
+int container_restart(struct container *c)
+{
+    if (!c || !c->in_use) return -EINVAL;
+
+    /* Track restart count in container's restart_count field */
+    c->restart_count++;
+
+    if (c->restart_count > MAX_RESTART_ATTEMPTS) {
+        kprintf("[Orch] Restart: %s exceeded max attempts (%d), "
+                "not restarting\n", c->id, MAX_RESTART_ATTEMPTS);
+        container_set_state(c, CONTAINER_STATE_STOPPED);
+        return -EAGAIN;  /* Too many restarts */
+    }
+
+    /* Compute backoff delay: base * 2^(attempt-1) */
+    uint64_t delay = RESTART_BASE_DELAY;
+    for (int i = 1; i < c->restart_count; i++)
+        delay *= 2;
+    if (delay > TIMER_FREQ * 120)  /* Max 2 minutes */
+        delay = TIMER_FREQ * 120;
+
+    kprintf("[Orch] Restart: %s attempt %d/%d, waiting %llu ticks\n",
+            c->id, c->restart_count, MAX_RESTART_ATTEMPTS,
+            (unsigned long long)delay);
+
+    /* Wait for the backoff period (yield to other processes) */
+    uint64_t deadline = timer_get_ticks() + delay;
+    while (timer_get_ticks() < deadline)
+        scheduler_yield();
+
+    /* Attempt to restart */
+    int ret = container_start(c);
+    if (ret < 0) {
+        kprintf("[Orch] Restart: %s start failed (attempt %d): err=%d\n",
+                c->id, c->restart_count, ret);
+        return ret;
+    }
+
+    kprintf("[Orch] Restart: %s successfully restarted (attempt %d)\n",
+            c->id, c->restart_count);
+    return 0;
+}
+
+/**
+ * container_health_check_all — Check health of all containers and
+ *                               restart unhealthy ones.
+ *
+ * Should be called periodically by the orchestration loop.
+ *
+ * Returns the number of containers restarted.
+ */
+int container_health_check_all(void)
+{
+    int restarted = 0;
+    int unhealthy = 0;
+
+    for (int i = 0; i < CONTAINER_MAX; i++) {
+        struct container *c = &container_table[i];
+        if (!c->in_use) continue;
+        if (c->state != CONTAINER_STATE_RUNNING) continue;
+
+        int healthy = container_health_check(c);
+        if (healthy < 0) continue;  /* Error checking */
+        if (healthy == 0) {
+            unhealthy++;
+            kprintf("[Orch] Health check: %s is unhealthy, initiating restart\n",
+                    c->id);
+
+            int ret = container_restart(c);
+            if (ret == 0) restarted++;
+        }
+    }
+
+    if (unhealthy > 0) {
+        kprintf("[Orch] Health check complete: %d unhealthy, "
+                "%d restarted\n", unhealthy, restarted);
+    }
+    return restarted;
 }
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
