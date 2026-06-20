@@ -226,8 +226,17 @@ static int crictl_logs(int argc, char **argv) {
     kprintf("--- Logs for %s ---\n", c->id);
     char logpath[CONTAINER_STATE_PATH];
     snprintf(logpath, sizeof(logpath), "%s/log/output.log", c->data_dir);
-    kprintf("(log path: %s)\n", logpath);
-    kprintf("[log output not yet implemented — would read from VFS]\n");
+    char logbuf[4096];
+    uint32_t logsize = 0;
+    int ret = vfs_read(logpath, logbuf, sizeof(logbuf) - 1, &logsize);
+    if (ret == 0 && logsize > 0) {
+        logbuf[logsize < sizeof(logbuf) ? logsize : sizeof(logbuf) - 1] = '\0';
+        kprintf("%s", logbuf);
+        if (logsize >= sizeof(logbuf) - 1)
+            kprintf("\n...(truncated)");
+    } else {
+        kprintf("(no log data found at %s)\n", logpath);
+    }
     return 0;
 }
 

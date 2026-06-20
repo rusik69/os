@@ -84,23 +84,39 @@ static struct {
 static __attribute__((unused)) int create_unix_socket(const char *path)
 {
     /* Use the kernel AF_UNIX socket API to create a listener */
-    /* Since shell commands run in kernel context, we interact with
-     * the socket layer directly */
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
 
-    int fd = vfs_open(path, VFS_O_CREAT | VFS_O_RDWR, 0644);
-    if (fd < 0) {
-        /* Fallback: try to use socket() syscall via libc */
-        kprintf("[pulse] could not create socket at %s\n", path);
+    /* Create a UNIX domain socket endpoint */
+    int ep = unix_create(SOCK_STREAM);
+    if (ep < 0) {
+        kprintf("[pulse] unix_create failed: %d\n", ep);
         return -1;
     }
-    vfs_close(fd);
 
-    /* In this kernel implementation, we simulate the UNIX socket
-     * by using a simple file-based approach for inter-process
-     * communication. */
-    return -1; /* Placeholder — actual AF_UNIX socket creation
-                * would use socket() + bind() + listen() via the
-                * kernel's socket layer */
+    /* Remove existing socket file if present */
+    vfs_unlink(path);
+
+    /* Bind to the path */
+    int ret = unix_bind(ep, &addr, sizeof(addr));
+    if (ret < 0) {
+        kprintf("[pulse] unix_bind(%s) failed: %d\n", path, ret);
+        unix_destroy(ep);
+        return -1;
+    }
+
+    /* Start listening */
+    ret = unix_listen(ep, PULSE_BACKLOG);
+    if (ret < 0) {
+        kprintf("[pulse] unix_listen failed: %d\n", ret);
+        unix_destroy(ep);
+        return -1;
+    }
+
+    kprintf("[pulse] listening on %s (ep=%d)\n", path, ep);
+    return ep;
 }
 
 /* ── Stream management ─────────────────────────────────────────── */

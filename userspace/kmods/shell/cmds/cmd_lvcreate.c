@@ -112,6 +112,47 @@ void cmd_lvcreate(const char *args)
         return;
     }
 
-    kprintf("lvcreate: LV would be created via dm-linear target\n");
-    kprintf("lvcreate: (dm_table_add_target with type=dm-linear)\n");
+    /* Calculate size in sectors (512-byte sectors) */
+    uint64_t sector_count = 0;
+    if (extents > 0) {
+        /* Each extent is 4 MiB = 8192 sectors (assuming 4MiB extent size) */
+        sector_count = extents * 8192;
+    } else if (size > 0) {
+        sector_count = size / 512;
+    }
+
+    if (sector_count == 0) {
+        kprintf("lvcreate: invalid size (0 sectors)\n");
+        return;
+    }
+
+    /* Create the dm-linear device */
+    int dm_id = dm_device_create(name, sector_count);
+    if (dm_id < 0) {
+        kprintf("lvcreate: failed to create dm device '%s': err=%d\n", name, dm_id);
+        return;
+    }
+
+    /* Build the mapping table: start length linear <vg_name> <offset>
+     * For the first LV in a VG, we use the first available chunk at offset 0.
+     * In a full LVM implementation, this would consult the VG metadata to
+     * find free extents. */
+    char table[128];
+    int n = snprintf(table, sizeof(table), "0 %llu linear %s 0",
+                     (unsigned long long)sector_count, vg_name);
+    if (n < 0 || (size_t)n >= sizeof(table)) {
+        kprintf("lvcreate: table string too long\n");
+        dm_device_remove(dm_id);
+        return;
+    }
+
+    int ret = dm_table_load(dm_id, table);
+    if (ret < 0) {
+        kprintf("lvcreate: failed to load dm table for '%s': err=%d\n", name, ret);
+        dm_device_remove(dm_id);
+        return;
+    }
+
+    kprintf("lvcreate: LV '%s' created as dm-%d (%llu sectors, table: %s)\n",
+            name, dm_id, (unsigned long long)sector_count, table);
 }

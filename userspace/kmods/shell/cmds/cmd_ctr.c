@@ -341,13 +341,21 @@ static int ctr_tasks(int argc, char **argv) {
             kprintf("ctr: container '%s' not found\n", argv[2]);
             return 0;
         }
-        /* Read container log file and print it */
+        /* Read container log file via VFS and print it */
         char logpath[CONTAINER_STATE_PATH];
         snprintf(logpath, sizeof(logpath), "%s/log/output.log", c->data_dir);
-        /* Attempt to open and read the log (stub — VFS file read) */
         kprintf("--- Logs for container %s ---\n", c->id);
-        kprintf("(log file: %s)\n", logpath);
-        kprintf("Container logs would be displayed here.\n");
+        char logbuf[4096];
+        uint32_t logsize = 0;
+        int ret = vfs_read(logpath, logbuf, sizeof(logbuf) - 1, &logsize);
+        if (ret == 0 && logsize > 0) {
+            logbuf[logsize < sizeof(logbuf) ? logsize : sizeof(logbuf) - 1] = '\0';
+            kprintf("%s", logbuf);
+            if (logsize >= sizeof(logbuf) - 1)
+                kprintf("\n...(truncated, log larger than buffer)");
+        } else {
+            kprintf("(no log data found at %s)\n", logpath);
+        }
         return 0;
     }
 
@@ -386,6 +394,22 @@ static int ctr_tasks(int argc, char **argv) {
 
 static int ctr_snapshots(void) {
     kprintf("Available snapshots:\n");
-    kprintf("(snapshot support not yet implemented)\n");
+
+    /* Scan /var/lib/containers/<id>/snapshots/ for each container */
+    extern struct container container_table[CONTAINER_MAX];
+    int found = 0;
+    for (int i = 0; i < CONTAINER_MAX; i++) {
+        if (!container_table[i].in_use) continue;
+        char snap_dir[CONTAINER_STATE_PATH + 32];
+        snprintf(snap_dir, sizeof(snap_dir), "%s/snapshots", container_table[i].data_dir);
+        kprintf("  Checking %s for container %s:\n", snap_dir, container_table[i].id);
+        /* Use vfs_readdir to list the snapshots directory */
+        int ret = vfs_readdir(snap_dir);
+        if (ret == 0) {
+            found++;
+        }
+    }
+    if (found == 0)
+        kprintf("(no snapshots found)\n");
     return 0;
 }

@@ -88,11 +88,32 @@ static int64_t bc_parse_power(void) {
         int64_t exp = bc_parse_power(); /* right-associative */
         int64_t result = 1;
         if (exp < 0) {
-            kprintf("bc: negative exponent not supported\n");
-            return 0;
-        }
-        for (int64_t i = 0; i < exp; i++) {
-            result *= left;
+            /* Negative exponent: compute reciprocal as floating-point result.
+             * For integer mode, 1/(base^|exp|) gives 0 for |base|>1 or base=0.
+             * Special cases: 1^N = 1, (-1)^N = ±1. */
+            uint64_t abs_exp = (uint64_t)(-exp);
+            uint64_t power = 1;
+            int overflow = 0;
+            for (uint64_t i = 0; i < abs_exp; i++) {
+                uint64_t prev = power;
+                power *= (left >= 0 ? (uint64_t)left : (uint64_t)(-left));
+                if (power / (left >= 0 ? (uint64_t)left : (uint64_t)(-left)) != prev && i > 0) {
+                    overflow = 1;
+                    break;
+                }
+            }
+            if (overflow || power > 1) {
+                result = 0;  /* 1/N for N>1 is 0 in integer arithmetic */
+            } else if (power == 1) {
+                /* 1^N or (-1)^N */
+                result = (left == 1) ? 1 : ((abs_exp % 2 == 0) ? 1 : -1);
+            } else {
+                result = 0;
+            }
+        } else {
+            for (int64_t i = 0; i < exp; i++) {
+                result *= left;
+            }
         }
         return result;
     }

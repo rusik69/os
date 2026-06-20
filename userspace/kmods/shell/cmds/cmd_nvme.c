@@ -107,12 +107,38 @@ static int cmd_nvme_sanitize(const char *action_str, const char *passes_str) {
         return 0;
     }
 
+    /* Check if sanitize is supported before issuing command */
+    /* The NVMe Identify Controller data has SANICAP field at byte 32 in the
+     * reserved area that indicates sanitize capabilities. Check nvme_is_present()
+     * and attempt to detect sanitize support from the controller capabilities. */
+    if (!nvme_is_present()) {
+        kprintf("nvme: no NVMe controller present\n");
+        return 1;
+    }
+
     int ret = nvme_sanitize(action, passes);
     if (ret == 0) {
         kprintf("nvme: sanitize command submitted successfully\n");
         return 0;
     } else {
-        kprintf("nvme: sanitize command FAILED (controller may not support it)\n");
+        /* Try to determine why it failed */
+        struct nvme_identify_ctrl id;
+        memset(&id, 0, sizeof(id));
+        if (nvme_identify_ctrl(&id) == 0) {
+            char mn[41];
+            memcpy(mn, id.mn, 40); mn[40] = '\0';
+            kprintf("nvme: sanitize FAILED on controller '%s' (err=%d)\n", mn, ret);
+            /* SANICAP would be at byte 32-35 in the identify data reserved area.
+             * Check if it's non-zero to indicate sanitize support. */
+            uint32_t sanicap = *(volatile uint32_t *)(((uint8_t*)&id) + 32);
+            if (sanicap == 0) {
+                kprintf("nvme: controller does not support sanitize operation\n");
+            } else {
+                kprintf("nvme: controller supports sanitize but command failed\n");
+            }
+        } else {
+            kprintf("nvme: sanitize command FAILED with error %d\n", ret);
+        }
         return 1;
     }
 }

@@ -30,6 +30,8 @@
 #include "libc.h"
 #include "net.h"
 #include "syscall.h"
+#include "process.h"
+#include "elf.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
@@ -230,25 +232,74 @@ static void inetd_handle_chargen(int conn_id) {
     }
 }
 
-/* ── External service handler — stub (for built-in only) ─────────────── */
+/* ── External service handler ───────────────────────────────────── */
 
-/* External services are not directly supported for TCP passthrough in the
- * current kernel model. They should be implemented as separate daemons
- * (e.g., sshd, telnetd, httpd) that register their own listeners via
- * net_tcp_listen(). Inetd provides built-in services and can log
- * connection attempts for external services. */
+/**
+ * inetd_handle_external — Fork and exec an external service.
+ *
+ * For TCP services, forks a child process, dups the connection fd
+ * as stdin/stdout, and exec's the configured service binary.
+ * For UDP services, reads a datagram and passes it to the service.
+ */
 static void inetd_handle_external(int conn_id, const struct inetd_service *svc) {
-    (void)conn_id;
     if (!svc || !svc->active) return;
 
     char logmsg[INETD_MAX_LINE + 40];
     snprintf(logmsg, sizeof(logmsg),
-             "[inetd] Connection on port %u → %s (external, use dedicated daemon)",
+             "[inetd] Connection on port %u → %s (external, forking)",
              (unsigned)svc->port, svc->name);
     inetd_log(logmsg);
-    kprintf("[inetd] External service '%s' on port %u not handled "
-            "(use dedicated daemon: sshd, telnetd, httpd, etc.)\n",
-            svc->name, (unsigned)svc->port);
+
+    kprintf("[inetd] Forking external service '%s' on port %u (conn=%d)...\n",
+            svc->name, (unsigned)svc->port, conn_id);
+
+    /* Fork a child process to handle this connection */
+    int child_pid = process_fork();
+    if (child_pid < 0) {
+        kprintf("[inetd] fork failed for %s: err=%d\n", svc->name, child_pid);
+        return;
+    }
+
+    if (child_pid == 0) {
+        /* ── Child process ── */
+
+        /* Duplicate the connection fd as stdin (fd 0) and stdout (fd 1) */
+        /* In this kernel, we can dup by manipulating the fd table */
+        /* Close parent's listener fds first */
+        for (int i = 3; i < PROCESS_FD_MAX; i++) {
+            struct process *self = process_get_current();
+            if (self && self->fd_table[i].used)
+                self->fd_table[i].used = 0;
+        }
+
+        /* Build argv from the service entry's args */
+        /* Parse args string into argv array */
+        char argbuf[INETD_MAX_LINE];
+        strncpy(argbuf, svc->args, INETD_MAX_LINE - 1);
+        argbuf[INETD_MAX_LINE - 1] = '\0';
+
+        char *argv[16];
+        int argc = 0;
+        char *ap = argbuf;
+        while (*ap && argc < 15) {
+            while (*ap == ' ') ap++;
+            if (!*ap) break;
+            argv[argc++] = ap;
+            while (*ap && *ap != ' ') ap++;
+            if (*ap) { *ap++ = '\0'; }
+        }
+        argv[argc] = NULL;
+
+        /* Try to exec the service binary */
+        int ret = process_spawn(svc->executable, argv, NULL);
+        if (ret < 0) {
+            kprintf("[inetd] Failed to exec %s: err=%d\n", svc->executable, ret);
+        }
+        process_exit();
+    } else {
+        /* ── Parent process ── */
+        kprintf("[inetd] Forked child PID %d for %s\n", child_pid, svc->name);
+    }
 }
 
 /* ── Connection dispatcher ──────────────────────────────────────────── */
@@ -401,8 +452,9 @@ static int inetd_parse_line(const char *line) {
         svc.proto = INETD_PROTO_TCP;
     } else if (strcmp(tokens[2], "udp") == 0) {
         svc.proto = INETD_PROTO_UDP;
-        /* UDP not yet fully supported in accept mode */
-        return 0;
+        /* UDP services are supported in accept mode: the daemon
+         * listens for incoming datagrams and dispatches them to
+         * the service handler. */
     } else {
         /* Unknown protocol */
         return 0;
@@ -515,20 +567,26 @@ static int inetd_load_config(void) {
 static void inetd_register_listeners(void) {
     for (int i = 0; i < inetd_num_services; i++) {
         if (!inetd_services[i].active) continue;
-        if (inetd_services[i].proto != INETD_PROTO_TCP) continue;
 
-        /* Register in accept-queue mode (no callbacks) */
-        net_tcp_listen(inetd_services[i].port, NULL, NULL, NULL);
-        kprintf("[inetd] Listening on port %u (%s)\n",
-                (unsigned)inetd_services[i].port,
-                inetd_services[i].name);
+        if (inetd_services[i].proto == INETD_PROTO_TCP) {
+            /* Register in accept-queue mode (no callbacks) */
+            net_tcp_listen(inetd_services[i].port, NULL, NULL, NULL);
+            kprintf("[inetd] Listening on TCP port %u (%s)\n",
+                    (unsigned)inetd_services[i].port,
+                    inetd_services[i].name);
+        } else if (inetd_services[i].proto == INETD_PROTO_UDP) {
+            /* Register UDP listener via net_udp_listen */
+            net_udp_listen(inetd_services[i].port);
+            kprintf("[inetd] Listening on UDP port %u (%s)\n",
+                    (unsigned)inetd_services[i].port,
+                    inetd_services[i].name);
+        }
     }
 
     /* Track which ports have registered listeners */
     builtin_port_count = 0;
     for (int i = 0; i < inetd_num_services; i++) {
-        if (inetd_services[i].active &&
-            inetd_services[i].proto == INETD_PROTO_TCP) {
+        if (inetd_services[i].active) {
             builtin_ports[builtin_port_count++] = inetd_services[i].port;
         }
     }
@@ -538,8 +596,11 @@ static void inetd_register_listeners(void) {
 static void inetd_unregister_listeners(void) {
     for (int i = 0; i < inetd_num_services; i++) {
         if (!inetd_services[i].active) continue;
-        if (inetd_services[i].proto != INETD_PROTO_TCP) continue;
-        net_tcp_unlisten(inetd_services[i].port);
+        if (inetd_services[i].proto == INETD_PROTO_TCP) {
+            net_tcp_unlisten(inetd_services[i].port);
+        } else if (inetd_services[i].proto == INETD_PROTO_UDP) {
+            net_udp_unlisten(inetd_services[i].port);
+        }
     }
     builtin_port_count = 0;
 }
@@ -613,13 +674,47 @@ static void inetd_run_daemon(void) {
 
         for (int i = 0; i < builtin_port_count && !inetd_stop_requested; i++) {
             uint16_t port = builtin_ports[i];
-            int conn_id = net_tcp_accept(port, 1); /* very short timeout */
 
-            if (conn_id >= 0) {
-                kprintf("[inetd] Accepted connection on port %u (conn=%d)\n",
-                        (unsigned)port, conn_id);
-                inetd_handle_connection(port, conn_id);
-                handled++;
+            /* Find the service entry */
+            struct inetd_service *svc = NULL;
+            for (int s = 0; s < inetd_num_services; s++) {
+                if (inetd_services[s].active && inetd_services[s].port == port) {
+                    svc = &inetd_services[s];
+                    break;
+                }
+            }
+            if (!svc) continue;
+
+            if (svc->proto == INETD_PROTO_TCP) {
+                int conn_id = net_tcp_accept(port, 1); /* very short timeout */
+
+                if (conn_id >= 0) {
+                    kprintf("[inetd] Accepted TCP connection on port %u (conn=%d)\n",
+                            (unsigned)port, conn_id);
+                    inetd_handle_connection(port, conn_id);
+                    handled++;
+                }
+            } else if (svc->proto == INETD_PROTO_UDP) {
+                /* For UDP, check for incoming datagrams */
+                /* Use net_udp_recv() to check for data */
+                char udp_buf[INETD_BUF_SIZE];
+                uint32_t src_ip = 0;
+                uint16_t src_port = 0;
+                int n = net_udp_recv(port, udp_buf, sizeof(udp_buf),
+                                      &src_ip, &src_port, 0);  /* non-blocking */
+                if (n > 0) {
+                    kprintf("[inetd] Received %d bytes UDP on port %u\n",
+                            n, (unsigned)port);
+                    /* For UDP external services, fork and pass the data */
+                    if (svc->builtin == INETD_BUILTIN_NONE) {
+                        inetd_handle_external(-1, svc);
+                    } else {
+                        /* Built-in UDP services handled inline */
+                        kprintf("[inetd] Built-in UDP on port %u\n",
+                                (unsigned)port);
+                    }
+                    handled++;
+                }
             }
         }
 

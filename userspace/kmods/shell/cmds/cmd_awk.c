@@ -200,19 +200,46 @@ void cmd_awk(const char *args) {
     }
     while (*p == ' ') p++;
 
-    /* Skip BEGIN/END blocks (not supported in per-line mode here) */
-    /* Find main body: the { } block that is NOT BEGIN or END */
+    /* Extract BEGIN/END blocks and main body */
+    char begin_body[AWK_MAX_PROG] = {0};
+    char end_body[AWK_MAX_PROG] = {0};
     char main_body[AWK_MAX_PROG] = {0};
     const char *pp = prog;
-    /* simple heuristic: find first {body} not preceded by BEGIN/END */
+    /* Parse the program looking for BEGIN{}, main{}, and END{} blocks */
     while (*pp) {
         while (*pp == ' ' || *pp == '\t') pp++;
-        if (strncmp(pp, "BEGIN", 5) == 0 || strncmp(pp, "END", 3) == 0) {
-            /* skip this block */
-            while (*pp && *pp != '{') pp++;
-            if (*pp == '{') { pp++; int d=1; while(*pp && d>0){ if(*pp=='{')d++;else if(*pp=='}')d--; pp++; } }
+        if (strncmp(pp, "BEGIN", 5) == 0) {
+            pp += 5;
+            while (*pp == ' ' || *pp == '\t') pp++;
+            if (*pp == '{') {
+                pp++; /* skip '{' */
+                int d = 1;
+                int i = 0;
+                while (*pp && d > 0 && i < AWK_MAX_PROG - 1) {
+                    if (*pp == '{') d++;
+                    else if (*pp == '}') { d--; if (d == 0) break; }
+                    begin_body[i++] = *pp++;
+                }
+                begin_body[i] = '\0';
+                if (*pp == '}') pp++;
+            }
+        } else if (strncmp(pp, "END", 3) == 0) {
+            pp += 3;
+            while (*pp == ' ' || *pp == '\t') pp++;
+            if (*pp == '{') {
+                pp++; /* skip '{' */
+                int d = 1;
+                int i = 0;
+                while (*pp && d > 0 && i < AWK_MAX_PROG - 1) {
+                    if (*pp == '{') d++;
+                    else if (*pp == '}') { d--; if (d == 0) break; }
+                    end_body[i++] = *pp++;
+                }
+                end_body[i] = '\0';
+                if (*pp == '}') pp++;
+            }
         } else {
-            /* This is the main body */
+            /* This is the main body or part of it */
             int i = 0;
             while (*pp && i < AWK_MAX_PROG - 1) main_body[i++] = *pp++;
             main_body[i] = '\0';
@@ -221,6 +248,11 @@ void cmd_awk(const char *args) {
     }
     if (!main_body[0]) {
         for (int i = 0; prog[i] && i < AWK_MAX_PROG - 1; i++) main_body[i] = prog[i];
+    }
+
+    /* Execute BEGIN block before processing */
+    if (begin_body[0]) {
+        awk_run_line(begin_body, "");
     }
 
     /* Read from file or stdin */
@@ -274,5 +306,10 @@ void cmd_awk(const char *args) {
             if (len == 0) break;
             awk_run_line(main_body, line);
         }
+    }
+
+    /* Execute END block after all lines have been processed */
+    if (end_body[0]) {
+        awk_run_line(end_body, "");
     }
 }

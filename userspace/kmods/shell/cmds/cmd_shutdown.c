@@ -17,6 +17,7 @@
 #include "string.h"
 #include "service.h"
 #include "fat32.h"
+#include "timer.h"
 
 /* ── Forward declarations for ACPI functions ────────────────────────── */
 extern void acpi_shutdown(void);
@@ -58,6 +59,21 @@ static void stop_all_services(void)
     }
 }
 
+/* Parse +N minutes from a time spec string. Returns delay in ticks, 0 if not valid. */
+static uint64_t parse_delay_minutes(const char *p)
+{
+    if (!p || p[0] != '+') return 0;
+    p++; /* skip '+' */
+    int minutes = 0;
+    while (*p >= '0' && *p <= '9') {
+        minutes = minutes * 10 + (*p - '0');
+        p++;
+    }
+    if (minutes <= 0) return 0;
+    /* Convert minutes to ticks */
+    return (uint64_t)minutes * 60 * TIMER_FREQ;
+}
+
 /* ── Main shutdown command ──────────────────────────────────────────── */
 void cmd_shutdown(const char *args)
 {
@@ -89,9 +105,22 @@ void cmd_shutdown(const char *args)
         } else if (strcmp(p, "now") == 0) {
             /* Plain "shutdown now" — halt by default */;
         } else {
-            /* Check for +N format (delayed) — just log and proceed now */
+            /* Check for +N format (delayed) — implement timer-based delay */
             if (p[0] == '+') {
-                kprintf("shutdown: delayed shutdown not supported, shutting down now\n");
+                uint64_t delay_ticks = parse_delay_minutes(p);
+                if (delay_ticks > 0) {
+                    char *end = NULL;
+                    int minutes = (int)strtol(p + 1, &end, 10);
+                    kprintf("shutdown: delaying %d minute(s)...\n", minutes > 0 ? minutes : 0);
+                    /* Wait using timer ticks (yield to other processes) */
+                    uint64_t deadline = timer_get_ticks() + delay_ticks;
+                    while (timer_get_ticks() < deadline) {
+                        /* Yield CPU to other processes while waiting */
+                        __asm__ volatile("pause");
+                    }
+                } else {
+                    kprintf("shutdown: invalid delay '%s', shutting down now\n", p);
+                }
             }
             /* Anything else: treat as message or unknown */
         }
