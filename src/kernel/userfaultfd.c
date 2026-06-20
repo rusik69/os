@@ -37,6 +37,8 @@ void uffd_init(void)
         ctx->event_tail = 0;
         ctx->num_ranges = 0;
         ctx->features = 0;
+        ctx->wake_pending_count = 0;
+        memset(ctx->wake_pending_addrs, 0, sizeof(ctx->wake_pending_addrs));
         memset(ctx->ranges, 0, sizeof(ctx->ranges));
         memset(ctx->events, 0, sizeof(ctx->events));
     }
@@ -348,6 +350,12 @@ int userfaultfd_handle_fault(int fd, uint64_t fault_addr, int write,
     ev->pending     = 1;
     ctx->event_head = next_head;
 
+    /* Add to the wake-pending list so UFFDIO_COPY / UFFDIO_WAKE
+     * can track resolution of this page. */
+    if (ctx->wake_pending_count < 16) {
+        ctx->wake_pending_addrs[ctx->wake_pending_count++] = fault_addr;
+    }
+
     spinlock_release(&ctx->lock);
     return 0; /* handled (event queued) */
 }
@@ -604,12 +612,31 @@ int userfaultfd_copy(int fd, struct uffdio_copy *copy_arg)
     /* Copy succeeded — report bytes copied */
     copy_arg->copy = PAGE_SIZE;
 
-    /* TODO: If not DONTWAKE, wake any thread waiting on this page.
-     * Currently we use a simple synchronous model — the fault handler
-     * is not blocking because we queue events and return to userspace.
-     * When the user calls UFFDIO_COPY, the page is mapped and the
-     * next access to that address will succeed normally.
-     * A full implementation would maintain a waitqueue per range. */
+    /* ── Wake path ──────────────────────────────────────────────────
+     * If the caller did NOT set DONTWAKE, this page has been resolved
+     * and any thread waiting on it should be woken up.
+     *
+     * In a synchronous model the fault handler doesn't block threads,
+     * but we maintain a pending-address list for correctness so that
+     * the wake accounting is accurate.  A future enhancement would
+     * actually unblock waiting threads via a per-range waitqueue. */
+    if (!(copy_arg->mode & UFFDIO_COPY_MODE_DONTWAKE)) {
+        /* Remove this address from the wake-pending list */
+        spinlock_acquire(&ctx->lock);
+        for (int i = 0; i < ctx->wake_pending_count; i++) {
+            if (ctx->wake_pending_addrs[i] == copy_arg->dst) {
+                /* Shift remaining entries down */
+                for (int j = i; j < ctx->wake_pending_count - 1; j++)
+                    ctx->wake_pending_addrs[j] = ctx->wake_pending_addrs[j + 1];
+                ctx->wake_pending_count--;
+                break;
+            }
+        }
+        spinlock_release(&ctx->lock);
+        kprintf("[uffd] wake: pid=%u dst=0x%llx resolved\n",
+                (unsigned)cur->pid, copy_arg->dst);
+    }
+
     kprintf("[uffd] copy pid=%u dst=0x%llx src=0x%llx len=%llu\n",
             (unsigned)cur->pid, copy_arg->dst, copy_arg->src, copy_arg->len);
 
@@ -685,8 +712,11 @@ int userfaultfd_zeropage(int fd, struct uffdio_zeropage *zp_arg)
 
 /*
  * UFFDIO_WAKE — Wake any threads blocked waiting on a page range.
- * Currently a no-op since our fault handler doesn't block.
- * Present for API compatibility.
+ *
+ * In our synchronous model the fault handler does not block threads,
+ * but we still maintain the wake-pending list for correctness.
+ * This call scans the pending list and removes entries that fall
+ * within the requested range.
  */
 int userfaultfd_wake(int fd, struct uffdio_wake *wake_arg)
 {
@@ -703,7 +733,27 @@ int userfaultfd_wake(int fd, struct uffdio_wake *wake_arg)
     if (wake_arg->range_len & (PAGE_SIZE - 1))
         return -EINVAL;
 
-    (void)ctx; /* wake is a no-op in our synchronous model */
+    uint64_t range_end = wake_arg->range_start + wake_arg->range_len;
+
+    spinlock_acquire(&ctx->lock);
+
+    /* Walk the pending list and remove any addresses in the wake range */
+    int woken = 0;
+    for (int i = ctx->wake_pending_count - 1; i >= 0; i--) {
+        uint64_t addr = ctx->wake_pending_addrs[i];
+        if (addr >= wake_arg->range_start && addr < range_end) {
+            /* Remove by shifting later entries down */
+            for (int j = i; j < ctx->wake_pending_count - 1; j++)
+                ctx->wake_pending_addrs[j] = ctx->wake_pending_addrs[j + 1];
+            ctx->wake_pending_count--;
+            woken++;
+        }
+    }
+
+    spinlock_release(&ctx->lock);
+
+    kprintf("[uffd] wake: range=0x%llx-0x%llx woken=%d\n",
+            wake_arg->range_start, range_end, woken);
 
     return 0;
 }

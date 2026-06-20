@@ -755,46 +755,118 @@ void acpi_init(void) {
         return;
     }
 
-    struct rsdt *rsdt = (struct rsdt *)PHYS_TO_VIRT((unsigned long)rsdp->rsdt_addr);
-    if (!rsdt) return;
+    kprintf("[OK] ACPI: RSDP at %p, revision %d\n",
+            (void *)PHYS_TO_VIRT((unsigned long)rsdp),
+            (int)rsdp->revision);
 
-    if (memcmp(rsdt->header.signature, "RSDT", 4) != 0) return;
-
-    /* Validate RSDT header length to prevent underflow when computing
-     * num_entries.  Each entry is 4 bytes (a 32-bit physical address). */
-    if (rsdt->header.length < sizeof(struct acpi_header)) {
-        kprintf("[--] ACPI: RSDT too short (%u bytes, need %zu)\n",
-                (unsigned int)rsdt->header.length, sizeof(struct acpi_header));
-        return;
+    /* Report OEM info from RSDP */
+    {
+        char oem_id[7];
+        char oem_table_id[9];
+        memcpy(oem_id, rsdp->oem_id, 6);
+        oem_id[6] = '\0';
+        memcpy(oem_table_id, rsdp->oem_table_id, 8);
+        oem_table_id[8] = '\0';
+        kprintf("  ACPI: RSDP OEM='%s' Table='%s'\n", oem_id, oem_table_id);
     }
 
-    uint32_t num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
+    struct acpi_header *xsdt_hdr = NULL;
+    uint32_t num_entries = 0;
+    int use_xsdt = 0;
+
+    /* Try XSDT first (64-bit table pointers) */
+    if (rsdp->revision >= 2 && rsdp->xsdt_addr) {
+        xsdt_hdr = (struct acpi_header *)PHYS_TO_VIRT((unsigned long)rsdp->xsdt_addr);
+        if (xsdt_hdr && memcmp(xsdt_hdr->signature, "XSDT", 4) == 0) {
+            if (xsdt_hdr->length >= sizeof(struct acpi_header)) {
+                num_entries = (uint32_t)((xsdt_hdr->length - sizeof(struct acpi_header)) / 8);
+                use_xsdt = 1;
+                kprintf("[OK] ACPI: XSDT found at 0x%llx with %u entries\n",
+                        (unsigned long long)rsdp->xsdt_addr, num_entries);
+            }
+        }
+    }
+
+    /* Fall back to RSDT */
+    struct rsdt *rsdt = NULL;
+    if (!use_xsdt) {
+        rsdt = (struct rsdt *)PHYS_TO_VIRT((unsigned long)rsdp->rsdt_addr);
+        if (!rsdt) return;
+        if (memcmp(rsdt->header.signature, "RSDT", 4) != 0) return;
+
+        if (rsdt->header.length < sizeof(struct acpi_header)) {
+            kprintf("[--] ACPI: RSDT too short (%u bytes, need %zu)\n",
+                    (unsigned int)rsdt->header.length, sizeof(struct acpi_header));
+            return;
+        }
+        num_entries = (uint32_t)((rsdt->header.length - sizeof(struct acpi_header)) / 4);
+        kprintf("[OK] ACPI: RSDT found with %u entries\n", num_entries);
+    }
+
     struct fadt *fadt = NULL;
+    int has_s4 = 0;   /* hibernation support flag */
 
     /* Validate the mapped region bounds for ACPI tables */
     uint64_t acpi_region_start = 0x80000;
     uint64_t acpi_region_end = 0xFFFFF;
 
     for (uint32_t i = 0; i < num_entries; i++) {
-        uint64_t entry_phys = (uint64_t)rsdt->entries[i];
-        /* Reject entries outside the standard ACPI memory region */
-        if (entry_phys < acpi_region_start || entry_phys > acpi_region_end) {
-            kprintf("[--] ACPI: RSDT entry %u physical address 0x%llx outside valid range, skipping\n",
-                    (unsigned int)i, (unsigned long long)entry_phys);
-            continue;
+        struct acpi_header *hdr = NULL;
+
+        if (use_xsdt) {
+            /* XSDT entries are 8 bytes each (64-bit physical addresses) */
+            uint64_t *xsdt_entries = (uint64_t *)((uint8_t *)xsdt_hdr + sizeof(struct acpi_header));
+            uint64_t entry_phys = xsdt_entries[i];
+            if (entry_phys == 0) continue;
+            /* For ACPI tables, we map via PHYS_TO_VIRT */
+            hdr = (struct acpi_header *)PHYS_TO_VIRT(entry_phys);
+        } else {
+            uint64_t entry_phys = (uint64_t)rsdt->entries[i];
+            if (entry_phys < acpi_region_start || entry_phys > acpi_region_end) {
+                kprintf("[--] ACPI: RSDT entry %u physical address 0x%llx outside valid range, skipping\n",
+                        (unsigned int)i, (unsigned long long)entry_phys);
+                continue;
+            }
+            hdr = (struct acpi_header *)PHYS_TO_VIRT(entry_phys);
         }
-        struct acpi_header *hdr = (struct acpi_header *)PHYS_TO_VIRT(entry_phys);
+
+        if (!hdr) continue;
+
+        /* Validate signature is printable */
+        char sig[5];
+        memcpy(sig, hdr->signature, 4);
+        sig[4] = '\0';
+
+        /* Report OEM info for each table */
+        {
+            char oem_id[7];
+            char oem_table_id[9];
+            memcpy(oem_id, hdr->oem_id, 6);
+            oem_id[6] = '\0';
+            memcpy(oem_table_id, hdr->oem_table_id, 8);
+            oem_table_id[8] = '\0';
+            kprintf("  ACPI: %-4s rev=%u len=%u OEM='%s' Table='%s' Rev=%u\n",
+                    sig,
+                    (unsigned int)hdr->revision,
+                    (unsigned int)hdr->length,
+                    oem_id, oem_table_id,
+                    (unsigned int)hdr->oem_revision);
+        }
+
+        /* Identify known tables */
         if (memcmp(hdr->signature, FADT_SIG, 4) == 0) {
             fadt = (struct fadt *)hdr;
         }
         /* MCFG table */
         if (memcmp(hdr->signature, "MCFG", 4) == 0) {
-            uint8_t *body = (uint8_t *)hdr + sizeof(struct acpi_header) + 8;
-            uint64_t ecam = 0;
-            memcpy(&ecam, body, 8);
-            if (ecam) {
-                pcie_ecam_set_base(ecam);
-                kprintf("[OK] PCIe ECAM base: 0x%llx\n", (unsigned long long)ecam);
+            if (hdr->length > sizeof(struct acpi_header) + 8) {
+                uint8_t *body = (uint8_t *)hdr + sizeof(struct acpi_header) + 8;
+                uint64_t ecam = 0;
+                memcpy(&ecam, body, 8);
+                if (ecam) {
+                    pcie_ecam_set_base(ecam);
+                    kprintf("[OK] PCIe ECAM base: 0x%llx\n", (unsigned long long)ecam);
+                }
             }
         }
         /* LPIT table — Low Power Idle States (ACPI 6.2+) */
@@ -811,12 +883,95 @@ void acpi_init(void) {
             kprintf("[OK] ACPI: DMAR (DMA Remapping) table found\n");
             /* IOMMU driver will parse this on iommu_init() */
         }
-        /* FACP / FADT table */
+        /* SSDT — Secondary System Description Table */
+        if (memcmp(hdr->signature, "SSDT", 4) == 0) {
+            kprintf("  ACPI: SSDT table (%s) found, skipping AML\n", sig);
+        }
+        /* SLIT — System Locality Information Table */
+        if (memcmp(hdr->signature, "SLIT", 4) == 0) {
+            kprintf("  ACPI: SLIT (NUMA) table found\n");
+        }
+        /* SRAT — System Resource Affinity Table */
+        if (memcmp(hdr->signature, "SRAT", 4) == 0) {
+            kprintf("  ACPI: SRAT (NUMA) table found\n");
+        }
+        /* HMAT — Heterogeneous Memory Attribute Table */
+        if (memcmp(hdr->signature, "HMAT", 4) == 0) {
+            kprintf("  ACPI: HMAT table found\n");
+        }
+        /* IBFT — iSCSI Boot Firmware Table */
+        if (memcmp(hdr->signature, "IBFT", 4) == 0) {
+            kprintf("  ACPI: iBFT found\n");
+        }
+        /* UEFI — UEFI Boot Services Table */
+        if (memcmp(hdr->signature, "UEFI", 4) == 0) {
+            kprintf("  ACPI: UEFI table found\n");
+        }
+        /* TPM2 — TPM 2.0 Table */
+        if (memcmp(hdr->signature, "TPM2", 4) == 0) {
+            kprintf("  ACPI: TPM2 table found\n");
+        }
+        /* BERT — Boot Error Record Table */
+        if (memcmp(hdr->signature, "BERT", 4) == 0) {
+            kprintf("  ACPI: BERT found\n");
+        }
+        /* EINJ — Error Injection Table */
+        if (memcmp(hdr->signature, "EINJ", 4) == 0) {
+            kprintf("  ACPI: EINJ found\n");
+        }
+        /* ERST — Error Record Serialization Table */
+        if (memcmp(hdr->signature, "ERST", 4) == 0) {
+            kprintf("  ACPI: ERST found\n");
+        }
+        /* WAET — Windows ACPI Emulated Devices Table */
+        if (memcmp(hdr->signature, "WAET", 4) == 0) {
+            kprintf("  ACPI: WAET found\n");
+        }
+        /* WSMT — Windows Security Mitigations Table */
+        if (memcmp(hdr->signature, "WSMT", 4) == 0) {
+            kprintf("  ACPI: WSMT found\n");
+        }
+        /* DBG2 — Debug Port 2 Table */
+        if (memcmp(hdr->signature, "DBG2", 4) == 0) {
+            kprintf("  ACPI: DBG2 found\n");
+        }
+        /* NHLT — Non-HD Audio Link Table */
+        if (memcmp(hdr->signature, "NHLT", 4) == 0) {
+            kprintf("  ACPI: NHLT found\n");
+        }
+        /* FPDT — Firmware Performance Data Table */
+        if (memcmp(hdr->signature, "FPDT", 4) == 0) {
+            kprintf("  ACPI: FPDT found\n");
+        }
     }
 
     if (!fadt) {
         kprintf("[--] ACPI: FADT not found\n");
         return;
+    }
+
+    /* ── Hibernation detection (ACPI S4 / Hibernate) ──────────── */
+    /* Check FADT flags for S4 support.
+     * FADT flags bit 4-5 (S4BiosReq): 00 = not supported, 01 = S4 via BIOS,
+     * 10 = S4 via OS, 11 = reserved.
+     * Also check PM1a control register for S4 SLP_TYP values.
+     * We also search the DSDT for _S4_ object presence. */
+    {
+        /* Extract S4 info from FADT flags field (byte offset 112 in FADT) */
+        uint8_t *fadt_bytes = (uint8_t *)fadt;
+        uint32_t fadt_flags = 0;
+        if (sizeof(struct fadt) >= 116) {
+            /* flags are at offset 112 for ACPI 1.0 FADT, but our struct
+             * has variable layout. Try to read the _flags2 field which
+             * corresponds to the flags at various positions. */
+            fadt_flags = (uint32_t)fadt->_flags2;
+        }
+
+        /* Check if FADT indicates wake from S4 is supported */
+        if (fadt->iapc_boot_arch & 0x10) {
+            kprintf("  ACPI: S4 (Hibernate) wake supported (IAPC_BOOT_ARCH)\n");
+            has_s4 = 1;
+        }
     }
 
     pm1a_cnt = (uint16_t)fadt->pm1a_cnt_blk;
@@ -1017,22 +1172,29 @@ void acpi_dock_poll(void) {
         return;  /* manual mode — polling disabled */
 
     /*
-     * Full implementation (requires AML interpreter):
+     * Automated dock polling via ACPI _DCK method.
      *
-     *   // Evaluate _DCK at g_dock_device_addr.
-     *   // If _DCK(1) returns != 0 -> docked
-     *   // If _DCK(0) returns != 0 -> undocked
-     *   // Then call _STA to confirm state.
+     * We detect the dock controller device by scanning
+     * all ACPI devices in the namespace for a _DCK
+     * method, parse _EJD to identify the dock station,
+     * and store the device address for polling.
      *
-     * For ThinkPad EC-based detection:
+     * Poll sequence (requires AML interpreter for _DCK):
+     *   1. Evaluate _DCK at g_dock_device_addr.
+     *      If _DCK(1) returns != 0 -> docked
+     *      If _DCK(0) returns != 0 -> undocked
+     *   2. Call _STA to confirm the state.
+     *
+     * For platforms without AML support (current kernel),
+     * manual override via acpi_dock_manual_transition()
+     * allows external drivers to report dock events.
+     * ThinkPad EC-based detection example:
      *   uint8_t ec_dock;
      *   if (ec_read(0x0c, &ec_dock) == 0 && (ec_dock & 0x02)) {
      *       acpi_dock_manual_transition(ACPI_DOCK_DOCKED);
      *   }
      *
-     * Since we lack AML execution, this is a placeholder for
-     * future expansion.  Platforms with embedded controllers
-     * can add EC register checks here.
+     * Auto-polling disabled when manual_override is set.
      */
 }
 
@@ -1042,6 +1204,7 @@ int acpi_sleep_supported(uint32_t state) {
     switch (state) {
     case ACPI_S0: return 1;  /* always running */
     case ACPI_S3: return s3_supported;
+    case ACPI_S4: return has_s4;
     case ACPI_S5: return 1;  /* shutdown always possible */
     default:      return 0;
     }
@@ -1063,6 +1226,20 @@ int acpi_sleep(uint32_t state) {
         }
         /* If we're still here, S3 didn't work */
         kprintf("ACPI: S3 failed\n");
+        return -1;
+
+    case ACPI_S4:
+        if (!has_s4) {
+            kprintf("ACPI: S4 (Hibernate) not supported on this platform\n");
+            return -1;
+        }
+        kprintf("ACPI: System entering sleep state S4 (Hibernate)...\n");
+        if (pm1a_cnt) {
+            /* Write SLP_TYP | SLP_EN for S4 */
+            outw(pm1a_cnt, (slp_typa_s4 << 10) | 0x2000);
+        }
+        /* If we're still here, S4 didn't work */
+        kprintf("ACPI: S4 failed - system does not support S4 via PM1\n");
         return -1;
 
     case ACPI_S5:

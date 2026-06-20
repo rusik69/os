@@ -329,3 +329,5 @@ void lldp_age_neighbors(void)
         }
     }
 }
+#include "module.h"
+module_init(lldp_init);

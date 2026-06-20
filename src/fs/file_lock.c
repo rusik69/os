@@ -5,6 +5,7 @@
 #include "printf.h"
 #include "process.h"
 #include "mutex.h"
+#include "waitqueue.h"
 
 /* Advisory file locking table */
 #define FILE_LOCK_MAX 64
@@ -13,16 +14,19 @@ struct file_lock_entry {
     char path[128];
     struct file_lock flk;
     int in_use;
+    struct wait_queue wq;      /* waitqueue for blocking lock requests */
 };
 
 static struct file_lock_entry lock_table[FILE_LOCK_MAX];
-static mutex_t lock_mutex;
+static int lock_mutex_id;
 static int lock_initialized = 0;
 
 void file_lock_init(void) {
     if (lock_initialized) return;
     memset(lock_table, 0, sizeof(lock_table));
-    mutex_init(&lock_mutex);
+    lock_mutex_id = mutex_init();
+    for (int i = 0; i < FILE_LOCK_MAX; i++)
+        wait_queue_init(&lock_table[i].wq);
     lock_initialized = 1;
     kprintf("[OK] file_lock initialized\n");
 }
@@ -44,9 +48,8 @@ static int lock_conflicts(struct file_lock *a, struct file_lock *b) {
 
 int file_lock_set(const char *path, struct file_lock *flk, int wait) {
     if (!path || !flk) return -EINVAL;
-    (void)wait; /* non-blocking for now */
 
-    mutex_lock(&lock_mutex);
+    mutex_lock(lock_mutex_id);
 
     /* Find or create entry for this path */
     struct file_lock_entry *entry = NULL;
@@ -58,11 +61,12 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait) {
     }
 
     if (flk->l_type == F_UNLCK) {
-        /* Unlock: remove the entry */
+        /* Unlock: remove the entry and wake any waiters */
         if (entry) {
+            wait_queue_wake_all(&entry->wq);
             memset(entry, 0, sizeof(struct file_lock_entry));
         }
-        mutex_unlock(&lock_mutex);
+        mutex_unlock(lock_mutex_id);
         return 0;
     }
 
@@ -74,53 +78,99 @@ int file_lock_set(const char *path, struct file_lock *flk, int wait) {
                 strncpy(entry->path, path, sizeof(entry->path) - 1);
                 entry->path[sizeof(entry->path) - 1] = '\0';
                 entry->in_use = 1;
+                wait_queue_init(&entry->wq);
                 break;
             }
         }
         if (!entry) {
-            mutex_unlock(&lock_mutex);
+            mutex_unlock(lock_mutex_id);
             return -ENOLCK;
         }
         memcpy(&entry->flk, flk, sizeof(struct file_lock));
         entry->flk.l_pid = process_get_current() ? (int32_t)process_get_current()->pid : 0;
-        mutex_unlock(&lock_mutex);
+        mutex_unlock(lock_mutex_id);
         return 0;
     }
 
     /* Check for conflicts with existing lock */
-    if (lock_conflicts(&entry->flk, flk)) {
+    while (lock_conflicts(&entry->flk, flk)) {
         struct process *cur = process_get_current();
         if (cur && (uint32_t)entry->flk.l_pid == cur->pid) {
             /* Same process can upgrade/downgrade its own lock */
             memcpy(&entry->flk, flk, sizeof(struct file_lock));
             entry->flk.l_pid = (int32_t)cur->pid;
-            mutex_unlock(&lock_mutex);
+            /* Wake other waiters who might now be able to acquire */
+            wait_queue_wake_all(&entry->wq);
+            mutex_unlock(lock_mutex_id);
             return 0;
         }
-        mutex_unlock(&lock_mutex);
-        return -EAGAIN;
+
+        if (!wait) {
+            /* Non-blocking: return conflict immediately */
+            mutex_unlock(lock_mutex_id);
+            return -EAGAIN;
+        }
+
+        /* Blocking wait: release the mutex, sleep, and retry */
+        mutex_unlock(lock_mutex_id);
+        wait_queue_sleep(&entry->wq);
+        /* Re-acquire mutex and retry */
+        mutex_lock(lock_mutex_id);
+
+        /* Re-find entry (may have been freed) */
+        entry = NULL;
+        for (int i = 0; i < FILE_LOCK_MAX; i++) {
+            if (lock_table[i].in_use && strcmp(lock_table[i].path, path) == 0) {
+                entry = &lock_table[i];
+                break;
+            }
+        }
+        if (!entry) {
+            /* Lock was removed while we slept — create a fresh one */
+            for (int i = 0; i < FILE_LOCK_MAX; i++) {
+                if (!lock_table[i].in_use) {
+                    entry = &lock_table[i];
+                    strncpy(entry->path, path, sizeof(entry->path) - 1);
+                    entry->path[sizeof(entry->path) - 1] = '\0';
+                    entry->in_use = 1;
+                    wait_queue_init(&entry->wq);
+                    break;
+                }
+            }
+            if (!entry) {
+                mutex_unlock(lock_mutex_id);
+                return -ENOLCK;
+            }
+            memcpy(&entry->flk, flk, sizeof(struct file_lock));
+            entry->flk.l_pid = cur ? (int32_t)cur->pid : 0;
+            mutex_unlock(lock_mutex_id);
+            return 0;
+        }
     }
 
+    /* No conflict: acquire the lock */
     memcpy(&entry->flk, flk, sizeof(struct file_lock));
     struct process *cur = process_get_current();
     entry->flk.l_pid = cur ? (int32_t)cur->pid : 0;
-    mutex_unlock(&lock_mutex);
+    /* Wake other waiters who may now acquire */
+    wait_queue_wake_all(&entry->wq);
+    mutex_unlock(lock_mutex_id);
     return 0;
 }
 
 int file_lock_get(const char *path, struct file_lock *flk) {
     if (!path || !flk) return -EINVAL;
-    mutex_lock(&lock_mutex);
+    mutex_lock(lock_mutex_id);
 
     for (int i = 0; i < FILE_LOCK_MAX; i++) {
         if (lock_table[i].in_use && strcmp(lock_table[i].path, path) == 0) {
             memcpy(flk, &lock_table[i].flk, sizeof(struct file_lock));
-            mutex_unlock(&lock_mutex);
+            mutex_unlock(lock_mutex_id);
             return 0;
         }
     }
 
-    mutex_unlock(&lock_mutex);
+    mutex_unlock(lock_mutex_id);
     return -ENOENT;
 }
 

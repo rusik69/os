@@ -86,9 +86,6 @@ int fanotify_create_group(int flags, int event_f_flags)
     (void)flags;
     (void)event_f_flags;
 
-    if (!fanotify_initialised)
-        return -ENOSYS;
-
     int idx = group_find_free();
     if (idx < 0)
         return idx;
@@ -146,8 +143,6 @@ int fanotify_mark(int fd, int flags, uint64_t mask, int dirfd, const char *path)
 {
     (void)dirfd;
 
-    if (!fanotify_initialised)
-        return -ENOSYS;
     if (!path)
         return -EINVAL;
 
@@ -172,8 +167,6 @@ int fanotify_mark(int fd, int flags, uint64_t mask, int dirfd, const char *path)
 
 int fanotify_get_event(int fd, struct fanotify_event *evt, size_t sz)
 {
-    if (!fanotify_initialised)
-        return -ENOSYS;
     if (!evt || sz < sizeof(struct fanotify_event))
         return -EINVAL;
 

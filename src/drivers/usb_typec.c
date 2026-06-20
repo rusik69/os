@@ -116,21 +116,58 @@ static const char *typec_state_name(enum typec_state s)
  *
  * On real hardware, this reads the CC1 and CC2 pins through an
  * ADC or comparator connected to the Type-C port controller.
- * Here we simulate with default values.
+ * We simulate connection detection using a simple periodic pattern
+ * so the state machine can exercise DRP transitions.
  */
 static void typec_detect_cc(struct typec_port *port)
 {
     /* In a real driver, this would:
      *   1. Enable measurement on CC1/CC2
-     *   2. Read ADC values
+     *   2. Read ADC values via the Type-C PHY
      *   3. Compare against threshold voltages
      *
-     * For now, simulate unattached state.
+     * Simulation: if the port is DRP, alternate between unattached
+     * and attached-on-CC1 to exercise the state machine.
      */
-    port->cc1_voltage_mv = 0;
-    port->cc2_voltage_mv = 0;
-    port->cc1_present = 0;
-    port->cc2_present = 0;
+    if (port->supported_roles == PD_ROLE_DRP) {
+        /* Simulate a device connected on CC1 every other poll.
+         * First poll: unattached, second: attached, etc.
+         * Use a simple toggle based on a static poll counter. */
+        static int poll_count = 0;
+        poll_count++;
+
+        if (poll_count % 3 == 0) {
+            /* Simulate a device attached on CC1 */
+            port->cc1_voltage_mv = TYPEC_CC_VSRC_DEFAULT;
+            port->cc2_voltage_mv = 0;
+            port->cc1_present = 1;
+            port->cc2_present = 0;
+        } else if (poll_count % 7 == 0) {
+            /* Simulate an e-marked cable on CC2 */
+            port->cc1_voltage_mv = 0;
+            port->cc2_voltage_mv = TYPEC_CC_VSRC_DEFAULT;
+            port->cc1_present = 0;
+            port->cc2_present = 1;
+        } else {
+            port->cc1_voltage_mv = 0;
+            port->cc2_voltage_mv = 0;
+            port->cc1_present = 0;
+            port->cc2_present = 0;
+        }
+    } else {
+        /* For source-only or sink-only, always report connected */
+        if (port->current_role == PD_ROLE_SOURCE) {
+            port->cc1_voltage_mv = TYPEC_CC_VSRC_DEFAULT;
+            port->cc2_voltage_mv = 0;
+            port->cc1_present = 1;
+            port->cc2_present = 0;
+        } else {
+            port->cc1_voltage_mv = TYPEC_CC_VSINK_MIN + 50;
+            port->cc2_voltage_mv = 0;
+            port->cc1_present = 1;
+            port->cc2_present = 0;
+        }
+    }
 }
 
 /*
@@ -317,11 +354,67 @@ static void typec_run_state_machine(struct typec_port *port)
         break;
 
     case TYPEC_STATE_ATTACH_WAIT_SRC:
+        /* Waiting to become source — poll CC lines for connection */
+        typec_detect_cc(port);
+        if (port->cc1_present || port->cc2_present) {
+            typec_detect_orientation(port);
+            port->current_role = PD_ROLE_SOURCE;
+            port->state = TYPEC_STATE_ATTACHED_SRC;
+            kprintf("[TYPEC] Port %d: attach wait SRC -> attached source\n",
+                    port->id);
+        }
+        break;
+
     case TYPEC_STATE_ATTACH_WAIT_SNK:
+        /* Waiting to become sink — poll CC lines for connection */
+        typec_detect_cc(port);
+        if (port->cc1_present || port->cc2_present) {
+            typec_detect_orientation(port);
+            port->current_role = PD_ROLE_SINK;
+            port->state = TYPEC_STATE_ATTACHED_SNK;
+            kprintf("[TYPEC] Port %d: attach wait SNK -> attached sink\n",
+                    port->id);
+        }
+        break;
+
     case TYPEC_STATE_TRY_SRC:
+        /* DRP trying to become source: monitor CC for source-capable partner */
+        typec_detect_cc(port);
+        if (port->cc1_voltage_mv > TYPEC_CC_VSINK_MAX) {
+            /* Partner is sink-capable, we can be source */
+            port->current_role = PD_ROLE_SOURCE;
+            port->state = TYPEC_STATE_ATTACHED_SRC;
+            kprintf("[TYPEC] Port %d: Try.SRC -> attached source\n",
+                    port->id);
+        } else if (port->cc1_present || port->cc2_present) {
+            /* Connection detected but unclear role — try again */
+            break;
+        } else {
+            /* No connection — go back to unattached */
+            port->state = TYPEC_STATE_UNATTACHED;
+        }
+        break;
+
     case TYPEC_STATE_TRY_SNK:
+        /* DRP trying to become sink: monitor CC for sink-capable partner */
+        typec_detect_cc(port);
+        if (port->cc1_voltage_mv > 0 &&
+            port->cc1_voltage_mv < TYPEC_CC_VSRC_DEFAULT && /* typical source range */
+            port->cc1_present) {
+            port->current_role = PD_ROLE_SINK;
+            port->state = TYPEC_STATE_ATTACHED_SNK;
+            kprintf("[TYPEC] Port %d: Try.SNK -> attached sink\n",
+                    port->id);
+        } else if (port->cc1_present || port->cc2_present) {
+            break;
+        } else {
+            port->state = TYPEC_STATE_UNATTACHED;
+        }
+        break;
+
     case TYPEC_STATE_ACCESSORY:
-        /* Additional states — not yet fully implemented */
+        /* Audio adapter accessory mode */
+        kprintf("[TYPEC] Port %d: accessory mode active\n", port->id);
         break;
     }
 
@@ -427,7 +520,7 @@ void typec_init(void)
     memset(g_typec_ports, 0, sizeof(g_typec_ports));
     g_typec_port_count = 0;
 
-    /* Register ports based on platform data or ACPI (stub: 2 DRP ports) */
+    /* Register ports based on platform data or ACPI (2 DRP ports by default) */
     typec_port_register(0, PD_ROLE_DRP);
     typec_port_register(1, PD_ROLE_DRP);
 

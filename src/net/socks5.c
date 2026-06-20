@@ -173,3 +173,5 @@ void socks5_init(void)
 {
     kprintf("[OK] SOCKS5 proxy client initialized\n");
 }
+#include "module.h"
+module_init(socks5_init);

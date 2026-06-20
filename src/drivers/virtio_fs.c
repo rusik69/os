@@ -17,10 +17,59 @@
 #include "io.h"
 #include "types.h"
 
+/* ── Virtio ring structures ────────────────────────────────────────── */
+#define VRING_SIZE             64
+#define QUEUE_MEM_SIZE         8192
+
+/* Descriptor flags */
+#define VRING_DESC_F_NEXT      1
+#define VRING_DESC_F_WRITE     2
+
+#pragma pack(push, 1)
+struct vring_desc {
+    uint64_t addr;
+    uint32_t len;
+    uint16_t flags;
+    uint16_t next;
+};
+
+struct vring_avail {
+    uint16_t flags;
+    uint16_t idx;
+    uint16_t ring[VRING_SIZE];
+};
+
+struct vring_used_elem { uint32_t id; uint32_t len; };
+
+struct vring_used {
+    uint16_t flags;
+    uint16_t idx;
+    struct vring_used_elem ring[VRING_SIZE];
+};
+#pragma pack(pop)
+
+struct virtio_fs_vq {
+    uint8_t  mem[QUEUE_MEM_SIZE] __attribute__((aligned(4096)));
+    int      initialized;
+
+    uint16_t queue_idx;
+
+    struct vring_desc  *descs;
+    struct vring_avail *avail;
+    struct vring_used  *used;
+
+    uint16_t last_used_idx;
+};
+
 /* ── Device state ──────────────────────────────────────────────────── */
 
 static struct virtio_fs_device virtio_fs_dev;
 static int virtio_fs_initialized = 0;
+
+/* Virtqueues: one request queue (index 0), optionally one high-priority
+ * request queue (index 1) per the virtio-fs spec. */
+#define VIRTIO_FS_NUM_VQS    2
+static struct virtio_fs_vq g_fs_vqs[VIRTIO_FS_NUM_VQS];
 
 /* ── PCI I/O helpers ──────────────────────────────────────────────── */
 
@@ -50,6 +99,60 @@ static inline uint32_t vfs_inl(uint8_t off)
 }
 
 /* ── FUSE operation dispatch ───────────────────────────────────────── */
+
+/* FUSE_INIT: negotiate protocol version */
+static int fusex_init(struct fuse_in_header *inh, uint8_t *out_buf,
+                       uint32_t out_buf_size)
+{
+    struct fuse_init_in *iin = (struct fuse_init_in *)(inh + 1);
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    struct fuse_init_out *iout = (struct fuse_init_out *)(outh + 1);
+    (void)iin;
+
+    kprintf("[virtio-fs] FUSE_INIT: requested FUSE %u.%u\n",
+            (unsigned int)iin->major, (unsigned int)iin->minor);
+
+    memset(iout, 0, sizeof(*iout));
+    iout->major               = 7;
+    iout->minor               = 38;
+    iout->max_readahead       = 131072;
+    iout->flags               = 0;
+    iout->max_background      = 4;
+    iout->congestion_threshold = 2;
+    iout->max_write           = 65536;
+    iout->time_gran           = 1000; /* nanoseconds */
+
+    outh->len    = sizeof(*outh) + sizeof(*iout);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+
+    kprintf("[virtio-fs] FUSE_INIT: negotiated FUSE 7.38\n");
+    return 0;
+}
+
+/* FUSE_OPEN / FUSE_OPENDIR: open a file or directory */
+static int fusex_open(struct fuse_in_header *inh, uint8_t *out_buf,
+                       uint32_t out_buf_size)
+{
+    struct fuse_open_in *oin = (struct fuse_open_in *)(inh + 1);
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    struct fuse_open_out *oout = (struct fuse_open_out *)(outh + 1);
+    (void)oin;
+
+    memset(oout, 0, sizeof(*oout));
+    /* Assign a synthetic file handle from the nodeid */
+    oout->fh        = inh->nodeid;
+    oout->open_flags = 0;
+    oout->padding   = 0;
+
+    outh->len    = sizeof(*outh) + sizeof(*oout);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+
+    kprintf("[virtio-fs] OPEN nodeid=%llu flags=0x%x\n",
+            inh->nodeid, oin->flags);
+    return 0;
+}
 
 static int fusex_lookup(struct fuse_in_header *inh, uint8_t *out_buf,
                          uint32_t out_buf_size)
@@ -253,20 +356,105 @@ static int fusex_readdir(struct fuse_in_header *inh, uint8_t *out_buf,
 
 /* ── Virtqueue request handler ─────────────────────────────────────── */
 
+/* FUSE opcode dispatch table */
+typedef int (*fuse_handler_t)(struct fuse_in_header *, uint8_t *, uint32_t);
+
+static fuse_handler_t g_fuse_handlers[4098] = { NULL };
+
+static void fuse_init_handlers(void)
+{
+    g_fuse_handlers[FUSE_INIT]    = fusex_init;
+    g_fuse_handlers[FUSE_LOOKUP]  = fusex_lookup;
+    g_fuse_handlers[FUSE_GETATTR] = fusex_getattr;
+    g_fuse_handlers[FUSE_OPEN]    = fusex_open;
+    g_fuse_handlers[FUSE_OPENDIR] = fusex_open;
+    g_fuse_handlers[FUSE_READ]    = fusex_read;
+    g_fuse_handlers[FUSE_READDIR] = fusex_readdir;
+}
+
+/* Response buffer size (max FUSE response payload) */
+#define FUSE_RESP_BUF_SIZE 8192
+static uint8_t g_response_buf[FUSE_RESP_BUF_SIZE];
+
 int virtio_fs_handle_request(int vq_idx)
 {
     if (!virtio_fs_initialized) return -1;
+    if (vq_idx < 0 || vq_idx >= VIRTIO_FS_NUM_VQS) return -1;
 
-    kprintf("[virtio-fs] handling request on virtqueue %d\n", vq_idx);
+    struct virtio_fs_vq *vq = &g_fs_vqs[vq_idx];
+    if (!vq->initialized) return -1;
 
-    /* In a real implementation, this would:
-     *  1. Fetch the next available buffer from the virtqueue
-     *  2. Parse the FUSE in_header
-     *  3. Dispatch to the appropriate FUSE handler
-     *  4. Write the response back to the used ring
-     *
-     * For this reference implementation, we demonstrate the dispatch logic.
-     */
+    /* Process all available request buffers */
+    uint16_t avail_idx = vq->avail->idx;
+    while (vq->last_used_idx != avail_idx) {
+        /* Get descriptor index from avail ring */
+        uint16_t desc_idx = vq->avail->ring[vq->last_used_idx & (VRING_SIZE - 1)];
+
+        /* Walk the descriptor chain to collect the request */
+        /* virtio-fs uses a single descriptor chain: [fuse_in_header | ... | fuse_out_header | ...] */
+        struct vring_desc *desc = &vq->descs[desc_idx];
+
+        /* The request buffer starts at desc addr */
+        struct fuse_in_header *inh = (struct fuse_in_header *)(uintptr_t)desc->addr;
+        uint32_t req_len = desc->len;
+
+        if (req_len < sizeof(struct fuse_in_header)) {
+            kprintf("[virtio-fs] short request (%u bytes)\n", req_len);
+            goto next;
+        }
+
+        kprintf("[virtio-fs] request: opcode=%u unique=%llu nodeid=%llu len=%u\n",
+                inh->opcode, inh->unique, inh->nodeid, inh->len);
+
+        /* Find the write-descriptor for the response (typically the next descriptor) */
+        uint8_t *resp_buf = g_response_buf;
+        uint32_t resp_buf_size = FUSE_RESP_BUF_SIZE;
+
+        /* Dispatch to handler */
+        if (inh->opcode < 4098 && g_fuse_handlers[inh->opcode]) {
+            g_fuse_handlers[inh->opcode](inh, resp_buf, resp_buf_size);
+        } else {
+            /* Unknown opcode: return ENOSYS */
+            struct fuse_out_header *outh = (struct fuse_out_header *)resp_buf;
+            outh->len    = sizeof(*outh);
+            outh->error  = -ENOSYS;
+            outh->unique = inh->unique;
+            kprintf("[virtio-fs] unknown opcode %u\n", inh->opcode);
+        }
+
+        /* Write response to the write-descriptor in the chain */
+        struct fuse_out_header *outh = (struct fuse_out_header *)resp_buf;
+        {
+            /* Find the next descriptor (which should be writable) */
+            uint16_t next_idx = desc->next;
+            if (desc->flags & VRING_DESC_F_NEXT && next_idx < VRING_SIZE) {
+                struct vring_desc *resp_desc = &vq->descs[next_idx];
+                uint32_t copy_len = outh->len;
+                if (copy_len > resp_desc->len)
+                    copy_len = resp_desc->len;
+                memcpy((void *)(uintptr_t)resp_desc->addr, resp_buf, copy_len);
+            }
+        }
+
+next:
+        /* Mark the descriptor(s) as consumed */
+        vq->last_used_idx++;
+        __asm__ volatile("" ::: "memory");
+
+        /* Tell the device we've consumed the buffer by advancing used->idx */
+        uint16_t used_slot = vq->used->idx & (VRING_SIZE - 1);
+        vq->used->ring[used_slot].id  = desc_idx;
+        vq->used->ring[used_slot].len = sizeof(struct fuse_out_header) + 256;
+        __asm__ volatile("" ::: "memory");
+        vq->used->idx++;
+        __asm__ volatile("" ::: "memory");
+
+        /* Notify the device that we've used the buffer */
+        outw(virtio_fs_dev.iobase + VIRTIO_PCI_QUEUE_NOTIFY, (uint16_t)vq_idx);
+
+        /* Re-read avail index in case more requests arrived */
+        avail_idx = vq->avail->idx;
+    }
 
     return 0;
 }
@@ -284,10 +472,17 @@ int virtio_fs_mount(const char *host_dir, const char *mount_point)
            (strlen(mount_point) + 1 < sizeof(virtio_fs_dev.mount_point))
            ? strlen(mount_point) + 1 : sizeof(virtio_fs_dev.mount_point));
 
-    /* Register with VFS (simplified — creates a symlink for now) */
+    /* Register with VFS: create a mount point directory and register
+     * FUSE-like VFS operations for the virtio-fs filesystem.
+     * In a real implementation we'd register a FUSE VFS ops here with
+     * vfs_register_filesystem() pointing to a struct vfs_ops that
+     * dispatches through the virtqueue (FUSE_LOOKUP, FUSE_GETATTR,
+     * FUSE_READ, FUSE_READDIR, etc.). */
     kprintf("[virtio-fs] mount: '%s' → '%s'\n", host_dir, mount_point);
 
-    /* In a real implementation, we'd register a FUSE VFS ops here */
+    /* Create the mount point as a directory */
+    vfs_create(mount_point, 2);  /* type 2 = directory */
+
     return 0;
 }
 
@@ -345,6 +540,39 @@ int virtio_fs_init(void)
 
     virtio_fs_dev.present = 1;
     virtio_fs_initialized = 1;
+
+    /* Initialize virtqueues */
+    {
+        int num_queues = 0;
+        /* Probe for available queues */
+        for (int i = 0; i < VIRTIO_FS_NUM_VQS; i++) {
+            vfs_outw(VIRTIO_PCI_QUEUE_SEL, (uint16_t)i);
+            uint16_t qsz = vfs_inw(VIRTIO_PCI_QUEUE_SIZE);
+            if (qsz == 0) break;
+
+            struct virtio_fs_vq *vq = &g_fs_vqs[i];
+            memset(vq, 0, sizeof(*vq));
+            vq->queue_idx = (uint16_t)i;
+
+            /* Point device at our queue memory */
+            uint64_t phys = (uint64_t)(uintptr_t)vq->mem;
+            vfs_outl(VIRTIO_PCI_QUEUE_PFN, (uint32_t)(phys >> 12));
+
+            /* Set up ring pointers */
+            vq->descs = (struct vring_desc *)vq->mem;
+            vq->avail = (struct vring_avail *)(vq->mem +
+                          sizeof(struct vring_desc) * VRING_SIZE);
+            vq->used  = (struct vring_used *)(vq->mem + 4096);
+
+            vq->last_used_idx = 0;
+            vq->initialized   = 1;
+            num_queues++;
+        }
+        kprintf("[virtio-fs] %d virtqueue(s) initialized\n", num_queues);
+    }
+
+    /* Initialize FUSE opcode dispatch table */
+    fuse_init_handlers();
 
     /* Set default host dir to mount point */
     memcpy(virtio_fs_dev.host_dir, "/mnt", 5);

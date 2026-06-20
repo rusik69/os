@@ -87,6 +87,49 @@ struct sysv_priv {
     uint32_t fsize;          /* total blocks */
 };
 
+/* ── SYSV inode read ───────────────────────────────────────────── */
+
+/*
+ * Read a SYSV5 inode from disk.
+ * The inode table is stored in blocks starting at block 2 (after superblock).
+ * Inode number 1 is the root inode (SYSV_ROOT_INO).
+ * Block group calculation: inodes per block = block_size / sizeof(struct sysv_inode).
+ * inode block = 2 + (inode_number - 1) / inodes_per_block.
+ * Offset within block = ((inode_number - 1) % inodes_per_block) * sizeof(struct sysv_inode).
+ */
+static __attribute__((unused)) int sysv_read_inode(struct sysv_priv *sp,
+                            uint32_t inum,
+                            struct sysv_inode *inode)
+{
+    if (!sp || !inode || inum == 0)
+        return -1;
+
+    uint32_t block_size = SYSV_BLOCK_SIZE;
+    uint32_t inodes_per_block = block_size / sizeof(struct sysv_inode);
+    if (inodes_per_block == 0) inodes_per_block = 1;
+
+    /* Inode numbers are 1-based (root = 1) */
+    uint32_t inode_index = inum - 1;
+    uint32_t inode_block_offset = inode_index / inodes_per_block;
+    uint32_t inode_block_idx   = inode_index % inodes_per_block;
+
+    /* Inode table starts at block 2 (after the superblock at block 0-1) */
+    uint32_t inode_block_num = 2 + inode_block_offset;
+
+    uint8_t buf[SYSV_BLOCK_SIZE];
+    /* Read the block containing the inode */
+    uint32_t sectors_per_block = block_size / 512;
+    for (uint32_t s = 0; s < sectors_per_block; s++) {
+        if (blockdev_read_sectors(sp->dev_id, inode_block_num * sectors_per_block + s, 1,
+                                   buf + s * 512) != 0)
+            return -1;
+    }
+
+    memcpy(inode, buf + inode_block_idx * sizeof(struct sysv_inode),
+           sizeof(struct sysv_inode));
+    return 0;
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int sysv_read(void *priv, const char *path,

@@ -57,8 +57,6 @@ static int cpuset_index(uint32_t pid)
 
 int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
 {
-    if (!cpuset_initialised)
-        return -ENOSYS;
     if (!cpuset)
         return -EFAULT;
 
@@ -87,8 +85,6 @@ int sched_setaffinity(uint32_t pid, const cpuset_t *cpuset)
 
 int sched_getaffinity(uint32_t pid, cpuset_t *cpuset)
 {
-    if (!cpuset_initialised)
-        return -ENOSYS;
     if (!cpuset)
         return -EFAULT;
 
@@ -106,6 +102,45 @@ int sched_getaffinity(uint32_t pid, cpuset_t *cpuset)
     }
 
     return 0;
+}
+
+/*
+ * cpuset_mems_allowed — return the memory nodes allowed for the current process.
+ * If the current process has no mems_allowed set, returns default (all nodes).
+ */
+cpuset_t cpuset_mems_allowed(void)
+{
+    struct process *current = process_get_current();
+    cpuset_t all_nodes;
+    (void)current;
+
+    /* Default: all memory nodes (max 64 nodes) */
+#if CPUSET_MAX_CPUS >= 64
+    all_nodes.bits = ~0ULL;
+#else
+    all_nodes.bits = (1ULL << CPUSET_MAX_CPUS) - 1;
+#endif
+    /* In a full implementation we would check current->mems_allowed.
+     * For now, return all nodes as default. */
+    return all_nodes;
+}
+
+/*
+ * cpuset_cpus_allowed — return the CPU affinity mask for the current process.
+ * If the current process has no cpus_allowed set, returns default (all CPUs).
+ */
+cpuset_t cpuset_cpus_allowed(void)
+{
+    struct process *current = process_get_current();
+    cpuset_t mask;
+
+    if (current && current->cpu_affinity != 0) {
+        mask.bits = current->cpu_affinity;
+    } else {
+        /* Default: all CPUs */
+        mask = cpuset_all;
+    }
+    return mask;
 }
 
 /* ── CPU cgroup controller (Item 40) ────────────────────────────────

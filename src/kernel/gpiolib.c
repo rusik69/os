@@ -505,14 +505,42 @@ EXPORT_SYMBOL(gpiochip_add);
 EXPORT_SYMBOL(gpiochip_irq_demux);
 
 /*
- * gpio_set_irq_mode — configure GPIO IRQ trigger mode (stub)
+ * gpio_set_irq_mode — configure GPIO IRQ trigger mode
  *
- * Used by gpio_irq.c. Actual implementation depends on platform
- * GPIO controller hardware.
+ * Configures the trigger type for a GPIO line used as an interrupt source.
+ * Dispatches to the chip's irq_set_type operation if available.
+ *
+ * @pin:   GPIO line number
+ * @mode:  GPIO_IRQ_TYPE_EDGE_RISING / EDGE_FALLING / EDGE_BOTH /
+ *         LEVEL_HIGH / LEVEL_LOW
  */
 void gpio_set_irq_mode(unsigned int pin, int mode)
 {
-    (void)pin;
-    (void)mode;
-    /* Platform-specific GPIO IRQ config would go here */
+    if (pin >= GPIO_MAX_GPIOS)
+        return;
+
+    struct gpio_chip *chip;
+    unsigned int offset;
+
+    spinlock_acquire(&gpiolib_lock);
+
+    if (gpio_to_chip_offset(pin, &chip, &offset) < 0) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    if (!chip->ops || !chip->ops->irq_set_type) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    /* Validate the trigger mode */
+    if (mode < GPIO_IRQ_TYPE_EDGE_RISING || mode > GPIO_IRQ_TYPE_LEVEL_LOW) {
+        spinlock_release(&gpiolib_lock);
+        return;
+    }
+
+    chip->ops->irq_set_type(chip, offset, mode);
+
+    spinlock_release(&gpiolib_lock);
 }

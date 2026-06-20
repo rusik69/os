@@ -51,9 +51,6 @@ int pidfd_open(uint32_t pid, uint32_t flags)
 {
     (void)flags;
 
-    if (!pidfd_initialised)
-        return -ENOSYS;
-
     /* Validate that the process exists */
     struct process *proc = process_get_by_pid(pid);
     if (!proc)
@@ -81,9 +78,6 @@ int pidfd_open(uint32_t pid, uint32_t flags)
 int pidfd_send_signal(int pidfd, int sig, struct siginfo *info, uint32_t flags)
 {
     (void)flags;
-
-    if (!pidfd_initialised)
-        return -ENOSYS;
 
     if (pidfd < 0 || pidfd >= PIDFD_MAX)
         return -EBADF;
@@ -142,9 +136,6 @@ void pidfd_put(int pidfd)
  */
 int pidfd_getfd(int pidfd, int target_fd, uint32_t flags)
 {
-    if (!pidfd_initialised)
-        return -ENOSYS;
-
     if (flags != 0)
         return -EINVAL;
 

@@ -209,6 +209,57 @@ static int nvme_pmr_find_bar(void) {
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
+int nvme_pmr_enable(void)
+{
+    if (!g_pmr.present)
+        return -EOPNOTSUPP;
+    if (g_pmr.enabled)
+        return 0;
+
+    /* Enable PMR in the controller */
+    uint32_t pmrctl = pmr_read32(NVME_REG_PMRCTL);
+    pmrctl |= PMRCTL_PMR_EN;
+    pmr_write32(NVME_REG_PMRCTL, pmrctl);
+
+    /* Check PMR status */
+    uint32_t pmrsts = pmr_read32(NVME_REG_PMRSTS);
+    if (pmrsts & PMRSTS_PMR_ERR) {
+        kprintf("[NVMe PMR] Error enabling PMR (PMRSTS=0x%08X)\n", pmrsts);
+        return -EIO;
+    }
+
+    if (pmrsts & PMRSTS_PMR_NRDY) {
+        kprintf("[NVMe PMR] PMR not ready after enable (PMRSTS=0x%08X)\n", pmrsts);
+        return -EAGAIN;
+    }
+
+    /* Map PMR memory into kernel address space */
+    if (g_pmr.pmr_phys && !g_pmr.pmr_virt) {
+        g_pmr.pmr_virt = PHYS_TO_VIRT((void*)(uintptr_t)g_pmr.pmr_phys);
+    }
+
+    g_pmr.enabled = 1;
+    kprintf("[NVMe PMR] Enabled (BAR%d, PMR memory at %p, size=%llu bytes)\n",
+            g_pmr.bar_index, g_pmr.pmr_virt,
+            (unsigned long long)g_pmr.pmr_size);
+    return 0;
+}
+
+int nvme_pmr_disable(void)
+{
+    if (!g_pmr.enabled)
+        return 0;
+
+    /* Disable PMR in the controller */
+    uint32_t pmrctl = pmr_read32(NVME_REG_PMRCTL);
+    pmrctl &= ~PMRCTL_PMR_EN;
+    pmr_write32(NVME_REG_PMRCTL, pmrctl);
+
+    g_pmr.enabled = 0;
+    kprintf("[NVMe PMR] Disabled\n");
+    return 0;
+}
+
 int nvme_pmr_init(void) {
     if (g_pmr_init_done)
         return g_pmr.present ? 0 : -EOPNOTSUPP;

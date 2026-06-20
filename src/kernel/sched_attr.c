@@ -39,8 +39,6 @@ int sched_setattr(uint32_t pid, const struct sched_attr *attr, uint32_t flags)
 {
     (void)flags;
 
-    if (!sched_attr_initialised)
-        return -ENOSYS;
     if (!attr)
         return -EFAULT;
 
@@ -118,8 +116,6 @@ int sched_getattr(uint32_t pid, struct sched_attr *attr, size_t size, uint32_t f
 {
     (void)flags;
 
-    if (!sched_attr_initialised)
-        return -ENOSYS;
     if (!attr)
         return -EFAULT;
     if (size > sizeof(struct sched_attr))

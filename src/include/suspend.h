@@ -82,4 +82,18 @@ uint64_t suspend_s0ix_enter(int flags, uint32_t max_latency_us);
  */
 void suspend_s0ix_stats(uint64_t *entries, uint64_t *total_ticks);
 
+/* ── Hibernate (Suspend-to-Disk) ─────────────────────────────────────── */
+
+/**
+ * suspend_hibernate() — Enter ACPI S4 (Hibernate/Suspend-to-Disk).
+ *
+ * Writes current memory image to swap and powers off the system.
+ * On next boot, the bootloader/kernel restores the image from swap.
+ *
+ * Currently a stub; returns -EOPNOTSUPP.
+ *
+ * Returns 0 on successful resume, negative on error.
+ */
+int suspend_hibernate(void);
+
 #endif /* SUSPEND_H */

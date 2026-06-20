@@ -339,3 +339,29 @@ void suspend_s0ix_stats(uint64_t *entries, uint64_t *total_ticks)
     if (entries) *entries = g_s0ix_entries;
     if (total_ticks) *total_ticks = g_s0ix_total_ticks;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Hibernate (Suspend-to-Disk) support
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int suspend_hibernate(void)
+{
+    /* Lockdown: block hibernation at INTEGRITY level or above */
+    if (lockdown_is_locked_down(LOCKDOWN_INTEGRITY)) {
+        kprintf("hibernate: blocked by kernel lockdown\n");
+        return -EPERM;
+    }
+
+    kprintf("hibernate: Suspend-to-disk not yet implemented\n");
+
+    /* In a full implementation, we would:
+     *   1. Allocate a swap area or swap file
+     *   2. Write memory image to swap
+     *   3. Power off or hibernate via ACPI S4
+     *   4. On resume, restore from swap
+     *
+     * For now, return -EOPNOTSUPP to indicate the feature is not
+     * yet wired into the kernel's power management flow.
+     */
+    return -EOPNOTSUPP;
+}

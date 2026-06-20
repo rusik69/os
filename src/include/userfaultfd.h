@@ -105,6 +105,15 @@ struct uffd_context {
 
     /* Feature flags (set via UFFDIO_API ioctl) */
     uint64_t features;
+
+    /* ── Wake / page-resolution tracking ──────────────────────────
+     * Tracks pages that have been faulted and are waiting for a
+     * UFFDIO_COPY or UFFDIO_ZEROPAGE to resolve them.
+     * In a blocking model, threads would sleep on these pages and
+     * the wake path would unblock them.  Here we simply track state
+     * for correctness. */
+    uint64_t wake_pending_addrs[16];   /* addresses of faulted pages */
+    int      wake_pending_count;       /* number of pending pages */
 };
 
 /* Create a new userfaultfd context.  Returns fd index or -errno. */

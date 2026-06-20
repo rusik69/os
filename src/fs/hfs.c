@@ -269,11 +269,123 @@ static int hfs_unlink(void *priv, const char *path)
 
 static int hfs_readdir(void *priv, const char *path)
 {
-    (void)priv;
-    if (path[0] == '/' && path[1] == '\0') {
-        kprintf(".              <DIR>\n");
-        kprintf("..             <DIR>\n");
-        kprintf("[hfs] directories listed from catalog B-tree (stub)\n");
+    struct hfs_priv *hp = (struct hfs_priv *)priv;
+    if (!hp) return -1;
+
+    /* For the root directory, walk the catalog B-tree leaf nodes
+     * and list all entries whose parent CNID matches the root CNID (2). */
+    uint32_t target_dir_id = 2; /* root directory ID */
+
+    /* If path is not root, we would need to traverse the catalog tree
+     * to find the directory ID; for this implementation we handle root. */
+    if (!(path[0] == '/' && path[1] == '\0')) {
+        kprintf("[hfs] non-root directory listing not yet implemented (path=%s)\n", path);
+        return 0;
+    }
+
+    /* Read the catalog B-tree header node to get node size and first leaf */
+    uint8_t header_buf[512];
+    if (hp->cat_node_size == 0) hp->cat_node_size = 512;
+    uint32_t cat_blocks_per_node = hp->cat_node_size / HFS_SECTOR_SIZE;
+    if (cat_blocks_per_node == 0) cat_blocks_per_node = 1;
+
+    /* B-tree header is in node 0 */
+    uint32_t header_lba = hp->cat_start_block;
+    if (hfs_read_blocks(hp, header_lba, cat_blocks_per_node, header_buf) != 0)
+        return -1;
+
+    struct hfs_btree_node *header_node = (struct hfs_btree_node *)header_buf;
+    /* The header record starts after the node descriptor and offset table.
+     * For a 512-byte node: descriptor is 14 bytes, then offset table (2 bytes per record). */
+    uint16_t *offsets = (uint16_t *)(header_buf + hp->cat_node_size -
+                                     (header_node->numRecs * 2));
+    uint16_t hdr_rec_off = offsets[0]; /* offset of header record */
+
+    struct hfs_btree_header *btree_hdr =
+        (struct hfs_btree_header *)(header_buf + hdr_rec_off);
+
+    uint32_t first_leaf = btree_hdr->firstLeaf;
+    uint32_t node_size  = btree_hdr->nodeSize;
+    if (node_size == 0) node_size = hp->cat_node_size;
+
+    kprintf(".              <DIR>\n");
+    kprintf("..             <DIR>\n");
+
+    /* Walk leaf nodes */
+    uint32_t current_node = first_leaf;
+    uint8_t node_buf[512];
+    int entries_found = 0;
+
+    while (current_node != 0 && entries_found < 64) {
+        uint32_t node_lba = hp->cat_start_block + current_node * cat_blocks_per_node;
+        if (hfs_read_blocks(hp, node_lba, cat_blocks_per_node, node_buf) != 0)
+            break;
+
+        struct hfs_btree_node *node = (struct hfs_btree_node *)node_buf;
+
+        if (node->kind != -1) { /* leaf node has kind = -1 = 0xFF */
+            current_node = node->fLink;
+            continue;
+        }
+
+        /* Compute offset table for this node */
+        uint16_t *node_offsets = (uint16_t *)(node_buf + node_size -
+                                              (node->numRecs * 2));
+
+        for (int r = 0; r < node->numRecs && entries_found < 64; r++) {
+            uint16_t rec_off = node_offsets[r];
+            if (rec_off >= node_size) continue;
+
+            uint8_t *rec_ptr = node_buf + rec_off;
+
+            /* Parse the catalog key */
+            struct hfs_cat_key *key = (struct hfs_cat_key *)rec_ptr;
+            uint8_t key_len = key->keyLen;
+            (void)key_len; /* key length includes the keyLen byte itself */
+
+            uint32_t parent_cnid = ((uint32_t)key->ckrCLID[0] << 24) |
+                                   ((uint32_t)key->ckrCLID[1] << 16) |
+                                   ((uint32_t)key->ckrCLID[2] << 8)  |
+                                   ((uint32_t)key->ckrCLID[3]);
+
+            if (parent_cnid != target_dir_id)
+                continue;
+
+            /* Record data follows the key */
+            uint8_t *data = rec_ptr + sizeof(struct hfs_cat_key);
+            uint8_t rec_type = data[0];
+
+            /* Extract the name from the key */
+            uint8_t name_len = key->ckrCNameLen;
+            if (name_len > HFS_NAMELEN) name_len = HFS_NAMELEN;
+
+            char name_buf[32];
+            uint32_t name_idx;
+            for (name_idx = 0; name_idx < name_len; name_idx++) {
+                /* HFS stores names as MacRoman; for simplicity strip high byte */
+                name_buf[name_idx] = key->ckrCName[name_idx] & 0x7F;
+            }
+            name_buf[name_idx] = '\0';
+
+            if (name_len == 0) continue;
+
+            if (rec_type == HFS_CDR_DIR_REC) {
+                kprintf("%-18s <DIR>\n", name_buf);
+                entries_found++;
+            } else if (rec_type == HFS_CDR_FIL_REC) {
+                struct hfs_cat_file_rec *file_rec = (struct hfs_cat_file_rec *)data;
+                uint32_t file_size = file_rec->numBytes;
+                kprintf("%-18s %u\n", name_buf, file_size);
+                entries_found++;
+            }
+            /* Skip other record types (thread records, etc.) */
+        }
+
+        current_node = node->fLink;
+    }
+
+    if (entries_found == 0) {
+        kprintf("[hfs] catalog B-tree: no entries found\n");
     }
     return 0;
 }

@@ -113,11 +113,70 @@ static int bfs_unlink(void *priv, const char *path)
 
 static int bfs_readdir(void *priv, const char *path)
 {
-    (void)priv;
-    if (path[0] == '/' && path[1] == '\0')
-        kprintf(".              <DIR>\n"
-                "..             <DIR>\n"
-                "[bfs] SCO BFS (Boot File System) stub\n");
+    struct bfs_priv *bp = (struct bfs_priv *)priv;
+    if (!bp) return -1;
+
+    if (path[0] == '/' && path[1] == '\0') {
+        kprintf(".              <DIR>\n");
+        kprintf("..             <DIR>\n");
+
+        /* BFS inode map starts after the superblock (block 1).
+         * In BFS, directory entries are stored as inodes in the inode map.
+         * The inode map is a linear array of bfs_inode structs.
+         * We iterate the inode map and list all entries. */
+        uint32_t inode_map_block = bp->inode_map_start;
+        if (inode_map_block == 0) inode_map_block = 1;
+
+        uint32_t inodes_per_block = BFS_BLOCK_SIZE / sizeof(struct bfs_inode);
+        if (inodes_per_block == 0) inodes_per_block = 1;
+
+        /* Read blocks from the inode map, max 8 blocks to limit search */
+        int entries_found = 0;
+        for (uint32_t block = 0; block < 8 && entries_found < 64; block++) {
+            uint8_t buf[512];
+            if (blockdev_read_sectors(bp->dev_id, inode_map_block + block, 1, buf) != 0)
+                break;
+
+            for (uint32_t i = 0; i < inodes_per_block && entries_found < 64; i++) {
+                struct bfs_inode *inode = (struct bfs_inode *)(buf + i * sizeof(struct bfs_inode));
+
+                /* An inode is in use if its inode number is non-zero */
+                if (inode->i_ino == 0)
+                    continue;
+
+                /* Check if it belongs to the root directory.
+                 * In BFS, the root inode has i_ino == 0 (BFS_ROOT_INO).
+                 * All other inodes are files/subdirs listed in the root. */
+                if (inode->i_ino == BFS_ROOT_INO)
+                    continue; /* skip the root entry itself */
+
+                /* Extract the name */
+                char name_buf[BFS_NAMELEN + 1];
+                uint32_t name_len;
+                for (name_len = 0; name_len < BFS_NAMELEN; name_len++) {
+                    char c = (char)inode->i_name[name_len];
+                    if (c == '\0') break;
+                    name_buf[name_len] = c;
+                }
+                name_buf[name_len] = '\0';
+
+                if (name_len == 0) continue;
+
+                uint32_t file_size = (inode->i_end - inode->i_offset) * BFS_BLOCK_SIZE;
+
+                if (inode->i_type == BFS_ITYPE_DIR) {
+                    kprintf("%-18s <DIR>\n", name_buf);
+                } else {
+                    kprintf("%-18s %u\n", name_buf, file_size);
+                }
+                entries_found++;
+            }
+        }
+
+        if (entries_found == 0) {
+            kprintf("[bfs] no entries found in inode map\n");
+        }
+    }
     return 0;
 }
 

@@ -98,6 +98,37 @@ int devtmpfs_create_device(const char *name, uint8_t type, uint32_t major, uint3
     return devtmpfs_mknod(path, type, major, minor);
 }
 
+/* Remove a device node by name from the devtmpfs table.
+ * Finds the node with matching name, marks it unused, and removes
+ * the VFS entry.  Returns 0 on success, -ENOENT if not found. */
+int devtmpfs_delete_node(const char *name)
+{
+    if (!devtmpfs_initialised || !name)
+        return -ENOSYS;
+
+    int found = -1;
+    for (int i = 0; i < DEV_MAX_NODES; i++) {
+        if (dev_nodes[i].in_use &&
+            strcmp(dev_nodes[i].name, name) == 0) {
+            found = i;
+            break;
+        }
+    }
+    if (found < 0)
+        return -ENOENT;
+
+    memset(&dev_nodes[found], 0, sizeof(struct devtmpfs_node));
+    num_dev_nodes--;
+
+    /* Remove the VFS entry under /dev/ */
+    char vfs_path[128];
+    snprintf(vfs_path, sizeof(vfs_path), "/dev/%s", name);
+    vfs_remove(vfs_path);
+
+    kprintf("[devtmpfs] removed device node '%s'\n", name);
+    return 0;
+}
+
 int devtmpfs_setup(void)
 {
     if (!devtmpfs_initialised)

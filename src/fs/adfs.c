@@ -150,11 +150,102 @@ static int adfs_unlink(void *priv, const char *path)
 
 static int adfs_readdir(void *priv, const char *path)
 {
-    (void)priv;
-    if (path[0] == '/' && path[1] == '\0')
-        kprintf(".              <DIR>\n"
-                "..             <DIR>\n"
-                "[adfs] Acorn Disc Filing System (map/chains) stub\n");
+    struct adfs_priv *ap = (struct adfs_priv *)priv;
+    if (!ap) return -1;
+
+    if (path[0] == '/' && path[1] == '\0') {
+        kprintf(".              <DIR>\n");
+        kprintf("..             <DIR>\n");
+
+        /* Read the root directory fragment.
+         * ADFS root directory location: after the map blocks.
+         * The root directory is at block ap->root_block (if set),
+         * otherwise we read from block 2 (after boot block + map). */
+        uint32_t dir_block = ap->root_block;
+        if (dir_block == 0) dir_block = 2;
+
+        uint8_t buf[512];
+        if (blockdev_read_sectors(ap->dev_id, dir_block, 1, buf) != 0) {
+            kprintf("[adfs] failed to read root directory block %u\n", dir_block);
+            return 0;
+        }
+
+        /* Old ADFS directory format: header followed by entries.
+         * The old directory header is 16 bytes, then 10-byte entries. */
+        struct adfs_old_dir *dir = (struct adfs_old_dir *)buf;
+        uint32_t num_entries = *(uint32_t *)dir->dir_size;
+        if (num_entries > 64) num_entries = 64;
+
+        /* Skip the header (16 bytes) and read entries */
+        uint32_t offset = sizeof(struct adfs_old_dir);
+        for (uint32_t i = 0; i < num_entries && offset + sizeof(struct adfs_old_dirent) <= 512; i++) {
+            struct adfs_old_dirent *ent = (struct adfs_old_dirent *)(buf + offset);
+            offset += sizeof(struct adfs_old_dirent);
+
+            /* Extract name (10 chars, space-padded) */
+            char name_buf[11];
+            uint32_t name_len;
+            for (name_len = 0; name_len < ADFS_OLD_NAME_LEN; name_len++) {
+                char c = ent->ent_name[name_len];
+                if (c == ' ' || c == '\0') break;
+                name_buf[name_len] = c;
+            }
+            name_buf[name_len] = '\0';
+
+            if (name_len == 0) continue;
+
+            uint32_t file_len = ent->ent_len;
+            /* Check if it's a directory by looking at the load address */
+            uint32_t load_addr = ent->ent_loadaddr;
+            /* ADFS directories have a specific load address pattern (0xFFFF....) */
+            if ((load_addr & 0xFFFF0000) == 0xFFFF0000) {
+                kprintf("%-18s <DIR>\n", name_buf);
+            } else {
+                kprintf("%-18s %u\n", name_buf, file_len);
+            }
+        }
+
+        /* If no old-format entries found, try new ADFS directory format */
+        if (num_entries == 0) {
+            /* New format: read directory fragment (fragment descriptor followed by entries).
+             * For ADFS new directories, each entry has type/ident/load/exec/len/attr/addr/name.
+             * We iterate until we hit a terminator or end of block. */
+            offset = 0;
+            while (offset + 4 <= 512) {
+                uint8_t ent_type = buf[offset];
+                if (ent_type == 0) break; /* terminator */
+                if (ent_type >= 0x80) { /* unused or continuation */
+                    offset += 4;
+                    continue;
+                }
+
+                struct adfs_new_dirent *new_ent = (struct adfs_new_dirent *)(buf + offset);
+                /* Find the name length (null-terminated) */
+                uint32_t name_len;
+                for (name_len = 0; name_len < ADFS_NEW_NAME_LEN; name_len++) {
+                    if (new_ent->ent_name[name_len] == '\0') break;
+                }
+
+                char name_buf[256];
+                memcpy(name_buf, new_ent->ent_name, name_len);
+                name_buf[name_len] = '\0';
+
+                if (name_len > 0) {
+                    uint32_t file_len = new_ent->ent_len;
+                    if (ent_type == 2) { /* directory */
+                        kprintf("%-18s <DIR>\n", name_buf);
+                    } else {
+                        kprintf("%-18s %u\n", name_buf, file_len);
+                    }
+                }
+
+                /* Move to next entry: fixed-size header + variable name + padding */
+                offset += 26 + name_len + 1; /* fixed header + name + null */
+                /* Align to 4 bytes */
+                offset = (offset + 3) & ~3;
+            }
+        }
+    }
     return 0;
 }
 

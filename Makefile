@@ -780,6 +780,7 @@ obj-m += net/pfkey.ko
 obj-m += net/igmp.ko
 obj-m += net/stp.ko
 obj-m += net/lacp.ko
+obj-m += net/garp.ko
 obj-m += net/mrp.ko
 obj-m += net/lldp.ko
 obj-m += net/rds.ko

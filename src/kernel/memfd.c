@@ -41,9 +41,6 @@ static int memfd_find_free(void)
 
 int memfd_create(const char *name, int flags)
 {
-    if (!memfd_initialised)
-        return -ENOSYS;
-
     /* Validate flags: reject unknown bits (MFD_CLOEXEC, MFD_ALLOW_SEALING,
      * and MFD_HUGETLB are the only recognised flags).  MFD_HUGETLB is
      * accepted for Linux compatibility but uses kmalloc backing for now;

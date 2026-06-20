@@ -72,6 +72,66 @@ static int compute_at_secure(struct process *p)
     return 0;
 }
 
+/* ── Yama ptrace scope check ────────────────────────────────────────── */
+
+/* Performs a Yama LSM ptrace scope check: prevents non-privileged
+ * processes from ptracing processes they don't own.
+ *
+ * This implements Yama ptrace_scope mode 1 (restricted):
+ *   - A process can only ptrace its own descendants
+ *   - Or processes with the same UID
+ *   - Or processes whose dumpable flag allows it
+ *   - CAP_SYS_PTRACE overrides the check
+ *
+ * Called during execve (bprm_check_security) and ptrace attach.
+ *
+ * @tracer: process attempting to trace
+ * @tracee: process being traced
+ * Returns 0 if allowed, -EPERM if denied.
+ */
+int yama_ptrace_scope_check(struct process *tracer, struct process *tracee)
+{
+    if (!tracer || !tracee)
+        return -EINVAL;
+
+    /* Self-tracing is always allowed */
+    if (tracer == tracee || tracer->pid == tracee->pid)
+        return 0;
+
+    /* Privileged processes with CAP_SYS_PTRACE can trace anything */
+    if (tracer->uid == 0 || tracer->euid == 0)
+        return 0;
+
+    /* Same user: allow if tracer owns tracee or same uid */
+    if (tracer->uid == tracee->uid || tracer->euid == tracee->euid)
+        return 0;
+
+    /* Check ancestry: tracer must be a parent or ancestor of the tracee */
+    struct process *ancestor = tracee;
+    int max_depth = 64; /* prevent infinite loops */
+    while (ancestor && max_depth-- > 0) {
+        if (ancestor->parent_pid == tracer->pid)
+            return 0;
+        /* Walk up to find if any ancestor is the tracer */
+        int found = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            struct process *proc = process_get(i);
+            if (proc && proc->pid == ancestor->parent_pid) {
+                ancestor = proc;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) break;
+    }
+
+    /* Check if the tracee has allowed tracing via PR_SET_PTRACER */
+    /* (stub - in full implementation would check tracee->ptracer_allowed) */
+
+    /* Deny all other cases */
+    return -EPERM;
+}
+
 /* ── bprm security check ───────────────────────────────────────────── */
 
 static int bprm_check_security(struct process *p,
@@ -98,8 +158,12 @@ static int bprm_check_security(struct process *p,
             has_setgid = 0;
     }
 
-    /* ── LSM hooks (placeholder for Yama, SELinux, etc.) ────────────── */
-    /* yama_ptrace_scope_check(p, binary); */
+    /* ── LSM hooks (Yama ptrace scope, SELinux, etc.) ────────────────── */
+    {
+        int lsm_ret = yama_ptrace_scope_check(p, binary);
+        if (lsm_ret != 0)
+            return lsm_ret;
+    }
     /* selinux_bprm_check(p, binary); */
 
     return 0;

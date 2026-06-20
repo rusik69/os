@@ -413,6 +413,13 @@ static int sysfs_read_related_cpus(char *buf, uint32_t max_size, void *priv)
     return snprintf(buf, max_size, "0\n");
 }
 
+static int sysfs_read_available_governors(char *buf, uint32_t max_size, void *priv)
+{
+    (void)priv;
+    return snprintf(buf, max_size,
+                    "performance powersave userspace ondemand schedutil\n");
+}
+
 static int sysfs_read_pstate(char *buf, uint32_t max_size, void *priv)
 {
     (void)priv;
@@ -560,7 +567,7 @@ static int cpufreq_sysfs_init(void)
 
     sysfs_create_writable_file(
         "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors",
-        "performance powersave userspace ondemand schedutil\n", NULL, NULL, NULL);
+        NULL, NULL, sysfs_read_available_governors, NULL);
 
     sysfs_create_writable_file(
         "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",

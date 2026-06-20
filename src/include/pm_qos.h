@@ -96,6 +96,33 @@ int pm_qos_num_requests(void);
  */
 void pm_qos_dump_requests(void);
 
+/* ── PM QoS Notifier API ──────────────────────────────────────────── */
+
+/** Notifier callback for PM QoS effective value changes */
+typedef void (*pm_qos_notifier_fn_t)(uint32_t old_effective, uint32_t new_effective, void *data);
+
+/**
+ * pm_qos_add_notifier — Register a callback for PM QoS changes.
+ * @fn:    Callback function invoked when the effective constraint changes.
+ * @data:  Opaque pointer passed back to the callback.
+ * @return Notifier ID (>= 0) on success, negative on error.
+ */
+int pm_qos_add_notifier(pm_qos_notifier_fn_t fn, void *data);
+
+/**
+ * pm_qos_remove_notifier — Unregister a PM QoS notifier.
+ * @id:  Notifier ID returned by pm_qos_add_notifier().
+ * @return 0 on success, -ENOENT if not found.
+ */
+int pm_qos_remove_notifier(int id);
+
+/**
+ * pm_qos_read_value — Return the current effective PM QoS constraint value.
+ * This is an alias for pm_qos_read_effective_latency().
+ * @return The current effective latency in microseconds.
+ */
+uint32_t pm_qos_read_value(void);
+
 /* ── Per-Device PM QoS API ────────────────────────────────────────── */
 
 /**

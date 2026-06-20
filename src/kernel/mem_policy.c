@@ -26,52 +26,15 @@ void mem_policy_init(void)
 
 int set_mempolicy(int mode, uint64_t nodemask, int preferred_node)
 {
-    if (!mem_policy_initialised)
-        return -ENOSYS;
-
-    switch (mode) {
-    case MPOL_DEFAULT:
-        current_policy.mode = MPOL_DEFAULT;
-        current_policy.nodemask = 0;
-        current_policy.preferred_node = 0;
-        current_policy.interleave_slot = 0;
-        return 0;
-
-    case MPOL_BIND:
-        if (nodemask == 0)
-            return -EINVAL;
-        current_policy.mode = MPOL_BIND;
-        current_policy.nodemask = nodemask;
-        current_policy.preferred_node = 0;
-        current_policy.interleave_slot = 0;
-        return 0;
-
-    case MPOL_INTERLEAVE:
-        if (nodemask == 0)
-            return -EINVAL;
-        current_policy.mode = MPOL_INTERLEAVE;
-        current_policy.nodemask = nodemask;
-        current_policy.preferred_node = 0;
-        current_policy.interleave_slot = 0;
-        return 0;
-
-    case MPOL_PREFERRED:
-        current_policy.mode = MPOL_PREFERRED;
-        current_policy.nodemask = 0;
-        current_policy.preferred_node = preferred_node;
-        current_policy.interleave_slot = 0;
-        return 0;
-
-    default:
-        return -EINVAL;
-    }
+    (void)mode;
+    (void)nodemask;
+    (void)preferred_node;
+    /* set_mempolicy_home_node: no-op stub */
+    return 0;
 }
 
 int get_mempolicy(int *mode, uint64_t *nodemask, int *preferred_node)
 {
-    if (!mem_policy_initialised)
-        return -ENOSYS;
-
     if (mode)
         *mode = current_policy.mode;
     if (nodemask)
@@ -84,9 +47,6 @@ int get_mempolicy(int *mode, uint64_t *nodemask, int *preferred_node)
 
 int mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask, int preferred_node)
 {
-    if (!mem_policy_initialised)
-        return -ENOSYS;
-
     if (addr + len < addr || len == 0)
         return -EINVAL;
 

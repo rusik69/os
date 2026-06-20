@@ -8,6 +8,7 @@
 #include "heap.h"
 #include "signal.h"
 #include "pmm.h"
+#include "workqueue.h"
 
 /* ── Async I/O (AIO) basic implementation ────────────────────────────── */
 
@@ -116,10 +117,48 @@ static int aio_write_submit(struct aiocb *cb) {
     return 0;
 }
 
+/* ── Workqueue-based background AIO processing ─────────────────────── */
+
+/** Work item wrapping an AIO control block index for background execution */
+struct aio_work {
+    int idx;
+};
+
+static void aio_work_handler(void *arg)
+{
+    struct aio_work *work = (struct aio_work *)arg;
+    int idx = work->idx;
+    kfree(work);
+
+    if (idx < 0 || idx >= AIO_MAX_IO || !aio_cbs[idx].in_use)
+        return;
+
+    struct aiocb *cb = &aio_cbs[idx];
+
+    kprintf("[AIO] Processing request #%d in background (opcode=%d)\n",
+            idx, cb->aio_lio_opcode);
+
+    int ret;
+    if (cb->aio_lio_opcode == 0) { /* read */
+        ret = aio_read_submit(cb);
+    } else if (cb->aio_lio_opcode == 1) { /* write */
+        ret = aio_write_submit(cb);
+    } else {
+        cb->aio_state = 3;
+        cb->aio_errno = EINVAL;
+        ret = -EINVAL;
+    }
+
+    if (ret < 0 && cb->aio_state == 1) {
+        cb->aio_state = 3;
+        cb->aio_errno = -ret;
+    }
+}
+
 /* Submit aio request */
 int aio_submit(struct aiocb *user_cb) {
     if (!aio_initialized || !user_cb) return -EINVAL;
-    
+
     /* Find free slot */
     int idx = -1;
     for (int i = 0; i < AIO_MAX_IO; i++) {
@@ -129,31 +168,31 @@ int aio_submit(struct aiocb *user_cb) {
         }
     }
     if (idx < 0) return -EAGAIN;
-    
+
     /* Copy control block */
     memcpy(&aio_cbs[idx], user_cb, sizeof(struct aiocb));
     aio_cbs[idx].in_use = 1;
     aio_cbs[idx].aio_state = 1; /* in progress */
     struct process *cur = process_get_current();
     aio_cbs[idx].pid = cur ? cur->pid : 0;
-    
-    /* Execute immediately (synchronous for now) */
-    int ret;
-    if (user_cb->aio_lio_opcode == 0) { /* read */
-        ret = aio_read_submit(&aio_cbs[idx]);
-    } else if (user_cb->aio_lio_opcode == 1) { /* write */
-        ret = aio_write_submit(&aio_cbs[idx]);
-    } else {
-        aio_cbs[idx].aio_state = 3;
-        aio_cbs[idx].aio_errno = EINVAL;
-        ret = -EINVAL;
+
+    /* Schedule AIO request for background processing via workqueue */
+    struct aio_work *work = (struct aio_work *)kmalloc(sizeof(struct aio_work));
+    if (!work) {
+        aio_cbs[idx].in_use = 0;
+        return -ENOMEM;
     }
-    
+    work->idx = idx;
+
+    int ret = workqueue_schedule(aio_work_handler, work);
     if (ret < 0) {
+        kfree(work);
         aio_cbs[idx].in_use = 0;
         return ret;
     }
-    
+
+    kprintf("[AIO] Request #%d queued in background\n", idx);
+
     return idx;
 }
 

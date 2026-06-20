@@ -145,6 +145,139 @@ struct ufs_priv {
     uint32_t inode_size;
 };
 
+/* ── UFS inode read and block pointer translation ─────────────── */
+
+/*
+ * Read a UFS1 inode from disk given the inode number.
+ * Inodes per cylinder group = (fragments_per_group * frag_size) / inode_size.
+ * Cylinder group number = inode_number / inodes_per_group.
+ * Inode offset within group = (inode_number % inodes_per_group) * inode_size.
+ */
+static __attribute__((unused)) int ufs_read_inode(struct ufs_priv *up,
+                           uint32_t inum,
+                           struct ufs_inode *inode)
+{
+    if (!up || !inode || inum == 0)
+        return -1;
+
+    /* Calculate inodes per cylinder group */
+    uint32_t frags_per_group = up->fpg;
+    uint32_t bytes_per_group = frags_per_group * up->frag_size;
+    uint32_t inodes_per_group = bytes_per_group / sizeof(struct ufs_inode);
+    if (inodes_per_group == 0) inodes_per_group = 1;
+
+    /* Cylinder group number */
+    uint32_t cg_num = inum / inodes_per_group;
+    /* Inode index within the cylinder group */
+    uint32_t inode_idx = inum % inodes_per_group;
+
+    /* Read the cylinder group descriptor block to get the inode table location.
+     * The CG descriptor is at a fixed block within the CG area.
+     * For UFS1, the CG block number = cgblkno + cg_num * (fragments_per_group / fragments_per_block).
+     * We read the CG descriptor from the block device. */
+    uint32_t cg_block_bytes = cg_num * bytes_per_group;
+    uint32_t cg_block_num = up->cgblkno + (cg_block_bytes / up->block_size);
+
+    uint8_t cg_buf[512];
+    if (blockdev_read_sectors(up->dev_id, cg_block_num, 1, cg_buf) != 0)
+        return -1;
+
+    struct ufs_cg *cg = (struct ufs_cg *)cg_buf;
+    if (cg->cg_magic != 0x090255) {
+        kprintf("[ufs] bad CG magic for group %u\n", cg_num);
+        return -1;
+    }
+
+    /* Inode table starts at CG block data + cg_iusedoff offset.
+     * In many UFS layouts, the inode table is at a fixed offset after the CG descriptor.
+     * The actual inode block = first data block of the CG + inode block offset.
+     * For simplicity, we compute: inode table block = cg_block_num + block_offset_of_inode_table. */
+    uint32_t inode_table_offset = cg->cg_iusedoff;  /* offset in bytes from CG start */
+    /* The inode bitmap starts at cg_iusedoff. The inode data itself typically follows
+     * the bitmaps.  In UFS1, the inode blocks are located at a fixed position after the
+     * CG header and bitmaps.  We compute directly: */
+    uint32_t inodes_per_block = up->block_size / sizeof(struct ufs_inode);
+    uint32_t inode_block_offset = inode_idx / inodes_per_block;
+    uint32_t inode_block_idx   = inode_idx % inodes_per_block;
+    uint32_t inode_block_num   = cg_block_num + 1 + inode_block_offset;
+
+    uint8_t ibuf[512];
+    if (blockdev_read_sectors(up->dev_id, inode_block_num, 1, ibuf) != 0)
+        return -1;
+
+    memcpy(inode, ibuf + inode_block_idx * sizeof(struct ufs_inode),
+           sizeof(struct ufs_inode));
+    return 0;
+}
+
+/*
+ * Translate a logical block number (0-based within a file) to a
+ * physical block number using direct/indirect/double-indirect pointers.
+ * Returns the physical block number, or 0 if the block is a hole/sparse.
+ */
+static __attribute__((unused)) uint32_t ufs_bmap(struct ufs_priv *up,
+                          struct ufs_inode *inode,
+                          uint32_t logical_block)
+{
+    /* Direct blocks (ui_db[0..11]) */
+    if (logical_block < UFS_NDADDR)
+        return inode->ui_db[logical_block];
+
+    /* Singly indirect (ui_ib[0]) */
+    uint32_t per_block = up->block_size / 4;  /* block pointers per indirect block */
+    uint32_t idx = logical_block - UFS_NDADDR;
+    if (idx < per_block) {
+        uint8_t buf[512];
+        uint32_t ind_block = inode->ui_ib[0];
+        if (ind_block == 0) return 0;  /* hole */
+        if (blockdev_read_sectors(up->dev_id, ind_block, 1, buf) != 0)
+            return 0;
+        return ((uint32_t *)buf)[idx];
+    }
+
+    /* Doubly indirect (ui_ib[1]) */
+    idx -= per_block;
+    if (idx < per_block * per_block) {
+        uint8_t buf[512];
+        uint32_t dind_block = inode->ui_ib[1];
+        if (dind_block == 0) return 0;
+        if (blockdev_read_sectors(up->dev_id, dind_block, 1, buf) != 0)
+            return 0;
+        uint32_t ind_idx = idx / per_block;
+        uint32_t blk_idx = idx % per_block;
+        uint32_t ind_block = ((uint32_t *)buf)[ind_idx];
+        if (ind_block == 0) return 0;
+        if (blockdev_read_sectors(up->dev_id, ind_block, 1, buf) != 0)
+            return 0;
+        return ((uint32_t *)buf)[blk_idx];
+    }
+
+    /* Triply indirect (ui_ib[2]) — not commonly used but supported */
+    idx -= per_block * per_block;
+    if (idx < per_block * per_block * per_block) {
+        uint8_t buf[512];
+        uint32_t tind_block = inode->ui_ib[2];
+        if (tind_block == 0) return 0;
+        if (blockdev_read_sectors(up->dev_id, tind_block, 1, buf) != 0)
+            return 0;
+        uint32_t dind_idx = idx / (per_block * per_block);
+        uint32_t rem      = idx % (per_block * per_block);
+        uint32_t ind_idx  = rem / per_block;
+        uint32_t blk_idx  = rem % per_block;
+        uint32_t dind_block = ((uint32_t *)buf)[dind_idx];
+        if (dind_block == 0) return 0;
+        if (blockdev_read_sectors(up->dev_id, dind_block, 1, buf) != 0)
+            return 0;
+        uint32_t ind_block = ((uint32_t *)buf)[ind_idx];
+        if (ind_block == 0) return 0;
+        if (blockdev_read_sectors(up->dev_id, ind_block, 1, buf) != 0)
+            return 0;
+        return ((uint32_t *)buf)[blk_idx];
+    }
+
+    return 0;  /* beyond max file size */
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int ufs_read(void *priv, const char *path,

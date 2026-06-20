@@ -141,6 +141,82 @@ void devfreq_init(void)
     kprintf("[devfreq] Device frequency scaling framework initialized\n");
 }
 
+int devfreq_add_device(struct devfreq_device *dev)
+{
+    if (!devfreq_initialized || !dev)
+        return -EINVAL;
+
+    spinlock_acquire(&devfreq_lock);
+
+    int slot = -1;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (!devfreq_devices[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        spinlock_release(&devfreq_lock);
+        return -ENOSPC;
+    }
+
+    memcpy(&devfreq_devices[slot], dev, sizeof(struct devfreq_device));
+    devfreq_devices[slot].in_use = 1;
+
+    spinlock_release(&devfreq_lock);
+
+    kprintf("[devfreq] Device added: '%s'\n", dev->name);
+    return 0;
+}
+
+int devfreq_suspend_device(const char *name)
+{
+    if (!devfreq_initialized || !name)
+        return -EINVAL;
+
+    spinlock_acquire(&devfreq_lock);
+
+    int ret = -ENOENT;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            /* Mark as suspended by setting a flag - we use down_threshold as
+             * a sentinel: when suspended, always return 0% utilization */
+            devfreq_devices[i].up_threshold = 101; /* never up */
+            devfreq_devices[i].down_threshold = -1; /* always down */
+            ret = 0;
+            break;
+        }
+    }
+
+    spinlock_release(&devfreq_lock);
+    return ret;
+}
+
+int devfreq_resume_device(const char *name)
+{
+    if (!devfreq_initialized || !name)
+        return -EINVAL;
+
+    spinlock_acquire(&devfreq_lock);
+
+    int ret = -ENOENT;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            /* Restore default thresholds */
+            devfreq_devices[i].up_threshold = 80;
+            devfreq_devices[i].down_threshold = 20;
+            ret = 0;
+            break;
+        }
+    }
+
+    spinlock_release(&devfreq_lock);
+    return ret;
+}
+
 int devfreq_register_device(const char *name,
                              struct devfreq_freq_entry *freq_table,
                              int num_freqs,
@@ -208,6 +284,14 @@ int devfreq_unregister_device(const char *name)
 
     spinlock_release(&devfreq_lock);
     return ret;
+}
+
+int devfreq_remove_device(const char *name)
+{
+    if (!devfreq_initialized || !name)
+        return -EINVAL;
+
+    return devfreq_unregister_device(name);
 }
 
 int devfreq_start(void)

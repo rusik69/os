@@ -23,6 +23,7 @@
 #include "errno.h"
 #include "syscall.h"
 #include "export.h"
+#include "process.h"
 
 /* ── POSIX file type macros (stat.h equivalent) ────────────────────── */
 #ifndef S_ISREG
@@ -166,12 +167,19 @@ int64_t sys_getdents64(const char *dir_path, void *dirp, uint64_t count,
  */
 int64_t handle_getdents64(int fd, void *dirp, uint64_t count)
 {
-    (void)fd;
-    (void)dirp;
-    (void)count;
-    /* Path-based variant should be used instead.
-     * Return -ENOSYS to indicate the path-based wrapper is needed. */
-    return -ENOSYS;
+    /* Look up the path from the current process's fd table */
+    struct process *cur = process_get_current();
+    if (!cur || fd < 0 || fd >= PROCESS_FD_MAX)
+        return -EBADF;
+
+    struct process_fd *pfd = &cur->fd_table[fd];
+    if (!pfd->used)
+        return -EBADF;
+
+    /* The fd's path may include the offset cookie; handle_getdents64_path
+     * calls sys_getdents64 which reads entries by path. */
+    const char *path = pfd->path;
+    return sys_getdents64(path, dirp, count, 0);
 }
 
 /* Path-based getdents64: takes a directory path and cookie for resumption.

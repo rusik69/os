@@ -93,12 +93,35 @@ static int eth_transmit(struct net_device *dev,
     /* Copy frame to TX buffer */
     memcpy(priv->tx_buf, data, len);
 
-    /* For RNDIS, wrap in RNDIS packet message */
-    /* For ECM, send raw Ethernet frame over bulk OUT */
+    /* For ECM/EEM, send raw Ethernet frame over bulk OUT.
+     * Simulate a USB bulk transfer by writing to the device's bulk OUT endpoint.
+     * On real hardware, this would submit a USB Request Block (URB) to the
+     * host controller (EHCI/XHCI) for the bulk OUT endpoint.
+     *
+     * We simulate success by logging the transfer and updating stats.
+     */
 
-    /* Submit bulk OUT transfer (simplified stub) */
-    /* In a real implementation, this would use ehci_submit_bulk()
-     * or xhci_submit_bulk() */
+    /* ── Simulated USB bulk OUT submission ─────────────────────── */
+    /* Build a pseudo URB and submit to the USB core:
+     *   - Endpoint: priv->bulk_out_ep
+     *   - Data:     priv->tx_buf
+     *   - Length:   len
+     *   - Flags:    USB_DIR_OUT
+     *
+     * The USB core's ehci_submit_bulk() or xhci_submit_bulk() would
+     * create a transfer descriptor (TD) on the controller's ring,
+     * notify the controller, and wait for completion via interrupt.
+     */
+    if (priv->bulk_out_ep && len > 0) {
+        /* In a real implementation:
+         *   struct urb *urb = usb_alloc_urb(0, GFP_KERNEL);
+         *   usb_fill_bulk_urb(urb, dev, usb_sndbulkpipe(dev, bulk_out_ep),
+         *                     priv->tx_buf, len, tx_complete, priv);
+         *   ret = usb_submit_urb(urb, GFP_KERNEL);
+         */
+        kprintf("[USB ECM] TX %u bytes to ep 0x%02x\n",
+                len, priv->bulk_out_ep);
+    }
 
     spinlock_release(&priv->lock);
     return 0;
@@ -113,14 +136,102 @@ static int eth_receive(struct net_device *dev,
 
     spinlock_acquire(&priv->lock);
 
-    /* Poll for received frame via bulk IN (simplified stub) */
-    /* In a real implementation: submit bulk IN, wait completion */
+    /* Poll for received frame via bulk IN.
+     * Simulate a USB bulk IN transfer: submit a read URB to the bulk IN
+     * endpoint and check for completed data.
+     *
+     * In a real implementation:
+     *   - Submit a bulk IN URB to priv->bulk_in_ep
+     *   - Wait for completion (polling or interrupt-driven)
+     *   - Copy received data from priv->rx_buf to 'buf'
+     *   - Return number of bytes received
+     */
+    if (priv->bulk_in_ep && priv->rx_buf) {
+        /* Simulated: check if there's data available.
+         * On real hardware we'd check the USB controller's transfer ring
+         * for completed TDs on this endpoint. */
+        uint32_t avail = 0;  /* In simulation, no data available */
+
+        if (avail > 0 && avail <= max_len) {
+            memcpy(buf, priv->rx_buf, avail);
+            spinlock_release(&priv->lock);
+            return (int)avail;
+        }
+    }
 
     spinlock_release(&priv->lock);
     return 0;  /* no data available */
 }
 
-/* ── USB driver probe ──────────────────────────────────────────── */
+/* ── CDC control requests ─────────────────────────────────────── */
+
+/* CDC request codes */
+#define CDC_SEND_ENCAPSULATED_COMMAND      0x00
+#define CDC_GET_ENCAPSULATED_RESPONSE      0x01
+#define CDC_SET_ETHERNET_PACKET_FILTER     0x43
+#define CDC_SET_ETHERNET_MULTICAST_FILTERS 0x42
+#define CDC_GET_ETHERNET_STATISTIC         0x44
+
+/* Packet filter flags */
+#define CDC_PACKET_TYPE_PROMISCUOUS        (1u << 0)
+#define CDC_PACKET_TYPE_ALL_MULTICAST      (1u << 1)
+#define CDC_PACKET_TYPE_DIRECTED           (1u << 2)
+#define CDC_PACKET_TYPE_BROADCAST          (1u << 3)
+#define CDC_PACKET_TYPE_MULTICAST          (1u << 4)
+
+/* Handle a CDC control request from the USB host controller */
+static int usb_eth_handle_cdc_ctrl(int request, uint16_t value,
+                                    uint16_t index, uint16_t length,
+                                    uint8_t *data)
+{
+    (void)index;
+    (void)data;
+
+    kprintf("[USB ECM] CDC control req=0x%02x val=0x%04x idx=0x%04x len=%u\n",
+            request, value, index, length);
+
+    switch (request) {
+    case CDC_SEND_ENCAPSULATED_COMMAND:
+        /* Encapsulated CDC commands (e.g., RNDIS init) — silently accept */
+        kprintf("[USB ECM] Encapsulated command (%u bytes)\n", length);
+        return 0;
+
+    case CDC_GET_ENCAPSULATED_RESPONSE:
+        /* Return an empty response for now */
+        kprintf("[USB ECM] Encapsulated response request (%u bytes)\n", length);
+        return 0;
+
+    case CDC_SET_ETHERNET_PACKET_FILTER:
+        /* Set the Ethernet packet filter. value contains the filter flags.
+         * We accept all filter configurations. */
+        kprintf("[USB ECM] Set packet filter: 0x%04x\n", value);
+        if (value & CDC_PACKET_TYPE_PROMISCUOUS)
+            kprintf("[USB ECM]   Promiscuous mode enabled\n");
+        if (value & CDC_PACKET_TYPE_DIRECTED)
+            kprintf("[USB ECM]   Directed (unicast) enabled\n");
+        if (value & CDC_PACKET_TYPE_BROADCAST)
+            kprintf("[USB ECM]   Broadcast enabled\n");
+        if (value & CDC_PACKET_TYPE_MULTICAST)
+            kprintf("[USB ECM]   Multicast enabled\n");
+        if (value & CDC_PACKET_TYPE_ALL_MULTICAST)
+            kprintf("[USB ECM]   All multicast enabled\n");
+        return 0;
+
+    case CDC_SET_ETHERNET_MULTICAST_FILTERS:
+        /* Set multicast filters — we accept but don't filter */
+        kprintf("[USB ECM] Set multicast filters (%u bytes)\n", length);
+        return 0;
+
+    case CDC_GET_ETHERNET_STATISTIC:
+        /* Return 0 for all statistics */
+        kprintf("[USB ECM] Get ethernet statistic 0x%04x\n", value);
+        return 0;
+
+    default:
+        kprintf("[USB ECM] Unknown CDC request 0x%02x\n", request);
+        return -1;
+    }
+}
 
 static int usb_eth_probe(const struct usb_device *dev_desc)
 {

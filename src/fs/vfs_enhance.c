@@ -196,11 +196,20 @@ int vfs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len) {
         }
     }
 
-    if (!m || !m->ops->fallocate) return -EOPNOTSUPP;
-
+    if (!m) return -EOPNOTSUPP;
     if (m->flags & MS_RDONLY) return -EROFS;
 
-    return m->ops->fallocate(m->priv, ap, mode, offset, len);
+    /* If the filesystem has a fallocate op, use it */
+    if (m->ops && m->ops->fallocate)
+        return m->ops->fallocate(m->priv, ap, mode, offset, len);
+
+    /* Fallback for simple preallocation (mode 0):
+     * Use the native fs_fallocate which allocates and reserves blocks */
+    if (mode == 0)
+        return fs_fallocate(path, mode, offset, len);
+
+    /* Other modes are not supported without FS-specific ops */
+    return -EOPNOTSUPP;
 }
 
 /* ====================================================================

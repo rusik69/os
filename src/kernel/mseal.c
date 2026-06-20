@@ -33,9 +33,6 @@ int mseal(uint64_t addr, uint64_t len, int flags)
 {
     (void)flags;
 
-    if (!mseal_initialised)
-        return -ENOSYS;
-
     if (addr + len < addr)  /* overflow */
         return -EINVAL;
     if (len == 0)
@@ -70,9 +67,6 @@ int mseal(uint64_t addr, uint64_t len, int flags)
 
 int mseal_check(uint64_t addr, uint64_t len)
 {
-    if (!mseal_initialised)
-        return -ENOSYS;
-
     if (addr + len < addr)
         return -EINVAL;
     if (len == 0)

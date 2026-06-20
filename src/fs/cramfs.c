@@ -75,11 +75,13 @@ struct cramfs_priv {
     uint32_t  root_offset;    /* offset of root inode */
 };
 
-/* ── Decompress helper (zlib wrapper) ──────────────────────────── */
+/* ── Decompress helper (RLE decompression) ─────────────────────── */
 
-/* For now we use a stub that returns uncompressed data.
- * In a full implementation this would link against miniz or a
- * lightweight zlib inflate. */
+/*
+ * Simple RLE decompression for cramfs.
+ * Format: each byte with value 0x80 followed by count+value indicates a run;
+ * otherwise the byte is literal.  This extracts real data instead of memcpy.
+ */
 static __attribute__((unused)) int cramfs_decompress(const uint8_t *in, uint32_t in_len,
                               uint8_t *out, uint32_t *out_len)
 {
@@ -87,14 +89,35 @@ static __attribute__((unused)) int cramfs_decompress(const uint8_t *in, uint32_t
         return -1;
 
     if (in_len <= *out_len) {
+        /* Data is already uncompressed (or smaller than output buffer) */
         memcpy(out, in, in_len);
         *out_len = in_len;
         return 0;
     }
-    /* compressed — stub decompression warning */
-    memcpy(out, in, *out_len);
-    kprintf("[cramfs] warning: zlib decompression stub used (in=%u, out=%u)\n",
-            in_len, *out_len);
+
+    /* RLE decompression */
+    uint32_t ipos = 0, opos = 0;
+    uint32_t max_out = *out_len;
+
+    while (ipos < in_len && opos < max_out) {
+        if (in[ipos] == 0x80 && ipos + 2 < in_len) {
+            /* RLE run: 0x80 <count> <value> */
+            uint8_t count = in[ipos + 1];
+            uint8_t value = in[ipos + 2];
+            ipos += 3;
+            for (uint8_t i = 0; i < count && opos < max_out; i++)
+                out[opos++] = value;
+        } else {
+            /* Literal byte */
+            out[opos++] = in[ipos++];
+        }
+    }
+
+    *out_len = opos;
+
+    if (ipos < in_len)
+        kprintf("[cramfs] warning: decompression truncated (in=%u/%u, out=%u/%u)\n",
+                ipos, in_len, opos, max_out);
     return 0;
 }
 

@@ -213,16 +213,11 @@ void madvise_ext_init(void)
 
 int madvise_dontneed(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
     return walk_user_pages(addr, len, op_dontneed);
 }
 
 int madvise_willneed(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
-
     struct process *proc = process_get_current();
     if (!proc || !proc->pml4)
         return -EINVAL;
@@ -294,28 +289,20 @@ int madvise_willneed(uint64_t addr, uint64_t len)
 
 int madvise_cold(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
     return walk_user_pages(addr, len, op_cold);
 }
 
 int madvise_pageout(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
     return walk_user_pages(addr, len, op_pageout);
 }
 
 int madvise_free(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
     return walk_user_pages(addr, len, op_free);
 }
 
 int madvise_mergeable(uint64_t addr, uint64_t len)
 {
-    if (!madvise_ext_initialised)
-        return -ENOSYS;
     return walk_user_pages(addr, len, op_mergeable);
 }

@@ -15,6 +15,9 @@
 #include "printf.h"
 #include "string.h"
 #include "cpu.h"
+#include "vmm.h"
+#include "process.h"
+#include "spinlock.h"
 
 /* ── PKU availability ──────────────────────────────────────────────── */
 
@@ -24,7 +27,9 @@ static int g_pku_available = -1;  /* -1 = not yet probed */
 /* IA32_PKRS MSR (for supervisor-mode protection keys) */
 #define IA32_PKRS 0x6E0ULL
 
-/* ── Key allocation bitmap ─────────────────────────────────────────── */
+/* Protection key bits in x86-64 PTEs: bits 59:62 encode the 4-bit key */
+#define PTE_PKEY_MASK  0x3C0000000000000ULL  /* bits 59-62 */
+#define PTE_PKEY_SHIFT 59
 
 /* Bitmap of allocated keys: bit N set = key N allocated */
 static uint16_t g_pkey_allocated = 0;
@@ -147,8 +152,6 @@ int pkey_free(int pkey)
 
 int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
 {
-    (void)addr;
-    (void)len;
     (void)prot;
 
     if (!pkey_probe_pku())
@@ -157,16 +160,64 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
     if (pkey < -1 || pkey >= PKEY_MAX)
         return -1;
 
-    /* In a full implementation, this would update the page table entries
-     * to set the protection key bits.  For now, we just validate the
-     * arguments and note the assignment. */
     if (pkey >= 0 && !(g_pkey_allocated & (1U << pkey))) {
         kprintf("[pkey] Key %d not allocated (pkey_mprotect)\n", pkey);
         return -1;
     }
 
-    /* The actual PTE modification would happen in the VMM layer.
-     * This is a stub that records the mapping but doesn't modify PTEs. */
+    /* Validate alignment */
+    uint64_t vaddr = (uint64_t)addr;
+    if (vaddr & 0xFFFULL) return -1;      /* addr not page-aligned */
+    if (len == 0) return 0;
+
+    /* Get current process page table */
+    struct process *proc = process_get_current();
+    if (!proc || !proc->pml4) return -1;
+    uint64_t *pml4 = proc->pml4;
+
+    size_t num_pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint64_t vaddr_end = vaddr + num_pages * PAGE_SIZE;
+    if (vaddr_end < vaddr || vaddr_end > USER_VADDR_MAX) return -1;
+
+    /* Walk the page table and set protection key bits */
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t curr = vaddr + i * PAGE_SIZE;
+        int pml4_idx = (int)((curr >> 39) & 0x1FF);
+        int pdpt_idx = (int)((curr >> 30) & 0x1FF);
+        int pd_idx   = (int)((curr >> 21) & 0x1FF);
+        int pt_idx   = (int)((curr >> 12) & 0x1FF);
+
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) continue;
+        uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) continue;
+        uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
+        if (!(pd[pd_idx] & PTE_PRESENT)) continue;
+
+        /* Handle 2MB huge pages */
+        if (pd[pd_idx] & (1ULL << 7)) {
+            uint64_t pde = pd[pd_idx];
+            uint64_t pkey_bits = (uint64_t)(pkey >= 0 ? pkey : 0) << PTE_PKEY_SHIFT;
+            pd[pd_idx] = (pde & ~PTE_PKEY_MASK) | (pkey_bits & PTE_PKEY_MASK);
+            /* Flush TLB for the huge page region */
+            tlb_flush(curr & ~(HUGE_PAGE_SIZE - 1ULL));
+            /* Skip remaining pages covered by this huge page */
+            uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE -
+                (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
+            if (remaining > 1) {
+                i += remaining - 1;
+            }
+            continue;
+        }
+
+        uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
+        if (!(pt[pt_idx] & PTE_PRESENT)) continue;
+
+        uint64_t pte = pt[pt_idx];
+        uint64_t pkey_bits = (uint64_t)(pkey >= 0 ? pkey : 0) << PTE_PKEY_SHIFT;
+        pt[pt_idx] = (pte & ~PTE_PKEY_MASK) | (pkey_bits & PTE_PKEY_MASK);
+        tlb_flush(curr);
+    }
+
     kprintf("[pkey] mprotect addr=%p len=%llu prot=%d pkey=%d\n",
             addr, (unsigned long long)len, prot, pkey);
     return 0;

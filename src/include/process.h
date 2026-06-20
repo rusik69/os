@@ -178,6 +178,8 @@ struct process {
     /* seccomp mode and filter */
     int      seccomp_mode;
     struct seccomp_filter *seccomp_filter;  /* NULL if no filter installed */
+    /* Audit: syscall number for current syscall (set by audit_syscall_entry) */
+    int      audit_syscall_num;             /* -1 if not in a syscall */
     /* ── CPU time accounting ─────────────────────────────────── */
     uint64_t utime_ticks;    /* ticks spent in user mode */
     uint64_t stime_ticks;    /* ticks spent in kernel mode (syscalls + IRQs) */
@@ -300,6 +302,9 @@ struct process {
     /* ── Per-process UTS namespace (hostname/domainname isolation) ─ */
     char     ns_hostname[64]; /* namespace-local hostname (from CLONE_NEWUTS) */
     char     ns_domainname[64];
+    /* ── Yama ptrace scope: store tracer PID for restricted ptrace  */
+    int yama_tracer_pid;        /* PID of tracer (-1 = not traced) */
+
     /* ── Time namespace offsets (CLONE_NEWTIME) ──────────────────── */
     int64_t  timens_mono_offset;     /* offset (ns) applied to CLOCK_MONOTONIC */
     int64_t  timens_boottime_offset; /* offset (ns) applied to CLOCK_BOOTTIME */

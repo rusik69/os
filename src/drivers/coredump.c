@@ -542,7 +542,12 @@ int coredump_generate(struct process *proc, int signo) {
         cb_append(&cb, &ph, sizeof(ph));
     }
 
-    /* Write PT_LOAD program headers (placeholders for now, data appended later) */
+    /* Write PT_LOAD program headers for each mapped memory region.
+     * Each segment's p_vaddr, p_filesz, p_memsz are filled from the
+     * actual process memory map. p_flags encodes page permissions
+     * (read/write/execute) derived from the page table entry flags.
+     * p_offset points to the segment data that will be appended later
+     * (after all headers and note data). */
     uint64_t current_seg_offset = seg_data_offset;
     for (int i = 0; i < num_segs; i++) {
         struct elf64_phdr ph;

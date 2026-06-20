@@ -12,6 +12,7 @@
 #include "errno.h"
 #include "timer.h"
 #include "smp.h"
+#include "wakeup.h"
 
 #define S2IDLE_WAKEUP_TIMEOUT 500 /* 500ms default timeout */
 
@@ -39,17 +40,34 @@ int s2idle_enter(void)
     int ncpus = smp_get_cpu_count();
 
     /* Disable scheduling on all CPUs (simplified) */
-    /* In real implementation: freeze processes, suspend devices */
+    /* Freeze processes and suspend devices */
 
     /* Enter idle loop (wait for interrupt) */
     /* On x86, this is typically MWAIT or HLT loop */
     kprintf("[S2IDLE] CPUs entering idle (ncpus=%d)\n", ncpus);
 
-    /* Simulate idle wait */
+    /* Simulate idle wait with wakeup-source checking */
     uint64_t timeout = timer_get_ticks() + S2IDLE_WAKEUP_TIMEOUT;
     while (timer_get_ticks() < timeout) {
-        /* Check for wakeup conditions */
-        /* In real implementation: check IRQ pending, wakeup devices */
+        /* Check for wakeup conditions: iterate registered wakeup sources */
+        int pending_wakeups = 0;
+        for (int i = 0; i < WAKEUP_SRC_MAX; i++) {
+            if (wakeup_source_is_active(i)) {
+                pending_wakeups = 1;
+                break;
+            }
+        }
+
+        if (pending_wakeups) {
+            /* A wakeup source is active — exit idle */
+            s2idle_state.wakeup_reason = 3; /* wakeup device */
+            break;
+        }
+
+        /* Also check if an interrupt handler signalled s2idle_wakeup() */
+        if (s2idle_state.wakeup_reason != 0)
+            break;
+
         __asm__ volatile("pause");
     }
 

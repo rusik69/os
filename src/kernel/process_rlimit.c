@@ -54,8 +54,6 @@ static int rlim_valid_resource(int resource)
 
 int rlimit_get(uint32_t pid, int resource, struct rlimit *rlim)
 {
-    if (!rlimit_initialised)
-        return -ENOSYS;
     if (!rlim_valid_resource(resource))
         return -EINVAL;
     if (!rlim)
@@ -73,8 +71,6 @@ int rlimit_get(uint32_t pid, int resource, struct rlimit *rlim)
 
 int rlimit_set(uint32_t pid, int resource, const struct rlimit *rlim)
 {
-    if (!rlimit_initialised)
-        return -ENOSYS;
     if (!rlim_valid_resource(resource))
         return -EINVAL;
     if (!rlim)

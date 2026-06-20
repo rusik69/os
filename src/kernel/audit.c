@@ -220,6 +220,11 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
     if (!audit_enabled) return;
     (void)a5;
 
+    /* Store the syscall number per-process for use by audit_syscall_exit */
+    struct process *p = process_get_current();
+    if (p)
+        p->audit_syscall_num = (int)num;
+
     char buf[512];
     audit_format_syscall(buf, sizeof(buf), num, a1, a2, a3, a4, 0);
     audit_log_formatted(AUDIT_EVENT_SYSCALL, "%s", buf);
@@ -228,15 +233,22 @@ void audit_syscall_entry(uint64_t num, uint64_t a1, uint64_t a2,
 void audit_syscall_exit(uint64_t ret) {
     if (!audit_enabled) return;
 
-    /* The syscall number is not preserved here — in a full implementation
-     * we'd store it per-thread.  Use a generic exit record. */
     struct process *p = process_get_current();
     uint32_t pid = p ? p->pid : 0;
+    int syscall_num = p ? p->audit_syscall_num : -1;
 
     char buf[256];
-    int n = snprintf(buf, sizeof(buf),
-        "type=SYSCALL_EXIT msg=audit(%u): exit=%lld pid=%u",
-        audit_sequence + 1, (long long)ret, pid);
+    int n;
+    if (syscall_num >= 0) {
+        n = snprintf(buf, sizeof(buf),
+            "type=SYSCALL_EXIT msg=audit(%u): syscall=%d exit=%lld pid=%u",
+            audit_sequence + 1, syscall_num, (long long)ret, pid);
+        if (p) p->audit_syscall_num = -1; /* reset */
+    } else {
+        n = snprintf(buf, sizeof(buf),
+            "type=SYSCALL_EXIT msg=audit(%u): exit=%lld pid=%u",
+            audit_sequence + 1, (long long)ret, pid);
+    }
     if (n > 0) {
         audit_log_formatted(AUDIT_EVENT_SYSCALL, "%s", buf);
     }

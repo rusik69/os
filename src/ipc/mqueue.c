@@ -210,3 +210,25 @@ int mq_getattr(mqd_t mqdes, struct mq_attr *attr) {
     attr->mq_curmsgs = q->msg_count;
     return 0;
 }
+
+int mq_unlink(const char *name) {
+    if (!mqueue_inited || !name)
+        return -ENOSYS;
+
+    int idx = find_queue(name);
+    if (idx < 0)
+        return -ENOENT;
+
+    struct mqueue *q = &mqueue_table[idx];
+    q->in_use = 0;
+    memset(q->name, 0, sizeof(q->name));
+    q->msg_count = 0;
+    q->notify_active = 0;
+
+    /* Wake any blocked readers/writers so they can see the queue is gone */
+    wait_queue_wake_all(&q->r_wq);
+    wait_queue_wake_all(&q->w_wq);
+
+    kprintf("[mqueue] unlinked '%s'\n", name);
+    return 0;
+}

@@ -158,23 +158,231 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
                           uint32_t max, uint32_t *out)
 {
     (void)priv;
-    /* Build a simple /proc-like listing of cgroup controllers */
-    const char *header =
+    (void)path;
+    /* Build hierarchy info listing all mounted cgroups and their controllers */
+    char tmp[512];
+    int pos = 0;
+    pos += snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
         "# Cgroup v2 unified hierarchy\n"
         "# Controllers: cpu memory io pids freezer\n"
-        "# /sys/fs/cgroup/ mounted\n";
-    size_t hlen = strlen(header);
-    size_t cpy = hlen < (size_t)max ? hlen : (size_t)max;
-    memcpy(buf, header, cpy);
-    *out = (uint32_t)cpy;
+        "# /sys/fs/cgroup/ mounted\n\n");
+
+    spinlock_acquire(&g_cgroup_lock);
+    for (int i = 0; i < CGROUP_MAX; i++) {
+        if (!g_cgroups[i].in_use) continue;
+        /* Build controller list for this cgroup */
+        char ctrl[128] = "";
+        if (g_cgroups[i].cpu.max_period > 0 || g_cgroups[i].cpu.max_quota > 0)
+            strcat(ctrl, "cpu ");
+        if (g_cgroups[i].mem.max_bytes > 0 || g_cgroups[i].mem.high_bytes > 0)
+            strcat(ctrl, "memory ");
+        if (g_cgroups[i].pids.max > 0)
+            strcat(ctrl, "pids ");
+        /* IO limits */
+        for (int j = 0; j < CGROUP_IO_MAX_DEVICES; j++) {
+            if (g_cgroups[i].io.devices[j].in_use) {
+                strcat(ctrl, "io ");
+                break;
+            }
+        }
+        /* Freezer is always available */
+        strcat(ctrl, "freezer");
+        if (ctrl[0] == '\0')
+            strcpy(ctrl, "-");
+
+        pos += snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
+            "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n",
+            i, g_cgroups[i].parent_id,
+            (unsigned long)g_cgroups[i].pids.current,
+            ctrl);
+    }
+    spinlock_release(&g_cgroup_lock);
+
+    size_t total = (size_t)pos < (size_t)max ? (size_t)pos : (size_t)max;
+    memcpy(buf, tmp, total);
+    *out = (uint32_t)total;
     return 0;
 }
 
 static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                            uint32_t size)
 {
-    (void)priv; (void)path; (void)buf; (void)size;
-    return -ENOSYS; /* cgroup manipulation via sysfs entry points */
+    (void)priv;
+    /* Parse write content to support cgroup migration and limit setting.
+     *
+     * Format 1: "cgroup.procs <pid>"   — migrate PID into this cgroup
+     * Format 2: "<key> <value>"         — set control value
+     * Format 3: "<pid>"                 — shorthand migration (to root cgroup.procs)
+     */
+    const char *s = (const char *)buf;
+    uint32_t len = size;
+    /* Strip trailing whitespace/newline */
+    while (len > 0 && (s[len - 1] == '\n' || s[len - 1] == '\r' ||
+                       s[len - 1] == ' ' || s[len - 1] == '\t'))
+        len--;
+
+    /* Check for cgroup.procs prefix */
+    const char *procs_prefix = "cgroup.procs ";
+    size_t plen = strlen(procs_prefix);
+    int pid = -1;
+    int is_migration = 0;
+
+    if (len > plen && memcmp(s, procs_prefix, plen) == 0) {
+        /* cgroup.procs <pid> */
+        pid = 0;
+        for (uint32_t i = plen; i < len; i++) {
+            if (s[i] < '0' || s[i] > '9') return -EINVAL;
+            pid = pid * 10 + (int)(s[i] - '0');
+        }
+        is_migration = 1;
+    } else {
+        /* Try plain PID or key=value */
+        int all_digits = 1;
+        int has_space = 0;
+        for (uint32_t i = 0; i < len; i++) {
+            if (s[i] < '0' || s[i] > '9') {
+                if (s[i] == ' ' || s[i] == '\t') {
+                    has_space = 1;
+                } else {
+                    all_digits = 0;
+                    break;
+                }
+            }
+        }
+
+        if (all_digits && !has_space && len > 0) {
+            /* Plain PID — migrate */
+            pid = 0;
+            for (uint32_t i = 0; i < len; i++)
+                pid = pid * 10 + (int)(s[i] - '0');
+            is_migration = 1;
+        }
+    }
+
+    if (is_migration && pid >= 0) {
+        /* Extract cgroup ID from path.
+         * Path looks like: /sys/fs/cgroup/<name>/cgroup.procs
+         * or /sys/fs/cgroup/cgroup.procs for root.
+         */
+        int cg_id = 0; /* default to root */
+        if (path) {
+            const char *p = path;
+            /* Skip past /sys/fs/cgroup/ */
+            const char *base = "/sys/fs/cgroup/";
+            size_t blen = strlen(base);
+            if (memcmp(p, base, blen) == 0) {
+                p += blen;
+                /* If there's a subdirectory name before /cgroup.procs */
+                const char *slash = strchr(p, '/');
+                if (slash && (size_t)(slash - p) < sizeof(g_cgroups[0].name)) {
+                    char cg_name[32];
+                    size_t nlen = (size_t)(slash - p);
+                    if (nlen > 31) nlen = 31;
+                    memcpy(cg_name, p, nlen);
+                    cg_name[nlen] = '\0';
+                    /* Look up cgroup by name */
+                    int found = -1;
+                    for (int i = 0; i < CGROUP_MAX; i++) {
+                        if (g_cgroups[i].in_use &&
+                            g_cgroups[i].name[0] &&
+                            strcmp(g_cgroups[i].name, cg_name) == 0) {
+                            found = i;
+                            break;
+                        }
+                    }
+                    if (found >= 0) cg_id = found;
+                }
+            }
+        }
+        return cgroup_attach(pid, cg_id);
+    }
+
+    /* Key-value setting: "cpu.max 50000 100000", "memory.max 1048576", etc. */
+    if (len > 0) {
+        /* Copy to a temporary buffer */
+        char tmp[128];
+        if (len > 127) len = 127;
+        memcpy(tmp, s, len);
+        tmp[len] = '\0';
+
+        /* Try to split into controller key and value */
+        /* Format: "<controller>.<key> <value>" or "<controller> <key> <value>" */
+        char *space = strchr(tmp, ' ');
+        if (space) {
+            *space++ = '\0';
+            char *key = tmp;
+            char *value = space;
+
+            /* Also support "<controller> <key> <value>" by splitting again */
+            char *space2 = strchr(value, ' ');
+            if (space2) {
+                *space2++ = '\0';
+                /* key = value (first token after controller), value = space2 */
+                /* But we need to find the cgroup ID from the path */
+                int cg_id = 0;
+                /* Extract cgroup name from path (same logic as above) */
+                if (path) {
+                    const char *p = path;
+                    const char *base = "/sys/fs/cgroup/";
+                    size_t blen = strlen(base);
+                    if (memcmp(p, base, blen) == 0) {
+                        p += blen;
+                        const char *slash = strchr(p, '/');
+                        char cg_name[32] = "";
+                        if (slash) {
+                            size_t nlen = (size_t)(slash - p);
+                            if (nlen > 31) nlen = 31;
+                            memcpy(cg_name, p, nlen);
+                            cg_name[nlen] = '\0';
+                        }
+                        if (cg_name[0]) {
+                            for (int i = 0; i < CGROUP_MAX; i++) {
+                                if (g_cgroups[i].in_use &&
+                                    g_cgroups[i].name[0] &&
+                                    strcmp(g_cgroups[i].name, cg_name) == 0) {
+                                    cg_id = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                return cgroup_write_control(cg_id, key, value, space2);
+            } else {
+                /* "key value" with no controller prefix */
+                int cg_id = 0;
+                if (path) {
+                    const char *p = path;
+                    const char *base = "/sys/fs/cgroup/";
+                    size_t blen = strlen(base);
+                    if (memcmp(p, base, blen) == 0) {
+                        p += blen;
+                        const char *slash = strchr(p, '/');
+                        char cg_name[32] = "";
+                        if (slash) {
+                            size_t nlen = (size_t)(slash - p);
+                            if (nlen > 31) nlen = 31;
+                            memcpy(cg_name, p, nlen);
+                            cg_name[nlen] = '\0';
+                        }
+                        if (cg_name[0]) {
+                            for (int i = 0; i < CGROUP_MAX; i++) {
+                                if (g_cgroups[i].in_use &&
+                                    g_cgroups[i].name[0] &&
+                                    strcmp(g_cgroups[i].name, cg_name) == 0) {
+                                    cg_id = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                return cgroup_write_control(cg_id, "", key, value);
+            }
+        }
+    }
+
+    return -ENOSYS;
 }
 
 static struct vfs_ops cgroup_v2_vfs_ops = {

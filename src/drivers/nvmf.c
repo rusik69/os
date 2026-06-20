@@ -319,13 +319,27 @@ void nvmf_poll(void)
 
     /* Accept new connections using blocking accept */
     if (!tgt->connected) {
-        /* Try to accept — this is non-trivial with the kernel's TCP stack.
-         * We use net_tcp_listen + net_tcp_accept. */
-        /* For simplicity, just check if a connection exists */
-        /* In real scenario: listen on port, accept incoming */
+        /* Set up the TCP listener if not already listening */
         if (tgt->listen_fd <= 0) {
-            int listen_fd = net_tcp_connect(tgt->port ? 0 : 0, 0); /* placeholder */
-            (void)listen_fd;
+            const char *err = NULL;
+            int ret = net_tcp_listen(tgt->port, NULL, NULL, &err);
+            if (ret < 0) {
+                if (err) {
+                    kprintf("[nvmf] listen on port %u failed: %s\n",
+                            tgt->port, err);
+                }
+                return;
+            }
+            tgt->listen_fd = 1; /* mark as listening */
+            kprintf("[nvmf] Listening on TCP port %u\n", tgt->port);
+        }
+
+        /* Try to accept a connection (short timeout so we don't block) */
+        int conn = net_tcp_accept(tgt->port, 1); /* 1 tick timeout */
+        if (conn > 0) {
+            tgt->conn_id = conn;
+            tgt->connected = 1;
+            kprintf("[nvmf] Connection accepted (conn_id=%d)\n", conn);
         }
         return;
     }

@@ -31,6 +31,23 @@
 #include "printf.h"
 #include "errno.h"
 
+/* ── Notifier support ───────────────────────────────────────────────── */
+
+/** Max number of registered PM QoS notifiers */
+#define PM_QOS_NOTIFIER_MAX 16
+
+/** Notifier callback type */
+typedef void (*pm_qos_notifier_fn_t)(uint32_t old_effective, uint32_t new_effective, void *data);
+
+/** A registered notifier entry */
+struct pm_qos_notifier {
+    pm_qos_notifier_fn_t fn;
+    void                *data;
+    int                  used;
+};
+
+static struct pm_qos_notifier pm_qos_notifiers[PM_QOS_NOTIFIER_MAX];
+
 /* ── Internal data structures ─────────────────────────────────────── */
 
 /** A single PM QoS latency request. */
@@ -70,6 +87,7 @@ static struct {
 /**
  * Compute the effective latency constraint as the minimum of all
  * registered requests.  Must be called with the lock held.
+ * Returns the new effective value.
  */
 static uint32_t pm_qos_compute_effective_locked(void)
 {
@@ -83,6 +101,22 @@ static uint32_t pm_qos_compute_effective_locked(void)
     }
 
     return effective;
+}
+
+/**
+ * Notify all registered notifiers of a change in the effective constraint.
+ * Must be called with the lock held.
+ */
+static void pm_qos_notify_locked(uint32_t old_effective, uint32_t new_effective)
+{
+    if (old_effective == new_effective)
+        return;
+
+    for (int i = 0; i < PM_QOS_NOTIFIER_MAX; i++) {
+        if (pm_qos_notifiers[i].used && pm_qos_notifiers[i].fn)
+            pm_qos_notifiers[i].fn(old_effective, new_effective,
+                                   pm_qos_notifiers[i].data);
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -128,6 +162,9 @@ int pm_qos_add_request(const char *name, uint32_t latency_us)
         return -ENOSPC;
     }
 
+    /* Capture effective constraint before adding */
+    uint32_t old_effective = pm_qos_compute_effective_locked();
+
     /* Fill the slot */
     struct pm_qos_request *req = &pm_qos_state.requests[slot];
     strncpy(req->name, name, PM_QOS_NAME_MAX - 1);
@@ -136,6 +173,7 @@ int pm_qos_add_request(const char *name, uint32_t latency_us)
     req->used       = 1;
 
     uint32_t effective = pm_qos_compute_effective_locked();
+    pm_qos_notify_locked(old_effective, effective);
 
     spinlock_release(&pm_qos_state.lock);
 
@@ -160,8 +198,11 @@ int pm_qos_update_request(int id, uint32_t latency_us)
         return -ENOENT;
     }
 
+    uint32_t old_effective = pm_qos_compute_effective_locked();
+
     pm_qos_state.requests[id].latency_us = latency_us;
     uint32_t effective = pm_qos_compute_effective_locked();
+    pm_qos_notify_locked(old_effective, effective);
 
     spinlock_release(&pm_qos_state.lock);
 
@@ -187,11 +228,15 @@ int pm_qos_remove_request(int id)
     }
 
     const char *name = pm_qos_state.requests[id].name;
+
+    uint32_t old_effective = pm_qos_compute_effective_locked();
+
     pm_qos_state.requests[id].used = 0;
     pm_qos_state.requests[id].latency_us = 0;
     memset(pm_qos_state.requests[id].name, 0, PM_QOS_NAME_MAX);
 
     uint32_t effective = pm_qos_compute_effective_locked();
+    pm_qos_notify_locked(old_effective, effective);
 
     spinlock_release(&pm_qos_state.lock);
 
@@ -282,6 +327,65 @@ void pm_qos_dump_requests(void)
     }
 
     spinlock_release(&pm_qos_state.lock);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Notifier API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+int pm_qos_add_notifier(pm_qos_notifier_fn_t fn, void *data)
+{
+    if (!fn)
+        return -EINVAL;
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    int slot = -1;
+    for (int i = 0; i < PM_QOS_NOTIFIER_MAX; i++) {
+        if (!pm_qos_notifiers[i].used) {
+            slot = i;
+            break;
+        }
+    }
+
+    if (slot < 0) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOSPC;
+    }
+
+    pm_qos_notifiers[slot].fn = fn;
+    pm_qos_notifiers[slot].data = data;
+    pm_qos_notifiers[slot].used = 1;
+
+    spinlock_release(&pm_qos_state.lock);
+    return slot;
+}
+
+int pm_qos_remove_notifier(int id)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+    if (id < 0 || id >= PM_QOS_NOTIFIER_MAX)
+        return -ENOENT;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    if (!pm_qos_notifiers[id].used) {
+        spinlock_release(&pm_qos_state.lock);
+        return -ENOENT;
+    }
+
+    memset(&pm_qos_notifiers[id], 0, sizeof(pm_qos_notifiers[id]));
+
+    spinlock_release(&pm_qos_state.lock);
+    return 0;
+}
+
+uint32_t pm_qos_read_value(void)
+{
+    return pm_qos_read_effective_latency();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

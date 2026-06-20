@@ -257,3 +257,5 @@ void lacp_tick(void)
         }
     }
 }
+#include "module.h"
+module_init(lacp_init);

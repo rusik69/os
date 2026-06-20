@@ -245,3 +245,5 @@ void garp_tick(void)
         }
     }
 }
+#include "module.h"
+module_init(garp_init);

@@ -205,3 +205,5 @@ void mrp_tick(void)
         }
     }
 }
+#include "module.h"
+module_init(mrp_init);

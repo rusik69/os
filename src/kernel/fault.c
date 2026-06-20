@@ -90,9 +90,49 @@ static void page_fault_handler(struct interrupt_frame *frame) {
 
     /* Update vmstat counters */
     vm_pgfault++;
-    if (err & (1ULL << 1) && (err & (1ULL << 2))) {
-        /* User write fault — could be COW (minor) or major */
-        /* We don't have a way to differentiate yet; count as minor for now */
+
+    /* Distinguish major vs minor page faults:
+     *   Major fault  = the page was swapped out or otherwise required I/O
+     *   Minor fault  = the page was already in memory but needed PTE fixup
+     *                   (COW, lazy allocation, NUMA migration, etc.)
+     *
+     * We detect a major fault by walking the page table: if the PTE
+     * is non-present but has the swap marker bit (bit 1 set, present=0),
+     * the page was swapped out and must be read back from the swap device.
+     */
+    {
+        int is_major = 0;
+        struct process *cur_fault = process_get_current();
+        if (cur_fault && cur_fault->pml4) {
+            uint64_t *pml4_f = cur_fault->pml4;
+            int pml4_idx = (cr2 >> 39) & 0x1FF;
+            int pdpt_idx = (cr2 >> 30) & 0x1FF;
+            int pd_idx   = (cr2 >> 21) & 0x1FF;
+            int pt_idx   = (cr2 >> 12) & 0x1FF;
+
+            if ((pml4_f[pml4_idx] & PF_PTE_PRESENT)) {
+                uint64_t *pdpt_f = (uint64_t *)PHYS_TO_VIRT(pml4_f[pml4_idx] & PF_PTE_ADDR_MASK);
+                if ((pdpt_f[pdpt_idx] & PF_PTE_PRESENT)) {
+                    uint64_t *pd_f = (uint64_t *)PHYS_TO_VIRT(pdpt_f[pdpt_idx] & PF_PTE_ADDR_MASK);
+                    if ((pd_f[pd_idx] & PF_PTE_PRESENT)) {
+                        if (pd_f[pd_idx] & PF_PTE_HUGE) {
+                            /* 2 MB huge page — always in memory, not swapped */
+                            is_major = 0;
+                        } else {
+                            uint64_t *pt_f = (uint64_t *)PHYS_TO_VIRT(pd_f[pd_idx] & PF_PTE_ADDR_MASK);
+                            uint64_t pte = pt_f[pt_idx];
+                            /* A swap entry is a non-present PTE with the
+                             * software-defined swap marker bit set (bit 1). */
+                            if (!(pte & PF_PTE_PRESENT) && (pte & (1ULL << 1)))
+                                is_major = 1;
+                        }
+                    }
+                }
+            }
+        }
+        if (is_major)
+            vm_pgmajfault++;
+        /* Otherwise it's a minor fault — already counted via vm_pgfault */
     }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC

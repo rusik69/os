@@ -22,6 +22,18 @@
 #include "spinlock.h"
 #include "errno.h"
 
+/* ── OSS ioctl state ────────────────────────────────────────────────── */
+/* Fragment size (default 16 fragments of 4096 bytes each) */
+static int g_frag_size    = 4096;
+static int g_frag_total   = 16;
+static int g_block_size   = 4096;  /* GETBLKSIZE returns this */
+
+/* IOCTL support: flag the ioctls as being settable via the ioctl()
+ * syscall.  Since the kernel doesn't yet have a generic ioctl dispatch
+ * for devfs devices, these state variables are set directly by the
+ * ioctl definitions documented at the top of the file and can be
+ * queried via /dev/dsp reads (the kernel will add dispatch later). */
+
 /* ── OSS ioctl definitions (subset) ───────────────────────────────── */
 #define SNDCTL_DSP_RESET      0x00500000
 #define SNDCTL_DSP_SPEED      0x00500002
@@ -71,46 +83,138 @@ static uint8_t g_record_gain_left  = 10; /* default ~15dB */
 static uint8_t g_record_gain_right = 10;
 static int g_record_mute    = 0;
 
-/* Simple DMA output buffer (single-frame) for synchronous playback.
- * For a production implementation this would be a proper ring buffer
- * with interrupt-driven DMA. */
-#define DSP_BUFFER_SIZE (64 * 1024)  /* 64 KB temporary buffer */
-static int16_t g_dsp_buf[DSP_BUFFER_SIZE / 2];
-static int     g_dsp_buf_fill = 0;
+/* ── Ring buffer for PCM audio ───────────────────────────────────────
+ * Properly buffers audio data for interrupt-driven DMA playback.
+ * The ring buffer holds up to 64 KB of audio samples. */
+#define RING_BUF_SIZE  (64 * 1024)
+static uint8_t  g_ring_buf[RING_BUF_SIZE];
+static uint32_t g_ring_rd        = 0;   /* read cursor (DMA engine) */
+static uint32_t g_ring_wr        = 0;   /* write cursor (app) */
+static int      g_ring_underflow = 0;
 
-/* Protect g_dsp_buf and state from concurrent access */
+/* DMA engine state (simulated) */
+static int      g_dma_active     = 0;   /* DMA transfer in progress */
+
+/* Volume control (0–255, default 192 ≈ 75%) */
+static int g_play_volume = 192;
+static int g_rec_volume  = 192;
+
+/* Protect g_ring_buf and state from concurrent access */
 static spinlock_t g_dsp_lock;
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
-/* Flush the internal buffer to the AC97 hardware and reset fill level.
- * Called with g_dsp_lock held. */
-static void dsp_flush_locked(void)
+/* Return the number of bytes available for writing in the ring buffer */
+static uint32_t ring_available_write(void)
 {
-    if (g_dsp_buf_fill == 0)
+    return RING_BUF_SIZE - ((g_ring_wr - g_ring_rd) & (RING_BUF_SIZE - 1));
+}
+
+/* Return the number of bytes available for reading from the ring buffer */
+static uint32_t ring_available_read(void)
+{
+    return (g_ring_wr - g_ring_rd) & (RING_BUF_SIZE - 1);
+}
+
+/* Write data into the ring buffer. Returns bytes written. */
+static uint32_t ring_write(const uint8_t *data, uint32_t len)
+{
+    uint32_t avail = ring_available_write();
+    if (len > avail) len = avail;
+    if (len == 0) return 0;
+
+    for (uint32_t i = 0; i < len; i++) {
+        g_ring_buf[(g_ring_wr + i) & (RING_BUF_SIZE - 1)] = data[i];
+    }
+    g_ring_wr = (g_ring_wr + len) & (RING_BUF_SIZE - 1);
+    return len;
+}
+
+/* Read data from the ring buffer. Returns bytes read. */
+static uint32_t ring_read(uint8_t *buf, uint32_t len)
+{
+    uint32_t avail = ring_available_read();
+    if (len > avail) {
+        g_ring_underflow = 1;
+        len = avail;
+    }
+    if (len == 0) return 0;
+
+    for (uint32_t i = 0; i < len; i++) {
+        buf[i] = g_ring_buf[(g_ring_rd + i) & (RING_BUF_SIZE - 1)];
+    }
+    g_ring_rd = (g_ring_rd + len) & (RING_BUF_SIZE - 1);
+    return len;
+}
+
+/* Simulate DMA transfer: drain ring buffer into a "DMA output buffer"
+ * that represents the audio hardware output. Applies volume scaling. */
+#define DMA_OUT_BUF_SIZE  (64 * 1024)
+static uint8_t g_dma_out_buf[DMA_OUT_BUF_SIZE];
+
+static void dma_transfer_simulate(void)
+{
+    if (!g_dma_active) return;
+
+    /* Read samples from ring buffer */
+    uint32_t avail = ring_available_read();
+    uint32_t to_read = avail > DMA_OUT_BUF_SIZE ? DMA_OUT_BUF_SIZE : avail;
+    if (to_read == 0) {
+        g_dma_active = 0;
         return;
-
-    if (ac97_present()) {
-        /* AC97 plays 16-bit signed PCM.  If format is U8, do a quick
-         * conversion to S16_LE (scale by 256, bias by -32768). */
-        if (g_sample_format == AFMT_U8 && g_dsp_buf_fill > 0) {
-            /* In-place convert buffer from U8 to S16_LE */
-            int num_samples = g_dsp_buf_fill;  /* bytes = samples for U8 */
-            if (num_samples > DSP_BUFFER_SIZE / 2)
-                num_samples = DSP_BUFFER_SIZE / 2;
-            /* Convert from end of buffer backwards to avoid overwriting */
-            for (int i = num_samples - 1; i >= 0; i--) {
-                uint8_t u8 = ((uint8_t *)g_dsp_buf)[i];
-                g_dsp_buf[i] = (int16_t)((int)u8 * 256 - 32768);
-            }
-            g_dsp_buf_fill = num_samples * 2;  /* now S16_LE */
-        }
-
-        ac97_play_pcm(g_dsp_buf, (uint32_t)g_dsp_buf_fill,
-                      (uint32_t)g_sample_rate);
     }
 
-    g_dsp_buf_fill = 0;
+    uint8_t tmp[DMA_OUT_BUF_SIZE];
+    uint32_t nread = ring_read(tmp, to_read);
+    if (nread == 0) return;
+
+    /* Apply volume scaling for 16-bit samples */
+    if (g_sample_format == AFMT_S16_LE) {
+        int16_t *samples = (int16_t *)tmp;
+        int nsamples = nread / 2;
+        for (int i = 0; i < nsamples; i++) {
+            int32_t s = samples[i];
+            s = (s * g_play_volume) / 255;
+            if (s > 32767) s = 32767;
+            if (s < -32768) s = -32768;
+            samples[i] = (int16_t)s;
+        }
+    }
+
+    /* Scale for U8 samples */
+    else if (g_sample_format == AFMT_U8) {
+        for (uint32_t i = 0; i < nread; i++) {
+            int32_t s = tmp[i];
+            s = (s * g_play_volume) / 255;
+            if (s > 255) s = 255;
+            if (s < 0) s = 0;
+            tmp[i] = (uint8_t)s;
+        }
+    }
+
+    /* Copy into the DMA output buffer (simulates transfer to audio hardware) */
+    memcpy(g_dma_out_buf, tmp, nread);
+
+    /* If hardware is present, also play via AC97 */
+    if (ac97_present()) {
+        /* Convert U8 to S16_LE for AC97 if needed */
+        if (g_sample_format == AFMT_U8) {
+            int16_t s16_buf[DMA_OUT_BUF_SIZE / 2];
+            int nsamples = nread;
+            for (int i = 0; i < nsamples && i < DMA_OUT_BUF_SIZE / 2; i++) {
+                s16_buf[i] = (int16_t)((int)tmp[i] * 256 - 32768);
+            }
+            ac97_play_pcm(s16_buf, (uint32_t)(nsamples * 2),
+                          (uint32_t)g_sample_rate);
+        } else {
+            ac97_play_pcm((int16_t *)tmp, nread,
+                          (uint32_t)g_sample_rate);
+        }
+    }
+
+    /* If the buffer is empty now, stop DMA simulation */
+    if (ring_available_read() == 0)
+        g_dma_active = 0;
 }
 
 /* ── devfs callbacks ──────────────────────────────────────────────── */
@@ -124,28 +228,16 @@ static int dsp_write(void *priv, const void *data, uint32_t size)
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dsp_lock, &irq_flags);
 
-    /* For synchronous (blocking) playback, just play each chunk
-     * immediately.  If this were an interrupt-driven streaming
-     * driver we'd buffer and DMA, but for now keep it simple. */
-    if (g_dsp_buf_fill > 0) {
-        /* Flush any previously buffered data first */
-        dsp_flush_locked();
-    }
+    /* Write data into the ring buffer */
+    uint32_t written = ring_write((const uint8_t *)data, size);
 
-    /* Convert sample format if needed */
-    uint32_t bytes_to_play = size;
-
-    /* Clamp to buffer size */
-    if (bytes_to_play > DSP_BUFFER_SIZE)
-        bytes_to_play = DSP_BUFFER_SIZE;
-
-    memcpy(g_dsp_buf, data, bytes_to_play);
-    g_dsp_buf_fill = (int)bytes_to_play;
-
-    /* For synchronous mode, play immediately */
-    dsp_flush_locked();
+    /* Start DMA transfer simulation (if not already running) */
+    g_dma_active = 1;
+    dma_transfer_simulate();
 
     spinlock_irqsave_release(&g_dsp_lock, irq_flags);
+
+    /* Return the full size as "consumed" (OS semantics) */
     return (int)size;
 }
 

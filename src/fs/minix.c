@@ -135,6 +135,73 @@ static __attribute__((unused)) int minix_read_block(struct minix_priv *mp, uint3
     return 0;
 }
 
+/* ── Zone-to-block translation ─────────────────────────────────── */
+
+/*
+ * Translate a file-relative zone number to a physical block number.
+ * MINIX inodes have direct zones and indirect zones.
+ * For V1: 7 direct zones (i_zone[0..6]), i_zone[7] = singly indirect.
+ * For V2/V3: 10 direct zones (i_zone[0..9]), i_zone[10] = singly indirect,
+ *            i_zone[11] = doubly indirect.
+ * The return value is a block number (1 block = MINIX zone).
+ */
+static __attribute__((unused)) int minix_zone_to_block(struct minix_priv *mp,
+                                uint16_t *zones, int num_direct,
+                                uint32_t zone_num, uint32_t *block)
+{
+    uint8_t buf[1024];
+    uint32_t zones_per_block = mp->zone_size / 2; /* 16-bit zone numbers */
+
+    if (zone_num < (uint32_t)num_direct) {
+        *block = zones[zone_num];
+        return 0;
+    }
+
+    /* Singly indirect */
+    uint32_t idx = zone_num - num_direct;
+    uint16_t ind_zone = zones[num_direct]; /* i_zone[num_direct] = singly indirect */
+    if (ind_zone == 0) {
+        *block = 0;
+        return -1;
+    }
+    if (idx < zones_per_block) {
+        if (minix_read_block(mp, ind_zone, buf) != 0)
+            return -1;
+        *block = ((uint16_t *)buf)[idx];
+        return 0;
+    }
+
+    /* Doubly indirect — only for V2/V3 (num_direct == 10) */
+    if (num_direct >= 10) {
+        idx -= zones_per_block;
+        uint16_t dind_zone = zones[num_direct + 1]; /* i_zone[num_direct+1] */
+        if (dind_zone == 0) {
+            *block = 0;
+            return -1;
+        }
+        uint32_t dind_idx = idx / zones_per_block;
+        uint32_t blk_idx  = idx % zones_per_block;
+        if (dind_idx >= zones_per_block) {
+            *block = 0;
+            return -1;
+        }
+        if (minix_read_block(mp, dind_zone, buf) != 0)
+            return -1;
+        uint16_t ind_block = ((uint16_t *)buf)[dind_idx];
+        if (ind_block == 0) {
+            *block = 0;
+            return -1;
+        }
+        if (minix_read_block(mp, ind_block, buf) != 0)
+            return -1;
+        *block = ((uint16_t *)buf)[blk_idx];
+        return 0;
+    }
+
+    *block = 0;
+    return -1;
+}
+
 /* ── VFS operations ────────────────────────────────────────────── */
 
 static int minix_read(void *priv, const char *path,
