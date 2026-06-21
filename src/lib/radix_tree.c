@@ -94,6 +94,7 @@ void *radix_tree_delete(struct radix_tree_root *root, unsigned long key) {
                 struct radix_tree_node *p = parent;
                 struct radix_tree_node *pp = NULL;
                 struct radix_tree_node *c = cur;
+                (void)pp; (void)c;
                 int cleanup = 1;
                 while (cleanup && p && root->height > 1) {
                     if (p->count == 0) {

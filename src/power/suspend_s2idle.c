@@ -207,7 +207,10 @@ void s2idle_init(void)
     memset(g_wakeup_irqs, 0, sizeof(g_wakeup_irqs));
 
     /* Register standard wakeup IRQs if ACPI is present */
-    if (acpi_is_present()) {
+    /* Stub: ACPI GPE check not yet implemented */
+    (void)0;
+    if (0) {
+        (void)0;
         /* ACPI SCI is usually IRQ 9 */
         s2idle_register_wakeup_irq(9);
         kprintf("[S2IDLE] Registered ACPI SCI (IRQ 9) as wakeup source\n");
