@@ -12,6 +12,9 @@ build_test/
 build_analyze/
 tests/host_libc/test_libc
 tests/host_libc/test_bitops_crc_sha
+tests/host_libc/test_crypto_ext
+tests/host_libc/test_lib_structs
+tests/host_libc/test_cipher
 tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket

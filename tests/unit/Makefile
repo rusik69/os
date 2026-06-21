@@ -13,6 +13,7 @@ CFLAGS  = -Wall -Werror -g -O0
 all: test
 
 test: test_memory test_fs test_socket test_list test_string test_bitmap
+ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running memory allocator unit tests..."
 	@./test_memory
@@ -31,6 +32,21 @@ test: test_memory test_fs test_socket test_list test_string test_bitmap
 	@echo ""
 	@echo "Running bit manipulation unit tests..."
 	@./test_bitmap
+else
+	@echo ""
+	@echo "Running unit tests (JUnit output to $(JUNIT_DIR))..."
+	python3 ../../tests/junit_reporter.py unit-memory ./test_memory
+	python3 ../../tests/junit_reporter.py unit-fs ./test_fs
+	python3 ../../tests/junit_reporter.py unit-socket ./test_socket
+	python3 ../../tests/junit_reporter.py unit-list ./test_list
+	python3 ../../tests/junit_reporter.py unit-string ./test_string
+	python3 ../../tests/junit_reporter.py unit-bitmap ./test_bitmap
+	@mv -f unit-memory-results.xml unit-fs-results.xml \
+	      unit-socket-results.xml unit-list-results.xml \
+	      unit-string-results.xml unit-bitmap-results.xml \
+	      "$(JUNIT_DIR)/" 2>/dev/null || true
+	@echo "JUnit XML: $(JUNIT_DIR)/"
+endif
 
 test_memory: test_memory.c
 	$(CC) $(CFLAGS) -o $@ $<

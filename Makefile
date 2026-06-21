@@ -1536,6 +1536,15 @@ unit-test:
 	$(MAKE) -C tests/host_libc all
 	$(MAKE) -C tests/unit all
 
+# JUnit XML test reporting (for CI)
+# Usage: make junit-test JUNIT_DIR=build/test-reports
+junit-test:
+	@echo "=== Host-side unit tests (JUnit XML output) ==="
+	mkdir -p $(JUNIT_DIR)
+	$(MAKE) -C tests/host_libc all JUNIT_DIR=$(JUNIT_DIR)
+	$(MAKE) -C tests/unit all JUNIT_DIR=$(JUNIT_DIR)
+	@echo "JUnit XML reports in $(JUNIT_DIR)/"
+
 # Full clean rebuild + test
 test-clean: clean
 	$(MAKE) test

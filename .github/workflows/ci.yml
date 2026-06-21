@@ -123,14 +123,32 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential
 
-      - name: Run host-side unit tests
+      - name: Build unit test binaries
         run: |
-          make unit-test -j$(nproc)
+          make -C tests/host_libc all -j$(nproc)
+          make -C tests/unit all -j$(nproc)
+
+      - name: Run unit tests (JUnit XML)
+        run: |
+          make junit-test JUNIT_DIR=${{ runner.temp }}/test-reports
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results
+          path: ${{ runner.temp }}/test-reports/
+          retention-days: 7
 
       - name: Summary
         run: |
           echo "## Unit Tests" >> $GITHUB_STEP_SUMMARY
-          echo "- All host-side unit tests completed" >> $GITHUB_STEP_SUMMARY
+          for f in ${{ runner.temp }}/test-reports/*-results.xml; do
+            name="$$(basename "$$f" -results.xml)"
+            tests="$$(grep -o 'tests="[0-9]*"' "$$f" | head -1 | grep -o '[0-9]*')"
+            fails="$$(grep -o 'failures="[0-9]*"' "$$f" | head -1 | grep -o '[0-9]*')"
+            echo "- $$name: $$tests tests, $$fails failures" >> $GITHUB_STEP_SUMMARY
+          done
 
   # ── QEMU boot test ─────────────────────────────────────────────────
   boot-test:

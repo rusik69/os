@@ -10,6 +10,9 @@ KERNEL_CFLAGS = -DTEST_MODE_HOST \
                 -Wall -Werror \
                 -Wno-error=implicit-function-declaration \
                 -Wno-format-truncation \
+                -Wno-unused-but-set-variable \
+                -Wno-unused-variable \
+                -Wno-unused-function \
                 -g -O0
 
 # Flags for test files (use system headers, NOT kernel headers)
@@ -33,9 +36,14 @@ CRYPTO_EXT_OBJS = sha512.o md5.o hmac.o adler32.o base64.o test_crypto_ext.o
 KSRCDIR = ../../src/kernel
 LIB_STRUCTS_OBJS = hexdump.o radix_tree.o test_lib_structs.o
 
+# Cipher tests (AES, ChaCha20-Poly1305)
+CIPHERDIR = ../../src/lib
+CIPHER_OBJS = aes.o aes_xts.o chacha20.o poly1305.o chacha20poly1305.o test_cipher.o
+
 .PHONY: all clean
 
-all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs
+all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher
+ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
 	./test_libc
@@ -48,6 +56,22 @@ all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs
 	@echo ""
 	@echo "Running host-side library structure tests..."
 	./test_lib_structs
+	@echo ""
+	@echo "Running host-side cipher tests..."
+	./test_cipher
+else
+	@echo ""
+	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
+	python3 ../../tests/junit_reporter.py host_libc ./test_libc
+	python3 ../../tests/junit_reporter.py host-bitops-crc-sha ./test_bitops_crc_sha
+	python3 ../../tests/junit_reporter.py host-crypto-ext ./test_crypto_ext
+	python3 ../../tests/junit_reporter.py host-lib-structs ./test_lib_structs
+	python3 ../../tests/junit_reporter.py host-cipher ./test_cipher
+	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
+	      host-crypto-ext-results.xml host-lib-structs-results.xml \
+	      host-cipher-results.xml "$(JUNIT_DIR)/" 2>/dev/null || true
+	@echo "JUnit XML: $(JUNIT_DIR)/"
+endif
 
 test_libc: $(OBJS)
 	$(CC) -o $@ $^
@@ -136,6 +160,29 @@ radix_tree.o: $(CRYPTODIR)/radix_tree.c
 test_lib_structs.o: test_lib_structs.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Host-side cipher tests (AES, ChaCha20-Poly1305) ──────────────
+
+test_cipher: $(CIPHER_OBJS) printf.o stubs.o
+	$(CC) -o $@ $^
+
+aes.o: $(CIPHERDIR)/aes.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+aes_xts.o: $(CIPHERDIR)/aes_xts.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+chacha20.o: $(CIPHERDIR)/chacha20.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+poly1305.o: $(CIPHERDIR)/poly1305.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+chacha20poly1305.o: $(CIPHERDIR)/chacha20poly1305.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_cipher.o: test_cipher.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) \
-	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs
+	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) \
+	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher
