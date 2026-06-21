@@ -13,6 +13,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "errno.h"
+#include "dma.h"
 
 /* ── Global state ──────────────────────────────────────────────────── */
 
