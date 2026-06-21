@@ -81,11 +81,21 @@ RATELIMIT_OBJS = ratelimit.o test_ratelimit.o
 TFLAGS_time = -Wno-nonnull-compare -fno-stack-protector
 TIME_OBJS = time.o test_time.o
 
+# UUID tests
+UUID_OBJS = uuid.o test_uuid.o
+
+# Hash table tests
+HASHTABLE_OBJS = hashtable.o test_hashtable.o
+
+# Refcount tests
+REFCOUNT_OBJS = refcount.o test_refcount.o
+
 .PHONY: all clean
 
 all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
-     test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time
+     test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
+     test_uuid test_hashtable test_refcount
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -141,6 +151,15 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running time function tests..."
 	./test_time
+	@echo ""
+	@echo "Running UUID tests..."
+	./test_uuid
+	@echo ""
+	@echo "Running hash table tests..."
+	./test_hashtable
+	@echo ""
+	@echo "Running refcount tests..."
+	./test_refcount
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -162,6 +181,9 @@ else
 	python3 ../../tests/junit_reporter.py host-notifier ./test_notifier
 	python3 ../../tests/junit_reporter.py host-ratelimit ./test_ratelimit
 	python3 ../../tests/junit_reporter.py host-time ./test_time
+	python3 ../../tests/junit_reporter.py host-uuid ./test_uuid
+	python3 ../../tests/junit_reporter.py host-hashtable ./test_hashtable
+	python3 ../../tests/junit_reporter.py host-refcount ./test_refcount
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
@@ -171,6 +193,8 @@ else
 	      host-find-bit-results.xml host-div64-results.xml \
 	      host-idr-results.xml host-notifier-results.xml \
 	      host-ratelimit-results.xml host-time-results.xml \
+	      host-uuid-results.xml host-hashtable-results.xml \
+	      host-refcount-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -440,10 +464,42 @@ time.o: $(SRCDIR)/time.c
 test_time.o: test_time.c
 	$(CC) $(TEST_CFLAGS) -Wno-format-zero-length -c -o $@ $<
 
+# ── UUID tests ──────────────────────────────────────────────
+
+test_uuid: $(UUID_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+test_uuid.o: test_uuid.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Hash table tests ────────────────────────────────────────
+
+test_hashtable: $(HASHTABLE_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+hashtable.o: $(KSRCDIR)/hashtable.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_hashtable.o: test_hashtable.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Refcount tests ──────────────────────────────────────────
+
+test_refcount: $(REFCOUNT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+refcount.o: $(KSRCDIR)/refcount_ext.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_refcount.o: test_refcount.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
 	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) $(DS_OBJS) \
 	      $(SEARCH_OBJS) $(STDLIB_EXT_OBJS) $(HWEIGHT_OBJS) $(RANGE_OBJS) $(SORT_EXT_OBJS) $(CRC16_OBJS) \
 	      $(FIND_BIT_OBJS) $(DIV64_OBJS) $(IDR_OBJS) $(NOTIFIER_OBJS) $(RATELIMIT_OBJS) $(TIME_OBJS) \
+	      $(UUID_OBJS) $(HASHTABLE_OBJS) $(REFCOUNT_OBJS) \
 	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
 	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
-	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time
+	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
+	      test_uuid test_hashtable test_refcount

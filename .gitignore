@@ -28,6 +28,9 @@ tests/host_libc/test_idr
 tests/host_libc/test_notifier
 tests/host_libc/test_ratelimit
 tests/host_libc/test_time
+tests/host_libc/test_uuid
+tests/host_libc/test_hashtable
+tests/host_libc/test_refcount
 tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket
