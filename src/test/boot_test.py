@@ -3,20 +3,31 @@
 src/test/boot_test.py — QEMU boot test for x86-64 hobby OS.
 
 Launches QEMU with kernel.bin, captures serial output, and waits for
-a shell prompt or "init: starting" message to confirm the kernel boots
+a shell prompt or boot-complete message to confirm the kernel boots
 successfully to userspace.
+
+Supports isa-debug-exit for clean PASS/FAIL exit codes.
 
 Usage:
     ./src/test/boot_test.py [--kernel path/to/kernel.bin] [--disk path/to/disk.img]
-                            [--timeout 30] [--qemu qemu-system-x86_64]
+                            [--timeout 30] [--qemu qemu-system-x86_64] [--mem 256M]
 
-Returns 0 on success, 1 on failure.
-Uses Python 3 standard library only.
+Environment variable overrides (take precedence over defaults, CLI args win):
+    KERNEL  - path to kernel.bin
+    DISK    - path to disk.img
+    TIMEOUT - boot timeout in seconds
+    QEMU    - QEMU binary path
+    MEM     - QEMU memory size (e.g., 256M, 512M)
+    QEMU_EXTRA_ARGS - additional QEMU arguments
+    DEBUG   - set to 1 for verbose output
+
+Returns 0 on success, 1 on failure, 124 on timeout.
 """
 
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -24,31 +35,46 @@ import time
 
 
 def main():
+    # Parse CLI args, with env var fallbacks
     parser = argparse.ArgumentParser(
         description="QEMU boot test for x86-64 hobby OS"
     )
     parser.add_argument(
         "--kernel",
-        default=os.path.join("build", "kernel.bin"),
+        default=os.environ.get("KERNEL", os.path.join("build", "kernel.bin")),
         help="Path to kernel.bin (default: build/kernel.bin)",
     )
     parser.add_argument(
         "--disk",
-        default=os.path.join("build", "disk.img"),
+        default=os.environ.get("DISK", os.path.join("build", "disk.img")),
         help="Path to disk.img (default: build/disk.img)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=30,
+        default=int(os.environ.get("TIMEOUT", "30")),
         help="Timeout in seconds (default: 30)",
     )
     parser.add_argument(
         "--qemu",
-        default="qemu-system-x86_64",
+        default=os.environ.get("QEMU", "qemu-system-x86_64"),
         help="QEMU binary (default: qemu-system-x86_64)",
     )
+    parser.add_argument(
+        "--mem",
+        default=os.environ.get("MEM", "256M"),
+        help="QEMU memory size (default: 256M)",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=os.environ.get("DEBUG", "0") == "1",
+        help="Verbose output",
+    )
     args = parser.parse_args()
+
+    debug = args.verbose
 
     # Verify prerequisites
     for path, label in [(args.kernel, "kernel"), (args.disk, "disk image")]:
@@ -62,7 +88,7 @@ def main():
         print(f"ERROR: {args.qemu} not found or not executable")
         return 1
 
-    # Patterns to look for — boot success indicators
+    # Boot success indicators — checked in order
     success_patterns = [
         r"init: starting",
         r"shell\s*#",
@@ -87,29 +113,43 @@ def main():
         r"^=== SYSTEM HALTED ===",
     ]
 
-    print(f"[boot_test] Launching QEMU (timeout={args.timeout}s)...")
+    print(f"[boot_test] Launching QEMU (timeout={args.timeout}s, mem={args.mem})...")
     print(f"[boot_test] Kernel: {args.kernel}")
     print(f"[boot_test] Disk:   {args.disk}")
+    if debug:
+        print(f"[boot_test] QEMU:   {args.qemu}")
 
     fd, serial_log = tempfile.mkstemp(prefix="boot_test_", suffix=".txt")
     os.close(fd)
 
+    # Build QEMU command
+    qemu_cmd = [
+        args.qemu,
+        "-kernel", args.kernel,
+        "-m", args.mem,
+        "-serial", f"file:{serial_log}",
+        "-vga", "none",
+        "-display", "none",
+        "-drive", f"file={args.disk},format=raw,if=ide",
+        "-netdev", "user,id=net0",
+        "-device", "e1000,netdev=net0",
+        "-no-reboot",
+        "-no-shutdown",
+        "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
+        "-append", "console=serial quiet",
+    ]
+
+    # Append extra QEMU args from environment
+    extra = os.environ.get("QEMU_EXTRA_ARGS", "")
+    if extra:
+        qemu_cmd.extend(extra.split())
+
     try:
-        # Start QEMU with serial output to a file for pattern matching
+        if debug:
+            print(f"[boot_test] QEMU command: {' '.join(qemu_cmd)}")
+
         proc = subprocess.Popen(
-            [
-                args.qemu,
-                "-kernel", args.kernel,
-                "-m", "256M",
-                "-serial", f"file:{serial_log}",
-                "-vga", "none",
-                "-display", "none",
-                "-drive", f"file={args.disk},format=raw,if=ide",
-                "-netdev", "user,id=net0",
-                "-device", "e1000,netdev=net0",
-                "-no-reboot",
-                "-append", "console=serial quiet",
-            ],
+            qemu_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -120,11 +160,20 @@ def main():
         boot_failure = False
 
         while time.time() - start_time < args.timeout:
-            if proc.poll() is not None:
-                # QEMU exited early — check what we have
-                break
+            ret = proc.poll()
+            if ret is not None:
+                # QEMU exited — could be isa-debug-exit or crash
+                if ret == 33:  # isa-debug-exit: PASS
+                    print(f"[boot_test] PASS: Kernel booted successfully (isa-debug-exit code 33)")
+                    return 0
+                elif ret == 16:  # isa-debug-exit: FAIL
+                    print(f"[boot_test] FAIL: Test failure (isa-debug-exit code 16)")
+                    boot_failure = True
+                    break
+                elif debug:
+                    print(f"[boot_test] QEMU exited with code {ret}")
 
-            time.sleep(0.5)
+            time.sleep(0.25)
 
             try:
                 with open(serial_log, "r", errors="replace") as f:
@@ -162,34 +211,48 @@ def main():
             output = ""
 
         # Terminate QEMU
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        _terminate_qemu(proc)
 
         if boot_success:
             print(f"[boot_test] Boot completed in {elapsed:.1f}s")
             return 0
         elif boot_failure:
             print(f"[boot_test] Boot FAILED after {elapsed:.1f}s")
-            print("--- Last 30 lines of serial output ---")
-            lines = output.splitlines()
-            for line in lines[-30:]:
-                print(line)
+            _print_last_lines(output, 30)
             return 1
         else:
             print(f"[boot_test] TIMEOUT after {elapsed:.1f}s — expected boot pattern not found")
-            print("--- Last 30 lines of serial output ---")
-            lines = output.splitlines()
-            for line in lines[-30:]:
-                print(line)
-            return 1
+            _print_last_lines(output, 30)
+            return 124
 
     finally:
         if os.path.exists(serial_log):
             os.unlink(serial_log)
 
 
+def _terminate_qemu(proc):
+    """Gracefully terminate QEMU, escalating to kill if needed."""
+    try:
+        proc.terminate()
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=2)
+    except Exception:
+        proc.kill()
+
+
+def _print_last_lines(output, n):
+    """Print the last n lines of QEMU serial output."""
+    print(f"--- Last {n} lines of serial output ---")
+    lines = output.splitlines()
+    for line in lines[-n:]:
+        print(line)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n[boot_test] Interrupted")
+        sys.exit(130)

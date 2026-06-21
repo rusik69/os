@@ -57,6 +57,11 @@ jobs:
             -j$(nproc)
       - name: Check binary
         run: ls -lh build/kernel.bin
+      - name: Summary
+        run: |
+          echo "## PR Build" >> $GITHUB_STEP_SUMMARY
+          echo "- kernel.bin: $(ls -lh build/kernel.bin | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- disk.img: $(ls -lh build/disk.img | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
 
   # ── Build with -Werror (requires approval) ───────────────────────────
   build-strict:
@@ -86,6 +91,10 @@ jobs:
                     -Isrc/include -Isrc/gui -Isrc/doom -mcmodel=large -g \
                     -Wa,--noexecstack -O2 -MMD -MP" \
             -j$(nproc)
+      - name: Summary
+        run: |
+          echo "## PR Build (strict -Werror)" >> $GITHUB_STEP_SUMMARY
+          echo "- Clean build with -Wall -Wextra -Werror" >> $GITHUB_STEP_SUMMARY
 
   # ── Static analysis (requires approval) ─────────────────────────────
   static-analysis:
@@ -129,6 +138,10 @@ jobs:
             --inline-suppr \
             --error-exitcode=1 \
             src/ 2>&1
+      - name: Summary
+        run: |
+          echo "## Static Analysis (cppcheck)" >> $GITHUB_STEP_SUMMARY
+          echo "- No cppcheck warnings found" >> $GITHUB_STEP_SUMMARY
 
   # ── Code formatting check (no approval needed) ───────────────────────
   format-check:
@@ -148,6 +161,10 @@ jobs:
           BASE_REF="origin/${{ github.base_ref }}"
           git fetch origin "${{ github.base_ref }}" --depth=1
           make format-check FORMAT_BASE_REF="$BASE_REF"
+      - name: Summary
+        run: |
+          echo "## Format Check" >> $GITHUB_STEP_SUMMARY
+          echo "- Code formatting verified against clang-format" >> $GITHUB_STEP_SUMMARY
 
   # ── In-kernel unit tests (requires approval) ─────────────────────────
   test:
@@ -185,6 +202,10 @@ jobs:
           ./tests/run_tests.sh build_test/kernel.bin build/disk.img
         env:
           TIMEOUT: "300"
+      - name: Summary
+        run: |
+          echo "## In-Kernel Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- All in-kernel unit tests passed" >> $GITHUB_STEP_SUMMARY
 
   # ── E2E tests (requires approval) ───────────────────────────────────
   e2e:
@@ -217,6 +238,10 @@ jobs:
           E2E_BOOT_TIMEOUT: "180"
           E2E_TIMEOUT: "45"
           E2E_EXTERNAL_DNS: "0"
+      - name: Summary
+        run: |
+          echo "## E2E Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- All end-to-end tests passed" >> $GITHUB_STEP_SUMMARY
 
   # ── Host-side libc unit tests (no approval needed) ───────────────────
   libc-test:
@@ -233,3 +258,7 @@ jobs:
         run: |
           cd tests/host_libc
           make 2>&1
+      - name: Summary
+        run: |
+          echo "## Host libc Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- All host-side libc tests passed" >> $GITHUB_STEP_SUMMARY

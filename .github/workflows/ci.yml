@@ -1,6 +1,7 @@
 # .github/workflows/ci.yml — CI workflow for Hermes OS
 #
-# Builds the kernel, userspace, runs unit tests, and QEMU boot test.
+# Builds the kernel, userspace, runs unit tests, boot test, and quality checks.
+# Uses ccache for 10-20x faster rebuilds on repeated commits.
 
 name: CI
 
@@ -10,10 +11,19 @@ on:
   pull_request:
     branches: [ main, master ]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CCACHE_DIR: /tmp/ccache
+  CCACHE_MAXSIZE: 500M
+
 jobs:
-  # ── Kernel build ─────────────────────────────────────────────────────
+  # ── Build kernel ────────────────────────────────────────────────────
   kernel:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -22,14 +32,25 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
-            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools
+            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
+            ccache
+
+      - name: ccache cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-kernel-${{ github.sha }}
+          restore-keys: |
+            ccache-kernel-
+            ccache-
 
       - name: Build kernel + disk image
         run: |
           make -j$(nproc) \
-            CC=x86_64-linux-gnu-gcc \
+            CC="ccache x86_64-linux-gnu-gcc" \
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy
+          echo "ccache stats:" && ccache -s
 
       - name: Upload kernel artifact
         uses: actions/upload-artifact@v4
@@ -38,10 +59,19 @@ jobs:
           path: |
             build/kernel.bin
             build/disk.img
+          retention-days: 7
 
-  # ── Userspace build ──────────────────────────────────────────────────
+      - name: Summary
+        run: |
+          echo "## Kernel Build" >> $GITHUB_STEP_SUMMARY
+          echo "- kernel.bin: $(ls -lh build/kernel.bin | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- disk.img: $(ls -lh build/disk.img | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- ccache hit rate: $(ccache -s | grep 'cache hit rate' | awk '{print $4}')" >> $GITHUB_STEP_SUMMARY
+
+  # ── Build userspace ─────────────────────────────────────────────────
   userspace:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -74,10 +104,17 @@ jobs:
         with:
           name: initramfs
           path: userspace/initramfs.cpio
+          retention-days: 7
 
-  # ── Host-side unit tests ────────────────────────────────────────────
+      - name: Summary
+        run: |
+          echo "## Userspace Build" >> $GITHUB_STEP_SUMMARY
+          echo "- initramfs.cpio: $(ls -lh userspace/initramfs.cpio | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+
+  # ── Host-side unit tests ───────────────────────────────────────────
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -88,11 +125,17 @@ jobs:
 
       - name: Run host-side unit tests
         run: |
-          make unit-test
+          make unit-test -j$(nproc)
 
-  # ── QEMU boot test ──────────────────────────────────────────────────
+      - name: Summary
+        run: |
+          echo "## Unit Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- All host-side unit tests completed" >> $GITHUB_STEP_SUMMARY
+
+  # ── QEMU boot test ─────────────────────────────────────────────────
   boot-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [kernel]
     steps:
       - uses: actions/checkout@v4
@@ -116,9 +159,15 @@ jobs:
             --disk build/disk.img \
             --timeout 30
 
+      - name: Summary
+        run: |
+          echo "## Boot Test" >> $GITHUB_STEP_SUMMARY
+          echo "- Kernel boots successfully in QEMU" >> $GITHUB_STEP_SUMMARY
+
   # ── Full build check (kernel + userspace) ──────────────────────────
   full-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -127,12 +176,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             build-essential nasm qemu-system-x86 \
-            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools
+            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
+            ccache
+
+      - name: ccache cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-full-${{ github.sha }}
+          restore-keys: |
+            ccache-full-
+            ccache-
 
       - name: Build kernel
         run: |
           make -j$(nproc) \
-            CC=x86_64-linux-gnu-gcc \
+            CC="ccache x86_64-linux-gnu-gcc" \
             LD=x86_64-linux-gnu-ld \
             OBJCOPY=x86_64-linux-gnu-objcopy
 
@@ -146,3 +205,103 @@ jobs:
         run: |
           ls -lh build/kernel.bin
           ls -lh userspace/initramfs.cpio
+
+      - name: ccache stats
+        run: ccache -s
+
+      - name: Summary
+        run: |
+          echo "## Full Build" >> $GITHUB_STEP_SUMMARY
+          echo "- kernel.bin: $(ls -lh build/kernel.bin | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- disk.img: $(ls -lh build/disk.img | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- initramfs.cpio: $(ls -lh userspace/initramfs.cpio | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+
+  # ── Code formatting check ──────────────────────────────────────────
+  format-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-format-18
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
+
+      - name: Check formatting
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          git fetch origin "${{ github.base_ref || 'main' }}" --depth=1 2>/dev/null || true
+          make format-check FORMAT_BASE_REF="$BASE_REF"
+
+      - name: Summary
+        run: echo "## Format Check" >> $GITHUB_STEP_SUMMARY
+
+  # ── Static analysis (cppcheck) ─────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cppcheck
+
+      - name: Run cppcheck
+        run: |
+          make cppcheck-check
+
+      - name: Summary
+        run: |
+          echo "## Lint (cppcheck)" >> $GITHUB_STEP_SUMMARY
+          echo "- No cppcheck warnings found" >> $GITHUB_STEP_SUMMARY
+
+  # ── E2E smoke test ─────────────────────────────────────────────────
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [kernel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel
+          path: build/
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential nasm qemu-system-x86 \
+            gcc-x86-64-linux-gnu xorriso grub-pc-bin mtools \
+            python3 telnet
+
+      - name: Build/repair disk image
+        run: |
+          # Quick rebuild to ensure initramfs references are satisfied
+          make -j$(nproc) \
+            CC="x86_64-linux-gnu-gcc" \
+            LD=x86_64-linux-gnu-ld \
+            OBJCOPY=x86_64-linux-gnu-objcopy \
+            build/disk.img
+
+      - name: Run e2e smoke test
+        run: |
+          E2E_SMOKE=1 ./tests/e2e.sh build/kernel.bin build/disk.img
+        env:
+          E2E_BOOT_TIMEOUT: "60"
+          E2E_TIMEOUT: "15"
+          E2E_EXTERNAL_DNS: "0"
+
+      - name: Summary
+        run: |
+          echo "## E2E Smoke Test" >> $GITHUB_STEP_SUMMARY
+          echo "- E2E tests passed" >> $GITHUB_STEP_SUMMARY
