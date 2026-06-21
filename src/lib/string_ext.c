@@ -91,6 +91,7 @@ char *strndup(const char *s, size_t n) {
  * Returns the total length the string would have (like BSD strlcat).
  * If the return value >= size, truncation occurred.
  */
+#ifndef TEST_MODE_HOST
 size_t strlcat(char *dst, const char *src, size_t size) {
     size_t dlen = 0;
     while (dlen < size && dst[dlen]) dlen++;
@@ -117,6 +118,7 @@ size_t strlcpy(char *dst, const char *src, size_t size) {
     dst[to_copy] = '\0';
     return slen;
 }
+#endif /* not TEST_MODE_HOST */
 
 /*
  * strcasecmp — case-insensitive compare.

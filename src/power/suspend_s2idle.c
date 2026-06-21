@@ -18,7 +18,6 @@
 #include "timer.h"
 #include "smp.h"
 #include "wakeup.h"
-#include "irq.h"
 #include "ioapic.h"
 #include "acpi.h"
 
