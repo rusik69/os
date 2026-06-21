@@ -71,3 +71,47 @@ int mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask, int preferre
 
     return 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Stub functions for incomplete memory policy operations
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Stub: mempolicy_set ──────────────────────────────────────────────── */
+int mempolicy_set(int mode, uint64_t nodemask, int preferred_node)
+{
+    (void)mode;
+    (void)nodemask;
+    (void)preferred_node;
+    kprintf("[mem_policy] mempolicy_set not yet fully implemented\n");
+    return set_mempolicy(mode, nodemask, preferred_node);
+}
+
+/* ── Stub: mempolicy_get ──────────────────────────────────────────────── */
+int mempolicy_get(int *mode, uint64_t *nodemask, int *preferred_node)
+{
+    (void)mode;
+    (void)nodemask;
+    (void)preferred_node;
+    kprintf("[mem_policy] mempolicy_get not yet fully implemented\n");
+    return get_mempolicy(mode, nodemask, preferred_node);
+}
+
+/* ── Stub: mempolicy_mbind ────────────────────────────────────────────── */
+int mempolicy_mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask)
+{
+    (void)addr;
+    (void)len;
+    (void)mode;
+    (void)nodemask;
+    kprintf("[mem_policy] mempolicy_mbind not yet fully implemented\n");
+    return mbind(addr, len, mode, nodemask, -1);
+}
+
+/* ── Stub: mempolicy_migrate_pages ────────────────────────────────────── */
+int mempolicy_migrate_pages(int pid, uint64_t new_nodemask)
+{
+    (void)pid;
+    (void)new_nodemask;
+    kprintf("[mem_policy] mempolicy_migrate_pages not yet implemented\n");
+    return -ENOSYS;
+}

@@ -462,3 +462,36 @@ void devfreq_monitor_stop(void)
 {
     devfreq_stop();
 }
+
+/* ── Stub: devfreq_interval_update ─────────────────────────────── */
+int devfreq_interval_update(const char *name, unsigned int interval_ms)
+{
+    (void)name;
+    (void)interval_ms;
+    kprintf("[devfreq] devfreq_interval_update: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: devfreq_monitor_suspend ─────────────────────────────── */
+int devfreq_monitor_suspend(const char *name)
+{
+    (void)name;
+    kprintf("[devfreq] devfreq_monitor_suspend: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: devfreq_register_opp_notifier ─────────────────────────────── */
+int devfreq_register_opp_notifier(const char *name)
+{
+    (void)name;
+    kprintf("[devfreq] devfreq_register_opp_notifier: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: devfreq_unregister_opp_notifier ─────────────────────────────── */
+int devfreq_unregister_opp_notifier(const char *name)
+{
+    (void)name;
+    kprintf("[devfreq] devfreq_unregister_opp_notifier: not yet implemented\n");
+    return -ENOSYS;
+}

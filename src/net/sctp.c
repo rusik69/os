@@ -333,6 +333,111 @@ EXPORT_SYMBOL(sctp_connect);
 EXPORT_SYMBOL(sctp_send);
 EXPORT_SYMBOL(sctp_recv);
 EXPORT_SYMBOL(sctp_close);
+/* ── Stub: sctp_recvmsg ─────────────────────────────────────────── */
+int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16_t *ppid, int flags)
+{
+    (void)buf;
+    (void)maxlen;
+    (void)stream_id;
+    (void)ppid;
+    (void)flags;
+    kprintf("[sctp] sctp_recvmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_sendmsg ─────────────────────────────────────────── */
+int sctp_sendmsg(int fd, const void *data, uint16_t len, uint32_t to_ip, uint16_t to_port, uint16_t stream_id, uint32_t ppid, int flags)
+{
+    (void)data;
+    (void)len;
+    (void)to_ip;
+    (void)to_port;
+    (void)stream_id;
+    (void)ppid;
+    (void)flags;
+    kprintf("[sctp] sctp_sendmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_sendpage ────────────────────────────────────────── */
+int sctp_sendpage(int fd, const void *page, uint16_t offset, uint16_t len, uint16_t stream_id, int flags)
+{
+    (void)page;
+    (void)offset;
+    (void)len;
+    (void)stream_id;
+    (void)flags;
+    kprintf("[sctp] sctp_sendpage: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_ioctl ───────────────────────────────────────────── */
+int sctp_ioctl(int fd, unsigned long request, void *arg)
+{
+    (void)request;
+    (void)arg;
+    kprintf("[sctp] sctp_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_setsockopt ──────────────────────────────────────── */
+int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[sctp] sctp_setsockopt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_getsockopt ──────────────────────────────────────── */
+int sctp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[sctp] sctp_getsockopt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_shutdown ────────────────────────────────────────── */
+int sctp_shutdown(int fd, int how)
+{
+    (void)how;
+    kprintf("[sctp] sctp_shutdown: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_bindx ───────────────────────────────────────────── */
+int sctp_bindx(int fd, uint32_t *addrs, uint16_t port, int addrcnt, int flags)
+{
+    (void)addrs;
+    (void)port;
+    (void)addrcnt;
+    (void)flags;
+    kprintf("[sctp] sctp_bindx: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sctp_peeloff ─────────────────────────────────────────── */
+int sctp_peeloff(int fd, uint32_t assoc_id)
+{
+    (void)assoc_id;
+    kprintf("[sctp] sctp_peeloff: not yet implemented\n");
+    return -ENOSYS;
+}
+
+EXPORT_SYMBOL(sctp_recvmsg);
+EXPORT_SYMBOL(sctp_sendmsg);
+EXPORT_SYMBOL(sctp_sendpage);
+EXPORT_SYMBOL(sctp_ioctl);
+EXPORT_SYMBOL(sctp_setsockopt);
+EXPORT_SYMBOL(sctp_getsockopt);
+EXPORT_SYMBOL(sctp_shutdown);
+EXPORT_SYMBOL(sctp_bindx);
+EXPORT_SYMBOL(sctp_peeloff);
 EXPORT_SYMBOL(handle_sctp);
 #include "module.h"
 module_init(sctp_init);

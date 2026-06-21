@@ -227,3 +227,59 @@ void seccomp_bpf_release(void)
     current->seccomp_filter = NULL;
     current->seccomp_mode   = SECCOMP_MODE_DISABLED;
 }
+
+/* Forward declaration for stub functions */
+struct bpf_prog;
+
+/* ── Stub: seccomp_bpf_attach ─────────────────────────────── */
+int seccomp_bpf_attach(struct process *proc, struct bpf_prog *prog)
+{
+    (void)proc;
+    (void)prog;
+    kprintf("[seccomp_bpf] seccomp_bpf_attach: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: seccomp_bpf_detach ─────────────────────────────── */
+int seccomp_bpf_detach(struct process *proc, struct bpf_prog *prog)
+{
+    (void)proc;
+    (void)prog;
+    kprintf("[seccomp_bpf] seccomp_bpf_detach: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: seccomp_bpf_prog_install ─────────────────────────────── */
+int seccomp_bpf_prog_install(struct process *proc, struct bpf_prog *prog)
+{
+    (void)proc;
+    (void)prog;
+    kprintf("[seccomp_bpf] seccomp_bpf_prog_install: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: seccomp_bpf_prog_load ─────────────────────────────── */
+int seccomp_bpf_prog_load(const struct sock_fprog *fprog, struct bpf_prog **prog)
+{
+    (void)fprog;
+    (void)prog;
+    kprintf("[seccomp_bpf] seccomp_bpf_prog_load: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: seccomp_bpf_set_mode ─────────────────────────────── */
+int seccomp_bpf_set_mode(struct process *proc, int mode)
+{
+    (void)proc;
+    (void)mode;
+    kprintf("[seccomp_bpf] seccomp_bpf_set_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: seccomp_bpf_get_action_avail ─────────────────────────────── */
+int seccomp_bpf_get_action_avail(uint32_t action)
+{
+    (void)action;
+    kprintf("[seccomp_bpf] seccomp_bpf_get_action_avail: not yet implemented\n");
+    return -ENOSYS;
+}

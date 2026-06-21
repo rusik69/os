@@ -1037,3 +1037,39 @@ int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
         return (int64_t)-ENOSYS;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Stub functions for incomplete userfaultfd operations
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Stub: userfaultfd_poison ──────────────────────────────────────────── */
+int userfaultfd_poison(int fd, uint64_t addr, uint64_t len, uint64_t mode)
+{
+    (void)fd;
+    (void)addr;
+    (void)len;
+    (void)mode;
+    kprintf("[uffd] userfaultfd_poison not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: userfaultfd_remap ───────────────────────────────────────────── */
+int userfaultfd_remap(int fd, uint64_t addr, uint64_t len, uint64_t new_addr)
+{
+    (void)fd;
+    (void)addr;
+    (void)len;
+    (void)new_addr;
+    kprintf("[uffd] userfaultfd_remap not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: userfaultfd_unmap ───────────────────────────────────────────── */
+int userfaultfd_unmap(int fd, uint64_t addr, uint64_t len)
+{
+    (void)fd;
+    (void)addr;
+    (void)len;
+    kprintf("[uffd] userfaultfd_unmap not yet implemented\n");
+    return -ENOSYS;
+}

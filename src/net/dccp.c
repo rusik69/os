@@ -265,6 +265,90 @@ EXPORT_SYMBOL(dccp_connect);
 EXPORT_SYMBOL(dccp_send);
 EXPORT_SYMBOL(dccp_recv);
 EXPORT_SYMBOL(dccp_close);
+/* ── Stub: dccp_recvmsg ─────────────────────────────────────────── */
+int dccp_recvmsg(int fd, void *buf, uint16_t maxlen, int flags)
+{
+    (void)buf;
+    (void)maxlen;
+    (void)flags;
+    kprintf("[dccp] dccp_recvmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_sendmsg ─────────────────────────────────────────── */
+int dccp_sendmsg(int fd, const void *data, uint16_t len, int flags)
+{
+    (void)data;
+    (void)len;
+    (void)flags;
+    kprintf("[dccp] dccp_sendmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_ioctl ───────────────────────────────────────────── */
+int dccp_ioctl(int fd, unsigned long request, void *arg)
+{
+    (void)request;
+    (void)arg;
+    kprintf("[dccp] dccp_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_setsockopt ──────────────────────────────────────── */
+int dccp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[dccp] dccp_setsockopt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_getsockopt ──────────────────────────────────────── */
+int dccp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[dccp] dccp_getsockopt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_shutdown ────────────────────────────────────────── */
+int dccp_shutdown(int fd, int how)
+{
+    (void)how;
+    kprintf("[dccp] dccp_shutdown: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_listen ──────────────────────────────────────────── */
+int dccp_listen(int fd, int backlog)
+{
+    (void)backlog;
+    kprintf("[dccp] dccp_listen: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: dccp_accept ──────────────────────────────────────────── */
+int dccp_accept(int fd, uint32_t *peer_ip, uint16_t *peer_port)
+{
+    (void)peer_ip;
+    (void)peer_port;
+    kprintf("[dccp] dccp_accept: not yet implemented\n");
+    return -ENOSYS;
+}
+
+EXPORT_SYMBOL(dccp_recvmsg);
+EXPORT_SYMBOL(dccp_sendmsg);
+EXPORT_SYMBOL(dccp_ioctl);
+EXPORT_SYMBOL(dccp_setsockopt);
+EXPORT_SYMBOL(dccp_getsockopt);
+EXPORT_SYMBOL(dccp_shutdown);
+EXPORT_SYMBOL(dccp_listen);
+EXPORT_SYMBOL(dccp_accept);
 EXPORT_SYMBOL(handle_dccp);
 #include "module.h"
 module_init(dccp_init);

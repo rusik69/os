@@ -268,3 +268,80 @@ int landlock_check_path(const struct process *proc, const char *path,
     /* All rulesets granted access or no rulesets at all */
     return 0;
 }
+
+/* ── Stub: landlock_enforce ─────────────────────────────── */
+int landlock_enforce(const char *path, uint64_t access_mask)
+{
+    (void)path;
+    (void)access_mask;
+    kprintf("[landlock] landlock_enforce: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: landlock_handle_ptrace ─────────────────────────────── */
+int landlock_handle_ptrace(struct process *tracer, struct process *tracee)
+{
+    (void)tracer;
+    (void)tracee;
+    kprintf("[landlock] landlock_handle_ptrace: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_signal ─────────────────────────────── */
+int landlock_handle_signal(struct process *target, int sig)
+{
+    (void)target;
+    (void)sig;
+    kprintf("[landlock] landlock_handle_signal: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_setprocattr ─────────────────────────────── */
+int landlock_handle_setprocattr(struct process *p, const char *attr, const char *value)
+{
+    (void)p;
+    (void)attr;
+    (void)value;
+    kprintf("[landlock] landlock_handle_setprocattr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_getprocattr ─────────────────────────────── */
+int landlock_handle_getprocattr(struct process *p, const char *attr, char *buf, size_t size)
+{
+    (void)p;
+    (void)attr;
+    (void)buf;
+    (void)size;
+    kprintf("[landlock] landlock_handle_getprocattr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_unix_stream ─────────────────────────────── */
+int landlock_handle_unix_stream(struct process *src, struct process *dst)
+{
+    (void)src;
+    (void)dst;
+    kprintf("[landlock] landlock_handle_unix_stream: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_unix_dgram ─────────────────────────────── */
+int landlock_handle_unix_dgram(struct process *src, struct process *dst)
+{
+    (void)src;
+    (void)dst;
+    kprintf("[landlock] landlock_handle_unix_dgram: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: landlock_handle_socket_create ─────────────────────────────── */
+int landlock_handle_socket_create(struct process *p, int family, int type, int protocol)
+{
+    (void)p;
+    (void)family;
+    (void)type;
+    (void)protocol;
+    kprintf("[landlock] landlock_handle_socket_create: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -294,5 +294,69 @@ int vdpa_init(void)
 
     return 0;
 }
+
+/* Forward declarations for stub functions */
+struct vdpa_vq_state;
+
+/* ── Stub: vdpa_set_status ─────────────────────────────── */
+int vdpa_set_status(struct vdpa_device *dev, uint8_t status)
+{
+    (void)dev;
+    (void)status;
+    kprintf("[vdpa] vdpa_set_status: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vdpa_set_features ─────────────────────────────── */
+int vdpa_set_features(struct vdpa_device *dev, uint64_t features)
+{
+    (void)dev;
+    (void)features;
+    kprintf("[vdpa] vdpa_set_features: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vdpa_set_config ─────────────────────────────── */
+int vdpa_set_config(struct vdpa_device *dev, uint32_t offset, const void *buf, uint32_t len)
+{
+    (void)dev;
+    (void)offset;
+    (void)buf;
+    (void)len;
+    kprintf("[vdpa] vdpa_set_config: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vdpa_get_config ─────────────────────────────── */
+int vdpa_get_config(struct vdpa_device *dev, uint32_t offset, void *buf, uint32_t len)
+{
+    (void)dev;
+    (void)offset;
+    (void)buf;
+    (void)len;
+    kprintf("[vdpa] vdpa_get_config: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vdpa_get_vq_state ─────────────────────────────── */
+int vdpa_get_vq_state(struct vdpa_device *dev, uint16_t vq_idx, struct vdpa_vq_state *state)
+{
+    (void)dev;
+    (void)vq_idx;
+    (void)state;
+    kprintf("[vdpa] vdpa_get_vq_state: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vdpa_set_vq_state ─────────────────────────────── */
+int vdpa_set_vq_state(struct vdpa_device *dev, uint16_t vq_idx, const struct vdpa_vq_state *state)
+{
+    (void)dev;
+    (void)vq_idx;
+    (void)state;
+    kprintf("[vdpa] vdpa_set_vq_state: not yet implemented\n");
+    return -ENOSYS;
+}
+
 #include "module.h"
 module_init(vdpa_init);

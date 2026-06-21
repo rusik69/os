@@ -1025,3 +1025,37 @@ void cgroup_init(void)
     g_cgroup_initialized = 1;
 }
 EXPORT_SYMBOL(cgroup_init);
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Stub functions for incomplete cgroup operations
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Stub: cgroup_fork ─────────────────────────────────────────────────── */
+int cgroup_fork(struct process *task)
+{
+    (void)task;
+    kprintf("[cgroup] cgroup_fork not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cgroup_post_fork ────────────────────────────────────────────── */
+void cgroup_post_fork(struct process *task)
+{
+    (void)task;
+    kprintf("[cgroup] cgroup_post_fork not yet implemented\n");
+}
+
+/* ── Stub: cgroup_exit ─────────────────────────────────────────────────── */
+void cgroup_exit(struct process *task)
+{
+    (void)task;
+    kprintf("[cgroup] cgroup_exit not yet implemented\n");
+}
+
+/* ── Stub: cgroup_can_fork ─────────────────────────────────────────────── */
+int cgroup_can_fork(struct process *task)
+{
+    (void)task;
+    kprintf("[cgroup] cgroup_can_fork not yet implemented\n");
+    return -ENOSYS;
+}

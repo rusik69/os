@@ -25,6 +25,8 @@
 #include "cpuidle.h"       /* MWAIT C-state support */
 #include "timer.h"          /* timer_get_ticks */
 #include "lockdown.h"
+#include "blockdev.h"
+extern int blockdev_get_count(void);
 
 /* ── MSR definitions for S0ix ──────────────────────────────────────── */
 #define MSR_PKG_CST_CONFIG_CONTROL  0x000000E2
@@ -366,8 +368,8 @@ int suspend_hibernate(void)
             continue;
 
         /* Read the first sector to check for swap signature */
-        uint8_t sector[512];
-        int ret = blk_submit_sync(i, 0, 1, sector, BLK_REQ_READ);
+        uint8_t sector[4096];
+        int ret = blk_submit_sync(i, 0, 8, sector, BLK_REQ_READ);
         if (ret != 0)
             continue;
 
@@ -498,4 +500,58 @@ int suspend_hibernate(void)
     }
 
     return 0;
+}
+
+/* Forward declarations and includes for stub functions */
+#include "blockdev.h"
+typedef int suspend_state_t;
+struct suspend_stats;
+extern int blockdev_get_count(void);
+
+/* ── Stub: suspend_prepare ─────────────────────────────── */
+int suspend_prepare(void)
+{
+    kprintf("[suspend] suspend_prepare: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: suspend_enter ─────────────────────────────── */
+int suspend_enter(suspend_state_t state)
+{
+    (void)state;
+    kprintf("[suspend] suspend_enter: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: suspend_wakeup ─────────────────────────────── */
+void suspend_wakeup(void)
+{
+    kprintf("[suspend] suspend_wakeup: not yet implemented\n");
+}
+
+/* ── Stub: suspend_stats ─────────────────────────────── */
+void suspend_stats(struct suspend_stats *stats)
+{
+    (void)stats;
+    kprintf("[suspend] suspend_stats: not yet implemented\n");
+}
+
+/* ── Stub: suspend_wakeup_count ─────────────────────────────── */
+int suspend_wakeup_count(void)
+{
+    kprintf("[suspend] suspend_wakeup_count: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: suspend_wakeup_count_check ─────────────────────────────── */
+int suspend_wakeup_count_check(void)
+{
+    kprintf("[suspend] suspend_wakeup_count_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: suspend_wakeup_count_reset ─────────────────────────────── */
+void suspend_wakeup_count_reset(void)
+{
+    kprintf("[suspend] suspend_wakeup_count_reset: not yet implemented\n");
 }

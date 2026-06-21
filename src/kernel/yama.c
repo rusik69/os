@@ -106,5 +106,42 @@ void yama_sysctl_register(void) {
                     sysctl_read_ptrace_scope,
                     sysctl_write_ptrace_scope);
 }
+/* Forward declarations for stub functions */
+struct task_struct;
+
+/* ── Stub: yama_ptrace_access_check ─────────────────────────────── */
+int yama_ptrace_access_check(struct task_struct *child, unsigned int mode)
+{
+    (void)child;
+    (void)mode;
+    kprintf("[yama] yama_ptrace_access_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: yama_ptrace_traceme_allowed ─────────────────────────────── */
+int yama_ptrace_traceme_allowed(struct task_struct *parent)
+{
+    (void)parent;
+    kprintf("[yama] yama_ptrace_traceme_allowed: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: yama_task_prctl ─────────────────────────────── */
+int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3)
+{
+    (void)option;
+    (void)arg2;
+    (void)arg3;
+    kprintf("[yama] yama_task_prctl: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: yama_task_free ─────────────────────────────── */
+void yama_task_free(struct task_struct *task)
+{
+    (void)task;
+    kprintf("[yama] yama_task_free: not yet implemented\n");
+}
+
 #include "module.h"
 module_init(yama_init);

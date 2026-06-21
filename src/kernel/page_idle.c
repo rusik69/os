@@ -171,3 +171,20 @@ int page_idle_bitmap_write(uint64_t start_pfn, uint64_t nr_pfns, const uint8_t *
 
     return 0;
 }
+
+/* ── Stub: page_idle_clear_pte_refs_many ──────────────────────────────── */
+int page_idle_clear_pte_refs_many(uint64_t *pfns, int nr_pfns)
+{
+    (void)pfns;
+    (void)nr_pfns;
+    kprintf("[page_idle] page_idle_clear_pte_refs_many not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: page_idle_get_page ─────────────────────────────────────────── */
+uint64_t page_idle_get_page(int cpu)
+{
+    (void)cpu;
+    kprintf("[page_idle] page_idle_get_page not yet implemented\n");
+    return 0;
+}

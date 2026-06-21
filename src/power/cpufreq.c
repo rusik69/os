@@ -780,3 +780,66 @@ int cpufreq_fast_switch(uint32_t target_freq_khz)
     g_cpufreq.current_state = target_state;
     return 0;
 }
+
+/* Forward declarations for stub functions */
+struct cpufreq_driver;
+struct cpufreq_freqs;
+
+/* ── Stub: cpufreq_driver_init ─────────────────────────────── */
+int cpufreq_driver_init(void)
+{
+    kprintf("[cpufreq] cpufreq_driver_init: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpufreq_driver_exit ─────────────────────────────── */
+void cpufreq_driver_exit(void)
+{
+    kprintf("[cpufreq] cpufreq_driver_exit: not yet implemented\n");
+}
+
+/* ── Stub: cpufreq_register_driver ─────────────────────────────── */
+int cpufreq_register_driver(struct cpufreq_driver *driver)
+{
+    (void)driver;
+    kprintf("[cpufreq] cpufreq_register_driver: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpufreq_unregister_driver ─────────────────────────────── */
+int cpufreq_unregister_driver(struct cpufreq_driver *driver)
+{
+    (void)driver;
+    kprintf("[cpufreq] cpufreq_unregister_driver: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpufreq_update_policy ─────────────────────────────── */
+int cpufreq_update_policy(unsigned int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] cpufreq_update_policy: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpufreq_notify_transition ─────────────────────────────── */
+void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
+{
+    (void)freqs;
+    kprintf("[cpufreq] cpufreq_notify_transition: not yet implemented\n");
+}
+
+/* ── Stub: cpufreq_stats_create_table ─────────────────────────────── */
+int cpufreq_stats_create_table(unsigned int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] cpufreq_stats_create_table: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpufreq_stats_delete_table ─────────────────────────────── */
+void cpufreq_stats_delete_table(unsigned int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] cpufreq_stats_delete_table: not yet implemented\n");
+}

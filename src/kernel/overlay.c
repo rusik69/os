@@ -461,3 +461,31 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Overlay/union mount filesystem — merges multiple lower (read-only) directories with an upper (writable) layer via copy-up-on-write");
 MODULE_VERSION("1.0");
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Stub functions for incomplete overlay operations
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Stub: overlay_cleanup ─────────────────────────────────────────────── */
+void overlay_cleanup(void)
+{
+    kprintf("[overlay] overlay_cleanup not yet implemented\n");
+}
+
+/* ── Stub: overlay_add_lower_layer ─────────────────────────────────────── */
+int overlay_add_lower_layer(int mount_idx, const char *lower_dir)
+{
+    (void)mount_idx;
+    (void)lower_dir;
+    kprintf("[overlay] overlay_add_lower_layer not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: overlay_remove_lower_layer ──────────────────────────────────── */
+int overlay_remove_lower_layer(int mount_idx, const char *lower_dir)
+{
+    (void)mount_idx;
+    (void)lower_dir;
+    kprintf("[overlay] overlay_remove_lower_layer not yet implemented\n");
+    return -ENOSYS;
+}

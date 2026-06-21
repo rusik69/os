@@ -440,5 +440,85 @@ void ima_init(void)
         "[OK] IMA initialized (mode=%d, PCR=%d, log=%d slots)\n",
         ima_mode, IMA_PCR_INDEX, IMA_LOG_MAX);
 }
+/* Forward declarations for stub functions */
+struct linux_binprm;
+struct file;
+struct inode;
+typedef int kernel_read_file_id_t;
+
+/* ── Stub: ima_bprm_check ─────────────────────────────── */
+int ima_bprm_check(struct linux_binprm *bprm)
+{
+    (void)bprm;
+    kprintf("[ima] ima_bprm_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_file_check ─────────────────────────────── */
+int ima_file_check(struct file *file, int mask)
+{
+    (void)file;
+    (void)mask;
+    kprintf("[ima] ima_file_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_file_mmap ─────────────────────────────── */
+int ima_file_mmap(struct file *file, unsigned long prot)
+{
+    (void)file;
+    (void)prot;
+    kprintf("[ima] ima_file_mmap: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_read_file ─────────────────────────────── */
+int ima_read_file(struct file *file, kernel_read_file_id_t id)
+{
+    (void)file;
+    (void)id;
+    kprintf("[ima] ima_read_file: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_post_read_file ─────────────────────────────── */
+int ima_post_read_file(struct file *file, void *buf, size_t size, kernel_read_file_id_t id)
+{
+    (void)file;
+    (void)buf;
+    (void)size;
+    (void)id;
+    kprintf("[ima] ima_post_read_file: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_kexec_cmdline ─────────────────────────────── */
+int ima_kexec_cmdline(const char *cmdline)
+{
+    (void)cmdline;
+    kprintf("[ima] ima_kexec_cmdline: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_measure_critical_data ─────────────────────────────── */
+int ima_measure_critical_data(const char *name, const void *data, size_t len)
+{
+    (void)name;
+    (void)data;
+    (void)len;
+    kprintf("[ima] ima_measure_critical_data: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ima_get_action ─────────────────────────────── */
+int ima_get_action(struct inode *inode, int mask, int func)
+{
+    (void)inode;
+    (void)mask;
+    (void)func;
+    kprintf("[ima] ima_get_action: not yet implemented\n");
+    return -ENOSYS;
+}
+
 #include "module.h"
 module_init(ima_init);

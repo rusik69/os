@@ -251,3 +251,30 @@ void kcsan_debugfs_read(char *buf, int *len)
                     (unsigned long long)races,
                     (unsigned long long)tracked);
 }
+
+/* ── Stub: kcsan_check_read ───────────────────────────────────────────── */
+void kcsan_check_read(uint64_t addr, uint64_t size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[KCSAN] kcsan_check_read not yet fully implemented\n");
+    kcsan_check_access(addr, size, KCSAN_ACCESS_READ);
+}
+
+/* ── Stub: kcsan_check_write ──────────────────────────────────────────── */
+void kcsan_check_write(uint64_t addr, uint64_t size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[KCSAN] kcsan_check_write not yet fully implemented\n");
+    kcsan_check_access(addr, size, KCSAN_ACCESS_WRITE);
+}
+
+/* ── Stub: kcsan_atomic_check ─────────────────────────────────────────── */
+void kcsan_atomic_check(uint64_t addr, uint64_t size, int is_write)
+{
+    (void)addr;
+    (void)size;
+    (void)is_write;
+    kprintf("[KCSAN] kcsan_atomic_check not yet implemented\n");
+}

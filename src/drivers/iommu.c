@@ -553,5 +553,80 @@ int iommu_is_enabled(void)
 {
     return g_iommu_initialized && (g_num_iommu_units > 0);
 }
+
+/* Forward declarations for stub functions */
+struct device;
+
+/* ── Stub: iommu_enable ─────────────────────────────── */
+int iommu_enable(void)
+{
+    kprintf("[iommu] iommu_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: iommu_disable ─────────────────────────────── */
+void iommu_disable(void)
+{
+    kprintf("[iommu] iommu_disable: not yet implemented\n");
+}
+
+/* ── Stub: iommu_attach_device ─────────────────────────────── */
+int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
+{
+    (void)domain;
+    (void)dev;
+    kprintf("[iommu] iommu_attach_device: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: iommu_detach_device ─────────────────────────────── */
+void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
+{
+    (void)domain;
+    (void)dev;
+    kprintf("[iommu] iommu_detach_device: not yet implemented\n");
+}
+
+/* ── Stub: iommu_set_fault_handler ─────────────────────────────── */
+int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *data)
+{
+    (void)domain;
+    (void)handler;
+    (void)data;
+    kprintf("[iommu] iommu_set_fault_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: iommu_get_domain_for_dev ─────────────────────────────── */
+struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
+{
+    (void)dev;
+    kprintf("[iommu] iommu_get_domain_for_dev: not yet implemented\n");
+    return NULL;
+}
+
+/* ── Stub: iommu_iova_to_phys ─────────────────────────────── */
+uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
+{
+    (void)domain;
+    (void)iova;
+    kprintf("[iommu] iommu_iova_to_phys: not yet implemented\n");
+    return (uint64_t)-ENOSYS;
+}
+
+/* ── Stub: iommu_resume ─────────────────────────────── */
+int iommu_resume(void)
+{
+    kprintf("[iommu] iommu_resume: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: iommu_suspend ─────────────────────────────── */
+int iommu_suspend(void)
+{
+    kprintf("[iommu] iommu_suspend: not yet implemented\n");
+    return -ENOSYS;
+}
+
 #include "module.h"
 module_init(iommu_init);

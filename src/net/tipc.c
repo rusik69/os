@@ -166,3 +166,84 @@ void tipc_init(void)
     g_tipc_initialized = 1;
     kprintf("[OK] TIPC protocol initialized\n");
 }
+
+/* ── Stub: tipc_send_msg ────────────────────────────────────────── */
+int tipc_send_msg(int sock, const void *buf, uint32_t len, struct tipc_addr *dest)
+{
+    (void)buf;
+    (void)len;
+    (void)dest;
+    kprintf("[tipc] tipc_send_msg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_recv_msg ────────────────────────────────────────── */
+int tipc_recv_msg(int sock, void *buf, uint32_t len, struct tipc_addr *src)
+{
+    (void)buf;
+    (void)len;
+    (void)src;
+    kprintf("[tipc] tipc_recv_msg: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_connect ─────────────────────────────────────────── */
+int tipc_connect(int sock, struct tipc_addr *addr)
+{
+    (void)addr;
+    kprintf("[tipc] tipc_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_disconnect ──────────────────────────────────────── */
+int tipc_disconnect(int sock)
+{
+    kprintf("[tipc] tipc_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_shutdown ────────────────────────────────────────── */
+int tipc_shutdown(int sock, int how)
+{
+    (void)how;
+    kprintf("[tipc] tipc_shutdown: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_listen ──────────────────────────────────────────── */
+int tipc_listen(int sock, int backlog)
+{
+    (void)backlog;
+    kprintf("[tipc] tipc_listen: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_accept ──────────────────────────────────────────── */
+int tipc_accept(int sock, struct tipc_addr *addr)
+{
+    (void)addr;
+    kprintf("[tipc] tipc_accept: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_setsockopt ──────────────────────────────────────── */
+int tipc_setsockopt(int sock, int level, int optname, const void *optval, uint32_t optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[tipc] tipc_setsockopt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: tipc_getsockopt ──────────────────────────────────────── */
+int tipc_getsockopt(int sock, int level, int optname, void *optval, uint32_t *optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[tipc] tipc_getsockopt: not yet implemented\n");
+    return -ENOSYS;
+}

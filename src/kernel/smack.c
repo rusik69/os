@@ -536,5 +536,64 @@ void smack_sysfs_init(void)
 
     kprintf("[SMACK] /sys/fs/smackfs/load created\n");
 }
+/* ── Stub: smack_task_ptrace ─────────────────────────────── */
+int smack_task_ptrace(struct process *tracer, struct process *tracee)
+{
+    (void)tracer;
+    (void)tracee;
+    kprintf("[smack] smack_task_ptrace: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: smack_setprocattr ─────────────────────────────── */
+int smack_setprocattr(const char *attr, const char *value, size_t size)
+{
+    (void)attr;
+    (void)value;
+    (void)size;
+    kprintf("[smack] smack_setprocattr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: smack_getprocattr ─────────────────────────────── */
+int smack_getprocattr(const char *attr, char *buf, size_t size)
+{
+    (void)attr;
+    (void)buf;
+    (void)size;
+    kprintf("[smack] smack_getprocattr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: smack_netlabel ─────────────────────────────── */
+int smack_netlabel(const char *label, const char *addr, int family)
+{
+    (void)label;
+    (void)addr;
+    (void)family;
+    kprintf("[smack] smack_netlabel: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: smack_cipso ─────────────────────────────── */
+int smack_cipso(const char *label, const void *doi, const void *cipso)
+{
+    (void)label;
+    (void)doi;
+    (void)cipso;
+    kprintf("[smack] smack_cipso: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: smack_from_secattr ─────────────────────────────── */
+int smack_from_secattr(const void *secattr, char *label, size_t label_len)
+{
+    (void)secattr;
+    (void)label;
+    (void)label_len;
+    kprintf("[smack] smack_from_secattr: not yet implemented\n");
+    return -ENOSYS;
+}
+
 #include "module.h"
 module_init(smack_init);

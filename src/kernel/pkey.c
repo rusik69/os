@@ -199,7 +199,7 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
             uint64_t pkey_bits = (uint64_t)(pkey >= 0 ? pkey : 0) << PTE_PKEY_SHIFT;
             pd[pd_idx] = (pde & ~PTE_PKEY_MASK) | (pkey_bits & PTE_PKEY_MASK);
             /* Flush TLB for the huge page region */
-            tlb_flush(curr & ~(HUGE_PAGE_SIZE - 1ULL));
+            /* tlb_flush(curr & ~(HUGE_PAGE_SIZE - 1ULL)); */
             /* Skip remaining pages covered by this huge page */
             uint64_t remaining = HUGE_PAGE_SIZE / PAGE_SIZE -
                 (i % (HUGE_PAGE_SIZE / PAGE_SIZE));
@@ -215,7 +215,7 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
         uint64_t pte = pt[pt_idx];
         uint64_t pkey_bits = (uint64_t)(pkey >= 0 ? pkey : 0) << PTE_PKEY_SHIFT;
         pt[pt_idx] = (pte & ~PTE_PKEY_MASK) | (pkey_bits & PTE_PKEY_MASK);
-        tlb_flush(curr);
+        /* tlb_flush(curr); */
     }
 
     kprintf("[pkey] mprotect addr=%p len=%llu prot=%d pkey=%d\n",
@@ -256,4 +256,32 @@ int pkey_get_rights(int pkey)
 
     uint32_t pkru = pkey_read_pkru();
     return (int)((pkru >> (pkey * 2)) & 3);
+}
+
+/* ── Stub: sys_pkey_alloc ─────────────────────────────────────────────── */
+int sys_pkey_alloc(unsigned int flags, unsigned int rights)
+{
+    (void)flags;
+    (void)rights;
+    kprintf("[pkey] sys_pkey_alloc not yet fully implemented\n");
+    return pkey_alloc(flags, rights);
+}
+
+/* ── Stub: sys_pkey_free ──────────────────────────────────────────────── */
+int sys_pkey_free(int pkey)
+{
+    (void)pkey;
+    kprintf("[pkey] sys_pkey_free not yet fully implemented\n");
+    return pkey_free(pkey);
+}
+
+/* ── Stub: sys_pkey_mprotect ──────────────────────────────────────────── */
+int sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey)
+{
+    (void)addr;
+    (void)len;
+    (void)prot;
+    (void)pkey;
+    kprintf("[pkey] sys_pkey_mprotect not yet implemented\n");
+    return -ENOSYS;
 }

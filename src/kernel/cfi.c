@@ -88,3 +88,30 @@ void cfi_init(void)
     kprintf("[OK] CFI — Forward-edge control flow integrity (%d slots)\n",
             CFI_MAX_SITES);
 }
+
+/* ── Stub: cfi_check ──────────────────────────────────────────────────── */
+int cfi_check(uintptr_t target, const char *func)
+{
+    (void)target;
+    (void)func;
+    kprintf("[CFI] cfi_check not yet fully implemented\n");
+    return cfi_check_target(target);
+}
+
+/* ── Stub: cfi_set_shadow ─────────────────────────────────────────────── */
+int cfi_set_shadow(uintptr_t addr, uintptr_t shadow)
+{
+    (void)addr;
+    (void)shadow;
+    kprintf("[CFI] cfi_set_shadow not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cfi_verify ─────────────────────────────────────────────────── */
+int cfi_verify(uintptr_t target, uintptr_t expected)
+{
+    (void)target;
+    (void)expected;
+    kprintf("[CFI] cfi_verify not yet implemented\n");
+    return -ENOSYS;
+}

@@ -199,3 +199,19 @@ void cet_switch_task(struct cet_shadow_stack *sstk) {
     uint64_t ucet_val = CET_SHSTK_EN | CET_ENDBR_EN;
     write_msr(MSR_IA32_U_CET, ucet_val);
 }
+
+/* ── Stub: cet_shstk_status ───────────────────────────────────────────── */
+int cet_shstk_status(struct cet_shadow_stack *sstk)
+{
+    (void)sstk;
+    kprintf("[CET] cet_shstk_status not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cet_shstk_alloc ────────────────────────────────────────────── */
+int cet_shstk_alloc(struct cet_shadow_stack *sstk)
+{
+    (void)sstk;
+    kprintf("[CET] cet_shstk_alloc not yet implemented\n");
+    return -ENOSYS;
+}

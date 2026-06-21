@@ -743,3 +743,26 @@ void pm_qos_remote_work(uint32_t cpu, uint32_t value)
     (void)cpu;
     (void)value;
 }
+
+/* ── Stub: pm_qos_request ─────────────────────────────── */
+int pm_qos_request(int qos_type)
+{
+    (void)qos_type;
+    kprintf("[pm_qos] pm_qos_request: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: pm_qos_request_active ─────────────────────────────── */
+int pm_qos_request_active(int id)
+{
+    (void)id;
+    kprintf("[pm_qos] pm_qos_request_active: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: pm_qos_sysfs_init ─────────────────────────────── */
+int pm_qos_sysfs_init(void)
+{
+    kprintf("[pm_qos] pm_qos_sysfs_init: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -136,3 +136,18 @@ void nohz_tick_account(int cpu)
         return;
     nohz_cpus[cpu].last_tick = timer_get_ms();
 }
+
+/* ── Stub: nohz_full_setup ──────────────────────────────────────────────── */
+int nohz_full_setup(const char *cpulist)
+{
+    (void)cpulist;
+    kprintf("[NOHZ] nohz_full_setup not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: nohz_full_kick ──────────────────────────────────────────────── */
+void nohz_full_kick(int cpu)
+{
+    (void)cpu;
+    kprintf("[NOHZ] nohz_full_kick not yet implemented\n");
+}

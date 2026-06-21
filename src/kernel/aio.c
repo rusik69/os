@@ -222,3 +222,34 @@ int aio_cancel(int fd, uint64_t aiocb_ptr) {
     }
     return 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Stub functions for incomplete AIO operations
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Stub: aio_cancel_all ──────────────────────────────────────────────── */
+int aio_cancel_all(int fd)
+{
+    (void)fd;
+    kprintf("[AIO] aio_cancel_all not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: aio_get_events ──────────────────────────────────────────────── */
+int aio_get_events(uint64_t timeout_ms, struct aio_event *events, int max_events)
+{
+    (void)timeout_ms;
+    (void)events;
+    (void)max_events;
+    kprintf("[AIO] aio_get_events not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: aio_fsync ───────────────────────────────────────────────────── */
+int aio_fsync(int fd, int op)
+{
+    (void)fd;
+    (void)op;
+    kprintf("[AIO] aio_fsync not yet implemented\n");
+    return -ENOSYS;
+}

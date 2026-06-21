@@ -219,6 +219,110 @@ EXPORT_SYMBOL(mptcp_remove_subflow);
 EXPORT_SYMBOL(mptcp_send);
 EXPORT_SYMBOL(mptcp_recv);
 EXPORT_SYMBOL(mptcp_close);
+/* ── Stub: mptcp_subflow_create ──────────────────────────────────── */
+int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
+{
+    (void)addr;
+    (void)port;
+    kprintf("[mptcp] mptcp_subflow_create: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_add_addr ───────────────────────────────────────── */
+int mptcp_add_addr(uint32_t token, uint32_t addr, uint16_t port, uint8_t flags)
+{
+    (void)addr;
+    (void)port;
+    (void)flags;
+    kprintf("[mptcp] mptcp_add_addr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_remove_addr ────────────────────────────────────── */
+int mptcp_remove_addr(uint32_t token, uint32_t addr_id)
+{
+    (void)addr_id;
+    kprintf("[mptcp] mptcp_remove_addr: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_priority ────────────────────────────────────────── */
+int mptcp_priority(uint32_t token, uint32_t addr_id, uint8_t backup)
+{
+    (void)addr_id;
+    (void)backup;
+    kprintf("[mptcp] mptcp_priority: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_fastclose ──────────────────────────────────────── */
+int mptcp_fastclose(uint32_t token)
+{
+    kprintf("[mptcp] mptcp_fastclose: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_reset ──────────────────────────────────────────── */
+int mptcp_reset(uint32_t token, uint32_t addr_id)
+{
+    (void)addr_id;
+    kprintf("[mptcp] mptcp_reset: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_mp_join_syn ────────────────────────────────────── */
+int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
+{
+    (void)addr;
+    (void)port;
+    (void)opt_out;
+    (void)opt_len;
+    kprintf("[mptcp] mptcp_mp_join_syn: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_mp_join_synack ─────────────────────────────────── */
+int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
+{
+    (void)addr;
+    (void)port;
+    (void)opt_out;
+    (void)opt_len;
+    kprintf("[mptcp] mptcp_mp_join_synack: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_mp_join_ack ────────────────────────────────────── */
+int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id, const uint8_t *opt, uint16_t opt_len)
+{
+    (void)addr_id;
+    (void)opt;
+    (void)opt_len;
+    kprintf("[mptcp] mptcp_mp_join_ack: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mptcp_dss ────────────────────────────────────────────── */
+int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint32_t len)
+{
+    (void)seq;
+    (void)ack;
+    (void)data;
+    (void)len;
+    kprintf("[mptcp] mptcp_dss: not yet implemented\n");
+    return -ENOSYS;
+}
+
+EXPORT_SYMBOL(mptcp_subflow_create);
+EXPORT_SYMBOL(mptcp_add_addr);
+EXPORT_SYMBOL(mptcp_remove_addr);
+EXPORT_SYMBOL(mptcp_priority);
+EXPORT_SYMBOL(mptcp_fastclose);
+EXPORT_SYMBOL(mptcp_reset);
+EXPORT_SYMBOL(mptcp_mp_join_syn);
+EXPORT_SYMBOL(mptcp_mp_join_synack);
+EXPORT_SYMBOL(mptcp_mp_join_ack);
+EXPORT_SYMBOL(mptcp_dss);
 EXPORT_SYMBOL(mptcp_get_token);
 #include "module.h"
 module_init(mptcp_init);

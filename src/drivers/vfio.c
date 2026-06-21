@@ -325,5 +325,62 @@ int vfio_init(void)
             vfio_container_count, vfio_group_count);
     return 0;
 }
+
+/* Forward declarations for stub functions */
+struct vfio_info;
+
+/* ── Stub: vfio_dma_map ─────────────────────────────── */
+int vfio_dma_map(int container_id, uint64_t iova, uint64_t size, uint64_t phys_addr, int prot)
+{
+    (void)container_id;
+    (void)iova;
+    (void)size;
+    (void)phys_addr;
+    (void)prot;
+    kprintf("[vfio] vfio_dma_map: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vfio_dma_unmap ─────────────────────────────── */
+int vfio_dma_unmap(int container_id, uint64_t iova, uint64_t size)
+{
+    (void)container_id;
+    (void)iova;
+    (void)size;
+    kprintf("[vfio] vfio_dma_unmap: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vfio_irq_set ─────────────────────────────── */
+int vfio_irq_set(int device_fd, unsigned int index, unsigned int start, unsigned int count, uint32_t flags, void *data)
+{
+    (void)device_fd;
+    (void)index;
+    (void)start;
+    (void)count;
+    (void)flags;
+    (void)data;
+    kprintf("[vfio] vfio_irq_set: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vfio_get_info ─────────────────────────────── */
+int vfio_get_info(int container_id, struct vfio_info *info)
+{
+    (void)container_id;
+    (void)info;
+    kprintf("[vfio] vfio_get_info: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vfio_set_info ─────────────────────────────── */
+int vfio_set_info(int container_id, struct vfio_info *info)
+{
+    (void)container_id;
+    (void)info;
+    kprintf("[vfio] vfio_set_info: not yet implemented\n");
+    return -ENOSYS;
+}
+
 #include "module.h"
 module_init(vfio_init);
