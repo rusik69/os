@@ -394,3 +394,11 @@ int i3c_device_count(int ctl_id)
 EXPORT_SYMBOL(i3c_device_count);
 #include "module.h"
 module_init(i3c_init);
+
+/* ── Stub: i3c_register_device ─────────────────────────────── */
+int i3c_register_device(void *dev)
+{
+    (void)dev;
+    kprintf("[i3c] i3c_register_device: not yet implemented\n");
+    return -ENOSYS;
+}

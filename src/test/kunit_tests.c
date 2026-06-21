@@ -1526,3 +1526,24 @@ void kunit_register_builtin_tests(void)
     /* Register the container exec enhanced test suite from kunit_container_ext.c */
     kunit_container_ext_register();
 }
+
+/* ── Stub: kunit_tests_init ─────────────────────────────── */
+int kunit_tests_init(void)
+{
+    kprintf("[kunit] kunit_tests_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_tests_run ─────────────────────────────── */
+int kunit_tests_run(const char *filter)
+{
+    (void)filter;
+    kprintf("[kunit] kunit_tests_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_tests_report ─────────────────────────────── */
+int kunit_tests_report(void *report)
+{
+    (void)report;
+    kprintf("[kunit] kunit_tests_report: not yet implemented\n");
+    return -ENOSYS;
+}

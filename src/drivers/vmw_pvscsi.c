@@ -153,3 +153,19 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VMware PVSCSI adapter — ring, interrupt");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: vmw_pvscsi_queue_cmd ─────────────────────────────── */
+int vmw_pvscsi_queue_cmd(void *dev, void *cmd)
+{
+    (void)dev;
+    (void)cmd;
+    kprintf("[vmw] vmw_pvscsi_queue_cmd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vmw_pvscsi_complete_cmd ─────────────────────────────── */
+int vmw_pvscsi_complete_cmd(void *dev)
+{
+    (void)dev;
+    kprintf("[vmw] vmw_pvscsi_complete_cmd: not yet implemented\n");
+    return -ENOSYS;
+}

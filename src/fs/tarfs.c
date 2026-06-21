@@ -305,3 +305,19 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Read-only tar archive filesystem — mounts in-memory tar archives via VFS");
 MODULE_VERSION("1.0");
 #endif /* MODULE */
+
+/* ── Stub: tarfs_umount ─────────────────────────────── */
+int tarfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[tarfs] tarfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tarfs_lookup ─────────────────────────────── */
+int tarfs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[tarfs] tarfs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

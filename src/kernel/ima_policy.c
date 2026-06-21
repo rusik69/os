@@ -313,3 +313,27 @@ void ima_policy_clear(void)
 }
 #include "module.h"
 module_init(ima_policy_init);
+
+/* ── Stub: ima_policy_register ─────────────────────────────── */
+int ima_policy_register(void *rule)
+{
+    (void)rule;
+    kprintf("[ima] ima_policy_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ima_policy_unregister ─────────────────────────────── */
+int ima_policy_unregister(void *rule)
+{
+    (void)rule;
+    kprintf("[ima] ima_policy_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ima_policy_match ─────────────────────────────── */
+int ima_policy_match(void *inode, int mask, int func)
+{
+    (void)inode;
+    (void)mask;
+    (void)func;
+    kprintf("[ima] ima_policy_match: not yet implemented\n");
+    return -ENOSYS;
+}

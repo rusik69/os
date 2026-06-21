@@ -161,3 +161,18 @@ int gpio_irq_unregister(int irq_num)
 }
 #include "module.h"
 module_init(gpio_irq_init);
+
+/* ── Stub: gpio_irq_enable ─────────────────────────────── */
+int gpio_irq_enable(int gpio)
+{
+    (void)gpio;
+    kprintf("[gpio] gpio_irq_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gpio_irq_disable ─────────────────────────────── */
+int gpio_irq_disable(int gpio)
+{
+    (void)gpio;
+    kprintf("[gpio] gpio_irq_disable: not yet implemented\n");
+    return -ENOSYS;
+}

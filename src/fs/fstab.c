@@ -285,3 +285,18 @@ int fstab_mount_all(void) {
     }
     return mounted;
 }
+
+/* ── Stub: fstab_read ─────────────────────────────── */
+int fstab_read(const char *path)
+{
+    (void)path;
+    kprintf("[fstab] fstab_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fstab_write ─────────────────────────────── */
+int fstab_write(const char *path)
+{
+    (void)path;
+    kprintf("[fstab] fstab_write: not yet implemented\n");
+    return -ENOSYS;
+}

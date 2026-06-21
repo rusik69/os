@@ -196,3 +196,30 @@ void xts_decrypt(const struct xts_ctx *ctx, uint64_t start_sector,
                            &out[i * XTS_SECTOR_SIZE]);
     }
 }
+
+/* ── Stub: aes_xts_encrypt ─────────────────────────────── */
+int aes_xts_encrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
+{
+    (void)key1;
+    (void)key2;
+    (void)key_len;
+    (void)iv;
+    (void)src;
+    (void)dst;
+    (void)len;
+    kprintf("[aes_xts] aes_xts_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: aes_xts_decrypt ─────────────────────────────── */
+int aes_xts_decrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
+{
+    (void)key1;
+    (void)key2;
+    (void)key_len;
+    (void)iv;
+    (void)src;
+    (void)dst;
+    (void)len;
+    kprintf("[aes_xts] aes_xts_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}

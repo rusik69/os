@@ -113,3 +113,24 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("QEMU inter-VM shared memory — PCI BAR, interrupt");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: ivshmem_read ─────────────────────────────── */
+int ivshmem_read(void *dev, uint64_t offset, void *buf, size_t count)
+{
+    (void)dev;
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[ivshmem] ivshmem_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ivshmem_write ─────────────────────────────── */
+int ivshmem_write(void *dev, uint64_t offset, const void *buf, size_t count)
+{
+    (void)dev;
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[ivshmem] ivshmem_write: not yet implemented\n");
+    return -ENOSYS;
+}

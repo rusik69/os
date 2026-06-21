@@ -420,3 +420,11 @@ int mpath_status(int mpath_id, char *buf, int max)
 }
 #include "module.h"
 module_init(mpath_init);
+
+/* ── Stub: mpath_failover ─────────────────────────────── */
+int mpath_failover(const char *dev)
+{
+    (void)dev;
+    kprintf("[mpath] mpath_failover: not yet implemented\n");
+    return -ENOSYS;
+}

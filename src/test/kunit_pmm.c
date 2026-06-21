@@ -437,3 +437,22 @@ void kunit_oom_register(void)
     kunit_register_suite(&oom_test_suite);
     kprintf("[KUnit] OOM tests registered (%d cases)\n", ci);
 }
+
+/* ── Stub: kunit_pmm_init ─────────────────────────────── */
+int kunit_pmm_init(void)
+{
+    kprintf("[kunit] kunit_pmm_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_pmm_test_alloc ─────────────────────────────── */
+int kunit_pmm_test_alloc(void)
+{
+    kprintf("[kunit] kunit_pmm_test_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_pmm_test_free ─────────────────────────────── */
+int kunit_pmm_test_free(void)
+{
+    kprintf("[kunit] kunit_pmm_test_free: not yet implemented\n");
+    return -ENOSYS;
+}

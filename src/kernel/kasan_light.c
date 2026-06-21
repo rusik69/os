@@ -296,3 +296,20 @@ int kasan_extend_coverage(uint64_t start, uint64_t end)
 
     return 0;
 }
+
+/* ── Stub: kasan_alloc_pages ─────────────────────────────── */
+int kasan_alloc_pages(void *page, unsigned int order)
+{
+    (void)page;
+    (void)order;
+    kprintf("[kasan] kasan_alloc_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kasan_free_pages ─────────────────────────────── */
+int kasan_free_pages(void *page, unsigned int order)
+{
+    (void)page;
+    (void)order;
+    kprintf("[kasan] kasan_free_pages: not yet implemented\n");
+    return -ENOSYS;
+}

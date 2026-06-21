@@ -254,3 +254,21 @@ void evm_init(void)
 }
 #include "module.h"
 module_init(evm_init);
+
+/* ── Stub: evm_verify ─────────────────────────────── */
+int evm_verify(void *dentry, void *xattr_name, void *xattr_value, size_t xattr_len)
+{
+    (void)dentry;
+    (void)xattr_name;
+    (void)xattr_value;
+    (void)xattr_len;
+    kprintf("[evm] evm_verify: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: evm_update ─────────────────────────────── */
+int evm_update(void *dentry)
+{
+    (void)dentry;
+    kprintf("[evm] evm_update: not yet implemented\n");
+    return -ENOSYS;
+}

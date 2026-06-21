@@ -655,3 +655,27 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
           (unsigned long long)frame->rip,
           (unsigned long long)cr2);
 }
+
+/* ── Stub: nx_enforce ─────────────────────────────── */
+int nx_enforce(void *task)
+{
+    (void)task;
+    kprintf("[nx] nx_enforce: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nx_check_addr ─────────────────────────────── */
+int nx_check_addr(uint64_t addr)
+{
+    (void)addr;
+    kprintf("[nx] nx_check_addr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nx_set_prot ─────────────────────────────── */
+int nx_set_prot(uint64_t addr, size_t len, int prot)
+{
+    (void)addr;
+    (void)len;
+    (void)prot;
+    kprintf("[nx] nx_set_prot: not yet implemented\n");
+    return -ENOSYS;
+}

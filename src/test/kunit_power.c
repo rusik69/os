@@ -451,3 +451,16 @@ void kunit_power_register(void)
     REGISTER_SUITE(pm_runtime_test_suite,  pm_runtime_test_cases,  "pm_runtime");
     REGISTER_SUITE(rapl_test_suite,        rapl_test_cases,        "rapl");
 }
+
+/* ── Stub: kunit_power_init ─────────────────────────────── */
+int kunit_power_init(void)
+{
+    kprintf("[kunit] kunit_power_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_power_test_cpufreq ─────────────────────────────── */
+int kunit_power_test_cpufreq(void)
+{
+    kprintf("[kunit] kunit_power_test_cpufreq: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -78,3 +78,17 @@ int lockdown_restrict(const char *reason)
     kprintf("[LOCKDOWN] lockdown_restrict: not yet implemented\n");
     return -ENOSYS;
 }
+
+/* ── Stub: lockdown_get ─────────────────────────────── */
+int lockdown_get(void)
+{
+    kprintf("[lockdown] lockdown_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: lockdown_is_locked ─────────────────────────────── */
+int lockdown_is_locked(int what)
+{
+    (void)what;
+    kprintf("[lockdown] lockdown_is_locked: not yet implemented\n");
+    return -ENOSYS;
+}

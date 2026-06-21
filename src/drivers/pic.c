@@ -41,3 +41,11 @@ void pic_unmask(uint8_t irq) {
     else { port = PIC2_DATA; irq -= 8; }
     outb(port, (uint8_t)(inb(port) & ~(1 << irq)));
 }
+
+/* ── Stub: pic_remap ─────────────────────────────── */
+int pic_remap(int offset)
+{
+    (void)offset;
+    kprintf("[pic] pic_remap: not yet implemented\n");
+    return -ENOSYS;
+}

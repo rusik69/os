@@ -146,3 +146,14 @@ int smbus_block_read(uint8_t addr, uint8_t cmd, uint8_t *buf, int len) {
 }
 #include "module.h"
 module_init(smbus_init);
+
+/* ── Stub: smbus_read_block ─────────────────────────────── */
+int smbus_read_block(int addr, int reg, void *buf, size_t len)
+{
+    (void)addr;
+    (void)reg;
+    (void)buf;
+    (void)len;
+    kprintf("[smbus] smbus_read_block: not yet implemented\n");
+    return -ENOSYS;
+}

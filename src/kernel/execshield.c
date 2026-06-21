@@ -117,3 +117,27 @@ void execshield_init(void)
 {
     kprintf("[OK] Exec Shield (W^X enforcement + READ_IMPLIES_EXEC + PT_GNU_STACK)\n");
 }
+
+/* ── Stub: execshield_enable ─────────────────────────────── */
+int execshield_enable(void *task)
+{
+    (void)task;
+    kprintf("[execshield] execshield_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: execshield_disable ─────────────────────────────── */
+int execshield_disable(void *task)
+{
+    (void)task;
+    kprintf("[execshield] execshield_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: execshield_check ─────────────────────────────── */
+int execshield_check(uint64_t addr, size_t size, int prot)
+{
+    (void)addr;
+    (void)size;
+    (void)prot;
+    kprintf("[execshield] execshield_check: not yet implemented\n");
+    return -ENOSYS;
+}

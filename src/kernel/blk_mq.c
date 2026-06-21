@@ -185,3 +185,33 @@ void blk_mq_init(void)
     kprintf("[OK] blk-mq — Multi-queue block I/O layer (%d HW queues)\n",
             blk_mq_num_hw_queues);
 }
+
+/* ── Stub: blk_mq_init_queue ─────────────────────────────── */
+int blk_mq_init_queue(void *dev, void *tag_set)
+{
+    (void)dev;
+    (void)tag_set;
+    kprintf("[blk_mq] blk_mq_init_queue: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blk_mq_exit_queue ─────────────────────────────── */
+int blk_mq_exit_queue(void *q)
+{
+    (void)q;
+    kprintf("[blk_mq] blk_mq_exit_queue: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blk_mq_submit_bio ─────────────────────────────── */
+int blk_mq_submit_bio(void *bio)
+{
+    (void)bio;
+    kprintf("[blk_mq] blk_mq_submit_bio: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blk_mq_complete_request ─────────────────────────────── */
+int blk_mq_complete_request(void *rq)
+{
+    (void)rq;
+    kprintf("[blk_mq] blk_mq_complete_request: not yet implemented\n");
+    return -ENOSYS;
+}

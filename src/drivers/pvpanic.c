@@ -108,3 +108,11 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("QEMU pvpanic — MMIO detection, panic event");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: pvpanic_send ─────────────────────────────── */
+int pvpanic_send(uint8_t event)
+{
+    (void)event;
+    kprintf("[pvpanic] pvpanic_send: not yet implemented\n");
+    return -ENOSYS;
+}

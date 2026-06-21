@@ -113,3 +113,29 @@ int sndstat_generate(char *buf, int size)
 
     return pos;
 }
+
+/* ── Stub: sndstat_open ─────────────────────────────── */
+int sndstat_open(void *file)
+{
+    (void)file;
+    kprintf("[sndstat] sndstat_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sndstat_read ─────────────────────────────── */
+int sndstat_read(void *file, void *buf, size_t count)
+{
+    (void)file;
+    (void)buf;
+    (void)count;
+    kprintf("[sndstat] sndstat_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sndstat_ioctl ─────────────────────────────── */
+int sndstat_ioctl(void *file, int cmd, void *arg)
+{
+    (void)file;
+    (void)cmd;
+    (void)arg;
+    kprintf("[sndstat] sndstat_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

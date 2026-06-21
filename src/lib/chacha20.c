@@ -119,3 +119,14 @@ void lib_chacha20_encrypt(uint8_t *out, const uint8_t *in, size_t len,
         len -= todo;
     }
 }
+
+/* ── Stub: chacha20_encrypt ─────────────────────────────── */
+int chacha20_encrypt(void *ctx, const void *src, void *dst, size_t len)
+{
+    (void)ctx;
+    (void)src;
+    (void)dst;
+    (void)len;
+    kprintf("[chacha20] chacha20_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}

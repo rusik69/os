@@ -392,3 +392,11 @@ int ghes_source_status(int source_id, int *enabled, int *notify_type,
 EXPORT_SYMBOL(ghes_source_status);
 #include "module.h"
 module_init(ghes_init);
+
+/* ── Stub: ghes_estatus_read ─────────────────────────────── */
+int ghes_estatus_read(void *estatus)
+{
+    (void)estatus;
+    kprintf("[ghes] ghes_estatus_read: not yet implemented\n");
+    return -ENOSYS;
+}

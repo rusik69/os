@@ -135,3 +135,23 @@ void ima_appraise_init(void)
 }
 #include "module.h"
 module_init(ima_appraise_init);
+
+/* ── Stub: ima_appraise_measurement ─────────────────────────────── */
+int ima_appraise_measurement(void *inode, void *file, void *xattr_value, int xattr_len)
+{
+    (void)inode;
+    (void)file;
+    (void)xattr_value;
+    (void)xattr_len;
+    kprintf("[ima] ima_appraise_measurement: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ima_appraise_signature ─────────────────────────────── */
+int ima_appraise_signature(void *inode, void *file, void *sig)
+{
+    (void)inode;
+    (void)file;
+    (void)sig;
+    kprintf("[ima] ima_appraise_signature: not yet implemented\n");
+    return -ENOSYS;
+}

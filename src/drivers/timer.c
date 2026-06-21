@@ -84,3 +84,23 @@ uint64_t timer_get_ms(void) {
         return (uint64_t)(-1ULL); /* saturate on overflow */
     return t * 10ULL;
 }
+
+/* ── Stub: timer_read ─────────────────────────────── */
+uint64_t timer_read(void)
+{
+    kprintf("[timer] timer_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_set_period ─────────────────────────────── */
+int timer_set_period(uint64_t period)
+{
+    (void)period;
+    kprintf("[timer] timer_set_period: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_get_freq ─────────────────────────────── */
+uint64_t timer_get_freq(void)
+{
+    kprintf("[timer] timer_get_freq: not yet implemented\n");
+    return -ENOSYS;
+}

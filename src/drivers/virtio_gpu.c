@@ -128,3 +128,23 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO GPU — 2D modesetting, scanout, cursor");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: virtio_gpu_set_mode ─────────────────────────────── */
+int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
+{
+    (void)dev;
+    (void)w;
+    (void)h;
+    (void)bpp;
+    kprintf("[virtio] virtio_gpu_set_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_gpu_transfer ─────────────────────────────── */
+int virtio_gpu_transfer(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[virtio] virtio_gpu_transfer: not yet implemented\n");
+    return -ENOSYS;
+}

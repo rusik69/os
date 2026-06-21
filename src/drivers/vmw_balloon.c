@@ -138,3 +138,20 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VMware balloon — MMIO, stats");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: vmw_balloon_inflate ─────────────────────────────── */
+int vmw_balloon_inflate(void *dev, size_t count)
+{
+    (void)dev;
+    (void)count;
+    kprintf("[vmw] vmw_balloon_inflate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vmw_balloon_deflate ─────────────────────────────── */
+int vmw_balloon_deflate(void *dev, size_t count)
+{
+    (void)dev;
+    (void)count;
+    kprintf("[vmw] vmw_balloon_deflate: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -131,3 +131,27 @@ int fsnotify_read_events(struct fsnotify_event *events, int max) {
     spinlock_irqsave_release(&g_fsn_lock, irq_flags);
     return nread;
 }
+
+/* ── Stub: fsnotify_register ─────────────────────────────── */
+int fsnotify_register(void *group)
+{
+    (void)group;
+    kprintf("[fsnotify] fsnotify_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsnotify_unregister ─────────────────────────────── */
+int fsnotify_unregister(void *group)
+{
+    (void)group;
+    kprintf("[fsnotify] fsnotify_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsnotify_send_event ─────────────────────────────── */
+int fsnotify_send_event(void *group, void *inode, void *event)
+{
+    (void)group;
+    (void)inode;
+    (void)event;
+    kprintf("[fsnotify] fsnotify_send_event: not yet implemented\n");
+    return -ENOSYS;
+}

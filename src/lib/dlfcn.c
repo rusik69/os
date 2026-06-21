@@ -978,3 +978,26 @@ void *dlvsym(void *handle, const char *symbol, const char *version)
     if (addr == 0) { dl_set_error("dlvsym: undefined symbol"); return NULL; }
     return (void *)(uintptr_t)addr;
 }
+
+/* ── Stub: dlopen ─────────────────────────────── */
+void* dlopen(const char *file, int mode)
+{
+    (void)file;
+    (void)mode;
+    kprintf("[dl] dlopen: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dlsym ─────────────────────────────── */
+void* dlsym(void *handle, const char *symbol)
+{
+    (void)handle;
+    (void)symbol;
+    kprintf("[dl] dlsym: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dlerror ─────────────────────────────── */
+char* dlerror(void)
+{
+    kprintf("[dl] dlerror: not yet implemented\n");
+    return -ENOSYS;
+}

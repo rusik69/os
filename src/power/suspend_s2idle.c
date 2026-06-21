@@ -241,3 +241,16 @@ void s2idle_init(void)
 
     kprintf("[OK] s2idle — Suspend-to-Idle state (IRQ-based wakeup)\n");
 }
+
+/* ── Stub: suspend_s2idle_enter ─────────────────────────────── */
+int suspend_s2idle_enter(void)
+{
+    kprintf("[suspend] suspend_s2idle_enter: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: suspend_s2idle_exit ─────────────────────────────── */
+int suspend_s2idle_exit(void)
+{
+    kprintf("[suspend] suspend_s2idle_exit: not yet implemented\n");
+    return -ENOSYS;
+}

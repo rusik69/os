@@ -168,3 +168,26 @@ void sriov_init(void)
 }
 #include "module.h"
 module_init(sriov_init);
+
+/* ── Stub: sriov_enable ─────────────────────────────── */
+int sriov_enable(void *dev)
+{
+    (void)dev;
+    kprintf("[sriov] sriov_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sriov_disable ─────────────────────────────── */
+int sriov_disable(void *dev)
+{
+    (void)dev;
+    kprintf("[sriov] sriov_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sriov_configure ─────────────────────────────── */
+int sriov_configure(void *dev, int num_vfs)
+{
+    (void)dev;
+    (void)num_vfs;
+    kprintf("[sriov] sriov_configure: not yet implemented\n");
+    return -ENOSYS;
+}

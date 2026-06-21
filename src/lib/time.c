@@ -648,3 +648,24 @@ size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
     s[pos] = '\0';
     return pos;
 }
+
+/* ── Stub: time_get ─────────────────────────────── */
+uint64_t time_get(void)
+{
+    kprintf("[time] time_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: time_set ─────────────────────────────── */
+int time_set(uint64_t t)
+{
+    (void)t;
+    kprintf("[time] time_set: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: time_nanosleep ─────────────────────────────── */
+int time_nanosleep(uint64_t ns)
+{
+    (void)ns;
+    kprintf("[time] time_nanosleep: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -98,3 +98,19 @@ int chroot_check_path(const char *path, char *resolved, int resolved_max) {
 int vfs_chroot_resolve(const char *path, char *out, int out_max) {
     return chroot_check_path(path, out, out_max);
 }
+
+/* ── Stub: chroot_get ─────────────────────────────── */
+int chroot_get(char *buf, size_t size)
+{
+    (void)buf;
+    (void)size;
+    kprintf("[chroot] chroot_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: chroot_escape ─────────────────────────────── */
+int chroot_escape(void *task)
+{
+    (void)task;
+    kprintf("[chroot] chroot_escape: not yet implemented\n");
+    return -ENOSYS;
+}

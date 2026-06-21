@@ -129,3 +129,36 @@ int cpio_init(void) {
     kprintf("[cpio] CPIO/initramfs module initialized\n");
     return 0;
 }
+
+/* ── Stub: cpio_mount ─────────────────────────────── */
+int cpio_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[cpio] cpio_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpio_umount ─────────────────────────────── */
+int cpio_umount(const char *target)
+{
+    (void)target;
+    kprintf("[cpio] cpio_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpio_readdir ─────────────────────────────── */
+int cpio_readdir(void *dir, void *filldir)
+{
+    (void)dir;
+    (void)filldir;
+    kprintf("[cpio] cpio_readdir: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpio_lookup ─────────────────────────────── */
+int cpio_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[cpio] cpio_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

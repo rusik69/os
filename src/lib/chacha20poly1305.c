@@ -158,3 +158,32 @@ int lib_chacha20poly1305_decrypt(uint8_t *plaintext, const uint8_t *ciphertext,
     lib_chacha20_encrypt(plaintext, ciphertext, ct_len, key, nonce, 1);
     return 0;
 }
+
+/* ── Stub: chacha20poly1305_encrypt ─────────────────────────────── */
+int chacha20poly1305_encrypt(const void *key, const void *nonce, const void *aad, size_t aad_len, const void *plain, size_t plen, void *cipher, void *tag)
+{
+    (void)key;
+    (void)nonce;
+    (void)aad;
+    (void)aad_len;
+    (void)plain;
+    (void)plen;
+    (void)cipher;
+    (void)tag;
+    kprintf("[chacha20poly] chacha20poly1305_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: chacha20poly1305_decrypt ─────────────────────────────── */
+int chacha20poly1305_decrypt(const void *key, const void *nonce, const void *aad, size_t aad_len, const void *cipher, size_t clen, const void *tag, void *plain)
+{
+    (void)key;
+    (void)nonce;
+    (void)aad;
+    (void)aad_len;
+    (void)cipher;
+    (void)clen;
+    (void)tag;
+    (void)plain;
+    kprintf("[chacha20poly] chacha20poly1305_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}

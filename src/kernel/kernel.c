@@ -1315,3 +1315,29 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         cpuidle_idle();
     }
 }
+
+/* ── Stub: kernel_reboot ─────────────────────────────── */
+int kernel_reboot(void)
+{
+    kprintf("[kernel] kernel_reboot: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kernel_halt ─────────────────────────────── */
+int kernel_halt(void)
+{
+    kprintf("[kernel] kernel_halt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kernel_poweroff ─────────────────────────────── */
+int kernel_poweroff(void)
+{
+    kprintf("[kernel] kernel_poweroff: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kernel_restart ─────────────────────────────── */
+int kernel_restart(const char *cmd)
+{
+    (void)cmd;
+    kprintf("[kernel] kernel_restart: not yet implemented\n");
+    return -ENOSYS;
+}

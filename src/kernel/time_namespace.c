@@ -129,3 +129,20 @@ void time_ns_init(void)
     g_time_ns_count = 0;
     kprintf("[OK] Time namespace initialized (%d max)\n", TIME_NS_MAX);
 }
+
+/* ── Stub: time_ns_delete ─────────────────────────────── */
+int time_ns_delete(void *ns)
+{
+    (void)ns;
+    kprintf("[time_ns] time_ns_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: time_ns_set_offset ─────────────────────────────── */
+int time_ns_set_offset(void *ns, int clock, uint64_t offset)
+{
+    (void)ns;
+    (void)clock;
+    (void)offset;
+    kprintf("[time_ns] time_ns_set_offset: not yet implemented\n");
+    return -ENOSYS;
+}

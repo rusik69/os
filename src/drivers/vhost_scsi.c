@@ -318,3 +318,18 @@ int vhost_scsi_init(void)
 }
 #include "module.h"
 module_init(vhost_scsi_init);
+
+/* ── Stub: vhost_scsi_start ─────────────────────────────── */
+int vhost_scsi_start(void *dev)
+{
+    (void)dev;
+    kprintf("[vhost] vhost_scsi_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vhost_scsi_stop ─────────────────────────────── */
+int vhost_scsi_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[vhost] vhost_scsi_stop: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -1442,3 +1442,14 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("CIFS/SMB2 client — SMB 2.0.2 over TCP with guest auth");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: cifs_write ─────────────────────────────── */
+int cifs_write(void *file, const void *buf, size_t count, uint64_t offset)
+{
+    (void)file;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[cifs] cifs_write: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -1050,3 +1050,12 @@ void stdio_init(void)
     stdio_init_streams();
     kprintf("[OK] stdio: buffered I/O library initialized\\n");
 }
+
+/* ── Stub: fopen ─────────────────────────────── */
+void* fopen(const char *path, const char *mode)
+{
+    (void)path;
+    (void)mode;
+    kprintf("[stdio] fopen: not yet implemented\n");
+    return -ENOSYS;
+}

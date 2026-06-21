@@ -31,3 +31,18 @@ void cmos_init(void) {
 }
 #include "module.h"
 module_init(cmos_init);
+
+/* ── Stub: cmos_get_time ─────────────────────────────── */
+int cmos_get_time(void *time)
+{
+    (void)time;
+    kprintf("[cmos] cmos_get_time: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cmos_set_time ─────────────────────────────── */
+int cmos_set_time(const void *time)
+{
+    (void)time;
+    kprintf("[cmos] cmos_set_time: not yet implemented\n");
+    return -ENOSYS;
+}

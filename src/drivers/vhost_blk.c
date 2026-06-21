@@ -224,3 +224,26 @@ int vhost_blk_init(void)
 }
 #include "module.h"
 module_init(vhost_blk_init);
+
+/* ── Stub: vhost_blk_start ─────────────────────────────── */
+int vhost_blk_start(void *dev)
+{
+    (void)dev;
+    kprintf("[vhost] vhost_blk_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vhost_blk_stop ─────────────────────────────── */
+int vhost_blk_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[vhost] vhost_blk_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vhost_blk_handle_io ─────────────────────────────── */
+int vhost_blk_handle_io(void *dev, void *req)
+{
+    (void)dev;
+    (void)req;
+    kprintf("[vhost] vhost_blk_handle_io: not yet implemented\n");
+    return -ENOSYS;
+}

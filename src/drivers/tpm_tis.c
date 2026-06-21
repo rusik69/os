@@ -1813,3 +1813,35 @@ EXPORT_SYMBOL(tpm_is_present);
 EXPORT_SYMBOL(tpm2_sign);
 EXPORT_SYMBOL(tpm_nv_store_key);
 EXPORT_SYMBOL(tpm_nv_load_key);
+
+/* ── Stub: tpm_tis_init ─────────────────────────────── */
+int tpm_tis_init(void *dev)
+{
+    (void)dev;
+    kprintf("[tpm] tpm_tis_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tpm_tis_send ─────────────────────────────── */
+int tpm_tis_send(const void *cmd, size_t len)
+{
+    (void)cmd;
+    (void)len;
+    kprintf("[tpm] tpm_tis_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tpm_tis_recv ─────────────────────────────── */
+int tpm_tis_recv(void *resp, size_t *len)
+{
+    (void)resp;
+    (void)len;
+    kprintf("[tpm] tpm_tis_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tpm_tis_get_random ─────────────────────────────── */
+int tpm_tis_get_random(void *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[tpm] tpm_tis_get_random: not yet implemented\n");
+    return -ENOSYS;
+}

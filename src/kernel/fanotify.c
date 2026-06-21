@@ -207,3 +207,13 @@ void fanotify_handle_event(const char *path, uint64_t mask)
         }
     }
 }
+
+/* ── Stub: fanotify_read ─────────────────────────────── */
+int fanotify_read(int fd, void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    kprintf("[fanotify] fanotify_read: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -421,3 +421,31 @@ ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
     kprintf("[IPC_NS] msgrcv: received %zu bytes from queue id=%d\n", copy, msqid);
     return (ssize_t)copy;
 }
+
+/* ── Stub: ipc_ns_create ─────────────────────────────── */
+int ipc_ns_create(void *parent)
+{
+    (void)parent;
+    kprintf("[ipc_ns] ipc_ns_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipc_ns_delete ─────────────────────────────── */
+int ipc_ns_delete(void *ns)
+{
+    (void)ns;
+    kprintf("[ipc_ns] ipc_ns_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipc_ns_get ─────────────────────────────── */
+void* ipc_ns_get(void)
+{
+    kprintf("[ipc_ns] ipc_ns_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipc_ns_put ─────────────────────────────── */
+int ipc_ns_put(void *ns)
+{
+    (void)ns;
+    kprintf("[ipc_ns] ipc_ns_put: not yet implemented\n");
+    return -ENOSYS;
+}

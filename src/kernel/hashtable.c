@@ -101,3 +101,12 @@ void hashtable_init_global(void)
 {
     kprintf("[OK] hashtable: Hash table initialised (size=%d)\n", HASH_TABLE_SIZE);
 }
+
+/* ── Stub: hashtable_lookup ─────────────────────────────── */
+void* hashtable_lookup(void *ht, unsigned long key)
+{
+    (void)ht;
+    (void)key;
+    kprintf("[hashtable] hashtable_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

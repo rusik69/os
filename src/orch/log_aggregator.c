@@ -201,3 +201,12 @@ int log_agg_collect(const char *source, void *log)
     kprintf("[log_agg] log_agg_collect: not yet implemented\n");
     return -ENOSYS;
 }
+
+/* ── Stub: log_agg_query ─────────────────────────────── */
+int log_agg_query(const char *filter, void *results)
+{
+    (void)filter;
+    (void)results;
+    kprintf("[log_agg] log_agg_query: not yet implemented\n");
+    return -ENOSYS;
+}

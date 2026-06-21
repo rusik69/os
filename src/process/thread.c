@@ -240,3 +240,24 @@ uint64_t thread_get_fs_base(int tid)
         return 0;
     return thread_table[slot].fs_base;
 }
+
+/* ── Stub: thread_exit ─────────────────────────────── */
+int thread_exit(void *task)
+{
+    (void)task;
+    kprintf("[thread] thread_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: thread_yield ─────────────────────────────── */
+int thread_yield(void)
+{
+    kprintf("[thread] thread_yield: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: thread_sleep ─────────────────────────────── */
+int thread_sleep(uint64_t ns)
+{
+    (void)ns;
+    kprintf("[thread] thread_sleep: not yet implemented\n");
+    return -ENOSYS;
+}

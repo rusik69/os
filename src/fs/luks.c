@@ -529,3 +529,36 @@ int luks_setup_dm_crypt(int dev_id, struct luks_header *hdr, const uint8_t *mk)
 
     return dm_id;
 }
+
+/* ── Stub: luks_open ─────────────────────────────── */
+int luks_open(const char *device, const char *passphrase)
+{
+    (void)device;
+    (void)passphrase;
+    kprintf("[luks] luks_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: luks_close ─────────────────────────────── */
+int luks_close(const char *device)
+{
+    (void)device;
+    kprintf("[luks] luks_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: luks_format ─────────────────────────────── */
+int luks_format(const char *device, const char *passphrase)
+{
+    (void)device;
+    (void)passphrase;
+    kprintf("[luks] luks_format: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: luks_add_key ─────────────────────────────── */
+int luks_add_key(const char *device, const char *old_pass, const char *new_pass)
+{
+    (void)device;
+    (void)old_pass;
+    (void)new_pass;
+    kprintf("[luks] luks_add_key: not yet implemented\n");
+    return -ENOSYS;
+}

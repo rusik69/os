@@ -277,3 +277,45 @@ EXPORT_SYMBOL(strncmp);
 EXPORT_SYMBOL(strchr);
 EXPORT_SYMBOL(strcpy);
 EXPORT_SYMBOL(strncpy);
+
+/* ── Stub: strdup ─────────────────────────────── */
+char* strdup(const char *s)
+{
+    (void)s;
+    kprintf("[string] strdup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strndup ─────────────────────────────── */
+char* strndup(const char *s, size_t n)
+{
+    (void)s;
+    (void)n;
+    kprintf("[string] strndup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strsep ─────────────────────────────── */
+char* strsep(char **sp, const char *delim)
+{
+    (void)sp;
+    (void)delim;
+    kprintf("[string] strsep: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strlcat ─────────────────────────────── */
+size_t strlcat(char *dst, const char *src, size_t size)
+{
+    (void)dst;
+    (void)src;
+    (void)size;
+    kprintf("[string] strlcat: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strlcpy ─────────────────────────────── */
+size_t strlcpy(char *dst, const char *src, size_t size)
+{
+    (void)dst;
+    (void)src;
+    (void)size;
+    kprintf("[string] strlcpy: not yet implemented\n");
+    return -ENOSYS;
+}

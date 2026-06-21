@@ -192,3 +192,18 @@ int initramfs_extract(void) {
     kprintf("[initramfs] Extracted %d files\n", count);
     return count;
 }
+
+/* ── Stub: initramfs_load ─────────────────────────────── */
+int initramfs_load(const void *data, size_t size)
+{
+    (void)data;
+    (void)size;
+    kprintf("[initramfs] initramfs_load: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: initramfs_cleanup ─────────────────────────────── */
+int initramfs_cleanup(void)
+{
+    kprintf("[initramfs] initramfs_cleanup: not yet implemented\n");
+    return -ENOSYS;
+}

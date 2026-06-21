@@ -222,3 +222,29 @@ int raise(int sig)
     uint64_t pid = sc(SYS_GETPID, 0, 0, 0, 0, 0);
     return kill((uint32_t)pid, sig);
 }
+
+/* ── Stub: signal_raise ─────────────────────────────── */
+int signal_raise(int sig)
+{
+    (void)sig;
+    kprintf("[signal] signal_raise: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: signal_sigaction ─────────────────────────────── */
+int signal_sigaction(int sig, const void *act, void *oldact)
+{
+    (void)sig;
+    (void)act;
+    (void)oldact;
+    kprintf("[signal] signal_sigaction: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: signal_sigprocmask ─────────────────────────────── */
+int signal_sigprocmask(int how, const void *set, void *oldset)
+{
+    (void)how;
+    (void)set;
+    (void)oldset;
+    kprintf("[signal] signal_sigprocmask: not yet implemented\n");
+    return -ENOSYS;
+}

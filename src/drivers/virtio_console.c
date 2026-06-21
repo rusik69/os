@@ -113,3 +113,36 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO console — multi-port, hvc");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: virtio_console_open ─────────────────────────────── */
+int virtio_console_open(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio] virtio_console_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_console_close ─────────────────────────────── */
+int virtio_console_close(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio] virtio_console_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_console_write ─────────────────────────────── */
+int virtio_console_write(void *dev, const void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[virtio] virtio_console_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_console_read ─────────────────────────────── */
+int virtio_console_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[virtio] virtio_console_read: not yet implemented\n");
+    return -ENOSYS;
+}

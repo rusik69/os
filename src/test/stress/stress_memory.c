@@ -524,3 +524,17 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+
+/* ── Stub: stress_memory_run ─────────────────────────────── */
+int stress_memory_run(size_t size)
+{
+    (void)size;
+    kprintf("[stress] stress_memory_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stress_memory_stop ─────────────────────────────── */
+int stress_memory_stop(void)
+{
+    kprintf("[stress] stress_memory_stop: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -964,3 +964,25 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("NFSv3 server — in-kernel, single-threaded, TCP transport");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: nfsd_start ─────────────────────────────── */
+int nfsd_start(int port)
+{
+    (void)port;
+    kprintf("[nfsd] nfsd_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nfsd_stop ─────────────────────────────── */
+int nfsd_stop(void)
+{
+    kprintf("[nfsd] nfsd_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nfsd_handle_request ─────────────────────────────── */
+int nfsd_handle_request(void *req, void *resp)
+{
+    (void)req;
+    (void)resp;
+    kprintf("[nfsd] nfsd_handle_request: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -683,3 +683,24 @@ int virtio_fs_init(void)
 }
 #include "module.h"
 module_init(virtio_fs_init);
+
+/* ── Stub: virtio_fs_read ─────────────────────────────── */
+int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[virtio] virtio_fs_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_fs_write ─────────────────────────────── */
+int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[virtio] virtio_fs_write: not yet implemented\n");
+    return -ENOSYS;
+}

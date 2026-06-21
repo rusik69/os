@@ -179,3 +179,18 @@ struct devtmpfs_node *devtmpfs_get_table(int *count)
         *count = num_dev_nodes;
     return dev_nodes;
 }
+
+/* ── Stub: devtmpfs_mount ─────────────────────────────── */
+int devtmpfs_mount(const char *target)
+{
+    (void)target;
+    kprintf("[devtmpfs] devtmpfs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: devtmpfs_create_node ─────────────────────────────── */
+int devtmpfs_create_node(void *dev)
+{
+    (void)dev;
+    kprintf("[devtmpfs] devtmpfs_create_node: not yet implemented\n");
+    return -ENOSYS;
+}
