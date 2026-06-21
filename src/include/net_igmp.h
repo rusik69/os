@@ -41,8 +41,9 @@ int igmp_leave_group(const struct ip_mreqn *mreq);
 
 /* Process an incoming IGMP packet.
  * ip_hdr: the IP header of the received packet (payload follows header).
+ * len: total length of the IP packet (for IGMPv3 parsing).
  * Called from the network stack when IP protocol == 2 (IGMP). */
-void igmp_handle_report(struct ip_header *ip_hdr);
+void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len);
 
 /* Get the list of currently joined groups.
  * Returns pointer to the static table; *count is set to number of active entries. */

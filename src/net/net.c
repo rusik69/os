@@ -1133,15 +1133,31 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
 
     /* ── XDP hook: run XDP program before protocol dispatch ──────
      * If the XDP program returns XDP_DROP, the packet is discarded.
-     * XDP_TX would bounce it back (not implemented here).
+     * XDP_TX bounces the packet back out the same interface.
      * XDP_PASS (default) continues normal processing. */
     int xdp_act = xdp_run(pkt_buf, len, -1);
     if (xdp_act == XDP_DROP || xdp_act == XDP_ABORTED) {
         net_iface_stats.rx_drops++;
         return;
     }
-    /* XDP_TX would be implemented by calling netif_send with a
-     * swapped MAC and returning.  Omitted for simplicity. */
+    if (xdp_act == XDP_TX) {
+        /* Transmit the packet back out the same interface with
+         * MAC addresses swapped (source becomes destination). */
+        struct eth_header *eth = (struct eth_header *)pkt_buf;
+        uint8_t tmp_mac[6];
+        memcpy(tmp_mac, eth->dst_mac, 6);
+        memcpy(eth->dst_mac, eth->src_mac, 6);
+        memcpy(eth->src_mac, tmp_mac, 6);
+
+        /* Send back via netdevice layer or direct link */
+        if (netif_count() > 0) {
+            netif_send(0, pkt_buf, len);
+        } else {
+            net_link_send(pkt_buf, len);
+        }
+        net_iface_stats.tx_packets++;
+        return;
+    }
 
     struct eth_header *eth = (struct eth_header *)pkt_buf;
     uint16_t type = ntohs(eth->type);

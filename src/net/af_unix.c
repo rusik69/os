@@ -319,7 +319,7 @@ static uint32_t buf_read(const uint8_t *b, uint32_t wp, uint32_t *rp, uint32_t s
 
 int unix_create(int type)
 {
-    if (type != SOCK_STREAM && type != SOCK_DGRAM) return -EINVAL;
+    if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET) return -EINVAL;
     spinlock_acquire(&unix_lock);
     int idx = ep_alloc();
     spinlock_release(&unix_lock);
@@ -1043,15 +1043,19 @@ int unix_getpeername(int idx, struct sockaddr_un *addr, uint32_t *addrlen)
     return 0;
 }
 
-/* ── Socketpair — create a pair of connected AF_UNIX sockets ──────────
+/* ── Socketpair — create a pair of connected AF_UNIX sockets ────────── *
  *
  * Returns two endpoint indices that are connected to each other via a
  * shared connection buffer.  The first endpoint behaves as the "server"
  * side, the second as the "client" side — both can send and receive.
  *
- * Returns 0 on success with *ep0 and *ep1 filled, or -1 on error.
- */
+ * Returns 0 on success with *ep0 and *ep1 filled, or -1 on error. */
 int unix_socketpair(int *ep0, int *ep1)
+{
+    return unix_socketpair_type(ep0, ep1, SOCK_STREAM);
+}
+
+int unix_socketpair_type(int *ep0, int *ep1, int type)
 {
     if (!ep0 || !ep1) return -EINVAL;
 
@@ -1076,16 +1080,22 @@ int unix_socketpair(int *ep0, int *ep1)
     }
 
     /* Set up endpoint 0 as the "server" side */
-    eps[idx0].type      = SOCK_STREAM;
+    eps[idx0].type      = type;
     eps[idx0].state     = UNIX_CONNECTED;
-    eps[idx0].conn      = c;
+    eps[idx0].conn      = (type == SOCK_STREAM) ? c : NULL;
     eps[idx0].is_server = 1;
 
     /* Set up endpoint 1 as the "client" side */
-    eps[idx1].type      = SOCK_STREAM;
+    eps[idx1].type      = type;
     eps[idx1].state     = UNIX_CONNECTED;
-    eps[idx1].conn      = c;
+    eps[idx1].conn      = (type == SOCK_STREAM) ? c : NULL;
     eps[idx1].is_server = 0;
+
+    /* For SOCK_DGRAM and SOCK_SEQPACKET, we don't use the conn object */
+    if (type == SOCK_DGRAM || type == SOCK_SEQPACKET) {
+        kfree(c->buf);
+        kfree(c);
+    }
 
     spinlock_release(&unix_lock);
 

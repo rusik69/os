@@ -202,11 +202,32 @@ int spi_transfer(struct spi_device *dev,
     if (!master->ops || !master->ops->transfer_one)
         return -1;  /* ENOSYS */
 
-    /* Configure the SPI hardware for this device's mode and speed */
+    /* ── Configure SPI mode (CPHA, CPOL) ───────────────────────────
+     * Apply the SPI mode to the controller before starting the
+     * transfer.  Mode is encoded as:
+     *   bits [1:0] = CPOL and CPHA from SPI_MODE_x constants
+     *   bit  [2]   = CS high (vs active low)
+     *   bit  [3]   = LSB first (vs MSB first)
+     */
+
+    /* Set CPOL (Clock Polarity) and CPHA (Clock Phase) from mode */
     if (master->ops->set_mode) {
         int ret = master->ops->set_mode(master->priv, dev->mode);
         if (ret < 0)
             return ret;
+    }
+
+    /* ── Configure word size (bits per word) ───────────────────────
+     * The number of bits per word affects how data is serialized.
+     * Standard is 8 bits per word.  Some devices support 16-bit
+     * word sizes for higher throughput.
+     */
+    if (master->ops->set_word_size) {
+        int ret = master->ops->set_word_size(master->priv, dev->bits_per_word);
+        if (ret < 0) {
+            /* Fall back to 8-bit if set_word_size fails */
+            dev->bits_per_word = 8;
+        }
     }
 
     if (master->ops->set_speed) {
@@ -512,11 +533,23 @@ static int bb_set_bit_order(void *priv, int lsb)
     return 0;
 }
 
+static int bb_set_word_size(void *priv, int bits)
+{
+    struct bitbang_priv *bp = (struct bitbang_priv *)priv;
+    if (!bp)
+        return -1;
+    /* Bitbang only supports 8-bit words */
+    if (bits != 8)
+        return -1;
+    return 0;
+}
+
 static const struct spi_master_ops g_bitbang_ops = {
     .transfer_one  = bb_transfer_one,
     .set_mode      = bb_set_mode,
     .set_speed     = bb_set_speed,
     .set_bit_order = bb_set_bit_order,
+    .set_word_size = bb_set_word_size,
 };
 
 /**

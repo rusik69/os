@@ -68,6 +68,27 @@ struct uffdio_wake {
     uint64_t mode;         /* reserved, must be 0 */
 };
 
+/* UFFDIO_WRITEPROTECT ioctl argument */
+#define UFFDIO_WRITEPROTECT             0x3F06
+struct uffdio_writeprotect {
+    uint64_t range_start;  /* start of range (page-aligned) */
+    uint64_t range_len;    /* length (must be page-aligned) */
+    uint64_t mode;         /* UFFDIO_WRITEPROTECT_MODE_* flags */
+    int64_t  result;       /* response: number of bytes processed or error */
+};
+#define UFFDIO_WRITEPROTECT_MODE_WP     (1 << 0)  /* write-protect (0 = unwriteprotect) */
+#define UFFDIO_WRITEPROTECT_MODE_DONTWAKE (1 << 1)
+
+/* UFFDIO_CONTINUE ioctl argument */
+#define UFFDIO_CONTINUE                 0x3F07
+struct uffdio_continue {
+    uint64_t range_start;  /* start of range (page-aligned) */
+    uint64_t range_len;    /* length (must be page-aligned) */
+    uint64_t mode;         /* UFFDIO_CONTINUE_MODE_* flags */
+    int64_t  result;       /* response: number of bytes continued or error */
+};
+#define UFFDIO_CONTINUE_MODE_DONTWAKE   (1 << 0)
+
 /* UFFDIO_COPY / ZEROPAGE mode flags */
 #define UFFDIO_COPY_MODE_DONTWAKE     (1 << 0)
 #define UFFDIO_ZEROPAGE_MODE_DONTWAKE (1 << 0)
@@ -143,6 +164,8 @@ int userfaultfd_set_features(int fd, uint64_t features);
 int userfaultfd_copy(int fd, struct uffdio_copy *copy_arg);
 int userfaultfd_zeropage(int fd, struct uffdio_zeropage *zp_arg);
 int userfaultfd_wake(int fd, struct uffdio_wake *wake_arg);
+int userfaultfd_writeprotect(int fd, struct uffdio_writeprotect *wp_arg);
+int userfaultfd_continue(int fd, struct uffdio_continue *cont_arg);
 int userfaultfd_api(int fd, struct uffdio_api *api_arg);
 
 /* Syscall entry point: cmd and arg are passed from the userfaultfd syscall.

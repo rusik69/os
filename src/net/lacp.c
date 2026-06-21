@@ -226,12 +226,48 @@ int lacp_receive_pdu(uint16_t port_number, const struct lacp_pdu *pdu, uint16_t 
                               pdu->actor.system_priority[1];
     memcpy(&p->partner_system, pdu->actor.system_mac, 6);
     p->partner_key = (pdu->actor.key[0] << 8) | pdu->actor.key[1];
+    p->partner_port = (pdu->actor.port_number[0] << 8) | pdu->actor.port_number[1];
+    p->partner_port_prio = (pdu->actor.port_priority[0] << 8) | pdu->actor.port_priority[1];
 
-    kprintf("lacp: received PDU on port %u, partner system=%02x:%02x:%02x:%02x:%02x:%02x\n",
+    /* Actor/Partner state tracking per 802.3ad */
+    uint8_t rx_state = pdu->actor.state_flags;
+
+    /* Update our actor state based on received partner state */
+    if (rx_state & LACP_STATE_SYNC) {
+        /* Partner is in sync — we can start collecting/distributing */
+        p->actor.state_flags |= LACP_STATE_SYNC;
+        p->actor.state_flags |= LACP_STATE_COLLECTING;
+        p->actor.state_flags |= LACP_STATE_DISTRIBUTING;
+        p->aggregated = 1;
+    } else {
+        p->actor.state_flags &= ~LACP_STATE_SYNC;
+        p->actor.state_flags &= ~LACP_STATE_COLLECTING;
+        p->actor.state_flags &= ~LACP_STATE_DISTRIBUTING;
+        p->aggregated = 0;
+    }
+
+    /* Track timeout mode */
+    if (rx_state & LACP_STATE_SHORT_TIMER) {
+        p->periodic_state = LACP_PERIODIC_FAST;
+        p->periodic_timer = 1;  /* 1 second */
+        p->current_while_timer = 3;  /* Short timeout: 3 seconds */
+    } else {
+        p->periodic_state = LACP_PERIODIC_SLOW;
+        p->periodic_timer = 30; /* 30 seconds */
+        p->current_while_timer = 90; /* Long timeout: 90 seconds */
+    }
+
+    /* Clear defaulted/expired flags since we received a valid PDU */
+    p->actor.state_flags &= ~LACP_STATE_DEFAULTED;
+    p->actor.state_flags &= ~LACP_STATE_EXPIRED;
+
+    kprintf("lacp: received PDU on port %u, partner system=%02x:%02x:%02x:%02x:%02x:%02x "
+            "state=0x%02x aggregated=%d\n",
             port_number,
             pdu->actor.system_mac[0], pdu->actor.system_mac[1],
             pdu->actor.system_mac[2], pdu->actor.system_mac[3],
-            pdu->actor.system_mac[4], pdu->actor.system_mac[5]);
+            pdu->actor.system_mac[4], pdu->actor.system_mac[5],
+            rx_state, p->aggregated);
 
     return 0;
 }

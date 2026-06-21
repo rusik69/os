@@ -167,6 +167,100 @@ static int ipsec_compute_icv(struct security_assoc *sa, const uint8_t *data,
     return 0;
 }
 
+/* ESP/AH output path: encapsulate a payload with ESP or AH header */
+int ipsec_output_ah(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
+{
+    if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
+    uint32_t dst_ip = ntohl(outer_ip->dst_ip);
+
+    /* Find matching SA */
+    int idx = -1;
+    for (int i = 0; i < SADB_MAX_SAS; i++) {
+        if (sadb[i].in_use && sadb[i].proto == SADB_PROTO_AH &&
+            sadb[i].dst_ip == dst_ip) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return -ENOENT;
+    struct security_assoc *sa = &sadb[idx];
+
+    int payload_len = *len;
+    int ah_hdr_size = sizeof(struct ah_header) + 12; /* header + ICV */
+    int total_len = payload_len + ah_hdr_size;
+
+    if (total_len > max_len) return -ENOSPC;
+
+    /* Shift payload to make room for AH header */
+    memmove(buf + ah_hdr_size, buf, payload_len);
+
+    struct ah_header *ah = (struct ah_header *)buf;
+    ah->next_hdr = IP_PROTO_IPIP; /* or the actual next protocol */
+    ah->payload_len = (ah_hdr_size / 4) - 2;
+    ah->reserved = 0;
+    ah->spi = htonl(sa->spi);
+    ah->seq_no = htonl(++sa->last_seq);
+
+    /* Compute ICV over the entire AH payload */
+    ipsec_compute_icv(sa, buf, ah_hdr_size + payload_len - 12,
+                      buf + ah_hdr_size + payload_len - 12);
+
+    *len = total_len;
+    kprintf("ipsec: AH output spi=0x%x seq=%u len=%d\n", sa->spi, sa->last_seq, total_len);
+    return 0;
+}
+
+int ipsec_output_esp(struct ip_header *outer_ip, uint8_t *buf, int *len, int max_len)
+{
+    if (!ipsec_initialised || !buf || !len || !outer_ip) return -EINVAL;
+    uint32_t dst_ip = ntohl(outer_ip->dst_ip);
+
+    int idx = -1;
+    for (int i = 0; i < SADB_MAX_SAS; i++) {
+        if (sadb[i].in_use && sadb[i].proto == SADB_PROTO_ESP &&
+            sadb[i].dst_ip == dst_ip) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return -ENOENT;
+    struct security_assoc *sa = &sadb[idx];
+
+    int payload_len = *len;
+    /* ESP header + payload + padding + pad_len + next_hdr + ICV */
+    int pad_len = (4 - (payload_len + 2) % 4) % 4;
+    int esp_hdr_size = sizeof(struct esp_header);
+    int esp_trail_size = pad_len + 2 + 12; /* padding + trailer(2) + ICV(12) */
+    int total_len = esp_hdr_size + payload_len + esp_trail_size;
+
+    if (total_len > max_len) return -ENOSPC;
+
+    /* Shift payload right */
+    memmove(buf + esp_hdr_size, buf, payload_len);
+
+    struct esp_header *esp = (struct esp_header *)buf;
+    esp->spi = htonl(sa->spi);
+    esp->seq_no = htonl(++sa->last_seq);
+
+    /* Add padding */
+    uint8_t *payload_start = buf + esp_hdr_size;
+    for (int i = 0; i < pad_len; i++)
+        payload_start[payload_len + i] = i + 1;
+
+    /* Trailer */
+    struct esp_trailer *trailer = (struct esp_trailer *)(buf + esp_hdr_size + payload_len + pad_len);
+    trailer->pad_len = pad_len;
+    trailer->next_hdr = IP_PROTO_IPIP;
+
+    /* XOR encryption (simplified — real impl would use AES-CBC or similar) */
+    for (int i = 0; i < payload_len + pad_len + 2; i++)
+        buf[esp_hdr_size + i] ^= sa->enc_key[i % sa->enc_key_len];
+
+    *len = total_len;
+    kprintf("ipsec: ESP output spi=0x%x seq=%u len=%d\n", sa->spi, sa->last_seq, total_len);
+    return 0;
+}
+
 static int ipsec_input_ah(struct ip_header *ip_hdr, const uint8_t *payload, int len)
 {
     struct ah_header *ah = (struct ah_header *)payload;

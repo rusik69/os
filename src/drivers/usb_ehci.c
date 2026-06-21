@@ -713,7 +713,240 @@ int ehci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
     return 0;
 }
 
-/* ── xHCI isochronous stub ─────────────────────────────────────────────────── */
+/* ── Async schedule (control/bulk) processing ─────────────────────────── */
+
+/*
+ * EHCI async schedule processing using Queue Heads (QH) and
+ * Queue Element Transfer Descriptors (qTD).
+ *
+ * The async schedule processes control, bulk, and interrupt transfers.
+ * Each QH points to a ring of qTDs that describe the buffer locations
+ * and transfer sizes.
+ *
+ * qTD layout (EHCI spec §3.5, 32 bytes, 32-byte aligned):
+ *   [0x00] Next qTD pointer     — physical address of next qTD
+ *   [0x04] Alternate Next qTD   — for error recovery / NAK
+ *   [0x08] Token                — status, total bytes, CERR, PID, IOC
+ *   [0x0C] Buffer Pointer 0     — physical page address [31:12]
+ *   [0x10] Buffer Pointer 1
+ *   [0x14] Buffer Pointer 2
+ *   [0x18] Buffer Pointer 3
+ *   [0x1C] Buffer Pointer 4
+ */
+
+/* qTD token definitions */
+#define QTD_TOKEN_STATUS_MASK   0x000000FF
+#define QTD_TOKEN_ACTIVE        0x00000080
+#define QTD_TOKEN_HALTED        0x00000040
+#define QTD_TOKEN_DATABUFERR    0x00000020
+#define QTD_TOKEN_BABBLE        0x00000010
+#define QTD_TOKEN_XACTERR       0x00000008
+#define QTD_TOKEN_MISSEDMICRO   0x00000004
+#define QTD_TOKEN_SPLITXSTATE   0x00000002
+#define QTD_TOKEN_PID_MASK      0x00000300
+#define QTD_TOKEN_PID_OUTPUT    0x00000000
+#define QTD_TOKEN_PID_INPUT     0x00000100
+#define QTD_TOKEN_PID_SETUP     0x00000200
+#define QTD_TOKEN_CERR_SHIFT    10
+#define QTD_TOKEN_CERR_MASK     0x00000C00
+#define QTD_TOKEN_CPAGE_SHIFT   12
+#define QTD_TOKEN_CPAGE_MASK    0x00007000
+#define QTD_TOKEN_IOC           0x00008000
+#define QTD_TOKEN_BYTES_SHIFT   16
+#define QTD_TOKEN_BYTES_MASK    0x7FFF0000
+#define QTD_TOKEN_TOGGLE        0x80000000
+
+/* QH (Queue Head) layout (EHCI spec §3.6, 48 bytes, 32-byte aligned) */
+#define QH_NEXT_TERMINATE      0x00000001
+#define QH_TYPE_QH             0x00000002
+#define QH_EPS_HIGH            (2u << 12)  /* High-speed endpoint */
+
+/* Maximum number of qTDs per QH */
+#define QTD_MAX_PER_QH         8
+
+/* Maximum async schedule processing depth per call */
+#define ASYNC_MAX_QDS          32
+
+/**
+ * ehci_process_async_qtd — Process a single qTD.
+ *
+ * Checks the status of a qTD and handles completion or error.
+ *
+ * @qtd_phys: Physical address of the qTD
+ * @returns 0 if still active, 1 if complete, negative on error.
+ */
+static int ehci_process_async_qtd(uint64_t qtd_phys)
+{
+    volatile uint32_t *qtd_virt = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
+    uint32_t token = qtd_virt[2];  /* Token dword at offset 8 */
+
+    if (token & QTD_TOKEN_ACTIVE)
+        return 0;  /* Still pending */
+
+    if (token & QTD_TOKEN_HALTED) {
+        kprintf("[EHCI] qTD halted (token=0x%08X)\n", (unsigned)token);
+        return -EIO;
+    }
+
+    if (token & (QTD_TOKEN_BABBLE | QTD_TOKEN_XACTERR | QTD_TOKEN_DATABUFERR)) {
+        kprintf("[EHCI] qTD error (token=0x%08X)\n", (unsigned)token);
+        return -EIO;
+    }
+
+    /* Transfer completed successfully */
+    return 1;
+}
+
+/**
+ * ehci_process_async_schedule — Process the async schedule list.
+ *
+ * Walks the async schedule (QH list) and processes any completed qTDs.
+ * Called from the USB interrupt handler or periodically.
+ *
+ * Returns the number of qTDs processed, or negative on error.
+ */
+int ehci_process_async_schedule(void)
+{
+    int c = 0;
+    if (ehci_count < 1)
+        return -1;
+
+    uint32_t async_list_addr = op_read(c, EHCI_ASYNCLISTADDR);
+    if (async_list_addr == 0)
+        return 0;  /* Empty schedule */
+
+    int processed = 0;
+    uint32_t current_qh_phys = async_list_addr;
+    int safety = ASYNC_MAX_QDS;
+
+    while (current_qh_phys && !(current_qh_phys & QH_NEXT_TERMINATE) && safety > 0) {
+        uint64_t qh_virt = (uint64_t)PHYS_TO_VIRT(current_qh_phys & ~0x1F);
+        volatile uint32_t *qh = (volatile uint32_t *)qh_virt;
+
+        /* Get the horizontal link pointer (next QH) */
+        uint32_t horiz_link = qh[0];
+
+        /* Get the overlay qTD pointer (current transfer) */
+        uint32_t overlay_qtd = qh[2];  /* qTD pointer at offset 8 */
+
+        if (overlay_qtd && !(overlay_qtd & QH_NEXT_TERMINATE)) {
+            int ret = ehci_process_async_qtd((uint64_t)(overlay_qtd & ~0x1F));
+            if (ret > 0) {
+                processed++;
+                kprintf("[EHCI] Async qTD completed (QH=0x%08X)\n",
+                        (unsigned)current_qh_phys);
+            }
+        }
+
+        /* Advance to next QH */
+        current_qh_phys = horiz_link;
+        safety--;
+    }
+
+    return processed;
+}
+
+/**
+ * ehci_submit_async_qtd — Create and submit a single qTD.
+ *
+ * Allocates a qTD, fills it with the transfer parameters, and links
+ * it into the async schedule.
+ *
+ * @dev_addr:  USB device address
+ * @ep:        Endpoint number (0 for control)
+ * @buf:       Data buffer (virtual address)
+ * @len:       Transfer length
+ * @pid:       PID: QTD_TOKEN_PID_SETUP, QTD_TOKEN_PID_INPUT, QTD_TOKEN_PID_OUTPUT
+ * @toggle:    Data toggle (0 or 1)
+ *
+ * Returns 0 on success, negative on error.
+ */
+int ehci_submit_async_qtd(uint8_t dev_addr, uint8_t ep,
+                           void *buf, uint32_t len,
+                           uint32_t pid, int toggle)
+{
+    int c = 0;
+    if (ehci_count < 1)
+        return -1;
+
+    /* Allocate a qTD (one page, 32-byte aligned) */
+    uint64_t qtd_phys = pmm_alloc_frame();
+    if (!qtd_phys)
+        return -2;
+
+    volatile uint32_t *qtd = (volatile uint32_t *)PHYS_TO_VIRT(qtd_phys);
+    memset((void *)qtd, 0, 4096);
+
+    /* Fill qTD */
+    uint32_t buf_phys = (uint32_t)(uintptr_t)VIRT_TO_PHYS(buf);
+    uint32_t pg_base = buf_phys & ~0xFFFu;
+    uint32_t pg_off = buf_phys & 0xFFFu;
+
+    /* Buffer pointers */
+    qtd[3] = pg_base;                            /* buf_ptr0 */
+    qtd[4] = (pg_off + len > 4096) ? (pg_base + 0x1000u) : 0;
+    qtd[5] = 0;
+    qtd[6] = 0;
+    qtd[7] = 0;
+
+    /* Token: status + PID + length + toggle */
+    uint32_t bytes_to_send = (len > 0) ? (len << 16) : 0;
+    uint32_t cerr = (3u << QTD_TOKEN_CERR_SHIFT);  /* 3 error count */
+    uint32_t data_toggle = toggle ? QTD_TOKEN_TOGGLE : 0;
+    uint32_t page_sel = (pg_off >> 12) & 0x07;
+
+    qtd[2] = QTD_TOKEN_ACTIVE | pid | cerr |
+             (page_sel << QTD_TOKEN_CPAGE_SHIFT) |
+             bytes_to_send | data_toggle;
+
+    qtd[0] = EHCI_PTR_TERMINATE;  /* Next qTD pointer: terminate */
+    qtd[1] = EHCI_PTR_TERMINATE;  /* Alternate next: terminate */
+
+    /* Allocate a QH and link the qTD */
+    uint64_t qh_phys = pmm_alloc_frame();
+    if (!qh_phys) {
+        pmm_free_frame(qtd_phys);
+        return -3;
+    }
+
+    volatile uint32_t *qh = (volatile uint32_t *)PHYS_TO_VIRT(qh_phys);
+    memset((void *)qh, 0, 4096);
+
+    /* QH: Horizontal link pointer -> terminate */
+    qh[0] = EHCI_PTR_TERMINATE;
+
+    /* Endpoint capabilities:
+     *   bits 15:12 = endpoint speed (2 = high)
+     *   bits 11:8  = endpoint number
+     *   bits 7:0   = device address
+     */
+    uint32_t ep_cap = QH_EPS_HIGH | ((uint32_t)ep << 8) | dev_addr;
+    qh[1] = ep_cap;
+
+    /* Overlay: qTD pointer */
+    qh[2] = (uint32_t)(qtd_phys & 0xFFFFFFE0);  /* 32-byte aligned */
+
+    /* Current qTD pointer (same as overlay) */
+    qh[4] = (uint32_t)(qtd_phys & 0xFFFFFFE0);
+
+    /* Link QH into async schedule */
+    uint32_t old_async = op_read(c, EHCI_ASYNCLISTADDR);
+    qh[0] = old_async;  /* Point to whatever was there */
+    __asm__ volatile("mfence" ::: "memory");
+
+    op_write(c, EHCI_ASYNCLISTADDR, (uint32_t)(qh_phys & 0xFFFFFFE0));
+
+    /* Enable async schedule */
+    uint32_t cmd = op_read(c, EHCI_USBCMD);
+    op_write(c, EHCI_USBCMD, cmd | EHCI_CMD_ASE);
+
+    kprintf("[EHCI] Async qTD submitted: addr=%d ep=%d len=%u pid=%s\n",
+            dev_addr, ep, len,
+            (pid == QTD_TOKEN_PID_SETUP) ? "SETUP" :
+            (pid == QTD_TOKEN_PID_INPUT) ? "IN" : "OUT");
+
+    return 0;
+}
 int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
                              void *buf, uint32_t len)
 {

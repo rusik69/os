@@ -819,47 +819,114 @@ int sys_getpeername_impl(int sockfd, struct sockaddr_in *addr, uint32_t *addrlen
 }
 
 int sys_socketpair_impl(int domain, int type, int protocol, int sv[2]) {
-    /* Only AF_UNIX SOCK_STREAM socket pairs are supported */
-    if (domain != AF_UNIX) return -EOPNOTSUPP;
-    if (type != SOCK_STREAM) return -EOPNOTSUPP;
     (void)protocol;
 
-    /* Allocate two socket slots */
-    int slot0 = sock_alloc();
-    if (slot0 < 0) return -ENOMEM;
+    /* AF_UNIX socket pairs */
+    if (domain == AF_UNIX) {
+        /* Support SOCK_STREAM and SOCK_DGRAM and SOCK_SEQPACKET */
+        if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET)
+            return -EOPNOTSUPP;
 
-    int slot1 = sock_alloc();
-    if (slot1 < 0) {
-        sock_free(sock_fd_from_slot(slot0));
-        return -ENOMEM;
+        /* Allocate two socket slots */
+        int slot0 = sock_alloc();
+        if (slot0 < 0) return -ENOMEM;
+
+        int slot1 = sock_alloc();
+        if (slot1 < 0) {
+            sock_free(sock_fd_from_slot(slot0));
+            return -ENOMEM;
+        }
+
+        /* Create a connected AF_UNIX pair */
+        int ep0, ep1;
+        int ret = unix_socketpair(&ep0, &ep1);
+        if (ret < 0) {
+            sock_free(sock_fd_from_slot(slot0));
+            sock_free(sock_fd_from_slot(slot1));
+            return ret;
+        }
+
+        /* Set up socket 0 */
+        struct socket *s0 = &socket_table[slot0];
+        s0->domain  = AF_UNIX;
+        s0->type    = type;
+        s0->state   = SOCK_STATE_CONNECTED;
+        s0->unix_ep = ep0;
+
+        /* Set up socket 1 */
+        struct socket *s1 = &socket_table[slot1];
+        s1->domain  = AF_UNIX;
+        s1->type    = type;
+        s1->state   = SOCK_STATE_CONNECTED;
+        s1->unix_ep = ep1;
+
+        sv[0] = sock_fd_from_slot(slot0);
+        sv[1] = sock_fd_from_slot(slot1);
+        return 0;
     }
 
-    /* Create a connected AF_UNIX pair */
-    int ep0, ep1;
-    int ret = unix_socketpair(&ep0, &ep1);
-    if (ret < 0) {
-        sock_free(sock_fd_from_slot(slot0));
-        sock_free(sock_fd_from_slot(slot1));
-        return ret;
+    /* AF_INET socketpair: create a TCP loopback pair */
+    if (domain == AF_INET && type == SOCK_STREAM) {
+        /* Allocate two socket slots */
+        int slot0 = sock_alloc();
+        if (slot0 < 0) return -ENOMEM;
+
+        struct socket *s0 = &socket_table[slot0];
+        s0->domain  = AF_INET;
+        s0->type    = SOCK_STREAM;
+        s0->protocol = IPPROTO_TCP;
+        s0->state   = SOCK_STATE_BOUND;
+        s0->local_port = 0; /* ephemeral */
+
+        /* Bind to a random port */
+        s0->local_port = 30000 + ((uint32_t)(uintptr_t)s0 ^ (uint32_t)timer_get_ticks()) % 10000;
+        s0->local_ip = htonl(0x7F000001); /* 127.0.0.1 */
+
+        /* Listen */
+        s0->state = SOCK_STATE_LISTENING;
+        net_tcp_listen(s0->local_port, NULL, NULL, NULL);
+
+        /* Allocate slot 1 */
+        int slot1 = sock_alloc();
+        if (slot1 < 0) {
+            sock_free(sock_fd_from_slot(slot0));
+            return -ENOMEM;
+        }
+
+        struct socket *s1 = &socket_table[slot1];
+        s1->domain  = AF_INET;
+        s1->type    = SOCK_STREAM;
+        s1->protocol = IPPROTO_TCP;
+
+        /* Connect to slot 0 */
+        s1->remote_ip = htonl(0x7F000001);
+        s1->remote_port = s0->local_port;
+        s1->conn_id = net_tcp_connect(s1->remote_ip, s1->remote_port);
+        if (s1->conn_id < 0) {
+            sock_free(sock_fd_from_slot(slot0));
+            sock_free(sock_fd_from_slot(slot1));
+            return -1;
+        }
+        s1->state = SOCK_STATE_CONNECTED;
+
+        /* Accept on slot 0 */
+        int conn_id = net_tcp_accept(s0->local_port, 100);
+        if (conn_id < 0) {
+            net_tcp_close(s1->conn_id);
+            sock_free(sock_fd_from_slot(slot0));
+            sock_free(sock_fd_from_slot(slot1));
+            return -1;
+        }
+
+        s0->conn_id = conn_id;
+        s0->state = SOCK_STATE_CONNECTED;
+
+        sv[0] = sock_fd_from_slot(slot0);
+        sv[1] = sock_fd_from_slot(slot1);
+        return 0;
     }
 
-    /* Set up socket 0 */
-    struct socket *s0 = &socket_table[slot0];
-    s0->domain  = AF_UNIX;
-    s0->type    = SOCK_STREAM;
-    s0->state   = SOCK_STATE_CONNECTED;
-    s0->unix_ep = ep0;
-
-    /* Set up socket 1 */
-    struct socket *s1 = &socket_table[slot1];
-    s1->domain  = AF_UNIX;
-    s1->type    = SOCK_STREAM;
-    s1->state   = SOCK_STATE_CONNECTED;
-    s1->unix_ep = ep1;
-
-    sv[0] = sock_fd_from_slot(slot0);
-    sv[1] = sock_fd_from_slot(slot1);
-    return 0;
+    return -EOPNOTSUPP;
 }
 
 /* ── Socket poll support ─────────────────────────────────────── */

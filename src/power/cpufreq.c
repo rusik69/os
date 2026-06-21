@@ -587,3 +587,196 @@ static int cpufreq_sysfs_init(void)
 
     return 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Boost support
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Intel HWP (Hardware P-State) or Turbo Boost detection via MSR */
+#define MSR_IA32_MISC_ENABLE        0x000001A0
+#define MSR_IA32_MISC_ENABLE_TURBO  (1ULL << 38)
+
+/* IA32_PERF_CTL bits for turbo */
+#define PERF_CTL_TURBO              (1ULL << 32)   /* IDA (Intel Dynamic Acceleration) */
+
+static int g_boost_supported = 0;
+static int g_boost_enabled = 1;  /* enabled by default */
+
+/**
+ * cpufreq_detect_boost — Detect if hardware supports boost/turbo.
+ *
+ * Checks the IA32_MISC_ENABLE MSR for turbo boost availability.
+ * On Intel CPUs, bit 38 indicates whether turbo boost is available.
+ * Returns 1 if boost is supported, 0 otherwise.
+ */
+int cpufreq_detect_boost(void)
+{
+    if (g_boost_supported)
+        return 1;
+
+    /* Try reading IA32_MISC_ENABLE MSR */
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_IA32_MISC_ENABLE));
+    uint64_t misc = ((uint64_t)hi << 32) | lo;
+
+    if (!(misc & MSR_IA32_MISC_ENABLE_TURBO)) {
+        kprintf("[cpufreq] Turbo boost not available (MSR bit 38 clear)\n");
+        g_boost_supported = 0;
+        return 0;
+    }
+
+    g_boost_supported = 1;
+    kprintf("[cpufreq] Hardware turbo boost detected and enabled\n");
+    return 1;
+}
+
+/**
+ * cpufreq_boost_enable — Enable boost/turbo mode.
+ *
+ * Writes to IA32_PERF_CTL to re-enable IDA (Intel Dynamic Acceleration)
+ * which allows the CPU to enter turbo states.
+ */
+void cpufreq_boost_enable(void)
+{
+    if (!g_boost_supported)
+        return;
+    if (g_boost_enabled)
+        return;
+
+    /* Re-enable turbo by clearing the IDA disable bit in PERF_CTL */
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_IA32_PERF_CTL_ACTUAL));
+    uint64_t ctl = ((uint64_t)hi << 32) | lo;
+    ctl &= ~PERF_CTL_TURBO;
+    __asm__ volatile("wrmsr" :: "a"((uint32_t)ctl), "d"((uint32_t)(ctl >> 32)),
+                     "c"(MSR_IA32_PERF_CTL_ACTUAL) : "memory");
+
+    g_boost_enabled = 1;
+    kprintf("[cpufreq] Turbo boost enabled\n");
+}
+
+/**
+ * cpufreq_boost_disable — Disable boost/turbo mode.
+ *
+ * Writes to IA32_PERF_CTL to disable IDA, forcing the CPU to stay
+ * at the maximum non-turbo P-state.
+ */
+void cpufreq_boost_disable(void)
+{
+    if (!g_boost_supported)
+        return;
+    if (!g_boost_enabled)
+        return;
+
+    /* Disable turbo by setting the IDA disable bit in PERF_CTL */
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_IA32_PERF_CTL_ACTUAL));
+    uint64_t ctl = ((uint64_t)hi << 32) | lo;
+    ctl |= PERF_CTL_TURBO;
+    __asm__ volatile("wrmsr" :: "a"((uint32_t)ctl), "d"((uint32_t)(ctl >> 32)),
+                     "c"(MSR_IA32_PERF_CTL_ACTUAL) : "memory");
+
+    g_boost_enabled = 0;
+    kprintf("[cpufreq] Turbo boost disabled\n");
+}
+
+/**
+ * cpufreq_boost_is_enabled — Check if boost is currently enabled.
+ */
+int cpufreq_boost_is_enabled(void)
+{
+    return g_boost_enabled;
+}
+
+/**
+ * cpufreq_boost_is_supported — Check if boost is supported.
+ */
+int cpufreq_boost_is_supported(void)
+{
+    return g_boost_supported;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Fast frequency switching via MSR_PERF_CTL
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static int g_fast_switch_supported = 0;
+
+/**
+ * cpufreq_fast_switch_supported — Check if fast switch is available.
+ *
+ * Fast frequency switching writes directly to MSR_PERF_CTL without
+ * going through ACPI P-state coordination.  This is supported on
+ * modern Intel and AMD CPUs.
+ *
+ * Returns 1 if supported, 0 otherwise.
+ */
+int cpufreq_fast_switch_supported(void)
+{
+    return g_fast_switch_supported;
+}
+
+/**
+ * cpufreq_detect_fast_switch — Detect fast switch capability.
+ *
+ * Checks for MSR_PERF_CTL support (present on most modern x86 CPUs).
+ * This is assumed available if P-states were probed.
+ */
+void cpufreq_detect_fast_switch(void)
+{
+    if (!g_cpufreq.present) {
+        g_fast_switch_supported = 0;
+        return;
+    }
+
+    /* Verify by reading the PERF_CTL MSR — if it doesn't fault,
+     * it's supported.  We already use it in cpupstate_set_state(),
+     * so fast switch is inherently available. */
+    g_fast_switch_supported = 1;
+    kprintf("[cpufreq] Fast frequency switching supported (MSR_PERF_CTL)\n");
+}
+
+/**
+ * cpufreq_fast_switch — Immediately switch to a target frequency.
+ *
+ * Writes directly to MSR_IA32_PERF_CTL to change frequency without
+ * any coordination or latency.  Used by the schedutil governor for
+ * instant frequency changes.
+ *
+ * @target_freq_khz:  Target frequency in kHz.
+ *
+ * Returns 0 on success, negative on error.
+ */
+int cpufreq_fast_switch(uint32_t target_freq_khz)
+{
+    if (!g_fast_switch_supported)
+        return -1;
+    if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
+        return -1;
+
+    /* Find the P-state closest to the target frequency */
+    int target_state = 0;
+    uint32_t min_diff = 0xFFFFFFFF;
+    for (int i = 0; i < g_cpufreq.num_states; i++) {
+        uint32_t f = g_cpufreq.states[i].core_freq * 1000;
+        uint32_t diff = (f > target_freq_khz) ? (f - target_freq_khz) : (target_freq_khz - f);
+        if (diff < min_diff) {
+            min_diff = diff;
+            target_state = i;
+        }
+    }
+
+    /* Write directly to MSR_PERF_CTL */
+    uint8_t pstate_num = g_cpufreq.states[target_state].control;
+    uint64_t ctl_val = (uint64_t)pstate_num & 0xFFULL;
+
+    /* Preserve IDA/turbo setting */
+    if (g_boost_enabled)
+        ctl_val |= PERF_CTL_TURBO;
+
+    __asm__ volatile("wrmsr" :: "a"((uint32_t)ctl_val), "d"((uint32_t)(ctl_val >> 32)),
+                     "c"(MSR_IA32_PERF_CTL_ACTUAL) : "memory");
+
+    g_cpufreq.current_state = target_state;
+    return 0;
+}

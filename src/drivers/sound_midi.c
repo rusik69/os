@@ -549,4 +549,141 @@ void sound_midi_init(void)
             MIDI_SEQ_MAX_VOICES, MIDI_SEQ_MAX_QUEUE);
 }
 #include "module.h"
+
+/* ── Raw MIDI device open/close/read/write ──────────────────────────── */
+
+/*
+ * Raw MIDI device (/dev/midi) interface.
+ * Provides direct MIDI byte stream access through the sequencer.
+ *
+ * The raw MIDI device allows a simpler byte-stream interface where
+ * MIDI messages are written/read as raw bytes without timing info.
+ */
+
+static int g_midi_dev_open_count = 0;  /* How many times raw MIDI is opened */
+
+/**
+ * midi_raw_open — Open the raw MIDI device.
+ *
+ * Initializes per-open state for raw MIDI access.
+ * Returns 0 on success.
+ */
+int midi_raw_open(void)
+{
+    if (!g_seq_initialized)
+        return -ENODEV;
+
+    if (g_midi_dev_open_count == 0) {
+        /* First open: reset running status */
+        g_running_status = 0;
+        g_seq_bytes_pending = 0;
+        kprintf("[MIDI] Raw MIDI device opened\n");
+    }
+
+    g_midi_dev_open_count++;
+    return 0;
+}
+
+/**
+ * midi_raw_close — Close the raw MIDI device.
+ *
+ * All notes off and release resources.
+ * Returns 0 on success.
+ */
+int midi_raw_close(void)
+{
+    if (!g_seq_initialized)
+        return -ENODEV;
+
+    if (g_midi_dev_open_count > 0)
+        g_midi_dev_open_count--;
+
+    if (g_midi_dev_open_count == 0) {
+        /* Last close: all notes off */
+        midi_seq_stop();
+        g_running_status = 0;
+        g_seq_bytes_pending = 0;
+        kprintf("[MIDI] Raw MIDI device closed, all notes off\n");
+    }
+
+    return 0;
+}
+
+/**
+ * midi_raw_write — Write raw MIDI bytes to the sequencer.
+ *
+ * Accepts a stream of raw MIDI bytes.  Supports running status.
+ *
+ * @data:  Pointer to MIDI byte data
+ * @size:  Number of bytes to write
+ *
+ * Returns number of bytes written, or negative on error.
+ */
+int midi_raw_write(const uint8_t *data, uint32_t size)
+{
+    if (!g_seq_initialized)
+        return -ENODEV;
+    if (!data || size == 0)
+        return -EINVAL;
+
+    /* Use the existing seq_write handler for byte stream parsing */
+    return seq_write(NULL, data, size);
+}
+
+/**
+ * midi_raw_read — Read raw MIDI bytes from the sequencer.
+ *
+ * Returns current sequencer state as raw bytes.
+ *
+ * @buf:      Output buffer
+ * @max_size: Maximum bytes to read
+ * @out_size: Actual bytes read
+ *
+ * Returns 0 on success.
+ */
+int midi_raw_read(uint8_t *buf, uint32_t max_size, uint32_t *out_size)
+{
+    if (!g_seq_initialized)
+        return -ENODEV;
+    if (!buf || max_size == 0) {
+        if (out_size) *out_size = 0;
+        return -EINVAL;
+    }
+
+    return seq_read(NULL, buf, max_size, out_size);
+}
+
+/**
+ * midi_raw_ioctl — Handle raw MIDI device ioctls.
+ *
+ * Supports basic MIDI control operations.
+ *
+ * @cmd:  IOCTL command
+ * @arg:  IOCTL argument
+ *
+ * Returns 0 on success, negative on error.
+ */
+int midi_raw_ioctl(int cmd, void *arg)
+{
+    (void)arg;
+
+    switch (cmd) {
+    case 0x01: /* MIDI_RESET — reset all channels */
+        for (int i = 0; i < MIDI_NUM_CHANNELS; i++) {
+            g_channels[i].volume = 100;
+            g_channels[i].pan = 64;
+            g_channels[i].pitch_bend = 8192;
+            g_channels[i].modulation = 0;
+            g_channels[i].sustain = 0;
+        }
+        for (int i = 0; i < MIDI_SEQ_MAX_VOICES; i++)
+            g_voices[i].active = 0;
+        speaker_off();
+        return 0;
+
+    default:
+        return -EINVAL;
+    }
+}
+
 module_init(sound_midi_init);

@@ -92,6 +92,15 @@ struct spi_master_ops {
      * Returns 0 on success, negative errno on failure.
      */
     int (*set_bit_order)(void *priv, int lsb);
+
+    /**
+     * set_word_size — Set the number of bits per word.
+     * @priv:  Controller private data
+     * @bits:  Number of bits per word (typically 8 or 16)
+     *
+     * Returns 0 on success, negative errno on failure.
+     */
+    int (*set_word_size)(void *priv, int bits);
 };
 
 /**

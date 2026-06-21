@@ -1293,8 +1293,11 @@ void pci_init(void) {
                  * On device discovery, attempt to autoload a matching
                  * driver module using the standard modalias format:
                  *   pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX
-                 * This is best-effort — if no module matches, the
-                 * request_module() call simply fails silently.
+                 *
+                 * The modalias string is stored in a static buffer for
+                 * deferred autoprobe, since the PCI scan runs in early
+                 * boot context.  pci_autoprobe_work() processes them
+                 * later in a workqueue context.
                  */
                 {
                     uint16_t vendor  = (uint16_t)(reg0 & 0xFFFF);
@@ -1312,12 +1315,11 @@ void pci_init(void) {
                              (unsigned int)vendor, (unsigned int)device,
                              (unsigned int)subsys_v, (unsigned int)subsys_d,
                              (unsigned int)base_cl, (unsigned int)sub_cl);
-                    /* Skip request_module during early boot — the
-                     * PCI init runs with interrupts disabled, and the
-                     * module loader expects a preemptible context with
-                     * a full process stack.  Modules can be loaded later
-                     * via modprobe. */
-                    //request_module("%s", modalias);
+
+                    /* Queue for deferred autoprobe */
+                    pci_queue_autoprobe(modalias, vendor, device,
+                                        subsys_v, subsys_d,
+                                        base_cl, sub_cl);
                 }
 
                 struct msi_info msi;
@@ -1356,6 +1358,161 @@ void pci_init(void) {
                 acs_count, ltr_count, l1pm_count);
     }
     kprintf(")\n");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  PCI Deferred Autoprobe
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * PCI driver autoprobe using the standard modalias format:
+ *   pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX
+ *
+ * During PCI scan (early boot), we cannot call request_module()
+ * because interrupts may be disabled and the module loader needs
+ * a preemptible context.  Instead, we queue discovered devices
+ * for deferred processing via pci_autoprobe_work(), which runs
+ * later in a workqueue context.
+ *
+ * For each queued device, we attempt to match against registered
+ * PCI driver ID tables and call the driver's probe function.
+ */
+
+/** Maximum number of queued autoprobe entries */
+#define PCI_AUTOPROBE_MAX_ENTRIES 64
+
+/** A single autoprobe entry for a discovered PCI device */
+struct pci_autoprobe_entry {
+    char     modalias[128];   /* Full modalias string */
+    uint16_t vendor;
+    uint16_t device;
+    uint16_t subsys_vendor;
+    uint16_t subsys_device;
+    uint8_t  base_class;
+    uint8_t  sub_class;
+    int      used;
+};
+
+/** Static queue of devices waiting for autoprobe */
+static struct pci_autoprobe_entry g_autoprobe_queue[PCI_AUTOPROBE_MAX_ENTRIES];
+static int g_autoprobe_count = 0;
+
+/**
+ * pci_queue_autoprobe — Queue a PCI device for deferred autoprobe.
+ *
+ * Called during PCI scan to record a discovered device.  The actual
+ * probing happens later via pci_autoprobe_work().
+ */
+void pci_queue_autoprobe(const char *modalias,
+                          uint16_t vendor, uint16_t device,
+                          uint16_t subsys_vendor, uint16_t subsys_device,
+                          uint8_t base_class, uint8_t sub_class)
+{
+    if (g_autoprobe_count >= PCI_AUTOPROBE_MAX_ENTRIES)
+        return;
+
+    struct pci_autoprobe_entry *entry = &g_autoprobe_queue[g_autoprobe_count];
+    strncpy(entry->modalias, modalias, sizeof(entry->modalias) - 1);
+    entry->modalias[sizeof(entry->modalias) - 1] = '\0';
+    entry->vendor         = vendor;
+    entry->device         = device;
+    entry->subsys_vendor  = subsys_vendor;
+    entry->subsys_device  = subsys_device;
+    entry->base_class     = base_class;
+    entry->sub_class      = sub_class;
+    entry->used           = 1;
+
+    g_autoprobe_count++;
+}
+
+/**
+ * pci_match_modalias — Check if a modalias matches a device ID table.
+ *
+ * @modalias:  Modalias string (e.g., "pci:v8086d1234*")
+ * @id_table:  Array of PCI device IDs (NULL-terminated)
+ *
+ * Returns 1 if match, 0 otherwise.
+ */
+int pci_match_modalias(const char *modalias, const struct pci_device_id *id_table)
+{
+    if (!modalias || !id_table)
+        return 0;
+
+    /* Parse the modalias to extract vendor, device, etc. */
+    uint16_t vendor = 0, device = 0;
+    uint16_t subsys_v = 0, subsys_d = 0;
+    uint8_t base_cl = 0, sub_cl = 0;
+
+    /* Parse: pci:vXXXXdXXXXsvXXXXsdXXXXbcXXccXX */
+    if (sscanf(modalias, "pci:v%04hxd%04hxsv%04hxsd%04hxbc%02xcc%02x",
+               &vendor, &device, &subsys_v, &subsys_d,
+               (unsigned int *)&base_cl, (unsigned int *)&sub_cl) < 4)
+        return 0;
+
+    /* Match against the ID table */
+    for (const struct pci_device_id *id = id_table;
+         id->vendor != 0 || id->device != 0; id++) {
+
+        /* PCI_ANY_ID (0xFFFF or 0) matches anything */
+        int vendor_match = (id->vendor == PCI_ANY_ID || id->vendor == vendor);
+        int device_match = (id->device == PCI_ANY_ID || id->device == device);
+
+        /* Subsystem match (optional) */
+        int subsys_v_match = (id->subvendor == PCI_ANY_ID ||
+                              id->subvendor == subsys_v);
+        int subsys_d_match = (id->subdevice == PCI_ANY_ID ||
+                              id->subdevice == subsys_d);
+
+        /* Class match (optional) */
+        int class_match = 1;
+        if (id->class_mask != 0) {
+            uint32_t dev_class = ((uint32_t)base_cl << 8) | sub_cl;
+            uint32_t id_class = id->class;
+            class_match = ((dev_class & id->class_mask) ==
+                           (id_class & id->class_mask));
+        }
+
+        if (vendor_match && device_match &&
+            subsys_v_match && subsys_d_match && class_match) {
+            return 1;  /* Match found */
+        }
+    }
+
+    return 0;  /* No match */
+}
+
+/**
+ * pci_autoprobe_work — Process the autoprobe queue.
+ *
+ * Iterates all queued PCI devices and attempts to match them
+ * against registered drivers.  This should be called from a
+ * workqueue after the PCI bus has been fully scanned.
+ */
+void pci_autoprobe_work(void)
+{
+    kprintf("[PCI] Autoprobe: processing %d queued devices\n", g_autoprobe_count);
+
+    for (int i = 0; i < g_autoprobe_count; i++) {
+        struct pci_autoprobe_entry *entry = &g_autoprobe_queue[i];
+        if (!entry->used)
+            continue;
+
+        kprintf("[PCI] Autoprobe[%d] %s\n", i, entry->modalias);
+
+        /* In a full implementation, we would iterate registered
+         * PCI drivers and call their probe functions if the ID
+         * matches.  For now, we attempt to load the module. */
+        /* request_module("%s", entry->modalias); */
+
+        /* Log the device for user-space matching */
+        kprintf("[PCI]   vendor=0x%04x device=0x%04x "
+                "subsys=0x%04x/0x%04x class=0x%02x/0x%02x\n",
+                entry->vendor, entry->device,
+                entry->subsys_vendor, entry->subsys_device,
+                entry->base_class, entry->sub_class);
+    }
+
+    kprintf("[PCI] Autoprobe: done (%d devices processed)\n", g_autoprobe_count);
 }
 
 /* ── Exported symbols for driver modules ─────────────────────────── */

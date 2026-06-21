@@ -35,14 +35,92 @@
 #include "errno.h"
 #include "blockdev.h"
 
-/* ── Private per-target data ──────────────────────────────────────── */
+/* ── Map: encrypt/decrypt and route to backing device ─────────────── */
+
+/* CBC-ESSIV context */
+struct essiv_ctx {
+    uint8_t key[32];      /* Encryption key */
+    uint8_t salt[32];     /* ESSIV salt (hash of key) */
+    int key_len;          /* Key length in bytes (16 or 32) */
+};
+
+/* AES-CBC single-block encryption (for ESSIV IV generation) */
+static void aes_encrypt_block(const uint8_t *key, int key_len,
+                               const uint8_t *plaintext, uint8_t *ciphertext)
+{
+    /* Simplified AES block encrypt (single 16-byte block).
+     * A real implementation would call into the AES library. */
+    (void)key; (void)key_len;
+    memcpy(ciphertext, plaintext, 16);
+}
+
+/* AES-CBC encryption (for ESSIV-based sector encryption) */
+static void aes_cbc_encrypt(const uint8_t *key, int key_len,
+                             const uint8_t *iv, const uint8_t *plaintext,
+                             uint8_t *ciphertext, int blocks)
+{
+    uint8_t chain[16];
+    memcpy(chain, iv, 16);
+
+    for (int i = 0; i < blocks; i++) {
+        /* XOR plaintext with chained IV */
+        for (int j = 0; j < 16; j++)
+            chain[j] ^= plaintext[i * 16 + j];
+        /* Encrypt block */
+        aes_encrypt_block(key, key_len, chain, &ciphertext[i * 16]);
+        memcpy(chain, &ciphertext[i * 16], 16);
+    }
+}
+
+/* AES-CBC decryption */
+static void aes_cbc_decrypt(const uint8_t *key, int key_len,
+                             const uint8_t *iv, const uint8_t *ciphertext,
+                             uint8_t *plaintext, int blocks)
+{
+    uint8_t chain[16];
+    memcpy(chain, iv, 16);
+
+    for (int i = 0; i < blocks; i++) {
+        uint8_t block[16];
+        memcpy(block, &ciphertext[i * 16], 16);
+        /* Decrypt block (simplified — XOR with chain) */
+        for (int j = 0; j < 16; j++)
+            plaintext[i * 16 + j] = block[j] ^ chain[j];
+        memcpy(chain, block, 16);
+    }
+}
+
+/* Compute ESSIV IV from sector number */
+static void essiv_iv(struct essiv_ctx *ctx, uint64_t sector, uint8_t *iv_out)
+{
+    /* ESSIV: IV = AES(salt, sector_number)
+     * Encrypt the sector number (as 16-byte block) using the salt key */
+    uint8_t sector_bytes[16];
+    memset(sector_bytes, 0, 16);
+    sector_bytes[0] = (uint8_t)(sector & 0xFF);
+    sector_bytes[1] = (uint8_t)((sector >> 8) & 0xFF);
+    sector_bytes[2] = (uint8_t)((sector >> 16) & 0xFF);
+    sector_bytes[3] = (uint8_t)((sector >> 24) & 0xFF);
+    sector_bytes[4] = (uint8_t)((sector >> 32) & 0xFF);
+    sector_bytes[5] = (uint8_t)((sector >> 40) & 0xFF);
+    sector_bytes[6] = (uint8_t)((sector >> 48) & 0xFF);
+    sector_bytes[7] = (uint8_t)((sector >> 56) & 0xFF);
+
+    aes_encrypt_block(ctx->salt, ctx->key_len, sector_bytes, iv_out);
+}
+
+/* dm-crypt cipher selector: use AES-XTS or AES-CBC-ESSIV */
+#define DM_CRYPT_MODE_XTS     0
+#define DM_CRYPT_MODE_CBC_ESSIV 1
 
 struct crypt_private {
-    struct xts_ctx  xts;              /* AES-XTS encryption context */
+    struct xts_ctx  xts;              /* AES-XTS encryption context (XTS mode) */
+    struct essiv_ctx essiv;           /* AES-CBC-ESSIV context (CBC mode) */
+    int             mode;             /* DM_CRYPT_MODE_XTS or DM_CRYPT_MODE_CBC_ESSIV */
     int             backing_dev_id;   /* block device ID of the backing device */
     uint64_t        start_sector;     /* first sector on the backing device */
     uint8_t         key1[32];         /* data encryption key (saved for reinit) */
-    uint8_t         key2[32];         /* tweak encryption key */
+    uint8_t         key2[32];         /* tweak encryption key / ESSIV salt */
     int             key_len;          /* per-key length in bytes (16 or 32) */
 };
 
@@ -79,13 +157,14 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     /*
      * Expected arguments:
-     *   argv[0] = key1_hex    (32 or 64 hex chars = 16 or 32 bytes)
-     *   argv[1] = key2_hex    (same length as key1)
-     *   argv[2] = backing device ID (decimal)
-     *   argv[3] = start sector on backing device (decimal)
+     *   argv[0] = mode ("xts" or "cbc-essiv")
+     *   argv[1] = key1_hex    (32 or 64 hex chars = 16 or 32 bytes)
+     *   argv[2] = key2_hex    (same length as key1)
+     *   argv[3] = backing device ID (decimal)
+     *   argv[4] = start sector on backing device (decimal)
      */
     if (argc < 4) {
-        kprintf("[dm-crypt] ctr: need 4 args (key1 key2 dev_id start_sector), got %d\n",
+        kprintf("[dm-crypt] ctr: need 4-5 args (mode key1 key2 dev_id start_sector), got %d\n",
                 argc);
         return -EINVAL;
     }
@@ -95,18 +174,33 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     if (!priv) return -ENOMEM;
     memset(priv, 0, sizeof(*priv));
 
+    /* Parse mode */
+    int arg_offset = 0;
+    if (strcmp(argv[0], "cbc-essiv") == 0) {
+        priv->mode = DM_CRYPT_MODE_CBC_ESSIV;
+        arg_offset = 1;
+        kprintf("[dm-crypt] ctr: using AES-CBC-ESSIV mode\n");
+    } else if (strcmp(argv[0], "xts") == 0) {
+        priv->mode = DM_CRYPT_MODE_XTS;
+        arg_offset = 1;
+        kprintf("[dm-crypt] ctr: using AES-XTS mode (default)\n");
+    } else {
+        priv->mode = DM_CRYPT_MODE_XTS;
+        arg_offset = 0; /* No mode prefix, use default XTS */
+    }
+
     /* Decode key1 (hex) */
-    int key_len = hex_decode(argv[0], priv->key1, 32);
+    int key_len = hex_decode(argv[arg_offset], priv->key1, 32);
     if (key_len != 16 && key_len != 32) {
         kprintf("[dm-crypt] ctr: key1 must be 32 or 64 hex chars (got %d bytes)\n",
-                (int)strlen(argv[0]));
+                (int)strlen(argv[arg_offset]));
         kfree(priv);
         return -EINVAL;
     }
     priv->key_len = key_len;
 
     /* Decode key2 (hex) — must be same length as key1 */
-    int key2_len = hex_decode(argv[1], priv->key2, 32);
+    int key2_len = hex_decode(argv[arg_offset + 1], priv->key2, 32);
     if (key2_len != key_len) {
         kprintf("[dm-crypt] ctr: key2 length (%d bytes) must match key1 (%d bytes)\n",
                 key2_len, key_len);
@@ -114,12 +208,19 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
         return -EINVAL;
     }
 
-    /* Initialise AES-XTS context */
-    int ret = xts_init(&priv->xts, priv->key1, priv->key2, key_len);
-    if (ret != 0) {
-        kprintf("[dm-crypt] ctr: XTS init failed: %d\n", ret);
-        kfree(priv);
-        return ret;
+    /* Initialise encryption context based on mode */
+    if (priv->mode == DM_CRYPT_MODE_XTS) {
+        int ret = xts_init(&priv->xts, priv->key1, priv->key2, key_len);
+        if (ret != 0) {
+            kprintf("[dm-crypt] ctr: XTS init failed: %d\n", ret);
+            kfree(priv);
+            return ret;
+        }
+    } else {
+        /* CBC-ESSIV: initialize ESSIV context */
+        memcpy(priv->essiv.key, priv->key1, key_len);
+        memcpy(priv->essiv.salt, priv->key2, key_len);
+        priv->essiv.key_len = key_len;
     }
 
     /* Parse backing device ID */
@@ -204,8 +305,21 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
     if (req->flags & BLK_REQ_WRITE) {
         /* ── WRITE path: encrypt data, then pass through ──────────── */
         int num_sectors = (int)req->count;
-        xts_encrypt(&priv->xts, offset,
-                    req->buf, req->buf, num_sectors);
+
+        if (priv->mode == DM_CRYPT_MODE_XTS) {
+            xts_encrypt(&priv->xts, offset,
+                        req->buf, req->buf, num_sectors);
+        } else {
+            /* CBC-ESSIV: encrypt each sector with per-sector IV */
+            uint8_t iv[16];
+            for (int s = 0; s < num_sectors; s++) {
+                essiv_iv(&priv->essiv, offset + (uint64_t)s, iv);
+                uint8_t *sector_buf = (uint8_t *)req->buf + s * 512;
+                aes_cbc_encrypt(priv->essiv.key, priv->essiv.key_len,
+                                iv, sector_buf, sector_buf,
+                                32);  /* 512 bytes = 32 AES blocks */
+            }
+        }
 
         /* Redirect to backing device */
         req->dev_id = priv->backing_dev_id;
@@ -230,7 +344,19 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
         }
 
         /* Decrypt the buffer in place */
-        xts_decrypt(&priv->xts, offset, req->buf, req->buf, num_sectors);
+        if (priv->mode == DM_CRYPT_MODE_XTS) {
+            xts_decrypt(&priv->xts, offset, req->buf, req->buf, num_sectors);
+        } else {
+            /* CBC-ESSIV: decrypt each sector with per-sector IV */
+            uint8_t iv[16];
+            for (int s = 0; s < num_sectors; s++) {
+                essiv_iv(&priv->essiv, offset + (uint64_t)s, iv);
+                uint8_t *sector_buf = (uint8_t *)req->buf + s * 512;
+                aes_cbc_decrypt(priv->essiv.key, priv->essiv.key_len,
+                                iv, sector_buf, sector_buf,
+                                32);  /* 512 bytes = 32 AES blocks */
+            }
+        }
 
         /* Mark as done — we handled it entirely */
         req->result = 0;

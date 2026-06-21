@@ -110,3 +110,64 @@ int page_idle_scan_idle(void)
 
     return (int)idle_count;
 }
+
+/*
+ * Read a portion of the idle/accessed bitmap.
+ * For each page frame in [start_pfn, start_pfn + nr_pfns), set the
+ * corresponding bit in bitmap to 1 if the page is idle (accessed bit
+ * clear) or 0 if accessed.
+ *
+ * bitmap must point to a buffer at least ceil(nr_pfns/8) bytes.
+ */
+int page_idle_bitmap_read(uint64_t start_pfn, uint64_t nr_pfns, uint8_t *bitmap)
+{
+    if (!page_idle_initialised)
+        return -ENOSYS;
+    if (!bitmap || nr_pfns == 0)
+        return -EINVAL;
+
+    uint64_t total = pmm_get_total_frames();
+    for (uint64_t i = 0; i < nr_pfns; i++) {
+        uint64_t pfn = start_pfn + i;
+        if (pfn >= total)
+            break;
+        uint64_t phys = pfn * PAGE_SIZE;
+        int idle = page_idle_is_idle(phys);
+        if (idle != 0 && idle != -ENOSYS && idle != -EINVAL) {
+            /* Mark as idle: set bit */
+            bitmap[i / 8] |= (uint8_t)(1 << (i % 8));
+        } else {
+            /* Mark as accessed: clear bit */
+            bitmap[i / 8] &= (uint8_t)~(1 << (i % 8));
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * Write a portion of the idle/accessed bitmap.
+ * For each page whose corresponding bit in bitmap is 1, clear the
+ * hardware accessed bit (mark page as idle).
+ */
+int page_idle_bitmap_write(uint64_t start_pfn, uint64_t nr_pfns, const uint8_t *bitmap)
+{
+    if (!page_idle_initialised)
+        return -ENOSYS;
+    if (!bitmap || nr_pfns == 0)
+        return -EINVAL;
+
+    uint64_t total = pmm_get_total_frames();
+    for (uint64_t i = 0; i < nr_pfns; i++) {
+        uint64_t pfn = start_pfn + i;
+        if (pfn >= total)
+            break;
+        if (bitmap[i / 8] & (uint8_t)(1 << (i % 8))) {
+            /* Bit is set: clear the accessed bit on this page */
+            uint64_t phys = pfn * PAGE_SIZE;
+            page_idle_clear(phys);
+        }
+    }
+
+    return 0;
+}

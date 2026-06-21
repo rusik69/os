@@ -1255,3 +1255,308 @@ int acpi_sleep(uint32_t state) {
         return -1;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  ACPI System Resource Enumeration
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Parses ACPI _PRS (Possible Resource Settings) and _CRS (Current
+ * Resource Settings) buffers to extract IRQ, DMA, and MMIO resources.
+ *
+ * These are used by device drivers to discover platform resources
+ * without hardcoding IRQ numbers or port addresses.
+ */
+
+/** Resource descriptor tags (ACPI 6.5, Section 6.4) */
+#define ACPI_SMALL_IRQ            0x04  /* IRQ descriptor (small, 2 bytes) */
+#define ACPI_SMALL_DMA            0x0A  /* DMA descriptor (small, 2 bytes) */
+#define ACPI_LARGE_32BIT_MEMORY   0x07  /* 32-bit Memory Range Descriptor */
+#define ACPI_LARGE_32BIT_IO       0x01  /* 32-bit I/O Range Descriptor */
+#define ACPI_LARGE_EXT_IRQ        0x09  /* Extended IRQ Descriptor */
+#define ACPI_LARGE_WORD_IO        0x00  /* Word I/O Port Descriptor */
+
+/** Resource type */
+#define ACPI_RESOURCE_IRQ         1
+#define ACPI_RESOURCE_DMA         2
+#define ACPI_RESOURCE_MMIO        3
+#define ACPI_RESOURCE_IO          4
+
+/** Resource descriptor */
+struct acpi_resource {
+    int type;
+    union {
+        struct {
+            uint32_t irq;
+            int      active_low;
+            int      level_triggered;
+            int      shared;
+        } irq;
+        struct {
+            uint8_t  channel;
+            int      bus_master;
+            int      type_f;  /* 0=compat, 1=typeA, 2=typeB, 3=typeF */
+        } dma;
+        struct {
+            uint64_t base;
+            uint64_t length;
+            int      cacheable;
+            int      write_combine;
+            int      prefetchable;
+        } mmio;
+        struct {
+            uint32_t base;
+            uint32_t length;
+        } io;
+    };
+};
+
+/**
+ * acpi_parse_crs_buffer — Parse a _CRS buffer into resource descriptors.
+ *
+ * @crs_buffer:  Pointer to the raw _CRS bytecode buffer
+ * @crs_length:  Length of the buffer in bytes
+ * @resources:   Output array of parsed resources
+ * @max_count:   Maximum number of resources to parse
+ *
+ * Returns the number of resources found, or negative on error.
+ */
+int acpi_parse_crs_buffer(const uint8_t *crs_buffer, uint32_t crs_length,
+                           struct acpi_resource *resources, int max_count)
+{
+    if (!crs_buffer || !resources || max_count <= 0)
+        return -EINVAL;
+
+    int count = 0;
+    uint32_t offset = 0;
+
+    while (offset < crs_length && count < max_count) {
+        uint8_t tag = crs_buffer[offset];
+
+        if (tag & 0x80) {
+            /* Large resource descriptor (>8 bytes) */
+            uint8_t large_tag = tag & 0x7F;
+            uint32_t len = (uint32_t)crs_buffer[offset + 1] |
+                           ((uint32_t)crs_buffer[offset + 2] << 8);
+            uint32_t data_off = offset + 3;
+
+            if (offset + 3 + len > crs_length)
+                break;
+
+            switch (large_tag) {
+            case ACPI_LARGE_32BIT_MEMORY: {
+                /* 32-bit Fixed Memory Range Descriptor */
+                if (len >= 9 && count < max_count) {
+                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    int cache_attrs = (d[0] >> 1) & 0x03;
+                    int write_comb = (d[0] >> 4) & 0x01;
+                    int prefetch  = (d[0] >> 5) & 0x01;
+
+                    resources[count].type = ACPI_RESOURCE_MMIO;
+                    resources[count].mmio.base  = (uint64_t)d[2] | ((uint64_t)d[3] << 8) |
+                                                   ((uint64_t)d[4] << 16) | ((uint64_t)d[5] << 24);
+                    resources[count].mmio.length = (uint32_t)d[6] | ((uint32_t)d[7] << 8) |
+                                                   ((uint32_t)d[8] << 16) | ((uint32_t)d[9] << 24);
+                    resources[count].mmio.cacheable = (cache_attrs == 1);
+                    resources[count].mmio.write_combine = write_comb;
+                    resources[count].mmio.prefetchable = prefetch;
+                    count++;
+                }
+                break;
+            }
+            case ACPI_LARGE_EXT_IRQ: {
+                /* Extended IRQ Descriptor */
+                if (len >= 4 && count < max_count) {
+                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    int producer = (d[0] >> 1) & 1;
+                    int sharing  = (d[0] >> 3) & 1;  /* 0=exclusive, 1=shared */
+                    int wake_cap = (d[0] >> 5) & 1;
+                    int num_irqs = d[1];
+
+                    for (int j = 0; j < num_irqs && count < max_count; j++) {
+                        uint32_t irq = (uint32_t)d[2 + j * 4] |
+                                       ((uint32_t)d[3 + j * 4] << 8) |
+                                       ((uint32_t)d[4 + j * 4] << 16) |
+                                       ((uint32_t)d[5 + j * 4] << 24);
+                        resources[count].type = ACPI_RESOURCE_IRQ;
+                        resources[count].irq.irq = irq;
+                        resources[count].irq.shared = sharing;
+                        resources[count].irq.level_triggered = 1;
+                        resources[count].irq.active_low = 0;
+                        (void)producer;
+                        (void)wake_cap;
+                        count++;
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            offset += 3 + len;
+        } else {
+            /* Small resource descriptor (<= 8 bytes) */
+            uint8_t small_tag = tag >> 3;
+            uint32_t len = (uint32_t)(tag & 0x07);
+            uint32_t data_off = offset + 1;
+
+            if (offset + 1 + len > crs_length)
+                break;
+
+            switch (small_tag) {
+            case ACPI_SMALL_IRQ: {
+                /* IRQ descriptor (2 bytes) */
+                if (len >= 2 && count < max_count) {
+                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    int trigger = (d[0] >> 0) & 1;    /* 0=edge, 1=level */
+                    int polarity = (d[0] >> 1) & 1;   /* 0=high, 1=low */
+                    int sharing  = (d[0] >> 2) & 1;   /* 0=exclusive, 1=shared */
+                    uint16_t irq_mask = (uint16_t)d[1] | ((uint16_t)d[2] << 8);
+
+                    /* Find the first set bit in the IRQ mask */
+                    for (int b = 0; b < 16; b++) {
+                        if ((irq_mask >> b) & 1) {
+                            resources[count].type = ACPI_RESOURCE_IRQ;
+                            resources[count].irq.irq = (uint32_t)b;
+                            resources[count].irq.active_low = polarity;
+                            resources[count].irq.level_triggered = trigger;
+                            resources[count].irq.shared = sharing;
+                            count++;
+                        }
+                    }
+                }
+                break;
+            }
+            case ACPI_SMALL_DMA: {
+                /* DMA descriptor (2 bytes) */
+                if (len >= 2 && count < max_count) {
+                    uint8_t *d = (uint8_t *)&crs_buffer[data_off];
+                    int bus_master = (d[0] >> 2) & 1;
+                    int type_f = (d[0] >> 5) & 3;
+                    uint8_t dma_mask = d[1];
+
+                    for (int b = 0; b < 8; b++) {
+                        if ((dma_mask >> b) & 1) {
+                            resources[count].type = ACPI_RESOURCE_DMA;
+                            resources[count].dma.channel = (uint8_t)b;
+                            resources[count].dma.bus_master = bus_master;
+                            resources[count].dma.type_f = type_f;
+                            count++;
+                        }
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+            }
+            offset += 1 + len;
+        }
+    }
+
+    return count;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  ACPI Power Management — P-State enumeration
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Enumerates processor performance states (P-States) from ACPI _PCT
+ * and _PSS objects.  These are used to populate cpufreq's P-state table
+ * with platform-specific frequency/voltage pairs.
+ *
+ * _PCT (Performance Control) describes how to control P-states.
+ * _PSS (Performance Supported States) lists available P-states.
+ *
+ * Each _PSS entry is a 16-byte structure:
+ *   uint32_t core_freq;     — Frequency in MHz
+ *   uint32_t power;         — Power dissipation in mW
+ *   uint32_t transition_lat; — Worst-case transition latency in us
+ *   uint32_t bus_master_lat; — Bus master latency in us
+ *   uint32_t control;        — Value to write to PERF_CTL
+ *   uint32_t status;         — Value read back from PERF_STATUS
+ */
+
+#define ACPI_PSS_ENTRY_SIZE 24  /* 6 uint32_t values */
+
+/**
+ * acpi_enumerate_pstates — Parse _PSS data and register with cpufreq.
+ *
+ * @pss_data:   Pointer to raw _PSS buffer data
+ * @pss_length: Length of the _PSS buffer
+ *
+ * Returns the number of P-states registered, or negative on error.
+ */
+int acpi_enumerate_pstates(const uint8_t *pss_data, uint32_t pss_length)
+{
+    if (!pss_data || pss_length < ACPI_PSS_ENTRY_SIZE)
+        return -EINVAL;
+
+    int num_states = pss_length / ACPI_PSS_ENTRY_SIZE;
+    if (num_states > CPUPSTATE_MAX_STATES)
+        num_states = CPUPSTATE_MAX_STATES;
+
+    struct cpupstate_state states[CPUPSTATE_MAX_STATES];
+    memset(states, 0, sizeof(states));
+
+    for (int i = 0; i < num_states; i++) {
+        const uint32_t *entry = (const uint32_t *)(pss_data + i * ACPI_PSS_ENTRY_SIZE);
+        states[i].core_freq          = entry[0] / 1000000;  /* Convert kHz to MHz */
+        states[i].power              = entry[1] / 1000;     /* Convert uW to mW */
+        states[i].transition_latency = (uint16_t)entry[2];
+        states[i].bus_master_latency = (uint16_t)entry[3];
+        states[i].control            = (uint8_t)(entry[4] & 0xFF);
+        states[i].status             = (uint8_t)(entry[5] & 0xFF);
+
+        kprintf("[ACPI] P-state %d: %u MHz, %u mW, lat=%u/%u us ctl=0x%02x\n",
+                i,
+                states[i].core_freq,
+                states[i].power,
+                states[i].transition_latency,
+                states[i].bus_master_latency,
+                states[i].control);
+    }
+
+    /* Register with cpufreq subsystem */
+    int ret = cpufreq_register_acpi_states(states, num_states);
+    if (ret == 0) {
+        kprintf("[ACPI] Registered %d P-states from _PSS\n", num_states);
+    }
+
+    return num_states;
+}
+
+/**
+ * acpi_is_io_space — Check if an address range is I/O space.
+ */
+int acpi_is_io_space(uint8_t space_id)
+{
+    switch (space_id) {
+    case 0:  /* SystemMemory */
+        return 0;
+    case 1:  /* SystemIO */
+        return 1;
+    case 2:  /* PCIConfigSpace */
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+/**
+ * acpi_get_gpe_status — Read the ACPI GPE status register.
+ *
+ * Returns the current GPE status bits.
+ */
+uint32_t acpi_read_gpe_status(void)
+{
+    /* GPE0 status is typically at the GPE0 block address */
+    /* For simplicity, read from PM1a event block if available */
+    if (!acpi_ready || pm1a_evt == 0)
+        return 0;
+
+    /* Read GPE0 status register (assumes it's at a known offset) */
+    /* Actual implementation would use the FADT GPE0 block address */
+    return 0;  /* Placeholder — real GPE base not parsed yet */
+}

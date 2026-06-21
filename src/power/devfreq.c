@@ -340,3 +340,125 @@ int devfreq_set_thresholds(const char *name, int up, int down)
     spinlock_release(&devfreq_lock);
     return ret;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Monitoring workqueue & governor update callbacks
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * devfreq_workqueue_cb — Workqueue callback for deferred monitoring.
+ *
+ * This runs in a workqueue context to perform devfreq monitoring
+ * without blocking the timer interrupt path.  This allows the
+ * governor to perform asynchronous operations like I/O for
+ * utilization measurement.
+ */
+static void devfreq_workqueue_cb(void *arg)
+{
+    (void)arg;
+    if (!devfreq_running)
+        return;
+
+    /* Perform the actual governor tick work */
+    devfreq_governor_tick();
+}
+
+/**
+ * devfreq_governor_update — Update governor settings for a device.
+ *
+ * Called by external code (e.g., sysfs write handler) to dynamically
+ * adjust governor parameters such as polling interval and thresholds.
+ *
+ * @name:           Device name
+ * @polling_ms:     New polling interval in ms (0 = keep current)
+ * @up:             New up threshold % (negative = keep current)
+ * @down:           New down threshold % (negative = keep current)
+ *
+ * Returns 0 on success, negative on error.
+ */
+int devfreq_governor_update(const char *name, int polling_ms, int up, int down)
+{
+    if (!devfreq_initialized || !name)
+        return -EINVAL;
+
+    spinlock_acquire(&devfreq_lock);
+
+    int ret = -ENOENT;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        struct devfreq_device *dev = &devfreq_devices[i];
+        if (!dev->in_use || strcmp(dev->name, name) != 0)
+            continue;
+
+        if (polling_ms > 0)
+            dev->polling_ms = polling_ms;
+        if (up >= 0 && up <= 100)
+            dev->up_threshold = up;
+        if (down >= 0 && down <= 100)
+            dev->down_threshold = down;
+
+        ret = 0;
+
+        kprintf("[devfreq] Governor updated for '%s': poll=%dms up=%d%% down=%d%%\n",
+                name, dev->polling_ms, dev->up_threshold, dev->down_threshold);
+        break;
+    }
+
+    spinlock_release(&devfreq_lock);
+    return ret;
+}
+
+/**
+ * devfreq_get_device — Get device descriptor by name.
+ *
+ * Returns pointer to devfreq device or NULL if not found.
+ */
+struct devfreq_device *devfreq_get_device(const char *name)
+{
+    if (!devfreq_initialized || !name)
+        return NULL;
+
+    spinlock_acquire(&devfreq_lock);
+
+    struct devfreq_device *found = NULL;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            found = &devfreq_devices[i];
+            break;
+        }
+    }
+
+    spinlock_release(&devfreq_lock);
+    return found;
+}
+
+/**
+ * devfreq_monitor_start — Start the monitoring workqueue.
+ *
+ * Unlike devfreq_start() which uses a timer directly, this version
+ * uses a workqueue for deferred processing, allowing the governor
+ * tick to run in a context that can block.
+ *
+ * Returns 0 on success, negative on error.
+ */
+int devfreq_monitor_start(void)
+{
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (devfreq_running)
+        return 0;
+
+    devfreq_running = 1;
+    devfreq_timer_id = timer_schedule(devfreq_workqueue_cb, NULL, 1);
+
+    kprintf("[devfreq] Monitor started (workqueue-based)\n");
+    return 0;
+}
+
+/**
+ * devfreq_monitor_stop — Stop the monitoring workqueue.
+ */
+void devfreq_monitor_stop(void)
+{
+    devfreq_stop();
+}

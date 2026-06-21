@@ -19,6 +19,7 @@
 #include "errno.h"
 #include "uaccess.h"
 #include "pipe.h"
+#include "seccomp_bpf.h"
 
 /* ── Simple PRNG (xorshift64) ─────────────────────────────────────── */
 static uint64_t rng_state = 0;
@@ -360,9 +361,20 @@ int do_prctl(int option, unsigned long arg2, unsigned long arg3,
         /* Not fully implemented */
         return 0;
 
-    case PR_SET_SECCOMP:
-        /* Forward to seccomp — if seccomp_set_mode is available */
-        return -ENOSYS;
+    case PR_SET_SECCOMP: {
+        /* Forward to seccomp — install a BPF filter */
+        if (arg2 != SECCOMP_MODE_FILTER_BPF) {
+            /* Only SECCOMP_SET_MODE_FILTER (mode=2) is supported */
+            return -EINVAL;
+        }
+        struct sock_fprog prog;
+        if (copy_from_user(&prog, arg3, sizeof(prog)) < 0)
+            return -EFAULT;
+        int ret = seccomp_filter_install(&prog);
+        if (ret == 0)
+            p->no_new_privs = 1;  /* PR_SET_SECCOMP requires no_new_privs */
+        return ret;
+    }
 
     case PR_GET_SECCOMP:
         return 0;

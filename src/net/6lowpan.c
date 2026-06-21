@@ -122,7 +122,120 @@ int lowpan6_decompress(const uint8_t *in, uint16_t in_len,
         /* Context Identifier Extension */
         if (cid) {
             if (offset >= in_len) return -EINVAL;
-            offset++; /* skip context ID byte; we ignore contexts for now */
+            uint8_t ctx_id_ext = in[offset++];
+            int src_ctx = (ctx_id_ext >> 4) & 0x0F;
+            int dst_ctx = ctx_id_ext & 0x0F;
+
+            /* Look up context table for source and destination */
+            struct lowpan_iface *li = NULL;
+            /* Find the context table (use the first registered interface) */
+            for (int i = 0; i < LOWPAN6_MAX_IFACES; i++) {
+                if (lowpan_ifaces[i].used) {
+                    li = &lowpan_ifaces[i];
+                    break;
+                }
+            }
+
+            if (sac) {
+                /* Context-based source address compression */
+                if (li && li->ctx[src_ctx].used) {
+                    /* Use context prefix as the upper 64 bits */
+                    memcpy(&ip6->src_ip, li->ctx[src_ctx].prefix, 8);
+                    if (sam == 0) {
+                        if (offset + 16 > in_len) return -EINVAL;
+                        memcpy(((uint8_t *)&ip6->src_ip) + 8, in + offset, 8);
+                        offset += 8;
+                    } else if (sam == 1) {
+                        if (offset + 8 > in_len) return -EINVAL;
+                        memcpy(((uint8_t *)&ip6->src_ip) + 8, in + offset, 8);
+                        offset += 8;
+                    } else if (sam == 2) {
+                        if (offset + 2 > in_len) return -EINVAL;
+                        ((uint8_t *)&ip6->src_ip)[14] = in[offset];
+                        ((uint8_t *)&ip6->src_ip)[15] = in[offset + 1];
+                        offset += 2;
+                    }
+                    /* sam == 3: all 128 bits from context prefix */
+                } else {
+                    /* Context not found or not used — use unspecified */
+                    memset(&ip6->src_ip, 0, 16);
+                    /* Skip consumed inline bytes */
+                    if (sam == 0) { if (offset + 16 > in_len) return -EINVAL; offset += 16; }
+                    else if (sam == 1) { if (offset + 8 > in_len) return -EINVAL; offset += 8; }
+                    else if (sam == 2) { if (offset + 2 > in_len) return -EINVAL; offset += 2; }
+                }
+            } else {
+                /* sac == 0 uses stateless compression (already handled above) */
+                /* Re-run the stateless logic but context was consumed */
+                if (sam == 0) {
+                    if (offset + 16 > in_len) return -EINVAL;
+                    memcpy(&ip6->src_ip, in + offset, 16);
+                    offset += 16;
+                } else if (sam == 1) {
+                    if (offset + 8 > in_len) return -EINVAL;
+                    ((uint8_t *)&ip6->src_ip)[0] = 0xfe;
+                    ((uint8_t *)&ip6->src_ip)[1] = 0x80;
+                    memcpy(((uint8_t *)&ip6->src_ip) + 8, in + offset, 8);
+                    offset += 8;
+                } else if (sam == 2) {
+                    if (offset + 2 > in_len) return -EINVAL;
+                    ((uint8_t *)&ip6->src_ip)[0] = 0xfe;
+                    ((uint8_t *)&ip6->src_ip)[1] = 0x80;
+                    ((uint8_t *)&ip6->src_ip)[11] = 0xff;
+                    ((uint8_t *)&ip6->src_ip)[12] = 0xfe;
+                    ((uint8_t *)&ip6->src_ip)[14] = in[offset];
+                    ((uint8_t *)&ip6->src_ip)[15] = in[offset + 1];
+                    offset += 2;
+                }
+            }
+
+            if (dac) {
+                /* Context-based destination address compression */
+                if (li && li->ctx[dst_ctx].used) {
+                    memcpy(&ip6->dst_ip, li->ctx[dst_ctx].prefix, 8);
+                    if (dam == 0) {
+                        if (offset + 16 > in_len) return -EINVAL;
+                        memcpy(((uint8_t *)&ip6->dst_ip) + 8, in + offset, 8);
+                        offset += 8;
+                    } else if (dam == 1) {
+                        if (offset + 8 > in_len) return -EINVAL;
+                        memcpy(((uint8_t *)&ip6->dst_ip) + 8, in + offset, 8);
+                        offset += 8;
+                    } else if (dam == 2) {
+                        if (offset + 2 > in_len) return -EINVAL;
+                        ((uint8_t *)&ip6->dst_ip)[14] = in[offset];
+                        ((uint8_t *)&ip6->dst_ip)[15] = in[offset + 1];
+                        offset += 2;
+                    }
+                } else {
+                    memset(&ip6->dst_ip, 0, 16);
+                    if (dam == 0) { if (offset + 16 > in_len) return -EINVAL; offset += 16; }
+                    else if (dam == 1) { if (offset + 8 > in_len) return -EINVAL; offset += 8; }
+                    else if (dam == 2) { if (offset + 2 > in_len) return -EINVAL; offset += 2; }
+                }
+            } else {
+                /* dac == 0 uses stateless compression */
+                if (dam == 0) {
+                    if (offset + 16 > in_len) return -EINVAL;
+                    memcpy(&ip6->dst_ip, in + offset, 16);
+                    offset += 16;
+                } else if (dam == 1) {
+                    if (offset + 8 > in_len) return -EINVAL;
+                    ((uint8_t *)&ip6->dst_ip)[0] = 0xfe;
+                    ((uint8_t *)&ip6->dst_ip)[1] = 0x80;
+                    memcpy(((uint8_t *)&ip6->dst_ip) + 8, in + offset, 8);
+                    offset += 8;
+                } else if (dam == 2) {
+                    if (offset + 2 > in_len) return -EINVAL;
+                    ((uint8_t *)&ip6->dst_ip)[0] = 0xfe;
+                    ((uint8_t *)&ip6->dst_ip)[1] = 0x80;
+                    ((uint8_t *)&ip6->dst_ip)[11] = 0xff;
+                    ((uint8_t *)&ip6->dst_ip)[12] = 0xfe;
+                    ((uint8_t *)&ip6->dst_ip)[14] = in[offset];
+                    ((uint8_t *)&ip6->dst_ip)[15] = in[offset + 1];
+                    offset += 2;
+                }
+            }
         }
 
         memset(ip6, 0, sizeof(*ip6));

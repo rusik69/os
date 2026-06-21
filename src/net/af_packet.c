@@ -484,45 +484,189 @@ int packet_getsockname(int fd, struct sockaddr_ll *addr)
 
 /* ── Simple BPF filter support ───────────────────────────────────────
  * Stores a copy of the filter program and applies it to incoming frames.
- * For now, this is a stub that accepts all packets (BPF_PASS).
- * A full implementation would execute the BPF instruction set. */
+ * Implements actual BPF instruction evaluation. */
+
+/* BPF instruction set (subset for packet filtering) */
+#define BPF_LD  0x00
+#define BPF_LDX 0x01
+#define BPF_ALU 0x04
+#define BPF_JMP 0x05
+#define BPF_RET 0x06
+#define BPF_MISC 0x07
+
+#define BPF_W   0x00
+#define BPF_H   0x08
+#define BPF_B   0x10
+
+#define BPF_ABS 0x20
+
+#define BPF_JEQ 0x10
+#define BPF_JGT 0x20
+#define BPF_JGE 0x30
+#define BPF_JSET 0x40
+
+#define BPF_K   0x00
+#define BPF_X   0x08
+
+#define BPF_AND 0x50
+#define BPF_LSH 0x60
+#define BPF_RSH 0x70
+#define BPF_TAX 0x00
+#define BPF_TXA 0x80
+#define BPF_NEG 0x80
+
+/* Evaluate a single BPF instruction */
+static int bpf_eval_insn(const struct sock_filter *prog, int pc,
+                         const uint8_t *frame, int frame_len,
+                         uint32_t *A, uint32_t *X)
+{
+    uint16_t code = prog[pc].code;
+    uint8_t jt = prog[pc].jt;
+    uint8_t jf = prog[pc].jf;
+    uint32_t k = prog[pc].k;
+
+    switch (code) {
+    case BPF_RET | BPF_K:
+        return k; /* Return value = k (BPF_PASS or BPF_KILL) */
+
+    case BPF_LD | BPF_W | BPF_ABS:
+        if (k + 4 > (uint32_t)frame_len) return 0;
+        *A = (uint32_t)frame[k] << 24 | (uint32_t)frame[k+1] << 16 |
+             (uint32_t)frame[k+2] << 8 | frame[k+3];
+        return -1; /* Continue */
+
+    case BPF_LD | BPF_H | BPF_ABS:
+        if (k + 2 > (uint32_t)frame_len) return 0;
+        *A = ((uint32_t)frame[k] << 8) | frame[k+1];
+        return -1;
+
+    case BPF_LD | BPF_B | BPF_ABS:
+        if (k >= (uint32_t)frame_len) return 0;
+        *A = frame[k];
+        return -1;
+
+    case BPF_LD | BPF_W | BPF_LEN:
+        *A = (uint32_t)frame_len;
+        return -1;
+
+    case BPF_LDX | BPF_W | BPF_IMM:
+        *X = k;
+        return -1;
+
+    case BPF_ALU | BPF_AND | BPF_K:
+        *A &= k;
+        return -1;
+
+    case BPF_ALU | BPF_LSH | BPF_K:
+        *A <<= k;
+        return -1;
+
+    case BPF_ALU | BPF_RSH | BPF_K:
+        *A >>= k;
+        return -1;
+
+    case BPF_ALU | BPF_NEG:
+        *A = (uint32_t)(-(int32_t)*A);
+        return -1;
+
+    case BPF_JMP | BPF_JEQ | BPF_K:
+        return (*A == k) ? jt : jf;
+
+    case BPF_JMP | BPF_JGT | BPF_K:
+        return (*A > k) ? jt : jf;
+
+    case BPF_JMP | BPF_JGE | BPF_K:
+        return (*A >= k) ? jt : jf;
+
+    case BPF_JMP | BPF_JSET | BPF_K:
+        return (*A & k) ? jt : jf;
+
+    case BPF_MISC | BPF_TAX:
+        *X = *A;
+        return -1;
+
+    case BPF_MISC | BPF_TXA:
+        *A = *X;
+        return -1;
+
+    default:
+        /* Unsupported instruction — return 0 (block) */
+        return 0;
+    }
+}
+
+/* Execute a complete BPF filter program on a frame.
+ * Returns BPF_PASS (non-zero) or BPF_KILL (0). */
+static int bpf_run_filter(const struct sock_filter *prog, int prog_len,
+                           const uint8_t *frame, int frame_len)
+{
+    uint32_t A = 0, X = 0;
+    int pc = 0;
+
+    while (pc >= 0 && pc < prog_len) {
+        int result = bpf_eval_insn(prog, pc, frame, frame_len, &A, &X);
+        if (result >= 0) {
+            /* Terminal instruction (RET) or jump to nowhere */
+            return result ? BPF_PASS : BPF_KILL;
+        }
+        pc++;
+    }
+
+    return BPF_PASS; /* Default: accept */
+}
 
 int packet_set_filter(int fd, const struct sock_fprog *fprog)
 {
-    (void)fprog;
     struct packet_sock *ps = packet_find_by_fd(fd);
     if (!ps)
         return -EINVAL;
 
     spinlock_acquire(&packet_lock);
-    /* Stub: accept all. In a full implementation, we would copy the
-     * filter program and set ps->filter to the copied program. */
+
+    /* Free old filter program if any */
+    if (ps->filter_prog) {
+        kfree(ps->filter_prog);
+        ps->filter_prog = NULL;
+        ps->filter_len = 0;
+        ps->filter_active = 0;
+    }
+
     if (fprog && fprog->len > 0) {
         /* Validate filter length */
         if (fprog->len > 256) { /* reasonable max */
             spinlock_release(&packet_lock);
             return -EINVAL;
         }
-        /* For now just accept all — store that a filter was set */
-        ps->bound = 1; /* mark as having a filter */
-        /* We would normally do:
-         *   ps->filter_len = fprog->len;
-         *   ps->filter_prog = kmemdup(fprog->filter, ...);
-         * and set ps->filter_active = 1;
-         */
+
+        /* Allocate and copy filter program */
+        size_t prog_size = fprog->len * sizeof(struct sock_filter);
+        struct sock_filter *prog = (struct sock_filter *)kmalloc(prog_size);
+        if (!prog) {
+            spinlock_release(&packet_lock);
+            return -ENOMEM;
+        }
+
+        memcpy(prog, fprog->filter, prog_size);
+        ps->filter_prog = prog;
+        ps->filter_len = fprog->len;
+        ps->filter_active = 1;
     }
+
     spinlock_release(&packet_lock);
     return 0;
 }
 
-/* Apply BPF filter to a frame.  Returns BPF_PASS (1) or BPF_KILL (0).
- * Stub: always passes all frames. */
+/* Apply BPF filter to a frame.  Returns BPF_PASS (1) or BPF_KILL (0). */
 int packet_apply_filter(int fd, const uint8_t *frame, int len)
 {
-    (void)fd;
-    (void)frame;
-    (void)len;
-    return BPF_PASS; /* Accept all for now */
+    struct packet_sock *ps = packet_find_by_fd(fd);
+    if (!ps || !frame || len <= 0)
+        return BPF_PASS;
+
+    if (!ps->filter_active || !ps->filter_prog || ps->filter_len == 0)
+        return BPF_PASS; /* No filter — accept all */
+
+    return bpf_run_filter(ps->filter_prog, ps->filter_len, frame, len);
 }
 
 /* ── PACKET_MMAP ring ─────────────────────────────────────────────── */

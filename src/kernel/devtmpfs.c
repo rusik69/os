@@ -123,7 +123,7 @@ int devtmpfs_delete_node(const char *name)
     /* Remove the VFS entry under /dev/ */
     char vfs_path[128];
     snprintf(vfs_path, sizeof(vfs_path), "/dev/%s", name);
-    vfs_remove(vfs_path);
+    vfs_unlink(vfs_path);
 
     kprintf("[devtmpfs] removed device node '%s'\n", name);
     return 0;

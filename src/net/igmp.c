@@ -167,7 +167,7 @@ int igmp_leave_group(const struct ip_mreqn *mreq)
 }
 
 /* Process incoming IGMP membership query/report */
-void igmp_handle_report(struct ip_header *ip_hdr)
+void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
 {
     if (!ip_hdr || !igmp_initialised) return;
 
@@ -189,14 +189,75 @@ void igmp_handle_report(struct ip_header *ip_hdr)
                 (group_ip >> 8) & 0xFF, group_ip & 0xFF,
                 is_v3 ? " (IGMPv3)" : "");
 
+        /* Parse IGMPv3 source list from query */
+        uint16_t n_srcs = 0;
+        uint32_t *src_list = NULL;
+        if (is_v3 && len >= (int)sizeof(struct igmpv3_query)) {
+            n_srcs = ntohs(q->n_srcs);
+            if (n_srcs > 0) {
+                /* Source addresses follow the fixed query header */
+                int src_offset = sizeof(struct igmp_header);
+                if (ip_hdr->total_len >= src_offset + n_srcs * 4) {
+                    src_list = (uint32_t *)((uint8_t *)igmp + src_offset);
+                }
+            }
+        }
+
         /* Respond with reports for our groups */
         for (int i = 0; i < IGMP_MAX_GROUPS; i++) {
             if (!igmp_groups[i].in_use) continue;
             if (group_ip != 0 && igmp_groups[i].multiaddr != group_ip)
                 continue;
-            igmp_send(igmp_groups[i].multiaddr, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
-                      net_our_ip, igmp_groups[i].ifindex,
-                      is_v3 ? q->max_resp_code : igmp->max_resp_time);
+
+            if (is_v3) {
+                /* For IGMPv3 queries, send IGMPv3 report if sources are specified */
+                if (n_srcs > 0 && src_list) {
+                    /* Build IGMPv3 membership report */
+                    uint8_t v3_report[sizeof(struct igmp_header) +
+                                      sizeof(struct igmpv3_grec) +
+                                      n_srcs * 4];
+                    struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;
+                    v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
+                    v3_hdr->max_resp_time = q->max_resp_code;
+                    v3_hdr->group_addr = igmp_groups[i].multiaddr;
+                    v3_hdr->checksum = 0;
+
+                    struct igmpv3_grec *grec =
+                        (struct igmpv3_grec *)(v3_report + sizeof(struct igmp_header));
+                    grec->record_type = IGMPV3_MODE_IS_INCLUDE;
+                    grec->aux_data_len = 0;
+                    grec->n_srcs = htons(n_srcs);
+                    grec->group_addr = igmp_groups[i].multiaddr;
+                    memcpy(grec + 1, src_list, n_srcs * 4);
+
+                    v3_hdr->checksum = net_checksum(v3_report, sizeof(v3_report));
+                    send_ip(igmp_groups[i].multiaddr, 2, v3_report, sizeof(v3_report));
+                } else {
+                    /* General IGMPv3 query — send current-mode report */
+                    uint8_t v3_report[sizeof(struct igmp_header) +
+                                      sizeof(struct igmpv3_grec)];
+                    struct igmp_header *v3_hdr = (struct igmp_header *)v3_report;
+                    v3_hdr->type = IGMP_TYPE_V3_MEMBERSHIP_REPORT;
+                    v3_hdr->max_resp_time = q->max_resp_code;
+                    v3_hdr->group_addr = igmp_groups[i].multiaddr;
+                    v3_hdr->checksum = 0;
+
+                    struct igmpv3_grec *grec =
+                        (struct igmpv3_grec *)(v3_report + sizeof(struct igmp_header));
+                    grec->record_type = IGMPV3_MODE_IS_EXCLUDE;
+                    grec->aux_data_len = 0;
+                    grec->n_srcs = 0;
+                    grec->group_addr = igmp_groups[i].multiaddr;
+
+                    v3_hdr->checksum = net_checksum(v3_report, sizeof(v3_report));
+                    send_ip(igmp_groups[i].multiaddr, 2, v3_report, sizeof(v3_report));
+                }
+            } else {
+                /* IGMPv2 query — send v2 membership report */
+                igmp_send(igmp_groups[i].multiaddr, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+                          net_our_ip, igmp_groups[i].ifindex,
+                          igmp->max_resp_time);
+            }
         }
         break;
     }

@@ -224,15 +224,43 @@ int mount_get_propagation(const char *path, uint32_t *prop_flags)
 
 int mount_propagate_event(const char *source_mount, const char *target_path)
 {
-    (void)source_mount;
-    (void)target_path;
-
     if (!mount_prop_initialised)
         return -ENOSYS;
 
-    /* Stub: In a full implementation this would walk the mount tree
-     * and propagate mount events according to propagation types. */
-    kprintf("mount_prop: propagate event from %s to %s (stub)\n",
-            source_mount, target_path);
+    if (!source_mount || !target_path)
+        return -EINVAL;
+
+    /* Find the propagation type of the source mount */
+    int src_idx = entry_find_by_path(source_mount);
+    if (src_idx < 0)
+        return src_idx;  /* -ENOENT if not tracked */
+
+    uint32_t src_prop = mount_prop_table[src_idx].prop_flags;
+
+    kprintf("[mount_prop] propagate: event on %s (prop=0x%x) -> %s\n",
+            source_mount, src_prop, target_path);
+
+    /* Only SHARED mounts propagate events to their peers */
+    if (src_prop != MS_SHARED)
+        return 0;
+
+    /* If the source is SHARED, propagate to all SLAVE mounts that
+     * have the source as their master.  For simplicity, we check
+     * all tracked mounts and propagate to those with MS_SLAVE.
+     *
+     * In a full implementation we would also walk the mount tree
+     * to find shared peer groups and slave lists. */
+    for (int i = 0; i < MOUNT_PROP_MAX; i++) {
+        if (!mount_prop_table[i].in_use)
+            continue;
+        if (mount_prop_table[i].prop_flags == MS_SLAVE) {
+            /* This slave mount receives the propagation.
+             * In a real kernel we would recursively apply the
+             * mount/unmount event to this mount's subtree. */
+            kprintf("[mount_prop]   -> propagating to slave: %s\n",
+                    mount_prop_table[i].mountpoint);
+        }
+    }
+
     return 0;
 }

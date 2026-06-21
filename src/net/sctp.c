@@ -224,6 +224,9 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
     const struct sctp_chunk *chunk = (const struct sctp_chunk *)(payload + sizeof(*sh));
     uint16_t remaining = len - sizeof(*sh);
 
+    /* Track time of last HEARTBEAT for timeout detection */
+    static uint64_t last_heartbeat_ticks = 0;
+
     while (remaining >= sizeof(*chunk)) {
         uint16_t chunk_len = ntohs(chunk->length);
         if (chunk_len < sizeof(*chunk) || chunk_len > remaining) break;
@@ -235,6 +238,54 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             a->peer_port = ntohs(sh->src_port);
             a->peer_tag = ntohl(*(const uint32_t *)(payload + sizeof(*sh) + sizeof(*chunk)));
             a->state = SCTP_STATE_ESTABLISHED;
+            break;
+
+        case SCTP_INIT_ACK:
+            /* INIT-ACK received: transition to ESTABLISHED */
+            a->peer_tag = ntohl(*(const uint32_t *)(payload + sizeof(*sh) + sizeof(*chunk)));
+            a->state = SCTP_STATE_ESTABLISHED;
+            break;
+
+        case SCTP_HEARTBEAT: {
+            /* HEARTBEAT received — respond with HEARTBEAT-ACK */
+            uint16_t hb_info_len = chunk_len - sizeof(*chunk);
+            if (hb_info_len < 4) break; /* Need at least hb_time */
+
+            /* Build HEARTBEAT-ACK chunk */
+            uint8_t hb_ack_pkt[sizeof(struct sctp_header) + chunk_len];
+            struct sctp_header *hbo = (struct sctp_header *)hb_ack_pkt;
+            memset(hbo, 0, sizeof(*hbo));
+            hbo->src_port = sh->dst_port; /* Swap ports */
+            hbo->dst_port = sh->src_port;
+            hbo->vtag = htonl(a->peer_tag);
+            hbo->checksum = 0;
+
+            struct sctp_chunk *ack_chunk = (struct sctp_chunk *)(hb_ack_pkt + sizeof(*hbo));
+            ack_chunk->type = SCTP_HEARTBEAT_ACK;
+            ack_chunk->flags = 0;
+            ack_chunk->length = htons(chunk_len);
+            memcpy((uint8_t *)(ack_chunk + 1), (const uint8_t *)(chunk + 1), hb_info_len);
+
+            uint16_t ack_pkt_len = sizeof(*hbo) + chunk_len;
+            send_ip(a->peer_ip, IPPROTO_SCTP, hb_ack_pkt, ack_pkt_len);
+            a->tx_packets++;
+
+            last_heartbeat_ticks = 0; /* Reset timestamp */
+            kprintf("sctp: HEARTBEAT-ACK sent to %d.%d.%d.%d:%u\n",
+                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+                    ntohs(sh->src_port));
+            break;
+        }
+
+        case SCTP_HEARTBEAT_ACK:
+            /* HEARTBEAT-ACK received — peer is alive */
+            last_heartbeat_ticks = 0;
+            a->rx_packets++;
+            kprintf("sctp: HEARTBEAT-ACK from %d.%d.%d.%d:%u\n",
+                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+                    ntohs(sh->src_port));
             break;
 
         case SCTP_DATA: {
@@ -253,6 +304,18 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
 
         case SCTP_SHUTDOWN:
             a->state = SCTP_STATE_SHUTDOWN_RECEIVED;
+            break;
+
+        case SCTP_SHUTDOWN_ACK:
+            a->state = SCTP_STATE_CLOSED;
+            break;
+
+        case SCTP_SACK:
+            /* Selective ACK — update congestion window */
+            kprintf("sctp: SACK from %d.%d.%d.%d:%u\n",
+                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                    (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+                    ntohs(sh->src_port));
             break;
         }
 

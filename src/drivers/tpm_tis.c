@@ -385,6 +385,142 @@ int tpm2_get_random(uint8_t *buf, uint32_t count) {
  * The digest is a SHA-256 (32-byte) value.
  * Returns 0 on success, -1 on failure.
  */
+int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
+{
+    if (!digest || !digest_len)
+        return -1;
+
+    uint8_t cmd[22];  /* header(10) + pcrSelectSize(4) + pcrSelect(sizeof(SHA256)) */
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    /* TPM2_PCR_Read command structure */
+    hdr->tag = TPM2_ST_NO_SESSIONS;
+    hdr->total_size = sizeof(cmd);
+    hdr->command_code = TPM2_CC_PCR_READ;
+
+    /* PCR Selection structure */
+    /* pcrSelectionIn: TPM2B_PCR_SELECTION = size(2) + hash(2) + sizeofSelect(1) + pcrSelect(3) */
+    /* Actually a simplified approach: */
+    cmd[10] = 0;  /* PCR selections count = 1 (TPML_PCR_SELECTION) */
+    cmd[11] = 0;  /* reserved */
+
+    /* TPM2B_PCR_SELECTION: hashAlg (2), sizeofSelect (1), pcrSelect (3) */
+    cmd[12] = 0x00; cmd[13] = 0x0B;  /* TPM2_ALG_SHA256 = 0x000B */
+    cmd[14] = 3;                       /* sizeofSelect = 3 bytes for 24 PCRs */
+
+    /* pcrSelect: bitmask of PCRs to read (bit <pcr_index> set) */
+    uint32_t byte_idx = pcr_index / 8;
+    uint32_t bit_idx = pcr_index % 8;
+    cmd[15] = 0; cmd[16] = 0; cmd[17] = 0;
+    if (byte_idx < 3)
+        cmd[15 + byte_idx] = (uint8_t)(1u << bit_idx);
+
+    uint8_t rsp[128];
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
+    if (ret != 0) {
+        kprintf("[TPM] PCR_Read failed: %d\n", ret);
+        return -1;
+    }
+
+    /* Parse response to extract digest */
+    /* Response layout: hdr(10) + pcrSelectCnt(4) + pcrSelections(var) + digestCnt(4) + digests */
+    /* Simplified: digests start at offset 10 + parameterSize field */
+    struct tpm_rsp_hdr *rh = (struct tpm_rsp_hdr *)rsp;
+    if (rh->return_code != TPM2_RC_SUCCESS)
+        return -1;
+
+    /* For SHA256 digests, they follow at a fixed offset (simplified) */
+    /* Actual offset depends on PCR selection structure size */
+    uint32_t digest_offset = 22;  /* Simplified: after selection header */
+    uint32_t sha256_size = 32;
+
+    if (rsp_len < digest_offset + sha256_size) {
+        *digest_len = 0;
+        return -1;
+    }
+
+    memcpy(digest, rsp + digest_offset, sha256_size);
+    *digest_len = sha256_size;
+
+    return 0;
+}
+
+/* ── TPM2_PCR_Extend ─────────────────────────────────────────────────
+ *
+ * Extends a PCR with a SHA-256 digest value.
+ * PCR extension is: new_value = SHA256(old_value || extend_digest)
+ *
+ * @pcr_index:    PCR index to extend (0-23)
+ * @digest:       32-byte SHA-256 digest to extend with
+ * @digest_len:   Length of digest (must be 32)
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int tpm2_pcr_extend(uint32_t pcr_index, const uint8_t *digest, uint32_t digest_len)
+{
+    if (!digest || digest_len < 32)
+        return -1;
+    if (pcr_index > 23)
+        return -1;
+
+    /* TPM2_PCR_Extend command buffer */
+    uint8_t cmd[64];
+    struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
+
+    hdr->tag = TPM2_ST_NO_SESSIONS;
+    hdr->command_code = TPM2_CC_PCR_EXTEND;
+
+    /* PCR index (4 bytes) */
+    cmd[10] = (uint8_t)(pcr_index & 0xFF);
+    cmd[11] = (uint8_t)((pcr_index >> 8) & 0xFF);
+    cmd[12] = 0;
+    cmd[13] = 0;
+
+    /* TPML_DIGEST_VALUES: count (4 bytes) = 1 */
+    cmd[14] = 1;
+    cmd[15] = 0;
+    cmd[16] = 0;
+    cmd[17] = 0;
+
+    /* TPMT_HA: hashAlg (2 bytes) = TPM2_ALG_SHA256 (0x000B) */
+    cmd[18] = 0x0B;
+    cmd[19] = 0x00;
+
+    /* TPM2B_DIGEST: size (2) + digest (32) */
+    cmd[20] = 32;   /* size = 32 bytes */
+    cmd[21] = 0;
+
+    /* Copy the SHA-256 digest */
+    memcpy(&cmd[22], digest, 32);
+
+    /* Total command size = 10 + 4 + 4 + 2 + 2 + 32 = 54 */
+    uint32_t total_size = 10 + 4 + 4 + 2 + 2 + 32;
+    hdr->total_size = total_size;
+
+    uint8_t rsp[64];
+    uint32_t rsp_len = sizeof(rsp);
+
+    int ret = tpm_transmit(cmd, total_size, rsp, &rsp_len);
+    if (ret != 0) {
+        kprintf("[TPM] PCR_Extend[%u] failed: %d\n",
+                (unsigned)pcr_index, ret);
+        return -1;
+    }
+
+    struct tpm_rsp_hdr *rh = (struct tpm_rsp_hdr *)rsp;
+    if (rh->return_code != TPM2_RC_SUCCESS) {
+        kprintf("[TPM] PCR_Extend[%u] TPM error: 0x%08x\n",
+                (unsigned)pcr_index, rh->return_code);
+        return -1;
+    }
+
+    kprintf("[TPM] PCR_Extend[%u] completed successfully\n",
+            (unsigned)pcr_index);
+    return 0;
+}
+
 /* ── TPM initialization ──────────────────────────────────────────────
  *
  * Probes for a TPM at the standard TIS MMIO base address, validates

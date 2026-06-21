@@ -39,4 +39,33 @@ int overlay_write(const char *path, const void *data, uint32_t size);
 /* Initialise the overlay subsystem. */
 void overlay_init(void);
 
+/*
+ * Read a directory from the merged overlay view.
+ * Iterates entries from both upper and lower layers, returning
+ * unique entries (upper entries shadow lower ones with the same name).
+ * dir_path: path to the directory (under the overlay mountpoint).
+ * buf: output buffer for directory entries (struct vfs_dirent array).
+ * max_entries: maximum number of entries to return.
+ * out_count: actual number of entries written.
+ * Returns 0 on success, negative on error.
+ */
+int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t *out_count);
+
+/*
+ * Look up a path in the merged overlay view.
+ * Searches upper layer first, then lower layers (top to bottom).
+ * resolved_path: output buffer for the actual path where the file exists.
+ * Returns 0 on success (found), negative on error (ENOENT if not found).
+ */
+int ovl_lookup(const char *path, char *resolved_path, size_t resolved_sz);
+
+/*
+ * Read a symlink target from the merged overlay view.
+ * Searches upper then lower layers for the symlink, reads its target.
+ * buf: output buffer for the link target.
+ * size: size of output buffer.
+ * Returns number of bytes written on success, negative on error.
+ */
+int ovl_readlink(const char *path, char *buf, size_t size);
+
 #endif /* OVERLAY_H */

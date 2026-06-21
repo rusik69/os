@@ -187,6 +187,11 @@ struct packet_sock {
     /* PACKET_MMAP ring */
     struct packet_mmap_ring mmap_ring;
     int mmap_enabled;           /* 1 = mmap ring active */
+
+    /* BPF filter support */
+    struct sock_filter *filter_prog;  /* Copy of BPF filter program */
+    int   filter_len;                 /* Number of BPF instructions */
+    int   filter_active;              /* 1 = filter is installed */
 };
 
 /* ── API ────────────────────────────────────────────────────────── */

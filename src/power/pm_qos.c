@@ -518,3 +518,228 @@ int pm_qos_num_device_requests(void)
     spinlock_release(&pm_qos_state.lock);
     return count;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Extended PM QoS API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * pm_qos_update_target — Update an aggregated PM QoS constraint value.
+ *
+ * Called by cpuidle governors to notify PM QoS of a change in the
+ * target constraint for a given type (e.g. CPU_DMA_LATENCY).
+ * This is the main workhorse for updating the effective constraint.
+ *
+ * @type:      Constraint type (e.g. PM_QOS_CPU_DMA_LATENCY)
+ * @op:        Operation: PM_QOS_ADD, PM_QOS_UPDATE, PM_QOS_REMOVE
+ * @value:     New constraint value (for ADD/UPDATE)
+ *
+ * Returns the new effective value on success, negative on error.
+ */
+int pm_qos_update_target(int type, int op, uint32_t value)
+{
+    if (!pm_qos_state.initialized)
+        return -ENOSYS;
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    uint32_t old_effective = pm_qos_compute_effective_locked();
+    int ret = 0;
+
+    switch (op) {
+    case 0: /* PM_QOS_ADD */
+    case 1: /* PM_QOS_UPDATE */ {
+        int slot = -1;
+        for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+            if (!pm_qos_state.requests[i].used) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            ret = -ENOSPC;
+            break;
+        }
+        char name[PM_QOS_NAME_MAX];
+        snprintf(name, sizeof(name), "qos_type_%d", type);
+        strncpy(pm_qos_state.requests[slot].name, name, PM_QOS_NAME_MAX - 1);
+        pm_qos_state.requests[slot].name[PM_QOS_NAME_MAX - 1] = '\0';
+        pm_qos_state.requests[slot].latency_us = value;
+        pm_qos_state.requests[slot].used = 1;
+        kprintf("[PM QoS] update_target: type=%d op=%s value=%u slot=%d\n",
+                type, (op == 0 ? "ADD" : "UPDATE"), (unsigned)value, slot);
+        break;
+    }
+    case 2: /* PM_QOS_REMOVE */ {
+        for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+            if (pm_qos_state.requests[i].used) {
+                pm_qos_state.requests[i].used = 0;
+                pm_qos_state.requests[i].latency_us = 0;
+                memset(pm_qos_state.requests[i].name, 0, PM_QOS_NAME_MAX);
+                break;
+            }
+        }
+        break;
+    }
+    default:
+        ret = -EINVAL;
+        break;
+    }
+
+    uint32_t new_effective = pm_qos_compute_effective_locked();
+    pm_qos_notify_locked(old_effective, new_effective);
+
+    spinlock_release(&pm_qos_state.lock);
+    return (ret < 0) ? ret : (int)new_effective;
+}
+
+/**
+ * pm_qos_work_fn — Async work handler for PM QoS updates.
+ *
+ * Deferred processing for PM QoS constraint changes that may need
+ * to be handled outside of atomic context (e.g. cpuidle re-evaluation,
+ * frequency scaling adjustments).
+ */
+void pm_qos_work_fn(void *data)
+{
+    (void)data;
+    if (!pm_qos_state.initialized)
+        return;
+
+    uint32_t effective = pm_qos_read_effective_latency();
+    kprintf("[PM QoS] work: effective latency = %u us\n", (unsigned)effective);
+
+    /* Notify cpuidle governors to re-evaluate C-state selection */
+    /* In a full implementation, this would trigger cpuidle_refresh()
+     * or similar to cause re-selection of idle states based on the
+     * new constraint. */
+}
+
+/**
+ * pm_qos_debug_show — Display PM QoS state for debugfs.
+ *
+ * @buf:      Output buffer
+ * @size:     Size of output buffer
+ *
+ * Returns number of bytes written.
+ */
+int pm_qos_debug_show(char *buf, uint32_t size)
+{
+    if (!buf || size == 0)
+        return 0;
+
+    int off = 0;
+    off += snprintf(buf + off, (size_t)(size - off),
+                    "PM QoS State:\n");
+    off += snprintf(buf + off, (size_t)(size - off),
+                    "  Initialized: %s\n",
+                    pm_qos_state.initialized ? "yes" : "no");
+
+    spinlock_acquire(&pm_qos_state.lock);
+
+    uint32_t effective = pm_qos_compute_effective_locked();
+    off += snprintf(buf + off, (size_t)(size - off),
+                    "  Effective constraint: %u us\n", (unsigned)effective);
+    off += snprintf(buf + off, (size_t)(size - off),
+                    "  Active requests:\n");
+
+    for (int i = 0; i < PM_QOS_MAX_REQUESTS; i++) {
+        if (pm_qos_state.requests[i].used) {
+            off += snprintf(buf + off, (size_t)(size - off),
+                            "    [%d] %s: %u us\n",
+                            i,
+                            pm_qos_state.requests[i].name,
+                            (unsigned)pm_qos_state.requests[i].latency_us);
+        }
+    }
+
+    off += snprintf(buf + off, (size_t)(size - off),
+                    "  Device requests:\n");
+    for (int i = 0; i < PM_QOS_MAX_DEVICE_REQUESTS; i++) {
+        if (pm_qos_state.device_requests[i].used) {
+            const char *type_str = "unknown";
+            if (pm_qos_state.device_requests[i].type == PM_QOS_DEV_RESUME_LATENCY)
+                type_str = "resume_lat";
+            else if (pm_qos_state.device_requests[i].type == PM_QOS_DEV_THROUGHPUT)
+                type_str = "throughput";
+            off += snprintf(buf + off, (size_t)(size - off),
+                            "    [%d] %s type=%s value=%u\n",
+                            i,
+                            pm_qos_state.device_requests[i].dev_name,
+                            type_str,
+                            (unsigned)pm_qos_state.device_requests[i].value);
+        }
+    }
+
+    spinlock_release(&pm_qos_state.lock);
+
+    return off;
+}
+
+/**
+ * pm_qos_power_write — Write handler for power attribute in sysfs.
+ *
+ * @data:      Input string
+ * @size:      Size of input
+ *
+ * Parses a latency value in microseconds and applies it as a PM QoS
+ * constraint for the power management domain.
+ *
+ * Returns size on success, negative on error.
+ */
+int pm_qos_power_write(const char *data, uint32_t size)
+{
+    if (!data || size == 0)
+        return -EINVAL;
+
+    char buf[32];
+    uint32_t len = size < sizeof(buf) - 1 ? size : sizeof(buf) - 1;
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+
+    /* Strip trailing whitespace/newline */
+    while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' || buf[len - 1] == ' '))
+        buf[--len] = '\0';
+
+    if (len == 0)
+        return (int)size;
+
+    uint32_t latency_us = (uint32_t)strtoul(buf, NULL, 10);
+
+    /* Apply as a new PM QoS constraint */
+    int ret = pm_qos_add_request("power_attr", latency_us);
+    if (ret < 0) {
+        kprintf("[PM QoS] power_write: failed to add constraint (%d)\n", ret);
+        return ret;
+    }
+
+    kprintf("[PM QoS] power_write: set latency = %u us (request_id=%d)\n",
+            (unsigned)latency_us, ret);
+    return (int)size;
+}
+
+/**
+ * pm_qos_remote_work — Handle PM QoS updates from remote CPUs.
+ *
+ * When a constraint change is made on one CPU that affects the
+ * effective latency for another CPU (e.g. in a cluster topology),
+ * this handler is invoked to propagate the change and trigger
+ * re-evaluation of idle states on the remote CPU.
+ *
+ * @cpu:       Remote CPU ID
+ * @value:     New effective constraint value
+ */
+void pm_qos_remote_work(uint32_t cpu, uint32_t value)
+{
+    if (!pm_qos_state.initialized)
+        return;
+
+    kprintf("[PM QoS] remote_work: CPU%u effective = %u us\n",
+            (unsigned)cpu, (unsigned)value);
+
+    /* In a full implementation, this would send an IPI to the target
+     * CPU to trigger cpuidle re-evaluation.  For now, we just log
+     * the cross-CPU notification. */
+    (void)cpu;
+    (void)value;
+}

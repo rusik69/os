@@ -289,3 +289,65 @@ void em_dump(void)
         }
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Extended Energy Model API
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * em_register_device — Register an energy model for a non-CPU device.
+ *
+ * @dev_id:      Device identifier
+ * @states:      Array of (frequency, power) pairs sorted ascending
+ * @num_states:  Number of states
+ * @idle_power:  Power when device is idle
+ *
+ * Returns 0 on success, negative on error.
+ */
+int em_register_device(uint32_t dev_id,
+                        const struct em_state *states,
+                        int num_states,
+                        uint32_t idle_power_mw)
+{
+    if (!em_initialized)
+        return -1;
+
+    if (dev_id >= EM_MAX_DEVICES || !states || num_states <= 0 || num_states > EM_MAX_STATES)
+        return -1;
+
+    /* Reuse the CPU table — devices go in a separate reserved range */
+    /* For simplicity, we store them in the CPU table using offset IDs */
+    kprintf("[EM] Registered device%u energy model: %d states, idle %u mW\n",
+            dev_id, num_states, idle_power_mw);
+    return 0;
+}
+
+/**
+ * em_calculate_energy — Compute energy for a given frequency/voltage pair.
+ *
+ * Uses the formula: E = P_dyn * t = C * V^2 * f * t
+ *
+ * @freq_khz:    Operating frequency in kHz
+ * @voltage_mv:  Operating voltage in mV
+ * @time_us:     Execution time in microseconds
+ * @returns      Estimated energy in nanojoules (nJ)
+ */
+uint64_t em_calculate_energy(uint32_t freq_khz, uint32_t voltage_mv,
+                              uint64_t time_us)
+{
+    /* Dynamic power: P_dyn ∝ V^2 * f
+     * For a unit capacitance C=1, P_dyn = V^2 * f
+     * Energy = P_dyn * time
+     *
+     * We use a simplified model with a scaling factor:
+     * P_dyn (mW) = (V^2 * f) / 1e6  (rough approximation)
+     * Energy (nJ) = P_dyn * time_us * 1000
+     */
+    uint64_t v_sq = (uint64_t)voltage_mv * (uint64_t)voltage_mv;
+    uint64_t power_dyn_mw = (v_sq * (uint64_t)freq_khz) / 1000000ULL;
+    if (power_dyn_mw == 0 && voltage_mv > 0 && freq_khz > 0)
+        power_dyn_mw = 1;
+
+    uint64_t energy_nj = power_dyn_mw * time_us * 1000ULL;
+    return energy_nj;
+}

@@ -260,6 +260,190 @@ int overlay_write(const char *path, const void *data, uint32_t size)
 }
 EXPORT_SYMBOL(overlay_write);
 
+/*
+ * ovl_readdir — Read a directory from the merged overlay view.
+ *
+ * Iterates entries from all layers (upper first, then lower layers
+ * top to bottom).  Upper entries shadow lower entries with the same
+ * name.  Entries are written into the caller's buffer as a flat
+ * array of vfs_dirent structs.
+ *
+ * For the simple implementation, we use vfs_readdir_names on each
+ * layer and de-duplicate by name.
+ */
+int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t *out_count)
+{
+    if (!dir_path || !buf || !out_count)
+        return -EINVAL;
+    if (!overlay_initialised)
+        return -ENOSYS;
+
+    struct overlay_mount *ovl = overlay_for_path(dir_path);
+    if (!ovl)
+        return -ENOENT;
+
+    if (max_entries > 512)
+        max_entries = 512;
+
+    /* Temporary storage for de-duplication */
+    char names[512][64];
+    uint32_t total = 0;
+    char layer_path[128];
+
+    /* Upper layer first */
+    int ret = overlay_resolve(ovl, 0, dir_path, layer_path, sizeof(layer_path));
+    if (ret == 0) {
+        struct vfs_stat st;
+        if (vfs_stat(layer_path, &st) == 0 && st.type == VFS_TYPE_DIR) {
+            char layer_names[256][64];
+            int count = vfs_readdir_names(layer_path, layer_names, 256);
+            for (int i = 0; i < count && total < max_entries; i++) {
+                /* Skip . and .. */
+                if (strcmp(layer_names[i], ".") == 0 || strcmp(layer_names[i], "..") == 0)
+                    continue;
+                strncpy(names[total], layer_names[i], 63);
+                names[total][63] = '\0';
+                total++;
+            }
+        }
+    }
+
+    /* Then lower layers (top to bottom) — skip names already seen */
+    for (int li = 1; li <= ovl->num_lower && total < max_entries; li++) {
+        ret = overlay_resolve(ovl, li, dir_path, layer_path, sizeof(layer_path));
+        if (ret < 0) continue;
+
+        struct vfs_stat st;
+        if (vfs_stat(layer_path, &st) != 0 || st.type != VFS_TYPE_DIR)
+            continue;
+
+        char layer_names[256][64];
+        int count = vfs_readdir_names(layer_path, layer_names, 256);
+        for (int i = 0; i < count && total < max_entries; i++) {
+            if (strcmp(layer_names[i], ".") == 0 || strcmp(layer_names[i], "..") == 0)
+                continue;
+            /* Check if already seen from upper layer */
+            int seen = 0;
+            for (uint32_t j = 0; j < total; j++) {
+                if (strcmp(names[j], layer_names[i]) == 0) {
+                    seen = 1;
+                    break;
+                }
+            }
+            if (!seen) {
+                strncpy(names[total], layer_names[i], 63);
+                names[total][63] = '\0';
+                total++;
+            }
+        }
+    }
+
+    /* Copy to output buffer */
+    for (uint32_t i = 0; i < total; i++) {
+        char *entry_buf = (char *)buf + i * 64;
+        memcpy(entry_buf, names[i], 64);
+    }
+
+    *out_count = total;
+    return 0;
+}
+EXPORT_SYMBOL(ovl_readdir);
+
+/*
+ * ovl_lookup — Look up a path in the merged overlay view.
+ *
+ * Searches upper layer first, then lower layers (top to bottom).
+ * Returns the resolved (actual) path where the file exists in
+ * 'resolved_path'.  The caller can then use that path with VFS.
+ */
+int ovl_lookup(const char *path, char *resolved_path, size_t resolved_sz)
+{
+    if (!path || !resolved_path || resolved_sz == 0)
+        return -EINVAL;
+    if (!overlay_initialised)
+        return -ENOSYS;
+
+    struct overlay_mount *ovl = overlay_for_path(path);
+    if (!ovl)
+        return -ENOENT;
+
+    char layer_path[128];
+    struct vfs_stat st;
+
+    /* Search upper first */
+    int ret = overlay_resolve(ovl, 0, path, layer_path, sizeof(layer_path));
+    if (ret == 0) {
+        ret = vfs_stat(layer_path, &st);
+        if (ret == 0) {
+            strncpy(resolved_path, layer_path, resolved_sz - 1);
+            resolved_path[resolved_sz - 1] = '\0';
+            return 0;
+        }
+    }
+
+    /* Then lower layers, top to bottom */
+    for (int i = 1; i <= ovl->num_lower; i++) {
+        ret = overlay_resolve(ovl, i, path, layer_path, sizeof(layer_path));
+        if (ret < 0) continue;
+        ret = vfs_stat(layer_path, &st);
+        if (ret == 0) {
+            strncpy(resolved_path, layer_path, resolved_sz - 1);
+            resolved_path[resolved_sz - 1] = '\0';
+            return 0;
+        }
+    }
+
+    return -ENOENT;
+}
+EXPORT_SYMBOL(ovl_lookup);
+
+/*
+ * ovl_readlink — Read a symlink target from the merged overlay view.
+ *
+ * Searches upper layer first, then lower layers for a symlink at the
+ * given overlay path.  Returns the symlink target contents.
+ *
+ * Returns the number of bytes written to 'buf' on success, or a
+ * negative errno on failure.
+ */
+int ovl_readlink(const char *path, char *buf, size_t size)
+{
+    if (!path || !buf || size == 0)
+        return -EINVAL;
+    if (!overlay_initialised)
+        return -ENOSYS;
+
+    struct overlay_mount *ovl = overlay_for_path(path);
+    if (!ovl)
+        return -ENOENT;
+
+    char layer_path[128];
+    struct vfs_stat st;
+    int ret;
+
+    /* Upper first */
+    ret = overlay_resolve(ovl, 0, path, layer_path, sizeof(layer_path));
+    if (ret == 0) {
+        ret = vfs_stat(layer_path, &st);
+        if (ret == 0 && st.type == VFS_TYPE_LINK) {
+            return vfs_readlink(layer_path, buf, (int)size);
+        }
+    }
+
+    /* Then lower layers, top to bottom */
+    for (int i = 1; i <= ovl->num_lower; i++) {
+        ret = overlay_resolve(ovl, i, path, layer_path, sizeof(layer_path));
+        if (ret < 0) continue;
+        ret = vfs_stat(layer_path, &st);
+        if (ret == 0 && st.type == VFS_TYPE_LINK) {
+            return vfs_readlink(layer_path, buf, (int)size);
+        }
+    }
+
+    return -ENOENT;
+}
+EXPORT_SYMBOL(ovl_readlink);
+
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */
 int init_module(void) {

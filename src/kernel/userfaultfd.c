@@ -761,6 +761,152 @@ int userfaultfd_wake(int fd, struct uffdio_wake *wake_arg)
 /* ── Syscall entry point ─────────────────────────────────────────── */
 
 /*
+ * UFFDIO_WRITEPROTECT — Change the write-protection status on a range.
+ *
+ * When wp_arg->mode & UFFDIO_WRITEPROTECT_MODE_WP is set, the pages
+ * in the range are write-protected so that write faults will trigger
+ * a uffd event.  When clear, write protection is removed.
+ *
+ * In our implementation, we mark the tracked range with UFFD_FLAG_WP
+ * (or clear it), and update the actual page table entries in the
+ * current process's address space.
+ */
+int userfaultfd_writeprotect(int fd, struct uffdio_writeprotect *wp_arg)
+{
+    struct uffd_context *ctx = NULL;
+    int ret = uffd_validate_ctx(fd, &ctx);
+    if (ret < 0)
+        return ret;
+
+    if (!wp_arg)
+        return -EFAULT;
+
+    if (wp_arg->range_start & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (wp_arg->range_len & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (wp_arg->range_len == 0)
+        return -EINVAL;
+
+    int wp = (wp_arg->mode & UFFDIO_WRITEPROTECT_MODE_WP) ? 1 : 0;
+    uint64_t end = wp_arg->range_start + wp_arg->range_len;
+
+    spinlock_acquire(&ctx->lock);
+
+    /* Update range modes: for each overlapping range, set or clear the WP flag */
+    for (int i = 0; i < ctx->num_ranges; i++) {
+        struct uffd_range *r = &ctx->ranges[i];
+        if (!r->in_use)
+            continue;
+        if (ranges_overlap(wp_arg->range_start, end, r->start, r->end)) {
+            if (wp)
+                r->mode |= UFFD_FLAG_WP;
+            else
+                r->mode &= ~UFFD_FLAG_WP;
+        }
+    }
+
+    spinlock_release(&ctx->lock);
+
+    /* Update page table entries in the current process */
+    struct process *cur = process_get_current();
+    if (cur && cur->pml4) {
+        uint64_t num_pages = wp_arg->range_len / PAGE_SIZE;
+        if (num_pages > 0) {
+            if (wp) {
+                /* Remove the writable flag from the PTEs */
+                vmm_set_user_pages_flags(cur->pml4, wp_arg->range_start,
+                                         num_pages,
+                                         VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_NOEXEC);
+            } else {
+                /* Add the writable flag back */
+                vmm_set_user_pages_flags(cur->pml4, wp_arg->range_start,
+                                         num_pages,
+                                         VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+            }
+        }
+    }
+
+    wp_arg->result = (int64_t)wp_arg->range_len;
+
+    kprintf("[uffd] writeprotect pid=%u range=0x%llx-0x%llx wp=%d\n",
+            (unsigned)(cur ? cur->pid : 0),
+            wp_arg->range_start, end, wp);
+
+    return 0;
+}
+
+/*
+ * UFFDIO_CONTINUE — Continue execution after a minor page fault.
+ *
+ * Called after the page-cache page has been resolved (e.g., by backing
+ * it with a physical page).  This tells the uffd handler that the fault
+ * has been handled and the faulting thread can resume.
+ *
+ * In our synchronous model, we mark the event as resolved via the
+ * wake-pending tracker and ensure the page is mapped.
+ */
+int userfaultfd_continue(int fd, struct uffdio_continue *cont_arg)
+{
+    struct uffd_context *ctx = NULL;
+    int ret = uffd_validate_ctx(fd, &ctx);
+    if (ret < 0)
+        return ret;
+
+    if (!cont_arg)
+        return -EFAULT;
+
+    if (cont_arg->range_start & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (cont_arg->range_len & (PAGE_SIZE - 1))
+        return -EINVAL;
+    if (cont_arg->range_len != PAGE_SIZE)
+        return -EINVAL;
+
+    uint64_t end = cont_arg->range_start + cont_arg->range_len;
+
+    /* Validate the range is within a registered MINOR range */
+    int covered = 0;
+    spinlock_acquire(&ctx->lock);
+    for (int i = 0; i < ctx->num_ranges; i++) {
+        struct uffd_range *r = &ctx->ranges[i];
+        if (!r->in_use) continue;
+        if (!(r->mode & UFFD_FLAG_MINOR)) continue;
+        if (cont_arg->range_start >= r->start && end <= r->end) {
+            covered = 1;
+            break;
+        }
+    }
+    spinlock_release(&ctx->lock);
+
+    if (!covered)
+        return -ENOENT;
+
+    /* Remove from wake-pending list if not DONTWAKE */
+    if (!(cont_arg->mode & UFFDIO_CONTINUE_MODE_DONTWAKE)) {
+        spinlock_acquire(&ctx->lock);
+        for (int i = 0; i < ctx->wake_pending_count; i++) {
+            if (ctx->wake_pending_addrs[i] == cont_arg->range_start) {
+                for (int j = i; j < ctx->wake_pending_count - 1; j++)
+                    ctx->wake_pending_addrs[j] = ctx->wake_pending_addrs[j + 1];
+                ctx->wake_pending_count--;
+                break;
+            }
+        }
+        spinlock_release(&ctx->lock);
+    }
+
+    cont_arg->result = (int64_t)cont_arg->range_len;
+
+    struct process *cur = process_get_current();
+    kprintf("[uffd] continue pid=%u addr=0x%llx len=%llu\n",
+            (unsigned)(cur ? cur->pid : 0),
+            cont_arg->range_start, cont_arg->range_len);
+
+    return 0;
+}
+
+/*
  * sys_userfaultfd2 — Unified userfaultfd syscall entry point.
  *
  * Called from syscall dispatch with:
@@ -774,7 +920,7 @@ int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
     struct process *cur = process_get_current();
     if (!cur || !cur->is_user || !cur->pml4)
-        return (int64_t)-ENOSYS;
+        return (int64_t)-ESRCH;
 
     switch (cmd) {
     case UFFDIO_API: {
@@ -860,6 +1006,30 @@ int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
         int ret = userfaultfd_wake((int)fd, &wake_arg);
         if (ret < 0)
             return (int64_t)ret;
+        return 0;
+    }
+
+    case UFFDIO_WRITEPROTECT: {
+        struct uffdio_writeprotect wp_arg;
+        if (copy_from_user(&wp_arg, arg, sizeof(wp_arg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_writeprotect((int)fd, &wp_arg);
+        if (ret < 0)
+            return (int64_t)ret;
+        if (copy_to_user(arg, &wp_arg, sizeof(wp_arg)) < 0)
+            return (int64_t)-EFAULT;
+        return 0;
+    }
+
+    case UFFDIO_CONTINUE: {
+        struct uffdio_continue cont_arg;
+        if (copy_from_user(&cont_arg, arg, sizeof(cont_arg)) < 0)
+            return (int64_t)-EFAULT;
+        int ret = userfaultfd_continue((int)fd, &cont_arg);
+        if (ret < 0)
+            return (int64_t)ret;
+        if (copy_to_user(arg, &cont_arg, sizeof(cont_arg)) < 0)
+            return (int64_t)-EFAULT;
         return 0;
     }
 

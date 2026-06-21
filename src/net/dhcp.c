@@ -130,9 +130,36 @@ static void send_udp_unicast(uint32_t dst_ip, uint16_t src_port, uint16_t dst_po
     memcpy(buf + sizeof(struct ip_header) + sizeof(struct udp_header), data, data_len);
     ip->checksum = net_checksum(ip, sizeof(struct ip_header));
 
-    /* Use broadcast for now (simplified — no ARP lookup) */
-    uint8_t bcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    send_eth(bcast_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + udp_len);
+    /* Try to resolve the destination MAC via ARP for proper unicast */
+    uint8_t dst_mac[6];
+    int mac_known = 0;
+
+    /* Check if it's a known server from a previous transaction */
+    if (dhcp_server_id && dst_ip == dhcp_server_id && dhcp_result_ip) {
+        /* Try to get MAC from ARP cache */
+        uint8_t *arp_mac = arp_cache_lookup(dst_ip);
+        if (arp_mac) {
+            memcpy(dst_mac, arp_mac, 6);
+            mac_known = 1;
+        }
+    }
+
+    /* Check gateway MAC */
+    if (!mac_known) {
+        uint8_t *gw_mac = arp_cache_lookup(dst_ip);
+        if (gw_mac) {
+            memcpy(dst_mac, gw_mac, 6);
+            mac_known = 1;
+        }
+    }
+
+    /* If we have the destination MAC, use unicast; otherwise fallback to broadcast */
+    if (mac_known) {
+        send_eth(dst_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + udp_len);
+    } else {
+        uint8_t bcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+        send_eth(bcast_mac, ETH_TYPE_IP, buf, sizeof(struct ip_header) + udp_len);
+    }
 }
 
 /* ── DHCP message builders ──────────────────────────────────────────── */

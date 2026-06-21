@@ -232,7 +232,10 @@ static int raid0_map(struct raid_private *priv, struct blk_request *req,
 }
 
 /* Map a request for RAID1 (mirroring).
- * Reads go to the first available device; writes go to all mirrors. */
+ * Reads go to the first available device; writes go to all mirrors.
+ * Read balancing: select mirror based on bio sector for better
+ * load distribution across mirrors.
+ */
 static int raid1_map(struct raid_private *priv, struct blk_request *req,
                      struct blk_request *mapped[], int *mapped_count)
 {
@@ -252,22 +255,40 @@ static int raid1_map(struct raid_private *priv, struct blk_request *req,
         }
         *mapped_count = num_mirrors;
     } else {
-        /* Read from first available device */
-        for (int i = 0; i < num_mirrors; i++) {
-            if (blockdev_is_registered(priv->dev_ids[i])) {
+        /* Read: select mirror based on bio sector for load balancing.
+         * Mirror selection: mirror_index = (offset / stripe_size) % num_mirrors
+         * This distributes sequential reads across different mirrors. */
+        int mirror_idx = 0;
+        if (priv->stripe_size > 0) {
+            uint64_t stripe = priv->stripe_size;
+            mirror_idx = (int)((offset / stripe) % num_mirrors);
+        } else {
+            /* Round-robin based on sector number */
+            mirror_idx = (int)(offset % (uint64_t)num_mirrors);
+        }
+
+        /* Try the selected mirror first, fallback to others */
+        int read_ok = 0;
+        for (int attempt = 0; attempt < num_mirrors; attempt++) {
+            int idx = (mirror_idx + attempt) % num_mirrors;
+            if (blockdev_is_registered(priv->dev_ids[idx])) {
                 struct blk_request *clone = blk_request_alloc();
                 if (!clone) return -ENOMEM;
                 memcpy(clone, req, sizeof(struct blk_request));
-                clone->dev_id = (uint8_t)priv->dev_ids[i];
+                clone->dev_id = (uint8_t)priv->dev_ids[idx];
                 clone->lba = offset;
                 mapped[0] = clone;
                 *mapped_count = 1;
-                return 0;
+                read_ok = 1;
+                break;
             }
         }
-        req->result = -EIO;
-        blk_request_done(req);
-        *mapped_count = 0;
+
+        if (!read_ok) {
+            req->result = -EIO;
+            blk_request_done(req);
+            *mapped_count = 0;
+        }
     }
     return 0;
 }

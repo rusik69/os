@@ -41,7 +41,7 @@ static int cet_check_cpuid(void) {
 }
 
 /** Check CPUID for CET indirect branch tracking.
- *  CPUID leaf 7 (sub-leaf 0), ECX bit 11 = CET_IBT. */
+ *  CPUID leaf 7 (sub-leaf 0), EDX bit 20 = CET_IBT. */
 static int cet_ibt_available(void) {
     uint32_t eax = 7, ebx, ecx = 0, edx;
 
@@ -49,7 +49,7 @@ static int cet_ibt_available(void) {
                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                      : "a"(eax), "c"(ecx));
 
-    return (ecx >> 11) & 1;
+    return (edx >> 20) & 1;
 }
 
 /** Allocate a shadow stack page (physically contiguous, 4KB).

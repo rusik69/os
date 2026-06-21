@@ -168,6 +168,16 @@ static uint32_t pstate_freq_mhz(int state)
  * This is the heart of the governor.  It checks the current CPU util
  * against thresholds and scales up/down accordingly.  Called from
  * both the timer callback (periodic) and pelt_update (instant).
+ *
+ * The target frequency is computed using the formula:
+ *   freq = util * max_freq / max_capacity
+ *
+ * where util is the current PELT utilization (0..1024 SCALE),
+ * max_freq is the highest available P-state frequency,
+ * and max_capacity is PELT_SCALE (1024).
+ *
+ * Rate-limiting prevents thrashing: at most one transition every
+ * sampling_rate ticks.
  */
 static void schedutil_evaluate_cpu(struct schedutil_cpu_state *state)
 {
@@ -184,55 +194,75 @@ static void schedutil_evaluate_cpu(struct schedutil_cpu_state *state)
 
     uint64_t now = timer_get_ticks();
 
-    /* ── Scale-up decision ─────────────────────────────────────────
-     * If util exceeds the up-threshold, scale up one P-state.
-     * Rate-limited: at most one up-transition per sampling period. */
-    if (util >= (uint32_t)g_up_threshold) {
-        if (current_state > 0 &&
-            (int64_t)(now - state->last_up_tick) >= g_sampling_rate) {
-            int new_state = current_state - 1;  /* lower number = higher freq */
-            if (new_state < 0) new_state = 0;
+    /* Compute target frequency using the schedutil formula:
+     *   freq = util * max_freq / max_capacity
+     */
+    uint32_t max_freq_mhz = pstate_freq_mhz(0);
+    if (max_freq_mhz == 0)
+        max_freq_mhz = 2000; /* default 2 GHz if unknown */
 
-            if (new_state != current_state) {
-                cpupstate_set_state(new_state);
-                state->last_up_tick = now;
-                kprintf("[schedutil] scale UP: util=%u/%u (%d%%) -> P%d (%u MHz)\n",
-                        (unsigned)util, (unsigned)PELT_SCALE,
-                        state->current_util_pct,
-                        new_state, (unsigned)pstate_freq_mhz(new_state));
-            }
-        }
-        state->low_util_count = 0;  /* Reset low-util counter */
-        return;
-    }
-
-    /* ── Scale-down decision ───────────────────────────────────────
-     * If util is below the down-threshold, we wait for several
-     * consecutive low-util samples before scaling down.  This prevents
-     * oscillation when utilisation hovers near the boundary. */
-    if (util <= (uint32_t)g_down_threshold) {
-        state->low_util_count++;
+    uint32_t target_freq_mhz;
+    if (util >= PELT_SCALE) {
+        target_freq_mhz = max_freq_mhz;
     } else {
-        state->low_util_count = 0;
-        return;  /* Util in the "hold" zone — maintain current frequency */
+        uint64_t freq_val = (uint64_t)util * (uint64_t)max_freq_mhz;
+        target_freq_mhz = (uint32_t)(freq_val / PELT_SCALE);
+    }
+    if (target_freq_mhz < pstate_freq_mhz(num_states - 1))
+        target_freq_mhz = pstate_freq_mhz(num_states - 1);
+    if (target_freq_mhz > max_freq_mhz)
+        target_freq_mhz = max_freq_mhz;
+
+    /* Find the closest P-state to the target frequency */
+    int target_state = 0;
+    uint32_t min_diff = 0xFFFFFFFF;
+    for (int i = 0; i < num_states; i++) {
+        uint32_t f = pstate_freq_mhz(i);
+        uint32_t diff = (f > target_freq_mhz) ? (f - target_freq_mhz) : (target_freq_mhz - f);
+        if (diff < min_diff) {
+            min_diff = diff;
+            target_state = i;
+        }
     }
 
-    /* Scale down only after hysteresis count */
-    if (state->low_util_count >= SCHEDUTIL_DOWN_HYSTERESIS &&
-        current_state < num_states - 1 &&
-        (int64_t)(now - state->last_down_tick) >= g_sampling_rate) {
-        int new_state = current_state + 1;  /* higher number = lower freq */
-        if (new_state >= num_states) new_state = num_states - 1;
-
-        if (new_state != current_state) {
-            cpupstate_set_state(new_state);
-            state->last_down_tick = now;
-            kprintf("[schedutil] scale DOWN: util=%u/%u (%d%%) -> P%d (%u MHz)\n",
+    /* Rate-limited transition */
+    if (target_state < current_state) {
+        /* Scale up */
+        if ((int64_t)(now - state->last_up_tick) >= g_sampling_rate) {
+            cpupstate_set_state(target_state);
+            state->last_up_tick = now;
+            state->last_down_tick = 0;
+            kprintf("[schedutil] freq: util=%u/%u (%d%%) target=%u MHz -> P%d (%u MHz)\n",
                     (unsigned)util, (unsigned)PELT_SCALE,
                     state->current_util_pct,
-                    new_state, (unsigned)pstate_freq_mhz(new_state));
+                    target_freq_mhz, target_state,
+                    (unsigned)pstate_freq_mhz(target_state));
         }
-        state->low_util_count = 0;  /* Reset after scaling */
+        state->low_util_count = 0;
+    } else if (target_state > current_state) {
+        /* Scale down — use hysteresis */
+        if (util <= (uint32_t)g_down_threshold) {
+            state->low_util_count++;
+        } else {
+            state->low_util_count = 0;
+        }
+
+        if (state->low_util_count >= SCHEDUTIL_DOWN_HYSTERESIS &&
+            (int64_t)(now - state->last_down_tick) >= g_sampling_rate) {
+            cpupstate_set_state(target_state);
+            state->last_down_tick = now;
+            state->last_up_tick = 0;
+            state->low_util_count = 0;
+            kprintf("[schedutil] freq: util=%u/%u (%d%%) target=%u MHz -> P%d (%u MHz)\n",
+                    (unsigned)util, (unsigned)PELT_SCALE,
+                    state->current_util_pct,
+                    target_freq_mhz, target_state,
+                    (unsigned)pstate_freq_mhz(target_state));
+        }
+    } else {
+        /* Already at target — reset low util count in mid-range */
+        if (util > (uint32_t)g_down_threshold && util < (uint32_t)g_up_threshold)
+            state->low_util_count = 0;
     }
 }
 

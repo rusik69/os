@@ -456,4 +456,199 @@ int sound_mixer_write(enum sound_mixer_channel ch, uint16_t val)
     return 0;
 }
 #include "module.h"
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  OSS-compatible mixer ioctl handling
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/*
+ * OSS mixer ioctls (from linux/soundcard.h).
+ * We handle the basic volume control ioctls.
+ */
+#define SOUND_MIXER_READ_VOLUME   0x80044D00
+#define SOUND_MIXER_WRITE_VOLUME  0xC0044D00
+#define SOUND_MIXER_READ_MUTE     0x80044D01
+#define SOUND_MIXER_WRITE_MUTE    0xC0044D01
+#define SOUND_MIXER_READ_RECMASK  0x80044D02
+#define SOUND_MIXER_READ_DEVMASK  0x80044D03
+#define SOUND_MIXER_READ_RECSRC   0x80044D04
+#define SOUND_MIXER_WRITE_RECSRC  0xC0044D04
+#define SOUND_MIXER_READ_STEREO   0x80044D05
+#define SOUND_MIXER_READ_CAPS     0x80044D06
+
+/* OSS DSP fragment size negotiation */
+#define SNDCTL_DSP_SETFRAGMENT    0xC010500A
+#define SNDCTL_DSP_GETBLKSIZE     0x80045004
+#define SNDCTL_DSP_GETOSPACE      0x8010500C
+#define SNDCTL_DSP_GETISPACE      0x8010500D
+#define SNDCTL_DSP_RESET          0x00005000
+#define SNDCTL_DSP_SYNC           0x00005001
+
+/**
+ * sound_oss_mixer_ioctl — Handle OSS mixer ioctls.
+ *
+ * @cmd:   IOCTL command code
+ * @arg:   IOCTL argument pointer (user/kernel space)
+ *
+ * Returns 0 on success, negative on error.
+ */
+int sound_oss_mixer_ioctl(int cmd, void *arg)
+{
+    int val = 0;
+    uint32_t *uval = (uint32_t *)arg;
+
+    switch (cmd) {
+    case SOUND_MIXER_READ_VOLUME:
+        /* Return master volume as a combined left|right value */
+        val = (int)g_sound_mixer[SOUND_MIXER_MASTER].left |
+              ((int)g_sound_mixer[SOUND_MIXER_MASTER].right << 8);
+        if (uval) *uval = (uint32_t)val;
+        return 0;
+
+    case SOUND_MIXER_WRITE_VOLUME: {
+        if (!uval) return -EINVAL;
+        val = (int)*uval;
+        uint8_t left = (uint8_t)(val & 0xFF);
+        uint8_t right = (uint8_t)((val >> 8) & 0xFF);
+        if (left > 100) left = 100;
+        if (right > 100) right = 100;
+        sound_mixer_set_volume(SOUND_MIXER_MASTER, left, right);
+        return 0;
+    }
+
+    case SOUND_MIXER_READ_MUTE:
+        val = g_sound_mixer[SOUND_MIXER_MASTER].mute ? 1 : 0;
+        if (uval) *uval = (uint32_t)val;
+        return 0;
+
+    case SOUND_MIXER_WRITE_MUTE:
+        if (!uval) return -EINVAL;
+        sound_mixer_set_mute(SOUND_MIXER_MASTER, (int)*uval ? 1 : 0);
+        return 0;
+
+    case SOUND_MIXER_READ_DEVMASK:
+        /* Report which devices are available (bitmask) */
+        /* Bit 0 = master, bit 1 = PCM, bit 2 = mic, etc. */
+        if (uval) *uval = 0x3F;  /* bits 0-5 set = 6 devices */
+        return 0;
+
+    case SOUND_MIXER_READ_RECMASK:
+        /* Report which devices can record */
+        if (uval) *uval = (1u << 2);  /* Only mic (bit 2) */
+        return 0;
+
+    case SOUND_MIXER_READ_RECSRC:
+        /* Report current recording source */
+        val = 0;
+        for (int i = 0; i < SOUND_MIXER_COUNT; i++) {
+            if (g_sound_mixer[i].recsel)
+                val |= (1u << i);
+        }
+        if (uval) *uval = (uint32_t)val;
+        return 0;
+
+    case SOUND_MIXER_WRITE_RECSRC:
+        if (!uval) return -EINVAL;
+        for (int i = 0; i < SOUND_MIXER_COUNT; i++)
+            g_sound_mixer[i].recsel = (*uval & (1u << i)) ? 1 : 0;
+        return 0;
+
+    case SOUND_MIXER_READ_STEREO:
+        /* All our channels are stereo */
+        if (uval) *uval = 1;
+        return 0;
+
+    case SOUND_MIXER_READ_CAPS:
+        if (uval) *uval = 0;  /* No special caps */
+        return 0;
+
+    default:
+        return -EINVAL;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  OSS DSP fragment negotiation
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* DSP audio buffer state */
+static struct {
+    int fragment_size;    /* Size of each fragment in bytes */
+    int num_fragments;    /* Total number of fragments */
+    int frag_shift;       /* log2(fragment_size) */
+} g_dsp_state = { .fragment_size = 4096, .num_fragments = 4, .frag_shift = 12 };
+
+/**
+ * sound_oss_dsp_ioctl — Handle OSS DSP ioctls.
+ *
+ * @cmd:   IOCTL command code
+ * @arg:   IOCTL argument pointer
+ *
+ * Returns 0 on success, negative on error.
+ */
+int sound_oss_dsp_ioctl(int cmd, void *arg)
+{
+    uint32_t *uval = (uint32_t *)arg;
+
+    switch (cmd) {
+    case SNDCTL_DSP_RESET:
+        /* Reset the DSP device */
+        g_dsp_state.fragment_size = 4096;
+        g_dsp_state.num_fragments = 4;
+        g_dsp_state.frag_shift = 12;
+        return 0;
+
+    case SNDCTL_DSP_SYNC:
+        /* Sync (wait for playback to finish) — no-op for now */
+        return 0;
+
+    case SNDCTL_DSP_SETFRAGMENT: {
+        if (!uval) return -EINVAL;
+        uint32_t fragspec = *uval;
+        int frag_shift = (int)(fragspec & 0xFFFF);
+        int num_frags = (int)((fragspec >> 16) & 0xFFFF);
+
+        if (frag_shift < 4) frag_shift = 4;   /* min 16 bytes */
+        if (frag_shift > 15) frag_shift = 15;  /* max 32K */
+        if (num_frags < 2) num_frags = 2;
+        if (num_frags > 16) num_frags = 16;
+
+        g_dsp_state.frag_shift = frag_shift;
+        g_dsp_state.fragment_size = 1 << frag_shift;
+        g_dsp_state.num_fragments = num_frags;
+        return 0;
+    }
+
+    case SNDCTL_DSP_GETBLKSIZE:
+        if (uval) *uval = (uint32_t)g_dsp_state.fragment_size;
+        return 0;
+
+    case SNDCTL_DSP_GETOSPACE: {
+        /* Return output buffer info (audio_buf_info) */
+        /* struct audio_buf_info: fragments, fragstotal, fragsize, bytes */
+        uint32_t info[4];
+        info[0] = (uint32_t)g_dsp_state.num_fragments;  /* fragments available */
+        info[1] = (uint32_t)g_dsp_state.num_fragments;  /* fragstotal */
+        info[2] = (uint32_t)g_dsp_state.fragment_size;  /* fragsize */
+        info[3] = (uint32_t)(g_dsp_state.num_fragments * g_dsp_state.fragment_size); /* total bytes */
+        if (arg) memcpy(arg, info, sizeof(info));
+        return 0;
+    }
+
+    case SNDCTL_DSP_GETISPACE: {
+        /* Return input buffer info */
+        uint32_t info[4];
+        info[0] = 0;    /* fragments available (none yet) */
+        info[1] = 1;    /* fragstotal */
+        info[2] = (uint32_t)g_dsp_state.fragment_size;
+        info[3] = (uint32_t)g_dsp_state.fragment_size;
+        if (arg) memcpy(arg, info, sizeof(info));
+        return 0;
+    }
+
+    default:
+        return -EINVAL;
+    }
+}
+
 module_init(sound_core_init);

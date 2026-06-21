@@ -11,6 +11,7 @@
  *   - Basic GRE header (no checksum, key, or sequence number)
  *   - IPv4 inner protocol (protocol type 0x0800)
  *   - Tunnel create/destroy lifecycle
+ *   - Multi-tunnel support via hash table (up to GRE_MAX_TUNNELS)
  *
  * IP protocol number for GRE: 47
  */
@@ -30,6 +31,8 @@
 /* Protocol types for the GRE header Protocol Type field */
 #define GRE_ETH_TYPE_IP     0x0800  /* IPv4 */
 #define GRE_ETH_TYPE_IPV6   0x86DD  /* IPv6 (future) */
+
+#define GRE_MAX_TUNNELS     32
 
 /* ── GRE header (basic, no options) ───────────────────────────────── */
 
@@ -54,6 +57,8 @@ struct gre_tunnel {
     uint32_t remote_ip;      /* Remote tunnel endpoint */
     uint32_t local_ip;       /* Local tunnel endpoint */
     int      active;         /* 1 = tunnel is established */
+    int      index;          /* Tunnel index */
+    struct gre_tunnel *next; /* Hash table chain */
 };
 
 /* ── API ────────────────────────────────────────────────────────────── */
@@ -66,27 +71,34 @@ void gre_exit(void);
 
 /*
  * Create a GRE tunnel between @local and @remote IP addresses.
- * Returns 0 on success, -1 if a tunnel is already active.
+ * Returns the tunnel index on success, -1 on error.
  */
 int gre_create_tunnel(uint32_t remote, uint32_t local);
 
 /*
- * Destroy the currently active GRE tunnel.
+ * Destroy a GRE tunnel by index.
  * Returns 0 on success, -1 if no tunnel is active.
  */
-int gre_destroy_tunnel(void);
+int gre_destroy_tunnel(int index);
+
+/*
+ * Get a tunnel by index.
+ * Returns pointer to tunnel or NULL.
+ */
+struct gre_tunnel *gre_get_tunnel(int index);
 
 /*
  * Encapsulate an inner packet inside a GRE+IP outer packet.
  *
- * @inner_pkt   Pointer to the inner network-layer packet (e.g., IP).
- * @inner_len   Length of the inner packet in bytes.
- * @outer_buf   Output buffer for the outer GRE+IP packet.
- * @outer_max   Maximum size of the output buffer.
+ * @tunnel_index  Index of the tunnel to use.
+ * @inner_pkt     Pointer to the inner network-layer packet (e.g., IP).
+ * @inner_len     Length of the inner packet in bytes.
+ * @outer_buf     Output buffer for the outer GRE+IP packet.
+ * @outer_max     Maximum size of the output buffer.
  *
  * Returns the length of the outer packet on success, or -1 on error.
  */
-int gre_encapsulate(const uint8_t *inner_pkt, int inner_len,
+int gre_encapsulate(int tunnel_index, const uint8_t *inner_pkt, int inner_len,
                     uint8_t *outer_buf, int outer_max);
 
 /*
@@ -96,10 +108,13 @@ int gre_encapsulate(const uint8_t *inner_pkt, int inner_len,
  * @outer_len   Length of the outer packet in bytes.
  * @inner_buf   Output buffer for the inner packet.
  * @inner_max   Maximum size of the output buffer.
+ * @src_ip      Optional: returns source tunnel IP.
+ * @dst_ip      Optional: returns destination tunnel IP.
  *
  * Returns the length of the inner packet on success, or -1 on error.
  */
 int gre_decapsulate(const uint8_t *outer_pkt, int outer_len,
-                    uint8_t *inner_buf, int inner_max);
+                    uint8_t *inner_buf, int inner_max,
+                    uint32_t *src_ip, uint32_t *dst_ip);
 
 #endif /* GRE_H */

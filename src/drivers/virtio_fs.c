@@ -354,6 +354,101 @@ static int fusex_readdir(struct fuse_in_header *inh, uint8_t *out_buf,
     return 0;
 }
 
+/* ── FUSE_FLUSH ────────────────────────────────────────────────────────
+ * Flush (close) a file — release all pending writes and clean up
+ * kernel-side state for the given file handle.
+ */
+static int fusex_flush(struct fuse_in_header *inh, uint8_t *out_buf,
+                        uint32_t out_buf_size)
+{
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    (void)out_buf_size;
+
+    kprintf("[virtio-fs] FLUSH nodeid=%llu unique=%llu\n",
+            inh->nodeid, inh->unique);
+
+    outh->len    = sizeof(*outh);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+    return 0;
+}
+
+/* ── FUSE_FSYNC ────────────────────────────────────────────────────────
+ * Synchronize file contents — flush all dirty data for the given
+ * file handle to the backing store.
+ */
+static int fusex_fsync(struct fuse_in_header *inh, uint8_t *out_buf,
+                        uint32_t out_buf_size)
+{
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    (void)out_buf_size;
+
+    struct fuse_fsync_in *fin = (struct fuse_fsync_in *)(inh + 1);
+    int datasync = fin->fsync_flags & 1;
+
+    kprintf("[virtio-fs] FSYNC nodeid=%llu fh=%llu datasync=%d\n",
+            inh->nodeid, fin->fh, datasync);
+
+    /* In a real implementation, we would call fsync() on the host file */
+    outh->len    = sizeof(*outh);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+    return 0;
+}
+
+/* ── FUSE_RELEASE ──────────────────────────────────────────────────────
+ * Release a file handle — called when the last file descriptor for
+ * an open file is closed.  May trigger flush of pending data.
+ */
+static int fusex_release(struct fuse_in_header *inh, uint8_t *out_buf,
+                          uint32_t out_buf_size)
+{
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    (void)out_buf_size;
+
+    struct fuse_release_in *rin = (struct fuse_release_in *)(inh + 1);
+
+    kprintf("[virtio-fs] RELEASE nodeid=%llu fh=%llu flags=0x%x\n",
+            inh->nodeid, rin->fh, (unsigned)rin->flags);
+
+    outh->len    = sizeof(*outh);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+    return 0;
+}
+
+/* ── FUSE_STATFS ───────────────────────────────────────────────────────
+ * Get filesystem statistics — returns information about total/used
+ * space, inode counts, etc.
+ */
+static int fusex_statfs(struct fuse_in_header *inh, uint8_t *out_buf,
+                         uint32_t out_buf_size)
+{
+    struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
+    struct fuse_statfs_out *sout = (struct fuse_statfs_out *)(outh + 1);
+    (void)out_buf_size;
+    (void)inh;
+
+    kprintf("[virtio-fs] STATFS\n");
+
+    memset(sout, 0, sizeof(*sout));
+
+    /* Return reasonable default values */
+    sout->st.blocks  = 1048576;    /* Total blocks (512 MB) */
+    sout->st.bfree   = 524288;      /* Free blocks */
+    sout->st.bavail  = 524288;      /* Available blocks */
+    sout->st.files   = 65536;       /* Total inodes */
+    sout->st.ffree   = 32768;       /* Free inodes */
+    sout->st.bsize   = 512;         /* Block size (512 bytes) */
+    sout->st.namelen = 255;         /* Max filename length */
+    sout->st.frsize  = 512;         /* Fragment size */
+
+    outh->len    = sizeof(*outh) + sizeof(*sout);
+    outh->error  = 0;
+    outh->unique = inh->unique;
+    return 0;
+}
+
 /* ── Virtqueue request handler ─────────────────────────────────────── */
 
 /* FUSE opcode dispatch table */
@@ -370,6 +465,10 @@ static void fuse_init_handlers(void)
     g_fuse_handlers[FUSE_OPENDIR] = fusex_open;
     g_fuse_handlers[FUSE_READ]    = fusex_read;
     g_fuse_handlers[FUSE_READDIR] = fusex_readdir;
+    g_fuse_handlers[FUSE_FLUSH]   = fusex_flush;
+    g_fuse_handlers[FUSE_FSYNC]   = fusex_fsync;
+    g_fuse_handlers[FUSE_RELEASE] = fusex_release;
+    g_fuse_handlers[FUSE_STATFS]  = fusex_statfs;
 }
 
 /* Response buffer size (max FUSE response payload) */

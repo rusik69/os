@@ -212,11 +212,43 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         ds->ack_seq = ntohl(dh->seq_low);
         break;
     }
+    case DCCP_PKT_REQUEST:
+        /* DCCP-Request: respond with DCCP-Response */
+        ds->peer_ip = src_ip;
+        ds->peer_port = ntohs(dh->src_port);
+        ds->connected = 1;
+        {
+            uint8_t resp[sizeof(struct dccp_header)];
+            struct dccp_header *rh = (struct dccp_header *)resp;
+            memset(rh, 0, sizeof(*rh));
+            rh->src_port = dh->dst_port;
+            rh->dst_port = dh->src_port;
+            rh->data_offset = (sizeof(*rh) / 4) << 4;
+            rh->type_reset = (DCCP_PKT_RESPONSE << 4);
+            rh->seq_low = htonl(++ds->seq);
+            send_ip(src_ip, IPPROTO_DCCP, resp, sizeof(*rh));
+        }
+        break;
     case DCCP_PKT_RESPONSE:
         ds->peer_ip = src_ip;
         ds->peer_port = ntohs(dh->src_port);
         ds->connected = 1;
         break;
+    case DCCP_PKT_CLOSEREQ: {
+        /* DCCP-CloseReq: peer wants to close — send DCCP-Close */
+        uint8_t close_pkt[sizeof(struct dccp_header)];
+        struct dccp_header *ch = (struct dccp_header *)close_pkt;
+        memset(ch, 0, sizeof(*ch));
+        ch->src_port = dh->dst_port;
+        ch->dst_port = dh->src_port;
+        ch->data_offset = (sizeof(*ch) / 4) << 4;
+        ch->type_reset = (DCCP_PKT_CLOSE << 4);
+        ch->seq_low = htonl(++ds->seq);
+        send_ip(src_ip, IPPROTO_DCCP, close_pkt, sizeof(*ch));
+        ds->connected = 0;
+        kprintf("dccp: CloseReq received, sending Close\n");
+        break;
+    }
     case DCCP_PKT_CLOSE:
     case DCCP_PKT_RESET:
         ds->connected = 0;

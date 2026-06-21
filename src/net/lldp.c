@@ -20,6 +20,28 @@
 #define LLDP_TLV_SYSTEM_CAP      7
 #define LLDP_TLV_MANAGEMENT_ADDR 8
 
+/* LLDP-MED TLV types (ANSI/TIA-1057) */
+#define LLDP_MED_TLV_CAP         127  /* LLDP-MED capabilities */
+#define LLDP_MED_TLV_NETWORK_POLICY 127
+#define LLDP_MED_TLV_LOCATION    127
+#define LLDP_MED_TLV_POE_POWER   127
+
+/* LLDP-MED subtypes */
+#define LLDP_MED_CAP_SUBTYPE     1
+#define LLDP_MED_NETWORK_POLICY_SUBTYPE 2
+#define LLDP_MED_LOCATION_SUBTYPE 3
+#define LLDP_MED_POE_SUBTYPE     4
+
+/* System capabilities */
+#define LLDP_CAP_OTHER      0x0001
+#define LLDP_CAP_REPEATER   0x0002
+#define LLDP_CAP_BRIDGE     0x0004
+#define LLDP_CAP_WLAN       0x0008
+#define LLDP_CAP_ROUTER     0x0010
+#define LLDP_CAP_TELEPHONE  0x0020
+#define LLDP_CAP_DOCSIS     0x0040
+#define LLDP_CAP_STATION    0x0080
+
 /* Chassis ID subtypes */
 #define LLDP_CHASSIS_MAC           4   /* MAC address subtype */
 
@@ -177,6 +199,31 @@ int lldp_send(int ifindex)
         ret = lldp_write_tlv(frame, offset, sizeof(frame),
                              LLDP_TLV_SYSTEM_DESC,
                              (const uint8_t *)desc, (uint16_t)strlen(desc));
+        if (ret < 0) return ret;
+        offset += ret;
+    }
+
+    /* 6. System Capabilities (LLDP-MED basic) */
+    {
+        uint8_t cap_tlv[4];
+        uint16_t sys_cap = htons(LLDP_CAP_BRIDGE | LLDP_CAP_STATION);
+        uint16_t ena_cap = htons(LLDP_CAP_BRIDGE | LLDP_CAP_STATION);
+        memcpy(cap_tlv, &sys_cap, 2);
+        memcpy(cap_tlv + 2, &ena_cap, 2);
+        ret = lldp_write_tlv(frame, offset, sizeof(frame),
+                             LLDP_TLV_SYSTEM_CAP, cap_tlv, 4);
+        if (ret < 0) return ret;
+        offset += ret;
+    }
+
+    /* 7. LLDP-MED Capabilities (if MED is enabled) */
+    {
+        uint8_t med_cap[3];
+        med_cap[0] = LLDP_MED_CAP_SUBTYPE;
+        med_cap[1] = 0x00; /* MED capabilities bitmap high byte */
+        med_cap[2] = 0x01; /* Low byte: capability bit 0 = LLDP-MED */
+        ret = lldp_write_tlv(frame, offset, sizeof(frame),
+                             LLDP_MED_TLV_CAP, med_cap, 3);
         if (ret < 0) return ret;
         offset += ret;
     }

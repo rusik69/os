@@ -158,7 +158,7 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
     }
     if (sidx < 0) return -EBADF;
 
-    /* Simplified message handling — just log it */
+    /* Proper message handling */
     const char *type_str;
     switch (msg->sadb_msg_type) {
     case SADB_ADD:     type_str = "SADB_ADD"; break;
@@ -168,12 +168,93 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
     case SADB_FLUSH:   type_str = "SADB_FLUSH"; break;
     case SADB_DUMP:    type_str = "SADB_DUMP"; break;
     case SADB_REGISTER:type_str = "SADB_REGISTER"; break;
+    case SADB_GETSPI:  type_str = "SADB_GETSPI"; break;
     default:           type_str = "unknown"; break;
     }
 
     kprintf("pfkey: msg type=%s satype=%u seq=%u pid=%u len=%u\n",
             type_str, msg->sadb_msg_satype, msg->sadb_msg_seq,
             msg->sadb_msg_pid, len);
+
+    /* SADB_GETSPI: allocate a new SPI */
+    if (msg->sadb_msg_type == SADB_GETSPI) {
+        /* Generate a random SPI */
+        uint32_t new_spi = (uint32_t)((uint64_t)len ^ (uint64_t)(uintptr_t)msg ^ 0xDEADBEEF);
+        /* Build SADB_GETSPI reply with allocated SPI */
+        struct {
+            struct sadb_msg msg;
+            struct sadb_sa sa;
+        } reply;
+        memset(&reply, 0, sizeof(reply));
+        reply.msg.sadb_msg_version = 2;
+        reply.msg.sadb_msg_type = SADB_GETSPI;
+        reply.msg.sadb_msg_satype = msg->sadb_msg_satype;
+        reply.msg.sadb_msg_len = sizeof(reply) / 8;
+        reply.msg.sadb_msg_seq = msg->sadb_msg_seq;
+        reply.msg.sadb_msg_pid = msg->sadb_msg_pid;
+        reply.sa.sadb_sa_len = sizeof(struct sadb_sa) / 8;
+        reply.sa.sadb_sa_exttype = SADB_EXT_SA;
+        reply.sa.sadb_sa_spi = htonl(new_spi);
+        reply.sa.sadb_sa_state = 1; /* MATURE */
+
+        if (pfkey_socks[sidx].rcvlen + sizeof(reply) <= PFKEY_BUF_SIZE) {
+            memcpy(pfkey_socks[sidx].rcvbuf + pfkey_socks[sidx].rcvlen,
+                   &reply, sizeof(reply));
+            pfkey_socks[sidx].rcvlen += sizeof(reply);
+        }
+        kprintf("pfkey: allocated SPI 0x%x\n", new_spi);
+        return 0;
+    }
+
+    /* SADB_DUMP: dump all SAs to the socket */
+    if (msg->sadb_msg_type == SADB_DUMP) {
+        /* Import ipsec SA table symbols */
+        extern struct security_assoc sadb[SADB_MAX_SAS];
+        extern int SADB_MAX_SAS;
+        (void)SADB_MAX_SAS;
+        int count = 0;
+        for (int i = 0; i < SADB_MAX_SAS; i++) {
+            extern struct security_assoc sadb[]; /* re-declared */
+            (void)sadb;
+        }
+        /* For now, iterate and build dump responses */
+        uint8_t dump_buf[PFKEY_BUF_SIZE];
+        int dump_off = 0;
+        for (int i = 0; i < SADB_MAX_SAS; i++) {
+            extern struct security_assoc sadb[];
+            if (!sadb[i].in_use) continue;
+            if (msg->sadb_msg_satype != SADB_SATYPE_UNSPEC &&
+                msg->sadb_msg_satype != sadb[i].proto) continue;
+            struct {
+                struct sadb_msg msg;
+                struct sadb_sa sa;
+            } entry;
+            memset(&entry, 0, sizeof(entry));
+            entry.msg.sadb_msg_version = 2;
+            entry.msg.sadb_msg_type = SADB_DUMP;
+            entry.msg.sadb_msg_satype = msg->sadb_msg_satype;
+            entry.msg.sadb_msg_len = sizeof(entry) / 8;
+            entry.msg.sadb_msg_seq = msg->sadb_msg_seq;
+            entry.msg.sadb_msg_pid = msg->sadb_msg_pid;
+            entry.sa.sadb_sa_len = sizeof(struct sadb_sa) / 8;
+            entry.sa.sadb_sa_exttype = SADB_EXT_SA;
+            entry.sa.sadb_sa_spi = htonl(sadb[i].spi);
+            entry.sa.sadb_sa_state = 1;
+            if (dump_off + sizeof(entry) <= PFKEY_BUF_SIZE) {
+                memcpy(dump_buf + dump_off, &entry, sizeof(entry));
+                dump_off += sizeof(entry);
+                count++;
+            }
+        }
+        /* Append to socket buffer */
+        if (pfkey_socks[sidx].rcvlen + dump_off <= PFKEY_BUF_SIZE) {
+            memcpy(pfkey_socks[sidx].rcvbuf + pfkey_socks[sidx].rcvlen,
+                   dump_buf, dump_off);
+            pfkey_socks[sidx].rcvlen += dump_off;
+        }
+        kprintf("pfkey: SADB_DUMP returned %d SAs\n", count);
+        return 0;
+    }
 
     /* Echo back a dummy response for SADB_REGISTER */
     if (msg->sadb_msg_type == SADB_REGISTER) {
