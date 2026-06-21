@@ -106,6 +106,63 @@ static void test_uid_conv(void)
 }
 
 /* ===================================================================
+ *  test_uid16_more — additional boundary edge cases
+ * =================================================================== */
+static void test_uid16_more(void)
+{
+    /* 1. uid_to_16 boundary: 0 */
+    TEST("uid16_more: uid_to_16(0) == 0", uid_to_16(0) == 0);
+
+    /* 2. uid_to_16 boundary: 1 */
+    TEST("uid16_more: uid_to_16(1) == 1", uid_to_16(1) == 1);
+
+    /* 3. uid_to_16 boundary: 65534 */
+    TEST("uid16_more: uid_to_16(65534) == 65534", uid_to_16(65534) == 65534);
+
+    /* 4. uid_to_16 boundary: 65535 (max uint16_t) */
+    TEST("uid16_more: uid_to_16(65535) == 65535", uid_to_16(65535) == 65535);
+
+    /* 5. uid_to_16 boundary: 65536 (just above uint16_t) */
+    TEST("uid16_more: uid_to_16(65536) == 0xFFFE", uid_to_16(65536) == 0xFFFE);
+
+    /* 6. uid_to_16 boundary: 0x7FFFFFFF */
+    TEST("uid16_more: uid_to_16(0x7FFFFFFF) == 0xFFFE",
+         uid_to_16(0x7FFFFFFF) == 0xFFFE);
+
+    /* 7. uid_from_16 boundary: 0 */
+    TEST("uid16_more: uid_from_16(0) == 0", uid_from_16(0) == 0);
+
+    /* 8. uid_from_16 boundary: 1 */
+    TEST("uid16_more: uid_from_16(1) == 1", uid_from_16(1) == 1);
+
+    /* 9. uid_from_16 boundary: 65535 */
+    TEST("uid16_more: uid_from_16(65535) == 65535", uid_from_16(65535) == 65535);
+
+    /* 10. uid_from_16 boundary: 0xFFFE */
+    TEST("uid16_more: uid_from_16(0xFFFE) == 0xFFFE", uid_from_16(0xFFFE) == 0xFFFE);
+
+    /* 11. Roundtrip for each boundary value */
+    TEST("uid16_more: roundtrip 0",       uid_from_16(uid_to_16(0)) == 0);
+    TEST("uid16_more: roundtrip 1",       uid_from_16(uid_to_16(1)) == 1);
+    TEST("uid16_more: roundtrip 65534",   uid_from_16(uid_to_16(65534)) == 65534);
+    TEST("uid16_more: roundtrip 65535",   uid_from_16(uid_to_16(65535)) == 65535);
+    TEST("uid16_more: roundtrip 65536",   uid_from_16(uid_to_16(65536)) == 0xFFFE);
+    TEST("uid16_more: roundtrip 0x7FFFFFFF", uid_from_16(uid_to_16(0x7FFFFFFF)) == 0xFFFE);
+    TEST("uid16_more: roundtrip UINT32_MAX", uid_from_16(uid_to_16(0xFFFFFFFF)) == 0xFFFE);
+    TEST("uid16_more: roundtrip 0x10000", uid_from_16(uid_to_16(0x10000)) == 0xFFFE);
+
+    /* 12. Verify uid_to_16 clamps correctly for all values just around the boundary */
+    TEST("uid16_more: uid_to_16(0xFFFF) == 0xFFFF", uid_to_16(0xFFFF) == 0xFFFF);
+    TEST("uid16_more: uid_to_16(0xFFFF+1) clamps",  uid_to_16(0xFFFF+1) == 0xFFFE);
+    TEST("uid16_more: uid_to_16(0xFFFF+2) clamps",  uid_to_16(0xFFFF+2) == 0xFFFE);
+
+    /* 13. uid_from_16 preserves all uint16_t values */
+    TEST("uid16_more: uid_from_16(0xFFFF) == 0xFFFF", uid_from_16(0xFFFF) == 0xFFFF);
+    TEST("uid16_more: uid_from_16(0xFFFE) == 0xFFFE", uid_from_16(0xFFFE) == 0xFFFE);
+    TEST("uid16_more: uid_from_16(0x0001) == 0x0001", uid_from_16(0x0001) == 0x0001);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -114,6 +171,9 @@ int main(void)
 
     printf("--- uid_to_16 / uid_from_16 ---\n");
     test_uid_conv();
+
+    printf("\n--- more edge cases ---\n");
+    test_uid16_more();
 
     printf("\n");
     printf("============================================\n");

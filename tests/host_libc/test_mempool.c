@@ -134,6 +134,134 @@ static void test_mempool(void)
 }
 
 /* ===================================================================
+ *  test_mempool_more — additional edge cases
+ * =================================================================== */
+static void test_mempool_more(void)
+{
+    /* 1. Multiple allocs and frees in sequence (ping-pong) */
+    {
+        mempool_t *pool = mempool_create(5, 32);
+        TEST("mempool_more: create(5,32) ok", pool != NULL);
+        if (!pool) return;
+        void *ptrs[10];
+        int ok = 1;
+        for (int i = 0; i < 10; i++) {
+            ptrs[i] = mempool_alloc(pool);
+            if (!ptrs[i]) { ok = 0; break; }
+        }
+        TEST("mempool_more: 10 allocs all non-NULL", ok);
+        for (int i = 0; i < 10; i++) {
+            if (ptrs[i]) mempool_free(ptrs[i], pool);
+        }
+        /* Re-alloc after freeing all — should reuse some */
+        void *r1 = mempool_alloc(pool);
+        TEST("mempool_more: re-alloc after free all", r1 != NULL);
+        mempool_free(r1, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 2. Pool with very large min_nr (1000) */
+    {
+        mempool_t *pool = mempool_create(1000, 8);
+        TEST("mempool_more: create(1000,8) ok", pool != NULL);
+        if (!pool) return;
+        /* Alloc more than pre-allocated */
+        void *p = mempool_alloc(pool);
+        TEST("mempool_more: alloc from large pool", p != NULL);
+        mempool_free(p, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 3. Pool with very small elem_size (1 byte) */
+    {
+        mempool_t *pool = mempool_create(10, 1);
+        TEST("mempool_more: create(10,1) ok", pool != NULL);
+        if (!pool) return;
+        void *p = mempool_alloc(pool);
+        TEST("mempool_more: alloc 1-byte elem", p != NULL);
+        /* Write to it to ensure it's usable */
+        if (p) *(char*)p = 'x';
+        mempool_free(p, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 4. Pool with large elem_size (4096) */
+    {
+        mempool_t *pool = mempool_create(4, 4096);
+        TEST("mempool_more: create(4,4096) ok", pool != NULL);
+        if (!pool) return;
+        void *p = mempool_alloc(pool);
+        TEST("mempool_more: alloc 4096-byte elem", p != NULL);
+        if (p) memset(p, 0, 4096);
+        mempool_free(p, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 5. (skipped — alloc from destroyed pool causes use-after-free,
+       would need signal handling to test safely) */
+
+    /* 6. Pool with min_nr=0, then alloc many elements */
+    {
+        mempool_t *pool = mempool_create(0, 32);
+        TEST("mempool_more: create(0,32) ok", pool != NULL);
+        if (!pool) return;
+        void *a = mempool_alloc(pool);
+        void *b = mempool_alloc(pool);
+        void *c = mempool_alloc(pool);
+        TEST("mempool_more: 3 allocs from min_nr=0 pool",
+             a != NULL && b != NULL && c != NULL);
+        mempool_free(a, pool);
+        mempool_free(b, pool);
+        mempool_free(c, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 7. Alloc exactly min_nr elements, free them, alloc again */
+    {
+        mempool_t *pool = mempool_create(8, 16);
+        TEST("mempool_more: create(8,16) ok", pool != NULL);
+        if (!pool) return;
+        void *ptrs[8];
+        int ok = 1;
+        for (int i = 0; i < 8; i++) {
+            ptrs[i] = mempool_alloc(pool);
+            if (!ptrs[i]) ok = 0;
+        }
+        TEST("mempool_more: alloc all 8 pre-allocated", ok);
+        for (int i = 0; i < 8; i++) {
+            if (ptrs[i]) mempool_free(ptrs[i], pool);
+        }
+        /* Now re-alloc — should reuse pre-allocated elements */
+        ok = 1;
+        for (int i = 0; i < 8; i++) {
+            ptrs[i] = mempool_alloc(pool);
+            if (!ptrs[i]) ok = 0;
+        }
+        TEST("mempool_more: re-alloc all 8 after free", ok);
+        for (int i = 0; i < 8; i++) {
+            if (ptrs[i]) mempool_free(ptrs[i], pool);
+        }
+        mempool_destroy(pool);
+    }
+
+    /* 8. Alloc more than max_nr (force kmalloc path) */
+    {
+        mempool_t *pool = mempool_create(3, 16);
+        TEST("mempool_more: create(3,16) for overflow", pool != NULL);
+        if (!pool) return;
+        /* Pool max_nr = 3*2=6, so alloc 10 */
+        int ok = 1;
+        for (int i = 0; i < 10; i++) {
+            void *p = mempool_alloc(pool);
+            if (!p) { ok = 0; break; }
+            /* Intentionally NOT freeing — testing kmalloc fallback */
+        }
+        TEST("mempool_more: alloc beyond max_nr ok", ok);
+        mempool_destroy(pool);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -142,6 +270,9 @@ int main(void)
 
     printf("--- mempool_create/alloc/free/destroy ---\n");
     test_mempool();
+
+    printf("\n--- more edge cases ---\n");
+    test_mempool_more();
 
     printf("\n");
     printf("============================================\n");

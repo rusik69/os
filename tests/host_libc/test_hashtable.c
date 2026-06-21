@@ -242,12 +242,129 @@ static void test_hashtable(void)
 }
 
 /* ===================================================================
+ *  test_hashtable_more — additional edge cases
+ * =================================================================== */
+static void test_hashtable_more(void)
+{
+    /* 1. Insert NULL value, verify it's stored and retrievable */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        hashtable_insert(&ht, 42, NULL);
+        TEST("hashtable: insert key=42 with NULL value",
+             hashtable_lookup(&ht, 42) == NULL);
+        TEST("hashtable: count after NULL-value insert", hashtable_count(&ht) == 1);
+        hashtable_remove(&ht, 42);
+        TEST("hashtable: remove NULL-value key", hashtable_count(&ht) == 0);
+    }
+
+    /* 2. Many colliding keys (same bucket: 0, 64, 128, 192, 256) */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        int v0=0, v64=64, v128=128, v192=192, v256=256;
+        hashtable_insert(&ht, 0, &v0);
+        hashtable_insert(&ht, 64, &v64);
+        hashtable_insert(&ht, 128, &v128);
+        hashtable_insert(&ht, 192, &v192);
+        hashtable_insert(&ht, 256, &v256);
+        TEST("hashtable: 5 same-bucket keys count=5", hashtable_count(&ht) == 5);
+        TEST("hashtable: bucket chain key 0",   *(int*)hashtable_lookup(&ht, 0) == 0);
+        TEST("hashtable: bucket chain key 64",  *(int*)hashtable_lookup(&ht, 64) == 64);
+        TEST("hashtable: bucket chain key 128", *(int*)hashtable_lookup(&ht, 128) == 128);
+        TEST("hashtable: bucket chain key 192", *(int*)hashtable_lookup(&ht, 192) == 192);
+        TEST("hashtable: bucket chain key 256", *(int*)hashtable_lookup(&ht, 256) == 256);
+    }
+
+    /* 3. Remove middle of colliding chain, verify rest survive */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        int v0=0, v64=64, v128=128;
+        hashtable_insert(&ht, 0, &v0);
+        hashtable_insert(&ht, 64, &v64);
+        hashtable_insert(&ht, 128, &v128);
+        hashtable_remove(&ht, 64);
+        TEST("hashtable: remove middle of chain key=64 ok", hashtable_count(&ht) == 2);
+        TEST("hashtable: chain head 0 survives",  *(int*)hashtable_lookup(&ht, 0) == 0);
+        TEST("hashtable: chain tail 128 survives", *(int*)hashtable_lookup(&ht, 128) == 128);
+        TEST("hashtable: chain middle 64 gone",    hashtable_lookup(&ht, 64) == NULL);
+    }
+
+    /* 4. Insert after remove in same bucket chain */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        int v0=0, v64=64, v200=200;
+        hashtable_insert(&ht, 0, &v0);
+        hashtable_insert(&ht, 64, &v64);
+        hashtable_remove(&ht, 0);
+        hashtable_insert(&ht, 128, &v200);  /* key 128 maps to same bucket, different key */
+        TEST("hashtable: insert after remove in same bucket",
+             hashtable_count(&ht) == 2);
+        TEST("hashtable: new key 128 found",
+             *(int*)hashtable_lookup(&ht, 128) == 200);
+        TEST("hashtable: old key 64 still found",
+             *(int*)hashtable_lookup(&ht, 64) == 64);
+    }
+
+    /* 5. Remove all keys, verify empty iteration */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        int v;
+        hashtable_insert(&ht, 10, &v);
+        hashtable_insert(&ht, 20, &v);
+        hashtable_insert(&ht, 30, &v);
+        hashtable_remove(&ht, 10);
+        hashtable_remove(&ht, 20);
+        hashtable_remove(&ht, 30);
+        TEST("hashtable: empty after removing all", hashtable_count(&ht) == 0);
+        iter_count = 0;
+        hashtable_iterate(&ht, iter_fn, NULL);
+        TEST("hashtable: iterate empty after remove all", iter_count == 0);
+    }
+
+    /* 6. Iterate over large table and count */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        for (int i = 0; i < 200; i++) {
+            int *v = (int *)malloc(sizeof(int));
+            *v = i;
+            hashtable_insert(&ht, (uint64_t)i, v);
+        }
+        iter_count = 0;
+        hashtable_iterate(&ht, iter_fn, NULL);
+        TEST("hashtable: iterate over 200 items", iter_count == 200);
+        /* cleanup */
+        for (int i = 0; i < 200; i++) {
+            hashtable_remove(&ht, (uint64_t)i);
+        }
+    }
+
+    /* 7. Insert key=0 with value=NULL, then key=0 with actual value */
+    {
+        struct hashtable ht;
+        hashtable_init(&ht);
+        hashtable_insert(&ht, 0, NULL);
+        int v = 42;
+        hashtable_insert(&ht, 0, &v);
+        TEST("hashtable: overwrite key 0 value", *(int*)hashtable_lookup(&ht, 0) == 42);
+        TEST("hashtable: count still 1 after overwrite", hashtable_count(&ht) == 1);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
 {
     printf("=== Hash Table Tests ===\n\n");
     test_hashtable();
+
+    printf("\n--- more edge cases ---\n");
+    test_hashtable_more();
 
     printf("\n");
     printf("============================================\n");

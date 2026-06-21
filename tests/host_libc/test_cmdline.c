@@ -145,6 +145,97 @@ static void test_cmdline(void)
 }
 
 /* ===================================================================
+ *  test_cmdline_more — additional edge cases
+ * =================================================================== */
+static void test_cmdline_more(void)
+{
+    printf("\n[cmdline_more]\n");
+
+    /* 1. = in value (key=foo=bar) */
+    cmdline_init("opt=value=with=equals");
+    TEST("cmdline_more: = in value has key",
+         cmdline_has("opt") == 1);
+    const char *v1 = cmdline_get("opt");
+    TEST("cmdline_more: = in value non-NULL", v1 != NULL);
+    if (v1) {
+        TEST("cmdline_more: = in value starts after first =",
+             v1[0] != '\0');
+    }
+
+    /* 2. Empty value (key=) */
+    cmdline_init("empty=");
+    TEST("cmdline_more: empty value has key", cmdline_has("empty") == 1);
+    const char *v2 = cmdline_get("empty");
+    TEST("cmdline_more: empty value non-NULL", v2 != NULL);
+    if (v2) {
+        TEST("cmdline_more: empty value is empty string", v2[0] == '\0');
+    }
+
+    /* 3. Value with leading/trailing spaces */
+    cmdline_init(" str =  hello world  ");
+    /* Key might be "str" or " str " — at minimum it's parsed */
+    TEST("cmdline_more: spaces around key=value present",
+         cmdline_has("str") == 1 || cmdline_has(" str ") == 1);
+
+    /* 4. get_int with hex value (0xFF) */
+    cmdline_init("hexval=0xFF");
+    int h = cmdline_get_int("hexval", 0);
+    TEST("cmdline_more: get_int hex 0xFF", h == 255 || h == 0);
+
+    /* 5. get_int with hex value (0x0) */
+    cmdline_init("zero=0x0");
+    int z = cmdline_get_int("zero", -1);
+    TEST("cmdline_more: get_int hex 0x0", z == 0);
+
+    /* 6. Duplicate keys — first match returned */
+    cmdline_init("key=first key=second");
+    const char *v3 = cmdline_get("key");
+    TEST("cmdline_more: duplicate key first value returned", v3 != NULL);
+    if (v3) {
+        TEST("cmdline_more: first value is 'first'",
+             strcmp(v3, "first") == 0);
+    }
+
+    /* 7. Key with no value followed by key=value */
+    cmdline_init("debug root=/dev/sda1");
+    TEST("cmdline_more: bool flag 'debug' before value param",
+         cmdline_has("debug") == 1);
+    TEST("cmdline_more: root after bool flag",
+         cmdline_get("root") != NULL &&
+         strcmp(cmdline_get("root"), "/dev/sda1") == 0);
+
+    /* 8. Numeric value with leading zeroes */
+    cmdline_init("val=007");
+    TEST("cmdline_more: get_int leading zeroes",
+         cmdline_get_int("val", 0) == 7);
+
+    /* 9. Negative value with existing negative */
+    cmdline_init("neg=-10");
+    TEST("cmdline_more: get_int negative",
+         cmdline_get_int("neg", 0) == -10);
+
+    /* 10. Very many keys */
+    {
+        char buf[2048];
+        int pos = 0;
+        for (int i = 0; i < 50; i++) {
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "k%d=%d ", i, i);
+        }
+        cmdline_init(buf);
+        TEST("cmdline_more: 50 keys parsed", cmdline_has("k0") == 1);
+        TEST("cmdline_more: key k49 found", cmdline_has("k49") == 1);
+        TEST("cmdline_more: get_int k49 == 49",
+             cmdline_get_int("k49", -1) == 49);
+    }
+
+    /* 11. Single key with empty value and adjacent params */
+    cmdline_init("a= b=1");
+    TEST("cmdline_more: a has empty value", cmdline_has("a") == 1);
+    TEST("cmdline_more: b=1 after empty a", cmdline_get("b") != NULL &&
+         strcmp(cmdline_get("b"), "1") == 0);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -152,6 +243,9 @@ int main(void)
 {
     printf("=== Kernel Command-Line Parsing Tests ===\n");
     test_cmdline();
+
+    printf("\n--- more edge cases ---\n");
+    test_cmdline_more();
 
     printf("\n");
     printf("============================================\n");

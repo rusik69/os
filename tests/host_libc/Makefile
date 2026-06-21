@@ -74,6 +74,15 @@ IDR_OBJS = idr.o test_idr.o
 # Notifier chain tests
 NOTIFIER_OBJS = notifier.o test_notifier.o
 
+# Notifier chain extension tests (priority-ordered)
+NOTIFIER_EXT_OBJS = notifier_ext.o test_notifier_ext.o
+
+# W^X page protection enforcement tests
+WX_ENFORCE_OBJS = wx_enforce.o test_wx_enforce.o
+
+# STACKLEAK kernel stack eraser tests
+STACKLEAK_OBJS = stackleak.o test_stackleak.o
+
 # Rate limiting tests
 RATELIMIT_OBJS = ratelimit.o test_ratelimit.o
 
@@ -134,7 +143,8 @@ all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher 
      test_uuid test_hashtable test_refcount \
      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
-     test_signal_validate test_kptr_restrict
+     test_signal_validate test_kptr_restrict \
+     test_notifier_ext test_wx_enforce test_stackleak
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -235,6 +245,15 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running kernel pointer restrict tests..."
 	./test_kptr_restrict
+	@echo ""
+	@echo "Running notifier chain extension tests..."
+	./test_notifier_ext
+	@echo ""
+	@echo "Running W^X enforcement tests..."
+	./test_wx_enforce
+	@echo ""
+	@echo "Running STACKLEAK stack eraser tests..."
+	./test_stackleak
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -271,6 +290,9 @@ else
 	python3 ../../tests/junit_reporter.py host-sched-attr ./test_sched_attr
 	python3 ../../tests/junit_reporter.py host-signal-validate ./test_signal_validate
 	python3 ../../tests/junit_reporter.py host-kptr-restrict ./test_kptr_restrict
+	python3 ../../tests/junit_reporter.py host-notifier-ext ./test_notifier_ext
+	python3 ../../tests/junit_reporter.py host-wx-enforce ./test_wx_enforce
+	python3 ../../tests/junit_reporter.py host-stackleak ./test_stackleak
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
@@ -289,6 +311,8 @@ else
 	      host-logbuf-results.xml host-module-alias-results.xml \
 	      host-sched-attr-results.xml host-signal-validate-results.xml \
 	      host-kptr-restrict-results.xml \
+	      host-notifier-ext-results.xml host-wx-enforce-results.xml \
+	      host-stackleak-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -536,6 +560,39 @@ notifier.o: $(KSRCDIR)/notifier.c
 test_notifier.o: test_notifier.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Notifier chain extension tests (priority-ordered) ────────────
+
+test_notifier_ext: $(NOTIFIER_EXT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+notifier_ext.o: $(KSRCDIR)/notifier_ext.c
+	$(CC) -I. $(subst -isystem,-I,$(KERNEL_CFLAGS)) -include spinlock.h -DEINVAL=22 -c -o $@ $<
+
+test_notifier_ext.o: test_notifier_ext.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── W^X enforcement tests ────────────────────────────────────────
+
+test_wx_enforce: $(WX_ENFORCE_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+wx_enforce.o: $(KSRCDIR)/wx_enforce.c
+	$(CC) $(KERNEL_CFLAGS) -DEPERM=1 -DEINVAL=22 -c -o $@ $<
+
+test_wx_enforce.o: test_wx_enforce.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── STACKLEAK stack eraser tests ─────────────────────────────────
+
+test_stackleak: $(STACKLEAK_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+stackleak.o: $(KSRCDIR)/stackleak.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_stackleak.o: test_stackleak.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 # ── Rate limiting tests ────────────────────────────────────
 
 test_ratelimit: $(RATELIMIT_OBJS)
@@ -721,10 +778,12 @@ clean:
 	      $(BITFIELD_OBJS) $(ERRNO_EXT_OBJS) $(UID16_OBJS) $(MEMPOOL_OBJS) $(RNG_CORE_OBJS) \
 	      $(CMDLINE_OBJS) $(COMPRESS_OBJS) $(LOGBUF_OBJS) $(MODULE_ALIAS_OBJS) \
 	      $(SCHED_ATTR_OBJS) $(SIGNAL_VALIDATE_OBJS) $(KPTR_RESTRICT_OBJS) \
+	      $(NOTIFIER_EXT_OBJS) $(WX_ENFORCE_OBJS) $(STACKLEAK_OBJS) \
 	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
 	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
 	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
 	      test_uuid test_hashtable test_refcount \
 	      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
 	      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
-	      test_signal_validate test_kptr_restrict
+	      test_signal_validate test_kptr_restrict \
+	      test_notifier_ext test_wx_enforce test_stackleak

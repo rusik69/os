@@ -326,6 +326,100 @@ static void test_range_overlaps(void)
 }
 
 /* ===================================================================
+ *  test_range_more — additional edge cases
+ * =================================================================== */
+static void test_range_more(void)
+{
+    /* 1. range_add: single point merges into adjacent left range */
+    {
+        int nr = 2;
+        struct range r[16] = { {10, 19}, {30, 39} };
+        range_add(r, &nr, 16, 20, 20);
+        /* [20,20] adjacent to [10,19] → merges to [10,20].
+         * [10,20] NOT adjacent to [30,39] (gap 21-29) → stays separate */
+        TEST("range_add: single point merges adjacent left",
+             ranges_match(r, nr, (uint64_t[]){10,20,30,39}, 2));
+    }
+
+    /* 2. range_add: merge many overlapping ranges into one */
+    {
+        int nr = 5;
+        struct range r[16] = { {10,20}, {30,40}, {50,60}, {70,80}, {90,100} };
+        range_add(r, &nr, 16, 15, 95);
+        /* [15,95] overlaps all five — merges into one big [10,100] */
+        TEST("range_add: merges many overlapping ranges",
+             ranges_match(r, nr, (uint64_t[]){10,100}, 1));
+    }
+
+    /* 3. range_add: array near-capacity but merge reduces count */
+    {
+        int nr = 3;
+        struct range r[8] = { {10,20}, {30,40}, {50,60} };
+        range_add(r, &nr, 8, 5, 65);
+        /* [5,65] overlaps all three → merges into [5,65] then sort+merge = single range */
+        TEST("range_add: near-capacity but merge reduces",
+             ranges_match(r, nr, (uint64_t[]){5,65}, 1));
+    }
+
+    /* 4. range_add: full array, no overlap — fails */
+    {
+        int nr = 2;
+        struct range r[2] = { {10,20}, {30,40} };
+        int ret = range_add(r, &nr, 2, 50, 60);
+        TEST("range_add: full non-overlap returns -1", ret < 0);
+        TEST("range_add: nr unchanged on full non-overlap", nr == 2);
+    }
+
+    /* 5. range_remove: remove single point from middle */
+    {
+        int nr = 1;
+        struct range r[4] = { {100, 200} };
+        range_remove(r, &nr, 150, 150);
+        TEST("range_remove: single point splits into two",
+             ranges_match(r, nr, (uint64_t[]){100,149,151,200}, 2));
+    }
+
+    /* 6. range_remove: start>end returns error */
+    {
+        int nr = 1;
+        struct range r[4] = { {100, 200} };
+        int ret = range_remove(r, &nr, 200, 100);
+        TEST("range_remove: start>end returns <0", ret < 0);
+        TEST("range_remove: nr unchanged after invalid", nr == 1);
+    }
+
+    /* 7. range_contains: boundary values */
+    {
+        struct range r[] = { {0, 0}, {100, 100}, {UINT64_MAX, UINT64_MAX} };
+        int nr = 3;
+        TEST("range_contains: point 0",     range_contains(r, nr, 0));
+        TEST("range_contains: point 100",   range_contains(r, nr, 100));
+        TEST("range_contains: UINT64_MAX",  range_contains(r, nr, UINT64_MAX));
+        TEST("range_contains: 1 not in range", !range_contains(r, nr, 1));
+        TEST("range_contains: 99 not in range", !range_contains(r, nr, 99));
+    }
+
+    /* 8. range_overlaps: single boundary point queries */
+    {
+        struct range r[] = { {100, 200}, {300, 400} };
+        int nr = 2;
+        TEST("range_overlaps: start point query", range_overlaps(r, nr, 100, 100));
+        TEST("range_overlaps: end point query",   range_overlaps(r, nr, 200, 200));
+        TEST("range_overlaps: exact above no overlap", !range_overlaps(r, nr, 201, 201));
+        TEST("range_overlaps: exact below no overlap", !range_overlaps(r, nr, 99, 99));
+    }
+
+    /* 9. range_add: huge end (UINT64_MAX) */
+    {
+        int nr = 0;
+        struct range r[16];
+        range_add(r, &nr, 16, UINT64_MAX, UINT64_MAX);
+        TEST("range_add: single point at UINT64_MAX",
+             ranges_match(r, nr, (uint64_t[]){UINT64_MAX, UINT64_MAX}, 1));
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -346,6 +440,9 @@ int main(void)
 
     printf("\n--- range_overlaps ---\n");
     test_range_overlaps();
+
+    printf("\n--- more edge cases ---\n");
+    test_range_more();
 
     printf("\n");
     printf("============================================\n");

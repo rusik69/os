@@ -14,6 +14,7 @@
 #include <stdint.h>   /* uint8_t */
 #include <stdio.h>    /* printf */
 #include <limits.h>   /* INT_MAX, INT_MIN, LONG_MAX, LONG_MIN */
+#include <stdarg.h>  /* va_list for vsnprintf */
 
 /* ===================================================================
  *  Declarations of kernel libc functions being tested
@@ -55,9 +56,26 @@ extern char  *itoa(int value, char *buf, int base);
 extern char  *ltoa(long value, char *buf, int base);
 extern char  *strdup(const char *s);
 
+/* qsort / bsearch / rand / srand */
+extern void   qsort(void *base, size_t nmemb, size_t size,
+                    int (*compar)(const void *, const void *));
+extern void  *bsearch(const void *key, const void *base, size_t nmemb,
+                      size_t size,
+                      int (*compar)(const void *, const void *));
+extern void   srand(unsigned int seed);
+extern int    rand(void);
+
+/* string.c (beyond line 270) */
+extern char  *strtrim(char *s);
+
+#ifndef RAND_MAX
+#define RAND_MAX 0x7FFFFFFF
+#endif
+
 /* --- printf.c --- */
 extern int sprintf(char *buf, const char *fmt, ...);
 extern int snprintf(char *buf, size_t n, const char *fmt, ...);
+extern int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap);
 
 /* ---- string_ext.c functions (extended string ops) ---- */
 extern size_t strlcat(char *dst, const char *src, size_t size);
@@ -2136,6 +2154,533 @@ static void test_sprintf_advanced(void)
 }
 
 /* ===================================================================
+ *  qsort tests
+ * =================================================================== */
+
+static int cmp_int(const void *a, const void *b)
+{
+    int ia = *(const int *)a;
+    int ib = *(const int *)b;
+    if (ia < ib) return -1;
+    if (ia > ib) return 1;
+    return 0;
+}
+
+static int is_sorted_int(int *arr, size_t n)
+{
+    for (size_t i = 1; i < n; i++)
+        if (arr[i-1] > arr[i]) return 0;
+    return 1;
+}
+
+typedef struct { int id; char name[16]; } test_rec_t;
+
+static int cmp_rec_id(const void *a, const void *b)
+{
+    int ia = ((const test_rec_t *)a)->id;
+    int ib = ((const test_rec_t *)b)->id;
+    if (ia < ib) return -1;
+    if (ia > ib) return 1;
+    return 0;
+}
+
+static void test_qsort(void)
+{
+    printf("\n[qsort]\n");
+
+    TEST("qsort empty (n=0 no-op)");
+    qsort(NULL, 0, sizeof(int), cmp_int);
+    PASS();
+
+    TEST("qsort single element");
+    {
+        int a[] = { 42 };
+        qsort(a, 1, sizeof(int), cmp_int);
+        ASSERT_INT_EQ(a[0], 42, "single element unchanged");
+    }
+    PASS();
+
+    TEST("qsort 2 already sorted");
+    {
+        int a[] = { 1, 2 };
+        qsort(a, 2, sizeof(int), cmp_int);
+        ASSERT_INT_EQ(a[0], 1, "first");
+        ASSERT_INT_EQ(a[1], 2, "second");
+    }
+    PASS();
+
+    TEST("qsort 2 reverse sorted");
+    {
+        int a[] = { 2, 1 };
+        qsort(a, 2, sizeof(int), cmp_int);
+        ASSERT_INT_EQ(a[0], 1, "first after sort");
+        ASSERT_INT_EQ(a[1], 2, "second after sort");
+    }
+    PASS();
+
+    TEST("qsort 8 already sorted");
+    {
+        int a[] = { 10, 20, 30, 40, 50, 60, 70, 80 };
+        qsort(a, 8, sizeof(int), cmp_int);
+        ASSERT(is_sorted_int(a, 8), "8 sorted stays sorted");
+        ASSERT_INT_EQ(a[0], 10, "first preserved");
+        ASSERT_INT_EQ(a[7], 80, "last preserved");
+    }
+    PASS();
+
+    TEST("qsort 8 reverse sorted");
+    {
+        int a[] = { 80, 70, 60, 50, 40, 30, 20, 10 };
+        qsort(a, 8, sizeof(int), cmp_int);
+        ASSERT(is_sorted_int(a, 8), "8 reverse becomes sorted");
+        ASSERT_INT_EQ(a[0], 10, "smallest first");
+        ASSERT_INT_EQ(a[7], 80, "largest last");
+    }
+    PASS();
+
+    TEST("qsort 8 all equal");
+    {
+        int a[] = { 7, 7, 7, 7, 7, 7, 7, 7 };
+        qsort(a, 8, sizeof(int), cmp_int);
+        ASSERT(is_sorted_int(a, 8), "all equal sorted");
+        ASSERT_INT_EQ(a[0], 7, "first");
+        ASSERT_INT_EQ(a[4], 7, "middle");
+    }
+    PASS();
+
+    TEST("qsort 100 sorted");
+    {
+        int a[100];
+        for (int i = 0; i < 100; i++) a[i] = i * 10;
+        qsort(a, 100, sizeof(int), cmp_int);
+        ASSERT(is_sorted_int(a, 100), "100 sorted stays sorted");
+        ASSERT_INT_EQ(a[0], 0, "first");
+        ASSERT_INT_EQ(a[99], 990, "last");
+    }
+    PASS();
+
+    TEST("qsort 100 reverse sorted");
+    {
+        int a[100];
+        for (int i = 0; i < 100; i++) a[i] = (99 - i) * 10;
+        qsort(a, 100, sizeof(int), cmp_int);
+        ASSERT(is_sorted_int(a, 100), "100 reverse becomes sorted");
+        ASSERT_INT_EQ(a[0], 0, "first");
+        ASSERT_INT_EQ(a[99], 990, "last");
+    }
+    PASS();
+
+    TEST("qsort struct sort by id");
+    {
+        test_rec_t recs[] = { {3, "charlie"}, {1, "alice"}, {2, "bob"} };
+        qsort(recs, 3, sizeof(test_rec_t), cmp_rec_id);
+        ASSERT_INT_EQ(recs[0].id, 1, "first by id");
+        ASSERT_INT_EQ(recs[1].id, 2, "second by id");
+        ASSERT_INT_EQ(recs[2].id, 3, "third by id");
+    }
+    PASS();
+}
+
+/* ===================================================================
+ *  bsearch tests
+ * =================================================================== */
+
+static void test_bsearch(void)
+{
+    printf("\n[bsearch]\n");
+
+    {
+        int arr[] = { 10, 20, 30, 40, 50 };
+        size_t n = 5;
+
+        TEST("bsearch key present (first)");
+        {
+            int key = 10;
+            int *found = (int *)bsearch(&key, arr, n, sizeof(int), cmp_int);
+            ASSERT_PTR_EQ(found, &arr[0], "found first element");
+        }
+        PASS();
+
+        TEST("bsearch key present (middle)");
+        {
+            int key = 30;
+            int *found = (int *)bsearch(&key, arr, n, sizeof(int), cmp_int);
+            ASSERT_PTR_EQ(found, &arr[2], "found middle element");
+        }
+        PASS();
+
+        TEST("bsearch key present (last)");
+        {
+            int key = 50;
+            int *found = (int *)bsearch(&key, arr, n, sizeof(int), cmp_int);
+            ASSERT_PTR_EQ(found, &arr[4], "found last element");
+        }
+        PASS();
+
+        TEST("bsearch key absent (too small)");
+        {
+            int key = 5;
+            ASSERT(bsearch(&key, arr, n, sizeof(int), cmp_int) == NULL,
+                   "key less than all returns NULL");
+        }
+        PASS();
+
+        TEST("bsearch key absent (too large)");
+        {
+            int key = 99;
+            ASSERT(bsearch(&key, arr, n, sizeof(int), cmp_int) == NULL,
+                   "key greater than all returns NULL");
+        }
+        PASS();
+
+        TEST("bsearch key absent (in middle)");
+        {
+            int key = 25;
+            ASSERT(bsearch(&key, arr, n, sizeof(int), cmp_int) == NULL,
+                   "key in middle gap returns NULL");
+        }
+        PASS();
+    }
+
+    TEST("bsearch empty array (n=0)");
+    {
+        int key = 1;
+        int *arr = NULL;
+        ASSERT(bsearch(&key, arr, 0, sizeof(int), cmp_int) == NULL,
+               "empty array returns NULL");
+    }
+    PASS();
+
+    TEST("bsearch single element found");
+    {
+        int arr[] = { 42 };
+        int key = 42;
+        int *found = (int *)bsearch(&key, arr, 1, sizeof(int), cmp_int);
+        ASSERT_PTR_EQ(found, &arr[0], "single element found");
+    }
+    PASS();
+
+    TEST("bsearch single element not found");
+    {
+        int arr[] = { 42 };
+        int key = 99;
+        ASSERT(bsearch(&key, arr, 1, sizeof(int), cmp_int) == NULL,
+               "single element not found returns NULL");
+    }
+    PASS();
+
+    TEST("bsearch zero nmemb");
+    {
+        int arr[] = { 1, 2, 3 };
+        int key = 1;
+        ASSERT(bsearch(&key, arr, 0, sizeof(int), cmp_int) == NULL,
+               "zero nmemb returns NULL");
+    }
+    PASS();
+}
+
+/* ===================================================================
+ *  rand / srand tests
+ * =================================================================== */
+
+static void test_rand(void)
+{
+    printf("\n[rand/srand]\n");
+
+    TEST("srand(12345) deterministic first 5 values");
+    {
+        srand(12345);
+        int a1 = rand(), a2 = rand(), a3 = rand(), a4 = rand(), a5 = rand();
+        srand(12345);
+        ASSERT_INT_EQ(rand(), a1, "first value matches");
+        ASSERT_INT_EQ(rand(), a2, "second value matches");
+        ASSERT_INT_EQ(rand(), a3, "third value matches");
+        ASSERT_INT_EQ(rand(), a4, "fourth value matches");
+        ASSERT_INT_EQ(rand(), a5, "fifth value matches");
+    }
+    PASS();
+
+    TEST("srand(0) and srand(1) produce different sequences");
+    {
+        srand(0);
+        int v0 = rand();
+        srand(1);
+        int v1 = rand();
+        ASSERT(v0 != v1, "different seeds produce different first values");
+    }
+    PASS();
+
+    TEST("rand() produces values in [0, RAND_MAX]");
+    {
+        srand(42);
+        int r1 = rand();
+        int r2 = rand();
+        int r3 = rand();
+        ASSERT(r1 >= 0 && r1 <= RAND_MAX, "rand() value 1 in range");
+        ASSERT(r2 >= 0 && r2 <= RAND_MAX, "rand() value 2 in range");
+        ASSERT(r3 >= 0 && r3 <= RAND_MAX, "rand() value 3 in range");
+    }
+    PASS();
+
+    TEST("RAND_MAX meets POSIX minimum (>= 32767)");
+    {
+        ASSERT(RAND_MAX >= 32767, "RAND_MAX >= 32767");
+    }
+    PASS();
+
+    TEST("reseeding reproduces entire 10-element sequence");
+    {
+        srand(9999);
+        int seq[10];
+        for (int i = 0; i < 10; i++) seq[i] = rand();
+        srand(9999);
+        for (int i = 0; i < 10; i++)
+            ASSERT_INT_EQ(rand(), seq[i], "sequence matches after reseed");
+    }
+    PASS();
+
+    TEST("rand() values not trivially constant");
+    {
+        srand(54321);
+        int r1 = rand();
+        int r2 = rand();
+        int r3 = rand();
+        ASSERT(!(r1 == r2 && r2 == r3), "first 3 values differ");
+    }
+    PASS();
+
+    TEST("1000 rand() calls stay in [0, RAND_MAX]");
+    {
+        srand(7777);
+        int ok = 1;
+        for (int i = 0; i < 1000; i++) {
+            int r = rand();
+            if (r < 0 || r > RAND_MAX) { ok = 0; break; }
+        }
+        ASSERT(ok, "all 1000 values in valid range");
+    }
+    PASS();
+}
+
+/* ===================================================================
+ *  strtrim tests
+ * =================================================================== */
+
+static void test_strtrim(void)
+{
+    printf("\n[strtrim]\n");
+
+    TEST("strtrim empty string");
+    {
+        char s[] = "";
+        ASSERT_STR_EQ(strtrim(s), "", "empty string stays empty");
+    }
+    PASS();
+
+    TEST("strtrim no whitespace");
+    {
+        char s[] = "hello";
+        ASSERT_STR_EQ(strtrim(s), "hello", "no whitespace unchanged");
+    }
+    PASS();
+
+    TEST("strtrim leading spaces only");
+    {
+        char s[] = "   hello";
+        ASSERT_STR_EQ(strtrim(s), "hello", "leading spaces trimmed");
+    }
+    PASS();
+
+    TEST("strtrim trailing spaces only");
+    {
+        char s[] = "hello   ";
+        ASSERT_STR_EQ(strtrim(s), "hello", "trailing spaces trimmed");
+    }
+    PASS();
+
+    TEST("strtrim both sides");
+    {
+        char s[] = "  hello world  ";
+        ASSERT_STR_EQ(strtrim(s), "hello world", "both sides trimmed");
+    }
+    PASS();
+
+    TEST("strtrim all whitespace");
+    {
+        char s[] = "   ";
+        ASSERT_STR_EQ(strtrim(s), "", "all whitespace becomes empty");
+    }
+    PASS();
+
+    TEST("strtrim mixed space and tab");
+    {
+        char s[] = " \t hello \t ";
+        ASSERT_STR_EQ(strtrim(s), "hello", "mixed space/tab trimmed");
+    }
+    PASS();
+
+    TEST("strtrim leading tabs");
+    {
+        char s[] = "\t\t\thello";
+        ASSERT_STR_EQ(strtrim(s), "hello", "leading tabs trimmed");
+    }
+    PASS();
+
+    TEST("strtrim trailing tabs");
+    {
+        char s[] = "hello\t\t";
+        ASSERT_STR_EQ(strtrim(s), "hello", "trailing tabs trimmed");
+    }
+    PASS();
+
+    TEST("strtrim returns original pointer");
+    {
+        char s[] = "  x  ";
+        ASSERT(strtrim(s) == s, "returns original pointer");
+    }
+    PASS();
+
+    TEST("strtrim single leading space");
+    {
+        char s[] = " hello";
+        ASSERT_STR_EQ(strtrim(s), "hello", "one leading space trimmed");
+    }
+    PASS();
+
+    TEST("strtrim single trailing space");
+    {
+        char s[] = "hello ";
+        ASSERT_STR_EQ(strtrim(s), "hello", "one trailing space trimmed");
+    }
+    PASS();
+}
+
+/* ===================================================================
+ *  vsnprintf tests
+ * =================================================================== */
+
+static int call_vsnprintf(char *buf, size_t n, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsnprintf(buf, n, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+static void test_vsnprintf(void)
+{
+    printf("\n[vsnprintf]\n");
+
+    TEST("vsnprintf n=0 returns 0 (kernel behavior)");
+    {
+        char buf[16];
+        int r = call_vsnprintf(buf, 0, "hello");
+        ASSERT_INT_EQ(r, 0, "n=0 returns 0");
+    }
+    PASS();
+
+    TEST("vsnprintf n < needed truncates");
+    {
+        char buf[8];
+        memset(buf, 0xAA, sizeof(buf));
+        int r = call_vsnprintf(buf, 4, "hello");
+        ASSERT_INT_EQ(r, 5, "returned full length (5), not truncated count");
+        ASSERT_STR_EQ(buf, "hel", "truncated to 3 chars + null");
+    }
+    PASS();
+
+    TEST("vsnprintf with sufficient buffer");
+    {
+        char buf[64];
+        int r = call_vsnprintf(buf, sizeof(buf), "hello world");
+        ASSERT_INT_EQ(r, 11, "returned length of formatted string");
+        ASSERT_STR_EQ(buf, "hello world", "full string written");
+    }
+    PASS();
+
+    TEST("sprintf return value");
+    {
+        char buf[64];
+        int r = sprintf(buf, "abc%d", 42);
+        ASSERT_INT_EQ(r, 5, "sprintf returns length written (abc42)");
+        ASSERT_STR_EQ(buf, "abc42", "sprintf output correct");
+    }
+    PASS();
+
+    TEST("vsnprintf %%s with NULL produces (null)");
+    {
+        char buf[64];
+        int r = call_vsnprintf(buf, sizeof(buf), "%s", NULL);
+        ASSERT_INT_EQ(r, 6, "returned length of (null)");
+        ASSERT_STR_EQ(buf, "(null)", "NULL string prints as (null)");
+    }
+    PASS();
+
+    TEST("vsnprintf %%d formats correctly");
+    {
+        char buf[64];
+        int r = call_vsnprintf(buf, sizeof(buf), "%d", 42);
+        ASSERT_INT_EQ(r, 2, "length of '42'");
+        ASSERT_STR_EQ(buf, "42", "%%d formats correctly");
+    }
+    PASS();
+
+    TEST("snprintf return value on truncation");
+    {
+        char buf[8];
+        int r = snprintf(buf, 5, "hello world");
+        ASSERT_INT_EQ(r, 11, "snprintf returns full formatted length (11)");
+        ASSERT_STR_EQ(buf, "hell", "truncated to 4 chars + null");
+    }
+    PASS();
+
+    TEST("vsnprintf with multiple format args");
+    {
+        char buf[64];
+        int r = call_vsnprintf(buf, sizeof(buf), "%d %s %x",
+                               (long long)42, "test", (unsigned long long)0xff);
+        ASSERT_INT_EQ(r, 10, "length of '42 test ff'");
+        ASSERT_STR_EQ(buf, "42 test ff", "multiple args formatted correctly");
+    }
+    PASS();
+
+    TEST("vsnprintf NULL buf with n=0");
+    {
+        int r = call_vsnprintf(NULL, 0, "test");
+        ASSERT_INT_EQ(r, 0, "NULL buf with n=0 returns 0");
+    }
+    PASS();
+
+    TEST("vsnprintf n=1 returns full length (n=0 special-cased)");
+    {
+        char buf[4] = "xxx";
+        int r = call_vsnprintf(buf, 1, "hello");
+        ASSERT_INT_EQ(r, 5, "n=1 returns full formatted length (5)");
+        ASSERT(buf[0] == '\0', "buf[0] is null terminator");
+    }
+    PASS();
+
+    TEST("vsnprintf null-terminates after truncation");
+    {
+        char buf[8];
+        memset(buf, 'X', sizeof(buf));
+        call_vsnprintf(buf, 5, "abcdefgh");
+        ASSERT_INT_EQ(buf[4], '\0', "null-terminated at position 4");
+    }
+    PASS();
+
+    TEST("vsnprintf with va_list passthrough");
+    {
+        char buf[64];
+        int r = call_vsnprintf(buf, sizeof(buf), "test-%d-%s", 123, "done");
+        ASSERT_INT_EQ(r, 13, "length of 'test-123-done'");
+        ASSERT_STR_EQ(buf, "test-123-done", "va_list passthrough works");
+    }
+    PASS();
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -2169,6 +2714,7 @@ int main(void)
     test_strpbrk();
     test_strnlen();
     test_memccpy();
+    test_strtrim();
 
     /* --- stdlib.h tests --- */
     printf("\n--- stdlib.h ---\n");
@@ -2179,6 +2725,9 @@ int main(void)
     test_ltoa();
     test_strdup_func();
     test_abs();
+    test_qsort();
+    test_bsearch();
+    test_rand();
 
     /* --- printf tests --- */
     printf("\n--- printf.h ---\n");
@@ -2187,6 +2736,7 @@ int main(void)
     test_sprintf_multiple();
     test_snprintf();
     test_sprintf_advanced();
+    test_vsnprintf();
 
     /* --- string_ext.h tests --- */
     printf("\n--- string_ext.h ---\n");

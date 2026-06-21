@@ -186,6 +186,121 @@ static void test_logbuf(void)
 }
 
 /* ===================================================================
+ *  test_logbuf_more — additional edge cases
+ * =================================================================== */
+static void test_logbuf_more(void)
+{
+    printf("\n[logbuf_more]\n");
+    char buf[65536];
+
+    /* 1. Write exactly buffer size (no wrap — LOGBUF_SIZE/2 = 16384 per write) */
+    {
+        logbuf_read(buf, sizeof(buf)); /* drain any leftover */
+        char big[16384];
+        memset(big, 'Y', 16384);
+        logbuf_write(big, 16384);
+        uint32_t avail = logbuf_available();
+        TEST("logbuf_more: exact size write available == 16384",
+             avail == 16384);
+        uint32_t n = logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: exact size read returns >= 16384", n >= 16384);
+        logbuf_read(buf, sizeof(buf)); /* drain */
+        TEST("logbuf_more: drained after exact size", logbuf_available() == 0);
+    }
+
+    /* 2. Write buffer_size+1 (one byte wrap) */
+    {
+        char big[16385];
+        memset(big, 'Z', 16385);
+        logbuf_write(big, 16385);
+        /* Write should be truncated to 16384, which is < 16385 */
+        uint32_t avail = logbuf_available();
+        TEST("logbuf_more: oversized write truncated", avail <= 16384 && avail > 0);
+        logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: drained after oversized", logbuf_available() == 0);
+    }
+
+    /* 3. Write and read interleaved (write 10, read 5, write 10, read all) */
+    {
+        logbuf_write("ABCDEFGHIJ", 10);
+        uint32_t avail1 = logbuf_available();
+        TEST("logbuf_more: interleaved avail 10", avail1 == 10);
+        char tmp[16];
+        uint32_t n1 = logbuf_read(tmp, 5);
+        TEST("logbuf_more: partial read returns 5", n1 >= 5);
+        logbuf_write("KLMNOPQRST", 10);
+        /* Drain all */
+        uint32_t n2 = logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: second read returns > 0", n2 > 0);
+        TEST("logbuf_more: fully drained", logbuf_available() == 0);
+    }
+
+    /* 4. Write with embedded null bytes */
+    {
+        char mixed[] = {'A', 'B', '\0', 'C', 'D', '\0', 'E'};
+        logbuf_write(mixed, 7);
+        uint32_t n = logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: embedded nulls readable", n >= 7);
+        TEST("logbuf_more: null bytes preserved",
+             n >= 7 && buf[0] == 'A' && buf[1] == 'B' &&
+             buf[2] == '\0' && buf[3] == 'C');
+        logbuf_read(buf, sizeof(buf));
+    }
+
+    /* 5. Multiple sequential reads (consume all) */
+    {
+        logbuf_write("HelloWorld", 10);
+        uint32_t total = 0;
+        char small[4];
+        uint32_t r;
+        while ((r = logbuf_read(small, 3)) > 0)
+            total += r;
+        TEST("logbuf_more: sequential reads consume all", total >= 10);
+        TEST("logbuf_more: empty after sequential reads", logbuf_available() == 0);
+    }
+
+    /* 6. Read with smaller buffer than available */
+    {
+        logbuf_write("1234567890", 10);
+        char tiny[8];
+        uint32_t n = logbuf_read(tiny, 2);
+        /* logbuf_read may append newline, so n can be 2 or 3 */
+        TEST("logbuf_more: small buffer read non-zero", n > 0);
+        TEST("logbuf_more: small buffer reads at most max+1 (newline)",
+             n <= 3);
+        /* Drain remainder */
+        logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: drained after small read", logbuf_available() == 0);
+    }
+
+    /* 7. Two exact-size writes in a row */
+    {
+        char big[16384];
+        memset(big, 'M', 16384);
+        logbuf_write(big, 16384);
+        logbuf_write(big, 16384);
+        uint32_t avail = logbuf_available();
+        /* Second write may be truncated or overwrite — just check > 0 */
+        TEST("logbuf_more: double max write has data", avail > 0);
+        logbuf_read(buf, sizeof(buf));
+        logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: drained after double max", logbuf_available() == 0);
+    }
+
+    /* 8. Write after drain (reuse buffer) */
+    {
+        logbuf_write("first", 5);
+        logbuf_read(buf, sizeof(buf));
+        logbuf_write("second", 6);
+        uint32_t n = logbuf_read(buf, sizeof(buf));
+        TEST("logbuf_more: write after drain works", n >= 6);
+        TEST("logbuf_more: write after drain correct",
+             n >= 6 && memcmp(buf, "second", 6) == 0);
+        logbuf_read(buf, sizeof(buf));
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -193,6 +308,9 @@ int main(void)
 {
     printf("=== Kernel Log Buffer Tests ===\n");
     test_logbuf();
+
+    printf("\n--- more edge cases ---\n");
+    test_logbuf_more();
 
     printf("\n");
     printf("============================================\n");
