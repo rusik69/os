@@ -303,3 +303,49 @@ void acpi_init(void)
         kprintf("[ACPI] FADT found\n");
     }
 }
+
+/* ── Stub: acpi_enable ─────────────────────────────────────────────── */
+int acpi_enable(void)
+{
+    kprintf("[ACPI] acpi_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: acpi_disable ────────────────────────────────────────────── */
+int acpi_disable(void)
+{
+    kprintf("[ACPI] acpi_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: acpi_get_table ──────────────────────────────────────────── */
+int acpi_get_table(const char *signature, uint32_t instance,
+                   struct acpi_table_header **out_table)
+{
+    (void)signature; (void)instance; (void)out_table;
+    kprintf("[ACPI] acpi_get_table: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: acpi_put_table ──────────────────────────────────────────── */
+int acpi_put_table(struct acpi_table_header *table)
+{
+    (void)table;
+    kprintf("[ACPI] acpi_put_table: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: acpi_sleep ──────────────────────────────────────────────── */
+int acpi_sleep(uint32_t sleep_state)
+{
+    (void)sleep_state;
+    kprintf("[ACPI] acpi_sleep: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: acpi_reboot ─────────────────────────────────────────────── */
+int acpi_reboot(void)
+{
+    kprintf("[ACPI] acpi_reboot: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -280,3 +280,25 @@ void hugepage_migration_init(void)
 
     kprintf("[hugepage-mig] Huge page migration subsystem initialised\n");
 }
+
+/* ── Stub: hugepage_migration_supported ─────────────────────── */
+int hugepage_migration_supported(void)
+{
+    kprintf("[hugepage-mig] hugepage_migration_supported: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: isolate_huge_page ────────────────────────────────── */
+int isolate_huge_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[hugepage-mig] isolate_huge_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: putback_huge_page ────────────────────────────────── */
+void putback_huge_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[hugepage-mig] putback_huge_page: not yet implemented\n");
+}

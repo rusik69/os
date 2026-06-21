@@ -163,3 +163,48 @@ void bcache_init(void)
 }
 #include "module.h"
 module_init(bcache_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: bcache_read ─────────────────────────────── */
+int bcache_read(struct bcache_device *dev, uint64_t sector, void *buf, uint32_t count)
+{
+    (void)dev;
+    (void)sector;
+    (void)buf;
+    (void)count;
+    kprintf("[bcache] bcache_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bcache_write ────────────────────────────── */
+int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, uint32_t count)
+{
+    (void)dev;
+    (void)sector;
+    (void)buf;
+    (void)count;
+    kprintf("[bcache] bcache_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bcache_open ─────────────────────────────── */
+int bcache_open(struct bcache_device *dev)
+{
+    (void)dev;
+    kprintf("[bcache] bcache_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bcache_close ────────────────────────────── */
+void bcache_close(struct bcache_device *dev)
+{
+    (void)dev;
+    kprintf("[bcache] bcache_close: not yet implemented\n");
+}
+/* ── Stub: bcache_flush ────────────────────────────── */
+int bcache_flush(struct bcache_device *dev)
+{
+    (void)dev;
+    kprintf("[bcache] bcache_flush: not yet implemented\n");
+    return -ENOSYS;
+}

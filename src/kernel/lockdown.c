@@ -55,3 +55,26 @@ int lockdown_get_level(void)
 {
     return g_lockdown_level;
 }
+
+/* ── Stub: lockdown_set ────────────────────────────────────────────── */
+int lockdown_set(int level)
+{
+    (void)level;
+    kprintf("[LOCKDOWN] lockdown_set: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: lockdown_release ────────────────────────────────────────── */
+int lockdown_release(void)
+{
+    kprintf("[LOCKDOWN] lockdown_release: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: lockdown_restrict ───────────────────────────────────────── */
+int lockdown_restrict(const char *reason)
+{
+    (void)reason;
+    kprintf("[LOCKDOWN] lockdown_restrict: not yet implemented\n");
+    return -ENOSYS;
+}

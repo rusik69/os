@@ -52,3 +52,41 @@ void sem_destroy(int id) {
     sems[id].in_use = 0;
     sems[id].count  = 0;
 }
+
+/* ── Stub: semop ────────────────────────────────────────────── */
+int semop(int semid, struct sembuf *sops, size_t nsops)
+{
+    (void)semid;
+    (void)sops;
+    (void)nsops;
+    kprintf("[semaphore] semop: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: semctl ───────────────────────────────────────────── */
+int semctl(int semid, int semnum, int cmd, ...)
+{
+    (void)semid;
+    (void)semnum;
+    (void)cmd;
+    kprintf("[semaphore] semctl: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sem_getvalue ─────────────────────────────────────── */
+int sem_getvalue(int id, int *sval)
+{
+    (void)id;
+    (void)sval;
+    kprintf("[semaphore] sem_getvalue: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sem_timedwait ────────────────────────────────────── */
+int sem_timedwait(int id, const struct timespec *abs_timeout)
+{
+    (void)id;
+    (void)abs_timeout;
+    kprintf("[semaphore] sem_timedwait: not yet implemented\n");
+    return -ENOSYS;
+}

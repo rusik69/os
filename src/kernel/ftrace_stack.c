@@ -110,3 +110,37 @@ void ftrace_stack_init(void)
     memset(&stack_state, 0, sizeof(stack_state));
     kprintf("[OK] Ftrace stack tracer — max stack usage tracker\n");
 }
+
+/* ── Stub: ftrace_stack_trace_save ─────────────────────────────────── */
+int ftrace_stack_trace_save(unsigned long *store, unsigned int size,
+                            unsigned int skip)
+{
+    (void)store; (void)size; (void)skip;
+    kprintf("[FTRACE_STACK] ftrace_stack_trace_save: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ftrace_stack_trace_snprint ──────────────────────────────── */
+int ftrace_stack_trace_snprint(char *buf, size_t size,
+                               unsigned long *entries, unsigned int nr_entries)
+{
+    (void)buf; (void)size; (void)entries; (void)nr_entries;
+    kprintf("[FTRACE_STACK] ftrace_stack_trace_snprint: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ftrace_stack_check ──────────────────────────────────────── */
+int ftrace_stack_check(unsigned long addr, size_t size)
+{
+    (void)addr; (void)size;
+    kprintf("[FTRACE_STACK] ftrace_stack_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ftrace_stack_reserve ────────────────────────────────────── */
+void *ftrace_stack_reserve(size_t size)
+{
+    (void)size;
+    kprintf("[FTRACE_STACK] ftrace_stack_reserve: not yet implemented\n");
+    return NULL;
+}

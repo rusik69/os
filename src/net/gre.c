@@ -290,3 +290,30 @@ EXPORT_SYMBOL(gre_get_tunnel);
 EXPORT_SYMBOL(gre_encapsulate);
 EXPORT_SYMBOL(gre_decapsulate);
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: gre_xmit ────────────────────────────────── */
+int gre_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[GRE] gre_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gre_rcv ─────────────────────────────────── */
+int gre_rcv(void *skb)
+{
+    (void)skb;
+    kprintf("[GRE] gre_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gre_err ─────────────────────────────────── */
+void gre_err(void *skb, uint32_t info)
+{
+    (void)skb;
+    (void)info;
+    kprintf("[GRE] gre_err: not yet implemented\n");
+}

@@ -53,3 +53,19 @@ int hrtimer_active(struct hrtimer *timer)
 {
     return timer && timer->state;
 }
+
+/* ── Stub: hrtimer_forward ─────────────────────────────────────────── */
+uint64_t hrtimer_forward(struct hrtimer *timer, uint64_t now, uint64_t interval)
+{
+    (void)timer; (void)now; (void)interval;
+    kprintf("[HRTIMER] hrtimer_forward: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: hrtimer_nanosleep ───────────────────────────────────────── */
+int hrtimer_nanosleep(uint64_t ns)
+{
+    (void)ns;
+    kprintf("[HRTIMER] hrtimer_nanosleep: not yet implemented\n");
+    return -ENOSYS;
+}

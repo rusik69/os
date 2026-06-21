@@ -302,3 +302,48 @@ EXPORT_SYMBOL(pfkey_send_msg);
 EXPORT_SYMBOL(pfkey_recv_msg);
 #include "module.h"
 module_init(pfkey_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: pfkey_send ──────────────────────────────── */
+int pfkey_send(void *sk, void *skb)
+{
+    (void)sk;
+    (void)skb;
+    kprintf("[PFKEY] pfkey_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pfkey_recv ──────────────────────────────── */
+int pfkey_recv(void *sk, void *skb)
+{
+    (void)sk;
+    (void)skb;
+    kprintf("[PFKEY] pfkey_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pfkey_register ──────────────────────────── */
+int pfkey_register(void *sk, void *skb)
+{
+    (void)sk;
+    (void)skb;
+    kprintf("[PFKEY] pfkey_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pfkey_acquire ───────────────────────────── */
+int pfkey_acquire(void *sk, void *skb)
+{
+    (void)sk;
+    (void)skb;
+    kprintf("[PFKEY] pfkey_acquire: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pfkey_expire ────────────────────────────── */
+int pfkey_expire(void *sk, void *skb)
+{
+    (void)sk;
+    (void)skb;
+    kprintf("[PFKEY] pfkey_expire: not yet implemented\n");
+    return -ENOSYS;
+}

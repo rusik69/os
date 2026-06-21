@@ -309,3 +309,50 @@ uint32_t zram_get_algorithm(void)
 }
 #include "module.h"
 module_init(zram_init);
+
+/* ── Stub: zram_read ─────────────────────────────────────────── */
+int zram_read(uint64_t offset, void *buf, size_t count)
+{
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[zram] zram_read: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zram_write ────────────────────────────────────────── */
+int zram_write(uint64_t offset, const void *buf, size_t count)
+{
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[zram] zram_write: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zram_comp_read ────────────────────────────────────── */
+int zram_comp_read(uint64_t offset, void *buf, size_t count)
+{
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[zram] zram_comp_read: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zram_comp_write ───────────────────────────────────── */
+int zram_comp_write(uint64_t offset, const void *buf, size_t count)
+{
+    (void)offset;
+    (void)buf;
+    (void)count;
+    kprintf("[zram] zram_comp_write: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zram_free_page ────────────────────────────────────── */
+void zram_free_page(uint64_t offset)
+{
+    (void)offset;
+    kprintf("[zram] zram_free_page: not yet implemented\n");
+}

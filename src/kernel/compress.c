@@ -203,3 +203,34 @@ int lzss_decompress(const uint8_t *input, int input_len,
 
     return out_pos;
 }
+
+/* ── Stub: compress_deflate ────────────────────────────────────────── */
+int compress_deflate(const uint8_t *input, int input_len,
+                     uint8_t *output, int output_len)
+{
+    (void)input; (void)input_len; (void)output; (void)output_len;
+    kprintf("[COMPRESS] compress_deflate: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: compress_inflate ────────────────────────────────────────── */
+int compress_inflate(const uint8_t *input, int input_len,
+                     uint8_t *output, int output_len)
+{
+    (void)input; (void)input_len; (void)output; (void)output_len;
+    kprintf("[COMPRESS] compress_inflate: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: compress_init ───────────────────────────────────────────── */
+int compress_init(void)
+{
+    kprintf("[COMPRESS] compress_init: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: compress_exit ───────────────────────────────────────────── */
+void compress_exit(void)
+{
+    kprintf("[COMPRESS] compress_exit: not yet implemented\n");
+}

@@ -159,3 +159,22 @@ int eventfd_poll(int fd)
 int eventfd_syscall(uint32_t initval, int flags) {
     return eventfd_create(initval, flags);
 }
+
+/* ── Stub: eventfd_show_fdinfo ─────────────────────────────── */
+int eventfd_show_fdinfo(int fd, char *buf, size_t size)
+{
+    (void)fd;
+    (void)buf;
+    (void)size;
+    kprintf("[eventfd] eventfd_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: eventfd_signal ──────────────────────────────────── */
+int eventfd_signal(int fd, uint64_t val)
+{
+    (void)fd;
+    (void)val;
+    kprintf("[eventfd] eventfd_signal: not yet implemented\n");
+    return -ENOSYS;
+}

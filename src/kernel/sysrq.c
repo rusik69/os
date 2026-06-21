@@ -502,3 +502,37 @@ void sysrq_init(void)
             (int)(sizeof(sysrq_table) / sizeof(sysrq_table[0])) - 1,
             sysrq_enable_mask);
 }
+
+/* ── Stub: sysrq_handle_crash ──────────────────────────────────────── */
+void sysrq_handle_crash(void)
+{
+    kprintf("[SYSRQ] sysrq_handle_crash: not yet implemented\n");
+}
+
+/* ── Stub: sysrq_handle_term ───────────────────────────────────────── */
+void sysrq_handle_term(void)
+{
+    kprintf("[SYSRQ] sysrq_handle_term: not yet implemented\n");
+}
+
+/* ── Stub: sysrq_handle_reboot ─────────────────────────────────────── */
+void sysrq_handle_reboot(void)
+{
+    kprintf("[SYSRQ] sysrq_handle_reboot: not yet implemented\n");
+}
+
+/* ── Stub: sysrq_register_handler ──────────────────────────────────── */
+int sysrq_register_handler(int key, void (*handler)(void))
+{
+    (void)key; (void)handler;
+    kprintf("[SYSRQ] sysrq_register_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: sysrq_unregister_handler ────────────────────────────────── */
+int sysrq_unregister_handler(int key)
+{
+    (void)key;
+    kprintf("[SYSRQ] sysrq_unregister_handler: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -277,3 +277,47 @@ uint64_t compaction_run(void)
 EXPORT_SYMBOL(compaction_run);
 #include "module.h"
 module_init(compaction_init);
+
+/* ── Stub: compact_zone ─────────────────────────────────────── */
+int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
+{
+    (void)zone_pfn_start;
+    (void)zone_pfn_end;
+    kprintf("[compaction] compact_zone: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: compaction_suitable ───────────────────────────────── */
+int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
+{
+    (void)zone_pfn_start;
+    (void)zone_pfn_end;
+    kprintf("[compaction] compaction_suitable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: isolate_migratepages ──────────────────────────────── */
+int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
+{
+    (void)start_pfn;
+    (void)end_pfn;
+    kprintf("[compaction] isolate_migratepages: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: migrate_pages ─────────────────────────────────────── */
+int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
+{
+    (void)from_pfns;
+    (void)to_pfns;
+    (void)nr_pages;
+    kprintf("[compaction] migrate_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: compact_finished ──────────────────────────────────── */
+int compact_finished(void)
+{
+    kprintf("[compaction] compact_finished: not yet implemented\n");
+    return -ENOSYS;
+}

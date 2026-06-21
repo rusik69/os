@@ -366,3 +366,42 @@ void live_patch_trace_replacement(void)
 {
     kprintf("[livepatch-trace] Patched function called\n");
 }
+
+/* ── Stub: livepatch_enable ────────────────────────────────────────── */
+int livepatch_enable(const char *name)
+{
+    (void)name;
+    kprintf("[LIVEPATCH] livepatch_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: livepatch_disable ───────────────────────────────────────── */
+int livepatch_disable(const char *name)
+{
+    (void)name;
+    kprintf("[LIVEPATCH] livepatch_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: livepatch_replace ───────────────────────────────────────── */
+int livepatch_replace(const char *name, void *new_func, void *old_func)
+{
+    (void)name; (void)new_func; (void)old_func;
+    kprintf("[LIVEPATCH] livepatch_replace: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: klp_init ────────────────────────────────────────────────── */
+int klp_init(void)
+{
+    kprintf("[LIVEPATCH] klp_init: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: klp_load ────────────────────────────────────────────────── */
+int klp_load(const char *patch_module)
+{
+    (void)patch_module;
+    kprintf("[LIVEPATCH] klp_load: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -90,3 +90,47 @@ struct memhp_section *memhp_get_section(int section_id) {
 }
 #include "module.h"
 module_init(memhp_init);
+
+/* ── Stub: add_memory ───────────────────────────────────────── */
+int add_memory(uint64_t start, uint64_t size)
+{
+    (void)start;
+    (void)size;
+    kprintf("[memhotplug] add_memory: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: remove_memory ────────────────────────────────────── */
+int remove_memory(uint64_t start, uint64_t size)
+{
+    (void)start;
+    (void)size;
+    kprintf("[memhotplug] remove_memory: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: online_pages ─────────────────────────────────────── */
+int online_pages(uint64_t start, uint64_t size)
+{
+    (void)start;
+    (void)size;
+    kprintf("[memhotplug] online_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: offline_pages ────────────────────────────────────── */
+int offline_pages(uint64_t start, uint64_t size)
+{
+    (void)start;
+    (void)size;
+    kprintf("[memhotplug] offline_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: memory_notify ────────────────────────────────────── */
+void memory_notify(unsigned long event, void *data)
+{
+    (void)event;
+    (void)data;
+    kprintf("[memhotplug] memory_notify: not yet implemented\n");
+}

@@ -126,3 +126,30 @@ void hung_task_init(void)
     kprintf("[OK] hung_task: detection initialized (timeout=%d seconds, panic=%s)\n",
             120, "disabled");
 }
+
+/* ── Stub: hung_task_detect ────────────────────────────────────────── */
+int hung_task_detect(void)
+{
+    kprintf("[HUNG_TASK] hung_task_detect: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: hung_task_panic ─────────────────────────────────────────── */
+void hung_task_panic(void)
+{
+    kprintf("[HUNG_TASK] hung_task_panic: not yet implemented\n");
+}
+
+/* ── Stub: hung_task_check_count ───────────────────────────────────── */
+int hung_task_check_count(void)
+{
+    kprintf("[HUNG_TASK] hung_task_check_count: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: hung_task_timeout_secs ──────────────────────────────────── */
+uint64_t hung_task_timeout_secs(void)
+{
+    kprintf("[HUNG_TASK] hung_task_timeout_secs: not yet implemented\n");
+    return 0;
+}

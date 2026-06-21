@@ -152,3 +152,29 @@ int signalfd_close(int fd) {
     memset(&signalfd_table[slot], 0, sizeof(struct signalfd_entry));
     return 0;
 }
+
+/* ── Stub: signalfd_poll ────────────────────────────────────── */
+int signalfd_poll(int fd)
+{
+    (void)fd;
+    kprintf("[signalfd] signalfd_poll: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: signalfd_show_fdinfo ─────────────────────────────── */
+int signalfd_show_fdinfo(int fd, char *buf, size_t size)
+{
+    (void)fd;
+    (void)buf;
+    (void)size;
+    kprintf("[signalfd] signalfd_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: signalfd_release ─────────────────────────────────── */
+int signalfd_release(int fd)
+{
+    (void)fd;
+    kprintf("[signalfd] signalfd_release: not yet implemented\n");
+    return -ENOSYS;
+}

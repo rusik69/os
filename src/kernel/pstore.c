@@ -292,3 +292,24 @@ void pstore_init_notifier(void)
         kprintf("[!!] pstore: failed to register panic notifier (%d)\n", ret);
     }
 }
+
+/* ── Stub: pstore_erase ────────────────────────────────────────────── */
+int pstore_erase(int index)
+{
+    (void)index;
+    kprintf("[PSTORE] pstore_erase: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: pstore_open ─────────────────────────────────────────────── */
+int pstore_open(void)
+{
+    kprintf("[PSTORE] pstore_open: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: pstore_close ────────────────────────────────────────────── */
+void pstore_close(void)
+{
+    kprintf("[PSTORE] pstore_close: not yet implemented\n");
+}

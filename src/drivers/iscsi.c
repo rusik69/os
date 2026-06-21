@@ -438,3 +438,40 @@ void iscsi_disconnect(int dev_id)
             (int)(sess - g_sessions), dev_id);
     memset(sess, 0, sizeof(*sess));
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: iscsi_logout ────────────────────────────── */
+int iscsi_logout(struct iscsi_session *sess)
+{
+    (void)sess;
+    kprintf("[iscsi] iscsi_logout: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iscsi_send ──────────────────────────────── */
+int iscsi_send(struct iscsi_session *sess, const uint8_t *data, uint32_t len)
+{
+    (void)sess;
+    (void)data;
+    (void)len;
+    kprintf("[iscsi] iscsi_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iscsi_recv ──────────────────────────────── */
+int iscsi_recv(struct iscsi_session *sess, uint8_t *buf, uint32_t *len)
+{
+    (void)sess;
+    (void)buf;
+    (void)len;
+    kprintf("[iscsi] iscsi_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iscsi_nop_out ───────────────────────────── */
+int iscsi_nop_out(struct iscsi_session *sess)
+{
+    (void)sess;
+    kprintf("[iscsi] iscsi_nop_out: not yet implemented\n");
+    return -ENOSYS;
+}

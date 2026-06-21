@@ -267,3 +267,34 @@ int uefi_is_available(void)
 {
     return (g_efi_rt != NULL);
 }
+
+/* ── Stub: uefi_get_next_variable ──────────────────────────────────── */
+int uefi_get_next_variable(uint64_t *variable_name_size,
+                           uint16_t *variable_name, uint8_t *guid)
+{
+    (void)variable_name_size; (void)variable_name; (void)guid;
+    kprintf("[UEFI] uefi_get_next_variable: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: uefi_query_variable_info ────────────────────────────────── */
+int uefi_query_variable_info(uint32_t attributes,
+                             uint64_t *maximum_variable_storage_size,
+                             uint64_t *remaining_variable_storage_size,
+                             uint64_t *maximum_variable_size)
+{
+    (void)attributes; (void)maximum_variable_storage_size;
+    (void)remaining_variable_storage_size; (void)maximum_variable_size;
+    kprintf("[UEFI] uefi_query_variable_info: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: uefi_update_capsule ─────────────────────────────────────── */
+int uefi_update_capsule(void **capsule_header_array,
+                        uint64_t capsule_count,
+                        uint64_t scatter_gather_list)
+{
+    (void)capsule_header_array; (void)capsule_count; (void)scatter_gather_list;
+    kprintf("[UEFI] uefi_update_capsule: not yet implemented\n");
+    return -ENOSYS;
+}

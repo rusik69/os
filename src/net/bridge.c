@@ -495,3 +495,38 @@ EXPORT_SYMBOL(bridge_handle);
 EXPORT_SYMBOL(bridge_fdb_lookup);
 EXPORT_SYMBOL(bridge_fdb_learn);
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: bridge_xmit ─────────────────────────────── */
+int bridge_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[BRIDGE] bridge_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bridge_rcv ──────────────────────────────── */
+int bridge_rcv(void *skb)
+{
+    (void)skb;
+    kprintf("[BRIDGE] bridge_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bridge_fdb_add ──────────────────────────── */
+int bridge_fdb_add(const uint8_t *mac, struct net_device *dev)
+{
+    (void)mac;
+    (void)dev;
+    kprintf("[BRIDGE] bridge_fdb_add: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bridge_fdb_del ──────────────────────────── */
+int bridge_fdb_del(const uint8_t *mac)
+{
+    (void)mac;
+    kprintf("[BRIDGE] bridge_fdb_del: not yet implemented\n");
+    return -ENOSYS;
+}

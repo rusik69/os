@@ -162,3 +162,41 @@ void zbud_init(void)
 }
 #include "module.h"
 module_init(zbud_init);
+
+/* ── Stub: zbud_alloc ────────────────────────────────────────── */
+int zbud_alloc(int pool_id, size_t size, uint64_t *handle)
+{
+    (void)pool_id;
+    (void)size;
+    (void)handle;
+    kprintf("[zbud] zbud_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zbud_reclaim ──────────────────────────────────────── */
+int zbud_reclaim(int pool_id, int nr_to_reclaim)
+{
+    (void)pool_id;
+    (void)nr_to_reclaim;
+    kprintf("[zbud] zbud_reclaim: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zbud_pool_destroy ─────────────────────────────────── */
+int zbud_pool_destroy(int pool_id)
+{
+    (void)pool_id;
+    kprintf("[zbud] zbud_pool_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: zbud_pool_create also known as zbud_create_pool ──── */
+/* zbud_create_pool already exists; adding zbud_pool_create alias */
+
+int zbud_pool_create(const char *name, int gfp_mask)
+{
+    (void)name;
+    (void)gfp_mask;
+    kprintf("[zbud] zbud_pool_create: not yet implemented\n");
+    return -ENOSYS;
+}

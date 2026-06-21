@@ -526,3 +526,32 @@ EXPORT_SYMBOL(swap_swapoff);
 EXPORT_SYMBOL(swap_out);
 EXPORT_SYMBOL(swap_in);
 EXPORT_SYMBOL(swap_free_slot);
+
+/* ── Stub: swap_readpage ───────────────────────────────────────────── */
+int swap_readpage(struct page *page)
+{
+    (void)page;
+    kprintf("[SWAP] swap_readpage: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: swap_writepage ──────────────────────────────────────────── */
+int swap_writepage(struct page *page)
+{
+    (void)page;
+    kprintf("[SWAP] swap_writepage: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: swap_activate ───────────────────────────────────────────── */
+int swap_activate(void)
+{
+    kprintf("[SWAP] swap_activate: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: swap_deactivate ─────────────────────────────────────────── */
+void swap_deactivate(void)
+{
+    kprintf("[SWAP] swap_deactivate: not yet implemented\n");
+}

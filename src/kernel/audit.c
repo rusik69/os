@@ -283,3 +283,39 @@ int audit_read_log(char *buf, int max) {
     memcpy(buf, audit_buf, to_copy);
     return to_copy;
 }
+
+/* ── Stub: audit_log ───────────────────────────────────────────────── */
+void audit_log(const char *msg)
+{
+    (void)msg;
+    kprintf("[AUDIT] audit_log: not yet implemented\n");
+}
+
+/* ── Stub: audit_log_start ─────────────────────────────────────────── */
+int audit_log_start(int type)
+{
+    (void)type;
+    kprintf("[AUDIT] audit_log_start: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: audit_log_end ───────────────────────────────────────────── */
+void audit_log_end(void)
+{
+    kprintf("[AUDIT] audit_log_end: not yet implemented\n");
+}
+
+/* ── Stub: audit_log_format ────────────────────────────────────────── */
+void audit_log_format(const char *fmt, ...)
+{
+    (void)fmt;
+    kprintf("[AUDIT] audit_log_format: not yet implemented\n");
+}
+
+/* ── Stub: audit_send_reply ────────────────────────────────────────── */
+int audit_send_reply(void *skb, int type, int done, int seq, const void *data, int len)
+{
+    (void)skb; (void)type; (void)done; (void)seq; (void)data; (void)len;
+    kprintf("[AUDIT] audit_send_reply: not yet implemented\n");
+    return -ENOSYS;
+}

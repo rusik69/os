@@ -361,3 +361,21 @@ void pipe_close_write(int pipe_id) {
 void wait_queue_ensure(struct wait_queue *wq) {
     if (wq) spinlock_init(&wq->lock);
 }
+
+/* ── Stub: pipe_destroy ─────────────────────────────────────── */
+int pipe_destroy(int pipe_id)
+{
+    (void)pipe_id;
+    kprintf("[pipe] pipe_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: pipe_ioctl ───────────────────────────────────────── */
+int pipe_ioctl(int pipe_id, unsigned long request, void *arg)
+{
+    (void)pipe_id;
+    (void)request;
+    (void)arg;
+    kprintf("[pipe] pipe_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

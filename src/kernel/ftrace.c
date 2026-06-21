@@ -945,3 +945,18 @@ int trace_printk_read(char *buf, int buf_size)
 void trace_printk_enable(void) { trace_printk_enabled = 1; }
 void trace_printk_disable(void) { trace_printk_enabled = 0; }
 int  trace_printk_is_enabled(void) { return trace_printk_enabled; }
+
+/* ── Stub: ftrace_set_filter ───────────────────────────────────────── */
+int ftrace_set_filter(const char *filter_str)
+{
+    (void)filter_str;
+    kprintf("[FTRACE] ftrace_set_filter: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ftrace_dyn_arch_init ────────────────────────────────────── */
+int ftrace_dyn_arch_init(void)
+{
+    kprintf("[FTRACE] ftrace_dyn_arch_init: not yet implemented\n");
+    return -ENOSYS;
+}

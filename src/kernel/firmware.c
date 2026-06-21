@@ -451,3 +451,42 @@ int firmware_cache_flush(void)
     spinlock_release(&fw_lock);
     return flushed;
 }
+
+/* ── Stub: firmware_request ────────────────────────────────────────── */
+int firmware_request(struct firmware **fw, const char *name, void *device)
+{
+    (void)fw; (void)name; (void)device;
+    kprintf("[FIRMWARE] firmware_request: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: firmware_request_nowarn ─────────────────────────────────── */
+int firmware_request_nowarn(struct firmware **fw, const char *name, void *device)
+{
+    (void)fw; (void)name; (void)device;
+    kprintf("[FIRMWARE] firmware_request_nowarn: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: firmware_request_direct ─────────────────────────────────── */
+int firmware_request_direct(struct firmware **fw, const char *name)
+{
+    (void)fw; (void)name;
+    kprintf("[FIRMWARE] firmware_request_direct: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: firmware_send ───────────────────────────────────────────── */
+int firmware_send(const void *data, size_t size)
+{
+    (void)data; (void)size;
+    kprintf("[FIRMWARE] firmware_send: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: firmware_free ───────────────────────────────────────────── */
+void firmware_free(struct firmware *fw)
+{
+    (void)fw;
+    kprintf("[FIRMWARE] firmware_free: not yet implemented\n");
+}

@@ -181,3 +181,52 @@ void crypto_aes_decrypt(const uint8_t in[16], uint8_t out[16]) {
     add_round_key(state, 0);
     memcpy(out, state, 16);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: fscrypt_encrypt ─────────────────────────── */
+int fscrypt_encrypt(struct inode *inode, const uint8_t *plaintext, uint8_t *ciphertext, size_t len)
+{
+    (void)inode;
+    (void)plaintext;
+    (void)ciphertext;
+    (void)len;
+    kprintf("[crypto] fscrypt_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fscrypt_decrypt ─────────────────────────── */
+int fscrypt_decrypt(struct inode *inode, const uint8_t *ciphertext, uint8_t *plaintext, size_t len)
+{
+    (void)inode;
+    (void)ciphertext;
+    (void)plaintext;
+    (void)len;
+    kprintf("[crypto] fscrypt_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fscrypt_setup_encryption ────────────────── */
+int fscrypt_setup_encryption(struct inode *inode, const uint8_t *key, size_t key_len)
+{
+    (void)inode;
+    (void)key;
+    (void)key_len;
+    kprintf("[crypto] fscrypt_setup_encryption: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fscrypt_get_encryption ──────────────────── */
+int fscrypt_get_encryption(struct inode *inode, struct fscrypt_info *info)
+{
+    (void)inode;
+    (void)info;
+    kprintf("[crypto] fscrypt_get_encryption: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fscrypt_release_encryption ──────────────── */
+int fscrypt_release_encryption(struct inode *inode)
+{
+    (void)inode;
+    kprintf("[crypto] fscrypt_release_encryption: not yet implemented\n");
+    return -ENOSYS;
+}

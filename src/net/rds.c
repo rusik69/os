@@ -334,3 +334,15 @@ void rds_init(void)
 }
 #include "module.h"
 module_init(rds_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: rds_disconnect ──────────────────────────── */
+int rds_disconnect(struct rds_conn *conn)
+{
+    (void)conn;
+    kprintf("[RDS] rds_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}

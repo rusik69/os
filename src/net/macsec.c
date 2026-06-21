@@ -320,3 +320,23 @@ EXPORT_SYMBOL(macsec_decrypt);
 EXPORT_SYMBOL(macsec_handle_frame);
 #include "module.h"
 module_init(macsec_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: macsec_rx_handler ───────────────────────── */
+int macsec_rx_handler(void *skb)
+{
+    (void)skb;
+    kprintf("[MACSEC] macsec_rx_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: macsec_tx_handler ───────────────────────── */
+int macsec_tx_handler(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[MACSEC] macsec_tx_handler: not yet implemented\n");
+    return -ENOSYS;
+}

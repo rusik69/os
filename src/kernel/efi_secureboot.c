@@ -169,3 +169,35 @@ void efi_secureboot_sysfs_init(void)
 
     kprintf("[SECUREBOOT] /sys/firmware/efi/secureboot created\n");
 }
+
+/* ── Stub: efi_secureboot_enabled ──────────────────────────────────── */
+int efi_secureboot_enabled(void)
+{
+    kprintf("[SECUREBOOT] efi_secureboot_enabled: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: efi_secureboot_verify ───────────────────────────────────── */
+int efi_secureboot_verify(const uint8_t *data, size_t data_len,
+                          const uint8_t *sig, size_t sig_len)
+{
+    (void)data; (void)data_len; (void)sig; (void)sig_len;
+    kprintf("[SECUREBOOT] efi_secureboot_verify: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: efi_secureboot_db_lookup ────────────────────────────────── */
+int efi_secureboot_db_lookup(const uint8_t *hash, size_t hash_len)
+{
+    (void)hash; (void)hash_len;
+    kprintf("[SECUREBOOT] efi_secureboot_db_lookup: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: efi_secureboot_forbidden_signature ──────────────────────── */
+int efi_secureboot_forbidden_signature(const uint8_t *hash, size_t hash_len)
+{
+    (void)hash; (void)hash_len;
+    kprintf("[SECUREBOOT] efi_secureboot_forbidden_signature: not yet implemented\n");
+    return -ENOSYS;
+}

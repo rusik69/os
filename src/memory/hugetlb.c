@@ -171,3 +171,47 @@ uint32_t hugetlb_pool_size(void)
     if (!g_pool.initialized) return 0;
     return g_pool.capacity;
 }
+
+/* ── Stub: hugetlb_alloc ────────────────────────────────────── */
+uint64_t hugetlb_alloc(uint32_t nr_pages)
+{
+    (void)nr_pages;
+    kprintf("[hugetlb] hugetlb_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: hugetlb_free ─────────────────────────────────────── */
+int hugetlb_free(uint64_t phys, uint32_t nr_pages)
+{
+    (void)phys;
+    (void)nr_pages;
+    kprintf("[hugetlb] hugetlb_free: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: hugetlb_fault ────────────────────────────────────── */
+int hugetlb_fault(uint64_t addr, int write)
+{
+    (void)addr;
+    (void)write;
+    kprintf("[hugetlb] hugetlb_fault: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: hugetlb_reserve ──────────────────────────────────── */
+int hugetlb_reserve(uint64_t addr, size_t len)
+{
+    (void)addr;
+    (void)len;
+    kprintf("[hugetlb] hugetlb_reserve: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: hugetlb_unreserve ────────────────────────────────── */
+int hugetlb_unreserve(uint64_t addr, size_t len)
+{
+    (void)addr;
+    (void)len;
+    kprintf("[hugetlb] hugetlb_unreserve: not yet implemented\n");
+    return -ENOSYS;
+}

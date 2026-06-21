@@ -415,3 +415,51 @@ int rbac_list_roles(char names[][RBAC_NAME_MAX], int max_count)
     spinlock_release(&rbac_lock);
     return written;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: rbac_check_permission ───────────────────── */
+int rbac_check_permission(const char *subject, const char *resource, const char *verb)
+{
+    (void)subject;
+    (void)resource;
+    (void)verb;
+    kprintf("[RBAC] rbac_check_permission: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rbac_add_role ───────────────────────────── */
+int rbac_add_role(const char *name, const char *resource, const char *const *verbs, int verb_count)
+{
+    (void)name;
+    (void)resource;
+    (void)verbs;
+    (void)verb_count;
+    kprintf("[RBAC] rbac_add_role: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rbac_remove_role ────────────────────────── */
+int rbac_remove_role(const char *name)
+{
+    (void)name;
+    kprintf("[RBAC] rbac_remove_role: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rbac_add_binding ────────────────────────── */
+int rbac_add_binding(const char *role_name, const char *subject_kind, const char *subject_name)
+{
+    (void)role_name;
+    (void)subject_kind;
+    (void)subject_name;
+    kprintf("[RBAC] rbac_add_binding: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rbac_remove_binding ─────────────────────── */
+int rbac_remove_binding(const char *role_name, const char *subject_name)
+{
+    (void)role_name;
+    (void)subject_name;
+    kprintf("[RBAC] rbac_remove_binding: not yet implemented\n");
+    return -ENOSYS;
+}

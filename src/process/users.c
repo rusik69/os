@@ -961,3 +961,36 @@ void session_logout(void) {
 struct user_session *session_get(void) { return &current_session; }
 
 int session_is_root(void) { return current_session.uid == 0; }
+
+/* ── Stub: user_getpwnam ────────────────────────────────────── */
+int user_getpwnam(const char *name, struct user_entry *entry)
+{
+    (void)name;
+    (void)entry;
+    kprintf("[users] user_getpwnam: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: user_getpwuid ────────────────────────────────────── */
+int user_getpwuid(int uid, struct user_entry *entry)
+{
+    (void)uid;
+    (void)entry;
+    kprintf("[users] user_getpwuid: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: user_setlogin ────────────────────────────────────── */
+int user_setlogin(const char *name)
+{
+    (void)name;
+    kprintf("[users] user_setlogin: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: user_getlogin ────────────────────────────────────── */
+const char *user_getlogin(void)
+{
+    kprintf("[users] user_getlogin: not yet implemented\n");
+    return NULL;
+}

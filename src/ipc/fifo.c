@@ -78,3 +78,49 @@ int fifo_unlink(const char *path) {
     }
     return -1;
 }
+
+/* ── Stub: fifo_read ────────────────────────────────────────── */
+int fifo_read(int fd, void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    kprintf("[fifo] fifo_read: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: fifo_write ───────────────────────────────────────── */
+int fifo_write(int fd, const void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    kprintf("[fifo] fifo_write: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: fifo_poll ────────────────────────────────────────── */
+int fifo_poll(int fd)
+{
+    (void)fd;
+    kprintf("[fifo] fifo_poll: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: fifo_ioctl ───────────────────────────────────────── */
+int fifo_ioctl(int fd, unsigned long request, void *arg)
+{
+    (void)fd;
+    (void)request;
+    (void)arg;
+    kprintf("[fifo] fifo_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: fifo_release ─────────────────────────────────────── */
+int fifo_release(int fd)
+{
+    (void)fd;
+    kprintf("[fifo] fifo_release: not yet implemented\n");
+    return -ENOSYS;
+}

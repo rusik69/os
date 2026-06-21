@@ -71,3 +71,36 @@ int thaw_fs(void) {
 int is_frozen(void) { return fs_frozen; }
 #include "module.h"
 module_init(freeze_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: freeze_super ────────────────────────────── */
+int freeze_super(struct super_block *sb)
+{
+    (void)sb;
+    kprintf("[freeze] freeze_super: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: thaw_super ──────────────────────────────── */
+int thaw_super(struct super_block *sb)
+{
+    (void)sb;
+    kprintf("[freeze] thaw_super: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: freeze_bdev ─────────────────────────────── */
+int freeze_bdev(struct block_device *bdev)
+{
+    (void)bdev;
+    kprintf("[freeze] freeze_bdev: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: thaw_bdev ───────────────────────────────── */
+int thaw_bdev(struct block_device *bdev)
+{
+    (void)bdev;
+    kprintf("[freeze] thaw_bdev: not yet implemented\n");
+    return -ENOSYS;
+}

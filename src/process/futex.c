@@ -239,3 +239,21 @@ void futex_dump(void)
     }
     kprintf("[futex] Total waiters: %d\n", total_waiters);
 }
+
+/* ── Stub: futex_lock_pi ─────────────────────────────────────── */
+int futex_lock_pi(uint32_t *uaddr, int private)
+{
+    (void)uaddr;
+    (void)private;
+    kprintf("[futex] futex_lock_pi: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: futex_unlock_pi ───────────────────────────────────── */
+int futex_unlock_pi(uint32_t *uaddr, int private)
+{
+    (void)uaddr;
+    (void)private;
+    kprintf("[futex] futex_unlock_pi: not yet implemented\n");
+    return -ENOSYS;
+}

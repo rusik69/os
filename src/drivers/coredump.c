@@ -759,3 +759,48 @@ MODULE_VERSION("1.0");
 #include "initcall.h"
 device_initcall(coredump_init_handler);
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: coredump_write ──────────────────────────── */
+int coredump_write(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[coredump] coredump_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: coredump_read ───────────────────────────── */
+int coredump_read(void *buf, size_t len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[coredump] coredump_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: coredump_file_open ──────────────────────── */
+int coredump_file_open(const char *path)
+{
+    (void)path;
+    kprintf("[coredump] coredump_file_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: coredump_note_write ─────────────────────── */
+int coredump_note_write(const void *note, size_t len)
+{
+    (void)note;
+    (void)len;
+    kprintf("[coredump] coredump_note_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: coredump_elf_headers ────────────────────── */
+int coredump_elf_headers(void *task, void *buf, size_t *len)
+{
+    (void)task;
+    (void)buf;
+    (void)len;
+    kprintf("[coredump] coredump_elf_headers: not yet implemented\n");
+    return -ENOSYS;
+}

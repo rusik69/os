@@ -291,3 +291,45 @@ void kdb_init(void)
     kdb_history_pos = 0;
     kprintf("[OK] KDB kernel debugger initialized (use 'kdb' sysrq to enter)\n");
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: kdb_parse ───────────────────────────────── */
+int kdb_parse(const char *cmd)
+{
+    (void)cmd;
+    kprintf("[KDB] kdb_parse: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kdb_exec ────────────────────────────────── */
+int kdb_exec(const char *cmd)
+{
+    (void)cmd;
+    kprintf("[KDB] kdb_exec: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kdb_printf ──────────────────────────────── */
+int kdb_printf(const char *fmt, ...)
+{
+    (void)fmt;
+    kprintf("[KDB] kdb_printf: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kdb_register ────────────────────────────── */
+int kdb_register(const char *cmd, kdb_func_t func, const char *usage)
+{
+    (void)cmd;
+    (void)func;
+    (void)usage;
+    kprintf("[KDB] kdb_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kdb_unregister ──────────────────────────── */
+int kdb_unregister(const char *cmd)
+{
+    (void)cmd;
+    kprintf("[KDB] kdb_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

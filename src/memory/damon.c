@@ -169,3 +169,32 @@ void damon_init(void)
 }
 #include "module.h"
 module_init(damon_init);
+
+/* ── Stub: damon_set_attrs ───────────────────────────────────── */
+int damon_set_attrs(uint64_t sample_interval, uint64_t aggr_interval, uint64_t min_nr_regions, uint64_t max_nr_regions)
+{
+    (void)sample_interval;
+    (void)aggr_interval;
+    (void)min_nr_regions;
+    (void)max_nr_regions;
+    kprintf("[damon] damon_set_attrs: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: damon_set_targets ─────────────────────────────────── */
+int damon_set_targets(uint64_t *targets, int nr_targets)
+{
+    (void)targets;
+    (void)nr_targets;
+    kprintf("[damon] damon_set_targets: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: damon_set_schemes ─────────────────────────────────── */
+int damon_set_schemes(void *schemes, int nr_schemes)
+{
+    (void)schemes;
+    (void)nr_schemes;
+    kprintf("[damon] damon_set_schemes: not yet implemented\n");
+    return -ENOSYS;
+}

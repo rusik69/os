@@ -355,3 +355,44 @@ int ipsec_sa_list(struct security_assoc *buf, int max)
 }
 #include "module.h"
 module_init(ipsec_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: ipsec_encrypt ───────────────────────────── */
+int ipsec_encrypt(void *skb, void *sa)
+{
+    (void)skb;
+    (void)sa;
+    kprintf("[IPSEC] ipsec_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipsec_decrypt ───────────────────────────── */
+int ipsec_decrypt(void *skb, void *sa)
+{
+    (void)skb;
+    (void)sa;
+    kprintf("[IPSEC] ipsec_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipsec_sa_alloc ──────────────────────────── */
+struct ipsec_sa *ipsec_sa_alloc(void)
+{
+    kprintf("[IPSEC] ipsec_sa_alloc: not yet implemented\n");
+    return NULL;
+}
+/* ── Stub: ipsec_sa_free ───────────────────────────── */
+void ipsec_sa_free(struct ipsec_sa *sa)
+{
+    (void)sa;
+    kprintf("[IPSEC] ipsec_sa_free: not yet implemented\n");
+}
+/* ── Stub: ipsec_sa_lookup ─────────────────────────── */
+struct ipsec_sa *ipsec_sa_lookup(uint32_t spi, uint32_t daddr)
+{
+    (void)spi;
+    (void)daddr;
+    kprintf("[IPSEC] ipsec_sa_lookup: not yet implemented\n");
+    return NULL;
+}

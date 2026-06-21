@@ -235,3 +235,50 @@ int shm_perm_get(int id, struct shm_perm *out)
 
     return 0;
 }
+
+/* ── Stub: shm_open ─────────────────────────────────────────── */
+int shm_open(const char *name, int oflag, ...)
+{
+    (void)name;
+    (void)oflag;
+    kprintf("[shm] shm_open: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: shm_unlink ───────────────────────────────────────── */
+int shm_unlink(const char *name)
+{
+    (void)name;
+    kprintf("[shm] shm_unlink: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: shm_mmap ─────────────────────────────────────────── */
+int shm_mmap(int id, uint64_t addr, size_t len, int prot, int flags)
+{
+    (void)id;
+    (void)addr;
+    (void)len;
+    (void)prot;
+    (void)flags;
+    kprintf("[shm] shm_mmap: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: shm_show_fdinfo ──────────────────────────────────── */
+int shm_show_fdinfo(int id, char *buf, size_t size)
+{
+    (void)id;
+    (void)buf;
+    (void)size;
+    kprintf("[shm] shm_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: shm_stat ─────────────────────────────────────────── */
+int shm_stat(struct shm_info *info)
+{
+    (void)info;
+    kprintf("[shm] shm_stat: not yet implemented\n");
+    return -ENOSYS;
+}

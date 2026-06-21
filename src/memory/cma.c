@@ -142,3 +142,33 @@ void cma_reserve_default(void) {
     uint64_t base_pfn = total - reserve_size;
     cma_create_area(base_pfn, reserve_size, "default");
 }
+
+/* ── Stub: cma_release ──────────────────────────────────────── */
+int cma_release(uint64_t pfn, size_t count)
+{
+    (void)pfn;
+    (void)count;
+    kprintf("[cma] cma_release: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cma_isolate_page ─────────────────────────────────── */
+int cma_isolate_page(uint64_t pfn)
+{
+    (void)pfn;
+    kprintf("[cma] cma_isolate_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cma_free_page ────────────────────────────────────── */
+void cma_free_page(uint64_t pfn)
+{
+    (void)pfn;
+    kprintf("[cma] cma_free_page: not yet implemented\n");
+}
+
+/* ── Stub: cma_debug_show_areas ─────────────────────────────── */
+void cma_debug_show_areas(void)
+{
+    kprintf("[cma] cma_debug_show_areas: not yet implemented\n");
+}

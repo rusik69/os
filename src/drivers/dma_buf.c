@@ -320,3 +320,16 @@ uint64_t dma_buf_phys(struct dma_buf *dmabuf)
     if (!dmabuf || !dmabuf->in_use) return 0;
     return dmabuf->phys_addr;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: dma_buf_begin_cpu_access ────────────────── */
+int dma_buf_begin_cpu_access(struct dma_buf *dmabuf, enum dma_data_direction dir)
+{
+    (void)dmabuf;
+    (void)dir;
+    kprintf("[dma_buf] dma_buf_begin_cpu_access: not yet implemented\n");
+    return -ENOSYS;
+}

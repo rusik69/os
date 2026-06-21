@@ -1138,3 +1138,49 @@ EXPORT_SYMBOL(vmm_map_page);
 EXPORT_SYMBOL(vmm_unmap_page);
 EXPORT_SYMBOL(vmm_get_physaddr);
 EXPORT_SYMBOL(vmm_page_is_execonly);
+
+/* ── Stub: vmm_alloc ────────────────────────────────────────── */
+uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
+{
+    (void)addr;
+    (void)size;
+    (void)flags;
+    kprintf("[vmm] vmm_alloc: not yet implemented\n");
+    return 0;
+}
+
+/* ── Stub: vmm_free ─────────────────────────────────────────── */
+int vmm_free(uint64_t addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[vmm] vmm_free: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vmm_protect ──────────────────────────────────────── */
+int vmm_protect(uint64_t addr, size_t size, int new_flags)
+{
+    (void)addr;
+    (void)size;
+    (void)new_flags;
+    kprintf("[vmm] vmm_protect: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vmm_sync ─────────────────────────────────────────── */
+int vmm_sync(uint64_t addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[vmm] vmm_sync: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: vmm_flush_tlb ────────────────────────────────────── */
+void vmm_flush_tlb(uint64_t addr, size_t size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[vmm] vmm_flush_tlb: not yet implemented\n");
+}

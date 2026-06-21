@@ -379,3 +379,41 @@ int ksm_get_scan_batch(void)
 }
 #include "module.h"
 module_init(ksm_init);
+
+/* ── Stub: ksm_scan ─────────────────────────────────────────── */
+int ksm_scan(void)
+{
+    kprintf("[ksm] ksm_scan: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ksm_do_scan ──────────────────────────────────────── */
+int ksm_do_scan(int nr_to_scan)
+{
+    (void)nr_to_scan;
+    kprintf("[ksm] ksm_do_scan: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ksm_merge_page ───────────────────────────────────── */
+int ksm_merge_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[ksm] ksm_merge_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ksm_unmerge_page ─────────────────────────────────── */
+int ksm_unmerge_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[ksm] ksm_unmerge_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: ksm_check_stable_tree ────────────────────────────── */
+int ksm_check_stable_tree(void)
+{
+    kprintf("[ksm] ksm_check_stable_tree: not yet implemented\n");
+    return -ENOSYS;
+}

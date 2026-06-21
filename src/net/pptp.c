@@ -156,3 +156,38 @@ void pptp_init(void)
     g_pptp_initialized = 1;
     kprintf("[OK] PPTP initialized (%d calls max)\n", PPTP_MAX_CALLS);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: pptp_xmit ───────────────────────────────── */
+int pptp_xmit(void *skb, void *call)
+{
+    (void)skb;
+    (void)call;
+    kprintf("[PPTP] pptp_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pptp_rcv ────────────────────────────────── */
+int pptp_rcv(void *skb)
+{
+    (void)skb;
+    kprintf("[PPTP] pptp_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pptp_connect ────────────────────────────── */
+int pptp_connect(struct pptp_conn *conn, uint32_t server_ip)
+{
+    (void)conn;
+    (void)server_ip;
+    kprintf("[PPTP] pptp_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pptp_disconnect ─────────────────────────── */
+int pptp_disconnect(struct pptp_conn *conn)
+{
+    (void)conn;
+    kprintf("[PPTP] pptp_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}

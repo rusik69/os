@@ -222,3 +222,21 @@ void timerfd_tick(void) {
         }
     }
 }
+
+/* ── Stub: timerfd_poll ─────────────────────────────────────── */
+int timerfd_poll(int fd)
+{
+    (void)fd;
+    kprintf("[timerfd] timerfd_poll: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: timerfd_show_fdinfo ──────────────────────────────── */
+int timerfd_show_fdinfo(int fd, char *buf, size_t size)
+{
+    (void)fd;
+    (void)buf;
+    (void)size;
+    kprintf("[timerfd] timerfd_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}

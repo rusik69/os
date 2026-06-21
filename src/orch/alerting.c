@@ -253,3 +253,43 @@ int alerting_dispatch(struct alert_fire *fire)
 
     return ret;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: alert_send ──────────────────────────────── */
+int alert_send(const char *alert_name, const char *message)
+{
+    (void)alert_name;
+    (void)message;
+    kprintf("[Alerting] alert_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: alert_register_rule ──────────────────────── */
+int alert_register_rule(struct alert_rule *rule)
+{
+    (void)rule;
+    kprintf("[Alerting] alert_register_rule: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: alert_unregister_rule ────────────────────── */
+int alert_unregister_rule(const char *name)
+{
+    (void)name;
+    kprintf("[Alerting] alert_unregister_rule: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: alert_evaluate ──────────────────────────── */
+int alert_evaluate(void)
+{
+    kprintf("[Alerting] alert_evaluate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: alert_dismiss ────────────────────────────── */
+int alert_dismiss(const char *alert_name)
+{
+    (void)alert_name;
+    kprintf("[Alerting] alert_dismiss: not yet implemented\n");
+    return -ENOSYS;
+}

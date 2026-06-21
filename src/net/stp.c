@@ -626,3 +626,35 @@ int stp_port_state(int port_num) {
         return STP_PORT_DISABLED;
     return g_stp.ports[port_num].state;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: stp_xmit ────────────────────────────────── */
+int stp_xmit(void *skb, int port_num)
+{
+    (void)skb;
+    (void)port_num;
+    kprintf("[STP] stp_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stp_rcv ─────────────────────────────────── */
+int stp_rcv(void *skb, int port_num)
+{
+    (void)skb;
+    (void)port_num;
+    kprintf("[STP] stp_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stp_become_root ─────────────────────────── */
+void stp_become_root(void)
+{
+    kprintf("[STP] stp_become_root: not yet implemented\n");
+}
+/* ── Stub: stp_become_designated ───────────────────── */
+void stp_become_designated(int port_num)
+{
+    (void)port_num;
+    kprintf("[STP] stp_become_designated: not yet implemented\n");
+}

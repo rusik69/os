@@ -520,3 +520,41 @@ void inotify_subsystem_init(void)
 {
     inotify_init_subsystem();
 }
+
+/* ── Stub: inotify_add_to_dir ──────────────────────────────── */
+int inotify_add_to_dir(int fd, const char *path, uint32_t mask)
+{
+    (void)fd;
+    (void)path;
+    (void)mask;
+    kprintf("[inotify] inotify_add_to_dir: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: inotify_rm_from_dir ─────────────────────────────── */
+int inotify_rm_from_dir(int fd, int wd)
+{
+    (void)fd;
+    (void)wd;
+    kprintf("[inotify] inotify_rm_from_dir: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: inotify_handle_event ────────────────────────────── */
+void inotify_handle_event(const char *path, uint32_t mask, uint32_t cookie, const char *name)
+{
+    (void)path;
+    (void)mask;
+    (void)cookie;
+    (void)name;
+    kprintf("[inotify] inotify_handle_event: not yet implemented\n");
+}
+
+/* ── Stub: inotify_find_inode ──────────────────────────────── */
+int inotify_find_inode(const char *path, uint64_t *inode)
+{
+    (void)path;
+    (void)inode;
+    kprintf("[inotify] inotify_find_inode: not yet implemented\n");
+    return -ENOSYS;
+}

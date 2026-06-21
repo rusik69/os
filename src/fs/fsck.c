@@ -800,3 +800,47 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
 
     return (total_errors > 0) ? total_errors : 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: fsck_repair ─────────────────────────────── */
+int fsck_repair(const char *mountpoint, int flags)
+{
+    (void)mountpoint;
+    (void)flags;
+    kprintf("[FSCK] fsck_repair: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsck_verify_superblock ──────────────────── */
+int fsck_verify_superblock(const char *mountpoint)
+{
+    (void)mountpoint;
+    kprintf("[FSCK] fsck_verify_superblock: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsck_check_inodes ───────────────────────── */
+int fsck_check_inodes(const char *mountpoint, int *errors)
+{
+    (void)mountpoint;
+    (void)errors;
+    kprintf("[FSCK] fsck_check_inodes: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsck_check_blocks ───────────────────────── */
+int fsck_check_blocks(const char *mountpoint, int *errors)
+{
+    (void)mountpoint;
+    (void)errors;
+    kprintf("[FSCK] fsck_check_blocks: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fsck_check_dirs ─────────────────────────── */
+int fsck_check_dirs(const char *mountpoint, int *errors)
+{
+    (void)mountpoint;
+    (void)errors;
+    kprintf("[FSCK] fsck_check_dirs: not yet implemented\n");
+    return -ENOSYS;
+}

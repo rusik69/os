@@ -265,3 +265,29 @@ int vfs_removexattr(const char *path, const char *name) {
 }
 #include "module.h"
 module_init(xattr_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: xattr_generic_set ───────────────────────── */
+int xattr_generic_set(struct inode *inode, const char *name, const void *value, size_t size, int flags)
+{
+    (void)inode;
+    (void)name;
+    (void)value;
+    (void)size;
+    (void)flags;
+    kprintf("[xattr] xattr_generic_set: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: xattr_generic_get ───────────────────────── */
+int xattr_generic_get(struct inode *inode, const char *name, void *value, size_t size)
+{
+    (void)inode;
+    (void)name;
+    (void)value;
+    (void)size;
+    kprintf("[xattr] xattr_generic_get: not yet implemented\n");
+    return -ENOSYS;
+}

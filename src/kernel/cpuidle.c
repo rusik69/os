@@ -800,16 +800,39 @@ void cpuidle_disable(void)
     struct cpuidle_cpu *c = this_cpu_idle();
     c->enabled = 0;
 }
-
 void cpuidle_enable(void)
 {
-    struct cpuidle_cpu *c = this_cpu_idle();
-    c->enabled = 1;
+    if (!g_cpuidle_initialized)
+        return;
+    cpuidle_global_enabled = 1;
 }
 
 int cpuidle_state_count(void)
 {
-    return idle_state_count;
+    return g_state_count;
+}
+
+/* ── Stub: cpuidle_select ──────────────────────────────────────────── */
+int cpuidle_select(struct cpuidle_device *dev)
+{
+    (void)dev;
+    kprintf("[CPUIDLE] cpuidle_select: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpuidle_enter ───────────────────────────────────────────── */
+int cpuidle_enter(struct cpuidle_device *dev, int state_index)
+{
+    (void)dev; (void)state_index;
+    kprintf("[CPUIDLE] cpuidle_enter: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: cpuidle_reflect ─────────────────────────────────────────── */
+void cpuidle_reflect(struct cpuidle_device *dev, int state_index)
+{
+    (void)dev; (void)state_index;
+    kprintf("[CPUIDLE] cpuidle_reflect: not yet implemented\n");
 }
 
 const struct cpuidle_state *cpuidle_get_state(int idx)

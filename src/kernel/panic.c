@@ -561,3 +561,36 @@ void panic_init(void) {
     kprintf("[OK] Panic/oops handler initialized (timeout=%ds, TSC=%llu MHz)\n",
             panic_timeout, (unsigned long long)(g_tsc_freq_hz / 1000000));
 }
+
+/* ── Stub: panic_smp_self_stop ─────────────────────────────────────── */
+void panic_smp_self_stop(void)
+{
+    kprintf("[PANIC] panic_smp_self_stop: not yet implemented\n");
+}
+
+/* ── Stub: panic_blink ─────────────────────────────────────────────── */
+void panic_blink(int state)
+{
+    (void)state;
+    kprintf("[PANIC] panic_blink: not yet implemented\n");
+}
+
+/* ── Stub: oops_begin ──────────────────────────────────────────────── */
+int oops_begin(void)
+{
+    kprintf("[PANIC] oops_begin: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: oops_end ────────────────────────────────────────────────── */
+void oops_end(int die_flags)
+{
+    (void)die_flags;
+    kprintf("[PANIC] oops_end: not yet implemented\n");
+}
+
+/* ── Stub: emergency_restart ───────────────────────────────────────── */
+void emergency_restart(void)
+{
+    kprintf("[PANIC] emergency_restart: not yet implemented\n");
+}

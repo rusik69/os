@@ -247,10 +247,49 @@ int uefi_boot_menu_add_entry(const char *name,
     return 0;
 }
 
-/* Return number of registered boot entries */
+/* Return the number of registered boot entries */
 int uefi_boot_menu_entry_count(void)
 {
     return entry_count;
+}
+
+/* ── Stub: efi_menu_show ───────────────────────────────────────────── */
+int efi_menu_show(void)
+{
+    (void)0;
+    kprintf("[EFI_MENU] efi_menu_show: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: efi_menu_get_selection ──────────────────────────────────── */
+int efi_menu_get_selection(void)
+{
+    kprintf("[EFI_MENU] efi_menu_get_selection: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: efi_menu_boot_entry ─────────────────────────────────────── */
+int efi_menu_boot_entry(int index)
+{
+    (void)index;
+    kprintf("[EFI_MENU] efi_menu_boot_entry: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: efi_menu_set_timeout ────────────────────────────────────── */
+void efi_menu_set_timeout(int seconds)
+{
+    (void)seconds;
+    kprintf("[EFI_MENU] efi_menu_set_timeout: not yet implemented\n");
+}
+
+/* ── Stub: efi_menu_add_entry ──────────────────────────────────────── */
+int efi_menu_add_entry(const char *name, const char *kernel_path,
+                       const char *initrd_path)
+{
+    (void)name; (void)kernel_path; (void)initrd_path;
+    kprintf("[EFI_MENU] efi_menu_add_entry: not yet implemented\n");
+    return -ENOSYS;
 }
 
 /* Set timeout (in seconds) for the boot menu */

@@ -232,3 +232,30 @@ int mq_unlink(const char *name) {
     kprintf("[mqueue] unlinked '%s'\n", name);
     return 0;
 }
+
+/* ── Stub: mqueue_register ──────────────────────────────────── */
+int mqueue_register(const char *name, int oflag)
+{
+    (void)name;
+    (void)oflag;
+    kprintf("[mqueue] mqueue_register: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mqueue_unregister ────────────────────────────────── */
+int mqueue_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[mqueue] mqueue_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: mqueue_setattr ───────────────────────────────────── */
+int mqueue_setattr(mqd_t mqdes, const struct mq_attr *attr, struct mq_attr *old_attr)
+{
+    (void)mqdes;
+    (void)attr;
+    (void)old_attr;
+    kprintf("[mqueue] mqueue_setattr: not yet implemented\n");
+    return -ENOSYS;
+}

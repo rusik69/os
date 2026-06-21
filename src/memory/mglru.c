@@ -724,3 +724,32 @@ static void mglru_sysfs_init(void)
 }
 #include "module.h"
 module_init(mglru_init);
+
+/* ── Stub: lru_gen_init_lruvec ──────────────────────────────── */
+void lru_gen_init_lruvec(void *lruvec)
+{
+    (void)lruvec;
+    kprintf("[mglru] lru_gen_init_lruvec: not yet implemented\n");
+}
+
+/* ── Stub: lru_gen_look_around ──────────────────────────────── */
+void lru_gen_look_around(uint64_t addr)
+{
+    (void)addr;
+    kprintf("[mglru] lru_gen_look_around: not yet implemented\n");
+}
+
+/* ── Stub: lru_gen_eviction ──────────────────────────────────── */
+int lru_gen_eviction(int nr_to_reclaim)
+{
+    (void)nr_to_reclaim;
+    kprintf("[mglru] lru_gen_eviction: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: lru_gen_seg_strategy ─────────────────────────────── */
+int lru_gen_seg_strategy(void)
+{
+    kprintf("[mglru] lru_gen_seg_strategy: not yet implemented\n");
+    return -ENOSYS;
+}

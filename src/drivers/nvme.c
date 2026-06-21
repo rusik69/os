@@ -1305,3 +1305,58 @@ MODULE_ALIAS("pci:v00001AF4d00005841sv*sd*bc*sc*i*");
 MODULE_ALIAS("pci:v00001AF4d00005842sv*sd*bc*sc*i*");
 MODULE_VERSION("1.0");
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: nvme_submit_cmd ─────────────────────────── */
+int nvme_submit_cmd(struct nvme_queue *q, struct nvme_sq_entry *cmd)
+{
+    (void)q;
+    (void)cmd;
+    kprintf("[NVMe] nvme_submit_cmd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_complete_cmd ───────────────────────── */
+int nvme_complete_cmd(struct nvme_queue *q, struct nvme_cq_entry *cqe)
+{
+    (void)q;
+    (void)cqe;
+    kprintf("[NVMe] nvme_complete_cmd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_create_cq ──────────────────────────── */
+int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
+{
+    (void)cqid;
+    (void)addr;
+    (void)size;
+    (void)iv;
+    kprintf("[NVMe] nvme_create_cq: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_create_sq ──────────────────────────── */
+int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
+{
+    (void)sqid;
+    (void)addr;
+    (void)size;
+    (void)cqid;
+    kprintf("[NVMe] nvme_create_sq: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_delete_cq ──────────────────────────── */
+int nvme_delete_cq(uint16_t cqid)
+{
+    (void)cqid;
+    kprintf("[NVMe] nvme_delete_cq: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_delete_sq ──────────────────────────── */
+int nvme_delete_sq(uint16_t sqid)
+{
+    (void)sqid;
+    kprintf("[NVMe] nvme_delete_sq: not yet implemented\n");
+    return -ENOSYS;
+}

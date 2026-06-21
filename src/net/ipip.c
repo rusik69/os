@@ -109,3 +109,31 @@ EXPORT_SYMBOL(ipip_destroy_tunnel);
 EXPORT_SYMBOL(ipip_encapsulate);
 EXPORT_SYMBOL(ipip_decapsulate);
 #endif
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: ipip_xmit ───────────────────────────────── */
+int ipip_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[IPIP] ipip_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipip_rcv ────────────────────────────────── */
+int ipip_rcv(void *skb)
+{
+    (void)skb;
+    kprintf("[IPIP] ipip_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipip_err ────────────────────────────────── */
+void ipip_err(void *skb, uint32_t info)
+{
+    (void)skb;
+    (void)info;
+    kprintf("[IPIP] ipip_err: not yet implemented\n");
+}
+

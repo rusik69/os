@@ -314,3 +314,44 @@ int metrics_trends_report(char *buf, size_t len)
 
     return pos;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: metrics_collect ─────────────────────────── */
+int metrics_collect(void)
+{
+    kprintf("[Metrics] metrics_collect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: metrics_report ──────────────────────────── */
+int metrics_report(char *buf, size_t len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[Metrics] metrics_report: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: metrics_register ────────────────────────── */
+int metrics_register(const char *name, int type, const char *help)
+{
+    (void)name;
+    (void)type;
+    (void)help;
+    kprintf("[Metrics] metrics_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: metrics_unregister ──────────────────────── */
+int metrics_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[Metrics] metrics_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: metrics_reset ────────────────────────────── */
+int metrics_reset(void)
+{
+    kprintf("[Metrics] metrics_reset: not yet implemented\n");
+    return -ENOSYS;
+}

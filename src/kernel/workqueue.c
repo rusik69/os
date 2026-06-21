@@ -467,3 +467,28 @@ void workqueue_init(void)
         kprintf("[!!] Workqueue: failed to create system worker thread\n");
     }
 }
+
+/* ── Stub: workqueue_create ────────────────────────────────────────── */
+struct workqueue_struct *workqueue_create(const char *name)
+{
+    (void)name;
+    kprintf("[WORKQUEUE] workqueue_create: not yet implemented\n");
+    return NULL;
+}
+
+/* ── Stub: queue_work ──────────────────────────────────────────────── */
+int queue_work(struct workqueue_struct *wq, struct work_struct *work)
+{
+    (void)wq; (void)work;
+    kprintf("[WORKQUEUE] queue_work: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: queue_delayed_work ──────────────────────────────────────── */
+int queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dwork,
+                       unsigned long delay)
+{
+    (void)wq; (void)dwork; (void)delay;
+    kprintf("[WORKQUEUE] queue_delayed_work: not yet implemented\n");
+    return -ENOSYS;
+}

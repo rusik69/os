@@ -464,3 +464,43 @@ void sched_deadline_dump(int cpu)
                proc->dl_throttled);
     }
 }
+
+/* ── Stub: deadline_task_new ─────────────────────────────────── */
+int deadline_task_new(struct process *proc)
+{
+    (void)proc;
+    kprintf("[sched_deadline] deadline_task_new: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: deadline_task_delta ───────────────────────────────── */
+int deadline_task_delta(struct process *proc, int delta)
+{
+    (void)proc;
+    (void)delta;
+    kprintf("[sched_deadline] deadline_task_delta: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: deadline_push_task ────────────────────────────────── */
+int deadline_push_task(struct process *proc)
+{
+    (void)proc;
+    kprintf("[sched_deadline] deadline_push_task: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: deadline_pull_task ────────────────────────────────── */
+struct process *deadline_pull_task(int cpu)
+{
+    (void)cpu;
+    kprintf("[sched_deadline] deadline_pull_task: not yet implemented\n");
+    return NULL;
+}
+
+/* ── Stub: deadline_task_tick ────────────────────────────────── */
+void deadline_task_tick(struct process *proc)
+{
+    (void)proc;
+    kprintf("[sched_deadline] deadline_task_tick: not yet implemented\n");
+}

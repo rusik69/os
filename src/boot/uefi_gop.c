@@ -137,3 +137,32 @@ void uefi_gop_get_info(uint64_t *fb_addr, uint32_t *width,
     if (height)  *height  = g_gop_info.height;
     if (pitch)   *pitch   = g_gop_info.pitch;
 }
+
+/* ── Stub: uefi_gop_set_mode ───────────────────────────────────────── */
+int uefi_gop_set_mode(uint32_t mode)
+{
+    (void)mode;
+    kprintf("[GOP] uefi_gop_set_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: uefi_gop_blt ────────────────────────────────────────────── */
+int uefi_gop_blt(void *buffer, uint32_t operation,
+                 uint32_t src_x, uint32_t src_y,
+                 uint32_t dst_x, uint32_t dst_y,
+                 uint32_t width, uint32_t height, uint32_t delta)
+{
+    (void)buffer; (void)operation; (void)src_x; (void)src_y;
+    (void)dst_x; (void)dst_y; (void)width; (void)height; (void)delta;
+    kprintf("[GOP] uefi_gop_blt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: uefi_gop_query_mode ─────────────────────────────────────── */
+int uefi_gop_query_mode(uint32_t mode, uint32_t *width,
+                        uint32_t *height, uint32_t *pitch)
+{
+    (void)mode; (void)width; (void)height; (void)pitch;
+    kprintf("[GOP] uefi_gop_query_mode: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -372,3 +372,37 @@ MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS");
 MODULE_LICENSE("GPL");
 #endif /* MODULE */
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: vxlan_xmit ──────────────────────────────── */
+int vxlan_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[VXLAN] vxlan_xmit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vxlan_rcv ───────────────────────────────── */
+int vxlan_rcv(void *skb)
+{
+    (void)skb;
+    kprintf("[VXLAN] vxlan_rcv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vxlan_open ──────────────────────────────── */
+int vxlan_open(struct net_device *dev)
+{
+    (void)dev;
+    kprintf("[VXLAN] vxlan_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vxlan_stop ──────────────────────────────── */
+int vxlan_stop(struct net_device *dev)
+{
+    (void)dev;
+    kprintf("[VXLAN] vxlan_stop: not yet implemented\n");
+    return -ENOSYS;
+}

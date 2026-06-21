@@ -208,3 +208,42 @@ int tracing_export(char *buf, size_t len)
     spinlock_release(&trace_lock);
     return pos;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: tracing_start ───────────────────────────── */
+int tracing_start(void)
+{
+    kprintf("[Tracing] tracing_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tracing_stop ────────────────────────────── */
+int tracing_stop(void)
+{
+    kprintf("[Tracing] tracing_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tracing_snapshot ────────────────────────── */
+int tracing_snapshot(char *buf, size_t len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[Tracing] tracing_snapshot: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tracing_set_filter ──────────────────────── */
+int tracing_set_filter(const char *filter)
+{
+    (void)filter;
+    kprintf("[Tracing] tracing_set_filter: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tracing_set_rate ────────────────────────── */
+int tracing_set_rate(uint32_t rate_hz)
+{
+    (void)rate_hz;
+    kprintf("[Tracing] tracing_set_rate: not yet implemented\n");
+    return -ENOSYS;
+}

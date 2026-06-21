@@ -498,3 +498,36 @@ void khugepaged_start(void)
 }
 #include "module.h"
 module_init(thp_init);
+
+/* ── Stub: split_huge_page ───────────────────────────────────── */
+int split_huge_page(uint64_t addr)
+{
+    (void)addr;
+    kprintf("[thp] split_huge_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: collapse_huge_page ────────────────────────────────── */
+int collapse_huge_page(uint64_t addr)
+{
+    (void)addr;
+    kprintf("[thp] collapse_huge_page: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: thp_get_unmapped_area ────────────────────────────── */
+uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
+{
+    (void)addr;
+    (void)len;
+    (void)flags;
+    kprintf("[thp] thp_get_unmapped_area: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: deferred_split_huge_page ─────────────────────────── */
+void deferred_split_huge_page(uint64_t addr)
+{
+    (void)addr;
+    kprintf("[thp] deferred_split_huge_page: not yet implemented\n");
+}

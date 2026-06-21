@@ -510,3 +510,33 @@ int fsverity_disable(uint64_t ino)
 EXPORT_SYMBOL(fsverity_disable);
 #include "module.h"
 module_init(fsverity_init);
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: verity_verify ───────────────────────────── */
+int verity_verify(uint64_t ino, const uint8_t *data, uint64_t size)
+{
+    (void)ino;
+    (void)data;
+    (void)size;
+    kprintf("[fs-verity] verity_verify: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: verity_metadata ─────────────────────────── */
+int verity_metadata(uint64_t ino, void *buf, uint32_t *len)
+{
+    (void)ino;
+    (void)buf;
+    (void)len;
+    kprintf("[fs-verity] verity_metadata: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: verity_close ────────────────────────────── */
+int verity_close(uint64_t ino)
+{
+    (void)ino;
+    kprintf("[fs-verity] verity_close: not yet implemented\n");
+    return -ENOSYS;
+}

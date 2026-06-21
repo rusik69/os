@@ -163,3 +163,31 @@ int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
 
     return 0; /* clean */
 }
+
+/* ── Stub: poison_page ───────────────────────────────────────── */
+void poison_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[page_poison] poison_page: not yet implemented\n");
+}
+
+/* ── Stub: unpoison_page ─────────────────────────────────────── */
+void unpoison_page(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[page_poison] unpoison_page: not yet implemented\n");
+}
+
+/* ── Stub: page_poison_check ─────────────────────────────────── */
+int page_poison_check(uint64_t phys_addr)
+{
+    (void)phys_addr;
+    kprintf("[page_poison] page_poison_check: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: page_poison_debug ─────────────────────────────────── */
+void page_poison_debug(void)
+{
+    kprintf("[page_poison] page_poison_debug: not yet implemented\n");
+}

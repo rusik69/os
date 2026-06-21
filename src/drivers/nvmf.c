@@ -353,3 +353,39 @@ void nvmf_poll(void)
         nvmf_dispatch_pdu(tgt);
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Stub functions for future implementation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Stub: nvmf_connect ────────────────────────────── */
+int nvmf_connect(const char *transport, const char *traddr, const char *nqn)
+{
+    (void)transport;
+    (void)traddr;
+    (void)nqn;
+    kprintf("[nvmf] nvmf_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvmf_disconnect ─────────────────────────── */
+int nvmf_disconnect(void)
+{
+    kprintf("[nvmf] nvmf_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvmf_send ───────────────────────────────── */
+int nvmf_send(const void *data, uint32_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[nvmf] nvmf_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvmf_recv ───────────────────────────────── */
+int nvmf_recv(void *buf, uint32_t *len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[nvmf] nvmf_recv: not yet implemented\n");
+    return -ENOSYS;
+}

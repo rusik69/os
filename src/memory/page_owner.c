@@ -64,3 +64,26 @@ void page_owner_dump(void) {
         kprintf("  pid=%u: %llu frames\n", last_pid, (unsigned long long)count);
     }
 }
+
+/* ── Stub: page_owner_start ─────────────────────────────────── */
+int page_owner_start(void)
+{
+    kprintf("[page_owner] page_owner_start: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: page_owner_stop ──────────────────────────────────── */
+int page_owner_stop(void)
+{
+    kprintf("[page_owner] page_owner_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: page_owner_fetch ─────────────────────────────────── */
+int page_owner_fetch(uint64_t *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[page_owner] page_owner_fetch: not yet implemented\n");
+    return -ENOSYS;
+}

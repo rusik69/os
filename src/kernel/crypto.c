@@ -278,3 +278,59 @@ void crypto_init(void) {
     crypto_aes_key_set = 0;
     kprintf("[OK] crypto initialized (AES-128 available)\n");
 }
+
+/* ── Stub: crypto_skcipher_encrypt ─────────────────────────────────── */
+int crypto_skcipher_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+                            size_t len, const uint8_t *iv)
+{
+    (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
+    kprintf("[CRYPTO] crypto_skcipher_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: crypto_skcipher_decrypt ─────────────────────────────────── */
+int crypto_skcipher_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+                            size_t len, const uint8_t *iv)
+{
+    (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
+    kprintf("[CRYPTO] crypto_skcipher_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: crypto_aead_encrypt ─────────────────────────────────────── */
+int crypto_aead_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+                        size_t len, const uint8_t *aad, size_t aad_len,
+                        const uint8_t *iv)
+{
+    (void)tfm; (void)src; (void)dst; (void)len;
+    (void)aad; (void)aad_len; (void)iv;
+    kprintf("[CRYPTO] crypto_aead_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: crypto_aead_decrypt ─────────────────────────────────────── */
+int crypto_aead_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
+                        size_t len, const uint8_t *aad, size_t aad_len,
+                        const uint8_t *iv)
+{
+    (void)tfm; (void)src; (void)dst; (void)len;
+    (void)aad; (void)aad_len; (void)iv;
+    kprintf("[CRYPTO] crypto_aead_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+
+/* ── Stub: crypto_alloc_skcipher ───────────────────────────────────── */
+void *crypto_alloc_skcipher(const char *alg_name, uint32_t type, uint32_t mask)
+{
+    (void)alg_name; (void)type; (void)mask;
+    kprintf("[CRYPTO] crypto_alloc_skcipher: not yet implemented\n");
+    return NULL;
+}
+
+/* ── Stub: crypto_alloc_aead ───────────────────────────────────────── */
+void *crypto_alloc_aead(const char *alg_name, uint32_t type, uint32_t mask)
+{
+    (void)alg_name; (void)type; (void)mask;
+    kprintf("[CRYPTO] crypto_alloc_aead: not yet implemented\n");
+    return NULL;
+}
