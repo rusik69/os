@@ -1,5 +1,6 @@
 #include "bitmap.h"
 #include "string.h"
+#include "heap.h"
 void bitmap_zero(unsigned long *dst, int nbits) { memset(dst, 0, (nbits + 7) / 8); }
 void bitmap_set(unsigned long *map, int start, int nr) {
     for (int i = start; i < start + nr; i++) map[i / (8*sizeof(long))] |= (1UL << (i % (8*sizeof(long))));

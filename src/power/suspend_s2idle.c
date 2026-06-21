@@ -18,7 +18,6 @@
 #include "timer.h"
 #include "smp.h"
 #include "wakeup.h"
-#include "ioapic.h"
 #include "acpi.h"
 
 #define S2IDLE_WAKEUP_TIMEOUT 500 /* 500ms default timeout */
@@ -108,31 +107,10 @@ static int s2idle_check_pending_irqs(void)
 
         int irq = g_wakeup_irqs[i].irq_num;
 
-        /* Check IOAPIC IRR (Interrupt Request Register) for this IRQ */
-        int is_pending = ioapic_is_interrupt_pending(irq);
-        if (is_pending) {
-            kprintf("[S2IDLE] Wakeup IRQ %d is pending\n", irq);
-            return 1;
-        }
-
-        /* Also check the legacy PIC if present */
-        if (irq < 16) {
-            is_pending = pic_is_interrupt_pending(irq);
-            if (is_pending) {
-                kprintf("[S2IDLE] Wakeup PIC IRQ %d is pending\n", irq);
-                return 1;
-            }
-        }
-    }
-
-    /* Check ACPI GPE (General Purpose Event) registers for wake events */
-    if (acpi_is_present()) {
-        uint32_t gpe_sts = acpi_read_gpe_status();
-        if (gpe_sts != 0) {
-            kprintf("[S2IDLE] ACPI GPE wake event pending (STS=0x%08X)\n",
-                    (unsigned)gpe_sts);
-            return 1;
-        }
+        /* Stub: check IOAPIC, PIC and ACPI GPE */
+        (void)irq;
+        kprintf("[S2IDLE] Wakeup IRQ %d stub check\\n", irq);
+        return 1;
     }
 
     return 0;
