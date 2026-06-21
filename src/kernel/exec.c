@@ -361,3 +361,28 @@ void exec_init(void)
     kprintf("[OK] EXEC: enhanced exec with AT_SECURE, cred switching, "
             "bprm security\n");
 }
+
+/* ── Stub: exec_mmap ─────────────────────────────── */
+int exec_mmap(void *mm)
+{
+    (void)mm;
+    kprintf("[exec] exec_mmap: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exec_setup_stack ─────────────────────────────── */
+int exec_setup_stack(void *bprm, uint64_t *sp)
+{
+    (void)bprm;
+    (void)sp;
+    kprintf("[exec] exec_setup_stack: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exec_binprm ─────────────────────────────── */
+int exec_binprm(const char *filename, void *argv, void *envp)
+{
+    (void)filename;
+    (void)argv;
+    (void)envp;
+    kprintf("[exec] exec_binprm: not yet implemented\n");
+    return -ENOSYS;
+}

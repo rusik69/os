@@ -393,14 +393,14 @@ int vxlan_rcv(void *skb)
     return -ENOSYS;
 }
 /* ── Stub: vxlan_open ──────────────────────────────── */
-int vxlan_open(struct net_device *dev)
+int vxlan_open(void *dev)
 {
     (void)dev;
     kprintf("[VXLAN] vxlan_open: not yet implemented\n");
     return -ENOSYS;
 }
 /* ── Stub: vxlan_stop ──────────────────────────────── */
-int vxlan_stop(struct net_device *dev)
+int vxlan_stop(void *dev)
 {
     (void)dev;
     kprintf("[VXLAN] vxlan_stop: not yet implemented\n");

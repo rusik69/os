@@ -986,3 +986,31 @@ int oci_config_read_file(struct oci_config *config, const char *path)
     kfree(buf);
     return ret;
 }
+
+/* ── Stub: config_create ─────────────────────────────── */
+int config_create(const char *name, void *cfg)
+{
+    (void)name;
+    (void)cfg;
+    kprintf("[container] config_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: config_get ─────────────────────────────── */
+int config_get(const char *name, const char *key, void *val, size_t len)
+{
+    (void)name;
+    (void)key;
+    (void)val;
+    (void)len;
+    kprintf("[container] config_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: config_set ─────────────────────────────── */
+int config_set(const char *name, const char *key, const void *val)
+{
+    (void)name;
+    (void)key;
+    (void)val;
+    kprintf("[container] config_set: not yet implemented\n");
+    return -ENOSYS;
+}

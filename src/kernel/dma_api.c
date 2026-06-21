@@ -250,3 +250,13 @@ void dma_unmap_single(struct pci_device *dev, uint64_t dma_handle,
      */
     __asm__ volatile("mfence" ::: "memory");
 }
+
+/* ── Stub: dma_alloc_coherent ─────────────────────────────── */
+void* dma_alloc_coherent(void *dev, size_t size, void *dma_handle)
+{
+    (void)dev;
+    (void)size;
+    (void)dma_handle;
+    kprintf("[dma] dma_alloc_coherent: not yet implemented\n");
+    return -ENOSYS;
+}

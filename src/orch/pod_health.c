@@ -506,3 +506,27 @@ int health_get_status(const char *container_id) {
 
     return status;
 }
+
+/* ── Stub: pod_health_check ─────────────────────────────── */
+int pod_health_check(const char *pod)
+{
+    (void)pod;
+    kprintf("[pod_health] pod_health_check: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pod_health_report ─────────────────────────────── */
+int pod_health_report(const char *pod, void *status)
+{
+    (void)pod;
+    (void)status;
+    kprintf("[pod_health] pod_health_report: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pod_health_watch ─────────────────────────────── */
+int pod_health_watch(const char *pod, void *callback)
+{
+    (void)pod;
+    (void)callback;
+    kprintf("[pod_health] pod_health_watch: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -189,3 +189,21 @@ int overlay_opaque_clear(const char *mountpoint, const char *dir_path)
     }
     return -ENOENT;
 }
+
+/* ── Stub: overlay_enhance_mount ─────────────────────────────── */
+int overlay_enhance_mount(const char *lower, const char *upper, const char *work, const char *target)
+{
+    (void)lower;
+    (void)upper;
+    (void)work;
+    (void)target;
+    kprintf("[overlay] overlay_enhance_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: overlay_enhance_umount ─────────────────────────────── */
+int overlay_enhance_umount(const char *target)
+{
+    (void)target;
+    kprintf("[overlay] overlay_enhance_umount: not yet implemented\n");
+    return -ENOSYS;
+}

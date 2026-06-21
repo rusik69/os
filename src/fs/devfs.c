@@ -404,3 +404,20 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("devfs — /dev device virtual filesystem with dynamic device registration");
 MODULE_ALIAS("devfs");
 #endif /* MODULE */
+
+/* ── Stub: devfs_register ─────────────────────────────── */
+int devfs_register(const char *name, int major, int minor)
+{
+    (void)name;
+    (void)major;
+    (void)minor;
+    kprintf("[devfs] devfs_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: devfs_unregister ─────────────────────────────── */
+int devfs_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[devfs] devfs_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

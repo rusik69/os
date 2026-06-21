@@ -345,3 +345,28 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("exFAT — read-only");
 #endif
+
+/* ── Stub: exfat_mount ─────────────────────────────── */
+int exfat_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[exfat] exfat_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exfat_umount ─────────────────────────────── */
+int exfat_umount(const char *target)
+{
+    (void)target;
+    kprintf("[exfat] exfat_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exfat_lookup ─────────────────────────────── */
+int exfat_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[exfat] exfat_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

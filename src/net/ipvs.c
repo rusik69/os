@@ -277,3 +277,34 @@ int ipvs_get_dest(uint32_t vip, uint16_t port, uint32_t *rip_out, uint16_t *rpor
     *rport_out = v->reals[idx]->port;
     return 0;
 }
+
+/* ── Stub: ipvs_add_service ─────────────────────────────── */
+int ipvs_add_service(const void *svc)
+{
+    (void)svc;
+    kprintf("[ipvs] ipvs_add_service: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipvs_del_service ─────────────────────────────── */
+int ipvs_del_service(const void *svc)
+{
+    (void)svc;
+    kprintf("[ipvs] ipvs_del_service: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipvs_add_dest ─────────────────────────────── */
+int ipvs_add_dest(void *svc, const void *dest)
+{
+    (void)svc;
+    (void)dest;
+    kprintf("[ipvs] ipvs_add_dest: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipvs_del_dest ─────────────────────────────── */
+int ipvs_del_dest(void *svc, const void *dest)
+{
+    (void)svc;
+    (void)dest;
+    kprintf("[ipvs] ipvs_del_dest: not yet implemented\n");
+    return -ENOSYS;
+}

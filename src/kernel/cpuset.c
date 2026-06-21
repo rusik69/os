@@ -241,3 +241,35 @@ void cpu_cgroup_reset_window(void)
         }
     }
 }
+
+/* ── Stub: cpuset_create ─────────────────────────────── */
+int cpuset_create(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[cpuset] cpuset_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpuset_delete ─────────────────────────────── */
+int cpuset_delete(const char *name)
+{
+    (void)name;
+    kprintf("[cpuset] cpuset_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpuset_attach ─────────────────────────────── */
+int cpuset_attach(const char *name, void *task)
+{
+    (void)name;
+    (void)task;
+    kprintf("[cpuset] cpuset_attach: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpuset_migrate ─────────────────────────────── */
+int cpuset_migrate(const char *name, const void *cpus)
+{
+    (void)name;
+    (void)cpus;
+    kprintf("[cpuset] cpuset_migrate: not yet implemented\n");
+    return -ENOSYS;
+}

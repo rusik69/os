@@ -664,3 +664,11 @@ int image_load(const char *input_path)
     kprintf("[Images] Image loaded: %s (%s)\n", img->image_id, input_path);
     return 0;
 }
+
+/* ── Stub: image_push ─────────────────────────────── */
+int image_push(const char *ref)
+{
+    (void)ref;
+    kprintf("[container] image_push: not yet implemented\n");
+    return -ENOSYS;
+}

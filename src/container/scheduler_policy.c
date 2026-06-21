@@ -486,3 +486,21 @@ int scheduler_policy_init(void)
     kprintf("[SchedulerPolicy] Scheduler policy subsystem initialised\n");
     return 0;
 }
+
+/* ── Stub: sched_policy_set ─────────────────────────────── */
+int sched_policy_set(const char *cont, const char *policy)
+{
+    (void)cont;
+    (void)policy;
+    kprintf("[container] sched_policy_set: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sched_policy_get ─────────────────────────────── */
+int sched_policy_get(const char *cont, char *policy, size_t len)
+{
+    (void)cont;
+    (void)policy;
+    (void)len;
+    kprintf("[container] sched_policy_get: not yet implemented\n");
+    return -ENOSYS;
+}

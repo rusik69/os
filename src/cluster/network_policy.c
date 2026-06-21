@@ -447,3 +447,28 @@ int netpol_set_dns_default_deny(int enable)
     }
     return 0;
 }
+
+/* ── Stub: netpol_create ─────────────────────────────── */
+int netpol_create(const char *name, void *rules)
+{
+    (void)name;
+    (void)rules;
+    kprintf("[cluster] netpol_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netpol_delete ─────────────────────────────── */
+int netpol_delete(const char *name)
+{
+    (void)name;
+    kprintf("[cluster] netpol_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netpol_check ─────────────────────────────── */
+int netpol_check(const char *pod, const char *target, int port)
+{
+    (void)pod;
+    (void)target;
+    (void)port;
+    kprintf("[cluster] netpol_check: not yet implemented\n");
+    return -ENOSYS;
+}

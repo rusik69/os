@@ -22,3 +22,13 @@ int net_set_arp_cache_max(int max) {
     kprintf("[net] ARP cache max set to %d\n", max);
     return 0;
 }
+
+/* ── Stub: net_ext_ioctl ─────────────────────────────── */
+int net_ext_ioctl(int sock, int cmd, void *arg)
+{
+    (void)sock;
+    (void)cmd;
+    (void)arg;
+    kprintf("[net_ext] net_ext_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -156,3 +156,26 @@ void westwood_set_cwnd(struct westwood_data *w, uint32_t cwnd)
     if (!w || !w->initialised) return;
     w->cwnd = cwnd;
 }
+
+/* ── Stub: tcp_westwood_cong_avoid ─────────────────────────────── */
+int tcp_westwood_cong_avoid(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_westwood] tcp_westwood_cong_avoid: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_westwood_ssthresh ─────────────────────────────── */
+uint32_t tcp_westwood_ssthresh(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_westwood] tcp_westwood_ssthresh: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_westwood_acked ─────────────────────────────── */
+int tcp_westwood_acked(void *sk, uint32_t acked)
+{
+    (void)sk;
+    (void)acked;
+    kprintf("[tcp_westwood] tcp_westwood_acked: not yet implemented\n");
+    return -ENOSYS;
+}

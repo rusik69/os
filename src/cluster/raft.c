@@ -524,3 +524,26 @@ int raft_get_state(void)
 {
     return raft.state;
 }
+
+/* ── Stub: raft_start ─────────────────────────────── */
+int raft_start(const char *id, const char *peers)
+{
+    (void)id;
+    (void)peers;
+    kprintf("[cluster] raft_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: raft_stop ─────────────────────────────── */
+int raft_stop(void)
+{
+    kprintf("[cluster] raft_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: raft_propose ─────────────────────────────── */
+int raft_propose(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[cluster] raft_propose: not yet implemented\n");
+    return -ENOSYS;
+}

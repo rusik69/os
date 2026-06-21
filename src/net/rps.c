@@ -250,3 +250,19 @@ int rfs_flow_count(void)
 {
     return g_rfs_table.count;
 }
+
+/* ── Stub: rps_process ─────────────────────────────── */
+int rps_process(void *softirq)
+{
+    (void)softirq;
+    kprintf("[rps] rps_process: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rps_map_flow ─────────────────────────────── */
+int rps_map_flow(void *skb, void *flow_table)
+{
+    (void)skb;
+    (void)flow_table;
+    kprintf("[rps] rps_map_flow: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -420,3 +420,34 @@ int storage_layer_refcount_dec(const char *hash)
         layer_table[idx].refcount--;
     return 0;
 }
+
+/* ── Stub: storage_create_volume ─────────────────────────────── */
+int storage_create_volume(const char *name, size_t size)
+{
+    (void)name;
+    (void)size;
+    kprintf("[container] storage_create_volume: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: storage_delete_volume ─────────────────────────────── */
+int storage_delete_volume(const char *name)
+{
+    (void)name;
+    kprintf("[container] storage_delete_volume: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: storage_mount_volume ─────────────────────────────── */
+int storage_mount_volume(const char *name, const char *target)
+{
+    (void)name;
+    (void)target;
+    kprintf("[container] storage_mount_volume: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: storage_unmount_volume ─────────────────────────────── */
+int storage_unmount_volume(const char *name)
+{
+    (void)name;
+    kprintf("[container] storage_unmount_volume: not yet implemented\n");
+    return -ENOSYS;
+}

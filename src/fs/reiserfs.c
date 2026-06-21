@@ -560,3 +560,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("ReiserFS read-only filesystem — B* tree, stat/directory items");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: reiserfs_mount ─────────────────────────────── */
+int reiserfs_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[reiserfs] reiserfs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: reiserfs_umount ─────────────────────────────── */
+int reiserfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[reiserfs] reiserfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: reiserfs_lookup ─────────────────────────────── */
+int reiserfs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[reiserfs] reiserfs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

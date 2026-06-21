@@ -306,3 +306,28 @@ void bpf_maps_init(void)
     spinlock_init(&g_maps_lock);
     kprintf("[OK] BPF maps initialized (%d max)\n", BPF_MAP_MAX);
 }
+
+/* ── Stub: bpf_map_alloc ─────────────────────────────── */
+int bpf_map_alloc(void *attr)
+{
+    (void)attr;
+    kprintf("[bpf] bpf_map_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bpf_map_free ─────────────────────────────── */
+int bpf_map_free(void *map)
+{
+    (void)map;
+    kprintf("[bpf] bpf_map_free: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bpf_map_lookup_batch ─────────────────────────────── */
+int bpf_map_lookup_batch(void *map, void *keys, void *values, uint32_t *count)
+{
+    (void)map;
+    (void)keys;
+    (void)values;
+    (void)count;
+    kprintf("[bpf] bpf_map_lookup_batch: not yet implemented\n");
+    return -ENOSYS;
+}

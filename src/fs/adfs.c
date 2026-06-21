@@ -292,3 +292,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Acorn ADFS — map/chains, directory format");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: adfs_mount ─────────────────────────────── */
+int adfs_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[adfs] adfs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: adfs_umount ─────────────────────────────── */
+int adfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[adfs] adfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: adfs_lookup ─────────────────────────────── */
+int adfs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[adfs] adfs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

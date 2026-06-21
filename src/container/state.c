@@ -318,3 +318,29 @@ int container_persist_state(struct container *c)
 {
     return container_write_state_json(c);
 }
+
+/* ── Stub: state_save ─────────────────────────────── */
+int state_save(const char *name, const void *state, size_t len)
+{
+    (void)name;
+    (void)state;
+    (void)len;
+    kprintf("[container] state_save: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: state_load ─────────────────────────────── */
+int state_load(const char *name, void *state, size_t *len)
+{
+    (void)name;
+    (void)state;
+    (void)len;
+    kprintf("[container] state_load: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: state_delete ─────────────────────────────── */
+int state_delete(const char *name)
+{
+    (void)name;
+    kprintf("[container] state_delete: not yet implemented\n");
+    return -ENOSYS;
+}

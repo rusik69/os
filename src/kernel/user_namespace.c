@@ -724,3 +724,38 @@ uint32_t user_ns_sb_gid(const struct user_namespace *ns, uint32_t gid)
     (void)ns;
     return gid;
 }
+
+/* ── Stub: user_ns_create ─────────────────────────────── */
+int user_ns_create(void *parent)
+{
+    (void)parent;
+    kprintf("[user_ns] user_ns_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: user_ns_delete ─────────────────────────────── */
+int user_ns_delete(void *ns)
+{
+    (void)ns;
+    kprintf("[user_ns] user_ns_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: user_ns_uid_map ─────────────────────────────── */
+int user_ns_uid_map(void *ns, uint32_t from, uint32_t to, uint32_t count)
+{
+    (void)ns;
+    (void)from;
+    (void)to;
+    (void)count;
+    kprintf("[user_ns] user_ns_uid_map: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: user_ns_gid_map ─────────────────────────────── */
+int user_ns_gid_map(void *ns, uint32_t from, uint32_t to, uint32_t count)
+{
+    (void)ns;
+    (void)from;
+    (void)to;
+    (void)count;
+    kprintf("[user_ns] user_ns_gid_map: not yet implemented\n");
+    return -ENOSYS;
+}

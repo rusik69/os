@@ -100,3 +100,11 @@ void percpu_counter_init_global(void)
 {
     kprintf("[OK] percpu_counter: Per-CPU counters initialised\n");
 }
+
+/* ── Stub: percpu_counter_sum ─────────────────────────────── */
+int64_t percpu_counter_sum(void *fbc)
+{
+    (void)fbc;
+    kprintf("[percpu] percpu_counter_sum: not yet implemented\n");
+    return -ENOSYS;
+}

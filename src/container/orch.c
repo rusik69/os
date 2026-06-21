@@ -554,3 +554,26 @@ int orch_init(void)
     kprintf("[Orch] Orchestration subsystem initialised\n");
     return 0;
 }
+
+/* ── Stub: orch_deploy ─────────────────────────────── */
+int orch_deploy(const char *spec)
+{
+    (void)spec;
+    kprintf("[container] orch_deploy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: orch_scale ─────────────────────────────── */
+int orch_scale(const char *name, int replicas)
+{
+    (void)name;
+    (void)replicas;
+    kprintf("[container] orch_scale: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: orch_rollback ─────────────────────────────── */
+int orch_rollback(const char *name)
+{
+    (void)name;
+    kprintf("[container] orch_rollback: not yet implemented\n");
+    return -ENOSYS;
+}

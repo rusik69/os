@@ -96,3 +96,19 @@ void jffs2_init(void)
 }
 #include "module.h"
 module_init(jffs2_init);
+
+/* ── Stub: jffs2_umount ─────────────────────────────── */
+int jffs2_umount(const char *target)
+{
+    (void)target;
+    kprintf("[jffs2] jffs2_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: jffs2_lookup ─────────────────────────────── */
+int jffs2_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[jffs2] jffs2_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

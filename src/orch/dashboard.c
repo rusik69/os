@@ -177,3 +177,25 @@ int dashboard_render(char *buf, size_t len)
 {
     return dashboard_render_json(buf, len);
 }
+
+/* ── Stub: dashboard_start ─────────────────────────────── */
+int dashboard_start(int port)
+{
+    (void)port;
+    kprintf("[dashboard] dashboard_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dashboard_stop ─────────────────────────────── */
+int dashboard_stop(void)
+{
+    kprintf("[dashboard] dashboard_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dashboard_add_widget ─────────────────────────────── */
+int dashboard_add_widget(const char *name, const char *type)
+{
+    (void)name;
+    (void)type;
+    kprintf("[dashboard] dashboard_add_widget: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -151,3 +151,30 @@ void bpf_helpers_init(void)
 {
     kprintf("[OK] BPF helpers initialized\n");
 }
+
+/* ── Stub: bpf_map_lookup_elem ─────────────────────────────── */
+void* bpf_map_lookup_elem(void *map, const void *key)
+{
+    (void)map;
+    (void)key;
+    kprintf("[bpf] bpf_map_lookup_elem: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bpf_map_update_elem ─────────────────────────────── */
+int bpf_map_update_elem(void *map, const void *key, const void *val, uint64_t flags)
+{
+    (void)map;
+    (void)key;
+    (void)val;
+    (void)flags;
+    kprintf("[bpf] bpf_map_update_elem: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bpf_map_delete_elem ─────────────────────────────── */
+int bpf_map_delete_elem(void *map, const void *key)
+{
+    (void)map;
+    (void)key;
+    kprintf("[bpf] bpf_map_delete_elem: not yet implemented\n");
+    return -ENOSYS;
+}

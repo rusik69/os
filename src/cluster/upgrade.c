@@ -386,3 +386,11 @@ int upgrade_next_phase(void)
     spinlock_release(&g_upgrade.lock);
     return 0;
 }
+
+/* ── Stub: upgrade_apply ─────────────────────────────── */
+int upgrade_apply(const char *version)
+{
+    (void)version;
+    kprintf("[cluster] upgrade_apply: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -184,3 +184,12 @@ int smtp_send_auth(uint32_t server_ip, uint16_t port,
                    const char *username, const char *password) {
     return smtp_connect_and_send(server_ip, port, from, to, subject, body, username, password);
 }
+
+/* ── Stub: smtp_connect ─────────────────────────────── */
+int smtp_connect(const char *host, int port)
+{
+    (void)host;
+    (void)port;
+    kprintf("[smtp] smtp_connect: not yet implemented\n");
+    return -ENOSYS;
+}

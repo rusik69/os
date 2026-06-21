@@ -525,3 +525,26 @@ int gc_orphaned_resources(void)
     }
     return cleaned;
 }
+
+/* ── Stub: controller_register ─────────────────────────────── */
+int controller_register(const char *name, void *ctrl)
+{
+    (void)name;
+    (void)ctrl;
+    kprintf("[cluster] controller_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: controller_unregister ─────────────────────────────── */
+int controller_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[cluster] controller_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: controller_run ─────────────────────────────── */
+int controller_run(const char *name)
+{
+    (void)name;
+    kprintf("[cluster] controller_run: not yet implemented\n");
+    return -ENOSYS;
+}

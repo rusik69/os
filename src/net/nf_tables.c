@@ -406,3 +406,18 @@ void nft_exit(void) {
 #include "module.h"
 module_init(nft_init);
 module_exit(nft_exit);
+
+/* ── Stub: nft_add_table ─────────────────────────────── */
+int nft_add_table(const char *name)
+{
+    (void)name;
+    kprintf("[nft] nft_add_table: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nft_del_table ─────────────────────────────── */
+int nft_del_table(const char *name)
+{
+    (void)name;
+    kprintf("[nft] nft_del_table: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -950,3 +950,27 @@ int service_proxy_init(void)
     kprintf("[ServiceProxy] Service proxy subsystem initialised\n");
     return 0;
 }
+
+/* ── Stub: proxy_register ─────────────────────────────── */
+int proxy_register(const char *name, int port)
+{
+    (void)name;
+    (void)port;
+    kprintf("[container] proxy_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: proxy_unregister ─────────────────────────────── */
+int proxy_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[container] proxy_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: proxy_forward ─────────────────────────────── */
+int proxy_forward(void *req, void *resp)
+{
+    (void)req;
+    (void)resp;
+    kprintf("[container] proxy_forward: not yet implemented\n");
+    return -ENOSYS;
+}

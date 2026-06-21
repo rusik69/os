@@ -321,3 +321,25 @@ int namespace_list(char names[][NAMESPACE_NAME_MAX], int max_count)
     spinlock_release(&namespace_lock);
     return written;
 }
+
+/* ── Stub: ns_create ─────────────────────────────── */
+int ns_create(const char *name)
+{
+    (void)name;
+    kprintf("[ns] ns_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ns_delete ─────────────────────────────── */
+int ns_delete(const char *name)
+{
+    (void)name;
+    kprintf("[ns] ns_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ns_list ─────────────────────────────── */
+int ns_list(void *list)
+{
+    (void)list;
+    kprintf("[ns] ns_list: not yet implemented\n");
+    return -ENOSYS;
+}

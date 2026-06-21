@@ -358,3 +358,19 @@ int security_scan_add_cve(const char *cve_id, const char *severity,
             cve_id, severity, package, fixed_version);
     return 0;
 }
+
+/* ── Stub: security_scan_running ─────────────────────────────── */
+int security_scan_running(const char *cont)
+{
+    (void)cont;
+    kprintf("[container] security_scan_running: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: security_scan_report ─────────────────────────────── */
+int security_scan_report(const char *cont, void *report)
+{
+    (void)cont;
+    (void)report;
+    kprintf("[container] security_scan_report: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -517,3 +517,25 @@ int sec_apply_all(struct container *c)
     kprintf("[Sec] All security policies applied for container %s\n", c->id);
     return 0;
 }
+
+/* ── Stub: runtime_sec_enable ─────────────────────────────── */
+int runtime_sec_enable(const char *profile)
+{
+    (void)profile;
+    kprintf("[cluster] runtime_sec_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: runtime_sec_disable ─────────────────────────────── */
+int runtime_sec_disable(void)
+{
+    kprintf("[cluster] runtime_sec_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: runtime_sec_check ─────────────────────────────── */
+int runtime_sec_check(const char *pod, const char *event)
+{
+    (void)pod;
+    (void)event;
+    kprintf("[cluster] runtime_sec_check: not yet implemented\n");
+    return -ENOSYS;
+}

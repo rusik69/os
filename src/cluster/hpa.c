@@ -317,3 +317,19 @@ int descheduler_tick(void)
     /* Simplified: just report status */
     return 0;
 }
+
+/* ── Stub: hpa_update ─────────────────────────────── */
+int hpa_update(const char *name, int replicas)
+{
+    (void)name;
+    (void)replicas;
+    kprintf("[cluster] hpa_update: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: hpa_delete ─────────────────────────────── */
+int hpa_delete(const char *name)
+{
+    (void)name;
+    kprintf("[cluster] hpa_delete: not yet implemented\n");
+    return -ENOSYS;
+}

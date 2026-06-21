@@ -344,3 +344,19 @@ int node_conditions_update(void)
     spinlock_release(&cond_lock);
     return condition_count;
 }
+
+/* ── Stub: node_problem_repair ─────────────────────────────── */
+int node_problem_repair(const char *node)
+{
+    (void)node;
+    kprintf("[cluster] node_problem_repair: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: node_problem_report ─────────────────────────────── */
+int node_problem_report(const char *node, void *report)
+{
+    (void)node;
+    (void)report;
+    kprintf("[cluster] node_problem_report: not yet implemented\n");
+    return -ENOSYS;
+}

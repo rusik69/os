@@ -197,3 +197,26 @@ EXPORT_SYMBOL(ipoib_is_present);
 EXPORT_SYMBOL(ipoib_poll);
 #include "module.h"
 module_init(ipoib_init);
+
+/* ── Stub: ipoib_open ─────────────────────────────── */
+int ipoib_open(void *dev)
+{
+    (void)dev;
+    kprintf("[ipoib] ipoib_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipoib_stop ─────────────────────────────── */
+int ipoib_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[ipoib] ipoib_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ipoib_xmit ─────────────────────────────── */
+int ipoib_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[ipoib] ipoib_xmit: not yet implemented\n");
+    return -ENOSYS;
+}

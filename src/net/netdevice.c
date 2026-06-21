@@ -166,3 +166,32 @@ int netif_count(void)
 {
     return g_device_count;
 }
+
+/* ── Stub: netdevice_register ─────────────────────────────── */
+int netdevice_register(void *dev)
+{
+    (void)dev;
+    kprintf("[netdevice] netdevice_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netdevice_unregister ─────────────────────────────── */
+int netdevice_unregister(void *dev)
+{
+    (void)dev;
+    kprintf("[netdevice] netdevice_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netdevice_open ─────────────────────────────── */
+int netdevice_open(void *dev)
+{
+    (void)dev;
+    kprintf("[netdevice] netdevice_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netdevice_stop ─────────────────────────────── */
+int netdevice_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[netdevice] netdevice_stop: not yet implemented\n");
+    return -ENOSYS;
+}

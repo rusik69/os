@@ -189,3 +189,27 @@ int64_t handle_getdents64_path(const char *path, void *dirp,
 {
     return sys_getdents64(path, dirp, count, cookie);
 }
+
+/* ── Stub: readdir_filldir ─────────────────────────────── */
+int readdir_filldir(void *buf, const char *name, int namlen, uint64_t offset, uint64_t ino, unsigned int d_type)
+{
+    (void)buf;
+    (void)name;
+    (void)namlen;
+    (void)offset;
+    (void)ino;
+    (void)d_type;
+    kprintf("[readdir] readdir_filldir: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: readdir_emit ─────────────────────────────── */
+int readdir_emit(void *dir, const char *name, int namlen, uint64_t ino, unsigned int d_type)
+{
+    (void)dir;
+    (void)name;
+    (void)namlen;
+    (void)ino;
+    (void)d_type;
+    kprintf("[readdir] readdir_emit: not yet implemented\n");
+    return -ENOSYS;
+}

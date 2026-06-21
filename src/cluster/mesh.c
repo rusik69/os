@@ -438,3 +438,25 @@ int mesh_resolve_federated(const char *service_fqdn,
     spinlock_release(&mesh_lock);
     return -ENOENT;
 }
+
+/* ── Stub: mesh_join ─────────────────────────────── */
+int mesh_join(const char *addr)
+{
+    (void)addr;
+    kprintf("[cluster] mesh_join: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mesh_leave ─────────────────────────────── */
+int mesh_leave(void)
+{
+    kprintf("[cluster] mesh_leave: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mesh_route ─────────────────────────────── */
+int mesh_route(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[cluster] mesh_route: not yet implemented\n");
+    return -ENOSYS;
+}

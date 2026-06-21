@@ -368,3 +368,25 @@ int gossip_alive_count(void)
     spinlock_release(&gossip_lock);
     return count;
 }
+
+/* ── Stub: gossip_start ─────────────────────────────── */
+int gossip_start(const char *addr)
+{
+    (void)addr;
+    kprintf("[cluster] gossip_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gossip_stop ─────────────────────────────── */
+int gossip_stop(void)
+{
+    kprintf("[cluster] gossip_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gossip_send ─────────────────────────────── */
+int gossip_send(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[cluster] gossip_send: not yet implemented\n");
+    return -ENOSYS;
+}

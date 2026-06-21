@@ -378,3 +378,12 @@ void lldp_age_neighbors(void)
 }
 #include "module.h"
 module_init(lldp_init);
+/* ── Stub: lldp_recv ─────────────────────────────── */
+int lldp_recv(void *dev, const void *tlv, size_t len)
+{
+    (void)dev;
+    (void)tlv;
+    (void)len;
+    kprintf("[lldp] lldp_recv: not yet implemented\n");
+    return -ENOSYS;
+}

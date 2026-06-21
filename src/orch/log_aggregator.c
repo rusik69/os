@@ -179,3 +179,25 @@ int aggregator_serve_http(const char *method, const char *uri,
              "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
     return 0;
 }
+
+/* ── Stub: log_agg_start ─────────────────────────────── */
+int log_agg_start(const char *config)
+{
+    (void)config;
+    kprintf("[log_agg] log_agg_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: log_agg_stop ─────────────────────────────── */
+int log_agg_stop(void)
+{
+    kprintf("[log_agg] log_agg_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: log_agg_collect ─────────────────────────────── */
+int log_agg_collect(const char *source, void *log)
+{
+    (void)source;
+    (void)log;
+    kprintf("[log_agg] log_agg_collect: not yet implemented\n");
+    return -ENOSYS;
+}

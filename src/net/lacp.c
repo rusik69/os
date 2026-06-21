@@ -295,3 +295,29 @@ void lacp_tick(void)
 }
 #include "module.h"
 module_init(lacp_init);
+/* ── Stub: lacp_send ─────────────────────────────── */
+int lacp_send(void *dev, const void *pdu, size_t len)
+{
+    (void)dev;
+    (void)pdu;
+    (void)len;
+    kprintf("[lacp] lacp_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: lacp_recv ─────────────────────────────── */
+int lacp_recv(void *dev, const void *pdu, size_t len)
+{
+    (void)dev;
+    (void)pdu;
+    (void)len;
+    kprintf("[lacp] lacp_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: lacp_update_state ─────────────────────────────── */
+int lacp_update_state(void *port, int state)
+{
+    (void)port;
+    (void)state;
+    kprintf("[lacp] lacp_update_state: not yet implemented\n");
+    return -ENOSYS;
+}

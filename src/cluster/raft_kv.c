@@ -325,3 +325,29 @@ int kv_lease_valid(const char *key)
     }
     return 0;
 }
+
+/* ── Stub: raft_kv_put ─────────────────────────────── */
+int raft_kv_put(const char *key, const void *val, size_t len)
+{
+    (void)key;
+    (void)val;
+    (void)len;
+    kprintf("[cluster] raft_kv_put: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: raft_kv_get ─────────────────────────────── */
+int raft_kv_get(const char *key, void *val, size_t *len)
+{
+    (void)key;
+    (void)val;
+    (void)len;
+    kprintf("[cluster] raft_kv_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: raft_kv_delete ─────────────────────────────── */
+int raft_kv_delete(const char *key)
+{
+    (void)key;
+    kprintf("[cluster] raft_kv_delete: not yet implemented\n");
+    return -ENOSYS;
+}

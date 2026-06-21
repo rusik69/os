@@ -524,3 +524,20 @@ void nf_helper_init(void)
 }
 #include "module.h"
 module_init(nf_helper_init);
+
+/* ── Stub: conntrack_helper_register ─────────────────────────────── */
+int conntrack_helper_register(int proto, uint16_t port, void *helper)
+{
+    (void)proto;
+    (void)port;
+    (void)helper;
+    kprintf("[conntrack] conntrack_helper_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: conntrack_helper_unregister ─────────────────────────────── */
+int conntrack_helper_unregister(void *helper)
+{
+    (void)helper;
+    kprintf("[conntrack] conntrack_helper_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

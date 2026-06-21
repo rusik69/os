@@ -678,3 +678,18 @@ void seccomp_notify_status(void)
 
     spinlock_release(&seccomp_notify_lock);
 }
+
+/* ── Stub: seccomp_notify_register ─────────────────────────────── */
+int seccomp_notify_register(void *listener)
+{
+    (void)listener;
+    kprintf("[container] seccomp_notify_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: seccomp_notify_unregister ─────────────────────────────── */
+int seccomp_notify_unregister(void *listener)
+{
+    (void)listener;
+    kprintf("[container] seccomp_notify_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

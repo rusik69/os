@@ -494,3 +494,21 @@ void dns_server_stop(void) {
 }
 #include "module.h"
 module_init(dns_server_init);
+
+/* ── Stub: dns_server_start ─────────────────────────────── */
+int dns_server_start(int port)
+{
+    (void)port;
+    kprintf("[dns] dns_server_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dns_server_handle_query ─────────────────────────────── */
+int dns_server_handle_query(const void *query, size_t len, void *resp, size_t *rlen)
+{
+    (void)query;
+    (void)len;
+    (void)resp;
+    (void)rlen;
+    kprintf("[dns] dns_server_handle_query: not yet implemented\n");
+    return -ENOSYS;
+}

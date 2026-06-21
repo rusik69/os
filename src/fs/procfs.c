@@ -1971,3 +1971,20 @@ MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Hermes OS");
 MODULE_DESCRIPTION("procfs — /proc virtual filesystem (loadable module)");
 #endif /* MODULE */
+
+/* ── Stub: procfs_create_entry ─────────────────────────────── */
+int procfs_create_entry(const char *name, void *parent, void *fops)
+{
+    (void)name;
+    (void)parent;
+    (void)fops;
+    kprintf("[procfs] procfs_create_entry: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: procfs_remove_entry ─────────────────────────────── */
+int procfs_remove_entry(const char *name)
+{
+    (void)name;
+    kprintf("[procfs] procfs_remove_entry: not yet implemented\n");
+    return -ENOSYS;
+}

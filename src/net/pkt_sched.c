@@ -923,3 +923,27 @@ void pkt_sched_init(void) {
 }
 #include "module.h"
 module_init(pkt_sched_init);
+
+/* ── Stub: pkt_sched_enqueue ─────────────────────────────── */
+int pkt_sched_enqueue(void *skb, void *sch)
+{
+    (void)skb;
+    (void)sch;
+    kprintf("[pkt_sched] pkt_sched_enqueue: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pkt_sched_dequeue ─────────────────────────────── */
+void* pkt_sched_dequeue(void *sch)
+{
+    (void)sch;
+    kprintf("[pkt_sched] pkt_sched_dequeue: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pkt_sched_register ─────────────────────────────── */
+int pkt_sched_register(const char *name, void *ops)
+{
+    (void)name;
+    (void)ops;
+    kprintf("[pkt_sched] pkt_sched_register: not yet implemented\n");
+    return -ENOSYS;
+}

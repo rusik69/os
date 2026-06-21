@@ -339,3 +339,11 @@ void mrp_tick(void)
 }
 #include "module.h"
 module_init(mrp_init);
+
+/* ── Stub: mrp_transmit ─────────────────────────────── */
+int mrp_transmit(void *dev)
+{
+    (void)dev;
+    kprintf("[mrp] mrp_transmit: not yet implemented\n");
+    return -ENOSYS;
+}

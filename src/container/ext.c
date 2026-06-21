@@ -380,3 +380,19 @@ int container_inspect(struct container *c, char *buf, int buf_size)
 
     return n;
 }
+
+/* ── Stub: ext_mount ─────────────────────────────── */
+int ext_mount(const char *source, const char *target)
+{
+    (void)source;
+    (void)target;
+    kprintf("[container] ext_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ext_umount ─────────────────────────────── */
+int ext_umount(const char *target)
+{
+    (void)target;
+    kprintf("[container] ext_umount: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -359,3 +359,20 @@ void socks5_init(void)
 }
 #include "module.h"
 module_init(socks5_init);
+
+/* ── Stub: socks5_send ─────────────────────────────── */
+int socks5_send(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[socks5] socks5_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: socks5_recv ─────────────────────────────── */
+int socks5_recv(void *buf, size_t len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[socks5] socks5_recv: not yet implemented\n");
+    return -ENOSYS;
+}

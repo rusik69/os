@@ -413,3 +413,11 @@ void garp_tick(void)
 }
 #include "module.h"
 module_init(garp_init);
+
+/* ── Stub: garp_transmit ─────────────────────────────── */
+int garp_transmit(void *dev)
+{
+    (void)dev;
+    kprintf("[garp] garp_transmit: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -500,3 +500,31 @@ int splitbrain_recover(void)
     kprintf("[SplitBrain] Recovery complete. Waiting for new leader election.\n");
     return 0;
 }
+
+/* ── Stub: cluster_init ─────────────────────────────── */
+int cluster_init(const char *config)
+{
+    (void)config;
+    kprintf("[cluster] cluster_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cluster_join ─────────────────────────────── */
+int cluster_join(const char *addr)
+{
+    (void)addr;
+    kprintf("[cluster] cluster_join: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cluster_leave ─────────────────────────────── */
+int cluster_leave(void)
+{
+    kprintf("[cluster] cluster_leave: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cluster_get_status ─────────────────────────────── */
+int cluster_get_status(void *status)
+{
+    (void)status;
+    kprintf("[cluster] cluster_get_status: not yet implemented\n");
+    return -ENOSYS;
+}

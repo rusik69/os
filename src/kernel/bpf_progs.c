@@ -176,3 +176,13 @@ void bpf_progs_init(void)
     spinlock_init(&g_progs_lock);
     kprintf("[OK] BPF programs initialized (%d max)\n", BPF_PROG_MAX);
 }
+
+/* ── Stub: bpf_prog_run ─────────────────────────────── */
+int bpf_prog_run(int fd, const void *ctx, void *result)
+{
+    (void)fd;
+    (void)ctx;
+    (void)result;
+    kprintf("[bpf] bpf_prog_run: not yet implemented\n");
+    return -ENOSYS;
+}

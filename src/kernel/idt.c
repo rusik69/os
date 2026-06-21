@@ -287,3 +287,22 @@ void irq_free_range(int base, int count)
     }
 }
 EXPORT_SYMBOL(idt_register_handler);
+
+/* ── Stub: idt_set_entry ─────────────────────────────── */
+int idt_set_entry(int idx, void *handler, uint16_t sel, uint8_t flags)
+{
+    (void)idx;
+    (void)handler;
+    (void)sel;
+    (void)flags;
+    kprintf("[idt] idt_set_entry: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: idt_get_entry ─────────────────────────────── */
+int idt_get_entry(int idx, void *entry)
+{
+    (void)idx;
+    (void)entry;
+    kprintf("[idt] idt_get_entry: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -221,3 +221,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("SCO BFS (Boot File System) — read-only");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: bfs_mount ─────────────────────────────── */
+int bfs_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[bfs] bfs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bfs_umount ─────────────────────────────── */
+int bfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[bfs] bfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bfs_lookup ─────────────────────────────── */
+int bfs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[bfs] bfs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

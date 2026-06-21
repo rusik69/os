@@ -344,3 +344,27 @@ void numa_stats_read(char *buf, int *len)
 
     *len = pos;
 }
+
+/* ── Stub: numa_balance ─────────────────────────────── */
+int numa_balance(void *task)
+{
+    (void)task;
+    kprintf("[numa] numa_balance: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: numa_migrate ─────────────────────────────── */
+int numa_migrate(void *task, int src_node, int dst_node)
+{
+    (void)task;
+    (void)src_node;
+    (void)dst_node;
+    kprintf("[numa] numa_migrate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: numa_promote ─────────────────────────────── */
+int numa_promote(void *page)
+{
+    (void)page;
+    kprintf("[numa] numa_promote: not yet implemented\n");
+    return -ENOSYS;
+}

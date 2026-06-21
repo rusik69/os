@@ -277,3 +277,11 @@ void telnetd_task(void) {
         net_dhcp_renew_if_needed();
     }
 }
+
+/* ── Stub: telnetd_handle_client ─────────────────────────────── */
+int telnetd_handle_client(void *client)
+{
+    (void)client;
+    kprintf("[telnetd] telnetd_handle_client: not yet implemented\n");
+    return -ENOSYS;
+}

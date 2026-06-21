@@ -685,3 +685,11 @@ void sysfs_init(void) {
 
     sysfs_mounted = 1;
 }
+
+/* ── Stub: sysfs_remove_dir ─────────────────────────────── */
+int sysfs_remove_dir(const char *name)
+{
+    (void)name;
+    kprintf("[sysfs] sysfs_remove_dir: not yet implemented\n");
+    return -ENOSYS;
+}

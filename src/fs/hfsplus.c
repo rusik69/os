@@ -563,3 +563,28 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("HFS+ (Apple) — read-only");
 #endif
+
+/* ── Stub: hfsplus_mount ─────────────────────────────── */
+int hfsplus_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[hfsplus] hfsplus_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: hfsplus_umount ─────────────────────────────── */
+int hfsplus_umount(const char *target)
+{
+    (void)target;
+    kprintf("[hfsplus] hfsplus_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: hfsplus_lookup ─────────────────────────────── */
+int hfsplus_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[hfsplus] hfsplus_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

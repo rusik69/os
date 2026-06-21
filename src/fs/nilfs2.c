@@ -209,3 +209,12 @@ void nilfs2_init(void)
 }
 #include "module.h"
 module_init(nilfs2_init);
+
+/* ── Stub: nilfs2_lookup ─────────────────────────────── */
+int nilfs2_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[nilfs2] nilfs2_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

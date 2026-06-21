@@ -349,3 +349,26 @@ void ovs_init(void)
 }
 #include "module.h"
 module_init(ovs_init);
+
+/* ── Stub: ovs_add_flow ─────────────────────────────── */
+int ovs_add_flow(const void *flow)
+{
+    (void)flow;
+    kprintf("[ovs] ovs_add_flow: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ovs_del_flow ─────────────────────────────── */
+int ovs_del_flow(const void *flow)
+{
+    (void)flow;
+    kprintf("[ovs] ovs_del_flow: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ovs_add_port ─────────────────────────────── */
+int ovs_add_port(const char *name, void *dev)
+{
+    (void)name;
+    (void)dev;
+    kprintf("[ovs] ovs_add_port: not yet implemented\n");
+    return -ENOSYS;
+}

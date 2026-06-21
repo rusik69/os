@@ -208,3 +208,29 @@ int orch_secrets_list(const char *namespace,
     spinlock_release(&secret_lock);
     return written;
 }
+
+/* ── Stub: secret_create ─────────────────────────────── */
+int secret_create(const char *name, const void *data, size_t len)
+{
+    (void)name;
+    (void)data;
+    (void)len;
+    kprintf("[secrets] secret_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: secret_get ─────────────────────────────── */
+int secret_get(const char *name, void *data, size_t *len)
+{
+    (void)name;
+    (void)data;
+    (void)len;
+    kprintf("[secrets] secret_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: secret_delete ─────────────────────────────── */
+int secret_delete(const char *name)
+{
+    (void)name;
+    kprintf("[secrets] secret_delete: not yet implemented\n");
+    return -ENOSYS;
+}

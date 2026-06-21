@@ -1854,3 +1854,11 @@ int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
 {
     return vfs_check_perms(path, uid, gid, VFS_X_OK);
 }
+
+/* ── Stub: vfs_close ─────────────────────────────── */
+int vfs_close(void *file)
+{
+    (void)file;
+    kprintf("[vfs] vfs_close: not yet implemented\n");
+    return -ENOSYS;
+}

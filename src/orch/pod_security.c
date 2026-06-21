@@ -299,3 +299,20 @@ int psp_delete(const char *name)
     spinlock_release(&psp_lock);
     return 0;
 }
+
+/* ── Stub: pod_sec_set_context ─────────────────────────────── */
+int pod_sec_set_context(const char *pod, void *ctx)
+{
+    (void)pod;
+    (void)ctx;
+    kprintf("[pod_sec] pod_sec_set_context: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pod_sec_check_cap ─────────────────────────────── */
+int pod_sec_check_cap(const char *pod, const char *cap)
+{
+    (void)pod;
+    (void)cap;
+    kprintf("[pod_sec] pod_sec_check_cap: not yet implemented\n");
+    return -ENOSYS;
+}
