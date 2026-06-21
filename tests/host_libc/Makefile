@@ -62,10 +62,30 @@ SORT_EXT_OBJS = sort_ext.o test_sort_ext.o
 # CRC-16 tests
 CRC16_OBJS = crc16.o test_crc16.o
 
+# find_bit tests (test_bit, set_bit, find_first_bit, etc.)
+FIND_BIT_OBJS = find_bit.o test_find_bit.o
+
+# 64-bit division tests (__udivdi3, __umoddi3, etc.)
+DIV64_OBJS = div64.o test_div64.o
+
+# IDR allocator tests (idr_init, idr_alloc, idr_remove, idr_find)
+IDR_OBJS = idr.o test_idr.o
+
+# Notifier chain tests
+NOTIFIER_OBJS = notifier.o test_notifier.o
+
+# Rate limiting tests
+RATELIMIT_OBJS = ratelimit.o test_ratelimit.o
+
+# Time function tests (gmtime, mktime, asctime, strftime)
+TFLAGS_time = -Wno-nonnull-compare -fno-stack-protector
+TIME_OBJS = time.o test_time.o
+
 .PHONY: all clean
 
 all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
-     test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16
+     test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
+     test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -103,6 +123,24 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running CRC-16 tests..."
 	./test_crc16
+	@echo ""
+	@echo "Running find_bit tests..."
+	./test_find_bit
+	@echo ""
+	@echo "Running 64-bit division tests..."
+	./test_div64
+	@echo ""
+	@echo "Running IDR allocator tests..."
+	./test_idr
+	@echo ""
+	@echo "Running notifier chain tests..."
+	./test_notifier
+	@echo ""
+	@echo "Running rate limiting tests..."
+	./test_ratelimit
+	@echo ""
+	@echo "Running time function tests..."
+	./test_time
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -118,12 +156,21 @@ else
 	python3 ../../tests/junit_reporter.py host-range ./test_range
 	python3 ../../tests/junit_reporter.py host-sort-ext ./test_sort_ext
 	python3 ../../tests/junit_reporter.py host-crc16 ./test_crc16
+	python3 ../../tests/junit_reporter.py host-find-bit ./test_find_bit
+	python3 ../../tests/junit_reporter.py host-div64 ./test_div64
+	python3 ../../tests/junit_reporter.py host-idr ./test_idr
+	python3 ../../tests/junit_reporter.py host-notifier ./test_notifier
+	python3 ../../tests/junit_reporter.py host-ratelimit ./test_ratelimit
+	python3 ../../tests/junit_reporter.py host-time ./test_time
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
 	      host-search-results.xml host-stdlib-ext-results.xml \
 	      host-hweight-results.xml host-range-results.xml \
 	      host-sort-ext-results.xml host-crc16-results.xml \
+	      host-find-bit-results.xml host-div64-results.xml \
+	      host-idr-results.xml host-notifier-results.xml \
+	      host-ratelimit-results.xml host-time-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -327,8 +374,76 @@ crc16.o: $(CRYPTODIR)/crc16.c
 test_crc16.o: test_crc16.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── find_bit tests ─────────────────────────────────────────
+
+test_find_bit: $(FIND_BIT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+find_bit.o: $(SRCDIR)/find_bit.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_find_bit.o: test_find_bit.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── 64-bit division tests ─────────────────────────────────
+
+test_div64: $(DIV64_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+div64.o: $(KSRCDIR)/div64.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_div64.o: test_div64.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── IDR allocator tests ───────────────────────────────────
+
+test_idr: $(IDR_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+idr.o: $(KSRCDIR)/idr.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_idr.o: test_idr.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Notifier chain tests ──────────────────────────────────
+
+test_notifier: $(NOTIFIER_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+notifier.o: $(KSRCDIR)/notifier.c
+	$(CC) $(KERNEL_CFLAGS) -DEINVAL=22 -c -o $@ $<
+
+test_notifier.o: test_notifier.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Rate limiting tests ────────────────────────────────────
+
+test_ratelimit: $(RATELIMIT_OBJS)
+	$(CC) -o $@ $^
+
+ratelimit.o: $(KSRCDIR)/ratelimit.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_ratelimit.o: test_ratelimit.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Time function tests ────────────────────────────────────
+
+test_time: $(TIME_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+time.o: $(SRCDIR)/time.c
+	$(CC) $(KERNEL_CFLAGS) $(TFLAGS_time) -c -o $@ $<
+
+test_time.o: test_time.c
+	$(CC) $(TEST_CFLAGS) -Wno-format-zero-length -c -o $@ $<
+
 clean:
 	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) $(DS_OBJS) \
 	      $(SEARCH_OBJS) $(STDLIB_EXT_OBJS) $(HWEIGHT_OBJS) $(RANGE_OBJS) $(SORT_EXT_OBJS) $(CRC16_OBJS) \
+	      $(FIND_BIT_OBJS) $(DIV64_OBJS) $(IDR_OBJS) $(NOTIFIER_OBJS) $(RATELIMIT_OBJS) $(TIME_OBJS) \
 	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
-	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16
+	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
+	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time
