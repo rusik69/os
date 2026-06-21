@@ -16,6 +16,12 @@ tests/host_libc/test_crypto_ext
 tests/host_libc/test_lib_structs
 tests/host_libc/test_cipher
 tests/host_libc/test_datastructures
+tests/host_libc/test_search
+tests/host_libc/test_stdlib_ext
+tests/host_libc/test_hweight
+tests/host_libc/test_range
+tests/host_libc/test_sort_ext
+tests/host_libc/test_crc16
 tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket

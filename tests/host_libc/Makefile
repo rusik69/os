@@ -44,9 +44,28 @@ CIPHER_OBJS = aes.o aes_xts.o chacha20.o poly1305.o chacha20poly1305.o test_ciph
 KSRCDIR = ../../src/kernel
 DS_OBJS = klist.o llist.o interval_tree.o prio_tree.o cpu_bitmask.o test_datastructures.o
 
+# Search algorithm tests (qsort_ext, bsearch_ext, lfind, lsearch)
+SEARCH_OBJS = search.o test_search.o
+
+# Extended stdlib tests (strtoll, strtoull, atoll, ultoa, realloc, calloc)
+STDLIB_EXT_OBJS = stdlib_ext.o test_stdlib_ext.o
+
+# Hamming weight tests (popcount 8/16/32/64)
+HWEIGHT_OBJS = hweight.o test_hweight.o
+
+# Range management tests (sort, add, remove, contains, overlaps)
+RANGE_OBJS = range.o test_range.o
+
+# Sort extension tests (sort, swap_bytes, cmp_int/long/str)
+SORT_EXT_OBJS = sort_ext.o test_sort_ext.o
+
+# CRC-16 tests
+CRC16_OBJS = crc16.o test_crc16.o
+
 .PHONY: all clean
 
-all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures
+all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
+     test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -66,6 +85,24 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host-side data structure tests..."
 	./test_datastructures
+	@echo ""
+	@echo "Running search algorithm tests..."
+	./test_search
+	@echo ""
+	@echo "Running extended stdlib tests..."
+	./test_stdlib_ext
+	@echo ""
+	@echo "Running hamming weight tests..."
+	./test_hweight
+	@echo ""
+	@echo "Running range management tests..."
+	./test_range
+	@echo ""
+	@echo "Running sort extension tests..."
+	./test_sort_ext
+	@echo ""
+	@echo "Running CRC-16 tests..."
+	./test_crc16
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -75,9 +112,18 @@ else
 	python3 ../../tests/junit_reporter.py host-lib-structs ./test_lib_structs
 	python3 ../../tests/junit_reporter.py host-cipher ./test_cipher
 	python3 ../../tests/junit_reporter.py host-datastructures ./test_datastructures
+	python3 ../../tests/junit_reporter.py host-search ./test_search
+	python3 ../../tests/junit_reporter.py host-stdlib-ext ./test_stdlib_ext
+	python3 ../../tests/junit_reporter.py host-hweight ./test_hweight
+	python3 ../../tests/junit_reporter.py host-range ./test_range
+	python3 ../../tests/junit_reporter.py host-sort-ext ./test_sort_ext
+	python3 ../../tests/junit_reporter.py host-crc16 ./test_crc16
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
+	      host-search-results.xml host-stdlib-ext-results.xml \
+	      host-hweight-results.xml host-range-results.xml \
+	      host-sort-ext-results.xml host-crc16-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -215,6 +261,74 @@ cpu_bitmask.o: $(KSRCDIR)/cpu_bitmask.c
 test_datastructures.o: test_datastructures.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Search algorithm tests ────────────────────────────────────
+
+test_search: $(SEARCH_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+search.o: $(SRCDIR)/search.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_search.o: test_search.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Extended stdlib tests ─────────────────────────────────────
+
+test_stdlib_ext: $(STDLIB_EXT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+stdlib_ext.o: $(SRCDIR)/stdlib_ext.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_stdlib_ext.o: test_stdlib_ext.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Hamming weight tests ──────────────────────────────────────
+
+test_hweight: $(HWEIGHT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+hweight.o: $(KSRCDIR)/hweight.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_hweight.o: test_hweight.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Range management tests ────────────────────────────────────
+
+test_range: $(RANGE_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+range.o: $(KSRCDIR)/range.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_range.o: test_range.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Sort extension tests ──────────────────────────────────────
+
+test_sort_ext: $(SORT_EXT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+sort_ext.o: $(KSRCDIR)/sort_ext.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_sort_ext.o: test_sort_ext.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── CRC-16 tests ──────────────────────────────────────────────
+
+test_crc16: $(CRC16_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+crc16.o: $(CRYPTODIR)/crc16.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_crc16.o: test_crc16.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
 	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) $(DS_OBJS) \
-	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures
+	      $(SEARCH_OBJS) $(STDLIB_EXT_OBJS) $(HWEIGHT_OBJS) $(RANGE_OBJS) $(SORT_EXT_OBJS) $(CRC16_OBJS) \
+	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
+	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16
