@@ -204,3 +204,15 @@ void sha512_init_crypto(void)
 {
     kprintf("[OK] SHA-512 initialized\n");
 }
+
+/* ── Stub: hmac_sha512 ─────────────────────────────── */
+int hmac_sha512(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+{
+    (void)key;
+    (void)klen;
+    (void)msg;
+    (void)mlen;
+    (void)mac;
+    kprintf("[sha512] hmac_sha512: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -162,3 +162,42 @@ void cake_init(void)
 }
 #include "module.h"
 module_init(cake_init);
+
+/* ── Stub: cake_reset ─────────────────────────────── */
+int cake_reset(void *sch)
+{
+    (void)sch;
+    kprintf("[cake] cake_reset: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cake_destroy ─────────────────────────────── */
+int cake_destroy(void *sch)
+{
+    (void)sch;
+    kprintf("[cake] cake_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cake_change ─────────────────────────────── */
+int cake_change(void *sch, void *cfg)
+{
+    (void)sch;
+    (void)cfg;
+    kprintf("[cake] cake_change: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cake_dump ─────────────────────────────── */
+int cake_dump(void *sch, void *skb)
+{
+    (void)sch;
+    (void)skb;
+    kprintf("[cake] cake_dump: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cake_dump_stats ─────────────────────────────── */
+int cake_dump_stats(void *sch, void *d)
+{
+    (void)sch;
+    (void)d;
+    kprintf("[cake] cake_dump_stats: not yet implemented\n");
+    return -ENOSYS;
+}

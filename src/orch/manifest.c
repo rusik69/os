@@ -553,3 +553,20 @@ int manifest_list(void) {
     spinlock_release(&manifest_lock);
     return 0;
 }
+
+/* ── Stub: manifest_get ─────────────────────────────── */
+int manifest_get(const char *name, void *data)
+{
+    (void)name;
+    (void)data;
+    kprintf("[manifest] manifest_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: manifest_update ─────────────────────────────── */
+int manifest_update(const char *name, const char *yaml)
+{
+    (void)name;
+    (void)yaml;
+    kprintf("[manifest] manifest_update: not yet implemented\n");
+    return -ENOSYS;
+}

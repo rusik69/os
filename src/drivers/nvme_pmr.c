@@ -490,3 +490,20 @@ static int nvme_pmr_register_bdev(void)
             (unsigned long long)sector_count);
     return 0;
 }
+
+/* ── Stub: nvme_pmr_flush ─────────────────────────────── */
+int nvme_pmr_flush(void *dev)
+{
+    (void)dev;
+    kprintf("[nvme] nvme_pmr_flush: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nvme_pmr_secure_erase ─────────────────────────────── */
+int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
+{
+    (void)dev;
+    (void)offset;
+    (void)count;
+    kprintf("[nvme] nvme_pmr_secure_erase: not yet implemented\n");
+    return -ENOSYS;
+}

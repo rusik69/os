@@ -601,3 +601,19 @@ int tpm_attest_init(void)
     kprintf("[OK] TPM attestation initialized (/sys/kernel/security/tpm_attest/)\n");
     return 0;
 }
+
+/* ── Stub: tpm_attest_cleanup ─────────────────────────────── */
+int tpm_attest_cleanup(void)
+{
+    kprintf("[tpm] tpm_attest_cleanup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tpm_attest_get_platform_pcr ─────────────────────────────── */
+int tpm_attest_get_platform_pcr(int pcr, void *val, size_t *len)
+{
+    (void)pcr;
+    (void)val;
+    (void)len;
+    kprintf("[tpm] tpm_attest_get_platform_pcr: not yet implemented\n");
+    return -ENOSYS;
+}

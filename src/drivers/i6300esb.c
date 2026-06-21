@@ -130,3 +130,19 @@ void i6300esb_init(void)
     memset(&i6300esb, 0, sizeof(i6300esb));
     kprintf("[OK] Intel 6300ESB Watchdog Timer\n");
 }
+
+/* ── Stub: i6300esb_keepalive ─────────────────────────────── */
+int i6300esb_keepalive(void *dev)
+{
+    (void)dev;
+    kprintf("[i6300esb] i6300esb_keepalive: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: i6300esb_get_timeleft ─────────────────────────────── */
+int i6300esb_get_timeleft(void *dev, int *timeleft)
+{
+    (void)dev;
+    (void)timeleft;
+    kprintf("[i6300esb] i6300esb_get_timeleft: not yet implemented\n");
+    return -ENOSYS;
+}

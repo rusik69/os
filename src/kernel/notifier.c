@@ -36,3 +36,21 @@ int notifier_call_chain(int type, unsigned long v, void *data) {
     }
     return ret;
 }
+
+/* ── Stub: notifier_register_priority ─────────────────────────────── */
+int notifier_register_priority(void *nl, void *n, int priority)
+{
+    (void)nl;
+    (void)n;
+    (void)priority;
+    kprintf("[notifier] notifier_register_priority: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: notifier_set_priority ─────────────────────────────── */
+int notifier_set_priority(void *n, int priority)
+{
+    (void)n;
+    (void)priority;
+    kprintf("[notifier] notifier_set_priority: not yet implemented\n");
+    return -ENOSYS;
+}

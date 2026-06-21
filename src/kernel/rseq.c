@@ -211,3 +211,27 @@ void rseq_migrate(struct process *proc, int old_cpu, int new_cpu)
                 proc->pid, old_cpu, new_cpu);
     }
 }
+
+/* ── Stub: rseq_signal ─────────────────────────────── */
+int rseq_signal(void *task, int sig)
+{
+    (void)task;
+    (void)sig;
+    kprintf("[rseq] rseq_signal: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rseq_set_flags ─────────────────────────────── */
+int rseq_set_flags(void *task, uint32_t flags)
+{
+    (void)task;
+    (void)flags;
+    kprintf("[rseq] rseq_set_flags: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rseq_get_flags ─────────────────────────────── */
+uint32_t rseq_get_flags(void *task)
+{
+    (void)task;
+    kprintf("[rseq] rseq_get_flags: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -186,3 +186,20 @@ int pidfd_getfd(int pidfd, int target_fd, uint32_t flags)
 
     return new_fd; /* Note: returned directly, not fd-3 offset */
 }
+
+/* ── Stub: pidfd_poll ─────────────────────────────── */
+int pidfd_poll(void *file, void *pt)
+{
+    (void)file;
+    (void)pt;
+    kprintf("[pidfd] pidfd_poll: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pidfd_show_fdinfo ─────────────────────────────── */
+int pidfd_show_fdinfo(void *file, void *m)
+{
+    (void)file;
+    (void)m;
+    kprintf("[pidfd] pidfd_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}

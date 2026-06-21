@@ -147,3 +147,22 @@ int drm_dumb_destroy(struct drm_device *dev,
     /* Close the GEM handle (drops reference, frees if last ref) */
     return drm_gem_handle_close(dev, args->handle);
 }
+
+/* ── Stub: drm_dumb_sync ─────────────────────────────── */
+int drm_dumb_sync(void *file, void *dev, void *args)
+{
+    (void)file;
+    (void)dev;
+    (void)args;
+    kprintf("[drm] drm_dumb_sync: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: drm_dumb_mmap ─────────────────────────────── */
+int drm_dumb_mmap(void *file, void *dev, void *vma)
+{
+    (void)file;
+    (void)dev;
+    (void)vma;
+    kprintf("[drm] drm_dumb_mmap: not yet implemented\n");
+    return -ENOSYS;
+}

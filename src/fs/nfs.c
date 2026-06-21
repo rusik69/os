@@ -671,3 +671,20 @@ void nfs_init(void)
 }
 #include "module.h"
 module_init(nfs_init);
+
+/* ── Stub: nfs_readdir ─────────────────────────────── */
+int nfs_readdir(void *dir, void *filldir)
+{
+    (void)dir;
+    (void)filldir;
+    kprintf("[nfs] nfs_readdir: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: nfs_statfs ─────────────────────────────── */
+int nfs_statfs(void *sb, void *stat)
+{
+    (void)sb;
+    (void)stat;
+    kprintf("[nfs] nfs_statfs: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -93,3 +93,32 @@ void base64_init(void)
 {
     kprintf("[OK] Base64 encoder/decoder initialized\n");
 }
+
+/* ── Stub: base64_encode_alloc ─────────────────────────────── */
+int base64_encode_alloc(const uint8_t *src, size_t slen, char **dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[base64] base64_encode_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: base64_decode_alloc ─────────────────────────────── */
+int base64_decode_alloc(const char *src, size_t slen, uint8_t **dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[base64] base64_decode_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: base64_validate ─────────────────────────────── */
+int base64_validate(const char *src, size_t len)
+{
+    (void)src;
+    (void)len;
+    kprintf("[base64] base64_validate: not yet implemented\n");
+    return -ENOSYS;
+}

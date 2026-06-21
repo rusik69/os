@@ -544,3 +544,33 @@ void gpio_set_irq_mode(unsigned int pin, int mode)
 
     spinlock_release(&gpiolib_lock);
 }
+
+/* ── Stub: gpiochip_irqchip_add ─────────────────────────────── */
+int gpiochip_irqchip_add(void *chip, void *irqchip)
+{
+    (void)chip;
+    (void)irqchip;
+    kprintf("[gpio] gpiochip_irqchip_add: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gpiochip_irqchip_remove ─────────────────────────────── */
+int gpiochip_irqchip_remove(void *chip)
+{
+    (void)chip;
+    kprintf("[gpio] gpiochip_irqchip_remove: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: gpio_to_desc ─────────────────────────────── */
+void* gpio_to_desc(unsigned int gpio)
+{
+    (void)gpio;
+    kprintf("[gpio] gpio_to_desc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: desc_to_gpio ─────────────────────────────── */
+unsigned int desc_to_gpio(const void *desc)
+{
+    (void)desc;
+    kprintf("[gpio] desc_to_gpio: not yet implemented\n");
+    return -ENOSYS;
+}

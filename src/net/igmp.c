@@ -312,3 +312,20 @@ struct igmp_group *igmp_get_groups(int *count)
 }
 #include "module.h"
 module_init(igmp_init);
+
+/* ── Stub: igmp_handle_query ─────────────────────────────── */
+int igmp_handle_query(void *dev, const void *query)
+{
+    (void)dev;
+    (void)query;
+    kprintf("[igmp] igmp_handle_query: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: igmp_report_enhanced ─────────────────────────────── */
+int igmp_report_enhanced(void *dev, uint32_t addr)
+{
+    (void)dev;
+    (void)addr;
+    kprintf("[igmp] igmp_report_enhanced: not yet implemented\n");
+    return -ENOSYS;
+}

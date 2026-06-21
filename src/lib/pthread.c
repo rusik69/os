@@ -453,3 +453,93 @@ int pthread_cond_broadcast(pthread_cond_t *cond)
 
     return 0;
 }
+
+/* ── Stub: pthread_barrier_init ─────────────────────────────── */
+int pthread_barrier_init(void *barrier, const void *attr, unsigned int count)
+{
+    (void)barrier;
+    (void)attr;
+    (void)count;
+    kprintf("[pthread] pthread_barrier_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_barrier_wait ─────────────────────────────── */
+int pthread_barrier_wait(void *barrier)
+{
+    (void)barrier;
+    kprintf("[pthread] pthread_barrier_wait: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_barrier_destroy ─────────────────────────────── */
+int pthread_barrier_destroy(void *barrier)
+{
+    (void)barrier;
+    kprintf("[pthread] pthread_barrier_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_rwlock_init ─────────────────────────────── */
+int pthread_rwlock_init(void *rwlock, const void *attr)
+{
+    (void)rwlock;
+    (void)attr;
+    kprintf("[pthread] pthread_rwlock_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_rwlock_destroy ─────────────────────────────── */
+int pthread_rwlock_destroy(void *rwlock)
+{
+    (void)rwlock;
+    kprintf("[pthread] pthread_rwlock_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_rwlock_rdlock ─────────────────────────────── */
+int pthread_rwlock_rdlock(void *rwlock)
+{
+    (void)rwlock;
+    kprintf("[pthread] pthread_rwlock_rdlock: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_rwlock_wrlock ─────────────────────────────── */
+int pthread_rwlock_wrlock(void *rwlock)
+{
+    (void)rwlock;
+    kprintf("[pthread] pthread_rwlock_wrlock: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_rwlock_unlock ─────────────────────────────── */
+int pthread_rwlock_unlock(void *rwlock)
+{
+    (void)rwlock;
+    kprintf("[pthread] pthread_rwlock_unlock: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_key_create ─────────────────────────────── */
+int pthread_key_create(void *key, void *destructor)
+{
+    (void)key;
+    (void)destructor;
+    kprintf("[pthread] pthread_key_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_key_delete ─────────────────────────────── */
+int pthread_key_delete(void *key)
+{
+    (void)key;
+    kprintf("[pthread] pthread_key_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_setspecific ─────────────────────────────── */
+int pthread_setspecific(void *key, const void *value)
+{
+    (void)key;
+    (void)value;
+    kprintf("[pthread] pthread_setspecific: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pthread_getspecific ─────────────────────────────── */
+void* pthread_getspecific(void *key)
+{
+    (void)key;
+    kprintf("[pthread] pthread_getspecific: not yet implemented\n");
+    return -ENOSYS;
+}

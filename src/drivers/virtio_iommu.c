@@ -280,3 +280,36 @@ int virtio_iommu_init(void)
 }
 #include "module.h"
 module_init(virtio_iommu_init);
+
+/* ── Stub: virtio_iommu_probe ─────────────────────────────── */
+int virtio_iommu_probe(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio_iommu] virtio_iommu_probe: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_iommu_remove ─────────────────────────────── */
+int virtio_iommu_remove(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio_iommu] virtio_iommu_remove: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_iommu_iova_alloc ─────────────────────────────── */
+int virtio_iommu_iova_alloc(void *domain, size_t size, void *iova)
+{
+    (void)domain;
+    (void)size;
+    (void)iova;
+    kprintf("[virtio_iommu] virtio_iommu_iova_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_iommu_iova_free ─────────────────────────────── */
+int virtio_iommu_iova_free(void *domain, void *iova, size_t size)
+{
+    (void)domain;
+    (void)iova;
+    (void)size;
+    kprintf("[virtio_iommu] virtio_iommu_iova_free: not yet implemented\n");
+    return -ENOSYS;
+}

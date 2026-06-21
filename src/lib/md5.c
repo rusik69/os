@@ -207,3 +207,15 @@ void md5_init_crypto(void)
 {
     kprintf("[OK] MD5 initialized\n");
 }
+
+/* ── Stub: hmac_md5 ─────────────────────────────── */
+int hmac_md5(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+{
+    (void)key;
+    (void)klen;
+    (void)msg;
+    (void)mlen;
+    (void)mac;
+    kprintf("[md5] hmac_md5: not yet implemented\n");
+    return -ENOSYS;
+}

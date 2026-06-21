@@ -118,3 +118,18 @@ void irq_work_init(void)
     }
     kprintf("[OK] irq_work: IRQ work queues initialised\n");
 }
+
+/* ── Stub: irq_work_is_pending ─────────────────────────────── */
+int irq_work_is_pending(void *work)
+{
+    (void)work;
+    kprintf("[irq_work] irq_work_is_pending: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: irq_work_claim ─────────────────────────────── */
+int irq_work_claim(void *work)
+{
+    (void)work;
+    kprintf("[irq_work] irq_work_claim: not yet implemented\n");
+    return -ENOSYS;
+}

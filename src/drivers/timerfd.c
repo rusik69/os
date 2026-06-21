@@ -240,3 +240,20 @@ void timerfd_close(int fd)
     tfd->next_expiry_ticks = 0;
     tfd->expirations = 0;
 }
+
+/* ── Stub: timerfd_poll ─────────────────────────────── */
+int timerfd_poll(void *file, void *pt)
+{
+    (void)file;
+    (void)pt;
+    kprintf("[timerfd] timerfd_poll: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timerfd_show_fdinfo ─────────────────────────────── */
+int timerfd_show_fdinfo(void *file, void *m)
+{
+    (void)file;
+    (void)m;
+    kprintf("[timerfd] timerfd_show_fdinfo: not yet implemented\n");
+    return -ENOSYS;
+}

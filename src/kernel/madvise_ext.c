@@ -306,3 +306,28 @@ int madvise_mergeable(uint64_t addr, uint64_t len)
 {
     return walk_user_pages(addr, len, op_mergeable);
 }
+
+/* ── Stub: madvise_remove ─────────────────────────────── */
+int madvise_remove(uint64_t addr, size_t len)
+{
+    (void)addr;
+    (void)len;
+    kprintf("[madvise] madvise_remove: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: madvise_hugepage ─────────────────────────────── */
+int madvise_hugepage(uint64_t addr, size_t len)
+{
+    (void)addr;
+    (void)len;
+    kprintf("[madvise] madvise_hugepage: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: madvise_nohugepage ─────────────────────────────── */
+int madvise_nohugepage(uint64_t addr, size_t len)
+{
+    (void)addr;
+    (void)len;
+    kprintf("[madvise] madvise_nohugepage: not yet implemented\n");
+    return -ENOSYS;
+}

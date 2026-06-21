@@ -156,3 +156,15 @@ void sha256_init_crypto(void)
 {
     kprintf("[OK] SHA-256 initialized\n");
 }
+
+/* ── Stub: hmac_sha256 ─────────────────────────────── */
+int hmac_sha256(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+{
+    (void)key;
+    (void)klen;
+    (void)msg;
+    (void)mlen;
+    (void)mac;
+    kprintf("[sha256] hmac_sha256: not yet implemented\n");
+    return -ENOSYS;
+}
