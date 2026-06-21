@@ -25,6 +25,152 @@
 
 /* ── Big-endian helpers ──────────────────────────────────────────── */
 
+/* LUKS2 constants */
+#define LUKS2_MAGIC       "LUKS\xBA\xBE"
+#define LUKS2_MAGIC_LEN   6
+#define LUKS2_SECTOR_SIZE 512
+#define LUKS2_HDR_SIZE    4096
+#define LUKS2_MAX_JSON    4096  /* max JSON area size after binary header */
+
+/* LUKS2 binary header (first 512 bytes of offset 0) */
+struct luks2_header {
+    uint8_t  magic[6];
+    uint16_t version;       /* 2 */
+    uint32_t hdr_size;      /* size of this header (usually 4096) */
+    uint64_t seqid;         /* header sequence ID */
+    uint8_t  label[48];
+    uint8_t  csum_type[32]; /* null-terminated string */
+    uint8_t  salt[64];
+    uint8_t  uuid[40];
+    uint8_t  subsystem[48];
+    uint32_t hdr_offset;    /* offset of this header (0 or 4096) */
+    uint8_t  _pad[184];     /* padding to 512 bytes */
+    /* After this, JSON area starts at offset 512 */
+} __attribute__((packed));
+
+/* Parse LUKS2 header */
+static int luks2_parse_header(int dev_id, struct luks_header *hdr)
+{
+    uint8_t raw[LUKS2_HDR_SIZE];
+    int ret;
+
+    if (!hdr)
+        return -EINVAL;
+
+    /* Read binary header (first 4KB) */
+    ret = blk_submit_sync(dev_id, 0, LUKS2_HDR_SIZE / 512, raw, BLK_REQ_READ);
+    if (ret < 0) {
+        kprintf("[luks2] read header failed: %d\n", ret);
+        return ret;
+    }
+
+    struct luks2_header *h2 = (struct luks2_header *)raw;
+
+    /* Verify magic */
+    if (memcmp(h2->magic, LUKS2_MAGIC, LUKS2_MAGIC_LEN) != 0) {
+        kprintf("[luks2] bad magic\n");
+        return -EINVAL;
+    }
+
+    kprintf("[luks2] LUKS v2 header detected: seqid=%llu, hdr_size=%u\n",
+            (unsigned long long)h2->seqid, h2->hdr_size);
+
+    /* Parse JSON area (text after binary header, at offset 512) */
+    /* The LUKS2 JSON area contains keyslot descriptions, cipher info, etc.
+     * We do a simplified parse to find active keyslots. */
+    const char *json = (const char *)(raw + 512);
+    uint32_t json_max = h2->hdr_size - 512;
+    if (json_max > LUKS2_MAX_JSON) json_max = LUKS2_MAX_JSON;
+    json[json_max - 1] = '\0';
+
+    kprintf("[luks2] JSON area (%u bytes):\n%.256s\n", json_max, json);
+
+    /* Find keyslot info in JSON: look for "active":true patterns */
+    int keyslots_found = 0;
+    const char *ks_search = json;
+    while (ks_search && *ks_search && (uint32_t)(ks_search - json) < json_max) {
+        const char *ks_key = strstr(ks_search, "\"keyslots\"");
+        if (!ks_key) break;
+
+        /* Find keyslot names (e.g., "0": { ... }) */
+        const char *slot_start = ks_key + 10;
+        for (int slot = 0; slot < LUKS_KEY_SLOTS && slot < 8; slot++) {
+            char slot_tag[8];
+            snprintf(slot_tag, sizeof(slot_tag), "\"%d\":", slot);
+            const char *s = strstr(slot_start, slot_tag);
+            if (!s) continue;
+
+            /* Check if active */
+            const char *active = strstr(s, "\"active\"");
+            if (active) {
+                const char *val = active + 8;
+                while (*val == ' ' || *val == ':') val++;
+                if (strncmp(val, "true", 4) == 0 ||
+                    strncmp(val, "\"true\"", 6) == 0) {
+                    hdr->key_slots[slot].state = LUKS_SLOT_ACTIVE;
+
+                    /* Find key_size, stripes, etc. */
+                    const char *ks = strstr(s, "\"key_size\"");
+                    if (ks) {
+                        const char *kv = ks + 9;
+                        while (*kv == ' ' || *kv == ':') kv++;
+                        int ks_val = 0;
+                        while (*kv >= '0' && *kv <= '9') {
+                            ks_val = ks_val * 10 + (*kv - '0');
+                            kv++;
+                        }
+                        hdr->key_bytes = (uint32_t)ks_val;
+                    }
+
+                    const char *stripes = strstr(s, "\"stripes\"");
+                    if (stripes) {
+                        const char *sv = stripes + 8;
+                        while (*sv == ' ' || *sv == ':') sv++;
+                        int st_val = 0;
+                        while (*sv >= '0' && *sv <= '9') {
+                            st_val = st_val * 10 + (*sv - '0');
+                            sv++;
+                        }
+                        hdr->key_slots[slot].stripes = (uint32_t)st_val;
+                    }
+
+                    /* Find AF stripes offset */
+                    const char *af_offset = strstr(s, "\"area\"");
+                    if (af_offset) {
+                        const char *off_str = strstr(af_offset, "\"offset\"");
+                        if (off_str) {
+                            const char *ov = off_str + 7;
+                            while (*ov == ' ' || *ov == ':') ov++;
+                            uint64_t off_val = 0;
+                            while (*ov >= '0' && *ov <= '9') {
+                                off_val = off_val * 10 + (*ov - '0');
+                                ov++;
+                            }
+                            hdr->key_slots[slot].key_material_offset =
+                                (uint32_t)(off_val / 512);
+                        }
+                    }
+
+                    keyslots_found++;
+                    kprintf("[luks2] keyslot %d: active, key_size=%u, "
+                            "offset=%u\n",
+                            slot, hdr->key_bytes,
+                            hdr->key_slots[slot].key_material_offset);
+                }
+            }
+        }
+        break;
+    }
+
+    /* Set version and payload offset */
+    hdr->version = 2;
+    hdr->payload_offset = (h2->hdr_size * 2) / 512; /* primary + secondary header */
+
+    kprintf("[luks2] Parsed: %d active keyslots, payload_offset=%u\n",
+            keyslots_found, hdr->payload_offset);
+    return 0;
+}
+
 static uint16_t be16_to_cpu(const uint8_t *b)
 {
     return ((uint16_t)b[0] << 8) | (uint16_t)b[1];
@@ -112,8 +258,8 @@ int luks_parse_header(int dev_id, struct luks_header *hdr)
 
     /* Verify magic */
     if (memcmp(raw, LUKS_MAGIC, LUKS_MAGIC_LEN) != 0) {
-        kprintf("[luks] bad magic\n");
-        return -EINVAL;
+        /* Try LUKS2 format */
+        return luks2_parse_header(dev_id, hdr);
     }
 
     /* Parse header */

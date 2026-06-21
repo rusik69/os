@@ -2276,9 +2276,27 @@ void cc_parse(CompilerState *cc) {
             advance(cc);
             parse_struct_def(cc, 0);
             /* optional variable declaration after struct def */
-            if (cur(cc)->type == TK_IDENT) {
-                /* struct Foo x; */
-                advance(cc); /* skip for now */
+            while (cur(cc)->type == TK_IDENT) {
+                /* struct Foo x, *y, z[10]; — parse variable names */
+                advance(cc); /* consume identifier */
+                /* Handle pointer declarator */
+                while (cur(cc)->type == TK_STAR) {
+                    advance(cc);
+                }
+                /* Handle array declarator: identifier[expr] */
+                if (cur(cc)->type == TK_LBRACKET) {
+                    advance(cc);
+                    while (cur(cc)->type != TK_RBRACKET && cur(cc)->type != TK_EOF)
+                        advance(cc);
+                    if (cur(cc)->type == TK_RBRACKET)
+                        advance(cc);
+                }
+                /* Handle comma separator */
+                if (cur(cc)->type == TK_COMMA) {
+                    advance(cc);
+                    continue;
+                }
+                break;
             }
             if (cur(cc)->type == TK_SEMI) { advance(cc); continue; }
             continue;

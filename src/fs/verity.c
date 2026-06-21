@@ -340,6 +340,23 @@ int fsverity_ioctl_enable(const char *path, void *arg)
 }
 EXPORT_SYMBOL(fsverity_ioctl_enable);
 
+/* fsverity_measure: return the Merkle tree root hash for a file.
+ * Returns 0 on success with root_hash filled in, -ENOENT if verity not enabled. */
+int fsverity_measure(const char *path, uint8_t root_hash[VERITY_HASH_SIZE])
+{
+    if (!path || !root_hash)
+        return -EINVAL;
+
+    /* Get inode number via stat */
+    struct vfs_stat st;
+    int ret = vfs_stat(path, &st);
+    if (ret < 0)
+        return ret;
+
+    return fsverity_get_root_hash(st.ino, root_hash);
+}
+EXPORT_SYMBOL(fsverity_measure);
+
 /* Verify a single data block against the Merkle tree.
  *
  * @ino:   inode number

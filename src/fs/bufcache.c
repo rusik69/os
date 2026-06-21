@@ -57,6 +57,42 @@ static uint64_t g_total_accesses = 0;
 static uint64_t g_evictions = 0;
 static uint64_t g_dirty_forced_writes = 0;
 
+/* ── Per-device dirty writeback throttle ───────────────────────────── */
+#define BC_MAX_DIRTY_PER_DEV 32   /* max dirty buffers per device before throttling */
+static uint8_t  g_dirty_count_per_dev[256]; /* per-device dirty buffer counter */
+
+/* Throttle: if a device has too many dirty buffers, flush them */
+static void bufcache_throttle_writes(uint8_t dev_id) {
+    if (g_dirty_count_per_dev[dev_id] >= BC_MAX_DIRTY_PER_DEV) {
+        kprintf("[bufcache] writeback throttle: dev=%u has %u dirty buffers "
+                "(limit=%u)\n",
+                dev_id, g_dirty_count_per_dev[dev_id], BC_MAX_DIRTY_PER_DEV);
+
+        /* Flush all dirty buffers for this device */
+        uint64_t irq_flags;
+        spinlock_irqsave_acquire(&g_bc_lock, &irq_flags);
+        int flushed = 0;
+        for (int i = 0; i < BC_CAPACITY; i++) {
+            if (g_entries[i].valid && g_entries[i].dirty &&
+                g_entries[i].dev_id == dev_id && g_entries[i].refcount == 0) {
+                if (blockdev_write_sectors(dev_id, (uint32_t)g_entries[i].lba,
+                                            1, g_entries[i].data) == 0) {
+                    g_entries[i].dirty = 0;
+                    g_writes++;
+                    flushed++;
+                }
+            }
+        }
+        g_dirty_count_per_dev[dev_id] = 0;
+        spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+        if (flushed > 0) {
+            kprintf("[bufcache] throttled writeback: flushed %d buffers for dev=%u\n",
+                    flushed, dev_id);
+        }
+    }
+}
+
 /* Working-set estimation: track access frequency per entry */
 #define WS_DECAY_SHIFT 4  /* exponential decay factor */
 static uint32_t g_ws_est = 0;  /* working set estimate (active entries count) */
@@ -323,8 +359,12 @@ int bufcache_mark_dirty(uint64_t lba, uint8_t dev_id) {
     }
 
     g_entries[idx].dirty = 1;
+    g_dirty_count_per_dev[dev_id]++;
     lru_touch(idx);
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    /* Throttle: flush if too many dirty buffers on this device */
+    bufcache_throttle_writes(dev_id);
     return 0;
 }
 
@@ -343,6 +383,7 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
         struct bc_entry *e = &g_entries[idx];
         memcpy(e->data, data, SECT_SIZE);
         e->dirty = 1;
+        g_dirty_count_per_dev[dev_id]++;
         lru_touch(idx);
         g_writes++;
         g_total_accesses++;
@@ -371,12 +412,16 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     e->dev_id = dev_id;
     e->valid = 1;
     e->dirty = 1;
+    g_dirty_count_per_dev[dev_id]++;
     memcpy(e->data, data, SECT_SIZE);
     hash_insert(victim);
     lru_push_head(victim);
     g_count++;
 
     spinlock_irqsave_release(&g_bc_lock, irq_flags);
+
+    /* Throttle: flush if too many dirty buffers on this device */
+    bufcache_throttle_writes(dev_id);
     return 0;
 }
 

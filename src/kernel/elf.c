@@ -757,6 +757,22 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     if (!parent || !parent->is_user)
         return -ECHILD;
 
+    /* ── 0. Check file execute permission ────────────────────────── */
+    {
+        struct vfs_stat st;
+        if (vfs_stat(path, &st) < 0)
+            return -ENOENT;
+        /* Verify at least one execute bit is set */
+        if (!(st.mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
+            return -EACCES;
+        /* If uid matches, owner execute must be set */
+        if (st.uid == parent->uid && !(st.mode & S_IXUSR))
+            return -EACCES;
+        /* If gid matches, group execute must be set */
+        if (st.gid == parent->gid && !(st.mode & S_IXGRP))
+            return -EACCES;
+    }
+
     /* ── 1. Read the ELF file ───────────────────────────────────── */
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
     if (!buf) return -ENOMEM;

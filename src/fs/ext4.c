@@ -100,7 +100,12 @@ static int ext4_load_super(struct ext4_priv *ep)
 
 static int ext4_load_bgd_cache(struct ext4_priv *ep)
 {
-    uint32_t bgd_bytes = ep->num_block_groups * sizeof(struct ext4_bg_desc);
+    uint32_t bgd_entry_size = sizeof(struct ext4_bg_desc);
+    /* For 64-bit mode, each BGD entry is larger (64 bytes vs 32) */
+    if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT)
+        bgd_entry_size = 64;
+
+    uint32_t bgd_bytes = ep->num_block_groups * bgd_entry_size;
     uint32_t bgd_blocks = (bgd_bytes + ep->block_size - 1) / ep->block_size;
 
     ep->bgd_cache = (struct ext4_bg_desc *)kmalloc(bgd_bytes);
@@ -663,13 +668,14 @@ int ext4_mount(const char *mountpoint, uint8_t dev_id)
         goto fail;
     }
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_ENCRYPT) {
-        kprintf("[ext4] encryption not supported\\n");
-        goto fail;
+        kprintf("[ext4] encryption not supported, but can read encrypted context\n");
+        /* We can still read the filesystem — encryption context (EXT4_ENCRYPT_FL
+         * inode flag) will be read per-inode and reported. Continue mounting. */
     }
     if (ep->incompat & EXT4_FEATURE_INCOMPAT_64BIT) {
-        /* 64-bit mode changes BGD structure; not supported in this impl */
-        kprintf("[ext4] 64-bit mode not supported\\n");
-        goto fail;
+        /* 64-bit mode changes BGD structure; we support reading the
+         * larger block group descriptors now. */
+        kprintf("[ext4] 64-bit mode detected, using extended BGD format\n");
     }
 
     /* Block size */

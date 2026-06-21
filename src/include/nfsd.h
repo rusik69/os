@@ -99,12 +99,19 @@ struct nfs3_fhandle {
     uint8_t  data[NFSD_MAX_FH_SIZE];
 };
 
+#define NFSD_SQUASH_NONE  0  /* no squashing */
+#define NFSD_SQUASH_ROOT 1  /* squash root (UID 0) to anon_uid/anongid */
+#define NFSD_SQUASH_ALL  2  /* squash all users to anon_uid/anongid */
+
 /* Export entry — maps an NFS path to a local directory */
 struct nfsd_export {
     int    valid;
     char   export_path[NFSD_MAX_PATH]; /* NFS export name, e.g. "/export" */
     char   local_path[NFSD_MAX_PATH];  /* local directory path */
     struct vfs_stat st;                /* cached stat of root */
+    int    squash;                     /* NFSD_SQUASH_* */
+    uint16_t anon_uid;
+    uint16_t anon_gid;
 };
 
 /* NFSD RPC state (per TCP connection) */

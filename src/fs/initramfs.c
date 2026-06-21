@@ -62,6 +62,12 @@ static uint32_t align4(uint32_t v) {
 #ifndef S_ISREG
 #define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
 #endif
+#ifndef S_IFLNK
+#define S_IFLNK  0120000
+#endif
+#ifndef S_ISLNK
+#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
+#endif
 
 /* ── Embedded initramfs linker symbols (weak, may be absent) ── */
 extern uint8_t _binary_build_initramfs_cpio_start[] __attribute__((weak));
@@ -152,6 +158,23 @@ int initramfs_extract(void) {
                             kprintf("[initramfs] Failed to create empty: %s\n", namebuf);
                         }
                     }
+                }
+            } else if (S_ISLNK(mode)) {
+                /* Symbolic link: extract symlink target from file data */
+                char link_target[256];
+                uint32_t link_len = filesize;
+                if (link_len > sizeof(link_target) - 1)
+                    link_len = sizeof(link_target) - 1;
+                memcpy(link_target, (const void *)(start + data_offset), link_len);
+                link_target[link_len] = '\0';
+
+                kprintf("[initramfs]   symlink: %s -> %s\n", namebuf, link_target);
+
+                /* Create symlink via VFS */
+                int ret = vfs_symlink(namebuf, link_target);
+                if (ret < 0) {
+                    kprintf("[initramfs] Failed to create symlink %s -> %s (%d)\n",
+                            namebuf, link_target, ret);
                 }
             }
             /* Skip symlinks for now — we can add S_ISLNK later if needed */

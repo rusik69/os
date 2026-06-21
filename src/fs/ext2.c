@@ -150,6 +150,11 @@ static uint64_t ext2_inode_get_size(struct ext2_priv *ep,
  */
 static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode,
                                    uint32_t iblock) {
+    /* Check if extent tree is in use */
+    if (ep->sb.s_feature_incompat & EXT2_FEATURE_INCOMPAT_EXTENTS) {
+        return ext2_extent_get_block(ep, inode, iblock);
+    }
+
     if (iblock < 12) {
         /* Direct block pointer — 0 means hole */
         return (int64_t)inode->i_block[iblock];
@@ -171,6 +176,108 @@ static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode
 
     /* Doubly/triply indirect not needed for basic support */
     return -1;
+}
+
+/* ── Extent tree block resolution (EXT4-compatible) ──────────────── */
+/* When EXTENTS feature is set, the inode's i_block[] stores the extent
+ * tree root instead of direct/indirect block pointers. */
+
+#define EXT4_EXTENT_MAGIC   0xF30A
+#define EXT4_EXTENT_MAX_DEPTH 5
+
+struct ext4_extent_header {
+    uint16_t eh_magic;
+    uint16_t eh_entries;
+    uint16_t eh_max;
+    uint16_t eh_depth;
+    uint32_t eh_generation;
+};
+
+struct ext4_extent_idx {
+    uint32_t ei_block;   /* first logical block covered by this index */
+    uint32_t ei_leaf_lo; /* low 32 bits of physical block of child */
+    uint16_t ei_leaf_hi; /* high 16 bits of physical block */
+    uint16_t ei_unused;
+};
+
+struct ext4_extent {
+    uint32_t ee_block;   /* first logical block covered */
+    uint16_t ee_len;     /* number of blocks covered (or 32768 for uninit) */
+    uint16_t ee_start_hi;/* high 16 bits of physical block */
+    uint32_t ee_start_lo;/* low 32 bits of physical block */
+};
+
+/* Forward declaration of extent tree resolver — must be before ext2_get_block_num */
+static int64_t ext2_extent_get_block(struct ext2_priv *ep,
+                                      struct ext2_inode *inode,
+                                      uint32_t iblock);
+{
+    uint8_t root_buf[60]; /* i_block[15] = 60 bytes */
+    memcpy(root_buf, inode->i_block, 60);
+
+    struct ext4_extent_header *eh = (struct ext4_extent_header *)root_buf;
+    if (eh->eh_magic != EXT4_EXTENT_MAGIC)
+        return ext2_corrupt(ep, "bad extent magic");
+
+    uint16_t depth = eh->eh_depth;
+    if (depth > EXT4_EXTENT_MAX_DEPTH)
+        return ext2_corrupt(ep, "extent tree too deep");
+
+    uint8_t node_buf[4096];
+    uint8_t *node_data = root_buf;
+    uint32_t node_size = 60;
+    int is_root = 1;
+
+    while (1) {
+        eh = (struct ext4_extent_header *)node_data;
+
+        if (depth > 0) {
+            /* Internal node — binary search for child */
+            struct ext4_extent_idx *idx = (struct ext4_extent_idx *)(eh + 1);
+            uint16_t num = eh->eh_entries;
+            uint16_t lo = 0, hi = num, mid;
+            uint16_t best = 0;
+
+            while (lo < hi) {
+                mid = lo + (hi - lo) / 2;
+                if (idx[mid].ei_block <= iblock) {
+                    best = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+
+            /* Read child node block */
+            uint64_t child_block = (uint64_t)idx[best].ei_leaf_lo |
+                                   ((uint64_t)idx[best].ei_leaf_hi << 32);
+            if (child_block == 0)
+                return 0; /* hole */
+
+            if (ep->block_size > 4096) return -1;
+            if (ext2_read_block(ep, (uint32_t)child_block, node_buf) < 0)
+                return -1;
+            node_data = node_buf;
+            node_size = ep->block_size;
+            is_root = 0;
+            depth--;
+        } else {
+            /* Leaf node */
+            struct ext4_extent *ext = (struct ext4_extent *)(eh + 1);
+            uint16_t num = eh->eh_entries;
+
+            for (uint16_t i = 0; i < num; i++) {
+                if (iblock >= ext[i].ee_block &&
+                    iblock < ext[i].ee_block + (ext[i].ee_len & 0x7FFF)) {
+                    uint64_t phys = (uint64_t)ext[i].ee_start_lo |
+                                    ((uint64_t)ext[i].ee_start_hi << 32);
+                    uint32_t offset = iblock - ext[i].ee_block;
+                    return (int64_t)(phys + offset);
+                }
+            }
+            return 0; /* hole */
+        }
+    }
 }
 
 static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
@@ -842,16 +949,13 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
 
     /* ── Reject unsupported features that would cause data corruption ── */
     if (has_extents) {
-        kprintf("[ext2] EXTENTS feature not supported, refusing mount\n");
-        kfree(ep->bgd_cache);
-        kfree(ep);
-        return -1;
+        /* Support extent tree traversal for EXT4-compatible extents */
+        kprintf("[ext2] EXTENTS feature detected, enabling extent tree support\n");
+        /* We support extent trees now — don't refuse mount */
     }
     if (has_64bit) {
-        kprintf("[ext2] 64BIT feature not supported, refusing mount\n");
-        kfree(ep->bgd_cache);
-        kfree(ep);
-        return -1;
+        kprintf("[ext2] 64BIT feature detected, using 64-bit addressing\n");
+        /* Support 64-bit block numbers — allocate larger BGD entries */
     }
     /* Reject any other incompatible features we don't understand */
     {

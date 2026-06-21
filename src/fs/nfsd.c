@@ -840,7 +840,117 @@ int nfsd_init(void)
     memset(nfsd_exports, 0, sizeof(nfsd_exports));
     nfsd_num_exports = 0;
 
-    kprintf("[nfsd] NFSv3 server initialized\\n");
+    /* Parse /etc/exports to populate exports list */
+    uint8_t exports_buf[4096];
+    uint32_t exports_size = 0;
+    int ret = vfs_read("/etc/exports", exports_buf, sizeof(exports_buf), &exports_size);
+    if (ret == 0 && exports_size > 0) {
+        kprintf("[nfsd] Parsing /etc/exports (%u bytes)\n", exports_size);
+        exports_buf[exports_size] = '\0';
+
+        /* Simple line-based exports parser */
+        char *line_start = (char *)exports_buf;
+        char *p = line_start;
+        int in_line = 0;
+
+        while (*p && nfsd_num_exports < NFSD_MAX_EXPORTS) {
+            /* Skip whitespace and newlines */
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
+                p++;
+            if (*p == '\0') break;
+            if (*p == '#') {
+                /* Skip comment lines */
+                while (*p && *p != '\n') p++;
+                continue;
+            }
+
+            line_start = p;
+            /* Find end of line */
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') *p++ = '\0';
+            else *p = '\0';
+
+            /* Format: /export/path /local/path (ro,no_root_squash,...) */
+            char export_path[256], local_path[256];
+            char options[256];
+            export_path[0] = '\0';
+            local_path[0] = '\0';
+            options[0] = '\0';
+
+            int parsed = sscanf(line_start, "%255s %255s %255[^\n]",
+                                export_path, local_path, options);
+            if (parsed >= 2 && export_path[0] == '/') {
+                struct nfsd_export *ex = &nfsd_exports[nfsd_num_exports];
+                memset(ex, 0, sizeof(*ex));
+                strncpy(ex->export_path, export_path, sizeof(ex->export_path) - 1);
+                strncpy(ex->local_path, local_path, sizeof(ex->local_path) - 1);
+
+                /* Parse squash options */
+                ex->squash = NFSD_SQUASH_NONE;
+                ex->anon_uid = 65534;
+                ex->anon_gid = 65534;
+
+                if (options[0] != '\0') {
+                    char *opt = options;
+                    /* Skip leading parentheses */
+                    if (*opt == '(') opt++;
+                    while (*opt) {
+                        if (*opt == ')' || *opt == ',' || *opt == ' ') {
+                            opt++;
+                            continue;
+                        }
+                        if (strncmp(opt, "root_squash", 11) == 0) {
+                            ex->squash = NFSD_SQUASH_ROOT;
+                            opt += 11;
+                        } else if (strncmp(opt, "all_squash", 10) == 0) {
+                            ex->squash = NFSD_SQUASH_ALL;
+                            opt += 10;
+                        } else if (strncmp(opt, "no_root_squash", 14) == 0) {
+                            ex->squash = NFSD_SQUASH_NONE;
+                            opt += 14;
+                        } else if (strncmp(opt, "anonuid", 7) == 0) {
+                            opt += 7;
+                            if (*opt == '=') opt++;
+                            int uid = 0;
+                            while (*opt >= '0' && *opt <= '9') {
+                                uid = uid * 10 + (*opt - '0');
+                                opt++;
+                            }
+                            ex->anon_uid = (uint16_t)uid;
+                        } else if (strncmp(opt, "anongid", 7) == 0) {
+                            opt += 7;
+                            if (*opt == '=') opt++;
+                            int gid = 0;
+                            while (*opt >= '0' && *opt <= '9') {
+                                gid = gid * 10 + (*opt - '0');
+                                opt++;
+                            }
+                            ex->anon_gid = (uint16_t)gid;
+                        } else {
+                            opt++; /* skip unknown char */
+                        }
+                    }
+                }
+
+                /* Verify the local path exists */
+                struct vfs_stat st;
+                if (vfs_stat(local_path, &st) == 0) {
+                    ex->st = st;
+                    ex->valid = 1;
+                    nfsd_num_exports++;
+                    kprintf("[nfsd] Export: %s -> %s (squash=%d, uid=%d, gid=%d)\n",
+                            export_path, local_path, ex->squash,
+                            ex->anon_uid, ex->anon_gid);
+                } else {
+                    kprintf("[nfsd] Export path not accessible: %s\n", local_path);
+                }
+            }
+        }
+    } else {
+        kprintf("[nfsd] No /etc/exports found, using defaults\n");
+    }
+
+    kprintf("[nfsd] NFSv3 server initialized: %d exports\n", nfsd_num_exports);
     return 0;
 }
 

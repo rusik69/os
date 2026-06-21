@@ -147,7 +147,13 @@ struct btrfs_root_item {
     uint64_t otransid;
     uint64_t stransid;
     uint64_t rtransid;
-    uint8_t  _pad[8];
+    uint64_t last_snapshot;
+    uint64_t byte_limit;
+    uint64_t bytes_used;
+    uint64_t last_snapshot_tranid;
+    uint8_t  init;
+    uint8_t  _pad2[7];
+    uint32_t root_refs;
 } __attribute__((packed));
 
 struct btrfs_dir_item {

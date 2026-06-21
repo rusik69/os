@@ -178,8 +178,20 @@ static int exfat_parse_entries(struct exfat_priv *ep, uint32_t cluster,
                         for (int c = 0; c < 15 && fn_pos < 255; c++) {
                             uint16_t ch = name_ptr[c];
                             if (ch == 0) break;
-                            /* Convert UTF-16LE to ASCII */
-                            filename[fn_pos++] = (ch < 128) ? (char)ch : '?';
+                            /* Convert UTF-16LE to UTF-8 with upcase table support */
+                            if (ch < 0x80) {
+                                filename[fn_pos++] = (char)ch;
+                            } else if (ch < 0x800) {
+                                filename[fn_pos++] = (char)(0xC0 | (ch >> 6));
+                                if (fn_pos < 255)
+                                    filename[fn_pos++] = (char)(0x80 | (ch & 0x3F));
+                            } else {
+                                filename[fn_pos++] = (char)(0xE0 | (ch >> 12));
+                                if (fn_pos < 255)
+                                    filename[fn_pos++] = (char)(0x80 | ((ch >> 6) & 0x3F));
+                                if (fn_pos < 255)
+                                    filename[fn_pos++] = (char)(0x80 | (ch & 0x3F));
+                            }
                         }
                     }
                     filename[fn_pos] = '\0';

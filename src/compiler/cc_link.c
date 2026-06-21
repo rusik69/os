@@ -276,7 +276,23 @@ int cc_link(const char **obj_paths, int nobj, const char *outpath,
             uint8_t binding = st_info >> 4;
             uint8_t stype = st_info & 0xf;
 
-            if (stype == 3) continue; /* skip section symbols for now */
+            if (stype == 3) {
+                /* Section symbol — register in symbol table */
+                int sym_section = 0;
+                uint64_t sym_value = 0;
+                if (st_shndx == 1) { /* .text */
+                    sym_section = 1;
+                    sym_value = (uint64_t)(objs[oi].text_offset);
+                } else if (st_shndx == 2) { /* .data */
+                    sym_section = 2;
+                    sym_value = (uint64_t)(objs[oi].data_offset);
+                }
+                const char *sname = strtab_p ? (const char *)(strtab_p + st_name) : "";
+                if (sname[0]) {
+                    link_add_sym(syms, &nsyms, sname, 0, sym_section, sym_value, oi);
+                }
+                continue;
+            }
             if (binding != STB_GLOBAL) continue; /* skip locals */
 
             const char *sname = strtab_p ? (const char *)(strtab_p + st_name) : "";

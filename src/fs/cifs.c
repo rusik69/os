@@ -215,11 +215,20 @@ static void smb2_build_header(uint8_t **p, uint16_t command,
     *p += 16;
 }
 
-/* ── SMB2 Negotiate ────────────────────────────────────────────────── */
+/* ── SMB2 Negotiate (multi-dialect) ──────────────────────────────────── */
+
+/* Dialect revision table: highest first */
+static const uint16_t smb2_dialects[] = {
+    0x0311, /* SMB 3.1.1 */
+    0x0300, /* SMB 3.0 */
+    0x0210, /* SMB 2.1 */
+    0x0202, /* SMB 2.0.2 */
+};
+#define SMB2_NUM_DIALECTS (sizeof(smb2_dialects) / sizeof(smb2_dialects[0]))
 
 static int cifs_smb2_negotiate(struct cifs_mount_info *mnt)
 {
-    uint8_t buf[1024];
+    uint8_t buf[2048];
     uint8_t *p = buf;
 
     /* SMB2 negotiate request */
@@ -229,7 +238,7 @@ static int cifs_smb2_negotiate(struct cifs_mount_info *mnt)
     smb2_put16(&p, 36);
 
     /* Dialect count (2 bytes) */
-    smb2_put16(&p, 1);
+    smb2_put16(&p, (uint16_t)SMB2_NUM_DIALECTS);
 
     /* Security mode (2 bytes) */
     smb2_put16(&p, SMB2_NEGOTIATE_SIGNING_ENABLED);
@@ -238,7 +247,7 @@ static int cifs_smb2_negotiate(struct cifs_mount_info *mnt)
     smb2_put16(&p, 0);
 
     /* Capabilities (4 bytes) */
-    smb2_put32(&p, SMB2_GLOBAL_CAP_DFS);
+    smb2_put32(&p, SMB2_GLOBAL_CAP_DFS | SMB2_GLOBAL_CAP_LARGE_MTU);
 
     /* Client GUID (16 bytes) — random-ish */
     for (int i = 0; i < 16; i++)
@@ -247,11 +256,13 @@ static int cifs_smb2_negotiate(struct cifs_mount_info *mnt)
     /* Negotiate context offset (4 bytes) — 0 for simple negotiation */
     smb2_put32(&p, 0);
 
-    /* Pad (2 bytes) */
+    /* Reserved (2 bytes) */
     smb2_put16(&p, 0);
 
-    /* Dialect(s) */
-    smb2_put16(&p, SMB2_DIALECT_REVISION_202);
+    /* Dialect(s) — offer all supported dialects */
+    for (uint32_t d = 0; d < SMB2_NUM_DIALECTS; d++) {
+        smb2_put16(&p, smb2_dialects[d]);
+    }
 
     /* Reserved (2 bytes) */
     smb2_put16(&p, 0);
@@ -313,7 +324,20 @@ static int cifs_smb2_negotiate(struct cifs_mount_info *mnt)
     mnt->dialect_revision = dialect_revision;
 
     if (dialect_revision != SMB2_DIALECT_REVISION_202)
-        kprintf("[cifs] negotiated dialect 0x%04x (not 0x0202)\\n", dialect_revision);
+        kprintf("[cifs] negotiated dialect 0x%04x\n", dialect_revision);
+
+    /* Select the highest mutually-supported dialect */
+    int selected = 0;
+    for (uint32_t d = 0; d < SMB2_NUM_DIALECTS; d++) {
+        if (smb2_dialects[d] == dialect_revision) {
+            selected = 1;
+            break;
+        }
+    }
+    if (!selected) {
+        kprintf("[cifs] WARNING: server dialect 0x%04x not in our list\n",
+                dialect_revision);
+    }
 
     /* Security mode */
     smb2_get16(&rp);
