@@ -4,6 +4,7 @@
 #include "pid_namespace.h"
 #include "cgroup_namespace.h"
 #include "mnt_namespace.h"
+#include "ipc_namespace.h"
 #include "user_namespace.h"
 #include "ioprio.h"
 #include "scheduler.h"
@@ -1835,6 +1836,55 @@ static uint64_t sys_shmctl(uint64_t id, uint64_t cmd, uint64_t arg) {
     }
 
     return (uint64_t)(int64_t)-1; /* unknown command */
+}
+
+/* ── semctl() — System V semaphore control (simplified IPC_STAT/IPC_SET) ─── */
+struct sem_perm {
+    int      key;
+    int      semval;
+    uint32_t uid;
+    uint32_t gid;
+    uint16_t mode;
+};
+
+static uint64_t sys_semctl(uint64_t semid, uint64_t semnum, uint64_t cmd, uint64_t arg) {
+    (void)semnum;
+    int ccmd = (int)cmd;
+
+    /* Get current IPC namespace */
+    struct ipc_namespace *ns = ipc_ns_current();
+    if (!ns) return (uint64_t)-1;
+
+    /* Validate semid */
+    int sid = (int)semid;
+    if (sid < 0 || sid >= IPC_NS_MAX_SEMS || !ns->sem_table[sid].used)
+        return (uint64_t)-1;
+
+    /* SEMCTL_IPC_STAT (1): copy semaphore metadata to user space */
+    if (ccmd == 1) {
+        struct sem_perm sp;
+        sp.key    = ns->sem_table[sid].key;
+        sp.semval = ns->sem_table[sid].semval;
+        sp.uid    = ns->sem_table[sid].uid;
+        sp.gid    = ns->sem_table[sid].gid;
+        sp.mode   = ns->sem_table[sid].mode;
+        if (copy_to_user(arg, &sp, sizeof(sp)) < 0)
+            return (uint64_t)-1;
+        return 0;
+    }
+
+    /* SEMCTL_IPC_SET (2): set semaphore permissions from user space */
+    if (ccmd == 2) {
+        struct sem_perm sp;
+        if (copy_from_user(&sp, arg, sizeof(sp)) < 0)
+            return (uint64_t)-1;
+        ns->sem_table[sid].uid  = sp.uid;
+        ns->sem_table[sid].gid  = sp.gid;
+        ns->sem_table[sid].mode = sp.mode;
+        return 0;
+    }
+
+    return (uint64_t)-1; /* unknown command */
 }
 
 static uint64_t sys_fork(void) {
@@ -9462,6 +9512,8 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_KEYBOARD_RESET_STATE:
             keyboard_reset_state();
             return 0;
+        case SYS_SEMCTL:
+            return sys_semctl(a1, a2, a3, a4);
         default: {
             uint64_t ret = (uint64_t)-1;
             audit_syscall_exit(ret);

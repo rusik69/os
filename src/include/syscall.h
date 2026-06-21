@@ -144,6 +144,7 @@
 #define SYS_SEM_WAIT            195  /* wait/decrement */
 #define SYS_SEM_POST            196  /* post/increment */
 #define SYS_SEM_DESTROY         197  /* free */
+#define SYS_SEMCTL              428  /* semctl(semid, semnum, cmd, arg) → 0 or -1 */
 
 /* UDP server syscalls */
 #define SYS_NET_UDP_LISTEN   198  /* listen on port → 0 or -1 */
