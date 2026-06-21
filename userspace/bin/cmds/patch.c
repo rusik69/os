@@ -50,7 +50,7 @@ static int split_lines(char *buf, char **lines, int max) {
 }
 
 /* Check if line matches a context line (starts with ' ' or same as patch context) */
-static int line_matches(const char *fline, const char *pline) {
+__attribute__((unused)) static int line_matches(const char *fline, const char *pline) {
     if (!fline || !pline) return 0;
     /* pline starts with ' ' for context; + for added; - for removed */
     /* fline is a raw file line (no prefix) */
@@ -135,6 +135,7 @@ int main(int argc, char *argv[]) {
 
             /* Now apply hunk: process lines until next hunk or end */
             int hunk_lines_applied = 0;
+            (void)hunk_lines_applied;
             while (pi < npl) {
                 char *h = plines[pi];
                 if (h[0] == '@' || (h[0] == 'd' && h[1] == 'i' && h[2] == 'f' && h[3] == 'f')

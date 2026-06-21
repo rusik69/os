@@ -261,4 +261,37 @@ int  netlink_is_valid_fd(int fd);
 /* Get the protocol for an fd. */
 int  netlink_get_protocol(int fd);
 
+/* ── RTNETLINK (NETLINK_ROUTE) ───────────────────────────────────── */
+#define RTM_NEWROUTE    24
+#define RTM_DELROUTE    25
+#define RTM_GETROUTE    26
+
+struct rtmsg {
+    uint8_t  rtm_family;
+    uint8_t  rtm_dst_len;
+    uint8_t  rtm_src_len;
+    uint8_t  rtm_tos;
+    uint8_t  rtm_table;
+    uint8_t  rtm_protocol;
+    uint8_t  rtm_scope;
+    uint8_t  rtm_type;
+    uint32_t rtm_flags;
+};
+
+/* rtattr is the same as nlattr */
+#define RTM_RTA(r)       ((struct nlattr *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct rtmsg))))
+#define RTM_PAYLOAD(n)   NLMSG_PAYLOAD(n, sizeof(struct rtmsg))
+
+/* RTA attribute constants */
+#define RTA_DST          1
+#define RTA_GATEWAY      5
+#define RTA_OIF          4
+#define RTA_PREFSRC      7
+
+/* RTA attribute macros (using nlattr as rtattr) */
+#define RTA_LENGTH(len)  (NLA_HDRLEN + (len))
+#define RTA_DATA(rta)    NLA_DATA(rta)
+#define RTA_NEXT(rta, remaining) NLA_NEXT(rta, remaining)
+#define RTA_OK(rta, remaining)   NLA_OK(rta, remaining)
+
 #endif /* NETLINK_H */

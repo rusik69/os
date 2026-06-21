@@ -6,6 +6,7 @@
 #include "printf.h"
 #include "timer.h"
 #include "spinlock.h"
+#include "socket.h"
 #include "sysctl.h"
 
 /* DHCP packet structure */

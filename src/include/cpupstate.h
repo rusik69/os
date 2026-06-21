@@ -26,6 +26,7 @@ struct cpupstate_state {
     uint32_t core_freq;    /* MHz */
     uint32_t power;        /* mW */
     uint32_t transition_latency; /* us */
+    uint32_t bus_master_latency; /* us (bus master latency) */
     uint8_t  control;      /* Control value (written to MSR) */
     uint8_t  status;       /* Status value */
 };

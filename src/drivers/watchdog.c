@@ -448,6 +448,9 @@ void watchdog_system_reset(void)
 #include "module.h"
 module_init(watchdog_sysfs_init);
 
+/* I6300ESB register base (hardware-specific, may need platform detection) */
+#define I6300ESB_BASE 0x0
+
 int watchdog_start(void)
 {
     kprintf("[watchdog] Starting\n");

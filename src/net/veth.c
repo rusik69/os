@@ -66,13 +66,13 @@ static void veth_gen_mac(uint8_t mac[6])
  * Returns NULL if not found or not a veth device. */
 static struct veth_endpoint *veth_find_by_ifindex(int ifindex)
 {
-    if (ifindex < 0) return -EOPNOTSUPP;
+    if (ifindex < 0) return NULL;
     for (int i = 0; i < veth_endpoint_count; i++) {
         if (veth_endpoints[i].active &&
             veth_endpoints[i].ifindex == ifindex)
             return &veth_endpoints[i];
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 /* ── Net device callbacks ───────────────────────────────────────── */

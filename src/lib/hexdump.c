@@ -28,13 +28,13 @@ int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len)
     const uint8_t *p = (const uint8_t *)buf;
     size_t pos = 0;
     for (size_t i = 0; i < len && pos + 5 < out_len; i += 16) {
-        pos += ksnprintf(out + pos, out_len - pos, "%04lx: ", (unsigned long)i);
+        pos += snprintf(out + pos, out_len - pos, "%04lx: ", (unsigned long)i);
         for (size_t j = 0; j < 16; j++) {
             if (pos + 3 >= out_len) break;
             if (i + j < len)
-                pos += ksnprintf(out + pos, out_len - pos, "%02x ", p[i + j]);
+                pos += snprintf(out + pos, out_len - pos, "%02x ", p[i + j]);
             else
-                pos += ksnprintf(out + pos, out_len - pos, "   ");
+                pos += snprintf(out + pos, out_len - pos, "   ");
             if (j == 7 && pos < out_len)
                 out[pos++] = ' ';
         }

@@ -420,10 +420,3 @@ void kfence_dump(void)
     }
 }
 
-/* ── Stub: kfence_alloc ─────────────────────────────── */
-int kfence_alloc(void *page)
-{
-    (void)page;
-    kprintf("[kfence] kfence_alloc: not yet implemented\n");
-    return 0;
-}

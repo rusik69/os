@@ -45,7 +45,7 @@ struct essiv_ctx {
 };
 
 /* AES-CBC single-block encryption (for ESSIV IV generation) */
-static void aes_encrypt_block(const uint8_t *key, int key_len,
+static void _crypt_aes_encrypt_block(const uint8_t *key, int key_len,
                                const uint8_t *plaintext, uint8_t *ciphertext)
 {
     /* Simplified AES block encrypt (single 16-byte block).
@@ -55,7 +55,7 @@ static void aes_encrypt_block(const uint8_t *key, int key_len,
 }
 
 /* AES-CBC encryption (for ESSIV-based sector encryption) */
-static void aes_cbc_encrypt(const uint8_t *key, int key_len,
+static void _crypt_aes_cbc_encrypt(const uint8_t *key, int key_len,
                              const uint8_t *iv, const uint8_t *plaintext,
                              uint8_t *ciphertext, int blocks)
 {
@@ -67,13 +67,13 @@ static void aes_cbc_encrypt(const uint8_t *key, int key_len,
         for (int j = 0; j < 16; j++)
             chain[j] ^= plaintext[i * 16 + j];
         /* Encrypt block */
-        aes_encrypt_block(key, key_len, chain, &ciphertext[i * 16]);
+        _crypt_aes_encrypt_block(key, key_len, chain, &ciphertext[i * 16]);
         memcpy(chain, &ciphertext[i * 16], 16);
     }
 }
 
 /* AES-CBC decryption */
-static void aes_cbc_decrypt(const uint8_t *key, int key_len,
+static void _crypt_aes_cbc_decrypt(const uint8_t *key, int key_len,
                              const uint8_t *iv, const uint8_t *ciphertext,
                              uint8_t *plaintext, int blocks)
 {
@@ -106,7 +106,7 @@ static void essiv_iv(struct essiv_ctx *ctx, uint64_t sector, uint8_t *iv_out)
     sector_bytes[6] = (uint8_t)((sector >> 48) & 0xFF);
     sector_bytes[7] = (uint8_t)((sector >> 56) & 0xFF);
 
-    aes_encrypt_block(ctx->salt, ctx->key_len, sector_bytes, iv_out);
+    _crypt_aes_encrypt_block(ctx->salt, ctx->key_len, sector_bytes, iv_out);
 }
 
 /* dm-crypt cipher selector: use AES-XTS or AES-CBC-ESSIV */
@@ -315,7 +315,7 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
             for (int s = 0; s < num_sectors; s++) {
                 essiv_iv(&priv->essiv, offset + (uint64_t)s, iv);
                 uint8_t *sector_buf = (uint8_t *)req->buf + s * 512;
-                aes_cbc_encrypt(priv->essiv.key, priv->essiv.key_len,
+                _crypt_aes_cbc_encrypt(priv->essiv.key, priv->essiv.key_len,
                                 iv, sector_buf, sector_buf,
                                 32);  /* 512 bytes = 32 AES blocks */
             }
@@ -352,7 +352,7 @@ static int crypt_map(struct dm_target *ti, struct blk_request *req,
             for (int s = 0; s < num_sectors; s++) {
                 essiv_iv(&priv->essiv, offset + (uint64_t)s, iv);
                 uint8_t *sector_buf = (uint8_t *)req->buf + s * 512;
-                aes_cbc_decrypt(priv->essiv.key, priv->essiv.key_len,
+                _crypt_aes_cbc_decrypt(priv->essiv.key, priv->essiv.key_len,
                                 iv, sector_buf, sector_buf,
                                 32);  /* 512 bytes = 32 AES blocks */
             }

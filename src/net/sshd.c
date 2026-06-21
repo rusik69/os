@@ -937,5 +937,5 @@ void sshd_task(void) {
 int sshd_handle_client(void *client)
 {
     kprintf("[sshd] sshd_handle_client: stub (basic)\n");
-    return NULL;
+    return 0;
 }

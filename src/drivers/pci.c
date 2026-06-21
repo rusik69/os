@@ -6,7 +6,28 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "export.h"
+#include "stdio.h"
 #include "module.h"      /* request_module() for PCI driver autoloading */
+
+#ifndef HAVE_PCI_DEVICE_ID
+#define HAVE_PCI_DEVICE_ID
+#define PCI_ANY_ID   (~0U)
+struct pci_device_id {
+    uint32_t vendor;
+    uint32_t device;
+    uint32_t subvendor;
+    uint32_t subdevice;
+    uint32_t class;
+    uint32_t class_mask;
+    uintptr_t driver_data;
+};
+#endif
+
+/* Forward declarations */
+static void pci_queue_autoprobe(const char *modalias, uint16_t vendor,
+                                 uint16_t device, uint16_t subvendor,
+                                 uint16_t subdevice, uint8_t class_code,
+                                 uint8_t subclass);
 
 /* PCIe ECAM (Memory-Mapped Configuration Space) */
 static uint64_t ecam_base = 0;
@@ -1546,7 +1567,7 @@ void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, u
     outl(0xCFC, value);
 }
 
-int pci_enable_device(struct pci_dev *dev)
+int pci_enable_device(struct pci_device *dev)
 {
     if (!dev) return -EINVAL;
     uint32_t cmd = pci_read_config(dev->bus, dev->slot, dev->func, 0x04);

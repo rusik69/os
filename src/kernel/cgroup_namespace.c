@@ -196,14 +196,6 @@ uint64_t cgroup_ns_inode(const struct cgroup_namespace *ns)
     return h;
 }
 
-/* ── Stub: cgroup_ns_create ─────────────────────────────── */
-int cgroup_ns_create(void *parent)
-{
-    (void)parent;
-    kprintf("[cgroup_ns] cgroup_ns_create: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: cgroup_ns_delete ─────────────────────────────── */
 int cgroup_ns_delete(void *ns)
 {
     (void)ns;

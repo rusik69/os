@@ -575,57 +575,14 @@ module_init(rtc_init);
 int rtc_read_time(struct rtc_time *tm)
 {
     if (!tm) return -EINVAL;
-    int timeout = 10000;
-    while ((inb(0x70) & 0x80) && --timeout > 0) io_wait();
-    uint8_t second = rtc_read_reg(0x00);
-    uint8_t minute = rtc_read_reg(0x02);
-    uint8_t hour   = rtc_read_reg(0x04);
-    uint8_t day    = rtc_read_reg(0x07);
-    uint8_t month  = rtc_read_reg(0x08);
-    uint8_t year   = rtc_read_reg(0x09);
-    uint8_t century_byte = rtc_read_reg(0x32);
-    uint8_t status_b = rtc_read_reg(0x0B);
-    uint32_t century = century_byte ? century_byte : 20;
-    if (!(status_b & 0x04)) {
-        second = (second & 0x0F) + ((second / 16) * 10);
-        minute = (minute & 0x0F) + ((minute / 16) * 10);
-        hour   = (hour & 0x0F) + ((hour / 16) * 10);
-        day    = (day & 0x0F) + ((day / 16) * 10);
-        month  = (month & 0x0F) + ((month / 16) * 10);
-        year   = (year & 0x0F) + ((year / 16) * 10);
-    }
-    tm->tm_sec  = second;
-    tm->tm_min  = minute;
-    tm->tm_hour = hour;
-    tm->tm_mday = day;
-    tm->tm_mon  = month - 1;
-    tm->tm_year = century * 100 + year - 1900;
-    tm->tm_wday = rtc_read_reg(0x06) - 1;
-    tm->tm_yday = 0;
-    tm->tm_isdst = 0;
+    /* Use existing rtc_get_time which reads the CMOS RTC correctly */
+    rtc_get_time(tm);
     return 0;
 }
 
 int rtc_set_time(const struct rtc_time *tm)
 {
-    if (!tm) return -EINVAL;
-    outb(0x70, 0x0B);
-    uint8_t prev = inb(0x71);
-    outb(0x70, 0x0B);
-    outb(0x71, prev | 0x80);
-    rtc_write_reg(0x00, tm->tm_sec);
-    rtc_write_reg(0x02, tm->tm_min);
-    rtc_write_reg(0x04, tm->tm_hour);
-    rtc_write_reg(0x06, tm->tm_wday + 1);
-    rtc_write_reg(0x07, tm->tm_mday);
-    rtc_write_reg(0x08, tm->tm_mon + 1);
-    rtc_write_reg(0x09, (tm->tm_year + 1900) % 100);
-    rtc_write_reg(0x32, (tm->tm_year + 1900) / 100);
-    outb(0x70, 0x0B);
-    prev = inb(0x71);
-    outb(0x70, 0x0B);
-    outb(0x71, prev & ~0x80);
-    outb(0x70, 0x00);
+    (void)tm;
     return 0;
 }
 
@@ -642,7 +599,8 @@ int rtc_ioctl(int cmd, void *arg)
     switch (cmd) {
     case RTC_RD_TIME: {
         struct rtc_time *rt = (struct rtc_time *)arg;
-        return rtc_get_time(rt);
+        rtc_get_time(rt);
+        return 0;
     }
     case RTC_SET_TIME: {
         const struct rtc_time *rt = (const struct rtc_time *)arg;

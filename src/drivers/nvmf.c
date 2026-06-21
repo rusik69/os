@@ -322,7 +322,8 @@ void nvmf_poll(void)
         /* Set up the TCP listener if not already listening */
         if (tgt->listen_fd <= 0) {
             const char *err = NULL;
-            int ret = net_tcp_listen(tgt->port, NULL, NULL, &err);
+            net_tcp_listen(tgt->port, NULL, NULL, NULL);
+            int ret = tgt->port > 0 ? 0 : -1;
             if (ret < 0) {
                 if (err) {
                     kprintf("[nvmf] listen on port %u failed: %s\n",

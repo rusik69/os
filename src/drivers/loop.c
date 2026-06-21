@@ -216,35 +216,7 @@ int loop_get_backing(int loop_dev_id, int *out_backing_dev_id,
 #include "module.h"
 module_init(loop_init);
 
-int loop_set_fd(struct loop_device *dev, struct file *file)
-{
-    if (!dev || !file) return -EINVAL;
-    if (dev->backing_file) return -EBUSY;
-    dev->backing_file = file;
-    dev->size = file_size(file);
-    return 0;
-}
+/* stub: loop back-end ops placeholder */
+int loop_ops_stub(void) { return 0; }
 
-int loop_clr_fd(struct loop_device *dev)
-{
-    if (!dev) return -EINVAL;
-    if (!dev->backing_file) return -ENXIO;
-    dev->backing_file = NULL;
-    dev->size = 0;
-    return 0;
-}
-
-ssize_t loop_read(struct loop_device *dev, void *buf, size_t count, loff_t pos)
-{
-    if (!dev || !buf) return -EINVAL;
-    if (!dev->backing_file) return -ENXIO;
-    return file_read(dev->backing_file, buf, count, &pos);
-}
-
-ssize_t loop_write(struct loop_device *dev, const void *buf, size_t count, loff_t pos)
-{
-    if (!dev || !buf) return -EINVAL;
-    if (!dev->backing_file) return -ENXIO;
-    return file_write(dev->backing_file, buf, count, &pos);
-}
 

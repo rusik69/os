@@ -413,15 +413,6 @@ int ssh_client_ready(struct ssh_client *cl) {
     return cl&&cl->ready;
 }
 
-/* ── Stub: ssh_client_connect ─────────────────────────────── */
-int ssh_client_connect(const char *host, int port, const char *user)
-{
-    (void)host;
-    (void)port;
-    (void)user;
-    kprintf("[ssh] ssh_client_connect: not yet implemented\n");
-    return 0;
-}
 /* ── Stub: ssh_client_disconnect ─────────────────────────────── */
 int ssh_client_disconnect(void *session)
 {

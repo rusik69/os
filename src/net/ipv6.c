@@ -672,17 +672,17 @@ void ipv6_get_linklocal(struct in6_addr *addr)
 int ipv6_send(void *skb)
 {
     kprintf("[ipv6] ipv6_send: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: ipv6_route_add ────────────────── */
 int ipv6_route_add(const void *dst, const void *gw, int ifindex)
 {
     kprintf("[ipv6] ipv6_route_add: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: ipv6_route_del ────────────────── */
 int ipv6_route_del(const void *dst)
 {
     kprintf("[ipv6] ipv6_route_del: stub (basic)\n");
-    return NULL;
+    return 0;
 }

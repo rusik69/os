@@ -63,17 +63,3 @@ void llist_init(void)
     kprintf("[OK] llist: Lock-less singly-linked list initialised\n");
 }
 
-/* ── Stub: llist_del_all ─────────────────────────────── */
-void* llist_del_all(void *head)
-{
-    (void)head;
-    kprintf("[llist] llist_del_all: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: llist_reverse_order ─────────────────────────────── */
-void* llist_reverse_order(void *head)
-{
-    (void)head;
-    kprintf("[llist] llist_reverse_order: not yet implemented\n");
-    return 0;
-}

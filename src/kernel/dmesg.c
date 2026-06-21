@@ -66,8 +66,7 @@ int dmesg_write(const void *buf, size_t count)
     return 0;
 }
 /* ── Stub: dmesg_clear ─────────────────────────────── */
-int dmesg_clear(void)
+void dmesg_clear(void)
 {
     kprintf("[dmesg] dmesg_clear: not yet implemented\n");
-    return 0;
 }

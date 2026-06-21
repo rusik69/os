@@ -528,7 +528,7 @@ EXPORT_SYMBOL(swap_in);
 EXPORT_SYMBOL(swap_free_slot);
 
 /* ── Stub: swap_readpage ───────────────────────────────────────────── */
-int swap_readpage(struct page *page)
+int swap_readpage(void *page)
 {
     (void)page;
     kprintf("[SWAP] swap_readpage: not yet implemented\n");
@@ -536,7 +536,7 @@ int swap_readpage(struct page *page)
 }
 
 /* ── Stub: swap_writepage ──────────────────────────────────────────── */
-int swap_writepage(struct page *page)
+int swap_writepage(void *page)
 {
     (void)page;
     kprintf("[SWAP] swap_writepage: not yet implemented\n");

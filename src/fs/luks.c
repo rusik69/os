@@ -78,7 +78,7 @@ static int luks2_parse_header(int dev_id, struct luks_header *hdr)
     /* Parse JSON area (text after binary header, at offset 512) */
     /* The LUKS2 JSON area contains keyslot descriptions, cipher info, etc.
      * We do a simplified parse to find active keyslots. */
-    const char *json = (const char *)(raw + 512);
+    char *json = (char *)(raw + 512);
     uint32_t json_max = h2->hdr_size - 512;
     if (json_max > LUKS2_MAX_JSON) json_max = LUKS2_MAX_JSON;
     json[json_max - 1] = '\0';

@@ -17,6 +17,10 @@
 #include "af_packet.h"
 #include "net.h"
 #include "net_internal.h"
+
+/* Forward declarations */
+static int packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring);
+static void packet_mmap_teardown(int fd);
 #include "netdevice.h"
 #include "socket.h"
 #include "string.h"

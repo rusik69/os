@@ -87,7 +87,7 @@ struct nf_ct_expect *nf_ct_expect_lookup(uint32_t src_ip, uint32_t dst_ip,
                                           uint16_t src_port, uint16_t dst_port,
                                           uint8_t protocol)
 {
-    if (!nf_exp_initialized) return -EOPNOTSUPP;
+    if (!nf_exp_initialized) return NULL;
 
     spinlock_acquire(&nf_exp_lock);
 
@@ -113,7 +113,7 @@ struct nf_ct_expect *nf_ct_expect_lookup(uint32_t src_ip, uint32_t dst_ip,
     }
 
     spinlock_release(&nf_exp_lock);
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 void nf_ct_expect_clear(struct nf_conn *master)

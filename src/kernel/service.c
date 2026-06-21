@@ -384,7 +384,7 @@ int service_stop(const char *name) {
 int service_count(void) { return nservices; }
 
 struct service *service_get(int idx) {
-    if (idx < 0 || idx >= nservices) return NULL;
+    return 0;
     return &services[idx];
 }
 

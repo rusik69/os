@@ -1,47 +1,20 @@
+/* cpu_bitmask.c — CPU bitmask operations (static inlines in header) */
+
 #include "cpu_bitmask.h"
 #include "printf.h"
-#include "kernel.h"
 
-/*
- * cpu_bitmask.c – runtime initialisation.
- * All bitmask operations are inlines in the header; this file exists
- * to register the subsystem.
- */
-
-void cpu_bitmask_init(void)
+void cpumask_init_global(void)
 {
-    kprintf("[OK] cpu_bitmask: CPU bitmask operations initialised (max %d CPUs)\n",
+    kprintf("[OK] cpumask: CPU bitmask subsystem initialised (max %d CPUs)\n",
             CPUMASK_MAX_CPUS);
 }
 
-/* ── Stub: cpumask_set_cpu ─────────────────────────────── */
-int cpumask_set_cpu(int cpu, void *mask)
+/* Stub functions: cpumask_set_cpu, cpumask_clear_cpu, cpumask_test_cpu,
+   cpumask_weight — provided as static inlines in cpu_bitmask.h */
+
+/* ── Stub: cpumask_cpu_count ──────────────────────────── */
+int cpumask_cpu_count(void)
 {
-    (void)cpu;
-    (void)mask;
-    kprintf("[cpumask] cpumask_set_cpu: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: cpumask_clear_cpu ─────────────────────────────── */
-int cpumask_clear_cpu(int cpu, void *mask)
-{
-    (void)cpu;
-    (void)mask;
-    kprintf("[cpumask] cpumask_clear_cpu: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: cpumask_test_cpu ─────────────────────────────── */
-int cpumask_test_cpu(int cpu, const void *mask)
-{
-    (void)cpu;
-    (void)mask;
-    kprintf("[cpumask] cpumask_test_cpu: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: cpumask_weight ─────────────────────────────── */
-int cpumask_weight(const void *mask)
-{
-    (void)mask;
-    kprintf("[cpumask] cpumask_weight: not yet implemented\n");
-    return 0;
+    kprintf("[cpumask] cpumask_cpu_count: not yet implemented\n");
+    return 1;
 }

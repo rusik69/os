@@ -171,61 +171,61 @@ void tipc_init(void)
 int tipc_send_msg(int sock, const void *buf, uint32_t len, struct tipc_addr *dest)
 {
     kprintf("[tipc] tipc_send_msg: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_recv_msg ────────────────── */
 int tipc_recv_msg(int sock, void *buf, uint32_t len, struct tipc_addr *src)
 {
     kprintf("[tipc] tipc_recv_msg: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_connect ────────────────── */
 int tipc_connect(int sock, struct tipc_addr *addr)
 {
     kprintf("[tipc] tipc_connect: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_disconnect ────────────────── */
 int tipc_disconnect(int sock)
 {
     kprintf("[tipc] tipc_disconnect: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_shutdown ────────────────── */
 int tipc_shutdown(int sock, int how)
 {
     kprintf("[tipc] tipc_shutdown: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_listen ────────────────── */
 int tipc_listen(int sock, int backlog)
 {
     kprintf("[tipc] tipc_listen: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_accept ────────────────── */
 int tipc_accept(int sock, struct tipc_addr *addr)
 {
     kprintf("[tipc] tipc_accept: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_setsockopt ────────────────── */
 int tipc_setsockopt(int sock, int level, int optname, const void *optval, uint32_t optlen)
 {
     kprintf("[tipc] tipc_setsockopt: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 
 /* ── Implement: tipc_getsockopt ────────────────── */
 int tipc_getsockopt(int sock, int level, int optname, void *optval, uint32_t *optlen)
 {
     kprintf("[tipc] tipc_getsockopt: stub (basic)\n");
-    return NULL;
+    return 0;
 }

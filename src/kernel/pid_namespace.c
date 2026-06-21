@@ -236,13 +236,6 @@ uint32_t pid_ns_get_ns_pid(const struct process *proc)
     return proc->ns_pid;   /* namespace-local PID */
 }
 
-/* ── Stub: pid_ns_create ─────────────────────────────── */
-int pid_ns_create(void *parent)
-{
-    (void)parent;
-    kprintf("[pid_ns] pid_ns_create: not yet implemented\n");
-    return 0;
-}
 /* ── Stub: pid_ns_delete ─────────────────────────────── */
 int pid_ns_delete(void *ns)
 {

@@ -384,24 +384,10 @@ void net_ns_sync_routes(void)
     spinlock_release(&net_ns_lock);
 }
 
-/* ── Implement: net_ns_create ─────────────────────────── */
-int net_ns_create(const char *name)
-{
-    if (!name) return -EINVAL;
-    kprintf("[net_ns] net_ns_create: '%s'\n", name);
-    return 0;
-}
 /* ── Implement: net_ns_delete ─────────────────────────── */
 int net_ns_delete(const char *name)
 {
     if (!name) return -EINVAL;
     kprintf("[net_ns] net_ns_delete: '%s'\n", name);
-    return 0;
-}
-/* ── Implement: net_ns_attach ─────────────────────────── */
-int net_ns_attach(const char *name, void *task)
-{
-    if (!name || !task) return -EINVAL;
-    kprintf("[net_ns] net_ns_attach: task to '%s'\n", name);
     return 0;
 }

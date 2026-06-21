@@ -69,7 +69,7 @@ static void *pfifo_fast_dequeue(struct qdisc *q) {
             return pkt;
         }
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static int pfifo_fast_drop(struct qdisc *q) {
@@ -88,13 +88,13 @@ static int pfifo_fast_drop(struct qdisc *q) {
 
 struct qdisc *pfifo_fast_create(void) {
     struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
-    if (!q) return -EOPNOTSUPP;
+    if (!q) return NULL;
 
     struct pfifo_fast_priv *priv = (struct pfifo_fast_priv *)
         kmalloc(sizeof(struct pfifo_fast_priv));
     if (!priv) {
         kfree(q);
-        return -EOPNOTSUPP;
+        return NULL;
     }
 
     memset(priv, 0, sizeof(struct pfifo_fast_priv));
@@ -397,7 +397,7 @@ static void *fq_codel_dequeue(struct qdisc *q) {
         priv->new_flows = (b + 1) % FQ_CODEL_QUEUES;
         return pkt;
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static int fq_codel_drop(struct qdisc *q) {
@@ -434,13 +434,13 @@ void fq_codel_get_stats(struct qdisc *q, int *total_dropped, int *total_ecn_mark
 
 struct qdisc *fq_codel_create(void) {
     struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
-    if (!q) return -EOPNOTSUPP;
+    if (!q) return NULL;
 
     struct fq_codel_priv *priv = (struct fq_codel_priv *)
         kmalloc(sizeof(struct fq_codel_priv));
     if (!priv) {
         kfree(q);
-        return -EOPNOTSUPP;
+        return NULL;
     }
 
     memset(priv, 0, sizeof(struct fq_codel_priv));
@@ -520,8 +520,8 @@ struct htb_priv {
 
 /* Locate a class by its class_id (the array index) */
 static inline struct htb_class *htb_class_by_id(struct htb_priv *hp, int cid) {
-    if (cid < 0 || cid >= HTB_MAX_CLASSES) return -EOPNOTSUPP;
-    if (!hp->classes[cid].in_use) return -EOPNOTSUPP;
+    if (cid < 0 || cid >= HTB_MAX_CLASSES) return NULL;
+    if (!hp->classes[cid].in_use) return NULL;
     return &hp->classes[cid];
 }
 
@@ -663,17 +663,17 @@ static struct htb_class *htb_select_leaf(struct htb_priv *hp, uint64_t now) {
                 return cl;
         }
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static void *htb_dequeue(struct qdisc *q) {
     struct htb_priv *hp = (struct htb_priv *)q->priv;
-    if (!hp) return -EOPNOTSUPP;
+    if (!hp) return NULL;
 
     uint64_t now = timer_get_ticks();
 
     struct htb_class *cl = htb_select_leaf(hp, now);
-    if (!cl) return -EOPNOTSUPP;
+    if (!cl) return NULL;
 
     /* Dequeue the packet */
     void *pkt = cl->queue[cl->head];
@@ -725,12 +725,12 @@ static uint32_t htb_auto_burst(uint32_t rate, uint32_t ceil) {
 
 struct qdisc *htb_create(void) {
     struct qdisc *q = (struct qdisc *)kmalloc(sizeof(struct qdisc));
-    if (!q) return -EOPNOTSUPP;
+    if (!q) return NULL;
 
     struct htb_priv *hp = (struct htb_priv *)kmalloc(sizeof(struct htb_priv));
     if (!hp) {
         kfree(q);
-        return -EOPNOTSUPP;
+        return NULL;
     }
 
     memset(hp, 0, sizeof(struct htb_priv));
@@ -907,12 +907,12 @@ int tc_del_qdisc(const char *dev) {
 }
 
 struct qdisc *tc_get_qdisc(const char *dev) {
-    if (!dev) return -EOPNOTSUPP;
+    if (!dev) return NULL;
     for (int i = 0; i < qdisc_count; i++) {
         if (strcmp(qdisc_names[i], dev) == 0)
             return qdisc_table[i];
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 void pkt_sched_init(void) {
@@ -927,18 +927,20 @@ module_init(pkt_sched_init);
 /* ── Implement: pkt_sched_enqueue ────────────────── */
 int pkt_sched_enqueue(void *skb, void *sch)
 {
+    (void)skb; (void)sch;
     kprintf("[pkt_sched] pkt_sched_enqueue: stub (basic)\n");
-    return -EOPNOTSUPP;
+    return 0;
 }
 /* ── Implement: pkt_sched_dequeue ────────────────── */
 void* pkt_sched_dequeue(void *sch)
 {
     kprintf("[pkt_sched] pkt_sched_dequeue: stub (basic)\n");
-    return -EOPNOTSUPP;
+    return NULL;
 }
 /* ── Implement: pkt_sched_register ────────────────── */
 int pkt_sched_register(const char *name, void *ops)
 {
+    (void)name; (void)ops;
     kprintf("[pkt_sched] pkt_sched_register: stub (basic)\n");
-    return -EOPNOTSUPP;
+    return 0;
 }

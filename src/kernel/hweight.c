@@ -39,31 +39,3 @@ void hweight_init(void)
     kprintf("[OK] hweight: Hamming weight (popcount) routines initialised\n");
 }
 
-/* ── Stub: hweight8 ─────────────────────────────── */
-unsigned int hweight8(uint8_t w)
-{
-    (void)w;
-    kprintf("[hweight] hweight8: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: hweight16 ─────────────────────────────── */
-unsigned int hweight16(uint16_t w)
-{
-    (void)w;
-    kprintf("[hweight] hweight16: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: hweight32 ─────────────────────────────── */
-unsigned int hweight32(uint32_t w)
-{
-    (void)w;
-    kprintf("[hweight] hweight32: not yet implemented\n");
-    return 0;
-}
-/* ── Stub: hweight64 ─────────────────────────────── */
-unsigned int hweight64(uint64_t w)
-{
-    (void)w;
-    kprintf("[hweight] hweight64: not yet implemented\n");
-    return 0;
-}

@@ -77,28 +77,28 @@ module_init(freeze_init);
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── freeze_super ─────────────────────────────────────── */
-int freeze_super(struct super_block *sb)
+int freeze_super(void *sb)
 {
     (void)sb;
     kprintf("[freeze] Superblock frozen\n");
     return 0;
 }
 /* ── thaw_super ──────────────────────────────────────── */
-int thaw_super(struct super_block *sb)
+int thaw_super(void *sb)
 {
     (void)sb;
     kprintf("[freeze] Superblock thawed\n");
     return 0;
 }
 /* ── freeze_bdev ──────────────────────────────────────── */
-int freeze_bdev(struct block_device *bdev)
+int freeze_bdev(void *bdev)
 {
     (void)bdev;
     kprintf("[freeze] Block device frozen\n");
     return 0;
 }
 /* ── thaw_bdev ───────────────────────────────────────── */
-int thaw_bdev(struct block_device *bdev)
+int thaw_bdev(void *bdev)
 {
     (void)bdev;
     kprintf("[freeze] Block device thawed\n");

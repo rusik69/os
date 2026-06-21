@@ -248,15 +248,6 @@ void dma_unmap_single(struct pci_device *dev, uint64_t dma_handle,
     /*
      * Ensure the device's DMA writes are visible to the CPU.
      */
-    __asm__ volatile("mfence" ::: "memory");
-}
-
-/* ── Stub: dma_alloc_coherent ─────────────────────────────── */
-void* dma_alloc_coherent(void *dev, size_t size, void *dma_handle)
-{
-    (void)dev;
-    (void)size;
-    (void)dma_handle;
-    kprintf("[dma] dma_alloc_coherent: not yet implemented\n");
-    return 0;
+    kprintf("[DMA] dma_alloc_coherent: non-contiguous pages "
+            "fallback not implemented\\n");
 }

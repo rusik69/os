@@ -43,7 +43,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out);
 static struct vfs_mount *fsck_find_mount(const char *path)
 {
     if (!path || !path[0] || num_mounts <= 0)
-        return NULL;
+        return 0;
 
     /* Normalise: skip trailing slashes for matching */
     size_t plen = strlen(path);

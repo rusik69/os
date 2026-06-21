@@ -108,6 +108,9 @@ struct checkpoint_state {
     int                         saved_state;
 };
 
+/* ── Forward declaration ────────────────────────────────────────── */
+int container_checkpoint_save(const struct checkpoint_state *state, const char *path);
+
 /* ── Global checkpoint lock ─────────────────────────────────────────── */
 
 /* Lock protecting checkpoint operations (serialise access) */

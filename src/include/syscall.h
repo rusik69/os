@@ -510,10 +510,13 @@ struct file_handle {
 #define CLOCK_MONOTONIC 1
 
 /* struct itimerspec for timerfd_settime */
+#ifndef itimerspec_defined
+#define itimerspec_defined
 struct itimerspec {
     struct timespec it_interval;
     struct timespec it_value;
 };
+#endif
 
 /* ── epoll structures ────────────────────────────────────────── */
 #define EPOLL_CTL_ADD 1

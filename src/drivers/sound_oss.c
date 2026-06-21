@@ -75,6 +75,7 @@ static int g_sample_rate    = 44100;
 static int g_channels       = 2;   /* 1 = mono, 2 = stereo */
 static int g_sample_format  = AFMT_S16_LE;  /* 16-bit signed LE */
 static int g_sample_width   = 2;   /* bytes per sample (per channel) */
+static int g_dsp_buf_fill   = 0;   /* DSP buffer fill level */
 
 /* Capture state */
 static int g_capture_rate    = 44100;

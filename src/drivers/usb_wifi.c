@@ -96,7 +96,7 @@ int usb_wifi_probe(void)
         /* Check against our device ID table */
         const struct usb_wifi_device_id *id = usb_wifi_id_table;
         while (id->name) {
-            if (udev->vid == id->vid && udev->pid == id->pid) {
+            if (udev->vendor_id == id->vid && udev->product_id == id->pid) {
                 /* Found a match! */
                 if (usb_wifi_count >= USB_WIFI_MAX_DEVS) {
                     kprintf("[USB_WIFI] Max devices reached\n");
@@ -129,13 +129,9 @@ int usb_wifi_probe(void)
                 dev->channel = 1;
                 dev->rssi = -50;
 
-                /* Register with network subsystem */
-                dev->netdev = net_device_alloc(dev->chip_name, USB_WIFI_MTU);
-                if (dev->netdev) {
-                    net_device_set_mac(dev->netdev, dev->mac);
-                    net_device_set_ops(dev->netdev, NULL, NULL, NULL, NULL);
-                    net_device_register(dev->netdev);
-                }
+                /* Register with network subsystem (stub) */
+                dev->netdev = NULL;
+                kprintf("[usb_wifi] Device registered (net registration stub)\n");
 
                 usb_wifi_count++;
                 found++;

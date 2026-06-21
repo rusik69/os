@@ -479,7 +479,7 @@ int hooks_run_prestop(const char *container_id,
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: hook_register ───────────────────────────── */
-int hook_register(const char *name, hook_fn_t fn, int priority)
+int hook_register(const char *name, void *fn, int priority)
 {
     (void)name;
     (void)fn;

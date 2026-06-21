@@ -1189,11 +1189,11 @@ module_init(dhcp_init);
 int dhcp_send_discover(void *dev)
 {
     kprintf("[dhcp] dhcp_send_discover: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: dhcp_send_request ────────────────── */
 int dhcp_send_request(void *dev, uint32_t offered_ip)
 {
     kprintf("[dhcp] dhcp_send_request: stub (basic)\n");
-    return NULL;
+    return 0;
 }

@@ -422,7 +422,7 @@ int fcoe_recv(void *skb)
     return 0;
 }
 /* ── Stub: fcoe_vlan_create ────────────────────────── */
-int fcoe_vlan_create(struct net_device *dev, uint16_t vlan_id)
+int fcoe_vlan_create(void *dev, uint16_t vlan_id)
 {
     (void)dev;
     (void)vlan_id;
@@ -430,7 +430,7 @@ int fcoe_vlan_create(struct net_device *dev, uint16_t vlan_id)
     return 0;
 }
 /* ── Stub: fcoe_vlan_destroy ───────────────────────── */
-int fcoe_vlan_destroy(struct net_device *dev, uint16_t vlan_id)
+int fcoe_vlan_destroy(void *dev, uint16_t vlan_id)
 {
     (void)dev;
     (void)vlan_id;
@@ -438,7 +438,7 @@ int fcoe_vlan_destroy(struct net_device *dev, uint16_t vlan_id)
     return 0;
 }
 /* ── Stub: fcoe_netdev_event ───────────────────────── */
-int fcoe_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
+int fcoe_netdev_event(void *this, unsigned long event, void *ptr)
 {
     (void)this;
     (void)event;

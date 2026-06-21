@@ -30,6 +30,9 @@
 #include "timer.h"
 #include "scheduler.h"
 
+/* ── Forward declarations ──────────────────────────────────────── */
+static const char *container_state_str(int state);
+
 /* ── Constants ──────────────────────────────────────────────────────── */
 
 #define API_PORT             8375

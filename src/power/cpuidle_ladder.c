@@ -30,6 +30,14 @@
 
 /* ── Ladder governor per-CPU state ──────────────────────────────────── */
 
+/* ── Ladder governor constants ─────────────────────────────── */
+#ifndef LADDER_MAX_STATES
+#define LADDER_MAX_STATES   10
+#endif
+#ifndef LADDER_HISTORY_SIZE
+#define LADDER_HISTORY_SIZE 8
+#endif
+
 struct ladder_cpu_state {
     int current_state_idx;     /* Currently selected state index */
     uint64_t last_entry_ticks; /* Timer ticks at last idle entry */

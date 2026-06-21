@@ -51,7 +51,7 @@ char *telnet_get_cwd_ctx(void) { return g_session_cwd; }
 static struct telnet_session *find_session(int conn_id) {
     for (int i = 0; i < 8; i++)
         if (sessions[i].active && sessions[i].conn_id == conn_id) return &sessions[i];
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static struct telnet_session *alloc_session(int conn_id) {
@@ -65,7 +65,7 @@ static struct telnet_session *alloc_session(int conn_id) {
             return &sessions[i];
         }
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static void ses_flush(struct telnet_session *s);

@@ -725,13 +725,6 @@ uint32_t user_ns_sb_gid(const struct user_namespace *ns, uint32_t gid)
     return gid;
 }
 
-/* ── Stub: user_ns_create ─────────────────────────────── */
-int user_ns_create(void *parent)
-{
-    (void)parent;
-    kprintf("[user_ns] user_ns_create: not yet implemented\n");
-    return 0;
-}
 /* ── Stub: user_ns_delete ─────────────────────────────── */
 int user_ns_delete(void *ns)
 {

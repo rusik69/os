@@ -16,6 +16,7 @@ void doom_floor_column(const doom_state_t *st, int col, int32_t fov,
     uint8_t ceil_tex = sec ? sec->ceil_tex : 0;
     int8_t  floor_h  = sec ? sec->floor_h : 0;
     int8_t  ceil_h   = sec ? sec->ceil_h : 56;
+    (void)ceil_h; (void)floor_h;
 
     int half_h = DOOM_VIEW_H / 2;
 

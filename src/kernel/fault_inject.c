@@ -517,7 +517,7 @@ int fault_inject_attr(void)
 
 /* ── Stub: fault_create_debugfs_attr ───────────────────────────────── */
 int fault_create_debugfs_attr(const char *name, void *parent,
-                              struct fault_attr *attr)
+                              void *attr)
 {
     (void)name; (void)parent; (void)attr;
     kprintf("[FAULT_INJECT] fault_create_debugfs_attr: not yet implemented\n");
@@ -525,7 +525,7 @@ int fault_create_debugfs_attr(const char *name, void *parent,
 }
 
 /* ── Stub: should_fail ─────────────────────────────────────────────── */
-int should_fail(struct fault_attr *attr, size_t size)
+int should_fail(void *attr, size_t size)
 {
     (void)attr; (void)size;
     kprintf("[FAULT_INJECT] should_fail: not yet implemented\n");

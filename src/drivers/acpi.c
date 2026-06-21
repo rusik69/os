@@ -4,6 +4,7 @@
 #include "string.h"
 #include "printf.h"
 #include "cpuidle.h"
+#include "cpupstate.h"
 
 /* AML method signatures for dock detection */
 /* "_DCK" as little-endian uint32_t: 'D' 'C' 'K' '_' */
@@ -103,10 +104,12 @@ static uint16_t pm1a_cnt = 0;    /* PM1a control port */
 static uint16_t pm1a_evt = 0;    /* PM1a event port */
 static uint16_t slp_typa_s5 = 0xFF; /* SLP_TYP_a for S5 (0xFF = uninitialized) */
 static uint16_t slp_typa_s3 = 0xFF; /* SLP_TYP_a for S3 (0xFF = uninitialized) */
+static uint16_t slp_typa_s4 = 0xFF; /* SLP_TYP_a for S4 */
 static int acpi_ready = 0;
 
 /* S3 support flag */
 static int s3_supported = 0;
+static int has_s4 = 0;
 
 /* ── Exported DSDT info for ACPI drivers (acpi_cpufreq, etc.) ────── */
 
@@ -762,12 +765,9 @@ void acpi_init(void) {
     /* Report OEM info from RSDP */
     {
         char oem_id[7];
-        char oem_table_id[9];
         memcpy(oem_id, rsdp->oem_id, 6);
         oem_id[6] = '\0';
-        memcpy(oem_table_id, rsdp->oem_table_id, 8);
-        oem_table_id[8] = '\0';
-        kprintf("  ACPI: RSDP OEM='%s' Table='%s'\n", oem_id, oem_table_id);
+        kprintf("  ACPI: RSDP OEM='%s'\n", oem_id);
     }
 
     struct acpi_header *xsdt_hdr = NULL;

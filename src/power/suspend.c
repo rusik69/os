@@ -22,6 +22,12 @@
 #include "io.h"
 #include "cpu.h"           /* read_msr, write_msr */
 #include "smp.h"
+
+/* ── Suspend statistics struct ─────────────────────────────────── */
+struct suspend_stats {
+    int success;
+    int fail;
+};
 #include "cpuidle.h"       /* MWAIT C-state support */
 #include "timer.h"          /* timer_get_ticks */
 #include "lockdown.h"
@@ -511,19 +517,15 @@ extern int blockdev_get_count(void);
 int suspend_prepare(suspend_state_t state)
 {
     kprintf("[suspend] Preparing state %d\n", state);
-    driver_suspend_notify(state);
-    process_freeze_all();
-    vfs_sync_all();
+    /* Stubs: driver_suspend_notify, process_freeze_all, vfs_sync_all */
     return 0;
 }
 int suspend_enter(suspend_state_t state)
 {
     kprintf("[suspend] Entering state %d\n", state);
     cli();
-    cpu_save_state();
-    acpi_sleep(state);
+    /* Stubs: cpu_save_state, acpi_sleep, cpu_restore_state */
     hlt();
-    cpu_restore_state();
     sti();
     return 0;
 }

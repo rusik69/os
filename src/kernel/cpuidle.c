@@ -171,6 +171,11 @@ do_mwait_hint(uint64_t hint)
  *  State enter functions
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/* ── Global state ────────────────────────────────────────────────── */
+static int g_cpuidle_initialized = 0;
+static int cpuidle_global_enabled = 1;
+static int g_state_count = 0;
+
 /*
  * POLL idle state — busy-wait with PAUSE instruction.
  *
@@ -813,7 +818,7 @@ int cpuidle_state_count(void)
 }
 
 /* ── Stub: cpuidle_select ──────────────────────────────────────────── */
-int cpuidle_select(struct cpuidle_device *dev)
+int cpuidle_select(void *dev)
 {
     (void)dev;
     kprintf("[CPUIDLE] cpuidle_select: not yet implemented\n");
@@ -821,7 +826,7 @@ int cpuidle_select(struct cpuidle_device *dev)
 }
 
 /* ── Stub: cpuidle_enter ───────────────────────────────────────────── */
-int cpuidle_enter(struct cpuidle_device *dev, int state_index)
+int cpuidle_enter(void *dev, int state_index)
 {
     (void)dev; (void)state_index;
     kprintf("[CPUIDLE] cpuidle_enter: not yet implemented\n");
@@ -829,7 +834,7 @@ int cpuidle_enter(struct cpuidle_device *dev, int state_index)
 }
 
 /* ── Stub: cpuidle_reflect ─────────────────────────────────────────── */
-void cpuidle_reflect(struct cpuidle_device *dev, int state_index)
+void cpuidle_reflect(void *dev, int state_index)
 {
     (void)dev; (void)state_index;
     kprintf("[CPUIDLE] cpuidle_reflect: not yet implemented\n");

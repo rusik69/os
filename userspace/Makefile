@@ -2,7 +2,7 @@
 # Builds libc.a, init.elf, sh.elf, and all command ELFs,
 # then packages as initramfs.cpio
 # Uses x86_64-linux-gnu toolchain (not the kernel's cross compiler)
-CROSS_COMPILE ?= x86_64-elf-
+CROSS_COMPILE ?= x86_64-linux-gnu-
 CC := $(CROSS_COMPILE)gcc
 LD := $(CROSS_COMPILE)ld
 AS := $(CROSS_COMPILE)as

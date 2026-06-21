@@ -90,6 +90,10 @@ struct rsdp {
     char     oem_id[6];
     uint8_t  revision;
     uint32_t rsdt_addr;
+    uint32_t length;
+    uint64_t xsdt_addr;
+    uint8_t  ext_checksum;
+    uint8_t  reserved[3];
 } __attribute__((packed));
 
 struct rsdt {

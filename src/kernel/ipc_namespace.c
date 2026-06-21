@@ -422,13 +422,6 @@ ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
     return (ssize_t)copy;
 }
 
-/* ── Stub: ipc_ns_create ─────────────────────────────── */
-int ipc_ns_create(void *parent)
-{
-    (void)parent;
-    kprintf("[ipc_ns] ipc_ns_create: not yet implemented\n");
-    return 0;
-}
 /* ── Stub: ipc_ns_delete ─────────────────────────────── */
 int ipc_ns_delete(void *ns)
 {

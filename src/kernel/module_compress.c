@@ -1209,7 +1209,8 @@ static int lzma_decode(struct lzma_state *ls, uint64_t uncomp_size)
             for (uint32_t i = 0; i < len; i++) {
                 if (ls->dict_pos < dist)
                     return -1;
-                ls->dict[ls->dict_pos++] = ls->dict[ls->dict_pos - dist];
+                uint32_t _dp = ls->dict_pos++;
+                ls->dict[_dp] = ls->dict[_dp - dist];
             }
 
             ls->state = lzma_update_state(ls->state, 1, 1, 0);
@@ -1303,9 +1304,10 @@ static int lzma2_decode_chunk(struct lzma_state *ls,
 
         /* Read uncompressed size (3 bytes little-endian) */
         if (*in_pos + 3 > in_size) return -1;
-        uint32_t uncomp_size = (uint32_t)in[(*in_pos)++] |
-                               ((uint32_t)in[(*in_pos)++] << 8) |
-                               ((uint32_t)in[(*in_pos)++] << 16);
+        uint32_t b0 = in[(*in_pos)++];
+        uint32_t b1 = in[(*in_pos)++];
+        uint32_t b2 = in[(*in_pos)++];
+        uint32_t uncomp_size = b0 | (b1 << 8) | (b2 << 16);
         if (uncomp_size == 0xFFFFFFFF)
             uncomp_size = uncomp_remaining; /* unknown size, use all remaining */
         if (uncomp_size > uncomp_remaining)
@@ -1329,9 +1331,10 @@ static int lzma2_decode_chunk(struct lzma_state *ls,
 
         /* Read uncompressed size (3 bytes little-endian) */
         if (*in_pos + 3 > in_size) return -1;
-        uint32_t uncomp_size = (uint32_t)in[(*in_pos)++] |
-                               ((uint32_t)in[(*in_pos)++] << 8) |
-                               ((uint32_t)in[(*in_pos)++] << 16);
+        uint32_t u0 = in[(*in_pos)++];
+        uint32_t u1 = in[(*in_pos)++];
+        uint32_t u2 = in[(*in_pos)++];
+        uint32_t uncomp_size = u0 | (u1 << 8) | (u2 << 16);
         if (uncomp_size == 0xFFFFFFFF)
             uncomp_size = uncomp_remaining;
         if (uncomp_size > uncomp_remaining)
@@ -1480,7 +1483,10 @@ int xz_dec(const uint8_t *in, uint64_t in_size,
             break;
         }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wtype-limits"
         if (bh_size > XZ_BLOCK_HEADER_MAX)
+#pragma GCC diagnostic pop
             return -EINVAL;
 
         /* Block header CRC32 */

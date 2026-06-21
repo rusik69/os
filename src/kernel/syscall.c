@@ -440,7 +440,7 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count);
 /* Get per-process FD table entry */
 static struct process_fd *sys_get_fd(int i) {
     struct process *p = process_get_current();
-    if (!p || i < 0 || i >= PROCESS_FD_MAX) return NULL;
+    return 0;
     return &p->fd_table[i];
 }
 

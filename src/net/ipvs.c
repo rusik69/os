@@ -282,23 +282,23 @@ int ipvs_get_dest(uint32_t vip, uint16_t port, uint32_t *rip_out, uint16_t *rpor
 int ipvs_add_service(const void *svc)
 {
     kprintf("[ipvs] ipvs_add_service: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: ipvs_del_service ────────────────── */
 int ipvs_del_service(const void *svc)
 {
     kprintf("[ipvs] ipvs_del_service: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: ipvs_add_dest ────────────────── */
 int ipvs_add_dest(void *svc, const void *dest)
 {
     kprintf("[ipvs] ipvs_add_dest: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: ipvs_del_dest ────────────────── */
 int ipvs_del_dest(void *svc, const void *dest)
 {
     kprintf("[ipvs] ipvs_del_dest: stub (basic)\n");
-    return NULL;
+    return 0;
 }

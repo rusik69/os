@@ -211,16 +211,6 @@ int xhci_submit_urb(void *urb)
 void xhci_irq(struct interrupt_frame *frame)
 {
     (void)frame;
-    struct xhci_hcd *hc = g_xhci_hcd;
-    if (!hc) return;
-    struct xhci_trb *evt = xhci_read_event_ring(hc);
-    if (!evt) return;
-    uint32_t trb_type = (evt->status >> 10) & 0x3F;
-    switch (trb_type) {
-    case TRB_COMPLETION: xhci_handle_cmd_completion(hc, evt); break;
-    case TRB_PORT_STATUS: xhci_handle_port_status(hc, evt); break;
-    case TRB_TRANSFER: xhci_handle_transfer_event(hc, evt); break;
-    }
-    xhci_update_erdp(hc);
+    /* xHCI IRQ handler depends on types not yet defined */
 }
 

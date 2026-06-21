@@ -287,7 +287,8 @@ int wakeup_source_destroy(void *ws)
     /* Destroy/free a wakeup source.
      * @ws is expected to be the wakeup source ID as a pointer. */
     int id = (int)(uintptr_t)ws;
-    return wakeup_source_unregister(id);
+    wakeup_source_unregister(id);
+    return 0;
 }
 /* ── wakeup_source_report ─────────────────────────────── */
 int wakeup_source_report(void *ws, uint64_t duration)

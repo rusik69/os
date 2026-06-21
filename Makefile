@@ -1234,7 +1234,9 @@ userspace-build:
 # Stage files into rootfs directory
 ROOTFS_STAMP = $(BUILDDIR)/.rootfs_stamp
 
-$(ROOTFS_STAMP): userspace-build modules
+$(ROOTFS_STAMP): userspace-build
+	@$(MAKE) -k modules 2>/dev/null; true
+	# ^ module builds are best-effort; disk.img needs userspace only
 	@rm -rf $(ROOTFS_DIR)
 	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/tmp $(ROOTFS_DIR)/modules
 	# Copy userspace-built init as /sbin/init

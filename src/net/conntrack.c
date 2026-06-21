@@ -592,21 +592,17 @@ void nf_conntrack_init(void)
 #include "module.h"
 module_init(nf_conntrack_init);
 
-/* ── Implement: conntrack_new ────────────────── */
-int conntrack_new(void *skb)
-{
-    kprintf("[conntrack] conntrack_new: stub (basic)\n");
-    return NULL;
-}
 /* ── Implement: conntrack_destroy ────────────────── */
 int conntrack_destroy(void *ct)
 {
+    (void)ct;
     kprintf("[conntrack] conntrack_destroy: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: conntrack_lookup ────────────────── */
 void* conntrack_lookup(void *skb)
 {
+    (void)skb;
     kprintf("[conntrack] conntrack_lookup: stub (basic)\n");
     return NULL;
 }
@@ -614,5 +610,5 @@ void* conntrack_lookup(void *skb)
 int conntrack_flush(void)
 {
     kprintf("[conntrack] conntrack_flush: stub (basic)\n");
-    return NULL;
+    return 0;
 }

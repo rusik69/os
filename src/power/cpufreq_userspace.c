@@ -20,6 +20,10 @@
 #include "string.h"
 #include "sysfs.h"
 
+#ifndef UINT32_MAX
+#define UINT32_MAX 0xFFFFFFFFU
+#endif
+
 /* ── Governor state ─────────────────────────────────────────────────── */
 
 static int g_active = 0;

@@ -246,7 +246,8 @@ int ata_reset(int bus)
     if (bus == 0) {
         outb(0x3F6, 0x04);
         ata_400ns_delay();
-        udelay(5);
+        /* small delay */
+        for (volatile int _d = 0; _d < 5000; _d++) io_wait();
         outb(0x3F6, 0x00);
         ata_400ns_delay();
         if (ata_wait_bsy() < 0) { kprintf("[ata] Reset failed\n"); return -EIO; }
@@ -255,7 +256,7 @@ int ata_reset(int bus)
     } else if (bus == 1) {
         outb(0x376, 0x04);
         ata_400ns_delay();
-        udelay(5);
+        for (volatile int _dl = 0; _dl < 5000; _dl++) io_wait();
         outb(0x376, 0x00);
         ata_400ns_delay();
         return 0;

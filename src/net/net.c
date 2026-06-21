@@ -1145,9 +1145,9 @@ void net_rx_dispatch(const uint8_t *pkt_buf, uint16_t len)
          * MAC addresses swapped (source becomes destination). */
         struct eth_header *eth = (struct eth_header *)pkt_buf;
         uint8_t tmp_mac[6];
-        memcpy(tmp_mac, eth->dst_mac, 6);
-        memcpy(eth->dst_mac, eth->src_mac, 6);
-        memcpy(eth->src_mac, tmp_mac, 6);
+        memcpy(tmp_mac, eth->dst, 6);
+        memcpy(eth->dst, eth->src, 6);
+        memcpy(eth->src, tmp_mac, 6);
 
         /* Send back via netdevice layer or direct link */
         if (netif_count() > 0) {

@@ -191,4 +191,43 @@ int virtio_fs_mount(const char *host_dir, const char *mount_point);
 int virtio_fs_handle_request(int vq_idx);
 void virtio_fs_cleanup(void);
 
+/* ── Additional FUSE structs (defined here if fuse.h not included) ── */
+#ifndef HAVE_FUSE_FSYNC_IN
+#define HAVE_FUSE_FSYNC_IN
+struct fuse_fsync_in {
+    uint64_t fh;
+    uint32_t fsync_flags;
+    uint32_t padding;
+} __attribute__((packed));
+
+struct fuse_release_in {
+    uint64_t fh;
+    uint32_t flags;
+    uint32_t release_flags;
+    uint64_t lock_owner;
+} __attribute__((packed));
+
+struct fuse_statfs_out {
+    struct {
+        uint64_t blocks;
+        uint64_t bfree;
+        uint64_t bavail;
+        uint64_t files;
+        uint64_t ffree;
+        uint32_t bsize;
+        uint32_t frsize;
+        uint32_t namelen;
+        uint32_t frsize2;
+    } st;
+} __attribute__((packed));
+#endif /* HAVE_FUSE_FSYNC_IN */
+
+/* Opcodes not in header */
+#ifndef FUSE_FLUSH
+#define FUSE_FLUSH        25
+#endif
+#ifndef FUSE_FSYNC
+#define FUSE_FSYNC        20
+#endif
+
 #endif /* VIRTIO_FS_H */

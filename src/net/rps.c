@@ -171,7 +171,7 @@ static struct rfs_flow_entry *rfs_find_entry(const struct rps_flow_key *key)
             return e;
         }
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 /* Find a free slot, or evict the oldest */

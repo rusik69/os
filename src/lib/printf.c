@@ -7,14 +7,7 @@
 #include "kptr_restrict.h"
 #include "export.h"
 
-/* struct va_format — must be defined before use in %pV handling */
-#ifndef va_format_defined
-#define va_format_defined
-struct va_format {
-    const char *fmt;
-    __builtin_va_list *va;
-};
-#endif
+/* struct va_format — provided by printf.h */
 
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)

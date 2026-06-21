@@ -498,12 +498,14 @@ module_init(dns_server_init);
 /* ── Implement: dns_server_start ────────────────── */
 int dns_server_start(int port)
 {
+    (void)port;
     kprintf("[dns_server] dns_server_start: stub (basic)\n");
-    return NULL;
+    return 0;
 }
 /* ── Implement: dns_server_handle_query ────────────────── */
 int dns_server_handle_query(const void *query, size_t len, void *resp, size_t *rlen)
 {
+    (void)query; (void)len; (void)resp; (void)rlen;
     kprintf("[dns_server] dns_server_handle_query: stub (basic)\n");
-    return NULL;
+    return 0;
 }

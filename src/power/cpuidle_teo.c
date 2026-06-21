@@ -57,6 +57,15 @@ struct teo_cpu_state {
 };
 
 #define TEO_MAX_CPUS 64
+
+/* ── TEO governor constants ─────────────────────────────── */
+#ifndef TEO_MAX_STATES
+#define TEO_MAX_STATES   10
+#endif
+#ifndef TEO_PATTERN_WINDOW
+#define TEO_PATTERN_WINDOW 5
+#endif
+
 static struct teo_cpu_state teo_state[TEO_MAX_CPUS];
 
 /* ── Per-CPU accessor ──────────────────────────────────────────────── */
@@ -101,7 +110,7 @@ static void teo_compute_pattern_stats(struct teo_cpu_state *ts)
     }
 
     /* Copy window to temporary array for sorting */
-    uint64_t sorted[TEO_PATTERN_WINDOW_SIZE];
+    uint64_t sorted[TEO_PATTERN_WINDOW_SIZE] = {0};
     int n = ts->pattern_window_count;
     for (int i = 0; i < n; i++)
         sorted[i] = ts->pattern_window[i];

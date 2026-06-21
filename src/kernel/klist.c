@@ -132,10 +132,3 @@ int klist_iter_init(void *k, void *i)
     kprintf("[klist] klist_iter_init: not yet implemented\n");
     return 0;
 }
-/* ── Stub: klist_next ─────────────────────────────── */
-void* klist_next(void *i)
-{
-    (void)i;
-    kprintf("[klist] klist_next: not yet implemented\n");
-    return 0;
-}

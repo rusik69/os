@@ -31,7 +31,7 @@ static struct ipoib_iface *ipoib_find_by_ifindex(int ifindex)
         if (ipoib_ifaces[i].used && ipoib_ifaces[i].ifindex == ifindex)
             return &ipoib_ifaces[i];
     }
-    return -EOPNOTSUPP;
+    return NULL;
 }
 
 static int ipoib_find_free(void)

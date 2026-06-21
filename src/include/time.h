@@ -39,10 +39,13 @@ struct tm {
 
 /* ── Itimerspec for timer_settime ───────────────────────────────── */
 
+#ifndef itimerspec_defined
+#define itimerspec_defined
 struct itimerspec {
-    struct timespec it_interval;  /* timer period */
-    struct timespec it_value;     /* timer expiration */
+    struct timespec it_interval;
+    struct timespec it_value;
 };
+#endif
 
 /* ── Timezone structure ───────────────────────────────────────── */
 
