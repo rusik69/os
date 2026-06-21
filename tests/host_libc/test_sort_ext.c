@@ -102,6 +102,16 @@ static void test_swap_bytes(void)
     int f = 42;
     swap_bytes(&f, &f, sizeof(int));
     TEST("swap_bytes: self-swap no-op", f == 42);
+
+    /* 6. Swap odd size (3 bytes) */
+    char x3[4] = "abc", y3[4] = "xyz";
+    swap_bytes(x3, y3, 3);
+    TEST("swap_bytes: 3-byte swap", x3[0]=='x' && x3[1]=='y' && x3[2]=='z' && y3[0]=='a' && y3[1]=='b' && y3[2]=='c');
+
+    /* 7. Swap odd size (13 bytes) */
+    struct { char buf[16]; } s13a = {"hello01234567"}, s13b = {"WORLDabcdefgh"};
+    swap_bytes(&s13a, &s13b, 13);
+    TEST("swap_bytes: 13-byte swap odd alignment", memcmp(s13a.buf, "WORLDabcdefgh", 13) == 0);
 }
 
 /* ===================================================================
@@ -248,6 +258,28 @@ static void test_sort_large(void)
     for (int i = 0; i < 16; i++) b[i] = (i * 13 + 7) % 16;
     sort(b, 16, sizeof(int), cmp_int, NULL);
     TEST("sort: 16 elements (insertion sort boundary)", is_sorted_int(b, 16, 1));
+
+    /* Test all-equal elements */
+    int equal[32];
+    for (int i = 0; i < 32; i++) equal[i] = 42;
+    sort(equal, 32, sizeof(int), cmp_int, NULL);
+    int all_42 = 1;
+    for (int i = 0; i < 32; i++) if (equal[i] != 42) { all_42 = 0; break; }
+    TEST("sort: all-equal elements stable", all_42);
+
+    /* Test 1024 elements already sorted */
+    int c[1024];
+    for (int i = 0; i < 1024; i++) c[i] = i;
+    sort(c, 1024, sizeof(int), cmp_int, NULL);
+    TEST("sort: 1024 elements already sorted", is_sorted_int(c, 1024, 1));
+
+    /* Test 1024 elements reverse order */
+    for (int i = 0; i < 1024; i++) c[i] = 1023 - i;
+    sort(c, 1024, sizeof(int), cmp_int, NULL);
+    int sorted_1024 = 1;
+    for (int i = 1; i < 1024; i++)
+        if (c[i-1] > c[i]) { sorted_1024 = 0; break; }
+    TEST("sort: 1024 elements reverse sorted", sorted_1024);
 }
 
 /* ===================================================================

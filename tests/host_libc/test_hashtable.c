@@ -181,6 +181,64 @@ static void test_hashtable(void)
         hashtable_insert(&ht, i + 1000, v);
     }
     TEST("hashtable: 50 inserts successful", hashtable_count(&ht) >= 50);
+
+    /* 15. Iterate on empty table */
+    struct hashtable empty;
+    hashtable_init(&empty);
+    iter_count = 0;
+    hashtable_iterate(&empty, iter_fn, NULL);
+    TEST("hashtable_iterate: empty visits 0", iter_count == 0);
+
+    /* 16. Remove from empty table */
+    int r_empty = hashtable_remove(&empty, 42);
+    TEST("hashtable_remove: empty returns -1", r_empty != 0);
+
+    /* 17. Insert, remove, re-insert cycle */
+    struct hashtable ht2;
+    hashtable_init(&ht2);
+    int v17 = 17;
+    hashtable_insert(&ht2, 17, &v17);
+    TEST("hashtable_lookup: inserted 17", *(int*)hashtable_lookup(&ht2, 17) == 17);
+    hashtable_remove(&ht2, 17);
+    TEST("hashtable_lookup: removed 17 NULL", hashtable_lookup(&ht2, 17) == NULL);
+    hashtable_insert(&ht2, 17, &v17);
+    TEST("hashtable_lookup: re-inserted 17 found", *(int*)hashtable_lookup(&ht2, 17) == 17);
+    TEST("hashtable_count: re-inserted count=1", hashtable_count(&ht2) == 1);
+
+    /* 18. Insert key=0 with value=NULL */
+    hashtable_insert(&ht2, 0, NULL);
+    TEST("hashtable_lookup: key=0 returns NULL value",
+         hashtable_lookup(&ht2, 0) == NULL);
+    TEST("hashtable_count: key=0 added count=2", hashtable_count(&ht2) == 2);
+
+    /* 19. Keys that hash to same bucket (colliding keys) */
+    /* HASH_TABLE_SIZE=64, so keys 0 and 64 collide */
+    struct hashtable ht3;
+    hashtable_init(&ht3);
+    int v_a = 1, v_b = 2;
+    hashtable_insert(&ht3, 0, &v_a);
+    hashtable_insert(&ht3, 64, &v_b);
+    TEST("hashtable: colliding key 0 found", *(int*)hashtable_lookup(&ht3, 0) == 1);
+    TEST("hashtable: colliding key 64 found", *(int*)hashtable_lookup(&ht3, 64) == 2);
+    /* Remove one colliding key */
+    hashtable_remove(&ht3, 0);
+    TEST("hashtable: colliding key 0 removed NULL", hashtable_lookup(&ht3, 0) == NULL);
+    TEST("hashtable: colliding key 64 still found", *(int*)hashtable_lookup(&ht3, 64) == 2);
+    hashtable_remove(&ht3, 64);
+    TEST("hashtable: colliding key 64 removed NULL", hashtable_lookup(&ht3, 64) == NULL);
+
+    /* 20. Stress: 1000 insertions */
+    struct hashtable ht4;
+    hashtable_init(&ht4);
+    for (int i = 0; i < 1000; i++) {
+        int *v = (int *)malloc(sizeof(int));
+        *v = i;
+        hashtable_insert(&ht4, (uint64_t)i, v);
+    }
+    TEST("hashtable: 1000 inserts count=1000", hashtable_count(&ht4) == 1000);
+    TEST("hashtable: 1000 inserts lookup 0", *(int*)hashtable_lookup(&ht4, 0) == 0);
+    TEST("hashtable: 1000 inserts lookup 999", *(int*)hashtable_lookup(&ht4, 999) == 999);
+    TEST("hashtable: 1000 inserts lookup 500", *(int*)hashtable_lookup(&ht4, 500) == 500);
 }
 
 /* ===================================================================

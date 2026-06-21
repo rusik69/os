@@ -55,6 +55,9 @@ int kprintf(const char *fmt, ...) { (void)fmt; return 0; }
 int console_loglevel = 7;
 int default_message_loglevel = 6;
 
+/* Match the kernel's REFCOUNT_SATURATED value from refcount_ext.c */
+#define REFCOUNT_SATURATED (INT32_MAX / 2)
+
 /* ===================================================================
  *  Test harness
  * =================================================================== */
@@ -150,6 +153,56 @@ static void test_refcount(void)
     /* refcount_dec on value 1 triggers saturation — counter goes to REFCOUNT_SATURATED */
     /* inc_not_zero still works on saturated counter (it's a large positive value) */
     TEST("refcount_seq: saturated counter not crash", 1);
+
+    /* 13. refcount_inc on value near INT32_MAX (overflow protection) */
+    /* Start from just below INT32_MAX */
+    struct refcount_struct r2;
+    refcount_set(&r2, 0x7FFFFFFF);  /* INT32_MAX */
+    refcount_inc(&r2);
+    /* After increment, old=INT32_MAX+1 = INT32_MIN ≤ 0 → saturates to REFCOUNT_SATURATED */
+    int sat_ref = REFCOUNT_SATURATED;
+    TEST("refcount_inc: on INT32_MAX saturates to REFCOUNT_SATURATED",
+         refcount_read(&r2) == sat_ref);
+    /* Further inc should increment from REFCOUNT_SATURATED (no further saturation) */
+    refcount_inc(&r2);
+    TEST("refcount_inc: second inc increments from saturated",
+         refcount_read(&r2) == sat_ref + 1);
+
+    /* 14. refcount_dec on zero (underflow protection) */
+    struct refcount_struct r3;
+    refcount_set(&r3, 0);
+    refcount_dec(&r3);
+    /* refcount_dec on 0: old = -1 ≤ 0 → saturates to REFCOUNT_SATURATED */
+    TEST("refcount_dec: on zero saturates to REFCOUNT_SATURATED",
+         refcount_read(&r3) == sat_ref);
+
+    /* 15. refcount_sub_and_test with i=0 */
+    struct refcount_struct r4;
+    refcount_set(&r4, 5);
+    int sub_zero = refcount_sub_and_test(&r4, 0);
+    TEST("refcount_sub_and_test: i=0 returns 0", sub_zero == 0);
+    TEST("refcount_sub_and_test: i=0 value unchanged", refcount_read(&r4) == 5);
+
+    /* 16. refcount_sub_and_test with i > current */
+    struct refcount_struct r5;
+    refcount_set(&r5, 2);
+    refcount_sub_and_test(&r5, 10);
+    /* Should saturate or return 0, but definitely no crash */
+    TEST("refcount_sub_and_test: i>current no crash", 1);
+    /* old = 2-10 = -8 < 0 → saturates */
+    TEST("refcount_sub_and_test: i>current saturates",
+         refcount_read(&r5) == sat_ref);
+
+    /* 17. refcount_inc 100 times then dec 100 times */
+    struct refcount_struct r6;
+    refcount_set(&r6, 0);
+    for (int i = 0; i < 100; i++) refcount_inc(&r6);
+    TEST("refcount_inc: 100 incs value=100", refcount_read(&r6) == 100);
+    for (int i = 0; i < 99; i++) refcount_dec(&r6);
+    TEST("refcount_dec: 99 decs from 100 value=1", refcount_read(&r6) == 1);
+    refcount_dec(&r6); /* 1→0, old=0 ≤ 0 → saturates */
+    TEST("refcount_dec: last dec to zero saturates",
+         refcount_read(&r6) == sat_ref);
 }
 
 /* ===================================================================

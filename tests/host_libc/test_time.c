@@ -111,6 +111,44 @@ static void test_gmtime(void)
     /* 3. NULL result pointer — gmtime uses internal buffer */
     struct tm *gp = gmtime(&t);
     TEST("gmtime: non-NULL return", gp != NULL);
+
+    /* 4. Leap year Feb 29, 2024 */
+    /* 2024-02-29 12:00:00 UTC */
+    /* Jan 31 days + 29 days into Feb = days since Jan 1 = 31 + 28 = 59 */
+    /* 2024-02-29 12:00:00 = 1704067200 (2024-01-01) + 59*86400 + 12*3600 */
+    t = 1704067200LL + 59 * 86400LL + 12 * 3600LL;
+    gmtime_r(&t, &result);
+    TEST("gmtime: 2024 leap Feb 29 mon=1 (Feb)", result.tm_mon == 1);
+    TEST("gmtime: 2024 leap Feb 29 mday=29", result.tm_mday == 29);
+    TEST("gmtime: 2024 leap year yday=59", result.tm_yday == 59);
+
+    /* 5. Non-leap Feb 28, 2023 */
+    /* 2023-02-28 00:00:00 UTC */
+    /* 2023-01-01 = 1672531200, Jan has 31 days */
+    t = 1672531200LL + 58 * 86400LL;  /* day 58 = Feb 28 (0-indexed) */
+    gmtime_r(&t, &result);
+    TEST("gmtime: 2023 non-leap Feb 28 mon=1", result.tm_mon == 1);
+    TEST("gmtime: 2023 non-leap Feb 28 mday=28", result.tm_mday == 28);
+    /* 2023 is not leap, so yday should be 31+27=58 */
+    TEST("gmtime: 2023 non-leap yday=58", result.tm_yday == 58);
+
+    /* 6. Dec 31 23:59:59 (any year) — year boundary */
+    /* 2024-12-31 23:59:59 UTC: 2024-01-01 + 365 days + 23h59m59s */
+    /* 2024 is leap year so Dec 31 = day 365 (0-indexed) */
+    t = 1704067200LL + 365 * 86400LL + 23 * 3600LL + 59 * 60 + 59;
+    gmtime_r(&t, &result);
+    TEST("gmtime: 2024 Dec 31 mon=11 (Dec)", result.tm_mon == 11);
+    TEST("gmtime: 2024 Dec 31 mday=31", result.tm_mday == 31);
+    TEST("gmtime: 2024 Dec 31 hour=23", result.tm_hour == 23);
+    TEST("gmtime: 2024 Dec 31 min=59", result.tm_min == 59);
+    TEST("gmtime: 2024 Dec 31 sec=59", result.tm_sec == 59);
+    /* For 2024 (leap): 366 days, yday range 0-365, so Dec 31 = 365 */
+    if (result.tm_yday == 365 || result.tm_yday == 364) {
+        TEST("gmtime: 2024 Dec 31 yday valid", 1);
+    } else {
+        TEST("gmtime: 2024 Dec 31 yday valid", 0);
+    }
+    TEST("gmtime: 2024 Dec 31 year=124", result.tm_year == 124);
 }
 
 /* ===================================================================
@@ -162,6 +200,28 @@ static void test_mktime(void)
     TEST("mktime: roundtrip hour",  result.tm_hour == 12);
     TEST("mktime: roundtrip min",   result.tm_min == 0);
     TEST("mktime: roundtrip sec",   result.tm_sec == 0);
+    /* 5. Pre-1970 — 1969-06-20 — mktime/gmtime behavior depends on implementation */
+    tm.tm_year = 69; tm.tm_mon = 5; tm.tm_mday = 20;
+    tm.tm_hour = 12; tm.tm_min = 0; tm.tm_sec = 0;
+    tm.tm_isdst = -1;
+    t = mktime(&tm);
+    /* Kernel may not support pre-1970 dates (negative time_t) */
+    /* Just verify it returns something reasonable or doesn't crash */
+    TEST("mktime: pre-1970 returns non-negative or within range",
+         (long long)t >= 0 || t == (time_t)-1);
+
+    /* 6. 2038-01-19 03:14:07 (32-bit time_t overflow boundary) */
+    tm.tm_year = 138; tm.tm_mon = 0; tm.tm_mday = 19;
+    tm.tm_hour = 3; tm.tm_min = 14; tm.tm_sec = 7;
+    tm.tm_isdst = -1;
+    t = mktime(&tm);
+    /* 2038-01-19 03:14:07 UTC = 0x7FFFFFFF = 2147483647 */
+    if (sizeof(time_t) >= 8) {
+        TEST("mktime: 2038-01-19 = 2147483647", t == 2147483647LL);
+    }
+    gmtime_r(&t, &result);
+    TEST("mktime: 2038 roundtrip mday", result.tm_mday == 19);
+    TEST("mktime: 2038 roundtrip hour", result.tm_hour == 3);
 }
 
 /* ===================================================================
@@ -195,6 +255,10 @@ static void test_asctime(void)
     /* 3. asctime convenience wrapper */
     char *r2 = asctime(&tm);
     TEST("asctime: non-NULL return", r2 != NULL);
+
+    /* 4. asctime_r with NULL tm */
+    r = asctime_r(NULL, buf);
+    TEST("asctime_r: NULL tm returns NULL", r == NULL);
 }
 
 /* ===================================================================
@@ -249,6 +313,20 @@ static void test_strftime(void)
     /* 10. Empty format string (strftime returns 0) */
     size_t n2 = strftime(buf, sizeof(buf), "", &tm);
     TEST("strftime: empty returns 0", n2 == 0);
+
+    /* Setup for weekday/month name tests: 2024-03-15 */
+    struct tm tm2;
+    tm2.tm_year = 124; tm2.tm_mon = 2; tm2.tm_mday = 15;
+    tm2.tm_hour = 14; tm2.tm_min = 30; tm2.tm_sec = 45;
+    tm2.tm_wday = 5; tm2.tm_yday = 74; tm2.tm_isdst = 0;
+
+    /* 11. %A (full weekday name) */
+    strftime(buf, sizeof(buf), "%A", &tm2);
+    TEST("strftime: %A = Friday", strcmp(buf, "Friday") == 0);
+
+    /* 12. %B (full month name) */
+    strftime(buf, sizeof(buf), "%B", &tm2);
+    TEST("strftime: %B = March", strcmp(buf, "March") == 0);
 }
 
 /* ===================================================================

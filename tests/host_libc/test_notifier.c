@@ -62,6 +62,9 @@ static int callback_count = 0;
 static unsigned long last_val = 0;
 static void *last_data = NULL;
 
+/* NOTIFY_BAD-like return value */
+#define NOTIFY_BAD 1
+
 static int test_callback(struct notifier_block *nb, unsigned long v, void *data)
 {
     (void)nb;
@@ -76,6 +79,22 @@ static int test_callback2(struct notifier_block *nb, unsigned long v, void *data
     (void)nb;
     callback_count += 10;  /* distinguish from callback1 */
     (void)v; (void)data;
+    return 0;
+}
+
+static int test_callback_bad(struct notifier_block *nb, unsigned long v, void *data)
+{
+    (void)nb; (void)v; (void)data;
+    callback_count += 100;
+    return NOTIFY_BAD;
+}
+
+static int test_callback_self_unregister(struct notifier_block *nb, unsigned long v, void *data)
+{
+    (void)v; (void)data;
+    callback_count += 1000;
+    /* Unregister ourselves from the chain */
+    notifier_chain_unregister(NOTIFIER_PANIC, nb);
     return 0;
 }
 
@@ -144,6 +163,70 @@ static void test_notifier(void)
     TEST("notifier_chain_register: NULL returns -1", r == -1);
     r = notifier_chain_register(NOTIFIER_MAX + 1, &nb1);
     TEST("notifier_chain_register: invalid type returns -1", r == -1);
+
+    /* 11. Register same callback twice */
+    r = notifier_chain_register(NOTIFIER_PANIC, &nb1);
+    TEST("notifier_chain_register: re-register returns 0", r == 0);
+    callback_count = 0;
+    notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+    /* Kernel may or may not fire a double-registered callback twice */
+    TEST("notifier_call_chain: double-registered fires at least once",
+         callback_count >= 1);
+
+    /* Clean up extra registration */
+    notifier_chain_unregister(NOTIFIER_PANIC, &nb1);
+    notifier_chain_unregister(NOTIFIER_PANIC, &nb1);
+    callback_count = 0;
+    notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+    TEST("notifier_call_chain: empty after cleanup", callback_count == 0);
+
+    /* 12. Re-register after full unregister */
+    r = notifier_chain_register(NOTIFIER_PANIC, &nb1);
+    TEST("notifier_chain_register: re-register after empty returns 0", r == 0);
+    callback_count = 0;
+    notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+    TEST("notifier_call_chain: re-registered fires once", callback_count == 1);
+    notifier_chain_unregister(NOTIFIER_PANIC, &nb1);
+
+    /* 13. Callback returning NOTIFY_BAD */
+    /* First clean up nb1 from DIE (registered in test 6) */
+    notifier_chain_unregister(NOTIFIER_DIE, &nb1);
+    struct notifier_block nb_bad = { .notifier_call = test_callback_bad, .next = NULL };
+    struct notifier_block nb_good = { .notifier_call = test_callback, .next = NULL };
+    notifier_chain_register(NOTIFIER_DIE, &nb_bad);
+    notifier_chain_register(NOTIFIER_DIE, &nb_good);
+    callback_count = 0;
+    r = notifier_call_chain(NOTIFIER_DIE, 0, NULL);
+    /* nb_good fires first (LIFO): +1, then nb_bad: +100 = 101 */
+    TEST("notifier_call_chain: bad callback fires", callback_count == 101);
+    notifier_chain_unregister(NOTIFIER_DIE, &nb_bad);
+    notifier_chain_unregister(NOTIFIER_DIE, &nb_good);
+
+    /* 14. 10+ callbacks on same type */
+    struct notifier_block many[15];
+    for (int i = 0; i < 15; i++) {
+        many[i].notifier_call = test_callback;
+        many[i].next = NULL;
+        notifier_chain_register(NOTIFIER_REBOOT, &many[i]);
+    }
+    callback_count = 0;
+    notifier_call_chain(NOTIFIER_REBOOT, 0, NULL);
+    TEST("notifier_call_chain: 15 callbacks fire", callback_count == 15);
+    for (int i = 0; i < 15; i++)
+        notifier_chain_unregister(NOTIFIER_REBOOT, &many[i]);
+
+    /* 15. Callback that unregisters itself */
+    struct notifier_block nb_self = { .notifier_call = test_callback_self_unregister, .next = NULL };
+    struct notifier_block nb_after = { .notifier_call = test_callback2, .next = NULL };
+    notifier_chain_register(NOTIFIER_NET_EVENT, &nb_self);
+    notifier_chain_register(NOTIFIER_NET_EVENT, &nb_after);
+    callback_count = 0;
+    r = notifier_call_chain(NOTIFIER_NET_EVENT, 0, NULL);
+    /* Self-unregister fires (adds 1000), nb_after still fires (adds 10) */
+    TEST("notifier_call_chain: self-unregister fires", callback_count == 1010);
+    /* Verify nb_self may or may not still be in chain (depends on kernel impl) */
+    r = notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_self);
+    notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_after);
 }
 
 /* ===================================================================

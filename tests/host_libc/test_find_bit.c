@@ -83,6 +83,19 @@ static void test_set_clear_bit(void)
     TEST("set_bit: bit 64 not in first word", test_bit(0, arr) == 0);
     set_bit(128, arr);
     TEST("set_bit: bit 128 in third word", test_bit(128, arr) != 0);
+
+    /* 7. Clear bit in third word */
+    clear_bit(128, arr);
+    TEST("clear_bit: bit 128 in third word cleared", test_bit(128, arr) == 0);
+
+    /* 8. Test bit at a high position in array */
+    unsigned long w3 = 0;
+    set_bit(0, &w3);
+    set_bit(63, &w3);
+    TEST("set_bit: bit 0 and bit 63 both set",
+         test_bit(0, &w3) != 0 && test_bit(63, &w3) != 0);
+    clear_bit(0, &w3);
+    TEST("clear_bit: bit 0 cleared separately", test_bit(63, &w3) != 0);
 }
 
 /* ===================================================================
@@ -124,6 +137,15 @@ static void test_find_first_bit(void)
     unsigned long arr3[2] = {0, 0};
     set_bit(127, arr3);
     TEST("find_first_bit: bit 127", find_first_bit(arr3, 128) == 127);
+
+    /* 8. size=0 returns 0 */
+    unsigned long z[1] = {0};
+    TEST("find_first_bit: size=0 returns 0", find_first_bit(z, 0) == 0);
+
+    /* 9. size=0 with bits set returns 0 */
+    set_bit(0, z);
+    TEST("find_first_bit: size=0 with bits returns 0", find_first_bit(z, 0) == 0);
+    clear_bit(0, z);
 }
 
 /* ===================================================================
@@ -151,6 +173,13 @@ static void test_find_first_zero_bit(void)
     /* 4. Zero in second word */
     clear_bit(100, arr);
     TEST("find_first_zero_bit: bit 100", find_first_zero_bit(arr, 128) == 100);
+    set_bit(100, arr);
+
+    /* 5. size=0 returns 0 */
+    unsigned long full[1];
+    memset(full, 0xFF, sizeof(full));
+    TEST("find_first_zero_bit: size=0 returns 0",
+         find_first_zero_bit(full, 0) == 0);
 }
 
 /* ===================================================================
@@ -183,6 +212,20 @@ static void test_find_last_bit(void)
     unsigned long arr2[2] = {0, 0};
     set_bit(0, arr2);
     TEST("find_last_bit: only bit 0", find_last_bit(arr2, 64) == 0);
+
+    /* 7. Multi-word across three words */
+    unsigned long arr3[3] = {0, 0, 0};
+    set_bit(64, arr3);
+    TEST("find_last_bit: bit 64 in second word", find_last_bit(arr3, 192) == 64);
+    set_bit(128, arr3);
+    TEST("find_last_bit: bit 128 in third word", find_last_bit(arr3, 192) == 128);
+    set_bit(191, arr3);
+    TEST("find_last_bit: bit 191 highest in third word", find_last_bit(arr3, 192) == 191);
+
+    /* 8. Single bit in third word */
+    unsigned long arr4[3] = {0, 0, 0};
+    set_bit(150, arr4);
+    TEST("find_last_bit: single bit 150 in third word", find_last_bit(arr4, 192) == 150);
 }
 
 /* ===================================================================
@@ -218,6 +261,19 @@ static void test_find_next_bit(void)
     unsigned long arr3[2] = {0, 0};
     set_bit(127, arr3);
     TEST("find_next_bit: bit 127", find_next_bit(arr3, 128, 0) == 127);
+
+    /* 8. offset > size */
+    TEST("find_next_bit: offset>size returns size",
+         find_next_bit(arr, 128, 200) == 128);
+
+    /* 9. offset > size on empty */
+    unsigned long e2[2] = {0, 0};
+    TEST("find_next_bit: offset>size empty returns size",
+         find_next_bit(e2, 64, 100) == 64);
+
+    /* 10. offset equals size boundary */
+    TEST("find_next_bit: offset==size returns size",
+         find_next_bit(arr, 128, 128) == 128);
 }
 
 /* ===================================================================

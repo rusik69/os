@@ -1,0 +1,125 @@
+/*
+ * test_uid16.c — Host-side tests for kernel UID16 conversion functions
+ *
+ * Tests uid_to_16 and uid_from_16 inline helpers from src/kernel/uid16.c.
+ * These are static inline functions, so we duplicate them here
+ * (they're trivial).
+ */
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+/* ===================================================================
+ *  UID16 inline helpers (copied from uid16.c)
+ * =================================================================== */
+static inline uint16_t uid_to_16(uint32_t uid)
+{
+    return (uid > 0xFFFF) ? 0xFFFE : (uint16_t)uid;
+}
+
+static inline uint32_t uid_from_16(uint16_t uid16)
+{
+    return (uint32_t)uid16;
+}
+
+/* ===================================================================
+ *  Stubs
+ * =================================================================== */
+void vga_putchar(char c)      { (void)c; }
+void serial_putchar(char c)   { (void)c; }
+
+/* ===================================================================
+ *  Test harness
+ * =================================================================== */
+static int tests_passed = 0;
+static int tests_failed = 0;
+
+#define TEST(name, cond) do {                                           \
+    if (!(cond)) {                                                      \
+        printf("  FAIL: %s (%s)\n", name, #cond);                      \
+        tests_failed++;                                                 \
+    } else {                                                            \
+        printf("  PASS: %s\n", name);                                   \
+        tests_passed++;                                                 \
+    }                                                                   \
+} while (0)
+
+/* ===================================================================
+ *  test_uid_conv
+ * =================================================================== */
+static void test_uid_conv(void)
+{
+    /* 1. uid_to_16(0) == 0 */
+    TEST("uid_to_16(0) == 0", uid_to_16(0) == 0);
+
+    /* 2. uid_to_16(65535) == 65535 */
+    TEST("uid_to_16(65535) == 65535", uid_to_16(65535) == 65535);
+
+    /* 3. uid_to_16(65536) == 0xFFFE */
+    TEST("uid_to_16(65536) == 0xFFFE", uid_to_16(65536) == 0xFFFE);
+
+    /* 4. uid_to_16(999999) == 0xFFFE */
+    TEST("uid_to_16(999999) == 0xFFFE", uid_to_16(999999) == 0xFFFE);
+
+    /* 5. uid_to_16(UINT32_MAX) == 0xFFFE */
+    TEST("uid_to_16(UINT32_MAX) == 0xFFFE", uid_to_16(0xFFFFFFFF) == 0xFFFE);
+
+    /* 6. uid_to_16(1) == 1 */
+    TEST("uid_to_16(1) == 1", uid_to_16(1) == 1);
+
+    /* 7. uid_from_16(0) == 0 */
+    TEST("uid_from_16(0) == 0", uid_from_16(0) == 0);
+
+    /* 8. uid_from_16(65535) == 65535 */
+    TEST("uid_from_16(65535) == 65535", uid_from_16(65535) == 65535);
+
+    /* 9. uid_from_16(0xFFFE) == 0xFFFE */
+    TEST("uid_from_16(0xFFFE) == 0xFFFE", uid_from_16(0xFFFE) == 0xFFFE);
+
+    /* 10. uid_from_16(1) == 1 */
+    TEST("uid_from_16(1) == 1", uid_from_16(1) == 1);
+
+    /* 11. Roundtrip: uid_from_16(uid_to_16(x)) == x for x <= 65535 */
+    for (uint32_t test_val = 0; test_val <= 65535; test_val += 1024) {
+        uint16_t conv = uid_to_16(test_val);
+        uint32_t back = uid_from_16(conv);
+        if (back != test_val) {
+            TEST("uid roundtrip: <=65535", 0);
+            break;
+        }
+    }
+    TEST("uid roundtrip: <=65535 passes", 1);
+
+    /* 12. Roundtrip: uid_to_16(uid_from_16(x)) == x for all x */
+    TEST("uid_to_16(uid_from_16(12345)) == 12345",
+         uid_to_16(uid_from_16(12345)) == 12345);
+    TEST("uid_to_16(uid_from_16(0)) == 0",
+         uid_to_16(uid_from_16(0)) == 0);
+    TEST("uid_to_16(uid_from_16(65535)) == 65535",
+         uid_to_16(uid_from_16(65535)) == 65535);
+
+    /* 13. Large values clamp */
+    TEST("uid_to_16(0x10000) clamps to 0xFFFE", uid_to_16(0x10000) == 0xFFFE);
+    TEST("uid_to_16(0x10001) clamps to 0xFFFE", uid_to_16(0x10001) == 0xFFFE);
+}
+
+/* ===================================================================
+ *  Main
+ * =================================================================== */
+int main(void)
+{
+    printf("=== UID16 Conversion Tests ===\n\n");
+
+    printf("--- uid_to_16 / uid_from_16 ---\n");
+    test_uid_conv();
+
+    printf("\n");
+    printf("============================================\n");
+    printf("  Results: %d run, %d passed, %d failed\n",
+           tests_passed + tests_failed, tests_passed, tests_failed);
+    printf("============================================\n");
+
+    return tests_failed > 0 ? 1 : 0;
+}

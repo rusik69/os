@@ -172,6 +172,42 @@ static void test_idr_boundary(void)
     idr_remove(&idr2, 63);
     TEST("idr_find: id 63 freed", !idr_find(&idr2, 63));
     TEST("idr_alloc: reuses id 63", idr_alloc(&idr2) == 63);
+
+    /* max=2 (single word edge) */
+    struct idr idr3;
+    idr_init(&idr3, 2);
+    TEST("idr_alloc: max=2 id 0", idr_alloc(&idr3) == 0);
+    TEST("idr_alloc: max=2 id 1", idr_alloc(&idr3) == 1);
+    TEST("idr_alloc: max=2 full", idr_alloc(&idr3) == -1);
+    idr_remove(&idr3, 0);
+    TEST("idr_alloc: max=2 reuses 0", idr_alloc(&idr3) == 0);
+
+    /* max=63 (word boundary - 1) */
+    struct idr idr4;
+    idr_init(&idr4, 63);
+    for (int i = 0; i < 63; i++) idr_alloc(&idr4);
+    TEST("idr_alloc: max=63 full", idr_alloc(&idr4) == -1);
+    idr_remove(&idr4, 62);
+    TEST("idr_alloc: max=63 reuses 62", idr_alloc(&idr4) == 62);
+
+    /* max=128 (two words) */
+    struct idr idr5;
+    idr_init(&idr5, 128);
+    /* Allocate all 128 */
+    for (int i = 0; i < 128; i++) idr_alloc(&idr5);
+    TEST("idr_alloc: max=128 full", idr_alloc(&idr5) == -1);
+    idr_remove(&idr5, 127);
+    TEST("idr_alloc: max=128 reuses 127", idr_alloc(&idr5) == 127);
+
+    /* alloc-remove-realloc cycle across word boundary */
+    struct idr idr6;
+    idr_init(&idr6, 65);
+    for (int i = 0; i < 65; i++) idr_alloc(&idr6);
+    TEST("idr_alloc: max=65 full", idr_alloc(&idr6) == -1);
+    idr_remove(&idr6, 0);
+    idr_remove(&idr6, 64);
+    TEST("idr_alloc: max=65 reuses 0 after removal", idr_alloc(&idr6) == 0);
+    TEST("idr_alloc: max=65 reuses 64", idr_alloc(&idr6) == 64);
 }
 
 /* ===================================================================

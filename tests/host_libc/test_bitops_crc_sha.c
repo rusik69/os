@@ -192,6 +192,42 @@ static void test_bitmap_ops(void)
     } else {
         TEST("bitmap_set middle 32-bit word", map[0] == 0xFF0UL);
     }
+
+    /* Test bitmap_set nr=0 (no-op) */
+    bitmap_zero(map, 256);
+    unsigned long before = map[0];
+    bitmap_set(map, 10, 0);
+    TEST("bitmap_set nr=0 no-op", map[0] == before);
+
+    /* Test bitmap_clear nr=0 (no-op) */
+    bitmap_set(map, 10, 5);
+    before = map[0];
+    bitmap_clear(map, 10, 0);
+    TEST("bitmap_clear nr=0 no-op", map[0] == before);
+
+    /* Test bitmap_set all 256 bits */
+    bitmap_zero(map, 256);
+    bitmap_set(map, 0, 256);
+    int all_set = 1;
+    for (int i = 0; i < 4; i++)
+        if (map[i] != ~0UL) { all_set = 0; break; }
+    TEST("bitmap_set all 256 bits", all_set);
+
+    /* Test bitmap_clear all bits (clear 0..256) */
+    bitmap_clear(map, 0, 256);
+    int all_cleared = 1;
+    for (int i = 0; i < 4; i++)
+        if (map[i] != 0) { all_cleared = 0; break; }
+    TEST("bitmap_clear all 256 bits", all_cleared);
+
+    /* Test bitmap_find_next_zero_area with start > size */
+    bitmap_zero(map, 256);
+    area = bitmap_find_next_zero_area(map, 256, 300, 1);
+    TEST("find_next_zero_area start>size returns -1", area == -1);
+
+    /* Test bitmap_find_next_zero_area with start = size */
+    area = bitmap_find_next_zero_area(map, 256, 256, 1);
+    TEST("find_next_zero_area start==size returns -1", area == -1);
 }
 
 /* ===================================================================
@@ -249,6 +285,30 @@ static void test_crc32(void)
     c = crc32(0, zeros, 16);
     /* Known: CRC32(16 zero bytes) = 0xA0C67F41 (for IEEE polynomial) */
     TEST_EQ_U32("crc32 zeros", 0xECBB4B55U, c);
+
+    /* CRC32 incremental byte-by-byte matches bulk */
+    uint32_t inc = 0;
+    const char *pangram2 = "The quick brown fox jumps over the lazy dog";
+    size_t plen = strlen(pangram2);
+    for (size_t i = 0; i < plen; i++)
+        inc = crc32(inc, pangram2 + i, 1);
+    uint32_t bulk = crc32(0, pangram2, plen);
+    TEST_EQ_U32("crc32 byte-by-byte matches bulk", bulk, inc);
+
+    /* CRC32 non-zero initial value */
+    uint32_t with_seed = crc32(0xFFFFFFFFU, "abc", 3);
+    TEST("crc32 non-zero seed differs from zero seed",
+         with_seed != crc32(0, "abc", 3));
+
+    /* CRC32 large buffer (8192 bytes) */
+    uint8_t large[8192];
+    for (int i = 0; i < 8192; i++) large[i] = (uint8_t)(i * 3 + 7);
+    uint32_t c_large = crc32(0, large, 8192);
+    TEST("crc32 large buffer 8192 bytes non-zero", c_large != 0);
+    /* Chain two halves */
+    uint32_t half1 = crc32(0, large, 4096);
+    uint32_t half2 = crc32(half1, large + 4096, 4096);
+    TEST_EQ_U32("crc32 chain 4096+4096 matches 8192", c_large, half2);
 }
 
 /* ===================================================================
@@ -357,6 +417,50 @@ static void test_sha256(void)
         0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0, 0x0a, 0x08
     };
     TEST_BUF("SHA256('test')", expected_test, digest, 32);
+
+    /* Test 7: SHA256 single-block boundary (55 bytes — max in first block) */
+    {
+        uint8_t buf55[55];
+        memset(buf55, 'a', 55);
+        sha256_hash(digest, buf55, 55);
+        uint8_t stable55[32];
+        sha256_hash(stable55, buf55, 55);
+        TEST_BUF("SHA256 55-byte single block deterministic", stable55, digest, 32);
+    }
+
+    /* Test 8: SHA256 exactly 64 bytes (one full block) */
+    {
+        uint8_t buf64[64];
+        memset(buf64, 'b', 64);
+        sha256_hash(digest, buf64, 64);
+        uint8_t stable64[32];
+        sha256_hash(stable64, buf64, 64);
+        TEST_BUF("SHA256 64-byte exact block deterministic", stable64, digest, 32);
+    }
+
+    /* Test 9: SHA256 exactly 56 bytes (two-block boundary) */
+    {
+        uint8_t buf56[56];
+        memset(buf56, 'c', 56);
+        sha256_hash(digest, buf56, 56);
+        uint8_t stable56[32];
+        sha256_hash(stable56, buf56, 56);
+        TEST_BUF("SHA256 56-byte two-block boundary deterministic", stable56, digest, 32);
+    }
+
+    /* Test 10: SHA256 1-byte-at-a-time streaming matches all-in-one */
+    {
+        const char *msg = "Streaming test for SHA-256 implementation";
+        size_t msglen = strlen(msg);
+        struct sha256_ctx ctx;
+        sha256_init(&ctx);
+        for (size_t i = 0; i < msglen; i++)
+            sha256_update(&ctx, msg + i, 1);
+        sha256_final(digest, &ctx);
+        uint8_t bulk[32];
+        sha256_hash(bulk, msg, msglen);
+        TEST_BUF("SHA256 1-byte-at-a-time stream matches bulk", bulk, digest, 32);
+    }
 }
 
 /* ===================================================================

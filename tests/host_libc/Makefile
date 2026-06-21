@@ -90,12 +90,51 @@ HASHTABLE_OBJS = hashtable.o test_hashtable.o
 # Refcount tests
 REFCOUNT_OBJS = refcount.o test_refcount.o
 
+# Bitfield macro tests (self-contained — no kernel sources needed)
+BITFIELD_OBJS = test_bitfield.o
+
+# Errno string tests
+ERRNO_EXT_OBJS = errno_ext.o test_errno_ext.o
+
+# UID16 conversion tests (self-contained — inline functions only)
+UID16_OBJS = test_uid16.o
+
+# Memory pool tests
+MEMPOOL_OBJS = mempool.o test_mempool.o
+
+# PRNG core tests (self-contained — xorshift64 reimplemented)
+RNG_CORE_OBJS = test_rng_core.o
+
+# ── Kernel command-line parsing tests ─────────────────────
+CMDLINE_OBJS = cmdline.o test_cmdline.o
+
+# ── LZSS compression tests ────────────────────────────────
+COMPRESS_OBJS = compress.o test_compress.o
+
+# ── Log buffer tests ──────────────────────────────────────
+LOGBUF_OBJS = logbuf.o test_logbuf.o
+
+# ── Module alias tests ────────────────────────────────────
+MODULE_ALIAS_OBJS = module_alias.o test_module_alias.o
+
+# ── Sched attribute validation tests ──────────────────────
+SCHED_ATTR_OBJS = sched_attr.o test_sched_attr.o
+
+# ── Signal validation tests ───────────────────────────────
+SIGNAL_VALIDATE_OBJS = signal_validate.o test_signal_validate.o
+
+# ── Kernel pointer restrict tests ─────────────────────────
+KPTR_RESTRICT_OBJS = kptr_restrict.o test_kptr_restrict.o
+
 .PHONY: all clean
 
 all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
-     test_uuid test_hashtable test_refcount
+     test_uuid test_hashtable test_refcount \
+     test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
+     test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
+     test_signal_validate test_kptr_restrict
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -160,6 +199,42 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running refcount tests..."
 	./test_refcount
+	@echo ""
+	@echo "Running bitfield macro tests..."
+	./test_bitfield
+	@echo ""
+	@echo "Running errno string tests..."
+	./test_errno_ext
+	@echo ""
+	@echo "Running UID16 conversion tests..."
+	./test_uid16
+	@echo ""
+	@echo "Running memory pool tests..."
+	./test_mempool
+	@echo ""
+	@echo "Running PRNG core tests..."
+	./test_rng_core
+	@echo ""
+	@echo "Running kernel cmdline parsing tests..."
+	./test_cmdline
+	@echo ""
+	@echo "Running LZSS compression tests..."
+	./test_compress
+	@echo ""
+	@echo "Running log buffer tests..."
+	./test_logbuf
+	@echo ""
+	@echo "Running module alias tests..."
+	./test_module_alias
+	@echo ""
+	@echo "Running sched_attr validation tests..."
+	./test_sched_attr
+	@echo ""
+	@echo "Running signal validation tests..."
+	./test_signal_validate
+	@echo ""
+	@echo "Running kernel pointer restrict tests..."
+	./test_kptr_restrict
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -184,6 +259,18 @@ else
 	python3 ../../tests/junit_reporter.py host-uuid ./test_uuid
 	python3 ../../tests/junit_reporter.py host-hashtable ./test_hashtable
 	python3 ../../tests/junit_reporter.py host-refcount ./test_refcount
+	python3 ../../tests/junit_reporter.py host-bitfield ./test_bitfield
+	python3 ../../tests/junit_reporter.py host-errno-ext ./test_errno_ext
+	python3 ../../tests/junit_reporter.py host-uid16 ./test_uid16
+	python3 ../../tests/junit_reporter.py host-mempool ./test_mempool
+	python3 ../../tests/junit_reporter.py host-rng-core ./test_rng_core
+	python3 ../../tests/junit_reporter.py host-cmdline ./test_cmdline
+	python3 ../../tests/junit_reporter.py host-compress ./test_compress
+	python3 ../../tests/junit_reporter.py host-logbuf ./test_logbuf
+	python3 ../../tests/junit_reporter.py host-module-alias ./test_module_alias
+	python3 ../../tests/junit_reporter.py host-sched-attr ./test_sched_attr
+	python3 ../../tests/junit_reporter.py host-signal-validate ./test_signal_validate
+	python3 ../../tests/junit_reporter.py host-kptr-restrict ./test_kptr_restrict
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
@@ -195,6 +282,13 @@ else
 	      host-ratelimit-results.xml host-time-results.xml \
 	      host-uuid-results.xml host-hashtable-results.xml \
 	      host-refcount-results.xml \
+	      host-bitfield-results.xml host-errno-ext-results.xml \
+	      host-uid16-results.xml host-mempool-results.xml \
+	      host-rng-core-results.xml \
+	      host-cmdline-results.xml host-compress-results.xml \
+	      host-logbuf-results.xml host-module-alias-results.xml \
+	      host-sched-attr-results.xml host-signal-validate-results.xml \
+	      host-kptr-restrict-results.xml \
 	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
@@ -494,12 +588,143 @@ refcount.o: $(KSRCDIR)/refcount_ext.c
 test_refcount.o: test_refcount.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Bitfield macro tests ────────────────────────────────────
+
+test_bitfield: $(BITFIELD_OBJS)
+	$(CC) -o $@ $^
+
+test_bitfield.o: test_bitfield.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Errno string tests ───────────────────────────────────
+
+test_errno_ext: $(ERRNO_EXT_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+errno_ext.o: $(SRCDIR)/errno_ext.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_errno_ext.o: test_errno_ext.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── UID16 conversion tests ────────────────────────────────
+
+test_uid16: $(UID16_OBJS)
+	$(CC) -o $@ $^
+
+test_uid16.o: test_uid16.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Memory pool tests ─────────────────────────────────────
+
+test_mempool: $(MEMPOOL_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+mempool.o: $(SRCDIR)/mempool.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_mempool.o: test_mempool.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── PRNG core tests ───────────────────────────────────────
+
+test_rng_core: $(RNG_CORE_OBJS)
+	$(CC) -o $@ $^
+
+test_rng_core.o: test_rng_core.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Kernel command-line parsing tests ─────────────────────
+
+test_cmdline: $(CMDLINE_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+cmdline.o: $(KSRCDIR)/cmdline.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_cmdline.o: test_cmdline.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── LZSS compression tests ────────────────────────────────
+
+test_compress: $(COMPRESS_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+compress.o: $(KSRCDIR)/compress.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_compress.o: test_compress.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Log buffer tests ──────────────────────────────────────
+
+test_logbuf: $(LOGBUF_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+logbuf.o: $(KSRCDIR)/logbuf.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_logbuf.o: test_logbuf.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Module alias tests ────────────────────────────────────
+
+test_module_alias: $(MODULE_ALIAS_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+module_alias.o: $(KSRCDIR)/module_alias.c
+	$(CC) -I. $(subst -isystem,-I,$(KERNEL_CFLAGS)) -include spinlock.h -c -o $@ $<
+
+test_module_alias.o: test_module_alias.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Sched attribute validation tests ──────────────────────
+
+test_sched_attr: $(SCHED_ATTR_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+sched_attr.o: $(KSRCDIR)/sched_attr.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_sched_attr.o: test_sched_attr.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Signal validation tests ───────────────────────────────
+
+test_signal_validate: $(SIGNAL_VALIDATE_OBJS) stubs.o
+	$(CC) -o $@ $^
+
+signal_validate.o: $(KSRCDIR)/signal_validate.c
+	$(CC) $(KERNEL_CFLAGS) -DEINVAL=22 -DEPERM=1 -c -o $@ $<
+
+test_signal_validate.o: test_signal_validate.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+# ── Kernel pointer restrict tests ─────────────────────────
+# NOTE: Does NOT link stubs.o — both define kptr_restrict_check()
+# (stubs.c has weak attr, but test file provides its own stubs).
+
+test_kptr_restrict: $(KPTR_RESTRICT_OBJS)
+	$(CC) -o $@ $^
+
+kptr_restrict.o: $(KSRCDIR)/kptr_restrict.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_kptr_restrict.o: test_kptr_restrict.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
 	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) $(DS_OBJS) \
 	      $(SEARCH_OBJS) $(STDLIB_EXT_OBJS) $(HWEIGHT_OBJS) $(RANGE_OBJS) $(SORT_EXT_OBJS) $(CRC16_OBJS) \
 	      $(FIND_BIT_OBJS) $(DIV64_OBJS) $(IDR_OBJS) $(NOTIFIER_OBJS) $(RATELIMIT_OBJS) $(TIME_OBJS) \
 	      $(UUID_OBJS) $(HASHTABLE_OBJS) $(REFCOUNT_OBJS) \
+	      $(BITFIELD_OBJS) $(ERRNO_EXT_OBJS) $(UID16_OBJS) $(MEMPOOL_OBJS) $(RNG_CORE_OBJS) \
+	      $(CMDLINE_OBJS) $(COMPRESS_OBJS) $(LOGBUF_OBJS) $(MODULE_ALIAS_OBJS) \
+	      $(SCHED_ATTR_OBJS) $(SIGNAL_VALIDATE_OBJS) $(KPTR_RESTRICT_OBJS) \
 	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
 	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
 	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
-	      test_uuid test_hashtable test_refcount
+	      test_uuid test_hashtable test_refcount \
+	      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
+	      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
+	      test_signal_validate test_kptr_restrict

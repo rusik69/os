@@ -135,6 +135,22 @@ static void test_qsort_ext(void)
     for (int i = 1; i < 64; i++)
         if (a8[i-1] < a8[i]) { sorted8 = 0; break; }
     TEST("qsort_ext: 64-element array", sorted8);
+
+    /* 9. All-equal comparator — should not crash or reorder */
+    int a9[] = { 5, 5, 5, 5, 5 };
+    qsort_ext(a9, 5, sizeof(int), cmp_int_asc);
+    int all_eq = 1;
+    for (int i = 0; i < 5; i++) if (a9[i] != 5) { all_eq = 0; break; }
+    TEST("qsort_ext: all equal", all_eq);
+
+    /* 10. 1024-element array */
+    int a10[1024];
+    for (int i = 0; i < 1024; i++) a10[i] = (i * 31 + 17) % 1024;
+    qsort_ext(a10, 1024, sizeof(int), cmp_int_asc);
+    int sorted10 = 1;
+    for (int i = 1; i < 1024; i++)
+        if (a10[i-1] > a10[i]) { sorted10 = 0; break; }
+    TEST("qsort_ext: 1024 elements", sorted10);
 }
 
 /* ===================================================================
@@ -179,6 +195,12 @@ static void test_bsearch_ext(void)
     int k7 = 99;
     int *r7 = (int *)bsearch_ext(&k7, arr1, 1, sizeof(int), cmp_int_asc);
     TEST("bsearch_ext: single element no match", r7 == NULL);
+
+    /* 8. nmemb=1 exact location */
+    int arr1b[] = { 77 };
+    int k8 = 77;
+    int *r8 = (int *)bsearch_ext(&k8, arr1b, 1, sizeof(int), cmp_int_asc);
+    TEST("bsearch_ext: nmemb=1 finds only element", r8 == arr1b && *r8 == 77);
 }
 
 /* ===================================================================
@@ -213,6 +235,20 @@ static void test_lfind(void)
     char k4 = 'a';
     char *r4 = (char *)lfind(&k4, arr, &nmemb, 1, cmp_char);
     TEST("lfind: finds first element", r4 && *r4 == 'a');
+
+    /* 5. Last element */
+    char k5 = 'e';
+    char *r5 = (char *)lfind(&k5, arr, &nmemb, 1, cmp_char);
+    TEST("lfind: finds last element", r5 && *r5 == 'e');
+
+    /* 6. Every position in array */
+    int all_positions_ok = 1;
+    char expected[] = {'a','b','c','d','e'};
+    for (size_t i = 0; i < 5; i++) {
+        char *r = (char *)lfind(&expected[i], arr, &nmemb, 1, cmp_char);
+        if (!r || *r != expected[i]) { all_positions_ok = 0; break; }
+    }
+    TEST("lfind: finds at every position", all_positions_ok);
 }
 
 /* ===================================================================
@@ -304,6 +340,11 @@ static void test_search_linear(void)
     int k4 = 500;
     int r4 = search_linear(&k4, arr, ARRAY_SIZE(arr), sizeof(int), cmp_int_asc);
     TEST("search_linear: finds last element", r4 == 4);
+
+    /* 5. Empty array (nmemb=0) */
+    int k5 = 100;
+    int r5 = search_linear(&k5, arr, 0, sizeof(int), cmp_int_asc);
+    TEST("search_linear: empty array returns -1", r5 == -1);
 }
 
 /* ===================================================================

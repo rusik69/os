@@ -249,6 +249,17 @@ static void test_strcmp(void)
                   "abcdefghijklmnopqrstuvwxyz0123456788") > 0,
            "diff at last char");
     PASS();
+
+    TEST("strcmp with embedded null bytes");
+    /* Both strings have null at position 2, should compare equal up to null */
+    ASSERT_INT_EQ(strcmp("ab\0cd", "ab\0ef"), 0,
+                  "null bytes cause early termination (equal)");
+    PASS();
+
+    TEST("strcmp null byte vs different char");
+    ASSERT(strcmp("ab\0cd", "abc\0") != 0,
+           "null vs char differ after common prefix");
+    PASS();
 }
 
 static void test_strncmp(void)
@@ -379,6 +390,19 @@ static void test_memmove(void)
     ASSERT_INT_EQ(memcmp(exov, exov_orig, 10), 0,
                   "exact same region unchanged");
     PASS();
+
+    TEST("memmove huge overlap (4096 bytes)");
+    {
+        char huge[4096];
+        for (int i = 0; i < 4096; i++) huge[i] = (char)(i & 0xFF);
+        /* Move bytes 0..2047 to offset 2048 (overlapping forward) */
+        memmove(huge + 2048, huge, 2048);
+        int ok = 1;
+        for (int i = 0; i < 2048; i++)
+            if ((unsigned char)huge[2048 + i] != (unsigned char)(i & 0xFF)) { ok = 0; break; }
+        ASSERT(ok, "forward huge overlap copied correctly");
+    }
+    PASS();
 }
 
 static void test_memcmp(void)
@@ -418,6 +442,18 @@ static void test_memcmp(void)
     char zeros1[16] = {0};
     char zeros2[16] = {0};
     ASSERT_INT_EQ(memcmp(zeros1, zeros2, 16), 0, "all zeros equal");
+    PASS();
+
+    TEST("memcmp all 0xFF vs all 0xFF");
+    char ff1[16];
+    char ff2[16];
+    memset(ff1, 0xFF, 16);
+    memset(ff2, 0xFF, 16);
+    ASSERT_INT_EQ(memcmp(ff1, ff2, 16), 0, "all 0xFF buffers equal");
+    PASS();
+
+    TEST("memcmp 0xFF vs zero buffer");
+    ASSERT(memcmp(ff1, zeros1, 16) != 0, "all 0xFF vs all zero differ");
     PASS();
 }
 
@@ -486,6 +522,19 @@ static void test_memset(void)
     ASSERT_INT_EQ(one[0], 'Z', "first byte set");
     ASSERT_INT_EQ(one[1], 0, "second byte unchanged");
     PASS();
+
+    TEST("memset n=4095 (non-aligned)");
+    {
+        char big[4096];
+        memset(big, 0, 4096);
+        memset(big, 0xAB, 4095);
+        int ok = 1;
+        for (int i = 0; i < 4095; i++)
+            if ((unsigned char)big[i] != 0xAB) { ok = 0; break; }
+        ASSERT(ok, "first 4095 bytes = 0xAB");
+        ASSERT((unsigned char)big[4095] == 0, "last byte untouched");
+    }
+    PASS();
 }
 
 static void test_memchr(void)
@@ -522,6 +571,14 @@ static void test_memchr(void)
     unsigned char nbuf[] = {0x00, 0x10, 0x20, 0x30, 0x40};
     ASSERT(memchr(nbuf, 0x20, 5) == (void *)(nbuf + 2),
            "found 0x20 at offset 2");
+    PASS();
+
+    TEST("memchr find 0xFF byte");
+    unsigned char ffbuf[] = {0x00, 0xFF, 0xAA, 0xFF, 0x55};
+    ASSERT(memchr(ffbuf, 0xFF, 5) == (void *)(ffbuf + 1),
+           "found 0xFF at offset 1");
+    ASSERT(memchr(ffbuf + 2, 0xFF, 3) == (void *)(ffbuf + 3),
+           "found second 0xFF at offset 3");
     PASS();
 }
 
@@ -666,6 +723,16 @@ static void test_strcat(void)
     strcat(sdst, "x");
     ASSERT_STR_EQ(sdst, "xxx", "three single-char appends");
     PASS();
+
+    TEST("strcat to full buffer (no space)");
+    {
+        char full[4] = "abc";
+        /* Appending to an already-full buffer (no null terminator at position 3) 
+         * strcat should write at position 3, but buffer is only 4 bytes including null */
+        strcat(full, "");
+        ASSERT_STR_EQ(full, "abc", "appending empty to full buffer unchanged");
+    }
+    PASS();
 }
 
 static void test_strncat(void)
@@ -755,8 +822,23 @@ static void test_strstr(void)
                   "first occurrence of multiple");
     PASS();
 
-    TEST("strstr not found single char");
-    ASSERT(strstr("hello", "z") == NULL, "single char not found");
+    TEST("strstr pattern of 5 a's in long string of a's");
+    {
+        char long_as[256];
+        memset(long_as, 'a', 255);
+        long_as[255] = '\0';
+        const char *found = strstr(long_as, "aaaaa");
+        ASSERT(found == (void *)long_as, "found 5 a's at start of 255 a's");
+    }
+    PASS();
+
+    TEST("strstr single char not found in long 'a's");
+    {
+        char long_as2[101];
+        memset(long_as2, 'a', 100);
+        long_as2[100] = '\0';
+        ASSERT(strstr(long_as2, "b") == NULL, "'b' not found in all 'a's");
+    }
     PASS();
 }
 
@@ -884,6 +966,17 @@ static void test_strtok(void)
     ASSERT_STR_EQ(strtok(s8, ","), "a", "single char token");
     ASSERT(strtok(NULL, ",") == NULL, "no more");
     PASS();
+
+    TEST("strtok multiple different delimiters");
+    {
+        char s9[] = "hello,world;foo|bar";
+        ASSERT_STR_EQ(strtok(s9, ",;|"), "hello", "first token with multiple delimiters");
+        ASSERT_STR_EQ(strtok(NULL, ",;|"), "world", "second token");
+        ASSERT_STR_EQ(strtok(NULL, ",;|"), "foo", "third token");
+        ASSERT_STR_EQ(strtok(NULL, ",;|"), "bar", "fourth token");
+        ASSERT(strtok(NULL, ",;|") == NULL, "no more tokens");
+    }
+    PASS();
 }
 
 static void test_strtok_r(void)
@@ -924,6 +1017,17 @@ static void test_strtok_r(void)
     ASSERT_STR_EQ(strtok_r(NULL, ",", &sp5), "y", "skips empty");
     ASSERT(strtok_r(NULL, ",", &sp5) == NULL, "done");
     PASS();
+
+    TEST("strtok_r saveptr preserved after exhaustion");
+    {
+        char s6[] = "a,b";
+        char *sp6;
+        strtok_r(s6, ",", &sp6);
+        strtok_r(NULL, ",", &sp6);
+        /* saveptr should now point to null terminator */
+        ASSERT(*sp6 == '\0', "saveptr at null terminator after token exhaustion");
+    }
+    PASS();
 }
 
 static void test_strsep(void)
@@ -954,6 +1058,13 @@ static void test_strsep(void)
     ASSERT_STR_EQ(strsep(&sp3, ","), "x", "token after");
     ASSERT(strsep(&sp3, ",") == NULL, "done");
     PASS();
+
+    TEST("strsep with NULL stringp");
+    {
+        char *null_sp = NULL;
+        ASSERT(strsep(&null_sp, ",") == NULL, "NULL stringp returns NULL");
+    }
+    PASS();
 }
 
 static void test_strspn(void)
@@ -977,6 +1088,11 @@ static void test_strspn(void)
     TEST("strspn accept all printable");
     ASSERT_INT_EQ(strspn("hello", "abcdefghijklmnopqrstuvwxyz"), 5,
                   "all lowercase letters accept");
+    PASS();
+
+    TEST("strspn empty accept string");
+    ASSERT_INT_EQ(strspn("hello", ""), 0, "empty accept returns 0");
+    ASSERT_INT_EQ(strspn("", ""), 0, "both empty returns 0");
     PASS();
 }
 
@@ -1565,6 +1681,28 @@ static void test_strtol_func(void)
                    "stops at 'x'");
     ASSERT(*endptr == 'x', "endptr at invalid char");
     PASS();
+
+    TEST("strtol just '0x' prefix with no digits");
+    ASSERT_LONG_EQ(strtol("0x", &endptr, 0), 0, "'0x' alone returns 0");
+    PASS();
+
+    TEST("strtol whitespace with sign");
+    ASSERT_LONG_EQ(strtol("  - 5", &endptr, 10), 0,
+                   "'  - 5' has sign not directly before digit, returns 0");
+    PASS();
+
+    TEST("strtol empty string");
+    ASSERT_LONG_EQ(strtol("", &endptr, 10), 0, "empty string returns 0");
+    ASSERT(endptr == (void *)"", "endptr at start for empty string");
+    PASS();
+
+    TEST("strtol just '+'");
+    ASSERT_LONG_EQ(strtol("+", &endptr, 10), 0, "just '+' returns 0");
+    PASS();
+
+    TEST("strtol just '-'");
+    ASSERT_LONG_EQ(strtol("-", &endptr, 10), 0, "just '-' returns 0");
+    PASS();
 }
 
 static void test_strtoul_func(void)
@@ -1640,6 +1778,11 @@ static void test_itoa(void)
     ASSERT_STR_EQ(itoa(42, buf, 1), "", "base 1 returns empty");
     ASSERT_STR_EQ(itoa(42, buf, 37), "", "base 37 returns empty");
     PASS();
+
+    TEST("itoa INT_MIN in binary");
+    ASSERT_STR_EQ(itoa(-2147483648, buf, 2), "10000000000000000000000000000000",
+                  "INT_MIN binary = 1 followed by 31 zeros");
+    PASS();
 }
 
 static void test_ltoa(void)
@@ -1672,6 +1815,19 @@ static void test_ltoa(void)
 
     TEST("ltoa hex");
     ASSERT_STR_EQ(ltoa(255L, buf, 16), "ff", "ltoa 255 in hex");
+    PASS();
+
+    TEST("ltoa binary base 2");
+    ASSERT_STR_EQ(ltoa(42L, buf, 2), "101010", "ltoa 42 in binary");
+    PASS();
+
+    TEST("ltoa octal base 8");
+    ASSERT_STR_EQ(ltoa(64L, buf, 8), "100", "ltoa 64 in octal");
+    PASS();
+
+    TEST("ltoa base 36");
+    ASSERT_STR_EQ(ltoa(35L, buf, 36), "z", "ltoa 35 in base 36");
+    ASSERT_STR_EQ(ltoa(71L, buf, 36), "1z", "ltoa 71 in base 36");
     PASS();
 }
 
@@ -1913,6 +2069,73 @@ static void test_snprintf(void)
 }
 
 /* ===================================================================
+ *  Advanced printf format specifiers
+ * =================================================================== */
+
+static void test_sprintf_advanced(void)
+{
+    char buf[256];
+
+    TEST("sprintf %%ld long decimal");
+    snprintf(buf, sizeof(buf), "%ld", 123456789L);
+    ASSERT_STR_EQ(buf, "123456789", "%ld format");
+    PASS();
+
+    TEST("sprintf %%lu long unsigned");
+    snprintf(buf, sizeof(buf), "%lu", 3000000000UL);
+    ASSERT_STR_EQ(buf, "3000000000", "%lu format");
+    PASS();
+
+    TEST("sprintf %%llx long long hex");
+    snprintf(buf, sizeof(buf), "%llx", (unsigned long long)0xdeadbeef);
+    ASSERT_STR_EQ(buf, "deadbeef", "%llx format");
+    PASS();
+
+    TEST("sprintf %%x preserves width with %%08x");
+    snprintf(buf, sizeof(buf), "%08x", (unsigned long long)0xff);
+    ASSERT_STR_EQ(buf, "000000ff", "%08x zero-padded hex");
+    PASS();
+
+    TEST("sprintf %%-10d left justify int");
+    snprintf(buf, sizeof(buf), "%-10d", (long long)42);
+    ASSERT(strlen(buf) == 10, "%%-10d produces 10 chars");
+    ASSERT(buf[0] == '4' && buf[1] == '2', "%%-10d has '42' at start");
+    PASS();
+
+    TEST("sprintf %%010d zero pad positive");
+    snprintf(buf, sizeof(buf), "%010d", (long long)42);
+    ASSERT_STR_EQ(buf, "0000000042", "%010d zero-padded");
+    PASS();
+
+    TEST("sprintf %%010d zero pad negative");
+    snprintf(buf, sizeof(buf), "%010d", (long long)(-42));
+    ASSERT(strlen(buf) >= 8, "%%010d negative has reasonable length");
+    ASSERT(buf[0] == '-', "%%010d negative has sign first");
+    PASS();
+
+    TEST("snprintf with %%d truncation");
+    char sbuf[8];
+    snprintf(sbuf, 5, "%d", 123456789);
+    ASSERT_STR_EQ(sbuf, "1234", "truncated %%d");
+    PASS();
+
+    TEST("snprintf with %%x truncation");
+    snprintf(sbuf, 6, "%x", 0xdeadbeef);
+    ASSERT_STR_EQ(sbuf, "deadb", "truncated %%x (5 chars + null)");
+    PASS();
+
+    TEST("sprintf %%d zero value");
+    snprintf(buf, sizeof(buf), "%d", 0);
+    ASSERT_STR_EQ(buf, "0", "zero printed correctly");
+    PASS();
+
+    TEST("sprintf %%05d with zero value");
+    snprintf(buf, sizeof(buf), "%05d", 0);
+    ASSERT_STR_EQ(buf, "00000", "zero padded with 5 zeros");
+    PASS();
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -1963,6 +2186,7 @@ int main(void)
     test_sprintf_padding();
     test_sprintf_multiple();
     test_snprintf();
+    test_sprintf_advanced();
 
     /* --- string_ext.h tests --- */
     printf("\n--- string_ext.h ---\n");

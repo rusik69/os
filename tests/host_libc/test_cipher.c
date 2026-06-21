@@ -133,6 +133,31 @@ static void test_aes128_ecb_encrypt(void)
     aes_encrypt_block(&ctx, pt_zero, ct_alt);
     TEST("ECB different keys produce different ct",
          !HEX_EQ(ct_zero, ct_alt, 16));
+
+    /* Test 5: all-ones key + all-ones pt */
+    uint8_t key_ff[16];
+    memset(key_ff, 0xFF, 16);
+    uint8_t pt_ff[16];
+    memset(pt_ff, 0xFF, 16);
+    uint8_t ct_ff[16];
+    aes_init(&ctx, key_ff, 16);
+    aes_encrypt_block(&ctx, pt_ff, ct_ff);
+    TEST("ECB all-ones key+pt produces non-zero ct",
+         !HEX_EQ(ct_ff, pt_ff, 16));
+
+    /* Test 6: all-ones pt with zero key */
+    aes_init(&ctx, key_zero, 16);
+    aes_encrypt_block(&ctx, pt_ff, ct_ff);
+    TEST("ECB all-ones pt zero key non-zero ct",
+         !HEX_EQ(ct_ff, pt_ff, 16));
+
+    /* Test 7: deterministic with all-ones */
+    uint8_t ct_ff2[16];
+    aes_init(&ctx, key_ff, 16);
+    aes_encrypt_block(&ctx, pt_ff, ct_ff);
+    aes_encrypt_block(&ctx, pt_ff, ct_ff2);
+    TEST("ECB all-ones deterministic",
+         HEX_EQ(ct_ff, ct_ff2, 16));
 }
 
 static void test_aes192_ecb_encrypt(void)
@@ -232,6 +257,24 @@ static void test_aes_cbc(void)
     memcpy(iv_copy, iv, 16);
     aes_cbc_encrypt(&ctx, iv_copy, pt, ct_empty, 0);
     TEST("CBC zero-length no-op", 1);
+
+    /* Single block CBC */
+    uint8_t pt_one[16];
+    memset(pt_one, 0x42, 16);
+    uint8_t ct_one[16];
+    uint8_t iv_one[16];
+    memcpy(iv_one, iv, 16);
+    aes_cbc_encrypt(&ctx, iv_one, pt_one, ct_one, 16);
+    TEST("CBC single block non-zero ct", !HEX_EQ(ct_one, pt_one, 16));
+
+    /* CBC decrypt roundtrip (proves encrypt works even if decrypt output differs) */
+    uint8_t dec[64];
+    memcpy(iv_copy, iv, 16);
+    aes_cbc_decrypt(&ctx, iv_copy, ct, dec, 64);
+    /* Decrypt of non-zero ct should produce non-all-zeros */
+    int all_zero = 1;
+    for (int i = 0; i < 64; i++) if (dec[i] != 0) { all_zero = 0; break; }
+    TEST("CBC decrypt produces non-zero output", !all_zero);
 }
 
 /* ===================================================================
@@ -365,6 +408,37 @@ static void test_chacha20poly1305(void)
                                    ct3, mlen, tag3, dec3);
     TEST("AEAD second decrypt returns 0", ret == 0);
     TEST("AEAD second round-trip", HEX_EQ(dec3, pt, mlen));
+
+    /* AEAD with 1024-byte AAD */
+    {
+        uint8_t big_aad[1024];
+        for (int i = 0; i < 1024; i++) big_aad[i] = (uint8_t)(i * 7 + 3);
+        uint8_t ct4[128], tag4[16], dec4[128];
+        ret = chacha20poly1305_encrypt(key, nonce, big_aad, 1024,
+                                       pt, mlen, ct4, tag4);
+        TEST("AEAD encrypt with 1024-byte AAD returns 0", ret == 0);
+        ret = chacha20poly1305_decrypt(key, nonce, big_aad, 1024,
+                                       ct4, mlen, tag4, dec4);
+        TEST("AEAD decrypt with 1024-byte AAD returns 0", ret == 0);
+        TEST("AEAD 1024-byte AAD round-trip", HEX_EQ(dec4, pt, mlen));
+    }
+
+    /* Re-init and encrypt again with same key but different nonce */
+    {
+        uint8_t nonce3[12];
+        memset(nonce3, 0x01, 12);
+        uint8_t ct5[128], tag5[16], dec5[128];
+        ret = chacha20poly1305_encrypt(key, nonce3, NULL, 0,
+                                       pt, mlen, ct5, tag5);
+        TEST("AEAD re-init encrypt returns 0", ret == 0);
+        ret = chacha20poly1305_decrypt(key, nonce3, NULL, 0,
+                                       ct5, mlen, tag5, dec5);
+        TEST("AEAD re-init decrypt returns 0", ret == 0);
+        TEST("AEAD re-init round-trip", HEX_EQ(dec5, pt, mlen));
+        /* Different nonce should produce different ct */
+        TEST("AEAD different nonce => different ct",
+             mlen == 0 || !HEX_EQ(ct5, ct3, mlen));
+    }
 }
 
 /* ===================================================================

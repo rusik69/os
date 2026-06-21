@@ -120,6 +120,20 @@ static void test_range_sort(void)
     range_sort(r7, &nr7);
     TEST("range_sort: unsorted overlapping merges",
          ranges_match(r7, nr7, (uint64_t[]){50,200,300,400}, 2));
+
+    /* 8. Duplicate entries — should merge */
+    struct range r8[] = { {10, 30}, {10, 30}, {50, 60} };
+    int nr8 = 3;
+    range_sort(r8, &nr8);
+    TEST("range_sort: duplicate entries merge",
+         ranges_match(r8, nr8, (uint64_t[]){10,30,50,60}, 2));
+
+    /* 9. Multiple duplicates */
+    struct range r9[] = { {1,5}, {1,5}, {1,5}, {10,20} };
+    int nr9 = 4;
+    range_sort(r9, &nr9);
+    TEST("range_sort: triple duplicates merge",
+         ranges_match(r9, nr9, (uint64_t[]){1,5,10,20}, 2));
 }
 
 /* ===================================================================
@@ -175,6 +189,26 @@ static void test_range_add(void)
     range_add(r8, &nr8, 16, 25, 65);
     TEST("range_add: covers multiple, merges all",
          ranges_match(r8, nr8, (uint64_t[]){10,20,25,65,70,80}, 3));
+
+    /* 9. Add single point (start == end) */
+    int nr9 = 0;
+    range_add(r, &nr9, 16, 42, 42);
+    TEST("range_add: single point added",
+         ranges_match(r, nr9, (uint64_t[]){42,42}, 1));
+
+    /* 10. Add single point adjacent to existing — merges */
+    range_add(r, &nr9, 16, 43, 43);
+    TEST("range_add: adjacent point merges",
+         ranges_match(r, nr9, (uint64_t[]){42,43}, 1));
+
+    /* 11. Array full — add returns error */
+    int nr11 = 0;
+    struct range r11[2];
+    range_add(r11, &nr11, 2, 10, 20);
+    range_add(r11, &nr11, 2, 30, 40);
+    int ret11 = range_add(r11, &nr11, 2, 50, 60);
+    TEST("range_add: array full returns -1", ret11 < 0);
+    TEST("range_add: nr unchanged when full", nr11 == 2);
 }
 
 /* ===================================================================
@@ -257,6 +291,11 @@ static void test_range_contains(void)
     /* Empty array */
     struct range e[1];
     TEST("range_contains: empty array", !range_contains(e, 0, 100));
+
+    /* Single-element range with inverted bounds (start>end) — undefined but shouldn't crash */
+    struct range inv[] = { {200, 100} };
+    int r_inv = range_contains(inv, 1, 150);
+    TEST("range_contains: inverted range handled", r_inv == 0 || r_inv == 1);
 }
 
 /* ===================================================================
@@ -280,6 +319,10 @@ static void test_range_overlaps(void)
     /* Empty array */
     struct range e[1];
     TEST("range_overlaps: empty array", !range_overlaps(e, 0, 100, 200));
+
+    /* Query with start>end */
+    int r_inv = range_overlaps(r, nr, 400, 300);
+    TEST("range_overlaps: inverted query", r_inv == 0 || r_inv == 1);
 }
 
 /* ===================================================================

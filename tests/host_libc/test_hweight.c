@@ -110,6 +110,22 @@ static void test_hweight16(void)
     /* Cross-byte boundary */
     TEST("hweight16(0x0101) == 2", hweight16(0x0101) == 2);
     TEST("hweight16(0x8180) == 3", hweight16(0x8180) == 3);
+
+    /* Exhaustive check of first 1024 values */
+    int all_ok16 = 1;
+    for (int i = 0; i < 1024; i++) {
+        unsigned int hw = hweight16((uint16_t)i);
+        unsigned int ref = ref_popcount8((uint8_t)(i & 0xFF)) + ref_popcount8((uint8_t)((i >> 8) & 0xFF));
+        if (hw != ref) { all_ok16 = 0; break; }
+    }
+    TEST("hweight16: first 1024 values match reference", all_ok16);
+
+    /* Corner patterns */
+    TEST("hweight16(0xFFFF) == 16", hweight16(0xFFFF) == 16);
+    TEST("hweight16(0x8000) == 1", hweight16(0x8000) == 1);
+    TEST("hweight16(0x0001) == 1", hweight16(0x0001) == 1);
+    TEST("hweight16(0x8080) == 2", hweight16(0x8080) == 2);
+    TEST("hweight16(0x0101) == 2", hweight16(0x0101) == 2);
 }
 
 /* ===================================================================
@@ -147,6 +163,13 @@ static void test_hweight32(void)
     TEST("hweight32(0x0000000F) == 4", hweight32(0x0000000F) == 4);
     TEST("hweight32(0x0000FFFF) == 16", hweight32(0x0000FFFF) == 16);
     TEST("hweight32(0x00FFFF00) == 16", hweight32(0x00FFFF00) == 16);
+
+    /* Corner patterns */
+    TEST("hweight32(0x80000000) == 1", hweight32(0x80000000U) == 1);
+    TEST("hweight32(0xFFFF0000) == 16", hweight32(0xFFFF0000UL) == 16);
+    TEST("hweight32(0x0000FFFF) == 16", hweight32(0x0000FFFFUL) == 16);
+    TEST("hweight32(0xAAAAAAAA) == 16", hweight32(0xAAAAAAAAUL) == 16);
+    TEST("hweight32(0x55555555) == 16", hweight32(0x55555555UL) == 16);
 }
 
 /* ===================================================================
@@ -177,6 +200,22 @@ static void test_hweight64(void)
          hweight64(0x1111111111111111ULL) == 16);
     TEST("hweight64(0xFFFFFFFF00000000ULL) == 32",
          hweight64(0xFFFFFFFF00000000ULL) == 32);
+
+    /* Alternating patterns */
+    TEST("hweight64(0xAAAAAAAAAAAAAAAAULL) == 32",
+         hweight64(0xAAAAAAAAAAAAAAAAULL) == 32);
+    TEST("hweight64(0x5555555555555555ULL) == 32",
+         hweight64(0x5555555555555555ULL) == 32);
+    TEST("hweight64(0xF0F0F0F0F0F0F0F0ULL) == 32",
+         hweight64(0xF0F0F0F0F0F0F0F0ULL) == 32);
+    TEST("hweight64(0x0F0F0F0F0F0F0F0FULL) == 32",
+         hweight64(0x0F0F0F0F0F0F0F0FULL) == 32);
+    TEST("hweight64(0xFF00FF00FF00FF00ULL) == 32",
+         hweight64(0xFF00FF00FF00FF00ULL) == 32);
+    TEST("hweight64(0x00FF00FF00FF00FFULL) == 32",
+         hweight64(0x00FF00FF00FF00FFULL) == 32);
+    TEST("hweight64(0x8000000000000000ULL) == 1",
+         hweight64(0x8000000000000000ULL) == 1);
 }
 
 /* ===================================================================

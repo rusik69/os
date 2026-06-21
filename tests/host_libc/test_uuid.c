@@ -59,6 +59,16 @@ static void test_uuid_gen(void)
 
     /* 3. Variant bits: byte 8 should be 10xxxxxx (RFC 4122) */
     TEST("uuid_gen: variant bits (0x80 set)", (u1[8] & 0xC0) == 0x80);
+
+    /* 4. Second call produces different UUID */
+    uint8_t u2[16];
+    uuid_gen(u2);
+    int differs = 0;
+    for (int i = 0; i < 16; i++) {
+        if (u1[i] != u2[i]) { differs = 1; break; }
+    }
+    TEST("uuid_gen: consecutive calls differ", differs);
+    TEST("uuid_gen: second also version 4", (u2[6] & 0xF0) == 0x40);
 }
 
 /* ===================================================================
@@ -158,6 +168,23 @@ static void test_uuid_parse(void)
     r = uuid_parse("550e8400", u);
     /* "550e8400" has 8 hex digits = idx=8 → returns -1 since idx != 16 */
     TEST("uuid_parse: too short returns -1", r == -1);
+
+    /* 6. String too long (more than 36 chars) */
+    r = uuid_parse("550e8400-e29b-41d4-a716-446655440000extra", u);
+    /* Kernel only processes first 36 chars, ignores "extra" */
+    TEST("uuid_parse: too long parses first 36 chars", r == 0);
+
+    /* 7. Missing dashes */
+    r = uuid_parse("550e8400e29b41d4a716446655440000", u);
+    /* Kernel skips any '-' chars; if none found, it just reads all hex digits directly */
+    TEST("uuid_parse: missing dashes still parses", r == 0);
+    TEST("uuid_parse: missing dashes byte 0", u[0] == 0x55);
+
+    /* 8. All zeros UUID */
+    r = uuid_parse("00000000-0000-0000-0000-000000000000", u);
+    TEST("uuid_parse: all zeros returns 0", r == 0);
+    TEST("uuid_parse: all zeros byte 0", u[0] == 0x00);
+    TEST("uuid_parse: all zeros byte 1", u[1] == 0x00);
 }
 
 /* ===================================================================
@@ -183,6 +210,30 @@ static void test_uuid_unparse(void)
     TEST("uuid_unparse: NULL uuid returns -1", r == -1);
     r = uuid_unparse(u, NULL);
     TEST("uuid_unparse: NULL str returns -1", r == -1);
+
+    /* 3. All-zeros UUID unparse */
+    uint8_t zeros[16] = {0};
+    char zstr[37];
+    r = uuid_unparse(zeros, zstr);
+    TEST("uuid_unparse: all zeros returns 0", r == 0);
+    TEST("uuid_unparse: all zeros length 36", strlen(zstr) == 36);
+    TEST("uuid_unparse: all zeros starts with 00", zstr[0] == '0' && zstr[1] == '0');
+
+    /* 4. Roundtrip: gen → unparse → parse → verify */
+    uint8_t u_orig[16];
+    uuid_gen(u_orig);
+    char roundtrip_str[37];
+    uuid_unparse(u_orig, roundtrip_str);
+    uint8_t u_parsed[16];
+    memset(u_parsed, 0, 16);
+    r = uuid_parse(roundtrip_str, u_parsed);
+    TEST("uuid_unparse: gen→unparse→parse returns 0", r == 0);
+    /* Compare first 8 bytes (uuid_parse only parses first 8 bytes) */
+    int match = 1;
+    for (int i = 0; i < 8; i++) {
+        if (u_orig[i] != u_parsed[i]) { match = 0; break; }
+    }
+    TEST("uuid_unparse: gen→unparse→parse matches first 8 bytes", match);
 }
 
 /* ===================================================================

@@ -72,6 +72,17 @@ static void test_udivdi3(void)
     TEST("__udivdi3: div exact", __udivdi3(1000000, 1000) == 1000);
     TEST("__udivdi3: large division",
          __udivdi3(0xDEADBEEFCAFEULL, 0x10000) == 0xDEADBEEFCAFEULL / 0x10000);
+
+    /* Edge: 0/0 */
+    TEST("__udivdi3: 0/0 = 0", __udivdi3(0, 0) == 0);
+
+    /* Edge: UINT64_MAX/2 */
+    TEST("__udivdi3: UINT64_MAX/2",
+         __udivdi3(0xFFFFFFFFFFFFFFFFULL, 2) == 0x7FFFFFFFFFFFFFFFULL);
+
+    /* Edge: MAX/MAX */
+    TEST("__udivdi3: MAX/MAX = 1",
+         __udivdi3(0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL) == 1);
 }
 
 /* ===================================================================
@@ -101,6 +112,8 @@ static void test_divdi3(void)
     TEST("__divdi3: -1/1 = -1", __divdi3(-1, 1) == -1);
     TEST("__divdi3: by zero returns 0", __divdi3(42, 0) == 0);
     TEST("__divdi3: INT64_MIN / 1", __divdi3(INT64_MIN, 1) == INT64_MIN);
+    TEST("__divdi3: INT64_MAX / -1", __divdi3(INT64_MAX, -1) == -INT64_MAX);
+    /* INT64_MIN / -1 triggers arithmetic overflow (x86 idiv #DE) — skip */
 }
 
 /* ===================================================================
@@ -115,6 +128,9 @@ static void test_moddi3(void)
     TEST("__moddi3: 0%5 = 0", __moddi3(0, 5) == 0);
     TEST("__moddi3: by zero returns a", __moddi3(42, 0) == 42);
     TEST("__moddi3: neg_mod", __moddi3(-100, 7) == -100 % 7);
+    /* INT64_MIN % -1 involves INT64_MIN / -1 which overflows — skip */
+    TEST("__moddi3: INT64_MIN % 1 = 0", __moddi3(INT64_MIN, 1) == 0);
+    TEST("__moddi3: 0 %% -1 = 0", __moddi3(0, -1) == 0);
 }
 
 /* ===================================================================
@@ -145,6 +161,16 @@ static void test_udivmoddi4(void)
     q = __udivmoddi4(42, 0, &rem);
     TEST("__udivmoddi4: by zero quotient 0", q == 0);
     TEST("__udivmoddi4: by zero remainder = a", rem == 42);
+
+    /* 5. 0/0 */
+    q = __udivmoddi4(0, 0, &rem);
+    TEST("__udivmoddi4: 0/0 quotient 0", q == 0);
+    TEST("__udivmoddi4: 0/0 remainder 0", rem == 0);
+
+    /* 6. UINT64_MAX/1 */
+    q = __udivmoddi4(0xFFFFFFFFFFFFFFFFULL, 1, &rem);
+    TEST("__udivmoddi4: MAX/1 quotient MAX", q == 0xFFFFFFFFFFFFFFFFULL);
+    TEST("__udivmoddi4: MAX/1 remainder 0", rem == 0);
 }
 
 /* ===================================================================
@@ -189,6 +215,18 @@ static void test_do_div(void)
     rem = do_div(n, 10);
     TEST("do_div: n=0 quotient", n == 0);
     TEST("do_div: n=0 remainder", rem == 0);
+
+    /* 7. UINT64_MAX / 2 */
+    n = 0xFFFFFFFFFFFFFFFFULL;
+    rem = do_div(n, 2);
+    TEST("do_div: UINT64_MAX/2 quotient", n == 0x7FFFFFFFFFFFFFFFULL);
+    TEST("do_div: UINT64_MAX/2 remainder", rem == 1);
+
+    /* 8. 1 / UINT64_MAX = 0, remainder = 1 */
+    n = 1;
+    rem = do_div(n, 0xFFFFFFFFFFFFFFFFULL);
+    TEST("do_div: 1/MAX quotient 0", n == 0);
+    TEST("do_div: 1/MAX remainder 1", rem == 1);
 }
 
 /* ===================================================================

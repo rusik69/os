@@ -92,6 +92,16 @@ static void test_crc16(void)
         inc = crc16(inc, &msg[i], 1);
     uint16_t single = crc16(0, msg, strlen(msg));
     TEST("crc16: byte-at-a-time equals bulk", inc == single);
+
+    /* 10. Large buffer (256 bytes of 'A') */
+    char big[256];
+    memset(big, 'A', 256);
+    uint16_t cbig = crc16(0, big, 256);
+    TEST("crc16: 256-char buffer produces non-zero", cbig != 0);
+
+    /* 11. CRC16 of repeated byte differs from single byte */
+    uint16_t csingle = crc16(0, "A", 1);
+    TEST("crc16: 256 A's != 1 A", cbig != csingle);
 }
 
 /* ===================================================================
@@ -124,6 +134,16 @@ static void test_crc16_byte(void)
     /* 5. Zero byte — CRC(0, {0}, 1) = 0 for this impl */
     uint16_t cz = crc16_byte(0, 0);
     TEST("crc16_byte: zero byte", cz == 0x0000);
+
+    /* 6. Byte value 0x80 (MSB set) */
+    uint16_t c80 = crc16_byte(0, 0x80);
+    TEST("crc16_byte: 0x80 produces non-zero", c80 != 0);
+    TEST("crc16_byte: 0x80 != crc16_byte(0,0)", c80 != cz);
+
+    /* 7. Byte value 0x01 */
+    uint16_t c01 = crc16_byte(0, 0x01);
+    TEST("crc16_byte: 0x01 produces non-zero", c01 != 0);
+    TEST("crc16_byte: 0x01 != 0x80", c01 != c80);
 }
 
 /* ===================================================================

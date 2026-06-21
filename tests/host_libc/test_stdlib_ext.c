@@ -97,6 +97,19 @@ static void test_strtoll(void)
     char *end2 = NULL;
     long long v2 = strtoll("1a2", &end2, 10);
     TEST("strtoll: stops at invalid digit", v2 == 1 && end2 && *end2 == 'a');
+
+    /* 15. Empty string returns 0 */
+    char *ep;
+    long long v_empty = strtoll("", &ep, 10);
+    TEST("strtoll: empty string returns 0", v_empty == 0);
+
+    /* 18. Just positive sign */
+    long long v_plus = strtoll("+", &ep, 10);
+    TEST("strtoll: just '+' returns 0", v_plus == 0);
+
+    /* 19. Just negative sign */
+    long long v_minus = strtoll("-", &ep, 10);
+    TEST("strtoll: just '-' returns 0", v_minus == 0);
 }
 
 /* ===================================================================
@@ -133,7 +146,7 @@ static void test_strtoull(void)
     /* 8. Whitespace */
     TEST("strtoull: leading space", strtoull("  1", NULL, 10) == 1);
 
-    /* 9. Hex uppercase */
+    /* 10. Hex uppercase */
     TEST("strtoull: hex uppercase", strtoull("0X1F", NULL, 0) == 31);
 }
 
@@ -195,8 +208,15 @@ static void test_ultoa(void)
 
     /* 10. Base 11 (uses a-z for digits 10+) */
     ultoa(21, buf, 11);
-    /* 21 in base 11 = 1*11 + 10 = "1a" */
     TEST("ultoa: base 11 uses letters", strcmp(buf, "1a") == 0);
+
+    /* 11. Zero in binary */
+    ultoa(0, buf, 2);
+    TEST("ultoa: zero in binary", strcmp(buf, "0") == 0);
+
+    /* 12. UINT64_MAX in decimal */
+    ultoa(18446744073709551615UL, buf, 10);
+    TEST("ultoa: max 64-bit in decimal", strcmp(buf, "18446744073709551615") == 0);
 }
 
 /* ===================================================================
