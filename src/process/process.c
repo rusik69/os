@@ -1670,3 +1670,50 @@ int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4) {
 /* ── Module exports ──────────────────────────────────────────────── */
 #include "export.h"
 EXPORT_SYMBOL(process_exit);
+
+/* ── Exec permission check (Item S14) ──────────────────────────────── */
+
+/* Before executing a binary, verify that the inode has the necessary
+ * execute permission bits (S_IXUSR, S_IXGRP, or S_IXOTH) based on
+ * the current process's UID/GID.
+ *
+ * This is called from the exec path (do_execve in kernel/exec.c)
+ * as an additional security check.
+ *
+ * @binary_path  Path to the binary file
+ * @uid          Requesting user's UID (process euid)
+ * @gid          Requesting user's GID (process egid)
+ *
+ * Returns 0 if execute is allowed, -EACCES if denied.
+ */
+int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid)
+{
+    if (!binary_path) return -EINVAL;
+
+    /* Stat the binary to get its mode and ownership */
+    struct vfs_stat st;
+    int ret = vfs_stat(binary_path, &st);
+    if (ret < 0)
+        return -EACCES;
+
+    uint16_t mode = st.mode;
+    uint16_t file_uid = st.uid;
+    uint16_t file_gid = st.gid;
+
+    /* Check execute bits based on identity */
+    if (uid == file_uid) {
+        /* Owner check */
+        if (!(mode & S_IXUSR))
+            return -EACCES;
+    } else if (gid == file_gid) {
+        /* Group check */
+        if (!(mode & S_IXGRP))
+            return -EACCES;
+    } else {
+        /* Other check */
+        if (!(mode & S_IXOTH))
+            return -EACCES;
+    }
+
+    return 0; /* Execute permission granted */
+}

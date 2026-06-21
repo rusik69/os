@@ -1280,3 +1280,53 @@ uint32_t fs_cow_block(uint32_t block) {
 
     return new_block;
 }
+
+/* ── Rename (move) a file ──────────────────────────────────────── */
+int fs_rename(const char *old_path, const char *new_path)
+{
+    if (!old_path || !new_path) return -1;
+
+    int old_idx = find_inode(old_path);
+    if (old_idx < 0) return -1;
+
+    int new_idx = find_inode(new_path);
+    if (new_idx >= 0) return -1; /* target already exists */
+
+    /* Find a free inode for the new path */
+    new_idx = find_free_inode();
+    if (new_idx < 0) return -1;
+
+    /* Copy the inode data from old to new */
+    memcpy(&inodes[new_idx], &inodes[old_idx], sizeof(struct fs_inode));
+
+    /* Update the path in the new inode */
+    memset(inodes[new_idx].name, 0, FS_MAX_NAME);
+    size_t nlen = strlen(new_path);
+    const char *nbase = new_path;
+    const char *slash = strrchr(new_path, '/');
+    if (slash) nbase = slash + 1;
+    nlen = strlen(nbase);
+    if (nlen >= FS_MAX_NAME) nlen = FS_MAX_NAME - 1;
+    memcpy(inodes[new_idx].name, nbase, nlen);
+    inodes[new_idx].name[nlen] = '\0';
+
+    /* Free the old inode */
+    memset(&inodes[old_idx], 0, sizeof(struct fs_inode));
+
+    /* Update refcounts — bump refcount for all data blocks (now shared) */
+    for (uint32_t b = 0; b < FS_MAX_BLOCKS; b++) {
+        if (inodes[new_idx].blocks[b] != 0) {
+            int bmap_idx = (int)(inodes[new_idx].blocks[b] - FS_DATA_START);
+            if (bmap_idx >= 0 && bmap_idx < FS_MAX_BLOCKS_TOTAL)
+                fs_block_refcount[bmap_idx]++;
+        }
+    }
+
+    int ret = save_inodes();
+    if (ret < 0) {
+        /* Rollback: restore old inode, free new one */
+        memcpy(&inodes[old_idx], &inodes[new_idx], sizeof(struct fs_inode));
+        memset(&inodes[new_idx], 0, sizeof(struct fs_inode));
+    }
+    return ret;
+}

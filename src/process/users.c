@@ -782,6 +782,64 @@ static int copy_skel_to_home(const char *home, const char *username) {
     return 0;
 }
 
+/*
+ * create_default_files — Create default configuration files in the
+ * specified home directory.  Creates .profile (with PATH and PS1),
+ * .bashrc (with aliases), and .gitconfig.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+int create_default_files(const char *home_path, const char *username)
+{
+    if (!home_path || !username) return -1;
+
+    /* Use the existing skeleton copy for .profile and .bashrc */
+    int ret = copy_skel_to_home(home_path, username);
+    if (ret < 0) return ret;
+
+    /* ── Create .gitconfig if it doesn't exist ──────────────────────── */
+    char gitconfig_path[256];
+    int off = snprintf(gitconfig_path, sizeof(gitconfig_path),
+                       "%s/.gitconfig", home_path);
+    if (off < 0 || (size_t)off >= sizeof(gitconfig_path))
+        return -1;
+
+    struct vfs_stat gc_st;
+    if (vfs_stat(gitconfig_path, &gc_st) != 0) {
+        static const char default_gitconfig[] =
+            "[user]\n"
+            "\tname = ";
+
+        /* Build content: include username */
+        char content[512];
+        int cpos = snprintf(content, sizeof(content),
+                            "# ~/.gitconfig — created by system setup\n"
+                            "[user]\n"
+                            "\tname = %s\n"
+                            "\temail = %s@localhost\n"
+                            "[core]\n"
+                            "\teditor = edit\n"
+                            "\tautocrlf = input\n"
+                            "[color]\n"
+                            "\tui = auto\n"
+                            "[alias]\n"
+                            "\tco = checkout\n"
+                            "\tbr = branch\n"
+                            "\tci = commit\n"
+                            "\tst = status\n"
+                            "\tlg = log --oneline --graph --all\n",
+                            username, username);
+        if (cpos < 0 || (size_t)cpos >= sizeof(content))
+            return -1;
+
+        if (vfs_create(gitconfig_path, FS_TYPE_FILE) < 0)
+            return -1;
+        vfs_write(gitconfig_path, content, (uint32_t)cpos);
+    }
+
+    return 0;
+}
+
 int user_add(const char *username, uint32_t uid, const char *password) {
     if (!username || !*username) return -4;
     if (!password || !*password) return -4;

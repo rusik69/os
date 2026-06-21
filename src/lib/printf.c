@@ -374,6 +374,43 @@ int kprintf(const char *fmt, ...) {
                 }
                 break;
             }
+            /* Check for %pX (hex dump) */
+            if (*(fmt + 1) == 'X') {
+                fmt++;
+                const void *addr = va_arg(ap, const void *);
+                int len = (int)va_arg(ap, int64_t);
+                const uint8_t *p = (const uint8_t *)addr;
+                for (int i = 0; i < len; i++) {
+                    char hex[3];
+                    hex[0] = "0123456789abcdef"[(p[i] >> 4) & 0xF];
+                    hex[1] = "0123456789abcdef"[p[i] & 0xF];
+                    hex[2] = '\0';
+                    for (int j = 0; j < 2; j++) { kputchar(hex[j]); count++; }
+                    if ((i & 15) == 15 && i + 1 < len) { kputchar('\n'); count++; }
+                }
+                break;
+            }
+            /* Check for %pV (va_format passthrough) */
+            if (*(fmt + 1) == 'V') {
+                fmt++;
+                struct va_format *vaf = va_arg(ap, struct va_format *);
+                if (!vaf || !vaf->fmt) { const char *ns = "(null)"; while (*ns) { kputchar(*ns++); count++; } break; }
+                if (vaf->va) {
+                    count += vkprintf(vaf->fmt, *vaf->va);
+                } else {
+                    const char *s = vaf->fmt;
+                    while (*s) { kputchar(*s++); count++; }
+                }
+                break;
+            }
+            /* Check for %pf (function name) */
+            if (*(fmt + 1) == 'f') {
+                fmt++;
+                void *addr = va_arg(ap, void *);
+                kputchar('0'); kputchar('x'); count += 2;
+                count += print_uint((uint64_t)(uintptr_t)addr, 16, 16, '0');
+                break;
+            }
             /* Regular %p — always show pointer */
             uint64_t val = va_arg(ap, uint64_t);
             kputchar('0'); kputchar('x'); count += 2;
@@ -435,6 +472,68 @@ static int sn_uint(snbuf_t *b, uint64_t val, int base, int pad,
     return written;
 }
 
+/* ── Floating-point helpers ──────────────────────────────────────────── */
+
+/* Format a double in fixed-point notation (%f). */
+static int sn_double_fixed(snbuf_t *b, double val, int precision) {
+    int written = 0;
+    if (val < 0) { sn_write(b, '-'); written++; val = -val; }
+    /* Extract integer part */
+    uint64_t int_part = (uint64_t)val;
+    written += sn_uint(b, int_part, 10, 0, ' ', 0);
+    if (precision > 0) {
+        sn_write(b, '.'); written++;
+        double frac = val - (double)int_part;
+        for (int i = 0; i < precision; i++) {
+            frac *= 10.0;
+            int digit = (int)frac;
+            sn_write(b, '0' + (char)digit);
+            written++;
+            frac -= (double)digit;
+        }
+    }
+    return written;
+}
+
+/* Format a double in scientific notation (%e). */
+static int sn_double_sci(snbuf_t *b, double val, int precision) {
+    int written = 0;
+    if (val < 0) { sn_write(b, '-'); written++; val = -val; }
+    int exp = 0;
+    if (val != 0.0) {
+        while (val >= 10.0) { val /= 10.0; exp++; }
+        while (val < 1.0) { val *= 10.0; exp--; }
+    }
+    /* Write the mantissa */
+    written += sn_double_fixed(b, val, precision);
+    sn_write(b, 'e'); written++;
+    if (exp >= 0) { sn_write(b, '+'); written++; }
+    else { sn_write(b, '-'); written++; exp = -exp; }
+    written += sn_uint(b, (uint64_t)exp, 10, 2, '0', 0);
+    return written;
+}
+
+/* Format a double in shortest representation (%g).
+ * Uses fixed-point if exponent is in [-4, precision), scientific otherwise. */
+static int sn_double_shortest(snbuf_t *b, double val, int precision) {
+    if (precision < 1) precision = 1;
+    if (val == 0.0) {
+        sn_write(b, '0'); return 1;
+    }
+    /* Estimate exponent */
+    double v = val < 0 ? -val : val;
+    int exp = 0;
+    while (v >= 10.0) { v /= 10.0; exp++; }
+    while (v < 1.0) { v *= 10.0; exp--; }
+    if (exp >= -4 && exp < precision) {
+        return sn_double_fixed(b, val, precision - exp - 1);
+    } else {
+        return sn_double_sci(b, val, precision - 1);
+    }
+}
+
+/* ── vsnprintf ───────────────────────────────────────────────────────── */
+
 int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
     if (!buf || n == 0) return 0;
     snbuf_t b = { buf, 0, n };
@@ -446,6 +545,9 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
         if (*fmt == '-') { left_align = 1; fmt++; }
         if (*fmt == '0' && !left_align) { padchar = '0'; fmt++; }
         while (*fmt >= '0' && *fmt <= '9') { pad = pad * 10 + (*fmt - '0'); fmt++; }
+        /* Skip length modifiers */
+        if (*fmt == 'l') { fmt++; if (*fmt == 'l') fmt++; }
+        else if (*fmt == 'z') fmt++;
         switch (*fmt) {
         case 's': {
             const char *s = va_arg(ap, const char *);
@@ -484,12 +586,67 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
             count += sn_uint(&b, val, 16, pad, padchar, left_align);
             break;
         }
+        /* ── Floating-point format specifiers ────────────────────────── */
+        case 'f': case 'F': {
+            double val = va_arg(ap, double);
+            int precision = 6;
+            count += sn_double_fixed(&b, val, precision);
+            break;
+        }
+        case 'e': case 'E': {
+            double val = va_arg(ap, double);
+            int precision = 6;
+            count += sn_double_sci(&b, val, precision);
+            break;
+        }
+        case 'g': case 'G': {
+            double val = va_arg(ap, double);
+            int precision = 6;
+            count += sn_double_shortest(&b, val, precision);
+            break;
+        }
         case 'p': {
-            /* Check for %pK (kernel pointer restriction) */
+            /* %pX — hex dump */
+            if (*(fmt + 1) == 'X') {
+                fmt++;
+                const void *addr = va_arg(ap, const void *);
+                int len = (int)va_arg(ap, int64_t);
+                const uint8_t *p = (const uint8_t *)addr;
+                for (int i = 0; i < len; i++) {
+                    sn_write(&b, "0123456789abcdef"[(p[i] >> 4) & 0xF]);
+                    sn_write(&b, "0123456789abcdef"[p[i] & 0xF]);
+                    count += 2;
+                    if ((i & 15) == 15 && i + 1 < len) { sn_write(&b, '\n'); count++; }
+                }
+                break;
+            }
+            /* %pV — va_format passthrough */
+            if (*(fmt + 1) == 'V') {
+                fmt++;
+                struct va_format *vaf = va_arg(ap, struct va_format *);
+                if (!vaf || !vaf->fmt) { const char *ns = "(null)"; while (*ns) { sn_write(&b, *ns++); count++; } break; }
+                if (vaf->va) {
+                    count += vsnprintf(b.buf + b.pos, b.max - b.pos, vaf->fmt, *vaf->va);
+                    b.pos += count;
+                    if (b.pos >= b.max - 1) b.pos = b.max - 1;
+                    b.buf[b.pos] = '\0';
+                } else {
+                    const char *s = vaf->fmt;
+                    while (*s) { sn_write(&b, *s++); count++; }
+                }
+                break;
+            }
+            /* %pf — function name (prints address) */
+            if (*(fmt + 1) == 'f') {
+                fmt++;
+                void *addr = va_arg(ap, void *);
+                count += sn_uint(&b, (uint64_t)(uintptr_t)addr, 16, 16, '0', 0);
+                break;
+            }
+            /* %pK — kernel pointer restriction */
             if (*(fmt + 1) == 'K') {
                 fmt++;
                 if (kptr_restrict_check()) {
-                    /* Restricted: hide kernel pointer — output 0x0000000000000000 */
                     sn_write(&b, '0'); sn_write(&b, 'x');
                     count += 2;
                     for (int i = 0; i < 16; i++) { sn_write(&b, '0'); count++; }

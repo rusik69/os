@@ -15,6 +15,8 @@
 #define CAKE_QUEUES        8
 #define CAKE_DEFAULT_LIMIT 10240
 #define CAKE_TINS          8  /* 8 traffic classes (diffserv) */
+#define CAKE_TARGET        5  /* 5ms codel target */
+#define CAKE_INTERVAL      100 /* 100ms codel interval */
 
 struct cake_flow {
     uint8_t  queue[65536];
@@ -22,6 +24,8 @@ struct cake_flow {
     uint16_t tail;
     int      count;
     int      backlog;
+    uint64_t enq_time[256];  /* sojourn time tracking: enqueue timestamps per packet */
+    int      enq_idx;        /* index into enq_time ring (matches head packets) */
 };
 
 struct cake_tin {
@@ -73,6 +77,11 @@ int cake_enqueue(const uint8_t *pkt, size_t len, uint8_t dscp)
     flow->count++;
     flow->backlog += (int)len;
 
+    /* Record enqueue timestamp for sojourn time tracking (CoDel AQM) */
+    int et_idx = flow->count > 0 ? (flow->enq_idx + flow->count - 1) % 256 : flow->enq_idx;
+    if (flow->count <= 256)
+        flow->enq_time[et_idx] = timer_get_ticks();
+
     spinlock_irqsave_release(&cake.lock, irq_flags);
     return 0;
 }
@@ -111,10 +120,21 @@ found:
             flow->backlog -= (int)pkt_len;
             *max_len = pkt_len;
 
-            /* AQM: mark or drop based on threshold */
-            if (flow->backlog > cake.tins[best_tin].threshold) {
+            /* Advance enq_time index */
+            flow->enq_idx = (flow->enq_idx + 1) % 256;
+
+            /* CoDel AQM: check sojourn time */
+            uint64_t now = timer_get_ticks();
+            uint64_t sojourn = now - flow->enq_time[flow->enq_idx];
+
+            if (sojourn > CAKE_TARGET) {
                 cake.tins[best_tin].marks++;
-                /* ECN mark would be set on packet here */
+                /* In a full implementation, we would set ECN mark on the packet */
+            }
+
+            /* Drop if exceeding threshold for too long (codel control law) */
+            if (sojourn > CAKE_TARGET * 2 && flow->backlog > 65536) {
+                cake.tins[best_tin].drops++;
             }
 
             spinlock_irqsave_release(&cake.lock, irq_flags);

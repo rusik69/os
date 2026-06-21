@@ -402,4 +402,10 @@ void process_timer_tick(int was_user);
 int process_is_kthread(struct process *proc);
 int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4);
 
+/* ── Exec permission check (Item S14) ──────────────────────────────── */
+/* Before executing a binary, verify that the inode has the necessary
+ * execute permission bits (S_IXUSR, S_IXGRP, or S_IXOTH).
+ * Returns 0 if execute is allowed, -EACCES if denied. */
+int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid);
+
 #endif

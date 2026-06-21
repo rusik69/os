@@ -3913,8 +3913,10 @@ static uint64_t sys_mknod(uint64_t path_addr, uint64_t mode, uint64_t dev) {
                 return (uint64_t)-1;
             return 0;
         case S_IFIFO:
-            /* Named FIFO — not yet supported, could use pipe infrastructure */
-            return (uint64_t)-EOPNOTSUPP;
+            /* Named FIFO (pipe) — create as FIFO-type file */
+            if (vfs_create(path, VFS_TYPE_FIFO) < 0)
+                return (uint64_t)-1;
+            return 0;
         case S_IFSOCK:
             /* Socket — not supported via mknod */
             return (uint64_t)-EOPNOTSUPP;

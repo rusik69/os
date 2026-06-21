@@ -123,6 +123,32 @@ void uefi_runtime_init(uint64_t system_table_phys)
     }
 }
 
+/* ── SetVirtualAddressMap ──────────────────────────────────────────────── */
+/* Convert all UEFI runtime physical addresses to virtual after page table
+ * switch.  Called after ExitBootServices once the kernel's own page tables
+ * are active.  'map' is an array of EFI_MEMORY_DESCRIPTOR entries.
+ * Returns 0 on success, -1 on failure. */
+int uefi_set_virtual_address_map(uint64_t map_size, uint64_t desc_size,
+                                  uint32_t desc_version, void *map)
+{
+    if (!g_efi_rt || !g_efi_rt->set_virtual_address_map) {
+        kprintf("[UEFI] No SetVirtualAddressMap available\n");
+        return -1;
+    }
+
+    efi_status st = g_efi_rt->set_virtual_address_map(map_size, desc_size,
+                                                       desc_version, map);
+    if (st != EFI_SUCCESS) {
+        kprintf("[UEFI] SetVirtualAddressMap failed: status=%lu\n",
+                (unsigned long)st);
+        return -1;
+    }
+
+    kprintf("[UEFI] SetVirtualAddressMap OK (map_size=%lu, desc_size=%lu)\n",
+            (unsigned long)map_size, (unsigned long)desc_size);
+    return 0;
+}
+
 /* ── GetTime ─────────────────────────────────────────────────────────── */
 
 int uefi_get_time(uint16_t *year, uint8_t *month, uint8_t *day,

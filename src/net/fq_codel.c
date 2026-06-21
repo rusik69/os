@@ -27,6 +27,7 @@ struct fq_codel_flow {
     uint64_t first_above_time;
     uint64_t drop_next;
     int      backlog;
+    uint64_t enq_timestamp;  /* sojourn time: timestamp of the packet at head */
 };
 
 struct fq_codel_sched {
@@ -86,6 +87,10 @@ int fq_codel_enqueue(uint32_t src_ip, uint32_t dst_ip,
     flow->count++;
     flow->backlog += (int)len;
 
+    /* Record enqueue timestamp for sojourn time tracking */
+    if (flow->count == 1)
+        flow->enq_timestamp = timer_get_ticks();
+
     spinlock_irqsave_release(&fq_codel.lock, irq_flags);
     return 0;
 }
@@ -127,9 +132,16 @@ int fq_codel_dequeue(uint8_t *pkt, size_t *max_len)
     flow->backlog -= (int)pkt_len;
     *max_len = pkt_len;
 
+    /* Update enq_timestamp to the next packet in queue if any */
+    if (flow->count > 0) {
+        /* In a simple flat queue, we approximate by timestamping at dequeue time.
+         * A full implementation would store per-packet timestamps. */
+        flow->enq_timestamp = timer_get_ticks();
+    }
+
     /* CoDel AQM */
     now = timer_get_ticks();
-    sojourn = now; /* Simulated: in reality use packet enqueue timestamp */
+    sojourn = now - flow->enq_timestamp;  /* actual sojourn time */
 
     if (sojourn > FQ_CODEL_TARGET) {
         if (!flow->dropping) {

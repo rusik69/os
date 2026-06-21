@@ -260,7 +260,11 @@ int vfs_listxattr(const char *path, char *buf, int size);
 int vfs_statfs(const char *path, struct vfs_statfs *st);
 int vfs_fstatfs(int fd, struct vfs_statfs *st);
 
-/* ── Set file timestamps (utimensat / futimens) ────────────────── */
+/* ── Permission helper bits (analogous to MAY_EXEC/MAY_READ/MAY_WRITE) ── */
+#define VFS_X_OK  1  /* execute */
+#define VFS_W_OK  2  /* write */
+#define VFS_R_OK  4  /* read */
+#define VFS_F_OK  0  /* file exists */
 
 /* Special tv_nsec values for utimensat/futimens */
 #define UTIME_NOW  ((1UL << 30) - 1)   /* set to current time */
@@ -405,5 +409,11 @@ void vfs_init(void);
 /* Mount table (extern for enhanced features) */
 extern struct vfs_mount mounts[VFS_MAX_MOUNTS];
 extern int num_mounts;
+
+/* Check permissions on a path given uid/gid.
+ * @op is VFS_R_OK (4), VFS_W_OK (2), VFS_X_OK (1), or VFS_F_OK (0).
+ * Returns 0 on success, -EACCES on denial. */
+int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
+                     uint16_t op);
 
 #endif

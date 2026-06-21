@@ -462,6 +462,13 @@ static int smfs_set_time(void *priv, const char *path,
     return 0;
 }
 
+/* ── smfs_rename — rename/move a file within the simple FS ──────── */
+static int smfs_rename(void *priv, const char *old_path, const char *new_path)
+{
+    (void)priv;
+    return fs_rename(old_path, new_path);
+}
+
 static struct vfs_ops smfs_ops = {
     .read    = smfs_read,
     .write   = smfs_write,
@@ -478,6 +485,7 @@ static struct vfs_ops smfs_ops = {
     .symlink   = smfs_symlink,
     .readlink  = smfs_readlink,
     .set_time  = smfs_set_time,
+    .rename    = smfs_rename,
 };
 
 /* ------------------------------------------------------------------
@@ -1363,6 +1371,17 @@ int vfs_fset_time(int fd, const struct timespec times[2])
     return vfs_do_set_time(pfd->path, times);
 }
 
+/* ── vfs_utimes — set atime/mtime via set_time callback ────────── */
+int vfs_utimes(const char *path, const uint64_t atime, const uint64_t mtime)
+{
+    struct timespec ts[2];
+    ts[0].tv_sec = atime;
+    ts[0].tv_nsec = 0;
+    ts[1].tv_sec = mtime;
+    ts[1].tv_nsec = 0;
+    return vfs_set_time(path, ts);
+}
+
 /* ── Filesystem statistics ──────────────────────────────────────── */
 
 int vfs_statfs(const char *path, struct vfs_statfs *st) {
@@ -1766,3 +1785,72 @@ EXPORT_SYMBOL(vfs_flush);
 EXPORT_SYMBOL(vfs_sync_all);
 EXPORT_SYMBOL(vfs_statfs);
 EXPORT_SYMBOL(vfs_bind_mount);
+
+/* ── Permission check (VFS_R_OK, VFS_W_OK, VFS_X_OK, VFS_F_OK) ───────── */
+
+/* Check if the given uid/gid has the requested permission on a path.
+ * Uses stat to get the file's mode/uid/gid, then applies the standard
+ * POSIX owner/group/other permission check.
+ *
+ * @path  Absolute path to the file
+ * @uid   Requesting user's UID
+ * @gid   Requesting user's GID
+ * @op    Bitwise OR of VFS_R_OK (4), VFS_W_OK (2), VFS_X_OK (1), VFS_F_OK (0)
+ *
+ * Returns 0 if permitted, -EACCES if denied, or a negative errno on error.
+ */
+int vfs_check_perms(const char *path, uint16_t uid, uint16_t gid,
+                     uint16_t op)
+{
+    if (!path) return -EINVAL;
+
+    /* VFS_F_OK: just check existence */
+    if (op == VFS_F_OK) {
+        struct vfs_stat st;
+        int ret = vfs_stat(path, &st);
+        return (ret == 0) ? 0 : -EACCES;
+    }
+
+    struct vfs_stat st;
+    int ret = vfs_stat(path, &st);
+    if (ret < 0)
+        return -EACCES;
+
+    uint16_t mode = st.mode;
+    uint16_t file_uid = st.uid;
+    uint16_t file_gid = st.gid;
+    uint16_t perm = 0;
+
+    /* Owner */
+    if (uid == file_uid) {
+        if (op & VFS_R_OK) perm |= (mode & S_IRUSR) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK) perm |= (mode & S_IWUSR) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK) perm |= (mode & S_IXUSR) ? VFS_X_OK : 0;
+    }
+    /* Group */
+    else if (gid == file_gid) {
+        if (op & VFS_R_OK) perm |= (mode & S_IRGRP) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK) perm |= (mode & S_IWGRP) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK) perm |= (mode & S_IXGRP) ? VFS_X_OK : 0;
+    }
+    /* Other */
+    else {
+        if (op & VFS_R_OK) perm |= (mode & S_IROTH) ? VFS_R_OK : 0;
+        if (op & VFS_W_OK) perm |= (mode & S_IWOTH) ? VFS_W_OK : 0;
+        if (op & VFS_X_OK) perm |= (mode & S_IXOTH) ? VFS_X_OK : 0;
+    }
+
+    return (perm == op) ? 0 : -EACCES;
+}
+
+/* ── Exec permission check for process.c (Item S14) ──────────────────── */
+
+/* Verify that a binary path has execute permission for the given uid/gid.
+ * Checks S_IXUSR (owner execute), S_IXGRP (group execute), S_IXOTH
+ * (other execute) bits based on the caller's identity.
+ * Returns 0 if execute is allowed, -EACCES otherwise.
+ * This is the low-level check used by the exec path. */
+int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
+{
+    return vfs_check_perms(path, uid, gid, VFS_X_OK);
+}

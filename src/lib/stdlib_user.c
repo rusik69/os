@@ -494,6 +494,64 @@ void *realloc(void *ptr, size_t new_size) {
     return new_ptr;
 }
 
+/* ── strtok_r — reentrant tokenizer ──────────────────────────────────── */
+char *strtok_r(char *str, const char *delim, char **saveptr)
+{
+    if (!delim || !saveptr)
+        return NULL;
+    if (str == NULL)
+        str = *saveptr;
+    if (str == NULL || *str == '\0') {
+        *saveptr = str;
+        return NULL;
+    }
+
+    /* Skip leading delimiters */
+    str += strspn(str, delim);
+    if (*str == '\0') {
+        *saveptr = str;
+        return NULL;
+    }
+
+    /* Find end of token */
+    char *end = str;
+    while (*end && !strchr(delim, *end))
+        end++;
+
+    if (*end == '\0') {
+        *saveptr = end;
+    } else {
+        *end = '\0';
+        *saveptr = end + 1;
+    }
+
+    return str;
+}
+
+/* ── strdup — heap allocate a copy of string ─────────────────────────── */
+char *strdup(const char *s)
+{
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    char *p = (char *)malloc(len + 1);
+    if (!p) return NULL;
+    memcpy(p, s, len + 1);
+    return p;
+}
+
+/* ── strndup — heap allocate a copy of up to n characters ────────────── */
+char *strndup(const char *s, size_t n)
+{
+    if (!s) return NULL;
+    size_t slen = strlen(s);
+    if (slen > n) slen = n;
+    char *p = (char *)malloc(slen + 1);
+    if (!p) return NULL;
+    memcpy(p, s, slen);
+    p[slen] = '\0';
+    return p;
+}
+
 /* ── Statistics / Debugging ─────────────────────────────────────────── */
 
 void heap_stats(uint64_t *out_allocs, uint64_t *out_frees,

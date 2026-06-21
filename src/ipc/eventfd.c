@@ -13,9 +13,18 @@
 #include "string.h"
 #include "scheduler.h"
 #include "waitqueue.h"
+#include "errno.h"
 
 #define EVENTFD_MAX 16
 #define EVENTFD_BASE 700
+
+/* Poll/select flags (from sys/poll.h) */
+#define POLLIN      0x001
+#define POLLPRI     0x002
+#define POLLOUT     0x004
+#define POLLERR     0x008
+#define POLLHUP     0x010
+#define POLLNVAL    0x020
 
 struct eventfd_info {
     int      in_use;
@@ -116,6 +125,33 @@ void eventfd_close(int fd) {
     if (!efd) return;
     efd->in_use = 0;
     efd->counter = 0;
+}
+
+/* ── Poll support ─────────────────────────────────────────────────────── */
+
+/* Check eventfd readiness for poll/select.
+ * Returns a bitmask of POLLIN/POLLOUT flags.
+ * Called when userspace calls poll()/select() on this fd. */
+int eventfd_poll(int fd)
+{
+    struct eventfd_info *efd = eventfd_get(fd);
+    if (!efd) return POLLNVAL;
+
+    int mask = 0;
+
+    /* Readable if counter > 0 (data available to read) */
+    if (efd->counter > 0)
+        mask |= POLLIN;
+
+    /* Writable if counter won't overflow on a write of 1 (always true
+     * unless counter == UINT64_MAX).  Non-blocking semantics apply at
+     * write time. */
+    if (efd->counter < 0xFFFFFFFFFFFFFFFFULL)
+        mask |= POLLOUT;
+    else
+        mask |= POLLOUT; /* technically still writable; overflow handled in write */
+
+    return mask;
 }
 
 /* ── Syscall wrappers called from syscall dispatch ──────────────────── */

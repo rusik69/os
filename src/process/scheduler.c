@@ -1585,6 +1585,93 @@ int scheduler_migrate_tasks_from(int from_cpu)
     return migrated;
 }
 
+/* ── CFS vruntime-based pick_next (Item S15) ───────────────────────────
+ *
+ * Complements the multilevel queue by providing an O(n) scan for the
+ * CFS (SCHED_OTHER / SCHED_BATCH) task with the smallest vruntime.
+ * In a full production scheduler this would be replaced with an rb-tree
+ * or min-heap for O(log n) selection; the linear scan here is correct
+ * and simple for the initial stub.
+ *
+ * The function scans the current CPU's runqueue levels and returns the
+ * CFS-class task with the lowest vruntime.  Non-CFS tasks (SCHED_FIFO,
+ * SCHED_RR, SCHED_DEADLINE, SCHED_IDLE) are skipped.
+ *
+ * Caller must hold sched_lock.  Returns the dequeued process or NULL.
+ */
+static struct process *cfs_pick_next(void)
+{
+    struct cpu_info *ci = this_cpu();
+    struct process *best = NULL;
+    uint64_t best_vruntime = UINT64_MAX;
+    int best_lvl = -1;
+    struct process *best_prev = NULL;
+
+    /* Scan all priority levels, looking for CFS tasks with lowest vruntime */
+    for (int lvl = 0; lvl < SCHED_LEVELS; lvl++) {
+        struct process *prev = NULL;
+        struct process *cur = ci->queue_head[lvl];
+
+        while (cur) {
+            /* Only SCHED_OTHER and SCHED_BATCH are CFS-managed */
+            if (sched_cfs_policy(cur->sched_policy)) {
+                if (cur->vruntime < best_vruntime) {
+                    best_vruntime = cur->vruntime;
+                    best = cur;
+                    best_lvl = lvl;
+                    best_prev = prev;
+                }
+            }
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+
+    if (!best)
+        return NULL;
+
+    /* Dequeue the best task from its priority level */
+    if (best_prev)
+        best_prev->next = best->next;
+    else
+        ci->queue_head[best_lvl] = best->next;
+
+    if (ci->queue_tail[best_lvl] == best)
+        ci->queue_tail[best_lvl] = best_prev;
+
+    best->next = NULL;
+    best->on_queue = 0;
+
+    /* Update vruntime after picking (simulate having run for 1 tick) */
+    update_vruntime(best, 1);
+
+    return best;
+}
+
+/* ── Update vruntime after sleep (CFS sleeper credit) ───────────────────
+ *
+ * When a task wakes up after sleeping, its vruntime may be far behind
+ * other runnable tasks.  This function prevents the waking task from
+ * monopolising the CPU by capping its vruntime advantage.
+ *
+ * Specifically, if the task's vruntime is more than
+ * CFS_MIN_VRUNTIME_OFFSET below the current minimum, it is advanced
+ * to (cfs_min_vruntime - CFS_MIN_VRUNTIME_OFFSET).
+ *
+ * Caller must hold sched_lock.
+ */
+static void cfs_wakeup_adjust_vruntime(struct process *proc)
+{
+    if (!proc) return;
+
+    cfs_update_min_vruntime();
+    uint64_t min_vr = this_cpu()->cfs_min_vruntime;
+
+    if (proc->vruntime + CFS_MIN_VRUNTIME_OFFSET < min_vr) {
+        proc->vruntime = min_vr - CFS_MIN_VRUNTIME_OFFSET;
+    }
+}
+
 /* ── Module exports ──────────────────────────────────────────────── */
 #include "export.h"
 EXPORT_SYMBOL(scheduler_yield);

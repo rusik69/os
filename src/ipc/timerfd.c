@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "waitqueue.h"
 #include "signal.h"
+#include "errno.h"
 
 /* ── timerfd: create file descriptors that fire timer events ─────────── */
 

@@ -22,6 +22,12 @@ int kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 int vkprintf(const char *fmt, __builtin_va_list ap) __attribute__((format(printf, 1, 0)));
 int kprintf_level(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
+/* struct va_format — for %pV format specifier passthrough */
+struct va_format {
+    const char *fmt;
+    __builtin_va_list *va;
+};
+
 /* Low-level character output */
 void kputchar(char c);
 
