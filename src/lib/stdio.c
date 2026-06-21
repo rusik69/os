@@ -1057,5 +1057,104 @@ void* fopen(const char *path, const char *mode)
     (void)path;
     (void)mode;
     kprintf("[stdio] fopen: not yet implemented\n");
-    return -ENOSYS;
+    return NULL;
+}
+
+/* ── sscanf — Minimal string-format parser ─────────────────────────── */
+/* Supports: %s (whitespace-delimited), %d (int), %u (unsigned),
+ * %x (hex), %255s (width-limited), %255[^\n] (character class).
+ * Returns number of items matched, or -ENOSYS on unsupported format. */
+int sscanf(const char *str, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int matches = 0;
+
+    while (*fmt) {
+        /* Skip whitespace in format */
+        while (*fmt == ' ' || *fmt == '\t') fmt++;
+        /* Skip whitespace in input */
+        while (*str == ' ' || *str == '\t') str++;
+
+        if (*fmt == '%') {
+            fmt++;
+            int width = 0;
+            int invert = 0;
+            char class_end = 0;
+
+            /* Parse optional width */
+            while (*fmt >= '0' && *fmt <= '9') {
+                width = width * 10 + (*fmt - '0');
+                fmt++;
+            }
+
+            if (*fmt == '%') {
+                fmt++;
+                if (*str == '%') { str++; matches++; }
+                continue;
+            }
+
+            if (*fmt == 'd') {
+                fmt++;
+                int *val = va_arg(ap, int *);
+                char *end = NULL;
+                *val = (int)strtol(str, &end, 10);
+                if (end != str) { matches++; str = end; }
+            } else if (*fmt == 'u') {
+                fmt++;
+                unsigned int *val = va_arg(ap, unsigned int *);
+                char *end = NULL;
+                *val = (unsigned int)strtoul(str, &end, 10);
+                if (end != str) { matches++; str = end; }
+            } else if (*fmt == 'x') {
+                fmt++;
+                unsigned int *val = va_arg(ap, unsigned int *);
+                char *end = NULL;
+                *val = (unsigned int)strtoul(str, &end, 16);
+                if (end != str) { matches++; str = end; }
+            } else if (*fmt == 's') {
+                fmt++;
+                char *val = va_arg(ap, char *);
+                /* Skip leading whitespace */
+                while (*str == ' ' || *str == '\t') str++;
+                int n = 0;
+                while (*str && *str != ' ' && *str != '\t' && *str != '\n'
+                       && (width <= 0 || n < width - 1)) {
+                    *val++ = *str++;
+                    n++;
+                }
+                *val = '\0';
+                if (n > 0) matches++;
+            } else if (*fmt == '[') {
+                fmt++;
+                if (*fmt == '^') { invert = 1; fmt++; }
+                if (*fmt == ']') { class_end = ']'; fmt++; }
+                /* Simple character class: [^\\n] = not newline */
+                if (*fmt == '^' && *(fmt+1) == '\\' && *(fmt+2) == 'n') {
+                    class_end = ']';
+                    fmt += 3;
+                    if (*fmt == ']') fmt++;
+                    char *val = va_arg(ap, char *);
+                    while (*str && *str != '\n' && (width <= 0 || n < width - 1)) {
+                        *val++ = *str++;
+                        n++;
+                    }
+                    *val = '\0';
+                    if (n > 0) matches++;
+                }
+                /* Skip to closing ] */
+                while (*fmt && *fmt != ']') fmt++;
+                if (*fmt == ']') fmt++;
+            } else {
+                break;
+            }
+        } else if (*fmt == *str) {
+            fmt++;
+            str++;
+        } else {
+            break;
+        }
+    }
+    va_end(ap);
+    return matches;
 }

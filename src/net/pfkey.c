@@ -208,7 +208,7 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
 
     /* SADB_DUMP: dump all SAs to the socket */
     if (msg->sadb_msg_type == SADB_DUMP) {
-        /* Import ipsec SA table symbols */
+#if 0 /* Wire up when ipsec SA table is implemented */
         extern struct security_assoc sadb[SADB_MAX_SAS];
         extern int SADB_MAX_SAS;
         (void)SADB_MAX_SAS;
@@ -217,8 +217,10 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
             extern struct security_assoc sadb[]; /* re-declared */
             (void)sadb;
         }
-        /* For now, iterate and build dump responses */
-        uint8_t dump_buf[PFKEY_BUF_SIZE];
+#endif
+        kprintf("pfkey: SADB_DUMP not yet implemented\n");
+        return pfkey_error(sk, msg, EOPNOTSUPP);
+#if 0
         int dump_off = 0;
         for (int i = 0; i < SADB_MAX_SAS; i++) {
             extern struct security_assoc sadb[];
@@ -255,7 +257,7 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
         kprintf("pfkey: SADB_DUMP returned %d SAs\n", count);
         return 0;
     }
-
+#endif
     /* Echo back a dummy response for SADB_REGISTER */
     if (msg->sadb_msg_type == SADB_REGISTER) {
         struct sadb_msg reply;

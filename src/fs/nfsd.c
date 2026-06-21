@@ -15,6 +15,7 @@
 #include "nfsd.h"
 #include "string.h"
 #include "printf.h"
+#include "stdio.h"
 #include "heap.h"
 #include "vfs.h"
 #include "timer.h"

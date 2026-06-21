@@ -33,6 +33,7 @@ static inline uint32_t ntohl(uint32_t v) { return htonl(v); }
 #define IP_PROTO_TCP    6
 #define IP_PROTO_UDP    17
 #define IP_PROTO_ICMPV6 58
+#define IP_PROTO_IPIP   4
 
 #define DHCP_SERVER_PORT 67
 #define DHCP_CLIENT_PORT 68

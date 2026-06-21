@@ -148,6 +148,12 @@ static uint64_t ext2_inode_get_size(struct ext2_priv *ep,
  * unallocated regions.  A physical block number of 0 is reserved (the
  * boot block cannot be part of a file), so 0 unambiguously means hole.
  */
+
+/* Forward declaration for extent resolver */
+static int64_t ext2_extent_get_block(struct ext2_priv *ep,
+                                      struct ext2_inode *inode,
+                                      uint32_t iblock);
+
 static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode,
                                    uint32_t iblock) {
     /* Check if extent tree is in use */
@@ -207,10 +213,10 @@ struct ext4_extent {
     uint32_t ee_start_lo;/* low 32 bits of physical block */
 };
 
-/* Forward declaration of extent tree resolver — must be before ext2_get_block_num */
+/* Extent tree resolver — inline implementation */
 static int64_t ext2_extent_get_block(struct ext2_priv *ep,
                                       struct ext2_inode *inode,
-                                      uint32_t iblock);
+                                      uint32_t iblock)
 {
     uint8_t root_buf[60]; /* i_block[15] = 60 bytes */
     memcpy(root_buf, inode->i_block, 60);

@@ -21,6 +21,7 @@
 #include "devfs.h"
 #include "errno.h"
 #include "spinlock.h"
+#include "timer.h"
 
 /* ── Global FUSE device state ──────────────────────────────────────── */
 static struct fuse_dev g_fuse_dev;

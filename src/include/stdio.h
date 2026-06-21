@@ -89,6 +89,7 @@ void clearerr(FILE *stream);
 
 int fprintf(FILE *stream, const char *fmt, ...);
 int fscanf(FILE *stream, const char *fmt, ...);
+int sscanf(const char *str, const char *fmt, ...);
 int vfprintf(FILE *stream, const char *fmt, __builtin_va_list ap);
 int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap);
 

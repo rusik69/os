@@ -385,6 +385,7 @@ int tpm2_get_random(uint8_t *buf, uint32_t count) {
  * The digest is a SHA-256 (32-byte) value.
  * Returns 0 on success, -1 on failure.
  */
+#if 0 /* Duplicate — real implementation below at line 1732 */
 int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
 {
     if (!digest || !digest_len)
@@ -446,6 +447,7 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
 
     return 0;
 }
+#endif /* 0 — Duplicate of line 1732 */
 
 /* ── TPM2_PCR_Extend ─────────────────────────────────────────────────
  *
@@ -458,6 +460,7 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
  *
  * Returns 0 on success, -1 on failure.
  */
+#if 0 /* Duplicate — real implementation below at line 1775 */
 int tpm2_pcr_extend(uint32_t pcr_index, const uint8_t *digest, uint32_t digest_len)
 {
     if (!digest || digest_len < 32)
@@ -520,6 +523,7 @@ int tpm2_pcr_extend(uint32_t pcr_index, const uint8_t *digest, uint32_t digest_l
             (unsigned)pcr_index);
     return 0;
 }
+#endif /* 0 — Duplicate of line 1775 */
 
 /* ── TPM initialization ──────────────────────────────────────────────
  *
