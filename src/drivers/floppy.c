@@ -7,6 +7,8 @@
 #include "heap.h"
 #include "dma.h"
 #include "pmm.h"
+#include "delay.h"
+#include "pic.h"
 
 /*
  * floppy.c — Floppy disk controller driver
@@ -144,11 +146,11 @@ static int fdc_reset(void)
     /* Reset the FDC by clearing the RESET bit in DOR */
     outb(g_fdc_base + FDC_DOR, 0x00);
     io_wait();
-    timer_udelay(100);
+    udelay(100);
     /* Re-enable the FDC with IRQ enabled */
     outb(g_fdc_base + FDC_DOR, DOR_IRQ);
     io_wait();
-    timer_udelay(100);
+    udelay(100);
 
     /* Wait for sense interrupt after reset (up to 4 drives) */
     for (int i = 0; i < 4; i++) {
@@ -219,7 +221,7 @@ static void floppy_select_drive(int drive)
     outb(g_fdc_base + FDC_DOR, dor);
     g_floppy_motor_on = 1;
     /* Give the motor time to spin up (~250ms) */
-    timer_udelay(250000);
+    udelay(250000);
 }
 
 /* Turn off motor for the given drive */
@@ -447,7 +449,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
     floppy_setup_dma_read((uint32_t)dma_phys, (uint32_t)total_bytes);
 
     /* Wait for DMA controller to be ready */
-    timer_udelay(100);
+    udelay(100);
 
     /* Send READ DATA command:
      *   Byte 0: Command (0xE6 = MFM + skip + implied seek + DMA)
@@ -596,3 +598,61 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Floppy disk controller driver");
 
 #endif /* MODULE */
+
+/* ── Stub: floppy_write_sectors ─────────────────────────────── */
+int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
+{
+    (void)drive;
+    (void)lba;
+    (void)buf;
+    (void)count;
+    kprintf("[floppy] floppy_write_sectors: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_ioctl ─────────────────────────────── */
+int floppy_ioctl(int drive, int cmd, void *arg)
+{
+    (void)drive;
+    (void)cmd;
+    (void)arg;
+    kprintf("[floppy] floppy_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_open ─────────────────────────────── */
+int floppy_open(int drive)
+{
+    (void)drive;
+    kprintf("[floppy] floppy_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_close ─────────────────────────────── */
+int floppy_close(int drive)
+{
+    (void)drive;
+    kprintf("[floppy] floppy_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_get_geometry ─────────────────────────────── */
+int floppy_get_geometry(int drive, void *geo)
+{
+    (void)drive;
+    (void)geo;
+    kprintf("[floppy] floppy_get_geometry: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_format_track ─────────────────────────────── */
+int floppy_format_track(int drive, int track, int head)
+{
+    (void)drive;
+    (void)track;
+    (void)head;
+    kprintf("[floppy] floppy_format_track: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: floppy_eject ─────────────────────────────── */
+int floppy_eject(int drive)
+{
+    (void)drive;
+    kprintf("[floppy] floppy_eject: not yet implemented\n");
+    return -ENOSYS;
+}
