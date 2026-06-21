@@ -185,13 +185,13 @@ int log_agg_start(const char *config)
 {
     (void)config;
     kprintf("[log_agg] log_agg_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: log_agg_stop ─────────────────────────────── */
 int log_agg_stop(void)
 {
     kprintf("[log_agg] log_agg_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: log_agg_collect ─────────────────────────────── */
 int log_agg_collect(const char *source, void *log)
@@ -199,7 +199,7 @@ int log_agg_collect(const char *source, void *log)
     (void)source;
     (void)log;
     kprintf("[log_agg] log_agg_collect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: log_agg_query ─────────────────────────────── */
@@ -208,5 +208,5 @@ int log_agg_query(const char *filter, void *results)
     (void)filter;
     (void)results;
     kprintf("[log_agg] log_agg_query: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

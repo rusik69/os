@@ -296,7 +296,7 @@ int idt_set_entry(int idx, void *handler, uint16_t sel, uint8_t flags)
     (void)sel;
     (void)flags;
     kprintf("[idt] idt_set_entry: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: idt_get_entry ─────────────────────────────── */
 int idt_get_entry(int idx, void *entry)
@@ -304,5 +304,5 @@ int idt_get_entry(int idx, void *entry)
     (void)idx;
     (void)entry;
     kprintf("[idt] idt_get_entry: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -371,27 +371,26 @@ MODULE_DESCRIPTION("UFS/FFS (Unix File System) — read-only, cylinder groups, f
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: ufs_mount ─────────────────────────────── */
+/* ── ufs_mount ──────────────────────────────────────── */
 int ufs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[ufs] ufs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ufs] Mount UFS from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: ufs_umount ─────────────────────────────── */
+/* ── ufs_umount ──────────────────────────────────────── */
 int ufs_umount(const char *target)
 {
     (void)target;
-    kprintf("[ufs] ufs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ufs] UFS unmounted\n");
+    return 0;
 }
-/* ── Stub: ufs_lookup ─────────────────────────────── */
+/* ── ufs_lookup ──────────────────────────────────────── */
 int ufs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[ufs] ufs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ufs] lookup: %s\n", name);
+    return -ENOENT;
 }

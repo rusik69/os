@@ -340,30 +340,49 @@ out:
     return ret;
 }
 
-/* ── Stub: cpu_init ─────────────────────────────── */
+/* ── cpu_init: Initialize a specific CPU ─────────────────────────────── */
 int cpu_init(int cpu_id)
 {
-    (void)cpu_id;
-    kprintf("[cpu] cpu_init: not yet implemented\n");
-    return -ENOSYS;
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
+
+    kprintf("[cpu] cpu_init: initializing CPU %d\n", cpu_id);
+
+    /* Bring the CPU online via the existing cpuhp infrastructure */
+    int ret = cpuhp_bring_cpu(cpu_id);
+    if (ret < 0) {
+        kprintf("[cpu] cpu_init: failed to bring CPU %d online (ret=%d)\n", cpu_id, ret);
+        return ret;
+    }
+
+    kprintf("[cpu] cpu_init: CPU %d is now online\n", cpu_id);
+    return 0;
 }
-/* ── Stub: cpu_idle ─────────────────────────────── */
+/* ── cpu_idle: Enter idle state until next interrupt ──────────────────── */
 int cpu_idle(void)
 {
-    kprintf("[cpu] cpu_idle: not yet implemented\n");
-    return -ENOSYS;
+    /* Enter halt state to conserve power while waiting for interrupts */
+    __asm__ volatile("sti; hlt; cli");
+    return 0;
 }
-/* ── Stub: cpu_die ─────────────────────────────── */
+/* ── cpu_die: Take a CPU offline ──────────────────────────────────────── */
 int cpu_die(int cpu_id)
 {
-    (void)cpu_id;
-    kprintf("[cpu] cpu_die: not yet implemented\n");
-    return -ENOSYS;
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
+
+    kprintf("[cpu] cpu_die: taking CPU %d offline\n", cpu_id);
+
+    int ret = cpuhp_take_cpu_offline(cpu_id);
+    if (ret < 0) {
+        kprintf("[cpu] cpu_die: failed to take CPU %d offline (ret=%d)\n", cpu_id, ret);
+        return ret;
+    }
+
+    kprintf("[cpu] cpu_die: CPU %d is now offline\n", cpu_id);
+    return 0;
 }
-/* ── Stub: cpu_online ─────────────────────────────── */
+/* ── cpu_online: Check if a CPU is online ─────────────────────────────── */
 int cpu_online(int cpu_id)
 {
-    (void)cpu_id;
-    kprintf("[cpu] cpu_online: not yet implemented\n");
-    return -ENOSYS;
+    if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return 0;
+    return cpuhp_is_online(cpu_id) ? 1 : 0;
 }

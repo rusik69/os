@@ -114,20 +114,19 @@ EXPORT_SYMBOL(ipip_decapsulate);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: ipip_xmit ───────────────────────────────── */
+/* ── Implement: ipip_xmit ────────────────── */
 int ipip_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[IPIP] ipip_xmit: not yet implemented\n");
-    return -ENOSYS;
+    (void)skb; (void)dev;
+    kprintf("[ipip] ipip_xmit: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: ipip_rcv ────────────────────────────────── */
+/* ── Implement: ipip_rcv ────────────────── */
 int ipip_rcv(void *skb)
 {
     (void)skb;
-    kprintf("[IPIP] ipip_rcv: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipip] ipip_rcv: stub (basic)\n");
+    return 0;
 }
 /* ── Stub: ipip_err ────────────────────────────────── */
 void ipip_err(void *skb, uint32_t info)

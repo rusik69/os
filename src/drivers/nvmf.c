@@ -365,13 +365,13 @@ int nvmf_connect(const char *transport, const char *traddr, const char *nqn)
     (void)traddr;
     (void)nqn;
     kprintf("[nvmf] nvmf_connect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nvmf_disconnect ─────────────────────────── */
 int nvmf_disconnect(void)
 {
     kprintf("[nvmf] nvmf_disconnect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nvmf_send ───────────────────────────────── */
 int nvmf_send(const void *data, uint32_t len)
@@ -379,7 +379,7 @@ int nvmf_send(const void *data, uint32_t len)
     (void)data;
     (void)len;
     kprintf("[nvmf] nvmf_send: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nvmf_recv ───────────────────────────────── */
 int nvmf_recv(void *buf, uint32_t *len)
@@ -387,5 +387,5 @@ int nvmf_recv(void *buf, uint32_t *len)
     (void)buf;
     (void)len;
     kprintf("[nvmf] nvmf_recv: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

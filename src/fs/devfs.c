@@ -405,19 +405,36 @@ MODULE_DESCRIPTION("devfs — /dev device virtual filesystem with dynamic device
 MODULE_ALIAS("devfs");
 #endif /* MODULE */
 
-/* ── Stub: devfs_register ─────────────────────────────── */
+/* ── devfs_register ───────────────────────────────────── */
 int devfs_register(const char *name, int major, int minor)
 {
-    (void)name;
-    (void)major;
-    (void)minor;
-    kprintf("[devfs] devfs_register: not yet implemented\n");
-    return -ENOSYS;
+    /* Register a device in devfs */
+    int slot = -1;
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (!devfs_devices[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) return -ENOMEM;
+    strncpy(devfs_devices[slot].name, name, sizeof(devfs_devices[slot].name) - 1);
+    devfs_devices[slot].in_use = 1;
+    kprintf("[devfs] Registered device: %s\n", name);
+    return 0;
 }
-/* ── Stub: devfs_unregister ─────────────────────────────── */
+/* ── devfs_unregister ─────────────────────────────────── */
 int devfs_unregister(const char *name)
 {
-    (void)name;
-    kprintf("[devfs] devfs_unregister: not yet implemented\n");
-    return -ENOSYS;
+    for (int i = 0; i < DEVFS_MAX_DEVICES; i++) {
+        if (devfs_devices[i].in_use && strcmp(devfs_devices[i].name, name) == 0) {
+            devfs_devices[i].in_use = 0;
+            memset(devfs_devices[i].name, 0, sizeof(devfs_devices[i].name));
+            devfs_devices[i].read_fn = NULL;
+            devfs_devices[i].write_fn = NULL;
+            kprintf("[devfs] Unregistered device: %s\n", name);
+            return 0;
+        }
+    }
+    kprintf("[devfs] Device not found: %s\n", name);
+    return -ENOENT;
 }

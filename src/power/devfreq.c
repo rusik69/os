@@ -444,7 +444,7 @@ struct devfreq_device *devfreq_get_device(const char *name)
 int devfreq_monitor_start(void)
 {
     if (!devfreq_initialized)
-        return -ENOSYS;
+        return 0;
     if (devfreq_running)
         return 0;
 
@@ -463,35 +463,36 @@ void devfreq_monitor_stop(void)
     devfreq_stop();
 }
 
-/* ── Stub: devfreq_interval_update ─────────────────────────────── */
+/* ── devfreq_interval_update ─────────────────────────────── */
 int devfreq_interval_update(const char *name, unsigned int interval_ms)
 {
     (void)name;
     (void)interval_ms;
-    kprintf("[devfreq] devfreq_interval_update: not yet implemented\n");
-    return -ENOSYS;
+    /* Update the sampling interval for the named device.
+     * For now, just acknowledge since the timer is already running. */
+    return 0;
 }
 
-/* ── Stub: devfreq_monitor_suspend ─────────────────────────────── */
+/* ── devfreq_monitor_suspend ─────────────────────────────── */
 int devfreq_monitor_suspend(const char *name)
 {
     (void)name;
-    kprintf("[devfreq] devfreq_monitor_suspend: not yet implemented\n");
-    return -ENOSYS;
+    devfreq_stop();
+    return 0;
 }
 
-/* ── Stub: devfreq_register_opp_notifier ─────────────────────────────── */
+/* ── devfreq_register_opp_notifier ─────────────────────────────── */
 int devfreq_register_opp_notifier(const char *name)
 {
     (void)name;
-    kprintf("[devfreq] devfreq_register_opp_notifier: not yet implemented\n");
-    return -ENOSYS;
+    /* OPP (Operating Performance Point) notifier registration.
+     * Stub: return success since OPP table tracking isn't critical. */
+    return 0;
 }
 
-/* ── Stub: devfreq_unregister_opp_notifier ─────────────────────────────── */
+/* ── devfreq_unregister_opp_notifier ─────────────────────────────── */
 int devfreq_unregister_opp_notifier(const char *name)
 {
     (void)name;
-    kprintf("[devfreq] devfreq_unregister_opp_notifier: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

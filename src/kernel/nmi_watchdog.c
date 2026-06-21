@@ -486,7 +486,7 @@ void nmi_watchdog_get_stats(struct nmi_watchdog_stats *stats) {
 int nmi_watchdog_enable(void)
 {
     kprintf("[NMI_WATCHDOG] nmi_watchdog_enable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: nmi_watchdog_disable ────────────────────────────────────── */

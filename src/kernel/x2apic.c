@@ -62,7 +62,7 @@ uint32_t x2apic_read(int reg)
 {
     (void)reg;
     kprintf("[x2apic] x2apic_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: x2apic_write ─────────────────────────────── */
 int x2apic_write(int reg, uint32_t val)
@@ -70,7 +70,7 @@ int x2apic_write(int reg, uint32_t val)
     (void)reg;
     (void)val;
     kprintf("[x2apic] x2apic_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: x2apic_send_ipi ─────────────────────────────── */
 int x2apic_send_ipi(int cpu, int vector)
@@ -78,5 +78,5 @@ int x2apic_send_ipi(int cpu, int vector)
     (void)cpu;
     (void)vector;
     kprintf("[x2apic] x2apic_send_ipi: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

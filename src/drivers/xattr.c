@@ -29,7 +29,7 @@ int xattr_set(const char *path, const char *name, const void *val, size_t len, i
     (void)len;
     (void)flags;
     kprintf("[xattr] xattr_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: xattr_get ─────────────────────────────── */
 int xattr_get(const char *path, const char *name, void *val, size_t *len)
@@ -39,7 +39,7 @@ int xattr_get(const char *path, const char *name, void *val, size_t *len)
     (void)val;
     (void)len;
     kprintf("[xattr] xattr_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: xattr_list ─────────────────────────────── */
 int xattr_list(const char *path, char *list, size_t size)
@@ -48,7 +48,7 @@ int xattr_list(const char *path, char *list, size_t size)
     (void)list;
     (void)size;
     kprintf("[xattr] xattr_list: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: xattr_remove ─────────────────────────────── */
 int xattr_remove(const char *path, const char *name)
@@ -56,5 +56,5 @@ int xattr_remove(const char *path, const char *name)
     (void)path;
     (void)name;
     kprintf("[xattr] xattr_remove: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

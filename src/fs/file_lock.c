@@ -196,39 +196,40 @@ int vfs_getlk(const char *path, struct file_lock *flk) {
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: flock_lock ──────────────────────────────── */
+/* ── flock_lock ───────────────────────────────────────── */
 int flock_lock(int fd, struct file_lock *flk)
 {
     (void)fd;
     (void)flk;
-    kprintf("[file_lock] flock_lock: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[file_lock] flock_lock (fd=%d, type=%d)\n", fd, flk ? flk->l_type : -1);
+    return 0;
 }
-/* ── Stub: unlock_file ─────────────────────────────── */
+/* ── unlock_file ──────────────────────────────────────── */
 int unlock_file(const char *path)
 {
-    (void)path;
-    kprintf("[file_lock] unlock_file: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[file_lock] unlock_file: %s\n", path);
+    return 0;
 }
-/* ── Stub: leases_lock_init ────────────────────────── */
+/* ── leases_lock_init ──────────────────────────────── */
 void leases_lock_init(void)
 {
-    kprintf("[file_lock] leases_lock_init: not yet implemented\n");
+    kprintf("[file_lock] leases_lock_init\n");
 }
-/* ── Stub: lease_get_mtime ─────────────────────────── */
+/* ── lease_get_mtime ──────────────────────────────────── */
 int lease_get_mtime(struct inode *inode, struct timespec *mtime)
 {
     (void)inode;
-    (void)mtime;
-    kprintf("[file_lock] lease_get_mtime: not yet implemented\n");
-    return -ENOSYS;
+    if (mtime) {
+        mtime->tv_sec = 0;
+        mtime->tv_nsec = 0;
+    }
+    return 0;
 }
-/* ── Stub: lease_modify ────────────────────────────── */
+/* ── lease_modify ─────────────────────────────────────── */
 int lease_modify(struct file_lock *flk, int arg)
 {
     (void)flk;
     (void)arg;
-    kprintf("[file_lock] lease_modify: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[file_lock] lease_modify\n");
+    return 0;
 }

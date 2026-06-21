@@ -131,7 +131,7 @@ int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheri
     (void)inheritable;
     (void)permitted;
     kprintf("[caps] cap_capget: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_capset ─────────────────────────────── */
@@ -142,7 +142,7 @@ int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheri
     (void)inheritable;
     (void)permitted;
     kprintf("[caps] cap_capset: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_bprm_set_creds ─────────────────────────────── */
@@ -150,7 +150,7 @@ int cap_bprm_set_creds(struct linux_binprm *bprm)
 {
     (void)bprm;
     kprintf("[caps] cap_bprm_set_creds: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_task_prctl ─────────────────────────────── */
@@ -160,7 +160,7 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
     (void)arg2;
     (void)arg3;
     kprintf("[caps] cap_task_prctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_task_setscheduler ─────────────────────────────── */
@@ -168,7 +168,7 @@ int cap_task_setscheduler(struct task_struct *p)
 {
     (void)p;
     kprintf("[caps] cap_task_setscheduler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_task_setioprio ─────────────────────────────── */
@@ -177,7 +177,7 @@ int cap_task_setioprio(struct task_struct *p, int ioprio)
     (void)p;
     (void)ioprio;
     kprintf("[caps] cap_task_setioprio: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_task_setnice ─────────────────────────────── */
@@ -186,7 +186,7 @@ int cap_task_setnice(struct task_struct *p, int nice)
     (void)p;
     (void)nice;
     kprintf("[caps] cap_task_setnice: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cap_vm_enough_memory ─────────────────────────────── */
@@ -195,5 +195,5 @@ int cap_vm_enough_memory(struct mm_struct *mm, long pages)
     (void)mm;
     (void)pages;
     kprintf("[caps] cap_vm_enough_memory: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

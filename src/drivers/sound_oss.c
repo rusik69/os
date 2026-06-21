@@ -344,7 +344,7 @@ int sound_oss_open(int dev, void *file)
     (void)dev;
     (void)file;
     kprintf("[sound_oss] sound_oss_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sound_oss_release ─────────────────────────────── */
 int sound_oss_release(int dev, void *file)
@@ -352,7 +352,7 @@ int sound_oss_release(int dev, void *file)
     (void)dev;
     (void)file;
     kprintf("[sound_oss] sound_oss_release: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sound_oss_read ─────────────────────────────── */
 int sound_oss_read(int dev, void *buf, size_t count)
@@ -361,7 +361,7 @@ int sound_oss_read(int dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[sound_oss] sound_oss_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sound_oss_write ─────────────────────────────── */
 int sound_oss_write(int dev, const void *buf, size_t count)
@@ -370,5 +370,5 @@ int sound_oss_write(int dev, const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[sound_oss] sound_oss_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

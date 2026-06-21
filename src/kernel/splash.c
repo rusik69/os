@@ -501,18 +501,18 @@ int splash_show(const char *msg)
 {
     (void)msg;
     kprintf("[splash] splash_show: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: splash_hide ─────────────────────────────── */
 int splash_hide(void)
 {
     kprintf("[splash] splash_hide: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: splash_set_progress ─────────────────────────────── */
 int splash_set_progress(int pct)
 {
     (void)pct;
     kprintf("[splash] splash_set_progress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

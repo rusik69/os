@@ -7,6 +7,7 @@
 #include "waitqueue.h"
 #include "signal.h"
 #include "errno.h"
+#include "socket.h"
 
 /* ── timerfd: create file descriptors that fire timer events ─────────── */
 
@@ -223,20 +224,48 @@ void timerfd_tick(void) {
     }
 }
 
-/* ── Stub: timerfd_poll ─────────────────────────────────────── */
+/* ── timerfd_poll ─────────────────────────────────────── */
 int timerfd_poll(int fd)
 {
-    (void)fd;
-    kprintf("[timerfd] timerfd_poll: not yet implemented\n");
-    return -ENOSYS;
+    int slot = fd - 300;
+    if (slot < 0 || slot >= TIMERFD_MAX) return POLLNVAL;
+    if (!timerfd_table[slot].in_use) return POLLNVAL;
+
+    struct timerfd_entry *tf = &timerfd_table[slot];
+    int mask = POLLOUT; /* always writable */
+
+    if (tf->expired)
+        mask |= POLLIN;
+
+    return mask;
 }
 
-/* ── Stub: timerfd_show_fdinfo ──────────────────────────────── */
+/* ── timerfd_show_fdinfo ──────────────────────────────── */
 int timerfd_show_fdinfo(int fd, char *buf, size_t size)
 {
-    (void)fd;
-    (void)buf;
-    (void)size;
-    kprintf("[timerfd] timerfd_show_fdinfo: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || size == 0) return -EINVAL;
+
+    int slot = fd - 300;
+    if (slot < 0 || slot >= TIMERFD_MAX || !timerfd_table[slot].in_use) {
+        int n = snprintf(buf, size, "timerfd:\t%d (invalid)\n", fd);
+        return n < 0 ? -EINVAL : n;
+    }
+
+    struct timerfd_entry *tf = &timerfd_table[slot];
+    int n = snprintf(buf, size,
+        "timerfd:\t%d\n"
+        "pid:\t%u\n"
+        "expiration_tick:\t%llu\n"
+        "interval_ticks:\t%llu\n"
+        "expired:\t%d\n"
+        "expirations:\t%llu\n",
+        fd, tf->pid,
+        (unsigned long long)tf->expiration_tick,
+        (unsigned long long)tf->interval_ticks,
+        tf->expired,
+        (unsigned long long)tf->expirations);
+
+    if (n < 0) return -EINVAL;
+    if ((size_t)n >= size) return -ENOSPC;
+    return n;
 }

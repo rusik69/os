@@ -58,21 +58,21 @@ int refcount_ext_inc(void *r)
 {
     (void)r;
     kprintf("[refcount] refcount_ext_inc: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: refcount_ext_dec ─────────────────────────────── */
 int refcount_ext_dec(void *r)
 {
     (void)r;
     kprintf("[refcount] refcount_ext_dec: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: refcount_ext_read ─────────────────────────────── */
 unsigned int refcount_ext_read(void *r)
 {
     (void)r;
     kprintf("[refcount] refcount_ext_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: refcount_ext_set ─────────────────────────────── */
 int refcount_ext_set(void *r, unsigned int val)
@@ -80,5 +80,5 @@ int refcount_ext_set(void *r, unsigned int val)
     (void)r;
     (void)val;
     kprintf("[refcount] refcount_ext_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

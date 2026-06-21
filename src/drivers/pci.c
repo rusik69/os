@@ -1532,41 +1532,56 @@ EXPORT_SYMBOL(pci_find_ltr_cap);
 EXPORT_SYMBOL(pci_find_l1pm_cap);
 EXPORT_SYMBOL(pci_ltr_to_ns);
 
-/* ── Stub: pci_read_config ─────────────────────────────── */
-int pci_read_config(int bus, int dev, int func, int reg, int len)
+uint32_t pci_read_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 {
-    (void)bus;
-    (void)dev;
-    (void)func;
-    (void)reg;
-    (void)len;
-    kprintf("[pci] pci_read_config: not yet implemented\n");
-    return -ENOSYS;
+    uint32_t addr = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | 0x80000000u);
+    outl(0xCF8, addr);
+    return inl(0xCFC);
 }
-/* ── Stub: pci_write_config ─────────────────────────────── */
-int pci_write_config(int bus, int dev, int func, int reg, uint32_t val, int len)
+
+void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
 {
-    (void)bus;
-    (void)dev;
-    (void)func;
-    (void)reg;
-    (void)val;
-    (void)len;
-    kprintf("[pci] pci_write_config: not yet implemented\n");
-    return -ENOSYS;
+    uint32_t addr = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | 0x80000000u);
+    outl(0xCF8, addr);
+    outl(0xCFC, value);
 }
-/* ── Stub: pci_enable_device ─────────────────────────────── */
-int pci_enable_device(void *pdev)
+
+int pci_enable_device(struct pci_dev *dev)
 {
-    (void)pdev;
-    kprintf("[pci] pci_enable_device: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    uint32_t cmd = pci_read_config(dev->bus, dev->slot, dev->func, 0x04);
+    cmd |= 0x07;
+    pci_write_config(dev->bus, dev->slot, dev->func, 0x04, cmd);
+    return 0;
 }
-/* ── Stub: pci_find_capability ─────────────────────────────── */
+
+/* ── Find PCI capability ────────────────────────────── */
 int pci_find_capability(void *pdev, int cap)
 {
-    (void)pdev;
-    (void)cap;
-    kprintf("[pci] pci_find_capability: not yet implemented\n");
-    return -ENOSYS;
+    if (!pdev)
+        return -EINVAL;
+
+    struct pci_device *dev = (struct pci_device *)pdev;
+
+    /* Check capabilities list bit in status register (offset 0x04, bit 20) */
+    uint32_t status = pci_read(dev->bus, dev->slot, dev->func, 0x04);
+    if (!(status & 0x00100000))
+        return -ENOENT;  /* no capabilities list */
+
+    /* Read capabilities pointer at offset 0x34 */
+    uint32_t val = pci_read(dev->bus, dev->slot, dev->func, 0x34);
+    uint8_t cap_ptr = (uint8_t)(val & 0xFF);
+
+    /* Walk the capabilities list */
+    while (cap_ptr != 0) {
+        uint32_t cap_entry = pci_read(dev->bus, dev->slot, dev->func,
+                                      (uint8_t)(cap_ptr & 0xFC));
+        uint8_t cap_id = (uint8_t)(cap_entry & 0xFF);
+        if (cap_id == (uint8_t)cap)
+            return cap_ptr;  /* found, return offset */
+
+        cap_ptr = (uint8_t)((cap_entry >> 8) & 0xFF);
+    }
+
+    return -ENOENT;
 }

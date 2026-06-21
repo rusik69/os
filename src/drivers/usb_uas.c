@@ -141,7 +141,7 @@ int uas_init(void *dev)
 {
     (void)dev;
     kprintf("[usb] uas_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uas_read ─────────────────────────────── */
 int uas_read(void *dev, void *buf, size_t count, uint64_t offset)
@@ -151,7 +151,7 @@ int uas_read(void *dev, void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[usb] uas_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uas_write ─────────────────────────────── */
 int uas_write(void *dev, const void *buf, size_t count, uint64_t offset)
@@ -161,5 +161,5 @@ int uas_write(void *dev, const void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[usb] uas_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

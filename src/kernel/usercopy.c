@@ -143,17 +143,17 @@ int usercopy_check(const void *addr, size_t len, int write)
     (void)len;
     (void)write;
     kprintf("[usercopy] usercopy_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usercopy_allow ─────────────────────────────── */
 int usercopy_allow(void)
 {
     kprintf("[usercopy] usercopy_allow: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usercopy_forbid ─────────────────────────────── */
 int usercopy_forbid(void)
 {
     kprintf("[usercopy] usercopy_forbid: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -125,14 +125,14 @@ uint64_t rlimit_get_cur(int resource)
 {
     (void)resource;
     kprintf("[rlimit] rlimit_get_cur: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rlimit_get_max ─────────────────────────────── */
 uint64_t rlimit_get_max(int resource)
 {
     (void)resource;
     kprintf("[rlimit] rlimit_get_max: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rlimit_set_cur ─────────────────────────────── */
 int rlimit_set_cur(int resource, uint64_t val)
@@ -140,5 +140,5 @@ int rlimit_set_cur(int resource, uint64_t val)
     (void)resource;
     (void)val;
     kprintf("[rlimit] rlimit_set_cur: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

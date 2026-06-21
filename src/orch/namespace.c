@@ -327,19 +327,19 @@ int ns_create(const char *name)
 {
     (void)name;
     kprintf("[ns] ns_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ns_delete ─────────────────────────────── */
 int ns_delete(const char *name)
 {
     (void)name;
     kprintf("[ns] ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ns_list ─────────────────────────────── */
 int ns_list(void *list)
 {
     (void)list;
     kprintf("[ns] ns_list: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

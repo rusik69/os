@@ -409,31 +409,35 @@ struct usb_gadget *udc_create_dwc2_gadget(const char *name,
     return g;
 }
 
-/* ── Stub: udc_register ─────────────────────────────── */
+/* ── Implement: udc_register ─────────────────────────────── */
 int udc_register(void *gadget)
 {
-    (void)gadget;
-    kprintf("[gadget] udc_register: not yet implemented\n");
-    return -ENOSYS;
+    if (!gadget) return -EINVAL;
+    struct usb_gadget *g = (struct usb_gadget *)gadget;
+    return udc_register_gadget(g);
 }
-/* ── Stub: udc_unregister ─────────────────────────────── */
+/* ── Implement: udc_unregister ─────────────────────────────── */
 int udc_unregister(void *gadget)
 {
-    (void)gadget;
-    kprintf("[gadget] udc_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (!gadget) return -EINVAL;
+    struct usb_gadget *g = (struct usb_gadget *)gadget;
+    return udc_unregister_gadget(g);
 }
-/* ── Stub: udc_start ─────────────────────────────── */
+/* ── Implement: udc_start ─────────────────────────────── */
 int udc_start(void *gadget)
 {
-    (void)gadget;
-    kprintf("[gadget] udc_start: not yet implemented\n");
-    return -ENOSYS;
+    if (!gadget) return -EINVAL;
+    struct usb_gadget *g = (struct usb_gadget *)gadget;
+    if (g->ops && g->ops->start)
+        return g->ops->start(g);
+    return 0;
 }
-/* ── Stub: udc_stop ─────────────────────────────── */
+/* ── Implement: udc_stop ─────────────────────────────── */
 int udc_stop(void *gadget)
 {
-    (void)gadget;
-    kprintf("[gadget] udc_stop: not yet implemented\n");
-    return -ENOSYS;
+    if (!gadget) return -EINVAL;
+    struct usb_gadget *g = (struct usb_gadget *)gadget;
+    if (g->ops && g->ops->stop)
+        return g->ops->stop(g);
+    return 0;
 }

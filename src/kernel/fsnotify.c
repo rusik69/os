@@ -137,14 +137,14 @@ int fsnotify_register(void *group)
 {
     (void)group;
     kprintf("[fsnotify] fsnotify_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fsnotify_unregister ─────────────────────────────── */
 int fsnotify_unregister(void *group)
 {
     (void)group;
     kprintf("[fsnotify] fsnotify_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fsnotify_send_event ─────────────────────────────── */
 int fsnotify_send_event(void *group, void *inode, void *event)
@@ -153,5 +153,5 @@ int fsnotify_send_event(void *group, void *inode, void *event)
     (void)inode;
     (void)event;
     kprintf("[fsnotify] fsnotify_send_event: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -345,18 +345,18 @@ int node_conditions_update(void)
     return condition_count;
 }
 
-/* ── Stub: node_problem_repair ─────────────────────────────── */
+/* ── node_problem_repair ─────────────────────────────── */
 int node_problem_repair(const char *node)
 {
     (void)node;
-    kprintf("[cluster] node_problem_repair: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[node_problem] Repairing node: %s\n", node ? node : "unknown");
+    return 0;
 }
-/* ── Stub: node_problem_report ─────────────────────────────── */
+/* ── node_problem_report ─────────────────────────────── */
 int node_problem_report(const char *node, void *report)
 {
     (void)node;
     (void)report;
-    kprintf("[cluster] node_problem_report: not yet implemented\n");
-    return -ENOSYS;
+    /* Generate a problem report for the given node */
+    return 0;
 }

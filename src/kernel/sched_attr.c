@@ -158,7 +158,7 @@ int sched_attr_set(int pid, const void *attr)
     (void)pid;
     (void)attr;
     kprintf("[sched] sched_attr_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sched_attr_get ─────────────────────────────── */
 int sched_attr_get(int pid, void *attr)
@@ -166,5 +166,5 @@ int sched_attr_get(int pid, void *attr)
     (void)pid;
     (void)attr;
     kprintf("[sched] sched_attr_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -449,5 +449,5 @@ EXPORT_SYMBOL(ioapic_unmask_irq);
 int apic_calibrate_timer(void)
 {
     kprintf("[apic] apic_calibrate_timer: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

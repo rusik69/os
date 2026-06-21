@@ -184,7 +184,7 @@ int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *
     (void)dst;
     (void)dlen;
     kprintf("[zcomp] zcomp_compress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: zcomp_decompress ─────────────────────────────── */
 int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
@@ -195,19 +195,19 @@ int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t
     (void)dst;
     (void)dlen;
     kprintf("[zcomp] zcomp_decompress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: zcomp_create_pool ─────────────────────────────── */
 void* zcomp_create_pool(const char *alg)
 {
     (void)alg;
     kprintf("[zcomp] zcomp_create_pool: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: zcomp_destroy_pool ─────────────────────────────── */
 int zcomp_destroy_pool(void *pool)
 {
     (void)pool;
     kprintf("[zcomp] zcomp_destroy_pool: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

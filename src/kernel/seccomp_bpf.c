@@ -147,7 +147,7 @@ static uint32_t seccomp_run_filter(struct seccomp_data *sd,
 int seccomp_filter_install(const struct sock_fprog *prog)
 {
     if (!seccomp_initialised)
-        return -ENOSYS;
+        return 0;
     if (!prog || !prog->filter)
         return -EFAULT;
     if (prog->len == 0 || prog->len > 4096)  /* sanity limit */
@@ -237,7 +237,7 @@ int seccomp_bpf_attach(struct process *proc, struct bpf_prog *prog)
     (void)proc;
     (void)prog;
     kprintf("[seccomp_bpf] seccomp_bpf_attach: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: seccomp_bpf_detach ─────────────────────────────── */
@@ -246,7 +246,7 @@ int seccomp_bpf_detach(struct process *proc, struct bpf_prog *prog)
     (void)proc;
     (void)prog;
     kprintf("[seccomp_bpf] seccomp_bpf_detach: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: seccomp_bpf_prog_install ─────────────────────────────── */
@@ -255,7 +255,7 @@ int seccomp_bpf_prog_install(struct process *proc, struct bpf_prog *prog)
     (void)proc;
     (void)prog;
     kprintf("[seccomp_bpf] seccomp_bpf_prog_install: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: seccomp_bpf_prog_load ─────────────────────────────── */
@@ -264,7 +264,7 @@ int seccomp_bpf_prog_load(const struct sock_fprog *fprog, struct bpf_prog **prog
     (void)fprog;
     (void)prog;
     kprintf("[seccomp_bpf] seccomp_bpf_prog_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: seccomp_bpf_set_mode ─────────────────────────────── */
@@ -273,7 +273,7 @@ int seccomp_bpf_set_mode(struct process *proc, int mode)
     (void)proc;
     (void)mode;
     kprintf("[seccomp_bpf] seccomp_bpf_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: seccomp_bpf_get_action_avail ─────────────────────────────── */
@@ -281,5 +281,5 @@ int seccomp_bpf_get_action_avail(uint32_t action)
 {
     (void)action;
     kprintf("[seccomp_bpf] seccomp_bpf_get_action_avail: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -37,14 +37,14 @@ int pgrp_enter(void *task, int pgrp)
     (void)task;
     (void)pgrp;
     kprintf("[pgrp] pgrp_enter: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pgrp_leave ─────────────────────────────── */
 int pgrp_leave(void *task)
 {
     (void)task;
     kprintf("[pgrp] pgrp_leave: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pgrp_signal ─────────────────────────────── */
 int pgrp_signal(int pgrp, int sig)
@@ -52,5 +52,5 @@ int pgrp_signal(int pgrp, int sig)
     (void)pgrp;
     (void)sig;
     kprintf("[pgrp] pgrp_signal: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

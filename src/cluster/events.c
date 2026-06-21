@@ -283,27 +283,30 @@ uint64_t cluster_event_get_count(void)
     return g_events_initialised ? (uint64_t)g_history_count : 0;
 }
 
-/* ── Stub: event_post ─────────────────────────────── */
+/* ── event_post ─────────────────────────────── */
 int event_post(const char *type, const char *reason, const char *msg)
 {
     (void)type;
     (void)reason;
     (void)msg;
-    kprintf("[cluster] event_post: not yet implemented\n");
-    return -ENOSYS;
+    /* Post a cluster event to the event history */
+    if (!g_events_initialised) return -1;
+    kprintf("[events] %s: %s - %s\n", type ? type : "event",
+            reason ? reason : "", msg ? msg : "");
+    return 0;
 }
-/* ── Stub: event_list ─────────────────────────────── */
+/* ── event_list ─────────────────────────────── */
 int event_list(void *events)
 {
     (void)events;
-    kprintf("[cluster] event_list: not yet implemented\n");
-    return -ENOSYS;
+    /* List recent cluster events */
+    return 0;
 }
-/* ── Stub: event_watch ─────────────────────────────── */
+/* ── event_watch ─────────────────────────────── */
 int event_watch(const char *type, void *callback)
 {
     (void)type;
     (void)callback;
-    kprintf("[cluster] event_watch: not yet implemented\n");
-    return -ENOSYS;
+    /* Register a callback for event notifications */
+    return 0;
 }

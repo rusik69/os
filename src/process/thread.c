@@ -241,23 +241,31 @@ uint64_t thread_get_fs_base(int tid)
     return thread_table[slot].fs_base;
 }
 
-/* ── Stub: thread_exit ─────────────────────────────── */
+/* ── thread_exit ─────────────────────────────── */
 int thread_exit(void *task)
 {
     (void)task;
-    kprintf("[thread] thread_exit: not yet implemented\n");
-    return -ENOSYS;
+    /* Terminate the current thread.
+     * For now, just exit the process. */
+    process_exit();
+    return 0; /* never reached */
 }
-/* ── Stub: thread_yield ─────────────────────────────── */
+
+/* ── thread_yield ─────────────────────────────── */
 int thread_yield(void)
 {
-    kprintf("[thread] thread_yield: not yet implemented\n");
-    return -ENOSYS;
+    /* Yield the CPU to another runnable thread/process */
+    scheduler_yield();
+    return 0;
 }
-/* ── Stub: thread_sleep ─────────────────────────────── */
+
+/* ── thread_sleep ─────────────────────────────── */
 int thread_sleep(uint64_t ns)
 {
-    (void)ns;
-    kprintf("[thread] thread_sleep: not yet implemented\n");
-    return -ENOSYS;
+    /* Convert nanoseconds to ticks and sleep */
+    uint64_t ticks = ns / 10000000; /* 10ms per tick at 100Hz */
+    if (ticks == 0 && ns > 0) ticks = 1; /* minimum 1 tick */
+
+    process_sleep_ticks(ticks);
+    return 0;
 }

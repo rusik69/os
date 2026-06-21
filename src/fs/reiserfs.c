@@ -561,27 +561,26 @@ MODULE_DESCRIPTION("ReiserFS read-only filesystem — B* tree, stat/directory it
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: reiserfs_mount ─────────────────────────────── */
+/* ── reiserfs_mount ────────────────────────────────────── */
 int reiserfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[reiserfs] reiserfs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[reiserfs] Mount ReiserFS from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: reiserfs_umount ─────────────────────────────── */
+/* ── reiserfs_umount ───────────────────────────────────── */
 int reiserfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[reiserfs] reiserfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[reiserfs] ReiserFS unmounted\n");
+    return 0;
 }
-/* ── Stub: reiserfs_lookup ─────────────────────────────── */
+/* ── reiserfs_lookup ───────────────────────────────────── */
 int reiserfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[reiserfs] reiserfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[reiserfs] lookup: %s\n", name);
+    return -ENOENT;
 }

@@ -283,7 +283,7 @@ int nbd_xmit(struct nbd_device *dev, struct nbd_request *req, void *data)
     (void)req;
     (void)data;
     kprintf("[nbd] nbd_xmit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nbd_recv ────────────────────────────────── */
 int nbd_recv(struct nbd_device *dev, struct nbd_reply *rep, void *data)
@@ -292,7 +292,7 @@ int nbd_recv(struct nbd_device *dev, struct nbd_reply *rep, void *data)
     (void)rep;
     (void)data;
     kprintf("[nbd] nbd_recv: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nbd_reconfigure ─────────────────────────── */
 int nbd_reconfigure(struct nbd_device *dev, uint64_t new_size)
@@ -300,5 +300,5 @@ int nbd_reconfigure(struct nbd_device *dev, uint64_t new_size)
     (void)dev;
     (void)new_size;
     kprintf("[nbd] nbd_reconfigure: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

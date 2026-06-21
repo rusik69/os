@@ -336,19 +336,19 @@ int cpu_topology_get_package(int cpu)
 {
     (void)cpu;
     kprintf("[cpu_topology] cpu_topology_get_package: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cpu_topology_get_core ─────────────────────────────── */
 int cpu_topology_get_core(int cpu)
 {
     (void)cpu;
     kprintf("[cpu_topology] cpu_topology_get_core: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cpu_topology_get_numa ─────────────────────────────── */
 int cpu_topology_get_numa(int cpu)
 {
     (void)cpu;
     kprintf("[cpu_topology] cpu_topology_get_numa: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

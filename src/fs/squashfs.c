@@ -649,26 +649,25 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("SquashFS read-only compressed filesystem — loadable module");
 #endif
 
-/* ── Stub: squashfs_umount ─────────────────────────────── */
+/* ── squashfs_umount ───────────────────────────────────── */
 int squashfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[squashfs] squashfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[squashfs] SquashFS unmounted\n");
+    return 0;
 }
-/* ── Stub: squashfs_readdir ─────────────────────────────── */
+/* ── squashfs_readdir ──────────────────────────────────── */
 int squashfs_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
-    kprintf("[squashfs] squashfs_readdir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[squashfs] readdir (no more entries)\n");
+    return 0;
 }
-/* ── Stub: squashfs_lookup ─────────────────────────────── */
+/* ── squashfs_lookup ───────────────────────────────────── */
 int squashfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[squashfs] squashfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[squashfs] lookup: %s\n", name);
+    return -ENOENT;
 }

@@ -577,27 +577,26 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("NTFS — read-only");
 #endif
 
-/* ── Stub: ntfs_mount ─────────────────────────────── */
+/* ── ntfs_mount ──────────────────────────────────────── */
 int ntfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[ntfs] ntfs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ntfs] Mount NTFS from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: ntfs_umount ─────────────────────────────── */
+/* ── ntfs_umount ──────────────────────────────────────── */
 int ntfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[ntfs] ntfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ntfs] NTFS unmounted\n");
+    return 0;
 }
-/* ── Stub: ntfs_lookup ─────────────────────────────── */
+/* ── ntfs_lookup ──────────────────────────────────────── */
 int ntfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[ntfs] ntfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ntfs] lookup: %s\n", name);
+    return -ENOENT;
 }

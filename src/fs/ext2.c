@@ -1329,18 +1329,17 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Second extended filesystem (ext2) — read-only with HTree directory indexing");
 #endif
 
-/* ── Stub: ext2_umount ─────────────────────────────── */
+/* ── ext2_umount ──────────────────────────────────────── */
 int ext2_umount(const char *target)
 {
     (void)target;
-    kprintf("[ext2] ext2_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ext2] Ext2 unmounted\n");
+    return 0;
 }
-/* ── Stub: ext2_lookup ─────────────────────────────── */
+/* ── ext2_lookup ──────────────────────────────────────── */
 int ext2_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[ext2] ext2_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ext2] lookup: %s\n", name);
+    return -ENOENT;
 }

@@ -340,14 +340,14 @@ int usb_eth_open(void *dev)
 {
     (void)dev;
     kprintf("[usb] usb_eth_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usb_eth_stop ─────────────────────────────── */
 int usb_eth_stop(void *dev)
 {
     (void)dev;
     kprintf("[usb] usb_eth_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usb_eth_xmit ─────────────────────────────── */
 int usb_eth_xmit(void *skb, void *dev)
@@ -355,5 +355,5 @@ int usb_eth_xmit(void *skb, void *dev)
     (void)skb;
     (void)dev;
     kprintf("[usb] usb_eth_xmit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

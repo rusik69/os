@@ -48,7 +48,7 @@ static int alloc_queue(void) {
 }
 
 mqd_t mq_open(const char *name, int oflag, ...) {
-    if (!mqueue_inited) return -ENOSYS;
+    if (!mqueue_inited) return -EINVAL;
 
     int idx = find_queue(name);
     if (idx >= 0) {
@@ -213,7 +213,7 @@ int mq_getattr(mqd_t mqdes, struct mq_attr *attr) {
 
 int mq_unlink(const char *name) {
     if (!mqueue_inited || !name)
-        return -ENOSYS;
+        return -EINVAL;
 
     int idx = find_queue(name);
     if (idx < 0)
@@ -233,29 +233,73 @@ int mq_unlink(const char *name) {
     return 0;
 }
 
-/* ── Stub: mqueue_register ──────────────────────────────────── */
+/* ── mqueue_register ──────────────────────────────────── */
 int mqueue_register(const char *name, int oflag)
 {
-    (void)name;
-    (void)oflag;
-    kprintf("[mqueue] mqueue_register: not yet implemented\n");
-    return -ENOSYS;
+    /* Register a queue for future use (similar to mq_open but returns 0 on success) */
+    if (!mqueue_inited || !name)
+        return -EINVAL;
+
+    mqd_t mqdes = mq_open(name, oflag);
+    if (mqdes < 0)
+        return (int)mqdes;
+
+    /* Successfully registered */
+    return 0;
 }
 
-/* ── Stub: mqueue_unregister ────────────────────────────────── */
+/* ── mqueue_unregister ────────────────────────────────── */
 int mqueue_unregister(const char *name)
 {
-    (void)name;
-    kprintf("[mqueue] mqueue_unregister: not yet implemented\n");
-    return -ENOSYS;
+    /* Unregister a queue previously registered with mqueue_register */
+    if (!mqueue_inited || !name)
+        return -EINVAL;
+
+    int idx = -1;
+    for (int i = 0; i < MQUEUE_MAX; i++) {
+        if (mqueue_table[i].in_use && strcmp(mqueue_table[i].name, name) == 0) {
+            idx = i;
+            break;
+        }
+    }
+
+    if (idx < 0)
+        return -ENOENT;
+
+    return mq_close((mqd_t)idx);
 }
 
-/* ── Stub: mqueue_setattr ───────────────────────────────────── */
+/* ── mqueue_setattr ───────────────────────────────────── */
 int mqueue_setattr(mqd_t mqdes, const struct mq_attr *attr, struct mq_attr *old_attr)
 {
-    (void)mqdes;
-    (void)attr;
-    (void)old_attr;
-    kprintf("[mqueue] mqueue_setattr: not yet implemented\n");
-    return -ENOSYS;
+    if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
+        return -EBADF;
+
+    struct mqueue *q = &mqueue_table[mqdes];
+
+    /* Save old attributes if requested */
+    if (old_attr) {
+        old_attr->mq_flags = 0;
+        old_attr->mq_maxmsg = q->msg_max;
+        old_attr->mq_msgsize = q->msg_size_max;
+        old_attr->mq_curmsgs = q->msg_count;
+    }
+
+    /* Apply new attributes (only mq_flags can be changed per POSIX) */
+    if (attr) {
+        if (attr->mq_flags & O_NONBLOCK)
+            q->oflags |= O_NONBLOCK;
+        else
+            q->oflags &= ~O_NONBLOCK;
+
+        /* Changing maxmsg/msgsize requires an empty queue */
+        if (attr->mq_maxmsg > 0 && attr->mq_maxmsg <= MQUEUE_MAX_MSG && q->msg_count == 0) {
+            q->msg_max = attr->mq_maxmsg;
+        }
+        if (attr->mq_msgsize > 0 && attr->mq_msgsize <= MQUEUE_MAX_SIZE && q->msg_count == 0) {
+            q->msg_size_max = attr->mq_msgsize;
+        }
+    }
+
+    return 0;
 }

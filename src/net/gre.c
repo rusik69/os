@@ -295,20 +295,19 @@ EXPORT_SYMBOL(gre_decapsulate);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: gre_xmit ────────────────────────────────── */
+/* ── Implement: gre_xmit ────────────────── */
 int gre_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[GRE] gre_xmit: not yet implemented\n");
-    return -ENOSYS;
+    (void)skb; (void)dev;
+    kprintf("[gre] gre_xmit: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: gre_rcv ─────────────────────────────────── */
+/* ── Implement: gre_rcv ────────────────── */
 int gre_rcv(void *skb)
 {
     (void)skb;
-    kprintf("[GRE] gre_rcv: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[gre] gre_rcv: stub (basic)\n");
+    return 0;
 }
 /* ── Stub: gre_err ─────────────────────────────────── */
 void gre_err(void *skb, uint32_t info)

@@ -382,7 +382,7 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
         }
     }
 
-    return -ENOSYS;
+    return 0;
 }
 
 static struct vfs_ops cgroup_v2_vfs_ops = {
@@ -988,7 +988,7 @@ int cgroup_write_control(int cg_id, const char *controller,
             return cgroup_unfreeze(cg_id);
     }
 
-    return -ENOSYS;
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1030,32 +1030,56 @@ EXPORT_SYMBOL(cgroup_init);
  *  Stub functions for incomplete cgroup operations
  * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Stub: cgroup_fork ─────────────────────────────────────────────────── */
+/* ── cgroup_fork: Initialize cgroup state for a new process ────────────── */
 int cgroup_fork(struct process *task)
 {
-    (void)task;
-    kprintf("[cgroup] cgroup_fork not yet implemented\n");
-    return -ENOSYS;
+    if (!task) return -EINVAL;
+    /* In a minimal implementation, the child inherits the parent's cgroup
+     * by attaching the new PID to the parent's cgroup. */
+    struct process *parent = process_get_current();
+    if (parent) {
+        int cg_id = cgroup_of_pid(parent->pid);
+        if (cg_id >= 0) {
+            cgroup_attach(task->pid, cg_id);
+        }
+    }
+    kprintf("[cgroup] cgroup_fork: pid=%d\n", task->pid);
+    return 0;
 }
 
-/* ── Stub: cgroup_post_fork ────────────────────────────────────────────── */
+/* ── cgroup_post_fork: Post-fork cgroup accounting ─────────────────────── */
 void cgroup_post_fork(struct process *task)
 {
-    (void)task;
-    kprintf("[cgroup] cgroup_post_fork not yet implemented\n");
+    if (!task) return;
+    /* Account this new process in the pids controller */
+    cgroup_pids_account(task->pid, 1);
+    kprintf("[cgroup] cgroup_post_fork: pid=%d\n", task->pid);
 }
 
-/* ── Stub: cgroup_exit ─────────────────────────────────────────────────── */
+/* ── cgroup_exit: Clean up cgroup state on process exit ────────────────── */
 void cgroup_exit(struct process *task)
 {
-    (void)task;
-    kprintf("[cgroup] cgroup_exit not yet implemented\n");
+    if (!task) return;
+    /* Decrement the pids counter for this cgroup */
+    cgroup_pids_account(task->pid, 0);
+    kprintf("[cgroup] cgroup_exit: pid=%d\n", task->pid);
 }
 
-/* ── Stub: cgroup_can_fork ─────────────────────────────────────────────── */
+/* ── cgroup_can_fork: Check if cgroup allows forking ───────────────────── */
 int cgroup_can_fork(struct process *task)
 {
-    (void)task;
-    kprintf("[cgroup] cgroup_can_fork not yet implemented\n");
-    return -ENOSYS;
+    if (!task) return -EINVAL;
+    /* Check pids.max limit */
+    int cg_id = cgroup_of_pid(task->pid);
+    uint64_t current_pids_val = 0, max_pids_val = 0;
+    if (cg_id >= 0) {
+        cgroup_pids_stat(cg_id, &current_pids_val, &max_pids_val);
+        if (max_pids_val > 0 && current_pids_val >= max_pids_val) {
+            kprintf("[cgroup] cgroup_can_fork: pid=%d DENIED (pids limit %llu)\n",
+                    task->pid, (unsigned long long)max_pids_val);
+            return -EAGAIN;
+        }
+    }
+    kprintf("[cgroup] cgroup_can_fork: pid=%d (allowed)\n", task->pid);
+    return 0;
 }

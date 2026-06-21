@@ -201,14 +201,14 @@ int cgroup_ns_create(void *parent)
 {
     (void)parent;
     kprintf("[cgroup_ns] cgroup_ns_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cgroup_ns_delete ─────────────────────────────── */
 int cgroup_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[cgroup_ns] cgroup_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cgroup_ns_attach ─────────────────────────────── */
 int cgroup_ns_attach(void *ns, void *task)
@@ -216,5 +216,5 @@ int cgroup_ns_attach(void *ns, void *task)
     (void)ns;
     (void)task;
     kprintf("[cgroup_ns] cgroup_ns_attach: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

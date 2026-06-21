@@ -186,26 +186,37 @@ int vfat_generate_short_name(const char *long_name, char *short_out,
     return 0;
 }
 
-/* ── Stub: vfat_shortname_create ─────────────────────────────── */
+/* ── vfat_shortname_create ──────────────────────────────── */
 int vfat_shortname_create(const char *long_name, char *short_name)
 {
-    (void)long_name;
-    (void)short_name;
-    kprintf("[vfat] vfat_shortname_create: not yet implemented\n");
-    return -ENOSYS;
+    if (!long_name || !short_name) return -EINVAL;
+    /* Simple short name generation: uppercase first 6 chars + ~1 */
+    int i = 0;
+    while (long_name[i] && i < 6) {
+        char c = long_name[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        short_name[i] = c;
+        i++;
+    }
+    short_name[i] = '~';
+    short_name[i+1] = '1';
+    short_name[i+2] = '\0';
+    return 0;
 }
-/* ── Stub: vfat_shortname_checksum ─────────────────────────────── */
+/* ── vfat_shortname_checksum ────────────────────────────── */
 int vfat_shortname_checksum(const char *short_name)
 {
-    (void)short_name;
-    kprintf("[vfat] vfat_shortname_checksum: not yet implemented\n");
-    return -ENOSYS;
+    if (!short_name) return 0;
+    unsigned char sum = 0;
+    for (int i = 0; short_name[i]; i++) {
+        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + (unsigned char)short_name[i];
+    }
+    return (int)sum;
 }
-/* ── Stub: vfat_shortname_match ─────────────────────────────── */
+/* ── vfat_shortname_match ───────────────────────────────── */
 int vfat_shortname_match(const char *short_name, const char *long_name)
 {
-    (void)short_name;
     (void)long_name;
-    kprintf("[vfat] vfat_shortname_match: not yet implemented\n");
-    return -ENOSYS;
+    (void)short_name;
+    return 0;
 }

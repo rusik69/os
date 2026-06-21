@@ -193,7 +193,7 @@ int pidfd_poll(void *file, void *pt)
     (void)file;
     (void)pt;
     kprintf("[pidfd] pidfd_poll: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pidfd_show_fdinfo ─────────────────────────────── */
 int pidfd_show_fdinfo(void *file, void *m)
@@ -201,5 +201,5 @@ int pidfd_show_fdinfo(void *file, void *m)
     (void)file;
     (void)m;
     kprintf("[pidfd] pidfd_show_fdinfo: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

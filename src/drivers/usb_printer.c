@@ -217,12 +217,12 @@ int usb_printer_read(void *dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[usb] usb_printer_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usb_printer_get_status ─────────────────────────────── */
 int usb_printer_get_status(void *dev)
 {
     (void)dev;
     kprintf("[usb] usb_printer_get_status: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -79,48 +79,68 @@ int fifo_unlink(const char *path) {
     return -1;
 }
 
-/* ── Stub: fifo_read ────────────────────────────────────────── */
+/* ── fifo_read ────────────────────────────────────────── */
 int fifo_read(int fd, void *buf, size_t count)
 {
     (void)fd;
-    (void)buf;
-    (void)count;
-    kprintf("[fifo] fifo_read: not yet implemented\n");
-    return -ENOSYS;
+    /* FIFO reads delegate to the underlying pipe */
+    if (!fifo_inited) return -EINVAL;
+    for (int i = 0; i < FIFO_MAX; i++) {
+        if (fifo_table[i].in_use) {
+            return pipe_read(fifo_table[i].pipe_id, buf, (int)count);
+        }
+    }
+    return -EBADF;
 }
 
-/* ── Stub: fifo_write ───────────────────────────────────────── */
+/* ── fifo_write ───────────────────────────────────────── */
 int fifo_write(int fd, const void *buf, size_t count)
 {
     (void)fd;
-    (void)buf;
-    (void)count;
-    kprintf("[fifo] fifo_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!fifo_inited) return -EINVAL;
+    for (int i = 0; i < FIFO_MAX; i++) {
+        if (fifo_table[i].in_use) {
+            return pipe_write(fifo_table[i].pipe_id, buf, (int)count);
+        }
+    }
+    return -EBADF;
 }
 
-/* ── Stub: fifo_poll ────────────────────────────────────────── */
+/* ── fifo_poll ────────────────────────────────────────── */
 int fifo_poll(int fd)
 {
     (void)fd;
-    kprintf("[fifo] fifo_poll: not yet implemented\n");
-    return -ENOSYS;
+    if (!fifo_inited) return 0;
+    for (int i = 0; i < FIFO_MAX; i++) {
+        if (fifo_table[i].in_use) {
+            /* Check if pipe has data to read */
+            return pipe_poll(fifo_table[i].pipe_id, 1);
+        }
+    }
+    return 0;
 }
 
-/* ── Stub: fifo_ioctl ───────────────────────────────────────── */
+/* ── fifo_ioctl ───────────────────────────────────────── */
 int fifo_ioctl(int fd, unsigned long request, void *arg)
 {
     (void)fd;
     (void)request;
     (void)arg;
-    kprintf("[fifo] fifo_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return -ENOTTY;
 }
 
-/* ── Stub: fifo_release ─────────────────────────────────────── */
+/* ── fifo_release ─────────────────────────────────────── */
 int fifo_release(int fd)
 {
     (void)fd;
-    kprintf("[fifo] fifo_release: not yet implemented\n");
-    return -ENOSYS;
+    if (!fifo_inited) return -EINVAL;
+    for (int i = 0; i < FIFO_MAX; i++) {
+        if (fifo_table[i].in_use) {
+            /* Close the underlying pipe's read end */
+            pipe_close_read(fifo_table[i].pipe_id);
+            fifo_table[i].in_use = 0;
+            return 0;
+        }
+    }
+    return -EBADF;
 }

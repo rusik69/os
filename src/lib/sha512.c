@@ -205,14 +205,40 @@ void sha512_init_crypto(void)
     kprintf("[OK] SHA-512 initialized\n");
 }
 
-/* ── Stub: hmac_sha512 ─────────────────────────────── */
+/* ── hmac_sha512 ─────────────────────────────── */
 int hmac_sha512(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
 {
-    (void)key;
-    (void)klen;
-    (void)msg;
-    (void)mlen;
-    (void)mac;
-    kprintf("[sha512] hmac_sha512: not yet implemented\n");
-    return -ENOSYS;
+    uint8_t k[SHA512_BLOCK_SIZE];
+    struct sha512_ctx ctx;
+    int i;
+
+    /* If key is longer than block size, hash it */
+    if (klen > SHA512_BLOCK_SIZE) {
+        sha512_hash(k, key, klen);
+        memset(k + SHA512_DIGEST_SIZE, 0, SHA512_BLOCK_SIZE - SHA512_DIGEST_SIZE);
+    } else {
+        memcpy(k, key, klen);
+        if (klen < SHA512_BLOCK_SIZE)
+            memset(k + klen, 0, SHA512_BLOCK_SIZE - klen);
+    }
+
+    /* Inner hash: H((k ^ ipad) || data) */
+    for (i = 0; i < SHA512_BLOCK_SIZE; i++)
+        k[i] ^= 0x36;
+
+    sha512_init(&ctx);
+    sha512_update(&ctx, k, SHA512_BLOCK_SIZE);
+    sha512_update(&ctx, msg, mlen);
+    sha512_final((uint8_t *)mac, &ctx);
+
+    /* Outer hash: H((k ^ opad) || inner_hash) */
+    for (i = 0; i < SHA512_BLOCK_SIZE; i++)
+        k[i] ^= (0x36 ^ 0x5C);
+
+    sha512_init(&ctx);
+    sha512_update(&ctx, k, SHA512_BLOCK_SIZE);
+    sha512_update(&ctx, mac, SHA512_DIGEST_SIZE);
+    sha512_final((uint8_t *)mac, &ctx);
+
+    return 0;
 }

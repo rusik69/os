@@ -236,12 +236,13 @@ int simplefb_is_active(void)
     return (g_simplefb.fb_addr != NULL && g_simplefb.registered);
 }
 
-/* ── Stub: simplefb_set_mode ─────────────────────────────── */
+/* ── Set framebuffer mode (no-op for simplefb) ──────── */
 int simplefb_set_mode(int width, int height, int bpp)
 {
+    /* simplefb is configured by bootloader/firmware.
+     * Changing mode requires VESA BIOS call — not supported here. */
     (void)width;
     (void)height;
     (void)bpp;
-    kprintf("[simplefb] simplefb_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

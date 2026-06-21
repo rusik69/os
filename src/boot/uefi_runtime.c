@@ -272,9 +272,15 @@ int uefi_is_available(void)
 int uefi_get_next_variable(uint64_t *variable_name_size,
                            uint16_t *variable_name, uint8_t *guid)
 {
-    (void)variable_name_size; (void)variable_name; (void)guid;
-    kprintf("[UEFI] uefi_get_next_variable: not yet implemented\n");
-    return -ENOSYS;
+    if (!variable_name_size || !variable_name || !guid)
+        return -EINVAL;
+    if (!g_efi_rt || !g_efi_rt->get_next_variable_name) {
+        kprintf("[UEFI] uefi_get_next_variable: runtime not available\n");
+        return -ENODEV;
+    }
+    efi_status st = g_efi_rt->get_next_variable_name(variable_name_size, variable_name, guid);
+    kprintf("[UEFI] uefi_get_next_variable: status=%lu\n", (unsigned long)st);
+    return (st == EFI_SUCCESS) ? 0 : -1;
 }
 
 /* ── Stub: uefi_query_variable_info ────────────────────────────────── */
@@ -283,10 +289,14 @@ int uefi_query_variable_info(uint32_t attributes,
                              uint64_t *remaining_variable_storage_size,
                              uint64_t *maximum_variable_size)
 {
-    (void)attributes; (void)maximum_variable_storage_size;
-    (void)remaining_variable_storage_size; (void)maximum_variable_size;
-    kprintf("[UEFI] uefi_query_variable_info: not yet implemented\n");
-    return -ENOSYS;
+    if (!maximum_variable_storage_size || !remaining_variable_storage_size || !maximum_variable_size)
+        return -EINVAL;
+    if (!g_efi_rt || !g_efi_rt->query_variable_info) {
+        kprintf("[UEFI] uefi_query_variable_info: runtime not available\n");
+        return -ENODEV;
+    }
+    efi_status st = g_efi_rt->query_variable_info(attributes, maximum_variable_storage_size, remaining_variable_storage_size, maximum_variable_size);
+    return (st == EFI_SUCCESS) ? 0 : -1;
 }
 
 /* ── Stub: uefi_update_capsule ─────────────────────────────────────── */
@@ -295,6 +305,10 @@ int uefi_update_capsule(void **capsule_header_array,
                         uint64_t scatter_gather_list)
 {
     (void)capsule_header_array; (void)capsule_count; (void)scatter_gather_list;
-    kprintf("[UEFI] uefi_update_capsule: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_efi_rt || !g_efi_rt->update_capsule) {
+        kprintf("[UEFI] uefi_update_capsule: runtime not available\n");
+        return -ENODEV;
+    }
+    kprintf("[UEFI] uefi_update_capsule: %llu capsule(s)\n", (unsigned long long)capsule_count);
+    return -EOPNOTSUPP;
 }

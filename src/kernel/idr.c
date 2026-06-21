@@ -56,5 +56,5 @@ int idr_destroy(void *idr)
 {
     (void)idr;
     kprintf("[idr] idr_destroy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

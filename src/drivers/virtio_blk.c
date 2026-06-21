@@ -400,23 +400,20 @@ MODULE_DESCRIPTION("VirtIO block device driver with multi-queue (Item 195)");
 MODULE_ALIAS("pci:v00001AF4d00001001sv*sd*bc*sc*i*");
 #endif /* MODULE */
 
-/* ── Stub: virtio_blk_read ─────────────────────────────── */
-int virtio_blk_read(void *dev, void *buf, size_t count, uint64_t offset)
+/* Forward declaration for block-device layer API */
+struct block_device;
+
+/* ── Block-device layer read (delegates to sector API) ── */
+int virtio_blk_read(struct block_device *dev, uint64_t sector, void *buf, int count)
 {
     (void)dev;
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[virtio_blk] virtio_blk_read: not yet implemented\n");
-    return -ENOSYS;
+    return virtio_blk_read_sectors(sector, (uint32_t)count, buf);
 }
-/* ── Stub: virtio_blk_write ─────────────────────────────── */
-int virtio_blk_write(void *dev, const void *buf, size_t count, uint64_t offset)
+
+/* ── Block-device layer write (delegates to sector API) ─ */
+int virtio_blk_write(struct block_device *dev, uint64_t sector, const void *buf, int count)
 {
     (void)dev;
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[virtio_blk] virtio_blk_write: not yet implemented\n");
-    return -ENOSYS;
+    return virtio_blk_write_sectors(sector, (uint32_t)count, buf);
 }
+

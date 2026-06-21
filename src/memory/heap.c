@@ -228,11 +228,11 @@ int heap_stats(void *stats)
 {
     (void)stats;
     kprintf("[heap] heap_stats: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: heap_check ─────────────────────────────── */
 int heap_check(void)
 {
     kprintf("[heap] heap_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

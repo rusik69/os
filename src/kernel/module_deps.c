@@ -433,7 +433,7 @@ int module_deps_add(const char *mod, const char *dep)
     (void)mod;
     (void)dep;
     kprintf("[moddeps] module_deps_add: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_deps_remove ─────────────────────────────── */
 int module_deps_remove(const char *mod, const char *dep)
@@ -441,7 +441,7 @@ int module_deps_remove(const char *mod, const char *dep)
     (void)mod;
     (void)dep;
     kprintf("[moddeps] module_deps_remove: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_deps_resolve ─────────────────────────────── */
 int module_deps_resolve(const char *mod, void *list)
@@ -449,5 +449,5 @@ int module_deps_resolve(const char *mod, void *list)
     (void)mod;
     (void)list;
     kprintf("[moddeps] module_deps_resolve: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

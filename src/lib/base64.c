@@ -2,6 +2,7 @@
 #include "string.h"
 #include "printf.h"
 #include "base64.h"
+#include "stdlib.h"
 
 static const char base64_table[64] = {
     'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
@@ -94,31 +95,41 @@ void base64_init(void)
     kprintf("[OK] Base64 encoder/decoder initialized\n");
 }
 
-/* ── Stub: base64_encode_alloc ─────────────────────────────── */
+/* ── base64_encode_alloc ─────────────────────────────── */
 int base64_encode_alloc(const uint8_t *src, size_t slen, char **dst, size_t *dlen)
 {
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[base64] base64_encode_alloc: not yet implemented\n");
-    return -ENOSYS;
+    size_t out_len = ((slen + 2) / 3) * 4 + 1;
+    *dst = (char *)malloc(out_len);
+    if (!*dst)
+        return -1;
+    *dlen = base64_encode(*dst, src, slen);
+    return 0;
 }
-/* ── Stub: base64_decode_alloc ─────────────────────────────── */
+/* ── base64_decode_alloc ─────────────────────────────── */
 int base64_decode_alloc(const char *src, size_t slen, uint8_t **dst, size_t *dlen)
 {
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[base64] base64_decode_alloc: not yet implemented\n");
-    return -ENOSYS;
+    size_t out_len = (slen / 4) * 3;
+    *dst = (uint8_t *)malloc(out_len);
+    if (!*dst)
+        return -1;
+    *dlen = base64_decode(*dst, src, slen);
+    if (*dlen == (size_t)-1) {
+        free(*dst);
+        *dst = NULL;
+        return -1;
+    }
+    return 0;
 }
-/* ── Stub: base64_validate ─────────────────────────────── */
+/* ── base64_validate ─────────────────────────────── */
 int base64_validate(const char *src, size_t len)
 {
-    (void)src;
-    (void)len;
-    kprintf("[base64] base64_validate: not yet implemented\n");
-    return -ENOSYS;
+    if (len & 3)
+        return 0;
+    for (size_t i = 0; i < len; i++) {
+        if (src[i] == '=')
+            continue;
+        if (reverse_table[(uint8_t)src[i]] == 0xFF)
+            return 0;
+    }
+    return 1;
 }

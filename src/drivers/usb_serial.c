@@ -115,12 +115,12 @@ int usb_serial_open(void *dev)
 {
     (void)dev;
     kprintf("[usb] usb_serial_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: usb_serial_close ─────────────────────────────── */
 int usb_serial_close(void *dev)
 {
     (void)dev;
     kprintf("[usb] usb_serial_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

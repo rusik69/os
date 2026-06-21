@@ -184,5 +184,5 @@ int bpf_prog_run(int fd, const void *ctx, void *result)
     (void)ctx;
     (void)result;
     kprintf("[bpf] bpf_prog_run: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

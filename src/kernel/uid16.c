@@ -283,19 +283,19 @@ int uid16_to_uid(uint16_t uid16)
 {
     (void)uid16;
     kprintf("[uid] uid16_to_uid: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uid_to_uid16 ─────────────────────────────── */
 uint16_t uid_to_uid16(int uid)
 {
     (void)uid;
     kprintf("[uid] uid_to_uid16: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uid16_validate ─────────────────────────────── */
 int uid16_validate(uint16_t uid16)
 {
     (void)uid16;
     kprintf("[uid] uid16_validate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

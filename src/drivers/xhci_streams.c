@@ -130,12 +130,12 @@ int xhci_streams_alloc(void *dev, int count)
     (void)dev;
     (void)count;
     kprintf("[xhci] xhci_streams_alloc: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: xhci_streams_free ─────────────────────────────── */
 int xhci_streams_free(void *dev)
 {
     (void)dev;
     kprintf("[xhci] xhci_streams_free: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

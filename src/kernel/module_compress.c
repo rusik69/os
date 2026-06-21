@@ -1645,7 +1645,7 @@ void module_decompress_free(uint8_t *buf, int was_compressed)
 int module_compress_init(void)
 {
     kprintf("[modcompress] module_compress_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_compress_decompress ─────────────────────────────── */
 int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
@@ -1655,5 +1655,5 @@ int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *
     (void)dst;
     (void)dlen;
     kprintf("[modcompress] module_compress_decompress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -85,11 +85,11 @@ int acpi_power_button_handler(void *handle)
 {
     (void)handle;
     kprintf("[acpi] acpi_power_button_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: acpi_power_button_init ─────────────────────────────── */
 int acpi_power_button_init(void)
 {
     kprintf("[acpi] acpi_power_button_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

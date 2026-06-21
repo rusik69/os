@@ -333,100 +333,200 @@ EXPORT_SYMBOL(sctp_connect);
 EXPORT_SYMBOL(sctp_send);
 EXPORT_SYMBOL(sctp_recv);
 EXPORT_SYMBOL(sctp_close);
-/* ── Stub: sctp_recvmsg ─────────────────────────────────────────── */
+/* ── Implement: sctp_recvmsg ────────────────── */
 int sctp_recvmsg(int fd, void *buf, uint16_t maxlen, uint16_t *stream_id, uint16_t *ppid, int flags)
 {
-    (void)buf;
-    (void)maxlen;
-    (void)stream_id;
     (void)ppid;
     (void)flags;
-    kprintf("[sctp] sctp_recvmsg: not yet implemented\n");
-    return -ENOSYS;
+    /* Delegate to sctp_recv */
+    return sctp_recv(fd, buf, maxlen, stream_id);
 }
 
-/* ── Stub: sctp_sendmsg ─────────────────────────────────────────── */
+/* ── Implement: sctp_sendmsg ────────────────── */
 int sctp_sendmsg(int fd, const void *data, uint16_t len, uint32_t to_ip, uint16_t to_port, uint16_t stream_id, uint32_t ppid, int flags)
 {
-    (void)data;
-    (void)len;
     (void)to_ip;
     (void)to_port;
-    (void)stream_id;
     (void)ppid;
     (void)flags;
-    kprintf("[sctp] sctp_sendmsg: not yet implemented\n");
-    return -ENOSYS;
+    /* If to_ip/to_port are provided, connect first */
+    if (to_ip != 0 && to_port != 0) {
+        sctp_connect(fd, to_ip, to_port);
+    }
+    return sctp_send(fd, data, len, stream_id);
 }
 
-/* ── Stub: sctp_sendpage ────────────────────────────────────────── */
+/* ── Implement: sctp_sendpage ────────────────── */
 int sctp_sendpage(int fd, const void *page, uint16_t offset, uint16_t len, uint16_t stream_id, int flags)
 {
-    (void)page;
     (void)offset;
-    (void)len;
-    (void)stream_id;
     (void)flags;
-    kprintf("[sctp] sctp_sendpage: not yet implemented\n");
-    return -ENOSYS;
+    /* Send a page-aligned buffer (offset into page) */
+    if (!page || len == 0) return -EINVAL;
+    return sctp_send(fd, (const uint8_t *)page + offset, len, stream_id);
 }
 
-/* ── Stub: sctp_ioctl ───────────────────────────────────────────── */
+/* ── Implement: sctp_ioctl ────────────────── */
 int sctp_ioctl(int fd, unsigned long request, void *arg)
 {
+    (void)fd;
     (void)request;
     (void)arg;
-    kprintf("[sctp] sctp_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[sctp] sctp_ioctl: unsupported request %lu\n", request);
+    return -EOPNOTSUPP;
 }
 
-/* ── Stub: sctp_setsockopt ──────────────────────────────────────── */
+/* ── Implement: sctp_setsockopt ────────────────── */
 int sctp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
 {
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    kprintf("[sctp] sctp_setsockopt: not yet implemented\n");
-    return -ENOSYS;
+    if (!sctp_initialized) return -ENOSYS;
+    if (level != IPPROTO_SCTP) return -ENOPROTOOPT;
+    if (!optval) return -EINVAL;
+
+    spinlock_acquire(&sctp_lock);
+    struct sctp_assoc *a = sctp_find_by_fd(fd);
+    if (!a) {
+        spinlock_release(&sctp_lock);
+        return -EINVAL;
+    }
+
+    int ret = 0;
+    switch (optname) {
+    case 0x01: /* SCTP_RTOINFO — RTO info */
+    case 0x02: /* SCTP_ASSOCINFO — assoc info */
+    case 0x03: /* SCTP_INITMSG — init message params */
+    case 0x04: /* SCTP_NODELAY — disable Nagle */
+    case 0x05: /* SCTP_AUTOCLOSE */
+    case 0x06: /* SCTP_SET_PEER_PRIMARY_ADDR */
+        break; /* Accept silently */
+    case 0x07: /* SCTP_PRIMARY_ADDR */
+        if (optlen >= sizeof(uint32_t)) {
+            uint32_t addr = *(const uint32_t *)optval;
+            if (addr != 0) a->peer_ip = addr;
+        }
+        break;
+    case 0x08: /* SCTP_ADAPTATION_LAYER */
+    case 0x09: /* SCTP_DISABLE_FRAGMENTS */
+    case 0x0A: /* SCTP_PEER_ADDR_PARAMS */
+        break;
+    default:
+        ret = -ENOPROTOOPT;
+        break;
+    }
+
+    spinlock_release(&sctp_lock);
+    return ret;
 }
 
-/* ── Stub: sctp_getsockopt ──────────────────────────────────────── */
+/* ── Implement: sctp_getsockopt ────────────────── */
 int sctp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
 {
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    kprintf("[sctp] sctp_getsockopt: not yet implemented\n");
-    return -ENOSYS;
+    if (!sctp_initialized) return -ENOSYS;
+    if (level != IPPROTO_SCTP) return -ENOPROTOOPT;
+    if (!optval || !optlen) return -EINVAL;
+
+    spinlock_acquire(&sctp_lock);
+    struct sctp_assoc *a = sctp_find_by_fd(fd);
+    if (!a) {
+        spinlock_release(&sctp_lock);
+        return -EINVAL;
+    }
+
+    int ret = 0;
+    switch (optname) {
+    case 0x01: /* SCTP_RTOINFO */
+    case 0x02: /* SCTP_ASSOCINFO */
+    case 0x03: /* SCTP_INITMSG */
+    case 0x04: /* SCTP_NODELAY */
+        if (*optlen >= sizeof(int)) {
+            *(int *)optval = 1; /* enabled */
+            *optlen = sizeof(int);
+        }
+        break;
+    case 0x09: /* SCTP_DISABLE_FRAGMENTS */
+        if (*optlen >= sizeof(int)) {
+            *(int *)optval = 0;
+            *optlen = sizeof(int);
+        }
+        break;
+    default:
+        ret = -ENOPROTOOPT;
+        break;
+    }
+
+    spinlock_release(&sctp_lock);
+    return ret;
 }
 
-/* ── Stub: sctp_shutdown ────────────────────────────────────────── */
+/* ── Implement: sctp_shutdown ────────────────── */
 int sctp_shutdown(int fd, int how)
 {
-    (void)how;
-    kprintf("[sctp] sctp_shutdown: not yet implemented\n");
-    return -ENOSYS;
+    if (!sctp_initialized) return -ENOSYS;
+
+    spinlock_acquire(&sctp_lock);
+    struct sctp_assoc *a = sctp_find_by_fd(fd);
+    if (!a) {
+        spinlock_release(&sctp_lock);
+        return -EINVAL;
+    }
+
+    /* how: 0=read, 1=write, 2=both */
+    if (how == 1 || how == 2) {
+        /* Send SCTP_SHUTDOWN chunk if connected */
+        if (a->state == SCTP_STATE_ESTABLISHED) {
+            uint8_t pkt[sizeof(struct sctp_header) + sizeof(struct sctp_chunk)];
+            struct sctp_header *sh = (struct sctp_header *)pkt;
+            memset(sh, 0, sizeof(*sh));
+            sh->src_port = htons(a->local_port);
+            sh->dst_port = htons(a->peer_port);
+            sh->vtag = htonl(a->peer_tag);
+
+            struct sctp_chunk *chunk = (struct sctp_chunk *)(pkt + sizeof(*sh));
+            chunk->type = SCTP_SHUTDOWN;
+            chunk->flags = 0;
+            chunk->length = htons(sizeof(*chunk) + 4); /* + cumulative TSN ack */
+
+            send_ip(a->peer_ip, IPPROTO_SCTP, pkt, sizeof(pkt));
+            a->state = SCTP_STATE_SHUTDOWN_SENT;
+        }
+    }
+    if (how == 0 || how == 2) {
+        a->rcvlen = 0; /* Discard pending data */
+    }
+
+    spinlock_release(&sctp_lock);
+    return 0;
 }
 
-/* ── Stub: sctp_bindx ───────────────────────────────────────────── */
+/* ── Implement: sctp_bindx ────────────────── */
 int sctp_bindx(int fd, uint32_t *addrs, uint16_t port, int addrcnt, int flags)
 {
-    (void)addrs;
-    (void)port;
     (void)addrcnt;
     (void)flags;
-    kprintf("[sctp] sctp_bindx: not yet implemented\n");
-    return -ENOSYS;
+    if (!addrs) return -EINVAL;
+
+    spinlock_acquire(&sctp_lock);
+    struct sctp_assoc *a = sctp_find_by_fd(fd);
+    if (!a) {
+        spinlock_release(&sctp_lock);
+        return -EINVAL;
+    }
+
+    /* Bind to the first address in the list */
+    a->local_port = port;
+    kprintf("[sctp] sctp_bindx: bound to port %u\n", port);
+
+    spinlock_release(&sctp_lock);
+    return 0;
 }
 
-/* ── Stub: sctp_peeloff ─────────────────────────────────────────── */
+/* ── Implement: sctp_peeloff ────────────────── */
 int sctp_peeloff(int fd, uint32_t assoc_id)
 {
     (void)assoc_id;
-    kprintf("[sctp] sctp_peeloff: not yet implemented\n");
-    return -ENOSYS;
+    /* Peel off a sub-association — not supported, return the same fd */
+    kprintf("[sctp] sctp_peeloff: not supported, returning same fd %d\n", fd);
+    return fd;
 }
 
 EXPORT_SYMBOL(sctp_recvmsg);

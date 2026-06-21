@@ -216,7 +216,7 @@ int acpi_platform_profile_get(void *dev, int *profile)
     (void)dev;
     (void)profile;
     kprintf("[acpi] acpi_platform_profile_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: acpi_platform_profile_set ─────────────────────────────── */
 int acpi_platform_profile_set(void *dev, int profile)
@@ -224,5 +224,5 @@ int acpi_platform_profile_set(void *dev, int profile)
     (void)dev;
     (void)profile;
     kprintf("[acpi] acpi_platform_profile_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

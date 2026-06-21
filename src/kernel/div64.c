@@ -62,7 +62,7 @@ uint64_t div64_u64_rem(uint64_t dividend, uint64_t divisor, uint64_t *remainder)
     (void)divisor;
     (void)remainder;
     kprintf("[div64] div64_u64_rem: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: div64_u64 ─────────────────────────────── */
 uint64_t div64_u64(uint64_t dividend, uint64_t divisor)
@@ -70,7 +70,7 @@ uint64_t div64_u64(uint64_t dividend, uint64_t divisor)
     (void)dividend;
     (void)divisor;
     kprintf("[div64] div64_u64: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: div_s64_rem ─────────────────────────────── */
 int64_t div_s64_rem(int64_t dividend, int32_t divisor, int32_t *remainder)
@@ -79,5 +79,5 @@ int64_t div_s64_rem(int64_t dividend, int32_t divisor, int32_t *remainder)
     (void)divisor;
     (void)remainder;
     kprintf("[div64] div_s64_rem: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

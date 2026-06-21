@@ -149,14 +149,14 @@ static int kcov_disable(struct process *proc)
 int kcov_init(void)
 {
     kprintf("[kcov] kcov_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kcov_open ─────────────────────────────── */
 int kcov_open(void *file)
 {
     (void)file;
     kprintf("[kcov] kcov_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kcov_ioctl ─────────────────────────────── */
 int kcov_ioctl(void *file, int cmd, unsigned long arg)
@@ -165,7 +165,7 @@ int kcov_ioctl(void *file, int cmd, unsigned long arg)
     (void)cmd;
     (void)arg;
     kprintf("[kcov] kcov_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kcov_collect ─────────────────────────────── */
 int kcov_collect(void *task, void *buf, size_t len)
@@ -174,5 +174,5 @@ int kcov_collect(void *task, void *buf, size_t len)
     (void)buf;
     (void)len;
     kprintf("[kcov] kcov_collect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

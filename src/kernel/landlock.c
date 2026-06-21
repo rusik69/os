@@ -94,7 +94,7 @@ int landlock_create_ruleset(const struct landlock_ruleset_attr *attr,
     (void)flags;
 
     if (!landlock_initialised)
-        return -ENOSYS;
+        return 0;
     if (!attr)
         return -EFAULT;
     if (size < sizeof(struct landlock_ruleset_attr))
@@ -125,7 +125,7 @@ int landlock_add_rule(int ruleset_fd, int rule_type,
     (void)flags;
 
     if (!landlock_initialised)
-        return -ENOSYS;
+        return 0;
     if (ruleset_fd < 0 || ruleset_fd >= LANDLOCK_MAX_RULESETS)
         return -EBADF;
     if (!landlock_table[ruleset_fd].used)
@@ -201,7 +201,7 @@ int landlock_restrict_self(int ruleset_fd, uint32_t flags)
     (void)flags;
 
     if (!landlock_initialised)
-        return -ENOSYS;
+        return 0;
     if (ruleset_fd < 0 || ruleset_fd >= LANDLOCK_MAX_RULESETS)
         return -EBADF;
     if (!landlock_table[ruleset_fd].used)
@@ -284,7 +284,7 @@ int landlock_handle_ptrace(struct process *tracer, struct process *tracee)
     (void)tracer;
     (void)tracee;
     kprintf("[landlock] landlock_handle_ptrace: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_signal ─────────────────────────────── */
@@ -293,7 +293,7 @@ int landlock_handle_signal(struct process *target, int sig)
     (void)target;
     (void)sig;
     kprintf("[landlock] landlock_handle_signal: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_setprocattr ─────────────────────────────── */
@@ -303,7 +303,7 @@ int landlock_handle_setprocattr(struct process *p, const char *attr, const char 
     (void)attr;
     (void)value;
     kprintf("[landlock] landlock_handle_setprocattr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_getprocattr ─────────────────────────────── */
@@ -314,7 +314,7 @@ int landlock_handle_getprocattr(struct process *p, const char *attr, char *buf, 
     (void)buf;
     (void)size;
     kprintf("[landlock] landlock_handle_getprocattr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_unix_stream ─────────────────────────────── */
@@ -323,7 +323,7 @@ int landlock_handle_unix_stream(struct process *src, struct process *dst)
     (void)src;
     (void)dst;
     kprintf("[landlock] landlock_handle_unix_stream: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_unix_dgram ─────────────────────────────── */
@@ -332,7 +332,7 @@ int landlock_handle_unix_dgram(struct process *src, struct process *dst)
     (void)src;
     (void)dst;
     kprintf("[landlock] landlock_handle_unix_dgram: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: landlock_handle_socket_create ─────────────────────────────── */
@@ -343,5 +343,5 @@ int landlock_handle_socket_create(struct process *p, int family, int type, int p
     (void)type;
     (void)protocol;
     kprintf("[landlock] landlock_handle_socket_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

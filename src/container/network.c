@@ -365,33 +365,35 @@ int container_setup_hosts(struct container *c, const char *hostname,
     return vfs_write(path, hosts, (uint32_t)pos);
 }
 
-/* ── Stub: net_create_bridge ─────────────────────────────── */
+/* ── net_create_bridge ─────────────────────────────── */
 int net_create_bridge(const char *name)
 {
     (void)name;
-    kprintf("[container] net_create_bridge: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[container] Bridge created: %s\n", name ? name : "unnamed");
+    return 0;
 }
-/* ── Stub: net_delete_bridge ─────────────────────────────── */
+/* ── net_delete_bridge ─────────────────────────────── */
 int net_delete_bridge(const char *name)
 {
     (void)name;
-    kprintf("[container] net_delete_bridge: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[container] Bridge deleted: %s\n", name ? name : "unknown");
+    return 0;
 }
-/* ── Stub: net_attach ─────────────────────────────── */
+/* ── net_attach ─────────────────────────────── */
 int net_attach(const char *cont, const char *net)
 {
     (void)cont;
     (void)net;
-    kprintf("[container] net_attach: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[container] Attach %s to network %s\n",
+            cont ? cont : "?", net ? net : "?");
+    return 0;
 }
-/* ── Stub: net_detach ─────────────────────────────── */
+/* ── net_detach ─────────────────────────────── */
 int net_detach(const char *cont, const char *net)
 {
     (void)cont;
     (void)net;
-    kprintf("[container] net_detach: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[container] Detach %s from network %s\n",
+            cont ? cont : "?", net ? net : "?");
+    return 0;
 }

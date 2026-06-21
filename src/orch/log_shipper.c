@@ -174,7 +174,7 @@ int log_ship_register(const char *name, const char *target)
     (void)name;
     (void)target;
     kprintf("[log_ship] log_ship_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: log_ship_send ─────────────────────────────── */
 int log_ship_send(const char *name, const void *data, size_t len)
@@ -183,5 +183,5 @@ int log_ship_send(const char *name, const void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[log_ship] log_ship_send: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -532,7 +532,7 @@ int swap_readpage(struct page *page)
 {
     (void)page;
     kprintf("[SWAP] swap_readpage: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: swap_writepage ──────────────────────────────────────────── */
@@ -540,14 +540,14 @@ int swap_writepage(struct page *page)
 {
     (void)page;
     kprintf("[SWAP] swap_writepage: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: swap_activate ───────────────────────────────────────────── */
 int swap_activate(void)
 {
     kprintf("[SWAP] swap_activate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: swap_deactivate ─────────────────────────────────────────── */

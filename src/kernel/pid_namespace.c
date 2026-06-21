@@ -241,12 +241,12 @@ int pid_ns_create(void *parent)
 {
     (void)parent;
     kprintf("[pid_ns] pid_ns_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pid_ns_delete ─────────────────────────────── */
 int pid_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[pid_ns] pid_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

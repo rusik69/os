@@ -310,7 +310,7 @@ int efi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
     (void)enabled; (void)pending; (void)year; (void)month; (void)day;
     (void)hour; (void)minute; (void)second;
     kprintf("[EFI] efi_get_wakeup_time: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: efi_set_wakeup_time ─────────────────────────────────────── */
@@ -320,5 +320,5 @@ int efi_set_wakeup_time(uint8_t enable, uint16_t year, uint8_t month, uint8_t da
     (void)enable; (void)year; (void)month; (void)day;
     (void)hour; (void)minute; (void)second;
     kprintf("[EFI] efi_set_wakeup_time: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

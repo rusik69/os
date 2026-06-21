@@ -167,31 +167,33 @@ int netif_count(void)
     return g_device_count;
 }
 
-/* ── Stub: netdevice_register ─────────────────────────────── */
+/* ── Implement: netdevice_register ────────────────────── */
 int netdevice_register(void *dev)
 {
-    (void)dev;
-    kprintf("[netdevice] netdevice_register: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    return netdev_register((struct net_device *)dev);
 }
-/* ── Stub: netdevice_unregister ─────────────────────────────── */
+/* ── Implement: netdevice_unregister ──────────────────── */
 int netdevice_unregister(void *dev)
 {
-    (void)dev;
-    kprintf("[netdevice] netdevice_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    return netdev_unregister((struct net_device *)dev);
 }
-/* ── Stub: netdevice_open ─────────────────────────────── */
+/* ── Implement: netdevice_open ────────────────────────── */
 int netdevice_open(void *dev)
 {
-    (void)dev;
-    kprintf("[netdevice] netdevice_open: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    struct net_device *ndev = (struct net_device *)dev;
+    if (ndev->netdev_ops && ndev->netdev_ops->ndo_open)
+        return ndev->netdev_ops->ndo_open(ndev);
+    return 0;
 }
-/* ── Stub: netdevice_stop ─────────────────────────────── */
+/* ── Implement: netdevice_stop ────────────────────────── */
 int netdevice_stop(void *dev)
 {
-    (void)dev;
-    kprintf("[netdevice] netdevice_stop: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    struct net_device *ndev = (struct net_device *)dev;
+    if (ndev->netdev_ops && ndev->netdev_ops->ndo_stop)
+        return ndev->netdev_ops->ndo_stop(ndev);
+    return 0;
 }

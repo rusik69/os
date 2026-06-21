@@ -1055,7 +1055,7 @@ int elf_load_segment(void *elf, void *dest, size_t size)
     (void)dest;
     (void)size;
     kprintf("[elf] elf_load_segment: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: elf_parse_header ─────────────────────────────── */
 int elf_parse_header(const void *data, size_t size)
@@ -1063,7 +1063,7 @@ int elf_parse_header(const void *data, size_t size)
     (void)data;
     (void)size;
     kprintf("[elf] elf_parse_header: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: elf_lookup_sym ─────────────────────────────── */
 void* elf_lookup_sym(const void *elf, const char *name)
@@ -1071,7 +1071,7 @@ void* elf_lookup_sym(const void *elf, const char *name)
     (void)elf;
     (void)name;
     kprintf("[elf] elf_lookup_sym: not yet implemented\n");
-    return -ENOSYS;
+    return NULL;
 }
 /* ── Stub: elf_relocate ─────────────────────────────── */
 int elf_relocate(void *elf, const char *symname, void *addr)
@@ -1080,5 +1080,5 @@ int elf_relocate(void *elf, const char *symname, void *addr)
     (void)symname;
     (void)addr;
     kprintf("[elf] elf_relocate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

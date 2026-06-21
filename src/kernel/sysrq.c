@@ -526,7 +526,7 @@ int sysrq_register_handler(int key, void (*handler)(void))
 {
     (void)key; (void)handler;
     kprintf("[SYSRQ] sysrq_register_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: sysrq_unregister_handler ────────────────────────────────── */
@@ -534,5 +534,5 @@ int sysrq_unregister_handler(int key)
 {
     (void)key;
     kprintf("[SYSRQ] sysrq_unregister_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

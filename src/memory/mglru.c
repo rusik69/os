@@ -739,17 +739,38 @@ void lru_gen_look_around(uint64_t addr)
     kprintf("[mglru] lru_gen_look_around: not yet implemented\n");
 }
 
-/* ── Stub: lru_gen_eviction ──────────────────────────────────── */
+/* ── lru_gen_eviction ──────────────────────────────────────── */
 int lru_gen_eviction(int nr_to_reclaim)
 {
-    (void)nr_to_reclaim;
-    kprintf("[mglru] lru_gen_eviction: not yet implemented\n");
-    return -ENOSYS;
+    if (nr_to_reclaim <= 0)
+        return 0;
+    /* Delegate to the existing MGLRU reclaim path */
+    return mglru_reclaim_pages(nr_to_reclaim, 0);
 }
 
-/* ── Stub: lru_gen_seg_strategy ─────────────────────────────── */
+/* ── lru_gen_seg_strategy ──────────────────────────────────── */
 int lru_gen_seg_strategy(void)
 {
-    kprintf("[mglru] lru_gen_seg_strategy: not yet implemented\n");
-    return -ENOSYS;
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return -1;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&st->lock, &irq_flags);
+
+    /* Choose segment: prefer oldest non-empty generation that is not
+     * the youngest (last_accessed_gen). */
+    int chosen = -1;
+    for (int i = 0; i < MGLRU_NR_GENS; i++) {
+        int gen = (st->last_evicted_gen + i) % MGLRU_NR_GENS;
+        if (gen == st->last_accessed_gen)
+            continue;
+        if (st->gens[gen].nr_pages > 0) {
+            chosen = gen;
+            break;
+        }
+    }
+
+    spinlock_irqsave_release(&st->lock, irq_flags);
+    return chosen;
 }

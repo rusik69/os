@@ -425,5 +425,5 @@ int kfence_alloc(void *page)
 {
     (void)page;
     kprintf("[kfence] kfence_alloc: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

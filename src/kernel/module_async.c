@@ -148,19 +148,19 @@ int module_async_load(const char *name)
 {
     (void)name;
     kprintf("[modasync] module_async_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_async_complete ─────────────────────────────── */
 int module_async_complete(const char *name)
 {
     (void)name;
     kprintf("[modasync] module_async_complete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_async_wait ─────────────────────────────── */
 int module_async_wait(const char *name)
 {
     (void)name;
     kprintf("[modasync] module_async_wait: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

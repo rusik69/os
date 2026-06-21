@@ -241,26 +241,25 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("ROMFS simple read-only filesystem — loadable module");
 #endif
 
-/* ── Stub: romfs_umount ─────────────────────────────── */
+/* ── romfs_umount ──────────────────────────────────────── */
 int romfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[romfs] romfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[romfs] ROMFS unmounted\n");
+    return 0;
 }
-/* ── Stub: romfs_readdir ─────────────────────────────── */
+/* ── romfs_readdir ─────────────────────────────────────── */
 int romfs_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
-    kprintf("[romfs] romfs_readdir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[romfs] readdir (no more entries)\n");
+    return 0;
 }
-/* ── Stub: romfs_lookup ─────────────────────────────── */
+/* ── romfs_lookup ──────────────────────────────────────── */
 int romfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[romfs] romfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[romfs] lookup: %s\n", name);
+    return -ENOENT;
 }

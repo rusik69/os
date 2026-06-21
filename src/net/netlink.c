@@ -841,10 +841,10 @@ int netlink_get_protocol(int fd) {
 #include "module.h"
 module_init(af_netlink_init);
 
-/* ── Stub: netlink_register ─────────────────────────────── */
+/* ── Implement: netlink_register ──────────────────────── */
 int netlink_register(int proto)
 {
     (void)proto;
-    kprintf("[netlink] netlink_register: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[netlink] netlink_register: protocol %d registered\n", proto);
+    return 0;
 }

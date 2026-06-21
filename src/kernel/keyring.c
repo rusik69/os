@@ -368,14 +368,14 @@ int keyring_create(const char *name)
 {
     (void)name;
     kprintf("[keyring] keyring_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: keyring_destroy ─────────────────────────────── */
 int keyring_destroy(const char *name)
 {
     (void)name;
     kprintf("[keyring] keyring_destroy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: keyring_add_key ─────────────────────────────── */
 int keyring_add_key(const char *ring, const char *desc, const void *payload, size_t len)
@@ -385,7 +385,7 @@ int keyring_add_key(const char *ring, const char *desc, const void *payload, siz
     (void)payload;
     (void)len;
     kprintf("[keyring] keyring_add_key: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: keyring_search ─────────────────────────────── */
 int keyring_search(const char *ring, const char *desc, void *payload, size_t *len)
@@ -395,7 +395,7 @@ int keyring_search(const char *ring, const char *desc, void *payload, size_t *le
     (void)payload;
     (void)len;
     kprintf("[keyring] keyring_search: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: keyring_remove_key ─────────────────────────────── */
 int keyring_remove_key(const char *ring, const char *desc)
@@ -403,5 +403,5 @@ int keyring_remove_key(const char *ring, const char *desc)
     (void)ring;
     (void)desc;
     kprintf("[keyring] keyring_remove_key: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

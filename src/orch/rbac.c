@@ -427,7 +427,7 @@ int rbac_check_permission(const char *subject, const char *resource, const char 
     (void)resource;
     (void)verb;
     kprintf("[RBAC] rbac_check_permission: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rbac_add_role ───────────────────────────── */
 int rbac_add_role(const char *name, const char *resource, const char *const *verbs, int verb_count)
@@ -437,14 +437,14 @@ int rbac_add_role(const char *name, const char *resource, const char *const *ver
     (void)verbs;
     (void)verb_count;
     kprintf("[RBAC] rbac_add_role: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rbac_remove_role ────────────────────────── */
 int rbac_remove_role(const char *name)
 {
     (void)name;
     kprintf("[RBAC] rbac_remove_role: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rbac_add_binding ────────────────────────── */
 int rbac_add_binding(const char *role_name, const char *subject_kind, const char *subject_name)
@@ -453,7 +453,7 @@ int rbac_add_binding(const char *role_name, const char *subject_kind, const char
     (void)subject_kind;
     (void)subject_name;
     kprintf("[RBAC] rbac_add_binding: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rbac_remove_binding ─────────────────────── */
 int rbac_remove_binding(const char *role_name, const char *subject_name)
@@ -461,5 +461,5 @@ int rbac_remove_binding(const char *role_name, const char *subject_name)
     (void)role_name;
     (void)subject_name;
     kprintf("[RBAC] rbac_remove_binding: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

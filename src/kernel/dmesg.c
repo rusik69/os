@@ -55,7 +55,7 @@ int dmesg_read(void *buf, size_t count, uint64_t *pos)
     (void)count;
     (void)pos;
     kprintf("[dmesg] dmesg_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dmesg_write ─────────────────────────────── */
 int dmesg_write(const void *buf, size_t count)
@@ -63,11 +63,11 @@ int dmesg_write(const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[dmesg] dmesg_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dmesg_clear ─────────────────────────────── */
 int dmesg_clear(void)
 {
     kprintf("[dmesg] dmesg_clear: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

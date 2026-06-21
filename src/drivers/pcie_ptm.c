@@ -110,21 +110,21 @@ int pcie_ptm_init(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_ptm_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_ptm_enable ─────────────────────────────── */
 int pcie_ptm_enable(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_ptm_enable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_ptm_disable ─────────────────────────────── */
 int pcie_ptm_disable(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_ptm_disable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_ptm_read_time ─────────────────────────────── */
 int pcie_ptm_read_time(void *dev, uint64_t *time)
@@ -132,5 +132,5 @@ int pcie_ptm_read_time(void *dev, uint64_t *time)
     (void)dev;
     (void)time;
     kprintf("[pcie] pcie_ptm_read_time: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

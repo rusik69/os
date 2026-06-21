@@ -550,26 +550,68 @@ int do_symlinkat(const char *target, int newdirfd, const char *linkpath)
     return fs_symlink(ktarget, path);
 }
 
-/* ── Stub: syscall_new_register ─────────────────────────────── */
+/* ── syscall_new_register ──────────────────────────────────── */
 int syscall_new_register(int nr, void *handler)
 {
-    (void)nr;
-    (void)handler;
-    kprintf("[syscall] syscall_new_register: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 255 || !handler)
+        return -EINVAL;
+
+    /* Use a static table local to this file so that syscall_new.c
+     * remains independent of the main syscall dispatcher. */
+    static void *new_syscall_table[256];
+    static int table_initialized = 0;
+
+    if (!table_initialized) {
+        memset(new_syscall_table, 0, sizeof(new_syscall_table));
+        table_initialized = 1;
+    }
+
+    if (new_syscall_table[nr] != NULL) {
+        kprintf("[syscall] syscall_new_register: nr=%d already registered\n", nr);
+        return -EBUSY;
+    }
+
+    new_syscall_table[nr] = handler;
+    kprintf("[syscall] syscall_new_register: nr=%d handler=0x%llx\n",
+            nr, (unsigned long long)(uintptr_t)handler);
+    return 0;
 }
-/* ── Stub: syscall_new_unregister ─────────────────────────────── */
+/* ── syscall_new_unregister ────────────────────────────────── */
 int syscall_new_unregister(int nr)
 {
-    (void)nr;
-    kprintf("[syscall] syscall_new_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 255)
+        return -EINVAL;
+
+    static void *new_syscall_table[256];
+    static int table_initialized = 0;
+
+    if (!table_initialized) return -EINVAL;
+    if (!new_syscall_table[nr]) return -ENOENT;
+
+    new_syscall_table[nr] = NULL;
+    kprintf("[syscall] syscall_new_unregister: nr=%d\n", nr);
+    return 0;
 }
-/* ── Stub: syscall_new_invoke ─────────────────────────────── */
+/* ── syscall_new_invoke ────────────────────────────────────── */
 int syscall_new_invoke(int nr, void *args)
 {
-    (void)nr;
-    (void)args;
-    kprintf("[syscall] syscall_new_invoke: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 255)
+        return -EINVAL;
+
+    static void *new_syscall_table[256];
+    static int table_initialized = 0;
+
+    if (!table_initialized) return 0;
+
+    void *handler = new_syscall_table[nr];
+    if (!handler) {
+        kprintf("[syscall] syscall_new_invoke: nr=%d not registered\n", nr);
+        return 0;
+    }
+
+    /* A registered handler is a function pointer matching:
+     *   int handler(void *args)
+     * Cast and call it. */
+    typedef int (*syscall_handler_t)(void *);
+    return ((syscall_handler_t)handler)(args);
 }

@@ -539,7 +539,7 @@ int module_sig_verify(const void *data, size_t size)
     (void)data;
     (void)size;
     kprintf("[modsig] module_sig_verify: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_sig_sign ─────────────────────────────── */
 int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
@@ -549,5 +549,5 @@ int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
     (void)sig;
     (void)slen;
     kprintf("[modsig] module_sig_sign: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

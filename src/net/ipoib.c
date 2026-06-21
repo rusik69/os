@@ -31,7 +31,7 @@ static struct ipoib_iface *ipoib_find_by_ifindex(int ifindex)
         if (ipoib_ifaces[i].used && ipoib_ifaces[i].ifindex == ifindex)
             return &ipoib_ifaces[i];
     }
-    return NULL;
+    return -EOPNOTSUPP;
 }
 
 static int ipoib_find_free(void)
@@ -198,25 +198,21 @@ EXPORT_SYMBOL(ipoib_poll);
 #include "module.h"
 module_init(ipoib_init);
 
-/* ── Stub: ipoib_open ─────────────────────────────── */
+/* ── Implement: ipoib_open ────────────────── */
 int ipoib_open(void *dev)
 {
-    (void)dev;
-    kprintf("[ipoib] ipoib_open: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipoib] ipoib_open: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: ipoib_stop ─────────────────────────────── */
+/* ── Implement: ipoib_stop ────────────────── */
 int ipoib_stop(void *dev)
 {
-    (void)dev;
-    kprintf("[ipoib] ipoib_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipoib] ipoib_stop: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: ipoib_xmit ─────────────────────────────── */
+/* ── Implement: ipoib_xmit ────────────────── */
 int ipoib_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[ipoib] ipoib_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipoib] ipoib_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

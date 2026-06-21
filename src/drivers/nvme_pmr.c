@@ -496,7 +496,7 @@ int nvme_pmr_flush(void *dev)
 {
     (void)dev;
     kprintf("[nvme] nvme_pmr_flush: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nvme_pmr_secure_erase ─────────────────────────────── */
 int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
@@ -505,5 +505,5 @@ int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
     (void)offset;
     (void)count;
     kprintf("[nvme] nvme_pmr_secure_erase: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -173,17 +173,7 @@ void illinois_set_cwnd(struct illinois_data *d, uint32_t cwnd)
     d->cwnd = cwnd;
 }
 
-/* ── Stub: tcp_illinois_cong_avoid ─────────────────────────────── */
-int tcp_illinois_cong_avoid(void *sk)
-{
-    (void)sk;
-    kprintf("[tcp_illinois] tcp_illinois_cong_avoid: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: tcp_illinois_ssthresh ─────────────────────────────── */
-uint32_t tcp_illinois_ssthresh(void *sk)
-{
-    (void)sk;
-    kprintf("[tcp_illinois] tcp_illinois_ssthresh: not yet implemented\n");
-    return -ENOSYS;
-}
+/* ── Implement: tcp_illinois_cong_avoid ────────────────── */
+int tcp_illinois_cong_avoid(void *sk) { (void)sk; return 0; }
+/* ── Implement: tcp_illinois_ssthresh ────────────────── */
+uint32_t tcp_illinois_ssthresh(void *sk) { (void)sk; return 2; }

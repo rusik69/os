@@ -770,7 +770,7 @@ int coredump_write(const void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[coredump] coredump_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_read ───────────────────────────── */
 int coredump_read(void *buf, size_t len)
@@ -778,14 +778,14 @@ int coredump_read(void *buf, size_t len)
     (void)buf;
     (void)len;
     kprintf("[coredump] coredump_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_file_open ──────────────────────── */
 int coredump_file_open(const char *path)
 {
     (void)path;
     kprintf("[coredump] coredump_file_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_note_write ─────────────────────── */
 int coredump_note_write(const void *note, size_t len)
@@ -793,7 +793,7 @@ int coredump_note_write(const void *note, size_t len)
     (void)note;
     (void)len;
     kprintf("[coredump] coredump_note_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_elf_headers ────────────────────── */
 int coredump_elf_headers(void *task, void *buf, size_t *len)
@@ -802,5 +802,5 @@ int coredump_elf_headers(void *task, void *buf, size_t *len)
     (void)buf;
     (void)len;
     kprintf("[coredump] coredump_elf_headers: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

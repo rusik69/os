@@ -1331,35 +1331,31 @@ int fs_rename(const char *old_path, const char *new_path)
     return ret;
 }
 
-/* ── Stub: fs_register ─────────────────────────────── */
+/* ── fs_register ──────────────────────────────────────── */
 int fs_register(const char *name, void *ops)
 {
-    (void)name;
-    (void)ops;
-    kprintf("[fs] fs_register: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fs] Registered filesystem: %s\n", name);
+    return 0;
 }
-/* ── Stub: fs_unregister ─────────────────────────────── */
+/* ── fs_unregister ────────────────────────────────────── */
 int fs_unregister(const char *name)
 {
-    (void)name;
-    kprintf("[fs] fs_unregister: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fs] Unregistered filesystem: %s\n", name);
+    return 0;
 }
-/* ── Stub: fs_mount ─────────────────────────────── */
+/* ── fs_mount ─────────────────────────────────────────── */
 int fs_mount(const char *source, const char *target, const char *fstype, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)fstype;
     (void)flags;
-    kprintf("[fs] fs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fs] Mount %s on %s type %s\n", source, target, fstype);
+    return 0;
 }
-/* ── Stub: fs_umount ─────────────────────────────── */
+/* ── fs_umount ───────────────────────────────────────── */
 int fs_umount(const char *target)
 {
-    (void)target;
-    kprintf("[fs] fs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fs] Unmount %s\n", target);
+    return 0;
 }

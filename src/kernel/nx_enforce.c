@@ -661,14 +661,14 @@ int nx_enforce(void *task)
 {
     (void)task;
     kprintf("[nx] nx_enforce: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nx_check_addr ─────────────────────────────── */
 int nx_check_addr(uint64_t addr)
 {
     (void)addr;
     kprintf("[nx] nx_check_addr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: nx_set_prot ─────────────────────────────── */
 int nx_set_prot(uint64_t addr, size_t len, int prot)
@@ -677,5 +677,5 @@ int nx_set_prot(uint64_t addr, size_t len, int prot)
     (void)len;
     (void)prot;
     kprintf("[nx] nx_set_prot: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

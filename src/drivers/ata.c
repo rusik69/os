@@ -206,17 +206,60 @@ MODULE_DESCRIPTION("Legacy ATA PIO driver — primary IDE controller (master)");
 MODULE_ALIAS("ata");
 #endif /* MODULE */
 
-/* ── Stub: ata_identify ─────────────────────────────── */
 int ata_identify(void *ident_data)
 {
-    (void)ident_data;
-    kprintf("[ata] ata_identify: not yet implemented\n");
-    return -ENOSYS;
+    if (!ident_data)
+        return -EINVAL;
+    if (!ata_present)
+        return -ENODEV;
+    if (ata_wait_bsy() < 0)
+        return -EIO;
+    outb(ATA_DRIVE_HEAD, 0xA0);
+    ata_400ns_delay();
+    outb(ATA_SECT_CNT, 0);
+    outb(ATA_LBA_LO, 0);
+    outb(ATA_LBA_MID, 0);
+    outb(ATA_LBA_HI, 0);
+    outb(ATA_COMMAND, ATA_CMD_IDENTIFY);
+    ata_400ns_delay();
+    uint8_t status = inb(ATA_STATUS);
+    if (status == 0) return -ENODEV;
+    if (ata_wait_bsy() < 0) return -EIO;
+    for (int timeout = 0; timeout < 100000; timeout++) {
+        status = inb(ATA_STATUS);
+        if (status & ATA_SR_ERR) return -EIO;
+        if (status & ATA_SR_DRQ) break;
+        __asm__ volatile("pause");
+    }
+    if (!(status & ATA_SR_DRQ)) return -EIO;
+    uint16_t *ident = (uint16_t *)ident_data;
+    for (int i = 0; i < 256; i++)
+        ident[i] = inw(ATA_DATA);
+    kprintf("[ata] IDENTIFY successful\n");
+    return 0;
 }
-/* ── Stub: ata_reset ─────────────────────────────── */
+
 int ata_reset(int bus)
 {
     (void)bus;
-    kprintf("[ata] ata_reset: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ata] Soft resetting ATA bus\n");
+    if (bus == 0) {
+        outb(0x3F6, 0x04);
+        ata_400ns_delay();
+        udelay(5);
+        outb(0x3F6, 0x00);
+        ata_400ns_delay();
+        if (ata_wait_bsy() < 0) { kprintf("[ata] Reset failed\n"); return -EIO; }
+        ata_present = 0;
+        return 0;
+    } else if (bus == 1) {
+        outb(0x376, 0x04);
+        ata_400ns_delay();
+        udelay(5);
+        outb(0x376, 0x00);
+        ata_400ns_delay();
+        return 0;
+    }
+    return -EINVAL;
 }
+

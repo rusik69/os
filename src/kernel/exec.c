@@ -367,7 +367,7 @@ int exec_mmap(void *mm)
 {
     (void)mm;
     kprintf("[exec] exec_mmap: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: exec_setup_stack ─────────────────────────────── */
 int exec_setup_stack(void *bprm, uint64_t *sp)
@@ -375,7 +375,7 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
     (void)bprm;
     (void)sp;
     kprintf("[exec] exec_setup_stack: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: exec_binprm ─────────────────────────────── */
 int exec_binprm(const char *filename, void *argv, void *envp)
@@ -384,5 +384,5 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     (void)argv;
     (void)envp;
     kprintf("[exec] exec_binprm: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

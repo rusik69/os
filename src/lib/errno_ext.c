@@ -140,17 +140,14 @@ void perror(const char *s) {
         kprintf("%s\n", strerror(__errno_value));
 }
 
-/* ── Stub: errno_str ─────────────────────────────── */
+/* ── errno_str ─────────────────────────────── */
 const char* errno_str(int err)
 {
-    (void)err;
-    kprintf("[errno] errno_str: not yet implemented\n");
-    return -ENOSYS;
+    return strerror(err);
 }
-/* ── Stub: errno_set ─────────────────────────────── */
+/* ── errno_set ─────────────────────────────── */
 int errno_set(int err)
 {
-    (void)err;
-    kprintf("[errno] errno_set: not yet implemented\n");
-    return -ENOSYS;
+    __errno_value = err;
+    return 0;
 }

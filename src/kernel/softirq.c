@@ -267,9 +267,10 @@ void do_softirq(void)
     softirq_recursion[cpu]--;
 }
 
-/* ── Stub: softirq_handle ─────────────────────────────── */
+/* ── softirq_handle: Handle pending softirqs in process context ────── */
 int softirq_handle(void)
 {
-    kprintf("[softirq] softirq_handle: not yet implemented\n");
-    return -ENOSYS;
+    /* Forward to the existing do_softirq implementation */
+    do_softirq();
+    return 0;
 }

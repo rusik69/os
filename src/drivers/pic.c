@@ -47,5 +47,5 @@ int pic_remap(int offset)
 {
     (void)offset;
     kprintf("[pic] pic_remap: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

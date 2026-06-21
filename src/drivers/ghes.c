@@ -398,5 +398,5 @@ int ghes_estatus_read(void *estatus)
 {
     (void)estatus;
     kprintf("[ghes] ghes_estatus_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -414,10 +414,16 @@ void garp_tick(void)
 #include "module.h"
 module_init(garp_init);
 
-/* ── Stub: garp_transmit ─────────────────────────────── */
+/* ── Implement: garp_transmit ────────────────── */
 int garp_transmit(void *dev)
 {
     (void)dev;
-    kprintf("[garp] garp_transmit: not yet implemented\n");
-    return -ENOSYS;
+    if (!garp_initialised) return -ENOSYS;
+    /* Transmit all registered applications' PDUs */
+    for (int i = 0; i < GARP_MAX_APPS; i++) {
+        if (garp_apps[i].app_type) {
+            garp_send_pdu(garp_apps[i].app_type);
+        }
+    }
+    return 0;
 }

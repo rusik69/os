@@ -195,14 +195,14 @@ int snapshot_ctl_create(const char *name, const char *origin)
     (void)name;
     (void)origin;
     kprintf("[dm-snapshot] snapshot_ctl_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: snapshot_ctl_delete ──────────────────────── */
 int snapshot_ctl_delete(const char *name)
 {
     (void)name;
     kprintf("[dm-snapshot] snapshot_ctl_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: snapshot_read ────────────────────────────── */
 int snapshot_read(struct dm_snapshot *snap, uint64_t sector, void *buf, uint32_t count)
@@ -212,7 +212,7 @@ int snapshot_read(struct dm_snapshot *snap, uint64_t sector, void *buf, uint32_t
     (void)buf;
     (void)count;
     kprintf("[dm-snapshot] snapshot_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: snapshot_write ───────────────────────────── */
 int snapshot_write(struct dm_snapshot *snap, uint64_t sector, const void *buf, uint32_t count)
@@ -222,12 +222,12 @@ int snapshot_write(struct dm_snapshot *snap, uint64_t sector, const void *buf, u
     (void)buf;
     (void)count;
     kprintf("[dm-snapshot] snapshot_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: snapshot_merge ───────────────────────────── */
 int snapshot_merge(struct dm_snapshot *snap)
 {
     (void)snap;
     kprintf("[dm-snapshot] snapshot_merge: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -50,34 +50,61 @@ int umip_init(void) {
     return 0;
 }
 
-/* ── Stub: smap_enable ─────────────────────────────── */
+/* ── smap_enable ─────────────────────────────── */
 int smap_enable(void)
 {
-    kprintf("[smap] smap_enable: not yet implemented\n");
-    return -ENOSYS;
+    uint64_t cr4 = read_cr4();
+    if (!(cr4 & CR4_SMAP)) {
+        cr4 |= CR4_SMAP;
+        write_cr4(cr4);
+        kprintf("[smap] SMAP enabled\n");
+    }
+    return 0;
 }
-/* ── Stub: smap_disable ─────────────────────────────── */
+
+/* ── smap_disable ─────────────────────────────── */
 int smap_disable(void)
 {
-    kprintf("[smap] smap_disable: not yet implemented\n");
-    return -ENOSYS;
+    uint64_t cr4 = read_cr4();
+    if (cr4 & CR4_SMAP) {
+        cr4 &= ~CR4_SMAP;
+        write_cr4(cr4);
+        kprintf("[smap] SMAP disabled\n");
+    }
+    return 0;
 }
-/* ── Stub: smep_enable ─────────────────────────────── */
+
+/* ── smep_enable ─────────────────────────────── */
 int smep_enable(void)
 {
-    kprintf("[smap] smep_enable: not yet implemented\n");
-    return -ENOSYS;
+    uint64_t cr4 = read_cr4();
+    if (!(cr4 & CR4_SMEP)) {
+        cr4 |= CR4_SMEP;
+        write_cr4(cr4);
+        kprintf("[smap] SMEP enabled\n");
+    }
+    return 0;
 }
-/* ── Stub: smep_disable ─────────────────────────────── */
+
+/* ── smep_disable ─────────────────────────────── */
 int smep_disable(void)
 {
-    kprintf("[smap] smep_disable: not yet implemented\n");
-    return -ENOSYS;
+    uint64_t cr4 = read_cr4();
+    if (cr4 & CR4_SMEP) {
+        cr4 &= ~CR4_SMEP;
+        write_cr4(cr4);
+        kprintf("[smap] SMEP disabled\n");
+    }
+    return 0;
 }
-/* ── Stub: umip_handle_insn ─────────────────────────────── */
+
+/* ── umip_handle_insn ─────────────────────────────── */
 int umip_handle_insn(void *regs)
 {
     (void)regs;
-    kprintf("[smap] umip_handle_insn: not yet implemented\n");
-    return -ENOSYS;
+    /* UMIP traps #GP on certain instructions (SGDT, SIDT, SLDT, SMSW, STR)
+     * when executed from userspace. Return 0 to let the emulation happen
+     * (if emulation is available) or -EPERM to kill the process. */
+    kprintf("[smap] umip_handle_insn: #GP due to UMIP, instruction not emulated\n");
+    return -EPERM;
 }

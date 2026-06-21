@@ -9963,33 +9963,85 @@ void syscall_init(void) {
     wrmsr(MSR_SFMASK, (1 << 9));
 }
 
-/* ── Stub: syscall_handle ─────────────────────────────── */
+/* ── syscall_handle: Handle a syscall by number ─────────────────────── */
 int syscall_handle(int nr, void *args)
 {
-    (void)nr;
-    (void)args;
-    kprintf("[syscall] syscall_handle: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0) return -EINVAL;
+
+    /* Pack arguments into the dispatch format */
+    uint64_t *a = (uint64_t *)args;
+    uint64_t a1 = a ? a[0] : 0;
+    uint64_t a2 = a ? a[1] : 0;
+    uint64_t a3 = a ? a[2] : 0;
+    uint64_t a4 = a ? a[3] : 0;
+    uint64_t a5 = a ? a[4] : 0;
+
+    /* Forward to the main syscall dispatch which handles validation and seccomp */
+    uint64_t ret = syscall_dispatch((uint64_t)nr, a1, a2, a3, a4, a5);
+
+    /* Convert uint64_t return to int (assumes syscall returns int-compatible values) */
+    kprintf("[syscall] syscall_handle: nr=%d returned 0x%llx\n", nr, (unsigned long long)ret);
+    return (int)ret;
 }
-/* ── Stub: syscall_register ─────────────────────────────── */
+/* ── syscall_register: Register a custom syscall handler ────────────── */
 int syscall_register(int nr, void *handler)
 {
-    (void)nr;
-    (void)handler;
-    kprintf("[syscall] syscall_register: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 1024 || !handler) return -EINVAL;
+
+    /* Store in a small dynamic table for custom syscalls.
+     * Currently we use a fixed-size table. */
+    static void *custom_syscall_table[256];
+    static int custom_syscall_initialized = 0;
+
+    if (!custom_syscall_initialized) {
+        memset(custom_syscall_table, 0, sizeof(custom_syscall_table));
+        custom_syscall_initialized = 1;
+    }
+
+    if (nr >= 256) return -ENOSPC;
+
+    if (custom_syscall_table[nr] != NULL) {
+        kprintf("[syscall] syscall_register: nr=%d already registered\n", nr);
+        return -EBUSY;
+    }
+
+    custom_syscall_table[nr] = handler;
+    kprintf("[syscall] syscall_register: nr=%d handler=0x%llx\n",
+            nr, (unsigned long long)(uintptr_t)handler);
+    return 0;
 }
-/* ── Stub: syscall_unregister ─────────────────────────────── */
+/* ── syscall_unregister: Unregister a custom syscall handler ────────── */
 int syscall_unregister(int nr)
 {
-    (void)nr;
-    kprintf("[syscall] syscall_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 1024) return -EINVAL;
+
+    /* Access the static table */
+    static void *custom_syscall_table[256];
+    static int custom_syscall_initialized = 0;
+
+    if (!custom_syscall_initialized) return -EINVAL;
+    if (nr >= 256) return -ENOSPC;
+    if (!custom_syscall_table[nr]) return -ENOENT;
+
+    custom_syscall_table[nr] = NULL;
+    kprintf("[syscall] syscall_unregister: nr=%d\n", nr);
+    return 0;
 }
-/* ── Stub: syscall_table_lookup ─────────────────────────────── */
+/* ── syscall_table_lookup: Look up a syscall handler by number ──────── */
 void* syscall_table_lookup(int nr)
 {
-    (void)nr;
-    kprintf("[syscall] syscall_table_lookup: not yet implemented\n");
-    return -ENOSYS;
+    if (nr < 0 || nr > 1024) return NULL;
+
+    /* Check the custom table first */
+    static void *custom_syscall_table[256];
+    static int custom_syscall_initialized = 0;
+
+    if (custom_syscall_initialized && nr < 256 && custom_syscall_table[nr]) {
+        return custom_syscall_table[nr];
+    }
+
+    /* If no custom handler, return a generic indicator that the syscall is built-in.
+     * A full implementation would return the actual dispatch function pointer. */
+    kprintf("[syscall] syscall_table_lookup: nr=%d -> built-in (no custom handler)\n", nr);
+    return NULL;
 }

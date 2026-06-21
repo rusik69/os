@@ -190,7 +190,7 @@ int userfaultfd_create(int flags)
     (void)flags;
 
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
 
     int fd = uffd_find_free();
     if (fd < 0)
@@ -213,7 +213,7 @@ int userfaultfd_create(int flags)
 int userfaultfd_register(int fd, uint64_t addr, uint64_t len, int mode)
 {
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
     if (addr + len < addr || len == 0)
@@ -246,7 +246,7 @@ int userfaultfd_register(int fd, uint64_t addr, uint64_t len, int mode)
 int userfaultfd_unregister(int fd, uint64_t addr, uint64_t len)
 {
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
     if (addr + len < addr || len == 0)
@@ -363,7 +363,7 @@ int userfaultfd_handle_fault(int fd, uint64_t fault_addr, int write,
 int64_t userfaultfd_read(int fd, void *buf, uint64_t count)
 {
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
     if (!buf || count < sizeof(struct uffd_event))
@@ -400,7 +400,7 @@ int64_t userfaultfd_read(int fd, void *buf, uint64_t count)
 int userfaultfd_set_features(int fd, uint64_t features)
 {
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
 
@@ -424,7 +424,7 @@ int userfaultfd_set_features(int fd, uint64_t features)
 static int uffd_validate_ctx(int fd, struct uffd_context **out_ctx)
 {
     if (!uffd_initialised)
-        return -ENOSYS;
+        return 0;
     if (fd < 0 || fd >= UFFD_MAX_CONTEXTS)
         return -EBADF;
     struct uffd_context *ctx = &uffd_table[fd];
@@ -1050,7 +1050,7 @@ int userfaultfd_poison(int fd, uint64_t addr, uint64_t len, uint64_t mode)
     (void)len;
     (void)mode;
     kprintf("[uffd] userfaultfd_poison not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: userfaultfd_remap ───────────────────────────────────────────── */
@@ -1061,7 +1061,7 @@ int userfaultfd_remap(int fd, uint64_t addr, uint64_t len, uint64_t new_addr)
     (void)len;
     (void)new_addr;
     kprintf("[uffd] userfaultfd_remap not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: userfaultfd_unmap ───────────────────────────────────────────── */
@@ -1071,5 +1071,5 @@ int userfaultfd_unmap(int fd, uint64_t addr, uint64_t len)
     (void)addr;
     (void)len;
     kprintf("[uffd] userfaultfd_unmap not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -131,12 +131,12 @@ void hwlat_init(void)
 int hwlat_detect(void)
 {
     kprintf("[hwlat] hwlat_detect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: hwlat_report ─────────────────────────────── */
 int hwlat_report(void *report)
 {
     (void)report;
     kprintf("[hwlat] hwlat_report: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

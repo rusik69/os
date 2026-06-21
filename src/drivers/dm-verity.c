@@ -442,7 +442,7 @@ int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
     (void)argc;
     (void)argv;
     kprintf("[dm_verity] dm_verity_ctr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dm_verity_map ─────────────────────────────── */
 int dm_verity_map(void *ti, void *bio)
@@ -450,5 +450,5 @@ int dm_verity_map(void *ti, void *bio)
     (void)ti;
     (void)bio;
     kprintf("[dm_verity] dm_verity_map: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

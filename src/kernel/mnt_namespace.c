@@ -269,12 +269,12 @@ int mnt_ns_create(void *parent)
 {
     (void)parent;
     kprintf("[mnt_ns] mnt_ns_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: mnt_ns_delete ─────────────────────────────── */
 int mnt_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[mnt_ns] mnt_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

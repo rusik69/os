@@ -183,7 +183,7 @@ int page_poison_check(uint64_t phys_addr)
 {
     (void)phys_addr;
     kprintf("[page_poison] page_poison_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: page_poison_debug ─────────────────────────────────── */

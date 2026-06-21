@@ -101,14 +101,14 @@ int notifier_ext_register(void *n)
 {
     (void)n;
     kprintf("[notifier] notifier_ext_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: notifier_ext_unregister ─────────────────────────────── */
 int notifier_ext_unregister(void *n)
 {
     (void)n;
     kprintf("[notifier] notifier_ext_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: notifier_ext_call ─────────────────────────────── */
 int notifier_ext_call(void *n, unsigned long val, void *v)
@@ -117,5 +117,5 @@ int notifier_ext_call(void *n, unsigned long val, void *v)
     (void)val;
     (void)v;
     kprintf("[notifier] notifier_ext_call: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

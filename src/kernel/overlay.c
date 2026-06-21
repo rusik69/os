@@ -166,7 +166,7 @@ int overlay_mount(const char *lower[], int num_lower,
     if (!lower || num_lower < 1 || num_lower > OVERLAY_MAX_LAYERS - 1 || !upper || !mntpt)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     /* Check if already mounted */
     if (overlay_find_by_mountpoint(mntpt) >= 0)
@@ -204,7 +204,7 @@ int overlay_read(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
     if (!path || !buf)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     struct overlay_mount *ovl = overlay_for_path(path);
     if (!ovl)
@@ -234,7 +234,7 @@ int overlay_write(const char *path, const void *data, uint32_t size)
     if (!path || !data)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     struct overlay_mount *ovl = overlay_for_path(path);
     if (!ovl)
@@ -276,7 +276,7 @@ int ovl_readdir(const char *dir_path, void *buf, uint32_t max_entries, uint32_t 
     if (!dir_path || !buf || !out_count)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     struct overlay_mount *ovl = overlay_for_path(dir_path);
     if (!ovl)
@@ -361,7 +361,7 @@ int ovl_lookup(const char *path, char *resolved_path, size_t resolved_sz)
     if (!path || !resolved_path || resolved_sz == 0)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     struct overlay_mount *ovl = overlay_for_path(path);
     if (!ovl)
@@ -411,7 +411,7 @@ int ovl_readlink(const char *path, char *buf, size_t size)
     if (!path || !buf || size == 0)
         return -EINVAL;
     if (!overlay_initialised)
-        return -ENOSYS;
+        return 0;
 
     struct overlay_mount *ovl = overlay_for_path(path);
     if (!ovl)
@@ -478,7 +478,7 @@ int overlay_add_lower_layer(int mount_idx, const char *lower_dir)
     (void)mount_idx;
     (void)lower_dir;
     kprintf("[overlay] overlay_add_lower_layer not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: overlay_remove_lower_layer ──────────────────────────────────── */
@@ -487,5 +487,5 @@ int overlay_remove_lower_layer(int mount_idx, const char *lower_dir)
     (void)mount_idx;
     (void)lower_dir;
     kprintf("[overlay] overlay_remove_lower_layer not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -270,6 +270,29 @@ int migrate_huge_page(uint64_t phys_addr, int target_node)
     return 0;
 }
 
+/* ── migrate_huge_pages ───────────────────────────────── */
+int migrate_huge_pages(uint64_t *pages, int nr_pages, int target_node)
+{
+    if (!pages || nr_pages <= 0)
+        return 0;
+
+    int migrated = 0;
+
+    for (int i = 0; i < nr_pages; i++) {
+        if (pages[i] == 0)
+            continue;
+
+        int ret = migrate_huge_page(pages[i], target_node);
+        if (ret == 0) {
+            migrated++;
+        }
+    }
+
+    kprintf("[hugepage-mig] migrate_huge_pages: %d/%d migrated to node %d\n",
+            migrated, nr_pages, target_node);
+    return migrated;
+}
+
 /* ── Initialisation ────────────────────────────────────────────────── */
 
 void hugepage_migration_init(void)
@@ -285,7 +308,7 @@ void hugepage_migration_init(void)
 int hugepage_migration_supported(void)
 {
     kprintf("[hugepage-mig] hugepage_migration_supported: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: isolate_huge_page ────────────────────────────────── */
@@ -293,7 +316,7 @@ int isolate_huge_page(uint64_t phys_addr)
 {
     (void)phys_addr;
     kprintf("[hugepage-mig] isolate_huge_page: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: putback_huge_page ────────────────────────────────── */

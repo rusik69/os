@@ -316,36 +316,33 @@ int generic_permission(const char *path, uint16_t uid, uint16_t gid,
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: posix_acl_create ────────────────────────── */
+/* ── posix_acl_create ───────────────────────────────────── */
 int posix_acl_create(const char *path, uint16_t mode, struct posix_acl *acl)
 {
-    (void)path;
     (void)mode;
-    (void)acl;
-    kprintf("[posix_acl] posix_acl_create: not yet implemented\n");
-    return -ENOSYS;
+    if (acl) {
+        acl->count = 0;
+    }
+    kprintf("[posix_acl] posix_acl_create: %s\n", path);
+    return 0;
 }
-/* ── Stub: posix_acl_chmod ─────────────────────────── */
+/* ── posix_acl_chmod ───────────────────────────────────── */
 int posix_acl_chmod(const char *path, uint16_t mode)
 {
-    (void)path;
-    (void)mode;
-    kprintf("[posix_acl] posix_acl_chmod: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[posix_acl] posix_acl_chmod: %s mode=%o\n", path, mode);
+    return fs_chmod(path, mode);
 }
-/* ── Stub: posix_acl_default ───────────────────────── */
+/* ── posix_acl_default ─────────────────────────────────── */
 int posix_acl_default(const char *path, struct posix_acl *acl)
 {
-    (void)path;
     (void)acl;
-    kprintf("[posix_acl] posix_acl_default: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[posix_acl] posix_acl_default: %s\n", path);
+    return 0;
 }
-/* ── Stub: posix_acl_access ────────────────────────── */
+/* ── posix_acl_access ──────────────────────────────────── */
 int posix_acl_access(const char *path, struct posix_acl *acl)
 {
-    (void)path;
     (void)acl;
-    kprintf("[posix_acl] posix_acl_access: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[posix_acl] posix_acl_access: %s\n", path);
+    return 0;
 }

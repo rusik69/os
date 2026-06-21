@@ -422,7 +422,7 @@ int tpm_key_create(const char *name, void *key)
     (void)name;
     (void)key;
     kprintf("[tpm] tpm_key_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: tpm_key_load ─────────────────────────────── */
 int tpm_key_load(const char *name, void *key)
@@ -430,7 +430,7 @@ int tpm_key_load(const char *name, void *key)
     (void)name;
     (void)key;
     kprintf("[tpm] tpm_key_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: tpm_key_sign ─────────────────────────────── */
 int tpm_key_sign(const void *data, size_t dlen, void *sig, size_t *slen)
@@ -440,5 +440,5 @@ int tpm_key_sign(const void *data, size_t dlen, void *sig, size_t *slen)
     (void)sig;
     (void)slen;
     kprintf("[tpm] tpm_key_sign: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

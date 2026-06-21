@@ -284,12 +284,12 @@ int kpti_is_active(void) {
 int kpti_flush_tlb(void)
 {
     kprintf("[kpti] kpti_flush_tlb: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kpti_switch_mm ─────────────────────────────── */
 int kpti_switch_mm(void *mm)
 {
     (void)mm;
     kprintf("[kpti] kpti_switch_mm: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

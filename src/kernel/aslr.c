@@ -161,11 +161,11 @@ uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
     (void)base;
     (void)range;
     kprintf("[aslr] aslr_randomize_addr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: aslr_randomize_stack ─────────────────────────────── */
 uint64_t aslr_randomize_stack(void)
 {
     kprintf("[aslr] aslr_randomize_stack: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

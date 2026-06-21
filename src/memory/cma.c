@@ -143,21 +143,40 @@ void cma_reserve_default(void) {
     cma_create_area(base_pfn, reserve_size, "default");
 }
 
-/* ── Stub: cma_release ──────────────────────────────────────── */
+/* ── cma_release ──────────────────────────────────────── */
 int cma_release(uint64_t pfn, size_t count)
 {
-    (void)pfn;
-    (void)count;
-    kprintf("[cma] cma_release: not yet implemented\n");
-    return -ENOSYS;
+    if (count == 0) return -EINVAL;
+    /* Return CMA-allocated pages back to CMA pool */
+    cma_free(pfn, count);
+    kprintf("[cma] cma_release: released %zu pages at PFN 0x%llx\n",
+            count, (unsigned long long)pfn);
+    return 0;
 }
 
-/* ── Stub: cma_isolate_page ─────────────────────────────────── */
+/* ── cma_isolate_page ─────────────────────────────────── */
 int cma_isolate_page(uint64_t pfn)
 {
-    (void)pfn;
-    kprintf("[cma] cma_isolate_page: not yet implemented\n");
-    return -ENOSYS;
+    /* Isolate a page from CMA area for migration.
+     * In a real kernel, this marks the page as MIGRATE_ISOLATE. */
+    kprintf("[cma] cma_isolate_page: isolating PFN 0x%llx\n",
+            (unsigned long long)pfn);
+    /* Check if this PFN falls within any CMA area */
+    for (int i = 0; i < cma_area_count; i++) {
+        struct cma_area *area = &cma_areas[i];
+        if (pfn >= area->base_pfn && pfn < area->base_pfn + area->count) {
+            size_t offset = pfn - area->base_pfn;
+            if (!cma_bitmap_test(area, offset)) {
+                kprintf("[cma] cma_isolate_page: PFN 0x%llx already free\n",
+                        (unsigned long long)pfn);
+                return -EINVAL;
+            }
+            return 0;
+        }
+    }
+    kprintf("[cma] cma_isolate_page: PFN 0x%llx not in any CMA area\n",
+            (unsigned long long)pfn);
+    return -ENOENT;
 }
 
 /* ── Stub: cma_free_page ────────────────────────────────────── */

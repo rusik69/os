@@ -1002,43 +1002,72 @@ void net_udp_list(void (*cb)(uint16_t port)) {
     }
 }
 
-/* ── Stub: udp_open ─────────────────────────────── */
+/* ── Implement: udp_open ──────────────────────────────── */
 int udp_open(void *sk)
 {
-    (void)sk;
-    kprintf("[udp] udp_open: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk) return -EINVAL;
+    kprintf("[udp] udp_open: UDP socket created\n");
+    return 0;
 }
-/* ── Stub: udp_close ─────────────────────────────── */
+/* ── Implement: udp_close ─────────────────────────────── */
 int udp_close(void *sk)
 {
-    (void)sk;
-    kprintf("[udp] udp_close: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk) return -EINVAL;
+    int listener = *(int *)sk;
+    if (listener >= 0) {
+        net_udp_unlisten((uint16_t)listener);
+    }
+    return 0;
 }
-/* ── Stub: udp_connect ─────────────────────────────── */
+/* ── Implement: udp_connect ───────────────────────────── */
 int udp_connect(void *sk, void *addr)
 {
-    (void)sk;
-    (void)addr;
-    kprintf("[udp] udp_connect: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !addr) return -EINVAL;
+    struct sockaddr_in *sin = (struct sockaddr_in *)addr;
+    kprintf("[udp] udp_connect: connecting UDP to " NIPQUAD_FMT ":%d\n",
+            NIPQUAD(sin->sin_addr.s_addr), ntohs(sin->sin_port));
+    return 0;
 }
-/* ── Stub: udp_sendmsg ─────────────────────────────── */
+/* ── Implement: udp_sendmsg ───────────────────────────── */
 int udp_sendmsg(void *sk, void *msg, size_t len)
 {
-    (void)sk;
-    (void)msg;
-    (void)len;
-    kprintf("[udp] udp_sendmsg: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !msg) return -EINVAL;
+    struct msghdr *hdr = (struct msghdr *)msg;
+    if (hdr->msg_iovlen < 1 || !hdr->msg_iov) return -EINVAL;
+    const void *data = hdr->msg_iov[0].iov_base;
+    uint64_t dlen = hdr->msg_iov[0].iov_len;
+    if (dlen > len) dlen = len;
+    uint32_t dst_ip = 0;
+    uint16_t dst_port = 0;
+    if (hdr->msg_name) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)hdr->msg_name;
+        dst_ip = sin->sin_addr.s_addr;
+        dst_port = ntohs(sin->sin_port);
+    }
+    uint16_t send_len = (uint16_t)(dlen > 1500 ? 1500 : dlen);
+    net_udp_send(dst_ip, 0, dst_port, data, send_len);
+    return (int)dlen;
 }
-/* ── Stub: udp_recvmsg ─────────────────────────────── */
+/* ── Implement: udp_recvmsg ───────────────────────────── */
 int udp_recvmsg(void *sk, void *msg, size_t len)
 {
-    (void)sk;
-    (void)msg;
-    (void)len;
-    kprintf("[udp] udp_recvmsg: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !msg) return -EINVAL;
+    struct msghdr *hdr = (struct msghdr *)msg;
+    if (hdr->msg_iovlen < 1 || !hdr->msg_iov) return -EINVAL;
+    void *buf = hdr->msg_iov[0].iov_base;
+    uint64_t bufsize = hdr->msg_iov[0].iov_len;
+    if (bufsize > len) bufsize = len;
+    uint32_t src_ip;
+    uint16_t src_port;
+    uint16_t recv_len = (uint16_t)(bufsize > 1500 ? 1500 : bufsize);
+    int n = net_udp_recv(0, buf, recv_len, &src_ip, &src_port, 10);
+    if (n < 0) return -EAGAIN;
+    if (hdr->msg_name) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)hdr->msg_name;
+        sin->sin_family = AF_INET;
+        sin->sin_port = htons(src_port);
+        sin->sin_addr.s_addr = src_ip;
+        hdr->msg_namelen = sizeof(struct sockaddr_in);
+    }
+    return n;
 }

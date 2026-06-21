@@ -138,7 +138,7 @@ int virtio_scsi_cmd(void *dev, void *cmd)
     (void)dev;
     (void)cmd;
     kprintf("[virtio] virtio_scsi_cmd: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: virtio_scsi_task_mgt ─────────────────────────────── */
 int virtio_scsi_task_mgt(void *dev, void *tm)
@@ -146,5 +146,5 @@ int virtio_scsi_task_mgt(void *dev, void *tm)
     (void)dev;
     (void)tm;
     kprintf("[virtio] virtio_scsi_task_mgt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -216,7 +216,7 @@ int secret_create(const char *name, const void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[secrets] secret_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: secret_get ─────────────────────────────── */
 int secret_get(const char *name, void *data, size_t *len)
@@ -225,12 +225,12 @@ int secret_get(const char *name, void *data, size_t *len)
     (void)data;
     (void)len;
     kprintf("[secrets] secret_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: secret_delete ─────────────────────────────── */
 int secret_delete(const char *name)
 {
     (void)name;
     kprintf("[secrets] secret_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

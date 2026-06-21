@@ -540,5 +540,5 @@ int acpi_thermal_set_policy(void *dev, int policy)
     (void)dev;
     (void)policy;
     kprintf("[acpi] acpi_thermal_set_policy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

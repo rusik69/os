@@ -168,30 +168,47 @@ void cluster_autoscaler_get_info(struct cluster_autoscaler *out)
     spinlock_release(&g_as_lock);
 }
 
-/* ── Stub: autoscaler_run ─────────────────────────────── */
+/* ── autoscaler_run ─────────────────────────────── */
 int autoscaler_run(int interval)
 {
     (void)interval;
-    kprintf("[cluster] autoscaler_run: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_initialised) return -1;
+    g_autoscaler.enabled = 1;
+    kprintf("[cluster] Autoscaler started (interval=%d)\n", interval);
+    return 0;
 }
-/* ── Stub: autoscaler_stop ─────────────────────────────── */
+/* ── autoscaler_stop ─────────────────────────────── */
 int autoscaler_stop(void)
 {
-    kprintf("[cluster] autoscaler_stop: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_initialised) return -1;
+    g_autoscaler.enabled = 0;
+    kprintf("[cluster] Autoscaler stopped\n");
+    return 0;
 }
-/* ── Stub: autoscaler_scale_up ─────────────────────────────── */
+/* ── autoscaler_scale_up ─────────────────────────────── */
 int autoscaler_scale_up(int count)
 {
-    (void)count;
-    kprintf("[cluster] autoscaler_scale_up: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_initialised) return -1;
+    if (g_autoscaler.current_nodes + count > g_autoscaler.max_nodes)
+        count = (int)(g_autoscaler.max_nodes - g_autoscaler.current_nodes);
+    if (count <= 0) return 0;
+    g_autoscaler.current_nodes += (uint32_t)count;
+    g_autoscaler.scale_up_count++;
+    kprintf("[cluster] Autoscaler scaled up by %d (now %u nodes)\n",
+            count, g_autoscaler.current_nodes);
+    return count;
 }
-/* ── Stub: autoscaler_scale_down ─────────────────────────────── */
+/* ── autoscaler_scale_down ─────────────────────────────── */
 int autoscaler_scale_down(int count)
 {
-    (void)count;
-    kprintf("[cluster] autoscaler_scale_down: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_initialised) return -1;
+    if (count <= 0) return 0;
+    if ((int)g_autoscaler.current_nodes - count < (int)g_autoscaler.min_nodes)
+        count = (int)(g_autoscaler.current_nodes - g_autoscaler.min_nodes);
+    if (count <= 0) return 0;
+    g_autoscaler.current_nodes -= (uint32_t)count;
+    g_autoscaler.scale_down_count++;
+    kprintf("[cluster] Autoscaler scaled down by %d (now %u nodes)\n",
+            count, g_autoscaler.current_nodes);
+    return count;
 }

@@ -330,32 +330,30 @@ void aes_init_crypto(void)
     kprintf("[OK] AES-%d/%d/%d CBC initialized\n", AES_128 * 8, AES_192 * 8, AES_256 * 8);
 }
 
-/* ── Stub: aes_encrypt ─────────────────────────────── */
+/* ── aes_encrypt ─────────────────────────────── */
 int aes_encrypt(const void *key, size_t key_len, const void *plain, void *cipher)
 {
-    (void)key;
-    (void)key_len;
-    (void)plain;
-    (void)cipher;
-    kprintf("[aes] aes_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    struct aes_ctx ctx;
+    int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);
+    if (ret) return ret;
+    aes_encrypt_block(&ctx, (const uint8_t *)plain, (uint8_t *)cipher);
+    return 0;
 }
-/* ── Stub: aes_decrypt ─────────────────────────────── */
+/* ── aes_decrypt ─────────────────────────────── */
 int aes_decrypt(const void *key, size_t key_len, const void *cipher, void *plain)
 {
-    (void)key;
-    (void)key_len;
-    (void)cipher;
-    (void)plain;
-    kprintf("[aes] aes_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    struct aes_ctx ctx;
+    int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);
+    if (ret) return ret;
+    aes_decrypt_block(&ctx, (const uint8_t *)cipher, (uint8_t *)plain);
+    return 0;
 }
-/* ── Stub: aes_key_expand ─────────────────────────────── */
+/* ── aes_key_expand ─────────────────────────────── */
 int aes_key_expand(const void *key, size_t key_len, void *round_keys)
 {
-    (void)key;
-    (void)key_len;
-    (void)round_keys;
-    kprintf("[aes] aes_key_expand: not yet implemented\n");
-    return -ENOSYS;
+    struct aes_ctx ctx;
+    int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);
+    if (ret) return ret;
+    memcpy(round_keys, ctx.ek, sizeof(uint32_t) * 4 * (ctx.rounds + 1));
+    return 0;
 }

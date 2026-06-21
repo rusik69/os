@@ -223,28 +223,26 @@ int raise(int sig)
     return kill((uint32_t)pid, sig);
 }
 
-/* ── Stub: signal_raise ─────────────────────────────── */
+/* ── signal_raise ─────────────────────────────── */
 int signal_raise(int sig)
 {
-    (void)sig;
-    kprintf("[signal] signal_raise: not yet implemented\n");
-    return -ENOSYS;
+    /* raise(sig) = kill(getpid(), sig) */
+    uint64_t pid = sc(SYS_GETPID, 0, 0, 0, 0, 0);
+    return kill((uint32_t)pid, sig);
 }
-/* ── Stub: signal_sigaction ─────────────────────────────── */
+/* ── signal_sigaction ─────────────────────────────── */
 int signal_sigaction(int sig, const void *act, void *oldact)
 {
-    (void)sig;
-    (void)act;
-    (void)oldact;
-    kprintf("[signal] signal_sigaction: not yet implemented\n");
-    return -ENOSYS;
+    /* Delegate to the existing sigaction implementation */
+    const struct sigaction *new_act = (const struct sigaction *)act;
+    struct sigaction *old_act = (struct sigaction *)oldact;
+    return sigaction(sig, new_act, old_act);
 }
-/* ── Stub: signal_sigprocmask ─────────────────────────────── */
+/* ── signal_sigprocmask ─────────────────────────────── */
 int signal_sigprocmask(int how, const void *set, void *oldset)
 {
-    (void)how;
-    (void)set;
-    (void)oldset;
-    kprintf("[signal] signal_sigprocmask: not yet implemented\n");
-    return -ENOSYS;
+    /* Delegate to the existing sigprocmask implementation */
+    const sigset_t *new_set = (const sigset_t *)set;
+    sigset_t *old_set = (sigset_t *)oldset;
+    return sigprocmask(how, new_set, old_set);
 }

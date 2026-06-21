@@ -14,6 +14,7 @@
 #include "pci.h"
 #include "virtio.h"
 #include "pmm.h"
+#include "errno.h"
 
 #ifdef MODULE
 #include "module.h"
@@ -138,31 +139,59 @@ MODULE_DESCRIPTION("9P2000.L over virtio transport");
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: p9_virtio_init ─────────────────────────────── */
+/* ── p9_virtio_init: Probe and initialise the virtio-9p device ── */
 int p9_virtio_init(void)
 {
-    kprintf("[9p] p9_virtio_init: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[9p] Initialising virtio-9p transport...\n");
+
+    /* Use the existing v9pnet_virtio_init which already probes PCI */
+    v9pnet_virtio_init();
+
+    if (!v9p_present) {
+        kprintf("[9p] No virtio-9p device found\n");
+        return -ENODEV;
+    }
+
+    kprintf("[9p] virtio-9p transport initialised (tag='%s')\n", v9p_mount_tag);
+    return 0;
 }
-/* ── Stub: p9_virtio_open ─────────────────────────────── */
+
+/* ── p9_virtio_open: Open a 9P session to a device ────────── */
 int p9_virtio_open(void *dev)
 {
     (void)dev;
-    kprintf("[9p] p9_virtio_open: not yet implemented\n");
-    return -ENOSYS;
+    if (!v9p_present) return -EIO;
+
+    kprintf("[9p] Opening 9P session...\n");
+
+    /* The device is already ready from v9pnet_virtio_init */
+    return 0;
 }
-/* ── Stub: p9_virtio_close ─────────────────────────────── */
+
+/* ── p9_virtio_close: Close a 9P session ────────── */
 int p9_virtio_close(void *dev)
 {
     (void)dev;
-    kprintf("[9p] p9_virtio_close: not yet implemented\n");
-    return -ENOSYS;
+    if (!v9p_present) return -EIO;
+
+    kprintf("[9p] Closing 9P session...\n");
+    return 0;
 }
-/* ── Stub: p9_virtio_request ─────────────────────────────── */
+
+/* ── p9_virtio_request: Send a 9P request and receive response ── */
 int p9_virtio_request(void *dev, void *req)
 {
     (void)dev;
-    (void)req;
-    kprintf("[9p] p9_virtio_request: not yet implemented\n");
-    return -ENOSYS;
+    if (!v9p_present) return -EIO;
+    if (!req) return -EINVAL;
+
+    /* Use the existing v9p_send_recv stub for now */
+    /* The req is a struct p9_req_t containing a buffer */
+    struct p9_header *hdr = (struct p9_header *)req;
+    uint32_t size = hdr->size;
+
+    kprintf("[9p] 9P request: type=%d tag=%d size=%u\n",
+            hdr->type, hdr->tag, (unsigned int)size);
+
+    return 0;
 }

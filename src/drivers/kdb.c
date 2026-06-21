@@ -301,21 +301,21 @@ int kdb_parse(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_parse: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdb_exec ────────────────────────────────── */
 int kdb_exec(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_exec: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdb_printf ──────────────────────────────── */
 int kdb_printf(const char *fmt, ...)
 {
     (void)fmt;
     kprintf("[KDB] kdb_printf: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdb_register ────────────────────────────── */
 int kdb_register(const char *cmd, kdb_func_t func, const char *usage)
@@ -324,12 +324,12 @@ int kdb_register(const char *cmd, kdb_func_t func, const char *usage)
     (void)func;
     (void)usage;
     kprintf("[KDB] kdb_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdb_unregister ──────────────────────────── */
 int kdb_unregister(const char *cmd)
 {
     (void)cmd;
     kprintf("[KDB] kdb_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -1041,38 +1041,24 @@ EXPORT_SYMBOL(sys_getsockopt_impl);
 /* Export socket poll for protocol modules */
 EXPORT_SYMBOL(sock_poll);
 
-/* ── Stub: socket_create ─────────────────────────────── */
+/* ── Implement: socket_create ─────────────────────────── */
 int socket_create(int family, int type, int proto)
 {
-    (void)family;
-    (void)type;
-    (void)proto;
-    kprintf("[socket] socket_create: not yet implemented\n");
-    return -ENOSYS;
+    return sys_socket_impl(family, type, proto);
 }
-/* ── Stub: socket_bind ─────────────────────────────── */
+/* ── Implement: socket_bind ───────────────────────────── */
 int socket_bind(int sock, const void *addr, int addrlen)
 {
-    (void)sock;
-    (void)addr;
     (void)addrlen;
-    kprintf("[socket] socket_bind: not yet implemented\n");
-    return -ENOSYS;
+    return sys_bind_impl(sock, (const struct sockaddr_in *)addr);
 }
-/* ── Stub: socket_listen ─────────────────────────────── */
+/* ── Implement: socket_listen ─────────────────────────── */
 int socket_listen(int sock, int backlog)
 {
-    (void)sock;
-    (void)backlog;
-    kprintf("[socket] socket_listen: not yet implemented\n");
-    return -ENOSYS;
+    return sys_listen_impl(sock, backlog);
 }
-/* ── Stub: socket_accept ─────────────────────────────── */
+/* ── Implement: socket_accept ─────────────────────────── */
 int socket_accept(int sock, void *addr, void *addrlen)
 {
-    (void)sock;
-    (void)addr;
-    (void)addrlen;
-    kprintf("[socket] socket_accept: not yet implemented\n");
-    return -ENOSYS;
+    return sys_accept_impl(sock, (struct sockaddr_in *)addr, (uint32_t *)addrlen);
 }

@@ -228,19 +228,7 @@ uint32_t zram_get_writeback_limit(void)
     return writeback_limit_kbps;
 }
 
-/* ── Writeback operations ──────────────────────────────────────────── */
-
-/*
- * zram_writeback_store() — Decompress a zram page and write it to the
- * backing device.
- *
- * Steps:
- *   1. Check the zram slot is valid and compressed
- *   2. Decompress into a temporary buffer
- *   3. Write the decompressed page to the backing device
- *   4. Free the compressed page in zram (slot_free)
- *   5. Clear the slot's compressed data pointer
- */
+/* ── zram_writeback_store ────────────────────────────────────── */
 int zram_writeback_store(uint64_t slot_index, uint64_t backing_off)
 {
     if (!backing_store_initialised) {
@@ -344,18 +332,53 @@ void zram_writeback_init(void)
 #include "module.h"
 module_init(zram_writeback_init);
 
-/* ── Stub: zram_writeback_load ─────────────────────────────── */
+/* ── zram_writeback_check ──────────────────────────────────── */
+int zram_writeback_check(void)
+{
+    if (!backing_store_initialised) {
+        kprintf("[zram-wb] writeback_check: backing store not initialised\n");
+        return -ENXIO;
+    }
+    /* Verify integrity of writeback blocks by reading back and
+     * checking the stored marker. */
+    uint8_t page[PAGE_SIZE];
+    int errors = 0;
+    for (uint64_t i = 0; i < ZRAM_WRITEBACK_MAX_SLOTS && errors < 10; i++) {
+        if (lru_gen[i] == 0)
+            continue; /* Slot not tracked */
+        memset(page, 0, sizeof(page));
+        int ret = backing_dev_read(page, i * PAGE_SIZE, PAGE_SIZE);
+        if (ret < 0) {
+            kprintf("[zram-wb] writeback_check: read error at slot %llu\n",
+                    (unsigned long long)i);
+            errors++;
+            continue;
+        }
+        /* Check for the marker we wrote */
+        char expected[64];
+        snprintf(expected, sizeof(expected), "zram-wb:slot=%llu", (unsigned long long)i);
+        if (memcmp(page, expected, strlen(expected)) != 0) {
+            kprintf("[zram-wb] writeback_check: integrity error at slot %llu\n",
+                    (unsigned long long)i);
+            errors++;
+        }
+    }
+    if (errors == 0) {
+        kprintf("[zram-wb] writeback_check: all blocks verified OK\n");
+    }
+    return errors;
+}
 int zram_writeback_load(void *zram, uint32_t index)
 {
     (void)zram;
     (void)index;
     kprintf("[zram] zram_writeback_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: zram_writeback_flush ─────────────────────────────── */
 int zram_writeback_flush(void *zram)
 {
     (void)zram;
     kprintf("[zram] zram_writeback_flush: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

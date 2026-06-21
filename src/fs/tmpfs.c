@@ -520,25 +520,27 @@ void tmpfs_init(void) {
 #include "module.h"
 module_init(tmpfs_init);
 
-/* ── Stub: tmpfs_umount ─────────────────────────────── */
+/* ── tmpfs_umount ──────────────────────────────────────── */
 int tmpfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[tmpfs] tmpfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    return tmpfs_unmount();
 }
-/* ── Stub: tmpfs_lookup ─────────────────────────────── */
+/* ── tmpfs_lookup ──────────────────────────────────────── */
 int tmpfs_lookup(const char *name, void *parent)
 {
-    (void)name;
-    (void)parent;
-    kprintf("[tmpfs] tmpfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    int ino = (int)(uintptr_t)parent;
+    for (int i = 0; i < TMPFS_MAX_INODES; i++) {
+        if (inodes[i].in_use && inodes[i].parent == (uint32_t)ino &&
+            strncmp(inodes[i].name, name, sizeof(inodes[i].name)) == 0) {
+            return i;
+        }
+    }
+    return -ENOENT;
 }
-/* ── Stub: tmpfs_sync ─────────────────────────────── */
+/* ── tmpfs_sync ─────────────────────────────────────── */
 int tmpfs_sync(void *file)
 {
     (void)file;
-    kprintf("[tmpfs] tmpfs_sync: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

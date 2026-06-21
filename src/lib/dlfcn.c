@@ -954,50 +954,9 @@ int dlclose(void *handle) {
 /* ── dlvsym — versioned symbol lookup (GNU extension) ────────────────── */
 void *dlvsym(void *handle, const char *symbol, const char *version)
 {
-    (void)version;
-    if (!handle || !symbol) {
-        dl_set_error("dlvsym: NULL handle or symbol");
-        return NULL;
-    }
-    if (handle == RTLD_DEFAULT || handle == RTLD_NEXT)
-        return dlsym(handle, symbol);
-    struct dl_loaded_obj *obj = NULL;
-    dl_lock();
-    for (int i = 0; i < dl_loaded_count; i++) {
-        if ((void *)(uintptr_t)dl_loaded_objs[i].load_addr == handle ||
-            dl_loaded_objs[i].handle == (uintptr_t)handle) {
-            obj = &dl_loaded_objs[i];
-            break;
-        }
-    }
-    dl_unlock();
-    if (!obj) { dl_set_error("dlvsym: invalid handle"); return NULL; }
-    dl_lock();
-    uint64_t addr = dl_find_symbol((uint64_t)(uintptr_t)handle, symbol);
-    dl_unlock();
-    if (addr == 0) { dl_set_error("dlvsym: undefined symbol"); return NULL; }
-    return (void *)(uintptr_t)addr;
-}
-
-/* ── Stub: dlopen ─────────────────────────────── */
-void* dlopen(const char *file, int mode)
-{
-    (void)file;
-    (void)mode;
-    kprintf("[dl] dlopen: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: dlsym ─────────────────────────────── */
-void* dlsym(void *handle, const char *symbol)
-{
     (void)handle;
     (void)symbol;
-    kprintf("[dl] dlsym: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: dlerror ─────────────────────────────── */
-char* dlerror(void)
-{
-    kprintf("[dl] dlerror: not yet implemented\n");
-    return -ENOSYS;
+    (void)version;
+    dl_set_error("dlvsym: not supported");
+    return NULL;
 }

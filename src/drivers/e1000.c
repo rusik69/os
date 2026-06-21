@@ -858,26 +858,77 @@ MODULE_ALIAS("pci:v00008086d0000100Esv*sd*bc*sc*i*");
 MODULE_ALIAS("pci:v00008086d000010D3sv*sd*bc*sc*i*");
 #endif /* MODULE */
 
-/* ── Stub: e1000_open ─────────────────────────────── */
+/* ── e1000_open: Enable RX/TX, set up interrupts ──────────── */
 int e1000_open(void *dev)
 {
     (void)dev;
-    kprintf("[e1000] e1000_open: not yet implemented\n");
-    return -ENOSYS;
+    if (!nic_present) return -EIO;
+
+    kprintf("[e1000] Opening NIC...\n");
+
+    /* Enable receiver */
+    uint32_t rctl = e1000_read(REG_RCTL);
+    rctl |= RCTL_EN | RCTL_BAM | RCTL_SECRC;
+    rctl &= ~(RCTL_UPE | RCTL_MPE); /* no promisc */
+    e1000_write(REG_RCTL, rctl);
+
+    /* Enable transmitter */
+    uint32_t tctl = e1000_read(REG_TCTL);
+    tctl |= TCTL_EN | TCTL_PSP;
+    e1000_write(REG_TCTL, tctl);
+
+    /* Enable interrupts: TXQE, RXQ0, LINK */
+    e1000_write(REG_IMS, (1u << 6) | (1u << 7) | (1u << 2));
+    e1000_read(REG_ICR); /* clear pending */
+
+    kprintf("[e1000] NIC opened\n");
+    return 0;
 }
-/* ── Stub: e1000_stop ─────────────────────────────── */
+
+/* ── e1000_stop: Disable RX/TX, mask interrupts ──────────── */
 int e1000_stop(void *dev)
 {
     (void)dev;
-    kprintf("[e1000] e1000_stop: not yet implemented\n");
-    return -ENOSYS;
+    if (!nic_present) return -EIO;
+
+    kprintf("[e1000] Stopping NIC...\n");
+
+    /* Mask all interrupts */
+    e1000_write(REG_IMC, 0xFFFFFFFF);
+
+    /* Disable TX and RX */
+    e1000_write(REG_TCTL, 0);
+    e1000_write(REG_RCTL, 0);
+
+    kprintf("[e1000] NIC stopped\n");
+    return 0;
 }
-/* ── Stub: e1000_set_multicast ─────────────────────────────── */
+
+/* ── e1000_set_multicast: Update multicast filters ──────────── */
 int e1000_set_multicast(void *dev, void *addr, int count)
 {
     (void)dev;
+    if (!nic_present) return -EIO;
+
+    if (count == 0) {
+        /* Disable multicast promiscuous, clear MTA */
+        uint32_t rctl = e1000_read(REG_RCTL);
+        rctl &= ~RCTL_MPE;
+        e1000_write(REG_RCTL, rctl);
+        for (int i = 0; i < 128; i++)
+            e1000_write(REG_MTA + i * 4, 0);
+        return 0;
+    }
+
+    /* Enable multicast promiscuous for simplicity */
+    uint32_t rctl = e1000_read(REG_RCTL);
+    rctl |= RCTL_MPE;
+    e1000_write(REG_RCTL, rctl);
+
+    /* If we had a hash table, we'd program MTA entries here */
     (void)addr;
     (void)count;
-    kprintf("[e1000] e1000_set_multicast: not yet implemented\n");
-    return -ENOSYS;
+
+    kprintf("[e1000] Multicast filter set: %d address(es)\n", count);
+    return 0;
 }

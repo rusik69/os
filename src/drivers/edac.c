@@ -365,5 +365,5 @@ int edac_report_error(void *dev, int type, const char *msg)
     (void)type;
     (void)msg;
     kprintf("[edac] edac_report_error: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

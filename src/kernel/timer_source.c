@@ -111,15 +111,21 @@ void timer_source_init(void)
     kprintf("[OK] timer_source: Clocksource/clockevent abstraction initialised\n");
 }
 
-/* ── Stub: timer_source_read ─────────────────────────────── */
+/* ── timer_source_read: Read current clocksource counter ──────────────── */
 uint64_t timer_source_read(void)
 {
-    kprintf("[timer] timer_source_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!current_clocksource || !current_clocksource->read) {
+        kprintf("[timer] timer_source_read: no clocksource available\n");
+        return 0;
+    }
+    return current_clocksource->read();
 }
-/* ── Stub: timer_source_get_freq ─────────────────────────────── */
+/* ── timer_source_get_freq: Get current clocksource frequency in Hz ──── */
 uint64_t timer_source_get_freq(void)
 {
-    kprintf("[timer] timer_source_get_freq: not yet implemented\n");
-    return -ENOSYS;
+    if (!current_clocksource) {
+        kprintf("[timer] timer_source_get_freq: no clocksource available\n");
+        return 0;
+    }
+    return current_clocksource->freq_hz;
 }

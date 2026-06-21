@@ -174,7 +174,7 @@ int sched_core_task_online(struct process *task, int cpu)
     (void)task;
     (void)cpu;
     kprintf("[SchedCore] sched_core_task_online not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: sched_core_task_offline ─────────────────────────────────────── */
@@ -183,7 +183,7 @@ int sched_core_task_offline(struct process *task, int cpu)
     (void)task;
     (void)cpu;
     kprintf("[SchedCore] sched_core_task_offline not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: sched_core_free ─────────────────────────────────────────────── */

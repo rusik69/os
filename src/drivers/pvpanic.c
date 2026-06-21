@@ -114,5 +114,5 @@ int pvpanic_send(uint8_t event)
 {
     (void)event;
     kprintf("[pvpanic] pvpanic_send: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

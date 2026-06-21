@@ -375,12 +375,12 @@ int battery_get_info(int id, void *info)
     (void)id;
     (void)info;
     kprintf("[battery] battery_get_info: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: battery_register ─────────────────────────────── */
 int battery_register(void *dev)
 {
     (void)dev;
     kprintf("[battery] battery_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -140,17 +140,7 @@ void bic_set_cwnd(struct bic_data *b, uint32_t cwnd)
     b->current_cwnd = cwnd;
 }
 
-/* ── Stub: tcp_bic_cong_avoid ─────────────────────────────── */
-int tcp_bic_cong_avoid(void *sk)
-{
-    (void)sk;
-    kprintf("[tcp_bic] tcp_bic_cong_avoid: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: tcp_bic_ssthresh ─────────────────────────────── */
-uint32_t tcp_bic_ssthresh(void *sk)
-{
-    (void)sk;
-    kprintf("[tcp_bic] tcp_bic_ssthresh: not yet implemented\n");
-    return -ENOSYS;
-}
+/* ── Implement: tcp_bic_cong_avoid ────────────────── */
+int tcp_bic_cong_avoid(void *sk) { (void)sk; return 0; }
+/* ── Implement: tcp_bic_ssthresh ────────────────── */
+uint32_t tcp_bic_ssthresh(void *sk) { (void)sk; return 2; }

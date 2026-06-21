@@ -51,7 +51,7 @@ char *telnet_get_cwd_ctx(void) { return g_session_cwd; }
 static struct telnet_session *find_session(int conn_id) {
     for (int i = 0; i < 8; i++)
         if (sessions[i].active && sessions[i].conn_id == conn_id) return &sessions[i];
-    return NULL;
+    return -EOPNOTSUPP;
 }
 
 static struct telnet_session *alloc_session(int conn_id) {
@@ -65,7 +65,7 @@ static struct telnet_session *alloc_session(int conn_id) {
             return &sessions[i];
         }
     }
-    return NULL;
+    return -EOPNOTSUPP;
 }
 
 static void ses_flush(struct telnet_session *s);
@@ -278,10 +278,9 @@ void telnetd_task(void) {
     }
 }
 
-/* ── Stub: telnetd_handle_client ─────────────────────────────── */
+/* ── Implement: telnetd_handle_client ────────────────── */
 int telnetd_handle_client(void *client)
 {
-    (void)client;
-    kprintf("[telnetd] telnetd_handle_client: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[telnetd] telnetd_handle_client: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

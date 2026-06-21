@@ -16,26 +16,41 @@ int bitmap_find_next_zero_area(unsigned long *map, int size, int start, int nr) 
     return -1;
 }
 
-/* ── Stub: bitmap_alloc ─────────────────────────────── */
+/* ── bitmap_alloc ─────────────────────────────── */
 void* bitmap_alloc(int nbits)
 {
-    (void)nbits;
-    kprintf("[bitmap] bitmap_alloc: not yet implemented\n");
-    return -ENOSYS;
+    size_t bytes = (nbits + 7) / 8;
+    void *p = kmalloc(bytes);
+    if (p) memset(p, 0, bytes);
+    return p;
 }
-/* ── Stub: bitmap_free ─────────────────────────────── */
+/* ── bitmap_free ─────────────────────────────── */
 int bitmap_free(void *bitmap)
 {
-    (void)bitmap;
-    kprintf("[bitmap] bitmap_free: not yet implemented\n");
-    return -ENOSYS;
+    if (bitmap) kfree(bitmap);
+    return 0;
 }
-/* ── Stub: bitmap_parselist ─────────────────────────────── */
+/* ── bitmap_parselist ─────────────────────────────── */
 int bitmap_parselist(const char *buf, void *bitmap, int nbits)
 {
-    (void)buf;
-    (void)bitmap;
-    (void)nbits;
-    kprintf("[bitmap] bitmap_parselist: not yet implemented\n");
-    return -ENOSYS;
+    unsigned long *map = (unsigned long *)bitmap;
+    bitmap_zero(map, nbits);
+    if (!buf || !*buf) return 0;
+    const char *p = buf;
+    while (*p) {
+        if (*p == ' ' || *p == ',') { p++; continue; }
+        int start = 0, end = 0;
+        while (*p >= '0' && *p <= '9') { start = start * 10 + (*p - '0'); p++; }
+        if (*p == '-') {
+            p++;
+            while (*p >= '0' && *p <= '9') { end = end * 10 + (*p - '0'); p++; }
+        } else {
+            end = start;
+        }
+        if (start >= nbits) start = nbits - 1;
+        if (end >= nbits) end = nbits - 1;
+        for (int i = start; i <= end; i++)
+            map[i / (8*sizeof(long))] |= (1UL << (i % (8*sizeof(long))));
+    }
+    return 0;
 }

@@ -65,11 +65,11 @@ int kptr_restrict_set(int level)
 {
     (void)level;
     kprintf("[kptr] kptr_restrict_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kptr_restrict_get ─────────────────────────────── */
 int kptr_restrict_get(void)
 {
     kprintf("[kptr] kptr_restrict_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

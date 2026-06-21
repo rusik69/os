@@ -210,7 +210,7 @@ int compress_deflate(const uint8_t *input, int input_len,
 {
     (void)input; (void)input_len; (void)output; (void)output_len;
     kprintf("[COMPRESS] compress_deflate: not yet implemented\n");
-    return -ENOSYS;
+    return -EIO;
 }
 
 /* ── Stub: compress_inflate ────────────────────────────────────────── */
@@ -219,14 +219,14 @@ int compress_inflate(const uint8_t *input, int input_len,
 {
     (void)input; (void)input_len; (void)output; (void)output_len;
     kprintf("[COMPRESS] compress_inflate: not yet implemented\n");
-    return -ENOSYS;
+    return -EIO;
 }
 
 /* ── Stub: compress_init ───────────────────────────────────────────── */
 int compress_init(void)
 {
     kprintf("[COMPRESS] compress_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: compress_exit ───────────────────────────────────────────── */
@@ -243,7 +243,7 @@ int compress_lz4(const void *src, size_t src_len, void *dst, size_t *dst_len)
     (void)dst;
     (void)dst_len;
     kprintf("[compress] compress_lz4: not yet implemented\n");
-    return -ENOSYS;
+    return -EIO;
 }
 /* ── Stub: compress_zlib ─────────────────────────────── */
 int compress_zlib(const void *src, size_t src_len, void *dst, size_t *dst_len)
@@ -253,5 +253,5 @@ int compress_zlib(const void *src, size_t src_len, void *dst, size_t *dst_len)
     (void)dst;
     (void)dst_len;
     kprintf("[compress] compress_zlib: not yet implemented\n");
-    return -ENOSYS;
+    return -EIO;
 }

@@ -22,26 +22,47 @@ void uuid_to_str(const uint8_t uuid[16], char out[37]) {
     out[pos] = '\0';
 }
 
-/* ── Stub: uuid_generate ─────────────────────────────── */
+/* ── uuid_generate ─────────────────────────────── */
 int uuid_generate(void *uuid)
 {
-    (void)uuid;
-    kprintf("[uuid] uuid_generate: not yet implemented\n");
-    return -ENOSYS;
+    if (!uuid)
+        return -1;
+    uuid_gen((uint8_t *)uuid);
+    return 0;
 }
-/* ── Stub: uuid_parse ─────────────────────────────── */
+/* ── uuid_parse ─────────────────────────────── */
 int uuid_parse(const char *str, void *uuid)
 {
-    (void)str;
-    (void)uuid;
-    kprintf("[uuid] uuid_parse: not yet implemented\n");
-    return -ENOSYS;
+    if (!str || !uuid)
+        return -1;
+    uint8_t *u = (uint8_t *)uuid;
+    int idx = 0;
+    for (int i = 0; i < 36 && idx < 16; i++) {
+        char c = str[i];
+        if (c == '-')
+            continue;
+        uint8_t nibble = 0;
+        if (c >= '0' && c <= '9')
+            nibble = (uint8_t)(c - '0');
+        else if (c >= 'a' && c <= 'f')
+            nibble = (uint8_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F')
+            nibble = (uint8_t)(c - 'A' + 10);
+        else
+            return -1;
+        if (idx & 1)
+            u[idx >> 1] |= nibble;
+        else
+            u[idx >> 1] = nibble << 4;
+        idx++;
+    }
+    return (idx == 16) ? 0 : -1;
 }
-/* ── Stub: uuid_unparse ─────────────────────────────── */
+/* ── uuid_unparse ─────────────────────────────── */
 int uuid_unparse(const void *uuid, char *str)
 {
-    (void)uuid;
-    (void)str;
-    kprintf("[uuid] uuid_unparse: not yet implemented\n");
-    return -ENOSYS;
+    if (!uuid || !str)
+        return -1;
+    uuid_to_str((const uint8_t *)uuid, str);
+    return 0;
 }

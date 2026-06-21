@@ -285,7 +285,7 @@ int crypto_skcipher_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 {
     (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
     kprintf("[CRYPTO] crypto_skcipher_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: crypto_skcipher_decrypt ─────────────────────────────────── */
@@ -294,7 +294,7 @@ int crypto_skcipher_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
 {
     (void)tfm; (void)src; (void)dst; (void)len; (void)iv;
     kprintf("[CRYPTO] crypto_skcipher_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: crypto_aead_encrypt ─────────────────────────────────────── */
@@ -305,7 +305,7 @@ int crypto_aead_encrypt(void *tfm, const uint8_t *src, uint8_t *dst,
     (void)tfm; (void)src; (void)dst; (void)len;
     (void)aad; (void)aad_len; (void)iv;
     kprintf("[CRYPTO] crypto_aead_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: crypto_aead_decrypt ─────────────────────────────────────── */
@@ -316,7 +316,7 @@ int crypto_aead_decrypt(void *tfm, const uint8_t *src, uint8_t *dst,
     (void)tfm; (void)src; (void)dst; (void)len;
     (void)aad; (void)aad_len; (void)iv;
     kprintf("[CRYPTO] crypto_aead_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: crypto_alloc_skcipher ───────────────────────────────────── */

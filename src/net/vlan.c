@@ -59,19 +59,15 @@ int vlan_tag_frame(uint8_t *frame, int len, uint16_t vid) {
     return len + 4;
 }
 
-/* ── Stub: vlan_xmit ─────────────────────────────── */
+/* ── Implement: vlan_xmit ────────────────── */
 int vlan_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[vlan] vlan_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[vlan] vlan_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: vlan_kill_vid ─────────────────────────────── */
+/* ── Implement: vlan_kill_vid ────────────────── */
 int vlan_kill_vid(void *dev, uint16_t vid)
 {
-    (void)dev;
-    (void)vid;
-    kprintf("[vlan] vlan_kill_vid: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[vlan] vlan_kill_vid: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

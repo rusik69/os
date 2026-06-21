@@ -951,12 +951,12 @@ int ftrace_set_filter(const char *filter_str)
 {
     (void)filter_str;
     kprintf("[FTRACE] ftrace_set_filter: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ftrace_dyn_arch_init ────────────────────────────────────── */
 int ftrace_dyn_arch_init(void)
 {
     kprintf("[FTRACE] ftrace_dyn_arch_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

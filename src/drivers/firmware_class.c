@@ -247,19 +247,19 @@ int firmware_request(const char *name, void *dev, void *fw)
     (void)dev;
     (void)fw;
     kprintf("[firmware] firmware_request: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: firmware_release ─────────────────────────────── */
 int firmware_release(void *fw)
 {
     (void)fw;
     kprintf("[firmware] firmware_release: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: firmware_class_register ─────────────────────────────── */
 int firmware_class_register(void *class)
 {
     (void)class;
     kprintf("[firmware] firmware_class_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

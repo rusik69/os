@@ -131,18 +131,29 @@ void i6300esb_init(void)
     kprintf("[OK] Intel 6300ESB Watchdog Timer\n");
 }
 
-/* ── Stub: i6300esb_keepalive ─────────────────────────────── */
+/* ── Keepalive (pet) the watchdog ───────────────────── */
 int i6300esb_keepalive(void *dev)
 {
     (void)dev;
-    kprintf("[i6300esb] i6300esb_keepalive: not yet implemented\n");
-    return -ENOSYS;
+    if (!i6300esb.running)
+        return -EINVAL;
+
+    /* Write to reload register pets the watchdog */
+    outw(i6300esb.io_base + ESB_WDT_RELOAD, 0x5743); /* "WC" magic value */
+    i6300esb.last_pet = timer_get_ticks();
+    return 0;
 }
-/* ── Stub: i6300esb_get_timeleft ─────────────────────────────── */
+
+/* ── Get time left before watchdog reset ────────────── */
 int i6300esb_get_timeleft(void *dev, int *timeleft)
 {
     (void)dev;
-    (void)timeleft;
-    kprintf("[i6300esb] i6300esb_get_timeleft: not yet implemented\n");
-    return -ENOSYS;
+    if (!i6300esb.running || !timeleft)
+        return -EINVAL;
+
+    /* Read the timer value register */
+    uint16_t timer_val = inw(i6300esb.io_base + ESB_WDT_TIMEOUT);
+    /* Approximate seconds remaining */
+    *timeleft = (int)timer_val / 2;
+    return 0;
 }

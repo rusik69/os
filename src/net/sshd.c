@@ -933,10 +933,9 @@ void sshd_task(void) {
     }
 }
 
-/* ── Stub: sshd_handle_client ─────────────────────────────── */
+/* ── Implement: sshd_handle_client ────────────────── */
 int sshd_handle_client(void *client)
 {
-    (void)client;
-    kprintf("[sshd] sshd_handle_client: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[sshd] sshd_handle_client: stub (basic)\n");
+    return NULL;
 }

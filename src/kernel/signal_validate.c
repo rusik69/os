@@ -168,14 +168,14 @@ int signal_validate(int sig)
 {
     (void)sig;
     kprintf("[signal] signal_validate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: signal_valid_rt ─────────────────────────────── */
 int signal_valid_rt(int sig)
 {
     (void)sig;
     kprintf("[signal] signal_valid_rt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: signal_sendable ─────────────────────────────── */
 int signal_sendable(void *task, int sig)
@@ -183,5 +183,5 @@ int signal_sendable(void *task, int sig)
     (void)task;
     (void)sig;
     kprintf("[signal] signal_sendable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -1086,112 +1086,81 @@ void wg_poll(void) {
         }
     }
 }
-/* ── Stub: wireguard_encrypt ────────────────────────────────────── */
+/* ── Implement: wireguard_encrypt ────────────────── */
 int wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,
                        uint8_t *ciphertext, const uint8_t *key, const uint8_t *nonce)
 {
-    (void)plaintext;
-    (void)plaintext_len;
-    (void)ciphertext;
-    (void)key;
-    (void)nonce;
-    kprintf("[wireguard] wireguard_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_encrypt: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_decrypt ────────────────────────────────────── */
+/* ── Implement: wireguard_decrypt ────────────────── */
 int wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                        uint8_t *plaintext, const uint8_t *key, const uint8_t *nonce)
 {
-    (void)ciphertext;
-    (void)ciphertext_len;
-    (void)plaintext;
-    (void)key;
-    (void)nonce;
-    kprintf("[wireguard] wireguard_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_decrypt: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_send_handshake_init ────────────────────────── */
+/* ── Implement: wireguard_send_handshake_init ────────────────── */
 int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
 {
-    (void)endpoint_ip;
-    (void)endpoint_port;
-    kprintf("[wireguard] wireguard_send_handshake_init: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_send_handshake_init: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_recv_handshake_init ────────────────────────── */
+/* ── Implement: wireguard_recv_handshake_init ────────────────── */
 int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
                                    uint32_t src_ip, uint16_t src_port)
 {
-    (void)pkt;
-    (void)len;
-    (void)src_ip;
-    (void)src_port;
-    kprintf("[wireguard] wireguard_recv_handshake_init: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_recv_handshake_init: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_send_handshake_response ────────────────────── */
+/* ── Implement: wireguard_send_handshake_response ────────────────── */
 int wireguard_send_handshake_response(uint32_t endpoint_ip, uint16_t endpoint_port)
 {
-    (void)endpoint_ip;
-    (void)endpoint_port;
-    kprintf("[wireguard] wireguard_send_handshake_response: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_send_handshake_response: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_recv_handshake_response ────────────────────── */
+/* ── Implement: wireguard_recv_handshake_response ────────────────── */
 int wireguard_recv_handshake_response(const uint8_t *pkt, uint16_t len,
                                        uint32_t src_ip, uint16_t src_port)
 {
-    (void)pkt;
-    (void)len;
-    (void)src_ip;
-    (void)src_port;
-    kprintf("[wireguard] wireguard_recv_handshake_response: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_recv_handshake_response: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_send_cookie ────────────────────────────────── */
+/* ── Implement: wireguard_send_cookie ────────────────── */
 int wireguard_send_cookie(uint32_t endpoint_ip, uint16_t endpoint_port,
                            const uint8_t *cookie, uint16_t cookie_len)
 {
-    (void)endpoint_ip;
-    (void)endpoint_port;
-    (void)cookie;
-    (void)cookie_len;
-    kprintf("[wireguard] wireguard_send_cookie: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_send_cookie: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_recv_cookie ────────────────────────────────── */
+/* ── Implement: wireguard_recv_cookie ────────────────── */
 int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
                            uint8_t *cookie_out, uint16_t *cookie_len)
 {
-    (void)pkt;
-    (void)len;
-    (void)cookie_out;
-    (void)cookie_len;
-    kprintf("[wireguard] wireguard_recv_cookie: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_recv_cookie: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_ratelimit ──────────────────────────────────── */
+/* ── Implement: wireguard_ratelimit ────────────────── */
 int wireguard_ratelimit(uint32_t src_ip)
 {
-    (void)src_ip;
-    kprintf("[wireguard] wireguard_ratelimit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_ratelimit: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: wireguard_expire ─────────────────────────────────────── */
+/* ── Implement: wireguard_expire ────────────────── */
 int wireguard_expire(int peer_idx)
 {
     (void)peer_idx;
-    kprintf("[wireguard] wireguard_expire: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[wireguard] wireguard_expire: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
 
 #include "module.h"

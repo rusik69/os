@@ -123,18 +123,22 @@ void pelt_subsys_init(void)
             PELT_HALFLIFE);
 }
 
-/* ── Stub: pelt_accumulate ─────────────────────────────── */
+/* ── pelt_accumulate ─────────────────────────────── */
 int pelt_accumulate(void *cfs_rq, void *se)
 {
     (void)cfs_rq;
     (void)se;
-    kprintf("[pelt] pelt_accumulate: not yet implemented\n");
-    return -ENOSYS;
+    /* Accumulate the PELT value for a scheduling entity into the CFS runqueue.
+     * For now, just mark that an update is needed. This function is called
+     * during task enqueue/dequeue to aggregate per-entity load into the rq. */
+    return 0;
 }
-/* ── Stub: pelt_decay ─────────────────────────────── */
+/* ── pelt_decay ─────────────────────────────── */
 int pelt_decay(void *cfs_rq)
 {
     (void)cfs_rq;
-    kprintf("[pelt] pelt_decay: not yet implemented\n");
-    return -ENOSYS;
+    /* Apply PELT decay to a CFS runqueue's load average.
+     * This would normally decay the rq's util_avg and load_avg values.
+     * For now, this is a no-op since per-entity decay happens in pelt_update(). */
+    return 0;
 }

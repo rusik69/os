@@ -454,92 +454,161 @@ int pthread_cond_broadcast(pthread_cond_t *cond)
     return 0;
 }
 
-/* ── Stub: pthread_barrier_init ─────────────────────────────── */
+/* ── pthread_barrier_init ─────────────────────────────── */
 int pthread_barrier_init(void *barrier, const void *attr, unsigned int count)
 {
-    (void)barrier;
+    if (!barrier || count == 0) return EINVAL;
     (void)attr;
-    (void)count;
-    kprintf("[pthread] pthread_barrier_init: not yet implemented\n");
-    return -ENOSYS;
+    /* Simple barrier struct: [count, remaining, futex_word] */
+    volatile int *b = (volatile int *)barrier;
+    b[0] = (int)count;    /* total count */
+    b[1] = (int)count;    /* remaining */
+    b[2] = 0;             /* futex word / generation */
+    return 0;
 }
-/* ── Stub: pthread_barrier_wait ─────────────────────────────── */
+/* ── pthread_barrier_wait ─────────────────────────────── */
 int pthread_barrier_wait(void *barrier)
 {
-    (void)barrier;
-    kprintf("[pthread] pthread_barrier_wait: not yet implemented\n");
-    return -ENOSYS;
+    if (!barrier) return EINVAL;
+    volatile int *b = (volatile int *)barrier;
+    int count = b[0];
+
+    int rem = __sync_fetch_and_sub(&b[1], 1);
+    if (rem == 1) {
+        /* Last thread to arrive — reset and wake everyone */
+        b[1] = count;
+        __sync_fetch_and_add(&b[2], 1);
+        futex((int *)&b[2], FUTEX_WAKE, 2147483647, NULL, NULL);
+        return 1; /* PTHREAD_BARRIER_SERIAL_THREAD */
+    }
+    /* Wait for generation change */
+    int gen = b[2];
+    do {
+        futex((int *)&b[2], FUTEX_WAIT, gen, NULL, NULL);
+    } while (b[2] == gen);
+
+    return 0;
 }
-/* ── Stub: pthread_barrier_destroy ─────────────────────────────── */
+/* ── pthread_barrier_destroy ─────────────────────────────── */
 int pthread_barrier_destroy(void *barrier)
 {
-    (void)barrier;
-    kprintf("[pthread] pthread_barrier_destroy: not yet implemented\n");
-    return -ENOSYS;
+    if (!barrier) return EINVAL;
+    volatile int *b = (volatile int *)barrier;
+    if (b[1] != b[0])
+        return EBUSY;
+    return 0;
 }
-/* ── Stub: pthread_rwlock_init ─────────────────────────────── */
+/* ── pthread_rwlock_init ─────────────────────────────── */
 int pthread_rwlock_init(void *rwlock, const void *attr)
 {
-    (void)rwlock;
+    if (!rwlock) return EINVAL;
     (void)attr;
-    kprintf("[pthread] pthread_rwlock_init: not yet implemented\n");
-    return -ENOSYS;
+    volatile int *r = (volatile int *)rwlock;
+    r[0] = 0; /* readers count */
+    r[1] = 0; /* writer flag */
+    return 0;
 }
-/* ── Stub: pthread_rwlock_destroy ─────────────────────────────── */
+/* ── pthread_rwlock_destroy ─────────────────────────────── */
 int pthread_rwlock_destroy(void *rwlock)
 {
-    (void)rwlock;
-    kprintf("[pthread] pthread_rwlock_destroy: not yet implemented\n");
-    return -ENOSYS;
+    if (!rwlock) return EINVAL;
+    return 0;
 }
-/* ── Stub: pthread_rwlock_rdlock ─────────────────────────────── */
+/* ── pthread_rwlock_rdlock ─────────────────────────────── */
 int pthread_rwlock_rdlock(void *rwlock)
 {
-    (void)rwlock;
-    kprintf("[pthread] pthread_rwlock_rdlock: not yet implemented\n");
-    return -ENOSYS;
+    if (!rwlock) return EINVAL;
+    volatile int *r = (volatile int *)rwlock;
+    while (1) {
+        /* Wait until no writer */
+        while (r[1])
+            futex((int *)&r[1], FUTEX_WAIT, 1, NULL, NULL);
+        __sync_fetch_and_add(&r[0], 1);
+        if (!r[1])
+            return 0;
+        /* Writer started before we incremented — back off */
+        __sync_fetch_and_sub(&r[0], 1);
+    }
 }
-/* ── Stub: pthread_rwlock_wrlock ─────────────────────────────── */
+/* ── pthread_rwlock_wrlock ─────────────────────────────── */
 int pthread_rwlock_wrlock(void *rwlock)
 {
-    (void)rwlock;
-    kprintf("[pthread] pthread_rwlock_wrlock: not yet implemented\n");
-    return -ENOSYS;
+    if (!rwlock) return EINVAL;
+    volatile int *r = (volatile int *)rwlock;
+    while (__sync_lock_test_and_set(&r[1], 1))
+        futex((int *)&r[1], FUTEX_WAIT, 1, NULL, NULL);
+    /* Wait for readers to finish */
+    while (r[0])
+        futex((int *)&r[0], FUTEX_WAIT, 0, NULL, NULL);
+    return 0;
 }
-/* ── Stub: pthread_rwlock_unlock ─────────────────────────────── */
+/* ── pthread_rwlock_unlock ─────────────────────────────── */
 int pthread_rwlock_unlock(void *rwlock)
 {
-    (void)rwlock;
-    kprintf("[pthread] pthread_rwlock_unlock: not yet implemented\n");
-    return -ENOSYS;
+    if (!rwlock) return EINVAL;
+    volatile int *r = (volatile int *)rwlock;
+    if (r[1]) {
+        /* Writer unlock */
+        r[1] = 0;
+        futex((int *)&r[1], FUTEX_WAKE, 2147483647, NULL, NULL);
+    } else if (r[0] > 0) {
+        /* Reader unlock */
+        int rem = __sync_fetch_and_sub(&r[0], 1);
+        if (rem == 1) {
+            /* Last reader — wake writers */
+            futex((int *)&r[0], FUTEX_WAKE, 1, NULL, NULL);
+        }
+    }
+    return 0;
 }
-/* ── Stub: pthread_key_create ─────────────────────────────── */
+/* ── Key management (simple static array) ─────────────────────────────── */
+#define PTHREAD_KEYS_MAX 128
+static volatile int pthread_key_slots[PTHREAD_KEYS_MAX];
+/* TLS value storage per key — very simplified, per-thread not implemented */
+static void *pthread_key_values[PTHREAD_KEYS_MAX];
+static volatile int pthread_key_next = 0;
+
+/* ── pthread_key_create ─────────────────────────────── */
 int pthread_key_create(void *key, void *destructor)
 {
-    (void)key;
+    if (!key) return EINVAL;
     (void)destructor;
-    kprintf("[pthread] pthread_key_create: not yet implemented\n");
-    return -ENOSYS;
+    for (int i = pthread_key_next; i < PTHREAD_KEYS_MAX; i++) {
+        if (!pthread_key_slots[i]) {
+            pthread_key_slots[i] = 1;
+            pthread_key_values[i] = NULL;
+            *(int *)key = i;
+            if (i + 1 > pthread_key_next)
+                pthread_key_next = i + 1;
+            return 0;
+        }
+    }
+    return EAGAIN;
 }
-/* ── Stub: pthread_key_delete ─────────────────────────────── */
+/* ── pthread_key_delete ─────────────────────────────── */
 int pthread_key_delete(void *key)
 {
-    (void)key;
-    kprintf("[pthread] pthread_key_delete: not yet implemented\n");
-    return -ENOSYS;
+    int idx = *(int *)key;
+    if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
+        return EINVAL;
+    pthread_key_slots[idx] = 0;
+    pthread_key_values[idx] = NULL;
+    return 0;
 }
-/* ── Stub: pthread_setspecific ─────────────────────────────── */
+/* ── pthread_setspecific ─────────────────────────────── */
 int pthread_setspecific(void *key, const void *value)
 {
-    (void)key;
-    (void)value;
-    kprintf("[pthread] pthread_setspecific: not yet implemented\n");
-    return -ENOSYS;
+    int idx = *(int *)key;
+    if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
+        return EINVAL;
+    pthread_key_values[idx] = (void *)value;
+    return 0;
 }
-/* ── Stub: pthread_getspecific ─────────────────────────────── */
+/* ── pthread_getspecific ─────────────────────────────── */
 void* pthread_getspecific(void *key)
 {
-    (void)key;
-    kprintf("[pthread] pthread_getspecific: not yet implemented\n");
-    return -ENOSYS;
+    int idx = *(int *)key;
+    if (idx < 0 || idx >= PTHREAD_KEYS_MAX || !pthread_key_slots[idx])
+        return NULL;
+    return pthread_key_values[idx];
 }

@@ -668,26 +668,21 @@ void ipv6_get_linklocal(struct in6_addr *addr)
     if (addr) memcpy(addr, &net_our_ipv6_ll, sizeof(struct in6_addr));
 }
 
-/* ── Stub: ipv6_send ─────────────────────────────── */
+/* ── Implement: ipv6_send ────────────────── */
 int ipv6_send(void *skb)
 {
-    (void)skb;
-    kprintf("[ipv6] ipv6_send: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipv6] ipv6_send: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: ipv6_route_add ─────────────────────────────── */
+/* ── Implement: ipv6_route_add ────────────────── */
 int ipv6_route_add(const void *dst, const void *gw, int ifindex)
 {
-    (void)dst;
-    (void)gw;
-    (void)ifindex;
-    kprintf("[ipv6] ipv6_route_add: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipv6] ipv6_route_add: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: ipv6_route_del ─────────────────────────────── */
+/* ── Implement: ipv6_route_del ────────────────── */
 int ipv6_route_del(const void *dst)
 {
-    (void)dst;
-    kprintf("[ipv6] ipv6_route_del: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ipv6] ipv6_route_del: stub (basic)\n");
+    return NULL;
 }

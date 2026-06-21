@@ -39,6 +39,12 @@ typedef uint64_t (*efi_input_read_key_t)(void *this, uint8_t *key);
  * (set by boot stub, or NULL if not available) */
 static efi_input_read_key_t g_efi_read_key = NULL;
 
+/* Forward declarations */
+void uefi_boot_menu_set_timeout(int seconds);
+int  uefi_boot_menu_add_entry(const char *name, const char *kernel_path,
+                              const char *initrd_path);
+int  uefi_boot_menu_entry_count(void);
+
 /*
  * efi_menu_register_input — called by boot stub to register
  * the UEFI SimpleTextInput ReadKeyStroke function pointer.
@@ -256,40 +262,84 @@ int uefi_boot_menu_entry_count(void)
 /* ── Stub: efi_menu_show ───────────────────────────────────────────── */
 int efi_menu_show(void)
 {
-    (void)0;
-    kprintf("[EFI_MENU] efi_menu_show: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[EFI_MENU] efi_menu_show: delegating to uefi_boot_menu_show\n");
+    return uefi_boot_menu_show();
 }
 
 /* ── Stub: efi_menu_get_selection ──────────────────────────────────── */
 int efi_menu_get_selection(void)
 {
-    kprintf("[EFI_MENU] efi_menu_get_selection: not yet implemented\n");
-    return -ENOSYS;
+    if (uefi_boot_menu_entry_count() <= 0) {
+        kprintf("[EFI_MENU] efi_menu_get_selection: no boot entries\n");
+        return -1;
+    }
+
+    kprintf("[EFI_MENU] efi_menu_get_selection: showing menu for selection\n");
+
+    /* Re-parse entries and show a simple selection menu */
+    int highlight = default_entry;
+    render_menu(highlight);
+
+    /* Simple input loop — wait for Enter or timeout */
+    int timeout_ticks = 50; /* ~5 seconds at 100ms per poll */
+    while (timeout_ticks > 0) {
+        int key = efi_poll_keypress(100);
+        if (key != 0) {
+            if (key == '\r' || key == '\n') {
+                kprintf("[EFI_MENU] efi_menu_get_selection: selected entry %d\n",
+                        highlight);
+                return highlight;
+            } else if (key == 'A' - 0x40) {
+                /* Up arrow */
+                highlight = (highlight - 1 + entry_count) % entry_count;
+                render_menu(highlight);
+            } else if (key == 'B' - 0x40) {
+                /* Down arrow */
+                highlight = (highlight + 1) % entry_count;
+                render_menu(highlight);
+            }
+            timeout_ticks = 50;
+        } else {
+            timeout_ticks--;
+        }
+    }
+
+    kprintf("[EFI_MENU] efi_menu_get_selection: timeout, defaulting to entry %d\n",
+            default_entry);
+    return default_entry;
 }
 
 /* ── Stub: efi_menu_boot_entry ─────────────────────────────────────── */
 int efi_menu_boot_entry(int index)
 {
-    (void)index;
-    kprintf("[EFI_MENU] efi_menu_boot_entry: not yet implemented\n");
-    return -ENOSYS;
+    int count = uefi_boot_menu_entry_count();
+    if (index < 0 || index >= count) {
+        kprintf("[EFI_MENU] efi_menu_boot_entry: invalid index %d\n", index);
+        return -EINVAL;
+    }
+    kprintf("[EFI_MENU] efi_menu_boot_entry: booting entry %d\n", index);
+    boot_entry_at(index);
+    return 0;
 }
 
 /* ── Stub: efi_menu_set_timeout ────────────────────────────────────── */
 void efi_menu_set_timeout(int seconds)
 {
-    (void)seconds;
-    kprintf("[EFI_MENU] efi_menu_set_timeout: not yet implemented\n");
+    uefi_boot_menu_set_timeout(seconds);
+    kprintf("[EFI_MENU] efi_menu_set_timeout: set to %d seconds\n", seconds);
 }
 
 /* ── Stub: efi_menu_add_entry ──────────────────────────────────────── */
 int efi_menu_add_entry(const char *name, const char *kernel_path,
                        const char *initrd_path)
 {
-    (void)name; (void)kernel_path; (void)initrd_path;
-    kprintf("[EFI_MENU] efi_menu_add_entry: not yet implemented\n");
-    return -ENOSYS;
+    if (!name || !kernel_path) {
+        kprintf("[EFI_MENU] efi_menu_add_entry: invalid arguments\n");
+        return -EINVAL;
+    }
+    int ret = uefi_boot_menu_add_entry(name, kernel_path, initrd_path);
+    kprintf("[EFI_MENU] efi_menu_add_entry: '%s' -> %s\n", name, kernel_path);
+    return ret;
 }
 
 /* Set timeout (in seconds) for the boot menu */

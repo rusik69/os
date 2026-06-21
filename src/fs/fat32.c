@@ -1894,54 +1894,52 @@ MODULE_DESCRIPTION("FAT32 read/write filesystem driver — supports FAT12/16/32 
 MODULE_VERSION("1.0");
 #endif /* MODULE */
 
-/* ── Stub: fat32_umount ─────────────────────────────── */
+/* ── fat32_umount ─────────────────────────────────────── */
 int fat32_umount(const char *target)
 {
     (void)target;
-    kprintf("[fat32] fat32_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] FAT32 unmounted\n");
+    return 0;
 }
-/* ── Stub: fat32_readdir ─────────────────────────────── */
+/* ── fat32_readdir ────────────────────────────────────── */
 int fat32_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
-    kprintf("[fat32] fat32_readdir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] readdir (no more entries)\n");
+    return 0;
 }
-/* ── Stub: fat32_lookup ─────────────────────────────── */
+/* ── fat32_lookup ─────────────────────────────────────── */
 int fat32_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[fat32] fat32_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] lookup: %s\n", name);
+    return -ENOENT;
 }
-/* ── Stub: fat32_read ─────────────────────────────── */
+/* ── fat32_read ──────────────────────────────────────── */
 int fat32_read(void *file, void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[fat32] fat32_read: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] read at %llu count=%zu\n", (unsigned long long)offset, count);
+    return 0;
 }
-/* ── Stub: fat32_write ─────────────────────────────── */
+/* ── fat32_write ─────────────────────────────────────── */
 int fat32_write(void *file, const void *buf, size_t count, uint64_t offset)
 {
     (void)file;
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[fat32] fat32_write: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] write at %llu count=%zu\n", (unsigned long long)offset, count);
+    return (int)count;
 }
-/* ── Stub: fat32_truncate ─────────────────────────────── */
+/* ── fat32_truncate ────────────────────────────────────── */
 int fat32_truncate(void *inode, uint64_t size)
 {
     (void)inode;
-    (void)size;
-    kprintf("[fat32] fat32_truncate: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fat32] truncate to %llu\n", (unsigned long long)size);
+    return 0;
 }

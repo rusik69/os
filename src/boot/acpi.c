@@ -11,6 +11,8 @@
 #include "types.h"
 #include "printf.h"
 #include "string.h"
+#include "io.h"
+#include "errno.h"
 
 /* ── ACPI table signatures and structures ──────────────────────────────── */
 
@@ -33,6 +35,19 @@ struct acpi_rsdp {
 
 /* SDTH (System Description Table Header) — shared by XSDT, RSDT, all SSDTs */
 struct acpi_sdth {
+    char     signature[4];
+    uint32_t length;
+    uint8_t  revision;
+    uint8_t  checksum;
+    char     oem_id[6];
+    char     oem_table_id[8];
+    uint32_t oem_revision;
+    uint32_t creator_id;
+    uint32_t creator_revision;
+} __attribute__((packed));
+
+/* ACPI table header type alias for API compatibility */
+struct acpi_table_header {
     char     signature[4];
     uint32_t length;
     uint8_t  revision;
@@ -194,6 +209,59 @@ void *acpi_find_table(const char signature[4])
     return NULL;
 }
 
+/* ── FADT (Fixed ACPI Description Table) ──────────────────────────────── */
+
+struct acpi_fadt {
+    struct acpi_sdth header;
+    uint32_t firmware_ctrl;
+    uint32_t dsdt;
+    uint8_t  reserved;
+    uint8_t  preferred_pm_profile;
+    uint16_t sci_int;
+    uint32_t smi_cmd;
+    uint8_t  acpi_enable_val;
+    uint8_t  acpi_disable_val;
+    uint8_t  s4bios_req;
+    uint8_t  pstate_cnt;
+    uint32_t pm1a_evt_blk;
+    uint32_t pm1b_evt_blk;
+    uint32_t pm1a_cnt_blk;
+    uint32_t pm1b_cnt_blk;
+    uint32_t pm1a_evt_blk_len;
+    uint32_t pm1b_evt_blk_len;
+    uint32_t pm2_cnt_blk;
+    uint32_t pm_tmr_blk;
+    uint32_t gpe0_blk;
+    uint32_t gpe1_blk;
+    uint8_t  pm1_evt_len;
+    uint8_t  pm1_cnt_len;
+    uint8_t  pm2_cnt_len;
+    uint8_t  pm_tmr_len;
+    uint8_t  gpe0_blk_len;
+    uint8_t  gpe1_blk_len;
+    uint8_t  gpe1_base;
+    uint8_t  _cst_cnt;
+    uint16_t p_lvl2_lat;
+    uint16_t p_lvl3_lat;
+    uint16_t flush_size;
+    uint16_t flush_stride;
+    uint8_t  duty_offset;
+    uint8_t  duty_width;
+    uint8_t  day_alrm;
+    uint8_t  mon_alrm;
+    uint8_t  century;
+    uint16_t iapc_boot_arch;
+    uint8_t  _flags2;
+    uint8_t  _res3[3];
+    /* Reset register (Generic Address Structure) — 12 bytes */
+    uint8_t  reset_reg_addr_space;
+    uint8_t  reset_reg_bit_width;
+    uint8_t  reset_reg_bit_offset;
+    uint8_t  reset_reg_access_size;
+    uint64_t reset_reg_address;
+    uint8_t  reset_value;
+} __attribute__((packed));
+
 /* ── MADT (Multiple APIC Description Table) parser ─────────────────────── */
 
 struct acpi_madt {
@@ -304,48 +372,221 @@ void acpi_init(void)
     }
 }
 
-/* ── Stub: acpi_enable ─────────────────────────────────────────────── */
+/* ── acpi_enable ─────────────────────────────────────────────────────── */
+
 int acpi_enable(void)
 {
-    kprintf("[ACPI] acpi_enable: not yet implemented\n");
-    return -ENOSYS;
+    struct acpi_fadt *fadt = (struct acpi_fadt *)acpi_find_table("FACP");
+    if (!fadt) {
+        kprintf("[ACPI] acpi_enable: FADT not found\n");
+        return -ENODEV;
+    }
+
+    if (fadt->smi_cmd != 0 && fadt->acpi_enable_val != 0) {
+        outb((uint16_t)fadt->smi_cmd, fadt->acpi_enable_val);
+        kprintf("[ACPI] acpi_enable: wrote 0x%x to SMI_CMD port 0x%x\n",
+                fadt->acpi_enable_val, (unsigned)fadt->smi_cmd);
+        return 0;
+    }
+
+    kprintf("[ACPI] acpi_enable: no SMI_CMD, assuming already enabled\n");
+    return 0;
 }
 
-/* ── Stub: acpi_disable ────────────────────────────────────────────── */
+/* ── acpi_disable ────────────────────────────────────────────────────── */
+
 int acpi_disable(void)
 {
-    kprintf("[ACPI] acpi_disable: not yet implemented\n");
-    return -ENOSYS;
+    struct acpi_fadt *fadt = (struct acpi_fadt *)acpi_find_table("FACP");
+    if (!fadt) {
+        kprintf("[ACPI] acpi_disable: FADT not found\n");
+        return -ENODEV;
+    }
+
+    if (fadt->smi_cmd != 0 && fadt->acpi_disable_val != 0) {
+        outb((uint16_t)fadt->smi_cmd, fadt->acpi_disable_val);
+        kprintf("[ACPI] acpi_disable: wrote 0x%x to SMI_CMD port 0x%x\n",
+                fadt->acpi_disable_val, (unsigned)fadt->smi_cmd);
+        return 0;
+    }
+
+    kprintf("[ACPI] acpi_disable: no SMI_CMD\n");
+    return 0;
 }
 
-/* ── Stub: acpi_get_table ──────────────────────────────────────────── */
+/* ── acpi_get_table ──────────────────────────────────────────────────── */
+
+static int find_table_by_instance(const char *signature, uint32_t instance,
+                                  struct acpi_table_header **out_table)
+{
+    struct acpi_rsdp rsdp;
+    if (find_rsdp(&rsdp) < 0)
+        return -ENOENT;
+
+    struct acpi_sdth *sdt_header = NULL;
+    uint32_t entry_count = 0;
+    int entry_size = 0;
+    void *entries = NULL;
+
+    /* Prefer XSDT (64-bit entries) */
+    if (rsdp.revision >= 2 && rsdp.xsdt_addr != 0) {
+        sdt_header = (struct acpi_sdth *)(uintptr_t)rsdp.xsdt_addr;
+        if (acpi_checksum(sdt_header, sdt_header->length) < 0)
+            return -ENOENT;
+        entry_count = (sdt_header->length - sizeof(struct acpi_sdth)) / 8;
+        entries = (void *)((uintptr_t)sdt_header + sizeof(struct acpi_sdth));
+        entry_size = 8;
+    } else if (rsdp.rsdt_addr != 0) {
+        sdt_header = (struct acpi_sdth *)(uintptr_t)rsdp.rsdt_addr;
+        if (acpi_checksum(sdt_header, sdt_header->length) < 0)
+            return -ENOENT;
+        entry_count = (sdt_header->length - sizeof(struct acpi_sdth)) / 4;
+        entries = (void *)((uintptr_t)sdt_header + sizeof(struct acpi_sdth));
+        entry_size = 4;
+    }
+
+    if (!sdt_header)
+        return -ENOENT;
+
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < entry_count; i++) {
+        uint64_t table_addr;
+        if (entry_size == 8)
+            table_addr = ((uint64_t *)entries)[i];
+        else
+            table_addr = ((uint32_t *)entries)[i];
+
+        if (table_addr == 0)
+            continue;
+
+        struct acpi_sdth *hdr = (struct acpi_sdth *)(uintptr_t)table_addr;
+        if (memcmp(hdr->signature, signature, 4) == 0) {
+            if (found == instance) {
+                if (acpi_checksum(hdr, hdr->length) < 0)
+                    return -ENOENT;
+                *out_table = (struct acpi_table_header *)hdr;
+                return 0;
+            }
+            found++;
+        }
+    }
+
+    return -ENOENT;
+}
+
 int acpi_get_table(const char *signature, uint32_t instance,
                    struct acpi_table_header **out_table)
 {
-    (void)signature; (void)instance; (void)out_table;
-    kprintf("[ACPI] acpi_get_table: not yet implemented\n");
-    return -ENOSYS;
+    if (!signature || !out_table)
+        return -EINVAL;
+
+    int ret = find_table_by_instance(signature, instance, out_table);
+    if (ret == 0) {
+        kprintf("[ACPI] acpi_get_table: found '%.4s' instance %u\n",
+                signature, instance);
+    } else {
+        kprintf("[ACPI] acpi_get_table: '%.4s' instance %u not found\n",
+                signature, instance);
+        *out_table = NULL;
+    }
+    return ret;
 }
 
-/* ── Stub: acpi_put_table ──────────────────────────────────────────── */
+/* ── acpi_put_table ──────────────────────────────────────────────────── */
+
 int acpi_put_table(struct acpi_table_header *table)
 {
-    (void)table;
-    kprintf("[ACPI] acpi_put_table: not yet implemented\n");
-    return -ENOSYS;
+    if (!table)
+        return -EINVAL;
+    kprintf("[ACPI] acpi_put_table: released table '%.4s'\n", (char *)table);
+    return 0;
 }
 
-/* ── Stub: acpi_sleep ──────────────────────────────────────────────── */
+/* ── acpi_sleep ──────────────────────────────────────────────────────── */
+
 int acpi_sleep(uint32_t sleep_state)
 {
-    (void)sleep_state;
-    kprintf("[ACPI] acpi_sleep: not yet implemented\n");
-    return -ENOSYS;
+    if (sleep_state > 5) {
+        kprintf("[ACPI] acpi_sleep: invalid sleep state %u\n", sleep_state);
+        return -EINVAL;
+    }
+
+    /* Ensure ACPI is enabled before entering sleep */
+    int ret = acpi_enable();
+    if (ret != 0) {
+        kprintf("[ACPI] acpi_sleep: acpi_enable failed\n");
+        return ret;
+    }
+
+    struct acpi_fadt *fadt = (struct acpi_fadt *)acpi_find_table("FACP");
+    if (!fadt) {
+        kprintf("[ACPI] acpi_sleep: FADT not found\n");
+        return -ENODEV;
+    }
+
+    if (fadt->pm1a_cnt_blk == 0) {
+        kprintf("[ACPI] acpi_sleep: PM1a_CNT block not available\n");
+        return -ENODEV;
+    }
+
+    /* Write sleep state to PM1a_CNT: SLP_TYP (bits 12-15) = sleep_state,
+     * SLP_EN (bit 13) = 1. Per ACPI spec: (sleep_state << 10) | 0x2000 */
+    uint16_t pm1a_cnt_val = (uint16_t)((sleep_state << 10) | 0x2000);
+    kprintf("[ACPI] acpi_sleep: entering S%u state (PM1a_CNT=0x%x, val=0x%x)\n",
+            sleep_state, (unsigned)fadt->pm1a_cnt_blk, pm1a_cnt_val);
+
+    outw((uint16_t)fadt->pm1a_cnt_blk, pm1a_cnt_val);
+
+    /* If we're still here, the sleep didn't work */
+    kprintf("[ACPI] acpi_sleep: S%u failed - system did not enter sleep\n",
+            sleep_state);
+    return -EIO;
 }
 
-/* ── Stub: acpi_reboot ─────────────────────────────────────────────── */
+/* ── acpi_reboot ─────────────────────────────────────────────────────── */
+
 int acpi_reboot(void)
 {
-    kprintf("[ACPI] acpi_reboot: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ACPI] acpi_reboot: system reset via ACPI\n");
+    struct acpi_fadt *fadt = (struct acpi_fadt *)acpi_find_table("FACP");
+    if (!fadt) {
+        kprintf("[ACPI] acpi_reboot: FADT not found, falling back to keyboard reset\n");
+        outb(0x64, 0xFE);
+        return 0;
+    }
+
+    kprintf("[ACPI] acpi_reboot: using FADT reset register\n");
+
+    /* If the reset register is in I/O space (space_id == 1) */
+    if (fadt->reset_reg_addr_space == 1 && fadt->reset_reg_address != 0) {
+        uint16_t reset_port = (uint16_t)fadt->reset_reg_address;
+        switch (fadt->reset_reg_access_size) {
+        case 2:
+            outw(reset_port, fadt->reset_value);
+            break;
+        case 3:
+            outl(reset_port, fadt->reset_value);
+            break;
+        case 0:
+        case 1:
+        default:
+            outb(reset_port, fadt->reset_value);
+            break;
+        }
+        kprintf("[ACPI] acpi_reboot: wrote 0x%x to reset port 0x%x\n",
+                fadt->reset_value, reset_port);
+    } else if (fadt->reset_reg_addr_space == 0 && fadt->reset_reg_address != 0) {
+        /* SystemMemory space — write via memory-mapped register */
+        volatile uint8_t *reset_ptr =
+            (volatile uint8_t *)(uintptr_t)fadt->reset_reg_address;
+        *reset_ptr = fadt->reset_value;
+        kprintf("[ACPI] acpi_reboot: wrote 0x%x to memory reset register\n",
+                fadt->reset_value);
+    } else {
+        /* No usable reset register, fall back to keyboard controller reset */
+        kprintf("[ACPI] acpi_reboot: no usable reset register, falling back\n");
+        outb(0x64, 0xFE);
+    }
+
+    return 0;
 }

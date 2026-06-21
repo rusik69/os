@@ -103,7 +103,7 @@ int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
     (void)argc;
     (void)argv;
     kprintf("[dm] dm_zero_ctr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dm_zero_map ─────────────────────────────── */
 int dm_zero_map(void *ti, void *bio)
@@ -111,5 +111,5 @@ int dm_zero_map(void *ti, void *bio)
     (void)ti;
     (void)bio;
     kprintf("[dm] dm_zero_map: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

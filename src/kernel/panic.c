@@ -575,22 +575,32 @@ void panic_blink(int state)
     kprintf("[PANIC] panic_blink: not yet implemented\n");
 }
 
-/* ── Stub: oops_begin ──────────────────────────────────────────────── */
+/* ── oops_begin: Begin an OOPS (printk + lockup detection) ──────────── */
 int oops_begin(void)
 {
-    kprintf("[PANIC] oops_begin: not yet implemented\n");
-    return -ENOSYS;
+    /* In a minimal implementation, we just return 0 (no re-entrancy tracking).
+     * A full implementation would increment an oops counter and potentially
+     * spin if recursive. */
+    kprintf("[PANIC] OOPS begins\n");
+    return 0;
 }
 
-/* ── Stub: oops_end ────────────────────────────────────────────────── */
+/* ── oops_end: End an OOPS ──────────────────────────────────────────── */
 void oops_end(int die_flags)
 {
     (void)die_flags;
-    kprintf("[PANIC] oops_end: not yet implemented\n");
+    /* Just acknowledge. In a full implementation this would decrement
+     * the oops counter, log, and potentially panic if the limit is exceeded. */
+    kprintf("[PANIC] OOPS ended (flags=0x%x)\n", die_flags);
 }
 
-/* ── Stub: emergency_restart ───────────────────────────────────────── */
+/* ── emergency_restart: Emergency kernel restart ───────────────────── */
 void emergency_restart(void)
 {
-    kprintf("[PANIC] emergency_restart: not yet implemented\n");
+    /* Attempt a machine reset via keyboard controller (port 0x64).
+     * This is a best-effort emergency restart when all else fails. */
+    kprintf("[PANIC] Emergency restart requested!\n");
+    __asm__ volatile("cli; hlt"); /* Halt until external reset */
+    for (;;)
+        ;
 }

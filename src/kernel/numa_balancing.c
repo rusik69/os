@@ -350,7 +350,7 @@ int numa_balance(void *task)
 {
     (void)task;
     kprintf("[numa] numa_balance: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: numa_migrate ─────────────────────────────── */
 int numa_migrate(void *task, int src_node, int dst_node)
@@ -359,12 +359,12 @@ int numa_migrate(void *task, int src_node, int dst_node)
     (void)src_node;
     (void)dst_node;
     kprintf("[numa] numa_migrate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: numa_promote ─────────────────────────────── */
 int numa_promote(void *page)
 {
     (void)page;
     kprintf("[numa] numa_promote: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

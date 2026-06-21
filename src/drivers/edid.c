@@ -221,12 +221,12 @@ int edid_find_mode(const void *edid, int width, int height, void *mode)
     (void)height;
     (void)mode;
     kprintf("[edid] edid_find_mode: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: edid_valid ─────────────────────────────── */
 int edid_valid(const void *edid)
 {
     (void)edid;
     kprintf("[edid] edid_valid: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

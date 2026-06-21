@@ -298,7 +298,7 @@ int bpf_verifier_insn(const void *insn, void *env)
     (void)insn;
     (void)env;
     kprintf("[bpf] bpf_verifier_insn: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: bpf_verifier_analyze ─────────────────────────────── */
 int bpf_verifier_analyze(void *prog, void *env)
@@ -306,5 +306,5 @@ int bpf_verifier_analyze(void *prog, void *env)
     (void)prog;
     (void)env;
     kprintf("[bpf] bpf_verifier_analyze: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

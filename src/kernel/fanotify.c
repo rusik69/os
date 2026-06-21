@@ -215,5 +215,5 @@ int fanotify_read(int fd, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[fanotify] fanotify_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

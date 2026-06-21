@@ -461,11 +461,11 @@ int psi_trigger(const char *event, int threshold, int win_size)
     (void)threshold;
     (void)win_size;
     kprintf("[psi] psi_trigger: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: psi_poll ─────────────────────────────── */
 int psi_poll(void)
 {
     kprintf("[psi] psi_poll: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

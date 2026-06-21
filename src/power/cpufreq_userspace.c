@@ -173,18 +173,38 @@ int cpufreq_userspace_setspeed_write(const char *buf, uint32_t size)
     return 0;
 }
 
-/* ── Stub: usr_setspeed ─────────────────────────────── */
+/* ── usr_setspeed ─────────────────────────────── */
 int usr_setspeed(int cpu, unsigned int freq)
 {
     (void)cpu;
-    (void)freq;
-    kprintf("[cpufreq] usr_setspeed: not yet implemented\n");
-    return -ENOSYS;
+    /* Find the closest P-state to the requested frequency and set it */
+    int count = cpupstate_get_count();
+    if (count <= 0) return -1;
+
+    int best = 0;
+    uint32_t best_diff = UINT32_MAX;
+    for (int i = 0; i < count; i++) {
+        struct cpupstate_state info;
+        if (cpupstate_get_info(i, &info) == 0) {
+            uint32_t freq_khz = info.core_freq * 1000;
+            uint32_t diff = (freq_khz > freq) ? (freq_khz - freq) : (freq - freq_khz);
+            if (diff < best_diff) {
+                best_diff = diff;
+                best = i;
+            }
+        }
+    }
+    g_userspace_freq_state = best;
+    return cpupstate_set_state(best);
 }
-/* ── Stub: usr_getspeed ─────────────────────────────── */
+/* ── usr_getspeed ─────────────────────────────── */
 unsigned int usr_getspeed(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] usr_getspeed: not yet implemented\n");
-    return -ENOSYS;
+    int cur = cpupstate_get_state();
+    if (cur < 0) return 0;
+    struct cpupstate_state info;
+    if (cpupstate_get_info(cur, &info) == 0)
+        return info.core_freq * 1000;
+    return 0;
 }

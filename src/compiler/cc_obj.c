@@ -456,7 +456,7 @@ int cc_obj_create(void *obj)
 {
     (void)obj;
     kprintf("[cc] cc_obj_create: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_obj_add_section ─────────────────────────────── */
 int cc_obj_add_section(void *obj, const char *name, void *data, size_t len)
@@ -466,7 +466,7 @@ int cc_obj_add_section(void *obj, const char *name, void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[cc] cc_obj_add_section: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_obj_add_symbol ─────────────────────────────── */
 int cc_obj_add_symbol(void *obj, const char *name, void *addr)
@@ -475,5 +475,5 @@ int cc_obj_add_symbol(void *obj, const char *name, void *addr)
     (void)name;
     (void)addr;
     kprintf("[cc] cc_obj_add_symbol: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }

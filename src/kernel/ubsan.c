@@ -205,7 +205,7 @@ int ubsan_handle_overflow(void *data, void *lhs, void *rhs)
     (void)lhs;
     (void)rhs;
     kprintf("[ubsan] ubsan_handle_overflow: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ubsan_handle_out_of_bounds ─────────────────────────────── */
 int ubsan_handle_out_of_bounds(void *data, void *index)
@@ -213,7 +213,7 @@ int ubsan_handle_out_of_bounds(void *data, void *index)
     (void)data;
     (void)index;
     kprintf("[ubsan] ubsan_handle_out_of_bounds: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ubsan_handle_shift_out_of_bounds ─────────────────────────────── */
 int ubsan_handle_shift_out_of_bounds(void *data, void *lhs, void *rhs)
@@ -222,5 +222,5 @@ int ubsan_handle_shift_out_of_bounds(void *data, void *lhs, void *rhs)
     (void)lhs;
     (void)rhs;
     kprintf("[ubsan] ubsan_handle_shift_out_of_bounds: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

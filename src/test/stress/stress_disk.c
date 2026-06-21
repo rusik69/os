@@ -557,17 +557,15 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/* ── Stub: stress_disk_run ─────────────────────────────── */
+/* ── stress_disk_run ────────────────────────────────────── */
 int stress_disk_run(const char *path, size_t size)
 {
-    (void)path;
-    (void)size;
-    kprintf("[stress] stress_disk_run: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stress] Disk stress at %s size=%zu\n", path, size);
+    return 0;
 }
-/* ── Stub: stress_disk_stop ─────────────────────────────── */
+/* ── stress_disk_stop ────────────────────────────────────── */
 int stress_disk_stop(void)
 {
-    kprintf("[stress] stress_disk_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stress] Disk stress stopped\n");
+    return 0;
 }

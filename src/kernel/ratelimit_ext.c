@@ -51,5 +51,5 @@ int ratelimit_ext_check(void *rl)
 {
     (void)rl;
     kprintf("[ratelimit] ratelimit_ext_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

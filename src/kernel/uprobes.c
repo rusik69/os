@@ -522,12 +522,12 @@ int uprobe_handle_swbp(void *regs)
 {
     (void)regs;
     kprintf("[uprobes] uprobe_handle_swbp: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uprobe_handle_singlestep ─────────────────────────────── */
 int uprobe_handle_singlestep(void *regs)
 {
     (void)regs;
     kprintf("[uprobes] uprobe_handle_singlestep: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

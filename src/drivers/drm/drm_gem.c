@@ -311,27 +311,35 @@ int drm_gem_mmap(struct drm_gem_object *obj, uint64_t *offset)
     return 0;
 }
 
-/* ── Stub: drm_gem_object_init ─────────────────────────────── */
+/* ── Implement: drm_gem_object_init ─────────────────────────────── */
 int drm_gem_object_init(void *dev, void *obj, size_t size)
 {
     (void)dev;
-    (void)obj;
-    (void)size;
-    kprintf("[drm] drm_gem_object_init: not yet implemented\n");
-    return -ENOSYS;
+    if (!obj || size == 0) return -EINVAL;
+
+    /* Initialize a GEM object in-place (as opposed to creating a new one).
+     * Zero the object header and set the size. */
+    struct drm_gem_object *gem_obj = (struct drm_gem_object *)obj;
+    memset(gem_obj, 0, sizeof(*gem_obj));
+    gem_obj->size = size;
+    gem_obj->refcount = 1;
+    return 0;
 }
-/* ── Stub: drm_gem_object_free ─────────────────────────────── */
+/* ── Implement: drm_gem_object_free ─────────────────────────────── */
 int drm_gem_object_free(void *obj)
 {
-    (void)obj;
-    kprintf("[drm] drm_gem_object_free: not yet implemented\n");
-    return -ENOSYS;
+    if (!obj) return -EINVAL;
+
+    /* Free a GEM object — delegate to drm_gem_free_object */
+    struct drm_gem_object *gem_obj = (struct drm_gem_object *)obj;
+    drm_gem_free_object(gem_obj);
+    return 0;
 }
-/* ── Stub: drm_gem_handle_delete ─────────────────────────────── */
+/* ── Implement: drm_gem_handle_delete ─────────────────────────────── */
 int drm_gem_handle_delete(void *file, uint32_t handle)
 {
     (void)file;
-    (void)handle;
-    kprintf("[drm] drm_gem_handle_delete: not yet implemented\n");
-    return -ENOSYS;
+    /* Delete a GEM handle — our handle table is global, so we can
+     * use drm_gem_handle_close with a NULL device (which is tolerated). */
+    return drm_gem_handle_close(NULL, handle);
 }

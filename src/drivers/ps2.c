@@ -130,16 +130,53 @@ int ps2_test_port2(void) {
     return ps2_read_data() == 0x00 ? 0 : -1;
 }
 
-/* ── Stub: ps2_flush ─────────────────────────────── */
+/* ── Flush the PS/2 output buffer ──────────────────── */
 int ps2_flush(void)
 {
-    kprintf("[ps2] ps2_flush: not yet implemented\n");
-    return -ENOSYS;
+    uint32_t timeout = 100000;
+    while (timeout--) {
+        if (inb(PS2_STATUS) & 0x01) {
+            (void)inb(PS2_DATA); /* read and discard */
+        } else {
+            break;
+        }
+        io_wait();
+    }
+    return 0;
 }
-/* ── Stub: ps2_init_device ─────────────────────────────── */
+
+/* ── Initialise a PS/2 device (reset and set defaults) ── */
 int ps2_init_device(int dev_type)
 {
     (void)dev_type;
-    kprintf("[ps2] ps2_init_device: not yet implemented\n");
-    return -ENOSYS;
+
+    /* Send reset command */
+    ps2_write_data(0xFF);
+    ps2_wait_read();
+    uint8_t ack = ps2_read_data();
+    if (ack != 0xFA) {
+        kprintf("[PS2] Device init: expected ACK (0xFA) got 0x%02x\n", ack);
+        return -1;
+    }
+
+    /* Self-test result should be 0xAA */
+    ps2_wait_read();
+    uint8_t self_test = ps2_read_data();
+    if (self_test != 0xAA) {
+        kprintf("[PS2] Device self-test failed: 0x%02x\n", self_test);
+        return -1;
+    }
+
+    /* Device ID */
+    ps2_wait_read();
+    uint8_t dev_id = ps2_read_data();
+
+    /* Set defaults */
+    ps2_write_data(0xF6);
+    ps2_wait_read();
+    ack = ps2_read_data();
+
+    kprintf("[PS2] Device initialised (type=0x%02x, id=0x%02x)\n",
+            (uint32_t)dev_type, (uint32_t)dev_id);
+    return 0;
 }

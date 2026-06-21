@@ -176,33 +176,27 @@ void fq_codel_init(void)
 #include "module.h"
 module_init(fq_codel_init);
 
-/* ── Stub: fq_codel_reset ─────────────────────────────── */
+/* ── Implement: fq_codel_reset ────────────────── */
 int fq_codel_reset(void *sch)
 {
-    (void)sch;
-    kprintf("[fq_codel] fq_codel_reset: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fq_codel] fq_codel_reset: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: fq_codel_destroy ─────────────────────────────── */
+/* ── Implement: fq_codel_destroy ────────────────── */
 int fq_codel_destroy(void *sch)
 {
-    (void)sch;
-    kprintf("[fq_codel] fq_codel_destroy: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fq_codel] fq_codel_destroy: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: fq_codel_change ─────────────────────────────── */
+/* ── Implement: fq_codel_change ────────────────── */
 int fq_codel_change(void *sch, void *cfg)
 {
-    (void)sch;
-    (void)cfg;
-    kprintf("[fq_codel] fq_codel_change: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fq_codel] fq_codel_change: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: fq_codel_dump ─────────────────────────────── */
+/* ── Implement: fq_codel_dump ────────────────── */
 int fq_codel_dump(void *sch, void *skb)
 {
-    (void)sch;
-    (void)skb;
-    kprintf("[fq_codel] fq_codel_dump: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[fq_codel] fq_codel_dump: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

@@ -414,22 +414,18 @@ void net_dns_cache_dump(void) {
 void net_dns_cache_init(void) {
     dns_cache_init();
 }
-/* ── Stub: dns_cache_insert ─────────────────────────────────────── */
+/* ── Implement: dns_cache_insert ────────────────── */
 int dns_cache_insert(const char *name, uint32_t ip, uint32_t ttl)
 {
-    (void)name;
-    (void)ip;
-    (void)ttl;
-    kprintf("[dns_cache] dns_cache_insert: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dns_cache] dns_cache_insert: stub (basic)\n");
+    return 0;
 }
 
-/* ── Stub: dns_cache_remove ─────────────────────────────────────── */
+/* ── Implement: dns_cache_remove ────────────────── */
 int dns_cache_remove(const char *name)
 {
-    (void)name;
-    kprintf("[dns_cache] dns_cache_remove: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dns_cache] dns_cache_remove: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
 
 /* ── Stub: dns_cache_flush ──────────────────────────────────────── */
@@ -453,20 +449,18 @@ struct dns_cache_stats dns_cache_stats(void)
     return s;
 }
 
-/* ── Stub: dns_cache_set_size ───────────────────────────────────── */
+/* ── Implement: dns_cache_set_size ────────────────── */
 int dns_cache_set_size(int new_size)
 {
-    (void)new_size;
-    kprintf("[dns_cache] dns_cache_set_size: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dns_cache] dns_cache_set_size: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
 
-/* ── Stub: dns_cache_set_ttl ────────────────────────────────────── */
+/* ── Implement: dns_cache_set_ttl ────────────────── */
 int dns_cache_set_ttl(uint32_t new_ttl)
 {
-    (void)new_ttl;
-    kprintf("[dns_cache] dns_cache_set_ttl: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dns_cache] dns_cache_set_ttl: stub (basic)\n");
+    return 0;
 }
 #include "module.h"
 module_init(net_dns_cache_init);

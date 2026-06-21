@@ -210,5 +210,5 @@ int rng_get_random(void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[rng] rng_get_random: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

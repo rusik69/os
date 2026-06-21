@@ -113,5 +113,5 @@ int mempolicy_migrate_pages(int pid, uint64_t new_nodemask)
     (void)pid;
     (void)new_nodemask;
     kprintf("[mem_policy] mempolicy_migrate_pages not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

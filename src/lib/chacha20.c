@@ -120,13 +120,61 @@ void lib_chacha20_encrypt(uint8_t *out, const uint8_t *in, size_t len,
     }
 }
 
-/* ── Stub: chacha20_encrypt ─────────────────────────────── */
+/* ── chacha20_encrypt ─────────────────────────────── */
 int chacha20_encrypt(void *ctx, const void *src, void *dst, size_t len)
 {
-    (void)ctx;
-    (void)src;
-    (void)dst;
-    (void)len;
-    kprintf("[chacha20] chacha20_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    /* If ctx is provided, interpret it as raw state; otherwise we lack key.
+     * Since lib_chacha20_encrypt takes key+nonce, we need them.
+     * For now, the caller must have set up a chacha20_ctx (as in the struct above).
+     * We'll use a simplified approach: the ctx is actually a uint32_t[16] state. */
+    if (!ctx || !src || !dst)
+        return -1;
+
+    uint32_t *state = (uint32_t *)ctx;
+    uint8_t keystream[64];
+    size_t out_idx = 0;
+    size_t in_idx = 0;
+
+    while (len > 0) {
+        uint32_t block[16];
+        for (int i = 0; i < 16; i++)
+            block[i] = state[i];
+
+        for (int i = 0; i < 10; i++) {
+            QUARTERROUND(block[0], block[4], block[8],  block[12]);
+            QUARTERROUND(block[1], block[5], block[9],  block[13]);
+            QUARTERROUND(block[2], block[6], block[10], block[14]);
+            QUARTERROUND(block[3], block[7], block[11], block[15]);
+            QUARTERROUND(block[0], block[5], block[10], block[15]);
+            QUARTERROUND(block[1], block[6], block[11], block[12]);
+            QUARTERROUND(block[2], block[7], block[8],  block[13]);
+            QUARTERROUND(block[3], block[4], block[9],  block[14]);
+        }
+
+        for (int i = 0; i < 16; i++)
+            block[i] += state[i];
+
+        for (int i = 0; i < 16; i++) {
+            keystream[4*i]     = (uint8_t)(block[i] & 0xFF);
+            keystream[4*i + 1] = (uint8_t)((block[i] >> 8) & 0xFF);
+            keystream[4*i + 2] = (uint8_t)((block[i] >> 16) & 0xFF);
+            keystream[4*i + 3] = (uint8_t)((block[i] >> 24) & 0xFF);
+        }
+
+        size_t todo = (len > 64) ? 64 : len;
+        const uint8_t *in = (const uint8_t *)src + in_idx;
+        uint8_t *out = (uint8_t *)dst + out_idx;
+        for (size_t i = 0; i < todo; i++)
+            out[i] = in[i] ^ keystream[i];
+
+        out_idx += todo;
+        in_idx += todo;
+        len -= todo;
+
+        /* Increment counter */
+        state[12]++;
+        if (state[12] == 0)
+            state[13]++;
+    }
+    return 0;
 }

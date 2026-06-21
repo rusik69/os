@@ -16,29 +16,45 @@ void print_hex_dump(const char *prefix, const void *buf, uint32_t len) {
     }
 }
 
-/* ── Stub: hexdump_print ─────────────────────────────── */
+/* ── hexdump_print ─────────────────────────────── */
 int hexdump_print(const void *buf, size_t len)
 {
-    (void)buf;
-    (void)len;
-    kprintf("[hexdump] hexdump_print: not yet implemented\n");
-    return -ENOSYS;
+    print_hex_dump("", buf, (uint32_t)len);
+    return 0;
 }
-/* ── Stub: hexdump_to_buf ─────────────────────────────── */
+/* ── hexdump_to_buf ─────────────────────────────── */
 int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len)
 {
-    (void)buf;
-    (void)len;
-    (void)out;
-    (void)out_len;
-    kprintf("[hexdump] hexdump_to_buf: not yet implemented\n");
-    return -ENOSYS;
+    const uint8_t *p = (const uint8_t *)buf;
+    size_t pos = 0;
+    for (size_t i = 0; i < len && pos + 5 < out_len; i += 16) {
+        pos += ksnprintf(out + pos, out_len - pos, "%04lx: ", (unsigned long)i);
+        for (size_t j = 0; j < 16; j++) {
+            if (pos + 3 >= out_len) break;
+            if (i + j < len)
+                pos += ksnprintf(out + pos, out_len - pos, "%02x ", p[i + j]);
+            else
+                pos += ksnprintf(out + pos, out_len - pos, "   ");
+            if (j == 7 && pos < out_len)
+                out[pos++] = ' ';
+        }
+        if (pos + 2 >= out_len) break;
+        out[pos++] = '|';
+        for (size_t j = 0; j < 16 && i + j < len && pos < out_len; j++)
+            out[pos++] = (p[i+j] >= 32 && p[i+j] < 127) ? p[i+j] : '.';
+        if (pos < out_len) out[pos++] = '|';
+        if (pos < out_len) out[pos++] = '\n';
+    }
+    if (pos < out_len) out[pos] = '\0';
+    return (int)pos;
 }
-/* ── Stub: hexdump_ascii ─────────────────────────────── */
+/* ── hexdump_ascii ─────────────────────────────── */
 int hexdump_ascii(const void *buf, size_t len)
 {
-    (void)buf;
-    (void)len;
-    kprintf("[hexdump] hexdump_ascii: not yet implemented\n");
-    return -ENOSYS;
+    const uint8_t *p = (const uint8_t *)buf;
+    kprintf("[hexdump] ");
+    for (size_t i = 0; i < len; i++)
+        kprintf("%c", (p[i] >= 32 && p[i] < 127) ? p[i] : '.');
+    kprintf("\n");
+    return 0;
 }

@@ -545,21 +545,134 @@ void usb_hid_mouse_get(int *buttons, int *dx, int *dy) {
     g_mouse_dy = 0;
 }
 
-/* ── Stub: usb_hid_read ─────────────────────────────── */
-int usb_hid_read(void *dev, void *buf, size_t count)
+int usb_hid_read(struct usb_device *dev, void *buf, size_t count)
 {
-    (void)dev;
-    (void)buf;
-    (void)count;
-    kprintf("[usb] usb_hid_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev || !buf || count == 0) return -EINVAL;
+
+    /* Use interrupt IN transfer to read HID report */
+    if (!g_hid_initialized || !g_dev_addr) {
+        kprintf("[usb_hid] usb_hid_read: HID not initialized\n");
+        return -EIO;
+    }
+
+    /* For keyboard, return scancodes from internal buffer */
+    if (g_keyboard_present) {
+        int n = 0;
+        while (n < (int)count && usb_hid_has_input()) {
+            ((uint8_t *)buf)[n++] = (uint8_t)usb_hid_getchar();
+        }
+        return n;
+    }
+
+    /* For mouse, return current state */
+    if (g_mouse_present) {
+        if (count >= 7) {
+            uint8_t *p = (uint8_t *)buf;
+            int buttons, dx, dy;
+            usb_hid_mouse_get(&buttons, &dx, &dy);
+            p[0] = (uint8_t)buttons;
+            p[1] = (uint8_t)dx;
+            p[2] = (uint8_t)dy;
+            /* Clear state */
+            memset(p + 3, 0, count - 3);
+            return 3;
+        }
+    }
+
+    return 0;
 }
-/* ── Stub: usb_hid_parse_report ─────────────────────────────── */
+
+/* ── usb_hid_parse_report: Parse HID report descriptor ────────── */
 int usb_hid_parse_report(void *dev, const void *report, size_t len)
 {
     (void)dev;
-    (void)report;
-    (void)len;
-    kprintf("[usb] usb_hid_parse_report: not yet implemented\n");
-    return -ENOSYS;
+    if (!report || len == 0) return -EINVAL;
+
+    kprintf("[usb_hid] Parsing HID report descriptor (%zu bytes)...\n", len);
+
+    /* Simple HID report descriptor parser */
+    const uint8_t *data = (const uint8_t *)report;
+    size_t pos = 0;
+
+    /* HID report item types */
+#define HID_ITEM_TAG_MAIN_INPUT   0x80
+#define HID_ITEM_TAG_MAIN_OUTPUT  0x90
+#define HID_ITEM_TAG_MAIN_FEATURE 0xB0
+#define HID_ITEM_TAG_GLOBAL_USAGE_PAGE 0x04
+#define HID_ITEM_TAG_GLOBAL_LOGICAL_MIN 0x14
+#define HID_ITEM_TAG_GLOBAL_LOGICAL_MAX 0x24
+#define HID_ITEM_TAG_GLOBAL_REPORT_SIZE 0x74
+#define HID_ITEM_TAG_GLOBAL_REPORT_COUNT 0x94
+#define HID_ITEM_TAG_LOCAL_USAGE  0x08
+
+    uint32_t usage_page = 0;
+    uint32_t usage = 0;
+    uint32_t report_size = 0;
+    uint32_t report_count = 0;
+    int has_keyboard = 0;
+    int has_mouse = 0;
+
+    while (pos < len) {
+        uint8_t item = data[pos++];
+        if (item == 0) continue; /* padding */
+        uint8_t tag = item & 0xFC;
+        uint8_t type = item & 0x03;
+        uint8_t size = item & 0xFC ? (item & 0x03) : 0;
+        if (size == 3) size = 4; /* 3 means 4 bytes */
+
+        if (pos + size > len) break;
+
+        if (type == 1) { /* Global */
+            switch (tag) {
+            case HID_ITEM_TAG_GLOBAL_USAGE_PAGE:
+                if (size == 1) usage_page = data[pos];
+                else if (size == 2) usage_page = data[pos] | ((uint32_t)data[pos + 1] << 8);
+                break;
+            case HID_ITEM_TAG_GLOBAL_REPORT_SIZE:
+                if (size == 1) report_size = data[pos];
+                else if (size == 2) report_size = data[pos] | ((uint32_t)data[pos + 1] << 8);
+                break;
+            case HID_ITEM_TAG_GLOBAL_REPORT_COUNT:
+                if (size == 1) report_count = data[pos];
+                else if (size == 2) report_count = data[pos] | ((uint32_t)data[pos + 1] << 8);
+                break;
+            }
+        } else if (type == 2) { /* Local */
+            if (tag == HID_ITEM_TAG_LOCAL_USAGE) {
+                if (size == 1) usage = data[pos];
+                else if (size == 2) usage = data[pos] | ((uint32_t)data[pos + 1] << 8);
+            }
+        } else if (type == 0) { /* Main */
+            /* Check for Input/Output/Feature items */
+            uint8_t main_tag = tag;
+            (void)main_tag;
+            if (usage_page == 0x01) { /* Generic Desktop Controls */
+                if (usage == 0x06 && report_count > 0) {
+                    has_keyboard = 1;
+                }
+                if (usage == 0x02) {
+                    has_mouse = 1;
+                }
+            }
+        }
+
+        pos += size;
+    }
+
+    /* Update HID state based on parsed report */
+    if (has_keyboard) {
+        g_keyboard_present = 1;
+        kprintf("[usb_hid] Report parsed: keyboard detected\n");
+    }
+    if (has_mouse) {
+        g_mouse_present = 1;
+        kprintf("[usb_hid] Report parsed: mouse detected\n");
+    }
+
+    if (!has_keyboard && !has_mouse) {
+        kprintf("[usb_hid] Report parsed: unknown HID device (usage_page=0x%x, usage=0x%x)\n",
+                usage_page, usage);
+    }
+
+    return 0;
 }

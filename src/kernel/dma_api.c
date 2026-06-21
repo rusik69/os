@@ -258,5 +258,5 @@ void* dma_alloc_coherent(void *dev, size_t size, void *dma_handle)
     (void)size;
     (void)dma_handle;
     kprintf("[dma] dma_alloc_coherent: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

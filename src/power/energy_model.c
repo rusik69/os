@@ -352,25 +352,27 @@ uint64_t em_calculate_energy(uint32_t freq_khz, uint32_t voltage_mv,
     return energy_nj;
 }
 
-/* ── Stub: em_create ─────────────────────────────── */
+/* ── em_create ─────────────────────────────── */
 int em_create(void *pd)
 {
     (void)pd;
-    kprintf("[em] em_create: not yet implemented\n");
-    return -ENOSYS;
+    /* Create an energy model for a performance domain.
+     * For now, check that the EM framework is initialized. */
+    if (!em_initialized) return -1;
+    return 0;
 }
-/* ── Stub: em_destroy ─────────────────────────────── */
+/* ── em_destroy ─────────────────────────────── */
 int em_destroy(void *pd)
 {
     (void)pd;
-    kprintf("[em] em_destroy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: em_register ─────────────────────────────── */
+/* ── em_register ─────────────────────────────── */
 int em_register(void *dev, void *table)
 {
     (void)dev;
     (void)table;
-    kprintf("[em] em_register: not yet implemented\n");
-    return -ENOSYS;
+    /* Generic device EM registration. For CPU EMs, use em_register_cpu directly. */
+    if (!em_initialized) return -1;
+    return 0;
 }

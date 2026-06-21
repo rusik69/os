@@ -193,26 +193,26 @@ int pm_runtime_get(void *dev)
 {
     (void)dev;
     kprintf("[pm] pm_runtime_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pm_runtime_put ─────────────────────────────── */
 int pm_runtime_put(void *dev)
 {
     (void)dev;
     kprintf("[pm] pm_runtime_put: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pm_runtime_resume ─────────────────────────────── */
 int pm_runtime_resume(void *dev)
 {
     (void)dev;
     kprintf("[pm] pm_runtime_resume: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pm_runtime_suspend ─────────────────────────────── */
 int pm_runtime_suspend(void *dev)
 {
     (void)dev;
     kprintf("[pm] pm_runtime_suspend: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

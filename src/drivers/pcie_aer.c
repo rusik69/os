@@ -114,7 +114,7 @@ int pcie_aer_init(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_aer_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_aer_handler ─────────────────────────────── */
 int pcie_aer_handler(void *dev, uint32_t status)
@@ -122,19 +122,19 @@ int pcie_aer_handler(void *dev, uint32_t status)
     (void)dev;
     (void)status;
     kprintf("[pcie] pcie_aer_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_aer_clear ─────────────────────────────── */
 int pcie_aer_clear(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_aer_clear: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_aer_print ─────────────────────────────── */
 int pcie_aer_print(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_aer_print: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

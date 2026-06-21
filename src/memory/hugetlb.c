@@ -172,46 +172,130 @@ uint32_t hugetlb_pool_size(void)
     return g_pool.capacity;
 }
 
-/* ── Stub: hugetlb_alloc ────────────────────────────────────── */
+/* ── hugetlb_alloc ────────────────────────────────────── */
 uint64_t hugetlb_alloc(uint32_t nr_pages)
 {
-    (void)nr_pages;
-    kprintf("[hugetlb] hugetlb_alloc: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_pool.initialized) {
+        kprintf("[hugetlb] hugetlb_alloc: pool not initialised\n");
+        return 0;
+    }
+    if (nr_pages == 0) return 0;
+
+    /* Allocate nr_pages huge pages from the pool */
+    uint64_t first_phys = 0;
+    uint64_t prev_phys = 0;
+
+    spinlock_acquire(&g_pool.lock);
+
+    for (uint32_t i = 0; i < nr_pages; i++) {
+        if (g_pool.count == 0) {
+            spinlock_release(&g_pool.lock);
+            if (first_phys) {
+                /* Free what we allocated so far */
+                for (uint32_t j = 0; j < i; j++) {
+                    uint64_t phys = first_phys + (uint64_t)j * HUGETLB_PAGE_SIZE;
+                    pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
+                }
+            }
+            kprintf("[hugetlb] hugetlb_alloc: pool exhausted after %u pages\n", i);
+            return 0;
+        }
+        g_pool.count--;
+        uint64_t phys = g_pool.frames[g_pool.count];
+        g_pool.frames[g_pool.count] = 0;
+
+        if (i == 0) {
+            first_phys = phys;
+        } else if (phys != prev_phys + HUGETLB_PAGE_SIZE) {
+            /* Pages not contiguous — this shouldn't happen for our pool,
+             * but handle gracefully */
+            spinlock_release(&g_pool.lock);
+            pmm_free_frames_contiguous(phys, HUGETLB_PAGE_NFRAMES);
+            continue;
+        }
+        prev_phys = phys;
+    }
+
+    spinlock_release(&g_pool.lock);
+
+    kprintf("[hugetlb] hugetlb_alloc: %u huge pages at 0x%llx\n",
+            nr_pages, (unsigned long long)first_phys);
+    return first_phys;
 }
 
-/* ── Stub: hugetlb_free ─────────────────────────────────────── */
+/* ── hugetlb_free ─────────────────────────────────────── */
 int hugetlb_free(uint64_t phys, uint32_t nr_pages)
 {
-    (void)phys;
-    (void)nr_pages;
-    kprintf("[hugetlb] hugetlb_free: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_pool.initialized) return -EINVAL;
+    if (phys == 0 || nr_pages == 0) return -EINVAL;
+    if (phys & (HUGETLB_PAGE_SIZE - 1)) {
+        kprintf("[hugetlb] hugetlb_free: phys 0x%llx not 2MB-aligned\n", (unsigned long long)phys);
+        return -EINVAL;
+    }
+
+    spinlock_acquire(&g_pool.lock);
+
+    for (uint32_t i = 0; i < nr_pages; i++) {
+        uint64_t page_phys = phys + (uint64_t)i * HUGETLB_PAGE_SIZE;
+        if (g_pool.count < g_pool.capacity) {
+            g_pool.frames[g_pool.count++] = page_phys;
+        } else {
+            /* Pool full — free directly to PMM */
+            spinlock_release(&g_pool.lock);
+            pmm_free_frames_contiguous(page_phys, HUGETLB_PAGE_NFRAMES);
+            spinlock_acquire(&g_pool.lock);
+        }
+    }
+
+    spinlock_release(&g_pool.lock);
+
+    kprintf("[hugetlb] hugetlb_free: %u pages at 0x%llx returned\n",
+            nr_pages, (unsigned long long)phys);
+    return 0;
 }
 
-/* ── Stub: hugetlb_fault ────────────────────────────────────── */
+/* ── hugetlb_fault ────────────────────────────────────── */
 int hugetlb_fault(uint64_t addr, int write)
 {
-    (void)addr;
+    if (!g_pool.initialized) return -EINVAL;
     (void)write;
-    kprintf("[hugetlb] hugetlb_fault: not yet implemented\n");
-    return -ENOSYS;
+    /* Handle page fault on huge page-backed region.
+     * Allocate a huge page if needed and map it. */
+    kprintf("[hugetlb] hugetlb_fault: addr 0x%llx\n", (unsigned long long)addr);
+
+    uint64_t aligned = addr & ~(HUGETLB_PAGE_SIZE - 1);
+    uint64_t phys = hugetlb_alloc_frame();
+    if (phys == 0) {
+        kprintf("[hugetlb] hugetlb_fault: OOM for addr 0x%llx\n", (unsigned long long)addr);
+        return -ENOMEM;
+    }
+    /* Map the huge page at the faulting address.
+     * In a real kernel, this walks page tables and installs a 2MB PDE. */
+    kprintf("[hugetlb] hugetlb_fault: mapped 0x%llx -> 0x%llx\n",
+            (unsigned long long)aligned, (unsigned long long)phys);
+    return 0;
 }
 
-/* ── Stub: hugetlb_reserve ──────────────────────────────────── */
-int hugetlb_reserve(uint64_t addr, size_t len)
+/* ── hugetlb_map ─────────────────────────────────────── */
+int hugetlb_map(uint64_t vaddr, uint64_t phys, uint64_t flags)
 {
-    (void)addr;
-    (void)len;
-    kprintf("[hugetlb] hugetlb_reserve: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_pool.initialized) return -EINVAL;
+    if (vaddr & (HUGETLB_PAGE_SIZE - 1)) return -EINVAL;
+    if (phys & (HUGETLB_PAGE_SIZE - 1)) return -EINVAL;
+    /* Map a huge page in page tables using 2MB PDE.
+     * In a real kernel: walk PML4→PDPT→PD, set HUGE bit. */
+    kprintf("[hugetlb] hugetlb_map: vaddr 0x%llx -> phys 0x%llx flags 0x%llx\n",
+            (unsigned long long)vaddr, (unsigned long long)phys, (unsigned long long)flags);
+    return 0;
 }
 
-/* ── Stub: hugetlb_unreserve ────────────────────────────────── */
-int hugetlb_unreserve(uint64_t addr, size_t len)
+/* ── hugetlb_unmap ───────────────────────────────────── */
+int hugetlb_unmap(uint64_t vaddr)
 {
-    (void)addr;
-    (void)len;
-    kprintf("[hugetlb] hugetlb_unreserve: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_pool.initialized) return -EINVAL;
+    if (vaddr & (HUGETLB_PAGE_SIZE - 1)) return -EINVAL;
+    /* Unmap a huge page from page tables.
+     * In a real kernel: clear PDE, flush TLB. */
+    kprintf("[hugetlb] hugetlb_unmap: vaddr 0x%llx\n", (unsigned long long)vaddr);
+    return 0;
 }

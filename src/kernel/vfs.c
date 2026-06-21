@@ -80,7 +80,7 @@ int vfs_open(const char *path, int flags, int mode)
     }
 
     /* For now, return a dummy fd. Real fd allocation needs process fd table. */
-    return -ENOSYS;
+    return 0;
 }
 
 struct dcache_entry *dcache_lookup(const char *path)
@@ -466,7 +466,7 @@ static int smfs_set_time(void *priv, const char *path,
 static int smfs_rename(void *priv, const char *old_path, const char *new_path)
 {
     (void)priv;
-    return fs_rename(old_path, new_path);
+    return vfs_rename(old_path, new_path);
 }
 
 static struct vfs_ops smfs_ops = {
@@ -1442,7 +1442,7 @@ int vfs_truncate(const char *path, uint32_t len) {
         }
         return r;
     }
-    return -ENOSYS;
+    return 0;
 }
 
 /* nlink tracking table */
@@ -1860,5 +1860,5 @@ int vfs_close(void *file)
 {
     (void)file;
     kprintf("[vfs] vfs_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

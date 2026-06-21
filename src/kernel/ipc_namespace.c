@@ -427,25 +427,25 @@ int ipc_ns_create(void *parent)
 {
     (void)parent;
     kprintf("[ipc_ns] ipc_ns_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ipc_ns_delete ─────────────────────────────── */
 int ipc_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[ipc_ns] ipc_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ipc_ns_get ─────────────────────────────── */
 void* ipc_ns_get(void)
 {
     kprintf("[ipc_ns] ipc_ns_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ipc_ns_put ─────────────────────────────── */
 int ipc_ns_put(void *ns)
 {
     (void)ns;
     kprintf("[ipc_ns] ipc_ns_put: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

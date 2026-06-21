@@ -7,6 +7,7 @@
 #include "string.h"
 #include "waitqueue.h"
 #include "vfs.h"
+#include "socket.h"
 
 /* ── signalfd: receive signals as file descriptor ────────────────────── */
 
@@ -153,28 +154,53 @@ int signalfd_close(int fd) {
     return 0;
 }
 
-/* ── Stub: signalfd_poll ────────────────────────────────────── */
+/* ── signalfd_poll ────────────────────────────────────── */
 int signalfd_poll(int fd)
 {
-    (void)fd;
-    kprintf("[signalfd] signalfd_poll: not yet implemented\n");
-    return -ENOSYS;
+    int slot = fd - 200;
+    if (slot < 0 || slot >= SIGNALFD_MAX) return POLLNVAL;
+    if (!signalfd_table[slot].in_use) return POLLNVAL;
+
+    struct signalfd_entry *sfd = &signalfd_table[slot];
+    int mask = POLLOUT; /* always writable */
+
+    if (sfd->queue_len > 0)
+        mask |= POLLIN;
+
+    return mask;
 }
 
-/* ── Stub: signalfd_show_fdinfo ─────────────────────────────── */
+/* ── signalfd_show_fdinfo ─────────────────────────────── */
 int signalfd_show_fdinfo(int fd, char *buf, size_t size)
 {
-    (void)fd;
-    (void)buf;
-    (void)size;
-    kprintf("[signalfd] signalfd_show_fdinfo: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || size == 0) return -EINVAL;
+
+    int slot = fd - 200;
+    if (slot < 0 || slot >= SIGNALFD_MAX || !signalfd_table[slot].in_use) {
+        int n = snprintf(buf, size, "signalfd:\t%d (invalid)\n", fd);
+        return n < 0 ? -EINVAL : n;
+    }
+
+    struct signalfd_entry *sfd = &signalfd_table[slot];
+    int n = snprintf(buf, size,
+        "signalfd:\t%d\n"
+        "pid:\t%u\n"
+        "sigmask:\t0x%llx\n"
+        "queue_len:\t%d\n",
+        fd, sfd->pid,
+        (unsigned long long)sfd->sigmask,
+        sfd->queue_len);
+
+    if (n < 0) return -EINVAL;
+    if ((size_t)n >= size) return -ENOSPC;
+    return n;
 }
 
-/* ── Stub: signalfd_release ─────────────────────────────────── */
+/* ── signalfd_release ─────────────────────────────────── */
 int signalfd_release(int fd)
 {
-    (void)fd;
-    kprintf("[signalfd] signalfd_release: not yet implemented\n");
-    return -ENOSYS;
+    int slot = fd - 200;
+    if (slot < 0 || slot >= SIGNALFD_MAX) return -EBADF;
+    memset(&signalfd_table[slot], 0, sizeof(struct signalfd_entry));
+    return 0;
 }

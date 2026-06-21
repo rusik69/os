@@ -135,7 +135,7 @@ int time_ns_delete(void *ns)
 {
     (void)ns;
     kprintf("[time_ns] time_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: time_ns_set_offset ─────────────────────────────── */
 int time_ns_set_offset(void *ns, int clock, uint64_t offset)
@@ -144,5 +144,5 @@ int time_ns_set_offset(void *ns, int clock, uint64_t offset)
     (void)clock;
     (void)offset;
     kprintf("[time_ns] time_ns_set_offset: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

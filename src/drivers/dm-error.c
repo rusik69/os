@@ -95,7 +95,7 @@ int dm_error_ctr(void *ti, unsigned int argc, char **argv)
     (void)argc;
     (void)argv;
     kprintf("[dm] dm_error_ctr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dm_error_map ─────────────────────────────── */
 int dm_error_map(void *ti, void *bio)
@@ -103,5 +103,5 @@ int dm_error_map(void *ti, void *bio)
     (void)ti;
     (void)bio;
     kprintf("[dm] dm_error_map: not yet implemented\n");
-    return -ENOSYS;
+    return -EIO;
 }

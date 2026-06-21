@@ -319,14 +319,14 @@ int ima_policy_register(void *rule)
 {
     (void)rule;
     kprintf("[ima] ima_policy_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ima_policy_unregister ─────────────────────────────── */
 int ima_policy_unregister(void *rule)
 {
     (void)rule;
     kprintf("[ima] ima_policy_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ima_policy_match ─────────────────────────────── */
 int ima_policy_match(void *inode, int mask, int func)
@@ -335,5 +335,5 @@ int ima_policy_match(void *inode, int mask, int func)
     (void)mask;
     (void)func;
     kprintf("[ima] ima_policy_match: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -1676,26 +1676,31 @@ static void cfs_wakeup_adjust_vruntime(struct process *proc)
 #include "export.h"
 EXPORT_SYMBOL(scheduler_yield);
 
-/* ── Stub: scheduler_pick_next ─────────────────────────────── */
+/* ── scheduler_pick_next ─────────────────────────────── */
 void* scheduler_pick_next(void *rq)
 {
     (void)rq;
-    kprintf("[sched] scheduler_pick_next: not yet implemented\n");
-    return -ENOSYS;
+    /* Pick the next task from the current CPU's runqueue.
+     * If EEVDF is enabled, use eevdf_pick_next(); otherwise use cfs_pick_next(). */
+    if (sched_eevdf_enabled)
+        return (void*)eevdf_pick_next();
+    return (void*)cfs_pick_next();
 }
-/* ── Stub: scheduler_enqueue ─────────────────────────────── */
+/* ── scheduler_enqueue ─────────────────────────────── */
 int scheduler_enqueue(void *rq, void *task)
 {
     (void)rq;
-    (void)task;
-    kprintf("[sched] scheduler_enqueue: not yet implemented\n");
-    return -ENOSYS;
+    if (!task) return -EINVAL;
+    struct process *proc = (struct process *)task;
+    scheduler_add(proc);
+    return 0;
 }
-/* ── Stub: scheduler_dequeue ─────────────────────────────── */
+/* ── scheduler_dequeue ─────────────────────────────── */
 int scheduler_dequeue(void *rq, void *task)
 {
     (void)rq;
-    (void)task;
-    kprintf("[sched] scheduler_dequeue: not yet implemented\n");
-    return -ENOSYS;
+    if (!task) return -EINVAL;
+    struct process *proc = (struct process *)task;
+    scheduler_remove(proc);
+    return 0;
 }

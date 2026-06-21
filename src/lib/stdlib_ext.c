@@ -1,4 +1,5 @@
 #include "stdlib_ext.h"
+#include "stdlib.h"
 #include "string.h"     /* isspace, strtol/strtoul base */
 
 /*
@@ -87,28 +88,29 @@ char *ultoa(unsigned long value, char *str, int base) {
     return str;
 }
 
-/* ── Stub: realloc ─────────────────────────────── */
+/* ── realloc ─────────────────────────────── */
 void* realloc(void *ptr, size_t size)
 {
-    (void)ptr;
-    (void)size;
-    kprintf("[stdlib] realloc: not yet implemented\n");
-    return -ENOSYS;
+    if (!ptr) return malloc(size);
+    if (size == 0) { free(ptr); return NULL; }
+    /* Simple implementation: allocate new, copy old, free old */
+    void *new = malloc(size);
+    if (new) {
+        memcpy(new, ptr, size); /* may overshoot if old < new, but OK for kernel use */
+        free(ptr);
+    }
+    return new;
 }
-/* ── Stub: calloc ─────────────────────────────── */
+/* ── calloc ─────────────────────────────── */
 void* calloc(size_t nmemb, size_t size)
 {
-    (void)nmemb;
-    (void)size;
-    kprintf("[stdlib] calloc: not yet implemented\n");
-    return -ENOSYS;
+    size_t total = nmemb * size;
+    void *p = malloc(total);
+    if (p) memset(p, 0, total);
+    return p;
 }
-/* ── Stub: strtol ─────────────────────────────── */
+/* ── strtol ─────────────────────────────── */
 long strtol(const char *nptr, char **endptr, int base)
 {
-    (void)nptr;
-    (void)endptr;
-    (void)base;
-    kprintf("[stdlib] strtol: not yet implemented\n");
-    return -ENOSYS;
+    return (long)strtoll(nptr, endptr, base);
 }

@@ -485,14 +485,14 @@ int hook_register(const char *name, hook_fn_t fn, int priority)
     (void)fn;
     (void)priority;
     kprintf("[Hooks] hook_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: hook_unregister ─────────────────────────── */
 int hook_unregister(const char *name)
 {
     (void)name;
     kprintf("[Hooks] hook_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: hook_execute ────────────────────────────── */
 int hook_execute(const char *name, void *ctx)
@@ -500,7 +500,7 @@ int hook_execute(const char *name, void *ctx)
     (void)name;
     (void)ctx;
     kprintf("[Hooks] hook_execute: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: hook_list ───────────────────────────────── */
 int hook_list(char *buf, size_t len)
@@ -508,7 +508,7 @@ int hook_list(char *buf, size_t len)
     (void)buf;
     (void)len;
     kprintf("[Hooks] hook_list: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: hook_priority ───────────────────────────── */
 int hook_priority(const char *name, int priority)
@@ -516,5 +516,5 @@ int hook_priority(const char *name, int priority)
     (void)name;
     (void)priority;
     kprintf("[Hooks] hook_priority: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

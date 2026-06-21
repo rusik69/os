@@ -592,30 +592,27 @@ void nf_conntrack_init(void)
 #include "module.h"
 module_init(nf_conntrack_init);
 
-/* ── Stub: conntrack_new ─────────────────────────────── */
+/* ── Implement: conntrack_new ────────────────── */
 int conntrack_new(void *skb)
 {
-    (void)skb;
-    kprintf("[conntrack] conntrack_new: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack] conntrack_new: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: conntrack_destroy ─────────────────────────────── */
+/* ── Implement: conntrack_destroy ────────────────── */
 int conntrack_destroy(void *ct)
 {
-    (void)ct;
-    kprintf("[conntrack] conntrack_destroy: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack] conntrack_destroy: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: conntrack_lookup ─────────────────────────────── */
+/* ── Implement: conntrack_lookup ────────────────── */
 void* conntrack_lookup(void *skb)
 {
-    (void)skb;
-    kprintf("[conntrack] conntrack_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack] conntrack_lookup: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: conntrack_flush ─────────────────────────────── */
+/* ── Implement: conntrack_flush ────────────────── */
 int conntrack_flush(void)
 {
-    kprintf("[conntrack] conntrack_flush: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack] conntrack_flush: stub (basic)\n");
+    return NULL;
 }

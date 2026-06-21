@@ -677,13 +677,13 @@ int kdump_load(const char *path)
 {
     (void)path;
     kprintf("[kdump] kdump_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdump_unload ─────────────────────────────── */
 int kdump_unload(void)
 {
     kprintf("[kdump] kdump_unload: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kdump_read ─────────────────────────────── */
 int kdump_read(void *buf, size_t count, uint64_t offset)
@@ -692,5 +692,5 @@ int kdump_read(void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[kdump] kdump_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

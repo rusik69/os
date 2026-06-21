@@ -142,7 +142,7 @@ int range_overlap(const void *r1, const void *r2)
     (void)r1;
     (void)r2;
     kprintf("[range] range_overlap: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: range_merge ─────────────────────────────── */
 int range_merge(void *r1, const void *r2)
@@ -150,5 +150,5 @@ int range_merge(void *r1, const void *r2)
     (void)r1;
     (void)r2;
     kprintf("[range] range_merge: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

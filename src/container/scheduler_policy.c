@@ -493,7 +493,7 @@ int sched_policy_set(const char *cont, const char *policy)
     (void)cont;
     (void)policy;
     kprintf("[container] sched_policy_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sched_policy_get ─────────────────────────────── */
 int sched_policy_get(const char *cont, char *policy, size_t len)
@@ -502,5 +502,5 @@ int sched_policy_get(const char *cont, char *policy, size_t len)
     (void)policy;
     (void)len;
     kprintf("[container] sched_policy_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

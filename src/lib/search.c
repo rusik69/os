@@ -106,25 +106,33 @@ void *lsearch(const void *key, void *base, size_t *nmemb, size_t size,
     return (void *)(p + (*nmemb - 1) * size);
 }
 
-/* ── Stub: search_binary ─────────────────────────────── */
+/* ── search_binary ─────────────────────────────── */
 int search_binary(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
 {
-    (void)key;
-    (void)base;
-    (void)nmemb;
-    (void)size;
-    (void)cmp;
-    kprintf("[search] search_binary: not yet implemented\n");
-    return -ENOSYS;
+    if (!key || !base || !cmp)
+        return -1;
+    int (*compar)(const void *, const void *) = (int (*)(const void *, const void *))cmp;
+    const char *lo = (const char *)base;
+    const char *hi = lo + nmemb * size;
+    while (lo < hi) {
+        const char *mid = lo + ((size_t)(hi - lo) / size / 2) * size;
+        int r = compar(key, mid);
+        if (r == 0) return (int)((mid - (const char *)base) / size);
+        if (r < 0)  hi = mid;
+        else        lo = mid + size;
+    }
+    return -1;
 }
-/* ── Stub: search_linear ─────────────────────────────── */
+/* ── search_linear ─────────────────────────────── */
 int search_linear(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
 {
-    (void)key;
-    (void)base;
-    (void)nmemb;
-    (void)size;
-    (void)cmp;
-    kprintf("[search] search_linear: not yet implemented\n");
-    return -ENOSYS;
+    if (!key || !base || !cmp)
+        return -1;
+    int (*compar)(const void *, const void *) = (int (*)(const void *, const void *))cmp;
+    const char *p = (const char *)base;
+    for (size_t i = 0; i < nmemb; i++) {
+        if (compar(key, p + i * size) == 0)
+            return (int)i;
+    }
+    return -1;
 }

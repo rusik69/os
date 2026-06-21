@@ -216,35 +216,35 @@ int loop_get_backing(int loop_dev_id, int *out_backing_dev_id,
 #include "module.h"
 module_init(loop_init);
 
-/* ── Stub: loop_set_fd ─────────────────────────────── */
-int loop_set_fd(int fd)
+int loop_set_fd(struct loop_device *dev, struct file *file)
 {
-    (void)fd;
-    kprintf("[loop] loop_set_fd: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev || !file) return -EINVAL;
+    if (dev->backing_file) return -EBUSY;
+    dev->backing_file = file;
+    dev->size = file_size(file);
+    return 0;
 }
-/* ── Stub: loop_clr_fd ─────────────────────────────── */
-int loop_clr_fd(int fd)
+
+int loop_clr_fd(struct loop_device *dev)
 {
-    (void)fd;
-    kprintf("[loop] loop_clr_fd: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    if (!dev->backing_file) return -ENXIO;
+    dev->backing_file = NULL;
+    dev->size = 0;
+    return 0;
 }
-/* ── Stub: loop_read ─────────────────────────────── */
-int loop_read(void *buf, size_t count, uint64_t offset)
+
+ssize_t loop_read(struct loop_device *dev, void *buf, size_t count, loff_t pos)
 {
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[loop] loop_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev || !buf) return -EINVAL;
+    if (!dev->backing_file) return -ENXIO;
+    return file_read(dev->backing_file, buf, count, &pos);
 }
-/* ── Stub: loop_write ─────────────────────────────── */
-int loop_write(const void *buf, size_t count, uint64_t offset)
+
+ssize_t loop_write(struct loop_device *dev, const void *buf, size_t count, loff_t pos)
 {
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[loop] loop_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev || !buf) return -EINVAL;
+    if (!dev->backing_file) return -ENXIO;
+    return file_write(dev->backing_file, buf, count, &pos);
 }
+

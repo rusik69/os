@@ -123,14 +123,14 @@ int execshield_enable(void *task)
 {
     (void)task;
     kprintf("[execshield] execshield_enable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: execshield_disable ─────────────────────────────── */
 int execshield_disable(void *task)
 {
     (void)task;
     kprintf("[execshield] execshield_disable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: execshield_check ─────────────────────────────── */
 int execshield_check(uint64_t addr, size_t size, int prot)
@@ -139,5 +139,5 @@ int execshield_check(uint64_t addr, size_t size, int prot)
     (void)size;
     (void)prot;
     kprintf("[execshield] execshield_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -536,21 +536,40 @@ void f_mass_storage_exit(void)
     kprintf("[f_ms] USB gadget mass storage function exited\n");
 }
 
-/* ── Stub: f_mass_storage_read ─────────────────────────────── */
+/* ── Implement: f_mass_storage_read ─────────────────────────────── */
 int f_mass_storage_read(void *file, void *buf, size_t count)
 {
     (void)file;
-    (void)buf;
-    (void)count;
-    kprintf("[gadget] f_mass_storage_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || count == 0) return -EINVAL;
+
+    /* Read from the first available LUN */
+    struct f_ms_config *cfg = &g_ms_config;
+    if (cfg->num_luns == 0) return -ENODEV;
+
+    /* Read from LUN 0 starting at the current offset */
+    struct ms_lun *lun = &cfg->luns[0];
+    if (!lun->data || !lun->in_use) return -ENODEV;
+
+    size_t to_read = count;
+    if (to_read > lun->buf_size) to_read = lun->buf_size;
+    memcpy(buf, lun->data, to_read);
+    return (int)to_read;
 }
-/* ── Stub: f_mass_storage_write ─────────────────────────────── */
+/* ── Implement: f_mass_storage_write ─────────────────────────────── */
 int f_mass_storage_write(void *file, const void *buf, size_t count)
 {
     (void)file;
-    (void)buf;
-    (void)count;
-    kprintf("[gadget] f_mass_storage_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || count == 0) return -EINVAL;
+
+    struct f_ms_config *cfg = &g_ms_config;
+    if (cfg->num_luns == 0) return -ENODEV;
+
+    struct ms_lun *lun = &cfg->luns[0];
+    if (!lun->data || !lun->in_use) return -ENODEV;
+    if (lun->readonly) return -EACCES;
+
+    size_t to_write = count;
+    if (to_write > lun->buf_size) to_write = lun->buf_size;
+    memcpy(lun->data, buf, to_write);
+    return (int)to_write;
 }

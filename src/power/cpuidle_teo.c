@@ -310,11 +310,19 @@ int cpuidle_teo_init(void)
     return 0;
 }
 
-/* ── Stub: teo_reflect ─────────────────────────────── */
+/* ── teo_reflect ─────────────────────────────── */
 int teo_reflect(void *dev, int index)
 {
     (void)dev;
-    (void)index;
-    kprintf("[cpuidle] teo_reflect: not yet implemented\n");
-    return -ENOSYS;
+    /* Called after wake from C-state @index.
+     * Update the TEO pattern window for idle duration prediction. */
+    if (index >= 0 && index < TEO_MAX_STATES) {
+        struct teo_cpu_state *state = &teo_state[index];
+        state->last_state_idx = index;
+        state->pattern_window_idx = (state->pattern_window_idx + 1) % TEO_PATTERN_WINDOW;
+        state->pattern_window_count++;
+        if (state->pattern_window_count > TEO_PATTERN_WINDOW)
+            state->pattern_window_count = TEO_PATTERN_WINDOW;
+    }
+    return 0;
 }

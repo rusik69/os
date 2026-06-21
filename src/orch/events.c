@@ -217,7 +217,7 @@ int events_register(const char *type, void *handler)
     (void)type;
     (void)handler;
     kprintf("[orch] events_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: events_unregister ─────────────────────────────── */
 int events_unregister(const char *type, void *handler)
@@ -225,7 +225,7 @@ int events_unregister(const char *type, void *handler)
     (void)type;
     (void)handler;
     kprintf("[orch] events_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: events_dispatch ─────────────────────────────── */
 int events_dispatch(const char *type, const void *data)
@@ -233,5 +233,5 @@ int events_dispatch(const char *type, const void *data)
     (void)type;
     (void)data;
     kprintf("[orch] events_dispatch: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

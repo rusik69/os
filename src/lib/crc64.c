@@ -39,21 +39,27 @@ void crc64_init(void)
     kprintf("[OK] CRC64-ECMA-182 initialized\n");
 }
 
-/* ── Stub: crc64_le ─────────────────────────────── */
+/* ── crc64_le ─────────────────────────────── */
 uint64_t crc64_le(uint64_t crc, const uint8_t *data, size_t len)
 {
-    (void)crc;
-    (void)data;
-    (void)len;
-    kprintf("[crc64] crc64_le: not yet implemented\n");
-    return -ENOSYS;
+    return crc64(crc, data, len);
 }
-/* ── Stub: crc64_be ─────────────────────────────── */
+/* ── crc64_be ─────────────────────────────── */
 uint64_t crc64_be(uint64_t crc, const uint8_t *data, size_t len)
 {
-    (void)crc;
-    (void)data;
-    (void)len;
-    kprintf("[crc64] crc64_be: not yet implemented\n");
-    return -ENOSYS;
+    static uint64_t crc64_be_table[256];
+    static int be_initialized = 0;
+    if (!be_initialized) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint64_t crc = (uint64_t)i << 56;
+            for (int j = 0; j < 8; j++)
+                crc = (crc << 1) ^ ((crc & (1ULL << 63)) ? CRC64_ECMA182_POLY : 0);
+            crc64_be_table[i] = crc;
+        }
+        be_initialized = 1;
+    }
+    crc = ~crc;
+    for (size_t i = 0; i < len; i++)
+        crc = (crc << 8) ^ crc64_be_table[((crc >> 56) ^ data[i]) & 0xFF];
+    return ~crc;
 }

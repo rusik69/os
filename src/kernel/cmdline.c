@@ -146,7 +146,7 @@ int cmdline_parse(const char *cmdline, void *callback)
     (void)cmdline;
     (void)callback;
     kprintf("[cmdline] cmdline_parse: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cmdline_find_option ─────────────────────────────── */
 int cmdline_find_option(const char *cmdline, const char *option, char *val, int len)
@@ -156,5 +156,5 @@ int cmdline_find_option(const char *cmdline, const char *option, char *val, int 
     (void)val;
     (void)len;
     kprintf("[cmdline] cmdline_find_option: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

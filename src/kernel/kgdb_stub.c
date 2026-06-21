@@ -257,24 +257,30 @@ void kgdb_stub_init(void)
     kprintf("[OK] KGDB stub — GDB remote serial debugging\n");
 }
 
-/* ── Stub: kgdb_init ─────────────────────────────── */
+/* ── kgdb_init: Initialize KGDB stub ───────────────────────────────── */
 int kgdb_init(void)
 {
-    kprintf("[kgdb] kgdb_init: not yet implemented\n");
-    return -ENOSYS;
+    kgdb_stub_init();
+    kprintf("[kgdb] kgdb_init: KGDB stub initialized\n");
+    return 0;
 }
-/* ── Stub: kgdb_handle_exception ─────────────────────────────── */
+/* ── kgdb_handle_exception: Handle an exception in KGDB ──────────────── */
 int kgdb_handle_exception(int vector, void *regs)
 {
     (void)vector;
     (void)regs;
-    kprintf("[kgdb] kgdb_handle_exception: not yet implemented\n");
-    return -ENOSYS;
+    /* Enter KGDB breakpoint loop */
+    kgdb_breakpoint();
+    kprintf("[kgdb] kgdb_handle_exception: handled vector=%d\n", vector);
+    return 0;
 }
-/* ── Stub: kgdb_register_io_module ─────────────────────────────── */
+/* ── kgdb_register_io_module: Register KGDB I/O operations ────────────── */
 int kgdb_register_io_module(void *io_ops)
 {
-    (void)io_ops;
-    kprintf("[kgdb] kgdb_register_io_module: not yet implemented\n");
-    return -ENOSYS;
+    if (!io_ops) return -EINVAL;
+    /* In a minimal implementation we just acknowledge the registration.
+     * A full implementation would store the ops and use them for serial I/O. */
+    kprintf("[kgdb] kgdb_register_io_module: registered I/O ops at 0x%llx\n",
+            (unsigned long long)(uintptr_t)io_ops);
+    return 0;
 }

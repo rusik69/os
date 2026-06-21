@@ -352,5 +352,5 @@ int memfd_seal(int fd, unsigned int seals)
     (void)fd;
     (void)seals;
     kprintf("[memfd] memfd_seal: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

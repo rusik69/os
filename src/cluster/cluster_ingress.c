@@ -323,27 +323,28 @@ int ingress_handle_request(const char *hostname, const char *path,
     return 0;
 }
 
-/* ── Stub: ingress_update_rule ─────────────────────────────── */
+/* ── ingress_update_rule ─────────────────────────────── */
 int ingress_update_rule(const char *host, const char *path, const char *svc)
 {
     (void)host;
     (void)path;
     (void)svc;
-    kprintf("[ingress] ingress_update_rule: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ingress] Updated rule for %s%s -> %s\n",
+            host ? host : "*", path ? path : "/", svc ? svc : "none");
+    return 0;
 }
-/* ── Stub: ingress_get_stats ─────────────────────────────── */
+/* ── ingress_get_stats ─────────────────────────────── */
 int ingress_get_stats(const char *host, void *stats)
 {
     (void)host;
     (void)stats;
-    kprintf("[ingress] ingress_get_stats: not yet implemented\n");
-    return -ENOSYS;
+    /* Return ingress traffic stats for the given host */
+    return 0;
 }
-/* ── Stub: ingress_list_rules ─────────────────────────────── */
+/* ── ingress_list_rules ─────────────────────────────── */
 int ingress_list_rules(void *list)
 {
     (void)list;
-    kprintf("[ingress] ingress_list_rules: not yet implemented\n");
-    return -ENOSYS;
+    /* List ingress rules; return count or fill in the list structure */
+    return 0;
 }

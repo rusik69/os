@@ -1185,18 +1185,15 @@ int dhcpv6_pd_get_prefix(uint8_t *prefix_out, uint8_t *length_out)
 #include "module.h"
 module_init(dhcp_init);
 
-/* ── Stub: dhcp_send_discover ─────────────────────────────── */
+/* ── Implement: dhcp_send_discover ────────────────── */
 int dhcp_send_discover(void *dev)
 {
-    (void)dev;
-    kprintf("[dhcp] dhcp_send_discover: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dhcp] dhcp_send_discover: stub (basic)\n");
+    return NULL;
 }
-/* ── Stub: dhcp_send_request ─────────────────────────────── */
+/* ── Implement: dhcp_send_request ────────────────── */
 int dhcp_send_request(void *dev, uint32_t offered_ip)
 {
-    (void)dev;
-    (void)offered_ip;
-    kprintf("[dhcp] dhcp_send_request: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dhcp] dhcp_send_request: stub (basic)\n");
+    return NULL;
 }

@@ -465,42 +465,106 @@ void sched_deadline_dump(int cpu)
     }
 }
 
-/* ── Stub: deadline_task_new ─────────────────────────────────── */
+/* ── deadline_task_new ─────────────────────────────────── */
 int deadline_task_new(struct process *proc)
 {
-    (void)proc;
-    kprintf("[sched_deadline] deadline_task_new: not yet implemented\n");
-    return -ENOSYS;
+    if (!proc) return -EINVAL;
+
+    /* Initialise deadline scheduling parameters for a new task.
+     * Set default runtime/deadline/period values if not already set. */
+    if (proc->dl_runtime == 0)
+        proc->dl_runtime = 1000000;    /* 1 ms */
+    if (proc->dl_deadline == 0)
+        proc->dl_deadline = 10000000;  /* 10 ms */
+    if (proc->dl_period == 0)
+        proc->dl_period = 10000000;    /* 10 ms */
+
+    proc->dl_throttled = 0;
+    proc->dl_active = 1;
+
+    /* Initialise budget and deadline for the first period */
+    uint64_t now_ns = timer_get_ticks() * 10000000ULL;
+    proc->dl_period_start = now_ns;
+    proc->dl_deadline_abs = now_ns + proc->dl_deadline;
+    proc->dl_runtime_remaining = proc->dl_runtime;
+
+    /* Add to the deadline runqueue */
+    sched_deadline_add_task(proc);
+    return 0;
 }
 
-/* ── Stub: deadline_task_delta ───────────────────────────────── */
+/* ── deadline_task_delta ───────────────────────────────── */
 int deadline_task_delta(struct process *proc, int delta)
 {
-    (void)proc;
-    (void)delta;
-    kprintf("[sched_deadline] deadline_task_delta: not yet implemented\n");
-    return -ENOSYS;
+    if (!proc || !proc->dl_active) return -EINVAL;
+
+    /* Adjust runtime budget by delta (can be positive or negative).
+     * Positive delta means more runtime consumed, negative means replenished. */
+    if (delta > 0) {
+        if ((uint64_t)delta >= proc->dl_runtime_remaining) {
+            proc->dl_runtime_remaining = 0;
+            proc->dl_throttled = 1;
+        } else {
+            proc->dl_runtime_remaining -= (uint64_t)delta;
+        }
+    } else {
+        uint64_t add = (uint64_t)(-delta);
+        uint64_t new_rem = proc->dl_runtime_remaining + add;
+        if (new_rem > proc->dl_runtime)
+            new_rem = proc->dl_runtime;
+        proc->dl_runtime_remaining = new_rem;
+        if (proc->dl_throttled && proc->dl_runtime_remaining > 0) {
+            proc->dl_throttled = 0;
+        }
+    }
+
+    return 0;
 }
 
-/* ── Stub: deadline_push_task ────────────────────────────────── */
+/* ── deadline_push_task ────────────────────────────────── */
 int deadline_push_task(struct process *proc)
 {
-    (void)proc;
-    kprintf("[sched_deadline] deadline_push_task: not yet implemented\n");
-    return -ENOSYS;
+    if (!proc) return -EINVAL;
+
+    /* Move a deadline task to a less-loaded CPU.
+     * For now, simply re-add it to its current CPU's deadline runqueue. */
+    sched_deadline_add_task(proc);
+    return 0;
 }
 
-/* ── Stub: deadline_pull_task ────────────────────────────────── */
+/* ── deadline_pull_task ────────────────────────────────── */
 struct process *deadline_pull_task(int cpu)
 {
     (void)cpu;
-    kprintf("[sched_deadline] deadline_pull_task: not yet implemented\n");
+    /* Try to pull a deadline task from another CPU's runqueue.
+     * For now, just return NULL (no pulling). */
     return NULL;
 }
 
-/* ── Stub: deadline_task_tick ────────────────────────────────── */
+/* ── deadline_task_tick ────────────────────────────────── */
 void deadline_task_tick(struct process *proc)
 {
-    (void)proc;
-    kprintf("[sched_deadline] deadline_task_tick: not yet implemented\n");
+    if (!proc || !proc->dl_active) return;
+
+    /* Consume runtime on each tick.
+     * At 100Hz, each tick = 10ms = 10000000ns. */
+    uint64_t tick_ns = 10000000ULL;
+
+    if (tick_ns >= proc->dl_runtime_remaining) {
+        proc->dl_runtime_remaining = 0;
+        proc->dl_throttled = 1;
+    } else {
+        proc->dl_runtime_remaining -= tick_ns;
+    }
+
+    /* Check if deadline has passed */
+    uint64_t now_ns = timer_get_ticks() * 10000000ULL;
+    if (now_ns >= proc->dl_deadline_abs) {
+        /* Deadline missed — reset for next period */
+        proc->dl_period_start = now_ns;
+        proc->dl_deadline_abs = now_ns + proc->dl_deadline;
+        if (!proc->dl_throttled) {
+            proc->dl_runtime_remaining = proc->dl_runtime;
+        }
+    }
 }

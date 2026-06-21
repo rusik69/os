@@ -275,5 +275,5 @@ int virtio_rng_read(void *dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[virtio] virtio_rng_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

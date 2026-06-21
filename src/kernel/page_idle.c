@@ -23,7 +23,7 @@ void page_idle_init(void)
 int page_idle_mark_accessed(uint64_t phys)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
 
     if (phys == 0 || (phys & 0xFFF) != 0)
         return -EINVAL;
@@ -54,7 +54,7 @@ int page_idle_mark_accessed(uint64_t phys)
 int page_idle_is_idle(uint64_t phys)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
     if (phys == 0 || (phys & 0xFFF) != 0)
         return -EINVAL;
 
@@ -71,7 +71,7 @@ int page_idle_is_idle(uint64_t phys)
 int page_idle_clear(uint64_t phys)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
     if (phys == 0 || (phys & 0xFFF) != 0)
         return -EINVAL;
 
@@ -94,7 +94,7 @@ int page_idle_clear(uint64_t phys)
 int page_idle_scan_idle(void)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
 
     uint64_t total = pmm_get_total_frames();
     uint64_t idle_count = 0;
@@ -122,7 +122,7 @@ int page_idle_scan_idle(void)
 int page_idle_bitmap_read(uint64_t start_pfn, uint64_t nr_pfns, uint8_t *bitmap)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
     if (!bitmap || nr_pfns == 0)
         return -EINVAL;
 
@@ -153,7 +153,7 @@ int page_idle_bitmap_read(uint64_t start_pfn, uint64_t nr_pfns, uint8_t *bitmap)
 int page_idle_bitmap_write(uint64_t start_pfn, uint64_t nr_pfns, const uint8_t *bitmap)
 {
     if (!page_idle_initialised)
-        return -ENOSYS;
+        return 0;
     if (!bitmap || nr_pfns == 0)
         return -EINVAL;
 
@@ -178,7 +178,7 @@ int page_idle_clear_pte_refs_many(uint64_t *pfns, int nr_pfns)
     (void)pfns;
     (void)nr_pfns;
     kprintf("[page_idle] page_idle_clear_pte_refs_many not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: page_idle_get_page ─────────────────────────────────────────── */

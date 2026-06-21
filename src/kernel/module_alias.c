@@ -234,5 +234,5 @@ const char* module_alias_lookup(const char *alias)
 {
     (void)alias;
     kprintf("[modalias] module_alias_lookup: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

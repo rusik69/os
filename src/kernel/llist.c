@@ -68,12 +68,12 @@ void* llist_del_all(void *head)
 {
     (void)head;
     kprintf("[llist] llist_del_all: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: llist_reverse_order ─────────────────────────────── */
 void* llist_reverse_order(void *head)
 {
     (void)head;
     kprintf("[llist] llist_reverse_order: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

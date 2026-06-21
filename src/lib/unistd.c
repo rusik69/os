@@ -274,36 +274,23 @@ void sync(void) {
     do_syscall(SYS_SYNCFS);
 }
 
-/* ── Stub: syscall_read ─────────────────────────────── */
+/* ── syscall_read ─────────────────────────────── */
 int syscall_read(int fd, void *buf, size_t count)
 {
-    (void)fd;
-    (void)buf;
-    (void)count;
-    kprintf("[unistd] syscall_read: not yet implemented\n");
-    return -ENOSYS;
+    return (int)do_syscall6(SYS_READ, (uint64_t)fd, (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
 }
-/* ── Stub: syscall_write ─────────────────────────────── */
+/* ── syscall_write ─────────────────────────────── */
 int syscall_write(int fd, const void *buf, size_t count)
 {
-    (void)fd;
-    (void)buf;
-    (void)count;
-    kprintf("[unistd] syscall_write: not yet implemented\n");
-    return -ENOSYS;
+    return (int)do_syscall6(SYS_WRITE, (uint64_t)fd, (uint64_t)(uintptr_t)buf, (uint64_t)count, 0, 0);
 }
-/* ── Stub: syscall_open ─────────────────────────────── */
+/* ── syscall_open ─────────────────────────────── */
 int syscall_open(const char *path, int flags)
 {
-    (void)path;
-    (void)flags;
-    kprintf("[unistd] syscall_open: not yet implemented\n");
-    return -ENOSYS;
+    return (int)do_syscall6(SYS_OPEN, (uint64_t)(uintptr_t)path, (uint64_t)flags, 0, 0, 0);
 }
-/* ── Stub: syscall_close ─────────────────────────────── */
+/* ── syscall_close ─────────────────────────────── */
 int syscall_close(int fd)
 {
-    (void)fd;
-    kprintf("[unistd] syscall_close: not yet implemented\n");
-    return -ENOSYS;
+    return (int)do_syscall(SYS_CLOSE);
 }

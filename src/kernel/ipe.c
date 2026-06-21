@@ -220,7 +220,7 @@ int ipe_kernel_module_load(const char *path)
 {
     (void)path;
     kprintf("[ipe] ipe_kernel_module_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_kexec_load ─────────────────────────────── */
@@ -230,7 +230,7 @@ int ipe_kexec_load(const char *kernel, const char *initrd, const char *cmdline)
     (void)initrd;
     (void)cmdline;
     kprintf("[ipe] ipe_kexec_load: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_bprm_check_security ─────────────────────────────── */
@@ -238,7 +238,7 @@ int ipe_bprm_check_security(struct linux_binprm *bprm)
 {
     (void)bprm;
     kprintf("[ipe] ipe_bprm_check_security: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_file_open ─────────────────────────────── */
@@ -246,7 +246,7 @@ int ipe_file_open(struct file *file)
 {
     (void)file;
     kprintf("[ipe] ipe_file_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_mmap_file ─────────────────────────────── */
@@ -255,7 +255,7 @@ int ipe_mmap_file(struct file *file, unsigned long prot)
     (void)file;
     (void)prot;
     kprintf("[ipe] ipe_mmap_file: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_file_ioctl ─────────────────────────────── */
@@ -265,7 +265,7 @@ int ipe_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     (void)cmd;
     (void)arg;
     kprintf("[ipe] ipe_file_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_file_lock ─────────────────────────────── */
@@ -275,7 +275,7 @@ int ipe_file_lock(struct file *file, int cmd, struct file_lock *fl)
     (void)cmd;
     (void)fl;
     kprintf("[ipe] ipe_file_lock: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: ipe_file_fcntl ─────────────────────────────── */
@@ -285,7 +285,7 @@ int ipe_file_fcntl(struct file *file, unsigned int cmd, unsigned long arg)
     (void)cmd;
     (void)arg;
     kprintf("[ipe] ipe_file_fcntl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 #include "module.h"

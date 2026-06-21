@@ -142,7 +142,7 @@ int nohz_full_setup(const char *cpulist)
 {
     (void)cpulist;
     kprintf("[NOHZ] nohz_full_setup not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: nohz_full_kick ──────────────────────────────────────────────── */

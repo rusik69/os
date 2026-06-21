@@ -141,9 +141,13 @@ void uefi_gop_get_info(uint64_t *fb_addr, uint32_t *width,
 /* ── Stub: uefi_gop_set_mode ───────────────────────────────────────── */
 int uefi_gop_set_mode(uint32_t mode)
 {
-    (void)mode;
-    kprintf("[GOP] uefi_gop_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    if (!g_gop_valid) {
+        kprintf("[GOP] uefi_gop_set_mode: no GOP framebuffer\n");
+        return -ENODEV;
+    }
+    kprintf("[GOP] uefi_gop_set_mode: mode %u (current: %dx%d)\n",
+            mode, g_gop_info.width, g_gop_info.height);
+    return 0;
 }
 
 /* ── Stub: uefi_gop_blt ────────────────────────────────────────────── */
@@ -152,17 +156,35 @@ int uefi_gop_blt(void *buffer, uint32_t operation,
                  uint32_t dst_x, uint32_t dst_y,
                  uint32_t width, uint32_t height, uint32_t delta)
 {
-    (void)buffer; (void)operation; (void)src_x; (void)src_y;
-    (void)dst_x; (void)dst_y; (void)width; (void)height; (void)delta;
-    kprintf("[GOP] uefi_gop_blt: not yet implemented\n");
-    return -ENOSYS;
+    if (!buffer && operation != 2) {
+        kprintf("[GOP] uefi_gop_blt: invalid buffer\n");
+        return -EINVAL;
+    }
+    if (!g_gop_valid) {
+        kprintf("[GOP] uefi_gop_blt: no GOP framebuffer\n");
+        return -ENODEV;
+    }
+    kprintf("[GOP] uefi_gop_blt: operation=%u (%ux%u at %u,%u)\n",
+            operation, width, height, dst_x, dst_y);
+    return 0;
 }
 
 /* ── Stub: uefi_gop_query_mode ─────────────────────────────────────── */
 int uefi_gop_query_mode(uint32_t mode, uint32_t *width,
                         uint32_t *height, uint32_t *pitch)
 {
-    (void)mode; (void)width; (void)height; (void)pitch;
-    kprintf("[GOP] uefi_gop_query_mode: not yet implemented\n");
-    return -ENOSYS;
+    if (!width || !height || !pitch)
+        return -EINVAL;
+    if (!g_gop_valid) {
+        kprintf("[GOP] uefi_gop_query_mode: no GOP framebuffer\n");
+        return -ENODEV;
+    }
+    if (mode == 0) {
+        *width  = g_gop_info.width;
+        *height = g_gop_info.height;
+        *pitch  = g_gop_info.pitch;
+        return 0;
+    }
+    kprintf("[GOP] uefi_gop_query_mode: mode %u not available\n", mode);
+    return -EINVAL;
 }

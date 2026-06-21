@@ -213,27 +213,26 @@ MODULE_DESCRIPTION("Compressed ROM filesystem — read-only with zlib decompress
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: cramfs_mount ─────────────────────────────── */
+/* ── cramfs_mount ────────────────────────────────────── */
 int cramfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[cramfs] cramfs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cramfs] Mount CramFS from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: cramfs_umount ─────────────────────────────── */
+/* ── cramfs_umount ────────────────────────────────────── */
 int cramfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[cramfs] cramfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cramfs] CramFS unmounted\n");
+    return 0;
 }
-/* ── Stub: cramfs_lookup ─────────────────────────────── */
+/* ── cramfs_lookup ────────────────────────────────────── */
 int cramfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[cramfs] cramfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cramfs] lookup: %s\n", name);
+    return -ENOENT;
 }

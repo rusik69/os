@@ -324,12 +324,12 @@ void irq_regs_init(void)
 void* irq_regs_get(void)
 {
     kprintf("[irq] irq_regs_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: irq_regs_set ─────────────────────────────── */
 int irq_regs_set(void *regs)
 {
     (void)regs;
     kprintf("[irq] irq_regs_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

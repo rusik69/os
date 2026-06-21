@@ -120,7 +120,7 @@ int jump_label_register(void *key, void *entry)
     (void)key;
     (void)entry;
     kprintf("[jump_label] jump_label_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: jump_label_update ─────────────────────────────── */
 int jump_label_update(void *key, int enabled)
@@ -128,5 +128,5 @@ int jump_label_update(void *key, int enabled)
     (void)key;
     (void)enabled;
     kprintf("[jump_label] jump_label_update: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

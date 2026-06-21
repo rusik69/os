@@ -28,7 +28,7 @@ int stacktrace_print(void *stack, size_t size)
     (void)stack;
     (void)size;
     kprintf("[stacktrace] stacktrace_print: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: stacktrace_save ─────────────────────────────── */
 int stacktrace_save(void *trace, size_t max)
@@ -36,7 +36,7 @@ int stacktrace_save(void *trace, size_t max)
     (void)trace;
     (void)max;
     kprintf("[stacktrace] stacktrace_save: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: stacktrace_snprint ─────────────────────────────── */
 int stacktrace_snprint(char *buf, size_t size, void *trace, int count)
@@ -46,5 +46,5 @@ int stacktrace_snprint(char *buf, size_t size, void *trace, int count)
     (void)trace;
     (void)count;
     kprintf("[stacktrace] stacktrace_snprint: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

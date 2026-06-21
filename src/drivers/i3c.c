@@ -400,5 +400,5 @@ int i3c_register_device(void *dev)
 {
     (void)dev;
     kprintf("[i3c] i3c_register_device: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

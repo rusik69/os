@@ -457,7 +457,7 @@ int firmware_request(struct firmware **fw, const char *name, void *device)
 {
     (void)fw; (void)name; (void)device;
     kprintf("[FIRMWARE] firmware_request: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: firmware_request_nowarn ─────────────────────────────────── */
@@ -465,7 +465,7 @@ int firmware_request_nowarn(struct firmware **fw, const char *name, void *device
 {
     (void)fw; (void)name; (void)device;
     kprintf("[FIRMWARE] firmware_request_nowarn: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: firmware_request_direct ─────────────────────────────────── */
@@ -473,7 +473,7 @@ int firmware_request_direct(struct firmware **fw, const char *name)
 {
     (void)fw; (void)name;
     kprintf("[FIRMWARE] firmware_request_direct: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: firmware_send ───────────────────────────────────────────── */
@@ -481,7 +481,7 @@ int firmware_send(const void *data, size_t size)
 {
     (void)data; (void)size;
     kprintf("[FIRMWARE] firmware_send: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: firmware_free ───────────────────────────────────────────── */

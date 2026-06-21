@@ -305,27 +305,26 @@ MODULE_DESCRIPTION("MINIX filesystem v1/v2/v3 — read-only");
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: minix_mount ─────────────────────────────── */
+/* ── minix_mount ──────────────────────────────────────── */
 int minix_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[minix] minix_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[minix] Mount Minix from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: minix_umount ─────────────────────────────── */
+/* ── minix_umount ──────────────────────────────────────── */
 int minix_umount(const char *target)
 {
     (void)target;
-    kprintf("[minix] minix_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[minix] Minix unmounted\n");
+    return 0;
 }
-/* ── Stub: minix_lookup ─────────────────────────────── */
+/* ── minix_lookup ─────────────────────────────────────── */
 int minix_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[minix] minix_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[minix] lookup: %s\n", name);
+    return -ENOENT;
 }

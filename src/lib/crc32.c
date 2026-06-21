@@ -24,30 +24,48 @@ uint32_t crc32_no_comp(uint32_t crc, const void *buf, uint32_t len) {
     return crc32(crc, buf, len);
 }
 
-/* ── Stub: crc32_le ─────────────────────────────── */
+/* ── crc32_le ─────────────────────────────── */
 uint32_t crc32_le(uint32_t crc, const uint8_t *data, size_t len)
 {
-    (void)crc;
-    (void)data;
-    (void)len;
-    kprintf("[crc32] crc32_le: not yet implemented\n");
-    return -ENOSYS;
+    return crc32(crc, data, (uint32_t)len);
 }
-/* ── Stub: crc32_be ─────────────────────────────── */
+/* ── crc32_be ─────────────────────────────── */
 uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
 {
-    (void)crc;
-    (void)data;
-    (void)len;
-    kprintf("[crc32] crc32_be: not yet implemented\n");
-    return -ENOSYS;
+    /* CRC32_BE uses bit-reversed polynomial 0x04C11DB7 */
+    static uint32_t crc32_be_table[256];
+    static int be_initialized = 0;
+    if (!be_initialized) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t crc = i << 24;
+            for (int j = 0; j < 8; j++)
+                crc = (crc << 1) ^ ((crc & 0x80000000) ? 0x04C11DB7 : 0);
+            crc32_be_table[i] = crc;
+        }
+        be_initialized = 1;
+    }
+    crc = ~crc;
+    for (size_t i = 0; i < len; i++)
+        crc = (crc << 8) ^ crc32_be_table[((crc >> 24) ^ data[i]) & 0xFF];
+    return ~crc;
 }
-/* ── Stub: crc32c ─────────────────────────────── */
+/* ── crc32c ─────────────────────────────── */
 uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
 {
-    (void)crc;
-    (void)data;
-    (void)len;
-    kprintf("[crc32] crc32c: not yet implemented\n");
-    return -ENOSYS;
+    /* CRC32C uses polynomial 0x82F63B78 (Castagnoli) */
+    static uint32_t crc32c_table[256];
+    static int c_initialized = 0;
+    if (!c_initialized) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t crc = i;
+            for (int j = 0; j < 8; j++)
+                crc = (crc >> 1) ^ (0x82F63B78UL & -(crc & 1));
+            crc32c_table[i] = crc;
+        }
+        c_initialized = 1;
+    }
+    crc = ~crc;
+    for (size_t i = 0; i < len; i++)
+        crc = crc32c_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    return ~crc;
 }

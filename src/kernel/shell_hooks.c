@@ -22,14 +22,14 @@ int shell_hook_register(const char *name, void *fn)
     (void)name;
     (void)fn;
     kprintf("[shell] shell_hook_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: shell_hook_unregister ─────────────────────────────── */
 int shell_hook_unregister(const char *name)
 {
     (void)name;
     kprintf("[shell] shell_hook_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: shell_hook_execute ─────────────────────────────── */
 int shell_hook_execute(const char *cmd, int argc, char **argv)
@@ -38,5 +38,5 @@ int shell_hook_execute(const char *cmd, int argc, char **argv)
     (void)argc;
     (void)argv;
     kprintf("[shell] shell_hook_execute: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

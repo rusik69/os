@@ -185,28 +185,30 @@ void *memmem(const void *haystack, size_t haystacklen,
     return NULL;
 }
 
-/* ── Stub: strnlen_user ─────────────────────────────── */
+/* ── strnlen_user ─────────────────────────────── */
 size_t strnlen_user(const char *s, size_t n)
 {
-    (void)s;
-    (void)n;
-    kprintf("[string] strnlen_user: not yet implemented\n");
-    return -ENOSYS;
+    size_t len = 0;
+    while (len < n && s[len])
+        len++;
+    return len;
 }
-/* ── Stub: strncpy_from_user ─────────────────────────────── */
+/* ── strncpy_from_user ─────────────────────────────── */
 int strncpy_from_user(char *dst, const char *src, size_t n)
 {
-    (void)dst;
-    (void)src;
-    (void)n;
-    kprintf("[string] strncpy_from_user: not yet implemented\n");
-    return -ENOSYS;
+    size_t i;
+    for (i = 0; i < n && src[i]; i++)
+        dst[i] = src[i];
+    if (i < n)
+        dst[i] = '\0';
+    return (int)i;
 }
-/* ── Stub: strcmp_user ─────────────────────────────── */
+/* ── strcmp_user ─────────────────────────────── */
 int strcmp_user(const char *cs, const char *ct)
 {
-    (void)cs;
-    (void)ct;
-    kprintf("[string] strcmp_user: not yet implemented\n");
-    return -ENOSYS;
+    while (*cs && *ct && *cs == *ct) {
+        cs++;
+        ct++;
+    }
+    return (int)(unsigned char)*cs - (int)(unsigned char)*ct;
 }

@@ -162,17 +162,26 @@ int gpio_irq_unregister(int irq_num)
 #include "module.h"
 module_init(gpio_irq_init);
 
-/* ── Stub: gpio_irq_enable ─────────────────────────────── */
+/* ── gpio_irq_enable: Enable GPIO interrupt for a pin ──────── */
 int gpio_irq_enable(int gpio)
 {
-    (void)gpio;
-    kprintf("[gpio] gpio_irq_enable: not yet implemented\n");
-    return -ENOSYS;
+    if (gpio < 0 || gpio >= GPIO_MAX_PINS) return -EINVAL;
+
+    /* Configure the GPIO pin for interrupt mode */
+    gpio_set_irq_mode((unsigned int)gpio, 1); /* rising edge */
+
+    kprintf("[gpio] GPIO IRQ enabled for pin %d\n", gpio);
+    return 0;
 }
-/* ── Stub: gpio_irq_disable ─────────────────────────────── */
+
+/* ── gpio_irq_disable: Disable GPIO interrupt for a pin ──────── */
 int gpio_irq_disable(int gpio)
 {
-    (void)gpio;
-    kprintf("[gpio] gpio_irq_disable: not yet implemented\n");
-    return -ENOSYS;
+    if (gpio < 0 || gpio >= GPIO_MAX_PINS) return -EINVAL;
+
+    /* Disable interrupt mode for this pin */
+    gpio_set_irq_mode((unsigned int)gpio, 0); /* disabled */
+
+    kprintf("[gpio] GPIO IRQ disabled for pin %d\n", gpio);
+    return 0;
 }

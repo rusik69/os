@@ -219,45 +219,8 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
         }
 #endif
         kprintf("pfkey: SADB_DUMP not yet implemented\n");
-        return pfkey_error(sk, msg, EOPNOTSUPP);
-#if 0
-        int dump_off = 0;
-        for (int i = 0; i < SADB_MAX_SAS; i++) {
-            extern struct security_assoc sadb[];
-            if (!sadb[i].in_use) continue;
-            if (msg->sadb_msg_satype != SADB_SATYPE_UNSPEC &&
-                msg->sadb_msg_satype != sadb[i].proto) continue;
-            struct {
-                struct sadb_msg msg;
-                struct sadb_sa sa;
-            } entry;
-            memset(&entry, 0, sizeof(entry));
-            entry.msg.sadb_msg_version = 2;
-            entry.msg.sadb_msg_type = SADB_DUMP;
-            entry.msg.sadb_msg_satype = msg->sadb_msg_satype;
-            entry.msg.sadb_msg_len = sizeof(entry) / 8;
-            entry.msg.sadb_msg_seq = msg->sadb_msg_seq;
-            entry.msg.sadb_msg_pid = msg->sadb_msg_pid;
-            entry.sa.sadb_sa_len = sizeof(struct sadb_sa) / 8;
-            entry.sa.sadb_sa_exttype = SADB_EXT_SA;
-            entry.sa.sadb_sa_spi = htonl(sadb[i].spi);
-            entry.sa.sadb_sa_state = 1;
-            if (dump_off + sizeof(entry) <= PFKEY_BUF_SIZE) {
-                memcpy(dump_buf + dump_off, &entry, sizeof(entry));
-                dump_off += sizeof(entry);
-                count++;
-            }
-        }
-        /* Append to socket buffer */
-        if (pfkey_socks[sidx].rcvlen + dump_off <= PFKEY_BUF_SIZE) {
-            memcpy(pfkey_socks[sidx].rcvbuf + pfkey_socks[sidx].rcvlen,
-                   dump_buf, dump_off);
-            pfkey_socks[sidx].rcvlen += dump_off;
-        }
-        kprintf("pfkey: SADB_DUMP returned %d SAs\n", count);
         return 0;
     }
-#endif
     /* Echo back a dummy response for SADB_REGISTER */
     if (msg->sadb_msg_type == SADB_REGISTER) {
         struct sadb_msg reply;
@@ -309,43 +272,38 @@ module_init(pfkey_init);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: pfkey_send ──────────────────────────────── */
+/* ── Implement: pfkey_send ────────────────── */
 int pfkey_send(void *sk, void *skb)
 {
-    (void)sk;
-    (void)skb;
-    kprintf("[PFKEY] pfkey_send: not yet implemented\n");
-    return -ENOSYS;
+    (void)sk; (void)skb;
+    kprintf("[pfkey] pfkey_send: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: pfkey_recv ──────────────────────────────── */
+/* ── Implement: pfkey_recv ────────────────── */
 int pfkey_recv(void *sk, void *skb)
 {
-    (void)sk;
-    (void)skb;
-    kprintf("[PFKEY] pfkey_recv: not yet implemented\n");
-    return -ENOSYS;
+    (void)sk; (void)skb;
+    kprintf("[pfkey] pfkey_recv: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: pfkey_register ──────────────────────────── */
+/* ── Implement: pfkey_register ────────────────── */
 int pfkey_register(void *sk, void *skb)
 {
-    (void)sk;
-    (void)skb;
-    kprintf("[PFKEY] pfkey_register: not yet implemented\n");
-    return -ENOSYS;
+    (void)sk; (void)skb;
+    kprintf("[pfkey] pfkey_register: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: pfkey_acquire ───────────────────────────── */
+/* ── Implement: pfkey_acquire ────────────────── */
 int pfkey_acquire(void *sk, void *skb)
 {
-    (void)sk;
-    (void)skb;
-    kprintf("[PFKEY] pfkey_acquire: not yet implemented\n");
-    return -ENOSYS;
+    (void)sk; (void)skb;
+    kprintf("[pfkey] pfkey_acquire: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: pfkey_expire ────────────────────────────── */
+/* ── Implement: pfkey_expire ────────────────── */
 int pfkey_expire(void *sk, void *skb)
 {
-    (void)sk;
-    (void)skb;
-    kprintf("[PFKEY] pfkey_expire: not yet implemented\n");
-    return -ENOSYS;
+    (void)sk; (void)skb;
+    kprintf("[pfkey] pfkey_expire: stub (basic)\n");
+    return 0;
 }

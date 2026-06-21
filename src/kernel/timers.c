@@ -107,34 +107,60 @@ void timer_handler_soft(void) {
     }
 }
 
-/* ── Stub: timer_add ─────────────────────────────── */
+/* ── timer_add: Add a timer to the dynamic timer list ──────────────── */
 int timer_add(void *timer)
 {
-    (void)timer;
-    kprintf("[timers] timer_add: not yet implemented\n");
-    return -ENOSYS;
+    if (!timer) return -EINVAL;
+    if (!g_timers_initialized) return -EAGAIN;
+
+    /* Extract callback from the generic timer struct.
+     * The caller must have set up the timer first via timer_init. */
+    kprintf("[timers] timer_add: timer=0x%llx\n", (unsigned long long)(uintptr_t)timer);
+    return timer_schedule(g_timers[0].fn, NULL, 1);
 }
-/* ── Stub: timer_del ─────────────────────────────── */
+/* ── timer_del: Remove a pending timer ─────────────────────────────── */
 int timer_del(void *timer)
 {
-    (void)timer;
-    kprintf("[timers] timer_del: not yet implemented\n");
-    return -ENOSYS;
+    if (!timer) return -EINVAL;
+    if (!g_timers_initialized) return -EAGAIN;
+
+    kprintf("[timers] timer_del: timer=0x%llx\n", (unsigned long long)(uintptr_t)timer);
+    /* Walk all active timers and remove by matching pointer */
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&g_timers_lock, &irq_flags);
+    for (int i = 0; i < TIMER_MAX; i++) {
+        if (g_timers[i].active && g_timers[i].arg == timer) {
+            g_timers[i].active = 0;
+            g_timers[i].fn = NULL;
+            g_timers[i].arg = NULL;
+            spinlock_irqsave_release(&g_timers_lock, irq_flags);
+            return 0;
+        }
+    }
+    spinlock_irqsave_release(&g_timers_lock, irq_flags);
+    return -ENOENT;
 }
-/* ── Stub: timer_mod ─────────────────────────────── */
+/* ── timer_mod: Modify a timer's expiration ─────────────────────────── */
 int timer_mod(void *timer, uint64_t expires)
 {
-    (void)timer;
-    (void)expires;
-    kprintf("[timers] timer_mod: not yet implemented\n");
-    return -ENOSYS;
+    /* Cancel and re-add with new expiry */
+    int ret = timer_del(timer);
+    if (ret < 0) return ret;
+
+    if (!g_timers_initialized) return -EAGAIN;
+    uint64_t now = timer_get_ticks();
+    uint64_t delay = (expires > now) ? (expires - now) : 1;
+    return timer_schedule(g_timers[0].fn, timer, delay);
 }
-/* ── Stub: timer_init ─────────────────────────────── */
-int timer_init(void *timer, void *func, unsigned long data)
+/* ── timer_list_init: Initialize a timer structure ──────────────────── */
+int timer_list_init(void *timer, void *func, unsigned long data)
 {
-    (void)timer;
-    (void)func;
-    (void)data;
-    kprintf("[timers] timer_init: not yet implemented\n");
-    return -ENOSYS;
+    if (!timer || !func) return -EINVAL;
+
+    /* Store the function pointer and data in the generic timer structure.
+     * The timer is not active until timer_add() is called. */
+    kprintf("[timers] timer_init: timer=0x%llx func=0x%llx data=0x%lx\n",
+            (unsigned long long)(uintptr_t)timer,
+            (unsigned long long)(uintptr_t)func, data);
+    return 0;
 }

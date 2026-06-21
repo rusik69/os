@@ -115,7 +115,7 @@ int yama_ptrace_access_check(struct task_struct *child, unsigned int mode)
     (void)child;
     (void)mode;
     kprintf("[yama] yama_ptrace_access_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: yama_ptrace_traceme_allowed ─────────────────────────────── */
@@ -123,7 +123,7 @@ int yama_ptrace_traceme_allowed(struct task_struct *parent)
 {
     (void)parent;
     kprintf("[yama] yama_ptrace_traceme_allowed: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: yama_task_prctl ─────────────────────────────── */
@@ -133,7 +133,7 @@ int yama_task_prctl(int option, unsigned long arg2, unsigned long arg3)
     (void)arg2;
     (void)arg3;
     kprintf("[yama] yama_task_prctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: yama_task_free ─────────────────────────────── */

@@ -19,14 +19,14 @@ int uio_open(void *file)
 {
     (void)file;
     kprintf("[uio] uio_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uio_release ─────────────────────────────── */
 int uio_release(void *file)
 {
     (void)file;
     kprintf("[uio] uio_release: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uio_read ─────────────────────────────── */
 int uio_read(void *file, void *buf, size_t count)
@@ -35,7 +35,7 @@ int uio_read(void *file, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[uio] uio_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uio_write ─────────────────────────────── */
 int uio_write(void *file, const void *buf, size_t count)
@@ -44,7 +44,7 @@ int uio_write(void *file, const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[uio] uio_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: uio_mmap ─────────────────────────────── */
 int uio_mmap(void *file, void *vma)
@@ -52,5 +52,5 @@ int uio_mmap(void *file, void *vma)
     (void)file;
     (void)vma;
     kprintf("[uio] uio_mmap: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

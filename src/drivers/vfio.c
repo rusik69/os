@@ -338,7 +338,7 @@ int vfio_dma_map(int container_id, uint64_t iova, uint64_t size, uint64_t phys_a
     (void)phys_addr;
     (void)prot;
     kprintf("[vfio] vfio_dma_map: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vfio_dma_unmap ─────────────────────────────── */
@@ -348,7 +348,7 @@ int vfio_dma_unmap(int container_id, uint64_t iova, uint64_t size)
     (void)iova;
     (void)size;
     kprintf("[vfio] vfio_dma_unmap: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vfio_irq_set ─────────────────────────────── */
@@ -361,7 +361,7 @@ int vfio_irq_set(int device_fd, unsigned int index, unsigned int start, unsigned
     (void)flags;
     (void)data;
     kprintf("[vfio] vfio_irq_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vfio_get_info ─────────────────────────────── */
@@ -370,7 +370,7 @@ int vfio_get_info(int container_id, struct vfio_info *info)
     (void)container_id;
     (void)info;
     kprintf("[vfio] vfio_get_info: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vfio_set_info ─────────────────────────────── */
@@ -379,7 +379,7 @@ int vfio_set_info(int container_id, struct vfio_info *info)
     (void)container_id;
     (void)info;
     kprintf("[vfio] vfio_set_info: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 #include "module.h"

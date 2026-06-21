@@ -160,21 +160,33 @@ int eventfd_syscall(uint32_t initval, int flags) {
     return eventfd_create(initval, flags);
 }
 
-/* ── Stub: eventfd_show_fdinfo ─────────────────────────────── */
+/* ── eventfd_show_fdinfo ─────────────────────────────── */
 int eventfd_show_fdinfo(int fd, char *buf, size_t size)
 {
-    (void)fd;
-    (void)buf;
-    (void)size;
-    kprintf("[eventfd] eventfd_show_fdinfo: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || size == 0) return -EINVAL;
+
+    struct eventfd_info *efd = eventfd_get(fd);
+    if (!efd) {
+        int n = snprintf(buf, size, "eventfd:\t%d (invalid)\n", fd);
+        return n < 0 ? -EINVAL : n;
+    }
+
+    int n = snprintf(buf, size,
+        "eventfd:\t%d\n"
+        "counter:\t%llu\n"
+        "flags:\t%d\n",
+        fd, (unsigned long long)efd->counter, efd->flags);
+
+    if (n < 0) return -EINVAL;
+    if ((size_t)n >= size) return -ENOSPC;
+    return n;
 }
 
-/* ── Stub: eventfd_signal ──────────────────────────────────── */
+/* ── eventfd_signal ──────────────────────────────────── */
 int eventfd_signal(int fd, uint64_t val)
 {
-    (void)fd;
-    (void)val;
-    kprintf("[eventfd] eventfd_signal: not yet implemented\n");
-    return -ENOSYS;
+    /* eventfd_signal() is an alias for eventfd_write() with semantics
+     * similar to eventfd_write().  If val is 0, write 1 (default signal). */
+    if (val == 0) val = 1;
+    return eventfd_write(fd, val);
 }

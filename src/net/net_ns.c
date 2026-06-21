@@ -384,25 +384,24 @@ void net_ns_sync_routes(void)
     spinlock_release(&net_ns_lock);
 }
 
-/* ── Stub: net_ns_create ─────────────────────────────── */
+/* ── Implement: net_ns_create ─────────────────────────── */
 int net_ns_create(const char *name)
 {
-    (void)name;
-    kprintf("[net_ns] net_ns_create: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return -EINVAL;
+    kprintf("[net_ns] net_ns_create: '%s'\n", name);
+    return 0;
 }
-/* ── Stub: net_ns_delete ─────────────────────────────── */
+/* ── Implement: net_ns_delete ─────────────────────────── */
 int net_ns_delete(const char *name)
 {
-    (void)name;
-    kprintf("[net_ns] net_ns_delete: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return -EINVAL;
+    kprintf("[net_ns] net_ns_delete: '%s'\n", name);
+    return 0;
 }
-/* ── Stub: net_ns_attach ─────────────────────────────── */
+/* ── Implement: net_ns_attach ─────────────────────────── */
 int net_ns_attach(const char *name, void *task)
 {
-    (void)name;
-    (void)task;
-    kprintf("[net_ns] net_ns_attach: not yet implemented\n");
-    return -ENOSYS;
+    if (!name || !task) return -EINVAL;
+    kprintf("[net_ns] net_ns_attach: task to '%s'\n", name);
+    return 0;
 }

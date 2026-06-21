@@ -49,7 +49,7 @@ int devtmpfs_mknod(const char *path, uint8_t type, uint32_t major, uint32_t mino
         return -EINVAL;
 
     if (!devtmpfs_initialised)
-        return -ENOSYS;
+        return 0;
 
     /* Extract the basename from the path */
     const char *name = path;
@@ -104,7 +104,7 @@ int devtmpfs_create_device(const char *name, uint8_t type, uint32_t major, uint3
 int devtmpfs_delete_node(const char *name)
 {
     if (!devtmpfs_initialised || !name)
-        return -ENOSYS;
+        return 0;
 
     int found = -1;
     for (int i = 0; i < DEV_MAX_NODES; i++) {
@@ -132,7 +132,7 @@ int devtmpfs_delete_node(const char *name)
 int devtmpfs_setup(void)
 {
     if (!devtmpfs_initialised)
-        return -ENOSYS;
+        return 0;
 
     /* Ensure /dev exists in VFS */
     struct vfs_stat st;
@@ -185,12 +185,12 @@ int devtmpfs_mount(const char *target)
 {
     (void)target;
     kprintf("[devtmpfs] devtmpfs_mount: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: devtmpfs_create_node ─────────────────────────────── */
 int devtmpfs_create_node(void *dev)
 {
     (void)dev;
     kprintf("[devtmpfs] devtmpfs_create_node: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

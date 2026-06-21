@@ -3,245 +3,98 @@
 
 #include "types.h"
 
-/*
- * ── AF_PACKET — Raw packet sockets for Layer 2 access ────────────
- *
- * Provides AF_PACKET / PF_PACKET (domain=17) support with SOCK_RAW
- * for sending and receiving raw Ethernet frames.  Required by ping,
- * tcpdump, DHCP clients, and other network diagnostic tools.
- *
- * Reference: packet(7) man page, Linux net/packet/af_packet.c
- *
- * Socket address structure (struct sockaddr_ll):
- *   sll_family   = AF_PACKET (17)
- *   sll_protocol = Ethernet protocol type (e.g. ETH_P_IP, ETH_P_ALL)
- *   sll_ifindex  = Interface index (0 = any)
- *   sll_hatype   = ARP hardware type (output only)
- *   sll_pkttype  = Packet type (output only)
- *   sll_halen    = Hardware address length
- *   sll_addr     = Hardware address (up to 8 bytes)
- */
+/* ── Packet socket constants (AF_PACKET, AF_UNSPEC) ───────────── */
 
-/* ── Constants ──────────────────────────────────────────────────── */
+#define AF_PACKET    17
 
-#define AF_PACKET           17
-#define PF_PACKET           17
+/* Packet types for sll_pkttype */
+#define PACKET_HOST       0      /* To us */
+#define PACKET_BROADCAST  1      /* To all */
+#define PACKET_MULTICAST  2      /* To group */
+#define PACKET_OTHERHOST  3      /* To someone else */
+#define PACKET_OUTGOING   4      /* Outgoing of any type */
 
-/* Packet types (returned in sockaddr_ll.sll_pkttype) */
-#define PACKET_HOST         0       /* To us */
-#define PACKET_BROADCAST    1       /* To all */
-#define PACKET_MULTICAST    2       /* To group */
-#define PACKET_OTHERHOST    3       /* To someone else */
-#define PACKET_OUTGOING     4       /* Outgoing of any type */
-
-/* Packet socket options (setsockopt) */
-#define PACKET_ADD_MEMBERSHIP    1
+/* Packet socket options (SOL_PACKET level) */
+#define PACKET_ADD_MEMBERSHIP   1
 #define PACKET_DROP_MEMBERSHIP  2
-#define PACKET_RX_RING          5
-#define PACKET_TX_RING          6
-#define PACKET_VERSION          10
+#define PACKET_RECV_TYPE        3
+#define PACKET_VERSION          4
 #define PACKET_AUXDATA          8
 #define PACKET_FANOUT           18
-#define PACKET_MR_MULTICAST     0
-#define PACKET_MR_PROMISC       1
-#define PACKET_MR_ALLMULTI      2
-#define PACKET_MR_UNICAST       3
+#define PACKET_TX_HIGH_TSO      21
 
-/* Maximum packet socket instances */
-#define PACKET_MAX_SOCKETS      16
+/* Packet socket filter (BPF instruction set) */
+#define BPF_CLASS(code)  ((code) & 0x07)
+#define BPF_LD    0x00
+#define BPF_LDX   0x01
+#define BPF_ST    0x02
+#define BPF_STX   0x03
+#define BPF_ALU   0x04
+#define BPF_JMP   0x05
+#define BPF_RET   0x06
+#define BPF_MISC  0x07
 
-/* ── PACKET_MMAP ring (tpacket) ─────────────────────────────────── */
+#define BPF_SIZE(code)  ((code) & 0x18)
+#define BPF_W     0x00
+#define BPF_H     0x08
+#define BPF_B     0x10
 
-/* tpacket ring block size (must be page-aligned, default 4096) */
-#define TPACKET_ALIGNMENT       16
-#define TPACKET_ALIGN(x)       (((x) + TPACKET_ALIGNMENT - 1) & ~(TPACKET_ALIGNMENT - 1))
+#define BPF_MODE(code)  ((code) & 0xe0)
+#define BPF_IMM   0x00
+#define BPF_ABS   0x20
+#define BPF_IND   0x40
+#define BPF_MEM   0x60
+#define BPF_LEN   0x80
 
-/* tpacket block descriptor for PACKET_MMAP */
-struct tpacket_hdr {
-    uint64_t tp_status;         /* Status: TP_STATUS_KERNEL / TP_STATUS_USER */
-    uint32_t tp_len;            /* Frame length */
-    uint32_t tp_snaplen;        /* Captured length */
-    uint16_t tp_mac;            /* Offset to MAC header */
-    uint16_t tp_net;            /* Offset to network header */
-    uint32_t tp_sec;            /* Seconds (timestamp) */
-    uint32_t tp_nsec;           /* Nanoseconds (timestamp) */
-    uint16_t tp_vlan_tci;
-    uint16_t tp_vlan_tpid;
-} __attribute__((packed));
+/* BPF ALU operations */
+#define BPF_ADD   0x00
+#define BPF_SUB   0x10
+#define BPF_MUL   0x20
+#define BPF_DIV   0x30
+#define BPF_OR    0x40
+#define BPF_AND   0x50
+#define BPF_LSH   0x60
+#define BPF_RSH   0x70
+#define BPF_NEG   0x80
+#define BPF_MOD   0x90
+#define BPF_XOR   0xa0
 
-#define TP_STATUS_KERNEL        0       /* Kernel owns the frame */
-#define TP_STATUS_USER          1       /* User owns the frame */
-#define TP_STATUS_COPY          2
-#define TP_STATUS_VLAN_VALID    4
-#define TP_STATUS_BLK_TMO       8
+/* BPF jump conditions */
+#define BPF_JA    0x00
+#define BPF_JEQ   0x10
+#define BPF_JGT   0x20
+#define BPF_JGE   0x30
+#define BPF_JSET  0x40
 
-/* PACKET_MMAP ring configuration */
-struct tpacket_req {
-    uint32_t tp_block_size;     /* Size of each block */
-    uint32_t tp_block_nr;       /* Number of blocks */
-    uint32_t tp_frame_size;     /* Size of each frame */
-    uint32_t tp_frame_nr;       /* Number of frames */
-};
+/* BPF source (k = constant, x = X register) */
+#define BPF_K     0x00
+#define BPF_X     0x08
 
-/* Per-socket PACKET_MMAP ring state */
-struct packet_mmap_ring {
-    int              active;            /* 1 = ring is set up */
-    uint8_t         *base;              /* Virtual base address */
-    uint32_t         block_size;
-    uint32_t         block_nr;
-    uint32_t         frame_size;
-    uint32_t         frame_nr;
-    uint32_t         frames_per_block;
-    volatile struct tpacket_hdr **frames; /* Array of frame pointers */
-    uint32_t         frame_count;       /* Total frames in ring */
-    uint32_t         last_frame;        /* Last frame processed */
-    uint64_t         pg_vec_addr;       /* Physical page vector address */
-    uint32_t         pg_vec_len;        /* Number of pages in vector */
-};
+/* BPF miscellaneous */
+#define BPF_TAX   0x00
+#define BPF_TXA   0x80
 
-/* ── Data structures ────────────────────────────────────────────── */
-
-/* AF_PACKET socket address (struct sockaddr_ll) */
-struct sockaddr_ll {
-    uint16_t sll_family;    /* AF_PACKET (17) */
-    uint16_t sll_protocol;  /* Ethernet protocol type (e.g. ETH_P_ALL) */
-    int      sll_ifindex;   /* Interface index (0 = any) */
-    uint16_t sll_hatype;    /* ARP hardware type (output only) */
-    uint8_t  sll_pkttype;   /* Packet type (output only) */
-    uint8_t  sll_halen;     /* Hardware address length */
-    uint8_t  sll_addr[8];   /* Hardware address (up to 8 bytes) */
-} __attribute__((packed));
-
-/* Packet socket filter (BPF) instruction */
-struct sock_filter {
-    uint16_t code;      /* Filter opcode */
-    uint8_t  jt;        /* Jump true offset */
-    uint8_t  jf;        /* Jump false offset */
-    uint32_t k;         /* Generic multi-use field */
-};
-
-/* Packet socket filter program */
+/* sock_fprog for attaching a packet filter */
 struct sock_fprog {
-    uint16_t           len;       /* Number of filter blocks */
-    struct sock_filter *filter;  /* Pointer to struct sock_filter[] */
+    unsigned short len;
+    struct sock_filter *filter;
 };
 
-/* BPF return values */
-#define BPF_KILL          0
-#define BPF_PASS          1
-
-/* Multicast group membership request (for PACKET_ADD_MEMBERSHIP) */
-struct packet_mreq {
-    int            mr_ifindex;
-    uint16_t       mr_type;
-    uint16_t       mr_alen;
-    uint8_t        mr_address[8];
+/* Packet socket address structure */
+struct sockaddr_ll {
+    unsigned short sll_family;    /* AF_PACKET */
+    unsigned short sll_protocol;  /* ETH_P_* */
+    int            sll_ifindex;   /* Interface index */
+    unsigned short sll_hatype;    /* ARP hardware type */
+    unsigned char  sll_pkttype;   /* PACKET_* */
+    unsigned char  sll_halen;     /* Length of sll_addr */
+    unsigned char  sll_addr[8];   /* Physical layer address */
 };
 
-/* Packet ancillary data header (tpkt_auxdata) */
-struct tpacket_auxdata {
-    uint32_t tp_status;
-    uint32_t tp_len;
-    uint32_t tp_snaplen;
-    uint16_t tp_mac;
-    uint16_t tp_net;
-    uint32_t tp_sec;
-    uint32_t tp_nsec;
-    uint16_t tp_vlan_tci;
-    uint16_t tp_vlan_tpid;
+/* Packet filter statistics / info */
+struct tpacket_stats {
+    unsigned int tp_packets;
+    unsigned int tp_drops;
 };
-
-/* Multicast group membership entry */
-struct packet_mc_entry {
-    struct packet_mc_entry *next;
-    int         mr_ifindex;
-    uint16_t    mr_type;        /* PACKET_MR_MULTICAST, etc */
-    uint8_t     mr_alen;
-    uint8_t     mr_address[8];
-};
-
-/* Packet socket state */
-struct packet_sock {
-    int         used;           /* 1 = slot in use */
-    int         fd;             /* Associated file descriptor */
-    uint16_t    protocol;       /* Ethernet proto (ETH_P_ALL = 0x0003) */
-    int         ifindex;        /* Bound interface index (0 = any) */
-    int         bound;          /* 1 = bound to interface */
-    int         promisc;        /* 1 = promiscuous mode */
-    int         allmulti;       /* 1 = all multicast */
-
-    /* Packet type filter mask */
-    uint32_t    pkttype_mask;   /* Bitmask of PACKET_* types to accept */
-
-    /* Ancillary data (PACKET_AUXDATA) */
-    int         auxdata_enabled; /* 1 = deliver tpkt_auxdata on recvmsg */
-
-    /* Multicast group membership list */
-    struct packet_mc_entry *mc_list;  /* linked list of mc addresses */
-
-    /* Statistics */
-    uint64_t    frames_recv;
-    uint64_t    frames_sent;
-    uint64_t    frames_dropped;
-
-    /* PACKET_MMAP ring */
-    struct packet_mmap_ring mmap_ring;
-    int mmap_enabled;           /* 1 = mmap ring active */
-
-    /* BPF filter support */
-    struct sock_filter *filter_prog;  /* Copy of BPF filter program */
-    int   filter_len;                 /* Number of BPF instructions */
-    int   filter_active;              /* 1 = filter is installed */
-};
-
-/* ── API ────────────────────────────────────────────────────────── */
-
-/* Initialize the AF_PACKET subsystem */
-void af_packet_init(void);
-
-/* Create a packet socket.  Returns fd on success, -1 on error. */
-int  packet_create(int fd, int type, uint16_t protocol);
-
-/* Bind packet socket to an interface by index.  Returns 0 on success, -1 on error. */
-int  packet_bind(int fd, int ifindex);
-
-/* Send a raw Ethernet frame.  Returns bytes sent on success, -1 on error. */
-int  packet_send(int fd, const void *buf, int len);
-
-/* Receive a raw Ethernet frame.  Returns bytes received on success, -1 on error. */
-int  packet_recv(int fd, void *buf, int max_len, uint64_t *src_ifindex);
-
-/* Close a packet socket. */
-void packet_close(int fd);
-
-/* Deliver an incoming Ethernet frame to matching packet sockets.
- * Returns the number of sockets that received the frame. */
-int  packet_deliver(uint16_t eth_type, int ifindex,
-                    const uint8_t *dst_mac, const uint8_t *src_mac,
-                    const uint8_t *data, int len);
-
-/* Set/Get socket options on a packet socket. */
-int  packet_setsockopt(int fd, int optname, const void *optval, int optlen);
-int  packet_getsockopt(int fd, int optname, void *optval, int *optlen);
-
-/* Get socket name (for getsockname).  Returns 0 or -errno. */
-int  packet_getsockname(int fd, struct sockaddr_ll *addr);
-
-/* Simple BPF filter support.  Returns 0 on success, -errno on error. */
-int  packet_set_filter(int fd, const struct sock_fprog *fprog);
-int  packet_apply_filter(int fd, const uint8_t *frame, int len);
-
-/* Check if an fd is a packet socket. */
-int  packet_is_valid_fd(int fd);
-
-/* Get the bound protocol for an fd (ETH_P_ALL or specific). */
-uint16_t packet_get_protocol(int fd);
-
-/* PACKET_MMAP ring operations */
-int  packet_mmap_setup(int fd, struct tpacket_req *req, int tx_ring);
-int  packet_mmap_poll(int fd, int rx);
-int  packet_mmap_get_frame(int fd, int rx, uint32_t *frame_id);
-int  packet_mmap_release_frame(int fd, int rx, uint32_t frame_id);
-void packet_mmap_teardown(int fd);
 
 #endif /* AF_PACKET_H */

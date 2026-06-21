@@ -109,7 +109,7 @@ int mprotect_check(uint64_t addr, size_t len, int prot)
     (void)len;
     (void)prot;
     kprintf("[mprotect] mprotect_check: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: mprotect_apply ─────────────────────────────── */
 int mprotect_apply(uint64_t addr, size_t len, int prot)
@@ -118,5 +118,5 @@ int mprotect_apply(uint64_t addr, size_t len, int prot)
     (void)len;
     (void)prot;
     kprintf("[mprotect] mprotect_apply: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

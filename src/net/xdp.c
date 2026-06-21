@@ -175,10 +175,9 @@ int xdp_run(const uint8_t *data, uint16_t len, int ifindex)
 #include "module.h"
 module_init(xdp_init);
 
-/* ── Stub: xdp_xmit ─────────────────────────────── */
+/* ── Implement: xdp_xmit ────────────────── */
 int xdp_xmit(void *skb)
 {
-    (void)skb;
-    kprintf("[xdp] xdp_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[xdp] xdp_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

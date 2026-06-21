@@ -352,25 +352,35 @@ void cpufreq_ondemand_evaluate(void)
         ondemand_evaluate_cpu(state);
 }
 
-/* ── Stub: od_speed_up ─────────────────────────────── */
+/* ── od_speed_up ─────────────────────────────── */
 int od_speed_up(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] od_speed_up: not yet implemented\n");
-    return -ENOSYS;
+    int cur = cpupstate_get_state();
+    if (cur <= 0) return 0;
+    return cpupstate_set_state(cur - 1);
 }
-/* ── Stub: od_slow_down ─────────────────────────────── */
+/* ── od_slow_down ─────────────────────────────── */
 int od_slow_down(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] od_slow_down: not yet implemented\n");
-    return -ENOSYS;
+    int cur = cpupstate_get_state();
+    int max = cpupstate_get_count();
+    if (cur < 0 || cur >= max - 1) return 0;
+    return cpupstate_set_state(cur + 1);
 }
-/* ── Stub: od_target ─────────────────────────────── */
+/* ── od_target ─────────────────────────────── */
 int od_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
-    (void)target_freq;
-    kprintf("[cpufreq] od_target: not yet implemented\n");
-    return -ENOSYS;
+    int count = cpupstate_get_count();
+    int best = 0;
+    for (int i = 0; i < count; i++) {
+        struct cpupstate_state info;
+        if (cpupstate_get_info(i, &info) == 0) {
+            if (info.core_freq * 1000 <= target_freq)
+                best = i;
+        }
+    }
+    return cpupstate_set_state(best);
 }

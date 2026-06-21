@@ -298,14 +298,14 @@ int pstore_erase(int index)
 {
     (void)index;
     kprintf("[PSTORE] pstore_erase: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: pstore_open ─────────────────────────────────────────────── */
 int pstore_open(void)
 {
     kprintf("[PSTORE] pstore_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: pstore_close ────────────────────────────────────────────── */

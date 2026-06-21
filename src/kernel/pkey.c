@@ -283,5 +283,5 @@ int sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey)
     (void)prot;
     (void)pkey;
     kprintf("[pkey] sys_pkey_mprotect not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

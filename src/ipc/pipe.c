@@ -6,6 +6,8 @@
 #include "timer.h"
 #include "syscall.h"
 #include "heap.h"
+#include "errno.h"
+#include "printf.h"
 
 static struct pipe pipe_table[PIPE_MAX];
 
@@ -362,20 +364,54 @@ void wait_queue_ensure(struct wait_queue *wq) {
     if (wq) spinlock_init(&wq->lock);
 }
 
-/* ── Stub: pipe_destroy ─────────────────────────────────────── */
+/* ── pipe_destroy ─────────────────────────────────────── */
 int pipe_destroy(int pipe_id)
 {
-    (void)pipe_id;
-    kprintf("[pipe] pipe_destroy: not yet implemented\n");
-    return -ENOSYS;
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -EBADF;
+
+    struct pipe *p = &pipe_table[pipe_id];
+
+    /* Forcefully close both ends and free resources */
+    if (p->buf) {
+        kfree(p->buf);
+        p->buf = NULL;
+    }
+    if (p->buf2) {
+        kfree(p->buf2);
+        p->buf2 = NULL;
+    }
+
+    /* Wake any blocked waiters so they can see the pipe is gone */
+    wait_queue_wake_all(&p->read_wq);
+    wait_queue_wake_all(&p->write_wq);
+
+    memset(p, 0, sizeof(*p));
+    return 0;
 }
 
-/* ── Stub: pipe_ioctl ───────────────────────────────────────── */
+/* ── pipe_ioctl ───────────────────────────────────────── */
 int pipe_ioctl(int pipe_id, unsigned long request, void *arg)
 {
-    (void)pipe_id;
-    (void)request;
-    (void)arg;
-    kprintf("[pipe] pipe_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
+        return -EBADF;
+
+    struct pipe *p = &pipe_table[pipe_id];
+
+    switch (request) {
+        case 0x4701: /* FIONREAD: get bytes available for reading */
+            if (!arg) return -EINVAL;
+            *(int *)arg = p->count;
+            return 0;
+        case 0x4008: /* PIPE_IOC_CAPACITY: set capacity */
+            if (!arg) return -EINVAL;
+            return pipe_set_capacity(pipe_id, *(int *)arg);
+        case 0x8000: /* PIPE_IOC_GET_CAPACITY: get capacity */
+            if (!arg) return -EINVAL;
+            *(int *)arg = p->capacity;
+            return 0;
+        default:
+            kprintf("[pipe] pipe_ioctl: unknown request 0x%lx\n", request);
+            return -ENOTTY;
+    }
 }

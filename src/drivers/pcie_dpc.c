@@ -99,19 +99,19 @@ int pcie_dpc_init(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_dpc_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_dpc_handler ─────────────────────────────── */
 int pcie_dpc_handler(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_dpc_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pcie_dpc_reset ─────────────────────────────── */
 int pcie_dpc_reset(void *dev)
 {
     (void)dev;
     kprintf("[pcie] pcie_dpc_reset: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

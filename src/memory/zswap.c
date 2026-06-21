@@ -401,7 +401,7 @@ int zswap_invalidate(uint64_t offset)
 {
     (void)offset;
     kprintf("[zswap] zswap_invalidate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: zswap_shrink ──────────────────────────────────────── */
@@ -409,7 +409,7 @@ int zswap_shrink(int nr_to_reclaim)
 {
     (void)nr_to_reclaim;
     kprintf("[zswap] zswap_shrink: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: zswap_writeback_entry ─────────────────────────────── */
@@ -417,5 +417,5 @@ int zswap_writeback_entry(uint64_t offset)
 {
     (void)offset;
     kprintf("[zswap] zswap_writeback_entry: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

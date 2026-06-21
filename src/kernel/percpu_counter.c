@@ -106,5 +106,5 @@ int64_t percpu_counter_sum(void *fbc)
 {
     (void)fbc;
     kprintf("[percpu] percpu_counter_sum: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

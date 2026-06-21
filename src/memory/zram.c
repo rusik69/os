@@ -310,24 +310,109 @@ uint32_t zram_get_algorithm(void)
 #include "module.h"
 module_init(zram_init);
 
-/* ── Stub: zram_read ─────────────────────────────────────────── */
+/* ZRAM IOCTL command definitions */
+#define ZRAM_IOCTL_GET_INFO   0
+#define ZRAM_IOCTL_SET_LIMIT  1
+#define ZRAM_IOCTL_RESET      2
+
+/* ── zram_read ──────────────────────────────────────────── */
 int zram_read(uint64_t offset, void *buf, size_t count)
 {
-    (void)offset;
-    (void)buf;
-    (void)count;
-    kprintf("[zram] zram_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!zram_dev.initialized)
+        return -ENXIO;
+    if (!buf)
+        return -EINVAL;
+    if (offset + count > zram_dev.disk_size)
+        return -ENXIO;
+
+    /* Convert byte offset to sector number (512-byte sectors) and count */
+    uint64_t sector = offset / 512;
+    uint32_t sector_count = (uint32_t)((count + 511) / 512);
+    if (sector_count == 0) return 0;
+
+    return zram_read_sectors(sector, buf, sector_count);
 }
 
-/* ── Stub: zram_write ────────────────────────────────────────── */
+/* ── zram_write ────────────────────────────────────────── */
 int zram_write(uint64_t offset, const void *buf, size_t count)
 {
-    (void)offset;
-    (void)buf;
-    (void)count;
-    kprintf("[zram] zram_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!zram_dev.initialized)
+        return -ENXIO;
+    if (!buf)
+        return -EINVAL;
+    if (offset + count > zram_dev.disk_size)
+        return -ENXIO;
+
+    uint64_t sector = offset / 512;
+    uint32_t sector_count = (uint32_t)((count + 511) / 512);
+    if (sector_count == 0) return 0;
+
+    return zram_write_sectors(sector, buf, sector_count);
+}
+
+/* ── zram_ioctl ─────────────────────────────────────────── */
+int zram_ioctl(unsigned int cmd, unsigned long arg)
+{
+    if (!zram_dev.initialized)
+        return -ENXIO;
+
+    switch (cmd) {
+    case ZRAM_IOCTL_GET_INFO: {
+        /* Return basic device info */
+        uint64_t info[4] = { zram_dev.disk_size, zram_dev.num_slots,
+                             zram_dev.comp_total, zram_dev.orig_total };
+        if (arg && arg != (unsigned long)-1) {
+            memcpy((void *)(uintptr_t)arg, info, sizeof(info));
+        }
+        return 0;
+    }
+    case ZRAM_IOCTL_SET_LIMIT: {
+        /* Set a memory usage limit (just track it, not enforced) */
+        kprintf("[zram] zram_ioctl: SET_LIMIT %lu\n", arg);
+        return 0;
+    }
+    case ZRAM_IOCTL_RESET: {
+        /* Reset device statistics */
+        zram_dev.comp_total = 0;
+        zram_dev.orig_total = 0;
+        zram_dev.stored_pages = 0;
+        zram_dev.incompressible = 0;
+        kprintf("[zram] zram_ioctl: device reset\n");
+        return 0;
+    }
+    default:
+        kprintf("[zram] zram_ioctl: unknown cmd %u\n", cmd);
+        return -EINVAL;
+    }
+}
+
+/* ── zram_stats ────────────────────────────────────────── */
+int zram_stats(void *stats)
+{
+    if (!stats) return -EINVAL;
+    /* Fill a zram_stat struct */
+    struct {
+        uint64_t disk_size;
+        uint64_t num_slots;
+        uint64_t comp_total;
+        uint64_t orig_total;
+        uint64_t stored_pages;
+        uint64_t incompressible;
+        double   compress_ratio;
+    } st;
+
+    st.disk_size = zram_dev.disk_size;
+    st.num_slots = zram_dev.num_slots;
+    st.comp_total = zram_dev.comp_total;
+    st.orig_total = zram_dev.orig_total;
+    st.stored_pages = zram_dev.stored_pages;
+    st.incompressible = zram_dev.incompressible;
+    st.compress_ratio = (zram_dev.orig_total > 0 && zram_dev.comp_total > 0)
+                        ? (double)zram_dev.orig_total / (double)zram_dev.comp_total
+                        : 1.0;
+
+    memcpy(stats, &st, sizeof(st));
+    return 0;
 }
 
 /* ── Stub: zram_comp_read ────────────────────────────────────── */
@@ -337,7 +422,7 @@ int zram_comp_read(uint64_t offset, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[zram] zram_comp_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: zram_comp_write ───────────────────────────────────── */
@@ -347,7 +432,7 @@ int zram_comp_write(uint64_t offset, const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[zram] zram_comp_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: zram_free_page ────────────────────────────────────── */

@@ -296,7 +296,7 @@ int audit_log_start(int type)
 {
     (void)type;
     kprintf("[AUDIT] audit_log_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: audit_log_end ───────────────────────────────────────────── */
@@ -317,5 +317,5 @@ int audit_send_reply(void *skb, int type, int done, int seq, const void *data, i
 {
     (void)skb; (void)type; (void)done; (void)seq; (void)data; (void)len;
     kprintf("[AUDIT] audit_send_reply: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

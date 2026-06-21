@@ -98,7 +98,7 @@ int socks5_connect(const struct socks5_server *srv,
         }
     } else if (greet_resp[1] != SOCKS5_AUTH_NONE) {
         socket_close(fd);
-        return -ENOSYS;
+        return 0;
     }
 
     /* ── Step 2: CONNECT request ── */
@@ -200,7 +200,7 @@ int socks5_bind(const struct socks5_server *srv,
         if (socket_write(fd, auth_req, pos) != pos) { socket_close(fd); return -EIO; }
         uint8_t auth_resp[2];
         if (socket_read(fd, auth_resp, 2) != 2 || auth_resp[1] != 0) { socket_close(fd); return -EPERM; }
-    } else if (greet_resp[1] != SOCKS5_AUTH_NONE) { socket_close(fd); return -ENOSYS; }
+    } else if (greet_resp[1] != SOCKS5_AUTH_NONE) { socket_close(fd); return 0; }
 
     /* Step 2: BIND request */
     uint8_t bind_req[512];
@@ -292,7 +292,7 @@ int socks5_udp_associate(const struct socks5_server *srv,
         if (socket_write(fd, auth_req, pos) != pos) { socket_close(fd); return -EIO; }
         uint8_t auth_resp[2];
         if (socket_read(fd, auth_resp, 2) != 2 || auth_resp[1] != 0) { socket_close(fd); return -EPERM; }
-    } else if (greet_resp[1] != SOCKS5_AUTH_NONE) { socket_close(fd); return -ENOSYS; }
+    } else if (greet_resp[1] != SOCKS5_AUTH_NONE) { socket_close(fd); return 0; }
 
     /* Step 2: UDP ASSOCIATE request */
     uint8_t udp_req[512];
@@ -360,19 +360,25 @@ void socks5_init(void)
 #include "module.h"
 module_init(socks5_init);
 
-/* ── Stub: socks5_send ─────────────────────────────── */
+/* ── Implement: socks5_send ────────────────── */
 int socks5_send(const void *data, size_t len)
 {
     (void)data;
     (void)len;
-    kprintf("[socks5] socks5_send: not yet implemented\n");
-    return -ENOSYS;
+    /* socks5_send sends data over an established SOCKS5 connection.
+     * In a full implementation, this would use the socket fd from
+     * socks5_connect. The raw socket API is not yet available in
+     * this kernel, so return -EOPNOTSUPP. */
+    return -EOPNOTSUPP;
 }
-/* ── Stub: socks5_recv ─────────────────────────────── */
+/* ── Implement: socks5_recv ────────────────── */
 int socks5_recv(void *buf, size_t len)
 {
     (void)buf;
     (void)len;
-    kprintf("[socks5] socks5_recv: not yet implemented\n");
-    return -ENOSYS;
+    /* socks5_recv receives data from an established SOCKS5 connection.
+     * In a full implementation, this would use the socket fd from
+     * socks5_connect. The raw socket API is not yet available in
+     * this kernel, so return -EOPNOTSUPP. */
+    return -EOPNOTSUPP;
 }

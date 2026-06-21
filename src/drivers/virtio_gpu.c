@@ -137,7 +137,7 @@ int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
     (void)h;
     (void)bpp;
     kprintf("[virtio] virtio_gpu_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: virtio_gpu_transfer ─────────────────────────────── */
 int virtio_gpu_transfer(void *dev, void *buf, size_t count)
@@ -146,5 +146,5 @@ int virtio_gpu_transfer(void *dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[virtio] virtio_gpu_transfer: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

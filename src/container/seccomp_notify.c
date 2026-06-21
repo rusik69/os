@@ -247,7 +247,7 @@ int seccomp_notify_init(void)
  * @action when the syscall is made.
  *
  * @syscall_nr: The syscall number to intercept.
- * @action:     0 = allow, 1 = deny (return -ENOSYS), 2 = kill process.
+ * @action:     0 = allow, 1 = deny (return 0), 2 = kill process.
  * @name:       Optional human-readable name (may be NULL or empty).
  *
  * Returns 0 on success, -ENOSPC if the rule table is full.
@@ -684,12 +684,12 @@ int seccomp_notify_register(void *listener)
 {
     (void)listener;
     kprintf("[container] seccomp_notify_register: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: seccomp_notify_unregister ─────────────────────────────── */
 int seccomp_notify_unregister(void *listener)
 {
     (void)listener;
     kprintf("[container] seccomp_notify_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

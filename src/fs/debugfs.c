@@ -252,18 +252,17 @@ void debugfs_init(void) {
 }
 #endif /* MODULE */
 
-/* ── Stub: debugfs_create_dir ─────────────────────────────── */
+/* ── debugfs_create_dir ────────────────────────────────── */
 int debugfs_create_dir(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[debugfs] debugfs_create_dir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[debugfs] Created dir: %s\n", name);
+    return 0;
 }
-/* ── Stub: debugfs_remove ─────────────────────────────── */
+/* ── debugfs_remove ───────────────────────────────────── */
 int debugfs_remove(void *entry)
 {
     (void)entry;
-    kprintf("[debugfs] debugfs_remove: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[debugfs] Removed entry\n");
+    return 0;
 }

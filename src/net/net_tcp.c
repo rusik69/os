@@ -2068,50 +2068,75 @@ int net_tcp_has_closed(int conn_id)
     return (c->state == TCP_CLOSED || c->rx_fin) ? 1 : 0;
 }
 
-/* ── Stub: tcp_open ─────────────────────────────── */
+/* ── Implement: tcp_open ──────────────────────────────── */
 int tcp_open(void *sk)
 {
-    (void)sk;
-    kprintf("[tcp] tcp_open: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk) return -EINVAL;
+    kprintf("[tcp] tcp_open: allocating TCP connection\n");
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        if (tcp_conns[i].state == TCP_CLOSED) {
+            memset(&tcp_conns[i], 0, sizeof(struct tcp_conn));
+            tcp_conns[i].state = TCP_CLOSED;
+            tcp_conns[i].cwnd = 10;
+            tcp_conns[i].ssthresh = 0x7FFFFFFF;
+            tcp_conns[i].rto = 30;
+            tcp_conns[i].keepalive_interval = 500;
+            tcp_conns[i].keepalive_probes_max = 3;
+            return i;
+        }
+    }
+    return -ENOMEM;
 }
-/* ── Stub: tcp_close ─────────────────────────────── */
+/* ── Implement: tcp_close ─────────────────────────────── */
 int tcp_close(void *sk)
 {
-    (void)sk;
-    kprintf("[tcp] tcp_close: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk) return -EINVAL;
+    int conn_id = *(int *)sk;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
+    if (tcp_conns[conn_id].state != TCP_CLOSED) {
+        net_tcp_close(conn_id);
+    }
+    return 0;
 }
-/* ── Stub: tcp_connect ─────────────────────────────── */
+/* ── Implement: tcp_connect ───────────────────────────── */
 int tcp_connect(void *sk, void *addr)
 {
-    (void)sk;
-    (void)addr;
-    kprintf("[tcp] tcp_connect: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !addr) return -EINVAL;
+    struct sockaddr_in *sin = (struct sockaddr_in *)addr;
+    int conn_id = net_tcp_connect(sin->sin_addr.s_addr, ntohs(sin->sin_port));
+    if (conn_id < 0) return -ECONNREFUSED;
+    *(int *)sk = conn_id;
+    return 0;
 }
-/* ── Stub: tcp_disconnect ─────────────────────────────── */
+/* ── Implement: tcp_disconnect ────────────────────────── */
 int tcp_disconnect(void *sk)
 {
-    (void)sk;
-    kprintf("[tcp] tcp_disconnect: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk) return -EINVAL;
+    int conn_id = *(int *)sk;
+    if (conn_id >= 0 && conn_id < MAX_TCP_CONNS) {
+        if (tcp_conns[conn_id].state != TCP_CLOSED) {
+            net_tcp_close(conn_id);
+        }
+        tcp_conns[conn_id].state = TCP_CLOSED;
+    }
+    return 0;
 }
-/* ── Stub: tcp_sendmsg ─────────────────────────────── */
+/* ── Implement: tcp_sendmsg ───────────────────────────── */
 int tcp_sendmsg(void *sk, void *msg, size_t len)
 {
-    (void)sk;
-    (void)msg;
-    (void)len;
-    kprintf("[tcp] tcp_sendmsg: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !msg) return -EINVAL;
+    int conn_id = *(int *)sk;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
+    if (tcp_conns[conn_id].state != TCP_ESTABLISHED) return -ENOTCONN;
+    uint16_t send_len = (uint16_t)(len > 65535 ? 65535 : len);
+    return net_tcp_send(conn_id, msg, send_len);
 }
-/* ── Stub: tcp_recvmsg ─────────────────────────────── */
+/* ── Implement: tcp_recvmsg ───────────────────────────── */
 int tcp_recvmsg(void *sk, void *msg, size_t len)
 {
-    (void)sk;
-    (void)msg;
-    (void)len;
-    kprintf("[tcp] tcp_recvmsg: not yet implemented\n");
-    return -ENOSYS;
+    if (!sk || !msg) return -EINVAL;
+    int conn_id = *(int *)sk;
+    if (conn_id < 0 || conn_id >= MAX_TCP_CONNS) return -EINVAL;
+    uint16_t recv_len = (uint16_t)(len > 65535 ? 65535 : len);
+    return net_tcp_recv(conn_id, msg, recv_len, 10);
 }

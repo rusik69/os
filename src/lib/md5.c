@@ -208,14 +208,40 @@ void md5_init_crypto(void)
     kprintf("[OK] MD5 initialized\n");
 }
 
-/* ── Stub: hmac_md5 ─────────────────────────────── */
+/* ── hmac_md5 ─────────────────────────────── */
 int hmac_md5(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
 {
-    (void)key;
-    (void)klen;
-    (void)msg;
-    (void)mlen;
-    (void)mac;
-    kprintf("[md5] hmac_md5: not yet implemented\n");
-    return -ENOSYS;
+    uint8_t k[MD5_BLOCK_SIZE];
+    struct md5_ctx ctx;
+    int i;
+
+    /* If key is longer than block size, hash it */
+    if (klen > MD5_BLOCK_SIZE) {
+        md5_hash(k, key, klen);
+        memset(k + MD5_DIGEST_SIZE, 0, MD5_BLOCK_SIZE - MD5_DIGEST_SIZE);
+    } else {
+        memcpy(k, key, klen);
+        if (klen < MD5_BLOCK_SIZE)
+            memset(k + klen, 0, MD5_BLOCK_SIZE - klen);
+    }
+
+    /* Inner hash: H((k ^ ipad) || data) */
+    for (i = 0; i < MD5_BLOCK_SIZE; i++)
+        k[i] ^= 0x36;
+
+    md5_init(&ctx);
+    md5_update(&ctx, k, MD5_BLOCK_SIZE);
+    md5_update(&ctx, msg, mlen);
+    md5_final((uint8_t *)mac, &ctx);
+
+    /* Outer hash: H((k ^ opad) || inner_hash) */
+    for (i = 0; i < MD5_BLOCK_SIZE; i++)
+        k[i] ^= (0x36 ^ 0x5C);
+
+    md5_init(&ctx);
+    md5_update(&ctx, k, MD5_BLOCK_SIZE);
+    md5_update(&ctx, mac, MD5_DIGEST_SIZE);
+    md5_final((uint8_t *)mac, &ctx);
+
+    return 0;
 }

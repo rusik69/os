@@ -2416,7 +2416,7 @@ int cc_parse_expression(void *parser, void *ast)
     (void)parser;
     (void)ast;
     kprintf("[cc] cc_parse_expression: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_parse_statement ─────────────────────────────── */
 int cc_parse_statement(void *parser, void *ast)
@@ -2424,5 +2424,5 @@ int cc_parse_statement(void *parser, void *ast)
     (void)parser;
     (void)ast;
     kprintf("[cc] cc_parse_statement: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }

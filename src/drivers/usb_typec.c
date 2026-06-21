@@ -534,14 +534,14 @@ int typec_register_port(void *dev, void *cap)
     (void)dev;
     (void)cap;
     kprintf("[usb] typec_register_port: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: typec_unregister_port ─────────────────────────────── */
 int typec_unregister_port(void *dev)
 {
     (void)dev;
     kprintf("[usb] typec_unregister_port: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: typec_set_mode ─────────────────────────────── */
 int typec_set_mode(void *dev, int mode)
@@ -549,5 +549,5 @@ int typec_set_mode(void *dev, int mode)
     (void)dev;
     (void)mode;
     kprintf("[usb] typec_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

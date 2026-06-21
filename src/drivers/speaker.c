@@ -279,16 +279,28 @@ EXPORT_SYMBOL(speaker_bell);
 EXPORT_SYMBOL(speaker_set_bell_params);
 #endif /* !MODULE */
 
-/* ── Stub: speaker_on ─────────────────────────────── */
+/* ── Turn speaker on (use last set frequency) ──────── */
 int speaker_on(void)
 {
-    kprintf("[speaker] speaker_on: not yet implemented\n");
-    return -ENOSYS;
+    uint8_t tmp = inb(SPEAKER_PORT);
+    outb(SPEAKER_PORT, tmp | 0x03);
+    return 0;
 }
-/* ── Stub: speaker_set_freq ─────────────────────────────── */
+
+/* ── Set speaker frequency via PIT channel 2 ───────── */
 int speaker_set_freq(int freq)
 {
-    (void)freq;
-    kprintf("[speaker] speaker_set_freq: not yet implemented\n");
-    return -ENOSYS;
+    if (freq <= 0) {
+        speaker_off();
+        return 0;
+    }
+
+    uint32_t divisor = PIT_BASE_FREQ / (uint32_t)freq;
+
+    /* Configure PIT channel 2: mode 3 (square wave), binary */
+    outb(PIT_CMD, 0xB6);
+    outb(PIT_CH2, (uint8_t)(divisor & 0xFF));
+    outb(PIT_CH2, (uint8_t)(divisor >> 8));
+
+    return 0;
 }

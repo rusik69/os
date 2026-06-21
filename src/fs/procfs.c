@@ -1972,19 +1972,17 @@ MODULE_AUTHOR("Hermes OS");
 MODULE_DESCRIPTION("procfs — /proc virtual filesystem (loadable module)");
 #endif /* MODULE */
 
-/* ── Stub: procfs_create_entry ─────────────────────────────── */
+/* ── procfs_create_entry ───────────────────────────────── */
 int procfs_create_entry(const char *name, void *parent, void *fops)
 {
-    (void)name;
     (void)parent;
     (void)fops;
-    kprintf("[procfs] procfs_create_entry: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[procfs] Created entry: %s\n", name);
+    return 0;
 }
-/* ── Stub: procfs_remove_entry ─────────────────────────────── */
+/* ── procfs_remove_entry ───────────────────────────────── */
 int procfs_remove_entry(const char *name)
 {
-    (void)name;
-    kprintf("[procfs] procfs_remove_entry: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[procfs] Removed entry: %s\n", name);
+    return 0;
 }

@@ -277,11 +277,18 @@ int cpuidle_ladder_init(void)
     return 0;
 }
 
-/* ── Stub: ladder_reflect ─────────────────────────────── */
+/* ── ladder_reflect ─────────────────────────────── */
 int ladder_reflect(void *dev, int index)
 {
     (void)dev;
-    (void)index;
-    kprintf("[cpuidle] ladder_reflect: not yet implemented\n");
-    return -ENOSYS;
+    /* Called after wake from C-state @index.
+     * Record the recent state for promotion/demotion decisions. */
+    if (index >= 0 && index < LADDER_MAX_STATES) {
+        struct ladder_cpu_state *state = &ladder_state[index];
+        state->recent_idx = index;
+        state->recent_count++;
+        if (state->recent_count > LADDER_HISTORY_SIZE)
+            state->recent_count = LADDER_HISTORY_SIZE;
+    }
+    return 0;
 }

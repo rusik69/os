@@ -236,49 +236,140 @@ int shm_perm_get(int id, struct shm_perm *out)
     return 0;
 }
 
-/* ── Stub: shm_open ─────────────────────────────────────────── */
+/* ── shm_open ─────────────────────────────────────────── */
 int shm_open(const char *name, int oflag, ...)
 {
     (void)name;
     (void)oflag;
-    kprintf("[shm] shm_open: not yet implemented\n");
-    return -ENOSYS;
+    /* POSIX shared memory: allocate a new segment with a hash of name as key */
+    if (!name) return -EINVAL;
+
+    /* Simple hash of name to use as key */
+    int key = 0;
+    const char *p = name;
+    while (*p) { key = key * 31 + *p++; }
+
+    int id = shm_get(key, SHM_RW);
+    if (id >= 0) return id;
+
+    /* If O_CREAT is set (0x40), try creating */
+    if (oflag & 0x40) {
+        /* shm_get with mode will create if not found */
+        id = shm_get(key, SHM_RW);
+        return id;
+    }
+
+    return -ENOENT;
 }
 
-/* ── Stub: shm_unlink ───────────────────────────────────────── */
+/* ── shm_unlink ───────────────────────────────────────── */
 int shm_unlink(const char *name)
 {
     (void)name;
-    kprintf("[shm] shm_unlink: not yet implemented\n");
-    return -ENOSYS;
+    /* POSIX shared memory unlink: mark the segment for removal.
+     * Find segment by name hash and free it if no references. */
+    if (!name) return -EINVAL;
+
+    int key = 0;
+    const char *p = name;
+    while (*p) { key = key * 31 + *p++; }
+
+    for (int i = 0; i < SHM_MAX; i++) {
+        if (shm_table[i].used && shm_table[i].key == key) {
+            return shm_free(i);
+        }
+    }
+    return -ENOENT;
 }
 
-/* ── Stub: shm_mmap ─────────────────────────────────────────── */
+/* ── shm_mmap ─────────────────────────────────────────── */
 int shm_mmap(int id, uint64_t addr, size_t len, int prot, int flags)
 {
-    (void)id;
     (void)addr;
     (void)len;
     (void)prot;
     (void)flags;
-    kprintf("[shm] shm_mmap: not yet implemented\n");
-    return -ENOSYS;
+
+    if (id < 0 || id >= SHM_MAX || !shm_table[id].used)
+        return -EINVAL;
+
+    /* Map the shared memory segment into the current process's address space
+     * at the requested address (or at a convenient location). */
+    struct process *cur = process_get_current();
+    if (!cur) return -EINVAL;
+
+    uint64_t virt = SHM_VIRT_BASE + (uint64_t)id * 0x10000ULL;
+    uint64_t *pml4 = cur->pml4 ? cur->pml4 : vmm_get_pml4();
+
+    uint64_t vmm_flags = VMM_FLAG_PRESENT | VMM_FLAG_USER;
+    if (prot & 0x2) vmm_flags |= VMM_FLAG_WRITE; /* PROT_WRITE */
+
+    if (vmm_map_user_page(pml4, virt, shm_table[id].phys, vmm_flags) < 0)
+        return -ENOMEM;
+
+    shm_table[id].refs++;
+    return (int)virt;
 }
 
-/* ── Stub: shm_show_fdinfo ──────────────────────────────────── */
+/* ── shm_show_fdinfo ──────────────────────────────────── */
 int shm_show_fdinfo(int id, char *buf, size_t size)
 {
-    (void)id;
-    (void)buf;
-    (void)size;
-    kprintf("[shm] shm_show_fdinfo: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || size == 0) return -EINVAL;
+
+    int pos = 0;
+    if (id >= 0 && id < SHM_MAX && shm_table[id].used) {
+        pos = snprintf(buf, size,
+            "shmid:\t%d\n"
+            "key:\t%d\n"
+            "phys:\t0x%llx\n"
+            "refs:\t%d\n"
+            "uid:\t%u\n"
+            "gid:\t%u\n"
+            "mode:\t%o\n",
+            id, shm_table[id].key,
+            (unsigned long long)shm_table[id].phys,
+            shm_table[id].refs,
+            shm_table[id].uid, shm_table[id].gid,
+            shm_table[id].mode);
+    } else {
+        pos = snprintf(buf, size, "shmid:\t%d (unused)\n", id);
+    }
+
+    if (pos < 0) return -EINVAL;
+    if ((size_t)pos >= size) return -ENOSPC;
+    return pos;
 }
 
-/* ── Stub: shm_stat ─────────────────────────────────────────── */
+/* ── Local shm_info structure for statistics ───────────────── */
+#ifndef __SHM_INFO_DEFINED
+#define __SHM_INFO_DEFINED
+struct shm_info {
+    int      shm_tot;    /* total segments */
+    int      shm_used;   /* used segments  */
+    uint64_t shm_pages;  /* total pages    */
+    int      shm_max;    /* max segments   */
+};
+#endif
+
+/* ── shm_stat ─────────────────────────────────────────── */
 int shm_stat(struct shm_info *info)
 {
-    (void)info;
-    kprintf("[shm] shm_stat: not yet implemented\n");
-    return -ENOSYS;
+    if (!info) return -EINVAL;
+
+    int total = 0, used = 0;
+    uint64_t total_pages = 0;
+
+    for (int i = 0; i < SHM_MAX; i++) {
+        total++;
+        if (shm_table[i].used) {
+            used++;
+            total_pages++;
+        }
+    }
+
+    info->shm_tot = total;
+    info->shm_used = used;
+    info->shm_pages = total_pages;
+    info->shm_max = SHM_MAX;
+    return 0;
 }

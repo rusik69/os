@@ -20,6 +20,19 @@
 #define BPF_ABS   0x20   /* absolute load (from seccomp_data) */
 #define BPF_IND   0x40   /* indirect load (from seccomp_data + X) */
 
+/* Additional BPF mode/size constants for packet filter (AF_PACKET) */
+#define BPF_IMM   0x00   /* immediate value mode (LDX) */
+#define BPF_LEN   0x80   /* packet length mode (LD) */
+#define BPF_H     0x08   /* 16-bit half-word size */
+#define BPF_B     0x10   /* 8-bit byte size */
+#define BPF_LDX   0x01   /* load into X register */
+#define BPF_ALU   0x04   /* ALU operation */
+#define BPF_K     0x00   /* constant operand */
+#define BPF_AND   0x50   /* ALU AND */
+#define BPF_LSH   0x60   /* ALU left shift */
+#define BPF_RSH   0x70   /* ALU right shift */
+#define BPF_NEG   0x80   /* ALU negate */
+
 /* BPF jump conditions */
 #define BPF_JEQ   0x10   /* jump if equal */
 #define BPF_JGT   0x20   /* jump if greater than */

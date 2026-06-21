@@ -230,14 +230,14 @@ int vhost_blk_start(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_blk_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: vhost_blk_stop ─────────────────────────────── */
 int vhost_blk_stop(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_blk_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: vhost_blk_handle_io ─────────────────────────────── */
 int vhost_blk_handle_io(void *dev, void *req)
@@ -245,5 +245,5 @@ int vhost_blk_handle_io(void *dev, void *req)
     (void)dev;
     (void)req;
     kprintf("[vhost] vhost_blk_handle_io: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

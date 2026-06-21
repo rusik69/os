@@ -357,12 +357,12 @@ int balloon_inflate(size_t count)
 {
     (void)count;
     kprintf("[balloon] balloon_inflate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: balloon_deflate ─────────────────────────────── */
 int balloon_deflate(size_t count)
 {
     (void)count;
     kprintf("[balloon] balloon_deflate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

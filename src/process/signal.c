@@ -345,33 +345,72 @@ void signal_unmask(uint64_t sigmask) {
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
 
-/* ── Stub: signal_handle ─────────────────────────────── */
+/* ── signal_handle ─────────────────────────────── */
 int signal_handle(void *task, int sig)
 {
     (void)task;
-    (void)sig;
-    kprintf("[signal] signal_handle: not yet implemented\n");
-    return -ENOSYS;
+    if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
+
+    struct process *p = process_get_current();
+    if (!p) return -EINVAL;
+
+    /* Clear pending and deliver the signal */
+    uint64_t __sig_flags;
+    spinlock_irqsave_acquire(&p->sig_lock, &__sig_flags);
+
+    if (p->pending_signals & (1ULL << sig)) {
+        p->pending_signals &= ~(1ULL << sig);
+
+        signal_handler_t handler = p->sig_handlers[sig];
+
+        if (handler == SIG_IGN || handler == SIG_DFL) {
+            /* Default action handled by signal_check */
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return 0;
+        }
+
+        spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+
+        /* Call userspace handler */
+        if (p->is_user) {
+            /* For user processes, signal delivery happens on return to userspace */
+            return 0;
+        }
+
+        handler(sig);
+        return 0;
+    }
+
+    spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+    return -EAGAIN;
 }
-/* ── Stub: signal_register_handler ─────────────────────────────── */
+
+/* ── signal_register_handler ─────────────────────────────── */
 int signal_register_handler(int sig, void *handler)
 {
-    (void)sig;
-    (void)handler;
-    kprintf("[signal] signal_register_handler: not yet implemented\n");
-    return -ENOSYS;
+    if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
+    signal_register(sig, (signal_handler_t)handler);
+    return 0;
 }
-/* ── Stub: signal_block ─────────────────────────────── */
+
+/* ── signal_block ─────────────────────────────── */
 int signal_block(int sig)
 {
-    (void)sig;
-    kprintf("[signal] signal_block: not yet implemented\n");
-    return -ENOSYS;
+    if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
+    /* Block a single signal by masking it */
+    uint64_t mask = (1ULL << sig);
+    /* SIGKILL and SIGSTOP cannot be blocked */
+    if (sig == SIGKILL || sig == SIGSTOP)
+        return -EINVAL;
+    signal_mask(mask);
+    return 0;
 }
-/* ── Stub: signal_unblock ─────────────────────────────── */
+
+/* ── signal_unblock ─────────────────────────────── */
 int signal_unblock(int sig)
 {
-    (void)sig;
-    kprintf("[signal] signal_unblock: not yet implemented\n");
-    return -ENOSYS;
+    if (sig <= 0 || sig >= SIG_MAX) return -EINVAL;
+    uint64_t mask = (1ULL << sig);
+    signal_unmask(mask);
+    return 0;
 }

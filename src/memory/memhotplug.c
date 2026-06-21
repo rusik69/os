@@ -91,46 +91,111 @@ struct memhp_section *memhp_get_section(int section_id) {
 #include "module.h"
 module_init(memhp_init);
 
-/* ── Stub: add_memory ───────────────────────────────────────── */
-int add_memory(uint64_t start, uint64_t size)
+/* ── memhotplug_add ────────────────────────────────────── */
+int memhotplug_add(uint64_t phys_addr, size_t size)
 {
-    (void)start;
-    (void)size;
-    kprintf("[memhotplug] add_memory: not yet implemented\n");
-    return -ENOSYS;
+    if (size == 0) return -EINVAL;
+    if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
+    if (size & (PAGE_SIZE - 1)) return -EINVAL;
+
+    kprintf("[memhotplug] memhotplug_add: 0x%llx +%zu MB\n",
+            (unsigned long long)phys_addr, size / (1024 * 1024));
+
+    /* Add to hotplug tracking */
+    if (section_count >= MEMHP_MAX_SECTIONS) {
+        kprintf("[memhotplug] memhotplug_add: max sections reached\n");
+        return -ENOMEM;
+    }
+
+    struct memhp_section *sec = &sections[section_count];
+    sec->base_addr = phys_addr;
+    sec->size = size;
+    sec->state = MEMHP_OFFLINE;
+    sec->present = 1;
+    section_count++;
+
+    /* Bring memory online: add pages to PMM */
+    sec->state = MEMHP_GOING_ONLINE;
+    pmm_reserve_frames(phys_addr, size);
+    sec->state = MEMHP_ONLINE;
+
+    kprintf("[memhotplug] memhotplug_add: region 0x%llx (+%zu MB) online\n",
+            (unsigned long long)phys_addr, size / (1024 * 1024));
+    return 0;
 }
 
-/* ── Stub: remove_memory ────────────────────────────────────── */
-int remove_memory(uint64_t start, uint64_t size)
+/* ── memhotplug_remove ─────────────────────────────────── */
+int memhotplug_remove(uint64_t phys_addr, size_t size)
 {
-    (void)start;
-    (void)size;
-    kprintf("[memhotplug] remove_memory: not yet implemented\n");
-    return -ENOSYS;
+    if (size == 0) return -EINVAL;
+    if (phys_addr & (PAGE_SIZE - 1)) return -EINVAL;
+
+    kprintf("[memhotplug] memhotplug_remove: 0x%llx +%zu MB\n",
+            (unsigned long long)phys_addr, size / (1024 * 1024));
+
+    /* Find and offline the region */
+    for (int i = 0; i < section_count; i++) {
+        if (sections[i].base_addr == phys_addr && sections[i].present) {
+            if (sections[i].state == MEMHP_ONLINE) {
+                sections[i].state = MEMHP_GOING_OFFLINE;
+                sections[i].state = MEMHP_OFFLINE;
+            }
+            sections[i].present = 0;
+            kprintf("[memhotplug] memhotplug_remove: region 0x%llx removed\n",
+                    (unsigned long long)phys_addr);
+            return 0;
+        }
+    }
+
+    kprintf("[memhotplug] memhotplug_remove: region 0x%llx not found\n",
+            (unsigned long long)phys_addr);
+    return -ENOENT;
 }
 
-/* ── Stub: online_pages ─────────────────────────────────────── */
-int online_pages(uint64_t start, uint64_t size)
+/* ── memhotplug_notify ─────────────────────────────────── */
+void memhotplug_notify(unsigned long event, void *data)
 {
-    (void)start;
-    (void)size;
-    kprintf("[memhotplug] online_pages: not yet implemented\n");
-    return -ENOSYS;
-}
-
-/* ── Stub: offline_pages ────────────────────────────────────── */
-int offline_pages(uint64_t start, uint64_t size)
-{
-    (void)start;
-    (void)size;
-    kprintf("[memhotplug] offline_pages: not yet implemented\n");
-    return -ENOSYS;
-}
-
-/* ── Stub: memory_notify ────────────────────────────────────── */
-void memory_notify(unsigned long event, void *data)
-{
-    (void)event;
+    kprintf("[memhotplug] memhotplug_notify: event=%lu\n", event);
     (void)data;
-    kprintf("[memhotplug] memory_notify: not yet implemented\n");
+}
+
+/* ── memhotplug_status ─────────────────────────────────── */
+int memhotplug_status(char *buf, size_t bufsize)
+{
+    if (!buf || bufsize == 0) return -EINVAL;
+
+    int total = 0;
+    int online = 0;
+    int offline = 0;
+    uint64_t total_size = 0;
+
+    for (int i = 0; i < section_count; i++) {
+        if (!sections[i].present) continue;
+        total++;
+        total_size += sections[i].size;
+        if (sections[i].state == MEMHP_ONLINE)
+            online++;
+        else
+            offline++;
+    }
+
+    int n = snprintf(buf, bufsize,
+                     "Memory Hotplug Status:\n"
+                     "  Sections: %d total, %d online, %d offline\n"
+                     "  Total size: %llu MB\n"
+                     "  Regions:\n",
+                     total, online, offline,
+                     (unsigned long long)(total_size / (1024 * 1024)));
+
+    for (int i = 0; i < section_count && (size_t)n < bufsize; i++) {
+        if (!sections[i].present) continue;
+        n += snprintf(buf + n, bufsize - (size_t)n,
+                      "    [%d] base=0x%llx size=%llu MB state=%s\n",
+                      i,
+                      (unsigned long long)sections[i].base_addr,
+                      (unsigned long long)(sections[i].size / (1024 * 1024)),
+                      sections[i].state == MEMHP_ONLINE ? "online" : "offline");
+    }
+
+    return (n < (int)bufsize) ? n : (int)bufsize - 1;
 }

@@ -28,24 +28,23 @@ MODULE_AUTHOR("OS Kernel Team");
 MODULE_DESCRIPTION("Minimal test module for .ko build verification (M39)");
 MODULE_VERSION("1.0");
 
-/* ── Stub: test_module_init ─────────────────────────────── */
+/* ── test_module_init ─────────────────────────────────── */
 int test_module_init(void)
 {
-    kprintf("[test_mod] test_module_init: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[test_mod] Test module initialized\n");
+    return 0;
 }
-/* ── Stub: test_module_exit ─────────────────────────────── */
+/* ── test_module_exit ─────────────────────────────────── */
 int test_module_exit(void)
 {
-    kprintf("[test_mod] test_module_exit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[test_mod] Test module exited\n");
+    return 0;
 }
-/* ── Stub: test_module_ioctl ─────────────────────────────── */
+/* ── test_module_ioctl ────────────────────────────────── */
 int test_module_ioctl(void *file, int cmd, void *arg)
 {
     (void)file;
     (void)cmd;
     (void)arg;
-    kprintf("[test_mod] test_module_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

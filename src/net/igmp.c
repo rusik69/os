@@ -313,19 +313,36 @@ struct igmp_group *igmp_get_groups(int *count)
 #include "module.h"
 module_init(igmp_init);
 
-/* ── Stub: igmp_handle_query ─────────────────────────────── */
+/* ── Implement: igmp_handle_query ─────────────────────── */
 int igmp_handle_query(void *dev, const void *query)
 {
-    (void)dev;
-    (void)query;
-    kprintf("[igmp] igmp_handle_query: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev || !query) return -EINVAL;
+    if (!igmp_initialised) return -ENOSYS;
+
+    const struct igmp_header *igmp_hdr = (const struct igmp_header *)query;
+    uint32_t group_addr = igmp_hdr->group_addr;
+
+    kprintf("[igmp] igmp_handle_query: processing IGMP query for group 0x%08x\n", group_addr);
+
+    /* Respond to query with membership reports for matching groups */
+    for (int i = 0; i < IGMP_MAX_GROUPS; i++) {
+        if (!igmp_groups[i].in_use) continue;
+        if (group_addr != 0 && igmp_groups[i].multiaddr != group_addr) continue;
+
+        igmp_send(igmp_groups[i].multiaddr, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+                  net_our_ip, igmp_groups[i].ifindex, igmp_hdr->max_resp_time);
+    }
+    return 0;
 }
-/* ── Stub: igmp_report_enhanced ─────────────────────────────── */
+/* ── Implement: igmp_report_enhanced ──────────────────── */
 int igmp_report_enhanced(void *dev, uint32_t addr)
 {
-    (void)dev;
-    (void)addr;
-    kprintf("[igmp] igmp_report_enhanced: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    if (!igmp_initialised) return -ENOSYS;
+
+    kprintf("[igmp] igmp_report_enhanced: reporting group 0x%08x\n", addr);
+
+    /* Send an IGMPv3-style membership report for the given address */
+    igmp_send(addr, IGMP_TYPE_V2_MEMBERSHIP_REPORT, net_our_ip, 0, 0);
+    return 0;
 }

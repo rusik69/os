@@ -126,12 +126,12 @@ int powercap_unregister_zone(void *zone)
 {
     (void)zone;
     kprintf("[powercap] powercap_unregister_zone: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: powercap_read_energy ─────────────────────────────── */
 uint64_t powercap_read_energy(void *zone)
 {
     (void)zone;
     kprintf("[powercap] powercap_read_energy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

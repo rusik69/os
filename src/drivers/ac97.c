@@ -392,32 +392,76 @@ void ac97_set_record_gain(uint8_t left, uint8_t right, int mute)
 #include "module.h"
 module_init(ac97_init);
 
-/* ── Stub: ac97_read ─────────────────────────────── */
+/* ── Read AC97 register via NAM I/O ─────────────────── */
 int ac97_read(int reg)
 {
-    (void)reg;
-    kprintf("[ac97] ac97_read: not yet implemented\n");
-    return -ENOSYS;
+    if (reg < 0 || reg > 0x7E || (reg & 1))
+        return -EINVAL;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    return (int)inw(ac97_nam_base + (uint16_t)reg);
 }
-/* ── Stub: ac97_write ─────────────────────────────── */
-int ac97_write(int reg, uint16_t val)
+
+/* ── Write AC97 register ────────────────────────────── */
+int ac97_write(struct ac97_device *dev, uint32_t reg, uint16_t val)
 {
-    (void)reg;
-    (void)val;
-    kprintf("[ac97] ac97_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!dev) return -EINVAL;
+    int timeout = 10000;
+    while ((inb(dev->base + 0x04) & 0x01) && --timeout > 0) io_wait();
+    if (timeout == 0) return -EIO;
+    outw(dev->base + 0x02, val);
+    outb(dev->base + 0x00, reg);
+    return 0;
 }
-/* ── Stub: ac97_reset ─────────────────────────────── */
+
+/* ── Reset AC97 codec (toggle RESET bit) ────────────── */
 int ac97_reset(void)
 {
-    kprintf("[ac97] ac97_reset: not yet implemented\n");
-    return -ENOSYS;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Write 1 to RESET register to initiate cold reset */
+    outw(ac97_nam_base + NAM_RESET, 1);
+    udelay(100);
+
+    /* Read back to verify reset completed */
+    uint16_t status = inw(ac97_nam_base + NAM_RESET);
+    if (status == 0xFFFF) {
+        kprintf("[AC97] Codec reset failed\n");
+        return -EIO;
+    }
+
+    kprintf("[AC97] Codec reset OK\n");
+    return 0;
 }
-/* ── Stub: ac97_mixer_set ─────────────────────────────── */
+
+/* ── Set mixer channel level ────────────────────────── */
 int ac97_mixer_set(int channel, int level)
 {
-    (void)channel;
-    (void)level;
-    kprintf("[ac97] ac97_mixer_set: not yet implemented\n");
-    return -ENOSYS;
+    if (!ac97_dev_present)
+        return -ENODEV;
+
+    /* Map channel to register */
+    uint16_t reg;
+    switch (channel) {
+    case 0: reg = NAM_MASTER_VOL; break;  /* master volume */
+    case 1: reg = NAM_PCM_VOL;    break;  /* PCM output volume */
+    case 2: reg = NAM_REC_GAIN;   break;  /* recording gain */
+    default: return -EINVAL;
+    }
+
+    /* AC97 volume is 6-bit (0-63) with mute bit 15 */
+    uint16_t val;
+    if (level < 0) {
+        val = AC97_MUTE_BIT;  /* mute */
+    } else {
+        if (level > 63) level = 63;
+        uint16_t l = (uint16_t)level;
+        uint16_t r = (uint16_t)level;
+        val = l | (r << 8);
+    }
+
+    outw(ac97_nam_base + reg, val);
+    return 0;
 }

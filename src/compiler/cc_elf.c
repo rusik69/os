@@ -148,7 +148,7 @@ int cc_elf_write(const char *path, void *obj)
     (void)path;
     (void)obj;
     kprintf("[cc] cc_elf_write: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_elf_read ─────────────────────────────── */
 int cc_elf_read(const char *path, void *obj)
@@ -156,7 +156,7 @@ int cc_elf_read(const char *path, void *obj)
     (void)path;
     (void)obj;
     kprintf("[cc] cc_elf_read: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_elf_relocate ─────────────────────────────── */
 int cc_elf_relocate(void *obj, const char *section)
@@ -164,5 +164,5 @@ int cc_elf_relocate(void *obj, const char *section)
     (void)obj;
     (void)section;
     kprintf("[cc] cc_elf_relocate: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }

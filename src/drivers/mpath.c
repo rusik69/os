@@ -426,5 +426,5 @@ int mpath_failover(const char *dev)
 {
     (void)dev;
     kprintf("[mpath] mpath_failover: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

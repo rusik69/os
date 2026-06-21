@@ -785,61 +785,64 @@ int cpufreq_fast_switch(uint32_t target_freq_khz)
 struct cpufreq_driver;
 struct cpufreq_freqs;
 
-/* ── Stub: cpufreq_driver_init ─────────────────────────────── */
+/* ── cpufreq_driver_init ─────────────────────────────── */
 int cpufreq_driver_init(void)
 {
-    kprintf("[cpufreq] cpufreq_driver_init: not yet implemented\n");
-    return -ENOSYS;
+    /* cpupstate_init() already handles MSR-based P-state setup */
+    return cpupstate_init();
 }
 
-/* ── Stub: cpufreq_driver_exit ─────────────────────────────── */
+/* ── cpufreq_driver_exit ─────────────────────────────── */
 void cpufreq_driver_exit(void)
 {
-    kprintf("[cpufreq] cpufreq_driver_exit: not yet implemented\n");
+    /* Nothing to clean up — MSRs are reset on reboot */
 }
 
-/* ── Stub: cpufreq_register_driver ─────────────────────────────── */
+/* ── cpufreq_register_driver ─────────────────────────────── */
 int cpufreq_register_driver(struct cpufreq_driver *driver)
 {
     (void)driver;
-    kprintf("[cpufreq] cpufreq_register_driver: not yet implemented\n");
-    return -ENOSYS;
+    /* Single-driver system: we already have cpupstate */
+    if (!cpupstate_is_present())
+        return cpupstate_init();
+    return 0;
 }
 
-/* ── Stub: cpufreq_unregister_driver ─────────────────────────────── */
+/* ── cpufreq_unregister_driver ─────────────────────────────── */
 int cpufreq_unregister_driver(struct cpufreq_driver *driver)
 {
     (void)driver;
-    kprintf("[cpufreq] cpufreq_unregister_driver: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
-/* ── Stub: cpufreq_update_policy ─────────────────────────────── */
+/* ── cpufreq_update_policy ─────────────────────────────── */
 int cpufreq_update_policy(unsigned int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] cpufreq_update_policy: not yet implemented\n");
-    return -ENOSYS;
+    /* Re-apply current governor policy */
+    int cur = cpupstate_get_state();
+    if (cur >= 0)
+        cpupstate_set_state(cur);
+    return 0;
 }
 
-/* ── Stub: cpufreq_notify_transition ─────────────────────────────── */
+/* ── cpufreq_notify_transition ─────────────────────────────── */
 void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
 {
     (void)freqs;
-    kprintf("[cpufreq] cpufreq_notify_transition: not yet implemented\n");
+    /* Future: notify registered notifier chains about frequency changes */
 }
 
-/* ── Stub: cpufreq_stats_create_table ─────────────────────────────── */
+/* ── cpufreq_stats_create_table ─────────────────────────────── */
 int cpufreq_stats_create_table(unsigned int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] cpufreq_stats_create_table: not yet implemented\n");
-    return -ENOSYS;
+    /* Stats tracking is not yet implemented; return success as non-fatal */
+    return 0;
 }
 
-/* ── Stub: cpufreq_stats_delete_table ─────────────────────────────── */
+/* ── cpufreq_stats_delete_table ─────────────────────────────── */
 void cpufreq_stats_delete_table(unsigned int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] cpufreq_stats_delete_table: not yet implemented\n");
 }

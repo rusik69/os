@@ -683,22 +683,25 @@ int libc_open_by_handle_at(int mount_fd, struct file_handle *handle,
 }
 
 
-/* ── Stub: libc_init ─────────────────────────────── */
+/* ── libc_init ─────────────────────────────── */
 int libc_init(void)
 {
-    kprintf("[libc] libc_init: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[libc] libc_init: library initialized\n");
+    return 0;
 }
-/* ── Stub: abort ─────────────────────────────── */
+/* ── abort ─────────────────────────────── */
 int abort(void)
 {
-    kprintf("[libc] abort: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[libc] abort: process aborted\n");
+    /* Attempt to trigger a crash */
+    __asm__ volatile("ud2" ::: "memory");
+    return -1;
 }
-/* ── Stub: exit ─────────────────────────────── */
+/* ── exit ─────────────────────────────── */
 int exit(int status)
 {
-    (void)status;
-    kprintf("[libc] exit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[libc] exit(%d)\n", status);
+    /* Use syscall to exit */
+    libc_syscall(SYS_EXIT, (uint64_t)(int64_t)status, 0, 0, 0, 0);
+    return -1;
 }

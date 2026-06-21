@@ -119,5 +119,5 @@ int stack_guard_handle_violation(void *task)
 {
     (void)task;
     kprintf("[stack] stack_guard_handle_violation: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

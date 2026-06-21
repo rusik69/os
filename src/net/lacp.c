@@ -295,29 +295,41 @@ void lacp_tick(void)
 }
 #include "module.h"
 module_init(lacp_init);
-/* ── Stub: lacp_send ─────────────────────────────── */
+/* ── Implement: lacp_send ────────────────── */
 int lacp_send(void *dev, const void *pdu, size_t len)
 {
+    if (!lacp_enabled) return -ENOSYS;
     (void)dev;
-    (void)pdu;
-    (void)len;
-    kprintf("[lacp] lacp_send: not yet implemented\n");
-    return -ENOSYS;
+    if (!pdu || len < sizeof(struct lacp_pdu)) return -EINVAL;
+
+    /* Send directly via Ethernet slow protocol */
+    send_eth(lacp_dmac, LACP_ETHER_TYPE, pdu, len);
+    kprintf("[lacp] lacp_send: sent %zu bytes\n", len);
+    return 0;
 }
-/* ── Stub: lacp_recv ─────────────────────────────── */
+/* ── Implement: lacp_recv ────────────────── */
 int lacp_recv(void *dev, const void *pdu, size_t len)
 {
+    if (!lacp_enabled) return -ENOSYS;
     (void)dev;
-    (void)pdu;
-    (void)len;
-    kprintf("[lacp] lacp_recv: not yet implemented\n");
-    return -ENOSYS;
+    if (!pdu || len < sizeof(struct lacp_pdu)) return -EINVAL;
+
+    /* Delegate to receive handler */
+    const struct lacp_pdu *lacp = (const struct lacp_pdu *)pdu;
+    /* Parse port number from the PDU to find the right port */
+    uint16_t port_number = (lacp->actor.port_number[0] << 8) | lacp->actor.port_number[1];
+    return lacp_receive_pdu(port_number, lacp, (uint16_t)len);
 }
-/* ── Stub: lacp_update_state ─────────────────────────────── */
+/* ── Implement: lacp_update_state ────────────────── */
 int lacp_update_state(void *port, int state)
 {
-    (void)port;
-    (void)state;
-    kprintf("[lacp] lacp_update_state: not yet implemented\n");
-    return -ENOSYS;
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+
+    struct lacp_port *p = (struct lacp_port *)port;
+    p->state_flags = (uint8_t)(state & 0xFF);
+
+    kprintf("[lacp] lacp_update_state: port %u state=0x%02x\n",
+            p->port_number, p->state_flags);
+    return 0;
 }

@@ -170,25 +170,24 @@ EXPORT_SYMBOL(mouse_get_buttons);
 EXPORT_SYMBOL(mouse_get_wheel);
 EXPORT_SYMBOL(mouse_init);
 
-/* ── Stub: mouse_open ─────────────────────────────── */
+/* ── Open mouse device ──────────────────────────────── */
 int mouse_open(void *dev)
 {
     (void)dev;
-    kprintf("[mouse] mouse_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: mouse_close ─────────────────────────────── */
+
+/* ── Close mouse device ─────────────────────────────── */
 int mouse_close(void *dev)
 {
     (void)dev;
-    kprintf("[mouse] mouse_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: mouse_ioctl ─────────────────────────────── */
+
+/* ── Mouse ioctl ────────────────────────────────────── */
 int mouse_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;
-    kprintf("[mouse] mouse_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return -ENOTTY;
 }

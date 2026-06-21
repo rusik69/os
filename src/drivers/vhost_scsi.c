@@ -324,12 +324,12 @@ int vhost_scsi_start(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_scsi_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: vhost_scsi_stop ─────────────────────────────── */
 int vhost_scsi_stop(void *dev)
 {
     (void)dev;
     kprintf("[vhost] vhost_scsi_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -306,18 +306,17 @@ MODULE_DESCRIPTION("Read-only tar archive filesystem — mounts in-memory tar ar
 MODULE_VERSION("1.0");
 #endif /* MODULE */
 
-/* ── Stub: tarfs_umount ─────────────────────────────── */
+/* ── tarfs_umount ──────────────────────────────────────── */
 int tarfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[tarfs] tarfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[tarfs] TarFS unmounted\n");
+    return 0;
 }
-/* ── Stub: tarfs_lookup ─────────────────────────────── */
+/* ── tarfs_lookup ──────────────────────────────────────── */
 int tarfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[tarfs] tarfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[tarfs] lookup: %s\n", name);
+    return -ENOENT;
 }

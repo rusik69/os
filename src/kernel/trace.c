@@ -298,15 +298,22 @@ void trace_ev_init(void)
             TRACE_EV_BUF_SIZE);
 }
 
-/* ── Stub: trace_start ─────────────────────────────── */
+/* ── trace_start: Enable kernel tracing ───────────────────────────── */
 int trace_start(void)
 {
-    kprintf("[trace] trace_start: not yet implemented\n");
-    return -ENOSYS;
+    if (!trace_ev_state.initialized) {
+        trace_ev_init();
+    }
+    trace_ev_enable();
+    trace_ev_state.enabled = 1;
+    kprintf("[trace] trace_start: tracing enabled\n");
+    return 0;
 }
-/* ── Stub: trace_stop ─────────────────────────────── */
+/* ── trace_stop: Disable kernel tracing ────────────────────────────── */
 int trace_stop(void)
 {
-    kprintf("[trace] trace_stop: not yet implemented\n");
-    return -ENOSYS;
+    trace_ev_disable();
+    trace_ev_state.enabled = 0;
+    kprintf("[trace] trace_stop: tracing disabled\n");
+    return 0;
 }

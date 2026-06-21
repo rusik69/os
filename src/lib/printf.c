@@ -7,6 +7,15 @@
 #include "kptr_restrict.h"
 #include "export.h"
 
+/* struct va_format — must be defined before use in %pV handling */
+#ifndef va_format_defined
+#define va_format_defined
+struct va_format {
+    const char *fmt;
+    __builtin_va_list *va;
+};
+#endif
+
 typedef __builtin_va_list va_list;
 #define va_start(ap, last) __builtin_va_start(ap, last)
 #define va_end(ap)         __builtin_va_end(ap)
@@ -692,12 +701,8 @@ int sprintf(char *buf, const char *fmt, ...) {
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(kprintf);
 
-/* ── Stub: vsprintf ─────────────────────────────── */
-int vsprintf(char *buf, const char *fmt, void *args)
+/* ── vsprintf ─────────────────────────────── */
+int vsprintf(char *buf, const char *fmt, va_list args)
 {
-    (void)buf;
-    (void)fmt;
-    (void)args;
-    kprintf("[printf] vsprintf: not yet implemented\n");
-    return -ENOSYS;
+    return vsnprintf(buf, (size_t)-1, fmt, args);
 }

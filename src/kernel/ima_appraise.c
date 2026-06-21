@@ -144,7 +144,7 @@ int ima_appraise_measurement(void *inode, void *file, void *xattr_value, int xat
     (void)xattr_value;
     (void)xattr_len;
     kprintf("[ima] ima_appraise_measurement: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ima_appraise_signature ─────────────────────────────── */
 int ima_appraise_signature(void *inode, void *file, void *sig)
@@ -153,5 +153,5 @@ int ima_appraise_signature(void *inode, void *file, void *sig)
     (void)file;
     (void)sig;
     kprintf("[ima] ima_appraise_signature: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

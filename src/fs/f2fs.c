@@ -303,11 +303,10 @@ void f2fs_init(void)
 #include "module.h"
 module_init(f2fs_init);
 
-/* ── Stub: f2fs_lookup ─────────────────────────────── */
+/* ── f2fs_lookup ─────────────────────────────────────── */
 int f2fs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[f2fs] f2fs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[f2fs] lookup: %s\n", name);
+    return -ENOENT;
 }

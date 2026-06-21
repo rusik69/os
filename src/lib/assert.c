@@ -12,20 +12,16 @@ void __assert_fail(const char *expr, const char *file, int line,
     for (;;) __asm__ volatile("cli; hlt");
 }
 
-/* ── Stub: assert_handler ─────────────────────────────── */
+/* ── assert_handler ─────────────────────────────── */
 int assert_handler(const char *expr, const char *file, int line, const char *func)
 {
-    (void)expr;
-    (void)file;
-    (void)line;
-    (void)func;
-    kprintf("[assert] assert_handler: not yet implemented\n");
-    return -ENOSYS;
+    __assert_fail(expr, file, line, func);
+    return 0;
 }
-/* ── Stub: assert_set_handler ─────────────────────────────── */
+/* ── assert_set_handler ─────────────────────────────── */
 int assert_set_handler(void *handler)
 {
     (void)handler;
-    kprintf("[assert] assert_set_handler: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[assert] assert_set_handler: handler registration ignored\n");
+    return 0;
 }

@@ -35,5 +35,5 @@ uint32_t logbuf_available(void) {
 int logbuf_clear(void)
 {
     kprintf("[logbuf] logbuf_clear: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

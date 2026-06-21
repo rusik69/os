@@ -260,25 +260,38 @@ int conservative_set_freq_step(int pct) {
     return 0;
 }
 
-/* ── Stub: cs_speed_up ─────────────────────────────── */
+/* ── cs_speed_up ─────────────────────────────── */
 int cs_speed_up(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] cs_speed_up: not yet implemented\n");
-    return -ENOSYS;
+    int cur = cpupstate_get_state();
+    if (cur <= 0) return 0; /* already at max */
+    /* Increase frequency by one step */
+    return cpupstate_set_state(cur - 1);
 }
-/* ── Stub: cs_slow_down ─────────────────────────────── */
+/* ── cs_slow_down ─────────────────────────────── */
 int cs_slow_down(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] cs_slow_down: not yet implemented\n");
-    return -ENOSYS;
+    int cur = cpupstate_get_state();
+    int max = cpupstate_get_count();
+    if (cur < 0 || cur >= max - 1) return 0; /* already at min */
+    /* Decrease frequency by one step */
+    return cpupstate_set_state(cur + 1);
 }
-/* ── Stub: cs_target ─────────────────────────────── */
+/* ── cs_target ─────────────────────────────── */
 int cs_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
-    (void)target_freq;
-    kprintf("[cpufreq] cs_target: not yet implemented\n");
-    return -ENOSYS;
+    /* Find the P-state closest to the target frequency */
+    int count = cpupstate_get_count();
+    int best = 0;
+    for (int i = 0; i < count; i++) {
+        struct cpupstate_state info;
+        if (cpupstate_get_info(i, &info) == 0) {
+            if (info.core_freq * 1000 <= target_freq)
+                best = i;
+        }
+    }
+    return cpupstate_set_state(best);
 }

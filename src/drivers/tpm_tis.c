@@ -1818,34 +1818,33 @@ EXPORT_SYMBOL(tpm2_sign);
 EXPORT_SYMBOL(tpm_nv_store_key);
 EXPORT_SYMBOL(tpm_nv_load_key);
 
-/* ── Stub: tpm_tis_init ─────────────────────────────── */
+/* ── TIS init wrapper ────────────────────────────────── */
 int tpm_tis_init(void *dev)
 {
     (void)dev;
-    kprintf("[tpm] tpm_tis_init: not yet implemented\n");
-    return -ENOSYS;
+    return tpm_init();
 }
-/* ── Stub: tpm_tis_send ─────────────────────────────── */
+
+/* ── TIS send wrapper ────────────────────────────────── */
 int tpm_tis_send(const void *cmd, size_t len)
 {
-    (void)cmd;
-    (void)len;
-    kprintf("[tpm] tpm_tis_send: not yet implemented\n");
-    return -ENOSYS;
+    uint8_t rsp[128];
+    uint32_t rsp_len = sizeof(rsp);
+    return tpm_transmit((const uint8_t *)cmd, (uint32_t)len, rsp, &rsp_len);
 }
-/* ── Stub: tpm_tis_recv ─────────────────────────────── */
+
+/* ── TIS recv wrapper ────────────────────────────────── */
 int tpm_tis_recv(void *resp, size_t *len)
 {
+    /* For a real recv, we'd need a stored response buffer.
+     * Since tpm_transmit is synchronous, this is a no-op. */
     (void)resp;
     (void)len;
-    kprintf("[tpm] tpm_tis_recv: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: tpm_tis_get_random ─────────────────────────────── */
+
+/* ── TIS get_random wrapper ──────────────────────────── */
 int tpm_tis_get_random(void *buf, size_t count)
 {
-    (void)buf;
-    (void)count;
-    kprintf("[tpm] tpm_tis_get_random: not yet implemented\n");
-    return -ENOSYS;
+    return tpm2_get_random((uint8_t *)buf, (uint32_t)count);
 }

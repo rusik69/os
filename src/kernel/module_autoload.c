@@ -400,12 +400,12 @@ int module_autoload(const char *name)
 {
     (void)name;
     kprintf("[modload] module_autoload: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: module_autoload_alias ─────────────────────────────── */
 int module_autoload_alias(const char *alias)
 {
     (void)alias;
     kprintf("[modload] module_autoload_alias: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

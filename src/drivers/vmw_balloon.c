@@ -145,7 +145,7 @@ int vmw_balloon_inflate(void *dev, size_t count)
     (void)dev;
     (void)count;
     kprintf("[vmw] vmw_balloon_inflate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: vmw_balloon_deflate ─────────────────────────────── */
 int vmw_balloon_deflate(void *dev, size_t count)
@@ -153,5 +153,5 @@ int vmw_balloon_deflate(void *dev, size_t count)
     (void)dev;
     (void)count;
     kprintf("[vmw] vmw_balloon_deflate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

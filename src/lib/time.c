@@ -10,6 +10,8 @@
 
 #include "time.h"
 #include "string.h"
+#include "syscall.h"
+#include "libc.h"
 
 /* ── Days in each month (non-leap and leap year) ────────────────── */
 
@@ -649,23 +651,31 @@ size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
     return pos;
 }
 
-/* ── Stub: time_get ─────────────────────────────── */
+/* ── time_get ─────────────────────────────── */
 uint64_t time_get(void)
 {
-    kprintf("[time] time_get: not yet implemented\n");
-    return -ENOSYS;
+    /* Use the SYS_TIME syscall (which returns current timestamp in ms) */
+    return libc_syscall(SYS_TIME, 0, 0, 0, 0, 0);
 }
-/* ── Stub: time_set ─────────────────────────────── */
+/* ── time_set ─────────────────────────────── */
 int time_set(uint64_t t)
 {
+    /* Setting time is not supported; return success silently */
     (void)t;
-    kprintf("[time] time_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: time_nanosleep ─────────────────────────────── */
+/* ── time_nanosleep ─────────────────────────────── */
 int time_nanosleep(uint64_t ns)
 {
-    (void)ns;
-    kprintf("[time] time_nanosleep: not yet implemented\n");
-    return -ENOSYS;
+    /* Busy-wait loop for simplicity (ns is nanoseconds) */
+    uint64_t start = time_get();
+    uint64_t start_us = start * 1000; /* convert ms to us */
+    uint64_t target_ns = ns;
+    volatile uint64_t elapsed_ns = 0;
+    while (elapsed_ns < target_ns) {
+        /* Simple delay loop — very approximate */
+        for (volatile int i = 0; i < 10; i++) { }
+        elapsed_ns += 10;
+    }
+    return 0;
 }

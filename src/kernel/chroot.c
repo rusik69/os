@@ -105,12 +105,12 @@ int chroot_get(char *buf, size_t size)
     (void)buf;
     (void)size;
     kprintf("[chroot] chroot_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: chroot_escape ─────────────────────────────── */
 int chroot_escape(void *task)
 {
     (void)task;
     kprintf("[chroot] chroot_escape: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

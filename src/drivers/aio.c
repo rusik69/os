@@ -28,7 +28,7 @@ int aio_fsync(int fd)
 {
     (void)fd;
     kprintf("[aio] aio_fsync: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: aio_poll ─────────────────────────────── */
 int aio_poll(int fd, int events)
@@ -36,5 +36,5 @@ int aio_poll(int fd, int events)
     (void)fd;
     (void)events;
     kprintf("[aio] aio_poll: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

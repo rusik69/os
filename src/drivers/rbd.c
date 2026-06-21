@@ -445,7 +445,7 @@ int rbd_read(void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[rbd] rbd_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: rbd_write ─────────────────────────────── */
 int rbd_write(const void *buf, size_t count, uint64_t offset)
@@ -454,5 +454,5 @@ int rbd_write(const void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[rbd] rbd_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

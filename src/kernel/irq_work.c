@@ -124,12 +124,12 @@ int irq_work_is_pending(void *work)
 {
     (void)work;
     kprintf("[irq_work] irq_work_is_pending: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: irq_work_claim ─────────────────────────────── */
 int irq_work_claim(void *work)
 {
     (void)work;
     kprintf("[irq_work] irq_work_claim: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

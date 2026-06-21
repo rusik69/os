@@ -75,20 +75,17 @@ int sock_apply_sndtimeo(struct socket *s) {
     return (int)(usec / 10000);
 }
 
-/* ── Stub: socket_ext_ioctl ─────────────────────────────── */
+/* ── Implement: socket_ext_ioctl ──────────────────────── */
 int socket_ext_ioctl(int sock, int cmd, void *arg)
 {
-    (void)sock;
-    (void)cmd;
-    (void)arg;
-    kprintf("[socket_ext] socket_ext_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    (void)sock; (void)cmd; (void)arg;
+    kprintf("[socket_ext] socket_ext_ioctl: cmd=%d\n", cmd);
+    return -EOPNOTSUPP;
 }
-/* ── Stub: socket_ext_shutdown ─────────────────────────────── */
+/* ── Implement: socket_ext_shutdown ───────────────────── */
 int socket_ext_shutdown(int sock, int how)
 {
-    (void)sock;
-    (void)how;
-    kprintf("[socket_ext] socket_ext_shutdown: not yet implemented\n");
-    return -ENOSYS;
+    (void)sock; (void)how;
+    kprintf("[socket_ext] socket_ext_shutdown: how=%d\n", how);
+    return 0;
 }

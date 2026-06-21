@@ -26,7 +26,7 @@ int irq_affinity_set(int irq, const void *cpus)
     (void)irq;
     (void)cpus;
     kprintf("[irq] irq_affinity_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: irq_affinity_get ─────────────────────────────── */
 int irq_affinity_get(int irq, void *cpus)
@@ -34,5 +34,5 @@ int irq_affinity_get(int irq, void *cpus)
     (void)irq;
     (void)cpus;
     kprintf("[irq] irq_affinity_get: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

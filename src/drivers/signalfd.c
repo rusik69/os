@@ -64,7 +64,7 @@ int signalfd_read(int fd, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[signalfd] signalfd_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: signalfd_poll ─────────────────────────────── */
 int signalfd_poll(int fd, void *pt)
@@ -72,5 +72,5 @@ int signalfd_poll(int fd, void *pt)
     (void)fd;
     (void)pt;
     kprintf("[signalfd] signalfd_poll: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -56,39 +56,37 @@ int lockdown_get_level(void)
     return g_lockdown_level;
 }
 
-/* ── Stub: lockdown_set ────────────────────────────────────────────── */
+/* ── lockdown_set ────────────────────────────────────────────── */
 int lockdown_set(int level)
 {
-    (void)level;
-    kprintf("[LOCKDOWN] lockdown_set: not yet implemented\n");
-    return -ENOSYS;
+    lock_down(level);
+    return 0;
 }
 
-/* ── Stub: lockdown_release ────────────────────────────────────────── */
+/* ── lockdown_release ────────────────────────────────────────── */
 int lockdown_release(void)
 {
-    kprintf("[LOCKDOWN] lockdown_release: not yet implemented\n");
-    return -ENOSYS;
+    /* Lockdown is irreversible; this is a no-op */
+    kprintf("[LOCKDOWN] lockdown_release: lockdown is irreversible, ignored\n");
+    return 0;
 }
 
-/* ── Stub: lockdown_restrict ───────────────────────────────────────── */
+/* ── lockdown_restrict ───────────────────────────────────────── */
 int lockdown_restrict(const char *reason)
 {
-    (void)reason;
-    kprintf("[LOCKDOWN] lockdown_restrict: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[LOCKDOWN] lockdown_restrict: %s\n", reason ? reason : "unspecified reason");
+    lock_down(LOCKDOWN_INTEGRITY);
+    return 0;
 }
 
-/* ── Stub: lockdown_get ─────────────────────────────── */
+/* ── lockdown_get ─────────────────────────────── */
 int lockdown_get(void)
 {
-    kprintf("[lockdown] lockdown_get: not yet implemented\n");
-    return -ENOSYS;
+    return g_lockdown_level;
 }
-/* ── Stub: lockdown_is_locked ─────────────────────────────── */
+
+/* ── lockdown_is_locked ─────────────────────────────── */
 int lockdown_is_locked(int what)
 {
-    (void)what;
-    kprintf("[lockdown] lockdown_is_locked: not yet implemented\n");
-    return -ENOSYS;
+    return lockdown_is_locked_down(what);
 }

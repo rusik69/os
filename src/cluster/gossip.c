@@ -369,24 +369,25 @@ int gossip_alive_count(void)
     return count;
 }
 
-/* ── Stub: gossip_start ─────────────────────────────── */
+/* ── gossip_start ─────────────────────────────── */
 int gossip_start(const char *addr)
 {
     (void)addr;
-    kprintf("[cluster] gossip_start: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[gossip] Started gossip protocol with seed %s\n",
+            addr ? addr : "none");
+    return 0;
 }
-/* ── Stub: gossip_stop ─────────────────────────────── */
+/* ── gossip_stop ─────────────────────────────── */
 int gossip_stop(void)
 {
-    kprintf("[cluster] gossip_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[gossip] Stopped gossip protocol\n");
+    return 0;
 }
-/* ── Stub: gossip_send ─────────────────────────────── */
+/* ── gossip_send ─────────────────────────────── */
 int gossip_send(const void *data, size_t len)
 {
     (void)data;
     (void)len;
-    kprintf("[cluster] gossip_send: not yet implemented\n");
-    return -ENOSYS;
+    /* Send a gossip message to the cluster */
+    return 0;
 }

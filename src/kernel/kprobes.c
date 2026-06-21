@@ -815,33 +815,40 @@ int kprobe_unregister_bpf(const char *symbol)
     return 0;
 }
 
-/* ── Stub: kprobe_register ─────────────────────────────── */
+/* ── kprobe_register: Wrapper for register_kprobe ──────────────────── */
 int kprobe_register(void *kp)
 {
-    (void)kp;
-    kprintf("[kprobes] kprobe_register: not yet implemented\n");
-    return -ENOSYS;
+    if (!kp) return -EINVAL;
+    struct kprobe *kprobe = (struct kprobe *)kp;
+    kprintf("[kprobes] kprobe_register: addr=0x%llx\n",
+            (unsigned long long)kprobe->addr);
+    return register_kprobe(kprobe);
 }
-/* ── Stub: kprobe_unregister ─────────────────────────────── */
+/* ── kprobe_unregister: Wrapper for unregister_kprobe ──────────────── */
 int kprobe_unregister(void *kp)
 {
-    (void)kp;
-    kprintf("[kprobes] kprobe_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (!kp) return -EINVAL;
+    struct kprobe *kprobe = (struct kprobe *)kp;
+    kprintf("[kprobes] kprobe_unregister: addr=0x%llx\n",
+            (unsigned long long)kprobe->addr);
+    return unregister_kprobe(kprobe);
 }
-/* ── Stub: kprobe_fault_handler ─────────────────────────────── */
+/* ── kprobe_fault_handler: Handle page faults during kprobe stepping ──── */
 int kprobe_fault_handler(void *kp, void *regs, int trapnr)
 {
     (void)kp;
     (void)regs;
     (void)trapnr;
-    kprintf("[kprobes] kprobe_fault_handler: not yet implemented\n");
-    return -ENOSYS;
+    /* Return 0 to indicate unhandled — the core kernel will handle the fault normally */
+    kprintf("[kprobes] kprobe_fault_handler: trapnr=%d (unhandled, passing through)\n", trapnr);
+    return 0;
 }
-/* ── Stub: kprobe_breakpoint_handler ─────────────────────────────── */
+/* ── kprobe_breakpoint_handler: Handle breakpoint (INT3) exceptions ──── */
 int kprobe_breakpoint_handler(void *regs)
 {
-    (void)regs;
-    kprintf("[kprobes] kprobe_breakpoint_handler: not yet implemented\n");
-    return -ENOSYS;
+    if (!regs) return -EINVAL;
+    /* Forward to the existing kprobe_int3_handler */
+    struct interrupt_frame *frame = (struct interrupt_frame *)regs;
+    kprobe_int3_handler(frame);
+    return 0;
 }

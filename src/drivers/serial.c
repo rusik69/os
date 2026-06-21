@@ -294,35 +294,72 @@ void early_printdec(uint64_t val)
     early_printascii(&buf[pos]);
 }
 
-/* ── Stub: serial_open ─────────────────────────────── */
+/* ── Open a serial port ──────────────────────────────── */
 int serial_open(int port)
 {
-    (void)port;
-    kprintf("[serial] serial_open: not yet implemented\n");
-    return -ENOSYS;
+    if (port < 0 || port >= SERIAL_PORTS_MAX)
+        return -EINVAL;
+    return serial_port_init(port);
 }
-/* ── Stub: serial_close ─────────────────────────────── */
+
+/* ── Close a serial port ────────────────────────────── */
 int serial_close(int port)
 {
     (void)port;
-    kprintf("[serial] serial_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: serial_set_baud ─────────────────────────────── */
+
+/* ── Set baud rate using DLAB divisor ───────────────── */
 int serial_set_baud(int port, int baud)
 {
-    (void)port;
-    (void)baud;
-    kprintf("[serial] serial_set_baud: not yet implemented\n");
-    return -ENOSYS;
+    if (port < 0 || port >= SERIAL_PORTS_MAX)
+        return -EINVAL;
+    if (baud <= 0)
+        return -EINVAL;
+
+    uint16_t base = g_ports[port].base;
+    /* Divisor = 115200 / baud */
+    uint16_t divisor = (uint16_t)(115200 / (uint32_t)baud);
+    if (divisor == 0) divisor = 1;
+
+    outb(base + UART_LCR, UART_LCR_DLAB);  /* enable DLAB */
+    outb(base + UART_DLL, (uint8_t)(divisor & 0xFF));
+    outb(base + UART_DLM, (uint8_t)(divisor >> 8));
+    /* Restore line control to 8N1 */
+    outb(base + UART_LCR, UART_LCR_8BIT);
+
+    return 0;
 }
-/* ── Stub: serial_set_params ─────────────────────────────── */
+
+/* ── Set line parameters (bits, parity, stop) ───────── */
 int serial_set_params(int port, int bits, int parity, int stop)
 {
-    (void)port;
-    (void)bits;
-    (void)parity;
-    (void)stop;
-    kprintf("[serial] serial_set_params: not yet implemented\n");
-    return -ENOSYS;
+    if (port < 0 || port >= SERIAL_PORTS_MAX)
+        return -EINVAL;
+
+    uint8_t lcr = 0;
+
+    /* Data bits */
+    if (bits == 5) lcr |= 0;
+    else if (bits == 6) lcr |= 1;
+    else if (bits == 7) lcr |= 2;
+    else if (bits == 8) lcr |= 3;
+    else return -EINVAL;
+
+    /* Parity: 0=none, 1=odd, 2=even, 3=mark, 4=space */
+    switch (parity) {
+    case 0: break; /* none */
+    case 1: lcr |= 0x08; break; /* odd */
+    case 2: lcr |= 0x18; break; /* even */
+    case 3: lcr |= 0x28; break; /* mark */
+    case 4: lcr |= 0x38; break; /* space */
+    default: return -EINVAL;
+    }
+
+    /* Stop bits: 1 or 2 */
+    if (stop == 2) lcr |= 0x04;
+    else if (stop != 1) return -EINVAL;
+
+    outb(g_ports[port].base + UART_LCR, lcr);
+    return 0;
 }

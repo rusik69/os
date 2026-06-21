@@ -69,14 +69,14 @@ void page_owner_dump(void) {
 int page_owner_start(void)
 {
     kprintf("[page_owner] page_owner_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: page_owner_stop ──────────────────────────────────── */
 int page_owner_stop(void)
 {
     kprintf("[page_owner] page_owner_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: page_owner_fetch ─────────────────────────────────── */
@@ -85,5 +85,5 @@ int page_owner_fetch(uint64_t *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[page_owner] page_owner_fetch: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

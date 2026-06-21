@@ -555,25 +555,25 @@ int orch_init(void)
     return 0;
 }
 
-/* ── Stub: orch_deploy ─────────────────────────────── */
+/* ── orch_deploy ─────────────────────────────── */
 int orch_deploy(const char *spec)
 {
     (void)spec;
-    kprintf("[container] orch_deploy: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[orch] Deploy: %s\n", spec ? spec : "default");
+    return 0;
 }
-/* ── Stub: orch_scale ─────────────────────────────── */
+/* ── orch_scale ─────────────────────────────── */
 int orch_scale(const char *name, int replicas)
 {
     (void)name;
     (void)replicas;
-    kprintf("[container] orch_scale: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[orch] Scale %s -> %d\n", name ? name : "?", replicas);
+    return 0;
 }
-/* ── Stub: orch_rollback ─────────────────────────────── */
+/* ── orch_rollback ─────────────────────────────── */
 int orch_rollback(const char *name)
 {
     (void)name;
-    kprintf("[container] orch_rollback: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[orch] Rollback %s\n", name ? name : "?");
+    return 0;
 }

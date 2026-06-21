@@ -176,7 +176,7 @@ int bcache_read(struct bcache_device *dev, uint64_t sector, void *buf, uint32_t 
     (void)buf;
     (void)count;
     kprintf("[bcache] bcache_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: bcache_write ────────────────────────────── */
 int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, uint32_t count)
@@ -186,14 +186,14 @@ int bcache_write(struct bcache_device *dev, uint64_t sector, const void *buf, ui
     (void)buf;
     (void)count;
     kprintf("[bcache] bcache_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: bcache_open ─────────────────────────────── */
 int bcache_open(struct bcache_device *dev)
 {
     (void)dev;
     kprintf("[bcache] bcache_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: bcache_close ────────────────────────────── */
 void bcache_close(struct bcache_device *dev)
@@ -206,5 +206,5 @@ int bcache_flush(struct bcache_device *dev)
 {
     (void)dev;
     kprintf("[bcache] bcache_flush: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

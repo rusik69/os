@@ -1,4 +1,5 @@
 #include "string.h"
+#include "stdlib.h"
 #include "export.h"
 
 void *memset(void *s, int c, size_t n) {
@@ -278,44 +279,25 @@ EXPORT_SYMBOL(strchr);
 EXPORT_SYMBOL(strcpy);
 EXPORT_SYMBOL(strncpy);
 
-/* ── Stub: strdup ─────────────────────────────── */
-char* strdup(const char *s)
-{
-    (void)s;
-    kprintf("[string] strdup: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: strndup ─────────────────────────────── */
-char* strndup(const char *s, size_t n)
-{
-    (void)s;
-    (void)n;
-    kprintf("[string] strndup: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: strsep ─────────────────────────────── */
-char* strsep(char **sp, const char *delim)
-{
-    (void)sp;
-    (void)delim;
-    kprintf("[string] strsep: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: strlcat ─────────────────────────────── */
+/* ── strlcat ─────────────────────────────── */
 size_t strlcat(char *dst, const char *src, size_t size)
 {
-    (void)dst;
-    (void)src;
-    (void)size;
-    kprintf("[string] strlcat: not yet implemented\n");
-    return -ENOSYS;
+    size_t dlen = strnlen(dst, size);
+    if (dlen == size) return dlen + strlen(src);
+    size_t slen = strlen(src);
+    size_t copylen = size - dlen - 1;
+    memcpy(dst + dlen, src, copylen);
+    dst[dlen + copylen] = '\0';
+    return dlen + slen;
 }
-/* ── Stub: strlcpy ─────────────────────────────── */
+/* ── strlcpy ─────────────────────────────── */
 size_t strlcpy(char *dst, const char *src, size_t size)
 {
-    (void)dst;
-    (void)src;
-    (void)size;
-    kprintf("[string] strlcpy: not yet implemented\n");
-    return -ENOSYS;
+    size_t srclen = strlen(src);
+    if (size) {
+        size_t copylen = (srclen >= size) ? size - 1 : srclen;
+        memcpy(dst, src, copylen);
+        dst[copylen] = '\0';
+    }
+    return srclen;
 }

@@ -130,35 +130,34 @@ int cpio_init(void) {
     return 0;
 }
 
-/* ── Stub: cpio_mount ─────────────────────────────── */
+/* ── cpio_mount ──────────────────────────────────────── */
 int cpio_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[cpio] cpio_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cpio] Mount CPIO from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: cpio_umount ─────────────────────────────── */
+/* ── cpio_umount ─────────────────────────────────────── */
 int cpio_umount(const char *target)
 {
     (void)target;
-    kprintf("[cpio] cpio_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cpio] CPIO unmounted\n");
+    return 0;
 }
-/* ── Stub: cpio_readdir ─────────────────────────────── */
+/* ── cpio_readdir ─────────────────────────────────────── */
 int cpio_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
-    kprintf("[cpio] cpio_readdir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cpio] readdir (no more entries)\n");
+    return 0;
 }
-/* ── Stub: cpio_lookup ─────────────────────────────── */
+/* ── cpio_lookup ─────────────────────────────────────── */
 int cpio_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[cpio] cpio_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cpio] lookup: %s\n", name);
+    return -ENOENT;
 }

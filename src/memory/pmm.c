@@ -1209,12 +1209,52 @@ EXPORT_SYMBOL(pmm_alloc_frame);
 EXPORT_SYMBOL(pmm_free_frame);
 EXPORT_SYMBOL(pmm_ref_frame);
 
-/* ── Stub: pmm_alloc_pages ─────────────────────────────── */
+/* ── pmm_defrag ───────────────────────────────────────── */
+int pmm_defrag(void)
+{
+    kprintf("[pmm] pmm_defrag: defragmenting physical memory\n");
+    /* Compact physical memory, merge buddies.
+     * Delegate to the compaction subsystem. */
+    uint64_t moved = compaction_run();
+    kprintf("[pmm] pmm_defrag: %llu pages moved\n", (unsigned long long)moved);
+    return (int)moved;
+}
+
+/* ── pmm_reclaim ───────────────────────────────────────── */
+int pmm_reclaim(int nr_pages)
+{
+    if (nr_pages <= 0)
+        return 0;
+
+    kprintf("[pmm] pmm_reclaim: trying to reclaim %d pages\n", nr_pages);
+
+    /* Try MGLRU reclaim first */
+    int reclaimed = mglru_reclaim_pages(nr_pages, 0);
+    if (reclaimed >= nr_pages) {
+        kprintf("[pmm] pmm_reclaim: MGLRU reclaimed %d pages\n", reclaimed);
+        return reclaimed;
+    }
+
+    /* Shrink slab caches */
+    extern void kmem_cache_reap(void);
+    kmem_cache_reap();
+
+    /* Try compaction to free contiguous blocks */
+    compaction_run();
+
+    uint64_t total = pmm_get_total_frames();
+    uint64_t used = pmm_get_used_frames();
+    uint64_t free_pages = (total > used) ? (total - used) : 0;
+
+    kprintf("[pmm] pmm_reclaim: freed pages, now %llu free\n",
+            (unsigned long long)free_pages);
+    return (int)(free_pages < (uint64_t)nr_pages ? 0 : nr_pages);
+}
 void* pmm_alloc_pages(size_t count)
 {
     (void)count;
     kprintf("[pmm] pmm_alloc_pages: not yet implemented\n");
-    return -ENOSYS;
+    return NULL;
 }
 /* ── Stub: pmm_free_pages ─────────────────────────────── */
 int pmm_free_pages(void *addr, size_t count)
@@ -1222,12 +1262,12 @@ int pmm_free_pages(void *addr, size_t count)
     (void)addr;
     (void)count;
     kprintf("[pmm] pmm_free_pages: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: pmm_stats ─────────────────────────────── */
 int pmm_stats(void *stats)
 {
     (void)stats;
     kprintf("[pmm] pmm_stats: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

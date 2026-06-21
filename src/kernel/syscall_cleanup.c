@@ -99,24 +99,32 @@ void zero_kernel_stack_uapi(uint64_t entry_rsp)
     }
 }
 
-/* ── Stub: syscall_cleanup_init ─────────────────────────────── */
+/* ── syscall_cleanup_init ──────────────────────────────────── */
 int syscall_cleanup_init(void)
 {
-    kprintf("[syscall] syscall_cleanup_init: not yet implemented\n");
-    return -ENOSYS;
+    /* Stack zeroing at syscall exit is already wired into the asm
+     * entry/exit path (zero_kernel_stack_uapi).  No additional
+     * per-subsystem initialisation is required.
+     */
+    kprintf("[syscall] syscall_cleanup_init: done\n");
+    return 0;
 }
-/* ── Stub: syscall_cleanup_exit ─────────────────────────────── */
+/* ── syscall_cleanup_exit ──────────────────────────────────── */
 int syscall_cleanup_exit(void *task)
 {
+    /* Called when a task exits.  The stack-zeroing subsystem
+     * keeps no per-task state, so this is a no-op.
+     */
     (void)task;
-    kprintf("[syscall] syscall_cleanup_exit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: syscall_cleanup_fd ─────────────────────────────── */
+/* ── syscall_cleanup_fd ────────────────────────────────────── */
 int syscall_cleanup_fd(void *task, int fd)
 {
+    /* Called when a file descriptor is closed.  No per-fd tracking
+     * is maintained by the cleanup subsystem.
+     */
     (void)task;
     (void)fd;
-    kprintf("[syscall] syscall_cleanup_fd: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

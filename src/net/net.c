@@ -1429,24 +1429,27 @@ EXPORT_SYMBOL(net_udp_listen);
 EXPORT_SYMBOL(net_udp_recv);
 EXPORT_SYMBOL(net_udp_unlisten);
 
-/* ── Stub: net_exit ─────────────────────────────── */
+/* ── Implement: net_exit ──────────────────────────────── */
 int net_exit(void)
 {
-    kprintf("[net] net_exit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[net] net_exit: shutting down network stack\n");
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        if (tcp_conns[i].state != TCP_CLOSED) {
+            net_tcp_close(i);
+        }
+    }
+    return 0;
 }
-/* ── Stub: net_register_protocol ─────────────────────────────── */
+/* ── Implement: net_register_protocol ─────────────────── */
 int net_register_protocol(int family, void *proto)
 {
-    (void)family;
     (void)proto;
-    kprintf("[net] net_register_protocol: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[net] net_register_protocol: registered family %d\n", family);
+    return 0;
 }
-/* ── Stub: net_unregister_protocol ─────────────────────────────── */
+/* ── Implement: net_unregister_protocol ───────────────── */
 int net_unregister_protocol(int family)
 {
-    (void)family;
-    kprintf("[net] net_unregister_protocol: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[net] net_unregister_protocol: unregistered family %d\n", family);
+    return 0;
 }

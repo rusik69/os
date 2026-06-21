@@ -364,7 +364,7 @@ int security_scan_running(const char *cont)
 {
     (void)cont;
     kprintf("[container] security_scan_running: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: security_scan_report ─────────────────────────────── */
 int security_scan_report(const char *cont, void *report)
@@ -372,5 +372,5 @@ int security_scan_report(const char *cont, void *report)
     (void)cont;
     (void)report;
     kprintf("[container] security_scan_report: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

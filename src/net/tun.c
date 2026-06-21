@@ -67,18 +67,15 @@ void tun_destroy(void) {
     tun_initialized = 0;
 }
 
-/* ── Stub: tun_stop ─────────────────────────────── */
+/* ── Implement: tun_stop ────────────────── */
 int tun_stop(void *dev)
 {
-    (void)dev;
-    kprintf("[tun] tun_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[tun] tun_stop: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: tun_xmit ─────────────────────────────── */
+/* ── Implement: tun_xmit ────────────────── */
 int tun_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[tun] tun_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[tun] tun_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

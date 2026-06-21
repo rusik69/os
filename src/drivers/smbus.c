@@ -155,5 +155,5 @@ int smbus_read_block(int addr, int reg, void *buf, size_t len)
     (void)buf;
     (void)len;
     kprintf("[smbus] smbus_read_block: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

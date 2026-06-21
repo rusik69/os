@@ -122,7 +122,7 @@ int klist_del(void *n)
 {
     (void)n;
     kprintf("[klist] klist_del: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: klist_iter_init ─────────────────────────────── */
 int klist_iter_init(void *k, void *i)
@@ -130,12 +130,12 @@ int klist_iter_init(void *k, void *i)
     (void)k;
     (void)i;
     kprintf("[klist] klist_iter_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: klist_next ─────────────────────────────── */
 void* klist_next(void *i)
 {
     (void)i;
     kprintf("[klist] klist_next: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

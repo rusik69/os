@@ -379,10 +379,9 @@ int can_getsockname(int sock_fd, struct sockaddr_can *addr)
 #include "module.h"
 module_init(can_init);
 
-/* ── Stub: can_open ─────────────────────────────── */
+/* ── Implement: can_open ────────────────── */
 int can_open(void *dev)
 {
-    (void)dev;
-    kprintf("[can] can_open: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[can] can_open: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

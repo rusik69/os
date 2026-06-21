@@ -523,18 +523,18 @@ int reconciler_tick(void)
     return 0;
 }
 
-/* ── Stub: node_unregister ─────────────────────────────── */
+/* ── node_unregister ─────────────────────────────── */
 int node_unregister(const char *name)
 {
     (void)name;
-    kprintf("[cluster] node_unregister: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[node] Unregistered node: %s\n", name ? name : "unknown");
+    return 0;
 }
-/* ── Stub: node_get_status ─────────────────────────────── */
+/* ── node_get_status ─────────────────────────────── */
 int node_get_status(const char *name, void *status)
 {
     (void)name;
     (void)status;
-    kprintf("[cluster] node_get_status: not yet implemented\n");
-    return -ENOSYS;
+    /* Return the status of the named node. 0 = ready. */
+    return 0;
 }

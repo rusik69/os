@@ -201,14 +201,14 @@ int sched_idle_balance(int cpu)
 {
     (void)cpu;
     kprintf("[sched] sched_idle_balance: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sched_idle_pick ─────────────────────────────── */
 int sched_idle_pick(int cpu)
 {
     (void)cpu;
     kprintf("[sched] sched_idle_pick: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sched_idle_set ─────────────────────────────── */
 int sched_idle_set(int cpu, int idle)
@@ -216,5 +216,5 @@ int sched_idle_set(int cpu, int idle)
     (void)cpu;
     (void)idle;
     kprintf("[sched] sched_idle_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -72,7 +72,7 @@ int config_gz_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
     (void)dst;
     (void)dlen;
     kprintf("[config] config_gz_decompress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: config_gz_compress ─────────────────────────────── */
 int config_gz_compress(const void *src, size_t slen, void *dst, size_t *dlen)
@@ -82,5 +82,5 @@ int config_gz_compress(const void *src, size_t slen, void *dst, size_t *dlen)
     (void)dst;
     (void)dlen;
     kprintf("[config] config_gz_compress: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

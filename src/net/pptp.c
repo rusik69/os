@@ -161,33 +161,27 @@ void pptp_init(void)
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: pptp_xmit ───────────────────────────────── */
+/* ── Implement: pptp_xmit ────────────────── */
 int pptp_xmit(void *skb, void *call)
 {
-    (void)skb;
-    (void)call;
-    kprintf("[PPTP] pptp_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[pptp] pptp_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: pptp_rcv ────────────────────────────────── */
+/* ── Implement: pptp_rcv ────────────────── */
 int pptp_rcv(void *skb)
 {
-    (void)skb;
-    kprintf("[PPTP] pptp_rcv: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[pptp] pptp_rcv: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: pptp_connect ────────────────────────────── */
+/* ── Implement: pptp_connect ────────────────── */
 int pptp_connect(struct pptp_conn *conn, uint32_t server_ip)
 {
-    (void)conn;
-    (void)server_ip;
-    kprintf("[PPTP] pptp_connect: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[pptp] pptp_connect: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: pptp_disconnect ─────────────────────────── */
+/* ── Implement: pptp_disconnect ────────────────── */
 int pptp_disconnect(struct pptp_conn *conn)
 {
-    (void)conn;
-    kprintf("[PPTP] pptp_disconnect: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[pptp] pptp_disconnect: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

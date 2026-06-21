@@ -561,7 +561,7 @@ struct device;
 int iommu_enable(void)
 {
     kprintf("[iommu] iommu_enable: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: iommu_disable ─────────────────────────────── */
@@ -576,7 +576,7 @@ int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
     (void)domain;
     (void)dev;
     kprintf("[iommu] iommu_attach_device: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: iommu_detach_device ─────────────────────────────── */
@@ -594,7 +594,7 @@ int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *da
     (void)handler;
     (void)data;
     kprintf("[iommu] iommu_set_fault_handler: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: iommu_get_domain_for_dev ─────────────────────────────── */
@@ -618,14 +618,14 @@ uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
 int iommu_resume(void)
 {
     kprintf("[iommu] iommu_resume: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: iommu_suspend ─────────────────────────────── */
 int iommu_suspend(void)
 {
     kprintf("[iommu] iommu_suspend: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 #include "module.h"

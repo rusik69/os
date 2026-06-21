@@ -448,16 +448,18 @@ void watchdog_system_reset(void)
 #include "module.h"
 module_init(watchdog_sysfs_init);
 
-/* ── Stub: watchdog_start ─────────────────────────────── */
 int watchdog_start(void)
 {
-    kprintf("[watchdog] watchdog_start: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[watchdog] Starting\n");
+    outb(I6300ESB_BASE + 0x05, 0x30);
+    outb(I6300ESB_BASE + 0x05, 0x30);
+    return 0;
 }
-/* ── Stub: watchdog_set_timeout ─────────────────────────────── */
-int watchdog_set_timeout(int secs)
+
+int watchdog_set_timeout(uint32_t seconds)
 {
-    (void)secs;
-    kprintf("[watchdog] watchdog_set_timeout: not yet implemented\n");
-    return -ENOSYS;
+    if (seconds == 0 || seconds > 255) return -EINVAL;
+    outb(I6300ESB_BASE + 0x07, (uint8_t)seconds);
+    return 0;
 }
+

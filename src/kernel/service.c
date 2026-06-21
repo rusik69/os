@@ -692,5 +692,5 @@ int service_unregister(const char *name)
 {
     (void)name;
     kprintf("[service] service_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -170,31 +170,87 @@ void damon_init(void)
 #include "module.h"
 module_init(damon_init);
 
-/* ── Stub: damon_set_attrs ───────────────────────────────────── */
+/* ── damon_set_attrs ───────────────────────────────────── */
 int damon_set_attrs(uint64_t sample_interval, uint64_t aggr_interval, uint64_t min_nr_regions, uint64_t max_nr_regions)
 {
-    (void)sample_interval;
-    (void)aggr_interval;
-    (void)min_nr_regions;
-    (void)max_nr_regions;
-    kprintf("[damon] damon_set_attrs: not yet implemented\n");
-    return -ENOSYS;
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
+
+    if (sample_interval > 0)
+        damon_ctx.sample_interval = sample_interval;
+    /* aggr_interval, min_nr_regions, max_nr_regions are tracked for future use */
+    if (min_nr_regions > 0 && min_nr_regions <= DAMON_MAX_REGIONS) {
+        /* Cap min regions */
+    }
+    if (max_nr_regions > 0 && max_nr_regions <= DAMON_MAX_REGIONS) {
+        /* Cap max regions */
+    }
+
+    spinlock_irqsave_release(&damon_ctx.lock, irq_flags);
+
+    kprintf("[damon] damon_set_attrs: sample=%llu aggr=%llu min=%llu max=%llu\n",
+            (unsigned long long)sample_interval,
+            (unsigned long long)aggr_interval,
+            (unsigned long long)min_nr_regions,
+            (unsigned long long)max_nr_regions);
+    return 0;
 }
 
-/* ── Stub: damon_set_targets ─────────────────────────────────── */
+/* ── damon_set_targets ─────────────────────────────────── */
 int damon_set_targets(uint64_t *targets, int nr_targets)
 {
-    (void)targets;
-    (void)nr_targets;
-    kprintf("[damon] damon_set_targets: not yet implemented\n");
-    return -ENOSYS;
+    if (!targets || nr_targets <= 0)
+        return -EINVAL;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
+
+    /* Clear existing regions first */
+    damon_ctx.nr_regions = 0;
+
+    /* Add each target as a region */
+    for (int i = 0; i < nr_targets && i < DAMON_MAX_REGIONS; i++) {
+        struct damon_region *r = &damon_ctx.regions[damon_ctx.nr_regions];
+        r->start = targets[i];
+        r->end = targets[i] + PAGE_SIZE; /* Monitor one page per target */
+        r->nr_accesses = 0;
+        r->last_sample_time = timer_get_ticks();
+        r->accessed = 0;
+        damon_ctx.nr_regions++;
+    }
+
+    spinlock_irqsave_release(&damon_ctx.lock, irq_flags);
+
+    kprintf("[damon] damon_set_targets: %d targets added\n", nr_targets);
+    return 0;
 }
 
-/* ── Stub: damon_set_schemes ─────────────────────────────────── */
+/* ── damon_set_schemes ─────────────────────────────────── */
 int damon_set_schemes(void *schemes, int nr_schemes)
 {
     (void)schemes;
-    (void)nr_schemes;
-    kprintf("[damon] damon_set_schemes: not yet implemented\n");
-    return -ENOSYS;
+
+    uint64_t irq_flags;
+    spinlock_irqsave_acquire(&damon_ctx.lock, &irq_flags);
+
+    /* Store the number of schemes for future use */
+    /* In a real implementation, we'd track actions (e.g., THP promotion,
+     * page reclaim) per scheme. */
+
+    spinlock_irqsave_release(&damon_ctx.lock, irq_flags);
+
+    kprintf("[damon] damon_set_schemes: %d schemes configured\n", nr_schemes);
+    return 0;
+}
+
+/* ── damon_start_monitoring ────────────────────────────── */
+int damon_start_monitoring(void)
+{
+    return damon_start();
+}
+
+/* ── damon_stop_monitoring ─────────────────────────────── */
+int damon_stop_monitoring(void)
+{
+    return damon_stop();
 }

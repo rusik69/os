@@ -274,25 +274,30 @@ void wakeup_print_sources(void)
     spinlock_release(&wakeup_state.lock);
 }
 
-/* ── Stub: wakeup_source_create ─────────────────────────────── */
+/* ── wakeup_source_create ─────────────────────────────── */
 int wakeup_source_create(const char *name)
 {
-    (void)name;
-    kprintf("[wakeup] wakeup_source_create: not yet implemented\n");
-    return -ENOSYS;
+    /* Allocate a wakeup source by registering with the base API.
+     * Returns the wakeup source ID (>= 0) on success. */
+    return wakeup_source_register(name);
 }
-/* ── Stub: wakeup_source_destroy ─────────────────────────────── */
+/* ── wakeup_source_destroy ─────────────────────────────── */
 int wakeup_source_destroy(void *ws)
 {
-    (void)ws;
-    kprintf("[wakeup] wakeup_source_destroy: not yet implemented\n");
-    return -ENOSYS;
+    /* Destroy/free a wakeup source.
+     * @ws is expected to be the wakeup source ID as a pointer. */
+    int id = (int)(uintptr_t)ws;
+    return wakeup_source_unregister(id);
 }
-/* ── Stub: wakeup_source_report ─────────────────────────────── */
+/* ── wakeup_source_report ─────────────────────────────── */
 int wakeup_source_report(void *ws, uint64_t duration)
 {
-    (void)ws;
     (void)duration;
-    kprintf("[wakeup] wakeup_source_report: not yet implemented\n");
-    return -ENOSYS;
+    /* Report a wakeup event on the given wakeup source.
+     * This is called after handling the wakeup interrupt. */
+    int id = (int)(uintptr_t)ws;
+    if (wakeup_id_valid(id)) {
+        wakeup_state.sources[id].event_count++;
+    }
+    return 0;
 }

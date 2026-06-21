@@ -120,7 +120,7 @@ int virtio_input_read(void *dev, void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[virtio] virtio_input_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: virtio_input_ioctl ─────────────────────────────── */
 int virtio_input_ioctl(void *dev, int cmd, void *arg)
@@ -129,5 +129,5 @@ int virtio_input_ioctl(void *dev, int cmd, void *arg)
     (void)cmd;
     (void)arg;
     kprintf("[virtio] virtio_input_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

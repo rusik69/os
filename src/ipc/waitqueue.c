@@ -313,25 +313,22 @@ EXPORT_SYMBOL(wait_queue_sleep);
 EXPORT_SYMBOL(wait_queue_wake);
 EXPORT_SYMBOL(wait_queue_wake_all);
 
-/* ── Stub: waitqueue_wake_all ─────────────────────────────── */
+/* ── waitqueue_wake_all ─────────────────────────────── */
 int waitqueue_wake_all(void *wq)
 {
-    (void)wq;
-    kprintf("[waitqueue] waitqueue_wake_all: not yet implemented\n");
-    return -ENOSYS;
+    if (!wq) return -EINVAL;
+    return wait_queue_wake_all((struct wait_queue *)wq);
 }
-/* ── Stub: waitqueue_wake_one ─────────────────────────────── */
+/* ── waitqueue_wake_one ─────────────────────────────── */
 int waitqueue_wake_one(void *wq)
 {
-    (void)wq;
-    kprintf("[waitqueue] waitqueue_wake_one: not yet implemented\n");
-    return -ENOSYS;
+    if (!wq) return -EINVAL;
+    return wait_queue_wake((struct wait_queue *)wq);
 }
-/* ── Stub: waitqueue_sleep ─────────────────────────────── */
+/* ── waitqueue_sleep ─────────────────────────────── */
 int waitqueue_sleep(void *wq, void *task)
 {
-    (void)wq;
     (void)task;
-    kprintf("[waitqueue] waitqueue_sleep: not yet implemented\n");
-    return -ENOSYS;
+    if (!wq) return -EINVAL;
+    return wait_queue_sleep((struct wait_queue *)wq);
 }

@@ -631,21 +631,17 @@ int stp_port_state(int port_num) {
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: stp_xmit ────────────────────────────────── */
+/* ── Implement: stp_xmit ────────────────── */
 int stp_xmit(void *skb, int port_num)
 {
-    (void)skb;
-    (void)port_num;
-    kprintf("[STP] stp_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stp] stp_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: stp_rcv ─────────────────────────────────── */
+/* ── Implement: stp_rcv ────────────────── */
 int stp_rcv(void *skb, int port_num)
 {
-    (void)skb;
-    (void)port_num;
-    kprintf("[STP] stp_rcv: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stp] stp_rcv: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
 /* ── Stub: stp_become_root ─────────────────────────── */
 void stp_become_root(void)

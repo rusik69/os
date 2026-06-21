@@ -240,38 +240,72 @@ int uefi_boot_menu_entry_count(void)
 /* ── Stub: efi_menu_show ───────────────────────────────────────────── */
 int efi_menu_show(void)
 {
-    (void)0;
-    kprintf("[EFI_MENU] efi_menu_show: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[EFI_MENU] efi_menu_show: delegating to uefi_boot_menu_show\n");
+    return uefi_boot_menu_show();
 }
 
 /* ── Stub: efi_menu_get_selection ──────────────────────────────────── */
 int efi_menu_get_selection(void)
 {
-    kprintf("[EFI_MENU] efi_menu_get_selection: not yet implemented\n");
-    return -ENOSYS;
+    if (uefi_boot_menu_entry_count() <= 0) {
+        kprintf("[EFI_MENU] efi_menu_get_selection: no boot entries\n");
+        return -1;
+    }
+
+    kprintf("[EFI_MENU] efi_menu_get_selection: showing menu for selection\n");
+
+    int highlight = default_entry;
+    render_menu(highlight);
+
+    /* Simple timeout-based auto-boot loop */
+    int ticks_remaining = menu_timeout * 10; /* ~100ms ticks */
+    while (ticks_remaining > 0) {
+        /* Would use UEFI SimpleTextInput in a real impl */
+        /* For now, just show the menu and decrement timeout */
+        ticks_remaining--;
+        if (ticks_remaining % 10 == 0) {
+            kprintf("\rTimeout: %d seconds ", ticks_remaining / 10);
+        }
+        /* Busy-wait ~100ms */
+        for (volatile int i = 0; i < 2000000; i++)
+            __asm__ volatile("pause");
+    }
+
+    kprintf("\n[EFI_MENU] efi_menu_get_selection: timeout, returning default %d\n",
+            default_entry);
+    return default_entry;
 }
 
 /* ── Stub: efi_menu_boot_entry ─────────────────────────────────────── */
 int efi_menu_boot_entry(int index)
 {
-    (void)index;
-    kprintf("[EFI_MENU] efi_menu_boot_entry: not yet implemented\n");
-    return -ENOSYS;
+    int count = uefi_boot_menu_entry_count();
+    if (index < 0 || index >= count) {
+        kprintf("[EFI_MENU] efi_menu_boot_entry: invalid index %d\n", index);
+        return -EINVAL;
+    }
+    kprintf("[EFI_MENU] efi_menu_boot_entry: booting entry %d\n", index);
+    boot_entry_at(index);
+    return 0;
 }
 
 /* ── Stub: efi_menu_set_timeout ────────────────────────────────────── */
 void efi_menu_set_timeout(int seconds)
 {
-    (void)seconds;
-    kprintf("[EFI_MENU] efi_menu_set_timeout: not yet implemented\n");
+    if (seconds >= 0 && seconds <= 300)
+        menu_timeout = seconds;
+    kprintf("[EFI_MENU] efi_menu_set_timeout: set to %d seconds\n", seconds);
 }
 
 /* ── Stub: efi_menu_add_entry ──────────────────────────────────────── */
 int efi_menu_add_entry(const char *name, const char *kernel_path,
                        const char *initrd_path)
 {
-    (void)name; (void)kernel_path; (void)initrd_path;
-    kprintf("[EFI_MENU] efi_menu_add_entry: not yet implemented\n");
-    return -ENOSYS;
+    if (!name || !kernel_path) {
+        kprintf("[EFI_MENU] efi_menu_add_entry: invalid arguments\n");
+        return -EINVAL;
+    }
+    int ret = uefi_boot_menu_add_entry(name, kernel_path, initrd_path);
+    kprintf("[EFI_MENU] efi_menu_add_entry: '%s' -> %s\n", name, kernel_path);
+    return ret;
 }

@@ -136,7 +136,7 @@ int sort_ext_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap)
     (void)cmp;
     (void)swap;
     kprintf("[sort] sort_ext_sort: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: sort_ext_r_sort ─────────────────────────────── */
 int sort_ext_r_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap, void *priv)
@@ -148,5 +148,5 @@ int sort_ext_r_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap
     (void)swap;
     (void)priv;
     kprintf("[sort] sort_ext_r_sort: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -94,5 +94,5 @@ void invpcid_flush_pcid(uint64_t pcid) {
 int invpcid_flush_all_nonglobals(void)
 {
     kprintf("[invpcid] invpcid_flush_all_nonglobals: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

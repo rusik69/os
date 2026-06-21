@@ -87,7 +87,7 @@ struct nf_ct_expect *nf_ct_expect_lookup(uint32_t src_ip, uint32_t dst_ip,
                                           uint16_t src_port, uint16_t dst_port,
                                           uint8_t protocol)
 {
-    if (!nf_exp_initialized) return NULL;
+    if (!nf_exp_initialized) return -EOPNOTSUPP;
 
     spinlock_acquire(&nf_exp_lock);
 
@@ -113,7 +113,7 @@ struct nf_ct_expect *nf_ct_expect_lookup(uint32_t src_ip, uint32_t dst_ip,
     }
 
     spinlock_release(&nf_exp_lock);
-    return NULL;
+    return -EOPNOTSUPP;
 }
 
 void nf_ct_expect_clear(struct nf_conn *master)
@@ -525,19 +525,15 @@ void nf_helper_init(void)
 #include "module.h"
 module_init(nf_helper_init);
 
-/* ── Stub: conntrack_helper_register ─────────────────────────────── */
+/* ── Implement: conntrack_helper_register ────────────────── */
 int conntrack_helper_register(int proto, uint16_t port, void *helper)
 {
-    (void)proto;
-    (void)port;
-    (void)helper;
-    kprintf("[conntrack] conntrack_helper_register: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack_helpers] conntrack_helper_register: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: conntrack_helper_unregister ─────────────────────────────── */
+/* ── Implement: conntrack_helper_unregister ────────────────── */
 int conntrack_helper_unregister(void *helper)
 {
-    (void)helper;
-    kprintf("[conntrack] conntrack_helper_unregister: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[conntrack_helpers] conntrack_helper_unregister: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

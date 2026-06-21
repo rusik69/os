@@ -631,21 +631,3 @@ EXPORT_SYMBOL(spi_bitbang_register);
 #include "module.h"
 module_init(spi_init);
 
-/* ── Stub: spi_read ─────────────────────────────── */
-int spi_read(void *dev, void *buf, size_t len)
-{
-    (void)dev;
-    (void)buf;
-    (void)len;
-    kprintf("[spi] spi_read: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: spi_write ─────────────────────────────── */
-int spi_write(void *dev, const void *buf, size_t len)
-{
-    (void)dev;
-    (void)buf;
-    (void)len;
-    kprintf("[spi] spi_write: not yet implemented\n");
-    return -ENOSYS;
-}

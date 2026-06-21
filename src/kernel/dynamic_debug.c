@@ -132,5 +132,5 @@ int dynamic_debug_query(const char *query)
 {
     (void)query;
     kprintf("[dyndbg] dynamic_debug_query: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

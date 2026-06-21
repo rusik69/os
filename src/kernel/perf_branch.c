@@ -117,11 +117,23 @@ void perf_branch_init(void)
     kprintf("[OK] perf branch stack (LBR) sampling\n");
 }
 
-/* ── Stub: perf_branch_read ─────────────────────────────── */
+/* ── perf_branch_read: Read LBR data into user buffer ───────────────── */
 int perf_branch_read(void *data, size_t *len)
 {
-    (void)data;
-    (void)len;
-    kprintf("[perf] perf_branch_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!data || !len) return -EINVAL;
+
+    /* Use the already-implemented LBR reading functions */
+    int count = perf_branch_read_lbr();
+    if (count < 0) return count;
+
+    size_t entry_size = sizeof(struct perf_lbr_entry);
+    size_t total = (size_t)count * entry_size;
+    if (total > *len) total = *len;
+
+    int entries_to_copy = (int)(total / entry_size);
+    int n = perf_branch_get_entries((struct perf_lbr_entry *)data, entries_to_copy);
+    *len = (size_t)n * entry_size;
+
+    kprintf("[perf] perf_branch_read: read %d LBR entries\n", n);
+    return n;
 }

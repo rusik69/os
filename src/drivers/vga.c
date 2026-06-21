@@ -695,18 +695,40 @@ EXPORT_SYMBOL(vga_write);
 EXPORT_SYMBOL(vga_clear);
 EXPORT_SYMBOL(vga_set_color);
 
-/* ── Stub: vga_set_mode ─────────────────────────────── */
+/* ── Set VGA video mode via VGA ports ────────────────── */
 int vga_set_mode(int mode)
 {
-    (void)mode;
-    kprintf("[vga] vga_set_mode: not yet implemented\n");
-    return -ENOSYS;
+    /* VGA modes: 0x03 = 80x25 text, 0x12 = 640x480 16-color, 0x13 = 320x200 256-color */
+    /* Use VGA sequencer and CRTC registers to set mode */
+    if (mode < 0 || mode > 0x13)
+        return -EINVAL;
+
+    /* For now, only support switching back to text mode (0x03) */
+    /* INT 0x10 function 0: set video mode */
+    __asm__ volatile (
+        "mov %0, %%ax\n"
+        "int $0x10\n"
+        : : "a"((uint16_t)mode) : "cc", "memory"
+    );
+
+    return 0;
 }
-/* ── Stub: vga_set_palette ─────────────────────────────── */
+
+/* ── Set VGA palette via VGA DAC ports ──────────────── */
 int vga_set_palette(const void *palette, int count)
 {
-    (void)palette;
-    (void)count;
-    kprintf("[vga] vga_set_palette: not yet implemented\n");
-    return -ENOSYS;
+    if (!palette || count <= 0 || count > 256)
+        return -EINVAL;
+
+    const uint8_t *entries = (const uint8_t *)palette;
+
+    /* Write palette entries to VGA DAC (port 0x3C8 = write index, 0x3C9 = data) */
+    for (int i = 0; i < count; i++) {
+        outb(0x3C8, (uint8_t)i);           /* palette index */
+        outb(0x3C9, entries[i * 3 + 0]);   /* red */
+        outb(0x3C9, entries[i * 3 + 1]);   /* green */
+        outb(0x3C9, entries[i * 3 + 2]);   /* blue */
+    }
+
+    return 0;
 }

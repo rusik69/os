@@ -239,23 +239,78 @@ int zcomp_fast_init(void)
     return zcomp_register(&fast_ops);
 }
 
-/* ── Stub: zcomp_fast_compress ─────────────────────────────── */
+/* ── zcomp_fast_compress ─────────────────────────────── */
 int zcomp_fast_compress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[zcomp_fast] zcomp_fast_compress: not yet implemented\n");
-    return -ENOSYS;
+    if (!src || !dst || !dlen || slen == 0)
+        return -EINVAL;
+
+    /* Try LZ4-style fast compression first using the workspace.
+     * If compression doesn't save space, store uncompressed with a marker. */
+
+    /* First, try the fast compressor from this file */
+    void *ws = fast_create_workspace();
+    if (!ws) {
+        /* Fall back to "no compression" marker */
+        if (*dlen < slen + 8)
+            return -ENOSPC;
+        /* Store uncompressed page with a special header */
+        *(uint32_t *)dst = 0;       /* algo=0 means uncompressed */
+        *(uint32_t *)((uint8_t *)dst + 4) = (uint32_t)slen; /* orig size */
+        memcpy((uint8_t *)dst + 8, src, slen);
+        *dlen = slen + 8;
+        return 0;
+    }
+
+    int ret = fast_compress((const uint8_t *)src, slen, (uint8_t *)dst, *dlen, ws);
+    fast_destroy_workspace(ws);
+
+    if (ret > 0 && (size_t)ret < slen) {
+        *dlen = (size_t)ret;
+        return 0;
+    }
+
+    /* Compression didn't save space — store uncompressed */
+    if (*dlen < slen + 8)
+        return -ENOSPC;
+    *(uint32_t *)dst = 0;       /* uncompressed marker */
+    *(uint32_t *)((uint8_t *)dst + 4) = (uint32_t)slen;
+    memcpy((uint8_t *)dst + 8, src, slen);
+    *dlen = slen + 8;
+    return 0;
 }
-/* ── Stub: zcomp_fast_decompress ─────────────────────────────── */
+
+/* ── zcomp_fast_decompress ─────────────────────────────── */
 int zcomp_fast_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[zcomp_fast] zcomp_fast_decompress: not yet implemented\n");
-    return -ENOSYS;
+    if (!src || !dst || !dlen || slen == 0)
+        return -EINVAL;
+
+    /* Check for uncompressed marker */
+    if (*(const uint32_t *)src == 0) {
+        /* Uncompressed: skip header, memcpy */
+        uint32_t orig_size = *(const uint32_t *)((const uint8_t *)src + 4);
+        if (*dlen < (size_t)orig_size)
+            return -ENOSPC;
+        memcpy(dst, (const uint8_t *)src + 8, (size_t)orig_size);
+        *dlen = (size_t)orig_size;
+        return 0;
+    }
+
+    /* Try LZ4-style decompression */
+    void *ws = fast_create_workspace();
+    if (!ws) {
+        kprintf("[zcomp_fast] zcomp_fast_decompress: no workspace\n");
+        return -ENOMEM;
+    }
+
+    int ret = fast_decompress((const uint8_t *)src, slen, (uint8_t *)dst, *dlen, ws);
+    fast_destroy_workspace(ws);
+
+    if (ret > 0) {
+        *dlen = (size_t)ret;
+        return 0;
+    }
+
+    return -EINVAL;
 }

@@ -235,13 +235,11 @@ void poly1305_mac(uint8_t mac[16], const uint8_t *data, size_t len,
     poly1305_final(&ctx, mac);
 }
 
-/* ── Stub: poly1305_auth ─────────────────────────────── */
+/* ── poly1305_auth ─────────────────────────────── */
 int poly1305_auth(void *mac, const void *msg, size_t mlen, const void *key)
 {
-    (void)mac;
-    (void)msg;
-    (void)mlen;
-    (void)key;
-    kprintf("[poly1305] poly1305_auth: not yet implemented\n");
-    return -ENOSYS;
+    if (!mac || !key)
+        return -1;
+    poly1305_mac((uint8_t *)mac, (const uint8_t *)msg, mlen, (const uint8_t *)key);
+    return 0;
 }

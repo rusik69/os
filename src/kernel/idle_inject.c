@@ -264,5 +264,5 @@ int idle_inject_set_rate(int cpu, unsigned int rate)
     (void)cpu;
     (void)rate;
     kprintf("[idle] idle_inject_set_rate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

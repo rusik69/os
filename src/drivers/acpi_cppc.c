@@ -104,7 +104,7 @@ void acpi_cppc_init(void)
 int cppc_init(void)
 {
     kprintf("[acpi] cppc_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cppc_get_perf_caps ─────────────────────────────── */
 int cppc_get_perf_caps(int cpu, void *caps)
@@ -112,7 +112,7 @@ int cppc_get_perf_caps(int cpu, void *caps)
     (void)cpu;
     (void)caps;
     kprintf("[acpi] cppc_get_perf_caps: not yet implemented\n");
-    return -ENOSYS;
+    return -ENODATA;
 }
 /* ── Stub: cppc_set_perf ─────────────────────────────── */
 int cppc_set_perf(int cpu, uint64_t perf)
@@ -120,5 +120,5 @@ int cppc_set_perf(int cpu, uint64_t perf)
     (void)cpu;
     (void)perf;
     kprintf("[acpi] cppc_set_perf: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

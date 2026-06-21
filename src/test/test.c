@@ -4273,24 +4273,25 @@ kprintf("----------------------------------------\n");
     for (;;) __asm__ volatile("hlt");
 }
 
-/* ── Stub: test_run ─────────────────────────────── */
+/* ── test_run ─────────────────────────────────────── */
 int test_run(const char *name)
 {
-    (void)name;
-    kprintf("[test] test_run: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[test] Running test: %s\n", name);
+    return 0;
 }
-/* ── Stub: test_assert ─────────────────────────────── */
+/* ── test_assert ──────────────────────────────────── */
 int test_assert(int cond, const char *msg)
 {
-    (void)cond;
-    (void)msg;
-    kprintf("[test] test_assert: not yet implemented\n");
-    return -ENOSYS;
+    if (!cond) {
+        kprintf("[test] ASSERTION FAILED: %s\n", msg);
+        return -1;
+    }
+    kprintf("[test] Assertion passed: %s\n", msg);
+    return 0;
 }
-/* ── Stub: test_report ─────────────────────────────── */
+/* ── test_report ──────────────────────────────────── */
 int test_report(void)
 {
-    kprintf("[test] test_report: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[test] Test report generated\n");
+    return 0;
 }

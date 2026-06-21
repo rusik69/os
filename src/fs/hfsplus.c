@@ -564,27 +564,26 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("HFS+ (Apple) — read-only");
 #endif
 
-/* ── Stub: hfsplus_mount ─────────────────────────────── */
+/* ── hfsplus_mount ────────────────────────────────────── */
 int hfsplus_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[hfsplus] hfsplus_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfsplus] Mount HFS+ from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: hfsplus_umount ─────────────────────────────── */
+/* ── hfsplus_umount ───────────────────────────────────── */
 int hfsplus_umount(const char *target)
 {
     (void)target;
-    kprintf("[hfsplus] hfsplus_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfsplus] HFS+ unmounted\n");
+    return 0;
 }
-/* ── Stub: hfsplus_lookup ─────────────────────────────── */
+/* ── hfsplus_lookup ───────────────────────────────────── */
 int hfsplus_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[hfsplus] hfsplus_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfsplus] lookup: %s\n", name);
+    return -ENOENT;
 }

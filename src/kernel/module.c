@@ -22,6 +22,7 @@
 #include "aslr.h"
 #include "sha256.h"
 #include "rsa_key.h"
+#include "export.h"
 
 /* RSA signature verification from lib/rsa.c */
 extern int rsa_pkcs1_v15_verify(const uint8_t *sig, size_t sig_len,
@@ -1418,10 +1419,27 @@ int module_sysfs_remove_params(struct kernel_module *mod)
     return 0;
 }
 
-/* ── Stub: module_find_sym ─────────────────────────────── */
+/* ── module_find_sym: Find a symbol by name in all modules ──────────── */
 void* module_find_sym(const char *name)
 {
-    (void)name;
-    kprintf("[module] module_find_sym: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return NULL;
+
+    /* First try the kernel's exported symbol table */
+    uint64_t addr = find_ksym(name, 1);
+    if (addr) {
+        kprintf("[module] module_find_sym: '%s' found at 0x%llx\n",
+                name, (unsigned long long)addr);
+        return (void*)(uintptr_t)addr;
+    }
+
+    /* Fall back to comprehensive symbol search */
+    addr = find_ksym_all(name);
+    if (addr) {
+        kprintf("[module] module_find_sym: '%s' found (all) at 0x%llx\n",
+                name, (unsigned long long)addr);
+        return (void*)(uintptr_t)addr;
+    }
+
+    kprintf("[module] module_find_sym: '%s' not found\n", name);
+    return NULL;
 }

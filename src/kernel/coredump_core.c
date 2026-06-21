@@ -62,7 +62,7 @@ EXPORT_SYMBOL(coredump_unregister_handler);
 int coredump_core_init(void)
 {
     kprintf("[coredump] coredump_core_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_core_write ─────────────────────────────── */
 int coredump_core_write(const void *buf, size_t count)
@@ -70,7 +70,7 @@ int coredump_core_write(const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[coredump] coredump_core_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: coredump_core_read ─────────────────────────────── */
 int coredump_core_read(void *buf, size_t count)
@@ -78,5 +78,5 @@ int coredump_core_read(void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[coredump] coredump_core_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

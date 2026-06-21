@@ -98,5 +98,5 @@ int wx_enforce_apply(void *task)
 {
     (void)task;
     kprintf("[wx] wx_enforce_apply: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

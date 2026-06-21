@@ -240,20 +240,76 @@ void futex_dump(void)
     kprintf("[futex] Total waiters: %d\n", total_waiters);
 }
 
-/* ── Stub: futex_lock_pi ─────────────────────────────────────── */
+/* ── futex_lock_pi ─────────────────────────────────────── */
 int futex_lock_pi(uint32_t *uaddr, int private)
 {
-    (void)uaddr;
-    (void)private;
-    kprintf("[futex] futex_lock_pi: not yet implemented\n");
-    return -ENOSYS;
+    if (!futex_initialised || !uaddr)
+        return -EINVAL;
+
+    struct process *cur = process_get_current();
+    if (!cur)
+        return -EINVAL;
+
+    uint32_t tid = cur->pid;
+    uint32_t zero = 0;
+
+    for (;;) {
+        uint32_t cur_val;
+        memcpy(&cur_val, uaddr, sizeof(cur_val));
+
+        if (cur_val == 0) {
+            /* Lock is free — try to acquire by writing our PID */
+            __asm__ volatile("cli");
+            memcpy(&cur_val, uaddr, sizeof(cur_val));
+            if (cur_val == 0) {
+                /* Still free — take it */
+                uint32_t new_val = tid;
+                memcpy(uaddr, &new_val, sizeof(new_val));
+                __asm__ volatile("sti");
+                return 0;
+            }
+            __asm__ volatile("sti");
+            /* Someone else took it — re-evaluate */
+            continue;
+        }
+
+        /* Lock is held — set the FUTEX_WAITERS bit (bit 31) to indicate contention */
+        uint32_t waiters_val = cur_val | 0x80000000U;
+        memcpy(uaddr, &waiters_val, sizeof(waiters_val));
+
+        /* Wait for the lock to be released */
+        int ret = futex_wait(uaddr, waiters_val, 0, private);
+        if (ret < 0 && ret != -EAGAIN) {
+            /* Signal interrupted */
+            return ret;
+        }
+        /* Retry the loop */
+    }
 }
 
-/* ── Stub: futex_unlock_pi ───────────────────────────────────── */
+/* ── futex_unlock_pi ───────────────────────────────────── */
 int futex_unlock_pi(uint32_t *uaddr, int private)
 {
-    (void)uaddr;
-    (void)private;
-    kprintf("[futex] futex_unlock_pi: not yet implemented\n");
-    return -ENOSYS;
+    if (!futex_initialised || !uaddr)
+        return -EINVAL;
+
+    struct process *cur = process_get_current();
+    if (!cur)
+        return -EINVAL;
+
+    uint32_t cur_val;
+    memcpy(&cur_val, uaddr, sizeof(cur_val));
+
+    /* Check we are the owner (bits 0-30 contain PID) */
+    if ((cur_val & 0x7FFFFFFF) != cur->pid)
+        return -EPERM;
+
+    /* Clear the lock word */
+    uint32_t zero = 0;
+    memcpy(uaddr, &zero, sizeof(zero));
+
+    /* Wake up one waiter */
+    futex_wake(uaddr, 1, private);
+
+    return 0;
 }

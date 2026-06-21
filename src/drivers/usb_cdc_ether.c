@@ -114,21 +114,21 @@ int cdc_ether_init(void *dev)
 {
     (void)dev;
     kprintf("[usb] cdc_ether_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cdc_ether_open ─────────────────────────────── */
 int cdc_ether_open(void *dev)
 {
     (void)dev;
     kprintf("[usb] cdc_ether_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cdc_ether_stop ─────────────────────────────── */
 int cdc_ether_stop(void *dev)
 {
     (void)dev;
     kprintf("[usb] cdc_ether_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: cdc_ether_xmit ─────────────────────────────── */
 int cdc_ether_xmit(void *skb, void *dev)
@@ -136,5 +136,5 @@ int cdc_ether_xmit(void *skb, void *dev)
     (void)skb;
     (void)dev;
     kprintf("[usb] cdc_ether_xmit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

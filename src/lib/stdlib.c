@@ -255,29 +255,3 @@ int fnmatch(const char *pattern, const char *string, int flags) {
     }
     return (*s == '\0') ? 0 : FNM_NOMATCH;
 }
-
-/* ── Stub: bsearch ─────────────────────────────── */
-void* bsearch(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
-{
-    (void)key;
-    (void)base;
-    (void)nmemb;
-    (void)size;
-    (void)cmp;
-    kprintf("[stdlib] bsearch: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: atoi ─────────────────────────────── */
-int atoi(const char *s)
-{
-    (void)s;
-    kprintf("[stdlib] atoi: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: atol ─────────────────────────────── */
-long atol(const char *s)
-{
-    (void)s;
-    kprintf("[stdlib] atol: not yet implemented\n");
-    return -ENOSYS;
-}

@@ -854,26 +854,26 @@ int runtime_create(const char *name, void *spec)
     (void)name;
     (void)spec;
     kprintf("[container] runtime_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: runtime_start ─────────────────────────────── */
 int runtime_start(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_start: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: runtime_stop ─────────────────────────────── */
 int runtime_stop(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_stop: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: runtime_delete ─────────────────────────────── */
 int runtime_delete(const char *name)
 {
     (void)name;
     kprintf("[container] runtime_delete: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

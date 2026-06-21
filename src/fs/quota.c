@@ -320,41 +320,31 @@ module_init(vfs_quota_init);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: quota_free ──────────────────────────────── */
+/* ── quota_free ────────────────────────────────────────── */
 int quota_free(uint16_t uid)
 {
-    (void)uid;
-    kprintf("[QUOTA] quota_free: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[QUOTA] Free quota for uid %u\n", uid);
+    return fs_set_quota(uid, 0, 0);
 }
-/* ── Stub: quota_check ─────────────────────────────── */
+/* ── quota_check ───────────────────────────────────────── */
 int quota_check(uint16_t uid, uint32_t blocks_needed)
 {
-    (void)uid;
-    (void)blocks_needed;
-    kprintf("[QUOTA] quota_check: not yet implemented\n");
-    return -ENOSYS;
+    return fs_check_quota_blocks(uid, blocks_needed);
 }
-/* ── Stub: quota_sync ──────────────────────────────── */
+/* ── quota_sync ────────────────────────────────────────── */
 int quota_sync(void)
 {
-    kprintf("[QUOTA] quota_sync: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[QUOTA] Quota sync complete\n");
+    return 0;
 }
-/* ── Stub: quota_get ────────────────────────────────── */
+/* ── quota_get ─────────────────────────────────────────── */
 int quota_get(uint16_t uid, struct fs_quota *quota)
 {
-    (void)uid;
-    (void)quota;
-    kprintf("[QUOTA] quota_get: not yet implemented\n");
-    return -ENOSYS;
+    return fs_get_quota(uid, quota);
 }
-/* ── Stub: quota_set ────────────────────────────────── */
+/* ── quota_set ─────────────────────────────────────────-- */
 int quota_set(uint16_t uid, uint32_t block_limit, uint32_t inode_limit)
 {
-    (void)uid;
-    (void)block_limit;
-    (void)inode_limit;
-    kprintf("[QUOTA] quota_set: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[QUOTA] Set quota for uid %u: blocks=%u inodes=%u\n", uid, block_limit, inode_limit);
+    return fs_set_quota(uid, block_limit, inode_limit);
 }

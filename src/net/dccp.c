@@ -265,80 +265,195 @@ EXPORT_SYMBOL(dccp_connect);
 EXPORT_SYMBOL(dccp_send);
 EXPORT_SYMBOL(dccp_recv);
 EXPORT_SYMBOL(dccp_close);
-/* ── Stub: dccp_recvmsg ─────────────────────────────────────────── */
+/* ── Implement: dccp_recvmsg ────────────────── */
 int dccp_recvmsg(int fd, void *buf, uint16_t maxlen, int flags)
 {
-    (void)buf;
-    (void)maxlen;
     (void)flags;
-    kprintf("[dccp] dccp_recvmsg: not yet implemented\n");
-    return -ENOSYS;
+    /* Delegate to dccp_recv */
+    return dccp_recv(fd, buf, maxlen);
 }
 
-/* ── Stub: dccp_sendmsg ─────────────────────────────────────────── */
+/* ── Implement: dccp_sendmsg ────────────────── */
 int dccp_sendmsg(int fd, const void *data, uint16_t len, int flags)
 {
-    (void)data;
-    (void)len;
     (void)flags;
-    kprintf("[dccp] dccp_sendmsg: not yet implemented\n");
-    return -ENOSYS;
+    /* Delegate to dccp_send */
+    return dccp_send(fd, data, len);
 }
 
-/* ── Stub: dccp_ioctl ───────────────────────────────────────────── */
+/* ── Implement: dccp_ioctl ────────────────── */
 int dccp_ioctl(int fd, unsigned long request, void *arg)
 {
+    (void)fd;
     (void)request;
     (void)arg;
-    kprintf("[dccp] dccp_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[dccp] dccp_ioctl: unsupported request %lu\n", request);
+    return -EOPNOTSUPP;
 }
 
-/* ── Stub: dccp_setsockopt ──────────────────────────────────────── */
+/* ── Implement: dccp_setsockopt ────────────────── */
 int dccp_setsockopt(int fd, int level, int optname, const void *optval, uint16_t optlen)
 {
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    kprintf("[dccp] dccp_setsockopt: not yet implemented\n");
-    return -ENOSYS;
+    if (!dccp_initialized) return -ENOSYS;
+    if (level != IPPROTO_DCCP) return -ENOPROTOOPT;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    int ret = 0;
+    switch (optname) {
+    case 0x01: /* DCCP_SOCKOPT_SERVICE — set service code (dummy) */
+        if (optlen >= sizeof(uint32_t))
+            ds->service_code = *(const uint32_t *)optval;
+        break;
+    case 0x02: /* DCCP_SOCKOPT_CCID — set CCID */
+        if (optlen >= sizeof(int)) {
+            int ccid = *(const int *)optval;
+            if (ccid == DCCP_CCID_2 || ccid == DCCP_CCID_3)
+                ds->ccid = ccid;
+            else
+                ret = -EINVAL;
+        } else {
+            ret = -EINVAL;
+        }
+        break;
+    case 0x03: /* DCCP_SOCKOPT_TX_CCID — set TX CCID */
+    case 0x04: /* DCCP_SOCKOPT_RX_CCID — set RX CCID */
+        break; /* accept silently */
+    default:
+        ret = -ENOPROTOOPT;
+        break;
+    }
+
+    spinlock_release(&dccp_lock);
+    return ret;
 }
 
-/* ── Stub: dccp_getsockopt ──────────────────────────────────────── */
+/* ── Implement: dccp_getsockopt ────────────────── */
 int dccp_getsockopt(int fd, int level, int optname, void *optval, uint16_t *optlen)
 {
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    kprintf("[dccp] dccp_getsockopt: not yet implemented\n");
-    return -ENOSYS;
+    if (!dccp_initialized) return -ENOSYS;
+    if (level != IPPROTO_DCCP) return -ENOPROTOOPT;
+    if (!optval || !optlen) return -EINVAL;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    int ret = 0;
+    switch (optname) {
+    case 0x01: /* DCCP_SOCKOPT_SERVICE */
+        if (*optlen >= sizeof(uint32_t)) {
+            *(uint32_t *)optval = ds->service_code;
+            *optlen = sizeof(uint32_t);
+        } else {
+            ret = -EINVAL;
+        }
+        break;
+    case 0x02: /* DCCP_SOCKOPT_CCID */
+        if (*optlen >= sizeof(int)) {
+            *(int *)optval = ds->ccid;
+            *optlen = sizeof(int);
+        } else {
+            ret = -EINVAL;
+        }
+        break;
+    default:
+        ret = -ENOPROTOOPT;
+        break;
+    }
+
+    spinlock_release(&dccp_lock);
+    return ret;
 }
 
-/* ── Stub: dccp_shutdown ────────────────────────────────────────── */
+/* ── Implement: dccp_shutdown ────────────────── */
 int dccp_shutdown(int fd, int how)
 {
-    (void)how;
-    kprintf("[dccp] dccp_shutdown: not yet implemented\n");
-    return -ENOSYS;
+    if (!dccp_initialized) return -ENOSYS;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    /* how: 0=read, 1=write, 2=both */
+    if (how == 1 || how == 2) {
+        /* Send DCCP-Close */
+        if (ds->connected) {
+            uint8_t close_pkt[sizeof(struct dccp_header)];
+            struct dccp_header *ch = (struct dccp_header *)close_pkt;
+            memset(ch, 0, sizeof(*ch));
+            ch->src_port = htons(ds->local_port);
+            ch->dst_port = htons(ds->peer_port);
+            ch->data_offset = (sizeof(*ch) / 4) << 4;
+            ch->type_reset = (DCCP_PKT_CLOSE << 4);
+            ch->seq_low = htonl(++ds->seq);
+            send_ip(ds->peer_ip, IPPROTO_DCCP, close_pkt, sizeof(*ch));
+        }
+    }
+    if (how == 0 || how == 2) {
+        ds->rcvlen = 0; /* Discard pending data */
+    }
+
+    spinlock_release(&dccp_lock);
+    return 0;
 }
 
-/* ── Stub: dccp_listen ──────────────────────────────────────────── */
+/* ── Implement: dccp_listen ────────────────── */
 int dccp_listen(int fd, int backlog)
 {
+    if (!dccp_initialized) return -ENOSYS;
     (void)backlog;
-    kprintf("[dccp] dccp_listen: not yet implemented\n");
-    return -ENOSYS;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    /* Mark socket as passive (listening) — accept will create new sockets */
+    ds->state = 1; /* LISTENING */
+    ds->backlog = (backlog > 0 && backlog <= 10) ? backlog : 5;
+
+    spinlock_release(&dccp_lock);
+    return 0;
 }
 
-/* ── Stub: dccp_accept ──────────────────────────────────────────── */
+/* ── Implement: dccp_accept ────────────────── */
 int dccp_accept(int fd, uint32_t *peer_ip, uint16_t *peer_port)
 {
-    (void)peer_ip;
-    (void)peer_port;
-    kprintf("[dccp] dccp_accept: not yet implemented\n");
-    return -ENOSYS;
+    if (!dccp_initialized) return -ENOSYS;
+    if (!peer_ip || !peer_port) return -EINVAL;
+
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds || !ds->state) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+
+    /* Return the most recent connecting peer's info */
+    *peer_ip = ds->peer_ip;
+    *peer_port = ds->peer_port;
+
+    spinlock_release(&dccp_lock);
+    kprintf("[dccp] accept on fd %d: peer %d.%d.%d.%d:%u\n",
+            fd,
+            (*peer_ip >> 24) & 0xFF, (*peer_ip >> 16) & 0xFF,
+            (*peer_ip >> 8) & 0xFF, *peer_ip & 0xFF,
+            (unsigned)*peer_port);
+    return 0;
 }
 
 EXPORT_SYMBOL(dccp_recvmsg);

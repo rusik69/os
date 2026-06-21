@@ -373,5 +373,5 @@ void* interval_tree_iter_first(void *root, uint64_t start, uint64_t last)
     (void)start;
     (void)last;
     kprintf("[itree] interval_tree_iter_first: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

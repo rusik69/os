@@ -29,6 +29,7 @@
 #include "lockdep.h"
 #include "export.h"
 #include "smp.h"
+#include "errno.h"
 
 #define MUTEX_MAX 32
 #define MUTEX_WAITERS_MAX 8
@@ -440,21 +441,100 @@ EXPORT_SYMBOL(mutex_init);
 EXPORT_SYMBOL(mutex_lock);
 EXPORT_SYMBOL(mutex_unlock);
 
-/* ── Stub: mutex_trylock_debug ─────────────────────────────── */
+/* ── mutex_trylock (non-blocking) ──────────────────────── */
+int mutex_trylock(int id)
+{
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
+        return -EINVAL;
+    struct mutex_entry *m = &mutexes[id];
+    struct process *self = process_get_current();
+    if (!self) return -EINVAL;
+
+    __asm__ volatile("cli");
+    if (!m->locked) {
+        m->locked = 1;
+        m->owner_pid = self->pid;
+        m->owner_rip = (uint64_t)__builtin_return_address(0);
+        m->owner_orig_prio = self->base_priority;
+        m->owner_cpu = smp_get_cpu_id();
+        held_mutex_add(self, id);
+        __asm__ volatile("sti");
+        return 0;
+    }
+    __asm__ volatile("sti");
+    return -EBUSY;
+}
+
+/* ── mutex_lock_interruptible ──────────────────────────── */
+int mutex_lock_interruptible(int id)
+{
+    if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
+        return -EINVAL;
+    struct mutex_entry *m = &mutexes[id];
+    struct process *self = process_get_current();
+    if (!self) return -EINVAL;
+
+    lock_acquire("mutex", (uint64_t)&mutexes[id], LOCK_TYPE_MUTEX);
+
+    for (;;) {
+        /* Check for pending signals before blocking */
+        if (self->pending_signals & ~self->sig_mask)
+            return -EINTR;
+
+        __asm__ volatile("cli");
+        if (!m->locked) {
+            m->locked = 1;
+            m->owner_pid = self->pid;
+            m->owner_rip = (uint64_t)__builtin_return_address(0);
+            m->owner_orig_prio = self->base_priority;
+            m->owner_cpu = smp_get_cpu_id();
+            held_mutex_add(self, id);
+            __asm__ volatile("sti");
+            return 0;
+        }
+        __asm__ volatile("sti");
+
+        /* Brief spin, then yield */
+        for (int i = 0; i < 64; i++) {
+            if (!m->locked) {
+                __asm__ volatile("cli");
+                if (!m->locked) {
+                    m->locked = 1;
+                    m->owner_pid = self->pid;
+                    m->owner_rip = (uint64_t)__builtin_return_address(0);
+                    m->owner_orig_prio = self->base_priority;
+                    m->owner_cpu = smp_get_cpu_id();
+                    held_mutex_add(self, id);
+                    __asm__ volatile("sti");
+                    return 0;
+                }
+                __asm__ volatile("sti");
+            }
+            __asm__ volatile("pause");
+        }
+
+        scheduler_yield();
+    }
+}
+
+/* ── mutex_trylock_debug ─────────────────────────────── */
 int mutex_trylock_debug(void *lock, const char *file, int line)
 {
-    (void)lock;
     (void)file;
     (void)line;
-    kprintf("[mutex] mutex_trylock_debug: not yet implemented\n");
-    return -ENOSYS;
+    if (!lock) return -EINVAL;
+    spinlock_t *s = (spinlock_t *)lock;
+    if (spinlock_try_acquire(s))
+        return 0;
+    return -EBUSY;
 }
-/* ── Stub: mutex_unlock_debug ─────────────────────────────── */
+/* ── mutex_unlock_debug ─────────────────────────────── */
 int mutex_unlock_debug(void *lock, const char *file, int line)
 {
-    (void)lock;
     (void)file;
     (void)line;
-    kprintf("[mutex] mutex_unlock_debug: not yet implemented\n");
-    return -ENOSYS;
+    if (!lock) return -EINVAL;
+    spinlock_t *s = (spinlock_t *)lock;
+    spinlock_release(s);
+    return 0;
 }

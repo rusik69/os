@@ -962,35 +962,52 @@ struct user_session *session_get(void) { return &current_session; }
 
 int session_is_root(void) { return current_session.uid == 0; }
 
-/* ── Stub: user_getpwnam ────────────────────────────────────── */
+/* ── user_getpwnam ────────────────────────────────────── */
 int user_getpwnam(const char *name, struct user_entry *entry)
 {
-    (void)name;
-    (void)entry;
-    kprintf("[users] user_getpwnam: not yet implemented\n");
-    return -ENOSYS;
+    if (!name || !entry) return -EINVAL;
+
+    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
+        if (!user_table[i].active) continue;
+        if (strcmp(user_table[i].username, name) == 0) {
+            memcpy(entry, &user_table[i], sizeof(struct user_entry));
+            return 0;
+        }
+    }
+    return -ENOENT;
 }
 
-/* ── Stub: user_getpwuid ────────────────────────────────────── */
+/* ── user_getpwuid ────────────────────────────────────── */
 int user_getpwuid(int uid, struct user_entry *entry)
 {
-    (void)uid;
-    (void)entry;
-    kprintf("[users] user_getpwuid: not yet implemented\n");
-    return -ENOSYS;
+    if (!entry) return -EINVAL;
+
+    for (int i = 0; i < USER_MAX_ENTRIES; i++) {
+        if (!user_table[i].active) continue;
+        if ((int)user_table[i].uid == uid) {
+            memcpy(entry, &user_table[i], sizeof(struct user_entry));
+            return 0;
+        }
+    }
+    return -ENOENT;
 }
 
-/* ── Stub: user_setlogin ────────────────────────────────────── */
+/* ── user_setlogin ────────────────────────────────────── */
 int user_setlogin(const char *name)
 {
-    (void)name;
-    kprintf("[users] user_setlogin: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return -EINVAL;
+
+    /* Set the login name for the current session */
+    strncpy(current_session.username, name, USER_MAX_NAME - 1);
+    current_session.username[USER_MAX_NAME - 1] = '\0';
+    return 0;
 }
 
-/* ── Stub: user_getlogin ────────────────────────────────────── */
+/* ── user_getlogin ────────────────────────────────────── */
 const char *user_getlogin(void)
 {
-    kprintf("[users] user_getlogin: not yet implemented\n");
-    return NULL;
+    const char *name = current_session.username;
+    if (name && name[0])
+        return name;
+    return "root";
 }

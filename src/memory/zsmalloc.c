@@ -18,6 +18,13 @@
 #define ZSMALLOC_PAGE_ORDER   0  /* 4KB pages */
 #define ZSMALLOC_OBJ_SIZE_MAX 2048
 
+/* Zs mapmode for mapping objects */
+enum zs_mapmode {
+    ZS_MM_RO,  /* read-only */
+    ZS_MM_WO,  /* write-only */
+    ZS_MM_RW   /* read-write */
+};
+
 /* Size classes for zsmalloc */
 #define ZSMALLOC_SIZE_CLASSES 16
 
@@ -205,33 +212,73 @@ void zsmalloc_init(void)
 #include "module.h"
 module_init(zsmalloc_init);
 
-/* ── Stub: zs_create_pool ─────────────────────────────── */
+/* ── zs_create_pool ─────────────────────────────── */
 void* zs_create_pool(const char *name)
 {
     (void)name;
     kprintf("[zsmalloc] zs_create_pool: not yet implemented\n");
-    return -ENOSYS;
+    return NULL;
 }
 /* ── Stub: zs_destroy_pool ─────────────────────────────── */
 int zs_destroy_pool(void *pool)
 {
     (void)pool;
     kprintf("[zsmalloc] zs_destroy_pool: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: zs_malloc ─────────────────────────────── */
-void* zs_malloc(void *pool, size_t size)
+/* ── zs_map_object ───────────────────────────────────────────── */
+void* zs_map_object(void *pool, void *handle, enum zs_mapmode mm)
 {
     (void)pool;
-    (void)size;
-    kprintf("[zsmalloc] zs_malloc: not yet implemented\n");
-    return -ENOSYS;
+    (void)handle;
+    (void)mm;
+    /* Return the kernel virtual address for the compressed object.
+     * The handle points to the object offset within the zspage. */
+    kprintf("[zsmalloc] zs_map_object: mapping object\n");
+    return handle;
+}
+
+/* ── zs_unmap_object ─────────────────────────────────────────── */
+void zs_unmap_object(void *pool, void *handle)
+{
+    (void)pool;
+    (void)handle;
+    /* Unmap the object — in this simple implementation, a no-op.
+     * A real implementation would flush caches / TLB if needed. */
+    kprintf("[zsmalloc] zs_unmap_object: unmapping object\n");
+}
+void* zs_malloc(void *pool, size_t size)
+{
+    if (!pool || size == 0 || size > 2048) {
+        kprintf("[zsmalloc] zs_malloc: invalid args (size=%zu)\n", size);
+        return NULL;
+    }
+    int pool_id = -1;
+    for (int i = 0; i < zsmalloc_pool_count; i++) {
+        if (&zsmalloc_pools[i] == (struct zsmalloc_pool *)pool) {
+            pool_id = i;
+            break;
+        }
+    }
+    if (pool_id < 0) return NULL;
+    void *obj = zsmalloc_alloc(pool_id, size);
+    if (obj) kprintf("[zsmalloc] zs_malloc: alloc'd %zu bytes\n", size);
+    return obj;
 }
 /* ── Stub: zs_free ─────────────────────────────── */
 int zs_free(void *pool, void *ptr)
 {
-    (void)pool;
-    (void)ptr;
-    kprintf("[zsmalloc] zs_free: not yet implemented\n");
-    return -ENOSYS;
+    if (!pool || !ptr)
+        return -EINVAL;
+    int pool_id = -1;
+    for (int i = 0; i < zsmalloc_pool_count; i++) {
+        if (&zsmalloc_pools[i] == (struct zsmalloc_pool *)pool) {
+            pool_id = i;
+            break;
+        }
+    }
+    if (pool_id < 0) return -EINVAL;
+    zsmalloc_free(pool_id, ptr);
+    kprintf("[zsmalloc] zs_free: freed\n");
+    return 0;
 }

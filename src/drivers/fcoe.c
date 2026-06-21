@@ -412,14 +412,14 @@ int fcoe_xmit(void *skb, void *dev)
     (void)skb;
     (void)dev;
     kprintf("[FCoE] fcoe_xmit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fcoe_recv ───────────────────────────────── */
 int fcoe_recv(void *skb)
 {
     (void)skb;
     kprintf("[FCoE] fcoe_recv: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fcoe_vlan_create ────────────────────────── */
 int fcoe_vlan_create(struct net_device *dev, uint16_t vlan_id)
@@ -427,7 +427,7 @@ int fcoe_vlan_create(struct net_device *dev, uint16_t vlan_id)
     (void)dev;
     (void)vlan_id;
     kprintf("[FCoE] fcoe_vlan_create: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fcoe_vlan_destroy ───────────────────────── */
 int fcoe_vlan_destroy(struct net_device *dev, uint16_t vlan_id)
@@ -435,7 +435,7 @@ int fcoe_vlan_destroy(struct net_device *dev, uint16_t vlan_id)
     (void)dev;
     (void)vlan_id;
     kprintf("[FCoE] fcoe_vlan_destroy: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: fcoe_netdev_event ───────────────────────── */
 int fcoe_netdev_event(struct notifier_block *this, unsigned long event, void *ptr)
@@ -444,5 +444,5 @@ int fcoe_netdev_event(struct notifier_block *this, unsigned long event, void *pt
     (void)event;
     (void)ptr;
     kprintf("[FCoE] fcoe_netdev_event: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

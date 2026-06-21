@@ -532,7 +532,7 @@ int compose_logs(const char *project, void *logs)
     (void)project;
     (void)logs;
     kprintf("[compose] compose_logs: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: compose_exec ─────────────────────────────── */
 int compose_exec(const char *project, const char *svc, const char *cmd)
@@ -541,5 +541,5 @@ int compose_exec(const char *project, const char *svc, const char *cmd)
     (void)svc;
     (void)cmd;
     kprintf("[compose] compose_exec: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

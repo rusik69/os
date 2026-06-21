@@ -339,10 +339,9 @@ module_init(rds_init);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: rds_disconnect ──────────────────────────── */
+/* ── Implement: rds_disconnect ────────────────── */
 int rds_disconnect(struct rds_conn *conn)
 {
-    (void)conn;
-    kprintf("[RDS] rds_disconnect: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[rds] rds_disconnect: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

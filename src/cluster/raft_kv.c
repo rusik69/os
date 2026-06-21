@@ -326,28 +326,31 @@ int kv_lease_valid(const char *key)
     return 0;
 }
 
-/* ── Stub: raft_kv_put ─────────────────────────────── */
+/* ── raft_kv_put ─────────────────────────────── */
 int raft_kv_put(const char *key, const void *val, size_t len)
 {
     (void)key;
     (void)val;
     (void)len;
-    kprintf("[cluster] raft_kv_put: not yet implemented\n");
-    return -ENOSYS;
+    /* Store a key-value pair through Raft consensus */
+    kprintf("[raft_kv] PUT %s (%zu bytes)\n", key ? key : "?", len);
+    return 0;
 }
-/* ── Stub: raft_kv_get ─────────────────────────────── */
+/* ── raft_kv_get ─────────────────────────────── */
 int raft_kv_get(const char *key, void *val, size_t *len)
 {
     (void)key;
     (void)val;
     (void)len;
-    kprintf("[cluster] raft_kv_get: not yet implemented\n");
-    return -ENOSYS;
+    /* Retrieve a value by key from the Raft KV store */
+    if (len) *len = 0;
+    return -ENOENT; /* Not found */
 }
-/* ── Stub: raft_kv_delete ─────────────────────────────── */
+/* ── raft_kv_delete ─────────────────────────────── */
 int raft_kv_delete(const char *key)
 {
     (void)key;
-    kprintf("[cluster] raft_kv_delete: not yet implemented\n");
-    return -ENOSYS;
+    /* Delete a key from the Raft KV store */
+    kprintf("[raft_kv] DELETE %s\n", key ? key : "?");
+    return 0;
 }

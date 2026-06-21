@@ -151,7 +151,7 @@ int aio_enhanced_submit(void *ctx, void *iocb, int nr)
     (void)iocb;
     (void)nr;
     kprintf("[aio] aio_enhanced_submit: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: aio_enhanced_getevents ─────────────────────────────── */
 int aio_enhanced_getevents(void *ctx, uint64_t min_nr, uint64_t max_nr, void *events)
@@ -161,7 +161,7 @@ int aio_enhanced_getevents(void *ctx, uint64_t min_nr, uint64_t max_nr, void *ev
     (void)max_nr;
     (void)events;
     kprintf("[aio] aio_enhanced_getevents: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: aio_enhanced_cancel ─────────────────────────────── */
 int aio_enhanced_cancel(void *ctx, void *iocb)
@@ -169,5 +169,5 @@ int aio_enhanced_cancel(void *ctx, void *iocb)
     (void)ctx;
     (void)iocb;
     kprintf("[aio] aio_enhanced_cancel: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

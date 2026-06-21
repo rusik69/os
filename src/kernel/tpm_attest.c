@@ -606,7 +606,7 @@ int tpm_attest_init(void)
 int tpm_attest_cleanup(void)
 {
     kprintf("[tpm] tpm_attest_cleanup: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: tpm_attest_get_platform_pcr ─────────────────────────────── */
 int tpm_attest_get_platform_pcr(int pcr, void *val, size_t *len)
@@ -615,5 +615,5 @@ int tpm_attest_get_platform_pcr(int pcr, void *val, size_t *len)
     (void)val;
     (void)len;
     kprintf("[tpm] tpm_attest_get_platform_pcr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

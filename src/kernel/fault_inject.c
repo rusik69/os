@@ -512,7 +512,7 @@ uint64_t fault_inject_get_call_count(void) {
 int fault_inject_attr(void)
 {
     kprintf("[FAULT_INJECT] fault_inject_attr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: fault_create_debugfs_attr ───────────────────────────────── */
@@ -521,7 +521,7 @@ int fault_create_debugfs_attr(const char *name, void *parent,
 {
     (void)name; (void)parent; (void)attr;
     kprintf("[FAULT_INJECT] fault_create_debugfs_attr: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: should_fail ─────────────────────────────────────────────── */

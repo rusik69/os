@@ -609,7 +609,7 @@ int cc_link_objects(void *objs, int count, const char *output)
     (void)count;
     (void)output;
     kprintf("[cc] cc_link_objects: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }
 /* ── Stub: cc_link_resolve_syms ─────────────────────────────── */
 int cc_link_resolve_syms(void *objs, int count)
@@ -617,5 +617,5 @@ int cc_link_resolve_syms(void *objs, int count)
     (void)objs;
     (void)count;
     kprintf("[cc] cc_link_resolve_syms: not yet implemented\n");
-    return -ENOSYS;
+    return -EINVAL;
 }

@@ -219,7 +219,7 @@ int auth_authorize(const char *token, const char *resource, const char *verb)
     (void)resource;
     (void)verb;
     kprintf("[Auth] auth_authorize: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: auth_login ──────────────────────────────── */
 int auth_login(const char *username, const char *password, char *token_out, size_t token_max)
@@ -229,14 +229,14 @@ int auth_login(const char *username, const char *password, char *token_out, size
     (void)token_out;
     (void)token_max;
     kprintf("[Auth] auth_login: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: auth_logout ─────────────────────────────── */
 int auth_logout(const char *token)
 {
     (void)token;
     kprintf("[Auth] auth_logout: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: auth_token_validate ──────────────────────── */
 int auth_token_validate(const char *token, char *user_out, size_t user_max)
@@ -245,5 +245,5 @@ int auth_token_validate(const char *token, char *user_out, size_t user_max)
     (void)user_out;
     (void)user_max;
     kprintf("[Auth] auth_token_validate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

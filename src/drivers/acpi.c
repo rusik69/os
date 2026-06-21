@@ -1566,5 +1566,5 @@ void* acpi_get_table(const char *sig)
 {
     (void)sig;
     kprintf("[acpi] acpi_get_table: not yet implemented\n");
-    return -ENOSYS;
+    return NULL;
 }

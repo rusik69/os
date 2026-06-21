@@ -331,5 +331,5 @@ int dma_buf_begin_cpu_access(struct dma_buf *dmabuf, enum dma_data_direction dir
     (void)dmabuf;
     (void)dir;
     kprintf("[dma_buf] dma_buf_begin_cpu_access: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

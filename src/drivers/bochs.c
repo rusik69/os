@@ -56,5 +56,5 @@ int bochs_set_palette(const void *palette, int count)
     (void)palette;
     (void)count;
     kprintf("[bochs] bochs_set_palette: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

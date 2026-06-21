@@ -1310,53 +1310,125 @@ MODULE_VERSION("1.0");
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: nvme_submit_cmd ─────────────────────────── */
+/* ── Submit command to a queue ──────────────────────────── */
 int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
 {
-    (void)q;
-    (void)cmd;
-    kprintf("[NVMe] nvme_submit_cmd: not yet implemented\n");
-    return -ENOSYS;
+    if (!q || !cmd)
+        return -EINVAL;
+
+    struct nvme_io_queue *queue = (struct nvme_io_queue *)q;
+    if (!queue->valid || !queue->sq_virt)
+        return -ENODEV;
+
+    /* Copy command to the submission queue slot */
+    struct nvme_sq_entry *slot = (struct nvme_sq_entry *)queue->sq_virt + queue->sq_tail;
+    memcpy(slot, cmd, sizeof(struct nvme_sq_entry));
+
+    uint16_t sq_tail = queue->sq_tail;
+    queue->sq_tail = (uint16_t)((queue->sq_tail + 1) % queue->sq_size);
+
+    /* Ring the submission queue doorbell */
+    uint32_t doorbell_offset = 0x1000 + (2 * queue->qid) * queue->stride;
+    nvme_write32(&g_nvme_ctrl, doorbell_offset, queue->sq_tail);
+
+    return 0;
 }
-/* ── Stub: nvme_complete_cmd ───────────────────────── */
+
+/* ── Poll for command completion ───────────────────────── */
 int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 {
-    (void)q;
-    (void)cqe;
-    kprintf("[NVMe] nvme_complete_cmd: not yet implemented\n");
-    return -ENOSYS;
+    if (!q || !cqe)
+        return -EINVAL;
+
+    struct nvme_io_queue *queue = (struct nvme_io_queue *)q;
+    if (!queue->valid || !queue->cq_virt)
+        return -ENODEV;
+
+    /* Poll for phase tag change */
+    struct nvme_cq_entry *slot = (struct nvme_cq_entry *)queue->cq_virt + queue->cq_head;
+    uint16_t expected_phase = 1;  /* initial phase tag */
+    uint32_t timeout = 10000000;
+
+    while (timeout--) {
+        uint16_t status = slot->status;
+        uint16_t phase = (status >> 14) & 1;
+        if (phase == expected_phase)
+            break;
+        __asm__ volatile("pause");
+    }
+
+    if (timeout == 0)
+        return -EIO;
+
+    /* Copy completion entry */
+    memcpy(cqe, slot, sizeof(struct nvme_cq_entry));
+
+    /* Advance completion queue head */
+    queue->cq_head = (uint16_t)((queue->cq_head + 1) % queue->cq_size);
+
+    /* Ring the completion queue doorbell */
+    uint32_t doorbell_offset = 0x1000 + (2 * queue->qid + 1) * queue->stride;
+    nvme_write32(&g_nvme_ctrl, doorbell_offset, queue->cq_head);
+
+    return 0;
 }
-/* ── Stub: nvme_create_cq ──────────────────────────── */
+
+/* ── Create completion queue (admin command) ──────────── */
 int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
 {
-    (void)cqid;
-    (void)addr;
-    (void)size;
-    (void)iv;
-    kprintf("[NVMe] nvme_create_cq: not yet implemented\n");
-    return -ENOSYS;
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+
+    cmd.cdw0 = NVME_ADMIN_CREATE_CQ | (0 << 8);  /* opcode + fuse */
+    cmd.cdw10 = (uint32_t)(cqid & 0xFFFF) |
+                ((uint32_t)(size - 1) << 16);  /* queue size - 1 */
+    cmd.cdw11 = (1 << 0) |                     /* physically contiguous */
+                ((uint32_t)(iv & 0xFFFF) << 16); /* interrupt vector */
+    cmd.prp1 = addr;
+
+    return nvme_submit_admin_cmd(&cmd, &cqe);
 }
-/* ── Stub: nvme_create_sq ──────────────────────────── */
+
+/* ── Create submission queue (admin command) ──────────── */
 int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
 {
-    (void)sqid;
-    (void)addr;
-    (void)size;
-    (void)cqid;
-    kprintf("[NVMe] nvme_create_sq: not yet implemented\n");
-    return -ENOSYS;
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+
+    cmd.cdw0 = NVME_ADMIN_CREATE_SQ | (0 << 8);
+    cmd.cdw10 = (uint32_t)(sqid & 0xFFFF) |
+                ((uint32_t)(size - 1) << 16);
+    cmd.cdw11 = (1 << 0) |                     /* physically contiguous */
+                ((uint32_t)(cqid & 0xFFFF) << 16); /* completion queue ID */
+    cmd.prp1 = addr;
+
+    return nvme_submit_admin_cmd(&cmd, &cqe);
 }
-/* ── Stub: nvme_delete_cq ──────────────────────────── */
+
+/* ── Delete completion queue (admin command) ──────────── */
 int nvme_delete_cq(uint16_t cqid)
 {
-    (void)cqid;
-    kprintf("[NVMe] nvme_delete_cq: not yet implemented\n");
-    return -ENOSYS;
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+
+    cmd.cdw0 = NVME_ADMIN_DELETE_CQ | (0 << 8);
+    cmd.cdw10 = cqid;
+
+    return nvme_submit_admin_cmd(&cmd, &cqe);
 }
-/* ── Stub: nvme_delete_sq ──────────────────────────── */
+
+/* ── Delete submission queue (admin command) ──────────── */
 int nvme_delete_sq(uint16_t sqid)
 {
-    (void)sqid;
-    kprintf("[NVMe] nvme_delete_sq: not yet implemented\n");
-    return -ENOSYS;
+    struct nvme_sq_entry cmd;
+    struct nvme_cq_entry cqe;
+    memset(&cmd, 0, sizeof(cmd));
+
+    cmd.cdw0 = NVME_ADMIN_DELETE_SQ | (0 << 8);
+    cmd.cdw10 = sqid;
+
+    return nvme_submit_admin_cmd(&cmd, &cqe);
 }

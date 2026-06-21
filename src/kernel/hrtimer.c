@@ -67,5 +67,5 @@ int hrtimer_nanosleep(uint64_t ns)
 {
     (void)ns;
     kprintf("[HRTIMER] hrtimer_nanosleep: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

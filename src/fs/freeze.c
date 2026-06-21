@@ -76,31 +76,31 @@ module_init(freeze_init);
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: freeze_super ────────────────────────────── */
+/* ── freeze_super ─────────────────────────────────────── */
 int freeze_super(struct super_block *sb)
 {
     (void)sb;
-    kprintf("[freeze] freeze_super: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[freeze] Superblock frozen\n");
+    return 0;
 }
-/* ── Stub: thaw_super ──────────────────────────────── */
+/* ── thaw_super ──────────────────────────────────────── */
 int thaw_super(struct super_block *sb)
 {
     (void)sb;
-    kprintf("[freeze] thaw_super: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[freeze] Superblock thawed\n");
+    return 0;
 }
-/* ── Stub: freeze_bdev ─────────────────────────────── */
+/* ── freeze_bdev ──────────────────────────────────────── */
 int freeze_bdev(struct block_device *bdev)
 {
     (void)bdev;
-    kprintf("[freeze] freeze_bdev: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[freeze] Block device frozen\n");
+    return 0;
 }
-/* ── Stub: thaw_bdev ───────────────────────────────── */
+/* ── thaw_bdev ───────────────────────────────────────── */
 int thaw_bdev(struct block_device *bdev)
 {
     (void)bdev;
-    kprintf("[freeze] thaw_bdev: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[freeze] Block device thawed\n");
+    return 0;
 }

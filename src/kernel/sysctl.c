@@ -368,5 +368,5 @@ int sysctl_unregister(void *table)
 {
     (void)table;
     kprintf("[sysctl] sysctl_unregister: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

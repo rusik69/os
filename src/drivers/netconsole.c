@@ -409,12 +409,12 @@ int netconsole_send(const void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[netconsole] netconsole_send: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: netconsole_setup ─────────────────────────────── */
 int netconsole_setup(const char *config)
 {
     (void)config;
     kprintf("[netconsole] netconsole_setup: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

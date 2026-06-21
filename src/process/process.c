@@ -1718,20 +1718,79 @@ int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid
     return 0; /* Execute permission granted */
 }
 
-/* ── Stub: process_wait ─────────────────────────────── */
+/* ── process_wait ─────────────────────────────── */
 int process_wait(int pid, int *status, int options)
 {
-    (void)pid;
-    (void)status;
     (void)options;
-    kprintf("[process] process_wait: not yet implemented\n");
-    return -ENOSYS;
+    struct process *cur = process_get_current();
+    if (!cur) return -EINVAL;
+
+    struct process *table = process_get_table();
+
+    for (;;) {
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_ZOMBIE)
+                continue;
+            if (table[i].parent_pid != cur->pid)
+                continue;
+            if (pid > 0 && (int)table[i].pid != pid)
+                continue;
+            if (pid == -1)
+                ; /* any child */
+            else if (pid == 0) {
+                /* Same process group as current */
+                if (table[i].pgid != cur->pgid)
+                    continue;
+            }
+
+            /* Found a zombie child */
+            if (status)
+                *status = table[i].exit_code;
+
+            int child_pid = (int)table[i].pid;
+
+            /* Clean up the child process */
+            process_cleanup(&table[i]);
+            table[i].state = PROCESS_UNUSED;
+
+            return child_pid;
+        }
+
+        /* No zombie children found. If WNOHANG is set, return 0. */
+        if (options & 1) /* WNOHANG */
+            return 0;
+
+        /* Check if any children exist at all */
+        int has_children = 0;
+        for (int i = 0; i < PROCESS_MAX; i++) {
+            if (table[i].state != PROCESS_UNUSED &&
+                table[i].parent_pid == cur->pid) {
+                has_children = 1;
+                break;
+            }
+        }
+
+        if (!has_children)
+            return -ECHILD;
+
+        /* Block until a child exits */
+        cur->state = PROCESS_BLOCKED;
+        scheduler_remove(cur);
+        scheduler_yield();
+        /* Re-acquire and check again */
+    }
 }
-/* ── Stub: process_kill ─────────────────────────────── */
+
+/* ── process_kill ─────────────────────────────── */
 int process_kill(int pid, int sig)
 {
-    (void)pid;
-    (void)sig;
-    kprintf("[process] process_kill: not yet implemented\n");
-    return -ENOSYS;
+    if (pid <= 0) return -EINVAL;
+
+    if (sig == 0) {
+        /* Signal 0 is used to check if process exists */
+        struct process *p = process_get_by_pid((uint32_t)pid);
+        return (p && p->state != PROCESS_UNUSED) ? 0 : -ESRCH;
+    }
+
+    return signal_send((uint32_t)pid, sig);
 }

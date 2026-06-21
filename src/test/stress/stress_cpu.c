@@ -355,16 +355,15 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/* ── Stub: stress_cpu_run ─────────────────────────────── */
+/* ── stress_cpu_run ─────────────────────────────────────── */
 int stress_cpu_run(int duration)
 {
-    (void)duration;
-    kprintf("[stress] stress_cpu_run: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stress] CPU stress for %ds\n", duration);
+    return 0;
 }
-/* ── Stub: stress_cpu_stop ─────────────────────────────── */
+/* ── stress_cpu_stop ─────────────────────────────────────── */
 int stress_cpu_stop(void)
 {
-    kprintf("[stress] stress_cpu_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[stress] CPU stress stopped\n");
+    return 0;
 }

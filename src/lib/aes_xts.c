@@ -197,29 +197,46 @@ void xts_decrypt(const struct xts_ctx *ctx, uint64_t start_sector,
     }
 }
 
-/* ── Stub: aes_xts_encrypt ─────────────────────────────── */
+/* ── aes_xts_encrypt ─────────────────────────────── */
 int aes_xts_encrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
 {
-    (void)key1;
-    (void)key2;
-    (void)key_len;
-    (void)iv;
-    (void)src;
-    (void)dst;
-    (void)len;
-    kprintf("[aes_xts] aes_xts_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    if (!key1 || !key2 || !src || !dst)
+        return -1;
+    struct xts_ctx ctx;
+    int ret = xts_init(&ctx, (const uint8_t *)key1, (const uint8_t *)key2, (int)key_len);
+    if (ret != 0)
+        return ret;
+    uint64_t sector = iv ? *(const uint64_t *)iv : 0;
+    int num_sectors = (int)(len / XTS_SECTOR_SIZE);
+    if (num_sectors > 0)
+        xts_encrypt(&ctx, sector, (const uint8_t *)src, (uint8_t *)dst, num_sectors);
+    /* Handle remaining partial sector */
+    size_t done = num_sectors * XTS_SECTOR_SIZE;
+    if (done < len) {
+        xts_encrypt_sector(&ctx, sector + num_sectors,
+                           (const uint8_t *)src + done,
+                           (uint8_t *)dst + done);
+    }
+    return 0;
 }
-/* ── Stub: aes_xts_decrypt ─────────────────────────────── */
+/* ── aes_xts_decrypt ─────────────────────────────── */
 int aes_xts_decrypt(const void *key1, const void *key2, size_t key_len, const void *iv, const void *src, void *dst, size_t len)
 {
-    (void)key1;
-    (void)key2;
-    (void)key_len;
-    (void)iv;
-    (void)src;
-    (void)dst;
-    (void)len;
-    kprintf("[aes_xts] aes_xts_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    if (!key1 || !key2 || !src || !dst)
+        return -1;
+    struct xts_ctx ctx;
+    int ret = xts_init(&ctx, (const uint8_t *)key1, (const uint8_t *)key2, (int)key_len);
+    if (ret != 0)
+        return ret;
+    uint64_t sector = iv ? *(const uint64_t *)iv : 0;
+    int num_sectors = (int)(len / XTS_SECTOR_SIZE);
+    if (num_sectors > 0)
+        xts_decrypt(&ctx, sector, (const uint8_t *)src, (uint8_t *)dst, num_sectors);
+    size_t done = num_sectors * XTS_SECTOR_SIZE;
+    if (done < len) {
+        xts_decrypt_sector(&ctx, sector + num_sectors,
+                           (const uint8_t *)src + done,
+                           (uint8_t *)dst + done);
+    }
+    return 0;
 }

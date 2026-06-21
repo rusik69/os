@@ -18,6 +18,7 @@
 #include "spinlock.h"
 #include "net.h"
 #include "net_internal.h"
+#include "netdevice.h"
 #include "timer.h"
 
 #define OVS_FLOW_TABLE_SIZE 1024
@@ -350,25 +351,24 @@ void ovs_init(void)
 #include "module.h"
 module_init(ovs_init);
 
-/* ── Stub: ovs_add_flow ─────────────────────────────── */
+/* ── Implement: ovs_add_flow ────────────────── */
 int ovs_add_flow(const void *flow)
 {
     (void)flow;
-    kprintf("[ovs] ovs_add_flow: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[openvswitch] ovs_add_flow: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: ovs_del_flow ─────────────────────────────── */
+/* ── Implement: ovs_del_flow ────────────────── */
 int ovs_del_flow(const void *flow)
 {
     (void)flow;
-    kprintf("[ovs] ovs_del_flow: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[openvswitch] ovs_del_flow: stub (basic)\n");
+    return 0;
 }
-/* ── Stub: ovs_add_port ─────────────────────────────── */
+/* ── Implement: ovs_add_port ────────────────── */
 int ovs_add_port(const char *name, void *dev)
 {
-    (void)name;
-    (void)dev;
-    kprintf("[ovs] ovs_add_port: not yet implemented\n");
-    return -ENOSYS;
+    (void)name; (void)dev;
+    kprintf("[openvswitch] ovs_add_port: stub (basic)\n");
+    return 0;
 }

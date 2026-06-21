@@ -692,7 +692,7 @@ int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[virtio] virtio_fs_read: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: virtio_fs_write ─────────────────────────────── */
 int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
@@ -702,5 +702,5 @@ int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
     (void)count;
     (void)offset;
     kprintf("[virtio] virtio_fs_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

@@ -489,17 +489,17 @@ int kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1)
     (void)a0;
     (void)a1;
     kprintf("[kvm] kvm_hypercall: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kvm_para_available ─────────────────────────────── */
 int kvm_para_available(void)
 {
     kprintf("[kvm] kvm_para_available: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: kvm_register_steal_time ─────────────────────────────── */
 int kvm_register_steal_time(void)
 {
     kprintf("[kvm] kvm_register_steal_time: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

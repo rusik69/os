@@ -143,5 +143,5 @@ int intel_gpu_mode_set(void *dev, void *mode)
     (void)dev;
     (void)mode;
     kprintf("[intel_gpu] intel_gpu_mode_set: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

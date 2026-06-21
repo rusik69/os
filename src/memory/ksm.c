@@ -383,37 +383,50 @@ module_init(ksm_init);
 /* ── Stub: ksm_scan ─────────────────────────────────────────── */
 int ksm_scan(void)
 {
-    kprintf("[ksm] ksm_scan: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ksm] ksm_scan: starting scan cycle\n");
+    ksm_scan_cycle();
+    return ksm_get_total_scanned() > 0 ? 0 : -EAGAIN;
 }
 
 /* ── Stub: ksm_do_scan ──────────────────────────────────────── */
 int ksm_do_scan(int nr_to_scan)
 {
-    (void)nr_to_scan;
-    kprintf("[ksm] ksm_do_scan: not yet implemented\n");
-    return -ENOSYS;
+    if (nr_to_scan <= 0) {
+        kprintf("[ksm] ksm_do_scan: invalid count %d\n", nr_to_scan);
+        return -EINVAL;
+    }
+    kprintf("[ksm] ksm_do_scan: scanning up to %d pages\n", nr_to_scan);
+    int before = (int)ksm_get_total_scanned();
+    ksm_scan_cycle();
+    return (int)(ksm_get_total_scanned() - (uint64_t)before);
 }
 
 /* ── Stub: ksm_merge_page ───────────────────────────────────── */
 int ksm_merge_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[ksm] ksm_merge_page: not yet implemented\n");
-    return -ENOSYS;
+    if (phys_addr == 0 || (phys_addr & 0xFFF) != 0) {
+        kprintf("[ksm] ksm_merge_page: invalid phys 0x%llx\n", (unsigned long long)phys_addr);
+        return -EINVAL;
+    }
+    kprintf("[ksm] ksm_merge_page: merging page 0x%llx\n", (unsigned long long)phys_addr);
+    return ksm_register_region_legacy((uint64_t)PHYS_TO_VIRT(phys_addr), 4096);
 }
 
 /* ── Stub: ksm_unmerge_page ─────────────────────────────────── */
 int ksm_unmerge_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[ksm] ksm_unmerge_page: not yet implemented\n");
-    return -ENOSYS;
+    if (phys_addr == 0 || (phys_addr & 0xFFF) != 0) {
+        kprintf("[ksm] ksm_unmerge_page: invalid address 0x%llx\n", (unsigned long long)phys_addr);
+        return -EINVAL;
+    }
+    kprintf("[ksm] ksm_unmerge_page: unmerging page 0x%llx\n", (unsigned long long)phys_addr);
+    return ksm_unregister_region((uint64_t)PHYS_TO_VIRT(phys_addr));
 }
 
 /* ── Stub: ksm_check_stable_tree ────────────────────────────── */
 int ksm_check_stable_tree(void)
 {
-    kprintf("[ksm] ksm_check_stable_tree: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[ksm] ksm_check_stable_tree: checking %d tracked pages\n", ksm_get_page_count());
+    ksm_scan_cycle();
+    return 0;
 }

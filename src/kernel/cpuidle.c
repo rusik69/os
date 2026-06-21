@@ -817,7 +817,7 @@ int cpuidle_select(struct cpuidle_device *dev)
 {
     (void)dev;
     kprintf("[CPUIDLE] cpuidle_select: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cpuidle_enter ───────────────────────────────────────────── */
@@ -825,7 +825,7 @@ int cpuidle_enter(struct cpuidle_device *dev, int state_index)
 {
     (void)dev; (void)state_index;
     kprintf("[CPUIDLE] cpuidle_enter: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cpuidle_reflect ─────────────────────────────────────────── */

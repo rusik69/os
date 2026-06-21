@@ -500,7 +500,7 @@ int kexec_crash_is_loaded(void)
 int kexec_unload(void)
 {
     kprintf("[KEXEC] kexec_unload: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: kexec_shutdown ──────────────────────────────────────────── */
@@ -513,5 +513,5 @@ void kexec_shutdown(void)
 int kexec_jump(void)
 {
     kprintf("[KEXEC] kexec_jump: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

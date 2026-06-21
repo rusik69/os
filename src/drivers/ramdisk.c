@@ -87,29 +87,83 @@ uint32_t ramdisk_get_sectors(void) {
 #include "module.h"
 module_init(ramdisk_init);
 
-/* ── Stub: ramdisk_read ─────────────────────────────── */
+/* ── Byte-level read using sector-based backing store ─── */
 int ramdisk_read(void *buf, size_t count, uint64_t offset)
 {
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[ramdisk] ramdisk_read: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || !count || !ramdisk_ready)
+        return -EINVAL;
+
+    uint32_t start_lba = (uint32_t)(offset / RAMDISK_SECTOR_SIZE);
+    uint32_t end_lba   = (uint32_t)((offset + count + RAMDISK_SECTOR_SIZE - 1) / RAMDISK_SECTOR_SIZE);
+    uint32_t num_sectors = end_lba - start_lba;
+    if (num_sectors == 0)
+        return 0;
+
+    /* Allocate temporary sector buffer */
+    uint8_t tmp[RAMDISK_SECTOR_SIZE];
+
+    size_t buf_off = 0;
+    uint64_t remain = count;
+    for (uint32_t i = 0; i < num_sectors && remain > 0; i++) {
+        if (ramdisk_read_sectors(start_lba + i, 1, tmp) < 0)
+            return -EIO;
+
+        uint32_t copy_start = (i == 0) ? (uint32_t)(offset % RAMDISK_SECTOR_SIZE) : 0;
+        uint32_t copy_len = (uint32_t)remain;
+        if (copy_len > RAMDISK_SECTOR_SIZE - copy_start)
+            copy_len = RAMDISK_SECTOR_SIZE - copy_start;
+
+        memcpy((uint8_t *)buf + buf_off, tmp + copy_start, copy_len);
+        buf_off += copy_len;
+        remain -= copy_len;
+    }
+
+    return 0;
 }
-/* ── Stub: ramdisk_write ─────────────────────────────── */
+
+/* ── Byte-level write using sector-based backing store ─── */
 int ramdisk_write(const void *buf, size_t count, uint64_t offset)
 {
-    (void)buf;
-    (void)count;
-    (void)offset;
-    kprintf("[ramdisk] ramdisk_write: not yet implemented\n");
-    return -ENOSYS;
+    if (!buf || !count || !ramdisk_ready)
+        return -EINVAL;
+
+    uint32_t start_lba = (uint32_t)(offset / RAMDISK_SECTOR_SIZE);
+    uint32_t end_lba   = (uint32_t)((offset + count + RAMDISK_SECTOR_SIZE - 1) / RAMDISK_SECTOR_SIZE);
+    uint32_t num_sectors = end_lba - start_lba;
+    if (num_sectors == 0)
+        return 0;
+
+    uint8_t tmp[RAMDISK_SECTOR_SIZE];
+
+    size_t buf_off = 0;
+    uint64_t remain = count;
+    for (uint32_t i = 0; i < num_sectors && remain > 0; i++) {
+        uint32_t copy_start = (i == 0) ? (uint32_t)(offset % RAMDISK_SECTOR_SIZE) : 0;
+        uint32_t copy_len = (uint32_t)remain;
+        if (copy_len > RAMDISK_SECTOR_SIZE - copy_start)
+            copy_len = RAMDISK_SECTOR_SIZE - copy_start;
+
+        /* Read-modify-write if not covering the whole sector */
+        if (copy_start != 0 || copy_len != RAMDISK_SECTOR_SIZE) {
+            if (ramdisk_read_sectors(start_lba + i, 1, tmp) < 0)
+                return -EIO;
+        }
+
+        memcpy(tmp + copy_start, (const uint8_t *)buf + buf_off, copy_len);
+        if (ramdisk_write_sectors(start_lba + i, 1, tmp) < 0)
+            return -EIO;
+
+        buf_off += copy_len;
+        remain -= copy_len;
+    }
+
+    return 0;
 }
-/* ── Stub: ramdisk_ioctl ─────────────────────────────── */
+
+/* ── ioctl stub (ramdisk does not support any ioctls) ─── */
 int ramdisk_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;
-    kprintf("[ramdisk] ramdisk_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return -ENOTTY;
 }

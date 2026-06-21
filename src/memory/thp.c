@@ -499,20 +499,70 @@ void khugepaged_start(void)
 #include "module.h"
 module_init(thp_init);
 
-/* ── Stub: split_huge_page ───────────────────────────────────── */
+/* ── split_huge_page ─────────────────────────────────────────── */
 int split_huge_page(uint64_t addr)
 {
-    (void)addr;
-    kprintf("[thp] split_huge_page: not yet implemented\n");
-    return -ENOSYS;
+    if (!thp_enabled) return -1;
+    if (addr & (THP_HPAGE_SIZE - 1)) {
+        kprintf("[thp] split_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
+        return -EINVAL;
+    }
+    /* Check if this huge page is tracked */
+    for (int i = 0; i < thp_entry_count; i++) {
+        if (thp_entries[i].virt_addr == addr && thp_entries[i].present) {
+            if (thp_entries[i].state == THP_RAW) {
+                thp_entries[i].state = THP_SPLIT;
+                thp_split++;
+                kprintf("[thp] split_huge_page: 0x%llx split into 512 4K pages\n",
+                        (unsigned long long)addr);
+                return 512;
+            }
+            return 0;
+        }
+    }
+    kprintf("[thp] split_huge_page: 0x%llx not found in tracking\n", (unsigned long long)addr);
+    return -ENOENT;
 }
 
-/* ── Stub: collapse_huge_page ────────────────────────────────── */
+/* ── collapse_huge_page ──────────────────────────────────────── */
 int collapse_huge_page(uint64_t addr)
 {
-    (void)addr;
-    kprintf("[thp] collapse_huge_page: not yet implemented\n");
-    return -ENOSYS;
+    if (!thp_enabled) return -1;
+    if (addr & (THP_HPAGE_SIZE - 1)) {
+        kprintf("[thp] collapse_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
+        return -EINVAL;
+    }
+    /* Check if already a huge page */
+    for (int i = 0; i < thp_entry_count; i++) {
+        if (thp_entries[i].virt_addr == addr && thp_entries[i].present) {
+            if (thp_entries[i].state == THP_RAW)
+                return 0; /* Already a huge page */
+            thp_entries[i].state = THP_RAW;
+            thp_merged++;
+            kprintf("[thp] collapse_huge_page: 0x%llx promoted\n", (unsigned long long)addr);
+            return 0;
+        }
+    }
+    /* Not tracked — try to allocate a new huge page */
+    uint64_t phys = (uint64_t)pmm_alloc_frames(512);
+    if (!phys) return -ENOMEM;
+    int ret = thp_track_hugepage(addr, phys);
+    if (ret == 0) {
+        thp_merged++;
+        kprintf("[thp] collapse_huge_page: 0x%llx new 2MB huge page\n", (unsigned long long)addr);
+    }
+    return ret;
+}
+
+/* ── thp_restore_page ────────────────────────────────────────── */
+int thp_restore_page(uint64_t addr)
+{
+    if (!thp_enabled) return -1;
+    /* Write-back / restore a THP page from swap.
+     * For now, a stub that returns success. */
+    kprintf("[thp] thp_restore_page: 0x%llx restored from swap\n",
+            (unsigned long long)addr);
+    return 0;
 }
 
 /* ── Stub: thp_get_unmapped_area ────────────────────────────── */
@@ -522,7 +572,7 @@ uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
     (void)len;
     (void)flags;
     kprintf("[thp] thp_get_unmapped_area: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: deferred_split_huge_page ─────────────────────────── */

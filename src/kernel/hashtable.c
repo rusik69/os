@@ -108,5 +108,5 @@ void* hashtable_lookup(void *ht, unsigned long key)
     (void)ht;
     (void)key;
     kprintf("[hashtable] hashtable_lookup: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

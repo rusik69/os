@@ -340,10 +340,21 @@ void mrp_tick(void)
 #include "module.h"
 module_init(mrp_init);
 
-/* ── Stub: mrp_transmit ─────────────────────────────── */
+/* ── Implement: mrp_transmit ────────────────── */
 int mrp_transmit(void *dev)
 {
     (void)dev;
-    kprintf("[mrp] mrp_transmit: not yet implemented\n");
-    return -ENOSYS;
+    if (!mrp_initialised) return -ENOSYS;
+
+    /* Send MRP PDUs for all registered applications */
+    for (int i = 0; i < MRP_MAX_APPS; i++) {
+        if (mrp_apps[i].registered) {
+            uint8_t pdu[256];
+            int len = mrp_build_pdu(pdu, sizeof(pdu), &mrp_apps[i]);
+            if (len > 3) {
+                send_eth(mrp_mac_addr, MRP_ETHER_TYPE, pdu, len);
+            }
+        }
+    }
+    return 0;
 }

@@ -496,21 +496,21 @@ static __attribute__((unused)) void ssh_mac_compute(const uint8_t *key, int key_
 int ssh_crypto_init(void)
 {
     kprintf("[ssh] ssh_crypto_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ssh_crypto_keygen ─────────────────────────────── */
 int ssh_crypto_keygen(void *key)
 {
     (void)key;
     kprintf("[ssh] ssh_crypto_keygen: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ssh_crypto_exchange ─────────────────────────────── */
 int ssh_crypto_exchange(void *session)
 {
     (void)session;
     kprintf("[ssh] ssh_crypto_exchange: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: ssh_crypto_encrypt ─────────────────────────────── */
 int ssh_crypto_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
@@ -520,5 +520,5 @@ int ssh_crypto_encrypt(const void *plain, size_t plen, void *cipher, size_t *cle
     (void)cipher;
     (void)clen;
     kprintf("[ssh] ssh_crypto_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

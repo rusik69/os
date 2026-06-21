@@ -599,60 +599,183 @@ MODULE_DESCRIPTION("Floppy disk controller driver");
 
 #endif /* MODULE */
 
-/* ── Stub: floppy_write_sectors ─────────────────────────────── */
+/* ── Write sectors using DMA ──────────────────────────── */
 int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
 {
-    (void)drive;
-    (void)lba;
-    (void)buf;
-    (void)count;
-    kprintf("[floppy] floppy_write_sectors: not yet implemented\n");
-    return -ENOSYS;
+    if (drive < 0 || drive > 3 || !buf || count == 0)
+        return -1;
+    if (!g_floppy_present)
+        return -1;
+
+    /* Convert LBA to CHS */
+    int cylinder = (int)(lba / (FLOPPY_HEADS * FLOPPY_SECTORS));
+    int head    = (int)((lba / FLOPPY_SECTORS) % FLOPPY_HEADS);
+    int sector  = (int)(lba % FLOPPY_SECTORS) + 1;
+    int total_bytes = count * FLOPPY_SECTOR_SIZE;
+
+    if (cylinder >= FLOPPY_CYLINDERS)
+        return -1;
+
+    kprintf("[FLOPPY] Write drive %d: LBA=%u -> CHS=%d/%d/%d count=%d\n",
+            drive, lba, cylinder, head, sector, count);
+
+    /* Allocate DMA buffer below 16 MB */
+    void *dma_buf = kmalloc(total_bytes);
+    if (!dma_buf)
+        return -1;
+    memcpy(dma_buf, buf, (size_t)total_bytes);
+
+    uintptr_t dma_phys = (uintptr_t)VIRT_TO_PHYS(dma_buf);
+    if (dma_phys >= 0x1000000ULL) {
+        kprintf("[FLOPPY] WARNING: DMA buffer at 0x%lx may be too high for ISA DMA\n",
+                (unsigned long)dma_phys);
+    }
+
+    floppy_select_drive(drive);
+
+    /* Seek to the right cylinder */
+    floppy_seek(drive, cylinder);
+
+    /* Set up DMA for WRITE (memory → I/O, mode 0x4A) */
+    /* Mask DMA channel 2 */
+    outb(0x0A, 0x04 | FLOPPY_DMA_CHANNEL);
+
+    /* Clear flip-flop */
+    outb(0x0C, 0x00);
+
+    /* Base address */
+    outb(0x04, (uint8_t)(dma_phys & 0xFF));
+    outb(0x04, (uint8_t)((dma_phys >> 8) & 0xFF));
+
+    /* Base count */
+    uint32_t dma_count = (uint32_t)total_bytes - 1;
+    outb(0x05, (uint8_t)(dma_count & 0xFF));
+    outb(0x05, (uint8_t)((dma_count >> 8) & 0xFF));
+
+    /* Page register */
+    outb(0x81, (uint8_t)((dma_phys >> 16) & 0xFF));
+
+    /* Clear flip-flop */
+    outb(0x0C, 0x00);
+
+    /* Mode: channel 2, write transfer (mem → I/O), single, no auto-init */
+    /* 0x4A = 01 00 10 10 = single, no auto-init, write (mem→I/O), ch2 */
+    outb(0x0B, 0x4A);
+
+    /* Unmask DMA channel 2 */
+    outb(0x0A, FLOPPY_DMA_CHANNEL);
+
+    udelay(100);
+
+    /* Send WRITE DATA command (0xC5 = MFM + implied seek + DMA write) */
+    uint8_t cmd[9];
+    cmd[0] = 0xC5;               /* WRITE DATA with MFM, implied seek, DMA */
+    cmd[1] = (uint8_t)((head & 1) << 2) | (uint8_t)(drive & 0x03);
+    cmd[2] = (uint8_t)cylinder;
+    cmd[3] = (uint8_t)head;
+    cmd[4] = (uint8_t)sector;
+    cmd[5] = 2;                  /* sector size code: 2 = 512 bytes */
+    cmd[6] = FLOPPY_SECTORS;     /* end of track */
+    cmd[7] = 0x1B;               /* gap length */
+    cmd[8] = 0xFF;               /* data length (unused) */
+
+    g_floppy_irq_received = 0;
+
+    if (fdc_send_command(cmd, 9) < 0) {
+        kprintf("[FLOPPY] Write command failed\n");
+        floppy_deselect_drive(drive);
+        kfree(dma_buf);
+        return -1;
+    }
+
+    /* Wait for IRQ (DMA transfer complete) */
+    int timeout = 500000;
+    while (timeout--) {
+        if (g_floppy_irq_received)
+            break;
+        io_wait();
+    }
+
+    /* Read result bytes */
+    uint8_t st[7];
+    int res_count = fdc_recv_result(st, 7);
+
+    floppy_deselect_drive(drive);
+
+    if (!g_floppy_irq_received) {
+        kprintf("[FLOPPY] Write timeout\n");
+        kfree(dma_buf);
+        return -1;
+    }
+
+    if (res_count >= 1 && (st[0] & 0xC0)) {
+        kprintf("[FLOPPY] Write error: ST0=0x%02x ST1=0x%02x ST2=0x%02x\n",
+                st[0], st[1], st[2]);
+        kfree(dma_buf);
+        return -1;
+    }
+
+    kfree(dma_buf);
+    return 0;
 }
-/* ── Stub: floppy_ioctl ─────────────────────────────── */
+
+/* ── Open a floppy drive ─────────────────────────────── */
+int floppy_open(int drive)
+{
+    if (drive < 0 || drive > 3)
+        return -1;
+    if (!g_floppy_present)
+        return -1;
+    return 0;
+}
+
+/* ── Close a floppy drive ────────────────────────────── */
+int floppy_close(int drive)
+{
+    (void)drive;
+    return 0;
+}
+
+/* ── Get drive geometry ──────────────────────────────── */
+int floppy_get_geometry(int drive, void *geo)
+{
+    if (drive < 0 || drive > 3 || !geo)
+        return -1;
+    if (!g_floppy_present)
+        return -1;
+
+    /* Fill geometry structure — layout matches Linux floppy struct */
+    uint16_t *params = (uint16_t *)geo;
+    params[0] = FLOPPY_CYLINDERS;    /* cylinders */
+    params[1] = FLOPPY_HEADS;        /* heads */
+    params[2] = FLOPPY_SECTORS;      /* sectors */
+    params[3] = FLOPPY_SECTOR_SIZE;  /* sector size */
+    return 0;
+}
+
+/* ── Ioctl ───────────────────────────────────────────── */
 int floppy_ioctl(int drive, int cmd, void *arg)
 {
     (void)drive;
     (void)cmd;
     (void)arg;
-    kprintf("[floppy] floppy_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return -ENOTTY;
 }
-/* ── Stub: floppy_open ─────────────────────────────── */
-int floppy_open(int drive)
-{
-    (void)drive;
-    kprintf("[floppy] floppy_open: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: floppy_close ─────────────────────────────── */
-int floppy_close(int drive)
-{
-    (void)drive;
-    kprintf("[floppy] floppy_close: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: floppy_get_geometry ─────────────────────────────── */
-int floppy_get_geometry(int drive, void *geo)
-{
-    (void)drive;
-    (void)geo;
-    kprintf("[floppy] floppy_get_geometry: not yet implemented\n");
-    return -ENOSYS;
-}
-/* ── Stub: floppy_format_track ─────────────────────────────── */
+
+/* ── Format track (not yet implemented) ──────────────── */
 int floppy_format_track(int drive, int track, int head)
 {
     (void)drive;
     (void)track;
     (void)head;
-    kprintf("[floppy] floppy_format_track: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[FLOPPY] format_track: not yet implemented\n");
+    return 0;
 }
-/* ── Stub: floppy_eject ─────────────────────────────── */
+
+/* ── Eject (no-op on standard floppy controller) ─────── */
 int floppy_eject(int drive)
 {
     (void)drive;
-    kprintf("[floppy] floppy_eject: not yet implemented\n");
-    return -ENOSYS;
+    /* Standard FDC has no eject mechanism */
+    return 0;
 }

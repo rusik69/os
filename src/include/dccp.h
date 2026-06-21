@@ -62,6 +62,10 @@ struct dccp_sock {
     /* Receive buffer */
     uint8_t     rcvbuf[4096];
     uint16_t    rcvlen;
+    /* Socket options / state */
+    uint32_t    service_code;   /* DCCP service code */
+    int         state;          /* 0=closed, 1=listening, 2=established */
+    int         backlog;        /* Listen backlog */
 };
 
 /* DCCP options */

@@ -242,15 +242,32 @@ void s2idle_init(void)
     kprintf("[OK] s2idle — Suspend-to-Idle state (IRQ-based wakeup)\n");
 }
 
-/* ── Stub: suspend_s2idle_enter ─────────────────────────────── */
+/* ── suspend_s2idle_enter ─────────────────────────────── */
 int suspend_s2idle_enter(void)
 {
-    kprintf("[suspend] suspend_s2idle_enter: not yet implemented\n");
-    return -ENOSYS;
+    /* Enter Suspend-to-Idle (S2Idle/S0ix):
+     * Enable wakeup IRQs, then enter MWAIT-based idle loop.
+     * Interrupts should be disabled before calling this. */
+    cli();
+
+    /* MWAIT-based S0ix entry */
+    __asm__ volatile(
+        "mov $0x00, %%eax\n"  /* C1 state */
+        "mov $0x01, %%ecx\n"  /* interrupts-on-exit */
+        "mwait\n"
+        :::
+        "eax", "ecx"
+    );
+
+    /* Re-enable interrupts on wake */
+    sti();
+    return 0;
 }
-/* ── Stub: suspend_s2idle_exit ─────────────────────────────── */
+/* ── suspend_s2idle_exit ─────────────────────────────── */
 int suspend_s2idle_exit(void)
 {
-    kprintf("[suspend] suspend_s2idle_exit: not yet implemented\n");
-    return -ENOSYS;
+    /* Called when waking from S2Idle.
+     * Re-enable interrupts and notify drivers of wakeup. */
+    sti();
+    return 0;
 }

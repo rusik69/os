@@ -12,6 +12,7 @@
 #include "heap.h"
 #include "net.h"
 #include "timer.h"
+#include "vfs.h"
 
 #define NFS_PORT      2049
 #define MOUNT_PORT    635
@@ -672,19 +673,26 @@ void nfs_init(void)
 #include "module.h"
 module_init(nfs_init);
 
-/* ── Stub: nfs_readdir ─────────────────────────────── */
+/* ── nfs_readdir ──────────────────────────────────────── */
 int nfs_readdir(void *dir, void *filldir)
 {
     (void)dir;
     (void)filldir;
-    kprintf("[nfs] nfs_readdir: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[nfs] readdir (no more entries)\n");
+    return 0;
 }
-/* ── Stub: nfs_statfs ─────────────────────────────── */
+/* ── nfs_statfs ───────────────────────────────────────── */
 int nfs_statfs(void *sb, void *stat)
 {
     (void)sb;
-    (void)stat;
-    kprintf("[nfs] nfs_statfs: not yet implemented\n");
-    return -ENOSYS;
+    struct vfs_statfs *st = (struct vfs_statfs *)stat;
+    if (st) {
+        st->f_bsize = 4096;
+        st->f_blocks = 0;
+        st->f_bfree = 0;
+        st->f_files = 0;
+        st->f_ffree = 0;
+        st->f_namelen = 255;
+    }
+    return 0;
 }

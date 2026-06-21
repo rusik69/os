@@ -30,12 +30,12 @@ int dmi_match(const char *slot, const char *value)
     (void)slot;
     (void)value;
     kprintf("[dmi] dmi_match: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: dmi_get_system_info ─────────────────────────────── */
 const char* dmi_get_system_info(int field)
 {
     (void)field;
     kprintf("[dmi] dmi_get_system_info: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

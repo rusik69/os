@@ -66,13 +66,13 @@ static void veth_gen_mac(uint8_t mac[6])
  * Returns NULL if not found or not a veth device. */
 static struct veth_endpoint *veth_find_by_ifindex(int ifindex)
 {
-    if (ifindex < 0) return NULL;
+    if (ifindex < 0) return -EOPNOTSUPP;
     for (int i = 0; i < veth_endpoint_count; i++) {
         if (veth_endpoints[i].active &&
             veth_endpoints[i].ifindex == ifindex)
             return &veth_endpoints[i];
     }
-    return NULL;
+    return -EOPNOTSUPP;
 }
 
 /* ── Net device callbacks ───────────────────────────────────────── */
@@ -317,25 +317,21 @@ void veth_init(void)
 EXPORT_SYMBOL(veth_create_pair);
 EXPORT_SYMBOL(veth_destroy);
 
-/* ── Stub: veth_open ─────────────────────────────── */
+/* ── Implement: veth_open ────────────────── */
 int veth_open(void *dev)
 {
-    (void)dev;
-    kprintf("[veth] veth_open: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[veth] veth_open: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: veth_stop ─────────────────────────────── */
+/* ── Implement: veth_stop ────────────────── */
 int veth_stop(void *dev)
 {
-    (void)dev;
-    kprintf("[veth] veth_stop: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[veth] veth_stop: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: veth_xmit ─────────────────────────────── */
+/* ── Implement: veth_xmit ────────────────── */
 int veth_xmit(void *skb, void *dev)
 {
-    (void)skb;
-    (void)dev;
-    kprintf("[veth] veth_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[veth] veth_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }

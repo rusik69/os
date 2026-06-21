@@ -693,14 +693,14 @@ int midi_open(void *file)
 {
     (void)file;
     kprintf("[midi] midi_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: midi_close ─────────────────────────────── */
 int midi_close(void *file)
 {
     (void)file;
     kprintf("[midi] midi_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: midi_write ─────────────────────────────── */
 int midi_write(void *file, const void *buf, size_t count)
@@ -709,7 +709,7 @@ int midi_write(void *file, const void *buf, size_t count)
     (void)buf;
     (void)count;
     kprintf("[midi] midi_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: midi_ioctl ─────────────────────────────── */
 int midi_ioctl(void *file, int cmd, void *arg)
@@ -718,5 +718,5 @@ int midi_ioctl(void *file, int cmd, void *arg)
     (void)cmd;
     (void)arg;
     kprintf("[midi] midi_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

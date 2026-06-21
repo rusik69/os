@@ -414,25 +414,33 @@ void cpufreq_schedutil_pelt_update(int cpu_id, uint32_t util_avg)
     schedutil_evaluate_cpu(state);
 }
 
-/* ── Stub: schedutil_init ─────────────────────────────── */
+/* ── schedutil_init ─────────────────────────────── */
 int schedutil_init(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] schedutil_init: not yet implemented\n");
-    return -ENOSYS;
+    /* Per-CPU state is zero-initialized at compile time.
+     * Running start initializes the timer and evaluation. */
+    return cpufreq_schedutil_start();
 }
-/* ── Stub: schedutil_exit ─────────────────────────────── */
+/* ── schedutil_exit ─────────────────────────────── */
 int schedutil_exit(int cpu)
 {
     (void)cpu;
-    kprintf("[cpufreq] schedutil_exit: not yet implemented\n");
-    return -ENOSYS;
+    cpufreq_schedutil_stop();
+    return 0;
 }
-/* ── Stub: schedutil_target ─────────────────────────────── */
+/* ── schedutil_target ─────────────────────────────── */
 int schedutil_target(int cpu, unsigned int target_freq)
 {
     (void)cpu;
-    (void)target_freq;
-    kprintf("[cpufreq] schedutil_target: not yet implemented\n");
-    return -ENOSYS;
+    int count = cpupstate_get_count();
+    int best = 0;
+    for (int i = 0; i < count; i++) {
+        struct cpupstate_state info;
+        if (cpupstate_get_info(i, &info) == 0) {
+            if (info.core_freq * 1000 <= target_freq)
+                best = i;
+        }
+    }
+    return cpupstate_set_state(best);
 }

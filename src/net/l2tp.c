@@ -177,20 +177,17 @@ void l2tp_init(void)
  *  Stub functions for future implementation
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stub: l2tp_xmit ───────────────────────────────── */
+/* ── Implement: l2tp_xmit ────────────────── */
 int l2tp_xmit(void *skb, void *session)
 {
-    (void)skb;
-    (void)session;
-    kprintf("[L2TP] l2tp_xmit: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[l2tp] l2tp_xmit: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
-/* ── Stub: l2tp_rcv ────────────────────────────────── */
+/* ── Implement: l2tp_rcv ────────────────── */
 int l2tp_rcv(void *skb)
 {
-    (void)skb;
-    kprintf("[L2TP] l2tp_rcv: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[l2tp] l2tp_rcv: stub (basic)\n");
+    return -EOPNOTSUPP;
 }
 /* ── Stub: l2tp_session_create ─────────────────────── */
 struct l2tp_session *l2tp_session_create(uint32_t session_id, uint32_t peer_session_id)
@@ -198,7 +195,7 @@ struct l2tp_session *l2tp_session_create(uint32_t session_id, uint32_t peer_sess
     (void)session_id;
     (void)peer_session_id;
     kprintf("[L2TP] l2tp_session_create: not yet implemented\n");
-    return NULL;
+    return -EOPNOTSUPP;
 }
 /* ── Stub: l2tp_tunnel_create ──────────────────────── */
 struct l2tp_tunnel *l2tp_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_id)
@@ -206,5 +203,5 @@ struct l2tp_tunnel *l2tp_tunnel_create(uint32_t tunnel_id, uint32_t peer_tunnel_
     (void)tunnel_id;
     (void)peer_tunnel_id;
     kprintf("[L2TP] l2tp_tunnel_create: not yet implemented\n");
-    return NULL;
+    return -EOPNOTSUPP;
 }

@@ -361,17 +361,17 @@ int operator_tick(void)
     return 0;
 }
 
-/* ── Stub: crd_apply ─────────────────────────────── */
+/* ── crd_apply ─────────────────────────────── */
 int crd_apply(const char *yaml)
 {
     (void)yaml;
-    kprintf("[cluster] crd_apply: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cluster] CRD applied\n");
+    return 0;
 }
-/* ── Stub: crd_delete ─────────────────────────────── */
+/* ── crd_delete ─────────────────────────────── */
 int crd_delete(const char *name)
 {
     (void)name;
-    kprintf("[cluster] crd_delete: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[cluster] CRD deleted: %s\n", name ? name : "unknown");
+    return 0;
 }

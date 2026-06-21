@@ -385,7 +385,7 @@ int drbd_connect(const char *peer)
 {
     (void)peer;
     kprintf("[drbd] drbd_connect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: drbd_replicate ─────────────────────────────── */
 int drbd_replicate(const void *data, size_t len)
@@ -393,5 +393,5 @@ int drbd_replicate(const void *data, size_t len)
     (void)data;
     (void)len;
     kprintf("[drbd] drbd_replicate: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

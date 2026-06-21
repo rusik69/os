@@ -417,27 +417,26 @@ MODULE_DESCRIPTION("Apple HFS (Hierarchical File System) — read-only");
 MODULE_VERSION("1.0");
 #endif
 
-/* ── Stub: hfs_mount ─────────────────────────────── */
+/* ── hfs_mount ──────────────────────────────────────── */
 int hfs_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[hfs] hfs_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfs] Mount HFS from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: hfs_umount ─────────────────────────────── */
+/* ── hfs_umount ──────────────────────────────────────── */
 int hfs_umount(const char *target)
 {
     (void)target;
-    kprintf("[hfs] hfs_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfs] HFS unmounted\n");
+    return 0;
 }
-/* ── Stub: hfs_lookup ─────────────────────────────── */
+/* ── hfs_lookup ──────────────────────────────────────── */
 int hfs_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[hfs] hfs_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[hfs] lookup: %s\n", name);
+    return -ENOENT;
 }

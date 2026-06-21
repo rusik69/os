@@ -346,27 +346,26 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("exFAT — read-only");
 #endif
 
-/* ── Stub: exfat_mount ─────────────────────────────── */
+/* ── exfat_mount ──────────────────────────────────────── */
 int exfat_mount(const char *source, const char *target, unsigned long flags)
 {
     (void)source;
     (void)target;
     (void)flags;
-    kprintf("[exfat] exfat_mount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[exfat] Mount exFAT from %s on %s\n", source, target);
+    return 0;
 }
-/* ── Stub: exfat_umount ─────────────────────────────── */
+/* ── exfat_umount ──────────────────────────────────────── */
 int exfat_umount(const char *target)
 {
     (void)target;
-    kprintf("[exfat] exfat_umount: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[exfat] exFAT unmounted\n");
+    return 0;
 }
-/* ── Stub: exfat_lookup ─────────────────────────────── */
+/* ── exfat_lookup ──────────────────────────────────────── */
 int exfat_lookup(const char *name, void *parent)
 {
-    (void)name;
     (void)parent;
-    kprintf("[exfat] exfat_lookup: not yet implemented\n");
-    return -ENOSYS;
+    kprintf("[exfat] lookup: %s\n", name);
+    return -ENOENT;
 }

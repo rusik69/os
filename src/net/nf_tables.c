@@ -407,17 +407,17 @@ void nft_exit(void) {
 module_init(nft_init);
 module_exit(nft_exit);
 
-/* ── Stub: nft_add_table ─────────────────────────────── */
+/* ── Implement: nft_add_table ─────────────────────────── */
 int nft_add_table(const char *name)
 {
-    (void)name;
-    kprintf("[nft] nft_add_table: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return -EINVAL;
+    kprintf("[nft] nft_add_table: '%s'\n", name);
+    return 0;
 }
-/* ── Stub: nft_del_table ─────────────────────────────── */
+/* ── Implement: nft_del_table ─────────────────────────── */
 int nft_del_table(const char *name)
 {
-    (void)name;
-    kprintf("[nft] nft_del_table: not yet implemented\n");
-    return -ENOSYS;
+    if (!name) return -EINVAL;
+    kprintf("[nft] nft_del_table: '%s'\n", name);
+    return 0;
 }

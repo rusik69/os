@@ -9,6 +9,7 @@
 #include "string.h"
 #include "printf.h"
 #include "rng.h"
+#include "sha256.h"
 
 #define RSA_MAX_BITS 4096
 #define RSA_MAX_BYTES (RSA_MAX_BITS / 8)
@@ -328,47 +329,98 @@ int rsa_pkcs1_v15_sign(uint8_t *sig, size_t *sig_len,
     return rsa_private_decrypt(sig, sig_len, padded, mod_bytes, n, n_len, d, d_len);
 }
 
-/* ── Stub: rsa_encrypt ─────────────────────────────── */
+/* ── rsa_encrypt ─────────────────────────────── */
 int rsa_encrypt(const void *pub, const void *plain, size_t plen, void *cipher, size_t *clen)
 {
-    (void)pub;
-    (void)plain;
-    (void)plen;
-    (void)cipher;
-    (void)clen;
-    kprintf("[rsa] rsa_encrypt: not yet implemented\n");
-    return -ENOSYS;
+    if (!pub || !plain || !cipher || !clen)
+        return -1;
+    const struct rsa_key *key = (const struct rsa_key *)pub;
+    int nbytes = key->bits / 8;
+    if (nbytes > RSA_MAX_BYTES) return -1;
+
+    /* Prepare modulus and exponent as bytes */
+    uint8_t n_bytes[RSA_MAX_BYTES];
+    bn_to_bytes(n_bytes, key->n, key->nwords, nbytes);
+
+    return rsa_public_encrypt((uint8_t *)cipher, clen,
+                               (const uint8_t *)plain, plen,
+                               n_bytes, (size_t)nbytes, key->e);
 }
-/* ── Stub: rsa_decrypt ─────────────────────────────── */
+/* ── rsa_decrypt ─────────────────────────────── */
 int rsa_decrypt(const void *priv, const void *cipher, size_t clen, void *plain, size_t *plen)
 {
-    (void)priv;
-    (void)cipher;
-    (void)clen;
-    (void)plain;
-    (void)plen;
-    kprintf("[rsa] rsa_decrypt: not yet implemented\n");
-    return -ENOSYS;
+    if (!priv || !cipher || !plain || !plen)
+        return -1;
+    const struct rsa_key *key = (const struct rsa_key *)priv;
+    int nbytes = key->bits / 8;
+    if (nbytes > RSA_MAX_BYTES) return -1;
+
+    uint8_t n_bytes[RSA_MAX_BYTES];
+    uint8_t d_bytes[RSA_MAX_BYTES];
+    bn_to_bytes(n_bytes, key->n, key->nwords, nbytes);
+    bn_to_bytes(d_bytes, key->d, key->nwords, nbytes);
+
+    return rsa_private_decrypt((uint8_t *)plain, plen,
+                                (const uint8_t *)cipher, clen,
+                                n_bytes, (size_t)nbytes,
+                                d_bytes, (size_t)nbytes);
 }
-/* ── Stub: rsa_sign ─────────────────────────────── */
+/* ── rsa_sign ─────────────────────────────── */
 int rsa_sign(const void *priv, const void *msg, size_t mlen, void *sig, size_t *slen)
 {
-    (void)priv;
-    (void)msg;
-    (void)mlen;
-    (void)sig;
-    (void)slen;
-    kprintf("[rsa] rsa_sign: not yet implemented\n");
-    return -ENOSYS;
+    if (!priv || !msg || !sig || !slen)
+        return -1;
+    const struct rsa_key *key = (const struct rsa_key *)priv;
+    int nbytes = key->bits / 8;
+    if (nbytes > RSA_MAX_BYTES) return -1;
+
+    uint8_t n_bytes[RSA_MAX_BYTES];
+    uint8_t d_bytes[RSA_MAX_BYTES];
+    bn_to_bytes(n_bytes, key->n, key->nwords, nbytes);
+    bn_to_bytes(d_bytes, key->d, key->nwords, nbytes);
+
+    /* For PKCS#1 signing, we need a hash and digest_info.
+     * Since the caller passes the raw message, hash it with SHA-256. */
+    uint8_t hash[32];
+    sha256_hash(hash, msg, mlen);
+
+    /* SHA-256 DER digest info */
+    const uint8_t der_sha256[] = {
+        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
+        0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+        0x00, 0x04, 0x20
+    };
+
+    return rsa_pkcs1_v15_sign((uint8_t *)sig, slen,
+                               hash, 32,
+                               n_bytes, (size_t)nbytes,
+                               d_bytes, (size_t)nbytes,
+                               der_sha256, sizeof(der_sha256));
 }
-/* ── Stub: rsa_verify ─────────────────────────────── */
+/* ── rsa_verify ─────────────────────────────── */
 int rsa_verify(const void *pub, const void *msg, size_t mlen, const void *sig, size_t slen)
 {
-    (void)pub;
-    (void)msg;
-    (void)mlen;
-    (void)sig;
-    (void)slen;
-    kprintf("[rsa] rsa_verify: not yet implemented\n");
-    return -ENOSYS;
+    if (!pub || !msg || !sig)
+        return -1;
+    const struct rsa_key *key = (const struct rsa_key *)pub;
+    int nbytes = key->bits / 8;
+    if (nbytes > RSA_MAX_BYTES) return -1;
+
+    /* Hash the message */
+    uint8_t hash[32];
+    sha256_hash(hash, msg, mlen);
+
+    uint8_t n_bytes[RSA_MAX_BYTES];
+    bn_to_bytes(n_bytes, key->n, key->nwords, nbytes);
+
+    const uint8_t der_sha256[] = {
+        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
+        0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+        0x00, 0x04, 0x20
+    };
+
+    return rsa_pkcs1_v15_verify((const uint8_t *)sig, slen,
+                                 hash, 32,
+                                 n_bytes, (size_t)nbytes, key->e,
+                                 der_sha256, sizeof(der_sha256));
 }

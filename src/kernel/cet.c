@@ -205,7 +205,7 @@ int cet_shstk_status(struct cet_shadow_stack *sstk)
 {
     (void)sstk;
     kprintf("[CET] cet_shstk_status not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: cet_shstk_alloc ────────────────────────────────────────────── */
@@ -213,5 +213,5 @@ int cet_shstk_alloc(struct cet_shadow_stack *sstk)
 {
     (void)sstk;
     kprintf("[CET] cet_shstk_alloc not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

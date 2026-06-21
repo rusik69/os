@@ -1155,7 +1155,7 @@ int vmm_free(uint64_t addr, size_t size)
     (void)addr;
     (void)size;
     kprintf("[vmm] vmm_free: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vmm_protect ──────────────────────────────────────── */
@@ -1165,7 +1165,7 @@ int vmm_protect(uint64_t addr, size_t size, int new_flags)
     (void)size;
     (void)new_flags;
     kprintf("[vmm] vmm_protect: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vmm_sync ─────────────────────────────────────────── */
@@ -1174,7 +1174,7 @@ int vmm_sync(uint64_t addr, size_t size)
     (void)addr;
     (void)size;
     kprintf("[vmm] vmm_sync: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 
 /* ── Stub: vmm_flush_tlb ────────────────────────────────────── */

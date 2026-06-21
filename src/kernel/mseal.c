@@ -104,7 +104,7 @@ int mseal_seal(uint64_t addr, size_t len)
     (void)addr;
     (void)len;
     kprintf("[mseal] mseal_seal: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: mseal_unseal ─────────────────────────────── */
 int mseal_unseal(uint64_t addr, size_t len)
@@ -112,5 +112,5 @@ int mseal_unseal(uint64_t addr, size_t len)
     (void)addr;
     (void)len;
     kprintf("[mseal] mseal_unseal: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

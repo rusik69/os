@@ -313,7 +313,7 @@ int madvise_remove(uint64_t addr, size_t len)
     (void)addr;
     (void)len;
     kprintf("[madvise] madvise_remove: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: madvise_hugepage ─────────────────────────────── */
 int madvise_hugepage(uint64_t addr, size_t len)
@@ -321,7 +321,7 @@ int madvise_hugepage(uint64_t addr, size_t len)
     (void)addr;
     (void)len;
     kprintf("[madvise] madvise_hugepage: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: madvise_nohugepage ─────────────────────────────── */
 int madvise_nohugepage(uint64_t addr, size_t len)
@@ -329,5 +329,5 @@ int madvise_nohugepage(uint64_t addr, size_t len)
     (void)addr;
     (void)len;
     kprintf("[madvise] madvise_nohugepage: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }

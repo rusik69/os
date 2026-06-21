@@ -216,26 +216,23 @@ void nf_init(void) {
 #include "module.h"
 module_init(nf_init);
 
-/* ── Stub: netfilter_register ─────────────────────────────── */
+/* ── Implement: netfilter_register ────────────────────── */
 int netfilter_register(void *hook)
 {
-    (void)hook;
-    kprintf("[netfilter] netfilter_register: not yet implemented\n");
-    return -ENOSYS;
+    if (!hook) return -EINVAL;
+    return nf_register_hook((struct nf_hook_ops *)hook);
 }
-/* ── Stub: netfilter_unregister ─────────────────────────────── */
+/* ── Implement: netfilter_unregister ──────────────────── */
 int netfilter_unregister(void *hook)
 {
-    (void)hook;
-    kprintf("[netfilter] netfilter_unregister: not yet implemented\n");
-    return -ENOSYS;
+    if (!hook) return -EINVAL;
+    nf_unregister_hook((struct nf_hook_ops *)hook);
+    return 0;
 }
-/* ── Stub: netfilter_hook ─────────────────────────────── */
+/* ── Implement: netfilter_hook ────────────────────────── */
 int netfilter_hook(void *skb, void *dev, int dir)
 {
-    (void)skb;
-    (void)dev;
-    (void)dir;
-    kprintf("[netfilter] netfilter_hook: not yet implemented\n");
-    return -ENOSYS;
+    if (!skb) return -EINVAL;
+    return nf_hook_slow(NFPROTO_IPV4, dir, (struct sk_buff *)skb,
+                        (struct net_device *)dev, NULL);
 }

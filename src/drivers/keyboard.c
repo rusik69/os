@@ -365,25 +365,24 @@ EXPORT_SYMBOL(keyboard_getchar);
 EXPORT_SYMBOL(keyboard_is_down);
 EXPORT_SYMBOL(keyboard_init);
 
-/* ── Stub: keyboard_open ─────────────────────────────── */
+/* ── Open keyboard device ────────────────────────────── */
 int keyboard_open(void *dev)
 {
     (void)dev;
-    kprintf("[keyboard] keyboard_open: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: keyboard_close ─────────────────────────────── */
+
+/* ── Close keyboard device ──────────────────────────── */
 int keyboard_close(void *dev)
 {
     (void)dev;
-    kprintf("[keyboard] keyboard_close: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
-/* ── Stub: keyboard_ioctl ─────────────────────────────── */
+
+/* ── Keyboard ioctl ─────────────────────────────────── */
 int keyboard_ioctl(int cmd, void *arg)
 {
     (void)cmd;
     (void)arg;
-    kprintf("[keyboard] keyboard_ioctl: not yet implemented\n");
-    return -ENOSYS;
+    return -ENOTTY;
 }

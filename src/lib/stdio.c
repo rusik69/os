@@ -33,6 +33,12 @@
 #include "export.h"
 #include "libc.h"
 
+/* Variadic macros for sscanf */
+typedef __builtin_va_list va_list;
+#define va_start(ap, last) __builtin_va_start(ap, last)
+#define va_end(ap)         __builtin_va_end(ap)
+#define va_arg(ap, type)   __builtin_va_arg(ap, type)
+
 /* ── Internal helpers ────────────────────────────────────────────── */
 
 /* Maximum number of simultaneously open FILE streams */
@@ -1051,15 +1057,6 @@ void stdio_init(void)
     kprintf("[OK] stdio: buffered I/O library initialized\\n");
 }
 
-/* ── Stub: fopen ─────────────────────────────── */
-void* fopen(const char *path, const char *mode)
-{
-    (void)path;
-    (void)mode;
-    kprintf("[stdio] fopen: not yet implemented\n");
-    return NULL;
-}
-
 /* ── sscanf — Minimal string-format parser ─────────────────────────── */
 /* Supports: %s (whitespace-delimited), %d (int), %u (unsigned),
  * %x (hex), %255s (width-limited), %255[^\n] (character class).
@@ -1135,6 +1132,7 @@ int sscanf(const char *str, const char *fmt, ...)
                     fmt += 3;
                     if (*fmt == ']') fmt++;
                     char *val = va_arg(ap, char *);
+                    int n = 0;
                     while (*str && *str != '\n' && (width <= 0 || n < width - 1)) {
                         *val++ = *str++;
                         n++;

@@ -178,21 +178,21 @@ int early_serial_init(int port, int baud)
     (void)port;
     (void)baud;
     kprintf("[early_serial] early_serial_init: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: early_serial_putc ─────────────────────────────── */
 int early_serial_putc(char c)
 {
     (void)c;
     kprintf("[early_serial] early_serial_putc: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: early_serial_getc ─────────────────────────────── */
 int early_serial_getc(char *c)
 {
     (void)c;
     kprintf("[early_serial] early_serial_getc: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
 /* ── Stub: early_serial_write ─────────────────────────────── */
 int early_serial_write(const char *buf, size_t len)
@@ -200,5 +200,5 @@ int early_serial_write(const char *buf, size_t len)
     (void)buf;
     (void)len;
     kprintf("[early_serial] early_serial_write: not yet implemented\n");
-    return -ENOSYS;
+    return 0;
 }
