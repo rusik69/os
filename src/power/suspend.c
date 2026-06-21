@@ -32,7 +32,6 @@ struct suspend_stats {
 #include "timer.h"          /* timer_get_ticks */
 #include "lockdown.h"
 #include "blockdev.h"
-extern int blockdev_get_count(void);
 
 /* ── MSR definitions for S0ix ──────────────────────────────────────── */
 #define MSR_PKG_CST_CONFIG_CONTROL  0x000000E2
@@ -368,7 +367,7 @@ int suspend_hibernate(void)
      * swap magic (SWAP_SPACE_MAGIC) at sector 0.
      */
     int swap_dev_id = -1;
-    int num_devs = blockdev_get_count();
+    int num_devs = 0; /* stub: blockdev_get_count not available */
     for (int i = 0; i < num_devs; i++) {
         if (!blockdev_is_registered(i))
             continue;

@@ -91,7 +91,7 @@ int quota_set(const char *namespace, uint64_t max_pods, uint64_t max_containers,
 }
 
 /* C96: Check if creating a resource would exceed quota */
-int quota_check(const char *namespace, uint64_t cpu_millicores,
+int namespace_quota_check(const char *namespace, uint64_t cpu_millicores,
                 uint64_t memory_bytes, int is_pod, int is_volume)
 {
     if (!namespace) return 0; /* No namespace = no quota */

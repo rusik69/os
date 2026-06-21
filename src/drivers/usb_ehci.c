@@ -954,7 +954,7 @@ int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
     return -7;  /* ENOSYS — not yet implemented */
 }
 
-int usb_init(void) {
+int ehci_usb_init(void) {
     /* Scan PCI for EHCI controllers (class 0x0C, subclass 0x03, prog-if 0x20) */
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {
@@ -1004,7 +1004,7 @@ void usb_exit(void) {
 }
 
 int init_module(void) {
-    int ret = usb_init();
+    int ret = ehci_usb_init();
     if (ret != 0) {
         kprintf("[USB] init_module: no EHCI controller found\n");
         return 0; /* non-fatal — module loads but no hardware */

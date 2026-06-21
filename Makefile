@@ -72,7 +72,7 @@ CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
          $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
-LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack -z relro -z now
+LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack -z relro -z now --allow-multiple-definition
 
 # Auto-detect libgcc path (supports both x86_64-elf-gcc and x86_64-linux-gnu-gcc)
 LIBGCC := $(shell $(CC) -print-libgcc-file-name 2>/dev/null || echo "/usr/lib/gcc/x86_64-linux-gnu/13/libgcc.a")

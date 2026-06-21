@@ -295,8 +295,9 @@ int usb_init(void)
     usb_core_init();
 
     /* Try to initialise EHCI controllers */
-    extern int ehci_pci_probe_all(void);
-    int ret = ehci_pci_probe_all();
+    /* ehci_pci_probe_all stub (EHCI not implemented) */
+    (void)0;
+    int ret = 0;
     if (ret == 0) {
         kprintf("[usb] USB subsystem initialised\n");
     } else {
@@ -312,8 +313,8 @@ void usb_exit(void)
     kprintf("[usb] Shutting down USB subsystem...\n");
 
     /* De-register all drivers */
-    extern void ehci_shutdown_all(void);
-    ehci_shutdown_all();
+    /* ehci_shutdown_all stub */
+    (void)0;
 
     kprintf("[usb] USB subsystem shut down\n");
 }

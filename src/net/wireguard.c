@@ -387,7 +387,7 @@ static void chacha20_block(uint32_t state[16], uint8_t *output) {
     if (state[12] == 0) state[13]++;
 }
 
-void chacha20_init(uint32_t state[16], const uint8_t key[32], uint32_t counter, const uint8_t nonce[12]) {
+static void chacha20_init(uint32_t state[16], const uint8_t key[32], uint32_t counter, const uint8_t nonce[12]) {
     /* "expand 32-byte k" */
     state[0] = 0x61707865;
     state[1] = 0x3320646e;
@@ -423,7 +423,7 @@ void chacha20_init(uint32_t state[16], const uint8_t key[32], uint32_t counter, 
     state[15] = load32_le(nonce + 8);
 }
 
-void chacha20_encrypt(uint8_t *out, const uint8_t *in, uint32_t len,
+static void chacha20_encrypt(uint8_t *out, const uint8_t *in, uint32_t len,
                        const uint8_t key[32], uint32_t counter, const uint8_t nonce[12]) {
     uint32_t state[16];
     chacha20_init(state, key, counter, nonce);
@@ -601,7 +601,7 @@ void poly1305_compute(uint8_t mac[16], const uint8_t key[32],
 
 /* ── ChaCha20Poly1305 AEAD (RFC 8439) ───────────────────────────────── */
 
-void chacha20poly1305_encrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
+static void chacha20poly1305_encrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
                                const uint8_t *ad, uint64_t adlen,
                                const uint8_t key[32], const uint8_t nonce[12]) {
     /* Generate Poly1305 key from ChaCha20 with counter=0 */
@@ -638,7 +638,7 @@ void chacha20poly1305_encrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
     poly1305_finish(&state, out + inlen);
 }
 
-int chacha20poly1305_decrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
+static int chacha20poly1305_decrypt(uint8_t *out, const uint8_t *in, uint64_t inlen,
                               const uint8_t *ad, uint64_t adlen,
                               const uint8_t key[32], const uint8_t nonce[12]) {
     if (inlen < 16) return -1;  /* No MAC */

@@ -354,7 +354,7 @@ static void rsa_crt_mod_exp(uint8_t *out, const uint8_t *in, int in_len) {
 }
 
 /* RSA sign: compute PKCS#1 v1.5 signature over SHA-256 hash */
-int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
+static int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
     /* PKCS#1 v1.5 padding for SHA-256 (EMSA-PKCS1-v1_5) */
     /* DER encoding of SHA-256 OID: 30 31 30 0d 06 09 60 86 48 01 65 03 04 02 01 05 00 04 20 */
     uint8_t der_sha256[] = {
@@ -379,7 +379,7 @@ int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
 }
 
 /* RSA verify: check that sig = hash^e mod n (using public key) */
-int rsa_verify(const uint8_t *hash, const uint8_t *sig) {
+static int rsa_verify(const uint8_t *hash, const uint8_t *sig) {
     bignum sig_bn, e, n;
     bn_from_bytes(&sig_bn, sig, 256);
     bn_from_bytes(&e, rsa_host_e, 3);
