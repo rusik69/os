@@ -40,9 +40,13 @@ LIB_STRUCTS_OBJS = hexdump.o radix_tree.o test_lib_structs.o
 CIPHERDIR = ../../src/lib
 CIPHER_OBJS = aes.o aes_xts.o chacha20.o poly1305.o chacha20poly1305.o test_cipher.o
 
+# Data structure tests (klist, llist, interval_tree, prio_tree, cpumask)
+KSRCDIR = ../../src/kernel
+DS_OBJS = klist.o llist.o interval_tree.o prio_tree.o cpu_bitmask.o test_datastructures.o
+
 .PHONY: all clean
 
-all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher
+all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -59,6 +63,9 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host-side cipher tests..."
 	./test_cipher
+	@echo ""
+	@echo "Running host-side data structure tests..."
+	./test_datastructures
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -67,9 +74,11 @@ else
 	python3 ../../tests/junit_reporter.py host-crypto-ext ./test_crypto_ext
 	python3 ../../tests/junit_reporter.py host-lib-structs ./test_lib_structs
 	python3 ../../tests/junit_reporter.py host-cipher ./test_cipher
+	python3 ../../tests/junit_reporter.py host-datastructures ./test_datastructures
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
-	      host-cipher-results.xml "$(JUNIT_DIR)/" 2>/dev/null || true
+	      host-cipher-results.xml host-datastructures-results.xml \
+	      "$(JUNIT_DIR)/" 2>/dev/null || true
 	@echo "JUnit XML: $(JUNIT_DIR)/"
 endif
 
@@ -183,6 +192,29 @@ chacha20poly1305.o: $(CIPHERDIR)/chacha20poly1305.c
 test_cipher.o: test_cipher.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Host-side data structure tests ─────────────────────────────
+
+test_datastructures: $(DS_OBJS) printf.o stubs.o
+	$(CC) -o $@ $^
+
+klist.o: $(KSRCDIR)/klist.c
+	$(CC) -I. $(subst -isystem,-I,$(KERNEL_CFLAGS)) -include spinlock.h -c -o $@ $<
+
+llist.o: $(KSRCDIR)/llist.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+interval_tree.o: $(KSRCDIR)/interval_tree.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+prio_tree.o: $(KSRCDIR)/prio_tree.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+cpu_bitmask.o: $(KSRCDIR)/cpu_bitmask.c
+	$(CC) $(KERNEL_CFLAGS) -c -o $@ $<
+
+test_datastructures.o: test_datastructures.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) \
-	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher
+	rm -f $(OBJS) $(CRYPTO_OBJS) $(CRYPTO_EXT_OBJS) $(LIB_STRUCTS_OBJS) $(CIPHER_OBJS) $(DS_OBJS) \
+	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures

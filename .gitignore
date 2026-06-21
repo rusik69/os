@@ -15,6 +15,7 @@ tests/host_libc/test_bitops_crc_sha
 tests/host_libc/test_crypto_ext
 tests/host_libc/test_lib_structs
 tests/host_libc/test_cipher
+tests/host_libc/test_datastructures
 tests/unit/test_memory
 tests/unit/test_fs
 tests/unit/test_socket
