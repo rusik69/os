@@ -319,3 +319,17 @@ void irq_regs_init(void)
     kprintf("[OK] irq_regs: IRQ stacks + register save/restore initialised (%d CPUs)\n",
             max_cpus);
 }
+
+/* ── Stub: irq_regs_get ─────────────────────────────── */
+void* irq_regs_get(void)
+{
+    kprintf("[irq] irq_regs_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: irq_regs_set ─────────────────────────────── */
+int irq_regs_set(void *regs)
+{
+    (void)regs;
+    kprintf("[irq] irq_regs_set: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -601,3 +601,21 @@ fail_alloc:
     if (objs) kfree(objs);
     return -1;
 }
+
+/* ── Stub: cc_link_objects ─────────────────────────────── */
+int cc_link_objects(void *objs, int count, const char *output)
+{
+    (void)objs;
+    (void)count;
+    (void)output;
+    kprintf("[cc] cc_link_objects: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_link_resolve_syms ─────────────────────────────── */
+int cc_link_resolve_syms(void *objs, int count)
+{
+    (void)objs;
+    (void)count;
+    kprintf("[cc] cc_link_resolve_syms: not yet implemented\n");
+    return -ENOSYS;
+}

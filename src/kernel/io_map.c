@@ -132,3 +132,19 @@ EXPORT_SYMBOL(io_map_read);
 EXPORT_SYMBOL(io_map_write);
 EXPORT_SYMBOL(io_map_read8);
 EXPORT_SYMBOL(io_map_write8);
+
+/* ── Stub: io_map_read32 ─────────────────────────────── */
+uint32_t io_map_read32(uintptr_t addr)
+{
+    (void)addr;
+    kprintf("[iomap] io_map_read32: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: io_map_write32 ─────────────────────────────── */
+int io_map_write32(uintptr_t addr, uint32_t val)
+{
+    (void)addr;
+    (void)val;
+    kprintf("[iomap] io_map_write32: not yet implemented\n");
+    return -ENOSYS;
+}

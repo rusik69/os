@@ -744,3 +744,26 @@ void task_update_stack_watermark(struct process *p) {
     if (rsp < p->stack_watermark || p->stack_watermark == 0)
         p->stack_watermark = rsp;
 }
+
+/* ── Stub: fault_handle_page_fault ─────────────────────────────── */
+int fault_handle_page_fault(uint64_t addr, uint64_t error_code)
+{
+    (void)addr;
+    (void)error_code;
+    kprintf("[fault] fault_handle_page_fault: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fault_handle_gpf ─────────────────────────────── */
+int fault_handle_gpf(uint64_t error_code)
+{
+    (void)error_code;
+    kprintf("[fault] fault_handle_gpf: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fault_handle_df ─────────────────────────────── */
+int fault_handle_df(uint64_t error_code)
+{
+    (void)error_code;
+    kprintf("[fault] fault_handle_df: not yet implemented\n");
+    return -ENOSYS;
+}

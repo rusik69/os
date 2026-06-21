@@ -381,3 +381,12 @@ static int kunit_filter_write(const char *buf, int len)
 
     return 0;
 }
+
+/* ── Stub: kunit_run_test ─────────────────────────────── */
+int kunit_run_test(const char *suite, const char *test)
+{
+    (void)suite;
+    (void)test;
+    kprintf("[kunit] kunit_run_test: not yet implemented\n");
+    return -ENOSYS;
+}

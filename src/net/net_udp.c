@@ -1001,3 +1001,44 @@ void net_udp_list(void (*cb)(uint16_t port)) {
             cb(udp_slots[i].port);
     }
 }
+
+/* ── Stub: udp_open ─────────────────────────────── */
+int udp_open(void *sk)
+{
+    (void)sk;
+    kprintf("[udp] udp_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udp_close ─────────────────────────────── */
+int udp_close(void *sk)
+{
+    (void)sk;
+    kprintf("[udp] udp_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udp_connect ─────────────────────────────── */
+int udp_connect(void *sk, void *addr)
+{
+    (void)sk;
+    (void)addr;
+    kprintf("[udp] udp_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udp_sendmsg ─────────────────────────────── */
+int udp_sendmsg(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[udp] udp_sendmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udp_recvmsg ─────────────────────────────── */
+int udp_recvmsg(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[udp] udp_recvmsg: not yet implemented\n");
+    return -ENOSYS;
+}

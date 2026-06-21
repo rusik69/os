@@ -656,3 +656,10 @@ int kmemleak_unreferenced_count(void)
     spinlock_irqsave_release(&g_lock, irq_flags);
     return count;
 }
+
+/* ── Stub: kmemleak_report ─────────────────────────────── */
+int kmemleak_report(void)
+{
+    kprintf("[kmemleak] kmemleak_report: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -18,3 +18,22 @@ mempool_t *mempool_create(int min_nr, int elem_size) {
 void *mempool_alloc(mempool_t *pool) { return pool->cur_nr > 0 ? pool->elements[--pool->cur_nr] : kmalloc(pool->elem_size); }
 void mempool_free(void *e, mempool_t *p) { if (p->cur_nr < p->max_nr) p->elements[p->cur_nr++] = e; else kfree(e); }
 void mempool_destroy(mempool_t *p) { for (int i = 0; i < p->cur_nr; i++) kfree(p->elements[i]); kfree(p->elements); kfree(p); }
+
+/* ── Stub: mempool_create ─────────────────────────────── */
+int mempool_create(int min_nr, void *alloc_fn, void *free_fn, void *pool_data)
+{
+    (void)min_nr;
+    (void)alloc_fn;
+    (void)free_fn;
+    (void)pool_data;
+    kprintf("[mempool] mempool_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mempool_alloc ─────────────────────────────── */
+void* mempool_alloc(void *pool, int flags)
+{
+    (void)pool;
+    (void)flags;
+    kprintf("[mempool] mempool_alloc: not yet implemented\n");
+    return -ENOSYS;
+}

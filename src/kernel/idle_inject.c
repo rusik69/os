@@ -257,3 +257,12 @@ void idle_inject_init(void)
     kprintf("[idle-inject] Idle injection subsystem initialised (%d CPUs max)\n",
             IDLE_INJECT_MAX_CPUS);
 }
+
+/* ── Stub: idle_inject_set_rate ─────────────────────────────── */
+int idle_inject_set_rate(int cpu, unsigned int rate)
+{
+    (void)cpu;
+    (void)rate;
+    kprintf("[idle] idle_inject_set_rate: not yet implemented\n");
+    return -ENOSYS;
+}

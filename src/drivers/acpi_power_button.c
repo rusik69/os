@@ -79,3 +79,17 @@ void acpi_power_button_ext_unregister_callback(void) {
 int acpi_power_button_ext_is_initialized(void) {
     return g_pbtn_ext_init_done;
 }
+
+/* ── Stub: acpi_power_button_handler ─────────────────────────────── */
+int acpi_power_button_handler(void *handle)
+{
+    (void)handle;
+    kprintf("[acpi] acpi_power_button_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: acpi_power_button_init ─────────────────────────────── */
+int acpi_power_button_init(void)
+{
+    kprintf("[acpi] acpi_power_button_init: not yet implemented\n");
+    return -ENOSYS;
+}

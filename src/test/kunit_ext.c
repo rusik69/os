@@ -633,3 +633,23 @@ void kunit_ext_register(void)
 
     kprintf("[KUnit] Extended feature tests registered (ipvs, nvme_pmr, iosched, rtc, madvise_ext, rlimit)\n");
 }
+
+/* ── Stub: kunit_ext_init ─────────────────────────────── */
+int kunit_ext_init(void)
+{
+    kprintf("[kunit] kunit_ext_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_ext_run_all ─────────────────────────────── */
+int kunit_ext_run_all(void)
+{
+    kprintf("[kunit] kunit_ext_run_all: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_ext_report ─────────────────────────────── */
+int kunit_ext_report(void *report)
+{
+    (void)report;
+    kprintf("[kunit] kunit_ext_report: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -23,3 +23,31 @@ uint32_t crc32(uint32_t crc, const void *buf, uint32_t len) {
 uint32_t crc32_no_comp(uint32_t crc, const void *buf, uint32_t len) {
     return crc32(crc, buf, len);
 }
+
+/* ── Stub: crc32_le ─────────────────────────────── */
+uint32_t crc32_le(uint32_t crc, const uint8_t *data, size_t len)
+{
+    (void)crc;
+    (void)data;
+    (void)len;
+    kprintf("[crc32] crc32_le: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: crc32_be ─────────────────────────────── */
+uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
+{
+    (void)crc;
+    (void)data;
+    (void)len;
+    kprintf("[crc32] crc32_be: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: crc32c ─────────────────────────────── */
+uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
+{
+    (void)crc;
+    (void)data;
+    (void)len;
+    kprintf("[crc32] crc32c: not yet implemented\n");
+    return -ENOSYS;
+}

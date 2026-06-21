@@ -349,3 +349,20 @@ void mce_inject_init(void)
     kprintf("[MCE_INJECT] Usage: write bank, status, [addr], [misc], then "
             "echo 1 > trigger\\n");
 }
+
+/* ── Stub: mce_inject ─────────────────────────────── */
+int mce_inject(void *mce)
+{
+    (void)mce;
+    kprintf("[mce] mce_inject: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mce_inject_bank ─────────────────────────────── */
+int mce_inject_bank(int bank, uint64_t status, uint64_t addr)
+{
+    (void)bank;
+    (void)status;
+    (void)addr;
+    kprintf("[mce] mce_inject_bank: not yet implemented\n");
+    return -ENOSYS;
+}

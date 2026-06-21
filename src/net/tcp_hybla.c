@@ -134,3 +134,18 @@ void hybla_set_cwnd(struct hybla_data *h, uint32_t cwnd)
     if (!h || !h->initialised) return;
     h->cwnd = cwnd;
 }
+
+/* ── Stub: tcp_hybla_cong_avoid ─────────────────────────────── */
+int tcp_hybla_cong_avoid(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_hybla] tcp_hybla_cong_avoid: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_hybla_ssthresh ─────────────────────────────── */
+uint32_t tcp_hybla_ssthresh(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_hybla] tcp_hybla_ssthresh: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -74,3 +74,42 @@ int raid_read_super(const uint8_t *buffer, uint64_t sector_offset,
     memcpy(super, sb, sizeof(*super));
     return 0;
 }
+
+/* ── Stub: mdadm_init ─────────────────────────────── */
+int mdadm_init(void)
+{
+    kprintf("[mdadm] mdadm_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_run_array ─────────────────────────────── */
+int mdadm_run_array(const char *dev, int level, int disks)
+{
+    (void)dev;
+    (void)level;
+    (void)disks;
+    kprintf("[mdadm] mdadm_run_array: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_stop_array ─────────────────────────────── */
+int mdadm_stop_array(const char *dev)
+{
+    (void)dev;
+    kprintf("[mdadm] mdadm_stop_array: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_add_disk ─────────────────────────────── */
+int mdadm_add_disk(const char *dev, const char *disk)
+{
+    (void)dev;
+    (void)disk;
+    kprintf("[mdadm] mdadm_add_disk: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_remove_disk ─────────────────────────────── */
+int mdadm_remove_disk(const char *dev, const char *disk)
+{
+    (void)dev;
+    (void)disk;
+    kprintf("[mdadm] mdadm_remove_disk: not yet implemented\n");
+    return -ENOSYS;
+}

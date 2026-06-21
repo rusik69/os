@@ -285,3 +285,23 @@ struct usb_driver *usb_core_find_driver(const char *name)
     spinlock_release(&g_drivers_lock);
     return NULL;
 }
+
+/* ── Stub: usb_init ─────────────────────────────── */
+int usb_init(void)
+{
+    kprintf("[usb] usb_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_exit ─────────────────────────────── */
+int usb_exit(void)
+{
+    kprintf("[usb] usb_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_unregister_driver ─────────────────────────────── */
+int usb_unregister_driver(void *drv)
+{
+    (void)drv;
+    kprintf("[usb] usb_unregister_driver: not yet implemented\n");
+    return -ENOSYS;
+}

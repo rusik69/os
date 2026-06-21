@@ -106,3 +106,35 @@ void timer_handler_soft(void) {
         if (fn) fn(arg);
     }
 }
+
+/* ── Stub: timer_add ─────────────────────────────── */
+int timer_add(void *timer)
+{
+    (void)timer;
+    kprintf("[timers] timer_add: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_del ─────────────────────────────── */
+int timer_del(void *timer)
+{
+    (void)timer;
+    kprintf("[timers] timer_del: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_mod ─────────────────────────────── */
+int timer_mod(void *timer, uint64_t expires)
+{
+    (void)timer;
+    (void)expires;
+    kprintf("[timers] timer_mod: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_init ─────────────────────────────── */
+int timer_init(void *timer, void *func, unsigned long data)
+{
+    (void)timer;
+    (void)func;
+    (void)data;
+    kprintf("[timers] timer_init: not yet implemented\n");
+    return -ENOSYS;
+}

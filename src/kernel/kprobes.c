@@ -814,3 +814,34 @@ int kprobe_unregister_bpf(const char *symbol)
     kprintf("[KPROBES] BPF: detached from kprobe '%s'\n", symbol);
     return 0;
 }
+
+/* ── Stub: kprobe_register ─────────────────────────────── */
+int kprobe_register(void *kp)
+{
+    (void)kp;
+    kprintf("[kprobes] kprobe_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kprobe_unregister ─────────────────────────────── */
+int kprobe_unregister(void *kp)
+{
+    (void)kp;
+    kprintf("[kprobes] kprobe_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kprobe_fault_handler ─────────────────────────────── */
+int kprobe_fault_handler(void *kp, void *regs, int trapnr)
+{
+    (void)kp;
+    (void)regs;
+    (void)trapnr;
+    kprintf("[kprobes] kprobe_fault_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kprobe_breakpoint_handler ─────────────────────────────── */
+int kprobe_breakpoint_handler(void *regs)
+{
+    (void)regs;
+    kprintf("[kprobes] kprobe_breakpoint_handler: not yet implemented\n");
+    return -ENOSYS;
+}

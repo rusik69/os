@@ -120,3 +120,18 @@ void powercap_init(void)
     kprintf("[OK] Powercap — RAPL power capping framework (%d zones)\n",
             powercap_zone_count);
 }
+
+/* ── Stub: powercap_unregister_zone ─────────────────────────────── */
+int powercap_unregister_zone(void *zone)
+{
+    (void)zone;
+    kprintf("[powercap] powercap_unregister_zone: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: powercap_read_energy ─────────────────────────────── */
+uint64_t powercap_read_energy(void *zone)
+{
+    (void)zone;
+    kprintf("[powercap] powercap_read_energy: not yet implemented\n");
+    return -ENOSYS;
+}

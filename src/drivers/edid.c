@@ -212,3 +212,21 @@ void edid_print_info(const struct edid_data *edid) {
         }
     }
 }
+
+/* ── Stub: edid_find_mode ─────────────────────────────── */
+int edid_find_mode(const void *edid, int width, int height, void *mode)
+{
+    (void)edid;
+    (void)width;
+    (void)height;
+    (void)mode;
+    kprintf("[edid] edid_find_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: edid_valid ─────────────────────────────── */
+int edid_valid(const void *edid)
+{
+    (void)edid;
+    kprintf("[edid] edid_valid: not yet implemented\n");
+    return -ENOSYS;
+}

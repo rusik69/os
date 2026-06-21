@@ -544,3 +544,22 @@ void usb_hid_mouse_get(int *buttons, int *dx, int *dy) {
     g_mouse_dx = 0;
     g_mouse_dy = 0;
 }
+
+/* ── Stub: usb_hid_read ─────────────────────────────── */
+int usb_hid_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] usb_hid_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_hid_parse_report ─────────────────────────────── */
+int usb_hid_parse_report(void *dev, const void *report, size_t len)
+{
+    (void)dev;
+    (void)report;
+    (void)len;
+    kprintf("[usb] usb_hid_parse_report: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -510,3 +510,23 @@ void ecc_generate_keypair(uint8_t private_key[32], uint8_t public_key[64])
         public_key[32 + 4*i + 3] = (uint8_t)((pub.y[i] >> 24) & 0xFF);
     }
 }
+
+/* ── Stub: ecc_point_multiply ─────────────────────────────── */
+int ecc_point_multiply(const void *p, const void *k, void *r)
+{
+    (void)p;
+    (void)k;
+    (void)r;
+    kprintf("[ecc] ecc_point_multiply: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ecc_ecdsa_sign ─────────────────────────────── */
+int ecc_ecdsa_sign(const void *priv, const void *hash, size_t hlen, void *sig)
+{
+    (void)priv;
+    (void)hash;
+    (void)hlen;
+    (void)sig;
+    kprintf("[ecc] ecc_ecdsa_sign: not yet implemented\n");
+    return -ENOSYS;
+}

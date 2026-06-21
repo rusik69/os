@@ -368,3 +368,19 @@ int battery_get_health(struct battery_health *health) {
 }
 #include "module.h"
 module_init(battery_init);
+
+/* ── Stub: battery_get_info ─────────────────────────────── */
+int battery_get_info(int id, void *info)
+{
+    (void)id;
+    (void)info;
+    kprintf("[battery] battery_get_info: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: battery_register ─────────────────────────────── */
+int battery_register(void *dev)
+{
+    (void)dev;
+    kprintf("[battery] battery_register: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -339,3 +339,31 @@ out:
     spinlock_irqsave_release(&cpuhp_lock, irq_flags);
     return ret;
 }
+
+/* ── Stub: cpu_init ─────────────────────────────── */
+int cpu_init(int cpu_id)
+{
+    (void)cpu_id;
+    kprintf("[cpu] cpu_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpu_idle ─────────────────────────────── */
+int cpu_idle(void)
+{
+    kprintf("[cpu] cpu_idle: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpu_die ─────────────────────────────── */
+int cpu_die(int cpu_id)
+{
+    (void)cpu_id;
+    kprintf("[cpu] cpu_die: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpu_online ─────────────────────────────── */
+int cpu_online(int cpu_id)
+{
+    (void)cpu_id;
+    kprintf("[cpu] cpu_online: not yet implemented\n");
+    return -ENOSYS;
+}

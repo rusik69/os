@@ -562,3 +562,22 @@ void kunit_net_register(void)
     kunit_register_suite(&net_test_suite);
     kprintf("[KUnit] Networking tests registered (%d cases)\n", ci);
 }
+
+/* ── Stub: kunit_net_init ─────────────────────────────── */
+int kunit_net_init(void)
+{
+    kprintf("[kunit] kunit_net_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_net_test_tcp ─────────────────────────────── */
+int kunit_net_test_tcp(void)
+{
+    kprintf("[kunit] kunit_net_test_tcp: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_net_test_udp ─────────────────────────────── */
+int kunit_net_test_udp(void)
+{
+    kprintf("[kunit] kunit_net_test_udp: not yet implemented\n");
+    return -ENOSYS;
+}

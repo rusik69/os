@@ -518,3 +518,22 @@ void kunit_sched_register(void)
     kunit_register_suite(&sched_test_suite);
     kprintf("[KUnit] Scheduler tests registered (%d cases)\n", ci);
 }
+
+/* ── Stub: kunit_sched_init ─────────────────────────────── */
+int kunit_sched_init(void)
+{
+    kprintf("[kunit] kunit_sched_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_sched_test_fork ─────────────────────────────── */
+int kunit_sched_test_fork(void)
+{
+    kprintf("[kunit] kunit_sched_test_fork: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_sched_test_yield ─────────────────────────────── */
+int kunit_sched_test_yield(void)
+{
+    kprintf("[kunit] kunit_sched_test_yield: not yet implemented\n");
+    return -ENOSYS;
+}

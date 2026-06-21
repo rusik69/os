@@ -151,3 +151,20 @@ int sched_getattr(uint32_t pid, struct sched_attr *attr, size_t size, uint32_t f
 
     return 0;
 }
+
+/* ── Stub: sched_attr_set ─────────────────────────────── */
+int sched_attr_set(int pid, const void *attr)
+{
+    (void)pid;
+    (void)attr;
+    kprintf("[sched] sched_attr_set: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sched_attr_get ─────────────────────────────── */
+int sched_attr_get(int pid, void *attr)
+{
+    (void)pid;
+    (void)attr;
+    kprintf("[sched] sched_attr_get: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -143,3 +143,18 @@ void vegas_set_cwnd(struct vegas_data *v, uint32_t cwnd)
     if (!v || !v->initialised) return;
     v->cwnd = cwnd;
 }
+
+/* ── Stub: tcp_vegas_cong_avoid ─────────────────────────────── */
+int tcp_vegas_cong_avoid(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_vegas] tcp_vegas_cong_avoid: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_vegas_ssthresh ─────────────────────────────── */
+uint32_t tcp_vegas_ssthresh(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_vegas] tcp_vegas_ssthresh: not yet implemented\n");
+    return -ENOSYS;
+}

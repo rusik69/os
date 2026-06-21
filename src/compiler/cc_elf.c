@@ -141,3 +141,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("In-kernel C compiler — C17 compiler, assembler, and linker");
 MODULE_VERSION("1.0");
 #endif /* MODULE */
+
+/* ── Stub: cc_elf_write ─────────────────────────────── */
+int cc_elf_write(const char *path, void *obj)
+{
+    (void)path;
+    (void)obj;
+    kprintf("[cc] cc_elf_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_elf_read ─────────────────────────────── */
+int cc_elf_read(const char *path, void *obj)
+{
+    (void)path;
+    (void)obj;
+    kprintf("[cc] cc_elf_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_elf_relocate ─────────────────────────────── */
+int cc_elf_relocate(void *obj, const char *section)
+{
+    (void)obj;
+    (void)section;
+    kprintf("[cc] cc_elf_relocate: not yet implemented\n");
+    return -ENOSYS;
+}

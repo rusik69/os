@@ -450,3 +450,30 @@ static FuncInfo *find_func_by_name(CompilerState *cc, const char *name) {
             return &cc->funcs[i];
     return 0;
 }
+
+/* ── Stub: cc_obj_create ─────────────────────────────── */
+int cc_obj_create(void *obj)
+{
+    (void)obj;
+    kprintf("[cc] cc_obj_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_obj_add_section ─────────────────────────────── */
+int cc_obj_add_section(void *obj, const char *name, void *data, size_t len)
+{
+    (void)obj;
+    (void)name;
+    (void)data;
+    (void)len;
+    kprintf("[cc] cc_obj_add_section: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_obj_add_symbol ─────────────────────────────── */
+int cc_obj_add_symbol(void *obj, const char *name, void *addr)
+{
+    (void)obj;
+    (void)name;
+    (void)addr;
+    kprintf("[cc] cc_obj_add_symbol: not yet implemented\n");
+    return -ENOSYS;
+}

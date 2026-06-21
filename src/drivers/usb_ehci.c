@@ -1040,3 +1040,32 @@ MODULE_ALIAS("pci:v00008086d00001E2Dsv0000*"); /* Intel 8-series EHCI */
 MODULE_ALIAS("pci:v00008086d00009C2Dsv0000*"); /* Intel 9-series EHCI */
 MODULE_ALIAS("pci:v00001022d00007808sv0000*"); /* AMD Hudson EHCI */
 #endif /* MODULE */
+
+/* ── Stub: ehci_init ─────────────────────────────── */
+int ehci_init(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] ehci_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ehci_reset ─────────────────────────────── */
+int ehci_reset(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] ehci_reset: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ehci_submit_urb ─────────────────────────────── */
+int ehci_submit_urb(void *urb)
+{
+    (void)urb;
+    kprintf("[usb] ehci_submit_urb: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ehci_irq ─────────────────────────────── */
+int ehci_irq(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] ehci_irq: not yet implemented\n");
+    return -ENOSYS;
+}

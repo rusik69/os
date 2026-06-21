@@ -154,3 +154,18 @@ void aslr_add_entropy(uint64_t entropy) {
     /* XOR-based entropy mixing: fold in the new entropy */
     prng_add_entropy(entropy);
 }
+
+/* ── Stub: aslr_randomize_addr ─────────────────────────────── */
+uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
+{
+    (void)base;
+    (void)range;
+    kprintf("[aslr] aslr_randomize_addr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: aslr_randomize_stack ─────────────────────────────── */
+uint64_t aslr_randomize_stack(void)
+{
+    kprintf("[aslr] aslr_randomize_stack: not yet implemented\n");
+    return -ENOSYS;
+}

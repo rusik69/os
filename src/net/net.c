@@ -1428,3 +1428,25 @@ EXPORT_SYMBOL(net_udp_bind);
 EXPORT_SYMBOL(net_udp_listen);
 EXPORT_SYMBOL(net_udp_recv);
 EXPORT_SYMBOL(net_udp_unlisten);
+
+/* ── Stub: net_exit ─────────────────────────────── */
+int net_exit(void)
+{
+    kprintf("[net] net_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: net_register_protocol ─────────────────────────────── */
+int net_register_protocol(int family, void *proto)
+{
+    (void)family;
+    (void)proto;
+    kprintf("[net] net_register_protocol: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: net_unregister_protocol ─────────────────────────────── */
+int net_unregister_protocol(int family)
+{
+    (void)family;
+    kprintf("[net] net_unregister_protocol: not yet implemented\n");
+    return -ENOSYS;
+}

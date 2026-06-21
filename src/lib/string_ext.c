@@ -184,3 +184,29 @@ void *memmem(const void *haystack, size_t haystacklen,
     }
     return NULL;
 }
+
+/* ── Stub: strnlen_user ─────────────────────────────── */
+size_t strnlen_user(const char *s, size_t n)
+{
+    (void)s;
+    (void)n;
+    kprintf("[string] strnlen_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strncpy_from_user ─────────────────────────────── */
+int strncpy_from_user(char *dst, const char *src, size_t n)
+{
+    (void)dst;
+    (void)src;
+    (void)n;
+    kprintf("[string] strncpy_from_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strcmp_user ─────────────────────────────── */
+int strcmp_user(const char *cs, const char *ct)
+{
+    (void)cs;
+    (void)ct;
+    kprintf("[string] strcmp_user: not yet implemented\n");
+    return -ENOSYS;
+}

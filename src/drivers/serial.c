@@ -293,3 +293,36 @@ void early_printdec(uint64_t val)
 
     early_printascii(&buf[pos]);
 }
+
+/* ── Stub: serial_open ─────────────────────────────── */
+int serial_open(int port)
+{
+    (void)port;
+    kprintf("[serial] serial_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: serial_close ─────────────────────────────── */
+int serial_close(int port)
+{
+    (void)port;
+    kprintf("[serial] serial_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: serial_set_baud ─────────────────────────────── */
+int serial_set_baud(int port, int baud)
+{
+    (void)port;
+    (void)baud;
+    kprintf("[serial] serial_set_baud: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: serial_set_params ─────────────────────────────── */
+int serial_set_params(int port, int bits, int parity, int stop)
+{
+    (void)port;
+    (void)bits;
+    (void)parity;
+    (void)stop;
+    kprintf("[serial] serial_set_params: not yet implemented\n");
+    return -ENOSYS;
+}

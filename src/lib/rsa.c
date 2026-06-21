@@ -327,3 +327,48 @@ int rsa_pkcs1_v15_sign(uint8_t *sig, size_t *sig_len,
 
     return rsa_private_decrypt(sig, sig_len, padded, mod_bytes, n, n_len, d, d_len);
 }
+
+/* ── Stub: rsa_encrypt ─────────────────────────────── */
+int rsa_encrypt(const void *pub, const void *plain, size_t plen, void *cipher, size_t *clen)
+{
+    (void)pub;
+    (void)plain;
+    (void)plen;
+    (void)cipher;
+    (void)clen;
+    kprintf("[rsa] rsa_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rsa_decrypt ─────────────────────────────── */
+int rsa_decrypt(const void *priv, const void *cipher, size_t clen, void *plain, size_t *plen)
+{
+    (void)priv;
+    (void)cipher;
+    (void)clen;
+    (void)plain;
+    (void)plen;
+    kprintf("[rsa] rsa_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rsa_sign ─────────────────────────────── */
+int rsa_sign(const void *priv, const void *msg, size_t mlen, void *sig, size_t *slen)
+{
+    (void)priv;
+    (void)msg;
+    (void)mlen;
+    (void)sig;
+    (void)slen;
+    kprintf("[rsa] rsa_sign: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rsa_verify ─────────────────────────────── */
+int rsa_verify(const void *pub, const void *msg, size_t mlen, const void *sig, size_t slen)
+{
+    (void)pub;
+    (void)msg;
+    (void)mlen;
+    (void)sig;
+    (void)slen;
+    kprintf("[rsa] rsa_verify: not yet implemented\n");
+    return -ENOSYS;
+}

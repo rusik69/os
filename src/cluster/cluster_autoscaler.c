@@ -167,3 +167,31 @@ void cluster_autoscaler_get_info(struct cluster_autoscaler *out)
     *out = g_autoscaler;
     spinlock_release(&g_as_lock);
 }
+
+/* ── Stub: autoscaler_run ─────────────────────────────── */
+int autoscaler_run(int interval)
+{
+    (void)interval;
+    kprintf("[cluster] autoscaler_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: autoscaler_stop ─────────────────────────────── */
+int autoscaler_stop(void)
+{
+    kprintf("[cluster] autoscaler_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: autoscaler_scale_up ─────────────────────────────── */
+int autoscaler_scale_up(int count)
+{
+    (void)count;
+    kprintf("[cluster] autoscaler_scale_up: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: autoscaler_scale_down ─────────────────────────────── */
+int autoscaler_scale_down(int count)
+{
+    (void)count;
+    kprintf("[cluster] autoscaler_scale_down: not yet implemented\n");
+    return -ENOSYS;
+}

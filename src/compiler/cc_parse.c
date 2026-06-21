@@ -2409,3 +2409,20 @@ void cc_parse(CompilerState *cc) {
             patch_rel32(cc, cc->patches[i].code_off, f->code_offset);
     }
 }
+
+/* ── Stub: cc_parse_expression ─────────────────────────────── */
+int cc_parse_expression(void *parser, void *ast)
+{
+    (void)parser;
+    (void)ast;
+    kprintf("[cc] cc_parse_expression: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_parse_statement ─────────────────────────────── */
+int cc_parse_statement(void *parser, void *ast)
+{
+    (void)parser;
+    (void)ast;
+    kprintf("[cc] cc_parse_statement: not yet implemented\n");
+    return -ENOSYS;
+}

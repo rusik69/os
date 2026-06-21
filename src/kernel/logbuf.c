@@ -30,3 +30,10 @@ uint32_t logbuf_available(void) {
     if (log_head >= log_tail) return log_head - log_tail;
     return LOGBUF_SIZE - (log_tail - log_head);
 }
+
+/* ── Stub: logbuf_clear ─────────────────────────────── */
+int logbuf_clear(void)
+{
+    kprintf("[logbuf] logbuf_clear: not yet implemented\n");
+    return -ENOSYS;
+}

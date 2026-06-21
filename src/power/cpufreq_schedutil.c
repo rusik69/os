@@ -413,3 +413,26 @@ void cpufreq_schedutil_pelt_update(int cpu_id, uint32_t util_avg)
      * (checking last_up_tick / last_down_tick) prevents thrashing. */
     schedutil_evaluate_cpu(state);
 }
+
+/* ── Stub: schedutil_init ─────────────────────────────── */
+int schedutil_init(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] schedutil_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: schedutil_exit ─────────────────────────────── */
+int schedutil_exit(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] schedutil_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: schedutil_target ─────────────────────────────── */
+int schedutil_target(int cpu, unsigned int target_freq)
+{
+    (void)cpu;
+    (void)target_freq;
+    kprintf("[cpufreq] schedutil_target: not yet implemented\n");
+    return -ENOSYS;
+}

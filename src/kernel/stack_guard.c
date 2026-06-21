@@ -113,3 +113,11 @@ int stack_guard_remove(uint64_t stack_virt, int stack_pages)
     }
     return -ENOENT;
 }
+
+/* ── Stub: stack_guard_handle_violation ─────────────────────────────── */
+int stack_guard_handle_violation(void *task)
+{
+    (void)task;
+    kprintf("[stack] stack_guard_handle_violation: not yet implemented\n");
+    return -ENOSYS;
+}

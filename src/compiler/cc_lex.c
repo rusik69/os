@@ -603,3 +603,22 @@ void cc_lex(CompilerState *cc) {
 }
 
 
+
+/* ── Stub: cc_lex_tokenize ─────────────────────────────── */
+int cc_lex_tokenize(const char *src, size_t len, void *tokens, int *count)
+{
+    (void)src;
+    (void)len;
+    (void)tokens;
+    (void)count;
+    kprintf("[cc] cc_lex_tokenize: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cc_lex_next ─────────────────────────────── */
+int cc_lex_next(void *lexer, void *token)
+{
+    (void)lexer;
+    (void)token;
+    kprintf("[cc] cc_lex_next: not yet implemented\n");
+    return -ENOSYS;
+}

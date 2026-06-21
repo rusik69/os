@@ -209,3 +209,20 @@ void acpi_platform_profile_init(void)
 }
 #include "module.h"
 module_init(acpi_platform_profile_init);
+
+/* ── Stub: acpi_platform_profile_get ─────────────────────────────── */
+int acpi_platform_profile_get(void *dev, int *profile)
+{
+    (void)dev;
+    (void)profile;
+    kprintf("[acpi] acpi_platform_profile_get: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: acpi_platform_profile_set ─────────────────────────────── */
+int acpi_platform_profile_set(void *dev, int profile)
+{
+    (void)dev;
+    (void)profile;
+    kprintf("[acpi] acpi_platform_profile_set: not yet implemented\n");
+    return -ENOSYS;
+}

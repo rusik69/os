@@ -309,3 +309,12 @@ int cpuidle_teo_init(void)
     kprintf("[cpuidle_teo] TEO governor registered (pattern recognition enabled)\n");
     return 0;
 }
+
+/* ── Stub: teo_reflect ─────────────────────────────── */
+int teo_reflect(void *dev, int index)
+{
+    (void)dev;
+    (void)index;
+    kprintf("[cpuidle] teo_reflect: not yet implemented\n");
+    return -ENOSYS;
+}

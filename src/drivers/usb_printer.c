@@ -209,3 +209,20 @@ int usb_printer_get_count(void)
 {
     return g_printer_count;
 }
+
+/* ── Stub: usb_printer_read ─────────────────────────────── */
+int usb_printer_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] usb_printer_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_printer_get_status ─────────────────────────────── */
+int usb_printer_get_status(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] usb_printer_get_status: not yet implemented\n");
+    return -ENOSYS;
+}

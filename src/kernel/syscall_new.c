@@ -549,3 +549,27 @@ int do_symlinkat(const char *target, int newdirfd, const char *linkpath)
 
     return fs_symlink(ktarget, path);
 }
+
+/* ── Stub: syscall_new_register ─────────────────────────────── */
+int syscall_new_register(int nr, void *handler)
+{
+    (void)nr;
+    (void)handler;
+    kprintf("[syscall] syscall_new_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_new_unregister ─────────────────────────────── */
+int syscall_new_unregister(int nr)
+{
+    (void)nr;
+    kprintf("[syscall] syscall_new_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_new_invoke ─────────────────────────────── */
+int syscall_new_invoke(int nr, void *args)
+{
+    (void)nr;
+    (void)args;
+    kprintf("[syscall] syscall_new_invoke: not yet implemented\n");
+    return -ENOSYS;
+}

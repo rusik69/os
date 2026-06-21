@@ -520,3 +520,20 @@ int drm_add_connector(struct drm_device *dev, uint32_t type)
     spinlock_release(&g_drm_lock);
     return -1;
 }
+
+/* ── Stub: drm_open ─────────────────────────────── */
+int drm_open(void *dev, void *file)
+{
+    (void)dev;
+    (void)file;
+    kprintf("[drm] drm_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: drm_release ─────────────────────────────── */
+int drm_release(void *dev, void *file)
+{
+    (void)dev;
+    (void)file;
+    kprintf("[drm] drm_release: not yet implemented\n");
+    return -ENOSYS;
+}

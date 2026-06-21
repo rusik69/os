@@ -1560,3 +1560,11 @@ uint32_t acpi_read_gpe_status(void)
     /* Actual implementation would use the FADT GPE0 block address */
     return 0;  /* Placeholder — real GPE base not parsed yet */
 }
+
+/* ── Stub: acpi_get_table ─────────────────────────────── */
+void* acpi_get_table(const char *sig)
+{
+    (void)sig;
+    kprintf("[acpi] acpi_get_table: not yet implemented\n");
+    return -ENOSYS;
+}

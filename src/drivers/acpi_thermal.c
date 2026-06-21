@@ -533,3 +533,12 @@ void acpi_thermal_print_info(void)
                 tze->passive_cooling_active ? "YES" : "no");
     }
 }
+
+/* ── Stub: acpi_thermal_set_policy ─────────────────────────────── */
+int acpi_thermal_set_policy(void *dev, int policy)
+{
+    (void)dev;
+    (void)policy;
+    kprintf("[acpi] acpi_thermal_set_policy: not yet implemented\n");
+    return -ENOSYS;
+}

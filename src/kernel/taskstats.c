@@ -77,3 +77,26 @@ void taskstats_init(void)
 {
     kprintf("[OK] taskstats: Per-task statistics initialised\n");
 }
+
+/* ── Stub: taskstats_collect ─────────────────────────────── */
+int taskstats_collect(int pid, void *stats)
+{
+    (void)pid;
+    (void)stats;
+    kprintf("[taskstats] taskstats_collect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: taskstats_clear ─────────────────────────────── */
+int taskstats_clear(int pid)
+{
+    (void)pid;
+    kprintf("[taskstats] taskstats_clear: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: taskstats_register ─────────────────────────────── */
+int taskstats_register(void *listener)
+{
+    (void)listener;
+    kprintf("[taskstats] taskstats_register: not yet implemented\n");
+    return -ENOSYS;
+}

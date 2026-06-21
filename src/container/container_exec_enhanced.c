@@ -360,3 +360,26 @@ int container_exec_detach(struct exec_attach *ea)
     kfree(ea);
     return 0;
 }
+
+/* ── Stub: exec_enhanced_run ─────────────────────────────── */
+int exec_enhanced_run(const char *cont, const char *cmd)
+{
+    (void)cont;
+    (void)cmd;
+    kprintf("[container] exec_enhanced_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exec_enhanced_attach ─────────────────────────────── */
+int exec_enhanced_attach(const char *cont)
+{
+    (void)cont;
+    kprintf("[container] exec_enhanced_attach: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exec_enhanced_terminate ─────────────────────────────── */
+int exec_enhanced_terminate(const char *cont)
+{
+    (void)cont;
+    kprintf("[container] exec_enhanced_terminate: not yet implemented\n");
+    return -ENOSYS;
+}

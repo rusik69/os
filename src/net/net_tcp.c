@@ -2067,3 +2067,51 @@ int net_tcp_has_closed(int conn_id)
     struct tcp_conn *c = &tcp_conns[conn_id];
     return (c->state == TCP_CLOSED || c->rx_fin) ? 1 : 0;
 }
+
+/* ── Stub: tcp_open ─────────────────────────────── */
+int tcp_open(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp] tcp_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_close ─────────────────────────────── */
+int tcp_close(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp] tcp_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_connect ─────────────────────────────── */
+int tcp_connect(void *sk, void *addr)
+{
+    (void)sk;
+    (void)addr;
+    kprintf("[tcp] tcp_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_disconnect ─────────────────────────────── */
+int tcp_disconnect(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp] tcp_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_sendmsg ─────────────────────────────── */
+int tcp_sendmsg(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[tcp] tcp_sendmsg: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_recvmsg ─────────────────────────────── */
+int tcp_recvmsg(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[tcp] tcp_recvmsg: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -329,3 +329,33 @@ void aes_init_crypto(void)
 {
     kprintf("[OK] AES-%d/%d/%d CBC initialized\n", AES_128 * 8, AES_192 * 8, AES_256 * 8);
 }
+
+/* ── Stub: aes_encrypt ─────────────────────────────── */
+int aes_encrypt(const void *key, size_t key_len, const void *plain, void *cipher)
+{
+    (void)key;
+    (void)key_len;
+    (void)plain;
+    (void)cipher;
+    kprintf("[aes] aes_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: aes_decrypt ─────────────────────────────── */
+int aes_decrypt(const void *key, size_t key_len, const void *cipher, void *plain)
+{
+    (void)key;
+    (void)key_len;
+    (void)cipher;
+    (void)plain;
+    kprintf("[aes] aes_decrypt: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: aes_key_expand ─────────────────────────────── */
+int aes_key_expand(const void *key, size_t key_len, void *round_keys)
+{
+    (void)key;
+    (void)key_len;
+    (void)round_keys;
+    kprintf("[aes] aes_key_expand: not yet implemented\n");
+    return -ENOSYS;
+}

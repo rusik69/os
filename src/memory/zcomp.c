@@ -174,3 +174,40 @@ void zcomp_init(void)
 }
 #include "module.h"
 module_init(zcomp_init);
+
+/* ── Stub: zcomp_compress ─────────────────────────────── */
+int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)pool;
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[zcomp] zcomp_compress: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zcomp_decompress ─────────────────────────────── */
+int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)pool;
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[zcomp] zcomp_decompress: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zcomp_create_pool ─────────────────────────────── */
+void* zcomp_create_pool(const char *alg)
+{
+    (void)alg;
+    kprintf("[zcomp] zcomp_create_pool: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zcomp_destroy_pool ─────────────────────────────── */
+int zcomp_destroy_pool(void *pool)
+{
+    (void)pool;
+    kprintf("[zcomp] zcomp_destroy_pool: not yet implemented\n");
+    return -ENOSYS;
+}

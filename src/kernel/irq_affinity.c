@@ -19,3 +19,20 @@ uint64_t irq_get_affinity(int irq) {
     if (irq < 0 || irq >= MAX_IRQ) return 0;
     return irq_affinity[irq];
 }
+
+/* ── Stub: irq_affinity_set ─────────────────────────────── */
+int irq_affinity_set(int irq, const void *cpus)
+{
+    (void)irq;
+    (void)cpus;
+    kprintf("[irq] irq_affinity_set: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: irq_affinity_get ─────────────────────────────── */
+int irq_affinity_get(int irq, void *cpus)
+{
+    (void)irq;
+    (void)cpus;
+    kprintf("[irq] irq_affinity_get: not yet implemented\n");
+    return -ENOSYS;
+}

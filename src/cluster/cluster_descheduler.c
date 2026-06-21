@@ -174,3 +174,17 @@ int cluster_descheduler_get_stats(uint64_t *total_evictions)
     spinlock_release(&g_ds_lock);
     return 0;
 }
+
+/* ── Stub: descheduler_run ─────────────────────────────── */
+int descheduler_run(void)
+{
+    kprintf("[cluster] descheduler_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: descheduler_evict_pod ─────────────────────────────── */
+int descheduler_evict_pod(const char *pod)
+{
+    (void)pod;
+    kprintf("[cluster] descheduler_evict_pod: not yet implemented\n");
+    return -ENOSYS;
+}

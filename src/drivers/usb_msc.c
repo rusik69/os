@@ -511,3 +511,32 @@ void usb_msc_exit(void)
     g_max_lba = 0;
     kprintf("[USB] MSC device unregistered\n");
 }
+
+/* ── Stub: usb_msc_read ─────────────────────────────── */
+int usb_msc_read(void *dev, void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[usb] usb_msc_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_msc_write ─────────────────────────────── */
+int usb_msc_write(void *dev, const void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[usb] usb_msc_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_msc_capacity ─────────────────────────────── */
+int usb_msc_capacity(void *dev, void *cap)
+{
+    (void)dev;
+    (void)cap;
+    kprintf("[usb] usb_msc_capacity: not yet implemented\n");
+    return -ENOSYS;
+}

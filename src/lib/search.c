@@ -105,3 +105,26 @@ void *lsearch(const void *key, void *base, size_t *nmemb, size_t size,
     (*nmemb)++;
     return (void *)(p + (*nmemb - 1) * size);
 }
+
+/* ── Stub: search_binary ─────────────────────────────── */
+int search_binary(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
+{
+    (void)key;
+    (void)base;
+    (void)nmemb;
+    (void)size;
+    (void)cmp;
+    kprintf("[search] search_binary: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: search_linear ─────────────────────────────── */
+int search_linear(const void *key, const void *base, size_t nmemb, size_t size, void *cmp)
+{
+    (void)key;
+    (void)base;
+    (void)nmemb;
+    (void)size;
+    (void)cmp;
+    kprintf("[search] search_linear: not yet implemented\n");
+    return -ENOSYS;
+}

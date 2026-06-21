@@ -351,3 +351,18 @@ void balloon_init(void)
 }
 #include "module.h"
 module_init(balloon_init);
+
+/* ── Stub: balloon_inflate ─────────────────────────────── */
+int balloon_inflate(size_t count)
+{
+    (void)count;
+    kprintf("[balloon] balloon_inflate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: balloon_deflate ─────────────────────────────── */
+int balloon_deflate(size_t count)
+{
+    (void)count;
+    kprintf("[balloon] balloon_deflate: not yet implemented\n");
+    return -ENOSYS;
+}

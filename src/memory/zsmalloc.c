@@ -204,3 +204,34 @@ void zsmalloc_init(void)
 }
 #include "module.h"
 module_init(zsmalloc_init);
+
+/* ── Stub: zs_create_pool ─────────────────────────────── */
+void* zs_create_pool(const char *name)
+{
+    (void)name;
+    kprintf("[zsmalloc] zs_create_pool: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zs_destroy_pool ─────────────────────────────── */
+int zs_destroy_pool(void *pool)
+{
+    (void)pool;
+    kprintf("[zsmalloc] zs_destroy_pool: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zs_malloc ─────────────────────────────── */
+void* zs_malloc(void *pool, size_t size)
+{
+    (void)pool;
+    (void)size;
+    kprintf("[zsmalloc] zs_malloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zs_free ─────────────────────────────── */
+int zs_free(void *pool, void *ptr)
+{
+    (void)pool;
+    (void)ptr;
+    kprintf("[zsmalloc] zs_free: not yet implemented\n");
+    return -ENOSYS;
+}

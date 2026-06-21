@@ -136,3 +136,12 @@ const struct intel_gpu_info *intel_gpu_get_info(void) {
 }
 #include "module.h"
 module_init(intel_gpu_init);
+
+/* ── Stub: intel_gpu_mode_set ─────────────────────────────── */
+int intel_gpu_mode_set(void *dev, void *mode)
+{
+    (void)dev;
+    (void)mode;
+    kprintf("[intel_gpu] intel_gpu_mode_set: not yet implemented\n");
+    return -ENOSYS;
+}

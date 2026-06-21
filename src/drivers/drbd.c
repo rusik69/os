@@ -379,3 +379,19 @@ int drbd_get_state(int res_id, int *conn_state, int *disk_state)
     if (disk_state) *disk_state = g_resources[res_id].disk_state;
     return 0;
 }
+
+/* ── Stub: drbd_connect ─────────────────────────────── */
+int drbd_connect(const char *peer)
+{
+    (void)peer;
+    kprintf("[drbd] drbd_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: drbd_replicate ─────────────────────────────── */
+int drbd_replicate(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[drbd] drbd_replicate: not yet implemented\n");
+    return -ENOSYS;
+}

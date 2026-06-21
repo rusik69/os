@@ -330,3 +330,25 @@ unsigned int numa_distance(int node_a, int node_b)
         return 10;  /* fast local access */
     return 20;      /* remote — default distance */
 }
+
+/* ── Stub: cpu_topology_get_package ─────────────────────────────── */
+int cpu_topology_get_package(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpu_topology] cpu_topology_get_package: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpu_topology_get_core ─────────────────────────────── */
+int cpu_topology_get_core(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpu_topology] cpu_topology_get_core: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cpu_topology_get_numa ─────────────────────────────── */
+int cpu_topology_get_numa(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpu_topology] cpu_topology_get_numa: not yet implemented\n");
+    return -ENOSYS;
+}

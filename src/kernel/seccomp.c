@@ -371,3 +371,28 @@ int seccomp_filter_check(uint64_t num) {
     /* Default action for unmatched syscalls: allow */
     return 1;
 }
+
+/* ── Stub: seccomp_register_mode ─────────────────────────────── */
+int seccomp_register_mode(int mode, void *ops)
+{
+    (void)mode;
+    (void)ops;
+    kprintf("[seccomp] seccomp_register_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: seccomp_unregister_mode ─────────────────────────────── */
+int seccomp_unregister_mode(int mode)
+{
+    (void)mode;
+    kprintf("[seccomp] seccomp_unregister_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: seccomp_run_filters ─────────────────────────────── */
+int seccomp_run_filters(void *task, int syscall_nr, void *args)
+{
+    (void)task;
+    (void)syscall_nr;
+    (void)args;
+    kprintf("[seccomp] seccomp_run_filters: not yet implemented\n");
+    return -ENOSYS;
+}

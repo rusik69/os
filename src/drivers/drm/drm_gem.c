@@ -310,3 +310,28 @@ int drm_gem_mmap(struct drm_gem_object *obj, uint64_t *offset)
     *offset = obj->phys_addr;
     return 0;
 }
+
+/* ── Stub: drm_gem_object_init ─────────────────────────────── */
+int drm_gem_object_init(void *dev, void *obj, size_t size)
+{
+    (void)dev;
+    (void)obj;
+    (void)size;
+    kprintf("[drm] drm_gem_object_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: drm_gem_object_free ─────────────────────────────── */
+int drm_gem_object_free(void *obj)
+{
+    (void)obj;
+    kprintf("[drm] drm_gem_object_free: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: drm_gem_handle_delete ─────────────────────────────── */
+int drm_gem_handle_delete(void *file, uint32_t handle)
+{
+    (void)file;
+    (void)handle;
+    kprintf("[drm] drm_gem_handle_delete: not yet implemented\n");
+    return -ENOSYS;
+}

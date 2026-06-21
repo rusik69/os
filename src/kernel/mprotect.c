@@ -101,3 +101,22 @@ int64_t sys_mprotect(uint64_t addr, uint64_t length, uint64_t prot) {
 
     return 0;
 }
+
+/* ── Stub: mprotect_check ─────────────────────────────── */
+int mprotect_check(uint64_t addr, size_t len, int prot)
+{
+    (void)addr;
+    (void)len;
+    (void)prot;
+    kprintf("[mprotect] mprotect_check: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mprotect_apply ─────────────────────────────── */
+int mprotect_apply(uint64_t addr, size_t len, int prot)
+{
+    (void)addr;
+    (void)len;
+    (void)prot;
+    kprintf("[mprotect] mprotect_apply: not yet implemented\n");
+    return -ENOSYS;
+}

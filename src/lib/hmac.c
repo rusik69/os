@@ -86,3 +86,15 @@ void hmac_init(void)
 {
     kprintf("[OK] HMAC-MD5, HMAC-SHA256 initialized\n");
 }
+
+/* ── Stub: hmac_sha1 ─────────────────────────────── */
+int hmac_sha1(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+{
+    (void)key;
+    (void)klen;
+    (void)msg;
+    (void)mlen;
+    (void)mac;
+    kprintf("[hmac] hmac_sha1: not yet implemented\n");
+    return -ENOSYS;
+}

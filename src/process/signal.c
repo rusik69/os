@@ -344,3 +344,34 @@ void signal_unmask(uint64_t sigmask) {
     p->sig_mask &= ~sigmask;
     spinlock_irqsave_release(&p->sig_lock, __sig_flags);
 }
+
+/* ── Stub: signal_handle ─────────────────────────────── */
+int signal_handle(void *task, int sig)
+{
+    (void)task;
+    (void)sig;
+    kprintf("[signal] signal_handle: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: signal_register_handler ─────────────────────────────── */
+int signal_register_handler(int sig, void *handler)
+{
+    (void)sig;
+    (void)handler;
+    kprintf("[signal] signal_register_handler: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: signal_block ─────────────────────────────── */
+int signal_block(int sig)
+{
+    (void)sig;
+    kprintf("[signal] signal_block: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: signal_unblock ─────────────────────────────── */
+int signal_unblock(int sig)
+{
+    (void)sig;
+    kprintf("[signal] signal_unblock: not yet implemented\n");
+    return -ENOSYS;
+}

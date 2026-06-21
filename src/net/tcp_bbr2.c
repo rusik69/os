@@ -170,3 +170,18 @@ uint64_t bbr2_get_cwnd(void)
 }
 #include "module.h"
 module_init(bbr2_init);
+
+/* ── Stub: tcp_bbr2_cong_avoid ─────────────────────────────── */
+int tcp_bbr2_cong_avoid(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_bbr2] tcp_bbr2_cong_avoid: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tcp_bbr2_ssthresh ─────────────────────────────── */
+uint32_t tcp_bbr2_ssthresh(void *sk)
+{
+    (void)sk;
+    kprintf("[tcp_bbr2] tcp_bbr2_ssthresh: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -453,3 +453,19 @@ void psi_timer_init(void)
         kprintf("[OK] PSI: update timer registered (every %d ticks = 2s)\n",
                 PSI_UPDATE_INTERVAL_TICKS);
 }
+
+/* ── Stub: psi_trigger ─────────────────────────────── */
+int psi_trigger(const char *event, int threshold, int win_size)
+{
+    (void)event;
+    (void)threshold;
+    (void)win_size;
+    kprintf("[psi] psi_trigger: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: psi_poll ─────────────────────────────── */
+int psi_poll(void)
+{
+    kprintf("[psi] psi_poll: not yet implemented\n");
+    return -ENOSYS;
+}

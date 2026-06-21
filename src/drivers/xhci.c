@@ -193,3 +193,25 @@ void xhci_print_info(void) {
 }
 #include "module.h"
 module_init(xhci_init);
+
+/* ── Stub: xhci_reset ─────────────────────────────── */
+int xhci_reset(void *dev)
+{
+    (void)dev;
+    kprintf("[xhci] xhci_reset: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: xhci_submit_urb ─────────────────────────────── */
+int xhci_submit_urb(void *urb)
+{
+    (void)urb;
+    kprintf("[xhci] xhci_submit_urb: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: xhci_irq ─────────────────────────────── */
+int xhci_irq(void *dev)
+{
+    (void)dev;
+    kprintf("[xhci] xhci_irq: not yet implemented\n");
+    return -ENOSYS;
+}

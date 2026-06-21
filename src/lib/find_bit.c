@@ -12,3 +12,38 @@ unsigned long find_first_zero_bit(const unsigned long *addr, unsigned long size)
         if (!test_bit(i, addr)) return i;
     return size;
 }
+
+/* ── Stub: find_first_bit ─────────────────────────────── */
+unsigned long find_first_bit(const void *addr, unsigned long size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[find_bit] find_first_bit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: find_last_bit ─────────────────────────────── */
+unsigned long find_last_bit(const void *addr, unsigned long size)
+{
+    (void)addr;
+    (void)size;
+    kprintf("[find_bit] find_last_bit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: find_next_bit ─────────────────────────────── */
+unsigned long find_next_bit(const void *addr, unsigned long size, unsigned long offset)
+{
+    (void)addr;
+    (void)size;
+    (void)offset;
+    kprintf("[find_bit] find_next_bit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: find_next_zero_bit ─────────────────────────────── */
+unsigned long find_next_zero_bit(const void *addr, unsigned long size, unsigned long offset)
+{
+    (void)addr;
+    (void)size;
+    (void)offset;
+    kprintf("[find_bit] find_next_zero_bit: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -345,3 +345,12 @@ int memfd_set_size(struct memfd *mfd, uint64_t new_size)
     spinlock_release(&mfd->lock);
     return 0;
 }
+
+/* ── Stub: memfd_seal ─────────────────────────────── */
+int memfd_seal(int fd, unsigned int seals)
+{
+    (void)fd;
+    (void)seals;
+    kprintf("[memfd] memfd_seal: not yet implemented\n");
+    return -ENOSYS;
+}

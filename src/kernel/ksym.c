@@ -257,3 +257,33 @@ void ksym_dump_all(void)
             kprintf("  ... (%d more)\\n", g_kallsyms_count - 16);
     }
 }
+
+/* ── Stub: ksym_lookup ─────────────────────────────── */
+void* ksym_lookup(const char *name)
+{
+    (void)name;
+    kprintf("[ksym] ksym_lookup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ksym_resolve ─────────────────────────────── */
+const char* ksym_resolve(void *addr)
+{
+    (void)addr;
+    kprintf("[ksym] ksym_resolve: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ksym_register ─────────────────────────────── */
+int ksym_register(const char *name, void *addr)
+{
+    (void)name;
+    (void)addr;
+    kprintf("[ksym] ksym_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ksym_unregister ─────────────────────────────── */
+int ksym_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[ksym] ksym_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

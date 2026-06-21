@@ -273,3 +273,26 @@ void wakeup_print_sources(void)
 
     spinlock_release(&wakeup_state.lock);
 }
+
+/* ── Stub: wakeup_source_create ─────────────────────────────── */
+int wakeup_source_create(const char *name)
+{
+    (void)name;
+    kprintf("[wakeup] wakeup_source_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: wakeup_source_destroy ─────────────────────────────── */
+int wakeup_source_destroy(void *ws)
+{
+    (void)ws;
+    kprintf("[wakeup] wakeup_source_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: wakeup_source_report ─────────────────────────────── */
+int wakeup_source_report(void *ws, uint64_t duration)
+{
+    (void)ws;
+    (void)duration;
+    kprintf("[wakeup] wakeup_source_report: not yet implemented\n");
+    return -ENOSYS;
+}

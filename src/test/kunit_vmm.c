@@ -510,3 +510,22 @@ void kunit_vmm_register(void)
 
     kunit_register_suite(&vmm_test_suite);
 }
+
+/* ── Stub: kunit_vmm_init ─────────────────────────────── */
+int kunit_vmm_init(void)
+{
+    kprintf("[kunit] kunit_vmm_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_vmm_test_alloc ─────────────────────────────── */
+int kunit_vmm_test_alloc(void)
+{
+    kprintf("[kunit] kunit_vmm_test_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_vmm_test_map ─────────────────────────────── */
+int kunit_vmm_test_map(void)
+{
+    kprintf("[kunit] kunit_vmm_test_map: not yet implemented\n");
+    return -ENOSYS;
+}

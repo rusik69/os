@@ -238,3 +238,24 @@ int zcomp_fast_init(void)
 {
     return zcomp_register(&fast_ops);
 }
+
+/* ── Stub: zcomp_fast_compress ─────────────────────────────── */
+int zcomp_fast_compress(const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[zcomp_fast] zcomp_fast_compress: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zcomp_fast_decompress ─────────────────────────────── */
+int zcomp_fast_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[zcomp_fast] zcomp_fast_decompress: not yet implemented\n");
+    return -ENOSYS;
+}
