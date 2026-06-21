@@ -303,3 +303,21 @@ void dm_era_init(void)
 }
 #include "module.h"
 module_init(dm_era_init);
+
+/* ── Stub: dm_era_ctr ─────────────────────────────── */
+int dm_era_ctr(void *ti, unsigned int argc, char **argv)
+{
+    (void)ti;
+    (void)argc;
+    (void)argv;
+    kprintf("[dm] dm_era_ctr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dm_era_map ─────────────────────────────── */
+int dm_era_map(void *ti, void *bio)
+{
+    (void)ti;
+    (void)bio;
+    kprintf("[dm] dm_era_map: not yet implemented\n");
+    return -ENOSYS;
+}

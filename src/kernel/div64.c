@@ -54,3 +54,30 @@ void div64_init(void)
 
     kprintf("[OK] div64: 64-bit division support initialised\n");
 }
+
+/* ── Stub: div64_u64_rem ─────────────────────────────── */
+uint64_t div64_u64_rem(uint64_t dividend, uint64_t divisor, uint64_t *remainder)
+{
+    (void)dividend;
+    (void)divisor;
+    (void)remainder;
+    kprintf("[div64] div64_u64_rem: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: div64_u64 ─────────────────────────────── */
+uint64_t div64_u64(uint64_t dividend, uint64_t divisor)
+{
+    (void)dividend;
+    (void)divisor;
+    kprintf("[div64] div64_u64: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: div_s64_rem ─────────────────────────────── */
+int64_t div_s64_rem(int64_t dividend, int32_t divisor, int32_t *remainder)
+{
+    (void)dividend;
+    (void)divisor;
+    (void)remainder;
+    kprintf("[div64] div_s64_rem: not yet implemented\n");
+    return -ENOSYS;
+}

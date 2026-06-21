@@ -264,3 +264,26 @@ int mount_propagate_event(const char *source_mount, const char *target_path)
 
     return 0;
 }
+
+/* ── Stub: fs_mount_propagate ─────────────────────────────── */
+int fs_mount_propagate(void *mnt)
+{
+    (void)mnt;
+    kprintf("[fs_mount] fs_mount_propagate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fs_mount_umount_propagate ─────────────────────────────── */
+int fs_mount_umount_propagate(void *mnt)
+{
+    (void)mnt;
+    kprintf("[fs_mount] fs_mount_umount_propagate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fs_mount_set_group ─────────────────────────────── */
+int fs_mount_set_group(void *mnt, int group_id)
+{
+    (void)mnt;
+    (void)group_id;
+    kprintf("[fs_mount] fs_mount_set_group: not yet implemented\n");
+    return -ENOSYS;
+}

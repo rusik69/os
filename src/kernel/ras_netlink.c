@@ -168,3 +168,20 @@ void ras_netlink_init(void)
     kprintf("[OK] RAS netlink initialized (NETLINK_RAS=%d, ring=%d events)\n",
             NETLINK_RAS, RAS_RING_SIZE);
 }
+
+/* ── Stub: ras_netlink_send ─────────────────────────────── */
+int ras_netlink_send(const void *msg, size_t len)
+{
+    (void)msg;
+    (void)len;
+    kprintf("[ras] ras_netlink_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ras_netlink_recv ─────────────────────────────── */
+int ras_netlink_recv(void *buf, size_t *len)
+{
+    (void)buf;
+    (void)len;
+    kprintf("[ras] ras_netlink_recv: not yet implemented\n");
+    return -ENOSYS;
+}

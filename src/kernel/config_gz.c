@@ -63,3 +63,24 @@ void config_gz_init(void)
         kprintf("[!!] config_gz: no embedded config data\\n");
     }
 }
+
+/* ── Stub: config_gz_decompress ─────────────────────────────── */
+int config_gz_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[config] config_gz_decompress: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: config_gz_compress ─────────────────────────────── */
+int config_gz_compress(const void *src, size_t slen, void *dst, size_t *dlen)
+{
+    (void)src;
+    (void)slen;
+    (void)dst;
+    (void)dlen;
+    kprintf("[config] config_gz_compress: not yet implemented\n");
+    return -ENOSYS;
+}

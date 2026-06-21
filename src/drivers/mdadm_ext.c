@@ -1839,3 +1839,32 @@ void md_member_failed(int array_id, int dev_id, int level)
         break;
     }
 }
+
+/* ── Stub: mdadm_ext_init ─────────────────────────────── */
+int mdadm_ext_init(void)
+{
+    kprintf("[mdadm] mdadm_ext_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_ext_rebuild ─────────────────────────────── */
+int mdadm_ext_rebuild(const char *dev)
+{
+    (void)dev;
+    kprintf("[mdadm] mdadm_ext_rebuild: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_ext_check ─────────────────────────────── */
+int mdadm_ext_check(const char *dev, void *status)
+{
+    (void)dev;
+    (void)status;
+    kprintf("[mdadm] mdadm_ext_check: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mdadm_ext_resync ─────────────────────────────── */
+int mdadm_ext_resync(const char *dev)
+{
+    (void)dev;
+    kprintf("[mdadm] mdadm_ext_resync: not yet implemented\n");
+    return -ENOSYS;
+}

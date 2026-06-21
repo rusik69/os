@@ -118,3 +118,18 @@ void kaslr_init(void) {
                 (unsigned long long)(off / KASLR_ALIGN));
     }
 }
+
+/* ── Stub: kaslr_randomize ─────────────────────────────── */
+uint64_t kaslr_randomize(void)
+{
+    kprintf("[kaslr] kaslr_randomize: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kaslr_get_random_addr ─────────────────────────────── */
+uint64_t kaslr_get_random_addr(uint64_t base, uint64_t size)
+{
+    (void)base;
+    (void)size;
+    kprintf("[kaslr] kaslr_get_random_addr: not yet implemented\n");
+    return -ENOSYS;
+}

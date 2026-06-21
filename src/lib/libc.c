@@ -682,3 +682,23 @@ int libc_open_by_handle_at(int mount_fd, struct file_handle *handle,
                              (uint64_t)flags, 0, 0);
 }
 
+
+/* ── Stub: libc_init ─────────────────────────────── */
+int libc_init(void)
+{
+    kprintf("[libc] libc_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: abort ─────────────────────────────── */
+int abort(void)
+{
+    kprintf("[libc] abort: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: exit ─────────────────────────────── */
+int exit(int status)
+{
+    (void)status;
+    kprintf("[libc] exit: not yet implemented\n");
+    return -ENOSYS;
+}

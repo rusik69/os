@@ -167,3 +167,31 @@ int main(void)
     for (;;) __asm__ volatile("hlt");
     return 0;
 }
+
+/* ── Stub: stress_runner_start ─────────────────────────────── */
+int stress_runner_start(void)
+{
+    kprintf("[stress] stress_runner_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stress_runner_stop ─────────────────────────────── */
+int stress_runner_stop(void)
+{
+    kprintf("[stress] stress_runner_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stress_runner_add ─────────────────────────────── */
+int stress_runner_add(const char *name, void *fn)
+{
+    (void)name;
+    (void)fn;
+    kprintf("[stress] stress_runner_add: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stress_runner_report ─────────────────────────────── */
+int stress_runner_report(void *report)
+{
+    (void)report;
+    kprintf("[stress] stress_runner_report: not yet implemented\n");
+    return -ENOSYS;
+}

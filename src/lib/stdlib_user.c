@@ -575,3 +575,26 @@ void heap_stats(uint64_t *out_allocs, uint64_t *out_frees,
     }
     heap_unlock();
 }
+
+/* ── Stub: malloc_user ─────────────────────────────── */
+void* malloc_user(size_t size)
+{
+    (void)size;
+    kprintf("[stdlib] malloc_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: free_user ─────────────────────────────── */
+int free_user(void *ptr)
+{
+    (void)ptr;
+    kprintf("[stdlib] free_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: realloc_user ─────────────────────────────── */
+void* realloc_user(void *ptr, size_t size)
+{
+    (void)ptr;
+    (void)size;
+    kprintf("[stdlib] realloc_user: not yet implemented\n");
+    return -ENOSYS;
+}

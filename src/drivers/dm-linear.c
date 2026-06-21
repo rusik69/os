@@ -153,3 +153,21 @@ void dm_linear_init(void)
 }
 #include "module.h"
 module_init(dm_linear_init);
+
+/* ── Stub: dm_linear_ctr ─────────────────────────────── */
+int dm_linear_ctr(void *ti, unsigned int argc, char **argv)
+{
+    (void)ti;
+    (void)argc;
+    (void)argv;
+    kprintf("[dm] dm_linear_ctr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dm_linear_map ─────────────────────────────── */
+int dm_linear_map(void *ti, void *bio)
+{
+    (void)ti;
+    (void)bio;
+    kprintf("[dm] dm_linear_map: not yet implemented\n");
+    return -ENOSYS;
+}

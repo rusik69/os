@@ -267,3 +267,13 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO entropy — fill kernel RNG via virtqueue");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: virtio_rng_read ─────────────────────────────── */
+int virtio_rng_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[virtio] virtio_rng_read: not yet implemented\n");
+    return -ENOSYS;
+}

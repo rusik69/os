@@ -341,3 +341,29 @@ int dbc_is_present(void)
 {
     return g_dbc_initialized;
 }
+
+/* ── Stub: usb_debug_init ─────────────────────────────── */
+int usb_debug_init(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] usb_debug_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_debug_write ─────────────────────────────── */
+int usb_debug_write(void *dev, const void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] usb_debug_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_debug_read ─────────────────────────────── */
+int usb_debug_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] usb_debug_read: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -271,3 +271,12 @@ int acpi_cpufreq_init(void)
     }
     return n;
 }
+
+/* ── Stub: acpi_cpufreq_target ─────────────────────────────── */
+int acpi_cpufreq_target(void *policy, unsigned int target_freq)
+{
+    (void)policy;
+    (void)target_freq;
+    kprintf("[acpi] acpi_cpufreq_target: not yet implemented\n");
+    return -ENOSYS;
+}

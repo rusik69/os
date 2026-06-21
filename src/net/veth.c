@@ -316,3 +316,26 @@ void veth_init(void)
 /* ── Exported symbols for loadable kernel modules ────────────────── */
 EXPORT_SYMBOL(veth_create_pair);
 EXPORT_SYMBOL(veth_destroy);
+
+/* ── Stub: veth_open ─────────────────────────────── */
+int veth_open(void *dev)
+{
+    (void)dev;
+    kprintf("[veth] veth_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: veth_stop ─────────────────────────────── */
+int veth_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[veth] veth_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: veth_xmit ─────────────────────────────── */
+int veth_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[veth] veth_xmit: not yet implemented\n");
+    return -ENOSYS;
+}

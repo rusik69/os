@@ -135,3 +135,20 @@ void range_init(void)
 {
     kprintf("[OK] range: Range management initialised\n");
 }
+
+/* ── Stub: range_overlap ─────────────────────────────── */
+int range_overlap(const void *r1, const void *r2)
+{
+    (void)r1;
+    (void)r2;
+    kprintf("[range] range_overlap: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: range_merge ─────────────────────────────── */
+int range_merge(void *r1, const void *r2)
+{
+    (void)r1;
+    (void)r2;
+    kprintf("[range] range_merge: not yet implemented\n");
+    return -ENOSYS;
+}

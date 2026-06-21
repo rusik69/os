@@ -203,3 +203,12 @@ int rng_seed_from_hw(int words, int flags) {
 
     return obtained;
 }
+
+/* ── Stub: rng_get_random ─────────────────────────────── */
+int rng_get_random(void *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[rng] rng_get_random: not yet implemented\n");
+    return -ENOSYS;
+}

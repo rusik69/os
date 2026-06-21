@@ -4272,3 +4272,25 @@ kprintf("----------------------------------------\n");
     /* Halt in case both shutdown methods fail */
     for (;;) __asm__ volatile("hlt");
 }
+
+/* ── Stub: test_run ─────────────────────────────── */
+int test_run(const char *name)
+{
+    (void)name;
+    kprintf("[test] test_run: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: test_assert ─────────────────────────────── */
+int test_assert(int cond, const char *msg)
+{
+    (void)cond;
+    (void)msg;
+    kprintf("[test] test_assert: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: test_report ─────────────────────────────── */
+int test_report(void)
+{
+    kprintf("[test] test_report: not yet implemented\n");
+    return -ENOSYS;
+}

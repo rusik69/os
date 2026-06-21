@@ -1717,3 +1717,21 @@ int process_check_exec_perms(const char *binary_path, uint16_t uid, uint16_t gid
 
     return 0; /* Execute permission granted */
 }
+
+/* ── Stub: process_wait ─────────────────────────────── */
+int process_wait(int pid, int *status, int options)
+{
+    (void)pid;
+    (void)status;
+    (void)options;
+    kprintf("[process] process_wait: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: process_kill ─────────────────────────────── */
+int process_kill(int pid, int sig)
+{
+    (void)pid;
+    (void)sig;
+    kprintf("[process] process_kill: not yet implemented\n");
+    return -ENOSYS;
+}

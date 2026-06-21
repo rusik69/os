@@ -535,3 +535,22 @@ void f_mass_storage_exit(void)
     g_ms_config.num_luns = 0;
     kprintf("[f_ms] USB gadget mass storage function exited\n");
 }
+
+/* ── Stub: f_mass_storage_read ─────────────────────────────── */
+int f_mass_storage_read(void *file, void *buf, size_t count)
+{
+    (void)file;
+    (void)buf;
+    (void)count;
+    kprintf("[gadget] f_mass_storage_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: f_mass_storage_write ─────────────────────────────── */
+int f_mass_storage_write(void *file, const void *buf, size_t count)
+{
+    (void)file;
+    (void)buf;
+    (void)count;
+    kprintf("[gadget] f_mass_storage_write: not yet implemented\n");
+    return -ENOSYS;
+}

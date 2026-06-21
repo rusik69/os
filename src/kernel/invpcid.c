@@ -89,3 +89,10 @@ void invpcid_flush_pcid(uint64_t pcid) {
                      : "m"(desc), "r"(1ULL)
                      : "memory");
 }
+
+/* ── Stub: invpcid_flush_all_nonglobals ─────────────────────────────── */
+int invpcid_flush_all_nonglobals(void)
+{
+    kprintf("[invpcid] invpcid_flush_all_nonglobals: not yet implemented\n");
+    return -ENOSYS;
+}

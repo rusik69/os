@@ -38,3 +38,30 @@ void pagecache_store(uint64_t block, const uint8_t *data) {
     memcpy(page_cache[slot].data, data, 4096);
     spinlock_release(&pc_lock);
 }
+
+/* ── Stub: pagecache_read ─────────────────────────────── */
+int pagecache_read(void *mapping, uint64_t index, void *page)
+{
+    (void)mapping;
+    (void)index;
+    (void)page;
+    kprintf("[pagecache] pagecache_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pagecache_write ─────────────────────────────── */
+int pagecache_write(void *mapping, uint64_t index, const void *page)
+{
+    (void)mapping;
+    (void)index;
+    (void)page;
+    kprintf("[pagecache] pagecache_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pagecache_evict ─────────────────────────────── */
+int pagecache_evict(void *mapping, uint64_t index)
+{
+    (void)mapping;
+    (void)index;
+    kprintf("[pagecache] pagecache_evict: not yet implemented\n");
+    return -ENOSYS;
+}

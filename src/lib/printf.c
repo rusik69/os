@@ -691,3 +691,13 @@ int sprintf(char *buf, const char *fmt, ...) {
 
 /* ── Exported symbols for module loading ──────────────────────────── */
 EXPORT_SYMBOL(kprintf);
+
+/* ── Stub: vsprintf ─────────────────────────────── */
+int vsprintf(char *buf, const char *fmt, void *args)
+{
+    (void)buf;
+    (void)fmt;
+    (void)args;
+    kprintf("[printf] vsprintf: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -126,3 +126,11 @@ void dynamic_debug_init(void)
     dyndbg_count = 0;
     kprintf("[OK] dynamic_debug: Dynamic debug control initialised\n");
 }
+
+/* ── Stub: dynamic_debug_query ─────────────────────────────── */
+int dynamic_debug_query(const char *query)
+{
+    (void)query;
+    kprintf("[dyndbg] dynamic_debug_query: not yet implemented\n");
+    return -ENOSYS;
+}

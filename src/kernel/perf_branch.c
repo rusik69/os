@@ -116,3 +116,12 @@ void perf_branch_init(void)
     memset(&perf_branch, 0, sizeof(perf_branch));
     kprintf("[OK] perf branch stack (LBR) sampling\n");
 }
+
+/* ── Stub: perf_branch_read ─────────────────────────────── */
+int perf_branch_read(void *data, size_t *len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[perf] perf_branch_read: not yet implemented\n");
+    return -ENOSYS;
+}

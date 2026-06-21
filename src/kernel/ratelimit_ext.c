@@ -45,3 +45,11 @@ void ratelimit_ext_init(void)
 {
     kprintf("[OK] ratelimit_ext: Extended ratelimit initialised\n");
 }
+
+/* ── Stub: ratelimit_ext_check ─────────────────────────────── */
+int ratelimit_ext_check(void *rl)
+{
+    (void)rl;
+    kprintf("[ratelimit] ratelimit_ext_check: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -142,3 +142,25 @@ int module_async_is_pending(struct kernel_module *mod)
     return (mod->state == MODULE_LOADING &&
             (mod->flags & MODULE_FLAG_ASYNC_PROBE)) ? 1 : 0;
 }
+
+/* ── Stub: module_async_load ─────────────────────────────── */
+int module_async_load(const char *name)
+{
+    (void)name;
+    kprintf("[modasync] module_async_load: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_async_complete ─────────────────────────────── */
+int module_async_complete(const char *name)
+{
+    (void)name;
+    kprintf("[modasync] module_async_complete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_async_wait ─────────────────────────────── */
+int module_async_wait(const char *name)
+{
+    (void)name;
+    kprintf("[modasync] module_async_wait: not yet implemented\n");
+    return -ENOSYS;
+}

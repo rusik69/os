@@ -394,3 +394,18 @@ int request_module_params(const char *name, const char *params)
 
     return __request_module(name, params, 0);
 }
+
+/* ── Stub: module_autoload ─────────────────────────────── */
+int module_autoload(const char *name)
+{
+    (void)name;
+    kprintf("[modload] module_autoload: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_autoload_alias ─────────────────────────────── */
+int module_autoload_alias(const char *alias)
+{
+    (void)alias;
+    kprintf("[modload] module_autoload_alias: not yet implemented\n");
+    return -ENOSYS;
+}

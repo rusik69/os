@@ -66,3 +66,19 @@ void tun_destroy(void) {
     memset(&g_tun_dev, 0, sizeof(g_tun_dev));
     tun_initialized = 0;
 }
+
+/* ── Stub: tun_stop ─────────────────────────────── */
+int tun_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[tun] tun_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tun_xmit ─────────────────────────────── */
+int tun_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[tun] tun_xmit: not yet implemented\n");
+    return -ENOSYS;
+}

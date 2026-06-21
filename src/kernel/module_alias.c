@@ -228,3 +228,11 @@ void module_alias_dump(void)
     else
         kprintf("  Total: %d alias(es)\n", count);
 }
+
+/* ── Stub: module_alias_lookup ─────────────────────────────── */
+const char* module_alias_lookup(const char *alias)
+{
+    (void)alias;
+    kprintf("[modalias] module_alias_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

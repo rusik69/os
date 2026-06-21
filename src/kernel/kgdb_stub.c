@@ -256,3 +256,25 @@ void kgdb_stub_init(void)
     kgdb.active = 0;
     kprintf("[OK] KGDB stub — GDB remote serial debugging\n");
 }
+
+/* ── Stub: kgdb_init ─────────────────────────────── */
+int kgdb_init(void)
+{
+    kprintf("[kgdb] kgdb_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kgdb_handle_exception ─────────────────────────────── */
+int kgdb_handle_exception(int vector, void *regs)
+{
+    (void)vector;
+    (void)regs;
+    kprintf("[kgdb] kgdb_handle_exception: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kgdb_register_io_module ─────────────────────────────── */
+int kgdb_register_io_module(void *io_ops)
+{
+    (void)io_ops;
+    kprintf("[kgdb] kgdb_register_io_module: not yet implemented\n");
+    return -ENOSYS;
+}

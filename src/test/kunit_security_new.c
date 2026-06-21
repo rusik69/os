@@ -288,3 +288,22 @@ void kunit_security_new_register(void)
     kunit_register_suite(&caps_audit_suite);
     kunit_register_suite(&icmp_ratelimit_suite);
 }
+
+/* ── Stub: kunit_sec_new_init ─────────────────────────────── */
+int kunit_sec_new_init(void)
+{
+    kprintf("[kunit] kunit_sec_new_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_sec_new_test_caps ─────────────────────────────── */
+int kunit_sec_new_test_caps(void)
+{
+    kprintf("[kunit] kunit_sec_new_test_caps: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_sec_new_test_seccomp ─────────────────────────────── */
+int kunit_sec_new_test_seccomp(void)
+{
+    kprintf("[kunit] kunit_sec_new_test_seccomp: not yet implemented\n");
+    return -ENOSYS;
+}

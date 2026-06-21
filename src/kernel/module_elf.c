@@ -1186,3 +1186,28 @@ int module_elf_finalize(struct module_elf_context *ctx, const char *name)
             (unsigned long long)base, (unsigned long long)total_size);
     return mod_id;
 }
+
+/* ── Stub: module_elf_load ─────────────────────────────── */
+int module_elf_load(const char *path, void *mod)
+{
+    (void)path;
+    (void)mod;
+    kprintf("[modelf] module_elf_load: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_elf_relocate ─────────────────────────────── */
+int module_elf_relocate(void *mod, void *relocs)
+{
+    (void)mod;
+    (void)relocs;
+    kprintf("[modelf] module_elf_relocate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_elf_check ─────────────────────────────── */
+int module_elf_check(const void *data, size_t size)
+{
+    (void)data;
+    (void)size;
+    kprintf("[modelf] module_elf_check: not yet implemented\n");
+    return -ENOSYS;
+}

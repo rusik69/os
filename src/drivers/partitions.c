@@ -601,3 +601,17 @@ EXPORT_SYMBOL(partition_type_name);
 EXPORT_SYMBOL(gpt_type_name);
 EXPORT_SYMBOL(gpt_validate_header_crc);
 EXPORT_SYMBOL(gpt_get_stats);
+
+/* ── Stub: partitions_init ─────────────────────────────── */
+int partitions_init(void)
+{
+    kprintf("[partitions] partitions_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: partitions_scan ─────────────────────────────── */
+int partitions_scan(void *dev)
+{
+    (void)dev;
+    kprintf("[partitions] partitions_scan: not yet implemented\n");
+    return -ENOSYS;
+}

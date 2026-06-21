@@ -131,3 +131,20 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO SCSI — target/lun, command transport");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: virtio_scsi_cmd ─────────────────────────────── */
+int virtio_scsi_cmd(void *dev, void *cmd)
+{
+    (void)dev;
+    (void)cmd;
+    kprintf("[virtio] virtio_scsi_cmd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_scsi_task_mgt ─────────────────────────────── */
+int virtio_scsi_task_mgt(void *dev, void *tm)
+{
+    (void)dev;
+    (void)tm;
+    kprintf("[virtio] virtio_scsi_task_mgt: not yet implemented\n");
+    return -ENOSYS;
+}

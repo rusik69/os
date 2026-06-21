@@ -74,3 +74,18 @@ void randstruct_init(void)
     kprintf("[OK] Randstruct — GCC __randomize_layout support (%d seed slots)\n",
             RANDSTRUCT_MAX_SEEDS);
 }
+
+/* ── Stub: randstruct_randomize ─────────────────────────────── */
+int randstruct_randomize(void *layout)
+{
+    (void)layout;
+    kprintf("[randstruct] randstruct_randomize: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: randstruct_apply ─────────────────────────────── */
+int randstruct_apply(void *layout)
+{
+    (void)layout;
+    kprintf("[randstruct] randstruct_apply: not yet implemented\n");
+    return -ENOSYS;
+}

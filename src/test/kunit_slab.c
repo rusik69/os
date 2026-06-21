@@ -448,3 +448,22 @@ void kunit_slab_register(void)
     kunit_register_suite(&slab_full_test_suite);
     kprintf("[KUnit] Full slab allocator tests registered (%d cases)\n", ci);
 }
+
+/* ── Stub: kunit_slab_init ─────────────────────────────── */
+int kunit_slab_init(void)
+{
+    kprintf("[kunit] kunit_slab_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_slab_test_alloc ─────────────────────────────── */
+int kunit_slab_test_alloc(void)
+{
+    kprintf("[kunit] kunit_slab_test_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_slab_test_free ─────────────────────────────── */
+int kunit_slab_test_free(void)
+{
+    kprintf("[kunit] kunit_slab_test_free: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -168,3 +168,12 @@ uint32_t session_find(uint32_t pid) {
     }
     return 0;
 }
+
+/* ── Stub: pgrp_enter ─────────────────────────────── */
+int pgrp_enter(void *task, int pgrp)
+{
+    (void)task;
+    (void)pgrp;
+    kprintf("[pgrp] pgrp_enter: not yet implemented\n");
+    return -ENOSYS;
+}

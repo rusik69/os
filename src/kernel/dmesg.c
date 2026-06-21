@@ -47,3 +47,27 @@ int dmesg_check_access(void) {
 
     return 0;  /* non-root: deny */
 }
+
+/* ── Stub: dmesg_read ─────────────────────────────── */
+int dmesg_read(void *buf, size_t count, uint64_t *pos)
+{
+    (void)buf;
+    (void)count;
+    (void)pos;
+    kprintf("[dmesg] dmesg_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dmesg_write ─────────────────────────────── */
+int dmesg_write(const void *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[dmesg] dmesg_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dmesg_clear ─────────────────────────────── */
+int dmesg_clear(void)
+{
+    kprintf("[dmesg] dmesg_clear: not yet implemented\n");
+    return -ENOSYS;
+}

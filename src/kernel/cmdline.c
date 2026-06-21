@@ -139,3 +139,22 @@ int cmdline_nvram_restore(char *buf, int max_len) {
     buf[len] = '\0';
     return len;
 }
+
+/* ── Stub: cmdline_parse ─────────────────────────────── */
+int cmdline_parse(const char *cmdline, void *callback)
+{
+    (void)cmdline;
+    (void)callback;
+    kprintf("[cmdline] cmdline_parse: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cmdline_find_option ─────────────────────────────── */
+int cmdline_find_option(const char *cmdline, const char *option, char *val, int len)
+{
+    (void)cmdline;
+    (void)option;
+    (void)val;
+    (void)len;
+    kprintf("[cmdline] cmdline_find_option: not yet implemented\n");
+    return -ENOSYS;
+}

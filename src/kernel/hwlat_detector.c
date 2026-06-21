@@ -126,3 +126,17 @@ void hwlat_init(void)
     hwlat_enabled = 0;
     kprintf("[OK] Hwlat detector — SMI/NMI hardware latency detection\n");
 }
+
+/* ── Stub: hwlat_detect ─────────────────────────────── */
+int hwlat_detect(void)
+{
+    kprintf("[hwlat] hwlat_detect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: hwlat_report ─────────────────────────────── */
+int hwlat_report(void *report)
+{
+    (void)report;
+    kprintf("[hwlat] hwlat_report: not yet implemented\n");
+    return -ENOSYS;
+}

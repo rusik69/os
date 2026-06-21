@@ -137,3 +137,32 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("9P2000.L over virtio transport");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: p9_virtio_init ─────────────────────────────── */
+int p9_virtio_init(void)
+{
+    kprintf("[9p] p9_virtio_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: p9_virtio_open ─────────────────────────────── */
+int p9_virtio_open(void *dev)
+{
+    (void)dev;
+    kprintf("[9p] p9_virtio_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: p9_virtio_close ─────────────────────────────── */
+int p9_virtio_close(void *dev)
+{
+    (void)dev;
+    kprintf("[9p] p9_virtio_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: p9_virtio_request ─────────────────────────────── */
+int p9_virtio_request(void *dev, void *req)
+{
+    (void)dev;
+    (void)req;
+    kprintf("[9p] p9_virtio_request: not yet implemented\n");
+    return -ENOSYS;
+}

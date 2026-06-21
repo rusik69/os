@@ -430,3 +430,43 @@ int usb_cdc_acm_read(uint8_t *buf, int maxlen) {
 int usb_cdc_acm_available(void) {
     return (g_acm_rx_tail - g_acm_rx_head + ACM_BUF_SIZE) % ACM_BUF_SIZE;
 }
+
+/* ── Stub: cdc_acm_init ─────────────────────────────── */
+int cdc_acm_init(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] cdc_acm_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cdc_acm_open ─────────────────────────────── */
+int cdc_acm_open(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] cdc_acm_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cdc_acm_close ─────────────────────────────── */
+int cdc_acm_close(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] cdc_acm_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cdc_acm_write ─────────────────────────────── */
+int cdc_acm_write(void *dev, const void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] cdc_acm_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cdc_acm_read ─────────────────────────────── */
+int cdc_acm_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[usb] cdc_acm_read: not yet implemented\n");
+    return -ENOSYS;
+}

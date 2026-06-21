@@ -273,3 +273,37 @@ int ftruncate(int fd, off_t length) {
 void sync(void) {
     do_syscall(SYS_SYNCFS);
 }
+
+/* ── Stub: syscall_read ─────────────────────────────── */
+int syscall_read(int fd, void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    kprintf("[unistd] syscall_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_write ─────────────────────────────── */
+int syscall_write(int fd, const void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    kprintf("[unistd] syscall_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_open ─────────────────────────────── */
+int syscall_open(const char *path, int flags)
+{
+    (void)path;
+    (void)flags;
+    kprintf("[unistd] syscall_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_close ─────────────────────────────── */
+int syscall_close(int fd)
+{
+    (void)fd;
+    kprintf("[unistd] syscall_close: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -126,3 +126,27 @@ void sort_ext_init(void)
 {
     kprintf("[OK] sort_ext: Generic sort/swap/cmp routines initialised\n");
 }
+
+/* ── Stub: sort_ext_sort ─────────────────────────────── */
+int sort_ext_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap)
+{
+    (void)base;
+    (void)nmemb;
+    (void)size;
+    (void)cmp;
+    (void)swap;
+    kprintf("[sort] sort_ext_sort: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sort_ext_r_sort ─────────────────────────────── */
+int sort_ext_r_sort(void *base, size_t nmemb, size_t size, void *cmp, void *swap, void *priv)
+{
+    (void)base;
+    (void)nmemb;
+    (void)size;
+    (void)cmp;
+    (void)swap;
+    (void)priv;
+    kprintf("[sort] sort_ext_r_sort: not yet implemented\n");
+    return -ENOSYS;
+}

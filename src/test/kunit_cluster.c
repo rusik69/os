@@ -368,3 +368,22 @@ void kunit_cluster_register(void)
     kprintf("[KUnit] Cluster subsystem tests registered "
             "(cluster_autoscaler, cluster_descheduler, cluster_ingress)\n");
 }
+
+/* ── Stub: kunit_cluster_init ─────────────────────────────── */
+int kunit_cluster_init(void)
+{
+    kprintf("[kunit] kunit_cluster_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_cluster_test_join ─────────────────────────────── */
+int kunit_cluster_test_join(void)
+{
+    kprintf("[kunit] kunit_cluster_test_join: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_cluster_test_raft ─────────────────────────────── */
+int kunit_cluster_test_raft(void)
+{
+    kprintf("[kunit] kunit_cluster_test_raft: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -532,3 +532,22 @@ int module_verify_sig(const uint8_t *module_data, size_t module_size,
     /* Use the raw ELF verification that finds sections itself */
     return module_verify_elf(module_data, module_size);
 }
+
+/* ── Stub: module_sig_verify ─────────────────────────────── */
+int module_sig_verify(const void *data, size_t size)
+{
+    (void)data;
+    (void)size;
+    kprintf("[modsig] module_sig_verify: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: module_sig_sign ─────────────────────────────── */
+int module_sig_sign(const void *data, size_t size, void *sig, size_t *slen)
+{
+    (void)data;
+    (void)size;
+    (void)sig;
+    (void)slen;
+    kprintf("[modsig] module_sig_sign: not yet implemented\n");
+    return -ENOSYS;
+}

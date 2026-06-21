@@ -450,3 +450,11 @@ int fuse_unmount(const char *mountpoint)
 }
 #include "module.h"
 module_init(fuse_init);
+
+/* ── Stub: fuse_umount ─────────────────────────────── */
+int fuse_umount(const char *target)
+{
+    (void)target;
+    kprintf("[fuse] fuse_umount: not yet implemented\n");
+    return -ENOSYS;
+}

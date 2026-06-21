@@ -279,3 +279,17 @@ void kpti_trampoline_patch_cr3(int cpu, uint64_t kernel_cr3, uint64_t user_cr3) 
 int kpti_is_active(void) {
     return kpti_active;
 }
+
+/* ── Stub: kpti_flush_tlb ─────────────────────────────── */
+int kpti_flush_tlb(void)
+{
+    kprintf("[kpti] kpti_flush_tlb: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kpti_switch_mm ─────────────────────────────── */
+int kpti_switch_mm(void *mm)
+{
+    (void)mm;
+    kprintf("[kpti] kpti_switch_mm: not yet implemented\n");
+    return -ENOSYS;
+}

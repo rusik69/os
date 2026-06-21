@@ -125,3 +125,26 @@ void scs_init(void)
     kprintf("[OK] SCS — Shadow Call Stack (%d CPUs, %d entries each)\n",
             smp_get_cpu_count(), SCS_SIZE);
 }
+
+/* ── Stub: scs_alloc ─────────────────────────────── */
+void* scs_alloc(void *task)
+{
+    (void)task;
+    kprintf("[scs] scs_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: scs_free ─────────────────────────────── */
+int scs_free(void *task)
+{
+    (void)task;
+    kprintf("[scs] scs_free: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: scs_switch ─────────────────────────────── */
+int scs_switch(void *task, void *new_scs)
+{
+    (void)task;
+    (void)new_scs;
+    kprintf("[scs] scs_switch: not yet implemented\n");
+    return -ENOSYS;
+}

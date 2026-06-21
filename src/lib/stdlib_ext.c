@@ -86,3 +86,29 @@ char *ultoa(unsigned long value, char *str, int base) {
     str[j] = '\0';
     return str;
 }
+
+/* ── Stub: realloc ─────────────────────────────── */
+void* realloc(void *ptr, size_t size)
+{
+    (void)ptr;
+    (void)size;
+    kprintf("[stdlib] realloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: calloc ─────────────────────────────── */
+void* calloc(size_t nmemb, size_t size)
+{
+    (void)nmemb;
+    (void)size;
+    kprintf("[stdlib] calloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: strtol ─────────────────────────────── */
+long strtol(const char *nptr, char **endptr, int base)
+{
+    (void)nptr;
+    (void)endptr;
+    (void)base;
+    kprintf("[stdlib] strtol: not yet implemented\n");
+    return -ENOSYS;
+}

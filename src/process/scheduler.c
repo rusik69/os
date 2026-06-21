@@ -1675,3 +1675,27 @@ static void cfs_wakeup_adjust_vruntime(struct process *proc)
 /* ── Module exports ──────────────────────────────────────────────── */
 #include "export.h"
 EXPORT_SYMBOL(scheduler_yield);
+
+/* ── Stub: scheduler_pick_next ─────────────────────────────── */
+void* scheduler_pick_next(void *rq)
+{
+    (void)rq;
+    kprintf("[sched] scheduler_pick_next: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: scheduler_enqueue ─────────────────────────────── */
+int scheduler_enqueue(void *rq, void *task)
+{
+    (void)rq;
+    (void)task;
+    kprintf("[sched] scheduler_enqueue: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: scheduler_dequeue ─────────────────────────────── */
+int scheduler_dequeue(void *rq, void *task)
+{
+    (void)rq;
+    (void)task;
+    kprintf("[sched] scheduler_dequeue: not yet implemented\n");
+    return -ENOSYS;
+}

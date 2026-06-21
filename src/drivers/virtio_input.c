@@ -112,3 +112,22 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO input — keyboard, mouse, tablet");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: virtio_input_read ─────────────────────────────── */
+int virtio_input_read(void *dev, void *buf, size_t count)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    kprintf("[virtio] virtio_input_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_input_ioctl ─────────────────────────────── */
+int virtio_input_ioctl(void *dev, int cmd, void *arg)
+{
+    (void)dev;
+    (void)cmd;
+    (void)arg;
+    kprintf("[virtio] virtio_input_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -117,3 +117,22 @@ void kunit_container_ext_register(void)
 
     kprintf("[KUnit] Container exec enhanced tests registered\n");
 }
+
+/* ── Stub: kunit_container_ext_init ─────────────────────────────── */
+int kunit_container_ext_init(void)
+{
+    kprintf("[kunit] kunit_container_ext_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_container_ext_test_create ─────────────────────────────── */
+int kunit_container_ext_test_create(void)
+{
+    kprintf("[kunit] kunit_container_ext_test_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: kunit_container_ext_test_start ─────────────────────────────── */
+int kunit_container_ext_test_start(void)
+{
+    kprintf("[kunit] kunit_container_ext_test_start: not yet implemented\n");
+    return -ENOSYS;
+}

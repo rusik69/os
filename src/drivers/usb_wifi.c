@@ -253,3 +253,26 @@ void usb_wifi_init(void)
 }
 #include "module.h"
 module_init(usb_wifi_init);
+
+/* ── Stub: usb_wifi_open ─────────────────────────────── */
+int usb_wifi_open(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] usb_wifi_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_wifi_stop ─────────────────────────────── */
+int usb_wifi_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[usb] usb_wifi_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usb_wifi_xmit ─────────────────────────────── */
+int usb_wifi_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[usb] usb_wifi_xmit: not yet implemented\n");
+    return -ENOSYS;
+}

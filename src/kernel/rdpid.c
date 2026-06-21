@@ -25,3 +25,17 @@ int rdpid_init(void) {
 int rdpid_is_available(void) {
     return rdpid_available;
 }
+
+/* ── Stub: rdpid_read ─────────────────────────────── */
+uint64_t rdpid_read(void)
+{
+    kprintf("[rdpid] rdpid_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rdpid_write ─────────────────────────────── */
+int rdpid_write(uint64_t val)
+{
+    (void)val;
+    kprintf("[rdpid] rdpid_write: not yet implemented\n");
+    return -ENOSYS;
+}

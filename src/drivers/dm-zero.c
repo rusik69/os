@@ -95,3 +95,21 @@ void dm_zero_init(void)
 }
 #include "module.h"
 module_init(dm_zero_init);
+
+/* ── Stub: dm_zero_ctr ─────────────────────────────── */
+int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
+{
+    (void)ti;
+    (void)argc;
+    (void)argv;
+    kprintf("[dm] dm_zero_ctr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dm_zero_map ─────────────────────────────── */
+int dm_zero_map(void *ti, void *bio)
+{
+    (void)ti;
+    (void)bio;
+    kprintf("[dm] dm_zero_map: not yet implemented\n");
+    return -ENOSYS;
+}

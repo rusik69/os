@@ -408,3 +408,32 @@ struct usb_gadget *udc_create_dwc2_gadget(const char *name,
 
     return g;
 }
+
+/* ── Stub: udc_register ─────────────────────────────── */
+int udc_register(void *gadget)
+{
+    (void)gadget;
+    kprintf("[gadget] udc_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udc_unregister ─────────────────────────────── */
+int udc_unregister(void *gadget)
+{
+    (void)gadget;
+    kprintf("[gadget] udc_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udc_start ─────────────────────────────── */
+int udc_start(void *gadget)
+{
+    (void)gadget;
+    kprintf("[gadget] udc_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: udc_stop ─────────────────────────────── */
+int udc_stop(void *gadget)
+{
+    (void)gadget;
+    kprintf("[gadget] udc_stop: not yet implemented\n");
+    return -ENOSYS;
+}
