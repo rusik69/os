@@ -362,3 +362,11 @@ void sysctl_init(void) {
 
     kprintf("[OK] Sysctl interface initialized (%d entries)\n", g_num_entries);
 }
+
+/* ── Stub: sysctl_unregister ─────────────────────────────── */
+int sysctl_unregister(void *table)
+{
+    (void)table;
+    kprintf("[sysctl] sysctl_unregister: not yet implemented\n");
+    return -ENOSYS;
+}

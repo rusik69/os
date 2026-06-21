@@ -97,3 +97,18 @@ void stackleak_init(void)
     kprintf("[OK] STACKLEAK: kernel stack eraser initialized (poison=0x%016llx)\n",
             (unsigned long long)STACKLEAK_POISON_VALUE);
 }
+
+/* ── Stub: stackleak_check ─────────────────────────────── */
+int stackleak_check(void *task)
+{
+    (void)task;
+    kprintf("[stackleak] stackleak_check: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: stackleak_erase ─────────────────────────────── */
+int stackleak_erase(void *task)
+{
+    (void)task;
+    kprintf("[stackleak] stackleak_erase: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -736,3 +736,18 @@ void lockdep_init(void)
     kprintf("[OK] Lockdep initialized (cross-release checking, DFS cycle "
             "detection, sleeping-while-atomic guard)\n");
 }
+
+/* ── Stub: lock_contended ─────────────────────────────── */
+int lock_contended(void *lock)
+{
+    (void)lock;
+    kprintf("[lockdep] lock_contended: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: lock_acquired ─────────────────────────────── */
+int lock_acquired(void *lock)
+{
+    (void)lock;
+    kprintf("[lockdep] lock_acquired: not yet implemented\n");
+    return -ENOSYS;
+}

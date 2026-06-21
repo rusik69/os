@@ -22,3 +22,13 @@ void adler32_init(void)
 {
     kprintf("[OK] Adler-32 initialized\n");
 }
+
+/* ── Stub: adler32_combine ─────────────────────────────── */
+uint32_t adler32_combine(uint32_t crc1, uint32_t crc2, size_t len2)
+{
+    (void)crc1;
+    (void)crc2;
+    (void)len2;
+    kprintf("[adler32] adler32_combine: not yet implemented\n");
+    return -ENOSYS;
+}

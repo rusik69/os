@@ -434,3 +434,21 @@ void dm_verity_init(void)
 }
 #include "module.h"
 module_init(dm_verity_init);
+
+/* ── Stub: dm_verity_ctr ─────────────────────────────── */
+int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
+{
+    (void)ti;
+    (void)argc;
+    (void)argv;
+    kprintf("[dm_verity] dm_verity_ctr: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: dm_verity_map ─────────────────────────────── */
+int dm_verity_map(void *ti, void *bio)
+{
+    (void)ti;
+    (void)bio;
+    kprintf("[dm_verity] dm_verity_map: not yet implemented\n");
+    return -ENOSYS;
+}

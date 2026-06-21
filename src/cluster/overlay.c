@@ -320,3 +320,27 @@ int overlay_set_masquerade(int enable)
     /* In production: add/remove iptables MASQUERADE rule */
     return 0;
 }
+
+/* ── Stub: overlay_network_create ─────────────────────────────── */
+int overlay_network_create(const char *name, const char *subnet)
+{
+    (void)name;
+    (void)subnet;
+    kprintf("[overlay] overlay_network_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: overlay_network_delete ─────────────────────────────── */
+int overlay_network_delete(const char *name)
+{
+    (void)name;
+    kprintf("[overlay] overlay_network_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: overlay_network_attach ─────────────────────────────── */
+int overlay_network_attach(const char *name, const char *node)
+{
+    (void)name;
+    (void)node;
+    kprintf("[overlay] overlay_network_attach: not yet implemented\n");
+    return -ENOSYS;
+}

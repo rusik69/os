@@ -5,3 +5,12 @@ uint16_t crc16(uint16_t crc, const void *buf, uint32_t len) {
     for (uint32_t i = 0; i < len; i++) { crc = (crc << 4) ^ t[((crc >> 12) ^ (p[i] >> 4)) & 0xF]; crc = (crc << 4) ^ t[((crc >> 12) ^ (p[i] & 0xF)) & 0xF]; }
     return crc;
 }
+
+/* ── Stub: crc16_byte ─────────────────────────────── */
+uint16_t crc16_byte(uint16_t crc, uint8_t byte)
+{
+    (void)crc;
+    (void)byte;
+    kprintf("[crc16] crc16_byte: not yet implemented\n");
+    return -ENOSYS;
+}

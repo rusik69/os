@@ -1208,3 +1208,26 @@ uint64_t pmm_alloc_frame_migrate(enum migratetype mt)
 EXPORT_SYMBOL(pmm_alloc_frame);
 EXPORT_SYMBOL(pmm_free_frame);
 EXPORT_SYMBOL(pmm_ref_frame);
+
+/* ── Stub: pmm_alloc_pages ─────────────────────────────── */
+void* pmm_alloc_pages(size_t count)
+{
+    (void)count;
+    kprintf("[pmm] pmm_alloc_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pmm_free_pages ─────────────────────────────── */
+int pmm_free_pages(void *addr, size_t count)
+{
+    (void)addr;
+    (void)count;
+    kprintf("[pmm] pmm_free_pages: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pmm_stats ─────────────────────────────── */
+int pmm_stats(void *stats)
+{
+    (void)stats;
+    kprintf("[pmm] pmm_stats: not yet implemented\n");
+    return -ENOSYS;
+}

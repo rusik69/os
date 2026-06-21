@@ -9962,3 +9962,34 @@ void syscall_init(void) {
     /* SFMASK: mask IF (bit 9) during syscall execution */
     wrmsr(MSR_SFMASK, (1 << 9));
 }
+
+/* ── Stub: syscall_handle ─────────────────────────────── */
+int syscall_handle(int nr, void *args)
+{
+    (void)nr;
+    (void)args;
+    kprintf("[syscall] syscall_handle: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_register ─────────────────────────────── */
+int syscall_register(int nr, void *handler)
+{
+    (void)nr;
+    (void)handler;
+    kprintf("[syscall] syscall_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_unregister ─────────────────────────────── */
+int syscall_unregister(int nr)
+{
+    (void)nr;
+    kprintf("[syscall] syscall_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_table_lookup ─────────────────────────────── */
+void* syscall_table_lookup(int nr)
+{
+    (void)nr;
+    kprintf("[syscall] syscall_table_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

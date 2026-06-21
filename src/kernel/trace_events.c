@@ -308,3 +308,37 @@ void trace_v2_block_complete(uint32_t dev_id, uint64_t sector,
     pld.error = error;
     trace_ev_v2_write_locked(TRACE_EV_V2_BLOCK_COMPLETE, &pld);
 }
+
+/* ── Stub: trace_event_register ─────────────────────────────── */
+int trace_event_register(const char *name, void *event)
+{
+    (void)name;
+    (void)event;
+    kprintf("[trace] trace_event_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: trace_event_unregister ─────────────────────────────── */
+int trace_event_unregister(const char *name)
+{
+    (void)name;
+    kprintf("[trace] trace_event_unregister: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: trace_event_write ─────────────────────────────── */
+int trace_event_write(const char *name, const void *data, size_t len)
+{
+    (void)name;
+    (void)data;
+    (void)len;
+    kprintf("[trace] trace_event_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: trace_event_read ─────────────────────────────── */
+int trace_event_read(const char *name, void *buf, size_t len)
+{
+    (void)name;
+    (void)buf;
+    (void)len;
+    kprintf("[trace] trace_event_read: not yet implemented\n");
+    return -ENOSYS;
+}

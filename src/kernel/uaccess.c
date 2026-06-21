@@ -155,3 +155,31 @@ int memset_user(uint64_t dst_user, uint8_t val, size_t n) {
     }
     return 0;
 }
+
+/* ── Stub: uaccess_copy_to_user ─────────────────────────────── */
+int uaccess_copy_to_user(void *dst, const void *src, size_t len)
+{
+    (void)dst;
+    (void)src;
+    (void)len;
+    kprintf("[uaccess] uaccess_copy_to_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uaccess_copy_from_user ─────────────────────────────── */
+int uaccess_copy_from_user(void *dst, const void *src, size_t len)
+{
+    (void)dst;
+    (void)src;
+    (void)len;
+    kprintf("[uaccess] uaccess_copy_from_user: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uaccess_strncpy_from_user ─────────────────────────────── */
+int uaccess_strncpy_from_user(char *dst, const char *src, size_t n)
+{
+    (void)dst;
+    (void)src;
+    (void)n;
+    kprintf("[uaccess] uaccess_strncpy_from_user: not yet implemented\n");
+    return -ENOSYS;
+}

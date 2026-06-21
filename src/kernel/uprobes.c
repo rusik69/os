@@ -516,3 +516,18 @@ int uprobe_register_write(const char *buf, int len)
 
     return -EINVAL;
 }
+
+/* ── Stub: uprobe_handle_swbp ─────────────────────────────── */
+int uprobe_handle_swbp(void *regs)
+{
+    (void)regs;
+    kprintf("[uprobes] uprobe_handle_swbp: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uprobe_handle_singlestep ─────────────────────────────── */
+int uprobe_handle_singlestep(void *regs)
+{
+    (void)regs;
+    kprintf("[uprobes] uprobe_handle_singlestep: not yet implemented\n");
+    return -ENOSYS;
+}

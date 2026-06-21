@@ -110,3 +110,16 @@ void timer_source_init(void)
 
     kprintf("[OK] timer_source: Clocksource/clockevent abstraction initialised\n");
 }
+
+/* ── Stub: timer_source_read ─────────────────────────────── */
+uint64_t timer_source_read(void)
+{
+    kprintf("[timer] timer_source_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timer_source_get_freq ─────────────────────────────── */
+uint64_t timer_source_get_freq(void)
+{
+    kprintf("[timer] timer_source_get_freq: not yet implemented\n");
+    return -ENOSYS;
+}

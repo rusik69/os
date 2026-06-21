@@ -50,3 +50,11 @@ int idr_find(struct idr *idr, int id) {
     int bit = id % 64;
     return (idr->bitmap[w] & (1ULL << bit)) ? 1 : 0;
 }
+
+/* ── Stub: idr_destroy ─────────────────────────────── */
+int idr_destroy(void *idr)
+{
+    (void)idr;
+    kprintf("[idr] idr_destroy: not yet implemented\n");
+    return -ENOSYS;
+}

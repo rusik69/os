@@ -98,3 +98,25 @@ void zero_kernel_stack_uapi(uint64_t entry_rsp)
             p[i] = 0x00;
     }
 }
+
+/* ── Stub: syscall_cleanup_init ─────────────────────────────── */
+int syscall_cleanup_init(void)
+{
+    kprintf("[syscall] syscall_cleanup_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_cleanup_exit ─────────────────────────────── */
+int syscall_cleanup_exit(void *task)
+{
+    (void)task;
+    kprintf("[syscall] syscall_cleanup_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: syscall_cleanup_fd ─────────────────────────────── */
+int syscall_cleanup_fd(void *task, int fd)
+{
+    (void)task;
+    (void)fd;
+    kprintf("[syscall] syscall_cleanup_fd: not yet implemented\n");
+    return -ENOSYS;
+}

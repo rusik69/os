@@ -277,3 +277,25 @@ void uid16_init(void)
 {
     kprintf("[OK] UID16: 16-bit UID syscall compatibility layer\n");
 }
+
+/* ── Stub: uid16_to_uid ─────────────────────────────── */
+int uid16_to_uid(uint16_t uid16)
+{
+    (void)uid16;
+    kprintf("[uid] uid16_to_uid: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uid_to_uid16 ─────────────────────────────── */
+uint16_t uid_to_uid16(int uid)
+{
+    (void)uid;
+    kprintf("[uid] uid_to_uid16: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uid16_validate ─────────────────────────────── */
+int uid16_validate(uint16_t uid16)
+{
+    (void)uid16;
+    kprintf("[uid] uid16_validate: not yet implemented\n");
+    return -ENOSYS;
+}

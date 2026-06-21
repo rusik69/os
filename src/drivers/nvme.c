@@ -1311,7 +1311,7 @@ MODULE_VERSION("1.0");
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: nvme_submit_cmd ─────────────────────────── */
-int nvme_submit_cmd(struct nvme_queue *q, struct nvme_sq_entry *cmd)
+int nvme_submit_cmd(void *q, struct nvme_sq_entry *cmd)
 {
     (void)q;
     (void)cmd;
@@ -1319,7 +1319,7 @@ int nvme_submit_cmd(struct nvme_queue *q, struct nvme_sq_entry *cmd)
     return -ENOSYS;
 }
 /* ── Stub: nvme_complete_cmd ───────────────────────── */
-int nvme_complete_cmd(struct nvme_queue *q, struct nvme_cq_entry *cqe)
+int nvme_complete_cmd(void *q, struct nvme_cq_entry *cqe)
 {
     (void)q;
     (void)cqe;

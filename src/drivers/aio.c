@@ -22,3 +22,19 @@ int aio_write(int fd, const void *buf, size_t count, uint64_t offset) {
     kprintf("[aio] write fd=%d count=%llu offset=%llu\n", fd, (unsigned long long)count, (unsigned long long)offset);
     return (int)count;
 }
+
+/* ── Stub: aio_fsync ─────────────────────────────── */
+int aio_fsync(int fd)
+{
+    (void)fd;
+    kprintf("[aio] aio_fsync: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: aio_poll ─────────────────────────────── */
+int aio_poll(int fd, int events)
+{
+    (void)fd;
+    (void)events;
+    kprintf("[aio] aio_poll: not yet implemented\n");
+    return -ENOSYS;
+}

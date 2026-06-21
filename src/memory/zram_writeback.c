@@ -343,3 +343,19 @@ void zram_writeback_init(void)
 }
 #include "module.h"
 module_init(zram_writeback_init);
+
+/* ── Stub: zram_writeback_load ─────────────────────────────── */
+int zram_writeback_load(void *zram, uint32_t index)
+{
+    (void)zram;
+    (void)index;
+    kprintf("[zram] zram_writeback_load: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: zram_writeback_flush ─────────────────────────────── */
+int zram_writeback_flush(void *zram)
+{
+    (void)zram;
+    kprintf("[zram] zram_writeback_flush: not yet implemented\n");
+    return -ENOSYS;
+}

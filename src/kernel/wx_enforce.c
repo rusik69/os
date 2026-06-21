@@ -92,3 +92,11 @@ int wx_enforce_check_prot(uint64_t prot) {
 
     return 0;
 }
+
+/* ── Stub: wx_enforce_apply ─────────────────────────────── */
+int wx_enforce_apply(void *task)
+{
+    (void)task;
+    kprintf("[wx] wx_enforce_apply: not yet implemented\n");
+    return -ENOSYS;
+}

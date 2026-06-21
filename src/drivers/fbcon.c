@@ -486,3 +486,26 @@ void fbcon_dim_fb(int frac)
         g_fb[i] = ((uint32_t)b << 0) | ((uint32_t)g << 8) | ((uint32_t)r << 16);
     }
 }
+
+/* ── Stub: fbcon_exit ─────────────────────────────── */
+int fbcon_exit(void)
+{
+    kprintf("[fbcon] fbcon_exit: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fbcon_set_font ─────────────────────────────── */
+int fbcon_set_font(const void *font, int w, int h)
+{
+    (void)font;
+    (void)w;
+    (void)h;
+    kprintf("[fbcon] fbcon_set_font: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: fbcon_cursor ─────────────────────────────── */
+int fbcon_cursor(int on)
+{
+    (void)on;
+    kprintf("[fbcon] fbcon_cursor: not yet implemented\n");
+    return -ENOSYS;
+}

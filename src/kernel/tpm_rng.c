@@ -35,3 +35,20 @@ int tpm_rng_init(void)
 
     return 0;
 }
+
+/* ── Stub: tpm_rng_read ─────────────────────────────── */
+int tpm_rng_read(void *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[tpm] tpm_rng_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tpm_rng_add_entropy ─────────────────────────────── */
+int tpm_rng_add_entropy(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[tpm] tpm_rng_add_entropy: not yet implemented\n");
+    return -ENOSYS;
+}

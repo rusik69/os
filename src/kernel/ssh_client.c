@@ -412,3 +412,29 @@ int ssh_client_connected(struct ssh_client *cl) {
 int ssh_client_ready(struct ssh_client *cl) {
     return cl&&cl->ready;
 }
+
+/* ── Stub: ssh_client_connect ─────────────────────────────── */
+int ssh_client_connect(const char *host, int port, const char *user)
+{
+    (void)host;
+    (void)port;
+    (void)user;
+    kprintf("[ssh] ssh_client_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ssh_client_disconnect ─────────────────────────────── */
+int ssh_client_disconnect(void *session)
+{
+    (void)session;
+    kprintf("[ssh] ssh_client_disconnect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ssh_client_exec ─────────────────────────────── */
+int ssh_client_exec(void *session, const char *cmd, void *output)
+{
+    (void)session;
+    (void)cmd;
+    (void)output;
+    kprintf("[ssh] ssh_client_exec: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -491,3 +491,34 @@ static __attribute__((unused)) void ssh_mac_compute(const uint8_t *key, int key_
     hmac_sha256(key, key_len, hmac_input, 4 + packet_len, mac);
 }
 
+
+/* ── Stub: ssh_crypto_init ─────────────────────────────── */
+int ssh_crypto_init(void)
+{
+    kprintf("[ssh] ssh_crypto_init: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ssh_crypto_keygen ─────────────────────────────── */
+int ssh_crypto_keygen(void *key)
+{
+    (void)key;
+    kprintf("[ssh] ssh_crypto_keygen: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ssh_crypto_exchange ─────────────────────────────── */
+int ssh_crypto_exchange(void *session)
+{
+    (void)session;
+    kprintf("[ssh] ssh_crypto_exchange: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ssh_crypto_encrypt ─────────────────────────────── */
+int ssh_crypto_encrypt(const void *plain, size_t plen, void *cipher, size_t *clen)
+{
+    (void)plain;
+    (void)plen;
+    (void)cipher;
+    (void)clen;
+    kprintf("[ssh] ssh_crypto_encrypt: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -49,3 +49,35 @@ int umip_init(void) {
     }
     return 0;
 }
+
+/* ── Stub: smap_enable ─────────────────────────────── */
+int smap_enable(void)
+{
+    kprintf("[smap] smap_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smap_disable ─────────────────────────────── */
+int smap_disable(void)
+{
+    kprintf("[smap] smap_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smep_enable ─────────────────────────────── */
+int smep_enable(void)
+{
+    kprintf("[smap] smep_enable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smep_disable ─────────────────────────────── */
+int smep_disable(void)
+{
+    kprintf("[smap] smep_disable: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: umip_handle_insn ─────────────────────────────── */
+int umip_handle_insn(void *regs)
+{
+    (void)regs;
+    kprintf("[smap] umip_handle_insn: not yet implemented\n");
+    return -ENOSYS;
+}

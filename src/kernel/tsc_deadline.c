@@ -47,3 +47,16 @@ void tsc_deadline_set(uint64_t deadline) {
 uint64_t tsc_deadline_get(void) {
     return read_msr(IA32_TSC_DEADLINE);
 }
+
+/* ── Stub: tsc_deadline_cancel ─────────────────────────────── */
+int tsc_deadline_cancel(void)
+{
+    kprintf("[tsc] tsc_deadline_cancel: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tsc_deadline_read ─────────────────────────────── */
+uint64_t tsc_deadline_read(void)
+{
+    kprintf("[tsc] tsc_deadline_read: not yet implemented\n");
+    return -ENOSYS;
+}

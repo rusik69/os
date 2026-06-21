@@ -25,3 +25,25 @@ void timeconst_init(void)
     kprintf("[OK] timeconst: Time constants initialised (hz=%u, ns/tick=%llu)\n",
             system_hz, cached_ns_per_tick);
 }
+
+/* ── Stub: timeconst_jiffies_to_msecs ─────────────────────────────── */
+uint64_t timeconst_jiffies_to_msecs(uint64_t j)
+{
+    (void)j;
+    kprintf("[timeconst] timeconst_jiffies_to_msecs: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timeconst_msecs_to_jiffies ─────────────────────────────── */
+uint64_t timeconst_msecs_to_jiffies(uint64_t m)
+{
+    (void)m;
+    kprintf("[timeconst] timeconst_msecs_to_jiffies: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: timeconst_nsecs_to_jiffies ─────────────────────────────── */
+uint64_t timeconst_nsecs_to_jiffies(uint64_t n)
+{
+    (void)n;
+    kprintf("[timeconst] timeconst_nsecs_to_jiffies: not yet implemented\n");
+    return -ENOSYS;
+}
