@@ -591,3 +591,31 @@ void nf_conntrack_init(void)
 }
 #include "module.h"
 module_init(nf_conntrack_init);
+
+/* ── Stub: conntrack_new ─────────────────────────────── */
+int conntrack_new(void *skb)
+{
+    (void)skb;
+    kprintf("[conntrack] conntrack_new: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: conntrack_destroy ─────────────────────────────── */
+int conntrack_destroy(void *ct)
+{
+    (void)ct;
+    kprintf("[conntrack] conntrack_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: conntrack_lookup ─────────────────────────────── */
+void* conntrack_lookup(void *skb)
+{
+    (void)skb;
+    kprintf("[conntrack] conntrack_lookup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: conntrack_flush ─────────────────────────────── */
+int conntrack_flush(void)
+{
+    kprintf("[conntrack] conntrack_flush: not yet implemented\n");
+    return -ENOSYS;
+}

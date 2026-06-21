@@ -222,3 +222,17 @@ void *kcalloc(size_t nmemb, size_t size) {
         memset(ptr, 0, total);
     return ptr;
 }
+
+/* ── Stub: heap_stats ─────────────────────────────── */
+int heap_stats(void *stats)
+{
+    (void)stats;
+    kprintf("[heap] heap_stats: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: heap_check ─────────────────────────────── */
+int heap_check(void)
+{
+    kprintf("[heap] heap_check: not yet implemented\n");
+    return -ENOSYS;
+}

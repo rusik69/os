@@ -86,3 +86,30 @@ uint32_t ramdisk_get_sectors(void) {
 }
 #include "module.h"
 module_init(ramdisk_init);
+
+/* ── Stub: ramdisk_read ─────────────────────────────── */
+int ramdisk_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[ramdisk] ramdisk_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ramdisk_write ─────────────────────────────── */
+int ramdisk_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[ramdisk] ramdisk_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ramdisk_ioctl ─────────────────────────────── */
+int ramdisk_ioctl(int cmd, void *arg)
+{
+    (void)cmd;
+    (void)arg;
+    kprintf("[ramdisk] ramdisk_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

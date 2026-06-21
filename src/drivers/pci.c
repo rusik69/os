@@ -1531,3 +1531,42 @@ EXPORT_SYMBOL(pci_find_acs_cap);
 EXPORT_SYMBOL(pci_find_ltr_cap);
 EXPORT_SYMBOL(pci_find_l1pm_cap);
 EXPORT_SYMBOL(pci_ltr_to_ns);
+
+/* ── Stub: pci_read_config ─────────────────────────────── */
+int pci_read_config(int bus, int dev, int func, int reg, int len)
+{
+    (void)bus;
+    (void)dev;
+    (void)func;
+    (void)reg;
+    (void)len;
+    kprintf("[pci] pci_read_config: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pci_write_config ─────────────────────────────── */
+int pci_write_config(int bus, int dev, int func, int reg, uint32_t val, int len)
+{
+    (void)bus;
+    (void)dev;
+    (void)func;
+    (void)reg;
+    (void)val;
+    (void)len;
+    kprintf("[pci] pci_write_config: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pci_enable_device ─────────────────────────────── */
+int pci_enable_device(void *pdev)
+{
+    (void)pdev;
+    kprintf("[pci] pci_enable_device: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pci_find_capability ─────────────────────────────── */
+int pci_find_capability(void *pdev, int cap)
+{
+    (void)pdev;
+    (void)cap;
+    kprintf("[pci] pci_find_capability: not yet implemented\n");
+    return -ENOSYS;
+}

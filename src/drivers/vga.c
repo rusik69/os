@@ -694,3 +694,19 @@ EXPORT_SYMBOL(vga_putchar);
 EXPORT_SYMBOL(vga_write);
 EXPORT_SYMBOL(vga_clear);
 EXPORT_SYMBOL(vga_set_color);
+
+/* ── Stub: vga_set_mode ─────────────────────────────── */
+int vga_set_mode(int mode)
+{
+    (void)mode;
+    kprintf("[vga] vga_set_mode: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: vga_set_palette ─────────────────────────────── */
+int vga_set_palette(const void *palette, int count)
+{
+    (void)palette;
+    (void)count;
+    kprintf("[vga] vga_set_palette: not yet implemented\n");
+    return -ENOSYS;
+}

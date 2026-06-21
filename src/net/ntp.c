@@ -130,3 +130,24 @@ int ntp_request(uint32_t server_ip, uint64_t *out_sec, uint32_t *out_usec) {
 
     return 0;
 }
+
+/* ── Stub: ntp_sync ─────────────────────────────── */
+int ntp_sync(void)
+{
+    kprintf("[ntp] ntp_sync: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ntp_update ─────────────────────────────── */
+int ntp_update(uint64_t timestamp)
+{
+    (void)timestamp;
+    kprintf("[ntp] ntp_update: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ntp_set_server ─────────────────────────────── */
+int ntp_set_server(const char *host)
+{
+    (void)host;
+    kprintf("[ntp] ntp_set_server: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -734,3 +734,34 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Ext4 read-only filesystem — extent tree, flex_bg, inline data");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: ext4_umount ─────────────────────────────── */
+int ext4_umount(const char *target)
+{
+    (void)target;
+    kprintf("[ext4] ext4_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ext4_lookup ─────────────────────────────── */
+int ext4_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[ext4] ext4_lookup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ext4_truncate ─────────────────────────────── */
+int ext4_truncate(void *inode, uint64_t size)
+{
+    (void)inode;
+    (void)size;
+    kprintf("[ext4] ext4_truncate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ext4_sync ─────────────────────────────── */
+int ext4_sync(void *file)
+{
+    (void)file;
+    kprintf("[ext4] ext4_sync: not yet implemented\n");
+    return -ENOSYS;
+}

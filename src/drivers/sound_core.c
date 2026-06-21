@@ -652,3 +652,38 @@ int sound_oss_dsp_ioctl(int cmd, void *arg)
 }
 
 module_init(sound_core_init);
+
+/* ── Stub: sound_open ─────────────────────────────── */
+int sound_open(int minor, void *file)
+{
+    (void)minor;
+    (void)file;
+    kprintf("[sound_core] sound_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sound_release ─────────────────────────────── */
+int sound_release(int minor, void *file)
+{
+    (void)minor;
+    (void)file;
+    kprintf("[sound_core] sound_release: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sound_read ─────────────────────────────── */
+int sound_read(int minor, void *buf, size_t count)
+{
+    (void)minor;
+    (void)buf;
+    (void)count;
+    kprintf("[sound_core] sound_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sound_write ─────────────────────────────── */
+int sound_write(int minor, const void *buf, size_t count)
+{
+    (void)minor;
+    (void)buf;
+    (void)count;
+    kprintf("[sound_core] sound_write: not yet implemented\n");
+    return -ENOSYS;
+}

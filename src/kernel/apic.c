@@ -444,3 +444,10 @@ void smp_tlb_shootdown(const uint64_t *addrs, int nr) {
 /* ── Exported symbols for driver modules ─────────────────────────── */
 EXPORT_SYMBOL(ioapic_mask_irq);
 EXPORT_SYMBOL(ioapic_unmask_irq);
+
+/* ── Stub: apic_calibrate_timer ─────────────────────────────── */
+int apic_calibrate_timer(void)
+{
+    kprintf("[apic] apic_calibrate_timer: not yet implemented\n");
+    return -ENOSYS;
+}

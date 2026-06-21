@@ -266,3 +266,10 @@ void do_softirq(void)
 
     softirq_recursion[cpu]--;
 }
+
+/* ── Stub: softirq_handle ─────────────────────────────── */
+int softirq_handle(void)
+{
+    kprintf("[softirq] softirq_handle: not yet implemented\n");
+    return -ENOSYS;
+}

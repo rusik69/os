@@ -200,3 +200,22 @@ void pmem_init(void) {
 int pmem_get_device_count(void) {
     return g_pmem_devices;
 }
+
+/* ── Stub: pmem_read ─────────────────────────────── */
+int pmem_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[pmem] pmem_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pmem_write ─────────────────────────────── */
+int pmem_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[pmem] pmem_write: not yet implemented\n");
+    return -ENOSYS;
+}

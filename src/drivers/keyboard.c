@@ -364,3 +364,26 @@ EXPORT_SYMBOL(keyboard_has_input);
 EXPORT_SYMBOL(keyboard_getchar);
 EXPORT_SYMBOL(keyboard_is_down);
 EXPORT_SYMBOL(keyboard_init);
+
+/* ── Stub: keyboard_open ─────────────────────────────── */
+int keyboard_open(void *dev)
+{
+    (void)dev;
+    kprintf("[keyboard] keyboard_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: keyboard_close ─────────────────────────────── */
+int keyboard_close(void *dev)
+{
+    (void)dev;
+    kprintf("[keyboard] keyboard_close: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: keyboard_ioctl ─────────────────────────────── */
+int keyboard_ioctl(int cmd, void *arg)
+{
+    (void)cmd;
+    (void)arg;
+    kprintf("[keyboard] keyboard_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

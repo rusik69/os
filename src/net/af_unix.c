@@ -1115,3 +1115,48 @@ void af_unix_init(void)
 }
 #include "module.h"
 module_init(af_unix_init);
+
+/* ── Stub: af_unix_send ─────────────────────────────── */
+int af_unix_send(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[af_unix] af_unix_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_unix_recv ─────────────────────────────── */
+int af_unix_recv(void *sk, void *buf, size_t len)
+{
+    (void)sk;
+    (void)buf;
+    (void)len;
+    kprintf("[af_unix] af_unix_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_unix_connect ─────────────────────────────── */
+int af_unix_connect(void *sk, void *addr, int addr_len)
+{
+    (void)sk;
+    (void)addr;
+    (void)addr_len;
+    kprintf("[af_unix] af_unix_connect: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_unix_listen ─────────────────────────────── */
+int af_unix_listen(void *sk, int backlog)
+{
+    (void)sk;
+    (void)backlog;
+    kprintf("[af_unix] af_unix_listen: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_unix_accept ─────────────────────────────── */
+int af_unix_accept(void *sk, void *addr, void *addr_len)
+{
+    (void)sk;
+    (void)addr;
+    (void)addr_len;
+    kprintf("[af_unix] af_unix_accept: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -617,3 +617,26 @@ EXPORT_SYMBOL(iosched_set_policy);
 EXPORT_SYMBOL(iosched_get_policy);
 EXPORT_SYMBOL(iosched_request_complete);
 EXPORT_SYMBOL(iosched_get_queue);
+
+/* ── Stub: iosched_merge ─────────────────────────────── */
+int iosched_merge(void *queue, void *req)
+{
+    (void)queue;
+    (void)req;
+    kprintf("[iosched] iosched_merge: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iosched_dispatch ─────────────────────────────── */
+int iosched_dispatch(void *queue)
+{
+    (void)queue;
+    kprintf("[iosched] iosched_dispatch: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iosched_complete ─────────────────────────────── */
+int iosched_complete(void *req)
+{
+    (void)req;
+    kprintf("[iosched] iosched_complete: not yet implemented\n");
+    return -ENOSYS;
+}

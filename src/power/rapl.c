@@ -117,3 +117,12 @@ int rapl_get_units(struct rapl_units *units)
     *units = g_rapl_units;
     return 0;
 }
+
+/* ── Stub: rapl_set_limit ─────────────────────────────── */
+int rapl_set_limit(int domain, uint64_t limit)
+{
+    (void)domain;
+    (void)limit;
+    kprintf("[rapl] rapl_set_limit: not yet implemented\n");
+    return -ENOSYS;
+}

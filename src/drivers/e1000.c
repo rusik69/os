@@ -857,3 +857,27 @@ MODULE_DESCRIPTION("Intel PRO/1000 (E1000/E1000E) PCI Ethernet driver with multi
 MODULE_ALIAS("pci:v00008086d0000100Esv*sd*bc*sc*i*");
 MODULE_ALIAS("pci:v00008086d000010D3sv*sd*bc*sc*i*");
 #endif /* MODULE */
+
+/* ── Stub: e1000_open ─────────────────────────────── */
+int e1000_open(void *dev)
+{
+    (void)dev;
+    kprintf("[e1000] e1000_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: e1000_stop ─────────────────────────────── */
+int e1000_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[e1000] e1000_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: e1000_set_multicast ─────────────────────────────── */
+int e1000_set_multicast(void *dev, void *addr, int count)
+{
+    (void)dev;
+    (void)addr;
+    (void)count;
+    kprintf("[e1000] e1000_set_multicast: not yet implemented\n");
+    return -ENOSYS;
+}

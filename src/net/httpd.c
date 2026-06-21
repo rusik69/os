@@ -462,3 +462,20 @@ void httpd_task(void) {
         scheduler_yield();
     }
 }
+
+/* ── Stub: httpd_handle_request ─────────────────────────────── */
+int httpd_handle_request(void *req, void *resp)
+{
+    (void)req;
+    (void)resp;
+    kprintf("[httpd] httpd_handle_request: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: httpd_register_handler ─────────────────────────────── */
+int httpd_register_handler(const char *path, void *handler)
+{
+    (void)path;
+    (void)handler;
+    kprintf("[httpd] httpd_register_handler: not yet implemented\n");
+    return -ENOSYS;
+}

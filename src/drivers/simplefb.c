@@ -235,3 +235,13 @@ int simplefb_is_active(void)
 {
     return (g_simplefb.fb_addr != NULL && g_simplefb.registered);
 }
+
+/* ── Stub: simplefb_set_mode ─────────────────────────────── */
+int simplefb_set_mode(int width, int height, int bpp)
+{
+    (void)width;
+    (void)height;
+    (void)bpp;
+    kprintf("[simplefb] simplefb_set_mode: not yet implemented\n");
+    return -ENOSYS;
+}

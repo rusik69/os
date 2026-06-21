@@ -730,3 +730,20 @@ void rcu_init(void) {
             (unsigned long)(RCU_STALL_WARN_TICKS * 1000ULL / TIMER_FREQ),
             (unsigned long)(RCU_STALL_PANIC_TICKS * 1000ULL / TIMER_FREQ));
 }
+
+/* ── Stub: rcu_read_lock ─────────────────────────────── */
+void rcu_read_lock(void)
+{
+    kprintf("[rcu] rcu_read_lock: not yet implemented\n");
+}
+/* ── Stub: rcu_read_unlock ─────────────────────────────── */
+void rcu_read_unlock(void)
+{
+    kprintf("[rcu] rcu_read_unlock: not yet implemented\n");
+}
+/* ── Stub: rcu_synchronize ─────────────────────────────── */
+int rcu_synchronize(void)
+{
+    kprintf("[rcu] rcu_synchronize: not yet implemented\n");
+    return -ENOSYS;
+}

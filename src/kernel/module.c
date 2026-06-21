@@ -1417,3 +1417,11 @@ int module_sysfs_remove_params(struct kernel_module *mod)
     sysfs_remove_recursive(mod_dir);
     return 0;
 }
+
+/* ── Stub: module_find_sym ─────────────────────────────── */
+void* module_find_sym(const char *name)
+{
+    (void)name;
+    kprintf("[module] module_find_sym: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -234,3 +234,24 @@ void compress_exit(void)
 {
     kprintf("[COMPRESS] compress_exit: not yet implemented\n");
 }
+
+/* ── Stub: compress_lz4 ─────────────────────────────── */
+int compress_lz4(const void *src, size_t src_len, void *dst, size_t *dst_len)
+{
+    (void)src;
+    (void)src_len;
+    (void)dst;
+    (void)dst_len;
+    kprintf("[compress] compress_lz4: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: compress_zlib ─────────────────────────────── */
+int compress_zlib(const void *src, size_t src_len, void *dst, size_t *dst_len)
+{
+    (void)src;
+    (void)src_len;
+    (void)dst;
+    (void)dst_len;
+    kprintf("[compress] compress_zlib: not yet implemented\n");
+    return -ENOSYS;
+}

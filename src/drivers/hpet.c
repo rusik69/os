@@ -16,3 +16,20 @@ void hpet_init(void) {
     }
 }
 int hpet_is_present(void) { return hpet_present; }
+
+/* ── Stub: hpet_read ─────────────────────────────── */
+int hpet_read(void *buf, size_t count)
+{
+    (void)buf;
+    (void)count;
+    kprintf("[hpet] hpet_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: hpet_ioctl ─────────────────────────────── */
+int hpet_ioctl(int cmd, void *arg)
+{
+    (void)cmd;
+    (void)arg;
+    kprintf("[hpet] hpet_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

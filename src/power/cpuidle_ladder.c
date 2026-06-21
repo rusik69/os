@@ -276,3 +276,12 @@ int cpuidle_ladder_init(void)
             LADDER_DEFAULT_PROMOTE, LADDER_DEFAULT_DEMOTE);
     return 0;
 }
+
+/* ── Stub: ladder_reflect ─────────────────────────────── */
+int ladder_reflect(void *dev, int index)
+{
+    (void)dev;
+    (void)index;
+    kprintf("[cpuidle] ladder_reflect: not yet implemented\n");
+    return -ENOSYS;
+}

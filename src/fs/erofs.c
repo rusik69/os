@@ -278,3 +278,12 @@ void erofs_init(void)
 }
 #include "module.h"
 module_init(erofs_init);
+
+/* ── Stub: erofs_lookup ─────────────────────────────── */
+int erofs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[erofs] erofs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

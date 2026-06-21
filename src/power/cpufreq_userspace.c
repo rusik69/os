@@ -172,3 +172,19 @@ int cpufreq_userspace_setspeed_write(const char *buf, uint32_t size)
 
     return 0;
 }
+
+/* ── Stub: usr_setspeed ─────────────────────────────── */
+int usr_setspeed(int cpu, unsigned int freq)
+{
+    (void)cpu;
+    (void)freq;
+    kprintf("[cpufreq] usr_setspeed: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: usr_getspeed ─────────────────────────────── */
+unsigned int usr_getspeed(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] usr_getspeed: not yet implemented\n");
+    return -ENOSYS;
+}

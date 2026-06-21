@@ -447,3 +447,17 @@ void watchdog_system_reset(void)
 }
 #include "module.h"
 module_init(watchdog_sysfs_init);
+
+/* ── Stub: watchdog_start ─────────────────────────────── */
+int watchdog_start(void)
+{
+    kprintf("[watchdog] watchdog_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: watchdog_set_timeout ─────────────────────────────── */
+int watchdog_set_timeout(int secs)
+{
+    (void)secs;
+    kprintf("[watchdog] watchdog_set_timeout: not yet implemented\n");
+    return -ENOSYS;
+}

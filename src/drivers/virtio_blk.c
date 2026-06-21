@@ -399,3 +399,24 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO block device driver with multi-queue (Item 195)");
 MODULE_ALIAS("pci:v00001AF4d00001001sv*sd*bc*sc*i*");
 #endif /* MODULE */
+
+/* ── Stub: virtio_blk_read ─────────────────────────────── */
+int virtio_blk_read(void *dev, void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[virtio_blk] virtio_blk_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_blk_write ─────────────────────────────── */
+int virtio_blk_write(void *dev, const void *buf, size_t count, uint64_t offset)
+{
+    (void)dev;
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[virtio_blk] virtio_blk_write: not yet implemented\n");
+    return -ENOSYS;
+}

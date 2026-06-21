@@ -1039,3 +1039,27 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("ISO9660 CDROM filesystem with Rock Ridge (RRIP) and Joliet (UCS-2) extension support");
 #endif
+
+/* ── Stub: iso9660_umount ─────────────────────────────── */
+int iso9660_umount(const char *target)
+{
+    (void)target;
+    kprintf("[iso9660] iso9660_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iso9660_readdir ─────────────────────────────── */
+int iso9660_readdir(void *dir, void *filldir)
+{
+    (void)dir;
+    (void)filldir;
+    kprintf("[iso9660] iso9660_readdir: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: iso9660_lookup ─────────────────────────────── */
+int iso9660_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[iso9660] iso9660_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

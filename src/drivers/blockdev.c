@@ -699,3 +699,37 @@ EXPORT_SYMBOL(blk_submit_sync);
 EXPORT_SYMBOL(blockdev_discard);
 EXPORT_SYMBOL(blockdev_set_max_transfer);
 EXPORT_SYMBOL(blockdev_get_max_transfer);
+
+/* ── Stub: blockdev_read ─────────────────────────────── */
+int blockdev_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[blockdev] blockdev_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blockdev_write ─────────────────────────────── */
+int blockdev_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[blockdev] blockdev_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blockdev_open ─────────────────────────────── */
+int blockdev_open(const char *name, int flags)
+{
+    (void)name;
+    (void)flags;
+    kprintf("[blockdev] blockdev_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: blockdev_release ─────────────────────────────── */
+int blockdev_release(void *dev)
+{
+    (void)dev;
+    kprintf("[blockdev] blockdev_release: not yet implemented\n");
+    return -ENOSYS;
+}

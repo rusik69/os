@@ -351,3 +351,26 @@ void cpufreq_ondemand_evaluate(void)
     if (state)
         ondemand_evaluate_cpu(state);
 }
+
+/* ── Stub: od_speed_up ─────────────────────────────── */
+int od_speed_up(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] od_speed_up: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: od_slow_down ─────────────────────────────── */
+int od_slow_down(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] od_slow_down: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: od_target ─────────────────────────────── */
+int od_target(int cpu, unsigned int target_freq)
+{
+    (void)cpu;
+    (void)target_freq;
+    kprintf("[cpufreq] od_target: not yet implemented\n");
+    return -ENOSYS;
+}

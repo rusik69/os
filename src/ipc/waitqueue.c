@@ -312,3 +312,26 @@ int wait_queue_sleep_interruptible_timeout(struct wait_queue *wq, uint64_t ticks
 EXPORT_SYMBOL(wait_queue_sleep);
 EXPORT_SYMBOL(wait_queue_wake);
 EXPORT_SYMBOL(wait_queue_wake_all);
+
+/* ── Stub: waitqueue_wake_all ─────────────────────────────── */
+int waitqueue_wake_all(void *wq)
+{
+    (void)wq;
+    kprintf("[waitqueue] waitqueue_wake_all: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: waitqueue_wake_one ─────────────────────────────── */
+int waitqueue_wake_one(void *wq)
+{
+    (void)wq;
+    kprintf("[waitqueue] waitqueue_wake_one: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: waitqueue_sleep ─────────────────────────────── */
+int waitqueue_sleep(void *wq, void *task)
+{
+    (void)wq;
+    (void)task;
+    kprintf("[waitqueue] waitqueue_sleep: not yet implemented\n");
+    return -ENOSYS;
+}

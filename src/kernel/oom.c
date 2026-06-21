@@ -611,3 +611,17 @@ int oom_reaper_init(void) {
     }
     return 0;
 }
+
+/* ── Stub: oom_scan_process ─────────────────────────────── */
+int oom_scan_process(void)
+{
+    kprintf("[oom] oom_scan_process: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: oom_badness ─────────────────────────────── */
+int oom_badness(void *task)
+{
+    (void)task;
+    kprintf("[oom] oom_badness: not yet implemented\n");
+    return -ENOSYS;
+}

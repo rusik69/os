@@ -226,3 +226,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("System V Filesystem — SYSV5, Coherent, Xenix variants");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: sysv_mount ─────────────────────────────── */
+int sysv_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[sysv] sysv_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sysv_umount ─────────────────────────────── */
+int sysv_umount(const char *target)
+{
+    (void)target;
+    kprintf("[sysv] sysv_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: sysv_lookup ─────────────────────────────── */
+int sysv_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[sysv] sysv_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -685,3 +685,30 @@ int i2c_slave_poll(void) {
     g_slave.in_transaction = 0;
     return 1;
 }
+
+/* ── Stub: i2c_read ─────────────────────────────── */
+int i2c_read(int addr, void *buf, size_t count)
+{
+    (void)addr;
+    (void)buf;
+    (void)count;
+    kprintf("[i2c] i2c_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: i2c_write ─────────────────────────────── */
+int i2c_write(int addr, const void *buf, size_t count)
+{
+    (void)addr;
+    (void)buf;
+    (void)count;
+    kprintf("[i2c] i2c_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: i2c_transfer ─────────────────────────────── */
+int i2c_transfer(void *msgs, int num)
+{
+    (void)msgs;
+    (void)num;
+    kprintf("[i2c] i2c_transfer: not yet implemented\n");
+    return -ENOSYS;
+}

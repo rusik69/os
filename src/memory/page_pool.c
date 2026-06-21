@@ -223,3 +223,25 @@ void page_pool_return_rx_page(uint64_t page)
 }
 #include "module.h"
 module_init(page_pool_subsys_init);
+
+/* ── Stub: page_pool_alloc ─────────────────────────────── */
+void* page_pool_alloc(int flags)
+{
+    (void)flags;
+    kprintf("[page_pool] page_pool_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: page_pool_free ─────────────────────────────── */
+int page_pool_free(void *page)
+{
+    (void)page;
+    kprintf("[page_pool] page_pool_free: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: page_pool_refill ─────────────────────────────── */
+int page_pool_refill(int count)
+{
+    (void)count;
+    kprintf("[page_pool] page_pool_refill: not yet implemented\n");
+    return -ENOSYS;
+}

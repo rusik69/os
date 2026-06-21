@@ -215,3 +215,36 @@ int loop_get_backing(int loop_dev_id, int *out_backing_dev_id,
 }
 #include "module.h"
 module_init(loop_init);
+
+/* ── Stub: loop_set_fd ─────────────────────────────── */
+int loop_set_fd(int fd)
+{
+    (void)fd;
+    kprintf("[loop] loop_set_fd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: loop_clr_fd ─────────────────────────────── */
+int loop_clr_fd(int fd)
+{
+    (void)fd;
+    kprintf("[loop] loop_clr_fd: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: loop_read ─────────────────────────────── */
+int loop_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[loop] loop_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: loop_write ─────────────────────────────── */
+int loop_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[loop] loop_write: not yet implemented\n");
+    return -ENOSYS;
+}

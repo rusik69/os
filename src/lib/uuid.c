@@ -21,3 +21,27 @@ void uuid_to_str(const uint8_t uuid[16], char out[37]) {
     }
     out[pos] = '\0';
 }
+
+/* ── Stub: uuid_generate ─────────────────────────────── */
+int uuid_generate(void *uuid)
+{
+    (void)uuid;
+    kprintf("[uuid] uuid_generate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uuid_parse ─────────────────────────────── */
+int uuid_parse(const char *str, void *uuid)
+{
+    (void)str;
+    (void)uuid;
+    kprintf("[uuid] uuid_parse: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: uuid_unparse ─────────────────────────────── */
+int uuid_unparse(const void *uuid, char *str)
+{
+    (void)uuid;
+    (void)str;
+    kprintf("[uuid] uuid_unparse: not yet implemented\n");
+    return -ENOSYS;
+}

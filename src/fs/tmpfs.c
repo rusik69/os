@@ -519,3 +519,26 @@ void tmpfs_init(void) {
 }
 #include "module.h"
 module_init(tmpfs_init);
+
+/* ── Stub: tmpfs_umount ─────────────────────────────── */
+int tmpfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[tmpfs] tmpfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tmpfs_lookup ─────────────────────────────── */
+int tmpfs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[tmpfs] tmpfs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: tmpfs_sync ─────────────────────────────── */
+int tmpfs_sync(void *file)
+{
+    (void)file;
+    kprintf("[tmpfs] tmpfs_sync: not yet implemented\n");
+    return -ENOSYS;
+}

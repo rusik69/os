@@ -391,3 +391,33 @@ void ac97_set_record_gain(uint8_t left, uint8_t right, int mute)
 }
 #include "module.h"
 module_init(ac97_init);
+
+/* ── Stub: ac97_read ─────────────────────────────── */
+int ac97_read(int reg)
+{
+    (void)reg;
+    kprintf("[ac97] ac97_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ac97_write ─────────────────────────────── */
+int ac97_write(int reg, uint16_t val)
+{
+    (void)reg;
+    (void)val;
+    kprintf("[ac97] ac97_write: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ac97_reset ─────────────────────────────── */
+int ac97_reset(void)
+{
+    kprintf("[ac97] ac97_reset: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ac97_mixer_set ─────────────────────────────── */
+int ac97_mixer_set(int channel, int level)
+{
+    (void)channel;
+    (void)level;
+    kprintf("[ac97] ac97_mixer_set: not yet implemented\n");
+    return -ENOSYS;
+}

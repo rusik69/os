@@ -15,3 +15,27 @@ int bitmap_find_next_zero_area(unsigned long *map, int size, int start, int nr) 
     }
     return -1;
 }
+
+/* ── Stub: bitmap_alloc ─────────────────────────────── */
+void* bitmap_alloc(int nbits)
+{
+    (void)nbits;
+    kprintf("[bitmap] bitmap_alloc: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bitmap_free ─────────────────────────────── */
+int bitmap_free(void *bitmap)
+{
+    (void)bitmap;
+    kprintf("[bitmap] bitmap_free: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: bitmap_parselist ─────────────────────────────── */
+int bitmap_parselist(const char *buf, void *bitmap, int nbits)
+{
+    (void)buf;
+    (void)bitmap;
+    (void)nbits;
+    kprintf("[bitmap] bitmap_parselist: not yet implemented\n");
+    return -ENOSYS;
+}

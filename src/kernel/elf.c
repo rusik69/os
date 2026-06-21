@@ -1047,3 +1047,38 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     return (int)child->pid;
 }
+
+/* ── Stub: elf_load_segment ─────────────────────────────── */
+int elf_load_segment(void *elf, void *dest, size_t size)
+{
+    (void)elf;
+    (void)dest;
+    (void)size;
+    kprintf("[elf] elf_load_segment: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: elf_parse_header ─────────────────────────────── */
+int elf_parse_header(const void *data, size_t size)
+{
+    (void)data;
+    (void)size;
+    kprintf("[elf] elf_parse_header: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: elf_lookup_sym ─────────────────────────────── */
+void* elf_lookup_sym(const void *elf, const char *name)
+{
+    (void)elf;
+    (void)name;
+    kprintf("[elf] elf_lookup_sym: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: elf_relocate ─────────────────────────────── */
+int elf_relocate(void *elf, const char *symname, void *addr)
+{
+    (void)elf;
+    (void)symname;
+    (void)addr;
+    kprintf("[elf] elf_relocate: not yet implemented\n");
+    return -ENOSYS;
+}

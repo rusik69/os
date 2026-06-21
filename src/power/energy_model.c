@@ -351,3 +351,26 @@ uint64_t em_calculate_energy(uint32_t freq_khz, uint32_t voltage_mv,
     uint64_t energy_nj = power_dyn_mw * time_us * 1000ULL;
     return energy_nj;
 }
+
+/* ── Stub: em_create ─────────────────────────────── */
+int em_create(void *pd)
+{
+    (void)pd;
+    kprintf("[em] em_create: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: em_destroy ─────────────────────────────── */
+int em_destroy(void *pd)
+{
+    (void)pd;
+    kprintf("[em] em_destroy: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: em_register ─────────────────────────────── */
+int em_register(void *dev, void *table)
+{
+    (void)dev;
+    (void)table;
+    kprintf("[em] em_register: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -439,3 +439,22 @@ void mutex_spin_stats(uint64_t *attempts, uint64_t *success,
 EXPORT_SYMBOL(mutex_init);
 EXPORT_SYMBOL(mutex_lock);
 EXPORT_SYMBOL(mutex_unlock);
+
+/* ── Stub: mutex_trylock_debug ─────────────────────────────── */
+int mutex_trylock_debug(void *lock, const char *file, int line)
+{
+    (void)lock;
+    (void)file;
+    (void)line;
+    kprintf("[mutex] mutex_trylock_debug: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: mutex_unlock_debug ─────────────────────────────── */
+int mutex_unlock_debug(void *lock, const char *file, int line)
+{
+    (void)lock;
+    (void)file;
+    (void)line;
+    kprintf("[mutex] mutex_unlock_debug: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -49,3 +49,12 @@ void bochs_set_mode(int w, int h, int bpp) {
 }
 #include "module.h"
 module_init(bochs_init);
+
+/* ── Stub: bochs_set_palette ─────────────────────────────── */
+int bochs_set_palette(const void *palette, int count)
+{
+    (void)palette;
+    (void)count;
+    kprintf("[bochs] bochs_set_palette: not yet implemented\n");
+    return -ENOSYS;
+}

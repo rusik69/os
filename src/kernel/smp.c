@@ -439,3 +439,32 @@ int smp_cpu_enable(int cpu_id)
 
     return ret;
 }
+
+/* ── Stub: smp_boot_cpus ─────────────────────────────── */
+int smp_boot_cpus(void)
+{
+    kprintf("[smp] smp_boot_cpus: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smp_send_reschedule ─────────────────────────────── */
+int smp_send_reschedule(int cpu)
+{
+    (void)cpu;
+    kprintf("[smp] smp_send_reschedule: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smp_call_function ─────────────────────────────── */
+int smp_call_function(void *func, void *info, int wait)
+{
+    (void)func;
+    (void)info;
+    (void)wait;
+    kprintf("[smp] smp_call_function: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: smp_stop_cpus ─────────────────────────────── */
+int smp_stop_cpus(void)
+{
+    kprintf("[smp] smp_stop_cpus: not yet implemented\n");
+    return -ENOSYS;
+}

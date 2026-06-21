@@ -810,3 +810,26 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO network device driver with LRO support");
 MODULE_ALIAS("pci:v00001AF4d00001000sv*sd*bc*sc*i*");
 #endif /* MODULE */
+
+/* ── Stub: virtio_net_open ─────────────────────────────── */
+int virtio_net_open(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio_net] virtio_net_open: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_net_stop ─────────────────────────────── */
+int virtio_net_stop(void *dev)
+{
+    (void)dev;
+    kprintf("[virtio_net] virtio_net_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: virtio_net_xmit ─────────────────────────────── */
+int virtio_net_xmit(void *skb, void *dev)
+{
+    (void)skb;
+    (void)dev;
+    kprintf("[virtio_net] virtio_net_xmit: not yet implemented\n");
+    return -ENOSYS;
+}

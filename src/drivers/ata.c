@@ -205,3 +205,18 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Legacy ATA PIO driver — primary IDE controller (master)");
 MODULE_ALIAS("ata");
 #endif /* MODULE */
+
+/* ── Stub: ata_identify ─────────────────────────────── */
+int ata_identify(void *ident_data)
+{
+    (void)ident_data;
+    kprintf("[ata] ata_identify: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ata_reset ─────────────────────────────── */
+int ata_reset(int bus)
+{
+    (void)bus;
+    kprintf("[ata] ata_reset: not yet implemented\n");
+    return -ENOSYS;
+}

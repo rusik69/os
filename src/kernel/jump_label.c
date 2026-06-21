@@ -113,3 +113,20 @@ void jump_label_init(void)
 
     kprintf("[OK] jump_label: NOP patching verified\n");
 }
+
+/* ── Stub: jump_label_register ─────────────────────────────── */
+int jump_label_register(void *key, void *entry)
+{
+    (void)key;
+    (void)entry;
+    kprintf("[jump_label] jump_label_register: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: jump_label_update ─────────────────────────────── */
+int jump_label_update(void *key, int enabled)
+{
+    (void)key;
+    (void)enabled;
+    kprintf("[jump_label] jump_label_update: not yet implemented\n");
+    return -ENOSYS;
+}

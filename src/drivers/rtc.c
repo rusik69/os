@@ -571,3 +571,26 @@ void rtc_sysfs_init(void) {
 }
 #include "module.h"
 module_init(rtc_init);
+
+/* ── Stub: rtc_read_time ─────────────────────────────── */
+int rtc_read_time(void *time)
+{
+    (void)time;
+    kprintf("[rtc] rtc_read_time: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rtc_set_time ─────────────────────────────── */
+int rtc_set_time(const void *time)
+{
+    (void)time;
+    kprintf("[rtc] rtc_set_time: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rtc_ioctl ─────────────────────────────── */
+int rtc_ioctl(int cmd, void *arg)
+{
+    (void)cmd;
+    (void)arg;
+    kprintf("[rtc] rtc_ioctl: not yet implemented\n");
+    return -ENOSYS;
+}

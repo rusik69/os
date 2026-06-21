@@ -42,3 +42,20 @@ void *radix_tree_lookup(struct radix_tree_root *root, unsigned long key) {
     return NULL;
 }
 void *radix_tree_delete(struct radix_tree_root *root, unsigned long key) { (void)root; (void)key; return NULL; }
+
+/* ── Stub: radix_tree_delete ─────────────────────────────── */
+void* radix_tree_delete(void *root, unsigned long index)
+{
+    (void)root;
+    (void)index;
+    kprintf("[radix_tree] radix_tree_delete: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: radix_tree_lookup ─────────────────────────────── */
+void* radix_tree_lookup(void *root, unsigned long index)
+{
+    (void)root;
+    (void)index;
+    kprintf("[radix_tree] radix_tree_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

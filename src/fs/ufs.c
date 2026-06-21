@@ -370,3 +370,28 @@ MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("UFS/FFS (Unix File System) — read-only, cylinder groups, fragments, soft updates stub");
 MODULE_VERSION("1.0");
 #endif
+
+/* ── Stub: ufs_mount ─────────────────────────────── */
+int ufs_mount(const char *source, const char *target, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)flags;
+    kprintf("[ufs] ufs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ufs_umount ─────────────────────────────── */
+int ufs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[ufs] ufs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ufs_lookup ─────────────────────────────── */
+int ufs_lookup(const char *name, void *parent)
+{
+    (void)name;
+    (void)parent;
+    kprintf("[ufs] ufs_lookup: not yet implemented\n");
+    return -ENOSYS;
+}

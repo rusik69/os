@@ -278,3 +278,17 @@ EXPORT_SYMBOL(speaker_play_note);
 EXPORT_SYMBOL(speaker_bell);
 EXPORT_SYMBOL(speaker_set_bell_params);
 #endif /* !MODULE */
+
+/* ── Stub: speaker_on ─────────────────────────────── */
+int speaker_on(void)
+{
+    kprintf("[speaker] speaker_on: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: speaker_set_freq ─────────────────────────────── */
+int speaker_set_freq(int freq)
+{
+    (void)freq;
+    kprintf("[speaker] speaker_set_freq: not yet implemented\n");
+    return -ENOSYS;
+}

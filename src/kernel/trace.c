@@ -297,3 +297,16 @@ void trace_ev_init(void)
     kprintf("[trace] Structured event buffer initialized (%d records)\n",
             TRACE_EV_BUF_SIZE);
 }
+
+/* ── Stub: trace_start ─────────────────────────────── */
+int trace_start(void)
+{
+    kprintf("[trace] trace_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: trace_stop ─────────────────────────────── */
+int trace_stop(void)
+{
+    kprintf("[trace] trace_stop: not yet implemented\n");
+    return -ENOSYS;
+}

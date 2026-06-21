@@ -402,3 +402,19 @@ MODULE_LICENSE("MIT");
 MODULE_AUTHOR("OS Kernel Team");
 MODULE_DESCRIPTION("netconsole — kernel log over UDP (Item 391)");
 #endif /* MODULE */
+
+/* ── Stub: netconsole_send ─────────────────────────────── */
+int netconsole_send(const void *data, size_t len)
+{
+    (void)data;
+    (void)len;
+    kprintf("[netconsole] netconsole_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: netconsole_setup ─────────────────────────────── */
+int netconsole_setup(const char *config)
+{
+    (void)config;
+    kprintf("[netconsole] netconsole_setup: not yet implemented\n");
+    return -ENOSYS;
+}

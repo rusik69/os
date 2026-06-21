@@ -437,3 +437,22 @@ void rbd_disconnect(int dev_id)
             (int)(dev - g_rbd_devices), dev_id);
     memset(dev, 0, sizeof(*dev));
 }
+
+/* ── Stub: rbd_read ─────────────────────────────── */
+int rbd_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[rbd] rbd_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: rbd_write ─────────────────────────────── */
+int rbd_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[rbd] rbd_write: not yet implemented\n");
+    return -ENOSYS;
+}

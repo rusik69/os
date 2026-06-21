@@ -129,3 +129,17 @@ int ps2_test_port2(void) {
     ps2_write_command(PS2_CMD_TEST_P2);
     return ps2_read_data() == 0x00 ? 0 : -1;
 }
+
+/* ── Stub: ps2_flush ─────────────────────────────── */
+int ps2_flush(void)
+{
+    kprintf("[ps2] ps2_flush: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ps2_init_device ─────────────────────────────── */
+int ps2_init_device(int dev_type)
+{
+    (void)dev_type;
+    kprintf("[ps2] ps2_init_device: not yet implemented\n");
+    return -ENOSYS;
+}

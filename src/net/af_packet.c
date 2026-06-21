@@ -860,3 +860,42 @@ EXPORT_SYMBOL(packet_mmap_release_frame);
 EXPORT_SYMBOL(packet_mmap_teardown);
 #include "module.h"
 module_init(af_packet_init);
+
+/* ── Stub: af_packet_send ─────────────────────────────── */
+int af_packet_send(void *sk, void *msg, size_t len)
+{
+    (void)sk;
+    (void)msg;
+    (void)len;
+    kprintf("[af_packet] af_packet_send: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_packet_recv ─────────────────────────────── */
+int af_packet_recv(void *sk, void *buf, size_t len)
+{
+    (void)sk;
+    (void)buf;
+    (void)len;
+    kprintf("[af_packet] af_packet_recv: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_packet_bind ─────────────────────────────── */
+int af_packet_bind(void *sk, void *addr, int addr_len)
+{
+    (void)sk;
+    (void)addr;
+    (void)addr_len;
+    kprintf("[af_packet] af_packet_bind: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: af_packet_setsockopt ─────────────────────────────── */
+int af_packet_setsockopt(void *sk, int level, int optname, void *optval, int optlen)
+{
+    (void)sk;
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    kprintf("[af_packet] af_packet_setsockopt: not yet implemented\n");
+    return -ENOSYS;
+}

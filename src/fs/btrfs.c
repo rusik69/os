@@ -1137,3 +1137,35 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Btrfs — read-only, single-device, non-raid");
 #endif
+
+/* ── Stub: btrfs_mount ─────────────────────────────── */
+int btrfs_mount(const char *source, const char *target, const char *type, unsigned long flags)
+{
+    (void)source;
+    (void)target;
+    (void)type;
+    (void)flags;
+    kprintf("[btrfs] btrfs_mount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: btrfs_umount ─────────────────────────────── */
+int btrfs_umount(const char *target)
+{
+    (void)target;
+    kprintf("[btrfs] btrfs_umount: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: btrfs_statfs ─────────────────────────────── */
+int btrfs_statfs(void *stat)
+{
+    (void)stat;
+    kprintf("[btrfs] btrfs_statfs: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: btrfs_sync ─────────────────────────────── */
+int btrfs_sync(void *file)
+{
+    (void)file;
+    kprintf("[btrfs] btrfs_sync: not yet implemented\n");
+    return -ENOSYS;
+}

@@ -259,3 +259,26 @@ int conservative_set_freq_step(int pct) {
     g_freq_step = pct;
     return 0;
 }
+
+/* ── Stub: cs_speed_up ─────────────────────────────── */
+int cs_speed_up(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] cs_speed_up: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cs_slow_down ─────────────────────────────── */
+int cs_slow_down(int cpu)
+{
+    (void)cpu;
+    kprintf("[cpufreq] cs_slow_down: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: cs_target ─────────────────────────────── */
+int cs_target(int cpu, unsigned int target_freq)
+{
+    (void)cpu;
+    (void)target_freq;
+    kprintf("[cpufreq] cs_target: not yet implemented\n");
+    return -ENOSYS;
+}

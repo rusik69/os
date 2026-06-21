@@ -122,3 +122,19 @@ void pelt_subsys_init(void)
     kprintf("[OK] PELT load tracking initialized (half-life=%d ticks)\n",
             PELT_HALFLIFE);
 }
+
+/* ── Stub: pelt_accumulate ─────────────────────────────── */
+int pelt_accumulate(void *cfs_rq, void *se)
+{
+    (void)cfs_rq;
+    (void)se;
+    kprintf("[pelt] pelt_accumulate: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: pelt_decay ─────────────────────────────── */
+int pelt_decay(void *cfs_rq)
+{
+    (void)cfs_rq;
+    kprintf("[pelt] pelt_decay: not yet implemented\n");
+    return -ENOSYS;
+}

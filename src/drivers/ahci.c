@@ -1281,3 +1281,36 @@ MODULE_ALIAS("pci:v00001022d00007901sv*sd*bc*sc*i*");  /* AMD K15 AHCI */
 MODULE_ALIAS("pci:v00001B21d00000612sv*sd*bc*sc*i*");  /* ASMedia 1062 AHCI */
 MODULE_VERSION("1.0");
 #endif /* MODULE */
+
+/* ── Stub: ahci_port_start ─────────────────────────────── */
+int ahci_port_start(int port)
+{
+    (void)port;
+    kprintf("[ahci] ahci_port_start: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ahci_port_stop ─────────────────────────────── */
+int ahci_port_stop(int port)
+{
+    (void)port;
+    kprintf("[ahci] ahci_port_stop: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ahci_read ─────────────────────────────── */
+int ahci_read(void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[ahci] ahci_read: not yet implemented\n");
+    return -ENOSYS;
+}
+/* ── Stub: ahci_write ─────────────────────────────── */
+int ahci_write(const void *buf, size_t count, uint64_t offset)
+{
+    (void)buf;
+    (void)count;
+    (void)offset;
+    kprintf("[ahci] ahci_write: not yet implemented\n");
+    return -ENOSYS;
+}
