@@ -166,30 +166,50 @@ module_init(cake_init);
 /* ── Implement: cake_reset ────────────────── */
 int cake_reset(void *sch)
 {
-    kprintf("[cake] cake_reset: stub (basic)\n");
+    if (!sch) {
+        kprintf("[cake] cake_reset: NULL sch\n");
+        return -EINVAL;
+    }
+    kprintf("[cake] cake_reset: sch=%p (stub)\n", sch);
     return -EOPNOTSUPP;
 }
 /* ── Implement: cake_destroy ────────────────── */
 int cake_destroy(void *sch)
 {
-    kprintf("[cake] cake_destroy: stub (basic)\n");
+    if (!sch) {
+        kprintf("[cake] cake_destroy: NULL sch\n");
+        return -EINVAL;
+    }
+    kprintf("[cake] cake_destroy: sch=%p (stub)\n", sch);
     return -EOPNOTSUPP;
 }
 /* ── Implement: cake_change ────────────────── */
 int cake_change(void *sch, void *cfg)
 {
-    kprintf("[cake] cake_change: stub (basic)\n");
+    if (!sch || !cfg) {
+        kprintf("[cake] cake_change: NULL parameter (sch=%p cfg=%p)\n", sch, cfg);
+        return -EINVAL;
+    }
+    kprintf("[cake] cake_change: sch=%p cfg=%p (stub)\n", sch, cfg);
     return -EOPNOTSUPP;
 }
 /* ── Implement: cake_dump ────────────────── */
 int cake_dump(void *sch, void *skb)
 {
-    kprintf("[cake] cake_dump: stub (basic)\n");
+    if (!sch || !skb) {
+        kprintf("[cake] cake_dump: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[cake] cake_dump: sch=%p skb=%p (stub)\n", sch, skb);
     return -EOPNOTSUPP;
 }
 /* ── Implement: cake_dump_stats ────────────────── */
 int cake_dump_stats(void *sch, void *d)
 {
-    kprintf("[cake] cake_dump_stats: stub (basic)\n");
+    if (!sch || !d) {
+        kprintf("[cake] cake_dump_stats: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[cake] cake_dump_stats: sch=%p d=%p (stub)\n", sch, d);
     return -EOPNOTSUPP;
 }

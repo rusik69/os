@@ -464,14 +464,22 @@ void httpd_task(void) {
 }
 
 /* ── Implement: httpd_handle_request ────────────────── */
-int httpd_handle_request(void *req, void *resp)
+int httpd_handle_request(int conn_fd, const char *request)
 {
-    kprintf("[httpd] httpd_handle_request: stub (basic)\n");
+    if (conn_fd < 0 || !request) {
+        kprintf("[httpd] httpd_handle_request: invalid parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[httpd] httpd_handle_request: conn=%d request=%p (stub)\n", conn_fd, (const void *)request);
     return -EOPNOTSUPP;
 }
 /* ── Implement: httpd_register_handler ────────────────── */
 int httpd_register_handler(const char *path, void *handler)
 {
-    kprintf("[httpd] httpd_register_handler: stub (basic)\n");
+    if (!path || !handler) {
+        kprintf("[httpd] httpd_register_handler: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[httpd] httpd_register_handler: %s handler=%p (stub)\n", path, handler);
     return -EOPNOTSUPP;
 }

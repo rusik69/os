@@ -281,24 +281,56 @@ int ipvs_get_dest(uint32_t vip, uint16_t port, uint32_t *rip_out, uint16_t *rpor
 /* ── Implement: ipvs_add_service ────────────────── */
 int ipvs_add_service(const void *svc)
 {
-    kprintf("[ipvs] ipvs_add_service: stub (basic)\n");
-    return 0;
+    if (!svc) {
+        kprintf("[ipvs] ipvs_add_service: NULL svc\n");
+        return -EINVAL;
+    }
+    if (!ipvs_initialized) {
+        kprintf("[ipvs] ipvs_add_service: not initialized\n");
+        return -ENOSYS;
+    }
+    kprintf("[ipvs] ipvs_add_service: svc=%p (stub)\n", svc);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_del_service ────────────────── */
 int ipvs_del_service(const void *svc)
 {
-    kprintf("[ipvs] ipvs_del_service: stub (basic)\n");
-    return 0;
+    if (!svc) {
+        kprintf("[ipvs] ipvs_del_service: NULL svc\n");
+        return -EINVAL;
+    }
+    if (!ipvs_initialized) {
+        kprintf("[ipvs] ipvs_del_service: not initialized\n");
+        return -ENOSYS;
+    }
+    kprintf("[ipvs] ipvs_del_service: svc=%p (stub)\n", svc);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_add_dest ────────────────── */
 int ipvs_add_dest(void *svc, const void *dest)
 {
-    kprintf("[ipvs] ipvs_add_dest: stub (basic)\n");
-    return 0;
+    if (!svc || !dest) {
+        kprintf("[ipvs] ipvs_add_dest: NULL parameter\n");
+        return -EINVAL;
+    }
+    if (!ipvs_initialized) {
+        kprintf("[ipvs] ipvs_add_dest: not initialized\n");
+        return -ENOSYS;
+    }
+    kprintf("[ipvs] ipvs_add_dest: svc=%p dest=%p (stub)\n", svc, dest);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipvs_del_dest ────────────────── */
 int ipvs_del_dest(void *svc, const void *dest)
 {
-    kprintf("[ipvs] ipvs_del_dest: stub (basic)\n");
-    return 0;
+    if (!svc || !dest) {
+        kprintf("[ipvs] ipvs_del_dest: NULL parameter\n");
+        return -EINVAL;
+    }
+    if (!ipvs_initialized) {
+        kprintf("[ipvs] ipvs_del_dest: not initialized\n");
+        return -ENOSYS;
+    }
+    kprintf("[ipvs] ipvs_del_dest: svc=%p dest=%p (stub)\n", svc, dest);
+    return -EOPNOTSUPP;
 }

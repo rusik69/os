@@ -70,12 +70,20 @@ void tun_destroy(void) {
 /* ── Implement: tun_stop ────────────────── */
 int tun_stop(void *dev)
 {
-    kprintf("[tun] tun_stop: stub (basic)\n");
+    if (!dev) {
+        kprintf("[tun] tun_stop: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[tun] tun_stop: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: tun_xmit ────────────────── */
 int tun_xmit(void *skb, void *dev)
 {
-    kprintf("[tun] tun_xmit: stub (basic)\n");
+    if (!skb || !dev) {
+        kprintf("[tun] tun_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[tun] tun_xmit: skb=%p dev=%p (stub)\n", skb, dev);
     return -EOPNOTSUPP;
 }

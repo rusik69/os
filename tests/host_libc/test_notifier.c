@@ -311,12 +311,126 @@ static void test_notifier(void)
 }
 
 /* ===================================================================
+ *  test_notifier — extended edge cases
+ * =================================================================== */
+
+static void test_notifier_extended(void)
+{
+    printf("\n[notifier — extended]\n");
+
+    struct notifier_block nb1 = { .notifier_call = test_callback, .next = NULL };
+    int r;
+
+    /* 1. Register NULL callback block fails */
+    {
+        r = notifier_chain_register(NOTIFIER_PANIC, NULL);
+        TEST("register NULL block returns -1", r == -1);
+    }
+
+    /* 2. Unregister NULL callback block fails */
+    {
+        r = notifier_chain_unregister(NOTIFIER_PANIC, NULL);
+        TEST("unregister NULL block returns -1", r == -1);
+    }
+
+    /* 3. Invalid types for register */
+    {
+        r = notifier_chain_register(-5, &nb1);
+        TEST("register type=-5 returns -1", r == -1);
+        r = notifier_chain_register(NOTIFIER_MAX + 10, &nb1);
+        TEST("register type=NOTIFIER_MAX+10 returns -1", r == -1);
+    }
+
+    /* 4. Invalid types for unregister */
+    {
+        r = notifier_chain_unregister(-5, &nb1);
+        TEST("unregister type=-5 returns -1", r == -1);
+    }
+
+    /* 5. Callback on all NOTIFIER types */
+    {
+        int types[] = {NOTIFIER_PANIC, NOTIFIER_DIE, NOTIFIER_REBOOT,
+                       NOTIFIER_NET_EVENT, NOTIFIER_CPU_HP};
+        for (size_t i = 0; i < sizeof(types)/sizeof(types[0]); i++) {
+            notifier_chain_register(types[i], &nb1);
+        }
+        for (size_t i = 0; i < sizeof(types)/sizeof(types[0]); i++) {
+            callback_count = 0;
+            r = notifier_call_chain(types[i], 0, NULL);
+            if (callback_count != 1) {
+                printf("  FAIL: callback on type %d count=%d (expected 1)\n",
+                       types[i], callback_count);
+                tests_failed++;
+            } else {
+                printf("  PASS: callback on NOTIFIER type %d\n", types[i]);
+                tests_passed++;
+            }
+        }
+        /* Cleanup */
+        for (size_t i = 0; i < sizeof(types)/sizeof(types[0]); i++) {
+            notifier_chain_unregister(types[i], &nb1);
+        }
+    }
+
+    /* 6. Register two different blocks on same type */
+    {
+        struct notifier_block nb_a = { .notifier_call = test_callback, .next = NULL };
+        struct notifier_block nb_b = { .notifier_call = test_callback2, .next = NULL };
+        notifier_chain_register(NOTIFIER_PANIC, &nb_a);
+        r = notifier_chain_register(NOTIFIER_PANIC, &nb_b);
+        TEST("register second block returns 0", r == 0);
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+        /* nb_b registered last (LIFO), fires first: adds 10, then nb_a adds 1 = 11 */
+        TEST("two blocks fire in LIFO order", callback_count == 11);
+        notifier_chain_unregister(NOTIFIER_PANIC, &nb_b);
+        notifier_chain_unregister(NOTIFIER_PANIC, &nb_a);
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+        TEST("chain empty after unregister both", callback_count == 0);
+    }
+
+    /* 7. Register 5 blocks, call chain, unregister all */
+    {
+        struct notifier_block many[5];
+        for (int i = 0; i < 5; i++) {
+            many[i].notifier_call = test_callback;
+            many[i].next = NULL;
+            notifier_chain_register(NOTIFIER_DIE, &many[i]);
+        }
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_DIE, 0, NULL);
+        TEST("5 callbacks on DIE type fire", callback_count == 5);
+        for (int i = 0; i < 5; i++)
+            notifier_chain_unregister(NOTIFIER_DIE, &many[i]);
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_DIE, 0, NULL);
+        TEST("DIE type empty after unregister all 5", callback_count == 0);
+    }
+
+    /* 8. Chain with 1 callback, verify value and data passed */
+    {
+        struct notifier_block nb_val = { .notifier_call = test_callback, .next = NULL };
+        notifier_chain_register(NOTIFIER_NET_EVENT, &nb_val);
+        int test_val = 999;
+        char test_data = 'X';
+        callback_count = 0;
+        r = notifier_call_chain(NOTIFIER_NET_EVENT, (unsigned long)test_val, &test_data);
+        TEST("callback value passed correctly", last_val == (unsigned long)test_val);
+        TEST("callback data passed correctly", last_data == &test_data);
+        TEST("callback count is 1", callback_count == 1);
+        notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_val);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
 {
     printf("=== Notifier Chain Tests ===\n\n");
     test_notifier();
+    test_notifier_extended();
 
     printf("\n");
     printf("============================================\n");

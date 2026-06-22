@@ -550,34 +550,53 @@ int64_t sys_io_uring_register(int fd, uint32_t opcode, void *arg,
 /* ── Stub: io_uring_delete ─────────────────────────────────────────────── */
 int io_uring_delete(struct io_ring *ring)
 {
-    (void)ring;
-    kprintf("[io_uring] io_uring_delete not yet implemented\n");
-    return 0;
+    if (!ring) {
+        kprintf("[io_uring] io_uring_delete: NULL ring\n");
+        return -EINVAL;
+    }
+    kprintf("[io_uring] io_uring_delete: ring=%p (stub)\n", (const void *)ring);
+    return -EOPNOTSUPP;
 }
 
 /* ── Stub: io_uring_cancel ─────────────────────────────────────────────── */
 int io_uring_cancel(struct io_ring *ring, int pid)
 {
-    (void)ring;
-    (void)pid;
-    kprintf("[io_uring] io_uring_cancel not yet implemented\n");
-    return 0;
+    if (!ring) {
+        kprintf("[io_uring] io_uring_cancel: NULL ring\n");
+        return -EINVAL;
+    }
+    if (pid < 0) {
+        kprintf("[io_uring] io_uring_cancel: invalid pid %d\n", pid);
+        return -EINVAL;
+    }
+    kprintf("[io_uring] io_uring_cancel: ring=%p pid=%d (stub)\n", (const void *)ring, pid);
+    return -EOPNOTSUPP;
 }
 
 /* ── Stub: io_uring_timeout ───────────────────────────────────────────── */
 int io_uring_timeout(struct io_ring *ring, uint64_t timeout_ns)
 {
-    (void)ring;
-    (void)timeout_ns;
-    kprintf("[io_uring] io_uring_timeout not yet implemented\n");
-    return 0;
+    if (!ring) {
+        kprintf("[io_uring] io_uring_timeout: NULL ring\n");
+        return -EINVAL;
+    }
+    if (timeout_ns == 0) {
+        kprintf("[io_uring] io_uring_timeout: timeout must be > 0\n");
+        return -EINVAL;
+    }
+    kprintf("[io_uring] io_uring_timeout: ring=%p timeout=%llu ns (stub)\n",
+            (const void *)ring, (unsigned long long)timeout_ns);
+    return -EOPNOTSUPP;
 }
 
 /* ── Stub: io_uring_poll ──────────────────────────────────────────────── */
 int io_uring_poll(struct io_ring *ring, uint32_t poll_mask)
 {
-    (void)ring;
-    (void)poll_mask;
-    kprintf("[io_uring] io_uring_poll not yet implemented\n");
-    return 0;
+    if (!ring) {
+        kprintf("[io_uring] io_uring_poll: NULL ring\n");
+        return -EINVAL;
+    }
+    kprintf("[io_uring] io_uring_poll: ring=%p poll_mask=0x%x (stub)\n",
+            (const void *)ring, poll_mask);
+    return -EOPNOTSUPP;
 }

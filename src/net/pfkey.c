@@ -275,35 +275,50 @@ module_init(pfkey_init);
 /* ── Implement: pfkey_send ────────────────── */
 int pfkey_send(void *sk, void *skb)
 {
-    (void)sk; (void)skb;
-    kprintf("[pfkey] pfkey_send: stub (basic)\n");
-    return 0;
+    if (!sk || !skb) {
+        kprintf("[pfkey] pfkey_send: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pfkey] pfkey_send: sk=%p skb=%p (stub)\n", sk, skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_recv ────────────────── */
 int pfkey_recv(void *sk, void *skb)
 {
-    (void)sk; (void)skb;
-    kprintf("[pfkey] pfkey_recv: stub (basic)\n");
-    return 0;
+    if (!sk || !skb) {
+        kprintf("[pfkey] pfkey_recv: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pfkey] pfkey_recv: sk=%p skb=%p (stub)\n", sk, skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_register ────────────────── */
 int pfkey_register(void *sk, void *skb)
 {
-    (void)sk; (void)skb;
-    kprintf("[pfkey] pfkey_register: stub (basic)\n");
-    return 0;
+    if (!sk || !skb) {
+        kprintf("[pfkey] pfkey_register: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pfkey] pfkey_register: sk=%p skb=%p (stub)\n", sk, skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_acquire ────────────────── */
 int pfkey_acquire(void *sk, void *skb)
 {
-    (void)sk; (void)skb;
-    kprintf("[pfkey] pfkey_acquire: stub (basic)\n");
-    return 0;
+    if (!sk || !skb) {
+        kprintf("[pfkey] pfkey_acquire: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pfkey] pfkey_acquire: sk=%p skb=%p (stub)\n", sk, skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pfkey_expire ────────────────── */
 int pfkey_expire(void *sk, void *skb)
 {
-    (void)sk; (void)skb;
-    kprintf("[pfkey] pfkey_expire: stub (basic)\n");
-    return 0;
+    if (!sk || !skb) {
+        kprintf("[pfkey] pfkey_expire: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pfkey] pfkey_expire: sk=%p skb=%p (stub)\n", sk, skb);
+    return -EOPNOTSUPP;
 }

@@ -203,15 +203,33 @@ void cet_switch_task(struct cet_shadow_stack *sstk) {
 /* ── Stub: cet_shstk_status ───────────────────────────────────────────── */
 int cet_shstk_status(struct cet_shadow_stack *sstk)
 {
-    (void)sstk;
-    kprintf("[CET] cet_shstk_status not yet implemented\n");
+    if (!sstk) {
+        kprintf("[CET] cet_shstk_status: NULL sstk\n");
+        return -EINVAL;
+    }
+    if (!g_cet_supported) {
+        kprintf("[CET] cet_shstk_status: CET not supported\n");
+        return -EOPNOTSUPP;
+    }
+    kprintf("[CET] cet_shstk_status: base=0x%llx ssp=0x%llx enabled=%d\n",
+            (unsigned long long)sstk->base,
+            (unsigned long long)sstk->ssp,
+            sstk->enabled);
     return 0;
 }
 
 /* ── Stub: cet_shstk_alloc ────────────────────────────────────────────── */
 int cet_shstk_alloc(struct cet_shadow_stack *sstk)
 {
-    (void)sstk;
-    kprintf("[CET] cet_shstk_alloc not yet implemented\n");
-    return 0;
+    if (!sstk) {
+        kprintf("[CET] cet_shstk_alloc: NULL sstk\n");
+        return -EINVAL;
+    }
+    if (!g_cet_supported) {
+        kprintf("[CET] cet_shstk_alloc: CET not supported\n");
+        return -EOPNOTSUPP;
+    }
+    /* Allocate a shadow stack page using the existing cet_enable_per_task path */
+    kprintf("[CET] cet_shstk_alloc: allocating shadow stack (stub)\n");
+    return cet_enable_per_task(sstk);
 }

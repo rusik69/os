@@ -1650,16 +1650,21 @@ void module_decompress_free(uint8_t *buf, int was_compressed)
 /* ── Stub: module_compress_init ─────────────────────────────── */
 int module_compress_init(void)
 {
-    kprintf("[modcompress] module_compress_init: not yet implemented\n");
-    return 0;
+    kprintf("[modcompress] module_compress_init: xz decompression not yet available\n");
+    return -EOPNOTSUPP;
 }
 /* ── Stub: module_compress_decompress ─────────────────────────────── */
 int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[modcompress] module_compress_decompress: not yet implemented\n");
-    return 0;
+    if (!src || !dst || !dlen) {
+        kprintf("[modcompress] module_compress_decompress: NULL parameter\n");
+        return -EINVAL;
+    }
+    if (slen == 0 || *dlen == 0) {
+        kprintf("[modcompress] module_compress_decompress: zero length\n");
+        return -EINVAL;
+    }
+    kprintf("[modcompress] module_compress_decompress: src=%p slen=%zu dst=%p dlen=%zu (stub)\n",
+            src, slen, dst, *dlen);
+    return -EOPNOTSUPP;
 }

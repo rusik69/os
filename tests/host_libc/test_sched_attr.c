@@ -281,6 +281,163 @@ static void test_sched_attr_validation(void)
 }
 
 /* ===================================================================
+ *  Test: sched_setattr — extended boundary tests (+16 new assertions)
+ * =================================================================== */
+
+static void test_sched_attr_extended(void)
+{
+    printf("\n[sched_attr — extended]\n");
+
+    struct sched_attr attr;
+    int ret;
+
+    /* 1. SCHED_FIFO with priority=1 (valid boundary) */
+    {
+        memset(&attr, 0, sizeof(attr));
+        attr.size = sizeof(struct sched_attr);
+        attr.sched_policy = SCHED_FIFO;
+        attr.sched_priority = 1;
+        attr.sched_nice = 0;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: FIFO priority=1 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 2. SCHED_FIFO with priority=98 (valid boundary) */
+    {
+        attr.sched_priority = 98;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: FIFO priority=98 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 3. SCHED_RR with priority=1 (valid boundary) */
+    {
+        attr.sched_policy = SCHED_RR;
+        attr.sched_priority = 1;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: RR priority=1 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 4. SCHED_RR with priority=98 (valid boundary) */
+    {
+        attr.sched_priority = 98;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: RR priority=98 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 5. SCHED_OTHER with nice=-19 (valid boundary) */
+    {
+        attr.sched_policy = SCHED_OTHER;
+        attr.sched_priority = 0;
+        attr.sched_nice = -19;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: OTHER nice=-19 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 6. SCHED_OTHER with nice=18 (valid boundary) */
+    {
+        attr.sched_nice = 18;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: OTHER nice=18 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 7. SCHED_BATCH with nice=-20 (minimum) */
+    {
+        attr.sched_policy = SCHED_BATCH;
+        attr.sched_priority = 0;
+        attr.sched_nice = -20;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: BATCH nice=-20 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 8. SCHED_BATCH with nice=19 (maximum) */
+    {
+        attr.sched_nice = 19;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: BATCH nice=19 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 9. SCHED_IDLE with nice=-20 (minimum, unusual but valid) */
+    {
+        attr.sched_policy = SCHED_IDLE;
+        attr.sched_priority = 0;
+        attr.sched_nice = -20;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: IDLE nice=-20 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 10. SCHED_IDLE with nice=19 (maximum) */
+    {
+        attr.sched_nice = 19;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: IDLE nice=19 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 11. DL with runtime=1 (minimum positive) */
+    {
+        attr.sched_policy = SCHED_DEADLINE;
+        attr.sched_priority = 0;
+        attr.sched_nice = 0;
+        attr.sched_runtime = 1;
+        attr.sched_deadline = 500000;
+        attr.sched_period = 2000000;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: DL runtime=1 reaches lookup", ret == -ESRCH);
+    }
+
+    /* 12. DL with runtime == deadline (boundary: not >, so valid) */
+    {
+        attr.sched_runtime = 500000;
+        attr.sched_deadline = 500000;
+        attr.sched_period = 2000000;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: DL runtime==deadline reaches lookup", ret == -ESRCH);
+    }
+
+    /* 13. DL with deadline == period (boundary: not >, so valid) */
+    {
+        attr.sched_runtime = 100000;
+        attr.sched_deadline = 2000000;
+        attr.sched_period = 2000000;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: DL deadline==period reaches lookup", ret == -ESRCH);
+    }
+
+    /* 14. DL with runtime == deadline == period (all equal, extreme boundary) */
+    {
+        attr.sched_runtime = 1000000;
+        attr.sched_deadline = 1000000;
+        attr.sched_period = 1000000;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: DL runtime==deadline==period reaches lookup",
+             ret == -ESRCH);
+    }
+
+    /* 15. size == sizeof(struct sched_attr) - 1 (undersized, accepted for compat) */
+    {
+        memset(&attr, 0, sizeof(attr));
+        attr.size = sizeof(struct sched_attr) - 1;
+        attr.sched_policy = SCHED_OTHER;
+        attr.sched_priority = 0;
+        attr.sched_nice = 0;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: size=sizeof-1 accepted (compat), reaches lookup",
+             ret == -ESRCH);
+    }
+
+    /* 16. DL with priority=99 (DL policy with non-zero priority, should use priority check first) */
+    {
+        attr.sched_policy = SCHED_DEADLINE;
+        attr.sched_priority = 99;
+        attr.sched_nice = 0;
+        attr.sched_runtime = 100000;
+        attr.sched_deadline = 500000;
+        attr.sched_period = 2000000;
+        ret = sched_setattr(1, &attr, 0);
+        TEST("sched_setattr: DL priority=99 reaches lookup", ret == -ESRCH);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -288,6 +445,7 @@ int main(void)
 {
     printf("=== Kernel Sched Attribute Validation Tests ===\n");
     test_sched_attr_validation();
+    test_sched_attr_extended();
 
     printf("\n");
     printf("============================================\n");

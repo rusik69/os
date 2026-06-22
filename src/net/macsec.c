@@ -328,14 +328,20 @@ module_init(macsec_init);
 /* ── Implement: macsec_rx_handler ────────────────── */
 int macsec_rx_handler(void *skb)
 {
-    (void)skb;
-    kprintf("[macsec] macsec_rx_handler: stub (basic)\n");
+    if (!skb) {
+        kprintf("[macsec] macsec_rx_handler: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[macsec] macsec_rx_handler: skb=%p (stub)\n", skb);
     return -EOPNOTSUPP;
 }
 /* ── Implement: macsec_tx_handler ────────────────── */
 int macsec_tx_handler(void *skb, void *dev)
 {
-    (void)skb; (void)dev;
-    kprintf("[macsec] macsec_tx_handler: stub (basic)\n");
+    if (!skb || !dev) {
+        kprintf("[macsec] macsec_tx_handler: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[macsec] macsec_tx_handler: skb=%p dev=%p (stub)\n", skb, dev);
     return -EOPNOTSUPP;
 }

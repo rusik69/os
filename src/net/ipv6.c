@@ -671,18 +671,34 @@ void ipv6_get_linklocal(struct in6_addr *addr)
 /* ── Implement: ipv6_send ────────────────── */
 int ipv6_send(void *skb)
 {
-    kprintf("[ipv6] ipv6_send: stub (basic)\n");
-    return 0;
+    if (!skb) {
+        kprintf("[ipv6] ipv6_send: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[ipv6] ipv6_send: skb=%p (stub)\n", skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipv6_route_add ────────────────── */
 int ipv6_route_add(const void *dst, const void *gw, int ifindex)
 {
-    kprintf("[ipv6] ipv6_route_add: stub (basic)\n");
-    return 0;
+    if (!dst || !gw) {
+        kprintf("[ipv6] ipv6_route_add: NULL parameter\n");
+        return -EINVAL;
+    }
+    if (ifindex < 0) {
+        kprintf("[ipv6] ipv6_route_add: invalid ifindex %d\n", ifindex);
+        return -EINVAL;
+    }
+    kprintf("[ipv6] ipv6_route_add: dst=%p gw=%p ifindex=%d (stub)\n", dst, gw, ifindex);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipv6_route_del ────────────────── */
 int ipv6_route_del(const void *dst)
 {
-    kprintf("[ipv6] ipv6_route_del: stub (basic)\n");
-    return 0;
+    if (!dst) {
+        kprintf("[ipv6] ipv6_route_del: NULL dst\n");
+        return -EINVAL;
+    }
+    kprintf("[ipv6] ipv6_route_del: dst=%p (stub)\n", dst);
+    return -EOPNOTSUPP;
 }

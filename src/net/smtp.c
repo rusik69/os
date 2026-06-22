@@ -188,6 +188,14 @@ int smtp_send_auth(uint32_t server_ip, uint16_t port,
 /* ── Implement: smtp_connect ────────────────── */
 int smtp_connect(const char *host, int port)
 {
-    kprintf("[smtp] smtp_connect: stub (basic)\n");
+    if (!host || !*host) {
+        kprintf("[smtp] smtp_connect: invalid host\n");
+        return -EINVAL;
+    }
+    if (port <= 0 || port > 65535) {
+        kprintf("[smtp] smtp_connect: invalid port %d\n", port);
+        return -EINVAL;
+    }
+    kprintf("[smtp] smtp_connect: %s:%d (stub)\n", host, port);
     return -EOPNOTSUPP;
 }

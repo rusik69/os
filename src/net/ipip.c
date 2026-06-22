@@ -117,16 +117,22 @@ EXPORT_SYMBOL(ipip_decapsulate);
 /* ── Implement: ipip_xmit ────────────────── */
 int ipip_xmit(void *skb, void *dev)
 {
-    (void)skb; (void)dev;
-    kprintf("[ipip] ipip_xmit: stub (basic)\n");
-    return 0;
+    if (!skb || !dev) {
+        kprintf("[ipip] ipip_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[ipip] ipip_xmit: skb=%p dev=%p (stub)\n", skb, dev);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ipip_rcv ────────────────── */
 int ipip_rcv(void *skb)
 {
-    (void)skb;
-    kprintf("[ipip] ipip_rcv: stub (basic)\n");
-    return 0;
+    if (!skb) {
+        kprintf("[ipip] ipip_rcv: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[ipip] ipip_rcv: skb=%p (stub)\n", skb);
+    return -EOPNOTSUPP;
 }
 /* ── Stub: ipip_err ────────────────────────────────── */
 void ipip_err(void *skb, uint32_t info)

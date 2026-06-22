@@ -1188,12 +1188,27 @@ module_init(dhcp_init);
 /* ── Implement: dhcp_send_discover ────────────────── */
 int dhcp_send_discover(void *dev)
 {
-    kprintf("[dhcp] dhcp_send_discover: stub (basic)\n");
-    return 0;
+    if (!dev) {
+        kprintf("[dhcp] dhcp_send_discover: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[dhcp] dhcp_send_discover: dev=%p (stub)\n", dev);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: dhcp_send_request ────────────────── */
 int dhcp_send_request(void *dev, uint32_t offered_ip)
 {
-    kprintf("[dhcp] dhcp_send_request: stub (basic)\n");
-    return 0;
+    if (!dev) {
+        kprintf("[dhcp] dhcp_send_request: NULL dev\n");
+        return -EINVAL;
+    }
+    if (offered_ip == 0) {
+        kprintf("[dhcp] dhcp_send_request: invalid offered IP\n");
+        return -EINVAL;
+    }
+    kprintf("[dhcp] dhcp_send_request: dev=%p offered_ip=%u.%u.%u.%u (stub)\n",
+            dev,
+            (unsigned)((offered_ip >> 24) & 0xFF), (unsigned)((offered_ip >> 16) & 0xFF),
+            (unsigned)((offered_ip >> 8) & 0xFF), (unsigned)(offered_ip & 0xFF));
+    return -EOPNOTSUPP;
 }

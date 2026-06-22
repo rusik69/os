@@ -528,12 +528,26 @@ module_init(nf_helper_init);
 /* ── Implement: conntrack_helper_register ────────────────── */
 int conntrack_helper_register(int proto, uint16_t port, void *helper)
 {
-    kprintf("[conntrack_helpers] conntrack_helper_register: stub (basic)\n");
+    if (!helper) {
+        kprintf("[conntrack_helpers] conntrack_helper_register: NULL helper\n");
+        return -EINVAL;
+    }
+    if (proto < 0 || port == 0) {
+        kprintf("[conntrack_helpers] conntrack_helper_register: invalid proto=%d port=%u\n",
+                proto, (unsigned)port);
+        return -EINVAL;
+    }
+    kprintf("[conntrack_helpers] conntrack_helper_register: proto=%d port=%u helper=%p (stub)\n",
+            proto, (unsigned)port, helper);
     return -EOPNOTSUPP;
 }
 /* ── Implement: conntrack_helper_unregister ────────────────── */
 int conntrack_helper_unregister(void *helper)
 {
-    kprintf("[conntrack_helpers] conntrack_helper_unregister: stub (basic)\n");
+    if (!helper) {
+        kprintf("[conntrack_helpers] conntrack_helper_unregister: NULL helper\n");
+        return -EINVAL;
+    }
+    kprintf("[conntrack_helpers] conntrack_helper_unregister: helper=%p (stub)\n", helper);
     return -EOPNOTSUPP;
 }

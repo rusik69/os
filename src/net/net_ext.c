@@ -26,6 +26,10 @@ int net_set_arp_cache_max(int max) {
 /* ── Implement: net_ext_ioctl ────────────────── */
 int net_ext_ioctl(int sock, int cmd, void *arg)
 {
-    kprintf("[net_ext] net_ext_ioctl: stub (basic)\n");
+    if (sock < 0 || !arg) {
+        kprintf("[net_ext] net_ext_ioctl: invalid parameter (sock=%d arg=%p)\n", sock, arg);
+        return -EINVAL;
+    }
+    kprintf("[net_ext] net_ext_ioctl: sock=%d cmd=%d arg=%p (stub)\n", sock, cmd, arg);
     return -EOPNOTSUPP;
 }

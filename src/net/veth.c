@@ -320,18 +320,30 @@ EXPORT_SYMBOL(veth_destroy);
 /* ── Implement: veth_open ────────────────── */
 int veth_open(void *dev)
 {
-    kprintf("[veth] veth_open: stub (basic)\n");
+    if (!dev) {
+        kprintf("[veth] veth_open: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[veth] veth_open: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: veth_stop ────────────────── */
 int veth_stop(void *dev)
 {
-    kprintf("[veth] veth_stop: stub (basic)\n");
+    if (!dev) {
+        kprintf("[veth] veth_stop: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[veth] veth_stop: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: veth_xmit ────────────────── */
 int veth_xmit(void *skb, void *dev)
 {
-    kprintf("[veth] veth_xmit: stub (basic)\n");
+    if (!skb || !dev) {
+        kprintf("[veth] veth_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[veth] veth_xmit: skb=%p dev=%p (stub)\n", skb, dev);
     return -EOPNOTSUPP;
 }

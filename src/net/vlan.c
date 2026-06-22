@@ -62,12 +62,20 @@ int vlan_tag_frame(uint8_t *frame, int len, uint16_t vid) {
 /* ── Implement: vlan_xmit ────────────────── */
 int vlan_xmit(void *skb, void *dev)
 {
-    kprintf("[vlan] vlan_xmit: stub (basic)\n");
+    if (!skb || !dev) {
+        kprintf("[vlan] vlan_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[vlan] vlan_xmit: skb=%p dev=%p (stub)\n", skb, dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: vlan_kill_vid ────────────────── */
 int vlan_kill_vid(void *dev, uint16_t vid)
 {
-    kprintf("[vlan] vlan_kill_vid: stub (basic)\n");
+    if (!dev) {
+        kprintf("[vlan] vlan_kill_vid: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[vlan] vlan_kill_vid: dev=%p vid=%u (stub)\n", dev, (unsigned)vid);
     return -EOPNOTSUPP;
 }

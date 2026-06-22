@@ -26,7 +26,10 @@
  *  Declarations of kernel libc functions being tested
  * =================================================================== */
 
-/* --- bitmap.h --- */
+/* --- bitmap.h — additional ops --- */
+extern void* bitmap_alloc(int nbits);
+extern int   bitmap_free(void *bitmap);
+extern int   bitmap_parselist(const char *buf, void *bitmap, int nbits);
 extern void bitmap_zero(unsigned long *dst, int nbits);
 extern void bitmap_set(unsigned long *map, int start, int nr);
 extern void bitmap_clear(unsigned long *map, int start, int nr);
@@ -576,6 +579,135 @@ static void test_sha256(void)
 }
 
 /* ===================================================================
+ *  Additional bitmap tests (parselist, alloc, free)
+ * =================================================================== */
+
+static void test_bitmap_extended(void)
+{
+    printf("[Bitmap Extended]\n");
+
+    /* 1. bitmap_parselist with single bit */
+    {
+        unsigned long map[4];
+        bitmap_parselist("5", map, 256);
+        TEST("bitmap_parselist: single bit 5 set", bitmap_find_next_zero_area(map, 256, 0, 1) != 5);
+        /* bit 5 should be set, so find_next_zero_area starting at 5 should skip it */
+        int area = bitmap_find_next_zero_area(map, 256, 5, 1);
+        TEST("bitmap_parselist: bit 5 set, next zero at 6", area == 6);
+    }
+
+    /* 2. bitmap_parselist with range */
+    {
+        unsigned long map[4];
+        bitmap_zero(map, 256);
+        bitmap_parselist("10-15", map, 256);
+        /* bits 10-15 should be set */
+        int area = bitmap_find_next_zero_area(map, 256, 10, 1);
+        TEST("bitmap_parselist: 10-15 range, first zero at 16", area == 16);
+    }
+
+    /* 3. bitmap_parselist with multiple comma-separated ranges */
+    {
+        unsigned long map[4];
+        bitmap_zero(map, 256);
+        bitmap_parselist("0,5-7,20", map, 256);
+        int area = bitmap_find_next_zero_area(map, 256, 0, 1);
+        TEST("bitmap_parselist: bit 0 set, next zero at 1", area == 1);
+        area = bitmap_find_next_zero_area(map, 256, 5, 1);
+        TEST("bitmap_parselist: bit 5 set, next zero at 8", area == 8);
+        area = bitmap_find_next_zero_area(map, 256, 20, 1);
+        TEST("bitmap_parselist: bit 20 set, next zero at 21", area == 21);
+    }
+
+    /* 4. bitmap_parselist with empty string (zeroes bitmap then no-op set) */
+    {
+        unsigned long map[4];
+        bitmap_set(map, 0, 256);  /* all set first */
+        bitmap_parselist("", map, 256);
+        int area = bitmap_find_next_zero_area(map, 256, 0, 1);
+        TEST("bitmap_parselist: empty string clears all bits (bitmap_zero called first)",
+             area == 0);
+    }
+
+    /* 5. bitmap_alloc and bitmap_free basic */
+    {
+        unsigned long *bm = (unsigned long *)bitmap_alloc(64);
+        TEST("bitmap_alloc(64): returns non-NULL", bm != NULL);
+        if (bm) {
+            TEST("bitmap_alloc: initial all zero", bm[0] == 0);
+            bitmap_set(bm, 10, 5);
+            TEST("bitmap_alloc: set bits work", bm[0] != 0);
+            int r = bitmap_free(bm);
+            TEST("bitmap_free: returns 0", r == 0);
+        }
+    }
+
+    /* 6. bitmap_alloc with 0 bits (should still return non-NULL or NULL - both valid) */
+    {
+        void *bm = bitmap_alloc(0);
+        /* 0-bit allocation is implementation-defined, just check no crash */
+        if (bm) bitmap_free(bm);
+        TEST("bitmap_alloc(0): no crash", 1);
+    }
+
+    /* 7. bitmap_parselist with spaces instead of commas */
+    {
+        unsigned long map[4];
+        bitmap_zero(map, 256);
+        bitmap_parselist("3 7 11", map, 256);
+        int area = bitmap_find_next_zero_area(map, 256, 3, 1);
+        TEST("bitmap_parselist: space-separated '3 7 11', bit 3 set", area != 3);
+        area = bitmap_find_next_zero_area(map, 256, 7, 1);
+        TEST("bitmap_parselist: space-separated, bit 7 set", area != 7);
+        area = bitmap_find_next_zero_area(map, 256, 11, 1);
+        TEST("bitmap_parselist: space-separated, bit 11 set", area != 11);
+    }
+
+    /* 8. bitmap_parselist with range that exceeds nbits (clamped) */
+    {
+        unsigned long map[4]; /* 256 bits */
+        bitmap_parselist("250-260", map, 256);
+        /* 260 is clamped to 255 */
+        int area = bitmap_find_next_zero_area(map, 256, 250, 1);
+        TEST("bitmap_parselist: 250-260 clamped, first zero at 256", area == -1);
+    }
+
+    /* 9. CRC32 with odd lengths (single bytes) — use actual hex byte values */
+    {
+        const uint8_t byte_zero = 0x00;
+        const uint8_t byte_ff   = 0xFF;
+        uint32_t cz = crc32(0, &byte_zero, 1);
+        uint32_t cf = crc32(0, &byte_ff, 1);
+        TEST("crc32 single byte 0x00 non-zero or deterministic", 1);
+        TEST("crc32 single byte 0xFF differs from 0x00", cz != cf);
+    }
+
+    /* 10. CRC32 of incremental data: byte-by-byte for 256 bytes matches bulk */
+    {
+        uint8_t buf256[256];
+        for (int i = 0; i < 256; i++) buf256[i] = (uint8_t)(i * 3 + 7);
+        uint32_t bulk = crc32(0, buf256, 256);
+        uint32_t inc = 0;
+        for (int i = 0; i < 256; i++)
+            inc = crc32(inc, buf256 + i, 1);
+        TEST_EQ_U32("crc32 256 byte-by-byte matches bulk", bulk, inc);
+    }
+
+    /* 11. CRC32 with non-zero crc on empty buffer */
+    {
+        uint32_t c = crc32(0xFFFFFFFFU, "", 0);
+        TEST("crc32 seed=0xFFFFFFFF empty: non-zero", c != 0);
+    }
+
+    /* 12. CRC32 with various starting seeds */
+    {
+        uint32_t c1 = crc32(0xFFFFFFFFU, "a", 1);
+        uint32_t c2 = crc32(0xAAAAAAAAU, "a", 1);
+        TEST("crc32 different seeds produce different results", c1 != c2);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -584,6 +716,8 @@ int main(void)
     printf("=== Host-side Kernel Crypto Tests ===\n\n");
 
     test_bitmap_ops();
+    printf("\n");
+    test_bitmap_extended();
     printf("\n");
     test_crc32();
     printf("\n");

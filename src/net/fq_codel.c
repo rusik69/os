@@ -179,24 +179,40 @@ module_init(fq_codel_init);
 /* ── Implement: fq_codel_reset ────────────────── */
 int fq_codel_reset(void *sch)
 {
-    kprintf("[fq_codel] fq_codel_reset: stub (basic)\n");
+    if (!sch) {
+        kprintf("[fq_codel] fq_codel_reset: NULL sch\n");
+        return -EINVAL;
+    }
+    kprintf("[fq_codel] fq_codel_reset: sch=%p (stub)\n", sch);
     return -EOPNOTSUPP;
 }
 /* ── Implement: fq_codel_destroy ────────────────── */
 int fq_codel_destroy(void *sch)
 {
-    kprintf("[fq_codel] fq_codel_destroy: stub (basic)\n");
+    if (!sch) {
+        kprintf("[fq_codel] fq_codel_destroy: NULL sch\n");
+        return -EINVAL;
+    }
+    kprintf("[fq_codel] fq_codel_destroy: sch=%p (stub)\n", sch);
     return -EOPNOTSUPP;
 }
 /* ── Implement: fq_codel_change ────────────────── */
 int fq_codel_change(void *sch, void *cfg)
 {
-    kprintf("[fq_codel] fq_codel_change: stub (basic)\n");
+    if (!sch || !cfg) {
+        kprintf("[fq_codel] fq_codel_change: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[fq_codel] fq_codel_change: sch=%p cfg=%p (stub)\n", sch, cfg);
     return -EOPNOTSUPP;
 }
 /* ── Implement: fq_codel_dump ────────────────── */
 int fq_codel_dump(void *sch, void *skb)
 {
-    kprintf("[fq_codel] fq_codel_dump: stub (basic)\n");
+    if (!sch || !skb) {
+        kprintf("[fq_codel] fq_codel_dump: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[fq_codel] fq_codel_dump: sch=%p skb=%p (stub)\n", sch, skb);
     return -EOPNOTSUPP;
 }

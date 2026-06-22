@@ -238,6 +238,89 @@ static void test_stackleak(void)
 }
 
 /* ===================================================================
+ *  test_stackleak — extended edge cases
+ * =================================================================== */
+
+static void test_stackleak_extended(void)
+{
+    printf("\n[stackleak — extended]\n");
+
+    /* 1. set_enabled with 2 (non-zero) coerces to 1 */
+    {
+        stackleak_set_enabled(0);
+        int old = stackleak_set_enabled(2);
+        TEST("set_enabled(2): returns old 0", old == 0);
+        TEST("get_enabled after 2", stackleak_get_enabled() == 1);
+    }
+
+    /* 2. set_enabled with -100 (negative) coerces to 1 */
+    {
+        stackleak_set_enabled(0);
+        int old = stackleak_set_enabled(-100);
+        TEST("set_enabled(-100): returns old 0", old == 0);
+        TEST("get_enabled after -100", stackleak_get_enabled() == 1);
+    }
+
+    /* 3. Multiple get_enabled calls stay consistent */
+    {
+        stackleak_set_enabled(0);
+        stackleak_set_enabled(1);
+        int a = stackleak_get_enabled();
+        int b = stackleak_get_enabled();
+        int c = stackleak_get_enabled();
+        TEST("get_enabled consistent after set_enabled(1)", a == 1 && b == 1 && c == 1);
+    }
+
+    /* 4. Poison count is non-negative (valid uint64) */
+    {
+        uint64_t count = stackleak_get_poison_count();
+        TEST("poison_count: non-negative (top bit clear)", (count >> 63) == 0);
+    }
+
+    /* 5. Two consecutive get_poison_count calls return same value (no side effects) */
+    {
+        uint64_t c1 = stackleak_get_poison_count();
+        uint64_t c2 = stackleak_get_poison_count();
+        TEST("poison_count: idempotent (no side effect)", c1 == c2);
+    }
+
+    /* 6. Toggle 0→1→0→1→0 and verify final state */
+    {
+        stackleak_set_enabled(0);
+        TEST("toggle 0→1", stackleak_set_enabled(1) == 0);
+        TEST("toggle 1→0", stackleak_set_enabled(0) == 1);
+        TEST("toggle 0→1 again", stackleak_set_enabled(1) == 0);
+        TEST("final get_enabled", stackleak_get_enabled() == 1);
+        stackleak_set_enabled(0);
+        TEST("final get_enabled after disable", stackleak_get_enabled() == 0);
+    }
+
+    /* 7. Ensure stackleak_init can be called multiple times */
+    {
+        stackleak_init();
+        stackleak_init();
+        stackleak_init();
+        TEST("stackleak_init: multiple calls no crash", 1);
+    }
+
+    /* 8. Same as 19 but simpler chain */
+    {
+        stackleak_set_enabled(1);
+        int v1 = stackleak_set_enabled(1); /* 1→1 */
+        int v2 = stackleak_set_enabled(0); /* 1→0 */
+        int v3 = stackleak_set_enabled(1); /* 0→1 */
+        int v4 = stackleak_set_enabled(0); /* 1→0 */
+        TEST("set_enabled chain 1→1 returns 1", v1 == 1);
+        TEST("set_enabled chain 1→0 returns 1", v2 == 1);
+        TEST("set_enabled chain 0→1 returns 0", v3 == 0);
+        TEST("set_enabled chain 1→0 returns 1", v4 == 1);
+    }
+
+    /* Restore to known state */
+    stackleak_set_enabled(1);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -245,6 +328,7 @@ int main(void)
 {
     printf("=== STACKLEAK Kernel Stack Eraser Tests ===\n\n");
     test_stackleak();
+    test_stackleak_extended();
 
     printf("\n");
     printf("============================================\n");

@@ -222,70 +222,238 @@ EXPORT_SYMBOL(mptcp_close);
 /* ── Implement: mptcp_subflow_create ────────────────── */
 int mptcp_subflow_create(uint32_t token, uint32_t addr, uint16_t port)
 {
-    kprintf("[mptcp] mptcp_subflow_create: stub (basic)\n");
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_subflow_create: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_subflow_create: token %u not found\n", token);
+        return -EINVAL;
+    }
+    if (mc->num_subflows >= MPTCP_MAX_SUBFLOWS) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_subflow_create: max subflows reached for token %u\n", token);
+        return -ENOSPC;
+    }
+    int slot = mptcp_find_free();
+    if (slot < 0) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_subflow_create: no free subflow slot\n");
+        return -ENOMEM;
+    }
+    struct mptcp_subflow *sf = &mc->subflows[mc->num_subflows++];
+    sf->used = 1;
+    sf->token = token;
+    sf->conn_id = slot;
+    memcpy(sf->key, mc->snd_key, 8);
+    kprintf("[mptcp] mptcp_subflow_create: token=%u addr=%u:%u (stub)\n",
+            token, addr, (unsigned)port);
+    spinlock_release(&mptcp_lock);
     return 0;
 }
 
 /* ── Implement: mptcp_add_addr ────────────────── */
 int mptcp_add_addr(uint32_t token, uint32_t addr, uint16_t port, uint8_t flags)
 {
-    kprintf("[mptcp] mptcp_add_addr: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_add_addr: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_add_addr: token %u not found\n", token);
+        return -EINVAL;
+    }
+    if (addr == 0 || port == 0) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_add_addr: invalid addr/port\n");
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_add_addr: token=%u addr=%u:%u flags=0x%02x (stub)\n",
+            token, addr, (unsigned)port, (unsigned)flags);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_remove_addr ────────────────── */
 int mptcp_remove_addr(uint32_t token, uint32_t addr_id)
 {
-    kprintf("[mptcp] mptcp_remove_addr: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_remove_addr: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_remove_addr: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_remove_addr: token=%u addr_id=%u (stub)\n",
+            token, addr_id);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_priority ────────────────── */
 int mptcp_priority(uint32_t token, uint32_t addr_id, uint8_t backup)
 {
-    kprintf("[mptcp] mptcp_priority: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_priority: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_priority: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_priority: token=%u addr_id=%u backup=%u (stub)\n",
+            token, addr_id, (unsigned)backup);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_fastclose ────────────────── */
 int mptcp_fastclose(uint32_t token)
 {
-    kprintf("[mptcp] mptcp_fastclose: stub (basic)\n");
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_fastclose: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_fastclose: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_fastclose: token=%u (stub)\n", token);
+    /* Close the connection via mptcp_close */
+    memset(mc, 0, sizeof(*mc));
+    spinlock_release(&mptcp_lock);
     return 0;
 }
 
 /* ── Implement: mptcp_reset ────────────────── */
 int mptcp_reset(uint32_t token, uint32_t addr_id)
 {
-    kprintf("[mptcp] mptcp_reset: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_reset: not initialized\n");
+        return -ENOSYS;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_reset: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_reset: token=%u addr_id=%u (stub)\n", token, addr_id);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_mp_join_syn ────────────────── */
 int mptcp_mp_join_syn(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
 {
-    kprintf("[mptcp] mptcp_mp_join_syn: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_mp_join_syn: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!opt_out || !opt_len) {
+        kprintf("[mptcp] mptcp_mp_join_syn: NULL output pointer\n");
+        return -EINVAL;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_mp_join_syn: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_mp_join_syn: token=%u addr=%u:%u (stub)\n",
+            token, addr, (unsigned)port);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_mp_join_synack ────────────────── */
 int mptcp_mp_join_synack(uint32_t token, uint32_t addr, uint16_t port, uint8_t *opt_out, uint16_t *opt_len)
 {
-    kprintf("[mptcp] mptcp_mp_join_synack: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_mp_join_synack: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!opt_out || !opt_len) {
+        kprintf("[mptcp] mptcp_mp_join_synack: NULL output pointer\n");
+        return -EINVAL;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_mp_join_synack: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_mp_join_synack: token=%u addr=%u:%u (stub)\n",
+            token, addr, (unsigned)port);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_mp_join_ack ────────────────── */
 int mptcp_mp_join_ack(uint32_t token, uint32_t addr_id, const uint8_t *opt, uint16_t opt_len)
 {
-    kprintf("[mptcp] mptcp_mp_join_ack: stub (basic)\n");
-    return 0;
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_mp_join_ack: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!opt || opt_len < 4) {
+        kprintf("[mptcp] mptcp_mp_join_ack: invalid option (ptr=%p len=%u)\n",
+                (const void *)opt, (unsigned)opt_len);
+        return -EINVAL;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_mp_join_ack: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_mp_join_ack: token=%u addr_id=%u (stub)\n",
+            token, addr_id);
+    spinlock_release(&mptcp_lock);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: mptcp_dss ────────────────── */
 int mptcp_dss(uint32_t token, uint32_t seq, uint32_t ack, const void *data, uint32_t len)
 {
-    kprintf("[mptcp] mptcp_dss: stub (basic)\n");
+    if (!mptcp_initialized) {
+        kprintf("[mptcp] mptcp_dss: not initialized\n");
+        return -ENOSYS;
+    }
+    if (data == NULL && len > 0) {
+        kprintf("[mptcp] mptcp_dss: data is NULL but len=%u\n", len);
+        return -EINVAL;
+    }
+    spinlock_acquire(&mptcp_lock);
+    struct mptcp_conn *mc = mptcp_find_by_token(token);
+    if (!mc) {
+        spinlock_release(&mptcp_lock);
+        kprintf("[mptcp] mptcp_dss: token %u not found\n", token);
+        return -EINVAL;
+    }
+    kprintf("[mptcp] mptcp_dss: token=%u seq=%u ack=%u len=%u (stub)\n",
+            token, seq, ack, len);
+    spinlock_release(&mptcp_lock);
     return -EOPNOTSUPP;
 }
 

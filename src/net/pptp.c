@@ -164,24 +164,47 @@ void pptp_init(void)
 /* ── Implement: pptp_xmit ────────────────── */
 int pptp_xmit(void *skb, void *call)
 {
-    kprintf("[pptp] pptp_xmit: stub (basic)\n");
+    if (!skb || !call) {
+        kprintf("[pptp] pptp_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pptp] pptp_xmit: skb=%p call=%p (stub)\n", skb, call);
     return -EOPNOTSUPP;
 }
 /* ── Implement: pptp_rcv ────────────────── */
 int pptp_rcv(void *skb)
 {
-    kprintf("[pptp] pptp_rcv: stub (basic)\n");
+    if (!skb) {
+        kprintf("[pptp] pptp_rcv: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[pptp] pptp_rcv: skb=%p (stub)\n", skb);
     return -EOPNOTSUPP;
 }
 /* ── Implement: pptp_connect ────────────────── */
 int pptp_connect(struct pptp_conn *conn, uint32_t server_ip)
 {
-    kprintf("[pptp] pptp_connect: stub (basic)\n");
-    return 0;
+    if (!conn) {
+        kprintf("[pptp] pptp_connect: NULL conn\n");
+        return -EINVAL;
+    }
+    if (server_ip == 0) {
+        kprintf("[pptp] pptp_connect: invalid server IP\n");
+        return -EINVAL;
+    }
+    kprintf("[pptp] pptp_connect: conn=%p server_ip=%u.%u.%u.%u (stub)\n",
+            (const void *)conn,
+            (unsigned)((server_ip >> 24) & 0xFF), (unsigned)((server_ip >> 16) & 0xFF),
+            (unsigned)((server_ip >> 8) & 0xFF), (unsigned)(server_ip & 0xFF));
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pptp_disconnect ────────────────── */
 int pptp_disconnect(struct pptp_conn *conn)
 {
-    kprintf("[pptp] pptp_disconnect: stub (basic)\n");
+    if (!conn) {
+        kprintf("[pptp] pptp_disconnect: NULL conn\n");
+        return -EINVAL;
+    }
+    kprintf("[pptp] pptp_disconnect: conn=%p (stub)\n", (const void *)conn);
     return -EOPNOTSUPP;
 }

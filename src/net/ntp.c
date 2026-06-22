@@ -134,18 +134,27 @@ int ntp_request(uint32_t server_ip, uint64_t *out_sec, uint32_t *out_usec) {
 /* ── Implement: ntp_sync ────────────────── */
 int ntp_sync(void)
 {
-    kprintf("[ntp] ntp_sync: stub (basic)\n");
+    kprintf("[ntp] ntp_sync: triggering NTP synchronization (stub)\n");
     return -EOPNOTSUPP;
 }
 /* ── Implement: ntp_update ────────────────── */
 int ntp_update(uint64_t timestamp)
 {
-    kprintf("[ntp] ntp_update: stub (basic)\n");
+    if (timestamp == 0) {
+        kprintf("[ntp] ntp_update: invalid timestamp 0\n");
+        return -EINVAL;
+    }
+    kprintf("[ntp] ntp_update: timestamp=%llu (stub)\n",
+            (unsigned long long)timestamp);
     return -EOPNOTSUPP;
 }
 /* ── Implement: ntp_set_server ────────────────── */
 int ntp_set_server(const char *host)
 {
-    kprintf("[ntp] ntp_set_server: stub (basic)\n");
+    if (!host || !*host) {
+        kprintf("[ntp] ntp_set_server: invalid hostname\n");
+        return -EINVAL;
+    }
+    kprintf("[ntp] ntp_set_server: host=%s (stub)\n", host);
     return -EOPNOTSUPP;
 }

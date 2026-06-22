@@ -178,6 +178,10 @@ module_init(xdp_init);
 /* ── Implement: xdp_xmit ────────────────── */
 int xdp_xmit(void *skb)
 {
-    kprintf("[xdp] xdp_xmit: stub (basic)\n");
+    if (!skb) {
+        kprintf("[xdp] xdp_xmit: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[xdp] xdp_xmit: skb=%p (stub)\n", skb);
     return -EOPNOTSUPP;
 }

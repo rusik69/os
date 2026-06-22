@@ -354,21 +354,30 @@ module_init(ovs_init);
 /* ── Implement: ovs_add_flow ────────────────── */
 int ovs_add_flow(const void *flow)
 {
-    (void)flow;
-    kprintf("[openvswitch] ovs_add_flow: stub (basic)\n");
-    return 0;
+    if (!flow) {
+        kprintf("[openvswitch] ovs_add_flow: NULL flow\n");
+        return -EINVAL;
+    }
+    kprintf("[openvswitch] ovs_add_flow: flow=%p (stub)\n", flow);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ovs_del_flow ────────────────── */
 int ovs_del_flow(const void *flow)
 {
-    (void)flow;
-    kprintf("[openvswitch] ovs_del_flow: stub (basic)\n");
-    return 0;
+    if (!flow) {
+        kprintf("[openvswitch] ovs_del_flow: NULL flow\n");
+        return -EINVAL;
+    }
+    kprintf("[openvswitch] ovs_del_flow: flow=%p (stub)\n", flow);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: ovs_add_port ────────────────── */
 int ovs_add_port(const char *name, void *dev)
 {
-    (void)name; (void)dev;
-    kprintf("[openvswitch] ovs_add_port: stub (basic)\n");
-    return 0;
+    if (!name || !dev) {
+        kprintf("[openvswitch] ovs_add_port: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[openvswitch] ovs_add_port: %s dev=%p (stub)\n", name, dev);
+    return -EOPNOTSUPP;
 }

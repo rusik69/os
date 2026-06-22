@@ -201,18 +201,30 @@ module_init(ipoib_init);
 /* ── Implement: ipoib_open ────────────────── */
 int ipoib_open(void *dev)
 {
-    kprintf("[ipoib] ipoib_open: stub (basic)\n");
+    if (!dev) {
+        kprintf("[ipoib] ipoib_open: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[ipoib] ipoib_open: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipoib_stop ────────────────── */
 int ipoib_stop(void *dev)
 {
-    kprintf("[ipoib] ipoib_stop: stub (basic)\n");
+    if (!dev) {
+        kprintf("[ipoib] ipoib_stop: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[ipoib] ipoib_stop: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: ipoib_xmit ────────────────── */
 int ipoib_xmit(void *skb, void *dev)
 {
-    kprintf("[ipoib] ipoib_xmit: stub (basic)\n");
+    if (!skb || !dev) {
+        kprintf("[ipoib] ipoib_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[ipoib] ipoib_xmit: skb=%p dev=%p (stub)\n", skb, dev);
     return -EOPNOTSUPP;
 }

@@ -254,12 +254,20 @@ int rfs_flow_count(void)
 /* ── Implement: rps_process ────────────────── */
 int rps_process(void *softirq)
 {
-    kprintf("[rps] rps_process: stub (basic)\n");
+    if (!softirq) {
+        kprintf("[rps] rps_process: NULL softirq\n");
+        return -EINVAL;
+    }
+    kprintf("[rps] rps_process: softirq=%p (stub)\n", softirq);
     return -EOPNOTSUPP;
 }
 /* ── Implement: rps_map_flow ────────────────── */
 int rps_map_flow(void *skb, void *flow_table)
 {
-    kprintf("[rps] rps_map_flow: stub (basic)\n");
+    if (!skb || !flow_table) {
+        kprintf("[rps] rps_map_flow: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[rps] rps_map_flow: skb=%p flow_table=%p (stub)\n", skb, flow_table);
     return -EOPNOTSUPP;
 }

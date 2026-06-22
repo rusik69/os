@@ -259,6 +259,123 @@ static void test_kptr_restrict_extended(void)
 }
 
 /* ===================================================================
+ *  Test: kptr_restrict — format pointer tests (+15 new assertions)
+ * =================================================================== */
+
+/* Simulate %pK printing behaviour: calls kptr_restrict_check() to
+ * decide whether to show the real pointer or substitute zeros. */
+static int should_show_pointer(void)
+{
+    return kptr_restrict_check() == 0;
+}
+
+static void test_kptr_restrict_format(void)
+{
+    printf("\n[kptr_restrict — format %%pK vs %%p]\n");
+
+    /* 1. At level 0 (disabled), pointers should be visible */
+    {
+        kptr_restrict = KPTR_RESTRICT_DISABLED;
+        TEST("format: level 0 shows pointer", should_show_pointer() == 1);
+    }
+
+    /* 2. At level 1 (restricted), NULL process → kernel thread → show */
+    {
+        kptr_restrict = KPTR_RESTRICT_RESTRICTED;
+        TEST("format: level 1 (kernel thread) shows pointer",
+             should_show_pointer() == 1);
+    }
+
+    /* 3. At level 2 (root hide), pointer hidden */
+    {
+        kptr_restrict = KPTR_RESTRICT_ROOT_HIDE;
+        TEST("format: level 2 hides pointer", should_show_pointer() == 0);
+    }
+
+    /* 4. Negative level -1 shows (follows level-1 path) */
+    {
+        kptr_restrict = -1;
+        TEST("format: level -1 shows pointer", should_show_pointer() == 1);
+    }
+
+    /* 5. Large positive level >=2 hides */
+    {
+        kptr_restrict = 100;
+        TEST("format: level 100 hides pointer", should_show_pointer() == 0);
+    }
+
+    /* 6. Transition path: level 2 → 0 → show */
+    {
+        kptr_restrict = KPTR_RESTRICT_ROOT_HIDE;
+        int hide_state = should_show_pointer();
+        kptr_restrict = KPTR_RESTRICT_DISABLED;
+        int show_state = should_show_pointer();
+        TEST("format: level 2→0 transition correct",
+             hide_state == 0 && show_state == 1);
+    }
+
+    /* 7. kptr_restrict_check level 0: should_show = 1 (check returns 0) */
+    {
+        kptr_restrict = KPTR_RESTRICT_DISABLED;
+        int r = kptr_restrict_check();
+        int show = should_show_pointer();
+        TEST("format: level 0 check returns 0", r == 0);
+        TEST("format: level 0 should_show is 1", show == 1);
+    }
+
+    /* 8. kptr_restrict_check() called 10 times at level 0 stays 0 */
+    {
+        kptr_restrict = KPTR_RESTRICT_DISABLED;
+        int all_zero = 1;
+        for (int i = 0; i < 10; i++) {
+            if (kptr_restrict_check() != 0) { all_zero = 0; break; }
+        }
+        TEST("kptr_restrict: 10 calls at level 0 all return 0", all_zero);
+    }
+
+    /* 9. kptr_restrict_check() called 10 times at level 2 stays 1 */
+    {
+        kptr_restrict = KPTR_RESTRICT_ROOT_HIDE;
+        int all_one = 1;
+        for (int i = 0; i < 10; i++) {
+            if (kptr_restrict_check() != 1) { all_one = 0; break; }
+        }
+        TEST("kptr_restrict: 10 calls at level 2 all return 1", all_one);
+    }
+
+    /* 10. Check at level 0, 1, 2 in rapid succession.
+     *     Level 0 (DISABLED): check() returns 0 → should_show = 1
+     *     Level 1 (RESTRICTED, NULL proc): check() returns 0 → should_show = 1
+     *     Level 2 (ROOT_HIDE): check() returns 1 → should_show = 0 */
+    {
+        int show[3];
+        kptr_restrict = 0; show[0] = should_show_pointer();
+        kptr_restrict = 1; show[1] = should_show_pointer();
+        kptr_restrict = 2; show[2] = should_show_pointer();
+        TEST("format: level 0→1→2 should_show sequence",
+             show[0] == 1 && show[1] == 1 && show[2] == 0);
+    }
+
+    /* 11. kptr_restrict_set/kptr_restrict_get both return 0 (stubs) */
+    {
+        TEST("kptr_restrict_set(0) returns 0", kptr_restrict_set(0) == 0);
+        TEST("kptr_restrict_set(-1) returns 0", kptr_restrict_set(-1) == 0);
+        TEST("kptr_restrict_set(2) returns 0", kptr_restrict_set(2) == 0);
+        TEST("kptr_restrict_get() returns 0", kptr_restrict_get() == 0);
+    }
+
+    /* 12. Very large negative level (-1000000) — same as -1 path */
+    {
+        kptr_restrict = -1000000;
+        TEST("format: level -1000000 shows pointer (same as -1 path)",
+             should_show_pointer() == 1);
+    }
+
+    /* Restore default */
+    kptr_restrict = KPTR_RESTRICT_RESTRICTED;
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -267,6 +384,7 @@ int main(void)
     printf("=== Kernel Pointer Restrict Tests ===\n");
     test_kptr_restrict();
     test_kptr_restrict_extended();
+    test_kptr_restrict_format();
 
     printf("\n");
     printf("============================================\n");

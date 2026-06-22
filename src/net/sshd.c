@@ -936,6 +936,10 @@ void sshd_task(void) {
 /* ── Implement: sshd_handle_client ────────────────── */
 int sshd_handle_client(void *client)
 {
-    kprintf("[sshd] sshd_handle_client: stub (basic)\n");
-    return 0;
+    if (!client) {
+        kprintf("[sshd] sshd_handle_client: NULL client\n");
+        return -EINVAL;
+    }
+    kprintf("[sshd] sshd_handle_client: client=%p (stub)\n", client);
+    return -EOPNOTSUPP;
 }

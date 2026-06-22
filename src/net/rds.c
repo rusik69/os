@@ -342,6 +342,10 @@ module_init(rds_init);
 /* ── Implement: rds_disconnect ────────────────── */
 int rds_disconnect(struct rds_conn *conn)
 {
-    kprintf("[rds] rds_disconnect: stub (basic)\n");
+    if (!conn) {
+        kprintf("[rds] rds_disconnect: NULL conn\n");
+        return -EINVAL;
+    }
+    kprintf("[rds] rds_disconnect: conn=%p (stub)\n", (const void *)conn);
     return -EOPNOTSUPP;
 }

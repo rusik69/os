@@ -634,13 +634,21 @@ int stp_port_state(int port_num) {
 /* ── Implement: stp_xmit ────────────────── */
 int stp_xmit(void *skb, int port_num)
 {
-    kprintf("[stp] stp_xmit: stub (basic)\n");
+    if (!skb || port_num < 0) {
+        kprintf("[stp] stp_xmit: invalid parameter (skb=%p port=%d)\n", skb, port_num);
+        return -EINVAL;
+    }
+    kprintf("[stp] stp_xmit: skb=%p port=%d (stub)\n", skb, port_num);
     return -EOPNOTSUPP;
 }
 /* ── Implement: stp_rcv ────────────────── */
 int stp_rcv(void *skb, int port_num)
 {
-    kprintf("[stp] stp_rcv: stub (basic)\n");
+    if (!skb || port_num < 0) {
+        kprintf("[stp] stp_rcv: invalid parameter (skb=%p port=%d)\n", skb, port_num);
+        return -EINVAL;
+    }
+    kprintf("[stp] stp_rcv: skb=%p port=%d (stub)\n", skb, port_num);
     return -EOPNOTSUPP;
 }
 /* ── Stub: stp_become_root ─────────────────────────── */

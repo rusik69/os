@@ -927,20 +927,30 @@ module_init(pkt_sched_init);
 /* ── Implement: pkt_sched_enqueue ────────────────── */
 int pkt_sched_enqueue(void *skb, void *sch)
 {
-    (void)skb; (void)sch;
-    kprintf("[pkt_sched] pkt_sched_enqueue: stub (basic)\n");
-    return 0;
+    if (!skb || !sch) {
+        kprintf("[pkt_sched] pkt_sched_enqueue: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pkt_sched] pkt_sched_enqueue: skb=%p sch=%p (stub)\n", skb, sch);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: pkt_sched_dequeue ────────────────── */
 void* pkt_sched_dequeue(void *sch)
 {
-    kprintf("[pkt_sched] pkt_sched_dequeue: stub (basic)\n");
+    if (!sch) {
+        kprintf("[pkt_sched] pkt_sched_dequeue: NULL sch\n");
+        return NULL;
+    }
+    kprintf("[pkt_sched] pkt_sched_dequeue: sch=%p (stub)\n", sch);
     return NULL;
 }
 /* ── Implement: pkt_sched_register ────────────────── */
 int pkt_sched_register(const char *name, void *ops)
 {
-    (void)name; (void)ops;
-    kprintf("[pkt_sched] pkt_sched_register: stub (basic)\n");
-    return 0;
+    if (!name || !ops) {
+        kprintf("[pkt_sched] pkt_sched_register: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[pkt_sched] pkt_sched_register: %s ops=%p (stub)\n", name, ops);
+    return -EOPNOTSUPP;
 }

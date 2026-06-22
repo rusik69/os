@@ -464,24 +464,80 @@ struct lowpan_config;
 /* ── Implement: lowpan_process_data ────────────────── */
 int lowpan_process_data(int ifindex, const uint8_t *frame, uint16_t len)
 {
-    kprintf("[6lowpan] lowpan_process_data: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_process_data: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!frame || len == 0) {
+        kprintf("[6lowpan] lowpan_process_data: invalid frame (ptr=%p len=%u)\n",
+                (const void *)frame, (unsigned)len);
+        return -EINVAL;
+    }
+    if (len > IEEE802154_MAX_FRAME) {
+        kprintf("[6lowpan] lowpan_process_data: frame too large (%u > %u)\n",
+                (unsigned)len, (unsigned)IEEE802154_MAX_FRAME);
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_process_data: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_process_data: ifindex=%d len=%u dispatch=0x%02x (stub)\n",
+            ifindex, (unsigned)len, frame[0]);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_fragment ────────────────── */
 int lowpan_fragment(int ifindex, const uint8_t *data, uint16_t len,
                      uint8_t *frames, uint16_t *frame_lens, int max_frames)
 {
-    kprintf("[6lowpan] lowpan_fragment: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_fragment: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!data || !frames || !frame_lens || max_frames <= 0) {
+        kprintf("[6lowpan] lowpan_fragment: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (len == 0 || len > IEEE802154_MAX_PAYLOAD * max_frames) {
+        kprintf("[6lowpan] lowpan_fragment: invalid data len %u\n", (unsigned)len);
+        return -EINVAL;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_fragment: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_fragment: ifindex=%d len=%u max_frames=%d (stub)\n",
+            ifindex, (unsigned)len, max_frames);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_reassemble ────────────────── */
 int lowpan_reassemble(int ifindex, const uint8_t *frag, uint16_t frag_len,
                        uint8_t *out, uint16_t *out_len)
 {
-    kprintf("[6lowpan] lowpan_reassemble: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_reassemble: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!frag || !out || !out_len || frag_len < 4) {
+        kprintf("[6lowpan] lowpan_reassemble: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (frag_len > IEEE802154_MAX_FRAME) {
+        kprintf("[6lowpan] lowpan_reassemble: frag too large\n");
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_reassemble: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_reassemble: ifindex=%d frag_len=%u (stub)\n",
+            ifindex, (unsigned)frag_len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_header_compress ────────────────── */
@@ -489,9 +545,20 @@ int lowpan_header_compress(const struct ipv6_header *ip6,
                             const struct lowpan_ctx *ctx, int ctx_id,
                             uint8_t *out, uint16_t *out_len)
 {
-    (void)ip6; (void)ctx; (void)ctx_id; (void)out; (void)out_len;
-    kprintf("[6lowpan] lowpan_header_compress: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_header_compress: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!ip6 || !out || !out_len) {
+        kprintf("[6lowpan] lowpan_header_compress: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (ctx_id < 0 || ctx_id >= LOWPAN_CONTEXT_TABLE_SIZE) {
+        kprintf("[6lowpan] lowpan_header_compress: invalid ctx_id %d\n", ctx_id);
+        return -EINVAL;
+    }
+    kprintf("[6lowpan] lowpan_header_compress: ctx_id=%d (stub)\n", ctx_id);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_header_decompress ────────────────── */
@@ -499,47 +566,141 @@ int lowpan_header_decompress(const uint8_t *in, uint16_t in_len,
                               struct ipv6_header *ip6,
                               const struct lowpan_ctx *ctx, int ctx_id)
 {
-    kprintf("[6lowpan] lowpan_header_decompress: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_header_decompress: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!in || !ip6 || in_len < 2) {
+        kprintf("[6lowpan] lowpan_header_decompress: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (ctx_id < 0 || ctx_id >= LOWPAN_CONTEXT_TABLE_SIZE) {
+        kprintf("[6lowpan] lowpan_header_decompress: invalid ctx_id %d\n", ctx_id);
+        return -EINVAL;
+    }
+    kprintf("[6lowpan] lowpan_header_decompress: in_len=%u ctx_id=%d (stub)\n",
+            (unsigned)in_len, ctx_id);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_mesh_send ────────────────── */
 int lowpan_mesh_send(int ifindex, const uint8_t *data, uint16_t len,
                       const uint8_t *mesh_dst, const uint8_t *mesh_src)
 {
-    kprintf("[6lowpan] lowpan_mesh_send: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_mesh_send: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!data || !mesh_dst || !mesh_src || len == 0) {
+        kprintf("[6lowpan] lowpan_mesh_send: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (len > IEEE802154_MAX_PAYLOAD) {
+        kprintf("[6lowpan] lowpan_mesh_send: data too large (%u)\n", (unsigned)len);
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_mesh_send: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_mesh_send: ifindex=%d len=%u (stub)\n", ifindex, (unsigned)len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_mesh_recv ────────────────── */
 int lowpan_mesh_recv(int ifindex, const uint8_t *frame, uint16_t len,
                       uint8_t *mesh_src_out, uint8_t *mesh_dst_out)
 {
-    kprintf("[6lowpan] lowpan_mesh_recv: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_mesh_recv: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!frame || !mesh_src_out || !mesh_dst_out || len < 2) {
+        kprintf("[6lowpan] lowpan_mesh_recv: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (len > IEEE802154_MAX_FRAME) {
+        kprintf("[6lowpan] lowpan_mesh_recv: frame too large (%u)\n", (unsigned)len);
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_mesh_recv: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_mesh_recv: ifindex=%d len=%u (stub)\n", ifindex, (unsigned)len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_broadcast ────────────────── */
 int lowpan_broadcast(int ifindex, const uint8_t *data, uint16_t len)
 {
-    kprintf("[6lowpan] lowpan_broadcast: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_broadcast: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!data || len == 0) {
+        kprintf("[6lowpan] lowpan_broadcast: invalid data (ptr=%p len=%u)\n",
+                (const void *)data, (unsigned)len);
+        return -EINVAL;
+    }
+    if (len > IEEE802154_MAX_PAYLOAD) {
+        kprintf("[6lowpan] lowpan_broadcast: data too large (%u)\n", (unsigned)len);
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_broadcast: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_broadcast: ifindex=%d len=%u (stub)\n", ifindex, (unsigned)len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_unicast ────────────────── */
 int lowpan_unicast(int ifindex, const uint8_t *data, uint16_t len,
                     const struct in6_addr *dst)
 {
-    kprintf("[6lowpan] lowpan_unicast: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_unicast: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!data || !dst || len == 0) {
+        kprintf("[6lowpan] lowpan_unicast: invalid parameters\n");
+        return -EINVAL;
+    }
+    if (len > IEEE802154_MAX_PAYLOAD) {
+        kprintf("[6lowpan] lowpan_unicast: data too large (%u)\n", (unsigned)len);
+        return -EMSGSIZE;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_unicast: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_unicast: ifindex=%d len=%u (stub)\n", ifindex, (unsigned)len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: lowpan_setup ────────────────── */
 int lowpan_setup(int ifindex, const struct lowpan_config *cfg)
 {
-    (void)ifindex; (void)cfg;
-    kprintf("[6lowpan] lowpan_setup: stub (basic)\n");
-    return 0;
+    if (!lowpan_initialized) {
+        kprintf("[6lowpan] lowpan_setup: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!cfg) {
+        kprintf("[6lowpan] lowpan_setup: NULL config\n");
+        return -EINVAL;
+    }
+    struct lowpan_iface *li = lowpan_find_by_ifindex(ifindex);
+    if (!li) {
+        kprintf("[6lowpan] lowpan_setup: ifindex %d not registered\n", ifindex);
+        return -ENODEV;
+    }
+    kprintf("[6lowpan] lowpan_setup: ifindex=%d config=%p (stub)\n", ifindex, (const void *)cfg);
+    return -EOPNOTSUPP;
 }
 
 EXPORT_SYMBOL(lowpan_process_data);

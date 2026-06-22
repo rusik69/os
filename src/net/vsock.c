@@ -81,18 +81,38 @@ module_init(vsock_init);
 /* ── Implement: vsock_connect ────────────────── */
 int vsock_connect(uint32_t cid, uint32_t port)
 {
-    kprintf("[vsock] vsock_connect: stub (basic)\n");
-    return 0;
+    if (cid == 0 || cid == 0xFFFFFFFF) {
+        kprintf("[vsock] vsock_connect: invalid cid %u\n", cid);
+        return -EINVAL;
+    }
+    if (port == 0 || port >= 1024) {
+        kprintf("[vsock] vsock_connect: invalid port range %u\n", port);
+        return -EINVAL;
+    }
+    kprintf("[vsock] vsock_connect: cid=%u port=%u (stub)\n", cid, port);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: vsock_listen ────────────────── */
 int vsock_listen(uint32_t port, int backlog)
 {
-    kprintf("[vsock] vsock_listen: stub (basic)\n");
-    return 0;
+    if (port == 0 || port >= 1024) {
+        kprintf("[vsock] vsock_listen: invalid port %u\n", port);
+        return -EINVAL;
+    }
+    if (backlog <= 0) {
+        kprintf("[vsock] vsock_listen: invalid backlog %d\n", backlog);
+        return -EINVAL;
+    }
+    kprintf("[vsock] vsock_listen: port=%u backlog=%d (stub)\n", port, backlog);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: vsock_accept ────────────────── */
 int vsock_accept(uint32_t port)
 {
-    kprintf("[vsock] vsock_accept: stub (basic)\n");
-    return 0;
+    if (port == 0 || port >= 1024) {
+        kprintf("[vsock] vsock_accept: invalid port %u\n", port);
+        return -EINVAL;
+    }
+    kprintf("[vsock] vsock_accept: port=%u (stub)\n", port);
+    return -EOPNOTSUPP;
 }

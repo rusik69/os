@@ -498,14 +498,20 @@ module_init(dns_server_init);
 /* ── Implement: dns_server_start ────────────────── */
 int dns_server_start(int port)
 {
-    (void)port;
-    kprintf("[dns_server] dns_server_start: stub (basic)\n");
-    return 0;
+    if (port <= 0 || port > 65535) {
+        kprintf("[dns_server] dns_server_start: invalid port %d\n", port);
+        return -EINVAL;
+    }
+    kprintf("[dns_server] dns_server_start: port=%d (stub)\n", port);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: dns_server_handle_query ────────────────── */
 int dns_server_handle_query(const void *query, size_t len, void *resp, size_t *rlen)
 {
-    (void)query; (void)len; (void)resp; (void)rlen;
-    kprintf("[dns_server] dns_server_handle_query: stub (basic)\n");
-    return 0;
+    if (!query || !resp || !rlen || len < 12) {
+        kprintf("[dns_server] dns_server_handle_query: invalid parameters\n");
+        return -EINVAL;
+    }
+    kprintf("[dns_server] dns_server_handle_query: len=%zu (stub)\n", len);
+    return -EOPNOTSUPP;
 }

@@ -382,6 +382,10 @@ module_init(can_init);
 /* ── Implement: can_open ────────────────── */
 int can_open(void *dev)
 {
-    kprintf("[can] can_open: stub (basic)\n");
+    if (!dev) {
+        kprintf("[can] can_open: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[can] can_open: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }

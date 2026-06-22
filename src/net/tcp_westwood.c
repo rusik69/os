@@ -164,6 +164,10 @@ uint32_t tcp_westwood_ssthresh(void *sk) { (void)sk; return 2; }
 /* ── Implement: tcp_westwood_acked ────────────────── */
 int tcp_westwood_acked(void *sk, uint32_t acked)
 {
-    kprintf("[tcp_westwood] tcp_westwood_acked: stub (basic)\n");
-    return 0;
+    if (!sk) {
+        kprintf("[tcp_westwood] tcp_westwood_acked: NULL sk\n");
+        return -EINVAL;
+    }
+    kprintf("[tcp_westwood] tcp_westwood_acked: sk=%p acked=%u (stub)\n", sk, acked);
+    return -EOPNOTSUPP;
 }

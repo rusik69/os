@@ -15,6 +15,12 @@
  * =================================================================== */
 extern char *strerror(int errnum);
 extern void perror(const char *s);
+extern int *__errno_location(void);
+extern const char *errno_str(int err);
+extern int errno_set(int err);
+
+/* __errno_value is defined in errno_ext.c */
+extern int __errno_value;
 
 /* ===================================================================
  *  Stubs
@@ -24,8 +30,6 @@ void serial_putchar(char c)   { (void)c; }
 int kprintf(const char *fmt, ...) { (void)fmt; return 0; }
 int console_loglevel = 7;
 int default_message_loglevel = 6;
-
-/* __errno_value and __errno_location are defined in errno_ext.c */
 
 /* ===================================================================
  *  Test harness
@@ -252,13 +256,144 @@ static void test_strerror_full(void)
 }
 
 /* ===================================================================
+ *  test_errno_api — test errno_set, errno_str, __errno_location, perror
+ * =================================================================== */
+static void test_errno_api(void)
+{
+    printf("\n[errno API]\n");
+
+    /* Reset errno to known state */
+    __errno_value = 0;
+
+    /* 1. __errno_location returns valid pointer */
+    {
+        int *loc = __errno_location();
+        TEST("__errno_location: returns non-NULL", loc != NULL);
+        TEST("__errno_location: points to __errno_value", loc == &__errno_value);
+    }
+
+    /* 2. __errno_location returns same pointer each time */
+    {
+        int *loc1 = __errno_location();
+        int *loc2 = __errno_location();
+        TEST("__errno_location: consistent pointer", loc1 == loc2);
+    }
+
+    /* 3. errno_set(0) sets __errno_value to 0 */
+    {
+        __errno_value = 42;
+        errno_set(0);
+        TEST("errno_set(0) sets errno to 0", __errno_value == 0);
+    }
+
+    /* 4. errno_set(EPERM) sets to 1 */
+    {
+        errno_set(1);
+        TEST("errno_set(EPERM) sets errno to 1", __errno_value == 1);
+    }
+
+    /* 5. errno_set(EINVAL) sets to 22 */
+    {
+        errno_set(22);
+        TEST("errno_set(EINVAL) sets errno to 22", __errno_value == 22);
+    }
+
+    /* 6. errno_set returns 0 */
+    {
+        int ret = errno_set(0);
+        TEST("errno_set returns 0", ret == 0);
+    }
+
+    /* 7. errno_str(0) = "Success" */
+    {
+        const char *s = errno_str(0);
+        TEST("errno_str(0) = Success", strcmp(s, "Success") == 0);
+    }
+
+    /* 8. errno_str(EPERM) = "Operation not permitted" */
+    {
+        const char *s = errno_str(1);
+        TEST("errno_str(EPERM) correct", strcmp(s, "Operation not permitted") == 0);
+    }
+
+    /* 9. errno_str(EINTR) = "Interrupted system call" */
+    {
+        const char *s = errno_str(4);
+        TEST("errno_str(EINTR) correct", strcmp(s, "Interrupted system call") == 0);
+    }
+
+    /* 10. errno_str(999) = "Unknown error 999" */
+    {
+        const char *s = errno_str(999);
+        TEST("errno_str(999) = Unknown error 999", strcmp(s, "Unknown error 999") == 0);
+    }
+
+    /* 11. errno_str(-7) = "Unknown error -7" */
+    {
+        const char *s = errno_str(-7);
+        TEST("errno_str(-7) = Unknown error -7", strcmp(s, "Unknown error -7") == 0);
+    }
+
+    /* 12. perror with non-empty prefix (just check no crash) */
+    {
+        __errno_value = 2; /* ENOENT */
+        perror("test_prefix");
+        TEST("perror: non-empty prefix no crash", __errno_value == 2);
+    }
+
+    /* 13. perror with NULL prefix (no crash) */
+    {
+        __errno_value = 5; /* EIO */
+        perror(NULL);
+        TEST("perror: NULL prefix no crash", __errno_value == 5);
+    }
+
+    /* 14. perror with empty string prefix (no crash) */
+    {
+        __errno_value = 22;
+        perror("");
+        TEST("perror: empty prefix no crash", __errno_value == 22);
+    }
+
+    /* 15. errno_set then errno_str matches */
+    {
+        errno_set(1);  /* EPERM */
+        const char *s = errno_str(__errno_value);
+        TEST("errno_set + errno_str: EPERM", strcmp(s, "Operation not permitted") == 0);
+    }
+
+    /* 16. errno_set with large number, no crash */
+    {
+        errno_set(2000000);
+        TEST("errno_set(2000000) no crash", 1);
+        const char *s = errno_str(__errno_value);
+        TEST("errno_str after errno_set(2000000)", strcmp(s, "Unknown error 2000000") == 0);
+    }
+
+    /* 17. errno_set(0) resets to Success */
+    {
+        errno_set(1);
+        errno_set(0);
+        const char *s = errno_str(__errno_value);
+        TEST("errno_set(0) → errno_str = Success", strcmp(s, "Success") == 0);
+    }
+
+    /* 18. Chain: errno_set → __errno_location reads back same */
+    {
+        errno_set(13); /* EACCES */
+        int *loc = __errno_location();
+        TEST("__errno_location reads errno_set value", *loc == 13);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
 {
     printf("=== Errno String Tests ===\n\n");
 
-    printf("--- strerror ---\\n");
+    printf("--- strerror ---\n");
     test_strerror();
 
     printf("\n--- strerror more ---\n");
@@ -266,6 +401,9 @@ int main(void)
 
     printf("\n--- strerror full ---\n");
     test_strerror_full();
+
+    printf("\n--- errno API ---\n");
+    test_errno_api();
 
     printf("\n");
     printf("============================================\n");

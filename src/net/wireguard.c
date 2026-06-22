@@ -1090,77 +1090,206 @@ void wg_poll(void) {
 int wireguard_encrypt(const uint8_t *plaintext, uint64_t plaintext_len,
                        uint8_t *ciphertext, const uint8_t *key, const uint8_t *nonce)
 {
-    kprintf("[wireguard] wireguard_encrypt: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_encrypt: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!plaintext || !ciphertext || !key || !nonce) {
+        kprintf("[wireguard] wireguard_encrypt: invalid parameter (NULL pointer)\n");
+        return -EINVAL;
+    }
+    if (plaintext_len == 0 || plaintext_len > 65535) {
+        kprintf("[wireguard] wireguard_encrypt: invalid plaintext_len %llu\n",
+                (unsigned long long)plaintext_len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_encrypt: %llu bytes (stub)\n",
+            (unsigned long long)plaintext_len);
+    /* Real implementation calls chacha20poly1305_encrypt() */
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_decrypt ────────────────── */
 int wireguard_decrypt(const uint8_t *ciphertext, uint64_t ciphertext_len,
                        uint8_t *plaintext, const uint8_t *key, const uint8_t *nonce)
 {
-    kprintf("[wireguard] wireguard_decrypt: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_decrypt: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!ciphertext || !plaintext || !key || !nonce) {
+        kprintf("[wireguard] wireguard_decrypt: invalid parameter (NULL pointer)\n");
+        return -EINVAL;
+    }
+    if (ciphertext_len < 16 || ciphertext_len > 65535 + 16) {
+        kprintf("[wireguard] wireguard_decrypt: invalid ciphertext_len %llu\n",
+                (unsigned long long)ciphertext_len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_decrypt: %llu bytes (stub)\n",
+            (unsigned long long)ciphertext_len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_send_handshake_init ────────────────── */
 int wireguard_send_handshake_init(uint32_t endpoint_ip, uint16_t endpoint_port)
 {
-    kprintf("[wireguard] wireguard_send_handshake_init: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_send_handshake_init: not initialized\n");
+        return -ENOSYS;
+    }
+    if (endpoint_ip == 0 || endpoint_port == 0) {
+        kprintf("[wireguard] wireguard_send_handshake_init: invalid endpoint %u:%u\n",
+                endpoint_ip, (unsigned)endpoint_port);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_send_handshake_init: to %u:%u (stub)\n",
+            endpoint_ip, (unsigned)endpoint_port);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_recv_handshake_init ────────────────── */
 int wireguard_recv_handshake_init(const uint8_t *pkt, uint16_t len,
                                    uint32_t src_ip, uint16_t src_port)
 {
-    kprintf("[wireguard] wireguard_recv_handshake_init: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_recv_handshake_init: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!pkt) {
+        kprintf("[wireguard] wireguard_recv_handshake_init: NULL packet\n");
+        return -EINVAL;
+    }
+    if (len < 32) {
+        kprintf("[wireguard] wireguard_recv_handshake_init: packet too short (%u bytes)\n",
+                (unsigned)len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_recv_handshake_init: %u bytes from %u:%u (stub)\n",
+            (unsigned)len, src_ip, (unsigned)src_port);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_send_handshake_response ────────────────── */
 int wireguard_send_handshake_response(uint32_t endpoint_ip, uint16_t endpoint_port)
 {
-    kprintf("[wireguard] wireguard_send_handshake_response: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_send_handshake_response: not initialized\n");
+        return -ENOSYS;
+    }
+    if (endpoint_ip == 0 || endpoint_port == 0) {
+        kprintf("[wireguard] wireguard_send_handshake_response: invalid endpoint %u:%u\n",
+                endpoint_ip, (unsigned)endpoint_port);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_send_handshake_response: to %u:%u (stub)\n",
+            endpoint_ip, (unsigned)endpoint_port);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_recv_handshake_response ────────────────── */
 int wireguard_recv_handshake_response(const uint8_t *pkt, uint16_t len,
                                        uint32_t src_ip, uint16_t src_port)
 {
-    kprintf("[wireguard] wireguard_recv_handshake_response: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_recv_handshake_response: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!pkt) {
+        kprintf("[wireguard] wireguard_recv_handshake_response: NULL packet\n");
+        return -EINVAL;
+    }
+    if (len < 32) {
+        kprintf("[wireguard] wireguard_recv_handshake_response: packet too short (%u bytes)\n",
+                (unsigned)len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_recv_handshake_response: %u bytes from %u:%u (stub)\n",
+            (unsigned)len, src_ip, (unsigned)src_port);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_send_cookie ────────────────── */
 int wireguard_send_cookie(uint32_t endpoint_ip, uint16_t endpoint_port,
                            const uint8_t *cookie, uint16_t cookie_len)
 {
-    kprintf("[wireguard] wireguard_send_cookie: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_send_cookie: not initialized\n");
+        return -ENOSYS;
+    }
+    if (endpoint_ip == 0 || endpoint_port == 0) {
+        kprintf("[wireguard] wireguard_send_cookie: invalid endpoint %u:%u\n",
+                endpoint_ip, (unsigned)endpoint_port);
+        return -EINVAL;
+    }
+    if (!cookie || cookie_len == 0 || cookie_len > 64) {
+        kprintf("[wireguard] wireguard_send_cookie: invalid cookie (ptr=%p len=%u)\n",
+                (const void *)cookie, (unsigned)cookie_len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_send_cookie: %u bytes to %u:%u (stub)\n",
+            (unsigned)cookie_len, endpoint_ip, (unsigned)endpoint_port);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_recv_cookie ────────────────── */
 int wireguard_recv_cookie(const uint8_t *pkt, uint16_t len,
                            uint8_t *cookie_out, uint16_t *cookie_len)
 {
-    kprintf("[wireguard] wireguard_recv_cookie: stub (basic)\n");
-    return 0;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_recv_cookie: not initialized\n");
+        return -ENOSYS;
+    }
+    if (!pkt || !cookie_out || !cookie_len) {
+        kprintf("[wireguard] wireguard_recv_cookie: invalid parameter (NULL pointer)\n");
+        return -EINVAL;
+    }
+    if (len < 16) {
+        kprintf("[wireguard] wireguard_recv_cookie: packet too short (%u bytes)\n",
+                (unsigned)len);
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_recv_cookie: %u bytes (stub)\n", (unsigned)len);
+    return -EOPNOTSUPP;
 }
 
 /* ── Implement: wireguard_ratelimit ────────────────── */
 int wireguard_ratelimit(uint32_t src_ip)
 {
-    kprintf("[wireguard] wireguard_ratelimit: stub (basic)\n");
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_ratelimit: not initialized\n");
+        return -ENOSYS;
+    }
+    if (src_ip == 0) {
+        kprintf("[wireguard] wireguard_ratelimit: invalid source IP\n");
+        return -EINVAL;
+    }
+    kprintf("[wireguard] wireguard_ratelimit: src_ip=0x%08x (stub — allowing)\n", src_ip);
+    /* Ratelimit stub: always allow */
     return 0;
 }
 
 /* ── Implement: wireguard_expire ────────────────── */
 int wireguard_expire(int peer_idx)
 {
-    (void)peer_idx;
-    kprintf("[wireguard] wireguard_expire: stub (basic)\n");
-    return -EOPNOTSUPP;
+    if (!wg_initialized) {
+        kprintf("[wireguard] wireguard_expire: not initialized\n");
+        return -ENOSYS;
+    }
+    if (peer_idx < 0 || peer_idx >= g_wg.num_peers) {
+        kprintf("[wireguard] wireguard_expire: invalid peer index %d (num_peers=%d)\n",
+                peer_idx, g_wg.num_peers);
+        return -EINVAL;
+    }
+    if (!g_wg.peers[peer_idx].active) {
+        kprintf("[wireguard] wireguard_expire: peer %d already inactive\n", peer_idx);
+        return -EALREADY;
+    }
+    kprintf("[wireguard] wireguard_expire: expiring peer %d (%u:%u)\n",
+            peer_idx, g_wg.peers[peer_idx].endpoint_ip,
+            (unsigned)g_wg.peers[peer_idx].endpoint_port);
+    g_wg.peers[peer_idx].active = 0;
+    return 0;
 }
 
 #include "module.h"

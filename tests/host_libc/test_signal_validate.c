@@ -318,6 +318,213 @@ static void test_signal_validate(void)
 }
 
 /* ===================================================================
+ *  Test: signal_validate — extended tests (+20 new assertions)
+ * =================================================================== */
+
+static void test_signal_validate_extended(void)
+{
+    printf("\n[signal_validate — extended]\n");
+
+    struct siginfo info;
+    int ret;
+
+    /* 1. All valid signal numbers 1..31 (standard) with SI_KERNEL from kernel */
+    {
+        int all_ok = 1;
+        for (int sig = 1; sig <= 31; sig++) {
+            memset(&info, 0, sizeof(info));
+            info.si_signo = sig;
+            info.si_code = SI_KERNEL;
+            ret = signal_validate_siginfo(&info, 0);
+            if (ret != 0) { all_ok = 0; break; }
+        }
+        TEST("signal_validate: all standard signals 1-31 accepted from kernel",
+             all_ok);
+    }
+
+    /* 2. All valid RT signal numbers 32..64 with SI_KERNEL */
+    {
+        int all_ok = 1;
+        for (int sig = SIGRTMIN; sig <= SIGRTMAX; sig++) {
+            memset(&info, 0, sizeof(info));
+            info.si_signo = sig;
+            info.si_code = SI_KERNEL;
+            ret = signal_validate_siginfo(&info, 0);
+            if (ret != 0) { all_ok = 0; break; }
+        }
+        TEST("signal_validate: all RT signals 32-64 accepted from kernel",
+             all_ok);
+    }
+
+    /* 3. Invalid signo values: just above max */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIG_MAX + 1;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: signo=SIG_MAX+1 returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 4. Invalid signo values: very large number */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = 255;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: signo=255 returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 5. Invalid signo: negative */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = -5;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: signo=-5 returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 6. SIGKILL from userspace with SI_KERNEL — clamped to SI_TKILL, not rejected */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGKILL;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 1);
+        TEST("signal_validate: SIGKILL SI_KERNEL from userspace clamped to TKILL",
+             ret == 0 && info.si_code == SI_TKILL);
+    }
+
+    /* 7. SIGSTOP from userspace with SI_KERNEL — clamped to SI_TKILL */
+    {
+        info.si_signo = SIGSTOP;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 1);
+        TEST("signal_validate: SIGSTOP SI_KERNEL from userspace clamped to TKILL",
+             ret == 0 && info.si_code == SI_TKILL);
+    }
+
+    /* 8. SIGSTOP from userspace with SI_QUEUE — allowed (SI_QUEUE is valid) */
+    {
+        info.si_signo = SIGSTOP;
+        info.si_code = SI_QUEUE;
+        ret = signal_validate_siginfo(&info, 1);
+        TEST("signal_validate: SIGSTOP SI_QUEUE from userspace OK",
+             ret == 0);
+    }
+
+    /* 9. All valid standard signals with SI_USER from userspace — ALL rejected
+     *    (SI_USER from userspace is always -EPERM per kernel logic) */
+    {
+        int fail_count = 0;
+        for (int sig = 1; sig <= 31; sig++) {
+            memset(&info, 0, sizeof(info));
+            info.si_signo = sig;
+            info.si_code = SI_USER;
+            info.si_pid = 100;
+            info.si_uid = 1000;
+            ret = signal_validate_siginfo(&info, 1);
+            if (ret != -EPERM) fail_count++;
+        }
+        TEST("signal_validate: all signals SI_USER from userspace rejected (-EPERM)",
+             fail_count == 0);
+    }
+
+    /* 10. All RT signals with SI_QUEUE from userspace — all allowed */
+    {
+        int all_ok = 1;
+        for (int sig = SIGRTMIN; sig <= SIGRTMAX; sig++) {
+            memset(&info, 0, sizeof(info));
+            info.si_signo = sig;
+            info.si_code = SI_QUEUE;
+            ret = signal_validate_siginfo(&info, 1);
+            if (ret != 0) { all_ok = 0; break; }
+        }
+        TEST("signal_validate: RT signals 32-64 SI_QUEUE from userspace OK",
+             all_ok);
+    }
+
+    /* 11. SI_KERNEL from kernel with SIGHUP */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGHUP;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGHUP SI_KERNEL from kernel OK", ret == 0);
+    }
+
+    /* 12. SIGHUP with SI_USER from userspace — rejected (SI_USER from userspace is always -EPERM) */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGHUP;
+        info.si_code = SI_USER;
+        info.si_pid = 1;
+        info.si_uid = 0;
+        ret = signal_validate_siginfo(&info, 1);
+        TEST("signal_validate: SIGHUP SI_USER from userspace returns -EPERM",
+             ret == -EPERM);
+    }
+
+    /* 13. SIGTERM from userspace with SI_USER — rejected (SI_USER from userspace is always -EPERM) */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGTERM;
+        info.si_code = SI_USER;
+        info.si_pid = 42;
+        info.si_uid = 100;
+        ret = signal_validate_siginfo(&info, 1);
+        TEST("signal_validate: SIGTERM SI_USER from userspace returns -EPERM",
+             ret == -EPERM);
+    }
+
+    /* 14. SIGBUS with SI_KERNEL from kernel */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGBUS;
+        info.si_code = SI_KERNEL;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGBUS SI_KERNEL from kernel OK", ret == 0);
+    }
+
+    /* 15. SIGSEGV with SI_KERNEL from kernel */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGSEGV;
+        info.si_code = SI_KERNEL;
+        info.si_addr = (void *)0x0;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGSEGV SI_KERNEL from kernel OK", ret == 0);
+    }
+
+    /* 16. SIGCHLD with CLD_DUMPED stays */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGCHLD;
+        info.si_code = CLD_DUMPED;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGCHLD CLD_DUMPED stays",
+             ret == 0 && info.si_code == CLD_DUMPED);
+    }
+
+    /* 17. SIGCHLD with CLD_TRAPPED stays */
+    {
+        info.si_signo = SIGCHLD;
+        info.si_code = CLD_TRAPPED;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGCHLD CLD_TRAPPED stays",
+             ret == 0 && info.si_code == CLD_TRAPPED);
+    }
+
+    /* 18. SIGCHLD with si_code=0 (SI_USER) — passed through */
+    {
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGCHLD;
+        info.si_code = SI_USER;
+        ret = signal_validate_siginfo(&info, 0);
+        TEST("signal_validate: SIGCHLD SI_USER passes through",
+             ret == 0 && info.si_code == SI_USER);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -325,6 +532,7 @@ int main(void)
 {
     printf("=== Kernel Signal Validation Tests ===\n");
     test_signal_validate();
+    test_signal_validate_extended();
 
     printf("\n");
     printf("============================================\n");

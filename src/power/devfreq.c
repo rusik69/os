@@ -466,33 +466,80 @@ void devfreq_monitor_stop(void)
 /* ── devfreq_interval_update ─────────────────────────────── */
 int devfreq_interval_update(const char *name, unsigned int interval_ms)
 {
-    (void)name;
-    (void)interval_ms;
-    /* Update the sampling interval for the named device.
-     * For now, just acknowledge since the timer is already running. */
-    return 0;
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (!name) {
+        kprintf("[devfreq] devfreq_interval_update: NULL name\n");
+        return -EINVAL;
+    }
+    if (interval_ms == 0 || interval_ms > 60000) {
+        kprintf("[devfreq] devfreq_interval_update: invalid interval %u ms\n", interval_ms);
+        return -EINVAL;
+    }
+    spinlock_acquire(&devfreq_lock);
+    int ret = -ENOENT;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            devfreq_devices[i].polling_ms = interval_ms;
+            ret = 0;
+            break;
+        }
+    }
+    spinlock_release(&devfreq_lock);
+    if (ret == 0) {
+        kprintf("[devfreq] devfreq_interval_update: '%s' interval=%u ms\n",
+                name, interval_ms);
+    }
+    return ret;
 }
 
 /* ── devfreq_monitor_suspend ─────────────────────────────── */
 int devfreq_monitor_suspend(const char *name)
 {
-    (void)name;
-    devfreq_stop();
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (name) {
+        /* Pause specific device's monitoring by setting thresholds */
+        spinlock_acquire(&devfreq_lock);
+        for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+            if (devfreq_devices[i].in_use &&
+                strcmp(devfreq_devices[i].name, name) == 0) {
+                devfreq_devices[i].up_threshold = 101;
+                devfreq_devices[i].down_threshold = -1;
+                break;
+            }
+        }
+        spinlock_release(&devfreq_lock);
+        kprintf("[devfreq] devfreq_monitor_suspend: '%s' suspended\n", name);
+    } else {
+        devfreq_stop();
+    }
     return 0;
 }
 
 /* ── devfreq_register_opp_notifier ─────────────────────────────── */
 int devfreq_register_opp_notifier(const char *name)
 {
-    (void)name;
-    /* OPP (Operating Performance Point) notifier registration.
-     * Stub: return success since OPP table tracking isn't critical. */
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (!name) {
+        kprintf("[devfreq] devfreq_register_opp_notifier: NULL name\n");
+        return -EINVAL;
+    }
+    kprintf("[devfreq] devfreq_register_opp_notifier: '%s' (stub)\n", name);
     return 0;
 }
 
 /* ── devfreq_unregister_opp_notifier ─────────────────────────────── */
 int devfreq_unregister_opp_notifier(const char *name)
 {
-    (void)name;
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (!name) {
+        kprintf("[devfreq] devfreq_unregister_opp_notifier: NULL name\n");
+        return -EINVAL;
+    }
+    kprintf("[devfreq] devfreq_unregister_opp_notifier: '%s' (stub)\n", name);
     return 0;
 }

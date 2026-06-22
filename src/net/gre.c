@@ -298,16 +298,22 @@ EXPORT_SYMBOL(gre_decapsulate);
 /* ── Implement: gre_xmit ────────────────── */
 int gre_xmit(void *skb, void *dev)
 {
-    (void)skb; (void)dev;
-    kprintf("[gre] gre_xmit: stub (basic)\n");
-    return 0;
+    if (!skb || !dev) {
+        kprintf("[gre] gre_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[gre] gre_xmit: skb=%p dev=%p (stub)\n", skb, dev);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: gre_rcv ────────────────── */
 int gre_rcv(void *skb)
 {
-    (void)skb;
-    kprintf("[gre] gre_rcv: stub (basic)\n");
-    return 0;
+    if (!skb) {
+        kprintf("[gre] gre_rcv: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[gre] gre_rcv: skb=%p (stub)\n", skb);
+    return -EOPNOTSUPP;
 }
 /* ── Stub: gre_err ─────────────────────────────────── */
 void gre_err(void *skb, uint32_t info)

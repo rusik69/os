@@ -595,20 +595,26 @@ module_init(nf_conntrack_init);
 /* ── Implement: conntrack_destroy ────────────────── */
 int conntrack_destroy(void *ct)
 {
-    (void)ct;
-    kprintf("[conntrack] conntrack_destroy: stub (basic)\n");
-    return 0;
+    if (!ct) {
+        kprintf("[conntrack] conntrack_destroy: NULL ct\n");
+        return -EINVAL;
+    }
+    kprintf("[conntrack] conntrack_destroy: ct=%p (stub)\n", ct);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: conntrack_lookup ────────────────── */
 void* conntrack_lookup(void *skb)
 {
-    (void)skb;
-    kprintf("[conntrack] conntrack_lookup: stub (basic)\n");
+    if (!skb) {
+        kprintf("[conntrack] conntrack_lookup: NULL skb\n");
+        return NULL;
+    }
+    kprintf("[conntrack] conntrack_lookup: skb=%p (stub)\n", skb);
     return NULL;
 }
 /* ── Implement: conntrack_flush ────────────────── */
 int conntrack_flush(void)
 {
-    kprintf("[conntrack] conntrack_flush: stub (basic)\n");
-    return 0;
+    kprintf("[conntrack] conntrack_flush: flushing connection tracking table (stub)\n");
+    return -EOPNOTSUPP;
 }

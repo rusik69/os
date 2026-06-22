@@ -868,28 +868,41 @@ module_init(af_packet_init);
 /* ── Implement: af_packet_send ────────────────── */
 int af_packet_send(void *sk, void *msg, size_t len)
 {
-    (void)sk; (void)msg; (void)len;
-    kprintf("[af_packet] af_packet_send: stub (basic)\n");
-    return 0;
+    if (!sk || !msg || len == 0) {
+        kprintf("[af_packet] af_packet_send: invalid parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[af_packet] af_packet_send: sk=%p len=%zu (stub)\n", sk, len);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_recv ────────────────── */
 int af_packet_recv(void *sk, void *buf, size_t len)
 {
-    (void)sk; (void)buf; (void)len;
-    kprintf("[af_packet] af_packet_recv: stub (basic)\n");
-    return 0;
+    if (!sk || !buf || len == 0) {
+        kprintf("[af_packet] af_packet_recv: invalid parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[af_packet] af_packet_recv: sk=%p len=%zu (stub)\n", sk, len);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_bind ────────────────── */
 int af_packet_bind(void *sk, void *addr, int addr_len)
 {
-    (void)sk; (void)addr; (void)addr_len;
-    kprintf("[af_packet] af_packet_bind: stub (basic)\n");
-    return 0;
+    if (!sk || !addr || addr_len <= 0) {
+        kprintf("[af_packet] af_packet_bind: invalid parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[af_packet] af_packet_bind: sk=%p addr_len=%d (stub)\n", sk, addr_len);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: af_packet_setsockopt ────────────────── */
 int af_packet_setsockopt(void *sk, int level, int optname, void *optval, int optlen)
 {
-    (void)sk; (void)level; (void)optname; (void)optval; (void)optlen;
-    kprintf("[af_packet] af_packet_setsockopt: stub (basic)\n");
-    return 0;
+    if (!sk || !optval || optlen <= 0) {
+        kprintf("[af_packet] af_packet_setsockopt: invalid parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[af_packet] af_packet_setsockopt: sk=%p level=%d optname=%d (stub)\n",
+            sk, level, optname);
+    return -EOPNOTSUPP;
 }

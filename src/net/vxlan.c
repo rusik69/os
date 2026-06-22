@@ -380,28 +380,40 @@ MODULE_LICENSE("GPL");
 /* ── Implement: vxlan_xmit ────────────────── */
 int vxlan_xmit(void *skb, void *dev)
 {
-    (void)dev;
-    kprintf("[vxlan] vxlan_xmit: stub (basic)\n");
-    return 0;
+    if (!skb || !dev) {
+        kprintf("[vxlan] vxlan_xmit: NULL parameter\n");
+        return -EINVAL;
+    }
+    kprintf("[vxlan] vxlan_xmit: skb=%p dev=%p (stub)\n", skb, dev);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: vxlan_rcv ────────────────── */
 int vxlan_rcv(void *skb)
 {
-    (void)skb;
-    kprintf("[vxlan] vxlan_rcv: stub (basic)\n");
-    return 0;
+    if (!skb) {
+        kprintf("[vxlan] vxlan_rcv: NULL skb\n");
+        return -EINVAL;
+    }
+    kprintf("[vxlan] vxlan_rcv: skb=%p (stub)\n", skb);
+    return -EOPNOTSUPP;
 }
 /* ── Implement: vxlan_open ────────────────── */
 int vxlan_open(void *dev)
 {
-    (void)dev;
-    kprintf("[vxlan] vxlan_open: stub (basic)\n");
+    if (!dev) {
+        kprintf("[vxlan] vxlan_open: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[vxlan] vxlan_open: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }
 /* ── Implement: vxlan_stop ────────────────── */
 int vxlan_stop(void *dev)
 {
-    (void)dev;
-    kprintf("[vxlan] vxlan_stop: stub (basic)\n");
+    if (!dev) {
+        kprintf("[vxlan] vxlan_stop: NULL dev\n");
+        return -EINVAL;
+    }
+    kprintf("[vxlan] vxlan_stop: dev=%p (stub)\n", dev);
     return -EOPNOTSUPP;
 }

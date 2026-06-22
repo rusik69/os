@@ -353,6 +353,177 @@ static void test_rng_get_u32(void)
 }
 
 /* ===================================================================
+ *  test_rng_distribution — statistical distribution tests
+ * =================================================================== */
+static void test_rng_distribution(void)
+{
+    printf("\n[rng distribution]\n");
+
+    /* 1. Mean of 10000 u64 values should be roughly in range */
+    {
+        rng_init();
+        uint64_t sum = 0;
+        for (int i = 0; i < 10000; i++) {
+            sum += rng_get_u64();
+        }
+        double mean = (double)sum / 10000.0;
+        /* Mean of uniform 64-bit range is ~2^63 ≈ 9.22e18 */
+        TEST("rng_get_u64: mean of 10000 values > 0", mean > 0.0);
+        TEST("rng_get_u64: mean of 10000 values < UINT64_MAX",
+             mean < (double)UINT64_MAX);
+    }
+
+    /* 2. Mean of 10000 u32 values */
+    {
+        rng_init();
+        uint64_t sum = 0;
+        for (int i = 0; i < 10000; i++) {
+            sum += rng_get_u32();
+        }
+        double mean = (double)sum / 10000.0;
+        TEST("rng_get_u32: mean of 10000 values > 0", mean > 0.0);
+        TEST("rng_get_u32: mean of 10000 values < UINT32_MAX",
+             mean < (double)UINT32_MAX);
+    }
+
+    /* 3. No value repeats consecutively in 1000 u64 calls */
+    {
+        rng_init();
+        uint64_t prev = rng_get_u64();
+        int unique = 1;
+        for (int i = 1; i < 1000; i++) {
+            uint64_t cur = rng_get_u64();
+            if (cur == prev) { unique = 0; break; }
+            prev = cur;
+        }
+        TEST("rng_get_u64: 1000 values, no two consecutive equal", unique);
+    }
+
+    /* 4. No value repeats consecutively in 1000 u32 calls */
+    {
+        rng_init();
+        uint32_t prev = rng_get_u32();
+        int unique = 1;
+        for (int i = 1; i < 1000; i++) {
+            uint32_t cur = rng_get_u32();
+            if (cur == prev) { unique = 0; break; }
+            prev = cur;
+        }
+        TEST("rng_get_u32: 1000 values, no two consecutive equal", unique);
+    }
+
+    /* 5. u32 upper bits vary (bit 31 toggles) */
+    {
+        rng_init();
+        int saw_high = 0, saw_low = 0;
+        for (int i = 0; i < 1000; i++) {
+            uint32_t v = rng_get_u32();
+            if (v & 0x80000000U) saw_high = 1;
+            if (!(v & 0x80000000U)) saw_low = 1;
+        }
+        TEST("rng_get_u32: bit 31 varies (saw both 0 and 1)", saw_high && saw_low);
+    }
+
+    /* 6. u64 upper bits vary */
+    {
+        rng_init();
+        int saw_high = 0, saw_low = 0;
+        for (int i = 0; i < 1000; i++) {
+            uint64_t v = rng_get_u64();
+            if (v & 0x8000000000000000ULL) saw_high = 1;
+            if (!(v & 0x8000000000000000ULL)) saw_low = 1;
+        }
+        TEST("rng_get_u64: bit 63 varies (saw both 0 and 1)", saw_high && saw_low);
+    }
+
+    /* 7. rng_fill_buf: same seed produces same result */
+    {
+        uint8_t buf_a[16];
+        uint8_t buf_b[16];
+        g_rng_state = 0;
+        rng_init();
+        rng_fill_buf(buf_a, 16);
+        g_rng_state = 0;
+        rng_init();
+        rng_fill_buf(buf_b, 16);
+        TEST("rng_fill_buf: deterministic with same seed",
+             memcmp(buf_a, buf_b, 16) == 0);
+    }
+
+    /* 8. rng_fill_buf: different seeds produce different results */
+    {
+        uint8_t buf_da[16];
+        uint8_t buf_db[16];
+        g_rng_state = 0;
+        rng_init();
+        rng_fill_buf(buf_da, 16);
+        /* Add entropy to change seed */
+        rng_add_entropy("diff", 4);
+        rng_fill_buf(buf_db, 16);
+        int differs = 0;
+        for (int i = 0; i < 16; i++) {
+            if (buf_da[i] != buf_db[i]) { differs = 1; break; }
+        }
+        TEST("rng_fill_buf: different seeds diverge", differs);
+    }
+
+    /* 9. rng_fill_buf with odd sizes (1, 3, 5, 7, 33, 127, 255) */
+    {
+        int odd_sizes[] = {1, 3, 5, 7, 33, 127, 255};
+        int all_ok = 1;
+        for (size_t i = 0; i < sizeof(odd_sizes)/sizeof(odd_sizes[0]); i++) {
+            uint8_t buf[256];
+            memset(buf, 0, odd_sizes[i]);
+            rng_init();
+            rng_fill_buf(buf, odd_sizes[i]);
+            int has_nonzero = 0;
+            for (int j = 0; j < odd_sizes[i]; j++) {
+                if (buf[j]) { has_nonzero = 1; break; }
+            }
+            if (!has_nonzero) { all_ok = 0; break; }
+        }
+        TEST("rng_fill_buf: odd sizes produce non-zero output", all_ok);
+    }
+
+    /* 10. rng_add_entropy with all 0xFF bytes */
+    {
+        uint8_t ff_data[16];
+        memset(ff_data, 0xFF, 16);
+        g_rng_state = 0;
+        rng_init();
+        uint64_t before = g_rng_state;
+        rng_add_entropy(ff_data, 16);
+        TEST("rng_add_entropy: 0xFF data changes state",
+             g_rng_state != before);
+    }
+
+    /* 11. rng_add_entropy with all 0x00 bytes (should still change state due to length mixing) */
+    {
+        uint8_t zero_data[16];
+        memset(zero_data, 0, 16);
+        g_rng_state = 0;
+        rng_init();
+        uint64_t before = g_rng_state;
+        rng_add_entropy(zero_data, 16);
+        TEST("rng_add_entropy: zero data (len>0) changes state",
+             g_rng_state != before);
+    }
+
+    /* 12. Multiple rng_get_u32 calls interleaved with get_u64 */
+    {
+        rng_init();
+        uint32_t u1 = rng_get_u32();
+        uint64_t v1 = rng_get_u64();
+        uint32_t u2 = rng_get_u32();
+        uint64_t v2 = rng_get_u64();
+        TEST("rng interleaved: u32 values differ", u1 != u2);
+        TEST("rng interleaved: u64 values differ", v1 != v2);
+        TEST("rng interleaved: all four values non-zero",
+             u1 != 0 && u2 != 0 && v1 != 0 && v2 != 0);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -373,6 +544,9 @@ int main(void)
 
     printf("\n--- rng_add_entropy ---\n");
     test_rng_add_entropy();
+
+    printf("\n--- rng_distribution ---\n");
+    test_rng_distribution();
 
     printf("\n");
     printf("============================================\n");
