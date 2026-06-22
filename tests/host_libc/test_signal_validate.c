@@ -211,6 +211,110 @@ static void test_signal_validate(void)
     ret = signal_validate_siginfo(&info, 1);
     TEST("signal_validate: SI_QUEUE from userspace OK",
          ret == 0);
+
+    /* 13. SIGKILL with SI_KERNEL from kernel — allowed */
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGKILL;
+    info.si_code = SI_KERNEL;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGKILL SI_KERNEL from kernel returns 0", ret == 0);
+
+    /* 14. SIGSTOP with SI_KERNEL from kernel — allowed */
+    info.si_signo = SIGSTOP;
+    info.si_code = SI_KERNEL;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGSTOP SI_KERNEL from kernel returns 0", ret == 0);
+
+    /* 15. SIGKILL with SI_USER from userspace — rejected */
+    info.si_signo = SIGKILL;
+    info.si_code = SI_USER;
+    info.si_pid = 0;
+    info.si_uid = 0;
+    ret = signal_validate_siginfo(&info, 1);
+    TEST("signal_validate: SIGKILL SI_USER from userspace returns -EPERM",
+         ret == -EPERM);
+
+    /* 16. SIGSTOP with SI_USER from userspace — rejected */
+    info.si_signo = SIGSTOP;
+    info.si_code = SI_USER;
+    ret = signal_validate_siginfo(&info, 1);
+    TEST("signal_validate: SIGSTOP SI_USER from userspace returns -EPERM",
+         ret == -EPERM);
+
+    /* 17. SIGKILL with SI_TKILL from userspace — allowed */
+    info.si_signo = SIGKILL;
+    info.si_code = SI_TKILL;
+    ret = signal_validate_siginfo(&info, 1);
+    TEST("signal_validate: SIGKILL SI_TKILL from userspace returns 0",
+         ret == 0);
+
+    /* 18. SIGRTMIN real-time signal with SI_TKILL from userspace */
+    info.si_signo = SIGRTMIN;
+    info.si_code = SI_TKILL;
+    ret = signal_validate_siginfo(&info, 1);
+    TEST("signal_validate: SIGRTMIN SI_TKILL from userspace returns 0",
+         ret == 0);
+
+    /* 19. SIGRTMAX real-time signal with SI_QUEUE from userspace */
+    info.si_signo = SIGRTMAX;
+    info.si_code = SI_QUEUE;
+    ret = signal_validate_siginfo(&info, 1);
+    TEST("signal_validate: SIGRTMAX SI_QUEUE from userspace returns 0",
+         ret == 0);
+
+    /* 20. SIGCHLD with CLD_STOPPED stays as-is */
+    info.si_signo = SIGCHLD;
+    info.si_code = CLD_STOPPED;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGCHLD CLD_STOPPED stays",
+         ret == 0 && info.si_code == CLD_STOPPED);
+
+    /* 21. SIGCHLD with CLD_CONTINUED stays as-is */
+    info.si_signo = SIGCHLD;
+    info.si_code = CLD_CONTINUED;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGCHLD CLD_CONTINUED stays",
+         ret == 0 && info.si_code == CLD_CONTINUED);
+
+    /* 22. SIGFPE with positive si_code — accepted, not clamped */
+    info.si_signo = SIGFPE;
+    info.si_code = 42;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGFPE positive si_code stays 42",
+         ret == 0 && info.si_code == 42);
+
+    /* 23. SIGILL with positive si_code — accepted, not clamped */
+    info.si_signo = SIGILL;
+    info.si_code = 42;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGILL positive si_code stays 42",
+         ret == 0 && info.si_code == 42);
+
+    /* 24. SIGTERM with negative si_code from kernel — passes through */
+    info.si_signo = SIGTERM;
+    info.si_code = -1;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGTERM negative si_code from kernel passes",
+         ret == 0);
+
+    /* 25. SIGTERM with SI_KERNEL from kernel */
+    info.si_signo = SIGTERM;
+    info.si_code = SI_KERNEL;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SI_KERNEL from kernel returns 0", ret == 0);
+
+    /* 26. SIGKILL with SI_USER from kernel — allowed */
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGKILL;
+    info.si_code = SI_USER;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGKILL SI_USER from kernel returns 0", ret == 0);
+
+    /* 27. SIGSTOP with SI_USER from kernel — allowed */
+    info.si_signo = SIGSTOP;
+    info.si_code = SI_USER;
+    ret = signal_validate_siginfo(&info, 0);
+    TEST("signal_validate: SIGSTOP SI_USER from kernel returns 0", ret == 0);
 }
 
 /* ===================================================================

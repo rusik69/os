@@ -35,6 +35,77 @@ static void test_radix_tree(void) {
     TEST("delete done", 1==1);
 }
 
+static void test_radix_tree_more(void)
+{
+    struct radix_tree_root root;
+    printf("\n[Radix Tree — Extended]\n"); fflush(stdout);
+
+    /* 1. Insert key 0 first (triggers height-0 case), then key 1 */
+    radix_tree_init(&root);
+    TEST("insert key 0 first", radix_tree_insert(&root, 0, (void*)0xAA) == 0);
+    TEST("insert key 1", radix_tree_insert(&root, 1, (void*)0xA1) == 0);
+    TEST("lookup key 0", radix_tree_lookup(&root, 0) == (void*)0xAA);
+    TEST("lookup key 1", radix_tree_lookup(&root, 1) == (void*)0xA1);
+
+    /* 2. Insert key 2 with different value */
+    TEST("insert key 2", radix_tree_insert(&root, 2, (void*)0xB2) == 0);
+    TEST("lookup key 2", radix_tree_lookup(&root, 2) == (void*)0xB2);
+    TEST("key 1 still valid", radix_tree_lookup(&root, 1) == (void*)0xA1);
+
+    /* 3. Insert keys 0–9 and verify all present */
+    {
+        int ok = 1;
+        for (unsigned long k = 0; k < 10; k++)
+            if (radix_tree_insert(&root, k, (void*)(uintptr_t)(0x100 + k)) != 0)
+                ok = 0;
+        TEST("insert keys 0-9", ok);
+    }
+    {
+        int ok = 1;
+        for (unsigned long k = 0; k < 10; k++)
+            if (radix_tree_lookup(&root, k) != (void*)(uintptr_t)(0x100 + k))
+                ok = 0;
+        TEST("lookup keys 0-9 all present", ok);
+    }
+
+    /* 4. Delete non-existent key returns NULL */
+    TEST("delete non-existent returns NULL",
+         radix_tree_delete(&root, 9999) == NULL);
+
+    /* 5. Insert after delete */
+    radix_tree_delete(&root, 1);
+    TEST("insert after delete",
+         radix_tree_insert(&root, 1, (void*)0xDEAD) == 0);
+    TEST("lookup after delete+reinsert",
+         radix_tree_lookup(&root, 1) == (void*)0xDEAD);
+
+    /* 6. Large key value (outside one radix-tree map) */
+    TEST("insert large key",
+         radix_tree_insert(&root, 0xF000000000000000ULL, (void*)0xBEEF) == 0);
+    TEST("lookup large key",
+         radix_tree_lookup(&root, 0xF000000000000000ULL) == (void*)0xBEEF);
+
+    /* 7. Delete all keys and verify emptiness */
+    {
+        int ok = 1;
+        for (unsigned long k = 0; k < 10; k++)
+            radix_tree_delete(&root, k);
+        radix_tree_delete(&root, 0xF000000000000000ULL);
+        for (unsigned long k = 0; k < 10; k++)
+            if (radix_tree_lookup(&root, k) != NULL)
+                ok = 0;
+        if (radix_tree_lookup(&root, 0xF000000000000000ULL) != NULL)
+            ok = 0;
+        TEST("all deleted keys return NULL", ok);
+    }
+
+    /* 8. Re-insert after full deletion */
+    TEST("re-insert after full clear",
+         radix_tree_insert(&root, 42, (void*)0x42) == 0);
+    TEST("re-lookup after re-insert",
+         radix_tree_lookup(&root, 42) == (void*)0x42);
+}
+
 static void test_hexdump(void) {
     uint8_t buf[32];
     printf("\n[Hex Dump]\n"); fflush(stdout);
@@ -47,10 +118,70 @@ static void test_hexdump(void) {
     TEST("hexdump complete", 1==1);
 }
 
+static void test_hexdump_more(void)
+{
+    uint8_t buf[32];
+    printf("\n[Hex Dump — Extended]\n"); fflush(stdout);
+
+    /* 1. Single byte with zero value */
+    memset(buf, 0, sizeof(buf));
+    print_hex_dump("zero1:", buf, 1); fflush(stdout);
+    TEST("hexdump single zero byte", 1);
+
+    /* 2. Single byte 0xFF */
+    memset(buf, 0xFF, sizeof(buf));
+    print_hex_dump("ff1:", buf, 1); fflush(stdout);
+    TEST("hexdump single 0xFF byte", 1);
+
+    /* 3. Odd length — 3 bytes */
+    memset(buf, 0xAA, sizeof(buf));
+    print_hex_dump("odd3:", buf, 3); fflush(stdout);
+    TEST("hexdump odd length 3", 1);
+
+    /* 4. All zeros, 16 bytes */
+    memset(buf, 0, sizeof(buf));
+    print_hex_dump("zero16:", buf, 16); fflush(stdout);
+    TEST("hexdump 16 zero bytes", 1);
+
+    /* 5. All 0xFF, 16 bytes */
+    memset(buf, 0xFF, sizeof(buf));
+    print_hex_dump("ff16:", buf, 16); fflush(stdout);
+    TEST("hexdump 16 0xFF bytes", 1);
+
+    /* 6. 4-byte aligned buffer */
+    memset(buf, 0x00, sizeof(buf));
+    buf[0] = 0xDE; buf[1] = 0xAD; buf[2] = 0xBE; buf[3] = 0xEF;
+    print_hex_dump("aligned4:", buf, 4); fflush(stdout);
+    TEST("hexdump 4-byte aligned", 1);
+
+    /* 7. 3-byte boundary (not aligned to 4 or 16) */
+    memset(buf, 0x11, sizeof(buf));
+    print_hex_dump("boundary3:", buf, 3); fflush(stdout);
+    TEST("hexdump 3-byte boundary", 1);
+
+    /* 8. Empty buffer (len=0) */
+    print_hex_dump("empty:", buf, 0); fflush(stdout);
+    TEST("hexdump empty buffer", 1);
+
+    /* 9. Longer buffer — 20 bytes (spans 2 dump lines) */
+    memset(buf, 0, sizeof(buf));
+    for (int i = 0; i < 20; i++) buf[i] = (uint8_t)(i * 17);
+    print_hex_dump("longer20:", buf, 20); fflush(stdout);
+    TEST("hexdump 20 bytes across lines", 1);
+
+    /* 10. Repeated pattern buffer */
+    memset(buf, 0, sizeof(buf));
+    for (int i = 0; i < 16; i++) buf[i] = (uint8_t)((i % 2) ? 0xDE : 0xAD);
+    print_hex_dump("pattern:", buf, 16); fflush(stdout);
+    TEST("hexdump repeating pattern", 1);
+}
+
 int main(void) {
     printf("=== Kernel Data Structure Unit Tests ===\n"); fflush(stdout);
     test_radix_tree(); fflush(stdout);
+    test_radix_tree_more(); fflush(stdout);
     test_hexdump(); fflush(stdout);
+    test_hexdump_more(); fflush(stdout);
     printf("\n=== Results: %d passed, %d failed ===\n", tp, tf); fflush(stdout);
     return tf>0?1:0;
 }

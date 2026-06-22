@@ -348,6 +348,69 @@ static void test_search_linear(void)
 }
 
 /* ===================================================================
+ *  test_search_extras — additional edge cases
+ * =================================================================== */
+static void test_search_extras(void)
+{
+    int arr[] = { 10, 20, 30, 40, 50 };
+
+    /* bsearch_ext: key below min */
+    int k_low = 5;
+    int *r_low = (int *)bsearch_ext(&k_low, arr, ARRAY_SIZE(arr), sizeof(int), cmp_int_asc);
+    TEST("bsearch_ext: key below min returns NULL", r_low == NULL);
+
+    /* bsearch_ext: key above max */
+    int k_high = 99;
+    int *r_high = (int *)bsearch_ext(&k_high, arr, ARRAY_SIZE(arr), sizeof(int), cmp_int_asc);
+    TEST("bsearch_ext: key above max returns NULL", r_high == NULL);
+
+    /* bsearch_ext: duplicates in array */
+    int dup_arr[] = { 1, 2, 2, 2, 3, 4, 5 };
+    int k_dup = 2;
+    int *r_dup = (int *)bsearch_ext(&k_dup, dup_arr, ARRAY_SIZE(dup_arr), sizeof(int), cmp_int_asc);
+    TEST("bsearch_ext: finds element in duplicated array", r_dup && *r_dup == 2);
+
+    /* bsearch_ext: descending comparator on descending sorted array */
+    int desc_arr[] = { 50, 40, 30, 20, 10 };
+    int k_desc = 30;
+    int *r_desc = (int *)bsearch_ext(&k_desc, desc_arr, ARRAY_SIZE(desc_arr), sizeof(int), cmp_int_desc);
+    TEST("bsearch_ext: desc comparator finds element", r_desc && *r_desc == 30);
+
+    /* bsearch_ext: desc comparator miss */
+    int k_desc_miss = 25;
+    int *r_desc_miss = (int *)bsearch_ext(&k_desc_miss, desc_arr, ARRAY_SIZE(desc_arr), sizeof(int), cmp_int_desc);
+    TEST("bsearch_ext: desc comparator miss returns NULL", r_desc_miss == NULL);
+
+    /* lfind: single element, found */
+    char single_arr[] = { 'q' };
+    kernel_size_t single_nmemb = 1;
+    char k_single = 'q';
+    char *r_single = (char *)lfind(&k_single, single_arr, &single_nmemb, 1, cmp_char);
+    TEST("lfind: single element found", r_single && *r_single == 'q');
+
+    /* lfind: single element, not found */
+    char k_single_miss = 'z';
+    kernel_size_t single_nmemb2 = 1;
+    char arr_single2[] = { 'q' };
+    char *r_single_miss = (char *)lfind(&k_single_miss, arr_single2, &single_nmemb2, 1, cmp_char);
+    TEST("lfind: single element not found returns NULL", r_single_miss == NULL);
+
+    /* search_binary: NULL cmp */
+    int sb_k = 2;
+    int sb_r = search_binary(&sb_k, arr, ARRAY_SIZE(arr), sizeof(int), NULL);
+    TEST("search_binary: NULL cmp returns -1", sb_r == -1);
+
+    /* search_linear: empty array (nmemb=0) */
+    int sl_k = 42;
+    int sl_r = search_linear(&sl_k, arr, 0, sizeof(int), cmp_int_asc);
+    TEST("search_linear: empty array returns -1", sl_r == -1);
+
+    /* search_linear: NULL cmp */
+    int sl_r2 = search_linear(&sl_k, arr, ARRAY_SIZE(arr), sizeof(int), NULL);
+    TEST("search_linear: NULL cmp returns -1", sl_r2 == -1);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -371,6 +434,9 @@ int main(void)
 
     printf("\n--- search_linear ---\n");
     test_search_linear();
+
+    printf("\n--- extras ---\n");
+    test_search_extras();
 
     printf("\n");
     printf("============================================\n");

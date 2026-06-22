@@ -225,6 +225,73 @@ static void test_ratelimit_edge(void)
 }
 
 /* ===================================================================
+ *  test_ratelimit_windows — window and boundary variants
+ * =================================================================== */
+static void test_ratelimit_windows(void)
+{
+    struct ratelimit_state rs;
+
+    /* 1. burst=0 — never allows (printed < 0 always false) */
+    memset(&rs, 0, sizeof(rs));
+    rs.interval = 5;
+    rs.burst = 0;
+    fake_tick = 0;
+    int r = __ratelimit(&rs);
+    TEST("ratelimit_win: burst=0 never allows", r == 0);
+    fake_tick += 100;
+    r = __ratelimit(&rs);
+    TEST("ratelimit_win: burst=0 after interval still denied", r == 0);
+
+    /* 2. burst=1, interval=5 — strict 1 per window */
+    memset(&rs, 0, sizeof(rs));
+    rs.interval = 5;
+    rs.burst = 1;
+    fake_tick = 100;
+    r = __ratelimit(&rs);
+    TEST("ratelimit_win: burst=1 first allowed", r == 1);
+    r = __ratelimit(&rs);
+    TEST("ratelimit_win: burst=1 second denied", r == 0);
+    fake_tick += 51;
+    r = __ratelimit(&rs);
+    TEST("ratelimit_win: burst=1 after interval allowed", r == 1);
+
+    /* 3. Multiple calls within window, burst=3 */
+    memset(&rs, 0, sizeof(rs));
+    rs.interval = 10;
+    rs.burst = 3;
+    fake_tick = 200;
+    TEST("ratelimit_win: win call 1 allowed", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: win call 2 allowed", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: win call 3 allowed", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: win call 4 denied", __ratelimit(&rs) == 0);
+    TEST("ratelimit_win: win call 5 still denied", __ratelimit(&rs) == 0);
+
+    /* 4. After window expiry burst resets */
+    fake_tick += 101;
+    TEST("ratelimit_win: after expiry allowed", __ratelimit(&rs) == 1);
+
+    /* 5. Very short window (interval=1) */
+    memset(&rs, 0, sizeof(rs));
+    rs.interval = 1;
+    rs.burst = 2;
+    fake_tick = 300;
+    TEST("ratelimit_win: short win call 1", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: short win call 2", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: short win call 3 denied", __ratelimit(&rs) == 0);
+    fake_tick += 11;
+    TEST("ratelimit_win: short win after interval", __ratelimit(&rs) == 1);
+
+    /* 6. Very long window (interval=100000) */
+    memset(&rs, 0, sizeof(rs));
+    rs.interval = 100000;
+    rs.burst = 2;
+    fake_tick = 400;
+    TEST("ratelimit_win: long win call 1", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: long win call 2", __ratelimit(&rs) == 1);
+    TEST("ratelimit_win: long win call 3 denied", __ratelimit(&rs) == 0);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -242,6 +309,9 @@ int main(void)
 
     printf("\n--- __ratelimit edge cases ---\n");
     test_ratelimit_edge();
+
+    printf("\n--- __ratelimit windows ---\n");
+    test_ratelimit_windows();
 
     printf("\n");
     printf("============================================\n");

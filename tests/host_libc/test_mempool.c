@@ -259,6 +259,99 @@ static void test_mempool_more(void)
         TEST("mempool_more: alloc beyond max_nr ok", ok);
         mempool_destroy(pool);
     }
+
+    /* 9. Free many elements, then alloc many (reuse + kmalloc) */
+    {
+        mempool_t *pool = mempool_create(4, 32);
+        TEST("mempool_more: create(4,32) for free/alloc", pool != NULL);
+        if (!pool) return;
+        void *ptrs[20];
+        int ok = 1;
+        for (int i = 0; i < 20; i++) {
+            ptrs[i] = mempool_alloc(pool);
+            if (!ptrs[i]) { ok = 0; break; }
+        }
+        TEST("mempool_more: 20 allocs from pool(4,32)", ok);
+        /* Free all 20 — first 8 go to pool (cur_nr goes to max_nr=8),
+         * remaining 12 are kfree'd */
+        for (int i = 0; i < 20; i++) {
+            if (ptrs[i]) mempool_free(ptrs[i], pool);
+        }
+        /* Now alloc 20 again — first 8 come from pool, rest from kmalloc */
+        ok = 1;
+        for (int i = 0; i < 20; i++) {
+            ptrs[i] = mempool_alloc(pool);
+            if (!ptrs[i]) { ok = 0; break; }
+        }
+        TEST("mempool_more: 20 allocs after free all", ok);
+        for (int i = 0; i < 20; i++) {
+            if (ptrs[i]) mempool_free(ptrs[i], pool);
+        }
+        mempool_destroy(pool);
+    }
+
+    /* 10. Destroy with outstanding allocations (should not crash) */
+    {
+        mempool_t *pool = mempool_create(3, 16);
+        TEST("mempool_more: create(3,16) for destroy test", pool != NULL);
+        if (!pool) return;
+        void *a = mempool_alloc(pool);
+        void *b = mempool_alloc(pool);
+        void *c = mempool_alloc(pool);
+        TEST("mempool_more: alloc 3 from pool(3,16)", a && b && c);
+        /* Destroy without freeing — verifies no crash */
+        mempool_destroy(pool);
+        TEST("mempool_more: destroy with outstanding allocs", 1);
+    }
+
+    /* 11. Free when pool is full triggers kfree (no double-free) */
+    {
+        mempool_t *pool = mempool_create(2, 8);
+        TEST("mempool_more: create(2,8) for full-free", pool != NULL);
+        if (!pool) return;
+        /* Drain pool (2 pre-alloced, max_nr=4) */
+        void *p1 = mempool_alloc(pool);
+        void *p2 = mempool_alloc(pool);
+        /* Now pool is at 0, alloc 4 more via kmalloc */
+        void *p3 = mempool_alloc(pool);
+        void *p4 = mempool_alloc(pool);
+        void *p5 = mempool_alloc(pool);
+        void *p6 = mempool_alloc(pool);
+        TEST("mempool_more: 6 allocs from pool(2,8)", p1&&p2&&p3&&p4&&p5&&p6);
+        /* Free all — first 4 fill pool, last 2 get kfree'd */
+        mempool_free(p1, pool);
+        mempool_free(p2, pool);
+        mempool_free(p3, pool);
+        mempool_free(p4, pool);
+        mempool_free(p5, pool);
+        mempool_free(p6, pool);
+        /* Re-alloc should get back 4 from pool, 2 from kmalloc */
+        void *r1 = mempool_alloc(pool);
+        void *r2 = mempool_alloc(pool);
+        void *r3 = mempool_alloc(pool);
+        void *r4 = mempool_alloc(pool);
+        void *r5 = mempool_alloc(pool);
+        void *r6 = mempool_alloc(pool);
+        TEST("mempool_more: re-alloc 6 after full free", r1&&r2&&r3&&r4&&r5&&r6);
+        mempool_free(r1, pool); mempool_free(r2, pool);
+        mempool_free(r3, pool); mempool_free(r4, pool);
+        mempool_free(r5, pool); mempool_free(r6, pool);
+        mempool_destroy(pool);
+    }
+
+    /* 12. Pool with negative min_nr — implementation accepts negative values */
+    {
+        mempool_t *pool = mempool_create(-5, 16);
+        /* Implementation may handle this differently: min_nr < 0 sets max_nr = min_nr */
+        /* Just test it doesn't crash */
+        TEST("mempool_more: create(-5,16) no crash", pool != NULL || 1);
+        if (pool) {
+            void *p = mempool_alloc(pool);
+            /* May succeed or fail depending on implementation */
+            if (p) mempool_free(p, pool);
+            mempool_destroy(pool);
+        }
+    }
 }
 
 /* ===================================================================

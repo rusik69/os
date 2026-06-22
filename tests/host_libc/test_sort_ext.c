@@ -283,6 +283,95 @@ static void test_sort_large(void)
 }
 
 /* ===================================================================
+ *  test_sort_edge — additional edge cases
+ * =================================================================== */
+static void test_sort_edge(void)
+{
+    /* 1. sort with NULL cmp (no-op) */
+    int a[] = { 3, 1, 2 };
+    sort(a, 3, sizeof(int), NULL, NULL);
+    TEST("sort_edge: NULL cmp leaves array unchanged", a[0]==3 && a[1]==1 && a[2]==2);
+
+    /* 2. sort with nmemb=0 */
+    int b[] = { 99 };
+    sort(b, 0, sizeof(int), cmp_int, NULL);
+    TEST("sort_edge: nmemb=0 no-op", b[0]==99);
+
+    /* 3. sort of long ints */
+    long d[] = { 100L, -200L, 300L, -400L, 0L };
+    sort(d, 5, sizeof(long), cmp_long, NULL);
+    int sorted = 1;
+    for (int i = 1; i < 5; i++) if (d[i-1] > d[i]) { sorted = 0; break; }
+    TEST("sort_edge: longs sorted", sorted);
+
+    /* 4. cmp_long with edge values */
+    long pos = 9223372036854775807L;   /* LONG_MAX */
+    long neg = -9223372036854775807L - 1; /* LONG_MIN */
+    long zero = 0L;
+    TEST("cmp_long: LONG_MAX > 0", cmp_long(&pos, &zero) > 0);
+    TEST("cmp_long: LONG_MIN < 0", cmp_long(&neg, &zero) < 0);
+    TEST("cmp_long: LONG_MAX > LONG_MIN", cmp_long(&pos, &neg) > 0);
+
+    /* 5. cmp_str with empty strings */
+    const char *empty1 = "", *empty2 = "";
+    TEST("cmp_str: empty strings equal", cmp_str(&empty1, &empty2) == 0);
+    const char *empty3 = "", *nonempty = "a";
+    TEST("cmp_str: empty < nonempty", cmp_str(&empty3, &nonempty) < 0);
+
+    /* 6. Array of 2 elements */
+    int e[] = { 2, 1 };
+    sort(e, 2, sizeof(int), cmp_int, NULL);
+    TEST("sort_edge: 2 elements sorted", e[0]==1 && e[1]==2);
+
+    /* 7. Already sorted 17 elements (forces quicksort) */
+    int f[17];
+    for (int i = 0; i < 17; i++) f[i] = i;
+    sort(f, 17, sizeof(int), cmp_int, NULL);
+    TEST("sort_edge: 17 already sorted", is_sorted_int(f, 17, 1));
+
+    /* 8. Reverse sorted 17 elements */
+    int g[17];
+    for (int i = 0; i < 17; i++) g[i] = 16 - i;
+    sort(g, 17, sizeof(int), cmp_int, NULL);
+    TEST("sort_edge: 17 reverse sorted", is_sorted_int(g, 17, 1));
+
+    /* 9. All-equal 17 elements */
+    int h[17];
+    for (int i = 0; i < 17; i++) h[i] = 7;
+    sort(h, 17, sizeof(int), cmp_int, NULL);
+    int all_7 = 1;
+    for (int i = 0; i < 17; i++) if (h[i] != 7) { all_7 = 0; break; }
+    TEST("sort_edge: 17 all-equal", all_7);
+
+    /* 10. Large array (256 elements) with pseudo-random data */
+    int large[256];
+    for (int i = 0; i < 256; i++) large[i] = (i * 17 + 31) % 256;
+    sort(large, 256, sizeof(int), cmp_int, NULL);
+    TEST("sort_edge: 256 elements sorted", is_sorted_int(large, 256, 1));
+
+    /* 11. cmp_int with edge values */
+    int min_val = -2147483647 - 1; /* INT_MIN */
+    int max_val = 2147483647;      /* INT_MAX */
+    int middle = 0;
+    TEST("cmp_int: INT_MAX > 0", cmp_int(&max_val, &middle) > 0);
+    TEST("cmp_int: INT_MIN < 0", cmp_int(&min_val, &middle) < 0);
+    TEST("cmp_int: INT_MAX > INT_MIN", cmp_int(&max_val, &min_val) > 0);
+
+    /* 12. Two identical arrays sorted to ensure no element loss */
+    int src[] = { 9, 2, 7, 4, 5, 1, 8, 3, 6, 0 };
+    int copy[10];
+    memcpy(copy, src, sizeof(src));
+    sort(copy, 10, sizeof(int), cmp_int, NULL);
+    int all_present = 1;
+    for (int i = 0; i < 10; i++) {
+        int found = 0;
+        for (int j = 0; j < 10; j++) if (copy[j] == src[i]) { found = 1; break; }
+        if (!found) { all_present = 0; break; }
+    }
+    TEST("sort_edge: elements preserved after sort", all_present);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -312,6 +401,9 @@ int main(void)
 
     printf("\n--- sort (large) ---\n");
     test_sort_large();
+
+    printf("\n--- sort (edge) ---\n");
+    test_sort_edge();
 
     printf("\n");
     printf("============================================\n");

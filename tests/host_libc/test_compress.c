@@ -199,6 +199,77 @@ static void test_compress(void)
         int ret = lzss_compress(big, LZSS_MAX_INPUT + 1, out, sizeof(out));
         TEST("lzss: input exceeds max returns -EINVAL", ret == -EINVAL);
     }
+
+    /* 13. Very small input (2 bytes "AB") */
+    {
+        const uint8_t *ab = (const uint8_t *)"AB";
+        int ret = roundtrip(ab, 2);
+        TEST("lzss: 2-byte roundtrip succeeds", ret >= 0);
+    }
+
+    /* 14. Highly repetitive input (all 'A's 64 bytes) */
+    {
+        uint8_t aaaa[64];
+        memset(aaaa, 'A', 64);
+        int ret = roundtrip(aaaa, 64);
+        TEST("lzss: 64 'A's roundtrip succeeds", ret >= 0);
+        if (ret >= 0) {
+            TEST("lzss: 64 'A's compresses smaller", ret < 64);
+        }
+    }
+
+    /* 15. Multiple alternating roundtrips */
+    {
+        const uint8_t *msg1 = (const uint8_t *)"FirstMessage";
+        const uint8_t *msg2 = (const uint8_t *)"SecondMessage";
+        int r1 = roundtrip(msg1, 12);
+        int r2 = roundtrip(msg2, 13);
+        TEST("lzss: alternating roundtrip 1", r1 >= 0);
+        TEST("lzss: alternating roundtrip 2", r2 >= 0);
+    }
+
+    /* 16. Compress exactly 3 bytes (LZSS_MIN_MATCH boundary) */
+    {
+        uint8_t three[3] = { 'A', 'B', 'C' };
+        int ret = roundtrip(three, 3);
+        TEST("lzss: 3-byte (min match) roundtrip succeeds", ret >= 0);
+    }
+
+    /* 17. Compress NULL output returns -EINVAL */
+    {
+        const uint8_t *msg = (const uint8_t *)"test";
+        int ret = lzss_compress(msg, 4, NULL, 100);
+        TEST("lzss: compress NULL output returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 18. Input of exactly 4 bytes (LZSS_MIN_MATCH+1) */
+    {
+        const uint8_t *four = (const uint8_t *)"ABCD";
+        int ret = roundtrip(four, 4);
+        TEST("lzss: 4-byte roundtrip succeeds", ret >= 0);
+    }
+
+    /* 19. Input of exactly 18 bytes (LZSS_MAX_MATCH) */
+    {
+        const uint8_t *eighteen = (const uint8_t *)"ABCDEFGHIJKLMNOPQR";
+        int ret = roundtrip(eighteen, 18);
+        TEST("lzss: 18-byte (max match) roundtrip succeeds", ret >= 0);
+    }
+
+    /* 20. Input of 19 bytes (LZSS_MAX_MATCH+1) */
+    {
+        const uint8_t *nineteen = (const uint8_t *)"ABCDEFGHIJKLMNOPQRS";
+        int ret = roundtrip(nineteen, 19);
+        TEST("lzss: 19-byte roundtrip succeeds", ret >= 0);
+    }
+
+    /* 21. Wide character range (0x00-0xFF) */
+    {
+        uint8_t wide[256];
+        for (int i = 0; i < 256; i++) wide[i] = (uint8_t)i;
+        int ret = roundtrip(wide, 256);
+        TEST("lzss: 0x00-0xFF roundtrip succeeds", ret >= 0);
+    }
 }
 
 /* ===================================================================

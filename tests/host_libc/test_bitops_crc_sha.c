@@ -228,6 +228,45 @@ static void test_bitmap_ops(void)
     /* Test bitmap_find_next_zero_area with start = size */
     area = bitmap_find_next_zero_area(map, 256, 256, 1);
     TEST("find_next_zero_area start==size returns -1", area == -1);
+
+    /* Test bitmap_find_next_zero_area with all bits set */
+    bitmap_zero(map, 256);
+    bitmap_set(map, 0, 256);
+    area = bitmap_find_next_zero_area(map, 256, 0, 1);
+    TEST("find_next_zero_area all bits set returns -1", area == -1);
+
+    /* Test bitmap_find_next_zero_area with nr > size */
+    bitmap_zero(map, 256);
+    bitmap_set(map, 0, 1);
+    area = bitmap_find_next_zero_area(map, 256, 0, 300);
+    TEST("find_next_zero_area nr>size returns -1", area == -1);
+
+    /* Test bitmap_clear with start=0 nr=0 (no-op) */
+    bitmap_zero(map, 256);
+    bitmap_set(map, 0, 1);
+    unsigned long before_clear = map[0];
+    bitmap_clear(map, 0, 0);
+    TEST("bitmap_clear nr=0 no-op", map[0] == before_clear);
+
+    /* Test bitmap_find_next_zero_area with exact-sized clear area */
+    bitmap_zero(map, 256);
+    bitmap_set(map, 0, 10);
+    bitmap_set(map, 20, 236);
+    area = bitmap_find_next_zero_area(map, 256, 0, 10);
+    TEST("find_next_zero_area exact 10-bit gap", area == 10);
+
+    /* Test bitmap_find_next_zero_area with offset > size */
+    bitmap_zero(map, 256);
+    area = bitmap_find_next_zero_area(map, 256, 300, 1);
+    int oob_ret = area;
+    TEST("find_next_zero_area offset>size returns -1 or size",
+         oob_ret == -1 || oob_ret == 256);
+
+    /* Test CRC32 all-zero 1KB buffer */
+    uint8_t zeros1k[1024];
+    memset(zeros1k, 0, 1024);
+    uint32_t cz1k = crc32(0, zeros1k, 1024);
+    TEST("crc32 1KB all-zeros non-zero", cz1k != 0);
 }
 
 /* ===================================================================
@@ -309,6 +348,27 @@ static void test_crc32(void)
     uint32_t half1 = crc32(0, large, 4096);
     uint32_t half2 = crc32(half1, large + 4096, 4096);
     TEST_EQ_U32("crc32 chain 4096+4096 matches 8192", c_large, half2);
+
+    /* CRC32 large buffer (1KB) */
+    uint8_t buf1k[1024];
+    for (int i = 0; i < 1024; i++) buf1k[i] = (uint8_t)(i * 5 + 11);
+    uint32_t c_1k = crc32(0, buf1k, 1024);
+    TEST("crc32 1KB buffer non-zero", c_1k != 0);
+
+    /* CRC32 chaining across 3 buffers */
+    uint32_t c_a = crc32(0, buf1k, 341);
+    uint32_t c_b = crc32(c_a, buf1k + 341, 341);
+    uint32_t c_c = crc32(c_b, buf1k + 682, 342);
+    TEST_EQ_U32("crc32 chain 341+341+342 matches 1KB", c_1k, c_c);
+
+    /* CRC32 repeatability */
+    uint32_t c_1k_2 = crc32(0, buf1k, 1024);
+    TEST_EQ_U32("crc32 repeatability", c_1k, c_1k_2);
+
+    /* CRC32 with non-zero initial CRC on known data */
+    uint32_t with_seed2 = crc32(0xFFFFFFFFU, "123456789", 9);
+    TEST("crc32 seed=0xFFFFFFFF differs from seed=0",
+         with_seed2 != crc32(0, "123456789", 9));
 }
 
 /* ===================================================================
@@ -337,6 +397,18 @@ static void test_crc64(void)
     uint64_t c1 = crc64(0, "ab", 2);
     uint64_t c2 = crc64(c1, "c", 1);
     TEST_EQ_U64("crc64 chain", 0x2CD8094A1A277627ULL, c2);
+
+    /* CRC64 with large buffer (1KB) */
+    uint8_t buf64[1024];
+    for (int i = 0; i < 1024; i++) buf64[i] = (uint8_t)(i * 7 + 3);
+    uint64_t c64_1k = crc64(0, buf64, 1024);
+    TEST("crc64 1KB buffer non-zero", c64_1k != 0);
+
+    /* CRC64 chaining across 3 buffers */
+    uint64_t c64_a = crc64(0, buf64, 341);
+    uint64_t c64_b = crc64(c64_a, buf64 + 341, 341);
+    uint64_t c64_c = crc64(c64_b, buf64 + 682, 342);
+    TEST_EQ_U64("crc64 chain 341+341+342 matches 1KB", c64_1k, c64_c);
 }
 #else
 static void test_crc64(void)
@@ -460,6 +532,46 @@ static void test_sha256(void)
         uint8_t bulk[32];
         sha256_hash(bulk, msg, msglen);
         TEST_BUF("SHA256 1-byte-at-a-time stream matches bulk", bulk, digest, 32);
+    }
+
+    /* Test 11: SHA256 NULL data with len=0 gives empty hash */
+    {
+        sha256_hash(digest, NULL, 0);
+        TEST_BUF("SHA256(NULL,0) = empty hash", expected_empty, digest, 32);
+    }
+
+    /* Test 12: SHA256 65 bytes (two blocks) */
+    {
+        uint8_t buf65[65];
+        memset(buf65, 'd', 65);
+        sha256_hash(digest, buf65, 65);
+        uint8_t stable65[32];
+        sha256_hash(stable65, buf65, 65);
+        TEST_BUF("SHA256 65-byte two-block deterministic", stable65, digest, 32);
+    }
+
+    /* Test 13: SHA256 128 bytes (two full blocks) */
+    {
+        uint8_t buf128[128];
+        memset(buf128, 'e', 128);
+        sha256_hash(digest, buf128, 128);
+        uint8_t stable128[32];
+        sha256_hash(stable128, buf128, 128);
+        TEST_BUF("SHA256 128-byte two-full-block deterministic", stable128, digest, 32);
+    }
+
+    /* Test 14: SHA256 streaming byte-by-byte with longer message */
+    {
+        const char *msg2 = "A different streaming test for SHA-256 that exercises the implementation more thoroughly.";
+        size_t msglen2 = strlen(msg2);
+        struct sha256_ctx ctx2;
+        sha256_init(&ctx2);
+        for (size_t i = 0; i < msglen2; i++)
+            sha256_update(&ctx2, msg2 + i, 1);
+        sha256_final(digest, &ctx2);
+        uint8_t bulk2[32];
+        sha256_hash(bulk2, msg2, msglen2);
+        TEST_BUF("SHA256 streaming byte-by-byte (longer msg) matches bulk", bulk2, digest, 32);
     }
 }
 

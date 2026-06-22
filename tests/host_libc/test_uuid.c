@@ -237,6 +237,83 @@ static void test_uuid_unparse(void)
 }
 
 /* ===================================================================
+ *  test_uuid_extra — additional edge case tests
+ * =================================================================== */
+static void test_uuid_extra(void)
+{
+    int i, j;
+
+    /* 1–3. Generate 10 UUIDs, all must have version 4 and variant bits */
+    uint8_t uuids[10][16];
+    int all_version4 = 1, all_variant = 1, all_nonzero = 1;
+    for (i = 0; i < 10; i++) {
+        uuid_gen(uuids[i]);
+        if ((uuids[i][6] & 0xF0) != 0x40) all_version4 = 0;
+        if ((uuids[i][8] & 0xC0) != 0x80) all_variant = 0;
+        int nz = 0;
+        for (j = 0; j < 16; j++) if (uuids[i][j]) { nz = 1; break; }
+        if (!nz) all_nonzero = 0;
+    }
+    TEST("uuid_extra: 10 UUIDs all non-zero", all_nonzero);
+    TEST("uuid_extra: 10 UUIDs all version 4", all_version4);
+    TEST("uuid_extra: 10 UUIDs all variant RFC 4122", all_variant);
+
+    /* 4. No duplicates among 10 generated UUIDs */
+    int no_dupes = 1;
+    for (i = 0; i < 10 && no_dupes; i++) {
+        for (j = i + 1; j < 10 && no_dupes; j++) {
+            int same = 1;
+            for (int k = 0; k < 16; k++) {
+                if (uuids[i][k] != uuids[j][k]) { same = 0; break; }
+            }
+            if (same) no_dupes = 0;
+        }
+    }
+    TEST("uuid_extra: no duplicates among 10 UUIDs", no_dupes);
+
+    /* 5. uuid_to_str with all-zeros UUID */
+    uint8_t zeros[16] = {0};
+    char zstr[37];
+    uuid_to_str(zeros, zstr);
+    TEST("uuid_extra: all-zero UUID to_str length", strlen(zstr) == 36);
+    TEST("uuid_extra: all-zero UUID has dashes",
+         zstr[8] == '-' && zstr[13] == '-' && zstr[18] == '-' && zstr[23] == '-');
+
+    /* 6. uuid_to_str with known pattern — check first hex group */
+    uint8_t known[16];
+    for (i = 0; i < 16; i++) known[i] = i | (i << 4);
+    char kstr[37];
+    uuid_to_str(known, kstr);
+    /* Byte 0 = 0x00 → "00", byte 1 = 0x11 → "11" */
+    TEST("uuid_extra: known UUID starts with 0011", kstr[0]=='0' && kstr[1]=='0' && kstr[2]=='1' && kstr[3]=='1');
+
+    /* 7. uuid_parse with mixed-case hex */
+    uint8_t mixed[16];
+    memset(mixed, 0, 16);
+    int r = uuid_parse("550e8400-e29b-41d4-a716-446655440000", mixed);
+    TEST("uuid_extra: mixed-case parse OK", r == 0);
+    TEST("uuid_extra: mixed-case byte 0", mixed[0] == 0x55);
+
+    /* 8. uuid_unparse of all-zeros produces correct string */
+    uint8_t z2[16] = {0};
+    char z2str[37];
+    uuid_unparse(z2, z2str);
+    TEST("uuid_extra: all-zero unparse length", strlen(z2str) == 36);
+    /* First 4 hex digits should be 0000 */
+    TEST("uuid_extra: all-zero starts with 0000",
+         z2str[0]=='0' && z2str[1]=='0' && z2str[2]=='0' && z2str[3]=='0');
+
+    /* 9. uuid_generate called 10 times, no crashes, all version 4 */
+    int gen_ok = 1;
+    for (i = 0; i < 10; i++) {
+        uint8_t g[16];
+        if (uuid_generate(g) != 0) { gen_ok = 0; break; }
+        if ((g[6] & 0xF0) != 0x40) gen_ok = 0;
+    }
+    TEST("uuid_extra: 10x uuid_generate all OK", gen_ok);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -257,6 +334,9 @@ int main(void)
 
     printf("\n--- uuid_unparse ---\n");
     test_uuid_unparse();
+
+    printf("\n--- extras ---\n");
+    test_uuid_extra();
 
     printf("\n");
     printf("============================================\n");

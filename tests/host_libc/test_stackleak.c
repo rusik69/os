@@ -152,6 +152,89 @@ static void test_stackleak(void)
         TEST("get_poison_count: returns value <= 1ULL<<63",
              count < (1ULL << 63));
     }
+
+    /* 13. set_enabled with negative value (-1) coerces to 1 */
+    {
+        stackleak_set_enabled(0);
+        int old = stackleak_set_enabled(-1);
+        TEST("set_enabled(-1): negative coerces to 1, returns old 0", old == 0);
+        int enabled = stackleak_get_enabled();
+        TEST("get_enabled: 1 after set_enabled(-1)", enabled == 1);
+    }
+
+    /* 14. set_enabled with large positive value coerces to 1 */
+    {
+        stackleak_set_enabled(0);
+        int old = stackleak_set_enabled(0x7FFFFFFF);
+        TEST("set_enabled(0x7FFFFFFF): large value coerces to 1", old == 0);
+        int enabled = stackleak_get_enabled();
+        TEST("get_enabled: 1 after set_enabled(0x7FFFFFFF)", enabled == 1);
+    }
+
+    /* 15. Disabled state persists across multiple gets */
+    {
+        stackleak_set_enabled(0);
+        int g1 = stackleak_get_enabled();
+        int g2 = stackleak_get_enabled();
+        int g3 = stackleak_get_enabled();
+        TEST("get_enabled: persistent 0 after disable (1st call)", g1 == 0);
+        TEST("get_enabled: persistent 0 after disable (2nd call)", g2 == 0);
+        TEST("get_enabled: persistent 0 after disable (3rd call)", g3 == 0);
+    }
+
+    /* 16. set_enabled(1) when already enabled—idempotent */
+    {
+        stackleak_set_enabled(1);
+        int old = stackleak_set_enabled(1);
+        TEST("set_enabled(1) when already 1 returns 1", old == 1);
+        int enabled = stackleak_get_enabled();
+        TEST("get_enabled: still 1 after double-enable", enabled == 1);
+    }
+
+    /* 17. set_enabled(0) when already disabled—idempotent */
+    {
+        stackleak_set_enabled(0);
+        int old = stackleak_set_enabled(0);
+        TEST("set_enabled(0) when already 0 returns 0", old == 0);
+        int enabled = stackleak_get_enabled();
+        TEST("get_enabled: still 0 after double-disable", enabled == 0);
+    }
+
+    /* 18. Rapid toggles: 5 pairs of flip-flop */
+    {
+        stackleak_set_enabled(0);
+        for (int i = 0; i < 5; i++) {
+            stackleak_set_enabled(1);
+            stackleak_set_enabled(0);
+        }
+        TEST("get_enabled: 0 after 5 rapid toggle pairs",
+             stackleak_get_enabled() == 0);
+    }
+
+    /* 19. set_enabled returns correct chain of old values */
+    {
+        stackleak_set_enabled(1);
+        stackleak_set_enabled(0);
+        int v1 = stackleak_set_enabled(1);  /* 0→1 returns 0 */
+        int v2 = stackleak_set_enabled(0);  /* 1→0 returns 1 */
+        int v3 = stackleak_set_enabled(1);  /* 0→1 returns 0 */
+        TEST("set_enabled chain: 0→1 returns 0", v1 == 0);
+        TEST("set_enabled chain: 1→0 returns 1", v2 == 1);
+        TEST("set_enabled chain: 0→1 returns 0 again", v3 == 0);
+    }
+
+    /* 20. set_enabled with five different large values */
+    {
+        stackleak_set_enabled(0);
+        int e = stackleak_set_enabled(42);
+        TEST("set_enabled(42): returns old 0", e == 0);
+        TEST("get_enabled: 1 after 42", stackleak_get_enabled() == 1);
+        e = stackleak_set_enabled(0);
+        TEST("set_enabled(0): returns old 1", e == 1);
+        e = stackleak_set_enabled(-100);
+        TEST("set_enabled(-100): returns old 0", e == 0);
+        TEST("get_enabled: finally 1", stackleak_get_enabled() == 1);
+    }
 }
 
 /* ===================================================================

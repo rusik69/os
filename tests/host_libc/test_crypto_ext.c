@@ -26,6 +26,14 @@ extern void sha512_final(uint8_t digest[64], struct sha512_ctx *ctx);
 extern void sha512_hash(uint8_t digest[64], const void *data, size_t len);
 extern void sha512_init_crypto(void);
 
+#define SHA256_DIGEST_SIZE 32
+struct sha256_ctx { uint64_t count; uint32_t state[8]; uint8_t buffer[64]; };
+extern void sha256_init(struct sha256_ctx *ctx);
+extern void sha256_update(struct sha256_ctx *ctx, const void *data, size_t len);
+extern void sha256_final(uint8_t digest[32], struct sha256_ctx *ctx);
+extern void sha256_hash(uint8_t digest[32], const void *data, size_t len);
+extern void sha256_init_crypto(void);
+
 #define MD5_DIGEST_SIZE 16
 struct md5_ctx { uint64_t count; uint32_t state[4]; uint8_t buffer[64]; };
 extern void md5_init(struct md5_ctx *ctx);
@@ -120,6 +128,61 @@ static void test_sha512(void) {
     /* And differs from short inputs */
     TEST("SHA512 64-byte block != SHA512('')", memcmp(d1, expected_empty, 64) != 0);
     TEST("SHA512 64-byte block != SHA512('abc')", memcmp(d1, expected_abc, 64) != 0);
+
+    /* Multi-block: 129 bytes (one full block + partial) */
+    char block129[129];
+    memset(block129, 'b', 129);
+    sha512_hash(d1, block129, 129);
+    sha512_hash(d2, block129, 129);
+    TEST("SHA512 129-byte multi-block deterministic", memcmp(d1, d2, 64) == 0);
+    TEST("SHA512 129-byte != 64-byte", memcmp(d1, expected_empty, 64) != 0);
+}
+
+/* ===================================================================
+ *  SHA-256 tests
+ * =================================================================== */
+static void test_sha256(void) {
+    uint8_t d1[SHA256_DIGEST_SIZE], d2[SHA256_DIGEST_SIZE];
+    printf("\n[SHA-256]\n");
+
+    /* SHA-256 NIST known-answer: SHA256('') = e3b0c44... */
+    sha256_hash(d1, "", 0);
+    uint8_t expected_empty[32] = {
+        0xe3,0xb0,0xc4,0x42,0x98,0xfc,0x1c,0x14,
+        0x9a,0xfb,0xf4,0xc8,0x99,0x6f,0xb9,0x24,
+        0x27,0xae,0x41,0xe4,0x64,0x9b,0x93,0x4c,
+        0xa4,0x95,0x99,0x1b,0x78,0x52,0xb8,0x55
+    };
+    TEST("SHA256('') NIST vector", memcmp(d1, expected_empty, 32) == 0);
+
+    /* SHA-256 NIST known-answer: SHA256('abc') = ba7816bf... */
+    sha256_hash(d1, "abc", 3);
+    uint8_t expected_abc[32] = {
+        0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,
+        0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,
+        0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,
+        0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad
+    };
+    TEST("SHA256('abc') NIST vector", memcmp(d1, expected_abc, 32) == 0);
+
+    /* Stream consistency: init+update+final matches all-in-one */
+    struct sha256_ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, "Hello ", 6);
+    sha256_update(&ctx, "World", 5);
+    sha256_final(d1, &ctx);
+    sha256_hash(d2, "Hello World", 11);
+    TEST("SHA256 stream matches all-in-one", memcmp(d1, d2, 32) == 0);
+
+    /* Deterministic */
+    sha256_hash(d1, "test data", 9);
+    sha256_hash(d2, "test data", 9);
+    TEST("SHA256 deterministic", memcmp(d1, d2, 32) == 0);
+
+    /* Different inputs differ */
+    sha256_hash(d1, "abc", 3);
+    sha256_hash(d2, "abcd", 4);
+    TEST("SHA256 different inputs differ", memcmp(d1, d2, 32) != 0);
 }
 
 /* ===================================================================
@@ -232,6 +295,14 @@ static void test_hmac(void) {
     /* HMAC-SHA256 empty key + empty data */
     hmac_sha256((const uint8_t*)"", 0, (const uint8_t*)"", 0, mac1);
     TEST("HMAC-SHA256 empty key+data", mac1[0] != 0 || mac1[31] != 0);
+
+    /* HMAC-MD5 empty key + empty data */
+    hmac_md5((const uint8_t*)"", 0, (const uint8_t*)"", 0, mac1);
+    TEST("HMAC-MD5 empty key+data", mac1[0] != 0 || mac1[15] != 0);
+
+    /* HMAC-SHA256 empty data only */
+    hmac_sha256((const uint8_t*)"key", 3, (const uint8_t*)"", 0, mac1);
+    TEST("HMAC-SHA256 empty data works", mac1[0] != 0 || mac1[31] != 0);
 }
 
 /* ===================================================================
@@ -249,6 +320,10 @@ static void test_adler32(void) {
     /* Known vector: Adler32('Wikipedia') = 0x11E60398 */
     uint32_t wiki = adler32(1, "Wikipedia", 9);
     TEST("Adler32('Wikipedia') = 0x11E60398", wiki == 0x11E60398);
+
+    /* Known vector: Adler32('Hello World') = 0x180B041D */
+    uint32_t hello_world = adler32(1, "Hello World", 11);
+    TEST("Adler32('Hello World') = 0x180B041D", hello_world == 0x180B041D);
 
     /* Long buffer */
     char longbuf[1024];
@@ -300,6 +375,20 @@ static void test_base64(void) {
     dlen = base64_decode(dec, enc, elen);
     TEST("Base64 decode 'Zm8=' -> 'fo'", dlen == 2 && memcmp(dec, "fo", 2) == 0);
 
+    /* \"foo\" -> \"Zm9v\" (RFC 4648, no padding) */
+    elen = base64_encode(enc, (const uint8_t*)"foo", 3);
+    enc[elen] = '\0';
+    TEST("Base64 'foo' -> 'Zm9v'", strcmp(enc, "Zm9v") == 0);
+    dlen = base64_decode(dec, enc, elen);
+    TEST("Base64 decode 'Zm9v' -> 'foo'", dlen == 3 && memcmp(dec, "foo", 3) == 0);
+
+    /* \"foob\" -> \"Zm9vYg==\" (RFC 4648) */
+    elen = base64_encode(enc, (const uint8_t*)"foob", 4);
+    enc[elen] = '\0';
+    TEST("Base64 'foob' -> 'Zm9vYg=='", strcmp(enc, "Zm9vYg==") == 0);
+    dlen = base64_decode(dec, enc, elen);
+    TEST("Base64 decode 'Zm9vYg==' -> 'foob'", dlen == 4 && memcmp(dec, "foob", 4) == 0);
+
     /* Large buffer encode/decode */
     uint8_t large_buf[512];
     for (i = 0; i < 512; i++) large_buf[i] = (uint8_t)(i * 13 + 7);
@@ -317,11 +406,13 @@ static void test_base64(void) {
 int main(void) {
     printf("=== Extended Crypto Unit Tests ===\n");
     sha512_init_crypto();
+    sha256_init_crypto();
     md5_init_crypto();
     hmac_init();
     adler32_init();
     base64_init();
     test_sha512();
+    test_sha256();
     test_md5();
     test_hmac();
     test_adler32();

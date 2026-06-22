@@ -163,6 +163,36 @@ static void test_uid16_more(void)
 }
 
 /* ===================================================================
+ *  test_uid16_edge — additional boundary edge values
+ * =================================================================== */
+static void test_uid16_edge(void)
+{
+    /* uid_to_16 with intermediate boundary values */
+    TEST("uid16_edge: uid_to_16(2) == 2", uid_to_16(2) == 2);
+    TEST("uid16_edge: uid_to_16(0xFFFD) == 0xFFFD", uid_to_16(0xFFFD) == 0xFFFD);
+    TEST("uid16_edge: uid_to_16(0xFFFC) == 0xFFFC", uid_to_16(0xFFFC) == 0xFFFC);
+
+    /* uid_from_16 for intermediate boundary values */
+    TEST("uid16_edge: uid_from_16(2) == 2", uid_from_16(2) == 2);
+    TEST("uid16_edge: uid_from_16(0xFFFD) == 0xFFFD", uid_from_16(0xFFFD) == 0xFFFD);
+    TEST("uid16_edge: uid_from_16(0xFFFC) == 0xFFFC", uid_from_16(0xFFFC) == 0xFFFC);
+
+    /* Roundtrip: uid_from_16(uid_to_16(x)) == x for below-boundary values */
+    TEST("uid16_edge: roundtrip 2", uid_from_16(uid_to_16(2)) == 2);
+    TEST("uid16_edge: roundtrip 0xFFFB", uid_from_16(uid_to_16(0xFFFB)) == 0xFFFB);
+    TEST("uid16_edge: roundtrip 0xFFFC", uid_from_16(uid_to_16(0xFFFC)) == 0xFFFC);
+    TEST("uid16_edge: roundtrip 0xFFFD", uid_from_16(uid_to_16(0xFFFD)) == 0xFFFD);
+
+    /* uid_to_16(uid_from_16(x)) == x for all x in uint16_t range */
+    TEST("uid16_edge: uid_to_16(uid_from_16(0xFFFB)) == 0xFFFB",
+         uid_to_16(uid_from_16(0xFFFB)) == 0xFFFB);
+    TEST("uid16_edge: uid_to_16(uid_from_16(0xFFFC)) == 0xFFFC",
+         uid_to_16(uid_from_16(0xFFFC)) == 0xFFFC);
+    TEST("uid16_edge: uid_to_16(uid_from_16(0xFFFD)) == 0xFFFD",
+         uid_to_16(uid_from_16(0xFFFD)) == 0xFFFD);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -174,6 +204,9 @@ int main(void)
 
     printf("\n--- more edge cases ---\n");
     test_uid16_more();
+
+    printf("\n--- edge boundary values ---\n");
+    test_uid16_edge();
 
     printf("\n");
     printf("============================================\n");

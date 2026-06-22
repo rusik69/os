@@ -190,6 +190,94 @@ static void test_sched_attr_validation(void)
     ret = sched_setattr(1, &attr, 0);
     TEST("sched_setattr: valid DL reaches process lookup",
          ret == -ESRCH);
+
+    /* 15. SCHED_FIFO with priority=0 (minimum valid) */
+    attr.sched_policy = SCHED_FIFO;
+    attr.sched_priority = 0;
+    attr.sched_nice = 0;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: FIFO priority=0 reaches lookup", ret == -ESRCH);
+
+    /* 16. SCHED_FIFO with priority=99 (maximum valid) */
+    attr.sched_priority = 99;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: FIFO priority=99 reaches lookup", ret == -ESRCH);
+
+    /* 17. SCHED_RR with priority=0 */
+    attr.sched_policy = SCHED_RR;
+    attr.sched_priority = 0;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: RR priority=0 reaches lookup", ret == -ESRCH);
+
+    /* 18. SCHED_RR with priority=99 */
+    attr.sched_priority = 99;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: RR priority=99 reaches lookup", ret == -ESRCH);
+
+    /* 19. SCHED_BATCH with valid params */
+    attr.sched_policy = SCHED_BATCH;
+    attr.sched_priority = 0;
+    attr.sched_nice = 0;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: BATCH reaches lookup", ret == -ESRCH);
+
+    /* 20. SCHED_IDLE with valid params */
+    attr.sched_policy = SCHED_IDLE;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: IDLE reaches lookup", ret == -ESRCH);
+
+    /* 21. SCHED_OTHER with priority=50 (passes priority check) */
+    attr.sched_policy = SCHED_OTHER;
+    attr.sched_priority = 50;
+    attr.sched_nice = 0;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: OTHER priority=50 passes validation (reaches lookup)",
+         ret == -ESRCH);
+
+    /* 22. pid=0 (self — process_get_by_pid(0) returns NULL) */
+    attr.sched_policy = SCHED_OTHER;
+    attr.sched_priority = 0;
+    attr.sched_nice = 0;
+    ret = sched_setattr(0, &attr, 0);
+    TEST("sched_setattr: pid=0 returns -ESRCH", ret == -ESRCH);
+
+    /* 23. flags=0xFFFFFFFF is silently ignored */
+    attr.sched_policy = SCHED_OTHER;
+    attr.sched_priority = 0;
+    attr.sched_nice = 0;
+    ret = sched_setattr(1, &attr, 0xFFFFFFFF);
+    TEST("sched_setattr: flags=0xFFFFFFFF ignored, reaches lookup",
+         ret == -ESRCH);
+
+    /* 24. DL with period==0 */
+    attr.sched_policy = SCHED_DEADLINE;
+    attr.sched_priority = 0;
+    attr.sched_nice = 0;
+    attr.sched_runtime = 100000;
+    attr.sched_deadline = 500000;
+    attr.sched_period = 0;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: DL period==0 returns -EINVAL", ret == -EINVAL);
+
+    /* 25. Combined invalid: priority>99 takes precedence */
+    attr.sched_policy = SCHED_OTHER;
+    attr.sched_priority = 100;
+    attr.sched_nice = 50;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: priority>99 returns -EINVAL despite bad nice",
+         ret == -EINVAL);
+
+    /* 26. SCHED_OTHER with nice=-20 (minimum valid) */
+    attr.sched_policy = SCHED_OTHER;
+    attr.sched_priority = 0;
+    attr.sched_nice = -20;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: OTHER nice=-20 reaches lookup", ret == -ESRCH);
+
+    /* 27. SCHED_OTHER with nice=19 (maximum valid) */
+    attr.sched_nice = 19;
+    ret = sched_setattr(1, &attr, 0);
+    TEST("sched_setattr: OTHER nice=19 reaches lookup", ret == -ESRCH);
 }
 
 /* ===================================================================

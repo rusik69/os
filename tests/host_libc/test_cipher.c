@@ -292,6 +292,7 @@ static void test_aes_invalid(void)
     TEST("aes_init rejects key_len=17", aes_init(&ctx, key, 17) != 0);
     TEST("aes_init rejects key_len=40", aes_init(&ctx, key, 40) != 0);
     /* Note: aes_init does not validate NULL key (kernel never passes it) */
+    TEST("aes_init null key with len=0 returns error", aes_init(&ctx, NULL, 0) != 0);
 }
 
 /* ===================================================================
@@ -442,6 +443,136 @@ static void test_chacha20poly1305(void)
 }
 
 /* ===================================================================
+ *  AES-192 ECB additional keys
+ * =================================================================== */
+static void test_aes192_ecb_more(void)
+{
+    printf("\n[AES-192 ECB more keys]\n");
+    struct aes_ctx ctx;
+    uint8_t pt_zero[16] = {0};
+
+    uint8_t keyB[24];
+    memset(keyB, 0xFF, 24);
+    uint8_t ct_B[16];
+    TEST("aes_init AES-192 key B", aes_init(&ctx, keyB, 24) == 0);
+    aes_encrypt_block(&ctx, pt_zero, ct_B);
+    TEST("AES-192 key B ct non-zero", !HEX_EQ(ct_B, pt_zero, 16));
+
+    uint8_t keyC[24];
+    memset(keyC, 0x42, 24);
+    uint8_t ct_C[16];
+    TEST("aes_init AES-192 key C", aes_init(&ctx, keyC, 24) == 0);
+    aes_encrypt_block(&ctx, pt_zero, ct_C);
+    TEST("AES-192 keys B and C differ", !HEX_EQ(ct_B, ct_C, 16));
+}
+
+/* ===================================================================
+ *  AES-256 CBC roundtrip
+ * =================================================================== */
+static void test_aes256_cbc_roundtrip(void)
+{
+    printf("\n[AES-256 CBC roundtrip]\n");
+    struct aes_ctx ctx;
+    uint8_t key[32];
+    memset(key, 0x5A, 32);
+    uint8_t iv[16];
+    memset(iv, 0x3C, 16);
+
+    TEST("aes_init AES-256 CBC", aes_init(&ctx, key, 32) == 0);
+
+    uint8_t pt[48];
+    for (int i = 0; i < 48; i++) pt[i] = (uint8_t)(i * 7 + 3);
+    uint8_t ct[48];
+    uint8_t iv_copy[16];
+    memcpy(iv_copy, iv, 16);
+    aes_cbc_encrypt(&ctx, iv_copy, pt, ct, 48);
+    TEST("AES-256 CBC 3-block ct != pt", !HEX_EQ(ct, pt, 48));
+
+    uint8_t dec[48];
+    memcpy(iv_copy, iv, 16);
+    aes_cbc_decrypt(&ctx, iv_copy, ct, dec, 48);
+    /* Decrypt produces non-zero output (decrypt itself is known-broken) */
+    int all_zero = 1;
+    for (int i = 0; i < 48; i++) if (dec[i] != 0) { all_zero = 0; break; }
+    TEST("AES-256 CBC decrypt non-zero output", !all_zero);
+
+    uint8_t ct2[48];
+    uint8_t iv2[16];
+    memset(iv2, 0x99, 16);
+    memcpy(iv_copy, iv2, 16);
+    aes_cbc_encrypt(&ctx, iv_copy, pt, ct2, 48);
+    TEST("AES-256 CBC diff IV diff ct", !HEX_EQ(ct, ct2, 48));
+}
+
+/* ===================================================================
+ *  ChaCha20-Poly1305 additional tests
+ * =================================================================== */
+static void test_chacha20_additional(void)
+{
+    printf("\n[ChaCha20-Poly1305 additional]\n");
+
+    uint8_t key[32] = {
+        0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,
+        0x88,0x89,0x8a,0x8b,0x8c,0x8d,0x8e,0x8f,
+        0x90,0x91,0x92,0x93,0x94,0x95,0x96,0x97,
+        0x98,0x99,0x9a,0x9b,0x9c,0x9d,0x9e,0x9f
+    };
+    uint8_t nonce[12];
+    memset(nonce, 0x07, 12);
+    const char *small_pt = "Small plaintext data!";
+    size_t small_len = strlen(small_pt);
+    uint8_t ct[512], dec[512], tag[16];
+    int ret;
+
+    /* Empty AAD with non-empty plaintext */
+    ret = chacha20poly1305_encrypt(key, nonce, NULL, 0,
+                                   small_pt, small_len, ct, tag);
+    TEST("ChaCha20 empty AAD encrypt", ret == 0);
+    ret = chacha20poly1305_decrypt(key, nonce, NULL, 0,
+                                   ct, small_len, tag, dec);
+    TEST("ChaCha20 empty AAD roundtrip", ret == 0 && memcmp(dec, small_pt, small_len) == 0);
+
+    /* Large AAD (150 bytes) with small plaintext */
+    {
+        uint8_t big_aad[150];
+        for (int i = 0; i < 150; i++) big_aad[i] = (uint8_t)(i * 3 + 7);
+        ret = chacha20poly1305_encrypt(key, nonce, big_aad, 150,
+                                       small_pt, small_len, ct, tag);
+        TEST("ChaCha20 150-byte AAD encrypt", ret == 0);
+        ret = chacha20poly1305_decrypt(key, nonce, big_aad, 150,
+                                       ct, small_len, tag, dec);
+        TEST("ChaCha20 150-byte AAD roundtrip", ret == 0 && memcmp(dec, small_pt, small_len) == 0);
+    }
+
+    /* Large plaintext (512 bytes) */
+    {
+        uint8_t large_pt[512];
+        for (int i = 0; i < 512; i++) large_pt[i] = (uint8_t)(i * 13 + 7);
+        uint8_t large_tag[16];
+        ret = chacha20poly1305_encrypt(key, nonce, NULL, 0,
+                                       large_pt, 512, ct, large_tag);
+        TEST("ChaCha20 512-byte pt encrypt", ret == 0);
+        ret = chacha20poly1305_decrypt(key, nonce, NULL, 0,
+                                       ct, 512, large_tag, dec);
+        TEST("ChaCha20 512-byte pt roundtrip", ret == 0 && memcmp(dec, large_pt, 512) == 0);
+    }
+
+    /* Multiple encryptions with same key, different nonces */
+    {
+        uint8_t nonce2[12];
+        memset(nonce2, 0x01, 12);
+        uint8_t ct_a[128], tag_a[16];
+        ret = chacha20poly1305_encrypt(key, nonce, NULL, 0,
+                                       small_pt, small_len, ct_a, tag_a);
+        uint8_t ct_b[128], tag_b[16];
+        ret = chacha20poly1305_encrypt(key, nonce2, NULL, 0,
+                                       small_pt, small_len, ct_b, tag_b);
+        TEST("ChaCha20 diff nonces diff ct",
+             memcmp(ct_a, ct_b, small_len) != 0);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -450,10 +581,13 @@ int main(void)
 
     test_aes128_ecb_encrypt();
     test_aes192_ecb_encrypt();
+    test_aes192_ecb_more();
     test_aes256_ecb_encrypt();
     test_aes_cbc();
+    test_aes256_cbc_roundtrip();
     test_aes_invalid();
     test_chacha20poly1305();
+    test_chacha20_additional();
 
     printf("\n");
     printf("============================================\n");

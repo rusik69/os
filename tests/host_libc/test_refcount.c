@@ -203,6 +203,100 @@ static void test_refcount(void)
     refcount_dec(&r6); /* 1→0, old=0 ≤ 0 → saturates */
     TEST("refcount_dec: last dec to zero saturates",
          refcount_read(&r6) == sat_ref);
+
+    /* 18. refcount_inc_not_zero on saturated refcount (saturated > 0) */
+    {
+        struct refcount_struct r7;
+        refcount_set(&r7, REFCOUNT_SATURATED);
+        int rnz = refcount_inc_not_zero(&r7);
+        TEST("refcount_inc_not_zero: on saturated returns 1", rnz == 1);
+        TEST("refcount_inc_not_zero: saturated+1 = S+1",
+             refcount_read(&r7) == REFCOUNT_SATURATED + 1);
+    }
+
+    /* 19. refcount_sub_and_test with i=1 from value=0 (underflow) */
+    {
+        struct refcount_struct r8;
+        refcount_set(&r8, 0);
+        int t = refcount_sub_and_test(&r8, 1);
+        TEST("refcount_sub_and_test: 0-1 saturates, returns 0", t == 0);
+        TEST("refcount_sub_and_test: 0-1 saturates to S",
+             refcount_read(&r8) == REFCOUNT_SATURATED);
+    }
+
+    /* 20. refcount_sub_and_test with i=1 from value=1 (exactly zero) */
+    {
+        struct refcount_struct r9;
+        refcount_set(&r9, 1);
+        int t = refcount_sub_and_test(&r9, 1);
+        TEST("refcount_sub_and_test: 1-1=0 returns 1", t == 1);
+        TEST("refcount_sub_and_test: value 0 after sub", refcount_read(&r9) == 0);
+    }
+
+    /* 21. refcount_dec_and_test from value=0 (underflow saturation) */
+    {
+        struct refcount_struct r10;
+        refcount_set(&r10, 0);
+        int t = refcount_dec_and_test(&r10);
+        TEST("refcount_dec_and_test: 0-1 saturates, returns 0", t == 0);
+        TEST("refcount_dec_and_test: 0-1 saturates to S",
+             refcount_read(&r10) == REFCOUNT_SATURATED);
+    }
+
+    /* 22. refcount_inc from value=1 (old=1, positive, no saturation) */
+    {
+        struct refcount_struct r11;
+        refcount_set(&r11, 1);
+        refcount_inc(&r11);
+        TEST("refcount_inc: 1→2 (no saturation)", refcount_read(&r11) == 2);
+    }
+
+    /* 23. refcount_inc from REFCOUNT_SATURATED (just increments) */
+    {
+        struct refcount_struct r12;
+        refcount_set(&r12, REFCOUNT_SATURATED);
+        refcount_inc(&r12);
+        TEST("refcount_inc: S→S+1", refcount_read(&r12) == REFCOUNT_SATURATED + 1);
+        refcount_inc(&r12);
+        TEST("refcount_inc: S+1→S+2", refcount_read(&r12) == REFCOUNT_SATURATED + 2);
+    }
+
+    /* 24. refcount_dec from value=2 (2→1, no saturation) */
+    {
+        struct refcount_struct r13;
+        refcount_set(&r13, 2);
+        refcount_dec(&r13);
+        TEST("refcount_dec: 2→1 (no saturation)", refcount_read(&r13) == 1);
+    }
+
+    /* 25. refcount_dec from value=1 (saturates to REFCOUNT_SATURATED) */
+    {
+        struct refcount_struct r14;
+        refcount_set(&r14, 1);
+        refcount_dec(&r14);
+        TEST("refcount_dec: 1→0→S (saturates)",
+             refcount_read(&r14) == REFCOUNT_SATURATED);
+    }
+
+    /* 26. refcount_sub_and_test with i=5 from value=5 (exactly zero) */
+    {
+        struct refcount_struct r15;
+        refcount_set(&r15, 5);
+        int t = refcount_sub_and_test(&r15, 5);
+        TEST("refcount_sub_and_test: 5-5=0 returns 1", t == 1);
+        TEST("refcount_sub_and_test: value 0 after 5-5", refcount_read(&r15) == 0);
+    }
+
+    /* 27. Interleaved inc_not_zero and dec */
+    {
+        struct refcount_struct r16;
+        refcount_set(&r16, 2);
+        int rnz = refcount_inc_not_zero(&r16);  /* 2→3 */
+        TEST("inc_not_zero+dec: inc_not_zero returns 1", rnz == 1);
+        refcount_dec(&r16);  /* 3→2 */
+        refcount_dec(&r16);  /* 2→1 */
+        TEST("inc_not_zero+dec: final value 1", refcount_read(&r16) == 1);
+    }
 }
 
 /* ===================================================================

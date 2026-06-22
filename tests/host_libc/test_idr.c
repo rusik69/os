@@ -23,6 +23,7 @@ extern int idr_init(struct idr *idr, int max);
 extern int idr_alloc(struct idr *idr);
 extern void idr_remove(struct idr *idr, int id);
 extern int idr_find(struct idr *idr, int id);
+extern int idr_destroy(void *idr);
 
 /* ===================================================================
  *  Stubs (stubs.o provides kmalloc/kfree)
@@ -211,6 +212,68 @@ static void test_idr_boundary(void)
 }
 
 /* ===================================================================
+ *  test_idr_advanced — more edge cases
+ * =================================================================== */
+static void test_idr_advanced(void)
+{
+    struct idr idr;
+
+    /* 1. idr_alloc with NULL idr */
+    TEST("idr_advanced: alloc NULL returns -1", idr_alloc(NULL) == -1);
+
+    /* 2. idr_find on empty IDR */
+    idr_init(&idr, 64);
+    TEST("idr_advanced: find on empty returns 0", !idr_find(&idr, 0));
+    TEST("idr_advanced: find on empty id=63", !idr_find(&idr, 63));
+
+    /* 3. idr_remove of non-existent IDs (no crash) */
+    idr_remove(&idr, 50);
+    TEST("idr_advanced: remove non-existent no crash", 1);
+    idr_remove(&idr, -1);
+    TEST("idr_advanced: remove -1 no crash", 1);
+    idr_remove(&idr, 64);
+    TEST("idr_advanced: remove >= max no crash", 1);
+
+    /* 4. idr_find with out-of-range IDs */
+    TEST("idr_advanced: find id >= max", !idr_find(&idr, 64));
+    TEST("idr_advanced: find negative id", !idr_find(&idr, -5));
+
+    /* 5. Fill entire IDR, remove some, verify re-use pattern */
+    for (int i = 0; i < 64; i++) idr_alloc(&idr);
+    TEST("idr_advanced: full returns -1", idr_alloc(&idr) == -1);
+    idr_remove(&idr, 10);
+    idr_remove(&idr, 20);
+    idr_remove(&idr, 30);
+    TEST("idr_advanced: removed 10 not found", !idr_find(&idr, 10));
+    TEST("idr_advanced: removed 20 not found", !idr_find(&idr, 20));
+    TEST("idr_advanced: removed 30 not found", !idr_find(&idr, 30));
+    TEST("idr_advanced: still-allocated 0 found", idr_find(&idr, 0));
+
+    /* Re-alloc should return lowest free: 10 */
+    int new_id = idr_alloc(&idr);
+    TEST("idr_advanced: reuses lowest free ID", new_id == 10);
+
+    /* Remove last ID (63) — next alloc returns 20 (next lowest free) */
+    idr_remove(&idr, 63);
+    TEST("idr_advanced: reuses freed 20 next", idr_alloc(&idr) == 20);
+
+    /* 6. Non-word-aligned max (200) */
+    struct idr idr2;
+    idr_init(&idr2, 200);
+    int all_ok = 1;
+    for (int i = 0; i < 200; i++) {
+        if (idr_alloc(&idr2) != i) { all_ok = 0; break; }
+    }
+    TEST("idr_advanced: max=200 sequential", all_ok);
+    TEST("idr_advanced: max=200 full", idr_alloc(&idr2) == -1);
+    idr_remove(&idr2, 0);
+    TEST("idr_advanced: max=200 reuses 0", idr_alloc(&idr2) == 0);
+
+    idr_destroy(&idr);
+    idr_destroy(&idr2);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -228,6 +291,9 @@ int main(void)
 
     printf("\n--- Boundary ---\n");
     test_idr_boundary();
+
+    printf("\n--- Advanced ---\n");
+    test_idr_advanced();
 
     printf("\n");
     printf("============================================\n");

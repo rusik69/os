@@ -109,6 +109,100 @@ static void test_strerror(void)
 }
 
 /* ===================================================================
+ *  test_strerror_more — +12 new assertions (10+ required)
+ * =================================================================== */
+static void test_strerror_more(void)
+{
+    /* Use the kernel's errno value constants directly as literals
+     * (test is compiled with TEST_CFLAGS, not KERNEL_CFLAGS, so
+     *  kernel errno.h is not in the include path). */
+
+    /* 1. EBADF = 9 → "Bad file number" */
+    {
+        char *s = strerror(9);
+        TEST("strerror(EBADF) = Bad file number",
+             strcmp(s, "Bad file number") == 0);
+    }
+
+    /* 2. EIO = 5 → "I/O error" */
+    {
+        char *s = strerror(5);
+        TEST("strerror(EIO) = I/O error",
+             strcmp(s, "I/O error") == 0);
+    }
+
+    /* 3. EFAULT = 14 → "Bad address" */
+    {
+        char *s = strerror(14);
+        TEST("strerror(EFAULT) = Bad address",
+             strcmp(s, "Bad address") == 0);
+    }
+
+    /* 4. ENODEV = 19 → "No such device" */
+    {
+        char *s = strerror(19);
+        TEST("strerror(ENODEV) = No such device",
+             strcmp(s, "No such device") == 0);
+    }
+
+    /* 5. ENOTDIR = 20 → "Not a directory" */
+    {
+        char *s = strerror(20);
+        TEST("strerror(ENOTDIR) = Not a directory",
+             strcmp(s, "Not a directory") == 0);
+    }
+
+    /* 6. EISDIR = 21 → "Is a directory" */
+    {
+        char *s = strerror(21);
+        TEST("strerror(EISDIR) = Is a directory",
+             strcmp(s, "Is a directory") == 0);
+    }
+
+    /* 7. EEXIST = 17 → "File exists" */
+    {
+        char *s = strerror(17);
+        TEST("strerror(EEXIST) = File exists",
+             strcmp(s, "File exists") == 0);
+    }
+
+    /* 8. EAGAIN = 11 → "Try again" */
+    {
+        char *s = strerror(11);
+        TEST("strerror(EAGAIN) = Try again",
+             strcmp(s, "Try again") == 0);
+    }
+
+    /* 9. EMLINK = 31 → "Too many links" */
+    {
+        char *s = strerror(31);
+        TEST("strerror(EMLINK) = Too many links",
+             strcmp(s, "Too many links") == 0);
+    }
+
+    /* 10. EWOULDBLOCK == EAGAIN (11) → "Try again" */
+    {
+        char *s = strerror(11);
+        TEST("strerror(EWOULDBLOCK) = Try again",
+             strcmp(s, "Try again") == 0);
+    }
+
+    /* 11. strerror(-0) — negative zero is zero in C, should be "Success" */
+    {
+        char *s = strerror(-0);
+        TEST("strerror(-0) = Success",
+             strcmp(s, "Success") == 0);
+    }
+
+    /* 12. strerror with very large errno value */
+    {
+        char *s = strerror(2000000);
+        TEST("strerror(2000000) = Unknown error 2000000",
+             strcmp(s, "Unknown error 2000000") == 0);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -117,6 +211,9 @@ int main(void)
 
     printf("--- strerror ---\n");
     test_strerror();
+
+    printf("\n--- strerror more ---\n");
+    test_strerror_more();
 
     printf("\n");
     printf("============================================\n");

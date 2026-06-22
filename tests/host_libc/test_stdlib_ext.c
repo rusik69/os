@@ -268,6 +268,65 @@ static void test_calloc(void)
 }
 
 /* ===================================================================
+ *  Comparison helpers (for system bsearch/qsort)
+ * =================================================================== */
+static int cmp_int_asc(const void *a, const void *b) {
+    int x = *(const int *)a, y = *(const int *)b;
+    return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+/* ===================================================================
+ *  test_extra_stdlib — additional edge case tests
+ * =================================================================== */
+static void test_extra_stdlib(void)
+{
+    char *ep;
+
+    /* strtol edge cases (system libc) */
+    TEST("strtol: just '+' returns 0", strtol("+", &ep, 10) == 0);
+    TEST("strtol: just '-' returns 0", strtol("-", &ep, 10) == 0);
+    TEST("strtol: just '0x' prefix returns 0", strtol("0x", &ep, 0) == 0);
+    TEST("strtol: just '0X' prefix returns 0", strtol("0X", &ep, 0) == 0);
+    TEST("strtol: large overflow clamps", strtol("999999999999999999999", &ep, 10) > 0);
+
+    /* atoi with various values */
+    TEST("atoi: positive", atoi("42") == 42);
+    TEST("atoi: negative", atoi("-42") == -42);
+    TEST("atoi: zero", atoi("0") == 0);
+    TEST("atoi: leading plus", atoi("+99") == 99);
+
+    /* strdup with empty and non-empty strings */
+    char *s1 = strdup("");
+    TEST("strdup: empty string non-null", s1 != NULL);
+    if (s1) TEST("strdup: empty string length 0", strlen(s1) == 0);
+    free(s1);
+
+    char *s2 = strdup("hello, world");
+    TEST("strdup: non-empty non-null", s2 != NULL);
+    if (s2) TEST("strdup: copies content correctly", strcmp(s2, "hello, world") == 0);
+    free(s2);
+
+    /* bsearch with duplicate elements */
+    int bs_arr[] = { 1, 2, 2, 2, 3, 4, 5 };
+    int bs_k = 2;
+    int *bs_r = (int *)bsearch(&bs_k, bs_arr, 7, sizeof(int), cmp_int_asc);
+    TEST("bsearch: finds element in duplicated array", bs_r && *bs_r == 2);
+
+    int bs_k_miss = 6;
+    int *bs_r_miss = (int *)bsearch(&bs_k_miss, bs_arr, 7, sizeof(int), cmp_int_asc);
+    TEST("bsearch: missing element returns NULL", bs_r_miss == NULL);
+
+    /* bsearch edge cases: first and last elements */
+    int bs_k_first = 1;
+    int *bs_r_first = (int *)bsearch(&bs_k_first, bs_arr, 7, sizeof(int), cmp_int_asc);
+    TEST("bsearch: finds first element", bs_r_first && *bs_r_first == 1);
+
+    int bs_k_last = 5;
+    int *bs_r_last = (int *)bsearch(&bs_k_last, bs_arr, 7, sizeof(int), cmp_int_asc);
+    TEST("bsearch: finds last element", bs_r_last && *bs_r_last == 5);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -291,6 +350,9 @@ int main(void)
 
     printf("\n--- calloc ---\n");
     test_calloc();
+
+    printf("\n--- extras ---\n");
+    test_extra_stdlib();
 
     printf("\n");
     printf("============================================\n");

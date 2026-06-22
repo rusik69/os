@@ -102,6 +102,48 @@ static void test_crc16(void)
     /* 11. CRC16 of repeated byte differs from single byte */
     uint16_t csingle = crc16(0, "A", 1);
     TEST("crc16: 256 A's != 1 A", cbig != csingle);
+
+    /* 12. CRC-16 large buffer (1KB) produces non-zero */
+    char buf1k[1024];
+    memset(buf1k, 'B', 1024);
+    uint16_t c1k = crc16(0, buf1k, 1024);
+    TEST("crc16: 1KB buffer non-zero", c1k != 0);
+
+    /* 13. CRC-16 alternating pattern 0xAA, 0x55 */
+    char alt[32];
+    for (int i = 0; i < 32; i++) alt[i] = (char)((i % 2) ? 0x55 : 0xAA);
+    uint16_t calt = crc16(0, alt, 32);
+    TEST("crc16: alternating 0xAA,0x55 non-zero", calt != 0);
+    /* Different from uniform 0xAA */
+    char aa32[32];
+    memset(aa32, 0xAA, 32);
+    uint16_t caa32 = crc16(0, aa32, 32);
+    TEST("crc16: alternating != uniform 0xAA", calt != caa32);
+
+    /* 14. CRC-16 all-0xFF buffer (1KB) */
+    char ff1k[1024];
+    memset(ff1k, 0xFF, 1024);
+    uint16_t cff1k = crc16(0, ff1k, 1024);
+    TEST("crc16: 1KB all-0xFF non-zero", cff1k != 0);
+
+    /* 15. CRC-16 all-0x00 buffer (1KB) */
+    char zeros1k[1024];
+    memset(zeros1k, 0, 1024);
+    uint16_t cz1k = crc16(0, zeros1k, 1024);
+    TEST("crc16: 1KB all-zeros = 0x0000", cz1k == 0x0000);
+
+    /* 16. CRC-16 incremental across 4 calls equals single-pass */
+    uint16_t inc4 = 0;
+    inc4 = crc16(inc4, "AB", 2);
+    inc4 = crc16(inc4, "CDE", 3);
+    inc4 = crc16(inc4, "FG", 2);
+    inc4 = crc16(inc4, "HIJKL", 5);
+    uint16_t single4 = crc16(0, "ABCDEFGHIJKL", 12);
+    TEST("crc16: 4-call incremental matches single", inc4 == single4);
+
+    /* 17. CRC-16 null data with len=0 returns seed=0xFFFF unmodified */
+    uint16_t cnull_ffff = crc16(0xFFFF, NULL, 0);
+    TEST("crc16: NULL len=0 preserves seed 0xFFFF", cnull_ffff == 0xFFFF);
 }
 
 /* ===================================================================
@@ -144,6 +186,28 @@ static void test_crc16_byte(void)
     uint16_t c01 = crc16_byte(0, 0x01);
     TEST("crc16_byte: 0x01 produces non-zero", c01 != 0);
     TEST("crc16_byte: 0x01 != 0x80", c01 != c80);
+
+    /* 8. CRC-16_byte of 0xFF produces non-zero */
+    uint16_t cff = crc16_byte(0, 0xFF);
+    TEST("crc16_byte: 0xFF non-zero", cff != 0);
+    TEST("crc16_byte: 0xFF != 0x00", cff != cz);
+
+    /* 9. CRC-16_byte of 0xAA produces non-zero */
+    uint16_t caa = crc16_byte(0, 0xAA);
+    TEST("crc16_byte: 0xAA non-zero", caa != 0);
+
+    /* 10. CRC-16_byte of 0x55 produces non-zero */
+    uint16_t c55 = crc16_byte(0, 0x55);
+    TEST("crc16_byte: 0x55 non-zero", c55 != 0);
+    TEST("crc16_byte: 0xAA != 0x55", caa != c55);
+
+    /* 11. CRC-16_byte chaining across 10 bytes matches CRC-16 of those 10 bytes */
+    const char *chain_msg = "ChainMsg10";
+    uint16_t chain_cum = 0;
+    for (size_t i = 0; i < strlen(chain_msg); i++)
+        chain_cum = crc16_byte(chain_cum, (uint8_t)chain_msg[i]);
+    uint16_t chain_bulk = crc16(0, chain_msg, strlen(chain_msg));
+    TEST("crc16_byte: 10-byte chain matches crc16", chain_cum == chain_bulk);
 }
 
 /* ===================================================================

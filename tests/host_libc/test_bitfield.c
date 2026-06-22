@@ -147,9 +147,89 @@ static void test_field_prep(void)
     TEST("FIELD_PREP(GENMASK(7,0), 0) == 0",
          FIELD_PREP(GENMASK(7, 0), 0) == 0);
 
-    /* 6. FIELD_PREP + FIELD_GET roundtrip */
+    /* 6. FIELD_GET + FIELD_PREP roundtrip */
     TEST("FIELD_GET + FIELD_PREP roundtrip",
          FIELD_GET(GENMASK(15, 8), FIELD_PREP(GENMASK(15, 8), 0x42)) == 0x42);
+}
+
+/* ===================================================================
+ *  test_more_edge_cases — +15 new assertions
+ * =================================================================== */
+static void test_more_edge_cases(void)
+{
+    /* --- Additional GENMASK edge cases --- */
+
+    /* 1. GENMASK with h == l (single-bit, non-zero shift) */
+    TEST("GENMASK(5,5) == BIT(5)",
+         GENMASK(5, 5) == BIT(5));
+
+    /* 2. Another single-bit GENMASK */
+    TEST("GENMASK(1,1) == BIT(1)",
+         GENMASK(1, 1) == BIT(1));
+
+    /* 3. GENMASK with wide range */
+    TEST("GENMASK(10,0) == 0x7FF",
+         GENMASK(10, 0) == 0x7FFULL);
+
+    /* --- Additional FIELD_GET edge cases --- */
+
+    /* 4. FIELD_GET with full 64-bit mask extracts all bits */
+    TEST("FIELD_GET(GENMASK(63,0), ~0ULL) == ~0ULL",
+         FIELD_GET(GENMASK(63, 0), ~0ULL) == ~0ULL);
+
+    /* 5. FIELD_GET single bit at position 3 */
+    TEST("FIELD_GET(GENMASK(3,3), 0x8) == 1",
+         FIELD_GET(GENMASK(3, 3), 0x8ULL) == 1);
+
+    /* 6. FIELD_GET single bit at high position 62 */
+    TEST("FIELD_GET(GENMASK(62,62), BIT(62)) == 1",
+         FIELD_GET(GENMASK(62, 62), BIT(62)) == 1);
+
+    /* 7. FIELD_GET all bits set in a multi-bit range */
+    TEST("FIELD_GET(GENMASK(10,5), 0x7E0) == 0x3F",
+         FIELD_GET(GENMASK(10, 5), 0x7E0ULL) == 0x3F);
+
+    /* --- Additional FIELD_PREP edge cases --- */
+
+    /* 8. FIELD_PREP value wider than mask width — truncated to mask */
+    TEST("FIELD_PREP(GENMASK(3,0), 0xFF) == 0xF",
+         FIELD_PREP(GENMASK(3, 0), 0xFF) == 0xF);
+
+    /* 9. FIELD_PREP truncation with shifted mask */
+    TEST("FIELD_PREP(GENMASK(7,4), 0xFF) == 0xF0",
+         FIELD_PREP(GENMASK(7, 4), 0xFF) == 0xF0);
+
+    /* 10. Combining two FIELD_PREP values into a single word */
+    TEST("FIELD_PREP(lower) | FIELD_PREP(upper) == 0x5A",
+         (FIELD_PREP(GENMASK(3, 0), 0xA) | FIELD_PREP(GENMASK(7, 4), 0x5)) == 0x5A);
+
+    /* 11. FIELD_GET on the upper half of the combined word */
+    {
+        uint64_t combined = FIELD_PREP(GENMASK(3, 0), 0xA)
+                          | FIELD_PREP(GENMASK(7, 4), 0x5);
+        TEST("FIELD_GET(upper nibble) from combined 0x5A == 0x5",
+             FIELD_GET(GENMASK(7, 4), combined) == 0x5);
+    }
+
+    /* 12. FIELD_GET on the lower half of the combined word */
+    {
+        uint64_t combined = FIELD_PREP(GENMASK(3, 0), 0xA)
+                          | FIELD_PREP(GENMASK(7, 4), 0x5);
+        TEST("FIELD_GET(lower nibble) from combined 0x5A == 0xA",
+             FIELD_GET(GENMASK(3, 0), combined) == 0xA);
+    }
+
+    /* 13. FIELD_PREP exact fit — value fills mask exactly */
+    TEST("FIELD_PREP(GENMASK(15,0), 0xABCD) == 0xABCD",
+         FIELD_PREP(GENMASK(15, 0), 0xABCD) == 0xABCD);
+
+    /* 14. FIELD_PREP with single-bit mask (BIT(0)) */
+    TEST("FIELD_PREP(GENMASK(0,0), 1) == BIT(0)",
+         FIELD_PREP(GENMASK(0, 0), 1) == BIT(0));
+
+    /* 15. Full roundtrip: FIELD_PREP high 32 bits then FIELD_GET them back */
+    TEST("FIELD_GET/FIELD_PREP roundtrip high 32 bits",
+         FIELD_GET(GENMASK(63, 32), FIELD_PREP(GENMASK(63, 32), 0xDEADBEEFULL)) == 0xDEADBEEFULL);
 }
 
 /* ===================================================================
@@ -170,6 +250,9 @@ int main(void)
 
     printf("\n--- FIELD_PREP() ---\n");
     test_field_prep();
+
+    printf("\n--- More Edge Cases ---\n");
+    test_more_edge_cases();
 
     printf("\n");
     printf("============================================\n");

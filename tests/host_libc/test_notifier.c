@@ -227,6 +227,87 @@ static void test_notifier(void)
     /* Verify nb_self may or may not still be in chain (depends on kernel impl) */
     r = notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_self);
     notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_after);
+
+    /* 16. Register type validation edge cases */
+    {
+        struct notifier_block nb_tmp = { .notifier_call = test_callback, .next = NULL };
+        r = notifier_chain_register(-1, &nb_tmp);
+        TEST("notifier_chain_register: type=-1 returns -1", r == -1);
+        r = notifier_chain_register(NOTIFIER_MAX, &nb_tmp);
+        TEST("notifier_chain_register: type=NOTIFIER_MAX returns -1", r == -1);
+    }
+
+    /* 17. Call chain on CPU_HP type with proper value/data */
+    {
+        struct notifier_block nb_cpu = { .notifier_call = test_callback, .next = NULL };
+        notifier_chain_register(NOTIFIER_CPU_HP, &nb_cpu);
+        int val = 777;
+        callback_count = 0;
+        r = notifier_call_chain(NOTIFIER_CPU_HP, 888, &val);
+        TEST("notifier_call_chain: CPU_HP fires once", callback_count == 1);
+        TEST("notifier_call_chain: CPU_HP passes value", last_val == 888);
+        TEST("notifier_call_chain: CPU_HP passes data", last_data == &val);
+        notifier_chain_unregister(NOTIFIER_CPU_HP, &nb_cpu);
+    }
+
+    /* 18. Unregister non-existent from wrong type */
+    {
+        struct notifier_block nb_wt = { .notifier_call = test_callback, .next = NULL };
+        notifier_chain_register(NOTIFIER_PANIC, &nb_wt);
+        r = notifier_chain_unregister(NOTIFIER_DIE, &nb_wt);
+        TEST("notifier_chain_unregister: different type returns -1", r == -1);
+        notifier_chain_unregister(NOTIFIER_PANIC, &nb_wt);
+    }
+
+    /* 19. Two bad callbacks: both fire, return last NOTIFY_BAD */
+    {
+        struct notifier_block nb_b1 = { .notifier_call = test_callback_bad, .next = NULL };
+        struct notifier_block nb_b2 = { .notifier_call = test_callback_bad, .next = NULL };
+        notifier_chain_register(NOTIFIER_NET_EVENT, &nb_b1);
+        notifier_chain_register(NOTIFIER_NET_EVENT, &nb_b2);
+        callback_count = 0;
+        r = notifier_call_chain(NOTIFIER_NET_EVENT, 0, NULL);
+        /* nb_b2 registered last (LIFO), fires first → +100, then nb_b1 → +100 = 200 */
+        TEST("notifier_call_chain: two bad callbacks both fire", callback_count == 200);
+        TEST("notifier_call_chain: returns last callback's NOTIFY_BAD", r == NOTIFY_BAD);
+        notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_b1);
+        notifier_chain_unregister(NOTIFIER_NET_EVENT, &nb_b2);
+    }
+
+    /* 20. Register same callback block on two different types */
+    {
+        struct notifier_block nb_shared = { .notifier_call = test_callback2, .next = NULL };
+        notifier_chain_register(NOTIFIER_PANIC, &nb_shared);
+        notifier_chain_register(NOTIFIER_DIE, &nb_shared);
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_PANIC, 0, NULL);
+        TEST("notifier_call_chain: shared on PANIC fires (callback2 +10)",
+             callback_count == 10);
+        callback_count = 0;
+        notifier_call_chain(NOTIFIER_DIE, 0, NULL);
+        TEST("notifier_call_chain: shared on DIE fires (callback2 +10)",
+             callback_count == 10);
+        notifier_chain_unregister(NOTIFIER_PANIC, &nb_shared);
+        notifier_chain_unregister(NOTIFIER_DIE, &nb_shared);
+    }
+
+    /* 21. Register after failed unregister still works */
+    {
+        struct notifier_block nb_fail = { .notifier_call = test_callback, .next = NULL };
+        r = notifier_chain_unregister(NOTIFIER_PANIC, &nb_fail);
+        TEST("notifier_chain_unregister: never-registered returns -1", r == -1);
+        r = notifier_chain_register(NOTIFIER_PANIC, &nb_fail);
+        TEST("notifier_chain_register: after failed unreg returns 0", r == 0);
+        notifier_chain_unregister(NOTIFIER_PANIC, &nb_fail);
+    }
+
+    /* 22. notifier_call_chain with invalid type quietly returns 0 */
+    {
+        r = notifier_call_chain(-1, 0, NULL);
+        TEST("notifier_call_chain: type=-1 returns 0", r == 0);
+        r = notifier_call_chain(NOTIFIER_MAX, 0, NULL);
+        TEST("notifier_call_chain: type=NOTIFIER_MAX returns 0", r == 0);
+    }
 }
 
 /* ===================================================================
