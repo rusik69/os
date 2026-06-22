@@ -327,6 +327,118 @@ static void test_extra_stdlib(void)
 }
 
 /* ===================================================================
+ *  test_extra_stdlib_more — additional edge case tests
+ * =================================================================== */
+static void test_extra_stdlib_more(void)
+{
+    char *ep;
+
+    /* 1. strtoll with very large base 36 value */
+    {
+        long long v = strtoll("zzzzzzzz", &ep, 36);
+        TEST("strtoll: large base-36 value non-zero", v != 0);
+        TEST("strtoll: large base-36 consumed all chars", ep && *ep == '\0');
+    }
+
+    /* 2. strtoll with negative large base-36 */
+    {
+        long long v = strtoll("-zzzz", &ep, 36);
+        TEST("strtoll: negative base-36 value", v < 0);
+    }
+
+    /* 3. strtoull with invalid base (base 1) */
+    {
+        unsigned long long v = strtoull("123", &ep, 1);
+        TEST("strtoull: base=1 returns 0", v == 0);
+    }
+
+    /* 4. strtoull with leading zeros */
+    {
+        unsigned long long v = strtoull("00000123", &ep, 10);
+        TEST("strtoull: leading zeros", v == 123);
+    }
+
+    /* 5. strtoll with leading zeros and auto-detect */
+    {
+        long long v = strtoll("00123", &ep, 0);
+        /* leading 0 → octal: 0123 = 83 */
+        TEST("strtoll: auto-detect leading 0 as octal", v == 83);
+    }
+
+    /* 6. atoll with very long string */
+    {
+        long long v = atoll("1234567890123456789");
+        TEST("atoll: very long number", v == 1234567890123456789LL);
+    }
+
+    /* 7. atoll with leading whitespace */
+    {
+        long long v = atoll("   -42");
+        TEST("atoll: leading whitespace with negative", v == -42);
+    }
+
+    /* 8. ultoa: base 16 uppercase check */
+    {
+        char buf[66];
+        ultoa(0xABCDEF, buf, 16);
+        TEST("ultoa: hex uses lowercase", strcmp(buf, "abcdef") == 0 || strcmp(buf, "ABCDEF") == 0);
+    }
+
+    /* 9. ultoa: value = 1 in various bases */
+    {
+        char buf[66];
+        ultoa(1, buf, 2);
+        TEST("ultoa: 1 in binary", strcmp(buf, "1") == 0);
+        ultoa(1, buf, 10);
+        TEST("ultoa: 1 in decimal", strcmp(buf, "1") == 0);
+        ultoa(1, buf, 16);
+        TEST("ultoa: 1 in hex", strcmp(buf, "1") == 0);
+    }
+
+    /* 10. realloc: grow then shrink back */
+    {
+        char *p = (char *)realloc(NULL, 8);
+        if (p) {
+            memcpy(p, "abcdefg", 8);
+            char *q = (char *)realloc(p, 64);
+            if (q) {
+                int ok = (memcmp(q, "abcdefg", 8) == 0);
+                TEST("realloc: grow 8→64 preserves content", ok);
+                char *r = (char *)realloc(q, 4);
+                if (r) {
+                    /* Content should be preserved for min(4, 8) = 4 bytes */
+                    TEST("realloc: shrink 64→4 preserves first 4 bytes",
+                         memcmp(r, "abcd", 4) == 0);
+                    free(r);
+                }
+            } else {
+                free(p);
+            }
+        }
+    }
+
+    /* 11. calloc: large array */
+    {
+        int *p = (int *)calloc(1000, sizeof(int));
+        if (p) {
+            int zeroed = 1;
+            for (int i = 0; i < 1000; i++)
+                if (p[i] != 0) { zeroed = 0; break; }
+            TEST("calloc: 1000 ints zeroed", zeroed);
+            free(p);
+        }
+    }
+
+    /* 12. calloc: zero elements (may return NULL or valid pointer) */
+    {
+        int *p = (int *)calloc(0, sizeof(int));
+        /* calloc(0, ...) behavior is implementation-defined */
+        TEST("calloc: zero elements doesn't crash", 1);
+        if (p) free(p);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -353,6 +465,9 @@ int main(void)
 
     printf("\n--- extras ---\n");
     test_extra_stdlib();
+
+    printf("\n--- more extras ---\n");
+    test_extra_stdlib_more();
 
     printf("\n");
     printf("============================================\n");

@@ -144,6 +144,55 @@ static void test_crc16(void)
     /* 17. CRC-16 null data with len=0 returns seed=0xFFFF unmodified */
     uint16_t cnull_ffff = crc16(0xFFFF, NULL, 0);
     TEST("crc16: NULL len=0 preserves seed 0xFFFF", cnull_ffff == 0xFFFF);
+
+    /* 18. CRC-16 of single byte with non-zero seed */
+    uint16_t c_seed_A = crc16(0xAAAA, "A", 1);
+    TEST("crc16: non-zero seed with data works", c_seed_A != 0xAAAA);
+
+    /* 19. CRC-16 incremental across odd lengths */
+    uint16_t inc_odd = 0;
+    inc_odd = crc16(inc_odd, "abc", 3);
+    inc_odd = crc16(inc_odd, "de", 2);
+    inc_odd = crc16(inc_odd, "fghij", 5);
+    uint16_t bulk_odd = crc16(0, "abcdefghij", 10);
+    TEST("crc16: 3+2+5 incremental matches single 10-byte", inc_odd == bulk_odd);
+
+    /* 20. CRC-16 of 512-byte buffer */
+    char big512[512];
+    memset(big512, 'Z', 512);
+    uint16_t c512 = crc16(0, big512, 512);
+    TEST("crc16: 512-byte buffer non-zero", c512 != 0);
+
+    /* 21. CRC-16 deterministic: same data twice */
+    uint16_t c_det1 = crc16(0, "deterministic", 13);
+    uint16_t c_det2 = crc16(0, "deterministic", 13);
+    TEST("crc16: deterministic produces same result", c_det1 == c_det2);
+}
+
+/* ===================================================================
+ *  test_crc16_seeded — tests with specific seeds
+ * =================================================================== */
+static void test_crc16_seeded(void)
+{
+    printf("\n[crc16 seeded]\n");
+
+    /* 1. Seed=0xFFFF with empty buffer */
+    uint16_t c = crc16(0xFFFF, "", 0);
+    TEST("crc16(0xFFFF, '') == 0xFFFF", c == 0xFFFF);
+
+    /* 2. Seed=0xFFFF with data */
+    c = crc16(0xFFFF, "123456789", 9);
+    TEST("crc16(0xFFFF, '123456789') != crc16(0, ...)", c != 0x31C3);
+
+    /* 3. Seed=0x0000 with empty buffer */
+    c = crc16(0x0000, "", 0);
+    TEST("crc16(0, '') == 0", c == 0x0000);
+
+    /* 4. Chain: seed -> update -> update: matches direct */
+    uint16_t c1 = crc16(0xFFFF, "AB", 2);
+    uint16_t c2 = crc16(c1, "CD", 2);
+    uint16_t c_direct = crc16(0xFFFF, "ABCD", 4);
+    TEST("crc16: chained with 0xFFFF seed matches direct", c2 == c_direct);
 }
 
 /* ===================================================================
@@ -208,6 +257,16 @@ static void test_crc16_byte(void)
         chain_cum = crc16_byte(chain_cum, (uint8_t)chain_msg[i]);
     uint16_t chain_bulk = crc16(0, chain_msg, strlen(chain_msg));
     TEST("crc16_byte: 10-byte chain matches crc16", chain_cum == chain_bulk);
+
+    /* 11. CRC-16_byte of 0x00 with non-zero seed */
+    uint16_t cz_seed = crc16_byte(0x8000, 0);
+    TEST("crc16_byte: 0x00 with seed 0x8000", cz_seed != 0);
+
+    /* 12. CRC-16_byte of 0xFF with non-zero seed */
+    uint16_t cff_seed = crc16_byte(0x8000, 0xFF);
+    TEST("crc16_byte: 0xFF with seed 0x8000", cff_seed != 0);
+    TEST("crc16_byte: 0xFF with seed != 0xFF without seed",
+         cff_seed != crc16_byte(0, 0xFF));
 }
 
 /* ===================================================================
@@ -250,11 +309,14 @@ int main(void)
     printf("\n--- crc16_byte ---\n");
     test_crc16_byte();
 
-    printf("\n--- Known Vectors ---\n");
+    printf("\\n--- Known Vectors ---\\n");
     test_crc16_known_vectors();
 
-    printf("\n");
-    printf("============================================\n");
+    printf("\\n--- crc16_seeded ---\\n");
+    test_crc16_seeded();
+
+    printf("\\n");
+    printf("============================================\\n");
     printf("  Results: %d run, %d passed, %d failed\n",
            tests_passed + tests_failed, tests_passed, tests_failed);
     printf("============================================\n");

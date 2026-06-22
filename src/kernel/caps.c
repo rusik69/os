@@ -123,77 +123,309 @@ struct task_struct;
 struct linux_binprm;
 struct mm_struct;
 
-/* ── Stub: cap_capget ─────────────────────────────── */
+/* ── cap_capget ─────────────────────────────────────────────────────── */
+/*
+ * Get the capability sets of a target process.
+ * Returns 0 on success, -EINVAL on invalid parameters.
+ */
 int cap_capget(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
 {
-    (void)target;
-    (void)effective;
-    (void)inheritable;
-    (void)permitted;
-    kprintf("[caps] cap_capget: not yet implemented\n");
+    if (!target)
+        return -EINVAL;
+
+    struct process *proc = (struct process *)target;
+
+    if (effective)
+        *effective = proc->cap_effective[0];
+    if (inheritable)
+        *inheritable = proc->cap_inheritable[0];
+    if (permitted)
+        *permitted = proc->cap_permitted[0];
+
     return 0;
 }
 
-/* ── Stub: cap_capset ─────────────────────────────── */
+/* ── cap_capset ─────────────────────────────────────────────────────── */
+/*
+ * Set the capability sets of a target process.
+ * Requires CAP_SETPCAP in the caller's effective set.
+ * Returns 0 on success, -EPERM/‑EINVAL on error.
+ */
 int cap_capset(struct task_struct *target, uint64_t *effective, uint64_t *inheritable, uint64_t *permitted)
 {
-    (void)target;
-    (void)effective;
-    (void)inheritable;
-    (void)permitted;
-    kprintf("[caps] cap_capset: not yet implemented\n");
+    if (!target)
+        return -EINVAL;
+
+    struct process *proc = (struct process *)target;
+    struct process *caller = process_get_current();
+
+    /* Only root/CAP_SETPCAP can set capabilities on other processes */
+    if (!caller)
+        return -EPERM;
+
+    /* Check if caller has CAP_SETPCAP */
+    int word = CAP_SETPCAP / 64;
+    int bit  = CAP_SETPCAP % 64;
+    if (word < PROCESS_SYSCALL_CAP_WORDS &&
+        !(caller->syscall_caps[word] & (1ULL << bit))) {
+        return -EPERM;
+    }
+
+    /* Can only set caps that are in the caller's permitted set
+     * AND in the system-wide bounding set */
+    if (effective) {
+        uint64_t new_eff = *effective;
+        /* Cannot add caps not in permitted set */
+        if ((new_eff & ~proc->cap_permitted[0]) != 0)
+            return -EPERM;
+        proc->cap_effective[0] = new_eff;
+    }
+
+    if (inheritable) {
+        proc->cap_inheritable[0] = *inheritable;
+    }
+
+    if (permitted) {
+        uint64_t new_perm = *permitted;
+        /* Cannot exceed system-wide bounding set */
+        new_perm &= sys_cap_bset[0];
+        proc->cap_permitted[0] = new_perm;
+    }
+
     return 0;
 }
 
-/* ── Stub: cap_bprm_set_creds ─────────────────────────────── */
+/* ── cap_bprm_set_creds ─────────────────────────────────────────────── */
+/*
+ * Set credentials during exec. Computes the new capability sets
+ * based on the binary's file capabilities and the current process's
+ * inheritable/bset/securebits.
+ *
+ * Returns 0 on success, negative on error.
+ */
 int cap_bprm_set_creds(struct linux_binprm *bprm)
 {
-    (void)bprm;
-    kprintf("[caps] cap_bprm_set_creds: not yet implemented\n");
+    if (!bprm)
+        return -EINVAL;
+
+    struct process *p = process_get_current();
+    if (!p)
+        return -EPERM;
+
+    /* Apply securebits rules:
+     * If SECBIT_NO_SETUID_FIXUP is set, preserve existing effective set.
+     * Otherwise, recompute based on inheritable & permitted sets. */
+    if (!(p->securebits & SECBIT_KEEP_CAPS)) {
+        /* Clear effective set (will be recomputed) */
+        for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+            p->cap_effective[i] = 0;
+        }
+    }
+
+    /* If NOROOT is set, don't automatically grant capabilities to root */
+    if (p->securebits & SECBIT_NOROOT) {
+        /* Root does not get special treatment */
+    }
+
+    /* Apply bounding set: permitted set is ANDed with cap_bset */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+        p->cap_permitted[i] &= p->cap_bset[i];
+    }
+
+    /* Effective set = (inheritable & permitted) | (if file has caps, add file caps) */
+    for (int i = 0; i < PROCESS_SYSCALL_CAP_WORDS; i++) {
+        p->cap_effective[i] = p->cap_inheritable[i] & p->cap_permitted[i];
+    }
+
+    /* If the binary has file capabilities (setcap), they would be
+     * applied here. For now, without a full file caps implementation,
+     * we keep the computed sets. */
+
     return 0;
 }
 
-/* ── Stub: cap_task_prctl ─────────────────────────────── */
+/* ── cap_task_prctl ─────────────────────────────────────────────────── */
+/*
+ * Handle capability-related prctl operations.
+ * Supported options:
+ *   PR_SET_KEEPCAPS -> SECBIT_KEEP_CAPS
+ *   PR_GET_KEEPCAPS -> query SECBIT_KEEP_CAPS
+ *   PR_SET_SECCOMP -> seccomp mode (not strictly caps, but related)
+ *
+ * Returns 0 on success, -EINVAL for unknown options.
+ */
 int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
 {
-    (void)option;
-    (void)arg2;
-    (void)arg3;
-    kprintf("[caps] cap_task_prctl: not yet implemented\n");
-    return 0;
+    struct process *p = process_get_current();
+    if (!p)
+        return -EINVAL;
+
+    switch (option) {
+    case 1: /* PR_SET_KEEPCAPS (Linux value 1) */
+        p->securebits = (uint8_t)(arg2 ? (p->securebits | SECBIT_KEEP_CAPS)
+                                       : (p->securebits & ~SECBIT_KEEP_CAPS));
+        return 0;
+
+    case 2: /* PR_GET_KEEPCAPS (Linux value 2) */
+        return (p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0;
+
+    case 3: /* PR_SET_SECCOMP (Linux value 22 = 0x16) handled elsewhere */
+    case 22:
+        /* seccomp mode is set by the prctl handler in syscall.c */
+        return 0;
+
+    case 4: /* PR_CAPBSET_READ (Linux value 23) */
+        if (arg2 > CAP_LAST_CAP)
+            return -EINVAL;
+        return cap_bset_has((uint32_t)arg2) ? 1 : 0;
+
+    case 5: /* PR_CAPBSET_DROP (Linux value 24) */
+        if (arg2 > CAP_LAST_CAP)
+            return -EINVAL;
+        cap_bset_drop((uint32_t)arg2);
+        return 0;
+
+    case 6: /* PR_SET_SECUREBITS (Linux value 28 = 0x1c) */
+    case 28: {
+        uint8_t new_bits = (uint8_t)(arg2 & SECBIT_ALLOWED_MASK);
+        /* If locked bits are set, don't allow changing those bits */
+        if ((p->securebits & SECBIT_KEEP_CAPS_LOCKED) &&
+            ((new_bits ^ p->securebits) & SECBIT_KEEP_CAPS))
+            return -EPERM;
+        if ((p->securebits & SECBIT_NO_SETUID_FIXUP_LOCKED) &&
+            ((new_bits ^ p->securebits) & SECBIT_NO_SETUID_FIXUP))
+            return -EPERM;
+        if ((p->securebits & SECBIT_NOROOT_LOCKED) &&
+            ((new_bits ^ p->securebits) & SECBIT_NOROOT))
+            return -EPERM;
+        p->securebits = new_bits;
+        return 0;
+    }
+
+    case 7: /* PR_GET_SECUREBITS (Linux value 27 = 0x1b) */
+    case 27:
+        return p->securebits;
+
+    case 8: /* PR_SET_NO_NEW_PRIVS (Linux value 38 = 0x26) */
+    case 38:
+        p->no_new_privs = 1;
+        return 0;
+
+    case 9: /* PR_GET_NO_NEW_PRIVS (Linux value 39 = 0x27) */
+    case 39:
+        return p->no_new_privs ? 1 : 0;
+
+    default:
+        return -EINVAL;
+    }
 }
 
-/* ── Stub: cap_task_setscheduler ─────────────────────────────── */
+/* ── cap_task_setscheduler ─────────────────────────────────────────── */
+/*
+ * Check capability for setting scheduler parameters.
+ * Requires CAP_SYS_NICE.
+ */
 int cap_task_setscheduler(struct task_struct *p)
 {
-    (void)p;
-    kprintf("[caps] cap_task_setscheduler: not yet implemented\n");
-    return 0;
+    if (!p)
+        return -EINVAL;
+
+    return cap_capable_audit(CAP_SYS_NICE, "setscheduler");
 }
 
-/* ── Stub: cap_task_setioprio ─────────────────────────────── */
+/* ── cap_task_setioprio ─────────────────────────────────────────────── */
+/*
+ * Check capability for setting I/O priority.
+ * Requires CAP_SYS_ADMIN or CAP_SYS_NICE depending on target.
+ */
 int cap_task_setioprio(struct task_struct *p, int ioprio)
 {
-    (void)p;
+    if (!p)
+        return -EINVAL;
+
     (void)ioprio;
-    kprintf("[caps] cap_task_setioprio: not yet implemented\n");
-    return 0;
+
+    /* Changing I/O priority of another process needs CAP_SYS_ADMIN.
+     * Setting one's own I/O priority needs CAP_SYS_NICE. */
+    struct process *caller = process_get_current();
+    if (!caller)
+        return -EPERM;
+
+    uint32_t caller_pid = caller->pid;
+    uint32_t target_pid = ((struct process *)p)->pid;
+
+    if (caller_pid != target_pid) {
+        /* Modifying another process: need CAP_SYS_ADMIN */
+        return cap_capable_audit(CAP_SYS_ADMIN, "setioprio-other");
+    }
+
+    /* Self-modification: need CAP_SYS_NICE */
+    return cap_capable_audit(CAP_SYS_NICE, "setioprio-self");
 }
 
-/* ── Stub: cap_task_setnice ─────────────────────────────── */
+/* ── cap_task_setnice ───────────────────────────────────────────────── */
+/*
+ * Check capability for setting nice value.
+ * Requires CAP_SYS_NICE.
+ */
 int cap_task_setnice(struct task_struct *p, int nice)
 {
-    (void)p;
+    if (!p)
+        return -EINVAL;
+
     (void)nice;
-    kprintf("[caps] cap_task_setnice: not yet implemented\n");
+
+    struct process *caller = process_get_current();
+    if (!caller)
+        return -EPERM;
+
+    uint32_t caller_pid = caller->pid;
+    uint32_t target_pid = ((struct process *)p)->pid;
+
+    if (caller_pid != target_pid) {
+        /* Modifying another process's nice value: need CAP_SYS_NICE */
+        return cap_capable_audit(CAP_SYS_NICE, "setnice-other");
+    }
+
+    /* Self-modification: lowering nice (higher priority) needs CAP_SYS_NICE.
+     * Raising nice (lower priority) is always allowed. */
+    if (nice < 0 && nice < ((struct process *)p)->nice) {
+        return cap_capable_audit(CAP_SYS_NICE, "setnice-lower");
+    }
+
     return 0;
 }
 
-/* ── Stub: cap_vm_enough_memory ─────────────────────────────── */
+/* ── cap_vm_enough_memory ──────────────────────────────────────────── */
+/*
+ * Check whether a process has enough memory to fulfill a request.
+ * Returns 0 if enough memory is available (or overcommit is allowed),
+ * -ENOMEM if the allocation should be denied.
+ *
+ * CAP_SYS_ADMIN allows overcommit to always succeed.
+ */
 int cap_vm_enough_memory(struct mm_struct *mm, long pages)
 {
+    if (!mm)
+        return -EINVAL;
+
     (void)mm;
-    (void)pages;
-    kprintf("[caps] cap_vm_enough_memory: not yet implemented\n");
+
+    /* Root / CAP_SYS_ADMIN can overcommit freely */
+    if (cap_capable_audit(CAP_SYS_ADMIN, "vm_overcommit") == 0)
+        return 0;
+
+    /* Check if there's enough committed memory space */
+    uint64_t needed_bytes = (uint64_t)pages * PAGE_SIZE;
+    if (vmm_get_committed() < 0) {
+        /* Overcommit is enabled */
+        return 0;
+    }
+
+    /* Try to commit the memory */
+    if (vmm_commit(needed_bytes) < 0) {
+        return -ENOMEM;
+    }
+
     return 0;
 }

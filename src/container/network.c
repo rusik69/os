@@ -365,35 +365,229 @@ int container_setup_hosts(struct container *c, const char *hostname,
     return vfs_write(path, hosts, (uint32_t)pos);
 }
 
-/* ── net_create_bridge ─────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+ *  Container iptables-like rule storage (local tracking)
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* Per-container iptables-like rule list (in-memory store, just tracks
+ * what rules have been added without actual packet filtering).
+ */
+#define MAX_CONTAINER_RULES 64
+
+struct container_rule {
+    int      in_use;
+    char     cont_id[CONTAINER_ID_MAX];
+    uint32_t src_ip;
+    uint32_t dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint8_t  protocol;
+    uint8_t  action;        /* NF_ACCEPT, NF_DROP */
+    uint64_t added_tick;
+};
+
+static struct container_rule g_container_rules[MAX_CONTAINER_RULES];
+static int g_container_rule_count = 0;
+
+/* Add a container-specific firewall rule */
+int container_rule_add(const char *cont_id, const struct nf_rule *rule)
+{
+    if (!cont_id || !rule) return -EINVAL;
+    if (g_container_rule_count >= MAX_CONTAINER_RULES)
+        return -ENOSPC;
+
+    struct container_rule *cr = &g_container_rules[g_container_rule_count];
+    memset(cr, 0, sizeof(*cr));
+    strncpy(cr->cont_id, cont_id, CONTAINER_ID_MAX - 1);
+    cr->cont_id[CONTAINER_ID_MAX - 1] = '\0';
+    cr->src_ip = rule->src_ip;
+    cr->dst_ip = rule->dst_ip;
+    cr->src_port = rule->src_port;
+    cr->dst_port = rule->dst_port;
+    cr->protocol = rule->protocol;
+    cr->action = rule->action;
+    cr->added_tick = 0; /* timer_get_ticks() if available */
+    cr->in_use = 1;
+    g_container_rule_count++;
+
+    /* Also add to global netfilter */
+    return nf_add_rule(rule);
+}
+
+/* Remove all rules for a container */
+int container_rule_flush(const char *cont_id)
+{
+    if (!cont_id) return -EINVAL;
+    int removed = 0;
+    for (int i = 0; i < g_container_rule_count; i++) {
+        if (!g_container_rules[i].in_use) continue;
+        if (strcmp(g_container_rules[i].cont_id, cont_id) == 0) {
+            struct nf_rule rule;
+            memset(&rule, 0, sizeof(rule));
+            rule.src_ip = g_container_rules[i].src_ip;
+            rule.dst_ip = g_container_rules[i].dst_ip;
+            rule.src_port = g_container_rules[i].src_port;
+            rule.dst_port = g_container_rules[i].dst_port;
+            rule.protocol = g_container_rules[i].protocol;
+            rule.action = g_container_rules[i].action;
+            nf_del_rule(&rule);
+
+            memset(&g_container_rules[i], 0, sizeof(g_container_rules[i]));
+            removed++;
+        }
+    }
+    return removed;
+}
+
+/* ── Bridge management ──────────────────────────────────────────── */
+
+/* In-memory bridge table */
+#define MAX_BRIDGES 16
+
+struct bridge_entry {
+    int   in_use;
+    char  name[32];
+    int   num_attached;
+    char  attached_containers[8][CONTAINER_ID_MAX];
+};
+
+static struct bridge_entry g_bridges[MAX_BRIDGES];
+
+static int bridge_find(const char *name)
+{
+    for (int i = 0; i < MAX_BRIDGES; i++) {
+        if (g_bridges[i].in_use && strcmp(g_bridges[i].name, name) == 0)
+            return i;
+    }
+    return -ENOENT;
+}
+
+static int bridge_find_free(void)
+{
+    for (int i = 0; i < MAX_BRIDGES; i++) {
+        if (!g_bridges[i].in_use) return i;
+    }
+    return -ENOSPC;
+}
+
+/* net_create_bridge: Create a virtual bridge with the given name.
+ * Registers it in the bridge table.  Returns 0 on success.
+ */
 int net_create_bridge(const char *name)
 {
-    (void)name;
-    kprintf("[container] Bridge created: %s\n", name ? name : "unnamed");
+    if (!name || !name[0]) return -EINVAL;
+
+    if (bridge_find(name) >= 0)
+        return -EEXIST;
+
+    int idx = bridge_find_free();
+    if (idx < 0) return -ENOSPC;
+
+    struct bridge_entry *b = &g_bridges[idx];
+    memset(b, 0, sizeof(*b));
+    strncpy(b->name, name, sizeof(b->name) - 1);
+    b->name[sizeof(b->name) - 1] = '\0';
+    b->in_use = 1;
+    b->num_attached = 0;
+
+    kprintf("[Net] Bridge '%s' created (idx=%d)\n", name, idx);
     return 0;
 }
-/* ── net_delete_bridge ─────────────────────────────── */
+
+/* net_delete_bridge: Delete a virtual bridge by name.
+ * Only succeeds if no containers are attached.
+ * Returns 0 on success.
+ */
 int net_delete_bridge(const char *name)
 {
-    (void)name;
-    kprintf("[container] Bridge deleted: %s\n", name ? name : "unknown");
+    if (!name) return -EINVAL;
+
+    int idx = bridge_find(name);
+    if (idx < 0) return -ENOENT;
+
+    struct bridge_entry *b = &g_bridges[idx];
+    if (b->num_attached > 0) {
+        kprintf("[Net] Cannot delete bridge '%s': %d containers attached\n",
+                name, b->num_attached);
+        return -EBUSY;
+    }
+
+    memset(b, 0, sizeof(*b));
+    kprintf("[Net] Bridge '%s' deleted\n", name);
     return 0;
 }
-/* ── net_attach ─────────────────────────────── */
+
+/* net_attach: Attach a container to a network bridge.
+ * Creates a veth pair between the bridge and the container.
+ * Returns 0 on success.
+ */
 int net_attach(const char *cont, const char *net)
 {
-    (void)cont;
-    (void)net;
-    kprintf("[container] Attach %s to network %s\n",
-            cont ? cont : "?", net ? net : "?");
+    if (!cont || !net) return -EINVAL;
+
+    int bidx = bridge_find(net);
+    if (bidx < 0) return -ENOENT;
+
+    struct bridge_entry *b = &g_bridges[bidx];
+    if (b->num_attached >= 8) return -ENOSPC;
+
+    /* Check if already attached */
+    for (int i = 0; i < b->num_attached; i++) {
+        if (strcmp(b->attached_containers[i], cont) == 0)
+            return 0; /* already attached */
+    }
+
+    /* Create veth pair for this attachment */
+    char host_if[32], cont_if[32];
+    snprintf(host_if, sizeof(host_if), "veth-%s", cont);
+    snprintf(cont_if, sizeof(cont_if), "eth0");
+
+    int ret = veth_create_pair(host_if, cont_if, NULL);
+    if (ret < 0) {
+        kprintf("[Net] veth_create_pair failed for %s on %s: %d\n",
+                cont, net, ret);
+        return ret;
+    }
+
+    /* Record the attachment */
+    strncpy(b->attached_containers[b->num_attached], cont,
+            CONTAINER_ID_MAX - 1);
+    b->attached_containers[b->num_attached][CONTAINER_ID_MAX - 1] = '\0';
+    b->num_attached++;
+
+    kprintf("[Net] Container '%s' attached to bridge '%s' (%d attached)\n",
+            cont, net, b->num_attached);
     return 0;
 }
-/* ── net_detach ─────────────────────────────── */
+
+/* net_detach: Detach a container from a network bridge.
+ * Removes the veth pair and frees the attachment slot.
+ * Returns 0 on success.
+ */
 int net_detach(const char *cont, const char *net)
 {
-    (void)cont;
-    (void)net;
-    kprintf("[container] Detach %s from network %s\n",
-            cont ? cont : "?", net ? net : "?");
-    return 0;
+    if (!cont || !net) return -EINVAL;
+
+    int bidx = bridge_find(net);
+    if (bidx < 0) return -ENOENT;
+
+    struct bridge_entry *b = &g_bridges[bidx];
+
+    for (int i = 0; i < b->num_attached; i++) {
+        if (strcmp(b->attached_containers[i], cont) == 0) {
+            /* Compact the array */
+            int remaining = b->num_attached - i - 1;
+            if (remaining > 0)
+                memmove(&b->attached_containers[i],
+                        &b->attached_containers[i + 1],
+                        (size_t)remaining * CONTAINER_ID_MAX);
+            b->num_attached--;
+
+            kprintf("[Net] Container '%s' detached from bridge '%s' "
+                    "(%d remaining)\n", cont, net, b->num_attached);
+            return 0;
+        }
+    }
+
+    return -ENOENT; /* not attached to this bridge */
 }

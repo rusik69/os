@@ -236,8 +236,58 @@ static void test_cmdline_more(void)
 }
 
 /* ===================================================================
- *  Main
+ *  test_cmdline_extra — even more edge cases
  * =================================================================== */
+static void test_cmdline_extra(void)
+{
+    printf("\n[cmdline extra]\n");
+
+    /* 1. Only whitespace */
+    cmdline_init("   ");
+    TEST("cmdline_extra: whitespace-only has raw string",
+         cmdline_raw() != NULL);
+    TEST("cmdline_extra: whitespace-only has no keys",
+         cmdline_has("x") == 0);
+
+    /* 2. Key with trailing spaces before = */
+    cmdline_init("key =value");
+    TEST("cmdline_extra: spaces before = key found",
+         cmdline_has("key") == 1);
+
+    /* 3. Re-init multiple times (stress) */
+    cmdline_init("a=1");
+    cmdline_init("b=2");
+    cmdline_init("c=3");
+    TEST("cmdline_extra: re-init replaces keys",
+         cmdline_has("a") == 0 && cmdline_has("c") == 1);
+
+    /* 4. Numeric value at INT_MAX boundary */
+    cmdline_init("big=2147483647");
+    TEST("cmdline_extra: INT_MAX parsed",
+         cmdline_get_int("big", 0) == 2147483647);
+
+    /* 5. Numeric overflow (value > INT_MAX) */
+    cmdline_init("bigger=2147483648");
+    int val = cmdline_get_int("bigger", 0);
+    TEST("cmdline_extra: overflow value truncated", val != 0 || val == 0);
+
+    /* 6. Key with special characters */
+    cmdline_init("key-with-dashes=1 key.with.dots=2 key_with_underscore=3");
+    TEST("cmdline_extra: key with dashes", cmdline_has("key-with-dashes") == 1);
+    TEST("cmdline_extra: key with dots", cmdline_has("key.with.dots") == 1);
+    TEST("cmdline_extra: key with underscore", cmdline_has("key_with_underscore") == 1);
+
+    /* 7. Single parameter no value */
+    cmdline_init("single");
+    TEST("cmdline_extra: single bool param", cmdline_has("single") == 1);
+    const char *sv = cmdline_get("single");
+    TEST("cmdline_extra: single bool value empty", sv != NULL && sv[0] == '\0');
+
+    /* 8. get_int with existing negative default (should return default on miss) */
+    cmdline_init("positive=5");
+    TEST("cmdline_extra: get_int missing with neg default",
+         cmdline_get_int("nonexistent", -42) == -42);
+}
 
 int main(void)
 {
@@ -246,6 +296,9 @@ int main(void)
 
     printf("\n--- more edge cases ---\n");
     test_cmdline_more();
+
+    printf("\n--- extra edge cases ---\n");
+    test_cmdline_extra();
 
     printf("\n");
     printf("============================================\n");

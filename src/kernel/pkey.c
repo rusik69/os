@@ -258,30 +258,20 @@ int pkey_get_rights(int pkey)
     return (int)((pkru >> (pkey * 2)) & 3);
 }
 
-/* ── Stub: sys_pkey_alloc ─────────────────────────────────────────────── */
+/* ── sys_pkey_alloc ─────────────────────────────────────────────────── */
 int sys_pkey_alloc(unsigned int flags, unsigned int rights)
 {
-    (void)flags;
-    (void)rights;
-    kprintf("[pkey] sys_pkey_alloc not yet fully implemented\n");
     return pkey_alloc(flags, rights);
 }
 
-/* ── Stub: sys_pkey_free ──────────────────────────────────────────────── */
+/* ── sys_pkey_free ──────────────────────────────────────────────────── */
 int sys_pkey_free(int pkey)
 {
-    (void)pkey;
-    kprintf("[pkey] sys_pkey_free not yet fully implemented\n");
     return pkey_free(pkey);
 }
 
-/* ── Stub: sys_pkey_mprotect ──────────────────────────────────────────── */
+/* ── sys_pkey_mprotect ──────────────────────────────────────────────── */
 int sys_pkey_mprotect(void *addr, size_t len, int prot, int pkey)
 {
-    (void)addr;
-    (void)len;
-    (void)prot;
-    (void)pkey;
-    kprintf("[pkey] sys_pkey_mprotect not yet implemented\n");
-    return 0;
+    return pkey_mprotect(addr, len, prot, pkey);
 }

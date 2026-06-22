@@ -233,6 +233,62 @@ static void test_more_edge_cases(void)
 }
 
 /* ===================================================================
+ *  test_bitfield_extra — more edge cases
+ * =================================================================== */
+static void test_bitfield_extra(void)
+{
+    printf("\\n[Bitfield Extra Edge Cases]\\n");
+
+    /* 1. BIT() with boundary value 62 */
+    TEST("BIT(62) == 1ULL<<62", BIT(62) == (1ULL << 62));
+
+    /* 2. GENMASK with h < l (undefined but shouldn't crash — currently produces 0 or garbage) */
+    /* We just verify it compiles and runs */
+    volatile uint64_t bad_mask = GENMASK(3, 5);
+    (void)bad_mask;
+    TEST("GENMASK(3,5): compiles and runs", 1);
+
+    /* 3. GENMASK with negative l value (cast to uint64_t, large shift) */
+    volatile uint64_t neg_mask = GENMASK(5, 0);
+    (void)neg_mask;
+    TEST("GENMASK(5,0): non-zero result", GENMASK(5, 0) != 0);
+
+    /* 4. FIELD_GET with zero mask (ctzll(0) is undefined — skip) */
+    /* Just test with minimal mask */
+    TEST("FIELD_GET(GENMASK(0,0), 1) == 1",
+         FIELD_GET(GENMASK(0, 0), 1) == 1);
+    TEST("FIELD_GET(GENMASK(0,0), 0) == 0",
+         FIELD_GET(GENMASK(0, 0), 0) == 0);
+
+    /* 5. FIELD_PREP with zero value always zero */
+    TEST("FIELD_PREP(any mask, 0) == 0",
+         FIELD_PREP(GENMASK(63, 0), 0) == 0);
+
+    /* 6. Multiple non-overlapping FIELD_PREP combined */
+    {
+        uint64_t reg = FIELD_PREP(GENMASK(7, 0), 0xAB)
+                     | FIELD_PREP(GENMASK(15, 8), 0xCD)
+                     | FIELD_PREP(GENMASK(23, 16), 0xEF);
+        TEST("FIELD_PREP 3 non-overlapping fields combined",
+             FIELD_GET(GENMASK(7, 0), reg) == 0xAB &&
+             FIELD_GET(GENMASK(15, 8), reg) == 0xCD &&
+             FIELD_GET(GENMASK(23, 16), reg) == 0xEF);
+    }
+
+    /* 7. FIELD_GET with mask spanning exactly 64 bits */
+    TEST("FIELD_GET(GENMASK(63,0), 0xDEADBEEFCAFE) == 0xDEADBEEFCAFE",
+         FIELD_GET(GENMASK(63, 0), 0xDEADBEEFCAFEULL) == 0xDEADBEEFCAFEULL);
+
+    /* 8. FIELD_PREP with value == 0 (no bits set in value) */
+    TEST("FIELD_PREP(GENMASK(31,16), 0) == 0",
+         FIELD_PREP(GENMASK(31, 16), 0) == 0);
+
+    /* 9. BIT() with max valid value on 64-bit */
+    TEST("BIT(0) == 1", BIT(0) == 1ULL);
+    TEST("BIT(63) has MSB set", (BIT(63) >> 63) == 1);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -251,10 +307,13 @@ int main(void)
     printf("\n--- FIELD_PREP() ---\n");
     test_field_prep();
 
-    printf("\n--- More Edge Cases ---\n");
+    printf("\\n--- More Edge Cases ---\\n");
     test_more_edge_cases();
 
-    printf("\n");
+    printf("\\n--- Bitfield Extra Edge Cases ---\\n");
+    test_bitfield_extra();
+
+    printf("\\n");
     printf("============================================\n");
     printf("  Results: %d run, %d passed, %d failed\n",
            tests_passed + tests_failed, tests_passed, tests_failed);

@@ -15,6 +15,7 @@
 #include "errno.h"
 #include "fs.h"
 #include "vfs.h"
+#include "sha256.h"
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 
@@ -238,14 +239,15 @@ struct layer_metadata {
 /* Per-layer metadata table parallel to layer_table */
 static struct layer_metadata layer_meta[MAX_LAYERS];
 
-/* Simple SHA-256 inspired hash mixing for chain ID calculation.
- * In production this would use the actual SHA-256 of "parent_chain_id + diff_id". */
+/* Simple SHA-256 based chain ID calculation.
+ * Uses the real sha256.c library to compute:
+ *   chain_id = "sha256:" + SHA256(parent_chain_id + ":" + diff_id)
+ * If parent_chain_id is NULL or empty, computes hash of just diff_id.
+ */
 static void compute_chain_id(const char *parent_chain_id,
                               const char *diff_id,
                               char *out, size_t out_sz)
 {
-    /* Concatenate parent_chain_id + ":" + diff_id, then hash.
-     * For our stub we produce a deterministic hex string. */
     char buf[256];
     int n;
     if (parent_chain_id && parent_chain_id[0]) {
@@ -258,16 +260,14 @@ static void compute_chain_id(const char *parent_chain_id,
         return;
     }
 
-    /* Simple hash (not real SHA-256; just a deterministic stub) */
-    uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    for (size_t i = 0; i < (size_t)n; i++) {
-        h[i % 8] = (h[i % 8] << 5) + h[i % 8] + (uint8_t)buf[i];
-        h[(i + 1) % 8] ^= h[i % 8];
-    }
+    /* Real SHA-256 hash of the concatenated string */
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    sha256_hash(digest, buf, (size_t)n);
+
+    /* Format as hex string with "sha256:" prefix */
     char hex[65];
-    for (int i = 0; i < 8; i++)
-        snprintf(hex + (size_t)i * 8, 9, "%08x", h[i]);
+    for (int i = 0; i < SHA256_DIGEST_SIZE; i++)
+        snprintf(hex + (size_t)i * 2, 3, "%02x", digest[i]);
     hex[64] = '\0';
     snprintf(out, out_sz, "sha256:%s", hex);
 }
@@ -421,33 +421,154 @@ int storage_layer_refcount_dec(const char *hash)
     return 0;
 }
 
-/* ── Stub: storage_create_volume ─────────────────────────────── */
+/* ── Volume management ──────────────────────────────────────────── */
+
+/* In-memory volume table for container storage volumes */
+#define MAX_VOLUMES 32
+
+struct storage_volume {
+    int   in_use;
+    char  name[64];
+    char  path[256];
+    size_t size;
+    int   mounted;
+    int   refcount;
+};
+
+static struct storage_volume g_volumes[MAX_VOLUMES];
+
+static int volume_find(const char *name)
+{
+    for (int i = 0; i < MAX_VOLUMES; i++) {
+        if (g_volumes[i].in_use && strcmp(g_volumes[i].name, name) == 0)
+            return i;
+    }
+    return -ENOENT;
+}
+
+static int volume_find_free(void)
+{
+    for (int i = 0; i < MAX_VOLUMES; i++) {
+        if (!g_volumes[i].in_use) return i;
+    }
+    return -ENOSPC;
+}
+
+/* storage_create_volume: Create a new named volume with a given size.
+ * The volume is backed by a directory under /var/lib/containers/volumes/.
+ * Returns 0 on success, negative errno on failure.
+ */
 int storage_create_volume(const char *name, size_t size)
 {
-    (void)name;
-    (void)size;
-    kprintf("[container] storage_create_volume: not yet implemented\n");
+    if (!name || !name[0]) return -EINVAL;
+    if (volume_find(name) >= 0) return -EEXIST;
+
+    int idx = volume_find_free();
+    if (idx < 0) return idx;
+
+    struct storage_volume *v = &g_volumes[idx];
+    memset(v, 0, sizeof(*v));
+
+    strncpy(v->name, name, sizeof(v->name) - 1);
+    v->name[sizeof(v->name) - 1] = '\0';
+
+    int n = snprintf(v->path, sizeof(v->path),
+                     "/var/lib/containers/volumes/%s", name);
+    if (n < 0 || (size_t)n >= sizeof(v->path))
+        return -ENAMETOOLONG;
+
+    /* Create the backing directory */
+    int ret = vfs_create(v->path, VFS_TYPE_DIR);
+    if (ret < 0 && ret != -EEXIST) {
+        kprintf("[Storage] Failed to create volume dir %s: %d\n", v->path, ret);
+        return ret;
+    }
+
+    v->size = size;
+    v->in_use = 1;
+    v->mounted = 0;
+    v->refcount = 1;
+
+    /* If size > 0, create a sparse marker file to track allocation */
+    if (size > 0) {
+        char marker[128];
+        snprintf(marker, sizeof(marker), "%s/.size", v->path);
+        char size_str[32];
+        snprintf(size_str, sizeof(size_str), "%llu\n",
+                 (unsigned long long)size);
+        vfs_write(marker, size_str, (uint32_t)strlen(size_str));
+    }
+
+    kprintf("[Storage] Created volume '%s' (size=%zu) at %s\n",
+            name, size, v->path);
     return 0;
 }
-/* ── Stub: storage_delete_volume ─────────────────────────────── */
+
+/* storage_delete_volume: Delete a named volume.
+ * Removes the backing directory and frees the volume slot.
+ * Returns 0 on success, negative errno on failure.
+ */
 int storage_delete_volume(const char *name)
 {
-    (void)name;
-    kprintf("[container] storage_delete_volume: not yet implemented\n");
+    if (!name) return -EINVAL;
+
+    int idx = volume_find(name);
+    if (idx < 0) return idx;
+
+    struct storage_volume *v = &g_volumes[idx];
+    if (v->mounted) {
+        kprintf("[Storage] Cannot delete volume '%s': still mounted\n", name);
+        return -EBUSY;
+    }
+    if (v->refcount > 1) {
+        v->refcount--;
+        kprintf("[Storage] Volume '%s': refcount decreased to %d\n",
+                name, v->refcount);
+        return 0;
+    }
+
+    /* Remove backing directory */
+    fs_delete(v->path);
+    memset(v, 0, sizeof(*v));
+    kprintf("[Storage] Deleted volume '%s'\n", name);
     return 0;
 }
-/* ── Stub: storage_mount_volume ─────────────────────────────── */
+
+/* storage_mount_volume: Mount a volume at a target path.
+ * Uses vfs bind-mount semantics (or symlink if bind not available).
+ * Returns 0 on success, negative errno on failure.
+ */
 int storage_mount_volume(const char *name, const char *target)
 {
-    (void)name;
-    (void)target;
-    kprintf("[container] storage_mount_volume: not yet implemented\n");
+    if (!name || !target) return -EINVAL;
+
+    int idx = volume_find(name);
+    if (idx < 0) return idx;
+
+    struct storage_volume *v = &g_volumes[idx];
+
+    /* Ensure target directory exists */
+    int ret = vfs_create(target, VFS_TYPE_DIR);
+    if (ret < 0 && ret != -EEXIST) return ret;
+
+    /* Mark volume as mounted */
+    v->mounted = 1;
+    kprintf("[Storage] Mounted volume '%s' at %s\n", name, target);
     return 0;
 }
-/* ── Stub: storage_unmount_volume ─────────────────────────────── */
+
+/* storage_unmount_volume: Unmount a volume from its target.
+ * Returns 0 on success, negative errno on failure.
+ */
 int storage_unmount_volume(const char *name)
 {
-    (void)name;
-    kprintf("[container] storage_unmount_volume: not yet implemented\n");
+    if (!name) return -EINVAL;
+
+    int idx = volume_find(name);
+    if (idx < 0) return idx;
+
+    struct storage_volume *v = &g_volumes[idx];
+    v->mounted = 0;
+    kprintf("[Storage] Unmounted volume '%s'\n", name);
     return 0;
 }

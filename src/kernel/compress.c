@@ -158,6 +158,11 @@ int lzss_compress(const uint8_t *input, int input_len,
 int lzss_decompress(const uint8_t *input, int input_len,
                     uint8_t *output, int output_len)
 {
+    if (!input || !output)
+        return -EINVAL;
+    if (input_len <= 0)
+        return -EINVAL;
+
     int in_pos  = 0;
     int out_pos = 0;
 

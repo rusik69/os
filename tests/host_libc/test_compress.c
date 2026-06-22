@@ -270,6 +270,136 @@ static void test_compress(void)
         int ret = roundtrip(wide, 256);
         TEST("lzss: 0x00-0xFF roundtrip succeeds", ret >= 0);
     }
+
+    /* 22. Compress and decompress: deterministic output */
+    {
+        uint8_t data[32];
+        memset(data, 'X', 32);
+        uint8_t comp1[LZSS_WORST_CASE(128)], comp2[LZSS_WORST_CASE(128)];
+        int len1 = lzss_compress(data, 32, comp1, sizeof(comp1));
+        int len2 = lzss_compress(data, 32, comp2, sizeof(comp2));
+        TEST("lzss: deterministic compression size", len1 == len2);
+        if (len1 == len2 && len1 > 0) {
+            TEST("lzss: deterministic compression content",
+                 memcmp(comp1, comp2, len1) == 0);
+        }
+    }
+
+    /* 23. Decompress with NULL input */
+    {
+        uint8_t out[64];
+        int ret = lzss_decompress(NULL, 10, out, sizeof(out));
+        TEST("lzss: decompress NULL input returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 24. Decompress with NULL output */
+    {
+        uint8_t in[64];
+        memset(in, 0, 64);
+        int ret = lzss_decompress(in, 10, NULL, 100);
+        TEST("lzss: decompress NULL output returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 25. Compress with 0 input length (but non-NULL data) */
+    {
+        uint8_t out[128];
+        int ret = lzss_compress((const uint8_t *)"data", 0, out, sizeof(out));
+        TEST("lzss: compress zero length returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 26. Decompress with zero input length */
+    {
+        uint8_t out[64];
+        int ret = lzss_decompress((const uint8_t *)"", 0, out, sizeof(out));
+        TEST("lzss: decompress zero input returns -EINVAL", ret == -EINVAL);
+    }
+
+    /* 27. 2 identical bytes repeated — well-compressible pattern */
+    {
+        uint8_t pattern[64];
+        for (int i = 0; i < 64; i++) pattern[i] = (uint8_t)((i % 2) ? 0x55 : 0xAA);
+        int ret = roundtrip(pattern, 64);
+        TEST("lzss: alternating pattern roundtrip succeeds", ret >= 0);
+        if (ret >= 0) {
+            TEST("lzss: alternating pattern compresses", ret < 64);
+        }
+    }
+
+    /* 28. Ramp-up: increasing repeating pattern length to trigger matches */
+    {
+        uint8_t ramp[800];
+        for (int i = 0; i < 800; i++) ramp[i] = (uint8_t)('A' + (i % 5));
+        int ret = roundtrip(ramp, 800);
+        TEST("lzss: ramp 5-char pattern roundtrip succeeds", ret >= 0);
+    }
+
+    /* 29. Minimum compressible: 3 identical bytes (LZSS_MIN_MATCH) should compress */
+    {
+        uint8_t three[3] = { 'X', 'X', 'X' };
+        int ret = roundtrip(three, 3);
+        TEST("lzss: 3 identical bytes roundtrip succeeds", ret >= 0);
+    }
+
+    /* 30. 2 identical bytes (below LZSS_MIN_MATCH) */
+    {
+        uint8_t two[2] = { 'X', 'X' };
+        int ret = roundtrip(two, 2);
+        TEST("lzss: 2 identical bytes roundtrip succeeds", ret >= 0);
+    }
+
+    /* 31. Compress with output_len exactly matching worst-case size */
+    {
+        const uint8_t *msg = (const uint8_t *)"compression test";
+        uint8_t comp[LZSS_WORST_CASE(32)];
+        int ret = lzss_compress(msg, 17, comp, sizeof(comp));
+        TEST("lzss: compress with exact sized output buffer", ret >= 0 || ret == -ENOMEM);
+    }
+
+    /* 32. Multiple roundtrips with same data (deterministic compressed size) */
+    {
+        uint8_t data[64];
+        for (int i = 0; i < 64; i++) data[i] = (uint8_t)(i * 3 + 7);
+        int sizes[3];
+        for (int i = 0; i < 3; i++) {
+            sizes[i] = roundtrip(data, 64);
+            if (sizes[i] < 0) { TEST("lzss: deterministic roundtrip", 0); break; }
+        }
+        TEST("lzss: multiple roundtrips consistent",
+             sizes[0] >= 0 && sizes[0] == sizes[1] && sizes[1] == sizes[2]);
+    }
+
+    /* 33. Decompress with exact output length matching original */
+    {
+        uint8_t data[32];
+        for (int i = 0; i < 32; i++) data[i] = (uint8_t)(i * 7 + 11);
+        uint8_t comp[LZSS_WORST_CASE(64)];
+        uint8_t decomp[32];
+        int comp_len = lzss_compress(data, 32, comp, sizeof(comp));
+        if (comp_len > 0) {
+            int dec_len = lzss_decompress(comp, comp_len, decomp, 32);
+            TEST("lzss: exact decompress size matches", dec_len == 32);
+            if (dec_len == 32) {
+                TEST("lzss: exact decompress content matches",
+                     memcmp(decomp, data, 32) == 0);
+            }
+        }
+    }
+
+    /* 34. Compress large non-repeating input below max */
+    {
+        uint8_t buf[512];
+        for (int i = 0; i < 512; i++) buf[i] = (uint8_t)((i * 157 + 11) & 0xFF);
+        int ret = roundtrip(buf, 512);
+        TEST("lzss: 512-byte random roundtrip succeeds", ret >= 0);
+    }
+
+    /* 35. Compress with input of varying lengths */
+    {
+        uint8_t data[128];
+        for (int i = 0; i < 128; i++) data[i] = (uint8_t)(i * 5 + 3);
+        int ret = roundtrip(data, 128);
+        TEST("lzss: 128-byte roundtrip succeeds", ret >= 0);
+    }
 }
 
 /* ===================================================================

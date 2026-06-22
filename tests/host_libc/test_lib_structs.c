@@ -176,10 +176,100 @@ static void test_hexdump_more(void)
     TEST("hexdump repeating pattern", 1);
 }
 
+/* ===================================================================
+ *  test_radix_tree_extra — additional radix tree edge cases
+ * =================================================================== */
+static void test_radix_tree_extra(void)
+{
+    struct radix_tree_root root;
+    printf("\n[Radix Tree — Extra Edge Cases]\n"); fflush(stdout);
+    radix_tree_init(&root);
+
+    /* 1. Keys with conflicting bit patterns */
+    {
+        int ok = 1;
+        unsigned long vals[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+        for (int i = 0; i < 10; i++)
+            if (radix_tree_insert(&root, vals[i], (void*)(uintptr_t)(0x100 + vals[i])) != 0)
+                ok = 0;
+        TEST("radix_tree_extra: insert 0-9 works", ok);
+    }
+    {
+        int ok = 1;
+        for (unsigned long k = 0; k < 10; k++)
+            if (radix_tree_lookup(&root, k) != (void*)(uintptr_t)(0x100 + k))
+                ok = 0;
+        TEST("radix_tree_extra: lookup 0-9 all correct", ok);
+    }
+
+    /* 2. Insert and delete several keys, then verify remaining */
+    {
+        radix_tree_delete(&root, 3);
+        radix_tree_delete(&root, 7);
+        TEST("radix_tree_extra: key 3 deleted", radix_tree_lookup(&root, 3) == NULL);
+        TEST("radix_tree_extra: key 7 deleted", radix_tree_lookup(&root, 7) == NULL);
+        TEST("radix_tree_extra: key 0 survives", radix_tree_lookup(&root, 0) == (void*)0x100);
+        TEST("radix_tree_extra: key 9 survives", radix_tree_lookup(&root, 9) == (void*)0x109);
+    }
+
+    /* 3. Re-insert after delete in same tree */
+    {
+        radix_tree_delete(&root, 5);
+        int r = radix_tree_insert(&root, 5, (void*)0x500);
+        TEST("radix_tree_extra: re-insert key 5", r == 0);
+        TEST("radix_tree_extra: re-inserted key 5 found", radix_tree_lookup(&root, 5) == (void*)0x500);
+    }
+
+    /* 4. Insert key 0, then insert it again (update) */
+    {
+        struct radix_tree_root root2;
+        radix_tree_init(&root2);
+        (void)radix_tree_insert(&root2, 0, (void*)0xAA);
+        int r2 = radix_tree_insert(&root2, 0, (void*)0xBB);
+        TEST("radix_tree_extra: re-insert key 0", r2 == 0 || r2 == 1);
+        TEST("radix_tree_extra: re-inserted key 0 updated", radix_tree_lookup(&root2, 0) == (void*)0xBB);
+    }
+
+    /* 5. Insert keys in descending order */
+    {
+        struct radix_tree_root root4;
+        radix_tree_init(&root4);
+        int ok = 1;
+        for (unsigned long k = 100; k > 0; k--)
+            if (radix_tree_insert(&root4, k, (void*)(uintptr_t)k) != 0) { ok = 0; break; }
+        if (radix_tree_insert(&root4, 0, (void*)0) != 0) ok = 0;
+        TEST("radix_tree_extra: descending insert 100..0", ok);
+        TEST("radix_tree_extra: lookup 50 after descending insert",
+             radix_tree_lookup(&root4, 50) == (void*)50);
+        TEST("radix_tree_extra: lookup 0 after descending insert",
+             radix_tree_lookup(&root4, 0) == (void*)0);
+    }
+
+    /* 6. Delete non-existent key returns NULL (already tested in test_radix_tree_more) */
+    {
+        struct radix_tree_root root5;
+        radix_tree_init(&root5);
+        void *r = radix_tree_delete(&root5, 42);
+        TEST("radix_tree_extra: delete from empty returns NULL", r == NULL);
+    }
+
+    /* 7. Insert same key multiple times — should not corrupt */
+    {
+        struct radix_tree_root root6;
+        radix_tree_init(&root6);
+        radix_tree_insert(&root6, 10, (void*)0xA);
+        radix_tree_insert(&root6, 10, (void*)0xB);
+        radix_tree_insert(&root6, 10, (void*)0xC);
+        TEST("radix_tree_extra: multi-update key 10", radix_tree_lookup(&root6, 10) == (void*)0xC);
+    }
+}
+
 int main(void) {
     printf("=== Kernel Data Structure Unit Tests ===\n"); fflush(stdout);
     test_radix_tree(); fflush(stdout);
     test_radix_tree_more(); fflush(stdout);
+    printf("\n--- Radix Tree Extra ---\n"); fflush(stdout);
+    test_radix_tree_extra(); fflush(stdout);
     test_hexdump(); fflush(stdout);
     test_hexdump_more(); fflush(stdout);
     printf("\n=== Results: %d passed, %d failed ===\n", tp, tf); fflush(stdout);

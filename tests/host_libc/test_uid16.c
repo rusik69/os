@@ -193,6 +193,45 @@ static void test_uid16_edge(void)
 }
 
 /* ===================================================================
+ *  test_uid16_comprehensive — comprehensive boundary coverage
+ * =================================================================== */
+static void test_uid16_comprehensive(void)
+{
+    /* Test all values at and around boundary 0xFFFF */
+    TEST("uid16_comp: uid_to_16(0xFFFE) == 0xFFFE", uid_to_16(0xFFFE) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0xFFFF) == 0xFFFF", uid_to_16(0xFFFF) == 0xFFFF);
+    TEST("uid16_comp: uid_to_16(0x10000) clamps",   uid_to_16(0x10000) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0x10001) clamps",   uid_to_16(0x10001) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0x1FFFF) clamps",   uid_to_16(0x1FFFF) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0x7FFFFFFF) clamps", uid_to_16(0x7FFFFFFF) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0x80000000) clamps", uid_to_16(0x80000000) == 0xFFFE);
+    TEST("uid16_comp: uid_to_16(0xFFFFFFFF) clamps", uid_to_16(0xFFFFFFFF) == 0xFFFE);
+
+    /* uid_from_16 should preserve all values */
+    TEST("uid16_comp: uid_from_16(0) == 0",       uid_from_16(0) == 0);
+    TEST("uid16_comp: uid_from_16(1) == 1",       uid_from_16(1) == 1);
+    TEST("uid16_comp: uid_from_16(0xFFFE) == 0xFFFE", uid_from_16(0xFFFE) == 0xFFFE);
+    TEST("uid16_comp: uid_from_16(0xFFFF) == 0xFFFF", uid_from_16(0xFFFF) == 0xFFFF);
+
+    /* Roundtrip: uid_to_16 then uid_from_16 (for values ≤ 0xFFFF) */
+    TEST("uid16_comp: roundtrip 0",         uid_from_16(uid_to_16(0)) == 0);
+    TEST("uid16_comp: roundtrip 1",         uid_from_16(uid_to_16(1)) == 1);
+    TEST("uid16_comp: roundtrip 65534",     uid_from_16(uid_to_16(65534)) == 65534);
+    TEST("uid16_comp: roundtrip 65535",     uid_from_16(uid_to_16(65535)) == 65535);
+    TEST("uid16_comp: roundtrip 65536 clamps to 0xFFFE", uid_from_16(uid_to_16(65536)) == 0xFFFE);
+    TEST("uid16_comp: roundtrip UINT32_MAX clamps",   uid_from_16(uid_to_16(0xFFFFFFFF)) == 0xFFFE);
+
+    /* uid_from_16 followed by uid_to_16 should be identity for all uint16_t */
+    TEST("uid16_comp: uid_to_16(uid_from_16(0)) == 0",       uid_to_16(uid_from_16(0)) == 0);
+    TEST("uid16_comp: uid_to_16(uid_from_16(1)) == 1",       uid_to_16(uid_from_16(1)) == 1);
+    TEST("uid16_comp: uid_to_16(uid_from_16(0xFFFF)) == 0xFFFF", uid_to_16(uid_from_16(0xFFFF)) == 0xFFFF);
+
+    /* Specific boundary values */
+    TEST("uid16_comp: uid_to_16(0xFFFD) == 0xFFFD", uid_to_16(0xFFFD) == 0xFFFD);
+    TEST("uid16_comp: uid_to_16(0xFFFC) == 0xFFFC", uid_to_16(0xFFFC) == 0xFFFC);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -207,6 +246,9 @@ int main(void)
 
     printf("\n--- edge boundary values ---\n");
     test_uid16_edge();
+
+    printf("\n--- comprehensive boundary coverage ---\n");
+    test_uid16_comprehensive();
 
     printf("\n");
     printf("============================================\n");

@@ -203,6 +203,103 @@ static void test_wx_enforce(void)
 }
 
 /* ===================================================================
+ *  test_wx_enforce_more — additional VMM flag combinations
+ * =================================================================== */
+static void test_wx_enforce_more(void)
+{
+    printf("\n[wx_enforce — more combinations]\n");
+
+    wx_enabled = 0;
+
+    /* 1. USER | NOEXEC → allowed (user, no write, no exec) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_USER | VMM_FLAG_NOEXEC);
+        TEST("check_more(USER|NOEXEC): allowed (no write)", r == 0);
+    }
+
+    /* 2. PRESENT | USER → allowed (no write) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_USER);
+        TEST("check_more(PRESENT|USER): allowed (no write)", r == 0);
+    }
+
+    /* 3. PRESENT | USER | WRITE | NOEXEC → allowed (write but NX) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_USER | VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+        TEST("check_more(PRESENT|USER|WRITE|NOEXEC): write+NX allowed", r == 0);
+    }
+
+    /* 4. All flags set (PRESENT|WRITE|USER|NOEXEC) → allowed (NX protects) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC);
+        TEST("check_more(all flags): write+NX allowed", r == 0);
+    }
+
+    /* 5. WRITE without PRESENT → denied (W+X) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_WRITE);
+        TEST("check_more(WRITE only): W+X denied", r == -EPERM);
+    }
+
+    /* 6. WRITE | NOEXEC → allowed (NX present) */
+    {
+        int r = wx_enforce_check(VMM_FLAG_WRITE | VMM_FLAG_NOEXEC);
+        TEST("check_more(WRITE|NOEXEC): W+NX allowed", r == 0);
+    }
+
+    /* 7. check_prot: PROT_READ | PROT_WRITE → allowed (no EXEC) */
+    {
+        int r = wx_enforce_check_prot(PROT_READ | PROT_WRITE);
+        TEST("check_prot_more(RW): no exec, allowed", r == 0);
+    }
+
+    /* 8. check_prot: PROT_WRITE | PROT_READ | PROT_EXEC (RWX) → denied */
+    {
+        int r = wx_enforce_check_prot(PROT_WRITE | PROT_READ | PROT_EXEC);
+        TEST("check_prot_more(RWX): denied", r == -EPERM);
+    }
+
+    /* 9. check_prot: PROT_EXEC with write-like flags → denied */
+    {
+        /* PROT_EXEC only — no write, should be allowed */
+        int r = wx_enforce_check_prot(PROT_EXEC);
+        TEST("check_prot_more(PROT_EXEC only): allowed (no write)", r == 0);
+    }
+
+    /* 10. Relaxed mode with various combinations */
+    {
+        wx_enabled = 1;
+        int r1 = wx_enforce_check(VMM_FLAG_WRITE);
+        int r2 = wx_enforce_check(VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
+        int r3 = wx_enforce_check_prot(PROT_WRITE | PROT_EXEC);
+        TEST("check_more: relaxed mode WRITE only allowed", r1 == 0);
+        TEST("check_more: relaxed mode PRESENT|WRITE allowed", r2 == 0);
+        TEST("check_more: relaxed mode PROT_WRITE|PROT_EXEC allowed", r3 == 0);
+        wx_enabled = 0;
+    }
+
+    /* 11. Toggle active/inactive while checking */
+    {
+        wx_enabled = 0;
+        TEST("check_more: enforced WRITE denied", wx_enforce_check(VMM_FLAG_WRITE) == -EPERM);
+        wx_enabled = 1;
+        TEST("check_more: relaxed WRITE allowed", wx_enforce_check(VMM_FLAG_WRITE) == 0);
+        wx_enabled = 0;
+        TEST("check_more: enforced again WRITE denied", wx_enforce_check(VMM_FLAG_WRITE) == -EPERM);
+    }
+
+    /* 12. wx_enforce_is_active state tracking */
+    {
+        wx_enabled = 0;
+        TEST("check_more: active returns 1 when enforced", wx_enforce_is_active() == 1);
+        wx_enabled = 1;
+        TEST("check_more: active returns 0 when relaxed", wx_enforce_is_active() == 0);
+        wx_enabled = 0;
+        TEST("check_more: active returns 1 after re-enforce", wx_enforce_is_active() == 1);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 
@@ -210,6 +307,9 @@ int main(void)
 {
     printf("=== W^X Page Protection Enforcement Tests ===\n\n");
     test_wx_enforce();
+
+    printf("\n--- more flag combinations ---\n");
+    test_wx_enforce_more();
 
     printf("\n");
     printf("============================================\n");

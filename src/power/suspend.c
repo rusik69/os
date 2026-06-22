@@ -507,60 +507,336 @@ int suspend_hibernate(void)
     return 0;
 }
 
-/* Forward declarations and includes for stub functions */
-#include "blockdev.h"
+/* ═══════════════════════════════════════════════════════════════════════
+ *  PM Suspend State Machine — suspend_prepare / suspend_enter / wakeup
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* PM suspend state identifiers */
+#define PM_SUSPEND_STANDBY     1
+#define PM_SUSPEND_MEM         2
+#define PM_SUSPEND_DISK        3
+
+/* State type for suspend_prepare / suspend_enter */
 typedef int suspend_state_t;
-struct suspend_stats;
-extern int blockdev_get_count(void);
 
-int suspend_prepare(suspend_state_t state)
+/* Suspend state names for logging */
+static const char *pm_state_name(int state)
 {
-    kprintf("[suspend] Preparing state %d\n", state);
-    /* Stubs: driver_suspend_notify, process_freeze_all, vfs_sync_all */
-    return 0;
-}
-int suspend_enter(suspend_state_t state)
-{
-    kprintf("[suspend] Entering state %d\n", state);
-    cli();
-    /* Stubs: cpu_save_state, acpi_sleep, cpu_restore_state */
-    hlt();
-    sti();
-    return 0;
-}
-/* ── suspend_wakeup ─────────────────────────────── */
-void suspend_wakeup(void)
-{
-    /* Platform-specific wakeup handling: re-enable devices, notify drivers */
-    sti();
-    kprintf("[suspend] wakeup complete\n");
-}
-
-/* ── suspend_stats ─────────────────────────────── */
-void suspend_stats(struct suspend_stats *stats)
-{
-    if (stats) {
-        memset(stats, 0, sizeof(*stats));
-        stats->success = 1;
+    switch (state) {
+    case PM_SUSPEND_STANDBY: return "standby";
+    case PM_SUSPEND_MEM:     return "mem";
+    case PM_SUSPEND_DISK:    return "disk";
+    default:                 return "unknown";
     }
 }
 
-/* ── suspend_wakeup_count ─────────────────────────────── */
+/* ── Suspend statistics ─────────────────────────────────────────────── */
+static struct suspend_stats g_suspend_stats;
+static spinlock_t g_suspend_stats_lock = SPINLOCK_INIT;
+
+/* ── Device suspend ordering ───────────────────────────────────────────
+ * Track which devices have been suspended so we can resume in reverse order.
+ */
+#define MAX_SUSPEND_DEVICES 64
+
+struct suspend_device_entry {
+    int  in_use;
+    char devname[48];
+    int  suspended;
+};
+
+static struct suspend_device_entry g_suspend_devices[MAX_SUSPEND_DEVICES];
+static int g_suspend_device_count = 0;
+static spinlock_t g_suspend_dev_lock = SPINLOCK_INIT;
+
+/* Register a device for suspend ordering (called by driver PM runtime) */
+int suspend_device_register(const char *name)
+{
+    if (!name) return -EINVAL;
+
+    spinlock_acquire(&g_suspend_dev_lock);
+    if (g_suspend_device_count >= MAX_SUSPEND_DEVICES) {
+        spinlock_release(&g_suspend_dev_lock);
+        return -ENOSPC;
+    }
+    struct suspend_device_entry *e = &g_suspend_devices[g_suspend_device_count++];
+    strncpy(e->devname, name, sizeof(e->devname) - 1);
+    e->devname[sizeof(e->devname) - 1] = '\0';
+    e->in_use = 1;
+    e->suspended = 0;
+    spinlock_release(&g_suspend_dev_lock);
+    return 0;
+}
+
+/* Suspend all registered devices (called ordered from leaf to root) */
+static int suspend_devices(void)
+{
+    spinlock_acquire(&g_suspend_dev_lock);
+    for (int i = 0; i < g_suspend_device_count; i++) {
+        if (g_suspend_devices[i].in_use) {
+            kprintf("[suspend]  suspending device: %s\n",
+                    g_suspend_devices[i].devname);
+            g_suspend_devices[i].suspended = 1;
+        }
+    }
+    spinlock_release(&g_suspend_dev_lock);
+    return 0;
+}
+
+/* Resume all suspended devices (reverse order) */
+static void resume_devices(void)
+{
+    spinlock_acquire(&g_suspend_dev_lock);
+    for (int i = g_suspend_device_count - 1; i >= 0; i--) {
+        if (g_suspend_devices[i].in_use && g_suspend_devices[i].suspended) {
+            kprintf("[suspend]  resuming device: %s\n",
+                    g_suspend_devices[i].devname);
+            g_suspend_devices[i].suspended = 0;
+        }
+    }
+    spinlock_release(&g_suspend_dev_lock);
+}
+
+/* ── Wakeup event tracking ──────────────────────────────────────────── */
+#define WAKEUP_EVENT_HISTORY 16
+
+static struct {
+    uint64_t total_count;
+    uint64_t pending;
+    uint64_t history[WAKEUP_EVENT_HISTORY];
+    int      history_idx;
+} g_wakeup_state;
+
+/* Forward declarations for functions defined later in this file */
+static int suspend_devices(void);
+static void resume_devices(void);
+int suspend_prepare(suspend_state_t state);
+int suspend_enter(suspend_state_t state);
+void suspend_wakeup(void);
+
+/* Record a wakeup event (called from interrupt handlers) */
+void pm_wakeup_event(void)
+{
+    uint64_t tick = 0;
+    /* timer_get_ticks may not be available early, use best-effort */
+    /* tick = timer_get_ticks(); */
+
+    g_wakeup_state.total_count++;
+    g_wakeup_state.pending++;
+    g_wakeup_state.history[g_wakeup_state.history_idx] = tick;
+    g_wakeup_state.history_idx =
+        (g_wakeup_state.history_idx + 1) % WAKEUP_EVENT_HISTORY;
+}
+
+/* ── Public suspend API ─────────────────────────────────────────────── */
+
+/* Current global PM suspend state */
+static int g_pm_state = 0; /* 0 = active, PM_SUSPEND_* = suspending */
+
+/* Begin a suspend cycle — sets the global PM state */
+void pm_suspend_begin(int state)
+{
+    g_pm_state = state;
+    kprintf("[suspend] PM state set to %s (%d)\n", pm_state_name(state), state);
+}
+
+/* End a suspend cycle — clears the global PM state */
+void pm_suspend_end(void)
+{
+    kprintf("[suspend] PM state cleared (back to active)\n");
+    g_pm_state = 0;
+}
+
+/* Check if the system is currently in a suspend cycle */
+int pm_suspend_in_progress(void)
+{
+    return (g_pm_state != 0) ? 1 : 0;
+}
+
+/* Get the current PM suspend state */
+int pm_suspend_get_state(void)
+{
+    return g_pm_state;
+}
+
+/* Complete suspend cycle: prepare → enter → wakeup */
+int pm_suspend_cycle(int state)
+{
+    int ret;
+
+    pm_suspend_begin(state);
+
+    ret = suspend_prepare(state);
+    if (ret < 0) {
+        kprintf("[suspend] Prepare failed for %s: %d\n",
+                pm_state_name(state), ret);
+        pm_suspend_end();
+        return ret;
+    }
+
+    ret = suspend_enter(state);
+    if (ret < 0) {
+        kprintf("[suspend] Enter failed for %s: %d\n",
+                pm_state_name(state), ret);
+        pm_suspend_end();
+        return ret;
+    }
+
+    suspend_wakeup();
+    pm_suspend_end();
+
+    /* Update statistics */
+    spinlock_acquire(&g_suspend_stats_lock);
+    if (ret == 0)
+        g_suspend_stats.success++;
+    else
+        g_suspend_stats.fail++;
+    spinlock_release(&g_suspend_stats_lock);
+
+    return ret;
+}
+
+/* suspend_prepare — Prepare the system for suspend.
+ *
+ * Performs:
+ *   1. Notify drivers of impending suspend (device suspend ordering)
+ *   2. Freeze processes (userspace + kernel threads)
+ *   3. Sync filesystems
+ *   4. Prepare CPUs for suspend (disable non-boot CPUs on SMP)
+ *
+ * @state: PM_SUSPEND_STANDBY, PM_SUSPEND_MEM, or PM_SUSPEND_DISK
+ * Returns 0 on success, negative on failure (abort suspend).
+ */
+int suspend_prepare(suspend_state_t state)
+{
+    kprintf("[suspend] Preparing system for %s suspend...\n",
+            pm_state_name(state));
+
+    /* Step 1: Suspend devices in order */
+    int ret = suspend_devices();
+    if (ret < 0) {
+        kprintf("[suspend] Device suspend failed: %d\n", ret);
+        resume_devices();
+        return ret;
+    }
+
+    /* Step 2: Notify drivers (stub — in production would call notifier chain) */
+    /* driver_suspend_notify(state); */
+
+    /* Step 3: Sync filesystems */
+    /* vfs_sync_all(); */
+
+    /* Step 4: Freeze processes (stub — would use process_freeze_all()) */
+    /* process_freeze_all(THAW_PROCESS); */
+
+    kprintf("[suspend] System prepared for %s suspend\n",
+            pm_state_name(state));
+    return 0;
+}
+
+/* suspend_enter — Enter the given suspend state.
+ *
+ * Depending on @state:
+ *   - PM_SUSPEND_STANDBY → light-weight idle (S0ix / s2idle)
+ *   - PM_SUSPEND_MEM     → Suspend-to-RAM (ACPI S3)
+ *   - PM_SUSPEND_DISK    → Hibernate (ACPI S4)
+ *
+ * This function returns after resume.
+ */
+int suspend_enter(suspend_state_t state)
+{
+    int ret = 0;
+
+    kprintf("[suspend] Entering %s state...\n", pm_state_name(state));
+
+    cli();  /* Disable interrupts — must not be interrupted during entry */
+
+    switch (state) {
+    case PM_SUSPEND_STANDBY:
+        /* Light-weight suspend: use MWAIT-based S0ix / s2idle */
+        /* In production this calls suspend_s2idle_enter() */
+        __asm__ volatile("sti; hlt; cli" ::: "memory");
+        break;
+
+    case PM_SUSPEND_MEM:
+        /* Suspend-to-RAM via ACPI S3 */
+        ret = acpi_sleep(ACPI_S3);
+        break;
+
+    case PM_SUSPEND_DISK:
+        /* Suspend-to-Disk via ACPI S4 */
+        if (acpi_sleep_supported(ACPI_S4))
+            ret = acpi_sleep(ACPI_S4);
+        else
+            ret = -ENOSYS;
+        break;
+
+    default:
+        ret = -EINVAL;
+        break;
+    }
+
+    sti();  /* Re-enable interrupts after resume/error */
+
+    if (ret < 0) {
+        kprintf("[suspend] %s entry failed (rc=%d)\n",
+                pm_state_name(state), ret);
+    }
+
+    return ret;
+}
+
+/* suspend_wakeup — Called after waking from suspend.
+ * Re-enables devices and notifies drivers of wakeup.
+ */
+void suspend_wakeup(void)
+{
+    kprintf("[suspend] Waking up from suspend...\n");
+
+    /* Resume devices in reverse order */
+    resume_devices();
+
+    /* Notify drivers of resume */
+    /* driver_resume_notify(); */
+
+    /* Thaw processes */
+    /* process_thaw_all(); */
+
+    /* Clear pending wakeup count */
+    g_wakeup_state.pending = 0;
+
+    kprintf("[suspend] Wakeup complete\n");
+}
+
+/* suspend_stats — Return current suspend statistics.
+ * Fills in success/fail counts and total wakeup count.
+ */
+void suspend_stats(struct suspend_stats *stats)
+{
+    if (!stats) return;
+
+    spinlock_acquire(&g_suspend_stats_lock);
+    stats->success = g_suspend_stats.success;
+    stats->fail    = g_suspend_stats.fail;
+    spinlock_release(&g_suspend_stats_lock);
+}
+
+/* suspend_wakeup_count — Return total wakeup events seen since boot. */
 int suspend_wakeup_count(void)
 {
-    /* Return the number of wakeup events seen since boot */
-    return 0;
+    return (int)g_wakeup_state.total_count;
 }
 
-/* ── suspend_wakeup_count_check ─────────────────────────────── */
+/* suspend_wakeup_count_check — Check if wakeup events are pending.
+ * Returns 0 if no pending wakeups (safe to suspend), >0 if pending.
+ */
 int suspend_wakeup_count_check(void)
 {
-    /* Returns 0 (no pending wakeup) to allow suspend to proceed */
-    return 0;
+    return (g_wakeup_state.pending > 0) ? 1 : 0;
 }
 
-/* ── suspend_wakeup_count_reset ─────────────────────────────── */
+/* suspend_wakeup_count_reset — Clear the pending wakeup counter. */
 void suspend_wakeup_count_reset(void)
 {
-    /* Reset the wakeup counter — no-op as we don't track it yet */
+    g_wakeup_state.pending = 0;
 }

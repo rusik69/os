@@ -511,31 +511,75 @@ EXPORT_SYMBOL(fsverity_disable);
 #include "module.h"
 module_init(fsverity_init);
 
-/* ═══════════════════════════════════════════════════════════════
- *  Stub functions for future implementation
- * ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+ *  fs-verity measurement and verification API
+ * ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── verity_verify ─────────────────────────────────────── */
+/* verity_verify — Verify a complete file against its Merkle tree.
+ * This is the top-level measurement verification function.
+ * It checks that the file data matches the stored root hash by
+ * recomputing the Merkle tree and comparing.
+ *
+ * @ino:   inode number of the file to verify
+ * @data:  pointer to file data
+ * @size:  file size in bytes
+ *
+ * Returns 0 if verification passes, -EIO on failure, -ENOENT if
+ * fs-verity is not enabled on this file.
+ */
 int verity_verify(uint64_t ino, const uint8_t *data, uint64_t size)
 {
-    (void)ino;
-    (void)data;
-    (void)size;
-    kprintf("[fs-verity] Verify ino=%llu size=%llu\n", (unsigned long long)ino, (unsigned long long)size);
-    return 0;
+    return fsverity_verify_file(ino, data, size);
 }
-/* ── verity_metadata ───────────────────────────────────── */
+
+/* verity_metadata — Retrieve fs-verity metadata for a file.
+ * Fills @buf with up to @len bytes of verity descriptor data
+ * (root hash, tree levels, etc.).  On output, @len is set to
+ * the actual number of bytes written.
+ *
+ * Metadata format (packed):
+ *   - bytes 0-31:    root hash (SHA-256)
+ *   - bytes 32-35:   data blocks count (uint32_t)
+ *   - bytes 36-39:   tree levels (uint32_t)
+ *   - bytes 40-71:   padding (zeroed)
+ *
+ * Returns 0 on success, -ENOENT if verity not enabled.
+ */
 int verity_metadata(uint64_t ino, void *buf, uint32_t *len)
 {
-    (void)ino;
-    (void)buf;
-    (void)len;
-    kprintf("[fs-verity] Metadata ino=%llu\n", (unsigned long long)ino);
+    if (!buf || !len) return -EINVAL;
+
+    /* Find the verity descriptor */
+    struct verity_descriptor *vd = verity_find(ino);
+    if (!vd || !vd->verified)
+        return -ENOENT;
+
+    uint32_t out_len = sizeof(vd->root_hash) +
+                       sizeof(vd->data_blocks) +
+                       sizeof(vd->tree_levels);
+
+    if (*len < out_len)
+        return -ENOSPC;
+
+    uint8_t *p = (uint8_t *)buf;
+    memcpy(p, vd->root_hash, sizeof(vd->root_hash));
+    p += sizeof(vd->root_hash);
+    memcpy(p, &vd->data_blocks, sizeof(vd->data_blocks));
+    p += sizeof(vd->data_blocks);
+    memcpy(p, &vd->tree_levels, sizeof(vd->tree_levels));
+
+    *len = out_len;
     return 0;
 }
-/* ── verity_close ──────────────────────────────────────── */
+
+/* verity_close — Tear down fs-verity state for a file.
+ * Frees the Merkle tree data and releases the descriptor slot.
+ *
+ * @ino: inode number of the file to close
+ *
+ * Returns 0 on success, -ENOENT if verity not enabled.
+ */
 int verity_close(uint64_t ino)
 {
-    kprintf("[fs-verity] Close ino=%llu\n", (unsigned long long)ino);
-    return 0;
+    return fsverity_disable(ino);
 }

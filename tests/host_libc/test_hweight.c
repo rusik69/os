@@ -216,6 +216,54 @@ static void test_hweight64(void)
          hweight64(0x00FF00FF00FF00FFULL) == 32);
     TEST("hweight64(0x8000000000000000ULL) == 1",
          hweight64(0x8000000000000000ULL) == 1);
+
+    /* Additional 64-bit edge cases */
+    TEST("hweight64(0xFFFFFFFFFFFFFFFEULL) == 63",
+         hweight64(0xFFFFFFFFFFFFFFFEULL) == 63);
+    TEST("hweight64(0x7FFFFFFFFFFFFFFFULL) == 63",
+         hweight64(0x7FFFFFFFFFFFFFFFULL) == 63);
+    TEST("hweight64(0x0000000100000001ULL) == 2",
+         hweight64(0x0000000100000001ULL) == 2);
+    TEST("hweight64(0x8080808080808080ULL) == 8",
+         hweight64(0x8080808080808080ULL) == 8);
+}
+
+/* ===================================================================
+ *  test_hweight_extra — more edge cases
+ * =================================================================== */
+static void test_hweight_extra(void)
+{
+    printf("\n[hweight extra]\n");
+
+    /* 1. hweight8 with all intermediate nibble patterns */
+    TEST("hweight8(0xF0) == 4", hweight8(0xF0) == 4);
+    TEST("hweight8(0x0F) == 4", hweight8(0x0F) == 4);
+
+    /* 2. hweight16: cross-byte boundary patterns */
+    TEST("hweight16(0x00FF) == 8", hweight16(0x00FF) == 8);
+    TEST("hweight16(0xFF00) == 8", hweight16(0xFF00) == 8);
+    TEST("hweight16(0x0FF0) == 8", hweight16(0x0FF0) == 8);
+
+    /* 3. hweight32: specific bit-dense patterns */
+    TEST("hweight32(0x33333333) == 16", hweight32(0x33333333) == 16);
+    TEST("hweight32(0xCCCCCCCC) == 16", hweight32(0xCCCCCCCC) == 16);
+    TEST("hweight32(0xFFFF0001) == 17", hweight32(0xFFFF0001UL) == 17);
+
+    /* 4. hweight64: sparse patterns */
+    TEST("hweight64(0x1000000000000001ULL) == 2",
+         hweight64(0x1000000000000001ULL) == 2);
+    TEST("hweight64(0x0101010101010101ULL) == 8",
+         hweight64(0x0101010101010101ULL) == 8);
+    TEST("hweight64(0x1010101010101010ULL) == 8",
+         hweight64(0x1010101010101010ULL) == 8);
+    TEST("hweight64(0x0303030303030303ULL) == 16",
+         hweight64(0x0303030303030303ULL) == 16);
+
+    /* 5. Consistency across widths for same low bits */
+    TEST("hweight8 matches hweight16 for low byte",
+         hweight8(0xAB) == hweight16(0xAB));
+    TEST("hweight16 matches hweight32 for low 16 bits",
+         hweight16(0xABCD) == hweight32(0xABCD));
 }
 
 /* ===================================================================
@@ -234,14 +282,17 @@ int main(void)
     printf("\n--- hweight32 ---\n");
     test_hweight32();
 
-    printf("\n--- hweight64 ---\n");
+    printf("\\n--- hweight64 ---\\n");
     test_hweight64();
 
-    printf("\n");
-    printf("============================================\n");
-    printf("  Results: %d run, %d passed, %d failed\n",
+    printf("\\n--- hweight_extra ---\\n");
+    test_hweight_extra();
+
+    printf("\\n");
+    printf("============================================\\n");
+    printf("  Results: %d run, %d passed, %d failed\\n",
            tests_passed + tests_failed, tests_passed, tests_failed);
-    printf("============================================\n");
+    printf("============================================\\n");
 
     return tests_failed > 0 ? 1 : 0;
 }

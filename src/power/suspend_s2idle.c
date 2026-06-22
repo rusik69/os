@@ -109,7 +109,7 @@ static int s2idle_check_pending_irqs(void)
 
         /* Stub: check IOAPIC, PIC and ACPI GPE */
         (void)irq;
-        kprintf("[S2IDLE] Wakeup IRQ %d stub check\\n", irq);
+        kprintf("[S2IDLE] Wakeup IRQ %d stub check\n", irq);
         return 1;
     }
 

@@ -252,29 +252,51 @@ void kcsan_debugfs_read(char *buf, int *len)
                     (unsigned long long)tracked);
 }
 
-/* ── Stub: kcsan_check_read ───────────────────────────────────────────── */
+/* ── kcsan_check_read ─────────────────────────────────────────────────── */
 void kcsan_check_read(uint64_t addr, uint64_t size)
 {
-    (void)addr;
-    (void)size;
-    kprintf("[KCSAN] kcsan_check_read not yet fully implemented\n");
     kcsan_check_access(addr, size, KCSAN_ACCESS_READ);
 }
 
-/* ── Stub: kcsan_check_write ──────────────────────────────────────────── */
+/* ── kcsan_check_write ────────────────────────────────────────────────── */
 void kcsan_check_write(uint64_t addr, uint64_t size)
 {
-    (void)addr;
-    (void)size;
-    kprintf("[KCSAN] kcsan_check_write not yet fully implemented\n");
     kcsan_check_access(addr, size, KCSAN_ACCESS_WRITE);
 }
 
-/* ── Stub: kcsan_atomic_check ─────────────────────────────────────────── */
+/* ── kcsan_atomic_check ───────────────────────────────────────────────── */
+/*
+ * Check an atomic memory access for race conditions.
+ * Atomic accesses are inherently safe against data races on their own
+ * (they are serialized), but they can still race with non-atomic accesses.
+ * This function checks whether any existing watchpoint conflicts with
+ * this atomic access.
+ */
 void kcsan_atomic_check(uint64_t addr, uint64_t size, int is_write)
 {
-    (void)addr;
-    (void)size;
-    (void)is_write;
-    kprintf("[KCSAN] kcsan_atomic_check not yet implemented\n");
+    if (!kcsan_initialized || !kcsan_enabled)
+        return;
+
+    uint32_t cpu_id = smp_get_cpu_id();
+
+    spinlock_acquire(&kcsan_lock);
+
+    /* Check if this atomic access races with existing watchpoints.
+     * Atomic accesses can still race if a non-atomic access from
+     * another CPU touches the same address. */
+    int access_type = is_write ? KCSAN_ACCESS_WRITE : KCSAN_ACCESS_READ;
+    if (kcsan_check_watchpoints(addr, size, access_type, cpu_id)) {
+        kcsan_races_detected++;
+        kprintf("[KCSAN] DATA RACE (atomic vs non-atomic) at 0x%lx"
+                " (CPU%u, %s, size=%llu)\n",
+                (unsigned long)addr, cpu_id,
+                is_write ? "ATOMIC_WRITE" : "ATOMIC_READ",
+                (unsigned long long)size);
+    }
+
+    /* Do NOT set watchpoint for atomic accesses — they are
+     * self-synchronizing on their own, but we still check them
+     * against existing watchpoints. */
+
+    spinlock_release(&kcsan_lock);
 }

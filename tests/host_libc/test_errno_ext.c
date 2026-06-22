@@ -203,17 +203,69 @@ static void test_strerror_more(void)
 }
 
 /* ===================================================================
+ *  test_strerror_full — cover all common errno values
+ * =================================================================== */
+static void test_strerror_full(void)
+{
+    printf("\n[strerror full]\n");
+
+    /* Additional errno values */
+    struct { int num; const char *expected; } errnos[] = {
+        {3,    "No such process"},
+        {4,    "Interrupted system call"},
+        {6,    "No such device or address"},
+        {7,    "Argument list too long"},
+        {8,    "Exec format error"},
+        {10,   "No child processes"},
+        {16,   "Device or resource busy"},
+        {18,   "Cross-device link"},
+        {23,   "File table overflow"},
+        {24,   "Too many open files"},
+        {25,   "Not a typewriter"},
+        {27,   "File too large"},
+        {28,   "No space left on device"},
+        {29,   "Illegal seek"},
+        {30,   "Read-only file system"},
+        {32,   "Broken pipe"},
+        {34,   "Math result not representable"},
+        {35,   "Resource deadlock would occur"},
+        {36,   "File name too long"},
+        {37,   "No record locks available"},
+        {38,   "Function not implemented"},
+        {39,   "Directory not empty"},
+    };
+    int all_match = 1;
+    for (size_t i = 0; i < sizeof(errnos)/sizeof(errnos[0]); i++) {
+        char *s = strerror(errnos[i].num);
+        if (strcmp(s, errnos[i].expected) != 0) {
+            printf("  FAIL: strerror(%d) = \"%s\" (expected \"%s\")\n",
+                   errnos[i].num, s, errnos[i].expected);
+            tests_failed++;
+            all_match = 0;
+        } else {
+            printf("  PASS: strerror(%d) = \"%s\"\n",
+                   errnos[i].num, s);
+            tests_passed++;
+        }
+    }
+    TEST("strerror: all common errnos match", all_match);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
 {
     printf("=== Errno String Tests ===\n\n");
 
-    printf("--- strerror ---\n");
+    printf("--- strerror ---\\n");
     test_strerror();
 
     printf("\n--- strerror more ---\n");
     test_strerror_more();
+
+    printf("\n--- strerror full ---\n");
+    test_strerror_full();
 
     printf("\n");
     printf("============================================\n");

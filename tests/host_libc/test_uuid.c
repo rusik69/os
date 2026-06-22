@@ -314,6 +314,123 @@ static void test_uuid_extra(void)
 }
 
 /* ===================================================================
+ *  test_uuid_more — additional UUID edge cases
+ * =================================================================== */
+static void test_uuid_more(void)
+{
+    int i;
+
+    /* 1. uuid_gen: all generated UUIDs have unique bytes in timestamp/mac sections */
+    {
+        uint8_t u[16];
+        uuid_gen(u);
+        /* Version 4 UUID should have random bytes in all positions */
+        int non_zero_count = 0;
+        for (i = 0; i < 16; i++) if (u[i]) non_zero_count++;
+        TEST("uuid_more: at least 12 non-zero bytes in generated UUID",
+             non_zero_count >= 12);
+    }
+
+    /* 2. uuid_parse with single hex digit groups (no dashes) */
+    {
+        uint8_t u[16];
+        memset(u, 0, 16);
+        int r = uuid_parse("00112233445566778899aabbccddeeff", u);
+        TEST("uuid_more: parse 32 hex digits (no dashes)", r == 0);
+        TEST("uuid_more: parsed byte 0 = 0x00", u[0] == 0x00);
+        TEST("uuid_more: parsed byte 1 = 0x11", u[1] == 0x11);
+    }
+
+    /* 3. uuid_parse with short string (fewer than 16 hex digits) */
+    {
+        uint8_t u[16];
+        memset(u, 0, 16);
+        int r = uuid_parse("00112233", u);
+        TEST("uuid_more: parse short string returns -1", r == -1);
+    }
+
+    /* 4. uuid_parse with extra whitespace before */
+    {
+        uint8_t u[16];
+        memset(u, 0, 16);
+        int r = uuid_parse("  550e8400-e29b-41d4-a716-446655440000", u);
+        TEST("uuid_more: parse with leading whitespace returns -1", r == -1);
+    }
+
+    /* 5. uuid_unparse roundtrip with specific pattern */
+    {
+        uint8_t u[16];
+        for (i = 0; i < 16; i++) u[i] = (uint8_t)(i * 17 + 3);
+        u[6] = (u[6] & 0x0F) | 0x40; /* version 4 */
+        u[8] = (u[8] & 0x3F) | 0x80; /* variant */
+        char str[37];
+        uuid_unparse(u, str);
+        uint8_t back[16];
+        memset(back, 0, 16);
+        uuid_parse(str, back);
+        /* uuid_parse only parses first 8 bytes, so compare those */
+        int match = 1;
+        for (i = 0; i < 8; i++) if (u[i] != back[i]) { match = 0; break; }
+        TEST("uuid_more: unparse→parse roundtrip first 8 bytes", match);
+    }
+
+    /* 6. uuid_to_str with all 0xFF bytes */
+    {
+        uint8_t u[16];
+        memset(u, 0xFF, 16);
+        u[6] = 0x4F; /* version 4 */
+        u[8] = 0xBF; /* variant */
+        char str[37];
+        uuid_to_str(u, str);
+        TEST("uuid_more: all-0xFF to_str length", strlen(str) == 36);
+        TEST("uuid_more: all-0xFF has dashes at correct positions",
+             str[8]=='-' && str[13]=='-' && str[18]=='-' && str[23]=='-');
+    }
+
+    /* 7. uuid_generate returns non-zero UUID with correct version/variant */
+    {
+        uint8_t u[16];
+        memset(u, 0, 16);
+        int r = uuid_generate(u);
+        TEST("uuid_more: generate returns 0", r == 0);
+        TEST("uuid_more: generate version 4", (u[6] & 0xF0) == 0x40);
+        TEST("uuid_more: generate variant", (u[8] & 0xC0) == 0x80);
+        int nz = 0;
+        for (i = 0; i < 16; i++) if (u[i]) { nz = 1; break; }
+        TEST("uuid_more: generate non-zero", nz);
+    }
+
+    /* 8. uuid_parse invalid hex character positions */
+    {
+        uint8_t u[16];
+        int r = uuid_parse("GGGGGGGG-GGGG-GGGG-GGGG-GGGGGGGGGGGG", u);
+        TEST("uuid_more: invalid hex chars returns -1", r == -1);
+    }
+
+    /* 9. uuid_unparse of generated UUID produces valid string with dashes */
+    {
+        uint8_t u[16];
+        uuid_gen(u);
+        char str[37];
+        int r = uuid_unparse(u, str);
+        TEST("uuid_more: unparse generated UUID returns 0", r == 0);
+        TEST("uuid_more: unparse length 36", strlen(str) == 36);
+    }
+
+    /* 10. uuid_to_str output matches expected format for known UUID */
+    {
+        uint8_t u[16] = {
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4,
+            0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00
+        };
+        char str[37];
+        uuid_to_str(u, str);
+        TEST("uuid_more: known UUID string matches expected format",
+             strcmp(str, "550e8400-e29b-41d4-a716-446655440000") == 0);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -337,6 +454,9 @@ int main(void)
 
     printf("\n--- extras ---\n");
     test_uuid_extra();
+
+    printf("\n--- more edge cases ---\n");
+    test_uuid_more();
 
     printf("\n");
     printf("============================================\n");

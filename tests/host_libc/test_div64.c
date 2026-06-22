@@ -230,6 +230,58 @@ static void test_do_div(void)
 }
 
 /* ===================================================================
+ *  test_div64_extra — additional edge cases
+ * =================================================================== */
+static void test_div64_extra(void)
+{
+    printf("\n[div64 extra]\n");
+
+    /* 1. __udivdi3: dividend=1, divisor=1 */
+    TEST("__udivdi3(1,1) == 1", __udivdi3(1, 1) == 1);
+
+    /* 2. __udivdi3: large power of two */
+    TEST("__udivdi3(1<<63, 1<<31) == 1<<32",
+         __udivdi3(1ULL<<63, 1ULL<<31) == (1ULL<<32));
+
+    /* 3. __umoddi3: max mod small */
+    TEST("__umoddi3(~0ULL, 1000)", __umoddi3(~0ULL, 1000) == (~0ULL % 1000));
+
+    /* 4. __divdi3: INT64_MIN / INT64_MAX */
+    TEST("__divdi3(INT64_MIN, INT64_MAX) == -1 or 0",
+         __divdi3(INT64_MIN, INT64_MAX) == -1 ||
+         __divdi3(INT64_MIN, INT64_MAX) == 0);
+
+    /* 5. __divdi3: INT64_MIN / 1 */
+    TEST("__divdi3(INT64_MIN, 1) == INT64_MIN",
+         __divdi3(INT64_MIN, 1) == INT64_MIN);
+
+    /* 6. __moddi3: negative mod positive */
+    TEST("__moddi3(-7, 3) == -1 or 2",
+         __moddi3(-7, 3) == -1 || __moddi3(-7, 3) == 2);
+
+    /* 7. __moddi3: INT64_MIN % 1 == 0 */
+    TEST("__moddi3(INT64_MIN, 1) == 0", __moddi3(INT64_MIN, 1) == 0);
+
+    /* 8. __udivmoddi4: quotient and remainder matching div+mod */
+    uint64_t q, r;
+    q = __udivmoddi4(1000000, 123, &r);
+    TEST("__udivmoddi4: q == 1000000/123", q == 1000000/123);
+    TEST("__udivmoddi4: r == 1000000%123", r == 1000000%123);
+
+    /* 9. do_div: dividing by power of 2 */
+    uint64_t n = 1024;
+    uint64_t rem = do_div(n, 256);
+    TEST("do_div: 1024/256 quotient", n == 4);
+    TEST("do_div: 1024/256 remainder", rem == 0);
+
+    /* 10. do_div: large divisor */
+    n = 100;
+    rem = do_div(n, 1000);
+    TEST("do_div: 100/1000 quotient 0", n == 0);
+    TEST("do_div: 100/1000 remainder 100", rem == 100);
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -253,6 +305,9 @@ int main(void)
 
     printf("\n--- do_div macro ---\n");
     test_do_div();
+
+    printf("\n--- extra edge cases ---\n");
+    test_div64_extra();
 
     printf("\n");
     printf("============================================\n");

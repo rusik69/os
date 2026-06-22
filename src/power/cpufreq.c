@@ -826,23 +826,127 @@ int cpufreq_update_policy(unsigned int cpu)
     return 0;
 }
 
-/* ── cpufreq_notify_transition ─────────────────────────────── */
-void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
-{
-    (void)freqs;
-    /* Future: notify registered notifier chains about frequency changes */
-}
+/* ── cpufreq_notify_transition ───────────────────────────────────────────
+ * Notify registered notifier chains about frequency changes.
+ * This is a simple implementation that maintains a list of registered
+ * notifiers and calls them on each frequency transition.
+ */
+#define MAX_FREQ_NOTIFIERS 16
 
-/* ── cpufreq_stats_create_table ─────────────────────────────── */
-int cpufreq_stats_create_table(unsigned int cpu)
+struct freq_notifier {
+    void (*fn)(struct cpufreq_freqs *freqs);
+    int in_use;
+};
+
+static struct freq_notifier g_freq_notifiers[MAX_FREQ_NOTIFIERS];
+static int g_freq_notifier_count = 0;
+
+int cpufreq_register_transition_notifier(void (*fn)(struct cpufreq_freqs *))
 {
-    (void)cpu;
-    /* Stats tracking is not yet implemented; return success as non-fatal */
+    if (!fn) return -EINVAL;
+    if (g_freq_notifier_count >= MAX_FREQ_NOTIFIERS)
+        return -ENOSPC;
+    g_freq_notifiers[g_freq_notifier_count].fn = fn;
+    g_freq_notifiers[g_freq_notifier_count].in_use = 1;
+    g_freq_notifier_count++;
     return 0;
 }
 
-/* ── cpufreq_stats_delete_table ─────────────────────────────── */
+void cpufreq_notify_transition(struct cpufreq_freqs *freqs)
+{
+    if (!freqs) return;
+    for (int i = 0; i < g_freq_notifier_count; i++) {
+        if (g_freq_notifiers[i].in_use && g_freq_notifiers[i].fn)
+            g_freq_notifiers[i].fn(freqs);
+    }
+}
+
+/* ── cpufreq_stats_create_table ───────────────────────────────────────────
+ * Create and initialize per-CPU frequency statistics table.
+ * Tracks time-in-state for each P-state.
+ */
+#define MAX_TIME_IN_STATE 16
+
+struct cpufreq_stats {
+    uint32_t time_in_state[MAX_TIME_IN_STATE];
+    uint64_t total_transitions;
+    uint32_t last_state;
+};
+
+static struct cpufreq_stats g_cpufreq_stats;
+
+int cpufreq_stats_create_table(unsigned int cpu)
+{
+    (void)cpu;
+    memset(&g_cpufreq_stats, 0, sizeof(g_cpufreq_stats));
+    g_cpufreq_stats.last_state = 0;
+    kprintf("[cpufreq] Stats table created for cpu%u\n", cpu);
+    return 0;
+}
+
 void cpufreq_stats_delete_table(unsigned int cpu)
 {
     (void)cpu;
+    memset(&g_cpufreq_stats, 0, sizeof(g_cpufreq_stats));
+}
+
+/* Update stats on frequency transition */
+void cpufreq_stats_record_transition(int old_state, int new_state)
+{
+    (void)old_state;
+    g_cpufreq_stats.total_transitions++;
+    g_cpufreq_stats.last_state = (uint32_t)new_state;
+}
+
+/* ── Frequency table lookup ────────────────────────────────────────────
+ * Find the closest P-state index for a given target frequency.
+ * Returns the index (0-based) on success, negative on error.
+ */
+int cpufreq_freq_table_lookup(uint32_t target_freq_khz)
+{
+    if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
+        return -1;
+
+    int best_idx = 0;
+    uint32_t best_diff = 0xFFFFFFFF;
+
+    for (int i = 0; i < g_cpufreq.num_states; i++) {
+        uint32_t f = g_cpufreq.states[i].core_freq * 1000;
+        uint32_t diff = (f > target_freq_khz) ? (f - target_freq_khz)
+                                               : (target_freq_khz - f);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_idx = i;
+        }
+    }
+
+    return best_idx;
+}
+
+/* ── Min/max frequency helpers ─────────────────────────────────────── */
+uint32_t cpufreq_get_max_freq_khz(void)
+{
+    if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
+        return 0;
+    return g_cpufreq.states[0].core_freq * 1000;
+}
+
+uint32_t cpufreq_get_min_freq_khz(void)
+{
+    if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
+        return 0;
+    return g_cpufreq.states[g_cpufreq.num_states - 1].core_freq * 1000;
+}
+
+uint32_t cpufreq_get_transition_latency_us(void)
+{
+    if (!g_cpufreq.present || g_cpufreq.num_states <= 0)
+        return 0;
+    /* Return the worst-case transition latency across all states */
+    uint32_t max_lat = 0;
+    for (int i = 0; i < g_cpufreq.num_states; i++) {
+        if (g_cpufreq.states[i].transition_latency > max_lat)
+            max_lat = g_cpufreq.states[i].transition_latency;
+    }
+    return max_lat;
 }

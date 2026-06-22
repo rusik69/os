@@ -411,6 +411,160 @@ static void test_search_extras(void)
 }
 
 /* ===================================================================
+ *  test_search_more — additional edge-case tests
+ * =================================================================== */
+static void test_search_more(void)
+{
+    /* 1. qsort_ext: all elements identical large array */
+    {
+        int a[100];
+        for (int i = 0; i < 100; i++) a[i] = 42;
+        qsort_ext(a, 100, sizeof(int), cmp_int_asc);
+        int ok = 1;
+        for (int i = 0; i < 100; i++) if (a[i] != 42) { ok = 0; break; }
+        TEST("qsort_ext: 100 identical elements sorted (all 42)", ok);
+    }
+
+    /* 2. qsort_ext: two elements */
+    {
+        int a[] = { 99, 1 };
+        qsort_ext(a, 2, sizeof(int), cmp_int_asc);
+        TEST("qsort_ext: two elements ascending", a[0]==1 && a[1]==99);
+    }
+
+    /* 3. qsort_ext: two elements descending */
+    {
+        int a[] = { 1, 99 };
+        qsort_ext(a, 2, sizeof(int), cmp_int_desc);
+        TEST("qsort_ext: two elements descending", a[0]==99 && a[1]==1);
+    }
+
+    /* 4. qsort_ext: already sorted with odd number of elements */
+    {
+        int a[] = { 1, 2, 3, 4, 5, 6, 7 };
+        qsort_ext(a, 7, sizeof(int), cmp_int_asc);
+        int ok = 1;
+        for (int i = 1; i < 7; i++) if (a[i-1] > a[i]) { ok = 0; break; }
+        TEST("qsort_ext: 7 already sorted preserves order", ok);
+    }
+
+    /* 5. bsearch_ext: array with all identical elements */
+    {
+        int a[10];
+        for (int i = 0; i < 10; i++) a[i] = 5;
+        int key = 5;
+        int *r = (int *)bsearch_ext(&key, a, 10, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: all identical, finds key", r && *r == 5);
+        int missing = 3;
+        int *r2 = (int *)bsearch_ext(&missing, a, 10, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: all identical, missing returns NULL", r2 == NULL);
+    }
+
+    /* 6. bsearch_ext: key at odd positions (boundary checks) */
+    {
+        int a[] = { 2, 4, 6, 8, 10, 12, 14, 16 };
+        int key = 8;
+        int *r = (int *)bsearch_ext(&key, a, 8, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: key at exact middle (index 3)", r && *r == 8);
+        key = 12;
+        r = (int *)bsearch_ext(&key, a, 8, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: key at index 5", r && *r == 12);
+    }
+
+    /* 7. bsearch_ext: large array (100 elements) */
+    {
+        int a[100];
+        for (int i = 0; i < 100; i++) a[i] = i * 10;
+        int key = 0;
+        int *r = (int *)bsearch_ext(&key, a, 100, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: large array, first element found", r && *r == 0);
+        key = 990;
+        r = (int *)bsearch_ext(&key, a, 100, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: large array, last element found", r && *r == 990);
+        key = 555;
+        r = (int *)bsearch_ext(&key, a, 100, sizeof(int), cmp_int_asc);
+        TEST("bsearch_ext: large array, missing returns NULL", r == NULL);
+    }
+
+    /* 8. lfind: array with duplicates — finds first occurrence */
+    {
+        char arr[] = { 'a', 'b', 'a', 'c', 'a' };
+        kernel_size_t nm = 5;
+        char key = 'a';
+        char *r = (char *)lfind(&key, arr, &nm, 1, cmp_char);
+        TEST("lfind: finds first 'a' in duplicate array", r && *r == 'a' && r == &arr[0]);
+    }
+
+    /* 9. lfind: search in 0-length array always NULL */
+    {
+        char arr[] = { 'x' };
+        kernel_size_t nm = 0;
+        char key = 'x';
+        char *r = (char *)lfind(&key, arr, &nm, 1, cmp_char);
+        TEST("lfind: nmemb=0 always returns NULL", r == NULL);
+    }
+
+    /* 10. lsearch: append when array is 0-length */
+    {
+        char buf[32];
+        kernel_size_t nm = 0;
+        char key = 'z';
+        char *r = (char *)lsearch(&key, buf, &nm, 1, cmp_char);
+        TEST("lsearch: append to 0-length array", r && *r == 'z' && nm == 1);
+        TEST("lsearch: first element is key", buf[0] == 'z');
+    }
+
+    /* 11. lsearch: existing element does NOT change nmemb */
+    {
+        char buf[32] = { 'a', 'b' };
+        kernel_size_t nm = 2;
+        char key = 'a';
+        char *r = (char *)lsearch(&key, buf, &nm, 1, cmp_char);
+        TEST("lsearch: existing element, nmemb unchanged", r && *r == 'a' && nm == 2);
+    }
+
+    /* 12. search_binary: value at every index in array */
+    {
+        int a[] = { 10, 20, 30, 40, 50, 60 };
+        TEST("search_binary: index 0", search_binary(&a[0], a, 6, sizeof(int), cmp_int_asc) == 0);
+        TEST("search_binary: index 2", search_binary(&a[2], a, 6, sizeof(int), cmp_int_asc) == 2);
+        TEST("search_binary: index 5", search_binary(&a[5], a, 6, sizeof(int), cmp_int_asc) == 5);
+        int miss = 15;
+        TEST("search_binary: missing returns -1", search_binary(&miss, a, 6, sizeof(int), cmp_int_asc) == -1);
+    }
+
+    /* 13. search_linear: array with one element */
+    {
+        int a[] = { 42 };
+        int key = 42;
+        int r = search_linear(&key, a, 1, sizeof(int), cmp_int_asc);
+        TEST("search_linear: single element found", r == 0);
+        int miss = 99;
+        r = search_linear(&miss, a, 1, sizeof(int), cmp_int_asc);
+        TEST("search_linear: single element miss", r == -1);
+    }
+
+    /* 14. search_linear: duplicates — returns first index */
+    {
+        int a[] = { 7, 3, 7, 5, 7 };
+        int key = 7;
+        int r = search_linear(&key, a, 5, sizeof(int), cmp_int_asc);
+        TEST("search_linear: duplicates, finds first (index 0)", r == 0);
+    }
+
+    /* 15. search_binary: negative values */
+    {
+        int a[] = { -10, -5, 0, 5, 10 };
+        int k = -5;
+        int r = search_binary(&k, a, 5, sizeof(int), cmp_int_asc);
+        TEST("search_binary: negative key found", r == 1);
+        k = -7;
+        r = search_binary(&k, a, 5, sizeof(int), cmp_int_asc);
+        TEST("search_binary: negative key missing", r == -1);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -437,6 +591,9 @@ int main(void)
 
     printf("\n--- extras ---\n");
     test_search_extras();
+
+    printf("\n--- more edge cases ---\n");
+    test_search_more();
 
     printf("\n");
     printf("============================================\n");

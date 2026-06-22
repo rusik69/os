@@ -330,6 +330,138 @@ static void test_strftime(void)
 }
 
 /* ===================================================================
+ *  test_time_extra — additional time edge cases
+ * =================================================================== */
+static void test_time_extra(void)
+{
+    struct tm result, tm;
+    time_t t;
+    char buf[128];
+
+    /* 1. Leap year 2000 (divisible by 400, IS leap) */
+    {
+        tm.tm_year = 100; tm.tm_mon = 1; tm.tm_mday = 29; /* Feb 29, 2000 */
+        tm.tm_hour = 12; tm.tm_min = 0; tm.tm_sec = 0;
+        tm.tm_isdst = -1;
+        t = mktime(&tm);
+        struct tm back;
+        gmtime_r(&t, &back);
+        TEST("time_extra: 2000 leap Feb 29 roundtrip mday", back.tm_mday == 29);
+        TEST("time_extra: 2000 leap Feb 29 roundtrip mon", back.tm_mon == 1);
+    }
+
+    /* 2. Non-leap year 2100 (divisible by 100, NOT by 400, NOT leap) */
+    {
+        tm.tm_year = 200; tm.tm_mon = 1; tm.tm_mday = 28; /* Feb 28, 2100 */
+        tm.tm_hour = 0; tm.tm_min = 0; tm.tm_sec = 0;
+        tm.tm_isdst = -1;
+        t = mktime(&tm);
+        struct tm back;
+        gmtime_r(&t, &back);
+        TEST("time_extra: 2100 non-leap Feb 28 roundtrip mday", back.tm_mday == 28);
+        /* Feb 29 should NOT exist */
+        tm.tm_mday = 29;
+        t = mktime(&tm);
+        /* mktime may normalize to Mar 1 — check it's either -1 or maps to March */
+        gmtime_r(&t, &back);
+        int is_mar1 = (back.tm_mon == 2 && back.tm_mday == 1);
+        TEST("time_extra: 2100 Feb 29 normalized (to Mar 1 or -1)",
+             t == (time_t)-1 || is_mar1);
+    }
+
+    /* 3. Year 2400 (divisible by 400, IS leap) */
+    {
+        tm.tm_year = 500; tm.tm_mon = 1; tm.tm_mday = 29;
+        tm.tm_hour = 0; tm.tm_min = 0; tm.tm_sec = 0;
+        tm.tm_isdst = -1;
+        t = mktime(&tm);
+        if (t != (time_t)-1) {
+            struct tm back;
+            gmtime_r(&t, &back);
+            TEST("time_extra: 2400 leap Feb 29 roundtrip mday", back.tm_mday == 29);
+        }
+    }
+
+    /* 4. Year 1900 (not a leap year — divisible by 100, not 400) */
+    {
+        tm.tm_year = 0; tm.tm_mon = 1; tm.tm_mday = 28;
+        tm.tm_hour = 12; tm.tm_min = 0; tm.tm_sec = 0;
+        tm.tm_isdst = -1;
+        t = mktime(&tm);
+        if (t != (time_t)-1) {
+            struct tm back;
+            gmtime_r(&t, &back);
+            TEST("time_extra: 1900 non-leap Feb 28 roundtrip mday", back.tm_mday == 28);
+            TEST("time_extra: 1900 Feb yday <= 58", back.tm_yday <= 58);
+        }
+    }
+
+    /* 5. Jan 1, 2001 (first day of new century that's actually first) */
+    {
+        t = 978307200LL; /* 2001-01-01 00:00:00 UTC */
+        gmtime_r(&t, &result);
+        TEST("time_extra: 2001-01-01 mon=0 (Jan)", result.tm_mon == 0);
+        TEST("time_extra: 2001-01-01 mday=1", result.tm_mday == 1);
+        TEST("time_extra: 2001-01-01 year=101", result.tm_year == 101);
+        TEST("time_extra: 2001-01-01 yday=0", result.tm_yday == 0);
+    }
+
+    /* 6. Dec 31, 1999 — last day of millennium */
+    {
+        t = 946684799LL; /* 1999-12-31 23:59:59 UTC */
+        gmtime_r(&t, &result);
+        TEST("time_extra: 1999-12-31 mon=11 (Dec)", result.tm_mon == 11);
+        TEST("time_extra: 1999-12-31 mday=31", result.tm_mday == 31);
+        TEST("time_extra: 1999-12-31 year=99", result.tm_year == 99);
+        TEST("time_extra: 1999-12-31 hour=23", result.tm_hour == 23);
+        TEST("time_extra: 1999-12-31 min=59", result.tm_min == 59);
+        TEST("time_extra: 1999-12-31 sec=59", result.tm_sec == 59);
+    }
+
+    /* 7. 2038-01-19 03:14:08 (one second after Y2038 overflow) */
+    {
+        t = 2147483648LL; /* 0x80000000 = -2147483648 as signed 32-bit */
+        gmtime_r(&t, &result);
+        /* With 64-bit time_t this should work fine */
+        if (sizeof(time_t) >= 8) {
+            TEST("time_extra: 2038+1 sec year valid", result.tm_year >= 138);
+            TEST("time_extra: 2038+1 sec mon", result.tm_mon >= 0);
+            TEST("time_extra: 2038+1 sec mday", result.tm_mday >= 19);
+        }
+    }
+
+    /* 8. strftime with unsupported format specifier (%%z) */
+    {
+        struct tm tm2;
+        memset(&tm2, 0, sizeof(tm2));
+        tm2.tm_year = 100; tm2.tm_mon = 0; tm2.tm_mday = 1;
+        size_t n = strftime(buf, sizeof(buf), "Hello %y %x %%z", &tm2);
+        TEST("time_extra: strftime with %%z (unsupported) non-zero", n > 0);
+        /* Should have produced at least "Hello 00" */
+        TEST("time_extra: strftime unsupported spec skips %%z", n >= 7);
+    }
+
+    /* 9. strftime with all-day format */
+    {
+        struct tm tm3;
+        memset(&tm3, 0, sizeof(tm3));
+        tm3.tm_year = 124; tm3.tm_mon = 6; tm3.tm_mday = 4; /* 2024-07-04 */
+        tm3.tm_wday = 4; /* Thu */
+        strftime(buf, sizeof(buf), "%A, %B %d, %Y", &tm3);
+        TEST("time_extra: strftime 'Thursday, July 04, 2024'",
+             strcmp(buf, "Thursday, July 04, 2024") == 0);
+    }
+
+    /* 10. strftime single %% */
+    {
+        struct tm tm4;
+        memset(&tm4, 0, sizeof(tm4));
+        strftime(buf, sizeof(buf), "%%", &tm4);
+        TEST("time_extra: strftime single %%", strcmp(buf, "%") == 0);
+    }
+}
+
+/* ===================================================================
  *  Main
  * =================================================================== */
 int main(void)
@@ -347,6 +479,9 @@ int main(void)
 
     printf("\n--- strftime ---\n");
     test_strftime();
+
+    printf("\n--- extra edge cases ---\n");
+    test_time_extra();
 
     printf("\n");
     printf("============================================\n");
