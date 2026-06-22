@@ -171,7 +171,7 @@ static inline int  cpumask_weight(const struct cpumask *m) { return __builtin_po
 static inline int  cpumask_first(const struct cpumask *m) { if (m->bits == 0) return CPUMASK_MAX_CPUS; return __builtin_ctzll(m->bits); }
 static inline int  cpumask_next(int cpu, const struct cpumask *m) { uint64_t t = m->bits & ~((1ULL << (cpu + 1)) - 1); return t ? __builtin_ctzll(t) : CPUMASK_MAX_CPUS; }
 static inline int  cpumask_any(const struct cpumask *m) { return cpumask_first(m); }
-static inline int  cpumask_any_but(const struct cpumask *m, int cpu) { struct cpumask t; cpumask_complement(&t, m); cpumask_clear_cpu(cpu, &t); return cpumask_first(&t); }
+static inline int  cpumask_any_but(const struct cpumask *m, int cpu) { struct cpumask t; t.bits = m->bits; cpumask_clear_cpu(cpu, &t); return cpumask_first(&t); }
 
 extern void cpu_bitmask_init(void);
 
@@ -560,15 +560,18 @@ static void test_cpumask(void)
     /* NOTE: cpumask_next(cpu=63) has undefined behavior (shift by 64) — skipping */
 
     /* Any / Any-but */
-    /* NOTE: kernel's cpumask_any_but returns first CPU NOT in mask (not in mask but not cpu).
-     * This is likely a kernel bug — it should return first CPU IN the mask other than cpu. */
+    /* any_but should return first CPU IN the mask other than cpu.
+     * m1 has bits {0,3,7,63}, clear 3 → {0,7,63}, first = 0 */
     TEST("cpumask any returns first cpu",
          cpumask_any(&m1) == 0);
 
-    /* any_but with multiple CPUs: kernel returns first CPU NOT in mask (complement of m1):
-     * After set(0,3,7,63) and clear(3): m1 has bits {0,7,63}, complement has all others.
-     * First bit of complement that's not 'cpu' is... let's not test any_but with
-     * the kernel's broken implementation. */
+    /* any_but with excluded cpu not in mask: returns first CPU in mask */
+    TEST("cpumask any_but returns first CPU when excluded not in mask",
+         cpumask_any_but(&m1, 99) == 0);
+
+    /* any_but with excluded cpu in mask, other CPUs available */
+    TEST("cpumask any_but excludes the specified CPU",
+         cpumask_any_but(&m1, 0) == 3);
 
     /* Clear */
     cpumask_clear_cpu(3, &m1);
@@ -641,13 +644,13 @@ static void test_cpumask(void)
     cpumask_set_cpu(0, &m1);
     TEST("cpumask bits after cpu 0 set", m1.bits & 1);
 
-    /* any_but with single CPU: kernel returns first CPU NOT in mask */
+    /* any_but with single CPU: excluded cpu is the only one in mask */
     cpumask_zero(&m1);
     cpumask_set_cpu(7, &m1);
-    /* Complement of {7} = all CPUs except 7. First bit is 0 (unless cleared by any_but).
-     * any_but(&m1, 7) = complement(m1) with bit 7 cleared = all CPUs except 7 → first = 0 */
-    TEST("cpumask any_but on single-CPU mask returns 0 (kernel's broken implementation)",
-         cpumask_any_but(&m1, 7) == 0);
+    /* With correct implementation, any_but({7}, 7) should return no valid CPU (MAX_CPUS)
+     * since 7 is the only CPU in the mask and it's excluded. */
+    TEST("cpumask any_but on single-CPU mask returns MAX when excluded is the only CPU",
+         cpumask_any_but(&m1, 7) == CPUMASK_MAX_CPUS);
 
     /* Boundary: cpu 63 */
     cpumask_zero(&m1);

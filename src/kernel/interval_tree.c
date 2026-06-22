@@ -153,6 +153,7 @@ void interval_tree_remove(struct interval_tree *tree,
 {
     struct interval_tree_node *child, *parent;
     int color;
+    int child_is_left = 0; /* track which side child is on relative to parent */
 
     if (!node->rb_left || !node->rb_right) {
         /* Node has at most one child */
@@ -164,10 +165,13 @@ void interval_tree_remove(struct interval_tree *tree,
             child->rb_parent = parent;
         if (!parent)
             tree->root = child;
-        else if (node == parent->rb_left)
+        else if (node == parent->rb_left) {
             parent->rb_left = child;
-        else
+            child_is_left = 1;
+        } else {
             parent->rb_right = child;
+            child_is_left = 0;
+        }
     } else {
         /* Node has two children – find successor */
         struct interval_tree_node *succ = node->rb_right;
@@ -187,10 +191,13 @@ void interval_tree_remove(struct interval_tree *tree,
             child->rb_parent = parent;
         if (!parent)
             tree->root = child;
-        else if (succ == parent->rb_left)
+        else if (succ == parent->rb_left) {
             parent->rb_left = child;
-        else
+            child_is_left = 1;
+        } else {
             parent->rb_right = child;
+            child_is_left = 0;
+        }
 
         /* Move succ to node's position */
         succ->rb_parent = old_parent;
@@ -203,9 +210,13 @@ void interval_tree_remove(struct interval_tree *tree,
         succ->rb_left = old_left;
         if (old_left)
             old_left->rb_parent = succ;
-        succ->rb_right = old_right;
-        if (old_right)
-            old_right->rb_parent = succ;
+        /* Avoid self-loop when succ was node's immediate right child */
+        if (old_right != succ) {
+            succ->rb_right = old_right;
+            if (old_right)
+                old_right->rb_parent = succ;
+        }
+        /* If succ was node->rb_right, succ->rb_right stays unchanged */
         succ->rb_color = old_color;
     }
 
@@ -225,24 +236,28 @@ void interval_tree_remove(struct interval_tree *tree,
             if (child)
                 child->rb_color = RB_BLACK;
         } else {
-            /* Full RB delete fixup (simplified – for production use a full impl) */
-            /* Traverse up fixing double-black */
+            /* Full RB delete fixup – use explicit side tracking */
             struct interval_tree_node *x = child;
             struct interval_tree_node *xp = parent;
+            int x_is_left = child_is_left;
 
             while (x != tree->root && is_black(x)) {
-                if (x == xp->rb_left) {
-                    struct interval_tree_node *w = xp->rb_right;
+                struct interval_tree_node *w;
+
+                if (x_is_left) {
+                    w = xp->rb_right;
                     if (is_red(w)) {
                         w->rb_color = RB_BLACK;
                         xp->rb_color = RB_RED;
                         rotate_left(tree, xp);
                         w = xp->rb_right;
                     }
-                    if (is_black(w->rb_left) && is_black(w->rb_right)) {
-                        w->rb_color = RB_RED;
+                    if (!w || (is_black(w->rb_left) && is_black(w->rb_right))) {
+                        if (w)
+                            w->rb_color = RB_RED;
                         x = xp;
                         xp = xp->rb_parent;
+                        x_is_left = (xp && x == xp->rb_left);
                     } else {
                         if (is_black(w->rb_right)) {
                             if (w->rb_left)
@@ -260,17 +275,19 @@ void interval_tree_remove(struct interval_tree *tree,
                         break;
                     }
                 } else {
-                    struct interval_tree_node *w = xp->rb_left;
+                    w = xp->rb_left;
                     if (is_red(w)) {
                         w->rb_color = RB_BLACK;
                         xp->rb_color = RB_RED;
                         rotate_right(tree, xp);
                         w = xp->rb_left;
                     }
-                    if (is_black(w->rb_right) && is_black(w->rb_left)) {
-                        w->rb_color = RB_RED;
+                    if (!w || (is_black(w->rb_right) && is_black(w->rb_left))) {
+                        if (w)
+                            w->rb_color = RB_RED;
                         x = xp;
                         xp = xp->rb_parent;
+                        x_is_left = (xp && x == xp->rb_left);
                     } else {
                         if (is_black(w->rb_left)) {
                             if (w->rb_right)

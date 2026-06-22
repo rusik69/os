@@ -87,9 +87,9 @@ static inline int cpumask_any(const struct cpumask *mask) {
 
 static inline int cpumask_any_but(const struct cpumask *mask, int cpu) {
     struct cpumask tmp;
-    cpumask_complement(&tmp, mask);
-    cpumask_clear_cpu(cpu, &tmp);
-    return cpumask_first(&tmp);
+    tmp.bits = mask->bits;               /* copy mask */
+    cpumask_clear_cpu(cpu, &tmp);        /* remove the excluded cpu */
+    return cpumask_first(&tmp);          /* first CPU still in mask */
 }
 
 /* Convert to/from unsigned long pointer (for system call compatibility). */

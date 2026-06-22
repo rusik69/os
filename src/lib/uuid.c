@@ -37,7 +37,7 @@ int uuid_parse(const char *str, void *uuid)
         return -1;
     uint8_t *u = (uint8_t *)uuid;
     int idx = 0;
-    for (int i = 0; i < 36 && idx < 16; i++) {
+    for (int i = 0; i < 36 && idx < 32; i++) {
         char c = str[i];
         if (c == '-')
             continue;
@@ -56,7 +56,7 @@ int uuid_parse(const char *str, void *uuid)
             u[idx >> 1] = nibble << 4;
         idx++;
     }
-    return (idx == 16) ? 0 : -1;
+    return (idx == 32) ? 0 : -1;
 }
 /* ── uuid_unparse ─────────────────────────────── */
 int uuid_unparse(const void *uuid, char *str)

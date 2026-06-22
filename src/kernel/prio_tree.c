@@ -152,14 +152,31 @@ struct prio_tree_node *prio_tree_search(struct prio_tree_root *root,
     /* BFS-style search: try the root first (highest priority overall) */
     struct prio_tree_node *best = NULL;
 
-    /* Simple in-order traversal checking all nodes */
-    /* For efficiency, we could prune, but this is a straightforward impl. */
-    struct prio_tree_node *stack[64];
+    /* In-order traversal using dynamically allocated stack */
+    int stack_cap = 64;
     int sp = 0;
+    struct prio_tree_node **stack = kmalloc(sizeof(void *) * (size_t)stack_cap);
+    if (!stack)
+        return NULL;
+
     struct prio_tree_node *curr = root->prio_tree_node;
 
     while (sp > 0 || curr) {
         while (curr) {
+            if (sp >= stack_cap) {
+                /* Grow stack */
+                stack_cap *= 2;
+                struct prio_tree_node **new_stack =
+                    kmalloc(sizeof(void *) * (size_t)stack_cap);
+                if (!new_stack) {
+                    kfree(stack);
+                    return best; /* return what we found so far */
+                }
+                for (int i = 0; i < sp; i++)
+                    new_stack[i] = stack[i];
+                kfree(stack);
+                stack = new_stack;
+            }
             stack[sp++] = curr;
             curr = curr->left;
         }
@@ -171,6 +188,7 @@ struct prio_tree_node *prio_tree_search(struct prio_tree_root *root,
         curr = curr->right;
     }
 
+    kfree(stack);
     return best;
 }
 
@@ -178,13 +196,30 @@ void prio_tree_iterate(struct prio_tree_root *root,
                        void (*fn)(struct prio_tree_node *, void *),
                        void *ctx)
 {
-    /* In-order traversal (sorted by index) */
-    struct prio_tree_node *stack[64];
+    /* In-order traversal (sorted by index) using dynamically allocated stack */
+    int stack_cap = 64;
     int sp = 0;
+    struct prio_tree_node **stack = kmalloc(sizeof(void *) * (size_t)stack_cap);
+    if (!stack)
+        return;
+
     struct prio_tree_node *curr = root->prio_tree_node;
 
     while (sp > 0 || curr) {
         while (curr) {
+            if (sp >= stack_cap) {
+                stack_cap *= 2;
+                struct prio_tree_node **new_stack =
+                    kmalloc(sizeof(void *) * (size_t)stack_cap);
+                if (!new_stack) {
+                    kfree(stack);
+                    return;
+                }
+                for (int i = 0; i < sp; i++)
+                    new_stack[i] = stack[i];
+                kfree(stack);
+                stack = new_stack;
+            }
             stack[sp++] = curr;
             curr = curr->left;
         }
@@ -192,6 +227,8 @@ void prio_tree_iterate(struct prio_tree_root *root,
         fn(curr, ctx);
         curr = curr->right;
     }
+
+    kfree(stack);
 }
 
 void prio_tree_init_global(void)
