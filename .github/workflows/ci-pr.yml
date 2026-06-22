@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-${{ github.event.pull_request.head.sha }}
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-strict-${{ github.event.pull_request.head.sha }}
@@ -177,7 +177,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-test-${{ github.event.pull_request.head.sha }}
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: ccache cache
         continue-on-error: true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-pr-${{ github.event.pull_request.head.sha }}
