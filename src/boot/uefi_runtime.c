@@ -217,14 +217,91 @@ int uefi_get_variable(const char *name, uint8_t *guid,
     return (st == EFI_SUCCESS) ? 0 : -1;
 }
 
+/* ── Software variable store (fallback when no UEFI runtime) ─────────── */
+
+#define VAR_STORE_MAX_VARS 64
+#define VAR_STORE_NAME_MAX 256
+#define VAR_STORE_DATA_MAX 4096
+
+struct var_store_entry {
+    int      in_use;
+    char     name[VAR_STORE_NAME_MAX];
+    uint8_t  guid[16];
+    uint32_t attributes;
+    uint64_t data_size;
+    uint8_t  data[VAR_STORE_DATA_MAX];
+};
+
+static struct var_store_entry g_var_store[VAR_STORE_MAX_VARS];
+static int g_var_store_initialized = 0;
+
+static void var_store_init(void)
+{
+    if (g_var_store_initialized) return;
+    memset(g_var_store, 0, sizeof(g_var_store));
+    g_var_store_initialized = 1;
+}
+
+static struct var_store_entry *var_store_find(const char *name, uint8_t *guid)
+{
+    for (int i = 0; i < VAR_STORE_MAX_VARS; i++) {
+        if (!g_var_store[i].in_use) continue;
+        if (strcmp(g_var_store[i].name, name) == 0) {
+            if (guid && memcmp(g_var_store[i].guid, guid, 16) != 0)
+                continue;
+            return &g_var_store[i];
+        }
+    }
+    return NULL;
+}
+
+static int var_store_set(const char *name, uint8_t *guid,
+                          uint32_t attributes,
+                          uint64_t data_size, const void *data)
+{
+    var_store_init();
+
+    struct var_store_entry *entry = var_store_find(name, guid);
+    if (!entry) {
+        /* Find free slot */
+        for (int i = 0; i < VAR_STORE_MAX_VARS; i++) {
+            if (!g_var_store[i].in_use) {
+                entry = &g_var_store[i];
+                break;
+            }
+        }
+        if (!entry) return -ENOSPC;
+    }
+
+    strncpy(entry->name, name, VAR_STORE_NAME_MAX - 1);
+    entry->name[VAR_STORE_NAME_MAX - 1] = '\0';
+    if (guid) memcpy(entry->guid, guid, 16);
+    entry->attributes = attributes;
+
+    uint64_t copy_size = data_size;
+    if (copy_size > VAR_STORE_DATA_MAX) copy_size = VAR_STORE_DATA_MAX;
+    if (data && copy_size > 0)
+        memcpy(entry->data, data, (size_t)copy_size);
+    entry->data_size = copy_size;
+    entry->in_use = 1;
+
+    return 0;
+}
+
 /* ── SetVariable ─────────────────────────────────────────────────────── */
 
 int uefi_set_variable(const char *name, uint8_t *guid,
                       uint32_t attributes,
                       uint64_t data_size, const void *data)
 {
-    if (!g_efi_rt || !g_efi_rt->set_variable || !name)
-        return -1;
+    if (!name)
+        return -EINVAL;
+
+    if (!g_efi_rt || !g_efi_rt->set_variable) {
+        /* No UEFI runtime — use software variable store */
+        kprintf("[UEFI] SetVariable: no runtime, using software store\n");
+        return var_store_set(name, guid, attributes, data_size, data);
+    }
 
     efi_char16_t ucs2_name[256];
     int i = 0;

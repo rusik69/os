@@ -465,5 +465,87 @@ EXPORT_SYMBOL(dccp_shutdown);
 EXPORT_SYMBOL(dccp_listen);
 EXPORT_SYMBOL(dccp_accept);
 EXPORT_SYMBOL(handle_dccp);
+
+/* ── dccp_disconnect: disconnect a DCCP socket ── */
+int dccp_disconnect(int fd)
+{
+    if (!dccp_initialized) return -ENOSYS;
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+    if (!ds->connected) {
+        spinlock_release(&dccp_lock);
+        return -ENOTCONN;
+    }
+    /* Send DCCP-Close if connected */
+    {
+        uint8_t close_pkt[sizeof(struct dccp_header)];
+        struct dccp_header *ch = (struct dccp_header *)close_pkt;
+        memset(ch, 0, sizeof(*ch));
+        ch->src_port = htons(ds->local_port);
+        ch->dst_port = htons(ds->peer_port);
+        ch->data_offset = (sizeof(*ch) / 4) << 4;
+        ch->type_reset = (DCCP_PKT_CLOSE << 4);
+        ch->seq_low = htonl(++ds->seq);
+        send_ip(ds->peer_ip, IPPROTO_DCCP, close_pkt, sizeof(*ch));
+    }
+    ds->connected = 0;
+    ds->state = 0;
+    ds->rcvlen = 0;
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
+/* ── dccp_send_request: send explicit DCCP-Request on a connected socket ── */
+int dccp_send_request(int fd)
+{
+    if (!dccp_initialized) return -ENOSYS;
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+    /* Re-send DCCP-Request */
+    ds->seq++;
+    uint8_t pkt[sizeof(struct dccp_header)];
+    struct dccp_header *dh = (struct dccp_header *)pkt;
+    memset(dh, 0, sizeof(*dh));
+    dh->src_port = htons(ds->local_port);
+    dh->dst_port = htons(ds->peer_port);
+    dh->data_offset = (sizeof(*dh) / 4) << 4;
+    dh->type_reset = (DCCP_PKT_REQUEST << 4);
+    dh->seq_low = htonl(ds->seq);
+    send_ip(ds->peer_ip, IPPROTO_DCCP, pkt, sizeof(*dh));
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
+/* ── dccp_rcv_response: process received DCCP-Response packet ── */
+int dccp_rcv_response(int fd, uint32_t src_ip, uint16_t src_port)
+{
+    if (!dccp_initialized) return -ENOSYS;
+    spinlock_acquire(&dccp_lock);
+    struct dccp_sock *ds = dccp_find_by_fd(fd);
+    if (!ds) {
+        spinlock_release(&dccp_lock);
+        return -EINVAL;
+    }
+    ds->peer_ip = src_ip;
+    ds->peer_port = src_port;
+    ds->connected = 1;
+    ds->state = 1; /* ESTABLISHED */
+    kprintf("[dccp] dccp_rcv_response: fd=%d connected to %d.%d.%d.%d:%u\n",
+            fd,
+            (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+            (src_ip >> 8) & 0xFF, src_ip & 0xFF,
+            (unsigned int)src_port);
+    spinlock_release(&dccp_lock);
+    return 0;
+}
+
 #include "module.h"
 module_init(dccp_init);

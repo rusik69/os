@@ -295,7 +295,123 @@ void lacp_tick(void)
 }
 #include "module.h"
 module_init(lacp_init);
-/* ── Implement: lacp_send ────────────────── */
+
+/* ── lacp_actor_running: check if LACP actor is running on a port ── */
+int lacp_actor_running(void *port)
+{
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+    struct lacp_port *p = (struct lacp_port *)port;
+    /* Actor is running if the port is in use and has active LACP state */
+    int running = (p->in_use && (p->state_flags & LACP_STATE_ACTIVE)) ? 1 : 0;
+    kprintf("[lacp] lacp_actor_running: port=%u running=%d\n",
+            p->port_number, running);
+    return running;
+}
+
+/* ── lacp_partner_running: check if LACP partner is running ── */
+int lacp_partner_running(void *port)
+{
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+    struct lacp_port *p = (struct lacp_port *)port;
+    /* Partner is running if we have received their LACP PDU
+     * and they have the ACTIVE flag set */
+    int running = (p->in_use &&
+                   (p->partner.state_flags & LACP_STATE_ACTIVE) &&
+                   !(p->state_flags & LACP_STATE_DEFAULTED)) ? 1 : 0;
+    kprintf("[lacp] lacp_partner_running: port=%u running=%d\n",
+            p->port_number, running);
+    return running;
+}
+
+/* ── lacp_aggregator_oper_state: get operational state of LAG ── */
+int lacp_aggregator_oper_state(void *port)
+{
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+    struct lacp_port *p = (struct lacp_port *)port;
+    /* Aggregator is operational if both actor and partner are in sync
+     * and the port is part of the LAG */
+    int oper = (p->aggregated &&
+                (p->state_flags & LACP_STATE_SYNC) &&
+                (p->partner.state_flags & LACP_STATE_SYNC)) ? 1 : 0;
+    kprintf("[lacp] lacp_aggregator_oper_state: port=%u oper=%d\n",
+            p->port_number, oper);
+    return oper;
+}
+
+/* ── lacp_mux_machine: LACP MUX state machine ── */
+int lacp_mux_machine(void *port, int event)
+{
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+    struct lacp_port *p = (struct lacp_port *)port;
+
+    /* MUX states per 802.3ad:
+     * 0 = DETACHED, 1 = WAITING, 2 = ATTACHED, 3 = COLLECTING_DISTRIBUTING */
+    static const int mux_transitions[4][4] = {
+        /* event: 0=NONE, 1=ATTACH, 2=DETACH, 3=READY */
+        { 0, 1, 0, 0 },  /* DETACHED */
+        { 1, 1, 0, 2 },  /* WAITING */
+        { 2, 2, 0, 3 },  /* ATTACHED */
+        { 3, 3, 0, 3 },  /* COLLECTING_DISTRIBUTING */
+    };
+
+    if (event < 0 || event > 3) event = 0;
+    int cur_state = p->aggregated ? 3 : 0;
+    int new_state = mux_transitions[cur_state][event];
+
+    if (new_state == 3) {
+        p->aggregated = 1;
+        p->actor.state_flags |= (LACP_STATE_SYNC | LACP_STATE_COLLECTING |
+                                 LACP_STATE_DISTRIBUTING);
+    } else if (new_state == 0) {
+        p->aggregated = 0;
+        p->actor.state_flags &= ~(LACP_STATE_SYNC | LACP_STATE_COLLECTING |
+                                  LACP_STATE_DISTRIBUTING);
+    }
+
+    kprintf("[lacp] lacp_mux_machine: port=%u event=%d -> state=%d aggregated=%d\n",
+            p->port_number, event, new_state, p->aggregated);
+    return new_state;
+}
+
+/* ── lacp_rx_machine: LACP Receive state machine ── */
+int lacp_rx_machine(void *port, int event)
+{
+    if (!lacp_enabled) return -ENOSYS;
+    if (!port) return -EINVAL;
+    struct lacp_port *p = (struct lacp_port *)port;
+
+    /* RX states per 802.3ad:
+     * 0 = INIT, 1 = PORT_DISABLED, 2 = EXPIRED, 3 = DEFAULTED, 4 = CURRENT */
+    if (event == 1) { /* PORT_DISABLED */
+        p->state_flags |= LACP_STATE_DEFAULTED;
+        p->state_flags &= ~LACP_STATE_EXPIRED;
+        p->current_while_timer = 0;
+        kprintf("[lacp] lacp_rx_machine: port=%u -> PORT_DISABLED\n", p->port_number);
+        return 1;
+    }
+    if (event == 2) { /* EXPIRE */
+        p->state_flags |= LACP_STATE_EXPIRED;
+        p->state_flags &= ~LACP_STATE_DEFAULTED;
+        kprintf("[lacp] lacp_rx_machine: port=%u -> EXPIRED\n", p->port_number);
+        return 2;
+    }
+    if (event == 3) { /* DEFAULT */
+        p->state_flags |= LACP_STATE_DEFAULTED;
+        p->state_flags &= ~LACP_STATE_EXPIRED;
+        kprintf("[lacp] lacp_rx_machine: port=%u -> DEFAULTED\n", p->port_number);
+        return 3;
+    }
+    /* event == 0 or anything else: CURRENT (received valid LACP PDU) */
+    p->state_flags &= ~(LACP_STATE_DEFAULTED | LACP_STATE_EXPIRED);
+    kprintf("[lacp] lacp_rx_machine: port=%u -> CURRENT\n", p->port_number);
+    return 4;
+}
+
+/* ── lacp_send ────────────────── */
 int lacp_send(void *dev, const void *pdu, size_t len)
 {
     if (!lacp_enabled) return -ENOSYS;

@@ -1139,48 +1139,120 @@ EXPORT_SYMBOL(vmm_unmap_page);
 EXPORT_SYMBOL(vmm_get_physaddr);
 EXPORT_SYMBOL(vmm_page_is_execonly);
 
-/* ── Stub: vmm_alloc ────────────────────────────────────────── */
+/* ── vmm_alloc — Allocate virtual memory pages ────────────────── */
 uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
 {
-    (void)addr;
-    (void)size;
-    (void)flags;
-    kprintf("[vmm] vmm_alloc: not yet implemented\n");
-    return 0;
+    if (size == 0)
+        return 0;
+    /* Align size to page boundary */
+    size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    uint64_t start = addr;
+    if (start == 0) {
+        /* Auto-select address in user space above typical base */
+        start = 0x10000;
+    }
+    /* Align to page boundary */
+    start &= ~(PAGE_SIZE - 1ULL);
+
+    size_t num_pages = size / PAGE_SIZE;
+    if (num_pages == 0) num_pages = 1;
+
+    uint64_t *pml4 = kernel_pml4;
+    uint64_t vmm_flags = VMM_FLAG_PRESENT | VMM_FLAG_WRITE;
+    if (flags & 2) vmm_flags |= VMM_FLAG_WRITE;   /* PROT_WRITE */
+    if (flags & 1) vmm_flags |= VMM_FLAG_PRESENT;  /* PROT_READ */
+    if (!(flags & 4)) vmm_flags |= VMM_FLAG_NOEXEC; /* no PROT_EXEC -> NX */
+
+    /* Map pages one by one using the kernel page table */
+    for (size_t i = 0; i < num_pages; i++) {
+        uint64_t phys = pmm_alloc_frame();
+        if (!phys) {
+            /* Unwind on failure */
+            for (size_t j = 0; j < i; j++)
+                vmm_unmap_page(start + j * PAGE_SIZE);
+            return 0;
+        }
+        memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+        if (vmm_map_page(start + i * PAGE_SIZE, phys, vmm_flags) < 0) {
+            pmm_free_frame(phys);
+            for (size_t j = 0; j < i; j++)
+                vmm_unmap_page(start + j * PAGE_SIZE);
+            return 0;
+        }
+    }
+    return start;
 }
 
-/* ── Stub: vmm_free ─────────────────────────────────────────── */
+/* ── vmm_free — Free virtual memory pages ────────────────────── */
 int vmm_free(uint64_t addr, size_t size)
 {
-    (void)addr;
-    (void)size;
-    kprintf("[vmm] vmm_free: not yet implemented\n");
+    if (addr == 0 || size == 0)
+        return -1;
+
+    uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
+    uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
+
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+        if (vmm_virt_to_phys(va, &phys) == 0 && phys)
+            pmm_free_frame(phys);
+        vmm_unmap_page(va);
+    }
     return 0;
 }
 
-/* ── Stub: vmm_protect ──────────────────────────────────────── */
+/* ── vmm_protect — Change page protection ────────────────────── */
 int vmm_protect(uint64_t addr, size_t size, int new_flags)
 {
-    (void)addr;
-    (void)size;
-    (void)new_flags;
-    kprintf("[vmm] vmm_protect: not yet implemented\n");
+    if (addr == 0 || size == 0)
+        return -1;
+
+    uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
+    uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
+
+    uint64_t pte_flags = 0;
+    if (new_flags & 1) pte_flags |= VMM_FLAG_PRESENT;  /* PROT_READ */
+    if (new_flags & 2) pte_flags |= VMM_FLAG_WRITE;    /* PROT_WRITE */
+    if (!(new_flags & 4)) pte_flags |= VMM_FLAG_NOEXEC; /* no exec -> NX */
+
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+        if (vmm_virt_to_phys(va, &phys) < 0)
+            continue;
+        vmm_unmap_page(va);
+        vmm_map_page(va, phys, pte_flags);
+    }
     return 0;
 }
 
-/* ── Stub: vmm_sync ─────────────────────────────────────────── */
+/* ── vmm_sync — Flush data cache for mapped pages ───────────── */
 int vmm_sync(uint64_t addr, size_t size)
 {
     (void)addr;
     (void)size;
-    kprintf("[vmm] vmm_sync: not yet implemented\n");
+    /* On x86-64 with write-back cache, no explicit flush needed
+     * for coherency (cache is coherent).  For device memory or
+     * non-temporal stores, a WBINVD or CLFLUSH would be needed.
+     * This stub is a no-op for standard write-back memory. */
     return 0;
 }
 
-/* ── Stub: vmm_flush_tlb ────────────────────────────────────── */
+/* ── vmm_flush_tlb — Flush TLB for a range of pages ─────────── */
 void vmm_flush_tlb(uint64_t addr, size_t size)
 {
-    (void)addr;
-    (void)size;
-    kprintf("[vmm] vmm_flush_tlb: not yet implemented\n");
+    if (size == 0) {
+        /* Full TLB flush */
+        uint64_t cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+        __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+        return;
+    }
+
+    uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
+    uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
+
+    /* Single-page invlpg for each page in the range */
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+        __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
+    }
 }

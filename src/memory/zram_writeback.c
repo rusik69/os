@@ -368,17 +368,65 @@ int zram_writeback_check(void)
     }
     return errors;
 }
+/* ── zram_writeback_load — Load a page from writeback ──────── */
 int zram_writeback_load(void *zram, uint32_t index)
 {
     (void)zram;
-    (void)index;
-    kprintf("[zram] zram_writeback_load: not yet implemented\n");
+    if (index >= ZRAM_WRITEBACK_MAX_SLOTS)
+        return -EINVAL;
+
+    uint64_t flags;
+    spinlock_irqsave_acquire(&wb_lock, &flags);
+
+    /* Check if there's a writeback entry for this slot */
+    if (lru_gen[index] == 0) {
+        spinlock_irqsave_release(&wb_lock, flags);
+        return -ENOENT; /* Not written back */
+    }
+
+    spinlock_irqsave_release(&wb_lock, flags);
+
+    /* Read the page from backing store using zram_writeback_read */
+    int ret = zram_writeback_read((uint64_t)index, (uint64_t)index);
+    if (ret < 0) {
+        kprintf("[zram-wb] zram_writeback_load: read error at slot %u: %d\n",
+                index, ret);
+        return ret;
+    }
+
+    /* Clear the LRU generation since the page is now back in zram */
+    spinlock_irqsave_acquire(&wb_lock, &flags);
+    lru_gen[index] = 0;
+    spinlock_irqsave_release(&wb_lock, flags);
+
+    kprintf("[zram-wb] zram_writeback_load: slot %u loaded from backing store\n",
+            index);
     return 0;
 }
-/* ── Stub: zram_writeback_flush ─────────────────────────────── */
+
+/* ── zram_writeback_flush — Flush all writeback entries ────── */
 int zram_writeback_flush(void *zram)
 {
     (void)zram;
-    kprintf("[zram] zram_writeback_flush: not yet implemented\n");
-    return 0;
+
+    if (!backing_store_initialised)
+        return -ENXIO;
+
+    int flushed = 0;
+    uint64_t flags;
+
+    spinlock_irqsave_acquire(&wb_lock, &flags);
+
+    /* Iterate all LRU entries and flush them */
+    for (uint64_t i = 0; i < ZRAM_WRITEBACK_MAX_SLOTS; i++) {
+        if (lru_gen[i] != 0) {
+            lru_gen[i] = 0;
+            flushed++;
+        }
+    }
+
+    spinlock_irqsave_release(&wb_lock, flags);
+
+    kprintf("[zram-wb] zram_writeback_flush: flushed %d entries\n", flushed);
+    return flushed;
 }

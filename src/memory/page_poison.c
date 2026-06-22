@@ -164,30 +164,37 @@ int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
     return 0; /* clean */
 }
 
-/* ── Stub: poison_page ───────────────────────────────────────── */
+/* ── poison_page ───────────────────────────────────────── */
 void poison_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[page_poison] poison_page: not yet implemented\n");
+    if (!g_poison_active || phys_addr == 0)
+        return;
+    void *virt = (void *)PHYS_TO_VIRT(phys_addr);
+    poison_region_with_value(virt, PAGE_SIZE, g_poison_freed_val);
 }
 
-/* ── Stub: unpoison_page ─────────────────────────────────────── */
+/* ── unpoison_page ─────────────────────────────────────── */
 void unpoison_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[page_poison] unpoison_page: not yet implemented\n");
+    if (!g_poison_active || phys_addr == 0)
+        return;
+    void *virt = (void *)PHYS_TO_VIRT(phys_addr);
+    memset(virt, 0, PAGE_SIZE);
 }
 
-/* ── Stub: page_poison_check ─────────────────────────────────── */
+/* ── page_poison_check ─────────────────────────────────── */
 int page_poison_check(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[page_poison] page_poison_check: not yet implemented\n");
-    return 0;
+    if (!g_poison_active || phys_addr == 0)
+        return 0;
+    void *virt = (void *)PHYS_TO_VIRT(phys_addr);
+    return poison_check_region(virt, PAGE_SIZE, g_poison_freed_val);
 }
 
-/* ── Stub: page_poison_debug ─────────────────────────────────── */
+/* ── page_poison_debug ─────────────────────────────────── */
 void page_poison_debug(void)
 {
-    kprintf("[page_poison] page_poison_debug: not yet implemented\n");
+    kprintf("[page_poison] active=%d stage=%d freed_val=0x%02x\n",
+            g_poison_active, (int)g_init_stage,
+            (unsigned int)g_poison_freed_val);
 }

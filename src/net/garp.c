@@ -414,7 +414,86 @@ void garp_tick(void)
 #include "module.h"
 module_init(garp_init);
 
-/* ── Implement: garp_transmit ────────────────── */
+/* ── garp_join_group: public wrapper around garp_join ── */
+int garp_join_group(uint16_t app_type, uint32_t attr_value)
+{
+    return garp_join(app_type, attr_value);
+}
+/* ── garp_leave_group: public wrapper around garp_leave ── */
+int garp_leave_group(uint16_t app_type, uint32_t attr_value)
+{
+    return garp_leave(app_type, attr_value);
+}
+/* ── garp_handle_join: handle received Join PDU for an attribute ── */
+int garp_handle_join(uint16_t app_type, uint32_t attr_value)
+{
+    if (!garp_initialised) return -ENOSYS;
+    kprintf("[garp] garp_handle_join: app_type=%u attr=0x%x\n", app_type, attr_value);
+    /* Inbound Join: ensure attribute is in our participant table.
+     * If not present, add it as an observed remote declaration. */
+    for (int i = 0; i < GARP_MAX_APPS; i++) {
+        if (garp_apps[i].app_type != app_type) continue;
+        struct garp_application *app = &garp_apps[i];
+        for (int j = 0; j < app->nparticipants; j++) {
+            if (app->participants[j].in_use &&
+                app->participants[j].attribute_value == attr_value) {
+                /* Already known — transition to IN if leaving */
+                if (app->participants[j].state == GARP_LV)
+                    app->participants[j].state = GARP_IN;
+                return 0;
+            }
+        }
+        /* Not found — add as remote participant */
+        if (app->nparticipants < 16) {
+            struct garp_participant *p = &app->participants[app->nparticipants++];
+            memset(p, 0, sizeof(*p));
+            p->in_use = 1;
+            p->attribute_type = app->attribute_type;
+            p->attribute_value = attr_value;
+            p->state = GARP_IN;
+        }
+        return 0;
+    }
+    return -ENOENT;
+}
+/* ── garp_handle_leave: handle received Leave PDU for an attribute ── */
+int garp_handle_leave(uint16_t app_type, uint32_t attr_value)
+{
+    if (!garp_initialised) return -ENOSYS;
+    kprintf("[garp] garp_handle_leave: app_type=%u attr=0x%x\n", app_type, attr_value);
+    /* Inbound Leave: remove the attribute from participant table */
+    for (int i = 0; i < GARP_MAX_APPS; i++) {
+        if (garp_apps[i].app_type != app_type) continue;
+        struct garp_application *app = &garp_apps[i];
+        for (int j = 0; j < app->nparticipants; j++) {
+            if (app->participants[j].in_use &&
+                app->participants[j].attribute_value == attr_value) {
+                memset(&app->participants[j], 0, sizeof(struct garp_participant));
+                /* Compact */
+                for (int k = j; k < app->nparticipants - 1; k++)
+                    app->participants[k] = app->participants[k + 1];
+                app->nparticipants--;
+                return 0;
+            }
+        }
+    }
+    return -ENOENT;
+}
+/* ── garp_unregister: remove application and all its attributes ── */
+int garp_unregister(uint16_t app_type)
+{
+    if (!garp_initialised) return -ENOSYS;
+    for (int i = 0; i < GARP_MAX_APPS; i++) {
+        if (garp_apps[i].app_type == app_type) {
+            memset(&garp_apps[i], 0, sizeof(struct garp_application));
+            kprintf("[garp] garp_unregister: unregistered app_type=%u\n", app_type);
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+/* ── garp_transmit ────────────────── */
 int garp_transmit(void *dev)
 {
     (void)dev;

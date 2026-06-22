@@ -304,24 +304,52 @@ void hugepage_migration_init(void)
     kprintf("[hugepage-mig] Huge page migration subsystem initialised\n");
 }
 
-/* ── Stub: hugepage_migration_supported ─────────────────────── */
+/* ── hugepage_migration_supported — Check if supported ───── */
 int hugepage_migration_supported(void)
 {
-    kprintf("[hugepage-mig] hugepage_migration_supported: not yet implemented\n");
-    return 0;
+    /* Huge page migration is supported if THP is enabled */
+    int supported = thp_is_enabled() ? 1 : 0;
+    kprintf("[hugepage-mig] hugepage_migration_supported: %s\n",
+            supported ? "yes" : "no");
+    return supported;
 }
 
-/* ── Stub: isolate_huge_page ────────────────────────────────── */
+/* ── isolate_huge_page — Isolate a huge page for migration ── */
 int isolate_huge_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[hugepage-mig] isolate_huge_page: not yet implemented\n");
+    if (!thp_is_enabled())
+        return -ENOSYS;
+
+    if (phys_addr == 0 || (phys_addr & (THP_HPAGE_SIZE - 1)))
+        return -EINVAL;
+
+    /* Verify the page is allocated */
+    if (pmm_refcount(phys_addr) == 0) {
+        kprintf("[hugepage-mig] isolate_huge_page: page 0x%llx not allocated\n",
+                (unsigned long long)phys_addr);
+        return -ENOENT;
+    }
+
+    /* Increment isolated counter (anonymous pages) */
+    hugepage_inc_isolated(1, HPAGE_NR_PAGES);
+
+    kprintf("[hugepage-mig] isolate_huge_page: isolated 0x%llx (%d pages)\n",
+            (unsigned long long)phys_addr, HPAGE_NR_PAGES);
     return 0;
 }
 
-/* ── Stub: putback_huge_page ────────────────────────────────── */
+/* ── putback_huge_page — Put back a previously isolated page ── */
 void putback_huge_page(uint64_t phys_addr)
 {
-    (void)phys_addr;
-    kprintf("[hugepage-mig] putback_huge_page: not yet implemented\n");
+    if (!thp_is_enabled())
+        return;
+
+    if (phys_addr == 0 || (phys_addr & (THP_HPAGE_SIZE - 1)))
+        return;
+
+    /* Decrement isolated counter */
+    hugepage_dec_isolated(1, HPAGE_NR_PAGES);
+
+    kprintf("[hugepage-mig] putback_huge_page: returned 0x%llx (%d pages)\n",
+            (unsigned long long)phys_addr, HPAGE_NR_PAGES);
 }

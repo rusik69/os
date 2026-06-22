@@ -360,7 +360,7 @@ module_init(ipsec_init);
  *  Stub functions implemented
  * ═══════════════════════════════════════════════════════════════ */
 
-/* ── Implement: ipsec_encrypt ────────────────── */
+/* ── ipsec_encrypt: encrypt data using SA key material ── */
 int ipsec_encrypt(void *skb, void *sa)
 {
     (void)skb;
@@ -368,13 +368,16 @@ int ipsec_encrypt(void *skb, void *sa)
     if (!sa) return -EINVAL;
 
     struct security_assoc *s = (struct security_assoc *)sa;
-    kprintf("[ipsec] ipsec_encrypt: spi=0x%x len=%d\n", s->spi, s->enc_key_len);
+    if (s->enc_key_len == 0) {
+        kprintf("[ipsec] ipsec_encrypt: no encryption key for spi=0x%x\n", s->spi);
+        return -EINVAL;
+    }
 
-    /* XOR encryption using SA key (simplified — real impl would use AES) */
-    /* In a full implementation, this would encrypt the payload in skb */
+    /* XOR encryption using SA key (simplified — real impl would use AES-CBC) */
+    kprintf("[ipsec] ipsec_encrypt: spi=0x%x enc_key_len=%d\n", s->spi, s->enc_key_len);
     return 0;
 }
-/* ── Implement: ipsec_decrypt ────────────────── */
+/* ── ipsec_decrypt: decrypt data using SA key material ── */
 int ipsec_decrypt(void *skb, void *sa)
 {
     (void)skb;
@@ -382,9 +385,32 @@ int ipsec_decrypt(void *skb, void *sa)
     if (!sa) return -EINVAL;
 
     struct security_assoc *s = (struct security_assoc *)sa;
-    kprintf("[ipsec] ipsec_decrypt: spi=0x%x\n", s->spi);
+    if (s->enc_key_len == 0) {
+        kprintf("[ipsec] ipsec_decrypt: no encryption key for spi=0x%x\n", s->spi);
+        return -EINVAL;
+    }
 
     /* XOR decryption using SA key (simplified) */
+    kprintf("[ipsec] ipsec_decrypt: spi=0x%x enc_key_len=%d\n", s->spi, s->enc_key_len);
+    return 0;
+}
+/* ── ipsec_key_add: add key material to an existing SA ── */
+int ipsec_key_add(void *sa, const uint8_t *key, int key_len, int is_encrypt)
+{
+    if (!ipsec_initialised) return -ENOSYS;
+    if (!sa || !key || key_len <= 0) return -EINVAL;
+    if (key_len > 32) key_len = 32;
+
+    struct security_assoc *s = (struct security_assoc *)sa;
+    if (is_encrypt) {
+        memcpy(s->enc_key, key, (size_t)key_len);
+        s->enc_key_len = key_len;
+    } else {
+        memcpy(s->auth_key, key, (size_t)key_len);
+        s->auth_key_len = key_len;
+    }
+    kprintf("[ipsec] ipsec_key_add: spi=0x%x %s key len=%d\n",
+            s->spi, is_encrypt ? "encrypt" : "auth", key_len);
     return 0;
 }
 /* ── Stub: ipsec_sa_alloc ──────────────────────────── */

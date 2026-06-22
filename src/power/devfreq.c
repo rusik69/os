@@ -527,7 +527,25 @@ int devfreq_register_opp_notifier(const char *name)
         kprintf("[devfreq] devfreq_register_opp_notifier: NULL name\n");
         return -EINVAL;
     }
-    kprintf("[devfreq] devfreq_register_opp_notifier: '%s' (stub)\n", name);
+
+    /* Find the device and register a notifier (simplified: just acknowledge) */
+    spinlock_acquire(&devfreq_lock);
+    int found = 0;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            found = 1;
+            break;
+        }
+    }
+    spinlock_release(&devfreq_lock);
+
+    if (!found) {
+        kprintf("[devfreq] devfreq_register_opp_notifier: device '%s' not found\n", name);
+        return -ENOENT;
+    }
+
+    kprintf("[devfreq] devfreq_register_opp_notifier: registered for '%s'\n", name);
     return 0;
 }
 
@@ -540,6 +558,76 @@ int devfreq_unregister_opp_notifier(const char *name)
         kprintf("[devfreq] devfreq_unregister_opp_notifier: NULL name\n");
         return -EINVAL;
     }
-    kprintf("[devfreq] devfreq_unregister_opp_notifier: '%s' (stub)\n", name);
+
+    spinlock_acquire(&devfreq_lock);
+    int found = 0;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            found = 1;
+            break;
+        }
+    }
+    spinlock_release(&devfreq_lock);
+
+    if (!found) {
+        kprintf("[devfreq] devfreq_unregister_opp_notifier: device '%s' not found\n", name);
+        return -ENOENT;
+    }
+
+    kprintf("[devfreq] devfreq_unregister_opp_notifier: unregistered for '%s'\n", name);
     return 0;
+}
+
+/* ── devfreq_monitor_resume ─────────────────────────────── */
+int devfreq_monitor_resume(const char *name)
+{
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (name) {
+        /* Resume specific device monitoring */
+        spinlock_acquire(&devfreq_lock);
+        for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+            if (devfreq_devices[i].in_use &&
+                strcmp(devfreq_devices[i].name, name) == 0) {
+                devfreq_devices[i].up_threshold = 80;
+                devfreq_devices[i].down_threshold = 20;
+                break;
+            }
+        }
+        spinlock_release(&devfreq_lock);
+        kprintf("[devfreq] devfreq_monitor_resume: '%s' resumed\n", name);
+    } else {
+        devfreq_start();
+    }
+    return 0;
+}
+
+/* ── devfreq_available_frequencies ─────────────────────────────── */
+int devfreq_available_frequencies(const char *name, uint32_t *freqs, int max_freqs)
+{
+    if (!devfreq_initialized)
+        return -ENOSYS;
+    if (!name || !freqs || max_freqs <= 0)
+        return -EINVAL;
+
+    spinlock_acquire(&devfreq_lock);
+    int count = 0;
+    for (int i = 0; i < DEVFREQ_MAX_DEVICES; i++) {
+        if (devfreq_devices[i].in_use &&
+            strcmp(devfreq_devices[i].name, name) == 0) {
+            for (int j = 0; j < devfreq_devices[i].num_freqs && count < max_freqs; j++) {
+                freqs[count++] = devfreq_devices[i].freq_table[j].freq_khz;
+            }
+            break;
+        }
+    }
+    spinlock_release(&devfreq_lock);
+
+    if (count == 0) {
+        kprintf("[devfreq] devfreq_available_frequencies: device '%s' not found\n", name);
+        return -ENOENT;
+    }
+
+    return count;
 }

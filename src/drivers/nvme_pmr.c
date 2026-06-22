@@ -491,19 +491,51 @@ static int nvme_pmr_register_bdev(void)
     return 0;
 }
 
-/* ── Stub: nvme_pmr_flush ─────────────────────────────── */
+/* ── nvme_pmr_flush: flush PMR data to persistence ── */
 int nvme_pmr_flush(void *dev)
 {
     (void)dev;
-    kprintf("[nvme] nvme_pmr_flush: not yet implemented\n");
+    if (!g_pmr.enabled || !g_pmr.pmr_virt)
+        return -EIO;
+
+    /* For persistent memory, a cache flush ensures data reaches the
+     * PM.  Use CLWB for each cache line followed by SFENCE. */
+    uint64_t size = g_pmr.pmr_size;
+    uintptr_t addr = (uintptr_t)g_pmr.pmr_virt;
+    uintptr_t end = addr + size;
+
+    for (; addr < end; addr += 64) {
+        __asm__ volatile("clwb (%0)" : : "r"(addr) : "memory");
+    }
+    __asm__ volatile("sfence" : : : "memory");
+
+    kprintf("[nvme] nvme_pmr_flush: %llu bytes flushed\n", (unsigned long long)size);
     return 0;
 }
-/* ── Stub: nvme_pmr_secure_erase ─────────────────────────────── */
+
+/* ── nvme_pmr_secure_erase: securely erase a PMR range ── */
 int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
 {
     (void)dev;
-    (void)offset;
-    (void)count;
-    kprintf("[nvme] nvme_pmr_secure_erase: not yet implemented\n");
+    if (!g_pmr.enabled || !g_pmr.pmr_virt)
+        return -EIO;
+
+    if (offset + count > g_pmr.pmr_size)
+        return -EINVAL;
+
+    /* Overwrite with zeros, then flush */
+    uint8_t *base = (uint8_t *)g_pmr.pmr_virt + offset;
+    memset(base, 0, count);
+
+    /* Flush to persistence */
+    uintptr_t addr = (uintptr_t)base;
+    uintptr_t end = addr + count;
+    for (; addr < end; addr += 64) {
+        __asm__ volatile("clwb (%0)" : : "r"(addr) : "memory");
+    }
+    __asm__ volatile("sfence" : : : "memory");
+
+    kprintf("[nvme] nvme_pmr_secure_erase: offset=%llu count=%zu\n",
+            (unsigned long long)offset, count);
     return 0;
 }

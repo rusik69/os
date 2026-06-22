@@ -13,6 +13,7 @@
 
 #include "zram.h"
 #include "zcomp.h"
+#include "zram_writeback.h"
 #include "pmm.h"
 #include "string.h"
 #include "printf.h"
@@ -415,29 +416,161 @@ int zram_stats(void *stats)
     return 0;
 }
 
-/* ── Stub: zram_comp_read ────────────────────────────────────── */
+/* ── zram_comp_read — Read and decompress a compressed page ── */
 int zram_comp_read(uint64_t offset, void *buf, size_t count)
 {
-    (void)offset;
-    (void)buf;
-    (void)count;
-    kprintf("[zram] zram_comp_read: not yet implemented\n");
-    return 0;
+    if (!zram_dev.initialized)
+        return -ENXIO;
+    if (!buf || count == 0)
+        return -EINVAL;
+    if (offset >= zram_dev.disk_size)
+        return -ENXIO;
+
+    uint64_t slot_idx = offset / PAGE_SIZE;
+    if (slot_idx >= zram_dev.num_slots)
+        return -ENXIO;
+
+    struct zram_slot *slot = &zram_dev.slots[slot_idx];
+
+    if (slot->comp_len == 0) {
+        /* Slot is empty — return zeros */
+        memset(buf, 0, count);
+        return 0;
+    }
+
+    size_t to_copy = (count < (size_t)slot->orig_len) ? count : (size_t)slot->orig_len;
+
+    if (slot->flags & ZRAM_SLOT_FLAG_INCOMPRESSIBLE) {
+        /* Stored raw — direct copy */
+        void *raw_virt = PHYS_TO_VIRT(slot->comp_addr);
+        memcpy(buf, raw_virt, to_copy);
+    } else {
+        /* Decompress */
+        struct zcomp_stream *zs = zcomp_stream_get(zram_dev.streams, zram_dev.num_streams);
+        if (!zs || !zs->ops)
+            return -EINVAL;
+        void *comp_virt = PHYS_TO_VIRT(slot->comp_addr);
+        int ret = zcomp_stream_decompress(zs,
+                      (const uint8_t *)comp_virt, slot->comp_len,
+                      (uint8_t *)buf, (size_t)count);
+        if (ret < 0) {
+            kprintf("[zram] zram_comp_read: decompression error at slot %llu: %d\n",
+                    (unsigned long long)slot_idx, ret);
+            memset(buf, 0, count);
+            return ret;
+        }
+    }
+
+    /* Mark slot as recently accessed for writeback LRU */
+    zram_writeback_mark_accessed(slot_idx);
+    return (int)to_copy;
 }
 
-/* ── Stub: zram_comp_write ───────────────────────────────────── */
+/* ── zram_comp_write — Compress and store a page ────────────── */
 int zram_comp_write(uint64_t offset, const void *buf, size_t count)
 {
-    (void)offset;
-    (void)buf;
-    (void)count;
-    kprintf("[zram] zram_comp_write: not yet implemented\n");
-    return 0;
+    if (!zram_dev.initialized)
+        return -ENXIO;
+    if (!buf || count == 0)
+        return -EINVAL;
+    if (offset >= zram_dev.disk_size)
+        return -ENXIO;
+
+    uint64_t slot_idx = offset / PAGE_SIZE;
+    if (slot_idx >= zram_dev.num_slots)
+        return -ENXIO;
+
+    struct zram_slot *slot = &zram_dev.slots[slot_idx];
+
+    /* Free existing compressed page if any */
+    if (slot->comp_addr) {
+        pmm_free_frame(slot->comp_addr);
+        slot->comp_addr = 0;
+        slot->comp_len = 0;
+    }
+
+    /* Allocate a temporary buffer for compressed data */
+    uint8_t *comp_buf = (uint8_t *)kmalloc(PAGE_SIZE * 2);
+    if (!comp_buf)
+        return -ENOMEM;
+
+    struct zcomp_stream *zs = zcomp_stream_get(zram_dev.streams, zram_dev.num_streams);
+    if (!zs || !zs->ops) {
+        kfree(comp_buf);
+        return -EINVAL;
+    }
+
+    size_t write_len = (count < (size_t)PAGE_SIZE) ? count : (size_t)PAGE_SIZE;
+
+    /* Try to compress */
+    int comp_len = zcomp_stream_compress(zs,
+                      (const uint8_t *)buf, write_len,
+                      comp_buf, PAGE_SIZE * 2);
+
+    if (comp_len > 0 && (size_t)comp_len < write_len) {
+        /* Compression successful and beneficial */
+        uint64_t comp_page = pmm_alloc_frame();
+        if (!comp_page) {
+            kfree(comp_buf);
+            return -ENOMEM;
+        }
+        void *comp_virt = PHYS_TO_VIRT(comp_page);
+        memcpy(comp_virt, comp_buf, (size_t)comp_len);
+
+        slot->comp_addr = comp_page;
+        slot->comp_len = (uint32_t)comp_len;
+        slot->orig_len = (uint32_t)write_len;
+        slot->algo_id = (uint8_t)zram_dev.algo_id;
+        slot->flags = 0;
+
+        zram_dev.comp_total += (uint64_t)comp_len;
+        zram_dev.stored_pages++;
+    } else {
+        /* Incompressible — store raw */
+        uint64_t raw_page = pmm_alloc_frame();
+        if (!raw_page) {
+            kfree(comp_buf);
+            return -ENOMEM;
+        }
+        void *raw_virt = PHYS_TO_VIRT(raw_page);
+        memcpy(raw_virt, buf, write_len);
+
+        slot->comp_addr = raw_page;
+        slot->comp_len = (uint32_t)write_len;
+        slot->orig_len = (uint32_t)write_len;
+        slot->algo_id = (uint8_t)zram_dev.algo_id;
+        slot->flags = ZRAM_SLOT_FLAG_INCOMPRESSIBLE;
+
+        zram_dev.comp_total += write_len;
+        zram_dev.stored_pages++;
+        zram_dev.incompressible++;
+    }
+
+    zram_dev.orig_total += write_len;
+    kfree(comp_buf);
+
+    /* Mark slot as recently accessed */
+    zram_writeback_mark_accessed(slot_idx);
+    return (int)write_len;
 }
 
-/* ── Stub: zram_free_page ────────────────────────────────────── */
+/* ── zram_free_page — Free a compressed page slot ───────────── */
 void zram_free_page(uint64_t offset)
 {
-    (void)offset;
-    kprintf("[zram] zram_free_page: not yet implemented\n");
+    if (!zram_dev.initialized)
+        return;
+
+    uint64_t slot_idx = offset / PAGE_SIZE;
+    if (slot_idx >= zram_dev.num_slots)
+        return;
+
+    struct zram_slot *slot = &zram_dev.slots[slot_idx];
+
+    if (slot->comp_addr) {
+        pmm_free_frame(slot->comp_addr);
+        slot->comp_addr = 0;
+        slot->comp_len = 0;
+        slot->orig_len = 0;
+        slot->flags = 0;
+    }
 }

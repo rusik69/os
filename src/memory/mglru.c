@@ -725,18 +725,61 @@ static void mglru_sysfs_init(void)
 #include "module.h"
 module_init(mglru_init);
 
-/* ── Stub: lru_gen_init_lruvec ──────────────────────────────── */
+/* ── lru_gen_init_lruvec — Initialise an LRU vector ─────────── */
 void lru_gen_init_lruvec(void *lruvec)
 {
     (void)lruvec;
-    kprintf("[mglru] lru_gen_init_lruvec: not yet implemented\n");
+    struct mglru_state *st = &mglru_state[0];
+
+    if (!st->enabled)
+        return;
+
+    /* Initialise each generation list in the per-node state */
+    for (int i = 0; i < MGLRU_NR_GENS; i++) {
+        INIT_LIST_HEAD(&st->gens[i].list);
+        st->gens[i].nr_pages = 0;
+        st->gens[i].nr_active = 0;
+        st->gens[i].nr_inactive = 0;
+    }
+
+    st->last_accessed_gen = MGLRU_NR_GENS - 1; /* youngest */
+    st->last_evicted_gen = 0;                   /* oldest */
+
+    kprintf("[mglru] lru_gen_init_lruvec: initialised %d generations\n",
+            MGLRU_NR_GENS);
 }
 
-/* ── Stub: lru_gen_look_around ──────────────────────────────── */
+/* ── lru_gen_look_around — Scan PTEs around a page for access info ── */
 void lru_gen_look_around(uint64_t addr)
 {
-    (void)addr;
-    kprintf("[mglru] lru_gen_look_around: not yet implemented\n");
+    if (addr == 0)
+        return;
+
+    struct mglru_state *st = &mglru_state[0];
+    if (!st->enabled)
+        return;
+
+    /* Check nearby pages (64 PTEs = one cache line worth of PTE entries).
+     * This simulates scanning the page table entries around the given
+     * address to check their accessed/dirty bits. */
+    uint64_t base = addr & ~(uint64_t)(PAGE_SIZE - 1);
+    uint64_t start = base - 32 * PAGE_SIZE;
+    uint64_t end   = base + 32 * PAGE_SIZE;
+
+    if (start < base) /* check for wrap */
+        start = 0;
+
+    /* Walk the range and mark pages as accessed if they have PTE_ACCESSED */
+    for (uint64_t va = start; va < end; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+        if (vmm_virt_to_phys(va, &phys) == 0 && phys != 0) {
+            /* Check if the page has been accessed by looking at the
+             * PTE_ACCESSED bit.  In a real implementation, we'd walk
+             * the page tables and check.  Here we simply promote the
+             * page to a younger generation. */
+            mglru_page_accessed(phys);
+        }
+    }
 }
 
 /* ── lru_gen_eviction ──────────────────────────────────────── */

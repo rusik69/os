@@ -1647,13 +1647,13 @@ void module_decompress_free(uint8_t *buf, int was_compressed)
         kfree(buf);
 }
 
-/* ── Stub: module_compress_init ─────────────────────────────── */
+/* ── module_compress_init: initialize decompression subsystem ── */
 int module_compress_init(void)
 {
-    kprintf("[modcompress] module_compress_init: xz decompression not yet available\n");
-    return -EOPNOTSUPP;
+    kprintf("[modcompress] module_compress_init: gzip and xz decompression available\n");
+    return 0;
 }
-/* ── Stub: module_compress_decompress ─────────────────────────────── */
+/* ── module_compress_decompress: generic decompression dispatch ── */
 int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     if (!src || !dst || !dlen) {
@@ -1664,7 +1664,47 @@ int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *
         kprintf("[modcompress] module_compress_decompress: zero length\n");
         return -EINVAL;
     }
-    kprintf("[modcompress] module_compress_decompress: src=%p slen=%zu dst=%p dlen=%zu (stub)\n",
-            src, slen, dst, *dlen);
-    return -EOPNOTSUPP;
+
+    /* Detect compression type and call the appropriate decompressor */
+    enum module_compress_type ctype;
+    if (module_is_compressed((const uint8_t *)src, (uint64_t)slen, &ctype)) {
+        uint64_t decomp_size = 0;
+        int ret;
+
+        switch (ctype) {
+        case MODULE_COMPRESS_GZIP:
+            ret = gzip_inflate((const uint8_t *)src, (uint64_t)slen,
+                               (uint8_t *)dst, (uint64_t)*dlen, &decomp_size);
+            if (ret == 0) {
+                *dlen = (size_t)decomp_size;
+                kprintf("[modcompress] module_compress_decompress: gzip %zu -> %zu\n",
+                        slen, *dlen);
+                return 0;
+            }
+            kprintf("[modcompress] module_compress_decompress: gzip error %d\n", ret);
+            return ret;
+
+        case MODULE_COMPRESS_XZ:
+            ret = xz_dec((const uint8_t *)src, (uint64_t)slen,
+                         (uint8_t *)dst, (uint64_t)*dlen, &decomp_size);
+            if (ret == 0) {
+                *dlen = (size_t)decomp_size;
+                kprintf("[modcompress] module_compress_decompress: xz %zu -> %zu\n",
+                        slen, *dlen);
+                return 0;
+            }
+            kprintf("[modcompress] module_compress_decompress: xz error %d\n", ret);
+            return ret;
+
+        default:
+            kprintf("[modcompress] module_compress_decompress: unsupported type %d\n", ctype);
+            return -EINVAL;
+        }
+    }
+
+    /* Not compressed — just copy the data */
+    size_t copy_len = (*dlen < slen) ? *dlen : slen;
+    memcpy(dst, src, copy_len);
+    *dlen = copy_len;
+    return 0;
 }

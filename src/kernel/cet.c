@@ -218,7 +218,7 @@ int cet_shstk_status(struct cet_shadow_stack *sstk)
     return 0;
 }
 
-/* ── Stub: cet_shstk_alloc ────────────────────────────────────────────── */
+/* ── cet_shstk_alloc ────────────────────────────────────────────── */
 int cet_shstk_alloc(struct cet_shadow_stack *sstk)
 {
     if (!sstk) {
@@ -230,6 +230,37 @@ int cet_shstk_alloc(struct cet_shadow_stack *sstk)
         return -EOPNOTSUPP;
     }
     /* Allocate a shadow stack page using the existing cet_enable_per_task path */
-    kprintf("[CET] cet_shstk_alloc: allocating shadow stack (stub)\n");
+    kprintf("[CET] cet_shstk_alloc: allocating shadow stack\n");
     return cet_enable_per_task(sstk);
+}
+
+/* ── cet_ibt_status: check IBT (Indirect Branch Tracking) status ── */
+int cet_ibt_status(void)
+{
+    if (!g_cet_initialized) {
+        if (cet_init() < 0)
+            return -EOPNOTSUPP;
+    }
+
+    int available = cet_ibt_available();
+    kprintf("[CET] cet_ibt_status: IBT %s\n",
+            available ? "available" : "not supported");
+    return available ? 0 : -EOPNOTSUPP;
+}
+
+/* ── cet_ibt_enable: enable IBT for the current task ── */
+int cet_ibt_enable(void)
+{
+    if (!g_cet_supported)
+        return -EOPNOTSUPP;
+
+    if (!cet_ibt_available())
+        return -EOPNOTSUPP;
+
+    /* Enable ENDBRANCH tracking by setting bit 2 in IA32_U_CET */
+    uint64_t ucet_val = CET_SHSTK_EN | CET_ENDBR_EN;
+    write_msr(MSR_IA32_U_CET, ucet_val);
+
+    kprintf("[CET] cet_ibt_enable: IBT enabled\n");
+    return 0;
 }

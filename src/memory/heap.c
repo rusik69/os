@@ -223,16 +223,75 @@ void *kcalloc(size_t nmemb, size_t size) {
     return ptr;
 }
 
-/* ── Stub: heap_stats ─────────────────────────────── */
+/* ── heap_stats ─────────────────────────────── */
 int heap_stats(void *stats)
 {
-    (void)stats;
-    kprintf("[heap] heap_stats: not yet implemented\n");
+    if (!stats) return -1;
+    /* Fill a heap_stat structure */
+    struct {
+        uint64_t total_size;
+        uint64_t used_bytes;
+        uint64_t free_bytes;
+        uint64_t block_count;
+        uint64_t free_block_count;
+    } st;
+
+    st.total_size     = HEAP_MAX_SIZE;
+    st.used_bytes     = heap_used_bytes;
+    st.free_bytes     = (heap_used_bytes >= HEAP_MAX_SIZE) ? 0 : HEAP_MAX_SIZE - heap_used_bytes;
+
+    /* Count blocks */
+    st.block_count = 0;
+    st.free_block_count = 0;
+    struct heap_block *b = heap_start_block;
+    while (b) {
+        st.block_count++;
+        if (b->free) st.free_block_count++;
+        b = b->next;
+    }
+
+    memcpy(stats, &st, sizeof(st));
     return 0;
 }
-/* ── Stub: heap_check ─────────────────────────────── */
+
+/* ── heap_check ─────────────────────────────── */
 int heap_check(void)
 {
-    kprintf("[heap] heap_check: not yet implemented\n");
-    return 0;
+    struct heap_block *b = heap_start_block;
+    int errors = 0;
+
+    while (b) {
+        /* Validate block header sanity */
+        if (b->size == 0 || b->size > HEAP_MAX_SIZE) {
+            kprintf("[heap] heap_check: ERROR block %p has invalid size %zu\n",
+                    (void *)b, b->size);
+            errors++;
+        }
+        /* Validate prev/next consistency */
+        if (b->next && b->next->prev != b) {
+            kprintf("[heap] heap_check: ERROR block %p: next->prev mismatch\n",
+                    (void *)b);
+            errors++;
+        }
+        if (b->prev && b->prev->next != b) {
+            kprintf("[heap] heap_check: ERROR block %p: prev->next mismatch\n",
+                    (void *)b);
+            errors++;
+        }
+        /* Adjacent free blocks should have been coalesced */
+        if (b->free && b->next && b->next->free) {
+            kprintf("[heap] heap_check: ERROR adjacent free blocks at %p and %p\n",
+                    (void *)b, (void *)b->next);
+            errors++;
+        }
+        b = b->next;
+    }
+
+    if (errors == 0)
+        kprintf("[heap] heap_check: OK (%d blocks, %llu bytes used)\n",
+                errors, (unsigned long long)heap_used_bytes);
+    else
+        kprintf("[heap] heap_check: %d ERRORS found\n", errors);
+
+    return errors;
 }

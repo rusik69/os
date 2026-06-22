@@ -565,19 +565,63 @@ int thp_restore_page(uint64_t addr)
     return 0;
 }
 
-/* ── Stub: thp_get_unmapped_area ────────────────────────────── */
+/* ── thp_get_unmapped_area — Return THP-aligned address ────── */
 uint64_t thp_get_unmapped_area(uint64_t addr, size_t len, unsigned long flags)
 {
-    (void)addr;
-    (void)len;
     (void)flags;
-    kprintf("[thp] thp_get_unmapped_area: not yet implemented\n");
-    return 0;
+    if (!thp_enabled)
+        return addr;
+
+    /* Align the address to 2MB huge page boundary if possible */
+    if (addr != 0) {
+        uint64_t aligned = (addr + THP_HPAGE_SIZE - 1) & ~(uint64_t)(THP_HPAGE_SIZE - 1);
+        /* Check if the aligned range fits */
+        if (aligned + len <= USER_VADDR_MAX)
+            return aligned;
+        /* Try rounding down instead */
+        uint64_t aligned_down = addr & ~(uint64_t)(THP_HPAGE_SIZE - 1);
+        if (aligned_down + len <= USER_VADDR_MAX && aligned_down >= 0x1000)
+            return aligned_down;
+    }
+
+    /* If no hint or hint doesn't work, use a default alignment */
+    /* In a full implementation, this would scan the address space */
+    if (addr == 0)
+        addr = 0x200000; /* Start at 2MB for THP */
+
+    return addr;
 }
 
-/* ── Stub: deferred_split_huge_page ─────────────────────────── */
+/* ── deferred_split_huge_page — Queue a THP for deferred split ── */
 void deferred_split_huge_page(uint64_t addr)
 {
-    (void)addr;
-    kprintf("[thp] deferred_split_huge_page: not yet implemented\n");
+    if (!thp_enabled)
+        return;
+
+    if (addr & (THP_HPAGE_SIZE - 1)) {
+        kprintf("[thp] deferred_split_huge_page: addr 0x%llx not 2MB-aligned\n",
+                (unsigned long long)addr);
+        return;
+    }
+
+    /* Add to deferred split queue (simple array-based tracking).
+     * A real implementation would use a linked list or workqueue. */
+    static uint64_t deferred_queue[64];
+    static int deferred_count = 0;
+
+    if (deferred_count >= 64) {
+        kprintf("[thp] deferred_split_huge_page: queue full, splitting now\n");
+        thp_split_hugepage(addr);
+        return;
+    }
+
+    /* Check for duplicates */
+    for (int i = 0; i < deferred_count; i++) {
+        if (deferred_queue[i] == addr)
+            return;
+    }
+
+    deferred_queue[deferred_count++] = addr;
+    kprintf("[thp] deferred_split_huge_page: queued 0x%llx for deferred split (%d queued)\n",
+            (unsigned long long)addr, deferred_count);
 }

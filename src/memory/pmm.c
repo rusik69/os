@@ -1250,24 +1250,60 @@ int pmm_reclaim(int nr_pages)
             (unsigned long long)free_pages);
     return (int)(free_pages < (uint64_t)nr_pages ? 0 : nr_pages);
 }
+/* ── pmm_alloc_pages ──────────────────────────── */
 void* pmm_alloc_pages(size_t count)
 {
-    (void)count;
-    kprintf("[pmm] pmm_alloc_pages: not yet implemented\n");
-    return NULL;
+    if (count == 0)
+        return NULL;
+    if (count == 1) {
+        uint64_t phys = pmm_alloc_frame();
+        return phys ? (void *)PHYS_TO_VIRT(phys) : NULL;
+    }
+    uint64_t phys = (uint64_t)pmm_alloc_frames(count);
+    if (!phys)
+        return NULL;
+    return (void *)PHYS_TO_VIRT(phys);
 }
-/* ── Stub: pmm_free_pages ─────────────────────────────── */
+
+/* ── pmm_free_pages ─────────────────────────────── */
 int pmm_free_pages(void *addr, size_t count)
 {
-    (void)addr;
-    (void)count;
-    kprintf("[pmm] pmm_free_pages: not yet implemented\n");
+    if (!addr || count == 0)
+        return -1;
+    uint64_t phys = VIRT_TO_PHYS((uint64_t)(uintptr_t)addr);
+    if (phys & (PAGE_SIZE - 1))
+        return -1;
+
+    if (count == 1) {
+        pmm_free_frame(phys);
+    } else {
+        pmm_free_frames_contiguous(phys, count);
+    }
     return 0;
 }
-/* ── Stub: pmm_stats ─────────────────────────────── */
+
+/* ── pmm_stats ─────────────────────────────── */
 int pmm_stats(void *stats)
 {
-    (void)stats;
-    kprintf("[pmm] pmm_stats: not yet implemented\n");
+    if (!stats) return -1;
+    struct {
+        uint64_t total_frames;
+        uint64_t used_frames;
+        uint64_t free_frames;
+        uint64_t largest_free_block;
+        uint64_t free_block_count;
+        uint64_t pgalloc;
+        uint64_t pgfree;
+    } st;
+
+    st.total_frames      = total_frames;
+    st.used_frames       = used_frames;
+    st.free_frames       = (total_frames > used_frames) ? (total_frames - used_frames) : 0;
+    st.largest_free_block = pmm_largest_free_block();
+    st.free_block_count   = pmm_free_block_count();
+    st.pgalloc            = vm_pgalloc;
+    st.pgfree             = vm_pgfree;
+
+    memcpy(stats, &st, sizeof(st));
     return 0;
 }

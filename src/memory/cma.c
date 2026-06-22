@@ -179,15 +179,43 @@ int cma_isolate_page(uint64_t pfn)
     return -ENOENT;
 }
 
-/* ── Stub: cma_free_page ────────────────────────────────────── */
+/* ── cma_free_page — Free a single CMA page ──────────────── */
 void cma_free_page(uint64_t pfn)
 {
-    (void)pfn;
-    kprintf("[cma] cma_free_page: not yet implemented\n");
+    /* Free a single page back to its CMA area */
+    for (int i = 0; i < cma_area_count; i++) {
+        struct cma_area *area = &cma_areas[i];
+        if (pfn >= area->base_pfn && pfn < area->base_pfn + area->count) {
+            size_t offset = pfn - area->base_pfn;
+            if (cma_bitmap_test(area, offset)) {
+                cma_bitmap_clear(area, offset);
+                kprintf("[cma] cma_free_page: freed PFN 0x%llx in area '%s'\n",
+                        (unsigned long long)pfn, area->name);
+            }
+            return;
+        }
+    }
+    kprintf("[cma] cma_free_page: PFN 0x%llx not found in any CMA area\n",
+            (unsigned long long)pfn);
 }
 
-/* ── Stub: cma_debug_show_areas ─────────────────────────────── */
+/* ── cma_debug_show_areas — Display all CMA areas ────────── */
 void cma_debug_show_areas(void)
 {
-    kprintf("[cma] cma_debug_show_areas: not yet implemented\n");
+    kprintf("[cma] CMA areas: %d total\n", cma_area_count);
+    for (int i = 0; i < cma_area_count; i++) {
+        struct cma_area *area = &cma_areas[i];
+        uint64_t free_pages = 0;
+        for (size_t j = 0; j < area->count; j++) {
+            if (!cma_bitmap_test(area, j))
+                free_pages++;
+        }
+        uint64_t used_pages = area->count - free_pages;
+        kprintf("  [%d] '%s': base=0x%llx pages=%llu used=%llu free=%llu\n",
+                i, area->name,
+                (unsigned long long)area->base_pfn,
+                (unsigned long long)area->count,
+                (unsigned long long)used_pages,
+                (unsigned long long)free_pages);
+    }
 }

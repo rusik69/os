@@ -175,39 +175,89 @@ void zcomp_init(void)
 #include "module.h"
 module_init(zcomp_init);
 
-/* ── Stub: zcomp_compress ─────────────────────────────── */
+/* ── Pool structure for zcomp_create_pool / zcomp_destroy_pool ── */
+struct zcomp_pool {
+    const struct zcomp_ops *ops;
+    void                   *workspace;
+};
+
+/* ── zcomp_compress — Compress data using a pool's algorithm ─── */
 int zcomp_compress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
 {
-    (void)pool;
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[zcomp] zcomp_compress: not yet implemented\n");
-    return 0;
+    if (!pool || !src || !dst || !dlen)
+        return -EINVAL;
+
+    struct zcomp_pool *p = (struct zcomp_pool *)pool;
+    if (!p->ops || !p->ops->compress)
+        return -EINVAL;
+
+    int ret = p->ops->compress((const uint8_t *)src, slen,
+                                (uint8_t *)dst, *dlen, p->workspace);
+    if (ret > 0) {
+        *dlen = (size_t)ret;
+        return 0;
+    }
+    return ret;
 }
-/* ── Stub: zcomp_decompress ─────────────────────────────── */
+
+/* ── zcomp_decompress — Decompress data using a pool's algorithm ─ */
 int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t *dlen)
 {
-    (void)pool;
-    (void)src;
-    (void)slen;
-    (void)dst;
-    (void)dlen;
-    kprintf("[zcomp] zcomp_decompress: not yet implemented\n");
-    return 0;
+    if (!pool || !src || !dst || !dlen)
+        return -EINVAL;
+
+    struct zcomp_pool *p = (struct zcomp_pool *)pool;
+    if (!p->ops || !p->ops->decompress)
+        return -EINVAL;
+
+    int ret = p->ops->decompress((const uint8_t *)src, slen,
+                                  (uint8_t *)dst, *dlen, p->workspace);
+    if (ret > 0) {
+        *dlen = (size_t)ret;
+        return 0;
+    }
+    return ret;
 }
-/* ── Stub: zcomp_create_pool ─────────────────────────────── */
+
+/* ── zcomp_create_pool — Create a compression pool ──────────── */
 void* zcomp_create_pool(const char *alg)
 {
-    (void)alg;
-    kprintf("[zcomp] zcomp_create_pool: not yet implemented\n");
-    return 0;
+    if (!alg)
+        return NULL;
+
+    const struct zcomp_ops *ops = zcomp_find_by_name(alg);
+    if (!ops) {
+        kprintf("[zcomp] zcomp_create_pool: algorithm '%s' not found\n", alg);
+        return NULL;
+    }
+
+    struct zcomp_pool *pool = (struct zcomp_pool *)kmalloc(sizeof(struct zcomp_pool));
+    if (!pool)
+        return NULL;
+
+    pool->ops = ops;
+    pool->workspace = NULL;
+
+    /* Create a workspace if the algorithm needs one */
+    if (ops->create_workspace)
+        pool->workspace = ops->create_workspace();
+
+    kprintf("[zcomp] zcomp_create_pool: created pool for '%s'\n", alg);
+    return (void *)pool;
 }
-/* ── Stub: zcomp_destroy_pool ─────────────────────────────── */
+
+/* ── zcomp_destroy_pool — Destroy a compression pool ────────── */
 int zcomp_destroy_pool(void *pool)
 {
-    (void)pool;
-    kprintf("[zcomp] zcomp_destroy_pool: not yet implemented\n");
+    if (!pool)
+        return -EINVAL;
+
+    struct zcomp_pool *p = (struct zcomp_pool *)pool;
+
+    if (p->ops && p->ops->destroy_workspace && p->workspace)
+        p->ops->destroy_workspace(p->workspace);
+
+    kfree(pool);
+    kprintf("[zcomp] zcomp_destroy_pool: pool destroyed\n");
     return 0;
 }

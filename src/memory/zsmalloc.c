@@ -212,18 +212,65 @@ void zsmalloc_init(void)
 #include "module.h"
 module_init(zsmalloc_init);
 
-/* ── zs_create_pool ─────────────────────────────── */
+/* ── zs_create_pool — Create a zsmalloc pool ─────────────── */
 void* zs_create_pool(const char *name)
 {
-    (void)name;
-    kprintf("[zsmalloc] zs_create_pool: not yet implemented\n");
-    return NULL;
+    if (zsmalloc_pool_count >= ZSMALLOC_MAX_POOLS)
+        return NULL;
+
+    struct zsmalloc_pool *pool = &zsmalloc_pools[zsmalloc_pool_count];
+    memset(pool, 0, sizeof(struct zsmalloc_pool));
+    spinlock_init(&pool->lock);
+
+    /* Set up size classes for common compressed object sizes */
+    int sizes[] = { 16, 32, 64, 128, 256, 384, 512, 768, 1024, 1536, 2048 };
+    int num_sizes = sizeof(sizes) / sizeof(sizes[0]);
+    if (num_sizes > ZSMALLOC_SIZE_CLASSES)
+        num_sizes = ZSMALLOC_SIZE_CLASSES;
+
+    for (int i = 0; i < num_sizes; i++) {
+        pool->classes[i].size = sizes[i];
+        pool->classes[i].objs_per_page = PAGE_SIZE / sizes[i];
+        if (pool->classes[i].objs_per_page < 1)
+            pool->classes[i].objs_per_page = 1;
+    }
+    pool->class_count = num_sizes;
+    pool->nr_pages = 0;
+
+    zsmalloc_pool_count++;
+
+    kprintf("[zsmalloc] zs_create_pool: '%s' created with %d size classes\n",
+            name ? name : "unnamed", num_sizes);
+    return (void *)pool;
 }
-/* ── Stub: zs_destroy_pool ─────────────────────────────── */
+
+/* ── zs_destroy_pool — Destroy a zsmalloc pool ─────────────── */
 int zs_destroy_pool(void *pool)
 {
-    (void)pool;
-    kprintf("[zsmalloc] zs_destroy_pool: not yet implemented\n");
+    if (!pool)
+        return -EINVAL;
+
+    struct zsmalloc_pool *p = (struct zsmalloc_pool *)pool;
+
+    /* Free all pages allocated by this pool */
+    for (int i = 0; i < p->nr_pages; i++) {
+        if (p->pages[i]) {
+            struct zsmalloc_page *zp = p->pages[i];
+            if (zp->page) {
+                pmm_free_frame((uint64_t)(uintptr_t)zp->page);
+                zp->page = NULL;
+            }
+            if (zp->obj_table) {
+                kfree(zp->obj_table);
+                zp->obj_table = NULL;
+            }
+            kfree(zp);
+            p->pages[i] = NULL;
+        }
+    }
+    p->nr_pages = 0;
+
+    kprintf("[zsmalloc] zs_destroy_pool: pool destroyed\n");
     return 0;
 }
 /* ── zs_map_object ───────────────────────────────────────────── */

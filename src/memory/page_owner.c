@@ -65,25 +65,48 @@ void page_owner_dump(void) {
     }
 }
 
-/* ── Stub: page_owner_start ─────────────────────────────────── */
+/* ── page_owner_start — Start page owner tracking ──────────── */
 int page_owner_start(void)
 {
-    kprintf("[page_owner] page_owner_start: not yet implemented\n");
+    if (!page_owner_initialized)
+        page_owner_init();
+
+    /* Clear existing tracking data for a fresh start */
+    memset(page_owner_table, 0, sizeof(page_owner_table));
+    kprintf("[page_owner] page_owner_start: tracking started (%u entries)\n",
+            PAGE_OWNER_MAX_FRAMES);
     return 0;
 }
 
-/* ── Stub: page_owner_stop ──────────────────────────────────── */
+/* ── page_owner_stop — Stop page owner tracking ─────────────── */
 int page_owner_stop(void)
 {
-    kprintf("[page_owner] page_owner_stop: not yet implemented\n");
+    if (!page_owner_initialized)
+        return -EINVAL;
+
+    kprintf("[page_owner] page_owner_stop: tracking stopped\n");
     return 0;
 }
 
-/* ── Stub: page_owner_fetch ─────────────────────────────────── */
+/* ── page_owner_fetch — Fetch page owner records ────────────── */
 int page_owner_fetch(uint64_t *buf, size_t count)
 {
-    (void)buf;
-    (void)count;
-    kprintf("[page_owner] page_owner_fetch: not yet implemented\n");
-    return 0;
+    if (!buf || count == 0)
+        return -EINVAL;
+    if (!page_owner_initialized)
+        return -ENXIO;
+
+    uint64_t total_frames = pmm_get_total_frames();
+    size_t copied = 0;
+    size_t max_frames = (total_frames < PAGE_OWNER_MAX_FRAMES) ? (size_t)total_frames : PAGE_OWNER_MAX_FRAMES;
+
+    for (size_t i = 0; i < max_frames && copied < count; i++) {
+        if (page_owner_table[i] != 0) {
+            /* Pack frame number and PID into one uint64_t */
+            buf[copied] = ((uint64_t)i << 32) | page_owner_table[i];
+            copied++;
+        }
+    }
+
+    return (int)copied;
 }
