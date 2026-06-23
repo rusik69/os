@@ -367,7 +367,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     /* Kernel command line from multiboot info (offset 0x10 = cmdline phys addr) */
     {
         /* Validate that multiboot_info_phys points to sane physical memory */
-        if (multiboot_info_phys == 0 || multiboot_info_phys > 0x100000) {
+        if (multiboot_info_phys == 0) {
             kprintf("[boot] WARNING: multiboot_info at 0x%lx looks invalid\n",
                     (unsigned long)multiboot_info_phys);
         } else {
@@ -469,9 +469,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
 
     /* Kexec — reserve memory region for loading new kernel images (Item 362) */
     kexec_init();
-
-    /* Machine Check Exception (MCE) handler — hardware error detection */
-    mce_init();
 
     /* /proc/config.gz — embedded kernel build configuration */
     config_gz_init();
@@ -1171,27 +1168,12 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         init_path = cmdline_init_path;
     }
 
-    /* Spawn userspace init via kernel-mode spawner */
+    /* Load initrd from multiboot module BEFORE spawning init,
+     * so init can access files from the initrd. */
     {
-        extern int process_spawn_kernel(const char *path);
-        int pid = process_spawn_kernel(init_path);
-        if (pid > 0) {
-            init_ok = 1;
-            kprintf("[OK] Userspace init: %s (PID %d)\n", init_path, pid);
-        } else {
-            kprintf("[!!] process_spawn_kernel(%s) failed with %d\n",
-                    init_path, pid);
-        }
-    }
-
-    /* Try to load initrd from multiboot module */
-    {
-        /* Check for multiboot module at mbi->mods_count, mods_addr */
         uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
-        if (mbi[0] & (1 << 3)) { /* mods flag */
+        if (mbi[0] & (1 << 3)) {
             uint32_t mods_count = mbi[5];
-            /* For multiboot2, mods_addr can be above 4GB (64-bit phys addr).
-             * Multiboot1 uses uint32_t; we cast through uint64_t for safety. */
             uint64_t mods_addr = (uint64_t)mbi[6];
             if (mods_count > 0 && mods_addr > 0) {
                 uint32_t *mod = (uint32_t *)PHYS_TO_VIRT(mods_addr);
@@ -1201,7 +1183,6 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                 if (mod_size > 0 && mod_size < 16*1024*1024) {
                     kprintf("[OK] Initrd module: %llu bytes at 0x%llx\n",
                             (unsigned long long)mod_size, (unsigned long long)mod_start);
-                    /* Copy the initrd data into ramdisk */
                     void *mod_data = PHYS_TO_VIRT(mod_start);
                     if (ramdisk_is_present()) {
                         uint32_t num_sectors = (uint32_t)((mod_size + 511) / 512);
@@ -1214,6 +1195,19 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
                     }
                 }
             }
+        }
+    }
+
+    /* Spawn userspace init via kernel-mode spawner */
+    {
+        extern int process_spawn_kernel(const char *path);
+        int pid = process_spawn_kernel(init_path);
+        if (pid > 0) {
+            init_ok = 1;
+            kprintf("[OK] Userspace init: %s (PID %d)\n", init_path, pid);
+        } else {
+            kprintf("[!!] process_spawn_kernel(%s) failed with %d\n",
+                    init_path, pid);
         }
     }
 

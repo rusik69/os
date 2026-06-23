@@ -944,7 +944,10 @@ static uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 }
 
 static uint64_t sys_truncate(uint64_t path_addr, uint64_t len) {
-    return (uint64_t)fs_truncate((const char *)(uintptr_t)path_addr, (uint32_t)len);
+    char kpath[256];
+    if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
+        return (uint64_t)-1;
+    return (uint64_t)vfs_truncate(kpath, (uint32_t)len);
 }
 
 /* ── Raw Ethernet send (SYS_RAW_SEND=216) ──────────────────────── */
@@ -993,14 +996,17 @@ static uint64_t sys_fd_write(uint64_t fd, uint64_t buf_addr, uint64_t count) {
     if (count > UINT32_MAX) count = UINT32_MAX;
     int r;
     if (pfd->open_flags & O_APPEND) {
-        /* O_APPEND: always append to end of file, ignoring position */
         r = vfs_append(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+        if (r == 0) {
+            struct vfs_stat st;
+            if (vfs_stat(pfd->path, &st) == 0)
+                pfd->offset = st.size;
+        }
     } else {
-        /* Normal write at current position */
         r = vfs_write(pfd->path, (const void *)(uintptr_t)buf_addr, (uint32_t)count);
+        if (r == 0) pfd->offset += count;
     }
-    if (r >= 0) pfd->offset += count;
-    return (r >= 0) ? count : (uint64_t)-1;
+    return (r == 0) ? count : (uint64_t)-1;
 }
 
 /* ── Heap syscalls (malloc/free/calloc/realloc via kmalloc) ───── */

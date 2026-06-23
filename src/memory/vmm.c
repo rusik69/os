@@ -643,6 +643,22 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
     return (pt[pt_idx] & PTE_PRESENT) ? 1 : 0;
 }
 
+/* Walk user page tables to resolve a virtual address to a physical address.
+ * Returns 0 on success with phys set, -1 if not mapped. */
+static int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
+{
+    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    uint64_t pde = 0, pte = 0;
+    uint64_t *pt = vmm_walk_to_pt(pml4, virt, &pde, &pte);
+    if (pde & PTE_HUGE) {
+        if (phys) *phys = (pde & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
+        return 0;
+    }
+    if (!pt || !(pte & PTE_PRESENT)) return -1;
+    if (phys) *phys = (pte & PTE_ADDR_MASK) + (virt & 0xFFF);
+    return 0;
+}
+
 int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
                        uint64_t flags) {
     if (!pml4 || virt >= USER_VADDR_MAX) return -1;
@@ -673,11 +689,10 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
 
         uint64_t phys = pmm_alloc_frame();
         if (!phys) {
-            /* Unwind: free already-mapped pages */
             for (size_t j = 0; j < i; j++) {
                 uint64_t p;
                 vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
-                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
+                if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
             }
             return -1;
@@ -688,7 +703,7 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
             for (size_t j = 0; j < i; j++) {
                 uint64_t p;
                 vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
-                if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
+                if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
             }
             return -1;
@@ -700,8 +715,7 @@ unwind:
     for (size_t j = 0; j < i; j++) {
         uint64_t p;
         vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
-        if (vmm_virt_to_phys(virt + j * PAGE_SIZE, &p) == 0 && p) {
-            /* Only unref non-zero-page frames; the zero page lives forever */
+        if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p) {
             if (p != vmm_zero_page_frame)
                 pmm_unref_frame(p);
         }
@@ -717,7 +731,7 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t addr = virt + i * PAGE_SIZE;
         uint64_t phys = 0;
-        if (vmm_virt_to_phys(addr, &phys) == 0 && phys && phys != vmm_zero_page_frame) {
+        if (vmm_user_virt_to_phys(pml4, addr, &phys) == 0 && phys && phys != vmm_zero_page_frame) {
             pmm_unref_frame(phys);
         }
         vmm_unmap_user_page(pml4, addr);

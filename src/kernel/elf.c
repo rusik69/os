@@ -165,12 +165,12 @@ int elf_exec(const char *path) {
     size_t plen = strlen(path);
     if (plen > 255) plen = 255;
     char *name = (char *)kmalloc(plen + 1);
-    if (name) {
-        memcpy(name, path, plen);
-        name[plen] = '\0';
-    } else {
-        name = (char *)path; /* fallback: use caller's pointer as-is */
+    if (!name) {
+        kfree(buf);
+        return -ENOMEM;
     }
+    memcpy(name, path, plen);
+    name[plen] = '\0';
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {

@@ -1422,6 +1422,7 @@ int vfs_truncate(const char *path, uint32_t len) {
 
     struct vfs_mount *m = resolve(ap);
     if (!m) return -1;
+    if (m->flags & MS_RDONLY) return -EROFS_KERNEL;
 
     /* Get the old size before truncate for quota adjustment */
     struct vfs_stat old_st;
@@ -1465,7 +1466,7 @@ static void vfs_inc_nlink(const char *path) {
         if (!nlink_table[i].in_use) {
             strncpy(nlink_table[i].path, path, 127);
             nlink_table[i].path[127] = '\0';
-            nlink_table[i].nlink = 2; /* existing link + new link */
+            nlink_table[i].nlink = 1; /* first tracked link */
             nlink_table[i].in_use = 1;
             return;
         }

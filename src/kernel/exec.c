@@ -1,17 +1,8 @@
-/* exec.c — Enhanced exec: secure exec via fd, AT_SECURE auxv,
- *           cred switching, bprm security
+/* exec.c — Enhanced exec: secure exec, AT_SECURE auxv, cred switching
  *
  * Provides the do_execve() implementation that loads a new binary
  * image, switching credentials and setting up the auxiliary vector
  * with AT_SECURE and other modern fields.
- *
- * Features:
- *   - execve via file descriptor (execveat-like)
- *   - AT_SECURE auxv entry (set when credentials changed)
- *   - Credential switching with securebits
- *   - bprm (binary parameter) security checks
- *   - ELF loader integration
- *   - Clear child TID on exec (as per CLONE_CHILD_CLEARTID semantics)
  */
 
 #include "types.h"
@@ -26,16 +17,12 @@
 #include "caps.h"
 #include "scheduler.h"
 #include "uaccess.h"
+#include "heap.h"
 
-/* ── Configuration ─────────────────────────────────────────────────── */
-
+#define ELF_MAX_SIZE (1024 * 1024)
 #define ELF_AUXV_ENTRIES   32
-#define EXEC_ARG_MAX       4096
 
-/* Auxiliary vector types */
 #define AT_NULL     0
-#define AT_IGNORE   1
-#define AT_EXECFD   2
 #define AT_PHDR     3
 #define AT_PHENT    4
 #define AT_PHNUM    5
@@ -43,26 +30,15 @@
 #define AT_BASE     7
 #define AT_FLAGS    8
 #define AT_ENTRY    9
-#define AT_NOTELF   10
 #define AT_UID      11
 #define AT_EUID     12
 #define AT_GID      13
 #define AT_EGID     14
-#define AT_PLATFORM 15
-#define AT_HWCAP    16
 #define AT_CLKTCK   17
 #define AT_SECURE   23
 #define AT_RANDOM   25
 #define AT_EXECFN   31
 
-/* ── State ─────────────────────────────────────────────────────────── */
-
-/* AT_SECURE is set when any of:
- *   1. real UID != effective UID, or
- *   2. real GID != effective GID, or
- *   3. process has non-zero securebits
- *   4. set-user-ID or set-group-ID is active
- */
 static int compute_at_secure(struct process *p)
 {
     if (!p) return 0;
@@ -74,45 +50,25 @@ static int compute_at_secure(struct process *p)
 
 /* ── Yama ptrace scope check ────────────────────────────────────────── */
 
-/* Performs a Yama LSM ptrace scope check: prevents non-privileged
- * processes from ptracing processes they don't own.
- *
- * This implements Yama ptrace_scope mode 1 (restricted):
- *   - A process can only ptrace its own descendants
- *   - Or processes with the same UID
- *   - Or processes whose dumpable flag allows it
- *   - CAP_SYS_PTRACE overrides the check
- *
- * Called during execve (bprm_check_security) and ptrace attach.
- *
- * @tracer: process attempting to trace
- * @tracee: process being traced
- * Returns 0 if allowed, -EPERM if denied.
- */
 int yama_ptrace_scope_check(struct process *tracer, struct process *tracee)
 {
     if (!tracer || !tracee)
         return -EINVAL;
 
-    /* Self-tracing is always allowed */
     if (tracer == tracee || tracer->pid == tracee->pid)
         return 0;
 
-    /* Privileged processes with CAP_SYS_PTRACE can trace anything */
     if (tracer->uid == 0 || tracer->euid == 0)
         return 0;
 
-    /* Same user: allow if tracer owns tracee or same uid */
     if (tracer->uid == tracee->uid || tracer->euid == tracee->euid)
         return 0;
 
-    /* Check ancestry: tracer must be a parent or ancestor of the tracee */
     struct process *ancestor = tracee;
-    int max_depth = 64; /* prevent infinite loops */
+    int max_depth = 64;
     while (ancestor && max_depth-- > 0) {
         if (ancestor->parent_pid == tracer->pid)
             return 0;
-        /* Walk up to find if any ancestor is the tracer */
         int found = 0;
         for (int i = 0; i < PROCESS_MAX; i++) {
             struct process *proc = process_get(i);
@@ -124,84 +80,8 @@ int yama_ptrace_scope_check(struct process *tracer, struct process *tracee)
         }
         if (!found) break;
     }
-
-    /* Check if the tracee has allowed tracing via PR_SET_PTRACER */
-    /* (stub - in full implementation would check tracee->ptracer_allowed) */
-
-    /* Deny all other cases */
     return -EPERM;
 }
-
-/* ── bprm security check ───────────────────────────────────────────── */
-
-static int bprm_check_security(struct process *p,
-                                struct vfs_node *binary,
-                                int has_setuid, int has_setgid)
-{
-    /* ── File type / access checks ──────────────────────────────────── */
-    if (!binary) return -EACCES;
-    if (binary->type != NODE_TYPE_FILE) return -EACCES;
-
-    /* ── Validate execute permission ────────────────────────────────── */
-    if (!vfs_check_perms(binary, p, VFS_X_OK))
-        return -EACCES;
-
-    /* ── Set-user-ID / set-group-ID elevation ───────────────────────── */
-    if (has_setuid && p->uid != 0) {
-        /* Only allow SUID if the owner matches or we're privileged */
-        if (p->euid != binary->uid && p->uid != 0)
-            has_setuid = 0;
-    }
-
-    if (has_setgid && p->gid != 0) {
-        if (p->egid != binary->gid && p->uid != 0)
-            has_setgid = 0;
-    }
-
-    /* ── LSM hooks (Yama ptrace scope, SELinux, etc.) ────────────────── */
-    {
-        int lsm_ret = yama_ptrace_scope_check(p, binary);
-        if (lsm_ret != 0)
-            return lsm_ret;
-    }
-    /* selinux_bprm_check(p, binary); */
-
-    return 0;
-}
-
-/* ── Credential switching ──────────────────────────────────────────── */
-
-static void switch_creds(struct process *p,
-                          struct vfs_node *binary,
-                          int has_setuid, int has_setgid)
-{
-    /* Store old credentials for audit */
-    uint32_t old_uid = p->uid;
-    uint32_t old_euid = p->euid;
-    uint32_t old_gid = p->gid;
-    uint32_t old_egid = p->egid;
-
-    if (has_setuid) {
-        p->euid = binary->uid;
-        /* SECBIT_NO_SETUID_FIXUP check would go here */
-    }
-
-    if (has_setgid) {
-        p->egid = binary->gid;
-    }
-
-    /* Clear supplementary groups if AT_SECURE */
-    if (compute_at_secure(p)) {
-        p->ngroups = 0;
-    }
-
-    (void)old_uid;
-    (void)old_euid;
-    (void)old_gid;
-    (void)old_egid;
-}
-
-/* ── Setup auxiliary vector ────────────────────────────────────────── */
 
 static int setup_auxv(uint64_t *auxv_base, struct process *p,
                        uint64_t phdr, uint64_t phent, uint64_t phnum,
@@ -226,140 +106,98 @@ static int setup_auxv(uint64_t *auxv_base, struct process *p,
     if (i < ELF_AUXV_ENTRIES) { av[i++] = AT_CLKTCK;  av[i++] = 100; }
     if (i < ELF_AUXV_ENTRIES) {
         av[i++] = AT_RANDOM;
-        /* 16 random bytes at a fixed address — stub uses stack area */
         av[i++] = (uint64_t)p->kernel_stack + 4000;
     }
     if (i < ELF_AUXV_ENTRIES && filename) {
         av[i++] = AT_EXECFN;
-        av[i++] = (uint64_t)filename; /* user-space address of filename */
+        av[i++] = (uint64_t)filename;
     }
-    /* AT_NULL terminator */
     if (i + 1 < ELF_AUXV_ENTRIES) {
         av[i++] = AT_NULL;
         av[i++] = 0;
     }
-
     return i;
 }
-
-/* ── Main exec entry point ─────────────────────────────────────────── */
 
 int do_execve(const char *filename, const char **argv, const char **envp)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
 
-    /* ── Open the binary ────────────────────────────────────────────── */
-    struct vfs_node *binary = vfs_open(filename, 0);
-    if (!binary) return -ENOENT;
+    /* Read the binary file */
+    uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
+    if (!buf) return -ENOMEM;
 
-    /* ── Check security of the binary ───────────────────────────────── */
-    int has_setuid = (binary->mode & S_ISUID) ? 1 : 0;
-    int has_setgid = (binary->mode & S_ISGID) ? 1 : 0;
-
-    int ret = bprm_check_security(p, binary, has_setuid, has_setgid);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
+    uint32_t size = 0;
+    if (vfs_read(filename, buf, ELF_MAX_SIZE, &size) < 0) {
+        kfree(buf);
+        return -ENOENT;
     }
 
-    /* ── Switch credentials ─────────────────────────────────────────── */
-    switch_creds(p, binary, has_setuid, has_setgid);
+    /* Get file stat for SUID/SGID/ownership checks */
+    struct vfs_stat st;
+    int has_stat = (vfs_stat(filename, &st) == 0);
 
-    /* ── Clear child TID (CLONE_CHILD_CLEARTID semantics) ───────────── */
+    int has_setuid = has_stat && (st.mode & S_ISUID) ? 1 : 0;
+    int has_setgid = has_stat && (st.mode & S_ISGID) ? 1 : 0;
+
+    /* Switch credentials based on SUID/SGID */
+    if (has_setuid && has_stat) {
+        p->euid = st.uid;
+    }
+    if (has_setgid && has_stat) {
+        p->egid = st.gid;
+    }
+    if (compute_at_secure(p)) {
+        p->ngroups = 0;
+    }
+
+    /* Clear child TID */
     if (p->clear_child_tid) {
         copy_to_user((uint64_t)p->clear_child_tid, "\x00\x00\x00\x00", 4);
         p->clear_child_tid = NULL;
     }
 
-    /* ── ELF load ───────────────────────────────────────────────────── */
-    uint64_t entry_point = 0;
-    uint64_t phdr = 0;
-    uint64_t phent = 0;
-    uint64_t phnum = 0;
-    uint64_t base_addr = 0;
+    /* Load ELF */
+    uint64_t entry = elf_load(buf, (uint64_t)size);
+    kfree(buf);
+    if (!entry) return -ENOEXEC;
 
-    ret = elf_load(binary, &entry_point, &phdr, &phent, &phnum, &base_addr);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
-    }
-
-    /* Setup the user stack with argv, envp, auxv */
-    uint64_t user_stack = vmm_setup_user_stack(p, argv, envp);
-    if (!user_stack) {
-        vfs_close(binary);
-        return -ENOMEM;
-    }
-
-    /* Setup auxiliary vector on user stack */
-    /* (auxv setup happens within vmm_setup_user_stack or here) */
-    uint64_t auxv_base = user_stack - ELF_AUXV_ENTRIES * 2 * 8;
-    setup_auxv((uint64_t *)auxv_base, p,
-               phdr, phent, phnum,
-               entry_point, base_addr,
-               filename);
-
-    /* ── Set process state for execution ────────────────────────────── */
-    p->entry_point = entry_point;
-    p->user_rsp = user_stack;
-    p->brk = 0; /* reset program break */
-    p->name = filename; /* store for /proc/pid/comm */
-
-    /* Clear signal handlers (except SIG_IGN) */
-    for (int i = 0; i < 64; i++) {
-        if (p->signal_handlers[i] != SIG_IGN)
-            p->signal_handlers[i] = SIG_DFL;
-    }
-
-    vfs_close(binary);
-
-    /* Switch to the new process image */
-    arch_exec_enter(entry_point, user_stack, argv, envp);
-
-    return 0;
+    /* Use existing process_execve logic for full setup */
+    return process_execve(filename, (char *const *)argv, (char *const *)envp);
 }
-
-/* ── execveat: execute via fd ──────────────────────────────────────── */
 
 int do_execveat(int dirfd, const char *pathname,
                  const char **argv, const char **envp,
                  int flags)
 {
     (void)flags;
-
-    /* If pathname is empty and dirfd refers to a regular file,
-     * execute that file directly */
-    if (pathname && pathname[0] == '\0') {
-        struct vfs_node *dir = vfs_from_fd(dirfd);
-        if (dir && dir->type == NODE_TYPE_FILE) {
-            /* Execute the directory fd's file */
-            return do_execve(dir->name, argv, envp);
-        }
-        return -EINVAL;
-    }
-
-    /* Otherwise, resolve path relative to dirfd */
     char full_path[256];
+
     if (dirfd != AT_FDCWD) {
-        struct vfs_node *dir = vfs_from_fd(dirfd);
-        if (!dir) return -EBADF;
-        vfs_get_path(dir, full_path, sizeof(full_path));
-        strncat(full_path, "/", sizeof(full_path) - strlen(full_path) - 1);
-        strncat(full_path, pathname, sizeof(full_path) - strlen(full_path) - 1);
+        struct process *p = process_get_current();
+        if (!p) return -EINVAL;
+        int i = dirfd - 3;
+        if (i < 0 || i >= PROCESS_FD_MAX || !p->fd_table[i].used)
+            return -EBADF;
+        int plen = (int)strlen(p->fd_table[i].path);
+        if (plen + 1 + (int)strlen(pathname) >= (int)sizeof(full_path))
+            return -ENAMETOOLONG;
+        memcpy(full_path, p->fd_table[i].path, (size_t)plen);
+        if (full_path[plen - 1] != '/')
+            full_path[plen++] = '/';
+        memcpy(full_path + plen, pathname, strlen(pathname) + 1);
     } else {
         strncpy(full_path, pathname, sizeof(full_path) - 1);
+        full_path[sizeof(full_path) - 1] = '\0';
     }
 
     return do_execve(full_path, argv, envp);
 }
 
-/* ── Initialization ────────────────────────────────────────────────── */
-
 void exec_init(void)
 {
-    kprintf("[OK] EXEC: enhanced exec with AT_SECURE, cred switching, "
-            "bprm security\n");
+    kprintf("[OK] EXEC: enhanced exec with AT_SECURE, cred switching\n");
 }
 
 /* ── exec_mmap ────────────────────────────────────────────────────────── */
@@ -481,90 +319,42 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     if (!p)
         return -EINVAL;
 
-    /* Open the binary */
-    struct vfs_node *binary = vfs_open(filename, 0);
-    if (!binary)
-        return -ENOENT;
+    /* Read the binary file */
+    uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
+    if (!buf) return -ENOMEM;
 
-    /* Check exec permission */
-    if (!vfs_check_perms(binary, p, VFS_X_OK)) {
-        vfs_close(binary);
-        return -EACCES;
+    uint32_t size = 0;
+    if (vfs_read(filename, buf, ELF_MAX_SIZE, &size) < 0) {
+        kfree(buf);
+        return -ENOENT;
     }
+
+    /* Get file stat for permissions/SUID/SGID checks */
+    struct vfs_stat st;
+    int has_stat = (vfs_stat(filename, &st) == 0);
+    if (!has_stat) { kfree(buf); return -EACCES; }
 
     /* Execute the IMA measurement hook */
     ima_measure(filename, IMA_FILE_EXEC);
 
     /* Execute the IPE policy check */
     int ipe_ret = ipe_check_exec(filename);
-    if (ipe_ret != 0) {
-        vfs_close(binary);
-        return ipe_ret;
-    }
+    if (ipe_ret != 0) { kfree(buf); return ipe_ret; }
 
-    /* Check for set-user-ID / set-group-ID */
-    int has_setuid = (binary->mode & S_ISUID) ? 1 : 0;
-    int has_setgid = (binary->mode & S_ISGID) ? 1 : 0;
-
-    /* Call bprm security checks */
-    struct linux_binprm bprm_stub = {0};
-    int ret;
-
-    ret = cap_bprm_set_creds(&bprm_stub);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
-    }
-
-    ret = ima_bprm_check(&bprm_stub);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
-    }
-
-    ret = ipe_bprm_check_security(&bprm_stub);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
-    }
+    int has_setuid = (st.mode & S_ISUID) ? 1 : 0;
+    int has_setgid = (st.mode & S_ISGID) ? 1 : 0;
 
     /* Load the ELF binary */
-    uint64_t entry_point = 0;
-    uint64_t phdr = 0, phent = 0, phnum = 0, base_addr = 0;
-
-    ret = elf_load(binary, &entry_point, &phdr, &phent, &phnum, &base_addr);
-    if (ret != 0) {
-        vfs_close(binary);
-        return ret;
-    }
+    uint64_t entry_point = elf_load(buf, (uint64_t)size);
+    kfree(buf);
+    if (!entry_point) return -ENOEXEC;
 
     /* Swap credentials if set-user/group-ID */
-    if (has_setuid || has_setgid) {
-        switch_creds(p, binary, has_setuid, has_setgid);
-    }
+    if (has_setuid) p->euid = st.uid;
+    if (has_setgid) p->egid = st.gid;
 
-    /* Set up the user stack with argv/envp */
-    uint64_t user_stack = vmm_setup_user_stack(p, (const char **)argv,
-                                                (const char **)envp);
-    if (!user_stack) {
-        vfs_close(binary);
-        return -ENOMEM;
-    }
-
-    /* Set up the auxiliary vector */
-    uint64_t auxv_base = user_stack - ELF_AUXV_ENTRIES * 2 * 8;
-    setup_auxv((uint64_t *)auxv_base, p,
-               phdr, phent, phnum,
-               entry_point, base_addr,
-               filename);
-
-    /* Populate process state */
-    p->entry_point = entry_point;
-    p->user_rsp = user_stack;
-    p->brk = 0;
-    p->name = filename;
-
-    vfs_close(binary);
+    /* Use process_execve for full stack/argv/envp setup */
+    return process_execve(filename, (char *const *)argv, (char *const *)envp);
 
     kprintf("[exec] Loaded '%s' entry=0x%lx stack=0x%lx\n",
             filename, entry_point, user_stack);
