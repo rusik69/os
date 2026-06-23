@@ -95,23 +95,20 @@ void dpc_init(void)
 module_init(dpc_init);
 
 /* ── Stub: pcie_dpc_init ─────────────────────────────── */
-int pcie_dpc_init(void *dev)
+int pcie_dpc_init(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_dpc_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_dpc_handler ─────────────────────────────── */
-int pcie_dpc_handler(void *dev)
+int pcie_dpc_handler(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_dpc_handler: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_dpc_reset ─────────────────────────────── */
-int pcie_dpc_reset(void *dev)
+int pcie_dpc_reset(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_dpc_reset: not yet implemented\n");
     return 0;
 }

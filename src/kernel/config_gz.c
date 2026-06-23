@@ -47,7 +47,7 @@ int config_gz_get_uncompressed(char *buf, int max_len)
 {
     (void)buf;
     (void)max_len;
-    return -1;
+    return -ENOSYS;
 }
 
 /* ── Initialization ─────────────────────────────────────────────────── */

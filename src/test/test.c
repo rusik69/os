@@ -110,9 +110,16 @@
 #include "zram.h"
 #include "ksm.h"
 #include "thp.h"
+#include "bitops.h"
+#include "net.h"
+#include "crc.h"
+#include "compress.h"
 
 /* do_coredump is defined in kernel/syscall.c */
 extern void do_coredump(struct process *proc, int signo);
+
+/* aslr_randomize_addr is defined in kernel/aslr.c */
+extern uint64_t aslr_randomize_addr(uint64_t base, uint64_t range);
 
 
 /* ── Progress tracking ────────────────────────────────────────── */
@@ -1800,6 +1807,13 @@ static void test_aslr(void) {
     ASSERT("aslr stack offset <= max", off1 <= ASLR_STACK_RANDOM_PAGES);
     ASSERT("aslr mmap offset <= max", mmap_off <= ASLR_MMAP_RANDOM_PAGES);
     ASSERT("aslr brk offset <= max", brk_off <= ASLR_BRK_RANDOM_PAGES);
+    /* Verify ASLR produces non-zero offsets for meaningful randomization */
+    ASSERT("aslr stack offset > 0", off1 > 0);
+    ASSERT("aslr mmap offset > 0", mmap_off > 0);
+    ASSERT("aslr brk offset > 0", brk_off > 0);
+    /* aslr_randomize_addr should produce a randomized address > 0 */
+    uint64_t rnd1 = aslr_randomize_addr(0, 4096);
+    ASSERT("aslr_randomize_addr returns non-zero", rnd1 != 0);
     t_ok("aslr test");
 }
 
@@ -4055,6 +4069,400 @@ static void test_vsyscall(void) {
     t_ok("vsyscall page");
 }
 
+/* ── String edge-case tests ──────────────────────────────── */
+
+static void test_string_ext(void) {
+    /* strncpy with zero-length dst (truncation behavior) */
+    char slc_buf[16] = "unchanged";
+    slc_buf[0] = '\0';
+    strncpy(slc_buf, "hello", 0);
+    ASSERT_STR("strncpy size=0 buf", slc_buf, "");
+
+    /* strncat with full dst buffer */
+    char slc_buf2[4] = "abc";
+    strncat(slc_buf2, "d", 0);
+    ASSERT_STR("strncat zero n", slc_buf2, "abc");
+
+    /* strtrim with all-whitespace input */
+    char str1[] = "   \t\n\r  ";
+    ASSERT_STR("strtrim all whitespace", strtrim(str1), "");
+
+    /* strtrim with empty input */
+    char str2[] = "";
+    ASSERT_STR("strtrim empty", strtrim(str2), "");
+
+    /* strtol with overflow values */
+    char *ep;
+    long ov = strtol("999999999999999999999999999", &ep, 10);
+    ASSERT("strtol overflow saturates", ov > 999999999);
+
+    /* strtol with negative values */
+    long nv = strtol("-42", &ep, 10);
+    ASSERT_EQ("strtol negative", nv, -42);
+
+    /* strtol with leading whitespace */
+    long lw = strtol("  \t  456", &ep, 10);
+    ASSERT_EQ("strtol leading ws", lw, 456);
+
+    t_ok("string extended edge cases");
+}
+
+/* ── Memory operation edge-case tests ───────────────────── */
+
+static void test_memory_ext(void) {
+    char buf[64];
+
+    /* memset with zero length */
+    memset(buf, 0xAA, 32);
+    memset(buf + 8, 0x00, 0);
+    ASSERT_EQ("memset zero-len first", (uint8_t)buf[0], 0xAA);
+    ASSERT_EQ("memset zero-len unchanged", (uint8_t)buf[8], 0xAA);
+
+    /* memcmp with identical buffers of various sizes */
+    ASSERT("memcmp size0 eq", memcmp("a", "b", 0) == 0);
+    ASSERT("memcmp size1 eq", memcmp("\x01", "\x01", 1) == 0);
+    ASSERT("memcmp size7 eq", memcmp("abcdefg", "abcdefg", 7) == 0);
+
+    /* memcmp with differing first byte */
+    ASSERT("memcmp diff byte0", memcmp("\x01xxx", "\x02xxx", 4) != 0);
+    ASSERT("memcmp diff last", memcmp("abcd\x01", "abcd\x02", 5) != 0);
+
+    /* memcpy with exact copy */
+    memset(buf, 0, 16);
+    memcpy(buf, "Hello, World!", 14);
+    ASSERT("memcpy exact", memcmp(buf, "Hello, World!", 14) == 0);
+
+    t_ok("memory extended edge cases");
+}
+
+/* ── Bitfield operation tests ───────────────────────────── */
+
+static void test_bitfield_ops(void) {
+    /* BIT macro from bitops.h */
+    ASSERT_EQ("BIT(0)=1", BIT(0), 1UL);
+    ASSERT_EQ("BIT(63)", BIT(63), (1UL << 63));
+    ASSERT_EQ("BIT(31)", BIT(31), (1UL << 31));
+
+    /* set_bit / clear_bit / test_bit round-trip */
+    uint64_t word = 0;
+    set_bit(0, &word);
+    ASSERT("set_bit 0 visible", test_bit(0, &word));
+    ASSERT("set_bit 0 others clear", !test_bit(1, &word));
+    clear_bit(0, &word);
+    ASSERT("clear_bit 0 visible", !test_bit(0, &word));
+
+    /* Multiple bits */
+    word = 0;
+    set_bit(7, &word);
+    set_bit(15, &word);
+    set_bit(63, &word);
+    ASSERT("multi set bit 7", test_bit(7, &word));
+    ASSERT("multi set bit 15", test_bit(15, &word));
+    ASSERT("multi set bit 63", test_bit(63, &word));
+    ASSERT("multi set bit 0 clear", !test_bit(0, &word));
+
+    /* Clear middle bit preserves others */
+    clear_bit(15, &word);
+    ASSERT("clear mid keeps 7", test_bit(7, &word));
+    ASSERT("clear mid clears 15", !test_bit(15, &word));
+    ASSERT("clear mid keeps 63", test_bit(63, &word));
+
+    t_ok("bitfield ops");
+}
+
+/* ── Negative-path / error-handling tests ──────────────── */
+
+static void test_negative_path(void) {
+    /* strncmp with n=0 returns 0 */
+    ASSERT("strncmp n=0", strncmp("abc", "xyz", 0) == 0);
+
+    /* memcmp with n=0 returns 0 */
+    ASSERT("memcmp n=0", memcmp("abc", "xyz", 0) == 0);
+
+    /* strchr with empty string returns NULL */
+    ASSERT("strchr empty", strchr("", 'x') == NULL);
+
+    /* strstr with empty haystack returns NULL */
+    ASSERT("strstr empty haystack", strstr("", "x") == NULL);
+
+    /* strstr with empty needle returns haystack */
+    char ss[] = "hello";
+    ASSERT("strstr empty needle", strstr(ss, "") == ss);
+
+    /* strtol empty string returns 0 */
+    char *ep;
+    ASSERT_EQ("strtol empty", strtol("", &ep, 10), 0L);
+
+    /* strtol invalid base returns 0 */
+    ASSERT_EQ("strtol base 1", strtol("123", &ep, 1), 0L);
+
+    /* strtol just '-' returns 0 */
+    ASSERT_EQ("strtol just minus", strtol("-", &ep, 10), 0L);
+
+    /* strtol with INT_MAX boundary */
+    ASSERT_EQ("strtol INT_MAX", strtol("2147483647", &ep, 10), 2147483647L);
+
+    /* strtol with INT_MIN boundary */
+    ASSERT_EQ("strtol INT_MIN", strtol("-2147483648", &ep, 10), -2147483648L);
+
+    t_ok("negative path / error handling");
+}
+
+/* ── Bitfield extended tests ──────────────────────────── */
+
+static void test_bitfield_more(void) {
+    uint64_t word = 0;
+
+    /* Write bit 0, read it back */
+    set_bit(0, &word);
+    ASSERT("set_bit 0", test_bit(0, &word) == 1);
+    clear_bit(0, &word);
+    ASSERT("clear_bit 0", test_bit(0, &word) == 0);
+
+    /* Write all 1s, read all 1s */
+    word = ~0ULL;
+    ASSERT("all ones bit 0", test_bit(0, &word) == 1);
+    ASSERT("all ones bit 63", test_bit(63, &word) == 1);
+
+    /* Write to middle bits */
+    word = 0;
+    set_bit(31, &word);
+    ASSERT("set_bit 31", test_bit(31, &word) == 1);
+    ASSERT("set_bit 31 no spill", test_bit(30, &word) == 0 && test_bit(32, &word) == 0);
+
+    t_ok("bitfield extended");
+}
+
+/* ── Compression edge cases ───────────────────────────── */
+
+static void test_compress_edge(void) {
+    uint8_t out_buf[256];
+    int ret;
+
+    /* Empty buffer — lzss_compress rejects input_len == 0 */
+    ret = lzss_compress(NULL, 0, out_buf, sizeof(out_buf));
+    ASSERT_EQ("compress empty returns -EINVAL", ret, -EINVAL);
+
+    /* Single byte compress/decompress */
+    uint8_t in1[] = { 0x42 };
+    uint8_t comp[64];
+    uint8_t decomp[64];
+    ret = lzss_compress(in1, sizeof(in1), comp, sizeof(comp));
+    ASSERT("compress single byte returns > 0", ret > 0);
+    ret = lzss_decompress(comp, ret, decomp, sizeof(decomp));
+    ASSERT_EQ("decompress single byte", ret, 1);
+    ASSERT_EQ("decompress single byte value", decomp[0], 0x42);
+
+    /* Max-size buffer (LZSS_MAX_INPUT = 1024) */
+    uint8_t in2[1024];
+    uint8_t comp2[2048];
+    uint8_t decomp2[2048];
+    for (int i = 0; i < 1024; i++) in2[i] = (uint8_t)(i & 0xFF);
+    ret = lzss_compress(in2, 1024, comp2, sizeof(comp2));
+    ASSERT("compress max-size returns > 0", ret > 0);
+    ret = lzss_decompress(comp2, ret, decomp2, sizeof(decomp2));
+    ASSERT_EQ("decompress max-size size", ret, 1024);
+
+    t_ok("compress edge cases");
+}
+
+/* ── Endian conversion tests ──────────────────────────── */
+
+static void test_endian(void) {
+    /* htons / ntohs reciprocity */
+    ASSERT_EQ("htons(0x1234) recip", ntohs(htons(0x1234)), 0x1234);
+    ASSERT_EQ("htons(0x0001) recip", ntohs(htons(0x0001)), 0x0001);
+
+    /* htonl / ntohl reciprocity */
+    ASSERT_EQ("htonl(0x12345678) recip", ntohl(htonl(0x12345678)), 0x12345678);
+    ASSERT_EQ("htonl(0x00000001) recip", ntohl(htonl(0x00000001)), 0x00000001);
+
+    t_ok("endian conversion");
+}
+
+/* ── Hash function tests ──────────────────────────────── */
+
+static void test_hash(void) {
+    /* CRC32 of a known string */
+    uint32_t c1 = crc32(0, "hello", 5);
+    /* Same data should produce same CRC */
+    uint32_t c2 = crc32(0, "hello", 5);
+    ASSERT("crc32 deterministic", c1 == c2);
+    /* Different data should produce different CRC32 */
+    uint32_t c3 = crc32(0, "world", 5);
+    ASSERT("crc32 differs for different input", c1 != c3);
+    ASSERT("crc32 non-zero", c1 != 0);
+
+    /* CRC16 consistency */
+    uint16_t d1 = crc16(0, "hello", 5);
+    uint16_t d2 = crc16(0, "hello", 5);
+    ASSERT("crc16 deterministic", d1 == d2);
+    ASSERT("crc16 non-zero", d1 != 0);
+
+    t_ok("hash functions");
+}
+
+/* ── min/max macro tests ──────────────────────────────── */
+
+/* Local min/max without typeof for C17 compatibility */
+#define _MIN(x, y) ((x) < (y) ? (x) : (y))
+#define _MAX(x, y) ((x) > (y) ? (x) : (y))
+
+static void test_minmax(void) {
+    /* Basic comparisons */
+    ASSERT_EQ("min(3, 7)", _MIN(3, 7), 3);
+    ASSERT_EQ("max(3, 7)", _MAX(3, 7), 7);
+
+    /* Edge values — equal */
+    ASSERT_EQ("min equal", _MIN(5, 5), 5);
+    ASSERT_EQ("max equal", _MAX(5, 5), 5);
+
+    /* Negative values */
+    ASSERT_EQ("min negative", _MIN(-5, -3), -5);
+    ASSERT_EQ("max negative", _MAX(-5, -3), -3);
+
+    /* Mixed signedness / wider types */
+    ASSERT_EQ("min unsigned", _MIN(10U, 20U), 10U);
+    ASSERT_EQ("max unsigned", _MAX(10U, 20U), 20U);
+
+    t_ok("min/max macros");
+}
+
+/* ── Character classification tests ───────────────────── */
+
+static void test_isdigit(void) {
+    /* isdigit */
+    ASSERT("isdigit '0'", isdigit('0'));
+    ASSERT("isdigit '9'", isdigit('9'));
+    ASSERT("!isdigit 'a'", !isdigit('a'));
+
+    /* isxdigit */
+    ASSERT("isxdigit '0'", isxdigit('0'));
+    ASSERT("isxdigit 'f'", isxdigit('f'));
+    ASSERT("isxdigit 'F'", isxdigit('F'));
+    ASSERT("!isxdigit 'g'", !isxdigit('g'));
+
+    /* isspace */
+    ASSERT("isspace space", isspace(' '));
+    ASSERT("isspace tab", isspace('\t'));
+    ASSERT("isspace newline", isspace('\n'));
+    ASSERT("!isspace 'a'", !isspace('a'));
+
+    /* isalpha */
+    ASSERT("isalpha 'a'", isalpha('a'));
+    ASSERT("isalpha 'Z'", isalpha('Z'));
+    ASSERT("!isalpha '5'", !isalpha('5'));
+
+    /* isalnum */
+    ASSERT("isalnum 'a'", isalnum('a'));
+    ASSERT("isalnum '5'", isalnum('5'));
+    ASSERT("!isalnum '#'", !isalnum('#'));
+
+    t_ok("character classification");
+}
+
+/* ── Alignment macro tests ────────────────────────────── */
+
+/* Local alignment helpers without typeof for C17 compatibility */
+#define _ALIGN_UP(x, a)     (((x) + ((uint64_t)(a) - 1)) & ~((uint64_t)(a) - 1))
+#define _ALIGN_DOWN(x, a)   ((x) & ~((uint64_t)(a) - 1))
+#define _IS_ALIGNED(x, a)   (((x) & ((uint64_t)(a) - 1)) == 0)
+
+static void test_align(void) {
+    /* ALIGN_UP */
+    ASSERT_EQ("ALIGN_UP 0", _ALIGN_UP(0, 8), 0);
+    ASSERT_EQ("ALIGN_UP 1->8", _ALIGN_UP(1, 8), 8);
+    ASSERT_EQ("ALIGN_UP 8->8", _ALIGN_UP(8, 8), 8);
+    ASSERT_EQ("ALIGN_UP 9->16", _ALIGN_UP(9, 16), 16);
+
+    /* ALIGN_DOWN */
+    ASSERT_EQ("ALIGN_DOWN 0", _ALIGN_DOWN(0, 8), 0);
+    ASSERT_EQ("ALIGN_DOWN 7->0", _ALIGN_DOWN(7, 8), 0);
+    ASSERT_EQ("ALIGN_DOWN 8->8", _ALIGN_DOWN(8, 8), 8);
+    ASSERT_EQ("ALIGN_DOWN 15->8", _ALIGN_DOWN(15, 8), 8);
+
+    /* IS_ALIGNED */
+    ASSERT("IS_ALIGNED 0 true", _IS_ALIGNED(0, 8));
+    ASSERT("IS_ALIGNED 8 true", _IS_ALIGNED(8, 8));
+    ASSERT("!IS_ALIGNED 1", !_IS_ALIGNED(1, 8));
+    ASSERT("!IS_ALIGNED 7", !_IS_ALIGNED(7, 8));
+
+    t_ok("alignment macros");
+}
+
+/* ── container_of macro tests ─────────────────────────── */
+
+/* Local container_of without typeof for C17 compatibility */
+#define _CONTAINER_OF(ptr, type, member) \
+    ((type *)((char *)(ptr) - (uintptr_t)(&((type *)0)->member)))
+
+struct test_outer {
+    uint64_t prefix;
+    struct { int a; char b; } inner;
+    uint64_t suffix;
+};
+
+static void test_container_of(void) {
+    struct test_outer outer;
+    outer.prefix = 0x1234;
+    outer.inner.a = 42;
+    outer.inner.b = 'X';
+    outer.suffix = 0x5678;
+
+    /* Get pointer to inner from a pointer to its member */
+    int *ptr_a = &outer.inner.a;
+    struct test_outer *ret = _CONTAINER_OF(ptr_a, struct test_outer, inner.a);
+    ASSERT("container_of same pointer", ret == &outer);
+    ASSERT("container_of prefix ok", ret->prefix == 0x1234);
+    ASSERT("container_of suffix ok", ret->suffix == 0x5678);
+
+    t_ok("container_of");
+}
+
+/* ── snprintf formatting tests ────────────────────────── */
+
+static void test_sprintf(void) {
+    char buf[64];
+
+    /* %d — signed decimal */
+    memset(buf, 0, sizeof(buf));
+    int n = snprintf(buf, sizeof(buf), "%d", 42);
+    ASSERT_EQ("snprintf %%d len", n, 2);
+    ASSERT_STR("snprintf %%d value", buf, "42");
+
+    /* %u — unsigned decimal */
+    memset(buf, 0, sizeof(buf));
+    n = snprintf(buf, sizeof(buf), "%u", 0xFFFFFFFFU);
+    ASSERT("snprintf %%u len > 0", n > 0);
+    ASSERT_STR("snprintf %%u value", buf, "4294967295");
+
+    /* %x — hex */
+    memset(buf, 0, sizeof(buf));
+    n = snprintf(buf, sizeof(buf), "%x", 0xFF);
+    ASSERT_EQ("snprintf %%x len", n, 2);
+    ASSERT_STR("snprintf %%x value", buf, "ff");
+
+    /* %s — string */
+    memset(buf, 0, sizeof(buf));
+    n = snprintf(buf, sizeof(buf), "%s", "test");
+    ASSERT_EQ("snprintf %%s len", n, 4);
+    ASSERT_STR("snprintf %%s value", buf, "test");
+
+    /* %% — literal percent */
+    memset(buf, 0, sizeof(buf));
+    n = snprintf(buf, sizeof(buf), "%%");
+    ASSERT_EQ("snprintf %%%% len", n, 1);
+    ASSERT_STR("snprintf %%%% value", buf, "%");
+
+    /* Combined format */
+    memset(buf, 0, sizeof(buf));
+    n = snprintf(buf, sizeof(buf), "%s=%d", "x", 123);
+    ASSERT_EQ("snprintf combined len", n, 5);
+    ASSERT_STR("snprintf combined value", buf, "x=123");
+
+    t_ok("snprintf formatting");
+}
+
 void test_run_all(void) {
     outb(0x3F8, 'Z');  /* marker: test task is running */
 
@@ -4239,6 +4647,20 @@ void test_run_all(void) {
     kprintf("[TEST] zram\n");          test_zram();               test_progress_tick();
     kprintf("[TEST] ksm\n");           test_ksm();                test_progress_tick();
     kprintf("[TEST] thp\n");           test_thp();                test_progress_tick();
+    /* String / Memory / Bitfield / Negative-path extension tests */
+    kprintf("[TEST] string_ext\n");    test_string_ext();         test_progress_tick();
+    kprintf("[TEST] memory_ext\n");    test_memory_ext();         test_progress_tick();
+    kprintf("[TEST] bitfield_ops\n");  test_bitfield_ops();       test_progress_tick();
+    kprintf("[TEST] negative_path\n"); test_negative_path();      test_progress_tick();
+    kprintf("[TEST] bitfield_more\n");  test_bitfield_more();      test_progress_tick();
+    kprintf("[TEST] compress_edge\n");  test_compress_edge();      test_progress_tick();
+    kprintf("[TEST] endian\n");         test_endian();             test_progress_tick();
+    kprintf("[TEST] hash\n");           test_hash();               test_progress_tick();
+    kprintf("[TEST] minmax\n");         test_minmax();             test_progress_tick();
+    kprintf("[TEST] isdigit\n");        test_isdigit();            test_progress_tick();
+    kprintf("[TEST] align\n");          test_align();              test_progress_tick();
+    kprintf("[TEST] container_of\n");   test_container_of();       test_progress_tick();
+    kprintf("[TEST] sprintf\n");        test_sprintf();            test_progress_tick();
 kprintf("----------------------------------------\n");
     kprintf("Results: %llu passed, %llu failed\n",
             (unsigned long long)tpass, (unsigned long long)tfail);

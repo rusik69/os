@@ -115,34 +115,26 @@ MODULE_VERSION("1.0");
 #endif
 
 /* ── Stub: virtio_console_open ─────────────────────────────── */
-int virtio_console_open(void *dev)
+int virtio_console_open(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[virtio] virtio_console_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_close ─────────────────────────────── */
-int virtio_console_close(void *dev)
+int virtio_console_close(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[virtio] virtio_console_close: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_write ─────────────────────────────── */
-int virtio_console_write(void *dev, const void *buf, size_t count)
+int virtio_console_write(__maybe_unused void *dev, __maybe_unused const void *buf, __maybe_unused size_t count)
 {
-    (void)dev;
-    (void)buf;
-    (void)count;
     kprintf("[virtio] virtio_console_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_console_read ─────────────────────────────── */
-int virtio_console_read(void *dev, void *buf, size_t count)
+int virtio_console_read(__maybe_unused void *dev, __maybe_unused void *buf, __maybe_unused size_t count)
 {
-    (void)dev;
-    (void)buf;
-    (void)count;
     kprintf("[virtio] virtio_console_read: not yet implemented\n");
     return 0;
 }

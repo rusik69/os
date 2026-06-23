@@ -381,17 +381,14 @@ int drbd_get_state(int res_id, int *conn_state, int *disk_state)
 }
 
 /* ── Stub: drbd_connect ─────────────────────────────── */
-int drbd_connect(const char *peer)
+int drbd_connect(__maybe_unused const char *peer)
 {
-    (void)peer;
     kprintf("[drbd] drbd_connect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: drbd_replicate ─────────────────────────────── */
-int drbd_replicate(const void *data, size_t len)
+int drbd_replicate(__maybe_unused const void *data, __maybe_unused size_t len)
 {
-    (void)data;
-    (void)len;
     kprintf("[drbd] drbd_replicate: not yet implemented\n");
     return 0;
 }

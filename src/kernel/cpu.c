@@ -136,9 +136,9 @@ void cpuhp_init(void)
 int cpuhp_register_notify(cpuhp_notify_fn fn)
 {
     if (!fn)
-        return -1;
+        return -EINVAL;
     if (cpuhp_notifier_count >= CPUHP_NOTIFIER_MAX)
-        return -1;
+        return -EINVAL;
 
     cpuhp_notifiers[cpuhp_notifier_count++] = fn;
     return 0;
@@ -340,7 +340,17 @@ out:
     return ret;
 }
 
-/* ── cpu_init: Initialize a specific CPU ─────────────────────────────── */
+/**
+ * cpu_init - Initialize a specific CPU and bring it online
+ * @cpu_id: The ID of the CPU to initialize
+ *
+ * Brings the specified CPU online via the cpuhp infrastructure.
+ * The target CPU transitions from DEAD or OFFLINE to ONLINE state.
+ *
+ * Context: May be called during boot or hotplug. Takes cpuhp_lock internally.
+ * Return: 0 on success, -EINVAL if @cpu_id is out of range, or a negative
+ *         error code from cpuhp_bring_cpu().
+ */
 int cpu_init(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
@@ -357,7 +367,17 @@ int cpu_init(int cpu_id)
     kprintf("[cpu] cpu_init: CPU %d is now online\n", cpu_id);
     return 0;
 }
-/* ── cpu_idle: Enter idle state until next interrupt ──────────────────── */
+/**
+ * cpu_idle - Enter idle state until next interrupt
+ *
+ * Halts the CPU with interrupts enabled (sti; hlt; cli) to conserve
+ * power while waiting for the next interrupt. After the interrupt
+ * is handled, interrupts are disabled again before returning.
+ *
+ * Context: Must be called with interrupts enabled. Disables interrupts
+ *          before returning.
+ * Return: 0 on success.
+ */
 int cpu_idle(void)
 {
     /* Enter halt state to conserve power while waiting for interrupts */

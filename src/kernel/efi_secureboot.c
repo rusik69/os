@@ -38,7 +38,7 @@ static int efi_read_uint8_var(const char *name, uint8_t *value)
     if (ret != 0)
         return ret;
     if (data_size < sizeof(uint8_t))
-        return -1;
+        return -ENOSYS;
     *value = data;
     return 0;
 }

@@ -81,7 +81,7 @@ int bpf_map_create(int map_type, uint32_t key_size, uint32_t value_size,
     for (int i = 0; i < BPF_MAP_MAX; i++) {
         if (!g_maps[i].in_use) { fd = i + 1; break; }
     }
-    if (fd < 0) { spinlock_release(&g_maps_lock); return -ENOSPC; }
+    if (fd <= 0) { spinlock_release(&g_maps_lock); return -ENOSPC; }
 
     int idx = fd - 1;
     struct bpf_map *map = &g_maps[idx];
@@ -142,6 +142,8 @@ int bpf_map_create(int map_type, uint32_t key_size, uint32_t value_size,
         memset(map->perf.fds, 0xFF, fds_size);
         break;
     }
+    default:
+        break;
     }
 
     spinlock_release(&g_maps_lock);
@@ -177,6 +179,8 @@ int bpf_map_lookup_elem(int fd, const void *key, void *value)
         spinlock_release(&map->hash.lock);
         return -ENOENT;
     }
+    default:
+        break;
     }
     return -EINVAL;
 }
@@ -229,6 +233,8 @@ int bpf_map_update_elem(int fd, const void *key, const void *value, uint64_t fla
         spinlock_release(&map->hash.lock);
         return 0;
     }
+    default:
+        break;
     }
     return -EINVAL;
 }
@@ -287,6 +293,8 @@ int bpf_map_get_next_key(int fd, const void *key, void *next_key)
         spinlock_release(&map->hash.lock);
         return -ENOENT;
     }
+    default:
+        break;
     }
     return -EINVAL;
 }
@@ -308,16 +316,14 @@ void bpf_maps_init(void)
 }
 
 /* ── Stub: bpf_map_alloc ─────────────────────────────── */
-int bpf_map_alloc(void *attr)
+int bpf_map_alloc(__maybe_unused void *attr)
 {
-    (void)attr;
     kprintf("[bpf] bpf_map_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: bpf_map_free ─────────────────────────────── */
-int bpf_map_free(void *map)
+int bpf_map_free(__maybe_unused void *map)
 {
-    (void)map;
     kprintf("[bpf] bpf_map_free: not yet implemented\n");
     return 0;
 }

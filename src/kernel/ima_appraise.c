@@ -41,11 +41,10 @@ static int ima_appraise_enforce = 1;   /* 1 = deny on mismatch */
 int ima_appraise_file(const char *path)
 {
     if (!path)
-        return -1;
+        return -EINVAL;
 
     /* Get the security.ima xattr */
     uint8_t xattr_hash[SHA256_DIGEST_SIZE];
-    uint32_t xattr_len = sizeof(xattr_hash);
     int ret = vfs_getxattr(path, "security.ima", xattr_hash, sizeof(xattr_hash));
 
     if (ret < 0) {
@@ -63,10 +62,10 @@ int ima_appraise_file(const char *path)
     /* Compute hash of file contents */
     struct vfs_stat st;
     if (vfs_stat(path, &st) < 0)
-        return -1;
+        return -EIO;
 
     if (st.type != 1) /* Regular file only */
-        return -1;
+        return -EINVAL;
 
     uint8_t computed[SHA256_DIGEST_SIZE];
 
@@ -77,13 +76,13 @@ int ima_appraise_file(const char *path)
         /* Allocate buffer and read file */
         void *buf = kmalloc((size_t)st.size);
         if (!buf)
-            return -1;
+            return -ENOMEM;
 
         uint32_t bytes_read = 0;
         if (vfs_read(path, buf, (uint32_t)st.size, &bytes_read) < 0 ||
             bytes_read != (uint32_t)st.size) {
             kfree(buf);
-            return -1;
+            return -EIO;
         }
 
         sha256_hash(computed, (const uint8_t *)buf, (size_t)bytes_read);

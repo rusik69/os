@@ -76,7 +76,7 @@ int bpf_prog_load(int prog_type, const struct bpf_insn *insns, int insn_cnt,
             break;
         }
     }
-    if (fd < 0) {
+    if (fd <= 0) {
         spinlock_release(&g_progs_lock);
         return -ENOSPC;
     }

@@ -6,6 +6,10 @@
 #include "smp.h"
 #include "thp.h"
 #include "export.h"
+#include "bug.h"
+
+/* Verify our fundamental page size assumption at compile time */
+_Static_assert(PAGE_SIZE == 4096, "PAGE_SIZE must be 4096");
 
 /* NX support status — defined in this file, exported for nx_enforce */
 int nx_enabled = 0;
@@ -168,18 +172,64 @@ void vmm_init(void) {
     }
 }
 
+/**
+ * vmm_map_page - Map a physical page into the kernel's virtual address space
+ * @virt: Virtual address to map (must be in kernel space, >= KERNEL_VMA_OFFSET)
+ * @phys: Physical address of the page to map (must be page-aligned)
+ * @flags: Page table flags (e.g. VMM_FLAG_PRESENT, VMM_FLAG_WRITE, etc.)
+ *
+ * Maps a 4 KB physical page at the given virtual address in the kernel
+ * PML4. Automatically creates intermediate page tables (PDPT, PD, PT) as
+ * needed. If a 2 MB huge page is encountered at the target PDE, it is
+ * split into 512 × 4 KB entries before mapping. On allocation failure,
+ * unwinds any newly created intermediate tables to prevent page-table-page
+ * leaks. Issues a TLB flush for the virtual address on success.
+ *
+ * Context: Any context. May allocate memory for intermediate page tables.
+ *          Must not be called from interrupt context if allocation may block.
+ * Return: 0 on success, -ENOMEM on page table allocation failure.
+ */
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
+    /* Track whether each intermediate table was newly allocated so we can
+     * unwind on failure (preventing page-table-page leaks). */
+    int pml4_was_empty = !(kernel_pml4[pml4_idx] & PTE_PRESENT);
+
     uint64_t *pdpt = get_or_create_table(kernel_pml4, pml4_idx, flags);
-    if (!pdpt) return -1;
+    if (!pdpt) return -ENOMEM;
+
+    int pdpt_was_empty = !(pdpt[pdpt_idx] & PTE_PRESENT);
+
     uint64_t *pd  = get_or_create_table(pdpt, pdpt_idx, flags);
-    if (!pd)  return -1;
+    if (!pd) {
+        if (pml4_was_empty) {
+            uint64_t pdpt_phys = kernel_pml4[pml4_idx] & PTE_ADDR_MASK;
+            kernel_pml4[pml4_idx] = 0;
+            pmm_free_frame(pdpt_phys);
+        }
+        return -ENOMEM;
+    }
+
+    int pd_was_empty = !(pd[pd_idx] & PTE_PRESENT);
+
     uint64_t *pt  = get_or_create_table(pd, pd_idx, flags);
-    if (!pt)  return -1;
+    if (!pt) {
+        if (pdpt_was_empty) {
+            uint64_t pd_phys = pdpt[pdpt_idx] & PTE_ADDR_MASK;
+            pdpt[pdpt_idx] = 0;
+            pmm_free_frame(pd_phys);
+        }
+        if (pml4_was_empty) {
+            uint64_t pdpt_phys = kernel_pml4[pml4_idx] & PTE_ADDR_MASK;
+            kernel_pml4[pml4_idx] = 0;
+            pmm_free_frame(pdpt_phys);
+        }
+        return -ENOMEM;
+    }
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     tlb_flush(virt);
@@ -221,6 +271,19 @@ void vmm_set_range_uncacheable(uint64_t virt, uint64_t size) {
     }
 }
 
+/**
+ * vmm_unmap_page - Unmap a page from the kernel's virtual address space
+ * @virt: Virtual address to unmap (must be in kernel space)
+ *
+ * Removes the page table entry for the given virtual address in the kernel
+ * PML4. Walks the page table hierarchy (PML4 → PDPT → PD → PT) and clears
+ * the final PTE. Issues a TLB flush for the virtual address after unmapping.
+ * Does NOT free the underlying physical frame; the caller is responsible
+ * for freeing the physical page via pmm_free_frame() if needed.
+ *
+ * Context: Any context. Must be called with the kernel PML4 active.
+ * Return: void.
+ */
 void vmm_unmap_page(uint64_t virt) {
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
@@ -305,6 +368,19 @@ void vmm_unmap_phys(void *vaddr, uint64_t size) {
 /*  Per-process user address space support                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * vmm_create_user_pml4 - Create a new user-space PML4 page table
+ *
+ * Allocates a new PML4 page for a user process and copies the kernel
+ * half of the page table (entries 256-511) from the kernel PML4, with
+ * the PTE_USER bit cleared for kernel entries. The user half (entries
+ * 0-255) is zeroed, ready for user-space mappings.
+ *
+ * Context: Any context. Allocates one physical frame for the PML4.
+ *          Must not be called from interrupt context.
+ * Return: Pointer to the new user PML4 (in kernel virtual address space),
+ *         or NULL on allocation failure.
+ */
 uint64_t *vmm_create_user_pml4(void) {
     /* Allocate a new PML4 and copy the upper-half kernel mappings */
     uint64_t frame = pmm_alloc_frame();
@@ -331,20 +407,47 @@ static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t fla
 }
 
 int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
-    if (!pml4) return -1;
-    if (virt >= USER_VADDR_MAX) return -1;
+    if (!pml4) return -EINVAL;
+    if (virt >= USER_VADDR_MAX) return -EINVAL;
 
     int pml4_idx = (virt >> 39) & 0x1FF;
     int pdpt_idx = (virt >> 30) & 0x1FF;
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
+    int pml4_was_empty = !(pml4[pml4_idx] & PTE_PRESENT);
+
     uint64_t *pdpt = get_or_create_table_in(pml4, pml4_idx, flags);
-    if (!pdpt) return -1;
+    if (!pdpt) return -ENOMEM;
+
+    int pdpt_was_empty = !(pdpt[pdpt_idx] & PTE_PRESENT);
+
     uint64_t *pd = get_or_create_table_in(pdpt, pdpt_idx, flags);
-    if (!pd) return -1;
+    if (!pd) {
+        if (pml4_was_empty) {
+            uint64_t pdpt_phys = pml4[pml4_idx] & PTE_ADDR_MASK;
+            pml4[pml4_idx] = 0;
+            pmm_free_frame(pdpt_phys);
+        }
+        return -ENOMEM;
+    }
+
+    int pd_was_empty = !(pd[pd_idx] & PTE_PRESENT);
+
     uint64_t *pt = get_or_create_table_in(pd, pd_idx, flags);
-    if (!pt) return -1;
+    if (!pt) {
+        if (pdpt_was_empty) {
+            uint64_t pd_phys = pdpt[pdpt_idx] & PTE_ADDR_MASK;
+            pdpt[pdpt_idx] = 0;
+            pmm_free_frame(pd_phys);
+        }
+        if (pml4_was_empty) {
+            uint64_t pdpt_phys = pml4[pml4_idx] & PTE_ADDR_MASK;
+            pml4[pml4_idx] = 0;
+            pmm_free_frame(pdpt_phys);
+        }
+        return -ENOMEM;
+    }
 
     pt[pt_idx] = (phys & PTE_ADDR_MASK) | (flags & 0xFFF) | PTE_PRESENT;
     return 0;
@@ -695,7 +798,7 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
                 if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
             }
-            return -1;
+            return -ENOMEM;
         }
         memset((void *)PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
         if (vmm_map_user_page(pml4, cur_virt, phys, flags) < 0) {
@@ -774,7 +877,7 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     /* Ensure PDPT entry exists (allocate if absent) */
     if (!(pml4[idx4] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return -1;
+        if (!frame) return -ENOMEM;
         uint64_t *virt_pdpt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt_pdpt, 0, PAGE_SIZE);
         pml4[idx4] = frame | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -784,7 +887,7 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     /* Ensure PD entry exists (allocate if absent) */
     if (!(pdpt[idx3] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return -1;
+        if (!frame) return -ENOMEM;
         uint64_t *virt_pd = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt_pd, 0, PAGE_SIZE);
         pdpt[idx3] = frame | PTE_PRESENT | PTE_WRITE | PTE_USER;

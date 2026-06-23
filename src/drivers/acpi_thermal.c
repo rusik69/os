@@ -33,6 +33,7 @@
 #include "printf.h"
 #include "string.h"
 #include "timer.h"
+#include "kernel.h"
 
 #define MAX_THERMAL_ZONES       4
 #define TEMP_TREND_HYSTERESIS   5   /* tenths K (0.5°C) to consider a trend change */
@@ -331,8 +332,8 @@ static void thermal_init_trip_points(struct thermal_zone_ext *tze)
         {"_AC9", TRIP_POINT_ACTIVE},
     };
 
-    for (uint32_t m = 0; m < sizeof(methods) / sizeof(methods[0]); m++) {
-        if (idx >= (int)(sizeof(tze->trip_points) / sizeof(tze->trip_points[0])))
+    for (uint32_t m = 0; m < ARRAY_SIZE(methods); m++) {
+        if (idx >= (int)ARRAY_SIZE(tze->trip_points))
             break;
 
         int temp;

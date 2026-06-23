@@ -78,7 +78,7 @@ struct bpf_insn {
 #define BPF_JSGT  0x60
 #define BPF_JSGE  0x70
 #define BPF_CALL  0x80
-#define BPF_EXIT  0x90
+#define BPF_EXIT  0x09
 #define BPF_JLT   0xa0
 #define BPF_JLE   0xb0
 #define BPF_JSLT  0xc0
@@ -266,6 +266,8 @@ int bpf_verify_program(const struct bpf_insn *prog, int insn_cnt,
                 i++; /* skip the next insn (imm64 high part) */
             }
             break;
+        default:
+            return -EINVAL;
         }
 
         /* Track register state changes */

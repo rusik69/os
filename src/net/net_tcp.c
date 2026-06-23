@@ -439,7 +439,7 @@ static uint32_t cubic_update(struct tcp_conn *c, uint32_t cwnd, uint64_t now, ui
 
     /* W_cubic = C * (t - K)^3 + W_max
      *
-     * Compute in fixed point: 
+     * Compute in fixed point:
      * W_cubic_fp = C * delta_fp^3 / 1024^2 + W_max * 1024
      *            = CUBIC_C_FIXED * delta_fp^3 / 1024^2 / 1024 + W_max * 1024
      *            = CUBIC_C_FIXED * delta_fp^3 / 1073741824 + W_max * 1024

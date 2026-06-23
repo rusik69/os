@@ -179,7 +179,7 @@ static void fe25519_sub(uint64_t *r, const uint64_t *a, const uint64_t *b) {
     c = t[3] >> 57; /* max 3 bits above 51? keep 51 bits */
     t[3] &= 0x7FFFFFFFFFFFFFFULL;
 
-    r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3]; 
+    r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
 }
 
 /* Multiply two field elements (schoolbook, 4 limbs) */

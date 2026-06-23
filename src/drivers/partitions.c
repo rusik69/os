@@ -4,6 +4,7 @@
 #include "crc.h"
 #include "heap.h"
 #include "export.h"
+#include "kernel.h"
 
 /* ── Known GPT partition type GUIDs (common ones) ──────────────────── */
 
@@ -97,7 +98,7 @@ static const struct {
       "VMware VMFS" },
 };
 
-static const int gpt_type_count = sizeof(gpt_type_table) / sizeof(gpt_type_table[0]);
+static const int gpt_type_count = ARRAY_SIZE(gpt_type_table);
 
 /* ── GPT statistics ────────────────────────────────────────────────── */
 static struct gpt_stats gpt_last_stats;

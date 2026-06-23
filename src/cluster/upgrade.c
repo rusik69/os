@@ -14,6 +14,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "timer.h"
+#include "kernel.h"
 #include "socket.h"
 #include "net.h"
 
@@ -80,7 +81,7 @@ extern int node_signal_upgrade(int node_id, const char *version);
 
 static const char *phase_name(enum upgrade_phase p)
 {
-    if (p >= 0 && (size_t)p < sizeof(upgrade_phase_names) / sizeof(upgrade_phase_names[0]))
+    if (p >= 0 && (size_t)p < ARRAY_SIZE(upgrade_phase_names))
         return upgrade_phase_names[p] ? upgrade_phase_names[p] : "unknown";
     return "unknown";
 }

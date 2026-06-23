@@ -181,9 +181,6 @@ static int fast_decompress(const uint8_t *src, size_t src_len,
         return -EINVAL;
 
     while (in_pos < src_len) {
-        if (in_pos >= src_len)
-            return -EINVAL;
-
         uint8_t control = src[in_pos++];
 
         for (int op = 0; op < 8; op++) {

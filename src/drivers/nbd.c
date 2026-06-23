@@ -277,28 +277,20 @@ void nbd_disconnect(int dev_id)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: nbd_xmit ────────────────────────────────── */
-int nbd_xmit(struct nbd_device *dev, struct nbd_request *req, void *data)
+int nbd_xmit(__maybe_unused struct nbd_device *dev, __maybe_unused struct nbd_request *req, __maybe_unused void *data)
 {
-    (void)dev;
-    (void)req;
-    (void)data;
     kprintf("[nbd] nbd_xmit: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nbd_recv ────────────────────────────────── */
-int nbd_recv(struct nbd_device *dev, struct nbd_reply *rep, void *data)
+int nbd_recv(__maybe_unused struct nbd_device *dev, __maybe_unused struct nbd_reply *rep, __maybe_unused void *data)
 {
-    (void)dev;
-    (void)rep;
-    (void)data;
     kprintf("[nbd] nbd_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nbd_reconfigure ─────────────────────────── */
-int nbd_reconfigure(struct nbd_device *dev, uint64_t new_size)
+int nbd_reconfigure(__maybe_unused struct nbd_device *dev, __maybe_unused uint64_t new_size)
 {
-    (void)dev;
-    (void)new_size;
     kprintf("[nbd] nbd_reconfigure: not yet implemented\n");
     return 0;
 }

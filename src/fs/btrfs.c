@@ -511,7 +511,7 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
      * For the FS tree (subvol 5), we can find its root either from:
      * 1. The superblock backup
      * 2. An alternate method: the root tree root_item for subvol 5 has the root_dirid
-     *    (which is 5 generally) and the tree's root node logical address is... 
+     *    (which is 5 generally) and the tree's root node logical address is...
      *
      * Actually I think I recall now: btrfs stores the tree root's logical address
      * directly in the objectid/offset of certain items, or more practically, the
@@ -538,12 +538,12 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
      * Actually, I now realize: Btrfs root items DO NOT contain the root node address.
      * Instead, the root tree root node is stored in the superblock, and each subvolume
      * tree's root node address is stored in the EXTENT_TREE, referenced by the subvolume.
-     * 
-     * For simple implementations (or older Linux versions), the root backup in the 
+     *
+     * For simple implementations (or older Linux versions), the root backup in the
      * superblock (sys_chunk_array) can contain inline info for the FS tree too.
      *
      * Actually wait: I found it. The btrfs_root_item DOES have a `byte_limit` field
-     * and also `flags` but NOT `bytenr`. The tree root BYTENR for the FS tree is 
+     * and also `flags` but NOT `bytenr`. The tree root BYTENR for the FS tree is
      * found by looking at the superblock's `root` field which points to the root tree,
      * then finding a ROOT_BACKUP or ROOT_REF in the root tree that gives the bytenr
      * for the FS tree.
@@ -555,8 +555,8 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
      *
      * Let me look at how existing tools access this. In btrfs-progs:
      * btrfs_read_tree_root() reads the root tree to get root_item, then...
-     * 
-     * I think for simplicity, since the user task says "single-device, non-raid, 
+     *
+     * I think for simplicity, since the user task says "single-device, non-raid,
      * non-compressed", I can assume:
      * 1. chunk tree maps logical->physical
      * 2. The superblock's `root` gives the root tree node address
@@ -686,7 +686,7 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
      * at offset 0x300 contains:
      *   .root = root tree logical
      *   .num_entries = number of backup entries...
-     * 
+     *
      * Actually, I just realized something else: the root tree itself contains, for each
      * subvolume, a ROOT_ITEM. The btrfs_root_item struct I defined earlier is MISSING
      * the `byte_limit`, `bytes_used`, and most importantly, `last_snapshot` fields.
@@ -695,7 +695,7 @@ static int btrfs_find_fs_root(struct btrfs_priv *bp)
      * OK, I think the key insight is: Btrfs subvolume roots are found via the ROOT tree.
      * The ROOT tree stores ROOT_ITEM entries. Each ROOT_ITEM has `byte_limit`, `bytes_used`,
      * `last_snapshot`, and `flags` fields. The ROOT NODE BYTENR for the subvolume's tree
-     * is stored in the superblock's backup array. Each backup slot (0-3) contains a 
+     * is stored in the superblock's backup array. Each backup slot (0-3) contains a
      * btrfs_root_backup structure that has the root bytenrs for all critical trees.
      *
      * I'll use the root backup approach: read the root backup from the superblock

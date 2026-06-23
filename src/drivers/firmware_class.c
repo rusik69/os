@@ -241,18 +241,14 @@ void firmware_class_dump(void)
 module_init(firmware_class_init);
 
 /* ── Stub: firmware_request ─────────────────────────────── */
-int firmware_request(const char *name, void *dev, void *fw)
+int firmware_request(__maybe_unused const char *name, __maybe_unused void *dev, __maybe_unused void *fw)
 {
-    (void)name;
-    (void)dev;
-    (void)fw;
     kprintf("[firmware] firmware_request: not yet implemented\n");
     return 0;
 }
 /* ── Stub: firmware_class_register ─────────────────────────────── */
-int firmware_class_register(void *class)
+int firmware_class_register(__maybe_unused void *class)
 {
-    (void)class;
     kprintf("[firmware] firmware_class_register: not yet implemented\n");
     return 0;
 }

@@ -39,6 +39,7 @@
 #include "vfs.h"
 #include "keyboard.h"
 #include "string.h"
+#include "kernel.h"
 
 /* ── Forward declarations of extern functions ────────────────────── */
 
@@ -499,7 +500,7 @@ void sysrq_init(void)
     keyboard_set_sysrq_callback(keyboard_sysrq_hook);
 
     kprintf("[OK] Magic SysRq initialized (%d commands, mask=0x%x)\n",
-            (int)(sizeof(sysrq_table) / sizeof(sysrq_table[0])) - 1,
+            (int)ARRAY_SIZE(sysrq_table) - 1,
             sysrq_enable_mask);
 }
 

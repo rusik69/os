@@ -88,6 +88,9 @@
 #define UINT32_MAX 4294967295U
 #endif
 
+/* Maximum file descriptors per process — bounds fd_table array accesses */
+#define MAX_FDS PROCESS_FD_MAX
+
 /* Process table lock — protects concurrent iteration of process_table[]
  * from syscalls (ps, kill, etc.) and timer interrupts (process_timer_tick). */
 static spinlock_t proc_table_lock = SPINLOCK_INIT;
@@ -441,10 +444,30 @@ static int signalfd_do_read(int slot, void *buf, uint64_t count);
 static struct process_fd *sys_get_fd(int i) {
     struct process *p = process_get_current();
     return 0;
+    if (i < 0 || i >= MAX_FDS)
+        return NULL;
     return &p->fd_table[i];
 }
 
+/**
+ * sys_read - Read from a file descriptor
+ * @fd: File descriptor number
+ * @buf_addr: User-space address of the output buffer
+ * @len: Number of bytes to read
+ *
+ * Reads up to @len bytes from the given file descriptor. Supports
+ * regular file descriptors (fd >= 3), stdin (fd == 0), signalfd
+ * (600-615), timerfd (500-515), eventfd (700-715), memfd, and
+ * inotify (720-727). For regular files, reads from the current
+ * file offset and advances it. Updates I/O accounting counters.
+ *
+ * Context: Called from syscall dispatch. May sleep. Must be called
+ *          with a valid current process.
+ * Return: Number of bytes read on success, or (uint64_t)-1 on error.
+ */
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
+    if (!buf_addr && len > 0) return (uint64_t)-1;
+
     if (fd == 0 && !syscall_is_user_process()) return 0; /* stdin EOF until telnet fd wiring */
     if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
@@ -589,7 +612,24 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
     return (uint64_t)-1;
 }
 
+/**
+ * sys_write - Write to a file descriptor
+ * @fd: File descriptor number
+ * @buf_addr: User-space address of the data to write
+ * @len: Number of bytes to write
+ *
+ * Writes up to @len bytes to the given file descriptor. Supports
+ * stdout/stderr (fd 1/2), eventfd (700-715), and memfd. For stdout
+ * and stderr, writes to both VGA and serial console. Updates I/O
+ * accounting counters.
+ *
+ * Context: Called from syscall dispatch. May sleep. Must be called
+ *          with a valid current process.
+ * Return: Number of bytes written on success, or (uint64_t)-1 on error.
+ */
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
+    if (!buf_addr && len > 0) return (uint64_t)-1;
+
     if (fd == 1 || fd == 2) {
         /* Copy from user-space to avoid SMAP fault */
         uint8_t *kbuf = kmalloc(len > 4096 ? 4096 : (len > 0 ? len : 1));
@@ -687,6 +727,23 @@ static int tmpfile_make_path(const char *dir, char *buf, int bufsize)
     return 0;
 }
 
+/**
+ * sys_open - Open a file
+ * @path_addr: User-space address of the path string
+ * @flags: Open flags (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC,
+ *         O_TMPFILE, etc.)
+ * @mode: File creation mode (unused in current implementation)
+ *
+ * Opens or creates a file by copying the path from user space,
+ * performing VFS operations, and allocating a file descriptor in
+ * the current process's file descriptor table. Supports O_TMPFILE
+ * for creating unnamed temporary files and O_TRUNC for truncation.
+ * Enforces RLIMIT_NOFILE on fd allocation.
+ *
+ * Context: Called from syscall dispatch. May sleep. Must be called
+ *          with a valid current process.
+ * Return: File descriptor (>= 3) on success, or (uint64_t)-1 on error.
+ */
 static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     char kpath[256];
@@ -723,7 +780,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
                 strncpy(p->fd_table[i].path, tmp_path, 63);
                 p->fd_table[i].path[63] = '\0';
                 p->fd_table[i].offset = 0;
-                p->fd_table[i].used = 1;
+                p->fd_table[i].used = true;
                 p->fd_table[i].flags = FD_TMPFILE;
                 p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF);
                 return (uint64_t)(i + 3);
@@ -760,7 +817,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
             strncpy(p->fd_table[i].path, path, 63);
             p->fd_table[i].path[63] = '\0';
             p->fd_table[i].offset = 0;
-            p->fd_table[i].used = 1;
+            p->fd_table[i].used = true;
             p->fd_table[i].open_flags = (uint8_t)(flags & 0xFF); /* save O_APPEND, O_NONBLOCK etc. */
             return (uint64_t)(i + 3);
         }
@@ -768,6 +825,18 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     return (uint64_t)-1;
 }
 
+/**
+ * sys_close - Close a file descriptor
+ * @fd: File descriptor number to close
+ *
+ * Closes the given file descriptor, releasing the fd slot in the
+ * current process's file descriptor table. Supports inotify fd
+ * close (720-727). If the fd was created with O_TMPFILE, the
+ * hidden temporary file is unlinked.
+ *
+ * Context: Called from syscall dispatch. May sleep.
+ * Return: 0 on success, or (uint64_t)-1 on error.
+ */
 static uint64_t sys_close(uint64_t fd) {
     /* inotify close (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
@@ -783,7 +852,7 @@ static uint64_t sys_close(uint64_t fd) {
         vfs_unlink(pfd->path);
     }
 
-    pfd->used = 0;
+    pfd->used = false;
     pfd->flags = 0;
     pfd->path[0] = '\0';
     return 0;
@@ -826,7 +895,7 @@ static uint64_t sys_close_range(uint64_t first, uint64_t last, uint64_t flags)
             /* Close the fd */
             if (pfd->flags & FD_TMPFILE && pfd->path[0])
                 vfs_unlink(pfd->path);
-            pfd->used = 0;
+            pfd->used = false;
             pfd->flags = 0;
             pfd->path[0] = '\0';
             closed++;
@@ -1047,7 +1116,7 @@ static uint64_t sys_stat(uint64_t path_addr, uint64_t out_addr) {
     uint64_t *out = (uint64_t *)out_addr;
     struct vfs_stat st;
     if (vfs_stat(kpath, &st) < 0) return (uint64_t)-1;
-    if (out) { 
+    if (out) {
         uint64_t stbuf[2] = { st.size, st.type };
         if (copy_to_user(out_addr, stbuf, sizeof(stbuf)) < 0)
             return (uint64_t)-1;
@@ -1477,7 +1546,7 @@ static uint64_t sys_getcwd(uint64_t buf_addr, uint64_t buf_size) {
  *   nice   0 ..   9  →  priority 2
  *   nice  10 ..  19  →  priority 3
  */
-static int __attribute__((unused)) nice_to_priority(int nice) {
+static int nice_to_priority(int nice) {
     if (nice <= -11) return 0;
     if (nice <=  -1) return 1;
     if (nice <=   9) return 2;
@@ -1486,7 +1555,7 @@ static int __attribute__((unused)) nice_to_priority(int nice) {
 
 /* Return the "middle" nice value corresponding to a given priority level.
  * Used by getpriority to report a representative nice value. */
-static int __attribute__((unused)) priority_to_nice(int prio) {
+static int priority_to_nice(int prio) {
     switch (prio) {
         case 0: return -15;
         case 1: return  -5;
@@ -2851,7 +2920,7 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             kflk.l_start  = user_flk.l_start;
             kflk.l_len    = user_flk.l_len;
             kflk.l_pid    = user_flk.l_pid;
-            kflk.used     = 1;
+            kflk.used     = true;
             kflk.mandatory = 0;
 
             /* Get file path from fd table */
@@ -3318,12 +3387,12 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
     if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
 
     /* Store pipe index as part of fd path */
-    proc->fd_table[read_fd].used = 1;
+    proc->fd_table[read_fd].used = true;
     proc->fd_table[read_fd].offset = (uint32_t)id; /* store pipe id */
     snprintf(proc->fd_table[read_fd].path, 64, "pipe_read_%d", id);
     proc->fd_table[read_fd].flags = 0;
 
-    proc->fd_table[write_fd].used = 1;
+    proc->fd_table[write_fd].used = true;
     proc->fd_table[write_fd].offset = (uint32_t)id;
     snprintf(proc->fd_table[write_fd].path, 64, "pipe_write_%d", id);
     proc->fd_table[write_fd].flags = 0;
@@ -4503,6 +4572,10 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             struct process *cur_proc = process_get_current();
             if (!cur_proc) return (uint64_t)-1;
 
+            /* Bounds check: ensure we don't exceed the waiter array capacity */
+            if (futex_num_waiters >= FUTEX_MAX_WAITERS)
+                return (uint64_t)-1;
+
             __asm__ volatile("cli");
             int found = -1;
             for (int i = 0; i < FUTEX_MAX_WAITERS; i++) {
@@ -4550,6 +4623,10 @@ static uint64_t sys_futex(uint64_t uaddr, uint64_t op, uint64_t val,
             /* Register as waiter */
             struct process *cur_proc = process_get_current();
             if (!cur_proc) return (uint64_t)-1;
+
+            /* Bounds check: ensure we don't exceed the waiter array capacity */
+            if (futex_num_waiters >= FUTEX_MAX_WAITERS)
+                return (uint64_t)-1;
 
             __asm__ volatile("cli");
             int found = -1;
@@ -5580,6 +5657,9 @@ static uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     struct process *p = process_get_current();
     if (!p || fd >= PROCESS_FD_MAX || !p->fd_table[fd].used) return (uint64_t)-1;
 
+    /* For I/O control operations that use arg as a pointer, reject NULL */
+    if (!arg) return (uint64_t)-1;
+
     switch (cmd) {
         case TIOCGWINSZ: {
             /* Return a winsize struct — dummy values for now */
@@ -6509,7 +6589,7 @@ static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
         return (uint64_t)-1;
 
     struct epoll_event *events = (struct epoll_event *)events_addr;
-    
+
     /* Wait loop with timeout */
     uint64_t deadline = 0;
     if (timeout != (uint64_t)-1) {
@@ -6684,6 +6764,9 @@ static uint64_t sys_clock_getres(uint64_t clockid, uint64_t res_addr) {
 /* POSIX per-process timers — simple implementation using timerfd-like slots */
 #define POSIX_TIMER_MAX 16
 
+/* Alias for bounds-validation consistency */
+#define MAX_TIMERS POSIX_TIMER_MAX
+
 struct posix_timer {
     int      in_use;
     int      clockid;
@@ -6710,6 +6793,7 @@ static uint64_t sys_timer_create(uint64_t clockid, uint64_t sevp_addr, uint64_t 
     }
 
     for (int i = 0; i < POSIX_TIMER_MAX; i++) {
+        if (i < 0 || i >= MAX_TIMERS) break;  /* bounds safety */
         if (!posix_timers[i].in_use) {
             posix_timers[i].in_use = 1;
             posix_timers[i].clockid = (int)clockid;
@@ -6837,6 +6921,10 @@ static uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags) {
     if (flags & ~(uint64_t)O_CLOEXEC)
         return (uint64_t)-1;
 
+    /* Bounds check both fds against MAX_FDS */
+    if (oldfd >= MAX_FDS || newfd >= MAX_FDS)
+        return (uint64_t)-1;
+
     struct process *proc = process_get_current();
     if (!proc) return (uint64_t)-1;
     if (oldfd >= PROCESS_FD_MAX || !proc->fd_table[oldfd].used)
@@ -6900,12 +6988,12 @@ static uint64_t sys_pipe2(uint64_t fds_addr, uint64_t flags) {
     if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
 
     /* Store pipe index as fd entries */
-    proc->fd_table[read_fd].used = 1;
+    proc->fd_table[read_fd].used = true;
     proc->fd_table[read_fd].offset = (uint32_t)id;
     snprintf(proc->fd_table[read_fd].path, 64, "pipe_read_%d", id);
     proc->fd_table[read_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
 
-    proc->fd_table[write_fd].used = 1;
+    proc->fd_table[write_fd].used = true;
     proc->fd_table[write_fd].offset = (uint32_t)id;
     snprintf(proc->fd_table[write_fd].path, 64, "pipe_write_%d", id);
     proc->fd_table[write_fd].flags = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
@@ -9943,7 +10031,7 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     memcpy(p->fd_table[fd].path, open_path, plen);
     p->fd_table[fd].path[plen] = '\0';
     p->fd_table[fd].offset = 0;
-    p->fd_table[fd].used = 1;
+    p->fd_table[fd].used = true;
     p->fd_table[fd].flags = 0;  /* regular file */
 
     return (uint64_t)fd;

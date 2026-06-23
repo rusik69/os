@@ -686,18 +686,16 @@ int i2c_slave_poll(void) {
     return 1;
 }
 
-int i2c_read(void *dev, uint8_t addr, uint8_t reg, uint8_t *buf, size_t count)
+int i2c_read(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, uint8_t *buf, size_t count)
 {
     if (!dev || !buf || count == 0) return -EINVAL;
-    (void)addr; (void)reg;
     memset(buf, 0, count);
     return count;
 }
 
-int i2c_write(void *dev, uint8_t addr, uint8_t reg, const uint8_t *buf, size_t count)
+int i2c_write(void *dev, __maybe_unused uint8_t addr, __maybe_unused uint8_t reg, __maybe_unused const uint8_t *buf, size_t count)
 {
     if (!dev) return -EINVAL;
-    (void)addr; (void)reg; (void)buf;
     return count;
 }
 

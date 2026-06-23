@@ -1,5 +1,6 @@
 #define KERNEL_INTERNAL
 #include "types.h"
+#include "errno.h"
 #include "cmdline.h"
 #include "string.h"
 #include "printf.h"
@@ -111,7 +112,7 @@ const char *cmdline_raw(void) {
 /* ── CMOS NVRAM persistence ─────────────────────────────────── */
 
 int cmdline_nvram_save(const char *cmdline) {
-    if (!cmdline) return -1;
+    if (!cmdline) return -EINVAL;
     uint8_t buf[CMDLINE_NVRAM_LEN];
     memset(buf, 0, CMDLINE_NVRAM_LEN);
     int len = (int)strlen(cmdline);
@@ -126,7 +127,7 @@ int cmdline_nvram_save(const char *cmdline) {
 }
 
 int cmdline_nvram_restore(char *buf, int max_len) {
-    if (!buf || max_len <= 0) return -1;
+    if (!buf || max_len <= 0) return -EINVAL;
     uint8_t raw[CMDLINE_NVRAM_LEN];
     /* Read from CMOS NVRAM */
     for (int i = 0; i < CMDLINE_NVRAM_LEN; i++) {

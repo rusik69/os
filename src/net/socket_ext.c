@@ -8,6 +8,9 @@
 #include "process.h"
 #include "timer.h"
 
+/* Maximum sockets — bounds socket fd array accesses */
+#define MAX_SOCKETS  SOCK_MAX
+
 /* ── IP_TTL setsockopt implemented in socket.c already, but
  * we add IP_FREEBIND support here.
  *
@@ -65,7 +68,7 @@ int sock_apply_rcvtimeo(struct socket *s) {
     uint64_t usec = sock_get_rcvtimeo(s);
     if (usec == 0) return -1; /* no timeout */
     /* Convert usec to ticks (assuming 100Hz = 10ms per tick) */
-    return (int)(usec / 10000); 
+    return (int)(usec / 10000);
 }
 
 int sock_apply_sndtimeo(struct socket *s) {
@@ -78,6 +81,9 @@ int sock_apply_sndtimeo(struct socket *s) {
 /* ── Implement: socket_ext_ioctl ──────────────────────── */
 int socket_ext_ioctl(int sock, int cmd, void *arg)
 {
+    /* Bounds check: sock must be valid socket fd */
+    if (sock < 100 || sock - 100 >= MAX_SOCKETS)
+        return -EBADF;
     (void)sock; (void)cmd; (void)arg;
     kprintf("[socket_ext] socket_ext_ioctl: cmd=%d\n", cmd);
     return -EOPNOTSUPP;
@@ -85,6 +91,9 @@ int socket_ext_ioctl(int sock, int cmd, void *arg)
 /* ── Implement: socket_ext_shutdown ───────────────────── */
 int socket_ext_shutdown(int sock, int how)
 {
+    /* Bounds check: sock must be valid socket fd */
+    if (sock < 100 || sock - 100 >= MAX_SOCKETS)
+        return -EBADF;
     (void)sock; (void)how;
     kprintf("[socket_ext] socket_ext_shutdown: how=%d\n", how);
     return 0;

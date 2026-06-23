@@ -394,6 +394,9 @@ static int sysctl_write_sched_min_granularity(const char *buf, int len) {
 #define CFS_WEIGHT_SHIFT 10  /* 1024 = 1<<10 */
 #define CFS_VRUNTIME_MAX_DIFF 100000000ULL /* 100ms */
 
+/* Maximum priority level — guards per-priority array accesses */
+#define MAX_PRIO 40
+
 /*
  * Nice-to-weight conversion table (Linux-compatible scale).
  *
@@ -420,7 +423,10 @@ static const int sched_prio_to_weight[40] = {
 static inline int nice_to_weight(int nice) {
     if (nice < NICE_MIN) nice = NICE_MIN;
     if (nice > NICE_MAX) nice = NICE_MAX;
-    return sched_prio_to_weight[nice - NICE_MIN];
+    int idx = nice - NICE_MIN;
+    if (idx < 0 || idx >= MAX_PRIO)
+        return CFS_NICE_0_WEIGHT;
+    return sched_prio_to_weight[idx];
 }
 
 /* Return the nice value whose weight is closest to @weight.
@@ -573,11 +579,13 @@ static void scheduler_add_locked(struct process *proc) {
 }
 
 /* ── Add process to its CPU's runqueue (public API, acquires lock) ─── */
-void scheduler_add(struct process *proc) {
+int scheduler_add(struct process *proc) {
+    if (!proc) return -EINVAL;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&sched_lock, &irq_flags);
     scheduler_add_locked(proc);
     spinlock_irqsave_release(&sched_lock, irq_flags);
+    return 0;
 }
 
 /* ── Remove process from its queue ──────────────────────────────────── */
@@ -1677,9 +1685,8 @@ static void cfs_wakeup_adjust_vruntime(struct process *proc)
 EXPORT_SYMBOL(scheduler_yield);
 
 /* ── scheduler_pick_next ─────────────────────────────── */
-void* scheduler_pick_next(void *rq)
+void* scheduler_pick_next(__maybe_unused void *rq)
 {
-    (void)rq;
     /* Pick the next task from the current CPU's runqueue.
      * If EEVDF is enabled, use eevdf_pick_next(); otherwise use cfs_pick_next(). */
     if (sched_eevdf_enabled)

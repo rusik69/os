@@ -171,7 +171,7 @@ struct cpu_cgroup *cpu_cgroup_get(int cg_id)
 int cpu_cgroup_alloc(void)
 {
     if (!cpu_cgroup_initialised)
-        return -1;
+        return -EINVAL;
 
     for (int i = 1; i < CPU_CGROUP_MAX; i++) {
         if (!cpu_cgroups[i].in_use) {
@@ -184,7 +184,7 @@ int cpu_cgroup_alloc(void)
             return i;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 /* Set the per-window CPU limit for a cgroup (in timer ticks).

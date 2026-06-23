@@ -273,7 +273,7 @@ static int g_ftrace_events_enabled = 1;
 
 /* ── Schedule switch trace ─────────────────────────────────────────── */
 
-void ftrace_trace_sched_switch(struct process *prev, struct process *next)
+void ftrace_trace_sched_switch(const struct process *prev, const struct process *next)
 {
     if (!g_ftrace_events_enabled) return;
 
@@ -894,11 +894,8 @@ void trace_printk(const char *fmt, ...)
     char msg[256];
     __builtin_va_list args;
     __builtin_va_start(args, fmt);
-    int len = vsnprintf(msg, sizeof(msg), fmt, args);
+    (void)vsnprintf(msg, sizeof(msg), fmt, args);
     __builtin_va_end(args);
-
-    if (len < 0) len = 0;
-    if (len >= (int)sizeof(msg)) len = (int)sizeof(msg) - 1;
 
     /* Write to the ring buffer with a timestamp prefix */
     uint64_t now_ns = timer_get_ns();

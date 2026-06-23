@@ -15,10 +15,11 @@ static uint32_t system_hz = TIMECONST_HZ_1000;
 /* Cached conversion factors */
 static uint64_t cached_ns_per_tick;
 static uint64_t cached_mult;
-static __attribute__((unused)) unsigned int cached_shift = TIMECONST_SHIFT;
+static unsigned int cached_shift = TIMECONST_SHIFT;
 
 void timeconst_init(void)
 {
+    (void)cached_shift;
     cached_ns_per_tick = timeconst_ns_per_tick(system_hz);
     cached_mult = timeconst_mult(system_hz);
 

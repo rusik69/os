@@ -59,7 +59,7 @@ int chroot_check_path(const char *path, char *resolved, int resolved_max) {
     if (!path || !resolved) return -EINVAL;
 
     struct process *cur = process_get_current();
-    if (!cur) { 
+    if (!cur) {
         strncpy(resolved, path, resolved_max);
         return 0;
     }

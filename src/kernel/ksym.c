@@ -115,14 +115,14 @@ static void kallsyms_sort(void)
 /* Initialise the symbol table: compute count and sort. */
 void ksym_init(void)
 {
-    g_ksym_count = (int)(__ksymtab_end - __ksymtab_start);
+    g_ksym_count = (int)(((uintptr_t)__ksymtab_end - (uintptr_t)__ksymtab_start) / sizeof(struct ksym_entry));
     if (g_ksym_count < 0)
         g_ksym_count = 0;
 
     ksym_sort();
 
     /* Initialise comprehensive kallsyms table */
-    g_kallsyms_count = (int)(__kallsyms_end - __kallsyms_start);
+    g_kallsyms_count = (int)(((uintptr_t)__kallsyms_end - (uintptr_t)__kallsyms_start) / sizeof(struct ksym_entry));
     if (g_kallsyms_count < 0)
         g_kallsyms_count = 0;
 

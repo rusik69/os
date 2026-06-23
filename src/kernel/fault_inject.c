@@ -329,7 +329,7 @@ void fault_inject_enable(int interval) {
  * Returns 0 on success, -1 if the callsite table is full. */
 int fault_inject_callsite_config(uint64_t caller_ip, int fail_n, int fail_rate)
 {
-    if (fail_rate <= 0) return -1;
+    if (fail_rate <= 0) return -EINVAL;
     if (fail_n < 0) fail_n = 0;
     if (fail_n > fail_rate) fail_n = fail_rate;
 
@@ -348,7 +348,7 @@ int fault_inject_callsite_config(uint64_t caller_ip, int fail_n, int fail_rate)
     /* Create new entry */
     if (g_callsite_count >= FI_MAX_CALLSITES) {
         spinlock_release(&g_cs_lock);
-        return -1;
+        return -ENOSPC;
     }
 
     int idx = g_callsite_count++;
@@ -381,8 +381,8 @@ int fault_inject_callsite_should_fail(uint64_t caller_ip)
         }
 
         /* Fail when count % rate < n */
-        int should_fail = (cs->count % cs->fail_rate) < cs->fail_n;
-        if (should_fail) {
+        int should_fail_now = (cs->count % cs->fail_rate) < cs->fail_n;
+        if (should_fail_now) {
             cs->fail_count++;
             spinlock_release(&g_cs_lock);
             spinlock_acquire(&g_fi_lock);
@@ -456,7 +456,7 @@ int fault_inject_should_fail_vmalloc(void)
 /* ── Generic should-fail (kmalloc) ───────────────────────────────── */
 
 int fault_inject_should_fail_kmalloc(void) {
-    int should_fail = 0;
+    int should_fail_now = 0;
 
     spinlock_acquire(&g_fi_lock);
 
@@ -477,19 +477,19 @@ int fault_inject_should_fail_kmalloc(void) {
         int roll = rand() % 100;
         if (roll < g_fail_kmalloc_probability) {
             g_fail_count++;
-            should_fail = 1;
+            should_fail_now = 1;
         }
     } else if (g_fail_kmalloc_interval > 0) {
         /* Fail when call_count % interval == 0 */
         if (g_kmalloc_call_count % (uint64_t)g_fail_kmalloc_interval == 0) {
             g_fail_count++;
-            should_fail = 1;
+            should_fail_now = 1;
         }
     }
 
     spinlock_release(&g_fi_lock);
 
-    return should_fail;
+    return should_fail_now;
 }
 
 uint64_t fault_inject_get_fail_count(void) {

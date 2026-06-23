@@ -422,9 +422,8 @@ int mpath_status(int mpath_id, char *buf, int max)
 module_init(mpath_init);
 
 /* ── Stub: mpath_failover ─────────────────────────────── */
-int mpath_failover(const char *dev)
+int mpath_failover(__maybe_unused const char *dev)
 {
-    (void)dev;
     kprintf("[mpath] mpath_failover: not yet implemented\n");
     return 0;
 }

@@ -104,6 +104,8 @@ static void draw_spinner(void)
                 fbcon_fill_rect(px, py, bar_w, bar_w, COL_LOGO_PRI);
         }
         break;
+    default:
+        break;
     }
 }
 

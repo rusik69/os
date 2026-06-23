@@ -296,35 +296,24 @@ int nft_evaluate(struct nft_table *table, void *skb,
             continue;
 
         /* Walk rules in this chain */
-        struct nft_rule *r = chain->rules;
-        while (r) {
+        for (struct nft_rule *r = chain->rules; r; r = r->next) {
             /* Skip if protocol doesn't match */
-            if (r->protocol != 0 && r->protocol != protocol) {
-                r = r->next;
+            if (r->protocol != 0 && r->protocol != protocol)
                 continue;
-            }
 
             /* Check source IP */
-            if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask)) {
-                r = r->next;
+            if ((src_ip & r->src_mask) != (r->src_ip & r->src_mask))
                 continue;
-            }
 
             /* Check destination IP */
-            if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask)) {
-                r = r->next;
+            if ((dst_ip & r->dst_mask) != (r->dst_ip & r->dst_mask))
                 continue;
-            }
 
             /* Check ports (only for TCP/UDP) */
-            if (r->src_port != 0 && r->src_port != src_port) {
-                r = r->next;
+            if (r->src_port != 0 && r->src_port != src_port)
                 continue;
-            }
-            if (r->dst_port != 0 && r->dst_port != dst_port) {
-                r = r->next;
+            if (r->dst_port != 0 && r->dst_port != dst_port)
                 continue;
-            }
 
             /* Update counters */
             r->counter_packets++;

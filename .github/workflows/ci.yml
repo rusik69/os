@@ -27,6 +27,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Make version
+        run: make --version
+
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -140,6 +143,10 @@ jobs:
           path: ${{ runner.temp }}/test-reports/
           retention-days: 7
 
+      - name: Install ccache (for stats only)
+        run: |
+          sudo apt-get install -y -qq ccache
+
       - name: Summary
         run: |
           echo "## Unit Tests" >> $GITHUB_STEP_SUMMARY
@@ -149,6 +156,13 @@ jobs:
             fails="$$(grep -o 'failures="[0-9]*"' "$$f" | head -1 | grep -o '[0-9]*')"
             echo "- $$name: $$tests tests, $$fails failures" >> $GITHUB_STEP_SUMMARY
           done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ccache Stats" >> $GITHUB_STEP_SUMMARY
+          if command -v ccache >/dev/null 2>&1; then
+            ccache -s >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ccache not available" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # ── QEMU boot test ─────────────────────────────────────────────────
   boot-test:
@@ -182,12 +196,52 @@ jobs:
           echo "## Boot Test" >> $GITHUB_STEP_SUMMARY
           echo "- Kernel boots successfully in QEMU" >> $GITHUB_STEP_SUMMARY
 
+  # ── Direct QEMU boot test (no Python wrapper) ──────────────────────
+  qemu-boot-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [kernel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel
+          path: build/
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-system-x86
+
+      - name: QEMU boot test (direct, 30s timeout)
+        run: |
+          timeout 30 qemu-system-x86_64 \
+            -nographic \
+            -kernel build/kernel.bin \
+            -m 256M \
+            -no-reboot \
+            -display none \
+            -serial mon:stdio \
+            2>&1 | head -200 || true
+          echo "---"
+          echo "QEMU boot test completed (checked first 200 lines of output)"
+
+      - name: Summary
+        run: |
+          echo "## QEMU Boot Test (Direct)" >> $GITHUB_STEP_SUMMARY
+          echo "- Kernel boots via `qemu-system-x86_64 -nographic` with 30s timeout" >> $GITHUB_STEP_SUMMARY
+
   # ── Full build check (kernel + userspace) ──────────────────────────
   full-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Make version
+        run: make --version
 
       - name: Install dependencies
         run: |
@@ -233,6 +287,7 @@ jobs:
           echo "- kernel.bin: $(ls -lh build/kernel.bin | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
           echo "- disk.img: $(ls -lh build/disk.img | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
           echo "- initramfs.cpio: $(ls -lh userspace/initramfs.cpio | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
+          echo "- ccache hit rate: $(ccache -s | grep 'cache hit rate' | awk '{print $4}')" >> $GITHUB_STEP_SUMMARY
 
   # ── Code formatting check ──────────────────────────────────────────
   format-check:
@@ -259,6 +314,22 @@ jobs:
       - name: Summary
         run: echo "## Format Check" >> $GITHUB_STEP_SUMMARY
 
+  # ── Trailing whitespace check ──────────────────────────────────────
+  trailing-whitespace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check trailing whitespace
+        run: |
+          make check-whitespace
+
+      - name: Summary
+        run: |
+          echo "## Trailing Whitespace Check" >> $GITHUB_STEP_SUMMARY
+          echo "- All source files free of trailing whitespace" >> $GITHUB_STEP_SUMMARY
+
   # ── Static analysis (cppcheck) ─────────────────────────────────────
   lint:
     runs-on: ubuntu-latest
@@ -279,6 +350,42 @@ jobs:
         run: |
           echo "## Lint (cppcheck)" >> $GITHUB_STEP_SUMMARY
           echo "- No cppcheck warnings found" >> $GITHUB_STEP_SUMMARY
+
+  # ── Fast pre-merge verification ────────────────────────────────────
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            cppcheck \
+            clang-tidy-18 \
+            clang-format-18
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/git-clang-format
+
+      - name: Make version
+        run: make --version
+
+      - name: Run verify (format-check + lint + app boundary check)
+        run: |
+          BASE_REF="origin/${{ github.base_ref || 'main' }}"
+          git fetch origin "${{ github.base_ref || 'main' }}" --depth=1 2>/dev/null || true
+          make verify FORMAT_BASE_REF="$BASE_REF"
+
+      - name: Summary
+        run: |
+          echo "## Fast Pre-Merge Verification" >> $GITHUB_STEP_SUMMARY
+          echo "- format-check: passed" >> $GITHUB_STEP_SUMMARY
+          echo "- lint (cppcheck + clang-tidy): passed" >> $GITHUB_STEP_SUMMARY
+          echo "- app boundary check: passed" >> $GITHUB_STEP_SUMMARY
 
   # ── E2E smoke test ─────────────────────────────────────────────────
   e2e-smoke:

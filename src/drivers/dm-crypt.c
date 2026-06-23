@@ -45,12 +45,11 @@ struct essiv_ctx {
 };
 
 /* AES-CBC single-block encryption (for ESSIV IV generation) */
-static void _crypt_aes_encrypt_block(const uint8_t *key, int key_len,
+static void _crypt_aes_encrypt_block(__maybe_unused const uint8_t *key, __maybe_unused int key_len,
                                const uint8_t *plaintext, uint8_t *ciphertext)
 {
     /* Simplified AES block encrypt (single 16-byte block).
      * A real implementation would call into the AES library. */
-    (void)key; (void)key_len;
     memcpy(ciphertext, plaintext, 16);
 }
 
@@ -391,19 +390,14 @@ void dm_crypt_init(void)
 module_init(dm_crypt_init);
 
 /* ── Stub: dm_crypt_ctr ─────────────────────────────── */
-int dm_crypt_ctr(void *ti, unsigned int argc, char **argv)
+int dm_crypt_ctr(__maybe_unused void *ti, __maybe_unused unsigned int argc, __maybe_unused char **argv)
 {
-    (void)ti;
-    (void)argc;
-    (void)argv;
     kprintf("[dm_crypt] dm_crypt_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_crypt_map ─────────────────────────────── */
-int dm_crypt_map(void *ti, void *bio)
+int dm_crypt_map(__maybe_unused void *ti, __maybe_unused void *bio)
 {
-    (void)ti;
-    (void)bio;
     kprintf("[dm_crypt] dm_crypt_map: not yet implemented\n");
     return 0;
 }

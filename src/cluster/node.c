@@ -18,6 +18,7 @@
 #include "timer.h"
 #include "socket.h"
 #include "net.h"
+#include "cluster.h"
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -86,6 +87,12 @@ static int endpoint_count = 0;
 static spinlock_t endpoint_lock;
 
 static int node_initialised = 0;
+
+/* Public getter for local node index (used by cluster.c for health/recovery) */
+int cluster_get_local_node_idx(void)
+{
+    return local_node_idx;
+}
 
 /* Orchestration leader tracking */
 static char leader_id[NODE_ID_MAX];

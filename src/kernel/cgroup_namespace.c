@@ -189,7 +189,7 @@ uint64_t cgroup_ns_inode(const struct cgroup_namespace *ns)
 
     /* Mix table index and root path hash for uniqueness */
     uint64_t h = (uint64_t)(ns - cgroup_ns_table) * 1000003ULL;
-    for (int i = 0; ns->root_path[i] && i < CGROUP_NS_ROOT_LEN; i++)
+    for (int i = 0; i < CGROUP_NS_ROOT_LEN && ns->root_path[i]; i++)
         h = h * 31 + (uint8_t)ns->root_path[i];
     h &= 0x7FFFFFFFFFFFFFFFULL;
     if (h < 1024) h += 1024;

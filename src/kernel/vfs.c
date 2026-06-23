@@ -48,11 +48,24 @@ static int dcache_match(const struct dcache_entry *e, const char *path)
 }
 
 
-/* Open a file by path, returns a file descriptor.
- * This is a kernel-level open that bypasses user-space copy.
- * Returns fd (>=0) or negative errno. */
+/**
+ * vfs_open - Open a file by path
+ * @path: Absolute or relative path to the file
+ * @flags: Open flags (e.g. O_CREAT = 0x40)
+ * @mode: File creation mode (unused in current implementation)
+ *
+ * Opens a file by path, resolving it relative to the current process's
+ * working directory. Performs Landlock read-file permission checks and
+ * creates the file if O_CREAT is set and the file does not exist.
+ * Returns a file descriptor (or 0 as a dummy in the current stub).
+ *
+ * Context: May sleep. Performs VFS path resolution and Landlock checks.
+ * Return: File descriptor (>=0) on success, or a negative errno on error.
+ */
 int vfs_open(const char *path, int flags, int mode)
 {
+    if (!path) return -EINVAL;
+
     (void)mode;
     char ap[128];
     vfs_abs_path(path, ap, sizeof(ap));
@@ -469,7 +482,7 @@ static int smfs_rename(void *priv, const char *old_path, const char *new_path)
     return vfs_rename(old_path, new_path);
 }
 
-static struct vfs_ops smfs_ops = {
+static const struct vfs_ops smfs_ops = {
     .read    = smfs_read,
     .write   = smfs_write,
     .stat    = smfs_stat,
@@ -513,14 +526,26 @@ static struct {
     int  in_use;
 } bind_mounts[VFS_MAX_BIND_MOUNTS];
 
-int vfs_mount(const char *mountpoint, struct vfs_ops *ops, void *priv) {
+/**
+ * vfs_mount - Register a filesystem mount
+ * @mountpoint: Path where the filesystem is to be mounted
+ * @ops: Pointer to the VFS operations struct for the filesystem
+ * @priv: Private data for the filesystem driver
+ *
+ * Registers a new mount in the global mount table at the given
+ * mountpoint. Delegates to vfs_mount_ex() with flags = 0.
+ *
+ * Context: Any context. Caller must ensure mount table has room.
+ * Return: 0 on success, -1 if the mount table is full.
+ */
+int vfs_mount(const char *mountpoint, const struct vfs_ops *ops, void *priv) {
     return vfs_mount_ex(mountpoint, ops, priv, 0);
 }
 
 /* Find the best-matching mount for a path */
 static struct vfs_mount *resolve(const char *path);
 
-int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int flags) {
+int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, int flags) {
     if (num_mounts >= VFS_MAX_MOUNTS) return -1;
     size_t mlen = strlen(mountpoint);
     if (mlen >= 64) mlen = 63;
@@ -612,7 +637,7 @@ static struct vfs_mount *resolve(const char *path) {
     return best;
 }
 
-int vfs_register_filesystem(const char *name, struct vfs_ops *ops) {
+int vfs_register_filesystem(const char *name, const struct vfs_ops *ops) {
     if (num_fs_types >= VFS_MAX_FS_TYPES) return -1;
     strncpy(fs_types[num_fs_types].name, name, 31);
     fs_types[num_fs_types].name[31] = '\0';
@@ -635,6 +660,21 @@ int vfs_list_filesystems(char names[][32], int max) {
  * Public VFS API
  * ------------------------------------------------------------------ */
 
+/**
+ * vfs_read - Read from a file
+ * @path: Absolute path to the file
+ * @buf: Buffer to receive the data
+ * @max: Maximum number of bytes to read
+ * @out_size: Optional pointer to store the actual number of bytes read
+ *
+ * Reads up to @max bytes from the file at @path. Performs Landlock
+ * read-file permission check and mandatory file lock check before
+ * reading. Updates access time and generates fsnotify events on
+ * successful read.
+ *
+ * Context: May sleep. Performs permission and lock checks.
+ * Return: 0 on success, negative errno on failure.
+ */
 int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 
@@ -672,6 +712,20 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
     return r;
 }
 
+/**
+ * vfs_write - Write data to a file
+ * @path: Absolute path to the file
+ * @data: Pointer to the data to write
+ * @size: Number of bytes to write
+ *
+ * Writes @size bytes of data to the file at @path. Performs Landlock
+ * write-file permission check, mandatory file lock check, read-only
+ * mount check, RLIMIT_FSIZE enforcement, and filesystem quota checks.
+ * Generates fsnotify events and invalidates the dentry cache on success.
+ *
+ * Context: May sleep. Performs permission, quota, and lock checks.
+ * Return: 0 on success, negative errno on failure.
+ */
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
     uint32_t existing_size = 0;
@@ -868,6 +922,8 @@ int vfs_readahead(const char *path, uint32_t offset, uint32_t count) {
 }
 
 int vfs_stat(const char *path, struct vfs_stat *st) {
+    if (!path) return -EINVAL;
+
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
 
     /* Check Landlock read-file permission (reading metadata) */
@@ -1496,15 +1552,15 @@ int vfs_link(const char *oldpath, const char *newpath) {
     struct vfs_stat st;
     if (vfs_stat(ap_old, &st) < 0) return -ENOENT;
     if (vfs_stat(ap_new, &st) == 0) return -EEXIST;
-    
+
     struct vfs_mount *m_old = resolve(ap_old);
     if (!m_old) return -ENOENT;
     struct vfs_mount *m_new = resolve(ap_new);
     if (!m_new) return -ENOENT;
-    
+
     /* Hard links must be on the same filesystem */
     if (m_old != m_new) return -EXDEV;
-    
+
     /* If the filesystem supports native link, use it */
     if (m_old->ops && m_old->ops->link) {
         int ret = m_old->ops->link(m_old->priv, ap_old, ap_new);
@@ -1513,26 +1569,26 @@ int vfs_link(const char *oldpath, const char *newpath) {
         }
         return ret;
     }
-    
+
     /* Fallback: data copy for filesystems that don't support hard links */
     uint8_t *buf = kmalloc(st.size + 1);
     if (!buf) return -ENOMEM;
-    
+
     uint32_t out_size = 0;
     int ret = vfs_read(ap_old, buf, (uint32_t)st.size, &out_size);
     if (ret < 0) { kfree(buf); return ret; }
-    
+
     ret = vfs_create(ap_new, st.type);
     if (ret < 0) { kfree(buf); return ret; }
-    
+
     ret = vfs_write(ap_new, buf, out_size);
     kfree(buf);
-    
+
     if (ret == 0) {
         vfs_inc_nlink(ap_old);
         vfs_inc_nlink(ap_new);
     }
-    
+
     return ret;
 }
 
@@ -1663,14 +1719,18 @@ void vfs_init(void) {
     num_mounts = 0;
     dcache_init();
     /* Mount the SMFS filesystem as root */
-    vfs_mount("/", &smfs_ops, NULL);
+    if (vfs_mount("/", &smfs_ops, NULL) < 0) {
+        kprintf("[VFS] WARNING: failed to mount root filesystem\n");
+    }
     /* Mount the /proc virtual filesystem — now handled by procfs_init()
      * so that it can work as both a built-in and a loadable module. */
     /* The /dev device filesystem is mounted by devfs_init()
      * (called from kernel.c or from the devfs module init). */
     /* Mount tmpfs as /dev/shm for POSIX shared memory & semaphores */
     tmpfs_mount();
-    vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL);
+    if (vfs_mount("/dev/shm", &tmpfs_vfs_ops, NULL) < 0) {
+        kprintf("[VFS] WARNING: failed to mount /dev/shm\n");
+    }
     /* Initialize nlink tracking */
     memset(nlink_table, 0, sizeof(nlink_table));
 
@@ -1747,7 +1807,7 @@ int vfs_pivot_root(const char *new_root, const char *put_old) {
      *   - new_root entry gets old root's filesystem at put_old → old root
      *     is accessible there.
      */
-    struct vfs_ops *tmp_ops   = mounts[root_idx].ops;
+    const struct vfs_ops *tmp_ops   = mounts[root_idx].ops;
     void           *tmp_priv  = mounts[root_idx].priv;
     int             tmp_flags = mounts[root_idx].flags;
 
@@ -1856,7 +1916,17 @@ int exec_check_binary_perms(const char *path, uint16_t uid, uint16_t gid)
     return vfs_check_perms(path, uid, gid, VFS_X_OK);
 }
 
-/* ── Stub: vfs_close ─────────────────────────────── */
+/**
+ * vfs_close - Close an open file
+ * @file: Pointer to the file structure to close
+ *
+ * Stub implementation: currently logs a message and returns 0.
+ * In a full implementation this would release the file descriptor,
+ * clean up any associated resources, and update file metadata.
+ *
+ * Context: Any context.
+ * Return: 0 on success (stub).
+ */
 int vfs_close(void *file)
 {
     (void)file;

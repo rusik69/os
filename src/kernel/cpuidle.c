@@ -263,7 +263,7 @@ int cpuidle_c3_mwait_enter(struct cpuidle_state *self)
 static int cpuidle_mwait_hint_enter(struct cpuidle_state *self)
 {
     if (!self || !self->driver_data)
-        return -1;
+        return -EINVAL;
     uint64_t hint = (uint64_t)(uintptr_t)self->driver_data;
     do_mwait_hint(hint);
     return 0;
@@ -277,7 +277,7 @@ static int cpuidle_mwait_hint_enter(struct cpuidle_state *self)
 static int cpuidle_io_enter(struct cpuidle_state *self)
 {
     if (!self || !self->driver_data)
-        return -1;
+        return -EINVAL;
     uint64_t data = (uint64_t)(uintptr_t)self->driver_data;
     uint16_t port = (uint16_t)(data & 0xFFFF);
     uint8_t  value = (uint8_t)((data >> 16) & 0xFF);
@@ -509,7 +509,7 @@ void cpuidle_register_governor(const struct cpuidle_governor *gov)
 int cpuidle_select_governor(const char *name)
 {
     if (!name)
-        return -1;
+        return -EINVAL;
 
     for (int i = 0; i < governor_count; i++) {
         if (strcmp(governors[i]->name, name) == 0) {
@@ -518,7 +518,7 @@ int cpuidle_select_governor(const char *name)
             return 0;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -532,7 +532,7 @@ static int cpuidle_register_state(uint8_t id, const char *name,
                                    int (*enter)(struct cpuidle_state *))
 {
     if (idle_state_count >= CPUIDLE_MAX_STATES)
-        return -1;
+        return -ENOSPC;
 
     struct cpuidle_state *s = &idle_states[idle_state_count];
     s->id      = id;
@@ -588,9 +588,9 @@ int cpuidle_register_custom_state(const char *name, uint32_t latency,
                                    int (*enter)(struct cpuidle_state *))
 {
     if (!name || !enter)
-        return -1;
+        return -EINVAL;
     if (idle_state_count >= CPUIDLE_MAX_STATES)
-        return -1;
+        return -ENOSPC;
 
     struct cpuidle_state *s = &idle_states[idle_state_count];
     s->name = name;
@@ -622,7 +622,7 @@ int cpuidle_acpi_register_states(const struct acpi_cstate_desc *descs, int count
     static int next_name_slot = 0;
 
     if (!descs || count <= 0)
-        return -1;
+        return -EINVAL;
 
     int registered = 0;
 
@@ -765,6 +765,10 @@ void cpuidle_idle(void)
     if (state_idx < 0 || state_idx >= idle_state_count)
         state_idx = 0; /* Fall back to POLL */
 
+    /* Double-check bounds against cpu_data->deepest_state before array access */
+    if ((uint8_t)state_idx > c->deepest_state || state_idx >= CPUIDLE_MAX_STATES)
+        state_idx = 0;
+
     struct cpuidle_state *state = &idle_states[state_idx];
 
     /* ── NO_HZ: stop the periodic tick before entering deep idle ── */
@@ -805,6 +809,7 @@ void cpuidle_disable(void)
     struct cpuidle_cpu *c = this_cpu_idle();
     c->enabled = 0;
 }
+
 void cpuidle_enable(void)
 {
     if (!g_cpuidle_initialized)

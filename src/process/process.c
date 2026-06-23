@@ -21,6 +21,7 @@
 #include "kcov.h"
 #include "kpti.h"
 #include "errno.h"
+#include "bug.h"
 
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
@@ -40,6 +41,7 @@ static uint32_t alloc_pid(void) {
     spinlock_irqsave_acquire(&pid_lock, &irq_flags);
     uint32_t pid = (uint32_t)-1;
     for (int w = 0; w < PID_BITMAP_WORDS; w++) {
+        if (w < 0 || w >= PID_BITMAP_WORDS) break;  /* bounds safety */
         if (pid_bitmap[w] == ~0ULL) continue;
         int bit = __builtin_ctzll(~pid_bitmap[w]);
         pid = (uint32_t)(w * 64 + bit);
@@ -60,6 +62,10 @@ static void free_pid(uint32_t pid) {
     spinlock_irqsave_acquire(&pid_lock, &irq_flags);
     int w = pid / 64;
     int bit = pid % 64;
+    if (w < 0 || w >= PID_BITMAP_WORDS) {
+        spinlock_irqsave_release(&pid_lock, irq_flags);
+        return;
+    }
     pid_bitmap[w] &= ~(1ULL << bit);
     spinlock_irqsave_release(&pid_lock, irq_flags);
 }
@@ -261,6 +267,12 @@ static void rlimit_init_defaults(struct process *proc) {
 }
 
 void process_init(void) {
+    /* Compile-time assertions for critical struct sizes */
+    BUILD_BUG_ON(sizeof(struct process) < 1024);
+    BUILD_BUG_ON(sizeof(struct cpu_context) < 64);
+    BUILD_BUG_ON(sizeof(struct process_fd) < 80);
+    BUILD_BUG_ON(sizeof(struct itimerval) < 16);
+
     memset(process_table, 0, sizeof(process_table));
     memset(pid_bitmap, 0, sizeof(pid_bitmap));
     spinlock_init(&pid_lock);
@@ -558,7 +570,11 @@ struct process *process_create(void (*entry)(void), const char *name) {
 
     proc->context = (struct cpu_context *)sp;
 
-    scheduler_add(proc);
+    if (scheduler_add(proc) < 0) {
+        free_guarded_kernel_stack(proc);
+        proc->state = PROCESS_UNUSED;
+        return NULL;
+    }
     return proc;
 }
 
@@ -660,7 +676,11 @@ struct process *process_create_user(uint64_t entry, uint64_t user_rsp,
 
     proc->context = (struct cpu_context *)sp;
 
-    scheduler_add(proc);
+    if (scheduler_add(proc) < 0) {
+        free_guarded_kernel_stack(proc);
+        proc->state = PROCESS_UNUSED;
+        return NULL;
+    }
     return proc;
 }
 
@@ -996,7 +1016,7 @@ int process_fork(void) {
             break;
         }
     }
-    if (!child) { __asm__ volatile("sti"); return -1; }
+    if (!child) { __asm__ volatile("sti"); return -EAGAIN; }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1008,9 +1028,10 @@ int process_fork(void) {
 
     /* Allocate fresh kernel stack BEFORE setting state to READY */
     if (alloc_guarded_kernel_stack(child) < 0) {
+        free_pid(child->pid);
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
-        return -1;
+        return -ENOMEM;
     }
     child->state = PROCESS_READY;
 
@@ -1022,6 +1043,7 @@ int process_fork(void) {
     if (parent->pml4) {
         child->pml4 = vmm_clone_user_pml4(parent->pml4);
         if (!child->pml4) {
+            free_pid(child->pid);
             free_guarded_kernel_stack(child);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1039,7 +1061,13 @@ int process_fork(void) {
     sp[6] = (uint64_t)fork_child_trampoline;
     child->context = (struct cpu_context *)sp;
 
-    scheduler_add(child);
+    if (scheduler_add(child) < 0) {
+        free_pid(child->pid);
+        free_guarded_kernel_stack(child);
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -1;
+    }
     __asm__ volatile("sti");
     return (int)child->pid;
 }
@@ -1092,7 +1120,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     if (flags & CLONE_NEWPID) {
         struct pid_namespace *new_ns = pid_ns_create(parent->pid_ns);
         if (!new_ns) {
-            free_guarded_kernel_stack(child);
+            free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -1;
@@ -1122,7 +1150,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         struct cgroup_namespace *new_ns = cgroup_ns_create(parent->cgroup_ns
             ? parent->cgroup_ns->root_path : "/");
         if (!new_ns) {
-            free_guarded_kernel_stack(child);
+            free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -1;
@@ -1143,7 +1171,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns
             ? parent->mnt_ns : NULL);
         if (!new_ns) {
-            free_guarded_kernel_stack(child);
+            free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -1;
@@ -1164,7 +1192,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             ? parent->user_ns : &init_user_ns,
             parent->uid, parent->gid);
         if (!new_ns) {
-            free_guarded_kernel_stack(child);
+            free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
             return -1;
@@ -1187,6 +1215,28 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     /* Allocate fresh kernel stack */
     if (alloc_guarded_kernel_stack(child) < 0) {
+        /* Free any namespaces that were allocated above before failing */
+        if (flags & CLONE_NEWPID) {
+            /* child->pid_ns was allocated by pid_ns_create */
+            if (child->pid_ns && child->pid_ns != parent->pid_ns)
+                pid_ns_destroy(child->pid_ns);
+        } else if (parent->pid_ns && child->pid_ns != parent->pid_ns) {
+            /* child has its own PID namespace */
+            pid_ns_destroy(child->pid_ns);
+        }
+        if (flags & CLONE_NEWCGROUP) {
+            /* child->cgroup_ns was allocated by cgroup_ns_create */
+            if (child->cgroup_ns && child->cgroup_ns != parent->cgroup_ns)
+                cgroup_ns_put(child->cgroup_ns);
+        }
+        if (flags & CLONE_NEWNS) {
+            if (child->mnt_ns && child->mnt_ns != parent->mnt_ns)
+                mnt_ns_put(child->mnt_ns);
+        }
+        if (flags & CLONE_NEWUSER) {
+            if (child->user_ns && child->user_ns != parent->user_ns)
+                user_ns_destroy(child->user_ns);
+        }
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
         return -1;
@@ -1204,6 +1254,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         if (parent->pml4) {
             child->pml4 = vmm_clone_user_pml4(parent->pml4);
             if (!child->pml4) {
+                free_pid(child->pid);
                 free_guarded_kernel_stack(child);
                 child->state = PROCESS_UNUSED;
                 __asm__ volatile("sti");
@@ -1257,7 +1308,13 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
 
     child->context = (struct cpu_context *)sp;
 
-    scheduler_add(child);
+    if (scheduler_add(child) < 0) {
+        free_pid(child->pid);
+        free_guarded_kernel_stack(child);
+        child->state = PROCESS_UNUSED;
+        __asm__ volatile("sti");
+        return -1;
+    }
     __asm__ volatile("sti");
     return (int)child->pid;
 }

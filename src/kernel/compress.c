@@ -167,9 +167,6 @@ int lzss_decompress(const uint8_t *input, int input_len,
     int out_pos = 0;
 
     while (in_pos < input_len) {
-        if (in_pos >= input_len)
-            return -EINVAL;
-
         uint8_t control = input[in_pos++];
 
         for (int op = 0; op < 8; op++) {

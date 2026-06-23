@@ -176,7 +176,6 @@ int mount_setattr(int dirfd, const char *path, uint32_t flags,
         new_state = mount_attr_table[existing_idx].attr;
     } else {
         new_state.attr_set = 0;
-        new_state.prop_flags = new_prop;
     }
 
     /* Apply attr_set: add these attributes */

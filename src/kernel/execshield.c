@@ -33,7 +33,7 @@ int execshield_check_wx(uint64_t prot_flags)
 
     /* W+X is forbidden */
     if (writable && executable)
-        return -1; /* W^X violation */
+        return -EACCES; /* W^X violation */
 
     return 0;
 }
@@ -85,7 +85,7 @@ void execshield_apply_personality(struct process *proc, int read_implies_exec)
 
 /* Hook for mprotect syscall: enforce W^X */
 int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
-                               struct process *proc)
+                               const struct process *proc)
 {
     (void)addr;
     (void)len;
@@ -99,7 +99,7 @@ int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
         kprintf("[EXECSHIELD] W^X denied: pid=%u addr=0x%llx len=%llu prot=0x%llx\n",
                 proc->pid, (unsigned long long)addr,
                 (unsigned long long)len, (unsigned long long)prot);
-        return -1;
+        return -EINVAL;
     }
 
     /* If READ_IMPLIES_EXEC is set, X implies R; ensure W is not set with X */

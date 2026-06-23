@@ -16,6 +16,9 @@ typedef uint64_t            uintptr_t;
 #define NULL ((void *)0)
 #define true 1
 #define false 0
+
+#define __maybe_unused __attribute__((unused))
+
 typedef _Bool bool;
 
 #define INT64_MAX  ((int64_t)9223372036854775807LL)
@@ -57,11 +60,17 @@ struct timespec {
     uint64_t tv_nsec;
 };
 
+/* Compile-time ABI assertion: struct timespec must be 16 bytes */
+_Static_assert(sizeof(struct timespec) == 16, "struct timespec size mismatch");
+
 /* timeval for select/poll/setsockopt timeouts */
 struct timeval {
     uint64_t tv_sec;
     uint64_t tv_usec;
 };
+
+/* Compile-time ABI assertion: struct timeval must be 16 bytes */
+_Static_assert(sizeof(struct timeval) == 16, "struct timeval size mismatch");
 
 /* utsname for uname */
 struct utsname {

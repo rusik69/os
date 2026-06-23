@@ -47,13 +47,16 @@ static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
 int pmm_poison_enabled = 1;
 
-/* ── Per-CPU page hot cache ────────────────────────────────────────────
+/* Per-CPU page hot cache ────────────────────────────────────────────
  * Each CPU keeps a small pool of pre-allocated pages to avoid lock
  * contention on the global bitmap.  The hot cache is lock-free for the
  * owning CPU (only local IRQ save/restore is needed for reentrancy from
  * interrupt handlers on the same CPU).
  */
 #define PMM_CPU_CACHE_SIZE 8
+
+/* Memory zone count — guards zone-like migration type array accesses */
+#define ZONE_MAX   MIGRATE_TYPES
 
 struct pmm_cpu_cache {
     uint64_t frames[PMM_CPU_CACHE_SIZE]; /* cached physical page addresses */
@@ -305,6 +308,22 @@ static void pmm_cache_drain(void) {
 
 extern char _kernel_end[];
 
+/**
+ * pmm_init - Initialize the Physical Memory Manager
+ * @multiboot_info_phys: Physical address of the Multiboot info structure
+ *
+ * Initializes the physical memory manager by parsing the Multiboot memory
+ * map to detect available RAM regions. Marks all frames as used initially,
+ * then clears the bitmap for available memory regions reported by the
+ * bootloader. Reserves kernel memory frames, advances the allocation hint
+ * past the first 64 MB to avoid page-table corruption from huge-page self-
+ * references, initializes spinlocks, pre-populates the boot CPU's hot cache,
+ * and initializes pageblock migration type tracking.
+ *
+ * Context: Called once during kernel boot, before any memory allocations.
+ *          No locking required as this runs on the BSP only.
+ * Return: void.
+ */
 void pmm_init(uint64_t multiboot_info_phys) {
     /* Mark all frames as used initially */
     memset(frame_bitmap, 0xFF, sizeof(frame_bitmap));
@@ -751,6 +770,20 @@ int page_reclaim(int nr_pages, unsigned int gfp_mask)
 
 /* ── Page allocator ─────────────────────────────────────────────────────── */
 
+/**
+ * pmm_alloc_frame - Allocate a single physical memory frame (page)
+ *
+ * Allocates a 4 KB physical frame. Fast path: pops from the per-CPU hot
+ * cache with interrupts disabled. If the cache is empty, triggers proactive
+ * reclaim and refills from the global bitmap. On OOM, runs full OOM recovery
+ * and retries. Poison-fills the page with 0xDEADBEEF if page poisoning is
+ * enabled. Updates VM statistics and MGLRU tracking.
+ *
+ * Context: Any context (SMP-safe via per-CPU cache). May sleep during OOM
+ *          recovery. Must not be called from interrupt context if OOM path
+ *          might block.
+ * Return: Physical address of the allocated frame, or 0 on failure.
+ */
 uint64_t pmm_alloc_frame(void) {
     uint64_t addr = 0;
     uint64_t irq_save;
@@ -924,6 +957,20 @@ uint64_t *pmm_alloc_frames(size_t count) {
     return NULL;
 }
 
+/**
+ * pmm_free_frame - Free a single physical memory frame (page)
+ * @addr: Physical address of the frame to free
+ *
+ * Frees a 4 KB physical frame back to the allocator. Fast path: pushes to
+ * the per-CPU hot cache if space is available. If the cache is full, drains
+ * the cache to the global bitmap first, then adds the frame. Falls back to
+ * direct bitmap free if the cache remains full. Removes the page from MGLRU
+ * tracking before recycling. Updates refcounts and page poisoning.
+ *
+ * Context: Any context (SMP-safe via per-CPU cache with interrupt masking).
+ *          Must not be called with pmm_global_lock already held.
+ * Return: void.
+ */
 void pmm_free_frame(uint64_t addr) {
     if (addr & (PAGE_SIZE - 1)) return;
 

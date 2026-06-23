@@ -31,14 +31,14 @@ EXPORT_SYMBOL(coredump_trigger);
 int coredump_register_handler(coredump_handler_fn handler)
 {
     if (!handler)
-        return -1;
+        return -ENOMEM;
 
     if (coredump_handler) {
         kprintf("[coredump_core] handler already registered (0x%llx), "
                 "rejecting 0x%llx\n",
                 (unsigned long long)(uintptr_t)coredump_handler,
                 (unsigned long long)(uintptr_t)handler);
-        return -1; /* -EBUSY */
+        return -EBUSY; /* -EBUSY */
     }
 
     coredump_handler = handler;

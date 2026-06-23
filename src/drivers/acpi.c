@@ -804,7 +804,6 @@ void acpi_init(void) {
     }
 
     struct fadt *fadt = NULL;
-    int has_s4 = 0;   /* hibernation support flag */
 
     /* Validate the mapped region bounds for ACPI tables */
     uint64_t acpi_region_start = 0x80000;

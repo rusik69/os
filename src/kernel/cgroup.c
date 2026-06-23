@@ -143,15 +143,6 @@ static int cgroup_alloc_id(void)
     return -ENOSPC;
 }
 
-static __attribute__((unused)) void cgroup_free_id(int idx)
-{
-    if (!cgroup_valid(idx)) return;
-    spinlock_acquire(&g_cgroup_lock);
-    memset(&g_cgroups[idx], 0, sizeof(struct cgroup));
-    g_num_cgroups--;
-    spinlock_release(&g_cgroup_lock);
-}
-
 /* ── Cgroupv2 filesystem ──────────────────────────────────────────── */
 
 static int cgroup_v2_read(void *priv, const char *path, void *buf,
@@ -347,6 +338,9 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                         }
                     }
                 }
+                /* Validate cg_id before use */
+                if (cg_id < 0 || cg_id >= CGROUP_MAX)
+                    return -EINVAL;
                 return cgroup_write_control(cg_id, key, value, space2);
             } else {
                 /* "key value" with no controller prefix */
@@ -377,6 +371,9 @@ static int cgroup_v2_write(void *priv, const char *path, const void *buf,
                         }
                     }
                 }
+                /* Validate cg_id before use */
+                if (cg_id < 0 || cg_id >= CGROUP_MAX)
+                    return -EINVAL;
                 return cgroup_write_control(cg_id, "", key, value);
             }
         }
@@ -491,7 +488,7 @@ int cgroup_of_pid(int pid)
         }
     }
     spinlock_release(&g_cgroup_lock);
-    return -1; /* root */
+    return -ENOENT; /* root */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -671,7 +668,7 @@ void cgroup_mem_stat(int cg_id, uint64_t *usage, uint64_t *max_usage,
  * Returns PID of killed process, or -1 if none. */
 int cgroup_oom_kill(int cg_id)
 {
-    if (!cgroup_valid(cg_id)) return -1;
+    if (!cgroup_valid(cg_id)) return -EINVAL;
 
     struct cgroup *cg = &g_cgroups[cg_id];
     int victim = -1;
@@ -936,6 +933,7 @@ int cgroup_write_control(int cg_id, const char *controller,
                          const char *key, const char *value)
 {
     if (!cgroup_valid(cg_id)) return -EINVAL;
+    if (!controller || !key || !value) return -EINVAL;
 
     if (strcmp(controller, "cpu") == 0) {
         if (strcmp(key, "max") == 0) {

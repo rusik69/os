@@ -12,7 +12,7 @@ void trace_dump(void);
 
 /* ── Static trace events (from ftrace.c) ────────────────────────────── */
 
-void ftrace_trace_sched_switch(struct process *prev, struct process *next);
+void ftrace_trace_sched_switch(const struct process *prev, const struct process *next);
 void ftrace_trace_irq_entry(uint32_t irq_vector);
 void ftrace_trace_irq_exit(uint32_t irq_vector, int handled);
 void ftrace_trace_timer_expire(int timer_id, uint64_t expiry_tick);

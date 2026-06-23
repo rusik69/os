@@ -71,9 +71,8 @@ static int      g_floppy_drive_type = 0;  /* 0=unknown, 1=360K, ... */
 static int      g_floppy_motor_on = 0;
 
 /* ── IRQ handling ─────────────────────────────────────────────────── */
-static void floppy_irq_handler(struct interrupt_frame *frame)
+static void floppy_irq_handler(__maybe_unused struct interrupt_frame *frame)
 {
-    (void)frame;
     g_floppy_irq_received = 1;
 }
 
@@ -730,9 +729,8 @@ int floppy_open(int drive)
 }
 
 /* ── Close a floppy drive ────────────────────────────── */
-int floppy_close(int drive)
+int floppy_close(__maybe_unused int drive)
 {
-    (void)drive;
     return 0;
 }
 
@@ -754,28 +752,21 @@ int floppy_get_geometry(int drive, void *geo)
 }
 
 /* ── Ioctl ───────────────────────────────────────────── */
-int floppy_ioctl(int drive, int cmd, void *arg)
+int floppy_ioctl(__maybe_unused int drive, __maybe_unused int cmd, __maybe_unused void *arg)
 {
-    (void)drive;
-    (void)cmd;
-    (void)arg;
     return -ENOTTY;
 }
 
 /* ── Format track (not yet implemented) ──────────────── */
-int floppy_format_track(int drive, int track, int head)
+int floppy_format_track(__maybe_unused int drive, __maybe_unused int track, __maybe_unused int head)
 {
-    (void)drive;
-    (void)track;
-    (void)head;
     kprintf("[FLOPPY] format_track: not yet implemented\n");
     return 0;
 }
 
 /* ── Eject (no-op on standard floppy controller) ─────── */
-int floppy_eject(int drive)
+int floppy_eject(__maybe_unused int drive)
 {
-    (void)drive;
     /* Standard FDC has no eject mechanism */
     return 0;
 }

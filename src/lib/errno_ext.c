@@ -1,5 +1,6 @@
 #include "errno_ext.h"
 #include "printf.h"
+#include "kernel.h"
 
 /* Global errno storage */
 int __errno_value = 0;
@@ -113,7 +114,7 @@ static const char * const err_desc[] = {
     [EHWPOISON]    = "Memory page has hardware error",
 };
 
-#define ERR_DESC_COUNT (sizeof(err_desc) / sizeof(err_desc[0]))
+#define ERR_DESC_COUNT ARRAY_SIZE(err_desc)
 
 /*
  * strerror — return string description for error number.

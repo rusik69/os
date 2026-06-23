@@ -14,8 +14,24 @@
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
 
-/* Validate ELF headers and return entry point, WITHOUT copying segments.
- * The caller is responsible for mapping/loading segments afterward. */
+/* Maximum number of program headers we'll process — bounds phnum array loop */
+#define ELF_MAX_PHNUM  128
+
+/**
+ * elf_validate - Validate ELF headers and return entry point
+ * @data: Pointer to the ELF file data in memory
+ * @size: Size of the ELF file data
+ * @out_is_userland: Optional output pointer; set to 1 if entry point is
+ *                   in user-space range (< 0x800000000000), 0 otherwise
+ *
+ * Validates the ELF header magic, architecture (x86-64), type (executable
+ * or shared object), program header table bounds, and PT_LOAD segments.
+ * Checks for integer overflows, NULL-page targets, overlapping segments,
+ * and alignment requirements. Returns the entry point address if valid.
+ *
+ * Context: Any context.
+ * Return: The ELF entry point address, or 0 if validation fails.
+ */
 static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_userland) {
     if (size < sizeof(struct elf64_header)) return 0;
 
@@ -42,7 +58,11 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
         kprintf("elf: no program headers\n");
         return 0;
     }
-
+    if (hdr->e_phnum > ELF_MAX_PHNUM) {
+        kprintf("elf: too many program headers (%u > %u)\n",
+                hdr->e_phnum, ELF_MAX_PHNUM);
+        return 0;
+    }
     int userland = (hdr->e_entry < 0x800000000000ULL);
     if (out_is_userland) *out_is_userland = userland;
 
@@ -124,6 +144,21 @@ static uint64_t elf_validate(const uint8_t *data, uint64_t size, int *out_is_use
     return hdr->e_entry;
 }
 
+/**
+ * elf_load - Load an ELF binary into memory
+ * @data: Pointer to the ELF file data
+ * @size: Size of the ELF file data
+ *
+ * Validates the ELF binary via elf_validate(), then loads PT_LOAD segments
+ * into memory. For kernel-mode ELFs (entry >= 0x800000000000), segments
+ * are copied directly to their target virtual addresses. For userland ELFs
+ * (entry < 0x800000000000), this function only validates and returns the
+ * entry point; actual mapping is deferred to the caller.
+ *
+ * Context: Any context. For kernel ELFs, the target virtual addresses must
+ *          already be mapped and writable.
+ * Return: The ELF entry point, or 0 on failure.
+ */
 uint64_t elf_load(const uint8_t *data, uint64_t size) {
     int is_userland = 0;
     uint64_t entry = elf_validate(data, size, &is_userland);
@@ -156,7 +191,24 @@ uint64_t elf_load(const uint8_t *data, uint64_t size) {
 
 /* Trampoline: each exec'd process gets its own entry-point stub */
 
+/**
+ * elf_exec - Execute an ELF binary from a file path
+ * @path: Path to the ELF binary file
+ *
+ * Reads an ELF binary from the filesystem, validates and loads it,
+ * creates a new process with appropriate page tables (for user-space
+ * ELFs) or a kernel process (for kernel ELFs). For user-space ELFs,
+ * it allocates a user stack, maps all PT_LOAD segments with proper
+ * permissions, applies ASLR to the stack, and creates a user-mode
+ * process running the ELF entry point.
+ *
+ * Context: May sleep. Allocates memory, reads from VFS, creates processes.
+ * Return: 0 on success, or a negative errno (-EINVAL, -ENOMEM, -ENOENT,
+ *         -EACCES, -ENOEXEC) on failure.
+ */
 int elf_exec(const char *path) {
+    if (!path) return -EINVAL;
+
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
     if (!buf) return -ENOMEM;
 
@@ -176,17 +228,54 @@ int elf_exec(const char *path) {
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
         kprintf("elf: cannot read %s\n", path);
         kfree(buf);
+        kfree(name);
         return -ENOENT;
     }
+
+    /* Check that the ELF header and program header table fit in the read data */
+    if ((uint64_t)size < sizeof(struct elf64_header)) {
+        kprintf("elf: %s too small for ELF header\n", path);
+        kfree(buf);
+        kfree(name);
+        return -EIO;
+    }
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    uint64_t phdr_end = hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize;
+    if (phdr_end > (uint64_t)size || phdr_end < hdr->e_phoff) {
+        kprintf("elf: %s program header table out of bounds (short read)\n", path);
+        kfree(buf);
+        kfree(name);
+        return -EIO;
+    }
+
+    /* Bound program header count before loop */
+    if (hdr->e_phnum > ELF_MAX_PHNUM) {
+        kprintf("elf: %s too many program headers (%u)\n", path, hdr->e_phnum);
+        kfree(buf);
+        kfree(name);
+        return -EIO;
+    }
+
+    /* Check execute permission on the binary file (Item X10) */
+    struct process *cur_proc = process_get_current();
+    uint16_t check_uid = cur_proc ? cur_proc->euid : 0;
+    uint16_t check_gid = cur_proc ? cur_proc->egid : 0;
+    if (process_check_exec_perms(path, check_uid, check_gid) < 0) {
+        kprintf("elf: permission denied for %s\n", path);
+        kfree(buf);
+        kfree(name);
+        return -EACCES;
+    }
+
     uint64_t entry = elf_load(buf, (unsigned long)size);
     if (!entry) {
         kprintf("elf: load failed\n");
         kfree(buf);
+        kfree(name);
         return -ENOEXEC;
     }
 
     /* Check if this ELF is targeted at user-space addresses (< 0x800000000000) */
-    const struct elf64_header *hdr = (const struct elf64_header *)buf;
     int is_userland = (entry < 0x800000000000ULL);
 
     if (is_userland) {
@@ -306,6 +395,7 @@ int elf_exec(const char *path) {
     struct process *p = process_create((void (*)(void))(uintptr_t)entry, name);
     if (!p) {
         kprintf("elf: cannot create process\n");
+        kfree(name);
         return -ENOMEM;
     }
 
@@ -325,6 +415,8 @@ extern volatile uint64_t execve_user_rflags;
 extern volatile uint64_t execve_user_rsp;
 
 int process_execve(const char *path, char *const argv[], char *const envp[]) {
+    if (!path) return -EINVAL;
+
     struct process *cur = process_get_current();
     if (!cur) return -EINVAL;
     if (!cur->is_user) return -EACCES;
@@ -338,13 +430,35 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
         return -ENOENT;
     }
 
+    /* Check that the ELF header and program header table fit in the read data */
+    if ((uint64_t)size < sizeof(struct elf64_header)) {
+        kfree(buf);
+        return -EIO;
+    }
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    /* Bound program header count before loop */
+    if (hdr->e_phnum > ELF_MAX_PHNUM) {
+        kfree(buf);
+        return -EIO;
+    }
+    uint64_t phdr_end = hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize;
+    if (phdr_end > (uint64_t)size || phdr_end < hdr->e_phoff) {
+        kfree(buf);
+        return -EIO;
+    }
+
+    /* Check execute permission on the binary file (Item X10) */
+    if (process_check_exec_perms(path, cur->euid, cur->egid) < 0) {
+        kfree(buf);
+        return -EACCES;
+    }
+
     uint64_t entry = elf_load(buf, (uint64_t)size);
     if (!entry) {
         kfree(buf);
         return -ENOEXEC;
     }
 
-    const struct elf64_header *hdr = (const struct elf64_header *)buf;
     if (entry >= 0x800000000000ULL) {
         kfree(buf);
         return -ENOEXEC;
@@ -434,8 +548,9 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t aslr_pages = aslr_stack_offset();
     uint64_t user_stack_top = USER_STACK_TOP - (aslr_pages * PAGE_SIZE);
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
-    // uint64_t user_stack_guard = user_stack_bottom - PAGE_SIZE;  /* unmapped guard page */
-    for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
+    /* The bottommost page (user_stack_bottom) is deliberately left unmapped
+     * as a guard page — a stack underflow past it will fault with SIGSEGV. */
+    for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
         if (!frame) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
@@ -446,9 +561,9 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
             return -ENOMEM;
         }
     }
-    /* Guard page at user_stack_guard is left unmapped — a stack underflow
+    /* Guard page at user_stack_bottom is left unmapped — a stack underflow
      * (past the bottom) will fault on this page, caught as a SIGSEGV. */
-    cur->user_stack_bottom = user_stack_bottom; /* lowest mapped stack page */
+    cur->user_stack_bottom = user_stack_bottom + PAGE_SIZE; /* first mapped stack page */
     cur->user_stack_top    = user_stack_top;
 
     /* ── Verify no PT_LOAD segment overlaps with the user stack ────── */
@@ -643,13 +758,6 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     uint64_t envp_array = sp;
     uint64_t *envp_virt_ptr = (uint64_t *)PHYS_TO_VIRT(stack_phys_base + (envp_array - user_stack_bottom));
     for (int i = 0; i < envc; i++) {
-        /* Compute address of string data */
-        uint64_t str_addr = str_pos;
-        for (int k = 0; k < i; k++) {
-            int k_idx = argc + k;
-            if (tmp_buf[k_idx])
-                str_addr -= strlen(tmp_buf[k_idx]) + 1;
-        }
         if (envp_virt_ptr) envp_virt_ptr[i] = envp_array + i * sizeof(uint64_t); /* dummy */
     }
     /* For now, set envp[envc] = NULL */
@@ -784,13 +892,29 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     }
 
     /* ── 2. Validate ELF header ─────────────────────────────────── */
+    /* Check that the ELF header and program header table fit in the read data */
+    if ((uint64_t)size < sizeof(struct elf64_header)) {
+        kfree(buf);
+        return -EIO;
+    }
+    const struct elf64_header *hdr = (const struct elf64_header *)buf;
+    /* Bound program header count before loop */
+    if (hdr->e_phnum > ELF_MAX_PHNUM) {
+        kfree(buf);
+        return -EIO;
+    }
+    uint64_t phdr_end = hdr->e_phoff + (uint64_t)hdr->e_phnum * (uint64_t)hdr->e_phentsize;
+    if (phdr_end > (uint64_t)size || phdr_end < hdr->e_phoff) {
+        kfree(buf);
+        return -EIO;
+    }
+
     uint64_t entry = elf_load(buf, (uint64_t)size);
     if (!entry) {
         kfree(buf);
         return -ENOEXEC;
     }
 
-    const struct elf64_header *hdr = (const struct elf64_header *)buf;
     if (entry >= 0x800000000000ULL) {
         kfree(buf);
         return -ENOEXEC;
@@ -1049,7 +1173,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 }
 
 /* ── Stub: elf_load_segment ─────────────────────────────── */
-int elf_load_segment(void *elf, void *dest, size_t size)
+int elf_load_segment(const void *elf, void *dest, size_t size)
 {
     (void)elf;
     (void)dest;
@@ -1074,7 +1198,7 @@ void* elf_lookup_sym(const void *elf, const char *name)
     return NULL;
 }
 /* ── Stub: elf_relocate ─────────────────────────────── */
-int elf_relocate(void *elf, const char *symname, void *addr)
+int elf_relocate(const void *elf, const char *symname, void *addr)
 {
     (void)elf;
     (void)symname;

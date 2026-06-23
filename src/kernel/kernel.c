@@ -187,24 +187,6 @@ extern int usb_hub_init(void);
 /* ── Forward declarations ─────────────────────────────── */
 void stdio_init(void);
 
-static void __attribute__((unused)) test_task_a(void) {
-    for (;;) {
-        /* Background task A: just yields */
-        scheduler_yield();
-    }
-}
-
-static void __attribute__((unused)) test_task_b(void) {
-    for (;;) {
-        /* Background task B: just yields */
-        scheduler_yield();
-    }
-}
-
-static void __attribute__((unused)) net_task(void) {
-    telnetd_task();
-}
-
 /* ── Initcall support ─────────────────────────────────────────────── */
 
 extern initcall_t __initcall_start[];
@@ -221,7 +203,7 @@ void do_initcalls(void) {
 /* ── Boot timing ───────────────────────────────────────────────── */
 /* Captured at earliest possible point after entry (TSC timestamp) */
 static uint64_t boot_start_tsc = 0;
-uint64_t boot_time_ms = 0;
+static uint64_t boot_time_ms = 0;
 
 /* Read the x86 Time-Stamp Counter */
 static inline uint64_t rdtsc(void)
@@ -1214,16 +1196,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     if (!init_ok) {
         /* Fall back to kernel threads */
         kprintf("[--] No userspace init binary found\n");
-        if (!process_create(test_task_a, "task_a"))
-            kprintf("[!!] Failed to create task_a\n");
-        if (!process_create(test_task_b, "task_b"))
-            kprintf("[!!] Failed to create task_b\n");
-        if (virtio_net_present() || e1000_is_present()) {
-            if (!process_create(net_task, "netd"))
-                kprintf("[!!] Failed to create netd\n");
-            if (!process_create(httpd_task, "httpd"))
-                kprintf("[!!] Failed to create httpd\n");
-        }
+        /* Task spawning happens via init binary or userspace telnetd.
+         * Static test/net/httpd tasks were removed (dead code). */
+        kprintf("[--] No fallback tasks available, waiting for userspace\n");
     }
     kprintf("[OK] Processes created\n");
 

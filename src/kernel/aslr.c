@@ -44,6 +44,18 @@ static inline int rdrand64(uint64_t *val) {
     return (int)ok;
 }
 
+/**
+ * aslr_init - Initialize ASLR subsystem
+ *
+ * Checks the kernel command line for "nokaslr" to disable ASLR globally.
+ * Attempts to gather hardware entropy from the RDRAND instruction and
+ * seeds the PRNG. Additional entropy is mixed in from stack address
+ * randomization and timer tick timing.
+ *
+ * Context: Called once during kernel boot, before any process creation.
+ *          No locking required.
+ * Return: void.
+ */
 void aslr_init(void) {
     /* Check for "nokaslr" on kernel command line — disables ALL ASLR */
     if (cmdline_has("nokaslr")) {
@@ -69,20 +81,29 @@ void aslr_init(void) {
     kprintf("[OK] ASLR initialized\n");
 }
 
-/*
- * Return a random number of pages (0..ASLR_STACK_RANDOM_PAGES) for shifting
- * the user stack base downward from USER_STACK_TOP.
- * Returns 0 if ASLR is globally disabled.
+/**
+ * aslr_stack_offset - Return random stack base offset in pages
+ *
+ * Returns a random number of pages (0..ASLR_STACK_RANDOM_PAGES) for
+ * shifting the user stack base downward from USER_STACK_TOP.
+ *
+ * Context: Any context. Calls prng_rand64() which may require PRNG lock.
+ * Return: Random page offset, or 0 if ASLR is globally disabled.
  */
 uint64_t aslr_stack_offset(void) {
     if (aslr_disabled) return 0;
     return prng_rand64() % (ASLR_STACK_RANDOM_PAGES + 1);
 }
 
-/*
- * Return a random number of pages (0..ASLR_MMAP_RANDOM_PAGES) for shifting
- * the mmap allocation base upward from the default starting address.
- * Returns 0 if ASLR is globally disabled.
+/**
+ * aslr_mmap_offset - Return random mmap base offset in pages
+ *
+ * Returns a random number of pages (0..ASLR_MMAP_RANDOM_PAGES) for
+ * shifting the mmap allocation base upward from the default starting
+ * address.
+ *
+ * Context: Any context. Calls prng_rand64() which may require PRNG lock.
+ * Return: Random page offset, or 0 if ASLR is globally disabled.
  */
 uint64_t aslr_mmap_offset(void) {
     if (aslr_disabled) return 0;
@@ -155,7 +176,18 @@ void aslr_add_entropy(uint64_t entropy) {
     prng_add_entropy(entropy);
 }
 
-/* ── Stub: aslr_randomize_addr ─────────────────────────────── */
+/**
+ * aslr_randomize_addr - Randomize a base address within a given range
+ * @base: Base address to randomize
+ * @range: Range in bytes within which to add a random offset
+ *
+ * Stub implementation: currently logs a message and returns 0.
+ * In a full implementation this would return @base + random_offset
+ * where random_offset is in [0, @range) and page-aligned.
+ *
+ * Context: Any context.
+ * Return: Randomized address (currently 0, stub).
+ */
 uint64_t aslr_randomize_addr(uint64_t base, uint64_t range)
 {
     (void)base;

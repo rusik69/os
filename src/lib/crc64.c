@@ -22,6 +22,21 @@ static void crc64_init_table(void)
     crc64_initialized = 1;
 }
 
+/**
+ * crc64 - Compute CRC-64-ECMA-182 checksum
+ * @crc: Initial CRC value (typically 0)
+ * @buf: Pointer to the input data buffer
+ * @len: Length of the input data in bytes
+ *
+ * Computes a CRC-64 checksum over the given data buffer using the
+ * ECMA-182 polynomial. Uses a 256-entry lookup table initialized on
+ * first call. The caller may chain CRC computations by passing the
+ * previous return value as @crc for subsequent blocks.
+ *
+ * Context: Any context. Table initialization on first call is not thread-safe;
+ *          call crc64(0, NULL, 0) once at boot from a safe context to pre-init.
+ * Return: The CRC-64-ECMA-182 checksum.
+ */
 uint64_t crc64(uint64_t crc, const void *buf, size_t len)
 {
     if (!crc64_initialized)

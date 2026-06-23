@@ -156,7 +156,7 @@ static void key_expansion(const uint8_t key[16], uint8_t round_keys[11][16]) {
     /* Copy original key */
     for (int i = 0; i < 16; i++)
         round_keys[0][i] = key[i];
-    
+
     for (int round = 1; round <= 10; round++) {
         uint8_t temp[4];
         /* RotWord */
@@ -169,7 +169,7 @@ static void key_expansion(const uint8_t key[16], uint8_t round_keys[11][16]) {
             temp[i] = aes_sbox[temp[i]];
         /* XOR with Rcon */
         temp[0] ^= aes_rcon[round];
-        
+
         /* Compute round key */
         for (int i = 0; i < 4; i++)
             round_keys[round][i] = round_keys[round - 1][i] ^ temp[i];
@@ -181,44 +181,44 @@ static void key_expansion(const uint8_t key[16], uint8_t round_keys[11][16]) {
 void aes_ecb_encrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     uint8_t state[16];
     uint8_t round_keys[11][16];
-    
+
     memcpy(state, in, 16);
     key_expansion(key, round_keys);
-    
+
     add_round_key(state, round_keys[0]);
-    
+
     for (int round = 1; round <= 9; round++) {
         sub_bytes(state);
         shift_rows(state);
         mix_columns(state);
         add_round_key(state, round_keys[round]);
     }
-    
+
     sub_bytes(state);
     shift_rows(state);
     add_round_key(state, round_keys[10]);
-    
+
     memcpy(out, state, 16);
 }
 
 void aes_ecb_decrypt(const uint8_t key[16], const uint8_t in[16], uint8_t out[16]) {
     uint8_t state[16];
     uint8_t round_keys[11][16];
-    
+
     memcpy(state, in, 16);
     key_expansion(key, round_keys);
-    
+
     add_round_key(state, round_keys[10]);
     inv_shift_rows(state);
     inv_sub_bytes(state);
-    
+
     for (int round = 9; round >= 1; round--) {
         add_round_key(state, round_keys[round]);
         inv_mix_columns(state);
         inv_shift_rows(state);
         inv_sub_bytes(state);
     }
-    
+
     add_round_key(state, round_keys[0]);
     memcpy(out, state, 16);
 }
@@ -233,6 +233,18 @@ uint32_t crypto_xor_checksum(const void *data, size_t len) {
     return checksum;
 }
 
+/**
+ * sha256 - Compute SHA-256 hash of a data buffer
+ * @data: Pointer to the input data buffer
+ * @len: Length of the input data in bytes
+ * @out: Output buffer of 32 bytes to receive the hash digest
+ *
+ * Stub implementation: currently zeroes the output buffer.
+ * In a full implementation this would compute the SHA-256 cryptographic hash.
+ *
+ * Context: Any context (no locking required for this stub).
+ * Return: void (result written to @out).
+ */
 void sha256(const uint8_t *data, size_t len, uint8_t out[32]) {
     (void)data;
     (void)len;

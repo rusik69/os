@@ -19,6 +19,7 @@
 #include "timer.h"
 #include "socket.h"
 #include "net.h"
+#include "cluster.h"
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -76,7 +77,6 @@ struct cluster_node {
 
 static struct cluster_node nodes[NODE_MAX];
 static int node_count = 0;
-static int local_node_idx = -1;
 static char leader_id[64];
 static int is_leader = 0;
 static uint64_t leader_term = 0;
@@ -383,9 +383,10 @@ int quorum_get_health(char *buf, size_t bufsz)
      *   - Election count, log size, append RTT
      * Simplified version for now. */
 
-    /* Protect against uninitialized local_node_idx */
-    const char *local_id = (local_node_idx >= 0 && local_node_idx < NODE_MAX)
-                           ? nodes[local_node_idx].id : "unknown";
+    /* Get local node index (may be -1 if not yet registered) */
+    int local_idx = cluster_get_local_node_idx();
+    const char *local_id = (local_idx >= 0 && local_idx < NODE_MAX)
+                           ? nodes[local_idx].id : "unknown";
 
     int pos = snprintf(buf, bufsz,
         "Quorum Health:\n"
@@ -467,9 +468,10 @@ int splitbrain_recover(void)
     leader_term++;
 
     /* Step 2: Re-register this node with higher incarnation */
-    if (local_node_idx >= 0) {
-        nodes[local_node_idx].incarnation++;
-        nodes[local_node_idx].last_heartbeat = timer_get_ms();
+    int local_idx = cluster_get_local_node_idx();
+    if (local_idx >= 0) {
+        nodes[local_idx].incarnation++;
+        nodes[local_idx].last_heartbeat = timer_get_ms();
     }
 
     /* Step 3: Clear orphaned locks */

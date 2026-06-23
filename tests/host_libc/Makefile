@@ -144,7 +144,8 @@ all: test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher 
      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
      test_signal_validate test_kptr_restrict \
-     test_notifier_ext test_wx_enforce test_stackleak
+     test_notifier_ext test_wx_enforce test_stackleak \
+     test_negative_path
 ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running host_libc unit tests..."
@@ -254,6 +255,9 @@ ifeq ($(JUNIT_DIR),)
 	@echo ""
 	@echo "Running STACKLEAK stack eraser tests..."
 	./test_stackleak
+	@echo ""
+	@echo "Running negative-path / edge-case tests..."
+	./test_negative_path
 else
 	@echo ""
 	@echo "Running host_libc unit tests (JUnit output to $(JUNIT_DIR))..."
@@ -293,6 +297,7 @@ else
 	python3 ../../tests/junit_reporter.py host-notifier-ext ./test_notifier_ext
 	python3 ../../tests/junit_reporter.py host-wx-enforce ./test_wx_enforce
 	python3 ../../tests/junit_reporter.py host-stackleak ./test_stackleak
+	python3 ../../tests/junit_reporter.py host-negative-path ./test_negative_path
 	@mv -f host_libc-results.xml host-bitops-crc-sha-results.xml \
 	      host-crypto-ext-results.xml host-lib-structs-results.xml \
 	      host-cipher-results.xml host-datastructures-results.xml \
@@ -593,6 +598,14 @@ stackleak.o: $(KSRCDIR)/stackleak.c
 test_stackleak.o: test_stackleak.c
 	$(CC) $(TEST_CFLAGS) -c -o $@ $<
 
+# ── Negative-path / edge-case tests ────────────────────────
+
+test_negative_path: test_negative_path.o
+	$(CC) -o $@ $^
+
+test_negative_path.o: test_negative_path.c
+	$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
 # ── Rate limiting tests ────────────────────────────────────
 
 test_ratelimit: $(RATELIMIT_OBJS)
@@ -779,6 +792,7 @@ clean:
 	      $(CMDLINE_OBJS) $(COMPRESS_OBJS) $(LOGBUF_OBJS) $(MODULE_ALIAS_OBJS) \
 	      $(SCHED_ATTR_OBJS) $(SIGNAL_VALIDATE_OBJS) $(KPTR_RESTRICT_OBJS) \
 	      $(NOTIFIER_EXT_OBJS) $(WX_ENFORCE_OBJS) $(STACKLEAK_OBJS) \
+	      test_negative_path.o \
 	      test_libc test_bitops_crc_sha test_crypto_ext test_lib_structs test_cipher test_datastructures \
 	      test_search test_stdlib_ext test_hweight test_range test_sort_ext test_crc16 \
 	      test_find_bit test_div64 test_idr test_notifier test_ratelimit test_time \
@@ -786,4 +800,4 @@ clean:
 	      test_bitfield test_errno_ext test_uid16 test_mempool test_rng_core \
 	      test_cmdline test_compress test_logbuf test_module_alias test_sched_attr \
 	      test_signal_validate test_kptr_restrict \
-	      test_notifier_ext test_wx_enforce test_stackleak
+	      test_notifier_ext test_wx_enforce test_stackleak test_negative_path

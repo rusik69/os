@@ -69,7 +69,9 @@ CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -Wall -Wextra -Werror -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
-         -DKVERSION=\"$(KVERSION)\" $(VERMAGIC_FLAGS) \
+         -DKVERSION=\"$(KVERSION)\" \
+         -DBUILD_TIME=\"$(shell date -u '+%Y-%m-%d_%H:%M:%S_UTC')\" \
+         $(VERMAGIC_FLAGS) \
          $(CFLAGS_EXTRA)
 ASFLAGS = -f elf64 -g
 LDFLAGS = -T linker.ld -nostdlib -z max-page-size=0x1000 -z noexecstack -z relro -z now --allow-multiple-definition
@@ -1107,11 +1109,19 @@ all: $(BUILDDIR)/disk.img
 
 # ── Phony targets ─────────────────────────────────────────────────────
 
-.PHONY: all run run-smp run-gdb run-uefi help debug clean deps test test-kernel test-serial test-cli test-clean clean-all \
-        check check-full check-clean check-app-boundary check-debug doom-test format format-check lint lint-full ccache-stats count build-info run-test unit-test bench \
+.PHONY: all run run-smp run-gdb run-uefi run-virtio help debug clean deps \
+        test test-kernel test-serial test-cli test-clean test-coverage clean-all \
+        check check-full check-clean check-app-boundary check-debug doom-test \
+        format format-check check-whitespace lint lint-full cppcheck-check \
+        ccache-stats count build-info count-lines count-funcs count-headers \
+        run-test unit-test junit-test bench \
+        e2e e2e-smoke e2e-test e2e-list \
         stress stress-help \
-        modules modules_install build-strict analyze cppcheck clang-tidy-check ctags etags doccheck sparse \
-        release dist
+        modules modules_install build-strict analyze cppcheck cppcheck-all \
+        clang-tidy-check ctags etags doccheck sparse \
+        release dist \
+        install install-clean \
+        clean-kernel clean-test verify
 
 # ── Boundary check on app sources ─────────────────────────────────────
 
@@ -1549,6 +1559,20 @@ junit-test:
 test-clean: clean
 	$(MAKE) test
 
+# ── Test with code coverage ─────────────────────────────────────────────
+test-coverage: CFLAGS += -fprofile-arcs -ftest-coverage --coverage
+test-coverage: LDFLAGS += --coverage
+test-coverage: clean
+	@echo "=== Building with code coverage (-fprofile-arcs -ftest-coverage) ==="
+	$(MAKE) -j$(NPROCS) test-kernel
+	@echo ""
+	@echo "=== Running tests with coverage instrumentation ==="
+	$(MAKE) unit-test
+	@echo ""
+	@echo "=== Coverage data written to build_test/ directory ==="
+	@echo "Run: gcov -o build_test/ src/kernel/*.c  (per-file coverage)"
+	@echo "Or:  lcov -c -d build_test/ -o coverage.info && genhtml coverage.info -o coverage/"
+
 # E2E tests: boot normal kernel in QEMU with user-mode networking + telnet hostfwd
 e2e: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
@@ -1564,6 +1588,12 @@ e2e-smoke: $(BUILDDIR)/disk.img
 # Fast run: build test-kernel and run tests in one invocation
 run-test:
 	$(MAKE) test
+
+# Fast pre-merge verification: format check + static analysis + app boundary check
+verify:
+	$(MAKE) format-check
+	$(MAKE) lint
+	$(MAKE) check-app-boundary
 
 # Verify doom framebuffer (PCI BAR0) renders non-black pixels in QEMU -vga std
 doom-test: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
@@ -1762,7 +1792,10 @@ help:
 	@echo "  test-kernel      Build test kernel (separate output dir)"
 	@echo "  test-serial      Run test kernel with serial TCP output"
 	@echo "  test-clean       Clean + rebuild + run tests"
+	@echo "  test-coverage    Build with -fprofile-arcs -ftest-coverage and run tests"
 	@echo "  run-test         Alias for 'make test'"
+	@echo "  junit-test       Run unit tests with JUnit XML output"
+	@echo "  verify           Fast pre-merge: format-check + lint + app boundary check"
 	@echo "  stress           Run all stress tests in QEMU"
 	@echo "  stress-help      Show help for stress target"
 	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
@@ -1777,20 +1810,25 @@ help:
 	@echo "  e2e-list         List E2E test cases"
 	@echo "  doom-test        Verify DOOM framebuffer renders"
 	@echo ""
-	@echo "Analysis targets:"
+	@echo "Quality / Analysis targets:"
 	@echo "  analyze          GCC -fanalyzer static analysis"
 	@echo "  lint             Run cppcheck + clang-tidy"
 	@echo "  cppcheck         Run cppcheck static analysis"
 	@echo "  cppcheck-check   Run cppcheck with suppressions (called by lint)"
+	@echo "  cppcheck-all     Run cppcheck on kernel/memory/process/net/fs sources"
 	@echo "  clang-tidy-check Run clang-tidy on first 20 C sources"
 	@echo "  build-strict     Alias for cppcheck"
 	@echo "  sparse           Run sparse semantic parser"
 	@echo "  format           Format all C sources with clang-format"
 	@echo "  format-check     Check format compliance (via git-clang-format)"
+	@echo "  check-whitespace Check for trailing whitespace in source files"
 	@echo ""
-	@echo "Info targets:"
+	@echo "Info / Utility targets:"
 	@echo "  build-info       Show kernel size, object count, LOC"
 	@echo "  count            Show source code statistics"
+	@echo "  count-lines      Show line counts broken down by subsystem"
+	@echo "  count-funcs      Count function definitions per subsystem"
+	@echo "  count-headers    Count .h files per subsystem"
 	@echo "  ccache-stats     Show ccache hit rate"
 	@echo "  todo             Show TODO/FIXME/HACK/XXX/BUG markers"
 	@echo "  deps             Print build dependency install command (brew)"
@@ -1804,6 +1842,8 @@ help:
 	@echo ""
 	@echo "Clean targets:"
 	@echo "  clean            Remove build/ and build_test/"
+	@echo "  clean-kernel     Remove only kernel build artifacts (build/)"
+	@echo "  clean-test       Remove only test build artifacts (build_test/)"
 	@echo "  clean-all        clean + clear ccache stats"
 	@echo "  check-clean      Remove build_check/ and build_check_full/"
 	@echo "  install-clean    Remove ISO artifacts"
@@ -1821,6 +1861,15 @@ clean-all: clean
 		ccache --zero-stats 2>/dev/null; \
 		echo "ccache stats cleared."; \
 	fi
+
+# Clean only kernel build artifacts under build/ (keep tests, userspace)
+clean-kernel:
+	rm -rf $(BUILDDIR)
+	rm -f $(PCH_FILE) $(BUILDDIR)/kernel_pch.d
+
+# Clean only test build artifacts under build_test/
+clean-test:
+	rm -rf $(BUILDDIR_TEST)
 
 # ── Format: run clang-format on all .c and .h files ───────────────────
 
@@ -1854,6 +1903,25 @@ format-check:
 		fi \
 	else \
 		echo "git-clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
+		exit 1; \
+	fi
+
+# ── Check trailing whitespace in source files ─────────────────────────
+check-whitespace:
+	@echo "=== Checking for trailing whitespace ==="
+	@errors=0; \
+	for ext in c h asm py sh Makefile; do \
+		find . -name "*.$$ext" -not -path "./.git/*" -not -path "./build/*" -not -path "./build_test/*" -not -path "./build_check*" -print0 2>/dev/null | \
+		xargs -0 grep -l '[[:space:]]$$' 2>/dev/null | \
+		while read f; do \
+			echo "  TRAILING WHITESPACE: $$f"; \
+			errors=$$((errors + 1)); \
+		done; \
+	done; \
+	if [ "$$errors" -eq 0 ]; then \
+		echo "  ✅ No trailing whitespace found."; \
+	else \
+		echo "  ❌ $$errors file(s) with trailing whitespace."; \
 		exit 1; \
 	fi
 
@@ -2006,6 +2074,37 @@ count:
 	@echo "  Headers:    $$(find src -name '*.h' | wc -l) files, $$(find src -name '*.h' | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}') lines"
 	@echo "  Tests:      $$(find tests -name '*.c' -o -name '*.sh' -o -name '*.py' | wc -l) files"
 
+# ── Line counts by subsystem ────────────────────────────────────────────
+
+count-lines:
+	@echo "=== Line counts by subsystem ==="; \
+	for dir in kernel drivers fs net lib memory process ipc shell cluster; do \
+		count=$$(find src/$$dir -name '*.c' -o -name '*.h' -o -name '*.asm' -o -name '*.S' 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $$1}'); \
+		echo "  $$dir: $$count"; \
+	done
+
+# ── Function definitions by subsystem ──────────────────────────────────────
+
+count-funcs:
+	@echo "=== Function definitions by subsystem ==="; \
+	for dir in kernel memory process net fs drivers ipc lib; do \
+		count=$$(find src/$$dir -name '*.c' 2>/dev/null | xargs grep -cP '^[a-zA-Z_][a-zA-Z0-9_ \*]+\s+\*?[a-zA-Z_][a-zA-Z0-9_]*\s*\(' 2>/dev/null | awk -F: '{s+=$$2} END {print s+0}'); \
+		[ -z "$$count" ] && count=0; \
+		echo "  $$dir: $$count functions"; \
+	done
+
+# ── Header files per subsystem ─────────────────────────────────────────────
+
+count-headers:
+	@echo "=== Header files per subsystem ==="; \
+	for dir in kernel drivers fs net lib memory process ipc shell include; do \
+		count=$$(find src/$$dir -name '*.h' 2>/dev/null | wc -l); \
+		echo "  $$dir: $$count .h files"; \
+	done; \
+	total=$$(find src -name '*.h' 2>/dev/null | wc -l); \
+	echo "  -------------------"; \
+	echo "  total: $$total .h files"
+
 # ── ccache statistics ──────────────────────────────────────────────────
 
 ccache-stats:
@@ -2022,6 +2121,23 @@ build-strict: cppcheck
 .PHONY: cppcheck
 cppcheck:
 	cppcheck --enable=all --suppress=missingIncludeSystem -Isrc/include --std=c17 --platform=unix64 src/ 2>&1 | tee build/cppcheck-report.txt
+
+# ── Run cppcheck on kernel/memory/process/net/fs sources ─────────────────
+cppcheck-all:
+	@if command -v cppcheck >/dev/null 2>&1; then \
+		echo "=== Running cppcheck on kernel/memory/process/net/fs ===="; \
+		cppcheck --enable=all --inconclusive \
+		  --suppress=missingIncludeSystem \
+		  --suppress=unusedFunction \
+		  --std=c17 --platform=unix64 \
+		  -Isrc/include \
+		  src/kernel/*.c src/memory/*.c src/process/*.c src/net/*.c src/fs/*.c \
+		  2>&1; \
+		echo "=== cppcheck-all complete ==="; \
+	else \
+		echo "cppcheck not found. Install it (e.g., apt install cppcheck) and try again."; \
+		exit 1; \
+	fi
 
 # ── Sparse semantic parser ───────────────────────────────────────────────
 #

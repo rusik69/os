@@ -108,7 +108,7 @@ static int audit_format_denial(char *buf, int buf_size,
  */
 int audit_netlink_send(int event_type, const char *payload, int payload_len) {
     if (!audit_enabled || !audit_nl_initialized)
-        return -1;
+        return -ENOMEM;
 
     if (!payload) payload = "";
     if (payload_len <= 0) payload_len = strlen(payload);
@@ -120,7 +120,7 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
 
     /* Allocate a zeroed buffer for the message */
     struct nlmsghdr *nlh = (struct nlmsghdr *)kmalloc((size_t)aligned_len);
-    if (!nlh) return -1;
+    if (!nlh) return -EINVAL;
     memset(nlh, 0, (size_t)aligned_len);
 
     /* Populate netlink header */
@@ -278,7 +278,7 @@ void audit_log_denial(const char *subj, const char *obj,
 }
 
 int audit_read_log(char *buf, int max) {
-    if (!buf || max <= 0) return -1;
+    if (!buf || max <= 0) return -EINVAL;
     int to_copy = audit_pos < max ? audit_pos : max;
     memcpy(buf, audit_buf, to_copy);
     return to_copy;

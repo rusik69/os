@@ -90,15 +90,12 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
 
 /* ── Receive and parse FCoE frame ───────────────────────────────────── */
 
-static int fcoe_recv_frame(uint8_t *fc_frame_buf, uint32_t *fc_frame_len,
-                            uint8_t *dst_mac, uint8_t *src_mac)
+static int fcoe_recv_frame(__maybe_unused uint8_t *fc_frame_buf,
+                            __maybe_unused uint32_t *fc_frame_len,
+                            __maybe_unused uint8_t *dst_mac, __maybe_unused uint8_t *src_mac)
 {
     /* In real implementation: recv from AF_PACKET socket, strip FCoE header */
     /* Placeholder: return -1 (no data) */
-    (void)fc_frame_buf;
-    (void)fc_frame_len;
-    (void)dst_mac;
-    (void)src_mac;
     return -1;
 }
 
@@ -215,17 +212,6 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
     }
 
     return 0;
-}
-
-/* ── INQUIRY via FCoE ───────────────────────────────────────────────── */
-
-static int __attribute__((unused)) fcoe_inquiry(struct fcoe_device *dev, uint8_t *data, int max_len)
-{
-    uint8_t cdb[6];
-    memset(cdb, 0, sizeof(cdb));
-    cdb[0] = SCSI_OPCODE_INQUIRY;
-    cdb[4] = (uint8_t)(max_len > 255 ? 255 : max_len);
-    return fcoe_send_scsi_cmd(dev, cdb, 6, data, max_len, 0);
 }
 
 /* ── READ CAPACITY (10) via FCoE ─────────────────────────────────────── */
@@ -407,33 +393,26 @@ void fcoe_poll(void)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: fcoe_xmit ───────────────────────────────── */
-int fcoe_xmit(void *skb, void *dev)
+int fcoe_xmit(__maybe_unused void *skb, __maybe_unused void *dev)
 {
-    (void)skb;
-    (void)dev;
     kprintf("[FCoE] fcoe_xmit: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_recv ───────────────────────────────── */
-int fcoe_recv(void *skb)
+int fcoe_recv(__maybe_unused void *skb)
 {
-    (void)skb;
     kprintf("[FCoE] fcoe_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_create ────────────────────────── */
-int fcoe_vlan_create(void *dev, uint16_t vlan_id)
+int fcoe_vlan_create(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
-    (void)dev;
-    (void)vlan_id;
     kprintf("[FCoE] fcoe_vlan_create: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_destroy ───────────────────────── */
-int fcoe_vlan_destroy(void *dev, uint16_t vlan_id)
+int fcoe_vlan_destroy(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
-    (void)dev;
-    (void)vlan_id;
     kprintf("[FCoE] fcoe_vlan_destroy: not yet implemented\n");
     return 0;
 }

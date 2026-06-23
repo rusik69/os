@@ -197,7 +197,7 @@ struct vfs_ops {
 /* A mounted filesystem */
 struct vfs_mount {
     char          mountpoint[64]; /* e.g. "/" */
-    struct vfs_ops *ops;
+    const struct vfs_ops *ops;
     void          *priv;           /* private data passed to ops */
     int           flags;           /* mount flags (MS_RDONLY, etc.) */
     char          bind_source[64]; /* source path for bind mounts */
@@ -213,16 +213,16 @@ struct vfs_mount {
 /* Registered filesystem type */
 struct vfs_filesystem_type {
     char name[32];
-    struct vfs_ops *ops;
+    const struct vfs_ops *ops;
     int registered;
 };
 
 /* Register a filesystem type and mount it at a given path */
-int vfs_mount_ex(const char *mountpoint, struct vfs_ops *ops, void *priv, int flags);
-int vfs_mount(const char *mountpoint, struct vfs_ops *ops, void *priv);
+int vfs_mount_ex(const char *mountpoint, const struct vfs_ops *ops, void *priv, int flags);
+int vfs_mount(const char *mountpoint, const struct vfs_ops *ops, void *priv);
 
 /* Register a filesystem type (for /proc/filesystems) */
-int vfs_register_filesystem(const char *name, struct vfs_ops *ops);
+int vfs_register_filesystem(const char *name, const struct vfs_ops *ops);
 
 /* List registered filesystem types */
 int vfs_list_filesystems(char names[][32], int max);

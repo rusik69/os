@@ -13,6 +13,9 @@
 #include "errno.h"
 #include "signal_validate.h"
 
+/* Maximum signal number (signals 1-64) — bounds all signal arrays */
+#define MAX_SIG  65
+
 /* Core dump handler */
 extern void do_coredump(struct process *proc, int signo);
 
@@ -174,6 +177,11 @@ int signal_send_info(uint32_t pid, int signum, struct siginfo *info) {
 
     /* Store siginfo if provided */
     if (info) {
+        /* Extra bounds check: signal number must be within array range */
+        if (signum <= 0 || signum >= MAX_SIG) {
+            spinlock_irqsave_release(&p->sig_lock, __sig_flags);
+            return -1;
+        }
         struct siginfo validated = *info;
         int is_from_userspace = (caller && caller->is_user) ? 1 : 0;
         signal_validate_siginfo(&validated, is_from_userspace);

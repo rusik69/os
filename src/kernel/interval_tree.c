@@ -175,6 +175,9 @@ void interval_tree_remove(struct interval_tree *tree,
     } else {
         /* Node has two children – find successor */
         struct interval_tree_node *succ = node->rb_right;
+        /* Defensive: if rb_right is NULL the tree is corrupted, just return */
+        if (!succ)
+            return;
         while (succ->rb_left)
             succ = succ->rb_left;
         struct interval_tree_node *old_parent = node->rb_parent;

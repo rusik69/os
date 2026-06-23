@@ -76,12 +76,12 @@ enum ssh_phase {
 struct ssh_session {
     int conn_id;
     int active;
-    
+
     /* Protocol state */
     enum ssh_phase phase;
     uint32_t seq_nr_send;
     uint32_t seq_nr_recv;
-    
+
     /* KEX state */
     uint8_t client_kex[400];
     int client_kex_len;
@@ -93,7 +93,7 @@ struct ssh_session {
     uint8_t exchange_hash[32];
     uint8_t session_id[32];
     int kex_done;
-    
+
     /* Encryption */
     int encrypted;
     struct {
@@ -101,20 +101,20 @@ struct ssh_session {
         struct aes_ctx ctx;
         uint32_t seq;
     } send_cipher, recv_cipher;
-    
+
     /* MAC */
     uint8_t send_mac_key[32];
     uint8_t recv_mac_key[32];
-    
+
     /* Receive buffer */
     uint8_t recv_buf[SSH_SESS_BUF];
     int recv_len;
-    
+
     /* Channel state */
     int channel_open;
     int channel_id; /* our channel number (server: always 0) */
     uint32_t rwnd;   /* remote window */
-    
+
     /* Shell state */
     int processing;   /* 1 while a command is executing */
     char cwd[64];     /* per-session working directory */
@@ -161,19 +161,19 @@ static int ses_send_raw(struct ssh_session *s, const uint8_t *data, int len) {
 static int ses_send_packet(struct ssh_session *s, uint8_t type,
                            const uint8_t *payload, int payload_len) {
     uint8_t pkt[SSH_SESS_BUF];
-    
+
     /* Build plaintext: uint32 length || byte pad_len || payload || padding */
     int pad_len = 16 - ((1 + payload_len) % 16);
     if (pad_len < 4) pad_len += 16;
-    
+
     int total = 1 + payload_len + pad_len; /* padding_length + payload + padding */
-    
+
     pkt[0] = (total >> 24) & 0xFF;
     pkt[1] = (total >> 16) & 0xFF;
     pkt[2] = (total >> 8) & 0xFF;
     pkt[3] = total & 0xFF;
     pkt[4] = pad_len;
-    
+
     int off = 5;
     /* Message type byte */
     pkt[off++] = type;
@@ -184,24 +184,24 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
     /* Random padding */
     rng_fill_buf(pkt + off, pad_len);
     off += pad_len;
-    
+
     int packet_len = off; /* from padding_length to end of padding */
-    
+
     if (!s->encrypted) {
         /* Send in clear (before NEWKEYS) */
         ses_send_raw(s, pkt, 4 + packet_len);
         s->seq_nr_send++;
         return 0;
     }
-    
+
     /* Encrypt the block (packet_length is not encrypted) */
     uint8_t encrypted[SSH_SESS_BUF];
     memcpy(encrypted, pkt, 4); /* packet_length in clear */
-    
+
     /* Encrypt from padding_length onwards */
     aes_cbc_encrypt(&s->send_cipher.ctx, s->send_cipher.iv,
                     pkt + 4, encrypted + 4, packet_len);
-    
+
     /* Compute MAC */
     uint8_t mac[32];
     uint8_t seq_buf[4];
@@ -210,7 +210,7 @@ static int ses_send_packet(struct ssh_session *s, uint8_t type,
     memcpy(mac_input, seq_buf, 4);
     memcpy(mac_input + 4, pkt, 4 + packet_len);
     hmac_sha256(s->send_mac_key, 32, mac_input, 4 + 4 + packet_len, mac);
-    
+
     ses_send_raw(s, encrypted, 4 + packet_len);
     ses_send_raw(s, mac, 32);
     s->seq_nr_send++;
@@ -247,40 +247,40 @@ static int compute_exchange_hash(struct ssh_session *s,
                                   const bignum *K) {
     uint8_t buf[SSH_SESS_BUF];
     int off = 0;
-    
+
     /* V_C: client version string (including \r\n) */
     const char *ver_c = "SSH-2.0-OSSSH\r\n";
     int ver_c_len = strlen(ver_c);
     memcpy(buf + off, ver_c, ver_c_len); off += ver_c_len;
-    
+
     /* V_S: server version string (including \r\n) */
     const char *ver_s = "SSH-2.0-OSSSH\r\n";
     int ver_s_len = strlen(ver_s);
     memcpy(buf + off, ver_s, ver_s_len); off += ver_s_len;
-    
+
     /* I_C: client KEXINIT payload (without length prefix) */
     /* We need to strip the 4-byte length from the stored packet */
     const uint8_t *client_kex_payload = s->client_kex;
     int client_kex_payload_len = s->client_kex_len;
     memcpy(buf + off, client_kex_payload, client_kex_payload_len); off += client_kex_payload_len;
-    
+
     /* I_S: server KEXINIT payload */
     const uint8_t *server_kex_payload = s->server_kex;
     int server_kex_payload_len = s->server_kex_len;
     memcpy(buf + off, server_kex_payload, server_kex_payload_len); off += server_kex_payload_len;
-    
+
     /* K_S: host key blob */
     memcpy(buf + off, host_key_blob, host_key_blob_len); off += host_key_blob_len;
-    
+
     /* e: client DH public key (mpint) */
     off += pmpint(buf + off, e);
-    
+
     /* f: server DH public key (mpint) */
     off += pmpint(buf + off, f);
-    
+
     /* K: shared secret (mpint) */
     off += pmpint(buf + off, K);
-    
+
     /* Hash it */
     sha256_hash(s->exchange_hash, buf, off);
     return 0;
@@ -291,11 +291,11 @@ static void derive_keys(struct ssh_session *s,
                          const bignum *K, const uint8_t *H, int H_len,
                          uint8_t session_id[32]) {
     /* Compute multiple rounds of HASH(K || H || X || session_id)
-    
+
        For simplicity, derive using the standard SSH key derivation:
        Multiple rounds of HASH(K || H || X || session_id)
        where X = 'A', 'B', 'C', 'D', 'E', 'F' for each key */
-    
+
     /* We need:
        IV_c2s = first 16 bytes of HASH(K || H || "A" || session_id)
        IV_s2c = first 16 bytes of HASH(K || H || "B" || session_id)
@@ -304,14 +304,14 @@ static void derive_keys(struct ssh_session *s,
        MAC_c2s = HASH(K || H || "E" || session_id)
        MAC_s2c = HASH(K || H || "F" || session_id)
     */
-    
+
     uint8_t K_bytes[256];
     int K_len = bn_to_bytes(K, K_bytes, 0);
-    
+
     /* H is exchange_hash, H_len = 32 */
     char letters[] = {'A', 'B', 'C', 'D', 'E', 'F'};
     uint8_t output[6][32];
-    
+
     for (int i = 0; i < 6; i++) {
         struct sha256_ctx ctx;
         sha256_init(&ctx);
@@ -322,27 +322,27 @@ static void derive_keys(struct ssh_session *s,
         K_prefixed[kp_len++] = K_len;
         memcpy(K_prefixed + kp_len, K_bytes, K_len);
         kp_len += K_len;
-        
+
         sha256_update(&ctx, K_prefixed, kp_len);
         sha256_update(&ctx, H, H_len);
         sha256_update(&ctx, &letters[i], 1);
         sha256_update(&ctx, session_id, 32);
         sha256_final(output[i], &ctx);
     }
-    
+
     /* Assign keys based on our role (server) */
     memcpy(s->send_cipher.iv, output[1], 16);    /* IV_s2c */
     memcpy(s->send_cipher.key, output[3], 16);   /* Enc_s2c */
     memcpy(s->send_mac_key, output[5], 32);      /* MAC_s2c */
-    
+
     memcpy(s->recv_cipher.iv, output[0], 16);    /* IV_c2s */
     memcpy(s->recv_cipher.key, output[2], 16);   /* Enc_c2s */
     memcpy(s->recv_mac_key, output[4], 32);      /* MAC_c2s */
-    
+
     /* Initialize AES contexts */
     aes_init(&s->send_cipher.ctx, s->send_cipher.key, 16);
     aes_init(&s->recv_cipher.ctx, s->recv_cipher.key, 16);
-    
+
     s->seq_nr_send = 0;
     s->seq_nr_recv = 0;
     s->encrypted = 1;
@@ -394,7 +394,7 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
     int type_len;
     const uint8_t *type_str = ssh_read_string(data, len, &off, &type_len);
     if (!type_str) return;
-    
+
     /* We only support "session" channels */
     if (type_len == 7 && memcmp(type_str, "session", 7) == 0) {
         /* Read sender channel and initial window */
@@ -402,10 +402,10 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
         uint32_t window = g32(data + off); off += 4;
         uint32_t max_pkt = g32(data + off); off += 4;
         (void)max_pkt;
-        
+
         s->channel_id = 0; /* our channel number */
         s->rwnd = window;
-        
+
         /* Send CHANNEL_OPEN_CONFIRMATION */
         uint8_t resp[20];
         int roff = 0;
@@ -414,7 +414,7 @@ static void handle_channel_open(struct ssh_session *s, const uint8_t *data, int 
         p32(resp + roff, 65536); roff += 4;  /* initial window */
         p32(resp + roff, 32768); roff += 4;  /* max packet */
         ses_send_packet(s, SSH_MSG_CHANNEL_OPEN_CONFIRMATION, resp, roff);
-        
+
         s->channel_open = 1;
     } else {
         /* Reject unknown channel types */
@@ -435,14 +435,14 @@ static void handle_channel_request(struct ssh_session *s, const uint8_t *data, i
     const uint8_t *req_type = ssh_read_string(data, len, &off, &req_type_len);
     if (!req_type) return;
     int want_reply = data[off++];
-    
+
     if (req_type_len == 4 && memcmp(req_type, "shell", 4) == 0) {
         /* Start shell */
         if (want_reply)
             ses_send_packet(s, SSH_MSG_CHANNEL_SUCCESS, (uint8_t[]){ (recip >> 24) & 0xFF, (recip >> 16) & 0xFF, (recip >> 8) & 0xFF, recip & 0xFF }, 4);
-        
+
         s->phase = SSH_PHASE_SESSION;
-        
+
         /* Send welcome banner */
         kprintf_set_hook(ssh_output_hook, s);
         kprintf_set_flush(ssh_flush_hook, s);
@@ -471,7 +471,7 @@ static void process_command(struct ssh_session *s) {
     char *cmd = s->cmd_buf;
     while (*cmd == ' ') cmd++;
     if (*cmd == '\0') return;
-    
+
     if (strcmp(cmd, "exit") == 0 || strcmp(cmd, "quit") == 0) {
         kprintf_set_hook(ssh_output_hook, s);
         kprintf("Goodbye!\n");
@@ -481,18 +481,18 @@ static void process_command(struct ssh_session *s) {
         s->active = 0;
         return;
     }
-    
+
     if (shell_history_add_ptr) shell_history_add_ptr(s->cmd_buf);
     s->processing = 1;
-    
+
     kprintf_set_hook(ssh_output_hook, s);
     kprintf_set_flush(ssh_flush_hook, s);
     if (shell_process_line_ptr) shell_process_line_ptr(cmd);
     kprintf_set_flush(0, 0);
     kprintf_set_hook(0, 0);
-    
+
     s->processing = 0;
-    
+
     kprintf_set_hook(ssh_output_hook, s);
     kprintf("os> ");
     kprintf_set_hook(0, 0);
@@ -507,11 +507,11 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
     int data_len;
     const uint8_t *chan_data = ssh_read_string(data, len, &off, &data_len);
     if (!chan_data || data_len == 0) return;
-    
+
     /* Process each character */
     for (int i = 0; i < data_len; i++) {
         uint8_t c = chan_data[i];
-        
+
         if (c == '\r') continue;
         if (c == '\n' || c == '\0') {
             s->cmd_buf[s->cmd_len] = '\0';
@@ -521,7 +521,7 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
             s->cmd_len = 0;
             continue;
         }
-        
+
         if (c == 127 || c == '\b') {
             if (s->cmd_len > 0) {
                 s->cmd_len--;
@@ -530,7 +530,7 @@ static void handle_channel_data(struct ssh_session *s, const uint8_t *data, int 
             }
             continue;
         }
-        
+
         if (c >= 32 && c < 127 && s->cmd_len < 1023) {
             s->cmd_buf[s->cmd_len++] = c;
             char echo = c;
@@ -555,13 +555,13 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     s->client_kex_len = (len > 4) ? len - 4 : 0;
     if (s->client_kex_len > 0)
         memcpy(s->client_kex, data + 4, s->client_kex_len);
-    
+
     /* Build server KEXINIT */
     uint8_t kex[256];
     int off = 0;
     /* Cookie (16 random bytes) */
     rng_fill_buf(kex + off, 16); off += 16;
-    
+
     /* Algorithm lists (as strings) */
     const char *kex_algos = "diffie-hellman-group14-sha256";
     const char *hostkey_algos = "ssh-rsa";
@@ -569,7 +569,7 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     const char *mac_algos = "hmac-sha2-256";
     const char *comp_algos = "none";
     const char *lang = "";
-    
+
     off += pstr(kex + off, (const uint8_t *)kex_algos, strlen(kex_algos));
     off += pstr(kex + off, (const uint8_t *)hostkey_algos, strlen(hostkey_algos));
     off += pstr(kex + off, (const uint8_t *)enc_algos, strlen(enc_algos));
@@ -588,11 +588,11 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     int pad = 0;
     while ((off + pad + 1) % 8 != 0) pad++;
     rng_fill_buf(kex + off, pad); off += pad;
-    
+
     /* Store server KEXINIT payload */
     s->server_kex_len = off;
     memcpy(s->server_kex, kex, off);
-    
+
     /* Send KEXINIT as a packet */
     ses_send_raw(s, (const uint8_t[]){0,0,0,0}, 4); /* dummy - we'll send properly */
     /* Actually, send as proper packet */
@@ -603,7 +603,7 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     kex_pkt[1] = (kex_pkt_len >> 16) & 0xFF;
     kex_pkt[2] = (kex_pkt_len >> 8) & 0xFF;
     kex_pkt[3] = kex_pkt_len & 0xFF;
-    
+
     int pad_len = 16 - ((1 + off) % 16);
     if (pad_len < 4) pad_len += 16;
     int actual_len = 1 + off + pad_len;
@@ -615,67 +615,67 @@ static void handle_kexinit(struct ssh_session *s, const uint8_t *data, int len) 
     kex_pkt[5] = SSH_MSG_KEXINIT;
     memcpy(kex_pkt + 6, kex, off);
     rng_fill_buf(kex_pkt + 6 + off, pad_len);
-    
+
     ses_send_raw(s, kex_pkt, 4 + actual_len);
-    
+
     /* Now we wait for KEXDH_INIT */
 }
 
 static void handle_kexdh_init(struct ssh_session *s, const uint8_t *data, int len) {
     int off = 0;
     uint8_t msg_type = data[off++]; (void)msg_type;
-    
+
     /* Skip padding to get to the payload */
     /* Actually, the mpint e is right after the msg type byte */
     bignum e;
     if (ssh_read_mpint(data + off, len - off, &off, &e) < 0) return;
-    
+
     /* Generate server's DH key pair */
     bignum f;
     dh_generate_key(&f, &s->dh_priv);
     bn_copy(&s->dh_pub, &f);
-    
+
     /* Compute shared secret K = e^priv mod p */
     dh_compute_shared(&s->dh_shared, &e, &s->dh_priv);
-    
+
     /* Get host key blob */
     int hk_len;
     const uint8_t *hk = rsa_get_pubkey_blob(&hk_len);
-    
+
     /* Compute exchange hash */
     compute_exchange_hash(s, hk, hk_len, &e, &f, &s->dh_shared);
     memcpy(s->session_id, s->exchange_hash, 32);
-    
+
     /* Sign the exchange hash with host key */
     uint8_t sig[256];
     rsa_sign(s->exchange_hash, sig);
-    
+
     /* Build KEXDH_REPLY */
     uint8_t reply[4096];
     int roff = 0;
-    
+
     /* Host key blob */
     memcpy(reply + roff, hk, hk_len); roff += hk_len;
-    
+
     /* f (server's DH public key) */
     roff += pmpint(reply + roff, &f);
-    
+
     /* Signature of H */
     /* Signature blob = string "ssh-rsa" || string(sig) */
     uint8_t sig_blob[512];
     int sblen = 0;
     sblen += pstr(sig_blob + sblen, (const uint8_t *)"ssh-rsa", 7);
     sblen += pstr(sig_blob + sblen, sig, 256);
-    
+
     roff += pstr(reply + roff, sig_blob, sblen);
-    
+
     ses_send_packet(s, SSH_MSG_KEXDH_REPLY, reply, roff);
 }
 
 static void handle_newkeys(struct ssh_session *s) {
     /* Derive all keys from shared secret */
     derive_keys(s, &s->dh_shared, s->exchange_hash, 32, s->session_id);
-    
+
     s->phase = SSH_PHASE_NEWKEYS;
     s->kex_done = 1;
 }
@@ -686,7 +686,7 @@ static void handle_service_request(struct ssh_session *s, const uint8_t *data, i
     int name_len;
     const uint8_t *name = ssh_read_string(data, len, &off, &name_len);
     if (!name) return;
-    
+
     if (name_len == 12 && memcmp(name, "ssh-userauth", 12) == 0) {
         /* Send SERVICE_ACCEPT */
         uint8_t resp[4];
@@ -703,34 +703,34 @@ static void handle_service_request(struct ssh_session *s, const uint8_t *data, i
 /* Handle SSH_MSG_USERAUTH_REQUEST */
 static void handle_userauth_request(struct ssh_session *s, const uint8_t *data, int len) {
     int off = 6; /* skip header */
-    
+
     int user_len;
     const uint8_t *user = ssh_read_string(data, len, &off, &user_len);
     int svc_len;
     const uint8_t *svc = ssh_read_string(data, len, &off, &svc_len);
     int method_len;
     const uint8_t *method = ssh_read_string(data, len, &off, &method_len);
-    
+
     if (!user || !svc || !method) return;
     (void)svc;
-    
+
     if (method_len == 8 && memcmp(method, "password", 8) == 0) {
         /* Read password */
         int has_changed = data[off++]; (void)has_changed;
         int pass_len;
         const uint8_t *pass = ssh_read_string(data, len, &off, &pass_len);
-        
+
         if (pass) {
             char pass_buf[128];
             int pl = pass_len < 127 ? pass_len : 127;
             memcpy(pass_buf, pass, pl);
             pass_buf[pl] = '\0';
-            
+
             char user_buf[64];
             int ul = user_len < 63 ? user_len : 63;
             memcpy(user_buf, user, ul);
             user_buf[ul] = '\0';
-            
+
             /* Authenticate against system users */
             if (session_login(user_buf, pass_buf) == 0) {
                 /* Success */
@@ -740,7 +740,7 @@ static void handle_userauth_request(struct ssh_session *s, const uint8_t *data, 
             }
         }
     }
-    
+
     /* Authentication failed */
     uint8_t fail[64];
     int foff = 0;
@@ -755,7 +755,7 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
     s->recv_len += len;
     if (s->recv_len > SSH_SESS_BUF) s->recv_len = SSH_SESS_BUF;
     memcpy(s->recv_buf, data, len < SSH_SESS_BUF ? len : SSH_SESS_BUF);
-    
+
     if (s->phase == SSH_PHASE_VERSION) {
         /* Check for newline */
         for (int i = 0; i < s->recv_len; i++) {
@@ -767,30 +767,30 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
         }
         return;
     }
-    
+
     /* Process packets once we have at least length field */
     int consumed = 0;
-    
+
     while (consumed < s->recv_len) {
         int remaining = s->recv_len - consumed;
         if (remaining < 4) break;
-        
+
         int pkt_len = g32(s->recv_buf + consumed);
         if (pkt_len < 1 || pkt_len > 35000) break;
-        
+
         int total_pkt = 4 + pkt_len;
         if (!s->encrypted)
             total_pkt += 0; /* no MAC before encryption */
         else
             total_pkt += 32; /* MAC length */
-        
+
         if (remaining < total_pkt) break;
-        
+
         uint8_t *pkt = s->recv_buf + consumed;
         int type;
         uint8_t *payload;
         int payload_len;
-        
+
         if (!s->encrypted) {
             int pad = pkt[4];
             type = pkt[5];
@@ -805,7 +805,7 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
             memcpy(decrypted, pkt + 4, dec_len);
             aes_cbc_decrypt(&s->recv_cipher.ctx, s->recv_cipher.iv,
                            decrypted, decrypted, dec_len);
-            
+
             int pad = decrypted[0];
             type = decrypted[1];
             payload = decrypted + 2;
@@ -813,7 +813,7 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
             if (payload_len < 0) payload_len = 0;
             s->seq_nr_recv++;
         }
-        
+
         /* Dispatch */
         switch (s->phase) {
             case SSH_PHASE_KEX_INIT:
@@ -822,7 +822,7 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
                     s->phase = SSH_PHASE_KEX;
                 }
                 break;
-            
+
             case SSH_PHASE_KEX:
                 if (type == SSH_MSG_KEXDH_INIT) {
                     handle_kexdh_init(s, pkt, total_pkt);
@@ -830,24 +830,24 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
                     handle_newkeys(s);
                 }
                 break;
-            
+
             case SSH_PHASE_NEWKEYS:
                 if (type == SSH_MSG_SERVICE_REQUEST)
                     handle_service_request(s, pkt, total_pkt);
                 break;
-            
+
             case SSH_PHASE_AUTH:
                 if (type == SSH_MSG_USERAUTH_REQUEST)
                     handle_userauth_request(s, pkt, total_pkt);
                 break;
-            
+
             case SSH_PHASE_CHANNEL:
                 if (type == SSH_MSG_CHANNEL_OPEN)
                     handle_channel_open(s, payload, payload_len);
                 else if (type == SSH_MSG_CHANNEL_REQUEST)
                     handle_channel_request(s, payload, payload_len);
                 break;
-            
+
             case SSH_PHASE_SESSION:
                 if (type == SSH_MSG_CHANNEL_DATA)
                     handle_channel_data(s, payload, payload_len);
@@ -857,14 +857,14 @@ static void process_ssh_data(struct ssh_session *s, const uint8_t *data, int len
                 } else if (type == SSH_MSG_CHANNEL_REQUEST)
                     handle_channel_request(s, payload, payload_len);
                 break;
-            
+
             default:
                 break;
         }
-        
+
         consumed += total_pkt;
     }
-    
+
     /* Remove consumed data */
     if (consumed > 0 && consumed < s->recv_len) {
         memmove(s->recv_buf, s->recv_buf + consumed, s->recv_len - consumed);
@@ -880,10 +880,10 @@ static void on_connect(int conn_id) {
     struct ssh_session *s = alloc_session(conn_id);
     if (!s) { net_tcp_close(conn_id); return; }
     service_log("sshd", "client connected");
-    
+
     /* Initialize DH */
     dh_init();
-    
+
     /* Send SSH version string - the version exchange starts from server */
     const char *ver = "SSH-2.0-OSSSH\r\n";
     ses_send_raw(s, (const uint8_t *)ver, strlen(ver));
@@ -893,7 +893,7 @@ static void on_data(int conn_id, const void *data, uint16_t len) {
     struct ssh_session *s = find_session(conn_id);
     if (!s) return;
     if (s->processing) return;
-    
+
     process_ssh_data(s, (const uint8_t *)data, len);
 }
 

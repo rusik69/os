@@ -34,6 +34,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "export.h"
+#include "kernel.h"
 
 /* ── Integer limit constants (not all compilers provide <stdint.h>
  *     in -ffreestanding, and types.h only defines INT32_MAX). ─────── */
@@ -259,8 +260,8 @@ static int parse_symbol_table(struct module_elf_context *ctx)
     }
 
     int num_syms = (int)(symtab_sh->sh_size / symtab_sh->sh_entsize);
-    if (num_syms > (int)(sizeof(ctx->syms) / sizeof(ctx->syms[0]))) {
-        num_syms = (int)(sizeof(ctx->syms) / sizeof(ctx->syms[0]));
+    if (num_syms > (int)ARRAY_SIZE(ctx->syms)) {
+        num_syms = (int)ARRAY_SIZE(ctx->syms);
     }
     ctx->num_syms = num_syms;
 

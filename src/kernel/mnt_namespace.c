@@ -140,7 +140,7 @@ int mnt_ns_mount(struct mnt_namespace *ns, const char *mountpoint,
                  struct vfs_ops *ops, void *priv, int flags)
 {
     if (!ns || !mountpoint) {
-        extern int vfs_mount_ex(const char *, struct vfs_ops *, void *, int);
+        extern int vfs_mount_ex(const char *, const struct vfs_ops *, void *, int);
         return vfs_mount_ex(mountpoint, ops, priv, flags);
     }
 

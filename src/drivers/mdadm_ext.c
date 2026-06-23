@@ -1847,17 +1847,14 @@ int mdadm_ext_init(void)
     return 0;
 }
 /* ── Stub: mdadm_ext_rebuild ─────────────────────────────── */
-int mdadm_ext_rebuild(const char *dev)
+int mdadm_ext_rebuild(__maybe_unused const char *dev)
 {
-    (void)dev;
     kprintf("[mdadm] mdadm_ext_rebuild: not yet implemented\n");
     return 0;
 }
 /* ── Stub: mdadm_ext_check ─────────────────────────────── */
-int mdadm_ext_check(const char *dev, void *status)
+int mdadm_ext_check(__maybe_unused const char *dev, __maybe_unused void *status)
 {
-    (void)dev;
-    (void)status;
     kprintf("[mdadm] mdadm_ext_check: not yet implemented\n");
     return 0;
 }

@@ -264,6 +264,7 @@ void trace_ev_dump(int limit)
             case TRACE_EV_PAGE_FAULT:    type_name = "page_fault";    break;
             case TRACE_EV_SYSCALL_ENTER: type_name = "syscall_enter"; break;
             case TRACE_EV_SYSCALL_EXIT:  type_name = "syscall_exit";  break;
+            default: break;
         }
 
         kprintf("  [%u] CPU%u tick=%llu %s\n",

@@ -6,6 +6,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "export.h"
+#include "kernel.h"
 #include "stdio.h"
 #include "module.h"      /* request_module() for PCI driver autoloading */
 
@@ -1231,7 +1232,7 @@ uint64_t pci_ltr_to_ns(uint16_t ltr_reg) {
         1ULL, 32ULL, 1024ULL, 32768ULL, 1048576ULL, 33554432ULL
     };
 
-    if (scale >= sizeof(ltr_scales) / sizeof(ltr_scales[0]))
+    if (scale >= ARRAY_SIZE(ltr_scales))
         return 0;  /* Invalid scale */
 
     return (uint64_t)raw_val * ltr_scales[scale];

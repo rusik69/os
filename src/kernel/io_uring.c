@@ -649,7 +649,7 @@ int io_uring_poll(struct io_ring *ring, uint32_t poll_mask)
     }
 
     /* Flush any pending CQEs to the shared ring */
-    uint32_t flushed = io_ring_flush_cqes(ring);
+    (void)io_ring_flush_cqes(ring);
 
     /* Determine poll result based on available CQEs */
     uint32_t avail = ring->cq_pending_tail - ring->cq_pending_head;

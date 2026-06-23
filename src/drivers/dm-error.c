@@ -25,9 +25,8 @@
 /* ── Target operations ────────────────────────────────────────────── */
 
 /* Constructor: no arguments needed. */
-static int error_ctr(struct dm_target *ti, int argc, const char **argv)
+static int error_ctr(struct dm_target *ti, int argc, __maybe_unused const char **argv)
 {
-    (void)argv;
     if (argc != 0) {
         kprintf("[dm-error] ctr: error target takes no arguments, got %d\n", argc);
         return -EINVAL;
@@ -40,9 +39,8 @@ static int error_ctr(struct dm_target *ti, int argc, const char **argv)
 }
 
 /* Destructor: nothing to free. */
-static void error_dtr(struct dm_target *ti)
+static void error_dtr(__maybe_unused struct dm_target *ti)
 {
-    (void)ti;
 }
 
 /* Map: return -EIO for all I/O operations.

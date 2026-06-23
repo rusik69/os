@@ -32,6 +32,9 @@ struct sigaction {
 #ifndef SA_NOCLDSTOP
 #define SA_NOCLDSTOP  0x00000001
 #endif
+
+/* Compile-time ABI assertion: struct sigaction must match userspace expectations */
+_Static_assert(sizeof(struct sigaction) == 40, "struct sigaction size mismatch");
 #ifndef SA_NOCLDWAIT
 #define SA_NOCLDWAIT  0x00000002
 #endif

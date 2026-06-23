@@ -45,6 +45,7 @@
 #include "smp.h"
 #include "io.h"
 #include "lockdown.h"
+#include "kernel.h"
 
 /* ── Global state ──────────────────────────────────────────────────── */
 
@@ -144,7 +145,7 @@ int kexec_init(void)
 {
     if (kexec_region_reserved) {
         kprintf("[!!] kexec: already initialized\n");
-        return -1;
+        return -EBUSY;
     }
 
     /* Reserve the physical region from PMM so no other allocator uses it. */
@@ -230,6 +231,8 @@ int kexec_load_segments(const struct kexec_segment *segments,
                         unsigned long entry,
                         unsigned long flags)
 {
+    if (!segments) return -EINVAL;
+
     /* Check kexec_load_disabled sysfs toggle */
     if (kexec_load_disabled)
         return -EPERM;
@@ -374,7 +377,7 @@ static void kexec_mask_apic_lvts(void)
         LAPIC_LVT_ERROR,      /* 0x370 — Error */
     };
 
-    for (size_t i = 0; i < sizeof(lvt_entries) / sizeof(lvt_entries[0]); i++) {
+    for (size_t i = 0; i < ARRAY_SIZE(lvt_entries); i++) {
         uint32_t val = apic_read(lvt_entries[i]);
         val |= (1 << 16);       /* set mask bit */
         apic_write(lvt_entries[i], val);

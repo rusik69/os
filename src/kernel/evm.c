@@ -52,7 +52,7 @@ static const char *g_evm_protected_xattrs[EVM_XATTR_MAX] = {
 static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZE])
 {
     if (!path || !g_evm_key_set)
-        return -1;
+        return -EINVAL;
 
     /* Collect all protected xattr values into a buffer */
     uint8_t *buf = NULL;
@@ -60,7 +60,7 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
     uint32_t buf_cap = 256;
 
     buf = (uint8_t *)kmalloc(buf_cap);
-    if (!buf) return -1;
+    if (!buf) return -ENOMEM;
 
     for (int i = 0; i < EVM_XATTR_MAX; i++) {
         uint8_t xattr_val[256];
@@ -76,7 +76,7 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
         if (buf_len + needed > buf_cap) {
             buf_cap = buf_len + needed + 128;
             uint8_t *new_buf = (uint8_t *)krealloc(buf, buf_cap);
-            if (!new_buf) { kfree(buf); return -1; }
+            if (!new_buf) { kfree(buf); return -ENOMEM; }
             buf = new_buf;
         }
 
@@ -112,11 +112,11 @@ static int evm_compute_hmac(const char *path, uint8_t hmac_out[SHA256_DIGEST_SIZ
 int evm_set_xattr(const char *path)
 {
     if (!path || !g_evm_key_set)
-        return -1;
+        return -EINVAL;
 
     uint8_t hmac[SHA256_DIGEST_SIZE];
     if (evm_compute_hmac(path, hmac) < 0)
-        return -1;
+        return -EIO;
 
     /* Write security.evm xattr — this is the HMAC of the protected xattrs */
     return vfs_setxattr(path, "security.evm", hmac, SHA256_DIGEST_SIZE);
@@ -135,7 +135,7 @@ int evm_set_xattr(const char *path)
 int evm_verify_xattr(const char *path)
 {
     if (!path || !g_evm_key_set)
-        return -1;
+        return -EINVAL;
 
     /* Read security.evm xattr */
     uint8_t stored_hmac[SHA256_DIGEST_SIZE];
@@ -152,7 +152,7 @@ int evm_verify_xattr(const char *path)
     /* Compute expected HMAC */
     uint8_t computed[SHA256_DIGEST_SIZE];
     if (evm_compute_hmac(path, computed) < 0)
-        return -1;
+        return -EIO;
 
     /* Compare */
     if (memcmp(computed, stored_hmac, SHA256_DIGEST_SIZE) == 0)
@@ -206,7 +206,7 @@ int evm_check_file(const char *path)
 int evm_set_key(const uint8_t *key, uint32_t len)
 {
     if (!key || len < EVM_KEY_SIZE)
-        return -1;
+        return -EINVAL;
 
     memcpy(g_evm_key, key, EVM_KEY_SIZE);
     g_evm_key_set = 1;

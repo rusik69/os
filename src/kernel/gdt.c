@@ -103,6 +103,7 @@ void tss_set_ist(int index, uint64_t stack_top) {
         case 5: kernel_tss.ist5 = stack_top; break;
         case 6: kernel_tss.ist6 = stack_top; break;
         case 7: kernel_tss.ist7 = stack_top; break;
+        default: break;
     }
 }
 

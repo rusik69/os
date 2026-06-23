@@ -187,6 +187,9 @@ uint32_t apic_timer_calibrate(void) {
 
 static volatile uint32_t *ioapic = NULL;
 
+/* Maximum I/O APIC redirection entry index (set during ioapic_init) */
+static uint8_t ioapic_nr_entries = 0;
+
 static void ioapic_write_reg(uint32_t reg, uint32_t val) {
     ioapic[IOAPIC_INDEX / 4] = reg;
     ioapic[IOAPIC_DATA / 4] = val;
@@ -206,6 +209,7 @@ void ioapic_init(void) {
     uint32_t id = ioapic_read_reg(IOAPIC_ID);
     uint32_t ver = ioapic_read_reg(IOAPIC_VER);
     uint8_t max_redir = (ver >> 16) & 0xFF;
+    ioapic_nr_entries = max_redir;  /* store for bounds checks in other routines */
 
     kprintf("[OK] I/O APIC (ID=0x%lx, max_redir=%u)\n", (unsigned long)(id >> 24), (unsigned int)(max_redir + 1));
 
@@ -221,17 +225,20 @@ void ioapic_init(void) {
      * PIC's output through the I/O APIC, so each driver only needs
      * pic_unmask() + ioapic_unmask_irq(). */
     for (int i = 0; i < 16 && i <= max_redir; i++) {
-        uint32_t low = IOAPIC_MASKED | (7 << 8) | (0 << 11) | (0 << 15);
+        uint32_t low = IOAPIC_MASKED | (7 << 8);
         ioapic_write_reg(IOAPIC_REDTBL + i * 2, low);
         ioapic_write_reg(IOAPIC_REDTBL + i * 2 + 1, 0);
     }
 }
 
 void ioapic_redirect_extint(uint8_t irq) {
+    /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
+    if (irq > ioapic_nr_entries)
+        return;
     /* Configure I/O APIC pin for ExtINT delivery.
      * ExtINT forwards whatever the legacy PIC outputs — used for
      * backward-compatible interrupt routing (PIT, keyboard, etc.). */
-    uint32_t low = (7 << 8) | (0 << 11) | (0 << 15); /* ExtINT, phys, edge */
+    uint32_t low = (7 << 8); /* ExtINT, phys, edge */
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2 + 1, 0);
 }
@@ -245,6 +252,9 @@ void irq_ack(uint8_t irq) {
 }
 
 void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id) {
+    /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
+    if (irq > ioapic_nr_entries)
+        return;
     uint32_t low = vector | (apic_id << 24);  /* physical destination mode */
     uint32_t high = 0;
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low);
@@ -252,11 +262,17 @@ void ioapic_redirect_irq(uint8_t irq, uint8_t vector, uint32_t apic_id) {
 }
 
 void ioapic_mask_irq(uint8_t irq) {
+    /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
+    if (irq > ioapic_nr_entries)
+        return;
     uint32_t low = ioapic_read_reg(IOAPIC_REDTBL + irq * 2);
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low | IOAPIC_MASKED);
 }
 
 void ioapic_unmask_irq(uint8_t irq) {
+    /* Bounds check: ensure irq does not exceed I/O APIC redirection entries */
+    if (irq > ioapic_nr_entries)
+        return;
     uint32_t low = ioapic_read_reg(IOAPIC_REDTBL + irq * 2);
     ioapic_write_reg(IOAPIC_REDTBL + irq * 2, low & ~IOAPIC_MASKED);
 }

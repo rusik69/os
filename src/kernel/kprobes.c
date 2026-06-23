@@ -101,14 +101,14 @@ static int text_poke_write(uint64_t addr, uint8_t value) {
     if (!phys) {
         kprintf("[KPROBES] text_poke: no physical mapping for 0x%llX\n",
                 (unsigned long long)addr);
-        return -1;
+        return -EFAULT;
     }
 
     /* Map the physical page at our scratch address with write permission */
     uint64_t poke_vaddr = TEXT_POKE_BASE;
     if (vmm_map_page(poke_vaddr, phys, VMM_FLAG_PRESENT | VMM_FLAG_WRITE) < 0) {
         kprintf("[KPROBES] text_poke: vmm_map_page failed\n");
-        return -1;
+        return -EIO;
     }
 
     /* Write the byte */
@@ -147,7 +147,7 @@ static int kprobe_find_free_slot(void) {
             return i;
         }
     }
-    return -1;
+    return -ENOSPC;
 }
 
 /* Estimate the length of the instruction at @addr by reading opcode bytes.
@@ -264,7 +264,7 @@ static int kprobe_estimate_insn_len(uint64_t addr) {
 
     /* ADD/OR/ADC/SBB/AND/SUB/XOR/CMP AL, imm8 — 2 bytes */
     if (b0 >= 0x04 && b0 <= 0x0D && b0 != 0x0A && b0 != 0x0B)
-        return (b0 == 0x0C || b0 == 0x0D) ? 2 : 2;
+        return 2;
 
     /* PUSH/POP reg (0x50-0x5F) */
     if (b0 >= 0x50 && b0 <= 0x5F) return 1;
@@ -338,31 +338,31 @@ void kprobes_init(void) {
 int register_kprobe(struct kprobe *kp) {
     if (!kp || !kp->addr) {
         kprintf("[KPROBES] register_kprobe: NULL probe or addr\n");
-        return -1;
+        return -EINVAL;
     }
 
     if (!kp->pre_handler && !kp->post_handler) {
         kprintf("[KPROBES] register_kprobe: no handlers set\n");
-        return -1;  /* at least one handler required */
+        return -EINVAL;  /* at least one handler required */
     }
 
     if (!g_kprobes_initialized) {
         kprintf("[KPROBES] register_kprobe: kprobes not initialized\n");
-        return -1;
+        return -ENOSYS;
     }
 
     /* Check if already registered */
     if (kprobe_find(kp->addr)) {
         kprintf("[KPROBES] register_kprobe: already probed at 0x%llX\n",
                 (unsigned long long)kp->addr);
-        return -1;
+        return -EBUSY;
     }
 
     /* Find a free slot */
     int slot = kprobe_find_free_slot();
     if (slot < 0) {
         kprintf("[KPROBES] register_kprobe: table full (%d max)\n", KPROBES_MAX);
-        return -1;
+        return -ENOSPC;
     }
 
     /* Save the original opcode */
@@ -377,7 +377,7 @@ int register_kprobe(struct kprobe *kp) {
         kp->flags = 0;
         kprintf("[KPROBES] register_kprobe: text_poke_write failed at 0x%llX\n",
                 (unsigned long long)kp->addr);
-        return -1;
+        return -EIO;
     }
 
     g_kprobes[slot] = kp;
@@ -391,13 +391,13 @@ int register_kprobe(struct kprobe *kp) {
 
 int unregister_kprobe(struct kprobe *kp) {
     if (!kp || !(kp->flags & KPROBE_FLAG_ACTIVE))
-        return -1;
+        return -EINVAL;
 
     /* Restore the original opcode */
     if (text_poke_write(kp->addr, kp->orig_opcode) < 0) {
         kprintf("[KPROBES] unregister_kprobe: text_poke_write failed at 0x%llX\n",
                 (unsigned long long)kp->addr);
-        return -1;
+        return -EIO;
     }
 
     kp->flags = 0;
@@ -556,7 +556,7 @@ static int kretprobe_alloc_instance(struct kretprobe *rp) {
             return i;
         }
     }
-    return -1;
+    return -ENOSPC;
 }
 
 /* Free an instance slot by index. */
@@ -664,12 +664,12 @@ void kretprobe_init(void) {
 int register_kretprobe(struct kretprobe *rp) {
     if (!rp || !rp->addr) {
         kprintf("[KPROBES] register_kretprobe: NULL or no addr\n");
-        return -1;
+        return -EINVAL;
     }
 
     if (!rp->handler) {
         kprintf("[KPROBES] register_kretprobe: no handler set\n");
-        return -1;
+        return -EINVAL;
     }
 
     if (rp->maxactive <= 0)
@@ -701,7 +701,7 @@ int register_kretprobe(struct kretprobe *rp) {
 }
 
 int unregister_kretprobe(struct kretprobe *rp) {
-    if (!rp) return -1;
+    if (!rp) return -EINVAL;
 
     /* Unregister the underlying kprobe */
     int ret = unregister_kprobe(&rp->kp);

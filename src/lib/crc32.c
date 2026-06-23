@@ -12,6 +12,21 @@ static void crc32_init_table(void) {
     }
     crc32_initialized = 1;
 }
+/**
+ * crc32 - Compute CRC-32 checksum (IEEE polynomial 0xEDB88320)
+ * @crc: Initial CRC value (typically 0)
+ * @buf: Pointer to the input data buffer
+ * @len: Length of the input data in bytes
+ *
+ * Computes a CRC-32 checksum over the given data buffer using the
+ * IEEE polynomial. Uses a 256-entry lookup table initialized on first call.
+ * The caller may chain CRC computations by passing the previous return value
+ * as @crc for subsequent blocks.
+ *
+ * Context: Any context. Table initialization on first call is not thread-safe;
+ *          call crc32(0, NULL, 0) once at boot from a safe context to pre-init.
+ * Return: The CRC-32 checksum (inverted, so final value is the standard CRC).
+ */
 uint32_t crc32(uint32_t crc, const void *buf, uint32_t len) {
     if (!crc32_initialized) crc32_init_table();
     const uint8_t *p = (const uint8_t *)buf;

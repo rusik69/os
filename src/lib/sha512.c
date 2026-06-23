@@ -191,6 +191,19 @@ void sha512_final(uint8_t digest[SHA512_DIGEST_SIZE],
     }
 }
 
+/**
+ * sha512_hash - Compute SHA-512 hash of a data buffer
+ * @digest: Output buffer of SHA512_DIGEST_SIZE (64) bytes to receive the hash
+ * @data: Pointer to the input data buffer
+ * @len: Length of the input data in bytes
+ *
+ * Convenience wrapper that initializes a SHA-512 context, feeds the data,
+ * and finalizes the digest in a single call. SHA-512 produces a 64-byte
+ * (512-bit) hash.
+ *
+ * Context: Any context.
+ * Return: void (digest written to @digest).
+ */
 void sha512_hash(uint8_t digest[SHA512_DIGEST_SIZE],
                  const void *data, size_t len)
 {
@@ -206,6 +219,21 @@ void sha512_init_crypto(void)
 }
 
 /* ── hmac_sha512 ─────────────────────────────── */
+/**
+ * hmac_sha512 - Compute HMAC-SHA512 authentication tag
+ * @key: Pointer to the secret key
+ * @klen: Length of the key in bytes
+ * @msg: Pointer to the input message
+ * @mlen: Length of the input message in bytes
+ * @mac: Output buffer for the MAC (SHA512_DIGEST_SIZE = 64 bytes)
+ *
+ * Computes a keyed-hash message authentication code using SHA-512 as the
+ * underlying hash function, following RFC 2104. If the key is longer than
+ * the SHA-512 block size (128 bytes), it is first hashed with SHA-512.
+ *
+ * Context: Any context.
+ * Return: 0 on success.
+ */
 int hmac_sha512(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
 {
     uint8_t k[SHA512_BLOCK_SIZE];

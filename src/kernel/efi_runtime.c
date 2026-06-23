@@ -133,7 +133,7 @@ int efi_get_time(uint16_t *year, uint8_t *month, uint8_t *day,
 
     efi_status_t st = g_efi_rt->get_time(&et, NULL);
     if (st != EFI_SUCCESS)
-        return -1;
+        return -ENOSYS;
 
     if (year)   *year   = et.year;
     if (month)  *month  = et.month;
@@ -189,7 +189,7 @@ int efi_get_variable(const char *name, uint8_t *guid,
         return 0;
     if (st == EFI_NOT_FOUND)
         return -ENOENT;
-    return -1;
+    return -EIO;
 }
 
 /* ── SetVariable ─────────────────────────────────────────────────────── */

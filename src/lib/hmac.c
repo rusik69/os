@@ -8,6 +8,21 @@
 #define HMAC_IPAD 0x36
 #define HMAC_OPAD 0x5C
 
+/**
+ * hmac_md5 - Compute HMAC-MD5 authentication tag
+ * @key: Pointer to the secret key
+ * @key_len: Length of the key in bytes
+ * @data: Pointer to the input message
+ * @data_len: Length of the input message in bytes
+ * @mac: Output buffer of HMAC_MD5_DIGEST_SIZE (16) bytes for the MAC
+ *
+ * Computes a keyed-hash message authentication code using MD5 as the
+ * underlying hash function, following RFC 2104. If the key is longer than
+ * the MD5 block size (64 bytes), it is first hashed with MD5.
+ *
+ * Context: Any context.
+ * Return: void (MAC written to @mac).
+ */
 void hmac_md5(const uint8_t *key, size_t key_len,
               const uint8_t *data, size_t data_len,
               uint8_t mac[HMAC_MD5_DIGEST_SIZE])
@@ -45,6 +60,21 @@ void hmac_md5(const uint8_t *key, size_t key_len,
     md5_final(mac, &ctx);
 }
 
+/**
+ * hmac_sha256 - Compute HMAC-SHA256 authentication tag
+ * @key: Pointer to the secret key
+ * @key_len: Length of the key in bytes
+ * @data: Pointer to the input message
+ * @data_len: Length of the input message in bytes
+ * @mac: Output buffer of HMAC_SHA256_DIGEST_SIZE (32) bytes for the MAC
+ *
+ * Computes a keyed-hash message authentication code using SHA-256 as the
+ * underlying hash function, following RFC 2104. If the key is longer than
+ * the SHA-256 block size (64 bytes), it is first hashed with SHA-256.
+ *
+ * Context: Any context.
+ * Return: void (MAC written to @mac).
+ */
 void hmac_sha256(const uint8_t *key, size_t key_len,
                  const uint8_t *data, size_t data_len,
                  uint8_t mac[HMAC_SHA256_DIGEST_SIZE])

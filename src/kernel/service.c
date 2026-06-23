@@ -4,6 +4,7 @@
 #include "fs.h"
 #include "printf.h"
 #include "string.h"
+#include "kernel.h"
 #include "rtc.h"
 #include "timer.h"
 #include "panic.h"
@@ -43,7 +44,7 @@ void service_init(void) {
         "/tmp",
         "/tmp/www",
     };
-    for (int i = 0; i < (int)(sizeof(dirs) / sizeof(dirs[0])); i++) {
+    for (int i = 0; i < (int)ARRAY_SIZE(dirs); i++) {
         uint32_t sz; uint8_t tp;
         if (fs_stat(dirs[i], &sz, &tp) < 0)
             fs_create(dirs[i], FS_TYPE_DIR);

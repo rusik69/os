@@ -13,6 +13,7 @@
 
 /* ── Async I/O (AIO) basic implementation ────────────────────────────── */
 
+#define AIO_MAX_CTX    4   /* max AIO context slots */
 #define AIO_MAX_EVENTS 64
 #define AIO_MAX_IO 256
 
@@ -65,14 +66,14 @@ static const char *aio_fd_to_path(int fd) {
 /* Submit an AIO read request */
 static int aio_read_submit(struct aiocb *cb) {
     if (!cb) return -EINVAL;
-    
+
     const char *path = aio_fd_to_path(cb->aio_fildes);
     if (!path) return -EBADF;
-    
+
     /* Allocate a temp buffer */
     void *buf = kmalloc(cb->aio_nbytes);
     if (!buf) return -ENOMEM;
-    
+
     /* Perform the read via VFS */
     uint32_t out_size = 0;
     int ret = vfs_read(path, buf, cb->aio_nbytes, &out_size);
@@ -82,7 +83,7 @@ static int aio_read_submit(struct aiocb *cb) {
         cb->aio_errno = -ret;
         return ret;
     }
-    
+
     /* Copy to user buffer (simplified: kernel buffer) */
     /* In real implementation, would copy to user-space via copy_to_user */
     cb->aio_return = out_size;
@@ -94,16 +95,16 @@ static int aio_read_submit(struct aiocb *cb) {
 /* Submit an AIO write request */
 static int aio_write_submit(struct aiocb *cb) {
     if (!cb) return -EINVAL;
-    
+
     const char *path = aio_fd_to_path(cb->aio_fildes);
     if (!path) return -EBADF;
-    
+
     void *buf = kmalloc(cb->aio_nbytes);
     if (!buf) return -ENOMEM;
-    
+
     /* In real impl, copy from userspace */
     memset(buf, 0, cb->aio_nbytes); /* stub data */
-    
+
     int ret = vfs_write(path, buf, cb->aio_nbytes);
     if (ret < 0) {
         kfree(buf);
@@ -111,7 +112,7 @@ static int aio_write_submit(struct aiocb *cb) {
         cb->aio_errno = -ret;
         return ret;
     }
-    
+
     cb->aio_return = cb->aio_nbytes;
     cb->aio_state = 2;
     kfree(buf);
@@ -169,6 +170,10 @@ int aio_submit(struct aiocb *user_cb) {
         }
     }
     if (idx < 0) return -EAGAIN;
+
+    /* Bounds check: ensure idx is within AIO_MAX_CTX (context table limit) */
+    if (idx < 0 || idx >= AIO_MAX_CTX)
+        return -EINVAL;
 
     /* Copy control block */
     memcpy(&aio_cbs[idx], user_cb, sizeof(struct aiocb));

@@ -11,6 +11,7 @@
 #define max(x, y) ({ typeof(x) _x = (x); typeof(y) _y = (y); _x > _y ? _x : _y; })
 #define clamp(v, lo, hi) min(max(v, lo), hi)
 #define abs(x) ({ typeof(x) _x = (x); _x < 0 ? -_x : _x; })
+#define __maybe_unused __attribute__((unused))
 #define barrier() __asm__ volatile("" : : : "memory")
 #define mb()      __asm__ volatile("mfence" : : : "memory")
 #define rmb()     __asm__ volatile("lfence" : : : "memory")

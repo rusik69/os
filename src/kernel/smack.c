@@ -90,6 +90,7 @@ static uint8_t smack_parse_access(const char *str)
             case 'x': mask |= SMACK_MAY_EXEC; break;
             case 'a': mask |= SMACK_MAY_APPEND; break;
             case 't': mask |= SMACK_MAY_TRANSMUTE; break;
+            default: break;
         }
         str++;
     }

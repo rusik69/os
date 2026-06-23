@@ -25,23 +25,21 @@ static int get_cpuid_leaf_b(int level, int *eax, int *ebx)
 struct cpu_topology cpu_topology_get(void)
 {
     struct cpu_topology topo;
-    int level0_width = 0, level1_width = 0;
-    int eax, ebx;
-    int x2apic_id;
 
     /*
      * Probe level 0 (SMT / thread).
      * EAX[4:0] = number of bits to shift for next level
      * EBX[15:0] = number of logical processors at this level
      */
-    x2apic_id = get_cpuid_leaf_b(0, &eax, &ebx);
-    level0_width = eax & 0x1F;
+    int eax, ebx;
+    get_cpuid_leaf_b(0, &eax, &ebx);
+    int level0_width = eax & 0x1F;
 
     /*
      * Probe level 1 (core).
      */
-    x2apic_id = get_cpuid_leaf_b(1, &eax, &ebx);
-    level1_width = eax & 0x1F;
+    int x2apic_id = get_cpuid_leaf_b(1, &eax, &ebx);
+    int level1_width = eax & 0x1F;
 
     /*
      * Derive topology IDs from the x2APIC ID.
@@ -173,9 +171,7 @@ void numa_init(void)
      */
 
     /* Try to detect number of packages from CPU topology */
-    int max_package_id = 0;
     int packages_seen = 0;
-    uint64_t package_map = 0;  /* bitmask of seen package IDs (up to 64) */
 
     /*
      * Walk all online CPUs.  On the BSP we can only probe our own
@@ -194,12 +190,7 @@ void numa_init(void)
 
     /* Each unique package_id → one NUMA node */
     if (topo.package_id >= 0 && topo.package_id < 64) {
-        if (!(package_map & (1ULL << topo.package_id))) {
-            package_map |= (1ULL << topo.package_id);
-            packages_seen++;
-            if (topo.package_id > max_package_id)
-                max_package_id = topo.package_id;
-        }
+        packages_seen++;
     }
 
     /* Ensure at least 1 NUMA node */
@@ -292,9 +283,9 @@ int numa_cpu_is_on_node(int cpu, int node)
  */
 int numa_first_cpu_on_node(int node)
 {
-    if (node < 0 || node >= NUMA_MAX_NODES) return -1;
+    if (node < 0 || node >= NUMA_MAX_NODES) return -EINVAL;
     uint64_t mask = numa_node_cpus[node];
-    if (mask == 0) return -1;
+    if (mask == 0) return -EINVAL;
 
     /* Find lowest set bit */
     int cpu = 0;

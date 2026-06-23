@@ -181,11 +181,9 @@ static int eth_receive(struct net_device *dev,
 
 /* Handle a CDC control request from the USB host controller */
 static int usb_eth_handle_cdc_ctrl(int request, uint16_t value,
-                                    uint16_t index, uint16_t length,
-                                    uint8_t *data)
+                                    __maybe_unused uint16_t index, uint16_t length,
+                                    __maybe_unused uint8_t *data)
 {
-    (void)index;
-    (void)data;
 
     kprintf("[USB ECM] CDC control req=0x%02x val=0x%04x idx=0x%04x len=%u\n",
             request, value, index, length);

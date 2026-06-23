@@ -462,6 +462,7 @@ static void nd_handle_ra(struct ipv6_header *ip6, const uint8_t *payload,
             /* Check A-flag (autonomous address-configuration) */
             if (prefix_flags & 0x40) {
                 struct in6_addr gua;
+                memset(&gua, 0, sizeof(gua));
                 /* Use the prefix with our EUI-64 interface identifier */
                 if (prefix_len == 64) {
                     memcpy(gua.s6_addr, prefix, 8);

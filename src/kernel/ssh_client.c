@@ -56,28 +56,28 @@ struct ssh_client {
     int conn_id;
     int connected;
     int ready;
-    
+
     uint32_t seq_send, seq_recv;
     int encrypted;
     struct aes_ctx send_ctx, recv_ctx;
     uint8_t send_iv[16], recv_iv[16];
     uint8_t send_mac_key[32], recv_mac_key[32];
-    
+
     bignum dh_priv;
     bignum dh_shared;
     uint8_t exchange_hash[32];
     uint8_t session_id[32];
-    
+
     int phase;
     uint8_t rbuf[CLI_BUF];
     int rlen;
-    
+
     char user[64];
     char pass[128];
-    
+
     uint32_t channel_id;
     int channel_open;
-    
+
     ssh_output_fn on_output;
     ssh_close_fn on_close;
     void *ctx;
@@ -94,30 +94,30 @@ static int cl_pkt(struct ssh_client *c, uint8_t type, const uint8_t *pl, int ple
     int pad = 16 - ((1+plen)%16);
     if(pad<4)pad+=16;
     int total = 1+plen+pad;
-    
+
     pkt[0]=(total>>24)&0xFF;pkt[1]=(total>>16)&0xFF;
     pkt[2]=(total>>8)&0xFF;pkt[3]=total&0xFF;
     pkt[4]=pad;int off=5;
     pkt[off++]=type;
     if(pl&&plen){memcpy(pkt+off,pl,plen);off+=plen;}
     rng_fill_buf(pkt+off,pad);off+=pad;
-    
+
     if(!c->encrypted) {
         cl_send(c,pkt,4+total);
         c->seq_send++;
         return 0;
     }
-    
+
     uint8_t enc[CLI_BUF];
     memcpy(enc,pkt,4);
     aes_cbc_encrypt(&c->send_ctx,c->send_iv,pkt+4,enc+4,total);
-    
+
     uint8_t mac[32],sb[4];
     pc32(sb,c->seq_send);
     uint8_t mi[4+4+total];
     memcpy(mi,sb,4);memcpy(mi+4,pkt,4+total);
     hmac_sha256(c->send_mac_key,32,mi,4+4+total,mac);
-    
+
     cl_send(c,enc,4+total);
     cl_send(c,mac,32);
     c->seq_send++;
@@ -184,7 +184,7 @@ static void cl_keys(struct ssh_client *c, const bignum *K,
 /* Process an SSH packet */
 static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int plen) {
     int off;
-    
+
     switch(type) {
     case SSH_MSG_KEXINIT:
         if(c->phase==0||c->phase==1) {
@@ -195,7 +195,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
             c->phase=2;
         }
         break;
-    
+
     case SSH_MSG_KEXDH_REPLY: {
         off=0;
         int hkl;const uint8_t *hk=cstr(pl,plen,&off,&hkl);
@@ -209,7 +209,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
         c->phase=3;
         break;
     }
-    
+
     case SSH_MSG_NEWKEYS:
         c->phase=4;
         {
@@ -217,7 +217,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
             cl_pkt(c,SSH_MSG_SERVICE_REQUEST,svc,so);
         }
         break;
-    
+
     case SSH_MSG_SERVICE_ACCEPT:
         {
             uint8_t auth[512];int ao=0;
@@ -230,7 +230,7 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
             c->phase=5;
         }
         break;
-    
+
     case SSH_MSG_USERAUTH_SUCCESS:
         c->phase=6;
         {
@@ -242,13 +242,13 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
             cl_pkt(c,SSH_MSG_CHANNEL_OPEN,ch,co);
         }
         break;
-    
+
     case SSH_MSG_USERAUTH_FAILURE:
         if(c->on_close) c->on_close(c->ctx);
         net_tcp_close(c->conn_id);
         c->connected=0;
         break;
-    
+
     case SSH_MSG_CHANNEL_OPEN_CONFIRMATION:
         off=0;
         gc32(pl+off);off+=4;
@@ -258,29 +258,29 @@ static void cl_dispatch(struct ssh_client *c, uint8_t type, uint8_t *pl, int ple
         c->ready=1;
         if(c->on_output) c->on_output("\n",1,c->ctx);
         break;
-    
+
     case SSH_MSG_CHANNEL_OPEN_FAILURE:
         if(c->on_close) c->on_close(c->ctx);
         net_tcp_close(c->conn_id);
         c->connected=0;
         break;
-    
+
     case SSH_MSG_CHANNEL_DATA: {
         off=0;gc32(pl+off);off+=4;
         int dl;const uint8_t *d=cstr(pl,plen,&off,&dl);
         if(d&&dl>0&&c->on_output) c->on_output((const char*)d,dl,c->ctx);
         break;
     }
-    
+
     case SSH_MSG_CHANNEL_CLOSE:
         if(c->on_close) c->on_close(c->ctx);
         net_tcp_close(c->conn_id);
         c->connected=0;
         break;
-    
+
     case SSH_MSG_CHANNEL_EOF: break;
     case SSH_MSG_DEBUG: case SSH_MSG_IGNORE: break;
-    
+
     default:
         {uint8_t ui[4];pc32(ui,type);cl_pkt(c,SSH_MSG_UNIMPLEMENTED,ui,4);}
         break;
@@ -292,7 +292,7 @@ void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
     if(c->rlen+len>CLI_BUF)len=CLI_BUF-c->rlen;
     memcpy(c->rbuf+c->rlen,data,len);
     c->rlen+=len;
-    
+
     int consumed=0;
     while(consumed<c->rlen) {
         int rem=c->rlen-consumed;
@@ -301,10 +301,10 @@ void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
         if(pktlen<1||pktlen>35000)break;
         int total=4+pktlen+(c->encrypted?32:0);
         if(rem<total)break;
-        
+
         uint8_t *pkt=c->rbuf+consumed;
         uint8_t type;uint8_t *pl;int plen;
-        
+
         if(!c->encrypted) {
             int pad=pkt[4];type=pkt[5];pl=pkt+6;
             plen=pktlen-pad-1-1;if(plen<0)plen=0;
@@ -316,17 +316,17 @@ void cl_feed(struct ssh_client *c, const uint8_t *data, int len) {
             plen=pktlen-pad-1-1;if(plen<0)plen=0;
             c->seq_recv++;
         }
-        
+
         cl_dispatch(c,type,pl,plen);
         consumed+=total;
     }
-    
+
     if(consumed>0&&consumed<c->rlen)
         memmove(c->rbuf,c->rbuf+consumed,c->rlen-consumed),c->rlen-=consumed;
     else if(consumed>=c->rlen)
         c->rlen=0;
 }
- 
+
 /* ── Public API ──────────────────────────────────────────────── */
 
 struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
@@ -352,13 +352,13 @@ struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
             ip = (oct[0]<<24)|(oct[1]<<16)|(oct[2]<<8)|oct[3];
         else return NULL;
     }
-    
+
     int conn_id=net_tcp_connect(ip,port);
     if(conn_id<0) return NULL;
-    
+
     struct ssh_client *cl = (struct ssh_client*)kmalloc(sizeof(struct ssh_client));
     if(!cl) { net_tcp_close(conn_id); return NULL; }
-    
+
     memset(cl,0,sizeof(*cl));
     cl->conn_id=conn_id;
     cl->connected=1;
@@ -369,9 +369,9 @@ struct ssh_client *ssh_client_connect(const char *host, uint16_t port,
     cl->on_output=on_output;
     cl->on_close=on_close;
     cl->ctx=ctx;
-    
+
     cl_send(cl,"SSH-2.0-OSSSH\r\n",17);
-    
+
     return cl;
 }
 

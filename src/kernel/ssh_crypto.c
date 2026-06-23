@@ -169,24 +169,24 @@ void bn_mod(bignum *r, const bignum *a, const bignum *m) {
     bignum tmp, divisor;
     bn_copy(&tmp, a);
     bn_copy(&divisor, m);
-    
+
     int shift = bn_bits(&tmp) - bn_bits(&divisor);
     if (shift < 0) shift = 0;
-    
+
     /* Shift divisor left */
     bignum shifted;
     memset(&shifted, 0, sizeof(shifted));
     for (int i = 0; i < divisor.used; i++) shifted.l[i] = divisor.l[i];
     shifted.used = divisor.used;
     for (int s = 0; s < shift; s++) bn_lshift1(&shifted);
-    
+
     for (int s = shift; s >= 0; s--) {
         if (bn_compare(&tmp, &shifted) >= 0) {
             bn_sub(&tmp, &tmp, &shifted);
         }
         bn_rshift1(&shifted);
     }
-    
+
     bn_copy(r, &tmp);
     if (bn_is_zero(r)) { r->l[0] = 0; r->used = 0; }
 }
@@ -195,7 +195,7 @@ void bn_mod(bignum *r, const bignum *a, const bignum *m) {
 void bn_mod_mul(bignum *r, const bignum *a, const bignum *b, const bignum *m) {
     bignum product;
     memset(&product, 0, sizeof(product));
-    
+
     /* Long multiplication */
     for (int i = 0; i < a->used; i++) {
         uint64_t carry = 0;
@@ -212,7 +212,7 @@ void bn_mod_mul(bignum *r, const bignum *a, const bignum *b, const bignum *m) {
     while (product.used > 0 && product.l[product.used - 1] == 0) product.used--;
     if (product.used == 0) product.used = 1;
     if (product.l[0] == 0 && product.used == 1) { memset(r, 0, sizeof(*r)); r->used = 0; return; }
-    
+
     bn_mod(r, &product, m);
 }
 
@@ -222,10 +222,10 @@ void bn_mod_exp(bignum *r, const bignum *base, const bignum *exp, const bignum *
     memset(&result, 0, sizeof(result));
     result.l[0] = 1;
     result.used = 1;
-    
+
     bignum b;
     bn_mod(&b, base, mod);
-    
+
     int bits = bn_bits(exp);
     for (int i = 0; i < bits; i++) {
         int bit_idx = i / 32;
@@ -235,7 +235,7 @@ void bn_mod_exp(bignum *r, const bignum *base, const bignum *exp, const bignum *
         }
         bn_mod_mul(&b, &b, &b, mod);
     }
-    
+
     bn_copy(r, &result);
 }
 
@@ -290,7 +290,7 @@ void dh_generate_key(bignum *pub, bignum *priv) {
     max.l[7] = 0xFFFFFFFF;
     max.used = 8;
     bn_random(priv, &max);
-    
+
     /* pub = g^priv mod p */
     bn_mod_exp(pub, &dh_g, priv, &dh_p);
 }
@@ -326,7 +326,7 @@ static void rsa_crt_mod_exp(uint8_t *out, const uint8_t *in, int in_len) {
     bignum m1, m2;
     bn_mod(&m1, &m, &p);
     bn_mod(&m2, &m, &q);
-    
+
     bignum s1, s2;
     bn_mod_exp(&s1, &m1, &dp, &p);
     bn_mod_exp(&s2, &m2, &dq, &q);
@@ -362,10 +362,10 @@ static int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
         0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
         0x00, 0x04, 0x20
     };
-    
+
     uint8_t em[256];
     int em_len = 256;
-    
+
     em[0] = 0x00;
     em[1] = 0x01;
     int pad_len = em_len - 3 - sizeof(der_sha256) - 32;
@@ -373,7 +373,7 @@ static int rsa_sign(const uint8_t *hash, uint8_t *sig_out) {
     em[2 + pad_len] = 0x00;
     memcpy(em + 2 + pad_len + 1, der_sha256, sizeof(der_sha256));
     memcpy(em + 2 + pad_len + 1 + sizeof(der_sha256), hash, 32);
-    
+
     rsa_crt_mod_exp(sig_out, em, em_len);
     return 256;
 }
@@ -384,13 +384,13 @@ static int rsa_verify(const uint8_t *hash, const uint8_t *sig) {
     bn_from_bytes(&sig_bn, sig, 256);
     bn_from_bytes(&e, rsa_host_e, 3);
     bn_from_bytes(&n, rsa_host_n, 256);
-    
+
     bignum em;
     bn_mod_exp(&em, &sig_bn, &e, &n);
-    
+
     uint8_t em_bytes[256];
     bn_to_bytes(&em, em_bytes, 256);
-    
+
     /* Check PKCS#1 v1.5 padding: 00 01 FF ... FF 00 DER(hash) */
     if (em_bytes[0] != 0x00 || em_bytes[1] != 0x01) return 0;
     int pos = 2;
@@ -421,20 +421,25 @@ static void ssh_pack_u32(uint8_t *buf, uint32_t v) {
 }
 
 /* Unpack uint32 */
-static __attribute__((unused)) uint32_t ssh_unpack_u32(const uint8_t *buf) {
+#if 0
+static uint32_t ssh_unpack_u32(const uint8_t *buf) {
     return ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
            ((uint32_t)buf[2] << 8) | buf[3];
 }
+#endif
 
 /* Pack a string (uint32 length + data) into buf, returns bytes written */
-static __attribute__((unused)) int ssh_pack_string(uint8_t *buf, const uint8_t *data, int len) {
+#if 0
+static int ssh_pack_string(uint8_t *buf, const uint8_t *data, int len) {
     ssh_pack_u32(buf, len);
     if (len > 0) memcpy(buf + 4, data, len);
     return 4 + len;
 }
+#endif
 
 /* Pack an mpint from bignum into buf, returns bytes written */
-static __attribute__((unused)) int ssh_pack_mpint(uint8_t *buf, const bignum *bn) {
+#if 0
+static int ssh_pack_mpint(uint8_t *buf, const bignum *bn) {
     uint8_t tmp[BN_MAX_BYTES + 1];
     int len = bn_to_bytes(bn, tmp + 1, 0);
     /* Remove leading zeros */
@@ -455,6 +460,7 @@ static __attribute__((unused)) int ssh_pack_mpint(uint8_t *buf, const bignum *bn
     memcpy(buf + 4, tmp + start, data_len);
     return 4 + data_len;
 }
+#endif
 
 /* ── AES-128-CBC encrypt/decrypt for SSH ────────────────────── */
 struct ssh_cipher {
@@ -464,23 +470,28 @@ struct ssh_cipher {
     uint8_t dec_iv[16];
 };
 
-static __attribute__((unused)) void ssh_cipher_init(struct ssh_cipher *c, const uint8_t *key, const uint8_t *iv) {
+#if 0
+static void ssh_cipher_init(struct ssh_cipher *c, const uint8_t *key, const uint8_t *iv) {
     aes_init(&c->enc_ctx, key, 16);
     aes_init(&c->dec_ctx, key, 16);
     memcpy(c->enc_iv, iv, 16);
     memcpy(c->dec_iv, iv, 16);
 }
+#endif
 
-static __attribute__((unused)) void ssh_cipher_encrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
+#if 0
+static void ssh_cipher_encrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
     aes_cbc_encrypt(&c->enc_ctx, c->enc_iv, buf, buf, len);
 }
 
-static __attribute__((unused)) void ssh_cipher_decrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
+static void ssh_cipher_decrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
     aes_cbc_decrypt(&c->dec_ctx, c->dec_iv, buf, buf, len);
 }
+#endif
 
 /* ── HMAC-SHA256 for SSH ────────────────────────────────────── */
-static __attribute__((unused)) void ssh_mac_compute(const uint8_t *key, int key_len,
+#if 0
+static void ssh_mac_compute(const uint8_t *key, int key_len,
                             uint32_t seq_nr, const uint8_t *packet, int packet_len,
                             uint8_t mac[32]) {
     uint8_t seq_buf[4];
@@ -490,6 +501,7 @@ static __attribute__((unused)) void ssh_mac_compute(const uint8_t *key, int key_
     memcpy(hmac_input + 4, packet, packet_len);
     hmac_sha256(key, key_len, hmac_input, 4 + packet_len, mac);
 }
+#endif
 
 
 /* ── Stub: ssh_crypto_init ─────────────────────────────── */

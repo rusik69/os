@@ -282,34 +282,26 @@ int virtio_iommu_init(void)
 module_init(virtio_iommu_init);
 
 /* ── Stub: virtio_iommu_probe ─────────────────────────────── */
-int virtio_iommu_probe(void *dev)
+int virtio_iommu_probe(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[virtio_iommu] virtio_iommu_probe: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_remove ─────────────────────────────── */
-int virtio_iommu_remove(void *dev)
+int virtio_iommu_remove(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[virtio_iommu] virtio_iommu_remove: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_alloc ─────────────────────────────── */
-int virtio_iommu_iova_alloc(void *domain, size_t size, void *iova)
+int virtio_iommu_iova_alloc(__maybe_unused void *domain, __maybe_unused size_t size, __maybe_unused void *iova)
 {
-    (void)domain;
-    (void)size;
-    (void)iova;
     kprintf("[virtio_iommu] virtio_iommu_iova_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_free ─────────────────────────────── */
-int virtio_iommu_iova_free(void *domain, void *iova, size_t size)
+int virtio_iommu_iova_free(__maybe_unused void *domain, __maybe_unused void *iova, __maybe_unused size_t size)
 {
-    (void)domain;
-    (void)iova;
-    (void)size;
     kprintf("[virtio_iommu] virtio_iommu_iova_free: not yet implemented\n");
     return 0;
 }

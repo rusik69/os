@@ -34,7 +34,7 @@ int cfi_register_target(uintptr_t addr, const char *name)
 
     if (cfi_target_count >= CFI_MAX_SITES) {
         spinlock_irqsave_release(&cfi_lock, irq_flags);
-        return -1;
+        return -ENOSYS;
     }
 
     cfi_targets[cfi_target_count].addr = addr;
@@ -69,7 +69,7 @@ int __attribute__((used)) __cfi_check(uintptr_t target)
                 (unsigned long long)target,
                 cur ? cur->pid : 0,
                 cur && cur->name ? cur->name : "?");
-        return -1;
+        return -ENOSYS;
     }
     return 0;
 }

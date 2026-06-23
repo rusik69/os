@@ -1060,3 +1060,98 @@ make clean        — remove build artifacts
 The linker script (`linker.ld`) defines the memory layout with proper section ordering, alignment, and high-half VMA assignment.
 
 **Module build:** 226 `.ko` files produced from `obj-m` entries. Modules are compiled with `-DMODULE` flag and linked as relocatable ELF64 objects. Module region at `0xFFFF800100000000` (64MB) is divided into RX/RO/RW subregions for code, read-only data, and writable data respectively.
+
+## Recent Improvements
+
+### Kernel Page Table Isolation (KPTI)
+
+Implemented KPTI with PCID/INVPCID support for Meltdown mitigation. The kernel
+maintains separate page tables for kernel and userspace: a "kernel mode" PML4
+with all kernel+user mappings, and a "user mode" PML4 with only minimal kernel
+entries (interrupt gates, syscall entry). Context switches between kernel and
+user mode switch CR3 via PCID-tagged entries to avoid TLB flushing overhead.
+Key files: `src/kernel/kpti.c`, `src/include/kpti.h`.
+
+### Modular Kernel Architecture
+
+Transitioned from a purely monolithic build to a modular kernel with 226
+loadable kernel modules (`.ko` files). The module loader supports ELF64
+relocation, GOT/PLT handling, EXPORT_SYMBOL symbol resolution, RSA-2048/SHA-256
+signature verification, dependency tracking, and automatic module loading via
+`request_module()`. Modules are compressed (xz/gzip) in initramfs and
+decompressed on load. Module region layout: 64MB at `0xFFFF800100000000`
+divided into RX (code), RO (rodata), and RW (data) sub-regions.
+
+### E1000 NIC Driver
+
+Added full Intel PRO/1000 network driver with MSI-X multi-queue, RSS (Receive
+Side Scaling) for flow distribution across CPUs, hardware interrupt moderation
+(ITR), and NAPI polling. Supports PCIe capability detection, multi-queue
+transmit/receive with descriptor ring management, and hardware filtering.
+File: `src/drivers/e1000.c` (with `e1000.h` header).
+
+### PCIe ECAM Configuration
+
+Upgraded PCI configuration access from legacy I/O port cycles (0xCF8/0xCFC) to
+Enhanced Configuration Access Mechanism (ECAM) for PCIe. ECAM maps the entire
+PCIe configuration space into memory-mapped I/O, enabling access to extended
+PCIe capabilities (AER, DPC, PTM, SR-IOV). The ECAM memory region is
+discovered via ACPI MCFG table. File: `src/drivers/pci.c`.
+
+### 500+ System Calls
+
+Expanded the system call table from ~120 to 512 entries. New syscalls include:
+- Linux-compatible `openat`, `readv`, `writev`, `splice`, `sendfile`,
+  `fallocate`, `copy_file_range`, `renameat2`
+- Modern Linux syscalls: `pidfd_open`, `pidfd_send_signal`, `clone3`,
+  `faccessat2`, `fsopen`, `fsconfig`, `fsmount`, `fspick`
+- eBPF: `bpf()` syscall with BPF_PROG_LOAD, BPF_MAP_CREATE, etc.
+- io_uring: `io_uring_setup`, `io_uring_enter`, `io_uring_register`
+- Namespace: `setns`, `unshare`, `open_tree`, `move_mount`
+- Security: `landlock_create_ruleset`, `landlock_add_rule`, `landlock_restrict_self`,
+  `pkey_alloc`, `pkey_free`, `pkey_mprotect`, `mseal`
+
+Syscall dispatch is now table-driven with per-syscall argument validation.
+File: `src/kernel/syscall.c`.
+
+### Test Infrastructure
+
+Three-tier testing framework:
+1. **In-kernel tests** (`src/test/test.c`) — 200+ tests running in QEMU,
+   covering scheduler (fork/exec/exit/wait), VM (map/unmap/COW), PMM
+   (alloc/free/refcount), slab, IPC, VFS, TCP/UDP, device probing, syscalls
+2. **KUnit** (`src/test/kunit_tests.c`) — In-kernel unit testing framework
+   with test case/suite/assertion API for subsystem-level tests
+3. **Host-side tests** (`tests/host_libc/`) — kernel libc functions compiled
+   and run on Linux host against glibc baseline (string, printf, stdlib,
+   bitops, CRC, SHA-256, AES)
+4. **E2E QEMU smoke test** (`tests/e2e.sh`) — boots kernel, validates boot
+   sequence, shell commands, networking, filesystem operations via serial
+5. **UBSan:** Kernel boots with CONFIG_UBSAN for automatic undefined behavior
+   detection
+
+### Performance Optimizations
+
+- **Per-CPU data structures:** page caches, slab caches, runqueues minimize
+  cross-CPU traffic
+- **Lock contention:** MCS optimistic spinning, RCU for read-mostly paths,
+  per-CPU locking
+- **Memory bandwidth:** Huge pages (2MB/1GB) for kernel and userspace reduce
+  TLB misses
+- **Interrupt mitigation:** MSI/MSI-X per-queue, interrupt moderation (e1000
+  ITR), softirq coalescing, NAPI polling
+- **I/O efficiency:** I/O schedulers (deadline/CFQ), block layer merging,
+  readahead, page cache, io_uring async I/O
+- **Network performance:** RPS/RFS flow steering, XDP fast path, multi-queue RSS
+
+### Build System Hardening
+
+- `-Werror` in default CFLAGS — zero compiler warnings
+- `-fstack-clash-protection` — stack clash attack mitigation
+- `-z relro -z now` — full RELRO, GOT read-only after relocation
+- `-fstack-protector-strong` — stack canary for functions with local buffers
+- `-fstackleak` — kernel stack erasure on syscall exit
+- Static analysis via `cppcheck` target
+- `krealloc_array`/`kmalloc_array`/`kcalloc_array` wrappers — overflow-checked
+  allocation for multiply-based sizes
+- Stack canary per-task for kernel stack overflow detection

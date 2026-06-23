@@ -106,31 +106,26 @@ void ptm_init(void)
 module_init(ptm_init);
 
 /* ── Stub: pcie_ptm_init ─────────────────────────────── */
-int pcie_ptm_init(void *dev)
+int pcie_ptm_init(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_ptm_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_enable ─────────────────────────────── */
-int pcie_ptm_enable(void *dev)
+int pcie_ptm_enable(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_ptm_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_disable ─────────────────────────────── */
-int pcie_ptm_disable(void *dev)
+int pcie_ptm_disable(__maybe_unused void *dev)
 {
-    (void)dev;
     kprintf("[pcie] pcie_ptm_disable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pcie_ptm_read_time ─────────────────────────────── */
-int pcie_ptm_read_time(void *dev, uint64_t *time)
+int pcie_ptm_read_time(__maybe_unused void *dev, __maybe_unused uint64_t *time)
 {
-    (void)dev;
-    (void)time;
     kprintf("[pcie] pcie_ptm_read_time: not yet implemented\n");
     return 0;
 }

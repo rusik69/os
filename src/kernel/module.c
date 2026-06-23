@@ -402,7 +402,7 @@ void module_apply_cmdline_params(struct kernel_module *mod)
 /* ── Module loading ─────────────────────────────────────────────── */
 
 int module_load(const char *name, module_entry_t entry) {
-    if (!name || !entry || !g_mod_initialized) return -1;
+    if (!name || !entry || !g_mod_initialized) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
@@ -413,7 +413,7 @@ int module_load(const char *name, module_entry_t entry) {
             g_modules[i].state != MODULE_DEAD &&
             strcmp(g_modules[i].name, name) == 0) {
             spinlock_irqsave_release(&g_mod_lock, irq_flags);
-            return -1;
+            return -EEXIST;
         }
     }
 
@@ -428,7 +428,13 @@ int module_load(const char *name, module_entry_t entry) {
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_mod_lock, irq_flags);
-        return -1;
+        return -ENOSPC;
+    }
+
+    /* Bounds check: module slot index must be within array limits */
+    if (slot < 0 || slot >= MODULE_MAX) {
+        spinlock_irqsave_release(&g_mod_lock, irq_flags);
+        return -EINVAL;
     }
 
     struct kernel_module *mod = &g_modules[slot];
@@ -458,7 +464,7 @@ int module_load(const char *name, module_entry_t entry) {
 }
 
 int module_unload(int module_id) {
-    if (module_id < 0 || module_id >= MODULE_MAX || !g_mod_initialized) return -1;
+    if (module_id < 0 || module_id >= MODULE_MAX || !g_mod_initialized) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
@@ -466,14 +472,14 @@ int module_unload(int module_id) {
     struct kernel_module *mod = &g_modules[module_id];
     if (mod->state == MODULE_UNUSED || mod->state == MODULE_DEAD) {
         spinlock_irqsave_release(&g_mod_lock, irq_flags);
-        return -1;
+        return -EINVAL;
     }
 
     /* Check refcount — if still in use, refuse to unload */
     if (mod->refcount > 0) {
         kprintf("[MOD] Cannot unload %s: refcount=%d\n", mod->name, mod->refcount);
         spinlock_irqsave_release(&g_mod_lock, irq_flags);
-        return -1;
+        return -EBUSY;
     }
 
     kprintf("[MOD] Unloading module: %s (slot %d)\n", mod->name, module_id);
@@ -611,10 +617,10 @@ int module_add_param(struct kernel_module *mod, const char *name,
                      enum module_param_type type, void *data, int data_len,
                      int perm, int (*set_fn)(const char*, struct kernel_param*),
                      int (*get_fn)(char*, int, struct kernel_param*)) {
-    if (!mod || !name) return -1;
+    if (!mod || !name) return -EINVAL;
 
     struct kernel_param *kp = (struct kernel_param *)kmalloc(sizeof(struct kernel_param));
-    if (!kp) return -1;
+    if (!kp) return -ENOMEM;
 
     memset(kp, 0, sizeof(*kp));
     strncpy(kp->name, name, 31);
@@ -648,14 +654,14 @@ struct kernel_param *module_find_param(struct kernel_module *mod, const char *na
 /* ── Dependency support (M23-M25) ───────────────────────────────── */
 
 int module_add_dep(struct kernel_module *mod, const char *dep_name) {
-    if (!mod || !dep_name) return -1;
+    if (!mod || !dep_name) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_mod_lock, &irq_flags);
 
     if (mod->num_deps >= MODULE_MAX_DEPS) {
         spinlock_irqsave_release(&g_mod_lock, irq_flags);
-        return -1;
+        return -ENOSPC;
     }
 
     /* Check for duplicate */
@@ -987,7 +993,7 @@ static int module_param_write_cb(const char *data, uint32_t size, void *priv)
 {
     struct kernel_param *kp = (struct kernel_param *)priv;
     if (!kp || !data || size == 0)
-        return -1;
+        return -EINVAL;
 
     /* Allocate a NUL-terminated copy of the written data */
     uint32_t copy_len = size;
@@ -1014,36 +1020,36 @@ static int module_param_write_cb(const char *data, uint32_t size, void *priv)
 int module_param_set_value(struct kernel_param *kp, const char *val)
 {
     if (!kp || !val)
-        return -1;
+        return -EINVAL;
 
     /* If the module registered a custom setter, delegate to it */
     if (kp->set_fn)
         return kp->set_fn(val, kp);
 
     if (!kp->data || kp->data_len <= 0)
-        return -1;
+        return -EINVAL;
 
     switch (kp->type) {
     case PARAM_TYPE_INT: {
-        if (kp->data_len < (int)sizeof(int)) return -1;
+        if (kp->data_len < (int)sizeof(int)) return -EINVAL;
         char *endp = NULL;
         long v = strtol(val, &endp, 0);
         if (endp == val || (*endp != '\0' && !isspace((unsigned char)*endp)))
-            return -1;
+            return -EINVAL;
         *(int *)kp->data = (int)v;
         return 0;
     }
     case PARAM_TYPE_UINT: {
-        if (kp->data_len < (int)sizeof(unsigned int)) return -1;
+        if (kp->data_len < (int)sizeof(unsigned int)) return -EINVAL;
         char *endp = NULL;
         unsigned long v = strtoul(val, &endp, 0);
         if (endp == val || (*endp != '\0' && !isspace((unsigned char)*endp)))
-            return -1;
+            return -EINVAL;
         *(unsigned int *)kp->data = (unsigned int)v;
         return 0;
     }
     case PARAM_TYPE_BOOL: {
-        if (kp->data_len < (int)sizeof(int)) return -1;
+        if (kp->data_len < (int)sizeof(int)) return -EINVAL;
         /* Try numeric first */
         char *endp = NULL;
         unsigned long bval = strtoul(val, &endp, 0);
@@ -1068,14 +1074,14 @@ int module_param_set_value(struct kernel_param *kp, const char *val)
             *(int *)kp->data = 0;
             return 0;
         }
-        return -1;
+        return -EINVAL;
     }
     case PARAM_TYPE_CHARP: {
         char *old = *(char **)kp->data;
         if (old) kfree(old);
         size_t vlen = strlen(val);
         char *copy = (char *)kmalloc(vlen + 1);
-        if (!copy) return -1;
+        if (!copy) return -ENOMEM;
         memcpy(copy, val, vlen + 1);
         *(char **)kp->data = copy;
         kp->data_len = (int)(vlen + 1);
@@ -1090,7 +1096,7 @@ int module_param_set_value(struct kernel_param *kp, const char *val)
         return 0;
     }
     default:
-        return -1;
+        return -ENOSYS;
     }
     return 0;
 }
@@ -1216,7 +1222,7 @@ static int module_verify_read_cb(char *buf, uint32_t max_size, void *priv)
 static int module_verify_write_cb(const char *data, uint32_t size, void *priv)
 {
     (void)priv;
-    if (!data || size == 0) return -1;
+    if (!data || size == 0) return -EINVAL;
 
     /* Parse a single digit (0, 1, or 2) */
     int val = data[0] - '0';
@@ -1226,7 +1232,7 @@ static int module_verify_write_cb(const char *data, uint32_t size, void *priv)
                 val == 0 ? "off" : (val == 1 ? "warn" : "enforce"));
         return 0;
     }
-    return -1;
+    return -EINVAL;
 }
 
 /* Get the current module verification mode */
@@ -1291,14 +1297,14 @@ int build_mod_dir(char *buf, int max, const char *mod_name)
 int module_sysfs_add_params(struct kernel_module *mod)
 {
     if (!mod || mod->name[0] == '\0')
-        return -1;
+        return -EINVAL;
 
     /* Lazily create /sys/module/ directory if it doesn't exist yet */
     static int sysfs_module_dir_created = 0;
     if (!sysfs_module_dir_created) {
         if (sysfs_create_dir("/sys/module") < 0) {
             /* sysfs might not be mounted yet — defer silently */
-            return -1;
+            return -EIO;
         }
         sysfs_module_dir_created = 1;
     }
@@ -1306,13 +1312,13 @@ int module_sysfs_add_params(struct kernel_module *mod)
     /* Create /sys/module/<name>/ directory */
     char mod_dir[128];
     if (build_mod_dir(mod_dir, (int)sizeof(mod_dir), mod->name) <= 0)
-        return -1;
+        return -EINVAL;
     sysfs_create_dir(mod_dir);
 
     /* Create /sys/module/<name>/parameters/ directory */
     char param_dir[128];
     if (build_mod_param_dir(param_dir, (int)sizeof(param_dir), mod->name) <= 0)
-        return -1;
+        return -EINVAL;
     sysfs_create_dir(param_dir);
 
     /* ── Create metadata files ───────────────────────────────────── */
@@ -1408,11 +1414,11 @@ int module_sysfs_add_params(struct kernel_module *mod)
 int module_sysfs_remove_params(struct kernel_module *mod)
 {
     if (!mod || mod->name[0] == '\0')
-        return -1;
+        return -EINVAL;
 
     char mod_dir[128];
     if (build_mod_dir(mod_dir, (int)sizeof(mod_dir), mod->name) <= 0)
-        return -1;
+        return -EINVAL;
 
     /* Recursively remove the entire module directory in sysfs */
     sysfs_remove_recursive(mod_dir);

@@ -2,6 +2,7 @@
 #include "string.h"     /* strlen, memcpy, tolower, isupper */
 #include "heap.h"       /* kmalloc / kfree */
 #include "signal.h"     /* signal definitions for strsignal */
+#include "kernel.h"
 
 /* ── Signal name table for strsignal ─────────────────────────────── */
 
@@ -158,7 +159,7 @@ char *strchrnul(const char *s, int c) {
 /* ── strsignal — map signal number to human-readable name ───────── */
 
 const char *strsignal(int signum) {
-    if (signum >= 1 && signum < (int)(sizeof(sig_names) / sizeof(sig_names[0]))) {
+    if (signum >= 1 && signum < (int)ARRAY_SIZE(sig_names)) {
         const char *name = sig_names[signum];
         if (name) return name;
     }

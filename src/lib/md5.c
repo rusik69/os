@@ -194,6 +194,18 @@ void md5_final(uint8_t digest[MD5_DIGEST_SIZE], struct md5_ctx *ctx)
     }
 }
 
+/**
+ * md5_hash - Compute MD5 hash of a data buffer
+ * @digest: Output buffer of MD5_DIGEST_SIZE (16) bytes to receive the hash
+ * @data: Pointer to the input data buffer
+ * @len: Length of the input data in bytes
+ *
+ * Convenience wrapper that initializes an MD5 context, feeds the data,
+ * and finalizes the digest in a single call.
+ *
+ * Context: Any context.
+ * Return: void (digest written to @digest).
+ */
 void md5_hash(uint8_t digest[MD5_DIGEST_SIZE],
               const void *data, size_t len)
 {

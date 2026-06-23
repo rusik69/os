@@ -221,20 +221,7 @@ static int pd_send_message(struct typec_port *port, const uint8_t *msg, int len)
     return 0;
 }
 
-/*
- * Receive a PD message.
- */
-static __attribute__((unused)) int pd_receive_message(struct typec_port *port, uint8_t *buf, int max_len)
-{
-    (void)port;
-    (void)buf;
-    (void)max_len;
-    /* Stub */
-    return 0;
-}
-
-/*
- * pd_negotiate_contract — Run PD contract negotiation as Source.
+/*\n * pd_negotiate_contract — Run PD contract negotiation as Source.
  *
  * Sequence:
  *   1. Send Source_Capabilities

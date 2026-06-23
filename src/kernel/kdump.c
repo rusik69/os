@@ -43,7 +43,7 @@ static int kdump_initialized = 0;
  * Returns 0 on success, -1 on error. */
 static int parse_size_str(const char *str, uint64_t *out)
 {
-    if (!str || !*str) return -1;
+    if (!str || !*str) return -EINVAL;
 
     uint64_t val = 0;
     const char *p = str;
@@ -51,7 +51,7 @@ static int parse_size_str(const char *str, uint64_t *out)
         val = val * 10 + (uint64_t)(*p - '0');
         p++;
     }
-    if (p == str) return -1;  /* no digits */
+    if (p == str) return -EINVAL;  /* no digits */
 
     /* Check suffix */
     if (*p == 'K' || *p == 'k') {
@@ -69,7 +69,7 @@ static int parse_size_str(const char *str, uint64_t *out)
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')
         p++;
 
-    if (*p != '\0') return -1;  /* trailing garbage */
+    if (*p != '\0') return -EINVAL;  /* trailing garbage */
 
     *out = val;
     return 0;
@@ -119,20 +119,20 @@ static int kdump_parse_crashkernel(void)
         if (parse_size_str(buf, &crash_kernel_size) != 0) {
             kprintf("[!!] kdump: invalid crashkernel size: \"%s\"\n", buf);
             crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
-            return -1;
+            return -EINVAL;
         }
         /* Parse offset (after @) */
         if (parse_size_str(at + 1, &crash_kernel_base) != 0) {
             kprintf("[!!] kdump: invalid crashkernel offset: \"%s\"\n", at + 1);
             crash_kernel_base = CRASH_KERNEL_DEFAULT_BASE;
-            return -1;
+            return -EINVAL;
         }
     } else {
         /* No '@' — just size, use default offset */
         if (parse_size_str(buf, &crash_kernel_size) != 0) {
             kprintf("[!!] kdump: invalid crashkernel size: \"%s\"\n", buf);
             crash_kernel_size = CRASH_KERNEL_DEFAULT_SIZE;
-            return -1;
+            return -EINVAL;
         }
         crash_kernel_base = CRASH_KERNEL_DEFAULT_BASE;
     }
@@ -233,7 +233,7 @@ static int sysfs_kexec_disabled_write(const char *data, uint32_t size,
                                        void *priv)
 {
     (void)priv;
-    if (size == 0) return -1;
+    if (size == 0) return -EINVAL;
 
     /* Accept: "0", "1", "true", "false", "on", "off" */
     if ((data[0] == '1') ||
@@ -260,7 +260,7 @@ static int sysfs_crash_kexec_post_notifiers_write(const char *data,
                                                     void *priv)
 {
     (void)priv;
-    if (size == 0) return -1;
+    if (size == 0) return -EINVAL;
 
     if ((data[0] == '1') ||
         (size >= 4 && (data[0] == 't' || data[0] == 'T')) ||
@@ -566,7 +566,7 @@ void kdump_capture(const char *msg, uint64_t rip)
 
     /* Segment 0: .text section */
     if (seg_idx < KDUMP_MAX_SEGMENTS) {
-        uint64_t sz = (uint64_t)(_text_end - _text_start);
+        uint64_t sz = (uint64_t)((uintptr_t)_text_end - (uintptr_t)_text_start);
         segs[seg_idx].start_vaddr = (uint64_t)_text_start;
         segs[seg_idx].size        = sz;
         segs[seg_idx].offset      = current_data_off;
@@ -578,7 +578,7 @@ void kdump_capture(const char *msg, uint64_t rip)
 
     /* Segment 1: .rodata */
     if (seg_idx < KDUMP_MAX_SEGMENTS) {
-        uint64_t sz = (uint64_t)(_rodata_end - _rodata_start);
+        uint64_t sz = (uint64_t)((uintptr_t)_rodata_end - (uintptr_t)_rodata_start);
         segs[seg_idx].start_vaddr = (uint64_t)_rodata_start;
         segs[seg_idx].size        = sz;
         segs[seg_idx].offset      = current_data_off;
@@ -590,7 +590,7 @@ void kdump_capture(const char *msg, uint64_t rip)
 
     /* Segment 2: .data */
     if (seg_idx < KDUMP_MAX_SEGMENTS) {
-        uint64_t sz = (uint64_t)(_data_end - _data_start);
+        uint64_t sz = (uint64_t)((uintptr_t)_data_end - (uintptr_t)_data_start);
         segs[seg_idx].start_vaddr = (uint64_t)_data_start;
         segs[seg_idx].size        = sz;
         segs[seg_idx].offset      = current_data_off;
@@ -602,7 +602,7 @@ void kdump_capture(const char *msg, uint64_t rip)
 
     /* Segment 3: .bss (includes .lbss) */
     if (seg_idx < KDUMP_MAX_SEGMENTS) {
-        uint64_t sz = (uint64_t)(_kernel_end - _bss_start);
+        uint64_t sz = (uint64_t)((uintptr_t)_kernel_end - (uintptr_t)_bss_start);
         segs[seg_idx].start_vaddr = (uint64_t)_bss_start;
         segs[seg_idx].size        = sz;
         segs[seg_idx].offset      = current_data_off;
