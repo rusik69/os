@@ -7,7 +7,6 @@
 #include "string.h"
 #include "elf.h"
 #include "errno.h"
-#include "heap.h"
 
 /*
  * Module Signature Verification (Item 75)

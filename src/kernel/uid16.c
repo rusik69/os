@@ -153,7 +153,7 @@ int sys_setregid16(uint16_t rgid16, uint16_t egid16)
     return 0;
 }
 
-int sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
+int __no_sanitize_address sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -162,14 +162,14 @@ int sys_getresuid16(uint16_t *ruid, uint16_t *euid, uint16_t *suid)
     uint16_t e = uid_to_16(p->euid);
     uint16_t s = uid_to_16(p->euid);  /* saved uid not stored separately */
 
-    copy_to_user((uint64_t)ruid, &r, 2);
-    copy_to_user((uint64_t)euid, &e, 2);
-    copy_to_user((uint64_t)suid, &s, 2);
+    if (copy_to_user((uint64_t)ruid, &r, 2) < 0) return -EFAULT;
+    if (copy_to_user((uint64_t)euid, &e, 2) < 0) return -EFAULT;
+    if (copy_to_user((uint64_t)suid, &s, 2) < 0) return -EFAULT;
 
     return 0;
 }
 
-int sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
+int __no_sanitize_address sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
 {
     struct process *p = process_get_current();
     if (!p) return -EINVAL;
@@ -178,9 +178,9 @@ int sys_getresgid16(uint16_t *rgid, uint16_t *egid, uint16_t *sgid)
     uint16_t e = uid_to_16(p->egid);
     uint16_t s = uid_to_16(p->egid);  /* saved gid not stored separately */
 
-    copy_to_user((uint64_t)rgid, &r, 2);
-    copy_to_user((uint64_t)egid, &e, 2);
-    copy_to_user((uint64_t)sgid, &s, 2);
+    if (copy_to_user((uint64_t)rgid, &r, 2) < 0) return -EFAULT;
+    if (copy_to_user((uint64_t)egid, &e, 2) < 0) return -EFAULT;
+    if (copy_to_user((uint64_t)sgid, &s, 2) < 0) return -EFAULT;
 
     return 0;
 }

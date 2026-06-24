@@ -15,10 +15,10 @@
  */
 
 /* Copy from user-space to kernel buffer.  Returns 0 on success, -EFAULT on error. */
-int copy_from_user(void *dst, uint64_t src_user, size_t n);
+int __must_check copy_from_user(void *dst, uint64_t src_user, size_t n);
 
 /* Copy to user-space from kernel buffer.  Returns 0 on success, -EFAULT on error. */
-int copy_to_user(uint64_t dst_user, const void *src, size_t n);
+int __must_check copy_to_user(uint64_t dst_user, const void *src, size_t n);
 
 /* Copy a null-terminated string from user-space to kernel buffer.
  * Returns number of bytes copied (including NUL terminator) on success,

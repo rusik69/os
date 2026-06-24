@@ -24,6 +24,11 @@
 #include "rsa_key.h"
 #include "export.h"
 
+/* Module metadata */
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Kernel module loader — dynamic loading, ELF parsing, symbol resolution");
+MODULE_AUTHOR("Ruslan Gustomiasov");
+
 /* RSA signature verification from lib/rsa.c */
 extern int rsa_pkcs1_v15_verify(const uint8_t *sig, size_t sig_len,
                                 const uint8_t *hash, size_t hash_len,
@@ -1209,7 +1214,7 @@ int modsig_verify(const uint8_t *data, size_t data_len)
 
 /* ── /sys/kernel/module_verify sysfs file ────────────────────────── */
 
-static int g_module_verify_mode = MODULE_VERIFY_ENFORCE;
+static int __read_mostly g_module_verify_mode = MODULE_VERIFY_ENFORCE;
 
 /* Read callback for /sys/kernel/module_verify */
 static int module_verify_read_cb(char *buf, uint32_t max_size, void *priv)

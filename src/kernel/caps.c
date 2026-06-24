@@ -5,6 +5,12 @@
 #include "printf.h"
 #include "audit.h"
 #include "errno.h"
+#include "module.h"
+
+/* Module metadata */
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Capability enforcement — system-wide capability bounding set");
+MODULE_AUTHOR("Ruslan Gustomiasov");
 
 /*
  * System-wide capability bounding set — limits what capabilities

@@ -51,7 +51,7 @@ struct dma_buf {
 
     /* Lock */
     spinlock_t lock;
-};
+} __cacheline_aligned;
 
 /* ── Attachment structure ─────────────────────────────────────────────
  *

@@ -11,7 +11,6 @@
 #include "userfaultfd.h"
 #include "string.h"
 #include "kernel.h"
-#include "heap.h"
 #include "printf.h"
 #include "errno.h"
 #include "process.h"
@@ -916,7 +915,7 @@ int userfaultfd_continue(int fd, struct uffdio_continue *cont_arg)
  *
  * Returns fd (for UFFDIO_API create), 0 on success, or negative errno.
  */
-int64_t sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
+int64_t __no_sanitize_address sys_userfaultfd2(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
     struct process *cur = process_get_current();
     if (!cur || !cur->is_user || !cur->pml4)

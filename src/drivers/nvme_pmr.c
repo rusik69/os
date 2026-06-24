@@ -535,7 +535,7 @@ int nvme_pmr_secure_erase(void *dev, uint64_t offset, size_t count)
     }
     __asm__ volatile("sfence" : : : "memory");
 
-    kprintf("[nvme] nvme_pmr_secure_erase: offset=%llu count=%zu\n",
-            (unsigned long long)offset, count);
+    kprintf("[nvme] nvme_pmr_secure_erase: offset=%llu count=%llu\n",
+            (unsigned long long)offset, (unsigned long long)count);
     return 0;
 }

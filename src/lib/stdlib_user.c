@@ -279,7 +279,7 @@ static void heap_coalesce(struct heap_header *hdr) {
 
 /* ── Core alloc/free ────────────────────────────────────────────────── */
 
-void *malloc(size_t size) {
+void * __malloc malloc(size_t size) {
     if (size == 0) size = 1;
 
     /* Align requested size and add header overhead */
@@ -409,7 +409,7 @@ void free(void *ptr) {
     heap_unlock();
 }
 
-void *calloc(size_t nmemb, size_t size) {
+void * __malloc calloc(size_t nmemb, size_t size) {
     size_t total = nmemb * size;
     if (nmemb && size && total / nmemb != size) return (void *)0;  /* overflow */
 

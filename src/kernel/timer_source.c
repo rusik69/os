@@ -7,12 +7,11 @@
 /* Globally registered clocksources and clockevents (simple fixed arrays). */
 #define MAX_CLOCKSOURCES 8
 #define MAX_CLOCKEVENTS  8
-
+static int                __read_mostly clocksource_count;
 static struct clocksource *clocksource_list[MAX_CLOCKSOURCES];
-static int                clocksource_count;
+static int                 __read_mostly clockevent_count;
 
 static struct clockevent  *clockevent_list[MAX_CLOCKEVENTS];
-static int                 clockevent_count;
 
 struct clocksource *current_clocksource;
 struct clockevent  *current_clockevent;

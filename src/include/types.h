@@ -21,6 +21,22 @@ typedef uint64_t            uintptr_t;
 #define __init        __attribute__((section(".init.text")))
 #define __printf(fmt, args) __attribute__((format(printf, fmt, args)))
 
+#ifndef __must_check
+#define __must_check        __attribute__((warn_unused_result))
+#endif
+#ifndef __malloc
+#define __malloc            __attribute__((__malloc__))
+#endif
+#ifndef __read_mostly
+#define __read_mostly       __attribute__((__section__(".data.read_mostly")))
+#endif
+#ifndef __cacheline_aligned
+#define __cacheline_aligned __attribute__((__aligned__(64)))
+#endif
+#ifndef __no_sanitize_address
+#define __no_sanitize_address __attribute__((__no_sanitize_address__))
+#endif
+
 #ifndef likely
 #define likely(x)     __builtin_expect(!!(x), 1)
 #define unlikely(x)   __builtin_expect(!!(x), 0)

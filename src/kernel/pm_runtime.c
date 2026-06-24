@@ -9,7 +9,6 @@
 #include "pm_runtime.h"
 #include "printf.h"
 #include "string.h"
-#include "heap.h"
 #include "timer.h"
 
 /* ── Maximum devices ─────────────────────────────────────────────────- */
@@ -35,6 +34,13 @@ static struct pm_runtime_device *rpm_find_device(struct pm_runtime_device *dev)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
+/**
+ * pm_runtime_init - Initialize the Runtime Power Management subsystem
+ *
+ * Initialises the global runtime PM device table and marks the subsystem
+ * as ready.  Must be called once during kernel boot before any other
+ * runtime PM operations.  Safe to call multiple times (idempotent).
+ */
 void pm_runtime_init(void)
 {
     if (g_rpm_initialized) {
@@ -47,6 +53,17 @@ void pm_runtime_init(void)
     kprintf("[pm_runtime] Runtime PM subsystem initialized\n");
 }
 
+/**
+ * pm_runtime_get_sync - Increment the usage count and resume a device
+ * @dev: Target runtime PM device
+ *
+ * Increases the usage count of @dev.  If the device is currently
+ * suspended, its runtime_resume callback is invoked to bring it back
+ * to an active state.  Must be called before accessing device hardware.
+ *
+ * Return: 0 on success, -1 if the subsystem is not initialised, @dev
+ *         is NULL, or resume fails
+ */
 int pm_runtime_get_sync(struct pm_runtime_device *dev)
 {
     if (!g_rpm_initialized || !dev)
@@ -76,6 +93,18 @@ int pm_runtime_get_sync(struct pm_runtime_device *dev)
     return 0;
 }
 
+/**
+ * pm_runtime_put_sync - Decrement the usage count and autosuspend a device
+ * @dev: Target runtime PM device
+ *
+ * Decreases the usage count of @dev.  When the count reaches zero,
+ * the runtime_idle callback is called first; if the device is still
+ * active, runtime_suspend is invoked to save power.  Must be called
+ * when the caller is done accessing device hardware.
+ *
+ * Return: 0 on success, -1 if the subsystem is not initialised, @dev
+ *         is NULL, or usage count is already zero
+ */
 int pm_runtime_put_sync(struct pm_runtime_device *dev)
 {
     if (!g_rpm_initialized || !dev)
@@ -113,6 +142,16 @@ int pm_runtime_put_sync(struct pm_runtime_device *dev)
     return 0;
 }
 
+/**
+ * pm_runtime_register - Register a device with the runtime PM subsystem
+ * @dev: Device descriptor to register (copied into internal table)
+ *
+ * Adds @dev to the runtime PM device table and starts it with a usage
+ * count of 1.  The device must have valid ops pointers for runtime
+ * suspend/resume.  Up to PM_RUNTIME_MAX_DEVICES devices can be registered.
+ *
+ * Return: 0 on success, -1 if the table is full or @dev is NULL
+ */
 int pm_runtime_register(struct pm_runtime_device *dev)
 {
     if (!g_rpm_initialized || !dev)
@@ -135,6 +174,16 @@ int pm_runtime_register(struct pm_runtime_device *dev)
     return -1;
 }
 
+/**
+ * pm_runtime_unregister - Remove a device from runtime PM
+ * @dev: Device descriptor to unregister
+ *
+ * Resumes the device if it is suspended, then removes it from the
+ * internal device table.  After this call @dev is no longer tracked
+ * by runtime PM.
+ *
+ * Return: 0 on success, -1 if @dev is not registered or is NULL
+ */
 int pm_runtime_unregister(struct pm_runtime_device *dev)
 {
     if (!g_rpm_initialized || !dev)
@@ -162,6 +211,15 @@ void pm_runtime_set_autosuspend_delay(struct pm_runtime_device *dev, int ms)
         dev->suspend_after_ms = ms;
 }
 
+/**
+ * pm_runtime_suspend_immediately - Force-suspend a device right away
+ * @dev: Target runtime PM device
+ *
+ * Calls the device's runtime_suspend callback immediately, bypassing
+ * the autosuspend delay.  The device is marked as suspended on success.
+ *
+ * Return: 0 on success, -1 if @dev or its ops are NULL or suspend fails
+ */
 int pm_runtime_suspend_immediately(struct pm_runtime_device *dev)
 {
     if (!dev || !dev->ops || !dev->ops->runtime_suspend)

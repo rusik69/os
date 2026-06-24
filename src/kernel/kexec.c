@@ -50,10 +50,10 @@
 /* ── Global state ──────────────────────────────────────────────────── */
 
 /* Sysfs toggle: /sys/kernel/kexec_load_disabled — writable, default 0 */
-int kexec_load_disabled = 0;
+int __read_mostly kexec_load_disabled = 0;
 
 /* Sysfs toggle: /sys/kernel/crash_kexec_post_notifiers — writable, default 0 */
-int crash_kexec_post_notifiers = 0;
+int __read_mostly crash_kexec_post_notifiers = 0;
 
 /* Crash kernel region (parsed from crashkernel= kernel param) */
 uint64_t crash_kernel_base = 0;

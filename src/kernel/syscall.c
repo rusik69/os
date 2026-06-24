@@ -84,6 +84,11 @@
 #include "blockdev.h"   /* for SG_IO ioctl */
 #include "io_uring.h"   /* for io_uring syscalls */
 
+/* Module metadata */
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Syscall dispatch — main kernel syscall interface and handler dispatch");
+MODULE_AUTHOR("Ruslan Gustomiasov");
+
 #ifndef UINT32_MAX
 #define UINT32_MAX 4294967295U
 #endif

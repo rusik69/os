@@ -111,7 +111,7 @@ struct dm_device {
     struct blk_request *suspended_head;
     struct blk_request *suspended_tail;
     int suspended_count;
-};
+} __cacheline_aligned;
 
 /* ── Target type registration ─────────────────────────────────────── */
 

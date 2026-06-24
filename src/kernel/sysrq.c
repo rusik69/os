@@ -57,7 +57,7 @@ extern uint64_t oom_kill_count;
 
 /* ── Global sysrq enable mask (kernel.sysrq) ─────────────────────── */
 
-static int sysrq_enable_mask = SYSRQ_ENABLE_DEFAULT;
+static int __read_mostly sysrq_enable_mask = SYSRQ_ENABLE_DEFAULT;
 
 int sysrq_get_mask(void)
 {

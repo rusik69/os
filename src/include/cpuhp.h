@@ -34,7 +34,7 @@ typedef void (*cpuhp_notify_fn)(void);
 extern enum cpuhp_state cpuhp_cpu_state[CPUHP_MAX_CPUS];
 
 /* Lock protecting hotplug state transitions */
-extern spinlock_t cpuhp_lock;
+extern spinlock_t __cacheline_aligned cpuhp_lock;
 
 /*
  * ── Initialization ─────────────────────────────────────────────

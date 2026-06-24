@@ -188,14 +188,14 @@ struct elf_load_result {
  * Segments are loaded at their p_vaddr (statically linked).
  * Returns entry point or 0 on failure.
  */
-uint64_t elf_load(const uint8_t *data, uint64_t size);
+uint64_t __must_check elf_load(const uint8_t *data, uint64_t size);
 
 /*
  * Execute an ELF file from the filesystem (reads via VFS, then elf_load).
  * Creates a new kernel process whose entry jumps to the ELF entry point.
  * Returns 0 on success.
  */
-int elf_exec(const char *path);
+int __must_check elf_exec(const char *path);
 
 /*
  * execve: replace the current user process image with a new ELF.
@@ -205,7 +205,7 @@ int elf_exec(const char *path);
  * Kernel threads cannot call execve (must be a user process).
  * argv/envp are currently not passed to userspace.
  */
-int process_execve(const char *path, char *const argv[], char *const envp[]);
+int __must_check process_execve(const char *path, char *const argv[], char *const envp[]);
 
 /* Lightweight process creation — spawn a child running a new executable.
  * Returns child PID on success, negative errno on failure.

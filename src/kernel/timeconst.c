@@ -10,7 +10,7 @@
  */
 
 /* System tick rate (configurable, default 1000 Hz) */
-static uint32_t system_hz = TIMECONST_HZ_1000;
+static uint32_t __read_mostly system_hz = TIMECONST_HZ_1000;
 
 /* Cached conversion factors */
 static uint64_t cached_ns_per_tick;

@@ -43,7 +43,7 @@ struct prio_tree_node *prio_tree_search(struct prio_tree_root *root,
 
 /* Iterate all nodes in priority order (descending). */
 void prio_tree_iterate(struct prio_tree_root *root,
-                       void (*fn)(struct prio_tree_node *, void *),
+                       void (*fn)(struct prio_tree_node *node, void *data),
                        void *ctx);
 
 static inline int prio_tree_count(struct prio_tree_root *root) {

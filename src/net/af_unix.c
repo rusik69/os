@@ -148,8 +148,7 @@ static int path_eq(const struct path_entry *e, const char *path, int len)
     return memcmp(e->path, path, (size_t)len) == 0;
 }
 
-static struct path_entry *
-path_lookup_len(const char *path, int len)
+static struct path_entry *path_lookup_len(const char *path, int len)
 {
     if (!path || len <= 0) return NULL;
     uint32_t i = path_hash_len(path, len), start = i;
@@ -161,8 +160,7 @@ path_lookup_len(const char *path, int len)
     return NULL;
 }
 
-static struct path_entry *
-path_lookup(const char *path)
+static struct path_entry *path_lookup(const char *path)
 {
     return path_lookup_len(path, (int)strlen(path));
 }

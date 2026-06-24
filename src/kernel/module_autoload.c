@@ -33,6 +33,11 @@
 #include "errno.h"
 #include "scheduler.h"
 
+/* Module metadata */
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Kernel-initiated module loading (request_module) — automatic module loading");
+MODULE_AUTHOR("Ruslan Gustomiasov");
+
 /* Variadic macros (freestanding environment — use compiler built-ins) */
 #define REQ_MOD_VA_LIST    __builtin_va_list
 #define REQ_MOD_VA_START   __builtin_va_start

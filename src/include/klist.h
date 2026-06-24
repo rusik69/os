@@ -19,7 +19,7 @@ struct klist {
     spinlock_t        lock;
     void              (*get)(struct klist_node *);
     void              (*put)(struct klist_node *);
-};
+} __cacheline_aligned;
 
 /* Life-cycle callbacks for reference-counted nodes. */
 typedef void (*klist_get_func)(struct klist_node *n);

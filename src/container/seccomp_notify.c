@@ -170,8 +170,7 @@ static int notify_rule_match(int syscall_nr, int *action_out,
  * Look up a response by request ID.
  * Returns a pointer to the response entry, or NULL if not found.
  */
-static struct seccomp_notify_response *
-notify_lookup_response(uint64_t id)
+static struct seccomp_notify_response *notify_lookup_response(uint64_t id)
 {
     int idx = (int)(id % SECCOMP_NOTIFY_QUEUE_MAX);
     if (notify_responses[idx].id == id)

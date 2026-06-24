@@ -45,7 +45,7 @@ static uint64_t used_frames = 0;
 static uint64_t pmm_hint = 0; /* last-known free frame; speeds up allocation */
 
 /* Page poisoning: fill freed pages with 0xDC and allocated pages with 0xDEADBEEF */
-int pmm_poison_enabled = 1;
+int __read_mostly pmm_poison_enabled = 1;
 
 /* Per-CPU page hot cache ────────────────────────────────────────────
  * Each CPU keeps a small pool of pre-allocated pages to avoid lock

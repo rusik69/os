@@ -71,7 +71,7 @@ void __init heap_init(void) {
     heap_start_block->prev  = NULL;
 }
 
-void *kmalloc(size_t size) {
+void * __malloc kmalloc(size_t size) {
     if (size == 0) return NULL;
     if (heap_base == 0) return NULL;
 
@@ -212,7 +212,7 @@ void *krealloc(void *ptr, size_t new_size) {
 
 /* ── kcalloc — zero-initialised array allocation ─────────────────── */
 
-void *kcalloc(size_t nmemb, size_t size) {
+void * __malloc kcalloc(size_t nmemb, size_t size) {
     size_t total = nmemb * size;
     /* Check for overflow */
     if (nmemb != 0 && total / nmemb != size)
@@ -263,8 +263,8 @@ int heap_check(void)
     while (b) {
         /* Validate block header sanity */
         if (b->size == 0 || b->size > HEAP_MAX_SIZE) {
-            kprintf("[heap] heap_check: ERROR block %p has invalid size %zu\n",
-                    (void *)b, b->size);
+            kprintf("[heap] heap_check: ERROR block %p has invalid size %llu\n",
+                    (void *)b, (unsigned long long)b->size);
             errors++;
         }
         /* Validate prev/next consistency */

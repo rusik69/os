@@ -12,7 +12,7 @@
  */
 void sort(void *base, size_t nmemb, size_t size,
           int (*cmp)(const void *, const void *),
-          void (*swap)(void *, void *, size_t));
+          void (*swap)(void *a, void *b, size_t size));
 
 /* Byte-by-byte swap (the default swap backing). */
 void swap_bytes(void *a, void *b, size_t size);

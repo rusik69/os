@@ -21,7 +21,7 @@
 #define OOM_ADJ_MIN  (-1000)
 #define OOM_ADJ_MAX  1000
 
-static int16_t oom_score_adj_table[PROCESS_MAX];
+static int16_t __read_mostly oom_score_adj_table[PROCESS_MAX];
 
 void oom_set_score_adj(int pid, int16_t adjustment) {
     if (pid < 0 || pid >= PROCESS_MAX) return;

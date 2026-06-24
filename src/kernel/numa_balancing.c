@@ -19,7 +19,7 @@ static struct numa_node_stats g_node_stats[NUMA_MAX_NODES];
 static spinlock_t g_numa_lock;
 
 /* Scanner control */
-static int g_numa_scan_enabled = 1;
+static int __read_mostly g_numa_scan_enabled = 1;
 static int g_numa_initialised = 0;
 
 /* Hint fault tracking ring buffer (per-node, simple array) */

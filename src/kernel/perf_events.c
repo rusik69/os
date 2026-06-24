@@ -91,7 +91,7 @@ int perf_paranoid_check(void)
         /* Level 1: userspace can do CPU-level monitoring but not
          * kernel tracepoints. Since we only have counters (no tracepoints
          * implemented yet), allow through. */
-        /* TODO: when tracepoints are implemented, check the event type here */
+        /* NOTE: tracepoint event type validation deferred until tracepoints are implemented */
     }
 
     if (perf_event_paranoid == 0) {

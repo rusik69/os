@@ -19,7 +19,6 @@
 #include "types.h"
 #include "string.h"
 #include "printf.h"
-#include "heap.h"
 #include "errno.h"
 
 /* ── IMA policy actions ──────────────────────────────────────────── */

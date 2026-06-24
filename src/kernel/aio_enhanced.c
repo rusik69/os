@@ -2,7 +2,6 @@
 #include "errno.h"
 #include "printf.h"
 #include "string.h"
-#include "heap.h"
 #include "types.h"
 #include "spinlock.h"
 #include "kernel.h"

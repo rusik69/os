@@ -20,7 +20,6 @@
 #include "string.h"
 #include "string_ext.h"
 #include "printf.h"
-#include "heap.h"
 #include "spinlock.h"
 #include "errno.h"
 #include "timer.h"

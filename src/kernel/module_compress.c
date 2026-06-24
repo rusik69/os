@@ -1677,8 +1677,8 @@ int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *
                                (uint8_t *)dst, (uint64_t)*dlen, &decomp_size);
             if (ret == 0) {
                 *dlen = (size_t)decomp_size;
-                kprintf("[modcompress] module_compress_decompress: gzip %zu -> %zu\n",
-                        slen, *dlen);
+                kprintf("[modcompress] module_compress_decompress: gzip %llu -> %llu\n",
+                        (unsigned long long)slen, (unsigned long long)*dlen);
                 return 0;
             }
             kprintf("[modcompress] module_compress_decompress: gzip error %d\n", ret);
@@ -1689,8 +1689,8 @@ int module_compress_decompress(const void *src, size_t slen, void *dst, size_t *
                          (uint8_t *)dst, (uint64_t)*dlen, &decomp_size);
             if (ret == 0) {
                 *dlen = (size_t)decomp_size;
-                kprintf("[modcompress] module_compress_decompress: xz %zu -> %zu\n",
-                        slen, *dlen);
+                kprintf("[modcompress] module_compress_decompress: xz %llu -> %llu\n",
+                        (unsigned long long)slen, (unsigned long long)*dlen);
                 return 0;
             }
             kprintf("[modcompress] module_compress_decompress: xz error %d\n", ret);

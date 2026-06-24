@@ -8,7 +8,7 @@
 #include "string.h"
 
 /* dmesg_restrict: when set, only root can read dmesg */
-int dmesg_restrict = 1;
+int __read_mostly dmesg_restrict = 1;
 
 /* ── Sysctl handlers ──────────────────────────────────────────────── */
 

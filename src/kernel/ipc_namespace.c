@@ -388,7 +388,7 @@ int ipc_ns_msgsnd(struct ipc_namespace *ns, int msqid,
     memcpy(ns->msg_table[msqid].data, msgp, msgsz);
     ns->msg_table[msqid].len = (uint32_t)msgsz;
 
-    kprintf("[IPC_NS] msgsnd: sent %zu bytes to queue id=%d\n", msgsz, msqid);
+    kprintf("[IPC_NS] msgsnd: sent %llu bytes to queue id=%d\n", (unsigned long long)msgsz, msqid);
     return 0;
 }
 
@@ -418,7 +418,7 @@ ssize_t ipc_ns_msgrcv(struct ipc_namespace *ns, int msqid,
     /* Clear the message after reading (simplified: single-message queue) */
     ns->msg_table[msqid].len = 0;
 
-    kprintf("[IPC_NS] msgrcv: received %zu bytes from queue id=%d\n", copy, msqid);
+    kprintf("[IPC_NS] msgrcv: received %llu bytes from queue id=%d\n", (unsigned long long)copy, msqid);
     return (ssize_t)copy;
 }
 

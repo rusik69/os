@@ -40,7 +40,7 @@ struct interval_tree_node *interval_tree_search(
 /* Find all nodes overlapping [start, last] via callback. */
 void interval_tree_search_all(struct interval_tree *tree,
                               uint64_t start, uint64_t last,
-                              void (*fn)(struct interval_tree_node *, void *),
+                              void (*fn)(struct interval_tree_node *node, void *data),
                               void *ctx);
 
 static inline int interval_tree_count(struct interval_tree *tree) {

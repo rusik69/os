@@ -135,7 +135,7 @@ struct uffd_context {
      * for correctness. */
     uint64_t wake_pending_addrs[16];   /* addresses of faulted pages */
     int      wake_pending_count;       /* number of pending pages */
-};
+} __cacheline_aligned;
 
 /* Create a new userfaultfd context.  Returns fd index or -errno. */
 int userfaultfd_create(int flags);

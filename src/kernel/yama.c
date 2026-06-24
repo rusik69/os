@@ -18,7 +18,7 @@
 
 /* YAMA ptrace scope: 0 = disabled, 1 = restricted (descendants only),
  * 2 = admin-controlled (CAP_SYS_PTRACE + PR_SET_PTRACER opt-in). */
-int yama_ptrace_scope = YAMA_PTRACE_SCOPE_RESTRICTED;
+int __read_mostly yama_ptrace_scope = YAMA_PTRACE_SCOPE_RESTRICTED;
 
 void __init yama_init(void) {
     kprintf("[OK] YAMA ptrace initialized (scope=%d)\n", yama_ptrace_scope);

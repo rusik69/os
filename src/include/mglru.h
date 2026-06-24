@@ -35,7 +35,7 @@ struct mglru_state {
     unsigned long    aging_threshold;     /* threshold in jiffies */
     unsigned long    min_ttl_ms;          /* min time-to-live in ms */
     int              enabled;
-};
+} __cacheline_aligned;
 
 /* ── Internal page tracking entry ────────────────────────────────────── */
 struct mglru_page_entry {

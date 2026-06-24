@@ -78,7 +78,7 @@ struct blk_request_queue {
     uint8_t         queued_count;   /* total requests in queue */
     uint8_t         inflight_count; /* requests dispatched to driver */
     uint8_t         batch_done;     /* deadline scheduler batch age */
-};
+} __cacheline_aligned;
 
 /* Low-level driver interface (called by blockdev layer) */
 typedef int (*blk_driver_submit_fn)(struct blk_request *req);

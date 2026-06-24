@@ -28,7 +28,7 @@ struct page_pool {
     uint64_t return_count;
     uint64_t refill_count;
     uint64_t oom_count;
-};
+} __cacheline_aligned;
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 

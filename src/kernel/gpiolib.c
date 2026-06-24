@@ -52,6 +52,19 @@ static int gpio_to_chip_offset(unsigned int gpio,
 
 /* ── Standard GPIO operations ──────────────────────────────────────── */
 
+/**
+ * gpio_request - Request and reserve a GPIO pin
+ * @gpio: GPIO pin number
+ * @label: Descriptive label for the requester (may be NULL)
+ *
+ * Allocates the specified GPIO pin for exclusive use.  The pin must be
+ * supported by a registered GPIO chip.  Once requested, the pin can be
+ * configured for input/output and read/written.  Returns 0 on success
+ * or a negative errno on failure.
+ *
+ * Return: 0 on success, -EINVAL if @gpio is out of range,
+ *         -EBUSY if already allocated, -ENODEV if no GPIO chip covers @gpio
+ */
 int gpio_request(unsigned int gpio, const char *label)
 {
     struct gpio_chip *chip;
@@ -93,6 +106,15 @@ int gpio_request(unsigned int gpio, const char *label)
     return ret;
 }
 
+/**
+ * gpio_free - Release a previously requested GPIO pin
+ * @gpio: GPIO pin number to release
+ *
+ * Frees a GPIO pin that was allocated with gpio_request().  After
+ * this call the pin becomes available for other requesters.  If the
+ * GPIO chip supports a free operation it is called to release
+ * hardware resources.
+ */
 void gpio_free(unsigned int gpio)
 {
     struct gpio_chip *chip;
@@ -118,6 +140,16 @@ void gpio_free(unsigned int gpio)
     spinlock_release(&gpiolib_lock);
 }
 
+/**
+ * gpio_direction_input - Set a GPIO pin as input
+ * @gpio: GPIO pin number
+ *
+ * Configures the direction of a previously requested GPIO pin to
+ * input.  The underlying chip's direction_input operation is called
+ * if available.
+ *
+ * Return: 0 on success, -EINVAL if @gpio is not allocated or out of range
+ */
 int gpio_direction_input(unsigned int gpio)
 {
     struct gpio_chip *chip;
@@ -136,6 +168,17 @@ int gpio_direction_input(unsigned int gpio)
     return ret;
 }
 
+/**
+ * gpio_direction_output - Set a GPIO pin as output with initial value
+ * @gpio: GPIO pin number
+ * @value: Initial output value (0 or 1)
+ *
+ * Configures the direction of a previously requested GPIO pin to
+ * output and sets the initial output value.  The underlying chip's
+ * direction_output operation is called if available.
+ *
+ * Return: 0 on success, -EINVAL if @gpio is not allocated or out of range
+ */
 int gpio_direction_output(unsigned int gpio, int value)
 {
     struct gpio_chip *chip;
@@ -154,6 +197,16 @@ int gpio_direction_output(unsigned int gpio, int value)
     return ret;
 }
 
+/**
+ * gpio_get_value - Read the current value of a GPIO pin
+ * @gpio: GPIO pin number
+ *
+ * Reads the logical value of a previously requested GPIO pin
+ * configured as input.  The underlying chip's get operation is
+ * called if available.
+ *
+ * Return: 0 or 1 on success, -EINVAL if @gpio is not allocated or out of range
+ */
 int gpio_get_value(unsigned int gpio)
 {
     struct gpio_chip *chip;
@@ -172,6 +225,15 @@ int gpio_get_value(unsigned int gpio)
     return val;
 }
 
+/**
+ * gpio_set_value - Set the output value of a GPIO pin
+ * @gpio: GPIO pin number
+ * @value: Output value (0 or 1)
+ *
+ * Sets the logical output value of a previously requested GPIO pin
+ * configured as output.  The underlying chip's set operation is
+ * called if available.
+ */
 void gpio_set_value(unsigned int gpio, unsigned int value)
 {
     struct gpio_chip *chip;

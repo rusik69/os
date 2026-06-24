@@ -46,6 +46,17 @@ static int g_attest_initialized = 0;
 
 /* ── Hex encoding ──────────────────────────────────────────────────── */
 
+/**
+ * tpm_attest_bin2hex - Convert binary data to hexadecimal string
+ * @bin: Pointer to binary input data
+ * @bin_len: Length of binary data in bytes
+ * @hex: Output buffer for hex string
+ * @hex_size: Size of output buffer in bytes
+ *
+ * Converts @bin_len bytes of binary data at @bin into a null-terminated
+ * lowercase hexadecimal string stored at @hex.  The output is truncated
+ * if @hex_size is too small to hold the full result.
+ */
 void tpm_attest_bin2hex(const uint8_t *bin, uint32_t bin_len,
                         char *hex, uint32_t hex_size)
 {
@@ -100,6 +111,22 @@ void tpm_attest_bin2hex(const uint8_t *bin, uint32_t bin_len,
  *   signature:    TPMT_SIGNATURE (variable)
  */
 
+/**
+ * tpm_attest_quote - Perform a TPM2_Quote operation for remote attestation
+ * @pcr_index: PCR index to quote (typically 0-23)
+ * @nonce: Nonce to include in the quote (fresh random data)
+ * @nonce_len: Length of the nonce in bytes
+ * @quote: Output structure to receive the quote data
+ *
+ * Builds and sends a TPM2_Quote command to the TPM.  The TPM signs the
+ * current value of the specified PCR together with the provided nonce
+ * using the Attestation Identity Key (AIK).  The resulting quote
+ * structure contains the PCR value, nonce, and signature for later
+ * verification by a remote party.
+ *
+ * Return: 0 on success, -EINVAL if parameters are invalid,
+ *         -ENODEV if no TPM is present
+ */
 int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
                      uint32_t nonce_len, struct tpm_attest_quote *quote)
 {
@@ -282,6 +309,23 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
 
 /* ── Quote verification ────────────────────────────────────────────── */
 
+/**
+ * tpm_attest_verify - Verify a TPM quote against expected values
+ * @quote: Quote structure returned by tpm_attest_quote()
+ * @expected_pcr_value: Expected PCR digest value
+ * @nonce: Original nonce used in the quote
+ * @nonce_len: Length of the nonce in bytes
+ * @public_key: AIK public key for signature verification (unused in simplified impl)
+ * @key_len: Length of the public key in bytes
+ *
+ * Verifies that a TPM quote is authentic by checking:
+ *   1. The PCR value matches @expected_pcr_value
+ *   2. The nonce matches the original challenge
+ *   3. The signature is valid (simplified: recomputed hash-based check)
+ *
+ * Return: 0 on success, -EINVAL if parameters are invalid,
+ *         -EKEYREJECTED if PCR, nonce, or signature mismatch
+ */
 int tpm_attest_verify(const struct tpm_attest_quote *quote,
                       const uint8_t *expected_pcr_value,
                       const uint8_t *nonce, uint32_t nonce_len,
@@ -339,6 +383,18 @@ int tpm_attest_verify(const struct tpm_attest_quote *quote,
 
 /* ── AIK storage in NVRAM ──────────────────────────────────────────── */
 
+/**
+ * tpm_attest_store_aik - Store Attestation Identity Key in TPM NVRAM
+ * @aik_data: AIK data blob to store
+ * @aik_len: Length of the AIK data in bytes
+ *
+ * Defines an NVRAM index for the AIK (if not already defined) and
+ * writes the AIK data to TPM non-volatile storage.  The key can later
+ * be retrieved with tpm_attest_load_aik() for quoting operations.
+ *
+ * Return: 0 on success, -EINVAL if parameters are invalid,
+ *         -1 on NVRAM write failure
+ */
 int tpm_attest_store_aik(const uint8_t *aik_data, uint32_t aik_len)
 {
     if (!aik_data || aik_len == 0)
@@ -368,6 +424,17 @@ int tpm_attest_store_aik(const uint8_t *aik_data, uint32_t aik_len)
     return 0;
 }
 
+/**
+ * tpm_attest_load_aik - Load Attestation Identity Key from TPM NVRAM
+ * @aik_data: Output buffer for the AIK data
+ * @aik_len: On input, capacity of @aik_data; on output, actual AIK size
+ *
+ * Reads the previously stored AIK from TPM NVRAM into @aik_data.
+ * The caller must provide a buffer large enough to hold the key.
+ *
+ * Return: Number of bytes read on success, -EINVAL if parameters
+ *         are invalid, -1 on NVRAM read failure
+ */
 int tpm_attest_load_aik(uint8_t *aik_data, uint32_t *aik_len)
 {
     if (!aik_data || !aik_len)

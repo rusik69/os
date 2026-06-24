@@ -101,7 +101,7 @@ struct iosched_queue {
         struct iosched_deadline_data deadline;
         struct iosched_cfq_data     cfq;
     };
-};
+} __cacheline_aligned;
 
 /* ── Public API ──────────────────────────────────────────────────── */
 

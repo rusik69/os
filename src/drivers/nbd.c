@@ -268,7 +268,7 @@ void nbd_disconnect(int dev_id)
     blockdev_unregister(dev_id);
     net_tcp_close(dev->conn_id);
     kprintf("[nbd] Device nbd%d (id=%d) disconnected\n",
-            dev - g_nbd_devices, dev_id);
+            (int)(dev - g_nbd_devices), dev_id);
     memset(dev, 0, sizeof(*dev));
 }
 

@@ -1,6 +1,5 @@
 #include "klist.h"
 #include "printf.h"
-#include "heap.h"
 #include "kernel.h"
 
 void klist_init(struct klist *list,

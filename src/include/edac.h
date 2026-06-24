@@ -29,8 +29,8 @@ int edac_setup_csrows(int ctl_id, int num_csrows);
 
 /* Set custom error handlers for a controller */
 void edac_set_handlers(int ctl_id,
-                       void (*ce_fn)(int, int, int, uint64_t),
-                       void (*ue_fn)(int, int, int, uint64_t));
+                       void (*ce_fn)(int type, int row, int channel, uint64_t syndrome),
+                       void (*ue_fn)(int type, int row, int channel, uint64_t syndrome));
 
 /* Poll all registered controllers for errors */
 int edac_poll_all(void);

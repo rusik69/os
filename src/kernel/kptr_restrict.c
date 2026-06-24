@@ -11,7 +11,7 @@
  *   0 = show all kernel addresses,
  *   1 = hide from non-root,
  *   2 = hide from everyone (including root) */
-int kptr_restrict = KPTR_RESTRICT_RESTRICTED;
+int __read_mostly kptr_restrict = KPTR_RESTRICT_RESTRICTED;
 
 /* ── Sysctl handlers ──────────────────────────────────────────────── */
 

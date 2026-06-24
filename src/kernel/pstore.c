@@ -29,8 +29,7 @@ static spinlock_t pstore_lock = SPINLOCK_INIT;
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
 /* Return the virtual address of the n-th record slot */
-static inline volatile struct pstore_record *
-pstore_slot(unsigned int idx)
+static inline volatile struct pstore_record *pstore_slot(unsigned int idx)
 {
     uint64_t base = (uint64_t)(uintptr_t)pstore_region_base;
     uint64_t rec_off = sizeof(struct pstore_region_header)

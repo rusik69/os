@@ -47,7 +47,7 @@ struct wait_queue {
     int head;                        /* index of oldest waiter */
     int count;                       /* number of active waiters */
     uint32_t pids[WAITQUEUE_MAX_WAITERS];  /* 0 = empty slot */
-};
+} __cacheline_aligned;
 
 /* Static initializer */
 #define WAITQUEUE_INIT { .lock = SPINLOCK_INIT, .head = 0, .count = 0, .pids = {0} }

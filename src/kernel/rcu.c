@@ -602,7 +602,7 @@ EXPORT_SYMBOL(synchronize_rcu);
  * grace-period kthread. Instead, they are handled by a separate
  * nocb kthread that runs on a different CPU.
  * By default, no CPUs are offloaded (bitmask = 0). */
-static uint64_t rcu_nocb_cpumask;
+static uint64_t __read_mostly rcu_nocb_cpumask;
 
 /* Set the nocb CPU mask: CPUs in this mask have their RCU callbacks
  * offloaded to a dedicated kthread rather than being handled by the
@@ -634,7 +634,7 @@ int rcu_nocbs_is_enabled(int cpu_id)
  */
 
 /* Current boost priority level (0 = disabled, 1-99 = RT priority) */
-static int rcu_boost_priority = 1;
+static int __read_mostly rcu_boost_priority = 1;
 
 /* Duration to hold boosted priority (in timer ticks) */
 static uint64_t rcu_boost_duration = 5;

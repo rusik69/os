@@ -140,8 +140,7 @@ static void cpuidle_detect_caps(void)
 /* Execute MONITOR for address tracking, then MWAIT with hint.
  * The hint is: bits [3:0] = C-state sub-state, bits [7:4] = C-state.
  * Returns immediately on wake (store to monitored address or interrupt). */
-static inline void
-do_mwait(volatile uint64_t *addr, uint32_t hint)
+static inline void do_mwait(volatile uint64_t *addr, uint32_t hint)
 {
     __asm__ volatile(
         "movq %[addr], %%rax\n\t"
@@ -158,8 +157,7 @@ do_mwait(volatile uint64_t *addr, uint32_t hint)
 
 /* MWAIT with hint from ACPI _CST entry param.  The hint encodes the
  * C-state (bits [7:4]) and sub-state (bits [3:0]) in the eax value. */
-static inline void
-do_mwait_hint(uint64_t hint)
+static inline void do_mwait_hint(uint64_t hint)
 {
     volatile uint64_t monitor_addr = 0;
     __asm__ volatile("sti" : : : "memory");

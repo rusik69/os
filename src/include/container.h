@@ -108,7 +108,7 @@ struct container {
 
     /* Container is in use (slot allocated) */
     int in_use;
-};
+} __cacheline_aligned;
 
 /* ── Container state file helpers ──────────────────────────────────── */
 

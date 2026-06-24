@@ -25,7 +25,6 @@
 #include "sha256.h"
 #include "xattr.h"
 #include "errno.h"
-#include "heap.h"
 
 /* ── IPE policy modes ───────────────────────────────────────────── */
 #define IPE_MODE_OFF        0
@@ -40,7 +39,7 @@ static char g_ipe_trusted_paths[IPE_MAX_TRUSTED_PATHS][IPE_TRUSTED_PATH_LEN];
 static int  g_ipe_trusted_count = 0;
 
 /* ── Global state ────────────────────────────────────────────────── */
-static int g_ipe_mode = IPE_MODE_STRICT;
+static int __read_mostly g_ipe_mode = IPE_MODE_STRICT;
 static int g_ipe_initialized = 0;
 
 /*

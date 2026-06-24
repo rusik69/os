@@ -9,7 +9,7 @@
 #define NOTIFIER_CPU_HP     4
 #define NOTIFIER_MAX        8
 struct notifier_block {
-    int (*notifier_call)(struct notifier_block *, unsigned long, void *);
+    int (*notifier_call)(struct notifier_block *nb, unsigned long action, void *data);
     struct notifier_block *next;
 };
 void notifier_init(void);

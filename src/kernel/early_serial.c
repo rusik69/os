@@ -38,7 +38,7 @@
 #define UART_LCR_DLAB   (1U << 7)  /* Divisor Latch Access Bit */
 
 /* Saved port base (default COM1 = 0x3F8) */
-static uint16_t g_early_port = 0x3F8;
+static uint16_t __read_mostly g_early_port = 0x3F8;
 
 /* ── Wait for transmitter to be ready ─────────────────────────────── */
 
