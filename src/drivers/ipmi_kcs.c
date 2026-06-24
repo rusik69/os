@@ -206,8 +206,8 @@ int ipmi_send_cmd(struct ipmi_msg *msg)
     msg->completion_code = kcs_read_data(base);
 
     /* Read response data */
-    int rsp_idx = 0;
-    while (rsp_idx < (int)sizeof(msg->rsp)) {
+    size_t rsp_idx = 0;
+    while (rsp_idx < sizeof(msg->rsp)) {
         if (kcs_wait_obf(base, 50000) < 0)
             break;
         uint8_t sts = kcs_read_status(base);

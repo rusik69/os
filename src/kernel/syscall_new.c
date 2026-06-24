@@ -235,7 +235,7 @@ int do_sysinfo(struct sysinfo *info)
  * getrandom
  * ==================================================================== */
 
-int do_getrandom(void *buf, size_t count, unsigned int flags)
+ssize_t do_getrandom(void *buf, size_t count, unsigned int flags)
 {
     (void)flags;
     if (!buf || count == 0) return 0;
@@ -245,7 +245,7 @@ int do_getrandom(void *buf, size_t count, unsigned int flags)
     for (size_t i = 0; i < count; i++)
         b[i] = (uint8_t)(local_xorshift64() >> 56);
 
-    return (int)count;
+    return (ssize_t)count;
 }
 
 /* ====================================================================
@@ -511,7 +511,7 @@ int do_fadvise64(int fd, uint64_t offset, uint64_t len, int advice)
  * readlinkat / symlinkat
  * ==================================================================== */
 
-int do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
+ssize_t do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
 {
     char kpath[256];
     char resolved[256];
@@ -530,7 +530,7 @@ int do_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz)
     if (copy_to_user((uint64_t)(uintptr_t)buf, link_target, copy_len) < 0)
         return -EFAULT;
 
-    return (int)copy_len;
+    return (ssize_t)copy_len;
 }
 
 int do_symlinkat(const char *target, int newdirfd, const char *linkpath)

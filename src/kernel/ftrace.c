@@ -799,8 +799,8 @@ int ftrace_graph_parse_and_set_func(const char *input)
 
     /* Input format: "func_name" or "0x<hex_addr>" */
     char buf[64];
-    int i = 0;
-    while (*input && *input != '\n' && i < (int)sizeof(buf) - 1) {
+    size_t i = 0;
+    while (*input && *input != '\n' && i < sizeof(buf) - 1) {
         buf[i++] = *input++;
     }
     buf[i] = '\0';

@@ -32,7 +32,7 @@ struct pptp_call {
 
 static struct pptp_call g_calls[PPTP_MAX_CALLS];
 static spinlock_t g_pptp_lock;
-static int g_pptp_initialized;
+static int g_pptp_initialized = 0;
 
 /* ── Call management ────────────────────────────────────────────────── */
 

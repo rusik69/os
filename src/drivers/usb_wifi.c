@@ -72,7 +72,7 @@ struct usb_wifi_device {
 };
 
 static struct usb_wifi_device usb_wifi_devs[USB_WIFI_MAX_DEVS];
-static int usb_wifi_count;
+static int usb_wifi_count = 0;
 
 /**
  * usb_wifi_probe — Probe for a Realtek USB Wi-Fi device.

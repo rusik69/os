@@ -22,9 +22,9 @@ struct cfi_target {
 };
 
 static struct cfi_target cfi_targets[CFI_MAX_SITES];
-static int cfi_target_count;
+static int cfi_target_count = 0;
 static spinlock_t cfi_lock;
-static int cfi_enabled;
+static int cfi_enabled = 0;
 
 /* Register a valid indirect call target */
 int cfi_register_target(uintptr_t addr, const char *name)

@@ -1157,6 +1157,7 @@ static void tpm_module_exit(void) {
 module_init(tpm_module_init);
 module_exit(tpm_module_exit);
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("TPM 2.0 TIS (FIFO) interface driver");
 #endif /* MODULE */

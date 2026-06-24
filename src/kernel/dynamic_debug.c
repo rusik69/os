@@ -24,7 +24,7 @@
 #define DYNDBG_MAX_DESCS  256
 
 static struct dynamic_debug_descriptor *dyndbg_table[DYNDBG_MAX_DESCS];
-static int dyndbg_count;
+static int dyndbg_count = 0;
 static spinlock_t dyndbg_lock;
 
 /**

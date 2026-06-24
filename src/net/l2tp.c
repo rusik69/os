@@ -39,7 +39,7 @@ struct l2tp_session {
 
 static struct l2tp_session g_sessions[L2TP_SESSION_MAX];
 static spinlock_t g_l2tp_lock;
-static int g_l2tp_initialized;
+static int g_l2tp_initialized = 0;
 
 /* ── Session management ─────────────────────────────────────────────── */
 

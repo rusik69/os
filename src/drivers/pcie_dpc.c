@@ -35,7 +35,7 @@
 #define DPC_TRIGGER_RAS_DES  0  /* ERR_COR or ERR_FATAL/NONFATAL */
 #define DPC_TRIGGER_DPC_TRIG 1  /* DPC Trigger bit */
 
-static int dpc_triggered_count;
+static int dpc_triggered_count = 0;
 
 /* Enable DPC on a port */
 int dpc_enable(int bus, int dev, int func)

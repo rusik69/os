@@ -54,7 +54,7 @@ static const uint32_t tcp_timeout_ticks[TCP_CONN_MAX_STATE] = {
  * ══════════════════════════════════════════════════════════════════ */
 
 static struct nf_conn nf_conns[NF_CONNTRACK_MAX];
-static int            nf_conn_count;
+static int            nf_conn_count = 0;
 
 static struct nf_conntrack_stats nf_stats;
 

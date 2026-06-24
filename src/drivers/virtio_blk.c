@@ -395,6 +395,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO block device driver with multi-queue (Item 195)");
 MODULE_ALIAS("pci:v00001AF4d00001001sv*sd*bc*sc*i*");

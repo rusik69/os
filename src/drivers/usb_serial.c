@@ -34,7 +34,7 @@ struct usb_serial_device {
 };
 
 static struct usb_serial_device usb_ser_devs[USB_SERIAL_MAX_DEVS];
-static int usb_ser_count;
+static int usb_ser_count = 0;
 
 /* Register a USB serial device */
 int usb_serial_register(int chip_type, uint16_t vid, uint16_t pid)

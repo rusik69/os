@@ -63,7 +63,7 @@ static inline struct cpu_info *this_cpu(void);
  */
 
 /* Global EEVDF enable flag (0 = CFS/multilevel queue, 1 = EEVDF) */
-static int sched_eevdf_enabled;
+static int sched_eevdf_enabled = 0;
 
 /* Sysctl read/write for /sys/kernel/sched_eevdf */
 static int sysctl_read_sched_eevdf(char *buf, int max) {

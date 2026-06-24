@@ -21,7 +21,7 @@ struct seccomp_filter {
     int                refcount;
 };
 
-static int seccomp_initialised;
+static int seccomp_initialised = 0;
 
 void __init seccomp_bpf_init(void)
 {

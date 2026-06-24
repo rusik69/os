@@ -189,7 +189,7 @@ int module_deps_resolved(struct kernel_module *mod);
         .type = PARAM_TYPE_##type, \
         .data = &name, \
         .data_len = sizeof(name), \
-        .perm = perm, \
+        .perm = (perm), \
         .set_fn = NULL, \
         .get_fn = NULL, \
     }; \
@@ -261,7 +261,7 @@ int module_deps_resolved(struct kernel_module *mod);
             while (*p == ' ' || *p == '\t') p++; \
             if (*p == ',') p++; \
         } \
-        if (nump) *(nump) = count; \
+        if ((nump)) *(nump) = count; \
         return 0; \
     } \
     static struct kernel_param __module_param_arr_##name = { \

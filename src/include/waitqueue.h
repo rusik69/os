@@ -16,7 +16,7 @@
     extern uint64_t timer_get_ticks(void); \
     __start = timer_get_ticks(); \
     while (!(condition)) { \
-        if (timeout_ticks > 0 && (timer_get_ticks() - __start) >= (timeout_ticks)) { \
+        if ((timeout_ticks) > 0 && (timer_get_ticks() - __start) >= (timeout_ticks)) { \
             __ret = -1; \
             break; \
         } \

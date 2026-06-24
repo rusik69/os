@@ -474,8 +474,8 @@ int dm_table_load(int dm_id, const char *table)
         int argc = 0;
 
         /* Read start sector (decimal) */
-        int i = 0;
-        while (*p >= '0' && *p <= '9' && i < (int)sizeof(start_str) - 1)
+        size_t i = 0;
+        while (*p >= '0' && *p <= '9' && i < sizeof(start_str) - 1)
             start_str[i++] = *p++;
         start_str[i] = '\0';
         if (i == 0) { ret = -EINVAL; break; }
@@ -484,7 +484,7 @@ int dm_table_load(int dm_id, const char *table)
 
         /* Read length (decimal) */
         i = 0;
-        while (*p >= '0' && *p <= '9' && i < (int)sizeof(len_str) - 1)
+        while (*p >= '0' && *p <= '9' && i < sizeof(len_str) - 1)
             len_str[i++] = *p++;
         len_str[i] = '\0';
         if (i == 0) { ret = -EINVAL; break; }
@@ -494,7 +494,7 @@ int dm_table_load(int dm_id, const char *table)
         /* Read target type name */
         i = 0;
         while (*p != ' ' && *p != '\t' && *p != '\n' && *p != '\0' &&
-               i < (int)sizeof(type_str) - 1)
+               i < sizeof(type_str) - 1)
             type_str[i++] = *p++;
         type_str[i] = '\0';
         if (i == 0) { ret = -EINVAL; break; }
@@ -504,9 +504,9 @@ int dm_table_load(int dm_id, const char *table)
         while (*p && *p != '\n' && argc < 8) {
             /* Collect one arg */
             static char argbufs[8][64];
-            int ai = 0;
+            size_t ai = 0;
             while (*p && *p != ' ' && *p != '\t' && *p != '\n' &&
-                   ai < (int)sizeof(argbufs[0]) - 1) {
+                   ai < sizeof(argbufs[0]) - 1) {
                 argbufs[argc][ai++] = *p++;
             }
             argbufs[argc][ai] = '\0';

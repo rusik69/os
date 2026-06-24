@@ -28,9 +28,9 @@
  * ══════════════════════════════════════════════════════════════════ */
 
 static struct nf_ct_expect nf_exp_table[NF_CT_EXPECT_MAX];
-static int                 nf_exp_count;
+static int                 nf_exp_count = 0;
 static spinlock_t          nf_exp_lock;
-static int                 nf_exp_initialized;
+static int                 nf_exp_initialized = 0;
 
 /* ══════════════════════════════════════════════════════════════════
  *                  Static State — Registered Helpers
@@ -38,7 +38,7 @@ static int                 nf_exp_initialized;
 
 #define NF_HELPER_MAX  8
 static struct nf_helper nf_helpers[NF_HELPER_MAX];
-static int              nf_helper_count;
+static int              nf_helper_count = 0;
 
 /* ══════════════════════════════════════════════════════════════════
  *              Expected Connection Table Management

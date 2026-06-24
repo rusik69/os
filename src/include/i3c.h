@@ -28,10 +28,10 @@ int i3c_add_device(int ctl_id, uint8_t static_addr, uint64_t pid,
                    uint8_t bcr, uint8_t dcr);
 
 /* Read data from an I3C device */
-int i3c_read(int ctl_id, uint8_t addr, uint8_t *buf, uint32_t len);
+ssize_t i3c_read(int ctl_id, uint8_t addr, uint8_t *buf, uint32_t len);
 
 /* Write data to an I3C device */
-int i3c_write(int ctl_id, uint8_t addr, const uint8_t *buf, uint32_t len);
+ssize_t i3c_write(int ctl_id, uint8_t addr, const uint8_t *buf, uint32_t len);
 
 /* Send a CCC (Common Command Code) */
 int i3c_send_ccc(int ctl_id, uint8_t ccc, const uint8_t *data, uint32_t len);

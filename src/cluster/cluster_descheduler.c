@@ -29,7 +29,7 @@
 
 static struct desched_policy g_policies[DESCHED_POLICIES_MAX];
 static spinlock_t g_ds_lock;
-static int g_initialised;
+static int g_initialised = 0;
 static uint64_t g_total_evictions;
 
 /* ── Initialisation ─────────────────────────────────────────────────── */

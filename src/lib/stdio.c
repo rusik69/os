@@ -949,7 +949,7 @@ int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap)
             skip_whitespace(stream);
 
             char num_buf[64];
-            int pos = 0;
+            size_t pos = 0;
 
             int c = fgetc(stream);
             if (c == EOF) {
@@ -965,7 +965,7 @@ int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap)
                 if (assignments == 0) return EOF;
                 goto done;
             }
-            while (pos < (int)sizeof(num_buf) - 1 && c != EOF) {
+            while (pos < sizeof(num_buf) - 1 && c != EOF) {
                 if ((c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E') {
                     num_buf[pos++] = (char)c;
                     c = fgetc(stream);

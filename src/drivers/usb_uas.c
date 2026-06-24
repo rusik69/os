@@ -41,7 +41,7 @@ struct uas_device {
 };
 
 static struct uas_device uas_devs[8];
-static int uas_dev_count;
+static int uas_dev_count = 0;
 
 /* Probe a USB device for UAS support */
 int uas_probe(int dev_num)

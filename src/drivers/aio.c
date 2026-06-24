@@ -12,15 +12,15 @@ void aio_init(void) {
     memset(aio_queue, 0, sizeof(aio_queue));
     kprintf("[OK] AIO subsystem initialized\n");
 }
-int aio_read(int fd, void *buf, size_t count, uint64_t offset) {
+ssize_t aio_read(int fd, void *buf, size_t count, uint64_t offset) {
     if (!buf) return -1;
     kprintf("[aio] read fd=%d count=%llu offset=%llu\n", fd, (unsigned long long)count, (unsigned long long)offset);
-    return (int)count;
+    return (ssize_t)count;
 }
-int aio_write(int fd, const void *buf, size_t count, uint64_t offset) {
+ssize_t aio_write(int fd, const void *buf, size_t count, uint64_t offset) {
     if (!buf) return -1;
     kprintf("[aio] write fd=%d count=%llu offset=%llu\n", fd, (unsigned long long)count, (unsigned long long)offset);
-    return (int)count;
+    return (ssize_t)count;
 }
 
 /* ── Stub: aio_fsync ─────────────────────────────── */

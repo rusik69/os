@@ -806,6 +806,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO network device driver with LRO support");
 MODULE_ALIAS("pci:v00001AF4d00001000sv*sd*bc*sc*i*");

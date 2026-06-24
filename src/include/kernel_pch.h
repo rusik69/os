@@ -14,8 +14,8 @@
  * units with basic type definitions, memory allocator APIs, string/print
  * utilities, and common structure declarations.
  */
-#ifndef _KERNEL_PCH_H
-#define _KERNEL_PCH_H
+#ifndef KERNEL_PCH_H
+#define KERNEL_PCH_H
 
 /* ── Core type system (tiny, extremely stable) ───────────────────── */
 #include "types.h"
@@ -42,4 +42,4 @@
 /* ── Module export infrastructure ────────────────────────────────── */
 #include "export.h"
 
-#endif /* _KERNEL_PCH_H */
+#endif /* KERNEL_PCH_H */

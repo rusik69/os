@@ -31,7 +31,7 @@ static uint32_t g_pool_end;
 static uint32_t g_pool_next;
 static uint16_t g_nodeport_bitmap[(NODEPORT_MAX - NODEPORT_MIN + 1) / 8 + 1];
 static spinlock_t g_in_lock;
-static int g_initialised;
+static int g_initialised = 0;
 
 /* ── Bitmap helpers for NodePort allocation ─────────────────────────── */
 

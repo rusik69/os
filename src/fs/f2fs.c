@@ -94,7 +94,7 @@ struct f2fs_region {
 
 static struct f2fs_superblock f2fs_sb;
 static struct f2fs_checkpoint f2fs_cp;
-static int f2fs_mounted;
+static int f2fs_mounted = 0;
 
 /* Read a block from the device (data pointer is memory-mapped) */
 static const uint8_t *f2fs_data_base = NULL;

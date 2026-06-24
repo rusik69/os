@@ -39,7 +39,7 @@ struct aer_error {
 };
 
 static struct aer_error aer_errors[64];
-static int aer_error_count;
+static int aer_error_count = 0;
 
 /* Log an AER error */
 void aer_log_error(int bus, int dev, int func,

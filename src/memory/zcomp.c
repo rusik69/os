@@ -19,7 +19,7 @@ extern int zcomp_fast_init(void);
 /* ── Registered algorithms table ───────────────────────────────────── */
 
 static const struct zcomp_ops *zcomp_algorithms[ZCOMP_MAX_ALGOS];
-static int zcomp_num_algorithms;
+static int zcomp_num_algorithms = 0;
 
 /* ── Registration ──────────────────────────────────────────────────── */
 

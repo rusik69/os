@@ -2209,7 +2209,7 @@ static void test_rng(void) {
     memset(buf, 0, sizeof(buf));
     rng_fill_buf(buf, sizeof(buf));
     int any_nonzero = 0;
-    for (int i = 0; i < (int)sizeof(buf); i++) {
+    for (size_t i = 0; i < sizeof(buf); i++) {
         if (buf[i]) { any_nonzero = 1; break; }
     }
     ASSERT("rng fill buf non-zero", any_nonzero);

@@ -146,7 +146,7 @@ struct nfs_mount_info {
 };
 
 static struct nfs_mount_info nfs_mounts[NFS_MAX_MOUNTS];
-static int nfs_mount_count;
+static int nfs_mount_count = 0;
 
 /* ── UDP socket helpers ─────────────────────────────────────────── */
 

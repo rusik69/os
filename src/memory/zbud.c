@@ -33,7 +33,7 @@ struct zbud_pool {
 };
 
 static struct zbud_pool zbud_pools[ZBUD_MAX_POOLS];
-static int zbud_pool_count;
+static int zbud_pool_count = 0;
 
 /* Allocate a new zbud pool */
 int zbud_create_pool(void)

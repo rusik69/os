@@ -10,6 +10,6 @@ struct aio_request {
     int status;
 };
 void aio_init(void);
-int aio_read(int fd, void *buf, size_t count, uint64_t offset);
-int aio_write(int fd, const void *buf, size_t count, uint64_t offset);
+ssize_t aio_read(int fd, void *buf, size_t count, uint64_t offset);
+ssize_t aio_write(int fd, const void *buf, size_t count, uint64_t offset);
 #endif

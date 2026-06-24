@@ -400,6 +400,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("devfs — /dev device virtual filesystem with dynamic device registration");
 MODULE_ALIAS("devfs");

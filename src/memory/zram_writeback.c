@@ -101,7 +101,7 @@ static uint64_t lru_find_coldest(void)
 /* Simulated backing store: up to 64 MB */
 #define BACKING_STORE_PAGES (64 * 1024 * 1024 / PAGE_SIZE)
 static uint64_t backing_store_phys;  /* Physical base of backing store */
-static int backing_store_initialised;
+static int backing_store_initialised = 0;
 
 static int backing_store_init(void)
 {

@@ -9,6 +9,7 @@
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Capability enforcement — system-wide capability bounding set");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 

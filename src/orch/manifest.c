@@ -51,7 +51,7 @@ struct orch_resource {
 
 static struct orch_resource manifest_resources[MANIFEST_MAX_RESOURCES];
 static spinlock_t manifest_lock = SPINLOCK_INIT;
-static int manifest_initialized;
+static int manifest_initialized = 0;
 
 /* ── Simple JSON tokenizer ─────────────────────────────────────────── */
 

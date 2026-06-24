@@ -51,7 +51,7 @@ struct zsmalloc_pool {
 };
 
 static struct zsmalloc_pool zsmalloc_pools[ZSMALLOC_MAX_POOLS];
-static int zsmalloc_pool_count;
+static int zsmalloc_pool_count = 0;
 
 /* Size classes: 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048 */
 static const int zsmalloc_class_sizes[ZSMALLOC_SIZE_CLASSES] = {

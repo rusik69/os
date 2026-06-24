@@ -269,7 +269,7 @@ EXPORT_SYMBOL(i3c_add_device);
  *
  * Returns number of bytes read on success, negative on error.
  */
-int i3c_read(int ctl_id, uint8_t addr, uint8_t *buf, uint32_t len)
+ssize_t i3c_read(int ctl_id, uint8_t addr, uint8_t *buf, uint32_t len)
 {
     if (ctl_id < 0 || ctl_id >= I3C_MAX_CONTROLLERS ||
         !g_i3c_controllers[ctl_id].in_use)
@@ -287,7 +287,7 @@ int i3c_read(int ctl_id, uint8_t addr, uint8_t *buf, uint32_t len)
     memset(buf, 0, len);
     kprintf("[I3C] read %u bytes from addr 0x%02x on controller %d\n",
             len, (unsigned int)addr, ctl_id);
-    return (int)len;
+    return (ssize_t)len;
 }
 EXPORT_SYMBOL(i3c_read);
 
@@ -300,7 +300,7 @@ EXPORT_SYMBOL(i3c_read);
  *
  * Returns number of bytes written on success, negative on error.
  */
-int i3c_write(int ctl_id, uint8_t addr, const uint8_t *buf, uint32_t len)
+ssize_t i3c_write(int ctl_id, uint8_t addr, const uint8_t *buf, uint32_t len)
 {
     if (ctl_id < 0 || ctl_id >= I3C_MAX_CONTROLLERS ||
         !g_i3c_controllers[ctl_id].in_use)
@@ -315,7 +315,7 @@ int i3c_write(int ctl_id, uint8_t addr, const uint8_t *buf, uint32_t len)
 
     kprintf("[I3C] wrote %u bytes to addr 0x%02x on controller %d\n",
             len, (unsigned int)addr, ctl_id);
-    return (int)len;
+    return (ssize_t)len;
 }
 EXPORT_SYMBOL(i3c_write);
 

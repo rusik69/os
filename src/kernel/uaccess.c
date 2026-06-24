@@ -28,7 +28,7 @@ static inline int current_is_user(void) {
     return p && p->is_user;
 }
 
-int copy_from_user(void *dst, uint64_t src_user, size_t n) {
+int copy_from_user(void *dst, uint64_t __user src_user, size_t n) {
     if (n == 0) return 0;
     if (current_is_user()) {
         struct process *p = process_get_current();
@@ -44,7 +44,7 @@ int copy_from_user(void *dst, uint64_t src_user, size_t n) {
     return 0;
 }
 
-int copy_to_user(uint64_t dst_user, const void *src, size_t n) {
+int copy_to_user(uint64_t __user dst_user, const void *src, size_t n) {
     if (n == 0) return 0;
     if (current_is_user()) {
         struct process *p = process_get_current();
@@ -60,7 +60,7 @@ int copy_to_user(uint64_t dst_user, const void *src, size_t n) {
     return 0;
 }
 
-long strncpy_from_user(char *dst, uint64_t src_user, size_t max_len) {
+long strncpy_from_user(char *dst, uint64_t __user src_user, size_t max_len) {
     size_t i;
 
     if (max_len == 0) return -EFAULT;
@@ -88,7 +88,7 @@ long strncpy_from_user(char *dst, uint64_t src_user, size_t max_len) {
     return (long)(i + 1);
 }
 
-long strlen_user(uint64_t src_user, size_t max_len) {
+long strlen_user(uint64_t __user src_user, size_t max_len) {
     size_t i;
 
     if (max_len == 0) return -EFAULT;
@@ -113,7 +113,7 @@ long strlen_user(uint64_t src_user, size_t max_len) {
     return (long)max_len;
 }
 
-int get_user_byte(uint64_t addr, uint8_t *out) {
+int get_user_byte(uint64_t __user addr, uint8_t *out) {
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 0))
@@ -127,7 +127,7 @@ int get_user_byte(uint64_t addr, uint8_t *out) {
     return 0;
 }
 
-int put_user_byte(uint64_t addr, uint8_t val) {
+int put_user_byte(uint64_t __user addr, uint8_t val) {
     if (current_is_user()) {
         struct process *p = process_get_current();
         if (!p || !p->pml4 || !vmm_user_range_ok(p->pml4, addr, 1, 1))
@@ -141,7 +141,7 @@ int put_user_byte(uint64_t addr, uint8_t val) {
     return 0;
 }
 
-int memset_user(uint64_t dst_user, uint8_t val, size_t n) {
+int memset_user(uint64_t __user dst_user, uint8_t val, size_t n) {
     if (n == 0) return 0;
     if (current_is_user()) {
         struct process *p = process_get_current();

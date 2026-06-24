@@ -25,7 +25,7 @@ struct powercap_zone {
 };
 
 static struct powercap_zone powercap_zones[POWERCAP_MAX_ZONES];
-static int powercap_zone_count;
+static int powercap_zone_count = 0;
 static spinlock_t powercap_lock;
 
 /* Register a powercap zone */

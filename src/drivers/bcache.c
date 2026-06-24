@@ -31,7 +31,7 @@ struct bcache_device {
 };
 
 static struct bcache_device bcache_devices[BCACHE_MAX_CACHES];
-static int bcache_count;
+static int bcache_count = 0;
 
 /* Register a cache device */
 int bcache_register(const char *backing, const char *cache)

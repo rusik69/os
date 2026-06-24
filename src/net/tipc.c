@@ -48,7 +48,7 @@ struct tipc_name_entry {
 
 static struct tipc_sock g_tipc_socks[TIPC_PORT_MAX];
 static spinlock_t g_tipc_lock;
-static int g_tipc_initialized;
+static int g_tipc_initialized = 0;
 
 /* ── Socket operations ─────────────────────────────────────────────── */
 

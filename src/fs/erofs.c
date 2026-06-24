@@ -97,7 +97,7 @@ struct erofs_dirent {
 #define EROFS_EXTENT_UNCOMPRESSED 2
 
 static struct erofs_superblock erofs_sb;
-static int erofs_mounted;
+static int erofs_mounted = 0;
 
 /* Memory-mapped image access */
 static const uint8_t *erofs_data_base = NULL;

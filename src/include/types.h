@@ -33,6 +33,10 @@ typedef uint64_t            uintptr_t;
 #ifndef __cacheline_aligned
 #define __cacheline_aligned __attribute__((__aligned__(64)))
 #endif
+#ifndef __user
+#define __user            /* nothing — documentation only for userspace pointer annotations */
+#endif
+
 #ifndef __no_sanitize_address
 #define __no_sanitize_address __attribute__((__no_sanitize_address__))
 #endif

@@ -26,7 +26,7 @@ struct stack_trace_state {
 };
 
 static struct stack_trace_state stack_state;
-static int stack_tracer_enabled;
+static int stack_tracer_enabled = 0;
 
 /* Enable the stack tracer */
 void ftrace_stack_enable(void)

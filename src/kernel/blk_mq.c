@@ -47,8 +47,8 @@ struct blk_mq_hw_queue {
 
 static struct blk_mq_sw_queue blk_mq_sw_queues[BLK_MQ_MAX_SW_QUEUES];
 static struct blk_mq_hw_queue blk_mq_hw_queues[BLK_MQ_MAX_HW_QUEUES];
-static int blk_mq_num_hw_queues;
-static int blk_mq_initialized;
+static int blk_mq_num_hw_queues = 0;
+static int blk_mq_initialized = 0;
 
 /* Allocate a request from the pool */
 static struct blk_mq_request *blk_mq_alloc_request(void)

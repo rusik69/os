@@ -29,7 +29,7 @@
 
 static struct cluster_autoscaler g_autoscaler;
 static spinlock_t g_as_lock;
-static int g_initialised;
+static int g_initialised = 0;
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 

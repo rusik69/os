@@ -82,7 +82,7 @@ static struct {
     struct mount_attr_state attr;
 } mount_attr_table[MOUNT_PROP_MAX];
 
-static int mount_attr_initialised;
+static int mount_attr_initialised = 0;
 
 static void mount_attr_init(void)
 {

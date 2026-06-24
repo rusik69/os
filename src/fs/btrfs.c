@@ -1134,6 +1134,7 @@ device_initcall(btrfs_init);
 int init_module(void) { return btrfs_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Btrfs — read-only, single-device, non-raid");
 #endif

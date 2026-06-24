@@ -21,7 +21,7 @@
 /* Per-CPU shadow stack pointers */
 static uintptr_t *scs_sp[SMP_MAX_CPUS];
 static uintptr_t *scs_base[SMP_MAX_CPUS];
-static int scs_initialized;
+static int scs_initialized = 0;
 
 /* Allocate shadow stack for a CPU */
 static int scs_setup_cpu(int cpu)

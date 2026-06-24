@@ -106,7 +106,7 @@ static uint32_t fb_pitch;
 static uint32_t fb_width;
 static uint32_t fb_height;
 static uint8_t fb_bpp;
-static int fb_active;
+static int fb_active = 0;
 
 static void vbe_write(uint16_t index, uint16_t value) {
     outw(VBE_DISPI_INDEX, index);

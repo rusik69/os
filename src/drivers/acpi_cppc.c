@@ -27,7 +27,7 @@ struct cppc_domain {
 };
 
 static struct cppc_domain cppc_domains[CPPC_MAX_DOMAINS];
-static int cppc_domain_count;
+static int cppc_domain_count = 0;
 
 /* Register a CPPC domain */
 int cppc_register_domain(uint32_t domain_id,

@@ -40,7 +40,7 @@ struct futex_bucket {
 /* ── Global state ──────────────────────────────────────────────────────── */
 
 static struct futex_bucket futex_buckets[FUTEX_HASH_SIZE];
-static int futex_initialised;
+static int futex_initialised = 0;
 
 /* ── Hash function ──────────────────────────────────────────────────────── */
 

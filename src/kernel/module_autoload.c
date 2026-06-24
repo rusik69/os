@@ -35,6 +35,7 @@
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Kernel-initiated module loading (request_module) — automatic module loading");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 

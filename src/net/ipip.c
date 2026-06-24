@@ -11,6 +11,7 @@
 #include "module.h"
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("IP-in-IP tunnel protocol (RFC 2003) - loadable kernel module");
 MODULE_ALIAS("net-ipip");

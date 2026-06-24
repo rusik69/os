@@ -54,9 +54,9 @@ struct security_scan_result {
 /* ── Global vulnerability database ───────────────────────────────────── */
 
 static struct vuln_entry vuln_db[VULN_DB_MAX];
-static int               vuln_db_count;
+static int               vuln_db_count = 0;
 static spinlock_t        scan_lock;
-static int               scan_initialised;
+static int               scan_initialised = 0;
 
 /* ── Simulated package / version database for scanning ──────────────────
  *

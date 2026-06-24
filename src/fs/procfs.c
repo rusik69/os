@@ -1968,6 +1968,7 @@ void cleanup_module(void)
 }
 
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS");
 MODULE_DESCRIPTION("procfs — /proc virtual filesystem (loadable module)");
 #endif /* MODULE */

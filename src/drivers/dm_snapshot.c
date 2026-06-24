@@ -33,7 +33,7 @@ static struct dm_snapshot dm_snapshots[DM_SNAP_MAX_SNAPSHOTS];
 static uint64_t next_snap_id;
 
 /* Create a snapshot of a device */
-int dm_snapshot_create(const char *origin, const char *cow_dev,
+int64_t dm_snapshot_create(const char *origin, const char *cow_dev,
                         uint64_t cow_size)
 {
     uint64_t irq_flags;
@@ -80,11 +80,11 @@ int dm_snapshot_create(const char *origin, const char *cow_dev,
     kprintf("[DM-SNAP] Created snapshot #%llu for %s (COW=%s, %llu bytes)\n",
             (unsigned long long)snap->snap_id, origin, cow_dev,
             (unsigned long long)cow_size);
-    return (int)snap->snap_id;
+    return (int64_t)snap->snap_id;
 }
 
 /* Read from snapshot (origin data, COW if modified) */
-int dm_snapshot_read(int snap_id, uint64_t sector,
+ssize_t dm_snapshot_read(int snap_id, uint64_t sector,
                       uint8_t *buf, size_t len)
 {
     struct dm_snapshot *snap = NULL;
@@ -125,11 +125,11 @@ int dm_snapshot_read(int snap_id, uint64_t sector,
     }
 
     spinlock_irqsave_release(&snap->lock, irq_flags);
-    return (int)len;
+    return (ssize_t)len;
 }
 
 /* Write to snapshot (triggers COW) */
-int dm_snapshot_write(int snap_id, uint64_t sector,
+ssize_t dm_snapshot_write(int snap_id, uint64_t sector,
                        const uint8_t *buf, size_t len)
 {
     struct dm_snapshot *snap = NULL;
@@ -171,7 +171,7 @@ int dm_snapshot_write(int snap_id, uint64_t sector,
     }
     snap->block_writes++;
     spinlock_irqsave_release(&snap->lock, irq_flags);
-    return (int)len;
+    return (ssize_t)len;
 }
 
 void dm_snapshot_init(void)

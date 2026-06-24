@@ -475,6 +475,7 @@ void bridge_handle(const uint8_t *frame, int len, int ingress_port)
 #include "module.h"
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Learning network bridge with STP (802.1D) and IGMP snooping — loadable kernel module");
 MODULE_ALIAS("net-bridge");

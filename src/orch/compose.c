@@ -68,7 +68,7 @@ struct compose_app {
 
 static struct compose_app compose_apps[COMPOSE_MAX_APPS];
 static spinlock_t compose_global_lock = SPINLOCK_INIT;
-static int compose_initialized;
+static int compose_initialized = 0;
 
 /* ── Forward declarations for internal helpers ─────────────────────── */
 static struct compose_app *compose_find_app(const char *name);

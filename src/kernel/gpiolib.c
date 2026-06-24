@@ -24,7 +24,7 @@
 #define GPIO_MAX_GPIOS (GPIO_MAX_CHIPS * GPIO_MAX_LINES)
 
 static struct gpio_chip *gpio_chips[GPIO_MAX_CHIPS];
-static int gpio_chip_count;
+static int gpio_chip_count = 0;
 static spinlock_t gpiolib_lock;
 
 /* Per-GPIO allocation tracking */

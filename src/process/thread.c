@@ -41,10 +41,10 @@ struct thread {
 /* ── Global state ──────────────────────────────────────────────────────── */
 
 static struct thread thread_table[THREAD_MAX];
-static int thread_count;
-static int next_tid;
+static int thread_count = 0;
+static int next_tid = 0;
 static spinlock_t thread_lock;
-static int thread_initialised;
+static int thread_initialised = 0;
 
 /* ── Initialisation ────────────────────────────────────────────────────── */
 

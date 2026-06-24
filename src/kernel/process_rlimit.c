@@ -14,7 +14,7 @@
  * This module provides the get/set/check API and initialisation.
  */
 
-static int rlimit_initialised;
+static int rlimit_initialised = 0;
 
 void rlimit_init(void)
 {

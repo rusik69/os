@@ -270,6 +270,7 @@ int gre_decapsulate(const uint8_t *outer_pkt, int outer_len,
 #include "module.h"
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("GRE tunnel protocol (RFC 2784) - loadable kernel module");
 MODULE_ALIAS("net-gre");

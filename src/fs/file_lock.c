@@ -18,7 +18,7 @@ struct file_lock_entry {
 };
 
 static struct file_lock_entry lock_table[FILE_LOCK_MAX];
-static int lock_mutex_id;
+static int lock_mutex_id = 0;
 static int lock_initialized = 0;
 
 void file_lock_init(void) {

@@ -30,7 +30,7 @@ struct time_ns {
 
 static struct time_ns g_time_ns[TIME_NS_MAX];
 static spinlock_t g_time_ns_lock;
-static int g_time_ns_count;
+static int g_time_ns_count = 0;
 
 /* ── Namespace operations ──────────────────────────────────────────── */
 

@@ -58,7 +58,7 @@ struct jffs2_dirent {
     uint8_t  name[];
 } __attribute__((packed));
 
-static int jffs2_mounted;
+static int jffs2_mounted = 0;
 
 int jffs2_mount(const uint8_t *data, uint64_t size)
 {

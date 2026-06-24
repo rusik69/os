@@ -19,7 +19,7 @@
 
 /* Whitelist of allowed struct sizes for user copies */
 static size_t usercopy_whitelist[USERCOPY_WHITELIST_MAX];
-static int usercopy_whitelist_count;
+static int usercopy_whitelist_count = 0;
 
 /* Register a struct size as whitelisted for user copies */
 int usercopy_whitelist_add(size_t struct_size)

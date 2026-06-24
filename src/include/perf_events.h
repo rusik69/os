@@ -351,10 +351,10 @@ void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid);
 /* MMAP/Munmap event */
 void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len, uint32_t flags);
 
-/* Read samples from ring buffers (0 on success, negative on error) */
-int perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count);
-int perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count);
-int perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count);
+/* Read samples from ring buffers (returns count read, or negative on error) */
+ssize_t perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count);
+ssize_t perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count);
+ssize_t perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count);
 
 /* Clear sample ring buffers */
 void perf_clear_cswitch(void);

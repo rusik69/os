@@ -645,6 +645,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("SquashFS read-only compressed filesystem — loadable module");
 #endif

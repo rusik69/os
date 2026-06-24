@@ -153,8 +153,8 @@ static void nc_parse_cmdline(void)
 
     /* Parse target IP (dot-decimal up to the first comma) */
     char ip_str[32];
-    int ip_idx = 0;
-    while (*p && *p != ',' && *p != '@' && ip_idx < (int)sizeof(ip_str) - 1) {
+    size_t ip_idx = 0;
+    while (*p && *p != ',' && *p != '@' && ip_idx < sizeof(ip_str) - 1) {
         ip_str[ip_idx++] = *p++;
     }
     ip_str[ip_idx] = '\0';
@@ -171,8 +171,8 @@ static void nc_parse_cmdline(void)
 
     /* Parse port (up to '@' or end of string) */
     char port_str[16];
-    int port_idx = 0;
-    while (*p && *p != '@' && port_idx < (int)sizeof(port_str) - 1) {
+    size_t port_idx = 0;
+    while (*p && *p != '@' && port_idx < sizeof(port_str) - 1) {
         port_str[port_idx++] = *p++;
     }
     port_str[port_idx] = '\0';
@@ -193,8 +193,8 @@ static void nc_parse_cmdline(void)
     if (*p == '@') {
         p++;
         char src_str[16];
-        int src_idx = 0;
-        while (*p && src_idx < (int)sizeof(src_str) - 1) {
+        size_t src_idx = 0;
+        while (*p && src_idx < sizeof(src_str) - 1) {
             src_str[src_idx++] = *p++;
         }
         src_str[src_idx] = '\0';
@@ -399,6 +399,7 @@ static void __exit netconsole_module_exit(void)
 module_init(netconsole_module_init);
 module_exit(netconsole_module_exit);
 MODULE_LICENSE("MIT");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("OS Kernel Team");
 MODULE_DESCRIPTION("netconsole — kernel log over UDP (Item 391)");
 #endif /* MODULE */

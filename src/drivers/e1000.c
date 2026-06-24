@@ -853,6 +853,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Intel PRO/1000 (E1000/E1000E) PCI Ethernet driver with multi-queue RSS");
 MODULE_ALIAS("pci:v00008086d0000100Esv*sd*bc*sc*i*");

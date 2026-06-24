@@ -80,7 +80,7 @@ struct nilfs2_cp_entry {
 } __attribute__((packed));
 
 static struct nilfs2_superblock nilfs2_sb;
-static int nilfs2_mounted;
+static int nilfs2_mounted = 0;
 
 /* Block device access */
 static const uint8_t *nilfs2_data_base = NULL;

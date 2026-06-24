@@ -25,11 +25,11 @@ struct hwlat_sample {
 };
 
 static struct hwlat_sample hwlat_samples[HW_LATENCY_MAX_SAMPLES];
-static int hwlat_sample_count;
+static int hwlat_sample_count = 0;
 static uint64_t hwlat_max_latency;
 static uint64_t hwlat_total_latency;
 static uint64_t hwlat_sample_count_total;
-static int hwlat_enabled;
+static int hwlat_enabled = 0;
 
 /* Measure latency by polling a memory location */
 static uint64_t hwlat_measure(void)

@@ -86,6 +86,7 @@
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Syscall dispatch — main kernel syscall interface and handler dispatch");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 

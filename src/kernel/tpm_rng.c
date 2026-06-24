@@ -30,7 +30,7 @@ int tpm_rng_init(void)
     kprintf("[OK] tpm_rng: seeded kernel entropy pool with %d bytes from TPM\n", ret);
 
     /* Wipe the buffer for security */
-    for (int i = 0; i < (int)sizeof(entropy_buf); i++)
+    for (size_t i = 0; i < sizeof(entropy_buf); i++)
         entropy_buf[i] = 0;
 
     return 0;

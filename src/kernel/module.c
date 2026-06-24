@@ -26,6 +26,7 @@
 
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION("1.0");
 MODULE_DESCRIPTION("Kernel module loader — dynamic loading, ELF parsing, symbol resolution");
 MODULE_AUTHOR("Ruslan Gustomiasov");
 

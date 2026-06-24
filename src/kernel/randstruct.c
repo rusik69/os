@@ -19,8 +19,8 @@ static struct randstruct_seed {
     uint32_t seed;
 } randstruct_seeds[RANDSTRUCT_MAX_SEEDS];
 
-static int randstruct_seed_count;
-static int randstruct_initialized;
+static int randstruct_seed_count = 0;
+static int randstruct_initialized = 0;
 
 /* Register a type for layout randomization with a seed */
 int randstruct_register_seed(const char *type_name, uint32_t seed)

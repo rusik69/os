@@ -1135,7 +1135,7 @@ void perf_cswitch_trace(uint32_t prev_pid, uint32_t next_pid,
     }
 }
 
-int perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
+ssize_t perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
 {
     if (!buf || max_count <= 0)
         return 0;
@@ -1149,7 +1149,7 @@ int perf_cswitch_read(struct perf_cswitch_event *buf, int max_count)
     for (uint32_t i = 0; i < count; i++) {
         buf[i] = perf_cswitch_state.events[i];
     }
-    return (int)count;
+    return (ssize_t)count;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1257,7 +1257,7 @@ void perf_pf_sample(uint64_t fault_addr, uint64_t ip, uint32_t error_code,
     s->stack_depth = perf_capture_stack(s->stack, PERF_PF_STACK_DEPTH);
 }
 
-int perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
+ssize_t perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0)
         return 0;
@@ -1271,7 +1271,7 @@ int perf_pf_read_samples(struct perf_pf_sample *buf, int max_count)
     for (uint32_t i = 0; i < count; i++) {
         buf[i] = perf_pf_state.samples[i];
     }
-    return (int)count;
+    return (ssize_t)count;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1483,7 +1483,7 @@ void perf_context_switch_event(uint32_t prev_pid, uint32_t next_pid,
     s->reason = reason;
 }
 
-int perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count)
+ssize_t perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_cswitch.initialized)
         return 0;
@@ -1496,7 +1496,7 @@ int perf_read_cswitch_samples(struct perf_cswitch_sample *buf, int max_count)
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_cswitch.events[i];
 
-    return (int)n;
+    return (ssize_t)n;
 }
 
 void perf_clear_cswitch(void)
@@ -1543,7 +1543,7 @@ void perf_page_fault_event(uint64_t addr, uint32_t flags, uint32_t pid)
     s->pid = pid;
 }
 
-int perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
+ssize_t perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_pf_v2.initialized)
         return 0;
@@ -1556,7 +1556,7 @@ int perf_read_pf_samples(struct perf_pf_sample_v2 *buf, int max_count)
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_pf_v2.events[i];
 
-    return (int)n;
+    return (ssize_t)n;
 }
 
 void perf_clear_pf(void)
@@ -1605,7 +1605,7 @@ void perf_mmap_event(uint32_t pid, uint64_t addr, uint64_t len,
     s->flags = flags;
 }
 
-int perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
+ssize_t perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
 {
     if (!buf || max_count <= 0 || !g_perf_mmap.initialized)
         return 0;
@@ -1618,7 +1618,7 @@ int perf_read_mmap_samples(struct perf_mmap_sample *buf, int max_count)
     for (uint32_t i = 0; i < n; i++)
         buf[i] = g_perf_mmap.events[i];
 
-    return (int)n;
+    return (ssize_t)n;
 }
 
 void perf_clear_mmap(void)

@@ -31,7 +31,7 @@ struct cdc_ether_device {
 };
 
 static struct cdc_ether_device cdc_ether_devs[CDC_ETHER_MAX_DEVS];
-static int cdc_ether_count;
+static int cdc_ether_count = 0;
 
 /* Register a CDC Ethernet device */
 int cdc_ether_register(const uint8_t *mac, int dev_num)

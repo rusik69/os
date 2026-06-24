@@ -50,7 +50,7 @@ struct sriov_pf_state {
 };
 
 static struct sriov_pf_state sriov_pf_states[16];
-static int sriov_pf_count;
+static int sriov_pf_count = 0;
 
 /* Probe a PF for SR-IOV capability */
 int sriov_probe_pf(int bus, int dev, int func)

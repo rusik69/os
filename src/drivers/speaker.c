@@ -47,6 +47,7 @@ void cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("PC speaker beep/tone driver with MIDI note and console bell support");
 #endif /* MODULE */

@@ -342,6 +342,7 @@ device_initcall(exfat_init);
 int init_module(void) { return exfat_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
+MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("exFAT — read-only");
 #endif
