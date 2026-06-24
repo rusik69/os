@@ -53,6 +53,21 @@ static inline void get_ref(const uint8_t *src, uint32_t *offset, int *match_len)
 
 /* ── Compression ──────────────────────────────────────────────────── */
 
+/**
+ * lzss_compress - Compress a buffer using the LZSS algorithm
+ * @input: Pointer to the input (uncompressed) data buffer
+ * @input_len: Length of the input data in bytes
+ * @output: Pointer to the output (compressed) data buffer
+ * @output_len: Maximum size of the output buffer in bytes
+ *
+ * Implements LZSS compression with a hash-chain match finder.  The
+ * algorithm emits literal bytes or (offset, length) reference pairs
+ * for repeated sequences.  Each control byte governs up to 8 operations.
+ *
+ * Return: The number of bytes written to @output on success, or a
+ *         negative errno on failure: -EINVAL for invalid parameters,
+ *         -ENOMEM if the output buffer is too small
+ */
 int lzss_compress(const uint8_t *input, int input_len,
                   uint8_t *output, int output_len)
 {
@@ -155,6 +170,21 @@ int lzss_compress(const uint8_t *input, int input_len,
 
 /* ── Decompression ────────────────────────────────────────────────── */
 
+/**
+ * lzss_decompress - Decompress an LZSS-compressed buffer
+ * @input: Pointer to the compressed input data
+ * @input_len: Length of the compressed data in bytes
+ * @output: Pointer to the output (decompressed) buffer
+ * @output_len: Maximum size of the output buffer in bytes
+ *
+ * Reverses the LZSS compression applied by lzss_compress().  Literal
+ * bytes are copied directly; reference pairs cause previously emitted
+ * data to be copied from the output window.
+ *
+ * Return: The number of bytes written to @output on success, or a
+ *         negative errno on failure: -EINVAL for corrupt data or
+ *         invalid parameters, -ENOSPC if the output buffer is too small
+ */
 int lzss_decompress(const uint8_t *input, int input_len,
                     uint8_t *output, int output_len)
 {

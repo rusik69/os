@@ -808,8 +808,9 @@ int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len)
     cmd[21] = (uint8_t)(*len & 0xFF);
     cmd[22] = 0; cmd[23] = 0;  /* offset = 0 */
 
-    uint8_t rsp[1024];  /* Large enough for typical NV read */
-    uint32_t rsp_len = sizeof(rsp);
+    uint8_t *rsp = kmalloc(1024);  /* Large enough for typical NV read */
+    if (!rsp) return -ENOMEM;
+    uint32_t rsp_len = 1024;
 
     int ret = tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
     if (ret == 0 && rsp_len > sizeof(struct tpm_rsp_hdr) + 2) {
@@ -821,6 +822,7 @@ int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len)
         *len = avail;
     }
 
+    kfree(rsp);
     return ret;
 }
 

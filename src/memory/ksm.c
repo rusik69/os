@@ -256,7 +256,7 @@ void __init ksm_init(void)
     ksm_scan_count = 0;
     ksm_total_scanned = 0;
 
-    kprintf("[mem] KSM (Kernel Same-page Merging) v2 — scan pacing + NUMA awareness\n");
+    kprintf("[MEM] KSM (Kernel Same-page Merging) v2 — scan pacing + NUMA awareness\n");
 }
 
 void ksm_set_enabled(int enabled)
@@ -264,9 +264,9 @@ void ksm_set_enabled(int enabled)
     ksm_enabled = enabled;
     if (enabled) {
         ksm_scan_pos = 0;  /* Reset scan cursor */
-        kprintf("[mem] KSM enabled (pacing active)\n");
+        kprintf("[MEM] KSM enabled (pacing active)\n");
     } else {
-        kprintf("[mem] KSM disabled\n");
+        kprintf("[MEM] KSM disabled\n");
     }
 }
 

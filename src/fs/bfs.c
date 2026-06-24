@@ -214,7 +214,7 @@ int bfs_init(void)
 }
 
 #ifdef MODULE
-int init_module(void) { return bfs_init(); }
+int __init init_module(void) { return bfs_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

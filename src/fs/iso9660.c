@@ -1015,7 +1015,7 @@ int iso9660_mount(const char *mountpoint, uint8_t dev_id)
     return vfs_mount_ex(mountpoint, &iso9660_ops, ip, MS_RDONLY);
 }
 
-int iso9660_init(void)
+int __init iso9660_init(void)
 {
     kprintf("[iso9660] ISO9660 CDROM filesystem (Rock Ridge + Joliet) initialized\n");
     vfs_register_filesystem("iso9660", &iso9660_ops);

@@ -74,7 +74,7 @@ static void trace_ev_v2_write_locked(uint16_t event_id, const void *payload)
 
 /* ── Public API ────────────────────────────────────────────────────── */
 
-void trace_events_v2_init(void)
+void __init trace_events_v2_init(void)
 {
     if (trace_ev_v2_state.initialized)
         return;

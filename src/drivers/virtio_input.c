@@ -100,7 +100,7 @@ void virtio_input_init(void)
 
     input_present = 1;
 
-    kprintf("[virtio-input] VirtIO input (keyboard/mouse/tablet) at %02x:%02x.%d, I/O 0x%04x\n",
+    kprintf("[VIRTIO-INPUT] VirtIO input (keyboard/mouse/tablet) at %02x:%02x.%d, I/O 0x%04x\n",
             dev.bus, dev.slot, dev.func, input_iobase);
 }
 
@@ -119,7 +119,7 @@ int virtio_input_read(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[virtio] virtio_input_read: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_input_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_input_ioctl ─────────────────────────────── */
@@ -128,6 +128,6 @@ int virtio_input_ioctl(void *dev, int cmd, void *arg)
     (void)dev;
     (void)cmd;
     (void)arg;
-    kprintf("[virtio] virtio_input_ioctl: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_input_ioctl: not yet implemented\n");
     return 0;
 }

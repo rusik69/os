@@ -126,7 +126,7 @@ static void drbd_handle_packet(struct drbd_resource *res)
     uint32_t data_len = sizeof(data_buf);
 
     if (drbd_recv_packet(res, &hdr, data_buf, &data_len) < 0) {
-        kprintf("[drbd] Failed to receive packet\n");
+        kprintf("[DRBD] Failed to receive packet\n");
         return;
     }
 
@@ -135,7 +135,7 @@ static void drbd_handle_packet(struct drbd_resource *res)
     switch (type) {
     case P_DATA:
         /* Peer sent data to replicate to us */
-        kprintf("[drbd] Received P_DATA: sector=%llu count=%u\n",
+        kprintf("[DRBD] Received P_DATA: sector=%llu count=%u\n",
                 (unsigned long long)drbd_htonll(hdr.sector),
                 drbd_htonl(hdr.count));
 
@@ -156,7 +156,7 @@ static void drbd_handle_packet(struct drbd_resource *res)
 
     case P_ACK:
         /* Peer acknowledged our write */
-        kprintf("[drbd] Received P_ACK: sector=%llu count=%u\n",
+        kprintf("[DRBD] Received P_ACK: sector=%llu count=%u\n",
                 (unsigned long long)drbd_htonll(hdr.sector),
                 drbd_htonl(hdr.count));
         res->pending_writes--;
@@ -164,12 +164,12 @@ static void drbd_handle_packet(struct drbd_resource *res)
 
     case P_BARRIER:
         /* Barrier acknowledgment */
-        kprintf("[drbd] Received P_BARRIER\n");
+        kprintf("[DRBD] Received P_BARRIER\n");
         drbd_send_packet(res, P_ACK, 0, 0, NULL, 0);
         break;
 
     default:
-        kprintf("[drbd] Unknown packet type: 0x%04x\n", type);
+        kprintf("[DRBD] Unknown packet type: 0x%04x\n", type);
         break;
     }
 }
@@ -208,7 +208,7 @@ static int drbd_submit_fn(struct blk_request *req)
     int local_ret = blk_submit_sync(res->local_dev_id, req->lba,
                                      req->count, req->buf, BLK_REQ_WRITE);
     if (local_ret < 0) {
-        kprintf("[drbd] Local write failed: sector=%llu\n",
+        kprintf("[DRBD] Local write failed: sector=%llu\n",
                 (unsigned long long)req->lba);
         return local_ret;
     }
@@ -219,7 +219,7 @@ static int drbd_submit_fn(struct blk_request *req)
         int peer_ret = drbd_send_packet(res, P_DATA, req->lba,
                                          req->count, req->buf, byte_len);
         if (peer_ret < 0) {
-            kprintf("[drbd] Peer write failed\n");
+            kprintf("[DRBD] Peer write failed\n");
             res->pending_writes--;
             return peer_ret;
         }
@@ -235,7 +235,7 @@ static int drbd_submit_fn(struct blk_request *req)
         }
 
         if (res->pending_writes > 0) {
-            kprintf("[drbd] Timeout waiting for peer ACK\n");
+            kprintf("[DRBD] Timeout waiting for peer ACK\n");
             return -ETIMEDOUT;
         }
 
@@ -253,7 +253,7 @@ void drbd_init(void)
     memset(g_resources, 0, sizeof(g_resources));
     spinlock_init(&g_drbd_lock);
     g_drbd_initialized = 1;
-    kprintf("[drbd] DRBD subsystem initialized\n");
+    kprintf("[DRBD] DRBD subsystem initialized\n");
 }
 
 int drbd_create_resource(const char *name, int local_dev_id)
@@ -269,7 +269,7 @@ int drbd_create_resource(const char *name, int local_dev_id)
         }
     }
     if (slot < 0) {
-        kprintf("[drbd] No free resource slots\n");
+        kprintf("[DRBD] No free resource slots\n");
         return -1;
     }
 
@@ -295,13 +295,13 @@ int drbd_create_resource(const char *name, int local_dev_id)
                                  drbd_submit_fn, NULL,
                                  sector_count, 0);
     if (ret != 0) {
-        kprintf("[drbd] Failed to register DRBD device\n");
+        kprintf("[DRBD] Failed to register DRBD device\n");
         memset(res, 0, sizeof(*res));
         return -1;
     }
 
     res->active = 1;
-    kprintf("[drbd] Resource '%s' created: drbd%d (id=%d), backing=%d, %llu sectors\n",
+    kprintf("[DRBD] Resource '%s' created: drbd%d (id=%d), backing=%d, %llu sectors\n",
             res->name, slot, drbd_id, local_dev_id,
             (unsigned long long)sector_count);
     return slot;
@@ -319,7 +319,7 @@ int drbd_connect_peer(int res_id, uint32_t peer_ip, uint16_t port)
     /* Connect to peer */
     int conn_id = net_tcp_connect(peer_ip, port);
     if (conn_id < 0) {
-        kprintf("[drbd] Failed to connect to peer %d.%d.%d.%d:%d\n",
+        kprintf("[DRBD] Failed to connect to peer %d.%d.%d.%d:%d\n",
                 NIPQUAD(peer_ip), port);
         return -1;
     }
@@ -329,7 +329,7 @@ int drbd_connect_peer(int res_id, uint32_t peer_ip, uint16_t port)
     res->peer_port = port;
     res->conn_state = DRBD_STATE_CONNECTED;
 
-    kprintf("[drbd] Connected to peer %d.%d.%d.%d:%d on resource '%s'\n",
+    kprintf("[DRBD] Connected to peer %d.%d.%d.%d:%d on resource '%s'\n",
             NIPQUAD(peer_ip), port, res->name);
     return 0;
 }
@@ -346,7 +346,7 @@ void drbd_disconnect(int res_id)
         res->conn_state = DRBD_STATE_STANDALONE;
     }
 
-    kprintf("[drbd] Resource '%s' disconnected\n", res->name);
+    kprintf("[DRBD] Resource '%s' disconnected\n", res->name);
 }
 
 void drbd_poll(void)
@@ -364,7 +364,7 @@ void drbd_poll(void)
 
         /* Check if connection is still alive */
         if (!net_tcp_is_connected(res->conn_id)) {
-            kprintf("[drbd] Connection lost for resource '%s'\n", res->name);
+            kprintf("[DRBD] Connection lost for resource '%s'\n", res->name);
             res->conn_state = DRBD_STATE_STANDALONE;
         }
     }
@@ -383,12 +383,12 @@ int drbd_get_state(int res_id, int *conn_state, int *disk_state)
 /* ── Stub: drbd_connect ─────────────────────────────── */
 int drbd_connect(__maybe_unused const char *peer)
 {
-    kprintf("[drbd] drbd_connect: not yet implemented\n");
+    kprintf("[DRBD] drbd_connect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: drbd_replicate ─────────────────────────────── */
 int drbd_replicate(__maybe_unused const void *data, __maybe_unused size_t len)
 {
-    kprintf("[drbd] drbd_replicate: not yet implemented\n");
+    kprintf("[DRBD] drbd_replicate: not yet implemented\n");
     return 0;
 }

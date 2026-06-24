@@ -606,13 +606,13 @@ EXPORT_SYMBOL(gpt_get_stats);
 /* ── Stub: partitions_init ─────────────────────────────── */
 int partitions_init(void)
 {
-    kprintf("[partitions] partitions_init: not yet implemented\n");
+    kprintf("[PARTITIONS] partitions_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: partitions_scan ─────────────────────────────── */
 int partitions_scan(void *dev)
 {
     (void)dev;
-    kprintf("[partitions] partitions_scan: not yet implemented\n");
+    kprintf("[PARTITIONS] partitions_scan: not yet implemented\n");
     return 0;
 }

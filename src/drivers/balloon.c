@@ -283,7 +283,7 @@ void balloon_memory_pressure(void)
     /* Run compaction to defragment */
     compaction_run();
 
-    kprintf("[balloon] memory pressure: target=%d inflated=%d "
+    kprintf("[BALLOON] memory pressure: target=%d inflated=%d "
             "compaction=%llu%%\n",
             balloon.target_pages, balloon.inflate_count,
             (unsigned long long)compaction_fragmentation_pct());
@@ -300,7 +300,7 @@ void balloon_init(void)
     /* Try to find virtio-balloon PCI device */
     if (pci_find_device(BALLOON_PCI_VENDOR, BALLOON_PCI_DEVICE, &dev) < 0) {
         /* No hardware balloon — create software balloon anyway */
-        kprintf("[balloon] virtio-balloon device not found, "
+        kprintf("[BALLOON] virtio-balloon device not found, "
                 "running software balloon\n");
     } else {
         balloon.iobase = (uint16_t)(dev.bar[0] & ~0x3u);
@@ -338,13 +338,13 @@ void balloon_init(void)
     /* Register /sys/kernel/mm/balloon_compaction/ reporting */
     if (devfs_register_device("balloon_compaction", NULL,
                               balloon_sysfs_read, NULL) < 0) {
-        kprintf("[balloon] Warning: failed to register sysfs node\n");
+        kprintf("[BALLOON] Warning: failed to register sysfs node\n");
     }
 
     /* Set a reasonable initial target */
     balloon.target_pages = balloon.num_pages / 4;
 
-    kprintf("[balloon] Balloon compaction initialized: "
+    kprintf("[BALLOON] Balloon compaction initialized: "
             "max=%d pages, target=%d, compaction=%s\n",
             balloon.num_pages, balloon.target_pages,
             balloon.compaction_enabled ? "enabled" : "disabled");
@@ -356,13 +356,13 @@ module_init(balloon_init);
 int balloon_inflate(size_t count)
 {
     (void)count;
-    kprintf("[balloon] balloon_inflate: not yet implemented\n");
+    kprintf("[BALLOON] balloon_inflate: not yet implemented\n");
     return 0;
 }
 /* ── Stub: balloon_deflate ─────────────────────────────── */
 int balloon_deflate(size_t count)
 {
     (void)count;
-    kprintf("[balloon] balloon_deflate: not yet implemented\n");
+    kprintf("[BALLOON] balloon_deflate: not yet implemented\n");
     return 0;
 }

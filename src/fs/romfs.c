@@ -217,7 +217,7 @@ int romfs_mount(const char *mountpoint, uint32_t addr, uint32_t size) {
     return vfs_mount_ex(mountpoint, &romfs_ops, rp, MS_RDONLY);
 }
 
-int romfs_init(void) {
+int __init romfs_init(void) {
     kprintf("[romfs] ROMFS initialized\n");
     vfs_register_filesystem("romfs", &romfs_ops);
     return 0;

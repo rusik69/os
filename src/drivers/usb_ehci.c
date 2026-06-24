@@ -1047,7 +1047,7 @@ int ehci_init(void *dev)
     struct pci_device *pdev = (struct pci_device *)dev;
     if (!pdev) return -EINVAL;
 
-    kprintf("[usb] ehci_init: probing controller at %02x:%02x.%d\n",
+    kprintf("[USB] ehci_init: probing controller at %02x:%02x.%d\n",
             pdev->bus, pdev->slot, pdev->func);
 
     uint32_t bar0 = pci_read(pdev->bus, pdev->slot, pdev->func, 0x10);
@@ -1068,10 +1068,10 @@ int ehci_reset(void *dev)
     while ((op_read(c, EHCI_USBCMD) & EHCI_CMD_HCRESET) && --timeout)
         busy_wait_n(10);
     if (timeout == 0) {
-        kprintf("[usb] ehci_reset: timeout waiting for controller reset\n");
+        kprintf("[USB] ehci_reset: timeout waiting for controller reset\n");
         return -EIO;
     }
-    kprintf("[usb] EHCI controller reset\n");
+    kprintf("[USB] EHCI controller reset\n");
     return 0;
 }
 
@@ -1079,7 +1079,7 @@ int ehci_reset(void *dev)
 int ehci_submit_urb(void *urb)
 {
     if (!urb) return -EINVAL;
-    kprintf("[usb] ehci_submit_urb: URB submitted (stub processing)\n");
+    kprintf("[USB] ehci_submit_urb: URB submitted (stub processing)\n");
 
     /* For now, just submit as an async qTD if we have a controller */
     if (ehci_count > 0) {
@@ -1103,7 +1103,7 @@ void ehci_irq(struct interrupt_frame *frame)
     if (sts & (1u << 2)) { /* Port Change Detect */
         /* Clear the status bit */
         op_write(0, EHCI_USBSTS, (1u << 2));
-        kprintf("[usb] EHCI IRQ: port change detected\n");
+        kprintf("[USB] EHCI IRQ: port change detected\n");
     }
 
     /* Check for USB error interrupt (USBERRINT) */

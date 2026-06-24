@@ -509,7 +509,7 @@ int fsverity_disable(uint64_t ino)
 }
 EXPORT_SYMBOL(fsverity_disable);
 #include "module.h"
-module_init(fsverity_init);
+fs_initcall(fsverity_init);
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  fs-verity measurement and verification API

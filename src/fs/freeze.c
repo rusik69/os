@@ -70,7 +70,7 @@ int thaw_fs(void) {
 
 int is_frozen(void) { return fs_frozen; }
 #include "module.h"
-module_init(freeze_init);
+fs_initcall(freeze_init);
 
 /* ═══════════════════════════════════════════════════════════════
  *  Stub functions for future implementation

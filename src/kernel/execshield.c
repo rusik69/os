@@ -24,7 +24,15 @@
 
 /* ── W^X enforcement ──────────────────────────────────────────────── */
 
-/* Check if a memory protection combination violates W^X */
+/**
+ * execshield_check_wx - Check if a memory protection combination violates W^X
+ * @prot_flags: Memory protection flags (PROT_READ, PROT_WRITE, PROT_EXEC, etc.)
+ *
+ * Enforces the W^X (Write XOR Execute) policy: a mapping that is both
+ * writable and executable is forbidden.
+ *
+ * Return: 0 if the combination is allowed, -EACCES if W+X is detected
+ */
 int execshield_check_wx(uint64_t prot_flags)
 {
     /* Extract writable and executable bits from protection flags */
@@ -40,8 +48,18 @@ int execshield_check_wx(uint64_t prot_flags)
 
 /* ── READ_IMPLIES_EXEC ────────────────────────────────────────────── */
 
-/* Determine whether a process should get READ_IMPLIES_EXEC based on
- * ELF header flags (e.g., PT_GNU_STACK absence) */
+/**
+ * execshield_read_implies_exec - Determine if READ_IMPLIES_EXEC is needed
+ * @ehdr: Pointer to the ELF header of the binary being loaded
+ * @phdrs: Array of ELF program headers
+ * @phdr_count: Number of program header entries
+ *
+ * Checks whether a PT_GNU_STACK program header is present; if absent
+ * (legacy binary) or if the stack is explicitly marked executable,
+ * READ_IMPLIES_EXEC is enabled.
+ *
+ * Return: 1 if READ_IMPLIES_EXEC should be set, 0 otherwise
+ */
 int execshield_read_implies_exec(const struct elf64_header *ehdr,
                                   const struct elf64_phdr *phdrs,
                                   int phdr_count)
@@ -83,7 +101,20 @@ void execshield_apply_personality(struct process *proc, int read_implies_exec)
 
 /* ── mprotect enforcement ─────────────────────────────────────────── */
 
-/* Hook for mprotect syscall: enforce W^X */
+/**
+ * execshield_mprotect_check - Enforce W^X during an mprotect syscall
+ * @addr: Base address of the region being modified
+ * @len: Length of the region being modified
+ * @prot: New protection flags being requested
+ * @proc: Process making the mprotect call
+ *
+ * Hook for the mprotect syscall to enforce the W^X policy.  Kernel
+ * threads are exempt from enforcement.  If READ_IMPLIES_EXEC is set,
+ * the personality flag allows R+X but W+X remains blocked.
+ *
+ * Return: 0 if the protection change is allowed, -EINVAL if W^X would
+ *         be violated
+ */
 int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
                                const struct process *proc)
 {
@@ -113,6 +144,13 @@ int execshield_mprotect_check(uint64_t addr, uint64_t len, uint64_t prot,
 
 /* ── Init ─────────────────────────────────────────────────────────── */
 
+/**
+ * execshield_init - Initialise the Exec Shield (W^X enforcement) subsystem
+ *
+ * Called once during boot to announce that W^X enforcement,
+ * READ_IMPLIES_EXEC personality handling, and PT_GNU_STACK processing
+ * are active.
+ */
 void execshield_init(void)
 {
     kprintf("[OK] Exec Shield (W^X enforcement + READ_IMPLIES_EXEC + PT_GNU_STACK)\n");

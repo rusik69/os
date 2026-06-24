@@ -59,7 +59,7 @@ static int  raid_map(struct dm_target *ti, struct blk_request *req,
 static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     if (argc < 2) {
-        kprintf("[dm-raid] ctr: need at least 2 args (level devs...), got %d\n", argc);
+        kprintf("[DM-RAID] ctr: need at least 2 args (level devs...), got %d\n", argc);
         return -EINVAL;
     }
 
@@ -77,7 +77,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
     else if (strcmp(level_str, "raid10") == 0)
         priv->level = DM_RAID_LEVEL_10;
     else {
-        kprintf("[dm-raid] ctr: unknown level '%s' (expected raid0/raid1/raid10)\n",
+        kprintf("[DM-RAID] ctr: unknown level '%s' (expected raid0/raid1/raid10)\n",
                 level_str);
         kfree(priv);
         return -EINVAL;
@@ -100,7 +100,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
             if (*p < '0' || *p > '9') { is_number = 0; break; }
         }
         if (!is_number) {
-            kprintf("[dm-raid] ctr: invalid argument '%s'\n", dev_argv[i]);
+            kprintf("[DM-RAID] ctr: invalid argument '%s'\n", dev_argv[i]);
             kfree(priv);
             return -EINVAL;
         }
@@ -114,7 +114,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
             /* RAID1: first arg is starting dev_id, second is num_mirrors */
             if (i == 0) {
                 if (!blockdev_is_registered((int)val)) {
-                    kprintf("[dm-raid] ctr: device %llu not registered\n",
+                    kprintf("[DM-RAID] ctr: device %llu not registered\n",
                             (unsigned long long)val);
                     kfree(priv);
                     return -ENODEV;
@@ -124,7 +124,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
             } else if (i == 1) {
                 priv->num_devs = (int)val;
                 if (priv->num_devs < 2 || priv->num_devs > DM_RAID_MAX_DEVS) {
-                    kprintf("[dm-raid] ctr: RAID1 needs 2-%d mirrors, got %d\n",
+                    kprintf("[DM-RAID] ctr: RAID1 needs 2-%d mirrors, got %d\n",
                             DM_RAID_MAX_DEVS, priv->num_devs);
                     kfree(priv);
                     return -EINVAL;
@@ -135,7 +135,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
             /* RAID0/10: collect devices, last numeric is stripe size */
             if (i < dev_argc - 1) {
                 if (!blockdev_is_registered((int)val)) {
-                    kprintf("[dm-raid] ctr: device %llu not registered\n",
+                    kprintf("[DM-RAID] ctr: device %llu not registered\n",
                             (unsigned long long)val);
                     kfree(priv);
                     return -ENODEV;
@@ -143,7 +143,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
                 if (priv->num_devs < DM_RAID_MAX_DEVS) {
                     priv->dev_ids[priv->num_devs++] = (int)val;
                 } else {
-                    kprintf("[dm-raid] ctr: too many devices (max %d)\n",
+                    kprintf("[DM-RAID] ctr: too many devices (max %d)\n",
                             DM_RAID_MAX_DEVS);
                     kfree(priv);
                     return -EINVAL;
@@ -158,7 +158,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
 
     /* Validate */
     if (priv->num_devs < 2) {
-        kprintf("[dm-raid] ctr: need at least 2 devices\n");
+        kprintf("[DM-RAID] ctr: need at least 2 devices\n");
         kfree(priv);
         return -EINVAL;
     }
@@ -166,7 +166,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
     if (priv->level == DM_RAID_LEVEL_0 || priv->level == DM_RAID_LEVEL_10) {
         if (priv->stripe_size < DM_RAID_MIN_STRIPE ||
             priv->stripe_size > DM_RAID_MAX_STRIPE) {
-            kprintf("[dm-raid] ctr: stripe_size %llu out of range [%d, %d]\n",
+            kprintf("[DM-RAID] ctr: stripe_size %llu out of range [%d, %d]\n",
                     (unsigned long long)priv->stripe_size,
                     DM_RAID_MIN_STRIPE, DM_RAID_MAX_STRIPE);
             kfree(priv);
@@ -178,7 +178,7 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
 
     ti->private = priv;
 
-    kprintf("[dm-raid] ctr: level=%s, devs=%d, stripe=%llu\n",
+    kprintf("[DM-RAID] ctr: level=%s, devs=%d, stripe=%llu\n",
             (priv->level == DM_RAID_LEVEL_0) ? "RAID0" :
             (priv->level == DM_RAID_LEVEL_1) ? "RAID1" : "RAID10",
             priv->num_devs, (unsigned long long)priv->stripe_size);
@@ -407,7 +407,7 @@ int dm_raid_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm_raid] dm_raid_ctr: not yet implemented\n");
+    kprintf("[DM_RAID] dm_raid_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_raid_map ─────────────────────────────── */
@@ -415,6 +415,6 @@ int dm_raid_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm_raid] dm_raid_map: not yet implemented\n");
+    kprintf("[DM_RAID] dm_raid_map: not yet implemented\n");
     return 0;
 }

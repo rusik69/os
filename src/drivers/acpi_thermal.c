@@ -354,7 +354,7 @@ static void thermal_init_trip_points(struct thermal_zone_ext *tze)
     tze->passive_cooling_active = 0;
 }
 
-int acpi_thermal_init(void)
+int __init acpi_thermal_init(void)
 {
     if (g_thermal_init_done)
         return 0;

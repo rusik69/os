@@ -92,7 +92,7 @@ static int glob_match(const char *pattern, const char *str)
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
-void module_alias_init(void)
+void __init module_alias_init(void)
 {
     memset(g_aliases, 0, sizeof(g_aliases));
     spinlock_init(&g_alias_lock);

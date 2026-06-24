@@ -490,6 +490,16 @@ static int menu_governor_select(struct cpuidle_cpu *cpu_data)
  *  Governor registration & selection
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * cpuidle_register_governor - Register a new idle governor
+ * @gov: Pointer to the governor descriptor (must have @name and @select set)
+ *
+ * Adds a pluggable governor to the cpuidle subsystem.  The first
+ * registered governor is automatically activated.  Governors are stored
+ * in a static table of up to MAX_GOVERNORS (4) entries.  If @gov is
+ * NULL, has no name, or has no select callback, this function returns
+ * immediately.
+ */
 void cpuidle_register_governor(const struct cpuidle_governor *gov)
 {
     if (!gov || !gov->name || !gov->select)
@@ -710,6 +720,14 @@ int cpuidle_acpi_register_states(const struct acpi_cstate_desc *descs, int count
  *  Public API
  * ═══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * cpuidle_init - Initialise the CPU idle management subsystem
+ *
+ * Detects CPU idle capabilities via CPUID (MWAIT/MONITOR support),
+ * registers the built-in idle states (POLL, C1/HLT, C1E/C2/C3 via
+ * MWAIT if available), and activates the default menu governor.
+ * Must be called once during boot before any CPU enters idle.
+ */
 void cpuidle_init(void)
 {
     /* Detect CPU idle capabilities */
@@ -726,6 +744,13 @@ void cpuidle_init(void)
             idle_state_count);
 }
 
+/**
+ * cpuidle_init_cpu - Initialise per-CPU cpuidle state
+ *
+ * Resets the idle data for the current CPU, enabling idle state
+ * selection and setting the deepest available state.  Must be called
+ * during CPU hotplug or initialisation for each logical CPU.
+ */
 void cpuidle_init_cpu(void)
 {
     struct cpuidle_cpu *c = this_cpu_idle();
@@ -736,6 +761,16 @@ void cpuidle_init_cpu(void)
     c->menu_correction_factor = MENU_CORRECTION_INIT;
 }
 
+/**
+ * cpuidle_idle - Enter an idle state selected by the active governor
+ *
+ * The main idle entry point called by the scheduler when no task is
+ * runnable.  Uses the active governor to predict the expected idle
+ * duration and select the deepest C-state whose break-even latency
+ * falls within the prediction.  Supports POLL, HLT, and MWAIT-based
+ * states, NO_HZ tick stopping for deep C-states, and governor-based
+ * idle duration tracking for adaptive prediction.
+ */
 void cpuidle_idle(void)
 {
     struct cpu_info *ci = get_cpu_info();
@@ -843,6 +878,13 @@ void cpuidle_reflect(void *dev, int state_index)
     kprintf("[CPUIDLE] cpuidle_reflect: not yet implemented\n");
 }
 
+/**
+ * cpuidle_get_state - Look up a registered idle state by index
+ * @idx: Zero-based index of the idle state to retrieve
+ *
+ * Return: A pointer to the cpuidle_state descriptor, or NULL if @idx
+ *         is out of range (negative or >= number of registered states)
+ */
 const struct cpuidle_state *cpuidle_get_state(int idx)
 {
     if (idx < 0 || idx >= idle_state_count)

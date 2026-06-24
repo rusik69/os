@@ -1312,6 +1312,8 @@ int ext2_init(void) {
     vfs_register_filesystem("ext2", &ext2_ops);
     return 0;
 }
+#include "initcall.h"
+fs_initcall(ext2_init);
 
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */

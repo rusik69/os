@@ -262,29 +262,27 @@ extern struct vfs_ops devfs_ops;
 int vfs_abs_path(const char *path, char *out, int out_max) {
     char tmp[128];
     int wpos = 0;
-    int i;
 
     if (!path || !path[0]) { out[0] = '/'; out[1] = '\0'; return 0; }
 
     /* Start with cwd for relative paths, empty for absolute */
     if (path[0] == '/') {
         wpos = 0;
-        i = 0;
     } else {
         const char *cwd = "/";
         struct process *p = process_get_current();
         if (p && p->cwd[0]) cwd = p->cwd;
         int cwdl = (int)strlen(cwd);
-        if (cwdl >= (int)sizeof(tmp)) cwdl = (int)sizeof(tmp) - 1;
+        if ((size_t)cwdl >= sizeof(tmp)) cwdl = (int)sizeof(tmp) - 1;
         memcpy(tmp, cwd, (size_t)cwdl);
         wpos = cwdl;
-        i = 0;
     }
 
     /* Normalize the starting path: remove trailing slash unless it's just "/" */
     while (wpos > 1 && tmp[wpos - 1] == '/') wpos--;
 
     /* Tokenize the input path and process each component */
+    int i = 0;
     while (path[i]) {
         /* Skip slashes */
         while (path[i] == '/') i++;
@@ -728,7 +726,6 @@ int vfs_read(const char *path, void *buf, uint32_t max, uint32_t *out_size) {
  */
 int vfs_write(const char *path, const void *data, uint32_t size) {
     char ap[128]; vfs_abs_path(path, ap, sizeof(ap));
-    uint32_t existing_size = 0;
 
     /* Check Landlock write-file permission */
     {
@@ -752,6 +749,7 @@ int vfs_write(const char *path, const void *data, uint32_t size) {
 
     /* Enforce RLIMIT_FSIZE: check if write would exceed file size limit */
     struct process *proc = process_get_current();
+    uint32_t existing_size = 0;
     if (proc) {
         /* Get the existing file size (if any) and check the new total */
         struct vfs_stat st;

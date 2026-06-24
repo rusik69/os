@@ -184,7 +184,7 @@ int ipe_get_mode(void)
  *
  * Registers default trusted paths and sets the default policy.
  */
-void ipe_init(void)
+void __init ipe_init(void)
 {
     if (g_ipe_initialized) return;
 

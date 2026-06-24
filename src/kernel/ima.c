@@ -24,6 +24,7 @@
 #include "vfs.h"
 #include "sysfs.h"
 #include "errno.h"
+#include "heap.h"
 
 /* ── Configuration ───────────────────────────────────────────────── */
 
@@ -70,31 +71,37 @@ static inline void ima_unlock(void)
     __sync_lock_release(&ima_log_lock);
 }
 
-/* ── SHA256 file hashing (stack-based, no heap) ──────────────────── */
+/* ── SHA256 file hashing ──────────────────────────────────────── */
 
 /*
  * Read a file in 4K chunks and compute its SHA-256 hash.
- * Uses a stack buffer (no heap allocation).
+ * Uses a heap-allocated bounce buffer.
  * Returns 0 on success, -errno on failure.
  */
 static int ima_hash_file(const char *path, uint8_t digest[IMA_DIGEST_SIZE])
 {
     struct sha256_ctx ctx;
-    uint8_t  buf[4096];
+    uint8_t  *buf;
     uint32_t offset = 0;
     int      ret;
 
     if (!path || !digest)
         return -EINVAL;
 
+    buf = kmalloc(4096);
+    if (!buf)
+        return -ENOMEM;
+
     sha256_init(&ctx);
 
     /* Read the file in 4K chunks */
     for (;;) {
         uint32_t bytes_read = 0;
-        ret = vfs_read(path, buf, sizeof(buf), &bytes_read);
-        if (ret < 0)
+        ret = vfs_read(path, buf, 4096, &bytes_read);
+        if (ret < 0) {
+            kfree(buf);
             return ret;
+        }
 
         if (bytes_read == 0)
             break;  /* EOF */
@@ -103,7 +110,7 @@ static int ima_hash_file(const char *path, uint8_t digest[IMA_DIGEST_SIZE])
         offset += bytes_read;
 
         /* If we got less than a full buffer, it's the last chunk */
-        if (bytes_read < sizeof(buf))
+        if (bytes_read < 4096)
             break;
 
         /* Safety: limit to 64 MB to avoid pathological files */
@@ -112,6 +119,7 @@ static int ima_hash_file(const char *path, uint8_t digest[IMA_DIGEST_SIZE])
     }
 
     sha256_final(digest, &ctx);
+    kfree(buf);
     return 0;
 }
 
@@ -409,7 +417,7 @@ int ima_file_exec(const char *path)
 
 /* ── Public API: ima_init ────────────────────────────────────────── */
 
-void ima_init(void)
+void __init ima_init(void)
 {
     /* Zero out the measurement log */
     memset(ima_log, 0, sizeof(ima_log));

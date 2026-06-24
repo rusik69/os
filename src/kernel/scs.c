@@ -106,7 +106,7 @@ void scs_set_sp(uintptr_t *sp)
         scs_sp[cpu] = sp;
 }
 
-void scs_init(void)
+void __init scs_init(void)
 {
     if (scs_initialized)
         return;

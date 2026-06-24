@@ -62,7 +62,7 @@ static int pmem_submit(struct blk_request *req) {
      * a well-known base (BLOCKDEV_PMEM0). */
     int pmem_idx = dev_id - BLOCKDEV_PMEM0;
     if (pmem_idx < 0 || pmem_idx >= g_pmem_devices) {
-        kprintf("[pmem] ERROR: invalid device id %d (pmem_idx=%d)\n",
+        kprintf("[PMEM] ERROR: invalid device id %d (pmem_idx=%d)\n",
                 dev_id, pmem_idx);
         req->result = -1;
         return -1;
@@ -71,7 +71,7 @@ static int pmem_submit(struct blk_request *req) {
     /* Get the SPA range info for this device */
     struct nfit_spa_range_info spa;
     if (acpi_nfit_get_spa(pmem_idx, &spa) != 0) {
-        kprintf("[pmem] ERROR: cannot get SPA info for index %d\n",
+        kprintf("[PMEM] ERROR: cannot get SPA info for index %d\n",
                 pmem_idx);
         req->result = -1;
         return -1;
@@ -85,7 +85,7 @@ static int pmem_submit(struct blk_request *req) {
 
     /* Bounds check: ensure the request fits within the SPA range */
     if (offset + length > spa.spa_length) {
-        kprintf("[pmem] ERROR: request beyond device boundary "
+        kprintf("[PMEM] ERROR: request beyond device boundary "
                 "(lba=%llu count=%u offset=0x%llx length=0x%llx "
                 "spa_length=0x%llx)\n",
                 (unsigned long long)lba, count,
@@ -130,14 +130,14 @@ void __init pmem_init(void) {
     /* Query the number of PMEM SPA ranges found during NFIT parsing */
     int count = acpi_nfit_get_count();
     if (count <= 0) {
-        kprintf("[pmem] No NVDIMM regions found (NFIT not present or "
+        kprintf("[PMEM] No NVDIMM regions found (NFIT not present or "
                 "no PMEM ranges)\n");
         g_pmem_initialized = 1;
         return;
     }
 
     if (count > PMEM_MAX_DEVICES) {
-        kprintf("[pmem] WARNING: %u PMEM regions found, but only "
+        kprintf("[PMEM] WARNING: %u PMEM regions found, but only "
                 "%d supported; ignoring extras\n",
                 count, PMEM_MAX_DEVICES);
         count = PMEM_MAX_DEVICES;
@@ -145,13 +145,13 @@ void __init pmem_init(void) {
 
     g_pmem_devices = count;
 
-    kprintf("[pmem] Registering %d persistent memory device(s):\n",
+    kprintf("[PMEM] Registering %d persistent memory device(s):\n",
             count);
 
     for (int i = 0; i < count; i++) {
         struct nfit_spa_range_info spa;
         if (acpi_nfit_get_spa(i, &spa) != 0) {
-            kprintf("[pmem] ERROR: cannot get SPA info for index %d, "
+            kprintf("[PMEM] ERROR: cannot get SPA info for index %d, "
                     "skipping\n", i);
             continue;
         }
@@ -164,7 +164,7 @@ void __init pmem_init(void) {
         char dev_name[16];
         int n = snprintf(dev_name, sizeof(dev_name), "%s%d",
                          PMEM_DEV_NAME_BASE, i);
-        if (n < 0 || n >= (int)sizeof(dev_name)) {
+        if (n < 0 || (size_t)n >= sizeof(dev_name)) {
             /* Truncation — fall back to generic name */
             strncpy(dev_name, PMEM_DEV_NAME_BASE, sizeof(dev_name) - 1);
             dev_name[sizeof(dev_name) - 1] = '\0';
@@ -176,7 +176,7 @@ void __init pmem_init(void) {
                                     pmem_submit, NULL,
                                     sector_count, 0);
         if (ret != 0) {
-            kprintf("[pmem] ERROR: blockdev_register(%d, %s) failed "
+            kprintf("[PMEM] ERROR: blockdev_register(%d, %s) failed "
                     "with %d\n", dev_id, dev_name, ret);
             continue;
         }
@@ -207,7 +207,7 @@ int pmem_read(void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[pmem] pmem_read: not yet implemented\n");
+    kprintf("[PMEM] pmem_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pmem_write ─────────────────────────────── */
@@ -216,6 +216,6 @@ int pmem_write(const void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[pmem] pmem_write: not yet implemented\n");
+    kprintf("[PMEM] pmem_write: not yet implemented\n");
     return 0;
 }

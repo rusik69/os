@@ -317,7 +317,7 @@ int zram_writeback_evict_one(void)
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-void zram_writeback_init(void)
+void __init zram_writeback_init(void)
 {
     memset(backing_dev_path, 0, sizeof(backing_dev_path));
     memset(lru_gen, 0, sizeof(lru_gen));

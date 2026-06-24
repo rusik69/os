@@ -727,7 +727,7 @@ int ext4_init(void)
 device_initcall(ext4_init);
 
 #ifdef MODULE
-int init_module(void) { return ext4_init(); }
+int __init init_module(void) { return ext4_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

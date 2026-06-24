@@ -555,7 +555,7 @@ int e1000_init(void) {
 
             int ifindex = netif_register(&ndev);
             if (ifindex >= 0) {
-                kprintf("[e1000] registered as netdevice ifindex=%d\n", ifindex);
+                kprintf("[E1000] registered as netdevice ifindex=%d\n", ifindex);
                 reg_ok = 1;
             }
         } else {
@@ -607,7 +607,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
 {
     (void)dev;
 
-    kprintf("[dbg] e1000_netdev_transmit: len=%u\n", len);
+    kprintf("[DBG] e1000_netdev_transmit: len=%u\n", len);
 
     /* Choose a TX queue: hash src+dst IP from ethernet/IP header if possible */
     int tx_q = 0;
@@ -637,7 +637,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
     while (!(qp->tx_descs[idx].status & TDESC_STA_DD) && --tx_timeout > 0)
         __asm__ volatile("pause");
     if (tx_timeout <= 0) {
-        kprintf("[dbg] e1000_netdev_transmit: TIMEOUT waiting for desc %d\n", idx);
+        kprintf("[DBG] e1000_netdev_transmit: TIMEOUT waiting for desc %d\n", idx);
         qp->stats.tx_errors++;
         return -1;
     }
@@ -659,7 +659,7 @@ static int e1000_netdev_transmit(struct net_device *dev,
     qp->stats.tx_packets++;
     qp->stats.tx_bytes += len;
 
-    kprintf("[dbg] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
+    kprintf("[DBG] e1000_netdev_transmit: done, new tx_cur=%u\n", qp->tx_cur);
     return 0;
 }
 
@@ -807,7 +807,7 @@ int e1000_receive(void *buf, uint16_t max_len) {
 void e1000_exit(void) {
     if (!nic_present) return;
 
-    kprintf("[e1000] Shutting down NIC...\n");
+    kprintf("[E1000] Shutting down NIC...\n");
 
     /* Disable all interrupts */
     e1000_write(REG_IMC, 0xFFFFFFFF);
@@ -841,7 +841,7 @@ void e1000_exit(void) {
             netif_unregister(idx);
     }
 
-    kprintf("[e1000] NIC shut down\n");
+    kprintf("[E1000] NIC shut down\n");
 }
 
 #ifdef MODULE
@@ -866,7 +866,7 @@ int e1000_open(void *dev)
     (void)dev;
     if (!nic_present) return -EIO;
 
-    kprintf("[e1000] Opening NIC...\n");
+    kprintf("[E1000] Opening NIC...\n");
 
     /* Enable receiver */
     uint32_t rctl = e1000_read(REG_RCTL);
@@ -883,7 +883,7 @@ int e1000_open(void *dev)
     e1000_write(REG_IMS, (1u << 6) | (1u << 7) | (1u << 2));
     e1000_read(REG_ICR); /* clear pending */
 
-    kprintf("[e1000] NIC opened\n");
+    kprintf("[E1000] NIC opened\n");
     return 0;
 }
 
@@ -893,7 +893,7 @@ int e1000_stop(void *dev)
     (void)dev;
     if (!nic_present) return -EIO;
 
-    kprintf("[e1000] Stopping NIC...\n");
+    kprintf("[E1000] Stopping NIC...\n");
 
     /* Mask all interrupts */
     e1000_write(REG_IMC, 0xFFFFFFFF);
@@ -902,7 +902,7 @@ int e1000_stop(void *dev)
     e1000_write(REG_TCTL, 0);
     e1000_write(REG_RCTL, 0);
 
-    kprintf("[e1000] NIC stopped\n");
+    kprintf("[E1000] NIC stopped\n");
     return 0;
 }
 
@@ -931,6 +931,6 @@ int e1000_set_multicast(void *dev, void *addr, int count)
     (void)addr;
     (void)count;
 
-    kprintf("[e1000] Multicast filter set: %d address(es)\n", count);
+    kprintf("[E1000] Multicast filter set: %d address(es)\n", count);
     return 0;
 }

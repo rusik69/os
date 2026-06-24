@@ -100,7 +100,7 @@ void zero_kernel_stack_uapi(uint64_t entry_rsp)
 }
 
 /* ── syscall_cleanup_init ──────────────────────────────────── */
-int syscall_cleanup_init(void)
+int __init syscall_cleanup_init(void)
 {
     /* Stack zeroing at syscall exit is already wired into the asm
      * entry/exit path (zero_kernel_stack_uapi).  No additional

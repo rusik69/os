@@ -59,6 +59,20 @@ static struct idle_inject_cpu *ii_get_state(int cpu)
 
 /* ── Public API ────────────────────────────────────────────────────── */
 
+/**
+ * idle_inject_register - Register a CPU for idle injection
+ * @cpu: Logical CPU number to register
+ * @max_ratio: Maximum idle ratio (0-100, percentage of time to idle)
+ * @duration: Base duration of the duty cycle in milliseconds
+ *
+ * Enables idle injection on the specified CPU.  The run and idle phase
+ * durations are derived from @max_ratio and @duration: idle_ms = duration
+ * * max_ratio / 100, run_ms = duration - idle_ms.  Minimum durations
+ * of 1 ms are enforced for both phases.
+ *
+ * Return: 0 on success, -EINVAL if @cpu is out of range or @max_ratio
+ *         is invalid, -EBUSY if the CPU is already registered
+ */
 int idle_inject_register(int cpu, unsigned int max_ratio, unsigned int duration)
 {
     struct idle_inject_cpu *state = ii_get_state(cpu);
@@ -170,11 +184,14 @@ int idle_inject_set_duration(int cpu, unsigned int run, unsigned int idle)
 
 /* ── Timer tick handler ────────────────────────────────────────────── */
 
-/*
- * Called each scheduler/timer tick.  Checks if the given CPU has idle
- * injection active and whether the current phase has expired.
- * If the idle phase should be entered, the next schedule() call will
- * notice via idle_inject_is_idle() and enter HLT.
+/**
+ * idle_inject_tick - Timer-tick handler for idle injection state machine
+ * @cpu: Logical CPU number to process
+ *
+ * Called from the scheduler or timer tick.  Checks if the current phase
+ * (RUN or IDLE) has expired for the given CPU and transitions to the
+ * next phase if needed.  The phase duration is converted from milliseconds
+ * to ticks (assuming 100 Hz / 10 ms per tick).
  */
 void idle_inject_tick(int cpu)
 {
@@ -232,10 +249,14 @@ void idle_inject_tick(int cpu)
     spinlock_irqsave_release(&ii_lock, flags);
 }
 
-/*
- * Check if the given CPU is currently in an injected idle period.
- * The scheduler should call this before picking a task; if it returns
- * 1, the CPU should enter idle (HLT) instead of running anything.
+/**
+ * idle_inject_is_idle - Check if a CPU is currently in an injected idle phase
+ * @cpu: Logical CPU number to query
+ *
+ * The scheduler calls this before picking a task.  If it returns 1,
+ * the CPU should enter idle (HLT) instead of running any task.
+ *
+ * Return: 1 if the CPU is in an idle-injection idle phase, 0 otherwise
  */
 int idle_inject_is_idle(int cpu)
 {
@@ -249,6 +270,13 @@ int idle_inject_is_idle(int cpu)
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
+/**
+ * idle_inject_init - Initialise the idle injection subsystem
+ *
+ * Clears the per-CPU idle injection state array and initialises the
+ * global spinlock.  Called once during boot before any CPU can be
+ * registered for idle injection.
+ */
 void idle_inject_init(void)
 {
     memset(idle_inject_state, 0, sizeof(idle_inject_state));

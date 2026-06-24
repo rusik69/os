@@ -1435,7 +1435,7 @@ int cifs_init(void)
 device_initcall(cifs_init);
 
 #ifdef MODULE
-int init_module(void) { return cifs_init(); }
+int __init init_module(void) { return cifs_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

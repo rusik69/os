@@ -281,7 +281,7 @@ static int acm_read_data(uint8_t *buf, uint32_t len) {
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-int usb_cdc_acm_init(void) {
+int __init usb_cdc_acm_init(void) {
     if (g_acm_initialized) return 0;
     if (!usb_is_present()) return -1;
 
@@ -435,21 +435,21 @@ int usb_cdc_acm_available(void) {
 int cdc_acm_init(void *dev)
 {
     (void)dev;
-    kprintf("[usb] cdc_acm_init: not yet implemented\n");
+    kprintf("[USB] cdc_acm_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cdc_acm_open ─────────────────────────────── */
 int cdc_acm_open(void *dev)
 {
     (void)dev;
-    kprintf("[usb] cdc_acm_open: not yet implemented\n");
+    kprintf("[USB] cdc_acm_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cdc_acm_close ─────────────────────────────── */
 int cdc_acm_close(void *dev)
 {
     (void)dev;
-    kprintf("[usb] cdc_acm_close: not yet implemented\n");
+    kprintf("[USB] cdc_acm_close: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cdc_acm_write ─────────────────────────────── */
@@ -458,7 +458,7 @@ int cdc_acm_write(void *dev, const void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[usb] cdc_acm_write: not yet implemented\n");
+    kprintf("[USB] cdc_acm_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: cdc_acm_read ─────────────────────────────── */
@@ -467,6 +467,6 @@ int cdc_acm_read(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[usb] cdc_acm_read: not yet implemented\n");
+    kprintf("[USB] cdc_acm_read: not yet implemented\n");
     return 0;
 }

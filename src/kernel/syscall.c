@@ -5615,7 +5615,8 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
     }
 
     /* Transfer up to 'count' bytes using a 4K kernel bounce buffer */
-    uint8_t buf[4096];
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return (uint64_t)-1;
     uint64_t total = 0;
     while (total < count) {
         uint64_t chunk = count - total;
@@ -5650,12 +5651,18 @@ static uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd,
     }
 
     /* Update offset if requested */
+    uint64_t result;
     if (use_offset && offset_addr) {
-        if (copy_to_user(offset_addr, &off, 8) < 0)
-            return (uint64_t)-1;
+        if (copy_to_user(offset_addr, &off, 8) < 0) {
+            result = (uint64_t)-1;
+            goto sendfile_cleanup;
+        }
     }
 
-    return (uint64_t)total;
+    result = (uint64_t)total;
+sendfile_cleanup:
+    kfree(buf);
+    return result;
 }
 
 /* ── ioctl ─────────────────────────────────────────────────────────────── */
@@ -6386,7 +6393,7 @@ static const char *resolve_path_at(int dirfd, const char *path) {
     }
 
     int n = snprintf(buf, sizeof(buf), "%s/%s", base, path);
-    if (n < 0 || n >= (int)sizeof(buf)) return NULL;
+    if (n < 0 || (size_t)n >= sizeof(buf)) return NULL;
     return buf;
 }
 
@@ -7589,24 +7596,45 @@ static uint64_t sys_renameat(uint64_t olddirfd, uint64_t oldpath_addr,
     const char *newpath = resolve_path_at((int)newdirfd, knewpath);
     if (!oldpath || !newpath) return (uint64_t)-1;
     /* For now, fall back to VFS operations: copy + delete */
-    uint8_t buf[4096];
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return (uint64_t)-1;
     uint32_t sz = 0;
-    if (vfs_read(oldpath, buf, 4096, &sz) < 0) return (uint64_t)-1;
-    if (vfs_write(newpath, buf, sz) < 0) return (uint64_t)-1;
+    if (vfs_read(oldpath, buf, 4096, &sz) < 0) {
+        kfree(buf);
+        return (uint64_t)-1;
+    }
+    if (vfs_write(newpath, buf, sz) < 0) {
+        kfree(buf);
+        return (uint64_t)-1;
+    }
     vfs_unlink(oldpath);
+    kfree(buf);
     return 0;
 }
 
 static uint64_t sys_symlinkat(uint64_t target_addr, uint64_t newdirfd,
                                uint64_t linkpath_addr) {
-    char ktarget[4096], klinkpath[256];
-    if (strncpy_from_user(ktarget, target_addr, sizeof(ktarget)) < 0)
+    char *ktarget = kmalloc(4096);
+    if (!ktarget) return (uint64_t)-1;
+    char klinkpath[256];
+    if (strncpy_from_user(ktarget, target_addr, 4096) < 0) {
+        kfree(ktarget);
         return (uint64_t)-1;
-    if (strncpy_from_user(klinkpath, linkpath_addr, sizeof(klinkpath)) < 0)
+    }
+    if (strncpy_from_user(klinkpath, linkpath_addr, sizeof(klinkpath)) < 0) {
+        kfree(ktarget);
         return (uint64_t)-1;
+    }
     const char *linkpath = resolve_path_at((int)newdirfd, klinkpath);
-    if (!linkpath) return (uint64_t)-1;
-    if (vfs_symlink(ktarget, linkpath) < 0) return (uint64_t)-1;
+    if (!linkpath) {
+        kfree(ktarget);
+        return (uint64_t)-1;
+    }
+    if (vfs_symlink(ktarget, linkpath) < 0) {
+        kfree(ktarget);
+        return (uint64_t)-1;
+    }
+    kfree(ktarget);
     return 0;
 }
 
@@ -8375,7 +8403,8 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
     if (fd_in >= PROCESS_FD_MAX || !p->fd_table[fd_in].used) return (uint64_t)-1;
     if (fd_out >= PROCESS_FD_MAX || !p->fd_table[fd_out].used) return (uint64_t)-1;
 
-    uint8_t buf[4096];
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return (uint64_t)-1;
     uint64_t total = 0;
     while (total < len) {
         uint64_t chunk = len - total;
@@ -8389,6 +8418,7 @@ static uint64_t sys_splice(uint64_t fd_in, uint64_t off_in_addr,
         total += nread;
         if (nread < chunk) break;
     }
+    kfree(buf);
     return total > 0 ? (uint64_t)total : (uint64_t)-1;
 }
 
@@ -8438,23 +8468,29 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
     /* Copy between two files via a kernel bounce buffer.
      * A production implementation would use splice-like page flipping
      * for true zero-copy, but this is correct and sufficient for now. */
-    uint8_t buf[4096];
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return (uint64_t)-1;
     uint64_t total = 0;
+    uint64_t cfr_result;
 
     while (total < len) {
         uint64_t chunk = len - total;
-        if (chunk > sizeof(buf))
-            chunk = sizeof(buf);
+        if (chunk > 4096)
+            chunk = 4096;
 
         /* ── Determine source offset ── */
         uint64_t saved_in_off = pfd_in->offset;
         if (off_in_addr != 0) {
             /* User provided absolute source offset: read loff_t from user space */
             int64_t abs_off;
-            if (copy_from_user(&abs_off, off_in_addr, sizeof(abs_off)) < 0)
-                return (uint64_t)-1;
-            if (abs_off < 0)
-                return (uint64_t)-1;
+            if (copy_from_user(&abs_off, off_in_addr, sizeof(abs_off)) < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
+            if (abs_off < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
             /* Temporarily seek fd_in to the requested offset */
             pfd_in->offset = (uint32_t)abs_off;
         }
@@ -8467,14 +8503,17 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
              * what we've already copied. */
             if (off_in_addr != 0)
                 pfd_in->offset = saved_in_off;  /* restore on error */
-            return total > 0 ? (uint64_t)total : (uint64_t)-1;
+            cfr_result = total > 0 ? (uint64_t)total : (uint64_t)-1;
+            goto cfr_cleanup;
         }
 
         /* Update user-provided source offset if applicable */
         if (off_in_addr != 0) {
             int64_t new_off = (int64_t)pfd_in->offset;
-            if (copy_to_user(off_in_addr, &new_off, sizeof(new_off)) < 0)
-                return (uint64_t)-1;
+            if (copy_to_user(off_in_addr, &new_off, sizeof(new_off)) < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
         }
         /* else: fd_in offset was already updated by vfs_read */
 
@@ -8485,10 +8524,14 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
         uint64_t saved_out_off = pfd_out->offset;
         if (off_out_addr != 0) {
             int64_t abs_off;
-            if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0)
-                return (uint64_t)-1;
-            if (abs_off < 0)
-                return (uint64_t)-1;
+            if (copy_from_user(&abs_off, off_out_addr, sizeof(abs_off)) < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
+            if (abs_off < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
             pfd_out->offset = (uint32_t)abs_off;
         }
 
@@ -8499,14 +8542,17 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
                 pfd_in->offset = saved_in_off;
             if (off_out_addr != 0)
                 pfd_out->offset = saved_out_off;
-            return total > 0 ? (uint64_t)total : (uint64_t)-1;
+            cfr_result = total > 0 ? (uint64_t)total : (uint64_t)-1;
+            goto cfr_cleanup;
         }
 
         /* Update user-provided destination offset */
         if (off_out_addr != 0) {
             int64_t new_off = (int64_t)pfd_out->offset;
-            if (copy_to_user(off_out_addr, &new_off, sizeof(new_off)) < 0)
-                return (uint64_t)-1;
+            if (copy_to_user(off_out_addr, &new_off, sizeof(new_off)) < 0) {
+                cfr_result = (uint64_t)-1;
+                goto cfr_cleanup;
+            }
         }
 
         total += nread;
@@ -8515,7 +8561,10 @@ static uint64_t sys_copy_file_range(uint64_t fd_in, uint64_t off_in_addr,
             break;  /* Short read — EOF or underlying FS limit */
     }
 
-    return (uint64_t)total;
+    cfr_result = (uint64_t)total;
+cfr_cleanup:
+    kfree(buf);
+    return cfr_result;
 }
 
 /* ── sendmmsg / recvmmsg ──────────────────────────────────────────────── */

@@ -29,6 +29,14 @@ static int g_event_count = 0;
 static spinlock_t g_fsn_lock;
 static int g_fsn_initialized = 0;
 
+/**
+ * fsnotify_init - Initialise the filesystem notification subsystem
+ *
+ * Clears the watch table and event ring, initialises the internal
+ * spinlock, and prints a boot message indicating the maximum number
+ * of concurrent watches.  Must be called before any fsnotify API
+ * function is used.
+ */
 void fsnotify_init(void) {
     memset(g_watches, 0, sizeof(g_watches));
     memset(g_event_ring, 0, sizeof(g_event_ring));
@@ -37,6 +45,19 @@ void fsnotify_init(void) {
     kprintf("[OK] FS notify initialized (%d watches)\n", FSNOTIFY_MAX_WATCHES);
 }
 
+/**
+ * fsnotify_watch - Register a new filesystem watch on a path
+ * @path: Filesystem path to watch
+ * @mask: Event mask describing which events to monitor
+ *
+ * Adds a watch entry in the global watch table.  The watch is match
+ * by prefix comparison: any event whose path starts with @path and
+ * whose mask overlaps with @mask triggers a notification.
+ *
+ * Return: A non-negative watch descriptor (slot index) on success,
+ *         or -1 if the watch table is full or the subsystem is
+ *         uninitialised
+ */
 int fsnotify_watch(const char *path, uint32_t mask) {
     if (!path || !g_fsn_initialized) return -1;
 
@@ -74,6 +95,15 @@ void fsnotify_unwatch(int watch_id) {
     spinlock_irqsave_release(&g_fsn_lock, irq_flags);
 }
 
+/**
+ * fsnotify_notify - Notify watchers of a filesystem event
+ * @path: Path at which the event occurred
+ * @event: Event mask describing the type of event
+ *
+ * Scans all registered watches and checks for a matching prefix and
+ * mask.  If a match is found, the event is delivered to any inotify
+ * instances and stored in the global event ring buffer.
+ */
 void fsnotify_notify(const char *path, uint32_t event) {
     if (!path || !g_fsn_initialized) return;
 
@@ -110,6 +140,18 @@ void fsnotify_notify(const char *path, uint32_t event) {
     spinlock_irqsave_release(&g_fsn_lock, irq_flags);
 }
 
+/**
+ * fsnotify_read_events - Read pending filesystem notification events
+ * @events: Output buffer to receive event entries
+ * @max: Maximum number of events to read
+ *
+ * Drains the global event ring buffer, copying up to @max events
+ * into the caller-supplied array.  The ring buffer is cleared after
+ * reading.
+ *
+ * Return: The number of events copied, or 0 if the subsystem is
+ *         uninitialised or @events is NULL
+ */
 int fsnotify_read_events(struct fsnotify_event *events, int max) {
     if (!events || max <= 0 || !g_fsn_initialized) return 0;
 

@@ -82,7 +82,7 @@ static inline uint32_t vgpu_inl(uint8_t off) {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-void virtio_gpu_init(void)
+void __init virtio_gpu_init(void)
 {
     struct pci_device dev;
     if (pci_find_device(VIRTIO_VENDOR, VIRTIO_GPU_DEVICE, &dev) < 0)
@@ -114,14 +114,14 @@ void virtio_gpu_init(void)
     gpu_scanout_w = 1024;
     gpu_scanout_h = 768;
 
-    kprintf("[virtio-gpu] VirtIO GPU at %02x:%02x.%d, I/O 0x%04x, "
+    kprintf("[VIRTIO-GPU] VirtIO GPU at %02x:%02x.%d, I/O 0x%04x, "
             "scanout %ux%u\n",
             dev.bus, dev.slot, dev.func, gpu_iobase,
             gpu_scanout_w, gpu_scanout_h);
 }
 
 #ifdef MODULE
-int init_module(void) { virtio_gpu_init(); return 0; }
+int __init init_module(void) { virtio_gpu_init(); return 0; }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
@@ -136,7 +136,7 @@ int virtio_gpu_set_mode(void *dev, int w, int h, int bpp)
     (void)w;
     (void)h;
     (void)bpp;
-    kprintf("[virtio] virtio_gpu_set_mode: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_gpu_set_mode: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_gpu_transfer ─────────────────────────────── */
@@ -145,6 +145,6 @@ int virtio_gpu_transfer(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[virtio] virtio_gpu_transfer: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_gpu_transfer: not yet implemented\n");
     return 0;
 }

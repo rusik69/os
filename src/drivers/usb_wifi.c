@@ -52,9 +52,9 @@ struct usb_wifi_device {
     int channel;
     int rssi;
     int connected;
-    uint8_t rx_buf[2048];
+    uint8_t *rx_buf;
     int rx_len;
-    uint8_t tx_buf[2048];
+    uint8_t *tx_buf;
     int tx_len;
 
     /* Chip identification */
@@ -105,6 +105,14 @@ int usb_wifi_probe(void)
 
                 struct usb_wifi_device *dev = &usb_wifi_devs[usb_wifi_count];
                 memset(dev, 0, sizeof(*dev));
+
+                dev->rx_buf = kmalloc(2048);
+                dev->tx_buf = kmalloc(2048);
+                if (!dev->rx_buf || !dev->tx_buf) {
+                    kfree(dev->rx_buf);
+                    kfree(dev->tx_buf);
+                    return -ENOMEM;
+                }
 
                 dev->active = 1;
                 dev->dev_num = usb_wifi_count;
@@ -164,6 +172,13 @@ int usb_wifi_register(int dev_num, const uint8_t *mac)
         return -ENOMEM;
 
     struct usb_wifi_device *dev = &usb_wifi_devs[usb_wifi_count];
+    dev->rx_buf = kmalloc(2048);
+    dev->tx_buf = kmalloc(2048);
+    if (!dev->rx_buf || !dev->tx_buf) {
+        kfree(dev->rx_buf);
+        kfree(dev->tx_buf);
+        return -ENOMEM;
+    }
     dev->active = 1;
     dev->dev_num = dev_num;
     memcpy(dev->mac, mac, 6);
@@ -234,7 +249,7 @@ int usb_wifi_recv(int dev_id, uint8_t *buf, int max)
     return copy_len;
 }
 
-void usb_wifi_init(void)
+void __init usb_wifi_init(void)
 {
     memset(usb_wifi_devs, 0, sizeof(usb_wifi_devs));
     usb_wifi_count = 0;
@@ -254,14 +269,14 @@ module_init(usb_wifi_init);
 int usb_wifi_open(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_wifi_open: not yet implemented\n");
+    kprintf("[USB] usb_wifi_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_wifi_stop ─────────────────────────────── */
 int usb_wifi_stop(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_wifi_stop: not yet implemented\n");
+    kprintf("[USB] usb_wifi_stop: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_wifi_xmit ─────────────────────────────── */
@@ -269,6 +284,6 @@ int usb_wifi_xmit(void *skb, void *dev)
 {
     (void)skb;
     (void)dev;
-    kprintf("[usb] usb_wifi_xmit: not yet implemented\n");
+    kprintf("[USB] usb_wifi_xmit: not yet implemented\n");
     return 0;
 }

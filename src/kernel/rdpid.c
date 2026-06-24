@@ -13,12 +13,12 @@ int rdpid_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
 
     if (!(rbx & CPUID_7_EBX_RDPID)) {
-        kprintf("[cpu] RDPID instruction not supported\n");
+        kprintf("[CPU] RDPID instruction not supported\n");
         return -1;
     }
 
     rdpid_available = 1;
-    kprintf("[cpu] RDPID instruction available\n");
+    kprintf("[CPU] RDPID instruction available\n");
     return 0;
 }
 
@@ -29,13 +29,13 @@ int rdpid_is_available(void) {
 /* ── Stub: rdpid_read ─────────────────────────────── */
 uint64_t rdpid_read(void)
 {
-    kprintf("[rdpid] rdpid_read: not yet implemented\n");
+    kprintf("[RDPID] rdpid_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: rdpid_write ─────────────────────────────── */
 int rdpid_write(uint64_t val)
 {
     (void)val;
-    kprintf("[rdpid] rdpid_write: not yet implemented\n");
+    kprintf("[RDPID] rdpid_write: not yet implemented\n");
     return 0;
 }

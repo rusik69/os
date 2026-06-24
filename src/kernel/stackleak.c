@@ -92,7 +92,7 @@ uint64_t stackleak_get_poison_count(void)
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void stackleak_init(void)
+void __init stackleak_init(void)
 {
     kprintf("[OK] STACKLEAK: kernel stack eraser initialized (poison=0x%016llx)\n",
             (unsigned long long)STACKLEAK_POISON_VALUE);

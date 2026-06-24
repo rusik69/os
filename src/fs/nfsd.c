@@ -958,7 +958,7 @@ int nfsd_init(void)
 device_initcall(nfsd_init);
 
 #ifdef MODULE
-int init_module(void) { return nfsd_init(); }
+int __init init_module(void) { return nfsd_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

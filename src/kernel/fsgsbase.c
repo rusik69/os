@@ -13,7 +13,7 @@ int fsgsbase_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
 
     if (!(rbx & CPUID_7_EBX_FSGSBASE)) {
-        kprintf("[cpu] FSGSBASE instructions not supported\n");
+        kprintf("[CPU] FSGSBASE instructions not supported\n");
         return -1;
     }
 
@@ -23,7 +23,7 @@ int fsgsbase_init(void) {
     write_cr4(cr4);
 
     fsgsbase_available = 1;
-    kprintf("[cpu] FSGSBASE instructions enabled (CR4 bit 16)\n");
+    kprintf("[CPU] FSGSBASE instructions enabled (CR4 bit 16)\n");
     return 0;
 }
 
@@ -34,26 +34,26 @@ int fsgsbase_is_available(void) {
 /* ── Stub: fsgsbase_read_gs ─────────────────────────────── */
 uint64_t fsgsbase_read_gs(void)
 {
-    kprintf("[fsgsbase] fsgsbase_read_gs: not yet implemented\n");
+    kprintf("[FSGSBASE] fsgsbase_read_gs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_write_gs ─────────────────────────────── */
 int fsgsbase_write_gs(uint64_t val)
 {
     (void)val;
-    kprintf("[fsgsbase] fsgsbase_write_gs: not yet implemented\n");
+    kprintf("[FSGSBASE] fsgsbase_write_gs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_read_fs ─────────────────────────────── */
 uint64_t fsgsbase_read_fs(void)
 {
-    kprintf("[fsgsbase] fsgsbase_read_fs: not yet implemented\n");
+    kprintf("[FSGSBASE] fsgsbase_read_fs: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fsgsbase_write_fs ─────────────────────────────── */
 int fsgsbase_write_fs(uint64_t val)
 {
     (void)val;
-    kprintf("[fsgsbase] fsgsbase_write_fs: not yet implemented\n");
+    kprintf("[FSGSBASE] fsgsbase_write_fs: not yet implemented\n");
     return 0;
 }

@@ -59,25 +59,25 @@ int cpu_security_init(void)
     /* Enable SMEP if supported (ECX bit 7) */
     if (rcx & (1U << 7)) {
         cr4 |= CR4_SMEP;
-        kprintf("[cpu] SMEP enabled\n");
+        kprintf("[CPU] SMEP enabled\n");
     } else {
-        kprintf("[cpu] SMEP not supported\n");
+        kprintf("[CPU] SMEP not supported\n");
     }
 
     /* Enable SMAP if supported (ECX bit 20) */
     if (rcx & (1U << 20)) {
         cr4 |= CR4_SMAP;
-        kprintf("[cpu] SMAP enabled\n");
+        kprintf("[CPU] SMAP enabled\n");
     } else {
-        kprintf("[cpu] SMAP not supported\n");
+        kprintf("[CPU] SMAP not supported\n");
     }
 
     /* Enable UMIP if supported (ECX bit 2) */
     if (rcx & (1U << 2)) {
         cr4 |= CR4_UMIP;
-        kprintf("[cpu] UMIP enabled\n");
+        kprintf("[CPU] UMIP enabled\n");
     } else {
-        kprintf("[cpu] UMIP not supported\n");
+        kprintf("[CPU] UMIP not supported\n");
     }
 
     /* Write updated CR4 */
@@ -88,9 +88,9 @@ int cpu_security_init(void)
     if (rdx & (1U << 20)) { /* CPUID.80000001h:EDX bit 20 = NX (XD) support */
         efer |= EFER_NXE;
         write_msr(0xC0000080, efer);
-        kprintf("[cpu] NXE enabled\n");
+        kprintf("[CPU] NXE enabled\n");
     } else {
-        kprintf("[cpu] NX not supported\n");
+        kprintf("[CPU] NX not supported\n");
     }
 
     return 0;
@@ -128,7 +128,7 @@ void cpuhp_init(void)
     cpuhp_notifier_count = 0;
     memset(cpuhp_notifiers, 0, sizeof(cpuhp_notifiers));
 
-    kprintf("[cpu] Hotplug initialized (max %d CPUs)\n", CPUHP_MAX_CPUS);
+    kprintf("[CPU] Hotplug initialized (max %d CPUs)\n", CPUHP_MAX_CPUS);
 }
 
 /* ── Notifier registration ──────────────────────────────────────────── */
@@ -198,14 +198,14 @@ int cpuhp_migrate_tasks_away(int cpu_id)
     }
 
     if (!other_online) {
-        kprintf("[cpu] Cannot migrate from CPU %d: no other online CPUs\n", cpu_id);
+        kprintf("[CPU] Cannot migrate from CPU %d: no other online CPUs\n", cpu_id);
         return CPUHP_ERR_BUSY;
     }
 
     /* Delegate to scheduler */
     migrated = scheduler_migrate_tasks_from(cpu_id);
     if (migrated < 0) {
-        kprintf("[cpu] Task migration from CPU %d failed (err=%d)\n",
+        kprintf("[CPU] Task migration from CPU %d failed (err=%d)\n",
                 cpu_id, migrated);
         return CPUHP_ERR_BUSY;
     }
@@ -218,7 +218,7 @@ int cpuhp_migrate_tasks_away(int cpu_id)
         migrated++;
     }
 
-    kprintf("[cpu] Migrated %d tasks from CPU %d\n", migrated, cpu_id);
+    kprintf("[CPU] Migrated %d tasks from CPU %d\n", migrated, cpu_id);
     return CPUHP_OK;
 }
 
@@ -261,14 +261,14 @@ int cpuhp_bring_cpu(int cpu_id)
 
     if (cur == CPUHP_STATE_DEAD) {
         /* Cannot bring a dead (physically absent) CPU online */
-        kprintf("[cpu] Cannot bring CPU %d online: not present\n", cpu_id);
+        kprintf("[CPU] Cannot bring CPU %d online: not present\n", cpu_id);
         ret = CPUHP_ERR_INVAL;
         goto out;
     }
 
     /* Transition OFFLINE → ONLINE */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_ONLINE;
-    kprintf("[cpu] CPU %d brought online (now %d online)\n",
+    kprintf("[CPU] CPU %d brought online (now %d online)\n",
             cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
@@ -285,7 +285,7 @@ int cpuhp_take_cpu_offline(int cpu_id)
         return CPUHP_ERR_INVAL;
 
     if (cpu_id == 0) {
-        kprintf("[cpu] Cannot offline BSP (CPU 0)\n");
+        kprintf("[CPU] Cannot offline BSP (CPU 0)\n");
         return CPUHP_ERR_BSP;
     }
 
@@ -310,7 +310,7 @@ int cpuhp_take_cpu_offline(int cpu_id)
     }
 
     if (!other_online) {
-        kprintf("[cpu] Refusing to offline CPU %d: no other online CPUs\n", cpu_id);
+        kprintf("[CPU] Refusing to offline CPU %d: no other online CPUs\n", cpu_id);
         ret = CPUHP_ERR_BUSY;
         goto out;
     }
@@ -331,7 +331,7 @@ int cpuhp_take_cpu_offline(int cpu_id)
 
     /* ── Step 4: transition state ──────────────────────────────────── */
     cpuhp_cpu_state[cpu_id] = CPUHP_STATE_OFFLINE;
-    kprintf("[cpu] CPU %d taken offline (now %d online)\n",
+    kprintf("[CPU] CPU %d taken offline (now %d online)\n",
             cpu_id, cpuhp_online_count());
     cpuhp_notify();
 
@@ -355,16 +355,16 @@ int cpu_init(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
 
-    kprintf("[cpu] cpu_init: initializing CPU %d\n", cpu_id);
+    kprintf("[CPU] cpu_init: initializing CPU %d\n", cpu_id);
 
     /* Bring the CPU online via the existing cpuhp infrastructure */
     int ret = cpuhp_bring_cpu(cpu_id);
     if (ret < 0) {
-        kprintf("[cpu] cpu_init: failed to bring CPU %d online (ret=%d)\n", cpu_id, ret);
+        kprintf("[CPU] cpu_init: failed to bring CPU %d online (ret=%d)\n", cpu_id, ret);
         return ret;
     }
 
-    kprintf("[cpu] cpu_init: CPU %d is now online\n", cpu_id);
+    kprintf("[CPU] cpu_init: CPU %d is now online\n", cpu_id);
     return 0;
 }
 /**
@@ -389,15 +389,15 @@ int cpu_die(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return -EINVAL;
 
-    kprintf("[cpu] cpu_die: taking CPU %d offline\n", cpu_id);
+    kprintf("[CPU] cpu_die: taking CPU %d offline\n", cpu_id);
 
     int ret = cpuhp_take_cpu_offline(cpu_id);
     if (ret < 0) {
-        kprintf("[cpu] cpu_die: failed to take CPU %d offline (ret=%d)\n", cpu_id, ret);
+        kprintf("[CPU] cpu_die: failed to take CPU %d offline (ret=%d)\n", cpu_id, ret);
         return ret;
     }
 
-    kprintf("[cpu] cpu_die: CPU %d is now offline\n", cpu_id);
+    kprintf("[CPU] cpu_die: CPU %d is now offline\n", cpu_id);
     return 0;
 }
 /* ── cpu_online: Check if a CPU is online ─────────────────────────────── */

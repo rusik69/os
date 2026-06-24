@@ -553,7 +553,7 @@ int reiserfs_init(void)
 device_initcall(reiserfs_init);
 
 #ifdef MODULE
-int init_module(void) { return reiserfs_init(); }
+int __init init_module(void) { return reiserfs_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

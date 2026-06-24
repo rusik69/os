@@ -382,6 +382,7 @@ void __init splash_init(void)
         fbcon_set_bg(FBCON_BLACK);
         fbcon_write("Hermes OS Kernel v");
         fbcon_write(KVERSION);
+        fbcon_write(" (" __DATE__ " " __TIME__ ")");
     }
 
     /* Draw initial spinner */

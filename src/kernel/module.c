@@ -24,6 +24,10 @@
 #include "rsa_key.h"
 #include "export.h"
 
+/* ── Compile-time struct size assertions ────────────────────────────── */
+_Static_assert(sizeof(struct kernel_module) >= 256, "kernel_module must be at least 256 bytes for fixed-size table");
+_Static_assert(sizeof(struct module_section) == 24, "module_section must be 24 bytes (2×uint64_t + uint32_t + padding)");
+
 /* Module metadata */
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION("1.0");
@@ -283,10 +287,11 @@ static void module_scan_cmdline_params(void)
 
     /* Parse the raw cmdline by tokenising on spaces.
      * Each token is either a standalone key or key=value. */
-    char buf[1024];
+    char *buf = kmalloc(1024);
+    if (!buf) return;
     size_t raw_len = strlen(raw);
-    if (raw_len >= sizeof(buf))
-        raw_len = sizeof(buf) - 1;
+    if (raw_len >= 1024)
+        raw_len = 1024 - 1;
     memcpy(buf, raw, raw_len);
     buf[raw_len] = '\0';
 
@@ -344,6 +349,7 @@ static void module_scan_cmdline_params(void)
 
         token = strtok(NULL, delim);
     }
+    kfree(buf);
 }
 
 /*
@@ -375,7 +381,7 @@ void module_apply_cmdline_params(struct kernel_module *mod)
         /* Append "param=value" to the parameter string */
         int needed = (int)strlen(g_cmdline_params[i].param) + 1 +
                      (int)strlen(g_cmdline_params[i].value) + 2; /* "param=val," or "\0" */
-        if (pos + needed > (int)sizeof(params))
+        if ((size_t)pos + (size_t)needed > sizeof(params))
             break;
 
         if (pos > 0)

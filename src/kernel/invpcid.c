@@ -19,7 +19,7 @@ int invpcid_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(7), "c"(0));
 
     if (!(rbx & CPUID_7_EBX_INVPCID)) {
-        kprintf("[cpu] INVPCID not supported\n");
+        kprintf("[CPU] INVPCID not supported\n");
         return -1;
     }
 
@@ -31,7 +31,7 @@ int invpcid_init(void) {
     write_cr4(cr4);
 
     invpcid_available = 1;
-    kprintf("[cpu] INVPCID + PCID enabled (CR4 bits 10, 17)\n");
+    kprintf("[CPU] INVPCID + PCID enabled (CR4 bits 10, 17)\n");
     return 0;
 }
 
@@ -93,6 +93,6 @@ void invpcid_flush_pcid(uint64_t pcid) {
 /* ── Stub: invpcid_flush_all_nonglobals ─────────────────────────────── */
 int invpcid_flush_all_nonglobals(void)
 {
-    kprintf("[invpcid] invpcid_flush_all_nonglobals: not yet implemented\n");
+    kprintf("[INVPCID] invpcid_flush_all_nonglobals: not yet implemented\n");
     return 0;
 }

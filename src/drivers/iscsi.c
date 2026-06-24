@@ -123,23 +123,23 @@ static int iscsi_login(struct iscsi_session *sess)
                         "AuthMethod=None\r\n");
 
     if (iscsi_transmit_pdu(sess, &bhs, param_buf, (uint32_t)plen) < 0) {
-        kprintf("[iscsi] Login stage 1 send failed\n");
+        kprintf("[ISCSI] Login stage 1 send failed\n");
         return -EIO;
     }
 
     /* Receive login response */
     resp_len = sizeof(resp_buf);
     if (iscsi_receive_pdu(sess, &resp_bhs, resp_buf, &resp_len) < 0) {
-        kprintf("[iscsi] Login stage 1 recv failed\n");
+        kprintf("[ISCSI] Login stage 1 recv failed\n");
         return -EIO;
     }
 
-    kprintf("[iscsi] Login response: opcode=0x%02x flags=0x%02x dlen=%u\n",
+    kprintf("[ISCSI] Login response: opcode=0x%02x flags=0x%02x dlen=%u\n",
             resp_bhs.opcode, resp_bhs.flags, iscsi_htonl(resp_bhs.data_seg_len));
 
     /* Check status (implied 0 = success) */
     if ((resp_bhs.flags & 0x3F) != 0) {
-        kprintf("[iscsi] Login stage 1 failed (status class != 0)\n");
+        kprintf("[ISCSI] Login stage 1 failed (status class != 0)\n");
         return -EACCES;
     }
 
@@ -162,20 +162,20 @@ static int iscsi_login(struct iscsi_session *sess)
                     sess->target_name);
 
     if (iscsi_transmit_pdu(sess, &bhs, param_buf, (uint32_t)plen) < 0) {
-        kprintf("[iscsi] Login stage 2 send failed\n");
+        kprintf("[ISCSI] Login stage 2 send failed\n");
         return -EIO;
     }
 
     resp_len = sizeof(resp_buf);
     if (iscsi_receive_pdu(sess, &resp_bhs, resp_buf, &resp_len) < 0) {
-        kprintf("[iscsi] Login stage 2 recv failed\n");
+        kprintf("[ISCSI] Login stage 2 recv failed\n");
         return -EIO;
     }
 
     /* Extract TSIH from the login response BHS */
     sess->tsih = iscsi_htons((uint16_t)(resp_bhs.lun >> 48));  /* TSIH is in bytes 6-7 of LUN field */
 
-    kprintf("[iscsi] Login complete, TSIH=0x%04x\n", sess->tsih);
+    kprintf("[ISCSI] Login complete, TSIH=0x%04x\n", sess->tsih);
     sess->login_done = 1;
     return 0;
 }
@@ -241,7 +241,7 @@ static int iscsi_submit_scsi_cmd(struct iscsi_session *sess,
 
     /* Check status */
     if (rsp_bhs.flags & 0x01) { /* Check Condition */
-        kprintf("[iscsi] SCSI command failed (check condition)\n");
+        kprintf("[ISCSI] SCSI command failed (check condition)\n");
         return -EIO;
     }
     return 0;
@@ -280,7 +280,7 @@ static int iscsi_read_capacity_10(struct iscsi_session *sess)
 
     sess->sector_count = (uint64_t)last_lba + 1;
     sess->sector_size = block_len;
-    kprintf("[iscsi] Capacity: %llu sectors, %u bytes/sector\n",
+    kprintf("[ISCSI] Capacity: %llu sectors, %u bytes/sector\n",
             (unsigned long long)sess->sector_count, sess->sector_size);
     return 0;
 }
@@ -344,7 +344,7 @@ void iscsi_init(void)
     if (g_iscsi_initialized) return;
     memset(g_sessions, 0, sizeof(g_sessions));
     g_iscsi_initialized = 1;
-    kprintf("[iscsi] iSCSI initiator subsystem initialized (max %d sessions)\n",
+    kprintf("[ISCSI] iSCSI initiator subsystem initialized (max %d sessions)\n",
             ISCSI_MAX_DEVICES);
 }
 
@@ -361,19 +361,19 @@ int iscsi_connect(uint32_t target_ip, const char *target_name)
         }
     }
     if (slot < 0) {
-        kprintf("[iscsi] No free session slots\n");
+        kprintf("[ISCSI] No free session slots\n");
         return -1;
     }
 
     /* Connect TCP */
     int conn_id = net_tcp_connect(target_ip, ISCSI_PORT);
     if (conn_id < 0) {
-        kprintf("[iscsi] TCP connect failed to %d.%d.%d.%d:%d\n",
+        kprintf("[ISCSI] TCP connect failed to %d.%d.%d.%d:%d\n",
                 NIPQUAD(target_ip), ISCSI_PORT);
         return -1;
     }
 
-    kprintf("[iscsi] Connected to %d.%d.%d.%d:%d (conn=%d)\n",
+    kprintf("[ISCSI] Connected to %d.%d.%d.%d:%d (conn=%d)\n",
             NIPQUAD(target_ip), ISCSI_PORT, conn_id);
 
     /* Initialize session */
@@ -389,14 +389,14 @@ int iscsi_connect(uint32_t target_ip, const char *target_name)
     /* Login */
     if (iscsi_login(sess) < 0) {
         net_tcp_close(conn_id);
-        kprintf("[iscsi] Login failed\n");
+        kprintf("[ISCSI] Login failed\n");
         return -1;
     }
 
     /* Get capacity */
     if (iscsi_read_capacity_10(sess) < 0) {
         net_tcp_close(conn_id);
-        kprintf("[iscsi] READ CAPACITY failed\n");
+        kprintf("[ISCSI] READ CAPACITY failed\n");
         return -1;
     }
 
@@ -411,14 +411,14 @@ int iscsi_connect(uint32_t target_ip, const char *target_name)
                                  iscsi_submit_fn, NULL,
                                  sess->sector_count, 0);
     if (ret != 0) {
-        kprintf("[iscsi] Failed to register block device %s\n", name);
+        kprintf("[ISCSI] Failed to register block device %s\n", name);
         net_tcp_close(conn_id);
         memset(sess, 0, sizeof(*sess));
         return -1;
     }
 
     sess->connected = 1;
-    kprintf("[iscsi] Device %s (id=%d): %llu sectors, %u bytes/sector\n",
+    kprintf("[ISCSI] Device %s (id=%d): %llu sectors, %u bytes/sector\n",
             name, iscsi_id, (unsigned long long)sess->sector_count,
             sess->sector_size);
     return iscsi_id;
@@ -428,13 +428,13 @@ void iscsi_disconnect(int dev_id)
 {
     struct iscsi_session *sess = iscsi_find_by_dev_id(dev_id);
     if (!sess) {
-        kprintf("[iscsi] Device %d not found\n", dev_id);
+        kprintf("[ISCSI] Device %d not found\n", dev_id);
         return;
     }
 
     blockdev_unregister(dev_id);
     net_tcp_close(sess->conn_id);
-    kprintf("[iscsi] Device iscsi%d (id=%d) disconnected\n",
+    kprintf("[ISCSI] Device iscsi%d (id=%d) disconnected\n",
             (int)(sess - g_sessions), dev_id);
     memset(sess, 0, sizeof(*sess));
 }
@@ -447,7 +447,7 @@ void iscsi_disconnect(int dev_id)
 int iscsi_logout(struct iscsi_session *sess)
 {
     (void)sess;
-    kprintf("[iscsi] iscsi_logout: not yet implemented\n");
+    kprintf("[ISCSI] iscsi_logout: not yet implemented\n");
     return 0;
 }
 /* ── Stub: iscsi_send ──────────────────────────────── */
@@ -456,7 +456,7 @@ int iscsi_send(struct iscsi_session *sess, const uint8_t *data, uint32_t len)
     (void)sess;
     (void)data;
     (void)len;
-    kprintf("[iscsi] iscsi_send: not yet implemented\n");
+    kprintf("[ISCSI] iscsi_send: not yet implemented\n");
     return 0;
 }
 /* ── Stub: iscsi_recv ──────────────────────────────── */
@@ -465,13 +465,13 @@ int iscsi_recv(struct iscsi_session *sess, uint8_t *buf, uint32_t *len)
     (void)sess;
     (void)buf;
     (void)len;
-    kprintf("[iscsi] iscsi_recv: not yet implemented\n");
+    kprintf("[ISCSI] iscsi_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: iscsi_nop_out ───────────────────────────── */
 int iscsi_nop_out(struct iscsi_session *sess)
 {
     (void)sess;
-    kprintf("[iscsi] iscsi_nop_out: not yet implemented\n");
+    kprintf("[ISCSI] iscsi_nop_out: not yet implemented\n");
     return 0;
 }

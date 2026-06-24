@@ -76,7 +76,7 @@ static __attribute__((unused)) void parse_device_id(struct usb_printer *p, const
         id_len = (int)data[0] | ((int)data[1] << 8);
         int offset = 2;
         if (id_len > len - 2) id_len = len - 2;
-        if (id_len > (int)sizeof(p->device_id) - 1)
+        if ((size_t)id_len > sizeof(p->device_id) - 1)
             id_len = (int)sizeof(p->device_id) - 1;
         memcpy(p->device_id, data + offset, (size_t)id_len);
         p->device_id[id_len] = '\0';
@@ -216,13 +216,13 @@ int usb_printer_read(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[usb] usb_printer_read: not yet implemented\n");
+    kprintf("[USB] usb_printer_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_printer_get_status ─────────────────────────────── */
 int usb_printer_get_status(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_printer_get_status: not yet implemented\n");
+    kprintf("[USB] usb_printer_get_status: not yet implemented\n");
     return 0;
 }

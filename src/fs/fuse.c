@@ -450,7 +450,7 @@ int fuse_unmount(const char *mountpoint)
     return -1;
 }
 #include "module.h"
-module_init(fuse_init);
+fs_initcall(fuse_init);
 
 /* ── fuse_umount ─────────────────────────────────────── */
 int fuse_umount(const char *target)

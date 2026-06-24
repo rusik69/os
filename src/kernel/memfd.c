@@ -8,7 +8,7 @@
 static struct memfd memfd_table[MEMFD_MAX];
 static int memfd_initialised = 0;
 
-void memfd_init(void)
+void __init memfd_init(void)
 {
     if (memfd_initialised)
         return;

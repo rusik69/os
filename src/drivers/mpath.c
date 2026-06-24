@@ -163,7 +163,7 @@ int mpath_create(const char *name, int selector)
                            ? selector : MPATH_SEL_ROUND_ROBIN;
             mp->rr_next = 0;
             spinlock_init(&mp->lock);
-            kprintf("[mpath] created '%s' (selector=%d)\n", name, mp->selector);
+            kprintf("[MPATH] created '%s' (selector=%d)\n", name, mp->selector);
             return i;
         }
     }
@@ -221,7 +221,7 @@ int mpath_add_path(int mpath_id, int dev_id)
     p->in_use = 1;
     mp->num_paths++;
 
-    kprintf("[mpath] added path dev_id=%d to '%s' (total %d)\n",
+    kprintf("[MPATH] added path dev_id=%d to '%s' (total %d)\n",
             dev_id, mp->name, mp->num_paths);
     spinlock_release(&mp->lock);
     return 0;
@@ -424,6 +424,6 @@ module_init(mpath_init);
 /* ── Stub: mpath_failover ─────────────────────────────── */
 int mpath_failover(__maybe_unused const char *dev)
 {
-    kprintf("[mpath] mpath_failover: not yet implemented\n");
+    kprintf("[MPATH] mpath_failover: not yet implemented\n");
     return 0;
 }

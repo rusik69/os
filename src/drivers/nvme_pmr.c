@@ -260,7 +260,7 @@ int nvme_pmr_disable(void)
     return 0;
 }
 
-int nvme_pmr_init(void) {
+int __init nvme_pmr_init(void) {
     if (g_pmr_init_done)
         return g_pmr.present ? 0 : -EOPNOTSUPP;
 

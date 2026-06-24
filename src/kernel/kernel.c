@@ -1215,6 +1215,9 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
     kprintf("\n============================================\n");
     kprintf("  Hermes OS Kernel — Version " KVERSION "\n");
     kprintf("  Built: " __DATE__ " " __TIME__ "\n");
+#ifdef BUILD_TIME
+    kprintf("  Build config: " BUILD_TIME "\n");
+#endif
     kprintf("  SMP: %s, Preempt: %s\n",
 #ifdef CONFIG_SMP
             "enabled",

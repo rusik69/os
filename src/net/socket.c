@@ -13,6 +13,12 @@
 #include "af_packet.h"    /* AF_PACKET raw packet sockets (Item 386) */
 #include "netlink.h"       /* AF_NETLINK kernel-userspace sockets (Item 384) */
 #include "can.h"           /* AF_CAN SocketCAN protocol (Item 352) */
+
+/* ── Compile-time struct size assertions ────────────────────────────── */
+_Static_assert(sizeof(struct socket) >= 64, "struct socket must be at least 64 bytes for fixed-size table");
+_Static_assert(sizeof(struct sockaddr_in) == 16, "sockaddr_in must be 16 bytes (ABI)");
+_Static_assert(sizeof(struct tcp_info) == 104, "tcp_info must be 104 bytes (ABI)");
+
 /* ── Socket table ────────────────────────────────────────────── */
 static struct socket socket_table[SOCK_MAX];
 

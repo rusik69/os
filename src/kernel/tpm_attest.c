@@ -21,6 +21,7 @@
 #include "errno.h"
 #include "spinlock.h"
 #include "sha256.h"
+#include "heap.h"
 
 /* Forward declaration of TPM presence check (defined in tpm_tis.c) */
 int tpm_is_present(void);
@@ -226,12 +227,14 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
     *(uint32_t *)(cmd + total_size_pos) = cmd_pos;
 
     /* ── Transmit and receive ────────────────────────────────────── */
-    uint8_t rsp[1024];
-    uint32_t rsp_len = sizeof(rsp);
+    uint8_t *rsp = kmalloc(1024);
+    if (!rsp) return -1;
+    uint32_t rsp_len = 1024;
 
     int ret = tpm_transmit(cmd, cmd_pos, rsp, &rsp_len);
     if (ret != 0) {
         kprintf("[TPM_ATTEST] TPM2_Quote failed (ret=%d, rsp_len=%u)\n", ret, rsp_len);
+        kfree(rsp);
         return -1;
     }
 
@@ -241,6 +244,7 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
 
     if (rsp_len < 10) {
         kprintf("[TPM_ATTEST] Response too short (%u)\n", rsp_len);
+        kfree(rsp);
         return -1;
     }
 
@@ -248,6 +252,7 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
     struct tpm_rsp_hdr *hdr = (struct tpm_rsp_hdr *)rsp;
     if (hdr->return_code != TPM2_RC_SUCCESS) {
         kprintf("[TPM_ATTEST] TPM2_Quote returned error 0x%08x\n", hdr->return_code);
+        kfree(rsp);
         return -1;
     }
 
@@ -304,6 +309,7 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
 
     kprintf("[TPM_ATTEST] Quote generated for PCR %u (nonce len=%u)\n",
             pcr_index, nonce_len);
+    kfree(rsp);
     return 0;
 }
 
@@ -628,7 +634,7 @@ static int nonce_write_cb(const char *data, uint32_t size, void *priv)
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-int tpm_attest_init(void)
+int __init tpm_attest_init(void)
 {
     if (g_attest_initialized)
         return 0;
@@ -654,14 +660,15 @@ int tpm_attest_init(void)
 
     /* Try to load AIK from NVRAM if available */
     if (tpm_is_present()) {
-        uint8_t aik_buf[1024];
-        uint32_t aik_len = sizeof(aik_buf);
+        uint8_t *aik_buf = kmalloc(1024);
+        uint32_t aik_len = 1024;
         int ret = tpm_attest_load_aik(aik_buf, &aik_len);
         if (ret > 0) {
             kprintf("[TPM_ATTEST] AIK loaded from NVRAM (%d bytes)\n", ret);
         } else {
             kprintf("[TPM_ATTEST] No AIK in NVRAM — attestation keys may need provisioning\n");
         }
+        kfree(aik_buf);
     }
 
     g_attest_initialized = 1;

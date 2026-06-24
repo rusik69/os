@@ -53,7 +53,7 @@ static const struct dm_target_ops era_ops = {
 static int era_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     if (argc < 2) {
-        kprintf("[dm-era] ctr: need at least 2 args (block_size backing_dev)\n");
+        kprintf("[DM-ERA] ctr: need at least 2 args (block_size backing_dev)\n");
         return -EINVAL;
     }
 
@@ -68,7 +68,7 @@ static int era_ctr(struct dm_target *ti, int argc, const char **argv)
     }
 
     if (block_size == 0) {
-        kprintf("[dm-era] ctr: block_size must be > 0\n");
+        kprintf("[DM-ERA] ctr: block_size must be > 0\n");
         return -EINVAL;
     }
 
@@ -76,7 +76,7 @@ static int era_ctr(struct dm_target *ti, int argc, const char **argv)
     const char *backing_path = argv[1];
     int backing_dev = blockdev_find_by_name(backing_path);
     if (backing_dev < 0) {
-        kprintf("[dm-era] ctr: backing device '%s' not found\n",
+        kprintf("[DM-ERA] ctr: backing device '%s' not found\n",
                 backing_path);
         return -ENODEV;
     }
@@ -106,7 +106,7 @@ static int era_ctr(struct dm_target *ti, int argc, const char **argv)
 
     ti->private = priv;
 
-    kprintf("[dm-era] ctr: block_size=%llu sectors, nr_blocks=%llu, "
+    kprintf("[DM-ERA] ctr: block_size=%llu sectors, nr_blocks=%llu, "
             "backing_dev=%d, range=[%llu, %llu)\n",
             (unsigned long long)block_size,
             (unsigned long long)priv->nr_blocks,
@@ -125,7 +125,7 @@ static void era_dtr(struct dm_target *ti)
 
     struct dm_era_private *priv = (struct dm_era_private *)ti->private;
 
-    kprintf("[dm-era] dtr: era_count=%u, total_writes=%llu, "
+    kprintf("[DM-ERA] dtr: era_count=%u, total_writes=%llu, "
             "checkpoints=%llu\n",
             priv->era_count,
             (unsigned long long)priv->total_writes,
@@ -296,9 +296,9 @@ void dm_era_init(void)
 {
     int ret = dm_register_target(&era_ops);
     if (ret == 0) {
-        kprintf("[dm-era] target type 'era' registered\n");
+        kprintf("[DM-ERA] target type 'era' registered\n");
     } else {
-        kprintf("[dm-era] failed to register target type: %d\n", ret);
+        kprintf("[DM-ERA] failed to register target type: %d\n", ret);
     }
 }
 #include "module.h"
@@ -310,7 +310,7 @@ int dm_era_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm] dm_era_ctr: not yet implemented\n");
+    kprintf("[DM] dm_era_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_era_map ─────────────────────────────── */
@@ -318,6 +318,6 @@ int dm_era_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm] dm_era_map: not yet implemented\n");
+    kprintf("[DM] dm_era_map: not yet implemented\n");
     return 0;
 }

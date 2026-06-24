@@ -7,25 +7,25 @@
 
 static int x2apic_active = 0;
 
-int x2apic_init(void) {
+int __init x2apic_init(void) {
     int rax, rbx, rcx, rdx;
 
     /* Check CPUID leaf 1 for x2APIC support (ECX bit 21) */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
     if (!(rcx & (1U << 21))) {
-        kprintf("[cpu] x2APIC not supported\n");
+        kprintf("[CPU] x2APIC not supported\n");
         return -1;
     }
 
-    kprintf("[cpu] x2APIC supported by CPU\n");
+    kprintf("[CPU] x2APIC supported by CPU\n");
 
     /* Read current APIC base MSR */
     uint64_t apic_base = read_msr(IA32_APIC_BASE);
 
     /* Check if already in x2APIC mode */
     if (apic_base & IA32_APIC_BASE_X2APIC) {
-        kprintf("[cpu] x2APIC already active\n");
+        kprintf("[CPU] x2APIC already active\n");
         x2apic_active = 1;
         return 0;
     }
@@ -44,11 +44,11 @@ int x2apic_init(void) {
     /* Verify the transition */
     uint64_t check = read_msr(IA32_APIC_BASE);
     if (check & IA32_APIC_BASE_X2APIC) {
-        kprintf("[cpu] x2APIC enabled successfully\n");
+        kprintf("[CPU] x2APIC enabled successfully\n");
         x2apic_active = 1;
         return 0;
     } else {
-        kprintf("[cpu] x2APIC enable FAILED\n");
+        kprintf("[CPU] x2APIC enable FAILED\n");
         return -1;
     }
 }
@@ -61,7 +61,7 @@ int x2apic_is_active(void) {
 uint32_t x2apic_read(int reg)
 {
     (void)reg;
-    kprintf("[x2apic] x2apic_read: not yet implemented\n");
+    kprintf("[X2APIC] x2apic_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: x2apic_write ─────────────────────────────── */
@@ -69,7 +69,7 @@ int x2apic_write(int reg, uint32_t val)
 {
     (void)reg;
     (void)val;
-    kprintf("[x2apic] x2apic_write: not yet implemented\n");
+    kprintf("[X2APIC] x2apic_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: x2apic_send_ipi ─────────────────────────────── */
@@ -77,6 +77,6 @@ int x2apic_send_ipi(int cpu, int vector)
 {
     (void)cpu;
     (void)vector;
-    kprintf("[x2apic] x2apic_send_ipi: not yet implemented\n");
+    kprintf("[X2APIC] x2apic_send_ipi: not yet implemented\n");
     return 0;
 }

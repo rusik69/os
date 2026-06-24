@@ -64,7 +64,7 @@ void __init dyndbg_init(void) {
                                      dyndbg_control_file_read,
                                      dyndbg_control_file_write);
     if (ret == 0) {
-        kprintf("[dyndbg] control file at /sys/kernel/debug/dynamic_debug/control\n");
+        kprintf("[DYNDBG] control file at /sys/kernel/debug/dynamic_debug/control\n");
     }
 
     kprintf("[OK] Dynamic debug initialized\n");
@@ -192,7 +192,7 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
             for (int i = 0; i < debug_count; i++)
                 debug_sites[i].enabled = 1;
             dynamic_debug_enable(NULL, 0);
-            kprintf("[dyndbg] all debug enabled\n");
+            kprintf("[DYNDBG] all debug enabled\n");
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
             dyndbg_all_enabled = 0;
@@ -200,7 +200,7 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
             for (int i = 0; i < debug_count; i++)
                 debug_sites[i].enabled = 0;
             dynamic_debug_disable(NULL, 0);
-            kprintf("[dyndbg] all debug disabled\n");
+            kprintf("[DYNDBG] all debug disabled\n");
             return 0;
         }
         return -EINVAL;
@@ -214,11 +214,11 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
     if (kw_len == 6 && memcmp(keyword, "module", 6) == 0) {
         if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
             int n = dynamic_debug_enable(name, MATCH_MODULE);
-            kprintf("[dyndbg] module '%s' enabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] module '%s' enabled (%d site(s))\n", name, n);
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
             int n = dynamic_debug_disable(name, MATCH_MODULE);
-            kprintf("[dyndbg] module '%s' disabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] module '%s' disabled (%d site(s))\n", name, n);
             return 0;
         }
         return -EINVAL;
@@ -229,12 +229,12 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
         if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
             dyndbg_enable(name);
             int n = dynamic_debug_enable(name, MATCH_FUNC);
-            kprintf("[dyndbg] func '%s' enabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] func '%s' enabled (%d site(s))\n", name, n);
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
             dyndbg_disable(name);
             int n = dynamic_debug_disable(name, MATCH_FUNC);
-            kprintf("[dyndbg] func '%s' disabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] func '%s' disabled (%d site(s))\n", name, n);
             return 0;
         }
         return -EINVAL;
@@ -244,17 +244,17 @@ static int dyndbg_parse_and_apply(const char *line, int line_len)
     if (kw_len == 4 && memcmp(keyword, "file", 4) == 0) {
         if (op_len == 2 && memcmp(op, "+p", 2) == 0) {
             int n = dynamic_debug_enable(name, MATCH_FILE);
-            kprintf("[dyndbg] file '%s' enabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] file '%s' enabled (%d site(s))\n", name, n);
             return 0;
         } else if (op_len == 2 && memcmp(op, "-p", 2) == 0) {
             int n = dynamic_debug_disable(name, MATCH_FILE);
-            kprintf("[dyndbg] file '%s' disabled (%d site(s))\n", name, n);
+            kprintf("[DYNDBG] file '%s' disabled (%d site(s))\n", name, n);
             return 0;
         }
         return -EINVAL;
     }
 
-    kprintf("[dyndbg] unrecognized: '%s'\n", buf);
+    kprintf("[DYNDBG] unrecognized: '%s'\n", buf);
     return -EINVAL;
 }
 
@@ -292,7 +292,7 @@ static int dyndbg_control_file_write(const char *buf, int len)
 /* ── Stub: dyndbg_clear ─────────────────────────────── */
 int dyndbg_clear(void)
 {
-    kprintf("[dyndbg] dyndbg_clear: not yet implemented\n");
+    kprintf("[DYNDBG] dyndbg_clear: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dyndbg_set_flags ─────────────────────────────── */
@@ -300,6 +300,6 @@ int dyndbg_set_flags(const char *module, unsigned long flags)
 {
     (void)module;
     (void)flags;
-    kprintf("[dyndbg] dyndbg_set_flags: not yet implemented\n");
+    kprintf("[DYNDBG] dyndbg_set_flags: not yet implemented\n");
     return 0;
 }

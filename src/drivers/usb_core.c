@@ -289,7 +289,7 @@ struct usb_driver *usb_core_find_driver(const char *name)
 /* ── usb_init: Initialise USB subsystem, probe for controllers ── */
 int usb_init(void)
 {
-    kprintf("[usb] Initialising USB subsystem...\n");
+    kprintf("[USB] Initialising USB subsystem...\n");
 
     /* Initialise the USB core device model */
     usb_core_init();
@@ -299,9 +299,9 @@ int usb_init(void)
     (void)0;
     int ret = 0;
     if (ret == 0) {
-        kprintf("[usb] USB subsystem initialised\n");
+        kprintf("[USB] USB subsystem initialised\n");
     } else {
-        kprintf("[usb] No EHCI controllers found\n");
+        kprintf("[USB] No EHCI controllers found\n");
     }
 
     return 0;
@@ -310,13 +310,13 @@ int usb_init(void)
 /* ── usb_exit: Shutdown USB subsystem ─────────────────── */
 void usb_exit(void)
 {
-    kprintf("[usb] Shutting down USB subsystem...\n");
+    kprintf("[USB] Shutting down USB subsystem...\n");
 
     /* De-register all drivers */
     /* ehci_shutdown_all stub */
     (void)0;
 
-    kprintf("[usb] USB subsystem shut down\n");
+    kprintf("[USB] USB subsystem shut down\n");
 }
 
 /* ── usb_unregister_driver: Remove a USB driver ─────────────── */

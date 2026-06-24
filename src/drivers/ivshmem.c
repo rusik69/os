@@ -95,7 +95,7 @@ void ivshmem_init(void)
 
     ivshmem_present = 1;
 
-    kprintf("[ivshmem] QEMU ivshmem at %02x:%02x.%d, I/O 0x%04x, "
+    kprintf("[IVSHMEM] QEMU ivshmem at %02x:%02x.%d, I/O 0x%04x, "
             "version=%u, id=%u, peers=%u, position=%u, "
             "shmem phys=0x%llx size=%llu\n",
             dev.bus, dev.slot, dev.func, ivshmem_iobase,
@@ -121,7 +121,7 @@ int ivshmem_read(void *dev, uint64_t offset, void *buf, size_t count)
     (void)offset;
     (void)buf;
     (void)count;
-    kprintf("[ivshmem] ivshmem_read: not yet implemented\n");
+    kprintf("[IVSHMEM] ivshmem_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: ivshmem_write ─────────────────────────────── */
@@ -131,6 +131,6 @@ int ivshmem_write(void *dev, uint64_t offset, const void *buf, size_t count)
     (void)offset;
     (void)buf;
     (void)count;
-    kprintf("[ivshmem] ivshmem_write: not yet implemented\n");
+    kprintf("[IVSHMEM] ivshmem_write: not yet implemented\n");
     return 0;
 }

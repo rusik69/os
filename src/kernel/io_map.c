@@ -19,6 +19,20 @@ static spinlock_t io_map_lock;
 /* Track the next virtual address to hand out (simulated) */
 static uint64_t next_virt_base = 0xFFFF800000000000ULL;
 
+/**
+ * io_map_create - Create an I/O memory mapping
+ * @phys_addr: Physical base address of the I/O region
+ * @size: Size of the region in bytes
+ * @flags: Mapping flags (uncached, write-combining, etc.)
+ *
+ * Allocates a slot in the I/O mapping table, assigns a simulated
+ * virtual address, and records the physical address and size.  In a
+ * real kernel this function would install page-table entries with
+ * the appropriate PAT memory type.
+ *
+ * Return: A virtual address that can be used to access the I/O region,
+ *         or NULL if the mapping table is full or @size is zero
+ */
 void *io_map_create(uint64_t phys_addr, size_t size, int flags)
 {
     if (size == 0)
@@ -62,6 +76,14 @@ void *io_map_create(uint64_t phys_addr, size_t size, int flags)
     return virt;
 }
 
+/**
+ * io_map_destroy - Destroy an I/O memory mapping
+ * @virt_addr: Virtual address of the mapping to destroy
+ *
+ * Decrements the reference count on the mapping.  When the count
+ * reaches zero, the mapping slot is freed and becomes available for
+ * reuse.  Safe to call with a NULL @virt_addr.
+ */
 void io_map_destroy(void *virt_addr)
 {
     if (!virt_addr)
@@ -88,12 +110,27 @@ void io_map_destroy(void *virt_addr)
     spinlock_release(&io_map_lock);
 }
 
+/**
+ * io_map_read - Read a 32-bit value from an I/O memory address
+ * @addr: Virtual address of the I/O register to read (may be NULL)
+ *
+ * Performs a volatile 32-bit read from the given address.
+ *
+ * Return: The 32-bit value read, or 0 if @addr is NULL
+ */
 uint32_t io_map_read(const volatile void *addr)
 {
     if (!addr) return 0;
     return *(volatile uint32_t *)addr;
 }
 
+/**
+ * io_map_write - Write a 32-bit value to an I/O memory address
+ * @addr: Virtual address of the I/O register to write (may be NULL)
+ * @value: 32-bit value to write
+ *
+ * Performs a volatile 32-bit write to the given address.
+ */
 void io_map_write(volatile void *addr, uint32_t value)
 {
     if (!addr) return;
@@ -112,6 +149,13 @@ void io_map_write8(volatile void *addr, uint8_t value)
     *(volatile uint8_t *)addr = value;
 }
 
+/**
+ * io_map_init - Initialise the I/O memory mapping subsystem
+ *
+ * Clears the I/O mapping table and initialises the internal spinlock.
+ * Must be called once during boot before any io_map_create or
+ * io_map_destroy calls.
+ */
 void io_map_init(void)
 {
     spinlock_init(&io_map_lock);

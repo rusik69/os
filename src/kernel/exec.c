@@ -307,13 +307,7 @@ int do_execve(const char *filename, const char **argv, const char **envp)
         return -EIO;
     }
 
-    uint64_t entry_point = 0;
-    uint64_t phdr = 0;
-    uint64_t phent = 0;
-    uint64_t phnum = 0;
-    uint64_t base_addr = 0;
-
-    entry_point = elf_load(elf_buf, (unsigned long)elf_size);
+    uint64_t entry_point = elf_load(elf_buf, (unsigned long)elf_size);
     if (unlikely(!entry_point)) {
         kfree(elf_buf);
         vfs_close(binary);
@@ -329,8 +323,8 @@ int do_execve(const char *filename, const char **argv, const char **envp)
     }
 
     /* Setup auxiliary vector on user stack */
-    /* (auxv setup happens within vmm_setup_user_stack or here) */
     uint64_t auxv_base = user_stack - ELF_AUXV_ENTRIES * 2 * 8;
+    uint64_t phdr = 0, phent = 0, phnum = 0, base_addr = 0;
     setup_auxv((uint64_t *)auxv_base, p,
                phdr, phent, phnum,
                entry_point, base_addr,

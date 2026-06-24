@@ -58,7 +58,7 @@ int page_poison_enter_late_stage(void)
         return 0;
     }
 
-    kprintf("[mem] page_poison: transitioning EARLY->LATE, verifying "
+    kprintf("[MEM] page_poison: transitioning EARLY->LATE, verifying "
             "EARLY-poisoned regions...\n");
 
     /*
@@ -77,7 +77,7 @@ int page_poison_enter_late_stage(void)
     g_init_stage = MEMINIT_LATE;
     g_poison_freed_val = POISON_LATE_FREED;
 
-    kprintf("[mem] page_poison: now using LATE pattern 0x%02x\n",
+    kprintf("[MEM] page_poison: now using LATE pattern 0x%02x\n",
             (unsigned int)POISON_LATE_FREED);
     return 0;
 }
@@ -89,7 +89,7 @@ void __init page_poison_init(void)
     g_init_stage = MEMINIT_EARLY;
     g_poison_freed_val = POISON_EARLY_FREED;
     g_poison_active = 1;
-    kprintf("[mem] page_poison: EARLY stage active (pattern 0x%02x)\n",
+    kprintf("[MEM] page_poison: EARLY stage active (pattern 0x%02x)\n",
             (unsigned int)POISON_EARLY_FREED);
 }
 
@@ -100,7 +100,7 @@ void page_poison_set_freed_value(uint8_t val)
     if (!g_poison_active)
         return;
     g_poison_freed_val = val;
-    kprintf("[mem] page_poison: freed value set to 0x%02x\n",
+    kprintf("[MEM] page_poison: freed value set to 0x%02x\n",
             (unsigned int)val);
 }
 
@@ -146,7 +146,7 @@ int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
 
             /* Log first few corruptions with detail, then summarize */
             if (corruptions <= 3) {
-                kprintf("[mem] page_poison CORRUPTION at %p+0x%lx: "
+                kprintf("[MEM] page_poison CORRUPTION at %p+0x%lx: "
                         "expected 0x%02x, got 0x%02x\n",
                         addr, (unsigned long)i,
                         (unsigned int)poison_val,
@@ -156,7 +156,7 @@ int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
     }
 
     if (corruptions > 0) {
-        kprintf("[mem] page_poison: %lu corruptions in %lu-byte region\n",
+        kprintf("[MEM] page_poison: %lu corruptions in %lu-byte region\n",
                 (unsigned long)corruptions, (unsigned long)size);
         return (int)corruptions;
     }

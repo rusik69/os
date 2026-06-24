@@ -74,7 +74,7 @@ int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
 {
     /* Validate parameters */
     if (!fb_addr || width == 0 || height == 0 || stride == 0) {
-        kprintf("[simplefb] Invalid parameters: addr=%p w=%u h=%u stride=%u\n",
+        kprintf("[SIMPLEFB] Invalid parameters: addr=%p w=%u h=%u stride=%u\n",
                 (void*)(uintptr_t)fb_addr, width, height, stride);
         return -1;
     }
@@ -112,7 +112,7 @@ int simplefb_init(uint64_t fb_addr, uint32_t width, uint32_t height,
     g_simplefb.format     = (enum simplefb_format)format_enum;
     g_simplefb.registered = 0;
 
-    kprintf("[simplefb] %s framebuffer: %dx%d, %dbpp, stride=%d, addr=%p, size=%u\n",
+    kprintf("[SIMPLEFB] %s framebuffer: %dx%d, %dbpp, stride=%d, addr=%p, size=%u\n",
             simplefb_format_name(g_simplefb.format),
             width, height, bpp, stride, g_simplefb.fb_addr, fb_size);
 
@@ -163,7 +163,7 @@ int simplefb_init_from_multiboot2(uint64_t mboot_info_phys)
 
             int fmt = SIMPLEFB_FORMAT_BGRX_8888;
 
-            kprintf("[simplefb] Found in multiboot2 tag: %dx%d pitch=%d addr=%p\n",
+            kprintf("[SIMPLEFB] Found in multiboot2 tag: %dx%d pitch=%d addr=%p\n",
                     width, height, pitch, (void*)(uintptr_t)fb_addr);
 
             return simplefb_init(fb_addr, width, height, pitch, fmt);
@@ -187,7 +187,7 @@ int simplefb_init_from_multiboot1(uint64_t mboot_info_phys)
     /* Multiboot v1: framebuffer fields at offset 60-88 if flags[2] is set */
     uint32_t flags = *(uint32_t*)(uintptr_t)mboot_info_phys;
     if (!(flags & (1U << 2))) {
-        kprintf("[simplefb] No framebuffer in multiboot v1 info\n");
+        kprintf("[SIMPLEFB] No framebuffer in multiboot v1 info\n");
         return -1;
     }
 
@@ -201,11 +201,11 @@ int simplefb_init_from_multiboot1(uint64_t mboot_info_phys)
     /* fb_type at offset 81 */
 
     if (width == 0 || height == 0 || fb_addr == 0) {
-        kprintf("[simplefb] Multiboot v1 framebuffer info incomplete\n");
+        kprintf("[SIMPLEFB] Multiboot v1 framebuffer info incomplete\n");
         return -1;
     }
 
-    kprintf("[simplefb] Multiboot v1 fb: %dx%d bpp=%d pitch=%d addr=%p\n",
+    kprintf("[SIMPLEFB] Multiboot v1 fb: %dx%d bpp=%d pitch=%d addr=%p\n",
             width, height, bpp, pitch, (void*)(uintptr_t)fb_addr);
 
     int fmt = SIMPLEFB_FORMAT_BGRX_8888;

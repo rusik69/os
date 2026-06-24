@@ -295,7 +295,7 @@ int migrate_huge_pages(uint64_t *pages, int nr_pages, int target_node)
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-void hugepage_migration_init(void)
+void __init hugepage_migration_init(void)
 {
     nr_isolated_anon = 0;
     nr_isolated_file = 0;

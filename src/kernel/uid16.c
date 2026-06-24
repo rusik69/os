@@ -273,7 +273,7 @@ int sys_setfsgid16(uint16_t gid16)
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void uid16_init(void)
+void __init uid16_init(void)
 {
     kprintf("[OK] UID16: 16-bit UID syscall compatibility layer\n");
 }

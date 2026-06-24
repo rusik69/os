@@ -540,7 +540,7 @@ void gpiochip_irq_demux(struct interrupt_frame *frame, struct gpio_chip *chip)
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-void gpiolib_init(void)
+void __init gpiolib_init(void)
 {
     spinlock_init(&gpiolib_lock);
 

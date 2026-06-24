@@ -141,6 +141,6 @@ module_init(intel_gpu_init);
 /* ── Stub: intel_gpu_mode_set ─────────────────────────────── */
 int intel_gpu_mode_set(__maybe_unused void *dev, __maybe_unused void *mode)
 {
-    kprintf("[intel_gpu] intel_gpu_mode_set: not yet implemented\n");
+    kprintf("[INTEL_GPU] intel_gpu_mode_set: not yet implemented\n");
     return 0;
 }

@@ -70,13 +70,13 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
 
     /* Receive initial magic + export info */
     if (nbd_tcp_recv(conn_id, buf, 128, 100) < 0) {
-        kprintf("[nbd] Negotiation failed: no initial data\n");
+        kprintf("[NBD] Negotiation failed: no initial data\n");
         return -1;
     }
 
     uint64_t magic = *(uint64_t *)buf;
     if (magic != NBD_MAGIC) {
-        kprintf("[nbd] Bad magic: 0x%llx (expected 0x%llx)\n",
+        kprintf("[NBD] Bad magic: 0x%llx (expected 0x%llx)\n",
                 (unsigned long long)magic, (unsigned long long)NBD_MAGIC);
         return -1;
     }
@@ -84,17 +84,17 @@ static int nbd_negotiate(int conn_id, struct nbd_device *dev)
     dev->export_size = *(uint64_t *)(buf + 8);
     dev->flags       = *(uint32_t *)(buf + 16);
 
-    kprintf("[nbd] Export: %llu bytes, flags=0x%x\n",
+    kprintf("[NBD] Export: %llu bytes, flags=0x%x\n",
             (unsigned long long)dev->export_size, dev->flags);
 
     /* Send client flags (0 = simple) */
     uint32_t client_flags = 0;
     if (nbd_tcp_send(conn_id, &client_flags, 4) < 0) {
-        kprintf("[nbd] Failed to send client flags\n");
+        kprintf("[NBD] Failed to send client flags\n");
         return -1;
     }
 
-    kprintf("[nbd] Negotiation complete\n");
+    kprintf("[NBD] Negotiation complete\n");
     return 0;
 }
 
@@ -129,12 +129,12 @@ static int nbd_issue_command(int conn_id, uint32_t type, uint64_t offset,
         return -EIO;
 
     if (rep.magic != NBD_REPLY_MAGIC) {
-        kprintf("[nbd] Bad reply magic: 0x%x\n", rep.magic);
+        kprintf("[NBD] Bad reply magic: 0x%x\n", rep.magic);
         return -EIO;
     }
 
     if (rep.handle != handle) {
-        kprintf("[nbd] Handle mismatch: %llx != %llx\n",
+        kprintf("[NBD] Handle mismatch: %llx != %llx\n",
                 (unsigned long long)rep.handle, (unsigned long long)handle);
         return -EIO;
     }
@@ -190,7 +190,7 @@ void nbd_init(void)
     if (g_nbd_initialized) return;
     memset(g_nbd_devices, 0, sizeof(g_nbd_devices));
     g_nbd_initialized = 1;
-    kprintf("[nbd] NBD subsystem initialized (max %d devices)\n", NBD_MAX_DEVICES);
+    kprintf("[NBD] NBD subsystem initialized (max %d devices)\n", NBD_MAX_DEVICES);
 }
 
 int nbd_connect(uint32_t server_ip)
@@ -206,19 +206,19 @@ int nbd_connect(uint32_t server_ip)
         }
     }
     if (slot < 0) {
-        kprintf("[nbd] No free device slots\n");
+        kprintf("[NBD] No free device slots\n");
         return -1;
     }
 
     /* Connect to NBD server */
     int conn_id = net_tcp_connect(server_ip, NBD_PORT);
     if (conn_id < 0) {
-        kprintf("[nbd] TCP connect failed to %d.%d.%d.%d:%d\n",
+        kprintf("[NBD] TCP connect failed to %d.%d.%d.%d:%d\n",
                 NIPQUAD(server_ip), NBD_PORT);
         return -1;
     }
 
-    kprintf("[nbd] Connected to %d.%d.%d.%d:%d (conn=%d)\n",
+    kprintf("[NBD] Connected to %d.%d.%d.%d:%d (conn=%d)\n",
             NIPQUAD(server_ip), NBD_PORT, conn_id);
 
     /* Negotiate export */
@@ -228,7 +228,7 @@ int nbd_connect(uint32_t server_ip)
 
     if (nbd_negotiate(conn_id, dev) < 0) {
         net_tcp_close(conn_id);
-        kprintf("[nbd] Negotiation failed\n");
+        kprintf("[NBD] Negotiation failed\n");
         return -1;
     }
 
@@ -244,14 +244,14 @@ int nbd_connect(uint32_t server_ip)
                                 nbd_submit_fn, NULL,
                                 sector_count, 0);
     if (ret != 0) {
-        kprintf("[nbd] Failed to register block device %s\n", name);
+        kprintf("[NBD] Failed to register block device %s\n", name);
         net_tcp_close(conn_id);
         memset(dev, 0, sizeof(*dev));
         return -1;
     }
 
     dev->connected = 1;
-    kprintf("[nbd] Device %s (id=%d): %llu sectors\n",
+    kprintf("[NBD] Device %s (id=%d): %llu sectors\n",
             name, nbd_id, (unsigned long long)sector_count);
 
     return nbd_id;
@@ -261,13 +261,13 @@ void nbd_disconnect(int dev_id)
 {
     struct nbd_device *dev = nbd_find_by_dev_id(dev_id);
     if (!dev) {
-        kprintf("[nbd] Device %d not found\n", dev_id);
+        kprintf("[NBD] Device %d not found\n", dev_id);
         return;
     }
 
     blockdev_unregister(dev_id);
     net_tcp_close(dev->conn_id);
-    kprintf("[nbd] Device nbd%d (id=%d) disconnected\n",
+    kprintf("[NBD] Device nbd%d (id=%d) disconnected\n",
             (int)(dev - g_nbd_devices), dev_id);
     memset(dev, 0, sizeof(*dev));
 }
@@ -279,18 +279,18 @@ void nbd_disconnect(int dev_id)
 /* ── Stub: nbd_xmit ────────────────────────────────── */
 int nbd_xmit(__maybe_unused struct nbd_device *dev, __maybe_unused struct nbd_request *req, __maybe_unused void *data)
 {
-    kprintf("[nbd] nbd_xmit: not yet implemented\n");
+    kprintf("[NBD] nbd_xmit: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nbd_recv ────────────────────────────────── */
 int nbd_recv(__maybe_unused struct nbd_device *dev, __maybe_unused struct nbd_reply *rep, __maybe_unused void *data)
 {
-    kprintf("[nbd] nbd_recv: not yet implemented\n");
+    kprintf("[NBD] nbd_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nbd_reconfigure ─────────────────────────── */
 int nbd_reconfigure(__maybe_unused struct nbd_device *dev, __maybe_unused uint64_t new_size)
 {
-    kprintf("[nbd] nbd_reconfigure: not yet implemented\n");
+    kprintf("[NBD] nbd_reconfigure: not yet implemented\n");
     return 0;
 }

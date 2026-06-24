@@ -1942,7 +1942,7 @@ struct vfs_ops procfs_ops = {
  * /proc/meminfo, /proc/uptime, /proc/PID/, and other virtual files
  * become accessible to userspace.
  */
-void procfs_init(void)
+void __init procfs_init(void)
 {
     if (vfs_mount("/proc", &procfs_ops, NULL) == 0) {
         kprintf("[OK] procfs mounted on /proc\n");
@@ -1950,6 +1950,8 @@ void procfs_init(void)
         kprintf("[!!] procfs mount failed\n");
     }
 }
+#include "initcall.h"
+fs_initcall(procfs_init);
 
 #ifdef MODULE
 #include "module.h"

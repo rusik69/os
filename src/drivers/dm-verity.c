@@ -157,7 +157,7 @@ static int verity_verify_block(struct verity_private *vp,
         ret = blk_submit_sync(vp->hash_dev_id, hash_sector, 1,
                               stored_hash, BLK_REQ_READ);
         if (ret != 0) {
-            kprintf("[dm-verity] I/O error reading hash at level %d, "
+            kprintf("[DM-VERITY] I/O error reading hash at level %d, "
                     "block %llu, sector %llu: %d\n",
                     level, (unsigned long long)current_block,
                     (unsigned long long)hash_sector, ret);
@@ -166,7 +166,7 @@ static int verity_verify_block(struct verity_private *vp,
 
         /* Compare the computed hash with the stored hash */
         if (memcmp(hash, stored_hash, VERITY_HASH_SIZE) != 0) {
-            kprintf("[dm-verity] VERIFICATION FAILED at level %d, "
+            kprintf("[DM-VERITY] VERIFICATION FAILED at level %d, "
                     "block %llu: hash mismatch\n",
                     level, (unsigned long long)current_block);
             kprintf("  computed: ");
@@ -185,7 +185,7 @@ static int verity_verify_block(struct verity_private *vp,
              * We've already verified it matches the computed hash from
              * the level above; now check it matches the trusted root. */
             if (memcmp(hash, vp->root_hash, VERITY_HASH_SIZE) != 0) {
-                kprintf("[dm-verity] ROOT HASH MISMATCH: block %llu\n",
+                kprintf("[DM-VERITY] ROOT HASH MISMATCH: block %llu\n",
                         (unsigned long long)block_num);
                 kprintf("  expected root: ");
                 for (int i = 0; i < VERITY_HASH_SIZE; i++)
@@ -242,7 +242,7 @@ static int verity_verify_block(struct verity_private *vp,
 static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     if (argc < 4) {
-        kprintf("[dm-verity] ctr: need 4 args (data_dev hash_dev hash_start root_hash), got %d\n",
+        kprintf("[DM-VERITY] ctr: need 4 args (data_dev hash_dev hash_start root_hash), got %d\n",
                 argc);
         return -EINVAL;
     }
@@ -257,14 +257,14 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
     int dev_id = 0;
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-verity] ctr: invalid data_dev_id '%s'\n", argv[0]);
+            kprintf("[DM-VERITY] ctr: invalid data_dev_id '%s'\n", argv[0]);
             kfree(priv);
             return -EINVAL;
         }
         dev_id = dev_id * 10 + (*s++ - '0');
     }
     if (!blockdev_is_registered(dev_id)) {
-        kprintf("[dm-verity] ctr: data device %d not registered\n", dev_id);
+        kprintf("[DM-VERITY] ctr: data device %d not registered\n", dev_id);
         kfree(priv);
         return -ENODEV;
     }
@@ -275,14 +275,14 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
     int hash_dev = 0;
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-verity] ctr: invalid hash_dev_id '%s'\n", argv[1]);
+            kprintf("[DM-VERITY] ctr: invalid hash_dev_id '%s'\n", argv[1]);
             kfree(priv);
             return -EINVAL;
         }
         hash_dev = hash_dev * 10 + (*s++ - '0');
     }
     if (!blockdev_is_registered(hash_dev)) {
-        kprintf("[dm-verity] ctr: hash device %d not registered\n", hash_dev);
+        kprintf("[DM-VERITY] ctr: hash device %d not registered\n", hash_dev);
         kfree(priv);
         return -ENODEV;
     }
@@ -293,7 +293,7 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
     uint64_t hash_start = 0;
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-verity] ctr: invalid hash_start '%s'\n", argv[2]);
+            kprintf("[DM-VERITY] ctr: invalid hash_start '%s'\n", argv[2]);
             kfree(priv);
             return -EINVAL;
         }
@@ -304,7 +304,7 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
     /* Parse root hash (64 hex chars = 32 bytes SHA-256) */
     int hash_len = hex_decode(argv[3], priv->root_hash, VERITY_HASH_SIZE);
     if (hash_len != VERITY_HASH_SIZE) {
-        kprintf("[dm-verity] ctr: root_hash must be %d hex chars (got %d bytes)\n",
+        kprintf("[DM-VERITY] ctr: root_hash must be %d hex chars (got %d bytes)\n",
                 VERITY_HASH_SIZE * 2, hash_len * 2);
         kfree(priv);
         return -EINVAL;
@@ -315,7 +315,7 @@ static int verity_ctr(struct dm_target *ti, int argc, const char **argv)
 
     ti->private = priv;
 
-    kprintf("[dm-verity] ctr: [%llu, %llu) data dev %d, hash dev %d, "
+    kprintf("[DM-VERITY] ctr: [%llu, %llu) data dev %d, hash dev %d, "
             "hash_start %llu, blocks %llu\n",
             (unsigned long long)ti->start,
             (unsigned long long)(ti->start + ti->length),
@@ -361,7 +361,7 @@ static int verity_map(struct dm_target *ti, struct blk_request *req,
 
     if (req->flags & BLK_REQ_WRITE) {
         /* ── WRITE path: reject (read-only target) ─────────────────── */
-        kprintf("[dm-verity] WRITE rejected at virtual sector %llu "
+        kprintf("[DM-VERITY] WRITE rejected at virtual sector %llu "
                 "(read-only target)\n", (unsigned long long)req->lba);
         req->result = -EROFS;
         blk_request_done(req);
@@ -395,7 +395,7 @@ static int verity_map(struct dm_target *ti, struct blk_request *req,
             const uint8_t *block_buf = (const uint8_t *)req->buf + block_offset;
             ret = verity_verify_block(priv, b, block_buf);
             if (ret != 0) {
-                kprintf("[dm-verity] Block %llu verification FAILED\n",
+                kprintf("[DM-VERITY] Block %llu verification FAILED\n",
                         (unsigned long long)b);
                 req->result = ret;
                 *mapped_count = 0;
@@ -441,7 +441,7 @@ int dm_verity_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm_verity] dm_verity_ctr: not yet implemented\n");
+    kprintf("[DM_VERITY] dm_verity_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_verity_map ─────────────────────────────── */
@@ -449,6 +449,6 @@ int dm_verity_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm_verity] dm_verity_map: not yet implemented\n");
+    kprintf("[DM_VERITY] dm_verity_map: not yet implemented\n");
     return 0;
 }

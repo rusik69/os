@@ -160,7 +160,7 @@ uint64_t damon_get_access_count(uint64_t start)
     return 0;
 }
 
-void damon_init(void)
+void __init damon_init(void)
 {
     memset(&damon_ctx, 0, sizeof(damon_ctx));
     spinlock_init(&damon_ctx.lock);

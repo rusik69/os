@@ -191,7 +191,7 @@ static int vblk_init_queue(int qid) {
 }
 
 /* ── Init ───────────────────────────────────────────────────────── */
-int virtio_blk_init(void) {
+int __init virtio_blk_init(void) {
     struct pci_device dev;
 
     /* Find device */
@@ -265,6 +265,9 @@ int virtio_blk_init(void) {
             vblk_num_qs, vblk_num_cpus);
     return 0;
 }
+
+#include "initcall.h"
+device_initcall(virtio_blk_init);
 
 /* ── I/O request on a specific queue ──────────────────────────────
  * Submits a read or write request on the given queue index.

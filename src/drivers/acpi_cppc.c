@@ -89,7 +89,7 @@ void cppc_get_info(int dom_idx, uint32_t *highest, uint32_t *nominal,
     if (lowest) *lowest = dom->lowest_perf;
 }
 
-void acpi_cppc_init(void)
+void __init acpi_cppc_init(void)
 {
     memset(cppc_domains, 0, sizeof(cppc_domains));
     cppc_domain_count = 0;

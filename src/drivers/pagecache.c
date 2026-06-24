@@ -45,7 +45,7 @@ int pagecache_read(void *mapping, uint64_t index, void *page)
     (void)mapping;
     (void)index;
     (void)page;
-    kprintf("[pagecache] pagecache_read: not yet implemented\n");
+    kprintf("[PAGECACHE] pagecache_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pagecache_write ─────────────────────────────── */
@@ -54,7 +54,7 @@ int pagecache_write(void *mapping, uint64_t index, const void *page)
     (void)mapping;
     (void)index;
     (void)page;
-    kprintf("[pagecache] pagecache_write: not yet implemented\n");
+    kprintf("[PAGECACHE] pagecache_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: pagecache_evict ─────────────────────────────── */
@@ -62,6 +62,6 @@ int pagecache_evict(void *mapping, uint64_t index)
 {
     (void)mapping;
     (void)index;
-    kprintf("[pagecache] pagecache_evict: not yet implemented\n");
+    kprintf("[PAGECACHE] pagecache_evict: not yet implemented\n");
     return 0;
 }

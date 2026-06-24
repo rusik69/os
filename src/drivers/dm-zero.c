@@ -29,11 +29,11 @@ static int zero_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     (void)argv;
     if (argc != 0) {
-        kprintf("[dm-zero] ctr: zero target takes no arguments, got %d\n", argc);
+        kprintf("[DM-ZERO] ctr: zero target takes no arguments, got %d\n", argc);
         return -EINVAL;
     }
     ti->private = NULL;
-    kprintf("[dm-zero] ctr: [%llu, %llu) zero target created\n",
+    kprintf("[DM-ZERO] ctr: [%llu, %llu) zero target created\n",
             (unsigned long long)ti->start,
             (unsigned long long)(ti->start + ti->length));
     return 0;
@@ -102,7 +102,7 @@ int dm_zero_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm] dm_zero_ctr: not yet implemented\n");
+    kprintf("[DM] dm_zero_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_zero_map ─────────────────────────────── */
@@ -110,6 +110,6 @@ int dm_zero_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm] dm_zero_map: not yet implemented\n");
+    kprintf("[DM] dm_zero_map: not yet implemented\n");
     return 0;
 }

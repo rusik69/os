@@ -140,7 +140,7 @@ static void kcsan_set_watchpoint(uint64_t addr, uint64_t size,
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void kcsan_init(void)
+void __init kcsan_init(void)
 {
     if (kcsan_initialized) return;
 

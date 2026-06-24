@@ -117,7 +117,7 @@ void virtio_scsi_init(void)
 
     scsi_present = 1;
 
-    kprintf("[virtio-scsi] VirtIO SCSI at %02x:%02x.%d, I/O 0x%04x, "
+    kprintf("[VIRTIO-SCSI] VirtIO SCSI at %02x:%02x.%d, I/O 0x%04x, "
             "targets=%d LUNs=%d\n",
             dev.bus, dev.slot, dev.func, scsi_iobase,
             VIRTIO_SCSI_MAX_TARGET, VIRTIO_SCSI_MAX_LUN);
@@ -137,7 +137,7 @@ int virtio_scsi_cmd(void *dev, void *cmd)
 {
     (void)dev;
     (void)cmd;
-    kprintf("[virtio] virtio_scsi_cmd: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_scsi_cmd: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_scsi_task_mgt ─────────────────────────────── */
@@ -145,6 +145,6 @@ int virtio_scsi_task_mgt(void *dev, void *tm)
 {
     (void)dev;
     (void)tm;
-    kprintf("[virtio] virtio_scsi_task_mgt: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_scsi_task_mgt: not yet implemented\n");
     return 0;
 }

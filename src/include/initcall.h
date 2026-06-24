@@ -26,6 +26,15 @@ typedef void (*initcall_t)(void);
 #define subsys_initcall(fn)     __define_initcall(fn, 4)
 #define device_initcall(fn)     __define_initcall(fn, 5)
 
+/* Documentation aliases — same behaviour, clarify intended ordering.
+ * These don't create new linker sections; they use the existing level
+ * that matches their documented role:
+ *   fs_initcall   → subsys level (after arch, before device)
+ *   late_initcall  → device level (last among built-in initcalls)
+ */
+#define fs_initcall(fn)         __define_initcall(fn, 4)
+#define late_initcall(fn)       __define_initcall(fn, 5)
+
 /* Called from kernel_main to run all initcalls in order */
 void do_initcalls(void);
 

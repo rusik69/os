@@ -55,11 +55,14 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
                             const void *fc_frame, uint32_t fc_frame_len,
                             uint8_t sof, uint8_t eof)
 {
-    uint8_t buf[2048];
+    uint8_t *buf = kmalloc(2048);
+    if (!buf) return -ENOMEM;
     struct fcoe_frame *fcoe = (struct fcoe_frame *)buf;
 
-    if (fc_frame_len + sizeof(struct fcoe_frame) + 4 /* CRC */ > sizeof(buf))
+    if (fc_frame_len + sizeof(struct fcoe_frame) + 4 /* CRC */ > 2048) {
+        kfree(buf);
         return -EINVAL;
+    }
 
     memcpy(fcoe->eth_dst, dst_mac, 6);
     memcpy(fcoe->eth_src, src_mac, 6);
@@ -85,6 +88,7 @@ static int fcoe_xmit_frame(const uint8_t *dst_mac, const uint8_t *src_mac,
     /* In real implementation: send with sock_sendto() on AF_PACKET socket */
     /* For now, use net_link_send to raw Ethernet frame */
     net_link_send(buf, offset);
+    kfree(buf);
     return 0;
 }
 
@@ -143,11 +147,11 @@ static int fcoe_flogi(struct fcoe_device *dev)
     /* Send FLOGI */
     memcpy(fc_frame + 24, els_payload, 64);
 
-    kprintf("[fcoe] Sending FLOGI\n");
+    kprintf("[FCOE] Sending FLOGI\n");
     ret = fcoe_xmit_frame(dev->target_mac, dev->local_mac,
                           fc_frame, 24 + 64, FC_SOF_I3, FC_EOF_T);
     if (ret < 0) {
-        kprintf("[fcoe] FLOGI send failed\n");
+        kprintf("[FCOE] FLOGI send failed\n");
         return ret;
     }
 
@@ -155,7 +159,7 @@ static int fcoe_flogi(struct fcoe_device *dev)
     /* For simulation, assign ourselves an S_ID */
     dev->s_id = 0x010100;  /* Assigned S_ID */
     dev->d_id = FC_FABRIC_D_ID;
-    kprintf("[fcoe] FLOGI complete: S_ID=0x%06x\n", dev->s_id);
+    kprintf("[FCOE] FLOGI complete: S_ID=0x%06x\n", dev->s_id);
     return 0;
 }
 
@@ -166,7 +170,8 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
                                void *data, int data_len,
                                int is_write)
 {
-    uint8_t fc_frame[2048];
+    uint8_t *fc_frame = kmalloc(2048);
+    if (!fc_frame) return -ENOMEM;
     struct fc_header *hdr = (struct fc_header *)fc_frame;
     struct fcp_cmnd *cmnd = (struct fcp_cmnd *)(fc_frame + 24);
     uint32_t fc_data_len = 0;
@@ -189,7 +194,10 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
     /* Send FCP command */
     ret = fcoe_xmit_frame(dev->target_mac, dev->local_mac,
                           fc_frame, fc_data_len, FC_SOF_I3, FC_EOF_T);
-    if (ret < 0) return ret;
+    if (ret < 0) {
+        kfree(fc_frame);
+        return ret;
+    }
 
     /* For writes: send data after command (simplified — in practice wait for XFER_RDY) */
     if (is_write && data && data_len > 0) {
@@ -199,7 +207,10 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
         ret = fcoe_xmit_frame(dev->target_mac, dev->local_mac,
                               fc_frame, 24 + (uint32_t)data_len,
                               FC_SOF_I3, FC_EOF_T);
-        if (ret < 0) return ret;
+        if (ret < 0) {
+            kfree(fc_frame);
+            return ret;
+        }
     }
 
     /* For reads: in real impl, wait for XFER_RDY + data frames */
@@ -211,6 +222,7 @@ static int fcoe_send_scsi_cmd(struct fcoe_device *dev,
         /* It would actually come via fcoe_recv_frame from the target */
     }
 
+    kfree(fc_frame);
     return 0;
 }
 
@@ -232,7 +244,7 @@ static int fcoe_read_capacity_10(struct fcoe_device *dev)
 
     dev->sector_count = (uint64_t)last_lba + 1;
     dev->sector_size = block_len;
-    kprintf("[fcoe] Capacity: %llu sectors, %u bytes/sector\n",
+    kprintf("[FCOE] Capacity: %llu sectors, %u bytes/sector\n",
             (unsigned long long)dev->sector_count, dev->sector_size);
     return 0;
 }
@@ -295,7 +307,7 @@ void fcoe_init(void)
     if (g_fcoe_initialized) return;
     memset(g_fcoe_devices, 0, sizeof(g_fcoe_devices));
     g_fcoe_initialized = 1;
-    kprintf("[fcoe] FCoE initiator subsystem initialized\n");
+    kprintf("[FCOE] FCoE initiator subsystem initialized\n");
 }
 
 int fcoe_connect(void)
@@ -310,7 +322,7 @@ int fcoe_connect(void)
         }
     }
     if (slot < 0) {
-        kprintf("[fcoe] No free device slots\n");
+        kprintf("[FCOE] No free device slots\n");
         return -1;
     }
 
@@ -328,13 +340,13 @@ int fcoe_connect(void)
 
     /* Perform FLOGI */
     if (fcoe_flogi(dev) < 0) {
-        kprintf("[fcoe] FLOGI failed\n");
+        kprintf("[FCOE] FLOGI failed\n");
         return -1;
     }
 
     /* Get capacity */
     if (fcoe_read_capacity_10(dev) < 0) {
-        kprintf("[fcoe] READ CAPACITY failed\n");
+        kprintf("[FCOE] READ CAPACITY failed\n");
         return -1;
     }
 
@@ -349,13 +361,13 @@ int fcoe_connect(void)
                                  fcoe_submit_fn, NULL,
                                  dev->sector_count, 0);
     if (ret != 0) {
-        kprintf("[fcoe] Failed to register block device %s\n", name);
+        kprintf("[FCOE] Failed to register block device %s\n", name);
         memset(dev, 0, sizeof(*dev));
         return -1;
     }
 
     dev->connected = 1;
-    kprintf("[fcoe] Device %s (id=%d): %llu sectors\n",
+    kprintf("[FCOE] Device %s (id=%d): %llu sectors\n",
             name, fcoe_id, (unsigned long long)dev->sector_count);
     return fcoe_id;
 }
@@ -367,7 +379,7 @@ void fcoe_disconnect(int dev_id)
 
     blockdev_unregister(dev_id);
     dev->connected = 0;
-    kprintf("[fcoe] Device fcoe%d (id=%d) disconnected\n",
+    kprintf("[FCOE] Device fcoe%d (id=%d) disconnected\n",
             (int)(dev - g_fcoe_devices), dev_id);
     memset(dev, 0, sizeof(*dev));
 }
@@ -375,17 +387,19 @@ void fcoe_disconnect(int dev_id)
 void fcoe_poll(void)
 {
     /* Poll for incoming FCoE frames */
-    uint8_t fc_frame[2048];
-    uint32_t fc_len = sizeof(fc_frame);
+    uint8_t *fc_frame = kmalloc(2048);
+    if (!fc_frame) return;
+    uint32_t fc_len = 2048;
     uint8_t dst_mac[6], src_mac[6];
 
     if (fcoe_recv_frame(fc_frame, &fc_len, dst_mac, src_mac) == 0) {
         /* Process received FC frame */
         struct fc_header *hdr = (struct fc_header *)fc_frame;
-        kprintf("[fcoe] RX: r_ctl=0x%02x type=0x%02x s_id=0x%02x%02x%02x\n",
+        kprintf("[FCOE] RX: r_ctl=0x%02x type=0x%02x s_id=0x%02x%02x%02x\n",
                 hdr->r_ctl, hdr->type,
                 hdr->s_id[0], hdr->s_id[1], hdr->s_id[2]);
     }
+    kfree(fc_frame);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -395,25 +409,25 @@ void fcoe_poll(void)
 /* ── Stub: fcoe_xmit ───────────────────────────────── */
 int fcoe_xmit(__maybe_unused void *skb, __maybe_unused void *dev)
 {
-    kprintf("[FCoE] fcoe_xmit: not yet implemented\n");
+    kprintf("[FCOE] fcoe_xmit: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_recv ───────────────────────────────── */
 int fcoe_recv(__maybe_unused void *skb)
 {
-    kprintf("[FCoE] fcoe_recv: not yet implemented\n");
+    kprintf("[FCOE] fcoe_recv: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_create ────────────────────────── */
 int fcoe_vlan_create(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
-    kprintf("[FCoE] fcoe_vlan_create: not yet implemented\n");
+    kprintf("[FCOE] fcoe_vlan_create: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_vlan_destroy ───────────────────────── */
 int fcoe_vlan_destroy(__maybe_unused void *dev, __maybe_unused uint16_t vlan_id)
 {
-    kprintf("[FCoE] fcoe_vlan_destroy: not yet implemented\n");
+    kprintf("[FCOE] fcoe_vlan_destroy: not yet implemented\n");
     return 0;
 }
 /* ── Stub: fcoe_netdev_event ───────────────────────── */
@@ -422,6 +436,6 @@ int fcoe_netdev_event(void *this, unsigned long event, void *ptr)
     (void)this;
     (void)event;
     (void)ptr;
-    kprintf("[FCoE] fcoe_netdev_event: not yet implemented\n");
+    kprintf("[FCOE] fcoe_netdev_event: not yet implemented\n");
     return 0;
 }

@@ -399,6 +399,6 @@ module_init(ghes_init);
 int ghes_estatus_read(void *estatus)
 {
     (void)estatus;
-    kprintf("[ghes] ghes_estatus_read: not yet implemented\n");
+    kprintf("[GHES] ghes_estatus_read: not yet implemented\n");
     return 0;
 }

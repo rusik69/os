@@ -942,7 +942,7 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
                 found = 1;
                 data_len = large_len;
                 /* Read the data bytes */
-                int max_read = (data_len < (int)sizeof(tag_data)) ? data_len : (int)sizeof(tag_data);
+                int max_read = ((size_t)data_len < sizeof(tag_data)) ? data_len : (int)sizeof(tag_data);
                 for (int i = 0; i < max_read; i += 4) {
                     uint32_t w;
                     if (pci_vpd_read(dev, offset + 3 + i, &w) < 0)
@@ -1383,6 +1383,9 @@ void __init pci_init(void) {
     }
     kprintf(")\n");
 }
+
+#include "initcall.h"
+device_initcall(pci_init);
 
 /* ═══════════════════════════════════════════════════════════════════════
  *  PCI Deferred Autoprobe

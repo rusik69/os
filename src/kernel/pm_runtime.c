@@ -41,7 +41,7 @@ static struct pm_runtime_device *rpm_find_device(struct pm_runtime_device *dev)
  * as ready.  Must be called once during kernel boot before any other
  * runtime PM operations.  Safe to call multiple times (idempotent).
  */
-void pm_runtime_init(void)
+void __init pm_runtime_init(void)
 {
     if (g_rpm_initialized) {
         kprintf("[pm_runtime] Already initialized\n");

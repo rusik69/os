@@ -92,7 +92,7 @@ int devtmpfs_create_device(const char *name, uint8_t type, uint32_t major, uint3
 {
     char path[96];
     int ret = snprintf(path, sizeof(path), "/dev/%s", name);
-    if (ret < 0 || ret >= (int)sizeof(path))
+    if (ret < 0 || (size_t)ret >= sizeof(path))
         return -ENAMETOOLONG;
 
     return devtmpfs_mknod(path, type, major, minor);

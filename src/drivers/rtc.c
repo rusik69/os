@@ -480,7 +480,7 @@ static void rtc_devfs_init(void)
     if (ret == 0) {
         kprintf("[OK] RTC: /dev/rtc registered (periodic 1-8192 Hz, SIGALRM delivery)\n");
     } else {
-        kprintf("[rtc] WARN: failed to register /dev/rtc\n");
+        kprintf("[RTC] WARN: failed to register /dev/rtc\n");
     }
 }
 
@@ -550,20 +550,20 @@ static int wakealarm_write(const char *data, uint32_t size, void *priv) {
 void __init rtc_sysfs_init(void) {
     /* Create /sys/class/rtc/ directory */
     if (sysfs_create_dir("/sys/class/rtc") < 0) {
-        kprintf("[rtc] sysfs: failed to create /sys/class/rtc\n");
+        kprintf("[RTC] sysfs: failed to create /sys/class/rtc\n");
         return;
     }
 
     /* Create /sys/class/rtc/rtc0/ directory */
     if (sysfs_create_dir("/sys/class/rtc/rtc0") < 0) {
-        kprintf("[rtc] sysfs: failed to create /sys/class/rtc/rtc0\n");
+        kprintf("[RTC] sysfs: failed to create /sys/class/rtc/rtc0\n");
         return;
     }
 
     /* Create writable wakealarm file */
     if (sysfs_create_writable_file("/sys/class/rtc/rtc0/wakealarm",
                                     "0\n", NULL, wakealarm_read, wakealarm_write) < 0) {
-        kprintf("[rtc] sysfs: failed to create wakealarm\n");
+        kprintf("[RTC] sysfs: failed to create wakealarm\n");
         return;
     }
 

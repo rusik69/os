@@ -65,7 +65,7 @@ void __init zram_init(void)
     memset(&zram_dev, 0, sizeof(zram_dev));
     zram_dev.algo_id = ZCOMP_ALGO_FAST;
     zram_dev.num_streams = 0;
-    kprintf("[mem] ZRAM subsystem initialized\n");
+    kprintf("[MEM] ZRAM subsystem initialized\n");
 }
 
 /* ── Device creation ───────────────────────────────────────────────── */

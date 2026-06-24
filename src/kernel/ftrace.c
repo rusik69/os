@@ -906,7 +906,7 @@ void trace_printk(const char *fmt, ...)
     int entry_len = snprintf(entry, sizeof(entry), "[%llu] %s\n",
                              (unsigned long long)now_ns, msg);
     if (entry_len < 0) return;
-    if (entry_len >= (int)sizeof(entry)) entry_len = (int)sizeof(entry) - 1;
+    if ((size_t)entry_len >= sizeof(entry)) entry_len = (int)sizeof(entry) - 1;
 
     /* Copy into ring buffer */
     for (int i = 0; i < entry_len; i++) {

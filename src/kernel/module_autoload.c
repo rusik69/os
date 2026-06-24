@@ -203,7 +203,7 @@ static int __request_module_internal(const char *name, const char *params, int f
     char path[MODULE_PATH_MAX];
     int plen = snprintf(path, sizeof(path), "%s%s%s",
                         MODULE_PATH_PREFIX, name, MODULE_PATH_SUFFIX);
-    if (plen < 0 || plen >= (int)sizeof(path))
+    if (plen < 0 || (size_t)plen >= sizeof(path))
         return -ENAMETOOLONG;
 
     /* ── Step 2: Stat the .ko file ───────────────────────────────── */
@@ -378,7 +378,7 @@ int request_module(const char *fmt, ...)
     int nlen = vsnprintf(name, sizeof(name), fmt, args);
     REQ_MOD_VA_END(args);
 
-    if (nlen < 0 || nlen >= (int)sizeof(name))
+    if (nlen < 0 || (size_t)nlen >= sizeof(name))
         return -ENAMETOOLONG;
 
     return __request_module(name, NULL, 0);

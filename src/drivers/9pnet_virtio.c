@@ -131,7 +131,7 @@ void v9pnet_virtio_init(void)
 }
 
 #ifdef MODULE
-int init_module(void) { v9pnet_virtio_init(); return 0; }
+int __init init_module(void) { v9pnet_virtio_init(); return 0; }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");

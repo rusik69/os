@@ -10,6 +10,10 @@
 #include "pmm.h"
 #include "syscall.h"   /* for FALLOC_FL_* constants */
 
+/* ── Compile-time struct size assertions ────────────────────────────── */
+_Static_assert(sizeof(struct fs_inode) == 1072, "fs_inode packed size mismatch (expected 1072)");
+_Static_assert(sizeof(struct fs_super) == 512, "fs_super must be exactly 512 bytes (1 ATA sector)");
+
 static struct fs_super super;
 static struct fs_inode inodes[FS_MAX_FILES];
 
@@ -297,10 +301,8 @@ static int check_dir_perm_idx(int idx, char op) {
 
     if (cur_uid == 0) return 0; /* root */
 
-    int shift;
-    if (cur_uid == inodes[idx].uid)      shift = 6;
-    else if (cur_gid == inodes[idx].gid) shift = 3;
-    else                                 shift = 0;
+    int shift = (cur_uid == inodes[idx].uid) ? 6 :
+                (cur_gid == inodes[idx].gid) ? 3 : 0;
 
     uint16_t bits;
     switch (op) {
@@ -763,15 +765,10 @@ int fs_delete(const char *path) {
 }
 
 int fs_list(const char *path) {
-    int parent;
-    if (!path || path[0] == '\0' || (path[0] == '/' && path[1] == '\0')) {
-        parent = 0; /* root */
-    } else {
-        parent = find_inode(path);
-        if (parent < 0) return -EINVAL;
-        if (inodes[parent].type != FS_TYPE_DIR) return -EINVAL;
-    }
-
+    int parent = (!path || path[0] == '\0' || (path[0] == '/' && path[1] == '\0'))
+                 ? 0 : find_inode(path);
+    if (parent < 0) return -EINVAL;
+    if (parent != 0 && inodes[parent].type != FS_TYPE_DIR) return -EINVAL;
     if (check_dir_perm_idx(parent, 'r') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
     int count = 0;
@@ -885,15 +882,8 @@ int fs_check_perm(const char *path, char op) {
     /* Root bypasses permission checks */
     if (cur_uid == 0) return 0;
 
-    int shift;
-    if (cur_uid == inodes[idx].uid) {
-        shift = 6; /* owner */
-    } else if (cur_gid == inodes[idx].gid || user_in_group(cur_uid, inodes[idx].gid)) {
-        /* Check primary gid and supplementary groups */
-        shift = 3; /* group */
-    } else {
-        shift = 0; /* other */
-    }
+    int shift = (cur_uid == inodes[idx].uid) ? 6 :
+                (cur_gid == inodes[idx].gid || user_in_group(cur_uid, inodes[idx].gid)) ? 3 : 0;
 
     uint16_t bits;
     switch (op) {
@@ -931,14 +921,9 @@ void fs_get_usage(uint32_t *used_inodes, uint32_t *total_inodes,
 
 int fs_list_names(const char *dir, const char *prefix,
                   char names[][FS_MAX_NAME], int max) {
-    int parent;
-    if (!dir || dir[0] == '\0' || (dir[0] == '/' && dir[1] == '\0'))
-        parent = 0;
-    else {
-        parent = find_inode(dir);
-        if (parent < 0) return 0;
-        if (inodes[parent].type != FS_TYPE_DIR) return 0;
-    }
+    int parent = (!dir || dir[0] == '\0' || (dir[0] == '/' && dir[1] == '\0'))
+                 ? 0 : find_inode(dir);
+    if (parent < 0) return 0;
     if (check_dir_perm_idx(parent, 'r') < 0 || check_dir_perm_idx(parent, 'x') < 0) return 0;
     int plen = prefix ? (int)strlen(prefix) : 0;
     int n = 0;

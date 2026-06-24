@@ -339,7 +339,7 @@ int exfat_init(void)
 device_initcall(exfat_init);
 
 #ifdef MODULE
-int init_module(void) { return exfat_init(); }
+int __init init_module(void) { return exfat_init(); }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");

@@ -372,12 +372,12 @@ module_init(battery_init);
 /* ── Stub: battery_get_info ─────────────────────────────── */
 int battery_get_info(__maybe_unused int id, __maybe_unused void *info)
 {
-    kprintf("[battery] battery_get_info: not yet implemented\n");
+    kprintf("[BATTERY] battery_get_info: not yet implemented\n");
     return 0;
 }
 /* ── Stub: battery_register ─────────────────────────────── */
 int battery_register(__maybe_unused void *dev)
 {
-    kprintf("[battery] battery_register: not yet implemented\n");
+    kprintf("[BATTERY] battery_register: not yet implemented\n");
     return 0;
 }

@@ -48,7 +48,7 @@ static void pvpanic_detect_isa(void)
     if (val != 0xFF || val == 0x00) {
         pvpanic_mode = PVPANIC_MODE_ISA;
         pvpanic_detected = 1;
-        kprintf("[pvpanic] detected at ISA I/O port 0x%04x (val=0x%02x)\n",
+        kprintf("[PVPANIC] detected at ISA I/O port 0x%04x (val=0x%02x)\n",
                 PVPANIC_PORT, val);
     }
 }
@@ -60,7 +60,7 @@ static void pvpanic_detect_mmio(void)
     if (val != 0xFF) {
         pvpanic_mode = PVPANIC_MODE_MMIO;
         pvpanic_detected = 1;
-        kprintf("[pvpanic] detected at MMIO 0x%08x (val=0x%02x)\n",
+        kprintf("[PVPANIC] detected at MMIO 0x%08x (val=0x%02x)\n",
                 PVPANIC_MMIO_BASE, val);
     }
 }
@@ -95,13 +95,13 @@ void pvpanic_init(void)
         pvpanic_detect_mmio();
 
     if (pvpanic_detected)
-        kprintf("[pvpanic] QEMU pvpanic device ready, mode=%d\n", pvpanic_mode);
+        kprintf("[PVPANIC] QEMU pvpanic device ready, mode=%d\n", pvpanic_mode);
     else
-        kprintf("[pvpanic] not detected\n");
+        kprintf("[PVPANIC] not detected\n");
 }
 
 #ifdef MODULE
-int init_module(void) { pvpanic_init(); return 0; }
+int __init init_module(void) { pvpanic_init(); return 0; }
 void cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
@@ -113,6 +113,6 @@ MODULE_VERSION("1.0");
 int pvpanic_send(uint8_t event)
 {
     (void)event;
-    kprintf("[pvpanic] pvpanic_send: not yet implemented\n");
+    kprintf("[PVPANIC] pvpanic_send: not yet implemented\n");
     return 0;
 }

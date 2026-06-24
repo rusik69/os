@@ -82,7 +82,7 @@ int firmware_class_register_device(const char *name)
             fw_class_devices[i].loading = 0;
 
             spinlock_release(&fw_class_lock);
-            kprintf("[fw_class] Registered device '%s' as ID %d\n", name, i);
+            kprintf("[FW_CLASS] Registered device '%s' as ID %d\n", name, i);
             return i;
         }
     }
@@ -243,12 +243,12 @@ module_init(firmware_class_init);
 /* ── Stub: firmware_request ─────────────────────────────── */
 int firmware_request(__maybe_unused const char *name, __maybe_unused void *dev, __maybe_unused void *fw)
 {
-    kprintf("[firmware] firmware_request: not yet implemented\n");
+    kprintf("[FIRMWARE] firmware_request: not yet implemented\n");
     return 0;
 }
 /* ── Stub: firmware_class_register ─────────────────────────────── */
 int firmware_class_register(__maybe_unused void *class)
 {
-    kprintf("[firmware] firmware_class_register: not yet implemented\n");
+    kprintf("[FIRMWARE] firmware_class_register: not yet implemented\n");
     return 0;
 }

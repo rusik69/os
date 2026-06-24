@@ -371,6 +371,8 @@ void __init devfs_init(void) {
 
     devfs_mounted = 1;
 }
+#include "initcall.h"
+fs_initcall(devfs_init);
 
 #ifdef MODULE
 #include "module.h"

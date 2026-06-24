@@ -560,14 +560,14 @@ struct device;
 /* ── Stub: iommu_enable ─────────────────────────────── */
 int iommu_enable(void)
 {
-    kprintf("[iommu] iommu_enable: not yet implemented\n");
+    kprintf("[IOMMU] iommu_enable: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_disable ─────────────────────────────── */
 void iommu_disable(void)
 {
-    kprintf("[iommu] iommu_disable: not yet implemented\n");
+    kprintf("[IOMMU] iommu_disable: not yet implemented\n");
 }
 
 /* ── Stub: iommu_attach_device ─────────────────────────────── */
@@ -575,7 +575,7 @@ int iommu_attach_device(struct iommu_domain *domain, struct device *dev)
 {
     (void)domain;
     (void)dev;
-    kprintf("[iommu] iommu_attach_device: not yet implemented\n");
+    kprintf("[IOMMU] iommu_attach_device: not yet implemented\n");
     return 0;
 }
 
@@ -584,7 +584,7 @@ void iommu_detach_device(struct iommu_domain *domain, struct device *dev)
 {
     (void)domain;
     (void)dev;
-    kprintf("[iommu] iommu_detach_device: not yet implemented\n");
+    kprintf("[IOMMU] iommu_detach_device: not yet implemented\n");
 }
 
 /* ── Stub: iommu_set_fault_handler ─────────────────────────────── */
@@ -593,7 +593,7 @@ int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *da
     (void)domain;
     (void)handler;
     (void)data;
-    kprintf("[iommu] iommu_set_fault_handler: not yet implemented\n");
+    kprintf("[IOMMU] iommu_set_fault_handler: not yet implemented\n");
     return 0;
 }
 
@@ -601,7 +601,7 @@ int iommu_set_fault_handler(struct iommu_domain *domain, void *handler, void *da
 struct iommu_domain *iommu_get_domain_for_dev(struct device *dev)
 {
     (void)dev;
-    kprintf("[iommu] iommu_get_domain_for_dev: not yet implemented\n");
+    kprintf("[IOMMU] iommu_get_domain_for_dev: not yet implemented\n");
     return NULL;
 }
 
@@ -610,21 +610,21 @@ uint64_t iommu_iova_to_phys(struct iommu_domain *domain, unsigned long iova)
 {
     (void)domain;
     (void)iova;
-    kprintf("[iommu] iommu_iova_to_phys: not yet implemented\n");
+    kprintf("[IOMMU] iommu_iova_to_phys: not yet implemented\n");
     return (uint64_t)-ENOSYS;
 }
 
 /* ── Stub: iommu_resume ─────────────────────────────── */
 int iommu_resume(void)
 {
-    kprintf("[iommu] iommu_resume: not yet implemented\n");
+    kprintf("[IOMMU] iommu_resume: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: iommu_suspend ─────────────────────────────── */
 int iommu_suspend(void)
 {
-    kprintf("[iommu] iommu_suspend: not yet implemented\n");
+    kprintf("[IOMMU] iommu_suspend: not yet implemented\n");
     return 0;
 }
 

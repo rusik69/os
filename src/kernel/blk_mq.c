@@ -63,7 +63,21 @@ static void blk_mq_free_request(struct blk_mq_request *req)
     kfree(req);
 }
 
-/* Submit I/O request through the multi-queue layer */
+/**
+ * blk_mq_submit_request - Submit an I/O request through the multi-queue layer
+ * @sector: Starting sector number for the I/O operation
+ * @buffer: Pointer to the data buffer (read/write payload)
+ * @count: Number of bytes to transfer
+ * @write: Operation direction (0 = read, 1 = write)
+ * @complete: Completion callback invoked when the request is finished
+ *
+ * Allocates a request descriptor, fills it with the given parameters, and
+ * enqueues it on the current CPU's software staging queue.  The request is
+ * later flushed to a hardware dispatch queue by blk_mq_flush().
+ *
+ * Return: 0 on success, -ENOMEM if allocation fails, -EAGAIN if the
+ *         software queue is full
+ */
 int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
                            size_t count, int write,
                            void (*complete)(struct blk_mq_request *, int))
@@ -101,7 +115,13 @@ int blk_mq_submit_request(uint64_t sector, uint8_t *buffer,
     return 0;
 }
 
-/* Flush software queues to hardware queues */
+/**
+ * blk_mq_flush - Flush software staging queues to hardware dispatch queues
+ *
+ * Iterates over all software staging queues and drains each pending
+ * request into a hardware dispatch queue using round-robin assignment.
+ * If a hardware queue is full, the request is freed with an error.
+ */
 void blk_mq_flush(void)
 {
     int hw_idx = 0;
@@ -135,7 +155,14 @@ void blk_mq_flush(void)
     }
 }
 
-/* Complete a request from a hardware queue */
+/**
+ * blk_mq_complete - Complete a request from a hardware queue
+ * @req: Pointer to the request to complete
+ * @error: Completion status (0 for success, negative errno on failure)
+ *
+ * Invokes the request's completion callback and marks the request as
+ * no longer in use.  Safe to call with a NULL request pointer.
+ */
 void blk_mq_complete(struct blk_mq_request *req, int error)
 {
     if (req && req->complete)
@@ -144,7 +171,15 @@ void blk_mq_complete(struct blk_mq_request *req, int error)
         req->in_use = 0;
 }
 
-/* Start hardware dispatch */
+/**
+ * blk_mq_dispatch - Process pending requests from all hardware queues
+ *
+ * Iterates over every hardware dispatch queue and processes each
+ * enqueued request by invoking its completion callback with success (0).
+ * Frees the request descriptor afterwards.  This is a simplified
+ * simulation — a real implementation would submit requests to the
+ * underlying block device driver.
+ */
 void blk_mq_dispatch(void)
 {
     for (int hw = 0; hw < blk_mq_num_hw_queues; hw++) {
@@ -165,7 +200,15 @@ void blk_mq_dispatch(void)
     }
 }
 
-void blk_mq_init(void)
+/**
+ * blk_mq_init - Initialise the multi-queue block I/O layer
+ *
+ * Detects the number of available CPUs and sets up the software and
+ * hardware queue data structures.  Each queue is assigned its own
+ * spinlock for concurrent access.  This function may safely be called
+ * multiple times — subsequent calls are no-ops.
+ */
+void __init blk_mq_init(void)
 {
     if (blk_mq_initialized)
         return;

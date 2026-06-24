@@ -36,7 +36,7 @@ struct linear_private {
 static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
 {
     if (argc < 2) {
-        kprintf("[dm-linear] ctr: need 2 args (dev_id start_sector), got %d\n", argc);
+        kprintf("[DM-LINEAR] ctr: need 2 args (dev_id start_sector), got %d\n", argc);
         return -EINVAL;
     }
 
@@ -50,7 +50,7 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
     const char *s = argv[0];
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-linear] ctr: invalid dev_id '%s'\n", argv[0]);
+            kprintf("[DM-LINEAR] ctr: invalid dev_id '%s'\n", argv[0]);
             kfree(priv);
             return -EINVAL;
         }
@@ -59,7 +59,7 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
 
     /* Validate the backing device exists */
     if (!blockdev_is_registered(dev_id)) {
-        kprintf("[dm-linear] ctr: backing device %d not registered\n", dev_id);
+        kprintf("[DM-LINEAR] ctr: backing device %d not registered\n", dev_id);
         kfree(priv);
         return -ENODEV;
     }
@@ -69,7 +69,7 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
     s = argv[1];
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-linear] ctr: invalid start_sector '%s'\n", argv[1]);
+            kprintf("[DM-LINEAR] ctr: invalid start_sector '%s'\n", argv[1]);
             kfree(priv);
             return -EINVAL;
         }
@@ -79,7 +79,7 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
     /* Check that the range fits on the backing device */
     uint64_t backing_sectors = blockdev_get_sectors(dev_id);
     if (start + ti->length > backing_sectors) {
-        kprintf("[dm-linear] ctr: range [%llu, %llu) exceeds backing device size %llu\n",
+        kprintf("[DM-LINEAR] ctr: range [%llu, %llu) exceeds backing device size %llu\n",
                 (unsigned long long)start,
                 (unsigned long long)(start + ti->length),
                 (unsigned long long)backing_sectors);
@@ -91,7 +91,7 @@ static int linear_ctr(struct dm_target *ti, int argc, const char **argv)
     priv->start_sector   = start;
     ti->private = priv;
 
-    kprintf("[dm-linear] ctr: [%llu, %llu) -> dev %d sector %llu\n",
+    kprintf("[DM-LINEAR] ctr: [%llu, %llu) -> dev %d sector %llu\n",
             (unsigned long long)ti->start,
             (unsigned long long)(ti->start + ti->length),
             dev_id, (unsigned long long)start);
@@ -160,7 +160,7 @@ int dm_linear_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm] dm_linear_ctr: not yet implemented\n");
+    kprintf("[DM] dm_linear_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_linear_map ─────────────────────────────── */
@@ -168,6 +168,6 @@ int dm_linear_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm] dm_linear_map: not yet implemented\n");
+    kprintf("[DM] dm_linear_map: not yet implemented\n");
     return 0;
 }

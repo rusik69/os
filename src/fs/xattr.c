@@ -264,7 +264,7 @@ int vfs_removexattr(const char *path, const char *name) {
     return xattr_remove(path, name);
 }
 #include "module.h"
-module_init(xattr_init);
+fs_initcall(xattr_init);
 
 /* ═══════════════════════════════════════════════════════════════
  *  Stub functions for future implementation

@@ -123,7 +123,7 @@ void wdt_send_nmi_all_cpus(void)
     while (apic_read(LAPIC_ICR_LOW) & ICR_DELIVERY)
         __asm__ volatile("pause");
 
-    kprintf("[watchdog] NMI delivered to all CPUs via APIC\n");
+    kprintf("[WATCHDOG] NMI delivered to all CPUs via APIC\n");
 }
 
 /* ── Governor implementation ────────────────────────────────────────── */
@@ -152,20 +152,20 @@ void wdt_pretimeout_action(void)
 {
     switch (g_pretimeout_governor) {
     case WDT_GOVERNOR_PANIC:
-        kprintf("[watchdog] PRETIMEOUT — governor=panic, calling panic()\n");
+        kprintf("[WATCHDOG] PRETIMEOUT — governor=panic, calling panic()\n");
         panic("Watchdog pretimeout — system will reset");
         /* Never reached */
         break;
 
     case WDT_GOVERNOR_DUMP:
-        kprintf("[watchdog] PRETIMEOUT — governor=dump, dumping CPU state\n");
+        kprintf("[WATCHDOG] PRETIMEOUT — governor=dump, dumping CPU state\n");
         wdt_dump_all_cpu_regs();
-        kprintf("[watchdog] Dump complete — system continues (no reset)\n");
+        kprintf("[WATCHDOG] Dump complete — system continues (no reset)\n");
         break;
 
     case WDT_GOVERNOR_NONE:
     default:
-        kprintf("[watchdog] PRETIMEOUT — governor=none, no action taken\n");
+        kprintf("[WATCHDOG] PRETIMEOUT — governor=none, no action taken\n");
         break;
     }
 }
@@ -354,7 +354,7 @@ void watchdog_sysfs_init(void)
 
     /* Create /sys/class/watchdog/watchdog0/ directory */
     if (sysfs_create_dir("/sys/class/watchdog/watchdog0") < 0) {
-        kprintf("[watchdog] sysfs: watchdog0 dir already exists\n");
+        kprintf("[WATCHDOG] sysfs: watchdog0 dir already exists\n");
     }
 
     /* Create pretimeout attribute (writable) */
@@ -362,7 +362,7 @@ void watchdog_sysfs_init(void)
             "/sys/class/watchdog/watchdog0/pretimeout",
             "0\n", NULL,
             sysfs_pretimeout_read, sysfs_pretimeout_write) < 0) {
-        kprintf("[watchdog] sysfs: failed to create pretimeout attr\n");
+        kprintf("[WATCHDOG] sysfs: failed to create pretimeout attr\n");
     }
 
     /* Create pretimeout_governor attribute (writable) */
@@ -370,7 +370,7 @@ void watchdog_sysfs_init(void)
             "/sys/class/watchdog/watchdog0/pretimeout_governor",
             "none\n", NULL,
             sysfs_governor_read, sysfs_governor_write) < 0) {
-        kprintf("[watchdog] sysfs: failed to create pretimeout_governor attr\n");
+        kprintf("[WATCHDOG] sysfs: failed to create pretimeout_governor attr\n");
     }
 
     /* Create timeout attribute (read-only) */
@@ -453,7 +453,7 @@ module_init(watchdog_sysfs_init);
 
 int watchdog_start(void)
 {
-    kprintf("[watchdog] Starting\n");
+    kprintf("[WATCHDOG] Starting\n");
     outb(I6300ESB_BASE + 0x05, 0x30);
     outb(I6300ESB_BASE + 0x05, 0x30);
     return 0;

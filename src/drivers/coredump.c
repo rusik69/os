@@ -372,25 +372,25 @@ int coredump_generate(struct process *proc, int signo) {
      * dumpable=1: always dump (default)
      * dumpable=2: dump only if current user is root */
     if (proc->dumpable == 0) {
-        kprintf("[coredump] pid=%d: core dump suppressed (dumpable=0)\n",
+        kprintf("[COREDUMP] pid=%d: core dump suppressed (dumpable=0)\n",
                 (int)proc->pid);
         return -1;
     }
     if (proc->dumpable == 2) {
         struct process *cur = process_get_current();
         if (!cur || cur->euid != 0) {
-            kprintf("[coredump] pid=%d: core dump suppressed (dumpable=2, not root)\n",
+            kprintf("[COREDUMP] pid=%d: core dump suppressed (dumpable=2, not root)\n",
                     (int)proc->pid);
             return -1;
         }
     }
 
-    kprintf("[coredump] Generating core for PID %d (%s), signal %d\n",
+    kprintf("[COREDUMP] Generating core for PID %d (%s), signal %d\n",
             (int)proc->pid, proc->name ? proc->name : "unknown", signo);
 
     struct core_buf cb;
     if (cb_init(&cb, 64 * 1024) < 0) {
-        kprintf("[coredump] Out of memory\n");
+        kprintf("[COREDUMP] Out of memory\n");
         return -1;
     }
 
@@ -607,7 +607,7 @@ int coredump_generate(struct process *proc, int signo) {
                                         core_path, sizeof(core_path));
 
     if (path_len < 0) {
-        kprintf("[coredump] core_pattern expansion failed, falling back to default\n");
+        kprintf("[COREDUMP] core_pattern expansion failed, falling back to default\n");
         snprintf(core_path, sizeof(core_path), "/tmp/core.%u",
                  (unsigned int)proc->pid);
     }
@@ -616,7 +616,7 @@ int coredump_generate(struct process *proc, int signo) {
     if (core_path[0] == '|') {
         /* Pipe mode: core would be piped to a userspace handler.
          * For now, log a warning and fall back to writing /tmp/core.<pid> */
-        kprintf("[coredump] Pipe mode core_pattern=\"%s\" not yet fully "
+        kprintf("[COREDUMP] Pipe mode core_pattern=\"%s\" not yet fully "
                 "implemented; falling back to /tmp/core.%u\n",
                 g_core_pattern, (unsigned int)proc->pid);
         snprintf(core_path, sizeof(core_path), "/tmp/core.%u",
@@ -641,12 +641,12 @@ int coredump_generate(struct process *proc, int signo) {
     /* Write the core file to the expanded path */
     int ret = vfs_write(core_path, cb.data, cb.len);
     if (ret < 0) {
-        kprintf("[coredump] Failed to write %s (ret=%d)\n", core_path, ret);
+        kprintf("[COREDUMP] Failed to write %s (ret=%d)\n", core_path, ret);
         kfree(cb.data);
         return -1;
     }
 
-    kprintf("[coredump] Core dump written to %s (%llu bytes, %d segments, signal %d)\n",
+    kprintf("[COREDUMP] Core dump written to %s (%llu bytes, %d segments, signal %d)\n",
             core_path, (unsigned long long)cb.len, num_segs, signo);
 
     kfree(cb.data);
@@ -682,18 +682,18 @@ void coredump_deferred(void *arg)
     struct process *proc = process_get_by_pid(pid);
 
     if (!proc || proc->state == PROCESS_UNUSED) {
-        kprintf("[coredump] pid=%u: process vanished before dump could be written\n", pid);
+        kprintf("[COREDUMP] pid=%u: process vanished before dump could be written\n", pid);
         return;
     }
 
     /* Re-check RLIMIT_CORE (index 1, matching syscall.h convention).  If the
      * limit was set to 0 between scheduling and execution, skip the dump. */
     if (proc->rlim_cur[1] == 0) {
-        kprintf("[coredump] pid=%u: core dump suppressed (RLIMIT_CORE=0 at write time)\n", pid);
+        kprintf("[COREDUMP] pid=%u: core dump suppressed (RLIMIT_CORE=0 at write time)\n", pid);
         return;
     }
 
-    kprintf("[coredump] pid=%u name=\"%s\": deferred dump generation (signal %d)...\n",
+    kprintf("[COREDUMP] pid=%u name=\"%s\": deferred dump generation (signal %d)...\n",
             pid, proc->name ? proc->name : "?", signo);
 
     coredump_generate(proc, signo);
@@ -727,17 +727,17 @@ int coredump_init_handler(void)
 {
     int ret = coredump_register_handler(coredump_dispatch);
     if (ret < 0) {
-        kprintf("[coredump] failed to register handler\n");
+        kprintf("[COREDUMP] failed to register handler\n");
         return ret;
     }
-    kprintf("[coredump] Core dump handler registered\n");
+    kprintf("[COREDUMP] Core dump handler registered\n");
     return 0;
 }
 
 void coredump_exit_handler(void)
 {
     coredump_unregister_handler();
-    kprintf("[coredump] Core dump handler unregistered\n");
+    kprintf("[COREDUMP] Core dump handler unregistered\n");
 }
 
 #ifdef MODULE
@@ -769,7 +769,7 @@ int coredump_write(const void *data, size_t len)
 {
     (void)data;
     (void)len;
-    kprintf("[coredump] coredump_write: not yet implemented\n");
+    kprintf("[COREDUMP] coredump_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: coredump_read ───────────────────────────── */
@@ -777,14 +777,14 @@ int coredump_read(void *buf, size_t len)
 {
     (void)buf;
     (void)len;
-    kprintf("[coredump] coredump_read: not yet implemented\n");
+    kprintf("[COREDUMP] coredump_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: coredump_file_open ──────────────────────── */
 int coredump_file_open(const char *path)
 {
     (void)path;
-    kprintf("[coredump] coredump_file_open: not yet implemented\n");
+    kprintf("[COREDUMP] coredump_file_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: coredump_note_write ─────────────────────── */
@@ -792,7 +792,7 @@ int coredump_note_write(const void *note, size_t len)
 {
     (void)note;
     (void)len;
-    kprintf("[coredump] coredump_note_write: not yet implemented\n");
+    kprintf("[COREDUMP] coredump_note_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: coredump_elf_headers ────────────────────── */
@@ -801,6 +801,6 @@ int coredump_elf_headers(void *task, void *buf, size_t *len)
     (void)task;
     (void)buf;
     (void)len;
-    kprintf("[coredump] coredump_elf_headers: not yet implemented\n");
+    kprintf("[COREDUMP] coredump_elf_headers: not yet implemented\n");
     return 0;
 }

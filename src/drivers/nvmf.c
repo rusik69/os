@@ -69,7 +69,7 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
     uint8_t data_seg[256];
     uint32_t dlen;
 
-    kprintf("[nvmf] Received Fabrics CONNECT\n");
+    kprintf("[NVMF] Received Fabrics CONNECT\n");
 
     /* Read the connect command payload */
     if (nvmf_recv_exact(tgt, &conn_req, sizeof(conn_req), 100) < 0)
@@ -83,7 +83,7 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
             return -EIO;
     }
 
-    kprintf("[nvmf] Connect: nsid=%u qid=%u\n",
+    kprintf("[NVMF] Connect: nsid=%u qid=%u\n",
             nvmf_htonl(conn_req.nsid), conn_req.cdw10 & 0xFFFF);
 
     /* Build connect response */
@@ -97,7 +97,7 @@ static int nvmf_handle_connect(struct nvmf_target *tgt,
 
     conn_rsp->cdw0 = 0;  /* SUCCESS */
 
-    kprintf("[nvmf] Sending CONNECT response\n");
+    kprintf("[NVMF] Sending CONNECT response\n");
     return nvmf_send_pdu(tgt, &rsp, sizeof(rsp));
 }
 
@@ -115,7 +115,7 @@ static int nvmf_handle_prop_set(struct nvmf_target *tgt,
     rsp.hdr.tag = prop->hdr.tag;
     rsp.cqe.cdw0 = 0;  /* SUCCESS */
 
-    kprintf("[nvmf] Property Set: offset=0x%x value=0x%x\n",
+    kprintf("[NVMF] Property Set: offset=0x%x value=0x%x\n",
             nvmf_htonl(prop->offset), nvmf_htonl(prop->value));
     return nvmf_send_pdu(tgt, &rsp, sizeof(rsp));
 }
@@ -135,7 +135,7 @@ static int nvmf_handle_prop_get(struct nvmf_target *tgt,
     rsp.offset = prop->offset;
     rsp.value = 0;  /* Return 0 for simplicity */
 
-    kprintf("[nvmf] Property Get: offset=0x%x\n", nvmf_htonl(prop->offset));
+    kprintf("[NVMF] Property Get: offset=0x%x\n", nvmf_htonl(prop->offset));
     return nvmf_send_pdu(tgt, &rsp, sizeof(rsp));
 }
 
@@ -168,7 +168,7 @@ static int nvmf_submit_nvme_cmd(struct nvmf_target *tgt,
     /* Distinguish admin vs I/O commands */
     if (opcode == NVMF_FABRIC_COMMAND) {
         /* Already handled above */
-        kprintf("[nvmf] Fabric command forwarded\n");
+        kprintf("[NVMF] Fabric command forwarded\n");
         return 0;
     }
 
@@ -216,7 +216,7 @@ static int nvmf_handle_capsule_cmd(struct nvmf_target *tgt,
 
     uint8_t opcode = (uint8_t)(capsule.nvme_cdw0 & 0xFF);
 
-    kprintf("[nvmf] Capsule cmd: opcode=0x%02x nsid=%u\n",
+    kprintf("[NVMF] Capsule cmd: opcode=0x%02x nsid=%u\n",
             opcode, nvmf_htonl(capsule.nsid));
 
     /* If it's an admin command, submit locally */
@@ -230,17 +230,17 @@ static void nvmf_dispatch_pdu(struct nvmf_target *tgt)
     struct nvmf_pdu_hdr hdr;
 
     if (nvmf_recv_exact(tgt, &hdr, sizeof(hdr), 100) < 0) {
-        kprintf("[nvmf] Failed to receive PDU header\n");
+        kprintf("[NVMF] Failed to receive PDU header\n");
         return;
     }
 
     switch (hdr.type) {
     case NVMF_PDU_IC_REQ:
-        kprintf("[nvmf] Received IC_REQ (Fabric Connect)\n");
+        kprintf("[NVMF] Received IC_REQ (Fabric Connect)\n");
         nvmf_handle_connect(tgt, &hdr);
         break;
     case NVMF_PDU_CAPSULE_CMD:
-        kprintf("[nvmf] Received Capsule Command\n");
+        kprintf("[NVMF] Received Capsule Command\n");
         nvmf_handle_capsule_cmd(tgt, &hdr);
         break;
     case NVMF_PDU_PROP_SET:
@@ -264,7 +264,7 @@ static void nvmf_dispatch_pdu(struct nvmf_target *tgt)
         }
         break;
     default:
-        kprintf("[nvmf] Unknown PDU type: 0x%02x\n", hdr.type);
+        kprintf("[NVMF] Unknown PDU type: 0x%02x\n", hdr.type);
         break;
     }
 }
@@ -276,7 +276,7 @@ void nvmf_init(void)
     if (g_nvmf_init_done) return;
     memset(&g_nvmf_target, 0, sizeof(g_nvmf_target));
     g_nvmf_init_done = 1;
-    kprintf("[nvmf] NVMe-oF target subsystem initialized\n");
+    kprintf("[NVMF] NVMe-oF target subsystem initialized\n");
 }
 
 int nvmf_start(uint16_t port, int nsid)
@@ -285,7 +285,7 @@ int nvmf_start(uint16_t port, int nsid)
 
     struct nvmf_target *tgt = &g_nvmf_target;
     if (tgt->active) {
-        kprintf("[nvmf] Target already active\n");
+        kprintf("[NVMF] Target already active\n");
         return -1;
     }
 
@@ -295,7 +295,7 @@ int nvmf_start(uint16_t port, int nsid)
     tgt->port = port;
     tgt->active = 1;
 
-    kprintf("[nvmf] Target starting on port %u, exporting NSID %d\n", port, nsid);
+    kprintf("[NVMF] Target starting on port %u, exporting NSID %d\n", port, nsid);
     return 0;
 }
 
@@ -309,7 +309,7 @@ void nvmf_stop(void)
         tgt->connected = 0;
     }
     tgt->active = 0;
-    kprintf("[nvmf] Target stopped\n");
+    kprintf("[NVMF] Target stopped\n");
 }
 
 void nvmf_poll(void)
@@ -326,13 +326,13 @@ void nvmf_poll(void)
             int ret = tgt->port > 0 ? 0 : -1;
             if (ret < 0) {
                 if (err) {
-                    kprintf("[nvmf] listen on port %u failed: %s\n",
+                    kprintf("[NVMF] listen on port %u failed: %s\n",
                             tgt->port, err);
                 }
                 return;
             }
             tgt->listen_fd = 1; /* mark as listening */
-            kprintf("[nvmf] Listening on TCP port %u\n", tgt->port);
+            kprintf("[NVMF] Listening on TCP port %u\n", tgt->port);
         }
 
         /* Try to accept a connection (short timeout so we don't block) */
@@ -340,7 +340,7 @@ void nvmf_poll(void)
         if (conn > 0) {
             tgt->conn_id = conn;
             tgt->connected = 1;
-            kprintf("[nvmf] Connection accepted (conn_id=%d)\n", conn);
+            kprintf("[NVMF] Connection accepted (conn_id=%d)\n", conn);
         }
         return;
     }
@@ -365,13 +365,13 @@ static int nvmf_connect(const char *transport, const char *traddr, const char *n
     (void)transport;
     (void)traddr;
     (void)nqn;
-    kprintf("[nvmf] nvmf_connect: not yet implemented\n");
+    kprintf("[NVMF] nvmf_connect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nvmf_disconnect ─────────────────────────── */
 static int nvmf_disconnect(void)
 {
-    kprintf("[nvmf] nvmf_disconnect: not yet implemented\n");
+    kprintf("[NVMF] nvmf_disconnect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nvmf_send ───────────────────────────────── */
@@ -379,7 +379,7 @@ static int nvmf_send(const void *data, uint32_t len)
 {
     (void)data;
     (void)len;
-    kprintf("[nvmf] nvmf_send: not yet implemented\n");
+    kprintf("[NVMF] nvmf_send: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nvmf_recv ───────────────────────────────── */
@@ -387,6 +387,6 @@ static int nvmf_recv(void *buf, uint32_t *len)
 {
     (void)buf;
     (void)len;
-    kprintf("[nvmf] nvmf_recv: not yet implemented\n");
+    kprintf("[NVMF] nvmf_recv: not yet implemented\n");
     return 0;
 }

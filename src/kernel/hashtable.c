@@ -18,6 +18,14 @@ static inline uint32_t hash_key(uint64_t key)
     return (uint32_t)(h & (HASH_TABLE_SIZE - 1));
 }
 
+/**
+ * hashtable_init - Initialise a hash table structure
+ * @ht: Pointer to the hash table to initialise
+ *
+ * Initialises all buckets as empty linked lists and resets the
+ * element count to zero.  Must be called before the hash table
+ * is used.
+ */
 void hashtable_init(struct hashtable *ht)
 {
     int i;
@@ -26,6 +34,18 @@ void hashtable_init(struct hashtable *ht)
     ht->count = 0;
 }
 
+/**
+ * hashtable_insert - Insert or update a key-value pair in the hash table
+ * @ht: Pointer to the hash table
+ * @key: 64-bit key for lookup
+ * @value: Pointer to the value to associate with @key
+ *
+ * If the key already exists, the associated value is updated.  Otherwise
+ * a new node is allocated and added to the appropriate bucket chain.
+ *
+ * Return: 0 on success, -ENOMEM if memory allocation for a new node
+ *         fails
+ */
 int hashtable_insert(struct hashtable *ht, uint64_t key, void *value)
 {
     struct hashtable_node *node;
@@ -52,6 +72,17 @@ int hashtable_insert(struct hashtable *ht, uint64_t key, void *value)
     return 0;
 }
 
+/**
+ * hashtable_lookup - Look up a value by key in the hash table
+ * @ht: Pointer to the hash table
+ * @key: 64-bit key to search for
+ *
+ * Searches the bucket chain corresponding to @key using the Thomas
+ * Wang integer hash function.
+ *
+ * Return: The value pointer associated with @key, or NULL if the key
+ *         was not found
+ */
 void *hashtable_lookup(struct hashtable *ht, uint64_t key)
 {
     uint32_t idx = hash_key(key);

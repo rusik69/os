@@ -483,7 +483,7 @@ int usb_hub_port_reset(void *hub, int port)
 {
     (void)hub;
     (void)port;
-    kprintf("[usb] usb_hub_port_reset: not yet implemented\n");
+    kprintf("[USB] usb_hub_port_reset: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_hub_port_enable ─────────────────────────────── */
@@ -491,13 +491,13 @@ int usb_hub_port_enable(void *hub, int port)
 {
     (void)hub;
     (void)port;
-    kprintf("[usb] usb_hub_port_enable: not yet implemented\n");
+    kprintf("[USB] usb_hub_port_enable: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_hub_detect ─────────────────────────────── */
 int usb_hub_detect(void *hub)
 {
     (void)hub;
-    kprintf("[usb] usb_hub_detect: not yet implemented\n");
+    kprintf("[USB] usb_hub_detect: not yet implemented\n");
     return 0;
 }

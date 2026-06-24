@@ -28,11 +28,11 @@
 static int error_ctr(struct dm_target *ti, int argc, __maybe_unused const char **argv)
 {
     if (argc != 0) {
-        kprintf("[dm-error] ctr: error target takes no arguments, got %d\n", argc);
+        kprintf("[DM-ERROR] ctr: error target takes no arguments, got %d\n", argc);
         return -EINVAL;
     }
     ti->private = NULL;
-    kprintf("[dm-error] ctr: [%llu, %llu) error target created\n",
+    kprintf("[DM-ERROR] ctr: [%llu, %llu) error target created\n",
             (unsigned long long)ti->start,
             (unsigned long long)(ti->start + ti->length));
     return 0;
@@ -92,7 +92,7 @@ int dm_error_ctr(void *ti, unsigned int argc, char **argv)
     (void)ti;
     (void)argc;
     (void)argv;
-    kprintf("[dm] dm_error_ctr: not yet implemented\n");
+    kprintf("[DM] dm_error_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_error_map ─────────────────────────────── */
@@ -100,6 +100,6 @@ int dm_error_map(void *ti, void *bio)
 {
     (void)ti;
     (void)bio;
-    kprintf("[dm] dm_error_map: not yet implemented\n");
+    kprintf("[DM] dm_error_map: not yet implemented\n");
     return -EIO;
 }

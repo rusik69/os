@@ -231,7 +231,7 @@ static const struct zcomp_ops fast_ops = {
 
 /* ── Registration ──────────────────────────────────────────────────── */
 
-int zcomp_fast_init(void)
+int __init zcomp_fast_init(void)
 {
     return zcomp_register(&fast_ops);
 }

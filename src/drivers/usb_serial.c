@@ -116,13 +116,13 @@ module_init(usb_serial_init);
 int usb_serial_open(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_serial_open: not yet implemented\n");
+    kprintf("[USB] usb_serial_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_serial_close ─────────────────────────────── */
 int usb_serial_close(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_serial_close: not yet implemented\n");
+    kprintf("[USB] usb_serial_close: not yet implemented\n");
     return 0;
 }

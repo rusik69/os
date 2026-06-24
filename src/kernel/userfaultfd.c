@@ -22,7 +22,7 @@
 static struct uffd_context uffd_table[UFFD_MAX_CONTEXTS];
 static int uffd_initialised = 0;
 
-void uffd_init(void)
+void __init uffd_init(void)
 {
     if (uffd_initialised)
         return;

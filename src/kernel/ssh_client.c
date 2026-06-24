@@ -143,7 +143,9 @@ static int cmint(const uint8_t *d, int dl, int *off, bignum *bn) {
 static void cl_hash(struct ssh_client *c, const uint8_t *hk, int hkl,
                      const bignum *e, const bignum *f, const bignum *K,
                      const uint8_t *ck, int ckl, const uint8_t *sk, int skl) {
-    uint8_t buf[4096];int off=0;
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return;
+    int off=0;
     const char *vc="SSH-2.0-OSSSH\r\n";
     const char *vs="SSH-2.0-OSSSH\r\n";
     memcpy(buf+off,vc,strlen(vc));off+=strlen(vc);
@@ -155,6 +157,7 @@ static void cl_hash(struct ssh_client *c, const uint8_t *hk, int hkl,
     off+=pmpint32(buf+off,f);
     off+=pmpint32(buf+off,K);
     sha256_hash(c->exchange_hash,buf,off);
+    kfree(buf);
 }
 
 /* Derive keys (client side) */
@@ -379,9 +382,11 @@ void ssh_client_poll(struct ssh_client *cl) {
     if(!cl||!cl->connected) return;
     net_poll();
     /* Read any received data from TCP buffer */
-    uint8_t buf[4096];
-    int n = net_tcp_recv(cl->conn_id, buf, sizeof(buf), 0);
+    uint8_t *buf = kmalloc(4096);
+    if (!buf) return;
+    int n = net_tcp_recv(cl->conn_id, buf, 4096, 0);
     if(n > 0) cl_feed(cl, buf, n);
+    kfree(buf);
 }
 
 int ssh_client_send(struct ssh_client *cl, const char *data, int len) {

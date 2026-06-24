@@ -731,27 +731,27 @@ int dm_create(const char *name, const char *target)
 {
     (void)name;
     (void)target;
-    kprintf("[dm] dm_create: not yet implemented\n");
+    kprintf("[DM] dm_create: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_remove ─────────────────────────────── */
 int dm_remove(const char *name)
 {
     (void)name;
-    kprintf("[dm] dm_remove: not yet implemented\n");
+    kprintf("[DM] dm_remove: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_suspend ─────────────────────────────── */
 int dm_suspend(const char *name)
 {
     (void)name;
-    kprintf("[dm] dm_suspend: not yet implemented\n");
+    kprintf("[DM] dm_suspend: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_resume ─────────────────────────────── */
 int dm_resume(const char *name)
 {
     (void)name;
-    kprintf("[dm] dm_resume: not yet implemented\n");
+    kprintf("[DM] dm_resume: not yet implemented\n");
     return 0;
 }

@@ -19,7 +19,7 @@
 static char process_chroot[PROCESS_MAX][CHROOT_PATH_MAX];
 static int chroot_initialized = 0;
 
-void chroot_init(void) {
+void __init chroot_init(void) {
     if (chroot_initialized) return;
     memset(process_chroot, 0, sizeof(process_chroot));
     chroot_initialized = 1;

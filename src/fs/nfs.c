@@ -671,7 +671,7 @@ void nfs_init(void)
     kprintf("[OK] NFSv3 — Client (RPC/XDR + mount protocol)\n");
 }
 #include "module.h"
-module_init(nfs_init);
+fs_initcall(nfs_init);
 
 /* ── nfs_readdir ──────────────────────────────────────── */
 int nfs_readdir(void *dir, void *filldir)

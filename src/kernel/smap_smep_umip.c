@@ -14,17 +14,17 @@ int smap_smep_init(void) {
     /* Enable SMEP if supported (ECX bit 7) */
     if (rcx & (1U << 7)) {
         cr4 |= CR4_SMEP;
-        kprintf("[cpu] SMEP enabled (CR4 bit 20)\n");
+        kprintf("[CPU] SMEP enabled (CR4 bit 20)\n");
     } else {
-        kprintf("[cpu] SMEP not supported\n");
+        kprintf("[CPU] SMEP not supported\n");
     }
 
     /* Enable SMAP if supported (ECX bit 20) */
     if (rcx & (1U << 20)) {
         cr4 |= CR4_SMAP;
-        kprintf("[cpu] SMAP enabled (CR4 bit 21)\n");
+        kprintf("[CPU] SMAP enabled (CR4 bit 21)\n");
     } else {
-        kprintf("[cpu] SMAP not supported\n");
+        kprintf("[CPU] SMAP not supported\n");
     }
 
     /* Write updated CR4 */
@@ -43,9 +43,9 @@ int umip_init(void) {
     if (rcx & (1U << 2)) {
         cr4 |= CR4_UMIP;
         write_cr4(cr4);
-        kprintf("[cpu] UMIP enabled (CR4 bit 11)\n");
+        kprintf("[CPU] UMIP enabled (CR4 bit 11)\n");
     } else {
-        kprintf("[cpu] UMIP not supported\n");
+        kprintf("[CPU] UMIP not supported\n");
     }
     return 0;
 }
@@ -57,7 +57,7 @@ int smap_enable(void)
     if (!(cr4 & CR4_SMAP)) {
         cr4 |= CR4_SMAP;
         write_cr4(cr4);
-        kprintf("[smap] SMAP enabled\n");
+        kprintf("[SMAP] SMAP enabled\n");
     }
     return 0;
 }
@@ -69,7 +69,7 @@ int smap_disable(void)
     if (cr4 & CR4_SMAP) {
         cr4 &= ~CR4_SMAP;
         write_cr4(cr4);
-        kprintf("[smap] SMAP disabled\n");
+        kprintf("[SMAP] SMAP disabled\n");
     }
     return 0;
 }
@@ -81,7 +81,7 @@ int smep_enable(void)
     if (!(cr4 & CR4_SMEP)) {
         cr4 |= CR4_SMEP;
         write_cr4(cr4);
-        kprintf("[smap] SMEP enabled\n");
+        kprintf("[SMAP] SMEP enabled\n");
     }
     return 0;
 }
@@ -93,7 +93,7 @@ int smep_disable(void)
     if (cr4 & CR4_SMEP) {
         cr4 &= ~CR4_SMEP;
         write_cr4(cr4);
-        kprintf("[smap] SMEP disabled\n");
+        kprintf("[SMAP] SMEP disabled\n");
     }
     return 0;
 }
@@ -105,6 +105,6 @@ int umip_handle_insn(void *regs)
     /* UMIP traps #GP on certain instructions (SGDT, SIDT, SLDT, SMSW, STR)
      * when executed from userspace. Return 0 to let the emulation happen
      * (if emulation is available) or -EPERM to kill the process. */
-    kprintf("[smap] umip_handle_insn: #GP due to UMIP, instruction not emulated\n");
+    kprintf("[SMAP] umip_handle_insn: #GP due to UMIP, instruction not emulated\n");
     return -EPERM;
 }

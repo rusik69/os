@@ -198,14 +198,14 @@ module_init(xhci_init);
 int xhci_reset(void *dev)
 {
     (void)dev;
-    kprintf("[xhci] xhci_reset: not yet implemented\n");
+    kprintf("[XHCI] xhci_reset: not yet implemented\n");
     return 0;
 }
 /* ── Stub: xhci_submit_urb ─────────────────────────────── */
 int xhci_submit_urb(void *urb)
 {
     (void)urb;
-    kprintf("[xhci] xhci_submit_urb: not yet implemented\n");
+    kprintf("[XHCI] xhci_submit_urb: not yet implemented\n");
     return 0;
 }
 void xhci_irq(struct interrupt_frame *frame)

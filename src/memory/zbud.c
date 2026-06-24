@@ -154,7 +154,7 @@ int zbud_free(int pool_id, uint64_t handle)
     return 0;
 }
 
-void zbud_init(void)
+void __init zbud_init(void)
 {
     memset(zbud_pools, 0, sizeof(zbud_pools));
     zbud_pool_count = 0;

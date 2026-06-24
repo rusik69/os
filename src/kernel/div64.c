@@ -45,7 +45,7 @@ uint64_t __udivmoddi4(uint64_t a, uint64_t b, uint64_t *rem)
     return a / b;
 }
 
-void div64_init(void)
+void __init div64_init(void)
 {
     /* Validate do_div macro */
     uint64_t test = 1000000ULL;

@@ -167,7 +167,7 @@ int dynamic_debug_enabled(const char *func)
  * Called once during kernel boot.  Must be invoked before any
  * dynamic_debug_register() or query operations.
  */
-void dynamic_debug_init(void)
+void __init dynamic_debug_init(void)
 {
     spinlock_init(&dyndbg_lock);
     dyndbg_count = 0;

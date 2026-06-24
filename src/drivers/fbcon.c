@@ -490,7 +490,7 @@ void fbcon_dim_fb(int frac)
 /* ── Exit fb console ────────────────────────────────── */
 int fbcon_exit(void)
 {
-    kprintf("[fbcon] fbcon_exit called\n");
+    kprintf("[FBCON] fbcon_exit called\n");
     return 0;
 }
 

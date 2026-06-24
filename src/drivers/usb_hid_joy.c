@@ -410,10 +410,10 @@ int usb_hid_joy_get_count(void)
 }
 
 /* ── Stub: usb_hid_joy_init ─────────────────────────────── */
-int usb_hid_joy_init(void *dev)
+int __init usb_hid_joy_init(void *dev)
 {
     (void)dev;
-    kprintf("[usb] usb_hid_joy_init: not yet implemented\n");
+    kprintf("[USB] usb_hid_joy_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_hid_joy_read ─────────────────────────────── */
@@ -422,7 +422,7 @@ int usb_hid_joy_read(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[usb] usb_hid_joy_read: not yet implemented\n");
+    kprintf("[USB] usb_hid_joy_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: usb_hid_joy_ioctl ─────────────────────────────── */
@@ -431,6 +431,6 @@ int usb_hid_joy_ioctl(void *dev, int cmd, void *arg)
     (void)dev;
     (void)cmd;
     (void)arg;
-    kprintf("[usb] usb_hid_joy_ioctl: not yet implemented\n");
+    kprintf("[USB] usb_hid_joy_ioctl: not yet implemented\n");
     return 0;
 }

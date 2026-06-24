@@ -10,7 +10,7 @@ void uio_init(void) {
 }
 int uio_register(uint64_t phys_addr, size_t size) {
     if (uio_count >= MAX_UIO) return -1;
-    kprintf("[uio] register phys=0x%llx size=%llu\n", (unsigned long long)phys_addr, (unsigned long long)size);
+    kprintf("[UIO] register phys=0x%llx size=%llu\n", (unsigned long long)phys_addr, (unsigned long long)size);
     return uio_count++;
 }
 
@@ -18,14 +18,14 @@ int uio_register(uint64_t phys_addr, size_t size) {
 int uio_open(void *file)
 {
     (void)file;
-    kprintf("[uio] uio_open: not yet implemented\n");
+    kprintf("[UIO] uio_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_release ─────────────────────────────── */
 int uio_release(void *file)
 {
     (void)file;
-    kprintf("[uio] uio_release: not yet implemented\n");
+    kprintf("[UIO] uio_release: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_read ─────────────────────────────── */
@@ -34,7 +34,7 @@ int uio_read(void *file, void *buf, size_t count)
     (void)file;
     (void)buf;
     (void)count;
-    kprintf("[uio] uio_read: not yet implemented\n");
+    kprintf("[UIO] uio_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_write ─────────────────────────────── */
@@ -43,7 +43,7 @@ int uio_write(void *file, const void *buf, size_t count)
     (void)file;
     (void)buf;
     (void)count;
-    kprintf("[uio] uio_write: not yet implemented\n");
+    kprintf("[UIO] uio_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uio_mmap ─────────────────────────────── */
@@ -51,6 +51,6 @@ int uio_mmap(void *file, void *vma)
 {
     (void)file;
     (void)vma;
-    kprintf("[uio] uio_mmap: not yet implemented\n");
+    kprintf("[UIO] uio_mmap: not yet implemented\n");
     return 0;
 }

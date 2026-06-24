@@ -28,7 +28,7 @@ static acpi_pbtn_callback_t g_pbtn_ext_callback = NULL;
 /* Local PM1a EVT BLK base — defaults to PM1a_EVT_BLK */
 static uint32_t g_ext_pm1a_evt_blk = PM1a_EVT_BLK;
 
-int acpi_power_button_ext_init(void) {
+int __init acpi_power_button_ext_init(void) {
     if (g_pbtn_ext_init_done)
         return 0;
 

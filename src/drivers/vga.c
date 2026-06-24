@@ -199,7 +199,7 @@ static int vga_try_bochs_vbe(uint32_t width, uint32_t height, uint8_t bpp) {
     if (IS_ERR((const void *)fb_base))
         return -1;
 
-    kprintf("[vga] fb: addr=0x%x bpp=%u pitch=%u dims=%ux%u\n",
+    kprintf("[VGA] fb: addr=0x%x bpp=%u pitch=%u dims=%ux%u\n",
             (unsigned)fb_addr, bpp, fb_pitch, fb_width, fb_height);
 
     vmm_set_range_uncacheable((uint64_t)(uintptr_t)fb_base, (uint64_t)fb_pitch * height);

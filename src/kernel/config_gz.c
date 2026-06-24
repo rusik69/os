@@ -32,7 +32,17 @@ extern unsigned int build_config_gz_len;
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
-/* Return a pointer to the compressed config data and set *out_size. */
+/**
+ * config_gz_get_data - Return a pointer to the compressed kernel config
+ * @out_size: On success, set to the size of the compressed data in bytes
+ *
+ * Provides access to the embedded gzip-compressed kernel build
+ * configuration.  The data is generated at build time by
+ * scripts/gen_config.sh and embedded via build_config_gz.h.
+ *
+ * Return: A pointer to the compressed config data, or NULL if @out_size
+ *         is NULL or the embedded data is empty
+ */
 const void *config_gz_get_data(uint32_t *out_size)
 {
     if (!out_size)
@@ -41,8 +51,16 @@ const void *config_gz_get_data(uint32_t *out_size)
     return (const void *)build_config_gz;
 }
 
-/* Return the uncompressed config text.  This is not directly supported;
- * userspace should use zcat /proc/config.gz to decompress. */
+/**
+ * config_gz_get_uncompressed - Return the uncompressed config text
+ * @buf: Destination buffer for the uncompressed config
+ * @max_len: Maximum number of bytes to write to @buf
+ *
+ * This operation is not directly supported — userspace should use
+ * zcat /proc/config.gz to decompress the embedded data.
+ *
+ * Return: -ENOSYS, as this function is not yet implemented
+ */
 int config_gz_get_uncompressed(char *buf, int max_len)
 {
     (void)buf;
@@ -52,6 +70,13 @@ int config_gz_get_uncompressed(char *buf, int max_len)
 
 /* ── Initialization ─────────────────────────────────────────────────── */
 
+/**
+ * config_gz_init - Initialise the /proc/config.gz subsystem
+ *
+ * Prints a boot message indicating whether the embedded compressed
+ * configuration data is available and its size.  Called once during
+ * kernel initialisation.
+ */
 void config_gz_init(void)
 {
     uint32_t size = 0;

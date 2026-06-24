@@ -34,7 +34,7 @@ static int soft_kick_vq(struct vdpa_device *dev, int vq_idx)
     struct vdpa_soft_device *sdev = (struct vdpa_soft_device *)dev;
     if (vq_idx < 0 || vq_idx >= sdev->num_vqs) return -1;
 
-    kprintf("[vdpa] soft device '%s' kick vq %d\n",
+    kprintf("[VDPA] soft device '%s' kick vq %d\n",
             dev->name, vq_idx);
 
     /* In a real implementation, this would process the virtqueue:
@@ -48,7 +48,7 @@ static int soft_kick_vq(struct vdpa_device *dev, int vq_idx)
 static int soft_set_map(struct vdpa_device *dev, uint64_t iova,
                          uint64_t size, uint64_t pa, uint32_t flags)
 {
-    kprintf("[vdpa] soft device '%s' set_map: iova=0x%llx size=%llu "
+    kprintf("[VDPA] soft device '%s' set_map: iova=0x%llx size=%llu "
             "pa=0x%llx flags=0x%x\n",
             dev->name, iova, size, pa, flags);
     return 0;
@@ -82,7 +82,7 @@ static void soft_set_status(struct vdpa_device *dev, uint8_t status)
 static void soft_release(struct vdpa_device *dev)
 {
     (void)dev;
-    kprintf("[vdpa] soft device released\n");
+    kprintf("[VDPA] soft device released\n");
 }
 
 /* Default vdpa_ops for software devices */
@@ -137,7 +137,7 @@ struct vdpa_soft_device *vdpa_soft_device_create(const char *name,
     /* Feature bits */
     sdev->features = (1ULL << 0); /* basic feature */
 
-    kprintf("[vdpa] soft device '%s' created (%llu sectors)\n",
+    kprintf("[VDPA] soft device '%s' created (%llu sectors)\n",
             name, blk_sectors);
     return sdev;
 }
@@ -153,7 +153,7 @@ int vdpa_soft_device_destroy(struct vdpa_soft_device *sdev)
         sdev->vdev.ops->release(&sdev->vdev);
 
     memset(sdev, 0, sizeof(*sdev));
-    kprintf("[vdpa] soft device destroyed\n");
+    kprintf("[VDPA] soft device destroyed\n");
     return 0;
 }
 
@@ -165,14 +165,14 @@ int vdpa_device_register(struct vdpa_device *dev)
     if (vdpa_num_devices >= VDPA_MAX_DEVICES) return -1;
 
     if (!dev->ops) {
-        kprintf("[vdpa] ERROR: device '%s' has no ops\n",
+        kprintf("[VDPA] ERROR: device '%s' has no ops\n",
                 dev->name ? dev->name : "unnamed");
         return -1;
     }
 
     /* Validate required ops */
     if (!dev->ops->get_vq_num || !dev->ops->kick_vq || !dev->ops->set_map) {
-        kprintf("[vdpa] ERROR: device '%s' missing required ops\n",
+        kprintf("[VDPA] ERROR: device '%s' missing required ops\n",
                 dev->name ? dev->name : "unnamed");
         return -1;
     }
@@ -180,7 +180,7 @@ int vdpa_device_register(struct vdpa_device *dev)
     vdpa_devices[vdpa_num_devices++] = dev;
     dev->registered = 1;
 
-    kprintf("[vdpa] device '%s' registered (%d devices total)\n",
+    kprintf("[VDPA] device '%s' registered (%d devices total)\n",
             dev->name ? dev->name : "unnamed", vdpa_num_devices);
     return 0;
 }
@@ -196,7 +196,7 @@ int vdpa_device_unregister(struct vdpa_device *dev)
                 vdpa_devices[j] = vdpa_devices[j + 1];
             vdpa_num_devices--;
             dev->registered = 0;
-            kprintf("[vdpa] device '%s' unregistered\n",
+            kprintf("[VDPA] device '%s' unregistered\n",
                     dev->name ? dev->name : "unnamed");
             return 0;
         }
@@ -228,11 +228,11 @@ static struct virtio_vdpa_adapter virtio_vdpa_adapters[VDPA_MAX_DEVICES];
 static int virtio_vdpa_num = 0;
 
 /* Initialize the virtio-vdpa bus */
-int virtio_vdpa_init(void)
+int __init virtio_vdpa_init(void)
 {
     memset(virtio_vdpa_adapters, 0, sizeof(virtio_vdpa_adapters));
     virtio_vdpa_num = 0;
-    kprintf("[vdpa] virtio-vdpa bus adapter initialized\n");
+    kprintf("[VDPA] virtio-vdpa bus adapter initialized\n");
     return 0;
 }
 
@@ -261,7 +261,7 @@ int virtio_vdpa_add_device(struct vdpa_device *vdev)
 
     virtio_vdpa_num++;
 
-    kprintf("[vdpa] virtio-vdpa: device '%s' added as virtio device\n",
+    kprintf("[VDPA] virtio-vdpa: device '%s' added as virtio device\n",
             vdev->name ? vdev->name : "unnamed");
     return 0;
 }
@@ -274,7 +274,7 @@ int vdpa_init(void)
     vdpa_num_devices = 0;
     vdpa_initialized = 1;
 
-    kprintf("[vdpa] vDPA framework initialized\n");
+    kprintf("[VDPA] vDPA framework initialized\n");
 
     /* Create a default software vDPA block device */
     uint64_t num_pages = (32ULL * 1024 * 1024) / PAGE_SIZE;
@@ -301,42 +301,42 @@ struct vdpa_vq_state;
 /* ── Stub: vdpa_set_status ─────────────────────────────── */
 int vdpa_set_status(__maybe_unused struct vdpa_device *dev, __maybe_unused uint8_t status)
 {
-    kprintf("[vdpa] vdpa_set_status: not yet implemented\n");
+    kprintf("[VDPA] vdpa_set_status: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_features ─────────────────────────────── */
 int vdpa_set_features(__maybe_unused struct vdpa_device *dev, __maybe_unused uint64_t features)
 {
-    kprintf("[vdpa] vdpa_set_features: not yet implemented\n");
+    kprintf("[VDPA] vdpa_set_features: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_config ─────────────────────────────── */
 int vdpa_set_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused const void *buf, __maybe_unused uint32_t len)
 {
-    kprintf("[vdpa] vdpa_set_config: not yet implemented\n");
+    kprintf("[VDPA] vdpa_set_config: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_get_config ─────────────────────────────── */
 int vdpa_get_config(__maybe_unused struct vdpa_device *dev, __maybe_unused uint32_t offset, __maybe_unused void *buf, __maybe_unused uint32_t len)
 {
-    kprintf("[vdpa] vdpa_get_config: not yet implemented\n");
+    kprintf("[VDPA] vdpa_get_config: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_get_vq_state ─────────────────────────────── */
 int vdpa_get_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused struct vdpa_vq_state *state)
 {
-    kprintf("[vdpa] vdpa_get_vq_state: not yet implemented\n");
+    kprintf("[VDPA] vdpa_get_vq_state: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: vdpa_set_vq_state ─────────────────────────────── */
 int vdpa_set_vq_state(__maybe_unused struct vdpa_device *dev, __maybe_unused uint16_t vq_idx, __maybe_unused const struct vdpa_vq_state *state)
 {
-    kprintf("[vdpa] vdpa_set_vq_state: not yet implemented\n");
+    kprintf("[VDPA] vdpa_set_vq_state: not yet implemented\n");
     return 0;
 }
 

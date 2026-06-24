@@ -706,7 +706,7 @@ int blockdev_read(void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[blockdev] blockdev_read: not yet implemented\n");
+    kprintf("[BLOCKDEV] blockdev_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: blockdev_write ─────────────────────────────── */
@@ -715,7 +715,7 @@ int blockdev_write(const void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[blockdev] blockdev_write: not yet implemented\n");
+    kprintf("[BLOCKDEV] blockdev_write: not yet implemented\n");
     return 0;
 }
 /* ── Stub: blockdev_open ─────────────────────────────── */
@@ -723,13 +723,13 @@ int blockdev_open(const char *name, int flags)
 {
     (void)name;
     (void)flags;
-    kprintf("[blockdev] blockdev_open: not yet implemented\n");
+    kprintf("[BLOCKDEV] blockdev_open: not yet implemented\n");
     return 0;
 }
 /* ── Stub: blockdev_release ─────────────────────────────── */
 int blockdev_release(void *dev)
 {
     (void)dev;
-    kprintf("[blockdev] blockdev_release: not yet implemented\n");
+    kprintf("[BLOCKDEV] blockdev_release: not yet implemented\n");
     return 0;
 }

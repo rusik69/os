@@ -87,6 +87,9 @@ struct timespec {
     uint64_t tv_nsec;
 };
 
+/* PAGE_SIZE must be 4096 for x86-64 page tables */
+_Static_assert(PAGE_SIZE == 4096, "PAGE_SIZE must be 4096");
+
 /* Compile-time ABI assertion: struct timespec must be 16 bytes */
 _Static_assert(sizeof(struct timespec) == 16, "struct timespec size mismatch");
 

@@ -294,7 +294,7 @@ static void fault_inject_debugfs_init(void) {
     kprintf("[FI] Debugfs interface registered\n");
 }
 
-void fault_inject_init(void) {
+void __init fault_inject_init(void) {
     spinlock_init(&g_fi_lock);
     g_fail_kmalloc_interval = 0;
     g_fail_kmalloc_probability = 0;

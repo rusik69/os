@@ -1121,14 +1121,14 @@ int btrfs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int btrfs_init(void)
+int __init btrfs_init(void)
 {
     kprintf("[btrfs] Btrfs read-only filesystem initialized\n");
     vfs_register_filesystem("btrfs", &btrfs_ops);
     return 0;
 }
 
-device_initcall(btrfs_init);
+fs_initcall(btrfs_init);
 
 #ifdef MODULE
 int init_module(void) { return btrfs_init(); }

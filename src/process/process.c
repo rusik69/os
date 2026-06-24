@@ -23,6 +23,11 @@
 #include "errno.h"
 #include "bug.h"
 
+/* ── Compile-time struct size assertions ────────────────────────────── */
+_Static_assert(sizeof(struct process) >= 2048, "struct process must be at least 2048 bytes for fixed-size table");
+_Static_assert(sizeof(struct cpu_context) == 64, "cpu_context must be 8 x uint64_t (packed)");
+_Static_assert(sizeof(struct itimerval) == 16, "itimerval must be 2 x uint64_t");
+
 static struct process process_table[PROCESS_MAX];
 extern void user_entry_trampoline(void);
 extern void process_entry_trampoline(void);

@@ -104,14 +104,14 @@ void *dma_alloc_coherent_aligned(struct pci_device *dev, size_t size,
 /* ── Stub: dma_api_init ─────────────────────────────── */
 int dma_api_init(void)
 {
-    kprintf("[dma] dma_api_init: not yet implemented\n");
+    kprintf("[DMA] dma_api_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dma_api_alloc ─────────────────────────────── */
 void* dma_api_alloc(size_t size)
 {
     (void)size;
-    kprintf("[dma] dma_api_alloc: not yet implemented\n");
+    kprintf("[DMA] dma_api_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dma_api_free ─────────────────────────────── */
@@ -119,7 +119,7 @@ int dma_api_free(void *ptr, size_t size)
 {
     (void)ptr;
     (void)size;
-    kprintf("[dma] dma_api_free: not yet implemented\n");
+    kprintf("[DMA] dma_api_free: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dma_api_map ─────────────────────────────── */
@@ -128,7 +128,7 @@ void* dma_api_map(void *ptr, size_t size, int dir)
     (void)ptr;
     (void)size;
     (void)dir;
-    kprintf("[dma] dma_api_map: not yet implemented\n");
+    kprintf("[DMA] dma_api_map: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dma_api_unmap ─────────────────────────────── */
@@ -137,6 +137,6 @@ int dma_api_unmap(void *addr, size_t size, int dir)
     (void)addr;
     (void)size;
     (void)dir;
-    kprintf("[dma] dma_api_unmap: not yet implemented\n");
+    kprintf("[DMA] dma_api_unmap: not yet implemented\n");
     return 0;
 }

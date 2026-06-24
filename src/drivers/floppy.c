@@ -530,7 +530,7 @@ int floppy_is_present(void)
 
 /* ── Initialisation ──────────────────────────────────────────────── */
 
-int floppy_init(void)
+int __init floppy_init(void)
 {
     /* Register IRQ handler for FDC (IRQ 6 -> vector 32+6=38) */
     idt_register_handler((uint8_t)(IRQ_OFFSET + g_fdc_irq), floppy_irq_handler);
@@ -574,6 +574,8 @@ int floppy_init(void)
     /* No drive found but controller might be present */
     return -EINVAL;
 }
+#include "initcall.h"
+device_initcall(floppy_init);
 
 /* ── Module hotplug (loadable module path) ───────────────────────── */
 

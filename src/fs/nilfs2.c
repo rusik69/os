@@ -208,7 +208,7 @@ void nilfs2_init(void)
     kprintf("[OK] NILFS2 — Continuous snapshotting FS with segment summary\n");
 }
 #include "module.h"
-module_init(nilfs2_init);
+fs_initcall(nilfs2_init);
 
 /* ── nilfs2_lookup ────────────────────────────────────── */
 int nilfs2_lookup(const char *name, void *parent)

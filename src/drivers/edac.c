@@ -364,6 +364,6 @@ int edac_report_error(void *dev, int type, const char *msg)
     (void)dev;
     (void)type;
     (void)msg;
-    kprintf("[edac] edac_report_error: not yet implemented\n");
+    kprintf("[EDAC] edac_report_error: not yet implemented\n");
     return 0;
 }

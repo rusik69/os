@@ -109,7 +109,7 @@ static int fusex_init(struct fuse_in_header *inh, uint8_t *out_buf,
     struct fuse_init_out *iout = (struct fuse_init_out *)(outh + 1);
     (void)iin;
 
-    kprintf("[virtio-fs] FUSE_INIT: requested FUSE %u.%u\n",
+    kprintf("[VIRTIO-FS] FUSE_INIT: requested FUSE %u.%u\n",
             (unsigned int)iin->major, (unsigned int)iin->minor);
 
     memset(iout, 0, sizeof(*iout));
@@ -126,7 +126,7 @@ static int fusex_init(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] FUSE_INIT: negotiated FUSE 7.38\n");
+    kprintf("[VIRTIO-FS] FUSE_INIT: negotiated FUSE 7.38\n");
     return 0;
 }
 
@@ -149,7 +149,7 @@ static int fusex_open(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] OPEN nodeid=%llu flags=0x%x\n",
+    kprintf("[VIRTIO-FS] OPEN nodeid=%llu flags=0x%x\n",
             inh->nodeid, oin->flags);
     return 0;
 }
@@ -206,7 +206,7 @@ static int fusex_lookup(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] LOOKUP '%s' → nodeid=%llu\n", name, entry->nodeid);
+    kprintf("[VIRTIO-FS] LOOKUP '%s' → nodeid=%llu\n", name, entry->nodeid);
     return 0;
 }
 
@@ -256,7 +256,7 @@ static int fusex_getattr(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] GETATTR nodeid=%llu\n", inh->nodeid);
+    kprintf("[VIRTIO-FS] GETATTR nodeid=%llu\n", inh->nodeid);
     return 0;
 }
 
@@ -282,7 +282,7 @@ static int fusex_read(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] READ nodeid=%llu offset=%llu size=%u got=%u\n",
+    kprintf("[VIRTIO-FS] READ nodeid=%llu offset=%llu size=%u got=%u\n",
             inh->nodeid, rin->offset, rin->size, bytes_read);
     return 0;
 }
@@ -349,7 +349,7 @@ static int fusex_readdir(struct fuse_in_header *inh, uint8_t *out_buf,
     outh->error  = 0;
     outh->unique = inh->unique;
 
-    kprintf("[virtio-fs] READDIR nodeid=%llu offset=%llu\n",
+    kprintf("[VIRTIO-FS] READDIR nodeid=%llu offset=%llu\n",
             inh->nodeid, rdin->offset);
     return 0;
 }
@@ -364,7 +364,7 @@ static int fusex_flush(struct fuse_in_header *inh, uint8_t *out_buf,
     struct fuse_out_header *outh = (struct fuse_out_header *)out_buf;
     (void)out_buf_size;
 
-    kprintf("[virtio-fs] FLUSH nodeid=%llu unique=%llu\n",
+    kprintf("[VIRTIO-FS] FLUSH nodeid=%llu unique=%llu\n",
             inh->nodeid, inh->unique);
 
     outh->len    = sizeof(*outh);
@@ -386,7 +386,7 @@ static int fusex_fsync(struct fuse_in_header *inh, uint8_t *out_buf,
     struct fuse_fsync_in *fin = (struct fuse_fsync_in *)(inh + 1);
     int datasync = fin->fsync_flags & 1;
 
-    kprintf("[virtio-fs] FSYNC nodeid=%llu fh=%llu datasync=%d\n",
+    kprintf("[VIRTIO-FS] FSYNC nodeid=%llu fh=%llu datasync=%d\n",
             inh->nodeid, fin->fh, datasync);
 
     /* In a real implementation, we would call fsync() on the host file */
@@ -408,7 +408,7 @@ static int fusex_release(struct fuse_in_header *inh, uint8_t *out_buf,
 
     struct fuse_release_in *rin = (struct fuse_release_in *)(inh + 1);
 
-    kprintf("[virtio-fs] RELEASE nodeid=%llu fh=%llu flags=0x%x\n",
+    kprintf("[VIRTIO-FS] RELEASE nodeid=%llu fh=%llu flags=0x%x\n",
             inh->nodeid, rin->fh, (unsigned)rin->flags);
 
     outh->len    = sizeof(*outh);
@@ -429,7 +429,7 @@ static int fusex_statfs(struct fuse_in_header *inh, uint8_t *out_buf,
     (void)out_buf_size;
     (void)inh;
 
-    kprintf("[virtio-fs] STATFS\n");
+    kprintf("[VIRTIO-FS] STATFS\n");
 
     memset(sout, 0, sizeof(*sout));
 
@@ -498,11 +498,11 @@ int virtio_fs_handle_request(int vq_idx)
         uint32_t req_len = desc->len;
 
         if (req_len < sizeof(struct fuse_in_header)) {
-            kprintf("[virtio-fs] short request (%u bytes)\n", req_len);
+            kprintf("[VIRTIO-FS] short request (%u bytes)\n", req_len);
             goto next;
         }
 
-        kprintf("[virtio-fs] request: opcode=%u unique=%llu nodeid=%llu len=%u\n",
+        kprintf("[VIRTIO-FS] request: opcode=%u unique=%llu nodeid=%llu len=%u\n",
                 inh->opcode, inh->unique, inh->nodeid, inh->len);
 
         /* Find the write-descriptor for the response (typically the next descriptor) */
@@ -518,7 +518,7 @@ int virtio_fs_handle_request(int vq_idx)
             outh->len    = sizeof(*outh);
             outh->error  = -ENOSYS;
             outh->unique = inh->unique;
-            kprintf("[virtio-fs] unknown opcode %u\n", inh->opcode);
+            kprintf("[VIRTIO-FS] unknown opcode %u\n", inh->opcode);
         }
 
         /* Write response to the write-descriptor in the chain */
@@ -577,7 +577,7 @@ int virtio_fs_mount(const char *host_dir, const char *mount_point)
      * vfs_register_filesystem() pointing to a struct vfs_ops that
      * dispatches through the virtqueue (FUSE_LOOKUP, FUSE_GETATTR,
      * FUSE_READ, FUSE_READDIR, etc.). */
-    kprintf("[virtio-fs] mount: '%s' → '%s'\n", host_dir, mount_point);
+    kprintf("[VIRTIO-FS] mount: '%s' → '%s'\n", host_dir, mount_point);
 
     /* Create the mount point as a directory */
     vfs_create(mount_point, 2);  /* type 2 = directory */
@@ -591,7 +591,7 @@ void virtio_fs_cleanup(void)
 {
     memset(&virtio_fs_dev, 0, sizeof(virtio_fs_dev));
     virtio_fs_initialized = 0;
-    kprintf("[virtio-fs] cleaned up\n");
+    kprintf("[VIRTIO-FS] cleaned up\n");
 }
 
 /* ── Init ──────────────────────────────────────────────────────────── */
@@ -607,14 +607,14 @@ int virtio_fs_init(void)
     if (pci_find_device(0x1AF4, 0x1042, &dev) < 0) {
         /* Try transitional device */
         if (pci_find_device(0x1AF4, 0x1000, &dev) < 0) {
-            kprintf("[virtio-fs] device not found\n");
+            kprintf("[VIRTIO-FS] device not found\n");
             return -1;
         }
     }
 
     virtio_fs_dev.iobase = (uint16_t)(dev.bar[0] & ~0x3u);
     if (!virtio_fs_dev.iobase) {
-        kprintf("[virtio-fs] no I/O base\n");
+        kprintf("[VIRTIO-FS] no I/O base\n");
         return -1;
     }
 
@@ -667,7 +667,7 @@ int virtio_fs_init(void)
             vq->initialized   = 1;
             num_queues++;
         }
-        kprintf("[virtio-fs] %d virtqueue(s) initialized\n", num_queues);
+        kprintf("[VIRTIO-FS] %d virtqueue(s) initialized\n", num_queues);
     }
 
     /* Initialize FUSE opcode dispatch table */
@@ -677,7 +677,7 @@ int virtio_fs_init(void)
     memcpy(virtio_fs_dev.host_dir, "/mnt", 5);
     memcpy(virtio_fs_dev.mount_point, "/virtio-fs", 10);
 
-    kprintf("[virtio-fs] Virtio FS initialized at I/O 0x%04x, tag='%s'\n",
+    kprintf("[VIRTIO-FS] Virtio FS initialized at I/O 0x%04x, tag='%s'\n",
             virtio_fs_dev.iobase, virtio_fs_dev.tag);
     return 0;
 }
@@ -691,7 +691,7 @@ int virtio_fs_read(void *dev, void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[virtio] virtio_fs_read: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_fs_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_fs_write ─────────────────────────────── */
@@ -701,6 +701,6 @@ int virtio_fs_write(void *dev, const void *buf, size_t count, uint64_t offset)
     (void)buf;
     (void)count;
     (void)offset;
-    kprintf("[virtio] virtio_fs_write: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_fs_write: not yet implemented\n");
     return 0;
 }

@@ -60,7 +60,7 @@ static void kvm_detect_virt(void)
 {
     kvm_has_vmx = cpu_has_vmx();
     kvm_has_svm = cpu_has_svm();
-    kprintf("[kvm] VMX=%d SVM=%d\n", kvm_has_vmx, kvm_has_svm);
+    kprintf("[KVM] VMX=%d SVM=%d\n", kvm_has_vmx, kvm_has_svm);
 }
 
 /* ── EPT page table management ─────────────────────────────────────── */
@@ -173,25 +173,25 @@ static int kvm_vmxon(void)
 {
     if (!kvm_has_vmx) return -1;
     /* Would execute VMXON with a VMXON region */
-    kprintf("[kvm] VMXON executed\n");
+    kprintf("[KVM] VMXON executed\n");
     return 0;
 }
 
 static int kvm_vmxoff(void)
 {
-    kprintf("[kvm] VMXOFF executed\n");
+    kprintf("[KVM] VMXOFF executed\n");
     return 0;
 }
 
 static int kvm_vmlaunch(void)
 {
-    kprintf("[kvm] VMLAUNCH (guest entry)\n");
+    kprintf("[KVM] VMLAUNCH (guest entry)\n");
     return 0;
 }
 
 static int kvm_vmresume(void)
 {
-    kprintf("[kvm] VMRESUME (guest re-entry)\n");
+    kprintf("[KVM] VMRESUME (guest re-entry)\n");
     return 0;
 }
 
@@ -231,35 +231,35 @@ static struct kvm_run *kvm_handle_exit(struct kvm_vcpu *vcpu,
         run->io.size    = (uint8_t)((info->qualification >> 2) & 0x3);
         run->io.count   = 1;
         run->io.data    = 0;
-        kprintf("[kvm] VM exit: I/O port=0x%x dir=%d size=%d\n",
+        kprintf("[KVM] VM exit: I/O port=0x%x dir=%d size=%d\n",
                 run->io.port, run->io.direction, run->io.size);
         break;
     }
     case VM_EXIT_REASON_HLT: {
         run->exit_reason = 12; /* KVM_EXIT_HLT */
-        kprintf("[kvm] VM exit: HLT\n");
+        kprintf("[KVM] VM exit: HLT\n");
         /* For HLT, we just continue — single vCPU, no interrupts */
         break;
     }
     case VM_EXIT_REASON_VMCALL: {
         run->exit_reason = 18; /* KVM_EXIT_VMCALL */
-        kprintf("[kvm] VM exit: VMCALL\n");
+        kprintf("[KVM] VM exit: VMCALL\n");
         break;
     }
     case VM_EXIT_REASON_MSR_READ:
     case VM_EXIT_REASON_MSR_WRITE: {
         run->exit_reason = 31; /* KVM_EXIT_MSR (approximate) */
-        kprintf("[kvm] VM exit: MSR access reason=%u\n", info->reason);
+        kprintf("[KVM] VM exit: MSR access reason=%u\n", info->reason);
         break;
     }
     case VM_EXIT_REASON_CR_ACCESS: {
         run->exit_reason = 28; /* KVM_EXIT_CR_ACCESS (approximate) */
-        kprintf("[kvm] VM exit: CR access\n");
+        kprintf("[KVM] VM exit: CR access\n");
         break;
     }
     default:
         run->exit_reason = info->reason;
-        kprintf("[kvm] VM exit: unhandled reason=%u rip=0x%llx\n",
+        kprintf("[KVM] VM exit: unhandled reason=%u rip=0x%llx\n",
                 info->reason, info->guest_rip);
         break;
     }
@@ -297,7 +297,7 @@ int kvm_ioctl(int cmd, uint64_t arg)
 
     case KVM_CREATE_VM:
         /* Create a virtual machine (single guest) */
-        kprintf("[kvm] KVM_CREATE_VM\n");
+        kprintf("[KVM] KVM_CREATE_VM\n");
         return 0; /* fd for VM — simplified: always VM 0 */
 
     case KVM_CHECK_EXTENSION: {
@@ -314,16 +314,16 @@ int kvm_ioctl(int cmd, uint64_t arg)
 
     case KVM_CREATE_VCPU:
         if (kvm_vcpu.created) {
-            kprintf("[kvm] KVM_CREATE_VCPU: already created\n");
+            kprintf("[KVM] KVM_CREATE_VCPU: already created\n");
             return -1;
         }
         memset(&kvm_vcpu, 0, sizeof(kvm_vcpu));
         kvm_vcpu.created = 1;
-        kprintf("[kvm] KVM_CREATE_VCPU: vCPU 0 created\n");
+        kprintf("[KVM] KVM_CREATE_VCPU: vCPU 0 created\n");
 
         /* Init EPT */
         if (ept_init(&kvm_vcpu) < 0) {
-            kprintf("[kvm] Failed to init EPT\n");
+            kprintf("[KVM] Failed to init EPT\n");
             return -1;
         }
         /* Set default register state */
@@ -342,7 +342,7 @@ int kvm_ioctl(int cmd, uint64_t arg)
         if (slot->used && (slot->memory_size != region.memory_size ||
             slot->guest_phys_addr != region.guest_phys_addr)) {
             /* Would need to unmap old region */
-            kprintf("[kvm] WARNING: reusing slot %u\n", region.slot);
+            kprintf("[KVM] WARNING: reusing slot %u\n", region.slot);
         }
 
         /* Allocate guest memory from kernel pages */
@@ -356,7 +356,7 @@ int kvm_ioctl(int cmd, uint64_t arg)
         slot->memory_size = region.memory_size;
         slot->host_virt_addr = (uint64_t)PHYS_TO_VIRT(guest_mem);
 
-        kprintf("[kvm] KVM_SET_USER_MEMORY_REGION: slot=%u gpa=0x%llx "
+        kprintf("[KVM] KVM_SET_USER_MEMORY_REGION: slot=%u gpa=0x%llx "
                 "size=%llu host=0x%llx\n",
                 region.slot, region.guest_phys_addr,
                 region.memory_size, slot->host_virt_addr);
@@ -376,7 +376,7 @@ int kvm_ioctl(int cmd, uint64_t arg)
         struct kvm_run *run = &kvm_run_data;
         memset(run, 0, sizeof(*run));
 
-        kprintf("[kvm] KVM_RUN: guest entry\n");
+        kprintf("[KVM] KVM_RUN: guest entry\n");
 
         /* Try VM entry */
         if (kvm_vcpu.vm_entry_ok) {
@@ -425,7 +425,7 @@ int kvm_ioctl(int cmd, uint64_t arg)
     }
 
     default:
-        kprintf("[kvm] Unknown ioctl cmd=0x%llx\n", (unsigned long long)cmd);
+        kprintf("[KVM] Unknown ioctl cmd=0x%llx\n", (unsigned long long)cmd);
         return -1;
     }
 }
@@ -435,11 +435,11 @@ int kvm_ioctl(int cmd, uint64_t arg)
 void kvm_run(void)
 {
     if (!kvm_initialized || !kvm_vcpu.created) {
-        kprintf("[kvm] Cannot run: not initialized\n");
+        kprintf("[KVM] Cannot run: not initialized\n");
         return;
     }
 
-    kprintf("[kvm] kvm_run() entering guest loop\n");
+    kprintf("[KVM] kvm_run() entering guest loop\n");
 
     /* The main VMLAUNCH/VMRESUME loop would be:
      *   while (should_run) {
@@ -464,19 +464,19 @@ int kvm_init(void)
     kvm_detect_virt();
 
     if (!kvm_has_vmx && !kvm_has_svm) {
-        kprintf("[kvm] Warning: neither VMX nor SVM detected. "
+        kprintf("[KVM] Warning: neither VMX nor SVM detected. "
                 "Running in emulation mode.\n");
     }
 
     /* Register /dev/kvm character device */
     if (devfs_register_device("kvm", NULL,
                               kvm_dev_read, kvm_dev_write) < 0) {
-        kprintf("[kvm] Failed to register /dev/kvm\n");
+        kprintf("[KVM] Failed to register /dev/kvm\n");
         return -1;
     }
 
     kvm_initialized = 1;
-    kprintf("[kvm] KVM minimal hypervisor initialized "
+    kprintf("[KVM] KVM minimal hypervisor initialized "
             "(VMX=%d SVM=%d, version=%d)\n",
             kvm_has_vmx, kvm_has_svm, KVM_API_VERSION);
     return 0;
@@ -488,18 +488,18 @@ int kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1)
     (void)nr;
     (void)a0;
     (void)a1;
-    kprintf("[kvm] kvm_hypercall: not yet implemented\n");
+    kprintf("[KVM] kvm_hypercall: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kvm_para_available ─────────────────────────────── */
 int kvm_para_available(void)
 {
-    kprintf("[kvm] kvm_para_available: not yet implemented\n");
+    kprintf("[KVM] kvm_para_available: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kvm_register_steal_time ─────────────────────────────── */
 int kvm_register_steal_time(void)
 {
-    kprintf("[kvm] kvm_register_steal_time: not yet implemented\n");
+    kprintf("[KVM] kvm_register_steal_time: not yet implemented\n");
     return 0;
 }

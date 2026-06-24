@@ -434,7 +434,7 @@ int module_elf_parse(struct module_elf_context *ctx)
                     while (pos + 8 + dlen < modinfo_size &&
                            modinfo_data[pos + 8 + dlen] != '\0')
                         dlen++;
-                    if (dlen > 0 && dlen < (int)sizeof(ctx->depends)) {
+                    if (dlen > 0 && (size_t)dlen < sizeof(ctx->depends)) {
                         memcpy(ctx->depends, d, (size_t)dlen);
                         ctx->depends[dlen] = '\0';
                     }
@@ -448,7 +448,7 @@ int module_elf_parse(struct module_elf_context *ctx)
                     if (alen > 0) {
                         int cur_len = (int)strlen(ctx->aliases);
                         int needed = cur_len + alen + 2; /* comma + null */
-                        if (needed <= (int)sizeof(ctx->aliases)) {
+                        if ((size_t)needed <= sizeof(ctx->aliases)) {
                             if (cur_len > 0)
                                 ctx->aliases[cur_len++] = ',';
                             memcpy(ctx->aliases + cur_len, a, (size_t)alen);

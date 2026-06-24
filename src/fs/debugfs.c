@@ -99,7 +99,7 @@ static int debugfs_vfs_read(void *priv, const char *path, void *buf,
     if (debugfs_entries[idx].type == 1 && debugfs_entries[idx].read_fn) {
         int len = 0;
         debugfs_entries[idx].read_fn(cbuf, &len);
-        if (len > (int)max_size) len = (int)max_size;
+        if ((size_t)len > max_size) len = (int)max_size;
         if (len < 0) len = 0;
         cbuf[len] = '\0';
         *out_size = (uint32_t)len;
@@ -123,7 +123,7 @@ static int debugfs_vfs_read(void *priv, const char *path, void *buf,
     } else if (debugfs_entries[idx].type == 3 && debugfs_entries[idx].read_fn) {
         int len = 0;
         debugfs_entries[idx].read_fn(cbuf, &len);
-        if (len > (int)max_size) len = (int)max_size;
+        if ((size_t)len > max_size) len = (int)max_size;
         if (len < 0) len = 0;
         cbuf[len] = '\0';
         *out_size = (uint32_t)len;

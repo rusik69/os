@@ -40,7 +40,7 @@ struct pid_namespace init_pid_ns = {
 
 /* ── Initialization ────────────────────────────────────────────── */
 
-void pid_ns_init(void)
+void __init pid_ns_init(void)
 {
     /* Root namespace: PID 0 (idle) is always allocated */
     init_pid_ns.pid_bitmap[0] = 1;  /* PID 0 reserved */

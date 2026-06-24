@@ -61,7 +61,7 @@ void dma_buf_subsys_init(void)
     spinlock_init(&g_dma_buf_lock);
     g_dma_buf_inited = 1;
 
-    kprintf("[dma_buf] subsystem initialised (%d buffers max, "
+    kprintf("[DMA_BUF] subsystem initialised (%d buffers max, "
             "%d attachments max)\n",
             DMA_BUF_MAX_BUFS, DMA_BUF_MAX_BUFS * DMA_BUF_MAX_ATTACH);
 }
@@ -133,7 +133,7 @@ struct dma_buf *dma_buf_alloc(size_t size, uint32_t flags)
         /* Free pages */
         for (int i = 0; i < num_frames; i++)
             pmm_free_frame(first_frame + (uint64_t)i * PAGE_SIZE);
-        kprintf("[dma_buf] failed to allocate slot (max=%d)\n",
+        kprintf("[DMA_BUF] failed to allocate slot (max=%d)\n",
                 DMA_BUF_MAX_BUFS);
         return NULL;
     }
@@ -148,7 +148,7 @@ struct dma_buf *dma_buf_alloc(size_t size, uint32_t flags)
     dmabuf->attach_count = 0;
     memset(dmabuf->attachments, 0, sizeof(dmabuf->attachments));
 
-    kprintf("[dma_buf] allocated buf=%p size=%llu flags=0x%x "
+    kprintf("[DMA_BUF] allocated buf=%p size=%llu flags=0x%x "
             "phys=0x%llx virt=%p frames=%d\n",
             (void *)dmabuf, (unsigned long long)aligned,
             (unsigned int)flags,
@@ -190,7 +190,7 @@ struct dma_buf_attachment *dma_buf_attach(struct dma_buf *dmabuf,
 
     spinlock_irqsave_release(&dmabuf->lock, flags);
 
-    kprintf("[dma_buf] attached device %p to buf=%p (refcount=%d)\n",
+    kprintf("[DMA_BUF] attached device %p to buf=%p (refcount=%d)\n",
             device, (void *)dmabuf, dmabuf->refcount);
 
     return att;
@@ -257,7 +257,7 @@ void dma_buf_detach(struct dma_buf *dmabuf,
 
     free_attachment(attach);
 
-    kprintf("[dma_buf] detached from buf=%p (refcount=%d)\n",
+    kprintf("[DMA_BUF] detached from buf=%p (refcount=%d)\n",
             (void *)dmabuf, dmabuf->refcount);
 }
 
@@ -303,7 +303,7 @@ void dma_buf_free(struct dma_buf *dmabuf)
 
     spinlock_irqsave_release(&dmabuf->lock, flags);
 
-    kprintf("[dma_buf] freed buf=%p phys=0x%llx size=%llu\n",
+    kprintf("[DMA_BUF] freed buf=%p phys=0x%llx size=%llu\n",
             (void *)dmabuf, (unsigned long long)phys,
             (unsigned long long)dmabuf->size);
 }
@@ -331,6 +331,6 @@ int dma_buf_begin_cpu_access(struct dma_buf *dmabuf, enum dma_data_direction dir
 {
     (void)dmabuf;
     (void)dir;
-    kprintf("[dma_buf] dma_buf_begin_cpu_access: not yet implemented\n");
+    kprintf("[DMA_BUF] dma_buf_begin_cpu_access: not yet implemented\n");
     return 0;
 }

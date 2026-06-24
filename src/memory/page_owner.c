@@ -9,7 +9,7 @@
 static uint32_t page_owner_table[PAGE_OWNER_MAX_FRAMES];
 static int page_owner_initialized = 0;
 
-void page_owner_init(void) {
+void __init page_owner_init(void) {
     if (page_owner_initialized) return;
     memset(page_owner_table, 0, sizeof(page_owner_table));
     page_owner_initialized = 1;

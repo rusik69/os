@@ -33,12 +33,12 @@ void __init thp_init(void) {
     thp_total = 0;
     thp_merged = 0;
     thp_split = 0;
-    kprintf("[mem] THP (Transparent Huge Pages) tracking initialized\n");
+    kprintf("[MEM] THP (Transparent Huge Pages) tracking initialized\n");
 }
 
 void thp_set_enabled(int enabled) {
     thp_enabled = enabled;
-    kprintf("[mem] THP %s\n", enabled ? "enabled" : "disabled");
+    kprintf("[MEM] THP %s\n", enabled ? "enabled" : "disabled");
 }
 
 int thp_is_enabled(void) {

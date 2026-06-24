@@ -627,12 +627,14 @@ int squashfs_mount(const char *mountpoint, uint32_t base_addr, uint32_t size)
     return vfs_mount_ex(mountpoint, &squashfs_ops, rp, MS_RDONLY);
 }
 
-int squashfs_init(void)
+int __init squashfs_init(void)
 {
     kprintf("[squashfs] SquashFS read-only FS initialized\n");
     vfs_register_filesystem("squashfs", &squashfs_ops);
     return 0;
 }
+#include "initcall.h"
+fs_initcall(squashfs_init);
 
 #ifdef MODULE
 #include "module.h"

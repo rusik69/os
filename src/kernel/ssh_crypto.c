@@ -270,7 +270,7 @@ static void hex_to_bytes(const char *hex, uint8_t *bytes, int *len) {
     }
 }
 
-void dh_init(void) {
+void __init dh_init(void) {
     if (dh_initialized) return;
     uint8_t p_buf[BN_MAX_BYTES];
     int p_len;
@@ -438,7 +438,7 @@ struct ssh_cipher {
 
 
 /* ── Stub: ssh_crypto_init ─────────────────────────────── */
-int ssh_crypto_init(void)
+int __init ssh_crypto_init(void)
 {
     kprintf("[ssh] ssh_crypto_init: not yet implemented\n");
     return 0;

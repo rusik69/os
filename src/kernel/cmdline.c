@@ -24,7 +24,7 @@ void cmdline_init(const char *cmdline) {
     if (!cmdline) { raw_cmdline[0] = '\0'; return; }
 
     int len = (int)strlen(cmdline);
-    if (len > (int)sizeof(raw_cmdline) - 1) len = sizeof(raw_cmdline) - 1;
+    if ((size_t)len > sizeof(raw_cmdline) - 1) len = sizeof(raw_cmdline) - 1;
     memcpy(raw_cmdline, cmdline, (size_t)len);
     raw_cmdline[len] = '\0';
 

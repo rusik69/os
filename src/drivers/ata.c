@@ -112,6 +112,8 @@ void __init ata_init(void) {
     kprintf("  ATA disk: %llu sectors (%llu MB)\n", (unsigned long long)sectors,
             (unsigned long long)(sectors / 2048));
 }
+#include "initcall.h"
+device_initcall(ata_init);
 
 int ata_is_present(void) {
     return ata_present || redirect_read;
@@ -236,14 +238,14 @@ static int ata_identify(void *ident_data)
     uint16_t *ident = (uint16_t *)ident_data;
     for (int i = 0; i < 256; i++)
         ident[i] = inw(ATA_DATA);
-    kprintf("[ata] IDENTIFY successful\n");
+    kprintf("[ATA] IDENTIFY successful\n");
     return 0;
 }
 
 static int ata_reset(int bus)
 {
     (void)bus;
-    kprintf("[ata] Soft resetting ATA bus\n");
+    kprintf("[ATA] Soft resetting ATA bus\n");
     if (bus == 0) {
         outb(0x3F6, 0x04);
         ata_400ns_delay();
@@ -251,7 +253,7 @@ static int ata_reset(int bus)
         for (volatile int _d = 0; _d < 5000; _d++) io_wait();
         outb(0x3F6, 0x00);
         ata_400ns_delay();
-        if (ata_wait_bsy() < 0) { kprintf("[ata] Reset failed\n"); return -EIO; }
+        if (ata_wait_bsy() < 0) { kprintf("[ATA] Reset failed\n"); return -EIO; }
         ata_present = 0;
         return 0;
     } else if (bus == 1) {

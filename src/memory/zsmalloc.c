@@ -203,7 +203,7 @@ void zsmalloc_free(int pool_id, void *obj)
     spinlock_irqsave_release(&pool->lock, irq_flags);
 }
 
-void zsmalloc_init(void)
+void __init zsmalloc_init(void)
 {
     memset(zsmalloc_pools, 0, sizeof(zsmalloc_pools));
     zsmalloc_pool_count = 0;

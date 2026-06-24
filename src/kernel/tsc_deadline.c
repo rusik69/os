@@ -14,14 +14,14 @@ int tsc_deadline_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
     if (!(rcx & (1U << 24))) {
-        kprintf("[cpu] TSC deadline mode not supported\n");
+        kprintf("[CPU] TSC deadline mode not supported\n");
         return -1;
     }
 
     /* Also verify x2APIC is active (TSC deadline requires either x2APIC or xAPIC) */
     uint64_t apic_base = read_msr(IA32_APIC_BASE);
     if (!(apic_base & IA32_APIC_BASE_ENABLE)) {
-        kprintf("[cpu] TSC deadline: APIC not enabled\n");
+        kprintf("[CPU] TSC deadline: APIC not enabled\n");
         return -1;
     }
 
@@ -34,7 +34,7 @@ int tsc_deadline_init(void) {
     apic_write(LAPIC_LVT_TIMER, lvt_timer);
 
     tsc_deadline_available = 1;
-    kprintf("[cpu] TSC deadline timer mode enabled\n");
+    kprintf("[CPU] TSC deadline timer mode enabled\n");
     return 0;
 }
 
@@ -51,12 +51,12 @@ uint64_t tsc_deadline_get(void) {
 /* ── Stub: tsc_deadline_cancel ─────────────────────────────── */
 int tsc_deadline_cancel(void)
 {
-    kprintf("[tsc] tsc_deadline_cancel: not yet implemented\n");
+    kprintf("[TSC] tsc_deadline_cancel: not yet implemented\n");
     return 0;
 }
 /* ── Stub: tsc_deadline_read ─────────────────────────────── */
 uint64_t tsc_deadline_read(void)
 {
-    kprintf("[tsc] tsc_deadline_read: not yet implemented\n");
+    kprintf("[TSC] tsc_deadline_read: not yet implemented\n");
     return 0;
 }

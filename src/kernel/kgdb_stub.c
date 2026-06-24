@@ -10,6 +10,7 @@
 #include "printf.h"
 #include "errno.h"
 #include "serial.h"
+#include "heap.h"
 
 #define KGDB_BUF_SIZE 4096
 #define KGDB_SIGTRAP  5
@@ -103,7 +104,7 @@ static void kgdb_handle_read_mem(const char *args)
 {
     uint64_t addr;
     int len;
-    char reply[1024];
+    char *reply = kmalloc(1024);
     int pos = 0;
 
     addr = parse_hex_addr(&args);
@@ -113,13 +114,14 @@ static void kgdb_handle_read_mem(const char *args)
     if (len > 256) len = 256;
 
     reply[pos] = '\0';
-    for (int i = 0; i < len && pos < (int)sizeof(reply) - 3; i++) {
+    for (int i = 0; i < len && pos < 1024 - 3; i++) {
         uint8_t b = ((const uint8_t *)(uintptr_t)addr)[i];
         reply[pos++] = "0123456789abcdef"[b >> 4];
         reply[pos++] = "0123456789abcdef"[b & 0xF];
     }
     reply[pos] = '\0';
     kgdb_send_packet(reply);
+    kfree(reply);
 }
 
 /* Handle GDB 'M' command (write memory) */

@@ -74,7 +74,7 @@ int nx_enforce_init(void) {
                      : "a"(0x80000001));
 
     if (!(rdx & (1U << 20))) {
-        kprintf("[nx] NX (No-Execute) not supported by CPU — skipping\n");
+        kprintf("[NX] NX (No-Execute) not supported by CPU — skipping\n");
         return -1;
     }
 
@@ -83,7 +83,7 @@ int nx_enforce_init(void) {
     if (!(efer & EFER_NXE)) {
         efer |= EFER_NXE;
         write_msr(0xC0000080, efer);
-        kprintf("[nx] EFER.NXE enabled\n");
+        kprintf("[NX] EFER.NXE enabled\n");
     }
 
     nx_self_active = 1;
@@ -93,18 +93,18 @@ int nx_enforce_init(void) {
     uint64_t text_end   = (uint64_t)(uintptr_t)_text_end;
     nx_enforce_register_region(text_start, text_end);
 
-    kprintf("[nx] Kernel .text : 0x%llx – 0x%llx  (%llu KB)\n",
+    kprintf("[NX] Kernel .text : 0x%llx – 0x%llx  (%llu KB)\n",
             text_start, text_end, (text_end - text_start) / 1024);
-    kprintf("[nx] Kernel .rodata: 0x%llx – 0x%llx\n",
+    kprintf("[NX] Kernel .rodata: 0x%llx – 0x%llx\n",
             (uint64_t)(uintptr_t)_rodata_start,
             (uint64_t)(uintptr_t)_rodata_end);
-    kprintf("[nx] Kernel .data  : 0x%llx – 0x%llx\n",
+    kprintf("[NX] Kernel .data  : 0x%llx – 0x%llx\n",
             (uint64_t)(uintptr_t)_data_start,
             (uint64_t)(uintptr_t)_data_end);
-    kprintf("[nx] Kernel .bss   : 0x%llx – 0x%llx\n",
+    kprintf("[NX] Kernel .bss   : 0x%llx – 0x%llx\n",
             (uint64_t)(uintptr_t)_bss_start,
             (uint64_t)(uintptr_t)_bss_end);
-    kprintf("[nx] NX enforcement initialised successfully\n");
+    kprintf("[NX] NX enforcement initialised successfully\n");
 
     return 0;
 }
@@ -119,14 +119,14 @@ int nx_enforce_register_region(uint64_t start, uint64_t end) {
     if (!nx_self_active) return -1;
     if (start >= end) return -1;
     if (nr_exec_regions >= NX_ENFORCE_MAX_REGIONS) {
-        kprintf("[nx] WARNING: exec region table full (max %d)\n",
+        kprintf("[NX] WARNING: exec region table full (max %d)\n",
                 NX_ENFORCE_MAX_REGIONS);
         return -1;
     }
     exec_regions[nr_exec_regions].start = start;
     exec_regions[nr_exec_regions].end   = end;
     nr_exec_regions++;
-    kprintf("[nx] Registered exec region [%d]: 0x%llx – 0x%llx\n",
+    kprintf("[NX] Registered exec region [%d]: 0x%llx – 0x%llx\n",
             nr_exec_regions - 1, start, end);
     return 0;
 }
@@ -141,7 +141,7 @@ int nx_enforce_is_executable(uint64_t vaddr) {
 }
 
 void nx_enforce_print_regions(void) {
-    kprintf("[nx] Registered executable regions (%d):\n", nr_exec_regions);
+    kprintf("[NX] Registered executable regions (%d):\n", nr_exec_regions);
     for (int i = 0; i < nr_exec_regions; i++) {
         kprintf("  [%d] 0x%llx – 0x%llx  (%llu KB)\n",
                 i, exec_regions[i].start, exec_regions[i].end,
@@ -190,7 +190,7 @@ static int check_pte(uint64_t vaddr, uint64_t pte, int level, int *suppress) {
 
     if (is_exec && !should_exec) {
         if (!suppress || *suppress > 0) {
-            kprintf("[nx] AUDIT: %s page 0x%llx (L%d) is EXECUTABLE but is in %s"
+            kprintf("[NX] AUDIT: %s page 0x%llx (L%d) is EXECUTABLE but is in %s"
                     " — missing NX!\n",
                     region_name(vaddr), vaddr, level, region_name(vaddr));
             if (suppress && *suppress > 0) (*suppress)--;
@@ -199,7 +199,7 @@ static int check_pte(uint64_t vaddr, uint64_t pte, int level, int *suppress) {
     }
 
     if (!is_exec && should_exec) {
-        kprintf("[nx] AUDIT: .text page 0x%llx (L%d) has NX set but"
+        kprintf("[NX] AUDIT: .text page 0x%llx (L%d) has NX set but"
                 " should be executable!\n",
                 vaddr, level);
         return 1;
@@ -225,7 +225,7 @@ int nx_enforce_audit_kernel(void) {
     int suppress = 20;
     uint64_t *pml4 = kernel_pml4;
     if (!pml4) {
-        kprintf("[nx] audit: kernel_pml4 is NULL — cannot audit\n");
+        kprintf("[NX] audit: kernel_pml4 is NULL — cannot audit\n");
         return -1;
     }
 
@@ -281,9 +281,9 @@ int nx_enforce_audit_kernel(void) {
     }
 
     if (violations == 0) {
-        kprintf("[nx] audit: OK — all kernel pages have correct NX settings\n");
+        kprintf("[NX] audit: OK — all kernel pages have correct NX settings\n");
     } else {
-        kprintf("[nx] audit: %d NX violation(s) found in kernel page tables!"
+        kprintf("[NX] audit: %d NX violation(s) found in kernel page tables!"
                 " (showing first %d)\n",
                 violations, 1);
     }
@@ -318,7 +318,7 @@ int nx_enforce_audit_user_range(uint64_t *pml4, uint64_t start, uint64_t end) {
                 /* executable huge page in user space: only valid for
                  * regions registered as executable */
                 if (!nx_enforce_is_executable(vaddr)) {
-                    kprintf("[nx] user-audit: executable 2MB page at 0x%llx"
+                    kprintf("[NX] user-audit: executable 2MB page at 0x%llx"
                             " not in exec region\n", vaddr);
                     violations++;
                 }
@@ -332,7 +332,7 @@ int nx_enforce_audit_user_range(uint64_t *pml4, uint64_t start, uint64_t end) {
         uint64_t pte = pt[pt_idx];
         if (!(pte & PTE_NX) && !nx_enforce_is_executable(vaddr)) {
             /* executable user page outside known exec region */
-            kprintf("[nx] user-audit: executable user page at 0x%llx"
+            kprintf("[NX] user-audit: executable user page at 0x%llx"
                     " not in exec region\n", vaddr);
             violations++;
         }
@@ -370,7 +370,7 @@ static int split_2mb_huge_page(uint64_t *pml4, uint64_t pd_vaddr,
     /* Allocate a 4KB page table page */
     uint64_t pt_phys = pmm_alloc_frame();
     if (!pt_phys) {
-        kprintf("[nx] FAILED to allocate page-table page for huge-page split at 0x%llx\n",
+        kprintf("[NX] FAILED to allocate page-table page for huge-page split at 0x%llx\n",
                 pd_vaddr);
         return -1;
     }
@@ -411,13 +411,13 @@ static int split_2mb_huge_page(uint64_t *pml4, uint64_t pd_vaddr,
 int nx_enforce_protect_kernel_sections(void)
 {
     if (!nx_self_active) {
-        kprintf("[nx] section protection: NX not active — skipping\n");
+        kprintf("[NX] section protection: NX not active — skipping\n");
         return -1;
     }
 
     uint64_t *pml4 = kernel_pml4;
     if (!pml4) {
-        kprintf("[nx] section protection: kernel_pml4 is NULL\n");
+        kprintf("[NX] section protection: kernel_pml4 is NULL\n");
         return -1;
     }
 
@@ -473,7 +473,7 @@ int nx_enforce_protect_kernel_sections(void)
                 if (is_2mb && section_count > 1) {
                     uint64_t phys = pd_flags & PTE_ADDR_MASK;
                     if (split_2mb_huge_page(pml4, pd_vbase, phys, pd_flags) < 0) {
-                        kprintf("[nx] WARNING: failed to split 2MB page at 0x%llx\n",
+                        kprintf("[NX] WARNING: failed to split 2MB page at 0x%llx\n",
                                 pd_vbase);
                         continue;
                     }
@@ -541,7 +541,7 @@ int nx_enforce_protect_kernel_sections(void)
         }
     }
 
-    kprintf("[nx] section protection complete: %d pages set read-only, "
+    kprintf("[NX] section protection complete: %d pages set read-only, "
             "%d pages set NX, %d huge-page split(s)\n",
             ro_modified, nx_modified, splits);
 
@@ -590,7 +590,7 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
 
     if (user_fault) {
         /* Deliver SIGSEGV to the offending process */
-        kprintf("[nx] Delivering SIGSEGV to pid=%u for NX violation\n",
+        kprintf("[NX] Delivering SIGSEGV to pid=%u for NX violation\n",
                 proc ? (unsigned int)proc->pid : 0);
         kprintf("  Full register state:\n");
         kprintf("  RAX=0x%llx  RBX=0x%llx  RCX=0x%llx  RDX=0x%llx\n",
@@ -660,14 +660,14 @@ int nx_enforce_check_fault(uint64_t cr2, uint64_t err,
 int nx_enforce(void *task)
 {
     (void)task;
-    kprintf("[nx] nx_enforce: not yet implemented\n");
+    kprintf("[NX] nx_enforce: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nx_check_addr ─────────────────────────────── */
 int nx_check_addr(uint64_t addr)
 {
     (void)addr;
-    kprintf("[nx] nx_check_addr: not yet implemented\n");
+    kprintf("[NX] nx_check_addr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nx_set_prot ─────────────────────────────── */
@@ -676,6 +676,6 @@ int nx_set_prot(uint64_t addr, size_t len, int prot)
     (void)addr;
     (void)len;
     (void)prot;
-    kprintf("[nx] nx_set_prot: not yet implemented\n");
+    kprintf("[NX] nx_set_prot: not yet implemented\n");
     return 0;
 }

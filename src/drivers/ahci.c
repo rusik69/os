@@ -1000,7 +1000,7 @@ static int ahci_probe_device(struct ahci_port *port, int pm_port __attribute__((
 }
 
 /* ── Initialization ─────────────────────────────────────────────────── */
-int ahci_init(void) {
+int __init ahci_init(void) {
     struct pci_device dev;
     if (pci_find_class(0x01, 0x06, &dev) < 0)
         return -1; /* no AHCI controller */
@@ -1167,6 +1167,8 @@ int ahci_init(void) {
             ahci_port_count, (long)AHCI_NCQ_SLOTS);
     return 0;
 }
+#include "initcall.h"
+device_initcall(ahci_init);
 
 /* ── ahci_exit — reverse initialization, for module unloading ── */
 void ahci_exit(void) {
@@ -1265,7 +1267,7 @@ int ahci_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
 
 #ifdef MODULE
 /* Module entry/exit points — the ELF loader looks for these symbols */
-int init_module(void) {
+int __init init_module(void) {
     return ahci_init();
 }
 void cleanup_module(void) {

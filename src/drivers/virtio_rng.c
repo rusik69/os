@@ -141,7 +141,7 @@ static int vrng_init_queue(void)
     q->last_used_idx = 0;
     q->initialized   = 1;
 
-    kprintf("[virtio-rng] queue 0 initialised (vring_size=%d)\n", VRING_SIZE);
+    kprintf("[VIRTIO-RNG] queue 0 initialised (vring_size=%d)\n", VRING_SIZE);
     return 0;
 }
 
@@ -181,7 +181,7 @@ static int vrng_read_entropy(void *buf, uint32_t len)
     }
 
     if (timeout == 0) {
-        kprintf("[virtio-rng] timeout waiting for entropy\n");
+        kprintf("[VIRTIO-RNG] timeout waiting for entropy\n");
         return -1;
     }
 
@@ -235,13 +235,13 @@ void virtio_rng_init(void)
     if (virtio_negotiate_features_ex(vrng_inl, vrng_outl, vrng_outb, vrng_inb,
                                      VIRTIO_RNG_F_RNG_EE, 0, NULL,
                                      "virtio-rng") < 0) {
-        kprintf("[virtio-rng] feature negotiation failed\n");
+        kprintf("[VIRTIO-RNG] feature negotiation failed\n");
         return;
     }
 
     /* Initialize the virtqueue */
     if (vrng_init_queue() < 0) {
-        kprintf("[virtio-rng] queue initialisation failed\n");
+        kprintf("[VIRTIO-RNG] queue initialisation failed\n");
         return;
     }
 
@@ -252,7 +252,7 @@ void virtio_rng_init(void)
 
     rng_present = 1;
 
-    kprintf("[virtio-rng] VirtIO RNG at %02x:%02x.%d, I/O 0x%04x, queue active\n",
+    kprintf("[VIRTIO-RNG] VirtIO RNG at %02x:%02x.%d, I/O 0x%04x, queue active\n",
             dev.bus, dev.slot, dev.func, rng_iobase);
 
     /* Feed initial entropy into kernel RNG via the virtqueue */
@@ -274,6 +274,6 @@ int virtio_rng_read(void *dev, void *buf, size_t count)
     (void)dev;
     (void)buf;
     (void)count;
-    kprintf("[virtio] virtio_rng_read: not yet implemented\n");
+    kprintf("[VIRTIO] virtio_rng_read: not yet implemented\n");
     return 0;
 }

@@ -163,7 +163,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
      *   argv[4] = start sector on backing device (decimal)
      */
     if (argc < 4) {
-        kprintf("[dm-crypt] ctr: need 4-5 args (mode key1 key2 dev_id start_sector), got %d\n",
+        kprintf("[DM-CRYPT] ctr: need 4-5 args (mode key1 key2 dev_id start_sector), got %d\n",
                 argc);
         return -EINVAL;
     }
@@ -178,11 +178,11 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     if (strcmp(argv[0], "cbc-essiv") == 0) {
         priv->mode = DM_CRYPT_MODE_CBC_ESSIV;
         arg_offset = 1;
-        kprintf("[dm-crypt] ctr: using AES-CBC-ESSIV mode\n");
+        kprintf("[DM-CRYPT] ctr: using AES-CBC-ESSIV mode\n");
     } else if (strcmp(argv[0], "xts") == 0) {
         priv->mode = DM_CRYPT_MODE_XTS;
         arg_offset = 1;
-        kprintf("[dm-crypt] ctr: using AES-XTS mode (default)\n");
+        kprintf("[DM-CRYPT] ctr: using AES-XTS mode (default)\n");
     } else {
         priv->mode = DM_CRYPT_MODE_XTS;
         arg_offset = 0; /* No mode prefix, use default XTS */
@@ -191,7 +191,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     /* Decode key1 (hex) */
     int key_len = hex_decode(argv[arg_offset], priv->key1, 32);
     if (key_len != 16 && key_len != 32) {
-        kprintf("[dm-crypt] ctr: key1 must be 32 or 64 hex chars (got %d bytes)\n",
+        kprintf("[DM-CRYPT] ctr: key1 must be 32 or 64 hex chars (got %d bytes)\n",
                 (int)strlen(argv[arg_offset]));
         kfree(priv);
         return -EINVAL;
@@ -201,7 +201,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     /* Decode key2 (hex) — must be same length as key1 */
     int key2_len = hex_decode(argv[arg_offset + 1], priv->key2, 32);
     if (key2_len != key_len) {
-        kprintf("[dm-crypt] ctr: key2 length (%d bytes) must match key1 (%d bytes)\n",
+        kprintf("[DM-CRYPT] ctr: key2 length (%d bytes) must match key1 (%d bytes)\n",
                 key2_len, key_len);
         kfree(priv);
         return -EINVAL;
@@ -211,7 +211,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     if (priv->mode == DM_CRYPT_MODE_XTS) {
         int ret = xts_init(&priv->xts, priv->key1, priv->key2, key_len);
         if (ret != 0) {
-            kprintf("[dm-crypt] ctr: XTS init failed: %d\n", ret);
+            kprintf("[DM-CRYPT] ctr: XTS init failed: %d\n", ret);
             kfree(priv);
             return ret;
         }
@@ -227,7 +227,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     int dev_id = 0;
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-crypt] ctr: invalid dev_id '%s'\n", argv[2]);
+            kprintf("[DM-CRYPT] ctr: invalid dev_id '%s'\n", argv[2]);
             kfree(priv);
             return -EINVAL;
         }
@@ -235,7 +235,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     }
 
     if (!blockdev_is_registered(dev_id)) {
-        kprintf("[dm-crypt] ctr: backing device %d not registered\n", dev_id);
+        kprintf("[DM-CRYPT] ctr: backing device %d not registered\n", dev_id);
         kfree(priv);
         return -ENODEV;
     }
@@ -245,7 +245,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     uint64_t start = 0;
     while (*s) {
         if (*s < '0' || *s > '9') {
-            kprintf("[dm-crypt] ctr: invalid start_sector '%s'\n", argv[3]);
+            kprintf("[DM-CRYPT] ctr: invalid start_sector '%s'\n", argv[3]);
             kfree(priv);
             return -EINVAL;
         }
@@ -255,7 +255,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     /* Check that the range fits on the backing device */
     uint64_t backing_sectors = blockdev_get_sectors(dev_id);
     if (start + ti->length > backing_sectors) {
-        kprintf("[dm-crypt] ctr: range [%llu, %llu) exceeds backing device size %llu\n",
+        kprintf("[DM-CRYPT] ctr: range [%llu, %llu) exceeds backing device size %llu\n",
                 (unsigned long long)start,
                 (unsigned long long)(start + ti->length),
                 (unsigned long long)backing_sectors);
@@ -267,7 +267,7 @@ static int crypt_ctr(struct dm_target *ti, int argc, const char **argv)
     priv->start_sector   = start;
     ti->private = priv;
 
-    kprintf("[dm-crypt] ctr: [%llu, %llu) AES-%d-XTS -> dev %d sector %llu\n",
+    kprintf("[DM-CRYPT] ctr: [%llu, %llu) AES-%d-XTS -> dev %d sector %llu\n",
             (unsigned long long)ti->start,
             (unsigned long long)(ti->start + ti->length),
             key_len * 8 * 2,  /* total key bits (e.g., 256 for AES-128-XTS) */
@@ -392,12 +392,12 @@ module_init(dm_crypt_init);
 /* ── Stub: dm_crypt_ctr ─────────────────────────────── */
 int dm_crypt_ctr(__maybe_unused void *ti, __maybe_unused unsigned int argc, __maybe_unused char **argv)
 {
-    kprintf("[dm_crypt] dm_crypt_ctr: not yet implemented\n");
+    kprintf("[DM_CRYPT] dm_crypt_ctr: not yet implemented\n");
     return 0;
 }
 /* ── Stub: dm_crypt_map ─────────────────────────────── */
 int dm_crypt_map(__maybe_unused void *ti, __maybe_unused void *bio)
 {
-    kprintf("[dm_crypt] dm_crypt_map: not yet implemented\n");
+    kprintf("[DM_CRYPT] dm_crypt_map: not yet implemented\n");
     return 0;
 }

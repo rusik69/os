@@ -32,7 +32,7 @@ static int g_page_pool_subsys_inited = 0;
 
 /* ── Subsystem initialisation ──────────────────────────────────────── */
 
-void page_pool_subsys_init(void)
+void __init page_pool_subsys_init(void)
 {
     if (g_page_pool_subsys_inited) return;
 

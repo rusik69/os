@@ -177,9 +177,9 @@ static int nvme_probe_pci(void) {
     /* MPSMIN: minimum memory page size exponent (shift from 4096 base) */
     g_nvme_ctrl.mpsmin = (uint8_t)((cap >> 48) & 0xF);
 
-    kprintf("[NVMe] Found controller: VID=0x%04X DID=0x%04X IRQ=%d\n",
+    kprintf("[NVME] Found controller: VID=0x%04X DID=0x%04X IRQ=%d\n",
             pci.vendor_id, pci.device_id, pci.irq);
-    kprintf("[NVMe] Version %d.%d.%d, max queue depth %u, doorbell stride %u\n",
+    kprintf("[NVME] Version %d.%d.%d, max queue depth %u, doorbell stride %u\n",
             (version >> 16) & 0xFF, (version >> 8) & 0xFF, version & 0xFF,
             g_nvme_ctrl.max_q_depth, g_nvme_ctrl.doorbell_stride);
 
@@ -229,7 +229,7 @@ static int nvme_enable_controller(void) {
     /* Wait for CSTS.RDY = 0 (controller not ready) */
     ret = nvme_wait_ready(&g_nvme_ctrl, 0, 2000);
     if (ret < 0) {
-        kprintf("[NVMe] Timeout waiting for CSTS.RDY=0\n");
+        kprintf("[NVME] Timeout waiting for CSTS.RDY=0\n");
         return -EIO;
     }
 
@@ -243,7 +243,7 @@ static int nvme_enable_controller(void) {
     /* Wait for CSTS.RDY = 1 */
     ret = nvme_wait_ready(&g_nvme_ctrl, 1, 2000);
     if (ret < 0) {
-        kprintf("[NVMe] Timeout waiting for CSTS.RDY=1\n");
+        kprintf("[NVME] Timeout waiting for CSTS.RDY=1\n");
         return -EIO;
     }
 
@@ -292,12 +292,12 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
     }
     /* No data transfer — no PRP needed */
 
-    kprintf("[NVMe] Submitting sanitize command (action=%d, overwrite_passes=%d)...\n",
+    kprintf("[NVME] Submitting sanitize command (action=%d, overwrite_passes=%d)...\n",
             action, (action == NVME_SANITIZE_ACTION_OVERWRITE) ? overwrite_pass_count : 0);
 
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
     if (ret != 0) {
-        kprintf("[NVMe] Sanitize command submission FAILED (timeout or error)\n");
+        kprintf("[NVME] Sanitize command submission FAILED (timeout or error)\n");
         return -EIO;
     }
 
@@ -307,12 +307,12 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
         /* Bit 0 set = error */
         uint8_t sc  = (uint8_t)((status >> 1) & 0xFF);  /* Status Code */
         uint8_t sct = (uint8_t)((status >> 9) & 0x7);   /* Status Code Type */
-        kprintf("[NVMe] Sanitize command rejected: SCT=%u SC=%u\n",
+        kprintf("[NVME] Sanitize command rejected: SCT=%u SC=%u\n",
                 (unsigned)sct, (unsigned)sc);
         return -EINVAL;
     }
 
-    kprintf("[NVMe] Sanitize operation ACCEPTED by controller — running in background.\n"
+    kprintf("[NVME] Sanitize operation ACCEPTED by controller — running in background.\n"
             "        Use 'nvme sanitize-status' to check progress.\n");
     return 0;
 }
@@ -390,7 +390,7 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
         g_nvme_ctrl.sq_entry_size = 1U << (id->sqes & 0x0F);
         g_nvme_ctrl.cq_entry_size = 1U << ((id->cqes >> 4) & 0x0F);
     } else {
-        kprintf("[NVMe] Identify controller command failed\n");
+        kprintf("[NVME] Identify controller command failed\n");
     }
 
     pmm_free_frame(data_frame);
@@ -460,7 +460,7 @@ static int nvme_set_num_queues(uint32_t nr_queues) {
         uint32_t granted_sq = (granted >> 16) + 1;
         uint32_t actual = (granted_cq < granted_sq) ? granted_cq : granted_sq;
         if (actual < nr_queues) {
-            kprintf("[NVMe] Requested %u I/O queues, granted %u\n",
+            kprintf("[NVME] Requested %u I/O queues, granted %u\n",
                     nr_queues, actual);
         }
         ret = (int)actual;
@@ -504,7 +504,7 @@ static int nvme_create_io_cq(struct nvme_io_queue *q) {
     struct nvme_cq_entry cqe;
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
     if (ret < 0) {
-        kprintf("[NVMe] Create I/O CQ %u failed\n", q->qid);
+        kprintf("[NVME] Create I/O CQ %u failed\n", q->qid);
         pmm_free_frame(cq_frame);
         q->cq_virt = NULL;
         q->cq_phys = 0;
@@ -540,7 +540,7 @@ static int nvme_create_io_sq(struct nvme_io_queue *q) {
     struct nvme_cq_entry cqe;
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
     if (ret < 0) {
-        kprintf("[NVMe] Create I/O SQ %u failed\n", q->qid);
+        kprintf("[NVME] Create I/O SQ %u failed\n", q->qid);
         pmm_free_frame(sq_frame);
         q->sq_virt = NULL;
         q->sq_phys = 0;
@@ -560,12 +560,12 @@ static int nvme_setup_io_queues(void) {
     /* Negotiate queue count with the controller */
     int nr_queues = nvme_set_num_queues((uint32_t)nr_cpus);
     if (nr_queues < 0) {
-        kprintf("[NVMe] Failed to negotiate queue count, using 1\n");
+        kprintf("[NVME] Failed to negotiate queue count, using 1\n");
         nr_queues = 1;
     }
     if (nr_queues > nr_cpus) nr_queues = nr_cpus;
 
-    kprintf("[NVMe] Setting up %d I/O queue pairs\n", nr_queues);
+    kprintf("[NVME] Setting up %d I/O queue pairs\n", nr_queues);
 
     g_nvme_ctrl.nr_io_queues = (uint32_t)nr_queues;
 
@@ -582,13 +582,13 @@ static int nvme_setup_io_queues(void) {
 
         /* Create completion queue first (SQ depends on CQ) */
         if (nvme_create_io_cq(q) < 0) {
-            kprintf("[NVMe] Failed to create I/O CQ %d\n", q->qid);
+            kprintf("[NVME] Failed to create I/O CQ %d\n", q->qid);
             continue;
         }
 
         /* Then create submission queue associated with this CQ */
         if (nvme_create_io_sq(q) < 0) {
-            kprintf("[NVMe] Failed to create I/O SQ %d\n", q->qid);
+            kprintf("[NVME] Failed to create I/O SQ %d\n", q->qid);
             /* Try to clean up CQ (best-effort) */
             pmm_free_frame((uint64_t)q->cq_phys / 4096);
             q->cq_virt = NULL;
@@ -606,7 +606,7 @@ static int nvme_setup_io_queues(void) {
             created++;
     }
 
-    kprintf("[NVMe] %d/%d I/O queue pairs active\n", created, nr_queues);
+    kprintf("[NVME] %d/%d I/O queue pairs active\n", created, nr_queues);
     return created > 0 ? 0 : -1;
 }
 
@@ -815,7 +815,7 @@ static int nvme_blk_submit(struct blk_request *req) {
     if (nr_pages > 1) {
         /* Guard against PRP list overflow (more pages than fit in one PRP page) */
         if ((nr_pages - 1) > NVME_PRP_MAX_PER_PAGE) {
-            kprintf("[NVMe] PRP list overflow: %u pages requested, max %u\n",
+            kprintf("[NVME] PRP list overflow: %u pages requested, max %u\n",
                     nr_pages, NVME_PRP_MAX_PER_PAGE + 1);
             for (uint32_t i = 0; i < nr_pages; i++)
                 pmm_free_frame(frames[i]);
@@ -902,7 +902,7 @@ static int nvme_register_blockdevs(void) {
         memset(&ns, 0, sizeof(ns));
 
         if (nvme_identify_ns(nsid, &ns) < 0) {
-            kprintf("[NVMe] Failed to identify namespace %u\n", nsid);
+            kprintf("[NVME] Failed to identify namespace %u\n", nsid);
             continue;
         }
 
@@ -937,7 +937,7 @@ static int nvme_register_blockdevs(void) {
                                     nvme_blk_submit, NULL,
                                     nsze, 0);
         if (ret < 0) {
-            kprintf("[NVMe] Failed to register blockdev %s\n", devname);
+            kprintf("[NVME] Failed to register blockdev %s\n", devname);
             continue;
         }
 
@@ -960,7 +960,7 @@ static int nvme_register_blockdevs(void) {
             blockdev_set_max_transfer(dev_id, max_sectors);
         }
 
-        kprintf("[NVMe] Registered namespace %u: %s (%llu sectors of %u bytes)\n",
+        kprintf("[NVME] Registered namespace %u: %s (%llu sectors of %u bytes)\n",
                 nsid, devname, (unsigned long long)nsze, sector_size);
     }
 
@@ -1012,7 +1012,7 @@ static struct nvme_mpath_dev *nvme_mpath_find_or_create(uint32_t nsid,
                                      sector_count, 0);
         if (ret == 0) {
             g_mpath_count++;
-            kprintf("[NVMe] Multipath device %s (id=%d) created for NSID %u\n",
+            kprintf("[NVME] Multipath device %s (id=%d) created for NSID %u\n",
                     mp_name, mp->mp_dev_id, nsid);
         } else {
             memset(mp, 0, sizeof(*mp));
@@ -1029,7 +1029,7 @@ static struct nvme_mpath_dev *nvme_mpath_find_or_create(uint32_t nsid,
         path->nsid = nsid;
         path->dev_id = path_dev_id;
         mp->nr_paths++;
-        kprintf("[NVMe] Multipath: added path (ctrl=%d, nsid=%u, dev=%d) to NSID %u\n",
+        kprintf("[NVME] Multipath: added path (ctrl=%d, nsid=%u, dev=%d) to NSID %u\n",
                 ctrl_index, nsid, path_dev_id, nsid);
     }
 
@@ -1098,7 +1098,7 @@ static int nvme_mpath_submit(struct blk_request *req)
         path->stats.fail_count++;
         if (!first_error) first_error = ret;
 
-        kprintf("[NVMe] Multipath: path %d (ctrl=%d, nsid=%u) failed, retrying...\n",
+        kprintf("[NVME] Multipath: path %d (ctrl=%d, nsid=%u) failed, retrying...\n",
                 idx, path->ctrl_index, path->nsid);
     }
 
@@ -1141,28 +1141,28 @@ int nvme_init(void) {
 
     /* Probe PCI */
     if (nvme_probe_pci() < 0) {
-        kprintf("[NVMe] No NVMe controller found\n");
+        kprintf("[NVME] No NVMe controller found\n");
         g_nvme_init_done = 1;
         return -EIO;
     }
 
     /* Setup admin queues */
     if (nvme_setup_admin_queues() < 0) {
-        kprintf("[NVMe] Failed to setup admin queues\n");
+        kprintf("[NVME] Failed to setup admin queues\n");
         return -EIO;
     }
 
     /* Enable controller */
     if (nvme_enable_controller() < 0) {
-        kprintf("[NVMe] Failed to enable controller\n");
+        kprintf("[NVME] Failed to enable controller\n");
         return -EIO;
     }
 
     /* Identify controller */
     struct nvme_identify_ctrl id;
     if (nvme_identify_ctrl(&id) == 0) {
-        kprintf("[NVMe] Model: %.40s  SN: %.20s\n", id.mn, id.sn);
-        kprintf("[NVMe] FW rev: %.8s, Namespaces: %u\n", id.fr, id.nn);
+        kprintf("[NVME] Model: %.40s  SN: %.20s\n", id.mn, id.sn);
+        kprintf("[NVME] FW rev: %.8s, Namespaces: %u\n", id.fr, id.nn);
         /* Save MDTS (Maximum Data Transfer Size) for bio splitting (Item 328) */
         g_nvme_ctrl.mdts = id.mdts;
     }
@@ -1172,24 +1172,26 @@ int nvme_init(void) {
 
     /* Set up per-CPU I/O queue pairs */
     if (nvme_setup_io_queues() < 0) {
-        kprintf("[NVMe] I/O queue setup failed\n");
+        kprintf("[NVME] I/O queue setup failed\n");
     }
 
     /* Register namespaces as block devices */
     if (g_nvme_ctrl.nn > 0) {
         int reg = nvme_register_blockdevs();
         if (reg > 0)
-            kprintf("[NVMe] Registered %d namespace(s)\n", reg);
+            kprintf("[NVME] Registered %d namespace(s)\n", reg);
         else
-            kprintf("[NVMe] No namespaces registered\n");
+            kprintf("[NVME] No namespaces registered\n");
     }
 
     g_nvme_init_done = 1;
-    kprintf("[NVMe] Driver initialized\n");
+    kprintf("[NVME] Driver initialized\n");
     return 0;
 }
 
 /* ── Utility functions ─────────────────────────────────────────────── */
+#include "initcall.h"
+device_initcall(nvme_init);
 
 int nvme_is_present(void) {
     return g_nvme_ctrl.present;
@@ -1227,7 +1229,7 @@ void nvme_exit(void)
     if (!g_nvme_ctrl.present || !g_nvme_init_done)
         return;
 
-    kprintf("[NVMe] Shutting down...\n");
+    kprintf("[NVME] Shutting down...\n");
 
     /* Disable the controller: clear CC.EN */
     uint32_t cc = nvme_read32(&g_nvme_ctrl, NVME_REG_CC);
@@ -1282,7 +1284,7 @@ void nvme_exit(void)
     g_nvme_ctrl.nn = 0;
     g_nvme_init_done = 0;
 
-    kprintf("[NVMe] Driver shut down\n");
+    kprintf("[NVME] Driver shut down\n");
 }
 
 /* ── Module entry/exit points ─────────────────────────────────────── */

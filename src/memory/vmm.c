@@ -12,6 +12,9 @@
 /* Verify our fundamental page size assumption at compile time */
 _Static_assert(PAGE_SIZE == 4096, "PAGE_SIZE must be 4096");
 
+/* Page table entries on x86-64 are 8 bytes (uint64_t) */
+_Static_assert(sizeof(uint64_t) == 8, "Page table entry / uint64_t must be 8 bytes");
+
 /* NX support status — defined in this file, exported for nx_enforce */
 int nx_enabled = 0;
 

@@ -160,7 +160,7 @@ static void nc_parse_cmdline(void)
     ip_str[ip_idx] = '\0';
 
     if (nc_parse_ip(ip_str, &nc_target_ip) < 0) {
-        kprintf("[netconsole] WARNING: failed to parse target IP '%s', disabling\n",
+        kprintf("[NETCONSOLE] WARNING: failed to parse target IP '%s', disabling\n",
                 ip_str);
         nc_enabled = 0;
         return;
@@ -359,7 +359,7 @@ static void nc_send_line(void *arg)
     len = snprintf(buf, sizeof(buf), "<%d>kernel: %s\n",
                    NC_FACILITY * 8 + NC_DEFAULT_SEVERITY,
                    line);
-    if (len > (int)sizeof(buf))
+    if ((size_t)len > sizeof(buf))
         len = (int)sizeof(buf);
 
     /* Send via UDP */
@@ -407,12 +407,12 @@ MODULE_DESCRIPTION("netconsole — kernel log over UDP (Item 391)");
 /* ── Stub: netconsole_send ─────────────────────────────── */
 int netconsole_send(__maybe_unused const void *data, __maybe_unused size_t len)
 {
-    kprintf("[netconsole] netconsole_send: not yet implemented\n");
+    kprintf("[NETCONSOLE] netconsole_send: not yet implemented\n");
     return 0;
 }
 /* ── Stub: netconsole_setup ─────────────────────────────── */
 int netconsole_setup(__maybe_unused const char *config)
 {
-    kprintf("[netconsole] netconsole_setup: not yet implemented\n");
+    kprintf("[NETCONSOLE] netconsole_setup: not yet implemented\n");
     return 0;
 }

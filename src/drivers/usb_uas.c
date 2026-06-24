@@ -139,18 +139,18 @@ module_init(usb_uas_init);
 /* ── Stub: uas_init ─────────────────────────────── */
 int uas_init(__maybe_unused void *dev)
 {
-    kprintf("[usb] uas_init: not yet implemented\n");
+    kprintf("[USB] uas_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uas_read ─────────────────────────────── */
 int uas_read(__maybe_unused void *dev, __maybe_unused void *buf, __maybe_unused size_t count, __maybe_unused uint64_t offset)
 {
-    kprintf("[usb] uas_read: not yet implemented\n");
+    kprintf("[USB] uas_read: not yet implemented\n");
     return 0;
 }
 /* ── Stub: uas_write ─────────────────────────────── */
 int uas_write(__maybe_unused void *dev, __maybe_unused const void *buf, __maybe_unused size_t count, __maybe_unused uint64_t offset)
 {
-    kprintf("[usb] uas_write: not yet implemented\n");
+    kprintf("[USB] uas_write: not yet implemented\n");
     return 0;
 }

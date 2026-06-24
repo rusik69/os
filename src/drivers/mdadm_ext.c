@@ -46,7 +46,7 @@ void raid_md_init(void)
     spinlock_init(&g_raid_lock);
     g_raid_next_id = 0;
     g_raid_initialized = 1;
-    kprintf("[mdadm] MD subsystem initialized (RAID0/1/5/6/10, max %d+%d+%d+%d+%d arrays)\n",
+    kprintf("[MDADM] MD subsystem initialized (RAID0/1/5/6/10, max %d+%d+%d+%d+%d arrays)\n",
             MAX_RAID1_ARRAYS, MAX_RAID0_ARRAYS, MAX_RAID5_ARRAYS,
             MAX_RAID6_ARRAYS, MAX_RAID10_ARRAYS);
 }
@@ -90,7 +90,7 @@ static uint64_t raid1_min_sectors(const struct raid1_array *array)
 int raid1_create(const int *member_dev_ids, int num_members)
 {
     if (!member_dev_ids || num_members < 2 || num_members > RAID1_MAX_MEMBERS) {
-        kprintf("[mdadm] RAID1: invalid parameters (%d members, max %d)\n",
+        kprintf("[MDADM] RAID1: invalid parameters (%d members, max %d)\n",
                 num_members, RAID1_MAX_MEMBERS);
         return -1;
     }
@@ -111,7 +111,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID1: no free array slots\n");
+        kprintf("[MDADM] RAID1: no free array slots\n");
         return -1;
     }
 
@@ -133,7 +133,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
         g_raid1_arrays[slot].members[i].sector_count = blockdev_get_sectors(dev_id);
 
         if (g_raid1_arrays[slot].members[i].sector_count == 0) {
-            kprintf("[mdadm] RAID1: member %d (dev_id=%d) has 0 sectors\n",
+            kprintf("[MDADM] RAID1: member %d (dev_id=%d) has 0 sectors\n",
                     i, dev_id);
             spinlock_irqsave_release(&g_raid_lock, irq_flags);
             memset(&g_raid1_arrays[slot], 0, sizeof(struct raid1_array));
@@ -161,7 +161,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
                                 g_raid1_arrays[slot].array_sectors,
                                 0);   /* flags (sync driver) */
     if (ret != 0) {
-        kprintf("[mdadm] RAID1: failed to register block device md%d (ret=%d)\n",
+        kprintf("[MDADM] RAID1: failed to register block device md%d (ret=%d)\n",
                 slot, ret);
         memset(&g_raid1_arrays[slot], 0, sizeof(struct raid1_array));
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
@@ -170,7 +170,7 @@ int raid1_create(const int *member_dev_ids, int num_members)
 
     spinlock_irqsave_release(&g_raid_lock, irq_flags);
 
-    kprintf("[mdadm] RAID1 array md%d created: %d members, %llu sectors, id=%d\n",
+    kprintf("[MDADM] RAID1 array md%d created: %d members, %llu sectors, id=%d\n",
             slot, num_members,
             (unsigned long long)g_raid1_arrays[slot].array_sectors,
             md_id);
@@ -189,7 +189,7 @@ void raid1_destroy(int array_id)
         if (g_raid1_arrays[i].array_id == array_id && g_raid1_arrays[i].num_members > 0) {
             int md_id = g_raid1_arrays[i].array_id;
             blockdev_unregister(md_id);
-            kprintf("[mdadm] RAID1 array md%d (id=%d) destroyed\n", i, md_id);
+            kprintf("[MDADM] RAID1 array md%d (id=%d) destroyed\n", i, md_id);
             memset(&g_raid1_arrays[i], 0, sizeof(struct raid1_array));
             break;
         }
@@ -213,7 +213,7 @@ int raid1_member_failed(int array_id, int dev_id)
                 if (arr->members[j].dev_id == dev_id &&
                     arr->members[j].state == RAID_MEMBER_ACTIVE) {
                     arr->members[j].state = RAID_MEMBER_FAILED;
-                    kprintf("[mdadm] RAID1 md%d: member %d (dev_id=%d) marked FAILED\n",
+                    kprintf("[MDADM] RAID1 md%d: member %d (dev_id=%d) marked FAILED\n",
                             i, j, dev_id);
 
                     /* Check if we still have any active members */
@@ -224,10 +224,10 @@ int raid1_member_failed(int array_id, int dev_id)
                     }
                     if (active == 0) {
                         arr->state = RAID_ARRAY_FAILED;
-                        kprintf("[mdadm] RAID1 md%d: ALL members failed, array is FAILED\n", i);
+                        kprintf("[MDADM] RAID1 md%d: ALL members failed, array is FAILED\n", i);
                     } else {
                         arr->state = RAID_ARRAY_DEGRADED;
-                        kprintf("[mdadm] RAID1 md%d: degraded (%d/%d members active)\n",
+                        kprintf("[MDADM] RAID1 md%d: degraded (%d/%d members active)\n",
                                 i, active, arr->num_members);
                     }
                     found = 1;
@@ -404,7 +404,7 @@ int raid_set_level_raid0(struct raid_super *super)
     if (!super) return -EINVAL;
     super->level = 0;
     super->checksum = raid_super_checksum(super);
-    kprintf("[mdadm] RAID superblock set to RAID0\n");
+    kprintf("[MDADM] RAID superblock set to RAID0\n");
     return 0;
 }
 
@@ -429,7 +429,7 @@ int raid_create_raid0(struct raid_super *super, uint32_t num_disks,
     memcpy(super->uuid, uuid, 16);
     super->checksum = raid_super_checksum(super);
 
-    kprintf("[mdadm] RAID0 created: %u disks, chunk=%u sectors\n",
+    kprintf("[MDADM] RAID0 created: %u disks, chunk=%u sectors\n",
             num_disks, chunk_size);
     return 0;
 }
@@ -470,7 +470,7 @@ int raid0_create(const int *member_dev_ids, int num_disks,
                  uint32_t chunk_size, const uint8_t *uuid)
 {
     if (!member_dev_ids || num_disks < 2 || num_disks > RAID0_MAX_DISKS) {
-        kprintf("[mdadm] RAID0: invalid parameters (%d disks, max %d)\n",
+        kprintf("[MDADM] RAID0: invalid parameters (%d disks, max %d)\n",
                 num_disks, RAID0_MAX_DISKS);
         return -1;
     }
@@ -494,7 +494,7 @@ int raid0_create(const int *member_dev_ids, int num_disks,
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID0: no free array slots\n");
+        kprintf("[MDADM] RAID0: no free array slots\n");
         return -1;
     }
 
@@ -521,7 +521,7 @@ int raid0_create(const int *member_dev_ids, int num_disks,
 
     if (min_sectors == (uint64_t)-1 || min_sectors == 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID0: all disks have 0 sectors\n");
+        kprintf("[MDADM] RAID0: all disks have 0 sectors\n");
         memset(&g_raid0_arrays[slot], 0, sizeof(struct raid0_array));
         return -1;
     }
@@ -550,7 +550,7 @@ int raid0_create(const int *member_dev_ids, int num_disks,
                                 g_raid0_arrays[slot].array_sectors,
                                 0);
     if (ret != 0) {
-        kprintf("[mdadm] RAID0: failed to register block device %s (ret=%d)\n",
+        kprintf("[MDADM] RAID0: failed to register block device %s (ret=%d)\n",
                 md_name, ret);
         memset(&g_raid0_arrays[slot], 0, sizeof(struct raid0_array));
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
@@ -559,7 +559,7 @@ int raid0_create(const int *member_dev_ids, int num_disks,
 
     spinlock_irqsave_release(&g_raid_lock, irq_flags);
 
-    kprintf("[mdadm] RAID0 array %s created: %d disks, chunk=%u sectors, "
+    kprintf("[MDADM] RAID0 array %s created: %d disks, chunk=%u sectors, "
             "%llu total sectors, id=%d\n",
             md_name, num_disks, chunk_size,
             (unsigned long long)g_raid0_arrays[slot].array_sectors,
@@ -578,7 +578,7 @@ void raid0_destroy(int array_id)
     for (int i = 0; i < MAX_RAID0_ARRAYS; i++) {
         if (g_raid0_arrays[i].array_id == array_id && g_raid0_arrays[i].num_disks > 0) {
             blockdev_unregister(array_id);
-            kprintf("[mdadm] RAID0 array md%d (id=%d) destroyed\n",
+            kprintf("[MDADM] RAID0 array md%d (id=%d) destroyed\n",
                     i + MAX_RAID1_ARRAYS, array_id);
             memset(&g_raid0_arrays[i], 0, sizeof(struct raid0_array));
             break;
@@ -784,7 +784,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
 {
     if (!member_dev_ids || num_disks < 4 || num_disks > RAID10_MAX_DISKS ||
         (num_disks & 1)) {
-        kprintf("[mdadm] RAID10: need even number of disks (>=4), got %d\n", num_disks);
+        kprintf("[MDADM] RAID10: need even number of disks (>=4), got %d\n", num_disks);
         return -1;
     }
 
@@ -809,7 +809,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID10: no free array slots\n");
+        kprintf("[MDADM] RAID10: no free array slots\n");
         return -1;
     }
 
@@ -846,7 +846,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
 
     if (min_pair_sectors == (uint64_t)-1 || min_pair_sectors == 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID10: all members have 0 sectors\n");
+        kprintf("[MDADM] RAID10: all members have 0 sectors\n");
         memset(&g_raid10_arrays[slot], 0, sizeof(struct raid10_array));
         return -1;
     }
@@ -872,7 +872,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
                                 g_raid10_arrays[slot].array_sectors,
                                 0);
     if (ret != 0) {
-        kprintf("[mdadm] RAID10: failed to register block device %s (ret=%d)\n",
+        kprintf("[MDADM] RAID10: failed to register block device %s (ret=%d)\n",
                 md_name, ret);
         memset(&g_raid10_arrays[slot], 0, sizeof(struct raid10_array));
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
@@ -881,7 +881,7 @@ int raid10_create(const int *member_dev_ids, int num_disks,
 
     spinlock_irqsave_release(&g_raid_lock, irq_flags);
 
-    kprintf("[mdadm] RAID10 array %s created: %d pairs (striped mirrors), "
+    kprintf("[MDADM] RAID10 array %s created: %d pairs (striped mirrors), "
             "chunk=%u sectors, %llu total sectors, id=%d\n",
             md_name, num_pairs, chunk_size,
             (unsigned long long)g_raid10_arrays[slot].array_sectors,
@@ -900,7 +900,7 @@ void raid10_destroy(int array_id)
     for (int i = 0; i < MAX_RAID10_ARRAYS; i++) {
         if (g_raid10_arrays[i].array_id == array_id && g_raid10_arrays[i].num_pairs > 0) {
             blockdev_unregister(array_id);
-            kprintf("[mdadm] RAID10 array md%d (id=%d) destroyed\n",
+            kprintf("[MDADM] RAID10 array md%d (id=%d) destroyed\n",
                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS, array_id);
             memset(&g_raid10_arrays[i], 0, sizeof(struct raid10_array));
             break;
@@ -1156,7 +1156,7 @@ int raid5_create(const int *member_dev_ids, int num_disks,
                  uint32_t chunk_size, const uint8_t *uuid)
 {
     if (!member_dev_ids || num_disks < 3 || num_disks > RAID5_MAX_DISKS) {
-        kprintf("[mdadm] RAID5: invalid parameters (%d disks, need 3-%d)\n",
+        kprintf("[MDADM] RAID5: invalid parameters (%d disks, need 3-%d)\n",
                 num_disks, RAID5_MAX_DISKS);
         return -1;
     }
@@ -1174,7 +1174,7 @@ int raid5_create(const int *member_dev_ids, int num_disks,
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID5: no free array slots\n");
+        kprintf("[MDADM] RAID5: no free array slots\n");
         return -1;
     }
 
@@ -1222,14 +1222,14 @@ int raid5_create(const int *member_dev_ids, int num_disks,
                                 raid5_submit_fn, NULL,
                                 g_raid5_arrays[slot].array_sectors, 0);
     if (ret != 0) {
-        kprintf("[mdadm] RAID5: failed to register %s (ret=%d)\n", md_name, ret);
+        kprintf("[MDADM] RAID5: failed to register %s (ret=%d)\n", md_name, ret);
         memset(&g_raid5_arrays[slot], 0, sizeof(struct raid5_array));
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
         return -1;
     }
 
     spinlock_irqsave_release(&g_raid_lock, irq_flags);
-    kprintf("[mdadm] RAID5 array %s: %d disks, chunk=%u sectors, "
+    kprintf("[MDADM] RAID5 array %s: %d disks, chunk=%u sectors, "
             "%llu total sectors, id=%d\n",
             md_name, num_disks, chunk_size,
             (unsigned long long)g_raid5_arrays[slot].array_sectors, md_id);
@@ -1243,7 +1243,7 @@ void raid5_destroy(int array_id)
     for (int i = 0; i < MAX_RAID5_ARRAYS; i++) {
         if (g_raid5_arrays[i].array_id == array_id && g_raid5_arrays[i].num_disks > 0) {
             blockdev_unregister(array_id);
-            kprintf("[mdadm] RAID5 array md%d (id=%d) destroyed\n", i, array_id);
+            kprintf("[MDADM] RAID5 array md%d (id=%d) destroyed\n", i, array_id);
             memset(&g_raid5_arrays[i], 0, sizeof(struct raid5_array));
             break;
         }
@@ -1452,7 +1452,7 @@ int raid6_create(const int *member_dev_ids, int num_disks,
                  uint32_t chunk_size, const uint8_t *uuid)
 {
     if (!member_dev_ids || num_disks < 4 || num_disks > RAID6_MAX_DISKS) {
-        kprintf("[mdadm] RAID6: invalid parameters (%d disks, need 4-%d)\n",
+        kprintf("[MDADM] RAID6: invalid parameters (%d disks, need 4-%d)\n",
                 num_disks, RAID6_MAX_DISKS);
         return -1;
     }
@@ -1470,7 +1470,7 @@ int raid6_create(const int *member_dev_ids, int num_disks,
     }
     if (slot < 0) {
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
-        kprintf("[mdadm] RAID6: no free array slots\n");
+        kprintf("[MDADM] RAID6: no free array slots\n");
         return -1;
     }
 
@@ -1518,14 +1518,14 @@ int raid6_create(const int *member_dev_ids, int num_disks,
                                 raid6_submit_fn, NULL,
                                 g_raid6_arrays[slot].array_sectors, 0);
     if (ret != 0) {
-        kprintf("[mdadm] RAID6: failed to register %s (ret=%d)\n", md_name, ret);
+        kprintf("[MDADM] RAID6: failed to register %s (ret=%d)\n", md_name, ret);
         memset(&g_raid6_arrays[slot], 0, sizeof(struct raid6_array));
         spinlock_irqsave_release(&g_raid_lock, irq_flags);
         return -1;
     }
 
     spinlock_irqsave_release(&g_raid_lock, irq_flags);
-    kprintf("[mdadm] RAID6 array %s: %d disks, chunk=%u sectors, "
+    kprintf("[MDADM] RAID6 array %s: %d disks, chunk=%u sectors, "
             "%llu total sectors, id=%d\n",
             md_name, num_disks, chunk_size,
             (unsigned long long)g_raid6_arrays[slot].array_sectors, md_id);
@@ -1539,7 +1539,7 @@ void raid6_destroy(int array_id)
     for (int i = 0; i < MAX_RAID6_ARRAYS; i++) {
         if (g_raid6_arrays[i].array_id == array_id && g_raid6_arrays[i].num_disks > 0) {
             blockdev_unregister(array_id);
-            kprintf("[mdadm] RAID6 array md%d (id=%d) destroyed\n", i, array_id);
+            kprintf("[MDADM] RAID6 array md%d (id=%d) destroyed\n", i, array_id);
             memset(&g_raid6_arrays[i], 0, sizeof(struct raid6_array));
             break;
         }
@@ -1710,7 +1710,7 @@ void md_member_failed(int array_id, int dev_id, int level)
                             g_raid0_arrays[i].disks[j].state == RAID_MEMBER_ACTIVE) {
                             g_raid0_arrays[i].disks[j].state = RAID_MEMBER_FAILED;
                             g_raid0_arrays[i].state = RAID_ARRAY_DEGRADED;
-                            kprintf("[mdadm] RAID0 md%d: disk %d (dev=%d) FAILED\n",
+                            kprintf("[MDADM] RAID0 md%d: disk %d (dev=%d) FAILED\n",
                                     i + MAX_RAID1_ARRAYS, j, dev_id);
                             break;
                         }
@@ -1736,7 +1736,7 @@ void md_member_failed(int array_id, int dev_id, int level)
                         if (g_raid5_arrays[i].disks[j].dev_id == dev_id &&
                             g_raid5_arrays[i].disks[j].state == RAID_MEMBER_ACTIVE) {
                             g_raid5_arrays[i].disks[j].state = RAID_MEMBER_FAILED;
-                            kprintf("[mdadm] RAID5 md%d: disk %d (dev=%d) FAILED\n",
+                            kprintf("[MDADM] RAID5 md%d: disk %d (dev=%d) FAILED\n",
                                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS + MAX_RAID10_ARRAYS,
                                     j, dev_id);
                         }
@@ -1747,7 +1747,7 @@ void md_member_failed(int array_id, int dev_id, int level)
                         g_raid5_arrays[i].state = RAID_ARRAY_FAILED;
                     } else {
                         g_raid5_arrays[i].state = RAID_ARRAY_DEGRADED;
-                        kprintf("[mdadm] RAID5 md%d: degraded (%d/%d active)\n",
+                        kprintf("[MDADM] RAID5 md%d: degraded (%d/%d active)\n",
                                 i, active, g_raid5_arrays[i].num_disks);
                     }
                     break;
@@ -1768,7 +1768,7 @@ void md_member_failed(int array_id, int dev_id, int level)
                         if (g_raid6_arrays[i].disks[j].dev_id == dev_id &&
                             g_raid6_arrays[i].disks[j].state == RAID_MEMBER_ACTIVE) {
                             g_raid6_arrays[i].disks[j].state = RAID_MEMBER_FAILED;
-                            kprintf("[mdadm] RAID6 md%d: disk %d (dev=%d) FAILED\n",
+                            kprintf("[MDADM] RAID6 md%d: disk %d (dev=%d) FAILED\n",
                                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS + MAX_RAID10_ARRAYS + MAX_RAID5_ARRAYS,
                                     j, dev_id);
                         }
@@ -1779,7 +1779,7 @@ void md_member_failed(int array_id, int dev_id, int level)
                         g_raid6_arrays[i].state = RAID_ARRAY_FAILED;
                     } else if (active < g_raid6_arrays[i].num_disks) {
                         g_raid6_arrays[i].state = RAID_ARRAY_DEGRADED;
-                        kprintf("[mdadm] RAID6 md%d: degraded (%d/%d active)\n",
+                        kprintf("[MDADM] RAID6 md%d: degraded (%d/%d active)\n",
                                 i, active, g_raid6_arrays[i].num_disks);
                     }
                     break;
@@ -1802,21 +1802,21 @@ void md_member_failed(int array_id, int dev_id, int level)
                         if (arr->pairs[p].primary.dev_id == dev_id &&
                             arr->pairs[p].primary.state == RAID_MEMBER_ACTIVE) {
                             arr->pairs[p].primary.state = RAID_MEMBER_FAILED;
-                            kprintf("[mdadm] RAID10 md%d: pair %d primary (dev=%d) FAILED\n",
+                            kprintf("[MDADM] RAID10 md%d: pair %d primary (dev=%d) FAILED\n",
                                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS,
                                     p, dev_id);
                         }
                         if (arr->pairs[p].secondary.dev_id == dev_id &&
                             arr->pairs[p].secondary.state == RAID_MEMBER_ACTIVE) {
                             arr->pairs[p].secondary.state = RAID_MEMBER_FAILED;
-                            kprintf("[mdadm] RAID10 md%d: pair %d secondary (dev=%d) FAILED\n",
+                            kprintf("[MDADM] RAID10 md%d: pair %d secondary (dev=%d) FAILED\n",
                                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS,
                                     p, dev_id);
                         }
                         /* Check if this pair is dead */
                         if (arr->pairs[p].primary.state == RAID_MEMBER_FAILED &&
                             arr->pairs[p].secondary.state == RAID_MEMBER_FAILED) {
-                            kprintf("[mdadm] RAID10 md%d: pair %d BOTH members dead\n",
+                            kprintf("[MDADM] RAID10 md%d: pair %d BOTH members dead\n",
                                     i + MAX_RAID1_ARRAYS + MAX_RAID0_ARRAYS, p);
                         } else {
                             all_failed = 0;
@@ -1845,25 +1845,25 @@ void md_member_failed(int array_id, int dev_id, int level)
 /* ── Stub: mdadm_ext_init ─────────────────────────────── */
 int mdadm_ext_init(void)
 {
-    kprintf("[mdadm] mdadm_ext_init: not yet implemented\n");
+    kprintf("[MDADM] mdadm_ext_init: not yet implemented\n");
     return 0;
 }
 /* ── Stub: mdadm_ext_rebuild ─────────────────────────────── */
 int mdadm_ext_rebuild(__maybe_unused const char *dev)
 {
-    kprintf("[mdadm] mdadm_ext_rebuild: not yet implemented\n");
+    kprintf("[MDADM] mdadm_ext_rebuild: not yet implemented\n");
     return 0;
 }
 /* ── Stub: mdadm_ext_check ─────────────────────────────── */
 int mdadm_ext_check(__maybe_unused const char *dev, __maybe_unused void *status)
 {
-    kprintf("[mdadm] mdadm_ext_check: not yet implemented\n");
+    kprintf("[MDADM] mdadm_ext_check: not yet implemented\n");
     return 0;
 }
 /* ── Stub: mdadm_ext_resync ─────────────────────────────── */
 int mdadm_ext_resync(const char *dev)
 {
     (void)dev;
-    kprintf("[mdadm] mdadm_ext_resync: not yet implemented\n");
+    kprintf("[MDADM] mdadm_ext_resync: not yet implemented\n");
     return 0;
 }

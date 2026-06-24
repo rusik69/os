@@ -818,7 +818,7 @@ int virtio_net_open(void *dev)
     (void)dev;
     if (!vnet_present) return -EIO;
 
-    kprintf("[virtio_net] Opening interface...\n");
+    kprintf("[VIRTIO_NET] Opening interface...\n");
 
     /* Set DRIVER_OK status — device starts sending interrupts */
     uint8_t status = vio_inb(VIRTIO_PCI_STATUS);
@@ -830,7 +830,7 @@ int virtio_net_open(void *dev)
     __asm__ volatile("" ::: "memory");
     vio_outw(VIRTIO_PCI_QUEUE_NOTIFY, RX_QUEUE_IDX);
 
-    kprintf("[virtio_net] Interface opened\n");
+    kprintf("[VIRTIO_NET] Interface opened\n");
     return 0;
 }
 
@@ -840,12 +840,12 @@ int virtio_net_stop(void *dev)
     (void)dev;
     if (!vnet_present) return -EIO;
 
-    kprintf("[virtio_net] Stopping interface...\n");
+    kprintf("[VIRTIO_NET] Stopping interface...\n");
 
     /* Reset the device (write 0 to status) */
     vio_outb(VIRTIO_PCI_STATUS, 0);
 
-    kprintf("[virtio_net] Interface stopped\n");
+    kprintf("[VIRTIO_NET] Interface stopped\n");
     return 0;
 }
 

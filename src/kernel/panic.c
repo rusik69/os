@@ -275,7 +275,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
         cur && cur->name ? cur->name : "?",
         smp_get_cpu_id(), smp_get_cpu_count());
     if (len > 0) {
-        if (len >= (int)sizeof(buf))
+        if ((size_t)len >= sizeof(buf))
             len = (int)sizeof(buf) - 1;
         pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
     }
@@ -289,7 +289,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
         (unsigned long long)rsi, (unsigned long long)rdi,
         (unsigned long long)rbp, (unsigned long long)rsp);
     if (len > 0) {
-        if (len >= (int)sizeof(buf))
+        if ((size_t)len >= sizeof(buf))
             len = (int)sizeof(buf) - 1;
         pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
     }
@@ -303,7 +303,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
         (unsigned long long)r12, (unsigned long long)r13,
         (unsigned long long)r14, (unsigned long long)r15);
     if (len > 0) {
-        if (len >= (int)sizeof(buf))
+        if ((size_t)len >= sizeof(buf))
             len = (int)sizeof(buf) - 1;
         pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
     }
@@ -319,7 +319,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
         (unsigned long long)cr3, (unsigned long long)cr4,
         (unsigned long long)cr8);
     if (len > 0) {
-        if (len >= (int)sizeof(buf))
+        if ((size_t)len >= sizeof(buf))
             len = (int)sizeof(buf) - 1;
         pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
     }
@@ -332,7 +332,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
 
         len = snprintf(buf, sizeof(buf), "Stack trace:"); /* Linux format */
         if (len > 0) {
-            if (len >= (int)sizeof(buf))
+            if ((size_t)len >= sizeof(buf))
                 len = (int)sizeof(buf) - 1;
             pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
         }
@@ -352,7 +352,7 @@ static void kdump_save_panic(const char *msg, uint64_t actual_rip)
                 "  [%02d] %016llx %s",
                 frame, (unsigned long long)ret_addr, sym);
             if (len > 0) {
-                if (len >= (int)sizeof(buf))
+                if ((size_t)len >= sizeof(buf))
                     len = (int)sizeof(buf) - 1;
                 pstore_write(PSTORE_TYPE_PANIC, (const uint8_t *)buf, len);
             }

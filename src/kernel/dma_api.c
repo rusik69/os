@@ -84,6 +84,20 @@ static void dma_unmap_pages_iommu(struct pci_device *dev,
 
 /* ── Public API ─────────────────────────────────────────────────── */
 
+/**
+ * dma_alloc_coherent - Allocate and IOMMU-map contiguous DMA-coherent memory
+ * @dev: Target PCI device (may be NULL for identity mapping)
+ * @size: Number of bytes to allocate
+ * @dma_handle: On success, set to the DMA bus address (IOVA) of the buffer
+ * @flags: Allocation flags (currently unused)
+ *
+ * Allocates physically-contiguous pages, maps them uncacheable into the
+ * kernel virtual address space, zeros the buffer, and creates an IOMMU
+ * mapping for the device.  If the IOMMU is disabled, the DMA handle
+ * is identical to the physical address (identity mapping).
+ *
+ * Return: A kernel virtual address for the buffer, or NULL on failure
+ */
 void *dma_alloc_coherent(struct pci_device *dev, size_t size,
                           uint64_t *dma_handle, uint64_t flags)
 {
@@ -175,6 +189,17 @@ void *dma_alloc_coherent(struct pci_device *dev, size_t size,
     return virt;
 }
 
+/**
+ * dma_free_coherent - Free a DMA-coherent buffer and tear down its mappings
+ * @dev: Target PCI device (may be NULL for identity mapping)
+ * @size: Original allocation size in bytes
+ * @cpu_addr: Kernel virtual address returned by dma_alloc_coherent()
+ * @dma_handle: DMA bus address (IOVA) returned by dma_alloc_coherent()
+ *
+ * Tears down the IOMMU mapping, unmaps the buffer from the kernel
+ * virtual address space, and frees the physical pages.  Safe to call
+ * with a NULL @cpu_addr.
+ */
 void dma_free_coherent(struct pci_device *dev, size_t size,
                         void *cpu_addr, uint64_t dma_handle)
 {
@@ -201,6 +226,19 @@ void dma_free_coherent(struct pci_device *dev, size_t size,
         pmm_free_frame(phys_addr + i * PAGE_SIZE);
 }
 
+/**
+ * dma_map_single - IOMMU-map an existing buffer for DMA
+ * @dev: Target PCI device (may be NULL for identity mapping)
+ * @cpu_addr: Kernel virtual address of the buffer to map
+ * @size: Number of bytes to map
+ * @dir: DMA data direction (TO_DEVICE, FROM_DEVICE, or BIDIRECTIONAL)
+ *
+ * Maps a buffer into IOMMU space for device DMA access.  Issues a
+ * memory barrier (MFENCE) before returning to ensure previous CPU
+ * writes are visible to the device.
+ *
+ * Return: The DMA bus address (IOVA) for the device, or ~0ULL on error
+ */
 uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
                          size_t size, enum dma_data_direction dir)
 {
@@ -236,6 +274,16 @@ uint64_t dma_map_single(struct pci_device *dev, void *cpu_addr,
     return dma_map_pages_iommu(dev, phys_addr, num_pages, iommu_flags);
 }
 
+/**
+ * dma_unmap_single - Tear down an IOMMU mapping created by dma_map_single()
+ * @dev: Target PCI device (may be NULL for identity mapping)
+ * @dma_handle: DMA bus address (IOVA) to unmap
+ * @size: Original mapped size in bytes
+ * @dir: DMA data direction (same as passed to dma_map_single())
+ *
+ * Removes the IOMMU mapping for the given DMA handle.  Safe to call
+ * with a @dma_handle of ~0ULL.
+ */
 void dma_unmap_single(struct pci_device *dev, uint64_t dma_handle,
                        size_t size, enum dma_data_direction dir)
 {

@@ -82,7 +82,7 @@ int virtio_iommu_map(uint64_t virt_start, uint64_t virt_end,
         if (e->used) {
             /* Check if ranges overlap */
             if (virt_start <= e->virt_end && virt_end >= e->virt_start) {
-                kprintf("[virtio-iommu] WARNING: mapping overlap "
+                kprintf("[VIRTIO-IOMMU] WARNING: mapping overlap "
                         "0x%llx-0x%llx with existing 0x%llx-0x%llx\n",
                         virt_start, virt_end,
                         e->virt_start, e->virt_end);
@@ -101,7 +101,7 @@ int virtio_iommu_map(uint64_t virt_start, uint64_t virt_end,
 
     virtio_iommu_num_mappings++;
 
-    kprintf("[virtio-iommu] MAP 0x%llx-0x%llx → phys 0x%llx flags=0x%x\n",
+    kprintf("[VIRTIO-IOMMU] MAP 0x%llx-0x%llx → phys 0x%llx flags=0x%x\n",
             virt_start, virt_end, phys_start, flags);
     return 0;
 }
@@ -112,7 +112,7 @@ int virtio_iommu_unmap(uint64_t virt_start)
         struct virtio_iommu_map_entry *e = &virtio_iommu_mappings[i];
         if (e->used && e->virt_start == virt_start) {
             e->used = 0;
-            kprintf("[virtio-iommu] UNMAP 0x%llx\n", virt_start);
+            kprintf("[VIRTIO-IOMMU] UNMAP 0x%llx\n", virt_start);
             return 0;
         }
     }
@@ -153,7 +153,7 @@ int virtio_iommu_attach(uint32_t domain_id, uint32_t endpoint)
         return -1;
     dom->endpoints[dom->num_endpoints++] = endpoint;
 
-    kprintf("[virtio-iommu] ATTACH domain %u endpoint %u\n",
+    kprintf("[VIRTIO-IOMMU] ATTACH domain %u endpoint %u\n",
             domain_id, endpoint);
     return 0;
 }
@@ -169,7 +169,7 @@ int virtio_iommu_detach(uint32_t domain_id, uint32_t endpoint)
                     for (int k = j; k < dom->num_endpoints - 1; k++)
                         dom->endpoints[k] = dom->endpoints[k + 1];
                     dom->num_endpoints--;
-                    kprintf("[virtio-iommu] DETACH domain %u endpoint %u\n",
+                    kprintf("[VIRTIO-IOMMU] DETACH domain %u endpoint %u\n",
                             domain_id, endpoint);
                     return 0;
                 }
@@ -204,7 +204,7 @@ int virtio_iommu_handle_request(int vq_idx)
 {
     if (!virtio_iommu_initialized) return -1;
 
-    kprintf("[virtio-iommu] handling request on virtqueue %d\n", vq_idx);
+    kprintf("[VIRTIO-IOMMU] handling request on virtqueue %d\n", vq_idx);
 
     /* In a real implementation, this would:
      *  1. Read the request from the virtqueue
@@ -225,7 +225,7 @@ void virtio_iommu_cleanup(void)
     virtio_iommu_num_mappings = 0;
     virtio_iommu_num_domains = 0;
     virtio_iommu_initialized = 0;
-    kprintf("[virtio-iommu] cleaned up\n");
+    kprintf("[VIRTIO-IOMMU] cleaned up\n");
 }
 
 /* ── Init ──────────────────────────────────────────────────────────── */
@@ -241,10 +241,10 @@ int virtio_iommu_init(void)
     if (pci_find_device(0x1AF4, 0x1057, &dev) < 0) {
         /* Some virtio-iommu implementations use transitional device ID */
         if (pci_find_device(0x1AF4, 0x1000, &dev) < 0) {
-            kprintf("[virtio-iommu] device not found (running in standalone mode)\n");
+            kprintf("[VIRTIO-IOMMU] device not found (running in standalone mode)\n");
             /* Continue without hardware — we provide software IOMMU anyway */
             virtio_iommu_initialized = 1;
-            kprintf("[virtio-iommu] software IOMMU initialized (no hardware)\n");
+            kprintf("[VIRTIO-IOMMU] software IOMMU initialized (no hardware)\n");
             return 0;
         }
     }
@@ -273,7 +273,7 @@ int virtio_iommu_init(void)
                      VIRTIO_IOMMU_MAP_F_READ | VIRTIO_IOMMU_MAP_F_WRITE);
 
     virtio_iommu_initialized = 1;
-    kprintf("[virtio-iommu] Virtio IOMMU initialized at I/O 0x%04x, "
+    kprintf("[VIRTIO-IOMMU] Virtio IOMMU initialized at I/O 0x%04x, "
             "%d mappings\n",
             virtio_iommu_iobase, virtio_iommu_num_mappings);
     return 0;
@@ -284,24 +284,24 @@ module_init(virtio_iommu_init);
 /* ── Stub: virtio_iommu_probe ─────────────────────────────── */
 int virtio_iommu_probe(__maybe_unused void *dev)
 {
-    kprintf("[virtio_iommu] virtio_iommu_probe: not yet implemented\n");
+    kprintf("[VIRTIO_IOMMU] virtio_iommu_probe: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_remove ─────────────────────────────── */
 int virtio_iommu_remove(__maybe_unused void *dev)
 {
-    kprintf("[virtio_iommu] virtio_iommu_remove: not yet implemented\n");
+    kprintf("[VIRTIO_IOMMU] virtio_iommu_remove: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_alloc ─────────────────────────────── */
 int virtio_iommu_iova_alloc(__maybe_unused void *domain, __maybe_unused size_t size, __maybe_unused void *iova)
 {
-    kprintf("[virtio_iommu] virtio_iommu_iova_alloc: not yet implemented\n");
+    kprintf("[VIRTIO_IOMMU] virtio_iommu_iova_alloc: not yet implemented\n");
     return 0;
 }
 /* ── Stub: virtio_iommu_iova_free ─────────────────────────────── */
 int virtio_iommu_iova_free(__maybe_unused void *domain, __maybe_unused void *iova, __maybe_unused size_t size)
 {
-    kprintf("[virtio_iommu] virtio_iommu_iova_free: not yet implemented\n");
+    kprintf("[VIRTIO_IOMMU] virtio_iommu_iova_free: not yet implemented\n");
     return 0;
 }

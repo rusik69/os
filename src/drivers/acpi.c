@@ -1564,6 +1564,6 @@ uint32_t acpi_read_gpe_status(void)
 void* acpi_get_table(const char *sig)
 {
     (void)sig;
-    kprintf("[acpi] acpi_get_table: not yet implemented\n");
+    kprintf("[ACPI] acpi_get_table: not yet implemented\n");
     return NULL;
 }

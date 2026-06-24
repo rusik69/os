@@ -146,7 +146,7 @@ static int kcov_disable(struct process *proc)
 }
 
 /* ── Stub: kcov_init ─────────────────────────────── */
-int kcov_init(void)
+int __init kcov_init(void)
 {
     kprintf("[kcov] kcov_init: not yet implemented\n");
     return 0;

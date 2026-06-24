@@ -258,7 +258,7 @@ static int scan_dsdt_for_pss(void)
  *   0   : ACPI _PSS not found (MSR fallback should be used)
  *   < 0 : error
  */
-int acpi_cpufreq_init(void)
+int __init acpi_cpufreq_init(void)
 {
     kprintf("[acpi_cpufreq] Scanning ACPI for _PSS...\n");
 

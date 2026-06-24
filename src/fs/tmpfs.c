@@ -518,7 +518,7 @@ void __init tmpfs_init(void) {
     kprintf("[OK] tmpfs initialized\n");
 }
 #include "module.h"
-module_init(tmpfs_init);
+fs_initcall(tmpfs_init);
 
 /* ── tmpfs_umount ──────────────────────────────────────── */
 static int tmpfs_umount(const char *target)
