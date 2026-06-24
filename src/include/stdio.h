@@ -87,10 +87,10 @@ void clearerr(FILE *stream);
 
 /* ── Formatted I/O ──────────────────────────────────────────────── */
 
-int fprintf(FILE *stream, const char *fmt, ...);
+int fprintf(FILE *stream, const char *fmt, ...) __printf(2, 3);
 int fscanf(FILE *stream, const char *fmt, ...);
 int sscanf(const char *str, const char *fmt, ...);
-int vfprintf(FILE *stream, const char *fmt, __builtin_va_list ap);
+int vfprintf(FILE *stream, const char *fmt, __builtin_va_list ap) __printf(2, 0);
 int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap);
 
 /* ── Pre-defined standard streams (terminal input/output via serial) ── */

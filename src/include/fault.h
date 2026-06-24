@@ -9,7 +9,7 @@ void fault_init(void);
 
 /* Kernel panic — prints message, register state, then halts.
  * Use via the PANIC() macro for file/line info. */
-void kpanic(const char *fmt, ...) __attribute__((noreturn));
+void kpanic(const char *fmt, ...) __attribute__((noreturn)) __printf(1, 2);
 void arch_print_backtrace(void);
 
 #define PANIC(msg, ...) \

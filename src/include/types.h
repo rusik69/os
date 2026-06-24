@@ -19,6 +19,12 @@ typedef uint64_t            uintptr_t;
 
 #define __maybe_unused __attribute__((unused))
 #define __init        __attribute__((section(".init.text")))
+#define __printf(fmt, args) __attribute__((format(printf, fmt, args)))
+
+#ifndef likely
+#define likely(x)     __builtin_expect(!!(x), 1)
+#define unlikely(x)   __builtin_expect(!!(x), 0)
+#endif
 
 typedef _Bool bool;
 

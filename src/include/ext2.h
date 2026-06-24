@@ -233,8 +233,8 @@ static inline uint32_t ext2_bgd_block(uint32_t group, uint32_t blocks_per_group,
 static inline uint32_t ext2_bgd_table_size_blocks(uint32_t num_groups,
                                                     uint32_t block_size)
 {
-    uint32_t bgd_bytes = num_groups * sizeof(struct ext2_bg_desc);
-    return (bgd_bytes + block_size - 1) / block_size;
+    size_t bgd_bytes = num_groups * sizeof(struct ext2_bg_desc);
+    return (uint32_t)((bgd_bytes + block_size - 1) / block_size);
 }
 
 /* ── ext2_priv forward declaration ────────────────────────────────────

@@ -115,7 +115,7 @@ int bpf_map_create(int map_type, uint32_t key_size, uint32_t value_size,
     }
     case 1: { /* HASH */
         map->hash.nbuckets = max_entries < 16 ? 16 : max_entries;
-        uint32_t bsize = map->hash.nbuckets * sizeof(void *);
+        size_t bsize = map->hash.nbuckets * sizeof(void *);
         uint32_t pages = (bsize + 4095) / 4096;
         uint64_t frame = pmm_alloc_frame();
         if (!frame) {
@@ -221,7 +221,7 @@ int bpf_map_update_elem(int fd, const void *key, const void *value, uint64_t fla
         if (!frame) { spinlock_release(&map->hash.lock); return -ENOMEM; }
         struct bpf_hash_entry *e = (struct bpf_hash_entry *)
             PHYS_TO_VIRT((void *)(uintptr_t)(frame * 4096));
-        uint32_t entry_size = sizeof(struct bpf_hash_entry) + map->key_size + map->value_size;
+        size_t entry_size = sizeof(struct bpf_hash_entry) + map->key_size + map->value_size;
         memset(e, 0, entry_size);
         e->hash = h;
         e->key_size = map->key_size;

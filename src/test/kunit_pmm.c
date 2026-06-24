@@ -323,7 +323,7 @@ static void pmm_frame_alignment(struct kunit *test)
  *  Suite definition
  * ==================================================================== */
 
-static struct kunit_case pmm_test_cases[] = {
+static const struct kunit_case pmm_test_cases[] = {
     KUNIT_CASE(pmm_alloc_free_one),
     KUNIT_CASE(pmm_alloc_free_multi),
     KUNIT_CASE(pmm_alloc_free_reuse),
@@ -408,7 +408,7 @@ static void oom_kill_count_tracking(struct kunit *test)
     (void)count_before;
 }
 
-static struct kunit_case oom_test_cases[] = {
+static const struct kunit_case oom_test_cases[] = {
     KUNIT_CASE(oom_scoring_basic),
     KUNIT_CASE(oom_score_adj_set_get),
     KUNIT_CASE(oom_estimate_freed),

@@ -208,16 +208,6 @@ int pfkey_send_msg(int fd, const struct sadb_msg *msg, uint16_t len)
 
     /* SADB_DUMP: dump all SAs to the socket */
     if (msg->sadb_msg_type == SADB_DUMP) {
-#if 0 /* Wire up when ipsec SA table is implemented */
-        extern struct security_assoc sadb[SADB_MAX_SAS];
-        extern int SADB_MAX_SAS;
-        (void)SADB_MAX_SAS;
-        int count = 0;
-        for (int i = 0; i < SADB_MAX_SAS; i++) {
-            extern struct security_assoc sadb[]; /* re-declared */
-            (void)sadb;
-        }
-#endif
         kprintf("pfkey: SADB_DUMP not yet implemented\n");
         return 0;
     }

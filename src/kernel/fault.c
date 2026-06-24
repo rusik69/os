@@ -700,6 +700,7 @@ void arch_print_backtrace(void) {
 
 /* ── kpanic — print a formatted message then halt ─────────────────── */
 
+__printf(1, 2)
 void kpanic(const char *fmt, ...) {
     __builtin_va_list ap;
     __asm__ volatile("cli");

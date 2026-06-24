@@ -516,7 +516,7 @@ static void net_iface_stats_query_test(struct kunit *test)
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
-static struct kunit_case net_test_cases[] = {
+static const struct kunit_case net_test_cases[] = {
     KUNIT_CASE(net_socket_create_test),
     KUNIT_CASE(net_socket_bind_listen_accept_test),
     KUNIT_CASE(net_socket_invalid_ops_test),

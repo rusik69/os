@@ -268,7 +268,7 @@ static void ingress_remove_rule_test(struct kunit *test)
  *  Test case lists
  * ═══════════════════════════════════════════════════════════════════════ */
 
-static struct kunit_case autoscaler_test_cases[] = {
+static const struct kunit_case autoscaler_test_cases[] = {
     KUNIT_CASE(autoscaler_init_test),
     KUNIT_CASE(autoscaler_init_invalid_test),
     KUNIT_CASE(autoscaler_should_scale_test),
@@ -278,7 +278,7 @@ static struct kunit_case autoscaler_test_cases[] = {
     {0}
 };
 
-static struct kunit_case descheduler_test_cases[] = {
+static const struct kunit_case descheduler_test_cases[] = {
     KUNIT_CASE(descheduler_init_test),
     KUNIT_CASE(descheduler_add_policy_test),
     KUNIT_CASE(descheduler_add_invalid_test),
@@ -287,7 +287,7 @@ static struct kunit_case descheduler_test_cases[] = {
     {0}
 };
 
-static struct kunit_case ingress_test_cases[] = {
+static const struct kunit_case ingress_test_cases[] = {
     KUNIT_CASE(ingress_init_test),
     KUNIT_CASE(ingress_nodeport_test),
     KUNIT_CASE(ingress_add_rule_test),

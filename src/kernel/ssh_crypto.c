@@ -421,46 +421,10 @@ static void ssh_pack_u32(uint8_t *buf, uint32_t v) {
 }
 
 /* Unpack uint32 */
-#if 0
-static uint32_t ssh_unpack_u32(const uint8_t *buf) {
-    return ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
-           ((uint32_t)buf[2] << 8) | buf[3];
-}
-#endif
 
 /* Pack a string (uint32 length + data) into buf, returns bytes written */
-#if 0
-static int ssh_pack_string(uint8_t *buf, const uint8_t *data, int len) {
-    ssh_pack_u32(buf, len);
-    if (len > 0) memcpy(buf + 4, data, len);
-    return 4 + len;
-}
-#endif
 
 /* Pack an mpint from bignum into buf, returns bytes written */
-#if 0
-static int ssh_pack_mpint(uint8_t *buf, const bignum *bn) {
-    uint8_t tmp[BN_MAX_BYTES + 1];
-    int len = bn_to_bytes(bn, tmp + 1, 0);
-    /* Remove leading zeros */
-    int start = 1;
-    while (start <= len && tmp[start] == 0) start++;
-    int data_len = len - start + 1;
-    if (data_len == 0) {
-        ssh_pack_u32(buf, 0);
-        return 4;
-    }
-    /* Add 0x00 prefix if high bit set */
-    if (tmp[start] & 0x80) {
-        tmp[start - 1] = 0x00;
-        start--;
-        data_len++;
-    }
-    ssh_pack_u32(buf, data_len);
-    memcpy(buf + 4, tmp + start, data_len);
-    return 4 + data_len;
-}
-#endif
 
 /* ── AES-128-CBC encrypt/decrypt for SSH ────────────────────── */
 struct ssh_cipher {
@@ -470,38 +434,7 @@ struct ssh_cipher {
     uint8_t dec_iv[16];
 };
 
-#if 0
-static void ssh_cipher_init(struct ssh_cipher *c, const uint8_t *key, const uint8_t *iv) {
-    aes_init(&c->enc_ctx, key, 16);
-    aes_init(&c->dec_ctx, key, 16);
-    memcpy(c->enc_iv, iv, 16);
-    memcpy(c->dec_iv, iv, 16);
-}
-#endif
-
-#if 0
-static void ssh_cipher_encrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
-    aes_cbc_encrypt(&c->enc_ctx, c->enc_iv, buf, buf, len);
-}
-
-static void ssh_cipher_decrypt(struct ssh_cipher *c, uint8_t *buf, int len) {
-    aes_cbc_decrypt(&c->dec_ctx, c->dec_iv, buf, buf, len);
-}
-#endif
-
 /* ── HMAC-SHA256 for SSH ────────────────────────────────────── */
-#if 0
-static void ssh_mac_compute(const uint8_t *key, int key_len,
-                            uint32_t seq_nr, const uint8_t *packet, int packet_len,
-                            uint8_t mac[32]) {
-    uint8_t seq_buf[4];
-    ssh_pack_u32(seq_buf, seq_nr);
-    uint8_t hmac_input[4 + packet_len];
-    memcpy(hmac_input, seq_buf, 4);
-    memcpy(hmac_input + 4, packet, packet_len);
-    hmac_sha256(key, key_len, hmac_input, 4 + packet_len, mac);
-}
-#endif
 
 
 /* ── Stub: ssh_crypto_init ─────────────────────────────── */

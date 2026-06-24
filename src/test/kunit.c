@@ -81,7 +81,8 @@ void kunit_do_pass(struct kunit *test)
     g_total_assertions++;
 }
 
-void kunit_do_fail(struct kunit *test, const char *file, int line,
+void __printf(4, 5)
+kunit_do_fail(struct kunit *test, const char *file, int line,
                    const char *fmt, ...)
 {
     if (!test) return;

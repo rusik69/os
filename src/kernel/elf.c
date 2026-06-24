@@ -211,14 +211,14 @@ int elf_exec(const char *path) {
     if (!path) return -EINVAL;
 
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -ENOMEM;
+    if (unlikely(!buf)) return -ENOMEM;
 
     /* Copy path to kernel heap so proc->name is a stable kernel-space pointer,
      * regardless of whether path came from user space or a caller's stack. */
     size_t plen = strlen(path);
     if (plen > 255) plen = 255;
     char *name = (char *)kmalloc(plen + 1);
-    if (!name) {
+    if (unlikely(!name)) {
         kfree(buf);
         return -ENOMEM;
     }
@@ -269,7 +269,7 @@ int elf_exec(const char *path) {
     }
 
     uint64_t entry = elf_load(buf, (unsigned long)size);
-    if (!entry) {
+    if (unlikely(!entry)) {
         kprintf("elf: load failed\n");
         kfree(buf);
         kfree(name);
@@ -310,7 +310,7 @@ int elf_exec(const char *path) {
             for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
                 /* Allocate a physical frame and map it */
                 uint64_t frame = pmm_alloc_frame();
-                if (!frame) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
+                if (unlikely(!frame)) { kprintf("elf: OOM mapping segment\n"); map_ok = 0; break; }
                 /* Zero the frame first */
                 memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
@@ -350,7 +350,7 @@ int elf_exec(const char *path) {
         uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
         for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) {
+            if (unlikely(!frame)) {
                 kprintf("elf: OOM for user stack\n");
                 vmm_destroy_user_pml4(user_pml4);
                 kfree(buf); kfree(name);
@@ -375,7 +375,7 @@ int elf_exec(const char *path) {
 
         /* Create user-mode process */
         struct process *p = process_create_user(entry, user_rsp, user_pml4, name);
-        if (!p) {
+        if (unlikely(!p)) {
             kprintf("elf: cannot create user process\n");
             vmm_destroy_user_pml4(user_pml4);
             kfree(name);
@@ -394,7 +394,7 @@ int elf_exec(const char *path) {
     /* Kernel-mode fallback for non-userland ELFs */
     kfree(buf);
     struct process *p = process_create((void (*)(void))(uintptr_t)entry, name);
-    if (!p) {
+    if (unlikely(!p)) {
         kprintf("elf: cannot create process\n");
         kfree(name);
         return -ENOMEM;
@@ -423,7 +423,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     if (!cur->is_user) return -EACCES;
 
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -ENOMEM;
+    if (unlikely(!buf)) return -ENOMEM;
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
@@ -483,7 +483,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
 
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) { map_ok = 0; break; }
+            if (unlikely(!frame)) { map_ok = 0; break; }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
             /* Copy segment data via high-half VMA (buf is kernel addr). */
@@ -553,7 +553,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
      * as a guard page — a stack underflow past it will fault with SIGSEGV. */
     for (uint64_t va = user_stack_bottom + PAGE_SIZE; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+        if (unlikely(!frame)) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
@@ -884,7 +884,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* ── 1. Read the ELF file ───────────────────────────────────── */
     uint8_t *buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!buf) return -ENOMEM;
+    if (unlikely(!buf)) return -ENOMEM;
 
     uint32_t size = 0;
     if (vfs_read(path, buf, ELF_MAX_SIZE, &size) < 0) {
@@ -911,7 +911,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     }
 
     uint64_t entry = elf_load(buf, (uint64_t)size);
-    if (!entry) {
+    if (unlikely(!entry)) {
         kfree(buf);
         return -ENOEXEC;
     }
@@ -941,7 +941,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
         for (uint64_t va = seg_start; va < seg_end; va += PAGE_SIZE) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) { map_ok = 0; break; }
+            if (unlikely(!frame)) { map_ok = 0; break; }
             memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
 
             uint64_t page_off = va - (ph->p_vaddr & ~0xFFFULL);
@@ -968,7 +968,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
     uint64_t user_stack_bottom = user_stack_top - USER_STACK_SIZE;
     for (uint64_t va = user_stack_bottom; va < user_stack_top; va += PAGE_SIZE) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
+        if (unlikely(!frame)) { vmm_destroy_user_pml4(new_pml4); return -ENOMEM; }
         memset(PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
         if (vmm_map_user_page(new_pml4, va, frame,
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER | VMM_FLAG_NOEXEC) < 0) {
@@ -1138,7 +1138,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* ── 9. Create the child process ────────────────────────────── */
     struct process *child = process_create_user(entry, new_rsp, new_pml4, path);
-    if (!child) {
+    if (unlikely(!child)) {
         vmm_destroy_user_pml4(new_pml4);
         return -ENOMEM;
     }

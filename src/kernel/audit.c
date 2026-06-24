@@ -185,7 +185,7 @@ void __init audit_init(void) {
  * Takes a format string and arguments, builds the record, and sends it
  * via both ring buffer and netlink multicast.
  */
-static void audit_log_formatted(int event_type, const char *fmt, ...)
+static void __printf(2, 3) audit_log_formatted(int event_type, const char *fmt, ...)
 {
     if (!audit_enabled || !fmt) return;
 
@@ -306,6 +306,7 @@ void audit_log_end(void)
 }
 
 /* ── Stub: audit_log_format ────────────────────────────────────────── */
+__printf(1, 2)
 void audit_log_format(const char *fmt, ...)
 {
     (void)fmt;

@@ -145,6 +145,7 @@ int kprintf_dmesg_used(void) {
 
 static uint64_t g_ratelimit_last_tick = 0;
 
+__printf(1, 2)
 int kprintf_ratelimited(const char *fmt, ...) {
     uint64_t now = timer_get_ticks();
     if (now - g_ratelimit_last_tick < TIMER_FREQ) {
@@ -235,6 +236,7 @@ static int print_int(int64_t val, int pad, char padchar) {
     return chars + print_uint((uint64_t)val, 10, pad, padchar);
 }
 
+__printf(1, 0)
 int vkprintf(const char *fmt, va_list ap) {
     /* Re-use kprintf's format engine by simulating variadic dispatch.
      * kprintf uses va_arg internally, so we provide the caller's va_list
@@ -285,6 +287,7 @@ int vkprintf(const char *fmt, va_list ap) {
     return count;
 }
 
+__printf(1, 2)
 int kprintf(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -442,6 +445,7 @@ int kprintf(const char *fmt, ...) {
     return count;
 }
 
+__printf(2, 3)
 int kprintf_level(int level, const char *fmt, ...) {
     /* Filter by console_loglevel: only print if level <= console_loglevel */
     if (level > console_loglevel) return 0;
@@ -536,6 +540,7 @@ static int sn_double_shortest(snbuf_t *b, double val, int precision) {
 
 /* ── vsnprintf ───────────────────────────────────────────────────────── */
 
+__printf(3, 0)
 int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
     if (!buf || n == 0) return 0;
     snbuf_t b = { buf, 0, n };
@@ -679,12 +684,14 @@ int vsnprintf(char *buf, size_t n, const char *fmt, va_list ap) {
     return count;
 }
 
+__printf(3, 4)
 int snprintf(char *buf, size_t n, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     int r = vsnprintf(buf, n, fmt, ap);
     va_end(ap); return r;
 }
 
+__printf(2, 3)
 int sprintf(char *buf, const char *fmt, ...) {
     va_list ap; va_start(ap, fmt);
     int r = vsnprintf(buf, (size_t)-1, fmt, ap);
@@ -695,6 +702,7 @@ int sprintf(char *buf, const char *fmt, ...) {
 EXPORT_SYMBOL(kprintf);
 
 /* ── vsprintf ─────────────────────────────── */
+__printf(2, 0)
 int vsprintf(char *buf, const char *fmt, va_list args)
 {
     return vsnprintf(buf, (size_t)-1, fmt, args);

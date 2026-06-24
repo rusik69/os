@@ -233,7 +233,7 @@ static void vfs_force_readonly_test(struct kunit *test)
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
-static struct kunit_case vfs_test_cases[] = {
+static const struct kunit_case vfs_test_cases[] = {
     KUNIT_CASE(vfs_file_create_test),
     KUNIT_CASE(vfs_file_write_read_test),
     KUNIT_CASE(vfs_file_stat_test),

@@ -363,6 +363,7 @@ int __request_module(const char *name, const char *params, int flags)
  *   request_module("ext2");                         // simple name
  *   request_module("pci:v%08Xd%08X", vid, did);    // alias-based (future)
  */
+__printf(1, 2)
 int request_module(const char *fmt, ...)
 {
     char name[64];

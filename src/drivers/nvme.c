@@ -193,7 +193,7 @@ static int nvme_setup_admin_queues(void) {
     /* Allocate one page for admin SQ and one for admin CQ */
     uint64_t sq_frame = pmm_alloc_frame();
     uint64_t cq_frame = pmm_alloc_frame();
-    if (!sq_frame || !cq_frame) {
+    if (unlikely(!sq_frame || !cq_frame)) {
         if (sq_frame) pmm_free_frame(sq_frame);
         return -EIO;
     }
@@ -368,7 +368,7 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
 
     /* Allocate a page for the identify data (physical contiguous) */
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -ENOMEM;
+    if (unlikely(!data_frame)) return -ENOMEM;
 
     uint64_t data_phys = data_frame * 4096;
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
@@ -404,7 +404,7 @@ static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
         return -EINVAL;
 
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -ENOMEM;
+    if (unlikely(!data_frame)) return -ENOMEM;
 
     uint64_t data_phys = data_frame * 4096;
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
@@ -431,7 +431,7 @@ static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
 
 static int nvme_set_num_queues(uint32_t nr_queues) {
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -ENOMEM;
+    if (unlikely(!data_frame)) return -ENOMEM;
 
     memset(PHYS_TO_VIRT((void*)(uintptr_t)(data_frame * 4096)), 0, 4096);
 
@@ -487,7 +487,7 @@ static int nvme_create_io_cq(struct nvme_io_queue *q) {
 
     /* Allocate a physically contiguous page for the CQ */
     uint64_t cq_frame = pmm_alloc_frame();
-    if (!cq_frame) return -ENOMEM;
+    if (unlikely(!cq_frame)) return -ENOMEM;
 
     q->cq_virt = PHYS_TO_VIRT((void*)(uintptr_t)(cq_frame * 4096));
     q->cq_phys = cq_frame * 4096;
@@ -521,7 +521,7 @@ static int nvme_create_io_sq(struct nvme_io_queue *q) {
 
     /* Allocate a physically contiguous page for the SQ */
     uint64_t sq_frame = pmm_alloc_frame();
-    if (!sq_frame) {
+    if (unlikely(!sq_frame)) {
         return -ENOMEM;
     }
 
@@ -708,7 +708,7 @@ int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
      * The NVMe Dataset Management range is a 16-byte structure.
      * We send a single range per command. */
     uint64_t range_frame = pmm_alloc_frame();
-    if (!range_frame)
+    if (unlikely(!range_frame))
         return -ENOMEM;
 
     uint64_t range_phys = range_frame * 4096;
@@ -783,12 +783,12 @@ static int nvme_blk_submit(struct blk_request *req) {
      * For small transfers (1 page), use PRP1 directly.
      * For multi-page transfers, build a PRP list. */
     uint64_t *frames = (uint64_t *)kmalloc((size_t)nr_pages * sizeof(uint64_t));
-    if (!frames)
+    if (unlikely(!frames))
         return -ENOMEM;
 
     for (uint32_t i = 0; i < nr_pages; i++) {
         frames[i] = pmm_alloc_frame();
-        if (!frames[i]) {
+        if (unlikely(!frames[i])) {
             for (uint32_t j = 0; j < i; j++)
                 pmm_free_frame(frames[j]);
             kfree(frames);
@@ -825,7 +825,7 @@ static int nvme_blk_submit(struct blk_request *req) {
 
         /* Allocate a dedicated page for the PRP list (do NOT reuse a data page) */
         uint64_t prp_list_frame = pmm_alloc_frame();
-        if (!prp_list_frame) {
+        if (unlikely(!prp_list_frame)) {
             for (uint32_t i = 0; i < nr_pages; i++)
                 pmm_free_frame(frames[i]);
             kfree(frames);

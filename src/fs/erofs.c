@@ -129,7 +129,7 @@ static int erofs_read_inode_raw(uint32_t nid, struct erofs_inode_extended *inode
 {
     if (!erofs_mounted) return -ENODEV;
     /* Inode table starts after superblock. Each inode is at a fixed offset. */
-    uint32_t inode_offset = sizeof(struct erofs_superblock) + (uint32_t)nid * sizeof(struct erofs_inode_extended);
+    size_t inode_offset = sizeof(struct erofs_superblock) + (size_t)nid * sizeof(struct erofs_inode_extended);
     if (inode_offset + sizeof(struct erofs_inode_extended) > erofs_data_size)
         return -EIO;
     memcpy(inode, erofs_data_base + inode_offset, sizeof(struct erofs_inode_extended));

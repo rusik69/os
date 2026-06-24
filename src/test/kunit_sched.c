@@ -470,7 +470,7 @@ static void sched_idle_ticks_test(struct kunit *test)
  *  Test case list (terminated by {0})
  * ==================================================================== */
 
-static struct kunit_case sched_test_cases[] = {
+static const struct kunit_case sched_test_cases[] = {
     KUNIT_CASE(sched_stats_test),
     KUNIT_CASE(sched_runqueue_stats_test),
     KUNIT_CASE(sched_policy_consistency_test),

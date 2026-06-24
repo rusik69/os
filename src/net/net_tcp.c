@@ -1655,14 +1655,19 @@ void net_tcp_close(int conn_id) {
             c->state = TCP_LAST_ACK;
             break;
         case TCP_SYN_SENT:
+            /* fallthrough */
         case TCP_SYN_RECEIVED:
             send_tcp(c, TCP_RST, NULL, 0);
             c->state = TCP_CLOSED;
             break;
         case TCP_FIN_WAIT:
+            /* fallthrough */
         case TCP_FIN_WAIT_2:
+            /* fallthrough */
         case TCP_CLOSING:
+            /* fallthrough */
         case TCP_LAST_ACK:
+            /* fallthrough */
         case TCP_CLOSED:
         default:
             break;

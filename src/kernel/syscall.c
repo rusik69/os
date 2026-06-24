@@ -4343,6 +4343,7 @@ static uint64_t sys_script_exec(uint64_t path_addr) {
 }
 
 static uint64_t sys_fat_mount(uint64_t disk, uint64_t part_lba) {
+    if (part_lba > 0xFFFFFFFFULL) return (uint64_t)-EOVERFLOW;
     return (uint64_t)fat32_mount((fat32_disk_t)disk, (uint32_t)part_lba);
 }
 
@@ -7865,6 +7866,7 @@ static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint6
 
     /* Delegate to the proper filesystem-level fallocate implementation
      * which pre-allocates disk blocks without writing data. */
+    if (offset > 0xFFFFFFFFULL || len > 0xFFFFFFFFULL) return (uint64_t)-EOVERFLOW;
     int ret = fs_fallocate(path, (int)mode, (uint32_t)offset, (uint32_t)len);
     return ret == 0 ? 0 : (uint64_t)-1;
 }

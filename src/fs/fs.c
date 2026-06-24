@@ -540,7 +540,7 @@ int fs_append(const char *path, const void *data, uint32_t len) {
     if (total > max_total) total = max_total;
 
     uint8_t *tmp = (uint8_t *)kmalloc(total);
-    if (!tmp) return -ENOMEM;
+    if (unlikely(!tmp)) return -ENOMEM;
 
     uint32_t copy = total - existing;
     if (existing > 0 && fs_read_file(path, tmp, existing, &existing) < 0) {
@@ -1044,7 +1044,7 @@ int fs_truncate(const char *path, uint32_t len) {
         int free_start = -1;
         for (uint32_t b = old_blocks; b < new_blocks; b++) {
             uint32_t blk = alloc_block();
-            if (!blk) {
+            if (unlikely(!blk)) {
                 /* Allocation failed — free any blocks we allocated */
                 if (free_start >= 0) fs_free_inode_blocks_from(idx, free_start);
                 return -EINVAL;
@@ -1146,7 +1146,7 @@ int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
     for (uint32_t b = start_block; b < needed_end_block; b++) {
         if (inodes[idx].blocks[b] == 0) {
             uint32_t blk = alloc_block();
-            if (!blk) {
+            if (unlikely(!blk)) {
                 /* Allocation failed — free any blocks we allocated in this call */
                 if (alloc_start >= 0) {
                     for (uint32_t fb = (uint32_t)alloc_start; fb < b; fb++) {

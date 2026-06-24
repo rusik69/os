@@ -898,6 +898,7 @@ int module_elf_apply_rela(struct module_elf_context *ctx)
             }
 
             case R_X86_64_PC32:
+                /* fallthrough */
             case R_X86_64_PLT32: {
                 /* S + A - P: 32-bit PC-relative offset */
                 int64_t value = (int64_t)(S + (uint64_t)A - P);

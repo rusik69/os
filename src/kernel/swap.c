@@ -357,7 +357,7 @@ int swap_out(uint64_t phys_addr, uint32_t *out_slot, int *out_dev)
 
     /* Calculate byte offset of the slot data on the device.
      * Layout: [superblock][bitmap][slot_0][slot_1]... */
-    uint32_t bitmap_bytes = dev->bitmap_slots * sizeof(uint64_t);
+    size_t   bitmap_bytes = dev->bitmap_slots * sizeof(uint64_t);
     uint64_t data_start   = (SWAP_SUPERBLOCK_PAGES * SWAP_SLOT_SIZE) + bitmap_bytes;
     uint64_t slot_offset  = data_start + (uint64_t)slot * SWAP_SLOT_SIZE;
 
@@ -418,7 +418,7 @@ int swap_in(int dev_idx, uint32_t slot, uint64_t phys_addr)
     }
 
     /* Calculate byte offset of the slot. */
-    uint32_t bitmap_bytes = dev->bitmap_slots * sizeof(uint64_t);
+    size_t   bitmap_bytes = dev->bitmap_slots * sizeof(uint64_t);
     uint64_t data_start   = (SWAP_SUPERBLOCK_PAGES * SWAP_SLOT_SIZE) + bitmap_bytes;
     uint64_t slot_offset  = data_start + (uint64_t)slot * SWAP_SLOT_SIZE;
 

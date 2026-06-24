@@ -117,7 +117,9 @@ int signal_validate_siginfo(struct siginfo *info, int is_from_userspace)
         break;
 
     case SIGILL:
+        /* fallthrough */
     case SIGFPE:
+        /* fallthrough */
     case SIGTRAP:
         /* These can have various signal-specific codes; accept any positive
          * value as potentially valid. Negative values are kernel-internal. */

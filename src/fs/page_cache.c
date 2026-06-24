@@ -764,6 +764,7 @@ int page_cache_read(uint64_t ino, uint64_t block, void *buf,
         return -ENOENT;
 
     uint8_t tmp[PAGE_SIZE];
+    if (block > 0xFFFFFFFFULL) return -EOVERFLOW;
     if (backing_store((uint32_t)block, 1, tmp) < 0)
         return -EIO;
 

@@ -591,6 +591,7 @@ void clearerr(FILE *stream)
 
 #define FPRINTF_BUF_SIZE 4096
 
+__printf(2, 0)
 int vfprintf(FILE *stream, const char *fmt, __builtin_va_list ap)
 {
     if (!stream || !fmt) return 0;
@@ -612,6 +613,7 @@ int vfprintf(FILE *stream, const char *fmt, __builtin_va_list ap)
     return (int)sizeof(buf) - 1;
 }
 
+__printf(2, 3)
 int fprintf(FILE *stream, const char *fmt, ...)
 {
     __builtin_va_list ap;

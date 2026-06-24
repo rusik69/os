@@ -409,7 +409,7 @@ static int smfs_fallocate(void *priv, const char *path, int mode, uint32_t offse
         if (needed > fs_size) {
             /* Extend file with zeros */
             uint8_t *zero_buf = (uint8_t *)kmalloc(needed - fs_size);
-            if (!zero_buf) return -1;
+            if (unlikely(!zero_buf)) return -1;
             memset(zero_buf, 0, needed - fs_size);
             int ret = fs_append(path, zero_buf, needed - fs_size);
             kfree(zero_buf);
@@ -843,7 +843,7 @@ int vfs_append(const char *path, const void *data, uint32_t size)
     if (vfs_stat(path, &st) == 0 && st.size > 0) {
         old_size = (uint32_t)st.size;
         old_buf = kmalloc(old_size);
-        if (!old_buf)
+        if (unlikely(!old_buf))
             return -ENOMEM;
 
         if (vfs_read(path, old_buf, old_size, NULL) < 0) {
@@ -855,7 +855,7 @@ int vfs_append(const char *path, const void *data, uint32_t size)
     /* Allocate a combined buffer */
     uint32_t new_total = old_size + size;
     void *combined = kmalloc(new_total);
-    if (!combined) {
+    if (unlikely(!combined)) {
         kfree(old_buf);
         return -ENOMEM;
     }
@@ -1174,7 +1174,7 @@ int vfs_rename(const char *old_path, const char *new_path)
 
     /* For regular files and symlinks, use create+copy+delete fallback */
     void *buf = kmalloc(st.size + 1);
-    if (!buf) return -ENOMEM;
+    if (unlikely(!buf)) return -ENOMEM;
     uint32_t sz = 0;
     int r = m_old->ops->read(m_old->priv, old_ap, buf, (uint32_t)st.size, &sz);
     if (r < 0) { kfree(buf); return r; }
@@ -1572,7 +1572,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
 
     /* Fallback: data copy for filesystems that don't support hard links */
     uint8_t *buf = kmalloc(st.size + 1);
-    if (!buf) return -ENOMEM;
+    if (unlikely(!buf)) return -ENOMEM;
 
     uint32_t out_size = 0;
     int ret = vfs_read(ap_old, buf, (uint32_t)st.size, &out_size);

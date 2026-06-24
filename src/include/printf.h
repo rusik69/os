@@ -18,9 +18,9 @@ extern int console_loglevel;
 /* Default message log level (used when no explicit level given) */
 extern int default_message_loglevel;
 
-int kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-int vkprintf(const char *fmt, __builtin_va_list ap) __attribute__((format(printf, 1, 0)));
-int kprintf_level(int level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int kprintf(const char *fmt, ...) __printf(1, 2);
+int vkprintf(const char *fmt, __builtin_va_list ap) __printf(1, 0);
+int kprintf_level(int level, const char *fmt, ...) __printf(2, 3);
 
 /* struct va_format — for %pV format specifier passthrough */
 struct va_format {
@@ -39,15 +39,15 @@ int kprintf_dmesg(char *buf, int max);
 void kprintf_dmesg_clear(void);
 void kprintf_dmesg_flush_serial(void);
 int kprintf_dmesg_used(void);       /* bytes currently in dmesg buffer */
-int kprintf_ratelimited(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+int kprintf_ratelimited(const char *fmt, ...) __printf(1, 2);
 
 /* dmesg ring buffer configuration */
 void dmesg_resize(int new_size);
 void dmesg_clear(void);
 int dmesg_get_size(void);
 
-int vsnprintf(char *buf, size_t n, const char *fmt, __builtin_va_list ap) __attribute__((format(printf, 3, 0)));
-int snprintf(char *buf, size_t n, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
-int sprintf(char *buf, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int vsnprintf(char *buf, size_t n, const char *fmt, __builtin_va_list ap) __printf(3, 0);
+int snprintf(char *buf, size_t n, const char *fmt, ...) __printf(3, 4);
+int sprintf(char *buf, const char *fmt, ...) __printf(2, 3);
 
 #endif

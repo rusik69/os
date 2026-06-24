@@ -453,6 +453,7 @@ void dump_regs(void) {
 }
 
 __attribute__((noreturn))
+__printf(1, 2)
 void panic(const char *fmt, ...) {
     char msg_buf[128];
 

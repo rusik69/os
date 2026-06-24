@@ -421,7 +421,7 @@ void module_apply_cmdline_params(struct kernel_module *mod);
  * Probes /modules/<name>.ko and loads it via the ELF loader.
  * May sleep; must not be called from atomic context.
  * Returns module ID (>0) on success, or a negative errno. */
-int request_module(const char *fmt, ...);
+int request_module(const char *fmt, ...) __printf(1, 2);
 
 /* request_module with explicit parameter string.
  * Like request_module(), but passes @params to the module's init. */

@@ -263,6 +263,7 @@ void igmp_handle_report(struct ip_header *ip_hdr, uint16_t len)
     }
 
     case IGMP_TYPE_V1_MEMBERSHIP_REPORT:
+        /* fallthrough */
     case IGMP_TYPE_V2_MEMBERSHIP_REPORT:
         kprintf("igmp: report from %d.%d.%d.%d for group %d.%d.%d.%d\n",
                 (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,

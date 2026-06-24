@@ -91,6 +91,7 @@ void early_puts(const char *s)
         early_putc(*s++);
 }
 
+__printf(1, 2)
 void early_printf(const char *fmt, ...)
 {
     __builtin_va_list ap;

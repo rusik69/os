@@ -54,8 +54,11 @@ int mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask, int preferre
     /* Validate mode. */
     switch (mode) {
     case MPOL_DEFAULT:
+        /* fallthrough */
     case MPOL_BIND:
+        /* fallthrough */
     case MPOL_INTERLEAVE:
+        /* fallthrough */
     case MPOL_PREFERRED:
         break;
     default:
@@ -166,8 +169,11 @@ int mempolicy_mbind(uint64_t addr, uint64_t len, int mode, uint64_t nodemask)
     /* Validate mode */
     switch (mode) {
     case MPOL_DEFAULT:
+        /* fallthrough */
     case MPOL_BIND:
+        /* fallthrough */
     case MPOL_INTERLEAVE:
+        /* fallthrough */
     case MPOL_PREFERRED:
         break;
     default:

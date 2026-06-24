@@ -296,7 +296,7 @@ static int fsck_ext2(struct vfs_mount *mnt, int flags, int *errors_out)
     }
 
     /* ── Step 2: Load block group descriptors ────────────────────── */
-    uint32_t bgd_blocks = (num_groups * sizeof(struct ext2_bg_desc)
+    size_t bgd_blocks = (num_groups * sizeof(struct ext2_bg_desc)
                            + block_size - 1) / block_size;
     if (bgd_blocks == 0) bgd_blocks = 1;
 

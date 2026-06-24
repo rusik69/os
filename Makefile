@@ -56,17 +56,16 @@ endif
 # SMP enabled? (auto-detected from target)
 VERMAGIC_FLAGS += -DCONFIG_SMP
 
-# NOTE: -Wno-format and -Wno-unused-* are intentionally suppressed in this
-# freestanding kernel build.  Standard library printf format attributes
-# don't apply to freestanding targets, so -Wformat triggers false positives
-# in every printf-family call.  Likewise, -Wunused-* produces noise because
-# kernel code deliberately omits parameter names in function declarations
-# (forward-compatibility stubs) and has variables that are read by inline
-# assembly or used only in certain configs.  These suppressions keep the
-# build clean while -Werror is active.
+# NOTE: -Wno-unused-* are intentionally suppressed in this freestanding kernel
+# build.  -Wunused-* produces noise because kernel code deliberately omits
+# parameter names in function declarations (forward-compatibility stubs) and
+# has variables that are read by inline assembly or used only in certain
+# configs.  These suppressions keep the build clean while -Werror is active.
+# -Wformat=2 is now enabled because printf-like functions have been annotated
+# with __printf() attributes for compile-time format string checking.
 CFLAGS = -std=c17 -ffreestanding -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
          -fstack-protector-strong -fstack-clash-protection -mstack-protector-guard=global -fno-omit-frame-pointer -nostdlib -nostdinc -fno-builtin \
-         -Wall -Wextra -Werror -Wno-format -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
+         -Wall -Wextra -Werror -Wformat=2 -Wno-sign-conversion -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Isrc/include -Iuserspace/kmods/gui -Iuserspace/kmods/doom -mcmodel=large -g \
          -Wa,--noexecstack -O2 -MMD -MP \
          -include kernel_pch.h \
          -DKVERSION=\"$(KVERSION)\" \

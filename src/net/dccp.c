@@ -250,6 +250,7 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
         break;
     }
     case DCCP_PKT_CLOSE:
+        /* fallthrough */
     case DCCP_PKT_RESET:
         ds->connected = 0;
         break;

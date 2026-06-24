@@ -130,7 +130,7 @@ static inline void write_cr3(uint64_t val) {
 static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags) {
     if (!(table[index] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return ERR_PTR(-ENOMEM);
+        if (unlikely(!frame)) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
         table[index] = frame | flags | PTE_PRESENT | PTE_WRITE;
@@ -140,7 +140,7 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
     if (table[index] & PTE_HUGE) {
         uint64_t huge = table[index];
         uint64_t pt_phys = pmm_alloc_frame();
-        if (!pt_phys) return ERR_PTR(-ENOMEM);
+        if (unlikely(!pt_phys)) return ERR_PTR(-ENOMEM);
         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
         uint64_t base  = huge & 0x000FFFFFFFE00000ULL;
         uint64_t pflags = (huge & 0x1FF) & ~(uint64_t)PTE_HUGE;
@@ -385,7 +385,7 @@ void vmm_unmap_phys(void *vaddr, uint64_t size) {
 uint64_t *vmm_create_user_pml4(void) {
     /* Allocate a new PML4 and copy the upper-half kernel mappings */
     uint64_t frame = pmm_alloc_frame();
-    if (!frame) return ERR_PTR(-ENOMEM);
+    if (unlikely(!frame)) return ERR_PTR(-ENOMEM);
     uint64_t *pml4 = (uint64_t *)PHYS_TO_VIRT(frame);
     memset(pml4, 0, PAGE_SIZE);
 
@@ -399,7 +399,7 @@ uint64_t *vmm_create_user_pml4(void) {
 static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t flags) {
     if (!(table[index] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return ERR_PTR(-ENOMEM);
+        if (unlikely(!frame)) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
         table[index] = frame | flags | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -588,7 +588,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
         uint64_t *src_pdpt = (uint64_t *)PHYS_TO_VIRT(src[i] & PTE_ADDR_MASK);
 
         uint64_t dst_pdpt_phys = pmm_alloc_frame();
-        if (!dst_pdpt_phys) { vmm_destroy_user_pml4(dst); return NULL; }
+        if (unlikely(!dst_pdpt_phys)) { vmm_destroy_user_pml4(dst); return NULL; }
         uint64_t *dst_pdpt = (uint64_t *)PHYS_TO_VIRT(dst_pdpt_phys);
         memset(dst_pdpt, 0, PAGE_SIZE);
         dst[i] = dst_pdpt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -599,7 +599,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
             uint64_t *src_pd = (uint64_t *)PHYS_TO_VIRT(src_pdpt[j] & PTE_ADDR_MASK);
 
             uint64_t dst_pd_phys = pmm_alloc_frame();
-            if (!dst_pd_phys) { vmm_destroy_user_pml4(dst); return NULL; }
+            if (unlikely(!dst_pd_phys)) { vmm_destroy_user_pml4(dst); return NULL; }
             uint64_t *dst_pd = (uint64_t *)PHYS_TO_VIRT(dst_pd_phys);
             memset(dst_pd, 0, PAGE_SIZE);
             dst_pdpt[j] = dst_pd_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -618,7 +618,7 @@ uint64_t *vmm_clone_user_pml4(uint64_t *src) {
                 uint64_t *src_pt = (uint64_t *)PHYS_TO_VIRT(src_pd[k] & PTE_ADDR_MASK);
 
                 uint64_t dst_pt_phys = pmm_alloc_frame();
-                if (!dst_pt_phys) { vmm_destroy_user_pml4(dst); return NULL; }
+                if (unlikely(!dst_pt_phys)) { vmm_destroy_user_pml4(dst); return NULL; }
                 uint64_t *dst_pt = (uint64_t *)PHYS_TO_VIRT(dst_pt_phys);
                 memset(dst_pt, 0, PAGE_SIZE);
                 dst_pd[k] = dst_pt_phys | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -718,7 +718,7 @@ int vmm_handle_cow_fault(uint64_t *pml4, uint64_t virt) {
     } else {
         /* Shared — allocate a private copy */
         uint64_t new_phys = pmm_alloc_frame();
-        if (!new_phys) return 0; /* OOM: can't handle */
+        if (unlikely(!new_phys)) return 0; /* OOM: can't handle */
         memcpy((void *)PHYS_TO_VIRT(new_phys),
                (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
         pmm_unref_frame(old_phys);
@@ -792,7 +792,7 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
         }
 
         uint64_t phys = pmm_alloc_frame();
-        if (!phys) {
+        if (unlikely(!phys)) {
             for (size_t j = 0; j < i; j++) {
                 uint64_t p;
                 vmm_unmap_user_page(pml4, virt + j * PAGE_SIZE);
@@ -878,7 +878,7 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     /* Ensure PDPT entry exists (allocate if absent) */
     if (!(pml4[idx4] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return -ENOMEM;
+        if (unlikely(!frame)) return -ENOMEM;
         uint64_t *virt_pdpt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt_pdpt, 0, PAGE_SIZE);
         pml4[idx4] = frame | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -888,7 +888,7 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
     /* Ensure PD entry exists (allocate if absent) */
     if (!(pdpt[idx3] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return -ENOMEM;
+        if (unlikely(!frame)) return -ENOMEM;
         uint64_t *virt_pd = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt_pd, 0, PAGE_SIZE);
         pdpt[idx3] = frame | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -1058,7 +1058,7 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
         if ((new_flags & VMM_FLAG_WRITE) && (pte & VMM_FLAG_COW)) {
             uint64_t old_phys = pte & PTE_ADDR_MASK;
             uint64_t new_phys = pmm_alloc_frame();
-            if (!new_phys) return -ENOMEM;
+            if (unlikely(!new_phys)) return -ENOMEM;
             memcpy((void *)PHYS_TO_VIRT(new_phys),
                    (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
             pmm_unref_frame(old_phys);
@@ -1284,7 +1284,7 @@ uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
     /* Map pages one by one using the kernel page table */
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t phys = pmm_alloc_frame();
-        if (!phys) {
+        if (unlikely(!phys)) {
             /* Unwind on failure */
             for (size_t j = 0; j < i; j++)
                 vmm_unmap_page(start + j * PAGE_SIZE);

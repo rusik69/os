@@ -264,7 +264,7 @@ void trace_v2_block_write(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors)
 void trace_v2_block_complete(uint32_t dev_id, uint64_t sector, uint32_t nr_sectors, uint32_t error);
 
 /* trace_printk (Item 31) — Write a formatted message to the trace buffer */
-void trace_printk(const char *fmt, ...);
+void trace_printk(const char *fmt, ...) __printf(1, 2);
 void trace_printk_init(void);
 
 #endif /* FTRACE_H */

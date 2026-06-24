@@ -78,7 +78,7 @@ static void free_pid(uint32_t pid) {
  * Returns 0 on success, -1 on failure (all frames freed on error). */
 static int alloc_guarded_kernel_stack(struct process *proc) {
     uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
-    if (!phys) return -ENOMEM;
+    if (unlikely(!phys)) return -ENOMEM;
 
     uint64_t guard_phys  = (uint64_t)phys;
     uint64_t stack_phys  = guard_phys + PAGE_SIZE;
@@ -1016,7 +1016,7 @@ int process_fork(void) {
             break;
         }
     }
-    if (!child) { __asm__ volatile("sti"); return -EAGAIN; }
+    if (unlikely(!child)) { __asm__ volatile("sti"); return -EAGAIN; }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1103,7 +1103,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             break;
         }
     }
-    if (!child) { __asm__ volatile("sti"); return -EINVAL; }
+    if (unlikely(!child)) { __asm__ volatile("sti"); return -EINVAL; }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1119,7 +1119,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     /* ── Handle CLONE_NEWPID: child gets a new PID namespace (Item 111) ── */
     if (flags & CLONE_NEWPID) {
         struct pid_namespace *new_ns = pid_ns_create(parent->pid_ns);
-        if (!new_ns) {
+        if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1149,7 +1149,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         /* Use the parent's cgroup path as the namespace root */
         struct cgroup_namespace *new_ns = cgroup_ns_create(parent->cgroup_ns
             ? parent->cgroup_ns->root_path : "/");
-        if (!new_ns) {
+        if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1170,7 +1170,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
     if (flags & CLONE_NEWNS) {
         struct mnt_namespace *new_ns = mnt_ns_copy(parent->mnt_ns
             ? parent->mnt_ns : NULL);
-        if (!new_ns) {
+        if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1191,7 +1191,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         struct user_namespace *new_ns = user_ns_create(parent->user_ns
             ? parent->user_ns : &init_user_ns,
             parent->uid, parent->gid);
-        if (!new_ns) {
+        if (unlikely(!new_ns)) {
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
@@ -1591,7 +1591,7 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
     /* Allocate and fill the start arguments */
     struct thread_start_args *tsa = (struct thread_start_args *)
         kmalloc(sizeof(struct thread_start_args));
-    if (!tsa) return -ENOMEM;
+    if (unlikely(!tsa)) return -ENOMEM;
     tsa->start_routine = start_routine;
     tsa->arg           = arg;
     tsa->info_idx      = idx;

@@ -1,5 +1,5 @@
-#ifndef ERRNIO_EXT_H
-#define ERRNIO_EXT_H
+#ifndef ERRNO_EXT_H
+#define ERRNO_EXT_H
 
 #include "errno.h"
 #include "printf.h"    /* for perror */
@@ -22,4 +22,4 @@ char *strerror(int errnum);
 /* Print "s: error-description" to the kernel log. */
 void perror(const char *s);
 
-#endif /* ERRNIO_EXT_H */
+#endif /* ERRNO_EXT_H */

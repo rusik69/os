@@ -266,7 +266,9 @@ void bridge_igmp_snoop(const uint8_t *frame, int len, int ingress_port) {
 
     switch (igmp_type) {
     case IGMP_TYPE_V1_MEMBERSHIP_REPORT:
+        /* fallthrough */
     case IGMP_TYPE_V2_MEMBERSHIP_REPORT:
+        /* fallthrough */
     case IGMP_TYPE_V3_MEMBERSHIP_REPORT: {
         /* Membership report: add ingress port to the group's port mask */
         int idx = mcast_find_by_group(group_ip);

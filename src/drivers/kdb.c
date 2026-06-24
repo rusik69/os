@@ -311,6 +311,7 @@ int kdb_exec(const char *cmd)
     return 0;
 }
 /* ── Stub: kdb_printf ──────────────────────────────── */
+__printf(1, 2)
 int kdb_printf(const char *fmt, ...)
 {
     (void)fmt;

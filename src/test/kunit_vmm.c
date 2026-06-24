@@ -476,7 +476,7 @@ static void vmm_address_translation(struct kunit *test)
  *  Suite definition
  * ==================================================================== */
 
-static struct kunit_case vmm_test_cases[] = {
+static const struct kunit_case vmm_test_cases[] = {
     KUNIT_CASE(vmm_map_unmap_basic),
     KUNIT_CASE(vmm_multiple_pages),
     KUNIT_CASE(vmm_double_map),

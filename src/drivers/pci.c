@@ -55,7 +55,7 @@ static int map_ecam_region(uint64_t phys_base) {
         /* Ensure PML4 entry exists */
         if (!(pml4[pml4_idx] & PTE_PRESENT)) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) return -ENOMEM;
+            if (unlikely(!frame)) return -ENOMEM;
             memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             pml4[pml4_idx] = frame | PTE_PRESENT | PTE_WRITE;
         }
@@ -65,7 +65,7 @@ static int map_ecam_region(uint64_t phys_base) {
         /* Ensure PDPT entry exists */
         if (!(pdpt[pdpt_idx] & PTE_PRESENT)) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) return -ENOMEM;
+            if (unlikely(!frame)) return -ENOMEM;
             memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             pdpt[pdpt_idx] = frame | PTE_PRESENT | PTE_WRITE;
         }

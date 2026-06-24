@@ -261,7 +261,7 @@ static int cache_fill(int16_t idx, uint64_t lba, uint8_t dev_id) {
     e->refcount = 0;      /* no outstanding references yet */
 
     /* Read from disk */
-    if (blockdev_read_sectors(dev_id, (uint32_t)lba, 1, e->data) != 0) {
+    if (blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_READ) != 0) {
         e->valid = 0;
         return -1;
     }
@@ -371,7 +371,7 @@ int bufcache_mark_dirty(uint64_t lba, uint8_t dev_id) {
 int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
     if (!g_active || !g_initialized) {
         /* Fallthrough: direct write */
-        return blockdev_write_sectors(dev_id, (uint32_t)lba, 1, data);
+        return blk_submit_sync(dev_id, lba, 1, (void *)data, BLK_REQ_WRITE);
     }
 
     uint64_t irq_flags;
@@ -402,7 +402,7 @@ int bufcache_write(uint64_t lba, uint8_t dev_id, const void *data) {
         if (victim < 0) {
             /* Cache full with dirty entries — write directly */
             spinlock_irqsave_release(&g_bc_lock, irq_flags);
-            return blockdev_write_sectors(dev_id, (uint32_t)lba, 1, data);
+            return blk_submit_sync(dev_id, lba, 1, (void *)data, BLK_REQ_WRITE);
         }
         lru_remove(victim);
     }
@@ -529,7 +529,7 @@ void bufcache_invalidate(uint64_t lba, uint8_t dev_id) {
     if (idx >= 0) {
         struct bc_entry *e = &g_entries[idx];
         if (e->dirty) {
-            blockdev_write_sectors(dev_id, (uint32_t)lba, 1, e->data);
+            blk_submit_sync(dev_id, lba, 1, e->data, BLK_REQ_WRITE);
             g_writes++;
             e->dirty = 0;
         }

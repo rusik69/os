@@ -410,7 +410,7 @@ static void slab_aligned_cache_test(struct kunit *test)
  *  Suite registration
  * ==================================================================== */
 
-static struct kunit_case slab_full_test_cases[] = {
+static const struct kunit_case slab_full_test_cases[] = {
     KUNIT_CASE(slab_alloc_pattern_test),
     KUNIT_CASE(slab_alloc_zero_test),
     KUNIT_CASE(slab_alloc_huge_test),

@@ -272,7 +272,7 @@ int do_execve(const char *filename, const char **argv, const char **envp)
 
     /* ── Open the binary ────────────────────────────────────────────── */
     struct vfs_node *binary = vfs_open(filename, 0);
-    if (!binary) return -ENOENT;
+    if (unlikely(!binary)) return -ENOENT;
 
     /* ── Check security of the binary ───────────────────────────────── */
     int has_setuid = (binary->mode & S_ISUID) ? 1 : 0;
@@ -314,7 +314,7 @@ int do_execve(const char *filename, const char **argv, const char **envp)
     uint64_t base_addr = 0;
 
     entry_point = elf_load(elf_buf, (unsigned long)elf_size);
-    if (!entry_point) {
+    if (unlikely(!entry_point)) {
         kfree(elf_buf);
         vfs_close(binary);
         return -ENOEXEC;
@@ -322,7 +322,8 @@ int do_execve(const char *filename, const char **argv, const char **envp)
 
     /* Setup the user stack with argv, envp, auxv */
     uint64_t user_stack = vmm_setup_user_stack(p, argv, envp);
-    if (!user_stack) {
+    if (unlikely(!user_stack)) {
+        kfree(elf_buf);
         vfs_close(binary);
         return -ENOMEM;
     }
@@ -479,7 +480,7 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
     /* Map the initial stack pages */
     for (uint64_t vaddr = stack_base; vaddr < USER_STACK_TOP; vaddr += PAGE_SIZE) {
         uint64_t phys = pmm_alloc_zero_frame();
-        if (!phys)
+        if (unlikely(!phys))
             return -ENOMEM;
 
         uint64_t flags = VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_USER;
@@ -530,7 +531,7 @@ int exec_binprm(const char *filename, void *argv, void *envp)
 
     /* Open the binary */
     struct vfs_node *binary = vfs_open(filename, 0);
-    if (!binary)
+    if (unlikely(!binary))
         return -ENOENT;
 
     /* Check exec permission */
@@ -578,7 +579,7 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     /* Load the ELF binary */
     /* First read the ELF file into a buffer */
     uint8_t *elf_buf = (uint8_t *)kmalloc(ELF_MAX_SIZE);
-    if (!elf_buf) {
+    if (unlikely(!elf_buf)) {
         vfs_close(binary);
         return -ENOMEM;
     }
@@ -594,7 +595,7 @@ int exec_binprm(const char *filename, void *argv, void *envp)
 
     /* Validate and load the ELF from the buffer */
     uint64_t entry = elf_load(elf_buf, (unsigned long)elf_size);
-    if (!entry) {
+    if (unlikely(!entry)) {
         kfree(elf_buf);
         vfs_close(binary);
         return -ENOEXEC;
@@ -608,7 +609,7 @@ int exec_binprm(const char *filename, void *argv, void *envp)
     /* Set up the user stack with argv/envp */
     uint64_t user_stack = vmm_setup_user_stack(p, (const char **)argv,
                                                 (const char **)envp);
-    if (!user_stack) {
+    if (unlikely(!user_stack)) {
         kfree(elf_buf);
         vfs_close(binary);
         return -ENOMEM;

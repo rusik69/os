@@ -224,6 +224,7 @@ void mce_handler(struct interrupt_frame *frame)
     /* Step 5: Take action based on worst severity */
     switch (worst_severity) {
     case MCE_SEV_NO_ERROR:
+        /* fallthrough */
     case MCE_SEV_CORRECTED:
         kprintf("[MCE] Corrected machine check — continuing\n");
         /* Clear MCIP to indicate MCE processing is complete */
@@ -262,6 +263,7 @@ void mce_handler(struct interrupt_frame *frame)
         break;
 
     case MCE_SEV_FATAL:
+        /* fallthrough */
     case MCE_SEV_DEFERRED:
     default:
         kprintf("[MCE] FATAL — processor context corrupted\n");

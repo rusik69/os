@@ -17,7 +17,7 @@
  */
 
 /* Panic the kernel — never returns */
-__attribute__((noreturn))
+__attribute__((noreturn)) __printf(1, 2)
 void panic(const char *fmt, ...);
 
 /* Dump stack backtrace */

@@ -1307,7 +1307,7 @@ void* pmm_alloc_pages(size_t count)
         return phys ? (void *)PHYS_TO_VIRT(phys) : NULL;
     }
     uint64_t phys = (uint64_t)pmm_alloc_frames(count);
-    if (!phys)
+    if (unlikely(!phys))
         return NULL;
     return (void *)PHYS_TO_VIRT(phys);
 }

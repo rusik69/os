@@ -134,7 +134,7 @@ void kunit_reset(void);
 
 /* Internal helper — records a failure with file/line info */
 void kunit_do_fail(struct kunit *test, const char *file, int line,
-                   const char *fmt, ...);
+                   const char *fmt, ...) __printf(4, 5);
 
 /* Internal helper — records a success assertion */
 void kunit_do_pass(struct kunit *test);

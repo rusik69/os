@@ -71,6 +71,6 @@ void early_puts(const char *s);
  * No field widths, no precision, no flags.  Designed for debugging
  * early boot without requiring any kernel infrastructure.
  */
-void early_printf(const char *fmt, ...);
+void early_printf(const char *fmt, ...) __printf(1, 2);
 
 #endif /* EARLY_SERIAL_H */

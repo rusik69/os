@@ -885,6 +885,7 @@ void trace_printk_init(void)
     kprintf("[OK] trace_printk initialized (%d bytes)\n", TRACE_PRINTK_BUF_SIZE);
 }
 
+__printf(1, 2)
 void trace_printk(const char *fmt, ...)
 {
     if (!trace_printk_enabled || !fmt)

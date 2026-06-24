@@ -209,6 +209,7 @@ int seccomp_check_syscall(uint64_t num) {
 
     switch (action) {
     case SECCOMP_RET_ALLOW:
+        /* fallthrough */
     case SECCOMP_RET_LOG:
         return 1; /* allowed */
 
@@ -219,6 +220,7 @@ int seccomp_check_syscall(uint64_t num) {
         return 0; /* blocked for now */
 
     case SECCOMP_RET_KILL:
+        /* fallthrough */
     default:
         /* Kill the process immediately with SIGSYS (seccomp violation) */
         kprintf("[seccomp] Killing process %u (%s) for seccomp violation\n",
