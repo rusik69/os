@@ -4,11 +4,12 @@
 #include "pmm.h"
 #include "printf.h"
 #include "string.h"
+#include "err.h"
 
 static struct memhp_section sections[MEMHP_MAX_SECTIONS];
 static int section_count = 0;
 
-void memhp_init(void) {
+void __init memhp_init(void) {
     memset(sections, 0, sizeof(sections));
     kprintf("[mem] Memory hotplug framework initialized (%d max sections, %lu MB each)\n",
             MEMHP_MAX_SECTIONS, (unsigned long)(MEMHP_SECTION_SIZE / (1024 * 1024)));
@@ -85,7 +86,7 @@ int memhp_get_section_count(void) {
 
 struct memhp_section *memhp_get_section(int section_id) {
     if (section_id < 0 || section_id >= section_count)
-        return NULL;
+        return ERR_PTR(-EINVAL);
     return &sections[section_id];
 }
 #include "module.h"

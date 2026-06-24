@@ -242,7 +242,7 @@ static int ghes_process_source(struct ghes_source *gs)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Initialize the GHES subsystem — parse ACPI HEST table. */
-void ghes_init(void)
+void __init ghes_init(void)
 {
     if (g_ghes_initialized) return;
 

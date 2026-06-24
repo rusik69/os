@@ -58,7 +58,7 @@ static int fw_cache_insert(const char *name, const uint8_t *data, size_t size);
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-void firmware_init(void)
+void __init firmware_init(void)
 {
     memset(builtin_fw_table, 0, sizeof(builtin_fw_table));
     num_builtin_fw = 0;

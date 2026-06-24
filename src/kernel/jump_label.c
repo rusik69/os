@@ -84,7 +84,7 @@ void static_key_disable(struct static_key *key)
 }
 
 /* Initialize jump label subsystem */
-void jump_label_init(void)
+void __init jump_label_init(void)
 {
     /* Test that we can patch a jmp and back */
     uint64_t flags;

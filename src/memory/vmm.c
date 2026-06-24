@@ -7,6 +7,7 @@
 #include "thp.h"
 #include "export.h"
 #include "bug.h"
+#include "err.h"
 
 /* Verify our fundamental page size assumption at compile time */
 _Static_assert(PAGE_SIZE == 4096, "PAGE_SIZE must be 4096");
@@ -37,7 +38,7 @@ static inline void tlb_flush(uint64_t addr) {
 /* (nx_enabled is defined below and exported for nx_enforce) */
 
 /* Initialize NX support detection */
-void vmm_nx_init(void) {
+void __init vmm_nx_init(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0x80000001));
     nx_enabled = (edx & (1u << 20)) ? 1 : 0; /* bit 20 = NX */
@@ -129,7 +130,7 @@ static inline void write_cr3(uint64_t val) {
 static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags) {
     if (!(table[index] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return NULL;
+        if (!frame) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
         table[index] = frame | flags | PTE_PRESENT | PTE_WRITE;
@@ -139,7 +140,7 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
     if (table[index] & PTE_HUGE) {
         uint64_t huge = table[index];
         uint64_t pt_phys = pmm_alloc_frame();
-        if (!pt_phys) return NULL;
+        if (!pt_phys) return ERR_PTR(-ENOMEM);
         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
         uint64_t base  = huge & 0x000FFFFFFFE00000ULL;
         uint64_t pflags = (huge & 0x1FF) & ~(uint64_t)PTE_HUGE;
@@ -151,7 +152,7 @@ static uint64_t *get_or_create_table(uint64_t *table, int index, uint64_t flags)
     return (uint64_t *)PHYS_TO_VIRT(table[index] & PTE_ADDR_MASK);
 }
 
-void vmm_init(void) {
+void __init vmm_init(void) {
     /* Use current PML4 set up by boot code */
     kernel_pml4 = (uint64_t *)PHYS_TO_VIRT(read_cr3() & PTE_ADDR_MASK);
 
@@ -200,12 +201,12 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pml4_was_empty = !(kernel_pml4[pml4_idx] & PTE_PRESENT);
 
     uint64_t *pdpt = get_or_create_table(kernel_pml4, pml4_idx, flags);
-    if (!pdpt) return -ENOMEM;
+    if (IS_ERR(pdpt)) return -ENOMEM;
 
     int pdpt_was_empty = !(pdpt[pdpt_idx] & PTE_PRESENT);
 
     uint64_t *pd  = get_or_create_table(pdpt, pdpt_idx, flags);
-    if (!pd) {
+    if (IS_ERR(pd)) {
         if (pml4_was_empty) {
             uint64_t pdpt_phys = kernel_pml4[pml4_idx] & PTE_ADDR_MASK;
             kernel_pml4[pml4_idx] = 0;
@@ -217,7 +218,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pd_was_empty = !(pd[pd_idx] & PTE_PRESENT);
 
     uint64_t *pt  = get_or_create_table(pd, pd_idx, flags);
-    if (!pt) {
+    if (IS_ERR(pt)) {
         if (pdpt_was_empty) {
             uint64_t pd_phys = pdpt[pdpt_idx] & PTE_ADDR_MASK;
             pdpt[pdpt_idx] = 0;
@@ -351,7 +352,7 @@ void *vmm_map_phys(uint64_t phys, uint64_t size, uint64_t flags) {
     for (uint64_t off = 0; off < end - start; off += PAGE_SIZE) {
         uint64_t vaddr = KERNEL_VMA_OFFSET + start + off;
         if (vmm_map_page(vaddr, start + off, flags) < 0)
-            return NULL;
+            return ERR_PTR(-ENOMEM);
     }
     return (void *)(KERNEL_VMA_OFFSET + phys);
 }
@@ -384,7 +385,7 @@ void vmm_unmap_phys(void *vaddr, uint64_t size) {
 uint64_t *vmm_create_user_pml4(void) {
     /* Allocate a new PML4 and copy the upper-half kernel mappings */
     uint64_t frame = pmm_alloc_frame();
-    if (!frame) return NULL;
+    if (!frame) return ERR_PTR(-ENOMEM);
     uint64_t *pml4 = (uint64_t *)PHYS_TO_VIRT(frame);
     memset(pml4, 0, PAGE_SIZE);
 
@@ -398,7 +399,7 @@ uint64_t *vmm_create_user_pml4(void) {
 static uint64_t *get_or_create_table_in(uint64_t *table, int index, uint64_t flags) {
     if (!(table[index] & PTE_PRESENT)) {
         uint64_t frame = pmm_alloc_frame();
-        if (!frame) return NULL;
+        if (!frame) return ERR_PTR(-ENOMEM);
         uint64_t *virt = (uint64_t *)PHYS_TO_VIRT(frame);
         memset(virt, 0, PAGE_SIZE);
         table[index] = frame | flags | PTE_PRESENT | PTE_WRITE | PTE_USER;
@@ -418,12 +419,12 @@ int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fla
     int pml4_was_empty = !(pml4[pml4_idx] & PTE_PRESENT);
 
     uint64_t *pdpt = get_or_create_table_in(pml4, pml4_idx, flags);
-    if (!pdpt) return -ENOMEM;
+    if (IS_ERR(pdpt)) return -ENOMEM;
 
     int pdpt_was_empty = !(pdpt[pdpt_idx] & PTE_PRESENT);
 
     uint64_t *pd = get_or_create_table_in(pdpt, pdpt_idx, flags);
-    if (!pd) {
+    if (IS_ERR(pd)) {
         if (pml4_was_empty) {
             uint64_t pdpt_phys = pml4[pml4_idx] & PTE_ADDR_MASK;
             pml4[pml4_idx] = 0;
@@ -435,7 +436,7 @@ int vmm_map_user_page(uint64_t *pml4, uint64_t virt, uint64_t phys, uint64_t fla
     int pd_was_empty = !(pd[pd_idx] & PTE_PRESENT);
 
     uint64_t *pt = get_or_create_table_in(pd, pd_idx, flags);
-    if (!pt) {
+    if (IS_ERR(pt)) {
         if (pdpt_was_empty) {
             uint64_t pd_phys = pdpt[pdpt_idx] & PTE_ADDR_MASK;
             pdpt[pdpt_idx] = 0;
@@ -485,21 +486,21 @@ static uint64_t *vmm_walk_to_pt(uint64_t *pml4, uint64_t virt,
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(pml4[pml4_idx] & PTE_PRESENT)) return NULL;
-    if (!(pml4[pml4_idx] & PTE_USER)) return NULL;
+    if (!(pml4[pml4_idx] & PTE_PRESENT)) return ERR_PTR(-ENOENT);
+    if (!(pml4[pml4_idx] & PTE_USER)) return ERR_PTR(-EACCES);
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return NULL;
-    if (!(pdpt[pdpt_idx] & PTE_USER)) return NULL;
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return ERR_PTR(-ENOENT);
+    if (!(pdpt[pdpt_idx] & PTE_USER)) return ERR_PTR(-EACCES);
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
-    if (!(pd[pd_idx] & PTE_PRESENT)) return NULL;
-    if (!(pd[pd_idx] & PTE_USER)) return NULL;
+    if (!(pd[pd_idx] & PTE_PRESENT)) return ERR_PTR(-ENOENT);
+    if (!(pd[pd_idx] & PTE_USER)) return ERR_PTR(-EACCES);
     if (pde_out) *pde_out = pd[pd_idx];
 
     if (pd[pd_idx] & (1ULL << 7)) {
         if (pte_out) *pte_out = pd[pd_idx];
-        return NULL;
+        return ERR_PTR(-ENOENT); /* huge page: not a leaf page table */
     }
 
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
@@ -532,7 +533,7 @@ int vmm_user_range_ok(uint64_t *pml4, uint64_t addr, uint64_t len, int write) {
             continue;
         }
 
-        if (!pt) return 0;
+        if (IS_ERR(pt)) return 0;
         if (!(pte & PTE_PRESENT) || !(pte & PTE_USER)) return 0;
         /* COW pages are logically writable — the first write triggers
          * allocation via the existing COW handler. */
@@ -579,7 +580,7 @@ void vmm_switch_pml4(uint64_t *pml4) {
  */
 uint64_t *vmm_clone_user_pml4(uint64_t *src) {
     uint64_t *dst = vmm_create_user_pml4(); /* copies kernel half */
-    if (!dst) return NULL;
+    if (IS_ERR(dst)) return ERR_CAST(dst);
 
     for (int i = 0; i < 256; i++) {
         if (!(src[i] & PTE_PRESENT)) continue;
@@ -743,7 +744,7 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
     if (!(pd[pd_idx] & PTE_PRESENT)) return 0;
     if (pd[pd_idx] & (1ULL << 7)) return 1; /* 2MB page present */
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
-    return (pt[pt_idx] & PTE_PRESENT) ? 1 : 0;
+    return pt[pt_idx] & PTE_PRESENT;
 }
 
 /* Walk user page tables to resolve a virtual address to a physical address.
@@ -757,7 +758,7 @@ static int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
         if (phys) *phys = (pde & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
         return 0;
     }
-    if (!pt || !(pte & PTE_PRESENT)) return -EFAULT;
+    if (IS_ERR(pt) || !(pte & PTE_PRESENT)) return -EFAULT;
     if (phys) *phys = (pte & PTE_ADDR_MASK) + (virt & 0xFFF);
     return 0;
 }
@@ -1242,12 +1243,12 @@ int vmm_page_is_execonly(uint64_t *pml4, uint64_t virt) {
     if (!(pd[pd_idx] & PTE_PRESENT)) return 0;
 
     if (pd[pd_idx] & PTE_HUGE) {
-        return (pd[pd_idx] & PTE_EXECONLY) ? 1 : 0;
+        return pd[pd_idx] & PTE_EXECONLY;
     }
 
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
     if (!(pt[pt_idx] & PTE_PRESENT)) return 0;
-    return (pt[pt_idx] & PTE_EXECONLY) ? 1 : 0;
+    return pt[pt_idx] & PTE_EXECONLY;
 }
 
 /* ── Exported symbols for module loading ──────────────────────────── */

@@ -15,6 +15,7 @@
 #include "printf.h"
 #include "spinlock.h"
 #include "errno.h"
+#include "err.h"
 
 /* ── Global state ──────────────────────────────────────────────────── */
 
@@ -200,8 +201,8 @@ void page_pool_destroy(int pool_idx)
 
 struct page_pool *page_pool_get(int pool_idx)
 {
-    if (pool_idx < 0 || pool_idx >= PAGE_POOL_MAX_POOLS) return NULL;
-    if (!g_page_pools[pool_idx].initialized) return NULL;
+    if (pool_idx < 0 || pool_idx >= PAGE_POOL_MAX_POOLS) return ERR_PTR(-EINVAL);
+    if (!g_page_pools[pool_idx].initialized) return ERR_PTR(-ENODEV);
     return &g_page_pools[pool_idx];
 }
 
@@ -229,7 +230,7 @@ void* page_pool_alloc(int flags)
 {
     (void)flags;
     kprintf("[page_pool] page_pool_alloc: not yet implemented\n");
-    return 0;
+    return ERR_PTR(-ENOSYS);
 }
 /* ── Stub: page_pool_free ─────────────────────────────── */
 int page_pool_free(void *page)

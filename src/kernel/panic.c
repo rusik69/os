@@ -555,7 +555,7 @@ void panic(const char *fmt, ...) {
     panic_halt_loop();
 }
 
-void panic_init(void) {
+void __init panic_init(void) {
     calibrate_tsc();
 
     kprintf("[OK] Panic/oops handler initialized (timeout=%ds, TSC=%llu MHz)\n",

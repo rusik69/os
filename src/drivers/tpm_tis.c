@@ -29,6 +29,7 @@
 #include "module.h"
 #include "vmm.h"   /* vmm_map_phys, vmm_unmap_phys */
 #include "errno.h"
+#include "err.h"
 #include "heap.h"
 
 /* ── Global TPM device singleton ──────────────────────────────────── */
@@ -546,7 +547,7 @@ int tpm_init(void) {
     uint64_t phys = TPM_TIS_BASE;
     void *virt = vmm_map_phys(phys, TPM_TIS_SIZE,
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
-    if (!virt) {
+    if (IS_ERR(virt)) {
         kprintf("[TPM] failed to map MMIO region at 0x%llx\n", phys);
         return -EINVAL;
     }

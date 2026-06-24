@@ -41,7 +41,7 @@ static int lock_initialized = 0;
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
-void file_lock_init(void)
+void __init file_lock_init(void)
 {
     if (lock_initialized)
         return;

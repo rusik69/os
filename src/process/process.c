@@ -266,7 +266,7 @@ static void rlimit_init_defaults(struct process *proc) {
     proc->rlim_max[RLIMIT_MEMLOCK] = 1024ULL * 64;
 }
 
-void process_init(void) {
+void __init process_init(void) {
     /* Compile-time assertions for critical struct sizes */
     BUILD_BUG_ON(sizeof(struct process) < 1024);
     BUILD_BUG_ON(sizeof(struct cpu_context) < 64);
@@ -794,7 +794,7 @@ int cap_bset_has(uint32_t cap) {
     if (!p || cap >= PROCESS_SYSCALL_MAX) return 0;
     int word = cap / 64;
     int bit  = cap % 64;
-    return (p->cap_bset[word] & (1ULL << bit)) ? 1 : 0;
+    return p->cap_bset[word] & (1ULL << bit);
 }
 
 void cap_bset_init(struct process *proc) {

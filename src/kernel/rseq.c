@@ -37,7 +37,7 @@ struct rseq_state {
 static struct rseq_state rseq_table[PROCESS_MAX];
 static int rseq_initialized = 0;
 
-void rseq_init(void)
+void __init rseq_init(void)
 {
     memset(rseq_table, 0, sizeof(rseq_table));
     rseq_initialized = 1;

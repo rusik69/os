@@ -157,7 +157,7 @@ static void rtc_irq_handler(struct interrupt_frame *frame) {
     irq_ack(8);
 }
 
-void rtc_init(void) {
+void __init rtc_init(void) {
     idt_register_handler_named(40, rtc_irq_handler, "cmos_rtc");
 
     /* Initialize wait queue for /dev/rtc blocking reads */
@@ -547,7 +547,7 @@ static int wakealarm_write(const char *data, uint32_t size, void *priv) {
 
 /* Initialize RTC sysfs interface.
  * Creates /sys/class/rtc/rtc0/wakealarm for wake-from-suspend. */
-void rtc_sysfs_init(void) {
+void __init rtc_sysfs_init(void) {
     /* Create /sys/class/rtc/ directory */
     if (sysfs_create_dir("/sys/class/rtc") < 0) {
         kprintf("[rtc] sysfs: failed to create /sys/class/rtc\n");

@@ -18,6 +18,7 @@ typedef uint64_t            uintptr_t;
 #define false 0
 
 #define __maybe_unused __attribute__((unused))
+#define __init        __attribute__((section(".init.text")))
 
 typedef _Bool bool;
 

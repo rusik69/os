@@ -34,7 +34,7 @@ static const uint64_t strict_allowed[STRICT_ALLOWED_COUNT] = {
     15, /* SYS_RT_SIGRETURN in Linux */
 };
 
-void seccomp_init(void) {
+void __init seccomp_init(void) {
     kprintf("[OK] Seccomp initialized (RET_LOG/RET_TRAP audit logging available)\n");
 }
 

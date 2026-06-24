@@ -20,7 +20,7 @@
  * 2 = admin-controlled (CAP_SYS_PTRACE + PR_SET_PTRACER opt-in). */
 int yama_ptrace_scope = YAMA_PTRACE_SCOPE_RESTRICTED;
 
-void yama_init(void) {
+void __init yama_init(void) {
     kprintf("[OK] YAMA ptrace initialized (scope=%d)\n", yama_ptrace_scope);
 }
 

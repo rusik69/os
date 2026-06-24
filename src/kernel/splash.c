@@ -319,7 +319,7 @@ static void draw_status_text(void)
 
 /* ── Public API ────────────────────────────────────────────────────── */
 
-void splash_init(void)
+void __init splash_init(void)
 {
     if (splash_shown)
         return;

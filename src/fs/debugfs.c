@@ -235,7 +235,7 @@ MODULE_DESCRIPTION("Debugfs virtual filesystem — exposes kernel debug data via
 MODULE_VERSION("1.0");
 #else /* !MODULE — built-in, called directly from kernel boot path */
 
-void debugfs_init(void) {
+void __init debugfs_init(void) {
     if (debugfs_mounted) return;
 
     for (int i = 0; i < DEBUGFS_MAX_ENTRIES; i++)

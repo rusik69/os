@@ -154,7 +154,7 @@ int audit_netlink_send(int event_type, const char *payload, int payload_len) {
 
 /* ── Initialisation ──────────────────────────────────────────────── */
 
-void audit_init(void) {
+void __init audit_init(void) {
     if (audit_enabled) return;
 
     audit_enabled = 1;

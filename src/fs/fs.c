@@ -307,7 +307,7 @@ static int check_dir_perm_idx(int idx, char op) {
         case 'r': bits = FS_PERM_ROTH << shift; break;
         case 'w': bits = FS_PERM_WOTH << shift; break;
         case 'x': bits = FS_PERM_XOTH << shift; break;
-        default:  return -EINVAL;
+        default: return -EINVAL;
     }
     return (m & bits) ? 0 : -1;
 }
@@ -360,7 +360,7 @@ int fs_format(void) {
     return 0;
 }
 
-void fs_init(void) {
+void __init fs_init(void) {
     if (!ata_is_present()) {
         kprintf("  No disk found, filesystem unavailable\n");
         return;
@@ -900,7 +900,7 @@ int fs_check_perm(const char *path, char op) {
         case 'r': bits = FS_PERM_ROTH << shift; break;
         case 'w': bits = FS_PERM_WOTH << shift; break;
         case 'x': bits = FS_PERM_XOTH << shift; break;
-        default:  return -2;
+        default: return -2;
     }
     return (m & bits) ? 0 : -2;
 }

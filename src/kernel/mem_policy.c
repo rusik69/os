@@ -11,7 +11,7 @@
 static struct mem_policy current_policy;
 static int mem_policy_initialised = 0;
 
-void mem_policy_init(void)
+void __init mem_policy_init(void)
 {
     if (mem_policy_initialised)
         return;

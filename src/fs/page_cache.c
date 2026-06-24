@@ -67,7 +67,7 @@ static uint64_t ra_prefetches = 0;  /* total pages prefetched */
 static int evict_one(void);
 
 /* ── Initialization ────────────────────────────────────────────────── */
-void page_cache_init(void) {
+void __init page_cache_init(void) {
     if (page_cache_initialized) return;
     memset(page_cache, 0, sizeof(page_cache));
     page_cache_initialized = 1;

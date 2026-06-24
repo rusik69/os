@@ -66,7 +66,7 @@ static int nmi_pmc_check_support(void) {
         : "a"(0x0A));
     (void)ebx; (void)ecx; (void)edx;
     uint8_t version = (uint8_t)(eax & 0xFF);
-    return (version > 0) ? 1 : 0;
+    return version > 0;
 }
 
 /*
@@ -450,7 +450,7 @@ int nmi_watchdog_available(void) {
     return 1; /* Always available — uses local APIC if possible */
 }
 
-void nmi_watchdog_init(void) {
+void __init nmi_watchdog_init(void) {
     /* Zero out per-CPU state */
     memset(watchdog_per_cpu, 0, sizeof(watchdog_per_cpu));
 

@@ -56,7 +56,7 @@ static inline int rdrand64(uint64_t *val) {
  *          No locking required.
  * Return: void.
  */
-void aslr_init(void) {
+void __init aslr_init(void) {
     /* Check for "nokaslr" on kernel command line — disables ALL ASLR */
     if (cmdline_has("nokaslr")) {
         aslr_disabled = 1;

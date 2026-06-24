@@ -18,6 +18,7 @@
 #define KERNEL_INTERNAL
 #include "cgroup.h"
 #include "string.h"
+#include "string_ext.h"
 #include "printf.h"
 #include "heap.h"
 #include "spinlock.h"
@@ -164,22 +165,22 @@ static int cgroup_v2_read(void *priv, const char *path, void *buf,
         /* Build controller list for this cgroup */
         char ctrl[128] = "";
         if (g_cgroups[i].cpu.max_period > 0 || g_cgroups[i].cpu.max_quota > 0)
-            strcat(ctrl, "cpu ");
+            strlcat(ctrl, "cpu ", sizeof(ctrl));
         if (g_cgroups[i].mem.max_bytes > 0 || g_cgroups[i].mem.high_bytes > 0)
-            strcat(ctrl, "memory ");
+            strlcat(ctrl, "memory ", sizeof(ctrl));
         if (g_cgroups[i].pids.max > 0)
-            strcat(ctrl, "pids ");
+            strlcat(ctrl, "pids ", sizeof(ctrl));
         /* IO limits */
         for (int j = 0; j < CGROUP_IO_MAX_DEVICES; j++) {
             if (g_cgroups[i].io.devices[j].in_use) {
-                strcat(ctrl, "io ");
+                strlcat(ctrl, "io ", sizeof(ctrl));
                 break;
             }
         }
         /* Freezer is always available */
-        strcat(ctrl, "freezer");
+        strlcat(ctrl, "freezer", sizeof(ctrl));
         if (ctrl[0] == '\0')
-            strcpy(ctrl, "-");
+            strlcpy(ctrl, "-", sizeof(ctrl));
 
         pos += snprintf(tmp + pos, sizeof(tmp) - (size_t)pos,
             "  cgroup[%d]  parent=%d  pids=%lu  controllers=%s\n",

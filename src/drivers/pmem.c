@@ -123,7 +123,7 @@ static int pmem_submit(struct blk_request *req) {
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void pmem_init(void) {
+void __init pmem_init(void) {
     if (g_pmem_initialized)
         return;
 

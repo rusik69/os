@@ -103,7 +103,7 @@ uint64_t kaslr_get_offset(void) {
  * Called early in kernel_main(), after serial/VGA is up.
  * Logs status and stores the offset in the global variable.
  */
-void kaslr_init(void) {
+void __init kaslr_init(void) {
     uint64_t off = kaslr_get_offset();
 
     if (off == 0) {

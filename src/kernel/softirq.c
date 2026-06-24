@@ -46,7 +46,7 @@ static int softirq_initialized = 0;
 /* ── Forward declarations ──────────────────────────────────────────────── */
 static void ksoftirqd_task(void *arg);
 
-void softirq_init(void)
+void __init softirq_init(void)
 {
     if (softirq_initialized)
         return;

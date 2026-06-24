@@ -234,7 +234,7 @@ int mq_unlink(const char *name) {
 }
 
 /* ── mqueue_register ──────────────────────────────────── */
-int mqueue_register(const char *name, int oflag)
+static int mqueue_register(const char *name, int oflag)
 {
     /* Register a queue for future use (similar to mq_open but returns 0 on success) */
     if (!mqueue_inited || !name)
@@ -249,7 +249,7 @@ int mqueue_register(const char *name, int oflag)
 }
 
 /* ── mqueue_unregister ────────────────────────────────── */
-int mqueue_unregister(const char *name)
+static int mqueue_unregister(const char *name)
 {
     /* Unregister a queue previously registered with mqueue_register */
     if (!mqueue_inited || !name)
@@ -270,7 +270,7 @@ int mqueue_unregister(const char *name)
 }
 
 /* ── mqueue_setattr ───────────────────────────────────── */
-int mqueue_setattr(mqd_t mqdes, const struct mq_attr *attr, struct mq_attr *old_attr)
+static int mqueue_setattr(mqd_t mqdes, const struct mq_attr *attr, struct mq_attr *old_attr)
 {
     if (mqdes < 0 || mqdes >= MQUEUE_MAX || !mqueue_table[mqdes].in_use)
         return -EBADF;

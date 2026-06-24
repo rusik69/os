@@ -478,6 +478,8 @@ int image_pull(const char *image_ref, const char *registry)
     /* Store layer digests */
     img->num_layers = num_layers;
     if (num_layers > 0) {
+        if ((size_t)num_layers > SIZE_MAX / sizeof(char *))
+            return -EOVERFLOW;
         img->layer_digests = (char **)kmalloc((size_t)num_layers * sizeof(char *));
         if (img->layer_digests) {
             for (int i = 0; i < num_layers; i++) {

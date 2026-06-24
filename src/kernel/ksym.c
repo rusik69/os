@@ -113,7 +113,7 @@ static void kallsyms_sort(void)
 /* ── Public API ────────────────────────────────────────────────────── */
 
 /* Initialise the symbol table: compute count and sort. */
-void ksym_init(void)
+void __init ksym_init(void)
 {
     g_ksym_count = (int)(((uintptr_t)__ksymtab_end - (uintptr_t)__ksymtab_start) / sizeof(struct ksym_entry));
     if (g_ksym_count < 0)

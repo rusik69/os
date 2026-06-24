@@ -577,7 +577,7 @@ int user_ns_setgroups_allowed(const struct user_namespace *ns)
 {
     if (!ns || ns == &init_user_ns)
         return 1;  /* always allowed in root namespace */
-    return (ns->setgroups_denied == 0) ? 1 : 0;
+    return ns->setgroups_denied == 0;
 }
 
 int user_ns_setgroups_deny(struct user_namespace *ns)

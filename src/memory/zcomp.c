@@ -11,6 +11,7 @@
 #include "printf.h"
 #include "smp.h"
 #include "heap.h"
+#include "err.h"
 
 /* Forward declaration — zcomp_fast_init() defined in zcomp_fast.c */
 extern int zcomp_fast_init(void);
@@ -51,25 +52,25 @@ const struct zcomp_ops *zcomp_find(uint32_t algo_id)
         if (zcomp_algorithms[i]->algo_id == algo_id)
             return zcomp_algorithms[i];
     }
-    return NULL;
+    return ERR_PTR(-ENOENT);
 }
 
 const struct zcomp_ops *zcomp_find_by_name(const char *name)
 {
     if (!name)
-        return NULL;
+        return ERR_PTR(-EINVAL);
 
     for (int i = 0; i < zcomp_num_algorithms; i++) {
         if (strcmp(zcomp_algorithms[i]->name, name) == 0)
             return zcomp_algorithms[i];
     }
-    return NULL;
+    return ERR_PTR(-ENOENT);
 }
 
 const char *zcomp_get_algo_name(uint32_t algo_id)
 {
     const struct zcomp_ops *ops = zcomp_find(algo_id);
-    return ops ? ops->name : "unknown";
+    return IS_ERR(ops) ? "unknown" : ops->name;
 }
 
 /* ── Per-CPU stream management ─────────────────────────────────────── */
@@ -158,7 +159,7 @@ static const struct zcomp_ops none_ops = {
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void zcomp_init(void)
+void __init zcomp_init(void)
 {
     /* Reset registration table */
     zcomp_num_algorithms = 0;
@@ -223,17 +224,17 @@ int zcomp_decompress(void *pool, const void *src, size_t slen, void *dst, size_t
 void* zcomp_create_pool(const char *alg)
 {
     if (!alg)
-        return NULL;
+        return ERR_PTR(-EINVAL);
 
     const struct zcomp_ops *ops = zcomp_find_by_name(alg);
-    if (!ops) {
+    if (IS_ERR(ops)) {
         kprintf("[zcomp] zcomp_create_pool: algorithm '%s' not found\n", alg);
-        return NULL;
+        return ERR_CAST(ops);
     }
 
     struct zcomp_pool *pool = (struct zcomp_pool *)kmalloc(sizeof(struct zcomp_pool));
     if (!pool)
-        return NULL;
+        return ERR_PTR(-ENOMEM);
 
     pool->ops = ops;
     pool->workspace = NULL;

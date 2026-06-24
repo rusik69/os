@@ -513,7 +513,7 @@ int tmpfs_unmount(void) {
     return 0;
 }
 
-void tmpfs_init(void) {
+void __init tmpfs_init(void) {
     tmpfs_mount();
     kprintf("[OK] tmpfs initialized\n");
 }

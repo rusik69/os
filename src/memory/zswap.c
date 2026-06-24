@@ -100,7 +100,7 @@ static struct zswap_entry *zswap_find(int dev_idx, uint32_t slot)
 
 /* ── Initialization ─────────────────────────────────────────────────── */
 
-void zswap_init(void)
+void __init zswap_init(void)
 {
     if (zswap_initialised)
         return;
@@ -345,7 +345,7 @@ int zswap_is_full(void)
 {
     if (!zswap_initialised)
         return 1;
-    return (zswap_pool_used >= zswap_pool_max) ? 1 : 0;
+    return zswap_pool_used >= zswap_pool_max;
 }
 
 /* ── Statistics ─────────────────────────────────────────────────────── */

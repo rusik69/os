@@ -19,9 +19,10 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "string.h"
+#include "errno.h"
+#include "err.h"
 #include "printf.h"
 #include "spinlock.h"
-#include "errno.h"
 
 /* ── Handle table ──────────────────────────────────────────────── */
 
@@ -111,7 +112,7 @@ int drm_gem_create_object(size_t size, int is_contig,
         /* Map into kernel virtual space */
         obj->vaddr = vmm_map_phys(obj->phys_addr, size,
                                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-        if (!obj->vaddr) {
+        if (IS_ERR(obj->vaddr)) {
             pmm_free_frames_contiguous(obj->phys_addr, num_pages);
             spinlock_release(&g_gem_lock);
             return -ENOMEM;
@@ -130,7 +131,7 @@ int drm_gem_create_object(size_t size, int is_contig,
         obj->phys_addr = pages[0];
         obj->vaddr = vmm_map_phys(obj->phys_addr, size,
                                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-        if (!obj->vaddr) {
+        if (IS_ERR(obj->vaddr)) {
             pmm_free_frames_contiguous(obj->phys_addr, num_pages);
             spinlock_release(&g_gem_lock);
             return -ENOMEM;

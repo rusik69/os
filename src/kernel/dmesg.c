@@ -28,7 +28,7 @@ static int sysctl_write_dmesg_restrict(const char *buf, int len) {
 
 /* ── API ──────────────────────────────────────────────────────────── */
 
-void dmesg_init(void) {
+void __init dmesg_init(void) {
     kprintf("[OK] dmesg_restrict initialized (value=%d)\n", dmesg_restrict);
 
     /* Register sysctl entry: kernel.dmesg_restrict */

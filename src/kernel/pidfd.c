@@ -18,7 +18,7 @@ struct pidfd_entry {
 static struct pidfd_entry pidfd_table[PIDFD_MAX];
 static int                pidfd_initialised;
 
-void pidfd_init(void)
+void __init pidfd_init(void)
 {
     if (pidfd_initialised)
         return;

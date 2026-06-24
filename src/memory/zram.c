@@ -60,7 +60,7 @@ static struct zram_device zram_dev;
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void zram_init(void)
+void __init zram_init(void)
 {
     memset(&zram_dev, 0, sizeof(zram_dev));
     zram_dev.algo_id = ZCOMP_ALGO_FAST;

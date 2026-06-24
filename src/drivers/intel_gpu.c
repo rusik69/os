@@ -2,6 +2,7 @@
 #include "pci.h"
 #include "printf.h"
 #include "vmm.h"
+#include "err.h"
 
 #define INTEL_VENDOR_ID 0x8086
 #define PCI_CLASS_DISPLAY 0x03
@@ -18,7 +19,7 @@ static struct intel_gpu_info g_gpu;
 static volatile uint8_t *g_mmio;
 
 static uint32_t intel_gpu_read32(uint32_t reg) {
-    if (!g_mmio) return 0;
+    if (IS_ERR_OR_NULL((const void *)g_mmio)) return 0;
     return *(volatile uint32_t *)(g_mmio + reg);
 }
 
@@ -26,7 +27,7 @@ static void intel_gpu_map_mmio(struct intel_gpu_info *gpu) {
     if (!gpu->mmio_base) return;
     g_mmio = (volatile uint8_t *)vmm_map_phys(gpu->mmio_base, gpu->mmio_size,
                     VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (g_mmio) gpu->mmio_mapped = 1;
+    if (!IS_ERR((const void *)g_mmio)) gpu->mmio_mapped = 1;
 }
 
 static void intel_gpu_read_state(struct intel_gpu_info *gpu) {

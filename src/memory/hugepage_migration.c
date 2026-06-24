@@ -94,7 +94,7 @@ static int page_is_allocated(uint64_t phys_addr)
     uint64_t frame = phys_addr / PAGE_SIZE;
     if (frame >= pmm_get_total_frames())
         return 0;
-    return (pmm_refcount(phys_addr) > 0) ? 1 : 0;
+    return pmm_refcount(phys_addr) > 0;
 }
 
 /* ── Split huge page for migration ─────────────────────────────────── */

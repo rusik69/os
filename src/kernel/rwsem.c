@@ -245,13 +245,13 @@ const char *rwsem_owner_name(struct rw_semaphore *sem) {
 
 int rwsem_is_write_locked(struct rw_semaphore *sem) {
     if (!sem) return 0;
-    return sem->count < 0 ? 1 : 0;
+    return sem->count < 0;
 }
 
 int rwsem_is_read_locked(struct rw_semaphore *sem) {
     if (!sem) return 0;
     if (sem->count < 0) return 0; /* write-locked, not read-locked */
-    return sem->reader_count > 0 ? 1 : 0;
+    return sem->reader_count > 0;
 }
 
 /* ── Optimistic spinning statistics ──────────────────────────────── */

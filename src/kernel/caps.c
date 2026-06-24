@@ -267,7 +267,7 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
         return 0;
 
     case 2: /* PR_GET_KEEPCAPS (Linux value 2) */
-        return (p->securebits & SECBIT_KEEP_CAPS) ? 1 : 0;
+        return p->securebits & SECBIT_KEEP_CAPS;
 
     case 3: /* PR_SET_SECCOMP (Linux value 22 = 0x16) handled elsewhere */
     case 22:
@@ -277,7 +277,7 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
     case 4: /* PR_CAPBSET_READ (Linux value 23) */
         if (arg2 > CAP_LAST_CAP)
             return -EINVAL;
-        return cap_bset_has((uint32_t)arg2) ? 1 : 0;
+        return cap_bset_has((uint32_t)arg2);
 
     case 5: /* PR_CAPBSET_DROP (Linux value 24) */
         if (arg2 > CAP_LAST_CAP)
@@ -313,7 +313,7 @@ int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3)
 
     case 9: /* PR_GET_NO_NEW_PRIVS (Linux value 39 = 0x27) */
     case 39:
-        return p->no_new_privs ? 1 : 0;
+        return p->no_new_privs;
 
     default:
         return -EINVAL;

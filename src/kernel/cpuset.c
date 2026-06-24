@@ -19,7 +19,7 @@ static cpuset_t cpuset_all;
 static struct cpu_cgroup cpu_cgroups[CPU_CGROUP_MAX];
 static int cpu_cgroup_initialised = 0;
 
-void cpuset_init(void)
+void __init cpuset_init(void)
 {
     if (cpuset_initialised)
         return;

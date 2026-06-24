@@ -662,7 +662,7 @@ int kdump_check(void)
         return 0;
 
     volatile struct kdump_header *hdr = kdump_virt;
-    return (hdr->magic == KDUMP_MAGIC && hdr->version == KDUMP_VERSION) ? 1 : 0;
+    return hdr->magic == KDUMP_MAGIC && hdr->version == KDUMP_VERSION;
 }
 
 const struct kdump_header *kdump_get_header(void)

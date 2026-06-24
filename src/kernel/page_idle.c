@@ -4,6 +4,7 @@
 #include "kernel.h"
 #include "printf.h"
 #include "errno.h"
+#include "err.h"
 #include "smp.h"
 
 static int page_idle_initialised = 0;
@@ -31,7 +32,7 @@ int page_idle_mark_accessed(uint64_t phys)
 
     /* Map the page at a temporary kernel address. */
     void *virt = vmm_map_phys(phys, PAGE_SIZE, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (!virt)
+    if (IS_ERR(virt))
         return -ENOMEM;
 
     /* Read a byte to set the accessed bit in the hardware page tables. */
@@ -77,7 +78,7 @@ int page_idle_clear(uint64_t phys)
         return -EINVAL;
 
     void *virt = vmm_map_phys(phys, PAGE_SIZE, VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (!virt)
+    if (IS_ERR(virt))
         return -ENOMEM;
 
     /* Temporarily map to get the PTE, then clear bit 5 (accessed).

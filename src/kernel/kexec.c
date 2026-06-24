@@ -496,7 +496,7 @@ void kexec_crash_reboot(void)
 
 int kexec_crash_is_loaded(void)
 {
-    return kexec_crash_state.loaded ? 1 : 0;
+    return kexec_crash_state.loaded;
 }
 
 /* ── Stub: kexec_unload ────────────────────────────────────────────── */

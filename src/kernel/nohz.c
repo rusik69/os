@@ -37,7 +37,7 @@ static int nohz_initialised = 0;
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
-void nohz_init(void)
+void __init nohz_init(void)
 {
     if (nohz_initialised)
         return;

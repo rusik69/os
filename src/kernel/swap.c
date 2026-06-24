@@ -73,7 +73,7 @@ static int swap_write_slot(int dev_id, uint64_t byte_offset, const void *buf)
 
 /* ── Initialisation ────────────────────────────────────────────────── */
 
-void swap_init(void)
+void __init swap_init(void)
 {
     if (swap_initialised) return;
 

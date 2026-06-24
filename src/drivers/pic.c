@@ -1,7 +1,7 @@
 #include "pic.h"
 #include "io.h"
 
-void pic_init(void) {
+void __init pic_init(void) {
     /* ICW1: begin initialization */
     outb(PIC1_CMD, 0x11); io_wait();
     outb(PIC2_CMD, 0x11); io_wait();
@@ -43,7 +43,7 @@ void pic_unmask(uint8_t irq) {
 }
 
 /* ── Stub: pic_remap ─────────────────────────────── */
-int pic_remap(int offset)
+static int pic_remap(int offset)
 {
     (void)offset;
     kprintf("[pic] pic_remap: not yet implemented\n");

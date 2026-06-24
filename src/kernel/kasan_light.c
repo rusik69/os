@@ -75,7 +75,7 @@ static inline uint8_t *kasan_addr_to_shadow(const void *addr)
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-void kasan_init(void)
+void __init kasan_init(void)
 {
     kprintf("[WARN] kasan: disabled (shadow PML4 entries unstable)\n");
 }

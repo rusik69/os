@@ -365,7 +365,7 @@ void wait_queue_ensure(struct wait_queue *wq) {
 }
 
 /* ── pipe_destroy ─────────────────────────────────────── */
-int pipe_destroy(int pipe_id)
+static int pipe_destroy(int pipe_id)
 {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return -EBADF;
@@ -391,7 +391,7 @@ int pipe_destroy(int pipe_id)
 }
 
 /* ── pipe_ioctl ───────────────────────────────────────── */
-int pipe_ioctl(int pipe_id, unsigned long request, void *arg)
+static int pipe_ioctl(int pipe_id, unsigned long request, void *arg)
 {
     if (pipe_id < 0 || pipe_id >= PIPE_MAX || !pipe_table[pipe_id].in_use)
         return -EBADF;

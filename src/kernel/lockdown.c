@@ -46,7 +46,7 @@ void lock_down(int level)
 int lockdown_is_locked_down(int level)
 {
     if (level == LOCKDOWN_INTEGRITY || level == LOCKDOWN_CONFIDENTIALITY) {
-        return g_lockdown_level >= level ? 1 : 0;
+        return g_lockdown_level >= level;
     }
     return 0;
 }

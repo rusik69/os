@@ -350,7 +350,7 @@ static int devfs_mounted = 0;
  * nodes (null, zero, random, kmsg) and dynamically registered device
  * nodes are accessible to userspace.
  */
-void devfs_init(void) {
+void __init devfs_init(void) {
     if (devfs_mounted) return;
 
     /* Clear the dynamic device table */

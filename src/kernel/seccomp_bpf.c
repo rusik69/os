@@ -23,7 +23,7 @@ struct seccomp_filter {
 
 static int seccomp_initialised;
 
-void seccomp_bpf_init(void)
+void __init seccomp_bpf_init(void)
 {
     if (seccomp_initialised)
         return;

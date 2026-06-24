@@ -63,7 +63,7 @@ static void ata_400ns_delay(void) {
     inb(ATA_STATUS); inb(ATA_STATUS);
 }
 
-void ata_init(void) {
+void __init ata_init(void) {
     /* Select master drive */
     outb(ATA_DRIVE_HEAD, 0xA0);
     ata_400ns_delay();
@@ -206,7 +206,7 @@ MODULE_DESCRIPTION("Legacy ATA PIO driver — primary IDE controller (master)");
 MODULE_ALIAS("ata");
 #endif /* MODULE */
 
-int ata_identify(void *ident_data)
+static int ata_identify(void *ident_data)
 {
     if (!ident_data)
         return -EINVAL;
@@ -239,7 +239,7 @@ int ata_identify(void *ident_data)
     return 0;
 }
 
-int ata_reset(int bus)
+static int ata_reset(int bus)
 {
     (void)bus;
     kprintf("[ata] Soft resetting ATA bus\n");

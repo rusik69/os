@@ -15,6 +15,7 @@
 #include "types.h"
 #include "printf.h"
 #include "string.h"
+#include "string_ext.h"
 #include "pmm.h"
 #include "heap.h"
 #include "timer.h"
@@ -51,6 +52,7 @@
 #include "waitqueue.h"
 #include "completion.h"
 #include "rwlock.h"
+#include "err.h"
 #include "oom.h"
 #include "rcu.h"
 #include "aslr.h"
@@ -1653,8 +1655,8 @@ static void test_vmm_user_pages(void) {
 
     /* Create a user PML4 for testing */
     uint64_t *user_pml4 = vmm_create_user_pml4();
-    ASSERT("vmm create user pml4", user_pml4 != NULL);
-    if (!user_pml4) return;
+    ASSERT("vmm create user pml4", !IS_ERR(user_pml4));
+    if (IS_ERR(user_pml4)) return;
 
     /* Map a page in user space */
     uint64_t test_virt = 0x0000000001000000ULL;
@@ -4463,6 +4465,186 @@ static void test_sprintf(void) {
     t_ok("snprintf formatting");
 }
 
+/* ── Arithmetic overflow tests ────────────────────────── */
+
+#define _DIV_ROUND_UP(n, d)  (((n) + (d) - 1) / (d))
+#define _IS_POWER_OF_2(x)    ((x) && !((x) & ((x) - 1)))
+
+static void test_overflow_arithmetic(void) {
+    unsigned int u32;
+    unsigned long ul;
+    int i32;
+    bool ov;
+
+    /* ── Unsigned addition overflow ───────────────────────── */
+    ov = __builtin_add_overflow((unsigned int)0xFFFFFFFF, 1U, &u32);
+    ASSERT("overflow u32_max+1", ov);
+
+    ov = __builtin_add_overflow((unsigned int)0xFFFFFFFF, 0U, &u32);
+    ASSERT("!overflow u32_max+0", !ov);
+
+    ov = __builtin_add_overflow(0U, 0U, &u32);
+    ASSERT("!overflow 0+0", !ov);
+
+    ov = __builtin_add_overflow(1U, 2U, &u32);
+    ASSERT("!overflow 1+2", !ov);
+
+    /* ── Signed addition overflow ────────────────────────── */
+    ov = __builtin_add_overflow(2147483647, 1, &i32);
+    ASSERT("overflow i32_max+1", ov);
+
+    ov = __builtin_add_overflow(1, 2, &i32);
+    ASSERT("!overflow 1+2 signed", !ov);
+
+    /* ── Signed subtraction overflow ─────────────────────── */
+    ov = __builtin_sub_overflow(-2147483647 - 1, 1, &i32);
+    ASSERT("overflow i32_min-1", ov);
+
+    /* ── Unsigned multiplication overflow ────────────────── */
+    ov = __builtin_mul_overflow((size_t)-1, (size_t)2, &ul);
+    ASSERT("overflow size_max*2", ov);
+
+    ov = __builtin_mul_overflow(1000U, 2000U, &u32);
+    ASSERT("!overflow 1000*2000", !ov);
+
+    ov = __builtin_mul_overflow((unsigned int)0xFFFFFFFF, 2U, &u32);
+    ASSERT("overflow u32_max*2", ov);
+
+    ov = __builtin_mul_overflow(10U, 10U, &u32);
+    ASSERT("!overflow 10*10", !ov);
+
+    /* u16_max * u16_max fits in 32 bits */
+    ov = __builtin_mul_overflow((unsigned int)65535, (unsigned int)65535, &u32);
+    ASSERT("!overflow u16_max*u16_max", !ov);
+
+    t_ok("overflow arithmetic");
+}
+
+/* ── NULL pointer safety tests ────────────────────────── */
+
+static void test_null_safety(void) {
+    char buf[16];
+
+    /* kmalloc(0) returns NULL (heap.c returns NULL for size==0) */
+    void *z = kmalloc(0);
+    ASSERT("kmalloc(0) is NULL", z == NULL);
+
+    /* kfree(NULL) is a safe no-op */
+    kfree(NULL);
+    t_ok("kfree(NULL) no-op");
+
+    /* memcpy with NULL and len=0 avoids dereference */
+    memcpy(buf, NULL, 0);
+    ASSERT_EQ("memcpy NULL src len0 byte0", (uint8_t)buf[0], 0);
+    memcpy(NULL, buf, 0);
+    t_ok("memcpy NULL dst len0 safe");
+
+    /* memset with NULL and len=0 is safe */
+    memset(NULL, 0, 0);
+    t_ok("memset NULL len0 safe");
+
+    /* memmove with NULL and len=0 is safe */
+    memmove(buf, NULL, 0);
+    t_ok("memmove NULL src len0 safe");
+    memmove(NULL, buf, 0);
+    t_ok("memmove NULL dst len0 safe");
+
+    /* memcmp with NULL and len=0 returns 0 */
+    ASSERT("memcmp NULL NULL len0", memcmp(NULL, NULL, 0) == 0);
+
+    /* strnlen(NULL, 0) returns 0 without crashing */
+    ASSERT_EQ("strnlen NULL maxlen0", strnlen(NULL, 0), 0);
+
+    /* kmalloc(0) round-trip: free the NULL and re-query */
+    kfree(z);
+    t_ok("kfree kmalloc 0 roundtrip");
+
+    t_ok("null safety");
+}
+
+/* ── Math helper macro tests ──────────────────────────── */
+
+static void test_math_helpers(void) {
+    /* ── is_power_of_2 ──────────────────────────────────── */
+    ASSERT("pow2: 1",        _IS_POWER_OF_2(1));
+    ASSERT("pow2: 2",        _IS_POWER_OF_2(2));
+    ASSERT("pow2: 4",        _IS_POWER_OF_2(4));
+    ASSERT("pow2: 1024",     _IS_POWER_OF_2(1024));
+    ASSERT("pow2: 0x8000",   _IS_POWER_OF_2(0x8000));
+    ASSERT("pow2: 0x10000",  _IS_POWER_OF_2(0x10000));
+    ASSERT("!pow2: 0",       !_IS_POWER_OF_2(0));
+    ASSERT("!pow2: 3",       !_IS_POWER_OF_2(3));
+    ASSERT("!pow2: 5",       !_IS_POWER_OF_2(5));
+    ASSERT("!pow2: 1023",    !_IS_POWER_OF_2(1023));
+    ASSERT("!pow2: 1025",    !_IS_POWER_OF_2(1025));
+
+    /* ── DIV_ROUND_UP ───────────────────────────────────── */
+    ASSERT_EQ("div_round_up 0/1",   _DIV_ROUND_UP(0, 1),   0);
+    ASSERT_EQ("div_round_up 1/1",   _DIV_ROUND_UP(1, 1),   1);
+    ASSERT_EQ("div_round_up 1/2",   _DIV_ROUND_UP(1, 2),   1);
+    ASSERT_EQ("div_round_up 2/2",   _DIV_ROUND_UP(2, 2),   1);
+    ASSERT_EQ("div_round_up 3/2",   _DIV_ROUND_UP(3, 2),   2);
+    ASSERT_EQ("div_round_up 0/100", _DIV_ROUND_UP(0, 100), 0);
+    ASSERT_EQ("div_round_up 99/100",  _DIV_ROUND_UP(99, 100),   1);
+    ASSERT_EQ("div_round_up 100/100", _DIV_ROUND_UP(100, 100),  1);
+    ASSERT_EQ("div_round_up 101/100", _DIV_ROUND_UP(101, 100),  2);
+
+    t_ok("math helpers");
+}
+
+/* ── String function edge cases ───────────────────────── */
+
+static void test_string_edges(void) {
+    char buf[32];
+    size_t ret;
+
+    /* ── strlcpy — truncation when dst < src ────────────── */
+    memset(buf, 0xAA, sizeof(buf));
+    ret = strlcpy(buf, "hello world this is long", 5);
+    ASSERT_EQ("strlcpy trunc return", ret, 25);
+    ASSERT_STR("strlcpy trunc content", buf, "hell");
+
+    /* ── strlcpy — exact fit ────────────────────────────── */
+    memset(buf, 0, sizeof(buf));
+    ret = strlcpy(buf, "abcd", 5);
+    ASSERT_EQ("strlcpy exact return", ret, 4);
+    ASSERT_STR("strlcpy exact content", buf, "abcd");
+
+    /* ── strlcat — full destination buffer ──────────────── */
+    memset(buf, 0, sizeof(buf));
+    buf[0] = 'a';
+    buf[1] = '\0';
+    ret = strlcat(buf, "b", 2);
+    ASSERT_EQ("strlcat full return", ret, 2);
+    ASSERT_STR("strlcat full content", buf, "a");
+
+    /* ── strlcat — empty destination ────────────────────── */
+    memset(buf, 0, sizeof(buf));
+    ret = strlcat(buf, "hello", 32);
+    ASSERT_EQ("strlcat empty dst return", ret, 5);
+    ASSERT_STR("strlcat empty dst result", buf, "hello");
+
+    /* ── memcpy zero-length (no-op) ─────────────────────── */
+    char src[] = "source";
+    memset(buf, 0xBB, 16);
+    memcpy(buf, src, 0);
+    ASSERT_EQ("memcpy len0 unchanged", (uint8_t)buf[0], 0xBB);
+
+    /* ── memset large area (256 bytes) ──────────────────── */
+    char big[256];
+    memset(big, 0xCC, 256);
+    ASSERT_EQ("memset large first", (uint8_t)big[0],    0xCC);
+    ASSERT_EQ("memset large last",  (uint8_t)big[255],  0xCC);
+    ASSERT_EQ("memset large mid",   (uint8_t)big[128],  0xCC);
+
+    /* ── strnlen edge cases ─────────────────────────────── */
+    ASSERT_EQ("strnlen exact",    strnlen("abcde", 5),  5);
+    ASSERT_EQ("strnlen truncated", strnlen("abcde", 3), 3);
+    ASSERT_EQ("strnlen unlimited", strnlen("abcde", 10), 5);
+
+    t_ok("string edges");
+}
+
 void test_run_all(void) {
     outb(0x3F8, 'Z');  /* marker: test task is running */
 
@@ -4661,6 +4843,10 @@ void test_run_all(void) {
     kprintf("[TEST] align\n");          test_align();              test_progress_tick();
     kprintf("[TEST] container_of\n");   test_container_of();       test_progress_tick();
     kprintf("[TEST] sprintf\n");        test_sprintf();            test_progress_tick();
+    kprintf("[TEST] overflow\n");       test_overflow_arithmetic(); test_progress_tick();
+    kprintf("[TEST] null_safety\n");    test_null_safety();        test_progress_tick();
+    kprintf("[TEST] math_helpers\n");   test_math_helpers();       test_progress_tick();
+    kprintf("[TEST] string_edges\n");   test_string_edges();       test_progress_tick();
 kprintf("----------------------------------------\n");
     kprintf("Results: %llu passed, %llu failed\n",
             (unsigned long long)tpass, (unsigned long long)tfail);

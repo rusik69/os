@@ -84,7 +84,7 @@ int page_poison_enter_late_stage(void)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void page_poison_init(void)
+void __init page_poison_init(void)
 {
     g_init_stage = MEMINIT_EARLY;
     g_poison_freed_val = POISON_EARLY_FREED;

@@ -19,6 +19,7 @@
 #include "scheduler.h"
 #include "workqueue.h"
 #include "errno.h"
+#include "heap.h"
 
 /* ── ASYNC_PROBE flag ─────────────────────────────────────────────── */
 

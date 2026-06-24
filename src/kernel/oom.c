@@ -383,7 +383,7 @@ int oom_kill_victim(void) {
     return 1;
 }
 
-void oom_init(void) {
+void __init oom_init(void) {
     oom_kill_count = 0;
     kprintf("[OK] OOM killer initialized — RSS+swap+limit+cache-aware scoring (Item 28)\n");
 }

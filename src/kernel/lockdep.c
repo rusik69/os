@@ -712,7 +712,7 @@ void lockdep_check_exit(void)
     }
 }
 
-void lockdep_init(void)
+void __init lockdep_init(void)
 {
     for (int i = 0; i < LOCKDEP_MAX_LOCKS; i++)
         lock_classes[i].in_use = 0;

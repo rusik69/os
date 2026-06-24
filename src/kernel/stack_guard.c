@@ -21,7 +21,7 @@ struct guard_region {
 static struct guard_region guard_regions[STACK_GUARD_MAX_REGIONS];
 static int guard_initialized = 0;
 
-void stack_guard_init(void)
+void __init stack_guard_init(void)
 {
     memset(guard_regions, 0, sizeof(guard_regions));
     guard_initialized = 1;

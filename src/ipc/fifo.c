@@ -80,7 +80,7 @@ int fifo_unlink(const char *path) {
 }
 
 /* ── fifo_read ────────────────────────────────────────── */
-int fifo_read(int fd, void *buf, size_t count)
+static int fifo_read(int fd, void *buf, size_t count)
 {
     (void)fd;
     /* FIFO reads delegate to the underlying pipe */
@@ -94,7 +94,7 @@ int fifo_read(int fd, void *buf, size_t count)
 }
 
 /* ── fifo_write ───────────────────────────────────────── */
-int fifo_write(int fd, const void *buf, size_t count)
+static int fifo_write(int fd, const void *buf, size_t count)
 {
     (void)fd;
     if (!fifo_inited) return -EINVAL;
@@ -107,7 +107,7 @@ int fifo_write(int fd, const void *buf, size_t count)
 }
 
 /* ── fifo_poll ────────────────────────────────────────── */
-int fifo_poll(int fd)
+static int fifo_poll(int fd)
 {
     (void)fd;
     if (!fifo_inited) return 0;
@@ -121,7 +121,7 @@ int fifo_poll(int fd)
 }
 
 /* ── fifo_ioctl ───────────────────────────────────────── */
-int fifo_ioctl(int fd, unsigned long request, void *arg)
+static int fifo_ioctl(int fd, unsigned long request, void *arg)
 {
     (void)fd;
     (void)request;
@@ -130,7 +130,7 @@ int fifo_ioctl(int fd, unsigned long request, void *arg)
 }
 
 /* ── fifo_release ─────────────────────────────────────── */
-int fifo_release(int fd)
+static int fifo_release(int fd)
 {
     (void)fd;
     if (!fifo_inited) return -EINVAL;

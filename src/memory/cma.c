@@ -9,7 +9,7 @@ static struct cma_area cma_areas[CMA_MAX_AREAS];
 static int cma_area_count = 0;
 static int cma_initialized = 0;
 
-void cma_init(void) {
+void __init cma_init(void) {
     memset(cma_areas, 0, sizeof(cma_areas));
     cma_area_count = 0;
     cma_initialized = 1;

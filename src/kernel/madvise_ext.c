@@ -201,7 +201,7 @@ static void op_mergeable(uint64_t phys, uint64_t *pte_ptr, uint64_t virt)
 
 static int madvise_ext_initialised = 0;
 
-void madvise_ext_init(void)
+void __init madvise_ext_init(void)
 {
     if (madvise_ext_initialised)
         return;

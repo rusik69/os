@@ -20,8 +20,9 @@
 #include "heap.h"
 #include "vfs.h"
 #include "errno.h"
+#include "err.h"
 
-/* Maximum ELF binary size to load */
+/* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)
 #define PAGE_SIZE    4096
 
@@ -64,7 +65,7 @@ int process_spawn_kernel(const char *path) {
 
     /* Create per-process page tables */
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (!new_pml4) {
+    if (IS_ERR(new_pml4)) {
         kprintf("[spawn_kernel] Failed to create PML4 for: %s\n", path);
         kfree(buf);
         return -ENOMEM;

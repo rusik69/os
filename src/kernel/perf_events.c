@@ -785,7 +785,7 @@ static void topdown_init(void)
     g_topdown_configured = 0;
 }
 
-void perf_init(void)
+void __init perf_init(void)
 {
     uint32_t eax, ebx, ecx, edx;
 

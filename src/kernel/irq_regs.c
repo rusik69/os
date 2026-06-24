@@ -294,7 +294,7 @@ int irq_nesting_depth(void)
 
 /* ── Initialization ────────────────────────────────────────────────── */
 
-void irq_regs_init(void)
+void __init irq_regs_init(void)
 {
     int max_cpus;
 

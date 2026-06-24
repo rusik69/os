@@ -49,7 +49,7 @@ static int  migrate_one_page(uint64_t old_phys);
 
 /* ── Initialisation ──────────────────────────────────────────────────── */
 
-void compaction_init(void)
+void __init compaction_init(void)
 {
     kprintf("[compaction] memory compaction subsystem ready\n");
 }
@@ -107,7 +107,7 @@ static int page_is_movable(uint64_t phys_addr)
 {
     uint64_t frame = phys_addr / PAGE_SIZE;
     enum migratetype mt = pageblock_get_migratetype(frame);
-    return (mt == MIGRATE_MOVABLE) ? 1 : 0;
+    return mt == MIGRATE_MOVABLE;
 }
 
 /* Determine whether a page should be considered for migration.

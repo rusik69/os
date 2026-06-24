@@ -35,7 +35,7 @@ static void gdt_set_entry(int i, uint32_t base, uint32_t limit, uint8_t access, 
     gdt[i].access      = access;
 }
 
-void gdt_init(void) {
+void __init gdt_init(void) {
     /* Null descriptor */
     gdt_set_entry(0, 0, 0, 0, 0);
 
@@ -107,7 +107,7 @@ void tss_set_ist(int index, uint64_t stack_top) {
     }
 }
 
-void ist_init(void) {
+void __init ist_init(void) {
     /* ── Double fault IST stack (4 pages = 16 KB) ── */
     uint64_t df_phys = (uint64_t)(uintptr_t)pmm_alloc_frames(4);
     if (!df_phys) {

@@ -628,7 +628,7 @@ static void sysfs_create_cpu_hotplug_files(void)
     }
 }
 
-void sysfs_init(void) {
+void __init sysfs_init(void) {
     if (sysfs_mounted) return;
 
     /* Clear all entries */

@@ -7,6 +7,7 @@
 #include "net.h"
 #include "net_internal.h"
 #include "errno.h"
+#include "heap.h"
 
 /* IP protocol numbers for AH and ESP */
 #define IP_PROTO_AH   51

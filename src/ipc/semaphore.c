@@ -91,7 +91,7 @@ void sem_destroy(int id) {
 }
 
 /* ── sem_trywait ────────────────────────────────────────── */
-int sem_trywait(int id)
+static int sem_trywait(int id)
 {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use)
         return -EINVAL;
@@ -106,7 +106,7 @@ int sem_trywait(int id)
 }
 
 /* ── semop ──────────────────────────────────────────────────── */
-int semop(int semid, struct sembuf *sops, size_t nsops)
+static int semop(int semid, struct sembuf *sops, size_t nsops)
 {
     if (semid < 0 || semid >= SEM_MAX || !sems[semid].in_use)
         return -EINVAL;
@@ -139,7 +139,7 @@ int semop(int semid, struct sembuf *sops, size_t nsops)
 }
 
 /* ── semctl ─────────────────────────────────────────────────── */
-int semctl(int semid, int semnum, int cmd, ...)
+static int semctl(int semid, int semnum, int cmd, ...)
 {
     (void)semnum;
     if (semid < 0 || semid >= SEM_MAX)
@@ -180,7 +180,7 @@ int semctl(int semid, int semnum, int cmd, ...)
 }
 
 /* ── sem_getvalue ───────────────────────────────────────────── */
-int sem_getvalue(int id, int *sval)
+static int sem_getvalue(int id, int *sval)
 {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use)
         return -EINVAL;
@@ -193,7 +193,7 @@ int sem_getvalue(int id, int *sval)
 }
 
 /* ── sem_timedwait ──────────────────────────────────────────── */
-int sem_timedwait(int id, const struct timespec *abs_timeout)
+static int sem_timedwait(int id, const struct timespec *abs_timeout)
 {
     if (id < 0 || id >= SEM_MAX || !sems[id].in_use)
         return -EINVAL;
@@ -224,7 +224,7 @@ int sem_timedwait(int id, const struct timespec *abs_timeout)
 }
 
 /* ── sem_open (named semaphore) ─────────────────────────── */
-int sem_open(const char *name, int oflag, ...)
+static int sem_open(const char *name, int oflag, ...)
 {
     (void)name;
     (void)oflag;
@@ -236,7 +236,7 @@ int sem_open(const char *name, int oflag, ...)
 }
 
 /* ── sem_unlink ─────────────────────────────────────────── */
-int sem_unlink(const char *name)
+static int sem_unlink(const char *name)
 {
     (void)name;
     /* Named semaphore unlink not supported; just return success. */

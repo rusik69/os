@@ -26,7 +26,7 @@ static uint64_t thp_total = 0;
 static uint64_t thp_merged = 0;
 static uint64_t thp_split = 0;
 
-void thp_init(void) {
+void __init thp_init(void) {
     memset(thp_entries, 0, sizeof(thp_entries));
     thp_entry_count = 0;
     thp_enabled = 1;

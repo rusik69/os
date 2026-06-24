@@ -6,7 +6,7 @@
 static struct mseal_range mseal_ranges[MSEAL_SEAL_COUNT];
 static int mseal_initialised = 0;
 
-void mseal_init(void)
+void __init mseal_init(void)
 {
     if (mseal_initialised)
         return;

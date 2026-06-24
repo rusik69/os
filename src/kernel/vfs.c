@@ -1715,7 +1715,7 @@ int vfs_sync_all(void) {
     return ret;
 }
 
-void vfs_init(void) {
+void __init vfs_init(void) {
     num_mounts = 0;
     dcache_init();
     /* Mount the SMFS filesystem as root */

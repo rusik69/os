@@ -244,7 +244,7 @@ int idle_inject_is_idle(int cpu)
         return 0;
 
     /* Fast path — check without lock since phase transitions are rare */
-    return (state->phase == IDLE_INJECT_PHASE_IDLE) ? 1 : 0;
+    return state->phase == IDLE_INJECT_PHASE_IDLE;
 }
 
 /* ── Initialisation ────────────────────────────────────────────────── */

@@ -492,7 +492,7 @@ int sound_mixer_write(enum sound_mixer_channel ch, uint16_t val)
  *
  * Returns 0 on success, negative on error.
  */
-int sound_oss_mixer_ioctl(int cmd, void *arg)
+static int sound_oss_mixer_ioctl(int cmd, void *arg)
 {
     int val = 0;
     uint32_t *uval = (uint32_t *)arg;
@@ -586,7 +586,7 @@ static struct {
  *
  * Returns 0 on success, negative on error.
  */
-int sound_oss_dsp_ioctl(int cmd, void *arg)
+static int sound_oss_dsp_ioctl(int cmd, void *arg)
 {
     uint32_t *uval = (uint32_t *)arg;
 
@@ -654,7 +654,7 @@ int sound_oss_dsp_ioctl(int cmd, void *arg)
 module_init(sound_core_init);
 
 /* ── Stub: sound_open ─────────────────────────────── */
-int sound_open(int minor, void *file)
+static int sound_open(int minor, void *file)
 {
     (void)minor;
     (void)file;
@@ -662,7 +662,7 @@ int sound_open(int minor, void *file)
     return 0;
 }
 /* ── Stub: sound_release ─────────────────────────────── */
-int sound_release(int minor, void *file)
+static int sound_release(int minor, void *file)
 {
     (void)minor;
     (void)file;
@@ -670,7 +670,7 @@ int sound_release(int minor, void *file)
     return 0;
 }
 /* ── Stub: sound_read ─────────────────────────────── */
-int sound_read(int minor, void *buf, size_t count)
+static int sound_read(int minor, void *buf, size_t count)
 {
     (void)minor;
     (void)buf;
@@ -679,7 +679,7 @@ int sound_read(int minor, void *buf, size_t count)
     return 0;
 }
 /* ── Stub: sound_write ─────────────────────────────── */
-int sound_write(int minor, const void *buf, size_t count)
+static int sound_write(int minor, const void *buf, size_t count)
 {
     (void)minor;
     (void)buf;

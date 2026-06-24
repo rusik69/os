@@ -750,7 +750,7 @@ static void acpi_parse_nfit(struct acpi_header *hdr) {
             spa_count, region_count, ctrl_count, g_nfit_spa_count);
 }
 
-void acpi_init(void) {
+void __init acpi_init(void) {
     struct rsdp *rsdp = find_rsdp(0x80000, 0x9FFFF);
     if (!rsdp) rsdp = find_rsdp(0xE0000, 0xFFFFF);
     if (!rsdp) {

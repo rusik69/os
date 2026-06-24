@@ -494,7 +494,7 @@ static void keyboard_sysrq_hook(char ascii_char)
     sysrq_handle(ascii_char);
 }
 
-void sysrq_init(void)
+void __init sysrq_init(void)
 {
     /* Register with keyboard driver for Alt+SysRq detection */
     keyboard_set_sysrq_callback(keyboard_sysrq_hook);

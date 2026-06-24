@@ -53,6 +53,9 @@ int hugetlb_init(uint32_t count)
 
     /* Allocate the frame-pointer array.  Use heap (kmalloc) since the
      * number of entries is modest — at max 1024 entries × 8 bytes = 8 KB. */
+    size_t _alloc_size;
+    if (__builtin_mul_overflow((size_t)count, sizeof(uint64_t), &_alloc_size))
+        return -EOVERFLOW;
     uint64_t *frames = (uint64_t *)kmalloc(count * sizeof(uint64_t));
     if (!frames)
         return -ENOMEM; /* ENOMEM */

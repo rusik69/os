@@ -247,7 +247,7 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
-void keyboard_init(void) {
+void __init keyboard_init(void) {
     /* Initialise PS/2 controller first */
     ps2_controller_init();
 

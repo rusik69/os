@@ -83,7 +83,7 @@ int serial_port_init(int port_idx) {
     return 0;
 }
 
-void serial_init(void) {
+void __init serial_init(void) {
     serial_port_init(0); /* COM1 */
 }
 

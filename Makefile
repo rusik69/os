@@ -1105,11 +1105,17 @@ $(BUILDDIR)/kernel/kpti.o: $(KPTI_TRAMP_H)
 all: $(BUILDDIR)/disk.img
 	$(MAKE) -j$(NPROCS) $(BUILDDIR)/kernel.bin
 
+# Build kernel.elf only (skip disk image)
+kernel: $(BUILDDIR)/kernel.elf
+	@echo "Kernel built: $<"
+
 -include $(wildcard $(DEPS))
 
 # ── Phony targets ─────────────────────────────────────────────────────
 
-.PHONY: all run run-smp run-gdb run-uefi run-virtio help debug clean deps \
+.PHONY: all kernel \
+        run run-smp run-gdb run-uefi run-virtio qemu qemu-gdb \
+        help debug clean deps \
         test test-kernel test-serial test-cli test-clean test-coverage clean-all \
         check check-full check-clean check-app-boundary check-debug doom-test \
         format format-check check-whitespace lint lint-full cppcheck-check \
@@ -1118,7 +1124,7 @@ all: $(BUILDDIR)/disk.img
         e2e e2e-smoke e2e-test e2e-list \
         stress stress-help \
         modules modules_install build-strict analyze cppcheck cppcheck-all \
-        clang-tidy-check ctags etags doccheck sparse \
+        clang-tidy-check ctags etags doccheck sparse todo \
         release dist \
         install install-clean \
         clean-kernel clean-test verify
@@ -1764,89 +1770,92 @@ run-uefi: $(BUILDDIR)/kernel.bin $(BUILDDIR)/disk.img
 		-netdev user,id=net0 -device e1000,netdev=net0 ; \
 	stty sane
 
+# Alias for run target
+qemu: run
+
+# Alias for run-gdb (GDB stub on port 1234)
+qemu-gdb: run-gdb
+
 # ── Help target: list all major targets ──────────────────────────────
 
 help:
 	@echo "=== Hermes OS Build System ==="
 	@echo ""
-	@echo "Build targets:"
-	@echo "  all              Build kernel + disk image (default)"
-	@echo "  clean            Remove build artifacts"
-	@echo "  clean-all        Remove build artifacts + clear ccache"
-	@echo "  modules          Build loadable kernel modules"
-	@echo "  modules_install  Stage modules for installation"
-	@echo "  userspace-build  Build userspace commands into ELF binaries"
-	@echo "  release          Build kernel.bin + disk.img + source tarball"
-	@echo "  dist             Create release tarball with source + binaries"
+	@echo "=== Kernel Build Targets ==="
+	@echo "  all (default)   - Build kernel.elf + kernel.bin + disk image"
+	@echo "  kernel          - Build kernel.elf only"
+	@echo "  clean           - Remove build/ and build_test/ artifacts"
+	@echo "  clean-kernel    - Remove only kernel build artifacts (build/)"
+	@echo "  clean-test      - Remove only test build artifacts (build_test/)"
+	@echo "  clean-all       - clean + clear ccache statistics"
+	@echo "  modules         - Build loadable kernel modules (.ko)"
+	@echo "  modules_install - Stage .ko files for disk image installation"
+	@echo "  userspace-build - Build userspace commands into ELF binaries"
+	@echo "  release         - Build kernel.bin + disk.img + source tarball"
+	@echo "  dist            - Create distribution tarball with source + binaries"
+	@echo "  install         - Build bootable ISO (or write to USB via make install USB=/dev/sdX)"
+	@echo "  install-clean   - Remove ISO and staging artifacts"
 	@echo ""
-	@echo "Run targets:"
-	@echo "  run              Boot in QEMU (serial stdio, e1000 NIC)"
-	@echo "  run-smp          Boot QEMU with SMP (4 CPUs, -cpu max)"
-	@echo "  run-gdb          Boot QEMU with GDB stub (-s -S)"
-	@echo "  run-uefi         Boot QEMU with UEFI firmware (OVMF)"
-	@echo "  run-virtio       Boot QEMU with virtio-net"
-	@echo "  debug            Boot QEMU with GDB stub (alias for run-gdb)"
+	@echo "=== Run Targets ==="
+	@echo "  qemu            - Boot kernel in QEMU (alias for run)"
+	@echo "  qemu-gdb        - Boot kernel in QEMU with GDB stub (port 1234, alias for run-gdb)"
+	@echo "  run             - Boot in QEMU (serial stdio, e1000 NIC)"
+	@echo "  run-smp         - Boot QEMU with SMP (4 CPUs, -cpu max)"
+	@echo "  run-gdb         - Boot QEMU with GDB stub (-s -S)"
+	@echo "  run-uefi        - Boot QEMU with UEFI firmware (OVMF)"
+	@echo "  run-virtio      - Boot QEMU with virtio-net"
+	@echo "  debug           - Boot QEMU with GDB stub (alias for run-gdb)"
 	@echo ""
-	@echo "Test targets:"
-	@echo "  test             Build test kernel + run all tests in QEMU"
-	@echo "  test-kernel      Build test kernel (separate output dir)"
-	@echo "  test-serial      Run test kernel with serial TCP output"
-	@echo "  test-clean       Clean + rebuild + run tests"
-	@echo "  test-coverage    Build with -fprofile-arcs -ftest-coverage and run tests"
-	@echo "  run-test         Alias for 'make test'"
-	@echo "  junit-test       Run unit tests with JUnit XML output"
-	@echo "  verify           Fast pre-merge: format-check + lint + app boundary check"
-	@echo "  stress           Run all stress tests in QEMU"
-	@echo "  stress-help      Show help for stress target"
-	@echo "  check            Strict build (-Werror) + tests + E2E smoke"
-	@echo "  check-full       Ultra-strict build (-Werror + all warnings)"
-	@echo "  check-debug      Build with all debug options enabled"
-	@echo "  check-clean      Remove check build artifacts"
-	@echo "  check-app-boundary  Verify app source includes only allowed headers"
-	@echo "  unit-test        Run host-side unit tests"
-	@echo "  e2e              Run E2E QEMU smoke tests"
-	@echo "  e2e-smoke        Fast CI E2E subset"
-	@echo "  e2e-test         Run E2E boot + interactive tests"
-	@echo "  e2e-list         List E2E test cases"
-	@echo "  doom-test        Verify DOOM framebuffer renders"
+	@echo "=== Testing Targets ==="
+	@echo "  test            - Build test kernel + run all tests in QEMU"
+	@echo "  test-kernel     - Build test kernel (separate build_test/ output dir)"
+	@echo "  test-serial     - Run test kernel with serial TCP output"
+	@echo "  test-clean      - Clean + rebuild + run tests"
+	@echo "  test-coverage   - Build with -fprofile-arcs -ftest-coverage and run tests"
+	@echo "  run-test        - Alias for 'make test'"
+	@echo "  verify          - Fast pre-merge: format-check + lint + app boundary check"
+	@echo "  stress          - Run all stress tests in QEMU"
+	@echo "  stress-help     - Show help for stress target"
+	@echo "  check           - Strict build (-Werror) + tests + E2E smoke"
+	@echo "  check-full      - Ultra-strict build (-Werror + -Wpedantic + all warnings)"
+	@echo "  check-debug     - Build with all debug options enabled"
+	@echo "  check-clean     - Remove build_check/ and build_check_full/ artifacts"
+	@echo "  check-app-boundary  - Verify app source includes only allowed headers"
+	@echo "  unit-test       - Run host-side unit tests"
+	@echo "  e2e             - Run E2E QEMU smoke tests"
+	@echo "  e2e-smoke       - Fast CI E2E subset"
+	@echo "  e2e-test        - Run E2E boot + interactive command tests"
+	@echo "  e2e-list        - List E2E test case descriptions"
+	@echo "  doom-test       - Verify DOOM framebuffer renders non-black pixels"
+	@echo "  junit-test      - Run unit tests with JUnit XML output"
 	@echo ""
-	@echo "Quality / Analysis targets:"
-	@echo "  analyze          GCC -fanalyzer static analysis"
-	@echo "  lint             Run cppcheck + clang-tidy"
-	@echo "  cppcheck         Run cppcheck static analysis"
-	@echo "  cppcheck-check   Run cppcheck with suppressions (called by lint)"
-	@echo "  cppcheck-all     Run cppcheck on kernel/memory/process/net/fs sources"
-	@echo "  clang-tidy-check Run clang-tidy on first 20 C sources"
-	@echo "  build-strict     Alias for cppcheck"
-	@echo "  sparse           Run sparse semantic parser"
-	@echo "  format           Format all C sources with clang-format"
-	@echo "  format-check     Check format compliance (via git-clang-format)"
-	@echo "  check-whitespace Check for trailing whitespace in source files"
+	@echo "=== Static Analysis Targets ==="
+	@echo "  cppcheck-all    - Run cppcheck with warning/performance/style checks"
+	@echo "  cppcheck        - Run cppcheck with --enable=all on whole src/"
+	@echo "  cppcheck-check  - Run cppcheck with suppressions (called by lint)"
+	@echo "  lint            - Run cppcheck-check + clang-tidy-check"
+	@echo "  clang-tidy-check - Run clang-tidy on first 20 C sources"
+	@echo "  analyze         - GCC -fanalyzer static analysis"
+	@echo "  build-strict    - Alias for cppcheck"
+	@echo "  sparse          - Run sparse semantic parser on all C sources"
+	@echo "  format          - Run clang-format on all .c and .h files"
+	@echo "  format-check    - Check format compliance (via git-clang-format)"
+	@echo "  check-whitespace - Check for trailing whitespace in source files"
 	@echo ""
-	@echo "Info / Utility targets:"
-	@echo "  build-info       Show kernel size, object count, LOC"
-	@echo "  count            Show source code statistics"
-	@echo "  count-lines      Show line counts broken down by subsystem"
-	@echo "  count-funcs      Count function definitions per subsystem"
-	@echo "  count-headers    Count .h files per subsystem"
-	@echo "  ccache-stats     Show ccache hit rate"
-	@echo "  todo             Show TODO/FIXME/HACK/XXX/BUG markers"
-	@echo "  deps             Print build dependency install command (brew)"
-	@echo "  doccheck         Verify documentation files exist and are valid"
+	@echo "=== Code Metrics Targets ==="
+	@echo "  count-lines     - Count lines of code per subsystem"
+	@echo "  count-funcs     - Count function definitions per subsystem"
+	@echo "  count-headers   - Count .h files per subsystem"
+	@echo "  count           - Show C/asm/header/test file and line totals"
+	@echo "  build-info      - Show kernel size, object count, source file count, LOC"
+	@echo "  ccache-stats    - Show ccache hit rate and statistics"
 	@echo ""
-	@echo "Developer targets:"
-	@echo "  install          Build bootable ISO (or write to USB)"
-	@echo "  install-clean    Remove ISO and staging artifacts"
-	@echo "  ctags            Generate ctags for src/"
-	@echo "  etags            Generate Emacs TAGS for src/"
-	@echo ""
-	@echo "Clean targets:"
-	@echo "  clean            Remove build/ and build_test/"
-	@echo "  clean-kernel     Remove only kernel build artifacts (build/)"
-	@echo "  clean-test       Remove only test build artifacts (build_test/)"
-	@echo "  clean-all        clean + clear ccache stats"
-	@echo "  check-clean      Remove build_check/ and build_check_full/"
-	@echo "  install-clean    Remove ISO artifacts"
+	@echo "=== Developer Utility Targets ==="
+	@echo "  ctags           - Generate ctags for src/"
+	@echo "  etags           - Generate Emacs TAGS for src/"
+	@echo "  todo            - Show TODO/FIXME/HACK/XXX/BUG markers in src/"
+	@echo "  doccheck        - Verify documentation files exist and are valid"
+	@echo "  deps            - Print build dependency install command (brew)"
 
 # ── Clean targets ─────────────────────────────────────────────────────
 
@@ -1873,14 +1882,14 @@ clean-test:
 
 # ── Format: run clang-format on all .c and .h files ───────────────────
 
+FORMAT_FILES := $(shell find src/ -type f \( -name '*.c' -o -name '*.h' \) | sort)
+
 format:
 	@if command -v clang-format >/dev/null 2>&1; then \
-		find src/ -type f \( -name '*.c' -o -name '*.h' \) -exec clang-format -i -style=file {} +; \
-		find userspace/ -type f \( -name '*.c' -o -name '*.h' \) -exec clang-format -i -style=file {} +; \
-		echo "Formatted all .c and .h files in src/ and userspace/."; \
+		clang-format -i $(FORMAT_FILES); \
+		echo "Formatted $(words $(FORMAT_FILES)) files in src/"; \
 	else \
-		echo "clang-format not found. Install it (e.g., apt install clang-format) and try again."; \
-		exit 1; \
+		echo "clang-format not found — install with: sudo apt install clang-format"; \
 	fi
 
 # ── Format check: verify code matches clang-format style ────────────
@@ -2086,11 +2095,10 @@ count-lines:
 # ── Function definitions by subsystem ──────────────────────────────────────
 
 count-funcs:
-	@echo "=== Function definitions by subsystem ==="; \
-	for dir in kernel memory process net fs drivers ipc lib; do \
-		count=$$(find src/$$dir -name '*.c' 2>/dev/null | xargs grep -cP '^[a-zA-Z_][a-zA-Z0-9_ \*]+\s+\*?[a-zA-Z_][a-zA-Z0-9_]*\s*\(' 2>/dev/null | awk -F: '{s+=$$2} END {print s+0}'); \
-		[ -z "$$count" ] && count=0; \
-		echo "  $$dir: $$count functions"; \
+	@echo "=== Function count per subsystem ==="
+	@for dir in kernel memory process fs net drivers ipc lib shell boot; do \
+		count=$$(grep -rE '^(int|void|uint|bool|size_t|ssize_t|long|unsigned|uint8_t|uint16_t|uint32_t|uint64_t|uintptr_t|char|const|static|struct|enum)\b.*\(' src/$$dir/ --include='*.c' 2>/dev/null | grep -v '//' | wc -l); \
+		printf "  %-12s %4d functions\n" "$$dir" $$count; \
 	done
 
 # ── Header files per subsystem ─────────────────────────────────────────────
@@ -2125,18 +2133,13 @@ cppcheck:
 # ── Run cppcheck on kernel/memory/process/net/fs sources ─────────────────
 cppcheck-all:
 	@if command -v cppcheck >/dev/null 2>&1; then \
-		echo "=== Running cppcheck on kernel/memory/process/net/fs ===="; \
-		cppcheck --enable=all --inconclusive \
-		  --suppress=missingIncludeSystem \
-		  --suppress=unusedFunction \
-		  --std=c17 --platform=unix64 \
-		  -Isrc/include \
-		  src/kernel/*.c src/memory/*.c src/process/*.c src/net/*.c src/fs/*.c \
-		  2>&1; \
-		echo "=== cppcheck-all complete ==="; \
+		cppcheck --enable=warning,performance,style --error-exitcode=1 \
+			--suppress=missingIncludeSystem \
+			-I src/include \
+			src/ 2>&1; \
+		echo "=== cppcheck-all complete ===\n"; \
 	else \
-		echo "cppcheck not found. Install it (e.g., apt install cppcheck) and try again."; \
-		exit 1; \
+		echo "cppcheck not found — install with: sudo apt install cppcheck"; \
 	fi
 
 # ── Sparse semantic parser ───────────────────────────────────────────────

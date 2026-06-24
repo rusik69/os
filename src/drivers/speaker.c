@@ -30,7 +30,7 @@ static uint32_t g_bell_dur  = 100;   /* 100 ms */
  * (MODULE defined), the ELF module loader calls init_module() below
  * instead, which in turn calls speaker_init().
  */
-void speaker_init(void) {
+void __init speaker_init(void) {
     speaker_off();
 }
 

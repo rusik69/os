@@ -245,7 +245,7 @@ static int ksm_scan_batch(int max_batch)
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 
-void ksm_init(void)
+void __init ksm_init(void)
 {
     memset(ksm_pages, 0, sizeof(ksm_pages));
     ksm_page_count = 0;

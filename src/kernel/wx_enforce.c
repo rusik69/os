@@ -48,7 +48,7 @@ static int wx_sysctl_write(const char *buf, int len) {
 
 /* ── Initialisation ──────────────────────────────────────────────── */
 
-void wx_enforce_init(void) {
+void __init wx_enforce_init(void) {
     /* Register the sysctl entry */
     int ret = sysctl_register("vm.mmap_wx_enabled",
                                wx_sysctl_read,

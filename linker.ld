@@ -46,6 +46,12 @@ SECTIONS
         _text_end = .;
     }
 
+    .init.text ALIGN(4K) : AT(ADDR(.init.text) - KERNEL_VMA_OFFSET) {
+        __init_start = .;
+        *(.init.text)
+        __init_end = .;
+    }
+
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VMA_OFFSET) {
         _rodata_start = .;
         *(.rodata .rodata.*)

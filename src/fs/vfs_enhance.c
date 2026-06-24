@@ -39,7 +39,7 @@ static int vfs_acl_check(struct posix_acl *acl, uint16_t uid, uint16_t gid, char
         case 'r': req_perm = 4; break;
         case 'w': req_perm = 2; break;
         case 'x': req_perm = 1; break;
-        default:  return -1;
+        default: return -1;
     }
 
     /* Check ACL entries in order */

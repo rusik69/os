@@ -27,6 +27,7 @@
 #include "scheduler.h"
 #include "uaccess.h"
 #include "heap.h"
+#include "err.h"
 
 /* ── Configuration ─────────────────────────────────────────────────── */
 
@@ -436,7 +437,7 @@ int exec_mmap(void *mm)
 
     /* Create a fresh user PML4 for the new executable */
     p->pml4 = vmm_create_user_pml4();
-    if (!p->pml4)
+    if (IS_ERR(p->pml4))
         return -ENOMEM;
 
     return 0;
@@ -467,7 +468,7 @@ int exec_setup_stack(void *bprm, uint64_t *sp)
 
     if (!p->pml4) {
         p->pml4 = vmm_create_user_pml4();
-        if (!p->pml4)
+        if (IS_ERR(p->pml4))
             return -ENOMEM;
     }
 

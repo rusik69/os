@@ -10,6 +10,7 @@
 #include "net.h"
 #include "netdevice.h"
 #include "smp.h"
+#include "err.h"
 #ifdef MODULE
 #include "module.h"
 #endif
@@ -440,7 +441,7 @@ int e1000_init(void) {
     /* Map MMIO region (128KB) into high-half VMA space */
     mmio_base = (volatile uint8_t *)vmm_map_phys(bar0, 0x20000,
                     VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (!mmio_base) {
+    if (IS_ERR((const void *)mmio_base)) {
         kprintf("  e1000: failed to map MMIO\n");
         return -1;
     }

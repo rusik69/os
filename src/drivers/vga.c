@@ -5,6 +5,7 @@
 #include "printf.h"
 #include "heap.h"
 #include "pci.h"
+#include "err.h"
 
 #define FB_CELL_W 8
 #define FB_CELL_H 16
@@ -147,9 +148,9 @@ static uint64_t vga_lookup_pci_fb(void) {
         /* Map the stdvga MMIO region for endianness setup (identity map removed) */
         volatile uint8_t *mmio_virt = (volatile uint8_t *)vmm_map_phys(mmio, 0x1000,
                     VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-        if (mmio_virt) {
+        if (!IS_ERR((const void *)mmio_virt)) {
             volatile uint32_t *end_reg = (volatile uint32_t *)(mmio_virt + 0x604 / sizeof(uint8_t));
-            *end_reg = 0x1e1e1e1e;
+            *end_reg = 1; /* set little-endian */
             __asm__ volatile("mfence" ::: "memory");
             vmm_unmap_phys((void *)mmio_virt, 0x1000);
         }
@@ -195,10 +196,11 @@ static int vga_try_bochs_vbe(uint32_t width, uint32_t height, uint8_t bpp) {
     /* Map framebuffer in high-half VMA space (identity map removed) */
     fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, (uint64_t)fb_pitch * height,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (!fb_base)
+    if (IS_ERR((const void *)fb_base))
         return -1;
 
-    fb_active = 1;
+    kprintf("[vga] fb: addr=0x%x bpp=%u pitch=%u dims=%ux%u\n",
+            (unsigned)fb_addr, bpp, fb_pitch, fb_width, fb_height);
 
     vmm_set_range_uncacheable((uint64_t)(uintptr_t)fb_base, (uint64_t)fb_pitch * height);
     return 0;
@@ -378,7 +380,7 @@ static void vga_scroll(void) {
     render_all();
 }
 
-void vga_init(void) {
+void __init vga_init(void) {
     vga_row = 0;
     vga_col = 0;
     vga_color = VGA_LIGHT_GREY | (VGA_BLACK << 4);
@@ -446,7 +448,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, fb_size,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
 
-    if (!fb_base) {
+    if (IS_ERR((const void *)fb_base)) {
         kprintf("[--] Failed to map framebuffer at 0x%x\n", (unsigned)fb_addr);
         return -1;
     }
@@ -696,7 +698,7 @@ EXPORT_SYMBOL(vga_clear);
 EXPORT_SYMBOL(vga_set_color);
 
 /* ── Set VGA video mode via VGA ports ────────────────── */
-int vga_set_mode(int mode)
+static int vga_set_mode(int mode)
 {
     /* VGA modes: 0x03 = 80x25 text, 0x12 = 640x480 16-color, 0x13 = 320x200 256-color */
     /* Use VGA sequencer and CRTC registers to set mode */
@@ -715,7 +717,7 @@ int vga_set_mode(int mode)
 }
 
 /* ── Set VGA palette via VGA DAC ports ──────────────── */
-int vga_set_palette(const void *palette, int count)
+static int vga_set_palette(const void *palette, int count)
 {
     if (!palette || count <= 0 || count > 256)
         return -EINVAL;

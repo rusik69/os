@@ -54,7 +54,7 @@ static int dyndbg_all_funcs = 0;  /* function-level all flag */
 static void dyndbg_control_file_read(char *buf, int *len);
 static int  dyndbg_control_file_write(const char *buf, int len);
 
-void dyndbg_init(void) {
+void __init dyndbg_init(void) {
     if (dyndbg_initialized) return;
     memset(debug_sites, 0, sizeof(debug_sites));
     dyndbg_initialized = 1;

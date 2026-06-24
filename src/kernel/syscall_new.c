@@ -344,7 +344,7 @@ int do_prctl(int option, unsigned long arg2, unsigned long arg3,
         return 0;
 
     case PR_GET_NO_NEW_PRIVS:
-        return p->no_new_privs ? 1 : 0;
+        return p->no_new_privs;
 
     case PR_SET_DUMPABLE: {
         int val = (int)arg2;

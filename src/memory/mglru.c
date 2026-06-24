@@ -60,7 +60,7 @@ static void mglru_aging_callback(void *data);
  *  Initialisation
  * ════════════════════════════════════════════════════════════════════════ */
 
-void mglru_init(void)
+void __init mglru_init(void)
 {
     int node, gen;
 

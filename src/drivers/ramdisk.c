@@ -19,7 +19,7 @@ static uint8_t *sector_ptr(uint32_t lba) {
     return ramdisk_pages[page_idx] + offset;
 }
 
-void ramdisk_init(void) {
+void __init ramdisk_init(void) {
     if (ramdisk_ready) return;
 
     for (int i = 0; i < RAMDISK_PAGES; i++) {

@@ -647,7 +647,7 @@ static void gp_fault_handler(struct interrupt_frame *frame) {
  * The handler is registered via idt_register_handler() below. */
 /* (mce_handler lives in mce.c, declared in mce.h) */
 
-void fault_init(void) {
+void __init fault_init(void) {
     idt_register_handler(14, page_fault_handler);
     idt_register_handler(8, double_fault_handler);
     idt_register_handler(13, gp_fault_handler);

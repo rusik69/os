@@ -378,7 +378,7 @@ static uint64_t ntfs_get_file_size(struct ntfs_priv *np, uint8_t *mft_rec)
 static int ntfs_is_directory(struct ntfs_priv *np, uint8_t *mft_rec)
 {
     struct ntfs_mft_rec *rec = (struct ntfs_mft_rec *)mft_rec;
-    return (rec->flags & MFT_RECORD_DIR) ? 1 : 0;
+    return rec->flags & MFT_RECORD_DIR;
 }
 
 /* ── Lookup path in MFT ──────────────────────────────────────────── */

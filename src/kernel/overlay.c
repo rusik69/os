@@ -16,7 +16,7 @@
 static struct overlay_mount overlay_table[OVERLAY_MAX_MOUNTS];
 static int overlay_initialised = 0;
 
-void overlay_init(void)
+void __init overlay_init(void)
 {
     if (overlay_initialised)
         return;

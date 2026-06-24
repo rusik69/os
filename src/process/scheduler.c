@@ -476,7 +476,7 @@ static __attribute__((unused)) int cpu_nr_runnable(struct cpu_info *ci) {
 }
 
 /* ── Initialization ─────────────────────────────────────────────────── */
-void scheduler_init(void) {
+void __init scheduler_init(void) {
     /* Per-CPU queues are zero-initialized by smp_init_bsp.
      * scheduler_enabled is kept 0 until the boot sequence finishes —
      * kernel_main enables it just before entering the idle loop. */

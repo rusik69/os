@@ -360,7 +360,7 @@ void nvmf_poll(void)
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── Stub: nvmf_connect ────────────────────────────── */
-int nvmf_connect(const char *transport, const char *traddr, const char *nqn)
+static int nvmf_connect(const char *transport, const char *traddr, const char *nqn)
 {
     (void)transport;
     (void)traddr;
@@ -369,13 +369,13 @@ int nvmf_connect(const char *transport, const char *traddr, const char *nqn)
     return 0;
 }
 /* ── Stub: nvmf_disconnect ─────────────────────────── */
-int nvmf_disconnect(void)
+static int nvmf_disconnect(void)
 {
     kprintf("[nvmf] nvmf_disconnect: not yet implemented\n");
     return 0;
 }
 /* ── Stub: nvmf_send ───────────────────────────────── */
-int nvmf_send(const void *data, uint32_t len)
+static int nvmf_send(const void *data, uint32_t len)
 {
     (void)data;
     (void)len;
@@ -383,7 +383,7 @@ int nvmf_send(const void *data, uint32_t len)
     return 0;
 }
 /* ── Stub: nvmf_recv ───────────────────────────────── */
-int nvmf_recv(void *buf, uint32_t *len)
+static int nvmf_recv(void *buf, uint32_t *len)
 {
     (void)buf;
     (void)len;

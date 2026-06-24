@@ -324,7 +324,7 @@ extern char _kernel_end[];
  *          No locking required as this runs on the BSP only.
  * Return: void.
  */
-void pmm_init(uint64_t multiboot_info_phys) {
+void __init pmm_init(uint64_t multiboot_info_phys) {
     /* Mark all frames as used initially */
     memset(frame_bitmap, 0xFF, sizeof(frame_bitmap));
     used_frames = MAX_FRAMES;

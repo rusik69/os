@@ -311,7 +311,7 @@ static int kprobe_estimate_insn_len(uint64_t addr) {
 
 /* ── API implementation ────────────────────────────────────────────── */
 
-void kprobes_init(void) {
+void __init kprobes_init(void) {
     memset(g_kprobes, 0, sizeof(g_kprobes));
     g_kprobe_count = 0;
     g_current_stepping = NULL;
@@ -418,7 +418,7 @@ int unregister_kprobe(struct kprobe *kp) {
 }
 
 int kprobe_is_probed(uint64_t addr) {
-    return (kprobe_find(addr) != NULL) ? 1 : 0;
+    return kprobe_find(addr) != NULL;
 }
 
 /* ── Interrupt handlers ────────────────────────────────────────────── */

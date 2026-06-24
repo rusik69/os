@@ -314,19 +314,19 @@ EXPORT_SYMBOL(wait_queue_wake);
 EXPORT_SYMBOL(wait_queue_wake_all);
 
 /* ── waitqueue_wake_all ─────────────────────────────── */
-int waitqueue_wake_all(void *wq)
+static int waitqueue_wake_all(void *wq)
 {
     if (!wq) return -EINVAL;
     return wait_queue_wake_all((struct wait_queue *)wq);
 }
 /* ── waitqueue_wake_one ─────────────────────────────── */
-int waitqueue_wake_one(void *wq)
+static int waitqueue_wake_one(void *wq)
 {
     if (!wq) return -EINVAL;
     return wait_queue_wake((struct wait_queue *)wq);
 }
 /* ── waitqueue_sleep ─────────────────────────────── */
-int waitqueue_sleep(void *wq, void *task)
+static int waitqueue_sleep(void *wq, void *task)
 {
     (void)task;
     if (!wq) return -EINVAL;

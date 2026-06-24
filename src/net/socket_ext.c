@@ -25,7 +25,7 @@
  */
 
 /* These functions are called from socket.c setsockopt */
-int sock_set_freebind(struct socket *s, int val) {
+static int sock_set_freebind(struct socket *s, int val) {
     if (!s) return -EINVAL;
     /* Store in a new field — we reuse sk_mark as freebind indicator
      * since we don't want to change socket.h struct layout */
@@ -33,37 +33,37 @@ int sock_set_freebind(struct socket *s, int val) {
     return 0;
 }
 
-int sock_get_freebind(struct socket *s) {
+static int sock_get_freebind(struct socket *s) {
     if (!s) return 0;
     return s->broadcast ? 1 : 0;
 }
 
 /* SO_RCVTIMEO / SO_SNDTIMEO support — stored in socket */
-int sock_set_rcvtimeo(struct socket *s, uint64_t timeout_usec) {
+static int sock_set_rcvtimeo(struct socket *s, uint64_t timeout_usec) {
     if (!s) return -EINVAL;
     s->busy_poll_usecs = (int)(timeout_usec & 0xFFFFFFFF); /* reuse field */
     return 0;
 }
 
-int sock_set_sndtimeo(struct socket *s, uint64_t timeout_usec) {
+static int sock_set_sndtimeo(struct socket *s, uint64_t timeout_usec) {
     if (!s) return -EINVAL;
     s->max_pacing_rate = timeout_usec; /* reuse field */
     return 0;
 }
 
-uint64_t sock_get_rcvtimeo(struct socket *s) {
+static uint64_t sock_get_rcvtimeo(struct socket *s) {
     if (!s) return 0;
     return (uint64_t)s->busy_poll_usecs;
 }
 
-uint64_t sock_get_sndtimeo(struct socket *s) {
+static uint64_t sock_get_sndtimeo(struct socket *s) {
     if (!s) return 0;
     return s->max_pacing_rate;
 }
 
 /* Apply timeout to recv/send operations.
  * Returns the timeout in ticks (0 = infinite, -1 = no timeout). */
-int sock_apply_rcvtimeo(struct socket *s) {
+static int sock_apply_rcvtimeo(struct socket *s) {
     if (!s) return -1;
     uint64_t usec = sock_get_rcvtimeo(s);
     if (usec == 0) return -1; /* no timeout */
@@ -71,7 +71,7 @@ int sock_apply_rcvtimeo(struct socket *s) {
     return (int)(usec / 10000);
 }
 
-int sock_apply_sndtimeo(struct socket *s) {
+static int sock_apply_sndtimeo(struct socket *s) {
     if (!s) return -1;
     uint64_t usec = sock_get_sndtimeo(s);
     if (usec == 0) return -1;
@@ -79,7 +79,7 @@ int sock_apply_sndtimeo(struct socket *s) {
 }
 
 /* ── Implement: socket_ext_ioctl ──────────────────────── */
-int socket_ext_ioctl(int sock, int cmd, void *arg)
+static int socket_ext_ioctl(int sock, int cmd, void *arg)
 {
     /* Bounds check: sock must be valid socket fd */
     if (sock < 100 || sock - 100 >= MAX_SOCKETS)
@@ -89,7 +89,7 @@ int socket_ext_ioctl(int sock, int cmd, void *arg)
     return -EOPNOTSUPP;
 }
 /* ── Implement: socket_ext_shutdown ───────────────────── */
-int socket_ext_shutdown(int sock, int how)
+static int socket_ext_shutdown(int sock, int how)
 {
     /* Bounds check: sock must be valid socket fd */
     if (sock < 100 || sock - 100 >= MAX_SOCKETS)

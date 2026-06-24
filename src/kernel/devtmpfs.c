@@ -12,7 +12,7 @@ static struct devtmpfs_node dev_nodes[DEV_MAX_NODES];
 static int num_dev_nodes = 0;
 static int devtmpfs_initialised = 0;
 
-void devtmpfs_init(void)
+void __init devtmpfs_init(void)
 {
     if (devtmpfs_initialised)
         return;

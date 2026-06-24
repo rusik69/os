@@ -1299,7 +1299,7 @@ void pci_log_l1pm_cap(uint8_t bus, uint8_t slot, uint8_t func) {
     kprintf("\n");
 }
 
-void pci_init(void) {
+void __init pci_init(void) {
     int count = 0;
     int msi_count = 0;
     int msix_count = 0;

@@ -36,7 +36,7 @@ void smp_set_gs_base(struct cpu_info *info) {
 }
 
 /* ── BSP initialization ────────────────────────────────────────────── */
-void smp_init_bsp(void) {
+void __init smp_init_bsp(void) {
     /* Initialize per-CPU info for BSP (CPU 0) */
     struct cpu_info *bsp = &cpu_info_array[0];
     memset(bsp, 0, sizeof(*bsp));

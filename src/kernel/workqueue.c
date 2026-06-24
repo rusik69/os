@@ -437,7 +437,7 @@ int workqueue_oom_get_state(void)
 
 /* ── Initialisation ───────────────────────────────────────────────── */
 
-void workqueue_init(void)
+void __init workqueue_init(void)
 {
     /* Initialise system workqueue */
     memset(&g_sys_wq, 0, sizeof(g_sys_wq));

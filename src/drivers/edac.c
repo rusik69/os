@@ -111,7 +111,7 @@ static void default_ue_handler(int ctl, int csrow, int channel, uint64_t addr)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Initialize the EDAC subsystem. */
-void edac_init(void)
+void __init edac_init(void)
 {
     if (g_edac_initialized) return;
 

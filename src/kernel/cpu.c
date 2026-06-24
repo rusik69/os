@@ -404,5 +404,5 @@ int cpu_die(int cpu_id)
 int cpu_online(int cpu_id)
 {
     if (cpu_id < 0 || cpu_id >= CPUHP_MAX_CPUS) return 0;
-    return cpuhp_is_online(cpu_id) ? 1 : 0;
+    return cpuhp_is_online(cpu_id);
 }

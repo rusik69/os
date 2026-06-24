@@ -39,7 +39,7 @@ static int overlay_enhance_initialised = 0;
 
 /* ── Initialisation ─────────────────────────────────────────────────── */
 
-void overlay_enhance_init(void)
+void __init overlay_enhance_init(void)
 {
     if (overlay_enhance_initialised)
         return;

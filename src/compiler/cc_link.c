@@ -134,6 +134,8 @@ int cc_link(const char **obj_paths, int nobj, const char *outpath,
     uint8_t *merged_text = (uint8_t *)kmalloc(LINK_MAX_TEXT);
     uint8_t *merged_data = (uint8_t *)kmalloc(LINK_MAX_DATA);
     LinkSymbol *syms = (LinkSymbol *)kmalloc(LINK_MAX_SYMBOLS * sizeof(LinkSymbol));
+    if (nobj > SIZE_MAX / sizeof(ObjInfo))
+        return -EOVERFLOW;
     ObjInfo *objs = (ObjInfo *)kmalloc(nobj * sizeof(ObjInfo));
 
     if (!merged_text || !merged_data || !syms || !objs) {

@@ -442,7 +442,7 @@ EXPORT_SYMBOL(mutex_lock);
 EXPORT_SYMBOL(mutex_unlock);
 
 /* ── mutex_trylock (non-blocking) ──────────────────────── */
-int mutex_trylock(int id)
+static int mutex_trylock(int id)
 {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
         return -EINVAL;
@@ -466,7 +466,7 @@ int mutex_trylock(int id)
 }
 
 /* ── mutex_lock_interruptible ──────────────────────────── */
-int mutex_lock_interruptible(int id)
+static int mutex_lock_interruptible(int id)
 {
     if (id < 0 || id >= MUTEX_MAX || !mutexes[id].in_use)
         return -EINVAL;
@@ -518,7 +518,7 @@ int mutex_lock_interruptible(int id)
 }
 
 /* ── mutex_trylock_debug ─────────────────────────────── */
-int mutex_trylock_debug(void *lock, const char *file, int line)
+static int mutex_trylock_debug(void *lock, const char *file, int line)
 {
     (void)file;
     (void)line;
@@ -529,7 +529,7 @@ int mutex_trylock_debug(void *lock, const char *file, int line)
     return -EBUSY;
 }
 /* ── mutex_unlock_debug ─────────────────────────────── */
-int mutex_unlock_debug(void *lock, const char *file, int line)
+static int mutex_unlock_debug(void *lock, const char *file, int line)
 {
     (void)file;
     (void)line;

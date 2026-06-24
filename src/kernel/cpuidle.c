@@ -485,7 +485,7 @@ static int menu_governor_select(struct cpuidle_cpu *cpu_data)
     }
 
     /* Fall back to C1 (HLT) at index 1, or POLL if only POLL exists */
-    return (idle_state_count > 1) ? 1 : 0;
+    return idle_state_count > 1;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

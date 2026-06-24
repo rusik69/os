@@ -22,6 +22,7 @@
 #include "heap.h"
 #include "vmm.h"
 #include "string.h"
+#include "err.h"
 #include "printf.h"
 #include "io.h"
 #include "idt.h"
@@ -1013,9 +1014,10 @@ int ahci_init(void) {
     if (hba_base == 0) return -2;
 
     /* Map HBA MMIO in high-half VMA space */
-    hba_base = (uint64_t)vmm_map_phys(hba_base, 0x2000,
+    void *hba_virt = vmm_map_phys(hba_base, 0x2000,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);
-    if (!hba_base) return -2;
+    if (IS_ERR(hba_virt)) return -2;
+    hba_base = (uint64_t)hba_virt;
 
     /* Check CAP2.SNCQ for controller-wide NCQ support */
     uint32_t cap2 = hba_read(HBA_CAP2_OFFSET);

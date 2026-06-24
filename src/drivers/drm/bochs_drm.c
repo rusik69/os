@@ -29,6 +29,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "heap.h"
+#include "err.h"
 
 /* ── VBE register indices ───────────────────────────────────────── */
 
@@ -245,7 +246,7 @@ int bochs_drm_init(void)
     priv->lfb_virt = vmm_map_phys(priv->lfb_phys, priv->lfb_size,
                                    VMM_FLAG_PRESENT | VMM_FLAG_WRITE |
                                    VMM_FLAG_NOCACHE);
-    if (!priv->lfb_virt) {
+    if (IS_ERR(priv->lfb_virt)) {
         kprintf("[bochs-drm] failed to map LFB\n");
         kfree(priv);
         return -1;

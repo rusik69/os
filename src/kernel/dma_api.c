@@ -24,6 +24,7 @@
 #include "string.h"
 #include "printf.h"
 #include "errno.h"
+#include "err.h"
 
 /* ── Internal helpers ───────────────────────────────────────────── */
 
@@ -147,7 +148,7 @@ void *dma_alloc_coherent(struct pci_device *dev, size_t size,
     /* Map into kernel virtual address space as uncacheable */
     void *virt = vmm_map_phys(first_phys, alloc_size,
                                VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
-    if (!virt) {
+    if (IS_ERR(virt)) {
         for (size_t i = 0; i < num_pages; i++)
             pmm_free_frame(first_phys + i * PAGE_SIZE);
         if (dma_handle) *dma_handle = 0;

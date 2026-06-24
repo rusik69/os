@@ -49,7 +49,7 @@ static int heap_expand(size_t needed) {
     return 0;
 }
 
-void heap_init(void) {
+void __init heap_init(void) {
     /* Align heap base to PAGE_SIZE above the kernel binary */
     heap_base    = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
     heap_current = heap_base + HEAP_INITIAL;

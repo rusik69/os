@@ -97,7 +97,7 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
     }
 }
 
-void mouse_init(void) {
+void __init mouse_init(void) {
     /* Enable auxiliary PS/2 device (mouse) */
     ps2_write_command(0xA8);
 

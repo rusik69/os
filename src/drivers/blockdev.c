@@ -451,7 +451,7 @@ static void drain_queue(struct blk_request_queue *q) {
 
 /* ── Public API ───────────────────────────────────────────────────── */
 
-void blockdev_init(void) {
+void __init blockdev_init(void) {
     memset(g_blockdevs, 0, sizeof(g_blockdevs));
     memset(g_queues, 0, sizeof(g_queues));
     spinlock_init(&g_dev_lock);

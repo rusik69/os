@@ -649,7 +649,7 @@ void kmem_cache_reap(void) {
 struct kmem_cache *cache_process = NULL;
 struct kmem_cache *cache_socket  = NULL;
 
-void slab_init(void) {
+void __init slab_init(void) {
     if (slab_initialized) return;
 
     kprintf("[..] Initializing slab allocator...\n");

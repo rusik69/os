@@ -10,6 +10,7 @@
 #include "scheduler.h"
 #include "aslr.h"
 #include "auxv.h"
+#include "err.h"
 
 /* Max ELF binary we'll try to load from disk */
 #define ELF_MAX_SIZE (1024 * 1024)  /* 1MB — increased from 64KB to support real binaries */
@@ -281,7 +282,7 @@ int elf_exec(const char *path) {
     if (is_userland) {
         /* Create per-process page tables */
         uint64_t *user_pml4 = vmm_create_user_pml4();
-        if (!user_pml4) {
+        if (IS_ERR(user_pml4)) {
             kprintf("elf: cannot create page tables\n");
             kfree(buf); kfree(name);
             return -ENOMEM;
@@ -465,7 +466,7 @@ int process_execve(const char *path, char *const argv[], char *const envp[]) {
     }
 
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (!new_pml4) { kfree(buf); return -ENOMEM; }
+    if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
 
     int map_ok = 1;
     for (uint16_t i = 0; i < hdr->e_phnum && map_ok; i++) {
@@ -922,7 +923,7 @@ int process_spawn(const char *path, char *const argv[], char *const envp[])
 
     /* ── 3. Create fresh page tables ────────────────────────────── */
     uint64_t *new_pml4 = vmm_create_user_pml4();
-    if (!new_pml4) { kfree(buf); return -ENOMEM; }
+    if (IS_ERR(new_pml4)) { kfree(buf); return -ENOMEM; }
 
     /* ── 4. Map all PT_LOAD segments ────────────────────────────── */
     int map_ok = 1;

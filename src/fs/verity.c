@@ -105,7 +105,7 @@ static struct verity_descriptor *verity_find(uint64_t ino)
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* Initialize the fs-verity subsystem. */
-void fsverity_init(void)
+void __init fsverity_init(void)
 {
     if (g_verity_initialized) return;
 
@@ -306,7 +306,7 @@ int fsverity_is_enabled(const char *path)
 {
     uint8_t buf[FS_VERITY_HASH_SIZE];
     int ret = vfs_getxattr(path, FS_VERITY_XATTR_NAME, buf, sizeof(buf));
-    return (ret == FS_VERITY_HASH_SIZE) ? 1 : 0;
+    return ret == FS_VERITY_HASH_SIZE;
 }
 EXPORT_SYMBOL(fsverity_is_enabled);
 

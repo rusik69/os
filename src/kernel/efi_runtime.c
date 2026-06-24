@@ -235,7 +235,7 @@ void efi_reset_system(int shutdown)
 
 int efi_is_available(void)
 {
-    return (g_efi_rt != NULL) ? 1 : 0;
+    return g_efi_rt != NULL;
 }
 
 /* ── Sysfs entries: /sys/firmware/efi/ ──────────────────────────────── */

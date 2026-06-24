@@ -708,7 +708,7 @@ int rcu_boost_get_priority(uint64_t gp_seq)
 
 /* ── Initialization ──────────────────────────────────────────────── */
 
-void rcu_init(void) {
+void __init rcu_init(void) {
     for (int i = 0; i < SMP_MAX_CPUS; i++) {
         rcu_state_percpu[i].gp_seq = 0;
         rcu_state_percpu[i].last_qs_tick = 0;

@@ -127,12 +127,12 @@ int efi_secureboot_get_mode(void)
 
 int efi_secureboot_requires_module_signing(void)
 {
-    return (g_secureboot_mode == EFI_SECUREBOOT_USER_MODE) ? 1 : 0;
+    return g_secureboot_mode == EFI_SECUREBOOT_USER_MODE;
 }
 
 int efi_secureboot_is_enabled(void)
 {
-    return (g_secureboot_mode == EFI_SECUREBOOT_USER_MODE) ? 1 : 0;
+    return g_secureboot_mode == EFI_SECUREBOOT_USER_MODE;
 }
 
 /* ── Sysfs interface ───────────────────────────────────────────────── */

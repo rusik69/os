@@ -5891,7 +5891,7 @@ static uint64_t sys_prctl(uint64_t op, uint64_t a2, uint64_t a3,
             return 0;
         }
         case PR_GET_NO_NEW_PRIVS: {
-            return p->no_new_privs ? 1 : 0;
+            return p->no_new_privs;
         }
         case PR_SET_SECCOMP: {
             /* arg2 = seccomp mode, arg3 = flags (e.g. SECCOMP_FILTER_FLAG_TSYNC) */
@@ -9278,7 +9278,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_VGA_PUT_ENTRY_AT: return sys_vga_put_entry_at(a1, a2, a3, a4);
         case SYS_VGA_SET_CURSOR: return sys_vga_set_cursor(a1, a2);
         case SYS_VGA_CLEAR: return sys_vga_clear();
-        case SYS_AC97_PRESENT: return ac97_present() ? 1 : 0;
+        case SYS_AC97_PRESENT: return ac97_present();
         case SYS_AC97_BEEP: {
             if (!ac97_present()) return (uint64_t)-1;
             uint32_t freq = (uint32_t)a1;
@@ -10039,7 +10039,7 @@ static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle_addr,
     return (uint64_t)fd;
 }
 
-void syscall_init(void) {
+void __init syscall_init(void) {
     /* Enable SCE bit in EFER */
     wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_SCE);
 

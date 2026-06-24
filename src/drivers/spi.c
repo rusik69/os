@@ -31,7 +31,7 @@ static int g_spi_initialized = 0;
 static struct spi_master *g_masters[SPI_BUS_MAX];
 
 /* ── Initialisation ────────────────────────────────────────────────── */
-void spi_init(void)
+void __init spi_init(void)
 {
     if (g_spi_initialized)
         return;

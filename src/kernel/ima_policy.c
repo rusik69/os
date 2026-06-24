@@ -261,7 +261,7 @@ int ima_policy_should_measure(const char *path, uint32_t uid, uint32_t gid,
     uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
     if (action & IMA_POLICY_DONT_MEASURE)
         return 0;
-    return (action & IMA_POLICY_MEASURE) ? 1 : 0;
+    return action & IMA_POLICY_MEASURE;
 }
 
 /*
@@ -274,7 +274,7 @@ int ima_policy_should_appraise(const char *path, uint32_t uid, uint32_t gid,
     uint32_t action = ima_policy_evaluate(path, uid, gid, func, fs_magic);
     if (action & IMA_POLICY_DONT_APPRAISE)
         return 0;
-    return (action & IMA_POLICY_APPRAISE) ? 1 : 0;
+    return action & IMA_POLICY_APPRAISE;
 }
 
 /*

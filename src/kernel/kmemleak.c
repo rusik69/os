@@ -123,7 +123,7 @@ static int find_free_slot(void)
 
 /* ── Public API ─────────────────────────────────────────────────── */
 
-void kmemleak_init(void)
+void __init kmemleak_init(void)
 {
     if (g_initialised)
         return;

@@ -38,7 +38,7 @@ static void timer_handler(struct interrupt_frame *frame) {
     scheduler_tick(was_user);
 }
 
-void timer_init(void) {
+void __init timer_init(void) {
     uint16_t divisor = 1193180 / TIMER_FREQ;
 
     outb(PIT_CMD, 0x36); /* channel 0, lobyte/hibyte, rate generator */
