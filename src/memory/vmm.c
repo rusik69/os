@@ -103,7 +103,7 @@ int vmm_commit(uint64_t bytes) {
     uint64_t old = __sync_fetch_and_add(&vmm_committed_bytes, bytes);
     if (old + bytes > VMM_OVERCOMMIT_LIMIT) {
         __sync_fetch_and_sub(&vmm_committed_bytes, bytes);  /* rollback */
-        return -1;
+        return -ENOMEM;
     }
     return 0;
 }
@@ -309,10 +309,10 @@ int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
     int pd_idx   = (virt >> 21) & 0x1FF;
     int pt_idx   = (virt >> 12) & 0x1FF;
 
-    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return -1;
+    if (!(kernel_pml4[pml4_idx] & PTE_PRESENT)) return -EFAULT;
     uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(kernel_pml4[pml4_idx] & PTE_ADDR_MASK);
 
-    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -1;
+    if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -EFAULT;
     uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
 
     /* Check for 2MB huge page */
@@ -321,10 +321,10 @@ int vmm_virt_to_phys(uint64_t virt, uint64_t *phys) {
         return 0;
     }
 
-    if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
+    if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
-    if (!(pt[pt_idx] & PTE_PRESENT)) return -1;
+    if (!(pt[pt_idx] & PTE_PRESENT)) return -EFAULT;
     if (phys) *phys = (pt[pt_idx] & PTE_ADDR_MASK) + (virt & 0xFFF);
     return 0;
 }
@@ -750,23 +750,23 @@ int vmm_page_is_mapped_user(uint64_t *pml4, uint64_t virt) {
  * Returns 0 on success with phys set, -1 if not mapped. */
 static int vmm_user_virt_to_phys(uint64_t *pml4, uint64_t virt, uint64_t *phys)
 {
-    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
     uint64_t pde = 0, pte = 0;
     uint64_t *pt = vmm_walk_to_pt(pml4, virt, &pde, &pte);
     if (pde & PTE_HUGE) {
         if (phys) *phys = (pde & 0x000FFFFFFFE00000ULL) + (virt & 0x1FFFFF);
         return 0;
     }
-    if (!pt || !(pte & PTE_PRESENT)) return -1;
+    if (!pt || !(pte & PTE_PRESENT)) return -EFAULT;
     if (phys) *phys = (pte & PTE_ADDR_MASK) + (virt & 0xFFF);
     return 0;
 }
 
 int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
                        uint64_t flags) {
-    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
-    if (virt + num_pages * PAGE_SIZE < virt) return -1; /* overflow */
-    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW; /* overflow */
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     size_t i = 0;
     for (i = 0; i < num_pages; i++) {
@@ -809,7 +809,7 @@ int vmm_map_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages,
                 if (vmm_user_virt_to_phys(pml4, virt + j * PAGE_SIZE, &p) == 0 && p && p != vmm_zero_page_frame)
                     pmm_unref_frame(p);
             }
-            return -1;
+            return -ENOMEM;
         }
     }
     return 0;
@@ -823,13 +823,13 @@ unwind:
                 pmm_unref_frame(p);
         }
     }
-    return -1;
+    return -ENOMEM;
 }
 
 int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
-    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
-    if (virt + num_pages * PAGE_SIZE < virt) return -1;
-    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t addr = virt + i * PAGE_SIZE;
@@ -865,10 +865,10 @@ int vmm_unmap_user_pages(uint64_t *pml4, uint64_t virt, size_t num_pages) {
 int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
                                     uint64_t huge_phys, uint64_t flags) {
     /* Validate alignment constraints */
-    if (virt & (HUGE_PAGE_SIZE - 1)) return -1;
-    if (huge_phys & (HUGE_PAGE_SIZE - 1)) return -1;
-    if (virt >= USER_VADDR_MAX) return -1;
-    if (!pml4) return -1;
+    if (virt & (HUGE_PAGE_SIZE - 1)) return -EINVAL;
+    if (huge_phys & (HUGE_PAGE_SIZE - 1)) return -EINVAL;
+    if (virt >= USER_VADDR_MAX) return -EINVAL;
+    if (!pml4) return -EINVAL;
 
     int idx4 = (virt >> 39) & 0x1FF;
     int idx3 = (virt >> 30) & 0x1FF;
@@ -940,11 +940,11 @@ int vmm_map_user_hugepage_internal(uint64_t *pml4, uint64_t virt,
  */
 int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
                              size_t num_4k_pages, uint64_t flags) {
-    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
     if (num_4k_pages == 0) return 0;
 
     uint64_t end = virt + (uint64_t)num_4k_pages * PAGE_SIZE;
-    if (end < virt || end > USER_VADDR_MAX) return -1;
+    if (end < virt || end > USER_VADDR_MAX) return -EINVAL;
 
     uint64_t cur = virt;
 
@@ -955,7 +955,7 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
     if (cur < lead_end) {
         size_t lead_pages = (lead_end - cur) / PAGE_SIZE;
         if (vmm_map_user_pages(pml4, cur, lead_pages, flags) < 0)
-            return -1;
+            return -ENOMEM;
         cur = lead_end;
     }
 
@@ -982,7 +982,7 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
 
         /* ── Fallback: use 4KB pages for this 2MB chunk ───────────── */
         if (vmm_map_user_pages(pml4, cur, HUGE_PAGE_NFRAMES, flags) < 0)
-            return -1;
+            return -ENOMEM;
         cur += HUGE_PAGE_SIZE;
     }
 
@@ -990,7 +990,7 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
     if (cur < end) {
         size_t trail_pages = (end - cur) / PAGE_SIZE;
         if (vmm_map_user_pages(pml4, cur, trail_pages, flags) < 0)
-            return -1;
+            return -ENOMEM;
     }
 
     return 0;
@@ -998,9 +998,9 @@ int vmm_map_user_huge_pages(uint64_t *pml4, uint64_t virt,
 
 int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
                              uint64_t new_flags) {
-    if (!pml4 || virt >= USER_VADDR_MAX) return -1;
-    if (virt + num_pages * PAGE_SIZE < virt) return -1;
-    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -1;
+    if (!pml4 || virt >= USER_VADDR_MAX) return -EINVAL;
+    if (virt + num_pages * PAGE_SIZE < virt) return -EOVERFLOW;
+    if (virt + num_pages * PAGE_SIZE > USER_VADDR_MAX) return -EINVAL;
 
     for (size_t i = 0; i < num_pages; i++) {
         uint64_t addr = virt + i * PAGE_SIZE;
@@ -1009,11 +1009,11 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
         int pd_idx   = (addr >> 21) & 0x1FF;
         int pt_idx   = (addr >> 12) & 0x1FF;
 
-        if (!(pml4[pml4_idx] & PTE_PRESENT)) return -1;
+        if (!(pml4[pml4_idx] & PTE_PRESENT)) return -EFAULT;
         uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pml4[pml4_idx] & PTE_ADDR_MASK);
-        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -1;
+        if (!(pdpt[pdpt_idx] & PTE_PRESENT)) return -EFAULT;
         uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pdpt[pdpt_idx] & PTE_ADDR_MASK);
-        if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
+        if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
 
         /* Handle 2MB huge pages: update flags directly in the PDE.
          * The PDE low 9 bits (8:0) contain page flags; bits 9-11 are
@@ -1042,11 +1042,11 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
             continue;
         }
 
-        if (!(pd[pd_idx] & PTE_PRESENT)) return -1;
+        if (!(pd[pd_idx] & PTE_PRESENT)) return -EFAULT;
         uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
         uint64_t pte = pt[pt_idx];
-        if (!(pte & PTE_PRESENT)) return -1;
+        if (!(pte & PTE_PRESENT)) return -EFAULT;
 
         /* ── COW-aware flag update ──────────────────────────────────
          * If adding write permission to a COW page, break COW first by
@@ -1057,7 +1057,7 @@ int vmm_set_user_pages_flags(uint64_t *pml4, uint64_t virt, size_t num_pages,
         if ((new_flags & VMM_FLAG_WRITE) && (pte & VMM_FLAG_COW)) {
             uint64_t old_phys = pte & PTE_ADDR_MASK;
             uint64_t new_phys = pmm_alloc_frame();
-            if (!new_phys) return -1;
+            if (!new_phys) return -ENOMEM;
             memcpy((void *)PHYS_TO_VIRT(new_phys),
                    (void *)PHYS_TO_VIRT(old_phys), PAGE_SIZE);
             pmm_unref_frame(old_phys);
@@ -1304,7 +1304,7 @@ uint64_t vmm_alloc(uint64_t addr, size_t size, int flags)
 int vmm_free(uint64_t addr, size_t size)
 {
     if (addr == 0 || size == 0)
-        return -1;
+        return -EINVAL;
 
     uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
     uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));
@@ -1322,7 +1322,7 @@ int vmm_free(uint64_t addr, size_t size)
 int vmm_protect(uint64_t addr, size_t size, int new_flags)
 {
     if (addr == 0 || size == 0)
-        return -1;
+        return -EINVAL;
 
     uint64_t start = addr & ~(PAGE_SIZE - 1ULL);
     uint64_t end = ((addr + size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL));

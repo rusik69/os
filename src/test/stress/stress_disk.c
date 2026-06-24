@@ -500,6 +500,8 @@ int main(int argc, char *argv[])
             if (test_write_verify(dir, wvfy_count++) != 0)
                 test_errors++;
             break;
+        default:
+            break;
         }
 
         if ((int)(elapsed() - wall_start) % 10 == 0 &&

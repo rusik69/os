@@ -355,7 +355,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
         } else {
             uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
             uint32_t flags = mbi[0];
-            if (flags & (1 << 2)) { /* cmdline flag */
+            if (flags & (1U << 2)) { /* cmdline flag */
                 uint32_t cmdline_phys = mbi[4];
                 if (cmdline_phys) {
                     const char *cmdline_virt = (const char *)PHYS_TO_VIRT((uint64_t)cmdline_phys);
@@ -1154,7 +1154,7 @@ void kernel_main(uint32_t magic, uint64_t multiboot_info_phys) {
      * so init can access files from the initrd. */
     {
         uint32_t *mbi = (uint32_t *)PHYS_TO_VIRT(multiboot_info_phys);
-        if (mbi[0] & (1 << 3)) {
+        if (mbi[0] & (1U << 3)) {
             uint32_t mods_count = mbi[5];
             uint64_t mods_addr = (uint64_t)mbi[6];
             if (mods_count > 0 && mods_addr > 0) {

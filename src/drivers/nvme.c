@@ -126,7 +126,7 @@ static int nvme_wait_ready(struct nvme_ctrl *ctrl, int ready, int timeout_ms) {
         for (volatile int i = 0; i < 100000; i++);
         timeout++;
     }
-    return -1;
+    return -ETIMEDOUT;
 }
 
 /* ── PCI probe ─────────────────────────────────────────────────────── */
@@ -141,7 +141,7 @@ static int nvme_probe_pci(void) {
         uint32_t sub_prog = ((uint32_t)NVME_PCI_PROG_IF << 16) | NVME_PCI_SUBCLASS;
         int ret2 = pci_find_class(NVME_PCI_CLASS, (uint8_t)sub_prog, &pci2);
         if (ret2 < 0)
-            return -1;
+            return -EINVAL;
         pci = pci2;
     }
 
@@ -154,12 +154,12 @@ static int nvme_probe_pci(void) {
         /* MMIO BAR */
         uint64_t mmio_base = (bar0 & 0xFFFFFFF0);
         if (mmio_base == 0)
-            return -1;
+            return -EIO;
         g_nvme_ctrl.phys_regs = mmio_base;
         g_nvme_ctrl.regs = (uint64_t)PHYS_TO_VIRT((void*)(uintptr_t)mmio_base);
     } else {
         /* I/O BAR not supported for NVMe */
-        return -1;
+        return -EIO;
     }
 
     g_nvme_ctrl.irq = pci.irq;
@@ -195,7 +195,7 @@ static int nvme_setup_admin_queues(void) {
     uint64_t cq_frame = pmm_alloc_frame();
     if (!sq_frame || !cq_frame) {
         if (sq_frame) pmm_free_frame(sq_frame);
-        return -1;
+        return -EIO;
     }
 
     g_nvme_ctrl.admin_sq = PHYS_TO_VIRT((void*)(uintptr_t)(sq_frame * 4096));
@@ -230,7 +230,7 @@ static int nvme_enable_controller(void) {
     ret = nvme_wait_ready(&g_nvme_ctrl, 0, 2000);
     if (ret < 0) {
         kprintf("[NVMe] Timeout waiting for CSTS.RDY=0\n");
-        return -1;
+        return -EIO;
     }
 
     /* Set CC: enable, page size (4096 = 0 shift), MPS=0, CSS=NVM */
@@ -244,7 +244,7 @@ static int nvme_enable_controller(void) {
     ret = nvme_wait_ready(&g_nvme_ctrl, 1, 2000);
     if (ret < 0) {
         kprintf("[NVMe] Timeout waiting for CSTS.RDY=1\n");
-        return -1;
+        return -EIO;
     }
 
     return 0;
@@ -270,11 +270,11 @@ static int nvme_enable_controller(void) {
  */
 int nvme_sanitize(int action, int overwrite_pass_count) {
     if (!g_nvme_ctrl.present)
-        return -1;
+        return -EIO;
 
     if (action < NVME_SANITIZE_ACTION_BLOCK_ERASE ||
         action > NVME_SANITIZE_ACTION_CRYPTO_ERASE)
-        return -1;
+        return -EIO;
 
     struct nvme_sq_entry cmd;
     struct nvme_cq_entry cqe;
@@ -298,7 +298,7 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
     int ret = nvme_submit_admin_cmd(&cmd, &cqe);
     if (ret != 0) {
         kprintf("[NVMe] Sanitize command submission FAILED (timeout or error)\n");
-        return -1;
+        return -EIO;
     }
 
     /* Check completion status */
@@ -309,7 +309,7 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
         uint8_t sct = (uint8_t)((status >> 9) & 0x7);   /* Status Code Type */
         kprintf("[NVMe] Sanitize command rejected: SCT=%u SC=%u\n",
                 (unsigned)sct, (unsigned)sc);
-        return -1;
+        return -EINVAL;
     }
 
     kprintf("[NVMe] Sanitize operation ACCEPTED by controller — running in background.\n"
@@ -321,7 +321,7 @@ int nvme_sanitize(int action, int overwrite_pass_count) {
 
 int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) {
     if (!g_nvme_ctrl.present || !g_nvme_ctrl.admin_sq)
-        return -1;
+        return -EIO;
 
     struct nvme_sq_entry *sq = (struct nvme_sq_entry *)g_nvme_ctrl.admin_sq;
     uint16_t tail = g_nvme_ctrl.admin_sq_tail;
@@ -357,18 +357,18 @@ int nvme_submit_admin_cmd(struct nvme_sq_entry *cmd, struct nvme_cq_entry *cqe) 
         __asm__ volatile("pause");
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Identify controller ──────────────────────────────────────────── */
 
 int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
     if (!g_nvme_ctrl.present || !id)
-        return -1;
+        return -EINVAL;
 
     /* Allocate a page for the identify data (physical contiguous) */
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -1;
+    if (!data_frame) return -ENOMEM;
 
     uint64_t data_phys = data_frame * 4096;
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
@@ -387,8 +387,8 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
     if (ret == 0) {
         memcpy(id, data_virt, sizeof(struct nvme_identify_ctrl));
         g_nvme_ctrl.nn = id->nn;
-        g_nvme_ctrl.sq_entry_size = 1 << (id->sqes & 0x0F);
-        g_nvme_ctrl.cq_entry_size = 1 << ((id->cqes >> 4) & 0x0F);
+        g_nvme_ctrl.sq_entry_size = 1U << (id->sqes & 0x0F);
+        g_nvme_ctrl.cq_entry_size = 1U << ((id->cqes >> 4) & 0x0F);
     } else {
         kprintf("[NVMe] Identify controller command failed\n");
     }
@@ -401,10 +401,10 @@ int nvme_identify_ctrl(struct nvme_identify_ctrl *id) {
 
 static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
     if (!g_nvme_ctrl.present || !id || nsid == 0)
-        return -1;
+        return -EINVAL;
 
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -1;
+    if (!data_frame) return -ENOMEM;
 
     uint64_t data_phys = data_frame * 4096;
     void *data_virt = PHYS_TO_VIRT((void*)(uintptr_t)data_phys);
@@ -431,7 +431,7 @@ static int nvme_identify_ns(uint32_t nsid, struct nvme_identify_ns *id) {
 
 static int nvme_set_num_queues(uint32_t nr_queues) {
     uint64_t data_frame = pmm_alloc_frame();
-    if (!data_frame) return -1;
+    if (!data_frame) return -ENOMEM;
 
     memset(PHYS_TO_VIRT((void*)(uintptr_t)(data_frame * 4096)), 0, 4096);
 
@@ -487,7 +487,7 @@ static int nvme_create_io_cq(struct nvme_io_queue *q) {
 
     /* Allocate a physically contiguous page for the CQ */
     uint64_t cq_frame = pmm_alloc_frame();
-    if (!cq_frame) return -1;
+    if (!cq_frame) return -ENOMEM;
 
     q->cq_virt = PHYS_TO_VIRT((void*)(uintptr_t)(cq_frame * 4096));
     q->cq_phys = cq_frame * 4096;
@@ -508,7 +508,7 @@ static int nvme_create_io_cq(struct nvme_io_queue *q) {
         pmm_free_frame(cq_frame);
         q->cq_virt = NULL;
         q->cq_phys = 0;
-        return -1;
+        return -EINVAL;
     }
 
     return 0;
@@ -522,7 +522,7 @@ static int nvme_create_io_sq(struct nvme_io_queue *q) {
     /* Allocate a physically contiguous page for the SQ */
     uint64_t sq_frame = pmm_alloc_frame();
     if (!sq_frame) {
-        return -1;
+        return -ENOMEM;
     }
 
     q->sq_virt = PHYS_TO_VIRT((void*)(uintptr_t)(sq_frame * 4096));
@@ -544,7 +544,7 @@ static int nvme_create_io_sq(struct nvme_io_queue *q) {
         pmm_free_frame(sq_frame);
         q->sq_virt = NULL;
         q->sq_phys = 0;
-        return -1;
+        return -EINVAL;
     }
 
     return 0;
@@ -620,7 +620,7 @@ static int nvme_io_submit_on_queue(struct nvme_io_queue *q, uint32_t nsid,
                                        uint32_t nr_pages) {
     (void)nr_pages;
     if (!q || !q->valid || !q->sq_virt)
-        return -1;
+        return -EIO;
 
     struct nvme_sq_entry *sq = (struct nvme_sq_entry *)q->sq_virt;
     uint16_t tail = q->sq_tail;
@@ -670,14 +670,14 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
             nvme_write32(&g_nvme_ctrl, nvme_cq_doorbell(&g_nvme_ctrl, q->qid), head);
 
             if (sct != 0 || sc != 0) {
-                return -1;
+                return -EIO;
             }
             return 0;
         }
         __asm__ volatile("pause");
     }
 
-    return -1;  /* timeout */
+    return -ETIMEDOUT;  /* timeout */
 }
 
 /* ── NVMe deallocate (Dataset Management) ─────────────────────────── */
@@ -698,18 +698,18 @@ static int nvme_poll_io_cq(struct nvme_io_queue *q, uint32_t timeout_loops) {
  */
 int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
     if (ns_id < 1 || (uint32_t)ns_id > g_nvme_ctrl.nn || count == 0)
-        return -1;
+        return -EIO;
 
     struct nvme_io_queue *q = nvme_get_io_queue();
     if (!q || !q->valid)
-        return -1;
+        return -EIO;
 
     /* Allocate one physically-contiguous page for the DSM range list.
      * The NVMe Dataset Management range is a 16-byte structure.
      * We send a single range per command. */
     uint64_t range_frame = pmm_alloc_frame();
     if (!range_frame)
-        return -1;
+        return -ENOMEM;
 
     uint64_t range_phys = range_frame * 4096;
     uint32_t *range = (uint32_t *)PHYS_TO_VIRT(range_phys);
@@ -753,12 +753,12 @@ int nvme_deallocate(int ns_id, uint64_t lba, uint32_t count) {
 /** Block device submit_fn — called by blockdev layer for I/O requests */
 static int nvme_blk_submit(struct blk_request *req) {
     if (!req)
-        return -1;
+        return -EIO;
 
     /* Determine namespace from device ID */
     int ns_index = req->dev_id - NVME_BLOCKDEV_ID;
     if (ns_index < 0 || ns_index >= (int)g_nvme_ctrl.nn)
-        return -1;
+        return -EIO;
 
     uint32_t nsid = (uint32_t)(ns_index + 1);  /* namespace IDs are 1-based */
 
@@ -772,7 +772,7 @@ static int nvme_blk_submit(struct blk_request *req) {
     /* Get the I/O queue for the current CPU */
     struct nvme_io_queue *q = nvme_get_io_queue();
     if (!q || !q->valid)
-        return -1;
+        return -EIO;
 
     /* Allocate physically-contiguous pages for DMA */
     uint32_t nr_sectors = req->count;
@@ -784,7 +784,7 @@ static int nvme_blk_submit(struct blk_request *req) {
      * For multi-page transfers, build a PRP list. */
     uint64_t *frames = (uint64_t *)kmalloc((size_t)nr_pages * sizeof(uint64_t));
     if (!frames)
-        return -1;
+        return -ENOMEM;
 
     for (uint32_t i = 0; i < nr_pages; i++) {
         frames[i] = pmm_alloc_frame();
@@ -792,7 +792,7 @@ static int nvme_blk_submit(struct blk_request *req) {
             for (uint32_t j = 0; j < i; j++)
                 pmm_free_frame(frames[j]);
             kfree(frames);
-            return -1;
+            return -ENOMEM;
         }
     }
 
@@ -820,7 +820,7 @@ static int nvme_blk_submit(struct blk_request *req) {
             for (uint32_t i = 0; i < nr_pages; i++)
                 pmm_free_frame(frames[i]);
             kfree(frames);
-            return -1;
+            return -ENOSPC;
         }
 
         /* Allocate a dedicated page for the PRP list (do NOT reuse a data page) */
@@ -829,7 +829,7 @@ static int nvme_blk_submit(struct blk_request *req) {
             for (uint32_t i = 0; i < nr_pages; i++)
                 pmm_free_frame(frames[i]);
             kfree(frames);
-            return -1;
+            return -ENOMEM;
         }
         prp_list = (uint64_t *)PHYS_TO_VIRT(prp_list_frame * 4096);
         prp1 = prp_list_frame * 4096; /* PRP1 points to the PRP list */
@@ -850,7 +850,7 @@ static int nvme_blk_submit(struct blk_request *req) {
         for (uint32_t i = 0; i < nr_pages; i++)
             pmm_free_frame(frames[i]);
         kfree(frames);
-        return -1;
+        return -EINVAL;
     }
 
     /* Poll for completion (synchronous for now) */
@@ -1128,7 +1128,7 @@ int nvme_mpath_get_stats(int mp_dev_id,
             return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Main initialization ───────────────────────────────────────────── */
@@ -1143,19 +1143,19 @@ int nvme_init(void) {
     if (nvme_probe_pci() < 0) {
         kprintf("[NVMe] No NVMe controller found\n");
         g_nvme_init_done = 1;
-        return -1;
+        return -EIO;
     }
 
     /* Setup admin queues */
     if (nvme_setup_admin_queues() < 0) {
         kprintf("[NVMe] Failed to setup admin queues\n");
-        return -1;
+        return -EIO;
     }
 
     /* Enable controller */
     if (nvme_enable_controller() < 0) {
         kprintf("[NVMe] Failed to enable controller\n");
-        return -1;
+        return -EIO;
     }
 
     /* Identify controller */
@@ -1383,7 +1383,7 @@ int nvme_create_cq(uint16_t cqid, uint64_t addr, uint16_t size, uint16_t iv)
     cmd.cdw0 = NVME_ADMIN_CREATE_CQ | (0 << 8);  /* opcode + fuse */
     cmd.cdw10 = (uint32_t)(cqid & 0xFFFF) |
                 ((uint32_t)(size - 1) << 16);  /* queue size - 1 */
-    cmd.cdw11 = (1 << 0) |                     /* physically contiguous */
+    cmd.cdw11 = (1U << 0) |                     /* physically contiguous */
                 ((uint32_t)(iv & 0xFFFF) << 16); /* interrupt vector */
     cmd.prp1 = addr;
 
@@ -1400,7 +1400,7 @@ int nvme_create_sq(uint16_t sqid, uint64_t addr, uint16_t size, uint16_t cqid)
     cmd.cdw0 = NVME_ADMIN_CREATE_SQ | (0 << 8);
     cmd.cdw10 = (uint32_t)(sqid & 0xFFFF) |
                 ((uint32_t)(size - 1) << 16);
-    cmd.cdw11 = (1 << 0) |                     /* physically contiguous */
+    cmd.cdw11 = (1U << 0) |                     /* physically contiguous */
                 ((uint32_t)(cqid & 0xFFFF) << 16); /* completion queue ID */
     cmd.prp1 = addr;
 

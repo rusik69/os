@@ -189,7 +189,7 @@ void *memmem(const void *haystack, size_t haystacklen,
 }
 
 /* ── strnlen_user ─────────────────────────────── */
-size_t strnlen_user(const char *s, size_t n)
+static size_t strnlen_user(const char *s, size_t n)
 {
     size_t len = 0;
     while (len < n && s[len])
@@ -197,7 +197,7 @@ size_t strnlen_user(const char *s, size_t n)
     return len;
 }
 /* ── strncpy_from_user ─────────────────────────────── */
-int strncpy_from_user(char *dst, const char *src, size_t n)
+static int strncpy_from_user(char *dst, const char *src, size_t n)
 {
     size_t i;
     for (i = 0; i < n && src[i]; i++)
@@ -207,7 +207,7 @@ int strncpy_from_user(char *dst, const char *src, size_t n)
     return (int)i;
 }
 /* ── strcmp_user ─────────────────────────────── */
-int strcmp_user(const char *cs, const char *ct)
+static int strcmp_user(const char *cs, const char *ct)
 {
     while (*cs && *ct && *cs == *ct) {
         cs++;

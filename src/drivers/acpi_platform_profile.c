@@ -134,7 +134,7 @@ static int platform_profile_write(const char *data, uint32_t size, void *priv)
         return -1;
 
     /* Check if the profile is supported */
-    int bit = (1 << new_profile);
+    int bit = (1U << new_profile);
     if (!(g_supported_profiles & bit))
         return -1;
 

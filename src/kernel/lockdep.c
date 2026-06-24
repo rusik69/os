@@ -738,14 +738,14 @@ void lockdep_init(void)
 }
 
 /* ── Stub: lock_contended ─────────────────────────────── */
-int lock_contended(void *lock)
+static int lock_contended(void *lock)
 {
     (void)lock;
     kprintf("[lockdep] lock_contended: not yet implemented\n");
     return 0;
 }
 /* ── Stub: lock_acquired ─────────────────────────────── */
-int lock_acquired(void *lock)
+static int lock_acquired(void *lock)
 {
     (void)lock;
     kprintf("[lockdep] lock_acquired: not yet implemented\n");

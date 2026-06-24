@@ -30,9 +30,9 @@
 #define CDC_ETH          0x0F
 
 /* ACM capabilities */
-#define ACM_SUPPORT_LINE_CODING     (1 << 0)
-#define ACM_SUPPORT_SEND_BREAK      (1 << 1)
-#define ACM_SUPPORT_NET_CONNECTION  (1 << 2)
+#define ACM_SUPPORT_LINE_CODING     (1U << 0)
+#define ACM_SUPPORT_SEND_BREAK      (1U << 1)
+#define ACM_SUPPORT_NET_CONNECTION  (1U << 2)
 
 /* Requests */
 #define CDC_SEND_ENCAPSULATED_COMMAND   0x00
@@ -50,8 +50,8 @@ struct cdc_line_coding {
 } __attribute__((packed));
 
 /* Control line state */
-#define LINE_STATE_DTR     (1 << 0)
-#define LINE_STATE_RTS     (1 << 1)
+#define LINE_STATE_DTR     (1U << 0)
+#define LINE_STATE_RTS     (1U << 1)
 
 /* ── EHCI transfer primitives (same layout as usb_msc.c) ────────────── */
 

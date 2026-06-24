@@ -24,9 +24,9 @@
 #define AT_LOGGED_UTILITY_STREAM  0x100
 
 /* Attribute flags */
-#define ATTR_FLAG_COMPRESSED    (1 << 0)
-#define ATTR_FLAG_ENCRYPTED     (1 << 1)
-#define ATTR_FLAG_SPARSE        (1 << 2)
+#define ATTR_FLAG_COMPRESSED    (1U << 0)
+#define ATTR_FLAG_ENCRYPTED     (1U << 1)
+#define ATTR_FLAG_SPARSE        (1U << 2)
 
 /* File attribute flags */
 #define FILE_ATTR_READONLY      0x0001
@@ -45,8 +45,8 @@
 #define FILE_ATTR_ENCRYPTED     0x4000
 
 /* MFT record flags */
-#define MFT_RECORD_IN_USE   (1 << 0)
-#define MFT_RECORD_DIR      (1 << 1)
+#define MFT_RECORD_IN_USE   (1U << 0)
+#define MFT_RECORD_DIR      (1U << 1)
 
 /* MFT reference numbers */
 #define MFT_FILE_MFT       0

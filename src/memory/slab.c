@@ -195,6 +195,8 @@ static void slab_relink(struct kmem_cache *cache, struct slab *slab,
         case SLAB_FULL:    list = &cache->slabs_full;    break;
         case SLAB_PARTIAL: list = &cache->slabs_partial; break;
         case SLAB_FREE:    list = &cache->slabs_free;    break;
+        default:
+            break;
     }
     if (list) {
         if (slab->prev) slab->prev->next = slab->next;
@@ -219,6 +221,8 @@ static void slab_relink(struct kmem_cache *cache, struct slab *slab,
             slab->next = cache->slabs_free;
             if (cache->slabs_free) cache->slabs_free->prev = slab;
             cache->slabs_free = slab;
+            break;
+        default:
             break;
     }
     slab->state = new_state;
@@ -259,13 +263,13 @@ static int slab_grow(struct kmem_cache *cache) {
 
     /* Allocate contiguous pages via PMM */
     uint64_t phys_base = 0;
-    int pages = 1 << cache->gfporder;
+    int pages = 1U << cache->gfporder;
     for (int i = 0; i < pages; i++) {
         uint64_t p = pmm_alloc_frame();
         if (!p) {
             for (int j = 0; j < i; j++)
                 pmm_free_frame(phys_base + j * PAGE_SIZE);
-            return -1;
+            return -ENOMEM;
         }
         if (i == 0) phys_base = p;
     }
@@ -571,7 +575,7 @@ void kmem_cache_free(struct kmem_cache *cache, void *obj) {
 void kmem_cache_destroy(struct kmem_cache *cache) {
     if (!cache) return;
 
-    int pages = 1 << cache->gfporder;
+    int pages = 1U << cache->gfporder;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&cache->lock, &irq_flags);
@@ -622,7 +626,7 @@ void kmem_cache_reap(void) {
         uint64_t irq_flags;
         spinlock_irqsave_acquire(&cache->lock, &irq_flags);
 
-        int pages = 1 << cache->gfporder;
+        int pages = 1U << cache->gfporder;
         struct slab *slab = cache->slabs_free;
         while (slab) {
             struct slab *nxt = slab->next;

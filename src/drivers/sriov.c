@@ -27,9 +27,9 @@
 #define PCI_SRIOV_BAR          0x24
 
 /* SR-IOV control bits */
-#define SRIOV_CTL_ENABLE       (1 << 0)
-#define SRIOV_CTL_VF_MIGRATION (1 << 1)
-#define SRIOV_CTL_VF_ARB_EN    (1 << 2)
+#define SRIOV_CTL_ENABLE       (1U << 0)
+#define SRIOV_CTL_VF_MIGRATION (1U << 1)
+#define SRIOV_CTL_VF_ARB_EN    (1U << 2)
 
 struct sriov_vf {
     int pf_bus;
@@ -57,7 +57,7 @@ int sriov_probe_pf(int bus, int dev, int func)
 {
     /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
     uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1 << 4)))
+    if (!(status & (1U << 4)))
         return 0;
     uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
     uint16_t sriov_cap = 0;
@@ -93,7 +93,7 @@ int sriov_enable_vfs(int bus, int dev, int func, int num_vfs)
 {
     /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
     uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1 << 4)))
+    if (!(status & (1U << 4)))
         return -ENODEV;
     uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
     uint16_t sriov_cap = 0;
@@ -139,7 +139,7 @@ int sriov_disable_vfs(int bus, int dev, int func)
 {
     /* Walk standard PCI capability list to find SR-IOV (cap_id=0x10) */
     uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1 << 4)))
+    if (!(status & (1U << 4)))
         return -ENODEV;
     uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
     uint16_t sriov_cap = 0;

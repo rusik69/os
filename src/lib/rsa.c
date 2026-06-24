@@ -66,7 +66,7 @@ static void bn_mul_wide(uint32_t *r, const uint32_t *a, const uint32_t *b, int n
 {
     uint64_t carry;
     bn_zero(r, nwords * 2);
-    
+
     for (int i = 0; i < nwords; i++) {
         carry = 0;
         for (int j = 0; j < nwords; j++) {
@@ -83,14 +83,14 @@ static void bn_mod(uint32_t *r, const uint32_t *a, const uint32_t *m, int nwords
 {
     uint32_t tmp[RSA_MAX_WORDS * 2];
     int mbits = 0;
-    
+
     bn_copy(tmp, a, nwords * 2);
-    
+
     /* Find bit length of m */
     uint32_t mtop = m[nwords - 1];
     while (mtop) { mbits++; mtop >>= 1; }
     mbits += (nwords - 1) * 32;
-    
+
     /* Compute bit length of a */
     int abits = 0;
     for (int i = nwords * 2 - 1; i >= 0; i--) {
@@ -101,17 +101,17 @@ static void bn_mod(uint32_t *r, const uint32_t *a, const uint32_t *m, int nwords
             break;
         }
     }
-    
+
     /* Long division (simplified) */
     /* For RSA sizes, repeated subtraction is fine */
     while (abits >= mbits) {
         int shift = abits - mbits;
         uint32_t shifted_m[RSA_MAX_WORDS];
         bn_zero(shifted_m, nwords);
-        
+
         int word_shift = shift / 32;
         int bit_shift = shift % 32;
-        
+
         for (int i = 0; i < nwords; i++) {
             uint64_t val = (uint64_t)m[i] << bit_shift;
             if (i + word_shift < nwords)
@@ -119,11 +119,11 @@ static void bn_mod(uint32_t *r, const uint32_t *a, const uint32_t *m, int nwords
             if (i + word_shift + 1 < nwords)
                 shifted_m[i + word_shift + 1] |= (uint32_t)(val >> 32);
         }
-        
+
         if (bn_cmp(tmp, shifted_m, nwords * 2) >= 0) {
             bn_sub(tmp, tmp, shifted_m, nwords * 2);
         }
-        
+
         /* Recalculate abits */
         abits = 0;
         for (int i = nwords * 2 - 1; i >= 0; i--) {
@@ -135,7 +135,7 @@ static void bn_mod(uint32_t *r, const uint32_t *a, const uint32_t *m, int nwords
             }
         }
     }
-    
+
     /* Result guaranteed to be < m now */
     for (int i = 0; i < nwords; i++)
         r[i] = tmp[i];
@@ -175,8 +175,8 @@ static void bn_mod_exp(uint32_t *r, const uint32_t *base, const uint32_t *exp,
     for (int i = 0; i < ebits; i++) {
         int word_idx = i / 32;
         int bit_idx = i % 32;
-        
-        if (exp[word_idx] & (1 << bit_idx)) {
+
+        if (exp[word_idx] & (1U << bit_idx)) {
             bn_mul_mod(result, result, b, m, nwords);
         }
         bn_mul_mod(b, b, b, m, nwords);

@@ -234,7 +234,7 @@ void sha512_init_crypto(void)
  * Context: Any context.
  * Return: 0 on success.
  */
-int hmac_sha512(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+static int hmac_sha512(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
 {
     uint8_t k[SHA512_BLOCK_SIZE];
     struct sha512_ctx ctx;

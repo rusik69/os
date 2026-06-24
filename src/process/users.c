@@ -48,13 +48,13 @@ static uint32_t djb2_hash(const char *s) {
 static int ensure_home_owned(const char *path, uint16_t uid, uint16_t gid, uint16_t mode) {
     uint8_t type = 0;
     if (fs_stat(path, (uint32_t *)0, &type) < 0) {
-        if (fs_create(path, FS_TYPE_DIR) < 0) return -1;
+        if (fs_create(path, FS_TYPE_DIR) < 0) return -EINVAL;
     } else if (type != FS_TYPE_DIR) {
-        return -1;
+        return -EINVAL;
     }
 
-    if (fs_chown(path, uid, gid) < 0) return -1;
-    if (fs_chmod(path, mode) < 0) return -1;
+    if (fs_chown(path, uid, gid) < 0) return -EINVAL;
+    if (fs_chmod(path, mode) < 0) return -EINVAL;
     return 0;
 }
 
@@ -88,9 +88,9 @@ static int passwd_file_write(void) {
     /* Write the file (truncate + rewrite) */
     if (fs_write_file(PASSWD_FILE, buf, (uint32_t)off) < 0) {
         if (fs_create(PASSWD_FILE, FS_TYPE_FILE) < 0)
-            return -1;
+            return -EINVAL;
         if (fs_write_file(PASSWD_FILE, buf, (uint32_t)off) < 0)
-            return -1;
+            return -EINVAL;
     }
     return 0;
 }
@@ -118,9 +118,9 @@ static int shadow_file_write(void) {
 
     if (fs_write_file(SHADOW_FILE, buf, (uint32_t)off) < 0) {
         if (fs_create(SHADOW_FILE, FS_TYPE_FILE) < 0)
-            return -1;
+            return -EINVAL;
         if (fs_write_file(SHADOW_FILE, buf, (uint32_t)off) < 0)
-            return -1;
+            return -EINVAL;
     }
     return 0;
 }
@@ -129,7 +129,7 @@ static int shadow_file_write(void) {
  * Line format: name:password:UID:GID:gecos:home:shell
  * Returns 0 on success, -1 on parse error. */
 static int parse_passwd_line(const char *line, struct user_entry *ue) {
-    if (!line || !*line || line[0] == '#') return -1;
+    if (!line || !*line || line[0] == '#') return -EINVAL;
 
     memset(ue, 0, sizeof(*ue));
     const char *p = line;
@@ -139,13 +139,13 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
     while (*p && *p != ':' && i < USER_MAX_NAME - 1)
         ue->username[i++] = *p++;
     ue->username[i] = '\0';
-    if (i == 0) return -1;
-    if (*p != ':') return -1;
+    if (i == 0) return -EINVAL;
+    if (*p != ':') return -EINVAL;
     p++; /* skip ':' */
 
     /* Password field (should be 'x' if shadow is used) */
     while (*p && *p != ':') p++;
-    if (*p != ':') return -1;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* UID */
@@ -154,11 +154,11 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
         if (*p >= '0' && *p <= '9')
             uid = uid * 10 + (uint32_t)(*p - '0');
         else
-            return -1;
+            return -EINVAL;
         p++;
     }
     ue->uid = uid;
-    if (*p != ':') return -1;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* GID */
@@ -167,11 +167,11 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
         if (*p >= '0' && *p <= '9')
             gid = gid * 10 + (uint32_t)(*p - '0');
         else
-            return -1;
+            return -EINVAL;
         p++;
     }
     ue->gid = gid;
-    if (*p != ':') return -1;
+    if (*p != ':') return -ENOSPC;
     p++;
 
     /* GECOS (full name / description) */
@@ -179,7 +179,7 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
     while (*p && *p != ':' && i < USER_MAX_GECOS - 1)
         ue->gecos[i++] = *p++;
     ue->gecos[i] = '\0';
-    if (*p != ':') return -1;
+    if (*p != ':') return -ENOSPC;
     p++;
 
     /* Home directory */
@@ -193,7 +193,7 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
         ue->active = 1;
         return 0;
     }
-    if (*p != ':') return -1;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* Shell */
@@ -212,9 +212,9 @@ static int parse_passwd_line(const char *line, struct user_entry *ue) {
  * Line format: name:hashed_password:lastchange:min:max:warn:inactive:expire
  * Returns 0 on success (sets *hash_out), -1 on parse error. */
 static int parse_shadow_line(const char *line, char *username, uint32_t *hash_out) {
-    if (!line || !*line || line[0] == '#') return -1;
+    if (!line || !*line || line[0] == '#') return -EINVAL;
 
-    if (!username || !hash_out) return -1;
+    if (!username || !hash_out) return -EINVAL;
     const char *p = line;
 
     /* Username */
@@ -222,8 +222,8 @@ static int parse_shadow_line(const char *line, char *username, uint32_t *hash_ou
     while (*p && *p != ':' && i < USER_MAX_NAME - 1)
         username[i++] = *p++;
     username[i] = '\0';
-    if (i == 0) return -1;
-    if (*p != ':') return -1;
+    if (i == 0) return -EINVAL;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* Hashed password (hex string) */
@@ -243,7 +243,7 @@ static int parse_shadow_line(const char *line, char *username, uint32_t *hash_ou
         else if (*p >= 'A' && *p <= 'F')
             hash |= (uint32_t)(*p - 'A' + 10);
         else
-            return -1;
+            return -EINVAL;
     }
     *hash_out = hash;
     return 0;
@@ -303,9 +303,9 @@ static int group_file_write(void) {
     if (fs_write_file(GROUP_FILE, buf, (uint32_t)off) < 0) {
         /* File may not exist yet — create it */
         if (fs_create(GROUP_FILE, FS_TYPE_FILE) < 0)
-            return -1;
+            return -ENOENT;
         if (fs_write_file(GROUP_FILE, buf, (uint32_t)off) < 0)
-            return -1;
+            return -ENOENT;
     }
     return 0;
 }
@@ -315,7 +315,7 @@ static int group_file_write(void) {
  * (user_list is comma-separated usernames).
  * Returns 0 on success, -1 on parse error. */
 static int parse_group_line(const char *line, struct group_entry *ge) {
-    if (!line || !*line || line[0] == '#') return -1;
+    if (!line || !*line || line[0] == '#') return -EINVAL;
 
     memset(ge, 0, sizeof(*ge));
     ge->password = 'x';
@@ -328,15 +328,15 @@ static int parse_group_line(const char *line, struct group_entry *ge) {
     while (*p && *p != ':' && i < GROUP_MAX_NAME - 1)
         ge->name[i++] = *p++;
     ge->name[i] = '\0';
-    if (i == 0) return -1;
-    if (*p != ':') return -1;
+    if (i == 0) return -EINVAL;
+    if (*p != ':') return -EINVAL;
     p++; /* skip ':' */
 
     /* Password field */
     if (*p && *p != ':')
         ge->password = *p;
     while (*p && *p != ':') p++;
-    if (*p != ':') return -1;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* GID */
@@ -345,11 +345,11 @@ static int parse_group_line(const char *line, struct group_entry *ge) {
         if (*p >= '0' && *p <= '9')
             gid = gid * 10 + (uint32_t)(*p - '0');
         else
-            return -1;  /* non-numeric GID */
+            return -EINVAL;  /* non-numeric GID */
         p++;
     }
     ge->gid = gid;
-    if (*p != ':') return -1;
+    if (*p != ':') return -EINVAL;
     p++;
 
     /* User list (comma-separated usernames, resolve to UIDs) */
@@ -486,8 +486,8 @@ int groups_init(void) {
 /* ── Group management functions ───────────────────────────────────────────── */
 
 int group_add(const char *name, uint32_t gid) {
-    if (!name || !*name) return -1;
-    if (group_count >= GROUP_MAX_ENTRIES) return -1;
+    if (!name || !*name) return -EINVAL;
+    if (group_count >= GROUP_MAX_ENTRIES) return -EINVAL;
 
     /* Check for duplicate name or GID */
     for (int i = 0; i < GROUP_MAX_ENTRIES; i++) {
@@ -510,11 +510,11 @@ int group_add(const char *name, uint32_t gid) {
             return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 int group_del(const char *name) {
-    if (!name || !*name) return -1;
+    if (!name || !*name) return -EINVAL;
     for (int i = 0; i < GROUP_MAX_ENTRIES; i++) {
         if (!group_table[i].active) continue;
         if (strcmp(group_table[i].name, name) == 0) {
@@ -528,7 +528,7 @@ int group_del(const char *name) {
 }
 
 int group_add_user(const char *group, uint32_t uid) {
-    if (!group || !*group) return -1;
+    if (!group || !*group) return -ENOENT;
     for (int i = 0; i < GROUP_MAX_ENTRIES; i++) {
         if (!group_table[i].active) continue;
         if (strcmp(group_table[i].name, group) == 0) {
@@ -546,7 +546,7 @@ int group_add_user(const char *group, uint32_t uid) {
 }
 
 int group_del_user(const char *group, uint32_t uid) {
-    if (!group || !*group) return -1;
+    if (!group || !*group) return -ENOENT;
     for (int i = 0; i < GROUP_MAX_ENTRIES; i++) {
         if (!group_table[i].active) continue;
         if (strcmp(group_table[i].name, group) == 0) {
@@ -589,7 +589,7 @@ int  groups_count(void) { return group_count; }
 /* Return all groups a user (identified by uid) belongs to.
  * Returns number of groups found, or -1 on error. */
 int groups_of_user(uint32_t uid, struct group_entry **out, int max) {
-    if (!out || max <= 0) return -1;
+    if (!out || max <= 0) return -EINVAL;
     int count = 0;
 
     for (int i = 0; i < GROUP_MAX_ENTRIES && count < max; i++) {
@@ -757,24 +757,24 @@ static int copy_skel_to_home(const char *home, const char *username) {
 
     skel_off = snprintf(skel_buf, sizeof(skel_buf), "%s/.profile", home);
     if (skel_off < 0 || (size_t)skel_off >= sizeof(skel_buf))
-        return -1;
+        return -EEXIST;
     skel_buf[sizeof(skel_buf) - 1] = '\0';
 
     /* Check if .profile already exists in home */
     if (vfs_stat(skel_buf, &skel_st) != 0) {
         /* Create .profile */
         if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
-            return -1;
+            return -EEXIST;
         vfs_write(skel_buf, default_profile, (uint32_t)strlen(default_profile));
     }
 
     /* Create .bashrc if it doesn't exist */
     skel_off = snprintf(skel_buf, sizeof(skel_buf), "%s/.bashrc", home);
     if (skel_off < 0 || (size_t)skel_off >= sizeof(skel_buf))
-        return -1;
+        return -EINVAL;
     if (vfs_stat(skel_buf, &skel_st) != 0) {
         if (vfs_create(skel_buf, FS_TYPE_FILE) < 0)
-            return -1;
+            return -EINVAL;
         vfs_write(skel_buf, default_bashrc, (uint32_t)strlen(default_bashrc));
     }
 
@@ -789,9 +789,9 @@ static int copy_skel_to_home(const char *home, const char *username) {
  *
  * Returns 0 on success, -1 on failure.
  */
-int create_default_files(const char *home_path, const char *username)
+static int create_default_files(const char *home_path, const char *username)
 {
-    if (!home_path || !username) return -1;
+    if (!home_path || !username) return -EINVAL;
 
     /* Use the existing skeleton copy for .profile and .bashrc */
     int ret = copy_skel_to_home(home_path, username);
@@ -802,7 +802,7 @@ int create_default_files(const char *home_path, const char *username)
     int off = snprintf(gitconfig_path, sizeof(gitconfig_path),
                        "%s/.gitconfig", home_path);
     if (off < 0 || (size_t)off >= sizeof(gitconfig_path))
-        return -1;
+        return -EINVAL;
 
     struct vfs_stat gc_st;
     if (vfs_stat(gitconfig_path, &gc_st) != 0) {
@@ -830,10 +830,10 @@ int create_default_files(const char *home_path, const char *username)
                             "\tlg = log --oneline --graph --all\n",
                             username, username);
         if (cpos < 0 || (size_t)cpos >= sizeof(content))
-            return -1;
+            return -EINVAL;
 
         if (vfs_create(gitconfig_path, FS_TYPE_FILE) < 0)
-            return -1;
+            return -EINVAL;
         vfs_write(gitconfig_path, content, (uint32_t)cpos);
     }
 
@@ -843,7 +843,7 @@ int create_default_files(const char *home_path, const char *username)
 int user_add(const char *username, uint32_t uid, const char *password) {
     if (!username || !*username) return -4;
     if (!password || !*password) return -4;
-    if (user_count >= USER_MAX_ENTRIES) return -1;
+    if (user_count >= USER_MAX_ENTRIES) return -EINVAL;
     /* Check duplicate */
     for (int i = 0; i < USER_MAX_ENTRIES; i++) {
         if (!user_table[i].active) continue;
@@ -893,7 +893,7 @@ int user_add(const char *username, uint32_t uid, const char *password) {
 }
 
 int user_delete(const char *username) {
-    if (strcmp(username, "root") == 0) return -1;  /* cannot delete root */
+    if (strcmp(username, "root") == 0) return -EINVAL;  /* cannot delete root */
     for (int i = 0; i < USER_MAX_ENTRIES; i++) {
         if (user_table[i].active && strcmp(user_table[i].username, username) == 0) {
             user_table[i].active = 0;
@@ -914,7 +914,7 @@ int user_find(const char *username, struct user_entry *out) {
             return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 int user_passwd(const char *username, const char *new_pass) {
@@ -927,7 +927,7 @@ int user_passwd(const char *username, const char *new_pass) {
             return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 struct user_entry *users_get_table(void) { return user_table; }
@@ -936,7 +936,7 @@ int  users_count(void) { return user_count; }
 /* ── Session management ───────────────────────────────────────────────────── */
 int session_login(const char *username, const char *password) {
     struct user_entry ue;
-    if (user_find(username, &ue) != 0) return -1;  /* user not found */
+    if (user_find(username, &ue) != 0) return -ENOENT;  /* user not found */
 
     /* Check password */
     uint32_t pw_hash = password && *password ? djb2_hash(password) : 0;
@@ -963,7 +963,7 @@ struct user_session *session_get(void) { return &current_session; }
 int session_is_root(void) { return current_session.uid == 0; }
 
 /* ── user_getpwnam ────────────────────────────────────── */
-int user_getpwnam(const char *name, struct user_entry *entry)
+static int user_getpwnam(const char *name, struct user_entry *entry)
 {
     if (!name || !entry) return -EINVAL;
 
@@ -978,7 +978,7 @@ int user_getpwnam(const char *name, struct user_entry *entry)
 }
 
 /* ── user_getpwuid ────────────────────────────────────── */
-int user_getpwuid(int uid, struct user_entry *entry)
+static int user_getpwuid(int uid, struct user_entry *entry)
 {
     if (!entry) return -EINVAL;
 
@@ -993,7 +993,7 @@ int user_getpwuid(int uid, struct user_entry *entry)
 }
 
 /* ── user_setlogin ────────────────────────────────────── */
-int user_setlogin(const char *name)
+static int user_setlogin(const char *name)
 {
     if (!name) return -EINVAL;
 
@@ -1004,7 +1004,7 @@ int user_setlogin(const char *name)
 }
 
 /* ── user_getlogin ────────────────────────────────────── */
-const char *user_getlogin(void)
+static const char *user_getlogin(void)
 {
     const char *name = current_session.username;
     if (name && name[0])

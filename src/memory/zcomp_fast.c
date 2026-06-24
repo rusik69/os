@@ -26,7 +26,7 @@
 /* ── Constants ─────────────────────────────────────────────────────── */
 
 #define FAST_HASH_BITS    10
-#define FAST_HASH_SIZE    (1 << FAST_HASH_BITS)  /* 1024 entries */
+#define FAST_HASH_SIZE    (1U << FAST_HASH_BITS)  /* 1024 entries */
 #define FAST_MIN_MATCH    3
 #define FAST_MAX_MATCH    18
 #define FAST_CHAIN_MAX    4096  /* Max positions to chain (1 page) */
@@ -57,7 +57,7 @@ static void *fast_create_workspace(void)
         return NULL;
 
     /* Initialize hash table to "empty" */
-    for (int i = 0; i < FAST_HASH_SIZE; i++)
+    for (unsigned int i = 0; i < FAST_HASH_SIZE; i++)
         ws->hash_head[i] = -1;
 
     return ws;
@@ -87,7 +87,7 @@ static int fast_compress(const uint8_t *src, size_t src_len,
     hash_next = ws->hash_next;
 
     /* Reset hash table for this compression run */
-    for (int i = 0; i < FAST_HASH_SIZE; i++)
+    for (unsigned int i = 0; i < FAST_HASH_SIZE; i++)
         hash_head[i] = -1;
 
     while (in_pos < src_len) {
@@ -134,7 +134,7 @@ static int fast_compress(const uint8_t *src, size_t src_len,
 
             if (best_len >= FAST_MIN_MATCH) {
                 /* Emit a reference */
-                control |= (uint8_t)(1 << op);
+                control |= (uint8_t)(1U << op);
 
                 if (out_pos + 2 > dst_len)
                     return -ENOSPC;
@@ -184,7 +184,7 @@ static int fast_decompress(const uint8_t *src, size_t src_len,
         uint8_t control = src[in_pos++];
 
         for (int op = 0; op < 8; op++) {
-            if (control & (1 << op)) {
+            if (control & (1U << op)) {
                 /* Reference: 2 bytes */
                 if (in_pos + 2 > src_len)
                     return -EINVAL;

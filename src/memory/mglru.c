@@ -127,7 +127,7 @@ static int mglru_alloc_entry(void)
             return idx;
         }
     }
-    return -1;  /* pool exhausted */
+    return -ENOSPC;  /* pool exhausted */
 }
 
 /* Release a tracking entry back to the pool. */
@@ -150,13 +150,13 @@ static int mglru_find_entry(uint64_t phys_addr)
 {
     uint64_t frame = phys_addr / PAGE_SIZE;
     if (frame >= 262144)  /* MAX_FRAMES */
-        return -1;
+        return -EINVAL;
     int idx = mglru_frame_map[frame];
     if (idx < 0 || idx >= MGLRU_MAX_PAGES)
-        return -1;
+        return -EINVAL;
     if (!mglru_page_pool[idx].in_use ||
         mglru_page_pool[idx].phys_addr != phys_addr)
-        return -1;
+        return -EINVAL;
     return idx;
 }
 
@@ -634,7 +634,7 @@ static int mglru_sysfs_enabled_read(char *buf, uint32_t max_size, void *priv)
 static int mglru_sysfs_enabled_write(const char *data, uint32_t size, void *priv)
 {
     (void)priv;
-    if (size == 0) return -1;
+    if (size == 0) return -EINVAL;
 
     int val = 0;
     if (data[0] == '1' || data[0] == 'y' || data[0] == 'Y' ||
@@ -656,7 +656,7 @@ static int mglru_sysfs_min_ttl_read(char *buf, uint32_t max_size, void *priv)
 static int mglru_sysfs_min_ttl_write(const char *data, uint32_t size, void *priv)
 {
     (void)priv;
-    if (size == 0) return -1;
+    if (size == 0) return -EINVAL;
 
     unsigned long val = 0;
     for (uint32_t i = 0; i < size; i++) {
@@ -665,7 +665,7 @@ static int mglru_sysfs_min_ttl_write(const char *data, uint32_t size, void *priv
         else if (data[i] == '\n' || data[i] == '\0')
             break;
         else
-            return -1;  /* invalid character */
+            return -EINVAL;  /* invalid character */
     }
 
     if (val < 1) val = 1;
@@ -796,7 +796,7 @@ int lru_gen_seg_strategy(void)
 {
     struct mglru_state *st = &mglru_state[0];
     if (!st->enabled)
-        return -1;
+        return -ENODEV;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&st->lock, &irq_flags);

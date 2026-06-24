@@ -136,10 +136,10 @@ int page_idle_bitmap_read(uint64_t start_pfn, uint64_t nr_pfns, uint8_t *bitmap)
         int idle = page_idle_is_idle(phys);
         if (idle != 0 && idle != -ENOSYS && idle != -EINVAL) {
             /* Mark as idle: set bit */
-            bitmap[i / 8] |= (uint8_t)(1 << (i % 8));
+            bitmap[i / 8] |= (uint8_t)(1U << (i % 8));
         } else {
             /* Mark as accessed: clear bit */
-            bitmap[i / 8] &= (uint8_t)~(1 << (i % 8));
+            bitmap[i / 8] &= (uint8_t)~(1U << (i % 8));
         }
     }
 
@@ -163,7 +163,7 @@ int page_idle_bitmap_write(uint64_t start_pfn, uint64_t nr_pfns, const uint8_t *
         uint64_t pfn = start_pfn + i;
         if (pfn >= total)
             break;
-        if (bitmap[i / 8] & (uint8_t)(1 << (i % 8))) {
+        if (bitmap[i / 8] & (uint8_t)(1U << (i % 8))) {
             /* Bit is set: clear the accessed bit on this page */
             uint64_t phys = pfn * PAGE_SIZE;
             page_idle_clear(phys);

@@ -13,7 +13,7 @@ int tsc_deadline_init(void) {
     /* Check CPUID leaf 1 for TSC deadline support (ECX bit 24) */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
-    if (!(rcx & (1 << 24))) {
+    if (!(rcx & (1U << 24))) {
         kprintf("[cpu] TSC deadline mode not supported\n");
         return -1;
     }
@@ -29,8 +29,8 @@ int tsc_deadline_init(void) {
      * LVT Timer register bit 18 = 1 selects TSC deadline mode */
     uint32_t lvt_timer = apic_read(LAPIC_LVT_TIMER);
     lvt_timer &= ~(3 << 17);    /* Clear timer mode bits */
-    lvt_timer |= (1 << 18);     /* Set TSC deadline mode (bit 18) */
-    lvt_timer &= ~(1 << 16);    /* Unmask */
+    lvt_timer |= (1U << 18);     /* Set TSC deadline mode (bit 18) */
+    lvt_timer &= ~(1U << 16);    /* Unmask */
     apic_write(LAPIC_LVT_TIMER, lvt_timer);
 
     tsc_deadline_available = 1;

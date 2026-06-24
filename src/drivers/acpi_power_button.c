@@ -20,8 +20,8 @@ static acpi_pbtn_callback_t g_pbtn_ext_callback = NULL;
 
 /* ACPI PM1a_EVT_BLK ports for power button status */
 #define PM1a_EVT_BLK  0x1000  /* Will be set from FADT in real system */
-#define ACPI_PWRBTN_STS (1 << 8)   /* Power button status bit in PM1_STS */
-#define ACPI_PWRBTN_EN  (1 << 8)   /* Power button enable bit in PM1_EN */
+#define ACPI_PWRBTN_STS (1U << 8)   /* Power button status bit in PM1_STS */
+#define ACPI_PWRBTN_EN  (1U << 8)   /* Power button enable bit in PM1_EN */
 #define ACPI_PM1_STS    0x00  /* Offset of PM1 status within EVT_BLK */
 #define ACPI_PM1_EN     0x02  /* Offset of PM1 enable within EVT_BLK */
 

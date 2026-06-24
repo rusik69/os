@@ -26,7 +26,7 @@
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
 #define FUTEX_HASH_BITS       8
-#define FUTEX_HASH_SIZE       (1 << FUTEX_HASH_BITS)   /* 256 buckets */
+#define FUTEX_HASH_SIZE       (1U << FUTEX_HASH_BITS)   /* 256 buckets */
 #define FUTEX_BUCKET_MASK     (FUTEX_HASH_SIZE - 1)
 
 /* ── Hash bucket ───────────────────────────────────────────────────────── */

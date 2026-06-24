@@ -286,35 +286,35 @@ static int procfs_gen_cpuinfo(char *buf, int max) {
 
         /* Features from CPUID leaves */
         proc_str("flags\t\t: ", buf, &p, max);
-        if (edx & (1 << 0))  proc_str("fpu ", buf, &p, max);
-        if (edx & (1 << 1))  proc_str("vme ", buf, &p, max);
-        if (edx & (1 << 2))  proc_str("de ", buf, &p, max);
-        if (edx & (1 << 3))  proc_str("pse ", buf, &p, max);
-        if (edx & (1 << 4))  proc_str("tsc ", buf, &p, max);
-        if (edx & (1 << 5))  proc_str("msr ", buf, &p, max);
-        if (edx & (1 << 6))  proc_str("pae ", buf, &p, max);
-        if (edx & (1 << 7))  proc_str("mce ", buf, &p, max);
-        if (edx & (1 << 8))  proc_str("cx8 ", buf, &p, max);
-        if (edx & (1 << 9))  proc_str("apic ", buf, &p, max);
-        if (edx & (1 << 11)) proc_str("sep ", buf, &p, max);
-        if (edx & (1 << 12)) proc_str("mtrr ", buf, &p, max);
-        if (edx & (1 << 13)) proc_str("pge ", buf, &p, max);
-        if (edx & (1 << 14)) proc_str("mca ", buf, &p, max);
-        if (edx & (1 << 15)) proc_str("cmov ", buf, &p, max);
-        if (edx & (1 << 16)) proc_str("pat ", buf, &p, max);
-        if (edx & (1 << 17)) proc_str("pse36 ", buf, &p, max);
-        if (edx & (1 << 18)) proc_str("pn ", buf, &p, max);
-        if (edx & (1 << 19)) proc_str("clflush ", buf, &p, max);
-        if (edx & (1 << 23)) proc_str("mmx ", buf, &p, max);
-        if (edx & (1 << 24)) proc_str("fxsr ", buf, &p, max);
-        if (edx & (1 << 25)) proc_str("sse ", buf, &p, max);
-        if (edx & (1 << 26)) proc_str("sse2 ", buf, &p, max);
-        if (ecx & (1 << 0))  proc_str("sse3 ", buf, &p, max);
-        if (ecx & (1 << 9))  proc_str("ssse3 ", buf, &p, max);
-        if (ecx & (1 << 19)) proc_str("sse4.1 ", buf, &p, max);
-        if (ecx & (1 << 20)) proc_str("sse4.2 ", buf, &p, max);
-        if (ecx & (1 << 29)) proc_str("f16c ", buf, &p, max);
-        if (edx & (1 << 28)) proc_str("ht ", buf, &p, max);
+        if (edx & (1U << 0))  proc_str("fpu ", buf, &p, max);
+        if (edx & (1U << 1))  proc_str("vme ", buf, &p, max);
+        if (edx & (1U << 2))  proc_str("de ", buf, &p, max);
+        if (edx & (1U << 3))  proc_str("pse ", buf, &p, max);
+        if (edx & (1U << 4))  proc_str("tsc ", buf, &p, max);
+        if (edx & (1U << 5))  proc_str("msr ", buf, &p, max);
+        if (edx & (1U << 6))  proc_str("pae ", buf, &p, max);
+        if (edx & (1U << 7))  proc_str("mce ", buf, &p, max);
+        if (edx & (1U << 8))  proc_str("cx8 ", buf, &p, max);
+        if (edx & (1U << 9))  proc_str("apic ", buf, &p, max);
+        if (edx & (1U << 11)) proc_str("sep ", buf, &p, max);
+        if (edx & (1U << 12)) proc_str("mtrr ", buf, &p, max);
+        if (edx & (1U << 13)) proc_str("pge ", buf, &p, max);
+        if (edx & (1U << 14)) proc_str("mca ", buf, &p, max);
+        if (edx & (1U << 15)) proc_str("cmov ", buf, &p, max);
+        if (edx & (1U << 16)) proc_str("pat ", buf, &p, max);
+        if (edx & (1U << 17)) proc_str("pse36 ", buf, &p, max);
+        if (edx & (1U << 18)) proc_str("pn ", buf, &p, max);
+        if (edx & (1U << 19)) proc_str("clflush ", buf, &p, max);
+        if (edx & (1U << 23)) proc_str("mmx ", buf, &p, max);
+        if (edx & (1U << 24)) proc_str("fxsr ", buf, &p, max);
+        if (edx & (1U << 25)) proc_str("sse ", buf, &p, max);
+        if (edx & (1U << 26)) proc_str("sse2 ", buf, &p, max);
+        if (ecx & (1U << 0))  proc_str("sse3 ", buf, &p, max);
+        if (ecx & (1U << 9))  proc_str("ssse3 ", buf, &p, max);
+        if (ecx & (1U << 19)) proc_str("sse4.1 ", buf, &p, max);
+        if (ecx & (1U << 20)) proc_str("sse4.2 ", buf, &p, max);
+        if (ecx & (1U << 29)) proc_str("f16c ", buf, &p, max);
+        if (edx & (1U << 28)) proc_str("ht ", buf, &p, max);
         /* Extended features from leaf 0x80000001 */
         if (max_ext >= 0x80000001) {
             uint32_t ex_eax, ex_ebx, ex_ecx, ex_edx;
@@ -761,7 +761,7 @@ static int procfs_gen_slabinfo(char *buf, int max) {
 /* /proc/<pid>/status — per-process status */
 static int procfs_gen_pid_status(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     proc_str("Name:\t", buf, &pos, max);
@@ -1034,7 +1034,7 @@ static int procfs_gen_loadavg(char *buf, int max) {
 /* /proc/<pid>/fd — list open file descriptors */
 static int procfs_gen_pid_fd(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     for (int i = 0; i < PROCESS_FD_MAX; i++) {
@@ -1051,7 +1051,7 @@ static int procfs_gen_pid_fd(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/cmdline — command line (from proc_comm) */
 static int procfs_gen_pid_cmdline(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     if (p->proc_comm[0]) {
@@ -1066,7 +1066,7 @@ static int procfs_gen_pid_cmdline(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/environ — environment variables */
 static int procfs_gen_pid_environ(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     /* Read environment from user stack (typically at ELF aux vector area) */
@@ -1090,7 +1090,7 @@ static int procfs_gen_pid_environ(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/io — I/O statistics (standard Linux proc interface) */
 static int procfs_gen_pid_io(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     /* Format matches Linux /proc/PID/io: key: value\n */
@@ -1122,7 +1122,7 @@ static int procfs_gen_pid_io(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/ns — list namespace types and identifiers (Item 120) */
 static int procfs_gen_pid_ns(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     /* UTS namespace — dynamically compute inode from hostname + pointer */
@@ -1164,7 +1164,7 @@ static int procfs_gen_pid_ns(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/maps — memory mappings */
 static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     /* Report VMA-style memory regions from the process's page table */
@@ -1197,7 +1197,7 @@ static int procfs_gen_pid_maps(uint32_t pid, char *buf, int max) {
 /* /proc/<pid>/smaps — detailed per-VMA memory statistics */
 static int procfs_gen_pid_smaps(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
 
@@ -1338,7 +1338,7 @@ static int procfs_gen_pid_smaps(uint32_t pid, char *buf, int max) {
 static int procfs_gen_pid_numa_maps(uint32_t pid, char *buf, int max)
 {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     int pos = 0;
     (void)max;
@@ -1405,7 +1405,7 @@ static int procfs_gen_pid_numa_maps(uint32_t pid, char *buf, int max)
 /* /proc/<pid>/limits — per-process resource limits */
 static int procfs_gen_pid_limits(uint32_t pid, char *buf, int max) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
 
     static const struct {
         int         resource;
@@ -1506,7 +1506,7 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
     /* Resolve /proc/self dynamically to /proc/<current_pid> */
     if (strncmp(path, "/proc/self", 10) == 0) {
         struct process *proc = process_get_current();
-        if (!proc) return -1;
+        if (!proc) return -EINVAL;
         /* Build a temporary resolved path for the sub-path */
         char resolved[128];
         int pos = 0;
@@ -1546,7 +1546,7 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             *out_size = copy;
             return 0;
         }
-        return -1;
+        return -EINVAL;
     } else if (strcmp(path, "/proc/net/arp") == 0) {
         len = procfs_gen_arp(buf, (int)max_size);
     } else if (strcmp(path, "/proc/net/route") == 0) {
@@ -1569,7 +1569,7 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         len = procfs_gen_filesystems(buf, (int)max_size);
     } else if (strcmp(path, "/proc/asound") == 0) {
         len = sndstat_generate(buf, (int)max_size);
-        if (len < 0) return -1;
+        if (len < 0) return -EINVAL;
     } else if (strcmp(path, "/proc/modules") == 0) {
         len = procfs_gen_modules(buf, (int)max_size);
     } else if (strcmp(path, "/proc/kallsyms") == 0) {
@@ -1580,12 +1580,12 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         if (proc)
             len = procfs_gen_pid_status(proc->pid, buf, (int)max_size);
         else
-            return -1;
+            return -EINVAL;
     } else if (strcmp(path, "/proc/self/exe") == 0) {
         /* Return path to current process's executable */
         struct process *proc = process_get_current();
         if (!proc || !proc->exe_path[0])
-            return -1;
+            return -EINVAL;
         len = (int)strlen(proc->exe_path);
         if (len > (int)max_size - 1) len = (int)max_size - 1;
         memcpy(buf, proc->exe_path, (size_t)len);
@@ -1594,25 +1594,25 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
     } else if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
         /* Sysctl read */
         len = sysctl_read(path + 17, buf, (int)max_size);
-        if (len < 0) return -1;
+        if (len < 0) return -EISDIR;
     } else if (strcmp(path, "/proc/sys") == 0) {
         /* /proc/sys is a directory */
-        return -1;
+        return -EISDIR;
     } else if (strcmp(path, "/proc/sys/kernel") == 0) {
         /* /proc/sys/kernel is a directory */
-        return -1;
+        return -EISDIR;
     } else if (strcmp(path, "/proc/pressure") == 0) {
         /* /proc/pressure is a directory listing */
-        return -1;
+        return -EISDIR;
     } else if (strcmp(path, "/proc/pressure/cpu") == 0) {
         len = psi_gen_proc_file(PSI_RES_CPU, buf, (int)max_size);
-        if (len < 0) return -1;
+        if (len < 0) return -EISDIR;
     } else if (strcmp(path, "/proc/pressure/memory") == 0) {
         len = psi_gen_proc_file(PSI_RES_MEMORY, buf, (int)max_size);
-        if (len < 0) return -1;
+        if (len < 0) return -EINVAL;
     } else if (strcmp(path, "/proc/pressure/io") == 0) {
         len = psi_gen_proc_file(PSI_RES_IO, buf, (int)max_size);
-        if (len < 0) return -1;
+        if (len < 0) return -EINVAL;
     } else {
         /* Try /proc/<pid>/status */
         const char *p = path + 6; /* skip "/proc/" */
@@ -1620,35 +1620,35 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
         while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
         if (got && strcmp(p, "/status") == 0) {
             len = procfs_gen_pid_status(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/fd") == 0) {
             len = procfs_gen_pid_fd(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/cmdline") == 0) {
             len = procfs_gen_pid_cmdline(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/environ") == 0) {
             len = procfs_gen_pid_environ(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/maps") == 0) {
             len = procfs_gen_pid_maps(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/smaps") == 0) {
             len = procfs_gen_pid_smaps(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/numa_maps") == 0) {
             len = procfs_gen_pid_numa_maps(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/limits") == 0) {
             len = procfs_gen_pid_limits(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/io") == 0) {
             len = procfs_gen_pid_io(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strcmp(p, "/cgroup") == 0) {
             /* /proc/<pid>/cgroup — show cgroup path, virtualized by namespace (Item 117) */
             struct process *proc = process_get_by_pid(pid);
-            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            if (!proc || proc->state == PROCESS_UNUSED) return -ENOSPC;
             const char *full_path = "/sys/fs/cgroup";
             char vpath[128];
             if (proc->cgroup_ns) {
@@ -1658,15 +1658,15 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
                 vpath[sizeof(vpath) - 1] = '\0';
             }
             len = snprintf(buf, (size_t)max_size, "0::%s\n", vpath);
-            if (len < 0) return -1;
+            if (len < 0) return -ENOSPC;
         } else if (got && strcmp(p, "/ns") == 0) {
             /* /proc/<pid>/ns — list available namespace types */
             len = procfs_gen_pid_ns(pid, buf, (int)max_size);
-            if (len < 0) return -1;
+            if (len < 0) return -EINVAL;
         } else if (got && strncmp(p, "/ns/", 4) == 0) {
             /* /proc/<pid>/ns/<type> — read namespace identifier (Linux: "type:[inode]") */
             struct process *proc = process_get_by_pid(pid);
-            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            if (!proc || proc->state == PROCESS_UNUSED) return -EINVAL;
             const char *ns_type = p + 4;
             if (strcmp(ns_type, "uts") == 0) {
                 /* Compute a namespace inode from the hostname + process pointer */
@@ -1695,28 +1695,28 @@ static int procfs_read(void *priv, const char *path, void *buf_v,
             } else if (strcmp(ns_type, "time") == 0) {
                 len = snprintf(buf, (size_t)max_size, "time:[4026531834]\n");
             } else {
-                return -1;
+                return -EINVAL;
             }
-            if (len < 0) return -1;
+            if (len < 0) return -ELOOP;
         } else if (got && strncmp(p, "/fd/", 4) == 0) {
             /* /proc/<pid>/fd/<N> — read symlink target (file path) */
             struct process *proc = process_get_by_pid(pid);
-            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            if (!proc || proc->state == PROCESS_UNUSED) return -ELOOP;
             const char *fd_str = p + 4;
             int fd_num = 0;
             while (*fd_str >= '0' && *fd_str <= '9')
                 fd_num = fd_num * 10 + (int)(*fd_str++ - '0');
             if (*fd_str != '\0' || fd_num < 0 || fd_num >= PROCESS_FD_MAX)
-                return -1;
+                return -EINVAL;
             if (!proc->fd_table[fd_num].used)
-                return -1;
+                return -EINVAL;
             len = (int)strlen(proc->fd_table[fd_num].path);
             if (len > (int)max_size - 1)
                 len = (int)max_size - 1;
             memcpy(buf, proc->fd_table[fd_num].path, (size_t)len);
             buf[len] = '\0';
         } else {
-            return -1;
+            return -EINVAL;
         }
     }
 
@@ -1730,23 +1730,23 @@ static int procfs_write(void *priv, const char *path, const void *data, uint32_t
 
     /* Sysctl write */
     if (strncmp(path, "/proc/sys/kernel/", 17) == 0) {
-        if (sysctl_write(path + 17, buf, (int)size) < 0) return -1;
+        if (sysctl_write(path + 17, buf, (int)size) < 0) return -EINVAL;
         return 0;
     }
 
     /* /proc/sysrq-trigger — write a command character to trigger SysRq */
     if (strcmp(path, "/proc/sysrq-trigger") == 0) {
-        if (size < 1) return -1;
+        if (size < 1) return -EINVAL;
         char cmd = buf[0];
         /* Accept lowercase letters */
         if (cmd >= 'a' && cmd <= 'z') {
             sysrq_handle(cmd);
             return 0;
         }
-        return -1;
+        return -EINVAL;
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
@@ -1880,7 +1880,7 @@ static int procfs_stat(void *priv, const char *path, struct vfs_stat *st) {
             st->type = 1; st->size = 512; return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 static int procfs_readdir(void *priv, const char *path) {
@@ -1906,7 +1906,7 @@ static int procfs_readdir(void *priv, const char *path) {
         while (*p >= '0' && *p <= '9') { pid = pid * 10 + (uint32_t)(*p - '0'); p++; got = 1; }
         if (got && strcmp(p, "/fd") == 0) {
             struct process *proc = process_get_by_pid(pid);
-            if (!proc || proc->state == PROCESS_UNUSED) return -1;
+            if (!proc || proc->state == PROCESS_UNUSED) return -EINVAL;
             for (int i = 0; i < PROCESS_FD_MAX; i++) {
                 if (proc->fd_table[i].used)
                     kprintf("%d\n", i);
@@ -1920,7 +1920,7 @@ static int procfs_readdir(void *priv, const char *path) {
         kprintf("cpu\nmemory\nio\n");
         return 0;
     }
-    return -1;
+    return -EINVAL;
 }
 
 struct vfs_ops procfs_ops = {

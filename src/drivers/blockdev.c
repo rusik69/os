@@ -117,10 +117,10 @@ void blockdev_stats_update(int dev_id, int is_write, uint64_t sectors, uint64_t 
 }
 
 int blockdev_get_stats(int dev, struct blockdev_stats *s) {
-    if (!g_initialized) return -1;
+    if (!g_initialized) return -EINVAL;
     if (dev < 0 || dev >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev].active)
-        return -1;
-    if (!s) return -1;
+        return -EINVAL;
+    if (!s) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -133,10 +133,10 @@ int blockdev_get_stats(int dev, struct blockdev_stats *s) {
 /* ── Core submission path ─────────────────────────────────────────── */
 
 int blk_submit_async(struct blk_request *req) {
-    if (!req || !g_initialized) return -1;
+    if (!req || !g_initialized) return -EINVAL;
     int dev_id = req->dev_id;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
 
     struct blk_request_queue *q = &g_queues[dev_id];
 
@@ -162,7 +162,7 @@ int blk_submit_async(struct blk_request *req) {
             if (req->done_wq) {
                 wait_queue_wake(req->done_wq);
             }
-            return -1;
+            return -EINVAL;
         }
         int ret = g_blockdevs[dev_id].submit_fn(req);
 
@@ -194,9 +194,9 @@ int blk_submit_async(struct blk_request *req) {
 
 int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
                     void *buf, uint32_t flags) {
-    if (!g_initialized) return -1;
+    if (!g_initialized) return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
 
     uint32_t max_xfer = g_blockdevs[dev_id].max_transfer;
 
@@ -300,9 +300,9 @@ int blk_submit_sync(int dev_id, uint64_t lba, uint32_t count,
  * Returns 0 on success, -errno on error.
  */
 int blockdev_discard(int dev_id, uint64_t lba, uint32_t count) {
-    if (!g_initialized) return -1;
+    if (!g_initialized) return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
     if (count == 0)
         return 0;
 
@@ -463,8 +463,8 @@ int blockdev_register(int id, const char *name,
                       blk_driver_idle_fn idle_fn,
                       uint64_t sector_count,
                       int flags) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
-    if (!submit_fn) return -1;
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EINVAL;
+    if (!submit_fn) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -514,23 +514,23 @@ static struct legacy_driver g_legacy[BLOCKDEV_MAX_DEVICES];
 static int legacy_submit_fn_adapter(struct blk_request *req) {
     int dev_id = req->dev_id;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
 
     uint64_t start_ticks = timer_get_ticks();
 
     if (req->flags & BLK_REQ_READ) {
-        if (!g_legacy[dev_id].read_fn) { req->result = -1; return -1; }
+        if (!g_legacy[dev_id].read_fn) { req->result = -1; return -EINVAL; }
         req->result = g_legacy[dev_id].read_fn((uint32_t)req->lba,
                                                 (uint8_t)req->count,
                                                 req->buf);
     } else if (req->flags & BLK_REQ_WRITE) {
-        if (!g_legacy[dev_id].write_fn) { req->result = -1; return -1; }
+        if (!g_legacy[dev_id].write_fn) { req->result = -1; return -EINVAL; }
         req->result = g_legacy[dev_id].write_fn((uint32_t)req->lba,
                                                  (uint8_t)req->count,
                                                  (const void *)req->buf);
     } else {
         req->result = -1;
-        return -1;
+        return -EINVAL;
     }
 
     uint64_t elapsed_ms = (timer_get_ticks() - start_ticks) * 1000 / TIMER_FREQ;
@@ -544,8 +544,8 @@ int blockdev_register_legacy(int id, const char *name,
                               blockdev_read_fn read_fn,
                               blockdev_write_fn write_fn,
                               blockdev_size_fn size_fn) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
-    if (!read_fn) return -1;
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EIO;
+    if (!read_fn) return -EIO;
 
     g_legacy[id].read_fn = read_fn;
     g_legacy[id].write_fn = write_fn;
@@ -565,7 +565,7 @@ int blockdev_is_registered(int id) {
 }
 
 int blockdev_unregister(int id) {
-    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -1;
+    if (id < 0 || id >= BLOCKDEV_MAX_DEVICES) return -EINVAL;
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
     g_blockdevs[id].active = 0;
@@ -592,8 +592,8 @@ struct blk_request_queue *blockdev_get_queue(int id) {
 }
 
 int blockdev_set_scheduler(int id, enum blk_scheduler sched) {
-    if (!blockdev_is_registered(id)) return -1;
-    if (sched >= BLK_SCHED_COUNT) return -1;
+    if (!blockdev_is_registered(id)) return -EINVAL;
+    if (sched >= BLK_SCHED_COUNT) return -EINVAL;
     g_queues[id].sched = sched;
     return 0;
 }
@@ -607,9 +607,9 @@ enum blk_scheduler blockdev_get_scheduler(int id) {
 
 int blockdev_set_max_transfer(int dev_id, uint32_t max_sectors)
 {
-    if (!g_initialized) return -1;
+    if (!g_initialized) return -EINVAL;
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
     if (max_sectors == 0) {
         g_blockdevs[dev_id].max_transfer = 0; /* unlimited */
     } else {
@@ -629,7 +629,7 @@ uint32_t blockdev_get_max_transfer(int dev_id)
 int blockdev_register_scsi_cmd(int dev_id, scsi_submit_cmd_fn fn)
 {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);
@@ -646,7 +646,7 @@ int blockdev_scsi_submit(int dev_id,
                           int timeout_ms)
 {
     if (dev_id < 0 || dev_id >= BLOCKDEV_MAX_DEVICES || !g_blockdevs[dev_id].active)
-        return -1;
+        return -ETIMEDOUT;
 
     scsi_submit_cmd_fn fn = g_blockdevs[dev_id].scsi_cmd_fn;
     if (!fn)
@@ -660,14 +660,14 @@ int blockdev_scsi_submit(int dev_id,
 
 int blockdev_find_by_name(const char *name)
 {
-    if (!name || !name[0]) return -1;
+    if (!name || !name[0]) return -EINVAL;
 
     /* Strip "/dev/" prefix if present */
     const char *devname = name;
     if (strncmp(name, "/dev/", 5) == 0)
         devname = name + 5;
 
-    if (!devname[0]) return -1;
+    if (!devname[0]) return -EINVAL;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_dev_lock, &irq_flags);

@@ -71,7 +71,7 @@ int  mptcp_get_token(void);
 /* TCP option handlers — called from TCP stack */
 int  mptcp_handle_capable(int conn_id, const uint8_t *opt, uint16_t optlen);
 int  mptcp_handle_join(int conn_id, const uint8_t *opt, uint16_t optlen);
-int  mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen, 
+int  mptcp_handle_dss(int conn_id, const uint8_t *opt, uint16_t optlen,
                        uint32_t seq, uint32_t ack);
 
 #endif /* MPTCP_H */

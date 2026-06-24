@@ -17,8 +17,8 @@ void cma_init(void) {
 }
 
 int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
-    if (!cma_initialized) return -1;
-    if (cma_area_count >= CMA_MAX_AREAS) return -1;
+    if (!cma_initialized) return -ENODEV;
+    if (cma_area_count >= CMA_MAX_AREAS) return -ENOSPC;
 
     struct cma_area *area = &cma_areas[cma_area_count];
     area->base_pfn = base_pfn;
@@ -27,7 +27,7 @@ int cma_create_area(uint64_t base_pfn, uint64_t count, const char *name) {
     /* Allocate bitmap: one bit per page */
     area->bitmap_size = (count + 7) / 8;
     area->bitmap = (uint64_t *)pmm_alloc_frames((area->bitmap_size + PAGE_SIZE - 1) / PAGE_SIZE);
-    if (!area->bitmap) return -1;
+    if (!area->bitmap) return -ENOMEM;
 
     memset(area->bitmap, 0, area->bitmap_size);
     strncpy(area->name, name, sizeof(area->name) - 1);
@@ -46,7 +46,7 @@ static int cma_find_area(const char *name) {
         if (strcmp(cma_areas[i].name, name) == 0)
             return i;
     }
-    return -1;
+    return -ENOENT;
 }
 
 static inline void cma_bitmap_set(struct cma_area *area, uint64_t idx) {

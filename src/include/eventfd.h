@@ -4,9 +4,9 @@
 #include "types.h"
 
 /* eventfd flags */
-#define EFD_SEMAPHORE (1 << 0)
-#define EFD_CLOEXEC   (1 << 1)
-#define EFD_NONBLOCK  (1 << 2)
+#define EFD_SEMAPHORE (1U << 0)
+#define EFD_CLOEXEC   (1U << 1)
+#define EFD_NONBLOCK  (1U << 2)
 
 /* Create an eventfd — returns fd number or -1 on error */
 int eventfd_create(uint32_t initval, int flags);

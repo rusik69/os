@@ -34,21 +34,21 @@
 #define HUB_FEATURE_C_PORT_RESET       20
 
 /* Port status bits */
-#define PORT_STATUS_CONNECTION    (1 << 0)
-#define PORT_STATUS_ENABLE        (1 << 1)
-#define PORT_STATUS_SUSPEND       (1 << 2)
-#define PORT_STATUS_OVER_CURRENT  (1 << 3)
-#define PORT_STATUS_RESET         (1 << 4)
-#define PORT_STATUS_POWER         (1 << 8)
-#define PORT_STATUS_LOW_SPEED     (1 << 9)
-#define PORT_STATUS_HIGH_SPEED    (1 << 10)
+#define PORT_STATUS_CONNECTION    (1U << 0)
+#define PORT_STATUS_ENABLE        (1U << 1)
+#define PORT_STATUS_SUSPEND       (1U << 2)
+#define PORT_STATUS_OVER_CURRENT  (1U << 3)
+#define PORT_STATUS_RESET         (1U << 4)
+#define PORT_STATUS_POWER         (1U << 8)
+#define PORT_STATUS_LOW_SPEED     (1U << 9)
+#define PORT_STATUS_HIGH_SPEED    (1U << 10)
 
 /* Port change bits */
-#define PORT_CHANGE_C_CONNECTION    (1 << 0)
-#define PORT_CHANGE_C_ENABLE        (1 << 1)
-#define PORT_CHANGE_C_SUSPEND       (1 << 2)
-#define PORT_CHANGE_C_OVER_CURRENT  (1 << 3)
-#define PORT_CHANGE_C_RESET         (1 << 4)
+#define PORT_CHANGE_C_CONNECTION    (1U << 0)
+#define PORT_CHANGE_C_ENABLE        (1U << 1)
+#define PORT_CHANGE_C_SUSPEND       (1U << 2)
+#define PORT_CHANGE_C_OVER_CURRENT  (1U << 3)
+#define PORT_CHANGE_C_RESET         (1U << 4)
 
 /* Hub descriptor (as returned by GET_DESCRIPTOR) */
 struct hub_descriptor {
@@ -63,7 +63,7 @@ struct hub_descriptor {
 
 /* Hub characteristics flags */
 #define HUB_CHAR_TT_GLOBAL      (0 << 5)  /* single Transaction Translator */
-#define HUB_CHAR_TT_PER_PORT    (1 << 5)  /* per-port Transaction Translator */
+#define HUB_CHAR_TT_PER_PORT    (1U << 5)  /* per-port Transaction Translator */
 
 /* ── EHCI transfer primitives (same as other USB drivers) ──────────── */
 

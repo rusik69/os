@@ -59,6 +59,7 @@ void qsort(void *base, size_t n, size_t sz,
  */
 void *bsearch(const void *key, const void *base, size_t n, size_t sz,
               int (*cmp)(const void *, const void *)) {
+    if (sz == 0) return NULL;
     const char *lo = (const char *)base;
     const char *hi = lo + n * sz;
     while (lo < hi) {

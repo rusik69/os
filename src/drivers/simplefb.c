@@ -186,7 +186,7 @@ int simplefb_init_from_multiboot1(uint64_t mboot_info_phys)
 
     /* Multiboot v1: framebuffer fields at offset 60-88 if flags[2] is set */
     uint32_t flags = *(uint32_t*)(uintptr_t)mboot_info_phys;
-    if (!(flags & (1 << 2))) {
+    if (!(flags & (1U << 2))) {
         kprintf("[simplefb] No framebuffer in multiboot v1 info\n");
         return -1;
     }

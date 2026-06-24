@@ -1069,9 +1069,9 @@ int acpi_power_button_read(void) {
     /* Check PM1a event register for power button (bit 8 = PWRBTN_STS) */
     if (pm1a_evt) {
         uint16_t evt = inw(pm1a_evt);
-        if (evt & (1 << 8)) {
+        if (evt & (1U << 8)) {
             /* Clear by writing 1 to the status bit */
-            outw(pm1a_evt, (1 << 8));
+            outw(pm1a_evt, (1U << 8));
             g_power_button_pressed = 1;
         }
     }

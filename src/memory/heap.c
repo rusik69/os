@@ -37,7 +37,7 @@ static uint64_t heap_used_bytes = 0; /* running total of bytes in use */
 static int heap_expand(size_t needed) {
     uint64_t new_limit = heap_current + needed;
     if (new_limit > heap_base + HEAP_MAX_SIZE)
-        return -1;
+        return -ENOMEM;
 
     /* Reserve the newly expanded physical frames in PMM */
     uint64_t old_limit_phys = heap_base_phys + (heap_limit - heap_base);
@@ -226,7 +226,7 @@ void *kcalloc(size_t nmemb, size_t size) {
 /* ── heap_stats ─────────────────────────────── */
 int heap_stats(void *stats)
 {
-    if (!stats) return -1;
+    if (!stats) return -EINVAL;
     /* Fill a heap_stat structure */
     struct {
         uint64_t total_size;

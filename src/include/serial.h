@@ -25,21 +25,21 @@
 #define UART_DLM  1   /* Divisor Latch High (DLAB=1) */
 
 /* UART flags */
-#define UART_IER_RX     (1 << 0)  /* Enable Received Data Available Interrupt */
-#define UART_IER_TX     (1 << 1)  /* Enable Transmitter Holding Register Empty Interrupt */
-#define UART_IER_LINE   (1 << 2)  /* Enable Receiver Line Status Interrupt */
-#define UART_IER_MS     (1 << 3)  /* Enable Modem Status Interrupt */
-#define UART_LSR_DR     (1 << 0)  /* Data Ready */
-#define UART_LSR_THRE   (1 << 5)  /* Transmitter Holding Register Empty */
-#define UART_FCR_ENABLE (1 << 0)  /* FIFO Enable */
-#define UART_FCR_RXCLR  (1 << 1)  /* Clear Receive FIFO */
-#define UART_FCR_TXCLR  (1 << 2)  /* Clear Transmit FIFO */
+#define UART_IER_RX     (1U << 0)  /* Enable Received Data Available Interrupt */
+#define UART_IER_TX     (1U << 1)  /* Enable Transmitter Holding Register Empty Interrupt */
+#define UART_IER_LINE   (1U << 2)  /* Enable Receiver Line Status Interrupt */
+#define UART_IER_MS     (1U << 3)  /* Enable Modem Status Interrupt */
+#define UART_LSR_DR     (1U << 0)  /* Data Ready */
+#define UART_LSR_THRE   (1U << 5)  /* Transmitter Holding Register Empty */
+#define UART_FCR_ENABLE (1U << 0)  /* FIFO Enable */
+#define UART_FCR_RXCLR  (1U << 1)  /* Clear Receive FIFO */
+#define UART_FCR_TXCLR  (1U << 2)  /* Clear Transmit FIFO */
 #define UART_FCR_TRIG1  (0 << 6)  /* RX FIFO trigger level: 1 byte */
-#define UART_FCR_TRIG4  (1 << 6)  /* RX FIFO trigger level: 4 bytes */
+#define UART_FCR_TRIG4  (1U << 6)  /* RX FIFO trigger level: 4 bytes */
 #define UART_FCR_TRIG8  (2 << 6)  /* RX FIFO trigger level: 8 bytes */
 #define UART_FCR_TRIG14 (3 << 6)  /* RX FIFO trigger level: 14 bytes */
 #define UART_LCR_8BIT   (3 << 0)  /* 8 data bits */
-#define UART_LCR_DLAB   (1 << 7)  /* Divisor Latch Access Bit */
+#define UART_LCR_DLAB   (1U << 7)  /* Divisor Latch Access Bit */
 
 /* Initialise COM1 (original behaviour). */
 void serial_init(void);

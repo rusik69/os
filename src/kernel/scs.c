@@ -14,7 +14,7 @@
 #include "smp.h"
 
 #define SCS_SHIFT 10           /* 1024 entries per shadow stack */
-#define SCS_SIZE  (1 << SCS_SHIFT)
+#define SCS_SIZE  (1U << SCS_SHIFT)
 #define SCS_ENTRY_SIZE sizeof(uintptr_t)
 #define SCS_TOTAL (SCS_SIZE * SCS_ENTRY_SIZE)
 

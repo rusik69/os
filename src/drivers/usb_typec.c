@@ -403,6 +403,8 @@ static void typec_run_state_machine(struct typec_port *port)
         /* Audio adapter accessory mode */
         kprintf("[TYPEC] Port %d: accessory mode active\n", port->id);
         break;
+    default:
+        break;
     }
 
     if (old_state != port->state) {

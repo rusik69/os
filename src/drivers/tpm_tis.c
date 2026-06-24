@@ -86,7 +86,7 @@ static int tis_wait_for_bit(struct tpm_device *dev, uint16_t reg,
             return 0;  /* Condition met */
 
         if (timer_get_ticks() >= deadline)
-            return -1;  /* Timeout */
+            return -ETIMEDOUT;  /* Timeout */
 
         udelay(10);  /* 10 us polling interval */
     }
@@ -105,7 +105,7 @@ static int tis_request_locality(struct tpm_device *dev) {
     if (tis_wait_for_bit(dev, TIS_ACCESS, TIS_ACC_ACTIVE_LOC, 1,
                          TPM_TIMEOUT_A) < 0) {
         kprintf("[TPM] timeout requesting locality\n");
-        return -1;
+        return -ETIMEDOUT;
     }
     return 0;
 }
@@ -123,7 +123,7 @@ static int tis_ready(struct tpm_device *dev) {
     if (tis_wait_for_bit(dev, TIS_STS, TIS_STS_CMD_READY, 0,
                          TPM_TIMEOUT_B) < 0) {
         kprintf("[TPM] timeout entering ready state\n");
-        return -1;
+        return -ETIMEDOUT;
     }
     dev->state = TIS_STATE_READY;
     return 0;
@@ -135,7 +135,7 @@ static int tis_cancel(struct tpm_device *dev) {
     if (tis_wait_for_bit(dev, TIS_STS, TIS_STS_CMD_READY, 0,
                          TPM_TIMEOUT_B) < 0) {
         kprintf("[TPM] timeout cancelling command\n");
-        return -1;
+        return -EIO;
     }
     dev->state = TIS_STATE_IDLE;
     return 0;
@@ -159,7 +159,7 @@ int tpm_transmit(const uint8_t *cmd, uint32_t cmd_len,
 
     if (!dev->initialized) {
         kprintf("[TPM] not initialized\n");
-        return -1;
+        return -ENODEV;
     }
 
     spinlock_acquire(&g_tpm_lock);
@@ -339,7 +339,7 @@ int tpm2_selftest(int full_test) {
  * Returns 0 on success, -1 on failure.
  */
 int tpm2_get_random(uint8_t *buf, uint32_t count) {
-    if (!buf || count == 0) return -1;
+    if (!buf || count == 0) return -EINVAL;
 
     int ret = -1;
 
@@ -389,7 +389,7 @@ int tpm2_get_random(uint8_t *buf, uint32_t count) {
 int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
 {
     if (!digest || !digest_len)
-        return -1;
+        return -EIO;
 
     uint8_t cmd[22];  /* header(10) + pcrSelectSize(4) + pcrSelect(sizeof(SHA256)) */
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
@@ -422,7 +422,7 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
     int ret = tpm_transmit(cmd, sizeof(cmd), rsp, &rsp_len);
     if (ret != 0) {
         kprintf("[TPM] PCR_Read failed: %d\n", ret);
-        return -1;
+        return -EIO;
     }
 
     /* Parse response to extract digest */
@@ -430,7 +430,7 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
     /* Simplified: digests start at offset 10 + parameterSize field */
     struct tpm_rsp_hdr *rh = (struct tpm_rsp_hdr *)rsp;
     if (rh->return_code != TPM2_RC_SUCCESS)
-        return -1;
+        return -EIO;
 
     /* For SHA256 digests, they follow at a fixed offset (simplified) */
     /* Actual offset depends on PCR selection structure size */
@@ -439,7 +439,7 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
 
     if (rsp_len < digest_offset + sha256_size) {
         *digest_len = 0;
-        return -1;
+        return -EINVAL;
     }
 
     memcpy(digest, rsp + digest_offset, sha256_size);
@@ -464,9 +464,9 @@ int tpm2_pcr_read(uint32_t pcr_index, uint8_t *digest, uint32_t *digest_len)
 int tpm2_pcr_extend(uint32_t pcr_index, const uint8_t *digest, uint32_t digest_len)
 {
     if (!digest || digest_len < 32)
-        return -1;
+        return -EINVAL;
     if (pcr_index > 23)
-        return -1;
+        return -EINVAL;
 
     /* TPM2_PCR_Extend command buffer */
     uint8_t cmd[64];
@@ -509,14 +509,14 @@ int tpm2_pcr_extend(uint32_t pcr_index, const uint8_t *digest, uint32_t digest_l
     if (ret != 0) {
         kprintf("[TPM] PCR_Extend[%u] failed: %d\n",
                 (unsigned)pcr_index, ret);
-        return -1;
+        return -EIO;
     }
 
     struct tpm_rsp_hdr *rh = (struct tpm_rsp_hdr *)rsp;
     if (rh->return_code != TPM2_RC_SUCCESS) {
         kprintf("[TPM] PCR_Extend[%u] TPM error: 0x%08x\n",
                 (unsigned)pcr_index, rh->return_code);
-        return -1;
+        return -EIO;
     }
 
     kprintf("[TPM] PCR_Extend[%u] completed successfully\n",
@@ -548,7 +548,7 @@ int tpm_init(void) {
                               VMM_FLAG_PRESENT | VMM_FLAG_WRITE | VMM_FLAG_NOCACHE);
     if (!virt) {
         kprintf("[TPM] failed to map MMIO region at 0x%llx\n", phys);
-        return -1;
+        return -EINVAL;
     }
     dev->mmio_base = (volatile uint8_t *)virt;
 
@@ -564,7 +564,7 @@ int tpm_init(void) {
                 phys, dev->did, dev->vid);
         vmm_unmap_phys(virt, TPM_TIS_SIZE);
         dev->mmio_base = NULL;
-        return -1;
+        return -EINVAL;
     }
 
     /* ── Check interface ID (FIFO vs CRB) ──────────────────────── */
@@ -581,14 +581,14 @@ int tpm_init(void) {
                 intf_type, dev->did, dev->vid);
         vmm_unmap_phys(virt, TPM_TIS_SIZE);
         dev->mmio_base = NULL;
-        return -1;
+        return -ENOENT;
     }
 
     /* ── Claim locality 0 ──────────────────────────────────────── */
     if (tis_request_locality(dev) < 0) {
         vmm_unmap_phys(virt, TPM_TIS_SIZE);
         dev->mmio_base = NULL;
-        return -1;
+        return -EINVAL;
     }
 
     /* ── Check if TPM was already initialized ──────────────────── */
@@ -658,7 +658,7 @@ int tpm_is_present(void) {
 int tpm2_context_save(void *object_handle, uint8_t *out_buf, uint32_t *out_len)
 {
     if (!object_handle || !out_buf || !out_len || *out_len < 128)
-        return -1;
+        return -EINVAL;
 
     uint32_t handle = *(uint32_t *)object_handle;
 
@@ -699,11 +699,11 @@ int tpm2_context_load(const uint8_t *ctx_buf, uint32_t ctx_len,
                        uint32_t *loaded_handle)
 {
     if (!ctx_buf || !loaded_handle || ctx_len < sizeof(struct tpm_cmd_hdr))
-        return -1;
+        return -EINVAL;
 
     /* Build command: header + context blob */
     uint8_t *cmd = (uint8_t *)kmalloc((size_t)ctx_len + 10);
-    if (!cmd) return -1;
+    if (!cmd) return -ENOMEM;
 
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
     hdr->tag = TPM2_ST_NO_SESSIONS;
@@ -716,7 +716,7 @@ int tpm2_context_load(const uint8_t *ctx_buf, uint32_t ctx_len,
     uint8_t *rsp = (uint8_t *)kmalloc((size_t)rsp_len);
     if (!rsp) {
         kfree(cmd);
-        return -1;
+        return -EIO;
     }
 
     int ret = tpm_transmit(cmd, ctx_len + 10, rsp, &rsp_len);
@@ -844,7 +844,7 @@ int tpm2_nv_define_space(uint32_t nv_index, uint32_t data_size,
  */
 int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len)
 {
-    if (!data || len == 0) return -1;
+    if (!data || len == 0) return -EINVAL;
 
     /*
      * Command:
@@ -857,7 +857,7 @@ int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len)
      */
     uint32_t cmd_size = 10 + 4 + 4 + 2 + 2 + len;
     uint8_t *cmd = (uint8_t *)kmalloc((size_t)cmd_size);
-    if (!cmd) return -1;
+    if (!cmd) return -ENOMEM;
 
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
     hdr->tag = TPM2_ST_SESSIONS;
@@ -906,7 +906,7 @@ int tpm2_nv_write(uint32_t nv_index, const uint8_t *data, uint32_t len)
  */
 int tpm2_nv_read(uint32_t nv_index, uint8_t *buf, uint32_t *len)
 {
-    if (!buf || !len || *len == 0) return -1;
+    if (!buf || !len || *len == 0) return -EINVAL;
 
     /*
      * Command:
@@ -969,7 +969,7 @@ int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
                uint8_t *attest_buf, uint32_t *attest_len)
 {
     if (!attest_buf || !attest_len || *attest_len < 256)
-        return -1;
+        return -EINVAL;
 
     /*
      * Command:
@@ -1014,7 +1014,7 @@ int tpm2_quote(uint32_t pcr_index, const uint8_t *nonce, uint32_t nonce_len,
 
     /* pcrSelect[3]: select the requested PCR */
     uint8_t select_bitmap[3] = {0, 0, 0};
-    select_bitmap[pcr_index / 8] |= (1 << (pcr_index % 8));
+    select_bitmap[pcr_index / 8] |= (1U << (pcr_index % 8));
     cmd2[pos++] = select_bitmap[0];
     cmd2[pos++] = select_bitmap[1];
     cmd2[pos++] = select_bitmap[2];
@@ -1054,7 +1054,7 @@ int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
                 uint8_t *priv_buf, uint32_t *priv_len,
                 uint8_t *pub_buf, uint32_t *pub_len)
 {
-    if (!sealed_data || !priv_buf || !pub_buf) return -1;
+    if (!sealed_data || !priv_buf || !pub_buf) return -EINVAL;
 
     /* Simplified creation command with minimal parameters */
     uint8_t cmd[256];
@@ -1114,7 +1114,7 @@ int tpm2_create(uint32_t parent_handle, const uint8_t *sealed_data,
 
     uint32_t rsp_len = 1024;
     uint8_t *rsp = (uint8_t *)kmalloc(rsp_len);
-    if (!rsp) return -1;
+    if (!rsp) return -ENOMEM;
 
     int ret = tpm_transmit(cmd, (uint32_t)pos, rsp, &rsp_len);
     if (ret == 0 && rsp_len > sizeof(struct tpm_rsp_hdr)) {
@@ -1158,12 +1158,12 @@ int tpm2_load(uint32_t parent_handle,
               const uint8_t *pub_buf, uint32_t pub_len,
               uint32_t *loaded_handle)
 {
-    if (!priv_buf || !pub_buf || !loaded_handle) return -1;
+    if (!priv_buf || !pub_buf || !loaded_handle) return -EINVAL;
 
     /* Build command: header + parentHandle + auth + private + public */
     uint32_t cmd_size = 10 + 4 + 2 + 2 + priv_len + 2 + pub_len;
     uint8_t *cmd = (uint8_t *)kmalloc((size_t)cmd_size);
-    if (!cmd) return -1;
+    if (!cmd) return -ENOMEM;
 
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
     hdr->tag = TPM2_ST_SESSIONS;
@@ -1220,7 +1220,7 @@ int tpm2_load(uint32_t parent_handle,
 int tpm2_unseal(uint32_t item_handle,
                 uint8_t *data_buf, uint32_t *data_len)
 {
-    if (!data_buf || !data_len || *data_len == 0) return -1;
+    if (!data_buf || !data_len || *data_len == 0) return -EINVAL;
 
     uint8_t cmd[16];
     struct tpm_cmd_hdr *hdr = (struct tpm_cmd_hdr *)cmd;
@@ -1307,7 +1307,7 @@ int tpm2_sign(uint32_t key_handle, const uint8_t *digest, uint32_t digest_len,
               uint8_t *sig_buf, uint32_t *sig_len)
 {
     if (!digest || !sig_buf || !sig_len || *sig_len < 256)
-        return -1;
+        return -EIO;
 
     /* Build command:
      *   tpm_cmd_hdr (10 bytes)
@@ -1430,7 +1430,7 @@ static int tpm_dev_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_
 {
     (void)priv;
     if (!buf || !out_size || max_size == 0)
-        return -1;
+        return -EIO;
 
     /* Read random bytes from TPM */
     uint32_t count = (max_size > 128) ? 128 : max_size;
@@ -1439,7 +1439,7 @@ static int tpm_dev_read(void *priv, void *buf, uint32_t max_size, uint32_t *out_
         *out_size = (uint32_t)ret;
         return 0;
     }
-    return -1;
+    return -EIO;
 }
 
 static int tpm_dev_write(void *priv, const void *data, uint32_t size)
@@ -1448,7 +1448,7 @@ static int tpm_dev_write(void *priv, const void *data, uint32_t size)
     (void)data;
     (void)size;
     /* Writes to /dev/tpm0 are not supported directly */
-    return -1;
+    return -EINVAL;
 }
 
 /* ioctl dispatch (simplified — in a real kernel, this hooks into
@@ -1456,7 +1456,7 @@ static int tpm_dev_write(void *priv, const void *data, uint32_t size)
 static __attribute__((unused)) int tpm_dev_ioctl(void *priv, uint32_t cmd, void *arg)
 {
     (void)priv;
-    if (!arg) return -1;
+    if (!arg) return -EINVAL;
 
     switch (cmd) {
         case TPMIO_GET_RANDOM: {
@@ -1464,7 +1464,7 @@ static __attribute__((unused)) int tpm_dev_ioctl(void *priv, uint32_t cmd, void 
             uint32_t count = (p->count > 128) ? 128 : p->count;
             int ret = tpm2_get_random(p->data, count);
             if (ret > 0) return 0;
-            return -1;
+            return -EIO;
         }
         case TPMIO_PCR_READ: {
             struct tpm_ioctl_pcr_op *p = (struct tpm_ioctl_pcr_op *)arg;
@@ -1491,7 +1491,7 @@ static __attribute__((unused)) int tpm_dev_ioctl(void *priv, uint32_t cmd, void 
             return ret;
         }
         default:
-            return -1;
+            return -EINVAL;
     }
 }
 
@@ -1502,7 +1502,7 @@ int tpm_dev_init(void)
                                      tpm_dev_read, tpm_dev_write);
     if (ret < 0) {
         kprintf("[TPM] failed to register /dev/tpm0\n");
-        return -1;
+        return -EIO;
     }
     kprintf("[TPM] /dev/tpm0 registered (ioctl interface)\n");
     return 0;
@@ -1612,11 +1612,11 @@ static int build_pcr_read_cmd(uint8_t *buf, uint32_t *buf_len,
     *p++ = 0;                     /* pcrSelect[2] */
 
     if (pcr_index < 8)
-        buf[sizeof(struct tpm_cmd_hdr) + 4] |= (uint8_t)(1 << pcr_index);
+        buf[sizeof(struct tpm_cmd_hdr) + 4] |= (uint8_t)(1U << pcr_index);
     else if (pcr_index < 16)
-        buf[sizeof(struct tpm_cmd_hdr) + 5] |= (uint8_t)(1 << (pcr_index - 8));
+        buf[sizeof(struct tpm_cmd_hdr) + 5] |= (uint8_t)(1U << (pcr_index - 8));
     else if (pcr_index < 24)
-        buf[sizeof(struct tpm_cmd_hdr) + 6] |= (uint8_t)(1 << (pcr_index - 16));
+        buf[sizeof(struct tpm_cmd_hdr) + 6] |= (uint8_t)(1U << (pcr_index - 16));
 
     uint32_t total = (uint32_t)(p - buf);
     hdr->total_size = total + 5; /* + algorithm + digestsCount */
@@ -1688,11 +1688,11 @@ static int parse_pcr_read_rsp(const uint8_t *rsp, uint32_t rsp_len,
                                uint8_t digest[TPM2_PCR_DIGEST_LEN])
 {
     if (rsp_len < sizeof(struct tpm_rsp_hdr) + 8)
-        return -1;
+        return -EIO;
 
     const struct tpm_rsp_hdr *hdr = (const struct tpm_rsp_hdr *)rsp;
     if (hdr->return_code != TPM2_RC_SUCCESS)
-        return -1;
+        return -EIO;
 
     /* Response structure:
      *   pcrSelect (variable)
@@ -1710,7 +1710,7 @@ static int parse_pcr_read_rsp(const uint8_t *rsp, uint32_t rsp_len,
     p += 4;
 
     if (digests_count == 0)
-        return -1;
+        return -EINVAL;
 
     /* Read the first digest */
     uint16_t algo = *(const uint16_t *)p;

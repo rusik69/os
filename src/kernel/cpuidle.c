@@ -116,7 +116,7 @@ static void cpuidle_detect_caps(void)
     __asm__ volatile("cpuid"
                      : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx)
                      : "a"(1));
-    if (rcx & (1 << 3)) {
+    if (rcx & (1U << 3)) {
         have_mwait = 1;
         kprintf("[cpuidle] MWAIT/MONITOR supported\n");
     } else {

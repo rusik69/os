@@ -57,7 +57,7 @@ int cpu_security_init(void)
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
     /* Enable SMEP if supported (ECX bit 7) */
-    if (rcx & (1 << 7)) {
+    if (rcx & (1U << 7)) {
         cr4 |= CR4_SMEP;
         kprintf("[cpu] SMEP enabled\n");
     } else {
@@ -65,7 +65,7 @@ int cpu_security_init(void)
     }
 
     /* Enable SMAP if supported (ECX bit 20) */
-    if (rcx & (1 << 20)) {
+    if (rcx & (1U << 20)) {
         cr4 |= CR4_SMAP;
         kprintf("[cpu] SMAP enabled\n");
     } else {
@@ -73,7 +73,7 @@ int cpu_security_init(void)
     }
 
     /* Enable UMIP if supported (ECX bit 2) */
-    if (rcx & (1 << 2)) {
+    if (rcx & (1U << 2)) {
         cr4 |= CR4_UMIP;
         kprintf("[cpu] UMIP enabled\n");
     } else {
@@ -85,7 +85,7 @@ int cpu_security_init(void)
 
     /* Enable NXE in EFER if supported */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(0x80000001));
-    if (rdx & (1 << 20)) { /* CPUID.80000001h:EDX bit 20 = NX (XD) support */
+    if (rdx & (1U << 20)) { /* CPUID.80000001h:EDX bit 20 = NX (XD) support */
         efer |= EFER_NXE;
         write_msr(0xC0000080, efer);
         kprintf("[cpu] NXE enabled\n");

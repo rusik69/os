@@ -89,13 +89,13 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
 
 /* MSI capability ID = 0x05 */
 /* Message Control register bits (at cap_offset + 2) */
-#define PCI_MSI_CTRL_ENABLE    (1 << 0)
+#define PCI_MSI_CTRL_ENABLE    (1U << 0)
 #define PCI_MSI_CTRL_MMC_SHIFT 1    /* Multiple Message Capable */
 #define PCI_MSI_CTRL_MMC_MASK  (7 << 1)
 #define PCI_MSI_CTRL_MME_SHIFT 4    /* Multiple Message Enable */
 #define PCI_MSI_CTRL_MME_MASK  (7 << 4)
-#define PCI_MSI_CTRL_64BIT     (1 << 7)  /* 64-bit addressing capable */
-#define PCI_MSI_CTRL_PERVEC    (1 << 8)  /* Per-vector masking capable */
+#define PCI_MSI_CTRL_64BIT     (1U << 7)  /* 64-bit addressing capable */
+#define PCI_MSI_CTRL_PERVEC    (1U << 8)  /* Per-vector masking capable */
 
 /* MSI delivery modes (used in data register) */
 #define PCI_MSI_DM_FIXED       0x0
@@ -202,30 +202,30 @@ int pci_setup_interrupts(struct pci_device *dev,
 #define PCI_AER_UNCOR_SRC_ID      0x36  /* Error Source ID (uncorrectable) */
 
 /* AER Uncorrectable Error Status bits */
-#define PCI_AER_UNCOR_DL_PROTO     (1 << 4)  /* Data Link Protocol Error */
-#define PCI_AER_UNCOR_SURPRISE_DN  (1 << 5)  /* Surprise Down */
-#define PCI_AER_UNCOR_POISON_TLP   (1 << 12) /* Poisoned TLP */
-#define PCI_AER_UNCOR_FC_PROTO     (1 << 13) /* Flow Control Protocol */
-#define PCI_AER_UNCOR_COMP_TIME    (1 << 14) /* Completion Timeout */
-#define PCI_AER_UNCOR_COMP_ABORT   (1 << 15) /* Completer Abort */
-#define PCI_AER_UNCOR_UNEXP_CMP    (1 << 16) /* Unexpected Completion */
-#define PCI_AER_UNCOR_RCV_OVFLOW   (1 << 17) /* Receiver Overflow */
-#define PCI_AER_UNCOR_MALFORMED    (1 << 18) /* Malformed TLP */
-#define PCI_AER_UNCOR_ECRC_ERR     (1 << 19) /* ECRC Error */
-#define PCI_AER_UNCOR_UNSUP_REQ    (1 << 20) /* Unsupported Request */
-#define PCI_AER_UNCOR_ACS_VIOL     (1 << 21) /* ACS Violation */
-#define PCI_AER_UNCOR_INTERNAL     (1 << 22) /* Internal Error */
-#define PCI_AER_UNCOR_ATOMIC_EGR   (1 << 23) /* AtomicOp Egress Blocked */
-#define PCI_AER_UNCOR_TLP_PREFIX   (1 << 24) /* TLP Prefix Blocked */
-#define PCI_AER_UNCOR_POISON_SKIP  (1 << 25) /* Poisoned TLP (skip) */
+#define PCI_AER_UNCOR_DL_PROTO     (1U << 4)  /* Data Link Protocol Error */
+#define PCI_AER_UNCOR_SURPRISE_DN  (1U << 5)  /* Surprise Down */
+#define PCI_AER_UNCOR_POISON_TLP   (1U << 12) /* Poisoned TLP */
+#define PCI_AER_UNCOR_FC_PROTO     (1U << 13) /* Flow Control Protocol */
+#define PCI_AER_UNCOR_COMP_TIME    (1U << 14) /* Completion Timeout */
+#define PCI_AER_UNCOR_COMP_ABORT   (1U << 15) /* Completer Abort */
+#define PCI_AER_UNCOR_UNEXP_CMP    (1U << 16) /* Unexpected Completion */
+#define PCI_AER_UNCOR_RCV_OVFLOW   (1U << 17) /* Receiver Overflow */
+#define PCI_AER_UNCOR_MALFORMED    (1U << 18) /* Malformed TLP */
+#define PCI_AER_UNCOR_ECRC_ERR     (1U << 19) /* ECRC Error */
+#define PCI_AER_UNCOR_UNSUP_REQ    (1U << 20) /* Unsupported Request */
+#define PCI_AER_UNCOR_ACS_VIOL     (1U << 21) /* ACS Violation */
+#define PCI_AER_UNCOR_INTERNAL     (1U << 22) /* Internal Error */
+#define PCI_AER_UNCOR_ATOMIC_EGR   (1U << 23) /* AtomicOp Egress Blocked */
+#define PCI_AER_UNCOR_TLP_PREFIX   (1U << 24) /* TLP Prefix Blocked */
+#define PCI_AER_UNCOR_POISON_SKIP  (1U << 25) /* Poisoned TLP (skip) */
 
 /* AER Correctable Error Status bits */
-#define PCI_AER_COR_RCV_ERR        (1 << 0)  /* Receiver Error */
-#define PCI_AER_COR_BAD_TLP        (1 << 6)  /* Bad TLP */
-#define PCI_AER_COR_BAD_DLLP       (1 << 7)  /* Bad DLLP */
-#define PCI_AER_COR_REPLAY_ROLL    (1 << 8)  /* REPLAY_NUM Rollover */
-#define PCI_AER_COR_REPLAY_TIMEOUT (1 << 12) /* Replay Timer Timeout */
-#define PCI_AER_COR_ADVISORY_NF    (1 << 13) /* Advisory Non-Fatal Error */
+#define PCI_AER_COR_RCV_ERR        (1U << 0)  /* Receiver Error */
+#define PCI_AER_COR_BAD_TLP        (1U << 6)  /* Bad TLP */
+#define PCI_AER_COR_BAD_DLLP       (1U << 7)  /* Bad DLLP */
+#define PCI_AER_COR_REPLAY_ROLL    (1U << 8)  /* REPLAY_NUM Rollover */
+#define PCI_AER_COR_REPLAY_TIMEOUT (1U << 12) /* Replay Timer Timeout */
+#define PCI_AER_COR_ADVISORY_NF    (1U << 13) /* Advisory Non-Fatal Error */
 
 /* Find the AER extended capability on a PCIe device.
  * Returns the extended capability offset (>= 0x100) on success, or < 0
@@ -262,13 +262,13 @@ int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id);
 #define PCI_ACS_EGRESS_CTRL   0x08  /* Egress Control Vector (if cap[2]=1) */
 
 /* ACS Capability bits */
-#define PCI_ACS_CAP_SV        (1 << 0)  /* Source Validation */
-#define PCI_ACS_CAP_TB        (1 << 1)  /* Translation Blocking */
-#define PCI_ACS_CAP_RR        (1 << 2)  /* P2P Request Redirect */
-#define PCI_ACS_CAP_CR        (1 << 3)  /* P2P Completion Redirect */
-#define PCI_ACS_CAP_UF        (1 << 4)  /* Upstream Forwarding */
-#define PCI_ACS_CAP_EC        (1 << 5)  /* P2P Egress Control */
-#define PCI_ACS_CAP_DT        (1 << 6)  /* Direct Translated P2P */
+#define PCI_ACS_CAP_SV        (1U << 0)  /* Source Validation */
+#define PCI_ACS_CAP_TB        (1U << 1)  /* Translation Blocking */
+#define PCI_ACS_CAP_RR        (1U << 2)  /* P2P Request Redirect */
+#define PCI_ACS_CAP_CR        (1U << 3)  /* P2P Completion Redirect */
+#define PCI_ACS_CAP_UF        (1U << 4)  /* Upstream Forwarding */
+#define PCI_ACS_CAP_EC        (1U << 5)  /* P2P Egress Control */
+#define PCI_ACS_CAP_DT        (1U << 6)  /* Direct Translated P2P */
 
 /* ACS Control bits (same bit positions, writable) */
 #define PCI_ACS_CTRL_SV       PCI_ACS_CAP_SV
@@ -306,7 +306,7 @@ void pci_log_acs_cap(uint8_t bus, uint8_t slot, uint8_t func);
 #define PCI_LTR_VALUE_MASK      0x0FFF
 #define PCI_LTR_SCALE_SHIFT      12
 #define PCI_LTR_SCALE_MASK      (7 << 12)
-#define PCI_LTR_REQUIRE         (1 << 15)
+#define PCI_LTR_REQUIRE         (1U << 15)
 
 /* Convert LTR encoded latency to nanoseconds (returns 0 on invalid scale) */
 uint64_t pci_ltr_to_ns(uint16_t ltr_reg);
@@ -331,20 +331,20 @@ void pci_log_ltr_cap(uint8_t bus, uint8_t slot, uint8_t func);
 #define PCI_L1PM_CTRL2          0x0C  /* L1 PM Substates Control 2 */
 
 /* L1 PM Substates Capability bits */
-#define PCI_L1PM_CAP_PCIPM_L12  (1 << 0)  /* PCI-PM L1.2 Supported */
-#define PCI_L1PM_CAP_PCIPM_L11  (1 << 1)  /* PCI-PM L1.1 Supported */
-#define PCI_L1PM_CAP_ASPM_L12   (1 << 2)  /* ASPM L1.2 Supported */
-#define PCI_L1PM_CAP_ASPM_L11   (1 << 3)  /* ASPM L1.1 Supported */
-#define PCI_L1PM_CAP_L1SS       (1 << 4)  /* L1 SubState Supported */
-#define PCI_L1PM_CAP_CM_REST    (1 << 5)  /* CommonMode Restore Time Supported */
-#define PCI_L1PM_CAP_PWR_ON     (1 << 6)  /* Power On Time Supported */
-#define PCI_L1PM_CAP_LTR_BLOCK  (1 << 7)  /* LTR Blocking Supported */
+#define PCI_L1PM_CAP_PCIPM_L12  (1U << 0)  /* PCI-PM L1.2 Supported */
+#define PCI_L1PM_CAP_PCIPM_L11  (1U << 1)  /* PCI-PM L1.1 Supported */
+#define PCI_L1PM_CAP_ASPM_L12   (1U << 2)  /* ASPM L1.2 Supported */
+#define PCI_L1PM_CAP_ASPM_L11   (1U << 3)  /* ASPM L1.1 Supported */
+#define PCI_L1PM_CAP_L1SS       (1U << 4)  /* L1 SubState Supported */
+#define PCI_L1PM_CAP_CM_REST    (1U << 5)  /* CommonMode Restore Time Supported */
+#define PCI_L1PM_CAP_PWR_ON     (1U << 6)  /* Power On Time Supported */
+#define PCI_L1PM_CAP_LTR_BLOCK  (1U << 7)  /* LTR Blocking Supported */
 
 /* L1 PM Substates Control 1 bits */
 #define PCI_L1PM_CTRL1_CM_REST_TIME_MASK  0xFF  /* CommonModeRestoreTime (bits 7:0) */
 #define PCI_L1PM_CTRL1_PWR_ON_TIME_MASK   0xFF00 /* PowerOnTime (bits 15:8) */
 #define PCI_L1PM_CTRL1_PWR_ON_SHIFT       8
-#define PCI_L1PM_CTRL1_LTR_BLOCK_OVR      (1 << 30) /* LTR Block Override */
+#define PCI_L1PM_CTRL1_LTR_BLOCK_OVR      (1U << 30) /* LTR Block Override */
 #define PCI_L1PM_CTRL1_L12_EN             (1U << 31) /* L1.2 Enable (both PCI-PM & ASPM) */
 
 /* Find the L1 PM Substates extended capability.

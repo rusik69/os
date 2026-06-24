@@ -774,7 +774,7 @@ static void topdown_init(void)
                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                      : "a"(0x0a), "c"(0));
 
-    if (ecx & (1 << 15)) {
+    if (ecx & (1U << 15)) {
         g_topdown_available = 1;
         kprintf("[OK] topdown: IA32_PERF_METRICS supported (Ice Lake+)\\n");
     } else {
@@ -819,7 +819,7 @@ void perf_init(void)
                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                      : "a"(0x01), "c"(0));
 
-    if (edx & (1 << 21)) {
+    if (edx & (1U << 21)) {
         pebs_platform_ok = 1;
         kprintf("[OK] perf_events: PEBS / Debug Store supported\n");
     } else {

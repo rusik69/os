@@ -110,6 +110,7 @@ uint32_t westwood_update(struct westwood_data *w, uint32_t cwnd,
         cwnd += (uint32_t)acked_segments;
     } else {
         /* Congestion avoidance */
+        if (cwnd == 0) cwnd = 1;
         cwnd += (uint32_t)acked_segments / cwnd;
         if (cwnd < 2) cwnd = 2;
     }
@@ -131,7 +132,7 @@ void westwood_on_loss(struct westwood_data *w, uint32_t current_cwnd,
      */
     uint32_t estimated_cwnd;
 
-    if (w->bw_filtered > 0 && w->rtt_min > 0 && w->rtt_min != 0xFFFFFFFF) {
+    if (w->bw_filtered > 0 && w->rtt_min > 0 && w->rtt_min != 0xFFFFFFFF && seg_size > 0) {
         estimated_cwnd = (w->bw_filtered * w->rtt_min) / seg_size;
     } else {
         /* Fallback: standard Reno halving */

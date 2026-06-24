@@ -636,6 +636,8 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len)
                 if (size == 1) report_count = data[pos];
                 else if (size == 2) report_count = data[pos] | ((uint32_t)data[pos + 1] << 8);
                 break;
+            default:
+                break;
             }
         } else if (type == 2) { /* Local */
             if (tag == HID_ITEM_TAG_LOCAL_USAGE) {

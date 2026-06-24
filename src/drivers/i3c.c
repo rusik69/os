@@ -48,10 +48,10 @@
 #define I3C_CCC_GETSTATUS      0x15   /* Get Device Status */
 
 /* I3C device capability bits (BCR) */
-#define I3C_BCR_MAX_DATA_SPEED     (1 << 0)
-#define I3C_BCR_IBI_PAYLOAD        (1 << 1)
-#define I3C_BCR_IBI_REQUEST        (1 << 2)
-#define I3C_BCR_HOT_JOIN           (1 << 3)
+#define I3C_BCR_MAX_DATA_SPEED     (1U << 0)
+#define I3C_BCR_IBI_PAYLOAD        (1U << 1)
+#define I3C_BCR_IBI_REQUEST        (1U << 2)
+#define I3C_BCR_HOT_JOIN           (1U << 3)
 
 /* I3C transfer types */
 #define I3C_XFER_READ         0

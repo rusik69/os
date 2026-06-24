@@ -30,8 +30,8 @@
 #define BOND_MODE_BROADCAST    3
 
 /* ── Slave state flags ────────────────────────────────────────── */
-#define BOND_SLAVE_ACTIVE   (1 << 0)
-#define BOND_SLAVE_UP       (1 << 1)
+#define BOND_SLAVE_ACTIVE   (1U << 0)
+#define BOND_SLAVE_UP       (1U << 1)
 
 /* ── Per-slave descriptor ─────────────────────────────────────── */
 struct bond_slave {

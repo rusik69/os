@@ -154,10 +154,12 @@ void bbr2_tick(uint64_t now)
             bbr2.probe_rtt_timestamp = now;
         }
         break;
+    default:
+        break;
     }
 }
 
-/* Get current pacing rate */
+/* ── BBRv2 public API ──────────────────────────────────────────────── */
 uint64_t bbr2_get_pacing_rate(void)
 {
     return bbr2.pacing_rate;

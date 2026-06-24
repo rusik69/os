@@ -17,13 +17,13 @@ void print_hex_dump(const char *prefix, const void *buf, uint32_t len) {
 }
 
 /* ── hexdump_print ─────────────────────────────── */
-int hexdump_print(const void *buf, size_t len)
+static int hexdump_print(const void *buf, size_t len)
 {
     print_hex_dump("", buf, (uint32_t)len);
     return 0;
 }
 /* ── hexdump_to_buf ─────────────────────────────── */
-int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len)
+static int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len)
 {
     const uint8_t *p = (const uint8_t *)buf;
     size_t pos = 0;
@@ -49,7 +49,7 @@ int hexdump_to_buf(const void *buf, size_t len, char *out, size_t out_len)
     return (int)pos;
 }
 /* ── hexdump_ascii ─────────────────────────────── */
-int hexdump_ascii(const void *buf, size_t len)
+static int hexdump_ascii(const void *buf, size_t len)
 {
     const uint8_t *p = (const uint8_t *)buf;
     kprintf("[hexdump] ");

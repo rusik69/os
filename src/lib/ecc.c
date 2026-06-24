@@ -119,7 +119,7 @@ static void bn_mul_mod_p(uint32_t *r, const uint32_t *a, const uint32_t *b)
 {
     uint64_t product[ECC_NUM_WORDS * 2] = {0};
     uint64_t carry;
-    
+
     /* Schoolbook multiplication */
     for (int i = 0; i < ECC_NUM_WORDS; i++) {
         carry = 0;
@@ -135,7 +135,7 @@ static void bn_mul_mod_p(uint32_t *r, const uint32_t *a, const uint32_t *b)
     /* For correctness, reduce the 512-bit result mod p */
     uint32_t tmp[ECC_NUM_WORDS * 2];
     memcpy(tmp, product, sizeof(product));
-    
+
     /* Use the fact that p ≈ 2^256, so the high 256 bits need reduction */
     /* This is a simplified approach — full Montgomery reduction would be better */
     bn_zero(r);
@@ -151,7 +151,7 @@ static void bn_mul_mod_p(uint32_t *r, const uint32_t *a, const uint32_t *b)
         /* 2^256 ≡ 2^224 - 2^192 - 2^96 + 1 (mod p) */
         uint32_t val[ECC_NUM_WORDS];
         bn_zero(val);
-        
+
         /* Simplified: just add the overflow and reduce */
         val[0] = w; /* low word */
         val[4] = w; /* 2^128 word */
@@ -187,7 +187,7 @@ static void bn_inv_mod_p(uint32_t *r, const uint32_t *a)
     bn_copy(exp, ecc_p);
     if (exp[0] >= 2) exp[0] -= 2;
     else { exp[0] = 0xFFFFFFFF; /* borrow */ }
-    
+
     /* Simple square-and-multiply */
     uint32_t base[ECC_NUM_WORDS];
     bn_copy(base, a);
@@ -202,7 +202,7 @@ static void bn_inv_mod_p(uint32_t *r, const uint32_t *a)
 
         int word_idx = i / 32;
         int bit_idx = i % 32;
-        if (exp[word_idx] & (1 << bit_idx)) {
+        if (exp[word_idx] & (1U << bit_idx)) {
             uint32_t mul[ECC_NUM_WORDS];
             bn_mul_mod_p(mul, r, base);
             bn_copy(r, mul);
@@ -301,14 +301,14 @@ static void ecc_scalar_mult(struct ecc_point *r, const uint32_t *k,
     for (int i = 255; i >= 0; i--) {
         int word_idx = i / 32;
         int bit_idx = i % 32;
-        
+
         if (!result.is_infinity) {
             struct ecc_point dbl;
             ecc_point_add(&dbl, &result, &result);
             result = dbl;
         }
 
-        if (k[word_idx] & (1 << bit_idx)) {
+        if (k[word_idx] & (1U << bit_idx)) {
             struct ecc_point add;
             ecc_point_add(&add, &result, &temp);
             result = add;

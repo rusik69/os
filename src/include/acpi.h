@@ -230,7 +230,7 @@ struct dmar_sub_header {
 } __attribute__((packed));
 
 /* DRHD — DMA Remapping Hardware Unit Definition */
-#define DMAR_DRHD_FLAG_INCLUDE_PCI_ALL (1 << 0)
+#define DMAR_DRHD_FLAG_INCLUDE_PCI_ALL (1U << 0)
 
 struct dmar_drhd {
     struct dmar_sub_header hdr;

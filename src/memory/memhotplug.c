@@ -17,7 +17,7 @@ void memhp_init(void) {
 int memhp_add_region(uint64_t base, uint64_t size) {
     if (section_count >= MEMHP_MAX_SECTIONS) {
         kprintf("[mem] memhp: max sections reached\n");
-        return -1;
+        return -ENOSPC;
     }
 
     struct memhp_section *sec = &sections[section_count];
@@ -37,7 +37,7 @@ int memhp_remove_region(uint64_t base) {
         if (sections[i].base_addr == base && sections[i].present) {
             if (sections[i].state == MEMHP_ONLINE) {
                 kprintf("[mem] memhp: cannot remove online region 0x%lx\n", (unsigned long)base);
-                return -1;
+                return -EBUSY;
             }
             sections[i].present = 0;
             sections[i].state = MEMHP_OFFLINE;
@@ -45,14 +45,14 @@ int memhp_remove_region(uint64_t base) {
             return 0;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 int memhp_online_section(int section_id) {
     if (section_id < 0 || section_id >= section_count)
-        return -1;
+        return -EINVAL;
     struct memhp_section *sec = &sections[section_id];
-    if (!sec->present) return -1;
+    if (!sec->present) return -ENOENT;
 
     sec->state = MEMHP_GOING_ONLINE;
     /* Add pages to PMM by freeing each page in the region */
@@ -66,10 +66,10 @@ int memhp_online_section(int section_id) {
 
 int memhp_offline_section(int section_id) {
     if (section_id < 0 || section_id >= section_count)
-        return -1;
+        return -EINVAL;
     struct memhp_section *sec = &sections[section_id];
     if (!sec->present || sec->state != MEMHP_ONLINE)
-        return -1;
+        return -EINVAL;
 
     sec->state = MEMHP_GOING_OFFLINE;
     /* Migrate pages out (simplified: just mark as offline) */

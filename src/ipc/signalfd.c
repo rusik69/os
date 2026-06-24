@@ -60,10 +60,10 @@ int signalfd_create(int fd, const uint64_t *sigmask, size_t sigsetsize) {
     (void)fd;
     (void)sigsetsize;
     if (!signalfd_initialized) return -1;
-    
+
     struct process *cur = process_get_current();
     if (!cur) return -1;
-    
+
     /* Find free slot */
     int slot = -1;
     for (int i = 0; i < SIGNALFD_MAX; i++) {
@@ -73,14 +73,14 @@ int signalfd_create(int fd, const uint64_t *sigmask, size_t sigsetsize) {
         }
     }
     if (slot < 0) return -ENFILE;
-    
+
     struct signalfd_entry *sfd = &signalfd_table[slot];
     sfd->in_use = 1;
     sfd->pid = cur->pid;
     sfd->sigmask = sigmask ? *sigmask : 0;
     sfd->queue_len = 0;
     wait_queue_init(&sfd->wq);
-    
+
     /* Return a pseudo-fd (offset from base to avoid fd conflicts) */
     return 200 + slot;
 }
@@ -88,10 +88,10 @@ int signalfd_create(int fd, const uint64_t *sigmask, size_t sigsetsize) {
 /* Write a signal to signalfd queue */
 int signalfd_push(int signo, struct siginfo *info) {
     if (!signalfd_initialized) return -1;
-    
+
     struct process *cur = process_get_current();
     if (!cur) return -1;
-    
+
     struct signalfd_siginfo ssi;
     memset(&ssi, 0, sizeof(ssi));
     ssi.ssi_signo = (uint32_t)signo;
@@ -102,13 +102,13 @@ int signalfd_push(int signo, struct siginfo *info) {
         ssi.ssi_addr = (uint64_t)info->si_addr;
         ssi.ssi_status = info->si_status;
     }
-    
+
     /* Find matching signalfd for this process */
     for (int i = 0; i < SIGNALFD_MAX; i++) {
         if (!signalfd_table[i].in_use) continue;
         if (signalfd_table[i].pid != cur->pid) continue;
         if (!(signalfd_table[i].sigmask & (1ULL << (signo - 1)))) continue;
-        
+
         /* Append to queue */
         struct signalfd_entry *sfd = &signalfd_table[i];
         if (sfd->queue_len + (int)sizeof(ssi) <= (int)sizeof(sfd->queue)) {
@@ -126,23 +126,23 @@ int signalfd_read(int fd, void *buf, size_t count) {
     int slot = fd - 200;
     if (slot < 0 || slot >= SIGNALFD_MAX) return -EBADF;
     if (!signalfd_table[slot].in_use) return -EBADF;
-    
+
     struct signalfd_entry *sfd = &signalfd_table[slot];
-    
+
     /* Wait for data */
     while (sfd->queue_len == 0) {
         wait_queue_sleep(&sfd->wq);
     }
-    
+
     size_t to_copy = (count < (size_t)sfd->queue_len) ? count : (size_t)sfd->queue_len;
     memcpy(buf, sfd->queue, to_copy);
-    
+
     /* Shift remaining data */
     if ((int)to_copy < sfd->queue_len) {
         memmove(sfd->queue, sfd->queue + to_copy, (size_t)(sfd->queue_len - (int)to_copy));
     }
     sfd->queue_len -= (int)to_copy;
-    
+
     return (int)to_copy;
 }
 

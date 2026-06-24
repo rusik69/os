@@ -1059,7 +1059,7 @@ int unix_socketpair(int *ep0, int *ep1)
     return unix_socketpair_type(ep0, ep1, SOCK_STREAM);
 }
 
-int unix_socketpair_type(int *ep0, int *ep1, int type)
+static int unix_socketpair_type(int *ep0, int *ep1, int type)
 {
     if (!ep0 || !ep1) return -EINVAL;
 
@@ -1121,35 +1121,35 @@ void af_unix_init(void)
 module_init(af_unix_init);
 
 /* ── Implement: af_unix_send ──────────────────────────── */
-int af_unix_send(void *sk, void *msg, size_t len)
+static int af_unix_send(void *sk, void *msg, size_t len)
 {
     (void)sk; (void)msg; (void)len;
     kprintf("[af_unix] af_unix_send: use unix_send via socket layer\n");
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_unix_recv ──────────────────────────── */
-int af_unix_recv(void *sk, void *buf, size_t len)
+static int af_unix_recv(void *sk, void *buf, size_t len)
 {
     (void)sk; (void)buf; (void)len;
     kprintf("[af_unix] af_unix_recv: use unix_recv via socket layer\n");
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_unix_connect ───────────────────────── */
-int af_unix_connect(void *sk, void *addr, int addr_len)
+static int af_unix_connect(void *sk, void *addr, int addr_len)
 {
     (void)sk; (void)addr; (void)addr_len;
     kprintf("[af_unix] af_unix_connect: use socket layer connect\n");
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_unix_listen ────────────────────────── */
-int af_unix_listen(void *sk, int backlog)
+static int af_unix_listen(void *sk, int backlog)
 {
     (void)sk; (void)backlog;
     kprintf("[af_unix] af_unix_listen: use socket layer listen\n");
     return -EOPNOTSUPP;
 }
 /* ── Implement: af_unix_accept ────────────────────────── */
-int af_unix_accept(void *sk, void *addr, void *addr_len)
+static int af_unix_accept(void *sk, void *addr, void *addr_len)
 {
     (void)sk; (void)addr; (void)addr_len;
     kprintf("[af_unix] af_unix_accept: use socket layer accept\n");

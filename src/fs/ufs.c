@@ -176,7 +176,7 @@ static __attribute__((unused)) int ufs_read_inode(struct ufs_priv *up,
      * For UFS1, the CG block number = cgblkno + cg_num * (fragments_per_group / fragments_per_block).
      * We read the CG descriptor from the block device. */
     uint32_t cg_block_bytes = cg_num * bytes_per_group;
-    uint32_t cg_block_num = up->cgblkno + (cg_block_bytes / up->block_size);
+    uint32_t cg_block_num = up->block_size ? up->cgblkno + (cg_block_bytes / up->block_size) : 0;
 
     uint8_t cg_buf[512];
     if (blockdev_read_sectors(up->dev_id, cg_block_num, 1, cg_buf) != 0)
@@ -197,6 +197,7 @@ static __attribute__((unused)) int ufs_read_inode(struct ufs_priv *up,
      * the bitmaps.  In UFS1, the inode blocks are located at a fixed position after the
      * CG header and bitmaps.  We compute directly: */
     uint32_t inodes_per_block = up->block_size / sizeof(struct ufs_inode);
+    if (inodes_per_block == 0) return -1;
     uint32_t inode_block_offset = inode_idx / inodes_per_block;
     uint32_t inode_block_idx   = inode_idx % inodes_per_block;
     uint32_t inode_block_num   = cg_block_num + 1 + inode_block_offset;
@@ -225,6 +226,7 @@ static __attribute__((unused)) uint32_t ufs_bmap(struct ufs_priv *up,
 
     /* Singly indirect (ui_ib[0]) */
     uint32_t per_block = up->block_size / 4;  /* block pointers per indirect block */
+    if (per_block == 0) return 0;
     uint32_t idx = logical_block - UFS_NDADDR;
     if (idx < per_block) {
         uint8_t buf[512];

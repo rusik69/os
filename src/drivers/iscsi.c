@@ -147,7 +147,7 @@ static int iscsi_login(struct iscsi_session *sess)
     memset(&bhs, 0, sizeof(bhs));
     bhs.opcode = ISCSI_OP_LOGIN | ISCSI_OP_FINAL;
     /* Transition to FullFeaturePhase: TSG=Full, CSG=OperationalNegotiation, T=1 */
-    bhs.flags = (1 << 6) |                             /* T bit (transit) */
+    bhs.flags = (1U << 6) |                             /* T bit (transit) */
                 (ISCSI_LOGIN_STAGE_OP_NEGOTIATION << 2) | /* CSG */
                 ISCSI_LOGIN_STAGE_FULL_FEATURE_PHASE;     /* NSG (lower 2 bits) */
 

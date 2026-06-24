@@ -455,7 +455,7 @@ static void raid0_stripe_map(struct raid0_array *arr, uint64_t lba,
 {
     uint32_t chunk = arr->chunk_size;
     int ndisks = arr->num_disks;
-    
+
     /* Logical chunk index */
     uint64_t chunk_idx = lba / chunk;
     /* Which disk owns this chunk */
@@ -1399,7 +1399,7 @@ static void raid6_q_syndrome(uint8_t *q, const uint8_t *data, int len, int index
 {
     /* q ^= gf_mul(data, 2^index) */
     for (int i = 0; i < len; i++) {
-        q[i] ^= gf_mul(data[i], (uint8_t)(1 << (index & 7)));
+        q[i] ^= gf_mul(data[i], (uint8_t)(1U << (index & 7)));
     }
 }
 
@@ -1634,7 +1634,7 @@ static int raid6_submit_fn(struct blk_request *req)
             /* new Q = old_q ^ gf_mul(delta, 2^data_disk) */
             memcpy(delta_q, old_q, 512);
             for (int i = 0; i < 512; i++)
-                delta_q[i] ^= gf_mul(delta[i], (uint8_t)(1 << (data_disk & 7)));
+                delta_q[i] ^= gf_mul(delta[i], (uint8_t)(1U << (data_disk & 7)));
 
             /* Write new data, new P, new Q */
             r = member_io(local_array.disks[data_disk].dev_id, disk_lba_val, 1,
@@ -1836,6 +1836,8 @@ void md_member_failed(int array_id, int dev_id, int level)
             }
             spinlock_irqsave_release(&g_raid_lock, irq_flags);
         }
+        break;
+    default:
         break;
     }
 }

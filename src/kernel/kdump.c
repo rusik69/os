@@ -673,20 +673,20 @@ const struct kdump_header *kdump_get_header(void)
 }
 
 /* ── Stub: kdump_load ─────────────────────────────── */
-int kdump_load(const char *path)
+static int kdump_load(const char *path)
 {
     (void)path;
     kprintf("[kdump] kdump_load: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kdump_unload ─────────────────────────────── */
-int kdump_unload(void)
+static int kdump_unload(void)
 {
     kprintf("[kdump] kdump_unload: not yet implemented\n");
     return 0;
 }
 /* ── Stub: kdump_read ─────────────────────────────── */
-int kdump_read(void *buf, size_t count, uint64_t offset)
+static int kdump_read(void *buf, size_t count, uint64_t offset)
 {
     (void)buf;
     (void)count;

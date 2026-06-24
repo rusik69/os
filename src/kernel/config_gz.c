@@ -65,7 +65,7 @@ void config_gz_init(void)
 }
 
 /* ── Stub: config_gz_decompress ─────────────────────────────── */
-int config_gz_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
+static int config_gz_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     (void)src;
     (void)slen;
@@ -75,7 +75,7 @@ int config_gz_decompress(const void *src, size_t slen, void *dst, size_t *dlen)
     return 0;
 }
 /* ── Stub: config_gz_compress ─────────────────────────────── */
-int config_gz_compress(const void *src, size_t slen, void *dst, size_t *dlen)
+static int config_gz_compress(const void *src, size_t slen, void *dst, size_t *dlen)
 {
     (void)src;
     (void)slen;

@@ -35,17 +35,17 @@ uint32_t crc32(uint32_t crc, const void *buf, uint32_t len) {
         crc = crc32_table[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
     return ~crc;
 }
-uint32_t crc32_no_comp(uint32_t crc, const void *buf, uint32_t len) {
+static uint32_t crc32_no_comp(uint32_t crc, const void *buf, uint32_t len) {
     return crc32(crc, buf, len);
 }
 
 /* ── crc32_le ─────────────────────────────── */
-uint32_t crc32_le(uint32_t crc, const uint8_t *data, size_t len)
+static uint32_t crc32_le(uint32_t crc, const uint8_t *data, size_t len)
 {
     return crc32(crc, data, (uint32_t)len);
 }
 /* ── crc32_be ─────────────────────────────── */
-uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
+static uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
 {
     /* CRC32_BE uses bit-reversed polynomial 0x04C11DB7 */
     static uint32_t crc32_be_table[256];
@@ -65,7 +65,7 @@ uint32_t crc32_be(uint32_t crc, const uint8_t *data, size_t len)
     return ~crc;
 }
 /* ── crc32c ─────────────────────────────── */
-uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
+static uint32_t crc32c(uint32_t crc, const uint8_t *data, size_t len)
 {
     /* CRC32C uses polynomial 0x82F63B78 (Castagnoli) */
     static uint32_t crc32c_table[256];

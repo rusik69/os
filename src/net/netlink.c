@@ -56,7 +56,7 @@ static int netlink_handle_kernel(int protocol, const void *buf, int len,
 /* Convert an fd to a slot index */
 static int netlink_fd_to_slot(int fd) {
     int slot = fd - NETLINK_FD_BASE;
-    if (slot < 0 || slot >= NETLINK_MAX_SOCKETS) return -1;
+    if (slot < 0 || slot >= NETLINK_MAX_SOCKETS) return -EINVAL;
     return slot;
 }
 
@@ -69,7 +69,7 @@ static int netlink_alloc_slot(void) {
             return i;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 /* Find a socket by port ID and protocol (caller must NOT hold lock) */
@@ -114,14 +114,14 @@ void af_netlink_init(void) {
 /* ── Socket lifecycle ──────────────────────────────────────────────── */
 
 int netlink_create(int fd, int protocol) {
-    if (!netlink_initialized) return -1;
-    if (protocol < 0 || protocol > 255) return -1;
+    if (!netlink_initialized) return -EINVAL;
+    if (protocol < 0 || protocol > 255) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
     int slot = netlink_alloc_slot();
     if (slot < 0) {
         spinlock_release(&netlink_lock);
-        return -1;
+        return -EINVAL;
     }
 
     struct netlink_sock *nl = &netlink_table[slot];
@@ -136,7 +136,7 @@ int netlink_create(int fd, int protocol) {
     if (!nl->recv_buf) {
         nl->used = 0;
         spinlock_release(&netlink_lock);
-        return -1;
+        return -ENOMEM;
     }
     memset(nl->recv_buf, 0, NETLINK_RECV_BUF);
     nl->recv_size = NETLINK_RECV_BUF;
@@ -148,22 +148,22 @@ int netlink_create(int fd, int protocol) {
 }
 
 int netlink_bind(int fd, const struct sockaddr_nl *addr) {
-    if (!netlink_initialized || !addr) return -1;
+    if (!netlink_initialized || !addr) return -EINVAL;
     int slot = netlink_fd_to_slot(fd);
-    if (slot < 0) return -1;
+    if (slot < 0) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
     struct netlink_sock *nl = &netlink_table[slot];
     if (!nl->used) {
         spinlock_release(&netlink_lock);
-        return -1;
+        return -EBUSY;
     }
 
     /* If already bound, unbind first */
     if (nl->bound) {
         spinlock_release(&netlink_lock);
-        return -1; /* EINVAL: already bound */
+        return -EBUSY; /* EINVAL: already bound */
     }
 
     uint32_t new_pid = addr->nl_pid;
@@ -171,7 +171,7 @@ int netlink_bind(int fd, const struct sockaddr_nl *addr) {
     /* Validate groups mask */
     if (addr->nl_groups & ~((1ULL << NETLINK_MAX_GROUPS) - 1)) {
         spinlock_release(&netlink_lock);
-        return -1; /* EINVAL */
+        return -EINVAL; /* EINVAL */
     }
 
     /* If port ID is 0, auto-assign one based on current process PID */
@@ -191,7 +191,7 @@ int netlink_bind(int fd, const struct sockaddr_nl *addr) {
             netlink_table[i].bound &&
             netlink_table[i].portid == new_pid) {
             spinlock_release(&netlink_lock);
-            return -1; /* EADDRINUSE */
+            return -EINVAL; /* EADDRINUSE */
         }
     }
 
@@ -204,22 +204,22 @@ int netlink_bind(int fd, const struct sockaddr_nl *addr) {
 }
 
 int netlink_send(int fd, const void *buf, int len) {
-    if (!netlink_initialized || !buf || len < (int)sizeof(struct nlmsghdr)) return -1;
+    if (!netlink_initialized || !buf || len < (int)sizeof(struct nlmsghdr)) return -EINVAL;
     int slot = netlink_fd_to_slot(fd);
-    if (slot < 0) return -1;
+    if (slot < 0) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
     struct netlink_sock *nl = &netlink_table[slot];
     if (!nl->used || !nl->bound) {
         spinlock_release(&netlink_lock);
-        return -1;
+        return -EINVAL;
     }
 
     const struct nlmsghdr *hdr = (const struct nlmsghdr *)buf;
     if ((unsigned int)len < hdr->nlmsg_len || hdr->nlmsg_len < sizeof(struct nlmsghdr)) {
         spinlock_release(&netlink_lock);
-        return -1; /* EINVAL */
+        return -EINVAL; /* EINVAL */
     }
 
     uint32_t dst_portid = hdr->nlmsg_pid; /* Destination port ID (from header) */
@@ -242,26 +242,26 @@ int netlink_send(int fd, const void *buf, int len) {
         return len;
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 int netlink_recv(int fd, void *buf, int max_len) {
-    if (!netlink_initialized || !buf || max_len <= 0) return -1;
+    if (!netlink_initialized || !buf || max_len <= 0) return -EINVAL;
     int slot = netlink_fd_to_slot(fd);
-    if (slot < 0) return -1;
+    if (slot < 0) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
     struct netlink_sock *nl = &netlink_table[slot];
     if (!nl->used || !nl->bound) {
         spinlock_release(&netlink_lock);
-        return -1;
+        return -EINVAL;
     }
 
     /* No data available */
     if (nl->recv_used <= 0) {
         spinlock_release(&netlink_lock);
-        return -1; /* EAGAIN */
+        return -EAGAIN; /* EAGAIN */
     }
 
     /* Copy out as much as we can */
@@ -315,12 +315,12 @@ void netlink_close(int fd) {
  * Returns 0 on success, -1 if no matching socket or buffer full. */
 static int netlink_deliver_internal(struct netlink_sock *nl,
                                      const void *data, int len) {
-    if (!nl || !nl->used) return -1;
+    if (!nl || !nl->used) return -ENOSPC;
 
     /* Check if message fits in the buffer */
     if (nl->recv_used + len > nl->recv_size) {
         nl->msgs_dropped++;
-        return -1; /* ENOSPC */
+        return -EINVAL; /* ENOSPC */
     }
 
     memcpy((uint8_t *)nl->recv_buf + nl->recv_used, data, len);
@@ -371,14 +371,14 @@ static int netlink_handle_kernel(int protocol, const void *buf, int len,
         return 0;
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Message delivery ──────────────────────────────────────────────── */
 
 int netlink_unicast(int protocol, uint32_t dst_portid,
                      const void *data, int len, uint32_t src_pid) {
-    if (!netlink_initialized || !data || len <= 0) return -1;
+    if (!netlink_initialized || !data || len <= 0) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
@@ -393,7 +393,7 @@ int netlink_unicast(int protocol, uint32_t dst_portid,
         uint8_t *copy_buf = (uint8_t *)kmalloc((size_t)len);
         if (!copy_buf) {
             spinlock_release(&netlink_lock);
-            return -1;
+            return -ENOMEM;
         }
         memcpy(copy_buf, data, (size_t)len);
 
@@ -409,12 +409,12 @@ int netlink_unicast(int protocol, uint32_t dst_portid,
     }
 
     spinlock_release(&netlink_lock);
-    return -1;
+    return -EINVAL;
 }
 
 int netlink_broadcast(int protocol, uint32_t group_mask,
                        const void *data, int len, uint32_t src_pid) {
-    if (!netlink_initialized || !data || len <= 0 || group_mask == 0) return -1;
+    if (!netlink_initialized || !data || len <= 0 || group_mask == 0) return -EINVAL;
 
     int deliveries = 0;
 
@@ -447,7 +447,7 @@ int netlink_broadcast(int protocol, uint32_t group_mask,
 /* ── Generic netlink family management ─────────────────────────────── */
 
 int genl_register_family(const char *name, uint8_t version, uint32_t maxattr) {
-    if (!netlink_initialized || !name) return -1;
+    if (!netlink_initialized || !name) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
@@ -456,7 +456,7 @@ int genl_register_family(const char *name, uint8_t version, uint32_t maxattr) {
         if (genl_families[i].registered &&
             strcmp(genl_families[i].name, name) == 0) {
             spinlock_release(&netlink_lock);
-            return -1; /* EEXIST */
+            return -EINVAL; /* EEXIST */
         }
     }
 
@@ -471,7 +471,7 @@ int genl_register_family(const char *name, uint8_t version, uint32_t maxattr) {
 
     if (slot < 0) {
         spinlock_release(&netlink_lock);
-        return -1; /* ENOSPC */
+        return -EINVAL; /* ENOSPC */
     }
 
     int family_id = next_genl_family_id++;
@@ -490,7 +490,7 @@ int genl_register_family(const char *name, uint8_t version, uint32_t maxattr) {
 }
 
 int genl_unregister_family(int family_id) {
-    if (!netlink_initialized) return -1;
+    if (!netlink_initialized) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
@@ -503,11 +503,11 @@ int genl_unregister_family(int family_id) {
     }
 
     spinlock_release(&netlink_lock);
-    return -1;
+    return -EINVAL;
 }
 
 int genl_find_family(const char *name) {
-    if (!netlink_initialized || !name) return -1;
+    if (!netlink_initialized || !name) return -EINVAL;
 
     spinlock_acquire(&netlink_lock);
 
@@ -521,13 +521,13 @@ int genl_find_family(const char *name) {
     }
 
     spinlock_release(&netlink_lock);
-    return -1;
+    return -EINVAL;
 }
 
 /* Handle a generic netlink controller command (family discovery) */
 static int genl_handle_ctrl(const void *buf, int len, uint32_t src_pid) {
     const struct nlmsghdr *nlh = (const struct nlmsghdr *)buf;
-    if ((unsigned int)len < sizeof(struct nlmsghdr) + GENL_HDRLEN) return -1;
+    if ((unsigned int)len < sizeof(struct nlmsghdr) + GENL_HDRLEN) return -EINVAL;
 
     const struct genlmsghdr *genlh =
         (const struct genlmsghdr *)((const char *)nlh + NLMSG_HDRLEN);
@@ -627,7 +627,7 @@ static int genl_handle_ctrl(const void *buf, int len, uint32_t src_pid) {
     }
 
     default:
-        return -1;
+        return -EINVAL;
     }
 }
 
@@ -641,8 +641,8 @@ int netlink_is_valid_fd(int fd) {
 
 int netlink_get_protocol(int fd) {
     int slot = netlink_fd_to_slot(fd);
-    if (slot < 0) return -1;
-    if (!netlink_table[slot].used) return -1;
+    if (slot < 0) return -EINVAL;
+    if (!netlink_table[slot].used) return -EINVAL;
     return netlink_table[slot].protocol;
 }
 #include "module.h"

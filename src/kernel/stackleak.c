@@ -18,8 +18,8 @@
 /* ── Configuration ─────────────────────────────────────────────────── */
 
 #define STACKLEAK_POISON_VALUE  0xDEADBEEFDEADBEEFull
-#define STACKLEAK_STACK_ORDER   2       /* size = (1 << order) * 4KB */
-#define STACKLEAK_STACK_SIZE    (4096 * (1 << STACKLEAK_STACK_ORDER))
+#define STACKLEAK_STACK_ORDER   2       /* size = (1U << order) * 4KB */
+#define STACKLEAK_STACK_SIZE    (4096 * (1U << STACKLEAK_STACK_ORDER))
 
 /* ── State ─────────────────────────────────────────────────────────── */
 

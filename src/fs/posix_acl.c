@@ -227,6 +227,8 @@ int posix_acl_permission(const char *path, uint16_t uid, uint16_t gid,
             case ACL_OTHER:
                 other_perm = acl.entries[i].perm;
                 break;
+            default:
+                return -EINVAL;
         }
     }
 

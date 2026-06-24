@@ -471,6 +471,8 @@ int main(int argc, char *argv[])
             if (test_brk_stress() != 0) test_errors++;
             brk_count++;
             break;
+        default:
+            break;
         }
 
         /* Progress report every ~5 seconds */

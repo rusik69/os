@@ -73,7 +73,7 @@ int nx_enforce_init(void) {
                      : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx)
                      : "a"(0x80000001));
 
-    if (!(rdx & (1 << 20))) {
+    if (!(rdx & (1U << 20))) {
         kprintf("[nx] NX (No-Execute) not supported by CPU — skipping\n");
         return -1;
     }

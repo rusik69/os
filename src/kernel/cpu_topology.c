@@ -7,8 +7,8 @@
  * CPUID leaf 0xB (Intel x2APIC topology enumeration).
  *
  * We probe levels 0 (SMT/thread) and 1 (core) to derive:
- *   thread_id = x2APIC ID & ((1 << level0_width) - 1)
- *   core_id   = (x2APIC ID >> level0_width) & ((1 << level1_width) - 1)
+ *   thread_id = x2APIC ID & ((1U << level0_width) - 1)
+ *   core_id   = (x2APIC ID >> level0_width) & ((1U << level1_width) - 1)
  *   package_id = x2APIC ID >> (level0_width + level1_width)
  */
 
@@ -48,9 +48,9 @@ struct cpu_topology cpu_topology_get(void)
      *   package_id   = bits above
      */
     int shift = level0_width;
-    int core_mask = (1 << level1_width) - 1;
+    int core_mask = (1U << level1_width) - 1;
 
-    topo.thread_id   = x2apic_id & ((1 << level0_width) - 1);
+    topo.thread_id   = x2apic_id & ((1U << level0_width) - 1);
     topo.core_id     = (x2apic_id >> shift) & core_mask;
     topo.package_id  = x2apic_id >> (level0_width + level1_width);
 

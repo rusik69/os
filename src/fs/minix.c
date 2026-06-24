@@ -151,6 +151,7 @@ static __attribute__((unused)) int minix_zone_to_block(struct minix_priv *mp,
 {
     uint8_t buf[1024];
     uint32_t zones_per_block = mp->zone_size / 2; /* 16-bit zone numbers */
+    if (zones_per_block == 0) return -1;
 
     if (zone_num < (uint32_t)num_direct) {
         *block = zones[zone_num];

@@ -81,7 +81,7 @@ static int nmi_pmc_setup(void) {
     }
 
     /* Mask the PC LVT entry while configuring */
-    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1 << 16));
+    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1U << 16));
 
     /* Write a full memory barrier so MSR writes are visible */
     __asm__ volatile("mfence" ::: "memory");
@@ -114,7 +114,7 @@ static void nmi_pmc_disable(void) {
     write_msr(NMI_MSR_PERFEVTSEL0, 0);
 
     /* Mask the PC LVT entry */
-    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1 << 16));
+    apic_write(LAPIC_LVT_PC, LVT_DELIVERY_NMI | (1U << 16));
     __asm__ volatile("mfence" ::: "memory");
 
     nmi_pmc_available = 0;

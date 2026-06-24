@@ -18,8 +18,8 @@
 #define KPROBES_MAX 64
 
 /* Flags for struct kprobe */
-#define KPROBE_FLAG_ACTIVE   (1 << 0)  /* kprobe is registered */
-#define KPROBE_FLAG_GONE     (1 << 1)  /* kprobe has been hit and removed */
+#define KPROBE_FLAG_ACTIVE   (1U << 0)  /* kprobe is registered */
+#define KPROBE_FLAG_GONE     (1U << 1)  /* kprobe has been hit and removed */
 
 /* Pre-handler return values */
 enum kprobe_action {

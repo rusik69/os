@@ -55,7 +55,7 @@ int hugetlb_init(uint32_t count)
      * number of entries is modest — at max 1024 entries × 8 bytes = 8 KB. */
     uint64_t *frames = (uint64_t *)kmalloc(count * sizeof(uint64_t));
     if (!frames)
-        return -1; /* ENOMEM */
+        return -ENOMEM; /* ENOMEM */
 
     /* Pre-allocate each huge page as 512 consecutive 4KB frames.
      * We allocate eagerly at init time so mmap(MAP_HUGETLB) can fail
@@ -73,7 +73,7 @@ int hugetlb_init(uint32_t count)
                 pmm_free_frames_contiguous(frames[j], HUGETLB_PAGE_NFRAMES);
             }
             kfree(frames);
-            return -1; /* ENOMEM */
+            return -ENOMEM; /* ENOMEM */
         }
 
         /* Verify 2MB alignment — pmm_alloc_frames should guarantee

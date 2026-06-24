@@ -278,13 +278,13 @@ int ksm_is_enabled(void)
 int ksm_register_region(uint64_t addr, size_t size, int numa_node)
 {
     if (size == 0 || (size & 0xFFF) != 0)
-        return -1;  /* Must be page-aligned */
+        return -EINVAL;  /* Must be page-aligned */
 
     uint64_t phys = VIRT_TO_PHYS(addr);
     int pages_needed = (int)(size / PAGE_SIZE);
 
     if (ksm_page_count + pages_needed > KSM_MAX_PAGES)
-        return -1;  /* Full */
+        return -ENOSPC;  /* Full */
 
     for (int i = 0; i < pages_needed; i++) {
         struct ksm_page *kp = &ksm_pages[ksm_page_count++];
@@ -323,7 +323,7 @@ int ksm_unregister_region(uint64_t addr)
             return 0;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 /* ── Main scan cycle — called periodically from a kernel thread or
@@ -381,7 +381,7 @@ int ksm_get_scan_batch(void)
 module_init(ksm_init);
 
 /* ── Stub: ksm_scan ─────────────────────────────────────────── */
-int ksm_scan(void)
+static int ksm_scan(void)
 {
     kprintf("[ksm] ksm_scan: starting scan cycle\n");
     ksm_scan_cycle();
@@ -389,7 +389,7 @@ int ksm_scan(void)
 }
 
 /* ── Stub: ksm_do_scan ──────────────────────────────────────── */
-int ksm_do_scan(int nr_to_scan)
+static int ksm_do_scan(int nr_to_scan)
 {
     if (nr_to_scan <= 0) {
         kprintf("[ksm] ksm_do_scan: invalid count %d\n", nr_to_scan);
@@ -402,7 +402,7 @@ int ksm_do_scan(int nr_to_scan)
 }
 
 /* ── Stub: ksm_merge_page ───────────────────────────────────── */
-int ksm_merge_page(uint64_t phys_addr)
+static int ksm_merge_page(uint64_t phys_addr)
 {
     if (phys_addr == 0 || (phys_addr & 0xFFF) != 0) {
         kprintf("[ksm] ksm_merge_page: invalid phys 0x%llx\n", (unsigned long long)phys_addr);
@@ -413,7 +413,7 @@ int ksm_merge_page(uint64_t phys_addr)
 }
 
 /* ── Stub: ksm_unmerge_page ─────────────────────────────────── */
-int ksm_unmerge_page(uint64_t phys_addr)
+static int ksm_unmerge_page(uint64_t phys_addr)
 {
     if (phys_addr == 0 || (phys_addr & 0xFFF) != 0) {
         kprintf("[ksm] ksm_unmerge_page: invalid address 0x%llx\n", (unsigned long long)phys_addr);
@@ -424,7 +424,7 @@ int ksm_unmerge_page(uint64_t phys_addr)
 }
 
 /* ── Stub: ksm_check_stable_tree ────────────────────────────── */
-int ksm_check_stable_tree(void)
+static int ksm_check_stable_tree(void)
 {
     kprintf("[ksm] ksm_check_stable_tree: checking %d tracked pages\n", ksm_get_page_count());
     ksm_scan_cycle();

@@ -78,7 +78,7 @@ static void free_pid(uint32_t pid) {
  * Returns 0 on success, -1 on failure (all frames freed on error). */
 static int alloc_guarded_kernel_stack(struct process *proc) {
     uint64_t *phys = pmm_alloc_frames(KERNEL_STACK_TOTAL_PAGES);
-    if (!phys) return -1;
+    if (!phys) return -ENOMEM;
 
     uint64_t guard_phys  = (uint64_t)phys;
     uint64_t stack_phys  = guard_phys + PAGE_SIZE;
@@ -90,7 +90,7 @@ static int alloc_guarded_kernel_stack(struct process *proc) {
     if (vmm_map_page(guard_vma, guard_phys, VMM_FLAG_WRITE) < 0) {
         for (size_t i = 0; i < KERNEL_STACK_TOTAL_PAGES; i++)
             pmm_free_frame(guard_phys + i * PAGE_SIZE);
-        return -1;
+        return -EINVAL;
     }
     vmm_unmap_page(guard_vma);
 
@@ -225,7 +225,7 @@ static void process_caps_apply_user_trusted(struct process *proc) {
 }
 
 int process_set_cap_profile(struct process *proc, enum process_cap_profile profile) {
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     switch (profile) {
         case PROCESS_CAP_PROFILE_NONE:
@@ -238,7 +238,7 @@ int process_set_cap_profile(struct process *proc, enum process_cap_profile profi
             process_caps_apply_user_trusted(proc);
             break;
         default:
-            return -1;
+            return -EINVAL;
     }
 
     proc->cap_profile = (uint8_t)profile;
@@ -812,20 +812,20 @@ int securebits_get(struct process *proc) {
 }
 
 int securebits_set(struct process *proc, uint8_t bits) {
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     /* Only allow setting bits that aren't locked */
     if (proc->securebits & SECBIT_LOCKED_MASK)
-        return -1;
+        return -EINVAL;
     /* Can only set bits that are in the allowed or locked mask */
     if (bits & ~(SECBIT_ALLOWED_MASK | SECBIT_LOCKED_MASK))
-        return -1;
+        return -EINVAL;
     /* Setting a locked bit requires the corresponding non-locked bit */
     if ((bits & SECBIT_KEEP_CAPS_LOCKED) && !(bits & SECBIT_KEEP_CAPS))
-        return -1;
+        return -EINVAL;
     if ((bits & SECBIT_NO_SETUID_FIXUP_LOCKED) && !(bits & SECBIT_NO_SETUID_FIXUP))
-        return -1;
+        return -EINVAL;
     if ((bits & SECBIT_NOROOT_LOCKED) && !(bits & SECBIT_NOROOT))
-        return -1;
+        return -EINVAL;
     proc->securebits = bits;
     return 0;
 }
@@ -857,7 +857,7 @@ void process_exec_caps(void) {
 int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
                      uint32_t *euid, uint32_t *egid) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
     if (uid)  *uid  = p->uid;
     if (gid)  *gid  = p->gid;
     if (euid) *euid = p->euid;
@@ -868,7 +868,7 @@ int process_get_cred(uint32_t pid, uint32_t *uid, uint32_t *gid,
 int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
                      uint32_t euid, uint32_t egid) {
     struct process *p = process_get_by_pid(pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -EINVAL;
     p->uid  = uid;
     p->gid  = gid;
     p->euid = euid;
@@ -879,13 +879,13 @@ int process_set_cred(uint32_t pid, uint32_t uid, uint32_t gid,
 /* ── Dumpable flag ──────────────────────────────────────────────── */
 
 int process_get_dumpable(struct process *proc) {
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
     return proc->dumpable;
 }
 
 int process_set_dumpable(struct process *proc, int val) {
-    if (!proc) return -1;
-    if (val != 0 && val != 1) return -1;
+    if (!proc) return -EINVAL;
+    if (val != 0 && val != 1) return -EINVAL;
     proc->dumpable = val;
     return 0;
 }
@@ -1047,7 +1047,7 @@ int process_fork(void) {
             free_guarded_kernel_stack(child);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
-            return -1;
+            return -EROFS;
         }
         /* Flush parent TLB: COW marking made parent pages read-only in the page tables */
         vmm_switch_pml4(parent->pml4);
@@ -1066,7 +1066,7 @@ int process_fork(void) {
         free_guarded_kernel_stack(child);
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
-        return -1;
+        return -EINVAL;
     }
     __asm__ volatile("sti");
     return (int)child->pid;
@@ -1103,7 +1103,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             break;
         }
     }
-    if (!child) { __asm__ volatile("sti"); return -1; }
+    if (!child) { __asm__ volatile("sti"); return -EINVAL; }
 
     child->state = PROCESS_UNUSED;
     *child = *parent;
@@ -1123,7 +1123,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
-            return -1;
+            return -EINVAL;
         }
         child->pid_ns = new_ns;
         child->ns_pid = pid_ns_alloc_pid(new_ns);
@@ -1153,7 +1153,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
-            return -1;
+            return -EINVAL;
         }
         /* Release the inherited reference (copied by *child = *parent) */
         if (child->cgroup_ns)
@@ -1174,7 +1174,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
-            return -1;
+            return -EINVAL;
         }
         /* Release the inherited reference (copied by *child = *parent) */
         if (child->mnt_ns)
@@ -1195,7 +1195,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
             free_pid(child->pid);
             child->state = PROCESS_UNUSED;
             __asm__ volatile("sti");
-            return -1;
+            return -EINVAL;
         }
         child->user_ns = new_ns;
         /* Inside the new user namespace, the child is initially mapped
@@ -1239,7 +1239,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         }
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
-        return -1;
+        return -EINVAL;
     }
 
     /* Handle CLONE_VM — share address space */
@@ -1258,7 +1258,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
                 free_guarded_kernel_stack(child);
                 child->state = PROCESS_UNUSED;
                 __asm__ volatile("sti");
-                return -1;
+                return -EINVAL;
             }
             vmm_switch_pml4(parent->pml4);
         }
@@ -1313,7 +1313,7 @@ int process_clone(struct process *parent, uint64_t flags, void *child_stack,
         free_guarded_kernel_stack(child);
         child->state = PROCESS_UNUSED;
         __asm__ volatile("sti");
-        return -1;
+        return -EINVAL;
     }
     __asm__ volatile("sti");
     return (int)child->pid;
@@ -1377,7 +1377,7 @@ int process_can_see(const struct process *caller, const struct process *target) 
  * Blocks (does NOT spin) until the child exits. */
 int process_waitpid(uint32_t pid, int *status) {
     struct process *child = process_get_by_pid(pid);
-    if (!child) return -1;
+    if (!child) return -ENOENT;
 
     if (child->state != PROCESS_ZOMBIE && child->state != PROCESS_UNUSED) {
         /* Block until child's process_exit_code wakes us */
@@ -1389,7 +1389,7 @@ int process_waitpid(uint32_t pid, int *status) {
          * by another concurrent waitpid (race). */
         current_process->wait_for_pid = 0;
         child = process_get_by_pid(pid);
-        if (!child || child->state == PROCESS_UNUSED) return -1;
+        if (!child || child->state == PROCESS_UNUSED) return -EINVAL;
     }
 
     if (status) *status = child->exit_code;
@@ -1503,7 +1503,7 @@ struct process *kthread_create_on_cpu(void (*entry)(void *arg), void *arg,
 
     proc->kthread_arg = arg;
     if (cpu_id >= 0 && cpu_id < SMP_MAX_CPUS)
-        proc->cpu_affinity = (uint8_t)(1 << cpu_id);
+        proc->cpu_affinity = (uint8_t)(1U << cpu_id);
     else
         proc->cpu_affinity = 0; /* any CPU */
 
@@ -1575,7 +1575,7 @@ void thread_info_init(void) {
  * Returns the thread ID (PID) on success, or -1 on error.
  */
 int process_thread_create(void *(*start_routine)(void *), void *arg) {
-    if (!start_routine) return -1;
+    if (!start_routine) return -EINVAL;
     if (!g_thread_info_inited) thread_info_init();
 
     /* Find a free thread info slot */
@@ -1586,12 +1586,12 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
             break;
         }
     }
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
 
     /* Allocate and fill the start arguments */
     struct thread_start_args *tsa = (struct thread_start_args *)
         kmalloc(sizeof(struct thread_start_args));
-    if (!tsa) return -1;
+    if (!tsa) return -ENOMEM;
     tsa->start_routine = start_routine;
     tsa->arg           = arg;
     tsa->info_idx      = idx;
@@ -1607,7 +1607,7 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
     if (!thread) {
         kfree(tsa);
         g_thread_info[idx].used = 0;
-        return -1;
+        return -EINVAL;
     }
 
     /* Share thread group ID with parent */
@@ -1625,7 +1625,7 @@ int process_thread_create(void *(*start_routine)(void *), void *arg) {
  * Returns 0 on success, -1 on error.
  */
 int process_thread_join(int thread_pid, void **retval) {
-    if (thread_pid <= 0) return -1;
+    if (thread_pid <= 0) return -EINVAL;
 
     /* Find the thread info slot */
     int idx = -1;
@@ -1635,7 +1635,7 @@ int process_thread_join(int thread_pid, void **retval) {
             break;
         }
     }
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
 
     /* Wait for the thread to finish by blocking on its PID.
      * We leverage the existing scheduler wake mechanism: when the
@@ -1708,10 +1708,10 @@ int process_is_kthread(struct process *proc) {
 
 int process_set_user_process(uint64_t entry, uint64_t stack, uint64_t *pml4) {
     struct process *proc = process_get_current();
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     /* Can only convert kernel threads to user processes */
-    if (proc->is_user) return -1;  /* already a user process */
+    if (proc->is_user) return -EINVAL;  /* already a user process */
 
     proc->is_user = 1;
     proc->user_entry = entry;

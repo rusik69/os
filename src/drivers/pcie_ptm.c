@@ -17,12 +17,12 @@
 #define PCI_PTM_DIALOG  0x08
 
 /* PTM capability bits */
-#define PTM_CAP_REQ       (1 << 0)
-#define PCI_PTM_CAP_ROOT  (1 << 1)
+#define PTM_CAP_REQ       (1U << 0)
+#define PCI_PTM_CAP_ROOT  (1U << 1)
 
 /* PTM control bits */
-#define PTM_CTL_ENABLE    (1 << 0)
-#define PTM_CTL_ROOT      (1 << 1)
+#define PTM_CTL_ENABLE    (1U << 0)
+#define PTM_CTL_ROOT      (1U << 1)
 
 /* PTM dialog */
 #define PTM_DIALOG_LOCAL   0
@@ -43,7 +43,7 @@ int ptm_enable(int bus, int dev, int func)
 {
     /* Walk standard PCI capability list to find PTM (cap_id=0x1F) */
     uint16_t status = (uint16_t)(pci_read(bus, dev, func, 0x06) & 0xFFFF);
-    if (!(status & (1 << 4)))
+    if (!(status & (1U << 4)))
         return -ENODEV;
     uint8_t cap_ptr = (uint8_t)(pci_read(bus, dev, func, 0x34) & 0xFF);
     uint16_t ptm_cap = 0;

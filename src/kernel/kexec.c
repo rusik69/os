@@ -379,13 +379,13 @@ static void kexec_mask_apic_lvts(void)
 
     for (size_t i = 0; i < ARRAY_SIZE(lvt_entries); i++) {
         uint32_t val = apic_read(lvt_entries[i]);
-        val |= (1 << 16);       /* set mask bit */
+        val |= (1U << 16);       /* set mask bit */
         apic_write(lvt_entries[i], val);
     }
 
     /* Also mask the spurious-interrupt vector register (bit 8 = mask) */
     uint32_t svr = apic_read(LAPIC_SVR);
-    svr &= ~(1 << 8);          /* clear enable bit (disable the APIC entirely) */
+    svr &= ~(1U << 8);          /* clear enable bit (disable the APIC entirely) */
     apic_write(LAPIC_SVR, svr);
 }
 

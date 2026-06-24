@@ -23,11 +23,11 @@
 /* ── Cramfs on-disk structures ─────────────────────────────────── */
 
 #define CRAMFS_MAGIC        0x28CD3D45
-#define CRAMFS_FLAG_FSID_VERSION_2  (1 << 1)
-#define CRAMFS_FLAG_SORTED_DIRS     (1 << 2)
-#define CRAMFS_FLAG_HOLES           (1 << 3)
-#define CRAMFS_FLAG_WRONG_SIGNATURE (1 << 4)
-#define CRAMFS_FLAG_SHIFTED_ROOT_OFFSET (1 << 5)
+#define CRAMFS_FLAG_FSID_VERSION_2  (1U << 1)
+#define CRAMFS_FLAG_SORTED_DIRS     (1U << 2)
+#define CRAMFS_FLAG_HOLES           (1U << 3)
+#define CRAMFS_FLAG_WRONG_SIGNATURE (1U << 4)
+#define CRAMFS_FLAG_SHIFTED_ROOT_OFFSET (1U << 5)
 #define CRAMFS_MAX_PATHLEN  256
 
 #pragma pack(push, 1)

@@ -81,6 +81,8 @@ static int vfs_acl_check(struct posix_acl *acl, uint16_t uid, uint16_t gid, char
             case ACL_OTHER:
                 other_perm = e->perm;
                 break;
+            default:
+                break;
         }
     }
 

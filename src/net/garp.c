@@ -329,6 +329,8 @@ int garp_receive_pdu(const uint8_t *data, uint16_t len)
                     p->join_timer = 0;
                     p->leave_timer = 0;
                     break;
+                default:
+                    break;
                 }
             }
         }

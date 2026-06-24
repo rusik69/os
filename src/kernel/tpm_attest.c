@@ -190,7 +190,7 @@ int tpm_attest_quote(uint32_t pcr_index, const uint8_t *nonce,
     /* Set the bit for the requested PCR index */
     uint8_t pcr_select[3] = {0, 0, 0};
     if (pcr_index < 24) {
-        pcr_select[pcr_index / 8] |= (1 << (pcr_index % 8));
+        pcr_select[pcr_index / 8] |= (1U << (pcr_index % 8));
     }
     memcpy(cmd + cmd_pos, pcr_select, 3);
     cmd_pos += 3;

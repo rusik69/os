@@ -27,7 +27,7 @@
 #define HFS_BLOCK_SIZE     512
 #define HFS_SECTOR_SIZE    512
 #define HFS_NAMELEN        31
-#define HFS_CAT_RES        (1 << 0)
+#define HFS_CAT_RES        (1U << 0)
 #define HFS_IS_DIR         0x4000
 
 /* MDB (Master Directory Block) — 256 bytes at block 2 */

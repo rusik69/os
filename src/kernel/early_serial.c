@@ -32,10 +32,10 @@
 #define UART_DLM  1   /* Divisor Latch High (DLAB=1) */
 
 /* UART flags */
-#define UART_LSR_THRE   (1 << 5)  /* Transmitter Holding Register Empty */
-#define UART_LSR_DR     (1 << 0)  /* Data Ready */
+#define UART_LSR_THRE   (1U << 5)  /* Transmitter Holding Register Empty */
+#define UART_LSR_DR     (1U << 0)  /* Data Ready */
 #define UART_LCR_8BIT   (3 << 0)  /* 8 data bits, no parity, 1 stop */
-#define UART_LCR_DLAB   (1 << 7)  /* Divisor Latch Access Bit */
+#define UART_LCR_DLAB   (1U << 7)  /* Divisor Latch Access Bit */
 
 /* Saved port base (default COM1 = 0x3F8) */
 static uint16_t g_early_port = 0x3F8;

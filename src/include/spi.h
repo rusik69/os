@@ -22,13 +22,13 @@
 #define SPI_MODE_1          1
 #define SPI_MODE_2          2
 #define SPI_MODE_3          3
-#define SPI_CPHA            (1 << 0)
-#define SPI_CPOL            (1 << 1)
+#define SPI_CPHA            (1U << 0)
+#define SPI_CPOL            (1U << 1)
 #define SPI_MODE_MASK       3
 
 /* ── SPI transfer flags ──────────────────────────────────────────── */
-#define SPI_TRANSFER_DONE   (1 << 0)   /* transfer completed */
-#define SPI_TRANSFER_CS_HIGH (1 << 1)  /* de-assert CS after this transfer */
+#define SPI_TRANSFER_DONE   (1U << 0)   /* transfer completed */
+#define SPI_TRANSFER_CS_HIGH (1U << 1)  /* de-assert CS after this transfer */
 
 /* ── Maximum devices per bus ─────────────────────────────────────── */
 #define SPI_MAX_DEVICES     8

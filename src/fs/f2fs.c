@@ -114,6 +114,7 @@ static int f2fs_read_nat(uint32_t ino, struct f2fs_nat_entry *entry)
     /* NAT is stored in NAT segments, each containing NAT entries.
      * Entry for ino N is at index (N - 1) in the NAT table. */
     uint32_t nat_entries_per_block = f2fs_reg.block_size / sizeof(struct f2fs_nat_entry);
+    if (nat_entries_per_block == 0) return -EIO;
     uint32_t nat_index = ino - 1;
     uint32_t nat_block_offset = nat_index / nat_entries_per_block;
     uint32_t nat_entry_offset = nat_index % nat_entries_per_block;
@@ -134,6 +135,7 @@ static int f2fs_read_nat(uint32_t ino, struct f2fs_nat_entry *entry)
 static int f2fs_read_sit(uint32_t segno, struct f2fs_sit_entry *sit)
 {
     uint32_t sit_entries_per_block = f2fs_reg.block_size / sizeof(struct f2fs_sit_entry);
+    if (sit_entries_per_block == 0) return -EIO;
     uint32_t sit_block_offset = segno / sit_entries_per_block;
     uint32_t sit_entry_offset = segno % sit_entries_per_block;
 
@@ -194,8 +196,9 @@ int f2fs_mount(const uint8_t *data, uint64_t size)
     f2fs_data_size = size;
 
     /* Initialize region info */
-    f2fs_reg.block_size = 1 << f2fs_sb.log_blocksize;
-    f2fs_reg.segment_size = 1 << f2fs_sb.log_segmentsize;
+    f2fs_reg.block_size = 1U << f2fs_sb.log_blocksize;
+    if (f2fs_reg.block_size == 0) return -EINVAL;
+    f2fs_reg.segment_size = 1U << f2fs_sb.log_segmentsize;
     f2fs_reg.segments = f2fs_sb.segments;
     f2fs_reg.main_blkaddr = f2fs_sb.main_blkaddr;
     f2fs_reg.nat_blkaddr = f2fs_sb.nat_blkaddr;
@@ -207,6 +210,7 @@ int f2fs_mount(const uint8_t *data, uint64_t size)
     f2fs_reg.segment_count_nat = f2fs_sb.segment_count_nat;
     f2fs_reg.segment_count_sit = f2fs_sb.segment_count_sit;
     f2fs_reg.blocks_per_seg = f2fs_reg.segment_size / f2fs_reg.block_size;
+    if (f2fs_reg.blocks_per_seg == 0) return -EINVAL;
 
     /* Recover checkpoint */
     if (f2fs_recover_checkpoint() < 0) {

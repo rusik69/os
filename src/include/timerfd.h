@@ -5,7 +5,7 @@
 /* timerfd flags */
 #define TFD_CLOEXEC      02000000
 #define TFD_NONBLOCK     00004000
-#define TFD_TIMER_ABSTIME (1 << 0)
+#define TFD_TIMER_ABSTIME (1U << 0)
 
 /* clock IDs for timerfd */
 #define CLOCK_REALTIME          0

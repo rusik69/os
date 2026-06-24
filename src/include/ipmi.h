@@ -16,14 +16,14 @@
 #define IPMI_KCS_CMD       (IPMI_KCS_BASE + 1)  /* Command register (same as status on write) */
 
 /* KCS status bits */
-#define IPMI_KCS_STS_OBF   (1 << 0)  /* Output Buffer Full */
-#define IPMI_KCS_STS_IBF   (1 << 1)  /* Input Buffer Full */
-#define IPMI_KCS_STS_SMS   (1 << 2)  /* State Machine State */
-#define IPMI_KCS_STS_CD    (1 << 3)  /* Command/Data */
-#define IPMI_KCS_STS_OEM1  (1 << 4)
-#define IPMI_KCS_STS_OEM2  (1 << 5)
-#define IPMI_KCS_STS_SMS_ATN (1 << 6)  /* SMS Attention */
-#define IPMI_KCS_STS_HBUSY (1 << 7)  /* Host Busy */
+#define IPMI_KCS_STS_OBF   (1U << 0)  /* Output Buffer Full */
+#define IPMI_KCS_STS_IBF   (1U << 1)  /* Input Buffer Full */
+#define IPMI_KCS_STS_SMS   (1U << 2)  /* State Machine State */
+#define IPMI_KCS_STS_CD    (1U << 3)  /* Command/Data */
+#define IPMI_KCS_STS_OEM1  (1U << 4)
+#define IPMI_KCS_STS_OEM2  (1U << 5)
+#define IPMI_KCS_STS_SMS_ATN (1U << 6)  /* SMS Attention */
+#define IPMI_KCS_STS_HBUSY (1U << 7)  /* Host Busy */
 
 /* KCS commands */
 #define IPMI_KCS_GET_STATUS  0x60

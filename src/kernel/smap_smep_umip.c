@@ -12,7 +12,7 @@ int smap_smep_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
     /* Enable SMEP if supported (ECX bit 7) */
-    if (rcx & (1 << 7)) {
+    if (rcx & (1U << 7)) {
         cr4 |= CR4_SMEP;
         kprintf("[cpu] SMEP enabled (CR4 bit 20)\n");
     } else {
@@ -20,7 +20,7 @@ int smap_smep_init(void) {
     }
 
     /* Enable SMAP if supported (ECX bit 20) */
-    if (rcx & (1 << 20)) {
+    if (rcx & (1U << 20)) {
         cr4 |= CR4_SMAP;
         kprintf("[cpu] SMAP enabled (CR4 bit 21)\n");
     } else {
@@ -40,7 +40,7 @@ int umip_init(void) {
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
     /* Enable UMIP if supported (ECX bit 2) */
-    if (rcx & (1 << 2)) {
+    if (rcx & (1U << 2)) {
         cr4 |= CR4_UMIP;
         write_cr4(cr4);
         kprintf("[cpu] UMIP enabled (CR4 bit 11)\n");

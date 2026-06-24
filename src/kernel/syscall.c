@@ -160,7 +160,7 @@ static inline void local_invlpg(uint64_t addr) {
 }
 
 /* EFER bits */
-#define EFER_SCE (1 << 0)  /* Syscall Enable */
+#define EFER_SCE (1U << 0)  /* Syscall Enable */
 
 extern void syscall_entry(void);
 extern uint64_t syscall_user_rip;
@@ -7984,6 +7984,8 @@ static uint64_t sys_fadvise64(uint64_t fd, uint64_t offset, uint64_t len, uint64
          * tune window sizes and prefetch behavior. */
         pfd->advice = (int)advice;
         break;
+    default:
+        return -EINVAL;
     }
 
     return 0;
@@ -9668,7 +9670,7 @@ static uint64_t sys_rseq(uint64_t rseq_addr, uint64_t rseq_len,
 /* ── membarrier — Memory barrier on all threads (Item 252) ─────────── */
 
 /* Per-process flag for membarrier registration */
-#define MEMBARRIER_PRIVATE_EXPEDITED  (1 << 0)
+#define MEMBARRIER_PRIVATE_EXPEDITED  (1U << 0)
 
 /*
  * sys_membarrier(cmd, flags, cpu_id)
@@ -10054,7 +10056,7 @@ void syscall_init(void) {
     wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
 
     /* SFMASK: mask IF (bit 9) during syscall execution */
-    wrmsr(MSR_SFMASK, (1 << 9));
+    wrmsr(MSR_SFMASK, (1U << 9));
 }
 
 /* ── syscall_handle: Handle a syscall by number ─────────────────────── */

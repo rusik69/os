@@ -41,7 +41,7 @@
 #define REC_SEL_PHONE   0x0707
 
 /* Extended audio register bits */
-#define EA_VRA    (1 << 0)   /* Variable Rate Audio enable */
+#define EA_VRA    (1U << 0)   /* Variable Rate Audio enable */
 
 /* NABM (Native Audio Bus Master) — mapped to BAR1 (I/O) */
 /* PCM-out (playback) registers */
@@ -62,11 +62,11 @@
 #define NABM_GLOB_CNT       0x2C  /* Global Control */
 #define NABM_GLOB_STS       0x30  /* Global Status */
 
-#define CR_RPBM  (1 << 0)   /* Run/Pause Bus Master */
-#define CR_RR    (1 << 1)   /* Reset Registers */
-#define CR_LVBIE (1 << 2)   /* Last Valid Buffer Interrupt Enable */
-#define CR_FEIE  (1 << 3)   /* FIFO Error Interrupt Enable */
-#define CR_IOCE  (1 << 4)   /* IOC Interrupt Enable */
+#define CR_RPBM  (1U << 0)   /* Run/Pause Bus Master */
+#define CR_RR    (1U << 1)   /* Reset Registers */
+#define CR_LVBIE (1U << 2)   /* Last Valid Buffer Interrupt Enable */
+#define CR_FEIE  (1U << 3)   /* FIFO Error Interrupt Enable */
+#define CR_IOCE  (1U << 4)   /* IOC Interrupt Enable */
 
 /* ── BDL entry ──────────────────────────────────────────────────── */
 #pragma pack(push, 1)

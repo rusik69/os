@@ -54,7 +54,7 @@ int page_poison_enter_late_stage(void)
     if (g_init_stage != MEMINIT_EARLY) {
         /* Already in LATE or not initialized — nothing to do */
         if (g_init_stage == MEMINIT_NONE)
-            return -1;
+            return -EINVAL;
         return 0;
     }
 
@@ -135,7 +135,7 @@ void poison_region(void *addr, size_t size)
 int poison_check_region(const void *addr, size_t size, uint8_t poison_val)
 {
     if (!addr || size == 0)
-        return -1;
+        return -EINVAL;
 
     const uint8_t *bytes = (const uint8_t *)addr;
     size_t corruptions = 0;

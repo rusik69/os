@@ -18,8 +18,8 @@
 #define STP_BPDU_TYPE_TCN     0x80
 
 /* Flags in the Config BPDU flags byte */
-#define STP_FLAG_TC           (1 << 1)   /* Topology Change */
-#define STP_FLAG_TCA          (1 << 0)   /* Topology Change Acknowledgment */
+#define STP_FLAG_TC           (1U << 1)   /* Topology Change */
+#define STP_FLAG_TCA          (1U << 0)   /* Topology Change Acknowledgment */
 
 /* STP port states (802.1D-1998, 8.4) */
 #define STP_PORT_DISABLED     0

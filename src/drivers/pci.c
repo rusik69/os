@@ -50,12 +50,12 @@ static int map_ecam_region(uint64_t phys_base) {
         int pd_idx   = (addr >> 21) & 0x1FF;
 
         uint64_t *pml4 = vmm_get_pml4();
-        if (!pml4) return -1;
+        if (!pml4) return -EEXIST;
 
         /* Ensure PML4 entry exists */
         if (!(pml4[pml4_idx] & PTE_PRESENT)) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) return -1;
+            if (!frame) return -ENOMEM;
             memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             pml4[pml4_idx] = frame | PTE_PRESENT | PTE_WRITE;
         }
@@ -65,7 +65,7 @@ static int map_ecam_region(uint64_t phys_base) {
         /* Ensure PDPT entry exists */
         if (!(pdpt[pdpt_idx] & PTE_PRESENT)) {
             uint64_t frame = pmm_alloc_frame();
-            if (!frame) return -1;
+            if (!frame) return -ENOMEM;
             memset((void *)PHYS_TO_VIRT(frame), 0, PAGE_SIZE);
             pdpt[pdpt_idx] = frame | PTE_PRESENT | PTE_WRITE;
         }
@@ -125,9 +125,9 @@ int pci_find_pcie_cap(uint8_t bus, uint8_t slot, uint8_t func, uint8_t *cap_offs
         status = (uint16_t)pci_read(bus, slot, func, 0x06);
     }
 
-    if (!(status & (1 << 4))) {
+    if (!(status & (1U << 4))) {
         /* Capabilities list not present */
-        return -1;
+        return -EINVAL;
     }
 
     /* Read capabilities pointer at offset 0x34 */
@@ -158,7 +158,7 @@ int pci_find_pcie_cap(uint8_t bus, uint8_t slot, uint8_t func, uint8_t *cap_offs
         cap_ptr = (cap_reg >> 8) & 0xFF;
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 int pcie_is_present(void) {
@@ -245,12 +245,12 @@ static uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint16_t off
 
 int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
                      struct msi_info *info) {
-    if (!info) return -1;
+    if (!info) return -EINVAL;
 
     /* Check capabilities list bit */
     uint16_t status = pci_read16(bus, slot, func, 0x06);
-    if (!(status & (1 << 4)))
-        return -1;
+    if (!(status & (1U << 4)))
+        return -EINVAL;
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(bus, slot, func, 0x34) & 0xFF);
 
@@ -273,18 +273,18 @@ int pci_find_msi_cap(uint8_t bus, uint8_t slot, uint8_t func,
         cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 /* ── MSI-X capability parsing ─────────────────────────────────────── */
 
 int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
                       struct msix_info *info) {
-    if (!info) return -1;
+    if (!info) return -EINVAL;
 
     /* MSI-X capability ID = 0x11 */
     uint16_t status = pci_read16(bus, slot, func, 0x06);
-    if (!(status & (1 << 4))) return -1;
+    if (!(status & (1U << 4))) return -EINVAL;
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(bus, slot, func, 0x34) & 0xFF);
 
@@ -326,7 +326,7 @@ int pci_find_msix_cap(uint8_t bus, uint8_t slot, uint8_t func,
         cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Enable MSI interrupts ────────────────────────────────────────── */
@@ -337,7 +337,7 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
     struct msi_info info;
     int ret = pci_find_msi_cap(dev->bus, dev->slot, dev->func, &info);
     if (ret < 0)
-        return -1;
+        return -EINVAL;
 
     uint8_t bus = dev->bus;
     uint8_t slot = dev->slot;
@@ -345,7 +345,7 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
     uint16_t cap = info.cap_offset;
 
     /* Clamp nvecs to what the device supports */
-    int max_nvecs = 1 << info.mmc;   /* device supports up to 2^mmc vectors */
+    int max_nvecs = 1U << info.mmc;   /* device supports up to 2^mmc vectors */
     if (nvecs > max_nvecs)
         nvecs = max_nvecs;
     if (nvecs < 1)
@@ -353,7 +353,7 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
 
     /* Calculate MME field value: log2(nvecs) rounded down */
     int mme = 0;
-    while ((1 << (mme + 1)) <= nvecs && mme < info.mmc)
+    while ((1U << (mme + 1)) <= (unsigned int)nvecs && mme < info.mmc)
         mme++;
 
     /* Build the MSI message address */
@@ -402,7 +402,7 @@ int pci_enable_msi(struct pci_device *dev, uint8_t vector,
     kprintf("[PCI] MSI enabled for %02x:%02x.%x: vector=%u, %d vector(s), "
             "addr=0x%08x, data=0x%04x\n",
             (unsigned int)bus, (unsigned int)slot, (unsigned int)func,
-            (unsigned int)vector, 1 << mme,
+            (unsigned int)vector, 1U << mme,
             (unsigned int)msg_addr, (unsigned int)msg_data);
 
     return vector;
@@ -441,9 +441,9 @@ int pci_enable_msix(struct pci_device *dev, struct msix_info *info,
     uint8_t func = dev->func;
 
     if (!info || !table_virt || !vectors || !apic_ids)
-        return -1;
+        return -EINVAL;
     if (n <= 0 || (uint32_t)n > info->table_size)
-        return -1;
+        return -EINVAL;
 
     uint16_t cap = info->cap_offset;
 
@@ -506,7 +506,7 @@ static int msi_alloc_vector(void) {
 
     if (next_vector + vectors_used >= 240) {
         kprintf("[PCI] ERROR: no free interrupt vectors\n");
-        return -1;
+        return -EINVAL;
     }
     int vec = next_vector + vectors_used;
     vectors_used++;
@@ -524,7 +524,7 @@ int pci_setup_interrupts(struct pci_device *dev,
                          isr_handler_t handler)
 {
     if (!dev || !cfg)
-        return -1;
+        return -EINVAL;
 
     memset(cfg, 0, sizeof(*cfg));
 
@@ -711,7 +711,7 @@ int pci_find_device(uint16_t vendor, uint16_t device, struct pci_device *out) {
             }
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
@@ -744,12 +744,12 @@ int pci_find_class(uint8_t cls, uint8_t sub, struct pci_device *out) {
             }
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 void pci_enable_bus_master(struct pci_device *dev) {
     uint32_t cmd = pci_read(dev->bus, dev->slot, dev->func, 0x04);
-    cmd |= (1 << 2); /* Bus Master Enable */
+    cmd |= (1U << 2); /* Bus Master Enable */
     pci_write(dev->bus, dev->slot, dev->func, 0x04, cmd);
 }
 
@@ -776,6 +776,8 @@ void pci_list(void) {
                 case PCIE_DEV_TYPE_UPSTREAM:   extra = " [PCIe Upstream]"; break;
                 case PCIE_DEV_TYPE_DOWNSTREAM: extra = " [PCIe Downstream]"; break;
                 case PCIE_DEV_TYPE_SWITCH:     extra = " [PCIe Switch]"; break;
+                default:
+                    break;
                 }
             }
 
@@ -821,8 +823,8 @@ int pci_vpd_find_cap(struct pci_device *dev)
 {
     /* Check capabilities list bit */
     uint16_t status = pci_read16(dev->bus, dev->slot, dev->func, 0x06);
-    if (!(status & (1 << 4)))
-        return -1;
+    if (!(status & (1U << 4)))
+        return -EINVAL;
 
     uint8_t cap_ptr = (uint8_t)(pci_read16(dev->bus, dev->slot, dev->func, 0x34) & 0xFF);
 
@@ -837,7 +839,7 @@ int pci_vpd_find_cap(struct pci_device *dev)
         cap_ptr = (uint8_t)((cap_id_next >> 8) & 0xFF);
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 int pci_vpd_capable(struct pci_device *dev)
@@ -848,11 +850,11 @@ int pci_vpd_capable(struct pci_device *dev)
 int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val)
 {
     if (!dev || !val)
-        return -1;
+        return -EINVAL;
 
     int cap = pci_vpd_find_cap(dev);
     if (cap < 0)
-        return -1;
+        return -EINVAL;
 
     uint8_t bus = dev->bus;
     uint8_t slot = dev->slot;
@@ -874,17 +876,17 @@ int pci_vpd_read(struct pci_device *dev, uint32_t addr, uint32_t *val)
         for (volatile int i = 0; i < 100; i++);
     }
 
-    return -1;  /* Timeout */
+    return -ETIMEDOUT;  /* Timeout */
 }
 
 int pci_vpd_write(struct pci_device *dev, uint32_t addr, uint32_t val)
 {
     if (!dev)
-        return -1;
+        return -EINVAL;
 
     int cap = pci_vpd_find_cap(dev);
     if (cap < 0)
-        return -1;
+        return -EINVAL;
 
     uint8_t bus = dev->bus;
     uint8_t slot = dev->slot;
@@ -906,17 +908,17 @@ int pci_vpd_write(struct pci_device *dev, uint32_t addr, uint32_t val)
         for (volatile int i = 0; i < 100; i++);
     }
 
-    return -1;  /* Timeout */
+    return -ETIMEDOUT;  /* Timeout */
 }
 
 int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
                         char *buf, size_t len)
 {
     if (!dev || !buf || len == 0)
-        return -1;
+        return -EINVAL;
 
     if (!pci_vpd_capable(dev))
-        return -1;
+        return -EINVAL;
 
     /* Scan VPD memory for the requested field tag */
     uint32_t offset = 0;
@@ -991,7 +993,7 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
     }
 
     if (!found)
-        return -1;
+        return -EINVAL;
 
     /* Copy to output buffer (null-terminate) */
     int copy_len = (data_len < (int)len - 1) ? data_len : (int)len - 1;
@@ -1002,7 +1004,7 @@ int pci_vpd_read_field(struct pci_device *dev, uint8_t field_tag,
 }
 
 int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id) {
-    if (!ecam_base) return -1;  /* Extended caps require ECAM access */
+    if (!ecam_base) return -EINVAL;  /* Extended caps require ECAM access */
 
     uint16_t offset = 0x100;  /* Start of extended config space */
     while (offset < 0x1000) {
@@ -1018,7 +1020,7 @@ int pci_find_ext_cap(uint8_t bus, uint8_t slot, uint8_t func, uint16_t cap_id) {
             break;  /* Last capability */
         offset = next;
     }
-    return -1;
+    return -EINVAL;
 }
 
 /*
@@ -1425,7 +1427,7 @@ static int g_autoprobe_count = 0;
  * Called during PCI scan to record a discovered device.  The actual
  * probing happens later via pci_autoprobe_work().
  */
-void pci_queue_autoprobe(const char *modalias,
+static void pci_queue_autoprobe(const char *modalias,
                           uint16_t vendor, uint16_t device,
                           uint16_t subsys_vendor, uint16_t subsys_device,
                           uint8_t base_class, uint8_t sub_class)
@@ -1455,7 +1457,7 @@ void pci_queue_autoprobe(const char *modalias,
  *
  * Returns 1 if match, 0 otherwise.
  */
-int pci_match_modalias(const char *modalias, const struct pci_device_id *id_table)
+static int pci_match_modalias(const char *modalias, const struct pci_device_id *id_table)
 {
     if (!modalias || !id_table)
         return 0;
@@ -1510,7 +1512,7 @@ int pci_match_modalias(const char *modalias, const struct pci_device_id *id_tabl
  * against registered drivers.  This should be called from a
  * workqueue after the PCI bus has been fully scanned.
  */
-void pci_autoprobe_work(void)
+static void pci_autoprobe_work(void)
 {
     kprintf("[PCI] Autoprobe: processing %d queued devices\n", g_autoprobe_count);
 
@@ -1554,21 +1556,21 @@ EXPORT_SYMBOL(pci_find_ltr_cap);
 EXPORT_SYMBOL(pci_find_l1pm_cap);
 EXPORT_SYMBOL(pci_ltr_to_ns);
 
-uint32_t pci_read_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+static uint32_t pci_read_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 {
     uint32_t addr = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | 0x80000000u);
     outl(0xCF8, addr);
     return inl(0xCFC);
 }
 
-void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
+static void pci_write_config(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
 {
     uint32_t addr = (uint32_t)((bus << 16) | (slot << 11) | (func << 8) | (offset & 0xFC) | 0x80000000u);
     outl(0xCF8, addr);
     outl(0xCFC, value);
 }
 
-int pci_enable_device(struct pci_device *dev)
+static int pci_enable_device(struct pci_device *dev)
 {
     if (!dev) return -EINVAL;
     uint32_t cmd = pci_read_config(dev->bus, dev->slot, dev->func, 0x04);
@@ -1578,7 +1580,7 @@ int pci_enable_device(struct pci_device *dev)
 }
 
 /* ── Find PCI capability ────────────────────────────── */
-int pci_find_capability(void *pdev, int cap)
+static int pci_find_capability(void *pdev, int cap)
 {
     if (!pdev)
         return -EINVAL;

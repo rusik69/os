@@ -19,11 +19,11 @@
 /* Mode flags for fopen */
 enum fmode {
     FMODE_NONE   = 0,
-    FMODE_READ   = (1 << 0),  /* "r"  — read-only          */
-    FMODE_WRITE  = (1 << 1),  /* "w"  — write (truncate)   */
-    FMODE_APPEND = (1 << 2),  /* "a"  — append              */
-    FMODE_RDWR   = (1 << 3),  /* "r+" / "w+" / "a+"       */
-    FMODE_BINARY = (1 << 4),  /* "b" — binary (no-op on this kernel) */
+    FMODE_READ   = (1U << 0),  /* "r"  — read-only          */
+    FMODE_WRITE  = (1U << 1),  /* "w"  — write (truncate)   */
+    FMODE_APPEND = (1U << 2),  /* "a"  — append              */
+    FMODE_RDWR   = (1U << 3),  /* "r+" / "w+" / "a+"       */
+    FMODE_BINARY = (1U << 4),  /* "b" — binary (no-op on this kernel) */
 };
 
 /* Internal buffer state */

@@ -628,7 +628,7 @@ void scheduler_remove(struct process *proc) {
 
 /* ── Priority change ────────────────────────────────────────────────── */
 int scheduler_set_priority(struct process *proc, uint8_t priority) {
-    if (!proc || priority >= SCHED_LEVELS) return -1;
+    if (!proc || priority >= SCHED_LEVELS) return -EINVAL;
 
     if (proc->state == PROCESS_READY) {
         scheduler_remove(proc);
@@ -655,7 +655,7 @@ int scheduler_set_priority(struct process *proc, uint8_t priority) {
  * Returns 0 on success, -1 on error.
  */
 int scheduler_set_nice(struct process *proc, int nice) {
-    if (!proc) return -1;
+    if (!proc) return -EINVAL;
 
     if (nice < NICE_MIN) nice = NICE_MIN;
     if (nice > NICE_MAX) nice = NICE_MAX;
@@ -1316,7 +1316,7 @@ int sched_autogroup_get(int session_id) {
             return i;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 void sched_autogroup_assign(struct process *proc, int group_id) {
@@ -1532,7 +1532,7 @@ int scheduler_migrate_tasks_from(int from_cpu)
     int migrated = 0;
 
     if (from_cpu < 0 || from_cpu >= smp_cpu_count)
-        return -1;
+        return -EINVAL;
 
     ci = &cpu_info_array[from_cpu];
 

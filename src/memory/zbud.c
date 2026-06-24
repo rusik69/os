@@ -73,7 +73,7 @@ int zbud_store(int pool_id, const uint8_t *compressed, size_t comp_len,
             page = pool->pages[p];
             /* Find first free chunk */
             for (int c = 0; c < ZBUD_CHUNKS_PER_PAGE; c++) {
-                if (!(page->free_chunks & (1 << (c % 16)))) {
+                if (!(page->free_chunks & (1U << (c % 16)))) {
                     /* Check if chunk is really free using a bitmap approach */
                     /* Simplified: track free chunks */
                     break;

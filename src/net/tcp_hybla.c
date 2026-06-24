@@ -45,7 +45,7 @@ struct hybla_data {
 
 /* Scaling factor for ρ to avoid floating point */
 #define HYBLA_SCALE_SHIFT   8
-#define HYBLA_SCALE         (1 << HYBLA_SCALE_SHIFT)  /* 256 */
+#define HYBLA_SCALE         (1U << HYBLA_SCALE_SHIFT)  /* 256 */
 
 void hybla_init(struct hybla_data *h)
 {
@@ -99,6 +99,7 @@ uint32_t hybla_update(struct hybla_data *h, uint32_t cwnd, int acked_segments)
     } else {
         /* Congestion avoidance: cwnd += ρ² / cwnd per ACK */
         /* Since we process multiple ACKs: cwnd += ρ² * acked / cwnd */
+        if (cwnd == 0) cwnd = 1;
         uint32_t inc = (h->rho2 * (uint32_t)acked_segments) / cwnd;
         if (inc < 1) inc = 1;
         /* Clamp to avoid excessive growth */

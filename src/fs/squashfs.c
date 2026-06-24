@@ -115,12 +115,12 @@ static int lzma_decode_symbol(struct lzma_decomp_state *st,
             symbol = (symbol << 1) | 1;
         }
         /* Renormalize */
-        while (st->range < (1 << 24)) {
+        while (st->range < (1U << 24)) {
             st->range <<= 8;
             st->code = (st->code << 8) | (st->in_pos < st->in_size ? st->in[st->in_pos++] : 0);
         }
     }
-    return symbol - (1 << num_bits);
+    return symbol - (1U << num_bits);
 }
 
 /* Minimal LZMA decompression — handles uncompressed/mostly-copied blocks.
@@ -433,7 +433,7 @@ static int squashfs_parse(struct squashfs_priv *rp)
     kprintf("[squashfs] Version %d.%d, %d inodes, %d KB blocks, "
             "compression=%d, size=%llu bytes\n",
             sb->s_major, sb->s_minor, sb->inodes,
-            1 << sb->block_log, sb->compression_id,
+            1U << sb->block_log, sb->compression_id,
             (unsigned long long)sb->bytes_used);
 
     /* Set up inode and dir table pointers */

@@ -56,6 +56,8 @@ int usb_serial_register(int chip_type, uint16_t vid, uint16_t pid)
     case USB_SERIAL_FTDI:   chip_name = "FTDI"; break;
     case USB_SERIAL_PL2303: chip_name = "PL2303"; break;
     case USB_SERIAL_CP2102: chip_name = "CP2102"; break;
+    default:
+        break;
     }
 
     kprintf("[USB_SERIAL] %s device registered: %04x:%04x\n",

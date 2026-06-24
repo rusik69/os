@@ -14,12 +14,12 @@
 #define UFFD_EVENT_PAGEFAULT 1
 
 /* Register/unregister mode flags */
-#define UFFD_FLAG_MISSING    (1 << 0)  /* track missing page faults */
-#define UFFD_FLAG_WP         (1 << 1)  /* track write-protect faults */
-#define UFFD_FLAG_MINOR      (1 << 2)  /* track minor faults (page cache) */
+#define UFFD_FLAG_MISSING    (1U << 0)  /* track missing page faults */
+#define UFFD_FLAG_WP         (1U << 1)  /* track write-protect faults */
+#define UFFD_FLAG_MINOR      (1U << 2)  /* track minor faults (page cache) */
 
 /* Userfaultfd features (set via ioctl) */
-#define UFFD_FEATURE_SIGBUS  (1 << 0)  /* deliver SIGBUS instead of queuing event */
+#define UFFD_FEATURE_SIGBUS  (1U << 0)  /* deliver SIGBUS instead of queuing event */
 
 /* ── UFFDIO ioctl commands (Linux-compatible values) ──────────────── */
 #define UFFDIO_API          0x3F00  /* negotiate API version and features */
@@ -76,8 +76,8 @@ struct uffdio_writeprotect {
     uint64_t mode;         /* UFFDIO_WRITEPROTECT_MODE_* flags */
     int64_t  result;       /* response: number of bytes processed or error */
 };
-#define UFFDIO_WRITEPROTECT_MODE_WP     (1 << 0)  /* write-protect (0 = unwriteprotect) */
-#define UFFDIO_WRITEPROTECT_MODE_DONTWAKE (1 << 1)
+#define UFFDIO_WRITEPROTECT_MODE_WP     (1U << 0)  /* write-protect (0 = unwriteprotect) */
+#define UFFDIO_WRITEPROTECT_MODE_DONTWAKE (1U << 1)
 
 /* UFFDIO_CONTINUE ioctl argument */
 #define UFFDIO_CONTINUE                 0x3F07
@@ -87,11 +87,11 @@ struct uffdio_continue {
     uint64_t mode;         /* UFFDIO_CONTINUE_MODE_* flags */
     int64_t  result;       /* response: number of bytes continued or error */
 };
-#define UFFDIO_CONTINUE_MODE_DONTWAKE   (1 << 0)
+#define UFFDIO_CONTINUE_MODE_DONTWAKE   (1U << 0)
 
 /* UFFDIO_COPY / ZEROPAGE mode flags */
-#define UFFDIO_COPY_MODE_DONTWAKE     (1 << 0)
-#define UFFDIO_ZEROPAGE_MODE_DONTWAKE (1 << 0)
+#define UFFDIO_COPY_MODE_DONTWAKE     (1U << 0)
+#define UFFDIO_ZEROPAGE_MODE_DONTWAKE (1U << 0)
 
 /* UFFD_API version */
 #define UFFD_API 0xAA

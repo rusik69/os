@@ -28,13 +28,13 @@ void page_allocator_ext_init(void)
 static inline void bitmap_set(uint64_t idx)
 {
     if (idx < MAX_FRAMES)
-        used_bitmap[idx / 8] |= (1 << (idx % 8));
+        used_bitmap[idx / 8] |= (1U << (idx % 8));
 }
 
 static inline void bitmap_clear(uint64_t idx)
 {
     if (idx < MAX_FRAMES)
-        used_bitmap[idx / 8] &= ~(1 << (idx % 8));
+        used_bitmap[idx / 8] &= ~(1U << (idx % 8));
 }
 
 static inline int bitmap_test(uint64_t idx)

@@ -269,7 +269,7 @@ int adfs_probe(uint8_t dev_id)
     if (dr->log2secsize >= 8 && dr->log2secsize <= 10 &&
         dr->secspertrack > 0 && dr->heads > 0) {
         kprintf("[adfs] ADFS detected on dev %u (secsize=%d, sec/track=%d)\n",
-                dev_id, 1 << dr->log2secsize, dr->secspertrack);
+                dev_id, 1U << dr->log2secsize, dr->secspertrack);
         return 0;
     }
     return -1;

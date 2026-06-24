@@ -279,7 +279,7 @@ EXPORT_SYMBOL(compaction_run);
 module_init(compaction_init);
 
 /* ── compact_zone ─────────────────────────────────────────── */
-int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
+static int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
 {
     if (zone_pfn_start >= zone_pfn_end)
         return -EINVAL;
@@ -295,7 +295,7 @@ int compact_zone(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
 }
 
 /* ── compaction_suitable ──────────────────────────────────── */
-int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
+static int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
 {
     if (zone_pfn_start >= zone_pfn_end)
         return 0;
@@ -313,7 +313,7 @@ int compaction_suitable(uint64_t zone_pfn_start, uint64_t zone_pfn_end)
 }
 
 /* ── isolate_migratepages ────────────────────────────────── */
-int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
+static int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
 {
     if (!start_pfn || !end_pfn)
         return -EINVAL;
@@ -343,7 +343,7 @@ int isolate_migratepages(uint64_t *start_pfn, uint64_t *end_pfn)
 }
 
 /* ── Stub: migrate_pages ─────────────────────────────────────── */
-int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
+static int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
 {
     (void)from_pfns;
     (void)to_pfns;
@@ -353,7 +353,7 @@ int migrate_pages(uint64_t *from_pfns, uint64_t *to_pfns, int nr_pages)
 }
 
 /* ── Stub: compact_finished ──────────────────────────────────── */
-int compact_finished(void)
+static int compact_finished(void)
 {
     kprintf("[compaction] compact_finished: not yet implemented\n");
     return 0;

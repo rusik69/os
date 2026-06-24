@@ -35,7 +35,7 @@ static const struct kallsyms_entry kallsyms_table[] = {
 
     /* Addr here will be filled dynamically. For this kernel, we don't
      * have fixed addresses because of the high-half VMA offset.
-     * 
+     *
      * Instead, we compute the actual addresses at boot time by scanning
      * for known function pointers. The table below uses offsets from
      * a base symbol that we calibrate at runtime.

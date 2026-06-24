@@ -15,10 +15,10 @@
  */
 
 /* I/O mapping flags */
-#define IO_MAP_UNCACHED         (1 << 0)    /* strongly-ordered (UC) */
-#define IO_MAP_WC               (1 << 1)    /* write-combining (WC) */
-#define IO_MAP_CACHED           (1 << 2)    /* normal cached (WB) */
-#define IO_MAP_READONLY         (1 << 3)    /* read-only mapping */
+#define IO_MAP_UNCACHED         (1U << 0)    /* strongly-ordered (UC) */
+#define IO_MAP_WC               (1U << 1)    /* write-combining (WC) */
+#define IO_MAP_CACHED           (1U << 2)    /* normal cached (WB) */
+#define IO_MAP_READONLY         (1U << 3)    /* read-only mapping */
 
 /* Maximum number of simultaneous I/O mappings */
 #define IO_MAP_MAX_MAPPINGS     64

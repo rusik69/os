@@ -19,11 +19,11 @@ struct fstab_entry {
 };
 
 /* ── Parsed options bitmask ─────────────────────────────────────────── */
-#define FSTAB_OPT_RO      (1 << 0)   /* read-only mount */
-#define FSTAB_OPT_RW      (1 << 1)   /* read-write mount */
-#define FSTAB_OPT_NOEXEC  (1 << 2)   /* disallow program execution */
-#define FSTAB_OPT_NOSUID  (1 << 3)   /* block suid/sgid bits */
-#define FSTAB_OPT_NODEV   (1 << 4)   /* disallow device access via this mount */
+#define FSTAB_OPT_RO      (1U << 0)   /* read-only mount */
+#define FSTAB_OPT_RW      (1U << 1)   /* read-write mount */
+#define FSTAB_OPT_NOEXEC  (1U << 2)   /* disallow program execution */
+#define FSTAB_OPT_NOSUID  (1U << 3)   /* block suid/sgid bits */
+#define FSTAB_OPT_NODEV   (1U << 4)   /* disallow device access via this mount */
 
 /* ── Public API ─────────────────────────────────────────────────────── */
 

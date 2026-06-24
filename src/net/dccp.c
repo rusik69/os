@@ -253,6 +253,8 @@ void handle_dccp(uint32_t src_ip, uint32_t dst_ip,
     case DCCP_PKT_RESET:
         ds->connected = 0;
         break;
+    default:
+        break;
     }
 
     spinlock_release(&dccp_lock);

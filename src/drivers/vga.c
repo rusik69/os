@@ -393,14 +393,14 @@ void vga_init(void) {
 
 int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     struct multiboot_info *mbi = (struct multiboot_info *)PHYS_TO_VIRT(multiboot_info_phys);
-    
+
     uint64_t fb_addr = mbi->framebuffer_addr;
     uint32_t fb_w = mbi->framebuffer_width;
     uint32_t fb_h = mbi->framebuffer_height;
     uint32_t fb_pitch_val = mbi->framebuffer_pitch;
     uint8_t fb_bpp_val = mbi->framebuffer_bpp;
     uint8_t fb_type = mbi->framebuffer_type;
-    
+
     /* If framebuffer_addr is 0, try to read from VBE mode info */
     if (!fb_addr && mbi->vbe_mode_info) {
         struct vbe_mode_info *vmi = (struct vbe_mode_info *)PHYS_TO_VIRT((uint32_t)mbi->vbe_mode_info);
@@ -413,17 +413,17 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
         kprintf("[..] Using VBE mode info: addr=0x%x %ux%u bpp=%d pitch=%u\n",
                 (unsigned)fb_addr, fb_w, fb_h, fb_bpp_val, fb_pitch_val);
     }
-    
+
     /* If still no framebuffer, return failure - will try to allocate later */
     if (!fb_addr) {
         return -1;
     }
-    
+
     kprintf("[..] Framebuffer: addr=0x%x type=%d bpp=%d %ux%u pitch=%u\n",
             (unsigned)fb_addr, fb_type,
             fb_bpp_val, fb_w, fb_h,
             fb_pitch_val);
-    
+
     if (fb_type != 1) {
         kprintf("[--] Framebuffer type %d (need 1 = RGB)\n", fb_type);
         return -1;
@@ -441,7 +441,7 @@ int vga_try_init_framebuffer(uint64_t multiboot_info_phys) {
     }
 
     uint64_t fb_size = (uint64_t)fb_pitch_val * fb_h;
-    
+
     /* Map framebuffer in high-half VMA space */
     fb_base = (volatile uint8_t *)vmm_map_phys(fb_addr, fb_size,
                 VMM_FLAG_PRESENT | VMM_FLAG_WRITE);

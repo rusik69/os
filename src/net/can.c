@@ -380,7 +380,7 @@ int can_getsockname(int sock_fd, struct sockaddr_can *addr)
 module_init(can_init);
 
 /* ── Implement: can_open ────────────────── */
-int can_open(void *dev)
+static int can_open(void *dev)
 {
     if (!dev) {
         kprintf("[can] can_open: NULL dev\n");

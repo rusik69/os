@@ -900,7 +900,7 @@ int vfscanf(FILE *stream, const char *fmt, __builtin_va_list ap)
             memset(set, 0, sizeof(set));
             if (*fmt == ']') { set[0] = 1; fmt++; }
             while (*fmt && *fmt != ']') {
-                set[(unsigned char)*fmt / 8] |= (1 << ((unsigned char)*fmt % 8));
+                set[(unsigned char)*fmt / 8] |= (1U << ((unsigned char)*fmt % 8));
                 fmt++;
             }
             if (*fmt == ']') fmt++;  /* skip closing ] */

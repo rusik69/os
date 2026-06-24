@@ -22,7 +22,7 @@
 
 /* BIC constants */
 #define BIC_BETA_SHIFT      3           /* β = 1/8 = 0.125 */
-#define BIC_BETA            (1 << BIC_BETA_SHIFT)  /* 8 */
+#define BIC_BETA            (1U << BIC_BETA_SHIFT)  /* 8 */
 #define BIC_BETA_SCALE      8           /* β is 1/8 */
 #define BIC_SMAX            32          /* max increment (segments) */
 #define BIC_SMIN            1           /* min increment (segments) */

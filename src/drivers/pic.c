@@ -32,14 +32,14 @@ void pic_mask(uint8_t irq) {
     uint16_t port;
     if (irq < 8) { port = PIC1_DATA; }
     else { port = PIC2_DATA; irq -= 8; }
-    outb(port, inb(port) | (1 << irq));
+    outb(port, inb(port) | (1U << irq));
 }
 
 void pic_unmask(uint8_t irq) {
     uint16_t port;
     if (irq < 8) { port = PIC1_DATA; }
     else { port = PIC2_DATA; irq -= 8; }
-    outb(port, (uint8_t)(inb(port) & ~(1 << irq)));
+    outb(port, (uint8_t)(inb(port) & ~(1U << irq)));
 }
 
 /* ── Stub: pic_remap ─────────────────────────────── */

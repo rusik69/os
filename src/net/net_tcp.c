@@ -30,7 +30,7 @@ static spinlock_t tcp_lock = SPINLOCK_INIT;
  */
 
 #define CUBIC_SCALE        10                /* fixed-point scale factor */
-#define CUBIC_ONE          (1 << CUBIC_SCALE) /* 1.0 in fixed point */
+#define CUBIC_ONE          (1U << CUBIC_SCALE) /* 1.0 in fixed point */
 #define CUBIC_C_FIXED      410               /* C = 0.4 * 1024 */
 #define CUBIC_BETA_FIXED   717               /* beta = 0.7 * 1024 */
 #define CUBIC_BETA_INV     (CUBIC_ONE - CUBIC_BETA_FIXED) /* (1-beta) = 307 */

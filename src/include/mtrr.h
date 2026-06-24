@@ -36,12 +36,12 @@
 
 /* MTRR cap bits */
 #define MTRR_CAP_VCNT_MASK   0xFF
-#define MTRR_CAP_WC          (1 << 8)
-#define MTRR_CAP_FIX         (1 << 10)
+#define MTRR_CAP_WC          (1U << 8)
+#define MTRR_CAP_FIX         (1U << 10)
 
 /* MTRR def type bits */
-#define MTRR_DEF_ENABLE      (1 << 11)
-#define MTRR_DEF_FIX_ENABLE  (1 << 10)
+#define MTRR_DEF_ENABLE      (1U << 11)
+#define MTRR_DEF_FIX_ENABLE  (1U << 10)
 
 /* MTRR variable range register */
 struct mtrr_range {

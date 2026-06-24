@@ -614,7 +614,7 @@ int sound_oss_dsp_ioctl(int cmd, void *arg)
         if (num_frags > 16) num_frags = 16;
 
         g_dsp_state.frag_shift = frag_shift;
-        g_dsp_state.fragment_size = 1 << frag_shift;
+        g_dsp_state.fragment_size = 1U << frag_shift;
         g_dsp_state.num_fragments = num_frags;
         return 0;
     }

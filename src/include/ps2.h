@@ -19,12 +19,12 @@
 #define PS2_CMD_SEND_TO_P2   0xD4
 
 /* PS/2 controller config byte bits */
-#define PS2_CFG_P1_IRQ      (1 << 0)
-#define PS2_CFG_P2_IRQ      (1 << 1)
-#define PS2_CFG_SYSTEM_FLAG (1 << 2)
-#define PS2_CFG_P1_CLOCK    (1 << 4)
-#define PS2_CFG_P2_CLOCK    (1 << 5)
-#define PS2_CFG_P1_TRANS    (1 << 6)
+#define PS2_CFG_P1_IRQ      (1U << 0)
+#define PS2_CFG_P2_IRQ      (1U << 1)
+#define PS2_CFG_SYSTEM_FLAG (1U << 2)
+#define PS2_CFG_P1_CLOCK    (1U << 4)
+#define PS2_CFG_P2_CLOCK    (1U << 5)
+#define PS2_CFG_P1_TRANS    (1U << 6)
 
 /* Controller self-test result */
 #define PS2_TEST_OK 0x55

@@ -134,6 +134,8 @@ static void ghes_dispatch_cper(const struct cper_sec_header *hdr,
     case CPER_SEV_RECOVERABLE:  sev_str = "recoverable"; break;
     case CPER_SEV_FATAL:        sev_str = "FATAL"; break;
     case CPER_SEV_INFO:         sev_str = "info"; break;
+    default:
+        break;
     }
 
     switch (hdr->sec_type) {

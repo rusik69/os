@@ -89,7 +89,7 @@ static void poly1305_process_block(struct poly1305_ctx *ctx, const uint8_t block
     ctx->h[1] += n[1];
     ctx->h[2] += n[2];
     ctx->h[3] += n[3];
-    ctx->h[4] += n[4] + (1 << 24); /* add 2^130 - 5 = 1 (bit 130) */
+    ctx->h[4] += n[4] + (1U << 24); /* add 2^130 - 5 = 1 (bit 130) */
 
     /* h = h * r mod (2^130 - 5) */
     d0 = (uint64_t)ctx->h[0] * ctx->r[0] +
@@ -198,7 +198,7 @@ void poly1305_final(struct poly1305_ctx *ctx, uint8_t mac[16])
     c = g2 >> 26; g2 &= 0x3ffffff;
     g3 = ctx->h[3] + c;
     c = g3 >> 26; g3 &= 0x3ffffff;
-    g4 = ctx->h[4] + c - (1 << 26);
+    g4 = ctx->h[4] + c - (1U << 26);
 
     /* Select h or h-(2^130-5) based on borrow */
     mask = (g4 >> 31) - 1;

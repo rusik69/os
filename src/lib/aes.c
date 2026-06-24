@@ -331,7 +331,7 @@ void aes_init_crypto(void)
 }
 
 /* ── aes_encrypt ─────────────────────────────── */
-int aes_encrypt(const void *key, size_t key_len, const void *plain, void *cipher)
+static int aes_encrypt(const void *key, size_t key_len, const void *plain, void *cipher)
 {
     struct aes_ctx ctx;
     int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);
@@ -340,7 +340,7 @@ int aes_encrypt(const void *key, size_t key_len, const void *plain, void *cipher
     return 0;
 }
 /* ── aes_decrypt ─────────────────────────────── */
-int aes_decrypt(const void *key, size_t key_len, const void *cipher, void *plain)
+static int aes_decrypt(const void *key, size_t key_len, const void *cipher, void *plain)
 {
     struct aes_ctx ctx;
     int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);
@@ -349,7 +349,7 @@ int aes_decrypt(const void *key, size_t key_len, const void *cipher, void *plain
     return 0;
 }
 /* ── aes_key_expand ─────────────────────────────── */
-int aes_key_expand(const void *key, size_t key_len, void *round_keys)
+static int aes_key_expand(const void *key, size_t key_len, void *round_keys)
 {
     struct aes_ctx ctx;
     int ret = aes_init(&ctx, (const uint8_t *)key, (int)key_len);

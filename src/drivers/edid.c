@@ -53,6 +53,8 @@ static void parse_standard_timing(const uint8_t *data, struct edid_timing *t) {
         case 1: t->v_lines = h_pixels * 3 / 4; break;   /* 4:3 */
         case 2: t->v_lines = h_pixels * 4 / 5; break;   /* 5:4 */
         case 3: t->v_lines = h_pixels * 9 / 16; break;  /* 16:9 */
+        default:
+            break;
     }
 }
 

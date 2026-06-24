@@ -524,6 +524,8 @@ void acpi_thermal_print_info(void)
                 case TRIP_POINT_HOT:      type_str = "HOT"; break;
                 case TRIP_POINT_PASSIVE:  type_str = "PSV"; break;
                 case TRIP_POINT_ACTIVE:   type_str = "ACT"; break;
+                default:
+                    break;
             }
             kprintf("      [%d] %s %s: %d (%s)\n",
                     j, tp->method, type_str, tp->temperature,

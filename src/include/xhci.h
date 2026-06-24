@@ -27,17 +27,17 @@
 #define XHCI_OP_CONFIG      0x38  /* Configure */
 
 /* USBCMD bits */
-#define XHCI_CMD_RUN        (1 << 0)
-#define XHCI_CMD_HCRST      (1 << 1)
-#define XHCI_CMD_INTE       (1 << 2)
-#define XHCI_CMD_HSEE       (1 << 3)
+#define XHCI_CMD_RUN        (1U << 0)
+#define XHCI_CMD_HCRST      (1U << 1)
+#define XHCI_CMD_INTE       (1U << 2)
+#define XHCI_CMD_HSEE       (1U << 3)
 
 /* USBSTS bits */
-#define XHCI_STS_HCH        (1 << 0)
-#define XHCI_STS_HSE        (1 << 2)
-#define XHCI_STS_EINT       (1 << 3)
-#define XHCI_STS_PCD        (1 << 4)
-#define XHCI_STS_CNR        (1 << 11)
+#define XHCI_STS_HCH        (1U << 0)
+#define XHCI_STS_HSE        (1U << 2)
+#define XHCI_STS_EINT       (1U << 3)
+#define XHCI_STS_PCD        (1U << 4)
+#define XHCI_STS_CNR        (1U << 11)
 
 /* Port register set */
 #define XHCI_PORTSC         0x400  /* Port Status and Control (per port, 0x10 each) */
@@ -46,19 +46,19 @@
 #define XHCI_PORTHLPMC      0x40C  /* Port Hardware LPM Control */
 
 /* PORTSC bits */
-#define XHCI_PORTSC_CCS     (1 << 0)
-#define XHCI_PORTSC_PED     (1 << 1)
-#define XHCI_PORTSC_PR      (1 << 4)
-#define XHCI_PORTSC_PP      (1 << 9)
-#define XHCI_PORTSC_CSC     (1 << 16)
-#define XHCI_PORTSC_PEC     (1 << 17)
-#define XHCI_PORTSC_WRC     (1 << 19)
-#define XHCI_PORTSC_OCC     (1 << 20)
-#define XHCI_PORTSC_PRC     (1 << 21)
-#define XHCI_PORTSC_PLC     (1 << 22)
-#define XHCI_PORTSC_CEC     (1 << 23)
-#define XHCI_PORTSC_WCE     (1 << 24)
-#define XHCI_PORTSC_WDE     (1 << 25)
+#define XHCI_PORTSC_CCS     (1U << 0)
+#define XHCI_PORTSC_PED     (1U << 1)
+#define XHCI_PORTSC_PR      (1U << 4)
+#define XHCI_PORTSC_PP      (1U << 9)
+#define XHCI_PORTSC_CSC     (1U << 16)
+#define XHCI_PORTSC_PEC     (1U << 17)
+#define XHCI_PORTSC_WRC     (1U << 19)
+#define XHCI_PORTSC_OCC     (1U << 20)
+#define XHCI_PORTSC_PRC     (1U << 21)
+#define XHCI_PORTSC_PLC     (1U << 22)
+#define XHCI_PORTSC_CEC     (1U << 23)
+#define XHCI_PORTSC_WCE     (1U << 24)
+#define XHCI_PORTSC_WDE     (1U << 25)
 
 /* Port speed */
 #define XHCI_PORTSC_PS_SHIFT 10

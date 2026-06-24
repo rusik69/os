@@ -31,7 +31,7 @@ static uint8_t fs_block_refcount[FS_MAX_BLOCKS_TOTAL]; /* simple refcount per bl
 
 static int load_super(void) {
     uint8_t buf[ATA_SECTOR_SIZE];
-    if (ata_read_sectors(0, 1, buf) < 0) return -1;
+    if (ata_read_sectors(0, 1, buf) < 0) return -EIO;
     memcpy(&super, buf, sizeof(super));
     return 0;
 }
@@ -46,7 +46,7 @@ static int save_super(void) {
 static int load_inodes(void) {
     uint8_t buf[ATA_SECTOR_SIZE];
     for (uint32_t i = 0; i < INODE_SECTORS; i++) {
-        if (ata_read_sectors(1 + i, 1, buf) < 0) return -1;
+        if (ata_read_sectors(1 + i, 1, buf) < 0) return -EIO;
         uint32_t offset = i * ATA_SECTOR_SIZE;
         uint32_t left   = (uint32_t)sizeof(inodes) - offset;
         uint32_t n      = left > ATA_SECTOR_SIZE ? ATA_SECTOR_SIZE : left;
@@ -63,7 +63,7 @@ static int save_inodes(void) {
         uint32_t left   = (uint32_t)sizeof(inodes) - offset;
         uint32_t n      = left > ATA_SECTOR_SIZE ? ATA_SECTOR_SIZE : left;
         memcpy(buf, (uint8_t *)inodes + offset, n);
-        if (ata_write_sectors(1 + i, 1, buf) < 0) return -1;
+        if (ata_write_sectors(1 + i, 1, buf) < 0) return -EIO;
     }
     return 0;
 }
@@ -74,9 +74,9 @@ static int save_inodes(void) {
 static uint8_t *fs_bitmap(void) { return super.padding; }
 
 static int bitmap_idx(uint32_t sector) {
-    if (sector < FS_DATA_START) return -1;
+    if (sector < FS_DATA_START) return -EINVAL;
     uint32_t idx = sector - FS_DATA_START;
-    if (idx >= FS_BITMAP_MAX_BLOCKS) return -1;
+    if (idx >= FS_BITMAP_MAX_BLOCKS) return -EINVAL;
     return (int)idx;
 }
 
@@ -169,7 +169,7 @@ static int find_free_inode(void) {
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type == FS_TYPE_FREE) return i;
     }
-    return -1;
+    return -EINVAL;
 }
 
 /* Find the filename component from a path (skip leading /) */
@@ -219,7 +219,7 @@ static int find_parent(const char *path) {
                 break;
             }
         }
-        if (found < 0) return -1; /* component not found */
+        if (found < 0) return -ENOENT; /* component not found */
         parent = found;
 
         seg = end + 1; /* move past the '/' */
@@ -238,12 +238,12 @@ static int find_inode(const char *path) {
 #define SYMLINK_MAX_DEPTH 8
 
 static int find_inode_depth(const char *path, int depth) {
-    if (depth > SYMLINK_MAX_DEPTH) return -1;
+    if (depth > SYMLINK_MAX_DEPTH) return -ELOOP;
     if (*path == '/') path++;
     if (*path == '\0') return 0; /* root itself = inode 0 */
 
     int parent = find_parent(path);
-    if (parent < 0) return -1;
+    if (parent < 0) return -ELOOP;
 
     /* For nested path, use basename; for root-level, path is the name */
     const char *name;
@@ -255,7 +255,7 @@ static int find_inode_depth(const char *path, int depth) {
     if (slash) name = slash + 1;
     else name = path;
 
-    if (*name == '\0') return -1;
+    if (*name == '\0') return -EINVAL;
 
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type != FS_TYPE_FREE &&
@@ -267,28 +267,28 @@ static int find_inode_depth(const char *path, int depth) {
                 char link_buf[FS_BLOCK_SIZE];
                 uint32_t tsz = 0;
                 /* Read target from first block directly */
-                if (inodes[cur].size == 0 || inodes[cur].blocks[0] == 0) return -1;
+                if (inodes[cur].size == 0 || inodes[cur].blocks[0] == 0) return -EIO;
                 if (ata_read_sectors(inodes[cur].blocks[0], 1,
-                                     (uint8_t*)link_buf) < 0) return -1;
+                                     (uint8_t*)link_buf) < 0) return -EIO;
                 uint32_t sz = inodes[cur].size;
                 if (sz >= FS_BLOCK_SIZE) sz = FS_BLOCK_SIZE - 1;
                 link_buf[sz] = '\0';
                 tsz = sz;
                 (void)tsz;
                 int next = find_inode_depth(link_buf, depth + 1);
-                if (next < 0) return -1;
+                if (next < 0) return -EINVAL;
                 cur = next;
                 depth++;
             }
             return cur;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 static int check_dir_perm_idx(int idx, char op) {
-    if (idx < 0 || idx >= FS_MAX_FILES) return -1;
-    if (inodes[idx].type != FS_TYPE_DIR) return -1;
+    if (idx < 0 || idx >= FS_MAX_FILES) return -EINVAL;
+    if (inodes[idx].type != FS_TYPE_DIR) return -EINVAL;
 
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
@@ -307,7 +307,7 @@ static int check_dir_perm_idx(int idx, char op) {
         case 'r': bits = FS_PERM_ROTH << shift; break;
         case 'w': bits = FS_PERM_WOTH << shift; break;
         case 'x': bits = FS_PERM_XOTH << shift; break;
-        default:  return -1;
+        default:  return -EINVAL;
     }
     return (m & bits) ? 0 : -1;
 }
@@ -355,8 +355,8 @@ int fs_format(void) {
 
     bitmap_init_all_free();
 
-    if (save_super() < 0) return -1;
-    if (save_inodes() < 0) return -1;
+    if (save_super() < 0) return -EINVAL;
+    if (save_inodes() < 0) return -EINVAL;
     return 0;
 }
 
@@ -419,14 +419,14 @@ void fs_init(void) {
 }
 
 int fs_create(const char *path, uint8_t type) {
-    if (find_inode(path) >= 0) return -1; /* exists */
+    if (find_inode(path) >= 0) return -EEXIST; /* exists */
 
     int parent = find_parent(path);
-    if (parent < 0) return -1;
+    if (parent < 0) return -EEXIST;
     if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
 
     int idx = find_free_inode();
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
 
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
@@ -453,10 +453,10 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
         idx = fs_create(path, FS_TYPE_FILE);
         if (idx < 0) return idx;
     }
-    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
 
     uint32_t blocks_needed = (size + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
-    if (blocks_needed > FS_MAX_BLOCKS) return -1;
+    if (blocks_needed > FS_MAX_BLOCKS) return -EINVAL;
 
     /* Save old blocks so we can free them after writing new data */
     uint32_t old_blocks[FS_MAX_BLOCKS];
@@ -473,7 +473,7 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
             for (uint32_t j = 0; j < i; j++) {
                 if (new_blocks[j]) bitmap_free_sector(new_blocks[j]);
             }
-            return -1;
+            return -EINVAL;
         }
         new_blocks[i] = blk;
 
@@ -486,7 +486,7 @@ int fs_write_file(const char *path, const void *data, uint32_t size) {
             for (uint32_t j = 0; j <= i; j++) {
                 if (new_blocks[j]) bitmap_free_sector(new_blocks[j]);
             }
-            return -1;
+            return -EIO;
         }
     }
 
@@ -530,7 +530,7 @@ int fs_append(const char *path, const void *data, uint32_t len) {
     uint32_t existing = 0;
     int idx = find_inode(path);
     if (idx >= 0) {
-        if (inodes[idx].type != FS_TYPE_FILE) return -1;
+        if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
         if (fs_check_perm(path, 'w') < 0) return -3;
         existing = inodes[idx].size;
     }
@@ -540,12 +540,12 @@ int fs_append(const char *path, const void *data, uint32_t len) {
     if (total > max_total) total = max_total;
 
     uint8_t *tmp = (uint8_t *)kmalloc(total);
-    if (!tmp) return -1;
+    if (!tmp) return -ENOMEM;
 
     uint32_t copy = total - existing;
     if (existing > 0 && fs_read_file(path, tmp, existing, &existing) < 0) {
         kfree(tmp);
-        return -1;
+        return -EINVAL;
     }
     memcpy(tmp + existing, data, copy);
 
@@ -571,7 +571,7 @@ static int fs_backing_store_write(uint32_t lba, uint8_t count, const void *buf)
 {
     for (uint8_t i = 0; i < count; i++) {
         if (ata_write_sectors(lba + i, 1, (const uint8_t *)buf + (uint32_t)i * 512) < 0)
-            return -1;
+            return -EIO;
     }
     return 0;
 }
@@ -594,8 +594,8 @@ void fs_register_page_cache_writeback(void)
  */
 int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_size) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
-    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (idx < 0) return -EINVAL;
+    if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
     if (fs_check_perm(path, 'r') < 0) return -3; /* permission denied */
 
     uint32_t size = inodes[idx].size;
@@ -635,7 +635,7 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
         if (ret < 0) {
             /* Fallback: direct ATA read without caching */
             uint8_t sector_buf[ATA_SECTOR_SIZE];
-            if (ata_read_sectors(blk, 1, sector_buf) < 0) return -1;
+            if (ata_read_sectors(blk, 1, sector_buf) < 0) return -EIO;
             uint32_t chunk = size - i * ATA_SECTOR_SIZE;
             if (chunk > ATA_SECTOR_SIZE) chunk = ATA_SECTOR_SIZE;
             memcpy(dst + i * ATA_SECTOR_SIZE, sector_buf, chunk);
@@ -675,8 +675,8 @@ int fs_read_file(const char *path, void *buf, uint32_t max_size, uint32_t *out_s
  */
 int fs_readahead(const char *path, uint32_t offset, uint32_t count) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
-    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (idx < 0) return -EINVAL;
+    if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
 
     uint32_t file_size = inodes[idx].size;
     if (offset >= file_size) return 0;
@@ -732,7 +732,7 @@ int fs_readahead(const char *path, uint32_t offset, uint32_t count) {
 
 int fs_delete(const char *path) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
 
     int parent = inodes[idx].parent;
     if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
@@ -752,7 +752,7 @@ int fs_delete(const char *path) {
     if (inodes[idx].type == FS_TYPE_DIR) {
         for (int i = 0; i < FS_MAX_FILES; i++) {
             if (inodes[i].type != FS_TYPE_FREE && inodes[i].parent == (uint16_t)idx && i != idx)
-                return -1; /* not empty */
+                return -ENOTEMPTY; /* not empty */
         }
     }
 
@@ -768,8 +768,8 @@ int fs_list(const char *path) {
         parent = 0; /* root */
     } else {
         parent = find_inode(path);
-        if (parent < 0) return -1;
-        if (inodes[parent].type != FS_TYPE_DIR) return -1;
+        if (parent < 0) return -EINVAL;
+        if (inodes[parent].type != FS_TYPE_DIR) return -EINVAL;
     }
 
     if (check_dir_perm_idx(parent, 'r') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
@@ -795,7 +795,7 @@ int fs_list(const char *path) {
 
 int fs_stat(const char *path, uint32_t *size, uint8_t *type) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
@@ -805,7 +805,7 @@ int fs_stat(const char *path, uint32_t *size, uint8_t *type) {
 int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
                uint16_t *uid, uint16_t *gid, uint16_t *mode) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
@@ -817,13 +817,13 @@ int fs_stat_ex(const char *path, uint32_t *size, uint8_t *type,
 
 int fs_stat_mtime(const char *path) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     return (int)inodes[idx].mtime;
 }
 
 int fs_set_mtime(const char *path, uint32_t mtime) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     inodes[idx].mtime = mtime;
     save_inodes();
     return 0;
@@ -833,13 +833,13 @@ int fs_set_mtime(const char *path, uint32_t mtime) {
 
 int fs_get_ino(const char *path) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     return idx;
 }
 
 int fs_chmod(const char *path, uint16_t mode) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
 
     struct user_session *s = session_get();
@@ -854,7 +854,7 @@ int fs_chmod(const char *path, uint16_t mode) {
 
 int fs_chown(const char *path, uint16_t uid, uint16_t gid) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -3;
 
     struct user_session *s = session_get();
@@ -872,7 +872,7 @@ int fs_chown(const char *path, uint16_t uid, uint16_t gid) {
  * Returns 0 = allowed, -1 = not found, -2 = denied. */
 int fs_check_perm(const char *path, char op) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -ENOENT;
 
     /* Linux-like path resolution requires search permission on parent dirs. */
     if (check_dir_perm_idx((int)inodes[idx].parent, 'x') < 0) return -2;
@@ -909,7 +909,7 @@ int fs_check_perm(const char *path, char op) {
 void fs_mode_str(uint16_t mode, char out[10]) {
     const char *bits = "rwxrwxrwx";
     for (int i = 0; i < 9; i++) {
-        int bit = 1 << (8 - i);
+        int bit = 1U << (8 - i);
         out[i] = (mode & bit) ? bits[i] : '-';
     }
     if (mode & FS_PERM_STICKY) {
@@ -958,30 +958,30 @@ int fs_list_names(const char *dir, const char *prefix,
 /* Like find_inode but does NOT follow symlinks (for readlink/lstat) */
 static int find_inode_nofollow(const char *path) {
     if (*path == '/') path++;
-    if (*path == '\0') return -1;
+    if (*path == '\0') return -ELOOP;
     int parent = find_parent(path);
-    if (parent < 0) return -1;
+    if (parent < 0) return -ELOOP;
     const char *name;
     const char *slash = NULL;
     for (const char *p = path; *p; p++) if (*p == '/') slash = p;
     name = slash ? slash + 1 : path;
-    if (*name == '\0') return -1;
+    if (*name == '\0') return -EINVAL;
     for (int i = 0; i < FS_MAX_FILES; i++) {
         if (inodes[i].type != FS_TYPE_FREE &&
             inodes[i].parent == (uint16_t)parent &&
             strcmp(inodes[i].name, name) == 0)
             return i;
     }
-    return -1;
+    return -EINVAL;
 }
 
 int fs_symlink(const char *path, const char *target) {
-    if (!path || !target) return -1;
+    if (!path || !target) return -EINVAL;
     int parent = find_parent(path);
-    if (parent < 0) return -1;
+    if (parent < 0) return -EINVAL;
     if (check_dir_perm_idx(parent, 'w') < 0 || check_dir_perm_idx(parent, 'x') < 0) return -3;
     int idx = find_free_inode();
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     struct user_session *s = session_get();
     uint16_t cur_uid = s ? (uint16_t)s->uid : 0;
     uint16_t cur_gid = s ? (uint16_t)s->gid : 0;
@@ -1011,11 +1011,11 @@ int fs_symlink(const char *path, const char *target) {
 
 int fs_readlink(const char *path, char *buf, int bufsize) {
     int idx = find_inode_nofollow(path);
-    if (idx < 0) return -1;
-    if (inodes[idx].type != FS_TYPE_LINK) return -1;
+    if (idx < 0) return -EINVAL;
+    if (inodes[idx].type != FS_TYPE_LINK) return -EIO;
     if (inodes[idx].size == 0 || inodes[idx].blocks[0] == 0) { buf[0]='\0'; return 0; }
     uint8_t blk_buf[FS_BLOCK_SIZE];
-    if (ata_read_sectors(inodes[idx].blocks[0], 1, blk_buf) < 0) return -1;
+    if (ata_read_sectors(inodes[idx].blocks[0], 1, blk_buf) < 0) return -EIO;
     uint32_t sz = inodes[idx].size;
     if (sz >= (uint32_t)bufsize) sz = (uint32_t)(bufsize - 1);
     memcpy(buf, blk_buf, sz);
@@ -1025,7 +1025,7 @@ int fs_readlink(const char *path, char *buf, int bufsize) {
 
 int fs_lstat(const char *path, uint32_t *size, uint8_t *type) {
     int idx = find_inode_nofollow(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     if (size) *size = inodes[idx].size;
     if (type) *type = inodes[idx].type;
     return 0;
@@ -1033,8 +1033,8 @@ int fs_lstat(const char *path, uint32_t *size, uint8_t *type) {
 
 int fs_truncate(const char *path, uint32_t len) {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
-    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (idx < 0) return -EINVAL;
+    if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
     uint32_t old_size = inodes[idx].size;
     if (len == old_size) return 0;
     if (len > old_size) {
@@ -1047,7 +1047,7 @@ int fs_truncate(const char *path, uint32_t len) {
             if (!blk) {
                 /* Allocation failed — free any blocks we allocated */
                 if (free_start >= 0) fs_free_inode_blocks_from(idx, free_start);
-                return -1;
+                return -EINVAL;
             }
             inodes[idx].blocks[b] = blk;
             if (free_start < 0) free_start = (int)b;
@@ -1079,8 +1079,8 @@ int fs_truncate(const char *path, uint32_t len) {
 int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
 {
     int idx = find_inode(path);
-    if (idx < 0) return -1;
-    if (inodes[idx].type != FS_TYPE_FILE) return -1;
+    if (idx < 0) return -ENOMEM;
+    if (inodes[idx].type != FS_TYPE_FILE) return -EINVAL;
 
     uint32_t end = offset + len;
 
@@ -1089,7 +1089,7 @@ int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
     if (end > max_file_size)
         end = max_file_size;
     if (end <= offset)
-        return -1; /* overflow or invalid range */
+        return -EINVAL; /* overflow or invalid range */
 
     /* ── FALLOC_FL_PUNCH_HOLE: Deallocate blocks in the range ── */
     if (mode & FALLOC_FL_PUNCH_HOLE) {
@@ -1156,7 +1156,7 @@ int fs_fallocate(const char *path, int mode, uint32_t offset, uint32_t len)
                         }
                     }
                 }
-                return -1;
+                return -EINVAL;
             }
             inodes[idx].blocks[b] = blk;
         }
@@ -1181,7 +1181,7 @@ int fs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit) {
         }
         if (!fs_quota_table[i].in_use && slot < 0) slot = i;
     }
-    if (slot < 0) return -1;
+    if (slot < 0) return -EINVAL;
 
     /* Recalculate current usage */
     uint32_t blocks_used = 0, inodes_used = 0;
@@ -1209,14 +1209,14 @@ int fs_set_quota(uint16_t uid, uint32_t block_limit, uint32_t inode_limit) {
 }
 
 int fs_get_quota(uint16_t uid, struct fs_quota *quota) {
-    if (!quota) return -1;
+    if (!quota) return -EINVAL;
     for (int i = 0; i < FS_QUOTA_MAX_USERS; i++) {
         if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
             *quota = fs_quota_table[i].quota;
             return 0;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 int fs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed) {
@@ -1224,7 +1224,7 @@ int fs_check_quota_blocks(uint16_t uid, uint32_t blocks_needed) {
         if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
             struct fs_quota *q = &fs_quota_table[i].quota;
             if (q->block_hard_limit > 0 && q->cur_blocks + blocks_needed > q->block_hard_limit)
-                return -1;
+                return -EINVAL;
             return 0;
         }
     }
@@ -1236,7 +1236,7 @@ int fs_check_quota_inodes(uint16_t uid) {
         if (fs_quota_table[i].in_use && fs_quota_table[i].uid == uid) {
             struct fs_quota *q = &fs_quota_table[i].quota;
             if (q->inode_hard_limit > 0 && q->cur_inodes + 1 > q->inode_hard_limit)
-                return -1;
+                return -EINVAL;
             return 0;
         }
     }
@@ -1282,19 +1282,19 @@ uint32_t fs_cow_block(uint32_t block) {
 }
 
 /* ── Rename (move) a file ──────────────────────────────────────── */
-int fs_rename(const char *old_path, const char *new_path)
+static int fs_rename(const char *old_path, const char *new_path)
 {
-    if (!old_path || !new_path) return -1;
+    if (!old_path || !new_path) return -EINVAL;
 
     int old_idx = find_inode(old_path);
-    if (old_idx < 0) return -1;
+    if (old_idx < 0) return -EEXIST;
 
     int new_idx = find_inode(new_path);
-    if (new_idx >= 0) return -1; /* target already exists */
+    if (new_idx >= 0) return -EEXIST; /* target already exists */
 
     /* Find a free inode for the new path */
     new_idx = find_free_inode();
-    if (new_idx < 0) return -1;
+    if (new_idx < 0) return -EEXIST;
 
     /* Copy the inode data from old to new */
     memcpy(&inodes[new_idx], &inodes[old_idx], sizeof(struct fs_inode));
@@ -1332,19 +1332,19 @@ int fs_rename(const char *old_path, const char *new_path)
 }
 
 /* ── fs_register ──────────────────────────────────────── */
-int fs_register(const char *name, void *ops)
+static int fs_register(const char *name, void *ops)
 {
     kprintf("[fs] Registered filesystem: %s\n", name);
     return 0;
 }
 /* ── fs_unregister ────────────────────────────────────── */
-int fs_unregister(const char *name)
+static int fs_unregister(const char *name)
 {
     kprintf("[fs] Unregistered filesystem: %s\n", name);
     return 0;
 }
 /* ── fs_mount ─────────────────────────────────────────── */
-int fs_mount(const char *source, const char *target, const char *fstype, unsigned long flags)
+static int fs_mount(const char *source, const char *target, const char *fstype, unsigned long flags)
 {
     (void)source;
     (void)target;
@@ -1354,7 +1354,7 @@ int fs_mount(const char *source, const char *target, const char *fstype, unsigne
     return 0;
 }
 /* ── fs_umount ───────────────────────────────────────── */
-int fs_umount(const char *target)
+static int fs_umount(const char *target)
 {
     kprintf("[fs] Unmount %s\n", target);
     return 0;

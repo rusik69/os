@@ -8,9 +8,9 @@
 #define MEMFD_NAME_MAX 32
 
 /* memfd_create flags (Linux-compatible) */
-#define MFD_CLOEXEC       (1 << 0)
-#define MFD_ALLOW_SEALING (1 << 1)
-#define MFD_HUGETLB       (1 << 2)
+#define MFD_CLOEXEC       (1U << 0)
+#define MFD_ALLOW_SEALING (1U << 1)
+#define MFD_HUGETLB       (1U << 2)
 
 /* Seal flags (Linux-compatible) */
 #define MEMFD_SEAL_SHRINK       1

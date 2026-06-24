@@ -478,6 +478,8 @@ static void stp_port_state_machine(void) {
         case STP_PORT_FORWARDING:
             /* Forwarding state — stable, no transition needed unless role changes */
             break;
+        default:
+            break;
         }
     }
 }

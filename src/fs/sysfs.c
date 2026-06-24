@@ -24,11 +24,11 @@ static int alloc_entry(void) {
             return i;
         }
     }
-    return -1;
+    return -EINVAL;
 }
 
 static int find_entry(const char *path) {
-    if (!path || path[0] != '/') return -1;
+    if (!path || path[0] != '/') return -EINVAL;
     /* Skip leading "/sys" if present */
     const char *rel = path;
     if (strncmp(path, "/sys", 4) == 0) {
@@ -48,7 +48,7 @@ static int find_entry(const char *path) {
             memcmp(sysfs_entries[i].name, name, (size_t)len) == 0)
             return i;
     }
-    return -1;
+    return -EINVAL;
 }
 
 /* Create entry under parent dir */
@@ -56,7 +56,7 @@ static int create_entry(const char *name, uint8_t type, const char *content,
                         int parent, void *priv,
                         sysfs_read_cb_t read_cb, sysfs_write_cb_t write_cb) {
     int idx = alloc_entry();
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     int nlen = (int)strlen(name);
     if (nlen >= SYSFS_MAX_NAME) nlen = SYSFS_MAX_NAME - 1;
     memcpy(sysfs_entries[idx].name, name, (size_t)nlen);
@@ -85,7 +85,7 @@ int sysfs_set_release_cb(const char *path, sysfs_release_cb_t release_cb)
 {
     int idx = find_entry(path);
     if (idx < 0)
-        return -1;
+        return -EINVAL;
     sysfs_entries[idx].release_cb = release_cb;
     return 0;
 }
@@ -94,16 +94,16 @@ int sysfs_create_file(const char *path, const char *content) {
     /* Find parent directory */
     char dirpath[128];
     const char *slash = strrchr(path, '/');
-    if (!slash || slash == path) return -1;
+    if (!slash || slash == path) return -EINVAL;
     int dirlen = (int)(slash - path);
-    if (dirlen > 126) return -1;
+    if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
     int parent = find_entry(dirpath);
-    if (parent < 0) return -1;
-    if (sysfs_entries[parent].type != 2) return -1;
+    if (parent < 0) return -EINVAL;
+    if (sysfs_entries[parent].type != 2) return -EINVAL;
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, content, parent, NULL, NULL, NULL) < 0) return -1;
+    if (create_entry(name, 1, content, parent, NULL, NULL, NULL) < 0) return -EINVAL;
     return 0;
 }
 
@@ -113,16 +113,16 @@ int sysfs_create_writable_file(const char *path, const char *initial_content,
     /* Find parent directory */
     char dirpath[128];
     const char *slash = strrchr(path, '/');
-    if (!slash || slash == path) return -1;
+    if (!slash || slash == path) return -EINVAL;
     int dirlen = (int)(slash - path);
-    if (dirlen > 126) return -1;
+    if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
     int parent = find_entry(dirpath);
-    if (parent < 0) return -1;
-    if (sysfs_entries[parent].type != 2) return -1;
+    if (parent < 0) return -EINVAL;
+    if (sysfs_entries[parent].type != 2) return -EINVAL;
 
     const char *name = slash + 1;
-    if (create_entry(name, 1, initial_content, parent, priv, read_cb, write_cb) < 0) return -1;
+    if (create_entry(name, 1, initial_content, parent, priv, read_cb, write_cb) < 0) return -EINVAL;
     return 0;
 }
 
@@ -130,21 +130,21 @@ int sysfs_create_dir(const char *path) {
     /* Find parent */
     char dirpath[128];
     const char *slash = strrchr(path, '/');
-    if (!slash || slash == path) return -1;
+    if (!slash || slash == path) return -EINVAL;
     int dirlen = (int)(slash - path);
-    if (dirlen > 126) return -1;
+    if (dirlen > 126) return -EINVAL;
     memcpy(dirpath, path, (size_t)dirlen); dirpath[dirlen] = '\0';
     int parent;
     if (dirlen == 0 || (dirlen == 1 && dirpath[0] == '/')) {
         parent = 0; /* root */
     } else {
         parent = find_entry(dirpath);
-        if (parent < 0) return -1;
+        if (parent < 0) return -EINVAL;
     }
-    if (sysfs_entries[parent].type != 2) return -1;
+    if (sysfs_entries[parent].type != 2) return -EINVAL;
 
     const char *name = slash + 1;
-    if (create_entry(name, 2, NULL, parent, NULL, NULL, NULL) < 0) return -1;
+    if (create_entry(name, 2, NULL, parent, NULL, NULL, NULL) < 0) return -EINVAL;
     return 0;
 }
 
@@ -155,12 +155,12 @@ static int sysfs_vfs_read(void *priv, const char *path, void *buf,
     (void)priv;
     int idx = find_entry(path);
     if (idx < 0 || sysfs_entries[idx].type != 1)
-        return -1;
+        return -EINVAL;
 
     /* Use dynamic read callback if available */
     if (sysfs_entries[idx].read_cb) {
         int ret = sysfs_entries[idx].read_cb((char *)buf, max_size, sysfs_entries[idx].priv);
-        if (ret < 0) return -1;
+        if (ret < 0) return -EINVAL;
         *out_size = (uint32_t)ret;
         return 0;
     }
@@ -177,20 +177,20 @@ static int sysfs_vfs_write(void *priv, const char *path, const void *data, uint3
     (void)priv;
     int idx = find_entry(path);
     if (idx < 0 || sysfs_entries[idx].type != 1)
-        return -1;
+        return -EINVAL;
 
     /* Use write callback if available */
     if (sysfs_entries[idx].write_cb) {
         return sysfs_entries[idx].write_cb((const char *)data, size, sysfs_entries[idx].priv);
     }
 
-    return -1; /* read-only if no write callback */
+    return -EROFS; /* read-only if no write callback */
 }
 
 static int sysfs_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
     (void)priv;
     int idx = find_entry(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -EINVAL;
     st->size = sysfs_entries[idx].size;
     st->type = sysfs_entries[idx].type; /* 1=file, 2=dir */
     st->uid = 0; st->gid = 0;
@@ -200,18 +200,18 @@ static int sysfs_vfs_stat(void *priv, const char *path, struct vfs_stat *st) {
 
 static int sysfs_vfs_create(void *priv, const char *path, uint8_t type) {
     (void)priv; (void)path; (void)type;
-    return -1; /* read-only */
+    return -EROFS; /* read-only */
 }
 
 static int sysfs_vfs_unlink(void *priv, const char *path) {
     (void)priv; (void)path;
-    return -1; /* read-only */
+    return -EROFS; /* read-only */
 }
 
 static int sysfs_vfs_readdir(void *priv, const char *path) {
     (void)priv;
     int idx = find_entry(path);
-    if (idx < 0 || sysfs_entries[idx].type != 2) return -1;
+    if (idx < 0 || sysfs_entries[idx].type != 2) return -EINVAL;
     for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {
         if (!sysfs_entries[i].in_use) continue;
         if (sysfs_entries[i].parent != idx && !(idx == 0 && i == 0)) continue;
@@ -263,11 +263,11 @@ struct vfs_ops sysfs_vfs_ops = {
 int sysfs_remove(const char *path)
 {
     if (!path || path[0] != '/')
-        return -1;
+        return -ENOENT;
 
     int idx = find_entry(path);
     if (idx < 0)
-        return -1;
+        return -EINVAL;
 
     /* Invoke the release callback before tearing down the entry.
      * The callback can still access all entry fields, including priv,
@@ -309,13 +309,13 @@ static void sysfs_clear_entry(int idx)
 int sysfs_remove_recursive(const char *path)
 {
     if (!path || path[0] != '/')
-        return -1;
+        return -EINVAL;
 
     int idx = find_entry(path);
     if (idx < 0)
-        return -1;
+        return -EINVAL;
     if (sysfs_entries[idx].type != 2)
-        return -1; /* Not a directory */
+        return -EINVAL; /* Not a directory */
 
     /* Remove all children recursively (multi-pass because children may have children) */
     int changed;
@@ -387,7 +387,7 @@ static int sysfs_read_panic_timeout(char *buf, uint32_t max_sz, void *priv)
     (void)priv;
     int n = snprintf(buf, max_sz, "%d\n", panic_timeout);
     if (n < 0)
-        return -1;
+        return -ETIMEDOUT;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -409,7 +409,7 @@ static int sysfs_write_panic_timeout(const char *data, uint32_t size, void *priv
     while (len > 0 && (tmp[len - 1] == '\n' || tmp[len - 1] == ' '))
         tmp[--len] = '\0';
     if (len == 0)
-        return -1;
+        return -EINVAL;
 
     int val = 0;
     int neg = 0;
@@ -418,7 +418,7 @@ static int sysfs_write_panic_timeout(const char *data, uint32_t size, void *priv
     while (*p >= '0' && *p <= '9')
         val = val * 10 + (*p++ - '0');
     if (*p != '\0')
-        return -1; /* non-numeric data */
+        return -EINVAL; /* non-numeric data */
 
     if (neg)
         val = -val;
@@ -441,7 +441,7 @@ static int sysfs_read_oops_count(char *buf, uint32_t max_sz, void *priv)
     extern uint64_t oops_count;
     int n = snprintf(buf, max_sz, "%llu\n", (unsigned long long)oops_count);
     if (n < 0)
-        return -1;
+        return -EINVAL;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -462,7 +462,7 @@ static int sysfs_read_printk(char *buf, uint32_t max_sz, void *priv)
                      1,          /* minimum_console_loglevel (KERN_EMERG) */
                      7);         /* default_console_loglevel */
     if (n < 0)
-        return -1;
+        return -EINVAL;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -500,7 +500,7 @@ static int sysfs_read_dmesg_restrict(char *buf, uint32_t max_sz, void *priv)
 {
     (void)priv;
     int n = snprintf(buf, max_sz, "%d\n", dmesg_restrict);
-    if (n < 0) return -1;
+    if (n < 0) return -EINVAL;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -511,9 +511,9 @@ static int sysfs_read_dmesg_restrict(char *buf, uint32_t max_sz, void *priv)
 static int sysfs_write_dmesg_restrict(const char *data, uint32_t size, void *priv)
 {
     (void)priv;
-    if (size < 1) return -1;
+    if (size < 1) return -EINVAL;
     int val = data[0] - '0';
-    if (val != 0 && val != 1) return -1;
+    if (val != 0 && val != 1) return -EINVAL;
     dmesg_restrict = val;
     return 0;
 }
@@ -525,7 +525,7 @@ static int sysfs_read_kptr_restrict(char *buf, uint32_t max_sz, void *priv)
 {
     (void)priv;
     int n = snprintf(buf, max_sz, "%d\n", kptr_restrict);
-    if (n < 0) return -1;
+    if (n < 0) return -EINVAL;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -536,9 +536,9 @@ static int sysfs_read_kptr_restrict(char *buf, uint32_t max_sz, void *priv)
 static int sysfs_write_kptr_restrict(const char *data, uint32_t size, void *priv)
 {
     (void)priv;
-    if (size < 1) return -1;
+    if (size < 1) return -EINVAL;
     int val = data[0] - '0';
-    if (val < 0 || val > 2) return -1;
+    if (val < 0 || val > 2) return -EINVAL;
     kptr_restrict = val;
     return 0;
 }
@@ -555,7 +555,7 @@ static int sysfs_read_cpu_online(char *buf, uint32_t max_sz, void *priv)
     int cpu_id = (int)(uintptr_t)priv;
     int online = cpuhp_is_online(cpu_id);
     int n = snprintf(buf, max_sz, "%d\n", online ? 1 : 0);
-    if (n < 0) return -1;
+    if (n < 0) return -EINVAL;
     return (uint32_t)n < max_sz ? n : (int)(max_sz - 1);
 }
 
@@ -567,7 +567,7 @@ static int sysfs_read_cpu_online(char *buf, uint32_t max_sz, void *priv)
 static int sysfs_write_cpu_online(const char *data, uint32_t size, void *priv)
 {
     int cpu_id = (int)(uintptr_t)priv;
-    if (size < 1) return -1;
+    if (size < 1) return -EINVAL;
 
     int val = data[0] - '0';
     if (val == 0) {
@@ -575,7 +575,7 @@ static int sysfs_write_cpu_online(const char *data, uint32_t size, void *priv)
         int ret = smp_cpu_disable(cpu_id);
         if (ret != 0) {
             kprintf("[sysfs] cpu%d disable failed: error %d\n", cpu_id, ret);
-            return -1;
+            return -EINVAL;
         }
         return (int)size;
     } else if (val == 1) {
@@ -583,12 +583,12 @@ static int sysfs_write_cpu_online(const char *data, uint32_t size, void *priv)
         int ret = smp_cpu_enable(cpu_id);
         if (ret != 0) {
             kprintf("[sysfs] cpu%d enable failed: error %d\n", cpu_id, ret);
-            return -1;
+            return -EINVAL;
         }
         return (int)size;
     }
 
-    return -1; /* invalid value */
+    return -EINVAL; /* invalid value */
 }
 
 /*

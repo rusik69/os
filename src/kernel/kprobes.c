@@ -816,7 +816,7 @@ int kprobe_unregister_bpf(const char *symbol)
 }
 
 /* ── kprobe_register: Wrapper for register_kprobe ──────────────────── */
-int kprobe_register(void *kp)
+static int kprobe_register(void *kp)
 {
     if (!kp) return -EINVAL;
     struct kprobe *kprobe = (struct kprobe *)kp;
@@ -825,7 +825,7 @@ int kprobe_register(void *kp)
     return register_kprobe(kprobe);
 }
 /* ── kprobe_unregister: Wrapper for unregister_kprobe ──────────────── */
-int kprobe_unregister(void *kp)
+static int kprobe_unregister(void *kp)
 {
     if (!kp) return -EINVAL;
     struct kprobe *kprobe = (struct kprobe *)kp;
@@ -834,7 +834,7 @@ int kprobe_unregister(void *kp)
     return unregister_kprobe(kprobe);
 }
 /* ── kprobe_fault_handler: Handle page faults during kprobe stepping ──── */
-int kprobe_fault_handler(void *kp, void *regs, int trapnr)
+static int kprobe_fault_handler(void *kp, void *regs, int trapnr)
 {
     (void)kp;
     (void)regs;
@@ -844,7 +844,7 @@ int kprobe_fault_handler(void *kp, void *regs, int trapnr)
     return 0;
 }
 /* ── kprobe_breakpoint_handler: Handle breakpoint (INT3) exceptions ──── */
-int kprobe_breakpoint_handler(void *regs)
+static int kprobe_breakpoint_handler(void *regs)
 {
     if (!regs) return -EINVAL;
     /* Forward to the existing kprobe_int3_handler */

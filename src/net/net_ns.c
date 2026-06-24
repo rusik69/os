@@ -71,9 +71,9 @@ struct net_ns *net_ns_create(const char *name) {
 }
 
 int net_ns_destroy(int ns_id) {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
-    if (ns_id == NET_NS_INIT) return -1;  /* can't destroy init_ns */
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
+    if (ns_id == NET_NS_INIT) return -EINVAL;  /* can't destroy init_ns */
 
     spinlock_acquire(&net_ns_lock);
     net_namespaces[ns_id].in_use = 0;
@@ -82,9 +82,9 @@ int net_ns_destroy(int ns_id) {
 }
 
 int net_ns_switch(int ns_id) {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
-    if (!net_namespaces[ns_id].in_use) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
+    if (!net_namespaces[ns_id].in_use) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     current_ns_id = ns_id;
@@ -111,18 +111,18 @@ int net_ns_get_id(void) {
 /* Interface management */
 int net_ns_add_iface(int ns_id, int iface_id)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
     if (ns->num_ifaces >= NET_NS_MAX_IFACES) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     /* Check for duplicates */
@@ -140,14 +140,14 @@ int net_ns_add_iface(int ns_id, int iface_id)
 
 int net_ns_remove_iface(int ns_id, int iface_id)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     for (int i = 0; i < ns->num_ifaces; i++) {
@@ -161,19 +161,19 @@ int net_ns_remove_iface(int ns_id, int iface_id)
         }
     }
     spinlock_release(&net_ns_lock);
-    return -1;  /* Not found */
+    return -ENOENT;  /* Not found */
 }
 
 int net_ns_get_ifaces(int ns_id, int *iface_ids, int max_count)
 {
-    if (!net_ns_initialized || !iface_ids) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized || !iface_ids) return -ENOENT;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     int count = ns->num_ifaces;
@@ -188,19 +188,19 @@ int net_ns_get_ifaces(int ns_id, int *iface_ids, int max_count)
 /* Routing table management */
 int net_ns_route_add(int ns_id, uint32_t dst, uint32_t mask, uint32_t gw, int iface)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     if (ns->rt_num_entries >= NET_NS_RT_MAX) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     struct rt_entry *entry = &ns->rt_table[ns->rt_num_entries++];
@@ -215,14 +215,14 @@ int net_ns_route_add(int ns_id, uint32_t dst, uint32_t mask, uint32_t gw, int if
 
 int net_ns_route_del(int ns_id, uint32_t dst, uint32_t mask)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     for (int i = 0; i < ns->rt_num_entries; i++) {
@@ -235,19 +235,19 @@ int net_ns_route_del(int ns_id, uint32_t dst, uint32_t mask)
         }
     }
     spinlock_release(&net_ns_lock);
-    return -1;
+    return -EINVAL;
 }
 
 int net_ns_route_lookup(int ns_id, uint32_t ip, uint32_t *gw_out, int *iface_out)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     /* Longest-prefix-match */
@@ -265,7 +265,7 @@ int net_ns_route_lookup(int ns_id, uint32_t ip, uint32_t *gw_out, int *iface_out
 
     if (best_idx < 0) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     if (gw_out) *gw_out = ns->rt_table[best_idx].gw;
@@ -289,19 +289,19 @@ void net_ns_route_flush(int ns_id)
 /* Netfilter/iptables management */
 int net_ns_nf_add_rule(int ns_id, struct netfilter_rule *rule)
 {
-    if (!net_ns_initialized || !rule) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized || !rule) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     if (ns->nf_num_rules >= NET_NS_NF_MAX) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     memcpy(&ns->nf_rules[ns->nf_num_rules++], rule, sizeof(struct netfilter_rule));
@@ -311,14 +311,14 @@ int net_ns_nf_add_rule(int ns_id, struct netfilter_rule *rule)
 
 int net_ns_nf_del_rule(int ns_id, int rule_idx)
 {
-    if (!net_ns_initialized) return -1;
-    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -1;
+    if (!net_ns_initialized) return -EINVAL;
+    if (ns_id < 0 || ns_id >= NET_NS_MAX) return -EINVAL;
 
     spinlock_acquire(&net_ns_lock);
     struct net_ns *ns = &net_namespaces[ns_id];
     if (!ns->in_use || rule_idx < 0 || rule_idx >= ns->nf_num_rules) {
         spinlock_release(&net_ns_lock);
-        return -1;
+        return -EINVAL;
     }
 
     for (int i = rule_idx; i < ns->nf_num_rules - 1; i++)

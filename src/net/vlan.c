@@ -13,7 +13,7 @@ static int vlan_initialized = 0;
 void vlan_init(void) {
     memset(vlan_active, 0, sizeof(vlan_active));
     /* Default VLAN 1 is always active */
-    vlan_active[VLAN_DEFAULT_VID / 16] |= (1 << (VLAN_DEFAULT_VID % 16));
+    vlan_active[VLAN_DEFAULT_VID / 16] |= (1U << (VLAN_DEFAULT_VID % 16));
     vlan_initialized = 1;
     kprintf("[OK] VLAN initialized (default VID 1)\\n");
 }
@@ -21,14 +21,14 @@ void vlan_init(void) {
 int vlan_add_vid(uint16_t vid) {
     if (!vlan_initialized) return -1;
     if (vid >= VLAN_MAX_VID) return -1;
-    vlan_active[vid / 16] |= (1 << (vid % 16));
+    vlan_active[vid / 16] |= (1U << (vid % 16));
     return 0;
 }
 
 int vlan_remove_vid(uint16_t vid) {
     if (!vlan_initialized) return -1;
     if (vid >= VLAN_MAX_VID || vid == VLAN_DEFAULT_VID) return -1;
-    vlan_active[vid / 16] &= ~(1 << (vid % 16));
+    vlan_active[vid / 16] &= ~(1U << (vid % 16));
     return 0;
 }
 

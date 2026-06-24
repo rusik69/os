@@ -180,13 +180,13 @@ static inline int bitmap_test(const uint8_t *bitmap, uint32_t index)
 /* Set a bit in a bitmap */
 static inline void bitmap_set(uint8_t *bitmap, uint32_t index)
 {
-    bitmap[index >> 3] |= (1 << (index & 7));
+    bitmap[index >> 3] |= (1U << (index & 7));
 }
 
 /* Clear a bit in a bitmap */
 static inline void bitmap_clear(uint8_t *bitmap, uint32_t index)
 {
-    bitmap[index >> 3] &= ~(1 << (index & 7));
+    bitmap[index >> 3] &= ~(1U << (index & 7));
 }
 
 /* Count the number of bits set in a bitmap */

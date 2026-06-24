@@ -118,7 +118,7 @@ void hmac_init(void)
 }
 
 /* ── hmac_sha1 ─────────────────────────────── */
-int hmac_sha1(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
+static int hmac_sha1(const void *key, size_t klen, const void *msg, size_t mlen, void *mac)
 {
     /* SHA-1 block and digest sizes */
 #define SHA1_BLOCK_SIZE  64

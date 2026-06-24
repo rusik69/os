@@ -92,6 +92,8 @@ static void mouse_irq_handler(struct interrupt_frame *frame) {
             if (mouse_py < 0) mouse_py = 0;
             if (mouse_py >= FB_HEIGHT) mouse_py = FB_HEIGHT - 1;
             break;
+        default:
+            break;
     }
 }
 

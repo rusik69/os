@@ -23,7 +23,7 @@ unsigned long find_first_zero_bit(const unsigned long *addr, unsigned long size)
     return size;
 }
 
-unsigned long find_last_bit(const unsigned long *addr, unsigned long size) {
+static unsigned long find_last_bit(const unsigned long *addr, unsigned long size) {
     if (size == 0) return 0;
     for (unsigned long i = size - 1; ; i--) {
         if (test_bit((int)i, addr)) return i;
@@ -32,13 +32,13 @@ unsigned long find_last_bit(const unsigned long *addr, unsigned long size) {
     return size;
 }
 
-unsigned long find_next_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
+static unsigned long find_next_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
     for (unsigned long i = offset; i < size; i++)
         if (test_bit((int)i, addr)) return i;
     return size;
 }
 
-unsigned long find_next_zero_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
+static unsigned long find_next_zero_bit(const unsigned long *addr, unsigned long size, unsigned long offset) {
     for (unsigned long i = offset; i < size; i++)
         if (!test_bit((int)i, addr)) return i;
     return size;

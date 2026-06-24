@@ -49,7 +49,7 @@
 
 /* Gains (fixed-point with 8 fractional bits, i.e. gain = value / 256) */
 #define BBR_GAIN_SCALE         8
-#define BBR_UNIT               (1 << BBR_GAIN_SCALE)   /* 256 = 1.0 */
+#define BBR_UNIT               (1U << BBR_GAIN_SCALE)   /* 256 = 1.0 */
 
 #define BBR_STARTUP_GAIN       (5 * BBR_UNIT / 4)       /* 1.25 : 25% growth per RTT */
 #define BBR_DRAIN_GAIN         (3 * BBR_UNIT / 4)       /* 0.75 : drain queue */
@@ -294,6 +294,8 @@ void bbr_on_ack(struct bbr_data *b, uint32_t acked_bytes,
             break;
         case BBR_PROBE_RTT:
             gain = BBR_PROBE_RTT_GAIN;
+            break;
+        default:
             break;
         }
 

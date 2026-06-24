@@ -459,7 +459,7 @@ struct file_handle {
 #define MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED 32
 
 /* membarrier flags */
-#define MEMBARRIER_CMD_FLAG_CPU     (1 << 0)
+#define MEMBARRIER_CMD_FLAG_CPU     (1U << 0)
 
 /* ── Constants for *at syscalls ─────────────────────────────── */
 #define AT_FDCWD            (-100)
@@ -503,7 +503,7 @@ struct file_handle {
 /* timerfd flags */
 #define TFD_CLOEXEC 02000000
 #define TFD_NONBLOCK 04000
-#define TFD_TIMER_ABSTIME (1 << 0)
+#define TFD_TIMER_ABSTIME (1U << 0)
 
 /* timerfd clock sources */
 #define CLOCK_REALTIME  0

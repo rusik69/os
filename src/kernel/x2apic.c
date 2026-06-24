@@ -13,7 +13,7 @@ int x2apic_init(void) {
     /* Check CPUID leaf 1 for x2APIC support (ECX bit 21) */
     __asm__ volatile("cpuid" : "=a"(rax), "=b"(rbx), "=c"(rcx), "=d"(rdx) : "a"(1));
 
-    if (!(rcx & (1 << 21))) {
+    if (!(rcx & (1U << 21))) {
         kprintf("[cpu] x2APIC not supported\n");
         return -1;
     }

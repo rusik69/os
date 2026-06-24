@@ -20,9 +20,9 @@
 #define ESB_WDT_STATUS  0xF6
 
 /* Control register bits */
-#define ESB_WDT_ENABLE_BIT (1 << 0)
-#define ESB_WDT_LOCK_BIT   (1 << 1)
-#define ESB_WDT_PULSE_BIT  (1 << 2)
+#define ESB_WDT_ENABLE_BIT (1U << 0)
+#define ESB_WDT_LOCK_BIT   (1U << 1)
+#define ESB_WDT_PULSE_BIT  (1U << 2)
 
 #define ESB_BAR0 0x10
 

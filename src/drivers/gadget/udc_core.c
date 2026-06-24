@@ -299,6 +299,8 @@ int udc_add_function(struct usb_gadget *g, int config_id,
         case GADGET_FUNC_MASS_STORAGE:
             func->ops = NULL; /* would set MS ops */
             break;
+        default:
+            break;
     }
 
     cfg->functions[cfg->num_functions++] = func;

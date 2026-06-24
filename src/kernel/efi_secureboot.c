@@ -113,6 +113,8 @@ void efi_secureboot_init(void)
             lock_down(LOCKDOWN_INTEGRITY);
             kprintf("[SECUREBOOT] Lockdown raised to INTEGRITY\n");
             break;
+        default:
+            break;
     }
 
     g_initialized = 1;

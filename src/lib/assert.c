@@ -13,13 +13,13 @@ void __assert_fail(const char *expr, const char *file, int line,
 }
 
 /* ── assert_handler ─────────────────────────────── */
-int assert_handler(const char *expr, const char *file, int line, const char *func)
+static int assert_handler(const char *expr, const char *file, int line, const char *func)
 {
     __assert_fail(expr, file, line, func);
     return 0;
 }
 /* ── assert_set_handler ─────────────────────────────── */
-int assert_set_handler(void *handler)
+static int assert_set_handler(void *handler)
 {
     (void)handler;
     kprintf("[assert] assert_set_handler: handler registration ignored\n");

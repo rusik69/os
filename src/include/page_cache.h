@@ -9,7 +9,7 @@
 #define PAGE_CACHE_MAX_PAGES 1024
 
 /* Page cache entry flags */
-#define PAGE_CACHE_DIRTY      (1 << 0)
+#define PAGE_CACHE_DIRTY      (1U << 0)
 
 /* Initialize the page cache subsystem */
 void page_cache_init(void);

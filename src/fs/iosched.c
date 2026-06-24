@@ -171,6 +171,9 @@ int iosched_set_policy(int dev_id, int policy)
         memset(&iq->cfq, 0, sizeof(iq->cfq));
         INIT_LIST_HEAD(&iq->cfq.active_queues);
         break;
+    default:
+        iq->ops = &g_noop_ops;
+        break;
     }
 
     spinlock_irqsave_release(&iq->lock, irq_flags);

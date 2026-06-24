@@ -102,7 +102,7 @@ int ftrace_register(const char *func_name,
 {
     if (!func_name || !callback) {
         kprintf("[ftrace] Invalid arguments\n");
-        return -1;
+        return -EINVAL;
     }
 
     if (!g_ftrace_initialized) ftrace_init();
@@ -116,14 +116,14 @@ int ftrace_register(const char *func_name,
             strcmp(g_tracepoints[i].func_name, func_name) == 0) {
             spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
             kprintf("[ftrace] %s already registered\n", func_name);
-            return -1;
+            return -EEXIST;
         }
     }
 
     if (g_num_tracepoints >= FTRACE_MAX_TRACEPOINTS) {
         spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
         kprintf("[ftrace] Tracepoint table full\n");
-        return -1;
+        return -ENOSPC;
     }
 
     /* Find the kernel symbol address */
@@ -131,7 +131,7 @@ int ftrace_register(const char *func_name,
     if (addr == 0) {
         spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
         kprintf("[ftrace] Symbol %s not found\n", func_name);
-        return -1;
+        return -ENOENT;
     }
 
     int idx = g_num_tracepoints;
@@ -153,7 +153,7 @@ int ftrace_register(const char *func_name,
         spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
         kprintf("[ftrace] Failed to register kprobe for %s (ret=%d)\n",
                 func_name, ret);
-        return -1;
+        return -EIO;
     }
 
     g_num_tracepoints++;
@@ -166,8 +166,8 @@ int ftrace_register(const char *func_name,
 
 int ftrace_unregister(const char *func_name)
 {
-    if (!func_name) return -1;
-    if (!g_ftrace_initialized) return -1;
+    if (!func_name) return -EINVAL;
+    if (!g_ftrace_initialized) return -ENODEV;
 
     uint64_t irq_flags;
     spinlock_irqsave_acquire(&g_ftrace_lock, &irq_flags);
@@ -191,7 +191,7 @@ int ftrace_unregister(const char *func_name)
 
     spinlock_irqsave_release(&g_ftrace_lock, irq_flags);
     kprintf("[ftrace] Tracepoint %s not found\n", func_name);
-    return -1;
+    return -ENOENT;
 }
 
 void ftrace_enable(void)
@@ -544,12 +544,12 @@ static void ftrace_graph_handler(struct kretprobe *rp, uint64_t return_value)
 static int ftrace_graph_find_func(const char *func_name)
 {
     if (!func_name)
-        return -1;
+        return -EINVAL;
     for (int i = 0; i < g_graph_num_funcs; i++) {
         if (strcmp(g_graph_func_names[i], func_name) == 0)
             return i;
     }
-    return -1;
+    return -ENOENT;
 }
 
 /* ── Public API ────────────────────────────────────────────────────── */

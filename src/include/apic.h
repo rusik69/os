@@ -31,20 +31,20 @@
 #define LAPIC_ICR_HIGH  0x310   /* Interrupt Command (high) */
 
 /* Spurious Vector Register bits */
-#define SVR_ENABLE      (1 << 8)
-#define SVR_FOCUS_DIS   (1 << 9)
+#define SVR_ENABLE      (1U << 8)
+#define SVR_FOCUS_DIS   (1U << 9)
 
 /* Timer LVT bits */
-#define TIMER_MASKED    (1 << 16)
-#define TIMER_PERIODIC  (1 << 17)
+#define TIMER_MASKED    (1U << 16)
+#define TIMER_PERIODIC  (1U << 17)
 #define TIMER_ONESHOT   (0 << 17)
 
 /* ICR bits */
 #define ICR_INIT        (5 << 8)
 #define ICR_STARTUP     (6 << 8)
-#define ICR_DELIVERY    (1 << 12)
-#define ICR_LEVEL       (1 << 15)
-#define ICR_TRIGGER     (1 << 15)
+#define ICR_DELIVERY    (1U << 12)
+#define ICR_LEVEL       (1U << 15)
+#define ICR_TRIGGER     (1U << 15)
 #define ICR_ALL_EXCL    (0x80000)  /* All excluding self */
 #define ICR_ALL_INCL    (0x80000 | 0x10000)  /* All including self */
 #define ICR_DEST_FIXED  0
@@ -65,7 +65,7 @@
 #define IOAPIC_REDTBL  0x10   /* first redirection table entry */
 
 /* I/O APIC redirection entry bits */
-#define IOAPIC_MASKED  (1 << 16)
+#define IOAPIC_MASKED  (1U << 16)
 
 /* APIC virtual base addresses */
 #define LAPIC_BASE_VIRT     0xFFFF8000FFE00000ULL

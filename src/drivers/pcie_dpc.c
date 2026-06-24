@@ -21,15 +21,15 @@
 #define PCI_DPC_RP_LOG_SIZE  16
 
 /* DPC control register bits */
-#define DPC_CTL_ENABLE       (1 << 0)
-#define DPC_CTL_INT_ENABLE   (1 << 1)
-#define DPC_CTL_ERR_COR      (1 << 2)
-#define DPC_CTL_TRIGGER      (1 << 3)
+#define DPC_CTL_ENABLE       (1U << 0)
+#define DPC_CTL_INT_ENABLE   (1U << 1)
+#define DPC_CTL_ERR_COR      (1U << 2)
+#define DPC_CTL_TRIGGER      (1U << 3)
 
 /* DPC status register bits */
-#define DPC_STATUS_TRIGGER   (1 << 0)
-#define DPC_STATUS_INTERRUPT (1 << 1)
-#define DPC_STATUS_RP_BUSY   (1 << 2)
+#define DPC_STATUS_TRIGGER   (1U << 0)
+#define DPC_STATUS_INTERRUPT (1U << 1)
+#define DPC_STATUS_RP_BUSY   (1U << 2)
 
 /* DPC trigger reason */
 #define DPC_TRIGGER_RAS_DES  0  /* ERR_COR or ERR_FATAL/NONFATAL */

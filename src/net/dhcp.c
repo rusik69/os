@@ -292,6 +292,8 @@ static void handle_dhcp_response(const uint8_t *data, uint16_t len) {
                 lease = ((uint32_t)opt[0] << 24) | ((uint32_t)opt[1] << 16) |
                         ((uint32_t)opt[2] << 8) | opt[3];
             break;
+        default:
+            break;
         }
         opt += olen;
     }

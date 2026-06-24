@@ -185,7 +185,7 @@ static inline void br_drop_bits(struct bit_reader *br, int n)
  * Maximum code length is 15 bits (RFC 1951). */
 
 #define HUFF_MAX_BITS  15
-#define HUFF_LUT_SIZE  (1 << HUFF_MAX_BITS)
+#define HUFF_LUT_SIZE  (1U << HUFF_MAX_BITS)
 
 struct huff_table {
     uint16_t lut[HUFF_LUT_SIZE]; /* direct lookup: 16k entries */
@@ -238,7 +238,7 @@ static int huff_build(struct huff_table *ht,
         next_code[len]++;
 
         /* Fill all entries with this prefix */
-        int step = 1 << len;
+        int step = 1U << len;
         for (uint32_t j = 0; j < (uint32_t)(1U << (HUFF_MAX_BITS - len)); j++) {
             uint32_t idx = ((uint32_t)c << (HUFF_MAX_BITS - len)) | j;
             if (idx < HUFF_LUT_SIZE)
@@ -760,7 +760,7 @@ static inline int lzma_rd_decode_bit(struct lzma_rd *rd, uint16_t *prob)
 #define LZMA_NUM_POS_SLOTS       64
 #define LZMA_NUM_LEN_TO_POS_STATES 4
 #define LZMA_NUM_ALIGN_BITS      4
-#define LZMA_ALIGN_TABLE_SIZE    (1 << LZMA_NUM_ALIGN_BITS)
+#define LZMA_ALIGN_TABLE_SIZE    (1U << LZMA_NUM_ALIGN_BITS)
 #define LZMA_NUM_STATES          12
 #define LZMA_NUM_LIT_STATES      7
 #define LZMA_NUM_PB_STATES_MAX   4   /* 0..3 (from pb) */
@@ -769,9 +769,9 @@ static inline int lzma_rd_decode_bit(struct lzma_rd *rd, uint16_t *prob)
 #define LZMA_LEN_LOW_SYMBOLS     8
 #define LZMA_LEN_MID_SYMBOLS     8
 #define LZMA_LEN_HIGH_SYMBOLS    16
-#define LZMA_LEN_LOW_SLOTS       (1 << 3)   /* low: 3 bits */
-#define LZMA_LEN_MID_SLOTS       (1 << 3)   /* mid: 3 bits */
-#define LZMA_LEN_HIGH_SLOTS      (1 << 8)   /* high: 8 bits */
+#define LZMA_LEN_LOW_SLOTS       (1U << 3)   /* low: 3 bits */
+#define LZMA_LEN_MID_SLOTS       (1U << 3)   /* mid: 3 bits */
+#define LZMA_LEN_HIGH_SLOTS      (1U << 8)   /* high: 8 bits */
 #define LZMA_DIST_SLOTS          4
 #define LZMA_DIST_MODEL_START    4
 #define LZMA_DIST_MODEL_END      14
@@ -838,19 +838,19 @@ static void lzma_init_probs(struct lzma_state *ls)
             ls->dist_slot[i][j] = INIT_PROB;
     for (int i = 0; i < LZMA_FULL_DISTANCES - LZMA_DIST_MODEL_END; i++)
         ls->dist_special[i] = INIT_PROB;
-    for (int i = 0; i < LZMA_ALIGN_TABLE_SIZE; i++)
+    for (unsigned int i = 0; i < LZMA_ALIGN_TABLE_SIZE; i++)
         ls->dist_align[i] = INIT_PROB;
     for (int i = 0; i < LZMA_NUM_LIT_STATES; i++)
         for (int j = 0; j < 0x300; j++)
             ls->literal[i][j] = INIT_PROB;
     for (int i = 0; i < LZMA_LEN_CHOICES; i++) {
         ls->len_choice[i] = INIT_PROB;
-        for (int j = 0; j < LZMA_LEN_LOW_SLOTS; j++)
+        for (unsigned int j = 0; j < LZMA_LEN_LOW_SLOTS; j++)
             ls->len_low[i][j] = INIT_PROB;
-        for (int j = 0; j < LZMA_LEN_MID_SLOTS; j++)
+        for (unsigned int j = 0; j < LZMA_LEN_MID_SLOTS; j++)
             ls->len_mid[i][j] = INIT_PROB;
     }
-    for (int i = 0; i < LZMA_LEN_HIGH_SLOTS; i++)
+    for (unsigned int i = 0; i < LZMA_LEN_HIGH_SLOTS; i++)
         ls->len_high[i] = INIT_PROB;
 }
 
@@ -1056,7 +1056,7 @@ static int lzma_decode_literal(struct lzma_rd *rd,
                                 uint8_t *literal)
 {
     /* Determine which literal probability sub-table to use */
-    /* lit_state = ((prev_byte >> (8 - lc)) & ((1 << lc) - 1)) |
+    /* lit_state = ((prev_byte >> (8 - lc)) & ((1U << lc) - 1)) |
      *             ((pos & mask) << lc)  ... but we use simplified: */
     int lit_state = (int)((prev_byte >> (8 - ls->lc)) & ((1u << ls->lc) - 1u));
 

@@ -32,7 +32,7 @@
  * ═══════════════════════════════════════════════════════════════════════ */
 
 #define PSI_FRAC_BITS  12          /* fixed-point resolution: 1/4096 */
-#define PSI_FRAC_ONE   (1 << PSI_FRAC_BITS)  /* 1.0 in fixed-point  */
+#define PSI_FRAC_ONE   (1U << PSI_FRAC_BITS)  /* 1.0 in fixed-point  */
 #define PSI_FRAC_HALF  (PSI_FRAC_ONE / 2)    /* 0.5 for rounding    */
 
 /* Format a fixed-point percentage value into a string like "12.34".
@@ -144,8 +144,8 @@ static void psi_update_window(struct psi_window *win,
     /* Clamp to [0, FRAC_ONE] */
     if (win->avg_fp < 0)
         win->avg_fp = 0;
-    if (win->avg_fp > PSI_FRAC_ONE)
-        win->avg_fp = PSI_FRAC_ONE;
+    if (win->avg_fp > (int)PSI_FRAC_ONE)
+        win->avg_fp = (int)PSI_FRAC_ONE;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

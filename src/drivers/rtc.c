@@ -30,9 +30,9 @@
 #define RTC_ALRM_DAY  0x06
 
 /* Status register B bits */
-#define RTC_B_UPD_END  (1 << 4)  /* Update-ended interrupt enable */
-#define RTC_B_PER_INT  (1 << 6)  /* Periodic interrupt enable */
-#define RTC_B_ALRM_INT (1 << 5)  /* Alarm interrupt enable */
+#define RTC_B_UPD_END  (1U << 4)  /* Update-ended interrupt enable */
+#define RTC_B_PER_INT  (1U << 6)  /* Periodic interrupt enable */
+#define RTC_B_ALRM_INT (1U << 5)  /* Alarm interrupt enable */
 
 /* Status register A bits */
 #define RTC_A_RATE_MASK 0x0F     /* Periodic rate select */

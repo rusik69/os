@@ -22,18 +22,18 @@
 #define NVME_REG_ACQ      0x0030  /* Admin Completion Queue Base */
 
 /* Controller Configuration bits */
-#define NVME_CC_ENABLE    (1 << 0)
+#define NVME_CC_ENABLE    (1U << 0)
 #define NVME_CC_CSS_NVM   (0 << 4)
 #define NVME_CC_MPS_SHIFT 7
 #define NVME_CC_AMS_RR    (0 << 11)
-#define NVME_CC_SHN_NORMAL (1 << 14)
+#define NVME_CC_SHN_NORMAL (1U << 14)
 #define NVME_CC_SHN_ABRUPT (3 << 14)
 #define NVME_CC_IOSQES    6    /* SQ entry size = 2^6 = 64 bytes */
 #define NVME_CC_IOCQES    4    /* CQ entry size = 2^4 = 16 bytes */
 
 /* Controller Status bits */
-#define NVME_CSTS_RDY     (1 << 0)
-#define NVME_CSTS_CFS     (1 << 1)
+#define NVME_CSTS_RDY     (1U << 0)
+#define NVME_CSTS_CFS     (1U << 1)
 #define NVME_CSTS_SHST_MASK (3 << 2)
 
 /* Admin queue IDs */

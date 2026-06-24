@@ -652,20 +652,20 @@ size_t strftime(char *s, size_t max, const char *format, const struct tm *tm) {
 }
 
 /* ── time_get ─────────────────────────────── */
-uint64_t time_get(void)
+static uint64_t time_get(void)
 {
     /* Use the SYS_TIME syscall (which returns current timestamp in ms) */
     return libc_syscall(SYS_TIME, 0, 0, 0, 0, 0);
 }
 /* ── time_set ─────────────────────────────── */
-int time_set(uint64_t t)
+static int time_set(uint64_t t)
 {
     /* Setting time is not supported; return success silently */
     (void)t;
     return 0;
 }
 /* ── time_nanosleep ─────────────────────────────── */
-int time_nanosleep(uint64_t ns)
+static int time_nanosleep(uint64_t ns)
 {
     /* Busy-wait loop for simplicity (ns is nanoseconds) */
     uint64_t start = time_get();

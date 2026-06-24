@@ -55,12 +55,12 @@ void crc64_init(void)
 }
 
 /* ── crc64_le ─────────────────────────────── */
-uint64_t crc64_le(uint64_t crc, const uint8_t *data, size_t len)
+static uint64_t crc64_le(uint64_t crc, const uint8_t *data, size_t len)
 {
     return crc64(crc, data, len);
 }
 /* ── crc64_be ─────────────────────────────── */
-uint64_t crc64_be(uint64_t crc, const uint8_t *data, size_t len)
+static uint64_t crc64_be(uint64_t crc, const uint8_t *data, size_t len)
 {
     static uint64_t crc64_be_table[256];
     static int be_initialized = 0;

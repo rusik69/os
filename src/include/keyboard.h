@@ -32,9 +32,9 @@ int keyboard_get_layout(void);
 /* ── Keyboard LED control ──────────────────────────────────────────── */
 
 /* LED bit masks (for the 0xED command byte) */
-#define KB_LED_SCROLL_LOCK  (1 << 0)
-#define KB_LED_NUM_LOCK     (1 << 1)
-#define KB_LED_CAPS_LOCK    (1 << 2)
+#define KB_LED_SCROLL_LOCK  (1U << 0)
+#define KB_LED_NUM_LOCK     (1U << 1)
+#define KB_LED_CAPS_LOCK    (1U << 2)
 
 /* Set keyboard LEDs to the given mask (KB_LED_SCROLL_LOCK | KB_LED_NUM_LOCK | KB_LED_CAPS_LOCK).
    Returns 0 on success, -1 on error. */

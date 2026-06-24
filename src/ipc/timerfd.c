@@ -14,7 +14,7 @@
 #define TIMERFD_MAX 16
 
 /* Timerfd settime flags (matching Linux TFD_TIMER_ABSTIME) */
-#define TFD_TIMER_ABSTIME (1 << 0)
+#define TFD_TIMER_ABSTIME (1U << 0)
 
 struct itimerspec {
     struct timespec it_interval; /* timer period (0 = one-shot) */
@@ -51,10 +51,10 @@ static uint64_t timespec_to_ticks(struct timespec *ts) {
 int timerfd_create(int clockid) {
     (void)clockid;
     if (!timerfd_initialized) return -1;
-    
+
     struct process *cur = process_get_current();
     if (!cur) return -1;
-    
+
     for (int i = 0; i < TIMERFD_MAX; i++) {
         if (!timerfd_table[i].in_use) {
             timerfd_table[i].in_use = 1;
@@ -77,9 +77,9 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
     int slot = fd - 300;
     if (slot < 0 || slot >= TIMERFD_MAX) return -EBADF;
     if (!timerfd_table[slot].in_use) return -EBADF;
-    
+
     struct timerfd_entry *tf = &timerfd_table[slot];
-    
+
     /* Save old value if requested */
     if (old_value) {
         if (tf->expiration_tick == 0) {
@@ -108,7 +108,7 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
         old_value->it_interval.tv_sec = tf->interval_ticks / 100;
         old_value->it_interval.tv_nsec = (tf->interval_ticks % 100) * 10000000;
     }
-    
+
     if (!new_value ||
         (new_value->it_value.tv_sec == 0 && new_value->it_value.tv_nsec == 0)) {
         /* Disarm */
@@ -118,12 +118,12 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
         tf->expirations = 0;
         return 0;
     }
-    
+
     uint64_t now = timer_get_ticks();
     uint64_t ticks = timespec_to_ticks((struct timespec *)&new_value->it_value);
-    
+
     tf->absolute = (flags & TFD_TIMER_ABSTIME) ? 1 : 0;
-    
+
     if (tf->absolute) {
         /* Absolute time: it_value is in the same time base as timer_get_ticks()
          * (monotonic time since boot).  Convert the timespec directly to ticks. */
@@ -132,11 +132,11 @@ int timerfd_settime(int fd, int flags, const struct itimerspec *new_value,
         /* Relative time: it_value is added to the current tick count */
         tf->expiration_tick = now + ticks;
     }
-    
+
     tf->interval_ticks = timespec_to_ticks((struct timespec *)&new_value->it_interval);
     tf->expired = 0;
     tf->expirations = 0;
-    
+
     return 0;
 }
 
@@ -145,9 +145,9 @@ int timerfd_gettime(int fd, struct itimerspec *cur_value) {
     int slot = fd - 300;
     if (slot < 0 || slot >= TIMERFD_MAX) return -EBADF;
     if (!timerfd_table[slot].in_use) return -EBADF;
-    
+
     struct timerfd_entry *tf = &timerfd_table[slot];
-    
+
     if (cur_value) {
         uint64_t ticks_left = 0;
         if (tf->expiration_tick > timer_get_ticks()) {
@@ -158,7 +158,7 @@ int timerfd_gettime(int fd, struct itimerspec *cur_value) {
         cur_value->it_interval.tv_sec = tf->interval_ticks / 100;
         cur_value->it_interval.tv_nsec = (tf->interval_ticks % 100) * 10000000;
     }
-    
+
     return 0;
 }
 
@@ -167,18 +167,18 @@ uint64_t timerfd_read(int fd) {
     int slot = fd - 300;
     if (slot < 0 || slot >= TIMERFD_MAX) return 0;
     if (!timerfd_table[slot].in_use) return 0;
-    
+
     struct timerfd_entry *tf = &timerfd_table[slot];
-    
+
     /* Wait for expiration */
     while (!tf->expired) {
         wait_queue_sleep(&tf->wq);
     }
-    
+
     uint64_t count = tf->expirations;
     tf->expirations = 0;
     tf->expired = 0;
-    
+
     /* Re-arm if periodic */
     if (tf->interval_ticks > 0) {
         /* For absolute timers, preserve alignment by adding to the original
@@ -191,7 +191,7 @@ uint64_t timerfd_read(int fd) {
             tf->expiration_tick += tf->interval_ticks;
         }
     }
-    
+
     return count;
 }
 
@@ -199,16 +199,16 @@ uint64_t timerfd_read(int fd) {
 void timerfd_tick(void) {
     if (!timerfd_initialized) return;
     uint64_t now = timer_get_ticks();
-    
+
     for (int i = 0; i < TIMERFD_MAX; i++) {
         if (!timerfd_table[i].in_use) continue;
         if (timerfd_table[i].expiration_tick == 0) continue;
-        
+
         if (now >= timerfd_table[i].expiration_tick) {
             timerfd_table[i].expired = 1;
             timerfd_table[i].expirations++;
             wait_queue_wake(&timerfd_table[i].wq);
-            
+
             if (timerfd_table[i].interval_ticks > 0) {
                 /* Periodic: advance by the interval, skipping missed expirations.
                  * Using += preserves timing alignment and avoids drift. */

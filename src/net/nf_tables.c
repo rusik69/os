@@ -271,6 +271,8 @@ int nft_set_lookup(struct nft_set *set, uint32_t ip, uint16_t port, uint8_t prot
             if (e->ip == ip && e->port == port)
                 return 1;
             break;
+        default:
+            break;
         }
     }
     return 0;

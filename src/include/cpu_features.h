@@ -13,9 +13,9 @@
 #define CR4_PKE         (1ULL << 22)  /* Protection Key Enable */
 
 /* CPUID leaf 7, EBX feature bits */
-#define CPUID_7_EBX_FSGSBASE   (1 << 0)
-#define CPUID_7_EBX_INVPCID    (1 << 10)
-#define CPUID_7_EBX_RDPID      (1 << 22)
+#define CPUID_7_EBX_FSGSBASE   (1U << 0)
+#define CPUID_7_EBX_INVPCID    (1U << 10)
+#define CPUID_7_EBX_RDPID      (1U << 22)
 
 /* x2APIC MSR */
 #define IA32_APIC_BASE          0x1B

@@ -32,19 +32,19 @@
 #define TIS_RID              0x0F04  /* 1 byte:  revision ID */
 
 /* ── TIS_ACCESS bits ───────────────────────────────────────────────── */
-#define TIS_ACC_ACTIVE_LOC    (1 << 5)  /* Locality is active */
-#define TIS_ACC_SEIZE         (1 << 4)  /* Seize locality (interrupt-based) */
-#define TIS_ACC_REQ_USE       (1 << 1)  /* Request locality use */
-#define TIS_ACC_ESTABLISH     (1 << 0)  /* Locality established */
+#define TIS_ACC_ACTIVE_LOC    (1U << 5)  /* Locality is active */
+#define TIS_ACC_SEIZE         (1U << 4)  /* Seize locality (interrupt-based) */
+#define TIS_ACC_REQ_USE       (1U << 1)  /* Request locality use */
+#define TIS_ACC_ESTABLISH     (1U << 0)  /* Locality established */
 
 /* ── TIS_STS bits ──────────────────────────────────────────────────── */
-#define TIS_STS_RESET_EST     (1 << 6)  /* Reset establishment (cancel) */
-#define TIS_STS_CMD_READY     (1 << 5)  /* Command ready (ready state) */
-#define TIS_STS_INT_VALID     (1 << 4)  /* Interrupt valid */
-#define TIS_STS_VALID         (1 << 3)  /* Status valid (write complete) */
-#define TIS_STS_DATA_AVAIL    (1 << 2)  /* Data available (response ready) */
-#define TIS_STS_EXPECT        (1 << 1)  /* Expect more data */
-#define TIS_STS_GO            (1 << 0)  /* Go (execute command) */
+#define TIS_STS_RESET_EST     (1U << 6)  /* Reset establishment (cancel) */
+#define TIS_STS_CMD_READY     (1U << 5)  /* Command ready (ready state) */
+#define TIS_STS_INT_VALID     (1U << 4)  /* Interrupt valid */
+#define TIS_STS_VALID         (1U << 3)  /* Status valid (write complete) */
+#define TIS_STS_DATA_AVAIL    (1U << 2)  /* Data available (response ready) */
+#define TIS_STS_EXPECT        (1U << 1)  /* Expect more data */
+#define TIS_STS_GO            (1U << 0)  /* Go (execute command) */
 
 /* Burst count mask (upper bytes of STS) */
 #define TIS_STS_BURST_COUNT_MASK  0xFFFF0000ULL

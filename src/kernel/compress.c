@@ -121,7 +121,7 @@ int lzss_compress(const uint8_t *input, int input_len,
 
             if (best_len >= LZSS_MIN_MATCH) {
                 /* Emit a reference */
-                control |= (uint8_t)(1 << op);
+                control |= (uint8_t)(1U << op);
 
                 /* Ensure 2 bytes for the reference */
                 if (out_pos + 2 > output_len)
@@ -170,7 +170,7 @@ int lzss_decompress(const uint8_t *input, int input_len,
         uint8_t control = input[in_pos++];
 
         for (int op = 0; op < 8; op++) {
-            if (control & (1 << op)) {
+            if (control & (1U << op)) {
                 /* Reference: 2 bytes */
                 if (in_pos + 2 > input_len)
                     return -EINVAL;
@@ -207,7 +207,7 @@ int lzss_decompress(const uint8_t *input, int input_len,
 }
 
 /* ── Stub: compress_deflate ────────────────────────────────────────── */
-int compress_deflate(const uint8_t *input, int input_len,
+static int compress_deflate(const uint8_t *input, int input_len,
                      uint8_t *output, int output_len)
 {
     (void)input; (void)input_len; (void)output; (void)output_len;
@@ -216,7 +216,7 @@ int compress_deflate(const uint8_t *input, int input_len,
 }
 
 /* ── Stub: compress_inflate ────────────────────────────────────────── */
-int compress_inflate(const uint8_t *input, int input_len,
+static int compress_inflate(const uint8_t *input, int input_len,
                      uint8_t *output, int output_len)
 {
     (void)input; (void)input_len; (void)output; (void)output_len;
@@ -225,20 +225,20 @@ int compress_inflate(const uint8_t *input, int input_len,
 }
 
 /* ── Stub: compress_init ───────────────────────────────────────────── */
-int compress_init(void)
+static int compress_init(void)
 {
     kprintf("[COMPRESS] compress_init: not yet implemented\n");
     return 0;
 }
 
 /* ── Stub: compress_exit ───────────────────────────────────────────── */
-void compress_exit(void)
+static void compress_exit(void)
 {
     kprintf("[COMPRESS] compress_exit: not yet implemented\n");
 }
 
 /* ── Stub: compress_lz4 ─────────────────────────────── */
-int compress_lz4(const void *src, size_t src_len, void *dst, size_t *dst_len)
+static int compress_lz4(const void *src, size_t src_len, void *dst, size_t *dst_len)
 {
     (void)src;
     (void)src_len;
@@ -248,7 +248,7 @@ int compress_lz4(const void *src, size_t src_len, void *dst, size_t *dst_len)
     return -EIO;
 }
 /* ── Stub: compress_zlib ─────────────────────────────── */
-int compress_zlib(const void *src, size_t src_len, void *dst, size_t *dst_len)
+static int compress_zlib(const void *src, size_t src_len, void *dst, size_t *dst_len)
 {
     (void)src;
     (void)src_len;

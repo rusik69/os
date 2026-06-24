@@ -14,7 +14,7 @@
 /* ── Constants ──────────────────────────────────────────────────────── */
 #define BC_CAPACITY 64           /* number of sector slots */
 #define BC_HASH_BITS 6           /* 64 buckets */
-#define BC_HASH_SIZE (1 << BC_HASH_BITS)
+#define BC_HASH_SIZE (1U << BC_HASH_BITS)
 #define HASH(lba, dev) (((uint32_t)(lba) ^ ((uint32_t)(lba) >> BC_HASH_BITS) ^ (dev)) & (BC_HASH_SIZE - 1))
 
 /* ── Per-entry structure ────────────────────────────────────────────── */
@@ -112,7 +112,7 @@ void bufcache_init(void) {
 
     memset(g_entries, 0, sizeof(g_entries));
     memset(g_lru, 0, sizeof(g_lru));
-    for (int i = 0; i < BC_HASH_SIZE; i++) g_hash[i] = -1;
+    for (unsigned int i = 0; i < BC_HASH_SIZE; i++) g_hash[i] = -1;
 
     /* Initialize LRU doubly-linked list (all entries free, linked as a pool) */
     for (int i = 0; i < BC_CAPACITY; i++) {

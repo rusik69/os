@@ -317,6 +317,8 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
                     (src_ip >> 8) & 0xFF, src_ip & 0xFF,
                     ntohs(sh->src_port));
             break;
+        default:
+            break;
         }
 
         remaining -= chunk_len;

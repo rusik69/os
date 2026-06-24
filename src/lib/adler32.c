@@ -24,7 +24,7 @@ void adler32_init(void)
 }
 
 /* ── adler32_combine ─────────────────────────────── */
-uint32_t adler32_combine(uint32_t crc1, uint32_t crc2, size_t len2)
+static uint32_t adler32_combine(uint32_t crc1, uint32_t crc2, size_t len2)
 {
     uint32_t s1a = crc1 & 0xFFFF;
     uint32_t s2a = (crc1 >> 16) & 0xFFFF;

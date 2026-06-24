@@ -187,6 +187,8 @@ static void keyboard_handler(struct interrupt_frame *frame) {
     case 0x54: kb_sysrq = 1; return; /* SysRq/PrintScreen make (scancode set 1) */
     case 0xD4: kb_sysrq = 0; return; /* SysRq/PrintScreen break */
     case 0x3A: kb_capslock = !kb_capslock; return;
+    default:
+        break;
     }
 
     if (scancode & 0x80) {
@@ -248,7 +250,7 @@ static void keyboard_handler(struct interrupt_frame *frame) {
 void keyboard_init(void) {
     /* Initialise PS/2 controller first */
     ps2_controller_init();
-    
+
     idt_register_handler_named(33, keyboard_handler, "keyboard");
     if (apic_is_init_complete()) {
         ioapic_redirect_extint(1);

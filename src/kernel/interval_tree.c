@@ -387,7 +387,7 @@ void interval_tree_init_global(void)
 }
 
 /* ── Stub: interval_tree_iter_first ─────────────────────────────── */
-void* interval_tree_iter_first(void *root, uint64_t start, uint64_t last)
+static void* interval_tree_iter_first(void *root, uint64_t start, uint64_t last)
 {
     (void)root;
     (void)start;

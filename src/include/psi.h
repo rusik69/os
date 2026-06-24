@@ -33,9 +33,9 @@
 #define PSI_NUM_WINDOWS  3
 
 /* ── Stall-state flags (per task) ──────────────────────────────────── */
-#define PSI_FLAG_CPU_STALL     (1 << 0)
-#define PSI_FLAG_MEM_STALL    (1 << 1)
-#define PSI_FLAG_IO_STALL     (1 << 2)
+#define PSI_FLAG_CPU_STALL     (1U << 0)
+#define PSI_FLAG_MEM_STALL    (1U << 1)
+#define PSI_FLAG_IO_STALL     (1U << 2)
 
 /* ── Exported API ──────────────────────────────────────────────────── */
 

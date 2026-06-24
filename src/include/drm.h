@@ -131,9 +131,9 @@ struct drm_mode_destroy_dumb {
 
 /* ── DRM device flags ─────────────────────────────────────────── */
 
-#define DRIVER_HAVE_DUMB      (1 << 0)
-#define DRIVER_MODESET        (1 << 1)
-#define DRIVER_GEM            (1 << 2)
+#define DRIVER_HAVE_DUMB      (1U << 0)
+#define DRIVER_MODESET        (1U << 1)
+#define DRIVER_GEM            (1U << 2)
 
 /* ═══════════════════════════════════════════════════════════════════
  *  DRM driver interface

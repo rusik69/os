@@ -27,9 +27,9 @@
 #define GPIO_HIGH               1
 
 /* GPIO flags */
-#define GPIO_ACTIVE_LOW         (1 << 0)
-#define GPIO_OPEN_DRAIN         (1 << 1)
-#define GPIO_OPEN_SOURCE        (1 << 2)
+#define GPIO_ACTIVE_LOW         (1U << 0)
+#define GPIO_OPEN_DRAIN         (1U << 1)
+#define GPIO_OPEN_SOURCE        (1U << 2)
 
 /* ── IRQ trigger types for GPIO interrupts ──────────────────────────── */
 #define GPIO_IRQ_TYPE_EDGE_RISING  0
@@ -39,7 +39,7 @@
 #define GPIO_IRQ_TYPE_LEVEL_LOW    4
 
 /* ── GPIO IRQ descriptor flags ──────────────────────────────────────── */
-#define GPIO_IRQ_FLAG_USED        (1 << 0)
+#define GPIO_IRQ_FLAG_USED        (1U << 0)
 
 /* Maximum GPIO IRQ handlers per chip (one per line maximum) */
 #define GPIO_IRQ_MAX_PER_CHIP    32

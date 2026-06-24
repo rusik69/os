@@ -88,14 +88,14 @@ static int fdc_wait_rqm(void)
             return 0;
         io_wait();
     }
-    return -1;  /* timeout */
+    return -ETIMEDOUT;  /* timeout */
 }
 
 /* Send a command byte to the FDC FIFO */
 static int fdc_send_byte(uint8_t val)
 {
     if (fdc_wait_rqm() < 0)
-        return -1;
+        return -EINVAL;
     outb(g_fdc_base + FDC_FIFO, val);
     return 0;
 }
@@ -104,10 +104,10 @@ static int fdc_send_byte(uint8_t val)
 static int fdc_recv_byte(uint8_t *val)
 {
     if (fdc_wait_rqm() < 0)
-        return -1;
+        return -EINVAL;
     uint8_t msr = inb(g_fdc_base + FDC_MSR);
     if (!(msr & MSR_DIO))
-        return -1;  /* not in read mode */
+        return -EINVAL;  /* not in read mode */
     *val = inb(g_fdc_base + FDC_FIFO);
     return 0;
 }
@@ -117,7 +117,7 @@ static int fdc_send_command(const uint8_t *cmd, int len)
 {
     for (int i = 0; i < len; i++) {
         if (fdc_send_byte(cmd[i]) < 0)
-            return -1;
+            return -EINVAL;
     }
     return 0;
 }
@@ -164,11 +164,11 @@ static int fdc_reset(void)
 
         /* Send SENSE INTERRUPT */
         if (fdc_send_command((uint8_t[]){FDC_CMD_SENSE_INTERRUPT}, 1) < 0)
-            return -1;
+            return -EINVAL;
 
         uint8_t st0, pcn;
         if (fdc_recv_byte(&st0) < 0 || fdc_recv_byte(&pcn) < 0)
-            return -1;
+            return -EINVAL;
 
         kprintf("[FLOPPY] Reset sense: drive %d, ST0=0x%02x, PCN=%d\n",
                 i, st0, pcn);
@@ -177,7 +177,7 @@ static int fdc_reset(void)
     /* Configure FDC: SPECIFY command (SPP rate, SRT = 0x0C, HUT = 0x0F, HLT = 0x02) */
     uint8_t specify_cmd[] = {FDC_CMD_SPECIFY, 0x0C, 0x02};
     if (fdc_send_command(specify_cmd, 3) < 0)
-        return -1;
+        return -EINVAL;
 
     kprintf("[FLOPPY] Controller reset OK\n");
     return 0;
@@ -198,7 +198,7 @@ static int floppy_probe_fdc(uint16_t base)
      * the register is not just reading back 0xFF (no device) or 0x00 (stuck). */
     if (msr == 0xFF || msr == 0x00) {
         g_fdc_base = 0;
-        return -1;
+        return -ENODEV;
     }
 
     return 0;
@@ -245,7 +245,7 @@ static int floppy_recalibrate(int drive)
     uint8_t cmd[] = {FDC_CMD_RECALIBRATE, (uint8_t)(drive & 0x03)};
     if (fdc_send_command(cmd, 2) < 0) {
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     /* Wait for IRQ */
@@ -258,7 +258,7 @@ static int floppy_recalibrate(int drive)
     if (!g_floppy_irq_received) {
         kprintf("[FLOPPY] Recalibrate timeout\n");
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     /* Sense interrupt */
@@ -266,13 +266,13 @@ static int floppy_recalibrate(int drive)
     if (fdc_send_command((uint8_t[]){FDC_CMD_SENSE_INTERRUPT}, 1) < 0 ||
         fdc_recv_byte(&st0) < 0 || fdc_recv_byte(&pcn) < 0) {
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     if (st0 & 0x20) {
         kprintf("[FLOPPY] Recalibrate failed (ST0=0x%02x, PCN=%d)\n", st0, pcn);
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     kprintf("[FLOPPY] Drive %d recalibrated to track %d\n", drive, pcn);
@@ -289,7 +289,7 @@ static int floppy_seek(int drive, int cylinder)
     uint8_t cmd[] = {FDC_CMD_SEEK, (uint8_t)(drive & 0x03), (uint8_t)cylinder};
     if (fdc_send_command(cmd, 3) < 0) {
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     /* Wait for IRQ */
@@ -302,7 +302,7 @@ static int floppy_seek(int drive, int cylinder)
     if (!g_floppy_irq_received) {
         kprintf("[FLOPPY] Seek timeout (cyl %d)\n", cylinder);
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     /* Sense interrupt */
@@ -310,13 +310,13 @@ static int floppy_seek(int drive, int cylinder)
     if (fdc_send_command((uint8_t[]){FDC_CMD_SENSE_INTERRUPT}, 1) < 0 ||
         fdc_recv_byte(&st0) < 0 || fdc_recv_byte(&pcn) < 0) {
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     if (st0 & 0x20) {
         kprintf("[FLOPPY] Seek failed (ST0=0x%02x, PCN=%d)\n", st0, pcn);
         floppy_deselect_drive(drive);
-        return -1;
+        return -EIO;
     }
 
     floppy_deselect_drive(drive);
@@ -383,7 +383,7 @@ static int floppy_setup_dma_read(uint32_t buf_phys, uint32_t len)
      *   bit 5: 0 = no auto-init
      *   bit 4: 0 = read (memory ← I/O)
      *   bits 3-2: 01 = channel 2
-     *   bits 1-0: 10 = demand/block? No, 01 for write, 10 for read? 
+     *   bits 1-0: 10 = demand/block? No, 01 for write, 10 for read?
      *   Actually for 8237A: 00 = verify, 01 = write (mem → I/O), 10 = read (I/O → mem)
      */
     outb(0x0B, 0x46);  /* mode: channel 2, single, read, no auto-init */
@@ -408,9 +408,9 @@ static int floppy_setup_dma_read(uint32_t buf_phys, uint32_t len)
 int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
 {
     if (drive < 0 || drive > 3 || !buf || count == 0)
-        return -1;
+        return -EIO;
     if (!g_floppy_present)
-        return -1;
+        return -EIO;
 
     /* Convert LBA to CHS */
     int cylinder = (int)(lba / (FLOPPY_HEADS * FLOPPY_SECTORS));
@@ -419,7 +419,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
     int total_bytes = count * FLOPPY_SECTOR_SIZE;
 
     if (cylinder >= FLOPPY_CYLINDERS)
-        return -1;
+        return -EINVAL;
 
     kprintf("[FLOPPY] Read drive %d: LBA=%u -> CHS=%d/%d/%d count=%d\n",
             drive, lba, cylinder, head, sector, count);
@@ -428,7 +428,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
      * Use kmalloc which should give us low memory on most x86 systems. */
     void *dma_buf = kmalloc(total_bytes);
     if (!dma_buf)
-        return -1;
+        return -ENOMEM;
     memset(dma_buf, 0, total_bytes);
 
     uintptr_t dma_phys = (uintptr_t)VIRT_TO_PHYS(dma_buf);
@@ -478,7 +478,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
         kprintf("[FLOPPY] Read command failed\n");
         floppy_deselect_drive(drive);
         kfree(dma_buf);
-        return -1;
+        return -EIO;
     }
 
     /* Wait for IRQ (DMA transfer complete) */
@@ -498,7 +498,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
     if (!g_floppy_irq_received) {
         kprintf("[FLOPPY] Read timeout\n");
         kfree(dma_buf);
-        return -1;
+        return -EIO;
     }
 
     /* Check result for errors */
@@ -507,7 +507,7 @@ int floppy_read_sectors(int drive, uint32_t lba, uint8_t count, void *buf)
                 "C=%d H=%d R=%d N=%d\n",
                 st[0], st[1], st[2], st[3], st[4], st[5], st[6]);
         kfree(dma_buf);
-        return -1;
+        return -EINVAL;
     }
 
     if (res_count >= 1)
@@ -546,14 +546,14 @@ int floppy_init(void)
         kprintf("[--] Floppy: no controller found\n");
         /* IRQ handler registered; since there's no irq_unregister_handler
          * API, we leave it registered but harmless. */
-        return -1;
+        return -EINVAL;
     }
 
     /* Reset the FDC controller */
     if (fdc_reset() < 0) {
         kprintf("[--] Floppy: FDC reset failed\n");
         g_fdc_base = 0;
-        return -1;
+        return -EINVAL;
     }
 
     /* Recalibrate drive 0 (A:) to see if it's present */
@@ -572,7 +572,7 @@ int floppy_init(void)
     }
 
     /* No drive found but controller might be present */
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Module hotplug (loadable module path) ───────────────────────── */
@@ -599,12 +599,12 @@ MODULE_DESCRIPTION("Floppy disk controller driver");
 #endif /* MODULE */
 
 /* ── Write sectors using DMA ──────────────────────────── */
-int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
+static int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
 {
     if (drive < 0 || drive > 3 || !buf || count == 0)
-        return -1;
+        return -EIO;
     if (!g_floppy_present)
-        return -1;
+        return -EIO;
 
     /* Convert LBA to CHS */
     int cylinder = (int)(lba / (FLOPPY_HEADS * FLOPPY_SECTORS));
@@ -613,7 +613,7 @@ int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
     int total_bytes = count * FLOPPY_SECTOR_SIZE;
 
     if (cylinder >= FLOPPY_CYLINDERS)
-        return -1;
+        return -EINVAL;
 
     kprintf("[FLOPPY] Write drive %d: LBA=%u -> CHS=%d/%d/%d count=%d\n",
             drive, lba, cylinder, head, sector, count);
@@ -621,7 +621,7 @@ int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
     /* Allocate DMA buffer below 16 MB */
     void *dma_buf = kmalloc(total_bytes);
     if (!dma_buf)
-        return -1;
+        return -ENOMEM;
     memcpy(dma_buf, buf, (size_t)total_bytes);
 
     uintptr_t dma_phys = (uintptr_t)VIRT_TO_PHYS(dma_buf);
@@ -684,7 +684,7 @@ int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
         kprintf("[FLOPPY] Write command failed\n");
         floppy_deselect_drive(drive);
         kfree(dma_buf);
-        return -1;
+        return -EIO;
     }
 
     /* Wait for IRQ (DMA transfer complete) */
@@ -704,14 +704,14 @@ int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
     if (!g_floppy_irq_received) {
         kprintf("[FLOPPY] Write timeout\n");
         kfree(dma_buf);
-        return -1;
+        return -EIO;
     }
 
     if (res_count >= 1 && (st[0] & 0xC0)) {
         kprintf("[FLOPPY] Write error: ST0=0x%02x ST1=0x%02x ST2=0x%02x\n",
                 st[0], st[1], st[2]);
         kfree(dma_buf);
-        return -1;
+        return -EINVAL;
     }
 
     kfree(dma_buf);
@@ -719,28 +719,28 @@ int floppy_write_sectors(int drive, uint32_t lba, void *buf, int count)
 }
 
 /* ── Open a floppy drive ─────────────────────────────── */
-int floppy_open(int drive)
+static int floppy_open(int drive)
 {
     if (drive < 0 || drive > 3)
-        return -1;
+        return -EIO;
     if (!g_floppy_present)
-        return -1;
+        return -EIO;
     return 0;
 }
 
 /* ── Close a floppy drive ────────────────────────────── */
-int floppy_close(__maybe_unused int drive)
+static int floppy_close(__maybe_unused int drive)
 {
     return 0;
 }
 
 /* ── Get drive geometry ──────────────────────────────── */
-int floppy_get_geometry(int drive, void *geo)
+static int floppy_get_geometry(int drive, void *geo)
 {
     if (drive < 0 || drive > 3 || !geo)
-        return -1;
+        return -EIO;
     if (!g_floppy_present)
-        return -1;
+        return -EIO;
 
     /* Fill geometry structure — layout matches Linux floppy struct */
     uint16_t *params = (uint16_t *)geo;
@@ -752,20 +752,20 @@ int floppy_get_geometry(int drive, void *geo)
 }
 
 /* ── Ioctl ───────────────────────────────────────────── */
-int floppy_ioctl(__maybe_unused int drive, __maybe_unused int cmd, __maybe_unused void *arg)
+static int floppy_ioctl(__maybe_unused int drive, __maybe_unused int cmd, __maybe_unused void *arg)
 {
     return -ENOTTY;
 }
 
 /* ── Format track (not yet implemented) ──────────────── */
-int floppy_format_track(__maybe_unused int drive, __maybe_unused int track, __maybe_unused int head)
+static int floppy_format_track(__maybe_unused int drive, __maybe_unused int track, __maybe_unused int head)
 {
     kprintf("[FLOPPY] format_track: not yet implemented\n");
     return 0;
 }
 
 /* ── Eject (no-op on standard floppy controller) ─────── */
-int floppy_eject(__maybe_unused int drive)
+static int floppy_eject(__maybe_unused int drive)
 {
     /* Standard FDC has no eject mechanism */
     return 0;

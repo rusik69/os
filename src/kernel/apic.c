@@ -87,7 +87,7 @@ void apic_init_local(void) {
 
     /* Set logical destination to CPU ID */
     uint32_t apic_id = apic_get_id();
-    apic_write(LAPIC_LDR, (1 << (apic_id & 0x0F)) << 24);
+    apic_write(LAPIC_LDR, (1U << (apic_id & 0x0F)) << 24);
 
     apic_initialized = 1;
 

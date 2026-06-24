@@ -12,12 +12,12 @@
 #define E1000_MAX_QUEUES 4
 
 /* RSS hash types */
-#define E1000_RSS_HASH_TCP_IPV4  (1 << 1)
-#define E1000_RSS_HASH_IPV4      (1 << 2)
-#define E1000_RSS_HASH_TCP_IPV6  (1 << 3)
-#define E1000_RSS_HASH_IPV6      (1 << 4)
-#define E1000_RSS_HASH_IPV6_EX   (1 << 5)
-#define E1000_RSS_HASH_TCP_IPV6_EX (1 << 6)
+#define E1000_RSS_HASH_TCP_IPV4  (1U << 1)
+#define E1000_RSS_HASH_IPV4      (1U << 2)
+#define E1000_RSS_HASH_TCP_IPV6  (1U << 3)
+#define E1000_RSS_HASH_IPV6      (1U << 4)
+#define E1000_RSS_HASH_IPV6_EX   (1U << 5)
+#define E1000_RSS_HASH_TCP_IPV6_EX (1U << 6)
 
 int e1000_init(void);
 int e1000_send(const void *data, uint16_t len);

@@ -54,6 +54,8 @@ static void seccomp_audit_log(uint64_t num, uint64_t a1, uint64_t a2,
     case SECCOMP_RET_TRAP: action_str = "TRAP";  break;
     case SECCOMP_RET_LOG:  action_str = "LOG";   break;
     case SECCOMP_RET_ALLOW: action_str = "ALLOW"; break;
+    default:
+        break;
     }
 
     /* Format the audit message */

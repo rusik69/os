@@ -65,7 +65,7 @@ static int zsmalloc_find_class(struct zsmalloc_pool *pool, size_t size)
         if (pool->classes[i].size >= (int)size)
             return i;
     }
-    return -1;
+    return -ENOMEM;
 }
 
 /* Create a new zsmalloc pool */
@@ -230,6 +230,7 @@ void* zs_create_pool(const char *name)
 
     for (int i = 0; i < num_sizes; i++) {
         pool->classes[i].size = sizes[i];
+        if (sizes[i] == 0) continue;
         pool->classes[i].objs_per_page = PAGE_SIZE / sizes[i];
         if (pool->classes[i].objs_per_page < 1)
             pool->classes[i].objs_per_page = 1;

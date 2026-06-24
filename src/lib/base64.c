@@ -96,7 +96,7 @@ void base64_init(void)
 }
 
 /* ── base64_encode_alloc ─────────────────────────────── */
-int base64_encode_alloc(const uint8_t *src, size_t slen, char **dst, size_t *dlen)
+static int base64_encode_alloc(const uint8_t *src, size_t slen, char **dst, size_t *dlen)
 {
     size_t out_len = ((slen + 2) / 3) * 4 + 1;
     *dst = (char *)malloc(out_len);
@@ -106,7 +106,7 @@ int base64_encode_alloc(const uint8_t *src, size_t slen, char **dst, size_t *dle
     return 0;
 }
 /* ── base64_decode_alloc ─────────────────────────────── */
-int base64_decode_alloc(const char *src, size_t slen, uint8_t **dst, size_t *dlen)
+static int base64_decode_alloc(const char *src, size_t slen, uint8_t **dst, size_t *dlen)
 {
     size_t out_len = (slen / 4) * 3;
     *dst = (uint8_t *)malloc(out_len);
@@ -121,7 +121,7 @@ int base64_decode_alloc(const char *src, size_t slen, uint8_t **dst, size_t *dle
     return 0;
 }
 /* ── base64_validate ─────────────────────────────── */
-int base64_validate(const char *src, size_t len)
+static int base64_validate(const char *src, size_t len)
 {
     if (len & 3)
         return 0;

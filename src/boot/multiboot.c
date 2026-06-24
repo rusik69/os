@@ -98,7 +98,7 @@ int multiboot_get_module(int index, uint64_t *start, uint64_t *end,
     if (!g_mbi)
         return -ENOENT;
 
-    if (!(g_mbi->flags & (1 << 3))) /* mods flag = bit 3 */
+    if (!(g_mbi->flags & (1U << 3))) /* mods flag = bit 3 */
         return -ENOENT;
 
     if (index < 0 || (uint32_t)index >= g_mbi->mods_count)

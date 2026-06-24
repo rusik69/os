@@ -46,8 +46,8 @@ int thp_is_enabled(void) {
 }
 
 int thp_track_hugepage(uint64_t virt_addr, uint64_t phys_addr) {
-    if (!thp_enabled) return -1;
-    if (thp_entry_count >= THP_MAX_PAGES) return -1;
+    if (!thp_enabled) return -ENODEV;
+    if (thp_entry_count >= THP_MAX_PAGES) return -ENOSPC;
 
     /* Check for duplicate */
     for (int i = 0; i < thp_entry_count; i++) {
@@ -85,7 +85,7 @@ int thp_split_hugepage(uint64_t virt_addr) {
             return 0;
         }
     }
-    return -1;
+    return -ENOENT;
 }
 
 uint64_t thp_get_total_pages(void)  { return thp_total; }
@@ -285,7 +285,7 @@ static int khugepaged_promote_range(uint64_t *pml4, uint64_t virt,
     uint64_t huge_phys = (uint64_t)pmm_alloc_frames(512);
     if (!huge_phys) {
         /* Contiguous allocation failed — cannot promote */
-        return -1;
+        return -ENOMEM;
     }
 
     /* ── Copy data from old 4K pages to new 2MB page ── */
@@ -502,7 +502,7 @@ module_init(thp_init);
 /* ── split_huge_page ─────────────────────────────────────────── */
 int split_huge_page(uint64_t addr)
 {
-    if (!thp_enabled) return -1;
+    if (!thp_enabled) return -ENODEV;
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] split_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
         return -EINVAL;
@@ -527,7 +527,7 @@ int split_huge_page(uint64_t addr)
 /* ── collapse_huge_page ──────────────────────────────────────── */
 int collapse_huge_page(uint64_t addr)
 {
-    if (!thp_enabled) return -1;
+    if (!thp_enabled) return -ENODEV;
     if (addr & (THP_HPAGE_SIZE - 1)) {
         kprintf("[thp] collapse_huge_page: addr 0x%llx not 2MB-aligned\n", (unsigned long long)addr);
         return -EINVAL;
@@ -557,7 +557,7 @@ int collapse_huge_page(uint64_t addr)
 /* ── thp_restore_page ────────────────────────────────────────── */
 int thp_restore_page(uint64_t addr)
 {
-    if (!thp_enabled) return -1;
+    if (!thp_enabled) return -ENODEV;
     /* Write-back / restore a THP page from swap.
      * For now, a stub that returns success. */
     kprintf("[thp] thp_restore_page: 0x%llx restored from swap\n",

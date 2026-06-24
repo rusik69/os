@@ -84,31 +84,31 @@ static const uint32_t TX_Q_REGS[E1000_MAX_QUEUES][5] = {
 #define ITR_HIGH_PPS   5000    /* above this PPS -> more throttling */
 
 /* CTRL bits */
-#define CTRL_SLU    (1 << 6)    /* Set Link Up */
-#define CTRL_RST    (1 << 26)
+#define CTRL_SLU    (1U << 6)    /* Set Link Up */
+#define CTRL_RST    (1U << 26)
 
 /* RCTL bits */
-#define RCTL_EN     (1 << 1)
-#define RCTL_UPE    (1 << 3)    /* Unicast promisc */
-#define RCTL_MPE    (1 << 4)    /* Multicast promisc */
-#define RCTL_BAM    (1 << 15)   /* Broadcast accept */
+#define RCTL_EN     (1U << 1)
+#define RCTL_UPE    (1U << 3)    /* Unicast promisc */
+#define RCTL_MPE    (1U << 4)    /* Multicast promisc */
+#define RCTL_BAM    (1U << 15)   /* Broadcast accept */
 #define RCTL_BSIZE_2048 0       /* buffer size 2048 */
-#define RCTL_SECRC  (1 << 26)   /* Strip CRC */
-#define RCTL_MQ     (1 << 24)   /* Multiple Queues (required for RSS) */
+#define RCTL_SECRC  (1U << 26)   /* Strip CRC */
+#define RCTL_MQ     (1U << 24)   /* Multiple Queues (required for RSS) */
 
 /* TCTL bits */
-#define TCTL_EN     (1 << 1)
-#define TCTL_PSP    (1 << 3)
+#define TCTL_EN     (1U << 1)
+#define TCTL_PSP    (1U << 3)
 
 /* TX descriptor command bits */
-#define TDESC_CMD_EOP  (1 << 0)
-#define TDESC_CMD_IFCS (1 << 1)
-#define TDESC_CMD_RS   (1 << 3)
+#define TDESC_CMD_EOP  (1U << 0)
+#define TDESC_CMD_IFCS (1U << 1)
+#define TDESC_CMD_RS   (1U << 3)
 
 /* TX/RX descriptor status */
-#define TDESC_STA_DD   (1 << 0)
-#define RDESC_STA_DD   (1 << 0)
-#define RDESC_STA_EOP  (1 << 1)
+#define TDESC_STA_DD   (1U << 0)
+#define RDESC_STA_DD   (1U << 0)
+#define RDESC_STA_EOP  (1U << 1)
 
 #define NUM_RX_DESC 32
 #define NUM_TX_DESC 32

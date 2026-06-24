@@ -410,10 +410,10 @@ int coredump_generate(struct process *proc, int signo) {
     }
 
     /* ── Step 2: Count memory segments ───────────────────────────── */
-    /* 
+    /*
      * We iterate the process's page table to find mapped regions.
      * For each contiguous region of mapped pages, we create a PT_LOAD segment.
-     * 
+     *
      * Simplified: we scan the user address space (0 to USER_VADDR_MAX)
      * in PAGE_SIZE steps, coalescing contiguous mapped pages.
      */

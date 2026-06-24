@@ -73,7 +73,7 @@ static int ext2_load_super(struct ext2_priv *ep) {
         /* Try via first block */
         uint64_t lba = 1024 / 512;
         if (blockdev_read_sectors(ep->dev_id, lba, 2, buf) != 0)
-            return -1;
+            return -EIO;
     }
     memcpy(&ep->sb, buf, sizeof(ep->sb));
     return 0;
@@ -102,8 +102,8 @@ static int ext2_read_inode(struct ext2_priv *ep, uint32_t ino, struct ext2_inode
     uint32_t tbl_off   = byte_offset % ep->block_size;
 
     uint8_t block_buf[4096];
-    if (ep->block_size > 4096) return -1;
-    if (ext2_read_block(ep, tbl_block, block_buf) < 0) return -1;
+    if (ep->block_size > 4096) return -EINVAL;
+    if (ext2_read_block(ep, tbl_block, block_buf) < 0) return -EIO;
 
     memcpy(inode, block_buf + tbl_off, sizeof(struct ext2_inode));
     return 0;
@@ -175,13 +175,13 @@ static int64_t ext2_get_block_num(struct ext2_priv *ep, struct ext2_inode *inode
             return 0; /* hole — indirect block not allocated */
         uint8_t indir[4096];
         if (ext2_read_block(ep, inode->i_block[12], indir) < 0)
-            return -1;
+            return -EIO;
         uint32_t *ptrs = (uint32_t *)indir;
         return (int64_t)ptrs[sind]; /* 0 means hole here too */
     }
 
     /* Doubly/triply indirect not needed for basic support */
-    return -1;
+    return -EINVAL;
 }
 
 /* ── Extent tree block resolution (EXT4-compatible) ──────────────── */
@@ -260,9 +260,9 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
             if (child_block == 0)
                 return 0; /* hole */
 
-            if (ep->block_size > 4096) return -1;
+            if (ep->block_size > 4096) return -EINVAL;
             if (ext2_read_block(ep, (uint32_t)child_block, node_buf) < 0)
-                return -1;
+                return -EIO;
             node_data = node_buf;
             node_size = ep->block_size;
             is_root = 0;
@@ -290,7 +290,7 @@ static int ext2_read_inode_block(struct ext2_priv *ep, struct ext2_inode *inode,
                                   uint32_t iblock, uint8_t *buf) {
     int64_t phys_block = ext2_get_block_num(ep, inode, iblock);
     if (phys_block < 0)
-        return -1;
+        return -EINVAL;
     if (phys_block == 0) {
         /* Hole — sparse block; fill with zeros */
         memset(buf, 0, ep->block_size);
@@ -458,7 +458,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
 
     /* Read the first block of the directory — contains the dx_root */
     if (ext2_read_inode_block(ep, inode, 0, block_buf) < 0)
-        return -1;
+        return -EINVAL;
 
     /* The dx_root starts after the '.' and '..' entries.  We skip them
      * by following rec_len fields, then parse the index header. */
@@ -473,7 +473,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
         uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
         uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
         if (*de_inode == 0 || *de_rec == 0)
-            return -1;
+            return -EINVAL;
         pos += *de_rec;
     }
 
@@ -482,7 +482,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
         uint32_t *de_inode  = (uint32_t *)(block_buf + pos);
         uint16_t *de_rec    = (uint16_t *)(block_buf + pos + 4);
         if (*de_inode == 0 || *de_rec == 0)
-            return -1;
+            return -EINVAL;
         pos += *de_rec;
     }
 
@@ -492,7 +492,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
      * So entries start at pos + 16. */
 
     if (pos + 16 > ep->block_size)
-        return -1;
+        return -EINVAL;
 
     /* Read the info fields */
     uint8_t info_bytes[8];
@@ -503,7 +503,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
     (void)hash_version;
 
     if (info_length < 8)
-        return -1;
+        return -EINVAL;
 
     /* Read limit, count, block from the root node header */
     uint16_t root_limit = *(uint16_t *)(block_buf + pos + 8);
@@ -512,7 +512,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
     (void)root_limit;
 
     if (root_count == 0)
-        return -1;
+        return -EINVAL;
 
     /* The dx_root entries follow at pos + 16 */
     struct ext2_dx_entry *root_entries = (struct ext2_dx_entry *)(block_buf + pos + 16);
@@ -537,10 +537,10 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
         } else {
             /* Read an internal node block */
             uint8_t *ibuf = (uint8_t *)kmalloc(ep->block_size);
-            if (!ibuf) return -1;
+            if (!ibuf) return -ENOMEM;
             if (ext2_read_block(ep, current_block, ibuf) < 0) {
                 kfree(ibuf);
-                return -1;
+                return -EIO;
             }
             node_buf = ibuf;
 
@@ -553,7 +553,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
         if (count == 0 || limit == 0) {
             if (node_buf != block_buf)
                 kfree(node_buf);
-            return -1;
+            return -EINVAL;
         }
 
         /* Binary search for the highest entry with hash <= current_hash */
@@ -589,7 +589,7 @@ static int ext2_htree_lookup_leaf(struct ext2_priv *ep,
             kfree(node_buf);
     }
 
-    return -1;
+    return -EINVAL;
 #undef EXT2_DIRENT_SIZE
 }
 
@@ -605,7 +605,7 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
 {
     size_t nlen = strlen(name);
     if (nlen == 0 || nlen > 255)
-        return -1;
+        return -EINVAL;
 
     /* Check if HTree indexing is available */
     int use_htree = 0;
@@ -709,7 +709,7 @@ static int ext2_find_in_dir(struct ext2_priv *ep, struct ext2_inode *dir_inode,
         offset += ep->block_size;
     }
 
-    return -1;
+    return -EINVAL;
 }
 
 /* Read directory entries from inode (linear, returns max entries). */
@@ -768,7 +768,7 @@ static int ext2_path_to_ino(struct ext2_priv *ep, const char *path, uint32_t *in
 
         /* Read current directory inode */
         struct ext2_inode dir_inode;
-        if (ext2_read_inode(ep, *ino, &dir_inode) < 0) return -1;
+        if (ext2_read_inode(ep, *ino, &dir_inode) < 0) return -EINVAL;
 
         /* Find next component */
         const char *end = p;
@@ -782,7 +782,7 @@ static int ext2_path_to_ino(struct ext2_priv *ep, const char *path, uint32_t *in
 
         uint32_t next_ino;
         if (ext2_find_in_dir(ep, &dir_inode, comp, &next_ino) < 0)
-            return -1;
+            return -EINVAL;
 
         *ino = next_ino;
         p = end;
@@ -797,10 +797,10 @@ static int ext2_read(void *priv, const char *path, void *buf,
                      uint32_t max_size, uint32_t *out_size) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
-    if (ext2_path_to_ino(ep, path, &ino) < 0) return -1;
+    if (ext2_path_to_ino(ep, path, &ino) < 0) return -EINVAL;
 
     struct ext2_inode inode;
-    if (ext2_read_inode(ep, ino, &inode) < 0) return -1;
+    if (ext2_read_inode(ep, ino, &inode) < 0) return -EINVAL;
 
     uint64_t file_size = ext2_inode_get_size(ep, &inode);
     uint64_t to_read = file_size;
@@ -828,10 +828,10 @@ static int ext2_read(void *priv, const char *path, void *buf,
 static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
-    if (ext2_path_to_ino(ep, path, &ino) < 0) return -1;
+    if (ext2_path_to_ino(ep, path, &ino) < 0) return -EINVAL;
 
     struct ext2_inode inode;
-    if (ext2_read_inode(ep, ino, &inode) < 0) return -1;
+    if (ext2_read_inode(ep, ino, &inode) < 0) return -EINVAL;
 
     memset(st, 0, sizeof(*st));
     st->size = ext2_inode_get_size(ep, &inode);
@@ -846,10 +846,10 @@ static int ext2_stat(void *priv, const char *path, struct vfs_stat *st) {
 static int ext2_readdir(void *priv, const char *path, char names[][64], int max) {
     struct ext2_priv *ep = (struct ext2_priv *)priv;
     uint32_t ino;
-    if (ext2_path_to_ino(ep, path, &ino) < 0) return -1;
+    if (ext2_path_to_ino(ep, path, &ino) < 0) return -EINVAL;
 
     struct ext2_inode inode;
-    if (ext2_read_inode(ep, ino, &inode) < 0) return -1;
+    if (ext2_read_inode(ep, ino, &inode) < 0) return -EINVAL;
 
     return ext2_read_dir(ep, &inode, names, max);
 }
@@ -871,7 +871,7 @@ static struct vfs_ops ext2_ops = {
 
 int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     struct ext2_priv *ep = (struct ext2_priv *)kmalloc(sizeof(struct ext2_priv));
-    if (!ep) return -1;
+    if (!ep) return -ENOMEM;
 
     memset(ep, 0, sizeof(*ep));
     ep->dev_id = dev_id;
@@ -881,20 +881,20 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
 
     if (ext2_load_super(ep) < 0) {
         kfree(ep);
-        return -1;
+        return -EINVAL;
     }
 
     if (ep->sb.s_magic != EXT2_SUPER_MAGIC) {
         kprintf("[ext2] Bad superblock magic: 0x%x\n", ep->sb.s_magic);
         kfree(ep);
-        return -1;
+        return -EINVAL;
     }
 
     ep->block_size = 1024 << ep->sb.s_log_block_size;
     if (ep->block_size > 4096) {
         kprintf("[ext2] Block size %u too large\n", ep->block_size);
         kfree(ep);
-        return -1;
+        return -EFBIG;
     }
 
     ep->blocks_per_group = ep->sb.s_blocks_per_group;
@@ -923,7 +923,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
     if (!ep->bgd_cache) {
         kprintf("[ext2] Failed to allocate bgd cache (%llu bytes)\n", (unsigned long long)bgd_table_bytes);
         kfree(ep);
-        return -1;
+        return -ENOMEM;
     }
     ep->bgd_cache_size = bgd_table_bytes;
     memset(ep->bgd_cache, 0, bgd_table_bytes);
@@ -936,7 +936,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
             kprintf("[ext2] Failed to read bgd block %u\n", bgd_first_block + i);
             kfree(ep->bgd_cache);
             kfree(ep);
-            return -1;
+            return -EIO;
         }
         uint32_t copy_size = bgd_table_bytes - bytes_read;
         if (copy_size > ep->block_size) copy_size = ep->block_size;
@@ -977,7 +977,7 @@ int ext2_mount(const char *mountpoint, uint8_t dev_id) {
             kprintf("[ext2] Unsupported incompatible features: 0x%x, refusing mount\n", unsup);
             kfree(ep->bgd_cache);
             kfree(ep);
-            return -1;
+            return -EOPNOTSUPP;
         }
     }
 
@@ -1042,7 +1042,7 @@ static int ext2_sync_super(struct ext2_priv *ep)
 
     /* Write primary superblock (offset 1024 = sector 2) */
     if (blockdev_write_sectors(ep->dev_id, 2, 2, buf) != 0)
-        return -1;
+        return -EIO;
 
     /* Write backup superblocks where they exist */
     for (uint32_t g = 0; g < ep->num_block_groups; g++) {
@@ -1051,7 +1051,7 @@ static int ext2_sync_super(struct ext2_priv *ep)
         uint64_t sb_sector = (uint64_t)ext2_group_start(g, ep->blocks_per_group)
                              * (ep->block_size / 512) + 2;
         if (blockdev_write_sectors(ep->dev_id, sb_sector, 2, buf) != 0)
-            return -1;
+            return -EIO;
     }
     return 0;
 }
@@ -1080,7 +1080,7 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
             if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
                                        block_buf + s * 512) != 0) {
                 kfree(block_buf);
-                return -1;
+                return -EIO;
             }
         }
         offset += copy;
@@ -1104,7 +1104,7 @@ static int ext2_sync_bgd(struct ext2_priv *ep)
                 if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
                                            block_buf + s * 512) != 0) {
                     kfree(block_buf);
-                    return -1;
+                    return -EIO;
                 }
             }
             offset += copy;
@@ -1164,7 +1164,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
             used_end = total_blocks_in_group;
 
         for (uint32_t b = used_start; b < used_end && b < total_blocks_in_group; b++) {
-            bitmap[b / 8] &= ~(1 << (b % 8)); /* mark as used */
+            bitmap[b / 8] &= ~(1U << (b % 8)); /* mark as used */
         }
 
         /* Write the block bitmap */
@@ -1172,7 +1172,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
         for (uint32_t s = 0; s < block_size / 512; s++) {
             if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
                                        bitmap + s * 512) != 0) {
-                kfree(bitmap); kfree(zero_buf); return -1;
+                kfree(bitmap); kfree(zero_buf); return -EIO;
             }
         }
         kfree(bitmap);
@@ -1188,7 +1188,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
         for (uint32_t s = 0; s < block_size / 512; s++) {
             if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
                                        bitmap + s * 512) != 0) {
-                kfree(bitmap); kfree(zero_buf); return -1;
+                kfree(bitmap); kfree(zero_buf); return -EIO;
             }
         }
         kfree(bitmap);
@@ -1200,7 +1200,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
         for (uint32_t s = 0; s < block_size / 512; s++) {
             if (blockdev_write_sectors(ep->dev_id, lba + s, 1,
                                        zero_buf) != 0) {
-                kfree(zero_buf); return -1;
+                kfree(zero_buf); return -EIO;
             }
         }
     }
@@ -1211,7 +1211,7 @@ static int ext2_init_new_group(struct ext2_priv *ep, uint32_t group)
         for (uint32_t s = 0; s < sb_blocks * block_size / 512; s++) {
             if (blockdev_write_sectors(ep->dev_id, sb_lba + s, 1,
                                        zero_buf) != 0) {
-                kfree(zero_buf); return -1;
+                kfree(zero_buf); return -EIO;
             }
         }
     }
@@ -1294,11 +1294,11 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks)
     /* Sync to disk */
     if (ext2_sync_super(ep) != 0) {
         kprintf("[ext2] resize: failed to sync superblock\n");
-        return -1;
+        return -EINVAL;
     }
     if (ext2_sync_bgd(ep) != 0) {
         kprintf("[ext2] resize: failed to sync BGD\n");
-        return -1;
+        return -EINVAL;
     }
 
     kprintf("[ext2] resize: complete — %u groups, %u blocks total\n",

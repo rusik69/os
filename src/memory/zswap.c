@@ -163,23 +163,23 @@ void zswap_init(void)
 int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
 {
     if (!zswap_initialised || !zswap_algo || !zswap_streams)
-        return -1;
+        return -ENODEV;
 
     /* Check if pool is full */
     if (zswap_is_full())
-        return -1;
+        return -ENOSPC;
 
     /* Check if entry already exists (shouldn't happen, but guard) */
     spinlock_acquire(&zswap_lock);
     struct zswap_entry *existing = zswap_find(dev_idx, slot);
     spinlock_release(&zswap_lock);
     if (existing)
-        return -1;  /* Already stored — caller should not retry */
+        return -EEXIST;  /* Already stored — caller should not retry */
 
     /* Allocate compression output buffer (worst case) */
     uint8_t *comp_buf = (uint8_t *)kmalloc(ZSWAP_MAX_COMP_LEN);
     if (!comp_buf)
-        return -1;
+        return -ENOMEM;
 
     /* Get per-CPU compression stream */
     struct zcomp_stream *zs = zcomp_stream_get(zswap_streams, zswap_num_cpus);
@@ -194,13 +194,13 @@ int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
     if (comp_len <= 0) {
         /* Compression failed or data is incompressible */
         kfree(comp_buf);
-        return -1;
+        return -EINVAL;
     }
 
     /* Reject if compression didn't save at least one page (no benefit) */
     if ((size_t)comp_len >= 4096) {
         kfree(comp_buf);
-        return -1;
+        return -EAGAIN;
     }
 
     /* Allocate entry */
@@ -208,7 +208,7 @@ int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
         kmalloc(sizeof(struct zswap_entry));
     if (!entry) {
         kfree(comp_buf);
-        return -1;
+        return -ENOMEM;
     }
 
     /* Shrink the compressed buffer to exact size */
@@ -250,14 +250,14 @@ int zswap_store(uint64_t phys_addr, int dev_idx, uint32_t slot)
 int zswap_load(int dev_idx, uint32_t slot, uint64_t phys_addr)
 {
     if (!zswap_initialised || !zswap_algo || !zswap_streams)
-        return -1;
+        return -ENODEV;
 
     spinlock_acquire(&zswap_lock);
 
     struct zswap_entry *entry = zswap_find(dev_idx, slot);
     if (!entry || !entry->in_use) {
         spinlock_release(&zswap_lock);
-        return -1;
+        return -ENOENT;
     }
 
     /* Save pointers before removing entry */

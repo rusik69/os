@@ -24,7 +24,7 @@ struct rseq_cs {
 } __attribute__((aligned(32)));
 
 /* Flags */
-#define RSEQ_FLAG_UNREGISTER (1 << 0)
+#define RSEQ_FLAG_UNREGISTER (1U << 0)
 
 /* Register restartable sequences for the current process.
  * addr: userspace address of struct rseq.

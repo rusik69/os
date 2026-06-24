@@ -5,12 +5,12 @@
 
 /* ── USB device ID match flags ─────────────────────────────────── */
 
-#define USB_DEVICE_ID_MATCH_VENDOR       (1 << 0)
-#define USB_DEVICE_ID_MATCH_PRODUCT      (1 << 1)
-#define USB_DEVICE_ID_MATCH_DEV_CLASS    (1 << 2)
-#define USB_DEVICE_ID_MATCH_DEV_SUBCLASS (1 << 3)
-#define USB_DEVICE_ID_MATCH_DEV_PROTOCOL (1 << 4)
-#define USB_DEVICE_ID_MATCH_INT_CLASS    (1 << 5)
+#define USB_DEVICE_ID_MATCH_VENDOR       (1U << 0)
+#define USB_DEVICE_ID_MATCH_PRODUCT      (1U << 1)
+#define USB_DEVICE_ID_MATCH_DEV_CLASS    (1U << 2)
+#define USB_DEVICE_ID_MATCH_DEV_SUBCLASS (1U << 3)
+#define USB_DEVICE_ID_MATCH_DEV_PROTOCOL (1U << 4)
+#define USB_DEVICE_ID_MATCH_INT_CLASS    (1U << 5)
 
 /* ── USB device ID structure ───────────────────────────────────── */
 

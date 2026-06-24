@@ -176,17 +176,17 @@ static void poison_fill(uint64_t phys_addr, uint32_t pattern) {
 
 static void bitmap_set(uint64_t frame) {
     if (frame >= MAX_FRAMES) return;
-    frame_bitmap[frame / 8] |= (uint8_t)(1 << (frame % 8));
+    frame_bitmap[frame / 8] |= (uint8_t)(1U << (frame % 8));
 }
 
 static void bitmap_clear(uint64_t frame) {
     if (frame >= MAX_FRAMES) return;
-    frame_bitmap[frame / 8] &= (uint8_t)~(1 << (frame % 8));
+    frame_bitmap[frame / 8] &= (uint8_t)~(1U << (frame % 8));
 }
 
 static int bitmap_test(uint64_t frame) {
     if (frame >= MAX_FRAMES) return 1; /* out-of-range frames appear used */
-    return frame_bitmap[frame / 8] & (1 << (frame % 8));
+    return frame_bitmap[frame / 8] & (1U << (frame % 8));
 }
 
 /* ── Internal bitmap allocator (caller must hold pmm_global_lock) ────── */
@@ -332,7 +332,7 @@ void pmm_init(uint64_t multiboot_info_phys) {
     struct multiboot_info *mbi = (struct multiboot_info *)PHYS_TO_VIRT(multiboot_info_phys);
 
     /* Check if memory map is available (bit 6 of flags) */
-    if (mbi->flags & (1 << 6)) {
+    if (mbi->flags & (1U << 6)) {
         uint64_t mmap_addr = (uint64_t)PHYS_TO_VIRT(mbi->mmap_addr);
         uint64_t mmap_end = mmap_addr + mbi->mmap_length;
 
@@ -1316,10 +1316,10 @@ void* pmm_alloc_pages(size_t count)
 int pmm_free_pages(void *addr, size_t count)
 {
     if (!addr || count == 0)
-        return -1;
+        return -EINVAL;
     uint64_t phys = VIRT_TO_PHYS((uint64_t)(uintptr_t)addr);
     if (phys & (PAGE_SIZE - 1))
-        return -1;
+        return -EINVAL;
 
     if (count == 1) {
         pmm_free_frame(phys);
@@ -1332,7 +1332,7 @@ int pmm_free_pages(void *addr, size_t count)
 /* ── pmm_stats ─────────────────────────────── */
 int pmm_stats(void *stats)
 {
-    if (!stats) return -1;
+    if (!stats) return -EFAULT;
     struct {
         uint64_t total_frames;
         uint64_t used_frames;

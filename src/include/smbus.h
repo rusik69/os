@@ -13,17 +13,17 @@
 #define SMBUS_BLOCK    0xEF4   /* Block Data */
 
 /* Host Control bits */
-#define SMBUS_HCTL_START    (1 << 0)
+#define SMBUS_HCTL_START    (1U << 0)
 #define SMBUS_HCTL_QUICK    (0 << 2)
-#define SMBUS_HCTL_BYTE     (1 << 2)
+#define SMBUS_HCTL_BYTE     (1U << 2)
 #define SMBUS_HCTL_BYTE_DATA (2 << 2)
 #define SMBUS_HCTL_WORD_DATA (3 << 2)
 #define SMBUS_HCTL_BLOCK    (5 << 2)
 #define SMBUS_HCTL_I2C      (6 << 2)
-#define SMBUS_HCTL_KILL     (1 << 1)
-#define SMBUS_HCTL_INTR     (1 << 4)
-#define SMBUS_HCTL_ERROR    (1 << 5)
-#define SMBUS_HCTL_BUSY     (1 << 0)
+#define SMBUS_HCTL_KILL     (1U << 1)
+#define SMBUS_HCTL_INTR     (1U << 4)
+#define SMBUS_HCTL_ERROR    (1U << 5)
+#define SMBUS_HCTL_BUSY     (1U << 0)
 
 /* SMBus status */
 #define SMBUS_OK        0
