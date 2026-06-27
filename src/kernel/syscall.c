@@ -2786,12 +2786,12 @@ static int fd_find_free(struct process *proc) {
 
 static uint64_t sys_dup(uint64_t old_fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
     if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
 
     int new_fd = fd_find_free(proc);
-    if (new_fd < 0) return (uint64_t)-1;
+    if (new_fd < 0) return (uint64_t)(int64_t)-EMFILE;
 
     proc->fd_table[new_fd] = proc->fd_table[old_fd];
     proc->fd_table[new_fd].offset = proc->fd_table[old_fd].offset;
@@ -2800,10 +2800,10 @@ static uint64_t sys_dup(uint64_t old_fd) {
 
 static uint64_t sys_dup2(uint64_t old_fd, uint64_t new_fd) {
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
     if (old_fd >= PROCESS_FD_MAX || !proc->fd_table[old_fd].used)
-        return (uint64_t)-1;
-    if (new_fd >= PROCESS_FD_MAX) return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EBADF;
+    if (new_fd >= PROCESS_FD_MAX) return (uint64_t)(int64_t)-EBADF;
 
     /* If new_fd is the same as old_fd, just return it */
     if (old_fd == new_fd) return new_fd;
@@ -3347,13 +3347,10 @@ static char system_hostname[HOSTNAME_MAX] = "os";
 /* ── uname ──────────────────────────────────────────────────── */
 
 static uint64_t sys_uname(uint64_t buf_addr) {
-    if (!buf_addr) return (uint64_t)-1;
+    if (!buf_addr) return (uint64_t)(int64_t)-EFAULT;
     struct utsname *buf = (struct utsname *)buf_addr;
-
-    /* Verify user pointer */
-
     memset(buf, 0, sizeof(struct utsname));
-    memcpy(buf->sysname, "OS", 3);
+    memcpy(buf->sysname, "Linux", 6);
     {
         struct process *proc = process_get_current();
         const char *node = proc ? proc->ns_hostname : system_hostname;
@@ -3363,8 +3360,8 @@ static uint64_t sys_uname(uint64_t buf_addr) {
             nlen = sizeof(buf->nodename) - 1;
         memcpy(buf->nodename, node, nlen);
     }
-    memcpy(buf->release, "1.0.0", 6);
-    memcpy(buf->version, __DATE__, 12);
+    memcpy(buf->release, "6.1.0-osdev", 12);
+    snprintf(buf->version, sizeof(buf->version), "%s %s", __DATE__, __TIME__);
     memcpy(buf->machine, "x86_64", 7);
     return 0;
 }
@@ -3372,9 +3369,9 @@ static uint64_t sys_uname(uint64_t buf_addr) {
 /* ── pipe() ──────────────────────────────────────────────────── */
 
 static uint64_t sys_pipe(uint64_t fds_addr) {
-    if (!fds_addr) return (uint64_t)-1;
+    if (!fds_addr) return (uint64_t)(int64_t)-EFAULT;
     struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
+    if (!proc) return (uint64_t)(int64_t)-EPERM;
 
     /* Count open FDs and check against RLIMIT_NOFILE */
     int open_count = 0;
@@ -3385,7 +3382,7 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
         return (uint64_t)-EMFILE;
 
     int id = pipe_create();
-    if (id < 0) return (uint64_t)-1;
+    if (id < 0) return (uint64_t)(int64_t)-EMFILE;
 
     /* Allocate two FD slots */
     int read_fd = -1, write_fd = -1;
@@ -3395,7 +3392,7 @@ static uint64_t sys_pipe(uint64_t fds_addr) {
             else if (write_fd < 0) { write_fd = i; break; }
         }
     }
-    if (read_fd < 0 || write_fd < 0) return (uint64_t)-1;
+    if (read_fd < 0 || write_fd < 0) return (uint64_t)(int64_t)-EMFILE;
 
     /* Store pipe index as part of fd path */
     proc->fd_table[read_fd].used = true;
