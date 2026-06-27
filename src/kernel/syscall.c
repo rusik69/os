@@ -6610,7 +6610,7 @@ static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
         deadline = timer_get_ticks() + (timeout / 10); /* convert ms to ticks */
     }
 
-    while (1) {
+    for (;;) {
         int ready = 0;
 
         for (int i = 0; i < ep->num_entries && ready < max; i++) {

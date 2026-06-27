@@ -206,7 +206,7 @@ int bfs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int bfs_init(void)
+int __init bfs_init(void)
 {
     kprintf("[bfs] SCO BFS (Boot File System) initialized\n");
     vfs_register_filesystem("bfs", &bfs_ops);
@@ -215,7 +215,7 @@ int bfs_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return bfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("SCO BFS (Boot File System) — read-only");

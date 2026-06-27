@@ -543,7 +543,7 @@ static struct vfs_ops reiserfs_ops = {
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 
-int reiserfs_init(void)
+int __init reiserfs_init(void)
 {
     kprintf("[reiserfs] ReiserFS read-only filesystem initialized\\n");
     vfs_register_filesystem("reiserfs", &reiserfs_ops);
@@ -554,7 +554,7 @@ device_initcall(reiserfs_init);
 
 #ifdef MODULE
 int __init init_module(void) { return reiserfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("ReiserFS read-only filesystem — B* tree, stat/directory items");

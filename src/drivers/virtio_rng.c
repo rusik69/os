@@ -260,8 +260,8 @@ void virtio_rng_init(void)
 }
 
 #ifdef MODULE
-int init_module(void) { virtio_rng_init(); return 0; }
-void cleanup_module(void) {}
+int __init init_module(void) { virtio_rng_init(); return 0; }
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("VirtIO entropy — fill kernel RNG via virtqueue");

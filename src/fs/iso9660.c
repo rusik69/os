@@ -1031,7 +1031,7 @@ int init_module(void) {
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     /* No VFS unregister yet; avoid unloading if filesystem is mounted */
 }
 

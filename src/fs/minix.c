@@ -290,7 +290,7 @@ int minix_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int minix_init(void)
+int __init minix_init(void)
 {
     kprintf("[minix] MINIX filesystem (v1/v2/v3) initialized\n");
     vfs_register_filesystem("minix", &minix_ops);
@@ -299,7 +299,7 @@ int minix_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return minix_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("MINIX filesystem v1/v2/v3 — read-only");

@@ -792,7 +792,7 @@ void virtio_net_get_lro_stats(struct virtio_net_lro_stats *stats) {
 
 /* ── Module hooks ─────────────────────────────────────────────────────── */
 #ifdef MODULE
-int init_module(void) {
+int __init init_module(void) {
     int ret = virtio_net_init();
     if (ret == 0) {
         kprintf("[OK] virtio-net (module): initialized with LRO\n");
@@ -800,7 +800,7 @@ int init_module(void) {
     return ret;
 }
 
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     vnet_present = 0;
     kprintf("virtio-net (module): unloaded\n");
 }

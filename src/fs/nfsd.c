@@ -836,7 +836,7 @@ void nfsd_server_task(void)
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 
-int nfsd_init(void)
+int __init nfsd_init(void)
 {
     memset(nfsd_exports, 0, sizeof(nfsd_exports));
     nfsd_num_exports = 0;
@@ -959,7 +959,7 @@ device_initcall(nfsd_init);
 
 #ifdef MODULE
 int __init init_module(void) { return nfsd_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("NFSv3 server — in-kernel, single-threaded, TCP transport");

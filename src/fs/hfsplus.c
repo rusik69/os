@@ -322,7 +322,7 @@ static int hfsplus_catalog_lookup(struct hfsplus_priv *hp,
     uint32_t current_node = hp->cat_root_node;
     int result = -1;
 
-    while (1) {
+    for (;;) {
         if (hfsplus_read_btree_node(hp, current_node, node_buf,
                                      node_size, hp->cat_start_offset) < 0)
             break;
@@ -547,7 +547,7 @@ int hfsplus_probe(uint8_t dev_id)
 
 /* ── Init ────────────────────────────────────────────────────────── */
 
-int hfsplus_init(void)
+int __init hfsplus_init(void)
 {
     kprintf("[hfsplus] HFS+ read-only filesystem initialized\n");
     vfs_register_filesystem("hfsplus", &hfsplus_ops);
@@ -558,7 +558,7 @@ device_initcall(hfsplus_init);
 
 #ifdef MODULE
 int __init init_module(void) { return hfsplus_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");

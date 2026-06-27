@@ -197,7 +197,7 @@ static struct vfs_ops cramfs_ops = {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int cramfs_init(void)
+int __init cramfs_init(void)
 {
     kprintf("[cramfs] Compressed ROM filesystem initialized\n");
     vfs_register_filesystem("cramfs", &cramfs_ops);
@@ -205,8 +205,8 @@ int cramfs_init(void)
 }
 
 #ifdef MODULE
-int init_module(void) { return cramfs_init(); }
-void cleanup_module(void) {}
+int __init init_module(void) { return cramfs_init(); }
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Compressed ROM filesystem — read-only with zlib decompression");

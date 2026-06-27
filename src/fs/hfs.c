@@ -401,7 +401,7 @@ static struct vfs_ops hfs_ops = {
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int hfs_init(void)
+int __init hfs_init(void)
 {
     kprintf("[hfs] Apple HFS filesystem initialized\n");
     vfs_register_filesystem("hfs", &hfs_ops);
@@ -410,7 +410,7 @@ int hfs_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return hfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Apple HFS (Hierarchical File System) — read-only");

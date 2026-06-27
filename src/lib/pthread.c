@@ -519,7 +519,7 @@ int pthread_rwlock_rdlock(void *rwlock)
 {
     if (!rwlock) return EINVAL;
     volatile int *r = (volatile int *)rwlock;
-    while (1) {
+    for (;;) {
         /* Wait until no writer */
         while (r[1])
             futex((int *)&r[1], FUTEX_WAIT, 1, NULL, NULL);

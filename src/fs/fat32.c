@@ -1865,7 +1865,7 @@ struct vfs_ops fat32_vfs_ops = {
 
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */
-int init_module(void) {
+int __init init_module(void) {
     kprintf("[fat32] FAT32 filesystem module loaded\n");
     vfs_register_filesystem("fat32", &fat32_vfs_ops);
 
@@ -1885,7 +1885,7 @@ int init_module(void) {
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     /* FAT32 state: clear mounted flag so further operations fail */
     mounted = 0;
     kprintf("[fat32] FAT32 filesystem module unloaded\n");

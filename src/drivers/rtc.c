@@ -276,7 +276,7 @@ int rtc_set_alarm_epoch(uint64_t epoch_sec) {
     t.year = 2000;
 
     /* Subtract years */
-    while (1) {
+    for (;;) {
         int days = is_leap((int)t.year) ? 366 : 365;
         uint64_t secs = (uint64_t)days * 86400ULL;
         if (remaining < secs) break;

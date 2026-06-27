@@ -80,7 +80,7 @@ struct tm *gmtime_r(const time_t *timep, struct tm *result) {
 
     /* Year calculation */
     int year = 1970;
-    while (1) {
+    for (;;) {
         int days_in_year = is_leap(year) ? 366 : 365;
         if (days_since_epoch < days_in_year) break;
         days_since_epoch -= days_in_year;

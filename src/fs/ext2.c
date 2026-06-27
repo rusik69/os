@@ -234,7 +234,7 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
     uint32_t node_size = 60;
     int is_root = 1;
 
-    while (1) {
+    for (;;) {
         eh = (struct ext4_extent_header *)node_data;
 
         if (depth > 0) {
@@ -1307,7 +1307,7 @@ int64_t ext2_resize(struct ext2_priv *ep, uint64_t new_total_blocks)
     return (int64_t)ep->sb.s_blocks_count;
 }
 
-int ext2_init(void) {
+int __init ext2_init(void) {
     kprintf("[ext2] Ext2 read-only filesystem initialized\n");
     vfs_register_filesystem("ext2", &ext2_ops);
     return 0;
@@ -1317,12 +1317,12 @@ fs_initcall(ext2_init);
 
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */
-int init_module(void) {
+int __init init_module(void) {
     return ext2_init();
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     /* No VFS unregister yet; avoid unloading if filesystem is mounted */
 }
 

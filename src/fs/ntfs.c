@@ -170,7 +170,7 @@ static uint8_t *ntfs_find_attr(struct ntfs_priv *np, uint8_t *mft_rec,
         return NULL;
 
     uint8_t *pos = mft_rec + attr_off;
-    while (1) {
+    for (;;) {
         struct ntfs_attr_hdr *attr = (struct ntfs_attr_hdr *)pos;
 
         if (attr->type == 0xFFFFFFFF) /* end marker */
@@ -560,7 +560,7 @@ int ntfs_probe(uint8_t dev_id)
 
 /* ── Init ────────────────────────────────────────────────────────── */
 
-int ntfs_init(void)
+int __init ntfs_init(void)
 {
     kprintf("[ntfs] NTFS read-only filesystem initialized\n");
     vfs_register_filesystem("ntfs", &ntfs_ops);
@@ -571,7 +571,7 @@ device_initcall(ntfs_init);
 
 #ifdef MODULE
 int __init init_module(void) { return ntfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");

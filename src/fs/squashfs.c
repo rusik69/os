@@ -318,7 +318,7 @@ static int squashfs_walk_dir(struct squashfs_priv *rp, uint64_t inode_ref,
     /* Position to the offset within the block */
     uint8_t *pos = dir_base + dir_offset;
 
-    while (1) {
+    for (;;) {
         /* Read directory header */
         if ((uint64_t)(pos - (uint8_t *)(uint64_t)rp->base_addr) >= rp->total_size)
             break;
@@ -643,7 +643,7 @@ int init_module(void) {
     return squashfs_init();
 }
 
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
 }
 
 MODULE_LICENSE("GPL");

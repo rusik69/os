@@ -7,7 +7,7 @@
 uint64_t bpf_get_current_pid_tgid(void);
 uint64_t bpf_get_current_uid_gid(void);
 uint64_t bpf_get_current_comm(char *buf, uint32_t size);
-uint64_t bpf_trace_printk(const char *fmt, uint32_t fmt_size, ...);
+uint64_t __printf(1, 3) bpf_trace_printk(const char *fmt, uint32_t fmt_size, ...);
 uint64_t bpf_ktime_get_ns(void);
 uint32_t bpf_get_smp_processor_id(void);
 

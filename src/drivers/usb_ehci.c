@@ -954,7 +954,7 @@ int xhci_submit_isochronous(uint8_t dev_addr, uint8_t ep,
     return -7;  /* ENOSYS — not yet implemented */
 }
 
-int ehci_usb_init(void) {
+int __init ehci_usb_init(void) {
     /* Scan PCI for EHCI controllers (class 0x0C, subclass 0x03, prog-if 0x20) */
     for (int bus = 0; bus < 256; bus++) {
         for (int slot = 0; slot < 32; slot++) {

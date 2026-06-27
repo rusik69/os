@@ -211,7 +211,7 @@ int sysv_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int sysv_init(void)
+int __init sysv_init(void)
 {
     kprintf("[sysv] System V FS (SYSV5, Coherent, Xenix variants) initialized\n");
     vfs_register_filesystem("sysv", &sysv_ops);
@@ -220,7 +220,7 @@ int sysv_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return sysv_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("System V Filesystem — SYSV5, Coherent, Xenix variants");

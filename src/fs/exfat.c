@@ -329,7 +329,7 @@ int exfat_probe(uint8_t dev_id)
 
 /* ── Init ────────────────────────────────────────────────────────── */
 
-int exfat_init(void)
+int __init exfat_init(void)
 {
     kprintf("[exfat] exFAT read-only filesystem initialized\n");
     vfs_register_filesystem("exfat", &exfat_ops);
@@ -340,7 +340,7 @@ device_initcall(exfat_init);
 
 #ifdef MODULE
 int __init init_module(void) { return exfat_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");

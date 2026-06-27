@@ -126,13 +126,13 @@ int cc_write_elf(CompilerState *cc, const char *outpath) {
 
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */
-int init_module(void) {
+int __init init_module(void) {
     kprintf("[compiler] In-kernel C compiler module loaded\n");
     return 0;
 }
 
 /* Module exit point */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     kprintf("[compiler] C compiler module unloaded\n");
 }
 

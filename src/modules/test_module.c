@@ -13,12 +13,12 @@
 #include "printf.h"
 
 /* Module entry points — ELF loader looks for "init_module" / "cleanup_module" */
-int init_module(void) {
+int __init init_module(void) {
     kprintf("[MOD] Test module loaded successfully!\n");
     return 0;
 }
 
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     kprintf("[MOD] Test module unloaded.\n");
 }
 

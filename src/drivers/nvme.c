@@ -1133,7 +1133,7 @@ int nvme_mpath_get_stats(int mp_dev_id,
 
 /* ── Main initialization ───────────────────────────────────────────── */
 
-int nvme_init(void) {
+int __init nvme_init(void) {
     if (g_nvme_init_done)
         return 0;
 

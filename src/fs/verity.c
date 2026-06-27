@@ -386,7 +386,7 @@ int fsverity_verify_block(uint64_t ino, uint32_t block, const uint8_t *data)
     sha256_hash(current_hash, block_buf, VERITY_BLOCK_SIZE);
 
     /* Walk up the tree */
-    while (1) {
+    for (;;) {
         /* Find the hash block containing the current hash at this level */
         uint32_t hash_block_idx = current_block / hashes_per_block;
         uint32_t hash_in_block = current_block % hashes_per_block;

@@ -283,7 +283,7 @@ int tarfs_mount(const char *mountpoint, uint64_t addr, uint64_t size) {
     return vfs_mount_ex(mountpoint, &tarfs_ops, priv, MS_RDONLY);
 }
 
-int tarfs_init(void) {
+int __init tarfs_init(void) {
     kprintf("[tarfs] Read-only tar filesystem initialized\n");
     vfs_register_filesystem("tarfs", &tarfs_ops);
     return 0;
@@ -291,12 +291,12 @@ int tarfs_init(void) {
 
 #ifdef MODULE
 /* Module entry point — called by the module ELF loader on insmod */
-int init_module(void) {
+int __init init_module(void) {
     return tarfs_init();
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     /* No cleanup needed for read-only tarfs */
 }
 

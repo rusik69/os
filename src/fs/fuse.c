@@ -233,7 +233,7 @@ static int fuse_read(void *priv, const char *path, void *buf,
     uint32_t timeout_ticks = 500; /* ~5 seconds at 100 Hz */
     int received_data = 0;
 
-    while (1) {
+    for (;;) {
         uint64_t elapsed = timer_get_ticks() - start;
         if (elapsed > (uint64_t)timeout_ticks) {
             *out_size = 0;

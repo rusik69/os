@@ -1422,7 +1422,7 @@ static int cifs_allocate_mount_id(void)
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 
-int cifs_init(void)
+int __init cifs_init(void)
 {
     memset(cifs_mounts, 0, sizeof(cifs_mounts));
     cifs_mount_count = 0;
@@ -1436,7 +1436,7 @@ device_initcall(cifs_init);
 
 #ifdef MODULE
 int __init init_module(void) { return cifs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("CIFS/SMB2 client — SMB 2.0.2 over TCP with guest auth");

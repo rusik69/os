@@ -194,7 +194,7 @@ static int64_t ext4_get_extent_block(struct ext4_priv *ep,
     uint32_t node_size = 60; /* root fits in 60 bytes */
     int is_root = 1;
 
-    while (1) {
+    for (;;) {
         eh = (struct ext4_extent_header *)node_data;
 
         if (depth > 0) {
@@ -717,7 +717,7 @@ fail:
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 
-int ext4_init(void)
+int __init ext4_init(void)
 {
     kprintf("[ext4] Ext4 read-only filesystem initialized\\n");
     vfs_register_filesystem("ext4", &ext4_ops);
@@ -728,7 +728,7 @@ device_initcall(ext4_init);
 
 #ifdef MODULE
 int __init init_module(void) { return ext4_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Ext4 read-only filesystem — extent tree, flex_bg, inline data");

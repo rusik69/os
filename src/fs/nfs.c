@@ -172,7 +172,7 @@ static int nfs_udp_rpc(uint32_t server_ip, uint16_t port,
 
     /* Wait for reply with timeout */
     uint64_t start = timer_get_ticks();
-    while (1) {
+    for (;;) {
         uint64_t now = timer_get_ticks();
         if (timeout_ticks > 0 && (now - start) > timeout_ticks) {
             net_udp_unlisten((uint16_t)rpc_udp_port);

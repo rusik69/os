@@ -50,7 +50,7 @@ int cpio_extract_initramfs(uint32_t addr, uint32_t size) {
 
     kprintf("[cpio] Extracting initramfs at 0x%x...\n", addr);
 
-    while (1) {
+    for (;;) {
         struct cpio_newc_header *hdr = (struct cpio_newc_header *)(buf + offset);
 
         if (offset + 110 > size) break;

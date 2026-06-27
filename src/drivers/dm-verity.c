@@ -149,7 +149,7 @@ static int verity_verify_block(struct verity_private *vp,
     uint64_t current_block = block_num;
     int      level = 0;
 
-    while (1) {
+    for (;;) {
         /* Calculate the hash sector on the hash device for this level */
         hash_sector = verity_hash_offset(vp, current_block, level);
 

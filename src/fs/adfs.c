@@ -277,7 +277,7 @@ int adfs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int adfs_init(void)
+int __init adfs_init(void)
 {
     kprintf("[adfs] Acorn Disc Filing System initialized\n");
     vfs_register_filesystem("adfs", &adfs_ops);
@@ -286,7 +286,7 @@ int adfs_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return adfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("Acorn ADFS — map/chains, directory format");

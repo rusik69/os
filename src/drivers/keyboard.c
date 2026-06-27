@@ -307,7 +307,7 @@ void keyboard_reset_state(void) {
 }
 
 char keyboard_getchar(void) {
-    while (1) {
+    for (;;) {
         __asm__ volatile("cli");
         if (keyboard_has_input()) {
             char c = kb_buffer[kb_tail];

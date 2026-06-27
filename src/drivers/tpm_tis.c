@@ -78,7 +78,7 @@ static int tis_wait_for_bit(struct tpm_device *dev, uint16_t reg,
     if (deadline < timeout_us * TIMER_FREQ / 1000000ULL)
         deadline = (uint64_t)-1;
 
-    while (1) {
+    for (;;) {
         uint32_t val = (reg == TIS_ACCESS)
                        ? (uint32_t)tis_read8(dev, reg)
                        : tis_read32(dev, reg);

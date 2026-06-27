@@ -360,7 +360,7 @@ int init_module(void) {
 }
 
 /* Module exit point — called by the module ELF loader on rmmod */
-void cleanup_module(void) {
+void __exit cleanup_module(void) {
     if (sysfs_mounted) {
         sysfs_mounted = 0;
         for (int i = 0; i < SYSFS_MAX_ENTRIES; i++) {

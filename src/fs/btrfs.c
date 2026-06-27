@@ -106,7 +106,7 @@ static int btrfs_search_tree(struct btrfs_priv *bp, uint64_t root_bytenr,
     uint8_t  level = root_level;
     *exact = 0;
 
-    while (1) {
+    for (;;) {
         if (btrfs_read_node(bp, bytenr, buf) < 0)
             return -1;
 
@@ -1132,7 +1132,7 @@ fs_initcall(btrfs_init);
 
 #ifdef MODULE
 int init_module(void) { return btrfs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 MODULE_AUTHOR("Hermes OS Kernel Team");

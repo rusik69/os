@@ -364,8 +364,8 @@ static void vxlan_module_exit(void)
     vxlan_exit();
 }
 
-int init_module(void) { return vxlan_module_init(); }
-void cleanup_module(void) { vxlan_module_exit(); }
+int __init init_module(void) { return vxlan_module_init(); }
+void __exit cleanup_module(void) { vxlan_module_exit(); }
 MODULE_NAME("vxlan");
 MODULE_DESCRIPTION("VXLAN Tunnel Encapsulation (RFC 7348)");
 MODULE_VERSION("1.0");

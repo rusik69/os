@@ -723,7 +723,7 @@ static void coredump_dispatch(uint32_t pid, int signo)
     }
 }
 
-int coredump_init_handler(void)
+int __init coredump_init_handler(void)
 {
     int ret = coredump_register_handler(coredump_dispatch);
     if (ret < 0) {

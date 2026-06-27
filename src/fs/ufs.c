@@ -357,7 +357,7 @@ int ufs_probe(uint8_t dev_id)
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
-int ufs_init(void)
+int __init ufs_init(void)
 {
     kprintf("[ufs] UFS/FFS filesystem (with cylinder groups, fragments, soft updates stub) initialized\n");
     vfs_register_filesystem("ufs", &ufs_ops);
@@ -366,7 +366,7 @@ int ufs_init(void)
 
 #ifdef MODULE
 int __init init_module(void) { return ufs_init(); }
-void cleanup_module(void) {}
+void __exit cleanup_module(void) {}
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Hermes OS Kernel Team");
 MODULE_DESCRIPTION("UFS/FFS (Unix File System) — read-only, cylinder groups, fragments, soft updates stub");
