@@ -472,15 +472,15 @@ static struct process_fd *sys_get_fd(int i) {
  * Return: Number of bytes read on success, or (uint64_t)-1 on error.
  */
 static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    if (!buf_addr && len > 0) return (uint64_t)-1;
+    if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
 
-    if (fd == 0 && !syscall_is_user_process()) return 0; /* stdin EOF until telnet fd wiring */
+    if (fd == 0 && !syscall_is_user_process()) return 0;
     if (fd >= 3 && fd < 700) {
         int i = (int)fd - 3;
         struct process_fd *pfd = sys_get_fd(i);
-        if (!pfd || !pfd->used) return (uint64_t)-1;
+        if (!pfd || !pfd->used) return (uint64_t)(int64_t)-EBADF;
         struct vfs_stat st;
-        if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)-1;
+        if (vfs_stat(pfd->path, &st) < 0) return (uint64_t)(int64_t)-EIO;
         uint64_t fsize = st.size;
         if (pfd->offset >= fsize) return 0;
         uint64_t avail = fsize - pfd->offset;
@@ -634,7 +634,7 @@ static uint64_t sys_read(uint64_t fd, uint64_t buf_addr, uint64_t len) {
  * Return: Number of bytes written on success, or (uint64_t)-1 on error.
  */
 static uint64_t sys_write(uint64_t fd, uint64_t buf_addr, uint64_t len) {
-    if (!buf_addr && len > 0) return (uint64_t)-1;
+    if (!buf_addr && len > 0) return (uint64_t)(int64_t)-EFAULT;
 
     if (fd == 1 || fd == 2) {
         /* Copy from user-space to avoid SMAP fault */
@@ -754,19 +754,16 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
     (void)mode;
     char kpath[256];
     if (strncpy_from_user(kpath, path_addr, sizeof(kpath)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     const char *path = kpath;
     struct vfs_stat st;
     int exists = (vfs_stat(path, &st) >= 0);
 
-    /* Handle O_TMPFILE: create an unnamed temporary file.
-     * The `path` argument is a directory under which the temp file
-     * is created (e.g. "/tmp").  The file has no visible directory
-     * entry and will be automatically deleted when the last fd is closed. */
+    /* Handle O_TMPFILE */
     if (flags & O_TMPFILE) {
         char tmp_path[64];
         if (tmpfile_make_path(path, tmp_path, (int)sizeof(tmp_path)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOSPC;
 
         /* Create the hidden temp file */
         if (vfs_create(tmp_path, 0) < 0)
@@ -774,7 +771,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
 
         /* Allocate fd slot and mark as FD_TMPFILE */
         struct process *p = process_get_current();
-        if (!p) { vfs_unlink(tmp_path); return (uint64_t)-1; }
+        if (!p) { vfs_unlink(tmp_path); return (uint64_t)(int64_t)-EPERM; }
         uint64_t max_fds = p->rlim_cur[RLIMIT_NOFILE] > 0 ?
                            p->rlim_cur[RLIMIT_NOFILE] : PROCESS_FD_MAX;
         for (int i = 0; i < PROCESS_FD_MAX; i++) {
@@ -801,7 +798,7 @@ static uint64_t sys_open(uint64_t path_addr, uint64_t flags, uint64_t mode) {
         vfs_truncate(path, 0);
     }
 
-    if (!exists) return (uint64_t)-1;
+    if (!exists) return (uint64_t)(int64_t)-ENOENT;
 
     /* IMA measurement: measure the file before opening for read */
     {
@@ -847,11 +844,11 @@ static uint64_t sys_close(uint64_t fd) {
     /* inotify close (fd range 720-727) */
     if (fd >= INOTIFY_FD_BASE && fd < INOTIFY_FD_BASE + INOTIFY_INSTANCES) {
         int ret = inotify_close((int)fd);
-        return ret < 0 ? (uint64_t)-1 : 0;
+        return ret < 0 ? (uint64_t)(int64_t)ret : 0;
     }
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
-    if (!pfd) return (uint64_t)-1;
+    if (!pfd) return (uint64_t)(int64_t)-EBADF;
 
     /* If this is an O_TMPFILE fd, unlink the hidden file */
     if (pfd->flags & FD_TMPFILE && pfd->path[0]) {
@@ -956,18 +953,17 @@ static uint64_t sys_brk(uint64_t addr) {
 
     /* Align to page boundary */
     addr = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
-    if (addr > USER_VADDR_MAX) return (uint64_t)-1;
+    if (addr > USER_VADDR_MAX) return (uint64_t)(int64_t)-ENOMEM;
 
     uint64_t old_end = p->heap_end;
     if (addr > old_end) {
         /* Grow heap — map new pages */
         uint64_t grow = addr - old_end;
 
-        /* Enforce RLIMIT_DATA: new heap end must not exceed
-         * heap_start + rlim_cur[RLIMIT_DATA]. */
+        /* Enforce RLIMIT_DATA */
         uint64_t data_limit = p->rlim_cur[RLIMIT_DATA];
         if (data_limit != RLIM_INFINITY && (addr - p->heap_start) > data_limit)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-ENOMEM;
 
         /* Also enforce RLIMIT_AS: new heap end relative to
          * heap_start must not exceed rlim_cur[RLIMIT_AS]. */
