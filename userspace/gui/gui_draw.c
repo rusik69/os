@@ -1043,3 +1043,203 @@ gui_widget_t* gui_groupbox_create(gui_rect_t rect, const char *title, gui_color_
     memset(d, 0, sizeof(gui_groupbox_data_t)); d->bg = bg; if (title) strncpy(d->title, title, sizeof(d->title) - 1);
     w->bg = bg; w->data = d; w->draw = groupbox_draw; w->destroy = groupbox_destroy; return w;
 }
+
+/* ===================================================================
+ * D115: New Drawing Primitives
+ * =================================================================== */
+
+/* Multi-stop gradient */
+void gui_draw_gradient_multi(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                              const gui_gradient_stop_t *stops, int n_stops, int vertical) {
+    if (!stops || n_stops < 2) return;
+    int max_dim = vertical ? (int)h : (int)w;
+    for (int pos = 0; pos < max_dim; pos++) {
+        float t = (float)pos / (float)max_dim;
+        int si = 0;
+        while (si < n_stops - 1 && stops[si + 1].position < t * 100) si++;
+        if (si >= n_stops - 1) si = n_stops - 2;
+        float lt = (t * 100.0f - (float)stops[si].position) / (float)(stops[si+1].position - stops[si].position + 1);
+        if (lt < 0) lt = 0;
+        if (lt > 1) lt = 1;
+        gui_color_t c = gui_color_lerp(stops[si].color, stops[si+1].color, (int)(lt * 255), 255);
+        if (vertical) {
+            for (uint32_t xi = 0; xi < w; xi++) __put(x + (int32_t)xi, y + pos, c);
+        } else {
+            for (uint32_t yi = 0; yi < h; yi++) __put(x + pos, y + (int32_t)yi, c);
+        }
+    }
+}
+
+/* Pattern fill */
+void gui_draw_pattern_fill(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                            const gui_color_t *pattern, int pw, int ph) {
+    if (!pattern || pw <= 0 || ph <= 0) return;
+    for (uint32_t yi = 0; yi < h; yi++)
+        for (uint32_t xi = 0; xi < w; xi++)
+            __put(x + (int32_t)xi, y + (int32_t)yi, pattern[(yi % ph) * pw + (xi % pw)]);
+}
+
+/* Dashed circle */
+void gui_draw_circle_dashed(int32_t cx, int32_t cy, int32_t r, gui_color_t color, int dash_len) {
+    int x = 0, y = r, d = 1 - r, draw = 1, cnt = 0;
+    while (x <= y) {
+        if (draw) {
+            __put(cx + x, cy + y, color); __put(cx - x, cy + y, color);
+            __put(cx + x, cy - y, color); __put(cx - x, cy - y, color);
+            __put(cx + y, cy + x, color); __put(cx - y, cy + x, color);
+            __put(cx + y, cy - x, color); __put(cx - y, cy - x, color);
+        }
+        cnt++; if (cnt >= dash_len) { draw = !draw; cnt = 0; }
+        x++; if (d < 0) d += 2 * x + 1; else { y--; d += 2 * (x - y) + 1; }
+    }
+}
+
+/* Sparkle */
+void gui_draw_sparkle(int32_t cx, int32_t cy, int size, gui_color_t color) {
+    for (int i = 0; i < 8; i++) {
+        int ang = i * 45;
+        int ex = cx + (size * __icos(ang) + 50) / 100;
+        int ey = cy + (size * __isin(ang) + 50) / 100;
+        gui_draw_line(cx, cy, ex, ey, color);
+    }
+    gui_draw_circle_filled(cx, cy, size / 4, color);
+}
+
+/* Gauge */
+void gui_draw_gauge(int32_t cx, int32_t cy, int r, int value, int min_val, int max_val,
+                     gui_color_t face, gui_color_t needle, gui_color_t tick) {
+    gui_draw_circle(cx, cy, r, tick);
+    gui_draw_circle_filled(cx, cy, r - 3, face);
+    for (int i = 0; i < 12; i++) {
+        int ang = i * 30 - 120;
+        int x1 = cx + (r - 8) * __icos(ang) / 100;
+        int y1 = cy + (r - 8) * __isin(ang) / 100;
+        int x2 = cx + (r - 3) * __icos(ang) / 100;
+        int y2 = cy + (r - 3) * __isin(ang) / 100;
+        gui_draw_line(x1, y1, x2, y2, tick);
+    }
+    int range = max_val - min_val;
+    int val_ang = -120 + (range > 0 ? (value - min_val) * 240 / range : 0);
+    int nx = cx + (r - 15) * __icos(val_ang) / 100;
+    int ny = cy + (r - 15) * __isin(val_ang) / 100;
+    gui_draw_thick_line(cx, cy, nx, ny, 3, needle);
+    gui_draw_circle_filled(cx, cy, 4, needle);
+}
+
+/* LED */
+void gui_draw_led(int32_t cx, int32_t cy, int r, int on, gui_color_t color) {
+    gui_color_t off = gui_color_darken(color, 150);
+    gui_draw_circle_filled(cx, cy, r, on ? color : off);
+    gui_draw_circle(cx, cy, r, GUI_DARK_GRAY);
+    if (on) {
+        gui_draw_circle_filled(cx - r/3, cy - r/3, r/3, gui_color_lighten(color, 80));
+    }
+}
+
+/* Drop shadow text */
+void gui_draw_text_shadow(int32_t x, int32_t y, const char *text,
+                           gui_color_t fg, gui_color_t shadow, int offset) {
+    gui_window_draw_text(NULL, x + offset, y + offset, text, shadow, shadow);
+    gui_window_draw_text(NULL, x, y, text, fg, shadow);
+}
+
+/* Outlined text */
+void gui_draw_text_outline(int32_t x, int32_t y, const char *text,
+                            gui_color_t fg, gui_color_t outline) {
+    for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            if (dx || dy) gui_window_draw_text(NULL, x + dx, y + dy, text, outline, outline);
+        }
+    }
+    gui_window_draw_text(NULL, x, y, text, fg, outline);
+}
+
+/* Hex grid */
+void gui_draw_hex_grid(int32_t x, int32_t y, int cols, int rows, int r, gui_color_t color) {
+    int dx = (int)((float)r * 1.732f), dy = (int)((float)r * 1.5f);
+    for (int row = 0; row < rows; row++) {
+        for (int col = 0; col < cols; col++) {
+            int hx = x + col * dx + (row % 2) * dx / 2;
+            int hy = y + row * dy;
+            for (int i = 0; i < 6; i++) {
+                int a1 = i * 60 - 30, a2 = (i + 1) * 60 - 30;
+                int x1 = hx + r * __icos(a1) / 100, y1 = hy + r * __isin(a1) / 100;
+                int x2 = hx + r * __icos(a2) / 100, y2 = hy + r * __isin(a2) / 100;
+                gui_draw_line(x1, y1, x2, y2, color);
+            }
+        }
+    }
+}
+
+/* Sine wave */
+void gui_draw_sine_wave(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                         int amplitude, int frequency, gui_color_t color) {
+    int cy = y + (int32_t)h / 2;
+    int prev_y = cy;
+    for (uint32_t xi = 0; xi < w; xi++) {
+        int ang = (int)xi * frequency * 360 / (int)w;
+        int sy = cy + amplitude * __isin(ang) / 100;
+        if (xi > 0) gui_draw_line(x + (int32_t)xi - 1, prev_y, x + (int32_t)xi, sy, color);
+        prev_y = sy;
+    }
+}
+
+/* Checkerboard custom */
+void gui_draw_checkerboard_custom(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                                   int cell_size, gui_color_t c1, gui_color_t c2) {
+    if (cell_size <= 0) cell_size = 8;
+    for (uint32_t yi = 0; yi < h; yi++)
+        for (uint32_t xi = 0; xi < w; xi++) {
+            int cx = ((int32_t)xi / cell_size) & 1;
+            int cy = ((int32_t)yi / cell_size) & 1;
+            __put(x + (int32_t)xi, y + (int32_t)yi, (cx ^ cy) ? c1 : c2);
+        }
+}
+
+/* Image flip */
+void gui_draw_image_flip(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                          const gui_color_t *pixels, int flip_h, int flip_v) {
+    if (!pixels) return;
+    for (uint32_t yi = 0; yi < h; yi++)
+        for (uint32_t xi = 0; xi < w; xi++) {
+            uint32_t sx = flip_h ? w - 1 - xi : xi;
+            uint32_t sy = flip_v ? h - 1 - yi : yi;
+            __put(x + (int32_t)xi, y + (int32_t)yi, pixels[sy * w + sx]);
+        }
+}
+
+/* Rounded rect outline */
+void gui_draw_rounded_rect_outline(gui_rect_t rect, int radius, gui_color_t color, int thickness) {
+    for (int t = 0; t < thickness; t++) {
+        gui_rect_t r = {rect.x + t, rect.y + t, rect.w - t*2, rect.h - t*2};
+        gui_draw_rounded_rect(r, radius - t, color);
+    }
+}
+
+/* Text bounding box */
+gui_rect_t gui_text_bounding_box(const char *text) {
+    gui_rect_t r = {0, 0, (uint32_t)(text ? strlen(text) * 12 : 0), 14};
+    return r;
+}
+
+/* Progress arc */
+void gui_draw_progress_arc(int32_t cx, int32_t cy, int r, int thickness,
+                            int percent, gui_color_t fg, gui_color_t bg) {
+    gui_draw_circle(cx, cy, r, bg);
+    int end = percent * 360 / 100;
+    for (int a = 0; a < end; a += 5) {
+        int ax = cx + r * __icos(a - 90) / 100;
+        int ay = cy + r * __isin(a - 90) / 100;
+        gui_draw_circle_filled(ax, ay, thickness, fg);
+    }
+}
+
+/* Cursor block */
+static int g_cursor_blink = 0;
+void gui_draw_cursor_block(int32_t x, int32_t y, int w, int h, gui_color_t color, int blink_on) {
+    (void)blink_on;
+    g_cursor_blink = !g_cursor_blink;
+    if (g_cursor_blink)
+        gui_window_draw_rect(NULL, (gui_rect_t){x, y, w, h}, color);
+}
+

@@ -28,6 +28,10 @@ typedef uint32_t gui_color_t;
 #define GUI_BLUE        GUI_COLOR(0, 0, 255)
 #define GUI_CYAN        GUI_COLOR(0, 200, 200)
 #define GUI_YELLOW      GUI_COLOR(255, 255, 0)
+#define GUI_MAGENTA     GUI_COLOR(255, 0, 255)
+#define GUI_ORANGE      GUI_COLOR(255, 165, 0)
+#define GUI_PINK        GUI_COLOR(255, 192, 203)
+#define GUI_PURPLE      GUI_COLOR(128, 0, 128)
 #define GUI_TITLE_BG    GUI_COLOR(0, 100, 200)
 #define GUI_BUTTON_BG   GUI_COLOR(200, 200, 200)
 #define GUI_BUTTON_FG   GUI_COLOR(0, 0, 0)
@@ -43,14 +47,46 @@ typedef struct {
     int32_t x, y;
 } gui_point_t;
 
+/* Cursor types */
+typedef enum {
+    GUI_CURSOR_ARROW = 0,
+    GUI_CURSOR_HAND,
+    GUI_CURSOR_TEXT,
+    GUI_CURSOR_WAIT,
+    GUI_CURSOR_CROSSHAIR,
+    GUI_CURSOR_RESIZE_V,
+    GUI_CURSOR_RESIZE_H,
+    GUI_CURSOR_RESIZE_DIAGONAL,
+    GUI_CURSOR_MOVE,
+} gui_cursor_t;
+
+/* Window states */
+typedef enum {
+    GUI_WINDOW_NORMAL = 0,
+    GUI_WINDOW_MINIMIZED,
+    GUI_WINDOW_MAXIMIZED,
+} gui_window_state_t;
+
+/* Text alignment */
+typedef enum {
+    GUI_ALIGN_LEFT = 0,
+    GUI_ALIGN_CENTER,
+    GUI_ALIGN_RIGHT,
+} gui_align_t;
+
 typedef enum {
     GUI_EVENT_MOUSE_MOVE,
     GUI_EVENT_MOUSE_DOWN,
     GUI_EVENT_MOUSE_UP,
+    GUI_EVENT_MOUSE_DRAG,
     GUI_EVENT_KEY_DOWN,
     GUI_EVENT_KEY_UP,
     GUI_EVENT_CHAR,
     GUI_EVENT_WINDOW_CLOSE,
+    GUI_EVENT_WINDOW_MINIMIZE,
+    GUI_EVENT_WINDOW_RESTORE,
+    GUI_EVENT_HOVER_ENTER,
+    GUI_EVENT_HOVER_LEAVE,
 } gui_event_type_t;
 
 typedef struct {
@@ -59,6 +95,7 @@ typedef struct {
     int button;
     uint32_t keycode;
     char ch;
+    void *data;
 } gui_event_t;
 
 /* ===== Window API ===== */
@@ -74,6 +111,9 @@ void gui_window_draw_rect_outline(gui_window_t *win, gui_rect_t rect,
                                    gui_color_t color, int thickness);
 void gui_window_draw_text(gui_window_t *win, int32_t x, int32_t y,
                            const char *text, gui_color_t fg, gui_color_t bg);
+void gui_window_draw_text_align(gui_window_t *win, gui_rect_t rect,
+                                const char *text, gui_align_t align,
+                                gui_color_t fg, gui_color_t bg);
 void gui_window_draw_string(gui_window_t *win, int32_t x, int32_t y,
                              const char *text);
 gui_rect_t gui_window_get_rect(gui_window_t *win);
@@ -87,6 +127,19 @@ void gui_window_set_focused_widget(gui_window_t *win, gui_widget_t *widget);
 gui_widget_t* gui_window_first_widget(gui_window_t *win);
 int gui_window_has_title(gui_window_t *win);
 
+/* New window management APIs */
+void gui_window_minimize(gui_window_t *win);
+void gui_window_maximize(gui_window_t *win);
+void gui_window_restore(gui_window_t *win);
+gui_window_state_t gui_window_get_state(gui_window_t *win);
+void gui_window_set_min_size(gui_window_t *win, uint32_t min_w, uint32_t min_h);
+void gui_window_set_icon(gui_window_t *win, gui_color_t *icon, uint32_t iw, uint32_t ih);
+void gui_window_bring_to_front(gui_window_t *win);
+void gui_window_close(gui_window_t *win);
+int gui_window_titlebar_at(gui_window_t *win, int32_t x, int32_t y);
+int gui_window_resize_handle_at(gui_window_t *win, int32_t x, int32_t y);
+gui_cursor_t gui_window_get_resize_cursor(gui_window_t *win, int32_t x, int32_t y);
+
 /* ===== Widget API ===== */
 
 typedef void (*gui_widget_draw_fn)(gui_widget_t *w);
@@ -97,6 +150,8 @@ struct gui_widget {
     gui_rect_t rect;
     gui_color_t bg, fg;
     int visible;
+    int enabled;
+    uint32_t flags;
     struct gui_widget *next;
     void *data;
     gui_widget_draw_fn draw;
@@ -110,6 +165,11 @@ void gui_widget_default_destroy(gui_widget_t *w);
 void gui_widget_draw(gui_widget_t *w);
 void gui_widget_on_event(gui_widget_t *w, gui_event_t *evt);
 int gui_widget_contains_point(gui_widget_t *w, int32_t x, int32_t y);
+
+/* Widget utility */
+void gui_widget_disable(gui_widget_t *w);
+void gui_widget_enable(gui_widget_t *w);
+int gui_widget_is_enabled(gui_widget_t *w);
 
 /* ===== Concrete Widgets ===== */
 
@@ -138,6 +198,55 @@ typedef struct {
 gui_widget_t* gui_label_create(gui_rect_t rect, const char *text);
 void gui_label_set_text(gui_widget_t *lbl, const char *text);
 
+/* New widgets (declared, implemented in gui_draw.c) */
+
+/* Multi-line text edit */
+typedef struct {
+    char text[2048];
+    int cursor_pos;
+    int scroll_y;
+    int line_count;
+} gui_textedit_data_t;
+
+gui_widget_t* gui_textedit_create(gui_rect_t rect);
+void gui_textedit_set_text(gui_widget_t *te, const char *text);
+const char* gui_textedit_get_text(gui_widget_t *te);
+
+/* Tab container */
+typedef struct gui_tab {
+    char title[32];
+    gui_widget_t *content;
+    struct gui_tab *next;
+} gui_tab_t;
+
+typedef struct {
+    gui_tab_t *tabs;
+    int tab_count;
+    int active_tab;
+} gui_tabview_data_t;
+
+gui_widget_t* gui_tabview_create(gui_rect_t rect);
+int gui_tabview_add_tab(gui_widget_t *tv, const char *title, gui_widget_t *content);
+void gui_tabview_set_active(gui_widget_t *tv, int index);
+
+/* Tooltip */
+typedef struct {
+    char text[128];
+    int delay_ms;
+} gui_tooltip_data_t;
+
+gui_widget_t* gui_tooltip_create(gui_rect_t rect, const char *text);
+void gui_tooltip_set_text(gui_widget_t *tt, const char *text);
+
+/* Notification / Toast */
+typedef struct {
+    char text[128];
+    uint32_t lifetime_ms;
+    gui_color_t notification_color;
+} gui_notification_data_t;
+
+gui_widget_t* gui_notification_create(gui_rect_t rect, const char *text, gui_color_t color);
+
 /* ===== GUI Context API ===== */
 
 int gui_init(void);
@@ -153,9 +262,23 @@ void gui_render_frame(void);
 void gui_update_mouse(int32_t x, int32_t y, int buttons);
 void gui_run_loop(void);
 
+/* Cursor control */
+void gui_set_cursor(gui_cursor_t cursor);
+gui_cursor_t gui_get_cursor(void);
+
+/* Theme */
+void gui_set_theme_color(gui_color_t title_bg, gui_color_t window_bg, gui_color_t button_bg);
+void gui_get_theme_colors(gui_color_t *title_bg, gui_color_t *window_bg, gui_color_t *button_bg);
+
+/* Screenshot */
+void gui_screenshot(void);
+
 /* Walk all windows front-to-back (head = most recently added) */
 gui_window_t* gui_get_window_list(void);
 gui_window_t* gui_window_next(gui_window_t *win);
+
+/* ===== Typewriter animation helper ===== */
+void gui_typewriter(int32_t x, int32_t y, const char *text, gui_color_t fg, gui_color_t bg, int delay);
 
 /* ===== Syscall wrappers ===== */
 
@@ -229,5 +352,18 @@ static inline void *heap_alloc(uint32_t size) { return malloc(size); }
 static inline void heap_free(void *p) { free(p); }
 #define kmalloc heap_alloc
 #define kfree heap_free
+
+/* Text measurement (width of a string in pixels) */
+static inline int gui_text_width(const char *text) {
+    if (!text) return 0;
+    return (int)strlen(text) * 12;
+}
+
+/* FNV-1a hash for debug / widget IDs */
+static inline uint32_t gui_hash(const char *str) {
+    uint32_t h = 2166136261u;
+    while (*str) { h ^= (uint8_t)*str++; h *= 16777619u; }
+    return h;
+}
 
 #endif /* GUI_H */

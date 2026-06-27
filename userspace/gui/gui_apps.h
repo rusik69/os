@@ -1,7 +1,7 @@
 #ifndef GUI_APPS_H
 #define GUI_APPS_H
 
-/* GUI application entry points — called from gui_shell when user clicks a button */
+/* GUI application entry points */
 void gui_app_draw_run(void);
 void gui_app_widgets_run(void);
 void gui_app_colors_run(void);
@@ -10,7 +10,7 @@ void gui_app_shapes_run(void);
 void gui_app_checker_run(void);
 void gui_app_info_run(void);
 
-/* ===== New GUI Apps (40+) ===== */
+/* === 40 Existing Apps === */
 void gui_app_mandelbrot_run(void);
 void gui_app_calc_run(void);
 void gui_app_rgb_mixer_run(void);
@@ -51,5 +51,47 @@ void gui_app_flood_fill_run(void);
 void gui_app_wave_interference_run(void);
 void gui_app_clock_dual_run(void);
 void gui_app_heartbeat_run(void);
+
+/* === 40 New Apps (D115) === */
+void gui_app_text_editor_run(void);
+void gui_app_cube_3d_run(void);
+void gui_app_julia_run(void);
+void gui_app_lorenz_run(void);
+void gui_app_pendulum_run(void);
+void gui_app_fourier_run(void);
+void gui_app_wave_eq_run(void);
+void gui_app_reaction_diff_run(void);
+void gui_app_cellular2_run(void);
+void gui_app_maze_gen_run(void);
+void gui_app_pathfind_run(void);
+void gui_app_sort_compare_run(void);
+void gui_app_bintree_run(void);
+void gui_app_color_wheel_run(void);
+void gui_app_dither_run(void);
+void gui_app_edge_run(void);
+void gui_app_spirograph_run(void);
+void gui_app_voronoi_run(void);
+void gui_app_fireworks_run(void);
+void gui_app_boids_run(void);
+void gui_app_complex_run(void);
+void gui_app_screensaver_run(void);
+void gui_app_biorhythm_run(void);
+void gui_app_stopwatch_run(void);
+void gui_app_solar_run(void);
+void gui_app_turing_run(void);
+void gui_app_snowflake_run(void);
+void gui_app_ascii_art_run(void);
+void gui_app_bezier_demo_run(void);
+void gui_app_lighting_run(void);
+void gui_app_terrain_run(void);
+void gui_app_pong_run(void);
+void gui_app_audio_viz_run(void);
+void gui_app_memory_map_run(void);
+void gui_app_clock_alarm_run(void);
+void gui_app_tiling_run(void);
+void gui_app_fluid_run(void);
+void gui_app_softbody_run(void);
+void gui_app_convolution_run(void);
+void gui_app_buddha_run(void);
 
 #endif /* GUI_APPS_H */

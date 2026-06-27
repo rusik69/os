@@ -128,6 +128,67 @@ void gui_draw_diamond(int32_t cx, int32_t cy, int32_t rx, int32_t ry, gui_color_
 /* Crosshair with circle */
 void gui_draw_crosshair(int32_t cx, int32_t cy, int r, gui_color_t color);
 
+
+/* ===== Additional Drawing Primitives (D115) ===== */
+
+/* Multi-stop gradient (up to 8 stops) */
+typedef struct { int position; gui_color_t color; } gui_gradient_stop_t;
+void gui_draw_gradient_multi(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                              const gui_gradient_stop_t *stops, int n_stops, int vertical);
+
+/* Pattern fill (tile a small bitmap) */
+void gui_draw_pattern_fill(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                            const gui_color_t *pattern, int pw, int ph);
+
+/* Dashed circle */
+void gui_draw_circle_dashed(int32_t cx, int32_t cy, int32_t r, gui_color_t color, int dash_len);
+
+/* Sparkle / starburst */
+void gui_draw_sparkle(int32_t cx, int32_t cy, int size, gui_color_t color);
+
+/* Gauge / dial indicator */
+void gui_draw_gauge(int32_t cx, int32_t cy, int r, int value, int min_val, int max_val,
+                     gui_color_t face, gui_color_t needle, gui_color_t tick);
+
+/* Status LED (cylinder with glow) */
+void gui_draw_led(int32_t cx, int32_t cy, int r, int on, gui_color_t color);
+
+/* Drop shadow text */
+void gui_draw_text_shadow(int32_t x, int32_t y, const char *text,
+                           gui_color_t fg, gui_color_t shadow, int offset);
+
+/* Outlined text (two-color) */
+void gui_draw_text_outline(int32_t x, int32_t y, const char *text,
+                            gui_color_t fg, gui_color_t outline);
+
+/* Hex grid */
+void gui_draw_hex_grid(int32_t x, int32_t y, int cols, int rows, int r, gui_color_t color);
+
+/* Sine wave across rectangle */
+void gui_draw_sine_wave(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                         int amplitude, int frequency, gui_color_t color);
+
+/* Checkerboard with custom colors */
+void gui_draw_checkerboard_custom(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                                   int cell_size, gui_color_t c1, gui_color_t c2);
+
+/* Image flip horizontal/vertical */
+void gui_draw_image_flip(int32_t x, int32_t y, uint32_t w, uint32_t h,
+                          const gui_color_t *pixels, int flip_h, int flip_v);
+
+/* Rounded rect outline only (no fill) */
+void gui_draw_rounded_rect_outline(gui_rect_t rect, int radius, gui_color_t color, int thickness);
+
+/* Bounding box for text */
+gui_rect_t gui_text_bounding_box(const char *text);
+
+/* Progress arc (circular progress) */
+void gui_draw_progress_arc(int32_t cx, int32_t cy, int r, int thickness,
+                            int percent, gui_color_t fg, gui_color_t bg);
+
+/* Blinking block cursor indicator */
+void gui_draw_cursor_block(int32_t x, int32_t y, int w, int h, gui_color_t color, int blink_on);
+
 /* ===== Color Utilities ===== */
 gui_color_t gui_color_lerp(gui_color_t a, gui_color_t b, int t, int max_t);
 gui_color_t gui_color_darken(gui_color_t c, int amount);

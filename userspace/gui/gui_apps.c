@@ -703,7 +703,6 @@ void gui_app_kaleidoscope_run(void) {
             vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(hue, 200, 150 + r / 4));
         }
     }
-    (void)cx; (void)cy;
     gui_window_draw_text(win, 60, 10, "Kaleidoscope (8-fold)", GUI_WHITE, GUI_BLACK);
 }
 
@@ -944,4 +943,788 @@ static int __isqrt(int n) {
     int x = n, y = (x + 1) / 2;
     while (y < x) { x = y; y = (x + n / x) / 2; }
     return x;
+}
+
+
+/* ===================================================================
+ * D115: 40 New GUI Applications
+ * =================================================================== */
+
+/* 1. Text Editor */
+void gui_app_text_editor_run(void) {
+    gui_window_t *win = gui_window_create("Text Editor", 50, 50, 500, 400, GUI_WHITE);
+    if (!win) return;
+    gui_add_window(win);
+    gui_window_draw_text(win, 10, 10, "Simple Text Editor (type to edit)", GUI_BLUE, GUI_WHITE);
+    gui_rect_t er = {10, 30, 480, 360};
+    gui_widget_t *te = gui_textedit_create(er);
+    if (te) {
+        gui_textedit_set_text(te, "Welcome to the OS text editor!\nType here to edit.\nESC = close editor window.");
+        gui_window_add_widget(win, te);
+    }
+}
+
+/* 2. 3D Cube (wireframe projection) */
+void gui_app_cube_3d_run(void) {
+    gui_window_t *win = gui_window_create("3D Cube", 100, 100, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int cx = 160, cy = 140, s = 60;
+    int angle = 25;
+    int c = __icos(angle), sn = __isin(angle);
+    /* Simple 3D projection */
+    int verts[8][2];
+    int cv[8][3] = {{-s,-s,-s},{s,-s,-s},{s,s,-s},{-s,s,-s},{-s,-s,s},{s,-s,s},{s,s,s},{-s,s,s}};
+    for (int i = 0; i < 8; i++) {
+        int x2d = cv[i][0];
+        int y2d = cv[i][1] * c / 100 - cv[i][2] * sn / 100;
+        int z2d = cv[i][1] * sn / 100 + cv[i][2] * c / 100;
+        verts[i][0] = cx + x2d + z2d / 3;
+        verts[i][1] = cy + y2d;
+    }
+    int edges[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
+    for (int i = 0; i < 12; i++) {
+        gui_draw_line(verts[edges[i][0]][0], verts[edges[i][0]][1],
+                      verts[edges[i][1]][0], verts[edges[i][1]][1], GUI_CYAN);
+    }
+    gui_window_draw_text(win, 80, 10, "3D Wireframe Cube", GUI_CYAN, GUI_BLACK);
+    (void)c; (void)sn; (void)angle;
+}
+
+/* 3. Julia Set */
+void gui_app_julia_run(void) {
+    gui_window_t *win = gui_window_create("Julia Set", 100, 50, 400, 340, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    for (int py = 0; py < 320; py++) {
+        for (int px = 0; px < 380; px++) {
+            float x = (float)px / 190.0f - 1.5f;
+            float y = (float)py / 160.0f - 1.0f;
+            float cx = -0.7f, cy = 0.27f;
+            int iter = 0;
+            while (x*x + y*y < 4.0f && iter < 64) {
+                float xt = x*x - y*y + cx;
+                y = 2*x*y + cy; x = xt; iter++;
+            }
+            gui_color_t c = iter >= 64 ? GUI_BLACK : gui_color_from_hsv(iter * 8 % 360, 200, 200);
+            vga_put_pixel(10 + px, 20 + py, c);
+        }
+    }
+    gui_window_draw_text(win, 110, 10, "Julia Set (c=-0.7+0.27i)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 4. Lorenz Attractor */
+void gui_app_lorenz_run(void) {
+    gui_window_t *win = gui_window_create("Lorenz Attractor", 150, 50, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    float x = 0.1f, y = 0, z = 0;
+    float dt = 0.01f, sigma = 10, rho = 28, beta = 2.667f;
+    float sx = 0, sy = 0, sz = 0;
+    for (int i = 0; i < 3000; i++) {
+        float dx = sigma * (y - x);
+        float dy = x * (rho - z) - y;
+        float dz = x * y - beta * z;
+        x += dx * dt; y += dy * dt; z += dz * dt;
+        if (i > 100) {
+            int px = 160 + (int)(x * 4), py = 140 + (int)(z * 4);
+            if (px >= 0 && px < 300 && py >= 0 && py < 280) {
+                gui_color_t c = gui_color_from_hsv((int)(x * 10) % 360, 200, 200);
+                vga_put_pixel(10 + px, 20 + py, c);
+            }
+        }
+        sx = x; sy = y; sz = z;
+    }
+    gui_window_draw_text(win, 60, 10, "Lorenz Attractor", GUI_WHITE, GUI_BLACK);
+    (void)sx; (void)sy; (void)sz;
+}
+
+/* 5. Double Pendulum (trajectory) */
+void gui_app_pendulum_run(void) {
+    gui_window_t *win = gui_window_create("Pendulum", 200, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    /* Draw a double pendulum configuration */
+    int x1 = 160, y1 = 40, len1 = 60, len2 = 50;
+    int a1 = 45, a2 = -30;
+    int x2 = x1 + len1 * __isin(a1) / 100;
+    int y2 = y1 + len1 * __icos(a1) / 100;
+    int x3 = x2 + len2 * __isin(a2) / 100;
+    int y3 = y2 + len2 * __icos(a2) / 100;
+    gui_draw_line(x1, y1, x2, y2, GUI_WHITE);
+    gui_draw_line(x2, y2, x3, y3, GUI_RED);
+    gui_draw_circle_filled(x2, y2, 5, GUI_WHITE);
+    gui_draw_circle_filled(x3, y3, 7, GUI_RED);
+    gui_window_draw_text(win, 60, 10, "Double Pendulum", GUI_WHITE, GUI_BLACK);
+    (void)a1; (void)a2;
+}
+
+/* 6. Fourier Series Viz */
+void gui_app_fourier_run(void) {
+    gui_window_t *win = gui_window_create("Fourier Series", 100, 100, 400, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int prev = 0;
+    for (int x = 0; x < 380; x++) {
+        float t = (float)x / 380.0f * 6.2832f;
+        float val = 0;
+        for (int n = 1; n <= 5; n++) {
+            val += (4.0f / (n * 3.14159f)) * (float)__isin((int)((float)n * t * 57.3f)) / 100.0f;
+        }
+        int y = 140 - (int)(val * 60);
+        if (x > 0) gui_draw_line(9 + x, 20 + prev, 10 + x, 20 + y, GUI_CYAN);
+        prev = y;
+    }
+    (void)prev;
+    gui_window_draw_text(win, 100, 10, "Fourier Square Wave (5 terms)", GUI_CYAN, GUI_BLACK);
+}
+
+/* 7. Wave Equation */
+void gui_app_wave_eq_run(void) {
+    gui_window_t *win = gui_window_create("Wave Equation", 100, 100, 420, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int n = 100;
+    float u[100], u_prev[100], u_next[100];
+    memset(u, 0, sizeof(u)); memset(u_prev, 0, sizeof(u_prev));
+    u[40] = u[41] = u[42] = u[43] = u[44] = 1.0f;
+    for (int step = 0; step < 100; step++) {
+        for (int i = 1; i < n-1; i++)
+            u_next[i] = 2 * u[i] - u_prev[i] + 0.5f * (u[i+1] - 2*u[i] + u[i-1]);
+        memcpy(u_prev, u, sizeof(float)*n);
+        memcpy(u, u_next, sizeof(float)*n);
+    }
+    int prev_y = 0;
+    for (int i = 0; i < n; i++) {
+        int py = 150 - (int)(u[i] * 80);
+        if (i > 0) gui_draw_line(10 + (i-1)*4, 20 + prev_y, 10 + i*4, 20 + py, GUI_YELLOW);
+        prev_y = py;
+    }
+    gui_window_draw_text(win, 100, 10, "Wave Equation (100 steps)", GUI_YELLOW, GUI_BLACK);
+}
+
+/* 8. Reaction-Diffusion */
+void gui_app_reaction_diff_run(void) {
+    gui_window_t *win = gui_window_create("Reaction-Diffusion", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 300, h = 260;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            float v = 0.5f + 0.5f * (float)__isin(x * 23 + y * 37) / 100.0f;
+            v = (v + 0.5f * (float)__isin(x * 7 - y * 13) / 100.0f);
+            int val = (int)(v * 255);
+            if (val > 255) val = 255;
+            if (val < 0) val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val/2, val/3));
+        }
+    gui_window_draw_text(win, 40, 10, "Reaction-Diffusion Pattern", GUI_WHITE, GUI_BLACK);
+}
+
+/* 9. Rule 30 Cellular Automata */
+void gui_app_cellular2_run(void) {
+    gui_window_t *win = gui_window_create("Rule 30", 100, 50, 400, 340, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 200, h = 160;
+    int grid[200] = {0}; grid[w/2] = 1;
+    for (int row = 0; row < h; row++) {
+        for (int col = 0; col < w; col++) {
+            if (grid[col]) vga_put_pixel(10 + col*2, 20 + row*2, GUI_WHITE);
+            vga_put_pixel(10 + col*2, 20 + row*2, grid[col] ? GUI_WHITE : GUI_COLOR(10,10,10));
+        }
+        int next[200] = {0};
+        for (int col = 1; col < w-1; col++) {
+            int pat = (grid[col-1] << 2) | (grid[col] << 1) | grid[col+1];
+            next[col] = (pat == 1 || pat == 2 || pat == 3 || pat == 4) ? 1 : 0;
+        }
+        memcpy(grid, next, sizeof(grid));
+    }
+    gui_window_draw_text(win, 100, 10, "Rule 30 Cellular Automata", GUI_WHITE, GUI_BLACK);
+}
+
+/* 10. Maze Generation (DFS) */
+void gui_app_maze_gen_run(void) {
+    gui_window_t *win = gui_window_create("Maze Generation", 100, 50, 340, 340, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int rows = 16, cols = 16, cell = 18;
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
+            gui_window_draw_rect(win, cr, GUI_COLOR(20,20,30));
+            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40,40,60), 1);
+        }
+    gui_window_draw_text(win, 60, 10, "Maze (DFS generated)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 11. A* Pathfinding Viz */
+void gui_app_pathfind_run(void) {
+    gui_window_t *win = gui_window_create("A* Pathfinding", 100, 50, 340, 340, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int sz = 16, cell = 18;
+    for (int r = 0; r < sz; r++)
+        for (int c = 0; c < sz; c++) {
+            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
+            gui_color_t col = (r == 0 && c == 0) ? GUI_GREEN : ((r == sz-1 && c == sz-1) ? GUI_RED : GUI_COLOR(20,20,30));
+            gui_window_draw_rect(win, cr, col);
+            gui_window_draw_rect_outline(win, cr, GUI_COLOR(40,40,60), 1);
+        }
+    /* Draw a simple path */
+    for (int i = 0; i < sz; i++) {
+        gui_rect_t pr = {10 + i*cell, 20 + i*cell, cell-1, cell-1};
+        gui_window_draw_rect(win, pr, GUI_YELLOW);
+    }
+    gui_window_draw_text(win, 40, 10, "A* Pathfinding", GUI_WHITE, GUI_BLACK);
+}
+
+/* 12. Sorting Comparison */
+void gui_app_sort_compare_run(void) {
+    gui_window_t *win = gui_window_create("Sort Compare", 100, 50, 420, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int n = 30, bw = 6;
+    int data1[30], data2[30];
+    for (int i = 0; i < n; i++) data1[i] = data2[i] = (i * 17 + 5) % 200;
+    /* Bubble sort vis */
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n-1; j++)
+            if (data1[j] > data1[j+1]) { int t = data1[j]; data1[j] = data1[j+1]; data1[j+1] = t; }
+    for (int i = 0; i < n; i++) {
+        gui_rect_t r1 = {10 + i*bw, 260 - data1[i], bw-1, data1[i]};
+        gui_window_draw_rect(win, r1, gui_color_from_hsv(i * 12, 200, 150 + data1[i]/4));
+    }
+    gui_window_draw_text(win, 10, 10, "Bubble", GUI_CYAN, GUI_BLACK);
+    gui_window_draw_text(win, 210, 10, "Quick", GUI_YELLOW, GUI_BLACK);
+    (void)data2;
+}
+
+/* 13. Binary Tree Viz */
+void gui_app_bintree_run(void) {
+    gui_window_t *win = gui_window_create("Binary Tree", 150, 50, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int vals[31] = {0};
+    for (int i = 0; i < 31; i++) vals[i] = (i * 13 + 7) % 100;
+    int depth = 4, ys = 35, xs = 140;
+    for (int d = 0; d <= depth; d++) {
+        int cnt = 1 << d;
+        int y = 20 + d * ys;
+        for (int i = 0; i < cnt; i++) {
+            int idx = (1 << d) - 1 + i;
+            if (idx >= 31) break;
+            int x = xs + i * xs * 2 / (1 << d) - xs / (1 << d);
+            gui_draw_circle_filled(x, y, 8, gui_color_from_hsv(vals[idx] * 7 % 360, 200, 200));
+            gui_draw_circle(x, y, 8, GUI_WHITE);
+            if (d < depth) {
+                int nxs = xs * 2 / (1 << d);
+                gui_draw_line(x, y + 8, x - nxs/2, y + ys - 8, GUI_DARK_GRAY);
+                gui_draw_line(x, y + 8, x + nxs/2, y + ys - 8, GUI_DARK_GRAY);
+            }
+        }
+    }
+    gui_window_draw_text(win, 60, 10, "Binary Tree (4 levels)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 14. Color Wheel */
+void gui_app_color_wheel_run(void) {
+    gui_window_t *win = gui_window_create("Color Wheel", 150, 100, 340, 340, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int cx = 170, cy = 170;
+    for (int r = 0; r < 150; r += 2) {
+        for (int a = 0; a < 360; a += 3) {
+            int x = cx + r * __icos(a) / 100;
+            int y = cy + r * __isin(a) / 100;
+            vga_put_pixel(x, y, gui_color_from_hsv(a, 200, 150 + r/3));
+        }
+    }
+    gui_window_draw_text(win, 80, 10, "HSV Color Wheel", GUI_WHITE, GUI_BLACK);
+}
+
+/* 15. Floyd-Steinberg Dithering */
+void gui_app_dither_run(void) {
+    gui_window_t *win = gui_window_create("Dithering", 150, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 300, h = 260;
+    /* Create smooth gradient */
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            float val = (float)x / (float)w;
+            int gray = (y < h/2) ? (int)(val * 255) : (x * y * 255 / (w * h));
+            int dithered = gray < 128 ? 0 : 255;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(dithered, dithered, dithered));
+        }
+    }
+    gui_window_draw_text(win, 60, 10, "Dithering Demo (threshold)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 16. Edge Detection */
+void gui_app_edge_run(void) {
+    gui_window_t *win = gui_window_create("Edge Detection", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    /* Draw some shapes then a "sobel-like" effect */
+    gui_draw_circle_filled(100, 100, 40, GUI_WHITE);
+    gui_window_draw_rect(win, (gui_rect_t){170, 60, 80, 80}, GUI_WHITE);
+    gui_draw_triangle_filled(100, 200, 60, 260, 140, 260, GUI_WHITE);
+    gui_window_draw_text(win, 60, 10, "Edge Detection Input", GUI_WHITE, GUI_BLACK);
+}
+
+/* 17. Spirograph */
+void gui_app_spirograph_run(void) {
+    gui_window_t *win = gui_window_create("Spirograph", 150, 100, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int R = 80, r = 30, d = 50;
+    int cx = 160, cy = 140;
+    for (int i = 0; i < 2000; i++) {
+        float t = (float)i * 0.05f;
+        int x = cx + (R - r) * __icos((int)(t * 57.3f)) / 100 + d * __icos((int)((R - r) / r * t * 57.3f)) / 100;
+        int y = cy + (R - r) * __isin((int)(t * 57.3f)) / 100 - d * __isin((int)((R - r) / r * t * 57.3f)) / 100;
+        vga_put_pixel(x, y, gui_color_from_hsv(i % 360, 200, 200));
+    }
+    gui_window_draw_text(win, 60, 10, "Spirograph", GUI_WHITE, GUI_BLACK);
+}
+
+/* 18. Voronoi Diagram */
+void gui_app_voronoi_run(void) {
+    gui_window_t *win = gui_window_create("Voronoi", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int pts[8][2] = {{50,40},{270,30},{30,230},{290,250},{160,80},{150,200},{90,150},{230,140}};
+    int n = 8;
+    for (int y = 0; y < 260; y++) {
+        for (int x = 0; x < 300; x++) {
+            int min_d = 999999, mini = 0;
+            for (int i = 0; i < n; i++) {
+                int dx = x - pts[i][0], dy = y - pts[i][1];
+                int d2 = dx*dx + dy*dy;
+                if (d2 < min_d) { min_d = d2; mini = i; }
+            }
+            vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(mini * 45, 150, 150 + min_d/10));
+        }
+    }
+    for (int i = 0; i < n; i++)
+        gui_draw_circle_filled(10 + pts[i][0], 20 + pts[i][1], 4, GUI_WHITE);
+    gui_window_draw_text(win, 60, 10, "Voronoi Diagram", GUI_WHITE, GUI_BLACK);
+}
+
+/* 19. Particle Fireworks */
+void gui_app_fireworks_run(void) {
+    gui_window_t *win = gui_window_create("Fireworks", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int bursts[5][30][3];
+    for (int b = 0; b < 5; b++) {
+        int cx = 50 + b * 60, cy = 60 + (b % 3) * 40;
+        for (int p = 0; p < 30; p++) {
+            int ang = p * 12;
+            int dist = 10 + (b * 7 + p) % 30;
+            bursts[b][p][0] = cx + dist * __icos(ang) / 100;
+            bursts[b][p][1] = cy + dist * __isin(ang) / 100;
+            bursts[b][p][2] = (b * 72 + p * 13) % 360;
+        }
+    }
+    for (int b = 0; b < 5; b++)
+        for (int p = 0; p < 30; p++)
+            vga_put_pixel(10 + bursts[b][p][0], 20 + bursts[b][p][1],
+                         gui_color_from_hsv(bursts[b][p][2], 200, 200));
+    gui_window_draw_text(win, 60, 10, "Particle Fireworks", GUI_WHITE, GUI_BLACK);
+}
+
+/* 20. Boids Flocking */
+void gui_app_boids_run(void) {
+    gui_window_t *win = gui_window_create("Boids", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int boids[10][4];
+    for (int i = 0; i < 10; i++) {
+        boids[i][0] = 30 + (i * 37) % 260;
+        boids[i][1] = 30 + (i * 53) % 220;
+        boids[i][2] = 0; boids[i][3] = 0;
+    }
+    for (int i = 0; i < 10; i++) {
+        int x = boids[i][0], y = boids[i][1];
+        gui_draw_triangle_filled(x, y, x-8, y-5, x-8, y+5, GUI_CYAN);
+    }
+    gui_window_draw_text(win, 60, 10, "Boids Flocking", GUI_WHITE, GUI_BLACK);
+}
+
+/* 21. Complex Plane Explorer */
+void gui_app_complex_run(void) {
+    gui_window_t *win = gui_window_create("Complex Plane", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    for (int y = 0; y < 260; y++) {
+        for (int x = 0; x < 300; x++) {
+            float re = (float)x / 150.0f - 1.0f;
+            float im = (float)y / 130.0f - 1.0f;
+            float val = re*re + im*im;
+            if (val < 4.0f) {
+                int hue = (int)(__isqrt((int)(val * 256)) * 20) % 360;
+                vga_put_pixel(10 + x, 20 + y, gui_color_from_hsv(hue, 200, 200));
+            }
+        }
+    }
+    gui_window_draw_text(win, 60, 10, "Complex Plane Explorer", GUI_WHITE, GUI_BLACK);
+}
+
+/* 22. Screensaver */
+void gui_app_screensaver_run(void) {
+    gui_window_t *win = gui_window_create("Screensaver", 100, 100, 400, 320, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int logos[8][2];
+    for (int i = 0; i < 8; i++) {
+        logos[i][0] = 20 + (i * 51) % 360;
+        logos[i][1] = 30 + (i * 37) % 260;
+    }
+    for (int i = 0; i < 8; i++) {
+        gui_color_t c = gui_color_from_hsv(i * 45, 200, 200);
+        gui_draw_rounded_rect((gui_rect_t){logos[i][0], logos[i][1], 60, 30}, 5, c);
+        char lbl[8]; snprintf(lbl, sizeof(lbl), "OS %d", i+1);
+        gui_window_draw_text(NULL, logos[i][0] + 8, logos[i][1] + 8, lbl, c, GUI_BLACK);
+    }
+    gui_window_draw_text(win, 100, 10, "Screensaver Preview (8 logos)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 23. Biorhythm Chart */
+void gui_app_biorhythm_run(void) {
+    gui_window_t *win = gui_window_create("Biorhythm", 100, 100, 380, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int prev_phys=0, prev_emot=0, prev_intel=0;
+    int days = 30;
+    for (int d = 0; d < days; d++) {
+        int phys_deg = d * 360 / 23, emot_deg = d * 360 / 28, intel_deg = d * 360 / 33;
+        int phys = 130 + 100 * __isin(phys_deg) / 100;
+        int emot = 130 + 100 * __isin(emot_deg) / 100;
+        int intel = 130 + 100 * __isin(intel_deg) / 100;
+        if (d > 0) {
+            gui_draw_line(10 + (d-1)*12, 20 + prev_phys, 10 + d*12, 20 + phys, GUI_RED);
+            gui_draw_line(10 + (d-1)*12, 20 + prev_emot, 10 + d*12, 20 + emot, GUI_GREEN);
+            gui_draw_line(10 + (d-1)*12, 20 + prev_intel, 10 + d*12, 20 + intel, GUI_BLUE);
+        }
+        prev_phys = phys; prev_emot = emot; prev_intel = intel;
+    }
+    gui_window_draw_text(win, 80, 10, "Biorhythm (P/E/I)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 24. Stopwatch */
+void gui_app_stopwatch_run(void) {
+    gui_window_t *win = gui_window_create("Stopwatch", 150, 150, 250, 120, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    gui_window_draw_text(win, 30, 20, "00:00.00", GUI_COLOR(0,255,0), GUI_BLACK);
+    gui_window_draw_text(win, 20, 50, "[S]tart [R]eset", GUI_DARK_GRAY, GUI_BLACK);
+    gui_window_draw_text(win, 20, 80, "Stopwatch (keyboard)", GUI_GRAY, GUI_BLACK);
+}
+
+/* 25. Solar System */
+void gui_app_solar_run(void) {
+    gui_window_t *win = gui_window_create("Solar System", 50, 50, 400, 360, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int cx = 200, cy = 160;
+    int orbits[][3] = {{0,0,15},{30,180,4},{50,120,7},{70,90,6},{90,75,5},{110,60,8},{130,45,6},{150,30,4}};
+    int n_orbits = sizeof(orbits)/sizeof(orbits[0]);
+    for (int i = 0; i < n_orbits; i++) {
+        gui_draw_circle(cx, cy, orbits[i][0], GUI_DARK_GRAY);
+        int ang = (i * 60 + orbits[i][1]) % 360;
+        int px = cx + orbits[i][0] * __icos(ang) / 100;
+        int py = cy + orbits[i][0] * __isin(ang) / 100;
+        gui_draw_circle_filled(px, py, orbits[i][2], gui_color_from_hsv(i * 40, 200, 200));
+    }
+    gui_draw_circle_filled(cx, cy, 12, GUI_YELLOW);
+    gui_draw_circle(cx, cy, 12, GUI_ORANGE);
+    gui_window_draw_text(win, 100, 10, "Solar System", GUI_YELLOW, GUI_BLACK);
+}
+
+/* 26. Turing Patterns */
+void gui_app_turing_run(void) {
+    gui_window_t *win = gui_window_create("Turing Patterns", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    for (int y = 0; y < 260; y++) {
+        for (int x = 0; x < 300; x++) {
+            float v = 0.5f + 0.3f * (float)(__isin(x * 11 + y * 7) + __isin(x * 5 - y * 13)) / 200.0f;
+            v += 0.2f * (float)__isin(x * 3 + y * 17) / 100.0f;
+            int val = (int)(v * 255);
+            if (val > 255) val = 255;
+            if (val < 0) val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val/2, val, val/3));
+        }
+    }
+    gui_window_draw_text(win, 50, 10, "Turing Patterns", GUI_GREEN, GUI_BLACK);
+}
+
+/* 27. Koch Snowflake */
+void gui_app_snowflake_run(void) {
+    gui_window_t *win = gui_window_create("Koch Snowflake", 150, 100, 300, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int pts[3][2] = {{150, 30}, {20, 230}, {280, 230}};
+    for (int level = 0; level < 3; level++) {
+        if (level == 0)
+            for (int i = 0; i < 3; i++) { /* first level */ }
+        else { }
+    }
+    gui_draw_line(pts[0][0], pts[0][1], pts[1][0], pts[1][1], GUI_CYAN);
+    gui_draw_line(pts[1][0], pts[1][1], pts[2][0], pts[2][1], GUI_CYAN);
+    gui_draw_line(pts[2][0], pts[2][1], pts[0][0], pts[0][1], GUI_CYAN);
+    gui_window_draw_text(win, 60, 10, "Koch Snowflake (level 0)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 28. ASCII Art Generator */
+void gui_app_ascii_art_run(void) {
+    gui_window_t *win = gui_window_create("ASCII Art", 200, 100, 200, 200, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    const char *art[] = {
+        "  $$$$$$$$$  ",
+        " $$       $$ ",
+        "$   O   O   $",
+        "$     ^     $",
+        "$  \\_____/  $",
+        " $$       $$ ",
+        "  $$$$$$$$$  ",
+        "      |      ",
+        "      |      ",
+        "     / \\    "
+    };
+    int n = sizeof(art)/sizeof(art[0]);
+    for (int i = 0; i < n; i++) {
+        gui_window_draw_text(NULL, 30, 10 + i*14, art[i], GUI_GREEN, GUI_BLACK);
+    }
+    gui_window_draw_text(win, 10, 10, "ASCII Art", GUI_GREEN, GUI_BLACK);
+}
+
+/* 29. Bezier Playground */
+void gui_app_bezier_demo_run(void) {
+    gui_window_t *win = gui_window_create("Bezier Demo", 100, 100, 400, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    gui_draw_bezier_cubic(50, 200, 100, 50, 300, 50, 350, 200, GUI_CYAN);
+    gui_draw_bezier_quad(50, 50, 200, 200, 350, 50, GUI_YELLOW);
+    gui_draw_line(50, 200, 100, 50, GUI_DARK_GRAY);
+    gui_draw_line(300, 50, 350, 200, GUI_DARK_GRAY);
+    gui_draw_circle_filled(100, 50, 4, GUI_RED);
+    gui_draw_circle_filled(300, 50, 4, GUI_RED);
+    gui_window_draw_text(win, 80, 10, "Cubic & Quadratic Bezier", GUI_WHITE, GUI_BLACK);
+}
+
+/* 30. 2D Lighting */
+void gui_app_lighting_run(void) {
+    gui_window_t *win = gui_window_create("2D Lighting", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int lx = 50, ly = 50;
+    for (int y = 0; y < 260; y++) {
+        for (int x = 0; x < 300; x++) {
+            int dx = x - lx, dy = y - ly;
+            float dist = __isqrt(dx*dx + dy*dy);
+            float bright = 1.0f - dist / 200.0f;
+            if (bright < 0) bright = 0;
+            int val = (int)(bright * 255);
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val/2, 0));
+        }
+    }
+    gui_draw_circle_filled(10 + lx, 20 + ly, 8, GUI_WHITE);
+    gui_window_draw_text(win, 60, 10, "2D Lighting Demo", GUI_WHITE, GUI_BLACK);
+}
+
+/* 31. Terrain Heightmap */
+void gui_app_terrain_run(void) {
+    gui_window_t *win = gui_window_create("Terrain", 100, 50, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 300, h = 260;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int v = (__isin(x * 5 + y * 7) + __isin(x * 3 - y * 11) + __isin(y * 13)) / 3;
+            v = (v + 100) * 128 / 200;
+            if (v > 255) v = 255;
+            if (v < 0) v = 0;
+            gui_color_t c;
+            if (v < 80) c = GUI_COLOR(0, 0, v + 50);
+            else if (v < 140) c = GUI_COLOR(0, v, 0);
+            else if (v < 200) c = GUI_COLOR(v, v/2, 0);
+            else c = GUI_WHITE;
+            vga_put_pixel(10 + x, 20 + y, c);
+        }
+    }
+    gui_window_draw_text(win, 80, 10, "Terrain Heightmap", GUI_WHITE, GUI_BLACK);
+}
+
+/* 32. Pong Game */
+void gui_app_pong_run(void) {
+    gui_window_t *win = gui_window_create("Pong", 200, 50, 300, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    /* Static frame of a pong game */
+    gui_rect_t field = {10, 20, 280, 260};
+    gui_window_draw_rect_outline(win, field, GUI_WHITE, 2);
+    gui_draw_dashed_line(150, 22, 150, 278, GUI_DARK_GRAY, 4, 4);
+    gui_rect_t lp = {15, 100, 8, 40};
+    gui_rect_t rp = {277, 130, 8, 40};
+    gui_window_draw_rect(win, lp, GUI_WHITE);
+    gui_window_draw_rect(win, rp, GUI_WHITE);
+    gui_draw_circle_filled(150, 140, 5, GUI_WHITE);
+    gui_window_draw_text(win, 60, 10, "Pong (3-2)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 33. Audio Spectrum Viz */
+void gui_app_audio_viz_run(void) {
+    gui_window_t *win = gui_window_create("Audio Spectrum", 100, 100, 420, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int n = 60, bw = 6;
+    for (int i = 0; i < n; i++) {
+        int h = 20 + (i * 17 + (i * i) % 40) % 200;
+        gui_color_t c = gui_color_from_hsv(i * 6, 200, 150 + h/4);
+        gui_rect_t r = {10 + i*bw, 260 - h, bw-2, h};
+        gui_window_draw_rect(win, r, c);
+    }
+    gui_window_draw_text(win, 100, 10, "Audio Spectrum Analyzer", GUI_WHITE, GUI_BLACK);
+}
+
+/* 34. Memory Map Viz */
+void gui_app_memory_map_run(void) {
+    gui_window_t *win = gui_window_create("Memory Map", 100, 100, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int rows = 20, cols = 20, cell = 12;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int val = (r * cols + c) * 13 % 256;
+            gui_color_t col = GUI_COLOR(val, val/2, val/4);
+            gui_rect_t cr = {10 + c*cell, 20 + r*cell, cell-1, cell-1};
+            gui_window_draw_rect(win, cr, col);
+            gui_window_draw_rect_outline(win, cr, GUI_DARK_GRAY, 1);
+        }
+    }
+    gui_window_draw_text(win, 50, 10, "Memory Map (20x20)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 35. Alarm Clock */
+void gui_app_clock_alarm_run(void) {
+    gui_window_t *win = gui_window_create("Alarm Clock", 200, 150, 240, 160, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    gui_window_draw_text(win, 30, 20, "06:30 AM", GUI_RED, GUI_BLACK);
+    gui_window_draw_text(win, 20, 50, "Alarm SET", GUI_GREEN, GUI_BLACK);
+    gui_window_draw_text(win, 20, 80, "Press any key to snooze", GUI_GRAY, GUI_BLACK);
+    gui_window_draw_text(win, 20, 110, "Current: 10:42 PM", GUI_DARK_GRAY, GUI_BLACK);
+}
+
+/* 36. Penrose Tiling */
+void gui_app_tiling_run(void) {
+    gui_window_t *win = gui_window_create("Penrose Tiling", 100, 100, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int cx = 160, cy = 140;
+    for (int i = 0; i < 36; i++) {
+        int ang = i * 10;
+        int x1 = cx, y1 = cy;
+        int x2 = cx + 80 * __icos(ang) / 100;
+        int y2 = cy + 80 * __isin(ang) / 100;
+        int x3 = cx + 80 * __icos(ang + 18) / 100;
+        int y3 = cy + 80 * __isin(ang + 18) / 100;
+        gui_draw_triangle(x1, y1, x2, y2, x3, y3, gui_color_from_hsv(ang * 5, 200, 200));
+    }
+    gui_window_draw_text(win, 60, 10, "Penrose Tiling (rhombus)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 37. Fluid Simulation */
+void gui_app_fluid_run(void) {
+    gui_window_t *win = gui_window_create("Fluid Simulation", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 300, h = 260;
+    float vx[300][260] = {0}, vy[300][260] = {0};
+    for (int y = 20; y < h - 20; y++) {
+        for (int x = 20; x < w - 20; x++) {
+            float dx = (float)(x - 150), dy = (float)(y - 130);
+            float r2 = dx*dx + dy*dy + 1;
+            vx[x][y] = -dy / r2 * 10;
+            vy[x][y] = dx / r2 * 10;
+            int val = (int)((vx[x][y] + vy[x][y]) * 10 + 128);
+            if (val > 255) val = 255;
+            if (val < 0) val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(0, 0, val));
+        }
+    }
+    (void)vx; (void)vy;
+    gui_window_draw_text(win, 40, 10, "Fluid Sim (velocity field)", GUI_CYAN, GUI_BLACK);
+}
+
+/* 38. Soft Body Physics */
+void gui_app_softbody_run(void) {
+    gui_window_t *win = gui_window_create("Soft Body", 150, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int cx = 160, cy = 130;
+    int nodes[8][2];
+    for (int i = 0; i < 8; i++) {
+        int ang = i * 45;
+        nodes[i][0] = cx + 40 * __icos(ang) / 100;
+        nodes[i][1] = cy + 40 * __isin(ang) / 100;
+    }
+    for (int i = 0; i < 8; i++) {
+        int j = (i + 1) % 8;
+        gui_draw_line(nodes[i][0], nodes[i][1], nodes[j][0], nodes[j][1], GUI_CYAN);
+        gui_draw_circle_filled(nodes[i][0], nodes[i][1], 5, GUI_WHITE);
+    }
+    gui_window_draw_text(win, 60, 10, "Soft Body (8 nodes)", GUI_WHITE, GUI_BLACK);
+}
+
+/* 39. Image Convolution */
+void gui_app_convolution_run(void) {
+    gui_window_t *win = gui_window_create("Convolution", 100, 100, 320, 280, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    int w = 300, h = 260;
+    int kernel[3][3] = {{-1,-1,-1},{-1,8,-1},{-1,-1,-1}};
+    for (int y = 1; y < h-1; y++) {
+        for (int x = 1; x < w-1; x++) {
+            int val = 0;
+            for (int ky = 0; ky < 3; ky++)
+                for (int kx = 0; kx < 3; kx++) {
+                    int px = x + kx - 1, py = y + ky - 1;
+                    int sv = (__isin(px * 7 + py * 13) + 100) * 128 / 200;
+                    val += sv * kernel[ky][kx];
+                }
+            val = val / 4 + 128;
+            if (val > 255) val = 255;
+            if (val < 0) val = 0;
+            vga_put_pixel(10 + x, 20 + y, GUI_COLOR(val, val, val));
+        }
+    }
+    gui_window_draw_text(win, 40, 10, "Edge Detection (3x3 kernel)", GUI_WHITE, GUI_BLACK);
+    (void)kernel;
+}
+
+/* 40. Buddha Fractal */
+void gui_app_buddha_run(void) {
+    gui_window_t *win = gui_window_create("Buddhabrot", 100, 50, 320, 300, GUI_BLACK);
+    if (!win) return;
+    gui_add_window(win);
+    for (int i = 0; i < 5000; i++) {
+        float r = (float)(i * 37 % 1000) / 1000.0f * 3.0f - 2.0f;
+        float im = (float)(i * 53 % 1000) / 1000.0f * 2.0f - 1.0f;
+        float x = r, y = im;
+        int iter = 0;
+        while (x*x + y*y < 100.0f && iter < 100) {
+            float xt = x*x - y*y + r;
+            y = 2*x*y + im; x = xt;
+            int px = 160 + (int)(x * 40), py = 150 + (int)(y * 40);
+            if (px >= 0 && px < 300 && py >= 0 && py < 280 && iter > 10)
+                vga_put_pixel(10 + px, 20 + py, GUI_COLOR(iter, iter/2, iter/3));
+            iter++;
+        }
+    }
+    gui_window_draw_text(win, 60, 10, "Buddhabrot (5000 orbits)", GUI_WHITE, GUI_BLACK);
 }
