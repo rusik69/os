@@ -141,6 +141,7 @@ void job_control_list(void)
         case JOB_STOPPED:     state_str = "stopped";   break;
         case JOB_DONE:        state_str = "done";      break;
         case JOB_TERMINATED:  state_str = "terminated"; break;
+        default: break;
         }
         kprintf("[%d]  %-8s  %-6llu  %s\n",
                jobs[i].job_id, state_str,

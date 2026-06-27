@@ -699,7 +699,7 @@ static int pmm_oom_recover(uint64_t needed_pages, uint64_t caller_ip) {
      *   Level 2: Compaction + OOM kill + yield
      *   Level 3: panic() with full diagnostics
      */
-    static const char *level_names[] = {
+    static const char *const level_names[] = {
         "slab reaping + OOM",
         "compaction + OOM"
     };

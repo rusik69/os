@@ -584,7 +584,7 @@ static void udp_slot_handler_##N(uint32_t ip, uint16_t p, const uint8_t *d, uint
 SLOT_HANDLER(0) SLOT_HANDLER(1) SLOT_HANDLER(2) SLOT_HANDLER(3)
 SLOT_HANDLER(4) SLOT_HANDLER(5) SLOT_HANDLER(6) SLOT_HANDLER(7)
 
-static udp_recv_handler slot_handlers[UDP_LISTEN_MAX] = {
+static const udp_recv_handler slot_handlers[UDP_LISTEN_MAX] = {
     udp_slot_handler_0, udp_slot_handler_1, udp_slot_handler_2, udp_slot_handler_3,
     udp_slot_handler_4, udp_slot_handler_5, udp_slot_handler_6, udp_slot_handler_7
 };

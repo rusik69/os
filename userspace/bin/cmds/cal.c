@@ -9,7 +9,7 @@ static int is_leap(int y) {
 }
 
 static int month_days(int m, int y) {
-    static int days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    static const int days[]={31,28,31,30,31,30,31,31,30,31,30,31};
     if(m==2 && is_leap(y)) return 29;
     return days[m-1];
 }
@@ -35,7 +35,7 @@ static void get_current_date(int *year, int *month, int *day) {
         if(secs<(unsigned long long)dys*86400) break;
         secs-=dys*86400; y++;
     }
-    static int md[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    static const int md[]={31,28,31,30,31,30,31,31,30,31,30,31};
     while(1){
         int dim=md[m-1];
         if(m==2&&(y%4==0&&(y%100!=0||y%400==0))) dim=29;

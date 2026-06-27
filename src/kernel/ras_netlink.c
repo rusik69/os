@@ -97,9 +97,9 @@ void ras_netlink_report_event(uint32_t type, uint32_t severity,
     netlink_broadcast(NETLINK_RAS, 1, &nl_msg, sizeof(nl_msg), 0);
 
     /* Also log to kernel log */
-    static const char *sev_names[] = { "INFO", "WARN", "CRIT", "FATAL" };
+    static const char *const sev_names[] = { "INFO", "WARN", "CRIT", "FATAL" };
     const char *sev_str = (severity < 4) ? sev_names[severity] : "?";
-    static const char *type_names[] = { "", "UE", "CE", "FATAL", "INFO" };
+    static const char *const type_names[] = { "", "UE", "CE", "FATAL", "INFO" };
     const char *type_str = (type <= 4) ? type_names[type] : "?";
 
     kprintf("[RAS] %s/%s cpu=%u: %s\n",
@@ -130,9 +130,9 @@ static void debugfs_events_read(char *buf, int *len)
         int idx = (start + i) % RAS_RING_SIZE;
         struct ras_event *ev = &g_ras_ring[idx];
 
-        static const char *sev_names[] = { "INFO", "WARN", "CRIT", "FATAL" };
+        static const char *const sev_names[] = { "INFO", "WARN", "CRIT", "FATAL" };
         const char *sev_str = (ev->severity < 4) ? sev_names[ev->severity] : "?";
-        static const char *type_names[] = { "", "UE", "CE", "FATAL", "INFO" };
+        static const char *const type_names[] = { "", "UE", "CE", "FATAL", "INFO" };
         const char *type_str = (ev->type <= 4) ? type_names[ev->type] : "?";
 
         int n = snprintf(buf + pos, (size_t)(max - pos),

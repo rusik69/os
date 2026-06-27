@@ -100,6 +100,7 @@ static int snk_tick(void) {
         case SNK_DOWN:  new_y++; break;
         case SNK_LEFT:  new_x--; break;
         case SNK_RIGHT: new_x++; break;
+        default: break;
     }
 
     /* Wall collision */

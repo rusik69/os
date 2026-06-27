@@ -178,7 +178,7 @@ static int num_queues = 1;
 static struct e1000_queue queues[E1000_MAX_QUEUES];
 
 /* RSS hash key (default Intel recommended key) */
-static uint32_t rss_key[4] = {
+static const uint32_t rss_key[4] = {
     0x6D5A56DA, 0xBF914C5B, 0xF4A3FCF1, 0x3BB06F25
 };
 

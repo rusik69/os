@@ -34,7 +34,7 @@ static int      watchdog_initialized = 0;
  * Directories that already exist are silently skipped.
  */
 void __init service_init(void) {
-    static const char *dirs[] = {
+    static const char *const dirs[] = {
         "/etc",
         "/var",
         "/var/log",

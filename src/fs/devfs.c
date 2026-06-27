@@ -306,7 +306,7 @@ static int devfs_readdir_names(void *priv, const char *path,
     int count = 0;
 
     /* Built-in devices */
-    static const char *builtins[] = {"null", "zero", "random", "kmsg"};
+    static const char *const builtins[] = {"null", "zero", "random", "kmsg"};
     int nbuilt = (int)(sizeof(builtins) / sizeof(builtins[0]));
 
     for (int i = 0; i < nbuilt && count < max; i++) {

@@ -228,6 +228,7 @@ static void collect_pickups(doom_state_t *st) {
             break;
         case DOOM_PICKUP_KEY_RED:  st->player.keys |= DOOM_KEY_RED; break;
         case DOOM_PICKUP_KEY_BLUE: st->player.keys |= DOOM_KEY_BLUE; break;
+        default: break;
         }
         p->active = 0;
     }

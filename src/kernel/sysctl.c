@@ -319,7 +319,7 @@ int sysctl_list_names(char names[][48], int max_names)
     }
 
     /* Add built-in entries that aren't already in the table */
-    static const char *builtins[] = {
+    static const char *const builtins[] = {
         "hostname", "osrelease", "ostype",
         "panic", "randomize_va_space",
         "vm.reclaim_watermark",

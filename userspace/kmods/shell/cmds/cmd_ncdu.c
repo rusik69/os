@@ -669,6 +669,7 @@ static void ncdu_interactive(void)
             }
             break;
         }
+        default: break;
         }
     }
 }

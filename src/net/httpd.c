@@ -89,8 +89,8 @@ static char *http_date(char *buf) {
     int y = t.year; if (t.month < 3) y--;
     int dow = (t.day + y + y/4 - y/100 + y/400 + dow_tbl[t.month - 1]) % 7;
     if (dow < 0) dow += 7;
-    static const char *days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-    static const char *months[] = {"Jan","Feb","Mar","Apr","May","Jun",
+    static const char *const days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    static const char *const months[] = {"Jan","Feb","Mar","Apr","May","Jun",
                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
 
     const char *d = days[dow];

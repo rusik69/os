@@ -58,7 +58,7 @@ extern void irq17(void);
 extern void irq18(void);
 extern void irq19(void);
 
-static const char *exception_names[] = {
+static const char *const exception_names[] = {
     "Division By Zero", "Debug", "NMI", "Breakpoint",
     "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
     "Double Fault", "Coprocessor Segment Overrun", "Invalid TSS", "Segment Not Present",

@@ -381,7 +381,7 @@ static int mode_read_cb(char *buf, uint32_t max_size, void *priv)
     struct bonding *bond = (struct bonding *)priv;
     if (!bond) return 0;
 
-    static const char *mode_names[] = {
+    static const char *const mode_names[] = {
         "balance-rr (0)",
         "active-backup (1)",
         "balance-xor (2)",
