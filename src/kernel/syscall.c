@@ -7892,6 +7892,16 @@ static uint64_t sys_madvise(uint64_t addr, uint64_t len, uint64_t advice) {
     }
 }
 
+static uint64_t sys_msync(uint64_t addr, uint64_t len, uint64_t flags) {
+    (void)addr;
+    (void)len;
+    (void)flags;
+    /* msync is a no-op since we don't have a page cache for mmap'd files.
+     * On Linux, msync flushes dirty pages back to the mapped file.
+     * Without MAP_SHARED file-backing, this is a successful no-op. */
+    return 0;
+}
+
 static uint64_t sys_fallocate(uint64_t fd, uint64_t mode, uint64_t offset, uint64_t len) {
     int i = (int)fd - 3;
     struct process_fd *pfd = sys_get_fd(i);
@@ -9432,6 +9442,7 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         case SYS_MUNLOCKALL:   return sys_munlockall();
         case SYS_MINCORE:      return sys_mincore(a1, a2, a3);
         case SYS_MADVISE:      return sys_madvise(a1, a2, a3);
+        case SYS_MSYNC:        return sys_msync(a1, a2, a3);
         case SYS_FALLOCATE:    return sys_fallocate(a1, a2, a3, a4);
         case SYS_READAHEAD:    return sys_readahead(a1, a2, a3);
         case SYS_PIVOT_ROOT:      return sys_pivot_root(a1, a2);

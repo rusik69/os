@@ -843,6 +843,9 @@ struct linux_dirent64 {
 #define SYS_IO_URING_ENTER    426  /* io_uring_enter(fd, to_submit, min_complete, flags) */
 #define SYS_IO_URING_REGISTER 427  /* io_uring_register(fd, opcode, arg, nr_args) */
 
+/* ── Memory synchronization ─────────────────────────────────── */
+#define SYS_MSYNC             800  /* msync(addr, len, flags) → 0 or -errno */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.
