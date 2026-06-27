@@ -276,6 +276,10 @@ void gui_widget_destroy(gui_widget_t *w) {
     kfree(w);
 }
 
+void gui_widget_default_destroy(gui_widget_t *w) {
+    (void)w; /* no dynamic data to free */
+}
+
 void gui_widget_draw(gui_widget_t *w) {
     if (!w || !w->visible || !w->draw) return;
     w->draw(w);

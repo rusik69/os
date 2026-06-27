@@ -106,6 +106,7 @@ struct gui_widget {
 
 gui_widget_t* gui_widget_create(gui_rect_t rect);
 void gui_widget_destroy(gui_widget_t *w);
+void gui_widget_default_destroy(gui_widget_t *w);
 void gui_widget_draw(gui_widget_t *w);
 void gui_widget_on_event(gui_widget_t *w, gui_event_t *evt);
 int gui_widget_contains_point(gui_widget_t *w, int32_t x, int32_t y);
