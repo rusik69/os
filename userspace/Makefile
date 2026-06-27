@@ -107,7 +107,7 @@ dos.elf: $(DOS_OBJS) $(LIBC_A)
 	$(LD) $(LDFLAGS) $^ -o $@
 
 # GUI desktop — standalone userspace app
-GUI_SRCS = gui/gui_task.c gui/gui.c gui/gui_widgets.c gui/gui_shell.c
+GUI_SRCS = gui/gui_task.c gui/gui.c gui/gui_widgets.c gui/gui_shell.c gui/gui_draw.c gui/gui_apps.c
 GUI_OBJS = $(patsubst gui/%.c,gui/%.o,$(GUI_SRCS))
 
 gui/%.o: gui/%.c

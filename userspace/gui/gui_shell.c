@@ -1,6 +1,14 @@
+/* gui_shell.c — GUI desktop shell with app launcher */
 #include "gui_shell.h"
 #include "gui.h"
 #include "gui_widgets.h"
+#include "gui_apps.h"
+#include "gui_draw.h"
+#include "string.h"
+
+/* Forward declarations */
+static void close_file_win(gui_widget_t *btn);
+static void open_file_win(gui_widget_t *btn);
 
 /* Desktop state */
 static gui_window_t      *g_desktop  = NULL;
@@ -10,76 +18,75 @@ static int                g_running  = 0;
 
 /* Window drag state */
 static gui_window_t *g_drag_win  = NULL;
-static int32_t       g_drag_offx = 0;
-static int32_t       g_drag_offy = 0;
+static int32_t       g_drag_offx = 0, g_drag_offy = 0;
 
-/* Forward declarations */
-static void open_file_window(gui_widget_t *btn);
-static void close_file_window(gui_widget_t *btn);
-static void exit_gui(gui_widget_t *btn);
+/* ── App launcher callbacks ── */
+static void launch_draw(gui_widget_t *btn)     { (void)btn; gui_app_draw_run(); }
+static void launch_widgets(gui_widget_t *btn)   { (void)btn; gui_app_widgets_run(); }
+static void launch_colors(gui_widget_t *btn)    { (void)btn; gui_app_colors_run(); }
+static void launch_gradient(gui_widget_t *btn)  { (void)btn; gui_app_gradient_run(); }
+static void launch_shapes(gui_widget_t *btn)    { (void)btn; gui_app_shapes_run(); }
+static void launch_checker(gui_widget_t *btn)   { (void)btn; gui_app_checker_run(); }
+static void launch_info(gui_widget_t *btn)      { (void)btn; gui_app_info_run(); }
 
-static void on_file_select(gui_filebrowser_t *fb, const char *name) {
-    (void)fb; (void)name;
-}
-
-static void open_file_window(gui_widget_t *btn) {
+static void open_file_win(gui_widget_t *btn) {
     (void)btn;
     if (g_file_win) return;
-
     g_file_win = gui_window_create("File Browser", 100, 70, 600, 480, GUI_WINDOW_BG);
     if (!g_file_win) return;
-
     gui_rect_t br = {108, 102, 584, 410};
     g_fb = gui_filebrowser_create(br, "/");
-    if (g_fb) {
-        gui_filebrowser_set_on_select(g_fb, on_file_select);
-        gui_window_add_widget(g_file_win, gui_filebrowser_get_widget(g_fb));
-    }
-
+    if (g_fb) gui_window_add_widget(g_file_win, gui_filebrowser_get_widget(g_fb));
     gui_rect_t close_r = {608, 74, 64, 20};
     gui_widget_t *close_btn = gui_button_create(close_r, "Close");
     if (close_btn) {
-        gui_button_set_on_click(close_btn, close_file_window);
+        gui_button_set_on_click(close_btn, (void(*)(gui_widget_t*))close_file_win);
         gui_window_add_widget(g_file_win, close_btn);
     }
-
     gui_add_window(g_file_win);
 }
 
-static void close_file_window(gui_widget_t *btn) {
+static void close_file_win(gui_widget_t *btn) {
     (void)btn;
     if (!g_file_win) return;
     if (g_drag_win == g_file_win) g_drag_win = NULL;
     gui_remove_window(g_file_win);
     gui_window_destroy(g_file_win);
-    g_file_win = NULL;
-    g_fb       = NULL;
+    g_file_win = NULL; g_fb = NULL;
 }
 
-static void exit_gui(gui_widget_t *btn) {
-    (void)btn;
-    g_running = 0;
-}
+static void exit_gui(gui_widget_t *btn) { (void)btn; g_running = 0; }
 
 #define TASKBAR_Y  750
 #define TASKBAR_H  18
 
 static void draw_taskbar(int32_t mx, int32_t my) {
-    (void)mx; (void)my;
     gui_rect_t bar = {0, TASKBAR_Y, 1024, TASKBAR_H};
     gui_window_draw_rect(NULL, bar, GUI_DARK_GRAY);
-
     gui_rect_t sep = {0, TASKBAR_Y, 1024, 1};
     gui_window_draw_rect(NULL, sep, GUI_GRAY);
 
-    gui_rect_t f = {2, TASKBAR_Y+2, 56, 14};
-    gui_window_draw_rect(NULL, f, GUI_COLOR(70,70,100));
-    gui_window_draw_text(NULL, 6, TASKBAR_Y+3, "FILES", GUI_WHITE, GUI_COLOR(70,70,100));
-
-    gui_rect_t e = {62, TASKBAR_Y+2, 48, 14};
-    gui_window_draw_rect(NULL, e, GUI_COLOR(100,50,50));
-    gui_window_draw_text(NULL, 66, TASKBAR_Y+3, "EXIT", GUI_WHITE, GUI_COLOR(100,50,50));
-
+    /* App buttons on taskbar */
+    struct { const char *label; int x, w; void (*click)(gui_widget_t*); } btns[] = {
+        {"DRAW",    2, 44, launch_draw},
+        {"WIDGET",  48, 50, launch_widgets},
+        {"COLORS",  100, 50, launch_colors},
+        {"GRAD",    152, 40, launch_gradient},
+        {"SHAPES",  194, 52, launch_shapes},
+        {"CHECK",   248, 48, launch_checker},
+        {"INFO",    298, 40, launch_info},
+        {"FILES",   340, 44, open_file_win},
+        {"EXIT",    386, 40, exit_gui},
+    };
+    int n = sizeof(btns)/sizeof(btns[0]);
+    for (int i = 0; i < n; i++) {
+        gui_color_t c = (btns[i].click == exit_gui) ? GUI_COLOR(100,50,50) : GUI_COLOR(70,70,100);
+        if (mx >= btns[i].x && mx < btns[i].x + btns[i].w && my >= TASKBAR_Y && my < TASKBAR_Y + TASKBAR_H)
+            c = gui_color_lighten(c, 30);
+        gui_rect_t r = {btns[i].x, TASKBAR_Y+2, btns[i].w, TASKBAR_H-2};
+        gui_window_draw_rect(NULL, r, c);
+        gui_window_draw_text(NULL, btns[i].x + 3, TASKBAR_Y+3, btns[i].label, GUI_WHITE, c);
+    }
     gui_window_draw_text(NULL, 750, TASKBAR_Y+3,
         "ESC = quit GUI", GUI_COLOR(160,160,160), GUI_DARK_GRAY);
 }
@@ -93,42 +100,23 @@ static gui_window_t* find_window_at(int32_t x, int32_t y) {
 
 static int on_close_button(gui_window_t *win, int32_t x, int32_t y) {
     gui_rect_t r = gui_window_get_rect(win);
-    return x >= (int32_t)(r.x + r.w - 22) &&
-           x <  (int32_t)(r.x + r.w) &&
-           y >= r.y && y < r.y + 24;
+    return x >= (int32_t)(r.x + r.w - 22) && x < (int32_t)(r.x + r.w) && y >= r.y && y < r.y + 24;
 }
 
 static int on_title_bar(gui_window_t *win, int32_t x, int32_t y) {
     gui_rect_t r = gui_window_get_rect(win);
-    return y >= r.y && y < r.y + 24 &&
-           x >= r.x && x < (int32_t)(r.x + r.w - 22);
+    return y >= r.y && y < r.y + 24 && x >= r.x && x < (int32_t)(r.x + r.w - 22);
 }
 
 static void build_desktop(void) {
     g_desktop = gui_window_create("", 0, 0, 1024, TASKBAR_Y, GUI_COLOR(30, 78, 140));
     if (!g_desktop) return;
 
-    gui_rect_t fr = {16, 50, 80, 52};
-    gui_widget_t *fb = gui_button_create(fr, "Files");
-    if (fb) {
-        gui_button_set_on_click(fb, open_file_window);
-        gui_window_add_widget(g_desktop, fb);
-    }
-
-    gui_rect_t er = {16, 116, 80, 52};
-    gui_widget_t *ex = gui_button_create(er, "Exit");
-    if (ex) {
-        gui_button_set_on_click(ex, exit_gui);
-        gui_window_add_widget(g_desktop, ex);
-    }
-
     gui_rect_t lr = {160, 10, 700, 16};
-    gui_widget_t *lbl = gui_label_create(lr, "OS Desktop  |  Files: browse filesystem  |  Exit: quit GUI");
-    if (lbl) {
-        lbl->fg = GUI_COLOR(200, 220, 255);
-        lbl->bg = GUI_COLOR(30, 78, 140);
-        gui_window_add_widget(g_desktop, lbl);
-    }
+    gui_widget_t *lbl = gui_label_create(lr,
+        "OS Desktop  |  Taskbar buttons launch GUI apps  |  ESC = quit");
+    if (lbl) { lbl->fg = GUI_COLOR(200, 220, 255); lbl->bg = GUI_COLOR(30, 78, 140);
+               gui_window_add_widget(g_desktop, lbl); }
 
     gui_add_window(g_desktop);
 }
@@ -136,56 +124,45 @@ static void build_desktop(void) {
 void gui_shell_run(void) {
     if (!vga_is_framebuffer()) {
         if (vga_try_alloc_software_framebuffer() != 0) {
-            kprintf("[ERROR] Failed to initialize framebuffer (hardware or software)\n");
+            kprintf("[ERROR] Failed to initialize framebuffer\\n");
             return;
         }
     }
 
-    g_running  = 1;
-    g_drag_win = NULL;
-    g_file_win = NULL;
-    g_desktop  = NULL;
-    g_fb       = NULL;
-
+    g_running = 1; g_drag_win = NULL; g_file_win = NULL;
+    g_desktop = NULL; g_fb = NULL;
     gui_init();
     build_desktop();
 
-    int      prev_buttons = 0;
-    int32_t  px = 512, py = 384;
+    int prev_buttons = 0;
+    int32_t px = 512, py = 384;
 
     while (g_running) {
         while (keyboard_has_input()) {
             char c = keyboard_getchar();
             if (c == 27) { g_running = 0; break; }
-
             gui_window_t *fw = gui_get_focused_window();
-            if (fw) {
+            if (fw && fw != g_desktop) {
                 gui_widget_t *ww = gui_window_get_focused_widget(fw);
                 if (ww) {
-                    gui_event_t ke;
-                    memset(&ke, 0, sizeof(ke));
-                    ke.type = GUI_EVENT_CHAR;
-                    ke.ch   = c;
+                    gui_event_t ke; memset(&ke, 0, sizeof(ke));
+                    ke.type = GUI_EVENT_CHAR; ke.ch = c;
                     gui_widget_on_event(ww, &ke);
                 }
             }
         }
         if (!g_running) break;
 
-        int32_t new_px, new_py;
-        mouse_get_pixel_pos(&new_px, &new_py);
-        int buttons      = (int)mouse_get_buttons();
+        mouse_get_pixel_pos(&px, &py);
+        int buttons = (int)mouse_get_buttons();
         int left_pressed  = (buttons & 1) && !(prev_buttons & 1);
         int left_released = !(buttons & 1) && (prev_buttons & 1);
 
-        px = new_px;
-        py = new_py;
         gui_update_mouse(px, py, buttons);
 
         if ((buttons & 1) && g_drag_win) {
             gui_rect_t r = gui_window_get_rect(g_drag_win);
-            int32_t nx = px - g_drag_offx;
-            int32_t ny = py - g_drag_offy;
+            int32_t nx = px - g_drag_offx, ny = py - g_drag_offy;
             if (nx < 0) nx = 0;
             if (ny < 0) ny = 0;
             if (nx + (int32_t)r.w > 1024) nx = 1024 - (int32_t)r.w;
@@ -193,53 +170,48 @@ void gui_shell_run(void) {
             r.x = nx; r.y = ny;
             gui_window_set_rect(g_drag_win, r);
         }
-
         if (left_released) g_drag_win = NULL;
 
         if (left_pressed) {
             if (py >= TASKBAR_Y) {
-                if (px >= 2 && px < 58)  open_file_window(NULL);
-                if (px >= 62 && px < 110) exit_gui(NULL);
-                goto frame;
+                struct { int x, w; void (*click)(gui_widget_t*); } btns[] = {
+                    {2,44,launch_draw},{48,50,launch_widgets},{100,50,launch_colors},
+                    {152,40,launch_gradient},{194,52,launch_shapes},{248,48,launch_checker},
+                    {298,40,launch_info},{340,44,open_file_win},{386,40,exit_gui},
+                };
+                for (int i = 0; i < 9; i++) {
+                    if (px >= btns[i].x && px < btns[i].x + btns[i].w) {
+                        btns[i].click(NULL); goto frame;
+                    }
+                }
             }
-
             gui_window_t *hit = find_window_at(px, py);
             if (hit) {
                 if (hit != gui_get_focused_window()) {
-                    gui_remove_window(hit);
-                    gui_add_window(hit);
+                    gui_remove_window(hit); gui_add_window(hit);
                 }
                 gui_set_focused_window(hit);
-
                 if (gui_window_has_title(hit) && on_close_button(hit, px, py)) {
-                    if (hit == g_file_win) close_file_window(NULL);
+                    if (hit == g_file_win) close_file_win(NULL);
                 }
                 else if (gui_window_has_title(hit) && on_title_bar(hit, px, py)) {
                     gui_rect_t r = gui_window_get_rect(hit);
-                    g_drag_win  = hit;
-                    g_drag_offx = px - r.x;
-                    g_drag_offy = py - r.y;
+                    g_drag_win = hit; g_drag_offx = px - r.x; g_drag_offy = py - r.y;
                 }
                 else {
                     gui_widget_t *w = gui_window_first_widget(hit);
                     while (w) {
                         if (gui_widget_contains_point(w, px, py)) {
                             gui_window_set_focused_widget(hit, w);
-                            gui_event_t evt;
-                            memset(&evt, 0, sizeof(evt));
-                            evt.type   = GUI_EVENT_MOUSE_DOWN;
-                            evt.button = 1;
-                            evt.x      = px;
-                            evt.y      = py;
-                            gui_widget_on_event(w, &evt);
-                            break;
+                            gui_event_t evt; memset(&evt, 0, sizeof(evt));
+                            evt.type = GUI_EVENT_MOUSE_DOWN; evt.button = 1; evt.x = px; evt.y = py;
+                            gui_widget_on_event(w, &evt); break;
                         }
                         w = w->next;
                     }
                 }
             }
         }
-
         prev_buttons = buttons;
 
     frame:
@@ -249,10 +221,6 @@ void gui_shell_run(void) {
     }
 
     gui_shutdown();
-    g_file_win = NULL;
-    g_fb       = NULL;
-    g_desktop  = NULL;
-    g_drag_win = NULL;
-
-    kprintf("\nGUI desktop closed.\n");
+    g_file_win = NULL; g_fb = NULL; g_desktop = NULL; g_drag_win = NULL;
+    kprintf("\\nGUI desktop closed.\\n");
 }
