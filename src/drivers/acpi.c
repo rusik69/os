@@ -958,12 +958,10 @@ void __init acpi_init(void) {
     {
         /* Extract S4 info from FADT flags field (byte offset 112 in FADT) */
         uint8_t *fadt_bytes = (uint8_t *)fadt;
-        uint32_t fadt_flags = 0;
         if (sizeof(struct fadt) >= 116) {
             /* flags are at offset 112 for ACPI 1.0 FADT, but our struct
              * has variable layout. Try to read the _flags2 field which
              * corresponds to the flags at various positions. */
-            fadt_flags = (uint32_t)fadt->_flags2;
         }
 
         /* Check if FADT indicates wake from S4 is supported */

@@ -224,9 +224,6 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
     const struct sctp_chunk *chunk = (const struct sctp_chunk *)(payload + sizeof(*sh));
     uint16_t remaining = len - sizeof(*sh);
 
-    /* Track time of last HEARTBEAT for timeout detection */
-    static uint64_t last_heartbeat_ticks = 0;
-
     while (remaining >= sizeof(*chunk)) {
         uint16_t chunk_len = ntohs(chunk->length);
         if (chunk_len < sizeof(*chunk) || chunk_len > remaining) break;
@@ -270,7 +267,6 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
             send_ip(a->peer_ip, IPPROTO_SCTP, hb_ack_pkt, ack_pkt_len);
             a->tx_packets++;
 
-            last_heartbeat_ticks = 0; /* Reset timestamp */
             kprintf("sctp: HEARTBEAT-ACK sent to %d.%d.%d.%d:%u\n",
                     (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
                     (src_ip >> 8) & 0xFF, src_ip & 0xFF,
@@ -280,7 +276,6 @@ void handle_sctp(uint32_t src_ip, uint32_t dst_ip,
 
         case SCTP_HEARTBEAT_ACK:
             /* HEARTBEAT-ACK received — peer is alive */
-            last_heartbeat_ticks = 0;
             a->rx_packets++;
             kprintf("sctp: HEARTBEAT-ACK from %d.%d.%d.%d:%u\n",
                     (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,

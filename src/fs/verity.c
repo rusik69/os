@@ -393,7 +393,6 @@ int fsverity_verify_block(uint64_t ino, uint32_t block, const uint8_t *data)
 
         /* Offset to the hash block in the tree */
         uint64_t hash_block_offset = 0;
-        uint32_t blocks_before = 0;
         uint32_t blocks_at_level = vd->data_blocks;
 
         for (uint32_t l = 0; l <= levels_verified; l++) {
@@ -405,7 +404,6 @@ int fsverity_verify_block(uint64_t ino, uint32_t block, const uint8_t *data)
             /* Align to block */
             level_size = (level_size + VERITY_BLOCK_SIZE - 1) & ~(uint64_t)(VERITY_BLOCK_SIZE - 1);
             hash_block_offset += level_size;
-            blocks_before = blocks_at_level;
             blocks_at_level = hash_blocks_at_level;
         }
 

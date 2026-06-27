@@ -1078,8 +1078,6 @@ int sscanf(const char *str, const char *fmt, ...)
         if (*fmt == '%') {
             fmt++;
             int width = 0;
-            int invert = 0;
-            char class_end = 0;
 
             /* Parse optional width */
             while (*fmt >= '0' && *fmt <= '9') {
@@ -1126,11 +1124,10 @@ int sscanf(const char *str, const char *fmt, ...)
                 if (n > 0) matches++;
             } else if (*fmt == '[') {
                 fmt++;
-                if (*fmt == '^') { invert = 1; fmt++; }
-                if (*fmt == ']') { class_end = ']'; fmt++; }
+                if (*fmt == '^') { fmt++; }
+                if (*fmt == ']') { fmt++; }
                 /* Simple character class: [^\\n] = not newline */
                 if (*fmt == '^' && *(fmt+1) == '\\' && *(fmt+2) == 'n') {
-                    class_end = ']';
                     fmt += 3;
                     if (*fmt == ']') fmt++;
                     char *val = va_arg(ap, char *);

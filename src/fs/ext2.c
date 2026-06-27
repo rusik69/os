@@ -231,8 +231,6 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
 
     uint8_t node_buf[4096];
     uint8_t *node_data = root_buf;
-    uint32_t node_size = 60;
-    int is_root = 1;
 
     for (;;) {
         eh = (struct ext4_extent_header *)node_data;
@@ -264,8 +262,6 @@ static int64_t ext2_extent_get_block(struct ext2_priv *ep,
             if (ext2_read_block(ep, (uint32_t)child_block, node_buf) < 0)
                 return -EIO;
             node_data = node_buf;
-            node_size = ep->block_size;
-            is_root = 0;
             depth--;
         } else {
             /* Leaf node */

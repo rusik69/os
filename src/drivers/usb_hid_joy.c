@@ -113,7 +113,6 @@ static void parse_hid_report_descriptor(struct joy_device *joy,
     uint32_t usage_max  = 0;
     uint32_t logical_min = 0;
     uint32_t logical_max = 255;
-    uint32_t report_size = 8;
     uint32_t report_count = 1;
 
     joy->n_axes = 0;
@@ -205,7 +204,6 @@ static void parse_hid_report_descriptor(struct joy_device *joy,
             break;
 
         case 0x94: /* Report Size */
-            report_size = data;
             break;
 
         case 0xA4: /* Report Count */

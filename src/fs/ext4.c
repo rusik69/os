@@ -191,8 +191,6 @@ static int64_t ext4_get_extent_block(struct ext4_priv *ep,
     /* Walk the tree from root to leaf */
     uint8_t node_buf[EXT4_MAX_BLOCK_SIZE];
     uint8_t *node_data = root_buf;
-    uint32_t node_size = 60; /* root fits in 60 bytes */
-    int is_root = 1;
 
     for (;;) {
         eh = (struct ext4_extent_header *)node_data;
@@ -228,9 +226,7 @@ static int64_t ext4_get_extent_block(struct ext4_priv *ep,
             if (ext4_read_block(ep, (uint32_t)child_block, node_buf) < 0)
                 return ext4_corrupt(ep, "failed to read extent index block");
             node_data = node_buf;
-            node_size = ep->block_size;
             depth--;
-            is_root = 0;
         } else {
             /* Leaf node — search extents */
             struct ext4_extent *ext = (struct ext4_extent *)(eh + 1);

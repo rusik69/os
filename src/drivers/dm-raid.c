@@ -89,9 +89,6 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
 
     priv->num_devs = 0;
 
-    /* For RAID0/10, the last arg may be stripe size; for RAID1, last is num_mirrors */
-    int stripe_arg_idx = dev_argc;
-
     for (int i = 0; i < dev_argc; i++) {
         /* Check if this looks like a number (all digits) */
         const char *s = dev_argv[i];
@@ -130,7 +127,6 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
                     return -EINVAL;
                 }
             }
-            stripe_arg_idx = 1; /* no stripe size for RAID1 */
         } else {
             /* RAID0/10: collect devices, last numeric is stripe size */
             if (i < dev_argc - 1) {
@@ -151,7 +147,6 @@ static int raid_ctr(struct dm_target *ti, int argc, const char **argv)
             } else {
                 /* This is the stripe size */
                 priv->stripe_size = val;
-                stripe_arg_idx = i;
             }
         }
     }

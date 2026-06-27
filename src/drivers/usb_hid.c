@@ -607,7 +607,6 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len)
 
     uint32_t usage_page = 0;
     uint32_t usage = 0;
-    uint32_t report_size = 0;
     uint32_t report_count = 0;
     int has_keyboard = 0;
     int has_mouse = 0;
@@ -629,8 +628,8 @@ int usb_hid_parse_report(void *dev, const void *report, size_t len)
                 else if (size == 2) usage_page = data[pos] | ((uint32_t)data[pos + 1] << 8);
                 break;
             case HID_ITEM_TAG_GLOBAL_REPORT_SIZE:
-                if (size == 1) report_size = data[pos];
-                else if (size == 2) report_size = data[pos] | ((uint32_t)data[pos + 1] << 8);
+                if (size == 1) /* report_size = */ (void)data[pos];
+                else if (size == 2) /* report_size = */ (void)(data[pos] | ((uint32_t)data[pos + 1] << 8));
                 break;
             case HID_ITEM_TAG_GLOBAL_REPORT_COUNT:
                 if (size == 1) report_count = data[pos];

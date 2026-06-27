@@ -170,7 +170,7 @@ void poly1305_update(struct poly1305_ctx *ctx, const uint8_t *data, size_t len)
 
 void poly1305_final(struct poly1305_ctx *ctx, uint8_t mac[16])
 {
-    uint64_t f0, f1, f2, f3, f4;
+    uint64_t f0, f1, f2, f3;
     uint32_t g0, g1, g2, g3, g4;
     uint32_t mask;
     uint32_t c;
@@ -213,7 +213,6 @@ void poly1305_final(struct poly1305_ctx *ctx, uint8_t mac[16])
     f1 = (uint64_t)ctx->h[1] + ctx->s[1];
     f2 = (uint64_t)ctx->h[2] + ctx->s[2];
     f3 = (uint64_t)ctx->h[3] + ctx->s[3];
-    f4 = (uint64_t)ctx->h[4];
 
     /* Convert to bytes */
     mac[0]  = (uint8_t)(f0 & 0xFF); mac[1]  = (uint8_t)((f0 >> 8) & 0xFF);
