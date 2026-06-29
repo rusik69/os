@@ -3064,18 +3064,35 @@ static uint64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     }
 }
 
-/* ── select (I/O multiplexing) ──────────────────────────────── */
+/* ── select (I/O multiplexing) via poll infrastructure ─────── */
 
-/* Maximum select timeout in ticks (about 1 second at 100Hz) when blocking.
- * For simplicity, we yield and re-check. */
-#define SELECT_MAX_TICKS 1
-
+/*
+ * sys_select — select(2) implemented using poll_table/poll_schedule.
+ *
+ * Converts fd_set-based select(2) arguments into the same event-checking
+ * logic used by sys_poll(), and uses poll_schedule() for efficient
+ * blocking instead of crude scheduler_yield() busy-wait.
+ *
+ * @nfds:           highest-numbered file descriptor (+1) to examine
+ * @readfds_addr:   user-space pointer to fd_set for readability
+ * @writefds_addr:  user-space pointer to fd_set for writability
+ * @exceptfds_addr: user-space pointer to fd_set for exceptions
+ * @timeout_addr:   user-space pointer to struct timespec (NULL = infinite)
+ *
+ * Returns: number of ready fds on success
+ *          -EFAULT if user copy fails
+ *          -EINTR  if interrupted by a signal
+ *          -EINVAL if bad timeout value
+ */
 static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
                             uint64_t writefds_addr, uint64_t exceptfds_addr,
-                            uint64_t timeout_addr) {
-    struct process *proc = process_get_current();
-    if (!proc) return (uint64_t)-1;
-    if (nfds > FD_SETSIZE) nfds = FD_SETSIZE;
+                            uint64_t timeout_addr)
+{
+    struct process *cur = process_get_current();
+    if (!cur)
+        return (uint64_t)(int64_t)-EINTR;
+    if (nfds > FD_SETSIZE)
+        nfds = FD_SETSIZE;
 
     fd_set readfds, writefds, exceptfds;
     fd_set orig_readfds, orig_writefds, orig_exceptfds;
@@ -3083,147 +3100,191 @@ static uint64_t sys_select(uint64_t nfds, uint64_t readfds_addr,
     /* Copy in from userspace — skip NULL sets */
     if (readfds_addr) {
         if (copy_from_user(&orig_readfds, readfds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     } else {
         FD_ZERO(&orig_readfds);
     }
     if (writefds_addr) {
         if (copy_from_user(&orig_writefds, writefds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     } else {
         FD_ZERO(&orig_writefds);
     }
     if (exceptfds_addr) {
         if (copy_from_user(&orig_exceptfds, exceptfds_addr, sizeof(fd_set)) < 0)
-            return (uint64_t)-1;
+            return (uint64_t)(int64_t)-EFAULT;
     } else {
         FD_ZERO(&orig_exceptfds);
     }
 
-    uint64_t timeout = 0;
+    /* Parse timeout (struct timespec from userspace) */
+    uint64_t timeout_ms = ~0ULL; /* infinite by default */
     if (timeout_addr) {
         struct timespec ts;
         if (copy_from_user(&ts, timeout_addr, sizeof(ts)) < 0)
-            return (uint64_t)-1;
-        /* Convert to ticks */
-        timeout = ts.tv_sec * 100 + ts.tv_nsec / 10000000;
+            return (uint64_t)(int64_t)-EFAULT;
+        if ((int64_t)ts.tv_sec < 0 || (int64_t)ts.tv_nsec < 0)
+            return (uint64_t)(int64_t)-EINVAL;
+        uint64_t total_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+        timeout_ms = total_ns / 1000000ULL;
+        if (timeout_ms == 0 && (ts.tv_sec > 0 || ts.tv_nsec > 0))
+            timeout_ms = 1; /* round up tiny non-zero timeout */
     }
 
-    int loops = 0;
-    int max_loops = (timeout == 0) ? 1 : (int)(timeout / SELECT_MAX_TICKS);
-    if (max_loops < 1) max_loops = 1;
+    /* Poll table for wait queue registration (stack-allocated) */
+    struct poll_queue_entry poll_entries_buf[POLL_TABLE_MAX];
+    struct poll_table pt;
+    poll_init_table_inline(&pt, poll_entries_buf, POLL_TABLE_MAX);
 
-    while (loops < max_loops) {
-        if (readfds_addr) {
+    uint64_t start_tick = timer_get_ticks();
+    int ready = 0;
+    int timed_out = 0;
+
+    for (;;) {
+        /* ── Reset result sets to original fd_set values ────── */
+        if (readfds_addr)
             memcpy(&readfds, &orig_readfds, sizeof(fd_set));
-            /* Check each FD for readability */
+        else
+            FD_ZERO(&readfds);
+        if (writefds_addr)
+            memcpy(&writefds, &orig_writefds, sizeof(fd_set));
+        else
+            FD_ZERO(&writefds);
+        if (exceptfds_addr)
+            memcpy(&exceptfds, &orig_exceptfds, sizeof(fd_set));
+        else
+            FD_ZERO(&exceptfds);
+
+        ready = 0;
+
+        /* ── Check readability for each FD in the read set ──── */
+        if (readfds_addr) {
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &readfds)) continue;
+                if (!FD_ISSET(i, &readfds))
+                    continue;
                 /* Socket FDs */
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     int revents = sock_poll(i, POLLIN);
                     if (!(revents & POLLIN))
                         FD_CLR(i, &readfds);
-                    continue;
-                }
-                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
                     FD_CLR(i, &readfds);
-                    continue;
-                }
-                /* Pipe read end: check pipe_available() via poll */
-                if (strncmp(proc->fd_table[i].path, "pipe_read_", 10) == 0) {
-                    int pipe_id = (int)proc->fd_table[i].offset;
+                } else if (strncmp(cur->fd_table[i].path, "pipe_read_", 10) == 0) {
+                    /* Pipe read end */
+                    int pipe_id = (int)cur->fd_table[i].offset;
                     int revents = pipe_poll(pipe_id, 1);
                     if (!(revents & POLLIN))
                         FD_CLR(i, &readfds);
-                    continue;
                 }
-                /* Default: always readable (regular files, devices) */
+                /* Default: regular files remain in set (always readable) */
+                if (FD_ISSET(i, &readfds))
+                    ready++;
             }
         }
+
+        /* ── Check writability for each FD in the write set ─── */
         if (writefds_addr) {
-            memcpy(&writefds, &orig_writefds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &writefds)) continue;
-                /* Socket FDs */
+                if (!FD_ISSET(i, &writefds))
+                    continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     int revents = sock_poll(i, POLLOUT);
                     if (!(revents & POLLOUT))
                         FD_CLR(i, &writefds);
-                    continue;
-                }
-                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
                     FD_CLR(i, &writefds);
-                    continue;
-                }
-                /* Pipe write end: check pipe_poll() */
-                if (strncmp(proc->fd_table[i].path, "pipe_write_", 11) == 0) {
-                    int pipe_id = (int)proc->fd_table[i].offset;
+                } else if (strncmp(cur->fd_table[i].path, "pipe_write_", 11) == 0) {
+                    /* Pipe write end */
+                    int pipe_id = (int)cur->fd_table[i].offset;
                     int revents = pipe_poll(pipe_id, 0);
                     if (!(revents & POLLOUT))
                         FD_CLR(i, &writefds);
-                    continue;
                 }
-                /* Default: always writable (regular files, devices) */
+                /* Default: regular files remain in set (always writable) */
+                if (FD_ISSET(i, &writefds))
+                    ready++;
             }
         }
+
+        /* ── Check exceptions for each FD in the except set ─── */
         if (exceptfds_addr) {
-            memcpy(&exceptfds, &orig_exceptfds, sizeof(fd_set));
             for (int i = 0; i < (int)nfds; i++) {
-                if (!FD_ISSET(i, &exceptfds)) continue;
-                /* Socket FDs */
+                if (!FD_ISSET(i, &exceptfds))
+                    continue;
                 if (i >= 100 && i < 100 + SOCK_MAX) {
                     struct socket *s = sock_get(i);
                     if (!s || s->state == SOCK_STATE_CLOSED) {
-                        continue; /* keep in set — closed socket is exceptional */
+                        continue; /* closed socket is exceptional */
                     }
                     FD_CLR(i, &exceptfds);
-                    continue;
-                }
-                if (i >= PROCESS_FD_MAX || !proc->fd_table[i].used) {
+                } else if (i >= PROCESS_FD_MAX || !cur->fd_table[i].used) {
                     FD_CLR(i, &exceptfds);
-                    continue;
+                } else {
+                    FD_CLR(i, &exceptfds); /* no exception pending */
                 }
-                /* Default: clear exceptfds — no exception pending */
-                FD_CLR(i, &exceptfds);
+                if (FD_ISSET(i, &exceptfds))
+                    ready++;
             }
         }
 
-        /* Count ready FDs */
-        int total = 0;
-        for (int i = 0; i < (int)nfds; i++) {
-            if ((readfds_addr && FD_ISSET(i, &readfds)) ||
-                (writefds_addr && FD_ISSET(i, &writefds)) ||
-                (exceptfds_addr && FD_ISSET(i, &exceptfds)))
-                total++;
+        /* ── Events available — return immediately ──────────── */
+        if (ready > 0)
+            break;
+
+        /* ── Non-blocking select: return 0 ──────────────────── */
+        if (timeout_ms == 0) {
+            timed_out = 1;
+            break;
         }
 
-        if (total > 0) {
-            /* Copy results back */
-            if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
-            if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
-            if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
-                return (uint64_t)-1;
-            return (uint64_t)total;
+        /* ── Check absolute timeout ─────────────────────────── */
+        uint64_t elapsed = timer_get_ticks() - start_tick;
+        uint64_t timeout_ticks = (timeout_ms * TIMER_FREQ) / 1000;
+        if (timeout_ms == ~0ULL)
+            timeout_ticks = ~0ULL;
+
+        if (elapsed >= timeout_ticks && timeout_ms != ~0ULL) {
+            timed_out = 1;
+            break;
         }
 
-        if (timeout == 0) break; /* Non-blocking */
-        loops++;
+        /* ── Block using poll_schedule ──────────────────────── */
+        uint64_t remaining_ms;
+        if (timeout_ms == ~0ULL) {
+            remaining_ms = ~0ULL;
+        } else {
+            uint64_t remaining_ticks = timeout_ticks - elapsed;
+            remaining_ms = (remaining_ticks * 1000) / TIMER_FREQ;
+            if (remaining_ms == 0)
+                remaining_ms = 1;
+        }
 
-        /* Yield and try again */
-        scheduler_yield();
+        /* Reset poll table so fd poll handlers can re-register */
+        pt.nr_entries = 0;
+
+        int sret = poll_schedule(&pt, remaining_ms);
+        if (sret == -EINTR) {
+            ready = 0;
+            break;
+        }
+        if (sret == -ETIME) {
+            timed_out = 1;
+            break;
+        }
+        /* Woken normally — loop and re-check fds */
     }
 
-    /* Timeout — return 0 */
+    /* ── Copy results back to userspace ─────────────────────── */
     if (readfds_addr && copy_to_user(readfds_addr, &readfds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (writefds_addr && copy_to_user(writefds_addr, &writefds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
+        return (uint64_t)(int64_t)-EFAULT;
     if (exceptfds_addr && copy_to_user(exceptfds_addr, &exceptfds, sizeof(fd_set)) < 0)
-        return (uint64_t)-1;
-    return 0;
+        return (uint64_t)(int64_t)-EFAULT;
+
+    if (timed_out)
+        return 0;
+    return (uint64_t)ready;
 }
 
 /* ── setitimer / getitimer (per-process interval timers) ────── */
