@@ -167,9 +167,9 @@ static void lockdown_enforcement_pattern(struct kunit *test)
 static void pkey_alloc_free(struct kunit *test)
 {
     int pkey = pkey_alloc(0, 0);
-    /* PKU may not be available — accept -1 gracefully */
+    /* PKU may not be available — accept -ENODEV or -ENOMEM gracefully */
     if (pkey < 0) {
-        KUNIT_EXPECT_EQ(test, (int64_t)pkey, (int64_t)-1);
+        KUNIT_EXPECT_TRUE(test, pkey == -ENODEV || pkey == -ENOMEM);
         return;
     }
 
@@ -185,7 +185,7 @@ static void pkey_set_get_rights(struct kunit *test)
 {
     int pkey = pkey_alloc(0, 0);
     if (pkey < 0) {
-        KUNIT_EXPECT_EQ(test, (int64_t)pkey, (int64_t)-1);
+        KUNIT_EXPECT_TRUE(test, pkey == -ENODEV || pkey == -ENOMEM);
         return;
     }
 
@@ -217,14 +217,14 @@ static void pkey_set_get_rights(struct kunit *test)
     pkey_free(pkey);
 }
 
-/* Free an invalid key must return -1. */
+/* Free an invalid key must return -EINVAL. */
 static void pkey_free_invalid(struct kunit *test)
 {
     int ret = pkey_free(-1);
-    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-1);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
 
     ret = pkey_free(PKEY_MAX + 10);
-    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-1);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
 }
 
 /* pkey_mprotect with valid arguments. */
@@ -232,18 +232,18 @@ static void pkey_mprotect_basic(struct kunit *test)
 {
     int pkey = pkey_alloc(0, 0);
     if (pkey < 0) {
-        KUNIT_EXPECT_EQ(test, (int64_t)pkey, (int64_t)-1);
+        KUNIT_EXPECT_TRUE(test, pkey == -ENODEV || pkey == -ENOMEM);
         return;
     }
 
     /* mprotect a small region (stub — may always succeed) */
     int ret = pkey_mprotect((void *)0x1000, 0x1000, 3, pkey);
-    /* The stub returns 0 on success, -1 on error */
-    KUNIT_EXPECT_TRUE(test, ret == 0 || ret == -1);
+    /* The stub returns 0 on success, -EINVAL on error */
+    KUNIT_EXPECT_TRUE(test, ret == 0 || ret == -EINVAL);
 
     /* pkey=-1 should clear the key (passing -1 means no key) */
     ret = pkey_mprotect((void *)0x1000, 0x1000, 3, -1);
-    KUNIT_EXPECT_TRUE(test, ret == 0 || ret == -1);
+    KUNIT_EXPECT_TRUE(test, ret == 0 || ret == -EINVAL);
 
     pkey_free(pkey);
 }
@@ -280,17 +280,17 @@ static void pkey_key0_reserved(struct kunit *test)
     pkey_free(pkey);
 }
 
-/* Get rights on invalid pkey returns -1. */
+/* Get rights on invalid pkey returns -EINVAL. */
 static void pkey_get_rights_invalid(struct kunit *test)
 {
     int rights = pkey_get_rights(-1);
-    KUNIT_EXPECT_EQ(test, (int64_t)rights, (int64_t)-1);
+    KUNIT_EXPECT_EQ(test, (int64_t)rights, (int64_t)-EINVAL);
 
     rights = pkey_get_rights(PKEY_MAX);
-    KUNIT_EXPECT_EQ(test, (int64_t)rights, (int64_t)-1);
+    KUNIT_EXPECT_EQ(test, (int64_t)rights, (int64_t)-EINVAL);
 }
 
-/* Set rights with invalid flags returns -1. */
+/* Set rights with invalid flags returns -EINVAL. */
 static void pkey_set_rights_invalid_flags(struct kunit *test)
 {
     int pkey = pkey_alloc(0, 0);
@@ -298,7 +298,7 @@ static void pkey_set_rights_invalid_flags(struct kunit *test)
         return;
 
     int ret = pkey_set_rights(pkey, 0xFF);  /* Invalid flags */
-    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-1);
+    KUNIT_EXPECT_EQ(test, (int64_t)ret, (int64_t)-EINVAL);
 
     pkey_free(pkey);
 }

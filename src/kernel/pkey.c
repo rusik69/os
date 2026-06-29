@@ -101,7 +101,7 @@ int pkey_alloc(unsigned int flags, unsigned int rights)
     (void)flags;  /* Unused for now */
 
     if (!pkey_probe_pku())
-        return -1;
+        return -ENODEV;
 
     /* Find the first free key (skip key 0, which is the default) */
     int pkey = -1;
@@ -114,7 +114,7 @@ int pkey_alloc(unsigned int flags, unsigned int rights)
 
     if (pkey < 0) {
         kprintf("[pkey] No keys available\n");
-        return -1;
+        return -ENOMEM;
     }
 
     /* Mark as allocated */
@@ -133,12 +133,12 @@ int pkey_free(int pkey)
 {
     if (pkey < 0 || pkey >= PKEY_MAX) {
         kprintf("[pkey] Invalid key %d\n", pkey);
-        return -1;
+        return -EINVAL;
     }
 
     if (!(g_pkey_allocated & (1U << pkey))) {
         kprintf("[pkey] Key %d not allocated\n", pkey);
-        return -1;
+        return -EINVAL;
     }
 
     /* Clear allocated bit */
@@ -155,29 +155,29 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
     (void)prot;
 
     if (!pkey_probe_pku())
-        return -1;
+        return -ENODEV;
 
     if (pkey < -1 || pkey >= PKEY_MAX)
-        return -1;
+        return -EINVAL;
 
     if (pkey >= 0 && !(g_pkey_allocated & (1U << pkey))) {
         kprintf("[pkey] Key %d not allocated (pkey_mprotect)\n", pkey);
-        return -1;
+        return -EINVAL;
     }
 
     /* Validate alignment */
     uint64_t vaddr = (uint64_t)addr;
-    if (vaddr & 0xFFFULL) return -1;      /* addr not page-aligned */
+    if (vaddr & 0xFFFULL) return -EINVAL;      /* addr not page-aligned */
     if (len == 0) return 0;
 
     /* Get current process page table */
     struct process *proc = process_get_current();
-    if (!proc || !proc->pml4) return -1;
+    if (!proc || !proc->pml4) return -EPERM;
     uint64_t *pml4 = proc->pml4;
 
     size_t num_pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t vaddr_end = vaddr + num_pages * PAGE_SIZE;
-    if (vaddr_end < vaddr || vaddr_end > USER_VADDR_MAX) return -1;
+    if (vaddr_end < vaddr || vaddr_end > USER_VADDR_MAX) return -EINVAL;
 
     /* Walk the page table and set protection key bits */
     for (size_t i = 0; i < num_pages; i++) {
@@ -226,13 +226,13 @@ int pkey_mprotect(void *addr, size_t len, int prot, int pkey)
 int pkey_set_rights(int pkey, unsigned int rights)
 {
     if (!pkey_probe_pku())
-        return -1;
+        return -ENODEV;
 
     if (pkey < 0 || pkey >= PKEY_MAX)
-        return -1;
+        return -EINVAL;
 
     if (rights & ~(PKEY_DISABLE_ACCESS | PKEY_DISABLE_WRITE))
-        return -1;
+        return -EINVAL;
 
     /* Each key uses 2 bits in PKRU at bit position pkey*2.
      *   bit[pkey*2]   = 1 -> disable access
@@ -249,10 +249,10 @@ int pkey_set_rights(int pkey, unsigned int rights)
 int pkey_get_rights(int pkey)
 {
     if (!pkey_probe_pku())
-        return -1;
+        return -ENODEV;
 
     if (pkey < 0 || pkey >= PKEY_MAX)
-        return -1;
+        return -EINVAL;
 
     uint32_t pkru = pkey_read_pkru();
     return (int)((pkru >> (pkey * 2)) & 3);

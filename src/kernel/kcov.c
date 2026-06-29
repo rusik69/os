@@ -77,7 +77,7 @@ int sys_kcov(uint64_t cmd, uint64_t arg2)
 {
     struct process *cur = process_get_current();
     if (!cur)
-        return -1;
+        return -EPERM;
 
     switch (cmd) {
     case KCOV_INIT_TRACE:
@@ -90,7 +90,7 @@ int sys_kcov(uint64_t cmd, uint64_t arg2)
         return kcov_disable(cur);
 
     default:
-        return -1;  /* EINVAL */
+        return -EINVAL;
     }
 }
 
@@ -99,16 +99,16 @@ int sys_kcov(uint64_t cmd, uint64_t arg2)
 static int kcov_init_trace(struct process *proc, uint64_t size)
 {
     if (proc->kcov_mode != KCOV_MODE_NONE)
-        return -1;  /* EBUSY */
+        return -EBUSY;
 
     if (size == 0 || size > KCOV_MAX_ENTRIES)
-        return -1;  /* EINVAL */
+        return -EINVAL;
 
     /* Allocate the coverage buffer.
      * Entries are uint64_t; we use one extra slot for the entry count at [0]. */
     uint64_t *area = (uint64_t *)kmalloc(size * sizeof(uint64_t));
     if (!area)
-        return -1;  /* ENOMEM */
+        return -ENOMEM;
 
     memset(area, 0, size * sizeof(uint64_t));
 
@@ -122,10 +122,10 @@ static int kcov_init_trace(struct process *proc, uint64_t size)
 static int kcov_enable(struct process *proc, uint64_t mode)
 {
     if (proc->kcov_mode != KCOV_MODE_INIT)
-        return -1;  /* EINVAL (not initialised or already enabled) */
+        return -EINVAL;
 
     if (mode != KCOV_TRACE_PC)
-        return -1;  /* EINVAL (unsupported mode) */
+        return -EINVAL;
 
     /* Reset the buffer: clear all entries, keep n=0 at [0] */
     if (proc->kcov_area)
@@ -139,7 +139,7 @@ static int kcov_enable(struct process *proc, uint64_t mode)
 static int kcov_disable(struct process *proc)
 {
     if (proc->kcov_mode != KCOV_MODE_TRACE_PC)
-        return -1;  /* EINVAL (not enabled) */
+        return -EINVAL;
 
     proc->kcov_mode = KCOV_MODE_INIT;  /* back to initialised but inactive */
     return 0;

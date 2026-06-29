@@ -4562,7 +4562,7 @@ static int futex_pi_alloc_internal(uint32_t *uaddr, uint32_t owner_pid) {
 int sys_set_robust_list(struct robust_list_head *head, size_t len) {
     (void)head; (void)len;
     struct process *cur = process_get_current();
-    if (!cur) return -1;
+    if (!cur) return -EPERM;
     /* Store robust list head pointer for later cleanup */
     cur->ctid_ptr = (void*)head; /* reuse ctid_ptr for robust list head */
     return 0;
@@ -4570,7 +4570,7 @@ int sys_set_robust_list(struct robust_list_head *head, size_t len) {
 
 int sys_get_robust_list(int pid, struct robust_list_head **head_ptr, size_t *len_ptr) {
     struct process *p = process_get_by_pid((uint32_t)pid);
-    if (!p || p->state == PROCESS_UNUSED) return -1;
+    if (!p || p->state == PROCESS_UNUSED) return -ESRCH;
     if (head_ptr) *head_ptr = (struct robust_list_head *)p->ctid_ptr;
     if (len_ptr) *len_ptr = sizeof(struct robust_list_head);
     return 0;
