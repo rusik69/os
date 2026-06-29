@@ -9123,6 +9123,9 @@ static uint64_t sys_name_to_handle_at(uint64_t dirfd, uint64_t pathname,
 static uint64_t sys_open_by_handle_at(uint64_t mount_fd, uint64_t handle,
                                        uint64_t flags);
 
+/* Forward declaration for raw dispatch (no seccomp/audit/validation) */
+uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
+                                    uint64_t a3, uint64_t a4, uint64_t a5);
 
 uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -9181,6 +9184,13 @@ uint64_t syscall_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
         return (uint64_t)-1;
     }
 
+    return syscall_dispatch_internal(num, a1, a2, a3, a4, a5);
+}
+
+/* ── syscall_dispatch_internal — raw dispatch (no seccomp/audit/validation) ── */
+
+uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
+                                    uint64_t a3, uint64_t a4, uint64_t a5) {
     switch (num) {
         case SYS_READ:   return sys_read(a1, a2, a3);
         case SYS_WRITE:  return sys_write(a1, a2, a3);

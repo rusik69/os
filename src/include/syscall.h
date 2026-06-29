@@ -450,6 +450,10 @@ struct file_handle {
 };
 #endif
 
+/* Forward declarations for functions in syscall.c */
+uint64_t syscall_dispatch_internal(uint64_t num, uint64_t a1, uint64_t a2,
+                                    uint64_t a3, uint64_t a4, uint64_t a5);
+
 /* membarrier command codes */
 #define MEMBARRIER_CMD_QUERY                    0
 #define MEMBARRIER_CMD_GLOBAL                   1
