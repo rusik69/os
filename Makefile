@@ -444,6 +444,7 @@ C_SRCS = src/kernel/kernel.c \
          src/kernel/cpuset.c \
          src/kernel/pidfd.c \
          src/kernel/poll.c \
+         src/kernel/epoll.c \
          src/kernel/landlock.c \
          src/kernel/seccomp_bpf.c \
          src/kernel/process_rlimit.c \

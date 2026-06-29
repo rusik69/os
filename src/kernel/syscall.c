@@ -24,6 +24,7 @@
 #include "vmm.h"
 #include "string.h"
 #include "eventfd.h"
+#include "epoll.h"
 #include "signalfd.h"
 #include "inotify.h"
 #include "net.h"
@@ -6491,152 +6492,95 @@ static uint64_t sys_socketpair(uint64_t domain, uint64_t type, uint64_t protocol
 
 /* ── epoll ─────────────────────────────────────────────────────────────── */
 
-#define EPOLL_MAX 16
-#define EPOLL_MAX_EVENTS 64
+/*
+ * Syscall wrappers — translate from the syscall dispatch ABI
+ * (uint64_t args, (uint64_t)-1 for errors) to the kernel-internal
+ * epoll API defined in epoll.h/epoll.c, which returns proper
+ * negative errno values.
+ *
+ * The actual implementation lives in src/kernel/epoll.c.
+ */
 
-struct epoll_fd_entry {
-    int      fd;
-    uint32_t events;
-    uint64_t data;
-    int      in_use;
-};
-
-struct epoll_instance {
-    int    in_use;
-    struct epoll_fd_entry entries[EPOLL_MAX_EVENTS];
-    int    num_entries;
-};
-
-static struct epoll_instance epoll_table[EPOLL_MAX];
-
-static uint64_t sys_epoll_create1(uint64_t flags) {
-    (void)flags;
-    for (int i = 0; i < EPOLL_MAX; i++) {
-        if (!epoll_table[i].in_use) {
-            memset(&epoll_table[i], 0, sizeof(struct epoll_instance));
-            epoll_table[i].in_use = 1;
-            return (uint64_t)(700 + i); /* epoll fd range */
-        }
-    }
-    return (uint64_t)-1;
+static uint64_t sys_epoll_create1(uint64_t flags)
+{
+    int ret = epoll_create1_syscall((int)flags);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd, uint64_t event_addr) {
-    int slot = (int)epfd - 700;
-    if (slot < 0 || slot >= EPOLL_MAX || !epoll_table[slot].in_use) return (uint64_t)-1;
+static uint64_t sys_epoll_ctl(uint64_t epfd, uint64_t op,
+                               uint64_t fd, uint64_t event_addr)
+{
+    struct epoll_event ev;
+    struct epoll_event *ev_ptr = NULL;
 
-    struct epoll_instance *ep = &epoll_table[slot];
-
-    switch (op) {
-        case EPOLL_CTL_ADD: {
-            struct epoll_event ev;
-            if (copy_from_user(&ev, event_addr, sizeof(struct epoll_event)) < 0)
-                return (uint64_t)-1;
-            if (ep->num_entries >= EPOLL_MAX_EVENTS) return (uint64_t)-1;
-            struct epoll_fd_entry *e = &ep->entries[ep->num_entries++];
-            e->fd = (int)fd;
-            e->events = ev.events;
-            e->data = ev.data;
-            e->in_use = 1;
-            return 0;
-        }
-        case EPOLL_CTL_DEL: {
-            for (int i = 0; i < ep->num_entries; i++) {
-                if (ep->entries[i].fd == (int)fd) {
-                    ep->entries[i] = ep->entries[--ep->num_entries];
-                    return 0;
-                }
-            }
-            return (uint64_t)-1;
-        }
-        case EPOLL_CTL_MOD: {
-            struct epoll_event ev;
-            if (copy_from_user(&ev, event_addr, sizeof(struct epoll_event)) < 0)
-                return (uint64_t)-1;
-            for (int i = 0; i < ep->num_entries; i++) {
-                if (ep->entries[i].fd == (int)fd) {
-                    ep->entries[i].events = ev.events;
-                    ep->entries[i].data = ev.data;
-                    return 0;
-                }
-            }
-            return (uint64_t)-1;
-        }
-        default:
-            return (uint64_t)-1;
+    if (event_addr != 0) {
+        if (syscall_is_user_process() &&
+            !syscall_user_read_ok(event_addr, sizeof(struct epoll_event)))
+            return (uint64_t)(int64_t)-EFAULT;
+        if (copy_from_user(&ev, (uint64_t)(void *)event_addr,
+                           sizeof(struct epoll_event)) < 0)
+            return (uint64_t)(int64_t)-EFAULT;
+        ev_ptr = &ev;
     }
+
+    int ret = epoll_ctl_syscall((int)epfd, (int)op, (int)fd, ev_ptr);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return 0;
 }
 
 static uint64_t sys_epoll_wait(uint64_t epfd, uint64_t events_addr,
-                                uint64_t maxevents, uint64_t timeout) {
-    int slot = (int)epfd - 700;
-    if (slot < 0 || slot >= EPOLL_MAX || !epoll_table[slot].in_use) return (uint64_t)-1;
-
-    struct epoll_instance *ep = &epoll_table[slot];
-    int max = maxevents < EPOLL_MAX_EVENTS ? (int)maxevents : EPOLL_MAX_EVENTS;
-
-    if (syscall_is_user_process() && !syscall_user_write_ok(events_addr, (uint64_t)max * sizeof(struct epoll_event)))
-        return (uint64_t)-1;
-
+                                uint64_t maxevents, uint64_t timeout)
+{
     struct epoll_event *events = (struct epoll_event *)events_addr;
 
-    /* Wait loop with timeout */
-    uint64_t deadline = 0;
-    if (timeout != (uint64_t)-1) {
-        deadline = timer_get_ticks() + (timeout / 10); /* convert ms to ticks */
-    }
+    if (maxevents == 0)
+        return (uint64_t)(int64_t)-EINVAL;
 
-    for (;;) {
-        int ready = 0;
+    if (syscall_is_user_process() &&
+        !syscall_user_write_ok(events_addr,
+            (uint64_t)maxevents * sizeof(struct epoll_event)))
+        return (uint64_t)(int64_t)-EFAULT;
 
-        for (int i = 0; i < ep->num_entries && ready < max; i++) {
-            struct epoll_fd_entry *e = &ep->entries[i];
-            if (!e->in_use) continue;
-
-            /* Check if fd is a socket and has data available */
-            struct socket *s = sock_get(e->fd);
-            events[ready].events = 0;
-            if (s && s->state != SOCK_STATE_FREE) {
-                if (e->events & EPOLLIN) {
-                    /* Assume readable if connected or listening */
-                    if (s->state == SOCK_STATE_CONNECTED || s->state == SOCK_STATE_LISTENING)
-                        events[ready].events |= EPOLLIN;
-                }
-                if (e->events & EPOLLOUT) {
-                    if (s->state == SOCK_STATE_CONNECTED)
-                        events[ready].events |= EPOLLOUT;
-                }
-            }
-            /* Also check regular fds */
-            if (e->fd >= 0 && e->fd < PROCESS_FD_MAX) {
-                struct process *p = process_get_current();
-                if (p && p->fd_table[e->fd].used) {
-                    if (e->events & EPOLLIN) events[ready].events |= EPOLLIN;
-                    if (e->events & EPOLLOUT) events[ready].events |= EPOLLOUT;
-                }
-            }
-            if (events[ready].events) {
-                events[ready].data = e->data;
-                ready++;
-            }
-        }
-
-        if (ready > 0) return (uint64_t)ready;
-
-        /* Check timeout */
-        if (timeout != (uint64_t)-1 && timer_get_ticks() >= deadline) {
-            return 0; /* timeout, no events ready */
-        }
-
-        /* Yield CPU while waiting */
-        scheduler_yield();
-    }
+    int ret = epoll_wait_syscall((int)epfd, events,
+                                  (int)maxevents, (int)timeout);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return (uint64_t)ret;
 }
 
-static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr, uint64_t maxevents,
-                                 uint64_t timeout, uint64_t sigmask_addr) {
-    (void)sigmask_addr;
-    return sys_epoll_wait(epfd, events_addr, maxevents, timeout);
+static uint64_t sys_epoll_pwait(uint64_t epfd, uint64_t events_addr,
+                                 uint64_t maxevents, uint64_t timeout,
+                                 uint64_t sigmask_addr)
+{
+    /*
+     * The syscall dispatch saves the packed sigmask pointer + size
+     * in syscall_arg6.  For epoll_pwait, a5 is the sigmask pointer.
+     * The sigsetsize arrives independently but is not currently
+     * validated — kept for future signal-mask integration.
+     */
+    struct epoll_event *events = (struct epoll_event *)events_addr;
+    const uint64_t *sigmask = NULL;
+
+    if (maxevents == 0)
+        return (uint64_t)(int64_t)-EINVAL;
+
+    if (sigmask_addr != 0)
+        sigmask = (const uint64_t *)sigmask_addr;
+
+    if (syscall_is_user_process() &&
+        !syscall_user_write_ok(events_addr,
+            (uint64_t)maxevents * sizeof(struct epoll_event)))
+        return (uint64_t)(int64_t)-EFAULT;
+
+    int ret = epoll_pwait_syscall((int)epfd, events,
+                                   (int)maxevents, (int)timeout,
+                                   sigmask);
+    if (ret < 0)
+        return (uint64_t)(int64_t)ret;
+    return (uint64_t)ret;
 }
 
 /* ── Clock & Timer syscalls ───────────────────────────────────────────── */
@@ -7502,7 +7446,6 @@ static uint64_t sys_mq_unlink(uint64_t name_addr) {
 
 void production_subsystems_init(void) {
     socket_init();
-    memset(epoll_table, 0, sizeof(epoll_table));
     memset(posix_timers, 0, sizeof(posix_timers));
     memset(mq_table, 0, sizeof(mq_table));
     inotify_subsystem_init();
