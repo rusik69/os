@@ -846,6 +846,347 @@ struct linux_dirent64 {
 /* ── Memory synchronization ─────────────────────────────────── */
 #define SYS_MSYNC             800  /* msync(addr, len, flags) → 0 or -errno */
 
+/* ── Linux x86-64 ABI syscall numbers (__NR_*) ──────────── */
+/* Standard Linux x86-64 syscall numbers for compatibility. */
+
+#define __NR_read                        0  /* read(fd, buf, count) */
+#define __NR_write                       1  /* write(fd, buf, count) */
+#define __NR_open                        2  /* open(path, flags, mode) */
+#define __NR_close                       3  /* close(fd) */
+#define __NR_stat                        4  /* stat(path, buf) */
+#define __NR_fstat                       5  /* fstat(fd, buf) */
+#define __NR_lstat                       6  /* lstat(path, buf) */
+#define __NR_poll                        7  /* poll(fds, nfds, timeout) */
+#define __NR_lseek                       8  /* lseek(fd, offset, whence) */
+#define __NR_mmap                        9  /* mmap(addr, len, prot, flags, fd, offset) */
+#define __NR_mprotect                   10  /* mprotect(addr, len, prot) */
+#define __NR_munmap                     11  /* munmap(addr, len) */
+#define __NR_brk                        12  /* brk(addr) */
+#define __NR_rt_sigaction               13  /* rt_sigaction(sig, act, oldact, sigsetsize) */
+#define __NR_rt_sigprocmask             14  /* rt_sigprocmask(how, set, oldset, sigsetsize) */
+#define __NR_rt_sigreturn               15  /* rt_sigreturn() */
+#define __NR_ioctl                      16  /* ioctl(fd, cmd, arg) */
+#define __NR_pread64                    17  /* pread64(fd, buf, count, offset) */
+#define __NR_pwrite64                   18  /* pwrite64(fd, buf, count, offset) */
+#define __NR_readv                      19  /* readv(fd, iov, iovcnt) */
+#define __NR_writev                     20  /* writev(fd, iov, iovcnt) */
+#define __NR_access                     21  /* access(path, mode) */
+#define __NR_pipe                       22  /* pipe(pipefd) */
+#define __NR_select                     23  /* select(nfds, readfds, writefds, exceptfds, timeout) */
+#define __NR_sched_yield                24  /* sched_yield() */
+#define __NR_mremap                     25  /* mremap(old_addr, old_size, new_size, flags) */
+#define __NR_msync                      26  /* msync(addr, len, flags) */
+#define __NR_mincore                    27  /* mincore(addr, len, vec) */
+#define __NR_madvise                    28  /* madvise(addr, len, advice) */
+#define __NR_shmget                     29  /* shmget(key, size, flags) */
+#define __NR_shmat                      30  /* shmat(shmid, shmaddr, shmflg) */
+#define __NR_shmctl                     31  /* shmctl(shmid, cmd, buf) */
+#define __NR_dup                        32  /* dup(oldfd) */
+#define __NR_dup2                       33  /* dup2(oldfd, newfd) */
+#define __NR_pause                      34  /* pause() */
+#define __NR_nanosleep                  35  /* nanosleep(req, rem) */
+#define __NR_getitimer                  36  /* getitimer(which, val) */
+#define __NR_alarm                      37  /* alarm(seconds) */
+#define __NR_setitimer                  38  /* setitimer(which, val, oldval) */
+#define __NR_getpid                     39  /* getpid() */
+#define __NR_sendfile                   40  /* sendfile(out_fd, in_fd, offset, count) */
+#define __NR_socket                     41  /* socket(domain, type, protocol) */
+#define __NR_connect                    42  /* connect(sockfd, addr, addrlen) */
+#define __NR_accept                     43  /* accept(sockfd, addr, addrlen) */
+#define __NR_sendto                     44  /* sendto(sockfd, buf, len, flags, dest, addrlen) */
+#define __NR_recvfrom                   45  /* recvfrom(sockfd, buf, len, flags, src, addrlen) */
+#define __NR_sendmsg                    46  /* sendmsg(sockfd, msg, flags) */
+#define __NR_recvmsg                    47  /* recvmsg(sockfd, msg, flags) */
+#define __NR_shutdown                   48  /* shutdown(sockfd, how) */
+#define __NR_bind                       49  /* bind(sockfd, addr, addrlen) */
+#define __NR_listen                     50  /* listen(sockfd, backlog) */
+#define __NR_getsockname                51  /* getsockname(sockfd, addr, addrlen) */
+#define __NR_getpeername                52  /* getpeername(sockfd, addr, addrlen) */
+#define __NR_socketpair                 53  /* socketpair(domain, type, proto, sv) */
+#define __NR_setsockopt                 54  /* setsockopt(sockfd, level, opt, val, len) */
+#define __NR_getsockopt                 55  /* getsockopt(sockfd, level, opt, val, len) */
+#define __NR_clone                      56  /* clone(clone_flags, stack, parent_tid, child_tls, child_tid) */
+#define __NR_fork                       57  /* fork() */
+#define __NR_vfork                      58  /* vfork() */
+#define __NR_execve                     59  /* execve(path, argv, envp) */
+#define __NR_exit                       60  /* exit(status) */
+#define __NR_wait4                      61  /* wait4(pid, wstatus, opts, rusage) */
+#define __NR_kill                       62  /* kill(pid, sig) */
+#define __NR_uname                      63  /* uname(buf) */
+#define __NR_semget                     64  /* semget(key, nsems, semflg) */
+#define __NR_semop                      65  /* semop(semid, sops, nsops) */
+#define __NR_semctl                     66  /* semctl(semid, semnum, cmd, arg) */
+#define __NR_shmdt                      67  /* shmdt(shmaddr) */
+#define __NR_msgget                     68  /* msgget(key, msgflg) */
+#define __NR_msgsnd                     69  /* msgsnd(msqid, msgp, msgsz, msgflg) */
+#define __NR_msgrcv                     70  /* msgrcv(msqid, msgp, msgsz, msgtyp, msgflg) */
+#define __NR_msgctl                     71  /* msgctl(msqid, cmd, buf) */
+#define __NR_fcntl                      72  /* fcntl(fd, cmd, arg) */
+#define __NR_flock                      73  /* flock(fd, op) */
+#define __NR_fsync                      74  /* fsync(fd) */
+#define __NR_fdatasync                  75  /* fdatasync(fd) */
+#define __NR_truncate                   76  /* truncate(path, length) */
+#define __NR_ftruncate                  77  /* ftruncate(fd, length) */
+#define __NR_getdents                   78  /* getdents(fd, dirp, count) */
+#define __NR_getcwd                     79  /* getcwd(buf, size) */
+#define __NR_chdir                      80  /* chdir(path) */
+#define __NR_fchdir                     81  /* fchdir(fd) */
+#define __NR_rename                     82  /* rename(oldpath, newpath) */
+#define __NR_mkdir                      83  /* mkdir(path, mode) */
+#define __NR_rmdir                      84  /* rmdir(path) */
+#define __NR_creat                      85  /* creat(path, mode) */
+#define __NR_link                       86  /* link(oldpath, newpath) */
+#define __NR_unlink                     87  /* unlink(path) */
+#define __NR_symlink                    88  /* symlink(target, linkpath) */
+#define __NR_readlink                   89  /* readlink(path, buf, bufsiz) */
+#define __NR_chmod                      90  /* chmod(path, mode) */
+#define __NR_fchmod                     91  /* fchmod(fd, mode) */
+#define __NR_chown                      92  /* chown(path, owner, group) */
+#define __NR_fchown                     93  /* fchown(fd, owner, group) */
+#define __NR_lchown                     94  /* lchown(path, owner, group) */
+#define __NR_umask                      95  /* umask(mask) */
+#define __NR_gettimeofday               96  /* gettimeofday(tv, tz) */
+#define __NR_getrlimit                  97  /* getrlimit(resource, rlim) */
+#define __NR_getrusage                  98  /* getrusage(who, usage) */
+#define __NR_sysinfo                    99  /* sysinfo(info) */
+#define __NR_times                     100  /* times(buf) */
+#define __NR_ptrace                    101  /* ptrace(request, pid, addr, data) */
+#define __NR_getuid                    102  /* getuid() */
+#define __NR_syslog                    103  /* syslog(opt, buf, len) */
+#define __NR_getgid                    104  /* getgid() */
+#define __NR_setuid                    105  /* setuid(uid) */
+#define __NR_setgid                    106  /* setgid(gid) */
+#define __NR_geteuid                   107  /* geteuid() */
+#define __NR_getegid                   108  /* getegid() */
+#define __NR_setpgid                   109  /* setpgid(pid, pgid) */
+#define __NR_getppid                   110  /* getppid() */
+#define __NR_getpgrp                   111  /* getpgrp() */
+#define __NR_setsid                    112  /* setsid() */
+#define __NR_setreuid                  113  /* setreuid(ruid, euid) */
+#define __NR_setregid                  114  /* setregid(rgid, egid) */
+#define __NR_getgroups                 115  /* getgroups(size, list) */
+#define __NR_setgroups                 116  /* setgroups(size, list) */
+#define __NR_setresuid                 117  /* setresuid(ruid, euid, suid) */
+#define __NR_getresuid                 118  /* getresuid(ruid, euid, suid) */
+#define __NR_setresgid                 119  /* setresgid(rgid, egid, sgid) */
+#define __NR_getresgid                 120  /* getresgid(rgid, egid, sgid) */
+#define __NR_getpgid                   121  /* getpgid(pid) */
+#define __NR_setfsuid                  122  /* setfsuid(uid) */
+#define __NR_setfsgid                  123  /* setfsgid(gid) */
+#define __NR_getsid                    124  /* getsid(pid) */
+#define __NR_capget                    125  /* capget(hdrp, datap) */
+#define __NR_capset                    126  /* capset(hdrp, datap) */
+#define __NR_rt_sigpending             127  /* rt_sigpending(set, sigsetsize) */
+#define __NR_rt_sigtimedwait           128  /* rt_sigtimedwait(set, info, timeout, sigsetsize) */
+#define __NR_rt_sigqueueinfo           129  /* rt_sigqueueinfo(pid, sig, uinfo) */
+#define __NR_rt_sigsuspend             130  /* rt_sigsuspend(mask, sigsetsize) */
+#define __NR_sigaltstack               131  /* sigaltstack(ss, old_ss) */
+#define __NR_utime                     132  /* utime(path, times) */
+#define __NR_mknod                     133  /* mknod(path, mode, dev) */
+#define __NR_uselib                    134  /* uselib(library) */
+#define __NR_personality               135  /* personality(persona) */
+#define __NR_ustat                     136  /* ustat(dev, buf) */
+#define __NR_statfs                    137  /* statfs(path, buf) */
+#define __NR_fstatfs                   138  /* fstatfs(fd, buf) */
+#define __NR_sysfs                     139  /* sysfs(option, arg1, arg2) */
+#define __NR_getpriority               140  /* getpriority(which, who) */
+#define __NR_setpriority               141  /* setpriority(which, who, prio) */
+#define __NR_sched_setparam            142  /* sched_setparam(pid, param) */
+#define __NR_sched_getparam            143  /* sched_getparam(pid, param) */
+#define __NR_sched_setscheduler        144  /* sched_setscheduler(pid, policy, param) */
+#define __NR_sched_getscheduler        145  /* sched_getscheduler(pid) */
+#define __NR_sched_get_priority_max    146  /* sched_get_priority_max(policy) */
+#define __NR_sched_get_priority_min    147  /* sched_get_priority_min(policy) */
+#define __NR_sched_rr_get_interval     148  /* sched_rr_get_interval(pid, tp) */
+#define __NR_mlock                     149  /* mlock(addr, len) */
+#define __NR_munlock                   150  /* munlock(addr, len) */
+#define __NR_mlockall                  151  /* mlockall(flags) */
+#define __NR_munlockall                152  /* munlockall() */
+#define __NR_vhangup                   153  /* vhangup() */
+#define __NR_modify_ldt                154  /* modify_ldt(func, ptr, bytecount) */
+#define __NR_pivot_root                155  /* pivot_root(new_root, put_old) */
+#define __NR__sysctl                   156  /* _sysctl(args) */
+#define __NR_prctl                     157  /* prctl(option, arg2, arg3, arg4, arg5) */
+#define __NR_arch_prctl                158  /* arch_prctl(code, addr) */
+#define __NR_adjtimex                  159  /* adjtimex(buf) */
+#define __NR_setrlimit                 160  /* setrlimit(resource, rlim) */
+#define __NR_chroot                    161  /* chroot(path) */
+#define __NR_sync                      162  /* sync() */
+#define __NR_acct                      163  /* acct(filename) */
+#define __NR_settimeofday              164  /* settimeofday(tv, tz) */
+#define __NR_mount                     165  /* mount(src, target, fstype, flags, data) */
+#define __NR_umount2                   166  /* umount2(target, flags) */
+#define __NR_swapon                    167  /* swapon(path, swapflags) */
+#define __NR_swapoff                   168  /* swapoff(path) */
+#define __NR_reboot                    169  /* reboot(magic1, magic2, cmd, arg) */
+#define __NR_sethostname               170  /* sethostname(name, len) */
+#define __NR_setdomainname             171  /* setdomainname(name, len) */
+#define __NR_iopl                      172  /* iopl(level) */
+#define __NR_ioperm                    173  /* ioperm(from, num, turn_on) */
+#define __NR_create_module             174  /* create_module(name, size) */
+#define __NR_init_module               175  /* init_module(mod_img, len, param_values) */
+#define __NR_delete_module             176  /* delete_module(name, flags) */
+#define __NR_get_kernel_syms           177  /* get_kernel_syms(buf) */
+#define __NR_query_module              178  /* query_module(name, which, buf, bufsize, ret) */
+#define __NR_quotactl                  179  /* quotactl(cmd, spec, id, addr) */
+#define __NR_nfsservctl                180  /* nfsservctl(cmd, argp, resp) */
+#define __NR_getpmsg                   181  /* getpmsg(fd, ctl, data, flags) */
+#define __NR_putpmsg                   182  /* putpmsg(fd, ctl, data, flags) */
+#define __NR_afs_syscall               183  /* afs_syscall() */
+#define __NR_tuxcall                   184  /* tuxcall() */
+#define __NR_security                  185  /* security() */
+#define __NR_gettid                    186  /* gettid() */
+#define __NR_readahead                 187  /* readahead(fd, offset, count) */
+#define __NR_setxattr                  188  /* setxattr(path, name, val, size, flags) */
+#define __NR_lsetxattr                 189  /* lsetxattr(path, name, val, size, flags) */
+#define __NR_fsetxattr                 190  /* fsetxattr(fd, name, val, size, flags) */
+#define __NR_getxattr                  191  /* getxattr(path, name, val, size) */
+#define __NR_lgetxattr                 192  /* lgetxattr(path, name, val, size) */
+#define __NR_fgetxattr                 193  /* fgetxattr(fd, name, val, size) */
+#define __NR_listxattr                 194  /* listxattr(path, list, size) */
+#define __NR_llistxattr                195  /* llistxattr(path, list, size) */
+#define __NR_flistxattr                196  /* flistxattr(fd, list, size) */
+#define __NR_removexattr               197  /* removexattr(path, name) */
+#define __NR_lremovexattr              198  /* lremovexattr(path, name) */
+#define __NR_fremovexattr              199  /* fremovexattr(fd, name) */
+#define __NR_tkill                     200  /* tkill(tid, sig) */
+#define __NR_time                      201  /* time(t) */
+#define __NR_futex                     202  /* futex(uaddr, op, val, timeout, uaddr2, val3) */
+#define __NR_sched_setaffinity         203  /* sched_setaffinity(pid, len, mask) */
+#define __NR_sched_getaffinity         204  /* sched_getaffinity(pid, len, mask) */
+#define __NR_set_thread_area           205  /* set_thread_area(u_info) */
+#define __NR_io_setup                  206  /* io_setup(nr_events, ctxp) */
+#define __NR_io_destroy                207  /* io_destroy(ctx_id) */
+#define __NR_io_getevents              208  /* io_getevents(ctx_id, min_nr, nr, events, timeout) */
+#define __NR_io_submit                 209  /* io_submit(ctx_id, nr, iocbpp) */
+#define __NR_io_cancel                 210  /* io_cancel(ctx_id, iocb, result) */
+#define __NR_get_thread_area           211  /* get_thread_area(u_info) */
+#define __NR_lookup_dcookie            212  /* lookup_dcookie(cookie64, buf, len) */
+#define __NR_epoll_create              213  /* epoll_create(size) */
+#define __NR_epoll_ctl_old             214  /* epoll_ctl_old(epfd, op, fd, event) */
+#define __NR_epoll_wait_old            215  /* epoll_wait_old(epfd, events, maxevents, timeout) */
+#define __NR_remap_file_pages          216  /* remap_file_pages(addr, size, prot, pgoff, flags) */
+#define __NR_getdents64                217  /* getdents64(fd, dirp, count) */
+#define __NR_set_tid_address           218  /* set_tid_address(tidptr) */
+#define __NR_restart_syscall           219  /* restart_syscall() */
+#define __NR_semtimedop                220  /* semtimedop(semid, sops, nsops, timeout) */
+#define __NR_fadvise64                 221  /* fadvise64(fd, offset, len, advice) */
+#define __NR_timer_create               222  /* timer_create(clockid, sevp, timerid) */
+#define __NR_timer_settime             223  /* timer_settime(timerid, flags, new, old) */
+#define __NR_timer_gettime             224  /* timer_gettime(timerid, cur) */
+#define __NR_timer_getoverrun          225  /* timer_getoverrun(timerid) */
+#define __NR_timer_delete              226  /* timer_delete(timerid) */
+#define __NR_clock_settime             227  /* clock_settime(clockid, tp) */
+#define __NR_clock_gettime             228  /* clock_gettime(clockid, tp) */
+#define __NR_clock_getres              229  /* clock_getres(clockid, res) */
+#define __NR_clock_nanosleep           230  /* clock_nanosleep(clockid, flags, req, rem) */
+#define __NR_exit_group                231  /* exit_group(status) */
+#define __NR_epoll_wait                232  /* epoll_wait(epfd, events, maxevents, timeout) */
+#define __NR_epoll_ctl                 233  /* epoll_ctl(epfd, op, fd, event) */
+#define __NR_tgkill                    234  /* tgkill(tgid, tid, sig) */
+#define __NR_utimes                    235  /* utimes(path, times) */
+#define __NR_vserver                   236  /* vserver() */
+#define __NR_mbind                     237  /* mbind(addr, len, mode, nmask, maxnode, flags) */
+#define __NR_set_mempolicy             238  /* set_mempolicy(mode, nmask, maxnode) */
+#define __NR_get_mempolicy             239  /* get_mempolicy(policy, nmask, maxnode, addr, flags) */
+#define __NR_mq_open                   240  /* mq_open(name, oflag, mode, attr) */
+#define __NR_mq_unlink                 241  /* mq_unlink(name) */
+#define __NR_mq_timedsend              242  /* mq_timedsend(mqdes, msg, len, prio, timeout) */
+#define __NR_mq_timedreceive           243  /* mq_timedreceive(mqdes, msg, len, prio, timeout) */
+#define __NR_mq_notify                 244  /* mq_notify(mqdes, sevp) */
+#define __NR_mq_getsetattr             245  /* mq_getsetattr(mqdes, new, old) */
+#define __NR_kexec_load                246  /* kexec_load(entry, nr_segs, segs, flags) */
+#define __NR_waitid                    247  /* waitid(which, pid, info, options, rusage) */
+#define __NR_add_key                   248  /* add_key(type, desc, payload, plen, keyring) */
+#define __NR_request_key               249  /* request_key(type, desc, info, keyring) */
+#define __NR_keyctl                    250  /* keyctl(cmd, arg2, arg3, arg4, arg5) */
+#define __NR_ioprio_set                251  /* ioprio_set(which, who, ioprio) */
+#define __NR_ioprio_get                252  /* ioprio_get(which, who) */
+#define __NR_inotify_init              253  /* inotify_init() */
+#define __NR_inotify_add_watch         254  /* inotify_add_watch(fd, path, mask) */
+#define __NR_inotify_rm_watch          255  /* inotify_rm_watch(fd, wd) */
+#define __NR_migrate_pages             256  /* migrate_pages(pid, maxnode, old_nodes, new_nodes) */
+#define __NR_openat                    257  /* openat(dirfd, path, flags, mode) */
+#define __NR_mkdirat                   258  /* mkdirat(dirfd, path, mode) */
+#define __NR_mknodat                   259  /* mknodat(dirfd, path, mode, dev) */
+#define __NR_fchownat                  260  /* fchownat(dirfd, path, owner, group, flags) */
+#define __NR_futimesat                 261  /* futimesat(dirfd, path, times) */
+#define __NR_newfstatat                262  /* newfstatat(dirfd, path, buf, flags) */
+#define __NR_unlinkat                  263  /* unlinkat(dirfd, path, flags) */
+#define __NR_renameat                  264  /* renameat(olddirfd, oldpath, newdirfd, newpath) */
+#define __NR_linkat                    265  /* linkat(olddirfd, oldpath, newdirfd, newpath, flags) */
+#define __NR_symlinkat                 266  /* symlinkat(target, newdirfd, linkpath) */
+#define __NR_readlinkat                267  /* readlinkat(dirfd, path, buf, bufsiz) */
+#define __NR_fchmodat                  268  /* fchmodat(dirfd, path, mode) */
+#define __NR_faccessat                 269  /* faccessat(dirfd, path, mode, flags) */
+#define __NR_pselect6                  270  /* pselect6(nfds, readfds, writefds, exceptfds, timeout, sigmask) */
+#define __NR_ppoll                     271  /* ppoll(fds, nfds, timeout, sigmask, sigsetsize) */
+#define __NR_unshare                   272  /* unshare(flags) */
+#define __NR_set_robust_list           273  /* set_robust_list(head, len) */
+#define __NR_get_robust_list           274  /* get_robust_list(pid, head_ptr, len_ptr) */
+#define __NR_splice                    275  /* splice(fd_in, off_in, fd_out, off_out, len, flags) */
+#define __NR_tee                       276  /* tee(fd_in, fd_out, len, flags) */
+#define __NR_sync_file_range           277  /* sync_file_range(fd, off, nbytes, flags) */
+#define __NR_vmsplice                  278  /* vmsplice(fd, iov, nr_segs, flags) */
+#define __NR_move_pages                279  /* move_pages(pid, nr, pages, nodes, status, flags) */
+#define __NR_utimensat                 280  /* utimensat(dirfd, path, times, flags) */
+#define __NR_epoll_pwait               281  /* epoll_pwait(epfd, events, maxevents, timeout, sigmask, sigsetsize) */
+#define __NR_signalfd                  282  /* signalfd(fd, mask, flags) */
+#define __NR_timerfd_create            283  /* timerfd_create(clockid, flags) */
+#define __NR_eventfd                   284  /* eventfd(initval, flags) */
+#define __NR_fallocate                 285  /* fallocate(fd, mode, offset, len) */
+#define __NR_timerfd_settime           286  /* timerfd_settime(fd, flags, new, old) */
+#define __NR_timerfd_gettime           287  /* timerfd_gettime(fd, cur) */
+#define __NR_accept4                   288  /* accept4(sockfd, addr, addrlen, flags) */
+#define __NR_signalfd4                 289  /* signalfd4(fd, mask, flags) */
+#define __NR_eventfd2                  290  /* eventfd2(initval, flags) */
+#define __NR_epoll_create1             291  /* epoll_create1(flags) */
+#define __NR_dup3                      292  /* dup3(oldfd, newfd, flags) */
+#define __NR_pipe2                     293  /* pipe2(pipefd, flags) */
+#define __NR_inotify_init1             294  /* inotify_init1(flags) */
+#define __NR_preadv                    295  /* preadv(fd, iov, iovcnt, offset) */
+#define __NR_pwritev                   296  /* pwritev(fd, iov, iovcnt, offset) */
+#define __NR_rt_tgsigqueueinfo         297  /* rt_tgsigqueueinfo(tgid, tid, sig, uinfo) */
+#define __NR_perf_event_open           298  /* perf_event_open(attr, pid, cpu, group_fd, flags) */
+#define __NR_recvmmsg                  299  /* recvmmsg(sockfd, msgvec, vlen, flags, timeout) */
+#define __NR_fanotify_init             300  /* fanotify_init(flags, event_f_flags) */
+#define __NR_fanotify_mark             301  /* fanotify_mark(fanotify_fd, flags, mask, dirfd, path) */
+#define __NR_prlimit64                 302  /* prlimit64(pid, resource, new, old) */
+#define __NR_name_to_handle_at         303  /* name_to_handle_at(dirfd, path, handle, mount_id, flags) */
+#define __NR_open_by_handle_at         304  /* open_by_handle_at(mount_fd, handle, flags) */
+#define __NR_clock_adjtime             305  /* clock_adjtime(clockid, buf) */
+#define __NR_syncfs                    306  /* syncfs(fd) */
+#define __NR_sendmmsg                  307  /* sendmmsg(sockfd, msgvec, vlen, flags) */
+#define __NR_setns                     308  /* setns(fd, nstype) */
+#define __NR_getcpu                    309  /* getcpu(cpu, node, tcache) */
+#define __NR_process_vm_readv          310  /* process_vm_readv(pid, liov, liovcnt, riov, riovcnt, flags) */
+#define __NR_process_vm_writev         311  /* process_vm_writev(pid, liov, liovcnt, riov, riovcnt, flags) */
+#define __NR_kcmp                      312  /* kcmp(pid1, pid2, type, idx1, idx2) */
+#define __NR_finit_module              313  /* finit_module(fd, params, flags) */
+#define __NR_sched_setattr             314  /* sched_setattr(pid, attr, flags) */
+#define __NR_sched_getattr             315  /* sched_getattr(pid, attr, size, flags) */
+#define __NR_renameat2                 316  /* renameat2(olddirfd, oldpath, newdirfd, newpath, flags) */
+#define __NR_seccomp                   317  /* seccomp(op, flags, args) */
+#define __NR_getrandom                 318  /* getrandom(buf, count, flags) */
+#define __NR_memfd_create              319  /* memfd_create(name, flags) */
+#define __NR_kexec_file_load           320  /* kexec_file_load(kernel_fd, initrd_fd, cmdline_len, cmdline, flags) */
+#define __NR_bpf                       321  /* bpf(cmd, attr, size) */
+#define __NR_execveat                  322  /* execveat(dirfd, path, argv, envp, flags) */
+#define __NR_userfaultfd               323  /* userfaultfd(flags) */
+#define __NR_membarrier                324  /* membarrier(cmd, flags, cpu_id) */
+#define __NR_mlock2                    325  /* mlock2(addr, len, flags) */
+#define __NR_copy_file_range           326  /* copy_file_range(fd_in, off_in, fd_out, off_out, len, flags) */
+#define __NR_preadv2                   327  /* preadv2(fd, iov, iovcnt, offset, flags) */
+#define __NR_pwritev2                  328  /* pwritev2(fd, iov, iovcnt, offset, flags) */
+#define __NR_pkey_mprotect             329  /* pkey_mprotect(addr, len, prot, pkey) */
+#define __NR_pkey_alloc                330  /* pkey_alloc(flags, init_val) */
+#define __NR_pkey_free                 331  /* pkey_free(pkey) */
+#define __NR_statx                     332  /* statx(dirfd, path, flags, mask, statxbuf) */
+#define __NR_io_pgetevents             333  /* io_pgetevents(ctx_id, min_nr, nr, events, timeout, usig) */
+#define __NR_rseq                      334  /* rseq(rseq, rseq_len, rseq_sig, flags) */
+
+#define __NR_syscalls  335  /* total number of Linux syscalls defined */
+
 /*
  * syscall_dispatch is a kernel-internal function called ONLY from the
  * userspace API: user code and libc must go through the `syscall` instruction.
