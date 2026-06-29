@@ -401,3 +401,34 @@ linux_syscall_t sys_call_table[__NR_syscalls] = {
     [333] = sys_ni_syscall, /* __NR_io_pgetevents */
     [334] = sys_ni_syscall, /* __NR_rseq */
 };
+
+/* System call argument 6 — saved by the asm entry before dispatch */
+extern uint64_t syscall_arg6;
+
+/*
+ * syscall_linux_dispatch — dispatch a Linux ABI syscall via sys_call_table[]
+ *
+ * Called from the syscall_linux_entry asm wrapper (or from the KPTI trampoline
+ * path via syscall_linux_entry_full).  Validates the syscall number, then
+ * indexes sys_call_table[] and calls the appropriate handler with up to 6 args.
+ *
+ * The 6th argument is read from syscall_arg6 (saved by the asm entry path).
+ * Returns the handler's uint64_t result directly — no seccomp/interposition.
+ */
+uint64_t syscall_linux_dispatch(uint64_t num, uint64_t a1, uint64_t a2,
+                                 uint64_t a3, uint64_t a4, uint64_t a5)
+{
+    uint64_t a6;
+    uint64_t result;
+
+    /* Bounds check: return -ENOSYS for out-of-range syscall numbers */
+    if (num >= __NR_syscalls)
+        return (uint64_t)(int64_t)-ENOSYS;
+
+    /* Read the 6th argument saved by the asm entry */
+    a6 = syscall_arg6;
+
+    /* Dispatch via the Linux ABI table */
+    result = sys_call_table[num](a1, a2, a3, a4, a5, a6);
+    return result;
+}

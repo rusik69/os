@@ -24,8 +24,10 @@ bits 64
 
 global syscall_entry
 global syscall_entry_full
+global syscall_linux_entry
 global libc_syscall
 extern syscall_dispatch
+extern syscall_linux_dispatch
 extern zero_kernel_stack_uapi
 
 ; KPTI trampoline constants (must match kpti.h)
@@ -137,6 +139,87 @@ syscall_entry:
     o64 sysret
 
 .normal_return:
+    ; ── Zero kernel stack ────────────────────────────────────────────
+    mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
+    call    zero_kernel_stack_uapi
+
+    pop     r15
+    pop     r14
+    pop     r13
+    pop     r12
+    pop     rbx
+    pop     rbp
+    pop     r11             ; user RFLAGS → sysret reads R11
+    pop     rcx             ; user RIP   → sysret reads RCX
+    pop     rsp             ; user RSP
+
+    o64 sysret              ; return to ring-3 user mode
+
+; ============================================================================
+; syscall_linux_entry — Linux ABI ring-3 path (same entry protocol)
+; ============================================================================
+;
+; Identical to syscall_entry except it dispatches via sys_call_table[]
+; (indexed by Linux __NR_* syscall numbers) instead of the internal
+; syscall_dispatch (which uses SYS_* numbers).
+;
+; After dispatching through the table, the entry returns to userspace
+; via sysret exactly as syscall_entry does.
+;
+; On entry (CPU has done):
+;   RCX = saved user RIP (instruction after `syscall`)
+;   R11 = saved user RFLAGS
+;   RSP = user stack pointer
+;   RAX = syscall number
+;   RDI = a1, RSI = a2, RDX = a3, R10 = a4, R8 = a5, R9 = a6
+
+syscall_linux_entry:
+    mov     [rel syscall_user_rsp], rsp        ; save user RSP
+    mov     rsp, [gs:CPU_INFO_KERNEL_RSP_OFF]  ; switch to per-CPU process kernel stack
+
+    push    qword [rel syscall_user_rsp]       ; saved user RSP   (frame 1)
+    push    rcx                                ; saved user RIP   (frame 2)
+    push    r11                                ; saved user RFLAGS (frame 3)
+    push    rbp                                ; (4)
+    push    rbx                                ; (5)
+    push    r12                                ; (6)
+    push    r13                                ; (7)
+    push    r14                                ; (8)
+    push    r15                                ; (9)
+
+    ; Save the stack pointer after pushing all registers for stack zeroing.
+    mov     [rel syscall_entry_rsp_saved], rsp
+
+    ; Save user RIP and RFLAGS for clone()
+    mov     [rel syscall_user_rip], rcx
+    mov     [rel syscall_user_rflags], r11
+
+    ; Save user R9 (6th syscall argument) before clobbering it.
+    mov     [rel syscall_arg6], r9
+
+    ; Arg shuffle: syscall_linux_dispatch(num, a1, a2, a3, a4, a5) — SysV
+    mov     r9,  r8         ; a5  (save before r8 is overwritten)
+    mov     r8,  r10        ; a4  (r10 holds arg4 per Linux syscall ABI)
+    mov     rcx, rdx        ; a3
+    mov     rdx, rsi        ; a2
+    mov     rsi, rdi        ; a1
+    mov     rdi, rax        ; num
+
+    call    syscall_linux_dispatch ; result in rax
+
+    ; Check if execve() was called
+    cmp     qword [rel execve_pending], 0
+    je      .linux_normal_return
+
+    ; Force execve return
+    xor     eax, eax               ; execve returns 0
+    mov     rcx, [rel execve_user_rip]
+    mov     r11, [rel execve_user_rflags]
+    mov     rsp, [rel execve_user_rsp]
+    mov     qword [rel execve_pending], 0
+    o64 sysret
+
+.linux_normal_return:
     ; ── Zero kernel stack ────────────────────────────────────────────
     mov     rdi, [rel syscall_entry_rsp_saved]  ; arg0 = entry RSP
     call    zero_kernel_stack_uapi
